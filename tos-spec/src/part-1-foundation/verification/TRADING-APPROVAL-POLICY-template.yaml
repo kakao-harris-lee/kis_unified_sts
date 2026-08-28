@@ -1,0 +1,68 @@
+artifact_type: TRADING_APPROVAL_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: TBD
+policy_version: TBD
+trading_approval_generation: null
+canonical_digest: TBD
+status: DRAFT
+scope:
+  environments: []
+  safety_cells: []
+  legal_portfolios: []
+  accounts: []
+  strategies: []
+  instruments: []
+  brokers_venues_routes: []
+  action_classes: []
+required_request_fields: []
+required_bound_artifacts: []
+independent_validation_rules: []
+common_mode_dimensions:
+  - source
+  - parser
+  - mapping
+  - library
+  - model
+  - cache
+  - registry
+  - administrator
+  - identity
+  - deployment
+  - network
+  - credential
+  - clock
+comparison_and_numeric_rules: []
+decision_precedence:
+  incomplete: UNKNOWN
+  stale: UNKNOWN
+  conflict: UNKNOWN
+  unsupported: DENY
+  unverifiable: UNKNOWN
+  policy_violation: DENY
+materiality_default: MATERIAL
+unknown_disposition: DENY_NEW_RISK
+intent_consumption_rules:
+  single_use: true
+  exact_intent_binding: true
+  atomic_registration_required: true
+  duplicate_returns_same_record: true
+  conflicting_duplicate: DENY
+invalidation_and_dependency_closure_rules: []
+recovery_and_non_revival_rules: []
+compatibility_requirements: []
+approved_residual_risks: []
+approved_by: []
+effective_from: null
+review_due: null
+authority:
+  policy_active: false
+  approves_proposal: false
+  creates_intent: false
+  mutates_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

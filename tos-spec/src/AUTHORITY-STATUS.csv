@@ -1,0 +1,3 @@
+axis,status,governing_source,change_authority,notes
+restricted_live,NOT_AUTHORIZED,part-1-foundation/ADR-002-025-Restricted-Live-Verification-Progressive-Scope-Promotion-and-Production-Authorization-Governance.md §29,System Owner plus the authorities required by ADR-002-025,No restricted-live grant is recorded; documents tests dashboards and evidence rows are not authority
+production,NOT_AUTHORIZED,part-1-foundation/verification/EVIDENCE-REGISTER-002.md Production Authorization header,System Owner plus the authorities required by ADR-002-025,Production Authorization remains NO; a PASS row is an evidence fact only

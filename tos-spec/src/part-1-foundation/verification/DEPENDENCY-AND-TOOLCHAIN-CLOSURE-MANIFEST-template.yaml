@@ -1,0 +1,66 @@
+artifact_type: DEPENDENCY_AND_TOOLCHAIN_CLOSURE_MANIFEST
+schema_version: 1.0-DRAFT
+manifest_id: TBD
+manifest_version: TBD
+closure_generation: null
+canonical_digest: TBD
+status: DRAFT
+policy_binding:
+  software_release_policy_id: TBD
+  policy_generation: null
+  policy_digest: TBD
+source_revision_manifest_binding:
+  source_revision_manifest_id: TBD
+  source_revision_manifest_digest: TBD
+build_dependency_set_digest: TBD
+runtime_dependency_set_digest: TBD
+build_script_set_digest: TBD
+plugin_set_digest: TBD
+compiler_and_linker_set_digest: TBD
+interpreter_set_digest: TBD
+sdk_set_digest: TBD
+code_generator_set_digest: TBD
+base_image_set_digest: TBD
+operating_system_package_set_digest: TBD
+native_library_set_digest: TBD
+dynamic_module_set_digest: TBD
+sidecar_and_proxy_component_set_digest: TBD
+migration_tool_set_digest: TBD
+signer_component_set_digest: TBD
+package_source_set_digest: TBD
+resolution_policy_digest: TBD
+software_bill_of_materials_digest: TBD
+correction_and_revocation_state_digest: TBD
+compatibility_edge_set_digest: TBD
+common_mode_analysis_digest: TBD
+transitive_closure_complete: false
+all_content_digests_verified: false
+all_sources_approved: false
+all_corrections_and_revocations_current: false
+semantic_result: UNKNOWN
+failure_response: QUARANTINE_AND_DENY
+floating_version_permitted: false
+undeclared_network_resolution_permitted: false
+runtime_dynamic_resolution_permitted: false
+closure_patch_permitted: false
+closure_union_permitted: false
+approved_by_effective_principal_set_digest: TBD
+effective_from: null
+review_due: null
+authority:
+  active: false
+  creates_source_approval: false
+  creates_artifact_admission: false
+  deploys_software: false
+  activates_configuration: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_safety_state: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+authorization_notice: This DRAFT closure is incomplete and UNKNOWN. Missing, floating, dynamically resolved, stale, conflicting, revoked, patched, or unioned dependencies or toolchains quarantine the candidate and grant no authority.

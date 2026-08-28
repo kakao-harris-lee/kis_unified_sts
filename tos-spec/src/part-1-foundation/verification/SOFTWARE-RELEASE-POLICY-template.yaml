@@ -1,0 +1,71 @@
+artifact_type: SOFTWARE_RELEASE_POLICY
+schema_version: 1.0-DRAFT
+policy_id: TBD
+policy_version: TBD
+policy_generation: null
+canonical_digest: TBD
+predecessor_policy_digest: TBD
+status: DRAFT
+scope:
+  environment: TBD
+  safety_cell: TBD
+  capacity_domain: TBD
+  legal_portfolio: TBD
+  account_scope_digest: TBD
+  broker_scope_digest: TBD
+  component_scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+source_review_policy_digest: TBD
+effective_principal_policy_digest: TBD
+build_recipe_policy_digest: TBD
+builder_identity_policy_digest: TBD
+build_network_policy_digest: TBD
+determinism_and_reproducibility_policy_digest: TBD
+dependency_and_toolchain_policy_digest: TBD
+package_source_policy_digest: TBD
+artifact_signing_and_key_policy_digest: TBD
+artifact_registry_custody_policy_digest: TBD
+artifact_admission_policy_digest: TBD
+compatibility_policy_digest: TBD
+deployment_promotion_policy_digest: TBD
+runtime_attestation_policy_digest: TBD
+restriction_and_incident_policy_digest: TBD
+recovery_and_restore_policy_digest: TBD
+evidence_policy_digest: TBD
+verification_profile_binding:
+  verification_profile_id: TBD
+  verification_profile_version: TBD
+  verification_profile_digest: TBD
+approved_bound_set_digest: TBD
+approved_limit_set_digest: TBD
+materiality_default: CRITICAL
+missing_lineage_disposition: DENY_AND_RESTRICT
+unknown_compatibility_disposition: DENY
+unknown_currentness_disposition: DENY_SEND
+mutable_reference_permitted: false
+partial_admission_permitted: false
+consumer_local_patch_permitted: false
+release_set_union_permitted: false
+automatic_rollback_permitted: false
+automatic_rearm_permitted: false
+approved_by_effective_principal_set_digest: TBD
+effective_from: null
+review_due: null
+authority:
+  policy_active: false
+  creates_source_approval: false
+  creates_artifact_admission: false
+  activates_configuration: false
+  deploys_software: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_latch_gap_restriction_or_incident: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+authorization_notice: This DRAFT policy is inactive and grants no source approval, artifact admission, deployment, configuration activation, capacity, protection, live authority, broker transmission, safety-state clearance, recovery readiness, scope restoration, or re-arm. Missing, null, TBD, stale, conflicting, mutable, or unapproved values deny dependent new risk.

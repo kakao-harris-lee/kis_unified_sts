@@ -1,0 +1,73 @@
+artifact_type: RESTRICTED_LIVE_TRIAL_PLAN
+schema_version: "1.0-DRAFT"
+plan_id: TBD
+plan_version: TBD
+canonical_digest: TBD
+status: DRAFT
+result: INELIGIBLE
+restricted_live_trial_policy:
+  policy_id: TBD
+  trial_policy_generation: null
+  canonical_digest: TBD
+promotion_generation: null
+predecessor_plan_id: TBD
+scope:
+  environment: TBD
+  safety_cell_id: TBD
+  capacity_domain_id: TBD
+  legal_portfolio_id: TBD
+  account_ids: []
+  broker_ids: []
+  venue_ids: []
+  instrument_ids: []
+  strategy_ids: []
+  action_classes: []
+  order_shapes: []
+  software_versions: []
+  configuration_generations: []
+  credential_route_session_and_failure_domains: []
+  scope_complete: false
+baseline_artifact_digests: []
+targeted_requirements_invariants_and_evidence_ids: []
+pre_registered_actions_faults_and_observations: []
+trial_budget:
+  maximum_action_count: null
+  maximum_duration_ms: null
+  maximum_concurrent_potential_effect: null
+  maximum_authorized_economic_effect: null
+  broker_resource_vector: []
+  credible_effect_envelope_id: TBD
+  rcl_capacity_request_id: TBD
+  action_flow_and_protective_prerequisites: []
+existing_exposure_external_activity_and_abort_overlap: []
+time_and_validity:
+  planned_start_window: null
+  expires_at: null
+  trustworthy_time_generation: null
+  consumer_receipt_anchor: TBD
+required_human_principals_operators_reviewers_and_observers: []
+evidence_sources_durability_and_retention: []
+abort_halt_latch_reconciliation_and_recovery_rules: []
+coverage_claims: []
+unexercised_conditions: []
+approved_residual_risks: []
+conflicts: []
+approved_by: []
+signatures: []
+authority:
+  eligible_to_request_live_authorization: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_approval: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  promotes_production_scope: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT plan is incomplete and INELIGIBLE. A reviewed plan may at most
+  become eligible to request the separate ADR-002-007/015 authorization chain;
+  it never creates capacity, live authority, transmission, promotion, or re-arm.

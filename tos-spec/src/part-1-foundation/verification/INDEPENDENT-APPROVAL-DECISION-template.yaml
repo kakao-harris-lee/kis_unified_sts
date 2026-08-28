@@ -1,0 +1,58 @@
+artifact_type: INDEPENDENT_APPROVAL_DECISION
+schema_version: "1.0-DRAFT"
+decision_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: UNKNOWN
+reason_codes: []
+proposal_approval_request:
+  request_id: TBD
+  canonical_digest: TBD
+trading_approval_policy:
+  policy_id: TBD
+  trading_approval_generation: null
+  canonical_digest: TBD
+issuer:
+  principal_id: TBD
+  evaluator_build_digest: TBD
+  verifier_build_digest: TBD
+  dependency_registry_digest: TBD
+  deployment_identity: TBD
+compatibility_manifest_id: TBD
+bound_artifact_results: []
+independently_established_facts: []
+canonical_comparisons: []
+common_mode_analysis: []
+uncertainties: []
+discrepancies: []
+residual_risks_and_scope_reductions: []
+approved_intent_envelope:
+  scope: {}
+  scope_complete: false
+  maximum_economic_effect: {}
+  maximum_effect_complete: false
+validity:
+  issued_at: null
+  consumer_receipt_anchor: TBD
+  maximum_age_ms: null
+  expires_at: null
+  invalidation_generation: null
+  invalidation_conditions: []
+consumption:
+  eligible: false
+  single_use: true
+  consumed: false
+  consumption_record_id: null
+evidence_commit_receipt_id: TBD
+signatures: []
+authority:
+  grants_intent_registration_only: false
+  creates_intent: false
+  mutates_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

@@ -344,10 +344,16 @@ that shortens the design → backtest → paper → feedback loop.
 
 ### North Star
 
-The **LLM interprets market context** (veto / risk-mode / size / threshold), and
-an **indicator + rule strategy (Setup A/C/D) owns entry/exit timing**. Thresholds
-live in YAML; runtime state is Redis DB 1 + the SQLite ledger. RL/TFT prediction
-paths are removed and must not be reintroduced
+An **indicator + deterministic rule strategy (Setup A/C/D) owns entry/exit
+timing, direction, quantity, price constraints, exposure, and thresholds**. LLM
+output may supply soft context/rationale or a restrictive entry veto; it must
+not determine those Critical Input axes. The current Setup A/C tuning and
+`llm_adaptive` implementation still expose direction/threshold/size dependence,
+although the reverified monolithic quantity call does not pass LLM context to
+the sizer. The non-authorizing migration and operator gates are recorded in
+[plans/2026-08-02-futures-llm-determinism-migration-plan.md](plans/2026-08-02-futures-llm-determinism-migration-plan.md).
+Thresholds live in YAML; runtime state is Redis DB 1 + the SQLite ledger. RL/TFT
+prediction paths are removed and must not be reintroduced
 ([plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md](plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md)).
 
 ### Current operating state
@@ -360,10 +366,32 @@ paths are removed and must not be reintroduced
   `futures-killswitch` exist with a double-trade guard, but the daemons are not
   registered in the running Compose stack.
 - **Enabled strategies (2026-06-28):** `setup_a_gap_reversion` (fires live
-  signals), `setup_c_event_reaction` (coded but ~0 signals — event scores need
-  real production/observation; bounded history is now retained for diagnostics),
-  and `setup_d_vwap_reversion` (paper rollout activated 2026-06-26; needs
+  signals), `setup_c_event_reaction` (see the note below), and
+  `setup_d_vwap_reversion` (paper rollout activated 2026-06-26; needs
   paper validation before any live consideration).
+- **`setup_c_event_reaction` — exactly zero signals since 2026-06-25 (corrected
+  2026-08-05).** Not "~0", and not the data-observation problem this line
+  previously claimed (that diagnosis predated the cause and was carried forward
+  after it went stale). Commit `81a10e53` inverted
+  `SetupCEntryAdapter._event_passes_filter` from the ratified fail-open
+  behaviour to fail-closed and wired it into `generate()` in the same commit,
+  while no caller ever passed a `forecast_client` — so the event score was
+  always `None` and every qualifying event was rejected as
+  `forecast_event_score_missing`. Addressed three ways: the predicate itself
+  was restored to the ratified fail-open behaviour (2026-08-05 operator ruling
+  — a missing score now defers to the legacy `min_impact_tier` gate),
+  `forecast_integration.enabled` ships `false`, and construction raises if
+  that flag is re-enabled without a client wired.
+  **This does not resume Setup C trading today.** `config/scheduled_events.yaml`
+  holds 67 events, the last dated 2026-07-10, and none after 2026-08-05, so
+  every candidate still stops at `no_event_in_window`. That calendar is
+  refreshed manually each month (see its header) — **refreshing it is an
+  operator action**, and it is the only thing that changes live behaviour here.
+  F-9 note: the decoupled pipeline instantiates `SetupCEventReaction()` directly
+  (`services/decision_engine/main.py:432`) with no forecast gate at all. Under
+  the shipped config (`enabled: false`, and a fail-open predicate even when
+  enabled) the monolith's gate is inert, so this diverges only if
+  `forecast_integration` is enabled with a client wired in the monolith.
 - **Disabled / deprecated:** `williams_r_15m` (reference), `bb_reversion_15m`
   (disabled — triggered a stock BEAR_EXIT, #479), `macd_ema_crossover_15m`,
   `momentum_breakout_futures`, `trend_pullback_futures`,

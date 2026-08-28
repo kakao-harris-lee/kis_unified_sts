@@ -1,0 +1,67 @@
+artifact_type: RESTRICTED_LIVE_TRIAL_EVIDENCE_PACKAGE
+schema_version: "1.0-DRAFT"
+package_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: INVALID
+trial_binding:
+  policy_id: TBD
+  trial_policy_generation: null
+  plan_id: TBD
+  plan_digest: TBD
+  trial_run_id: TBD
+  promotion_generation: null
+  live_authorization_id: TBD
+  exact_scope_digest: TBD
+baseline:
+  repository_commit: TBD
+  build_artifact_digest: TBD
+  safety_configuration_bundle_digest: TBD
+  verification_profile_version: TBD
+  broker_capability_profile_versions: []
+  software_configuration_identity_and_generation_set: []
+pre_registered_claims_actions_faults_stop_rules_and_coverage: []
+observed_actions_and_broker_effects: []
+capacity_action_flow_protection_and_potentially_live_history: []
+abort_halt_demotion_and_recovery_history: []
+external_activity_and_attribution_history: []
+raw_and_normalized_evidence_envelopes: []
+negative_failed_aborted_inconclusive_and_conflicting_results: []
+coverage_claims: []
+unexercised_or_ambiguous_conditions: []
+measured_bounds: []
+evidence_gaps: []
+selection_or_post_hoc_changes: []
+package_completeness:
+  causal_chain_complete: false
+  required_evidence_complete: false
+  negative_history_complete: false
+  broker_finality_complete: false
+  scope_and_generation_exact: false
+  independent_reproduction_complete: false
+independent_review:
+  reviewer_ids: []
+  effective_principal_independence_proven: false
+  decision: NOT_REVIEWED
+  reviewed_at: null
+integrity:
+  evidence_root_digest: TBD
+  integrity_anchor_ids: []
+  signatures: []
+authority:
+  establishes_trial_completion: false
+  creates_promotion_eligibility: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_approval: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  promotes_production_scope: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT package is INVALID and grants no authority or promotion
+  eligibility. Evidence completeness and independent review describe only the
+  exact observed run; they cannot authorize another run or production scope.

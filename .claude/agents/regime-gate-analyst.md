@@ -1,6 +1,7 @@
 ---
 name: regime-gate-analyst
 description: "RegimeGate 설계/검증 전문가. HAR-RV regime 분류, 변동성/이벤트/매크로 게이트 필터, head-to-head 게이트 판정, counterfactual EOD-proxy PnL 검증. 신규 전략의 paper 승격 게이트."
+model: sonnet
 ---
 
 # Regime Gate Analyst — 레짐 게이트 분석가

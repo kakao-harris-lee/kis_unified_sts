@@ -1,0 +1,24 @@
+먼저 `CLAUDE.md` 를 읽어라 (비협상 규칙 :21-36, 85-87, 104-107 등). 이것은 **재심**이다.
+
+심사 대상 (계획 문서 2건만 — 코드 아님):
+- `docs/plans/2026-08-12-tos-phase0-completion-contract-design.md` (v2.13, 6,226행)
+- `docs/plans/2026-08-11-tos-completion-development-plan.md`
+
+직전 판정 (v2.12 재심): `.omc/review/20260815-144959/verdict.md` — needs-attention, findings 3 (high 2 / medium 1). 그 직전 `.omc/review/20260815-102037/verdict.md` 는 Codex 쿼터 소진으로 인한 판정-불능 기록(결함 아님). 아크 누적 해소 4건(U-12 merge-DAG·U-16 시점-blob·U-16 전칭 통일·K-14/T-83).
+
+**1순위 지시**: 직전 findings 3건이 v2.13 에서 **실제로 해소**되었는지 vs **회피**(조건 완화·문구만 추가·대조군 무력화·산문 주장으로 대체)되었는지를 finding 별로 판정하라. 각각 "해소됨 / 부분해소 / 미해소 / 회피" 로 명시하고 근거 file:line 을 달아라.
+
+v2.13 이 주장하는 대응 (심판이 검증할 것 — 저작자 주장이지 사실 아님):
+1. 직전 #1 (high, 비가드 착수 + HEAD 동시성): §U-15-f-4 **부모 결속** — D0A-FIRST 커밋의 parent 가 하니스가 평가한 HEAD(transcript 의 R-0 head)와 동일해야 함. §U-15-g 사후 관측 계약을 **CORR(d) 기계 술어**로 재정의: CORR(d) = {transcript t : 형식 충족 ∧ t 의 R-0 head == parent(d) ∧ t 에 기록된 `d0a_entry_state == ENTRY_OK`}, |CORR(d)|==1 이어야 ENTRY_PROVENANCE_CLEAR. 예방(진입 표면 거부)은 UNCHK-008(브랜치 보호, Phase 1)로 명시 결속하고 발견/예방 경계를 정직 표기. T-81 ⑬(하니스 통과 후 HEAD 이동 → PARENT_MISMATCH)·⑭(비가드 착수 → TRANSCRIPT_MISSING)·⑮(전진-머지로 BLOCKED transcript 의 R-0 head 차용 — 독립 검증자가 초안에서 실제로 뚫었던 구성 → CORR 조건 (3) 불충족으로 red). **실행 증거**: `docs/reviews/phase0-completion-contract/20260815-144959/U15-ENTRY-CHECK.md` (커밋 3134a87b, 692행) — 프로그램 방출 상태값+rc, 하니스 byte-identical 결속(v2.10→v2.13 불변), SIMULATED 도달불가 커밋, repo 비영향 검증 포함. 이 transcript 가 ⑬⑭⑮ 를 실제로 관측하는지 직접 읽고 판정하라 — 특히 ⑮ 가 직전 verdict 의 우회 구성과 동일한지, "red" 가 프로그램 방출값인지 산문 주장인지.
+2. 직전 #2 (high, reviewer→승인 조상 순서 미강제): **g6 신설** — reviewer 아티팩트 도입 커밋 ⊰ 승인 도입 커밋(strict 조상성, 병렬 R∥A merge fail-open 봉합). T-82 변이 추가(병렬 R∥A merge → red). 실행 증거는 없음(검사기 이후) — 저작 완료로만 주장. ⊑→⊰ 극성 정정 포함.
+3. 직전 #3 (medium, 원장 간선 결정성): 원장 행을 **(row_id, edge_seq) 키**로 재정의 — 간선 단위 승인, edge_seq 로 U-12 전순서 재사용, g5 추출 재정의, 반복 이력(ABSENT→NO→YES→NO)이 결정적으로 NO_ROWS_CLEAR 에 도달하는 양성 대조군(T-82 ⑯), MALFORMED 의미 한정. 실행 증거 없음(검사기 이후).
+
+또한 신규 결함을 찾아라 — 특히: (a) CORR(d) 술어에 남은 우회(다른 transcript 위조·형식 충족의 정의·|CORR|==1 의 다중 매치 처리) (b) g6 의 조상성 정의가 merge-DAG 에서 결정적인가·strict/non-strict 극성 (c) edge_seq 원장의 동시 병렬 간선·재기입·삭제 케이스 (d) 실행 증거 없이 "저작 완료"로 계수한 것이 해소 인정에 충분한지 — 심판이 판단 (e) S-20/S-22 클래스(카운트·산문 미전파) 재발.
+
+계획 심사 기준 7종 전부 적용: (1) 단계 순서·의존성 실성립 (2) 숨은 가정 (3) 검증 가능성 — 증명 수단 없는 단계는 결함 (4) 실패·롤백 경로 (5) 범위 이탈·과잉 설계 (6) CLAUDE.md 비협상 규칙 충돌 (7) 누락.
+
+비협상 대조 목록 (배치되는 권고는 오케스트레이터가 기각한다): 선물 long/short 대칭·실계좌 증거금/실물 선물 주문 경로 전제·주식 EOD 일괄청산·ClickHouse 신규·RL/TFT 부활·하드코딩·Redis DB 1 이탈/TTL 없는 키·비KST 세션 로직.
+
+리비전 결속: 오케스트레이터 포착 HEAD `b259669c` · plan_scope_digest `3254f437…` · bound_set_digest `796ca1e0…`(OQ-11-DISPOSITION.md:10 과 일치 여부 확인). 재결속 커밋 순서 `8a25c3c0`(동결)→`3134a87b`(증거)→`b259669c`(재결속) 확인.
+
+계획을 다시 쓰지 마라. 개정안을 제시하지 말고 결함과 근거만 지적하라.

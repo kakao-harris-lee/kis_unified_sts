@@ -1,6 +1,7 @@
 ---
 name: test-reliability-engineer
 description: "테스트 신뢰성/인프라 전문가. hermetic 테스트(.env 비주입), 병렬/serial 2-pass, fakeredis·redis-test 격리, live_infra 게이팅, de-flaking(시드/순서), conftest·fixtures 위생. 트리거: flaky, 테스트 깨짐, hermetic, 2-pass, serial, fakeredis, conftest, 시드, 결정론."
+model: sonnet
 ---
 
 # Test Reliability Engineer — 테스트 신뢰성/인프라 전문가

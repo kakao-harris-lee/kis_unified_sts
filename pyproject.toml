@@ -125,6 +125,11 @@ dev = [
     "ruff>=0.1",
     "mypy>=1.7",
 
+    # tos import-firewall — layer ② (transitive forbidden-package defense).
+    # Drives `.importlinter` + the `tos-firewall` CI job. See
+    # docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md §3.3-②.
+    "import-linter>=2.0",
+
     # Type Stubs
     "types-PyYAML",
     "types-requests",
@@ -158,6 +163,16 @@ performance = [
 # suite green on the new version.
 backtest = [
     "vectorbt>=1.0,<1.1",
+    # vectorbt 1.0.x registers plotly's mapbox traces (`scattermapbox`) at *import*
+    # time (`vectorbt/_settings.py`), so an incompatible plotly breaks `import
+    # vectorbt` before any of our code runs.  plotly 7.0 removed those traces
+    # ("Bad property path: scattermapbox / Did you mean \"scattermap\"?").
+    #
+    # The boundary is **measured, not assumed**: the last green `backtest-extra`
+    # run (2026-07-20) resolved plotly 6.9.0, the first red one (2026-08-28)
+    # resolved 7.0.0.  Capping at `<6` — the intuitive guess — would have been
+    # wrong by a whole major.
+    "plotly<7",
 ]
 
 visualization = [
@@ -217,12 +232,31 @@ exclude = '''
     | __pycache__
 )/
 '''
+# U-17 evidence predicates (see the matching ruff extend-exclude below). These
+# files are byte-frozen contract artifacts: their sha256 AND line counts are
+# pinned in committed evidence, so reformatting them is not allowed.
+# force-exclude so `black --check <file>` skips them too, not just `black .`.
+force-exclude = '/tools/(ladder|pagelimb|wfcanon)-v[0-9][^/]*\.py$'
 
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+# `force-exclude` so an explicitly-named excluded path is skipped as well —
+# without it, `ruff check <excluded file>` still lints the file.
+force-exclude = true
 extend-exclude = [
     "docs/archive",
+    # U-17 «예방 통제» 증거 술어 — tools/u17-verify.sh 가 주입해 쓰는 계약 술어.
+    # 이 세 파일은 byte 로 동결된 계약 아티팩트다: sha256 과 «행 수»가
+    # docs/reviews/phase0-completion-contract/20260820-184748/ 의 커밋된 증거에
+    # 핀돼 있고(§3-2 인벤토리 · §4 「재구성 규율」), 파생기(derive-ladder-e5.py 등)가
+    # 원문 sha256 을 단언하며 이들을 전량 재구성한다. 즉 «손으로 고친 것이 아님»이
+    # 증거의 전제다 — 포매팅 한 번이 그 전제와 3개 핀을 동시에 깬다.
+    # 린트 대신 «동결»이 이 파일들의 규율이므로 검사 대상에서 제외한다.
+    # 새 세대 술어(v222e6 · v223 …)도 같은 규율이라 패턴으로 잡는다.
+    "tools/ladder-v[0-9]*.py",
+    "tools/pagelimb-v[0-9]*.py",
+    "tools/wfcanon-v[0-9]*.py",
 ]
 
 [tool.ruff.lint]

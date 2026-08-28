@@ -1,6 +1,7 @@
 ---
 name: llm-analyst
 description: "LLM 시장분석/브리핑 콘텐츠 전문가. shared/llm 모듈, UnifiedMarketAnalyzer, KRX/DART API, 야간/장전/장마감 브리핑 콘텐츠, news/macro 수집, 프롬프트 엔지니어링, LLM 스코어링 보정. 분석의 '내용'을 소유 (전달은 alert-manager)."
+model: sonnet
 ---
 
 # LLM Analyst — LLM 시장분석/브리핑 콘텐츠 전문가

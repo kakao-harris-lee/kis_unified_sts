@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from shared.config import ConfigLoader
@@ -12,6 +13,68 @@ if TYPE_CHECKING:
     from shared.strategy.base import PositionSizer, TradingStrategy
 
 logger = logging.getLogger("shared.strategy.registry")
+
+
+class StrategyDeliberatelyExcluded(ConfigurationError):
+    """Raised when a strategy is kept out of the roster *by design*.
+
+    This is the opt-out channel for "this config is well-formed, but it must
+    not run here" - e.g. the builder_v1 streaming-compatibility guard below.
+    Every other exception out of :meth:`StrategyFactory.create` means the
+    strategy was configured to run and could not be built, which is an
+    operator-visible misconfiguration.
+
+    Subclasses ``ConfigurationError`` on purpose so that callers of
+    :meth:`StrategyFactory.create_from_file` which already catch
+    ``ConfigurationError`` keep behaving exactly as before; only
+    :meth:`StrategyFactory.build_roster` inspects the narrower type.
+    """
+
+
+@dataclass(frozen=True)
+class StrategyBuildFailure:
+    """One configured strategy that is absent from the roster, and why.
+
+    Attributes:
+        name: ``strategy.name`` from the config, or ``"unnamed"``.
+        asset_class: ``strategy.asset_class`` from the config, if declared.
+        error_type: Class name of the exception raised during construction.
+        message: The exception's message, kept verbatim so the operator sees
+            the original diagnosis rather than a paraphrase.
+        deliberate: ``True`` when the factory excluded the strategy on purpose
+            (:class:`StrategyDeliberatelyExcluded`); ``False`` when it is a
+            misconfiguration that somebody has to fix.
+    """
+
+    name: str
+    asset_class: str | None
+    error_type: str
+    message: str
+    deliberate: bool
+
+
+@dataclass(frozen=True)
+class RosterBuildReport:
+    """The strategies that were built, and every one that was not.
+
+    ``strategies`` alone is what the runtime trades. ``failures`` is what makes
+    the absences answerable: without it, a strategy dropped for being broken and
+    a strategy the operator disabled with ``enabled: false`` look identical from
+    outside - both are simply not in the roster.
+    """
+
+    strategies: list[TradingStrategy]
+    failures: list[StrategyBuildFailure]
+
+    @property
+    def misconfigured(self) -> list[StrategyBuildFailure]:
+        """Absences that are defects: configured to run, could not be built."""
+        return [f for f in self.failures if not f.deliberate]
+
+    @property
+    def deliberately_excluded(self) -> list[StrategyBuildFailure]:
+        """Absences the factory chose. Not operator error, nothing to fix."""
+        return [f for f in self.failures if f.deliberate]
 
 
 class StrategyFactory:
@@ -51,12 +114,16 @@ class StrategyFactory:
 
         entry = EntryRegistry.create(entry_type, entry_params_filtered)
 
-        # Streaming-runtime incompatibility guard: builder_v1 strategies whose
-        # entry conditions use cross_above/cross_below operators can NEVER fire
-        # in the streaming stock/futures daemon (no cross-cycle history series
-        # and no arbitrary-period SMA keys). Raise ConfigurationError here so
-        # StrategyFactory.create_all's existing warning+skip loop excludes them
-        # from the active roster instead of adding a permanently-inert strategy.
+        # Streaming-runtime incompatibility guard: a builder_v1 strategy whose
+        # conditions use an operator the streaming stock/futures daemon cannot
+        # evaluate can NEVER fire, so it is excluded rather than added to the
+        # roster as a permanently-inert strategy. STREAMING_UNSUPPORTED_OPERATORS
+        # is empty today (the full-series Indicator Context covers every
+        # operator), so this branch is dormant - but re-introducing an
+        # unsupported operator is a one-line change there, so the guard stays.
+        # StrategyDeliberatelyExcluded, not a bare ConfigurationError: this is a
+        # designed exclusion, and build_roster must not report it to the
+        # operator as a misconfiguration to be fixed.
         # This is the single authoritative gate; BuilderStrategyEntry._parse_state
         # still logs loudly when instantiated directly (e.g. in tests or backtest),
         # but the streaming roster path never reaches generate() for these.
@@ -71,7 +138,7 @@ class StrategyFactory:
                 reason = streaming_support_reason(builder_state)
                 if reason is not None:
                     strategy_name = strategy_cfg.get("name", "unnamed")
-                    raise ConfigurationError(
+                    raise StrategyDeliberatelyExcluded(
                         f"Skipping streaming-incompatible builder_v1 strategy "
                         f"'{strategy_name}': {reason}"
                     )
@@ -189,16 +256,123 @@ class StrategyFactory:
     def create_all(
         cls, asset_class: str | None = None, enabled_only: bool = True
     ) -> list[TradingStrategy]:
-        """Create all enabled strategies, warning and skipping failures."""
+        """Create all enabled strategies, tolerating individual failures.
+
+        Thin wrapper over :meth:`build_roster` that returns only the strategies,
+        for callers that build a roster and have nothing to do with the ones
+        that failed. Failures are still logged loudly; use ``build_roster`` when
+        the caller can act on them.
+
+        Unlike :meth:`create_from_file`, this does NOT propagate: one broken
+        strategy config must not leave a running system with an empty roster.
+        """
+        return cls.build_roster(asset_class, enabled_only).strategies
+
+    @classmethod
+    def build_roster(
+        cls, asset_class: str | None = None, enabled_only: bool = True
+    ) -> RosterBuildReport:
+        """Build every configured strategy and report the ones that did not.
+
+        Tolerating a failed strategy is deliberate - see :meth:`create_all` -
+        but tolerance is not silence. Each absence is logged with its
+        consequence and returned in :class:`RosterBuildReport` so the caller can
+        distinguish the two reasons a strategy is missing from the roster:
+
+        - Disabled on purpose (``enabled: false``): filtered out by
+          ``ConfigLoader.load_all_strategies`` before the factory sees it, so it
+          never appears as a failure. Nothing to fix.
+        - Could not be built: recorded in ``failures``. Either a designed
+          exclusion (:class:`StrategyDeliberatelyExcluded`) or, for every other
+          exception, a misconfiguration the operator has to fix.
+
+        Args:
+            asset_class: Restrict to one asset class, or ``None`` for all.
+            enabled_only: Skip configs with ``strategy.enabled: false``.
+
+        Returns:
+            The built strategies plus a classified record of every absence.
+        """
         configs = ConfigLoader.load_all_strategies(asset_class, enabled_only)
-        strategies = []
+        strategies: list[TradingStrategy] = []
+        failures: list[StrategyBuildFailure] = []
+        scope = asset_class or "all-assets"
 
         for config in configs:
+            # Resolve identity the same way create() does, so the report names
+            # the strategy exactly as the roster would have.
+            strategy_cfg = config.get("strategy", config)
+            name = strategy_cfg.get("name", "unnamed")
+            declared_asset = strategy_cfg.get("asset_class")
             try:
-                strategy = cls.create(config)
-                strategies.append(strategy)
-            except Exception as e:
-                strategy_name = config.get("strategy", {}).get("name", "unknown")
-                logger.warning(f"Failed to create strategy '{strategy_name}': {e}")
+                strategies.append(cls.create(config))
+            except StrategyDeliberatelyExcluded as e:
+                failures.append(
+                    StrategyBuildFailure(
+                        name=name,
+                        asset_class=declared_asset,
+                        error_type=type(e).__name__,
+                        message=str(e),
+                        deliberate=True,
+                    )
+                )
+                logger.warning(
+                    "Strategy '%s' (asset_class=%s) was excluded from the %s "
+                    "roster by design - this is not a misconfiguration: %s",
+                    name,
+                    declared_asset,
+                    scope,
+                    e,
+                )
+            except Exception as e:  # noqa: BLE001 - classified and re-reported
+                failures.append(
+                    StrategyBuildFailure(
+                        name=name,
+                        asset_class=declared_asset,
+                        error_type=type(e).__name__,
+                        message=str(e),
+                        deliberate=False,
+                    )
+                )
+                logger.error(
+                    "Strategy '%s' (asset_class=%s) is MISCONFIGURED and is NOT "
+                    "in the %s roster: it will emit no signals and place no "
+                    "orders for this entire run. It was not disabled - it was "
+                    "configured to run and failed to build. %s: %s",
+                    name,
+                    declared_asset,
+                    scope,
+                    type(e).__name__,
+                    e,
+                )
 
-        return strategies
+        report = RosterBuildReport(strategies=strategies, failures=failures)
+        cls._log_roster_summary(report, scope)
+        return report
+
+    @classmethod
+    def _log_roster_summary(cls, report: RosterBuildReport, scope: str) -> None:
+        """Log one line stating whether the roster is whole or degraded."""
+        broken = report.misconfigured
+        if not broken:
+            logger.info(
+                "%s roster: %d strategies active, %d excluded by design.",
+                scope,
+                len(report.strategies),
+                len(report.deliberately_excluded),
+            )
+            return
+
+        # No strategies at all, yet configs asked for some: the runtime is up
+        # and will trade nothing. That is worse than any single bad config.
+        level = logging.CRITICAL if not report.strategies else logging.ERROR
+        logger.log(
+            level,
+            "%s roster is DEGRADED: %d strategies active, %d MISCONFIGURED and "
+            "dropped (%s). Fix them, or disable them explicitly with "
+            "'enabled: false' so the absence is intentional.",
+            scope,
+            len(report.strategies),
+            len(broken),
+            ", ".join(f.name for f in broken),
+        )

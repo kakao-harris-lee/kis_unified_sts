@@ -1,0 +1,58 @@
+artifact_type: RESIDUAL_RISK_ACCEPTANCE_RECORD
+schema_version: "1.0-DRAFT"
+record_id: TBD
+canonical_digest: TBD
+status: DRAFT
+acceptance_result: NOT_ACCEPTED
+deviation_generation: null
+policy_id: TBD
+request_id: TBD
+request_digest: TBD
+requirements_and_hazards: []
+accepted_reduced_scope_digest: TBD
+dependency_closure_digest: TBD
+combined_active_deviation_set_digest: TBD
+residual_risk:
+  classification: UNKNOWN
+  worst_credible_effect: UNKNOWN
+  bounded_inside_hard_safety_envelope: false
+  assumptions: []
+  uncertainties: []
+  common_modes: []
+compensating_controls:
+  control_ids: []
+  currentness_proofs: []
+  evidence_ids: []
+  independent_failure_paths_proven: false
+evidence_status:
+  affected_evidence_items: []
+  marks_any_item_pass: false
+  allowed_status: NOT_IMPLEMENTED
+validity:
+  accepted_at: null
+  expires_at: null
+  review_due: null
+  trustworthy_time_basis: TBD
+review:
+  effective_principal_ids: []
+  independence_proven: false
+  quorum_satisfied: false
+revocation_and_failure_responses: []
+signatures: []
+authority:
+  accepted_for_exact_scope: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  activates_configuration: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT record accepts no residual risk and grants no authority. Even a
+  future exact acceptance keeps the affected evidence visibly non-PASS and
+  requires separate configuration, reconciliation, authorization, capacity,
+  currentness, and final-egress enforcement.

@@ -1,0 +1,83 @@
+{
+  "artifact_id": "P-14-20260729T065011Z",
+  "probe_id": "P-14",
+  "title": "SESSION_CONNECTION_MODEL — concurrent sessions + subscription cap",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-07-29T06:50:11.662236+00:00",
+  "finished_at_utc": "2026-07-29T06:50:17.231559+00:00",
+  "duration_s": 5.569,
+  "repo_commit": "33565835",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-14",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A05608",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "P0-2 T2 campaign 2026-07-29; trader-futures+scheduler stopped; WS concurrent sessions + subscription cap",
+    "endpoint_class": "query",
+    "start_rps": 1.0,
+    "step_rps": 1.0,
+    "max_rps": 25.0,
+    "hold_seconds": 3.0,
+    "step_gap_seconds": 2.0,
+    "recovery_poll_s": 1.0,
+    "recovery_timeout_s": 120.0,
+    "max_sessions": 5,
+    "max_subscriptions": 45,
+    "reissue_gap_s": 5.0,
+    "reissue_poll_s": 5.0,
+    "blackout_timeout_s": 180.0,
+    "trials": 3,
+    "inter_trial_s": 1.0
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "5e175fd232de"
+  },
+  "measurements": {
+    "concurrent_sessions_accepted": 5,
+    "concurrent_sessions_verdict": "accepted 5; ceiling tested was 5. If accepted == max_sessions the cap is ABOVE the tested ceiling — do not record the ceiling as the cap.",
+    "displacement_check": "MANUAL: confirm whether opening session N invalidated session N-1 (watch for a server close frame on the earlier connections). A displacing broker means concurrent_sessions is effectively 1.",
+    "subscriptions_accepted": 1,
+    "subscription_cap_note": "config/streaming.yaml:50 asserts 'KIS 제한: 41' as a comment. The draft memo §5:211-216 classes that as unverified. Only this observation may promote or refute it.",
+    "single_symbol_caveat": "Subscribing the SAME tr_key repeatedly may be deduplicated by the broker, so this count may understate the cap. Establishing a true cap needs DISTINCT symbols per subscription, which this probe does not yet support (--symbol takes one code). Record the count as a single-symbol observation, not as the subscription limit."
+  },
+  "observations": [
+    {
+      "approval_key_issued": true,
+      "transport": "ws://ops.koreainvestment.com:31000",
+      "plaintext_ws": true
+    },
+    {
+      "subscription_index": 0,
+      "rejected_reply": "{\"header\":{\"tr_id\":\"H0STCNT0\",\"tr_key\":\"A05608\",\"encrypt\":\"N\"},\"body\":{\"rt_cd\":\"0\",\"msg_cd\":\"OPSP0000\",\"msg1\":\"SUBSCRIBE SUCCESS\",\"output\":{\"iv\":\"cc36f227f603b120\",\"key\":\"vaksempigpeyptrznxvbzszjzdacd"
+    }
+  ],
+  "skips": [],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [],
+    "instance_fields": [
+      "capabilities.sessions.concurrent_sessions",
+      "capabilities.sessions.subscription_limit"
+    ],
+    "capability_dimension": "SESSION_CONNECTION_MODEL"
+  }
+}

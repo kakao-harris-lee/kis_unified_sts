@@ -1,0 +1,64 @@
+artifact_type: ARTIFACT_ADMISSION_DECISION
+schema_version: 1.0-DRAFT
+decision_id: TBD
+decision_version: TBD
+candidate_release_generation: null
+canonical_digest: TBD
+status: DRAFT
+result: UNKNOWN
+policy_binding:
+  software_release_policy_id: TBD
+  policy_generation: null
+  policy_digest: TBD
+release_artifact_binding:
+  release_artifact_manifest_id: TBD
+  release_artifact_manifest_digest: TBD
+source_revision_manifest_digest: TBD
+dependency_and_toolchain_closure_manifest_digest: TBD
+build_provenance_attestation_digest: TBD
+artifact_signature_and_key_status_digest: TBD
+registry_custody_proof_digest: TBD
+compatibility_graph_digest: TBD
+scan_test_and_finding_evidence_digest: TBD
+common_mode_analysis_digest: TBD
+target_scope_digest: TBD
+predecessor_release_generation: null
+predecessor_admitted_release_set_digest: TBD
+current_release_restriction_floor: null
+reviewer_effective_principal_set_digest: TBD
+effective_principal_independence_result: UNKNOWN
+decision_reason_set_digest: TBD
+unresolved_condition_set_digest: TBD
+trustworthy_time_binding:
+  time_health_generation: null
+  receipt_anchor: null
+  decided_at: null
+  maximum_age_key: MAX_artifact_admission_decision_age_ms
+  age_within_approved_limit: false
+single_use_consumption_id: TBD
+consumed: false
+consumption_permitted: false
+current: false
+failure_response: DENY_AND_RESTRICT
+decision_patch_permitted: false
+decision_union_permitted: false
+scope_widening_permitted: false
+automatic_readmission_permitted: false
+authority:
+  active: false
+  creates_source_approval: false
+  creates_artifact_admission_without_release_commit: false
+  commits_release_generation: false
+  deploys_software: false
+  activates_configuration: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_latch_gap_restriction_or_incident: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+authorization_notice: This DRAFT UNKNOWN decision is not consumable and grants no authority. ADMIT, if later proven and consumed once into a new Release Generation, remains only eligibility for an exact release-set commit and never deploys, activates, arms, transmits, releases capacity, or re-arms.

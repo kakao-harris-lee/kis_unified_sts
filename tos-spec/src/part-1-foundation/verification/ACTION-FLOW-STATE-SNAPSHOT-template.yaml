@@ -1,0 +1,65 @@
+artifact_type: ACTION_FLOW_STATE_SNAPSHOT
+schema_version: "1.0-DRAFT"
+snapshot_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: INVALID
+issuer_principal_id: TBD
+action_flow_policy:
+  policy_id: TBD
+  action_flow_generation: null
+  canonical_digest: TBD
+consistency_cut:
+  cut_id: TBD
+  cut_completed: false
+  cut_time_evidence_id: TBD
+  rcl_revision: null
+  writer_epoch: null
+  recovery_generation: null
+  time_health_generation: null
+  context_generation: null
+  constraint_generation: null
+  construction_generation: null
+  aggregate_risk_generation: null
+scope:
+  environments: []
+  safety_cells: []
+  brokers: []
+  legal_portfolios: []
+  accounts: []
+  credentials_sessions_routes_and_endpoints: []
+  venues_and_instruments: []
+  strategies_intents_and_causes: []
+  action_classes: []
+  global_scope_included: false
+state:
+  committed_unclaimed_permits: []
+  claimed_and_consumed_permits: []
+  ambiguous_or_quarantined_permits: []
+  queued_operations: []
+  in_flight_operations: []
+  broker_observed_usage_and_limits: []
+  cause_and_amplification_usage: []
+  ordinary_headroom: []
+  protective_reservations_and_leases: []
+  partitions_and_unfenced_instances: []
+counter_conflicts: []
+missing_or_unknown_scopes: []
+common_mode_dependencies: []
+validity:
+  issued_at: null
+  consumer_receipt_anchor: TBD
+  maximum_age_ms: null
+  invalidation_generation: null
+  invalidation_conditions: []
+authority:
+  grants_action_flow_allocation: false
+  creates_or_refills_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

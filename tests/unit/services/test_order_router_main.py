@@ -17,6 +17,7 @@ from services.order_router.main import (
 from shared.decision.signal import Signal
 from shared.execution.contract_spec import ContractSpec
 from shared.execution.fill_logger import FillLogger
+from shared.execution.order_result import OrderState
 from shared.execution.passive_maker import Fill
 from shared.execution.pseudo_oco import PseudoOCO
 
@@ -1006,3 +1007,294 @@ async def test_close_missing_symbol_field_is_poison_pill(
         assert int(pending.get("pending", 0)) == 0
     elif pending:
         assert int(pending[0]) == 0
+
+
+# ---------------------------------------------------------------------------
+# Review attempt-1 #2 — an UNRESOLVED fill state must not be consumed quietly
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_unresolved_fill_state_is_logged_at_error_and_brackets_nothing(
+    redis, kis, fill_logger, pseudo_oco, caplog
+):
+    """`fill_state_unknown` reaching the daemon is not an ordinary non-fill.
+
+    The broker may hold an unbracketed position. Logging it at info alongside
+    genuine "didn't fill" signals is how the D-2 harm stays invisible.
+    """
+    import logging
+
+    kis.await_fill.return_value = None
+    kis.fill_state_unknown = lambda order_id: True
+
+    daemon = _make_daemon(
+        redis=redis, kis=kis, fill_logger=fill_logger, pseudo_oco=pseudo_oco
+    )
+    await _publish_final(redis, _signal("long"))
+
+    with caplog.at_level(logging.ERROR, logger="services.order_router.main"):
+        await _run_one_batch(daemon)
+
+    messages = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("UNRESOLVED" in m for m in messages), messages
+    assert any("fill_state_unknown" in m for m in messages), messages
+
+
+@pytest.mark.asyncio
+async def test_ordinary_non_fill_stays_at_info(
+    redis, kis, fill_logger, pseudo_oco, caplog
+):
+    """Negative control: a resolved miss must not be escalated to ERROR."""
+    import logging
+
+    kis.await_fill.return_value = None
+    kis.fill_state_unknown = lambda order_id: False
+
+    daemon = _make_daemon(
+        redis=redis, kis=kis, fill_logger=fill_logger, pseudo_oco=pseudo_oco
+    )
+    await _publish_final(redis, _signal("long"))
+
+    with caplog.at_level(logging.INFO, logger="services.order_router.main"):
+        await _run_one_batch(daemon)
+
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("not filled" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Review attempt-2 #1 — the bracket must be sized from the FILL, not the request
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_partial_fill_arms_a_bracket_sized_from_the_fill(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """A 2-of-3 partial must arm a 2-lot bracket, not a 3-lot one.
+
+    Futures accounts are net-position: a 3-lot protective exit against a long 2
+    does not clamp at flat, it FLIPS to a short 1 — an unbounded-risk position
+    created by the very order meant to bound risk.
+    """
+    kis.await_fill.return_value = Fill(
+        order_id="ORD-PARTIAL", price=331.20, quantity=2, filled_at_ms=2000
+    )
+    registered = []
+    pseudo_oco.register_bracket = AsyncMock(
+        side_effect=lambda **kw: registered.append(kw)
+    )
+
+    daemon = _make_daemon(
+        redis=redis, kis=kis, fill_logger=fill_logger, pseudo_oco=pseudo_oco
+    )
+    # base_quantity=1 x size_multiplier=3.0 -> requested 3
+    signal = _signal("long")
+    fields = signal.to_stream_dict()
+    fields["signal_id"] = "sig-partial"
+    fields["size_multiplier"] = "3.0"
+    fields["filtered_at_ms"] = "1000"
+    await redis.xadd(FINAL_STREAM, fields)
+
+    await _run_one_batch(daemon)
+
+    assert registered, "bracket was never registered"
+    assert registered[0]["fill"].quantity == 2
+
+
+@pytest.mark.asyncio
+async def test_full_fill_still_brackets_the_whole_position(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """Negative control: a complete fill brackets the full size."""
+    kis.await_fill.return_value = Fill(
+        order_id="ORD-FULL", price=331.20, quantity=3, filled_at_ms=2000
+    )
+    registered = []
+    pseudo_oco.register_bracket = AsyncMock(
+        side_effect=lambda **kw: registered.append(kw)
+    )
+
+    daemon = _make_daemon(
+        redis=redis, kis=kis, fill_logger=fill_logger, pseudo_oco=pseudo_oco
+    )
+    signal = _signal("long")
+    fields = signal.to_stream_dict()
+    fields["signal_id"] = "sig-full"
+    fields["size_multiplier"] = "3.0"
+    fields["filtered_at_ms"] = "1000"
+    await redis.xadd(FINAL_STREAM, fields)
+
+    await _run_one_batch(daemon)
+
+    assert registered[0]["fill"].quantity == 3
+
+
+@pytest.mark.asyncio
+async def test_client_reporting_no_quantity_falls_back_to_the_request(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """All-or-nothing clients (paper adapter) report no per-fill quantity."""
+    from shared.execution.order_result import OrderResult
+
+    registered = []
+    pseudo_oco.register_bracket = AsyncMock(
+        side_effect=lambda **kw: registered.append(kw)
+    )
+    daemon = _make_daemon(
+        redis=redis, kis=kis, fill_logger=fill_logger, pseudo_oco=pseudo_oco
+    )
+    daemon.passive_maker.place_passive_limit_futures = AsyncMock(
+        return_value=OrderResult(
+            state=OrderState.FILLED,
+            order_id="ORD-LEGACY",
+            filled_price=331.20,
+            slippage_ticks=0.0,
+            filled_quantity=None,
+        )
+    )
+    await _publish_final(redis, _signal("long"))
+
+    await _run_one_batch(daemon)
+
+    assert registered[0]["fill"].quantity == 1  # base_quantity
+
+
+@pytest.mark.asyncio
+async def test_unresolved_but_filled_is_bracketed_and_escalated(
+    redis, kis, fill_logger, pseudo_oco, caplog
+):
+    """Review attempt-2 #3: a Fill whose TOTAL is unknown still arms a bracket.
+
+    The measured quantity is a lower bound, so the bracket is armed (better
+    than none) but the operator must be told the broker may hold more.
+    """
+    import logging
+
+    kis.await_fill.return_value = Fill(
+        order_id="ORD-U", price=331.20, quantity=2, filled_at_ms=2000
+    )
+    kis.fill_state_unknown = lambda order_id: True
+    registered = []
+    pseudo_oco.register_bracket = AsyncMock(
+        side_effect=lambda **kw: registered.append(kw)
+    )
+
+    daemon = _make_daemon(
+        redis=redis, kis=kis, fill_logger=fill_logger, pseudo_oco=pseudo_oco
+    )
+    await _publish_final(redis, _signal("long"))
+
+    with caplog.at_level(logging.ERROR, logger="services.order_router.main"):
+        await _run_one_batch(daemon)
+
+    assert registered, "an unresolved total must NOT suppress the bracket"
+    assert registered[0]["fill"].quantity == 2
+    assert any("UNRESOLVED executed total" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_resolved_fill_is_not_escalated(
+    redis, kis, fill_logger, pseudo_oco, caplog
+):
+    """Negative control: a resolved fill brackets silently."""
+    import logging
+
+    kis.await_fill.return_value = Fill(
+        order_id="ORD-OK", price=331.20, quantity=1, filled_at_ms=2000
+    )
+    kis.fill_state_unknown = lambda order_id: False
+
+    daemon = _make_daemon(
+        redis=redis, kis=kis, fill_logger=fill_logger, pseudo_oco=pseudo_oco
+    )
+    await _publish_final(redis, _signal("long"))
+
+    with caplog.at_level(logging.ERROR, logger="services.order_router.main"):
+        await _run_one_batch(daemon)
+
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+# ---------------------------------------------------------------------------
+# Review attempt-3 #11 — the fill STREAM carries the executed quantity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_partial_fill_writes_the_executed_quantity_to_the_fill_stream(
+    redis, kis, pseudo_oco
+):
+    """A 2-of-3 partial must publish quantity=2, not the requested 3.
+
+    This row is not audit-only. `futures_monitor` copies it into
+    `futures:monitor:positions`, and the router's `_handle_close` reads it back
+    as the size for `close_executor.flatten(...)` — a real broker order. A
+    logged 3 against a held 2 makes the force-close over-sell by one contract,
+    which on a net-position futures account flips to a short 1.
+    """
+    from shared.execution.fill_logger import FillLogger
+
+    fill_stream = "stream:order.fill.test"
+    real_logger = FillLogger(
+        redis=redis, archive_client=None, stream=fill_stream, asset_class="futures"
+    )
+    kis.await_fill.return_value = Fill(
+        order_id="ORD-PARTIAL", price=331.20, quantity=2, filled_at_ms=2000
+    )
+
+    daemon = _make_daemon(
+        redis=redis, kis=kis, fill_logger=real_logger, pseudo_oco=pseudo_oco
+    )
+    signal = _signal("long")
+    fields = signal.to_stream_dict()
+    fields["signal_id"] = "sig-stream-partial"
+    fields["size_multiplier"] = "3.0"  # base 1 x 3 -> requested 3
+    fields["filtered_at_ms"] = "1000"
+    await redis.xadd(FINAL_STREAM, fields)
+
+    await _run_one_batch(daemon)
+
+    rows = await redis.xrange(fill_stream)
+    entries = [
+        {k.decode(): v.decode() for k, v in payload.items()} for _, payload in rows
+    ]
+    entry_rows = [r for r in entries if r["trade_role"] == "entry"]
+    assert entry_rows, "no entry fill row was published"
+    assert entry_rows[0]["quantity"] == "2"
+
+
+@pytest.mark.asyncio
+async def test_full_fill_writes_the_full_quantity_to_the_fill_stream(
+    redis, kis, pseudo_oco
+):
+    """Negative control: a complete fill publishes the whole size."""
+    from shared.execution.fill_logger import FillLogger
+
+    fill_stream = "stream:order.fill.test.full"
+    real_logger = FillLogger(
+        redis=redis, archive_client=None, stream=fill_stream, asset_class="futures"
+    )
+    kis.await_fill.return_value = Fill(
+        order_id="ORD-FULL", price=331.20, quantity=3, filled_at_ms=2000
+    )
+
+    daemon = _make_daemon(
+        redis=redis, kis=kis, fill_logger=real_logger, pseudo_oco=pseudo_oco
+    )
+    signal = _signal("long")
+    fields = signal.to_stream_dict()
+    fields["signal_id"] = "sig-stream-full"
+    fields["size_multiplier"] = "3.0"
+    fields["filtered_at_ms"] = "1000"
+    await redis.xadd(FINAL_STREAM, fields)
+
+    await _run_one_batch(daemon)
+
+    rows = await redis.xrange(fill_stream)
+    entries = [
+        {k.decode(): v.decode() for k, v in payload.items()} for _, payload in rows
+    ]
+    entry_rows = [r for r in entries if r["trade_role"] == "entry"]
+    assert entry_rows[0]["quantity"] == "3"

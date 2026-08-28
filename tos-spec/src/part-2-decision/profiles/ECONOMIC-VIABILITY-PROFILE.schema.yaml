@@ -1,0 +1,196 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "urn:tos:economic-viability-profile:0.1-proposed"
+title: Economic Viability Profile
+description: >-
+  Proposed schema for human-owned CONST-003 economic-evidence bounds. The schema
+  supplies no default or threshold and creates no authority.
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - profile_id
+  - profile_revision
+  - status
+  - scope
+  - preregistration
+  - cost_model
+  - statistical_discipline
+  - generalization
+  - portfolio_economics
+  - degradation
+  - human_bounds
+  - approvals
+  - non_authority
+properties:
+  schema_version:
+    const: "0.1-PROPOSED"
+  profile_id:
+    type: string
+    minLength: 1
+  profile_revision:
+    type: string
+    minLength: 1
+  status:
+    enum: [PROPOSED, APPROVED, SUSPENDED, RETIRED]
+  scope:
+    type: object
+    additionalProperties: false
+    required: [strategy_version, population, benchmark, capital_scope, regimes]
+    properties:
+      strategy_version: {type: string, minLength: 1}
+      population: {type: string, minLength: 1}
+      benchmark: {type: string, minLength: 1}
+      capital_scope: {type: string, minLength: 1}
+      regimes:
+        type: array
+        minItems: 1
+        items: {type: string, minLength: 1}
+  preregistration:
+    type: object
+    additionalProperties: false
+    required: [hypothesis, horizon, stop_rules, analysis_plan, selection_history]
+    properties:
+      hypothesis: {type: string, minLength: 1}
+      horizon: {type: string, minLength: 1}
+      stop_rules: {type: string, minLength: 1}
+      analysis_plan: {type: string, minLength: 1}
+      selection_history: {type: string, minLength: 1}
+  cost_model:
+    type: object
+    additionalProperties: false
+    required:
+      - fees_and_commissions
+      - taxes
+      - spread
+      - slippage
+      - market_impact
+      - missed_trades
+      - rejections
+      - partial_fills
+      - latency
+      - safety_opportunity_loss
+    properties:
+      fees_and_commissions: {$ref: "#/$defs/method_binding"}
+      taxes: {$ref: "#/$defs/method_binding"}
+      spread: {$ref: "#/$defs/method_binding"}
+      slippage: {$ref: "#/$defs/method_binding"}
+      market_impact: {$ref: "#/$defs/method_binding"}
+      missed_trades: {$ref: "#/$defs/method_binding"}
+      rejections: {$ref: "#/$defs/method_binding"}
+      partial_fills: {$ref: "#/$defs/method_binding"}
+      latency: {$ref: "#/$defs/method_binding"}
+      safety_opportunity_loss: {$ref: "#/$defs/method_binding"}
+  statistical_discipline:
+    type: object
+    additionalProperties: false
+    required:
+      - uncertainty_method
+      - effective_sample_method
+      - estimation_error_method
+      - multiple_testing_correction
+      - selection_bias_correction
+      - regime_analysis
+    properties:
+      uncertainty_method: {$ref: "#/$defs/method_binding"}
+      effective_sample_method: {$ref: "#/$defs/method_binding"}
+      estimation_error_method: {$ref: "#/$defs/method_binding"}
+      multiple_testing_correction: {$ref: "#/$defs/method_binding"}
+      selection_bias_correction: {$ref: "#/$defs/method_binding"}
+      regime_analysis: {$ref: "#/$defs/method_binding"}
+  generalization:
+    type: object
+    additionalProperties: false
+    required: [out_of_sample_protocol, restricted_live_protocol, leakage_controls]
+    properties:
+      out_of_sample_protocol: {$ref: "#/$defs/method_binding"}
+      restricted_live_protocol: {$ref: "#/$defs/method_binding"}
+      leakage_controls: {$ref: "#/$defs/method_binding"}
+  portfolio_economics:
+    type: object
+    additionalProperties: false
+    required:
+      - turnover
+      - deployable_capacity
+      - capital_efficiency
+      - drawdown
+      - existing_book_correlation
+      - crowding
+    properties:
+      turnover: {$ref: "#/$defs/method_binding"}
+      deployable_capacity: {$ref: "#/$defs/method_binding"}
+      capital_efficiency: {$ref: "#/$defs/method_binding"}
+      drawdown: {$ref: "#/$defs/method_binding"}
+      existing_book_correlation: {$ref: "#/$defs/method_binding"}
+      crowding: {$ref: "#/$defs/method_binding"}
+  degradation:
+    type: object
+    additionalProperties: false
+    required: [decay_measurement, revalidation_trigger, retirement_trigger]
+    properties:
+      decay_measurement: {$ref: "#/$defs/method_binding"}
+      revalidation_trigger: {$ref: "#/$defs/method_binding"}
+      retirement_trigger: {$ref: "#/$defs/method_binding"}
+  human_bounds:
+    type: object
+    additionalProperties: false
+    required:
+      - minimum_net_expectancy
+      - minimum_benchmark_relative_performance
+      - confidence_level
+      - minimum_effective_sample
+      - maximum_adjusted_error
+      - minimum_deployable_capacity
+      - maximum_turnover
+      - minimum_capital_efficiency
+      - maximum_drawdown_magnitude
+      - maximum_drawdown_duration
+      - maximum_existing_book_correlation
+      - minimum_decay_horizon
+      - maximum_estimation_error
+    properties:
+      minimum_net_expectancy: {$ref: "#/$defs/human_bound"}
+      minimum_benchmark_relative_performance: {$ref: "#/$defs/human_bound"}
+      confidence_level: {$ref: "#/$defs/human_bound"}
+      minimum_effective_sample: {$ref: "#/$defs/human_bound"}
+      maximum_adjusted_error: {$ref: "#/$defs/human_bound"}
+      minimum_deployable_capacity: {$ref: "#/$defs/human_bound"}
+      maximum_turnover: {$ref: "#/$defs/human_bound"}
+      minimum_capital_efficiency: {$ref: "#/$defs/human_bound"}
+      maximum_drawdown_magnitude: {$ref: "#/$defs/human_bound"}
+      maximum_drawdown_duration: {$ref: "#/$defs/human_bound"}
+      maximum_existing_book_correlation: {$ref: "#/$defs/human_bound"}
+      minimum_decay_horizon: {$ref: "#/$defs/human_bound"}
+      maximum_estimation_error: {$ref: "#/$defs/human_bound"}
+  approvals:
+    type: object
+    additionalProperties: false
+    required: [investment_authority, risk_authority, independent_reviewer, approved_at]
+    properties:
+      investment_authority: {type: string, minLength: 1}
+      risk_authority: {type: string, minLength: 1}
+      independent_reviewer: {type: string, minLength: 1}
+      approved_at: {type: string, format: date-time}
+  non_authority:
+    const: >-
+      This profile and any evidence result grant no ADR acceptance, strategy
+      admission, capital allocation, restricted-live scope, or production authority.
+$defs:
+  method_binding:
+    type: object
+    additionalProperties: false
+    required: [method_id, version, provenance, uncertainty_treatment]
+    properties:
+      method_id: {type: string, minLength: 1}
+      version: {type: string, minLength: 1}
+      provenance: {type: string, minLength: 1}
+      uncertainty_treatment: {type: string, minLength: 1}
+  human_bound:
+    type: object
+    additionalProperties: false
+    required: [value, unit, comparison, owner, rationale]
+    properties:
+      value: {type: number}
+      unit: {type: string, minLength: 1}
+      comparison: {enum: [GT, GTE, LT, LTE, EQ]}
+      owner: {type: string, minLength: 1}
+      rationale: {type: string, minLength: 1}

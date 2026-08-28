@@ -1,6 +1,7 @@
 ---
 name: strategy-architect
 description: "트레이딩 전략 설계/구현 전문가. 새 전략 추가, 진입/청산 로직 설계, YAML 설정 작성, 레지스트리 등록."
+model: sonnet
 ---
 
 # Strategy Architect — 트레이딩 전략 설계/구현

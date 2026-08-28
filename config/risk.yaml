@@ -80,6 +80,29 @@ risk:
     max_gross_leverage: 3.0 # 선물 그로스 레버리지 상한 (자산별)
     # stale_max_age_seconds: 미설정 ⇒ staleness 게이트 비활성(스냅샷 신선 신뢰).
     #   설정 시 asof_ts 없음/파싱실패/초과 → stale → fail-open pass(양성형, #458).
+  # VolatilityFilter(#6)의 심볼별 ATR 백분위 기준값. 이 `enabled` 하나가
+  # **발행자와 소비자를 동시에** 켠다:
+  #   발행 = services/decision_engine (선물 체인에서 StreamingIndicatorEngine을
+  #          가진 유일한 서비스) → risk:volatility:reference:futures 해시
+  #   소비 = services/risk_filter가 같은 플래그로 provider를 배선
+  # 두 쪽을 한 플래그로 묶은 이유: 과거 이 필터는 현재 ATR과 임계값이 서로 다른
+  # 곳에서 왔고 임계값(atr_90th_percentile)은 기본 0.0에 프로덕션 writer가
+  # 없었다. ATR만 배선하면 `atr > 0.0`이 항상 참 → 전 신호 기각 → **무성의 전면
+  # 거래 정지**. 이제 두 값은 하나의 스냅샷으로만 도착하며(구조적 봉인),
+  # VolatilityReference는 0 이하 임계값 자체를 생성 시점에 거부한다.
+  # 기본 enabled:false ⇒ 발행 없음 + 필터 무동작(현행 동작 그대로).
+  # 활성화 방법: enabled:true → decision_engine 재기동(발행 시작) → min_samples
+  # 만큼 축적될 때까지(60s×60 ≈ 1h) 필터는 "스킵 + 경고"로 관대하게 통과한 뒤
+  # 자동으로 실효화된다. 축적 창은 Redis에 있어 재기동에도 살아남는다.
+  volatility:
+    enabled: false
+    percentile: 90.0            # 상단꼬리 백분위 (90 = 기존 atr_90th_percentile)
+    window_samples: 240         # 60s 주기 기준 약 4시간
+    min_samples: 60             # 이 미만이면 임계값 미발행 → 필터 스킵(경고)
+    publish_interval_seconds: 60
+    stale_max_age_seconds: 900  # 발행 주기의 15배 — 1~2회 누락으로 눈멀지 않게
+    reference_ttl_seconds: 86400   # 운영 기본 24h
+    samples_ttl_seconds: 172800    # 축적 스냅샷 관행 48h
 
 trading_windows:
   - "09:00-10:30"
@@ -130,6 +153,26 @@ risk_stock:
     enabled: true
     mode: shadow            # 운영자 결정(2026-07-12): over-block 회피 위해 shadow 관측 유지
     max_gross_leverage: 1.0 # 현금 주식 계좌 — 무레버리지
+  # 심볼별 ATR 백분위 기준값 — risk.volatility와 동일 의미(상세 주석은 그쪽 참조).
+  # 발행 = services/stock_strategy(주식 체인에서 지표 엔진을 가진 유일한 서비스)
+  #        → risk:volatility:reference:stock, 소비 = services/stock_risk_filter.
+  # ⚠ 주식 체인은 M5D 이후 **현행 라이브 프로덕션 경로**다. 기본 enabled:false는
+  #   발행·소비 양쪽 모두 미구성이라 현행 동작과 바이트 단위로 동일하다.
+  #   활성화는 별도 운영자 결정으로 남긴다. 종목마다 가격대가 달라 ATR 절대값이
+  #   크게 다르므로 기준값은 반드시 심볼별이며(과거의 자산군 단일 스칼라는
+  #   주식에서는 애초에 성립할 수 없었다), 단일 종목이 임계 초과여도 다른 종목의
+  #   진입은 영향받지 않는다.
+  #   활성화 방법: enabled:true → stock-strategy 재기동 → 워밍업(min_samples)
+  #   동안은 스킵+경고로 관대 통과 → 자동 실효화. 되돌리기는 enabled:false 한 줄.
+  volatility:
+    enabled: false
+    percentile: 90.0
+    window_samples: 240
+    min_samples: 60
+    publish_interval_seconds: 60
+    stale_max_age_seconds: 900
+    reference_ttl_seconds: 86400
+    samples_ttl_seconds: 172800
   # Phase 5B Track A/B 상관관계 규칙 (설계서 §7.2 / roadmap §5.1) — 주식 전용
   # (StockRiskConfig에만 존재; 선물 체인은 이 필터들을 만들지 않는다).
   # 두 규칙 모두 트랙 A 수동 원장(config/portfolio/core_holdings.yaml)을 읽으며,

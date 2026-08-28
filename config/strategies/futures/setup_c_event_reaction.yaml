@@ -81,9 +81,40 @@ strategy:
         veto_long_block_signal: "STRONG_BEARISH"   # opposing signal that blocks longs
         veto_short_block_signal: "STRONG_BULLISH"  # opposing signal that blocks shorts
 
-      # Phase 5 forecast integration — Phase D canary activated 2026-05-13
+      # Phase 5 forecast integration — Phase D canary activated 2026-05-13.
+      #
+      # DISABLED 2026-08-05. This is NOT a bypass — it reproduces exactly what
+      # the ratified plan specified for the case where no forecast client is
+      # wired. docs/superpowers/plans/archive/2026-05-13-forecast-aware-paradigm.md
+      # :3147-3158 specifies _event_passes_filter as FAIL-OPEN, with the
+      # rationale in the method's own docstring: "Returns True when: ...
+      # event_score is None (let legacy tier filter decide)".
+      #
+      # Commit 81a10e53 (2026-06-25) inverted that predicate to fail-CLOSED,
+      # added _latest_event_score, and wired the filter into generate() for the
+      # first time — all in one commit. No caller anywhere passes a
+      # forecast_client (the factory path shared/strategy/factory.py ->
+      # EntryRegistry.create constructs the adapter from these params only), so
+      # the score was always None, the inverted filter rejected every qualifying
+      # event as "forecast_event_score_missing", and Setup C emitted exactly
+      # zero signals from 2026-06-25 onward.
+      #
+      # With this flag false the filter short-circuits to True and the legacy
+      # min_impact_tier gate decides — the plan's specified behaviour.
+      #
+      # The missing-score question is SETTLED (operator judgment 2026-08-05):
+      # a wired client returning None is FAIL-OPEN — the legacy min_impact_tier
+      # gate still decides, so a forecast outage degrades Setup C's selectivity
+      # instead of halting it. The predicate in
+      # shared/strategy/entry/setup_c_adapter.py::_event_passes_filter was
+      # restored to the plan's original accordingly.
+      #
+      # BEFORE SETTING THIS BACK TO true: wire a forecast client into the
+      # adapter — it raises at construction if you do not, see
+      # shared/strategy/entry/setup_c_adapter.py::_validate_config. Every other
+      # key below is left intact so re-enabling is a one-line change.
       forecast_integration:
-        enabled: true                        # feature flag
+        enabled: false                       # feature flag — see note above
         buffer_vol_mult: 0.5
         target_vol_mult: 2.5
         min_event_impact_score: 60

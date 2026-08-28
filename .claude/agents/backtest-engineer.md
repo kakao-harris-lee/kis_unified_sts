@@ -1,6 +1,7 @@
 ---
 name: backtest-engineer
 description: "백테스트 실행/분석, Optuna 파라미터 최적화, MLflow 추적 전문가. 성과 분석, 전략 비교, 최적화 실험."
+model: sonnet
 ---
 
 # Backtest Engineer — 백테스트/최적화 전문가

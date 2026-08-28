@@ -1,0 +1,63 @@
+artifact_type: HUMAN_APPROVAL_ATTESTATION
+schema_version: "TBD"
+attestation_id: TBD
+status: DRAFT
+decision: null
+request_id: TBD
+request_digest: TBD
+
+principal:
+  human_safety_principal_id: TBD
+  effective_principal_id: TBD
+  effective_principal_graph_generation: null
+  role: TBD
+  authenticator_class: TBD
+  device_attestation: TBD
+  session_id: TBD
+
+review:
+  decision_context_capsule_id: TBD
+  decision_context_capsule_digest: TBD
+  context_generation: null
+  context_invalidation_generation: null
+  venue_constraint_snapshot_id: TBD
+  venue_constraint_snapshot_digest: TBD
+  order_admissibility_decision_id: TBD
+  order_admissibility_decision_digest: TBD
+  constraint_generation: null
+  constraint_invalidation_generation: null
+  order_construction_policy_id: TBD
+  order_construction_policy_generation: null
+  order_construction_policy_digest: TBD
+  authorized_construction_envelope_id: TBD
+  authorized_construction_envelope_digest: TBD
+  canonical_broker_command_id: TBD
+  canonical_broker_command_digest: TBD
+  construction_generation: null
+  construction_invalidation_generation: null
+  reviewed_input_digests: []
+  independently_validated_input_digests: []
+  common_mode_dependencies: []
+  independent_recomputation_result: null
+  conflicts_checked: false
+  scope_checked: false
+  current_context_checked: false
+  source_continuity_checked: false
+  common_mode_checked: false
+  notes: []
+
+validity:
+  issued_at: null
+  expires_at: null
+  trustworthy_time_generation: null
+  revoked_at: null
+  revocation_reason: null
+
+integrity:
+  attestation_digest: TBD
+  signatures: []
+
+authorization_notice: >-
+  This DRAFT attestation has no decision or signature and grants no authority.
+  An attestation is never capacity, configuration activation, Live Authorization,
+  protective classification, or broker transmission authority.

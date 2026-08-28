@@ -1,0 +1,73 @@
+schema: tos-evidence/manifest/v1
+run_id: 20260729T120556Z-eb92ea46
+evidence_id: SPG-EV-002
+primary_adr: ADR-002-014
+design_document: docs/plans/2026-07-25-tos-safety-profile-governance-design.md
+evidence_level_stage: EV-L1
+discipline_tag: EV-L1 stage execution record only; not a row PASS; incomplete until independent review
+  signs (VER §9.5) and P0-1 (bounds approval) closes; staged rows require higher stages before acceptance
+  (VER:171).
+claim:
+  closes_evidence_item: false
+  register_status_moved_by_this_run: false
+  register_status_at_run_time: READY
+  minimum_evidence_level: EV-L1/2
+  independent_review: NOT_SIGNED (VER §9.5)
+  p0_1_bounds_approval: OPEN
+  verification_profile_version: 2.1 (PROPOSED — P0-1 open)
+  target_integrity: STABLE_DURING_RUN
+  mutated_during_run: []
+  note: This document records that named tests executed at the recorded baseline. It asserts no acceptance,
+    no PASS, and no coverage of the higher stages the row's minimum level names.
+execution:
+  command:
+  - /Users/harris/Development/private/kis_unified_sts/.venv/bin/python
+  - -m
+  - pytest
+  - tos/tests/spg/test_spg_semantic.py
+  - tos/tests/spg/test_spg_records.py::test_valid_result_must_have_empty_reason_set
+  - tos/tests/spg/test_spg_records.py::test_invalid_result_must_have_nonempty_reason_set
+  - tos/tests/spg/test_spg_records.py::test_extra_field_forbidden
+  - -q
+  - --junitxml=/Users/harris/Development/private/kis_unified_sts/tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/junit.xml
+  - --hypothesis-seed=0
+  cwd: /Users/harris/Development/private/kis_unified_sts
+  env_overrides:
+    PYTHONPATH: tos/src
+    PYTHONHASHSEED: '0'
+  started_utc: '2026-07-29T12:05:56.125715+00:00'
+  finished_utc: '2026-07-29T12:05:56.441287+00:00'
+  monotonic_duration_s: 0.315564
+  return_code: 0
+  outcome: ALL_SELECTED_TESTS_GREEN
+  junit_summary:
+    tests: 19
+    failures: 0
+    errors: 0
+    skipped: 0
+    time_s: '0.081'
+test_nodes:
+- tos/tests/spg/test_spg_semantic.py
+- tos/tests/spg/test_spg_records.py::test_valid_result_must_have_empty_reason_set
+- tos/tests/spg/test_spg_records.py::test_invalid_result_must_have_nonempty_reason_set
+- tos/tests/spg/test_spg_records.py::test_extra_field_forbidden
+baseline:
+  file: baseline.yaml
+  sha256: df95428c0212d9f2396780e3bf951c7375d8dbf84b9ec8b13fdf3660c648157f
+  completeness: 'EV-L1 subset (design #1 §5.1); VER §3 fields without an existing artifact are NOT_APPLICABLE_EV_L1.'
+  ver3_unmet_field_count: 17
+artifacts:
+- name: baseline.yaml
+  sha256: df95428c0212d9f2396780e3bf951c7375d8dbf84b9ec8b13fdf3660c648157f
+  bytes: 32232
+- name: junit.xml
+  sha256: 7a2d8f1f6d76590ad49b91d91c75248b2b8c32a669f03748cf4e2e8d99d1e636
+  bytes: 2327
+- name: run.log
+  sha256: 3679d896e61e774a3acf6143b78ccfaffbb9f50513a9e767b61d9ae106171eb4
+  bytes: 657
+- name: traceability.csv
+  sha256: 2d9eb5e5fd445c13b75cd73a75bd6bdc36a930879e6a9d6849ea4fac39e9203c
+  bytes: 1855
+artifact_closure_note: manifest.yaml cannot contain its own digest; sha256sums.txt is written last and
+  closes over every retained file including this manifest (VER §9.2).

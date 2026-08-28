@@ -1,6 +1,7 @@
 ---
 name: model-evaluator
 description: "전략/모델 평가·비교 전문가. Setup A/C·지표 전략 벤치마크, A/B 비교, regime-gate head-to-head, counterfactual 검증, Sharpe/MDD/승률 기반 승격 판정. RL 재학습 모델 평가는 부차."
+model: sonnet
 ---
 
 # Model Evaluator — 전략/모델 평가·비교 전문가

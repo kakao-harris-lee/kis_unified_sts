@@ -1,0 +1,51 @@
+artifact_type: INCIDENT_RECOVERY_HANDOFF_PACKAGE
+schema_version: "1.0-DRAFT"
+package_id: TBD
+package_version: null
+canonical_digest: TBD
+status: DRAFT
+handoff_state: NOT_READY
+incident_binding:
+  incident_id: TBD
+  incident_generation: null
+  incident_record_digest: TBD
+  active_incident_set_id: TBD
+  active_incident_set_digest: TBD
+  binding_current: false
+scope:
+  scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+current_restrictions_and_fences: []
+unresolved_economic_effects: []
+rcl_capacity_obligations: []
+protection_and_trapped_exposure_obligations: []
+external_activity_and_reconciliation_obligations: []
+evidence_gaps_and_custody_obligations: []
+configuration_identity_time_currentness_obligations: []
+stale_owner_and_hard_fence_obligations: []
+required_recovery_dependencies: []
+recovery_session_acceptance:
+  recovery_session_id: TBD
+  recovery_generation: null
+  accepted_package_digest: TBD
+  accepted_exactly: false
+  accepted_at: null
+handoff_complete: false
+authority:
+  package_active: false
+  transfers_obligations_without_acceptance: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_or_recovery_barrier: false
+  establishes_recovery_readiness: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT package is NOT_READY and transfers no obligation until one current
+  ADR-002-017 Recovery Session explicitly accepts this exact digest. Handoff is
+  not readiness, HALT clear, capacity release, live authority, or re-arm.

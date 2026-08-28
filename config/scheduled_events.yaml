@@ -10,7 +10,7 @@
 #
 # Events that CAN fire Setup C (KST-session-time):
 #   BOK rate decisions      10:00 KST = 01:00 UTC  (in-session)
-#   China PMI/NBS data      09:00 KST = 00:00 UTC  (in-session)
+#   China PMI/NBS data      10:30 KST = 01:30 UTC  (in-session)
 #   KOSPI200 rebalance eff  15:00 KST = 06:00 UTC  (in-session, close window)
 #   KR CPI (some years)     08:00 KST = 23:00 UTC prev — within 15-min gap window at 09:00
 #
@@ -20,15 +20,27 @@
 #   US NFP                  22:30 KST next day (post-session)
 #   → These are retained for operator reference and Setup A gap context only.
 #
-# Sources:
-#   BOK:          bok.or.kr (press release 10:00 KST, sometimes 09:00 after reform)
-#   China NBS:    stats.gov.cn PMI = last business day of month ~09:00 KST
-#   KOSPI200 rebalance: KRX quarterly (Mar/Jun/Sep/Dec, announcement ~10 business
-#                       days before close; effective at T-1 close)
+# Sources (all entries dated 2026-08 onward were transcribed from these):
+#   BOK:          bok.or.kr annual "금융통화위원회 정기회의 개최 예정일정" press
+#                 release. 8 rate-decision meetings/yr. The BOK does not publish an
+#                 official statement minute; 10:00 KST is this repo's convention.
+#   China NBS:    stats.gov.cn "主要统计信息发布日程表" — 采购经理指数月度报告,
+#                 last day of month at 09:30 Beijing (CST=UTC+8) = 10:30 KST.
+#                 NOTE: entries before 2026-08 used an inherited ~09:00 KST
+#                 approximation; only 2026-08+ entries carry the sourced 09:30 CST.
+#   KOSPI200 rebalance: KRX regular review is SEMI-ANNUAL (June + December), not
+#                 quarterly. Effective after the close of the reflection date.
+#                 There is no Mar/Sep rebalance — earlier Mar/Sep entries are stale.
 #   FOMC:         federalreserve.gov/monetarypolicy/fomccalendars.htm
-#   US CPI:       bls.gov (8:30 ET = 13:30 UTC EDT / 22:30 KST)
-#   US NFP:       bls.gov (8:30 ET first Friday of month)
-#   KR CPI:       kostat.go.kr (08:00 KST last business day of prior month)
+#                 Statement released 14:00 ET on the 2nd day of each meeting.
+#   US CPI:       bls.gov/schedule/news_release/cpi.htm (8:30 ET)
+#   US NFP:       bls.gov/schedule/news_release/empsit.htm (8:30 ET)
+#                 8:30 EDT = 12:30 UTC = 21:30 KST (Mar–Oct)
+#                 8:30 EST = 13:30 UTC = 22:30 KST (Nov–Feb)
+#   KR CPI:       kostat.go.kr 「물가, 고용, 산업활동동향 보도계획」 annual PDF.
+#                 Released 08:00 KST, typically the 2nd–6th of the FOLLOWING month.
+#                 NOTE: the earlier "last business day of prior month" rule was an
+#                 approximation; 2026-08+ entries use the published KOSTAT dates.
 # ──────────────────────────────────────────────────────────────────────────────
 
 events:
@@ -406,4 +418,113 @@ events:
   - event_id: "us_nfp_2026_may"
     event_type: "US_NFP"
     scheduled_at: "2026-05-01T12:30:00Z"   # 21:30 KST — post-session
+    impact_tier: 1
+
+  # ============================================================ 2026 H2 (Aug–Oct)
+  # Refreshed 2026-08-05. Every scheduled_at below was transcribed from the
+  # official publisher calendar cited in the header — none are extrapolated.
+  # US events are all in EDT here (US DST 2026: Mar 8 – Nov 1), so 8:30 ET =
+  # 12:30 UTC = 21:30 KST and 14:00 ET = 18:00 UTC = 03:00 KST next day.
+
+  # ── BOK MPC rate decisions (10:00 KST = 01:00 UTC) ────────────────────
+  # Source: BOK press release 2025-10-30, "2026년 금융통화위원회 정기회의 개최 및
+  # 의사록 공개 예정일정". 2026 rate-decision meetings: 1.15, 2.26, 4.10, 5.28,
+  # 7.16, 8.27, 10.22, 11.26. (Nov 26 is outside this Aug–Oct refresh window.)
+
+  - event_id: "bok_2026_aug"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2026-08-27T01:00:00Z"   # 10:00 KST Thu Aug 27 2026 — in-session
+    impact_tier: 1
+
+  - event_id: "bok_2026_oct"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2026-10-22T01:00:00Z"   # 10:00 KST Thu Oct 22 2026 — in-session
+    impact_tier: 1
+
+  # ── China NBS PMI (last day of month, 09:30 Beijing = 01:30 UTC = 10:30 KST) ──
+  # Source: NBS "2026年国家统计局主要统计信息发布日程表" row 4 (采购经理指数月度报告).
+  # Published dates/weekdays: 8/31(Mon), 9/30(Wed), 10/31(Sat).
+
+  - event_id: "china_pmi_2026_aug"
+    event_type: "CHINA_PMI"
+    scheduled_at: "2026-08-31T01:30:00Z"   # 10:30 KST Mon Aug 31 2026 — in-session
+    impact_tier: 2
+
+  - event_id: "china_pmi_2026_sep"
+    event_type: "CHINA_PMI"
+    scheduled_at: "2026-09-30T01:30:00Z"   # 10:30 KST Wed Sep 30 2026 — in-session
+    impact_tier: 2
+
+  - event_id: "china_pmi_2026_oct"
+    event_type: "CHINA_PMI"
+    scheduled_at: "2026-10-31T01:30:00Z"   # 10:30 KST Sat Oct 31 2026 — KRX closed,
+    impact_tier: 2                         # so this one cannot fire Setup C
+
+  # ── KR CPI (Statistics Korea, 08:00 KST = 23:00 UTC prior day) ────────
+  # Source: 통계청 「2026년 물가, 고용, 산업활동동향 보도계획」. event_id month =
+  # RELEASE month (the release covers the prior reference month).
+  # Still tier 3 → ignored by the default min_impact_tier=2; operator reference only.
+  # (The Aug 2026 release, 8.4, is already past and is not backfilled here.)
+
+  - event_id: "kr_cpi_2026_sep"
+    event_type: "KR_CPI_RELEASE"
+    scheduled_at: "2026-09-01T23:00:00Z"   # 08:00 KST Wed Sep 2 2026 (Aug CPI)
+    impact_tier: 3
+
+  - event_id: "kr_cpi_2026_oct"
+    event_type: "KR_CPI_RELEASE"
+    scheduled_at: "2026-10-01T23:00:00Z"   # 08:00 KST Fri Oct 2 2026 (Sep CPI)
+    impact_tier: 3
+
+  # ── KOSPI200 rebalance: NONE in Aug–Oct 2026 ──────────────────────────
+  # KRX regular review is semi-annual (June + December). The June 2026 change was
+  # reflected after the 2026-06-12 close. The next one is December 2026 — add it in
+  # a later refresh. No entry is emitted here rather than inventing a Sep date.
+
+  # ── FOMC / US data: retained for reference (see timing note above) ────
+  # FOMC source: federalreserve.gov 2026 calendar — Sep 15-16 and Oct 27-28.
+  # Statement lands 14:00 ET on day 2 of each meeting.
+
+  - event_id: "fomc_2026_sep"
+    event_type: "FOMC_rate_decision"
+    scheduled_at: "2026-09-16T18:00:00Z"   # 14:00 EDT / 03:00 KST Sep 17 — pre-session
+    impact_tier: 1
+
+  - event_id: "fomc_2026_oct"
+    event_type: "FOMC_rate_decision"
+    scheduled_at: "2026-10-28T18:00:00Z"   # 14:00 EDT / 03:00 KST Oct 29 — pre-session
+    impact_tier: 1
+
+  # US CPI source: bls.gov CPI release schedule. event_id month = RELEASE month.
+
+  - event_id: "us_cpi_2026_aug"
+    event_type: "US_CPI"
+    scheduled_at: "2026-08-12T12:30:00Z"   # 21:30 KST Aug 12 (Jul CPI) — post-session
+    impact_tier: 1
+
+  - event_id: "us_cpi_2026_sep"
+    event_type: "US_CPI"
+    scheduled_at: "2026-09-11T12:30:00Z"   # 21:30 KST Sep 11 (Aug CPI) — post-session
+    impact_tier: 1
+
+  - event_id: "us_cpi_2026_oct"
+    event_type: "US_CPI"
+    scheduled_at: "2026-10-14T12:30:00Z"   # 21:30 KST Oct 14 (Sep CPI) — post-session
+    impact_tier: 1
+
+  # US NFP source: bls.gov Employment Situation release schedule.
+
+  - event_id: "us_nfp_2026_aug"
+    event_type: "US_NFP"
+    scheduled_at: "2026-08-07T12:30:00Z"   # 21:30 KST Aug 7 (Jul jobs) — post-session
+    impact_tier: 1
+
+  - event_id: "us_nfp_2026_sep"
+    event_type: "US_NFP"
+    scheduled_at: "2026-09-04T12:30:00Z"   # 21:30 KST Sep 4 (Aug jobs) — post-session
+    impact_tier: 1
+
+  - event_id: "us_nfp_2026_oct"
+    event_type: "US_NFP"
+    scheduled_at: "2026-10-02T12:30:00Z"   # 21:30 KST Oct 2 (Sep jobs) — post-session
     impact_tier: 1

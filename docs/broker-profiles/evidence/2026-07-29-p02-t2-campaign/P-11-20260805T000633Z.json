@@ -1,0 +1,180 @@
+{
+  "artifact_id": "P-11-20260805T000633Z",
+  "probe_id": "P-11",
+  "title": "POSITIONS_BALANCES_MARGIN — fill→balance reflection lag",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-08-05T00:06:33.957110+00:00",
+  "finished_at_utc": "2026-08-05T00:06:45.934452+00:00",
+  "duration_s": 11.977,
+  "repo_commit": "fa145b5a",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-11",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "stock",
+    "symbol": "028050",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": "/home/deploy/.cache/kis-probes/mock-stock",
+    "out_dir": null,
+    "note": "pagesize-accumulation 20260805 cron (README 2026-08-01 design)",
+    "gap_ms": 200.0,
+    "settle_seconds": 2.0,
+    "poll_ms": 200.0,
+    "inter_trial_s": 1.0,
+    "pace_s": 1.1,
+    "visibility_timeout_s": 30.0,
+    "late_window_s": 120.0,
+    "max_pages": 10,
+    "allow_fill": true,
+    "stock_order_type": "market",
+    "balance_timeout_s": 120.0
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "stock",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "50******01",
+    "account_fingerprint": "54e7f8a5d841"
+  },
+  "measurements": {
+    "limit_price_tick": {
+      "applicable": false,
+      "wire_value": "0",
+      "unrounded": null,
+      "tick_size": null,
+      "tick_source": "NOT APPLICABLE — this run sent a 시장가 order (ORD_DVSN=01), which carries no limit price. No 호가단위 was requested and none was used: the inquire-price quote call was skipped entirely, so nothing here came from a tick table.",
+      "rounding": null,
+      "rounding_rationale": "no snapping was attempted — there is no price to snap. Bypassing the tick machinery also removes its failure mode: a 시장가 order cannot be rejected with 호가단위 오류, and a broker that does not report output.aspr_unit can no longer block this probe."
+    },
+    "fill_case": {
+      "symbol": "028050",
+      "baseline_holding_qty": 0,
+      "final_holding_qty": 1,
+      "balance_reflected": true,
+      "window_s": 120.0,
+      "polls": 1,
+      "poll_interval_ms_effective": 1100.0,
+      "execution_inquiry": {
+        "source": "주식일별주문체결조회 — /uapi/domestic-stock/v1/trading/inquire-daily-ccld, [v1_국내주식-005], mock VTTC0081R (real TTTC0081R), read-only GET, one page in 역순 (INQR_DVSN=00) with CCLD_DVSN=00 (전체) so an unfilled order still appears. The fill facts are the row's tot_ccld_qty (총체결수량), rmn_qty (잔여수량) and cncl_yn (취소여부), recorded verbatim. ord_tmd is 주문시각 (order time) per the official COLUMN_MAPPING — NOT a fill timestamp — and it is HHMMSS, 1-second resolution, so no sub-second lag may be derived from it; it is kept for time context only.",
+        "queried_symbol": "028050",
+        "queried_odno": "0000004337",
+        "queried_odno_key": "4337",
+        "rt_cd": "0",
+        "msg1": "모의투자 조회가 완료되었습니다.                                                 ",
+        "rows_returned": 1,
+        "row_cap_note": "모의 serves at most 15 rows per call and this probe reads ONE page in 역순, so a seconds-old order is on it. rows_returned is recorded so a truncated page stays visible instead of being read as a non-fill.",
+        "matched_rows": 1,
+        "row": {
+          "ord_dt": "20260805",
+          "odno": "0000004337",
+          "orgn_odno": "0000000000",
+          "ord_dvsn_name": "시장가",
+          "sll_buy_dvsn_cd": "02",
+          "pdno": "028050",
+          "ord_qty": "1",
+          "ord_unpr": "0",
+          "ord_tmd": "090638",
+          "tot_ccld_qty": "1",
+          "tot_ccld_amt": "48750",
+          "avg_prvs": "48750",
+          "rmn_qty": "0",
+          "cncl_yn": "N",
+          "rjct_qty": "0"
+        },
+        "row_odno_encoding": {
+          "verbatim": "0000004337",
+          "length": 10,
+          "leading_pad": "zero",
+          "canonical_key": "4337"
+        },
+        "filled_qty": 1,
+        "remaining_qty": 0,
+        "cancelled": "N",
+        "filled": true,
+        "available": true
+      },
+      "basis": "TWO independent sources. Fill: the execution inquiry above. Balance reflection: inquire-balance (VTTC8434R) holdings for this symbol, baseline read BEFORE the submit. Neither alone can separate a non-fill from a reflection lag.",
+      "case": "FILLED_AND_REFLECTED",
+      "interpretation": "the execution inquiry reports the order FILLED (tot_ccld_qty=1, rmn_qty=0) and the 028050 holding rose 0 -> 1 inside the 120.0s window, so submit_to_balance_reflection is a real reflection sample. Read it with resolution_floor: a reflection seen on the first poll is an UPPER bound, not a point value."
+    },
+    "resolution_floor": {
+      "poll_interval_ms_effective": 1100.0,
+      "smallest_resolvable_lag_ms": 1100.0,
+      "floor_source": "the poll interval is max(--poll-ms, --pace-s x 1000) — the pacer will not release two calls closer together, so a smaller --poll-ms did not happen (§5.3.1). Lowering --pace-s to sharpen this re-opens the throttling failure that voided P-5-20260729T235001Z.",
+      "reflected_on_poll": 1,
+      "sample_is_upper_bound": true,
+      "statement": "Every polled sample here is an UPPER bound on the true reflection lag: the reflection happened somewhere inside the interval that ended when the poll saw it. P-11 therefore cannot report a reflection faster than 1100.0 ms as a value — only as '<= 1100.0 ms'.",
+      "first_poll_reflection": true,
+      "upper_bound_only_ms": 4093.029,
+      "do_not_report_as_measured": "the reflection was already visible on the FIRST poll, so the recorded submit_to_balance_ms (~1100.0 ms) is this probe's DETECTION FLOOR, not the broker's lag. The true lag lies in [0, 1100.0] ms. Report 'reflection <= one effective poll interval'; do NOT feed the number to a hard_maximum bound as a measured lag, and do not widen a bound to accommodate it."
+    },
+    "submit_to_balance_reflection": {
+      "label": "submit_to_balance_ms",
+      "n": 1,
+      "min_ms": 4093.029,
+      "p50_ms": 4093.029,
+      "p90_ms": 4093.029,
+      "p95_ms": 4093.029,
+      "p99_ms": 4093.029,
+      "max_ms": 4093.029,
+      "stdev_ms": 0.0,
+      "margin_pct": 50.0,
+      "recommended_bound_ms": 6140,
+      "statistic": "hard maximum: ceil(max_observed x (1 + margin_pct/100)). p95/p99 are shape diagnostics and MUST NOT be proposed as the bound.",
+      "sample_adequacy_note": "A maximum estimated from a small sample understates the true maximum. Record n and the observation window with the value; the Bounds-Approver decides whether n is adequate.",
+      "candidate_only": true,
+      "value_semantics": "UPPER BOUND on the reflection lag, not a point value — the reflection happened somewhere inside the poll interval that ended when it was seen. See resolution_floor; a first-poll reflection carries no lower-bound information at all.",
+      "fill_confirmed_by": "주식일별주문체결조회 — /uapi/domestic-stock/v1/trading/inquire-daily-ccld, [v1_국내주식-005], mock VTTC0081R (real TTTC0081R), read-only GET, one page in 역순 (INQR_DVSN=00) with CCLD_DVSN=00 (전체) so an unfilled order still appears. The fill facts are the row's tot_ccld_qty (총체결수량), rmn_qty (잔여수량) and cncl_yn (취소여부), recorded verbatim. ord_tmd is 주문시각 (order time) per the official COLUMN_MAPPING — NOT a fill timestamp — and it is HHMMSS, 1-second resolution, so no sub-second lag may be derived from it; it is kept for time context only."
+    },
+    "n_note": "n=1 per invocation. Re-run --samples times and take the maximum across artifacts before proposing a bound.",
+    "poll_granularity_ms": 1100.0,
+    "granularity_note": "The sample carries up to one poll interval of additive error, so an approved bound must exceed it plus poll_granularity_ms — which is the EFFECTIVE interval max(--poll-ms, --pace-s), because the pacer floors polling and a smaller --poll-ms did not happen (runbook §8.3). When the reflection landed on the first poll the sample IS that granularity and bounds nothing below it — read resolution_floor before proposing any value.",
+    "position_left_open": "symbol=028050 qty=1 — the probe does NOT flatten the position. Close it manually on 모의투자."
+  },
+  "observations": [
+    {
+      "order_body": {
+        "CANO": "50****72",
+        "ACNT_PRDT_CD": "**",
+        "PDNO": "028050",
+        "ORD_DVSN": "01",
+        "ORD_QTY": "1",
+        "ORD_UNPR": "0"
+      },
+      "order_type": "market"
+    },
+    {
+      "baseline_holding_qty": 0,
+      "baseline_read": "before submit"
+    },
+    {
+      "submit_status": 200,
+      "rt_cd": "0",
+      "msg1": "모의투자 매수주문이 완료 되었습니다.",
+      "odno": "0000004337"
+    }
+  ],
+  "skips": [],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_broker_query_consistency",
+      "B_startup_reconciliation"
+    ],
+    "instance_fields": [
+      "capabilities.position_balance_margin.consistency_model"
+    ],
+    "capability_dimension": "POSITIONS_BALANCES_MARGIN"
+  }
+}

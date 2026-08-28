@@ -1,0 +1,535 @@
+schema: tos-evidence/baseline/v3
+run_id: 20260806T015632Z-12dd4077
+evidence_id: STATE-EV-004
+evidence_level_stage: EV-L3
+generated_utc: '2026-08-06T01:56:35.230648+00:00'
+contract:
+  run_manifest_contract: docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md §5.1 (seven
+    items)
+  ver_specification: tos-spec/src/part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md
+    §2.3/§3/§8/§9.1/§9.2/§9.5
+  completeness: EV-L3 integrated crash/restart. VER §3 requires 22 baseline fields and states that 'A
+    run without a complete baseline is invalid' (line 109) — a clause carrying no 'as applicable' qualifier,
+    unlike §7 line 258, so it stands beside P0-1 and the independent signature as a gate, not a waivable
+    formality. The unmet-field list and every reason are retained with the stage attribution updated (NOT_APPLICABLE_EV_L1
+    -> NOT_APPLICABLE_MODELED_TRANSPORT_L3); the enumerated list is ver_002_001_section_3_unmet_fields
+    below. This stage DOES bring a real local persistence substrate and a real OS process boundary into
+    existence; what remains absent is the transport and everything hanging off it — the broker, authority/human,
+    network and recovery instances — because the send boundary is a MODELLED marker emitting zero real
+    bytes and zero real orders (residuals R-N / R-I). Under VER §3's full standard this baseline is NOT
+    complete.
+evidence_register_row:
+  source: tos-spec/src/part-1-foundation/verification/EVIDENCE-REGISTER-002.csv
+  evidence_id: STATE-EV-004
+  domain: Orthogonal State
+  title: Conservative Restart Reconstruction
+  primary_adr: ADR-002-005
+  criticality: Critical
+  minimum_evidence_level: EV-L3
+  status_at_run_time: NOT_IMPLEMENTED
+  implementation_owner: ai-impl(claude-orchestrated)
+  evidence_owner: operator
+  independent_reviewer: ai-review(decorrelated)+operator-countersign
+design1_5_1:
+  item_1_repository_and_package:
+    git_commit_sha: 12dd40778b0237ea6992a3b0a9ecadb10f865f0f
+    git_short_sha: 12dd4077
+    tos_package_version: 0.0.1
+    worktree:
+      clean: false
+      untracked:
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/junit.xml
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/traceability.csv
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/junit.xml
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/traceability.csv
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/junit.xml
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/traceability.csv
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/fault-timeline.jsonl
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/junit.xml
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/traceability.csv
+      modified_unstaged: []
+      staged: []
+      all_dirty_paths:
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/junit.xml
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/traceability.csv
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/junit.xml
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/traceability.csv
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/junit.xml
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/traceability.csv
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/fault-timeline.jsonl
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/junit.xml
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/traceability.csv
+      note: 'A non-empty list does not by itself invalidate the run: the executed files are pinned individually
+        by target_file_digests below. Paths outside the executed set belong to other work in the same
+        worktree.'
+    worktree_after_run:
+      clean: false
+      untracked:
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/junit.xml
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/traceability.csv
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/junit.xml
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/traceability.csv
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/junit.xml
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/traceability.csv
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/fault-timeline.jsonl
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/junit.xml
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/traceability.csv
+      - tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/crash-timeline.jsonl
+      - tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/junit.xml
+      modified_unstaged: []
+      staged: []
+      all_dirty_paths:
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/junit.xml
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260806T015630Z-12dd4077/traceability.csv
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/junit.xml
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260806T015631Z-12dd4077/traceability.csv
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/junit.xml
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/traceability.csv
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/fault-timeline.jsonl
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/junit.xml
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/traceability.csv
+      - tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/crash-timeline.jsonl
+      - tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/junit.xml
+      note: 'A non-empty list does not by itself invalidate the run: the executed files are pinned individually
+        by target_file_digests below. Paths outside the executed set belong to other work in the same
+        worktree.'
+    worktree_delta:
+      became_dirty_during_run:
+      - tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/crash-timeline.jsonl
+      - tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/junit.xml
+      became_clean_during_run: []
+      stable: false
+    target_files_clean: true
+    target_files_stable_during_run: true
+    target_file_digests:
+    - path: tests/tos_l3/conftest.py
+      sha256_before_run: dd7202231254c1f2eb5ac34d3bfb7307a5741d20972fd0e23cd1a100069963ad
+      sha256_after_run: dd7202231254c1f2eb5ac34d3bfb7307a5741d20972fd0e23cd1a100069963ad
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tests/tos_l3/test_state_ev_004_crash_restart.py
+      sha256_before_run: 84c940ea7770fed86b4341ccc2d629f107d495a858145db859547c91ca113c59
+      sha256_after_run: 84c940ea7770fed86b4341ccc2d629f107d495a858145db859547c91ca113c59
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tools/tos_evidence_run.py
+      sha256_before_run: 562c52eebc1758ccf804b55c2eb03a1887a07014433d649ec0e01a7a143fb0aa
+      sha256_after_run: 562c52eebc1758ccf804b55c2eb03a1887a07014433d649ec0e01a7a143fb0aa
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: false
+    - path: tos/src/tos/orthostate/__init__.py
+      sha256_before_run: c866fc0fd8dc7bb0961f7550e2d9e73d1dfc4819afbc341c1f23fe4e0b11f632
+      sha256_after_run: c866fc0fd8dc7bb0961f7550e2d9e73d1dfc4819afbc341c1f23fe4e0b11f632
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/_base.py
+      sha256_before_run: 2c1b8bb6c73ee8f73697ecc5e33d149a80efd7fdf27550b2f148248a2b34a40e
+      sha256_after_run: 2c1b8bb6c73ee8f73697ecc5e33d149a80efd7fdf27550b2f148248a2b34a40e
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/predicates.py
+      sha256_before_run: 7265e75af582048fba54d757e5344a9d467348738a37dec7898df4c30db897c0
+      sha256_after_run: 7265e75af582048fba54d757e5344a9d467348738a37dec7898df4c30db897c0
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/records.py
+      sha256_before_run: 8dabc903e03d039fb5292d5094a7d87cb46f073965a163c12eb1c3f167285cd2
+      sha256_after_run: 8dabc903e03d039fb5292d5094a7d87cb46f073965a163c12eb1c3f167285cd2
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/state.py
+      sha256_before_run: aa68710f84ab21ba93d68d132a607ecb8f139f1acabde6e515712dc9599de0b3
+      sha256_after_run: aa68710f84ab21ba93d68d132a607ecb8f139f1acabde6e515712dc9599de0b3
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/vocabulary.py
+      sha256_before_run: 67dda3c7eed990f3150273fcf6f00e7ad8bca5bcf5fb101d37573f289fcc37d4
+      sha256_after_run: 67dda3c7eed990f3150273fcf6f00e7ad8bca5bcf5fb101d37573f289fcc37d4
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/staterestore/__init__.py
+      sha256_before_run: 138fd3eeff890ee44822925d76e81a9a270dc00a72b6a04af4b39d05b3990b8e
+      sha256_after_run: 138fd3eeff890ee44822925d76e81a9a270dc00a72b6a04af4b39d05b3990b8e
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/staterestore/_l3_worker.py
+      sha256_before_run: 3adeaa2c7e4ebc3a988e453201fc283d18f4b65cfb881ddb515ed91d470870b3
+      sha256_after_run: 3adeaa2c7e4ebc3a988e453201fc283d18f4b65cfb881ddb515ed91d470870b3
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/staterestore/reload.py
+      sha256_before_run: e9f65fcf3ae781ebab13958f47a7337f5c30cba5bfd4891161fc61eadcd5f75b
+      sha256_after_run: e9f65fcf3ae781ebab13958f47a7337f5c30cba5bfd4891161fc61eadcd5f75b
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/staterestore/store.py
+      sha256_before_run: c4e70f4692d9a4e7b418c1af61ae03827122cc6ee76a1f89de00d84cf3ef4e3f
+      sha256_after_run: c4e70f4692d9a4e7b418c1af61ae03827122cc6ee76a1f89de00d84cf3ef4e3f
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+  item_2_interpreter_and_dependencies:
+    python:
+      version: 3.12.2
+      version_full: 3.12.2 (main, Dec 11 2025, 16:36:08) [Clang 17.0.0 (clang-1700.4.4.1)]
+      implementation: CPython
+      executable: /Users/harris/Development/private/kis_unified_sts/.venv/bin/python
+    installed_versions_measured:
+      pydantic: 2.12.5
+      hypothesis: 6.151.5
+      pytest: 9.0.2
+      numpy: 1.26.4
+      pandas: 2.3.3
+      pyyaml: 6.0.3
+      tos: NOT_INSTALLED
+    pinned_in_tos_pyproject:
+      pydantic: 2.12.5
+      numpy: 2.4.0
+      pandas: 2.3.3
+      pyyaml: 6.0.3
+      pytest: 9.0.2
+      hypothesis: 6.150.2
+    pins_satisfied: false
+    pin_vs_installed_drift:
+    - distribution: hypothesis
+      pinned: 6.150.2
+      installed: 6.151.5
+    - distribution: numpy
+      pinned: 2.4.0
+      installed: 1.26.4
+    drift_note: 'pins_satisfied is the machine-readable claim; an empty drift list = the executed interpreter
+      matches every pin. A non-empty list is recorded, not resolved: the installed version is what executed.'
+  item_3_execution_environment: &id001
+    os: Darwin
+    os_release: 25.5.0
+    machine: arm64
+    platform: macOS-26.5.2-arm64-arm-64bit
+    python_implementation: CPython
+  item_4_harness_version: &id002
+    harness_path: tools/tos_evidence_run.py
+    harness_sha256: 562c52eebc1758ccf804b55c2eb03a1887a07014433d649ec0e01a7a143fb0aa
+    harness_tracked: true
+    harness_at_commit: aac2827bb5941603705da735ea079129ce3d942a
+    harness_dirty: false
+    pytest_version: 9.0.2
+    note: 'design #1 §5.1 item 4 — Phase 1 harness version = git digest, which exists only once the harness
+      is committed. Until then harness_at_commit is NOT_IN_COMMIT and harness_sha256 is the only identity
+      of the code that ran.'
+  item_5_seed_policy: &id003
+    policy: fixed
+    pytest_flags:
+    - --hypothesis-seed=0
+    hypothesis_seed: 0
+    note: 'VER §9.1 append-only: seed pinned before the run began.'
+  item_6_consumed_configuration_artifacts:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: 'No configuration artifact is consumed: bounds are hypothesis-injected generated values, not
+      read from a profile, and the run is hermetic (no .env, no YAML).'
+  item_7_retained_artifact_digests: Enumerated in manifest.yaml (artifacts) and closed over by sha256sums.txt,
+    which is written last and covers every retained file including the manifest.
+ver_002_001_section_3_baseline:
+  repository_commit_sha:
+    status: RECORDED
+    value: 12dd40778b0237ea6992a3b0a9ecadb10f865f0f
+  build_artifact_digest:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: 'Phase 1 executes from the source tree; no built distribution artifact is produced or consumed
+      (design #1 §5.1 items 1/4 — the git digest stands in). The executed bytes are pinned individually
+      by design1_5_1.item_1_repository_and_package.target_file_digests.'
+  rfc_adr_versions:
+    status: RECORDED
+    value:
+    - role: primary_adr
+      path: tos-spec/src/part-1-foundation/ADR-002-005-Intent-Transmission-Attempt-Broker-Order-and-Knowledge-State-Model.md
+      sha256: 025c02cf8638f6aed84faf22f724c47bbc0af390d3d189fa25ef065a8cd73d51
+    - role: design_document
+      path: docs/plans/2026-08-06-tos-ev-l3-pilot-design.md
+      sha256: 64ec27c15f94fa7ea16252c2f383ce3725e11523a5a45bb6f08fe88a2e11b4c8
+    - role: ver_specification
+      path: tos-spec/src/part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md
+      sha256: 217a43ab1b32e04fe6515316a7383c3e9e75bb177ed18c7c7e7267ca0a3c2a38
+    - role: boundary_design_1
+      path: docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md
+      sha256: 2449f18d6088e21f601da623d27e6eff74066661f5d92116db2eda1a59b5a988
+    reason: The corpus documents carry no separate version field; their content sha256 is the version
+      identity.
+  hard_safety_envelope_version:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L3 crash/restart run on a real local persistence substrate and a real process boundary consumes
+      none — its send boundary is a MODELLED marker (zero real bytes, zero real orders), so no broker,
+      authority/human, network or recovery instance is brought into existence. Recorded N/A per design
+      #1 §5.1 read forward to EV-L3 (EV-L3 pilot design §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  runtime_safety_profile_version:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L3 crash/restart run on a real local persistence substrate and a real process boundary consumes
+      none — its send boundary is a MODELLED marker (zero real bytes, zero real orders), so no broker,
+      authority/human, network or recovery instance is brought into existence. Recorded N/A per design
+      #1 §5.1 read forward to EV-L3 (EV-L3 pilot design §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  human_authority_policy_generation_and_digest:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L3 crash/restart run on a real local persistence substrate and a real process boundary consumes
+      none — its send boundary is a MODELLED marker (zero real bytes, zero real orders), so no broker,
+      authority/human, network or recovery instance is brought into existence. Recorded N/A per design
+      #1 §5.1 read forward to EV-L3 (EV-L3 pilot design §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  effective_principal_graph_generation_and_digest:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L3 crash/restart run on a real local persistence substrate and a real process boundary consumes
+      none — its send boundary is a MODELLED marker (zero real bytes, zero real orders), so no broker,
+      authority/human, network or recovery instance is brought into existence. Recorded N/A per design
+      #1 §5.1 read forward to EV-L3 (EV-L3 pilot design §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  evidence_integrity_policy_generation_and_digest:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L3 crash/restart run on a real local persistence substrate and a real process boundary consumes
+      none — its send boundary is a MODELLED marker (zero real bytes, zero real orders), so no broker,
+      authority/human, network or recovery instance is brought into existence. Recorded N/A per design
+      #1 §5.1 read forward to EV-L3 (EV-L3 pilot design §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  recovery_barrier_policy_generation_and_digest:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L3 crash/restart run on a real local persistence substrate and a real process boundary consumes
+      none — its send boundary is a MODELLED marker (zero real bytes, zero real orders), so no broker,
+      authority/human, network or recovery instance is brought into existence. Recorded N/A per design
+      #1 §5.1 read forward to EV-L3 (EV-L3 pilot design §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  critical_input_policy_generation_and_digest:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L3 crash/restart run on a real local persistence substrate and a real process boundary consumes
+      none — its send boundary is a MODELLED marker (zero real bytes, zero real orders), so no broker,
+      authority/human, network or recovery instance is brought into existence. Recorded N/A per design
+      #1 §5.1 read forward to EV-L3 (EV-L3 pilot design §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  venue_constraint_policy_generation_and_digest:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L3 crash/restart run on a real local persistence substrate and a real process boundary consumes
+      none — its send boundary is a MODELLED marker (zero real bytes, zero real orders), so no broker,
+      authority/human, network or recovery instance is brought into existence. Recorded N/A per design
+      #1 §5.1 read forward to EV-L3 (EV-L3 pilot design §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  trading_approval_policy_generation_and_digest:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L3 crash/restart run on a real local persistence substrate and a real process boundary consumes
+      none — its send boundary is a MODELLED marker (zero real bytes, zero real orders), so no broker,
+      authority/human, network or recovery instance is brought into existence. Recorded N/A per design
+      #1 §5.1 read forward to EV-L3 (EV-L3 pilot design §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  currentness_policy_generation_and_digest:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L3 crash/restart run on a real local persistence substrate and a real process boundary consumes
+      none — its send boundary is a MODELLED marker (zero real bytes, zero real orders), so no broker,
+      authority/human, network or recovery instance is brought into existence. Recorded N/A per design
+      #1 §5.1 read forward to EV-L3 (EV-L3 pilot design §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  restricted_live_trial_policy_generation_and_digest:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L3 crash/restart run on a real local persistence substrate and a real process boundary consumes
+      none — its send boundary is a MODELLED marker (zero real bytes, zero real orders), so no broker,
+      authority/human, network or recovery instance is brought into existence. Recorded N/A per design
+      #1 §5.1 read forward to EV-L3 (EV-L3 pilot design §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  broker_capability_profile_version:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: Evidence Register broker_capability_profile_version for this row = 'TBD'; the row's minimum
+      evidence level (EV-L3) carries no +Broker suffix and no Broker Capability Profile instance exists
+      (template only). P0-2 is not in this run's scope.
+  verification_profile_version:
+    status: RECORDED
+    value:
+      version: 2.1 (PROPOSED — P0-1 open)
+      register_column_value: 2.1-PROPOSED
+      artifact:
+        path: tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml
+        sha256: d837c7e74b0fbe70d7cf2dfb30e412a29042577a0a38dcba22c649dd457d5064
+      approval_state: PROPOSED — P0-1 (bounds approval) OPEN
+    reason: Recorded, not approved. VER §6 numeric bounds remain unapproved; no bound value is consumed
+      by this run (bounds are hypothesis-injected, not hardcoded).
+  database_schema_migration_version:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: 'The EV-L3 pilot exercises a real local persistence substrate (stdlib sqlite3, WAL, synchronous=FULL)
+      whose schema is a single fixed table created on open: there is no migration history and no versioned
+      schema artifact to record. This substrate is a PILOT-SCOPE choice, NOT the ADR-002-005 §4 line 61
+      project persistence-technology decision, which remains open.'
+  deployment_manifest_digest:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: 'Nothing is deployed: the kernel is non-transmitting and is executed in-process by pytest.'
+  workload_identities_and_key_versions:
+    status: NOT_APPLICABLE_MODELED_TRANSPORT_L3
+    reason: No workload identity, credential, or key material is used — the run is hermetic (no network,
+      no .env, no clock authority).
+  environment_identifier:
+    status: RECORDED
+    value: *id001
+  test_harness_version:
+    status: RECORDED
+    value: *id002
+  fault_injection_schedule_and_seed:
+    status: RECORDED
+    value:
+      fault_schedule:
+        catalog_ref: docs/plans/2026-08-06-tos-ev-l3-pilot-design.md#4
+        seed: 0
+        seed_pinned: true
+        schedule_artifact: crash-timeline.jsonl
+        crash_scenario_count: 8
+        expected_crash_scenario_count: 8
+        crash_scenario_count_matches_catalog: true
+        scenario_ids:
+        - L3-01
+        - L3-02
+        - L3-03
+        - L3-04
+        - L3-05
+        - L3-06
+        - L3-07
+        - L3-08
+        duplicate_scenario_ids: []
+        foreign_evidence_id_rows: []
+        deviation_scenarios: []
+        misreported_outcome_scenarios: []
+        expected_undefined_scenarios: []
+        unobserved_reconstruction_scenarios: []
+        shared_process_scenarios: []
+        non_durable_store_scenarios: []
+        crash_points:
+        - AFTER_COMPLETE_DURABLE_COMMIT
+        - AFTER_DURABLE_SEND_STARTED_BEFORE_BROKER
+        - AFTER_MODELLED_NETWORK_TRANSMISSION
+        - AFTER_STALE_OPTIMISTIC_CACHE
+        - AFTER_TERMINAL_FILL_WITH_POSITIVE_KNOWLEDGE
+        - AT_NON_TERMINAL_BROKER_ORDER_BOUNDARY
+        - BEFORE_EVIDENCE_PERSISTENCE
+        - BETWEEN_DIMENSION_TRANSACTIONS_INCOMPLETE_STORE
+        process_boundary_real: true
+        persistence_real_measured: true
+        all_crash_scenarios_met: true
+        all_crash_scenarios_met_basis: every row's outcome RE-DERIVED from observed vs expected reconstruction
+          plus the row's own structural boundary measurements (the row's outcome field is cross-checked,
+          never trusted); withheld on an empty schedule (0 injected != 0 violations), any deviation or
+          misreport, any undefined Expected or unobserved reconstruction, a writer/reader pid that is
+          not a real distinct pair, a store that was not a non-empty on-disk file, a duplicated scenario
+          id, a row from another evidence id, or a recount that disagrees with the catalog size
+        persistence_real: true
+        persistence_substrate_check:
+          met: true
+          path: tos/src/tos/staterestore/store.py
+          sha256: c4e70f4692d9a4e7b418c1af61ae03827122cc6ee76a1f89de00d84cf3ef4e3f
+          measured_from: structural analysis of the executed source's syntax tree; pragmas are read out
+            of real execute(...) arguments, so a docstring or comment mentioning one cannot satisfy the
+            check; the harness never imports tos (TOS-FW-R)
+          measured:
+            connect_call_sites: 1
+            literal_connection_targets: []
+            in_memory_tokens_present: []
+            executed_pragmas:
+              journal_mode: WAL
+              synchronous: FULL
+            pragmas_present:
+            - journal_mode=WAL
+            - synchronous=FULL
+            pragmas_missing: []
+            pragmas_required:
+            - journal_mode=WAL
+            - synchronous=FULL
+      seed: *id003
+    reason: 'EV-L3: the VER §9.1 append-only crash schedule and the seed are both recorded. This field
+      is no longer PARTIAL — it is the one VER §3 field the EV-L3 stage completes relative to EV-L1.'
+ver_002_001_section_3_unmet_fields:
+- broker_capability_profile_version
+- build_artifact_digest
+- critical_input_policy_generation_and_digest
+- currentness_policy_generation_and_digest
+- database_schema_migration_version
+- deployment_manifest_digest
+- effective_principal_graph_generation_and_digest
+- evidence_integrity_policy_generation_and_digest
+- hard_safety_envelope_version
+- human_authority_policy_generation_and_digest
+- recovery_barrier_policy_generation_and_digest
+- restricted_live_trial_policy_generation_and_digest
+- runtime_safety_profile_version
+- trading_approval_policy_generation_and_digest
+- venue_constraint_policy_generation_and_digest
+- workload_identities_and_key_versions
+ver_002_001_section_3_unmet_note: 'VER §3 line 109 (''A run without a complete baseline is invalid'')
+  has no ''as applicable'' clause. This list names every field that is not RECORDED, so the gap is machine-checkable:
+  an empty list would be the claim that the baseline is complete, and this run does not make that claim.'
+test_nodes:
+- tests/tos_l3/test_state_ev_004_crash_restart.py

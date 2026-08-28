@@ -227,3 +227,117 @@ class TestFetchBrokerPositionsConstruction:
         # Zero-quantity (closed) positions are filtered out.
         assert result == [{"code": "A05603", "side": "2", "quantity": 1}]
         assert balance_mock.await_count == 1
+
+
+def _run(monkeypatch, tmp_path, *, redis_pos, broker_pos, broker_raises=False):
+    """Drive ``_build_and_run`` offline, returning (exit_code, telegram_summaries)."""
+    import argparse
+    import asyncio
+
+    async def _fake_redis():
+        return redis_pos
+
+    async def _fake_broker():
+        if broker_raises:
+            raise RuntimeError("broker unreachable")
+        return broker_pos
+
+    sent: list[str] = []
+
+    async def _fake_telegram(summary: str) -> None:
+        sent.append(summary)
+
+    monkeypatch.setattr(_module, "_fetch_redis_positions", _fake_redis)
+    monkeypatch.setattr(_module, "_fetch_broker_positions", _fake_broker)
+    monkeypatch.setattr(_module, "_send_telegram", _fake_telegram)
+
+    args = argparse.Namespace(sentinel_path=str(tmp_path / "tripped"))
+    return asyncio.run(_module._build_and_run(args)), sent
+
+
+class TestAdvisoryOnlyMessaging:
+    """The sentinel is a report, not a fence — the messages must say so.
+
+    Regression guard for a documented-but-nonexistent safety barrier: the
+    script used to announce "order_router blocked" / "order_router will
+    refuse to start until cleared" while **no process reads the sentinel**
+    (``services/order_router/main.py`` honours only the separate kill-switch
+    sentinel). An operator reading the old Telegram alert would believe
+    resume was fenced when it was not. These tests do not assert a barrier
+    exists — they assert the messaging does not claim one.
+    """
+
+    def test_divergence_alert_does_not_claim_anything_is_blocked(
+        self, monkeypatch, tmp_path
+    ):
+        code, sent = _run(
+            monkeypatch,
+            tmp_path,
+            redis_pos=[],
+            broker_pos=[{"code": "A05603", "side": "2", "quantity": 1}],
+        )
+        assert code == 3
+        assert len(sent) == 1
+        summary = sent[0]
+        assert "ADVISORY ONLY" in summary
+        assert "operator action required" in summary.lower()
+        # The specific false claim that used to ship in this alert: the
+        # summary must not name order_router as something it has stopped.
+        assert "order_router" not in summary
+
+    def test_divergence_writes_sentinel_but_returns_advisory_exit_code(
+        self, monkeypatch, tmp_path
+    ):
+        code, _ = _run(
+            monkeypatch,
+            tmp_path,
+            redis_pos=[{"symbol": "A05603", "side": "long", "quantity": 1}],
+            broker_pos=[{"code": "A05603", "side": "1", "quantity": 1}],
+        )
+        assert code == 3
+        payload = json.loads((tmp_path / "tripped").read_text())
+        assert len(payload["mismatched"]) == 1
+
+    def test_coherent_state_sends_no_alert_and_writes_no_sentinel(
+        self, monkeypatch, tmp_path
+    ):
+        code, sent = _run(
+            monkeypatch,
+            tmp_path,
+            redis_pos=[{"symbol": "A05603", "side": "long", "quantity": 1}],
+            broker_pos=[{"code": "A05603", "side": "2", "quantity": 1}],
+        )
+        assert code == 0
+        assert sent == []
+        assert not (tmp_path / "tripped").exists()
+
+    def test_broker_failure_reaches_no_verdict(self, monkeypatch, tmp_path):
+        code, sent = _run(
+            monkeypatch,
+            tmp_path,
+            redis_pos=[],
+            broker_pos=[],
+            broker_raises=True,
+        )
+        assert code == 4
+        assert sent == []
+        assert not (tmp_path / "tripped").exists()
+
+
+class TestDocstringHonesty:
+    """The module docstring is the operator's first read — keep it truthful."""
+
+    def test_docstring_states_the_sentinel_has_no_consumer(self):
+        doc = _module.__doc__ or ""
+        assert "not a barrier" in doc.lower()
+        assert "blocks nothing" in doc.lower()
+
+    def test_docstring_does_not_point_at_a_nonexistent_clear_script(self):
+        doc = _module.__doc__ or ""
+        clear_script = _REPO_ROOT / "scripts" / "recover_positions_clear.sh"
+        assert not clear_script.exists(), (
+            "A clear script now exists — the docstring's 'there is no "
+            "recover_positions_clear.sh' note must be updated."
+        )
+        # It may name the script only to say it does not exist.
+        assert "Operator clears via" not in doc

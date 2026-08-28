@@ -1,0 +1,39 @@
+artifact_type: CRITICAL_INPUT_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: TBD
+policy_generation: null
+canonical_digest: TBD
+status: DRAFT
+approved_by: []
+effective_from: null
+review_due: null
+scope:
+  environments: []
+  safety_cells: []
+  accounts: []
+  venues: []
+  instruments: []
+  decision_classes: []
+critical_input_classes: []
+approved_sources: []
+source_continuity_rules: []
+schema_unit_mapping_rules: []
+allowed_transformations: []
+freshness_and_time_rules: []
+consistency_cut_rules: []
+corroboration_and_independence_rules: []
+correction_and_invalidation_rules: []
+conservative_failure_responses: []
+residual_risks: []
+authority:
+  grants_approval: false
+  creates_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  permits_broker_transmission: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+evidence:
+  activation_record_id: TBD
+  independent_review_id: TBD
+  evidence_location: TBD

@@ -1,0 +1,67 @@
+artifact_type: SAFETY_MONITORING_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: TBD
+policy_version: TBD
+monitor_generation: null
+canonical_digest: TBD
+status: DRAFT
+scope:
+  environments: []
+  safety_cells: []
+  capacity_domains: []
+  legal_portfolios: []
+  accounts: []
+  brokers: []
+  venues: []
+critical_telemetry_manifest_ids: []
+monitor_coverage_manifest_ids: []
+requirement_hazard_and_control_registry_ids: []
+detection_rule_ids: []
+approved_bound_keys: []
+source_continuity_and_time_rules: []
+semantic_unit_and_derivation_rules: []
+coverage_and_dependency_closure_rules: []
+independence_and_common_mode_rules: []
+monitor_generation_and_writer_fence_rules: []
+gap_and_restrictive_disposition_rules: []
+suppression_maintenance_and_test_rules: []
+alert_correlation_delivery_and_escalation_rules: []
+incident_and_recovery_handoff_rules: []
+evidence_and_status_rules: []
+materiality_default: CRITICAL
+missing_telemetry_disposition: GAP_AND_RESTRICT
+unknown_coverage_disposition: EXPAND_TO_GREATEST_CREDIBLE_SCOPE
+failure_responses:
+  policy_or_manifest_unavailable: DENY_DEPENDENT_NEW_RISK
+  telemetry_missing_stale_or_conflicting: CREATE_GAP_AND_RESTRICT
+  continuity_or_time_unknown: CREATE_GAP_AND_RESTRICT
+  evaluator_or_numeric_failure: UNKNOWN_AND_RESTRICT
+  common_mode_invalidates_independence: REMOVE_BENEFIT_AND_RESTRICT
+  suppression_unknown_or_expired: UNSUPPRESSED_AND_RESTRICTED
+  queue_or_delivery_failure: KEEP_RESTRICTED_AND_ESCALATE
+  currentness_unprovable_at_egress: DENY_SEND
+  recovery_state_unknown: KEEP_BARRIER_CLOSED
+approved_by: []
+effective_from: null
+review_due: null
+authority:
+  policy_active: false
+  marks_requirement_pass: false
+  creates_approval_or_intent: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_latch_gap_or_incident: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT policy is inactive and grants no approval, capacity, protection,
+  live authority, broker transmission, incident closure, recovery readiness,
+  scope restoration, or re-arm. Missing, null, TBD, stale, conflicting, or
+  unapproved values create a Monitoring Gap and restrict the greatest credible
+  dependent scope.

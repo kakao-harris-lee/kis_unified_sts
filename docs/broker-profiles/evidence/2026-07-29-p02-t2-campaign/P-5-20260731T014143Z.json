@@ -1,0 +1,729 @@
+{
+  "artifact_id": "P-5-20260731T014143Z",
+  "probe_id": "P-5",
+  "title": "OPEN_ORDER_QUERY — accept→visible convergence latency",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-07-31T01:41:43.780113+00:00",
+  "finished_at_utc": "2026-07-31T01:48:39.626950+00:00",
+  "duration_s": 415.847,
+  "repo_commit": "da6f96c2",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-5",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A01609",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 100,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "P0-2 T2 wave-3 order session 2026-07-31 (post mock-account reset). Symbol A01609 = resolve_futures_instrument_from_env(kospi200, no explicit symbol) -> get_front_month_code(legacy=True), Sep-2026 front month (expiry 2026-09-10), the same resolver the paper futures trader uses. Mock futures creds from .env (.env.paper KIS_FUTURES_* is a REAL key since 2026-07-29). N=100 per runbook 8.2. Third harness defect fixed before this run: submit-response ODNO is zero-padded (\"0000000762\") while inquire-ccnl rows are space-padded with leading zeros dropped (\"        762\"), so the raw string compare never matched and every trial censored (P-5-20260731T002112Z) even though the cleanup cancel of that same ODNO succeeded. Identity now canonicalizes both sides the way the runtime does (executor.py::_normalize_odno). Workers left running: contention ruled out by evidence (trader is parquet-fed VirtualBroker, scheduler REST is real-host/real-stock-key on a different app key); docker stop is denied by the host permission classifier.",
+    "gap_ms": 200.0,
+    "settle_seconds": 2.0,
+    "poll_ms": 1100.0,
+    "inter_trial_s": 1.0,
+    "pace_s": 1.1,
+    "visibility_timeout_s": 30.0,
+    "late_window_s": 120.0,
+    "max_pages": 10,
+    "allow_fill": false,
+    "stock_order_type": "market",
+    "balance_timeout_s": 120.0
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "5e175fd232de"
+  },
+  "measurements": {
+    "limit_price_tick": {
+      "wire_value": "917",
+      "unrounded": 917.01,
+      "tick_size": "0.05",
+      "tick_source": "config/execution.yaml::futures_contract_spec.kospi200_full.tick_size_points (matched symbol_prefix '101,A01')",
+      "rounding": "floor",
+      "rounding_rationale": "away from the touch — a resting probe depends on the order NOT filling, so a snap must never move the price toward the touch; P-11's marketable order is the mirror case and snaps further in"
+    },
+    "odno_wire_format": {
+      "paired": true,
+      "submit_response_field": "output.ODNO (order accept response)",
+      "query_row_field": "output1[].odno (inquire-ccnl row)",
+      "submit_response_samples": [
+        {
+          "verbatim": "0000002674",
+          "length": 10,
+          "leading_pad": "zero",
+          "canonical_key": "2674"
+        }
+      ],
+      "query_row_samples": [
+        {
+          "verbatim": "      2674",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "2674"
+        },
+        {
+          "verbatim": "       782",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "782"
+        },
+        {
+          "verbatim": "       762",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "762"
+        }
+      ],
+      "identity_matching": "The two surfaces disagree on padding, so matching a submitted order against a query row must canonicalize BOTH sides (strip whitespace, then strip leading zeros). A raw strip-and-compare evaluates '762' == '0000000762' and never matches: artifact P-5-20260731T002112Z reported 1 CENSORED trial and n=0 for exactly that reason while the cleanup cancel of the same ODNO returned rt_cd=0, proving the order existed and the query had returned it.",
+      "reported_identifiers": "Measurements that list ODNOs report canonical keys (leading zeros stripped). The verbatim wire forms are the samples above.",
+      "scope": "One 모의투자 account, one session, mock environment. Recorded as the encoding observed here — not as a general KIS guarantee, and not extrapolated to 실전."
+    },
+    "B_broker_query_consistency_candidate": {
+      "label": "accept_to_visible_ms",
+      "n": 100,
+      "min_ms": 1139.706,
+      "p50_ms": 2632.931,
+      "p90_ms": 3918.03,
+      "p95_ms": 4448.762,
+      "p99_ms": 5328.284,
+      "max_ms": 5344.445,
+      "stdev_ms": 942.74,
+      "margin_pct": 50.0,
+      "recommended_bound_ms": 8017,
+      "statistic": "hard maximum: ceil(max_observed x (1 + margin_pct/100)). p95/p99 are shape diagnostics and MUST NOT be proposed as the bound.",
+      "sample_adequacy_note": "A maximum estimated from a small sample understates the true maximum. Record n and the observation window with the value; the Bounds-Approver decides whether n is adequate.",
+      "candidate_only": true
+    },
+    "poll_granularity_ms": 1100.0,
+    "granularity_note": "Each sample carries up to one poll interval of additive error. The approved bound must exceed max_observed + poll_granularity_ms, not just max_observed. poll_granularity_ms is the EFFECTIVE interval max(--poll-ms, --pace-s): the pacer floors polling, so a smaller --poll-ms did not happen and recording it would understate the additive error — and therefore the bound (runbook §8.3).",
+    "censored_trials": 0
+  },
+  "observations": [
+    {
+      "trial": 0,
+      "odno": "0000002674",
+      "latency_ms": 1717.13,
+      "polls": 1
+    },
+    {
+      "trial": 1,
+      "odno": "0000002677",
+      "latency_ms": 1932.53,
+      "polls": 1
+    },
+    {
+      "trial": 2,
+      "odno": "0000002681",
+      "latency_ms": 1509.75,
+      "polls": 1
+    },
+    {
+      "trial": 3,
+      "odno": "0000002683",
+      "latency_ms": 1529.64,
+      "polls": 1
+    },
+    {
+      "trial": 4,
+      "odno": "0000002686",
+      "latency_ms": 1379.53,
+      "polls": 1
+    },
+    {
+      "trial": 5,
+      "odno": "0000002689",
+      "latency_ms": 1960.89,
+      "polls": 1
+    },
+    {
+      "trial": 6,
+      "odno": "0000002691",
+      "latency_ms": 1874.45,
+      "polls": 1
+    },
+    {
+      "trial": 7,
+      "odno": "0000002695",
+      "latency_ms": 1558.21,
+      "polls": 1
+    },
+    {
+      "trial": 8,
+      "odno": "0000002697",
+      "latency_ms": 1165.04,
+      "polls": 1
+    },
+    {
+      "trial": 9,
+      "odno": "0000002700",
+      "latency_ms": 1286.02,
+      "polls": 1
+    },
+    {
+      "trial": 10,
+      "odno": "0000002702",
+      "latency_ms": 1197.58,
+      "polls": 1
+    },
+    {
+      "trial": 11,
+      "odno": "0000002706",
+      "latency_ms": 1280.19,
+      "polls": 1
+    },
+    {
+      "trial": 12,
+      "odno": "0000002708",
+      "latency_ms": 1285.36,
+      "polls": 1
+    },
+    {
+      "trial": 13,
+      "odno": "0000002711",
+      "latency_ms": 2073.0,
+      "polls": 1
+    },
+    {
+      "trial": 14,
+      "odno": "0000002716",
+      "latency_ms": 2523.67,
+      "polls": 1
+    },
+    {
+      "trial": 15,
+      "odno": "0000002720",
+      "latency_ms": 2809.14,
+      "polls": 1
+    },
+    {
+      "trial": 16,
+      "odno": "0000002723",
+      "latency_ms": 3032.64,
+      "polls": 1
+    },
+    {
+      "trial": 17,
+      "odno": "0000002726",
+      "latency_ms": 2747.97,
+      "polls": 1
+    },
+    {
+      "trial": 18,
+      "odno": "0000002728",
+      "latency_ms": 3204.37,
+      "polls": 1
+    },
+    {
+      "trial": 19,
+      "odno": "0000002731",
+      "latency_ms": 3926.77,
+      "polls": 1
+    },
+    {
+      "trial": 20,
+      "odno": "0000002733",
+      "latency_ms": 3222.79,
+      "polls": 1
+    },
+    {
+      "trial": 21,
+      "odno": "0000002737",
+      "latency_ms": 2689.63,
+      "polls": 1
+    },
+    {
+      "trial": 22,
+      "odno": "0000002739",
+      "latency_ms": 3487.65,
+      "polls": 1
+    },
+    {
+      "trial": 23,
+      "odno": "0000002742",
+      "latency_ms": 3295.48,
+      "polls": 1
+    },
+    {
+      "trial": 24,
+      "odno": "0000002745",
+      "latency_ms": 3483.52,
+      "polls": 1
+    },
+    {
+      "trial": 25,
+      "odno": "0000002747",
+      "latency_ms": 3137.06,
+      "polls": 1
+    },
+    {
+      "trial": 26,
+      "odno": "0000002750",
+      "latency_ms": 2229.37,
+      "polls": 1
+    },
+    {
+      "trial": 27,
+      "odno": "0000002752",
+      "latency_ms": 2069.21,
+      "polls": 1
+    },
+    {
+      "trial": 28,
+      "odno": "0000002756",
+      "latency_ms": 2275.55,
+      "polls": 1
+    },
+    {
+      "trial": 29,
+      "odno": "0000002762",
+      "latency_ms": 2493.99,
+      "polls": 1
+    },
+    {
+      "trial": 30,
+      "odno": "0000002765",
+      "latency_ms": 2717.85,
+      "polls": 1
+    },
+    {
+      "trial": 31,
+      "odno": "0000002767",
+      "latency_ms": 2608.3,
+      "polls": 1
+    },
+    {
+      "trial": 32,
+      "odno": "0000002769",
+      "latency_ms": 2763.73,
+      "polls": 1
+    },
+    {
+      "trial": 33,
+      "odno": "0000002773",
+      "latency_ms": 3947.75,
+      "polls": 1
+    },
+    {
+      "trial": 34,
+      "odno": "0000002776",
+      "latency_ms": 4434.96,
+      "polls": 1
+    },
+    {
+      "trial": 35,
+      "odno": "0000002780",
+      "latency_ms": 4547.12,
+      "polls": 1
+    },
+    {
+      "trial": 36,
+      "odno": "0000002786",
+      "latency_ms": 5014.98,
+      "polls": 1
+    },
+    {
+      "trial": 37,
+      "odno": "0000002789",
+      "latency_ms": 5328.12,
+      "polls": 1
+    },
+    {
+      "trial": 38,
+      "odno": "0000002791",
+      "latency_ms": 3917.06,
+      "polls": 1
+    },
+    {
+      "trial": 39,
+      "odno": "0000002796",
+      "latency_ms": 3253.7,
+      "polls": 1
+    },
+    {
+      "trial": 40,
+      "odno": "0000002804",
+      "latency_ms": 4297.8,
+      "polls": 1
+    },
+    {
+      "trial": 41,
+      "odno": "0000002810",
+      "latency_ms": 5159.8,
+      "polls": 1
+    },
+    {
+      "trial": 42,
+      "odno": "0000002816",
+      "latency_ms": 4443.59,
+      "polls": 1
+    },
+    {
+      "trial": 43,
+      "odno": "0000002819",
+      "latency_ms": 2657.56,
+      "polls": 1
+    },
+    {
+      "trial": 44,
+      "odno": "0000002821",
+      "latency_ms": 3509.88,
+      "polls": 1
+    },
+    {
+      "trial": 45,
+      "odno": "0000002824",
+      "latency_ms": 5344.44,
+      "polls": 1
+    },
+    {
+      "trial": 46,
+      "odno": "0000002828",
+      "latency_ms": 2744.5,
+      "polls": 1
+    },
+    {
+      "trial": 47,
+      "odno": "0000002830",
+      "latency_ms": 2701.41,
+      "polls": 1
+    },
+    {
+      "trial": 48,
+      "odno": "0000002833",
+      "latency_ms": 3003.6,
+      "polls": 1
+    },
+    {
+      "trial": 49,
+      "odno": "0000002837",
+      "latency_ms": 3087.27,
+      "polls": 1
+    },
+    {
+      "trial": 50,
+      "odno": "0000002840",
+      "latency_ms": 3228.7,
+      "polls": 1
+    },
+    {
+      "trial": 51,
+      "odno": "0000002843",
+      "latency_ms": 3058.63,
+      "polls": 1
+    },
+    {
+      "trial": 52,
+      "odno": "0000002846",
+      "latency_ms": 2202.94,
+      "polls": 1
+    },
+    {
+      "trial": 53,
+      "odno": "0000002849",
+      "latency_ms": 2011.28,
+      "polls": 1
+    },
+    {
+      "trial": 54,
+      "odno": "0000002852",
+      "latency_ms": 2607.55,
+      "polls": 1
+    },
+    {
+      "trial": 55,
+      "odno": "0000002855",
+      "latency_ms": 3014.07,
+      "polls": 1
+    },
+    {
+      "trial": 56,
+      "odno": "0000002860",
+      "latency_ms": 2503.89,
+      "polls": 1
+    },
+    {
+      "trial": 57,
+      "odno": "0000002863",
+      "latency_ms": 2494.44,
+      "polls": 1
+    },
+    {
+      "trial": 58,
+      "odno": "0000002868",
+      "latency_ms": 2824.07,
+      "polls": 1
+    },
+    {
+      "trial": 59,
+      "odno": "0000002871",
+      "latency_ms": 3608.81,
+      "polls": 1
+    },
+    {
+      "trial": 60,
+      "odno": "0000002873",
+      "latency_ms": 3174.15,
+      "polls": 1
+    },
+    {
+      "trial": 61,
+      "odno": "0000002877",
+      "latency_ms": 2445.67,
+      "polls": 1
+    },
+    {
+      "trial": 62,
+      "odno": "0000002881",
+      "latency_ms": 2268.27,
+      "polls": 1
+    },
+    {
+      "trial": 63,
+      "odno": "0000002885",
+      "latency_ms": 2114.35,
+      "polls": 1
+    },
+    {
+      "trial": 64,
+      "odno": "0000002888",
+      "latency_ms": 1776.2,
+      "polls": 1
+    },
+    {
+      "trial": 65,
+      "odno": "0000002894",
+      "latency_ms": 1561.5,
+      "polls": 1
+    },
+    {
+      "trial": 66,
+      "odno": "0000002899",
+      "latency_ms": 1557.19,
+      "polls": 1
+    },
+    {
+      "trial": 67,
+      "odno": "0000002907",
+      "latency_ms": 1139.71,
+      "polls": 1
+    },
+    {
+      "trial": 68,
+      "odno": "0000002912",
+      "latency_ms": 1829.79,
+      "polls": 1
+    },
+    {
+      "trial": 69,
+      "odno": "0000002915",
+      "latency_ms": 2134.93,
+      "polls": 1
+    },
+    {
+      "trial": 70,
+      "odno": "0000002918",
+      "latency_ms": 2261.07,
+      "polls": 1
+    },
+    {
+      "trial": 71,
+      "odno": "0000002921",
+      "latency_ms": 2397.13,
+      "polls": 1
+    },
+    {
+      "trial": 72,
+      "odno": "0000002926",
+      "latency_ms": 2820.15,
+      "polls": 1
+    },
+    {
+      "trial": 73,
+      "odno": "0000002928",
+      "latency_ms": 2536.42,
+      "polls": 1
+    },
+    {
+      "trial": 74,
+      "odno": "0000002931",
+      "latency_ms": 2714.79,
+      "polls": 1
+    },
+    {
+      "trial": 75,
+      "odno": "0000002934",
+      "latency_ms": 2550.19,
+      "polls": 1
+    },
+    {
+      "trial": 76,
+      "odno": "0000002936",
+      "latency_ms": 3290.86,
+      "polls": 1
+    },
+    {
+      "trial": 77,
+      "odno": "0000002938",
+      "latency_ms": 3297.34,
+      "polls": 1
+    },
+    {
+      "trial": 78,
+      "odno": "0000002942",
+      "latency_ms": 2978.56,
+      "polls": 1
+    },
+    {
+      "trial": 79,
+      "odno": "0000002948",
+      "latency_ms": 3037.85,
+      "polls": 1
+    },
+    {
+      "trial": 80,
+      "odno": "0000002954",
+      "latency_ms": 2533.86,
+      "polls": 1
+    },
+    {
+      "trial": 81,
+      "odno": "0000002957",
+      "latency_ms": 2723.57,
+      "polls": 1
+    },
+    {
+      "trial": 82,
+      "odno": "0000002960",
+      "latency_ms": 2272.13,
+      "polls": 1
+    },
+    {
+      "trial": 83,
+      "odno": "0000002962",
+      "latency_ms": 2603.23,
+      "polls": 1
+    },
+    {
+      "trial": 84,
+      "odno": "0000002964",
+      "latency_ms": 2511.01,
+      "polls": 1
+    },
+    {
+      "trial": 85,
+      "odno": "0000002969",
+      "latency_ms": 2295.41,
+      "polls": 1
+    },
+    {
+      "trial": 86,
+      "odno": "0000002974",
+      "latency_ms": 2513.65,
+      "polls": 1
+    },
+    {
+      "trial": 87,
+      "odno": "0000002977",
+      "latency_ms": 2870.34,
+      "polls": 1
+    },
+    {
+      "trial": 88,
+      "odno": "0000002979",
+      "latency_ms": 3118.82,
+      "polls": 1
+    },
+    {
+      "trial": 89,
+      "odno": "0000002982",
+      "latency_ms": 3303.16,
+      "polls": 1
+    },
+    {
+      "trial": 90,
+      "odno": "0000002985",
+      "latency_ms": 3407.67,
+      "polls": 1
+    },
+    {
+      "trial": 91,
+      "odno": "0000002988",
+      "latency_ms": 3880.24,
+      "polls": 1
+    },
+    {
+      "trial": 92,
+      "odno": "0000002993",
+      "latency_ms": 3369.9,
+      "polls": 1
+    },
+    {
+      "trial": 93,
+      "odno": "0000002999",
+      "latency_ms": 3133.16,
+      "polls": 1
+    },
+    {
+      "trial": 94,
+      "odno": "0000003002",
+      "latency_ms": 2289.35,
+      "polls": 1
+    },
+    {
+      "trial": 95,
+      "odno": "0000003007",
+      "latency_ms": 1731.19,
+      "polls": 1
+    },
+    {
+      "trial": 96,
+      "odno": "0000003010",
+      "latency_ms": 1503.1,
+      "polls": 1
+    },
+    {
+      "trial": 97,
+      "odno": "0000003013",
+      "latency_ms": 1140.1,
+      "polls": 1
+    },
+    {
+      "trial": 98,
+      "odno": "0000003016",
+      "latency_ms": 1325.22,
+      "polls": 1
+    },
+    {
+      "trial": 99,
+      "odno": "0000003019",
+      "latency_ms": 1587.1,
+      "polls": 1
+    }
+  ],
+  "skips": [],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_broker_query_consistency"
+    ],
+    "instance_fields": [
+      "capabilities.open_order_query.eventual_consistency_bound_ms",
+      "capabilities.open_order_query.status"
+    ],
+    "capability_dimension": "OPEN_ORDER_QUERY"
+  }
+}

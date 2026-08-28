@@ -1,4 +1,5 @@
 """Test order executor."""
+import time
 from datetime import datetime
 from unittest.mock import MagicMock
 
@@ -75,7 +76,11 @@ async def test_futures_fill_timeout_triggers_cancel():
     from unittest.mock import AsyncMock
 
     from shared.execution.config import ExecutionConfig
-    from shared.execution.executor import OrderExecutor, _FuturesFillStatus
+    from shared.execution.executor import (
+        FillQueryOutcome,
+        OrderExecutor,
+        _FuturesFillStatus,
+    )
     from shared.execution.models import (
         OrderRequest,
         OrderResponse,
@@ -99,8 +104,20 @@ async def test_futures_fill_timeout_triggers_cancel():
         price=330.5,
     )
 
-    pending = _FuturesFillStatus(found=True, order_no="0000001234", order_qty=1, filled_qty=0, remaining_qty=1)
-    after_cancel = _FuturesFillStatus(found=True, order_no="0000001234", order_qty=1, filled_qty=0, remaining_qty=0)
+    pending = _FuturesFillStatus(
+        outcome=FillQueryOutcome.FOUND,
+        order_no="0000001234",
+        order_qty=1,
+        filled_qty=0,
+        remaining_qty=1,
+    )
+    after_cancel = _FuturesFillStatus(
+        outcome=FillQueryOutcome.FOUND,
+        order_no="0000001234",
+        order_qty=1,
+        filled_qty=0,
+        remaining_qty=0,
+    )
     executor._inquire_futures_fill_status = AsyncMock(side_effect=[pending, pending, after_cancel])
     executor._cancel_futures_order = AsyncMock(
         return_value=OrderResponse(success=True, message="cancel_ok")
@@ -294,6 +311,302 @@ async def test_futures_day_order_not_blocked_by_night_guard(monkeypatch):
         resp = await executor._send_kis_futures_order(order, is_mock=False)
 
     assert "Night session disabled" not in (resp.message or "")
+
+
+#: KIS futures ORD_DVSN_CD -> expected (NMPR_TYPE_CD, KRX_NMPR_CNDT_CD).
+#: Source: KIS official examples_llm domestic_futureoption/order docstring
+#: (accessed 2026-07-29) — NMPR_TYPE_CD 01:지정가 02:시장가 03:조건부 04:최유리,
+#: KRX_NMPR_CNDT_CD 0:없음 3:IOC 4:FOK.
+_EXPECTED_FUTURES_NMPR = {
+    "01": ("01", "0"),
+    "02": ("02", "0"),
+    "03": ("03", "0"),
+    "04": ("04", "0"),
+    "10": ("01", "3"),
+    "11": ("01", "4"),
+    "12": ("02", "3"),
+    "13": ("02", "4"),
+    "14": ("04", "3"),
+    "15": ("04", "4"),
+}
+
+
+def test_stock_order_type_mapping_covers_every_order_type():
+    """모든 OrderType 멤버가 주식 ORD_DVSN 명시 매핑에 존재한다."""
+    from shared.execution.executor import OrderExecutor
+    from shared.execution.models import OrderType
+
+    expected = {
+        OrderType.LIMIT: "00",  # 지정가
+        OrderType.MARKET: "01",  # 시장가
+        OrderType.CONDITIONAL: "02",  # 조건부지정가
+    }
+    for order_type, ord_dvsn in expected.items():
+        assert OrderExecutor._map_stock_order_type(order_type.value) == ord_dvsn
+
+
+@pytest.mark.parametrize("unknown", ["", "99", "03", "07", "IOC", "market", None])
+def test_stock_unknown_order_type_is_refused(unknown):
+    """주식: 매핑에 없는 주문유형은 폴백 없이 명시 예외로 거부된다."""
+    from shared.execution.exceptions import OrderExecutionError
+    from shared.execution.executor import OrderExecutor
+
+    with pytest.raises(OrderExecutionError) as exc:
+        OrderExecutor._map_stock_order_type(unknown)
+
+    assert "unknown order type" in str(exc.value)
+
+
+def test_futures_order_type_mapping_covers_every_order_type():
+    """선물: 내부 OrderType 3종 + 선물 네이티브 코드 10종이 전부 매핑된다."""
+    from shared.execution.executor import OrderExecutor
+    from shared.execution.models import OrderType
+
+    expected = {
+        OrderType.LIMIT: "01",  # stock 지정가 -> futures 지정가
+        OrderType.MARKET: "02",  # stock 시장가 -> futures 시장가
+        OrderType.CONDITIONAL: "03",  # stock 조건부 -> futures 조건부
+    }
+    for order_type, ord_dvsn_cd in expected.items():
+        assert OrderExecutor._map_futures_order_type(order_type.value) == ord_dvsn_cd
+
+    for native in ("04", "10", "11", "12", "13", "14", "15"):
+        assert OrderExecutor._map_futures_order_type(native) == native
+
+
+@pytest.mark.parametrize("unknown", ["", "05", "16", "99", "IOC", "market", None])
+def test_futures_unknown_order_type_is_refused_without_01_fallback(unknown):
+    """선물: 미지 주문유형이 조용히 "01"로 접히지 않고 예외로 거부된다."""
+    from shared.execution.exceptions import OrderExecutionError
+    from shared.execution.executor import OrderExecutor
+
+    with pytest.raises(OrderExecutionError) as exc:
+        OrderExecutor._map_futures_order_type(unknown)
+
+    assert "unknown order type" in str(exc.value)
+
+
+def test_futures_quote_type_codes_match_kis_enumeration():
+    """ORD_DVSN_CD 10종 전부에 대해 [필수] 2필드가 KIS 값집합으로 파생된다."""
+    from shared.execution.executor import OrderExecutor
+
+    for ord_dvsn_cd, expected in _EXPECTED_FUTURES_NMPR.items():
+        codes = OrderExecutor._futures_quote_type_codes(ord_dvsn_cd)
+        assert codes == expected
+        assert codes[0] in {"01", "02", "03", "04"}
+        assert codes[1] in {"0", "3", "4"}
+        assert "" not in codes
+
+
+def test_futures_ord_dvsn_cd_tables_share_one_key_set():
+    """드리프트 앵커: 수용하는 ORD_DVSN_CD와 [필수] 2필드 파생표의 키집합이 동일.
+
+    한쪽에만 코드를 추가하면 (a) 수용은 되는데 파생이 없어 주문이 거부되거나
+    (b) 파생만 있고 수용되지 않는 죽은 행이 생긴다. 둘 다 봉인한다.
+    """
+    from shared.execution.executor import (
+        _FUTURES_NMPR_CODES,
+        _FUTURES_ORD_DVSN_CD,
+        _FUTURES_ORD_DVSN_CD_NATIVE,
+    )
+
+    assert set(_FUTURES_NMPR_CODES) == _FUTURES_ORD_DVSN_CD_NATIVE
+    # 내부 OrderType 매핑의 치역도 파생표 안에 있어야 한다.
+    assert set(_FUTURES_ORD_DVSN_CD.values()) <= set(_FUTURES_NMPR_CODES)
+
+
+@pytest.mark.asyncio
+async def test_execute_order_does_not_retry_deterministic_refusal():
+    """미지 주문유형은 결정론적 거부 — 재시도 없이 즉시 fail-closed 반환."""
+    from unittest.mock import AsyncMock
+
+    from shared.execution.config import ExecutionConfig
+    from shared.execution.executor import OrderExecutor
+    from shared.execution.models import OrderRequest, OrderSide, OrderType
+
+    config = ExecutionConfig(
+        trading_mode="MOCK", rate_limit_key="stock", max_retries=3, retry_delay=5.0
+    )
+    executor = OrderExecutor(config)
+    executor._build_auth_headers = AsyncMock(return_value={"tr_id": "VTTC0012U"})
+    executor._request_json = AsyncMock()
+
+    order = OrderRequest(
+        code="005930",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=1,
+        price=70000.0,
+    ).model_copy(update={"order_type": "99"})
+
+    start = time.monotonic()
+    resp = await executor.execute_order(order)
+    elapsed = time.monotonic() - start
+
+    assert resp.success is False
+    assert "unknown order type" in resp.message
+    # retry_delay=5.0 x 2 sleeps would have been taken by the generic handler.
+    assert elapsed < 1.0
+    executor._request_json.assert_not_awaited()
+
+
+@pytest.mark.parametrize("unknown", ["", "00", "05", "16", None])
+def test_futures_quote_type_codes_refuse_unknown_ord_dvsn_cd(unknown):
+    """ORD_DVSN_CD가 KIS 열거 밖이면 빈 문자열 대신 예외."""
+    from shared.execution.exceptions import OrderExecutionError
+    from shared.execution.executor import OrderExecutor
+
+    with pytest.raises(OrderExecutionError):
+        OrderExecutor._futures_quote_type_codes(unknown)
+
+
+async def _capture_futures_order_body(order_type):
+    """선물 주문 body를 실제 전송 없이 캡처한다 (HTTP는 전부 mock)."""
+    from unittest.mock import AsyncMock, patch
+
+    from shared.execution.config import ExecutionConfig
+    from shared.execution.executor import OrderExecutor
+    from shared.execution.models import OrderRequest, OrderSide
+
+    config = ExecutionConfig(
+        trading_mode="REAL",
+        rate_limit_key="futures",
+        futures_fill_check_enabled=False,
+    )
+    executor = OrderExecutor(config)
+    executor._build_auth_headers = AsyncMock(return_value={"tr_id": "TTTO1101U"})
+    executor._request_json = AsyncMock(
+        return_value=({"rt_cd": "0", "msg1": "ok", "output": {"ODNO": "1"}}, 200)
+    )
+
+    order = OrderRequest(
+        code="101W09",
+        side=OrderSide.BUY,
+        order_type=order_type,
+        quantity=1,
+        price=350.0,
+    )
+    with patch.object(OrderExecutor, "_is_night_session", return_value=False):
+        resp = await executor._send_kis_futures_order(order, is_mock=False)
+
+    assert resp.success is True
+    executor._request_json.assert_awaited_once()
+    return executor._request_json.await_args.kwargs["json"]
+
+
+@pytest.mark.asyncio
+async def test_futures_order_body_sends_explicit_required_quote_fields():
+    """선물 주문 body의 [필수] 2필드가 빈 문자열이 아니라 명시 코드다."""
+    from shared.execution.models import OrderType
+
+    body = await _capture_futures_order_body(OrderType.LIMIT)
+
+    assert body["ORD_DVSN_CD"] == "01"  # 지정가
+    assert body["NMPR_TYPE_CD"] == "01"  # 호가유형 지정가
+    assert body["KRX_NMPR_CNDT_CD"] == "0"  # 호가조건 없음
+    assert body["NMPR_TYPE_CD"] != ""
+    assert body["KRX_NMPR_CNDT_CD"] != ""
+
+
+@pytest.mark.asyncio
+async def test_futures_market_order_body_derives_market_quote_type():
+    """시장가 주문이면 NMPR_TYPE_CD도 시장가(02)로 파생된다."""
+    from shared.execution.models import OrderType
+
+    body = await _capture_futures_order_body(OrderType.MARKET)
+
+    assert body["ORD_DVSN_CD"] == "02"  # 시장가
+    assert body["NMPR_TYPE_CD"] == "02"
+    assert body["KRX_NMPR_CNDT_CD"] == "0"
+
+
+@pytest.mark.asyncio
+async def test_futures_order_refused_before_any_request_on_unknown_type():
+    """미지 주문유형이면 HTTP 요청 자체가 발생하지 않는다 (실주문 0)."""
+    from unittest.mock import AsyncMock, patch
+
+    from shared.execution.config import ExecutionConfig
+    from shared.execution.exceptions import OrderExecutionError
+    from shared.execution.executor import OrderExecutor
+    from shared.execution.models import OrderRequest, OrderSide, OrderType
+
+    config = ExecutionConfig(trading_mode="REAL", rate_limit_key="futures")
+    executor = OrderExecutor(config)
+    executor._build_auth_headers = AsyncMock(return_value={"tr_id": "TTTO1101U"})
+    executor._request_json = AsyncMock()
+
+    order = OrderRequest(
+        code="101W09",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=1,
+        price=350.0,
+    ).model_copy(update={"order_type": "99"})
+
+    with patch.object(OrderExecutor, "_is_night_session", return_value=False):
+        with pytest.raises(OrderExecutionError):
+            await executor._send_kis_futures_order(order, is_mock=False)
+
+    executor._request_json.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stock_order_refused_before_any_request_on_unknown_type():
+    """주식도 동일: 미지 주문유형은 HTTP 요청 전에 거부된다."""
+    from unittest.mock import AsyncMock
+
+    from shared.execution.config import ExecutionConfig
+    from shared.execution.exceptions import OrderExecutionError
+    from shared.execution.executor import OrderExecutor
+    from shared.execution.models import OrderRequest, OrderSide, OrderType
+
+    config = ExecutionConfig(trading_mode="MOCK", rate_limit_key="stock")
+    executor = OrderExecutor(config)
+    executor._build_auth_headers = AsyncMock(return_value={"tr_id": "VTTC0012U"})
+    executor._request_json = AsyncMock()
+
+    order = OrderRequest(
+        code="005930",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=1,
+        price=70000.0,
+    ).model_copy(update={"order_type": "99"})
+
+    with pytest.raises(OrderExecutionError):
+        await executor._send_kis_stock_order(order, is_mock=True)
+
+    executor._request_json.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stock_order_body_uses_mapped_ord_dvsn():
+    """정상 주식 경로는 무변경 — LIMIT은 ORD_DVSN="00"으로 전송된다."""
+    from unittest.mock import AsyncMock
+
+    from shared.execution.config import ExecutionConfig
+    from shared.execution.executor import OrderExecutor
+    from shared.execution.models import OrderRequest, OrderSide, OrderType
+
+    config = ExecutionConfig(trading_mode="MOCK", rate_limit_key="stock")
+    executor = OrderExecutor(config)
+    executor._build_auth_headers = AsyncMock(return_value={"tr_id": "VTTC0012U"})
+    executor._request_json = AsyncMock(
+        return_value=({"rt_cd": "0", "msg1": "ok", "output": {"ODNO": "1"}}, 200)
+    )
+
+    order = OrderRequest(
+        code="005930",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=1,
+        price=70000.0,
+    )
+    resp = await executor._send_kis_stock_order(order, is_mock=True)
+
+    assert resp.success is True
+    body = executor._request_json.await_args.kwargs["json"]
+    assert body["ORD_DVSN"] == "00"  # 지정가
 
 
 def test_is_futures_night_session_enabled_reads_yaml(tmp_path, monkeypatch):

@@ -1,0 +1,50 @@
+artifact_type: APPROVAL_CONSUMPTION_RECORD
+schema_version: "1.0-DRAFT"
+record_id: TBD
+canonical_digest: TBD
+status: INVALID
+independent_approval_decision:
+  decision_id: TBD
+  canonical_digest: TBD
+proposal_approval_request:
+  request_id: TBD
+  canonical_digest: TBD
+intent:
+  intent_id: TBD
+  intent_canonical_digest: TBD
+  previous_state: PROPOSED
+  resulting_state: UNKNOWN
+registry_transition:
+  intent_registry_id: TBD
+  writer_epoch: null
+  transaction_revision: null
+  command_id: TBD
+  idempotency_key: TBD
+  committed_at: null
+  durable_receipt_id: TBD
+trading_approval_policy:
+  policy_id: TBD
+  trading_approval_generation: null
+  canonical_digest: TBD
+consumption_result:
+  consumed: false
+  duplicate_of_record_id: null
+  conflicting_duplicate: true
+  exact_intent_binding_verified: false
+  currentness_verified: false
+invalidation:
+  generation_at_commit: null
+  invalidated: true
+  invalidation_reason: NOT_PROVEN_CURRENT
+signatures: []
+authority:
+  proves_one_intent_registration: false
+  permits_additional_intent_registration: false
+  mutates_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

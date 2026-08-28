@@ -15,6 +15,7 @@ conditions.
 
 from __future__ import annotations
 
+import inspect
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -43,6 +44,24 @@ class Fill:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+async def _fill_state_unknown(kis_client: Any, order_id: str) -> bool:
+    """Ask a duck-typed client whether ``order_id``'s fill state is unresolved.
+
+    The client surface is duck-typed (tests inject mocks), so a merely truthy
+    answer proves nothing — an auto-attribute mock returns a truthy object for
+    any name. Only a literal ``True`` counts, and a client without the method
+    answers ``False``, preserving the pre-existing contract for clients that
+    cannot report the state.
+    """
+    probe = getattr(kis_client, "fill_state_unknown", None)
+    if not callable(probe):
+        return False
+    result = probe(order_id)
+    if inspect.isawaitable(result):
+        result = await result
+    return result is True
 
 
 class PassiveMaker:
@@ -95,8 +114,19 @@ class PassiveMaker:
         )
 
         fill = await self.kis.await_fill(order_id, timeout_seconds)
+        # Asked on BOTH branches. The client stashes the flag alongside a
+        # POSITIVE fill too (a partial whose total could not be confirmed), so
+        # consulting it only when `fill is None` left the unresolved-state
+        # chain open on exactly the rows where a position exists.
+        unresolved = await _fill_state_unknown(self.kis, order_id)
         if fill is None:
             await self.kis.cancel_order(order_id)
+            if unresolved:
+                # NOT a miss. The client could not establish what executed, so
+                # the broker may hold a position for this order. Reporting
+                # `missed` here would tell the caller the book is flat and no
+                # protective exit is needed — the exact D-2 failure.
+                return OrderResult.error(reason="fill_state_unknown", order_id=order_id)
             return OrderResult.missed(reason="passive_not_filled", order_id=order_id)
 
         slippage_ticks = _compute_slippage_ticks(
@@ -115,10 +145,21 @@ class PassiveMaker:
             filled_price=fill.price,
             tick_size_points=spec.tick_size_points,
             slippage_ticks=slippage_ticks,
-            quantity=quantity,
+            # The EXECUTED quantity, not the requested one. This is not audit
+            # cosmetics: the fill row flows to
+            # `futures_monitor` -> `futures:monitor:positions` -> the router's
+            # `_handle_close` -> `close_executor.flatten(quantity=...)`, i.e. a
+            # REAL broker order. Logging the requested 3 for a 2-lot fill makes
+            # the force-close path flatten 3 against a long 2 — on a
+            # net-position account that flips to a short 1, the same
+            # over-sizing that OrderResult.filled_quantity closed on the
+            # PseudoOCO bracket.
+            quantity=fill.quantity,
             requested_at_ms=requested_at_ms,
             filled_at_ms=fill.filled_at_ms,
             venue=self.venue,
             trade_role="entry",
         )
-        return OrderResult.filled(fill, slippage_ticks=slippage_ticks)
+        return OrderResult.filled(
+            fill, slippage_ticks=slippage_ticks, unresolved=unresolved
+        )

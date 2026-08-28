@@ -1,0 +1,96 @@
+# tos import-firewall — enforcement layer ③ (design §3.3-③).
+#
+# Runs the full firewall on EVERY pull request and every push to main, with NO
+# path gating: the checks are cheap and path-gating would leave an evasion gap
+# (a PR that edits both tos/ and the gate could skip enforcement). Steps mirror
+# the three enforcement layers:
+#   1. python tools/tos_firewall_check.py  — layer ① (default-deny AST gate)
+#   2. lint-imports                        — layer ② (transitive forbidden-pkg)
+#   3. pytest tos/tests                     — hermetic package tests (§2.4)
+#
+# NOTE: marking this job a *required* check is a GitHub branch-protection
+# setting and is NOT configured here — see the handoff report.
+name: tos-firewall
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tos-firewall:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # **전체 이력이 필요하다** — 아래 Layer 4 검사기의 `C2UP`(측정 출처 검증)은
+          # 래칫 기준선이 기록한 커밋에서 `git show <commit>:<path>` 로 blob 을 **다시
+          # 재어** 기준선이 그 내용에서 나왔음을 확인한다.  기본 `fetch-depth: 1` 은
+          # 얕은 클론이라 그 커밋이 없고, 검사기는 재측정 실패를 **fail-closed** 로
+          # 처분한다(rc=128 → `TOS-CC-C2UP` red).
+          #
+          # 에라타 32차가 `--full-history` lockstep 을 하네스·정본 블록·live sha 핀에
+          # 걸쳐 이행했으나 **검사기를 «실행하는» 이 체크아웃에는 닿지 않았다.**
+          # 로컬은 전체 이력을 갖고 있어 영원히 green 이었고, 게이트가 CI 에서 처음
+          # 실행된 PR #637 에서야 관측됐다 — `tos-gate.yml` 은 같은 이유로 이미
+          # `fetch-depth: 0` 이다.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install minimal dependencies
+        # Deliberately minimal — the heavy runtime stack (talib/mlflow/...) is
+        # NOT needed:
+        #   * tos + its 4 pinned third parties + pytest/hypothesis, via the
+        #     tos package's own [test] extra.
+        #   * import-linter (+ grimp) for layer ②.
+        #   * the repo-root package installed with --no-deps so grimp can LOCATE
+        #     shared/services/cli (it analyses them statically via AST and never
+        #     executes them, so their runtime deps are unnecessary).
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./tos[test]"
+          pip install import-linter
+          pip install -e . --no-deps
+          # Layer 4 의 RULE 축은 S-25 manifest(YAML)를 읽는다.  루트 프로젝트는
+          # `pyyaml>=6.0` 를 의존으로 선언하지만 위 설치는 `--no-deps` 라 딸려오지
+          # 않는다.  **부재 시 검사기는 조용히 건너뛰지 않고 `TOS-CC-RULE-MANIFEST`
+          # 로 red 를 낸다**(fail-closed) — 그래서 여기서 명시 설치한다.
+          # (`tos` 패키지의 §3.2 서드파티 allowlist 와는 무관하다 — `tools/` 의
+          #  저장소 도구가 쓰는 것이지 `tos` 패키지가 임포트하는 것이 아니다.)
+          pip install "pyyaml>=6.0"
+
+      - name: Layer 1 — custom AST firewall (default-deny)
+        run: python tools/tos_firewall_check.py
+
+      - name: Layer 2 — import-linter (transitive forbidden-package defense)
+        run: lint-imports
+
+      - name: tos hermetic package tests
+        run: pytest tos/tests
+
+      # Layer 4 — Phase 0 완료 계약의 «자기참조 stale» 게이트.
+      #
+      # 별도 잡·별도 워크플로가 아니라 이 잡의 «스텝»이다: 별도 잡이면 브랜치
+      # 보호의 필수 체크 «이름»이 하나 늘고, 이 아크의 통증이 바로 그 설정
+      # 표면이다.  이 워크플로는 이미 경로 게이팅 없이 모든 PR·main push 에서
+      # 돌므로(위 헤더 주석) 계약 문서만 고치는 PR 도 반드시 통과한다.
+      #
+      # 근거: 레인 B 재심 R-F3/R-F4 — 「규칙 신설 = 전수 적용까지가 한 단위」가
+      # 이 아크에서 다섯 번 깨졌고, 그때마다 문서 내 «수동 census» 였다.
+      # 산문 선언은 소비자가 없으면 산문이다(K-10).
+      - name: Layer 4 — phase0 contract self-reference gate
+        run: python tools/tos_contract_check.py
+
+      # 검사기 자신이 «죽은 검사»가 아님을 매 실행 증명한다.  9차의
+      # 「(4) 열거 7==7」 불변식이 세 자리 중 둘만 보고 green 을 낸 것이
+      # addendum-5 A-F5 였다 — 통과하는 검사와 «지고 있는» 검사는 다르다.
+      - name: Layer 4 self-test — mutation battery (dead-check 0)
+        run: python tools/tos_contract_check.py --self-test

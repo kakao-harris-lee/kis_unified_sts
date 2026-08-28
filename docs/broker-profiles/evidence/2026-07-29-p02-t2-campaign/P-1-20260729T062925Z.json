@@ -1,0 +1,96 @@
+{
+  "artifact_id": "P-1-20260729T062925Z",
+  "probe_id": "P-1",
+  "title": "ORDER_IDENTITY — client-supplied order id field存否",
+  "mode": "live",
+  "environment": "NONE",
+  "started_at_utc": "2026-07-29T06:29:25.705847+00:00",
+  "finished_at_utc": "2026-07-29T06:29:25.713824+00:00",
+  "duration_s": 0.008,
+  "repo_commit": "33565835",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-1",
+    "list": false,
+    "coverage": false,
+    "confirm": false,
+    "asset": "futures",
+    "symbol": "",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "",
+    "inter_trial_s": 1.0,
+    "poll_ms": 200.0
+  },
+  "credentials": {},
+  "measurements": {
+    "code_observed_request_fields": {
+      "stock_order_cash (executor.py:315-322)": [
+        "CANO",
+        "ACNT_PRDT_CD",
+        "PDNO",
+        "ORD_DVSN",
+        "ORD_QTY",
+        "ORD_UNPR"
+      ],
+      "futures_order (executor.py:386-399)": [
+        "ORD_PRCS_DVSN_CD",
+        "CANO",
+        "ACNT_PRDT_CD",
+        "SLL_BUY_DVSN_CD",
+        "SHTN_PDNO",
+        "ORD_QTY",
+        "UNIT_PRICE",
+        "NMPR_TYPE_CD",
+        "KRX_NMPR_CNDT_CD",
+        "CTAC_TLNO",
+        "FUOP_ITEM_DVSN_CD",
+        "ORD_DVSN_CD"
+      ],
+      "futures_rvsecncl (executor.py:613-627)": [
+        "ORD_PRCS_DVSN_CD",
+        "CANO",
+        "ACNT_PRDT_CD",
+        "RVSE_CNCL_DVSN_CD",
+        "ORGN_ODNO",
+        "ORD_QTY",
+        "UNIT_PRICE",
+        "NMPR_TYPE_CD",
+        "KRX_NMPR_CNDT_CD",
+        "RMN_QTY_YN",
+        "CTAC_TLNO",
+        "FUOP_ITEM_DVSN_CD",
+        "ORD_DVSN_CD"
+      ]
+    },
+    "client_identifier_token_grep": {
+      "ORD_ID": 0,
+      "CLNT_ORD": 0,
+      "CLIENT_ORDER": 0,
+      "CLORDID": 0,
+      "USER_ORD": 0,
+      "MY_ORD": 0
+    },
+    "absence_verified": true,
+    "broker_assigned_identifier": "ODNO is read from the response (executor.py:335, :412) — the identifier originates at the broker.",
+    "status_determination": "UNKNOWN until N-17. 'We do not send one' does not establish 'the broker offers none'. Only the official order-request field list can promote this to UNSUPPORTED or VERIFIED.",
+    "blocked_on": "N-17 (runbook §7 checklist item 1)"
+  },
+  "observations": [],
+  "skips": [],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [],
+    "instance_fields": [
+      "capabilities.client_generated_order_id.status"
+    ],
+    "capability_dimension": "ORDER_IDENTITY"
+  }
+}

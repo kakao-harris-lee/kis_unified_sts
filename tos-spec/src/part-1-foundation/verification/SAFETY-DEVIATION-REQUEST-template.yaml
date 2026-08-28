@@ -1,0 +1,79 @@
+artifact_type: SAFETY_DEVIATION_REQUEST
+schema_version: "1.0-DRAFT"
+request_id: TBD
+request_version: TBD
+canonical_digest: TBD
+status: DRAFT
+predecessor_request_id: null
+policy:
+  policy_id: TBD
+  deviation_generation: null
+  canonical_digest: TBD
+requirements_and_hazards:
+  requirement_ids: []
+  hazard_ids: []
+  normative_citations: []
+  verification_evidence_ids: []
+  current_evidence_statuses: []
+  outside_non_waivable_boundary_proven: false
+scope:
+  environment: TBD
+  safety_cells: []
+  capacity_domains: []
+  legal_portfolios: []
+  accounts: []
+  brokers: []
+  venues: []
+  instruments: []
+  strategies: []
+  action_classes: []
+  software_and_configuration_digests: []
+  identities_credentials_routes_and_sessions: []
+  failure_domains: []
+  scope_complete: false
+dependency_closure: []
+technical_cause: TBD
+normal_control_unavailable_reason: TBD
+remediation_plan: []
+validity:
+  requested_start: null
+  hard_expiry: null
+  review_interval_ms: null
+  trustworthy_time_basis: TBD
+residual_risk:
+  worst_credible_effect: UNKNOWN
+  economic_and_broker_effects: []
+  operational_and_security_effects: []
+  common_modes: []
+  assumptions_and_uncertainties: []
+  bounded_inside_hard_safety_envelope: false
+compensating_controls: []
+requested_restricted_runtime_safety_profile_digest: TBD
+capacity_protection_flow_and_supervision_constraints: []
+revocation_halt_egress_reconciliation_and_recovery_rules: []
+principals:
+  requester_ids: []
+  implementer_ids: []
+  beneficiary_ids: []
+  evidence_owner_ids: []
+  proposed_reviewer_ids: []
+  effective_principal_conflicts: []
+explicit_prohibited_inferences: []
+signatures: []
+authority:
+  eligible: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  activates_configuration: false
+  marks_requirement_pass: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT request is incomplete and grants no deviation, evidence status,
+  configuration, capacity, live authority, transmission, or re-arm. Unknown or
+  incomplete scope, risk, compensation, evidence, independence, or time is denial.

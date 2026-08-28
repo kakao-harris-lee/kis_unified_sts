@@ -1,0 +1,74 @@
+artifact_type: VENUE_CONSTRAINT_SNAPSHOT
+schema_version: "1.0-DRAFT"
+snapshot_id: TBD
+canonical_digest: TBD
+status: DRAFT
+issuer_principal_id: TBD
+venue_constraint_policy:
+  policy_id: TBD
+  policy_generation: null
+  canonical_digest: TBD
+constraint_generation: null
+decision_context_capsule:
+  capsule_id: TBD
+  canonical_digest: TBD
+scope:
+  environment: TBD
+  safety_cell: TBD
+  broker: TBD
+  account: TBD
+  venue: TBD
+  market_segment: TBD
+  instrument: TBD
+  contract: TBD
+  action_class: TBD
+source_continuity_vector: []
+session_state:
+  phase: UNKNOWN
+  scheduled_phase: UNKNOWN
+  exceptional_state: UNKNOWN
+  halt_state: UNKNOWN
+  suspension_state: UNKNOWN
+  auction_state: UNKNOWN
+  evidence_ids: []
+tradability_state:
+  result: UNKNOWN
+  position_effects: []
+  supported_actions: []
+  failed_or_unknown_predicates: []
+instrument_constraints: []
+price_tick_lot_and_quantity_constraints: []
+order_type_time_in_force_and_route_constraints: []
+account_permission_constraints: []
+margin_collateral_and_buying_power_constraints: []
+borrow_locate_and_short_sale_constraints: []
+settlement_currency_and_expiration_constraints: []
+broker_capability_profile:
+  profile_id: TBD
+  profile_version: TBD
+  assurance_level: UNKNOWN
+  canonical_digest: TBD
+common_mode_dependencies: []
+residual_risks: []
+trustworthy_time:
+  snapshot_id: TBD
+  generation: null
+  consumer_receipt_anchor: TBD
+  maximum_age_ms: null
+validity:
+  result: INVALID
+  issued_at: null
+  expires_at: null
+  invalidation_generation: null
+  invalidation_conditions: []
+authority:
+  grants_approval: false
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

@@ -1,0 +1,258 @@
+schema: tos-evidence/baseline/v1
+run_id: 20260729T054355Z-ea4bee5e
+evidence_id: SPG-EV-002
+generated_utc: '2026-07-29T05:43:55.988606+00:00'
+contract:
+  run_manifest_contract: docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md §5.1 (seven
+    items)
+  ver_specification: tos-spec/src/part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md
+    §2.3/§3/§8/§9.1/§9.2/§9.5
+  completeness: 'EV-L1 subset. VER §3 requires 22 baseline fields and states that ''A run without a complete
+    baseline is invalid''; design #1 §5.1 ratifies the seven items below as the EV-L1 subset. Fields whose
+    artifacts do not exist at this stage are marked NOT_APPLICABLE_EV_L1 with a reason. Under VER §3''s
+    full standard this baseline is complete for EV-L1 only and is NOT a complete baseline for EV-L2 and
+    above.'
+evidence_register_row:
+  source: tos-spec/src/part-1-foundation/verification/EVIDENCE-REGISTER-002.csv
+  evidence_id: SPG-EV-002
+  domain: Safety Profile Governance
+  title: Semantic Units, Numeric, and Cross-Field Validation
+  primary_adr: ADR-002-014
+  criticality: Critical
+  minimum_evidence_level: EV-L1/2
+  status_at_run_time: READY
+  implementation_owner: ai-impl(claude-orchestrated)
+  evidence_owner: operator
+  independent_reviewer: ai-review(decorrelated)+operator-countersign
+design1_5_1:
+  item_1_repository_and_package:
+    git_commit_sha: ea4bee5e990034fc17fc503bd4f02012940c3149
+    git_short_sha: ea4bee5e
+    tos_package_version: 0.0.1
+    worktree:
+      clean: false
+      untracked:
+      - tests/tools/test_tos_evidence_run.py
+      - tools/tos_evidence_run.py
+      - tos-evidence/
+      - tos/src/tos/backtest/
+      - tos/tests/backtest/
+      modified_unstaged:
+      - tos-spec/src/part-1-foundation/verification/EVIDENCE-REGISTER-002.csv
+      - tos-spec/src/part-1-foundation/verification/EVIDENCE-REGISTER-002.md
+      staged: []
+      all_dirty_paths:
+      - tests/tools/test_tos_evidence_run.py
+      - tools/tos_evidence_run.py
+      - tos-evidence/
+      - tos-spec/src/part-1-foundation/verification/EVIDENCE-REGISTER-002.csv
+      - tos-spec/src/part-1-foundation/verification/EVIDENCE-REGISTER-002.md
+      - tos/src/tos/backtest/
+      - tos/tests/backtest/
+      note: 'A non-empty list does not by itself invalidate the run: the executed files are pinned individually
+        by target_file_digests below. Paths outside the executed set belong to other work in the same
+        worktree.'
+    target_files_clean: true
+    target_file_digests:
+    - path: tos/src/tos/spg/__init__.py
+      sha256: 216b0249c63e6f11cb1e21c3c2668764aef96cc2b88664fe01f06e9d3c04d256
+      git_clean: true
+    - path: tos/src/tos/spg/_base.py
+      sha256: 72d6ef47c9289896eb036d7931f285d3b31e310f8ebbc0a5281b0f677889076a
+      git_clean: true
+    - path: tos/src/tos/spg/predicates.py
+      sha256: 0bb8facdabb37599c2f18f29c2e8507c8c7e6f9c30b147b20a3bc555bb7c7c89
+      git_clean: true
+    - path: tos/src/tos/spg/records.py
+      sha256: 06b5499e6e06627d1f9aeaebb372a13f263fab1818256040616c71f41025fd2a
+      git_clean: true
+    - path: tos/src/tos/spg/vocabulary.py
+      sha256: 7162aec0e5c8804e69fd3430a8399f2fb781206c80110c825b62929144fb8cae
+      git_clean: true
+    - path: tos/tests/spg/test_spg_records.py
+      sha256: 58d95de9a1cc5f195d54ade15f1f7be8a36005767ab73f3326dc76ee02314e25
+      git_clean: true
+    - path: tos/tests/spg/test_spg_semantic.py
+      sha256: 51bc8d7d6168d68306d622ebd14bf930ee21fe1c078953338a0f473e508c2b2c
+      git_clean: true
+  item_2_interpreter_and_dependencies:
+    python:
+      version: 3.12.2
+      version_full: 3.12.2 (main, Dec 11 2025, 16:36:08) [Clang 17.0.0 (clang-1700.4.4.1)]
+      implementation: CPython
+      executable: /Users/harris/Development/private/kis_unified_sts/.venv/bin/python
+    installed_versions_measured:
+      pydantic: 2.12.5
+      hypothesis: 6.151.5
+      pytest: 9.0.2
+      numpy: 1.26.4
+      pandas: 2.3.3
+      pyyaml: 6.0.3
+      tos: NOT_INSTALLED
+    pinned_in_tos_pyproject:
+      pydantic: 2.12.5
+      numpy: 2.4.0
+      pandas: 2.3.3
+      pyyaml: 6.0.3
+      pytest: 9.0.2
+      hypothesis: 6.150.2
+    pin_vs_installed_drift:
+    - distribution: hypothesis
+      pinned: 6.150.2
+      installed: 6.151.5
+    - distribution: numpy
+      pinned: 2.4.0
+      installed: 1.26.4
+    drift_note: 'Empty list = the executed interpreter matches every pin. A non-empty list is recorded,
+      not resolved: the installed version is what executed.'
+  item_3_execution_environment: &id001
+    os: Darwin
+    os_release: 25.5.0
+    machine: arm64
+    platform: macOS-26.5.2-arm64-arm-64bit
+    python_implementation: CPython
+  item_4_harness_version: &id002
+    harness_path: tools/tos_evidence_run.py
+    harness_sha256: 7e3f9834ac792ba3c316167946cdbbee34a91db21a567913ad4ca8928150e400
+    harness_git_commit: ea4bee5e990034fc17fc503bd4f02012940c3149
+    pytest_version: 9.0.2
+    note: 'design #1 §5.1 item 4 — Phase 1 harness version = git digest.'
+  item_5_seed_policy: &id003
+    policy: fixed
+    pytest_flags:
+    - --hypothesis-seed=0
+    hypothesis_seed: 0
+    note: 'VER §9.1 append-only: seed pinned before the run began.'
+  item_6_consumed_configuration_artifacts:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No configuration artifact is consumed: bounds are hypothesis-injected generated values, not
+      read from a profile, and the run is hermetic (no .env, no YAML).'
+  item_7_retained_artifact_digests: Enumerated in manifest.yaml (artifacts) and closed over by sha256sums.txt,
+    which is written last and covers every retained file including the manifest.
+ver_002_001_section_3_baseline:
+  repository_commit_sha:
+    status: RECORDED
+    value: ea4bee5e990034fc17fc503bd4f02012940c3149
+  build_artifact_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'Phase 1 executes from the source tree; no built distribution artifact is produced or consumed
+      (design #1 §5.1 items 1/4 — the git digest stands in). The executed bytes are pinned individually
+      by design1_5_1.item_1_repository_and_package.target_file_digests.'
+  rfc_adr_versions:
+    status: RECORDED
+    value:
+    - role: primary_adr
+      path: tos-spec/src/part-1-foundation/ADR-002-014-Hard-Safety-Envelope-and-Runtime-Safety-Profile-Governance.md
+      sha256: ba84bb15e30658323d9be6f9cf11fe16a90569789a22f96a2db9203b649f6709
+    - role: design_document
+      path: docs/plans/2026-07-25-tos-safety-profile-governance-design.md
+      sha256: cae316b02bed99e11bfad1e6b868ee8782e2c8173e1ecaf5404659ce047f1531
+    - role: ver_specification
+      path: tos-spec/src/part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md
+      sha256: 5088cf11b5d1334bc721dd4cb38169e5ba1c37e503f7df20c878d0c392bd2575
+    - role: boundary_design_1
+      path: docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md
+      sha256: 2449f18d6088e21f601da623d27e6eff74066661f5d92116db2eda1a59b5a988
+    reason: The corpus documents carry no separate version field; their content sha256 is the version
+      identity.
+  hard_safety_envelope_version:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  runtime_safety_profile_version:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  human_authority_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  effective_principal_graph_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  evidence_integrity_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  recovery_barrier_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  critical_input_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  venue_constraint_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  trading_approval_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  currentness_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  restricted_live_trial_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  broker_capability_profile_version:
+    status: NOT_APPLICABLE_EV_L1
+    reason: Evidence Register broker_capability_profile_version for this row = 'TBD'; the row's minimum
+      evidence level (EV-L1/2) carries no +Broker suffix and no Broker Capability Profile instance exists
+      (template only). P0-2 is not in this run's scope.
+  verification_profile_version:
+    status: RECORDED
+    value:
+      version: 2.1 (PROPOSED — P0-1 open)
+      register_column_value: 2.1-PROPOSED
+      artifact:
+        path: tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml
+        sha256: 91a374163ec60350bf6bb2785ca4766ad89696ca13ae0b9d60434a572d8c7d0c
+      approval_state: PROPOSED — P0-1 (bounds approval) OPEN
+    reason: Recorded, not approved. VER §6 numeric bounds remain unapproved; no bound value is consumed
+      by this run (bounds are hypothesis-injected, not hardcoded).
+  database_schema_migration_version:
+    status: NOT_APPLICABLE_EV_L1
+    reason: EV-L1 model/property verification exercises no persistence substrate; durable persistence
+      is the deferred /2 stage.
+  deployment_manifest_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'Nothing is deployed: the kernel is non-transmitting and is executed in-process by pytest.'
+  workload_identities_and_key_versions:
+    status: NOT_APPLICABLE_EV_L1
+    reason: No workload identity, credential, or key material is used — the run is hermetic (no network,
+      no .env, no clock authority).
+  environment_identifier:
+    status: RECORDED
+    value: *id001
+  test_harness_version:
+    status: RECORDED
+    value: *id002
+  fault_injection_schedule_and_seed:
+    status: PARTIAL_EV_L1
+    value:
+      fault_schedule:
+        status: NOT_APPLICABLE_EV_L1
+        reason: 'Fault injection begins at EV-L2 (VER §5); design #1 §5.1 adds the §9.1 fault schedule
+          on EV-L2 entry.'
+      seed: *id003
+test_nodes:
+- tos/tests/spg/test_spg_semantic.py
+- tos/tests/spg/test_spg_records.py::test_valid_result_must_have_empty_reason_set
+- tos/tests/spg/test_spg_records.py::test_invalid_result_must_have_nonempty_reason_set
+- tos/tests/spg/test_spg_records.py::test_extra_field_forbidden

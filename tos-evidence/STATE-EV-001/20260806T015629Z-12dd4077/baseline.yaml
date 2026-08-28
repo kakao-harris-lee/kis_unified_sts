@@ -1,0 +1,326 @@
+schema: tos-evidence/baseline/v1
+run_id: 20260806T015629Z-12dd4077
+evidence_id: STATE-EV-001
+evidence_level_stage: EV-L1
+generated_utc: '2026-08-06T01:56:29.830478+00:00'
+contract:
+  run_manifest_contract: docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md §5.1 (seven
+    items)
+  ver_specification: tos-spec/src/part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md
+    §2.3/§3/§8/§9.1/§9.2/§9.5
+  completeness: 'EV-L1 subset. VER §3 requires 22 baseline fields and states that ''A run without a complete
+    baseline is invalid''; design #1 §5.1 ratifies the seven items below as the EV-L1 subset. Fields whose
+    artifacts do not exist at this stage are marked NOT_APPLICABLE_EV_L1 with a reason. Under VER §3''s
+    full standard this baseline is complete for EV-L1 only and is NOT a complete baseline for EV-L2 and
+    above.'
+evidence_register_row:
+  source: tos-spec/src/part-1-foundation/verification/EVIDENCE-REGISTER-002.csv
+  evidence_id: STATE-EV-001
+  domain: Orthogonal State
+  title: Orthogonal Composite Persistence
+  primary_adr: ADR-002-005
+  criticality: Critical
+  minimum_evidence_level: EV-L1/2
+  status_at_run_time: READY
+  implementation_owner: ai-impl(claude-orchestrated)
+  evidence_owner: operator
+  independent_reviewer: ai-review(decorrelated)+operator-countersign
+design1_5_1:
+  item_1_repository_and_package:
+    git_commit_sha: 12dd40778b0237ea6992a3b0a9ecadb10f865f0f
+    git_short_sha: 12dd4077
+    tos_package_version: 0.0.1
+    worktree:
+      clean: true
+      untracked: []
+      modified_unstaged: []
+      staged: []
+      all_dirty_paths: []
+      note: 'A non-empty list does not by itself invalidate the run: the executed files are pinned individually
+        by target_file_digests below. Paths outside the executed set belong to other work in the same
+        worktree.'
+    worktree_after_run:
+      clean: false
+      untracked:
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/junit.xml
+      modified_unstaged: []
+      staged: []
+      all_dirty_paths:
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/junit.xml
+      note: 'A non-empty list does not by itself invalidate the run: the executed files are pinned individually
+        by target_file_digests below. Paths outside the executed set belong to other work in the same
+        worktree.'
+    worktree_delta:
+      became_dirty_during_run:
+      - tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/junit.xml
+      became_clean_during_run: []
+      stable: false
+    target_files_clean: true
+    target_files_stable_during_run: true
+    target_file_digests:
+    - path: tools/tos_evidence_run.py
+      sha256_before_run: 562c52eebc1758ccf804b55c2eb03a1887a07014433d649ec0e01a7a143fb0aa
+      sha256_after_run: 562c52eebc1758ccf804b55c2eb03a1887a07014433d649ec0e01a7a143fb0aa
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: false
+    - path: tos/src/tos/orthostate/__init__.py
+      sha256_before_run: c866fc0fd8dc7bb0961f7550e2d9e73d1dfc4819afbc341c1f23fe4e0b11f632
+      sha256_after_run: c866fc0fd8dc7bb0961f7550e2d9e73d1dfc4819afbc341c1f23fe4e0b11f632
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/_base.py
+      sha256_before_run: 2c1b8bb6c73ee8f73697ecc5e33d149a80efd7fdf27550b2f148248a2b34a40e
+      sha256_after_run: 2c1b8bb6c73ee8f73697ecc5e33d149a80efd7fdf27550b2f148248a2b34a40e
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/predicates.py
+      sha256_before_run: 7265e75af582048fba54d757e5344a9d467348738a37dec7898df4c30db897c0
+      sha256_after_run: 7265e75af582048fba54d757e5344a9d467348738a37dec7898df4c30db897c0
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/records.py
+      sha256_before_run: 8dabc903e03d039fb5292d5094a7d87cb46f073965a163c12eb1c3f167285cd2
+      sha256_after_run: 8dabc903e03d039fb5292d5094a7d87cb46f073965a163c12eb1c3f167285cd2
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/state.py
+      sha256_before_run: aa68710f84ab21ba93d68d132a607ecb8f139f1acabde6e515712dc9599de0b3
+      sha256_after_run: aa68710f84ab21ba93d68d132a607ecb8f139f1acabde6e515712dc9599de0b3
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/vocabulary.py
+      sha256_before_run: 67dda3c7eed990f3150273fcf6f00e7ad8bca5bcf5fb101d37573f289fcc37d4
+      sha256_after_run: 67dda3c7eed990f3150273fcf6f00e7ad8bca5bcf5fb101d37573f289fcc37d4
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/tests/orthostate/test_orthostate_composite.py
+      sha256_before_run: b764693802b2494b1fe86f2c737f7756d8857f13a3a32b8e472b8fe3398b3003
+      sha256_after_run: b764693802b2494b1fe86f2c737f7756d8857f13a3a32b8e472b8fe3398b3003
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/tests/orthostate/test_orthostate_coupling.py
+      sha256_before_run: 0465aba77727992042312a199959d8f71c161b04940eec81c44a169de6eace65
+      sha256_after_run: 0465aba77727992042312a199959d8f71c161b04940eec81c44a169de6eace65
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/tests/orthostate/test_orthostate_vocabulary.py
+      sha256_before_run: eabf04b0f1a030b3066f00ba0065bab652f8286c60f7a08336736398f3f291f8
+      sha256_after_run: eabf04b0f1a030b3066f00ba0065bab652f8286c60f7a08336736398f3f291f8
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+  item_2_interpreter_and_dependencies:
+    python:
+      version: 3.12.2
+      version_full: 3.12.2 (main, Dec 11 2025, 16:36:08) [Clang 17.0.0 (clang-1700.4.4.1)]
+      implementation: CPython
+      executable: /Users/harris/Development/private/kis_unified_sts/.venv/bin/python
+    installed_versions_measured:
+      pydantic: 2.12.5
+      hypothesis: 6.151.5
+      pytest: 9.0.2
+      numpy: 1.26.4
+      pandas: 2.3.3
+      pyyaml: 6.0.3
+      tos: NOT_INSTALLED
+    pinned_in_tos_pyproject:
+      pydantic: 2.12.5
+      numpy: 2.4.0
+      pandas: 2.3.3
+      pyyaml: 6.0.3
+      pytest: 9.0.2
+      hypothesis: 6.150.2
+    pins_satisfied: false
+    pin_vs_installed_drift:
+    - distribution: hypothesis
+      pinned: 6.150.2
+      installed: 6.151.5
+    - distribution: numpy
+      pinned: 2.4.0
+      installed: 1.26.4
+    drift_note: 'pins_satisfied is the machine-readable claim; an empty drift list = the executed interpreter
+      matches every pin. A non-empty list is recorded, not resolved: the installed version is what executed.'
+  item_3_execution_environment: &id001
+    os: Darwin
+    os_release: 25.5.0
+    machine: arm64
+    platform: macOS-26.5.2-arm64-arm-64bit
+    python_implementation: CPython
+  item_4_harness_version: &id002
+    harness_path: tools/tos_evidence_run.py
+    harness_sha256: 562c52eebc1758ccf804b55c2eb03a1887a07014433d649ec0e01a7a143fb0aa
+    harness_tracked: true
+    harness_at_commit: aac2827bb5941603705da735ea079129ce3d942a
+    harness_dirty: false
+    pytest_version: 9.0.2
+    note: 'design #1 §5.1 item 4 — Phase 1 harness version = git digest, which exists only once the harness
+      is committed. Until then harness_at_commit is NOT_IN_COMMIT and harness_sha256 is the only identity
+      of the code that ran.'
+  item_5_seed_policy: &id003
+    policy: fixed
+    pytest_flags:
+    - --hypothesis-seed=0
+    hypothesis_seed: 0
+    note: 'VER §9.1 append-only: seed pinned before the run began.'
+  item_6_consumed_configuration_artifacts:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No configuration artifact is consumed: bounds are hypothesis-injected generated values, not
+      read from a profile, and the run is hermetic (no .env, no YAML).'
+  item_7_retained_artifact_digests: Enumerated in manifest.yaml (artifacts) and closed over by sha256sums.txt,
+    which is written last and covers every retained file including the manifest.
+ver_002_001_section_3_baseline:
+  repository_commit_sha:
+    status: RECORDED
+    value: 12dd40778b0237ea6992a3b0a9ecadb10f865f0f
+  build_artifact_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'Phase 1 executes from the source tree; no built distribution artifact is produced or consumed
+      (design #1 §5.1 items 1/4 — the git digest stands in). The executed bytes are pinned individually
+      by design1_5_1.item_1_repository_and_package.target_file_digests.'
+  rfc_adr_versions:
+    status: RECORDED
+    value:
+    - role: primary_adr
+      path: tos-spec/src/part-1-foundation/ADR-002-005-Intent-Transmission-Attempt-Broker-Order-and-Knowledge-State-Model.md
+      sha256: 025c02cf8638f6aed84faf22f724c47bbc0af390d3d189fa25ef065a8cd73d51
+    - role: design_document
+      path: docs/plans/2026-07-25-tos-orthogonal-state-design.md
+      sha256: e2d9612bf26a48dfad6581d49d549229cdb247a59d20e616d87d43a4c2ddac49
+    - role: ver_specification
+      path: tos-spec/src/part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md
+      sha256: 217a43ab1b32e04fe6515316a7383c3e9e75bb177ed18c7c7e7267ca0a3c2a38
+    - role: boundary_design_1
+      path: docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md
+      sha256: 2449f18d6088e21f601da623d27e6eff74066661f5d92116db2eda1a59b5a988
+    reason: The corpus documents carry no separate version field; their content sha256 is the version
+      identity.
+  hard_safety_envelope_version:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  runtime_safety_profile_version:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  human_authority_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  effective_principal_graph_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  evidence_integrity_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  recovery_barrier_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  critical_input_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  venue_constraint_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  trading_approval_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  currentness_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  restricted_live_trial_policy_generation_and_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      an EV-L1 model/property run consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER
+      §3).'
+  broker_capability_profile_version:
+    status: NOT_APPLICABLE_EV_L1
+    reason: Evidence Register broker_capability_profile_version for this row = 'N/A'; the row's minimum
+      evidence level (EV-L1/2) carries no +Broker suffix and no Broker Capability Profile instance exists
+      (template only). P0-2 is not in this run's scope.
+  verification_profile_version:
+    status: RECORDED
+    value:
+      version: 2.1 (PROPOSED — P0-1 open)
+      register_column_value: 2.1-PROPOSED
+      artifact:
+        path: tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml
+        sha256: d837c7e74b0fbe70d7cf2dfb30e412a29042577a0a38dcba22c649dd457d5064
+      approval_state: PROPOSED — P0-1 (bounds approval) OPEN
+    reason: Recorded, not approved. VER §6 numeric bounds remain unapproved; no bound value is consumed
+      by this run (bounds are hypothesis-injected, not hardcoded).
+  database_schema_migration_version:
+    status: NOT_APPLICABLE_EV_L1
+    reason: EV-L1 model/property verification exercises no persistence substrate; durable persistence
+      is the deferred /2 stage.
+  deployment_manifest_digest:
+    status: NOT_APPLICABLE_EV_L1
+    reason: 'Nothing is deployed: the kernel is non-transmitting and is executed in-process by pytest.'
+  workload_identities_and_key_versions:
+    status: NOT_APPLICABLE_EV_L1
+    reason: No workload identity, credential, or key material is used — the run is hermetic (no network,
+      no .env, no clock authority).
+  environment_identifier:
+    status: RECORDED
+    value: *id001
+  test_harness_version:
+    status: RECORDED
+    value: *id002
+  fault_injection_schedule_and_seed:
+    status: PARTIAL_EV_L1
+    value:
+      fault_schedule:
+        status: NOT_APPLICABLE_EV_L1
+        reason: 'Fault injection begins at EV-L2 (VER §5); design #1 §5.1 adds the §9.1 fault schedule
+          on EV-L2 entry.'
+      seed: *id003
+ver_002_001_section_3_unmet_fields:
+- broker_capability_profile_version
+- build_artifact_digest
+- critical_input_policy_generation_and_digest
+- currentness_policy_generation_and_digest
+- database_schema_migration_version
+- deployment_manifest_digest
+- effective_principal_graph_generation_and_digest
+- evidence_integrity_policy_generation_and_digest
+- fault_injection_schedule_and_seed
+- hard_safety_envelope_version
+- human_authority_policy_generation_and_digest
+- recovery_barrier_policy_generation_and_digest
+- restricted_live_trial_policy_generation_and_digest
+- runtime_safety_profile_version
+- trading_approval_policy_generation_and_digest
+- venue_constraint_policy_generation_and_digest
+- workload_identities_and_key_versions
+ver_002_001_section_3_unmet_note: 'VER §3 line 109 (''A run without a complete baseline is invalid'')
+  has no ''as applicable'' clause. This list names every field that is not RECORDED, so the gap is machine-checkable:
+  an empty list would be the claim that the baseline is complete, and this run does not make that claim.'
+test_nodes:
+- tos/tests/orthostate/test_orthostate_composite.py
+- tos/tests/orthostate/test_orthostate_vocabulary.py
+- tos/tests/orthostate/test_orthostate_coupling.py::test_coupling_negative_fixtures_are_representable_and_flagged

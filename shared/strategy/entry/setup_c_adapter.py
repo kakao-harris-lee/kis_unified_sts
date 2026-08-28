@@ -119,6 +119,11 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         forecast_client: Any | None = None,
         gate_cfg: GateConfig | None = None,
     ) -> None:
+        # Assigned BEFORE super().__init__ on purpose: EntrySignalGenerator's
+        # __init__ sets self.config and then calls self._validate_config(), and
+        # that validation must be able to see the client to detect the
+        # "forecast_integration enabled but nothing wired" misconfiguration.
+        self._forecast_client = forecast_client
         super().__init__(config)
         from shared.decision.setups.event_reaction import (
             SetupCConfig,
@@ -136,7 +141,6 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
             no_entry_after_minutes_since_open=config.no_entry_after_minutes_since_open,
         )
         self._setup = SetupCEventReaction(config=setup_cfg)
-        self._forecast_client = forecast_client
         self._gate_cfg = gate_cfg
         self._daily_bias_provider = _daily_bias_provider_class()(
             bias_min_confidence=config.daily_bias_min_confidence,
@@ -159,12 +163,47 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         )
 
     def _event_passes_filter(self, event_score: Any | None) -> bool:
-        """Return True if event_score meets the configured impact threshold."""
+        """Return True if event_score meets the configured impact threshold.
+
+        SETTLED 2026-08-05 by operator judgment: a missing score is fail-OPEN.
+
+        Decision: when a wired forecast client returns None (service down, score
+        stale, or nothing published yet), this method returns True and defers to
+        the legacy ``min_impact_tier`` gate - the behaviour the ratified plan
+        specified (``docs/superpowers/plans/archive/
+        2026-05-13-forecast-aware-paradigm.md`` lines 3147-3158)::
+
+            Returns True when:
+            - forecast_integration is disabled (legacy tier filter handles
+              gating), OR
+            - event_score is None (let legacy tier filter decide), OR
+            - event_score.impact_score >= min_event_impact_score
+
+        Rationale: fail-open here is not "unguarded". The legacy
+        ``min_impact_tier`` gate still runs and still rejects low-tier events,
+        so a forecast outage degrades Setup C to its pre-forecast selectivity
+        rather than opening it up. Weighed against that, letting a forecast-side
+        failure halt Setup C entirely is the worse outcome.
+
+        History: the plan's fail-OPEN predicate was inverted to fail-CLOSED by
+        ``81a10e53`` (2026-06-25, "Close workbench QA gap and advance priority
+        gates"), which in the same commit added ``_latest_event_score`` and
+        wired the filter into ``generate()`` for the first time - without review
+        or ratification. No caller ever passed a ``forecast_client``, so the
+        score was always None and Setup C emitted exactly zero signals for the
+        next six weeks. ``4ac356f0`` (2026-08-05) closed the SILENT path -
+        ``_validate_config`` now raises when the feature is enabled with no
+        client wired, and the shipped config sets ``enabled: false`` - but left
+        the inverted predicate in place. This change restores the predicate
+        itself; the wiring guard and the shipped ``enabled: false`` stay.
+        """
         fi = self.config.forecast_integration
         if not fi.enabled:
             return True
         if event_score is None:
-            return False
+            # Fail-open by 2026-08-05 operator judgment: the legacy
+            # min_impact_tier gate still decides. See the docstring above.
+            return True
         return event_score.impact_score >= fi.min_event_impact_score
 
     async def _latest_event_score(self) -> Any | None:
@@ -197,6 +236,33 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         assert (
             self.config.no_entry_after_minutes_since_open > 0
         ), "no_entry_after_minutes_since_open must be > 0"
+        # Deliberately `raise`, not `assert`: asserts are stripped under
+        # `python -O`, and this guard exists precisely to stop a silent
+        # zero-signal deployment. Runs at construction (base __init__ calls
+        # this), so it fires at startup rather than at the first live event.
+        if self.config.forecast_integration.enabled and self._forecast_client is None:
+            raise ValueError(
+                "setup_c_event_reaction is misconfigured: "
+                "forecast_integration.enabled is true but no forecast client was "
+                "supplied to SetupCEntryAdapter. _latest_event_score() can then "
+                "only ever return None, so the forecast feature is inert while "
+                "the config claims it is on: thresholds silently fall back to "
+                "ATR and the score filter can never discriminate. From "
+                "2026-06-25 (commit 81a10e53) until 2026-08-05 this same "
+                "misconfiguration was actively lethal - _event_passes_filter "
+                "then rejected a None score, so EVERY qualifying event was "
+                "rejected as 'forecast_event_score_missing' and Setup C emitted "
+                "zero signals in silence. The predicate is fail-open again as of "
+                "the 2026-08-05 operator judgment, but an enabled-yet-unwired "
+                "feature is still a misconfiguration and still fails loudly "
+                "here. Two ways out: (1) construct the adapter with "
+                "forecast_client=<object exposing async get_latest_event_score()> "
+                "- note that the strategy factory path "
+                "(shared/strategy/factory.py -> EntryRegistry.create) does NOT "
+                "pass one today, so it must be wired first; or (2) set "
+                "strategy.entry.params.forecast_integration.enabled: false in "
+                "config/strategies/futures/setup_c_event_reaction.yaml."
+            )
 
     @property
     def name(self) -> str:
@@ -225,6 +291,12 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         ):
             event_score = await self._latest_event_score()
             if not self._event_passes_filter(event_score):
+                # Unreachable while the predicate fails open on a missing score
+                # (it only returns False for a *published* below-threshold
+                # score).  Kept as the fail-safe label should the predicate
+                # ever be re-inverted; unreachability is pinned by
+                # test_production_config_emits_signal_for_qualifying_event
+                # (Phase 2).
                 reason = "forecast_event_score_missing"
                 if event_score is not None:
                     reason = (

@@ -1,6 +1,7 @@
 ---
 name: strategy-builder
 description: "노코드 전략 빌더 전문가. Next.js 비주얼 빌더(/builder)에서 만든 전략을 paper로 연결, builder_v1 entry/exit, 지표 카탈로그, KIS 프리셋, builder→paper bridge 관리."
+model: sonnet
 ---
 
 # Strategy Builder — 노코드 전략 빌더 전문가

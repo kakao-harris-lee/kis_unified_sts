@@ -147,6 +147,83 @@ _SIGNALS_ALL_INSERT_SQL = SIGNALS_ALL_INSERT_SQL
 _risk_params_for_runtime_capital = _runtime_config.risk_params_for_runtime_capital
 
 
+def _load_execution_section() -> dict:
+    """Read ``config/execution.yaml::execution``, tolerating an absent file.
+
+    A MISSING file is degradable (the model defaults are safe). A file that
+    exists but is malformed is not — that is handled by the config model, not
+    swallowed here.
+    """
+    try:
+        section = ConfigLoader.load("execution.yaml").get("execution", {})
+    except (
+        InvalidConfigError,
+        MissingConfigError,
+        OSError,
+        yaml.YAMLError,
+        KeyError,
+        TypeError,
+    ):
+        return {}
+    return dict(section) if isinstance(section, dict) else {}
+
+
+def build_execution_config(
+    *,
+    raw_exec_cfg: dict,
+    mode: str,
+    asset_class: str,
+):
+    """Build the orchestrator's ``ExecutionConfig`` from the whole YAML section.
+
+    Forwards the WHOLE section rather than a whitelist. The old whitelist
+    silently dropped any key it predated, so ``execution.yaml`` stopped being
+    the source of truth for this path the moment a knob was added.
+    ``ExecutionConfig`` folds the legacy ``orders_per_second`` spelling itself
+    and rejects unknown keys outright, so passing the section through is both
+    complete and loud.
+
+    Raises rather than returning a degraded config: the caller must NOT catch
+    this. An executor that fails to build becomes ``None``, and a ``None``
+    executor makes the exit path report fills that never reached the broker.
+
+    Deliberately does NOT police the ``mode`` vocabulary. Two different knobs
+    are both spelled ``TRADING_MODE``: the orchestrator's deploy knob is
+    ``paper|live`` (docker-compose + ``trading_loop_entrypoint.sh``, which
+    rejects anything else), while ``ExecutionConfig`` speaks
+    ``PAPER|MOCK|REAL``. Rejecting ``LIVE`` here would make the live
+    orchestrator unstartable by any documented configuration, because no value
+    satisfies both. The caller owns that check, inside its own degrade handler.
+
+    Args:
+        raw_exec_cfg: The ``execution:`` section as loaded from YAML.
+        mode: Trading mode to stamp onto the config, uppercased by the caller.
+        asset_class: Owns the rate-limit bucket key.
+
+    Returns:
+        A validated ``ExecutionConfig``.
+
+    Raises:
+        pydantic.ValidationError: The section carries an unknown or invalid
+            key. Loud by design — see above.
+    """
+    from shared.execution.config import ExecutionConfig
+
+    exec_kwargs: dict[str, Any] = dict(raw_exec_cfg)
+    # Owned by the orchestrator; override whatever the file says.
+    exec_kwargs.update(
+        trading_mode=mode,
+        account_no=(
+            os.getenv("KIS_FUTURES_ACCOUNT_NO", os.getenv("KIS_ACCOUNT_NO", ""))
+            if asset_class == "futures"
+            else os.getenv("KIS_ACCOUNT_NO", "")
+        ),
+        redis_url=os.getenv("REDIS_URL", ""),
+        rate_limit_key=asset_class,
+    )
+    return ExecutionConfig(**exec_kwargs)
+
+
 class TradingOrchestrator:
     """트레이딩 오케스트레이터
 
@@ -1193,81 +1270,43 @@ class TradingOrchestrator:
                     self._mock_mirror = None
         else:
             # KIS execution via shared.execution.OrderExecutor (MOCK/REAL).
+            mode = (
+                self.config.execution_mode or os.getenv("TRADING_MODE", "MOCK")
+            ).upper()
+
+            # ONLY the config construction is outside the try. Everything
+            # inside that try degrades to `self._order_executor = None`, and a
+            # None executor on the exit path falls through to the mock branch —
+            # every exit then REPORTS FILLED at the requested price while
+            # nothing reaches the broker, behind a single startup WARNING. A
+            # malformed execution.yaml is not a degradable condition.
+            #
+            # The `mode` VOCABULARY check stays inside the try below, where it
+            # was: this orchestrator's TRADING_MODE space is paper|live while
+            # ExecutionConfig's is PAPER|MOCK|REAL, so `mode` is "PAPER" or
+            # "LIVE" on every production path. Hoisting that check out here
+            # would make the live stack unstartable by any documented
+            # configuration.
+            exec_cfg = build_execution_config(
+                raw_exec_cfg=_load_execution_section(),
+                mode=mode,
+                asset_class=self.config.asset_class,
+            )
+
             try:
-                from shared.execution.config import ExecutionConfig
                 from shared.execution.executor import OrderExecutor
 
-                mode = (
-                    self.config.execution_mode or os.getenv("TRADING_MODE", "MOCK")
-                ).upper()
+                # Vocabulary gate — degradable by design. LIVE/PAPER land here
+                # and leave `_order_executor = None`, exactly as at HEAD. The
+                # TRADING_MODE collision that makes this unreachable for a real
+                # live order is a separate, un-fixed item; do not "fix" it by
+                # mapping live->REAL, which would switch a live order path on
+                # without a gate.
                 if mode not in ("MOCK", "REAL"):
                     raise ValueError(
-                        f"execution_mode must be MOCK or REAL for live execution, got {mode!r}"
+                        "execution_mode must be MOCK or REAL for live "
+                        f"execution, got {mode!r}"
                     )
-
-                try:
-                    raw_exec_cfg = ConfigLoader.load("execution.yaml").get(
-                        "execution", {}
-                    )
-                except (
-                    InvalidConfigError,
-                    MissingConfigError,
-                    OSError,
-                    yaml.YAMLError,
-                    KeyError,
-                    TypeError,
-                ):
-                    raw_exec_cfg = {}
-
-                exec_kwargs: dict[str, Any] = {}
-                if isinstance(raw_exec_cfg, dict):
-                    if "max_retries" in raw_exec_cfg:
-                        exec_kwargs["max_retries"] = raw_exec_cfg["max_retries"]
-                    if "retry_delay" in raw_exec_cfg:
-                        exec_kwargs["retry_delay"] = raw_exec_cfg["retry_delay"]
-                    if "order_request_timeout_seconds" in raw_exec_cfg:
-                        exec_kwargs["order_request_timeout_seconds"] = raw_exec_cfg[
-                            "order_request_timeout_seconds"
-                        ]
-                    # Backward compatibility: execution.yaml used orders_per_second key.
-                    if "orders_per_second" in raw_exec_cfg:
-                        exec_kwargs["requests_per_second"] = raw_exec_cfg[
-                            "orders_per_second"
-                        ]
-                    elif "requests_per_second" in raw_exec_cfg:
-                        exec_kwargs["requests_per_second"] = raw_exec_cfg[
-                            "requests_per_second"
-                        ]
-                    if "futures_fill_check_enabled" in raw_exec_cfg:
-                        exec_kwargs["futures_fill_check_enabled"] = raw_exec_cfg[
-                            "futures_fill_check_enabled"
-                        ]
-                    if "futures_fill_check_poll_interval_seconds" in raw_exec_cfg:
-                        exec_kwargs["futures_fill_check_poll_interval_seconds"] = (
-                            raw_exec_cfg["futures_fill_check_poll_interval_seconds"]
-                        )
-                    if "futures_fill_check_timeout_seconds" in raw_exec_cfg:
-                        exec_kwargs["futures_fill_check_timeout_seconds"] = (
-                            raw_exec_cfg["futures_fill_check_timeout_seconds"]
-                        )
-                    if "futures_auto_cancel_unfilled" in raw_exec_cfg:
-                        exec_kwargs["futures_auto_cancel_unfilled"] = raw_exec_cfg[
-                            "futures_auto_cancel_unfilled"
-                        ]
-
-                exec_cfg = ExecutionConfig(
-                    trading_mode=mode,
-                    account_no=(
-                        os.getenv(
-                            "KIS_FUTURES_ACCOUNT_NO", os.getenv("KIS_ACCOUNT_NO", "")
-                        )
-                        if self.config.asset_class == "futures"
-                        else os.getenv("KIS_ACCOUNT_NO", "")
-                    ),
-                    redis_url=os.getenv("REDIS_URL", ""),
-                    rate_limit_key=self.config.asset_class,
-                    **exec_kwargs,
-                )
 
                 auth_manager = (
                     getattr(self._kis_client, "auth_manager", None)
@@ -3853,10 +3892,13 @@ class TradingOrchestrator:
                 # open — creating a tracker-vs-broker mismatch ("phantom").
                 # This is a deliberate trade-off: in an emergency we prefer a
                 # clean tracker over a dangling local entry, on the assumption
-                # that the operator will reconcile via the daily Edge Review
-                # script (`scripts/analysis/recover_positions.py`) and the
-                # critical-level alert below. If you're in this branch on
-                # live, MANUALLY VERIFY the broker side immediately.
+                # that the operator will reconcile via
+                # `scripts/trading/recover_positions.py` and the critical-level
+                # alert below. That script is ADVISORY ONLY — it reports a
+                # broker-vs-local divergence and writes a sentinel, but no
+                # process reads either, so it blocks nothing and resume is not
+                # fenced. If you're in this branch on live, MANUALLY VERIFY the
+                # broker side immediately.
                 is_filled, fill_price = True, exit_price
 
             if is_filled:
@@ -5939,6 +5981,20 @@ class TradingOrchestrator:
             "exit_trail_activation_atr",
             "exit_trail_atr_multiplier",
             "exit_max_hold_days",
+        ):
+            if key in signal_meta:
+                pos_metadata[key] = signal_meta[key]
+        # Forward Setup A RISK_OFF boost telemetry from signal.metadata. This is
+        # *entry* evidence, not an exit override, hence the separate block: it
+        # is the durable fingerprint that the LLM confidence boost fired, which
+        # the 1.0 confidence cap otherwise erases. The conditional copy is
+        # load-bearing — ``llm_risk_off_boost_applied`` is explicitly False when
+        # the helper ran and declined, and absent when it never ran at all, and
+        # those two states must stay distinguishable in the persisted record.
+        for key in (
+            "llm_risk_off_boost_applied",
+            "llm_risk_off_base_confidence",
+            "llm_risk_off_raw_confidence",
         ):
             if key in signal_meta:
                 pos_metadata[key] = signal_meta[key]

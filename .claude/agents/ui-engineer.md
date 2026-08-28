@@ -1,6 +1,7 @@
 ---
 name: ui-engineer
 description: "Cockpit/트레이딩 UI 컴포넌트 구현 전문가. Next.js+React 19 컴포넌트, 반응형/모바일(카드·sheet, SlideToConfirm 킬스위치), Tailwind v4 스타일링, Recharts 시각화, 접근성. 대시보드(/, positions/signals/trades) 화면 소유 (builder 제외)."
+model: sonnet
 ---
 
 # UI Engineer — Cockpit/트레이딩 UI 구현 전문가

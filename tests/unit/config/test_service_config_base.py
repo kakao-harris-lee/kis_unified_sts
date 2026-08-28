@@ -4,7 +4,7 @@ import pytest
 from pydantic import Field
 
 from shared.config import ConfigNotFoundError
-from shared.config.base import ServiceConfigBase
+from shared.config.base import ConfigSectionNotFoundError, ServiceConfigBase
 
 
 class SimpleConfig(ServiceConfigBase):
@@ -72,19 +72,20 @@ other_service:
         assert config.threshold == 0.9
         assert config.enabled is True  # default
 
-    def test_from_yaml_section_not_found(self, tmp_path):
-        """Test that missing section uses entire YAML."""
+    def test_from_yaml_section_not_found_raises(self, tmp_path):
+        """An unresolvable section is a config defect, not a silent fallback.
+
+        This previously fell back to the root document, so a typo'd or moved
+        section produced pure Pydantic defaults with no error at all.
+        """
         yaml_file = tmp_path / "config.yaml"
         yaml_file.write_text("""
 name: root_level
 threshold: 0.6
 """)
 
-        # Request non-existent section - should use root level
-        config = SimpleConfig.from_yaml(str(yaml_file), section="nonexistent")
-
-        assert config.name == "root_level"
-        assert config.threshold == 0.6
+        with pytest.raises(ConfigSectionNotFoundError, match="nonexistent"):
+            SimpleConfig.from_yaml(str(yaml_file), section="nonexistent")
 
     def test_from_yaml_uses_default_file(self, tmp_path, monkeypatch):
         """Test that default config file from class attribute is used."""
@@ -666,3 +667,215 @@ class TestServiceConfigBaseFromYAMLSections:
         )
 
         assert config.name == "valid_section"
+
+
+class DottedSectionConfig(ServiceConfigBase):
+    """Declares a nested section as a dotted path, like the futures setup configs."""
+
+    _default_section = "strategy.entry.params"
+
+    name: str = Field(default="default")
+    threshold: float = Field(default=0.5)
+
+
+class MissingSectionConfig(ServiceConfigBase):
+    """Declares a section that does not exist in the document it is pointed at."""
+
+    _default_section = "typo_section"
+
+    name: str = Field(default="default")
+
+
+class TestSectionResolution:
+    """A requested section either resolves, or loading fails loudly.
+
+    Returning Pydantic defaults for a section that could not be resolved is the
+    defect these tests seal: it is indistinguishable from a config that was
+    read and happened to match every default.
+    """
+
+    def test_dotted_section_resolves_nested_path(self, tmp_path):
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text("""
+strategy:
+  name: outer_ignored
+  entry:
+    params:
+      name: from_nested
+      threshold: 0.9
+""")
+
+        config = DottedSectionConfig.from_yaml(str(yaml_file))
+
+        assert config.name == "from_nested"
+        assert config.threshold == 0.9
+
+    def test_literal_key_wins_over_dotted_traversal(self, tmp_path):
+        """A literal top-level key containing dots is matched before traversal."""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text("""
+"strategy.entry.params":
+  name: from_literal
+strategy:
+  entry:
+    params:
+      name: from_traversal
+""")
+
+        assert DottedSectionConfig.from_yaml(str(yaml_file)).name == "from_literal"
+
+    def test_partially_resolvable_dotted_path_raises(self, tmp_path):
+        """Traversal that dies partway through is unresolvable, not a fallback."""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text("""
+strategy:
+  entry:
+    type: something_else
+""")
+
+        with pytest.raises(ConfigSectionNotFoundError, match="strategy.entry.params"):
+            DottedSectionConfig.from_yaml(str(yaml_file))
+
+    def test_dotted_path_through_non_mapping_raises(self, tmp_path):
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text("""
+strategy:
+  entry: "not a mapping"
+""")
+
+        with pytest.raises(ConfigSectionNotFoundError):
+            DottedSectionConfig.from_yaml(str(yaml_file))
+
+    def test_unresolvable_default_section_raises_not_defaults(self, tmp_path):
+        """The headline defect: declared section absent -> loud, never defaults."""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text("""
+some_other_section:
+  name: not_mine
+""")
+
+        with pytest.raises(ConfigSectionNotFoundError) as excinfo:
+            MissingSectionConfig.from_yaml(str(yaml_file))
+
+        message = str(excinfo.value)
+        assert "typo_section" in message
+        assert "MissingSectionConfig" in message
+        assert "some_other_section" in message  # available keys, for diagnosis
+
+    def test_section_error_is_not_a_missing_file_error(self):
+        """Must not be swallowed by ``except ConfigNotFoundError: return cls()``.
+
+        Many call sites treat a missing config *file* as an opt-in to defaults.
+        A missing *section* inside a file that does exist is a defect and must
+        not inherit that escape hatch.
+        """
+        assert not issubclass(ConfigSectionNotFoundError, ConfigNotFoundError)
+
+    def test_scalar_document_with_declared_section_raises(self, tmp_path):
+        """A document that is not a mapping cannot satisfy a declared section."""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text("- just\n- a\n- list\n")
+
+        with pytest.raises(ConfigSectionNotFoundError):
+            MissingSectionConfig.from_yaml(str(yaml_file))
+
+
+class TestSectionResolutionDoesNotOverSeal:
+    """Absent-by-design stays legal; only *unresolvable* requests fail."""
+
+    def test_present_but_empty_section_uses_defaults(self, tmp_path):
+        """``typo_section:`` written with no body is a declared, empty section."""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text("typo_section:\n")
+
+        config = MissingSectionConfig.from_yaml(str(yaml_file))
+
+        assert config.name == "default"
+
+    def test_present_but_empty_mapping_section_uses_defaults(self, tmp_path):
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text("typo_section: {}\n")
+
+        assert MissingSectionConfig.from_yaml(str(yaml_file)).name == "default"
+
+    def test_no_section_requested_still_reads_whole_document(self, tmp_path):
+        """Classes that declare no section keep reading the root document."""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text("name: root_level\nthreshold: 0.6\n")
+
+        config = SimpleConfig.from_yaml(str(yaml_file))
+
+        assert config.name == "root_level"
+        assert config.threshold == 0.6
+
+    def test_sections_merge_still_tolerates_absent_members(self, monkeypatch):
+        """``sections=[...]`` is an explicit merge-what-exists request.
+
+        Unlike a single declared section, the caller has named several keys and
+        asked for their union; an absent member is not a resolution failure.
+        """
+        monkeypatch.setattr(
+            "shared.config.base.ConfigLoader.load",
+            lambda path, **kw: {"env": {"name": "only_env"}},
+        )
+
+        config = SimpleConfig.from_yaml("fake.yaml", sections=["env", "absent"])
+
+        assert config.name == "only_env"
+
+    def test_declared_section_can_be_overridden_by_caller(self, tmp_path):
+        """An explicit ``section=`` still wins over ``_default_section``."""
+        yaml_file = tmp_path / "config.yaml"
+        yaml_file.write_text("elsewhere:\n  name: from_override\n")
+
+        config = MissingSectionConfig.from_yaml(str(yaml_file), section="elsewhere")
+
+        assert config.name == "from_override"
+
+
+class TestShippedConfigsResolveTheirDeclaredSection:
+    """Every shipped config class must actually resolve the section it declares.
+
+    This is the regression net for the whole class of defect: it fails the
+    moment a config file is restructured out from under a ``_default_section``,
+    instead of that class quietly degrading to Pydantic defaults.
+    """
+
+    def test_all_default_sections_resolve(self):
+        import importlib
+        import pkgutil
+
+        import services
+        import shared
+
+        discovered: dict[str, type[ServiceConfigBase]] = {}
+        for package in (shared, services):
+            for mod in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
+                try:
+                    module = importlib.import_module(mod.name)
+                except Exception:
+                    continue  # optional deps (talib, redis, ...) are not this test
+                for obj in vars(module).values():
+                    if (
+                        isinstance(obj, type)
+                        and issubclass(obj, ServiceConfigBase)
+                        and obj is not ServiceConfigBase
+                        and "_default_section" in obj.__dict__
+                        and obj._default_config_file is not None
+                    ):
+                        discovered[f"{obj.__module__}.{obj.__name__}"] = obj
+
+        assert discovered, "discovery found no configs — walk_packages broke"
+
+        failures = []
+        for name, cls in sorted(discovered.items()):
+            try:
+                cls.from_yaml()
+            except ConfigSectionNotFoundError as exc:
+                failures.append(f"{name}: {exc}")
+            except Exception:
+                pass  # unrelated validation/env problems are other tests' business
+
+        assert not failures, "configs whose declared section does not resolve:\n" + (
+            "\n".join(failures)
+        )

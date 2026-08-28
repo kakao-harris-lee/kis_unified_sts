@@ -1,0 +1,63 @@
+artifact_type: AGGREGATE_RISK_STATE_SNAPSHOT
+schema_version: "1.0-DRAFT"
+snapshot_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: INVALID
+issuer_principal_id: TBD
+aggregate_risk_policy:
+  policy_id: TBD
+  aggregate_risk_generation: null
+  canonical_digest: TBD
+consistency_cut:
+  cut_id: TBD
+  cut_completed: false
+  cut_time_evidence_id: TBD
+  rcl_revision: null
+  writer_epoch: null
+  recovery_generation: null
+  context_generation: null
+  constraint_generation: null
+scope:
+  environments: []
+  safety_cells: []
+  legal_portfolios: []
+  accounts: []
+  strategies: []
+  venues: []
+  instruments: []
+  currencies: []
+  global_scope_included: false
+state:
+  confirmed_positions: []
+  committed_capacity: []
+  potentially_live_orders: []
+  partial_fills: []
+  unknown_orders_and_attempts: []
+  external_and_unattributed_effects: []
+  trapped_exposure: []
+  replacement_overlap: []
+  protective_reserves_and_consumption: []
+  cash_collateral_margin_and_settlement: []
+  non_trade_transitions: []
+  concurrent_authorizations: []
+attribution_conflicts: []
+missing_or_unknown_scopes: []
+common_mode_dependencies: []
+validity:
+  issued_at: null
+  consumer_receipt_anchor: TBD
+  maximum_age_ms: null
+  invalidation_generation: null
+  invalidation_conditions: []
+authority:
+  grants_risk_allocation: false
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

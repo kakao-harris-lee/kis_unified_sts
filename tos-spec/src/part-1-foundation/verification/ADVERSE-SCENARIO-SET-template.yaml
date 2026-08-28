@@ -1,0 +1,36 @@
+artifact_type: ADVERSE_SCENARIO_SET
+schema_version: "1.0-DRAFT"
+scenario_set_id: TBD
+scenario_set_version: TBD
+aggregate_risk_generation: null
+canonical_digest: TBD
+status: DRAFT
+result: INVALID
+aggregate_risk_policy_id: TBD
+scope: []
+execution_path_scenarios: []
+partial_fill_and_ordering_scenarios: []
+cancel_amend_replace_retry_and_overlap_scenarios: []
+price_slippage_gap_volatility_and_liquidity_scenarios: []
+correlation_basis_and_hedge_failure_scenarios: []
+margin_collateral_borrow_and_currency_scenarios: []
+exercise_assignment_delivery_and_settlement_scenarios: []
+external_trapped_non_trade_and_concurrent_scenarios: []
+venue_broker_partition_and_recovery_scenarios: []
+dominance_and_pruning_proofs: []
+unbounded_credible_effects: []
+common_mode_dependencies: []
+approved_by: []
+effective_from: null
+review_due: null
+authority:
+  grants_risk_allocation: false
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

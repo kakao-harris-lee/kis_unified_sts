@@ -117,6 +117,21 @@ strategy config -> backtest -> tracking/optimization -> paper/live validation ->
   3. Registry wiring and focused unit tests.
   4. Backtest or paper validation artifacts when behavior changes materially.
 
+## Development Discipline (operator directive, 2026-08-19)
+
+- **Research first, then plan, then implement.** Before building any feature:
+  1. Survey libraries, frameworks, and standard tools that already solve the
+     problem (official docs first — `document-specialist` / Context7).
+  2. Check what this repo already implements (`shared/`, `tos/`, `tools/`,
+     `services/`) — reuse or extend before writing new surfaces.
+  3. Write the plan (reuse targets, rejected alternatives with a one-line
+     reason, minimal new surface), then implement. Send the plan through
+     `codex-gate` when it is a new feature, a new surface, or a change that is
+     hard to reverse — routine fixes, config edits, and doc changes go straight
+     to implementation, and any plan can be gated on request.
+- **Do not reinvent the wheel.** A bespoke parser/tokenizer/checker is the
+  last resort, not the first move; prefer proven tooling and existing modules.
+
 ## Development Commands
 
 ```bash
@@ -137,6 +152,53 @@ npm run dev
 npm run build
 npm run lint
 ```
+
+## Harness: Trading Platform Agent Team
+
+**Goal:** Route platform work to specialist agents, and keep adjudication (code and
+plan review) in an independent model lane.
+
+**Triggers:**
+
+- Platform work (strategy, ops, frontend, DevX, data, execution) → use the
+  `trading-harness` skill.
+- Review is **opt-in, not automatic.** Run `codex-gate` when the operator
+  explicitly asks for a review, merge gate, blocking verdict, or plan critique —
+  finishing an implementation, passing tests, or making a commit is not by itself
+  a trigger. When it does run, Codex is the reviewer of record; Claude agents
+  produce evidence, not verdicts.
+- Scope every gate run to the diff or plan under question. Do not re-adjudicate
+  already-disposed material; a fresh full-corpus review is an operator decision.
+- Keep the OpenAI Codex Claude Code plugin enabled, but keep its optional
+  stop-time review gate disabled. Run scoped reviews explicitly through
+  `codex-gate`; do not launch a fresh generic Codex task on every Claude stop.
+- Plan *authoring* is unchanged and stays on the existing Claude path. Only plan
+  *adjudication* moved to Codex.
+- Simple questions can be answered directly without the harness.
+
+**Adjudication override:** A Codex verdict never overrides the Non-Negotiable Rules
+above. Reject any finding that would violate them and record the reason.
+
+**Model lanes (cost discipline):** orchestration and `deep-reasoner` run on Opus;
+every implementation, test, debugging, audit-lens, and frontend agent runs on
+Sonnet 5 (`model:` in each `.claude/agents/*.md` file governs — do not override at
+call time); `runner`-class chores run on Haiku; the Codex forwarders stay on Haiku
+because they only relay Codex stdout. Opus for a coding agent is an exception that
+needs a stated reason (sonnet actually failed, or the change is hard to reverse).
+The `sonnet -> Opus` env remap in `~/.claude/fable/env.sh` was removed — sonnet
+means sonnet.
+
+Agent roster, skill list, directory layout, and execution detail live under
+`.claude/` — not here.
+
+### Harness Change Log
+
+| Date | Change | Scope | Reason |
+| --- | --- | --- | --- |
+| 2026-03-12 | Initial harness setup (commit `531ec227`) | all | - |
+| 2026-08-11 | Adjudication moved to Codex — added `codex-reviewer` / `codex-plan-reviewer` / `codex-gate`; demoted `code-reviewer` and `review-synthesizer` to fallback-only; replaced the `code-audit` fan-in | `agents/`, `skills/` | Prevent self-approval and secure cross-model independent adjudication |
+| 2026-08-21 | Disabled per-turn Codex stop review; kept explicit scoped `codex-gate` reviews and moved thin reviewer forwarders to Haiku | review harness | Prevent duplicate fresh Codex tasks, long Stop-hook stalls, and avoidable Claude token use |
+| 2026-08-25 | Cost rebalance — pinned `model:` per agent (Sonnet 5 for execution/audit lenses, Opus only for `architecture-auditor`, `security-auditor`, and the fallback review lane), removed the global `sonnet -> Opus` env remap, made Codex adjudication explicitly operator-triggered | `agents/`, `~/.claude/fable/`, harness docs | Every subagent was silently running on Opus; review ran more often than it was asked for |
 
 ## Documentation Map
 

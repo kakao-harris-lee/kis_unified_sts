@@ -1,0 +1,32 @@
+receipt_id: TBD
+status: UNVERIFIED
+evidence_record_id: TBD
+canonical_record_digest: TBD
+record_class: TBD
+durability_class: DENY_IF_UNSPECIFIED
+evidence_integrity_policy_id: TBD
+evidence_integrity_policy_generation: null
+evidence_integrity_policy_digest: TBD
+store_continuity_id: TBD
+store_generation: null
+durable_segment_id: TBD
+durable_position: null
+integrity_anchor_predecessor: TBD
+acknowledgement_rule: TBD
+committed_at_time_snapshot_id: TBD
+committed_at_monotonic_continuity_id: TBD
+committed_at_local_monotonic_value: null
+receipt_signer_identity: TBD
+receipt_key_generation: null
+receipt_signature: TBD
+valid_for_request_digest: TBD
+valid_for_scope_digest: TBD
+valid_for_egress_generation: null
+creates_authority: false
+creates_capacity: false
+permits_broker_transmission: false
+may_rearm: false
+
+authorization_notice: >-
+  This UNVERIFIED receipt proves no durability and grants no capacity, live
+  authorization, broker transmission, or re-arm authority.

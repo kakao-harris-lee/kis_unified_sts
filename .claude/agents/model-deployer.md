@@ -1,6 +1,7 @@
 ---
 name: model-deployer
 description: "전략/모델 배포·승격 전문가. Phase 5 Setup A/C Paper→Live 승격 게이트, futures_live.enabled + Redis suspended 플래그, 롤백, 배포 검증. RL 모델 경로 관리는 부차(재학습 시)."
+model: sonnet
 ---
 
 # Model Deployer — 전략/모델 배포·승격 전문가

@@ -1,0 +1,74 @@
+artifact_type: RUNTIME_ARTIFACT_ATTESTATION
+schema_version: 1.0-DRAFT
+attestation_id: TBD
+attestation_version: TBD
+runtime_continuity_generation: null
+canonical_digest: TBD
+status: DRAFT
+result: UNKNOWN
+release_binding:
+  software_release_policy_id: TBD
+  software_release_policy_generation: null
+  software_release_policy_digest: TBD
+  release_set_id: TBD
+  release_generation: null
+  admitted_release_set_digest: TBD
+  release_artifact_manifest_digest: TBD
+scope:
+  environment: TBD
+  safety_cell: TBD
+  capacity_domain: TBD
+  account_scope_digest: TBD
+  broker_scope_digest: TBD
+  component_scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+workload_identity: TBD
+workload_owner_epoch: null
+deployment_identity: TBD
+deployment_generation: null
+runtime_platform_identity: TBD
+actual_executable_and_image_digest: TBD
+actual_library_dependency_set_digest: TBD
+actual_plugin_and_runtime_module_set_digest: TBD
+actual_sidecar_proxy_sdk_and_signer_component_set_digest: TBD
+actual_configuration_bundle_digest: TBD
+expected_runtime_artifact_set_digest: TBD
+observed_runtime_artifact_set_digest: TBD
+runtime_artifact_match: false
+consumer_compatibility_result: UNKNOWN
+attestor_identity: TBD
+attestor_owner_epoch: null
+attestor_independence_result: UNKNOWN
+attestation_evidence_digest: TBD
+release_restriction_floor: null
+current_release_restriction_set_digest: TBD
+trustworthy_time_binding:
+  time_health_generation: null
+  receipt_anchor: null
+  attested_at: null
+  maximum_age_key: MAX_runtime_artifact_attestation_age_ms
+  age_within_approved_limit: false
+current: false
+invalidated: true
+failure_response: DENY_SEND_AND_RESTRICT
+self_report_only_is_sufficient: false
+desired_state_is_actual_state: false
+attestation_patch_permitted: false
+attestation_union_permitted: false
+authority:
+  active: false
+  creates_artifact_admission: false
+  deploys_software: false
+  activates_configuration: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_latch_gap_restriction_or_incident: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+authorization_notice: This DRAFT attestation is UNKNOWN, invalidated, and not current. Desired state, workload health, deployment status, tag, process name, or self-report cannot prove actual bytes or grant admission, authority, broker transmission, safety-state clearance, scope restoration, or re-arm.

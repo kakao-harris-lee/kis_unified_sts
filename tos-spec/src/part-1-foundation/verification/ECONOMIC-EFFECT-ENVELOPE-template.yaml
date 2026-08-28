@@ -1,0 +1,43 @@
+artifact_type: ECONOMIC_EFFECT_ENVELOPE
+schema_version: "1.0-DRAFT"
+envelope_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: UNKNOWN
+issuer_principal_id: TBD
+intent_id: TBD
+canonical_broker_command_id: TBD
+scope:
+  environment: TBD
+  safety_cell: TBD
+  broker: TBD
+  account: TBD
+  venue: TBD
+  instrument: TBD
+  contract: TBD
+  action_class: TBD
+governed_effect_dimensions: []
+credible_broker_interpretations: []
+full_and_partial_fill_prefixes: []
+zero_crossing_and_reversal_effects: []
+split_and_simultaneous_execution_effects: []
+cancel_amend_replace_overlap_effects: []
+reduce_only_and_close_only_failure_effects: []
+cash_currency_fee_margin_and_settlement_effects: []
+existing_and_potentially_live_related_effects: []
+worst_credible_effect_vector: {}
+validity:
+  issued_at: null
+  invalidation_generation: null
+  invalidation_conditions: []
+authority:
+  grants_approval: false
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

@@ -1,0 +1,223 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "urn:tos:investment-operating-profile:0.1-proposed"
+title: Investment Operating Profile
+description: >-
+  Proposed schema for human-owned investment mandate, data continuity,
+  account/broker concurrency, and end-to-end latency contracts. It supplies no
+  default bound and creates no authority.
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - profile_id
+  - profile_revision
+  - status
+  - mandate
+  - allocation
+  - market_data_continuity
+  - concurrency
+  - latency
+  - approvals
+  - non_authority
+properties:
+  schema_version: {const: "0.1-PROPOSED"}
+  profile_id: {type: string, minLength: 1}
+  profile_revision: {type: string, minLength: 1}
+  status: {enum: [PROPOSED, APPROVED, SUSPENDED, RETIRED]}
+  mandate:
+    type: object
+    additionalProperties: false
+    required:
+      - mandate_owner
+      - investment_authority
+      - objective
+      - benchmark
+      - benchmark_version
+      - horizon
+      - eligible_strategies
+      - capital_scope
+      - account_scope
+      - broker_scope
+      - prohibited_scope
+      - review_trigger
+    properties:
+      mandate_owner: {type: string, minLength: 1}
+      investment_authority: {type: string, minLength: 1}
+      objective: {type: string, minLength: 1}
+      benchmark: {type: string, minLength: 1}
+      benchmark_version: {type: string, minLength: 1}
+      horizon: {type: string, minLength: 1}
+      eligible_strategies: {$ref: "#/$defs/nonempty_strings"}
+      capital_scope: {type: string, minLength: 1}
+      account_scope: {$ref: "#/$defs/nonempty_strings"}
+      broker_scope: {$ref: "#/$defs/nonempty_strings"}
+      prohibited_scope: {$ref: "#/$defs/nonempty_strings"}
+      review_trigger: {$ref: "#/$defs/method_binding"}
+  allocation:
+    type: object
+    additionalProperties: false
+    required:
+      - allocation_authority
+      - risk_capacity_authority
+      - strategy_risk_budgets
+      - aggregation_rule
+      - correlation_and_crowding
+      - attribution
+      - capital_efficiency
+      - capacity_and_turnover
+      - degradation
+      - retirement
+    properties:
+      allocation_authority: {type: string, minLength: 1}
+      risk_capacity_authority: {type: string, minLength: 1}
+      strategy_risk_budgets: {$ref: "#/$defs/method_binding"}
+      aggregation_rule: {$ref: "#/$defs/method_binding"}
+      correlation_and_crowding: {$ref: "#/$defs/method_binding"}
+      attribution: {$ref: "#/$defs/method_binding"}
+      capital_efficiency: {$ref: "#/$defs/method_binding"}
+      capacity_and_turnover: {$ref: "#/$defs/method_binding"}
+      degradation: {$ref: "#/$defs/method_binding"}
+      retirement: {$ref: "#/$defs/method_binding"}
+  market_data_continuity:
+    type: object
+    additionalProperties: false
+    required:
+      - market_data_owner
+      - data_operations_owner
+      - exact_sources
+      - session_calendar
+      - schema_and_timestamp
+      - continuity
+      - gap_detection
+      - quarantine
+      - backfill
+      - recovery_completeness
+      - critical_input_admission
+    properties:
+      market_data_owner: {type: string, minLength: 1}
+      data_operations_owner: {type: string, minLength: 1}
+      exact_sources: {$ref: "#/$defs/nonempty_strings"}
+      session_calendar: {$ref: "#/$defs/method_binding"}
+      schema_and_timestamp: {$ref: "#/$defs/method_binding"}
+      continuity: {$ref: "#/$defs/method_binding"}
+      gap_detection: {$ref: "#/$defs/method_binding"}
+      quarantine: {$ref: "#/$defs/method_binding"}
+      backfill: {$ref: "#/$defs/method_binding"}
+      recovery_completeness: {$ref: "#/$defs/method_binding"}
+      critical_input_admission: {$ref: "#/$defs/method_binding"}
+  concurrency:
+    type: object
+    additionalProperties: false
+    required:
+      - operations_owner
+      - exact_scopes
+      - writer_epoch
+      - rcl_namespace
+      - aggregate_risk_boundary
+      - identity_and_idempotency
+      - reconciliation
+      - failure_fencing
+      - queued_work_invalidation
+      - double_trade_prevention
+      - operator_safety_state_owner
+    properties:
+      operations_owner: {type: string, minLength: 1}
+      exact_scopes: {$ref: "#/$defs/nonempty_strings"}
+      writer_epoch: {$ref: "#/$defs/method_binding"}
+      rcl_namespace: {$ref: "#/$defs/method_binding"}
+      aggregate_risk_boundary: {$ref: "#/$defs/method_binding"}
+      identity_and_idempotency: {$ref: "#/$defs/method_binding"}
+      reconciliation: {$ref: "#/$defs/method_binding"}
+      failure_fencing: {$ref: "#/$defs/method_binding"}
+      queued_work_invalidation: {$ref: "#/$defs/method_binding"}
+      double_trade_prevention: {$ref: "#/$defs/method_binding"}
+      operator_safety_state_owner: {type: string, minLength: 1}
+  latency:
+    type: object
+    additionalProperties: false
+    required:
+      - performance_owner
+      - stages
+      - end_to_end_bound
+      - load_and_fault_conditions
+      - clock_and_measurement
+      - freshness_and_ordering
+      - protective_response
+      - economic_survivability
+      - stop_and_invalidation
+      - no_gate_weakening
+    properties:
+      performance_owner: {type: string, minLength: 1}
+      stages:
+        type: array
+        minItems: 1
+        items: {$ref: "#/$defs/latency_stage"}
+      end_to_end_bound: {$ref: "#/$defs/human_bound"}
+      load_and_fault_conditions: {$ref: "#/$defs/method_binding"}
+      clock_and_measurement: {$ref: "#/$defs/method_binding"}
+      freshness_and_ordering: {$ref: "#/$defs/method_binding"}
+      protective_response: {$ref: "#/$defs/human_bound"}
+      economic_survivability: {$ref: "#/$defs/method_binding"}
+      stop_and_invalidation: {$ref: "#/$defs/method_binding"}
+      no_gate_weakening: {const: true}
+  approvals:
+    type: object
+    additionalProperties: false
+    required:
+      - system_owner
+      - architecture_board
+      - investment_authority
+      - risk_authority
+      - market_data_owner
+      - operations_owner
+      - independent_reviewer
+      - approved_at
+    properties:
+      system_owner: {type: string, minLength: 1}
+      architecture_board: {type: string, minLength: 1}
+      investment_authority: {type: string, minLength: 1}
+      risk_authority: {type: string, minLength: 1}
+      market_data_owner: {type: string, minLength: 1}
+      operations_owner: {type: string, minLength: 1}
+      independent_reviewer: {type: string, minLength: 1}
+      approved_at: {type: string, format: date-time}
+  non_authority:
+    const: >-
+      This profile and any evidence result grant no ADR acceptance, order
+      authorization, risk-capacity mutation, capital allocation, restricted-live
+      scope, or production authority.
+$defs:
+  nonempty_strings:
+    type: array
+    minItems: 1
+    items: {type: string, minLength: 1}
+  method_binding:
+    type: object
+    additionalProperties: false
+    required: [method_id, version, owner, provenance, rationale]
+    properties:
+      method_id: {type: string, minLength: 1}
+      version: {type: string, minLength: 1}
+      owner: {type: string, minLength: 1}
+      provenance: {type: string, minLength: 1}
+      rationale: {type: string, minLength: 1}
+  human_bound:
+    type: object
+    additionalProperties: false
+    required: [value, unit, statistic, comparison, owner, rationale]
+    properties:
+      value: {type: number}
+      unit: {type: string, minLength: 1}
+      statistic: {type: string, minLength: 1}
+      comparison: {enum: [GT, GTE, LT, LTE, EQ]}
+      owner: {type: string, minLength: 1}
+      rationale: {type: string, minLength: 1}
+  latency_stage:
+    type: object
+    additionalProperties: false
+    required: [stage_id, start_event, end_event, bound]
+    properties:
+      stage_id: {type: string, minLength: 1}
+      start_event: {type: string, minLength: 1}
+      end_event: {type: string, minLength: 1}
+      bound: {$ref: "#/$defs/human_bound"}

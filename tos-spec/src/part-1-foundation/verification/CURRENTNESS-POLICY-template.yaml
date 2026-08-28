@@ -1,0 +1,55 @@
+artifact_type: CURRENTNESS_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: TBD
+policy_version: TBD
+currentness_policy_generation: null
+canonical_digest: TBD
+status: DRAFT
+scope:
+  environments: []
+  safety_cells: []
+  capacity_domains: []
+  legal_portfolios: []
+  accounts: []
+  brokers: []
+  venues: []
+  instruments: []
+  action_classes: []
+required_dimensions: []
+owner_and_verifier_registry: []
+dependency_scope_and_closure_rules: []
+generation_comparison_rules: []
+minimum_restrictive_floor_rules: []
+restrictive_precedence_rules: []
+local_latch_rules: []
+cross_domain_ordering_rules: []
+normal_admission_rules: []
+degraded_protective_rules: []
+compatibility_requirements: []
+failure_responses:
+  missing: DENY_NEW_RISK
+  stale: DENY_NEW_RISK
+  conflict: HALT_OR_CONTAIN
+  unordered: DENY_NEW_RISK
+  unknown_scope: EXPAND_SCOPE_AND_DENY
+  quorum_loss: DENY_NEW_RISK
+  local_global_latch_conflict: RESTRICTIVE_STATE_WINS
+materiality_default: MATERIAL
+approved_bounds: []
+approved_residual_risks: []
+approved_by: []
+effective_from: null
+review_due: null
+authority:
+  policy_active: false
+  creates_currentness_fact: false
+  creates_approval: false
+  creates_intent: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

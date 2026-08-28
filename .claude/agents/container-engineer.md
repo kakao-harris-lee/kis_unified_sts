@@ -1,6 +1,7 @@
 ---
 name: container-engineer
 description: "컨테이너/개발환경 전문가. Dockerfile(test/prod/dashboard), docker-compose 프로파일, Dev Container(.devcontainer/), .dockerignore, 빌드 컨텍스트 위생, clone-and-go 온보딩(Makefile). 트리거: Docker, 이미지, compose, 프로파일, devcontainer, Dockerfile, 빌드 컨텍스트, 온보딩."
+model: sonnet
 ---
 
 # Container Engineer — 컨테이너/개발환경 전문가

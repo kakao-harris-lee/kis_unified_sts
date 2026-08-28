@@ -1,0 +1,24 @@
+먼저 `CLAUDE.md` 를 읽어라 (비협상 규칙 :21-36, 85-87, 104-107 등). 이것은 **재심**이다.
+
+심사 대상 (계획 문서 2건만 — 코드 아님):
+- `docs/plans/2026-08-12-tos-phase0-completion-contract-design.md` (v2.14, 6,464행)
+- `docs/plans/2026-08-11-tos-completion-development-plan.md`
+
+직전 판정 (v2.13 재심): `.omc/review/20260818-224729/verdict.md` — needs-attention, findings 3 (high 2 / medium 1), 직전 3건 전건 "부분해소". 아크 누적 해소 4건.
+
+**1순위 지시**: 직전 findings 3건이 v2.14 에서 **실제로 해소**되었는지 vs **회피**(조건 완화·문구만 추가·대조군 무력화·산문 주장으로 대체)되었는지 finding 별로 "해소됨 / 부분해소 / 미해소 / 회피" 판정 + 근거 file:line.
+
+v2.14 가 주장하는 대응 (심판이 검증할 것 — 저작자 주장이지 사실 아님). 저작 후 독립 검증자가 초안을 **실행으로 5건 뚫었고**(amend 사후 세탁 통과·머지 도입 digest 로 C_R=∅ 우회·`git log -S` 플래그별 정반대 판정·|CORR|<=1 항진으로 변이 ⑰ 불가능·supersedes 키 지목 복구 불능) 마감에서 처분됐다:
+1. **직전 #1 (high, CORR 사후 세탁)**: U-15-f-5 D0A-FIRST 커밋 트레일러(`Entry-Transcript`/`-Run`/`-SHA256`) + CORR 조건 (4) "d 가 (t, run k, sha256) 을 인용", 후보 단위 파일→`(t,run)` 쌍(U-15-e (4c-2) run 경계), 상태 7값(신설 `ENTRY_TRAILER_MALFORMED`·`TRANSCRIPT_NOT_ENTRY_OK`)·전순서 6단(U-15-g-4 유일 소스)·차단 5/비차단 2, 손 실행기 U-15-g-4b 승격(단일 성공 경로·trap·형식 검증·상태값+rc 방출), §12.3.4-G 양성 흐름 트레일러 포함 재정의, §11 행 재작성. **핵심 — 정직 경계**: 저작자가 amend 사후 세탁(비가드 d → parent(d) 에서 하니스 재실행 → `--amend` 로 트레일러 부착)을 재현해 **"닫힌다" 주장을 철회**했다 — 하니스는 커밋 상태에 결정적이라 재실행 산출물이 정직 실행과 동일하고 git 은 미공개 이력의 시간 순서를 증명하지 못하므로 **근면한 세탁은 in-repo 술어로 구별 불가**; CORR 은 sloppy 형태 검출이며 **예방 = UNCHK-008(Phase 1, 서버측 required check)** 로 명시 결속(U-15-g 본문·§11·변경 이력). 조건 (5) `commit(t) ⊰ d` 는 U-15-f-4 정직 흐름 충돌 + amend 비용 0 으로 기각. **심판 판단 요청**: 이 정직 경계(발견은 CORR·예방은 UNCHK-008)가 #1 의 해소/부분해소/미해소 중 무엇인지 — 과장 없이 "닫히지 않는다"를 명시한 것을 어떻게 계수하는지. **실행 증거**: `docs/reviews/phase0-completion-contract/20260818-224729/U15-ENTRY-CHECK.md` (커밋 c5359c74, 798행) — T-81 ⑫ 양성 트레일러 포함 → `ENTRY_PROVENANCE_CLEAR` rc=0 **실도달**·⑬ PARENT_MISMATCH·⑭⑮(v2.13 회귀)·⑯⑰ⓐⓑⓒ ENTRY_TRAILER_MALFORMED·⑱ TRANSCRIPT_NOT_ENTRY_OK·H6 경계 2종 TRANSCRIPT_MISSING — 전부 프로그램 방출값+rc, 하니스 byte-identical(v2.10→v2.14 `957bf49d…`). 증거 실행이 §8 ⑭ 행 stale 리터럴을 적발해 에라타 재동결(`e9cc3ba4`) — 그 경위가 변경 이력에 있다.
+2. **직전 #2 (high, g6 c_R 경로≠내용)**: `C_R(c)` 를 **DAG 구조 정의**로 재정의 — `{ x ⊑ c : digest ∈ blob(x:ref) ∧ ∀p∈parents(x): digest ∉ blob(p:ref) }` (머지 도입이면 머지 자체가 원소·pickaxe/플래그 의존 폐기·부모에 경로 부재 = ∉ 참), **존재 양화** ∃x∈C_R(c): x ⊰ c_APP (전칭은 형제 브랜치 독립 삽입을 무탈출 영구 red 로 만드는 과잉 차단; "유리한 후보 고르기"는 후보 전원이 실제 digest 보유 도입 지점이라 성립 안 함 — 극성 논증 본문), `C_R=∅` 면제 철회 → PROVENANCE_UNVERIFIABLE. T-82 ⑰ⓐ(기존 경로 B∥A)ⓑ(머지 해소 도입)ⓒ(양성 B1·B2 독립·A⊐B1 — 양화자 회귀 검출기). 손 실행 부속: `docs/reviews/phase0-completion-contract/20260818-224729/U16-LEDGER-CHECK.md` (**비규범** — 계약이 U-16 증거 아티팩트 경로를 규정하지 않음; 실제 소비자 `tools/tos_completion_status.py --check` 는 D0-A 이후) — ⑰ⓐ C_R={B} red·ⓑ C_R={M} red·ⓒ green·⑮ 회귀 red.
+3. **직전 #3 (medium, edge_seq 병렬 복구 모순)**: `supersedes` 가 **행**(`row_ref = (c_APP, row_digest)`)을 지목, `LEDGER_EFF` = 어떤 행에도 지목되지 않은 행(tombstone-graph), MALFORMED = 유효 원장 키 중복 ∨ 부재 행 지목 ∨ 순환 ∨ 같은 c_APP 내 row_digest 중복, «한 키 supersede 둘 이상=MALFORMED» 철회(2차 교정 허용), supersedes 정규형 포함(순환은 부재 행 지목으로 접힘), g2·g5 는 LEDGER_EFF 에서 추출. T-82 ⑱ 병렬 seq=1 충돌 → Z1/Z2 supersedes append → NO_ROWS_CLEAR·구 행 잔존 (U16-LEDGER-CHECK.md 손 실행: (i) 복구 green·(iii) 순환→MALFORMED·(v) 재부여 충돌→재-supersede 복구·H5-② 비단사 MALFORMED).
+
+신규 결함도 찾아라 — 특히: (a) 7값 전순서가 모든 입력에 결정적인지·CORR 조건 (1)~(4)에 남은 우회(sloppy 가 아닌 것으로 in-repo 검출 가능한데 안 잡는 구성이 있는가) (b) C_R 구조 정의의 결정성(rev-list 우주·부모 경로 부재·∃ 극성) (c) LEDGER_EFF 의 결정성(supersedes 정규형 포함 시 row_ref 계산 순서·체인 종결) (d) 실행 증거가 손 실행기(리뷰 표면)이고 실제 소비자가 아님을 어떻게 계수할지 (e) S-20/S-22 클래스 재발(카운트·상태 어휘·산문 미전파 — 이번 사이클 §11 행 stale 6회차·⑭ 행 stale 이 실제로 발생했다) (f) 정직 경계 서술 자체의 정합(어디선가 여전히 "닫힌다/봉합"을 주장하는가).
+
+계획 심사 기준 7종 전부 적용: (1) 단계 순서·의존성 실성립 (2) 숨은 가정 (3) 검증 가능성 (4) 실패·롤백 (5) 범위 이탈·과잉 설계 (6) CLAUDE.md 비협상 규칙 충돌 (7) 누락.
+
+비협상 대조 목록(배치 권고는 오케스트레이터가 기각): 선물 long/short 대칭·실계좌 증거금/실물 선물 주문 경로 전제·주식 EOD 일괄청산·ClickHouse 신규·RL/TFT 부활·하드코딩·Redis DB 1 이탈/TTL 없는 키·비KST 세션 로직.
+
+리비전 결속: 오케스트레이터 포착 HEAD `79d9cb07` · plan_scope_digest `69d6076f…` · bound_set_digest `99118a90…`(OQ-11-DISPOSITION.md:10 일치 확인). 커밋 순서 `db19a0e8`(동결)→`c5359c74`(증거)→`e9cc3ba4`(에라타 재동결)→`79d9cb07`(재결속) 확인.
+
+계획을 다시 쓰지 마라. 개정안을 제시하지 말고 결함과 근거만 지적하라.

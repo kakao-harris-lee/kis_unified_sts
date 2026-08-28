@@ -1,0 +1,55 @@
+artifact_type: ORDER_CONSTRUCTION_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: TBD
+policy_generation: null
+construction_generation: null
+canonical_digest: TBD
+status: DRAFT
+approved_by: []
+effective_from: null
+review_due: null
+scope:
+  environments: []
+  safety_cells: []
+  brokers: []
+  accounts: []
+  venues: []
+  market_segments: []
+  instruments: []
+  contracts: []
+  action_classes: []
+  order_types: []
+intent_schema_versions: []
+authorized_construction_envelope_schema_versions: []
+canonical_broker_command_schema_versions: []
+economic_effect_envelope_schema_versions: []
+order_conformance_proof_schema_versions: []
+field_presence_and_mapping_rules: []
+account_instrument_contract_and_route_rules: []
+direction_side_and_position_effect_rules: []
+unit_multiplier_currency_and_numeric_rules: []
+price_tick_lot_quantity_and_rounding_rules: []
+order_type_time_in_force_expiration_and_mode_rules: []
+split_aggregation_retry_cancel_amend_and_replace_rules: []
+canonicalization_and_duplicate_field_rules: []
+serializer_sdk_signer_and_actual_outbound_rules: []
+compiler_dependency_and_compatibility_rules: []
+economic_effect_and_capacity_rules: []
+invalidation_and_failure_responses: []
+common_mode_requirements: []
+residual_risks: []
+authority:
+  grants_approval: false
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+evidence:
+  activation_record_id: TBD
+  independent_review_id: TBD
+  evidence_location: TBD

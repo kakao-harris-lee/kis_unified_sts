@@ -1,0 +1,136 @@
+artifact_type: CONSUMER_COMPATIBILITY_MANIFEST
+schema_version: "TBD"
+artifact_id: TBD
+status: DRAFT
+consumer:
+  logical_role: TBD
+  workload_identity: TBD
+  software_artifact_digest: TBD
+  configuration_digest: TBD
+  deployment_identity: TBD
+  environment: TBD
+  safety_cells: []
+
+supported_contracts:
+  envelope_schema_versions: []
+  profile_schema_versions: []
+  canonicalization_versions: []
+  field_paths: []
+  units: []
+  currencies: []
+  multipliers: []
+  numeric_types: []
+  rounding_modes: []
+  boundary_semantics: []
+  calculation_models: []
+  failure_semantics: []
+  evidence_envelope_schema_versions: []
+  evidence_integrity_policy_versions: []
+  critical_input_policy_schema_versions: []
+  critical_input_observation_schema_versions: []
+  critical_input_snapshot_schema_versions: []
+  decision_context_capsule_schema_versions: []
+  venue_constraint_policy_schema_versions: []
+  venue_constraint_snapshot_schema_versions: []
+  order_admissibility_decision_schema_versions: []
+  order_construction_policy_schema_versions: []
+  authorized_construction_envelope_schema_versions: []
+  canonical_broker_command_schema_versions: []
+  economic_effect_envelope_schema_versions: []
+  order_conformance_proof_schema_versions: []
+  aggregate_risk_policy_schema_versions: []
+  aggregate_risk_state_snapshot_schema_versions: []
+  adverse_scenario_set_schema_versions: []
+  aggregate_risk_decision_schema_versions: []
+  action_flow_policy_schema_versions: []
+  action_flow_state_snapshot_schema_versions: []
+  action_flow_decision_schema_versions: []
+  action_flow_permit_schema_versions: []
+  trading_approval_policy_schema_versions: []
+  currentness_policy_schema_versions: []
+  safety_currentness_vector_schema_versions: []
+  restrictive_fence_record_schema_versions: []
+  egress_currentness_proof_schema_versions: []
+  restricted_live_trial_policy_schema_versions: []
+  restricted_live_trial_plan_schema_versions: []
+  restricted_live_trial_evidence_package_schema_versions: []
+  production_scope_promotion_decision_schema_versions: []
+  proposal_approval_request_schema_versions: []
+  independent_approval_decision_schema_versions: []
+  approval_consumption_record_schema_versions: []
+  source_continuity_protocol_versions: []
+  transformation_manifest_versions: []
+
+attestation:
+  profile_generation: null
+  envelope_artifact_id: TBD
+  envelope_canonical_semantic_digest: TBD
+  profile_artifact_id: TBD
+  profile_canonical_semantic_digest: TBD
+  referenced_artifact_digests: []
+  critical_input_policy_generation: null
+  critical_input_policy_digest: TBD
+  venue_constraint_policy_generation: null
+  venue_constraint_policy_digest: TBD
+  constraint_generation: null
+  order_construction_policy_generation: null
+  order_construction_policy_digest: TBD
+  construction_generation: null
+  aggregate_risk_policy_generation: null
+  aggregate_risk_policy_digest: TBD
+  adverse_scenario_set_generation: null
+  adverse_scenario_set_digest: TBD
+  action_flow_policy_generation: null
+  action_flow_policy_digest: TBD
+  trading_approval_policy_generation: null
+  trading_approval_policy_digest: TBD
+  currentness_policy_generation: null
+  currentness_policy_digest: TBD
+  restricted_live_trial_policy_generation: null
+  restricted_live_trial_policy_digest: TBD
+  context_generation: null
+  reproduced_semantic_digest: TBD
+  compatible: false
+  attested_at: null
+  expires_at: null
+  signer_identity: TBD
+  signatures: []
+
+fail_closed_contract:
+  unknown_field: DENY
+  unsupported_schema: DENY
+  digest_mismatch: DENY
+  mixed_generation: DENY
+  stale_attestation: DENY
+  missing_activation_record: DENY
+  stale_context_generation: DENY
+  unknown_source_continuity: DENY
+  invalidated_decision_context_capsule: DENY
+  stale_constraint_generation: DENY
+  invalidated_order_admissibility_decision: DENY
+  stale_construction_generation: DENY
+  invalidated_order_conformance_proof: DENY
+  stale_aggregate_risk_generation: DENY
+  invalidated_aggregate_risk_decision: DENY
+  stale_action_flow_generation: DENY
+  invalidated_action_flow_decision: DENY
+  invalid_or_consumed_action_flow_permit: DENY
+  stale_trading_approval_generation: DENY
+  stale_currentness_policy_generation: DENY
+  incomplete_or_mixed_currentness_vector: DENY
+  stale_or_replayed_egress_currentness_proof: DENY
+  restrictive_fence_or_local_latch_conflict: RESTRICTIVE_STATE_WINS
+  stale_or_invalid_trial_policy: DENY
+  ineligible_or_changed_trial_plan: DENY
+  invalid_or_aborted_trial_run: DENY
+  trial_envelope_unavailable_or_exceeded: DENY
+  invalid_or_incomplete_trial_evidence_package: DENY_PROMOTION
+  stale_replayed_or_widened_promotion_decision: DENY
+  invalidated_independent_approval_decision: DENY
+  invalid_or_conflicting_approval_consumption: DENY
+  approval_intent_binding_mismatch: DENY
+  actual_outbound_mismatch: DENY
+
+authorization_notice: >-
+  This DRAFT manifest is not a compatibility attestation and grants no live
+  authority. compatible remains false until independently verified.

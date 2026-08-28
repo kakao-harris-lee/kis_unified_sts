@@ -1,0 +1,79 @@
+recovery_session_id: TBD
+status: TRIGGERED
+recovery_generation: null
+recovery_domain_id: TBD
+owner_epoch: null
+owner_identity: TBD
+owner_fencing_proof: TBD
+created_at_time_snapshot_id: TBD
+
+policy:
+  recovery_barrier_policy_id: TBD
+  generation: null
+  digest: TBD
+
+trigger:
+  trigger_ids: []
+  trigger_classes: []
+  detected_by: []
+  initial_scope_digest: TBD
+  scope_uncertain: true
+
+scope:
+  safety_cells: []
+  capacity_domains: []
+  accounts: []
+  brokers: []
+  broker_sessions: []
+  credentials: []
+  routes: []
+  strategies: []
+  instruments: []
+  protective_structures: []
+  failure_domains: []
+  dependency_graph_digest: TBD
+
+barrier:
+  state: CLOSED_RECOVERY
+  committed_revision: null
+  commit_proof: TBD
+  affected_live_authority_suspended: true
+  final_egress_receipts: []
+
+inventory_cut:
+  status: NOT_STARTED
+  cut_id: null
+  start_time_snapshot_id: null
+  end_time_snapshot_id: null
+  authoritative_revisions: []
+  source_continuity_ids: []
+  source_pages_and_cursors: []
+  intervening_event_ids: []
+  evidence_record_ids: []
+  unresolved_windows: []
+  conservative_bounds: []
+
+obligations:
+  required_obligation_ids: []
+  satisfied_obligation_ids: []
+  failed_obligation_ids: []
+  unknown_obligation_ids: []
+  obligation_graph_digest: TBD
+
+decision_candidate:
+  recovery_evidence_package_id: null
+  recovery_readiness_decision_id: null
+  outcome: NOT_READY
+
+authority_effect:
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  may_rearm: false
+
+authorization_notice: >-
+  This TRIGGERED session has a closed barrier, incomplete scope and obligations,
+  and grants no readiness, capacity, Live Authorization, transmission, or re-arm authority.

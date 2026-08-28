@@ -2,6 +2,21 @@ execution:
   trading_mode: ${TRADING_MODE:PAPER}
   max_retries: 3
   retry_delay: 1.0
+  # 레거시 철자 — ExecutionConfig가 requests_per_second로 접어 넣는다.
+  # 두 철자를 동시에 다른 값으로 쓰면 부팅 시 명시적 에러.
+  #
+  # ⚠ PER-ORDER REQUEST BUDGET (이 값과 반드시 같이 읽을 것)
+  # 선물 주문 1건이 kis:ratelimit:futures 버킷에서 소모하는 요청 수:
+  #   체결확인 폴링  = ceil(futures_fill_check_timeout_seconds
+  #                        / futures_fill_check_poll_interval_seconds)
+  #                    x 조회 날짜 walk 1~2회        -> 현재 최대 10
+  #   주문 제출                                      -> 1
+  #   취소 후 재조회 x 날짜 walk                     -> 최대 2
+  #   합계                                           -> 최대 13
+  # 즉 주문 1건이 5.0 rps 버킷을 초과한다. 취소(안전 조작)는 별도 버킷
+  # (cancel_rate_limit_suffix)에서 획득하므로 자기 자신의 폴링에 굶지 않는다.
+  # 5.0은 측정된 브로커 상한이 아니다 — P-13에서 조회 클래스는 clean 1.0 rps /
+  # throttled 2.0 rps로만 측정됐다. 실환경 측정 후 조정 대상.
   orders_per_second: 5.0
   account_no: ${KIS_ACCOUNT_NO:}
   order_request_timeout_seconds: 5.0
@@ -11,6 +26,34 @@ execution:
   futures_fill_check_poll_interval_seconds: 0.2
   futures_fill_check_timeout_seconds: 1.0
   futures_auto_cancel_unfilled: true
+
+  # 타임아웃 취소 재시도 — 취소 1회 실패는 주문이 브로커에 그대로 남는다는 뜻.
+  # 재시도는 결과가 바뀔 수 있는 실패(throttle / 5xx / 429)에만 소모한다.
+  futures_cancel_max_attempts: 3
+  futures_cancel_retry_delay_seconds: 0.3
+  # 취소 전용 rate-limit 버킷 접미사. 취소가 자신을 유발한 체결 폴링 뒤에
+  # 줄서지 않도록 분리한다 (위 PER-ORDER REQUEST BUDGET 참조).
+  cancel_rate_limit_suffix: "-cancel"
+  # 체결 폴링의 rate-limit 획득 타임아웃(초). rate_limit_timeout보다 짧게 두어
+  # 폴링이 버킷을 붙잡는 대신 양보하게 한다. 획득 실패는 QUERY_FAILED로
+  # 표면화된다 ("미체결"이 아니라 "알 수 없음").
+  futures_fill_check_rate_limit_timeout_seconds: 0.5
+
+  # inquire-ccnl 응답 페이지 크기(모의 측정치 P-5b). 절단 "감지"에만 쓰인다 —
+  # 런타임 조회는 방금 낸 주문 1건 타깃 조회라 연속조회 walk를 하지 않는다.
+  futures_inquire_page_size: 15
+
+  # KIS 초당 거래건수 초과(EGW00201) 백오프. retry_delay 대신 적용된다:
+  # 이미 거부당한 페이싱보다 더 촘촘하게 재시도하면 스로틀만 깊어진다.
+  # 아래 값은 측정된 브로커 상한이 아니라 보수적 기본값 —
+  # 실환경 측정 후 조정한다.
+  throttle_backoff_initial_seconds: 2.0
+  throttle_backoff_multiplier: 2.0
+  throttle_backoff_max_seconds: 30.0
+  # 연속 스로틀 N회 = throttle storm(게이트웨이가 전부 거부). EGW00201은
+  # api_error_rate_5min에서 의도적으로 제외되므로, 이 카운트가 해당 상태의
+  # 유일한 경보 신호다. rate가 아니라 count.
+  throttle_storm_alert_threshold: 10
 
 # 유동성 부족 포지션 자동 청산 — 틱 수신 없는 포지션 타임아웃 강제 청산
 stale_position:

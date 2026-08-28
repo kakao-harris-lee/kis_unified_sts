@@ -1,0 +1,71 @@
+schema: tos-evidence/manifest/v1
+run_id: 20260729T134948Z-d4160fd0
+evidence_id: STATE-EV-001
+primary_adr: ADR-002-005
+design_document: docs/plans/2026-07-25-tos-orthogonal-state-design.md
+evidence_level_stage: EV-L1
+discipline_tag: EV-L1 stage execution record only; not a row PASS; incomplete until independent review
+  signs (VER §9.5) and P0-1 (bounds approval) closes; staged rows require higher stages before acceptance
+  (VER:171).
+claim:
+  closes_evidence_item: false
+  register_status_moved_by_this_run: false
+  register_status_at_run_time: READY
+  minimum_evidence_level: EV-L1/2
+  independent_review: NOT_SIGNED (VER §9.5)
+  p0_1_bounds_approval: OPEN
+  verification_profile_version: 2.1 (PROPOSED — P0-1 open)
+  target_integrity: STABLE_DURING_RUN
+  mutated_during_run: []
+  note: This document records that named tests executed at the recorded baseline. It asserts no acceptance,
+    no PASS, and no coverage of the higher stages the row's minimum level names.
+execution:
+  command:
+  - /Users/harris/Development/private/kis_unified_sts/.venv/bin/python
+  - -m
+  - pytest
+  - tos/tests/orthostate/test_orthostate_composite.py
+  - tos/tests/orthostate/test_orthostate_vocabulary.py
+  - tos/tests/orthostate/test_orthostate_coupling.py::test_coupling_negative_fixtures_are_representable_and_flagged
+  - -q
+  - --junitxml=/Users/harris/Development/private/kis_unified_sts/tos-evidence/STATE-EV-001/20260729T134948Z-d4160fd0/junit.xml
+  - --hypothesis-seed=0
+  cwd: /Users/harris/Development/private/kis_unified_sts
+  env_overrides:
+    PYTHONPATH: tos/src
+    PYTHONHASHSEED: '0'
+  started_utc: '2026-07-29T13:49:48.669014+00:00'
+  finished_utc: '2026-07-29T13:49:49.017946+00:00'
+  monotonic_duration_s: 0.348928
+  return_code: 0
+  outcome: ALL_SELECTED_TESTS_GREEN
+  junit_summary:
+    tests: 51
+    failures: 0
+    errors: 0
+    skipped: 0
+    time_s: '0.092'
+test_nodes:
+- tos/tests/orthostate/test_orthostate_composite.py
+- tos/tests/orthostate/test_orthostate_vocabulary.py
+- tos/tests/orthostate/test_orthostate_coupling.py::test_coupling_negative_fixtures_are_representable_and_flagged
+baseline:
+  file: baseline.yaml
+  sha256: e8246fdbdaa51e62f7c303183a167bda6a213ce33438766364157075892af3d4
+  completeness: 'EV-L1 subset (design #1 §5.1); VER §3 fields without an existing artifact are NOT_APPLICABLE_EV_L1.'
+  ver3_unmet_field_count: 17
+artifacts:
+- name: baseline.yaml
+  sha256: e8246fdbdaa51e62f7c303183a167bda6a213ce33438766364157075892af3d4
+  bytes: 19139
+- name: junit.xml
+  sha256: a37b8fccc9f7f47ce3a9607598515b39ef0bde92937182194994be68500ed849
+  bytes: 7705
+- name: run.log
+  sha256: 2c9a57dae886c64b085803aee47c06e536b39e02c17baebed3e7130d23645345
+  bytes: 610
+- name: traceability.csv
+  sha256: 9531d8d54c8418d2da4bd1242dbf104b1c149ff055c139361ebf618a3bce79d8
+  bytes: 1874
+artifact_closure_note: manifest.yaml cannot contain its own digest; sha256sums.txt is written last and
+  closes over every retained file including this manifest (VER §9.2).

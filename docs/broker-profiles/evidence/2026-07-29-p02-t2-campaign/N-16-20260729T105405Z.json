@@ -1,0 +1,93 @@
+{
+  "artifact_id": "N-16-20260729T105405Z",
+  "probe_id": "N-16",
+  "title": "CTFN6118R night futures balance — response schema capture",
+  "mode": "live",
+  "environment": "REAL_PROD",
+  "started_at_utc": "2026-07-29T10:54:05.097862+00:00",
+  "finished_at_utc": "2026-07-29T10:54:05.654220+00:00",
+  "duration_s": 0.556,
+  "repo_commit": "33565835",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "N-16",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "P0-2 T2 campaign 2026-07-29; night window 18:00+ KST; REAL read-only CTFN6118R schema capture; operator-directed; dedicated shell",
+    "program_range_days": 150,
+    "day_symbol": "",
+    "night_symbol": "",
+    "inter_call_s": 1.0,
+    "ignore_session_window": false
+  },
+  "credentials": {
+    "environment": "REAL_PROD",
+    "base_url": "https://openapi.koreainvestment.com:9443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "5e175fd232de"
+  },
+  "measurements": {
+    "top_level_keys": [
+      "msg1",
+      "msg_cd",
+      "rt_cd"
+    ],
+    "output1_keys": [],
+    "output2_keys": [],
+    "output1_row_count": null,
+    "session_window_kst": "2026-07-29 19:54 (night=True)",
+    "empty_response_caveat": "An empty output1 means 'no night positions', NOT 'no such fields'. Only a non-empty row establishes the row schema; record the emptiness explicitly rather than inferring an empty schema.",
+    "followup": "config/kis/tr_ids.yaml has zero balance TRs (plan §2:64). Adding CTFN6118R/CTFO6118R there is a SEPARATE commit, gated on this schema."
+  },
+  "observations": [
+    {
+      "read_only_attestation": "This probe can issue GET requests only, against the allowlist in tools/broker_probes/probes_real.py::ALLOWLIST. No order path exists in this module.",
+      "allowlist": [
+        {
+          "tr_id": "FHPPG04600001",
+          "path": "/uapi/domestic-stock/v1/quotations/comp-program-trade-daily"
+        },
+        {
+          "tr_id": "FHMIF10000000",
+          "path": "/uapi/domestic-futureoption/v1/quotations/inquire-price"
+        },
+        {
+          "tr_id": "CTFN6118R",
+          "path": "/uapi/domestic-futureoption/v1/trading/inquire-balance"
+        }
+      ]
+    },
+    {
+      "http_status": 500,
+      "rt_cd": "1",
+      "msg_cd": "EGW02004",
+      "msg1": "실전투자 도메인은 모의투자 앱키로 호출하실 수 없습니다.",
+      "raw_excerpt": "{\"rt_cd\":\"1\",\"msg1\":\"실전투자 도메인은 모의투자 앱키로 호출하실 수 없습니다.\",\"msg_cd\":\"EGW02004\"}"
+    }
+  ],
+  "skips": [],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [],
+    "instance_fields": [
+      "capabilities.position_balance_margin.evidence_refs",
+      "capabilities.position_balance_margin.status"
+    ],
+    "capability_dimension": "POSITIONS_BALANCES_MARGIN"
+  }
+}

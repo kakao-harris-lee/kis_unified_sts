@@ -1,6 +1,8 @@
 .history/
 .sisyphus/
 .superpowers/
+# oh-my-claudecode session-local state/docs (not shared across machines)
+.omc/
 __pycache__/
 */__pycache__/
 # Playwright/Chrome MCP browser-session artifacts (console logs, page snapshots)
@@ -11,6 +13,8 @@ __pycache__/
 .env.local
 .env.*.local
 # Stack secret env files (filled from .env.*.example, never committed).
+.env.real
+.env.mock
 # The *.example templates stay tracked; only the secret-filled copies are ignored.
 .env.paper
 .env.live
@@ -49,6 +53,11 @@ logs/
 # container (appuser, uid 1000) cannot persist tokens → re-issues on every restart.
 /.cache/*
 !/.cache/.gitkeep
+
+# Vendored KIS open-trading-api reference SDK (~496MB, 19k files).
+# Untracked it would otherwise be swept into working-tree code reviews and
+# every `git status --untracked-files=all` scope.
+open-trading-api/
 
 # Local artifacts
 .venv/

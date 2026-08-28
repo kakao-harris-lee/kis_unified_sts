@@ -1,0 +1,1158 @@
+# RESIDUAL-RISK-REGISTER-002 — the VER-002-001 §378 (line 3291-3310) register
+#
+# WHAT THIS IS
+#   The §378 Residual Risk Register instance for the ADR-002 evidence track.
+#   §378 line 3293: "Every unresolved limitation SHALL record:" followed by
+#   twelve items. Each entry below carries all twelve under those names.
+#
+# SHAPE
+#   No template exists for this artifact (measured: verification/ ships
+#   RESIDUAL-RISK-ACCEPTANCE-RECORD-template.yaml, which is the ADR-002-026
+#   deviation-acceptance record — a different artifact with a different
+#   authority). The shape here is derived directly from VER §378's twelve SHALL
+#   items, in the specification's own order and wording.
+#
+# THIS IS NOT A DEVIATION ACCEPTANCE
+#   §378 line 3308 adds binding requirements "Where RFC-001 permits a deviation".
+#   None of the three entries claims a deviation: no ADR-002-026 request, no
+#   decision, no Active Deviation Set, no compensating-control acceptance, no
+#   Deviation Generation. Entry R-1 in particular CANNOT be accepted that way —
+#   VER:130 forbids WAIVED_WITH_RESIDUAL_RISK for a Critical requirement. These
+#   are recorded gaps that block, not accepted risks that release.
+#   ADDED 2026-08-06 (v1.1): the statement above extends verbatim to the three
+#   entries registered on 2026-08-06 (R-N, R-I, R-D). None claims a deviation,
+#   and R-N and R-I are additionally ineligible for that route on the same
+#   ground as R-1 — STATE-EV-004 is a Critical row.
+#
+# NON-UNION RULE
+#   §378 line 3308: "Separate residual risks SHALL NOT be unioned at a consumer;
+#   combined risk requires one canonical reviewed set." R-1, R-2, and R-3 are
+#   three independent entries. A consumer SHALL cite them individually and SHALL
+#   NOT summarise them as one aggregate residual.
+#   ADDED 2026-08-06 (v1.1): the register now holds SIX independent entries —
+#   R-1, R-2, R-3, R-N, R-I, R-D. The non-union rule applies across all six with
+#   no exception and no sub-grouping. In particular R-1 (a STATE-EV-001 limb,
+#   whose evidence half is discharged as of this version) SHALL NOT be merged
+#   with R-N/R-I (which block STATE-EV-004's own PASS) or with R-D (whose
+#   blocking scope is narrower than either — a power-loss durability claim only).
+#   The measured anchor for the non-union sentence in the current VER revision
+#   is line 3310; see ANCHOR DRIFT NOTE.
+#
+# ANCHOR DRIFT NOTE (added 2026-08-06 with v1.1)
+#   The VER-002-001 `line NNNN` citations in the 2026-07-29 entries (R-1, R-2,
+#   R-3) were measured against the VER revision current on that date. Two dated
+#   "Currency Correction" bullets have since been added to that document's
+#   header (2026-08-04 and 2026-08-06), shifting every subsequent line by +2.
+#   Re-measured 2026-08-06: §378 heading = 3293, "Every unresolved limitation
+#   SHALL record:" = 3295, the non-union sentence = 3310, the broker-limitation
+#   sentence = 3312, the WAIVED_WITH_RESIDUAL_RISK prohibition = 132,
+#   STATE-EV-001 Expected = 1026, STATE-EV-004 Minimum Level = 1044.
+#   The 2026-07-29 entries are NOT rewritten (their citations are correct for
+#   the revision they were measured against and rewriting them would erase that
+#   fact); the entries registered on 2026-08-06 carry re-measured anchors and
+#   say so. A consumer resolving an anchor SHALL re-measure rather than trust
+#   either set. ADR-002-005 and VERIFICATION-PROFILE-002.yaml anchors were also
+#   re-measured 2026-08-06 and are unchanged (61, 197, 237, 240; 942, 943, 949).
+#
+# "BROKER LIMITATION" PROHIBITION
+#   §378 line 3310: "Broker limitation" is not a sufficient residual-risk
+#   description. No entry below invokes one; the scope is broker-free.
+#
+# APPROVAL RECORD
+#   Operator directive 2026-07-29 ("§378 Residual Risk Register 생성: 승인");
+#   session C record. Approver identity `operator` = D1 role scheme System owner /
+#   Bounds-Approver (docs/plans/2026-07-29-tos-phase0-role-scheme-and-disposition.md
+#   lines 15-16). Separation of duties preserved: this identity is not the
+#   Live-Armer (unassigned), and per VER §2.6 the independent reviewer of the
+#   affected evidence SHALL NOT be the identity that approved these residuals.
+#
+# APPROVAL RECORD — v1.1 AMENDMENT (2026-08-06)
+#   Three operator directives were issued in one session on 2026-08-06 and are
+#   recorded verbatim in
+#   `tos-evidence/STATE-EV-004/review/20260806-operator-countersign.md`
+#   (companion-directives section). Each is quoted here exactly as issued:
+#     1. "R-N/R-I/R-D 등재 승인"
+#        — authorises registration of the three new entries below.
+#     2. "OQ-1: (A) 채택"
+#        — adjudicates the open question that gated R-1's evidence limb; see
+#          entry R-1 `dated_disposition_2026_08_06`.
+#     3. "ASS-EVL3-PILOT 승인"
+#        — approves ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml (a sibling
+#          artifact, not this register); recorded here only because the R-N/R-I
+#          coverage statements cite that set.
+#   The countersign statement issued in the same session, verbatim:
+#     "STATE-EV-004 EV-L3 + STATE-EV-001/SPG-EV-002 EV-L1/L2 stage evidence at
+#      baseline 12dd4077 countersigned — operator, 2026-08-06"
+#   Approver identity `operator` = the same D1 role scheme System owner /
+#   Bounds-Approver as the 2026-07-29 record. Separation of duties preserved and
+#   re-measured: this identity is not the Live-Armer (still unassigned), and it
+#   is not either independent reviewer of the affected evidence — both review
+#   legs for the 12dd4077 generation are AI reviewers (attempt 1 same-family,
+#   attempt 2 decorrelated-family), per the D1 mixed scheme
+#   `ai-review(decorrelated)+operator-countersign`
+#   (docs/plans/2026-07-29-tos-phase0-role-scheme-and-disposition.md line 19).
+#   Registration is disclosure, not acceptance: none of these directives waives
+#   a residual, moves a register row by itself, or creates any authority.
+
+artifact_type: RESIDUAL_RISK_REGISTER
+schema_version: "1.0-DRAFT"
+register_id: RESIDUAL-RISK-REGISTER-002
+register_version: "1.1"
+# register_version history:
+#   1.0 — 2026-07-29 — created with entries R-1, R-2, R-3.
+#   1.1 — 2026-08-06 — entries R-N, R-I, R-D registered (operator directive
+#         "R-N/R-I/R-D 등재 승인"); entry R-1 gains a dated disposition block
+#         recording the OQ-1 (A) adjudication and its evidence-limb discharge.
+#         No existing field or text was removed. `effective_from` below stays
+#         2026-07-29 (the register's own effective date is not restarted by an
+#         amendment); the new entries carry their own effective date inside
+#         `expiration_or_review_date.basis`.
+canonical_digest: null   # no approved canonicalization scheme for spec-layer YAML; the git object is the integrity reference
+status: APPROVED
+approved_by: ["operator"]
+effective_from: "2026-07-29"
+review_due: "2027-01-25"
+# review_due rationale: the approved MAX_residual_risk_review_interval_ms
+# (VERIFICATION-PROFILE-002.yaml line 949) is 15552000000 ms = 180 days. From
+# effective_from 2026-07-29 that bound lands on 2027-01-25, four days before the
+# profile's own review_due 2027-01-29 (line 56). The earlier, bound-conforming
+# date governs every entry; a later date would breach an approved bound.
+
+scope:
+  environment: non-live-test
+  detail: >-
+    Pure model layer at commit eb92ea467cb55d923b5c9eb4307b65491b14fe26. No
+    broker session, no account, no instrument, no order path, no live
+    authorization. Matches VERIFICATION-PROFILE-002.yaml scope.environment
+    (line 60).
+  covered_rows: [STATE-EV-001, SPG-EV-002]
+  # DATED ADDITION 2026-08-06 (v1.1): covered_rows extends to STATE-EV-004 with
+  # the registration of R-N and R-I. The rows covered by this register are now
+  # STATE-EV-001, SPG-EV-002, and STATE-EV-004. The scope statement above
+  # remains exactly correct for entries R-1/R-2/R-3, whose affected artifacts
+  # sit at commit eb92ea46; the 2026-08-06 entries are scoped to the executed
+  # EV-L3 baseline instead — commit 12dd40778b0237ea6992a3b0a9ecadb10f865f0f —
+  # where the run does use a real on-disk sqlite3 WAL substrate and a real OS
+  # process boundary, and still has no broker session, no account, no
+  # instrument, no order path, and no live authorization. Both scopes remain
+  # inside VERIFICATION-PROFILE-002.yaml scope.environment `non-live-test`
+  # (line 59), which declares the EV-L1..L3 harness ceilings non-live-test.
+  covered_rows_2026_08_06: [STATE-EV-001, SPG-EV-002, STATE-EV-004]
+
+union_prohibition: >-
+  Per VER-002-001 §378 line 3308 these entries SHALL NOT be unioned at a
+  consumer. Each is registered independently with its own scope, controls,
+  bound, owner, approver, review date, and required scope reduction.
+  DATED ADDITION 2026-08-06 (v1.1): the prohibition covers all six entries
+  (R-1, R-2, R-3, R-N, R-I, R-D) with no sub-grouping. The measured anchor for
+  the non-union sentence in the current VER revision is line 3310 (the citation
+  of 3308 above was correct for the 2026-07-29 revision — see ANCHOR DRIFT
+  NOTE in the header).
+
+deviation_binding_applicability: >-
+  NOT_APPLICABLE — no entry claims an RFC-001 permitted deviation, so the §378
+  line 3308 ADR-002-026 binding requirements (request, decision, Active Deviation
+  Set, reduced configuration scope, independently verified compensating controls,
+  Deviation Generation, hard expiry, review interval, non-PASS evidence status)
+  do not attach. R-1 is additionally ineligible for that route (VER:130).
+  DATED ADDITION 2026-08-06 (v1.1): still NOT_APPLICABLE after the three new
+  registrations. R-N and R-I are additionally ineligible for that route on the
+  same ground as R-1 — STATE-EV-004 is a Critical row, and VER line 132
+  (measured 2026-08-06) forbids WAIVED_WITH_RESIDUAL_RISK for a Critical
+  requirement. R-D is likewise not claimed as a deviation.
+
+entries_scope_note: >-
+  This register holds exactly the three entries the operator approved on
+  2026-07-29. One further candidate limitation was identified while authoring the
+  companion scenario set and is recorded there rather than invented into this
+  register: ADVERSE-SCENARIO-SET-002-EVL2-PILOT.yaml
+  `dominance_and_pruning_proofs` id ASS-DOM-05 (STATE-EV-001 dimensions
+  intent_state and capacity_state were never directly mutated; their coverage
+  rests on a structural-identity argument, not an executed one). Registering it
+  as R-4 is an open operator decision.
+  DATED ADDITION 2026-08-06 (v1.1): the register now holds SIX entries. The
+  three above, plus R-N, R-I, and R-D — proposed by the EV-L3 pilot design
+  (docs/plans/2026-08-06-tos-ev-l3-pilot-design.md §2.4), carried in-band by
+  ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml `residual_risk_references` and by the
+  STATE-EV-004 run manifest's `integration_boundary.modeled_axes`, and
+  registered here on operator directive "R-N/R-I/R-D 등재 승인". The ASS-DOM-05
+  candidate above is UNCHANGED by this amendment: it is still not registered as
+  R-4 and is still an open operator decision — the 2026-08-06 directive named
+  R-N, R-I, and R-D only, and no entry is invented beyond what it named.
+
+entries:
+
+  - risk_identity: >-
+      R-1 — STATE-EV-001 durable/persisted limb is unevidenced. The EV-L2 pilot
+      covers the representability and no-silent-derivation axes of the row's
+      Expected; the "durable" half of that same Expected has no evidence at all,
+      because no persisted authoritative record exists to fault.
+    affected_requirement_and_adr:
+      requirement: >-
+        VER-002-001 STATE-EV-001 Expected (line 1024): "Every valid composite
+        remains representable and durable; no dimension is silently derived from
+        another except through an explicit CPL invariant and owned transition."
+        Minimum level EV-L1/EV-L2 (line 1021).
+      adr: >-
+        ADR-002-005 §13 (line 197): "All five dimensions SHALL be durable and
+        reconstructable after crash, restart, or failover." AC-005-1 (line 237):
+        the composite states "are all representable and persisted". The durable
+        referent's own row, STATE-EV-004, is minimum level EV-L3 (line 1042).
+      criticality_note: >-
+        The requirement is Critical, so VER:130 makes
+        WAIVED_WITH_RESIDUAL_RISK unavailable. This is a blocking gap, not an
+        acceptable one.
+    broker_account_instrument_scope:
+      brokers: []
+      accounts: []
+      instruments: []
+      statement: >-
+        Non-live-test only; the affected artifact is the in-memory
+        tos.orthostate.records.CompositeState at commit eb92ea46. No broker,
+        account, or instrument is in scope, and no broker limitation is invoked
+        or implied (VER:3310).
+    credible_failure_sequence: >-
+      (1) A durability or reconstruction defect exists in whatever persistence is
+      later chosen — a write that is not durable at the claimed point, or a
+      reconstruction that resolves a dimension differently after crash. (2) The
+      defect is invisible at the model layer, so the EV-L2 pilot cannot fail on
+      it. (3) A reader of the pilot evidence treats STATE-EV-001 as covering the
+      row's whole Expected and builds restart, recovery-barrier, or reconciliation
+      logic on "durable and reconstructable" as an established premise. (4) The
+      defect first surfaces at a real crash-restart, when a composite state is
+      reconstructed with a different capacity_state or knowledge_state than the
+      one that was committed. (5) The conservative-resume barrier is then armed
+      from a false premise, which is exactly the condition ADR-002-005 §13 exists
+      to prevent.
+    maximum_economic_effect:
+      present: >-
+        None. The declared scope has no broker route, no account, and no order
+        path, so no economic effect can be produced by this residual today.
+      path_to_economic_effect: >-
+        The credible economic path is evidence-chain contamination, not direct
+        loss: a coverage or PASS claim resting on this row could later be cited
+        as a satisfied precondition in a live-authorization or scope-promotion
+        decision. The effect would then be bounded by whatever live scope that
+        later decision opens — which is presently unbounded on the record,
+        because MAX_trial_authorized_economic_effect and
+        MAX_trial_concurrent_potential_effect are null and key-level unapproved
+        in VERIFICATION-PROFILE-002.yaml (lines 942-943).
+      statement: "No present economic effect; future effect unbounded-by-record until those keys are approved."
+    existing_controls:
+      - "The run manifest's claim.covered_axis names the exclusion in-band: 'representability + non-derivation ONLY (NOT durable)'."
+      - "coverage_argument.discharged is false in the same manifest; unexercised_residual_ref carries the durable limb with its anchors."
+      - "claim.closes_evidence_item and claim.register_status_moved_by_this_run are both false, so no register row moved."
+      - "VER:130 structurally forbids waiving a Critical requirement, so no acceptance route can quietly close this."
+      - "The durable referent has its own higher-level row (STATE-EV-004, EV-L3), so the gap has a named destination."
+    detection_and_containment_bound:
+      detection: >-
+        NOT_ESTABLISHED. There is no runtime detector because there is no durable
+        substrate to monitor — ADR-002-005 §4 (line 61) leaves the persistence
+        technology undecided. Detection today is document-gate only: review of the
+        evidence package's covered_axis and coverage_argument fields.
+      containment: >-
+        Gate-level only. The row cannot reach PASS while the coverage argument is
+        undischarged, and no automated fence exists (none can, absent a substrate).
+      time_bound: "None claimed. A gate reviewed at most every 180 days is not a time-to-detect bound."
+    owner: operator
+    approver:
+      identity: operator
+      basis: "Operator directive 2026-07-29 (§378 register creation approved); session C record. D1 role scheme System owner."
+      separation_of_duties: "Not the Live-Armer (unassigned). Per VER §2.6 this identity SHALL NOT also be the independent reviewer of the affected evidence."
+    expiration_or_review_date:
+      review_date: "2027-01-25"
+      basis: "MAX_residual_risk_review_interval_ms = 15552000000 ms = 180 days from 2026-07-29 (VERIFICATION-PROFILE-002.yaml line 949)."
+      expiry_semantics: >-
+        This entry does not expire into acceptance. A missed or unproven review
+        restricts scope and never auto-renews; the underlying requirement stays
+        Critical and unwaivable regardless of the date.
+    required_scope_reduction:
+      - "STATE-EV-001 SHALL NOT be marked PASS on the strength of the EV-L2 pilot."
+      - "No live scope, restricted-live trial, or production authorization may cite STATE-EV-001 as evidence of durability."
+      - "Any consumer needing the durable limb SHALL cite STATE-EV-004 at EV-L3 with a real persistence substrate, not this row."
+      - "Resolution prerequisite: the persistence technology decision deferred by ADR-002-005 §4 (line 61) must be made first; an EV-L3 crash/restart fault run then discharges the limb."
+    dated_disposition_2026_08_06:
+      # ADDITIVE field introduced with register_version 1.1. It records a dated
+      # disposition; it removes, replaces, or overrides no field above. Every
+      # twelve-SHALL field of this entry stands exactly as approved 2026-07-29.
+      disposition: EVIDENCE_LIMB_DISCHARGED_DECISION_GATE_RESOLVED_ENTRY_RETAINED
+      operator_directive_verbatim: "OQ-1: (A) 채택"
+      directive_date: "2026-08-06"
+      directive_record: "tos-evidence/STATE-EV-004/review/20260806-operator-countersign.md (companion-directives section)"
+      what_the_directive_decided: >-
+        Option (A) of open question OQ-1 (docs/plans/2026-08-06-tos-ev-l3-pilot-design.md
+        §3.3, §11): the PILOT-SCOPE persistence decision recorded in design §3 —
+        stdlib sqlite3 in WAL journal mode with synchronous=FULL — satisfies the
+        "decision first" prerequisite stated in this entry's
+        required_scope_reduction item 4 (the line-177 clause). The operator
+        adjudicated the sufficiency question that the design deliberately left
+        open; the design did not decide it and did not claim to.
+      evidence_limb_status: >-
+        DISCHARGED (substrate-class) by STATE-EV-004 run
+        `20260806T015632Z-12dd4077`. The durable half of the STATE-EV-001
+        Expected was executed against a REAL on-disk substrate across a REAL OS
+        process boundary — not modelled, not argued. Substrate-class means: what
+        was verified is the model's durable-restart property on a substrate that
+        provides ACID durability, over the ADR-002-005 §14 composite set plus the
+        boundary combinations (the VER §2.7 coverage argument), not a claim about
+        one specific production technology. A different §4 production choice that
+        is also ACID does not retroactively invalidate this discharge; it is the
+        subject of a separate production-acceptance EV-L3 (design #39 §7.1).
+      project_persistence_decision: >-
+        The ADR-002-005 §4 (line 61) project persistence-technology decision is
+        NOT made by this directive and is NOT made by the pilot. It continues as
+        a separate architecture track. As of this dated disposition it no longer
+        blocks this entry: the operator adjudicated that the pilot-scope decision
+        satisfies the line-177 prerequisite for the EVIDENCE limb. It remains an
+        open architecture gate on its own track.
+      required_scope_reduction_item_by_item:
+        # The four items above are re-read against this disposition. None is
+        # deleted; each is given its current standing.
+        item_1_state_ev_001_shall_not_pass_on_the_ev_l2_pilot: >-
+          STILL TRUE, read in its own terms. Item 1 says STATE-EV-001 SHALL NOT
+          be marked PASS "on the strength of the EV-L2 pilot" — that is, the
+          EV-L2 pilot ALONE never suffices, and it did not. The PASS recorded on
+          2026-08-06 does not rest on it alone: its basis is the EV-L1 and EV-L2
+          stages re-executed at baseline 12dd4077, PLUS citation of the
+          STATE-EV-004 EV-L3 run for the durable limb, PLUS the VER §9.5
+          signature chain (two independent review legs and the operator
+          countersign). Item 1 is satisfied, not overridden.
+        item_2_no_live_scope_may_cite_this_row_for_durability: >-
+          UNCHANGED and still binding. No live, restricted-live, or production
+          authorization may cite STATE-EV-001 as evidence of durability. A PASS
+          is an evidence fact at a registered scope; it is not permission.
+        item_3_consumers_needing_the_durable_limb_cite_state_ev_004: >-
+          UNCHANGED and still binding — it is the STANDING CITATION RULE, and the
+          2026-08-06 PASS complies with it rather than being excused from it. Any
+          consumer needing the durable limb cites STATE-EV-004 at EV-L3 with a
+          real persistence substrate. That is exactly the citation the PASS
+          makes. This item does not expire with the discharge; it is how the
+          discharge is consumed.
+        item_4_persistence_decision_prerequisite: >-
+          SATISFIED as of 2026-08-06 by operator directive "OQ-1: (A) 채택" —
+          the pilot-scope persistence decision (design §3) is adjudicated
+          sufficient for the line-177 prerequisite, and the EV-L3 crash/restart
+          fault run then discharged the limb, in that order.
+      entry_retained_and_why: >-
+        This entry is NOT closed and NOT deleted. Two things remain true. (a) The
+        requirement is Critical, so it can never be waived (VER line 132,
+        measured 2026-08-06) and this register never accepts it. (b) The
+        substrate-class caveat and the open ADR-002-005 §4 architecture track are
+        facts a future consumer must be able to read. A discharged evidence limb
+        is a recorded fact about what was executed, not an erasure of the entry
+        that demanded it.
+      non_union_reminder: >-
+        R-1 SHALL NOT be unioned with R-N, R-I, or R-D (VER §378, non-union
+        sentence measured at line 3310). Their blocking scopes differ: R-1's
+        evidence limb is discharged; R-N and R-I block STATE-EV-004's own PASS;
+        R-D blocks a power-loss durability claim only and blocks neither PASS.
+      what_this_disposition_does_not_do: >-
+        It creates no authority, no live or restricted-live scope, no ADR
+        acceptance, and no broker scope. It does not close this entry, does not
+        make the requirement waivable, does not decide ADR-002-005 §4, and does
+        not extend to R-2 or R-3 (SPG scope, untouched).
+    # DATED FACT NOTE — 2026-08-06: design #39 §7.1 conditional dual-record — evidence
+    # limb executed (substrate-class); the §4 project-persistence decision gate and
+    # substrate-class caveat remain OPEN pending OQ-1 operator adjudication; entry status
+    # and required_scope_reduction unchanged (transitions on this operator-approved
+    # register are the operator's act).
+    # SUPERSEDED IN PART, 2026-08-06 (v1.1): the note above was written while OQ-1
+    # was still open. The operator has since adjudicated it ("OQ-1: (A) 채택") — see
+    # `dated_disposition_2026_08_06` immediately above, which is the current
+    # disposition. The note is retained unaltered as the record of the state that
+    # preceded the adjudication. Still accurate in the note: the substrate-class
+    # characterisation, the fact that the §4 project decision was not made by the
+    # pilot, and that register transitions are the operator's act. Now overtaken:
+    # "pending OQ-1 operator adjudication".
+    evidence_references:
+      - "tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/manifest.yaml (run_id 20260729T120613Z-eb92ea46; coverage_argument.unexercised_residual_ref[0]; claim.covered_axis)"
+      - "tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/fault-timeline.jsonl (11 faults, all MET, none durable)"
+      - "tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/baseline.yaml (sha256 77c0234e9c83d5a662a39faf0a7ee9631e577c1a8b0f62cc72016aecbd7658f2; 16 VER §3 fields unmet)"
+      - "baseline commit eb92ea467cb55d923b5c9eb4307b65491b14fe26; evidence commit 9611142d"
+      - "docs/plans/2026-07-29-tos-ev-l2-pilot-design.md §2.3, §9 gate 3, §10 (ratified at commit fdb74324)"
+      - "VER-002-001 lines 1021, 1024, 1042, 130; ADR-002-005 lines 61, 197, 237"
+      - "tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/manifest.yaml (EV-L3 integrated crash-restart run; durable limb executed on a real substrate — pilot-scope sqlite3 WAL, substrate-class)"
+      - "tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/crash-timeline.jsonl (8 scenarios MET incl. the L3-08 durability cell)"
+      - "tos-evidence/STATE-EV-004/review/20260806-independent-review-attempt-1-SIGNOFF-RECOMMENDED.md (ai-review leg; decorrelation limitation recorded)"
+      # ADDED 2026-08-06 (v1.1) — the completed VER §9.5 signature chain for the
+      # 12dd4077 generation, which is what makes the durable-limb citation
+      # consumable rather than merely executed:
+      - "tos-evidence/STATE-EV-004/review/20260806-independent-review-attempt-2-gemini-SIGNOFF-RECOMMENDED.md (second ai-review leg; different model family — satisfies the D1 decorrelated-family preference that attempt 1 declared it could not)"
+      - "tos-evidence/STATE-EV-004/review/20260806-operator-countersign.md (VER §9.5 operator countersign, 2026-08-06; carries the OQ-1 (A) directive verbatim)"
+      - "tos-evidence/STATE-EV-001/20260806T015629Z-12dd4077/manifest.yaml (EV-L1 stage at the signed baseline)"
+      - "tos-evidence/STATE-EV-001/20260806T015630Z-12dd4077/manifest.yaml (EV-L2 stage at the signed baseline; 11/11 faults MET, seed 0 pinned)"
+      - "docs/plans/2026-08-06-tos-ev-l3-pilot-design.md §3, §7.1, §9 (pilot-scope persistence decision; R-1 closure path; gate list) — ratified at commit 2b455dd9, errata v1.2"
+      - "VER-002-001 line 132 (WAIVED prohibition), line 1026 (STATE-EV-001 Expected), line 1044 (STATE-EV-004 Minimum Level EV-L3), line 3310 (non-union) — all re-measured 2026-08-06; see ANCHOR DRIFT NOTE"
+
+  - risk_identity: >-
+      R-2 — the overflow/underflow limb of Safety-Profile semantic validation is
+      unexercised, because no approved bound defines a safe magnitude range for a
+      governed dimension. The fault was written, then excluded from the catalogue
+      for lack of a falsifiable Expected.
+    affected_requirement_and_adr:
+      requirement: >-
+        VER-002-001 SPG-EV-002 Expected (line 1549): "Every unsafe or incomparable
+        semantic mutation is rejected deterministically before activation; no
+        parser or consumer interpretation grants a more permissive result."
+        Minimum level EV-L1/EV-L2 (line 1546).
+      adr: >-
+        ADR-002-014 §11 step 3 (line 304) SHALL-validates "types, units,
+        currencies, multipliers, signs, precision, rounding, overflow, underflow,
+        NaN, infinity, and boundary inclusion"; SPG-AC-002 (line 621) requires
+        those defects to "fail closed before activation". The overflow/underflow
+        words in that list have no executed evidence.
+    broker_account_instrument_scope:
+      brokers: []
+      accounts: []
+      instruments: []
+      statement: >-
+        Non-live-test only; the affected artifact is
+        tos.spg.records.GovernedDimensionLimit (lines 87-114) as consumed by
+        tos.spg.predicates.semantic_validation and profile_within_envelope. No
+        broker, account, or instrument is in scope.
+    credible_failure_sequence: >-
+      (1) A Runtime Safety Profile is authored with a governed-dimension magnitude
+      outside any sane operating range — not merely above an envelope maximum,
+      but outside the range the downstream representation can carry. (2) Nothing
+      rejects it on absolute grounds: CanonicalDecimal is arbitrary-precision, so
+      no float overflow is raised, and the only magnitude check is the relative
+      comparison against envelope_max, which is itself only present when the
+      envelope declares that dimension. (3) The value is activated. (4) A
+      downstream consumer with a narrower representation — a broker field width, a
+      fixed-scale serialization, an integer conversion — truncates, wraps, or
+      saturates it. (5) The activated limit no longer represents the approved
+      limit, and the direction of the error is not guaranteed conservative: a
+      wrapped or truncated magnitude can be larger-permissive than intended.
+    maximum_economic_effect:
+      present: "None. Non-live-test scope; no order path exists to carry a permissive limit into a broker command."
+      path_to_economic_effect: >-
+        Same evidence-chain path as R-1: SPG-EV-002 is the row closest to PASS in
+        this track, so a coverage claim over its Expected that silently includes
+        the step-3 overflow/underflow words would be the artefact a later
+        live-scope decision cites. That decision's ceiling is unbounded on the
+        record while MAX_trial_authorized_economic_effect is null
+        (VERIFICATION-PROFILE-002.yaml line 942).
+      statement: "No present economic effect; future effect unbounded-by-record."
+    existing_controls:
+      - "NaN and Infinity magnitudes are rejected at construction — the §5 H-1 hardening pins allow_inf_nan=False on FrozenModel, measured met in the run manifest's l1_hardening_prereq block, and exercised as SPG-05 / SPG-06."
+      - "A None magnitude fails closed rather than reading as unbounded (SPG-15; records.py:106-114 contract)."
+      - "A magnitude above a declared envelope_max is rejected (SPG-09 EXCEEDS_ENVELOPE), and an undeclared or omitted dimension is rejected rather than skipped (SPG-10, SPG-11)."
+      - "Coverage honesty: the run manifest's coverage_argument.unexercised_residual_ref names SPG-07 explicitly, so the gap is in-band with the evidence."
+      - "Residual after those controls: the ABSOLUTE safe-range check. Nothing bounds a magnitude that is finite, present, and below whatever envelope_max happens to say."
+    detection_and_containment_bound:
+      detection: >-
+        NOT_ESTABLISHED, and measurably so. VERIFICATION-PROFILE-002.yaml was
+        approved at profile level on 2026-07-29 (P0-1) for 146 of its 163 numeric
+        keys, but it contains no governed-dimension magnitude or safe-range key at
+        all: a grep of the file for magnitude / overflow / underflow / safe_range /
+        scale matches only MAX_time_source_precision_ms (line 985) and
+        MIN_capacity_domain_voter_quorum (line 988), neither of which is a
+        magnitude range. The bound this residual needs is not among the approved
+        146 — it does not yet exist as a key.
+      containment: "Gate-level only: the SPG-EV-002 coverage argument SHALL NOT claim the step-3 overflow/underflow limb."
+      resolution_path: >-
+        Two steps, in order. (a) Register and approve a governed-dimension
+        magnitude range bound — the D4 patch track precedent is
+        VERIFICATION-PROFILE-002 PATCH-0054, which registered absent keys as null
+        with owner TBD so the gap was visible, followed by Bounds-Approver
+        approval; alternatively bind the range to an approved Hard Safety Envelope
+        instance. (b) With a falsifiable Expected then available, add SPG-07 to the
+        design §4 catalogue as a subsequent EV-L2 fault and re-run. Step (b) alone
+        cannot discharge this residual; without step (a) the Expected stays
+        non-falsifiable (design §0.5-4).
+    owner: operator
+    approver:
+      identity: operator
+      basis: "Operator directive 2026-07-29 (§378 register creation approved); session C record. Also the Bounds-Approver for the key this residual needs."
+      separation_of_duties: "Not the Live-Armer (unassigned). Per VER §2.6 not eligible as the independent reviewer of the affected evidence."
+    expiration_or_review_date:
+      review_date: "2027-01-25"
+      basis: "MAX_residual_risk_review_interval_ms = 180 days from 2026-07-29 (VERIFICATION-PROFILE-002.yaml line 949)."
+      expiry_semantics: "No auto-renewal and no ripening into acceptance; a missed review restricts scope."
+    required_scope_reduction:
+      - "SPG-EV-002's coverage argument SHALL NOT claim the ADR-002-014 §11 step-3 overflow/underflow limb, and any PASS proposed for the row SHALL carry this exclusion verbatim."
+      - "No Runtime Safety Profile may be activated for a live or restricted-live scope on the strength of SPG-EV-002 alone."
+      - "Until a range bound is approved, profile magnitudes remain constrained only relatively (against envelope_max), which SHALL be stated wherever the row is cited."
+    evidence_references:
+      - "tos-evidence/SPG-EV-002/20260729T120633Z-eb92ea46/manifest.yaml (run_id 20260729T120633Z-eb92ea46; coverage_argument.unexercised_residual_ref[0] = SPG-07)"
+      - "tos-evidence/SPG-EV-002/20260729T120633Z-eb92ea46/fault-timeline.jsonl (12 faults, all MET; SPG-07 absent by design)"
+      - "baseline commit eb92ea467cb55d923b5c9eb4307b65491b14fe26; evidence commit 9611142d; hardening commit eb92ea46"
+      - "docs/plans/2026-07-29-tos-ev-l2-pilot-design.md §4 (SPG-07 exclusion), §0.5-4, §10 (ratified at commit fdb74324)"
+      - "ADVERSE-SCENARIO-SET-002-EVL2-PILOT.yaml unbounded_credible_effects ASS-UNB-01; dominance_and_pruning_proofs ASS-DOM-01"
+      - "VERIFICATION-PROFILE-002.yaml lines 1-51 (P0-1 scope-limited approval), 942, 949, 985, 988"
+      - "ADR-002-014 lines 304, 621; VER-002-001 lines 1546, 1549"
+
+  - risk_identity: >-
+      R-3 — currency has no independent representation in the governed-dimension
+      model. ADR-002-014 §11 step 3 and SPG-AC-002 both name currency as a
+      fail-closed defect class, but the only carrier available is the free-text
+      `unit` field, so a currency defect cannot be expressed, mutated, or
+      validated on its own.
+    affected_requirement_and_adr:
+      requirement: >-
+        VER-002-001 SPG-EV-002 Expected (line 1549), the "incomparable semantic
+        mutation" clause: a currency-only mismatch is exactly such a mutation and
+        is not independently detectable.
+      adr: >-
+        ADR-002-014 §11 step 3 (line 304) lists "currencies" among the SHALL-
+        validated attributes; SPG-AC-002 (line 621) requires "Unit, multiplier,
+        currency, sign, precision, rounding, overflow, and cross-field semantic
+        defects fail closed before activation". ADR-002-021 §10 (line 281) adds
+        that "Currency conversion ... [is a] Critical Input and cannot silently
+        default".
+      measured_gap: >-
+        tos.spg.records.GovernedDimensionLimit (tos/src/tos/spg/records.py:87-114)
+        declares dimension, envelope_max, profile_value, unit, multiplier, sign,
+        precision, rounding, boundary — and no currency field. Negative grep over
+        tos/src/tos/spg/ for "currency" returns exactly one hit, a docstring at
+        predicates.py:438 quoting SPG-AC-002; there is no field and no validator.
+        The docstring names a guarantee the fields cannot carry.
+    broker_account_instrument_scope:
+      brokers: []
+      accounts: []
+      instruments: []
+      statement: >-
+        Non-live-test, and additionally single-currency by omission: the exercised
+        dimensions (qty, notional, latency) carry no currency at all. No broker,
+        account, or instrument is in scope.
+    credible_failure_sequence: >-
+      (1) A multi-currency deployment encodes currency by convention inside the
+      free-text `unit` string, or omits it. (2) An envelope dimension and a
+      profile dimension of the same name differ only in currency — say an envelope
+      maximum denominated in one currency and a profile value in another — while
+      their `unit` strings match, either because the convention was not followed
+      or because both were written as a currency-free unit such as "notional".
+      (3) profile_within_envelope compares the metadata tuple, finds no mismatch,
+      and compares the magnitudes directly. (4) The comparison is arithmetically
+      valid and semantically meaningless: an amount in a weaker unit of account
+      passes against a maximum in a stronger one, and the activated profile
+      permits more economic exposure than the envelope approved. (5) Nothing
+      downstream re-checks, because the currency conversion that ADR-002-021 §10
+      (line 281) requires to be explicit was never expressed as an input at all.
+    maximum_economic_effect:
+      present: >-
+        None. The scope is non-live-test and currency-free; no multi-currency
+        profile exists to activate and no order path exists to carry it.
+      path_to_economic_effect: >-
+        Two-step. First the evidence-chain path shared with R-1 and R-2: a
+        coverage claim over SPG-EV-002's Expected that reads as covering "currency"
+        because the ADR lists it would be cited later. Second, and specific to this
+        entry, the defect's own effect scales with the FX ratio between the two
+        currencies rather than with any approved limit — the over-permission is
+        multiplicative, not additive, and no approved bound caps it (the profile
+        has no currency-aware key, and MAX_trial_authorized_economic_effect is
+        null, line 942).
+      statement: "No present economic effect; the future effect is proportional to an unmodelled FX ratio and is unbounded-by-record."
+    existing_controls:
+      - "Unit-string equality is enforced between an envelope dimension and the same-named profile dimension (SPG-01 exercised; guard at predicates.py:536-537), so IF currency is embedded in `unit` by convention, a currency-only difference is caught as a unit mismatch."
+      - "That control is convention-dependent: nothing validates that the convention was followed, and no test asserts it. It is a practice, not a mechanism."
+      - "Multiplier and sign are separate fields, so a currency change disguised as a multiplier change is caught (SPG-02, SPG-03)."
+      - "Coverage honesty: the run manifest's coverage_argument.unexercised_residual_ref names SPG-04 and its cause explicitly."
+    detection_and_containment_bound:
+      detection: >-
+        NOT_ESTABLISHED at the model layer. There is no field to inspect, so no
+        detector can be written without a model change; a currency defect is
+        detectable today only by human reading of the `unit` strings.
+      containment: >-
+        Scope-level only: the exercised dimensions are currency-free, so the
+        defect cannot be instantiated at the present scope. This contains the
+        risk exactly as long as that stays true.
+      resolution_path: >-
+        A model change is required, not another test: either add an independent
+        currency field to GovernedDimensionLimit and compare it beside unit /
+        multiplier / sign (reusing the ratified ValidationReason vocabulary per the
+        design §5 H-3 drift-lock, minting no new reason value), or bind currency
+        through an approved conversion policy as ADR-002-021 §10 (line 281)
+        requires. Only then can SPG-04 be written with a deterministic, falsifiable
+        Expected and added to the catalogue.
+    owner: operator
+    approver:
+      identity: operator
+      basis: "Operator directive 2026-07-29 (§378 register creation approved); session C record."
+      separation_of_duties: "Not the Live-Armer (unassigned). Per VER §2.6 not eligible as the independent reviewer of the affected evidence."
+    expiration_or_review_date:
+      review_date: "2027-01-25"
+      basis: "MAX_residual_risk_review_interval_ms = 180 days from 2026-07-29 (VERIFICATION-PROFILE-002.yaml line 949)."
+      expiry_semantics: "No auto-renewal; review confirms the single-currency containment still holds or restricts scope."
+    required_scope_reduction:
+      - "No multi-currency Runtime Safety Profile may be authored or activated while GovernedDimensionLimit has no currency field."
+      - "SPG-EV-002's coverage argument SHALL NOT claim the ADR-002-014 §11 step-3 currency limb, and SHALL NOT cite SPG-AC-002 as satisfied in full."
+      - "Any governed dimension whose magnitude is denominated in a unit of account SHALL be treated as out of scope for this evidence track until the model change lands."
+    evidence_references:
+      - "tos-evidence/SPG-EV-002/20260729T120633Z-eb92ea46/manifest.yaml (coverage_argument.unexercised_residual_ref[1] = SPG-04)"
+      - "tos/src/tos/spg/records.py:87-114 (GovernedDimensionLimit field list — the measured absence)"
+      - "tos/src/tos/spg/predicates.py:438 (the sole 'currency' occurrence in tos/src/tos/spg/, a docstring quoting SPG-AC-002)"
+      - "baseline commit eb92ea467cb55d923b5c9eb4307b65491b14fe26; evidence commit 9611142d"
+      - "docs/plans/2026-07-29-tos-ev-l2-pilot-design.md §4 (SPG-04 exclusion), ratified at commit fdb74324"
+      - "ADVERSE-SCENARIO-SET-002-EVL2-PILOT.yaml dominance_and_pruning_proofs ASS-DOM-02"
+      - "ADR-002-014 lines 304, 621; ADR-002-021 line 281; VER-002-001 line 1549"
+
+  # ===========================================================================
+  # ENTRIES REGISTERED 2026-08-06 (register_version 1.1)
+  #
+  # Operator directive, verbatim: "R-N/R-I/R-D 등재 승인"
+  # (tos-evidence/STATE-EV-004/review/20260806-operator-countersign.md).
+  #
+  # Source of content: the EV-L3 pilot design's residual proposals
+  # (docs/plans/2026-08-06-tos-ev-l3-pilot-design.md §2.4), the in-band carriers
+  # that already named them before registration —
+  # ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml `residual_risk_references` and the
+  # STATE-EV-004 run manifest's `integration_boundary.modeled_axes` — and the
+  # executed run package 20260806T015632Z-12dd4077.
+  #
+  # SHAPE: identical to R-1/R-2/R-3 — all twelve VER §378 SHALL items, at the
+  # top level of each entry, in the specification's own order and wording
+  # (verified mechanically: 12/12 present on all six entries). ONE additive
+  # sub-field appears on these entries and is declared here rather than assumed:
+  # `blocking_effect`, nested inside `affected_requirement_and_adr` beside the
+  # existing `criticality_note`/`measured_gap` sub-fields. It states exactly
+  # which PASS each entry blocks, so a reader cannot infer a wider block than
+  # the entry supports. It removes and renames nothing. The non-union rule is
+  # NOT a new key: it is carried as the final item of each entry's
+  # `required_scope_reduction` list, which is where a scope restriction belongs.
+  # No top-level field is added to these entries.
+  #
+  # ANCHORS: every VER-002-001 `line NNNN` below was re-measured against the
+  # current revision on 2026-08-06. They therefore differ by +1 from the design
+  # document's citations and by +2 from the 2026-07-29 entries' citations. See
+  # the ANCHOR DRIFT NOTE in the header — the drift is two dated header bullets
+  # added to VER-002-001, not a change of referent.
+  # ===========================================================================
+
+  - risk_identity: >-
+      R-N — STATE-EV-004's real-network-boundary axis is undischarged. VER §5
+      defines EV-L3 as an integrated test with "real persistence, identity, and
+      network boundaries" (line 154). The executed EV-L3 run realized the
+      persistence boundary (a real on-disk sqlite3 WAL store) and a real OS
+      process boundary, and re-derived logical state identity across it; but the
+      transmission at every crash point is a capability-class VirtualBroker
+      marker held inside the process, not a real broker send. The row whose
+      minimum level IS EV-L3 therefore has one of its three defining boundaries
+      modeled rather than exercised.
+    affected_requirement_and_adr:
+      requirement: >-
+        VER-002-001 STATE-EV-004 — Conservative Restart Reconstruction: Minimum
+        Level EV-L3 (line 1044); Injection (line 1046) "Crash at each attempt and
+        broker-order boundary, including after durable `SEND_STARTED`, AFTER
+        NETWORK TRANSMISSION, and before evidence persistence"; Expected (line
+        1047). The level definition the row must meet is VER §5 EV-L3 (line 154):
+        "Multiple live-path components are tested together with real persistence,
+        identity, and network boundaries."
+      adr: >-
+        ADR-002-005 AC-005-4 — Restart (line 240): "post-restart,
+        `SEND_STARTED`/non-terminal orders are `POTENTIALLY_LIVE`/`UNKNOWN`;
+        knowledge is never `RECONCILED` without re-derivation". §13 (line 198-199)
+        carries the same obligation normatively. The named destination for a real
+        network boundary is VER §5 EV-L4 — Broker Sandbox or Certified Test
+        Environment (line 156) — or a +Broker-scoped level above it.
+      criticality_note: >-
+        STATE-EV-004 is a Critical requirement, so VER-002-001 line 132
+        (re-measured 2026-08-06) makes WAIVED_WITH_RESIDUAL_RISK unavailable.
+        This is a blocking gap, not an acceptable one.
+      blocking_effect: >-
+        ADDITIVE, and deliberately narrow. This entry blocks STATE-EV-004's OWN
+        PASS, and nothing else. It does NOT block the STATE-EV-001 PASS recorded
+        2026-08-06: that row's minimum level is EV-L1/EV-L2 (line 1023), its own
+        axes were executed at those levels, and it consumes the EV-L3 run only by
+        citing the durable limb under R-1's standing consumer rule — a
+        persistence property that traverses no network boundary. A consumer who
+        reads this entry as invalidating the STATE-EV-001 PASS has widened it
+        beyond what it says.
+    broker_account_instrument_scope:
+      brokers: []
+      accounts: []
+      instruments: []
+      statement: >-
+        Non-live-test only, with ZERO real broker order bytes emitted — measured,
+        not asserted: the run manifest records
+        `integration_boundary.modeled_axes[0]` as axis `network`, disposition
+        MODELED, and the transmission at each crash point is a capability-class
+        VirtualBroker marker (design #39 §0, §2.4). No broker, account, or
+        instrument is in scope. This description is NOT a "broker limitation"
+        (VER-002-001 line 3312, re-measured): it is a declared absence of an
+        exercised boundary inside this project's own test scope. The
+        project-side reason the real futures order path cannot be exercised at
+        all is an operator policy of this deployment — the real futures account
+        is never funded and real-money futures order paths are permanently
+        blocked (CLAUDE.md, Non-Negotiable Rules) — which is a constraint on this
+        operator's configuration, not a capability limit of any broker.
+    credible_failure_sequence: >-
+      (1) A defect exists at the real transmission boundary — a send the
+      transport acknowledges but the broker never receives, a connection reset
+      part-way through a write, a receipt whose ambiguity has no in-process
+      analogue, or a duplicate delivery on retry. (2) The modeled marker cannot
+      express it: the VirtualBroker marker transitions deterministically, never
+      leaves the process, and has no failure mode that is not authored, so the
+      EV-L3 run cannot fail on it. (3) A reader treats STATE-EV-004's executed
+      EV-L3 stage as covering the row's whole Expected and builds restart,
+      recovery-barrier, or reconciliation logic on "after network transmission"
+      being an exercised crash boundary. (4) The defect first surfaces against a
+      real broker, at precisely the boundary where a potentially-live order can
+      exist with no local record that it does. (5) Conservative reconstruction is
+      then armed from a false premise — an attempt reconstructed as not-live
+      while the broker holds it live — which is the exact condition AC-005-4
+      exists to prevent.
+    maximum_economic_effect:
+      present: >-
+        None, and structurally so at this scope: the run emits zero real broker
+        order bytes, and no live authorization, account, or order path exists.
+      path_to_economic_effect: >-
+        Evidence-chain contamination, as with R-1 — a coverage or PASS claim
+        resting on STATE-EV-004's EV-L3 stage could later be cited as a satisfied
+        precondition in a live-authorization or scope-promotion decision. The
+        effect would then be bounded by whatever live scope that later decision
+        opens, which is presently unbounded on the record:
+        MAX_trial_authorized_economic_effect and
+        MAX_trial_concurrent_potential_effect are null and key-level unapproved
+        (VERIFICATION-PROFILE-002.yaml lines 942-943), and no approved Broker
+        Capability Profile bound exists for this row
+        (`broker_capability_profile_version` is `N/A` on the STATE-EV-004 row of
+        EVIDENCE-REGISTER-002.csv — measured 2026-08-06). Per ADR-002-021 §11 an
+        unbounded credible effect is DENY or UNKNOWN, never a convenient finite
+        value; ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml
+        `unbounded_credible_effects` ASS-UNB-01 records the same refusal.
+      statement: "No present economic effect; future effect unbounded-by-record until those keys are approved."
+    existing_controls:
+      - "In-band declaration at the evidence: the run manifest records integration_boundary.modeled_axes[0] as axis=network, disposition=MODELED, with modeled_axis_residual_declared: true, and a modeled_axes_note stating that VER §5 defines EV-L3 by real persistence, identity and network boundaries while this run realizes persistence, the process boundary and logical identity re-derivation only."
+      - "coverage_argument.unexercised_residual_ref in the same manifest names 'R-N — STATE-EV-004 real-network-boundary axis unexercised' with its cause."
+      - "The manifest declares the run NOT PASS-eligible for STATE-EV-004 (design #39 §9) and records claim.register_status_moved_by_this_run: false."
+      - "Triple independent declaration in the approved scenario set ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml. (i) Per-entry markers, measured 2026-08-06: of its 8 populated ADR-002-021 §11 pointer entries, 7 carry real_network_sub_axis: DEFERRED_R_N and all 8 carry full_trading_scenario_coverage: NOT_CLAIMED. The eighth is ASS-EVL3-B-04 (design cell L3-08, the durability round-trip), which carries real_network_sub_axis: NOT_APPLICABLE beside modeled_transmission: false — correctly, because that cell performs no transmission at all, so there is no network sub-axis for it to defer. The exclusion is therefore stated on every entry that has a network sub-axis, and is not silently skipped on the one that does not. (ii) ASS-DOM-02 explicitly refuses a dominance pruning for the real-network sub-axis. (iii) ASS-UNB-01 refuses a finite effect bound."
+      - "VER-002-001 line 132 structurally forbids waiving a Critical requirement, so no acceptance route can quietly close this."
+      - "The gap has a named destination with its own level: VER §5 EV-L4 (line 156), broker sandbox or certified test environment."
+      - "Structural containment upstream: zero real order bytes is not a harness convention but an operator policy of this deployment (real futures account never funded; real-money futures order paths permanently blocked, CLAUDE.md), so the unexercised boundary cannot be crossed by accident from this project."
+    detection_and_containment_bound:
+      detection: >-
+        NOT_ESTABLISHED. No runtime detector exists because no real transmission
+        occurs — there is nothing to monitor. Detection today is document-gate
+        only: review of the run manifest's modeled_axes and coverage_argument
+        fields, of the scenario set's deferral markers, and of this register.
+      containment: >-
+        Two layers, both passive. Structural at the present scope: the emitted
+        real order byte count is zero, so the defect cannot be instantiated
+        today. Gate-level: STATE-EV-004 cannot reach PASS while this entry
+        stands. No automated fence exists, and none can, absent a real boundary
+        to fence.
+      resolution_path: >-
+        An EV-L4 broker-sandbox or certified-test-environment run (VER §5 line
+        156) that crosses a real broker network boundary, scoped to an instrument
+        class this operator's policy permits. It is NOT resolvable by any further
+        modeled run at EV-L3 — additional modeled cells add cells, not a
+        boundary. It SHALL NOT be resolved by a real-money futures order path:
+        that path is permanently policy-blocked (CLAUDE.md), and a zero-deposit
+        preflight ABORT there is a terminal verdict, not a pending-funding state.
+      time_bound: "None claimed. A gate reviewed at most every 180 days is not a time-to-detect bound."
+    owner: operator
+    approver:
+      identity: operator
+      basis: >-
+        Operator directive 2026-08-06, verbatim: "R-N/R-I/R-D 등재 승인", recorded
+        in tos-evidence/STATE-EV-004/review/20260806-operator-countersign.md
+        (companion-directives section). Approver identity `operator` = D1 role
+        scheme System owner / Bounds-Approver
+        (docs/plans/2026-07-29-tos-phase0-role-scheme-and-disposition.md lines
+        15-16).
+      separation_of_duties: >-
+        Not the Live-Armer (still deliberately unassigned, fail-closed — same
+        source, line 20). Per VER §2.6 this identity SHALL NOT also be the
+        independent reviewer of the affected evidence; measured for the 12dd4077
+        generation, both review legs are AI reviewers (attempt 1 same-family,
+        attempt 2 different-family), not this identity.
+    expiration_or_review_date:
+      review_date: "2027-01-25"
+      basis: >-
+        Registered 2026-08-06. Three candidate dates were derived and the
+        earliest governs, per the header's standing rationale that "the earlier,
+        bound-conforming date governs every entry": (a) 2027-02-02 =
+        MAX_residual_risk_review_interval_ms 15552000000 ms = 180 days from
+        2026-08-06 (VERIFICATION-PROFILE-002.yaml line 949); (b) 2027-01-29 = the
+        profile's own review_due (line 56); (c) 2027-01-25 = this register's
+        review_due, itself 180 days from the register's effective_from
+        2026-07-29. 2027-01-25 is adopted. It cannot breach the approved MAX
+        interval (it is earlier than the bound in every measurement), it places
+        this review before the profile review rather than after it, and it keeps
+        all six entries on one review cycle so no entry outlives the register's
+        own review.
+      expiry_semantics: >-
+        This entry does not expire into acceptance. A missed or unproven review
+        restricts scope and never auto-renews; the underlying requirement stays
+        Critical and unwaivable regardless of the date.
+    required_scope_reduction:
+      - "STATE-EV-004 SHALL NOT be marked PASS while this entry stands."
+      - "No consumer may cite STATE-EV-004 as evidence that a real broker network boundary was exercised. Its EV-L3 realization is real persistence + real process boundary + logical identity re-derivation ONLY, and any citation SHALL carry that enumeration."
+      - "No live scope, restricted-live trial, or production authorization may cite STATE-EV-004 as network-boundary evidence."
+      - "The zero-real-order-bytes property SHALL NOT be presented as coverage. It is the reason the axis is unexercised, not evidence that it is safe."
+      - "This entry SHALL be cited individually and SHALL NOT be summarised together with R-I, R-D, or R-1 as one aggregate residual (VER-002-001 §378, non-union sentence at line 3310)."
+    evidence_references:
+      - "tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/manifest.yaml (integration_boundary.modeled_axes[0] axis=network disposition=MODELED; modeled_axis_residual_declared: true; coverage_argument.unexercised_residual_ref)"
+      - "tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/crash-timeline.jsonl (8 crash scenarios MET; the transmission at each crash point is the modeled marker)"
+      - "baseline commit 12dd40778b0237ea6992a3b0a9ecadb10f865f0f; evidence commit ad6072de"
+      - "tos-spec/src/part-1-foundation/verification/ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml (residual_risk_references entry R-N; ASS-DOM-02; ASS-UNB-01; per-entry real_network_sub_axis: DEFERRED_R_N)"
+      - "docs/plans/2026-08-06-tos-ev-l3-pilot-design.md §2.4 (the R-N proposal), §0, §10 boundary table — ratified 2026-08-06, errata v1.2"
+      - "tos-evidence/STATE-EV-004/review/20260806-operator-countersign.md (registration directive, verbatim)"
+      - "VER-002-001 lines 132, 154, 156, 1044, 1046, 1047, 3310, 3312; ADR-002-005 lines 198-199, 240 — all re-measured 2026-08-06"
+      - "CLAUDE.md Non-Negotiable Rules (real futures account never funded; real-money futures order paths permanently blocked) — the operator policy that makes the real-order sub-path unreachable rather than merely unexercised"
+
+  - risk_identity: >-
+      R-I — STATE-EV-004's credential / service-identity boundary is
+      undischarged. VER §5 requires an EV-L3 test to cross real IDENTITY
+      boundaries (line 154). The executed run re-derives the LOGICAL state
+      identity across a real OS process boundary — writer process dies, reader
+      process reconstructs — but exercises no real credential, no service
+      principal, and no cross-host authentication. Logical identity
+      re-derivation and a credential boundary are different things, and only the
+      first was executed.
+    affected_requirement_and_adr:
+      requirement: >-
+        VER-002-001 STATE-EV-004 Minimum Level EV-L3 (line 1044), read against
+        the VER §5 definition of that level (line 154): "real persistence,
+        identity, and network boundaries". The row that owns this axis at its
+        own level is STATE-EV-005 — Dimension Transition Ownership, Minimum Level
+        "EV-L2/EV-L3 plus security assessment" (line 1051), which is
+        NOT_IMPLEMENTED in EVIDENCE-REGISTER-002.csv.
+      adr: >-
+        ADR-002-005 AC-005-5 — Ownership (line 241): "an attempt to transition a
+        dimension by a non-owner is rejected and evidenced (`STATE-EV-005`)". The
+        restart obligation this run does serve is AC-005-4 (line 240); the
+        identity half of the EV-L3 level definition points at AC-005-5's row, not
+        at this one.
+      measured_gap: >-
+        Measured in the executed evidence, not argued: the run manifest records
+        `integration_boundary.modeled_axes[1]` as axis `credential_identity`,
+        disposition DEFERRED, note "logical identity re-derivation executed; real
+        credential/cross-host auth deferred to STATE-EV-005 (+Security)". The
+        writer and reader processes run as the same OS user, on the same host,
+        against a store path the run itself creates; no credential appears
+        anywhere in the path, so there is nothing for a credential defect to
+        attach to.
+      criticality_note: >-
+        STATE-EV-004 is a Critical requirement, so VER-002-001 line 132
+        (re-measured 2026-08-06) makes WAIVED_WITH_RESIDUAL_RISK unavailable.
+        This is a blocking gap, not an acceptable one.
+      blocking_effect: >-
+        ADDITIVE, and deliberately narrow. This entry blocks STATE-EV-004's OWN
+        PASS, and nothing else. It does NOT block the STATE-EV-001 PASS recorded
+        2026-08-06, whose minimum level is EV-L1/EV-L2 (line 1023) and whose
+        durable-limb citation is a persistence property, not an identity one.
+    broker_account_instrument_scope:
+      brokers: []
+      accounts: []
+      instruments: []
+      statement: >-
+        Non-live-test only, and additionally credential-free by construction: the
+        pilot store is a local on-disk sqlite3 file created by the run, opened by
+        processes of one OS user on one host. No broker, account, or instrument
+        is in scope, and no broker limitation is invoked or implied
+        (VER-002-001 line 3312).
+    credible_failure_sequence: >-
+      (1) In a real deployment the writer and the reader are distinct service
+      principals — different credentials, plausibly different hosts — and the
+      authoritative store is reached through an authenticated path. (2) A
+      credential expires, a secret is rotated, a principal is misconfigured, or a
+      namespace/tenant qualifier is wrong. (3) The pilot cannot fail on any of
+      it: writer and reader share one OS user, one host, and one filesystem path,
+      with no credential in the path at all, so every authentication outcome is
+      vacuously correct. (4) At restart the reader either cannot reach the
+      authoritative store — and, if an absent store is treated as an empty one,
+      reconstructs "no attempt" while a potentially-live attempt sits in the
+      store it failed to open — or reaches a DIFFERENT store it should not have
+      been able to read, and reconstructs a stale or foreign composite as
+      authoritative. (5) The conservative-resume barrier is then armed from a
+      record that was never authoritatively identified, and the failure direction
+      is not guaranteed conservative: the second case can supply an optimistic
+      value the real store never held.
+    maximum_economic_effect:
+      present: >-
+        None. Non-live-test scope, no credential in the executed path, no order
+        path, no account.
+      path_to_economic_effect: >-
+        The evidence-chain path shared with R-1 and R-N: a coverage or PASS claim
+        over STATE-EV-004's Expected that reads as covering the EV-L3 identity
+        boundary would be the artefact a later live-scope or promotion decision
+        cites. That decision's ceiling is unbounded on the record while
+        MAX_trial_authorized_economic_effect and
+        MAX_trial_concurrent_potential_effect are null
+        (VERIFICATION-PROFILE-002.yaml lines 942-943). Specific to this entry:
+        the effect of reading a WRONG authoritative store is not bounded by this
+        deployment's own exposure at all — it is bounded by whatever exposure the
+        misidentified store governs, which no key in the approved profile
+        describes.
+      statement: "No present economic effect; future effect unbounded-by-record, and not bounded by this deployment's own scope in the wrong-store case."
+    existing_controls:
+      - "In-band declaration at the evidence: modeled_axes[1] axis=credential_identity, disposition=DEFERRED, residual_ref R-I, with modeled_axis_residual_declared: true."
+      - "The manifest's modeled_axes_note states the exclusion positively — VER §5 defines EV-L3 by real persistence, identity and network boundaries, and this run realizes persistence, the process boundary and logical identity re-derivation only — so the axis cannot be read as silently covered."
+      - "coverage_argument.unexercised_residual_ref names 'R-I credential-identity'."
+      - "ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml residual_risk_references carries R-I with its referent (STATE-EV-005, +Security)."
+      - "The gap has a named destination with its own higher level: STATE-EV-005, Minimum Level EV-L2/EV-L3 plus security assessment (line 1051)."
+      - "VER-002-001 line 132 structurally forbids waiving a Critical requirement."
+      - "Scope containment: with one OS user, one host, and a run-created store path, there is no credential and no cross-host route to misuse at the present scope. This contains the risk exactly as long as that stays true — it is a property of the harness, not a mechanism that would survive a real deployment."
+    detection_and_containment_bound:
+      detection: >-
+        NOT_ESTABLISHED, and structurally so: there is no credential to monitor,
+        no authentication event to log, and no principal to compare against an
+        expectation. Detection today is document-gate only — review of the
+        manifest's modeled_axes and of this register.
+      containment: >-
+        Scope-level plus gate-level. Scope-level: the executed configuration has
+        no credential path, so the defect cannot be instantiated at this scope.
+        Gate-level: STATE-EV-004 cannot reach PASS while this entry stands. No
+        automated fence exists.
+      resolution_path: >-
+        STATE-EV-005 executed at its own minimum level — EV-L2/EV-L3 plus a
+        security assessment (line 1051) — exercising a real service principal and
+        a real cross-host authenticated path to the authoritative store, with
+        non-owner transition attempts rejected and evidenced per AC-005-5 (line
+        241). It is NOT resolvable by another same-user, same-host run at EV-L3,
+        which would re-measure the boundary that is already exercised.
+      time_bound: "None claimed. A gate reviewed at most every 180 days is not a time-to-detect bound."
+    owner: operator
+    approver:
+      identity: operator
+      basis: >-
+        Operator directive 2026-08-06, verbatim: "R-N/R-I/R-D 등재 승인", recorded
+        in tos-evidence/STATE-EV-004/review/20260806-operator-countersign.md
+        (companion-directives section). D1 role scheme System owner /
+        Bounds-Approver (docs/plans/2026-07-29-tos-phase0-role-scheme-and-
+        disposition.md lines 15-16).
+      separation_of_duties: >-
+        Not the Live-Armer (still unassigned, fail-closed). Per VER §2.6 not
+        eligible as the independent reviewer of the affected evidence; the two
+        review legs for the 12dd4077 generation are AI reviewers, not this
+        identity.
+    expiration_or_review_date:
+      review_date: "2027-01-25"
+      basis: >-
+        Registered 2026-08-06; same derivation as R-N. 180 days from 2026-08-06
+        is 2027-02-02 (MAX_residual_risk_review_interval_ms, profile line 949);
+        the profile's own review_due is 2027-01-29 (line 56); this register's
+        review_due is 2027-01-25. The earliest, 2027-01-25, is adopted — it is
+        bound-conforming by construction, precedes the profile review, and keeps
+        all six entries on one review cycle.
+      expiry_semantics: >-
+        No auto-renewal and no ripening into acceptance. A missed review
+        restricts scope; the requirement stays Critical and unwaivable.
+    required_scope_reduction:
+      - "STATE-EV-004 SHALL NOT be marked PASS while this entry stands."
+      - "No consumer may cite STATE-EV-004 as evidence of a real credential or service-identity boundary. What was executed is logical state-identity re-derivation across a real OS process boundary, and any citation SHALL say so in those words."
+      - "Any deployment in which the writer and the reader are distinct principals, or sit on distinct hosts, is OUT OF SCOPE for this evidence track until STATE-EV-005 executes."
+      - "STATE-EV-004 SHALL NOT be cited as partial evidence toward STATE-EV-005 or AC-005-5; no non-owner transition attempt was made or rejected in this run."
+      - "This entry SHALL be cited individually and SHALL NOT be summarised together with R-N, R-D, or R-1 as one aggregate residual (VER-002-001 §378, non-union sentence at line 3310)."
+    evidence_references:
+      - "tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/manifest.yaml (integration_boundary.modeled_axes[1] axis=credential_identity disposition=DEFERRED; modeled_axes_note; coverage_argument.unexercised_residual_ref)"
+      - "baseline commit 12dd40778b0237ea6992a3b0a9ecadb10f865f0f; evidence commit ad6072de"
+      - "tos-spec/src/part-1-foundation/verification/ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml (residual_risk_references entry R-I)"
+      - "docs/plans/2026-08-06-tos-ev-l3-pilot-design.md §2.4 (the R-I proposal), §7.2 (STATE-EV-005 deferral), §10 boundary table"
+      - "tos-evidence/STATE-EV-004/review/20260806-operator-countersign.md (registration directive, verbatim)"
+      - "EVIDENCE-REGISTER-002.csv STATE-EV-005 row (status NOT_IMPLEMENTED — the destination exists and is open)"
+      - "VER-002-001 lines 132, 154, 1023, 1044, 1051, 3310, 3312; ADR-002-005 lines 240, 241 — all re-measured 2026-08-06"
+
+  - risk_identity: >-
+      R-D — power-loss and torn-sector durability are undischarged. The crash
+      injector is `os._exit`, which models an application process death
+      faithfully but leaves the operating system's page cache intact. It
+      therefore cannot model power loss, host loss, or a torn-sector write. What
+      the executed evidence supports is PROCESS-CRASH durability; it does not
+      support power-loss durability, and the distinction is load-bearing because
+      the two failure classes have different recovery consequences.
+    affected_requirement_and_adr:
+      requirement: >-
+        VER-002-001 STATE-EV-004 Injection (line 1046), "then restart with
+        incomplete stores and stale caches" — the INTER-transaction
+        incomplete-store facet IS exercised (design #39 §4 cell L3-05, scenario
+        ASS-EVL3-C-02: a crash between two dimension-marker transactions leaves a
+        legitimately incomplete store); INTRA-transaction torn writes and
+        page-cache loss are not. Also VER-002-001 STATE-EV-001 Expected (line
+        1026), the word "durable", in exactly the scope in which R-1's evidence
+        limb was discharged on 2026-08-06.
+      adr: >-
+        ADR-002-005 §13 (line 197): "All five dimensions SHALL be durable and
+        reconstructable after crash, restart, or failover." Of the three named
+        events, "crash" and "restart" are modeled by this pilot; "failover" and
+        the power-loss class beneath it are not. AC-005-1 (line 237) requires the
+        §14 composites to be "representable and persisted".
+      measured_gap: >-
+        Recorded as an errata of the ratified design (docs/plans/
+        2026-08-06-tos-ev-l3-pilot-design.md §2.4, errata v1.2) after
+        implementation measurement: under an `os._exit` crash model the
+        `synchronous=FULL` pragma is UNFALSIFIABLE — `synchronous=OFF` is an
+        EQUIVALENT mutant, measured as mutant E during the mutation-canary pass
+        and reported EQUIVALENT rather than KILLED. `os._exit` does not evict the
+        OS page cache, so every write the pilot issued survives regardless of the
+        pragma. The pragma's REAL PRESENCE is nevertheless pinned by a separate
+        structural check — AST inspection of the executed source's real
+        `execute(...)` arguments plus a `PRAGMA synchronous` read-back — so a
+        docstring or comment naming the pragma cannot satisfy it (manifest
+        `integration_boundary.persistence.substrate_check.executed_pragmas`:
+        journal_mode WAL, synchronous FULL). Presence is measured; behaviour
+        under power loss is not.
+      criticality_note: >-
+        The affected requirements are Critical, so VER-002-001 line 132 offers no
+        WAIVED_WITH_RESIDUAL_RISK route here either. See `blocking_effect` for
+        what this entry does and does not block — its scope is narrower than
+        R-N's or R-I's, and stating it precisely is the point of the field.
+      blocking_effect: >-
+        ADDITIVE, and the narrowest in this register. STATED EXACTLY: this entry
+        blocks a POWER-LOSS / HOST-LOSS / TORN-SECTOR DURABILITY CLAIM, and only
+        that. It does NOT block (a) the process-crash durability claim actually
+        made by STATE-EV-004 run `20260806T015632Z-12dd4077`, which is what was
+        executed and is fully supported; (b) the STATE-EV-001 PASS recorded
+        2026-08-06, whose durable-limb citation is scoped to that process-crash
+        claim; (c) STATE-EV-004's READY state or any evidence it did execute.
+        STATE-EV-004's own PASS is blocked by R-N and R-I — not by this entry. A
+        consumer who reads R-D as invalidating the 2026-08-06 evidence has
+        widened it beyond what it says; a consumer who cites that evidence for
+        power-loss durability has ignored it.
+    broker_account_instrument_scope:
+      brokers: []
+      accounts: []
+      instruments: []
+      statement: >-
+        Non-live-test only; the affected artifact is the pilot store at
+        tos/src/tos/staterestore/store.py (a local on-disk sqlite3 database in
+        WAL journal mode) and the reconstruction that reads it. No broker,
+        account, or instrument is in scope, and no broker limitation is invoked
+        or implied (VER-002-001 line 3312).
+    credible_failure_sequence: >-
+      (1) The host loses power, or the filesystem tears a write mid-sector, at a
+      moment when a dimension marker is in the page cache but not yet on stable
+      media. (2) On restart the store is missing a marker whose transaction had
+      already returned, or holds a physically damaged page — a state the
+      `os._exit` model never produces, because it preserves the page cache and so
+      makes every issued write survive regardless of the durability pragma.
+      (3) Reconstruction then either loses a potentially-live attempt entirely —
+      the dangerous direction, since absence reads as "no attempt was made" —
+      or fails to open the store at all. (4) A reader who takes "durable and
+      reconstructable after crash, restart, or failover" (ADR-002-005 §13 line
+      197) as fully evidenced by this pilot arms the conservative-resume barrier
+      on a record a power event can silently truncate. (5) The defect stays
+      invisible until a real power or hardware event — that is, until exactly the
+      moment the recovery path is what stands between the system and an untracked
+      live order.
+    maximum_economic_effect:
+      present: >-
+        None. Non-live-test scope; no order path exists to carry a mis-reconstructed
+        state into a broker command.
+      path_to_economic_effect: >-
+        Evidence-chain contamination, and narrower than R-N's or R-I's: only a
+        claim that reaches BEYOND process-crash durability is contaminated. The
+        contaminating artefact would be a citation of the STATE-EV-001 durable
+        limb, or of STATE-EV-004's persistence axis, phrased without its
+        process-crash qualifier — because ADR-002-005 §13 line 197 says "crash,
+        restart, or failover" and an unqualified citation silently claims the
+        third. Any later live-scope decision resting on it inherits the same
+        unbounded-by-record ceiling as R-1, R-N, and R-I
+        (MAX_trial_authorized_economic_effect and
+        MAX_trial_concurrent_potential_effect null,
+        VERIFICATION-PROFILE-002.yaml lines 942-943).
+      statement: "No present economic effect; future effect unbounded-by-record, and reachable only through a citation that drops the process-crash qualifier."
+    existing_controls:
+      - "The claim is scoped in-band at three independent places: the design's §2.4 errata v1.2 states the pilot discharges process-crash durability only; the run manifest scopes the persistence technology as PILOT-SCOPE; and ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml ASS-DOM-03 records power-loss/torn-sector as pruning_basis NOT_PRUNED_UNRESOLVED, explicitly refusing a dominance argument."
+      - "The residual is genuinely narrowed rather than merely declared: the inter-transaction incomplete-store facet of VER line 1046 IS exercised (design cell L3-05 / scenario ASS-EVL3-C-02), so what remains is intra-transaction torn writes and page-cache loss, not 'incomplete stores' as a class."
+      - "The pragma's real presence is structurally pinned (AST inspection of real execute(...) arguments plus a PRAGMA read-back, hardened so a docstring token cannot satisfy the check), so the unfalsifiable setting is at least proven present rather than asserted in prose."
+      - "synchronous=FULL is the conservative setting even though this crash model cannot falsify it: the residual is an evidence gap, not a known-bad configuration."
+      - "Equivalent-mutant honesty: mutant E was reported EQUIVALENT rather than KILLED, so the mutation-canary coverage claim was not inflated by a mutant the model cannot kill."
+      - "Residual after those controls: nothing exercises stable-media durability. Every control above scopes or discloses the gap; none closes it."
+    detection_and_containment_bound:
+      detection: >-
+        NOT_ESTABLISHED at the harness layer, and not trivially establishable:
+        detecting this class requires filesystem or block-layer fault injection,
+        while the import firewall forbids `subprocess` and `ctypes` outright
+        (2026-07-20 boundary-and-import-firewall design, allowlist lines
+        186-187), so the usual in-corpus injection mechanisms are unavailable and
+        an out-of-corpus harness would be needed. Detection today is
+        document-gate only.
+      containment: >-
+        Claim-level. The executed claim is confined to process-crash durability
+        wherever it is cited, and this entry's `required_scope_reduction` makes
+        that confinement explicit rather than conventional. There is no runtime
+        containment because there is no runtime at this scope.
+      resolution_path: >-
+        An FS-fault-injection class extension: a filesystem or block-layer fault
+        injector — torn write, page-cache loss, delayed or reordered writes, and
+        a genuine power-cut equivalent — driven against the same store at EV-L3
+        or above, with the reconstruction's Expected re-derived for each injected
+        fault. It is NOT resolvable by adding further `os._exit` cells: those are
+        equivalent by construction, which is precisely what mutant E measured.
+      time_bound: "None claimed. A gate reviewed at most every 180 days is not a time-to-detect bound."
+    owner: operator
+    approver:
+      identity: operator
+      basis: >-
+        Operator directive 2026-08-06, verbatim: "R-N/R-I/R-D 등재 승인", recorded
+        in tos-evidence/STATE-EV-004/review/20260806-operator-countersign.md
+        (companion-directives section). D1 role scheme System owner /
+        Bounds-Approver. Note on provenance: the EV-L3 pilot design proposed R-D
+        as a CANDIDATE residual explicitly reserved for operator decision
+        (design §2.4, "추가 이연 (candidate residual, 운영자 결정)"); this
+        directive is that decision.
+      separation_of_duties: >-
+        Not the Live-Armer (still unassigned, fail-closed). Per VER §2.6 not
+        eligible as the independent reviewer of the affected evidence.
+    expiration_or_review_date:
+      review_date: "2027-01-25"
+      basis: >-
+        Registered 2026-08-06; same derivation as R-N and R-I. 180 days from
+        2026-08-06 is 2027-02-02 (MAX_residual_risk_review_interval_ms, profile
+        line 949); the profile's review_due is 2027-01-29 (line 56); this
+        register's review_due is 2027-01-25. The earliest, 2027-01-25, is
+        adopted — bound-conforming by construction, before the profile review,
+        and on one cycle with the other five entries.
+      expiry_semantics: >-
+        No auto-renewal and no ripening into acceptance. A missed review
+        restricts scope: specifically, an unreviewed R-D means the process-crash
+        qualifier stays mandatory on every durability citation, not that it
+        lapses.
+    required_scope_reduction:
+      - "No consumer may claim power-loss, host-loss, or torn-sector durability on the strength of STATE-EV-004 run 20260806T015632Z-12dd4077, or of the STATE-EV-001 PASS that cites it."
+      - "Every citation of the durable limb SHALL carry the words 'process-crash durability' or an explicit equivalent. An unqualified citation of ADR-002-005 §13 line 197 ('crash, restart, or failover') over this evidence is a scope breach, because 'failover' is unevidenced."
+      - "The `synchronous=FULL` pragma SHALL NOT be cited as evidenced BEHAVIOUR. Only its structural presence is measured; it is unfalsifiable under this crash model (mutant E, equivalent)."
+      - "No live scope, restricted-live trial, or production authorization may cite this evidence track as durability evidence of any kind."
+      - "This entry SHALL be cited individually and SHALL NOT be summarised together with R-1, R-N, or R-I as one aggregate residual (VER-002-001 §378, non-union sentence at line 3310). Its blocking scope is materially narrower than theirs, and unioning it would over-state the block."
+    evidence_references:
+      - "tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/manifest.yaml (integration_boundary.persistence: technology declared PILOT-SCOPE; substrate_check.executed_pragmas journal_mode=WAL synchronous=FULL, measured_from structural analysis of the executed source's syntax tree)"
+      - "tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/crash-timeline.jsonl (8 os._exit crash points; L3-05 is the inter-transaction incomplete-store cell that narrows this residual)"
+      - "baseline commit 12dd40778b0237ea6992a3b0a9ecadb10f865f0f; evidence commit ad6072de; substrate source tos/src/tos/staterestore/store.py"
+      - "tos-spec/src/part-1-foundation/verification/ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml (dominance_and_pruning_proofs ASS-DOM-03, NOT_PRUNED_UNRESOLVED; residual_risk_references entry R-D)"
+      - "docs/plans/2026-08-06-tos-ev-l3-pilot-design.md §2.4 including the errata v1.2 addendum (the unfalsifiability measurement and the mutant-E equivalence), §4 catalogue exclusions"
+      - "docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md lines 186-187 (the allowlist that forbids subprocess and ctypes, and hence the usual FS-fault-injection mechanisms)"
+      - "tos-evidence/STATE-EV-004/review/20260806-operator-countersign.md (registration directive, verbatim)"
+      - "VER-002-001 lines 132, 1026, 1046, 3310, 3312; ADR-002-005 lines 197, 237 — all re-measured 2026-08-06"
+
+authority:
+  accepts_residual_risk: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  activates_configuration: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+  marks_any_evidence_item_pass: false
+
+authorization_notice: >-
+  This register records unresolved limitations; it accepts none of them and
+  grants nothing. Registration is disclosure, not acceptance: an entry here does
+  not become an approved deviation, does not permit the affected evidence item to
+  be marked PASS, and does not authorise any live, restricted-live, or production
+  scope. R-1 in particular cannot be accepted at all while the requirement is
+  Critical (VER-002-001 line 130). The three entries SHALL be cited individually
+  and never unioned (line 3308), and none of them rests on a broker limitation
+  (line 3310). Every review date here is bound by the approved
+  MAX_residual_risk_review_interval_ms; a missed review restricts scope and never
+  auto-renews.
+  DATED ADDITION 2026-08-06 (v1.1): the paragraph above governs all six entries
+  unchanged. Three registrations were added on operator directive
+  ("R-N/R-I/R-D 등재 승인") and one dated disposition was recorded on R-1
+  ("OQ-1: (A) 채택"). Neither act accepts a residual, and registration is still
+  disclosure rather than acceptance. R-N and R-I block STATE-EV-004's own PASS
+  and are unwaivable on the same Critical ground as R-1 (line 132, re-measured).
+  R-D blocks a power-loss/torn-sector durability CLAIM only — it blocks neither
+  the process-crash durability the run executed nor any register row — and that
+  narrower scope SHALL be preserved rather than rounded up. R-1's evidence limb
+  being discharged does not close R-1, does not make its requirement waivable,
+  and does not decide ADR-002-005 §4. The STATE-EV-001 PASS recorded on
+  2026-08-06 is an evidence fact at the EV-L1/EV-L2 minimum level; this register
+  neither creates it nor confers any authority through it, and no entry here
+  authorises live, restricted-live, or production scope.

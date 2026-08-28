@@ -1,6 +1,7 @@
 ---
 name: security-auditor
 description: "보안 취약점 감사 전문가. SQL injection, 시크릿/토큰 노출, 입력 검증, KIS API 키 처리, 경로 순회, 역직렬화, Redis/ClickHouse 접근, .env/gitignore, 의존성 취약점 점검. 종합 코드 감사의 보안 렌즈."
+model: opus
 ---
 
 # Security Auditor — 보안 취약점 감사 전문가

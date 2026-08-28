@@ -1,6 +1,7 @@
 ---
 name: data-engineer
 description: "데이터 수집/백필/품질 전문가. KIS WebSocket 피드, ClickHouse 분봉 저장, pre-market warmup, gap 탐지/복구, daily data-quality, screener/fusion 데이터 피드. 데이터 파이프라인의 정확성·완전성 소유."
+model: sonnet
 ---
 
 # Data Engineer — 데이터 수집/백필/품질 전문가

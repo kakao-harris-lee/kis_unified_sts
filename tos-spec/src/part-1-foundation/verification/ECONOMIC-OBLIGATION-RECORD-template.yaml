@@ -1,0 +1,89 @@
+artifact_type: ECONOMIC_OBLIGATION_RECORD
+schema_version: "1.0-DRAFT"
+obligation_id: TBD
+obligation_version: TBD
+canonical_digest: TBD
+status: DRAFT
+lifecycle_state: POTENTIAL
+knowledge_state: UNKNOWN
+exact_binding:
+  post_trade_finality_policy_id: TBD
+  post_trade_finality_policy_generation: null
+  post_trade_finality_policy_digest: TBD
+  post_trade_obligation_generation: null
+  primary_source_event_id: TBD
+  primary_source_event_digest: TBD
+  source_continuity_id: TBD
+  source_revision: null
+  binding_complete: false
+scope:
+  scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+  environment: TBD
+  safety_cell: TBD
+  legal_entity: TBD
+  account: TBD
+  subaccount: TBD
+  broker: TBD
+  clearing_system: TBD
+  custodian: TBD
+  settlement_location: TBD
+obligation_class: UNKNOWN
+economic_identity:
+  instrument_or_asset_id: TBD
+  currency: TBD
+  quantity: null
+  amount: null
+  unit: TBD
+  sign: UNKNOWN
+  value_date: null
+  due_date: null
+  settlement_date: null
+obligation_legs: []
+causal_parent_records: []
+source_claims_and_evidence: []
+confidence_and_conservative_bounds: []
+statement_coverage_manifest_id: TBD
+statement_coverage_manifest_digest: TBD
+post_trade_break_id: TBD
+post_trade_break_digest: TBD
+finality:
+  finality_class: UNKNOWN
+  finality_proof_id: TBD
+  finality_proof_digest: TBD
+  finality_proven: false
+  invalidation_conditions: []
+rcl_capacity_binding:
+  capacity_allocation_id: TBD
+  rcl_revision: null
+  rcl_writer_epoch: null
+  binding_complete: false
+correction_and_supersession:
+  supersedes_obligation_id: TBD
+  supersedes_obligation_digest: TBD
+  correction_identity: TBD
+  old_and_new_union_required: true
+unresolved_conditions: []
+consumer_union_permitted: false
+authority:
+  active: false
+  creates_external_economic_truth: false
+  creates_finality: false
+  creates_available_cash_or_assets: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_external_economic_transmission: false
+  clears_halt_latch_break_or_incident: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT POTENTIAL obligation is UNKNOWN and grants no finality, cash or
+  asset availability, capacity transition, authority, or transmission. Missing
+  or incomplete binding preserves the greatest credible obligation and blocks
+  dependent new risk.

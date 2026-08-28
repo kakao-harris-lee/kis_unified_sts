@@ -1,0 +1,156 @@
+{
+  "artifact_id": "P-BAL-20260731T114344Z",
+  "probe_id": "P-BAL",
+  "title": "BALANCE_PAGINATION — balance-query page size / continuation walk (GET-only)",
+  "mode": "live",
+  "environment": "REAL_PROD",
+  "started_at_utc": "2026-07-31T11:43:44.145894+00:00",
+  "finished_at_utc": "2026-07-31T11:43:44.588930+00:00",
+  "duration_s": 0.443,
+  "repo_commit": "381a5650",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-BAL",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "",
+    "env": "real",
+    "max_pages": 10,
+    "inter_page_s": 1.1,
+    "known_page_size": 0,
+    "known_page_size_source": "",
+    "record_raw_continuation_keys": false
+  },
+  "credentials": {
+    "environment": "REAL_PROD",
+    "base_url": "https://openapi.koreainvestment.com:9443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "43******01",
+    "account_fingerprint": "00bcc5b3a87b"
+  },
+  "measurements": {
+    "target_supported": true,
+    "target": {
+      "asset": "futures",
+      "environment": "REAL_PROD",
+      "tr_id": "CTFO6118R",
+      "path": "/uapi/domestic-futureoption/v1/trading/inquire-balance",
+      "continuation_key_pair": [
+        "CTX_AREA_FK200",
+        "CTX_AREA_NK200"
+      ],
+      "row_qty_field": "cblc_qty",
+      "tr_id_source": "shared/kis/client.py:919 (stock real/mock split), :1048 (futures)"
+    },
+    "termination_cause": "BROKER_END_OF_SET",
+    "termination_detail": "page 0 answered rt_cd='7' with msg_cd='KIOK0560' ('조회할 내용이 없습니다') — the broker's empty-result-set notation, not a rejection (wave-3 N-16 precedent; the stock sibling pairs the same msg_cd with rt_cd='0'). Zero rows are an answer; they establish nothing about pagination and the page-size skip records that.",
+    "truncation_risk": {
+      "verdict": "TRUNCATION_RISK_UNESTABLISHED",
+      "rationale": "1 page(s) walked, 0 row(s) seen, no page size established. A single page of 0 row(s) is consistent with ANY page size >= 0: the page size is NOT 0, and 0 is recorded as a LOWER BOUND (page_size_lower_bound). This run neither demonstrates nor refutes the truncation risk at shared/kis/client.py:931-932.",
+      "termination_cause": "BROKER_END_OF_SET",
+      "pages_walked": 1,
+      "page_row_counts": [
+        0
+      ],
+      "page_size": null,
+      "page_size_source": "UNESTABLISHED",
+      "page_size_lower_bound": 0,
+      "holdings_total": 0,
+      "holdings_total_lower_bound": 0,
+      "holdings_total_established": true,
+      "operator_supplied_page_size": null,
+      "operator_supplied_page_size_source": null
+    },
+    "pages_walked": 1,
+    "duplicate_final_page_excluded_from_totals": false,
+    "max_pages_requested": 10,
+    "rows_with_positive_qty_total": 0,
+    "continuation_supported": false,
+    "continuation_key_locations": [],
+    "continuation_key_asymmetry": [],
+    "continuation_key_asymmetry_note": "Pages where exactly one of the two continuation keys advanced. The prior campaign saw this shape, which is why both keys are recorded per page instead of one 'keys advanced' boolean. A non-empty list does NOT by itself mean the walk was wrong — it means the pair is not a single cursor and must not be treated as one.",
+    "tr_cont_header_observed": false,
+    "tr_cont_access_note": "The tr_cont response header is read directly from the transport by this module's _get(): common.http_json discards response headers and cannot answer this question. shared/kis/client.py:341 reads the same header the same way for fetch_invest_opinion; the balance methods (:901-1114) never read it at all. 'M' and 'F' are interpreted as 'more' (client.py:354; KIS's official inquire_balance example recurses on both) and any other NON-EMPTY value ends the walk as the broker's end-of-set signal — every value is also recorded verbatim per page.",
+    "runtime_defect": "shared/kis/client.py:931-932 (stock) and :1055-1056 (futures) send empty continuation keys and the surrounding methods never read the response keys, the tr_cont header, or the row count. A correct walk already exists at :303-356 (fetch_invest_opinion). Futures has a second, independent defect: the runtime omits MGNA_DVSN and EXCC_STAT_CD, which REAL_PROD requires (rt_cd=7 APMP0001, measured P-BAL-20260731T084304Z) — its futures balance query therefore always folds to [] on the real domain, before pagination even starts. This probe supplements both fields per KIS's official inquire_balance example in order to measure at all.",
+    "runtime_consumer": "services/trading/broker_verification.py reads a balance (:78 stock / :80 futures) and, when remove_redis_only is enabled (:105, gated :121-127), drops a position the balance did not show via remove_position(reason='broker_absent') (:187-190). Whether a truncated read can reach that branch is answered by measurements.truncation_risk.verdict and by nothing else in this artifact.",
+    "scope": "One account, one TR, one moment. A page size is a property of the broker endpoint, but 'holdings below the page size' is a property of THIS account right now and expires the moment a position is opened. A MOCK_VTS run establishes nothing about REAL_PROD (ADR-002-004 §13.14)."
+  },
+  "observations": [
+    {
+      "read_only_attestation": "This probe can issue GET requests only, against the allowlist in tools/broker_probes/probes_balance.py::ALLOWLIST. No order path exists in this module and it does not import one.",
+      "allowlist": [
+        {
+          "tr_id": "TTTC8434R",
+          "path": "/uapi/domestic-stock/v1/trading/inquire-balance"
+        },
+        {
+          "tr_id": "VTTC8434R",
+          "path": "/uapi/domestic-stock/v1/trading/inquire-balance"
+        },
+        {
+          "tr_id": "CTFO6118R",
+          "path": "/uapi/domestic-futureoption/v1/trading/inquire-balance"
+        }
+      ]
+    },
+    {
+      "page": 0,
+      "http_status": 200,
+      "rt_cd": "7",
+      "msg_cd": "KIOK0560",
+      "msg1": "조회할 내용이 없습니다                                                          ",
+      "elapsed_ms": 114.0,
+      "rows": 0,
+      "rows_with_positive_qty": 0,
+      "output2_present": false,
+      "tr_cont_response": "",
+      "tr_cont_more_code_evidenced": false,
+      "continuation_keys": {
+        "fk": {
+          "present": false,
+          "length": 0,
+          "fingerprint": "",
+          "found_at": "",
+          "advanced": null
+        },
+        "nk": {
+          "present": false,
+          "length": 0,
+          "fingerprint": "",
+          "found_at": "",
+          "advanced": null
+        }
+      },
+      "raw_excerpt": "{\"rt_cd\":\"7\",\"msg_cd\":\"KIOK0560\",\"msg1\":\"조회할 내용이 없습니다                                                          \"}"
+    }
+  ],
+  "skips": [
+    {
+      "what": "page-size determination",
+      "reason": "the account returned zero balance rows, so there was nothing to paginate. This is inconclusive, not 'single page' and not 'no truncation risk'. Re-run against an account that holds positions."
+    }
+  ],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [],
+    "instance_fields": [
+      "capabilities.position_balance_margin.evidence_refs",
+      "capabilities.position_balance_margin.status"
+    ],
+    "capability_dimension": "POSITIONS_BALANCES_MARGIN"
+  }
+}

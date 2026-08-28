@@ -56,6 +56,13 @@ _MARKET_RISK_GATE_FIELD = b"market_risk_gate"
 # trace lane (same passthrough contract as market_risk_gate). Optional.
 _FUTURES_CONTEXT_FIELD = b"futures_context"
 
+# Open-position hash owned by ``services/futures_monitor`` (HSET field=symbol on
+# an entry fill, HDEL on an exit fill) and already read back by
+# ``services/order_router``'s close path. Same env var + default as both of
+# those, so an operator override moves all three together.
+_FUTURES_POSITIONS_KEY_ENV = "FUTURES_MONITOR_POSITIONS_KEY"
+_DEFAULT_FUTURES_POSITIONS_KEY = "futures:monitor:positions"
+
 
 def _entry_size_factor(fields: dict[bytes, bytes]) -> float:
     """Upstream (decision_engine) entry-size factor, neutral 1.0 default.
@@ -369,6 +376,93 @@ def _build_leverage_wiring(
         return None, None
 
 
+def _build_open_position_provider(
+    sync_redis: Any, positions_key: str
+) -> Callable[[str], bool]:
+    """Build the OpenPositionFilter provider for the futures chain.
+
+    Mirrors ``services/stock_risk_filter``'s provider, including its error
+    polarity. The data already exists: ``services/futures_monitor`` keeps
+    ``futures:monitor:positions`` as a symbol-keyed hash (HSET on an entry fill,
+    HDEL on an exit fill), and ``services/order_router`` already reads it back
+    on the close path. Both services live in the ``futures-pipeline`` compose
+    profile alongside this daemon, and the hash field is the contract symbol —
+    the same string ``Signal.symbol`` carries here, since the fill row that
+    creates the hash entry is logged with ``symbol=signal.symbol``.
+
+    Without this the layer falls back to ``from_config``'s stub, which reports
+    "no position held" for EVERY symbol — not merely an absent filter but a
+    disabled duplicate-entry guard.
+
+    A Redis error resolves to "open" (fail-closed), blocking re-entry on
+    uncertainty: a duplicated entry is the more expensive mistake, and the
+    stock chain already made this call. Sync client because ``layer.evaluate``
+    is synchronous.
+    """
+
+    def _has_open_position(symbol: str) -> bool:
+        try:
+            return bool(sync_redis.hexists(positions_key, symbol))
+        except Exception:
+            logger.warning(
+                "Redis error checking open position for %s; "
+                "assuming open (fail-closed)",
+                symbol,
+            )
+            return True  # fail-closed: block re-entry on uncertainty
+
+    return _has_open_position
+
+
+def _build_volatility_reference_provider(
+    risk_config: FuturesRiskConfig, sync_redis: Any
+) -> Callable[[str], Any] | None:
+    """Build the VolatilityFilter reference reader for the futures chain.
+
+    Reads ``risk:volatility:reference:futures``, the per-symbol hash published
+    by ``services/decision_engine`` (the only futures service that owns a
+    ``StreamingIndicatorEngine``, hence the only one that can produce ATR).
+    Each field carries the current ATR *and* its percentile threshold together,
+    so this daemon cannot arm half of the comparison — see
+    :mod:`shared.risk.volatility_reference` for why that matters.
+
+    Gated on the same ``volatility.enabled`` flag that starts the publisher, so
+    one operator flip moves both sides. Default ``false`` ⇒ returns ``None`` ⇒
+    the filter is built with no provider and passes every signal, exactly as
+    the futures chain behaves today. Any wiring failure also returns ``None``
+    (fail-open ⇒ inert filter), never a rejection.
+
+    Read-only: it reuses the daemon's existing sync client and writes nothing.
+    """
+    settings = getattr(risk_config, "volatility", None)
+    if settings is None or not settings.enabled:
+        return None
+    try:
+        from shared.risk.volatility_reference import (
+            build_volatility_reference_provider,
+        )
+
+        provider = build_volatility_reference_provider(
+            asset_class="futures",
+            settings=settings,
+            redis_client=sync_redis,
+        )
+        logger.info(
+            "Futures VolatilityFilter provider wired (percentile=%.1f, "
+            "window=%d, min_samples=%d) — publisher: services/decision_engine",
+            settings.percentile,
+            settings.window_samples,
+            settings.min_samples,
+        )
+        return provider
+    except Exception:
+        logger.exception(
+            "futures volatility reference provider wiring failed; "
+            "VolatilityFilter left inert (fail-open)"
+        )
+        return None
+
+
 async def _build_and_run() -> int:
     """Production entrypoint. Wires Redis + optional CH + RiskFilterLayer."""
     import os
@@ -395,12 +489,26 @@ async def _build_and_run() -> int:
 
     risk_config = FuturesRiskConfig.from_yaml()
     trading_windows = load_trading_windows()
+
+    # Sync redis for the open-position provider (layer.evaluate is sync).
+    from shared.streaming.client import RedisClient
+
+    sync_redis = RedisClient.get_client()
+    positions_key = os.environ.get(
+        _FUTURES_POSITIONS_KEY_ENV, _DEFAULT_FUTURES_POSITIONS_KEY
+    )
+
     leverage_provider, leverage_product_specs = _build_leverage_wiring(risk_config)
+    volatility_provider = _build_volatility_reference_provider(risk_config, sync_redis)
     layer = RiskFilterLayer.from_config(
         risk_config,
         trading_windows,
+        has_open_position_provider=_build_open_position_provider(
+            sync_redis, positions_key
+        ),
         leverage_snapshot_provider=leverage_provider,
         leverage_product_specs=leverage_product_specs,
+        volatility_reference_provider=volatility_provider,
     )
     runtime_state = RuntimeRiskState(
         redis=redis_client, asset_class="futures", key_suffix=risk_state_suffix

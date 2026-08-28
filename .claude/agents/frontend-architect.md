@@ -1,6 +1,7 @@
 ---
 name: frontend-architect
 description: "Next.js 프론트엔드 아키텍처 전문가. App Router 구조, RSC/SSR/CSR 데이터 페칭, React Query 패턴, Tailwind v4 디자인 토큰 거버넌스, 빌드/배포(Dockerfile·Caddy), Next.js 통합/확장 전략. 단일 앱 strategy-builder-ui의 구조 소유."
+model: sonnet
 ---
 
 # Frontend Architect — Next.js 아키텍처 전문가

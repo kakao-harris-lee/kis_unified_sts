@@ -1149,7 +1149,9 @@ class KISClient(AsyncSessionMixin):
             side: Order side ("BUY" or "SELL")
             quantity: Order quantity
             price: Order price (0 for market orders)
-            order_type: Order division code (00=market, 01=limit, etc.)
+            order_type: Stock ``ORD_DVSN`` code — ``00``=지정가 (limit),
+                ``01``=시장가 (market), ``02``=조건부지정가. Passed through to
+                the broker verbatim; this method does not validate it.
             account_no: Account number (defaults to KIS_STOCK_ACCOUNT_NO env var)
 
         Returns:
@@ -1157,6 +1159,14 @@ class KISClient(AsyncSessionMixin):
 
         Raises:
             Exception: On API errors or invalid parameters
+
+        .. warning::
+            No caller in this repository (dead surface as of 2026-07-29); the
+            live ATS path is ``OrderExecutor._send_kis_stock_order``'s ``is_ats``
+            branch, which maps ``ORD_DVSN`` through an explicit fail-closed
+            table. This docstring previously stated ``00=market, 01=limit``,
+            which is the **inverse** of the KIS contract — do not reintroduce
+            it. Whether to delete this method is a separate hygiene decision.
         """
         if not account_no:
             account_no = self._resolve_account_no("stock")

@@ -1,0 +1,202 @@
+schema: tos-evidence/manifest/v2
+run_id: 20260729T120613Z-eb92ea46
+evidence_id: STATE-EV-001
+primary_adr: ADR-002-005
+design_document: docs/plans/2026-07-29-tos-ev-l2-pilot-design.md
+evidence_level_stage: EV-L2
+discipline_tag: EV-L2 stage execution record only; not a row PASS; L1 hardening prereq + coverage argument
+  + P0-1 + independent review remain as stated in claim/coverage_argument blocks.
+claim:
+  closes_evidence_item: false
+  register_status_moved_by_this_run: false
+  register_status_at_run_time: READY
+  minimum_evidence_level: EV-L1/2
+  independent_review: NOT_SIGNED (VER §9.5)
+  p0_1_bounds_approval: OPEN
+  verification_profile_version: 2.1 (PROPOSED — P0-1 open)
+  target_integrity: STABLE_DURING_RUN
+  mutated_during_run: []
+  note: This document records that named tests executed at the recorded baseline. It asserts no acceptance,
+    no PASS, and no coverage of the higher stages the row's minimum level names.
+  ev_l2_stage_gates_unmet: []
+  stages_executed:
+  - EV-L1
+  - EV-L2
+  stages_executed_note: EV-L1 is executed as its own run package and bound here by prior_stage_runs; this
+    package is the EV-L2 stage.
+  covered_axis: 'STATE: representability + non-derivation ONLY (NOT durable). The /2 durable/persisted
+    limb of the VER:1024 Expected is not evidenced by this run and is registered as a §378 residual; this
+    row is therefore NOT PASS-eligible on the evidence axis from this pilot alone (design §2.3 alternative
+    C, §9).'
+prior_stage_runs:
+- evidence_id: STATE-EV-001
+  run_id: 20260729T120555Z-eb92ea46
+  stage: EV-L1
+  sha256sums_digest: b7452f1855d04fdeeb8a0329713992a909b86bf843d2bf3dbe1118de9674ba94
+  artifacts_reverified:
+  - baseline.yaml
+  - junit.xml
+  - manifest.yaml
+  - run.log
+  - traceability.csv
+  baseline_commit_sha: eb92ea467cb55d923b5c9eb4307b65491b14fe26
+  baseline_matches_this_run: true
+  outcome: ALL_SELECTED_TESTS_GREEN
+  reconcile_note: L1 stage executed at THIS baseline (design §6.2 M9). Its traceability declares "[STATE-EV-001
+    slice — /2 durable persistence deferred]"; this L2 covers the storage-independent axis only (design
+    §2.2/§2.3).
+supersedes_run_id:
+- 20260729T110621Z-682ca9ce
+- 20260729T110603Z-682ca9ce
+supersedes_note: Superseded packages are retained unmodified (VER §2.2); this field is the forward pointer,
+  not a deletion record.
+fault_injection:
+  catalog_ref: docs/plans/2026-07-29-tos-ev-l2-pilot-design.md#3
+  seed: 0
+  seed_pinned: true
+  schedule_artifact: fault-timeline.jsonl
+  fault_count: 11
+  expected_fault_count: 11
+  fault_count_matches_catalog: true
+  fault_ids:
+  - ST-01
+  - ST-02
+  - ST-03
+  - ST-04
+  - ST-11
+  - ST-05
+  - ST-06
+  - ST-07
+  - ST-09
+  - ST-12
+  - ST-08
+  duplicate_fault_ids: []
+  foreign_evidence_id_rows: []
+  deviation_faults: []
+  misreported_outcome_faults: []
+  expected_undefined_faults: []
+  unobserved_disposition_faults: []
+  all_faults_met: true
+  all_faults_met_basis: every row's outcome RE-DERIVED from observed vs expected (the row's own outcome
+    field is cross-checked, never trusted); withheld on an empty schedule (0 injected != 0 violations),
+    any deviation or misreport, any undefined Expected or unobserved disposition, a duplicated fault id,
+    a row from another evidence id, or a recount that disagrees with the catalog size
+  l1_hardening_prereq_met: true
+  l1_hardening_prereq:
+    met: true
+    measured_from: structural analysis of the executed source's syntax tree; comments and docstrings cannot
+      satisfy any check (the harness never imports tos)
+    items:
+    - hardening: H-1 allow_inf_nan=False pinned on FrozenModel.model_config
+      path: tos/src/tos/canonical/_base.py
+      sha256: ca560b2987e078f9afc867c335f35915dfcb5c1065f00073c27bfef613f45dfb
+      met: true
+      measured:
+        bound_keywords:
+        - allow_inf_nan
+        - extra
+        - frozen
+        allow_inf_nan: 'False'
+    - hardening: H-2 precision/rounding/boundary comparability + boundary-aware comparison
+      path: tos/src/tos/spg/predicates.py
+      sha256: 0e135bee214bdbe55654e40586d0693d5b44d9dffbc56f7abaad8531e041327e
+      met: true
+      measured:
+        unit_metadata_keys:
+        - unit
+        - multiplier
+        - sign
+        - precision
+        - rounding
+        - boundary
+        missing_metadata_keys: []
+        boundary_comparison_defined: true
+    - hardening: H-4 canonicalization scheme lookup wrapped as ArtifactIntegrityError
+      path: tos/src/tos/canonical/canonicalization.py
+      sha256: 18d855970b3ae0eebc6b7b6db6b5e7d93cf52179360d7986883792ab2057bfe3
+      met: true
+      measured:
+        get_scheme_raises:
+        - ArtifactIntegrityError
+        module_raises:
+        - ArtifactIntegrityError
+        - TypeError
+coverage_argument:
+  specification: tos-spec/src/part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md
+    §2.7 (line 76-78) — a finite set of executed evidence cases does not by itself discharge a universally-quantified
+    safety claim. Both this row's Expected clauses are universally quantified, so the coverage argument
+    is mandatory.
+  boundary_values: per-dimension boundary combinations exercised (seed-fixed)
+  adverse_scenario_set: ADR-002-021 PROPOSED (unapproved) — adversarial-combination leg UNMET; applicability
+    to non-risk row = OQ; residual per §378
+  unexercised_residual_ref:
+  - 'STATE-EV-001 durable/persisted axis — VER:1024 "durable"; ADR-002-005 §13:197 "SHALL be durable and
+    reconstructable after crash"; AC-005-1:237 "representable and persisted". Referent is a real persisted
+    authoritative record surviving a real fault: absent from an in-memory model, EV-L3 (VER:150-152; STATE-EV-004
+    EV-L3 VER:1042), persistence technology undecided (ADR-002-005 §4:61). Critical, so WAIVED_WITH_RESIDUAL_RISK
+    is unavailable (VER:130) — a real gap.'
+  unexercised_residual_note: 'The §378 Residual Risk Register INSTANCE is absent (measured: verification/
+    holds only RESIDUAL-RISK-ACCEPTANCE-RECORD-template.yaml; tos-evidence/ holds zero residual artifacts)
+    — creating it is prerequisite work. Each entry SHALL carry all twelve VER:3293-3306 fields (risk identity;
+    affected requirement/ADR; scope; credible failure sequence; maximum economic effect; existing controls;
+    detection/containment bound; owner; approver; expiration/review date; required scope reduction; evidence
+    references), and owner/approver come through the P0-3 role system (D1). The refs above are pointers,
+    not a union: separate residual risks SHALL NOT be unioned at a consumer (VER:3308) — each is registered
+    independently.'
+  discharged: false
+  discharged_note: The adversarial-combination leg cannot be discharged while ADR-002-021 is PROPOSED,
+    and an unresolved applicability question defaults to APPLICABLE (VER §2.4 line 64-66; VER:173 'Missing
+    resolution is a blocker and SHALL NOT default to the lowest level'). This run therefore records the
+    argument's state; it does not claim to have made it.
+execution:
+  command:
+  - /Users/harris/Development/private/kis_unified_sts/.venv/bin/python
+  - -m
+  - pytest
+  - tos/tests/orthostate/test_orthostate_l2_fault.py
+  - -q
+  - --junitxml=/Users/harris/Development/private/kis_unified_sts/tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/junit.xml
+  - --hypothesis-seed=0
+  - --l2-fault-timeline=/Users/harris/Development/private/kis_unified_sts/tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/fault-timeline.jsonl
+  cwd: /Users/harris/Development/private/kis_unified_sts
+  env_overrides:
+    PYTHONPATH: tos/src
+    PYTHONHASHSEED: '0'
+  started_utc: '2026-07-29T12:06:13.945410+00:00'
+  finished_utc: '2026-07-29T12:06:14.244979+00:00'
+  monotonic_duration_s: 0.299562
+  return_code: 0
+  outcome: ALL_SELECTED_TESTS_GREEN
+  junit_summary:
+    tests: 23
+    failures: 0
+    errors: 0
+    skipped: 0
+    time_s: '0.069'
+  stage_gate_outcome: EV_L2_STAGE_GATES_MET
+test_nodes:
+- tos/tests/orthostate/test_orthostate_l2_fault.py
+baseline:
+  file: baseline.yaml
+  sha256: 77c0234e9c83d5a662a39faf0a7ee9631e577c1a8b0f62cc72016aecbd7658f2
+  completeness: NOT complete (VER §3 line 109 has no 'as applicable' clause). VER §3 fields without an
+    existing artifact are NOT_APPLICABLE_PURE_MODEL_L2; the unmet set is enumerated in baseline.yaml::ver_002_001_section_3_unmet_fields.
+  ver3_unmet_field_count: 16
+artifacts:
+- name: baseline.yaml
+  sha256: 77c0234e9c83d5a662a39faf0a7ee9631e577c1a8b0f62cc72016aecbd7658f2
+  bytes: 41174
+- name: fault-timeline.jsonl
+  sha256: 77ae73ef8ce54735e6d32a8501c4c2804bce6fc1e139cb2433c7bf9d76eafd8f
+  bytes: 5847
+- name: junit.xml
+  sha256: 5c6b3edd9de607644c8894f25008b535f18b03fc01670d623b140a9c6ea8ca5a
+  bytes: 3437
+- name: run.log
+  sha256: 66fcffdb82973b3f88de6de68f96c733f6ae98d78212f569cbee9f49047c7951
+  bytes: 589
+- name: traceability.csv
+  sha256: 63904ecf76dff7629e9d90fed6857a347ec4caada6591e1adb807dd3fbfc7d4b
+  bytes: 762
+artifact_closure_note: manifest.yaml cannot contain its own digest; sha256sums.txt is written last and
+  closes over every retained file including this manifest (VER §9.2).

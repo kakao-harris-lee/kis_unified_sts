@@ -1,0 +1,677 @@
+schema: tos-evidence/baseline/v2
+run_id: 20260729T120613Z-eb92ea46
+evidence_id: STATE-EV-001
+evidence_level_stage: EV-L2
+generated_utc: '2026-07-29T12:06:14.321177+00:00'
+contract:
+  run_manifest_contract: docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md §5.1 (seven
+    items)
+  ver_specification: tos-spec/src/part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md
+    §2.3/§3/§8/§9.1/§9.2/§9.5
+  completeness: EV-L2 component-fault. VER §3 requires 22 baseline fields and states that 'A run without
+    a complete baseline is invalid' (line 109) — a clause carrying no 'as applicable' qualifier, unlike
+    §7 line 258, so it stands beside P0-1 and the independent signature as a gate, not a waivable formality.
+    The unmet-field list and every reason are retained from EV-L1 with the stage attribution updated (NOT_APPLICABLE_EV_L1
+    -> NOT_APPLICABLE_PURE_MODEL_L2); the enumerated list is ver_002_001_section_3_unmet_fields below.
+    The absent artifacts are the broker, authority/human, reconciliation, network and recovery instances
+    — none of which a pure-model, single-component, non-transmitting fault run brings into existence.
+    Under VER §3's full standard this baseline is NOT complete.
+evidence_register_row:
+  source: tos-spec/src/part-1-foundation/verification/EVIDENCE-REGISTER-002.csv
+  evidence_id: STATE-EV-001
+  domain: Orthogonal State
+  title: Orthogonal Composite Persistence
+  primary_adr: ADR-002-005
+  criticality: Critical
+  minimum_evidence_level: EV-L1/2
+  status_at_run_time: READY
+  implementation_owner: ai-impl(claude-orchestrated)
+  evidence_owner: operator
+  independent_reviewer: ai-review(decorrelated)+operator-countersign
+design1_5_1:
+  item_1_repository_and_package:
+    git_commit_sha: eb92ea467cb55d923b5c9eb4307b65491b14fe26
+    git_short_sha: eb92ea46
+    tos_package_version: 0.0.1
+    worktree:
+      clean: false
+      untracked:
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/fault-timeline.jsonl
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/fault-timeline.jsonl
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/traceability.csv
+      modified_unstaged:
+      - tos-spec/src/part-1-foundation/verification/EVIDENCE-REGISTER-002.csv
+      staged: []
+      all_dirty_paths:
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/fault-timeline.jsonl
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/fault-timeline.jsonl
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/traceability.csv
+      - tos-spec/src/part-1-foundation/verification/EVIDENCE-REGISTER-002.csv
+      note: 'A non-empty list does not by itself invalidate the run: the executed files are pinned individually
+        by target_file_digests below. Paths outside the executed set belong to other work in the same
+        worktree.'
+    worktree_after_run:
+      clean: false
+      untracked:
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/fault-timeline.jsonl
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/fault-timeline.jsonl
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/fault-timeline.jsonl
+      - tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/junit.xml
+      modified_unstaged:
+      - tos-spec/src/part-1-foundation/verification/EVIDENCE-REGISTER-002.csv
+      staged: []
+      all_dirty_paths:
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T081323Z-fdb74324/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T081422Z-fdb74324/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T110527Z-682ca9ce/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T110604Z-682ca9ce/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/fault-timeline.jsonl
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T110641Z-682ca9ce/traceability.csv
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/baseline.yaml
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/junit.xml
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/manifest.yaml
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/sha256sums.txt
+      - tos-evidence/SPG-EV-002/20260729T120556Z-eb92ea46/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T081316Z-fdb74324/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/fault-timeline.jsonl
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T081405Z-fdb74324/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T110603Z-682ca9ce/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/fault-timeline.jsonl
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T110621Z-682ca9ce/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/baseline.yaml
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/junit.xml
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/manifest.yaml
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/sha256sums.txt
+      - tos-evidence/STATE-EV-001/20260729T120555Z-eb92ea46/traceability.csv
+      - tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/fault-timeline.jsonl
+      - tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/junit.xml
+      - tos-spec/src/part-1-foundation/verification/EVIDENCE-REGISTER-002.csv
+      note: 'A non-empty list does not by itself invalidate the run: the executed files are pinned individually
+        by target_file_digests below. Paths outside the executed set belong to other work in the same
+        worktree.'
+    worktree_delta:
+      became_dirty_during_run:
+      - tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/fault-timeline.jsonl
+      - tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/junit.xml
+      became_clean_during_run: []
+      stable: false
+    target_files_clean: true
+    target_files_stable_during_run: true
+    target_file_digests:
+    - path: tools/tos_evidence_run.py
+      sha256_before_run: 994889f1f9d12f5e9d99abf30837d00f49bbefbb5bcf40992af3ac8bbcae7032
+      sha256_after_run: 994889f1f9d12f5e9d99abf30837d00f49bbefbb5bcf40992af3ac8bbcae7032
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: false
+    - path: tos/src/tos/canonical/__init__.py
+      sha256_before_run: 46fd765566c6c6b567b1f87c4a70f64014bb1678def66c44d798d9f85a9d75bb
+      sha256_after_run: 46fd765566c6c6b567b1f87c4a70f64014bb1678def66c44d798d9f85a9d75bb
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/canonical/_base.py
+      sha256_before_run: ca560b2987e078f9afc867c335f35915dfcb5c1065f00073c27bfef613f45dfb
+      sha256_after_run: ca560b2987e078f9afc867c335f35915dfcb5c1065f00073c27bfef613f45dfb
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/canonical/canonicalization.py
+      sha256_before_run: 18d855970b3ae0eebc6b7b6db6b5e7d93cf52179360d7986883792ab2057bfe3
+      sha256_after_run: 18d855970b3ae0eebc6b7b6db6b5e7d93cf52179360d7986883792ab2057bfe3
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/canonical/record_pair.py
+      sha256_before_run: 764c96796038dcab512071aa31075b79160e8cda247b50fcf5b2dfbd4c81f551
+      sha256_after_run: 764c96796038dcab512071aa31075b79160e8cda247b50fcf5b2dfbd4c81f551
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/__init__.py
+      sha256_before_run: c866fc0fd8dc7bb0961f7550e2d9e73d1dfc4819afbc341c1f23fe4e0b11f632
+      sha256_after_run: c866fc0fd8dc7bb0961f7550e2d9e73d1dfc4819afbc341c1f23fe4e0b11f632
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/_base.py
+      sha256_before_run: 2c1b8bb6c73ee8f73697ecc5e33d149a80efd7fdf27550b2f148248a2b34a40e
+      sha256_after_run: 2c1b8bb6c73ee8f73697ecc5e33d149a80efd7fdf27550b2f148248a2b34a40e
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/predicates.py
+      sha256_before_run: 7265e75af582048fba54d757e5344a9d467348738a37dec7898df4c30db897c0
+      sha256_after_run: 7265e75af582048fba54d757e5344a9d467348738a37dec7898df4c30db897c0
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/records.py
+      sha256_before_run: 8dabc903e03d039fb5292d5094a7d87cb46f073965a163c12eb1c3f167285cd2
+      sha256_after_run: 8dabc903e03d039fb5292d5094a7d87cb46f073965a163c12eb1c3f167285cd2
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/state.py
+      sha256_before_run: aa68710f84ab21ba93d68d132a607ecb8f139f1acabde6e515712dc9599de0b3
+      sha256_after_run: aa68710f84ab21ba93d68d132a607ecb8f139f1acabde6e515712dc9599de0b3
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/src/tos/orthostate/vocabulary.py
+      sha256_before_run: 67dda3c7eed990f3150273fcf6f00e7ad8bca5bcf5fb101d37573f289fcc37d4
+      sha256_after_run: 67dda3c7eed990f3150273fcf6f00e7ad8bca5bcf5fb101d37573f289fcc37d4
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+    - path: tos/tests/orthostate/test_orthostate_l2_fault.py
+      sha256_before_run: 4cea0d91f144cae6519a58779a05656f6f0a38ffd9eeffcdb2197215fdc1639e
+      sha256_after_run: 4cea0d91f144cae6519a58779a05656f6f0a38ffd9eeffcdb2197215fdc1639e
+      status: STABLE_DURING_RUN
+      git_clean: true
+      cleanliness_guarded: true
+  item_2_interpreter_and_dependencies:
+    python:
+      version: 3.12.2
+      version_full: 3.12.2 (main, Dec 11 2025, 16:36:08) [Clang 17.0.0 (clang-1700.4.4.1)]
+      implementation: CPython
+      executable: /Users/harris/Development/private/kis_unified_sts/.venv/bin/python
+    installed_versions_measured:
+      pydantic: 2.12.5
+      hypothesis: 6.151.5
+      pytest: 9.0.2
+      numpy: 1.26.4
+      pandas: 2.3.3
+      pyyaml: 6.0.3
+      tos: NOT_INSTALLED
+    pinned_in_tos_pyproject:
+      pydantic: 2.12.5
+      numpy: 2.4.0
+      pandas: 2.3.3
+      pyyaml: 6.0.3
+      pytest: 9.0.2
+      hypothesis: 6.150.2
+    pins_satisfied: false
+    pin_vs_installed_drift:
+    - distribution: hypothesis
+      pinned: 6.150.2
+      installed: 6.151.5
+    - distribution: numpy
+      pinned: 2.4.0
+      installed: 1.26.4
+    drift_note: 'pins_satisfied is the machine-readable claim; an empty drift list = the executed interpreter
+      matches every pin. A non-empty list is recorded, not resolved: the installed version is what executed.'
+  item_3_execution_environment: &id001
+    os: Darwin
+    os_release: 25.5.0
+    machine: arm64
+    platform: macOS-26.5.2-arm64-arm-64bit
+    python_implementation: CPython
+  item_4_harness_version: &id002
+    harness_path: tools/tos_evidence_run.py
+    harness_sha256: 994889f1f9d12f5e9d99abf30837d00f49bbefbb5bcf40992af3ac8bbcae7032
+    harness_tracked: true
+    harness_at_commit: 30e77a9bf941ae27d08aed644bc942774bd806eb
+    harness_dirty: false
+    pytest_version: 9.0.2
+    note: 'design #1 §5.1 item 4 — Phase 1 harness version = git digest, which exists only once the harness
+      is committed. Until then harness_at_commit is NOT_IN_COMMIT and harness_sha256 is the only identity
+      of the code that ran.'
+  item_5_seed_policy: &id003
+    policy: fixed
+    pytest_flags:
+    - --hypothesis-seed=0
+    hypothesis_seed: 0
+    note: 'VER §9.1 append-only: seed pinned before the run began.'
+  item_6_consumed_configuration_artifacts:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: 'No configuration artifact is consumed: bounds are hypothesis-injected generated values, not
+      read from a profile, and the run is hermetic (no .env, no YAML).'
+  item_7_retained_artifact_digests: Enumerated in manifest.yaml (artifacts) and closed over by sha256sums.txt,
+    which is written last and covers every retained file including the manifest.
+ver_002_001_section_3_baseline:
+  repository_commit_sha:
+    status: RECORDED
+    value: eb92ea467cb55d923b5c9eb4307b65491b14fe26
+  build_artifact_digest:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: 'Phase 1 executes from the source tree; no built distribution artifact is produced or consumed
+      (design #1 §5.1 items 1/4 — the git digest stands in). The executed bytes are pinned individually
+      by design1_5_1.item_1_repository_and_package.target_file_digests.'
+  rfc_adr_versions:
+    status: RECORDED
+    value:
+    - role: primary_adr
+      path: tos-spec/src/part-1-foundation/ADR-002-005-Intent-Transmission-Attempt-Broker-Order-and-Knowledge-State-Model.md
+      sha256: b9bc5d36bef3a5ecb840ec4f879abb7e5f7fe3cc10e7a5821d6d5f516f394072
+    - role: design_document
+      path: docs/plans/2026-07-29-tos-ev-l2-pilot-design.md
+      sha256: 43dff50a6567f23d5aec58f8c061282e8b8e42944f0d66ea190e9d26c7b0d5a9
+    - role: ver_specification
+      path: tos-spec/src/part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md
+      sha256: 5088cf11b5d1334bc721dd4cb38169e5ba1c37e503f7df20c878d0c392bd2575
+    - role: boundary_design_1
+      path: docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md
+      sha256: 2449f18d6088e21f601da623d27e6eff74066661f5d92116db2eda1a59b5a988
+    reason: The corpus documents carry no separate version field; their content sha256 is the version
+      identity.
+  hard_safety_envelope_version:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      a pure-model EV-L2 component-fault run consumes none — it injects faults into a single in-process
+      component and inspects that component''s own authoritative verdict. Recorded N/A per design #1 §5.1
+      read forward to EV-L2 (EV-L2 pilot design §6.2 M2 / §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  runtime_safety_profile_version:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      a pure-model EV-L2 component-fault run consumes none — it injects faults into a single in-process
+      component and inspects that component''s own authoritative verdict. Recorded N/A per design #1 §5.1
+      read forward to EV-L2 (EV-L2 pilot design §6.2 M2 / §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  human_authority_policy_generation_and_digest:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      a pure-model EV-L2 component-fault run consumes none — it injects faults into a single in-process
+      component and inspects that component''s own authoritative verdict. Recorded N/A per design #1 §5.1
+      read forward to EV-L2 (EV-L2 pilot design §6.2 M2 / §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  effective_principal_graph_generation_and_digest:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      a pure-model EV-L2 component-fault run consumes none — it injects faults into a single in-process
+      component and inspects that component''s own authoritative verdict. Recorded N/A per design #1 §5.1
+      read forward to EV-L2 (EV-L2 pilot design §6.2 M2 / §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  evidence_integrity_policy_generation_and_digest:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      a pure-model EV-L2 component-fault run consumes none — it injects faults into a single in-process
+      component and inspects that component''s own authoritative verdict. Recorded N/A per design #1 §5.1
+      read forward to EV-L2 (EV-L2 pilot design §6.2 M2 / §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  recovery_barrier_policy_generation_and_digest:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      a pure-model EV-L2 component-fault run consumes none — it injects faults into a single in-process
+      component and inspects that component''s own authoritative verdict. Recorded N/A per design #1 §5.1
+      read forward to EV-L2 (EV-L2 pilot design §6.2 M2 / §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  critical_input_policy_generation_and_digest:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      a pure-model EV-L2 component-fault run consumes none — it injects faults into a single in-process
+      component and inspects that component''s own authoritative verdict. Recorded N/A per design #1 §5.1
+      read forward to EV-L2 (EV-L2 pilot design §6.2 M2 / §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  venue_constraint_policy_generation_and_digest:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      a pure-model EV-L2 component-fault run consumes none — it injects faults into a single in-process
+      component and inspects that component''s own authoritative verdict. Recorded N/A per design #1 §5.1
+      read forward to EV-L2 (EV-L2 pilot design §6.2 M2 / §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  trading_approval_policy_generation_and_digest:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      a pure-model EV-L2 component-fault run consumes none — it injects faults into a single in-process
+      component and inspects that component''s own authoritative verdict. Recorded N/A per design #1 §5.1
+      read forward to EV-L2 (EV-L2 pilot design §6.2 M2 / §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  currentness_policy_generation_and_digest:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      a pure-model EV-L2 component-fault run consumes none — it injects faults into a single in-process
+      component and inspects that component''s own authoritative verdict. Recorded N/A per design #1 §5.1
+      read forward to EV-L2 (EV-L2 pilot design §6.2 M2 / §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  restricted_live_trial_policy_generation_and_digest:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: 'No instance artifact exists in the corpus (template only under tos-spec/src/part-1-foundation/verification/);
+      a pure-model EV-L2 component-fault run consumes none — it injects faults into a single in-process
+      component and inspects that component''s own authoritative verdict. Recorded N/A per design #1 §5.1
+      read forward to EV-L2 (EV-L2 pilot design §6.2 M2 / §6.3): the field, its N/A status and its reason
+      are retained, only the stage attribution changes.'
+  broker_capability_profile_version:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: Evidence Register broker_capability_profile_version for this row = 'N/A'; the row's minimum
+      evidence level (EV-L1/2) carries no +Broker suffix and no Broker Capability Profile instance exists
+      (template only). P0-2 is not in this run's scope.
+  verification_profile_version:
+    status: RECORDED
+    value:
+      version: 2.1 (PROPOSED — P0-1 open)
+      register_column_value: 2.1-PROPOSED
+      artifact:
+        path: tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml
+        sha256: 91a374163ec60350bf6bb2785ca4766ad89696ca13ae0b9d60434a572d8c7d0c
+      approval_state: PROPOSED — P0-1 (bounds approval) OPEN
+    reason: Recorded, not approved. VER §6 numeric bounds remain unapproved; no bound value is consumed
+      by this run (bounds are hypothesis-injected, not hardcoded).
+  database_schema_migration_version:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: EV-L1 model/property verification exercises no persistence substrate; durable persistence
+      is the deferred /2 stage.
+  deployment_manifest_digest:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: 'Nothing is deployed: the kernel is non-transmitting and is executed in-process by pytest.'
+  workload_identities_and_key_versions:
+    status: NOT_APPLICABLE_PURE_MODEL_L2
+    reason: No workload identity, credential, or key material is used — the run is hermetic (no network,
+      no .env, no clock authority).
+  environment_identifier:
+    status: RECORDED
+    value: *id001
+  test_harness_version:
+    status: RECORDED
+    value: *id002
+  fault_injection_schedule_and_seed:
+    status: RECORDED
+    value:
+      fault_schedule:
+        catalog_ref: docs/plans/2026-07-29-tos-ev-l2-pilot-design.md#3
+        seed: 0
+        seed_pinned: true
+        schedule_artifact: fault-timeline.jsonl
+        fault_count: 11
+        expected_fault_count: 11
+        fault_count_matches_catalog: true
+        fault_ids:
+        - ST-01
+        - ST-02
+        - ST-03
+        - ST-04
+        - ST-11
+        - ST-05
+        - ST-06
+        - ST-07
+        - ST-09
+        - ST-12
+        - ST-08
+        duplicate_fault_ids: []
+        foreign_evidence_id_rows: []
+        deviation_faults: []
+        misreported_outcome_faults: []
+        expected_undefined_faults: []
+        unobserved_disposition_faults: []
+        all_faults_met: true
+        all_faults_met_basis: every row's outcome RE-DERIVED from observed vs expected (the row's own
+          outcome field is cross-checked, never trusted); withheld on an empty schedule (0 injected !=
+          0 violations), any deviation or misreport, any undefined Expected or unobserved disposition,
+          a duplicated fault id, a row from another evidence id, or a recount that disagrees with the
+          catalog size
+        l1_hardening_prereq_met: true
+        l1_hardening_prereq:
+          met: true
+          measured_from: structural analysis of the executed source's syntax tree; comments and docstrings
+            cannot satisfy any check (the harness never imports tos)
+          items:
+          - hardening: H-1 allow_inf_nan=False pinned on FrozenModel.model_config
+            path: tos/src/tos/canonical/_base.py
+            sha256: ca560b2987e078f9afc867c335f35915dfcb5c1065f00073c27bfef613f45dfb
+            met: true
+            measured:
+              bound_keywords:
+              - allow_inf_nan
+              - extra
+              - frozen
+              allow_inf_nan: 'False'
+          - hardening: H-2 precision/rounding/boundary comparability + boundary-aware comparison
+            path: tos/src/tos/spg/predicates.py
+            sha256: 0e135bee214bdbe55654e40586d0693d5b44d9dffbc56f7abaad8531e041327e
+            met: true
+            measured:
+              unit_metadata_keys:
+              - unit
+              - multiplier
+              - sign
+              - precision
+              - rounding
+              - boundary
+              missing_metadata_keys: []
+              boundary_comparison_defined: true
+          - hardening: H-4 canonicalization scheme lookup wrapped as ArtifactIntegrityError
+            path: tos/src/tos/canonical/canonicalization.py
+            sha256: 18d855970b3ae0eebc6b7b6db6b5e7d93cf52179360d7986883792ab2057bfe3
+            met: true
+            measured:
+              get_scheme_raises:
+              - ArtifactIntegrityError
+              module_raises:
+              - ArtifactIntegrityError
+              - TypeError
+      seed: *id003
+    reason: 'EV-L2: the VER §9.1 append-only fault schedule and the seed are both recorded. This field
+      is no longer PARTIAL — it is the one VER §3 field the EV-L2 stage completes relative to EV-L1.'
+ver_002_001_section_3_unmet_fields:
+- broker_capability_profile_version
+- build_artifact_digest
+- critical_input_policy_generation_and_digest
+- currentness_policy_generation_and_digest
+- database_schema_migration_version
+- deployment_manifest_digest
+- effective_principal_graph_generation_and_digest
+- evidence_integrity_policy_generation_and_digest
+- hard_safety_envelope_version
+- human_authority_policy_generation_and_digest
+- recovery_barrier_policy_generation_and_digest
+- restricted_live_trial_policy_generation_and_digest
+- runtime_safety_profile_version
+- trading_approval_policy_generation_and_digest
+- venue_constraint_policy_generation_and_digest
+- workload_identities_and_key_versions
+ver_002_001_section_3_unmet_note: 'VER §3 line 109 (''A run without a complete baseline is invalid'')
+  has no ''as applicable'' clause. This list names every field that is not RECORDED, so the gap is machine-checkable:
+  an empty list would be the claim that the baseline is complete, and this run does not make that claim.'
+test_nodes:
+- tos/tests/orthostate/test_orthostate_l2_fault.py

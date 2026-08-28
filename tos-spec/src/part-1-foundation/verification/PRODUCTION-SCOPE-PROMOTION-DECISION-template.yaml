@@ -1,0 +1,60 @@
+artifact_type: PRODUCTION_SCOPE_PROMOTION_DECISION
+schema_version: "1.0-DRAFT"
+decision_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: DENY
+promotion_generation: null
+restricted_live_trial_policy:
+  policy_id: TBD
+  trial_policy_generation: null
+  canonical_digest: TBD
+source_trial_evidence_package_id: TBD
+related_prior_evidence_packages_to_review: []
+evidence_packages_may_be_unioned_for_scope: false
+current_scope:
+  scope_digest: TBD
+  scope_complete: false
+requested_next_scope_delta:
+  scope_digest: TBD
+  scope_complete: false
+  within_policy_maximum_delta: false
+baseline_artifact_digests: []
+coverage_claims: []
+uncovered_or_ambiguous_conditions: []
+negative_failed_aborted_inconclusive_and_conflicting_evidence: []
+approved_residual_risks: []
+required_next_configuration_and_evidence: []
+validity:
+  issued_at: null
+  expires_at: null
+  consumer_receipt_anchor: TBD
+single_use:
+  nonce: TBD
+  consumed: false
+  consumption_record_id: null
+independent_review:
+  reviewer_ids: []
+  effective_principal_independence_proven: false
+  quorum_satisfied: false
+conflicts: []
+signatures: []
+authority:
+  eligible_to_request_new_scope: false
+  activates_configuration: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_approval: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  promotes_production_scope_by_itself: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT decision is DENY and grants no authority. A future independently
+  reviewed ELIGIBLE_TO_REQUEST_NEW_SCOPE result may be consumed once only to
+  request separate configuration activation and governed re-arm; it never
+  activates or authorizes production by itself.

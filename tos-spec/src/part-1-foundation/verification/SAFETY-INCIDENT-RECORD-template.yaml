@@ -1,0 +1,74 @@
+artifact_type: SAFETY_INCIDENT_RECORD
+schema_version: "1.0-DRAFT"
+incident_id: TBD
+incident_generation: null
+record_version: null
+canonical_digest: TBD
+status: DRAFT
+lifecycle_state: SUSPECTED
+policy_binding:
+  policy_id: TBD
+  policy_generation: null
+  policy_digest: TBD
+  current: false
+signals: []
+classification:
+  severity: UNKNOWN
+  materiality: MATERIAL
+  confidence: UNKNOWN
+  classification_complete: false
+scope:
+  scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+  greatest_credible_scope_used: true
+  safety_cells: []
+  capacity_domains: []
+  accounts: []
+  brokers: []
+  venues: []
+  instruments: []
+  strategies: []
+  credentials_sessions_routes: []
+  failure_domains: []
+related_incidents:
+  parent_ids: []
+  child_ids: []
+  overlapping_ids: []
+  shared_causes: []
+restrictions_and_fences: []
+economic_state:
+  positions: []
+  orders_and_attempts: []
+  potentially_live_effects: []
+  external_activity: []
+  rcl_commitments: []
+  unknown_state_present: true
+protection_and_safety_obligations: []
+containment_plan_ids: []
+evidence_envelope_ids: []
+evidence_gaps: []
+recovery_handoff_package_ids: []
+closure_decision_ids: []
+currentness:
+  owner_epoch: null
+  generation_current: false
+  active_incident_set_id: TBD
+  active_incident_set_digest: TBD
+  invalidations: []
+authority:
+  record_active: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_or_local_latch: false
+  establishes_recovery_readiness: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT record is non-authorizing. SUSPECTED, UNKNOWN, incomplete, stale,
+  conflicting, or missing scope remains restrictive and capacity-consuming where
+  economic effect may exist. Lifecycle state never permits broker transmission.

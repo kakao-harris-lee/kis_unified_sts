@@ -1,0 +1,1037 @@
+# VERIFICATION-PROFILE-002 — APPROVED (scope-limited; 16 null keys remain
+# key-level UNAPPROVED and fail-closed)
+#
+# STATUS: APPROVED at profile level (operator, 2026-07-29) for the 146 keys
+# carrying approved values at that date; MIN_evidence_retention_ms was approved
+# separately on 2026-08-07 (see the 2026-08-07 record below), so 147 of the 163
+# numeric keys now carry approved values. Per VER-002-001 §6 the key-level rule
+# is unchanged: an unapproved or placeholder bound is not an approved bound —
+# the 16 null keys (10 broker bounds pending P0-2 measurement, 6 instance/
+# architecture limits) remain unapproved and fail-closed.
+#
+# Rules for ratification (all required before status -> APPROVED):
+#   - each `value_ms` is confirmed or replaced by the accountable owner;
+#   - broker_specific bounds are MEASURED from an approved Broker Capability
+#     Profile (ADR-002-004), not guessed;
+#   - `approved_by` lists the accountable authority (separation of duties:
+#     the identity approving bounds SHALL NOT also arm live trading);
+#   - `effective_from` / `review_due` are set.
+# Values still marked MEASURE that remain null are deliberately left null pending
+# broker-specific measurement (P0-2) or a pending instance/architecture decision.
+# PATCH-0054 registered previously absent keys (2 bounds, 24 limits) with null values
+# and owner TBD so the completion gap is visible to the Bounds-Approver; registering a
+# key approves nothing and creates no bound.
+# PATCH-0055 added the two remaining VER-002-001 §6 per-bound attributes
+# (`applicable_scope`, `review_date`) to every bound here and in the template,
+# completing the seven-attribute per-bound shape; adding a field approves nothing.
+#
+# 2026-07-29 Bounds-Approver decision (operator; project record
+# `docs/plans/2026-07-29-tos-phase0-bounds-draft-package.md`, commit d6babce9):
+#   - 146 of the 163 numeric keys (74 bounds + 72 limits) now carry an approved value,
+#     `owner: operator` (bounds) and `review_date: 2027-01-29`;
+#   - 17 keys stay null and fail-closed: 10 broker bounds (P0-2 measurement),
+#     6 instance/architecture limits, and MIN_evidence_retention_ms;
+#   - because null keys remain, `status` stays PROPOSED and `approved_by` stays empty
+#     per the ratification rules above; `review_due` is set, which those rules require
+#     before any future APPROVED transition.
+#   - scope.environment stays non-live-test: these are EV-L1..L3 harness ceilings,
+#     not live calibration.
+#
+# 2026-07-29 P0-1 profile-level approval (operator directive, session C record):
+#   - The operator, as Bounds-Approver, APPROVES the profile at profile level.
+#     This is a SCOPE-LIMITED approval: it covers exactly the 146 keys carrying
+#     approved values above; the strict all-keys reading of the ratification
+#     rules is amended by this decision to "every key carrying a value is
+#     confirmed by the accountable owner; null keys remain key-level unapproved
+#     and fail-closed until P0-2 measurement or the pending instance decision".
+#   - Effect: the "bounds were measured / approved Profile" precondition for
+#     non-broker EV rows (e.g. SPG-EV-002) is discharged for the keys they
+#     consume; broker rows remain blocked on P0-2. No live calibration implied
+#     (scope.environment stays non-live-test). Approving bounds does not arm
+#     live trading (separation of duties preserved; Live-Armer unassigned).
+#
+# 2026-08-07 Bounds-Approver decision (operator; project record
+# `docs/plans/2026-08-06-tos-phase0-p01-residual-17key-disposition-draft.md`).
+# Cite that record in two parts, because one part did not exist at the commit
+# that carries the other: its recommendation and derivation (package §4.1) are
+# at commit 7368e7c3, whereas its §6 approval record is an EMPTY FORM at that
+# commit and is filled in by the same change that adds this header block — for
+# the approval entry cite that change, not 7368e7c3. The operator, as
+# Bounds-Approver, APPROVES that residual-17-key disposition package.
+# Operator response, verbatim:
+#   "1. a, 2. 승인. 3. 선물 계좌는 추후 모의 운영 서버에서 실행."
+# (item 2 is this package; items 1 and 3 are separate matters recorded elsewhere.)
+#   - Effect on this file: MIN_evidence_retention_ms carries an approved value
+#     (15552000000 ms = 180 days), derived per ADR-002-016 §17 "the longest
+#     applicable" rule from the already-approved review horizons in this profile
+#     (MAX_residual_risk_review_interval_ms, MAX_envelope_review_interval_ms).
+#     It is a floor, not a ceiling: the open-economic-effect and legal-hold
+#     record classes are state predicates owned by the Evidence Integrity Policy
+#     and are not truncated by it.
+#   - 147 of the 163 numeric keys now carry approved values; 16 keys stay null —
+#     10 broker bounds awaiting P0-2 measurement from an approved Broker
+#     Capability Profile, and 6 instance/architecture limits whose
+#     trigger-bound deferrals are RATIFIED by this same decision.
+#   - A RATIFIED DEFERRAL IS NOT A VALUE APPROVAL. Those 6 keys remain
+#     key-level unapproved and fail-closed; each trigger is defined in package
+#     §4 (which is authoritative for them). In particular
+#     MIN_capacity_domain_voter_quorum receives NO value: this key's own
+#     approval condition requires the Capacity Domain boundary and
+#     fault-tolerance model, which this decision does not supply.
+#   - status, approved_by, effective_from, and review_due are unchanged; this is
+#     a key-level act, not a profile re-approval. scope.environment stays
+#     non-live-test, Live-Armer stays unassigned, and no acceptance,
+#     restricted-live, or live authority follows.
+
+profile_id: VERIFICATION-PROFILE-002
+version: "2.1"
+status: APPROVED               # profile-level, scope-limited (see 2026-07-29 header record)
+approved_by: ["operator"]      # Bounds-Approver (D1 role scheme; SHALL NOT also arm live trading)
+effective_from: "2026-07-29"
+review_due: "2027-01-29"
+
+scope:
+  environment: non-live-test   # applies to EV-L1..L3 test harness only
+  accounts: []                 # assign approved test account scope
+  broker_capability_profiles: []   # link approved Broker Capability Profile(s)
+  hard_safety_envelope_id: TBD
+  hard_safety_envelope_version: TBD
+  hard_safety_envelope_generation: null
+  hard_safety_envelope_digest: TBD
+  runtime_safety_profile_id: TBD
+  runtime_safety_profile_version: TBD
+  runtime_safety_profile_generation: null
+  runtime_safety_profile_digest: TBD
+  safety_configuration_activation_record_id: TBD
+  safety_configuration_activation_record_digest: TBD
+  human_authority_policy_id: TBD
+  human_authority_policy_generation: null
+  human_authority_policy_digest: TBD
+  effective_principal_graph_id: TBD
+  effective_principal_graph_generation: null
+  effective_principal_graph_digest: TBD
+  evidence_integrity_policy_id: TBD
+  evidence_integrity_policy_generation: null
+  evidence_integrity_policy_digest: TBD
+  recovery_barrier_policy_id: TBD
+  recovery_barrier_policy_generation: null
+  recovery_barrier_policy_digest: TBD
+  critical_input_policy_id: TBD
+  critical_input_policy_generation: null
+  critical_input_policy_digest: TBD
+  venue_constraint_policy_id: TBD
+  venue_constraint_policy_generation: null
+  venue_constraint_policy_digest: TBD
+  order_construction_policy_id: TBD
+  order_construction_policy_generation: null
+  order_construction_policy_digest: TBD
+  aggregate_risk_policy_id: TBD
+  aggregate_risk_policy_generation: null
+  aggregate_risk_policy_digest: TBD
+  adverse_scenario_set_id: TBD
+  adverse_scenario_set_generation: null
+  adverse_scenario_set_digest: TBD
+  action_flow_policy_id: TBD
+  action_flow_policy_generation: null
+  action_flow_policy_digest: TBD
+  trading_approval_policy_id: TBD
+  trading_approval_policy_generation: null
+  trading_approval_policy_digest: TBD
+  currentness_policy_id: TBD
+  currentness_policy_generation: null
+  currentness_policy_digest: TBD
+  restricted_live_trial_policy_id: TBD
+  restricted_live_trial_policy_generation: null
+  restricted_live_trial_policy_digest: TBD
+  safety_deviation_policy_id: TBD
+  safety_deviation_policy_generation: null
+  safety_deviation_policy_digest: TBD
+  active_deviation_set_id: TBD
+  active_deviation_set_generation: null
+  active_deviation_set_digest: TBD
+  safety_incident_policy_id: TBD
+  safety_incident_policy_generation: null
+  safety_incident_policy_digest: TBD
+  active_incident_set_id: TBD
+  active_incident_set_generation: null
+  active_incident_set_digest: TBD
+  safety_monitoring_policy_id: TBD
+  safety_monitoring_policy_generation: null
+  safety_monitoring_policy_digest: TBD
+  critical_telemetry_manifest_id: TBD
+  critical_telemetry_manifest_generation: null
+  critical_telemetry_manifest_digest: TBD
+  monitor_coverage_manifest_id: TBD
+  monitor_coverage_manifest_generation: null
+  monitor_coverage_manifest_digest: TBD
+  software_release_policy_id: TBD
+  software_release_policy_generation: null
+  software_release_policy_digest: TBD
+  admitted_release_set_id: TBD
+  release_generation: null
+  admitted_release_set_digest: TBD
+  release_artifact_manifest_id: TBD
+  release_artifact_manifest_digest: TBD
+  runtime_artifact_attestation_id: TBD
+  runtime_artifact_attestation_digest: TBD
+  post_trade_finality_policy_id: TBD
+  post_trade_finality_policy_generation: null
+  post_trade_finality_policy_digest: TBD
+  active_economic_obligation_set_id: TBD
+  post_trade_obligation_generation: null
+  active_economic_obligation_set_digest: TBD
+  statement_coverage_manifest_id: TBD
+  statement_coverage_manifest_digest: TBD
+
+# ---------------------------------------------------------------------------
+# Bounds. `semantics: hard_maximum` = must be met every time (pass/fail gate).
+# All values PROPOSED; rationale states the engineering basis for review.
+# ---------------------------------------------------------------------------
+bounds:
+  B_authority_partition_detect:
+    value_ms: 2000
+    semantics: hard_maximum
+    owner: operator
+    rationale: "PROPOSED. Loss of verifiable Safety-Authority contact detected within a small multiple of the heartbeat interval; assumes ~500ms heartbeat x 3 missed. Confirm against chosen heartbeat design (ADR-002-003). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §9 reconfirmed]"
+    measurement_source: harness_clock_on_execution_path
+    failure_response: CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_risk_increase_revoke:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "PROPOSED. After a loss condition is detected, the authoritative new-risk permission is revoked within this bound. Final egress denial then follows within B_revocation_to_egress; neither interval may be hidden in cache or retry delay. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §9 reconfirmed]"
+    measurement_source: egress_decision_log
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_revocation_to_egress:
+    value_ms: 500   # RECHECK: APPROVE after the selected currentness protocol is implemented and measured
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed authoritative revocation/restriction generation to denial at every final egress (ADR-002-007 §§9, 16). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: authority_and_egress_generation_log
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_halt_to_egress:
+    value_ms: 500   # RECHECK: APPROVE after HALT generation propagation and fenced-send design are selected
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from authoritative HALT commit, or a final egress's locally verified acceptance of the same restrictive command, to denial of later risk-increasing transmissions at every affected final egress (ADR-002-007 §§16-17; ADR-002-015 §15). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: halt_and_egress_boundary_log
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_human_halt_to_commit:
+    value_ms: 1000   # RECHECK: APPROVE after the independent human HALT ingress, local latch, and authoritative commit path are implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from acceptance of a current authenticated Human HALT Command to an authoritative monotonic HALT commit or a proven local restrictive egress latch. It precedes or overlaps B_halt_to_egress but cannot be hidden inside it (ADR-002-015 §15). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-H]"
+    measurement_source: human_halt_ingress_local_latch_and_safety_commit_log
+    failure_response: LATCH_LOCAL_HALT_AND_ESCALATE
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_time_health_to_egress:
+    value_ms: 500   # RECHECK: APPROVE after Time Health currentness distribution is selected
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from a less-trusted Time Health generation to rejection of dependent transmission at every final egress (ADR-002-008 §§8, 14.6). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: time_health_and_egress_generation_log
+    failure_response: STOP_NEW_RISK
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_capability_claim_to_send:
+    value_ms: 500   # RECHECK: APPROVE after the fenced egress journal and broker transport are implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from durable single-use capability claim and SEND_STARTED persistence to transmission of the first broker-directed byte. Expiry or inability to prove this interval denies the send; post-claim ambiguity remains potentially live and capacity-covered (ADR-002-007 §§9.4-9.5). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-G]"
+    measurement_source: egress_journal_and_broker_transport_trace
+    failure_response: QUARANTINE_UNKNOWN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_egress_hard_fence:
+    value_ms: 1000   # RECHECK: APPROVE after credential, session, signer, route, and broker fence mechanisms are selected and measured
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from an authoritative egress-generation invalidation or credential-compromise containment trigger to proof that the superseded principal cannot create a broker-accepted order mutation (ADR-002-013 §§13-16). Unknown completion keeps replacement authority non-live. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-G]"
+    measurement_source: egress_identity_route_session_and_broker_denial_log
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_stale_epoch_reject:
+    value_ms: 0
+    semantics: hard_maximum
+    owner: operator
+    rationale: "PROPOSED. Rejection of a stale ledger/authority epoch is synchronous at the ledger transition and final egress (compare-and-set); 0 = no time window in which a stale epoch may mutate or transmit (ADR-002-002 INV-008, ADR-002-003). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §9 reconfirmed]"
+    measurement_source: ledger_and_egress_decision_log
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_external_activity_detect:
+    value_ms: null   # MEASURE: bounded by the broker account-event/poll cadence
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE from Broker Capability Profile. For a poll-only broker this is bounded by the poll interval; new-action size must be constrained so plausible external activity in this window cannot breach the Hard Safety Envelope (ADR-002-002 §23.4)."
+    measurement_source: broker_capability_profile
+    failure_response: CONTAIN
+    applicable_scope: per approved Broker Capability Profile (ADR-002-004)
+    review_date: null
+  B_external_activity_contain:
+    value_ms: 1000
+    semantics: hard_maximum
+    owner: operator
+    rationale: "PROPOSED. Once unattributed external activity is detected, new-risk authority suspended and reconciliation begun within this bound. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §9 reconfirmed]"
+    measurement_source: reconciliation_log
+    failure_response: CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_startup_reconciliation:
+    value_ms: 60000
+    semantics: operational_target_and_hard_gate
+    owner: operator
+    rationale: "PROPOSED target. No new risk before reconciliation completes (hard gate). 60s is an operational target; exceeding it triggers escalation, not relaxation of the gate. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §9 reconfirmed]"
+    measurement_source: recovery_coordinator_log
+    failure_response: REMAIN_HALTED
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_recovery_trigger_to_barrier:
+    value_ms: 1000   # RECHECK: APPROVE after trigger classification and ordered barrier commit are implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from authoritative detection of a recovery trigger to committed barrier closure or a proven local hard fence for the complete affected scope (ADR-002-017 §§8-9). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-E]"
+    measurement_source: recovery_trigger_barrier_commit_and_local_fence_trace
+    failure_response: HARD_FENCE_AND_HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_recovery_barrier_to_egress:
+    value_ms: 500   # RECHECK: APPROVE after Recovery Generation distribution and egress rejection are implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed Recovery Generation/barrier closure to denial of stale readiness, authorization, capability, and new-risk transmission at every affected final egress (ADR-002-017 §§9, 18). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: recovery_generation_and_egress_boundary_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_critical_input_loss_detect:
+    value_ms: 2000   # RECHECK: APPROVE per source class and continuity protocol
+    semantics: source_specific_hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from source loss, continuity break, sequence gap, or material trust degradation to authoritative Critical Input invalidation for the complete affected dependency scope (ADR-002-018 §§9, 14, 17). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-C]"
+    measurement_source: source_continuity_admission_and_context_invalidation_trace
+    failure_response: STOP_NEW_RISK
+    applicable_scope: per source class and continuity protocol
+    review_date: "2027-01-29"
+  B_critical_input_invalid_to_authority:
+    value_ms: 500   # RECHECK: APPROVE after Context Generation distribution to issuers is implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed material Critical Input invalidation to denial at every affected approval and new-risk authority issuer (ADR-002-018 §§15-17). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-B]"
+    measurement_source: context_generation_approval_and_authority_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_critical_input_invalid_to_egress:
+    value_ms: 500   # RECHECK: APPROVE after active final-egress context currentness is implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed material Critical Input invalidation to denial of the stale Capsule and dependent request at every affected final egress (ADR-002-018 §16). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: context_generation_invalidation_and_egress_boundary_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_venue_constraint_loss_detect:
+    value_ms: 2000   # RECHECK: APPROVE per venue, session, account, and constraint-source class
+    semantics: source_specific_hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from venue/session/tradability, account, margin, borrow, settlement, broker-capability, or source-continuity loss to a committed restrictive Constraint Generation for the complete affected scope (ADR-002-019 §§9-13, 18). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-C]"
+    measurement_source: venue_constraint_source_and_generation_trace
+    failure_response: STOP_NEW_RISK
+    applicable_scope: per venue, session, account, and constraint-source class
+    review_date: "2027-01-29"
+  B_venue_constraint_invalid_to_authority:
+    value_ms: 500   # RECHECK: APPROVE after Constraint Generation distribution to approval and authority issuers is implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed material venue-constraint invalidation to denial at every affected approval and new-risk authority issuer (ADR-002-019 §§16-18). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-B]"
+    measurement_source: constraint_generation_approval_and_authority_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_venue_constraint_invalid_to_egress:
+    value_ms: 500   # RECHECK: APPROVE after active final-egress constraint currentness is implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed material venue-constraint invalidation to denial of the stale decision and dependent broker request at every affected final egress (ADR-002-019 §17). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: constraint_generation_invalidation_and_egress_boundary_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_order_conformance_invalid_to_egress:
+    value_ms: 500   # RECHECK: APPROVE after Construction Generation and proof invalidation reach every final egress
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed material construction-policy, mapping, compiler, serializer, SDK, command, or proof invalidation to denial of the stale command at every affected final egress (ADR-002-020 §§17-18). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: construction_generation_proof_invalidation_and_egress_boundary_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_aggregate_risk_invalid_to_rcl:
+    value_ms: 500   # RECHECK: APPROVE after Aggregate Risk Generation and RCL admission fencing are implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed material aggregate-state, policy, scenario, valuation, model, mapping, or decision invalidation to rejection of the stale allocation request at the RCL (ADR-002-021 §§16-18). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-B]"
+    measurement_source: aggregate_risk_generation_decision_and_rcl_admission_trace
+    failure_response: STOP_NEW_RISK
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_aggregate_risk_invalid_to_egress:
+    value_ms: 500   # RECHECK: APPROVE after active final-egress risk-decision currentness is implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed material aggregate-risk invalidation to denial of the stale decision, commitment chain, and dependent request at every affected final egress (ADR-002-021 §17). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: aggregate_risk_generation_invalidation_and_egress_boundary_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_action_flow_invalid_to_rcl:
+    value_ms: 500   # RECHECK: APPROVE after Action Flow Generation and RCL admission fencing are implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed material action-flow policy, broker-limit, scope, counter, reserve, cause-lineage, or decision invalidation to rejection of the stale allocation request or permit at the RCL (ADR-002-022 §§13, 19). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-B]"
+    measurement_source: action_flow_generation_decision_permit_and_rcl_admission_trace
+    failure_response: STOP_NEW_RISK
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_action_flow_invalid_to_egress:
+    value_ms: 500   # RECHECK: APPROVE after active final-egress action-flow currentness is implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed material action-flow invalidation to denial of the stale decision, permit, reserve, or dependent request at every affected final egress (ADR-002-022 §17). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: action_flow_generation_invalidation_and_egress_boundary_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_action_flow_violation_to_containment:
+    value_ms: 1000   # RECHECK: APPROVE after rate/amplification/queue/reserve containment is implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from authoritative rate, burst, amplification, queue, in-flight, counter-divergence, duplicate-permit, or protective-reserve violation detection to completed new-risk denial and required containment across the complete affected shared scope (ADR-002-022 §19). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-D]"
+    measurement_source: action_flow_violation_rcl_authority_and_egress_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_approval_invalid_to_intent:
+    value_ms: 500   # RECHECK: APPROVE after Trading Approval Generation and Intent Registry invalidation are implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed material approval-policy, request, input, common-mode, decision, or dependency invalidation to rejection of affected unconsumed decisions and dependent Intent registration/use (ADR-002-023 §§12, 14). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-B]"
+    measurement_source: approval_generation_invalidation_decision_consumption_and_intent_registry_trace
+    failure_response: STOP_NEW_RISK
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_approval_invalid_to_egress:
+    value_ms: 500   # RECHECK: APPROVE after active final-egress approval currentness is implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed material approval or consumption invalidation to denial of every affected dependent new-risk request at final egress (ADR-002-023 §15). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: approval_generation_consumption_invalidation_and_egress_boundary_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_approval_generation_fence:
+    value_ms: 500   # RECHECK: APPROVE after evaluator, Intent Registry writer, and egress fencing are implemented
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from commitment of a newer Trading Approval Generation to proven inability of predecessor evaluators, registry writers, approval decisions, and egress consumers to create or use dependent new-risk permission (ADR-002-023 §17). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-F]"
+    measurement_source: trading_approval_generation_writer_fence_and_egress_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_currentness_gap_to_local_deny:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from a final egress detecting credible currentness loss or authenticated restriction to its Local Restrictive Latch reaching DENY_LATCHED (ADR-002-024 §§11, 14). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-H]"
+    measurement_source: restrictive_ingress_and_local_egress_latch_trace
+    failure_response: LATCH_LOCAL_HALT_AND_ESCALATE
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_restrictive_fence_commit:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from authoritative owner restriction to committed Restrictive Fence Record over the complete dependency scope (ADR-002-024 §§10-11). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-B]"
+    measurement_source: owner_restriction_and_currentness_ordering_trace
+    failure_response: KEEP_LOCAL_DENY_AND_HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_currentness_fence_to_egress:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed Restrictive Fence Record to denial of later affected claims and sends at every final egress (ADR-002-024 §§11-15). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: restrictive_fence_and_egress_admission_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_currentness_proof_issue:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval to validate one complete vector and atomically create its single-use Egress Currentness Proof with capability claim and SEND_STARTED (ADR-002-024 §§12-13). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-H]"
+    measurement_source: currentness_vector_claim_and_proof_trace
+    failure_response: DENY_NEW_RISK
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_currentness_generation_fence:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from commitment of a newer currentness, restore, writer, or egress generation to proven inability of every predecessor to create or consume a current vector or proof (ADR-002-024 §§15, 19). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-F]"
+    measurement_source: currentness_generation_and_hard_fence_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_trial_abort_to_authority_revoke:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from authoritative ADR-002-025 Trial Abort Trigger detection to revocation or restrictive fencing of every affected unconsumed trial authorization and capability. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-B]"
+    measurement_source: trial_abort_authority_and_capability_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_trial_abort_to_egress_deny:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from authoritative Trial Abort Trigger detection or committed abort generation to denial of every later affected trial transmission at final egress. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: trial_abort_generation_and_egress_boundary_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_trial_evidence_gap_to_containment:
+    value_ms: 1000
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from authoritative material trial-evidence gap detection to completed new-risk denial and required containment over the complete possibly affected scope. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-D]"
+    measurement_source: trial_evidence_gap_authority_rcl_and_egress_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_scope_promotion_generation_fence:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from commitment of a newer Promotion Generation to proven inability of predecessor plans, runs, evidence packages, promotion decisions, authorization requests, and egress consumers to create or widen permission. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-F]"
+    measurement_source: promotion_generation_registry_authority_and_egress_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_deviation_revoke_to_authority:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from authoritative ADR-002-026 deviation expiry, revocation, compensating-control loss, evidence invalidation, or scope conflict to revocation or restrictive fencing of every affected unconsumed approval and new-risk authority. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-B]"
+    measurement_source: deviation_generation_control_authority_and_currentness_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_deviation_revoke_to_egress:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from authoritative deviation restriction or committed Deviation Generation to denial of every later affected new-risk transmission at final egress; permissive caches and absence of a revocation event are not currentness proof. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: deviation_restriction_generation_and_egress_boundary_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_deviation_generation_fence:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from commitment of a newer Deviation Generation to proven inability of predecessor policy, evaluator, decision, Active Deviation Set, configuration, authority, and egress consumers to create or use dependent permission. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-F]"
+    measurement_source: deviation_generation_registry_configuration_authority_and_egress_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_incident_signal_to_authority_restrict:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from an authoritative material safety signal to committed denial, HALT, demotion, or restrictive fencing at every affected new-risk authority owner under ADR-002-027. Administrative confirmation cannot hide inside this bound. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-B]"
+    measurement_source: incident_signal_classifier_authority_and_fence_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_incident_signal_to_egress_deny:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from an authoritative material safety signal to denial of later dependent new-risk transmission at every affected final egress. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: incident_signal_generation_and_egress_boundary_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_incident_scope_expansion_to_egress_deny:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from authoritative incident dependency-scope expansion to denial at every newly affected final egress; unknown closure expands rather than narrows scope. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: incident_scope_active_set_and_egress_trace
+    failure_response: EXPAND_CONTAINMENT_AND_HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_incident_generation_fence:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from commitment of a newer Incident Generation to proven inability of stale coordinators, records, active sets, plans, closure decisions, authority requests, and egress consumers to create or use permission. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-F]"
+    measurement_source: incident_generation_registry_owner_authority_and_egress_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_controlled_shutdown_hard_fence:
+    value_ms: 1000
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from controlled-shutdown restriction commit to proof that every former principal, credential, signer, session, proxy, queue, and route cannot create a broker-accepted mutation. Cooperative process stop is not proof. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-G]"
+    measurement_source: incident_shutdown_egress_identity_route_session_and_broker_trace
+    failure_response: REMAIN_HALTED_UNTIL_PROVEN_FENCED
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_incident_handoff_to_recovery_barrier:
+    value_ms: 1000
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed incident recovery-handoff intent to exact package acceptance by a current Recovery Session behind a closed Recovery Barrier; incomplete handoff transfers no obligation. [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-E]"
+    measurement_source: incident_handoff_and_recovery_session_acceptance_trace
+    failure_response: CLOSE_BARRIER_AND_HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_safety_telemetry_loss_detect:
+    value_ms: 2000
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from required Critical Telemetry loss, continuity break, semantic invalidation, or coverage failure to a committed Monitoring Gap for the greatest credible dependent scope (ADR-002-028 §§8-13). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-C]"
+    measurement_source: telemetry_source_continuity_manifest_and_gap_trace
+    failure_response: STOP_NEW_RISK_AND_DECLARE_GAP
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_monitoring_gap_to_authority_restrict:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed Monitoring Gap to denial at every dependent new-risk authority issuer; alert delivery and acknowledgement cannot extend this bound (ADR-002-028 §§13, 17). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-B]"
+    measurement_source: monitoring_gap_authority_and_restrictive_ingress_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_monitoring_gap_to_egress_deny:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed Monitoring Gap to denial at every dependent final egress under active currentness; cache, heartbeat, dashboard state, and absence of alert are not proof (ADR-002-028 §18). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: monitoring_gap_currentness_and_egress_boundary_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_critical_alert_delivery:
+    value_ms: 5000
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from Critical alert commit to independently verifiable delivery or explicit delivery-gap escalation. This detective path runs in parallel and cannot delay restriction or egress denial (ADR-002-028 §16). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-H range 5000-30000, conservative low end]"
+    measurement_source: safety_alert_delivery_and_gap_trace
+    failure_response: KEEP_RESTRICTED_AND_ALTERNATE_ESCALATE
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_alert_escalation:
+    value_ms: 30000
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from missed delivery or acknowledgement deadline to the next required independent escalation stage without resetting the original safety deadline (ADR-002-028 §16). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-H]"
+    measurement_source: alert_escalation_ordering_and_effective_principal_trace
+    failure_response: INCIDENT_REMAINS_OPEN_AND_ESCALATE
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_monitoring_generation_fence:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from a new policy, manifest, gap, owner, restore, or Monitor Generation to rejection of superseded publishers and snapshots at every dependent consumer, authority issuer, and final egress (ADR-002-028 §§12, 18, 24). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-F]"
+    measurement_source: monitor_generation_writer_consumer_and_egress_fence_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_supply_chain_compromise_detect:
+    value_ms: 2000
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from source, builder, dependency, toolchain, signer, registry, admission, deployment, or runtime-artifact compromise or contradiction to a committed release restriction for the greatest credible affected scope (ADR-002-029). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-C range 2000-30000, conservative low end]"
+    measurement_source: source_build_dependency_signer_registry_admission_and_runtime_trace
+    failure_response: STOP_NEW_RISK_AND_RESTRICT_RELEASE_SCOPE
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_release_restriction_to_authority_restrict:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed release restriction to denial at every dependent new-risk authority issuer; scan, alert, deployment, or operator acknowledgement cannot extend this preventive bound (ADR-002-029). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-B]"
+    measurement_source: release_restriction_authority_and_currentness_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_release_restriction_to_egress_deny:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from committed release restriction to denial at every dependent final egress under active artifact currentness; cached admission, tags, health, or absence of revocation are not proof (ADR-002-029). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: release_restriction_generation_runtime_attestation_and_egress_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_release_generation_fence:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from Release Generation advance, restore, rollback, revocation, or set replacement to rejection of superseded publishers, deployments, consumers, and runtime attestations (ADR-002-029). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-F]"
+    measurement_source: release_generation_registry_deployment_runtime_and_consumer_fence_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_runtime_artifact_drift_detect:
+    value_ms: 2000
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from actual executable, image, plugin, sidecar, proxy, signer, SDK, or dynamically loaded artifact divergence to restrictive detection and runtime fencing (ADR-002-029). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-C]"
+    measurement_source: expected_release_manifest_and_actual_runtime_artifact_attestation_trace
+    failure_response: HALT_AND_FENCE_RUNTIME
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_post_trade_effect_to_obligation_commit:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from a possible external economic effect to durable PTOL obligation identity and conservative RCL coverage; expiry or missing evidence never releases capacity (ADR-002-030). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-B]"
+    measurement_source: broker_effect_ptol_commit_and_rcl_capacity_trace
+    failure_response: STOP_NEW_RISK_AND_QUARANTINE_CAPACITY
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_post_trade_change_detect:
+    value_ms: 2000
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from a material settlement, cash, collateral, borrow, custody, statement, break, correction, or finality change to detection over the greatest credible dependency closure (ADR-002-030). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-C range 2000-30000, conservative low end]"
+    measurement_source: post_trade_source_statement_break_and_correction_trace
+    failure_response: STOP_NEW_RISK_AND_MARK_UNKNOWN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_post_trade_break_to_restrict:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from a confirmed or suspected post-trade break to restrictive authority and conservative capacity treatment; workflow or operator acknowledgement cannot extend it (ADR-002-030). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-B]"
+    measurement_source: post_trade_break_ptol_rcl_and_authority_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_post_trade_invalid_to_egress_deny:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from invalid or stale post-trade state to denial of dependent future external-economic sends at final egress without permissive cache (ADR-002-030). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-A]"
+    measurement_source: post_trade_generation_finality_break_and_egress_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_post_trade_generation_fence:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from Post-Trade Obligation Generation advance, restore, correction, or owner replacement to rejection of stale PTOL writers, consumers, proofs, authorities, RCL commands, and egress attempts (ADR-002-030). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-F]"
+    measurement_source: ptol_generation_writer_consumer_rcl_authority_and_egress_fence_trace
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_statement_coverage_gap_detect:
+    value_ms: 2000
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval to detect incomplete, truncated, stale, conflicting, preliminary, or common-mode statement coverage for the applicable source and obligation scope (ADR-002-030). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-C range 2000-30000, conservative low end]"
+    measurement_source: statement_pagination_cutoff_revision_and_coverage_trace
+    failure_response: STOP_NEW_RISK_AND_MARK_UNKNOWN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_final_quantity_proof:
+    value_ms: null   # MEASURE per broker/order type
+    semantics: broker_specific
+    owner: TBD
+    rationale: "MEASURE. Time within which Final Quantity Proof (final filled qty + zero remaining) can be established for a given broker and order type; drives how long capacity stays RELEASE_PENDING_PROOF (ADR-002-002 §16)."
+    measurement_source: broker_capability_profile
+    failure_response: QUARANTINE_UNKNOWN
+    applicable_scope: per broker/order type
+    review_date: null
+  B_late_fill_observation:
+    value_ms: null   # MEASURE
+    semantics: broker_specific
+    owner: TBD
+    rationale: "MEASURE. Maximum credible interval in which a late fill may still arrive after a claimed terminal state; a late fill inside this window must not have caused early capacity release (ADR-002-002 §16.4)."
+    measurement_source: broker_capability_profile
+    failure_response: PROFILE_CONTRADICTORY
+    applicable_scope: per approved Broker Capability Profile (ADR-002-004)
+    review_date: null
+  B_protective_request_start:
+    value_ms: 1000
+    semantics: hard_maximum
+    owner: operator
+    rationale: "PROPOSED. Time from degraded-mode entry to first bounded protective request being started, using reserved protective capacity (ADR-002-001). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §9 reconfirmed]"
+    measurement_source: protective_controller_log
+    failure_response: CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_protective_request_complete:
+    value_ms: null   # MEASURE
+    semantics: broker_specific
+    owner: TBD
+    rationale: "MEASURE. Broker-dependent completion time for a protective action; informs protection-gap bounding (ADR-002-001 §12)."
+    measurement_source: broker_capability_profile
+    failure_response: CONTAIN
+    applicable_scope: per approved Broker Capability Profile (ADR-002-004)
+    review_date: null
+  B_broker_query_consistency:
+    value_ms: null   # MEASURE
+    semantics: broker_specific
+    owner: TBD
+    rationale: "MEASURE. Interval over which broker query sources are expected to converge; absence within it is not proof of non-existence (ADR-002-004)."
+    measurement_source: broker_capability_profile
+    failure_response: CONSERVATIVE_UNKNOWN
+    applicable_scope: per approved Broker Capability Profile (ADR-002-004)
+    review_date: null
+  B_rate_limit_recovery:
+    value_ms: null   # MEASURE per broker, account, session, and endpoint class
+    semantics: broker_specific
+    owner: TBD
+    rationale: "MEASURE. Recovery time after hitting the applicable broker account or session rate limit; protective/reconciliation traffic budget must survive this (ADR-002-001 §7.5)."
+    measurement_source: broker_capability_profile
+    failure_response: RESTRICT_OR_CONTAIN
+    applicable_scope: per broker, account, session, and endpoint class
+    review_date: null
+  B_failure_domain_detect:
+    value_ms: 2000   # RECHECK: APPROVE per concrete Failure-Domain Allocation Matrix
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from a safety-critical dependency failure or isolation-assumption breach to authoritative detection for the affected Safety Cell (ADR-002-009). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-C]"
+    measurement_source: failure_domain_and_authority_log
+    failure_response: STOP_NEW_RISK
+    applicable_scope: per concrete Failure-Domain Allocation Matrix
+    review_date: "2027-01-29"
+  B_failure_domain_contain:
+    value_ms: 1000   # RECHECK: APPROVE per concrete deployment profile
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from authoritative failure-domain detection to completed denial or broader HALT at every affected final egress (ADR-002-009). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-D]"
+    measurement_source: failure_domain_and_egress_log
+    failure_response: HALT
+    applicable_scope: per concrete deployment profile
+    review_date: "2027-01-29"
+  B_protection_gap:
+    value_ms: null   # APPROVE per broker/order/replacement profile
+    semantics: broker_specific
+    owner: TBD
+    rationale: "MEASURE. Maximum permitted interval without sufficient protection during an explicitly approved cancel-first replacement; an unknown or exceeded gap is containment (ADR-002-011)."
+    measurement_source: protective_replacement_and_broker_log
+    failure_response: CONTAIN
+    applicable_scope: per broker/order/replacement profile
+    review_date: null
+  B_protection_overlap:
+    value_ms: null   # APPROVE per broker/order/replacement profile
+    semantics: broker_specific
+    owner: TBD
+    rationale: "MEASURE. Maximum permitted interval in which old and new protective orders may both execute while worst-case reversal risk remains capacity-covered (ADR-002-011)."
+    measurement_source: protective_replacement_and_broker_log
+    failure_response: CONTAIN
+    applicable_scope: per broker/order/replacement profile
+    review_date: null
+  B_protective_replacement_contain:
+    value_ms: 1000   # RECHECK: APPROVE after replacement workflow and fallback are selected
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from replacement deviation or proof failure to authoritative containment of further transmission and new risk (ADR-002-011). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-D]"
+    measurement_source: protective_controller_ledger_and_egress_log
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_non_trade_event_detect:
+    value_ms: null   # APPROVE per source and broker capability profile
+    semantics: source_and_broker_specific
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from an externally effective non-trade change to authoritative detection; entry limits must remain safe throughout this interval (ADR-002-010)."
+    measurement_source: reference_source_and_broker_capability_profile
+    failure_response: CONTAIN
+    applicable_scope: per source and broker capability profile
+    review_date: null
+  B_non_trade_transition_apply:
+    value_ms: 1000   # RECHECK: APPROVE after conservative transition protocol is selected
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval for local instrument, projection, RCL, protection, and authority state to reach a complete non-permissive transition or containment (ADR-002-010). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-D]"
+    measurement_source: non_trade_transition_and_ledger_log
+    failure_response: REMAIN_HALTED
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_non_trade_reconcile:
+    value_ms: null   # APPROVE per event/instrument/broker scope
+    semantics: source_and_broker_specific
+    owner: TBD
+    rationale: "MEASURE. Maximum permitted unreconciled interval after a non-trade event while old and new effects remain conservatively capacity-covered (ADR-002-010)."
+    measurement_source: reconciliation_and_broker_capability_profile
+    failure_response: QUARANTINE_UNKNOWN
+    applicable_scope: per event/instrument/broker scope
+    review_date: null
+  B_operator_escalation:
+    value_ms: 30000
+    semantics: hard_maximum
+    owner: operator
+    rationale: "PROPOSED. Maximum time to raise an operator escalation on a Critical operational event (capacity exhaustion, trapped exposure, unresolved UNKNOWN). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §9 reconfirmed]"
+    measurement_source: alerting_pipeline_log
+    failure_response: HALT
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_evidence_persist:
+    value_ms: 500   # RECHECK: APPROVE after pre-effect and emergency durability mechanisms are selected and measured
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval allowed by the applicable durability class for a required safety record to receive a verifiable durable commit. Risk-increasing send cannot outrun exact pre-effect and SEND_STARTED durability (ADR-002-016 §10). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-H range 500-1000, conservative low end]"
+    measurement_source: source_ingress_store_and_egress_receipt_trace
+    failure_response: STOP_NEW_RISK
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_evidence_gap_detect:
+    value_ms: 2000   # RECHECK: APPROVE per record class, source continuity, and Evidence Integrity Policy
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from a required record omission, conflict, truncation, fork, or continuity break to authoritative Evidence Gap detection for the affected scope (ADR-002-016 §14). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-C]"
+    measurement_source: source_sequence_causal_index_anchor_and_inventory_trace
+    failure_response: STOP_NEW_RISK
+    applicable_scope: per record class, source continuity, and Evidence Integrity Policy
+    review_date: "2027-01-29"
+  B_evidence_gap_contain:
+    value_ms: 1000   # RECHECK: APPROVE after gap-to-authority and egress containment is selected
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from confirmed safety-relevant Evidence Gap to completed new-risk denial at every affected authority and final egress; unknown scope expands containment (ADR-002-016 §§14, 18). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-D]"
+    measurement_source: evidence_gap_authority_and_egress_trace
+    failure_response: HALT_OR_CONTAIN
+    applicable_scope: non-live-test
+    review_date: "2027-01-29"
+  B_evidence_anchor:
+    value_ms: 30000   # RECHECK: APPROVE per Evidence Integrity Policy anchor cadence and record class
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from one committed Integrity Anchor to the next required anchor commit for the affected ordered-segment scope; an unproven or exceeded interval is an anchor-cadence gap and cannot be claimed as detected (ADR-002-016 §13). Registered by PATCH-0054 (Phase-0 profile completion): the Evidence Integrity Policy declares an anchor cadence but the profile carried no distinct anchor bound (source: 2026-07-20 evidence-store design §8). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-H range (policy cadence), conservative]"
+    measurement_source: evidence_segment_chain_and_integrity_anchor_trace
+    failure_response: STOP_NEW_RISK
+    applicable_scope: per Evidence Integrity Policy anchor cadence and record class
+    review_date: "2027-01-29"
+  B_cell_halt_to_global_halt:
+    value_ms: 1000   # RECHECK: APPROVE per concrete deployment profile and Failure-Domain Allocation Matrix
+    semantics: hard_maximum
+    owner: operator
+    rationale: "MEASURE. Maximum interval from a Safety Cell HALT whose blast radius cannot be bounded to committed escalation to the broader Safety Cell or global HALT (ADR-002-009 §§13-14). B_failure_domain_detect and B_failure_domain_contain bound detection and containment within the affected cell and are a different quantity. Registered by PATCH-0054 (Phase-0 profile completion; source: 2026-07-27 failure-domain design §7). [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §5-D]"
+    measurement_source: failure_domain_escalation_and_authority_log
+    failure_response: HALT
+    applicable_scope: per concrete deployment profile and Failure-Domain Allocation Matrix
+    review_date: "2027-01-29"
+
+limits:
+  MAX_normal_capability_age_ms: 1000                   # PROPOSED: max consumer-local age of the normal capability/currentness proof before denial -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §9 reconfirmed] owner=operator; review_date=2027-01-29
+  MAX_time_health_snapshot_age_ms: 1000                # APPROVE: max consumer-held Time Health proof age, including transport uncertainty -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_degraded_lease_holdover_ms: 5000                 # PROPOSED: max monotonic lifetime of a pre-issued degraded protective lease -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §9 reconfirmed] owner=operator; review_date=2027-01-29
+  MAX_clock_drift_ppm: 200                             # PROPOSED: beyond this, time confidence is lost -> fail closed (ADR-002-003) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §9 reconfirmed] owner=operator; review_date=2027-01-29
+  MAX_process_suspension_ms: 2000                      # PROPOSED: a process suspended longer than this is fenced on resume -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §9 reconfirmed] owner=operator; review_date=2027-01-29
+  MAX_unresolved_send_per_scope: 1                     # from template: at most one unresolved send per scope -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §9 reconfirmed] owner=operator; review_date=2027-01-29
+  MAX_human_approval_age_ms: 60000                     # APPROVE per approval type; stale or unknown age denies authority increase -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1h range minute-session, conservative 1 minute] owner=operator; review_date=2027-01-29
+  MAX_human_session_age_ms: 3600000                    # APPROVE per human authority direction; unknown age denies the command -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1h range session, conservative 1 hour] owner=operator; review_date=2027-01-29
+  MAX_human_delegation_age_ms: 60000                   # APPROVE per delegation policy; expiry never transfers or revives approval -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1h range minute-session, conservative 1 minute] owner=operator; review_date=2027-01-29
+  MIN_evidence_retention_ms: 15552000000               # APPROVE per record class; economic-effect and verification horizons dominate -- [APPROVED 2026-08-07 operator (Bounds-Approver); derivation = disposition package §4.1 at commit 7368e7c3, approval entry = that package's §6 filled by this change (empty at 7368e7c3); floor = longest applicable approved horizon, a floor not a ceiling] owner=operator; review_date=2027-01-29
+  MAX_replay_start_delay_ms: 30000                     # APPROVE incident/review target; exceeding it never relaxes isolation or completeness -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L3] owner=operator; review_date=2027-01-29
+  MAX_recovery_readiness_age_ms: 1000                  # APPROVE per recovery scope; expiry or unknown age denies later authority issuance -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_critical_input_snapshot_age_ms: 1000             # APPROVE per source/input/decision scope; unknown age denies dependent new risk -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_decision_context_age_ms: 1000                    # APPROVE per action class; Capsule expiry never expires economic effect -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_venue_constraint_snapshot_age_ms: 1000           # APPROVE per venue/session/account/action scope; unknown age denies dependent new risk -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_order_admissibility_decision_age_ms: 1000        # APPROVE per exact order/action class; expiry never expires economic effect -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_canonical_broker_command_age_ms: 1000            # APPROVE per broker/action scope; unknown age denies send and expiry never expires economic effect -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_order_conformance_proof_age_ms: 1000             # APPROVE per exact command; stale proof denies send and cannot release capacity -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_aggregate_risk_state_snapshot_age_ms: 1000       # APPROVE per aggregate scope; unknown age denies allocation and dependent new risk -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_aggregate_risk_decision_age_ms: 1000             # APPROVE per exact effect/allocation scope; expiry never expires economic effect -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_action_flow_state_snapshot_age_ms: 1000          # APPROVE per shared broker-resource scope; unknown age denies allocation and send -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_action_flow_decision_age_ms: 1000                # APPROVE per exact action/scope; expiry never expires possible broker or economic effect -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_action_flow_permit_age_ms: 1000                  # APPROVE per exact action/claim path; stale permit denies send and cannot release economic capacity -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_action_amplification_per_cause: 3                # APPROVE per cause/action class; unknown or exceeded amplification invokes containment -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L6 small integer 3-5, conservative low end] owner=operator; review_date=2027-01-29
+  MAX_proposal_approval_request_age_ms: 1000           # APPROVE per action class; stale or unknown request age denies approval and consumption -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_independent_approval_decision_age_ms: 1000       # APPROVE per exact request/Intent scope; expiry never expires economic effect -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_egress_currentness_proof_age_ms: 1000            # APPROVE per send boundary; every normal send still requires a new single-use proof -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_currentness_vector_age_ms: 1000                  # APPROVE per complete dependency scope; unknown or stale vector age denies admission -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_trial_authorized_economic_effect: null           # APPROVE per exact trial scope; unknown or unbounded credible effect prohibits the trial -- [DEFERRED 2026-07-29: instance/architecture decision; value stays null, owner TBD]
+  MAX_trial_concurrent_potential_effect: null          # APPROVE per shared capacity scope; includes potentially-live and abort/recovery overlap -- [DEFERRED 2026-07-29: instance/architecture decision; value stays null, owner TBD]
+  MAX_trial_action_count: null                         # APPROVE per exact plan; unavailable or ambiguous counter denies later trial action -- [DEFERRED 2026-07-29: instance/architecture decision; value stays null, owner TBD]
+  MAX_trial_duration_ms: 60000                         # APPROVE per exact run; expiry ends future action but never economic effect -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L2 shortest exact run, conservative 1 minute] owner=operator; review_date=2027-01-29
+  MAX_trial_evidence_age_ms: 1000                      # APPROVE per promotion scope; stale evidence denies promotion and never releases capacity -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_deviation_duration_ms: 60000                     # APPROVE per exact reduced scope; expiry restricts future authority and never expires economic effect -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L2 shortest reduced scope, conservative 1 minute] owner=operator; review_date=2027-01-29
+  MAX_deviation_decision_age_ms: 1000                  # APPROVE per exact request/configuration consumption; stale or unknown age denies activation and send -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_residual_risk_review_interval_ms: 15552000000    # APPROVE per risk class; missed or unproven review restricts scope and never auto-renews -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L2 periodic review cycle = the 6-month profile review cadence] owner=operator; review_date=2027-01-29
+  MAX_incident_scope_snapshot_age_ms: 1000             # APPROVE per dependency scope; stale or unknown scope expands containment and denies new risk -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_incident_containment_plan_age_ms: 1000           # APPROVE per incident/action scope; stale plan cannot request action or justify shutdown progress -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_incident_recovery_handoff_age_ms: 1000           # APPROVE per Recovery Session; stale handoff transfers no obligation and keeps the barrier closed -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_incident_closure_decision_age_ms: 1000           # APPROVE per exact incident generation; expiry denies closure and never clears HALT or economic effect -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_critical_telemetry_age_ms: 1000                  # APPROVE per telemetry class/scope; unknown or stale age creates a Monitoring Gap -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_continuous_conformance_snapshot_age_ms: 1000     # APPROVE per exact scope; stale Snapshot denies dependent new risk and creates no permission -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_safety_alert_age_ms: 1000                        # APPROVE per alert class; stale alert cannot prove delivery, containment, or resolution -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_monitoring_suppression_duration_ms: 60000        # APPROVE per exact suppressible scope; expiry or ambiguity keeps restriction and never auto-resumes -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L2 shortest, no auto-resume, conservative 1 minute] owner=operator; review_date=2027-01-29
+  MAX_alert_acknowledgement_age_ms: 1000               # APPROVE per escalation stage; acknowledgement age cannot extend restriction or egress-denial bounds -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_build_provenance_age_ms: 1000                    # APPROVE per release class; stale or unknown provenance denies admission and never proves artifact safety -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_artifact_admission_decision_age_ms: 1000         # APPROVE per exact scope; stale admission denies future use and never expires economic effect -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_admitted_release_set_age_ms: 1000                # APPROVE per scope; stale set cannot prove current eligibility or revive a release -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_runtime_artifact_attestation_age_ms: 1000        # APPROVE per runtime identity; stale attestation denies dependent new risk -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_release_key_status_age_ms: 1000                  # APPROVE per signer/key class; stale or unknown status is restrictive -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_post_trade_obligation_snapshot_age_ms: 1000      # APPROVE per obligation class/scope; stale active-set state blocks dependent new risk -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_post_trade_finality_proof_age_ms: 1000           # APPROVE per exact field/class; stale proof cannot establish current finality or release capacity -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_statement_coverage_manifest_age_ms: 1000         # APPROVE per source/scope; stale or unknown coverage remains incomplete -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_unresolved_post_trade_break_age_ms: 30000        # APPROVE only as escalation deadline; age never converts a break to resolved -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L3] owner=operator; review_date=2027-01-29
+  MAX_pending_external_transfer_age_ms: 30000          # APPROVE per transfer rail; timeout never proves non-acceptance, failure, or finality -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L3 range 30000-hours, conservative low end] owner=operator; review_date=2027-01-29
+  # --- PATCH-0054 (Phase-0 profile completion) ---------------------------------
+  # Keys below were absent from this profile although the owning decision requires
+  # the quantity. They are registered so the gap is visible to the Bounds-Approver
+  # and enter the same approval flow as every other unapproved key. A registered
+  # key with a null value is not an approved bound (VER-002-001 §6).
+  MAX_critical_input_source_production_delay_ms: 50    # APPROVE per Critical Input source class; source production delay is a delay class separate from snapshot age and is not folded into it (ADR-002-018 §14; source: 2026-07-20 capsule design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L4 range ~50-500, conservative low end] owner=operator; review_date=2027-01-29
+  MAX_critical_input_transport_and_queue_delay_ms: 50  # APPROVE per Critical Input source and transport class; unknown or unbounded transport denies dependent new risk (ADR-002-018 §14; source: 2026-07-20 capsule design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L4 range ~50-500, conservative low end] owner=operator; review_date=2027-01-29
+  MAX_critical_input_consumer_receipt_age_ms: 1000     # APPROVE per consumer and dependency scope; consumer-local receipt age is distinct from issuer-side production and snapshot age (ADR-002-018 §14; source: 2026-07-20 capsule design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_critical_input_correction_horizon_ms: 86400000   # APPROVE per source and record class; the correction and late-revision horizon does not shrink because no correction has arrived (ADR-002-018 §14; source: 2026-07-20 capsule design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L4 horizon may be long; conservative direction is LONGER, 1 day] owner=operator; review_date=2027-01-29
+  MAX_time_transport_and_queue_uncertainty_ms: 50      # APPROVE per Time Health distribution path; transport, queueing, buffering, replay, and batching uncertainty is additive to snapshot age and not folded into it (ADR-002-008 §§8-9; source: 2026-07-21 trustworthy-time design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L4 range ~50-500, conservative low end] owner=operator; review_date=2027-01-29
+  MAX_clock_domain_conversion_uncertainty_ms: 50       # APPROVE per continuity-identity pair; a consumer not sharing the issuer's continuity identity adds this bound instead of subtracting clocks (ADR-002-008 §§8-9; source: 2026-07-21 trustworthy-time design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L4 range ~50-500, conservative low end] owner=operator; review_date=2027-01-29
+  MAX_time_source_disagreement_ms: 50                  # APPROVE per reference-source set; disagreement beyond this tolerance denies TRUSTED time, which drift alone does not express (ADR-002-008 §§7, 13; source: 2026-07-21 trustworthy-time design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L4 range ~50-500, conservative low end] owner=operator; review_date=2027-01-29
+  MAX_clock_offset_ms: 50                              # APPROVE per reference-source class; offset is a separate approved bound from MAX_clock_drift_ppm (ADR-002-008 §§7-8; source: 2026-07-21 trustworthy-time design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L4 range ~50-500, conservative low end] owner=operator; review_date=2027-01-29
+  MIN_time_stabilization_interval_ms: 5000             # APPROVE per recovery scope; synchronization and disagreement checks must pass for at least this interval before time is trusted again, and a shorter interval proves no stability (ADR-002-008 §16; source: 2026-07-21 trustworthy-time design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-F floor range 1000-5000+, conservative HIGH end] owner=operator; review_date=2027-01-29
+  MAX_future_timestamp_tolerance_ms: 50                # APPROVE per source class; a timestamp from the future outside this tolerance is rejected and never coerced to zero (ADR-002-008 §9; source: 2026-07-21 trustworthy-time design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L4 range ~50-500, conservative low end] owner=operator; review_date=2027-01-29
+  MIN_holdover_safety_margin_ms: 2000                  # APPROVE per lease class; the margin subtracted when deriving conservative usable lifetime, distinct from the MAX_degraded_lease_holdover_ms total budget (ADR-002-008 §11.2; source: 2026-07-21 trustworthy-time design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-F floor range 100s ms-seconds, conservative high end that keeps holdover usable] owner=operator; review_date=2027-01-29
+  MAX_time_source_precision_ms: 50                     # APPROVE per reference-source class; source timestamp precision and uncertainty enter the conservative freshness upper bound (ADR-002-008 §9; source: 2026-07-21 trustworthy-time design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L4 range ~50-500, conservative low end] owner=operator; review_date=2027-01-29
+  MAX_time_source_sequence_gap_ms: 50                  # APPROVE per reference-source class; an unknown or unbounded source sequence gap denies TRUSTED time (ADR-002-008 §9; source: 2026-07-21 trustworthy-time design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L4 range ~50-500, conservative low end] owner=operator; review_date=2027-01-29
+  MIN_reserved_protective_capacity: null               # APPROVE per capacity scope; normal strategy activity cannot consume the configured minimum Reserved Protective Capacity, and an unknown minimum is not a satisfied minimum (ADR-002-002 INV-009; source: 2026-07-21 risk-capacity-ledger design §8) -- [DEFERRED 2026-07-29: instance/architecture decision; value stays null, owner TBD]
+  MIN_capacity_domain_voter_quorum: null               # APPROVE together with the Capacity Domain boundary and fault-tolerance model, which is a separate architecture decision; this key registers the numeric gap only and grants no consensus model (ADR-002-012; source: 2026-07-21 risk-capacity-ledger design §8) -- [DEFERRED 2026-07-29: instance/architecture decision; value stays null, owner TBD]
+  MAX_quarantined_capacity_age_ms: 30000               # APPROVE only as escalation deadline; age never releases quarantined capacity or converts UNKNOWN to resolved (ADR-002-002 §37; source: 2026-07-21 risk-capacity-ledger design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L3] owner=operator; review_date=2027-01-29
+  MIN_lease_expiry_fence_ms: 10000                     # APPROVE per offline-capable scope; reassignment waits at least this long under worst-case duration, drift, suspension, and communication-delay assumptions unless a Hard Fence proves the former owner cannot transmit (ADR-002-003 §§5.9, 14.5; source: 2026-07-23 safety-authority design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-F floor range ~7000-10000, conservative HIGH end] owner=operator; review_date=2027-01-29
+  MAX_live_authorization_validity_ms: 60000            # APPROVE per authorization scope; the Live Authorization artifact's own maximum validity, distinct from readiness, capability, and context age (ADR-002-007 §§7, 9; source: 2026-07-24 live-authorization design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L2 range <=1 session and short, conservative 1 minute] owner=operator; review_date=2027-01-29
+  MAX_safety_profile_validity_ms: 3600000              # APPROVE per Runtime Safety Profile scope; expiry restricts future authority and never expires economic effect (ADR-002-014 §7; source: 2026-07-25 safety-profile-governance design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L2 range <=1 session-1 day, conservative 1 session] owner=operator; review_date=2027-01-29
+  MAX_envelope_review_interval_ms: 15552000000         # APPROVE per Hard Safety Envelope scope; a missed or unproven review deadline restricts scope and never auto-renews (ADR-002-014 §7; source: 2026-07-25 safety-profile-governance design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L2 periodic review cycle = the 6-month profile review cadence] owner=operator; review_date=2027-01-29
+  MAX_activation_staging_age_ms: 1000                  # APPROVE per activation scope; a stale staged bundle cannot be activated and staging age creates no permission (ADR-002-014 §§13, 21; source: 2026-07-25 safety-profile-governance design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_compatibility_attestation_age_ms: 1000           # APPROVE per consumer identity and exact digest; a stale Consumer Compatibility attestation denies activation and proves no current compatibility (ADR-002-014 §§7, 13; source: 2026-07-25 safety-profile-governance design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
+  MAX_safety_cell_blast_radius: null                   # APPROVE per Failure-Domain Allocation Matrix; maximum economic exposure and capacity affected by one Safety Cell failure including shared common modes, an unbounded value escalating rather than narrowing scope (ADR-002-009 §13; source: 2026-07-27 failure-domain design §7) -- [DEFERRED 2026-07-29: instance/architecture decision; value stays null, owner TBD]
+  MAX_dsl_evaluation_ms: 10                            # APPROVE per strategy evaluation scope; exhausting the evaluation time and resource bound degrades to no action and never to a partial unrecorded action (RFC-008 §6; source: 2026-07-21 strategy-dsl design §7) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L5 range 10-100, conservative low end] owner=operator; review_date=2027-01-29
+
+review:
+  independent_reviewer: TBD    # MUST NOT be the author/integrator of the architecture
+  evidence_location: TBD
+  approval_record: TBD

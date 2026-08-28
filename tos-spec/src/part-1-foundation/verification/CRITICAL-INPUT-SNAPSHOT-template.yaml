@@ -1,0 +1,50 @@
+artifact_type: CRITICAL_INPUT_SNAPSHOT
+schema_version: "1.0-DRAFT"
+snapshot_id: TBD
+canonical_digest: TBD
+status: DRAFT
+issuer_principal_id: TBD
+critical_input_policy:
+  policy_id: TBD
+  policy_generation: null
+  canonical_digest: TBD
+context_generation: null
+scope:
+  environment: TBD
+  safety_cell: TBD
+  accounts: []
+  venues: []
+  instruments: []
+  decision_class: TBD
+intended_use: TBD
+consistency_cut:
+  cut_id: TBD
+  source_continuity_vector: []
+  source_revision_vector: []
+  receipt_interval: TBD
+  atomicity_proven: false
+  uncertainty: UNKNOWN
+observations: []
+transformation_lineage: []
+field_evaluations: []
+corroboration_paths: []
+common_mode_dependencies: []
+residual_risks: []
+trustworthy_time:
+  snapshot_id: TBD
+  generation: null
+  consumer_receipt_anchor: TBD
+  maximum_age_ms: null
+validity:
+  result: INVALID
+  issued_at: null
+  expires_at: null
+  invalidation_generation: null
+  invalidation_conditions: []
+authority:
+  grants_approval: false
+  creates_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  permits_broker_transmission: false
+  permits_rearm: false

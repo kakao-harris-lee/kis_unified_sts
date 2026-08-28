@@ -1,0 +1,597 @@
+# =============================================================================
+# BROKER CAPABILITY PROFILE — TEMPLATE (shape canon; authorizes nothing)
+# =============================================================================
+#
+# NORMATIVE BASIS
+#   ADR-002-004 "Broker Capability Requirements and Fallbacks" §21:1039-1097
+#   ("Every broker profile SHALL contain at least: ...") is the minimum content
+#   this template realizes. §7.1:243-258 fixes the profile key, §7.2:262-270 the
+#   profile version block, §5.3:132-146 the per-dimension status rule,
+#   §8:293-512 the 17 dimensions, §9:516-540 the assurance levels, §10:544-584
+#   the conformance classes, §15:835-867 the Final Quantity Proof, and
+#   §21:1087-1091 the residual-risk attributes.
+#
+# THIS FILE IS A TEMPLATE, NOT A PROFILE
+#   It carries **shape**, not values. `status: DRAFT`, `approvers: []`, and
+#   `conformance_class: CLASS_D_NON_LIVE` are the fail-closed defaults a copy
+#   starts from; a profile becomes active only through the six conditions of
+#   ADR §7.3:272-281. Copying this file authorizes no live behavior.
+#
+# BROKER-AGNOSTIC — NO CONCRETE BROKER APPEARS HERE, EVER
+#   ADR line 798: facts about a specific broker "belong to a non-normative Broker
+#   Capability Profile instance produced on the implementation track (§21)". A
+#   filled INSTANCE therefore lives outside tos-spec/ and is never cited as
+#   normative by any RFC/ADR/VER.
+#
+# VOCABULARY BINDING
+#   Enumerated values are spelled exactly as the corresponding member of
+#   tos/src/tos/brokercap/vocabulary.py — CapabilityStatus, CapabilityDimension,
+#   AssuranceLevel, ConformanceClass, AssuranceSource, AcknowledgementState,
+#   ReplaceSemantics, ProhibitedProof — and the per-dimension declaration fields
+#   are those of CapabilityDeclaration in tos/src/tos/brokercap/records.py:103-110.
+#   Where ADR prose spells a token differently (§10 headings read "CLASS-D",
+#   §9 headings read "Level 0 — Unknown"), the code spelling is authoritative in
+#   this file and the ADR spelling is noted inline.
+#   `assurance_level` is the §9 `LEVEL_n_*` axis and is a DIFFERENT coordinate
+#   from the corpus evidence levels `EV-L0..EV-L5`; the two never share a string.
+#   Seven tokens below are defined by NEITHER an enum NOR any ADR-002-004 line
+#   (measured: 0 exact-word hits each) — `NO_BLIND_RETRY_AND_CONTAIN`,
+#   `PROHIBIT_AFFECTED_COMMAND_SCOPE`, `PROHIBITED_UNLESS_PROVEN_IDEMPOTENT`,
+#   `QUARANTINED_UNKNOWN`, `CONTAIN`, `ACCOUNT`, `UNAVAILABLE`. They are
+#   template-coined shorthand for ADR prose (BC-INV-002:193-195, §8.17:512,
+#   §12.4:639-646, §14:802-806, §13.10:746-750) and are left as they stand:
+#   naming a token is a deliberate act, not an editorial one. Do not read them
+#   as vocabulary until an ADR names them.
+#
+# FILL CONVENTION — four markers, every one fail-closed
+#   TBD      A value is OWED. The slot exists; no approved decision has filled
+#            it. TBD is never a defined policy, recipe, mechanism, or bound.
+#   null     Explicitly ABSENT / not defined. Also the model default
+#            (records.py: every scalar is `X | None = None`), so a consuming
+#            predicate fails closed on it.
+#   UNKNOWN  A vocabulary VALUE, not a placeholder — CapabilityStatus.UNKNOWN and
+#            the per-dimension "unknown semantics" values. BC-INV-001:191: a
+#            property not present and current in the approved profile is treated
+#            as unavailable, so UNKNOWN authorizes nothing.
+#   conservative default
+#            A boolean already at its restrictive setting: `false` for anything
+#            that would grant or relax (`restriction_approved`,
+#            `reduced_off_unattended_partition_protection`, `identity_aware`,
+#            `priority_alone_is_reservation`, ...) and `true` for anything that
+#            prohibits (`permissive_cache_prohibited`,
+#            `direct_worker_access_prohibited`, ...). Flipping one is an approval
+#            act carrying evidence, never an editorial one.
+#
+# PROFILE KEY (ADR §7.1:243-256)
+#   A profile is keyed by the 10 coordinates below — broker_id, api_product,
+#   api_version, environment, account_type, market, instrument_class,
+#   order_type, session_type, credential_scope. One profile = one coordinate
+#   tuple. §7.1:258: "Broader profiles are permitted only when evidence proves
+#   semantic equivalence across the broader scope", and §13.14:784-790 /
+#   BC-INV-009:221 forbid inheriting capability status across environments — so a
+#   second environment, account type, or session type is a SEPARATE profile
+#   document, never a widened one.
+# =============================================================================
+
+profile_identity:
+  artifact_id: TBD
+  schema_version: TBD
+  canonicalization_version: TBD
+  canonical_semantic_digest: TBD
+  byte_digest: TBD
+  broker_id: TBD
+  api_product: TBD
+  api_version: TBD
+  environment: TBD
+  account_type: TBD
+  market: TBD
+  instrument_class: TBD
+  order_types: []
+  session_type: TBD
+  credential_scope: TBD
+  profile_version: TBD
+  status: DRAFT
+  effective_from: null
+  expires_at: null
+  approvers: []
+  revocation_record: null
+  # -- ADR §7.2:264-270 profile-version block completion (Patch-0056) ---------
+  # §7.2 requires seven items; `profile_version`, `effective_from`, `approvers`,
+  # and `expires_at` above cover four. The remaining three are recorded here.
+  evidence_package_version: TBD      # §7.2:266 — evidence package version
+  superseded_version_link: null      # §7.2:269 — link to the version this one
+                                     #            supersedes (null = first version)
+  change_reason: TBD                 # §7.2:270 — why this version exists
+
+live_scope:
+  conformance_class: CLASS_D_NON_LIVE  # ConformanceClass.CLASS_D_NON_LIVE
+                                       # (ADR §10 heading spelling: "CLASS-D").
+                                       # §10:584 "A class cannot override a failed
+                                       # mandatory dimension."
+  accounts: []
+  venues: []
+  market_segments: []
+  instruments: []
+  session_phases: []
+  order_types: []
+  time_in_force_values: []
+  action_classes: []
+  maximum_concurrency: 0
+  maximum_quantity: null
+  maximum_risk_vector: {}
+  manual_activity_policy: TBD
+  # ADR §13.15:796 — the scope has been reduced so that NO unattended
+  # partition-time autonomous protection is relied upon. `false` (or null) means
+  # not reduced, which fails closed unless the class is CLASS-C / CLASS-D.
+  # Model: records.py LiveScope.reduced_off_unattended_partition_protection:132.
+  reduced_off_unattended_partition_protection: false
+
+# =============================================================================
+# capabilities — per-dimension declarations (ADR §5.3:132-146; §8:293; §21 Matrix)
+#
+# COMMON FIELD BLOCK — every capability key carries all seven, no exceptions
+# (Patch-0056; model: records.py CapabilityDeclaration:103-110):
+#     status                 CapabilityStatus  (§5.3:136-144)
+#     assurance_level        AssuranceLevel    (§9:520-538)
+#     evidence_refs          list              (§21:1060 "evidence reference")
+#     restrictions           list              (§5.3 the restriction a
+#                                              VERIFIED_WITH_RESTRICTION carries)
+#     restriction_approved   bool              (§5.3:146 — see below)
+#     fallback_reference     scalar            (§13 approved conservative fallback;
+#                                              §11:604 gate 13 requires one for
+#                                              every unavailable capability)
+#     assurance_sources      list              (§5.4:152-159, 8 values)
+# Dimension-specific fields follow the common ones inside each key.
+#
+# §5.3:146 verbatim: "Only `VERIFIED` and explicitly approved
+# `VERIFIED_WITH_RESTRICTION` may authorize live behavior." `restriction_approved`
+# IS that explicit approval, and it is a different fact from `restrictions` (which
+# states WHAT the restriction is). It stays `false` until an accountable approver
+# sets it; `false`/null fails closed.
+#
+# DIMENSION-SPECIFIC SLOTS ADDED BY PATCH-0057 (6): `sessions.subscription_limit`,
+# `credentials_and_revocation.reissue_rejection_semantics` and
+# `.token_blackout_window_ms`, `broker_time.skew_bound_ms`,
+# `replace_semantics.value_set`,
+# `market_and_instrument_constraints.instrument_coverage`. Each carries its ADR
+# anchor inline. They exist so a measured fact HAS somewhere to be written; every
+# one is at a fail-closed default and none is filled here. Two further measured
+# outputs were NOT given slots because existing keys already carry them — a
+# response-schema capture belongs in the dimension's own `evidence_refs`, and an
+# order-request field inventory belongs in
+# `command_construction_and_wire_semantics.required_and_default_field_semantics`
+# (with `.duplicate_unknown_and_omitted_field_behavior` and
+# `.unit_multiplier_currency_and_numeric_encoding`). Two names for one fact is a
+# defect, not a convenience.
+# =============================================================================
+capabilities:
+  client_generated_order_id:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: NO_BLIND_RETRY_AND_CONTAIN
+    assurance_sources: []
+  submission_idempotency:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    deduplication_window_ms: null
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: NO_BLIND_RETRY_AND_CONTAIN
+    assurance_sources: []
+  acknowledgement_semantics:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    proven_state: TRANSPORT_RECEIVED     # AcknowledgementState.TRANSPORT_RECEIVED
+                                         # (§8.3:323). §8.3:331 — a combined
+                                         # response code takes the weakest safe
+                                         # interpretation, which is this member.
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  fill_event_ordering:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    duplicates_possible: true
+    out_of_order_possible: true
+    replay_supported: false
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  open_order_query:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    completeness: UNKNOWN
+    eventual_consistency_bound_ms: null
+    pagination: TBD
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  order_history_query:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    retention: TBD
+    pagination: TBD
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  cancellation_finality:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    crossing_fill_possible: true
+    final_quantity_proof_recipe: TBD
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  replace_semantics:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    mode: BROKER_UNSPECIFIED
+    # §8.8:384-392 classifies replace via `mode`; this is the DIFFERENT fact of
+    # which discriminator values the broker's replace/cancel command actually
+    # accepts on the wire (Patch-0057). Empty list = no accepted value is
+    # recorded, which authorizes none; a value observed in OUR client is our
+    # usage, not the broker's accepted set.
+    value_set: []
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  reduce_only:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    exact_semantics: TBD
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  account_event_push:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    reconnect_replay: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  position_balance_margin:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    consistency_model: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  corporate_actions:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  rate_limits:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    scope: UNKNOWN
+    hard_limits: {}
+    sustained_and_burst_semantics: UNKNOWN
+    rolling_or_fixed_window_semantics: UNKNOWN
+    submit_cancel_amend_replace_query_and_session_sharing: UNKNOWN
+    credential_ip_route_endpoint_and_account_sharing: UNKNOWN
+    queue_throttle_partial_processing_and_reset_behavior: UNKNOWN
+    sdk_proxy_redirect_and_reconnect_retry_behavior: UNKNOWN
+    protective_guarantee: UNAVAILABLE
+    protective_reserved_dimensions: []
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  sessions:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    concurrent_sessions: UNKNOWN
+    head_of_line_blocking: UNKNOWN
+    # §8.14:461-468 — how many subscriptions/streams ONE session may hold. This
+    # is not `concurrent_sessions` (a count of sessions) and not a rate limit (a
+    # count per unit time); it caps what a single protective session can watch,
+    # so §8.14:467 independent-protective-session feasibility depends on it
+    # (Patch-0057). null = not established; a cap asserted by an unofficial
+    # source is not a value.
+    subscription_limit: null
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  credentials_and_revocation:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    revocation_bound_ms: null
+    direct_worker_access_prohibited: true
+    # §8.15:478 credential rotation latency, split into the two facts a rotation
+    # actually has (Patch-0057). Neither is `revocation_bound_ms`, which is the
+    # §8.15:477 revocation-propagation bound.
+    #   reissue_rejection_semantics — what the broker returns when a reissue is
+    #     refused (rate-limited, too soon, scope-denied). UNKNOWN per
+    #     BC-INV-001:191: a semantics not present and current is unavailable, so
+    #     a refusal cannot be interpreted and the affected scope stays contained.
+    reissue_rejection_semantics: UNKNOWN
+    #   token_blackout_window_ms — the interval in which NO valid credential can
+    #     be obtained (invalidation .. first successful reissue). null = not
+    #     established; 0 observations is not 0 ms.
+    token_blackout_window_ms: null
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  broker_time:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    timezone: TBD
+    precision: TBD
+    # §8.16:491 drift / synchronization guarantee, as a bound on |broker clock -
+    # our clock| (Patch-0057). Distinct from `precision` (timestamp resolution):
+    # a precise clock can still be far off. §8.16:493 — without this, broker
+    # timestamps are audit only and may not carry attribution or any time-based
+    # finality claim. null = not established.
+    skew_bound_ms: null
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  market_and_instrument_constraints:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    session_phase_semantics: UNKNOWN
+    halt_and_suspension_semantics: UNKNOWN
+    price_band_tick_lot_and_quantity_semantics: UNKNOWN
+    order_type_time_in_force_and_route_semantics: UNKNOWN
+    # §8.17:495-508 states the CONSTRAINTS that apply to a covered instrument.
+    # This is the prior fact of which instruments, symbol notations, and session
+    # codes the interface serves at all — plus the per-call retrieval cap that
+    # bounds how much of that coverage one query can return (Patch-0057). An
+    # instrument outside coverage has no constraints to state, and §8.17:510
+    # makes a missing or degraded dimension restrictive for the affected Order
+    # Admissibility Decision. UNKNOWN per BC-INV-001:191 — coverage is never
+    # assumed from the fact that another instrument is served.
+    instrument_coverage: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  account_margin_borrow_and_settlement_constraints:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    account_permission_semantics: UNKNOWN
+    margin_and_collateral_semantics: UNKNOWN
+    borrow_locate_and_short_sale_semantics: UNKNOWN
+    settlement_currency_and_expiration_semantics: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
+  command_construction_and_wire_semantics:
+    status: UNKNOWN
+    assurance_level: LEVEL_0_UNKNOWN
+    evidence_refs: []
+    required_and_default_field_semantics: UNKNOWN
+    account_symbol_side_and_position_effect_mapping: UNKNOWN
+    unit_multiplier_currency_and_numeric_encoding: UNKNOWN
+    duplicate_unknown_and_omitted_field_behavior: UNKNOWN
+    canonicalization_and_parser_behavior: UNKNOWN
+    serializer_sdk_signer_and_redirect_behavior: UNKNOWN
+    actual_outbound_observability: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: PROHIBIT_AFFECTED_COMMAND_SCOPE
+    assurance_sources: []
+
+venue_constraint_binding:
+  venue_constraint_policy_id: TBD
+  venue_constraint_policy_generation: null
+  venue_constraint_policy_digest: TBD
+  constraint_generation: null
+  active_currentness_mechanism: TBD
+  permissive_cache_prohibited: true
+
+order_construction_binding:
+  order_construction_policy_id: TBD
+  order_construction_policy_generation: null
+  order_construction_policy_digest: TBD
+  construction_generation: null
+  actual_outbound_comparison_mechanism: TBD
+  permissive_default_or_repair_prohibited: true
+
+action_flow_binding:
+  action_flow_policy_id: TBD
+  action_flow_policy_generation: null
+  action_flow_policy_digest: TBD
+  shared_scope_model: UNKNOWN
+  active_currentness_mechanism: TBD
+  rcl_action_flow_permit_required: true
+  priority_alone_is_reservation: false
+  permissive_local_token_or_cache_prohibited: true
+
+independent_approval_binding:
+  trading_approval_policy_id: TBD
+  trading_approval_policy_generation: null
+  trading_approval_policy_digest: TBD
+  approval_consumption_record_required: true
+  exact_intent_binding_required: true
+  active_currentness_mechanism: TBD
+  permissive_intent_state_or_cache_prohibited: true
+
+currentness_binding:
+  currentness_policy_id: TBD
+  currentness_policy_generation: null
+  currentness_policy_digest: TBD
+  complete_safety_currentness_vector_required: true
+  restrictive_fence_and_local_latch_required: true
+  per_send_single_use_egress_currentness_proof_required: true
+  proof_claim_and_send_started_same_ordering_domain_required: true
+  cache_ttl_heartbeat_health_or_absence_of_invalidation_sufficient: false
+  broker_reachable_control_plane_partition_allows_normal_send: false
+
+restricted_live_and_promotion_binding:
+  restricted_live_trial_policy_id: TBD
+  restricted_live_trial_policy_generation: null
+  restricted_live_trial_policy_digest: TBD
+  exact_pre_registered_trial_scope_required: true
+  worst_credible_effect_rcl_commitment_required: true
+  normal_safety_controls_and_final_egress_required: true
+  trial_label_or_low_notional_is_authority: false
+  negative_and_inconclusive_evidence_retained: true
+  cross_scope_evidence_extrapolation_allowed: false
+  automatic_scope_promotion_allowed: false
+  promotion_eligibility_is_live_authority: false
+  actual_ev_l5_evidence_package_required_for_promotion: true
+  recovery_may_resume_trial_or_rearm: false
+
+egress_security:
+  final_egress_boundary_id: TBD
+  egress_generation: TBD
+  active_principal_model: TBD
+  active_principals: []
+  usable_live_order_authority_inventory: []
+  non_exportable_signer:
+    status: UNKNOWN
+    principal_binding: TBD
+    arbitrary_payload_signing_prohibited: true
+    evidence_refs: []
+  broker_order_route:
+    status: UNKNOWN
+    identity_aware: false
+    live_order_destinations: []
+    mutation_endpoint_allowlist: []
+    approved_intermediaries: []
+    direct_and_legacy_paths_prohibited: true
+    evidence_refs: []
+  quorum_commit_certificate:
+    status: UNKNOWN
+    schema_version: TBD
+    membership_and_quorum_rule: TBD
+    trust_bundle_generation: TBD
+    leader_only_receipt_prohibited: true
+    evidence_refs: []
+  hard_egress_fence:
+    status: UNKNOWN
+    mechanisms: []
+    bound_ms: null
+    old_session_acceptance_proof: TBD
+    evidence_refs: []
+  broker_sessions:
+    principal_bound: false
+    generation_bound: false
+    reconnect_flush_prohibited: true
+    simultaneous_live_sessions: UNKNOWN
+  external_manual_authority:
+    portals_and_support_paths: []
+    disablement_or_detection_policy: TBD
+    evidence_refs: []
+
+uncertain_send_policy:
+  containment_scope: ACCOUNT
+  network_retry: PROHIBITED_UNLESS_PROVEN_IDEMPOTENT
+  query_sequence: []
+  final_unresolved_state: QUARANTINED_UNKNOWN
+
+external_activity:
+  allowed: true
+  detection_sources: []
+  detection_bound_ms: null
+  containment_bound_ms: null
+  bound_miss_response: CONTAIN
+
+# =============================================================================
+# final_quantity_proof — ADR §15:835-867
+#
+# §15.1:839 "Every supported order type SHALL define an approved Final Quantity
+# Proof recipe", so `recipes` carries ONE element per supported order type.
+#
+# recipes[] ELEMENT SCHEMA (Patch-0056). Ten fields, all fail-closed:
+#
+#   - order_type: TBD                # §15.1 — the order type this recipe covers
+#                                    #   (records.py FinalQuantityProofRule:149)
+#     required_result:               # §15.2:843-851 — "The recipe SHALL establish:"
+#                                    #   the seven conjuncts. Each is bool|null;
+#                                    #   null/false => the recipe does not establish
+#                                    #   it => the proof is inadequate. Observed
+#                                    #   values are supplied at evaluation time by
+#                                    #   the injected FinalQuantityEvidence
+#                                    #   (records.py:272-279); the recipe states
+#                                    #   which ones it claims to establish.
+#       broker_order_identity_or_bounded_effect: false   # §15.2:845
+#       final_cumulative_filled_quantity: false          # §15.2:846
+#       zero_remaining_executable_quantity: false        # §15.2:847
+#       corrections_busts_late_events_handled: false     # §15.2:848
+#       evidence_source_provenance: false                # §15.2:849
+#       within_valid_window: false                       # §15.2:850
+#       ordering_waiting_rule_satisfied: false           # §15.2:851
+#     prohibited_proofs: []          # §15.3:857-863 — ProhibitedProof members this
+#                                    #   recipe names as insufficient ALONE
+#                                    #   (records.py:150). Seven members exist:
+#                                    #   CANCEL_ACKNOWLEDGEMENT,
+#                                    #   ONE_OPEN_ORDER_QUERY_OMISSION,
+#                                    #   LOCAL_TIMEOUT, STRATEGY_CANCELLATION_INTENT,
+#                                    #   PROCESS_RESTART,
+#                                    #   ACCOUNT_POSITION_MATCHING_EXPECTED_VALUE,
+#                                    #   OPERATOR_ASSERTION_WITHOUT_BROKER_EVIDENCE.
+#     no_later_change_asserted: false   # §15.4:867 marker 1 — the profile states
+#                                    #   that no crossing fill or correction can
+#                                    #   later change final quantity
+#                                    #   (records.py:151)
+#     late_event_window_defined: false  # §15.4:867 marker 2 — bounded correction
+#                                    #   handling is defined (records.py:152)
+#
+# §15.4 admits a stronger broker-specific terminal event only when its semantics
+# are verified AND at least one of the two markers is true. Both false/null =>
+# no stronger proof is claimed and the recipe rests on §15.2 alone.
+# =============================================================================
+final_quantity_proof:
+  recipes: []
+  late_event_window_ms: null
+  correction_policy: TBD
+
+# =============================================================================
+# residual_risks[] ELEMENT SCHEMA — ADR §21:1087-1091, four attributes
+# (Patch-0056):
+#
+#   - description: TBD   # §21:1088 — what the residual risk is
+#     owner: TBD         # §21:1089 — the accountable owner
+#     acceptance: TBD    # §21:1090 — the acceptance record (who accepted, when,
+#                        #   under what scope). TBD = NOT accepted.
+#     expiry: null       # §21:1091 — when the acceptance lapses. null = no
+#                        #   acceptance is in force.
+#
+# An empty list means "no residual risk is recorded", NOT "no residual risk
+# exists"; §7.3:278 requires residual restrictions to be encoded before a profile
+# can activate.
+# =============================================================================
+residual_risks: []
+verification:
+  required_evidence_ids: []
+  last_passed_run_ids: []
+  evidence_digest: null
+  independent_reviewer: TBD

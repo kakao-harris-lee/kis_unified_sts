@@ -1,0 +1,68 @@
+artifact_type: SAFETY_DEVIATION_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: TBD
+policy_version: TBD
+deviation_generation: null
+canonical_digest: TBD
+status: DRAFT
+scope:
+  environments: []
+  safety_cells: []
+  capacity_domains: []
+  legal_portfolios: []
+  accounts: []
+  brokers: []
+  venues: []
+  instruments: []
+  strategies: []
+  action_classes: []
+requirement_and_hazard_registry: []
+non_waivable_requirements: []
+eligible_deviation_classes: []
+prohibited_deviation_classes: []
+required_scope_dimensions: []
+dependency_closure_rules: []
+combined_risk_rules: []
+compensating_control_rules: []
+required_evidence_levels: []
+effective_principal_quorum_rules: []
+conflict_and_separation_rules: []
+duration_review_and_renewal_rules: []
+configuration_activation_rules: []
+currentness_and_invalidation_rules: []
+recovery_and_non_revival_rules: []
+evidence_status_rules: []
+materiality_default: MATERIAL
+unknown_applicability_disposition: TREAT_AS_NON_WAIVABLE
+failure_responses:
+  non_waivable_or_unclassified: DENY
+  missing_or_stale_request: DENY
+  incomplete_dependency_closure: DENY
+  unbounded_or_unknown_residual_risk: DENY
+  compensating_control_unknown: DENY_AND_RESTRICT
+  evidence_gap: DENY_AND_CONTAIN
+  currentness_loss: DENY_AND_LATCH
+  expiry_or_revocation: RESTRICT_AND_REQUIRE_FRESH_GOVERNANCE
+approved_bounds: []
+approved_by: []
+effective_from: null
+review_due: null
+authority:
+  policy_active: false
+  creates_deviation_eligibility: false
+  marks_requirement_pass: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  activates_configuration: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT policy is inactive and grants no deviation, evidence completion,
+  configuration, capacity, live authority, broker transmission, or re-arm.
+  Missing, null, TBD, stale, conflicting, or unapproved values deny the affected
+  deviation and restrict dependent new risk.

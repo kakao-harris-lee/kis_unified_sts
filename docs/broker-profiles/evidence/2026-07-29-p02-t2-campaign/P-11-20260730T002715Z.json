@@ -1,0 +1,96 @@
+{
+  "artifact_id": "P-11-20260730T002715Z",
+  "probe_id": "P-11",
+  "title": "POSITIONS_BALANCES_MARGIN — fill→balance reflection lag",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-07-30T00:27:15.485610+00:00",
+  "finished_at_utc": "2026-07-30T00:27:49.289899+00:00",
+  "duration_s": 33.804,
+  "repo_commit": "f1a6121a",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-11",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "stock",
+    "symbol": "005930",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "P0-2 T2 wave-3 order session 2026-07-30, stock leg. Mock stock creds (account 50187672-01, validated 2026-07-29 by P-16-20260729T133539Z) sourced from outside the repo at ~/.config/kis-probes/p11-mock-stock.env; .env stock key is REAL and was not touched. Paced (aba51f2a) and tick-snapped from the broker-reported aspr_unit (f1a6121a). NOTE: the futures order family is BLOCKED on this session - the mock FUTURES account 60042851-03 rejects both A01609 (full) and A05608 (mini) with 모의투자 주문가능금액이 부족합니다, so P-5/P-5b/P-2/P-NMPR/P-8/P-FQP could not run. Deliberate fill: a position will remain on the mock stock account.",
+    "gap_ms": 200.0,
+    "settle_seconds": 2.0,
+    "poll_ms": 1100.0,
+    "inter_trial_s": 1.0,
+    "pace_s": 1.1,
+    "visibility_timeout_s": 30.0,
+    "late_window_s": 120.0,
+    "max_pages": 10,
+    "allow_fill": true
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "stock",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "50******01",
+    "account_fingerprint": "54e7f8a5d841"
+  },
+  "measurements": {
+    "limit_price_tick": {
+      "wire_value": "232500",
+      "unrounded": 232100.00000000003,
+      "tick_size": "500",
+      "tick_source": "broker-reported 호가단위: TR FHKST01010100 (v1_국내주식-008, /uapi/domestic-stock/v1/quotations/inquire-price) output.aspr_unit='500'",
+      "rounding": "ceiling",
+      "rounding_rationale": "away from the touch — a resting probe depends on the order NOT filling, so a snap must never move the price toward the touch; P-11's marketable order is the mirror case and snaps further in"
+    },
+    "position_left_open": "symbol=005930 qty=1 — the probe does NOT flatten the position. Close it manually on 모의투자."
+  },
+  "observations": [
+    {
+      "order_body": {
+        "CANO": "50****72",
+        "ACNT_PRDT_CD": "**",
+        "PDNO": "005930",
+        "ORD_DVSN": "00",
+        "ORD_QTY": "1",
+        "ORD_UNPR": "232500"
+      },
+      "last_price": 211000.0,
+      "marketable_price": "232500"
+    },
+    {
+      "submit_status": 200,
+      "rt_cd": "0",
+      "msg1": "모의투자 매수주문이 완료 되었습니다.",
+      "odno": "0000008686"
+    },
+    {
+      "baseline_holding_qty": 1
+    }
+  ],
+  "skips": [],
+  "errors": [
+    "balance never reflected the order within the timeout — CENSORED. Do not record a bound from a censored trial."
+  ],
+  "provenance_class": "NOT_MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_broker_query_consistency",
+      "B_startup_reconciliation"
+    ],
+    "instance_fields": [
+      "capabilities.position_balance_margin.consistency_model"
+    ],
+    "capability_dimension": "POSITIONS_BALANCES_MARGIN"
+  }
+}

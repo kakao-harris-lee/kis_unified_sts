@@ -1,0 +1,151 @@
+{
+  "artifact_id": "P-FQP-20260731T015653Z",
+  "probe_id": "P-FQP",
+  "title": "final_quantity_proof — post-cancel late-event window",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-07-31T01:56:53.309133+00:00",
+  "finished_at_utc": "2026-07-31T01:58:58.461569+00:00",
+  "duration_s": 125.152,
+  "repo_commit": "da6f96c2",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-FQP",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A05608",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "P0-2 T2 wave-3 order session 2026-07-31. MINI front month A05608 (the account funds only one FULL contract at a time — P-2-20260731T014957Z). Post-cancel late-event window 120s default. Context for interpreting any absence: observed today that an inquire-ccnl row with qty>0 is NOT necessarily a live cancellable order — 5 of 6 such rows refused cancellation with 모의투자 정정/취소할 수량이 없습니다, so row-field liveness is weaker evidence than the brokers own cancel response.",
+    "gap_ms": 200.0,
+    "settle_seconds": 2.0,
+    "poll_ms": 200.0,
+    "inter_trial_s": 1.0,
+    "pace_s": 1.1,
+    "visibility_timeout_s": 30.0,
+    "late_window_s": 120.0,
+    "max_pages": 10,
+    "allow_fill": false,
+    "stock_order_type": "market",
+    "balance_timeout_s": 120.0
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "5e175fd232de"
+  },
+  "measurements": {
+    "limit_price_tick": {
+      "wire_value": "908.94",
+      "unrounded": 908.946,
+      "tick_size": "0.02",
+      "tick_source": "config/execution.yaml::futures_contract_spec.kospi200_mini.tick_size_points (matched symbol_prefix 'A05')",
+      "rounding": "floor",
+      "rounding_rationale": "away from the touch — a resting probe depends on the order NOT filling, so a snap must never move the price toward the touch; P-11's marketable order is the mirror case and snaps further in"
+    },
+    "odno_wire_format": {
+      "paired": true,
+      "submit_response_field": "output.ODNO (order accept response)",
+      "query_row_field": "output1[].odno (inquire-ccnl row)",
+      "submit_response_samples": [
+        {
+          "verbatim": "0000003241",
+          "length": 10,
+          "leading_pad": "zero",
+          "canonical_key": "3241"
+        }
+      ],
+      "query_row_samples": [
+        {
+          "verbatim": "      3242",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "3242"
+        },
+        {
+          "verbatim": "      3241",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "3241"
+        },
+        {
+          "verbatim": "      3231",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "3231"
+        }
+      ],
+      "identity_matching": "The two surfaces disagree on padding, so matching a submitted order against a query row must canonicalize BOTH sides (strip whitespace, then strip leading zeros). A raw strip-and-compare evaluates '762' == '0000000762' and never matches: artifact P-5-20260731T002112Z reported 1 CENSORED trial and n=0 for exactly that reason while the cleanup cancel of the same ODNO returned rt_cd=0, proving the order existed and the query had returned it.",
+      "reported_identifiers": "Measurements that list ODNOs report canonical keys (leading zeros stripped). The verbatim wire forms are the samples above.",
+      "scope": "One 모의투자 account, one session, mock environment. Recorded as the encoding observed here — not as a general KIS guarantee, and not extrapolated to 실전."
+    },
+    "B_final_quantity_proof_candidate": {
+      "label": "submit_to_filled_plus_zero_remaining_ms",
+      "n": 1,
+      "min_ms": 6946.861,
+      "p50_ms": 6946.861,
+      "p90_ms": 6946.861,
+      "p95_ms": 6946.861,
+      "p99_ms": 6946.861,
+      "max_ms": 6946.861,
+      "stdev_ms": 0.0,
+      "margin_pct": 50.0,
+      "recommended_bound_ms": 10421,
+      "statistic": "hard maximum: ceil(max_observed x (1 + margin_pct/100)). p95/p99 are shape diagnostics and MUST NOT be proposed as the bound.",
+      "sample_adequacy_note": "A maximum estimated from a small sample understates the true maximum. Record n and the observation window with the value; the Bounds-Approver decides whether n is adequate.",
+      "candidate_only": true
+    },
+    "poll_granularity_ms": 1100.0,
+    "granularity_note": "Both candidates are polled observations and so carry up to one poll_granularity_ms of additive error (runbook §8.3). That value is the EFFECTIVE interval max(--poll-ms, --pace-s), not the requested --poll-ms: the pacer floors polling, and it also bounds how finely a post-terminal change can be located in time.",
+    "post_terminal_changes": [],
+    "B_late_fill_observation_candidate": {
+      "observed_changes": 0,
+      "latest_change_ms_after_cancel": null,
+      "observation_window_s": 120.0,
+      "verdict": "NOT_ESTABLISHED — zero late changes observed. Per VP-002:756 absence within a window is not proof of non-existence, so the field stays null and the capability stays UNKNOWN.",
+      "window_adequacy": "The observation window must be strictly longer than the largest change seen; otherwise the window itself is the binding limit."
+    },
+    "fqp_markers_required": [
+      "no_later_change_asserted (ADR §15.4 marker — cannot be asserted from a single trial)",
+      "late_event_window_defined (requires an approved B_late_fill_observation)"
+    ]
+  },
+  "observations": [
+    {
+      "original_odno": "0000003241",
+      "cancel_rt_cd": "0",
+      "cancel_returns_new_odno": "0000003242",
+      "quirk": "Q-CXL-1: a cancel ack carries its OWN ODNO and proves nothing about the original order's final quantity (draft §5:186)."
+    },
+    {
+      "reading_filled": 0,
+      "reading_remaining": 0
+    }
+  ],
+  "skips": [],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_final_quantity_proof",
+      "B_late_fill_observation"
+    ],
+    "instance_fields": [
+      "final_quantity_proof.recipes[]",
+      "final_quantity_proof.late_event_window_ms"
+    ],
+    "capability_dimension": "CANCELLATION"
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "artifact_id": "P-11-20260731T015709Z",
+  "probe_id": "P-11",
+  "title": "POSITIONS_BALANCES_MARGIN — fill→balance reflection lag",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-07-31T01:57:09.666091+00:00",
+  "finished_at_utc": "2026-07-31T01:59:12.905637+00:00",
+  "duration_s": 123.24,
+  "repo_commit": "da6f96c2",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-11",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "stock",
+    "symbol": "005930",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "P0-2 T2 wave-3 order session 2026-07-31 (post mock-account reset), stock leg. Mock stock creds (account 50187672-01) sourced from outside the repo at ~/.config/kis-probes/p11-mock-stock.env; the .env stock key is REAL and was not touched. Runs CONCURRENTLY with the futures P-FQP leg deliberately: a different app key and account, so the two do not share the rate budget P-13 measured. Now a 시장가 order by default (a marketable LIMIT was accepted but never filled yesterday — P-11-20260730T002715Z censored), and after the account reset the baseline holding should be 0. A fill leaves a position: the probe does not flatten it.",
+    "gap_ms": 200.0,
+    "settle_seconds": 2.0,
+    "poll_ms": 200.0,
+    "inter_trial_s": 1.0,
+    "pace_s": 1.1,
+    "visibility_timeout_s": 30.0,
+    "late_window_s": 120.0,
+    "max_pages": 10,
+    "allow_fill": true,
+    "stock_order_type": "market",
+    "balance_timeout_s": 120.0
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "stock",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "50******01",
+    "account_fingerprint": "54e7f8a5d841"
+  },
+  "measurements": {
+    "limit_price_tick": {
+      "applicable": false,
+      "wire_value": "0",
+      "unrounded": null,
+      "tick_size": null,
+      "tick_source": "NOT APPLICABLE — this run sent a 시장가 order (ORD_DVSN=01), which carries no limit price. No 호가단위 was requested and none was used: the inquire-price quote call was skipped entirely, so nothing here came from a tick table.",
+      "rounding": null,
+      "rounding_rationale": "no snapping was attempted — there is no price to snap. Bypassing the tick machinery also removes its failure mode: a 시장가 order cannot be rejected with 호가단위 오류, and a broker that does not report output.aspr_unit can no longer block this probe."
+    },
+    "fill_case": {
+      "symbol": "005930",
+      "baseline_holding_qty": 1,
+      "final_holding_qty": 1,
+      "window_s": 120.0,
+      "polls": 95,
+      "poll_interval_ms_effective": 1100.0,
+      "basis": "inquire-balance (VTTC8434R) holdings are the ONLY fill evidence this harness collects; it has no execution-inquiry path.",
+      "case": "UNDETERMINED_NON_FILL_OR_LAG_BEYOND_WINDOW",
+      "interpretation": "the 005930 holding stayed at 1 for the whole 120.0s window. This run CANNOT tell whether (a) the order never filled, or (b) it filled and the balance reflection lagged past the window — the balance reports the same thing in both cases. No bound may be derived from this run under either reading.",
+      "resolves_with": "A stock execution inquiry — 주식일별주문체결조회, /uapi/domestic-stock/v1/trading/inquire-daily-ccld (real TTTC8001R / mock VTTC8001R) — would separate the two by reporting filled quantity for the ODNO directly. This harness deliberately does not add that trading-namespace path. Until it does, resolve out of band: re-read the balance after the run and see whether the holding ever moved. Artifact P-11-20260730T002715Z needed exactly that manual re-check (~18 min later, holding unchanged at the baseline) to establish that its CENSORED result was a NON-FILL and not a reflection lag."
+    },
+    "position_left_open": "symbol=005930 qty=1 — the probe does NOT flatten the position. Close it manually on 모의투자."
+  },
+  "observations": [
+    {
+      "order_body": {
+        "CANO": "50****72",
+        "ACNT_PRDT_CD": "**",
+        "PDNO": "005930",
+        "ORD_DVSN": "01",
+        "ORD_QTY": "1",
+        "ORD_UNPR": "0"
+      },
+      "order_type": "market"
+    },
+    {
+      "submit_status": 200,
+      "rt_cd": "0",
+      "msg1": "모의투자 매수주문이 완료 되었습니다.",
+      "odno": "0000018925"
+    },
+    {
+      "baseline_holding_qty": 1
+    }
+  ],
+  "skips": [],
+  "errors": [
+    "balance never reflected the order within the timeout — CENSORED. Do not record a bound from a censored trial."
+  ],
+  "provenance_class": "NOT_MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_broker_query_consistency",
+      "B_startup_reconciliation"
+    ],
+    "instance_fields": [
+      "capabilities.position_balance_margin.consistency_model"
+    ],
+    "capability_dimension": "POSITIONS_BALANCES_MARGIN"
+  }
+}

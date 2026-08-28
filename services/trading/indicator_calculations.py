@@ -19,8 +19,11 @@ The daily-EMA / high-N / ATR accessors below remain here as thin shells: ATR
 delegates to the canonical ``reference.ATRCalculator``; the EMA math
 (``_ema_series`` / ``_ema_last`` / ``_calc_daily_ema_aligned``) and the
 trailing-max math (``_calc_high_n``) delegate to ``shared.indicators.series``
-(P1-b item 3; ``series.ema`` is empirically bit-identical to the manual
-``alpha = 2/(span+1)`` loop these methods carried — pinned by
+(P1-b item 3; ``series.ema`` is numerically equivalent to the manual
+``alpha = 2/(span+1)`` loop these methods carried, to within one ulp per
+step — compiled pandas ``ewm`` kernels (>= 2.2.1) may fuse the update into
+a single-rounding FMA, so exact bit-identity is wheel/platform-dependent —
+pinned at rel=1e-14 by
 ``tests/unit/trading/test_p1b3_trading_residuals_golden.py``). Only the
 stateful session aggregation (day rollover of highs/closes) stays here.
 """

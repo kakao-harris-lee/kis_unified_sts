@@ -26,14 +26,32 @@ class OrderResult:
     filled_price: float | None = None
     slippage_ticks: float | None = None
     reason: str | None = None
+    #: Quantity the broker actually executed. Carried separately from the
+    #: requested size because a partial fill makes the two differ, and a
+    #: protective exit sized from the REQUEST would overshoot the position: on
+    #: a net-position futures account that does not clamp at flat, it flips the
+    #: sign and creates an unbracketed position in the opposite direction.
+    #: ``None`` means the client reported no quantity (all-or-nothing clients),
+    #: in which case the caller's requested size is the best available answer.
+    filled_quantity: int | None = None
+    #: True when the fill is real but the EXECUTED TOTAL could not be
+    #: established — the measured quantity is then a lower bound, not the
+    #: whole position. The bracket is still armed (a lower-bound bracket beats
+    #: none), but the caller must surface it for reconciliation.
+    unresolved: bool = False
 
     @classmethod
-    def filled(cls, fill: Any, *, slippage_ticks: float) -> OrderResult:
+    def filled(
+        cls, fill: Any, *, slippage_ticks: float, unresolved: bool = False
+    ) -> OrderResult:
+        quantity = getattr(fill, "quantity", None)
         return cls(
             state=OrderState.FILLED,
             order_id=getattr(fill, "order_id", None),
             filled_price=float(fill.price),
             slippage_ticks=float(slippage_ticks),
+            filled_quantity=None if quantity is None else int(quantity),
+            unresolved=unresolved,
         )
 
     @classmethod

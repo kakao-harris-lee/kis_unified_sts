@@ -11,7 +11,12 @@ Pins the exact numeric behavior of the last hand-rolled indicator math in
 * ``_calc_high_n``                      — trailing max over daily-session highs
 
 Every ``_orig_*`` function below is a verbatim copy of the pre-refactor math.
-Assertions are EXACT (``==``): the delegation must be bit-identical.
+Boolean/ordering assertions are EXACT (``==``). EMA-derived float assertions
+are pinned to ``EMA_REL_TOL``: pandas >= 2.2.1 compiled ``ewm`` kernels contract
+the EMA update ``a*x + (1-a)*p`` into a fused multiply-add (one rounding), while
+the pure-Python reference rounds twice, so exact bit-identity is wheel- and
+platform-dependent (diverges on macOS arm64; measured max rel error 9.99e-16,
+worst case 6 ulp).
 
 The consumer-path test pins ``get_indicators()`` outputs (MACD family, EMA
 levels/alignment, ``high_N``, daily EMA alignment) so the live
@@ -27,6 +32,10 @@ import pytest
 
 from services.trading.indicator_candles import Candle
 from services.trading.indicator_engine import StreamingIndicatorEngine
+
+# Last-ulp band for EMA-derived floats (see module docstring: FMA contraction
+# in compiled pandas kernels makes exact ``==`` platform-dependent).
+EMA_REL_TOL = 1e-14
 
 # ---------------------------------------------------------------------------
 # Verbatim pre-refactor implementations (the golden reference)
@@ -123,19 +132,23 @@ def _make_candles(closes: list[float], rng: np.random.Generator) -> list[Candle]
 class TestEmaHelpersGolden:
     SPANS = (2, 3, 5, 9, 10, 12, 20, 26, 60, 120)
 
-    def test_ema_series_bit_identical(self):
+    def test_ema_series_reference_parity(self):
         for values in _walks(seed=101, count=60):
             for span in self.SPANS:
                 got = StreamingIndicatorEngine._ema_series(values, span)
                 want = _orig_ema_series(values, span)
-                assert got == want, f"span={span} len={len(values)}"
+                assert got == pytest.approx(
+                    want, rel=EMA_REL_TOL
+                ), f"span={span} len={len(values)}"
 
-    def test_ema_last_bit_identical(self):
+    def test_ema_last_reference_parity(self):
         for values in _walks(seed=202, count=60):
             for span in self.SPANS:
                 got = StreamingIndicatorEngine._ema_last(values, span)
                 want = _orig_ema_last(values, span)
-                assert got == want, f"span={span} len={len(values)}"
+                assert got == pytest.approx(
+                    want, rel=EMA_REL_TOL
+                ), f"span={span} len={len(values)}"
 
     def test_ema_single_value_and_flat(self):
         assert StreamingIndicatorEngine._ema_series([250.5], 5) == [250.5]
@@ -236,7 +249,7 @@ class TestHighNGolden:
 class TestGetIndicatorsConsumerGolden:
     """Pin the get_indicators() keys produced by the refactored helpers."""
 
-    def test_ema_macd_high_daily_keys_bit_identical(self):
+    def test_ema_macd_high_daily_keys_reference_parity(self):
         rng = np.random.default_rng(606)
         n = 150
         closes = [float(v) for v in 100.0 + np.cumsum(rng.normal(0.02, 0.8, n))]
@@ -271,13 +284,12 @@ class TestGetIndicatorsConsumerGolden:
 
         # EMA levels + alignment (intraday)
         for period in (5, 20, 60):
-            assert result[f"ema_{period}"] == _orig_ema_last(closes, period)
-        want_aligned = (
-            _orig_ema_last(closes, 60) > 0
-            and _orig_ema_last(closes, 5)
-            > _orig_ema_last(closes, 20)
-            > _orig_ema_last(closes, 60)
-        )
+            assert result[f"ema_{period}"] == pytest.approx(
+                _orig_ema_last(closes, period), rel=EMA_REL_TOL
+            )
+        want_aligned = _orig_ema_last(closes, 60) > 0 and _orig_ema_last(
+            closes, 5
+        ) > _orig_ema_last(closes, 20) > _orig_ema_last(closes, 60)
         assert result["ema_aligned"] == want_aligned
 
         # EMA ratios + MACD live in get_indicator_features (same helpers)
@@ -285,8 +297,8 @@ class TestGetIndicatorsConsumerGolden:
         assert features, "expected features (>=26 candles seeded)"
         cur_close = closes[-1]
         for w in (5, 10, 20):
-            assert features[f"ema_ratio_{w}"] == cur_close / (
-                _orig_ema_last(closes, w) + 1e-10
+            assert features[f"ema_ratio_{w}"] == pytest.approx(
+                cur_close / (_orig_ema_last(closes, w) + 1e-10), rel=EMA_REL_TOL
             )
 
         # MACD family (12/26/9 via _ema_series)
@@ -294,9 +306,11 @@ class TestGetIndicatorsConsumerGolden:
         ema26 = _orig_ema_series(closes, 26)
         macd_series = [f - s for f, s in zip(ema12, ema26)]
         macd_sig = _orig_ema_series(macd_series, 9)
-        assert features["macd"] == macd_series[-1]
-        assert features["macd_signal"] == macd_sig[-1]
-        assert features["macd_hist"] == macd_series[-1] - macd_sig[-1]
+        assert features["macd"] == pytest.approx(macd_series[-1], rel=EMA_REL_TOL)
+        assert features["macd_signal"] == pytest.approx(macd_sig[-1], rel=EMA_REL_TOL)
+        assert features["macd_hist"] == pytest.approx(
+            macd_series[-1] - macd_sig[-1], rel=EMA_REL_TOL, abs=1e-12
+        )
 
         # high_N (intraday fallback: no daily highs seeded)
         assert result["high_5"] == _orig_high_n([], 5, candles)

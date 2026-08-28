@@ -1,0 +1,408 @@
+# EVIDENCE-REGISTER-002 — Safety Architecture Evidence Register
+
+- **Status:** Active Register — **2 items `PASS`**: SPG-EV-002 (EV-L1/EV-L2 minimum level, signed 2026-07-30) and STATE-EV-001 (EV-L1/EV-L2 minimum level, signed 2026-08-06 — the second `PASS` in this register's history); 79 items `READY`; EV-L1 stage runs executed for 2 items, and the first EV-L3 stage run was executed 2026-08-06 for STATE-EV-004 (`READY`, not a `PASS`). A `PASS` is an evidence fact, not authority.
+- **Date:** 2026-07-14
+- **Specification:** VER-002-001
+- **Production Authorization:** NO
+
+This register tracks execution evidence. The initial state is intentionally `NOT_IMPLEMENTED`; document creation is not test completion. The CSV version is the machine-editable source.
+
+An executed EV-L1 run is a stage record, not an accepting state: a run neither closes an item nor covers the `/2`, `/3`, `+Security`, or `+Broker` stages a row's minimum level names, and a `PASS` remains incomplete until independent review signs the evidence manifest (VER-002-001 §9.5). Run packages live under `tos-evidence/<evidence-id>/<run-id>/`; the CSV-only `latest_run_id` / `latest_result_date` / `evidence_location` columns carry the binding.
+
+A `PASS` records only that a row's minimum evidence level was executed, independently reviewed, and signed. It is an evidence fact, not permission: it confers no live authorization, no broker or production scope, and no ADR acceptance — accepting an ADR requires all of its evidence rows plus Architecture Gate action. Both `PASS` rows cover EV-L1/EV-L2 stages only. SPG-EV-002 covers the EV-L1/EV-L2 stages at baseline `d4160fd0`; its signature chain is `ai-review(decorrelated)` attempt 3 plus operator countersign 2026-07-30, retained under `tos-evidence/SPG-EV-002/review/`. STATE-EV-001 covers the EV-L1/EV-L2 stages at baseline `12dd4077` and was signed 2026-08-06; its signature chain is two `ai-review` legs (attempt 1 same-model-family, attempt 2 a different model family) plus the operator countersign, retained under `tos-evidence/STATE-EV-004/review/`, and the durable limb of its Expected is evidenced by citation of the STATE-EV-004 EV-L3 run rather than by its own stages (§378 residual R-1, evidence limb discharged 2026-08-06, substrate-class).
+
+## Status Summary
+
+- Total evidence items: **372**
+- NOT_IMPLEMENTED: **291**
+- READY: **79**
+- PASS: **2**
+- FAIL: **0**
+- INCONCLUSIVE: **0**
+
+## Required Administrative Fields
+
+Before an item becomes `READY`, assign implementation owner, evidence owner, independent reviewer, Verification Profile version, applicable Broker Capability Profile, and evidence storage location.
+
+Mirror column mapping: the `Owner` column below mirrors the CSV `implementation_owner` field. The remaining administrative fields (`evidence_owner`, `verification_profile_version`, `broker_capability_profile_version`, `evidence_location`) are carried only in the CSV, which remains the machine-editable source.
+
+## Register
+
+| ID | Domain | Test | ADR | Minimum level | Status | Owner | Reviewer |
+|---|---|---|---|---|---|---|---|
+| RC-EV-001 | Risk Capacity | Concurrent Commitment Serialization | ADR-002-002 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-002 | Risk Capacity | Duplicate Active Ledger Writer | ADR-002-002 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-003 | Risk Capacity | Crash Before Send | ADR-002-002 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-004 | Risk Capacity | Crash After Send Boundary | ADR-002-002 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-005 | Risk Capacity | Acknowledgement Loss | ADR-002-002 | EV-L3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-006 | Risk Capacity | Partial Fill Transfer | ADR-002-002 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-007 | Risk Capacity | Cancel Crossing Fill | ADR-002-002 | EV-L3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-008 | Risk Capacity | Replace Overlap | ADR-002-002 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-009 | Risk Capacity | Reservation Expiry | ADR-002-002 | EV-L2 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-010 | Risk Capacity | External Activity Quarantine | ADR-002-002 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-011 | Risk Capacity | Broker Query Omission | ADR-002-002 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-012 | Risk Capacity | Protective Lease Partition | ADR-002-002 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-013 | Risk Capacity | Protective Lease Expiry | ADR-002-002 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-014 | Risk Capacity | Trapped Exposure | ADR-002-002 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-015 | Risk Capacity | Corporate Action Remap | ADR-002-002 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-016 | Risk Capacity | Hard Envelope Enforcement | ADR-002-002 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-017 | Risk Capacity | Startup Recovery Barrier | ADR-002-002 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RC-EV-018 | Risk Capacity | Capacity Evidence Replay | ADR-002-002 | EV-L2 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SA-EV-001 | Safety Authority | Duplicate Active Safety Authority | ADR-002-003 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SA-EV-002 | Safety Authority | Stale Leader Resume | ADR-002-003 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SA-EV-003 | Safety Authority | Partition After Normal Grant | ADR-002-003 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SA-EV-004 | Safety Authority | Valid Degraded Protective Lease | ADR-002-003 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SA-EV-005 | Safety Authority | Monotonic Lease Expiry | ADR-002-003 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SA-EV-006 | Safety Authority | Lease Owner Restart | ADR-002-003 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SA-EV-007 | Safety Authority | Overlapping Lease Failover | ADR-002-003 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SA-EV-008 | Safety Authority | Hard Fence | ADR-002-003 | EV-L3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SA-EV-009 | Safety Authority | HALT Versus Permissive Capability | ADR-002-003 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SA-EV-010 | Safety Authority | Re-arm Gate | ADR-002-003 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SA-EV-011 | Safety Authority | Time Discontinuity | ADR-002-003 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SA-EV-012 | Safety Authority | Key Rotation and Revocation | ADR-002-003 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SA-EV-013 | Safety Authority | Egress Bypass Test | ADR-002-003 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SA-EV-014 | Safety Authority | Epoch Registry Failure | ADR-002-003 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SA-EV-015 | Safety Authority | Authority Evidence Replay | ADR-002-003 | EV-L2 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-001 | Broker Capability | Broker Identity and Attribution | ADR-002-004 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-002 | Broker Capability | Lost Broker Acknowledgement | ADR-002-004 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-003 | Broker Capability | Duplicate Submission | ADR-002-004 | Profile-dependent | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-004 | Broker Capability | Fill Before Acknowledgement | ADR-002-004 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-005 | Broker Capability | Duplicate and Out-of-Order Fills | ADR-002-004 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-006 | Broker Capability | Query Omission | ADR-002-004 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-007 | Broker Capability | Cancel Crossing Fill | ADR-002-004 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-008 | Broker Capability | Late Fill and Correction | ADR-002-004 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-009 | Broker Capability | Replace Semantics | ADR-002-004 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-010 | Broker Capability | Reduce-Only or Exit Reversal | ADR-002-004 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-011 | Broker Capability | External Activity Detection | ADR-002-004 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-012 | Broker Capability | Polling Under Rate Pressure | ADR-002-004 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-013 | Broker Capability | Protective Request Under Saturation | ADR-002-004 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-014 | Broker Capability | Session Failure and Reconnect | ADR-002-004 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-015 | Broker Capability | Broker Credential Fencing | ADR-002-004 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-016 | Broker Capability | Capability Drift | ADR-002-004 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-017 | Broker Capability | Pagination and History Window | ADR-002-004 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-018 | Broker Capability | Position and Margin Conflict | ADR-002-004 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-019 | Broker Capability | Corporate/Administrative Change | ADR-002-004 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-020 | Broker Capability | Environment Isolation | ADR-002-004 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-021 | Broker Capability | Profile Version Enforcement | ADR-002-004 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| BC-EV-022 | Broker Capability | Broker Evidence Replay | ADR-002-004 | EV-L2 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| X-EV-001 | Cross-System | End-to-End Normal Order | ADR-002-002/003/004 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| X-EV-002 | Cross-System | Safety Authority Failover During Commit | ADR-002-002/003/004 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| X-EV-003 | Cross-System | Ledger Failover During Authority Partition | ADR-002-002/003/004 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| X-EV-004 | Cross-System | ACK Loss Plus External Manual Order | ADR-002-002/003/004 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| X-EV-005 | Cross-System | Protective Action Under Broker Saturation | ADR-002-002/003/004 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| X-EV-006 | Cross-System | Cancel/Replace During Safety HALT | ADR-002-002/003/004 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| X-EV-007 | Cross-System | Restart With Live UNKNOWN Orders | ADR-002-002/003/004 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| X-EV-008 | Cross-System | Clock Failure During Degraded Protection | ADR-002-002/003/004 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| X-EV-009 | Cross-System | Deployment Rollback Restores Stale Instance | ADR-002-002/003/004 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| X-EV-010 | Cross-System | Corporate Action During Open Order | ADR-002-002/003/004 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| X-EV-011 | Cross-System | Broker Capability Drift During Live Session | ADR-002-002/003/004 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| X-EV-012 | Cross-System | Recovery and Partial Re-arm | ADR-002-002/003/004 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| TIME-EV-001 | Trustworthy Time | Wall-Clock Rollback and Jump | ADR-002-008 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| TIME-EV-002 | Trustworthy Time | Clock Freeze | ADR-002-008 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| TIME-EV-003 | Trustworthy Time | Reference-Source Disagreement | ADR-002-008 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| TIME-EV-004 | Trustworthy Time | Monotonic Discontinuity | ADR-002-008 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| TIME-EV-005 | Trustworthy Time | Restart and Suspension | ADR-002-008 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| TIME-EV-006 | Trustworthy Time | Holdover Boundary | ADR-002-008 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| TIME-EV-007 | Trustworthy Time | Freshness and Ordering Ambiguity | ADR-002-008 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| TIME-EV-008 | Trustworthy Time | Session-Boundary Uncertainty | ADR-002-008 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| TIME-EV-009 | Trustworthy Time | Time Recovery Generation | ADR-002-008 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| TIME-EV-010 | Trustworthy Time | Egress Time Currentness | ADR-002-008 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| REARM-EV-001 | Live Authorization and Re-arm | Default Non-Live | ADR-002-007 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| REARM-EV-002 | Live Authorization and Re-arm | Complete Re-arm Gate | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| REARM-EV-003 | Live Authorization and Re-arm | Automatic Re-arm Prevention | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| REARM-EV-004 | Live Authorization and Re-arm | Fresh Authorization Identity | ADR-002-007 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| REARM-EV-005 | Live Authorization and Re-arm | Human Dual Control | ADR-002-007 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| REARM-EV-006 | Live Authorization and Re-arm | Atomic Safety Configuration | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| REARM-EV-007 | Live Authorization and Re-arm | UNKNOWN and Conservative Capacity | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| REARM-EV-008 | Live Authorization and Re-arm | Continuous Invalidation Bound | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| REARM-EV-009 | Live Authorization and Re-arm | Partial Re-arm Scope | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| REARM-EV-010 | Live Authorization and Re-arm | Final Egress Authorization Currentness | ADR-002-007 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| REARM-EV-011 | Live Authorization and Re-arm | HALT Restrictive Precedence | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| REARM-EV-012 | Live Authorization and Re-arm | Authorization Evidence Replay | ADR-002-007 | EV-L2 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STATE-EV-001 | Orthogonal State | Orthogonal Composite Persistence | ADR-002-005 | EV-L1/2 | PASS | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STATE-EV-002 | Orthogonal State | Conservative Direction | ADR-002-005 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STATE-EV-003 | Orthogonal State | Cross-Dimension Coupling | ADR-002-005 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STATE-EV-004 | Orthogonal State | Conservative Restart Reconstruction | ADR-002-005 | EV-L3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STATE-EV-005 | Orthogonal State | Dimension Transition Ownership | ADR-002-005 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RECON-EV-001 | Reconciliation Confidence | Single Evidence-Path Corruption | ADR-002-006 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RECON-EV-002 | Reconciliation Confidence | Query Omission and Negative Evidence | ADR-002-006 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RECON-EV-003 | Reconciliation Confidence | Conflicting Fill Quantity | ADR-002-006 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RECON-EV-004 | Reconciliation Confidence | Freshness and Time-Confidence Loss | ADR-002-006 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RECON-EV-005 | Reconciliation Confidence | Field-Specific Capacity Release Proof | ADR-002-006 | EV-L3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| FD-EV-001 | Failure Domain | Strategy-to-Safety Isolation | ADR-002-009 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| FD-EV-002 | Failure Domain | Stale Deployment and Duplicate Active Generation | ADR-002-009 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| FD-EV-003 | Failure Domain | Control-Plane-to-Egress Partition | ADR-002-009 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| FD-EV-004 | Failure Domain | Cache Failure Cannot Create Permission | ADR-002-009 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| FD-EV-005 | Failure Domain | Restrictive Event Distribution Failure | ADR-002-009 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| FD-EV-006 | Failure Domain | Live and Non-Live Environment Isolation | ADR-002-009 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| FD-EV-007 | Failure Domain | Risk Capacity Ledger Failover Fence | ADR-002-009 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| FD-EV-008 | Failure Domain | Shared Time Common Mode | ADR-002-009 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| FD-EV-009 | Failure Domain | Partial Deployment and Configuration Rollback | ADR-002-009 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| FD-EV-010 | Failure Domain | Shared Broker Resource Exhaustion | ADR-002-009 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| FD-EV-011 | Failure Domain | Safety-Cell Blast-Radius Containment | ADR-002-009 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| FD-EV-012 | Failure Domain | Region and Datastore Recovery | ADR-002-009 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PR-EV-001 | Protective Replacement | Overlap-First Replacement | ADR-002-011 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PR-EV-002 | Protective Replacement | Cancel-First Admission Gate | ADR-002-011 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PR-EV-003 | Protective Replacement | Missing ACK Replacement Ambiguity | ADR-002-011 | EV-L3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PR-EV-004 | Protective Replacement | Cancel ACK Is Not Final Quantity Proof | ADR-002-011 | EV-L3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PR-EV-005 | Protective Replacement | Partial-Fill Interleavings | ADR-002-011 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PR-EV-006 | Protective Replacement | New Protection Sufficiency Proof | ADR-002-011 | EV-L3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PR-EV-007 | Protective Replacement | Protective Broker-Resource Exhaustion | ADR-002-011 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PR-EV-008 | Protective Replacement | Replacement Authority Expiry | ADR-002-011 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PR-EV-009 | Protective Replacement | Replacement Crash and Failover | ADR-002-011 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PR-EV-010 | Protective Replacement | Replacement Partition | ADR-002-011 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PR-EV-011 | Protective Replacement | HALT and Replacement Precedence | ADR-002-011 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PR-EV-012 | Protective Replacement | Broker-Proven Atomic Replace Scope | ADR-002-011 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| NT-EV-001 | Non-Trade Events | Split and Reverse-Split Transition | ADR-002-010 | EV-L1/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| NT-EV-002 | Non-Trade Events | Multi-Leg Merger and Spin-Off | ADR-002-010 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| NT-EV-003 | Non-Trade Events | Instrument Identity Change | ADR-002-010 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| NT-EV-004 | Non-Trade Events | Option Exercise and Assignment | ADR-002-010 | EV-L3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| NT-EV-005 | Non-Trade Events | Futures Expiry and Settlement | ADR-002-010 | EV-L3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| NT-EV-006 | Non-Trade Events | Broker Open-Order Adjustment | ADR-002-010 | EV-L3/5 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| NT-EV-007 | Non-Trade Events | Conflicting Effective-Time Window | ADR-002-010 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| NT-EV-008 | Non-Trade Events | Unattributed Correction and Transfer | ADR-002-010 | EV-L3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| NT-EV-009 | Non-Trade Events | Non-Permissive Partial Local Application | ADR-002-010 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| NT-EV-010 | Non-Trade Events | Correction and Reversal Idempotency | ADR-002-010 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| NT-EV-011 | Non-Trade Events | Non-Trade Restart and Replay | ADR-002-010 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| NT-EV-012 | Non-Trade Events | Event Completion Cannot Re-arm | ADR-002-010 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RCLP-EV-001 | RCL Persistence and Consensus | Quorum-Serialized Concurrent Commitment | ADR-002-012 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RCLP-EV-002 | RCL Persistence and Consensus | Minority Leader With Broker Reachability | ADR-002-012 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RCLP-EV-003 | RCL Persistence and Consensus | Stale Writer Resume | ADR-002-012 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RCLP-EV-004 | RCL Persistence and Consensus | Quorum Loss Preserves Capacity | ADR-002-012 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RCLP-EV-005 | RCL Persistence and Consensus | Commit Response Loss and Crash Idempotency | ADR-002-012 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RCLP-EV-006 | RCL Persistence and Consensus | Capacity-to-Capability Commit Ordering | ADR-002-012 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RCLP-EV-007 | RCL Persistence and Consensus | Quorum-Committed Claim and Send Boundary | ADR-002-012 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RCLP-EV-008 | RCL Persistence and Consensus | Stale Read Cannot Create Permission | ADR-002-012 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RCLP-EV-009 | RCL Persistence and Consensus | Joint Membership and Removed-Voter Fence | ADR-002-012 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RCLP-EV-010 | RCL Persistence and Consensus | Snapshot, Compaction, and Restore Integrity | ADR-002-012 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RCLP-EV-011 | RCL Persistence and Consensus | Protective Sub-Ledger Rejoin | ADR-002-012 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RCLP-EV-012 | RCL Persistence and Consensus | Disaster Recovery and Conflicting History | ADR-002-012 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| EGRESS-EV-001 | Egress Security | Credential and Route Authority Inventory | ADR-002-013 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| EGRESS-EV-002 | Egress Security | Direct and Stale-Principal Bypass | ADR-002-013 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| EGRESS-EV-003 | Egress Security | Environment, Scope, Endpoint, and Route Substitution | ADR-002-013 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| EGRESS-EV-004 | Egress Security | Quorum Commit Certificate Validation | ADR-002-013 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| EGRESS-EV-005 | Egress Security | Proof, Capability, and Request Replay or Substitution | ADR-002-013 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| EGRESS-EV-006 | Egress Security | Downstream Intermediary and Reconnect Boundary | ADR-002-013 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| EGRESS-EV-007 | Egress Security | Restrictive Race at Actual Send Boundary | ADR-002-013 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| EGRESS-EV-008 | Egress Security | Deny-First Credential and Trust Rotation | ADR-002-013 | EV-L3/5+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| EGRESS-EV-009 | Egress Security | Failover, Rollback, and Removed-Principal Resume | ADR-002-013 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| EGRESS-EV-010 | Egress Security | Credential Compromise and Unknown Revocation | ADR-002-013 | EV-L3/5+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| EGRESS-EV-011 | Egress Security | Degraded Protective Egress Exclusivity | ADR-002-013 | EV-L3/5+Broker+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| EGRESS-EV-012 | Egress Security | Manual Authority and Recovery Cannot Re-arm | ADR-002-013 | EV-L3/5+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| EGRESS-EV-013 | Egress Security | Out-of-Band Containment of a Defective or Compromised Final Egress Point | ADR-002-013 | EV-L3/5+Broker+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SPG-EV-001 | Safety Profile Governance | Envelope Governance and Non-Silent Expansion | ADR-002-014 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SPG-EV-002 | Safety Profile Governance | Semantic Units, Numeric, and Cross-Field Validation | ADR-002-014 | EV-L1/2 | PASS | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SPG-EV-003 | Safety Profile Governance | Schema, Omission, and Canonicalization Safety | ADR-002-014 | EV-L1/2+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SPG-EV-004 | Safety Profile Governance | Atomic Mixed-Generation Activation | ADR-002-014 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SPG-EV-005 | Safety Profile Governance | Concurrent and Stale-Base Activation | ADR-002-014 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SPG-EV-006 | Safety Profile Governance | Restrictive Precedence and Economic Continuity | ADR-002-014 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SPG-EV-007 | Safety Profile Governance | Rollback, Restore, and Historical Replay Fencing | ADR-002-014 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SPG-EV-008 | Safety Profile Governance | Expiry and Recovery Non-Revival | ADR-002-014 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SPG-EV-009 | Safety Profile Governance | Separation of Duties and Break-Glass Confinement | ADR-002-014 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SPG-EV-010 | Safety Profile Governance | Consumer, Software, and Broker Compatibility Drift | ADR-002-014 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SPG-EV-011 | Safety Profile Governance | Missing or Contradictory Configuration Containment | ADR-002-014 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SPG-EV-012 | Safety Profile Governance | Configuration Decision Replay and Evidence Completeness | ADR-002-014 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-001 | Human Authority Governance | Effective Principal Collapse and Quorum Independence | ADR-002-015 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-002 | Human Authority Governance | Exact Approval Context Binding | ADR-002-015 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-003 | Human Authority Governance | Separation of Duties and Self-Approval Prevention | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-004 | Human Authority Governance | Approval Replay, Expiry, Revocation, and Consumption | ADR-002-015 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-005 | Human Authority Governance | Independent Human HALT Availability and Propagation | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-006 | Human Authority Governance | Break-Glass Directional Confinement | ADR-002-015 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-007 | Human Authority Governance | Human Protective Request Cannot Bypass Safety | ADR-002-015 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-008 | Human Authority Governance | Delegation, Roster, and Identity Recovery Fencing | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-009 | Human Authority Governance | Approver and Workflow Compromise Containment | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-010 | Human Authority Governance | Dual-Control Re-arm and Narrow Scope | ADR-002-015 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-011 | Human Authority Governance | Approval and Economic-State Continuity and Non-Revival | ADR-002-015 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-012 | Human Authority Governance | Human Authority Replay and Evidence Completeness | ADR-002-015 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-013 | Human Authority Governance | Governed Single-Operator Variant Pre-Approved and Non-Ad-Hoc | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-014 | Human Authority Governance | Time-Separated Re-Authenticated Self-Approval | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-015 | Human Authority Governance | Independent Attestation Mandatory and Block-Only | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-016 | Human Authority Governance | External Reviewer Independence | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-017 | Human Authority Governance | Variant Cannot Expand Authority or Scope | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| HAG-EV-018 | Human Authority Governance | Operator Configuration or Authorization Error Fail-Closed | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ERI-EV-001 | Evidence and Replay Integrity | Complete Immutable Causal Evidence Chain | ADR-002-016 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ERI-EV-002 | Evidence and Replay Integrity | Pre-Effect Durability and Exact Receipt Binding | ADR-002-016 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ERI-EV-003 | Evidence and Replay Integrity | Evidence Outage and Emergency Path Confinement | ADR-002-016 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ERI-EV-004 | Evidence and Replay Integrity | Duplicate, Reorder, Conflict, and Continuity Safety | ADR-002-016 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ERI-EV-005 | Evidence and Replay Integrity | Mutation, Deletion, Fork, Anchor, and Restore Detection | ADR-002-016 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ERI-EV-006 | Evidence and Replay Integrity | Causal Ordering and Trustworthy-Time Ambiguity | ADR-002-016 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ERI-EV-007 | Evidence and Replay Integrity | Isolated Deterministic Replay and Divergence | ADR-002-016 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ERI-EV-008 | Evidence and Replay Integrity | Historical Baseline and Schema Evolution Replay | ADR-002-016 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ERI-EV-009 | Evidence and Replay Integrity | Redaction Export Secret and Chain-of-Custody Safety | ADR-002-016 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ERI-EV-010 | Evidence and Replay Integrity | Retention Compaction Supersession and Deletion Safety | ADR-002-016 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ERI-EV-011 | Evidence and Replay Integrity | Broker External and Non-Trade Evidence Conservatism | ADR-002-016 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ERI-EV-012 | Evidence and Replay Integrity | Recovery Non-Revival and Incident Reconstruction | ADR-002-016 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SBR-EV-001 | Safe Startup and Recovery Barrier | Closed Startup and Fresh Live-Arming Chain | ADR-002-017 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SBR-EV-002 | Safe Startup and Recovery Barrier | Recovery Generation Propagation and Stale Egress Rejection | ADR-002-017 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SBR-EV-003 | Safe Startup and Recovery Barrier | Competing Recovery Owner Fencing | ADR-002-017 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SBR-EV-004 | Safe Startup and Recovery Barrier | Complete Recovery Inventory and Obligation Closure | ADR-002-017 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SBR-EV-005 | Safe Startup and Recovery Barrier | Non-Atomic Broker Inventory Conservatism | ADR-002-017 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SBR-EV-006 | Safe Startup and Recovery Barrier | UNKNOWN Conflict Gap Timeout and Retry Containment | ADR-002-017 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SBR-EV-007 | Safe Startup and Recovery Barrier | Restricted Readiness Dependency Isolation | ADR-002-017 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SBR-EV-008 | Safe Startup and Recovery Barrier | HALT Evidence Failure and Protective Continuity | ADR-002-017 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SBR-EV-009 | Safe Startup and Recovery Barrier | Readiness Invalidation Before Authority and Egress | ADR-002-017 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SBR-EV-010 | Safe Startup and Recovery Barrier | Restore Conflict and Worst-Credible Economic Union | ADR-002-017 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SBR-EV-011 | Safe Startup and Recovery Barrier | Recovery Authority Separation and Forced-Ready Denial | ADR-002-017 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SBR-EV-012 | Safe Startup and Recovery Barrier | Recovery Completion Non-Revival and Replay | ADR-002-017 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CII-EV-001 | Critical Input Integrity | Critical Input Classification Completeness | ADR-002-018 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CII-EV-002 | Critical Input Integrity | Source Identity Continuity and Replay Fencing | ADR-002-018 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CII-EV-003 | Critical Input Integrity | Identity Unit Scale and Mapping Integrity | ADR-002-018 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CII-EV-004 | Critical Input Integrity | Transformation Lineage and Hidden-Default Safety | ADR-002-018 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CII-EV-005 | Critical Input Integrity | Freshness Consistency and Source-Conflict Conservatism | ADR-002-018 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CII-EV-006 | Critical Input Integrity | Independent Approval and Common-Mode Detection | ADR-002-018 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CII-EV-007 | Critical Input Integrity | Exact Capsule Binding and Substitution Resistance | ADR-002-018 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CII-EV-008 | Critical Input Integrity | Correction Retraction and Invalidation Fan-Out | ADR-002-018 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CII-EV-009 | Critical Input Integrity | Active Final-Egress Context Currentness | ADR-002-018 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CII-EV-010 | Critical Input Integrity | Input Degradation and Protective Confinement | ADR-002-018 | EV-L1/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CII-EV-011 | Critical Input Integrity | Context Authority Separation and Human-Override Denial | ADR-002-018 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CII-EV-012 | Critical Input Integrity | Restart Restore Recovery and Non-Revival | ADR-002-018 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| VTG-EV-001 | Venue and Tradability Gate | Closed Exceptional and Phase-Transition Sessions | ADR-002-019 | EV-L1/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| VTG-EV-002 | Venue and Tradability Gate | Halt Suspension and Tradability Conflict | ADR-002-019 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| VTG-EV-003 | Venue and Tradability Gate | Exact Instrument Contract Account and Route | ADR-002-019 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| VTG-EV-004 | Venue and Tradability Gate | Price Tick Lot Quantity and Order Shape | ADR-002-019 | EV-L1/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| VTG-EV-005 | Venue and Tradability Gate | Margin Borrow Settlement and Account Eligibility | ADR-002-019 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| VTG-EV-006 | Venue and Tradability Gate | Exact Decision Binding and Substitution Resistance | ADR-002-019 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| VTG-EV-007 | Venue and Tradability Gate | Active Final-Egress Currentness and Invalidation Race | ADR-002-019 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| VTG-EV-008 | Venue and Tradability Gate | Exit Reduce-Only Cancel and Reversal | ADR-002-019 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| VTG-EV-009 | Venue and Tradability Gate | Protective and Replacement Constraints | ADR-002-019 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| VTG-EV-010 | Venue and Tradability Gate | Source Policy Capability and Common-Mode Drift | ADR-002-019 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| VTG-EV-011 | Venue and Tradability Gate | Authority Separation and Bypass Resistance | ADR-002-019 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| VTG-EV-012 | Venue and Tradability Gate | Recovery Reopen and Non-Revival | ADR-002-019 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IOC-EV-001 | Intent-to-Order Conformance | Direction and Position-Effect Inversion | ADR-002-020 | EV-L1/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IOC-EV-002 | Intent-to-Order Conformance | Account Instrument Contract Environment and Route Substitution | ADR-002-020 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IOC-EV-003 | Intent-to-Order Conformance | Unit Multiplier Currency Scale and Numeric Safety | ADR-002-020 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IOC-EV-004 | Intent-to-Order Conformance | Quantity Tick Lot and Rounding | ADR-002-020 | EV-L1/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IOC-EV-005 | Intent-to-Order Conformance | Price Order Type TIF Expiration Flags and Mode | ADR-002-020 | EV-L1/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IOC-EV-006 | Intent-to-Order Conformance | Economic Effect and Capacity Dominance | ADR-002-020 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IOC-EV-007 | Intent-to-Order Conformance | Canonicalization and Parser Differential | ADR-002-020 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IOC-EV-008 | Intent-to-Order Conformance | Post-Proof Mutation and Actual-Outbound Equivalence | ADR-002-020 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IOC-EV-009 | Intent-to-Order Conformance | Retry Cancel Amend Replace Split and Aggregate | ADR-002-020 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IOC-EV-010 | Intent-to-Order Conformance | Protective and Exit Construction | ADR-002-020 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IOC-EV-011 | Intent-to-Order Conformance | Authority Separation Compiler Drift and Bypass | ADR-002-020 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IOC-EV-012 | Intent-to-Order Conformance | Restart Restore Recovery Replay and Non-Revival | ADR-002-020 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ARE-EV-001 | Aggregate Risk Evaluation | Aggregate Scope Completeness | ADR-002-021 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ARE-EV-002 | Aggregate Risk Evaluation | Exact Effect and Snapshot Binding | ADR-002-021 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ARE-EV-003 | Aggregate Risk Evaluation | Partial Fill Overlap Reversal and Missing ACK | ADR-002-021 | EV-L1/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ARE-EV-004 | Aggregate Risk Evaluation | Dimension Unit Scope and Limit Integrity | ADR-002-021 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ARE-EV-005 | Aggregate Risk Evaluation | Netting Hedge Correlation and Common Mode | ADR-002-021 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ARE-EV-006 | Aggregate Risk Evaluation | Valuation Margin Liquidity and Tail Scenarios | ADR-002-021 | EV-L1/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ARE-EV-007 | Aggregate Risk Evaluation | Numerical Determinism and Failure | ADR-002-021 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ARE-EV-008 | Aggregate Risk Evaluation | Concurrent Grant and RCL Serialization | ADR-002-021 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ARE-EV-009 | Aggregate Risk Evaluation | Invalidation and Final-Egress Currentness | ADR-002-021 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ARE-EV-010 | Aggregate Risk Evaluation | Protective Exit and Partition Behavior | ADR-002-021 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ARE-EV-011 | Aggregate Risk Evaluation | Authority Separation and Security Bypass | ADR-002-021 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| ARE-EV-012 | Aggregate Risk Evaluation | Recovery Economic Continuity and Non-Revival | ADR-002-021 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| AFG-EV-001 | Action Flow Governance | Distributed Shared-Limit Serialization | ADR-002-022 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| AFG-EV-002 | Action Flow Governance | Duplicate Event and Fan-Out Amplification | ADR-002-022 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| AFG-EV-003 | Action Flow Governance | Missing-ACK Retry and Reconnect Storm | ADR-002-022 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| AFG-EV-004 | Action Flow Governance | Cancel Amend and Replace Storm | ADR-002-022 | EV-L1/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| AFG-EV-005 | Action Flow Governance | Complete Action and Resource Classification | ADR-002-022 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| AFG-EV-006 | Action Flow Governance | Protective Reserve Exclusivity | ADR-002-022 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| AFG-EV-007 | Action Flow Governance | RCL Atomicity and Permit Single Use | ADR-002-022 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| AFG-EV-008 | Action Flow Governance | Time Refill and Counter Integrity | ADR-002-022 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| AFG-EV-009 | Action Flow Governance | Invalidation and Final-Egress Currentness | ADR-002-022 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| AFG-EV-010 | Action Flow Governance | Partition Stale Writer and Protective Lease | ADR-002-022 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| AFG-EV-011 | Action Flow Governance | Authority Separation and Bypass | ADR-002-022 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| AFG-EV-012 | Action Flow Governance | Recovery Economic Continuity and Non-Revival | ADR-002-022 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IAP-EV-001 | Independent Proposal Approval | Complete Exact Request | ADR-002-023 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IAP-EV-002 | Independent Proposal Approval | Independent Validation and Common Mode | ADR-002-023 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IAP-EV-003 | Independent Proposal Approval | Deterministic Restrictive Decision | ADR-002-023 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IAP-EV-004 | Independent Proposal Approval | Exact Artifact and Scope Binding | ADR-002-023 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IAP-EV-005 | Independent Proposal Approval | Single-Use Intent Consumption | ADR-002-023 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IAP-EV-006 | Independent Proposal Approval | No Widening or Authority Escalation | ADR-002-023 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IAP-EV-007 | Independent Proposal Approval | Invalidation Dependency Closure | ADR-002-023 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IAP-EV-008 | Independent Proposal Approval | Active Final-Egress Currentness | ADR-002-023 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IAP-EV-009 | Independent Proposal Approval | UNKNOWN Protective and Human Confinement | ADR-002-023 | EV-L1/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IAP-EV-010 | Independent Proposal Approval | Partition and Stale-Generation Fencing | ADR-002-023 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IAP-EV-011 | Independent Proposal Approval | Economic Continuity and Broker Ambiguity | ADR-002-023 | EV-L1/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| IAP-EV-012 | Independent Proposal Approval | Recovery Evidence and Non-Revival | ADR-002-023 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CUR-EV-001 | Active Currentness | Complete Exact Vector | ADR-002-024 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CUR-EV-002 | Active Currentness | Restrictive Fence Dominance | ADR-002-024 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CUR-EV-003 | Active Currentness | Independent Local Deny | ADR-002-024 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CUR-EV-004 | Active Currentness | Per-Send Proof and No Cache | ADR-002-024 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CUR-EV-005 | Active Currentness | Claim Fence and First-Byte Race | ADR-002-024 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CUR-EV-006 | Active Currentness | Partition with Broker Reachability | ADR-002-024 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CUR-EV-007 | Active Currentness | Stale Generation and Restore Fence | ADR-002-024 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CUR-EV-008 | Active Currentness | Multi-Domain and Shared Scope | ADR-002-024 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CUR-EV-009 | Active Currentness | Authority and Capacity Separation | ADR-002-024 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CUR-EV-010 | Active Currentness | UNKNOWN and Economic Continuity | ADR-002-024 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CUR-EV-011 | Active Currentness | Protective Confinement | ADR-002-024 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| CUR-EV-012 | Active Currentness | Recovery Evidence and Non-Revival | ADR-002-024 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RLP-EV-001 | Restricted-Live and Promotion Governance | Exact Pre-Registered Scope | ADR-002-025 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RLP-EV-002 | Restricted-Live and Promotion Governance | Worst-Credible Effect and RCL Separation | ADR-002-025 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RLP-EV-003 | Restricted-Live and Promotion Governance | No Trial Safety Bypass | ADR-002-025 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RLP-EV-004 | Restricted-Live and Promotion Governance | Abort Dominance and Race | ADR-002-025 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RLP-EV-005 | Restricted-Live and Promotion Governance | Evidence Completeness and Negative-Result Retention | ADR-002-025 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RLP-EV-006 | Restricted-Live and Promotion Governance | Coverage and Non-Extrapolation | ADR-002-025 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RLP-EV-007 | Restricted-Live and Promotion Governance | Progressive Single-Use Promotion | ADR-002-025 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RLP-EV-008 | Restricted-Live and Promotion Governance | Independent Governance and Authority Separation | ADR-002-025 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RLP-EV-009 | Restricted-Live and Promotion Governance | Expiry and Economic Continuity | ADR-002-025 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RLP-EV-010 | Restricted-Live and Promotion Governance | Restart, Recovery, and Non-Revival | ADR-002-025 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RLP-EV-011 | Restricted-Live and Promotion Governance | Continuous Conformance and Demotion | ADR-002-025 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| RLP-EV-012 | Restricted-Live and Promotion Governance | Gate Honesty and Status Separation | ADR-002-025 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| WDR-EV-001 | Safety Deviation and Residual Risk | Non-Waivable Boundary | ADR-002-026 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| WDR-EV-002 | Safety Deviation and Residual Risk | Exact Scope and Dependency Closure | ADR-002-026 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| WDR-EV-003 | Safety Deviation and Residual Risk | Compensating-Control Effectiveness | ADR-002-026 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| WDR-EV-004 | Safety Deviation and Residual Risk | Independent Effective-Person Approval | ADR-002-026 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| WDR-EV-005 | Safety Deviation and Residual Risk | Non-Authorizing Single-Use Activation | ADR-002-026 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| WDR-EV-006 | Safety Deviation and Residual Risk | Currentness, Revocation, and Send Race | ADR-002-026 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| WDR-EV-007 | Safety Deviation and Residual Risk | UNKNOWN, Capacity, and Protective Confinement | ADR-002-026 | EV-L1/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| WDR-EV-008 | Safety Deviation and Residual Risk | Broker Finality and Economic Continuity | ADR-002-026 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| WDR-EV-009 | Safety Deviation and Residual Risk | Expiry, Renewal, Recovery, and Non-Revival | ADR-002-026 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| WDR-EV-010 | Safety Deviation and Residual Risk | Evidence and Status Honesty | ADR-002-026 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| WDR-EV-011 | Safety Deviation and Residual Risk | Security, Alternate Route, and Emergency Behavior | ADR-002-026 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| WDR-EV-012 | Safety Deviation and Residual Risk | Combined Deviations and Gate Separation | ADR-002-026 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SIR-EV-001 | Safety Incident and Controlled Shutdown | Restrictive Detection and Declaration | ADR-002-027 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SIR-EV-002 | Safety Incident and Controlled Shutdown | Exact Scope and Combined Incidents | ADR-002-027 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SIR-EV-003 | Safety Incident and Controlled Shutdown | Containment Authority Separation | ADR-002-027 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SIR-EV-004 | Safety Incident and Controlled Shutdown | Controlled Shutdown and Hard Fencing | ADR-002-027 | EV-L3+Broker+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SIR-EV-005 | Safety Incident and Controlled Shutdown | Protection and Ongoing Obligations | ADR-002-027 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SIR-EV-006 | Safety Incident and Controlled Shutdown | UNKNOWN, Broker Finality, and Capacity | ADR-002-027 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SIR-EV-007 | Safety Incident and Controlled Shutdown | Incident Currentness and Send Race | ADR-002-027 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SIR-EV-008 | Safety Incident and Controlled Shutdown | Partition, Common Mode, and Compromise | ADR-002-027 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SIR-EV-009 | Safety Incident and Controlled Shutdown | Evidence, Communication, and Status Honesty | ADR-002-027 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SIR-EV-010 | Safety Incident and Controlled Shutdown | Independent Non-Permissive Closure | ADR-002-027 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SIR-EV-011 | Safety Incident and Controlled Shutdown | External Activity and Demotion | ADR-002-027 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SIR-EV-012 | Safety Incident and Controlled Shutdown | Recovery and Non-Revival | ADR-002-027 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STM-EV-001 | Safety Telemetry and Continuous Monitoring | Complete Critical Coverage | ADR-002-028 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STM-EV-002 | Safety Telemetry and Continuous Monitoring | Provenance, Continuity, Semantics, and Time | ADR-002-028 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STM-EV-003 | Safety Telemetry and Continuous Monitoring | UNKNOWN, Silence, and Stale Green State | ADR-002-028 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STM-EV-004 | Safety Telemetry and Continuous Monitoring | Effective Independence and Common Mode | ADR-002-028 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STM-EV-005 | Safety Telemetry and Continuous Monitoring | Deterministic Evaluation and Bound Integrity | ADR-002-028 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STM-EV-006 | Safety Telemetry and Continuous Monitoring | Suppression and Maintenance Safety | ADR-002-028 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STM-EV-007 | Safety Telemetry and Continuous Monitoring | Alert Correlation, Delivery, and Escalation | ADR-002-028 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STM-EV-008 | Safety Telemetry and Continuous Monitoring | Restrictive and Incident Handoff | ADR-002-028 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STM-EV-009 | Safety Telemetry and Continuous Monitoring | Active Currentness and Send Race | ADR-002-028 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STM-EV-010 | Safety Telemetry and Continuous Monitoring | UNKNOWN, Broker Finality, and Economic Continuity | ADR-002-028 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STM-EV-011 | Safety Telemetry and Continuous Monitoring | Compromise, Fencing, and Failure Domains | ADR-002-028 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STM-EV-012 | Safety Telemetry and Continuous Monitoring | Evidence, Recovery, and Non-Revival | ADR-002-028 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SCI-EV-001 | Software Supply-Chain and Runtime Artifact Admission | Source Identity and Review Integrity | ADR-002-029 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SCI-EV-002 | Software Supply-Chain and Runtime Artifact Admission | Build Isolation, Provenance, and Reproducibility | ADR-002-029 | EV-L1/2/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SCI-EV-003 | Software Supply-Chain and Runtime Artifact Admission | Dependency and Toolchain Closure | ADR-002-029 | EV-L1/2/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SCI-EV-004 | Software Supply-Chain and Runtime Artifact Admission | Signer, Key, and Attestation Compromise | ADR-002-029 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SCI-EV-005 | Software Supply-Chain and Runtime Artifact Admission | Registry Custody and Artifact Substitution | ADR-002-029 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SCI-EV-006 | Software Supply-Chain and Runtime Artifact Admission | Independent Admission and Compatibility | ADR-002-029 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SCI-EV-007 | Software Supply-Chain and Runtime Artifact Admission | Release Generation and Stale Fencing | ADR-002-029 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SCI-EV-008 | Software Supply-Chain and Runtime Artifact Admission | Deployment Attestation and Environment Confinement | ADR-002-029 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SCI-EV-009 | Software Supply-Chain and Runtime Artifact Admission | Mixed Version, Promotion, Rollback, and Restore | ADR-002-029 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SCI-EV-010 | Software Supply-Chain and Runtime Artifact Admission | Active Currentness, Revocation, Partition, and Send Race | ADR-002-029 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SCI-EV-011 | Software Supply-Chain and Runtime Artifact Admission | Authority Separation, Broker Finality, and Economic Continuity | ADR-002-029 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SCI-EV-012 | Software Supply-Chain and Runtime Artifact Admission | Evidence, Recovery, Hotfix, and Non-Revival | ADR-002-029 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PTF-EV-001 | Post-Trade Economic Obligations and Finality | Fill/FQP vs Post-Trade Obligation Separation | ADR-002-030 | EV-L1/2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PTF-EV-002 | Post-Trade Economic Obligations and Finality | Fee/Tax/Interest/Financing Legs and Corrections | ADR-002-030 | EV-L1/2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PTF-EV-003 | Post-Trade Economic Obligations and Finality | Settlement, Cash Availability, Partial/Failure Semantics | ADR-002-030 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PTF-EV-004 | Post-Trade Economic Obligations and Finality | Margin/Collateral/Encumbrance/Haircut/Double-Use | ADR-002-030 | EV-L1/2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PTF-EV-005 | Post-Trade Economic Obligations and Finality | Borrow/Recall/Return/Buy-In | ADR-002-030 | EV-L2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PTF-EV-006 | Post-Trade Economic Obligations and Finality | Exercise/Assignment/Delivery/Corporate-Action Obligations | ADR-002-030 | EV-L1/2/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PTF-EV-007 | Post-Trade Economic Obligations and Finality | Custody/Transfer/In-Flight/Legal-Title Behavior | ADR-002-030 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PTF-EV-008 | Post-Trade Economic Obligations and Finality | Statement Coverage, Provenance, Conflict/Common-Mode | ADR-002-030 | EV-L1/2/3+Broker+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PTF-EV-009 | Post-Trade Economic Obligations and Finality | Breaks/Busts/Corrections/Reversal/Finality Reopen | ADR-002-030 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PTF-EV-010 | Post-Trade Economic Obligations and Finality | RCL Transfer/Release + Generation Currentness/Send Race | ADR-002-030 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PTF-EV-011 | Post-Trade Economic Obligations and Finality | Partition/Compromise/Stale Writer/Route Bypass | ADR-002-030 | EV-L3+Broker+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PTF-EV-012 | Post-Trade Economic Obligations and Finality | Evidence/Recovery/Non-Revival/Status Honesty | ADR-002-030 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PRD-EV-001 | Protective Resource Domain | Protective-Resource-Domain Enumeration Completeness | ADR-002-001 | EV-L1/3+Broker | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| PRD-EV-002 | Protective Resource Domain | Per-Resource Guarantee-Level Assignment Completeness | ADR-002-001 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+
+## Gate Rule
+
+**Gate Rule.** An ADR SHALL move to `Accepted` only when **every** required evidence item is in an accepting state, and no other state is accepting. The accepting states are exactly: (a) `PASS`; (b) `WAIVED_WITH_RESIDUAL_RISK` bound to one exact current ADR-002-026 decision, Residual-Risk Acceptance Record, compensating-control proof, Active Deviation Set, reduced configuration scope, and independent review, and only where RFC-001 explicitly permits the exception (this state remains non-`PASS` and non-authorizing); and (c) `SUPERSEDED` **only when a valid successor item in state (a) or (b) is explicitly bound**. Any required item in any other state — `NOT_IMPLEMENTED`, `READY`, `RUNNING`, `FAIL`, `INCONCLUSIVE`, `BLOCKED`, `EXPIRED`, a `SUPERSEDED` item with no bound passing successor, or a `WAIVED_WITH_RESIDUAL_RISK` item missing any required binding — SHALL block acceptance. The authoritative state vocabulary is VER-002-001 §4; this rule enumerates no state not defined there.

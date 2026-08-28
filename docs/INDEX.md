@@ -45,6 +45,7 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 | [runbooks/stock-pipeline-cutover-m5d.md](runbooks/stock-pipeline-cutover-m5d.md) | 현재 stock decoupled paper pipeline cutover/runbook. |
 | [runbooks/futures-pipeline-cutover-f9.md](runbooks/futures-pipeline-cutover-f9.md) | futures decoupled pipeline F-9 shadow/cutover runbook. |
 | [runbooks/market-structure-policy.md](runbooks/market-structure-policy.md) | Operator policy for stock ATS/SOR, futures 08:45 regular session, night session, and KOSPI 200 product governance. |
+| [runbooks/u17-prevention-control.md](runbooks/u17-prevention-control.md) | U-17 예방 통제 — 운영자·인프라 실행 런북(아티팩트 countersign · main 착지 · 룰셋 필수 체크).  D0-A 착수 차단의 실제 해제 조건. |
 | [runbooks/har-rv-log-rv-validation.md](runbooks/har-rv-log-rv-validation.md) | HAR-RV raw-vs-log validation report workflow before `rv_target: log` cutover. |
 | [runbooks/setup-c-event-score-observation.md](runbooks/setup-c-event-score-observation.md) | Setup C event-score history readiness observation. |
 | [runbooks/stock-strategy-reactivation.md](runbooks/stock-strategy-reactivation.md) | `technical_consensus` / `momentum_breakout` evidence review before reactivation changes. |

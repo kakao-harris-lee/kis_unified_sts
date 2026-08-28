@@ -1,0 +1,62 @@
+artifact_type: SAFETY_DEVIATION_DECISION
+schema_version: "1.0-DRAFT"
+decision_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: DENY
+deviation_generation: null
+request:
+  request_id: TBD
+  canonical_digest: TBD
+  exact_binding_verified: false
+policy:
+  policy_id: TBD
+  canonical_digest: TBD
+  generation_current: false
+non_waivable_boundary_check:
+  complete: false
+  outside_boundary_proven: false
+approved_reduced_scope:
+  scope_digest: TBD
+  scope_complete: false
+dependency_closure_digest: TBD
+combined_active_deviation_set_digest: TBD
+residual_risk_acceptance_record_id: TBD
+required_compensating_controls: []
+required_configuration_and_profile_digests: []
+required_evidence_and_statuses: []
+validity:
+  issued_at: null
+  expires_at: null
+  review_due: null
+  consumer_receipt_anchor: TBD
+single_use:
+  nonce: TBD
+  eligible_configuration_request_count: 0
+  consumed: false
+  consumption_record_id: null
+independent_review:
+  reviewer_ids: []
+  effective_principal_independence_proven: false
+  conflicts_resolved: false
+  quorum_satisfied: false
+invalidation_triggers: []
+signatures: []
+authority:
+  eligible_for_restricted_configuration: false
+  marks_requirement_pass: false
+  activates_configuration: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT decision is DENY and grants no deviation or authority. A future
+  ELIGIBLE_FOR_RESTRICTED_CONFIGURATION result may be consumed once only to
+  request separate exact configuration activation; it never marks evidence PASS,
+  arms live scope, transmits, clears HALT, or re-arms.

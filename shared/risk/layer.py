@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from shared.risk.config import FuturesRiskConfig
     from shared.risk.futures_margin import MarginProductSpec
     from shared.risk.state import RiskStateSnapshot
+    from shared.risk.volatility_reference import VolatilityReference
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,9 @@ class RiskFilterLayer:
         config: FuturesRiskConfig,
         trading_windows: list[str],
         *,
-        current_atr_provider: Callable[[], float] | None = None,
+        volatility_reference_provider: (
+            Callable[[str], VolatilityReference | None] | None
+        ) = None,
         current_spread_provider: Callable[[], float] | None = None,
         has_open_position_provider: Callable[[str], bool] | None = None,
         open_positions_count_provider: (
@@ -118,8 +121,9 @@ class RiskFilterLayer:
         3. :class:`WeeklyMDDFilter`.
         4. :class:`ConsecutiveLossFilter` (may return size_multiplier=0.5).
         5. :class:`DailyTradeCountFilter`.
-        6. :class:`VolatilityFilter` — uses ``current_atr_provider`` if given,
-           else a stub that returns 0.0 (never rejects on volatility).
+        6. :class:`VolatilityFilter` — uses ``volatility_reference_provider``
+           if given, else built with no provider at all (structurally inert:
+           it reads nothing and rejects nothing).
         7. :class:`SpreadFilter` — uses ``current_spread_provider`` if given,
            else a stub that returns 0.0 (never rejects on spread).
         8. :class:`OpenPositionFilter` — uses ``has_open_position_provider``
@@ -175,9 +179,18 @@ class RiskFilterLayer:
             the default mtime-reloading ledger loader and lazy sync-Redis
             positions reader (tests / backtests).
 
-        The stubs let the backtest run the layer in a reproducible way
-        without wiring real position / ATR / LOB sources; Phase 4 overrides
-        them with live providers.
+        The stubs let the backtest run the layer in a reproducible way without
+        wiring real position / ATR / LOB sources.  Each substitution is logged
+        at WARNING, so a *production* caller that forgets one is visible rather
+        than silent; ``tests/unit/risk/test_provider_wiring.py`` additionally
+        pins that both risk-filter daemons pass a real
+        ``has_open_position_provider`` and, when the volatility block is
+        enabled, a real ``volatility_reference_provider``.
+
+        The volatility provider carries BOTH sides of its comparison in one
+        value object (:class:`~shared.risk.volatility_reference.VolatilityReference`),
+        so the historically dangerous half-wiring — a live ATR against a
+        ``0.0`` threshold, which rejects every entry — is not expressible here.
         """
         from shared.risk.filters.consecutive_loss import ConsecutiveLossFilter
         from shared.risk.filters.daily_mdd import DailyMDDFilter
@@ -188,17 +201,41 @@ class RiskFilterLayer:
         from shared.risk.filters.volatility import VolatilityFilter
         from shared.risk.filters.weekly_mdd import WeeklyMDDFilter
 
-        if current_atr_provider is None:
-
-            def current_atr_provider() -> float:
-                return 0.0
+        # Observability: each of the three stubs below is a silent fail-open
+        # no-op. Log once at build time so operators can tell 'inert because
+        # unwired' apart from 'active and passing' — same convention the
+        # ConcurrentPositionsFilter / LeverageFilter blocks further down use.
+        if volatility_reference_provider is None:
+            logger.warning(
+                "VolatilityFilter has no volatility-reference provider wired — "
+                "filter is inert (fail-open pass on every signal). Enable "
+                "risk[_stock].volatility in config/risk.yaml to arm it: that "
+                "one flag starts the per-symbol reference publisher AND wires "
+                "this provider, so the current ATR and its percentile "
+                "threshold always arrive together. There is deliberately no "
+                "ATR-only parameter — supplying a live ATR against the old "
+                "0.0 default threshold rejected every entry and halted ALL "
+                "trading."
+            )
 
         if current_spread_provider is None:
+            logger.warning(
+                "SpreadFilter has no spread provider wired — filter is inert "
+                "(fail-open pass on every signal)"
+            )
 
             def current_spread_provider() -> float:
                 return 0.0
 
         if has_open_position_provider is None:
+            logger.warning(
+                "OpenPositionFilter has no open-position provider wired — "
+                "filter is inert, and fail-DANGEROUS rather than merely "
+                "fail-open: the stub reports 'no position held' for every "
+                "symbol, so the duplicate-entry guard never fires. Wire "
+                "has_open_position_provider to the chain's positions hash (see "
+                "services/risk_filter and services/stock_risk_filter)."
+            )
 
             def has_open_position_provider(_symbol: str) -> bool:
                 return False
@@ -219,7 +256,7 @@ class RiskFilterLayer:
                 reduce_blocks_at_floor=config.reduce_blocks_at_floor,
             ),
             DailyTradeCountFilter(max_daily_trades=config.max_daily_trades),
-            VolatilityFilter(current_atr_provider=current_atr_provider),
+            VolatilityFilter(reference_provider=volatility_reference_provider),
             SpreadFilter(
                 max_spread_ticks=config.max_spread_ticks,
                 current_spread_provider=current_spread_provider,

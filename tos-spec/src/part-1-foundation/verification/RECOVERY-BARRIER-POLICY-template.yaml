@@ -1,0 +1,86 @@
+policy_id: TBD
+version: "TBD"
+generation: null
+status: DRAFT
+activation_state: NOT_ACTIVE
+content_digest: TBD
+canonicalization_version: TBD
+approved_by: []
+effective_from: null
+expires_at: null
+
+scope:
+  environments: []
+  safety_cells: []
+  recovery_domains: []
+  capacity_domains: []
+  accounts: []
+  brokers: []
+
+triggers:
+  required_trigger_classes: []
+  unknown_trigger_response: EXPAND_SCOPE_AND_CLOSE_BARRIER
+  dependency_graph_id: TBD
+  dependency_graph_generation: null
+  dependency_graph_digest: TBD
+
+barrier:
+  initial_state: CLOSED_RECOVERY
+  trigger_to_barrier_bound_ms: null
+  barrier_to_egress_bound_ms: null
+  stale_generation_response: DENY
+  unverifiable_generation_response: DENY
+  owner_epoch_fencing_required: true
+  final_egress_enforcement_required: true
+
+obligations:
+  required_types: []
+  missing_obligation_response: NOT_READY
+  cyclic_dependency_response: NOT_READY
+  timeout_response: NOT_READY
+  human_force_ready_permitted: false
+
+inventory_and_convergence:
+  required_sources: []
+  required_record_classes: []
+  source_continuity_required: true
+  pagination_completeness_required: true
+  intervening_event_capture_required: true
+  convergence_rules: []
+  missing_ack_is_non_acceptance: false
+  cancel_ack_is_final_quantity_proof: false
+  flat_snapshot_proves_completeness: false
+
+partial_recovery:
+  permitted: false
+  required_isolation_proofs: []
+  unknown_dependency_response: EXPAND_SCOPE
+  shared_capacity_permitted: false
+  shared_broker_resource_permitted: false
+
+readiness:
+  outcomes:
+    - READY
+    - READY_RESTRICTED
+    - NOT_READY
+  maximum_age_ms: null
+  material_change_invalidates: true
+  completion_may_rearm: false
+
+authority_effect:
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  may_rearm: false
+
+review:
+  independent_reviewer: TBD
+  evidence_location: TBD
+  approval_record: TBD
+
+authorization_notice: >-
+  This DRAFT policy is NOT_ACTIVE and grants no recovery readiness, capacity,
+  Live Authorization, broker transmission, HALT clearing, or re-arm authority.

@@ -1,0 +1,74 @@
+artifact_type: POST_TRADE_FINALITY_PROOF
+schema_version: "1.0-DRAFT"
+proof_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: UNKNOWN
+finality_class: UNKNOWN
+exact_binding:
+  post_trade_finality_policy_id: TBD
+  post_trade_finality_policy_generation: null
+  post_trade_finality_policy_digest: TBD
+  post_trade_obligation_generation: null
+  economic_obligation_id: TBD
+  economic_obligation_version: TBD
+  economic_obligation_digest: TBD
+  obligation_leg_id: TBD
+  broker_or_custodian_capability_profile_id: TBD
+  broker_or_custodian_capability_profile_version: TBD
+  broker_or_custodian_capability_profile_digest: TBD
+  statement_coverage_manifest_id: TBD
+  statement_coverage_manifest_digest: TBD
+  binding_complete: false
+scope:
+  scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+economic_fact:
+  account: TBD
+  legal_entity: TBD
+  instrument_or_asset_id: TBD
+  currency: TBD
+  quantity: null
+  amount: null
+  value_date: null
+  settlement_or_custody_location: TBD
+source_native_finality_claims: []
+field_confidence_and_corroboration: []
+source_continuity_and_revision_evidence: []
+statement_page_cursor_and_completeness_evidence: []
+correction_and_restatement_horizon:
+  horizon_key: TBD
+  horizon_satisfied: false
+  later_correction_possible: UNKNOWN
+trustworthy_time:
+  time_health_generation: null
+  receipt_anchor: null
+  maximum_age_key: MAX_post_trade_finality_proof_age_ms
+  age_within_approved_limit: false
+unresolved_common_modes: []
+unresolved_conditions: []
+finality_proven: false
+non_transferable: true
+consumer_union_permitted: false
+partial_refresh_permitted: false
+authority:
+  active: false
+  creates_external_economic_truth: false
+  creates_available_cash_or_assets: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_external_economic_transmission: false
+  clears_halt_latch_break_or_incident: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT proof is UNKNOWN and does not establish finality. Even a later
+  proven result is exact-leg evidence only; it never releases RCL capacity,
+  creates cash or asset availability, permits external transmission, restores
+  scope, or re-arms.
