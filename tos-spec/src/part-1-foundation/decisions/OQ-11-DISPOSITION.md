@@ -7,7 +7,7 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: 760c155cec3e13de539de0770d62dd6bef1603b90b96500f4682b36757bdaa38
+bound_set_digest: 98e91d7c2cb99881378689f08d4afbfa22ae1fb77feaa46ca3af470e92d162d6
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
@@ -18,7 +18,7 @@ authority: 운영자 (this repository's corpus owner)
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: 2d3e51605eb1c080772dd07aedd83c5d76b5db8e
+decided_at_head: 48ac7c38cbdc44f5bcff07d715eeb0cc1a223622
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
