@@ -7,7 +7,7 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: c14960bfe657cd398eb7835f0b86f164c46b313386ac65c33a9abdef6c7b234a
+bound_set_digest: d87e503245878ef8a71a9cf1d8918840aac06effe58c25c105590fb72d38307d
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
@@ -18,7 +18,7 @@ authority: 운영자 (this repository's corpus owner)
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: 61691fb39b3eb83fd6d22c07381bcfe881ab7a50
+decided_at_head: df72ae5bf8a22475570752bec9b8d9d317c691da
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
@@ -643,6 +643,25 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 > **이 재결속이 «주장하지 않는» 것**: 43차도 종결이 아니다.  §S-26 ② 카운터는 **네 판 연속 0**.
 > 두 축의 잔여(임계 이름 상수 · 접두 목록 밖 표기)는 **«미확인»으로 남겼다** — 두 번 좁혔다고
 > «닫혔다»고 적지 않는다.  `u17-verify` 의미 정합도 여전히 미이행이다.
+
+> **재결속 기록 (현행 사이클 — 2026-08-29, v2.22 내용 · 에라타 44차 이후 · 동결 트랙 재시작)**:
+> 같은 날 **다섯 번째**.  재심 #4(`d4356235`)는 **동결 주장을 실측으로 확인**했으나
+> findings 2건을 **둘 다 «신규 material»** 로 명시해 §S-26 ② 카운터가 **시작되지 않았다**.
+> 44차(`df72ae5b`)가 전건 처분했고 그 편집으로 **새 동결 블록**이 선다.
+> 이전 결속값: `bound_set_digest c14960bf…` · `requesting_plan_version v2.22` ·
+> `decided_at_head 61691fb3…`.  `requesting_plan_version` **v2.22 유지**(일곱 사이클 연속).
+> 계약 blob **`51129374b8f2…`** — 이 blob 이 «동일 입력» 구간의 기준이다.
+>
+> **44차의 성격이 앞의 넷과 다르다**: 처분의 본체가 **주장 축소**다.  `CAP-2`·`C4C` 는
+> «폐쇄 증명»이 아니라 **«회귀 탐지기»**로 격하됐고, 남는 잔여(펜스 안 예시 위양성 ·
+> 임계 이름 상수 · 접두 목록 밖 표기 · **아직 관측되지 않은 표기**)를 명시 등재했다.
+> 표기 정규화는 **표준 NFKC 에 위임**했고 새 기계는 만들지 않았다.
+>
+> **저작 중 자기 적발 기록**: 초안의 「펜스 배제」는 전제가 거짓이었고(규범 술어가 펜스 «안»에
+> 있다) 모집단을 4 → 1 로 줄였다 — self-test 가 «죽은 검사 2건»으로 잡아 철회했다.
+>
+> **다음**: 이 blob 을 동결한 채 **편집 없이 재심 두 번**.  신규 material 0 이 두 회 연속이면
+> §S-26 ② 가 성립한다.  카운터는 현재 **0**(이 편집으로 리셋).
 
 > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
 > `plan_scope_digest` 를 본문에 적으면
