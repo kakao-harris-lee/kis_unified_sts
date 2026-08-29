@@ -2325,6 +2325,47 @@ def _normalize_scan_text(text: str) -> str:
 #: 문서화 예시를 guard 형상으로 적으려면 manifest 가 지목한 픽스처 행에 두거나 표현을 바꾼다.
 
 
+#: 대조군 식별자 «형상» — `(ㅎ-4)`·`(ㅈ-1)` 처럼 «한글 한 자 + 하이픈 + 숫자».
+#: 45차 재심 #5 F1 처분: 픽스처 면제를 **행 전체**로 주면 그 행에 규범 셀을 하나 더 넣어
+#: 우회할 수 있다(실측).  면제는 **대조군 식별자를 가진 셀**에만 준다 — 목록이 아니라 형상이다.
+CONTROL_ID_RE = re.compile(r"\([ㄱ-ㅎ]-\d")
+
+
+def _fixture_row_id(line: str, fixture_rows: Sequence[str]) -> bool:
+    """이 행이 manifest 가 지목한 **픽스처 행 «정체»** 인가 — 접두 일치가 아니라 첫 셀 «완전일치».
+
+    45차 재심 #5 F1 실측: `startswith` 는 `| **T-84**-NORM |` 같은 **접두 네임스페이스**를
+    같은 행으로 읽어 통째로 면제했다.  정체는 **첫 셀의 완전일치**로만 성립한다.
+
+    Args:
+        line: 원문 한 행.
+        fixture_rows: manifest 가 선언한 픽스처 행 앵커(예: `| **T-84**`).
+
+    Returns:
+        픽스처 행이면 True.
+    """
+    cells = _split_cells(line)
+    if len(cells) < 2:
+        return False
+    first = cells[1][1].strip()
+    return any(first == anchor.lstrip("| ").strip() for anchor in fixture_rows)
+
+
+def _scan_chunks(line: str, fixture_rows: Sequence[str]) -> list[str]:
+    """훑을 조각 목록 — 픽스처 행이면 **대조군 셀만 빼고** 셀 단위로 돌려준다.
+
+    Args:
+        line: 원문 한 행.
+        fixture_rows: manifest 가 선언한 픽스처 행 앵커.
+
+    Returns:
+        훑을 텍스트 조각들.  픽스처 행이 아니면 `[line]` 하나.
+    """
+    if not _fixture_row_id(line, fixture_rows):
+        return [line]
+    return [c for _, c in _split_cells(line) if not CONTROL_ID_RE.search(c)]
+
+
 def _cap_guard_sites(
     doc: ContractDoc, fixture_rows: Sequence[str]
 ) -> list[tuple[int, list[str]]]:
@@ -2347,14 +2388,17 @@ def _cap_guard_sites(
     for lineno, line in enumerate(doc.lines, start=1):
         if doc.is_history_row(lineno):
             continue
-        if any(line.lstrip().startswith(anchor) for anchor in fixture_rows):
-            continue
-        cur = _normalize_scan_text(line)
         prev = _normalize_scan_text(doc.lines[lineno - 2]) if lineno >= 2 else ""
-        for m in GUARD_ARROW_RE.finditer(cur):
-            win = (prev + " " + cur[: m.start()])[-GUARD_WINDOW:]
-            if GUARD_CMP_RE.search(win) and GUARD_CAPNUM_RE.search(win):
-                out.append((lineno, [win]))
+        for chunk in _scan_chunks(line, fixture_rows):
+            cur = _normalize_scan_text(chunk)
+            hit = False
+            for m in GUARD_ARROW_RE.finditer(cur):
+                win = (prev + " " + cur[: m.start()])[-GUARD_WINDOW:]
+                if GUARD_CMP_RE.search(win) and GUARD_CAPNUM_RE.search(win):
+                    out.append((lineno, [win]))
+                    hit = True
+                    break
+            if hit:
                 break
     return out
 
@@ -5073,6 +5117,32 @@ def build_mutations() -> list[Mutation]:
             # 역방향 — 술어 형태(회차 리터럴 없음)는 조용해야 한다.  이것이 없으면 축이
             # «→ 를 담은 모든 문장»을 잡는 과잉 차단으로 퇴행해도 배터리가 통과한다.
             lambda t: _append(t, "다음 = 동결 → 운영자 재결속(O-6) → 현행 버전 재심."),
+        ),
+        # ---- CAP-2 4세대 — 픽스처 «셀 정체» (45차 · 재심 #5 F1) ---------------
+        # 44차의 행-앵커 면제는 `startswith` 였다.  접두 네임스페이스(`| **T-84**-NORM |`)와
+        # 그 행의 «새 셀» 둘 다 통째로 면제됐다(실측).  정체는 첫 셀 완전일치 + 대조군
+        # 식별자를 가진 «셀»에만 준다.
+        Mutation(
+            "CAP2-escape-fixture-row-prefix",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "| **T-84**-NORM | 신규 규범: `total_count > 1000` "
+                "→ `PREVENTION_UNVERIFIABLE` |",
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-new-cell-in-fixture-row",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            # 픽스처 «행» 안이라도 대조군 식별자가 없는 셀은 규범 술어로 읽힌다.
+            lambda t: _replace_line_once(
+                t,
+                "| **T-84** | **U-17 예방 통제 활성 증거**",
+                "| 신규 규범 | `total_count > 1000` → `PREVENTION_UNVERIFIABLE` |\n"
+                "| **T-84** | **U-17 예방 통제 활성 증거**",
+            ),
         ),
         # ---- CAP-2/C4C 3세대 — 표기 정규화·행 정체·양극성 (44차 · 재심 #4) -----
         # 이 판은 **양쪽 극성이 다 깨져 있었다**: 우회는 조용하고(6종) 예시는 red(2종).
