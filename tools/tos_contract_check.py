@@ -2328,7 +2328,10 @@ def _normalize_scan_text(text: str) -> str:
 #: 대조군 식별자 «형상» — `(ㅎ-4)`·`(ㅈ-1)` 처럼 «한글 한 자 + 하이픈 + 숫자».
 #: 45차 재심 #5 F1 처분: 픽스처 면제를 **행 전체**로 주면 그 행에 규범 셀을 하나 더 넣어
 #: 우회할 수 있다(실측).  면제는 **대조군 식별자를 가진 셀**에만 준다 — 목록이 아니라 형상이다.
-CONTROL_ID_RE = re.compile(r"\([ㄱ-ㅎ]-\d")
+#: **[46차 — 재심 #6 F2] 괄호를 «닫아야» 한다**: 45차 판은 여는 괄호만 봐서 `(ㅎ-4x` 같은
+#: 미닫힘 접두가 셀 전체 면제키가 됐다(실측).  문언이 정의한 형상은 닫힌 형태였고
+#: 구현이 그보다 넓었다 — **면제는 문언보다 넓으면 안 된다**.
+CONTROL_ID_RE = re.compile(r"\([ㄱ-ㅎ]-\d+[′']?\)")
 
 
 def _fixture_row_id(line: str, fixture_rows: Sequence[str]) -> bool:
@@ -2363,7 +2366,11 @@ def _scan_chunks(line: str, fixture_rows: Sequence[str]) -> list[str]:
     """
     if not _fixture_row_id(line, fixture_rows):
         return [line]
-    return [c for _, c in _split_cells(line) if not CONTROL_ID_RE.search(c)]
+    # **[46차 — 재심 #6 F1] 비면제 셀을 «이어 붙인다».**  45차 판은 셀마다 독립 문자열을
+    # 돌려줘서, 비교식과 결과 토큰을 **서로 다른 셀에 나눠 두면** 결합되지 않았다(실측).
+    # 셀 경계는 «면제의 단위»이지 «술어의 단위»가 아니다 — 남은 셀은 한 조각으로 훑는다.
+    kept = [c for _, c in _split_cells(line) if not CONTROL_ID_RE.search(c)]
+    return [" ".join(kept)] if kept else []
 
 
 def _cap_guard_sites(
@@ -3548,6 +3555,30 @@ def _strip_structural_term(old: str, new: str) -> Callable[[str], str]:
 
     def _mutate(text: str) -> str:
         return _replace_line_once(text, old, new)
+
+    return _mutate
+
+
+def _append_cell_to_fixture_row(suffix: str) -> Callable[[str], str]:
+    """픽스처 행(`| **T-84**` 로 시작하는 그 행)에 셀을 «추가»하는 뮤테이션을 만든다.
+
+    Args:
+        suffix: 행 끝에 붙일 셀 문자열(선행 공백 · 후행 `|` 포함).
+
+    Returns:
+        뮤테이션 함수.
+
+    Raises:
+        ContractParseError: 픽스처 행을 찾지 못하면 — 대조군이 조용히 무의미해지지 않도록.
+    """
+
+    def _mutate(text: str) -> str:
+        lines = text.split("\n")
+        for i, line in enumerate(lines):
+            if line.startswith("| **T-84** |"):
+                lines[i] = line + suffix
+                return "\n".join(lines)
+        raise ContractParseError("픽스처 행(`| **T-84** |`)을 찾지 못했다")
 
     return _mutate
 
@@ -5136,12 +5167,28 @@ def build_mutations() -> list[Mutation]:
             "CAP2-escape-new-cell-in-fixture-row",
             "TOS-CC-RULE-MISSING",
             "inject",
-            # 픽스처 «행» 안이라도 대조군 식별자가 없는 셀은 규범 술어로 읽힌다.
-            lambda t: _replace_line_once(
-                t,
-                "| **T-84** | **U-17 예방 통제 활성 증거**",
-                "| 신규 규범 | `total_count > 1000` → `PREVENTION_UNVERIFIABLE` |\n"
-                "| **T-84** | **U-17 예방 통제 활성 증거**",
+            # **[46차 교정]** 45차 판은 «별도 행»을 삽입해 이 경계를 검증하지 «못했다»
+            # (재심 #6 이 그 대조군의 결함을 짚었다).  실제 픽스처 행에 셀을 «추가»한다.
+            _append_cell_to_fixture_row(
+                " 신규 규범: `total_count > 1000` → `PREVENTION_UNVERIFIABLE` |"
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-guard-split-across-cells",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            # 셀 경계로 술어를 쪼개는 우회(재심 #6 F1).
+            _append_cell_to_fixture_row(
+                " `total_count > 1000` | → `PREVENTION_UNVERIFIABLE` |"
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-unclosed-control-id",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            # 미닫힘 식별자 접두가 면제키가 되는 우회(재심 #6 F2).
+            _append_cell_to_fixture_row(
+                " (ㅎ-4x 신규 규범: `total_count > 1000` → `PREVENTION_UNVERIFIABLE` |"
             ),
         ),
         # ---- CAP-2/C4C 3세대 — 표기 정규화·행 정체·양극성 (44차 · 재심 #4) -----
