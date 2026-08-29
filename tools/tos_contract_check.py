@@ -2297,12 +2297,6 @@ GUARD_WINDOW = 300
 #: 인라인 HTML 주석 — 렌더링에 보이지 «않으므로» 술어 판별에서 제거한다.
 #: 44차 재심 #4 F2 실측: `다음 단계<!-- … -->=44차` 가 주석 하나로 우주 밖이었다.
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
-#: HTML 태그 — `<span hidden>`·`<template>` 처럼 **렌더링을 숨기는 운반체**가 식별자를
-#: 나를 수 있다(48차 재심 #8 실측).  47차는 «주석» 한 형상만 고쳐 놓고 문언은 «비가시
-#: 문자열» 전부를 주장했다 — **문언이 능력보다 넓으면 그것이 결함**이다.
-#: **면제 판별에서만** 태그를 벗긴다(가드 탐지 창에는 적용하지 않는다 — 과잉 제거가
-#: 술어를 가리는 방향으로는 절대 작동하지 않게 한다: 여기서의 과잉은 «면제 축소» 뿐이다).
-HTML_TAG_RE = re.compile(r"<[^<>]{0,200}>")
 
 
 def _normalize_scan_text(text: str) -> str:
@@ -2361,14 +2355,14 @@ def _fixture_row_id(line: str, fixture_rows: Sequence[str]) -> bool:
 
 
 def _scan_chunks(line: str, fixture_rows: Sequence[str]) -> list[str]:
-    """훑을 조각 목록 — 픽스처 행이면 **대조군 셀만 빼고** 셀 단위로 돌려준다.
+    """훑을 조각 목록 — 픽스처 행은 «통째로» 면제되어 빈 목록이다.
 
     Args:
         line: 원문 한 행.
         fixture_rows: manifest 가 선언한 픽스처 행 앵커.
 
     Returns:
-        훑을 텍스트 조각들.  픽스처 행이 아니면 `[line]` 하나.
+        훑을 텍스트 조각들.  픽스처 행이면 빈 목록, 아니면 `[line]` 하나.
     """
     if not _fixture_row_id(line, fixture_rows):
         return [line]
@@ -2461,29 +2455,98 @@ def read_fixture_row_baseline(path: Path) -> dict[str, int]:
     return out
 
 
-def check_fixture_row_shape(
-    doc: ContractDoc, fixture_rows: Sequence[str], baseline: Path
-) -> list[Violation]:
-    """픽스처 행의 **셀 수 래칫** — 면제받는 행에 셀을 더하면 red.
+FixtureRowShape = namedtuple("FixtureRowShape", ["lineno", "cells"])
 
-    48차 재심 #8 처분.  면제의 정체를 «내용»에서 «수»로 옮긴 축이며, 이것이 없으면
-    픽스처 행 전체 면제가 곧 무료 우회키다.
+
+def derive_fixture_row_cells(
+    doc: ContractDoc, fixture_rows: Sequence[str]
+) -> dict[str, FixtureRowShape]:
+    """픽스처 행의 «자리와 셀 수»를 구조에서 파생한다 (측정의 유일 소스).
+
+    문서든 출처 blob 이든 **이 함수로만** 잰다 — 두 경로로 재면 «무엇을 재는가»가
+    조용히 갈라진다 (`count_unanchored_in_text` 가 계수 축에 세운 같은 규율).
+
+    Args:
+        doc: 잴 대상 문서 컨텍스트.
+        fixture_rows: manifest 가 선언한 픽스처 행 앵커.
+
+    Returns:
+        앵커 → `(행번호, 셀 수)`.
+
+    Raises:
+        ContractParseError: 어떤 앵커가 정확히 1회가 아니면 — 0회는 픽스처 행 소실,
+            2회 이상은 앵커가 행을 특정하지 못한다.  둘 다 «수»를 잴 수 없는 상태다.
+    """
+    out: dict[str, FixtureRowShape] = {}
+    for anchor in fixture_rows:
+        shapes = [
+            FixtureRowShape(lineno, len(_split_cells(line)))
+            for lineno, line in enumerate(doc.lines, start=1)
+            if _fixture_row_id(line, [anchor])
+        ]
+        seen = len(shapes)
+        if seen != 1:
+            raise ContractParseError(
+                f"픽스처 행 {anchor!r} 가 문서에 {seen}회 — 정확히 1회여야 한다"
+            )
+        out[anchor] = shapes[0]
+    return out
+
+
+def check_fixture_row_shape(
+    doc: ContractDoc,
+    fixture_rows: Sequence[str],
+    baseline: Path,
+    repo_root: Path,
+) -> list[Violation]:
+    """픽스처 행의 **셀 수 래칫** — 기준은 기입 정수가 아니라 «측정 출처 blob» 이다.
+
+    48차 판은 문서 행의 셀 수를 기준선 파일의 «정수»와만 견줬다.  그 둘은 같은 커밋에서
+    함께 편집할 수 있으므로, 셀을 더하면서 기준값도 같이 올리면 위반이 0 건이었다
+    (49차 재심 #9 실측).  48차 문언은 그것을 「C2U 래칫과 같은 규율」이라 적었지만
+    **C2U 는 그 규율을 산문이 아니라 기계(`check_c2up`)로 진다** — 문언이 능력보다
+    넓었다.  그래서 여기에 같은 다리를 놓는다: `measured_against` 가 가리키는 **불변
+    blob** 을 다시 재고, **기입값과 워킹트리 행을 둘 다** 그 blob 에 대조한다.
+    기입 정수는 더 이상 권위가 아니라 «검증 대상 주장»이다.
+
+    **닫히지 «않는» 자리(등재)**: 핀을 «셀이 이미 늘어난 커밋»으로 옮기면 통과한다.
+    그 전이가 정당한지 세탁인지는 기계가 구별하지 못한다 — 구별하는 것은 그것이
+    diff 에 보이는 사람의 기록 행위라는 사실뿐이고, C2U 가 사는 체제와 같다.
 
     Args:
         doc: 계약 문서 컨텍스트.
         fixture_rows: manifest 가 선언한 픽스처 행 앵커.
         baseline: 기준선 JSON 경로.
+        repo_root: 측정 출처 blob 을 읽을 저장소 루트.
 
     Returns:
         위반 목록.
     """
+
+    def fail(message: str, line: int = 0) -> list[Violation]:
+        return [Violation("TOS-CC-CAP2-FIXTURE", doc.display_path, line, message)]
+
     try:
-        expected = read_fixture_row_baseline(baseline)
+        record = read_unanchored_baseline(baseline)
+        source = read_baseline_source(repo_root, record)
+        blob = derive_fixture_row_cells(ContractDoc(source, "<blob>"), fixture_rows)
     except ContractParseError as exc:
-        return [Violation("TOS-CC-CAP2-FIXTURE", doc.display_path, 0, str(exc))]
+        return fail(f"면제받는 행의 «수»를 측정 출처에서 재지 못했다 — {exc}")
+
+    origin = (
+        f"{record.commit}:{record.path}"
+        if record.kind == BASELINE_KIND_COMMIT
+        else f"워킹트리 {record.path}"
+    )
+
+    try:
+        recorded = read_fixture_row_baseline(baseline)
+    except ContractParseError as exc:
+        return fail(str(exc))
+
     out: list[Violation] = []
     for anchor in fixture_rows:
-        want = expected.get(anchor)
+        want = recorded.get(anchor)
         if want is None:
             out.append(
                 Violation(
@@ -2495,31 +2558,38 @@ def check_fixture_row_shape(
                 )
             )
             continue
-        seen = 0
-        for lineno, line in enumerate(doc.lines, start=1):
-            if not _fixture_row_id(line, [anchor]):
-                continue
-            seen += 1
-            got = len(_split_cells(line))
-            if got != want:
-                out.append(
-                    Violation(
-                        "TOS-CC-CAP2-FIXTURE",
-                        doc.display_path,
-                        lineno,
-                        f"픽스처 행 {anchor!r} 의 셀 수가 기준선과 다르다 "
-                        f"(기준선 {want} · 실측 {got}) — 면제받는 행에 셀이 늘거나 줄었다",
-                    )
-                )
-        if seen != 1:
+        if want != blob[anchor].cells:
             out.append(
                 Violation(
                     "TOS-CC-CAP2-FIXTURE",
                     doc.display_path,
                     0,
-                    f"픽스처 행 {anchor!r} 가 문서에 {seen}회 — 정확히 1회여야 한다",
+                    f"기준선의 자기 주장이 거짓이다 — "
+                    f"'{BASELINE_FIXTURE_KEY}[{anchor!r}]'={want} 이지만 {origin} 을 "
+                    f"다시 재면 {blob[anchor].cells} 다 "
+                    "(워킹트리를 재고 커밋 이름만 적었을 때 나타나는 형태)",
                 )
             )
+
+    try:
+        actual = derive_fixture_row_cells(doc, fixture_rows)
+    except ContractParseError as exc:
+        return out + fail(f"면제받는 행의 «수»를 문서에서 재지 못했다 — {exc}")
+
+    for anchor in fixture_rows:
+        if actual[anchor].cells == blob[anchor].cells:
+            continue
+        out.append(
+            Violation(
+                "TOS-CC-CAP2-FIXTURE",
+                doc.display_path,
+                actual[anchor].lineno,
+                f"픽스처 행 {anchor!r} 의 셀 수가 측정 출처와 다르다 "
+                f"(출처 {blob[anchor].cells} · 실측 {actual[anchor].cells}) — "
+                "면제받는 행에 셀이 늘거나 줄었다.  정당한 변경이면 "
+                "`--measure-baseline <sha>` 로 **provenance 전이**를 기록하라",
+            )
+        )
     return out
 
 
@@ -2845,13 +2915,21 @@ def check_rule_vocabulary(
     return out
 
 
-def _rule_baseline_path() -> Path:
-    """RULE 축이 쓰는 기준선 파일 경로 (C2U 와 같은 파일 — 계수의 자리는 하나다)."""
-    return default_baseline_path()
+def check_rule(
+    doc: ContractDoc, manifest_path: Path, baseline: Path, repo_root: Path
+) -> list[Violation]:
+    """RULE — manifest 가 등재한 각 규칙의 우주 ↔ 소비처를 전수 대조한다.
 
+    Args:
+        doc: 계약 문서 컨텍스트.
+        manifest_path: RULE 축 manifest 경로.
+        baseline: 기준선 JSON 경로 — 픽스처 행 셀 수 축이 쓴다.  종래 이 축은 인자를
+            무시하고 항상 기본 경로를 써서 `--baseline` 이 닿지 않았다(49차 관측 처분).
+        repo_root: 측정 출처 blob 을 읽을 저장소 루트.
 
-def check_rule(doc: ContractDoc, manifest_path: Path) -> list[Violation]:
-    """RULE — manifest 가 등재한 각 규칙의 우주 ↔ 소비처를 전수 대조한다."""
+    Returns:
+        위반 목록.
+    """
     manifest, violations = load_manifest(manifest_path)
     if manifest is None:
         return violations
@@ -2876,7 +2954,7 @@ def check_rule(doc: ContractDoc, manifest_path: Path) -> list[Violation]:
         )
         return violations
     fixture_rows = [str(x) for x in rows]
-    violations.extend(check_fixture_row_shape(doc, fixture_rows, _rule_baseline_path()))
+    violations.extend(check_fixture_row_shape(doc, fixture_rows, baseline, repo_root))
 
     rules = manifest["rules"]
     assert isinstance(rules, list)
@@ -3466,6 +3544,45 @@ def _manifest_step_prefixes(manifest_path: Path) -> list[str]:
     return [str(x) for x in raw if isinstance(x, str)]
 
 
+def _manifest_fixture_rows(manifest_path: Path) -> list[str]:
+    """manifest 에서 픽스처 행 앵커 정본을 읽는다 — 부재·형태 위반은 fail-closed.
+
+    `check_rule` 과 달리 여기서는 «위반 목록»을 낼 자리가 없다(픽스처 구성·기준선 측정
+    경로다).  그래서 조용히 빈 목록으로 접지 않고 시끄럽게 실패한다 — 앵커를 잃은 채
+    구성된 픽스처는 새 축을 통째로 장식으로 만든다.
+
+    Args:
+        manifest_path: RULE 축 manifest 경로.
+
+    Returns:
+        픽스처 행 앵커 목록.
+
+    Raises:
+        ContractParseError: 읽기 실패 또는 `fixture_rows` 형태 위반.
+    """
+    if yaml is None:
+        raise ContractParseError(
+            f"PyYAML 을 임포트하지 못했다 — manifest 를 읽을 수 없다: {YAML_IMPORT_ERROR}"
+        )
+    try:
+        data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ContractParseError(
+            f"manifest 를 읽지 못했다 ({manifest_path}): {exc}"
+        ) from exc
+    rows = data.get("fixture_rows") if isinstance(data, dict) else None
+    if (
+        not isinstance(rows, list)
+        or not rows
+        or not all(isinstance(x, str) and x.strip() for x in rows)
+    ):
+        raise ContractParseError(
+            f"manifest 에 `fixture_rows` 가 비지 않은 문자열 목록으로 없다 "
+            f"({manifest_path})"
+        )
+    return [str(x) for x in rows]
+
+
 def check_document(
     text: str,
     display_path: str,
@@ -3511,7 +3628,7 @@ def check_document(
         ("C3", check_c3),
         ("C4", check_c4),
         ("C4C", lambda d: check_c4c(d, _manifest_step_prefixes(manifest))),
-        ("RULE", lambda d: check_rule(d, manifest)),
+        ("RULE", lambda d: check_rule(d, manifest, baseline, root)),
         ("REF", lambda d: check_ref_rejected(d, manifest, root)),
         ("CLOSED-TABLE", lambda d: check_closed_tables(d, manifest, baseline)),
     )
@@ -3623,6 +3740,7 @@ FIXTURE_STALE_COUNT = "stale-count"  # 출처는 참이나 개수가 blob 과 �
 FIXTURE_BAD_COMMIT = "bad-commit"  # 움직이는 ref
 FIXTURE_NO_PROVENANCE = "no-provenance"  # 출처 필드 자체가 없다
 FIXTURE_NO_CLOSED_ROWS = "no-closed-rows"  # 닫힌 표의 행 수 기준선이 없다
+FIXTURE_FIXTURE_CELLS_BUMPED = "fixture-cells-bumped"  # 셀 수 기입값만 출처보다 크다
 
 #: RULE 축 manifest 픽스처 키.  기준선 픽스처와 «축»이 다르므로 별도 사상에 둔다.
 MFIXTURE_MISSING = "m-missing"  # 파일 자체가 없다 (부재를 «0 위반»으로 접지 않는다)
@@ -5455,6 +5573,34 @@ def build_mutations() -> list[Mutation]:
                 "→ `PREVENTION_UNVERIFIABLE` |"
             ),
         ),
+        # ---- CAP-2 5세대 — 셀 수의 «기준»이 출처 blob 인가 (49차 · 재심 #9) ------
+        Mutation(
+            "CAP2-FIXTURE-baseline-disagrees-with-blob",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # 출처 blob 은 참인데 «기입값만» 다르다 = 워킹트리를 재고 커밋 이름만 적은
+            # 형태.  실운용 기준선이 실제로 그 형태였다(핀의 T-84 는 15셀인데 기입값은
+            # 17 이었다) — C2UP 가 계수 축에서 잡는 그 형상의 셀 수 축 짝이다.
+            lambda t: t,
+            None,
+            FIXTURE_FIXTURE_CELLS_BUMPED,
+            FIXTURE_PROVENANCE_OK,
+        ),
+        Mutation(
+            "CAP2-escape-new-cell-with-baseline-bumped",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # **재심 #9 이 이름 지어 요구한 paired mutant**: 문서에 셀을 더하면서 기준값도
+            # «함께» 올리는 우회.  48차 판은 두 값을 서로 견줬으므로 이 짝맞춤이 위반
+            # 0건이었다(실측).  기준이 불변 blob 이면 둘을 함께 올려도 red 다 —
+            # 기준선 픽스처가 양쪽 실행에서 같으므로 늘어나는 것은 «문서 쪽 다리»뿐이다.
+            _append_cell_to_fixture_row(
+                " 신규 규범: `total_count > 1000` → `PREVENTION_UNVERIFIABLE` |"
+            ),
+            None,
+            FIXTURE_FIXTURE_CELLS_BUMPED,
+            FIXTURE_FIXTURE_CELLS_BUMPED,
+        ),
         Mutation(
             "C4C-escape-no-space-separator",
             "TOS-CC-C4C",
@@ -5974,7 +6120,11 @@ def _write_fixture(path: Path, payload: dict[str, object]) -> Path:
 
 
 def build_baseline_fixtures(
-    text: str, tmpdir: Path, real_baseline: Path, repo_root: Path
+    text: str,
+    tmpdir: Path,
+    real_baseline: Path,
+    repo_root: Path,
+    manifest_path: Path,
 ) -> dict[str | None, Path]:
     """대조군이 요구하는 기준선 픽스처들을 만든다.
 
@@ -5992,6 +6142,7 @@ def build_baseline_fixtures(
         tmpdir: 픽스처를 쓸 임시 디렉터리.
         real_baseline: 실운용 기준선 경로 (출처 필드를 빌려온다).
         repo_root: 출처 blob 을 읽을 저장소 루트.
+        manifest_path: 픽스처 행 앵커 정본(RULE 축 manifest) 경로.
 
     Returns:
         픽스처 키 → 경로 사상 (`None` 은 실운용 경로).
@@ -6008,11 +6159,24 @@ def build_baseline_fixtures(
     }
     # 검증과 같은 리더를 쓴다 — 픽스처의 기대값을 다른 경로로 만들면 «무엇을 재는가»가
     # 조용히 갈라져 C2UP 대조군이 자기 자신을 검증하게 된다.
-    blob_count = count_unanchored_in_text(read_baseline_source(repo_root, record))
+    source = read_baseline_source(repo_root, record)
+    blob_count = count_unanchored_in_text(source)
     # 닫힌 표 계수는 «한 가지만 바꾼다» 규율에 따라 실운용 값을 그대로 물려준다 —
     # 물려주지 않으면 모든 기준선 픽스처가 CLOSED-1 축에서 함께 red 가 되어, 어느
     # 술어가 잡았는지 알 수 없어진다.
     closed = {BASELINE_CLOSED_TABLE_KEY: read_closed_table_baseline(real_baseline)}
+    # 픽스처 행 셀 수도 같은 규율이다 — 48차는 이 키를 «필수»로 만들면서 상속을 하지
+    # 않아 모든 기준선 픽스처가 CAP2-FIXTURE 축에서 함께 red 였다(49차 부수 적발).
+    # 값은 계수와 **같은 자리에서 같은 소스**(출처 blob)로 잰다.
+    fixture_anchors = _manifest_fixture_rows(manifest_path)
+    blob_cells = derive_fixture_row_cells(
+        ContractDoc(source, "<blob>"), fixture_anchors
+    )
+    fixture_cells = {BASELINE_FIXTURE_KEY: {a: s.cells for a, s in blob_cells.items()}}
+    # 셀 수 «기입값만» 출처보다 큰 기준선 — 문서는 건드리지 않는다.  「워킹트리를 재고
+    # 커밋 이름만 적은」 형태의 직접 대조군이고, 문서 변이와 짝지으면 「셀 추가와 기준값
+    # 갱신을 함께 하는」 우회(재심 #9)를 재현한다.
+    bumped = {BASELINE_FIXTURE_KEY: {a: s.cells + 1 for a, s in blob_cells.items()}}
 
     return {
         None: real_baseline,
@@ -6022,6 +6186,7 @@ def build_baseline_fixtures(
                 BASELINE_UNANCHORED_KEY: count_unanchored_in_text(text),
                 BASELINE_PROVENANCE_KEY: prov,
                 **closed,
+                **fixture_cells,
             },
         ),
         FIXTURE_MISSING: tmpdir / "there-is-no-such-file.json",
@@ -6032,6 +6197,7 @@ def build_baseline_fixtures(
                 BASELINE_UNANCHORED_KEY: blob_count,
                 BASELINE_PROVENANCE_KEY: prov,
                 **closed,
+                **fixture_cells,
             },
         ),
         FIXTURE_STALE_COUNT: _write_fixture(
@@ -6040,6 +6206,7 @@ def build_baseline_fixtures(
                 BASELINE_UNANCHORED_KEY: blob_count + 1,
                 BASELINE_PROVENANCE_KEY: prov,
                 **closed,
+                **fixture_cells,
             },
         ),
         FIXTURE_BAD_COMMIT: _write_fixture(
@@ -6052,17 +6219,31 @@ def build_baseline_fixtures(
                     "path": record.path,
                 },
                 **closed,
+                **fixture_cells,
             },
         ),
         FIXTURE_NO_PROVENANCE: _write_fixture(
             tmpdir / "no-provenance.json",
-            {BASELINE_UNANCHORED_KEY: blob_count, **closed},
+            {BASELINE_UNANCHORED_KEY: blob_count, **closed, **fixture_cells},
         ),
         # 닫힌 표 계수만 빠진 기준선 — 나머지는 실운용과 같다.  부재를 «0 위반»으로
         # 접으면 CLOSED-1 축이 장식이 된다.
         FIXTURE_NO_CLOSED_ROWS: _write_fixture(
             tmpdir / "no-closed-rows.json",
-            {BASELINE_UNANCHORED_KEY: blob_count, BASELINE_PROVENANCE_KEY: prov},
+            {
+                BASELINE_UNANCHORED_KEY: blob_count,
+                BASELINE_PROVENANCE_KEY: prov,
+                **fixture_cells,
+            },
+        ),
+        FIXTURE_FIXTURE_CELLS_BUMPED: _write_fixture(
+            tmpdir / "fixture-cells-bumped.json",
+            {
+                BASELINE_UNANCHORED_KEY: blob_count,
+                BASELINE_PROVENANCE_KEY: prov,
+                **closed,
+                **bumped,
+            },
         ),
     }
 
@@ -6094,7 +6275,7 @@ def run_self_test(
     with tempfile.TemporaryDirectory(prefix="tos-contract-selftest-") as tmp:
         try:
             fixtures = build_baseline_fixtures(
-                text, Path(tmp), baseline_path, repo_root
+                text, Path(tmp), baseline_path, repo_root, manifest_path
             )
             manifests = build_manifest_fixtures(Path(tmp), manifest_path)
         except ContractParseError as exc:
@@ -6434,17 +6615,24 @@ def _run_battery(
 # ============================================================================
 
 
-def measure_baseline(repo_root: Path, rev: str, rel_path: str) -> int:
-    """`rev` 의 blob 에서 미앵커 좌표를 재어 붙여넣을 JSON 조각을 출력한다.
+def measure_baseline(
+    repo_root: Path, rev: str, rel_path: str, manifest_path: Path
+) -> int:
+    """`rev` 의 blob 에서 기준선 값들을 재어 붙여넣을 JSON 조각을 출력한다.
 
     **파일을 쓰지 않는다.**  래칫의 기준선 갱신은 사람의 기록 행위여야 하므로, 이
     명령은 «워킹트리가 아니라 커밋 blob 에서 재는» 절차만 기계화하고 기입은 사람에게
     남긴다.  ref 는 여기서 즉시 불변 sha 로 해소해 출력한다.
 
+    재는 키는 미앵커 좌표 계수와 픽스처 행 셀 수 **둘**이다.  후자를 내지 않으면 사람의
+    기록 행위가 그 키를 만들 수 없어 «기입은 사람이 한다»는 규율이 그 축에서만 공허해진다.
+    재지 «않는» 키는 출력 말미에 명시한다 — 통째로 붙여넣으면 그 키가 사라진다.
+
     Args:
         repo_root: 저장소 루트.
         rev: 측정할 리비전 (ref 도 받아 sha 로 해소한다).
         rel_path: 저장소 상대 계약 문서 경로.
+        manifest_path: 픽스처 행 앵커 정본(RULE 축 manifest) 경로.
 
     Returns:
         종료 코드 — 0 성공, 2 측정 실패.
@@ -6474,7 +6662,16 @@ def measure_baseline(repo_root: Path, rev: str, rel_path: str) -> int:
             sha = proc.stdout.decode().strip()
             record = BaselineRecord(0, BASELINE_KIND_COMMIT, sha, rel_path)
             origin = f"{sha[:8]}:{rel_path} blob"
-        count = count_unanchored_in_text(read_baseline_source(repo_root, record))
+        source = read_baseline_source(repo_root, record)
+        count = count_unanchored_in_text(source)
+        # 검사가 쓰는 것과 **같은 파생**으로 잰다 — 다른 경로로 만들면 이 명령이 내는
+        # 값과 검사기가 재는 값이 조용히 갈라진다.
+        cells = {
+            anchor: shape.cells
+            for anchor, shape in derive_fixture_row_cells(
+                ContractDoc(source, "<blob>"), _manifest_fixture_rows(manifest_path)
+            ).items()
+        }
     except ContractParseError as exc:
         print(f"tos-contract: ERROR — 기준선 측정 실패: {exc}")
         return 2
@@ -6485,10 +6682,16 @@ def measure_baseline(repo_root: Path, rev: str, rel_path: str) -> int:
     payload = {
         BASELINE_PROVENANCE_KEY: prov,
         BASELINE_UNANCHORED_KEY: count,
+        BASELINE_FIXTURE_KEY: cells,
     }
     print(f"tos-contract: {origin} 실측 미앵커 좌표 = {count}자리")
+    print(f"tos-contract: {origin} 실측 픽스처 행 셀 수 = {cells}")
     print("아래를 기준선 파일에 «사람이» 반영하라 (이 명령은 파일을 쓰지 않는다):")
     print(json.dumps(payload, ensure_ascii=False, indent=2))
+    print(
+        f"이 명령이 재지 «않는» 키: '{BASELINE_CLOSED_TABLE_KEY}' — "
+        "위 조각을 통째로 붙여넣으면 그 키가 사라진다(기존 값을 남겨 두라)."
+    )
     return 0
 
 
@@ -6591,7 +6794,7 @@ def main(argv: list[str] | None = None) -> int:
     baseline_path = (args.baseline or default_baseline_path()).resolve()
     manifest_path = (args.manifest or repo_root / DEFAULT_MANIFEST_PATH).resolve()
     if args.measure_baseline:
-        return measure_baseline(repo_root, args.measure_baseline, rel)
+        return measure_baseline(repo_root, args.measure_baseline, rel, manifest_path)
 
     notices: list[str] = []
     try:

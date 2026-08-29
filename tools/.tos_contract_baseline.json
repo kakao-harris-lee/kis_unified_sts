@@ -2,7 +2,7 @@
   "measured_against": {
     "kind": "commit",
     "path": "docs/plans/2026-08-12-tos-phase0-completion-contract-design.md",
-    "commit": "12e29ef0909c4f42de7687af9e842a573014393e"
+    "commit": "5fc3ac009258e7d4079c711a9ff1beed3a8d6f5b"
   },
   "unanchored_self_citations": 67,
   "closed_table_rows": {
