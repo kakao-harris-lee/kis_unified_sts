@@ -2369,7 +2369,15 @@ def _scan_chunks(line: str, fixture_rows: Sequence[str]) -> list[str]:
     # **[46차 — 재심 #6 F1] 비면제 셀을 «이어 붙인다».**  45차 판은 셀마다 독립 문자열을
     # 돌려줘서, 비교식과 결과 토큰을 **서로 다른 셀에 나눠 두면** 결합되지 않았다(실측).
     # 셀 경계는 «면제의 단위»이지 «술어의 단위»가 아니다 — 남은 셀은 한 조각으로 훑는다.
-    kept = [c for _, c in _split_cells(line) if not CONTROL_ID_RE.search(c)]
+    # **[47차 — 재심 #7]** 식별자 탐색은 **주석을 제거한 뒤**에 한다.  47차 이전 판은 원문
+    # 셀에서 먼저 찾아, `<!-- (ㅎ-4) -->` 처럼 **렌더링되지 않는** 식별자가 셀 전체를 면제로
+    # 승격시켰다(실측).  **비가시 문자열은 정체를 부여하지 못한다** — 면제는 문언보다 넓으면
+    # 안 된다는 46차 ⓑ 규율의 같은 적용이다.
+    kept = [
+        c
+        for _, c in _split_cells(line)
+        if not CONTROL_ID_RE.search(HTML_COMMENT_RE.sub(" ", c))
+    ]
     return [" ".join(kept)] if kept else []
 
 
@@ -5180,6 +5188,16 @@ def build_mutations() -> list[Mutation]:
             # 셀 경계로 술어를 쪼개는 우회(재심 #6 F1).
             _append_cell_to_fixture_row(
                 " `total_count > 1000` | → `PREVENTION_UNVERIFIABLE` |"
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-comment-hidden-control-id",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            # 비가시(HTML 주석) 식별자로 셀 전체를 면제시키는 우회(재심 #7 F1).
+            _append_cell_to_fixture_row(
+                " 신규 규범 <!-- (ㅎ-4) --> `total_count > 1000` "
+                "→ `PREVENTION_UNVERIFIABLE` |"
             ),
         ),
         Mutation(
