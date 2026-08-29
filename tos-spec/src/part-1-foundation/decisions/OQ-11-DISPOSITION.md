@@ -7,7 +7,7 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: 4d8c4ae3c296b363223b41c01d819b07a3dfca0b0663638dfec0d5ce31873f0b
+bound_set_digest: c14960bfe657cd398eb7835f0b86f164c46b313386ac65c33a9abdef6c7b234a
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
@@ -18,7 +18,7 @@ authority: 운영자 (this repository's corpus owner)
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: b6e78961bdce90dbe1dabee1a7964509fe1c8f27
+decided_at_head: 61691fb39b3eb83fd6d22c07381bcfe881ab7a50
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
@@ -625,6 +625,24 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 > **이 재결속이 «주장하지 않는» 것**: 42차도 **종결이 아니다.**  §S-26 ② 카운터는 **세 판 연속
 > 0**이고, 두 축의 잔여(임계 이름 상수 · 형제 표기 목록 «밖»)는 **닫혔다고 적지 않았다**.
 > `u17-verify` 의미 정합은 여전히 미이행이며 U-17 완료를 막는다.
+
+> **재결속 기록 (현행 사이클 — 2026-08-29, v2.22 내용 · 에라타 43차 이후)**: 같은 날 **네 번째**.
+> 재심 #3(`cb70c939` · findings **3**)을 43차(`61691fb3`)가 전건 처분했다.  이전 결속값:
+> `bound_set_digest 4d8c4ae3c296b363223b41c01d819b07a3dfca0b0663638dfec0d5ce31873f0b` ·
+> `requesting_plan_version v2.22` · `decided_at_head b6e78961bdce90dbe1dabee1a7964509fe1c8f27`.
+> `requesting_plan_version` **v2.22 유지**(여섯 사이클 연속).
+>
+> **세 판정의 궤적(정직 기록)**: findings **4 → 2 → 3**.  줄지 않은 회차가 있고, 그 이유는
+> **처분이 만든 새 표면**이다 — 41차가 만든 두 축을 42차가 좁혔고 43차가 다시 좁혔다.
+> 심판은 그 궤적을 「표기 의존은 한 번 걷어내서 끝나지 않는다」로 요약했고 그것이 정확하다.
+>
+> **심판이 확인해 준 것(비-차단)**: R-3 의 살아 있는 sha 핀 **10곳 전부 일치** ·
+> §S-26 은 **동일 입력을 동결하면 이론상 수렴 가능**하며 «N 판 연속 0» 은 진전이 아니라
+> **매 편집마다 리셋됐다는 뜻**이라는 독법.
+>
+> **이 재결속이 «주장하지 않는» 것**: 43차도 종결이 아니다.  §S-26 ② 카운터는 **네 판 연속 0**.
+> 두 축의 잔여(임계 이름 상수 · 접두 목록 밖 표기)는 **«미확인»으로 남겼다** — 두 번 좁혔다고
+> «닫혔다»고 적지 않는다.  `u17-verify` 의미 정합도 여전히 미이행이다.
 
 > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
 > `plan_scope_digest` 를 본문에 적으면
