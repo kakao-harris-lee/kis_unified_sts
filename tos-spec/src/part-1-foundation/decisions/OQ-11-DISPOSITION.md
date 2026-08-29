@@ -7,7 +7,7 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: c76f27ce7cb3bd7933bd041fef1be45ea17096b734aa4d0a43342a1e95eccdea
+bound_set_digest: 4d8c4ae3c296b363223b41c01d819b07a3dfca0b0663638dfec0d5ce31873f0b
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
@@ -18,7 +18,7 @@ authority: 운영자 (this repository's corpus owner)
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: e88960f8fe8311002d6e4c31aa5a7ae31c9f502f
+decided_at_head: b6e78961bdce90dbe1dabee1a7964509fe1c8f27
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
@@ -600,6 +600,31 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 > §S-26 ② 카운터는 **이 편집으로 다시 0**이고(두 판 연속 0), **F1 은 «해소»가 아니라 축소된
 > 주장**이다 — `u17-verify` 의 의미 정합은 미이행으로 남아 U-17 완료를 막는다.  R-3 정밀화는
 > **선택자**를 고쳤을 뿐 approve 를 만들지 않는다.
+
+> **재결속 기록 (현행 사이클 — 2026-08-29, v2.22 내용 · 에라타 42차 이후)**: 같은 날 **세 번째**다.
+> 41차 판(`4831da3b` 결속)에 대한 재심 #2 가 **`needs-attention`**(findings **4 → 2** ·
+> `docs/reviews/phase0-completion-contract/20260829-152144/verdict.md`)을 냈고 42차(`b6e78961`)가
+> 전건 처분해 결속이 만료됐다 — O-6 정상 거동.
+>
+> **이 재결속이 결속하는 내용**: 계약 blob `eefce59a685c…` · **9,975행** · 개발계획 blob
+> `98d8660f44f8…` · 612행(**42차는 계약 단독 사이클**).  동결 사슬 … → `e88960f8`(41차) →
+> **`b6e78961`(42차)**.  이전 결속값:
+> `bound_set_digest c76f27ce7cb3bd7933bd041fef1be45ea17096b734aa4d0a43342a1e95eccdea` ·
+> `requesting_plan_version v2.22` · `decided_at_head e88960f8fe8311002d6e4c31aa5a7ae31c9f502f`.
+> `requesting_plan_version` **v2.22 유지**(다섯 사이클 연속).
+>
+> **이 사이클이 실제로 좁힌 것**: findings **4 → 2**, 그리고 판정이 **F4 해소 · F1 «정직한
+> 미해소» 인정 · S-26 카운터 진술 정확**으로 갈렸다.  남은 둘은 **같은 클래스 하나**였다 —
+> 41차가 만든 두 축의 «모집단»이 표기에 묶여 신규 표기가 탈출했다.  42차는 그 모집단을
+> **구조**로 다시 잡았고(대조군 108 → 112종), **탈출 4종이 green → red 로 전환**됨을 실측했다.
+>
+> **권위 기록 (정직 표기)**: 운영자가 「판정 나오면 처분까지 계속 진행」(2026-08-29)으로
+> 지시했고 그 범위대로 처분·재결속했다.  `decided_at_head` 는 재결속 편집 직전 실측 HEAD.
+> **귀속은 대화 수준이며 리포-단독 재검증 불가**다.  countersign 미행사는 거부가 아니다.
+>
+> **이 재결속이 «주장하지 않는» 것**: 42차도 **종결이 아니다.**  §S-26 ② 카운터는 **세 판 연속
+> 0**이고, 두 축의 잔여(임계 이름 상수 · 형제 표기 목록 «밖»)는 **닫혔다고 적지 않았다**.
+> `u17-verify` 의미 정합은 여전히 미이행이며 U-17 완료를 막는다.
 
 > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
 > `plan_scope_digest` 를 본문에 적으면
