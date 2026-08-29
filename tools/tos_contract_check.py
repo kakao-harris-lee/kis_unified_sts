@@ -1923,9 +1923,15 @@ def check_c3(doc: ContractDoc) -> list[Violation]:
 # ============================================================================
 
 
-#: C4C — «다음 =» 계열 표기 뒤의 **단계 열거**.  `»` 가 바로 붙는 것은 토큰 «언급»이라
+#: C4C — «다음 =» **계열** 표기 뒤의 단계 열거.  `»` 가 바로 붙는 것은 토큰 «언급»이라
 #: 제외한다(축 자신을 설명하는 문장이 자기 위반이 되면 그 축은 못 산다).
-STEP_ENUM_RE = re.compile(r"(?:다음|현재 위치)\s*=\s(?!»)([^·|\n]{0,120})")
+#: **[42차 — 재심 F2] 형제 표기를 넓혔다**: 41차는 «다음 =»·«현재 위치 =» 둘만 봤고,
+#: 심판이 «다음 단계 =»·«다음:» 우회를 실측했다.  구분자도 `=`|`:` 둘 다 본다.
+#: **잔여(정직)**: 이 목록도 유한하다 — 목록 «밖» 표기로 쓰면 축은 0을 반환한다.
+#: 「미발견은 없음이 아니라 미확인」이므로 그렇게 적고, 새 표기가 관측되면 넓힌다.
+STEP_ENUM_RE = re.compile(
+    r"(?:다음 단계|다음 순서|다음|현재 위치|현 위치)\s*[=:]\s(?!»)([^·|\n]{0,120})"
+)
 #: 그 열거 안의 회차·addendum 리터럴.  이것이 «갱신해야 살아 있는 값»의 형상이다.
 STEP_ROUND_RE = re.compile(r"\d+\s*차|addendum-\d")
 
@@ -2241,35 +2247,62 @@ def derive_consumers_circled(
     return consumers, line_no
 
 
-#: 차단 술어(guard) 형상 — «1000 을 담은 코드스팬 술어 [∨ …] → `PREVENTION_UNVERIFIABLE`».
-#: 임계 리터럴을 정규식에 박는 것은 계수 하드코딩이 아니라 **형상**이다: 이 축이 세는 것은
-#: 「문서화된 상한 자리」이고 그 상한은 GitHub 문서가 정한 값이라 이 저장소가 못 고친다.
-GUARD_RE = re.compile(
-    r"`([^`\n]*\b1000\b[^`\n]*)`((?:\s*∨\s*`[^`\n]*`)*)"
-    r"\s*(?:\([^)\n]*\))?\s*→\s*\*{0,2}`PREVENTION_UNVERIFIABLE`"
-)
+#: 차단문의 **결과 토큰** — 모집단의 구조적 시작점.  40차 판은 «`1000` 을 담은 코드스팬»
+#: 이라는 **표기**로 모집단을 잡았고, 재심 F1(high)이 그 폐쇄 실패를 실측했다:
+#: 의미가 같은 `1_000`·`1,000` 신규 차단 자리가 **조용히 우주 밖**이었다.  이제 결과 토큰에서
+#: 시작해 **선행 항을 분류**한다 — 임계 리터럴 표기에 의존하지 않는다.
+GUARD_ARROW_RE = re.compile(r"→\s*\*{0,2}`PREVENTION_UNVERIFIABLE`")
+#: 선행 항의 비교 연산자.  «비교가 없다» = 상한 차단이 아니다(열거 실패·http 오류 등).
+GUARD_CMP_RE = re.compile(r"[><≥]=?|==")
+#: 임계 수치 — **구분자를 허용**한다(`1000`·`1_000`·`1,000`·`1 000`).  세 자리 이상만 본다:
+#: `?page=3`·`|E| ≥ 1` 같은 «작은 수» 비교는 상한이 아니다.
+GUARD_CAPNUM_RE = re.compile(r"\d[\d_,\u00a0 ]{2,}\d|\d{3,}")
 #: 구조 파생 항 — «수집한 집합의 크기»를 피연산자로 쓰는 항(`|S| >= 1000` 형상).
 #: 서버 자기신고(`total_count`)와 갈리는 것이 이 축의 요점이다.
-STRUCTURAL_TERM_RE = re.compile(r"\|\s*[A-Za-z_][A-Za-z0-9_₀-₉]*\s*\|\s*[><]?=\s*\d")
+STRUCTURAL_TERM_RE = re.compile(r"\|\s*[A-Za-z_][A-Za-z0-9_₀-₉]*\s*\|\s*[><≥]?=\s*\d")
+#: 선행 항으로 읽을 코드스팬 개수 — 화살표 «직전» 절만 본다(같은 행 앞머리의 산문 인용이
+#: 딸려 들어오면 분류가 흔들린다).
+GUARD_ANTECEDENT_SPANS = 3
 
 
-def _guard_terms(match: re.Match[str]) -> list[str]:
-    """guard 일치에서 «항 목록»을 뽑는다 (첫 항 + ∨ 로 이어진 항들)."""
-    rest = match.group(2) or ""
-    return [match.group(1)] + re.findall(r"`([^`\n]*)`", rest)
+def _cap_guard_sites(doc: ContractDoc) -> list[tuple[int, list[str]]]:
+    """살아 있는 **상한 차단문** 자리를 구조로 파생한다.
+
+    표 행은 제외한다 — 표는 레지스터·대조군 픽스처의 자리이지 규범 술어의 자리가 아니다
+    (실측: T-84 대조군 행이 픽스처 값으로 같은 형상을 담는다).  이력 행도 제외한다.
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+
+    Returns:
+        `(행번호, 선행 항 목록)` — 임계 비교를 담은 자리만.
+    """
+    out: list[tuple[int, list[str]]] = []
+    for lineno, line in enumerate(doc.lines, start=1):
+        if doc.is_history_row(lineno) or line.lstrip().startswith("|"):
+            continue
+        for m in GUARD_ARROW_RE.finditer(line):
+            spans = re.findall(r"`([^`\n]{1,90})`", line[: m.start()])[
+                -GUARD_ANTECEDENT_SPANS:
+            ]
+            if any(
+                GUARD_CMP_RE.search(sp) and GUARD_CAPNUM_RE.search(sp) for sp in spans
+            ):
+                out.append((lineno, spans))
+    return out
 
 
 def derive_cap_guards(
     doc: ContractDoc, anchor: str
 ) -> list[tuple[int, str, list[str]]]:
-    """문서의 **살아 있는** 차단 술어 자리를 파생한다 (이력 행 제외).
+    """CAP-2 모집단 — 살아 있는 상한 차단문 (구조 파생).
 
     Args:
         doc: 계약 문서 컨텍스트.
-        anchor: 이 파생이 훑을 자리를 지목하는 축자 토큰 (manifest 선언).
+        anchor: manifest 가 선언한 결과 토큰 앵커.
 
     Returns:
-        `(행번호, 정규화된 guard 식, 항 목록)` 목록.
+        `(행번호, 정규화된 guard 식, 선행 항 목록)` 목록.
 
     Raises:
         ContractParseError: 앵커가 문서에 없거나 모집단이 비면 — **모집단 붕괴는
@@ -2277,19 +2310,13 @@ def derive_cap_guards(
     """
     if not any(anchor in line for line in doc.lines):
         raise ContractParseError(f"guard 앵커가 문서에 부재: {anchor!r}")
-    out: list[tuple[int, str, list[str]]] = []
-    for lineno, line in enumerate(doc.lines, start=1):
-        if anchor not in line or doc.is_history_row(lineno):
-            continue
-        for m in GUARD_RE.finditer(line):
-            terms = _guard_terms(m)
-            out.append((lineno, " ∨ ".join(terms), terms))
-    if not out:
+    sites = _cap_guard_sites(doc)
+    if not sites:
         raise ContractParseError(
-            f"guard 모집단이 비었다 (앵커 {anchor!r}) — 형상 변경이면 이 축이 "
+            f"상한 차단 모집단이 비었다 (앵커 {anchor!r}) — 형상 변경이면 이 축이 "
             "조용히 사라지므로 fail-closed 로 죽는다"
         )
-    return out
+    return [(n, " ∨ ".join(spans), spans) for n, spans in sites]
 
 
 def derive_universe_cap_guards(doc: ContractDoc, anchor: str) -> tuple[list[str], int]:
@@ -4942,6 +4969,39 @@ def build_mutations() -> list[Mutation]:
             # 역방향 — 술어 형태(회차 리터럴 없음)는 조용해야 한다.  이것이 없으면 축이
             # «→ 를 담은 모든 문장»을 잡는 과잉 차단으로 퇴행해도 배터리가 통과한다.
             lambda t: _append(t, "다음 = 동결 → 운영자 재결속(O-6) → 현행 버전 재심."),
+        ),
+        # ---- CAP-2/C4C 모집단 «탈출» 대조군 (42차 · 재심 F1·F2) -------------
+        # 41차 판은 대조군이 전부 red 였는데도 **모집단 밖 신규 표기**가 조용히 통과했다.
+        # 「대조군이 red 인 것」과 「모집단이 닫힌 것」은 다른 주장이다 — 그 차이를 여기 넷이 진다.
+        Mutation(
+            "CAP2-escape-underscore-thousand",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "신규 상한: `total_count > 1_000` → `PREVENTION_UNVERIFIABLE`(전순서 1).",
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-comma-thousand",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "신규 상한: `total_count > 1,000` → `PREVENTION_UNVERIFIABLE`(전순서 1).",
+            ),
+        ),
+        Mutation(
+            "C4C-escape-next-step-notation",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(t, "다음 단계 = 42차 → addendum-9 → O-6 재결속 → 재심."),
+        ),
+        Mutation(
+            "C4C-escape-colon-notation",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(t, "다음: 42차 → addendum-9 → O-6 재결속 → 재심."),
         ),
         # ---- CAP-2 — 차단 술어의 «구조 파생 항» 전수 적용 (41차 ⓐ · 재심 F2) ----
         # **이 넷이 없어서 40차가 죽은 검사를 냈다.**  세 소비처의 구조 파생 항을
