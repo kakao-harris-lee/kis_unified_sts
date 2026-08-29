@@ -7,7 +7,7 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: d87e503245878ef8a71a9cf1d8918840aac06effe58c25c105590fb72d38307d
+bound_set_digest: 7fe8328ff23fd98af603bbe0cfd249eb2cdb71df196886c700a0b167448fce5c
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
@@ -18,7 +18,7 @@ authority: 운영자 (this repository's corpus owner)
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: df72ae5bf8a22475570752bec9b8d9d317c691da
+decided_at_head: 6cf6c7791b2e80a92cba16b92cd2410117848bd4
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
@@ -662,6 +662,21 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 >
 > **다음**: 이 blob 을 동결한 채 **편집 없이 재심 두 번**.  신규 material 0 이 두 회 연속이면
 > §S-26 ② 가 성립한다.  카운터는 현재 **0**(이 편집으로 리셋).
+
+> **재결속 기록 (현행 사이클 — 2026-08-29, v2.22 내용 · 에라타 45차 이후)**: 같은 날 **여섯 번째**.
+> 재심 #5 는 **findings 2 → 1** 이었고, 무엇보다 **44차의 «주장 축소»를 「표기 공간에 대해서는
+> 정직한 한계 진술」로 인정**하며 「그 축소만으로는 blocker 를 세우지 않는다」고 적었다 —
+> 이 아크에서 축소가 회피가 아니라고 판정받은 **두 번째** 자리다.  남은 1건(픽스처 면제가
+> «접두»였다)을 45차(`6cf6c779`)가 처분했다.  계약 blob **`2e77dfc8bd54…`**.
+> 이전 결속값: `bound_set_digest d87e5032…` · `requesting_plan_version v2.22` ·
+> `decided_at_head df72ae5b…`.  `requesting_plan_version` **v2.22 유지**(여덟 사이클 연속).
+>
+> **궤적**: findings 4 → 2 → 3 → 2 → **1**.  그리고 남은 축이 «축소가 정당한가»에서
+> «면제가 정확한가»로 옮겼다 — 주장에 대한 다툼은 끝났고 구현 정밀도만 남았다는 뜻이다.
+>
+> **이 재결속이 «주장하지 않는» 것**: 45차도 종결이 아니다.  §S-26 ② 카운터는 **여섯 판 연속 0**.
+> 잔여 다섯을 명시 등재했다(대조군 셀 «안»에 숨긴 규범 · 펜스 안 예시 위양성 · 임계 이름 상수 ·
+> 접두 목록 밖 표기 · 아직 관측되지 않은 표기).  `u17-verify` 의미 정합도 여전히 미이행이다.
 
 > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
 > `plan_scope_digest` 를 본문에 적으면
