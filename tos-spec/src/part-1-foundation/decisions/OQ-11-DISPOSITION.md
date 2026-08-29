@@ -7,7 +7,7 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: 7fe8328ff23fd98af603bbe0cfd249eb2cdb71df196886c700a0b167448fce5c
+bound_set_digest: 41c3da691678a652076ba12046839c050d806a50f33cab6570099e0e949495bf
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
@@ -18,7 +18,7 @@ authority: 운영자 (this repository's corpus owner)
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: 6cf6c7791b2e80a92cba16b92cd2410117848bd4
+decided_at_head: c4518f7b99adb206f1acdac59211271c5f5907c1
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
@@ -677,6 +677,19 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 > **이 재결속이 «주장하지 않는» 것**: 45차도 종결이 아니다.  §S-26 ② 카운터는 **여섯 판 연속 0**.
 > 잔여 다섯을 명시 등재했다(대조군 셀 «안»에 숨긴 규범 · 펜스 안 예시 위양성 · 임계 이름 상수 ·
 > 접두 목록 밖 표기 · 아직 관측되지 않은 표기).  `u17-verify` 의미 정합도 여전히 미이행이다.
+
+> **재결속 기록 (현행 사이클 — 2026-08-29, v2.22 내용 · 에라타 46차 이후)**: 같은 날 **일곱 번째**.
+> 재심 #6 은 **44차의 주장 축소 판정을 «유지»** 했고, 새 findings 둘은 **45차가 «행»에서 «셀»로
+> 내려가며 만든 자리**였다(셀 경계 분할 · 미닫힘 식별자).  46차(`c4518f7b`)가 처분했다.
+> 계약 blob **`1bae6d4d47de…`**.  이전 결속: `bound_set_digest 7fe8328f…` · `decided_at_head 6cf6c779…` ·
+> `requesting_plan_version` **v2.22 유지**(아홉 사이클 연속).
+>
+> **이 회차의 특기 사항**: 심판이 **저작자의 «대조군 자체»를 검사**했다 —
+> `CAP2-escape-new-cell-in-fixture-row` 가 실제 픽스처 행을 건드리지 않아 경계를 검증하지
+> 못한다고 짚었고, 그것은 옳았다.  아크 최초다.  **대조군도 심사 대상이다.**
+>
+> **궤적**: findings 4 → 2 → 3 → 2 → 1 → 2.  판정의 «층»은 계속 내려갔다(주장 → 모집단 →
+> 면제 → 면제의 단위).  **S-26 (2) 카운터는 일곱 판 연속 0.**
 
 > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
 > `plan_scope_digest` 를 본문에 적으면
