@@ -473,7 +473,7 @@ MANIFEST_TOP_KEYS = frozenset(
         "rejected_markers",
         "closed_tables",
         # [43차] 픽스처 표식 · 미래 지향 단계 접두 어휘 — 둘 다 «의도»이므로 manifest 가 자리다.
-        "fixture_marker",
+        "fixture_rows",
         "future_step_prefixes",
         "rules",
     }
@@ -1932,7 +1932,10 @@ def check_c3(doc: ContractDoc) -> list[Violation]:
 #: 를 받고 공백은 선택이며, 열거가 다음 행으로 이어지는 경우까지 창에 넣는다.
 #: `»` 가 바로 붙는 것은 토큰 «언급»이라 제외한다(축 자신을 설명하는 문장이 자기 위반이
 #: 되면 그 축은 못 산다).
-STEP_SEP_RE = r"\s*[=:：]\s*"
+STEP_SEP_RE = r"\s*[=:]\s*"
+#: 단계 화살표 — `→` 만이 아니다(44차 실측: `⇒` 우회).  표기 변형은 여기서 닫고
+#: 접두 «어휘»는 manifest 가 진다 — 둘을 섞으면 목록이 다시 표기 의존이 된다.
+STEP_ARROW_RE = re.compile(r"[→⇒➡]")
 #: 그 열거 안의 회차·addendum 리터럴.  이것이 «갱신해야 살아 있는 값»의 형상이다.
 STEP_ROUND_RE = re.compile(r"\d+\s*차|addendum-\d|[０-９]+\s*차")
 
@@ -1970,12 +1973,18 @@ def check_c4c(doc: ContractDoc, prefixes: Sequence[str]) -> list[Violation]:
     for lineno, line in enumerate(doc.lines, start=1):
         if doc.is_history_row(lineno):
             continue
-        nxt = doc.lines[lineno] if lineno < len(doc.lines) else ""
-        for m in pattern.finditer(line):
+        # 44차 재심 #4 F2: 주석 삽입·전각 구분자·여러 행 래핑이 전부 우회였다.
+        # 정규화는 NFKC 표준에 위임하고, 뒤따르는 **두 행**까지 이어 붙인다.
+        scan = _normalize_scan_text(line)
+        tail = " ".join(
+            _normalize_scan_text(doc.lines[k])
+            for k in range(lineno, min(lineno + 2, len(doc.lines)))
+        )
+        for m in pattern.finditer(scan):
             seg = m.group(1)
-            if "→" not in seg and "→" in nxt[:120]:
-                seg = seg + " " + nxt[:120]
-            if "→" in seg and STEP_ROUND_RE.search(seg):
+            if not STEP_ARROW_RE.search(seg):
+                seg = seg + " " + tail[:200]
+            if STEP_ARROW_RE.search(seg) and STEP_ROUND_RE.search(seg):
                 out.append(
                     Violation(
                         "TOS-CC-C4C",
@@ -2285,34 +2294,51 @@ STRUCTURAL_TERM_RE = re.compile(
 GUARD_WINDOW = 300
 
 
-def _guard_window(lines: Sequence[str], idx: int, upto: int) -> str:
-    """화살표 «앞»의 선행 창을 만든다 — 직전 행까지 이어 붙이고 백틱을 벗긴다.
+#: 인라인 HTML 주석 — 렌더링에 보이지 «않으므로» 술어 판별에서 제거한다.
+#: 44차 재심 #4 F2 실측: `다음 단계<!-- … -->=44차` 가 주석 하나로 우주 밖이었다.
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def _normalize_scan_text(text: str) -> str:
+    """판별 전 정규화 — **표준 유니코드 NFKC** + 주석 제거 + 백틱 제거.
+
+    NFKC 는 «검증된 표준»이다(전각 `＞`·`１０００`·`：` → 반각).  40~43차가 표기 변형을
+    정규식으로 하나씩 쫓다가 매 회차 새 우회를 냈다 — **표기 정규화는 발명하지 않고
+    표준에 위임**한다(바퀴 재발명 금지).
 
     Args:
-        lines: 문서 행 목록.
-        idx: 화살표가 있는 행의 0-기반 인덱스.
-        upto: 그 행에서 화살표가 시작하는 열.
+        text: 원문 조각.
 
     Returns:
-        정규화된 선행 창 문자열.
+        정규화된 조각.
     """
-    prev = lines[idx - 1] if idx >= 1 else ""
-    return (prev + " " + lines[idx][:upto])[-GUARD_WINDOW:].replace("`", "")
+    return unicodedata.normalize("NFKC", HTML_COMMENT_RE.sub(" ", text)).replace(
+        "`", ""
+    )
+
+
+#: [44차 — 펜스 배제를 «철회»한다]  초안은 「코드펜스 안 예시는 규범이 아니다」로 배제했다.
+#: **전제가 거짓이었다** — 이 계약은 규범 술어를 ```text 블록 «안»에 쓴다(실측: §12.3.4 의
+#: 상한 차단 셋이 6275 개시 블록 안에 있고, 배제하면 모집단이 4 → 1 로 조용히 줄었다).
+#: 자기검사 배터리가 그 축소를 «죽은 검사 2건»으로 잡았다.  **펜스는 이 문서에서 정체가
+#: 아니다.**  그러므로 «펜스 안 예시»에 대한 위양성은 이 판이 닫지 «못한다» — 등재한다:
+#: 문서화 예시를 guard 형상으로 적으려면 manifest 가 지목한 픽스처 행에 두거나 표현을 바꾼다.
 
 
 def _cap_guard_sites(
-    doc: ContractDoc, fixture_marker: str
+    doc: ContractDoc, fixture_rows: Sequence[str]
 ) -> list[tuple[int, list[str]]]:
     """살아 있는 **상한 차단문** 자리를 구조로 파생한다.
 
-    **표 행을 통째로 빼지 않는다** — 43차 재심 F2 가 그 배제를 「규범 술어에 주는 무료
-    우회키」로 적발했다(규범 표 행 주입이 조용히 통과했다).  대신 **픽스처는 스스로를
-    표시**해야 한다: 선행 창에 manifest 가 선언한 픽스처 표식이 있으면 그 자리는 대조군
-    서술이지 규범 술어가 아니다.  **극성이 안전한 쪽이다** — 표식을 빠뜨리면 red 가 난다.
+    **표 행을 통째로 빼지 않는다**(43차 재심 F2) — 그러나 **떠다니는 표식 문자열로도 빼지
+    않는다**(44차 재심 #4 F1: 표식을 규범 문장에 오용하거나 직전 행에 두면 조용히 빠졌다).
+    면제는 **행 정체**로 한다: manifest 가 지목한 픽스처 **행 앵커**로 시작하는 행만 뺀다.
+    코드펜스 «안»과 HTML 주석은 렌더링 술어가 아니므로 훑지 않는다(위양성 제거 — 같은 판이
+    그 반대 극성도 실측했다).  표기 변형은 **NFKC 표준**에 위임한다.
 
     Args:
         doc: 계약 문서 컨텍스트.
-        fixture_marker: manifest 가 선언한 픽스처 표식(축자).
+        fixture_rows: manifest 가 선언한 픽스처 행 앵커 목록.
 
     Returns:
         `(행번호, [선행 창])` — 임계 비교를 담은 자리만.
@@ -2321,17 +2347,20 @@ def _cap_guard_sites(
     for lineno, line in enumerate(doc.lines, start=1):
         if doc.is_history_row(lineno):
             continue
-        for m in GUARD_ARROW_RE.finditer(line):
-            win = _guard_window(doc.lines, lineno - 1, m.start())
-            if fixture_marker and fixture_marker in win:
-                continue
+        if any(line.lstrip().startswith(anchor) for anchor in fixture_rows):
+            continue
+        cur = _normalize_scan_text(line)
+        prev = _normalize_scan_text(doc.lines[lineno - 2]) if lineno >= 2 else ""
+        for m in GUARD_ARROW_RE.finditer(cur):
+            win = (prev + " " + cur[: m.start()])[-GUARD_WINDOW:]
             if GUARD_CMP_RE.search(win) and GUARD_CAPNUM_RE.search(win):
                 out.append((lineno, [win]))
+                break
     return out
 
 
 def derive_cap_guards(
-    doc: ContractDoc, anchor: str, fixture_marker: str = ""
+    doc: ContractDoc, anchor: str, fixture_rows: Sequence[str] = ()
 ) -> list[tuple[int, str, list[str]]]:
     """CAP-2 모집단 — 살아 있는 상한 차단문 (구조 파생).
 
@@ -2348,7 +2377,7 @@ def derive_cap_guards(
     """
     if not any(anchor in line for line in doc.lines):
         raise ContractParseError(f"guard 앵커가 문서에 부재: {anchor!r}")
-    sites = _cap_guard_sites(doc, fixture_marker)
+    sites = _cap_guard_sites(doc, fixture_rows)
     if not sites:
         raise ContractParseError(
             f"상한 차단 모집단이 비었다 (앵커 {anchor!r}) — 형상 변경이면 이 축이 "
@@ -2358,18 +2387,18 @@ def derive_cap_guards(
 
 
 def derive_universe_cap_guards(
-    doc: ContractDoc, anchor: str, fixture_marker: str = ""
+    doc: ContractDoc, anchor: str, fixture_rows: Sequence[str] = ()
 ) -> tuple[list[str], int]:
     """CAP-2 우주 — 살아 있는 상한 차단문 전부(픽스처 표식이 붙은 자리는 뺀다)."""
-    guards = derive_cap_guards(doc, anchor, fixture_marker)
+    guards = derive_cap_guards(doc, anchor, fixture_rows)
     return [g[1] for g in guards], guards[0][0]
 
 
 def derive_consumers_cap_guards(
-    doc: ContractDoc, anchor: str, fixture_marker: str = ""
+    doc: ContractDoc, anchor: str, fixture_rows: Sequence[str] = ()
 ) -> tuple[list[RuleConsumer], int]:
     """CAP-2 소비처 — 그중 **구조 파생 항을 실제로 가진** 자리."""
-    guards = derive_cap_guards(doc, anchor, fixture_marker)
+    guards = derive_cap_guards(doc, anchor, fixture_rows)
     consumers = [
         RuleConsumer(expr, expr, expr)
         for _, expr, terms in guards
@@ -2661,19 +2690,23 @@ def check_rule(doc: ContractDoc, manifest_path: Path) -> list[Violation]:
     violations.extend(check_rule_vocabulary(manifest, mpath))
     # 픽스처 표식 — «대조군 서술»과 «규범 술어»를 가르는 유일 소스(43차 · 재심 #3 F2).
     # 부재하면 fail-closed: 표식 없이 표 전체를 배제하던 42차 판이 우회키였다.
-    marker = manifest.get("fixture_marker")
-    if not isinstance(marker, str) or not marker.strip():
+    rows = manifest.get("fixture_rows")
+    if (
+        not isinstance(rows, list)
+        or not rows
+        or not all(isinstance(x, str) and x.strip() for x in rows)
+    ):
         violations.append(
             Violation(
                 "TOS-CC-RULE-MANIFEST",
                 mpath,
                 0,
-                "`fixture_marker` 가 비지 않은 문자열이 아니다 — 픽스처와 규범 술어를 "
-                "가르는 정본이 없으면 CAP-2 우주가 «표 배제»라는 우회키로 되돌아간다",
+                "`fixture_rows` 가 비지 않은 문자열 목록이 아니다 — 픽스처를 «행 정체»로 "
+                "가르는 정본이 없으면 면제가 다시 떠다니는 문자열로 되돌아간다",
             )
         )
         return violations
-    fixture_marker = marker
+    fixture_rows = [str(x) for x in rows]
 
     rules = manifest["rules"]
     assert isinstance(rules, list)
@@ -2706,7 +2739,7 @@ def check_rule(doc: ContractDoc, manifest_path: Path) -> list[Violation]:
         consumers_name = str(consumers_q.get("derivation"))
         if universe_name == "cap_guard_expressions":
             universe, universe_line = derive_universe_cap_guards(
-                doc, str(universe_q["block_anchor"]), fixture_marker
+                doc, str(universe_q["block_anchor"]), fixture_rows
             )
         else:
             universe, universe_line = derive_universe_separated(
@@ -2715,7 +2748,7 @@ def check_rule(doc: ContractDoc, manifest_path: Path) -> list[Violation]:
 
         if consumers_name == "structural_term_guard_expressions":
             found = derive_consumers_cap_guards(
-                doc, str(consumers_q["block_anchor"]), fixture_marker
+                doc, str(consumers_q["block_anchor"]), fixture_rows
             )
         else:
             found = derive_consumers_circled(doc, str(consumers_q["block_anchor"]))
@@ -5040,6 +5073,63 @@ def build_mutations() -> list[Mutation]:
             # 역방향 — 술어 형태(회차 리터럴 없음)는 조용해야 한다.  이것이 없으면 축이
             # «→ 를 담은 모든 문장»을 잡는 과잉 차단으로 퇴행해도 배터리가 통과한다.
             lambda t: _append(t, "다음 = 동결 → 운영자 재결속(O-6) → 현행 버전 재심."),
+        ),
+        # ---- CAP-2/C4C 3세대 — 표기 정규화·행 정체·양극성 (44차 · 재심 #4) -----
+        # 이 판은 **양쪽 극성이 다 깨져 있었다**: 우회는 조용하고(6종) 예시는 red(2종).
+        # 대조군도 양방향으로 못박는다 — «잡아야 할 것»과 «잡으면 안 되는 것» 둘 다.
+        Mutation(
+            "CAP2-escape-marker-misuse-inline",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "신규 규범 [대조군]: `total_count > 1000` → `PREVENTION_UNVERIFIABLE`.",
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-marker-on-previous-line",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "[대조군] 앞 문단.\n신규 규범: `total_count > 1000` "
+                "→ `PREVENTION_UNVERIFIABLE`.",
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-fullwidth-operator",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t, "신규 상한: `total_count ＞ 1000` → `PREVENTION_UNVERIFIABLE`."
+            ),
+        ),
+        Mutation(
+            "CAP2-html-comment-example-is-silent",
+            "TOS-CC-RULE-MISSING",
+            "silent",
+            # 역방향 — 주석 «안»의 예시는 규범 술어가 아니다(위양성이었다).
+            lambda t: _append(
+                t, "<!-- 예시: `total_count > 1000` → `PREVENTION_UNVERIFIABLE` -->"
+            ),
+        ),
+        Mutation(
+            "C4C-escape-html-comment-in-prefix",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(t, "다음 단계<!-- 비표시 -->=44차 → addendum-9 → 재심."),
+        ),
+        Mutation(
+            "C4C-escape-three-line-wrap",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(t, "다음 단계 =\n44차\n→ addendum-9 → 재심."),
+        ),
+        Mutation(
+            "C4C-escape-double-arrow",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(t, "다음 단계=44차 ⇒ addendum-9 ⇒ 재심."),
         ),
         # ---- CAP-2/C4C 모집단 «탈출» 대조군 2세대 (43차 · 재심 #3 F1·F2·F3) ----
         # 42차 판의 탈출 대조군은 «그 네 예시»만 잡았다.  심판이 같은 축에서 여섯 개를 더
