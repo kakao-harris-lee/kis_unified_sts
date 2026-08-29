@@ -7,7 +7,7 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: 1828675f262413e80e68ae8b4f58225714072e77c9ec81aa4876bfaad5d7f4f6
+bound_set_digest: 6f5cfce11bf16757f1e8dddf495448de1302cce90cc08c965a547131f1ad097e
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
@@ -18,7 +18,7 @@ authority: 운영자 (this repository's corpus owner)
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: c2d8fe79fa022acd99ad35f9e336576c81af617d
+decided_at_head: f35abcc55a7db60ccbe9eeb1a108ed5f11b57753
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
@@ -703,6 +703,22 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 > 면제의 단위 → **면제 판별의 «순서»**.  처분 규모도 함께 줄었다(이번은 한 줄).
 > **S-26 (2) 카운터는 여덟 판 연속 0** — 다만 이번 회차는 **잔여 재확인이 카운터를 막지
 > 않는다는 것이 판정으로 확인**됐으므로, 신규 우회가 나오지 않는 회차가 한 번 오면 카운터가 선다.
+
+> **재결속 기록 (현행 사이클 — 2026-08-29, v2.22 내용 · 에라타 48차 이후)**: 같은 날 **아홉 번째**.
+> 재심 #8 은 **47차 문언의 과대 선언**을 냈고(주석 한 형상만 고치고 «비가시 문자열» 전부를
+> 주장), 48차(`f35abcc5`)가 **정체를 «내용»에서 «수»로 옮겨** 처분했다 — 픽스처 행 전체 면제 +
+> **셀 수 래칫**(`TOS-CC-CAP2-FIXTURE`).  **운반체 열거를 포기한 것이 이 판의 요지**다:
+> 식별자는 위조되지만 **수는 위조되지 않는다**.  계약 blob **`a039eab7408e…`** ·
+> 이전 결속 `1828675f…` / `c2d8fe79…` · `requesting_plan_version` **v2.22**(열한 사이클 연속).
+>
+> **궤적**: findings 4 → 2 → 3 → 2 → 1 → 2 → 1 → **1**.  최근 네 회차는 전부 **1~2건**이고
+> 층은 계속 내려갔다(면제의 단위 → 판별 순서 → 운반체 → **정체의 종류 자체**).
+>
+> **운영 기록(정직)**: 이 회차에서 오케스트레이터가 **잡 id 추출 실패로 직전 회차(#7)의
+> 판정문을 #8 로 읽어 보고**했다가 `running` 목록 구조 관측으로 정정했다.  자기신고가 아니라
+> 구조로 확인하라는 규율은 **도구 사용에도** 적용된다.
+>
+> **S-26 (2) 카운터는 아홉 판 연속 0.**
 
 > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
 > `plan_scope_digest` 를 본문에 적으면
