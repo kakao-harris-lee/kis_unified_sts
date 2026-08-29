@@ -472,6 +472,9 @@ MANIFEST_TOP_KEYS = frozenset(
         "census_vocabulary",
         "rejected_markers",
         "closed_tables",
+        # [43차] 픽스처 표식 · 미래 지향 단계 접두 어휘 — 둘 다 «의도»이므로 manifest 가 자리다.
+        "fixture_marker",
+        "future_step_prefixes",
         "rules",
     }
 )
@@ -1923,38 +1926,55 @@ def check_c3(doc: ContractDoc) -> list[Violation]:
 # ============================================================================
 
 
-#: C4C — «다음 =» **계열** 표기 뒤의 단계 열거.  `»` 가 바로 붙는 것은 토큰 «언급»이라
-#: 제외한다(축 자신을 설명하는 문장이 자기 위반이 되면 그 축은 못 산다).
-#: **[42차 — 재심 F2] 형제 표기를 넓혔다**: 41차는 «다음 =»·«현재 위치 =» 둘만 봤고,
-#: 심판이 «다음 단계 =»·«다음:» 우회를 실측했다.  구분자도 `=`|`:` 둘 다 본다.
-#: **잔여(정직)**: 이 목록도 유한하다 — 목록 «밖» 표기로 쓰면 축은 0을 반환한다.
-#: 「미발견은 없음이 아니라 미확인」이므로 그렇게 적고, 새 표기가 관측되면 넓힌다.
-STEP_ENUM_RE = re.compile(
-    r"(?:다음 단계|다음 순서|다음|현재 위치|현 위치)\s*[=:]\s(?!»)([^·|\n]{0,120})"
-)
+#: C4C — 미래 지향 «단계 열거»의 회차 리터럴.  접두 어휘의 정본은 **manifest**
+#: (`future_step_prefixes`)이고 검사기는 **표기 변형만 정규화**한다 — 43차 재심 #3 F3 이
+#: 「구분자 뒤 공백 하나로 탈출」을 실측했다(`다음 단계=42차`).  구분자는 `=`·`:`·전각 `：`
+#: 를 받고 공백은 선택이며, 열거가 다음 행으로 이어지는 경우까지 창에 넣는다.
+#: `»` 가 바로 붙는 것은 토큰 «언급»이라 제외한다(축 자신을 설명하는 문장이 자기 위반이
+#: 되면 그 축은 못 산다).
+STEP_SEP_RE = r"\s*[=:：]\s*"
 #: 그 열거 안의 회차·addendum 리터럴.  이것이 «갱신해야 살아 있는 값»의 형상이다.
-STEP_ROUND_RE = re.compile(r"\d+\s*차|addendum-\d")
+STEP_ROUND_RE = re.compile(r"\d+\s*차|addendum-\d|[０-９]+\s*차")
 
 
-def check_c4c(doc: ContractDoc) -> list[Violation]:
+def _step_enum_re(prefixes: Sequence[str]) -> re.Pattern[str]:
+    """manifest 접두 어휘로 단계-열거 정규식을 만든다 (긴 접두가 먼저 걸리게 정렬)."""
+    alt = "|".join(
+        re.escape(p) for p in sorted(prefixes, key=len, reverse=True) if p.strip()
+    )
+    return re.compile(rf"(?:{alt}){STEP_SEP_RE}(?!»)([^·|\n]{{0,120}})")
+
+
+def check_c4c(doc: ContractDoc, prefixes: Sequence[str]) -> list[Violation]:
     """C4C — 미래 지향 «단계 열거»에 회차 리터럴을 두지 않는다 (S-11 의 기계 소비자).
-
-    40차 ⓑ 는 currency 셀 하나를 술어화하고 머리말의 같은 형상 둘을 남겼다 — 재심
-    F3(medium).  부분 스윕이 반복되는 이유는 **스윕을 사람이 하기 때문**이므로 이 축이
-    그 자리를 진다.
 
     Args:
         doc: 계약 문서 컨텍스트.
+        prefixes: manifest 가 선언한 접두 어휘(정본).
 
     Returns:
         위반 목록.  이력 행은 면제한다 — 「그때 참이었던 기록」은 갱신 대상이 아니다.
     """
+    if not prefixes:
+        return [
+            Violation(
+                "TOS-CC-C4C",
+                doc.display_path,
+                0,
+                "manifest `future_step_prefixes` 가 비었다 — 접두 정본이 없으면 이 축은 "
+                "조용히 0을 반환한다(모집단 붕괴는 «위반 0» 이 아니다)",
+            )
+        ]
+    pattern = _step_enum_re(prefixes)
     out: list[Violation] = []
     for lineno, line in enumerate(doc.lines, start=1):
         if doc.is_history_row(lineno):
             continue
-        for m in STEP_ENUM_RE.finditer(line):
+        nxt = doc.lines[lineno] if lineno < len(doc.lines) else ""
+        for m in pattern.finditer(line):
             seg = m.group(1)
+            if "→" not in seg and "→" in nxt[:120]:
+                seg = seg + " " + nxt[:120]
             if "→" in seg and STEP_ROUND_RE.search(seg):
                 out.append(
                     Violation(
@@ -2247,53 +2267,71 @@ def derive_consumers_circled(
     return consumers, line_no
 
 
-#: 차단문의 **결과 토큰** — 모집단의 구조적 시작점.  40차 판은 «`1000` 을 담은 코드스팬»
-#: 이라는 **표기**로 모집단을 잡았고, 재심 F1(high)이 그 폐쇄 실패를 실측했다:
-#: 의미가 같은 `1_000`·`1,000` 신규 차단 자리가 **조용히 우주 밖**이었다.  이제 결과 토큰에서
-#: 시작해 **선행 항을 분류**한다 — 임계 리터럴 표기에 의존하지 않는다.
-GUARD_ARROW_RE = re.compile(r"→\s*\*{0,2}`PREVENTION_UNVERIFIABLE`")
-#: 선행 항의 비교 연산자.  «비교가 없다» = 상한 차단이 아니다(열거 실패·http 오류 등).
+#: 차단문의 **결과 토큰** — 모집단의 구조적 시작점.
+#: [43차 — 재심 #3 F1·F2] 42차 판은 «화살표와 같은 행의 마지막 코드스팬 셋»을 봤고, 그것도
+#: **표기 의존**이었다(실측 탈출 셋: 백틱 없는 선행항 · 임계 뒤 스팬 셋 · 줄바꿈 분리).
+#: 이제 **선행 «창»** 을 본다 — 백틱을 벗기고, 직전 행까지 이어 붙이며, 표 행도 포함한다.
+GUARD_ARROW_RE = re.compile(r"→\s*\*{0,2}`?PREVENTION_UNVERIFIABLE`?")
+#: 선행 창의 비교 연산자.  «비교가 없다» = 상한 차단이 아니다(열거 실패·http 오류 등).
 GUARD_CMP_RE = re.compile(r"[><≥]=?|==")
-#: 임계 수치 — **구분자를 허용**한다(`1000`·`1_000`·`1,000`·`1 000`).  세 자리 이상만 본다:
+#: 임계 수치 — 구분자(`_`·`,`·공백)와 **전각 숫자**를 허용한다.  세 자리 이상만 본다:
 #: `?page=3`·`|E| ≥ 1` 같은 «작은 수» 비교는 상한이 아니다.
-GUARD_CAPNUM_RE = re.compile(r"\d[\d_,\u00a0 ]{2,}\d|\d{3,}")
+GUARD_CAPNUM_RE = re.compile(r"\d[\d_,\u00a0 ]{2,}\d|\d{3,}|[０-９]{3,}")
 #: 구조 파생 항 — «수집한 집합의 크기»를 피연산자로 쓰는 항(`|S| >= 1000` 형상).
-#: 서버 자기신고(`total_count`)와 갈리는 것이 이 축의 요점이다.
-STRUCTURAL_TERM_RE = re.compile(r"\|\s*[A-Za-z_][A-Za-z0-9_₀-₉]*\s*\|\s*[><≥]?=\s*\d")
-#: 선행 항으로 읽을 코드스팬 개수 — 화살표 «직전» 절만 본다(같은 행 앞머리의 산문 인용이
-#: 딸려 들어오면 분류가 흔들린다).
-GUARD_ANTECEDENT_SPANS = 3
+STRUCTURAL_TERM_RE = re.compile(
+    r"\\?\|\s*[A-Za-z_][A-Za-z0-9_₀-₉]*\s*\\?\|\s*[><≥]?=\s*[\d０-９]"
+)
+#: 선행 창의 길이(문자) — 같은 문단 안의 술어를 담되 문서 전체가 딸려오지 않을 만큼.
+GUARD_WINDOW = 300
 
 
-def _cap_guard_sites(doc: ContractDoc) -> list[tuple[int, list[str]]]:
+def _guard_window(lines: Sequence[str], idx: int, upto: int) -> str:
+    """화살표 «앞»의 선행 창을 만든다 — 직전 행까지 이어 붙이고 백틱을 벗긴다.
+
+    Args:
+        lines: 문서 행 목록.
+        idx: 화살표가 있는 행의 0-기반 인덱스.
+        upto: 그 행에서 화살표가 시작하는 열.
+
+    Returns:
+        정규화된 선행 창 문자열.
+    """
+    prev = lines[idx - 1] if idx >= 1 else ""
+    return (prev + " " + lines[idx][:upto])[-GUARD_WINDOW:].replace("`", "")
+
+
+def _cap_guard_sites(
+    doc: ContractDoc, fixture_marker: str
+) -> list[tuple[int, list[str]]]:
     """살아 있는 **상한 차단문** 자리를 구조로 파생한다.
 
-    표 행은 제외한다 — 표는 레지스터·대조군 픽스처의 자리이지 규범 술어의 자리가 아니다
-    (실측: T-84 대조군 행이 픽스처 값으로 같은 형상을 담는다).  이력 행도 제외한다.
+    **표 행을 통째로 빼지 않는다** — 43차 재심 F2 가 그 배제를 「규범 술어에 주는 무료
+    우회키」로 적발했다(규범 표 행 주입이 조용히 통과했다).  대신 **픽스처는 스스로를
+    표시**해야 한다: 선행 창에 manifest 가 선언한 픽스처 표식이 있으면 그 자리는 대조군
+    서술이지 규범 술어가 아니다.  **극성이 안전한 쪽이다** — 표식을 빠뜨리면 red 가 난다.
 
     Args:
         doc: 계약 문서 컨텍스트.
+        fixture_marker: manifest 가 선언한 픽스처 표식(축자).
 
     Returns:
-        `(행번호, 선행 항 목록)` — 임계 비교를 담은 자리만.
+        `(행번호, [선행 창])` — 임계 비교를 담은 자리만.
     """
     out: list[tuple[int, list[str]]] = []
     for lineno, line in enumerate(doc.lines, start=1):
-        if doc.is_history_row(lineno) or line.lstrip().startswith("|"):
+        if doc.is_history_row(lineno):
             continue
         for m in GUARD_ARROW_RE.finditer(line):
-            spans = re.findall(r"`([^`\n]{1,90})`", line[: m.start()])[
-                -GUARD_ANTECEDENT_SPANS:
-            ]
-            if any(
-                GUARD_CMP_RE.search(sp) and GUARD_CAPNUM_RE.search(sp) for sp in spans
-            ):
-                out.append((lineno, spans))
+            win = _guard_window(doc.lines, lineno - 1, m.start())
+            if fixture_marker and fixture_marker in win:
+                continue
+            if GUARD_CMP_RE.search(win) and GUARD_CAPNUM_RE.search(win):
+                out.append((lineno, [win]))
     return out
 
 
 def derive_cap_guards(
-    doc: ContractDoc, anchor: str
+    doc: ContractDoc, anchor: str, fixture_marker: str = ""
 ) -> list[tuple[int, str, list[str]]]:
     """CAP-2 모집단 — 살아 있는 상한 차단문 (구조 파생).
 
@@ -2310,7 +2348,7 @@ def derive_cap_guards(
     """
     if not any(anchor in line for line in doc.lines):
         raise ContractParseError(f"guard 앵커가 문서에 부재: {anchor!r}")
-    sites = _cap_guard_sites(doc)
+    sites = _cap_guard_sites(doc, fixture_marker)
     if not sites:
         raise ContractParseError(
             f"상한 차단 모집단이 비었다 (앵커 {anchor!r}) — 형상 변경이면 이 축이 "
@@ -2319,17 +2357,19 @@ def derive_cap_guards(
     return [(n, " ∨ ".join(spans), spans) for n, spans in sites]
 
 
-def derive_universe_cap_guards(doc: ContractDoc, anchor: str) -> tuple[list[str], int]:
-    """CAP-2 우주 — 살아 있는 차단 술어 자리 전부."""
-    guards = derive_cap_guards(doc, anchor)
+def derive_universe_cap_guards(
+    doc: ContractDoc, anchor: str, fixture_marker: str = ""
+) -> tuple[list[str], int]:
+    """CAP-2 우주 — 살아 있는 상한 차단문 전부(픽스처 표식이 붙은 자리는 뺀다)."""
+    guards = derive_cap_guards(doc, anchor, fixture_marker)
     return [g[1] for g in guards], guards[0][0]
 
 
 def derive_consumers_cap_guards(
-    doc: ContractDoc, anchor: str
+    doc: ContractDoc, anchor: str, fixture_marker: str = ""
 ) -> tuple[list[RuleConsumer], int]:
     """CAP-2 소비처 — 그중 **구조 파생 항을 실제로 가진** 자리."""
-    guards = derive_cap_guards(doc, anchor)
+    guards = derive_cap_guards(doc, anchor, fixture_marker)
     consumers = [
         RuleConsumer(expr, expr, expr)
         for _, expr, terms in guards
@@ -2619,6 +2659,21 @@ def check_rule(doc: ContractDoc, manifest_path: Path) -> list[Violation]:
         return violations
     mpath = str(manifest_path)
     violations.extend(check_rule_vocabulary(manifest, mpath))
+    # 픽스처 표식 — «대조군 서술»과 «규범 술어»를 가르는 유일 소스(43차 · 재심 #3 F2).
+    # 부재하면 fail-closed: 표식 없이 표 전체를 배제하던 42차 판이 우회키였다.
+    marker = manifest.get("fixture_marker")
+    if not isinstance(marker, str) or not marker.strip():
+        violations.append(
+            Violation(
+                "TOS-CC-RULE-MANIFEST",
+                mpath,
+                0,
+                "`fixture_marker` 가 비지 않은 문자열이 아니다 — 픽스처와 규범 술어를 "
+                "가르는 정본이 없으면 CAP-2 우주가 «표 배제»라는 우회키로 되돌아간다",
+            )
+        )
+        return violations
+    fixture_marker = marker
 
     rules = manifest["rules"]
     assert isinstance(rules, list)
@@ -2651,7 +2706,7 @@ def check_rule(doc: ContractDoc, manifest_path: Path) -> list[Violation]:
         consumers_name = str(consumers_q.get("derivation"))
         if universe_name == "cap_guard_expressions":
             universe, universe_line = derive_universe_cap_guards(
-                doc, str(universe_q["block_anchor"])
+                doc, str(universe_q["block_anchor"]), fixture_marker
             )
         else:
             universe, universe_line = derive_universe_separated(
@@ -2659,7 +2714,9 @@ def check_rule(doc: ContractDoc, manifest_path: Path) -> list[Violation]:
             )
 
         if consumers_name == "structural_term_guard_expressions":
-            found = derive_consumers_cap_guards(doc, str(consumers_q["block_anchor"]))
+            found = derive_consumers_cap_guards(
+                doc, str(consumers_q["block_anchor"]), fixture_marker
+            )
         else:
             found = derive_consumers_circled(doc, str(consumers_q["block_anchor"]))
         if found is None:
@@ -3192,6 +3249,20 @@ def default_repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def _manifest_step_prefixes(manifest_path: Path) -> list[str]:
+    """manifest 에서 C4C 접두 어휘 정본을 읽는다 (읽기 실패는 «빈 목록» = 축이 red)."""
+    try:
+        data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    raw = data.get("future_step_prefixes")
+    if not isinstance(raw, list):
+        return []
+    return [str(x) for x in raw if isinstance(x, str)]
+
+
 def check_document(
     text: str,
     display_path: str,
@@ -3236,7 +3307,7 @@ def check_document(
         ("C2UP", lambda d: check_c2up(d, baseline, root, notices)),
         ("C3", check_c3),
         ("C4", check_c4),
-        ("C4C", check_c4c),
+        ("C4C", lambda d: check_c4c(d, _manifest_step_prefixes(manifest))),
         ("RULE", lambda d: check_rule(d, manifest)),
         ("REF", lambda d: check_ref_rejected(d, manifest, root)),
         ("CLOSED-TABLE", lambda d: check_closed_tables(d, manifest, baseline)),
@@ -4969,6 +5040,85 @@ def build_mutations() -> list[Mutation]:
             # 역방향 — 술어 형태(회차 리터럴 없음)는 조용해야 한다.  이것이 없으면 축이
             # «→ 를 담은 모든 문장»을 잡는 과잉 차단으로 퇴행해도 배터리가 통과한다.
             lambda t: _append(t, "다음 = 동결 → 운영자 재결속(O-6) → 현행 버전 재심."),
+        ),
+        # ---- CAP-2/C4C 모집단 «탈출» 대조군 2세대 (43차 · 재심 #3 F1·F2·F3) ----
+        # 42차 판의 탈출 대조군은 «그 네 예시»만 잡았다.  심판이 같은 축에서 여섯 개를 더
+        # 찾아냈다 — 표기 의존이 남아 있던 자리들이다.  자리마다 하나씩 못박는다.
+        Mutation(
+            "CAP2-escape-no-backtick-antecedent",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "신규 상한: total_count > 1000 → `PREVENTION_UNVERIFIABLE`(전순서 1).",
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-spans-after-threshold",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "신규 상한: `total_count > 1000` 이면 `a` · `b` · `c` "
+                "→ `PREVENTION_UNVERIFIABLE`.",
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-line-break-split",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "신규 상한: `total_count > 1000` 이면\n  → `PREVENTION_UNVERIFIABLE`(전순서 1).",
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-fullwidth-digits",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t, "신규 상한: `total_count > １０００` → `PREVENTION_UNVERIFIABLE`."
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-normative-table-row",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            # 42차는 표 행을 통째로 뺐다 — 그것이 규범 술어에 준 무료 우회키였다.
+            lambda t: _append(
+                t, "| 신규 규범 | `total_count > 1000` → `PREVENTION_UNVERIFIABLE` |"
+            ),
+        ),
+        Mutation(
+            "CAP2-fixture-marker-is-silent",
+            "TOS-CC-RULE-MISSING",
+            "silent",
+            # 역방향 — 표식이 붙은 대조군 서술은 규범 술어가 «아니다».  이것이 없으면
+            # 픽스처를 red 로 만드는 과잉 차단으로 퇴행해도 배터리가 통과한다.
+            lambda t: _append(
+                t,
+                "[대조군] `total_count` 가 1,001 인 주입 → `PREVENTION_UNVERIFIABLE`.",
+            ),
+        ),
+        Mutation(
+            "C4C-escape-no-space-separator",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(t, "다음 단계=42차 → addendum-9 → O-6 재결속 → 재심."),
+        ),
+        Mutation(
+            "C4C-escape-fullwidth-colon",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(t, "다음 단계： 42차 → addendum-9 → O-6 재결속 → 재심."),
+        ),
+        Mutation(
+            "C4C-escape-newline-enumeration",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(
+                t, "다음 단계 =\n  42차 → addendum-9 → O-6 재결속 → 재심."
+            ),
         ),
         # ---- CAP-2/C4C 모집단 «탈출» 대조군 (42차 · 재심 F1·F2) -------------
         # 41차 판은 대조군이 전부 red 였는데도 **모집단 밖 신규 표기**가 조용히 통과했다.
