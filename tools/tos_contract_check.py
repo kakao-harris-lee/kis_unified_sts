@@ -21,6 +21,7 @@ addendum-5 가 낸 네 건은 전부 같은 클래스다: **계약이 자기 자
       TOS-CC-C3B  머리말이 스스로 열거한 «미래 지향 필드» 어휘 + 동일 major 리터럴 버전이
                   **같은 마크다운 표 «셀»** 안에 공존 (아래 CELL-1).
   C4  TOS-CC-C4A  currency 층 태그 «현행(N차 이후)» 의 N ≠ 현행 회차.
+      TOS-CC-C4C  미래 지향 «다음 =» 단계 열거의 회차 리터럴 (S-11 의 기계 소비자).
       TOS-CC-C4B  currency 어휘를 쓰면서 층 태그가 «전무»한 자리.
       TOS-CC-C4C  층 태그를 «단» 필드 안에서, 태그 밖 산문이 회차를 **리터럴**로
                   가리키며 그 태그와 어긋난 자리 (아래 LAYER-REF-1).
@@ -491,9 +492,13 @@ MANIFEST_SCHEMA_VERSION = 1
 
 #: 검사기가 «구현하는» 파생 질의의 이름.  manifest 가 모르는 이름을 쓰면 red —
 #: 모르는 질의를 «검사 없음»으로 접으면 그 규칙이 조용히 사라진다(fail-open).
-UNIVERSE_DERIVATIONS = frozenset({"separated_code_spans_in_block"})
-CONSUMER_DERIVATIONS = frozenset({"circled_items_in_block"})
-ELEMENT_ID_DERIVATIONS = frozenset({"code_span_verbatim"})
+UNIVERSE_DERIVATIONS = frozenset(
+    {"separated_code_spans_in_block", "cap_guard_expressions"}
+)
+CONSUMER_DERIVATIONS = frozenset(
+    {"circled_items_in_block", "structural_term_guard_expressions"}
+)
+ELEMENT_ID_DERIVATIONS = frozenset({"code_span_verbatim", "guard_expression_verbatim"})
 
 #: RATCHET-1 기준선 파일 — 검사기 «밖»에 두어 개수 갱신이 사람의 기록 행위로 남게 한다.
 #: 검사기가 스스로 낮출 수 있는 자리에 두면 래칫이 성립하지 않는다.
@@ -1918,6 +1923,46 @@ def check_c3(doc: ContractDoc) -> list[Violation]:
 # ============================================================================
 
 
+#: C4C — «다음 =» 계열 표기 뒤의 **단계 열거**.  `»` 가 바로 붙는 것은 토큰 «언급»이라
+#: 제외한다(축 자신을 설명하는 문장이 자기 위반이 되면 그 축은 못 산다).
+STEP_ENUM_RE = re.compile(r"(?:다음|현재 위치)\s*=\s(?!»)([^·|\n]{0,120})")
+#: 그 열거 안의 회차·addendum 리터럴.  이것이 «갱신해야 살아 있는 값»의 형상이다.
+STEP_ROUND_RE = re.compile(r"\d+\s*차|addendum-\d")
+
+
+def check_c4c(doc: ContractDoc) -> list[Violation]:
+    """C4C — 미래 지향 «단계 열거»에 회차 리터럴을 두지 않는다 (S-11 의 기계 소비자).
+
+    40차 ⓑ 는 currency 셀 하나를 술어화하고 머리말의 같은 형상 둘을 남겼다 — 재심
+    F3(medium).  부분 스윕이 반복되는 이유는 **스윕을 사람이 하기 때문**이므로 이 축이
+    그 자리를 진다.
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+
+    Returns:
+        위반 목록.  이력 행은 면제한다 — 「그때 참이었던 기록」은 갱신 대상이 아니다.
+    """
+    out: list[Violation] = []
+    for lineno, line in enumerate(doc.lines, start=1):
+        if doc.is_history_row(lineno):
+            continue
+        for m in STEP_ENUM_RE.finditer(line):
+            seg = m.group(1)
+            if "→" in seg and STEP_ROUND_RE.search(seg):
+                out.append(
+                    Violation(
+                        "TOS-CC-C4C",
+                        doc.display_path,
+                        lineno,
+                        "미래 지향 «단계 열거»에 회차 리터럴이 있다 — "
+                        f"«{_ellipsis(seg)}».  S-11 은 미래 지향 필드를 리터럴 대신 "
+                        "술어로 적게 한다(갱신할 값을 두지 않으면 stale 될 값도 없다)",
+                    )
+                )
+    return out
+
+
 def _prose_round_refs(
     cell: str,
 ) -> tuple[list[tuple[int, int, str]], list[re.Match[str]]]:
@@ -2067,6 +2112,7 @@ def check_c4(doc: ContractDoc) -> list[Violation]:
 #
 #   TOS-CC-RULE-ANCHOR    `statement_anchor` 가 문서에 0회 또는 2회 이상.
 #   TOS-CC-RULE-MISSING   universe ∖ consumers ≠ ∅  (R-F3 의 본체).
+#                         CAP-2 에서는 «차단 술어에 구조 파생 항이 없다» 가 이 형태로 뜬다.
 #   TOS-CC-RULE-EXTRA     consumers ∖ universe ≠ ∅  (사라진 원소를 가리키는 stale 소비처).
 #   TOS-CC-RULE-DUP       같은 (rule, element) 가 2회 이상.
 #   TOS-CC-RULE-MANIFEST  manifest 부재·파손·스키마 위반·미구현 파생 이름.
@@ -2193,6 +2239,76 @@ def derive_consumers_circled(
         for m in CIRCLED_ITEM_RE.finditer(block)
     ]
     return consumers, line_no
+
+
+#: 차단 술어(guard) 형상 — «1000 을 담은 코드스팬 술어 [∨ …] → `PREVENTION_UNVERIFIABLE`».
+#: 임계 리터럴을 정규식에 박는 것은 계수 하드코딩이 아니라 **형상**이다: 이 축이 세는 것은
+#: 「문서화된 상한 자리」이고 그 상한은 GitHub 문서가 정한 값이라 이 저장소가 못 고친다.
+GUARD_RE = re.compile(
+    r"`([^`\n]*\b1000\b[^`\n]*)`((?:\s*∨\s*`[^`\n]*`)*)"
+    r"\s*(?:\([^)\n]*\))?\s*→\s*\*{0,2}`PREVENTION_UNVERIFIABLE`"
+)
+#: 구조 파생 항 — «수집한 집합의 크기»를 피연산자로 쓰는 항(`|S| >= 1000` 형상).
+#: 서버 자기신고(`total_count`)와 갈리는 것이 이 축의 요점이다.
+STRUCTURAL_TERM_RE = re.compile(r"\|\s*[A-Za-z_][A-Za-z0-9_₀-₉]*\s*\|\s*[><]?=\s*\d")
+
+
+def _guard_terms(match: re.Match[str]) -> list[str]:
+    """guard 일치에서 «항 목록»을 뽑는다 (첫 항 + ∨ 로 이어진 항들)."""
+    rest = match.group(2) or ""
+    return [match.group(1)] + re.findall(r"`([^`\n]*)`", rest)
+
+
+def derive_cap_guards(
+    doc: ContractDoc, anchor: str
+) -> list[tuple[int, str, list[str]]]:
+    """문서의 **살아 있는** 차단 술어 자리를 파생한다 (이력 행 제외).
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+        anchor: 이 파생이 훑을 자리를 지목하는 축자 토큰 (manifest 선언).
+
+    Returns:
+        `(행번호, 정규화된 guard 식, 항 목록)` 목록.
+
+    Raises:
+        ContractParseError: 앵커가 문서에 없거나 모집단이 비면 — **모집단 붕괴는
+            «위반 0» 이 아니라 측정 불가**다(우주 블록 부재와 같은 극성).
+    """
+    if not any(anchor in line for line in doc.lines):
+        raise ContractParseError(f"guard 앵커가 문서에 부재: {anchor!r}")
+    out: list[tuple[int, str, list[str]]] = []
+    for lineno, line in enumerate(doc.lines, start=1):
+        if anchor not in line or doc.is_history_row(lineno):
+            continue
+        for m in GUARD_RE.finditer(line):
+            terms = _guard_terms(m)
+            out.append((lineno, " ∨ ".join(terms), terms))
+    if not out:
+        raise ContractParseError(
+            f"guard 모집단이 비었다 (앵커 {anchor!r}) — 형상 변경이면 이 축이 "
+            "조용히 사라지므로 fail-closed 로 죽는다"
+        )
+    return out
+
+
+def derive_universe_cap_guards(doc: ContractDoc, anchor: str) -> tuple[list[str], int]:
+    """CAP-2 우주 — 살아 있는 차단 술어 자리 전부."""
+    guards = derive_cap_guards(doc, anchor)
+    return [g[1] for g in guards], guards[0][0]
+
+
+def derive_consumers_cap_guards(
+    doc: ContractDoc, anchor: str
+) -> tuple[list[RuleConsumer], int]:
+    """CAP-2 소비처 — 그중 **구조 파생 항을 실제로 가진** 자리."""
+    guards = derive_cap_guards(doc, anchor)
+    consumers = [
+        RuleConsumer(expr, expr, expr)
+        for _, expr, terms in guards
+        if any(STRUCTURAL_TERM_RE.search(t) for t in terms)
+    ]
+    return consumers, guards[0][0]
 
 
 def default_manifest_path() -> Path:
@@ -2500,11 +2616,25 @@ def check_rule(doc: ContractDoc, manifest_path: Path) -> list[Violation]:
         universe_q = rule["universe"]
         consumers_q = rule["consumers"]
         assert isinstance(universe_q, dict) and isinstance(consumers_q, dict)
-        universe, universe_line = derive_universe_separated(
-            doc, str(universe_q["block_anchor"])
-        )
+        # **선언된 파생 이름으로 «디스패치»한다.**  종래 이 자리는 이름을 검증만 하고
+        # 호출은 한 벌로 고정돼 있었다 — 등록된 다른 이름을 선언해도 **조용히 같은
+        # 파생이 돌았다**(fail-open: manifest 의 «의도»와 측정자의 «행위»가 갈릴 수 있었다).
+        # 이름 → 함수 사상을 두면 그 창이 닫힌다.
+        universe_name = str(universe_q.get("derivation"))
+        consumers_name = str(consumers_q.get("derivation"))
+        if universe_name == "cap_guard_expressions":
+            universe, universe_line = derive_universe_cap_guards(
+                doc, str(universe_q["block_anchor"])
+            )
+        else:
+            universe, universe_line = derive_universe_separated(
+                doc, str(universe_q["block_anchor"])
+            )
 
-        found = derive_consumers_circled(doc, str(consumers_q["block_anchor"]))
+        if consumers_name == "structural_term_guard_expressions":
+            found = derive_consumers_cap_guards(doc, str(consumers_q["block_anchor"]))
+        else:
+            found = derive_consumers_circled(doc, str(consumers_q["block_anchor"]))
         if found is None:
             violations.append(
                 Violation(
@@ -3079,6 +3209,7 @@ def check_document(
         ("C2UP", lambda d: check_c2up(d, baseline, root, notices)),
         ("C3", check_c3),
         ("C4", check_c4),
+        ("C4C", check_c4c),
         ("RULE", lambda d: check_rule(d, manifest)),
         ("REF", lambda d: check_ref_rejected(d, manifest, root)),
         ("CLOSED-TABLE", lambda d: check_closed_tables(d, manifest, baseline)),
@@ -3223,6 +3354,27 @@ def _replace_line_once(text: str, old_line: str, new_line: str) -> str:
             old_line, count, "문서", f"주입 대상 행이 유일하지 않다 (count={count})"
         )
     return text.replace(old_line, new_line, 1)
+
+
+def _strip_structural_term(old: str, new: str) -> Callable[[str], str]:
+    """CAP-2 대조군 — 차단 술어에서 **구조 파생 항만** 걷어낸다.
+
+    guard 의 «형상»은 살려 둔다(여전히 `1000` 을 담은 술어 → `PREVENTION_UNVERIFIABLE`).
+    형상까지 깨면 모집단에서 사라져 `PARSE` 로 죽고, 그것은 이 대조군이 재려는 것이
+    아니다 — 재려는 것은 **«자기신고 전용으로 퇴행한 차단 자리»가 red 인가**다.
+
+    Args:
+        old: 원문에 정확히 1회 있는 축자 조각.
+        new: 구조 파생 항을 뺀 조각.
+
+    Returns:
+        뮤테이션 함수.
+    """
+
+    def _mutate(text: str) -> str:
+        return _replace_line_once(text, old, new)
+
+    return _mutate
 
 
 def _append_good_anchor(text: str) -> str:
@@ -4773,6 +4925,65 @@ def build_mutations() -> list[Mutation]:
                 t, ANCHOR_PARSE_ENUM_DEF, "(4) 삭제 대조군 **배열(목록)"
             ),
             anchors=(ANCHOR_PARSE_ENUM_DEF,),
+        ),
+        # ---- C4C — 미래 지향 단계 열거의 회차 리터럴 (41차 ⓑ · 재심 F3) -------
+        Mutation(
+            "C4C-inject-round-literal-step-enumeration",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(
+                t, "다음 = 42차 → addendum-9 → O-6 재결속 → «현행 버전 다음 판» 재심."
+            ),
+        ),
+        Mutation(
+            "C4C-predicate-form-is-silent",
+            "TOS-CC-C4C",
+            "silent",
+            # 역방향 — 술어 형태(회차 리터럴 없음)는 조용해야 한다.  이것이 없으면 축이
+            # «→ 를 담은 모든 문장»을 잡는 과잉 차단으로 퇴행해도 배터리가 통과한다.
+            lambda t: _append(t, "다음 = 동결 → 운영자 재결속(O-6) → 현행 버전 재심."),
+        ),
+        # ---- CAP-2 — 차단 술어의 «구조 파생 항» 전수 적용 (41차 ⓐ · 재심 F2) ----
+        # **이 넷이 없어서 40차가 죽은 검사를 냈다.**  세 소비처의 구조 파생 항을
+        # 각각 지운 변이가 전부 green 이었고(실측), 심판이 그것을 high 로 적발했다.
+        # 자리마다 하나씩 둔다 — «한 자리만 보는» 검사가 이 아크의 반복 결함이다.
+        Mutation(
+            "CAP2-strip-structural-term-S",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            _strip_structural_term(
+                "**`|S| >= 1000` ∨ `S.total_count > 1000` →",
+                "**`S.total_count > 1000` →",
+            ),
+        ),
+        Mutation(
+            "CAP2-strip-structural-term-Rs",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            _strip_structural_term(
+                "**`|R_s| >= 1000` ∨ `total_count > 1000` →",
+                "**`total_count > 1000` →",
+            ),
+        ),
+        Mutation(
+            "CAP2-strip-structural-term-R",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            _strip_structural_term(
+                "**`|R| >= 1000` ∨ `total_count > 1000` →",
+                "**`total_count > 1000` →",
+            ),
+        ),
+        Mutation(
+            "CAP2-strip-structural-term-E",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            # limb ⑤ 는 «처음부터» 구조 파생이었던 선례다 — 그 자리도 퇴행하면 red 여야
+            # 한다(선례라고 면제하면 규칙의 우주가 조용히 좁아진다).
+            _strip_structural_term(
+                "**`|E| >= 1000`(문서화된 임계) →",
+                "**`total_count > 1000`(문서화된 임계) →",
+            ),
         ),
         # ---- RULE — 규칙 ↔ 소비처 전수 대응 (S-25 · R-F3) -------------------
         # 문서 변이 (manifest 는 실운용 그대로).

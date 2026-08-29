@@ -272,7 +272,7 @@ runtime shell은 적어도 다음을 소유한다.
 - **예방 통제 활성**: tos-gate required check(룰셋 — `required_status_checks.checks[].app_id`
   == Actions app id)·`.github/workflows/tos-gate.yml`(하니스 `tools/tos_entry_harness.sh`
   경로·sha256 검증 스텝 포함) **및 그 하니스 파일 `tools/tos_entry_harness.sh` 의
-  실체화(계약 §12.3.4-R 블록 결속값 sha f5651fad…)** **및 `u17-verify` 실행기의 실체화**
+  실체화(계약 §12.3.4-R 블록 결속값 sha 1817c9ef…)** **및 `u17-verify` 실행기의 실체화**
   도입 → D0-A 착수 전 `PREVENTION_ACTIVE`(계약 §12.3.4 `U-17`).
   - **`u17-verify` 는 하니스와 «구별되는» 필수 산출물**이다 — 계약의 가드 체인은 3단
     (`bash <§12.3.4-R 하니스> && bash <u17-verify> && <D0A-FIRST>`)이고, 하니스는
@@ -289,9 +289,21 @@ runtime shell은 적어도 다음을 소유한다.
     `d0a_entry_state == ENTRY_OK` 에서만 green 이고 `ENTRY_OK` 는 `R-4` 에서 `verdict: approve` 를
     요구하므로, approve 이전에 룰셋에 넣으면 **모든 PR 이 무기한 red** 로 막힌다(계약이 등재한
     «자기 봉쇄»의 두 번째 형상).  **그 조건의 유일 소스는 계약 §12.2 이고 여기서는 참조만 한다**(S-14).
-    **현재 상태(실측)**: 파일 3종 착지 = `.github/workflows/tos-gate.yml` · `tools/tos_entry_harness.sh` ·
-    `tools/u17-verify.sh` **완료**, 운영자 countersign 완료, **룰셋 미설정 = 의도된 대기**
-    (계약 §12.2 표가 「보호 없음이지만 거짓 보호 주장도 없다」로 «보존» 판정한 부분 도입).
+    **현재 상태(실측 — [2026-08-29 재심 F1(high) 처분] «착지»와 «의미 정합»을 갈라 적는다)**:
+    · **파일 «착지» 완료** = `.github/workflows/tos-gate.yml` · `tools/tos_entry_harness.sh`
+      (정본 블록 sha `1817c9ef…` 와 byte-동일) · `tools/u17-verify.sh` · 운영자 countersign 완료.
+    · **`u17-verify` 의 «의미 정합»은 미이행**이다.  실행기는 계약 에라타 5차 세대이고,
+      **계약이 판정 경로에서 «제거»한 `commits/{sha}/check-runs` 를 여전히 열거**한다(실측).
+      계약의 현행 경로(①-R 런 열거 → ②-S suite 사상 → ③-C suite별 소비)와 세 상한
+      (`|R|`·`|R_s|`·`|S|` ≥ 1000)은 실행기에 **없다**.  40차가 이 자리를 «완료»로 적은 것은
+      **과잉주장**이었고 심판이 그것을 적발했다 — 채택한다.
+    · **순서상 귀결**: `PREVENTION_ACTIVE` 증거 «산출»은 계약 §12.2 가 이미 «approve 이후»로
+      순서화했으므로, 실행기의 의미 정합은 **그 시점의 선행조건**이지 approve 의 선행조건이
+      아니다.  착수 금지가 유지되는 동안 이 미이행은 **차단을 완화하지 않는다**(오히려 유지한다).
+      그러나 «완료»라고 적으면 거짓이므로 그렇게 적지 않는다 — **회피가 아니라 정직한 미해소**로
+      등재하고, 그 이행을 U-17 완료 조건에 결속한다.
+    · **룰셋 미설정 = 의도된 대기**(계약 §12.2 표가 「보호 없음이지만 거짓 보호 주장도 없다」로
+      «보존» 판정한 부분 도입).
 
 종료 조건:
 
