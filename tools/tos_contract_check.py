@@ -3225,6 +3225,26 @@ def _replace_line_once(text: str, old_line: str, new_line: str) -> str:
     return text.replace(old_line, new_line, 1)
 
 
+def _append_good_anchor(text: str) -> str:
+    """«앵커가 실재하는» 자기인용 하나를 붙인다 — 좌표는 문서에서 파생한다.
+
+    Args:
+        text: 계약 문서 텍스트.
+
+    Returns:
+        말미에 유효한 앵커 인용 한 줄을 더한 텍스트.
+
+    Raises:
+        ContractParseError: 앵커 어휘가 문서에 없으면 (대조군이 조용히 무의미해지지
+            않도록 시끄럽게 실패한다).
+    """
+    token = "재결속"
+    for idx, line in enumerate(text.split("\n"), start=1):
+        if token in line:
+            return _append(text, f"앵커 대조군 `:{idx}`«{token}»")
+    raise ContractParseError(f"대조군 앵커 어휘가 문서에 없다: {token!r}")
+
+
 def _append_in_enum_fence(suffix: str) -> Callable[[str], str]:
     """(4) 열거 펜스 «안»의 안전한 행 끝에 `suffix` 를 덧붙이는 변이를 만든다.
 
@@ -4379,7 +4399,12 @@ def build_mutations() -> list[Mutation]:
             "C2C-inject-good-anchor-is-silent",
             "TOS-CC-C2C",
             "silent",
-            lambda t: _append(t, "앵커 대조군 `:103`«재결속»"),
+            # **좌표를 «파생»한다.**  종래 이 픽스처는 `:103` 을 리터럴로 박았고, 계약
+            # 본문 위쪽에 행이 삽입되는 순간 그 행이 밀려 **대조군 자신이 위양성**을
+            # 냈다(v2.22 에라타 40차 실측 — 헤더 블록 삽입 +14 행).  «좋은 앵커는
+            # 조용하다»가 이 대조군의 의도인데, 리터럴은 그 의도를 문서 편집에
+            # 종속시킨다.  갱신할 값을 두지 않으면 stale 될 값도 없다.
+            _append_good_anchor,
         ),
         # ---- C2C 이력 행 면제의 «좁힘» (ANCHOR-2) -------------------------
         Mutation(
