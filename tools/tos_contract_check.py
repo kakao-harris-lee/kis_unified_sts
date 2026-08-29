@@ -2297,6 +2297,12 @@ GUARD_WINDOW = 300
 #: 인라인 HTML 주석 — 렌더링에 보이지 «않으므로» 술어 판별에서 제거한다.
 #: 44차 재심 #4 F2 실측: `다음 단계<!-- … -->=44차` 가 주석 하나로 우주 밖이었다.
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+#: HTML 태그 — `<span hidden>`·`<template>` 처럼 **렌더링을 숨기는 운반체**가 식별자를
+#: 나를 수 있다(48차 재심 #8 실측).  47차는 «주석» 한 형상만 고쳐 놓고 문언은 «비가시
+#: 문자열» 전부를 주장했다 — **문언이 능력보다 넓으면 그것이 결함**이다.
+#: **면제 판별에서만** 태그를 벗긴다(가드 탐지 창에는 적용하지 않는다 — 과잉 제거가
+#: 술어를 가리는 방향으로는 절대 작동하지 않게 한다: 여기서의 과잉은 «면제 축소» 뿐이다).
+HTML_TAG_RE = re.compile(r"<[^<>]{0,200}>")
 
 
 def _normalize_scan_text(text: str) -> str:
@@ -2373,12 +2379,15 @@ def _scan_chunks(line: str, fixture_rows: Sequence[str]) -> list[str]:
     # 셀에서 먼저 찾아, `<!-- (ㅎ-4) -->` 처럼 **렌더링되지 않는** 식별자가 셀 전체를 면제로
     # 승격시켰다(실측).  **비가시 문자열은 정체를 부여하지 못한다** — 면제는 문언보다 넓으면
     # 안 된다는 46차 ⓑ 규율의 같은 적용이다.
-    kept = [
-        c
-        for _, c in _split_cells(line)
-        if not CONTROL_ID_RE.search(HTML_COMMENT_RE.sub(" ", c))
-    ]
-    return [" ".join(kept)] if kept else []
+    # **[48차 — 재심 #8]  내용 기반 정체를 «폐기»한다.**  45~47차는 셀의 «내용»(대조군
+    # 식별자)으로 면제를 갈랐고, 그 정체는 매 회차 새 운반체로 위조됐다 —
+    # 미닫힘 괄호 → HTML 주석 → `<span hidden>`/`<template>`.  태그를 벗겨도 «내용»은
+    # 남으므로 이 방향은 끝이 없다(운반체 열거는 폐쇄되지 않는다).
+    # **정체를 «형상»에서 «수»로 옮긴다**: 픽스처 행은 통째로 면제하되 그 행의 **셀 수**를
+    # 기준선 파일에 래칫한다.  셀을 «더하면» 수가 어긋나 red 다 — 규범을 픽스처 행에
+    # 밀어 넣는 유일한 방법이 막힌다.  **잔여(등재)**: 기존 셀 «안»에 숨기는 것은 여전히
+    # 탐지되지 않는다(면제의 정의상 불가피 — 계약 잔여 1).
+    return []
 
 
 def _cap_guard_sites(
@@ -2415,6 +2424,102 @@ def _cap_guard_sites(
                     break
             if hit:
                 break
+    return out
+
+
+BASELINE_FIXTURE_KEY = "fixture_row_cells"
+
+
+def read_fixture_row_baseline(path: Path) -> dict[str, int]:
+    """기준선 파일에서 «픽스처 행 → 셀 수» 사상을 읽는다 — 부재·형태 위반은 fail-closed.
+
+    Args:
+        path: 기준선 JSON 경로.
+
+    Returns:
+        행 앵커 → 셀 수.
+
+    Raises:
+        ContractParseError: 읽기·파싱 실패 또는 키/타입 위반.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ContractParseError(f"기준선 파일을 읽지 못했다 ({path}): {exc}") from exc
+    table = data.get(BASELINE_FIXTURE_KEY) if isinstance(data, dict) else None
+    if not isinstance(table, dict) or not table:
+        raise ContractParseError(
+            f"기준선 파일에 '{BASELINE_FIXTURE_KEY}' 가 비지 않은 매핑으로 없다 ({path})"
+        )
+    out: dict[str, int] = {}
+    for key, value in table.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ContractParseError(
+                f"'{BASELINE_FIXTURE_KEY}[{key!r}]' 가 음이 아닌 정수가 아니다: {value!r}"
+            )
+        out[str(key)] = value
+    return out
+
+
+def check_fixture_row_shape(
+    doc: ContractDoc, fixture_rows: Sequence[str], baseline: Path
+) -> list[Violation]:
+    """픽스처 행의 **셀 수 래칫** — 면제받는 행에 셀을 더하면 red.
+
+    48차 재심 #8 처분.  면제의 정체를 «내용»에서 «수»로 옮긴 축이며, 이것이 없으면
+    픽스처 행 전체 면제가 곧 무료 우회키다.
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+        fixture_rows: manifest 가 선언한 픽스처 행 앵커.
+        baseline: 기준선 JSON 경로.
+
+    Returns:
+        위반 목록.
+    """
+    try:
+        expected = read_fixture_row_baseline(baseline)
+    except ContractParseError as exc:
+        return [Violation("TOS-CC-CAP2-FIXTURE", doc.display_path, 0, str(exc))]
+    out: list[Violation] = []
+    for anchor in fixture_rows:
+        want = expected.get(anchor)
+        if want is None:
+            out.append(
+                Violation(
+                    "TOS-CC-CAP2-FIXTURE",
+                    doc.display_path,
+                    0,
+                    f"픽스처 행 {anchor!r} 의 셀 수 기준선이 없다 — 면제받는 행의 «수»가 "
+                    "고정되지 않으면 그 면제가 곧 우회키다",
+                )
+            )
+            continue
+        seen = 0
+        for lineno, line in enumerate(doc.lines, start=1):
+            if not _fixture_row_id(line, [anchor]):
+                continue
+            seen += 1
+            got = len(_split_cells(line))
+            if got != want:
+                out.append(
+                    Violation(
+                        "TOS-CC-CAP2-FIXTURE",
+                        doc.display_path,
+                        lineno,
+                        f"픽스처 행 {anchor!r} 의 셀 수가 기준선과 다르다 "
+                        f"(기준선 {want} · 실측 {got}) — 면제받는 행에 셀이 늘거나 줄었다",
+                    )
+                )
+        if seen != 1:
+            out.append(
+                Violation(
+                    "TOS-CC-CAP2-FIXTURE",
+                    doc.display_path,
+                    0,
+                    f"픽스처 행 {anchor!r} 가 문서에 {seen}회 — 정확히 1회여야 한다",
+                )
+            )
     return out
 
 
@@ -2740,6 +2845,11 @@ def check_rule_vocabulary(
     return out
 
 
+def _rule_baseline_path() -> Path:
+    """RULE 축이 쓰는 기준선 파일 경로 (C2U 와 같은 파일 — 계수의 자리는 하나다)."""
+    return default_baseline_path()
+
+
 def check_rule(doc: ContractDoc, manifest_path: Path) -> list[Violation]:
     """RULE — manifest 가 등재한 각 규칙의 우주 ↔ 소비처를 전수 대조한다."""
     manifest, violations = load_manifest(manifest_path)
@@ -2766,6 +2876,7 @@ def check_rule(doc: ContractDoc, manifest_path: Path) -> list[Violation]:
         )
         return violations
     fixture_rows = [str(x) for x in rows]
+    violations.extend(check_fixture_row_shape(doc, fixture_rows, _rule_baseline_path()))
 
     rules = manifest["rules"]
     assert isinstance(rules, list)
@@ -5173,7 +5284,7 @@ def build_mutations() -> list[Mutation]:
         ),
         Mutation(
             "CAP2-escape-new-cell-in-fixture-row",
-            "TOS-CC-RULE-MISSING",
+            "TOS-CC-CAP2-FIXTURE",
             "inject",
             # **[46차 교정]** 45차 판은 «별도 행»을 삽입해 이 경계를 검증하지 «못했다»
             # (재심 #6 이 그 대조군의 결함을 짚었다).  실제 픽스처 행에 셀을 «추가»한다.
@@ -5183,7 +5294,7 @@ def build_mutations() -> list[Mutation]:
         ),
         Mutation(
             "CAP2-escape-guard-split-across-cells",
-            "TOS-CC-RULE-MISSING",
+            "TOS-CC-CAP2-FIXTURE",
             "inject",
             # 셀 경계로 술어를 쪼개는 우회(재심 #6 F1).
             _append_cell_to_fixture_row(
@@ -5191,8 +5302,27 @@ def build_mutations() -> list[Mutation]:
             ),
         ),
         Mutation(
+            "CAP2-escape-hidden-span-control-id",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # 태그 운반체로 식별자를 숨기는 우회(재심 #8 F1).
+            _append_cell_to_fixture_row(
+                " <span hidden>(ㅎ-4)</span> `total_count > 1000` "
+                "→ `PREVENTION_UNVERIFIABLE` |"
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-template-hidden-control-id",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            _append_cell_to_fixture_row(
+                " <template>(ㅎ-4)</template> `total_count > 1000` "
+                "→ `PREVENTION_UNVERIFIABLE` |"
+            ),
+        ),
+        Mutation(
             "CAP2-escape-comment-hidden-control-id",
-            "TOS-CC-RULE-MISSING",
+            "TOS-CC-CAP2-FIXTURE",
             "inject",
             # 비가시(HTML 주석) 식별자로 셀 전체를 면제시키는 우회(재심 #7 F1).
             _append_cell_to_fixture_row(
@@ -5202,7 +5332,7 @@ def build_mutations() -> list[Mutation]:
         ),
         Mutation(
             "CAP2-escape-unclosed-control-id",
-            "TOS-CC-RULE-MISSING",
+            "TOS-CC-CAP2-FIXTURE",
             "inject",
             # 미닫힘 식별자 접두가 면제키가 되는 우회(재심 #6 F2).
             _append_cell_to_fixture_row(
@@ -5315,14 +5445,14 @@ def build_mutations() -> list[Mutation]:
             ),
         ),
         Mutation(
-            "CAP2-fixture-marker-is-silent",
-            "TOS-CC-RULE-MISSING",
-            "silent",
-            # 역방향 — 표식이 붙은 대조군 서술은 규범 술어가 «아니다».  이것이 없으면
-            # 픽스처를 red 로 만드는 과잉 차단으로 퇴행해도 배터리가 통과한다.
-            lambda t: _append(
-                t,
-                "[대조군] `total_count` 가 1,001 인 주입 → `PREVENTION_UNVERIFIABLE`.",
+            "CAP2-fixture-row-cell-added-is-red",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # **[48차]** 정당한 대조군 셀을 더해도 red 다 — 기준선 갱신은 «사람의 기록
+            # 행위»여야 한다(C2U 래칫과 같은 규율).  이것이 «수»로 옮긴 정체의 값이다.
+            _append_cell_to_fixture_row(
+                " **(ㅎ-9)** 음성 — `total_count` 1,001 주입 "
+                "→ `PREVENTION_UNVERIFIABLE` |"
             ),
         ),
         Mutation(

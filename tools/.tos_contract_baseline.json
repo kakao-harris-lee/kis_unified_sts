@@ -7,5 +7,8 @@
   "unanchored_self_citations": 67,
   "closed_table_rows": {
     "| 대상 | 결과 |": 32
+  },
+  "fixture_row_cells": {
+    "| **T-84**": 17
   }
 }
