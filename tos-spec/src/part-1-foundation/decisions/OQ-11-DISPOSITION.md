@@ -7,7 +7,7 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: 44baa49d21876593a9d785b488e565345b354e054b1cd3b41f4073dd4ff344b5
+bound_set_digest: c76f27ce7cb3bd7933bd041fef1be45ea17096b734aa4d0a43342a1e95eccdea
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
@@ -18,7 +18,7 @@ authority: 운영자 (this repository's corpus owner)
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: 2f2ee16c9a0a3ad85fa39b6c971d9167668f031d
+decided_at_head: e88960f8fe8311002d6e4c31aa5a7ae31c9f502f
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
@@ -572,6 +572,34 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 > 강제가 없다**(대조군 형식이 다르다는 이유를 계약에 등재했다).  R-F2 처분이 **판정-변경
 > 생산 술어를 다시 바꿨으므로** 다음 S-24 결속은 6차 ⓓ 규율대로 **§2 실행기 전량
 > 재수행**이다 — 「측정된 byte-불변」 단축 경로는 이번에도 쓸 수 없다.
+
+> **재결속 기록 (현행 사이클 — 2026-08-29, v2.22 내용 · 에라타 41차 이후)**:
+> 같은 날 두 번째 재결속이다.  40차 판(`2f2ee16c`)에 결속한 뒤 레인 B 재심이
+> **`needs-attention`**(findings 4 · high 2 / medium 2 · 채택 4/기각 0/팬텀 0 ·
+> `docs/reviews/phase0-completion-contract/20260829-145254/verdict.md`)을 냈고,
+> **41차(`e88960f8`)가 전건을 처분**해 결속이 다시 만료됐다 — O-6 의 정상 거동이다.
+>
+> **이 재결속이 결속하는 내용**: 계약 blob `92c55b80ab13…` · **9,958행**(41차에서 +94/−?) ·
+> 개발계획 blob `98d8660f44f8…` · **612행**.  동결 사슬 … → `2f2ee16c`(40차) →
+> **`e88960f8`(41차)**.  **이 회차는 문언 회차가 아니다** — 본체는 **기계 소비자 둘**
+> (`CAP-2` 축 = 차단 술어의 구조 파생 항 전수 강제 · `C4C` 축 = 미래 지향 단계 열거의 회차
+> 리터럴 금지)과 **하니스 `R-3` 선택자 정밀화**(sha 핀 열 개 lockstep)이고, 문언 축소는 그 부수다.
+>
+> 이전 결속값은 이 문단이 역사로 보존한다:
+> `bound_set_digest 44baa49d21876593a9d785b488e565345b354e054b1cd3b41f4073dd4ff344b5`
+> · `requesting_plan_version v2.22` ·
+> `decided_at_head 2f2ee16c9a0a3ad85fa39b6c971d9167668f031d`.
+> `requesting_plan_version` 은 **v2.22 로 유지**한다(네 사이클 연속 — 에라타는 버전을 올리지 않는다).
+>
+> **권위 기록 (정직 표기)**: 운영자가 재심 판정을 받은 뒤 처분 범위를
+> 「F2·F3·F4 완전 처분 + F1 은 과잉주장 정정·이연 등재」(2026-08-29)로 선택했고, 그 범위대로
+> 처분했다.  `decided_at_head` 는 기입 규칙대로 재결속 편집 직전 실측 HEAD(`e88960f8…`)다.
+> **귀속은 대화 수준이며 리포-단독 재검증 불가**다.  countersign 미행사는 거부가 아니다.
+>
+> **이 재결속이 «주장하지 않는» 것**: 41차는 재심 4건을 처분했을 뿐 **종결이 아니다.**
+> §S-26 ② 카운터는 **이 편집으로 다시 0**이고(두 판 연속 0), **F1 은 «해소»가 아니라 축소된
+> 주장**이다 — `u17-verify` 의 의미 정합은 미이행으로 남아 U-17 완료를 막는다.  R-3 정밀화는
+> **선택자**를 고쳤을 뿐 approve 를 만들지 않는다.
 
 > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
 > `plan_scope_digest` 를 본문에 적으면
