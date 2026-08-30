@@ -72,7 +72,7 @@ CANON=github.com/kakao-harris-lee/kis_unified_sts     # 계약 핀 (C3)
 PIN_HOST=${CANON%%/*}                                 # [C6] 핀 host — 계약 핀에서 «파생»(아티팩트 선언 아님)
 WF_PATH=.github/workflows/tos-gate.yml                # 계약 리터럴 (C2)
 LIT1=tools/tos_entry_harness.sh                       # 계약 리터럴 (R2-i)
-LIT2=f5651fadcf2b5acda97192677525517751ff176eeaaccea4b5a446055e5670f1   # 계약 리터럴 (R2-ii) — §12.3.4-R 블록 sha256
+LIT2=1817c9ef5d790c111d4738b89e3c3add80dc2d9f80f9b8af7ef5738636cfbffb   # 계약 리터럴 (R2-ii) — §12.3.4-R 블록 sha256
 WFCANON="${U17_WFCANON:-$(dirname "$0")/wfcanon-v222.py}"     # [v2.22] «정본 잡 템플릿» 술어 (C-1 전 노드 중복 + 파서 핀 + 값 전수 핀)
 PYBIN="${U17_PYBIN:-/Users/harris/Development/private/kis_unified_sts/.venv/bin/python}"  # [v2.22] 술어의 PyYAML compose 층 전용 (시스템 python3 에는 PyYAML 부재)
 LADDER="${U17_LADDER:-$(dirname "$0")/ladder-v222e5.py}"       # [레인1] (b)② 4단 사다리 술어 — **gen 차이 자리**
@@ -232,6 +232,11 @@ show_capture A00 "apps/github-actions"; printf 'U17-A0 repos/%s  utc=%s  http=%s
 { ok2xx "$ST_APP" && [ -n "$APPID" ]; } || fire PREVENTION_UNVERIFIABLE "apps/github-actions 조회 실패(http=$ST_APP) — Actions app id 파생 불가"
 { ok2xx "$ST0" && [ -n "$TARGET" ]; }   || fire PREVENTION_UNVERIFIABLE "repos/$PIN_OR 조회 실패(http=$ST0) — default_branch 파생 불가"
 [ -n "$MATCH_REMOTE" ] || fire PREVENTION_TARGET_MISMATCH "계약 핀 $CANON 과 일치하는 원격 부재 (git remote -v 정규화:${NORMED:- none})"
+# ── [Phase B · 15차 에라타 AF-M3 · 41차 ⓓ 정합] 핀 workflow_id 결속 — ①-R «전»에 온다(구조 파생·아티팩트 파라미터 아님)
+WFIDQ="repos/$PIN_OR/actions/workflows/$(basename "$WF_PATH")"
+respond "$WFIDQ"; show_capture A0W "$WFIDQ"; STWFID=$(http_of "$WFIDQ"); PIN_WFID=$(jget "$WFIDQ" id); WFIDSTATE=$(jget "$WFIDQ" state)
+printf 'U17-0w 핀 workflow_id=%s (state=%s · %s 의 .id · 구조 파생 · ①-R 전 결속 · 폴백 없음)\n' "${PIN_WFID:-∅}" "${WFIDSTATE:-∅}" "$WFIDQ"
+{ ok2xx "$STWFID" && [ -n "$PIN_WFID" ]; } || fire PREVENTION_UNVERIFIABLE "[핀 workflow_id] $WFIDQ 조회 실패(http=$STWFID) 또는 .id 부재 — ①-R 구성 불가"
 
 # ── 아티팩트 (전순서 2 ABSENT · 대조값·countersign)  — 커밋-전용 읽기
 BODY=$(git show "HEAD:$PC" 2>/dev/null) || { fire PREVENTION_ABSENT "아티팩트 HEAD 부재: $PC"; BODY=""; }
@@ -263,6 +268,51 @@ P_PROT="repos/$PIN_OR/branches/$TARGET/protection"; P_RULES="repos/$PIN_OR/rules
 respond "$P_PROT";  show_capture A1 "$P_PROT"
 respond "$P_RULES"; show_capture A2 "$P_RULES"
 respond "$P_RSETS"; show_capture A3 "$P_RSETS"
+# ── [Phase B-2 · 결함 2] ⑥(다) 완전성 인증서 항 — «(2)② 경로 원소의 종단 판별력»(u17-path.txt:404-474).
+#    모집단(구조 파생) = (4) 원소 중 최상위 배열 ∧ total_count 미제공: commits/{d}/pulls(아래 (b)①에서
+#    처리) · rulesets · rules/branches/{target}.  이 승격은 «관측 전용»이다 — A_STATE 가 소비하는
+#    위 plain .body 는 그대로 두고(소비 의미 불변 · 과잉 차단 금지), per_page=100 리터럴을 붙인
+#    «별도» 조회로 페이지화 완전성 + 종단 «가득 참» 판별을 잰다.
+DELTA_CERT="$CAP/delta-cert.json"; printf '{}' > "$DELTA_CERT"
+deltamerge() { python3 -c 'import json,sys
+f=sys.argv[1]; d=json.load(open(f)); d[sys.argv[2]]=json.loads(sys.argv[3]); json.dump(d,open(f,"w"))' "$DELTA_CERT" "$1" "$2"; }
+observe_delta() {   # $1=인증서 라벨  $2=불변(엔드포인트 base, per_page 없이)
+  local label="$1" base="$2" p="${2}?per_page=100" k st
+  k="$CAP/$(key "$p")"
+  respond "$p"; show_capture DELTA "$p"; st=$(http_of "$p")
+  if [ "$st" = ERR ] || ! ok2xx "$st"; then deltamerge "$label" '{"observed":false,"why":"fetch failed"}'; return; fi
+  respond_slurp "$p"; show_slurp "$p"; local slst; slst=$(cat "$k.slurp.status" 2>/dev/null)
+  if ! ok2xx "$slst"; then deltamerge "$label" '{"observed":false,"why":"slurp fetch failed"}'; return; fi
+  local n; n=$(python3 -c 'import json,sys
+try: print(len(json.load(open(sys.argv[1]))))
+except Exception: print("")' "$k.slurp.body")
+  [ -n "$n" ] || { deltamerge "$label" '{"observed":false,"why":"slurp body not a page array"}'; return; }
+  local tp="${p}&page=$((n+1))"
+  respond "$tp"; show_capture DELTAt "$tp"; local tst; tst=$(http_of "$tp")
+  if [ "$tst" = ERR ] || ! ok2xx "$tst"; then deltamerge "$label" '{"observed":false,"why":"terminal probe fetch failed"}'; return; fi
+  local PLOUT2; PLOUT2=$("$PYBIN" "$PAGELIMB" "$PAGE_MODE" "$k.body" "$k.hdr" "$k.slurp.body" "$CAP/$(key "$tp").body" NONE "$k.delta.collected.json" 2>&1)
+  printf '%s\n' "$PLOUT2" | sed 's/^/  | /'
+  local PLRES2; PLRES2=$(printf '%s\n' "$PLOUT2" | sed -n 's/^RESULT=//p' | tail -1)
+  case "$PLRES2" in
+    PAGES_OK\|*) : ;;
+    *) deltamerge "$label" "$(python3 -c 'import json,sys;print(json.dumps({"observed":False,"why":sys.argv[1]}))' "${PLRES2#*|}")"; return ;;
+  esac
+  local verdict; verdict=$(python3 -c 'import json,sys
+pages=json.load(open(sys.argv[1])); per_page=100
+if not pages: print(json.dumps({"observed":False,"why":"no pages"})); raise SystemExit
+last=pages[-1]
+if not isinstance(last,list): print(json.dumps({"observed":False,"why":"last page not a bare array — (2)① 형상(비대상)"})); raise SystemExit
+n=len(last)
+if n==0: print(json.dumps({"observed":True,"discriminated":True,"why":"empty universe(소비 방향이 이미 안전 — u17-path.txt:438-440)"}))
+elif n<per_page: print(json.dumps({"observed":True,"discriminated":True,"why":"partial last page(%d<%d)"%(n,per_page)}))
+elif n==per_page: print(json.dumps({"observed":False,"why":"last page exactly per_page(%d) — 구별 불가(silent-cap 동형 · u17-path.txt:441-443)"%per_page}))
+else: print(json.dumps({"observed":False,"why":"last page>per_page — shape violation"}))
+' "$k.slurp.body")
+  deltamerge "$label" "$verdict"
+}
+observe_delta rules_branches "$P_RULES"
+observe_delta rulesets "$P_RSETS"
+printf 'U17-DELTA (다) 관측(target-scope): %s\n' "$(cat "$DELTA_CERT")"
 # [α] 연속성 입력우주 = target 에 «적용된» 룰셋만 (rules/branches/{target} 의 ruleset_id) — rulesets 목록 전체가 아니다
 APPLIED_IDS=$(python3 -c 'import json,sys
 ids=[]
@@ -481,6 +531,21 @@ except Exception: print("")' "$PK.slurp.body")
 ' "$PPOUT" | sed -n 's/^RESULT=//p' | tail -1)
     case "$PPRES" in PAGES_OK\|*) : ;;
       *) fire PREVENTION_UNVERIFIABLE "(b)① d=$d pulls 열거 완전성 불충족 — ${PPRES#*|}"; continue ;; esac
+    # [Phase B-2 · 결함 2] ⑥(다) — pulls 는 이미 열거+종단 프로브가 끝났다(위) · 추가 조회 없이
+    #   같은 slurp 본문에서 «가득 참» 판별만 파생한다(u17-path.txt:404-474 · observe_delta 와 동형).
+    PULLS_DELTA=$(python3 -c 'import json,sys
+pages=json.load(open(sys.argv[1])); per_page=100
+if not pages: print(json.dumps({"observed":False,"why":"no pages"})); raise SystemExit
+last=pages[-1]
+if not isinstance(last,list): print(json.dumps({"observed":False,"why":"last page not a bare array"})); raise SystemExit
+n=len(last)
+if n==0: print(json.dumps({"observed":True,"discriminated":True,"why":"empty universe"}))
+elif n<per_page: print(json.dumps({"observed":True,"discriminated":True,"why":"partial last page(%d<%d)"%(n,per_page)}))
+elif n==per_page: print(json.dumps({"observed":False,"why":"last page exactly per_page(%d) — 구별 불가(silent-cap 동형)"%per_page}))
+else: print(json.dumps({"observed":False,"why":"last page>per_page — shape violation"}))
+' "$PK.slurp.body")
+    deltamerge pulls "$PULLS_DELTA"
+    printf 'U17-DELTA (다) pulls d=%s: %s\n' "$d" "$PULLS_DELTA"
     HS=$(python3 - "$PK.collected.json" "$TARGET" <<'PYX'
 import json,sys
 prs=json.load(open(sys.argv[1])); target=sys.argv[2]
@@ -492,86 +557,268 @@ PYX
 )
     case "$HS" in UNVERIFIABLE\|*) fire PREVENTION_UNVERIFIABLE "(b) d=$d ${HS#*|}"; continue ;; UNVERIFIED_REVISION\|*) fire PREVENTION_UNVERIFIED_REVISION "(b) d=$d ${HS#*|}"; continue ;; esac
     HSHA=$(printf '%s' "$HS" | cut -d'|' -f2); MERGED=$(printf '%s' "$HS" | cut -d'|' -f3); { [ -z "$MINMERGED" ] || [[ "$MERGED" < "$MINMERGED" ]]; } && MINMERGED="$MERGED"
-    # ══ [레인1] (b)② 재작성 — 열거 규율(ⓛ/2차ⓡ/5차ⓧ) + 4단 사다리(3차ⓣ/4차ⓥ/5차ⓦ)
-    #    판정 논리는 «술어 파일»에 있고 이 블록은 조회·결속 해석·transcript 만 한다.
-    CRP="repos/$PIN_OR/commits/$HSHA/check-runs?filter=all&per_page=100"   # filter=all(2차ⓞㄱ) + per_page=100(계약 리터럴)
-    respond "$CRP"; show_capture B2 "$CRP"; CRST=$(http_of "$CRP")
-    if [ "$CRST" = ERR ]; then fire PREVENTION_UNVERIFIABLE "(b)② d=$d check-runs 조회 네트워크/인증 오류 — $CRP"; continue
-    elif ! ok2xx "$CRST"; then fire PREVENTION_UNVERIFIED_REVISION "(b)② d=$d head=$HSHA check-runs http=$CRST — 열거 실패(검사 생략 금지)"; continue; fi
-    CK="$CAP/$(key "$CRP")"
-    respond_slurp "$CRP"; show_slurp "$CRP"; SLST=$(cat "$CK.slurp.status" 2>/dev/null)
-    if ! ok2xx "$SLST"; then fire PREVENTION_UNVERIFIABLE "(b)② d=$d --slurp 조회 실패(status=${SLST:-∅}) — 페이지 수 N 을 본문에서 관측 불가"; continue; fi
-    NPG=$(python3 -c 'import json,sys
-try:
-    j=json.load(open(sys.argv[1])); print(len(j) if isinstance(j,list) else "")
-except Exception: print("")' "$CK.slurp.body")
-    [ -n "$NPG" ] || { fire PREVENTION_UNVERIFIABLE "(b)② d=$d --slurp 본문이 «페이지 배열의 배열»이 아니다 — 열거 완전성 관측 불가"; continue; }
-    # 종단 프로브 — `filter=all` 을 «그대로» 이어 붙인다.  이 핀을 빼면 열거와 프로브가
-    #   «서로 다른 컬렉션»을 보게 되므로, 계약 문언 `?page=<N+1>&per_page=100` 의 이 자리 이행이다.
-    TRP="$CRP&page=$((NPG+1))"
-    respond "$TRP"; show_capture B2t "$TRP"; TRST=$(http_of "$TRP")
-    if [ "$TRST" = ERR ]; then fire PREVENTION_UNVERIFIABLE "(b)② d=$d 종단 프로브 네트워크/인증 오류 — $TRP"; continue
-    elif ! ok2xx "$TRST"; then fire PREVENTION_UNVERIFIABLE "(b)② d=$d 종단 프로브 http=$TRST — 열거 완전성 관측 불가 — $TRP"; continue; fi
-    PLOUT=$("$PYBIN" "$PAGELIMB" "$PAGE_MODE" "$CK.body" "$CK.hdr" "$CK.slurp.body" "$CAP/$(key "$TRP").body" check_runs "$CK.collected.json" 2>&1); PLRC=$?
-    printf '%s\n' "$PLOUT" | sed 's/^/  | /'
-    PLRES=$(printf '%s\n' "$PLOUT" | sed -n 's/^RESULT=//p' | tail -1)
-    case "$PLRES" in PAGES_OK\|*) : ;;
-      *) fire PREVENTION_UNVERIFIABLE "(b)② d=$d head=$HSHA 열거 완전성 불충족 — ${PLRES#*|}"; continue ;; esac
-    # ── run 결속 해석 — 동명 check-run 마다 workflow run(path·head_sha)을 조회해 사다리에 넘긴다
-    NAMED=$(python3 - "$CK.collected.json" "$CHECK" <<'PY'
-import json,sys,re
+    # ══ [Phase B · errata41d 정합] E₀ 파생을 ①-R → ②-S → ③-C 로 교체한다.
+    #    [v2.22 에라타 10차 ⓐ] `commits/{sha}/check-runs` 는 판정 뿌리(E₀ 원천)에서 «제거»됐다 —
+    #    아래는 그 대체(계약 u17-path-ext-7000.txt:17-34 · 원본 문서 ≈6999-7028행).
+    #    `commits/{sha}/check-runs` 는 이 블록 «끝부분»(β 축)에서 **비-판정 교차검증 피연산자로만**
+    #    재등장한다 — 그 자리가 이 엔드포인트의 유일한 허용 잔존 역할이다(u17-path-ext-7000.txt:79-90).
+    CERTF="$CAP/cert-$(key "$d").json"; printf '{}' > "$CERTF"
+    certmerge() { python3 -c 'import json,sys
+f=sys.argv[1]; d=json.load(open(f)); d[sys.argv[2]]=json.loads(sys.argv[3]); json.dump(d,open(f,"w"))' "$CERTF" "$1" "$2"; }
+
+    # ①-R — 런 열거: actions/workflows/<핀 workflow_id>/runs?head_sha=<HSHA>  (계약 리터럴 per_page=100)
+    RRP="repos/$PIN_OR/actions/workflows/$PIN_WFID/runs?head_sha=$HSHA&per_page=100"
+    respond "$RRP"; show_capture C1R "$RRP"; RRST=$(http_of "$RRP")
+    if [ "$RRST" = ERR ]; then fire PREVENTION_UNVERIFIABLE "①-R d=$d 조회 네트워크/인증 오류 — $RRP"; continue
+    elif ! ok2xx "$RRST"; then fire PREVENTION_UNVERIFIABLE "①-R d=$d http=$RRST — $RRP"; continue; fi
+    RRK="$CAP/$(key "$RRP")"
+    respond_slurp "$RRP"; show_slurp "$RRP"; RRSLST=$(cat "$RRK.slurp.status" 2>/dev/null)
+    if ! ok2xx "$RRSLST"; then fire PREVENTION_UNVERIFIABLE "①-R d=$d --slurp 조회 실패(status=${RRSLST:-∅}) — 페이지 수 N 관측 불가"; continue; fi
+    # [(2)① 경로] actions/workflows/{id}/runs 는 total_count 를 준다 — 종단 프로브 불요(u17-path.txt:573)
+    RROUT=$("$PYBIN" "$PAGELIMB" "$PAGE_MODE" "$RRK.body" "$RRK.hdr" "$RRK.slurp.body" NONE workflow_runs "$RRK.collected.json" 2>&1)
+    printf '%s\n' "$RROUT" | sed 's/^/  | /'
+    RRRES=$(printf '%s\n' "$RROUT" | sed -n 's/^RESULT=//p' | tail -1)
+    case "$RRRES" in PAGES_OK\|*) : ;; *) fire PREVENTION_UNVERIFIABLE "①-R d=$d 열거 완전성 불충족 — ${RRRES#*|}"; continue ;; esac
+    R_COUNT=$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))))' "$RRK.collected.json" 2>/dev/null || echo 0)
+    R_TOTAL=$(jget "$RRP" total_count)
+    printf 'U17-C1R ①-R 1,000-런 상한 관측: 수집 런 수=%s · total_count=%s\n' "$R_COUNT" "${R_TOTAL:-∅}"
+    if [ "${R_COUNT:-0}" -ge 1000 ] 2>/dev/null || { [ -n "${R_TOTAL:-}" ] && [ "$R_TOTAL" -gt 1000 ] 2>/dev/null; }; then
+      fire PREVENTION_UNVERIFIABLE "①-R d=$d 1,000-결과 상한 도달(|R|=$R_COUNT · total_count=${R_TOTAL:-∅}) — head_sha 질의 문서화 상한(40차 ⓐ 논리합)"; continue
+    fi
+    certmerge cap_R "{\"observed\":true,\"count\":$R_COUNT,\"total\":${R_TOTAL:-null}}"
+
+    # ②-S — run→suite 사상(구조 파생 · HTTP 호출 아님) · |S_R| 는 항상 로그로 방출
+    SRF="$RRK.S_R.json"
+    python3 -c 'import json,sys
+runs=json.load(open(sys.argv[1])); sr=[]
+for r in runs:
+    if not isinstance(r,dict): continue
+    sid=r.get("check_suite_id")
+    if sid is not None and sid not in sr: sr.append(sid)
+json.dump(sr, open(sys.argv[2],"w"))' "$RRK.collected.json" "$SRF"
+    NSR=$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))))' "$SRF")
+    printf 'U17-C2S ②-S run→suite 사상: |S_R|=%s  S_R=%s\n' "$NSR" "$(cat "$SRF")"
+
+    # ③-C — suite 별 소비: check-suites/{s}/check-runs → E₀ 합집합 · ⑤ 동명-1,000 상한(suite 스코프)
+    E0P="$RRK.E0.json"; printf '[]' > "$E0P"
+    C3BAD=0
+    for s in $(python3 -c 'import json,sys
+for x in json.load(open(sys.argv[1])): print(x)' "$SRF"); do
+      CCQ="repos/$PIN_OR/check-suites/$s/check-runs?filter=all&per_page=100"
+      respond "$CCQ"; show_capture C3C "$CCQ"; CCST=$(http_of "$CCQ")
+      if [ "$CCST" = ERR ]; then fire PREVENTION_UNVERIFIABLE "③-C d=$d s=$s 조회 네트워크/인증 오류 — $CCQ"; C3BAD=1; break; fi
+      if ! ok2xx "$CCST"; then fire PREVENTION_UNVERIFIABLE "③-C d=$d s=$s http=$CCST — $CCQ"; C3BAD=1; break; fi
+      CCK="$CAP/$(key "$CCQ")"
+      respond_slurp "$CCQ"; show_slurp "$CCQ"; CCSLST=$(cat "$CCK.slurp.status" 2>/dev/null)
+      if ! ok2xx "$CCSLST"; then fire PREVENTION_UNVERIFIABLE "③-C d=$d s=$s --slurp 조회 실패(status=${CCSLST:-∅})"; C3BAD=1; break; fi
+      CCOUT=$("$PYBIN" "$PAGELIMB" "$PAGE_MODE" "$CCK.body" "$CCK.hdr" "$CCK.slurp.body" NONE check_runs "$CCK.collected.json" 2>&1)
+      printf '%s\n' "$CCOUT" | sed 's/^/  | /'
+      CCRES=$(printf '%s\n' "$CCOUT" | sed -n 's/^RESULT=//p' | tail -1)
+      case "$CCRES" in PAGES_OK\|*) : ;; *) fire PREVENTION_UNVERIFIABLE "③-C d=$d s=$s 열거 완전성 불충족 — ${CCRES#*|}"; C3BAD=1; break ;; esac
+      NAMED_S=$(python3 -c 'import json,sys
 els=json.load(open(sys.argv[1])); chk=sys.argv[2]
-for i,cr in enumerate(els):
-    if not isinstance(cr,dict) or cr.get("name")!=chk: continue
-    rid=""
-    for u in (cr.get("details_url") or "", cr.get("html_url") or ""):
-        m=re.search(r"/actions/runs/(\d+)",u)
-        if m: rid=m.group(1); break
-    print("CR|%d|%s|%s"%(i,(cr.get("check_suite") or {}).get("id"),rid))
-PY
-)
-    RESL="$CK.runs.tsv"; : > "$RESL"; RESBAD=0
-    while IFS='|' read -r tag idx sid rid; do
-      [ "$tag" = CR ] || continue
-      if [ -z "$rid" ]; then
-        Q="repos/$PIN_OR/actions/runs?check_suite_id=$sid&per_page=100"; respond "$Q"; show_capture B4q "$Q"; QST=$(http_of "$Q")
-        if [ "$QST" = ERR ]; then fire PREVENTION_UNVERIFIABLE "(b)② $Q 네트워크/인증 오류"; RESBAD=1; continue
-        elif ! ok2xx "$QST"; then fire PREVENTION_UNVERIFIED_REVISION "(b)② check-run #$idx → suite $sid http=$QST"; RESBAD=1; continue; fi
-        SR=$(python3 - "$CAP/$(key "$Q").body" <<'PY'
-import json,sys
-j=json.load(open(sys.argv[1])); r=j.get("workflow_runs") or []
-print("ONE|%s"%r[0].get("id") if len(r)==1 else "AMBIG|%d"%len(r))
-PY
-)
-        case "$SR" in ONE\|*) rid="${SR#ONE|}" ;;
-          *) fire PREVENTION_UNVERIFIED_REVISION "(b)② check-run #$idx: details_url 에 run id 부재 ∧ suite $sid 안 run ${SR#AMBIG|}개 = 모호 → 결속 불가(fail-closed)"; RESBAD=1; continue ;; esac
+print(sum(1 for c in els if isinstance(c,dict) and c.get("name")==chk))' "$CCK.collected.json" "$CHECK")
+      printf 'U17-C3E ⑤ suite=%s 이름==%s 인 check-run 수(동명 상한 관측대상)=%s\n' "$s" "$CHECK" "$NAMED_S"
+      if [ "${NAMED_S:-0}" -ge 1000 ] 2>/dev/null; then
+        fire PREVENTION_UNVERIFIABLE "⑤ d=$d suite=$s 동명 check-run 1,000 상한 도달(|E_s|=$NAMED_S) — 자동 삭제로 우주 잘림(문서: «In a check suite…limits…to 1000»)"
+        C3BAD=1; break
       fi
-      RQ="repos/$PIN_OR/actions/runs/$rid"; respond "$RQ"; show_capture B4 "$RQ"; RST=$(http_of "$RQ")
-      if [ "$RST" = ERR ]; then fire PREVENTION_UNVERIFIABLE "(b)② $RQ 네트워크/인증 오류"; RESBAD=1; continue
-      elif ! ok2xx "$RST"; then fire PREVENTION_UNVERIFIED_REVISION "(b)② check-run #$idx → runs/$rid http=$RST"; RESBAD=1; continue; fi
-      RPATH=$(jget "$RQ" path); RHEAD=$(jget "$RQ" head_sha)
-      printf '%s\t%s\t%s\t%s\t%s\n' "$idx" "$rid" "$RPATH" "$RHEAD" "$sid" >> "$RESL"
-      # [E2] 정본 path 원소만 check_suite 귀속 일치를 요구한다 (v2.22 원문 거동 유지 — 코드 델타 0 축)
-      if [ "$RPATH" = "$WF_PATH" ]; then
-        SQ="repos/$PIN_OR/check-suites/$sid"; respond "$SQ"; show_capture B3 "$SQ"; SST=$(http_of "$SQ")
-        if [ "$SST" = ERR ]; then fire PREVENTION_UNVERIFIABLE "(b)② $SQ 네트워크/인증 오류"; RESBAD=1
-        elif ! ok2xx "$SST"; then fire PREVENTION_UNVERIFIABLE "(b)② $SQ http=$SST"; RESBAD=1
-        elif [ "$(jget "$SQ" head_sha)" != "$HSHA" ]; then fire PREVENTION_UNVERIFIED_REVISION "(b)② suite $sid head_sha≠PR head"; RESBAD=1; fi
+      python3 -c 'import json,sys
+a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2]))
+json.dump(a+b, open(sys.argv[1],"w"))' "$E0P" "$CCK.collected.json"
+    done
+    [ "$C3BAD" = 0 ] || continue
+    NE0=$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))))' "$E0P")
+    printf 'U17-C3 ③-C 합집합 |E₀|=%s (S_R 전체 소비 완료 · 1,000-suite 잘림의 대상 아님 — GitHub 처방 이행)\n' "$NE0"
+    certmerge cap_E "{\"observed\":true}"
+
+    # α축 — commits/{sha}/check-suites 로 S_A 파생 · (i) 포함 · (ii) 정체성 확인
+    CSAQ="repos/$PIN_OR/commits/$HSHA/check-suites?per_page=100"
+    respond "$CSAQ"; show_capture ALFA "$CSAQ"; CSAST=$(http_of "$CSAQ")
+    if [ "$CSAST" = ERR ]; then fire PREVENTION_UNVERIFIABLE "α d=$d check-suites 조회 네트워크/인증 오류 — $CSAQ"; continue
+    elif ! ok2xx "$CSAST"; then fire PREVENTION_UNVERIFIABLE "α d=$d check-suites http=$CSAST — $CSAQ"; continue; fi
+    CSAK="$CAP/$(key "$CSAQ")"
+    respond_slurp "$CSAQ"; show_slurp "$CSAQ"; CSASL=$(cat "$CSAK.slurp.status" 2>/dev/null)
+    if ! ok2xx "$CSASL"; then fire PREVENTION_UNVERIFIABLE "α d=$d --slurp 조회 실패(status=${CSASL:-∅})"; continue; fi
+    CSAOUT=$("$PYBIN" "$PAGELIMB" "$PAGE_MODE" "$CSAK.body" "$CSAK.hdr" "$CSAK.slurp.body" NONE check_suites "$CSAK.collected.json" 2>&1)
+    printf '%s\n' "$CSAOUT" | sed 's/^/  | /'
+    CSARES=$(printf '%s\n' "$CSAOUT" | sed -n 's/^RESULT=//p' | tail -1)
+    case "$CSARES" in PAGES_OK\|*) : ;; *) fire PREVENTION_UNVERIFIABLE "α d=$d check-suites 열거 완전성 불충족 — ${CSARES#*|}"; continue ;; esac
+    SA_COUNT=$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))))' "$CSAK.collected.json")
+    SA_TOTAL=$(jget "$CSAQ" total_count)
+    printf 'U17-ALFA0 (limb③) check-suites 1,000-suite 상한 관측: 수집 수=%s · total_count=%s\n' "$SA_COUNT" "${SA_TOTAL:-∅}"
+    if [ "${SA_COUNT:-0}" -ge 1000 ] 2>/dev/null || { [ -n "${SA_TOTAL:-}" ] && [ "$SA_TOTAL" -gt 1000 ] 2>/dev/null; }; then
+      fire PREVENTION_UNVERIFIABLE "α d=$d check-suites 1,000-suite 상한 도달 — S_A 신뢰 구간 밖(α 는 상류 안전장치로 격하 · u17-path.txt:148)"; continue
+    fi
+    certmerge cap_S "{\"observed\":true,\"count\":$SA_COUNT,\"total\":${SA_TOTAL:-null}}"
+    SAF="$CSAK.S_A.json"
+    python3 -c 'import json,sys
+els=json.load(open(sys.argv[1])); h=sys.argv[2]; a=sys.argv[3]
+out=[str(x.get("id")) for x in els if isinstance(x,dict) and x.get("head_sha")==h and str((x.get("app") or {}).get("id"))==str(a)]
+json.dump(out, open(sys.argv[4],"w"))' "$CSAK.collected.json" "$HSHA" "$APPID" "$SAF"
+    printf 'U17-ALFA1 S_A(포함 조건: head_sha==%s ∧ app.id==%s) = %s\n' "$HSHA" "$APPID" "$(cat "$SAF")"
+    SR_STR_F="$RRK.S_R.str.json"
+    python3 -c 'import json,sys
+json.dump([str(x) for x in json.load(open(sys.argv[1]))], open(sys.argv[2],"w"))' "$SRF" "$SR_STR_F"
+    MISSF="$CSAK.missing.json"
+    python3 -c 'import json,sys
+sr=json.load(open(sys.argv[1])); sa=json.load(open(sys.argv[2]))
+json.dump([x for x in sr if x not in sa], open(sys.argv[3],"w"))' "$SR_STR_F" "$SAF" "$MISSF"
+    printf 'U17-ALFA2 (i) S_R∖S_A = %s\n' "$(cat "$MISSF")"
+    if [ "$(cat "$MISSF")" != "[]" ]; then
+      fire PREVENTION_UNVERIFIABLE "α(i) d=$d S_R∖S_A≠∅(=$(cat "$MISSF")) — check-suites 미문서화 잘림 반증 실패(u17-path-ext-7000.txt:46-47)"; continue
+    fi
+    EXCF="$CSAK.excess.json"
+    python3 -c 'import json,sys
+sr=json.load(open(sys.argv[1])); sa=json.load(open(sys.argv[2]))
+json.dump([x for x in sa if x not in sr], open(sys.argv[3],"w"))' "$SR_STR_F" "$SAF" "$EXCF"
+    printf 'U17-ALFA3 (ii) S_A∖S_R = %s (각 원소 정체성 확인 필요 — «두 축 모두» 달라야 «타 워크플로»)\n' "$(cat "$EXCF")"
+    ALFABAD=0
+    for s in $(python3 -c 'import json,sys
+for x in json.load(open(sys.argv[1])): print(x)' "$EXCF"); do
+      DQ="repos/$PIN_OR/actions/runs?check_suite_id=$s&per_page=100"
+      respond "$DQ"; show_capture DDID "$DQ"; DQST=$(http_of "$DQ")
+      if [ "$DQST" = ERR ]; then fire PREVENTION_UNVERIFIABLE "α(ii)/ⓓ d=$d s=$s 조회 네트워크/인증 오류 — $DQ"; ALFABAD=1; continue; fi
+      if ! ok2xx "$DQST"; then fire PREVENTION_UNVERIFIABLE "α(ii)/ⓓ d=$d s=$s http=$DQST — 정체성 확인 불가(fail-closed)"; ALFABAD=1; continue; fi
+      DQK="$CAP/$(key "$DQ")"
+      respond_slurp "$DQ"; show_slurp "$DQ"; DQSL=$(cat "$DQK.slurp.status" 2>/dev/null)
+      if ! ok2xx "$DQSL"; then fire PREVENTION_UNVERIFIABLE "α(ii)/ⓓ d=$d s=$s --slurp 조회 실패 — 정체성 확인 불가"; ALFABAD=1; continue; fi
+      DQOUT=$("$PYBIN" "$PAGELIMB" "$PAGE_MODE" "$DQK.body" "$DQK.hdr" "$DQK.slurp.body" NONE workflow_runs "$DQK.collected.json" 2>&1)
+      printf '%s\n' "$DQOUT" | sed 's/^/  | /'
+      DQRES=$(printf '%s\n' "$DQOUT" | sed -n 's/^RESULT=//p' | tail -1)
+      case "$DQRES" in PAGES_OK\|*) : ;; *) fire PREVENTION_UNVERIFIABLE "α(ii)/ⓓ d=$d s=$s 열거 완전성 불충족 — ${DQRES#*|}"; ALFABAD=1; continue ;; esac
+      DQ_COUNT=$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))))' "$DQK.collected.json")
+      DQ_TOTAL=$(jget "$DQ" total_count)
+      printf 'U17-ALFA3d ⓓ s=%s 1,000-결과 상한 관측: 수집 런 수=%s · total_count=%s\n' "$s" "$DQ_COUNT" "${DQ_TOTAL:-∅}"
+      if [ "${DQ_COUNT:-0}" -ge 1000 ] 2>/dev/null || { [ -n "${DQ_TOTAL:-}" ] && [ "$DQ_TOTAL" -gt 1000 ] 2>/dev/null; }; then
+        fire PREVENTION_UNVERIFIABLE "ⓓ α(ii) d=$d s=$s 1,000-결과 상한 도달(|R_s|=$DQ_COUNT · total_count=${DQ_TOTAL:-∅})"; ALFABAD=1; continue
       fi
-    done <<< "$NAMED"
-    [ "$RESBAD" = 0 ] || continue
-    RUNSJ="$CK.runs.json"
-    python3 - "$RESL" "$RUNSJ" <<'PY'
+      # [Phase B-2 · 결속 수정] 우선순위: ∅ → 귀속 불일치(check_suite_id≠s) → PINNED → 필드 부재 → OTHER.
+      #   구 판은 workflow_id·path 가 «둘 다 부재»여도 hit 미매치이면 OTHER(=«확인된 타 워크플로»)로
+      #   통과시켰다 — «확인하지 않은 것을 라벨로 적는» fail-open(K-10 계열).  또한 증거 run 이 실제로
+      #   그 suite s 에 귀속하는지(`check_suite_id == s`)를 확인하지 않았다.  둘 다 fail-closed 로 닫는다.
+      IDCHECK=$(python3 -c 'import json,sys
+runs=json.load(open(sys.argv[1])); wfid=sys.argv[2]; path=sys.argv[3]; suite=sys.argv[4]
+if not runs:
+    print("EMPTY"); raise SystemExit
+for r in runs:
+    if not isinstance(r,dict):
+        print("SHAPE_BAD"); raise SystemExit
+    csid = r.get("check_suite_id")
+    if csid is not None and str(csid) != str(suite):
+        print("MISMATCH"); raise SystemExit
+for r in runs:
+    wf=r.get("workflow_id"); p=r.get("path")
+    if (wf is not None and str(wf)==str(wfid)) or (p is not None and p==path):
+        print("PINNED"); raise SystemExit
+for r in runs:
+    if r.get("workflow_id") is None or r.get("path") is None:
+        print("FIELD_ABSENT"); raise SystemExit
+print("OTHER")' "$DQK.collected.json" "$PIN_WFID" "$WF_PATH" "$s")
+      printf 'U17-ALFA4 s=%s 정체성 판정=%s (workflow_id==%s ∨ path==%s · check_suite_id==%s 귀속 확인 — 보수 방향: «타 워크플로» 이려면 두 축 모두 달라야 하고 둘 다 실재해야 한다)\n' "$s" "$IDCHECK" "$PIN_WFID" "$WF_PATH" "$s"
+      case "$IDCHECK" in
+        PINNED)       fire PREVENTION_UNVERIFIABLE "α(ii) d=$d s=$s 핀 워크플로로 판명 — ①-R 과소 열거(u17-path-ext-7000.txt:51)"; ALFABAD=1 ;;
+        EMPTY)        fire PREVENTION_UNVERIFIABLE "α(ii) d=$d s=$s 의 run 0건 — 정체성 확인 불가(fail-closed)"; ALFABAD=1 ;;
+        MISMATCH)     fire PREVENTION_UNVERIFIABLE "α(ii) d=$d s=$s 증거 run 의 check_suite_id ≠ $s — 귀속 불일치(fail-closed)"; ALFABAD=1 ;;
+        FIELD_ABSENT) fire PREVENTION_UNVERIFIABLE "α(ii) d=$d s=$s 증거 run 에 workflow_id 또는 path 필드 부재 — «타 워크플로» 확인 불가(fail-closed)"; ALFABAD=1 ;;
+        SHAPE_BAD)    fire PREVENTION_UNVERIFIABLE "α(ii) d=$d s=$s 증거 run 원소가 매핑이 아님 — 정체성 확인 불가"; ALFABAD=1 ;;
+        OTHER)        : ;;
+        *)            fire PREVENTION_UNVERIFIABLE "α(ii) d=$d s=$s 정체성 판정 파서 오류(IDCHECK=$IDCHECK)"; ALFABAD=1 ;;
+      esac
+    done
+    [ "$ALFABAD" = 0 ] || continue
+    printf 'U17-ALFA5 α 축 통과: (i) S_R⊆S_A ∧ (ii) S_A∖S_R 전 원소 «확인된 타 워크플로»\n'
+    certmerge alpha "{\"observed\":true,\"subset_ok\":true,\"identity_ok\":true}"
+
+    # β축 — Σ_{s∈S_R}|E₀ 내 app.id==Actions| == |ref-level check-runs(app.id==Actions ∧ suite∈S_R)|
+    #   ref-level(commits/{sha}/check-runs) 은 «β 전용» — 판정 피연산자가 아니다(u17-path-ext-7000.txt:90)
+    BRQ="repos/$PIN_OR/commits/$HSHA/check-runs?filter=all&per_page=100"
+    respond "$BRQ"; show_capture BETA "$BRQ"; BRST=$(http_of "$BRQ")
+    if [ "$BRST" = ERR ]; then fire PREVENTION_UNVERIFIABLE "β d=$d check-runs(ref) 조회 네트워크/인증 오류 — $BRQ"; continue
+    elif ! ok2xx "$BRST"; then fire PREVENTION_UNVERIFIED_REVISION "β d=$d check-runs(ref) http=$BRST"; continue; fi
+    BRK="$CAP/$(key "$BRQ")"
+    respond_slurp "$BRQ"; show_slurp "$BRQ"; BRSL=$(cat "$BRK.slurp.status" 2>/dev/null)
+    if ! ok2xx "$BRSL"; then fire PREVENTION_UNVERIFIABLE "β d=$d --slurp 조회 실패(status=${BRSL:-∅})"; continue; fi
+    BROUT=$("$PYBIN" "$PAGELIMB" "$PAGE_MODE" "$BRK.body" "$BRK.hdr" "$BRK.slurp.body" NONE check_runs "$BRK.collected.json" 2>&1)
+    printf '%s\n' "$BROUT" | sed 's/^/  | /'
+    BRRES=$(printf '%s\n' "$BROUT" | sed -n 's/^RESULT=//p' | tail -1)
+    case "$BRRES" in PAGES_OK\|*) : ;; *) fire PREVENTION_UNVERIFIABLE "β d=$d check-runs(ref) 열거 완전성 불충족 — ${BRRES#*|}"; continue ;; esac
+    BETAF="$BRK.beta.json"
+    python3 -c 'import json,sys
+e0=json.load(open(sys.argv[1])); sr=set(str(x) for x in json.load(open(sys.argv[2])))
+ref=json.load(open(sys.argv[3])); appid=sys.argv[4]
+left=sum(1 for c in e0 if isinstance(c,dict) and str((c.get("app") or {}).get("id"))==str(appid))
+right=0; missing=0
+for c in ref:
+    if not isinstance(c,dict): continue
+    if str((c.get("app") or {}).get("id"))!=str(appid): continue
+    sid=(c.get("check_suite") or {}).get("id")
+    if sid is None: missing+=1; continue
+    if str(sid) in sr: right+=1
+json.dump({"left":left,"right":right,"missing_suite":missing}, open(sys.argv[5],"w"))' "$E0P" "$SR_STR_F" "$BRK.collected.json" "$APPID" "$BETAF"
+    printf 'U17-BETA0 β 계수 관측: %s\n' "$(cat "$BETAF")"
+    BMISS=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["missing_suite"])' "$BETAF")
+    if [ "${BMISS:-0}" -gt 0 ]; then
+      fire PREVENTION_UNVERIFIABLE "β d=$d ref-level check-run ${BMISS}건 check_suite.id 부재 — fail-closed(범위 밖으로 접지 않는다)"; continue
+    fi
+    BLEFT=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["left"])' "$BETAF")
+    BRIGHT=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["right"])' "$BETAF")
+    if [ "$BLEFT" != "$BRIGHT" ]; then
+      fire PREVENTION_UNVERIFIABLE "β d=$d 계수 불일치 좌(E₀ 내 app.id==Actions)=$BLEFT ≠ 우(ref-level·scope S_R)=$BRIGHT — 전이적 차단(재조회로 해소)"; continue
+    fi
+    printf 'U17-BETA1 β 축 통과: 좌=%s == 우=%s\n' "$BLEFT" "$BRIGHT"
+    certmerge beta "{\"observed\":true,\"left\":$BLEFT,\"right\":$BRIGHT}"
+    # [부수 · Phase B-2] uses=0 은 |S_A∖S_R|=∅ 라 ⓓ 가 «공허 충족»이었다는 사실을 정직하게 남긴다(게이트 술어 불변).
+    certmerge cap_Rs "{\"observed\":true,\"uses\":$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))))' "$EXCF")}"
+
+    # ⑥ 완전성 인증서 — 단일 방출점 게이팅.  결측 키 접근은 예외로 죽는다(truthy-sentinel 금지).
+    #   위 각 축이 실패할 때마다 이미 fire+continue 로 이 지점 «전»에 차단되므로, 이 게이트는
+    #   방어적 이중 확인이다 — 향후 편집이 어느 축의 certmerge 호출을 빠뜨리는 회귀를 잡는다.
+    GATE_OUT=$(python3 - "$CERTF" "$DELTA_CERT" <<'PYCERT' 2>&1
 import json,sys
-out={}
-for l in open(sys.argv[1]):
-    p=l.rstrip("\n").split("\t")
-    if len(p)<5: continue
-    out[p[1]]={"path":p[2],"head_sha":p[3],"check_suite_id":p[4]}
-json.dump(out,open(sys.argv[2],"w"))
-PY
-    printf 'U17-B2r run 결속 해석 (idx / run / path / run.head_sha / suite) — %s행:\n' "$(grep -c . "$RESL" 2>/dev/null || echo 0)"; sed 's/^/  | /' "$RESL"
-    LADOUT=$("$PYBIN" "$LADDER" "$CK.collected.json" "$RUNSJ" "$CHECK" "$WF_PATH" "$HSHA" "$APPID" 2>&1); LADRC=$?
+cert = json.load(open(sys.argv[1]))
+delta = json.load(open(sys.argv[2]))
+try:
+    for k in ("cap_R", "cap_S", "cap_Rs", "cap_E", "alpha", "beta"):
+        item = cert[k]                        # 결측 키 -> KeyError(죽는다·truthy-sentinel 아님)
+        if item["observed"] is not True:
+            raise RuntimeError("%s.observed is not True" % k)
+    if cert["alpha"]["subset_ok"] is not True or cert["alpha"]["identity_ok"] is not True:
+        raise RuntimeError("alpha 미충족")
+    if cert["beta"]["left"] != cert["beta"]["right"]:
+        raise RuntimeError("beta 미충족")
+    # [Phase B-2 · 결함 2] ⑥(다) — (2)② 경로 세 원소 전부 «관측 ∧ 판별» 이어야 인증서가 선다.
+    for k in ("pulls", "rules_branches", "rulesets"):
+        item = delta[k]                       # 결측 키 -> KeyError
+        if item["observed"] is not True or item.get("discriminated") is not True:
+            raise RuntimeError("(다) %s 미관측/미판별: %s" % (k, item.get("why")))
+    print("CERT_OK|" + json.dumps({"cert": cert, "delta": delta}))
+except Exception as e:
+    print("CERT_FAIL|%s: %s" % (type(e).__name__, e))
+    sys.exit(1)
+PYCERT
+)
+    printf 'U17-CERT ⑥ 완전성 인증서: %s\n' "$GATE_OUT"
+    case "$GATE_OUT" in
+      CERT_OK\|*) : ;;
+      *) fire PREVENTION_UNVERIFIABLE "⑥ d=$d 완전성 인증서 게이팅 실패 — $GATE_OUT"; continue ;;
+    esac
+
+    # ── run 결속 해석 — ①-R 의 수집 결과(R)가 이미 run 객체(id/path/head_sha)를 담으므로
+    #    구세대의 suite→run 역결속 HTTP 조회(옛 actions/runs?check_suite_id=·actions/runs/$rid)는
+    #    불필요하다 — runs.json 은 R 에서 «추가 조회 없이» 직접 구성한다.
+    RUNSJ="$RRK.runs.json"
+    python3 -c 'import json,sys
+runs=json.load(open(sys.argv[1])); out={}
+for r in runs:
+    if not isinstance(r,dict): continue
+    rid=r.get("id")
+    if rid is None: continue
+    out[str(rid)]={"path":r.get("path"),"head_sha":r.get("head_sha"),"check_suite_id":r.get("check_suite_id")}
+json.dump(out, open(sys.argv[2],"w"))' "$RRK.collected.json" "$RUNSJ"
+    printf 'U17-C1Rr ①-R run 결속 맵 구성(추가 HTTP 없음 — R 자체가 path/head_sha 를 담는다): %s개\n' "$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))))' "$RUNSJ")"
+
+    LADOUT=$("$PYBIN" "$LADDER" "$E0P" "$RUNSJ" "$CHECK" "$WF_PATH" "$HSHA" "$APPID" 2>&1)
     printf '%s\n' "$LADOUT" | sed 's/^/  | /'
     LADRES=$(printf '%s\n' "$LADOUT" | sed -n 's/^RESULT=//p' | tail -1)
     case "$LADRES" in
@@ -580,7 +827,7 @@ PY
       *) fire PREVENTION_UNVERIFIED_REVISION "(b)② d=$d head=$HSHA ${LADRES#*|}"; continue ;;
     esac
     R_SET=$(printf '%s\n' "$LADOUT" | sed -n 's/^LAD-R //p' | tr '\n' ' ')
-    printf 'U17-B2R 층 ① 과 층 (2) 가 소비하는 R = { %s} — 사다리 3단계 «현행» 집합에서 파생(2차 ⓝ·5차 ⓦ)\n' "$R_SET"
+    printf 'U17-B2R 층 ① 과 층 (2) 가 소비하는 R = { %s} — 사다리 3단계 «현행» 집합에서 파생(①-R→②-S→③-C 정합 E₀ 위)\n' "$R_SET"
     # [R2-③·E1] 그 head_sha 시점의 워크플로 blob — «서버»에서 읽는다: contents/<path>?ref=<head> → base64 decode → 두 리터럴 grep
     CQ="repos/$PIN_OR/contents/$WF_PATH?ref=$HSHA"; respond "$CQ"; show_capture B5 "$CQ"; CST=$(http_of "$CQ")
     if [ "$CST" = ERR ]; then fire PREVENTION_UNVERIFIABLE "(b) d=$d head=$HSHA contents 조회 네트워크/인증 오류 — $CQ"; continue
@@ -593,11 +840,11 @@ except Exception as e: sys.stdout.write("")' "$CAP/$(key "$CQ").body")
     printf 'U17-B5 decoded %s@%s (encoding=%s size=%s):\n' "$WF_PATH" "$HSHA" "$(jget "$CQ" encoding)" "$(jget "$CQ" size)"; printf '%s\n' "$WF" | sed 's/^/  | /'
     # ── [v2.21 #1 (1)] 정본 대조 — «토큰 존재»가 아니라 «정본 byte 일치» (열린-세계 → 닫힌-세계)
     WFF="$CAP/$(key "$CQ").wf.yml"; printf '%s\n' "$WF" > "$WFF"
-    WFOUT=$("$PYBIN" "$WFCANON" blob "$WFF" 2>&1); WFRC=$?   # [v2.22·F#2] 계약 리터럴은 술어 «안»에 있다 — env 로 선언하지 않는다(자기선택 표면 제거)
+    WFOUT=$("$PYBIN" "$WFCANON" blob "$WFF" 2>&1)   # [v2.22·F#2] 계약 리터럴은 술어 «안»에 있다 — env 로 선언하지 않는다(자기선택 표면 제거)
     printf '%s\n' "$WFOUT" | sed 's/^/  | /'
     WFRES=$(printf '%s\n' "$WFOUT" | sed -n 's/^RESULT=//p' | tail -1)
     case "$WFRES" in
-      UNVERIFIABLE) fire PREVENTION_UNVERIFIABLE "(b-blob)@d d=$d head=$HSHA 정본 잡 대조 불가(파서 핀 `yq (mikefarah) v4.48.x` 불일치 또는 YAML 파서 실패 — M-4)"; continue ;;
+      UNVERIFIABLE) fire PREVENTION_UNVERIFIABLE "(b-blob)@d d=$d head=$HSHA 정본 잡 대조 불가(파서 핀 \`yq (mikefarah) v4.48.x\` 불일치 또는 YAML 파서 실패 — M-4)"; continue ;;
       BLOB_OK) : ;;
       *) fire PREVENTION_UNVERIFIED_REVISION "(b-blob)@d d=$d head=$HSHA 정본 «잡 템플릿» 불일치 — 최상위 allowlist·jobs 개수·잡 키/name/runs-on·steps 순서·체크아웃 with·스텝 메타·중복 키 중 하나 이상 (T-84 ⑬)"; continue ;;
     esac
@@ -608,12 +855,17 @@ except Exception as e: sys.stdout.write("")' "$CAP/$(key "$CQ").body")
     [ -n "${R_SET// /}" ] || { fire PREVENTION_UNVERIFIED_REVISION "(b)③ d=$d head=$HSHA R=∅ — 서버 스텝 대조 불가"; continue; }
     JBAD=0
     for r in $R_SET; do
-      printf 'U17-B6a r=%s run_attempt=%s (ⓓ — 어느 attempt 를 본 판정인지 병기)\n' "$r" "$(jget "repos/$PIN_OR/actions/runs/$r" run_attempt)"
+      RATT=$(python3 -c 'import json,sys
+runs=json.load(open(sys.argv[1])); rid=sys.argv[2]
+for x in runs:
+    if isinstance(x,dict) and str(x.get("id"))==rid: print(x.get("run_attempt")); break
+else: print("")' "$RRK.collected.json" "$r")
+      printf 'U17-B6a r=%s run_attempt=%s (ⓓ — 어느 attempt 를 본 판정인지 병기 · ①-R 수집 R 에서 직접 파생 — 추가 조회 없음)\n' "$r" "${RATT:-∅}"
       JQ="repos/$PIN_OR/actions/runs/$r/jobs?filter=latest&per_page=100"   # filter=latest 핀(ⓓ) + per_page=100
       respond "$JQ"; show_capture B6 "$JQ"; JST=$(http_of "$JQ")
       if [ "$JST" = ERR ]; then fire PREVENTION_UNVERIFIABLE "(b)③ d=$d r=$r jobs 조회 네트워크/인증 오류 — $JQ"; JBAD=1; continue
       elif ! ok2xx "$JST"; then fire PREVENTION_UNVERIFIED_REVISION "(b)③ d=$d r=$r jobs http=$JST — 서버 스텝 기록 조회 실패(검사 생략 금지)"; JBAD=1; continue; fi
-      SVOUT=$("$PYBIN" "$WFCANON" server "$CAP/$(key "$JQ").body" 2>&1); SVRC=$?
+      SVOUT=$("$PYBIN" "$WFCANON" server "$CAP/$(key "$JQ").body" 2>&1)
       printf '%s\n' "$SVOUT" | sed 's/^/  | /'
       SVRES=$(printf '%s\n' "$SVOUT" | sed -n 's/^RESULT=//p' | tail -1)
       case "$SVRES" in
@@ -624,7 +876,7 @@ except Exception as e: sys.stdout.write("")' "$CAP/$(key "$CQ").body")
     done
     [ "$JBAD" = 0 ] || continue
     if git cat-file -e "$HSHA^{commit}" 2>/dev/null; then LB=$(git rev-parse -q --verify "$HSHA:$WF_PATH" 2>/dev/null || echo ABSENT); printf 'U17-B5x 보조(선택·판정 미소비): 로컬 git show %s:%s → %s\n' "$HSHA" "$WF_PATH" "$LB"; else printf 'U17-B5x 보조(선택·판정 미소비): 로컬에 %s 커밋 없음 — 서버 조회만으로 판정\n' "$HSHA"; fi
-    printf 'U17-B d=%s head=%s merged_at=%s: name/conclusion/app.id=%s/head_sha/suite/workflow(path·head)/blob 정본 대조(정본 A·B byte 일치)/서버 잡 steps[] 전부 일치\n' "$d" "$HSHA" "$MERGED" "$APPID"
+    printf 'U17-B d=%s head=%s merged_at=%s: ①-R/②-S/③-C E₀ 파생 ∧ α/β 독립 관측 ∧ ⑥ 완전성 인증서 ∧ name/conclusion/app.id=%s/head_sha/suite/workflow(path·head)/blob 정본 대조(정본 A·B byte 일치)/서버 잡 steps[] 전부 일치\n' "$d" "$HSHA" "$MERGED" "$APPID"
   done
 fi
 
@@ -662,4 +914,4 @@ PY
   fi
 fi
 
-finish "(a) 술어 충족(checks[].app_id==Actions $APPID) ∧ 핀 원격 존재·선언 대조 일치 ∧ [C6] 핀 host 결속(--hostname $PIN_HOST · GH_HOST 재핀) ∧ countersign 유효 ∧ [E9] |P_last|=1 ∧ ∀d∈D: x_last ⊰ d ∧ 소비 blob==blob(x_last) ∧ **(b-blob)@target=$BT_STATE(무조건 항·target HEAD=${THSHA:-∅})** ∧ (b-blob)@d·(b-server) 전 리비전 검증(|D|=$ND) ∧ (α) 연속성 성립(t_land=${MINMERGED:-∅}) — responder=$RESP"
+finish "(a) 술어 충족(checks[].app_id==Actions $APPID) ∧ 핀 원격 존재·선언 대조 일치 ∧ [C6] 핀 host 결속(--hostname $PIN_HOST · GH_HOST 재핀) ∧ countersign 유효 ∧ [E9] |P_last|=1 ∧ ∀d∈D: x_last ⊰ d ∧ 소비 blob==blob(x_last) ∧ **(b-blob)@target=$BT_STATE(무조건 항·target HEAD=${THSHA:-∅})** ∧ (b-blob)@d·(b-server) 전 리비전 검증(|D|=$ND · ①-R→②-S→③-C E₀ 파생 ∧ α/β 독립 관측 ∧ ⑥ 완전성 인증서) ∧ (α) 연속성 성립(t_land=${MINMERGED:-∅}) — responder=$RESP"

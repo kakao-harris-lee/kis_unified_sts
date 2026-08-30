@@ -66,10 +66,17 @@ case "$DISP" in
   *) emit REBINDING_REQUIRED "disposition 어휘 밖: '$DISP'" ;;
 esac
 
-# ── R-3  최신 verdict 스탬프 — **우주는 HEAD 트리다**(워킹트리 나열 아님)
-VD=$(git ls-tree -d --name-only HEAD "$STAMPS/" 2>/dev/null \
-     | LC_ALL=C sort | tail -1) || VD=""
-[ -n "$VD" ] || emit APPROVAL_ABSENT "HEAD 에 verdict 스탬프 없음"
+# ── R-3  최신 verdict 스탬프 — **우주는 HEAD 트리**이고 **선택자는 «내용»이다**
+#   [v2.22 에라타 41차 ⓒ — 재심 F4 (medium)] 종래 선택자는 «사전순 마지막 디렉터리»
+#   하나였다.  같은 네임스페이스에 verdict.md 없는 산출물 디렉터리가 생기면 그것이
+#   최신 판정을 **가려** APPROVAL_ABSENT 가 났다(실측: 40차 판 HEAD).  40차는 이것을
+#   «관행 규칙»으로만 두었고 심판이 「관행은 강제가 아니다」로 적발했다.  선택자를
+#   **«verdict.md 를 가진 디렉터리 중 사전순 마지막»**으로 정밀화한다 — 술어가 진다.
+VD=""
+for d in $(git ls-tree -d --name-only HEAD "$STAMPS/" 2>/dev/null | LC_ALL=C sort); do
+  if git cat-file -e "HEAD:$d/verdict.md" 2>/dev/null; then VD="$d"; fi
+done
+[ -n "$VD" ] || emit APPROVAL_ABSENT "HEAD 에 verdict.md 를 가진 스탬프 없음"
 VBODY=$(git show "HEAD:$VD/verdict.md" 2>/dev/null) \
   || emit APPROVAL_ABSENT "verdict.md 가 HEAD 에 부재: $VD"
 printf 'R-3 verdict=%s\n' "$VD"
