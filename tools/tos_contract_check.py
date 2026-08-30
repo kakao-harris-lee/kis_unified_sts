@@ -456,8 +456,10 @@ from __future__ import annotations
 
 import argparse
 import copy
+import errno
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -1590,19 +1592,81 @@ def derive_unanchored_citations(doc: ContractDoc) -> list[tuple[int, str]]:
     return sites
 
 
-def _read_source_text(path: Path, sources: Mapping[Path, str] | None) -> str:
-    """픽스처화 가능한 리더들이 공유하는 **유일한** 읽기 자리.
+# ============================================================================
+# 원본 읽기 — 게이트는 디스크, 배터리는 인메모리 사상 (부재는 «명시»)
+# ============================================================================
+
+
+class SourceAbsent:
+    """인메모리 사상 안에서 «이 경로에는 파일이 없다» 를 뜻하는 표지의 형(型).
+
+    쓰이는 인스턴스는 `SOURCE_ABSENT` 다.  참/거짓 문맥에서 쓰면 `TypeError` 가
+    난다 — 표지가 «원본 문자열» 자리로 새면 조용히 falsy 로 접히지 않고 그 자리에서
+    시끄럽게 죽는 편이 낫기 때문이다.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "SOURCE_ABSENT"
+
+    def __bool__(self) -> bool:
+        raise TypeError("SOURCE_ABSENT 는 참/거짓 문맥에서 쓸 수 없다")
+
+
+#: 부재 표지.  사상의 값이 이것이면 리더는 디스크로 내려가지 «않는다».
+SOURCE_ABSENT = SourceAbsent()
+
+#: 리더가 받는 «경로 → 원본» 사상.  값이 문자열이면 그 원본, `SOURCE_ABSENT` 면 부재.
+SourceMap = Mapping[Path, "str | SourceAbsent"]
+#: 픽스처를 «짓는» 쪽이 채우는 같은 사상의 가변 판.
+MutableSourceMap = dict[Path, "str | SourceAbsent"]
+
+#: 배터리 픽스처 경로의 «합성» 접두.  디스크에 만들지 않는다 — 키는 인메모리 사상
+#: 안에서만 살고, `str(path)` 는 진단 문구에서 여전히 뜻을 갖는다.  임시 디렉터리를
+#: 쓰지 않으므로 쓰기 가능한 경로가 없는 샌드박스에서도 배터리가 돈다.  고정 상대
+#: 경로이므로 같은 이름의 실제 파일이 작업 디렉터리 기준으로 «있을 수» 있다 — 그래서
+#: 이 접두 아래에서는 사상이 «유일한 우주»다(`_read_source_text`).
+SELFTEST_FIXTURE_DIR = Path("<selftest>")
+
+
+def _absent_source(path: Path) -> FileNotFoundError:
+    """실제 부재와 «같은» 예외를 짓는다.
+
+    호출부는 `OSError` 를 잡아 `ContractParseError` 로 접으며 예외 문구를 그대로
+    끼워 넣는다.  그 문구가 디스크의 실제 부재와 같아야 부재 대조군이 «같은 판정»을
+    유지하므로, errno 와 문구를 리터럴로 적지 않고 `os.strerror` 에서 받는다.
+    """
+    return FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))
+
+
+def _absent_fixture(sources: MutableSourceMap, path: Path) -> Path:
+    """부재 픽스처 하나를 사상에 «명시» 로 등재하고 그 «경로» 를 돌려준다.
+
+    부재를 사상에서 생략하면 리더가 디스크로 내려가고, 같은 이름의 실제 파일이
+    합성 좌표에 있으면 부재 대조군이 조용히 «존재» 로 바뀐다 (재심 #20).
+    """
+    sources[path] = SOURCE_ABSENT
+    return path
+
+
+def _read_source_text(path: Path, sources: SourceMap | None) -> str:
+    """픽스처를 받는 리더들이 **공유하는** 읽기 자리.
 
     `sources` 는 «경로 → 원본» 인메모리 사상이다.  기본값 `None` 이면 디스크에서
     읽는다 — 게이트 경로는 이 인자를 넘기지 «않으므로» 구성상 동작이 불변이다.
-    사상을 넘기는 것은 자기검사 배터리뿐이고, 그 키는 디스크에 만들지 않는 합성
-    경로다(`SELFTEST_FIXTURE_DIR`).
+    사상을 넘기는 자리는 자기검사 배터리(`run_self_test`)이고, 그 키는 디스크에
+    만들지 않는 합성 경로다(`SELFTEST_FIXTURE_DIR`).
 
     리더가 저마다 자기 자리에서 읽으면 «무엇을 읽는가» 가 조용히 갈라진다.  그래서
     자리를 하나로 둔다 — 잠금은 표면이 아니라 저작 레벨이다.
 
-    부재는 여기서 접지 않는다: 사상에 없고 디스크에도 없으면 `Path.read_text` 의
-    예외가 그대로 올라가 호출부의 기존 진단이 그대로 난다.
+    사상을 받은 경로에서 부재는 «생략» 이 아니라 «명시» 로 표현한다.  값이
+    `SOURCE_ABSENT` 면 디스크로 내려가지 않고 `_absent_source` 의 예외를 올린다.
+    합성 접두 아래인데 사상에 키가 아예 없을 때도 같게 접는다 — 합성 좌표는 고정
+    상대 경로라 같은 이름의 실제 파일이 존재할 수 있고, 그것을 읽으면 부재 대조군이
+    조용히 «존재» 로 바뀌기 때문이다.  사상 밖의 실제 경로(실운용 정본 등)는 그대로
+    디스크에서 읽는다.
 
     Args:
         path: 읽을 경로.  사상의 키이기도 하다.
@@ -1612,10 +1676,17 @@ def _read_source_text(path: Path, sources: Mapping[Path, str] | None) -> str:
         원본 텍스트.
 
     Raises:
-        OSError: 사상에 없고 디스크에서도 읽지 못했을 때.
+        OSError: 부재로 접힌 합성 좌표, 또는 디스크에서 읽지 못했을 때.
     """
-    if sources is not None and path in sources:
-        return sources[path]
+    if sources is None:
+        return path.read_text(encoding="utf-8")
+    if path in sources:
+        text = sources[path]
+        if isinstance(text, str):
+            return text
+        raise _absent_source(path)
+    if path.is_relative_to(SELFTEST_FIXTURE_DIR):
+        raise _absent_source(path)
     return path.read_text(encoding="utf-8")
 
 
@@ -1623,7 +1694,7 @@ BaselineRecord = namedtuple("BaselineRecord", ["count", "kind", "commit", "path"
 
 
 def read_unanchored_baseline(
-    path: Path, sources: Mapping[Path, str] | None = None
+    path: Path, sources: SourceMap | None = None
 ) -> BaselineRecord:
     """래칫 기준선을 읽는다 — 부재·손상·형태 위반은 전부 fail-closed 사유다.
 
@@ -1773,7 +1844,7 @@ def check_c2up(
     doc: ContractDoc,
     baseline_path: Path,
     repo_root: Path,
-    sources: Mapping[Path, str] | None = None,
+    sources: SourceMap | None = None,
 ) -> list[Violation]:
     """C2UP — 기준선이 «자기 측정 출처에 대해 하는 주장»을 기계로 강제한다.
 
@@ -1839,7 +1910,7 @@ def check_c2u(
     doc: ContractDoc,
     baseline_path: Path,
     notices: list[str] | None,
-    sources: Mapping[Path, str] | None = None,
+    sources: SourceMap | None = None,
 ) -> list[Violation]:
     """C2U — 미앵커 좌표 잔여가 «늘지 않는다»만 보장한다 (닫음이 아니라 래칫).
 
@@ -2562,7 +2633,7 @@ BASELINE_FIXTURE_KEY = "fixture_row_cells"
 
 
 def read_fixture_row_baseline(
-    path: Path, sources: Mapping[Path, str] | None = None
+    path: Path, sources: SourceMap | None = None
 ) -> dict[str, int]:
     """기준선 파일에서 «픽스처 행 → 셀 수» 사상을 읽는다 — 부재·형태 위반은 fail-closed.
 
@@ -2638,7 +2709,7 @@ def check_fixture_row_shape(
     fixture_rows: Sequence[str],
     baseline: Path,
     repo_root: Path,
-    sources: Mapping[Path, str] | None = None,
+    sources: SourceMap | None = None,
 ) -> list[Violation]:
     """픽스처 행의 **셀 수 래칫** — 기준은 기입 정수가 아니라 «측정 출처 blob» 이다.
 
@@ -2850,7 +2921,7 @@ def _reject_numeric(node: object, where: str, path: str, out: list[Violation]) -
 
 
 def load_manifest(
-    manifest_path: Path, sources: Mapping[Path, str] | None = None
+    manifest_path: Path, sources: SourceMap | None = None
 ) -> tuple[dict[str, object] | None, list[Violation]]:
     """manifest 를 읽고 스키마를 강제한다.
 
@@ -3068,7 +3139,7 @@ def check_rule(
     manifest_path: Path,
     baseline: Path,
     repo_root: Path,
-    sources: Mapping[Path, str] | None = None,
+    sources: SourceMap | None = None,
 ) -> list[Violation]:
     """RULE — manifest 가 등재한 각 규칙의 우주 ↔ 소비처를 전수 대조한다.
 
@@ -3272,7 +3343,7 @@ def read_first_heading(abs_path: str) -> CitedHeading:
 
 
 def derive_rejection_tokens(
-    manifest_path: Path, sources: Mapping[Path, str] | None = None
+    manifest_path: Path, sources: SourceMap | None = None
 ) -> tuple[list[str] | None, list[Violation]]:
     """기각 토큰 정본을 S-25 manifest 에서 읽는다 — **부재하면 fail-closed**.
 
@@ -3349,7 +3420,7 @@ def check_ref_rejected(
     doc: ContractDoc,
     manifest_path: Path,
     repo_root: Path,
-    sources: Mapping[Path, str] | None = None,
+    sources: SourceMap | None = None,
 ) -> list[Violation]:
     """REF — «기각된» 문서를 가리키는 인용 줄이 그 기각을 말하지 않으면 red (REF-1).
 
@@ -3459,7 +3530,7 @@ def is_table_separator_row(line: str) -> bool:
 
 
 def derive_closed_tables(
-    manifest_path: Path, sources: Mapping[Path, str] | None = None
+    manifest_path: Path, sources: SourceMap | None = None
 ) -> tuple[list[ClosedTable] | None, list[Violation]]:
     """닫힌 표 정본을 S-25 manifest 에서 읽는다 — **부재하면 fail-closed**.
 
@@ -3514,7 +3585,7 @@ def derive_closed_tables(
 
 
 def read_closed_table_baseline(
-    path: Path, sources: Mapping[Path, str] | None = None
+    path: Path, sources: SourceMap | None = None
 ) -> dict[str, int]:
     """기준선 파일에서 «닫힌 표 → 행 수» 사상을 읽는다 — 부재·형태 위반은 fail-closed.
 
@@ -3639,7 +3710,7 @@ def check_closed_tables(
     manifest_path: Path,
     baseline_path: Path,
     repo_root: Path,
-    sources: Mapping[Path, str] | None = None,
+    sources: SourceMap | None = None,
 ) -> list[Violation]:
     """CLOSED-TABLE — 닫힌 표의 데이터 행 수가 «측정 출처 blob» 과 같은지 (CLOSED-1).
 
@@ -3792,7 +3863,7 @@ def default_repo_root() -> Path:
 
 
 def _manifest_step_prefixes(
-    manifest_path: Path, sources: Mapping[Path, str] | None = None
+    manifest_path: Path, sources: SourceMap | None = None
 ) -> list[str]:
     """manifest 에서 C4C 접두 어휘 정본을 읽는다 (읽기 실패는 «빈 목록» = 축이 red)."""
     try:
@@ -3808,7 +3879,7 @@ def _manifest_step_prefixes(
 
 
 def _manifest_fixture_rows(
-    manifest_path: Path, sources: Mapping[Path, str] | None = None
+    manifest_path: Path, sources: SourceMap | None = None
 ) -> list[str]:
     """manifest 에서 픽스처 행 앵커 정본을 읽는다 — 부재·형태 위반은 fail-closed.
 
@@ -3858,7 +3929,7 @@ def check_document(
     notices: list[str] | None = None,
     repo_root: Path | None = None,
     manifest_path: Path | None = None,
-    sources: Mapping[Path, str] | None = None,
+    sources: SourceMap | None = None,
 ) -> list[Violation]:
     """계약 문서 텍스트에 모든 축을 적용한다.
 
@@ -3873,9 +3944,9 @@ def check_document(
         repo_root: C2UP 가 측정 출처 blob 을 읽을 저장소 루트.
         manifest_path: RULE 축 manifest 경로.  None 이면 저장소 기본 경로 —
             «지정 안 함»을 «검사 안 함»으로 접지 않는다.
-        sources: 인메모리 «경로 → 원본» 사상.  기본값 `None` 이면 정본을 전부
-            디스크에서 읽는다 — 게이트 경로는 이 인자를 넘기지 않는다.  넘기는 것은
-            자기검사 배터리뿐이다(`_read_source_text`).
+        sources: 인메모리 «경로 → 원본» 사상.  기본값 `None` 이면 정본을 디스크에서
+            읽는다 — 게이트 경로는 이 인자를 넘기지 않는다.  넘기는 자리는 자기검사
+            배터리다 (읽기 자체는 `_read_source_text` 가 진다).
 
     Returns:
         위반 목록.  파생 자체가 실패하면 `TOS-CC-PARSE` 단일 위반을 돌려준다
@@ -4004,14 +4075,9 @@ Outcome = namedtuple(
 (어느 앵커가 · 몇 회) — 진단 문구를 다시 파싱하지 않고 판정에 쓰기 위한 것이다.
 """
 
-#: 배터리 픽스처 경로의 «합성» 접두.  디스크에 만들지 않는다 — 키는 인메모리 사상
-#: 안에서만 살고, `str(path)` 는 진단 문구에서 여전히 뜻을 갖는다.  임시 디렉터리를
-#: 쓰지 않으므로 쓰기 가능한 경로가 없는 샌드박스에서도 배터리가 돈다.
-SELFTEST_FIXTURE_DIR = Path("<selftest>")
-
-#: 기준선 픽스처 키.
+#: 기준선 픽스처 키.  합성 접두는 `SELFTEST_FIXTURE_DIR` 이며 리더 곁에 산다.
 FIXTURE_MEASURED = "measured"  # 검사 «대상 문서» 실측값으로 핀 → C2U green 보장
-FIXTURE_MISSING = "missing"  # 존재하지 않는 경로
+FIXTURE_MISSING = "missing"  # 부재 (사상에 `SOURCE_ABSENT` 로 명시)
 FIXTURE_NOT_JSON = "not-json"  # 존재하지만 JSON 이 아닌 파일
 FIXTURE_PROVENANCE_OK = "prov-ok"  # 출처 blob 실측값으로 핀 → C2UP green 보장
 FIXTURE_STALE_COUNT = "stale-count"  # 출처는 참이나 개수가 blob 과 불일치
@@ -4979,7 +5045,7 @@ def _closed_table_anchor_gone(which: str) -> Callable[[str], str]:
 
 
 def build_manifest_fixtures(
-    sources: dict[Path, str], real_manifest: Path
+    sources: MutableSourceMap, real_manifest: Path
 ) -> dict[str | None, Path]:
     """RULE 대조군이 요구하는 manifest 픽스처들을 만든다.
 
@@ -5063,7 +5129,9 @@ def build_manifest_fixtures(
 
     return {
         None: real_manifest,
-        MFIXTURE_MISSING: SELFTEST_FIXTURE_DIR / "there-is-no-such-manifest.yaml",
+        MFIXTURE_MISSING: _absent_fixture(
+            sources, SELFTEST_FIXTURE_DIR / "there-is-no-such-manifest.yaml"
+        ),
         MFIXTURE_NOT_YAML: not_yaml,
         MFIXTURE_EXTRA_RULE: write(MFIXTURE_EXTRA_RULE, add_phantom_rule),
         MFIXTURE_UNKNOWN_DERIV: write(MFIXTURE_UNKNOWN_DERIV, unknown_derivation),
@@ -6518,16 +6586,20 @@ def build_classifier_controls(text: str) -> list[tuple[Mutation, int]]:
 
 
 def _write_fixture(
-    sources: dict[Path, str], path: Path, payload: dict[str, object]
+    sources: MutableSourceMap, path: Path, payload: dict[str, object]
 ) -> Path:
-    """픽스처 기준선 하나를 인메모리 사상에 적재하고 그 «경로» 를 돌려준다."""
+    """픽스처 기준선 하나를 인메모리 사상에 적재하고 그 «경로» 를 돌려준다.
+
+    이름의 `write` 는 «픽스처를 짓는다» 는 뜻이다 — 디스크 쓰기가 아니다.  돌려주는
+    경로는 `SELFTEST_FIXTURE_DIR` 아래의 합성 좌표이고 그 파일은 만들어지지 않는다.
+    """
     sources[path] = json.dumps(payload, ensure_ascii=False)
     return path
 
 
 def build_baseline_fixtures(
     text: str,
-    sources: dict[Path, str],
+    sources: MutableSourceMap,
     real_baseline: Path,
     repo_root: Path,
     manifest_path: Path,
@@ -6615,7 +6687,9 @@ def build_baseline_fixtures(
                 **fixture_cells,
             },
         ),
-        FIXTURE_MISSING: SELFTEST_FIXTURE_DIR / "there-is-no-such-file.json",
+        FIXTURE_MISSING: _absent_fixture(
+            sources, SELFTEST_FIXTURE_DIR / "there-is-no-such-file.json"
+        ),
         FIXTURE_NOT_JSON: Path(__file__).resolve(),
         FIXTURE_PROVENANCE_OK: _write_fixture(
             sources,
@@ -6747,8 +6821,9 @@ def run_self_test(
     # 픽스처는 디스크에 쓰지 «않는다» — 원본을 인메모리 사상에 담아 리더까지
     # 명시적으로 흘린다(`_read_source_text`).  쓰기 가능한 임시 디렉터리가 없는
     # 샌드박스에서도 배터리가 도는 것이 그 귀결이고, 게이트 경로는 사상을 넘기지
-    # 않으므로 «무엇을 읽는가» 는 그대로다.
-    sources: dict[Path, str] = {}
+    # 않으므로 «무엇을 읽는가» 는 그대로다.  부재 픽스처도 «생략» 이 아니라 사상에
+    # 명시로 등재한다(`_absent_fixture`).
+    sources: MutableSourceMap = {}
     try:
         fixtures = build_baseline_fixtures(
             text, sources, baseline_path, repo_root, manifest_path
@@ -6780,7 +6855,7 @@ def _reference_index(
     baseline: Path,
     manifest: Path,
     cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]],
-    sources: Mapping[Path, str],
+    sources: SourceMap,
 ) -> tuple[dict[str, int], dict[str, set[int]]]:
     """어떤 (기준선, manifest) 픽스처 짝에 대한 «원본 문서» 발화 색인을 (캐시해) 준다."""
     key = (baseline, manifest)
@@ -6841,7 +6916,7 @@ def _evaluate_mutation(
     fixtures: dict[str | None, Path],
     manifests: dict[str | None, Path],
     cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]],
-    sources: Mapping[Path, str],
+    sources: SourceMap,
 ) -> Outcome:
     """대조군 한 건을 돌려 «어느 부류인지» 판정한다.
 
@@ -6982,7 +7057,7 @@ def _run_classifier_controls(
     fixtures: dict[str | None, Path],
     manifests: dict[str | None, Path],
     cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]],
-    sources: Mapping[Path, str],
+    sources: SourceMap,
 ) -> list[str]:
     """«앵커 불일치» 분류 **자체**를 고정하는 메타 대조군을 돌린다.
 
@@ -7051,7 +7126,7 @@ def _run_battery(
     fixtures: dict[str | None, Path],
     manifest_path: Path,
     manifests: dict[str | None, Path],
-    sources: Mapping[Path, str],
+    sources: SourceMap,
 ) -> int:
     """대조군 배터리 본체 (픽스처가 준비된 뒤 실행된다)."""
     cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]] = {}
