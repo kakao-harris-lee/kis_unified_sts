@@ -461,10 +461,9 @@ import logging
 import re
 import subprocess
 import sys
-import tempfile
 import unicodedata
 from collections import namedtuple
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from functools import cache
 from pathlib import Path
 
@@ -1591,10 +1590,41 @@ def derive_unanchored_citations(doc: ContractDoc) -> list[tuple[int, str]]:
     return sites
 
 
+def _read_source_text(path: Path, sources: Mapping[Path, str] | None) -> str:
+    """픽스처화 가능한 리더들이 공유하는 **유일한** 읽기 자리.
+
+    `sources` 는 «경로 → 원본» 인메모리 사상이다.  기본값 `None` 이면 디스크에서
+    읽는다 — 게이트 경로는 이 인자를 넘기지 «않으므로» 구성상 동작이 불변이다.
+    사상을 넘기는 것은 자기검사 배터리뿐이고, 그 키는 디스크에 만들지 않는 합성
+    경로다(`SELFTEST_FIXTURE_DIR`).
+
+    리더가 저마다 자기 자리에서 읽으면 «무엇을 읽는가» 가 조용히 갈라진다.  그래서
+    자리를 하나로 둔다 — 잠금은 표면이 아니라 저작 레벨이다.
+
+    부재는 여기서 접지 않는다: 사상에 없고 디스크에도 없으면 `Path.read_text` 의
+    예외가 그대로 올라가 호출부의 기존 진단이 그대로 난다.
+
+    Args:
+        path: 읽을 경로.  사상의 키이기도 하다.
+        sources: 인메모리 원본 사상 (`None` = 디스크에서 읽는다).
+
+    Returns:
+        원본 텍스트.
+
+    Raises:
+        OSError: 사상에 없고 디스크에서도 읽지 못했을 때.
+    """
+    if sources is not None and path in sources:
+        return sources[path]
+    return path.read_text(encoding="utf-8")
+
+
 BaselineRecord = namedtuple("BaselineRecord", ["count", "kind", "commit", "path"])
 
 
-def read_unanchored_baseline(path: Path) -> BaselineRecord:
+def read_unanchored_baseline(
+    path: Path, sources: Mapping[Path, str] | None = None
+) -> BaselineRecord:
     """래칫 기준선을 읽는다 — 부재·손상·형태 위반은 전부 fail-closed 사유다.
 
     측정 출처(`measured_against`)는 여기서 «형태»만 본다.  그 주장이 참인지는 계수를
@@ -1603,6 +1633,7 @@ def read_unanchored_baseline(path: Path) -> BaselineRecord:
 
     Args:
         path: 기준선 JSON 경로.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         `(개수, 측정 커밋, 측정 경로)`.
@@ -1611,7 +1642,7 @@ def read_unanchored_baseline(path: Path) -> BaselineRecord:
         ContractParseError: 읽기·파싱 실패 또는 키/타입 위반.
     """
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = _read_source_text(path, sources)
     except OSError as exc:
         raise ContractParseError(f"기준선 파일을 읽지 못했다 ({path}): {exc}") from exc
     try:
@@ -1742,6 +1773,7 @@ def check_c2up(
     doc: ContractDoc,
     baseline_path: Path,
     repo_root: Path,
+    sources: Mapping[Path, str] | None = None,
 ) -> list[Violation]:
     """C2UP — 기준선이 «자기 측정 출처에 대해 하는 주장»을 기계로 강제한다.
 
@@ -1761,6 +1793,7 @@ def check_c2up(
         doc: 계약 문서 컨텍스트(진단 경로 표기용).
         baseline_path: 기준선 JSON 경로.
         repo_root: 저장소 루트.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         위반 목록.
@@ -1770,7 +1803,7 @@ def check_c2up(
         return [Violation("TOS-CC-C2UP", doc.display_path, 0, message)]
 
     try:
-        record = read_unanchored_baseline(baseline_path)
+        record = read_unanchored_baseline(baseline_path, sources)
     except ContractParseError as exc:
         return fail(f"기준선을 읽지 못해 측정 출처를 검증할 수 없다 — {exc}")
 
@@ -1803,7 +1836,10 @@ def check_c2up(
 
 
 def check_c2u(
-    doc: ContractDoc, baseline_path: Path, notices: list[str] | None
+    doc: ContractDoc,
+    baseline_path: Path,
+    notices: list[str] | None,
+    sources: Mapping[Path, str] | None = None,
 ) -> list[Violation]:
     """C2U — 미앵커 좌표 잔여가 «늘지 않는다»만 보장한다 (닫음이 아니라 래칫).
 
@@ -1811,6 +1847,7 @@ def check_c2u(
         doc: 계약 문서 컨텍스트.
         baseline_path: 기준선 JSON 경로.
         notices: 위반이 아닌 운영 안내를 모으는 목록(있으면).
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         위반 목록.
@@ -1819,7 +1856,7 @@ def check_c2u(
     actual = len(sites)
 
     try:
-        baseline = read_unanchored_baseline(baseline_path).count
+        baseline = read_unanchored_baseline(baseline_path, sources).count
     except ContractParseError as exc:
         # 기준선 부재를 «0 위반» 으로 접으면 래칫이 장식이 된다 — 부재 자체가 red.
         return [
@@ -2524,11 +2561,14 @@ def _cap_guard_sites(
 BASELINE_FIXTURE_KEY = "fixture_row_cells"
 
 
-def read_fixture_row_baseline(path: Path) -> dict[str, int]:
+def read_fixture_row_baseline(
+    path: Path, sources: Mapping[Path, str] | None = None
+) -> dict[str, int]:
     """기준선 파일에서 «픽스처 행 → 셀 수» 사상을 읽는다 — 부재·형태 위반은 fail-closed.
 
     Args:
         path: 기준선 JSON 경로.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         행 앵커 → 셀 수.
@@ -2537,7 +2577,7 @@ def read_fixture_row_baseline(path: Path) -> dict[str, int]:
         ContractParseError: 읽기·파싱 실패 또는 키/타입 위반.
     """
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(_read_source_text(path, sources))
     except (OSError, json.JSONDecodeError) as exc:
         raise ContractParseError(f"기준선 파일을 읽지 못했다 ({path}): {exc}") from exc
     table = data.get(BASELINE_FIXTURE_KEY) if isinstance(data, dict) else None
@@ -2598,6 +2638,7 @@ def check_fixture_row_shape(
     fixture_rows: Sequence[str],
     baseline: Path,
     repo_root: Path,
+    sources: Mapping[Path, str] | None = None,
 ) -> list[Violation]:
     """픽스처 행의 **셀 수 래칫** — 기준은 기입 정수가 아니라 «측정 출처 blob» 이다.
 
@@ -2623,6 +2664,7 @@ def check_fixture_row_shape(
         fixture_rows: manifest 가 선언한 픽스처 행 앵커.
         baseline: 기준선 JSON 경로.
         repo_root: 측정 출처 blob 을 읽을 저장소 루트.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         위반 목록.
@@ -2632,7 +2674,7 @@ def check_fixture_row_shape(
         return [Violation("TOS-CC-CAP2-FIXTURE", doc.display_path, line, message)]
 
     try:
-        record = read_unanchored_baseline(baseline)
+        record = read_unanchored_baseline(baseline, sources)
         source = read_baseline_source(repo_root, record)
         blob = derive_fixture_row_cells(ContractDoc(source, "<blob>"), fixture_rows)
     except ContractParseError as exc:
@@ -2645,7 +2687,7 @@ def check_fixture_row_shape(
     )
 
     try:
-        recorded = read_fixture_row_baseline(baseline)
+        recorded = read_fixture_row_baseline(baseline, sources)
     except ContractParseError as exc:
         return fail(str(exc))
 
@@ -2808,7 +2850,7 @@ def _reject_numeric(node: object, where: str, path: str, out: list[Violation]) -
 
 
 def load_manifest(
-    manifest_path: Path,
+    manifest_path: Path, sources: Mapping[Path, str] | None = None
 ) -> tuple[dict[str, object] | None, list[Violation]]:
     """manifest 를 읽고 스키마를 강제한다.
 
@@ -2818,6 +2860,7 @@ def load_manifest(
 
     Args:
         manifest_path: manifest 파일 경로.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         `(적재된 manifest 또는 None, 위반 목록)`.
@@ -2834,7 +2877,7 @@ def load_manifest(
             )
         ]
     try:
-        raw = manifest_path.read_text(encoding="utf-8")
+        raw = _read_source_text(manifest_path, sources)
     except OSError as exc:
         return None, [
             Violation(
@@ -3021,7 +3064,11 @@ def check_rule_vocabulary(
 
 
 def check_rule(
-    doc: ContractDoc, manifest_path: Path, baseline: Path, repo_root: Path
+    doc: ContractDoc,
+    manifest_path: Path,
+    baseline: Path,
+    repo_root: Path,
+    sources: Mapping[Path, str] | None = None,
 ) -> list[Violation]:
     """RULE — manifest 가 등재한 각 규칙의 우주 ↔ 소비처를 전수 대조한다.
 
@@ -3031,11 +3078,12 @@ def check_rule(
         baseline: 기준선 JSON 경로 — 픽스처 행 셀 수 축이 쓴다.  종래 이 축은 인자를
             무시하고 항상 기본 경로를 써서 `--baseline` 이 닿지 않았다(49차 관측 처분).
         repo_root: 측정 출처 blob 을 읽을 저장소 루트.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         위반 목록.
     """
-    manifest, violations = load_manifest(manifest_path)
+    manifest, violations = load_manifest(manifest_path, sources)
     if manifest is None:
         return violations
     mpath = str(manifest_path)
@@ -3059,7 +3107,9 @@ def check_rule(
         )
         return violations
     fixture_rows = [str(x) for x in rows]
-    violations.extend(check_fixture_row_shape(doc, fixture_rows, baseline, repo_root))
+    violations.extend(
+        check_fixture_row_shape(doc, fixture_rows, baseline, repo_root, sources)
+    )
 
     rules = manifest["rules"]
     assert isinstance(rules, list)
@@ -3222,7 +3272,7 @@ def read_first_heading(abs_path: str) -> CitedHeading:
 
 
 def derive_rejection_tokens(
-    manifest_path: Path,
+    manifest_path: Path, sources: Mapping[Path, str] | None = None
 ) -> tuple[list[str] | None, list[Violation]]:
     """기각 토큰 정본을 S-25 manifest 에서 읽는다 — **부재하면 fail-closed**.
 
@@ -3232,6 +3282,7 @@ def derive_rejection_tokens(
 
     Args:
         manifest_path: S-25 manifest 경로.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         `(정규화된 토큰 목록 또는 None, 위반 목록)`.  `None` 이면 축을 돌리지 않는다.
@@ -3241,7 +3292,7 @@ def derive_rejection_tokens(
     def fail(message: str) -> tuple[None, list[Violation]]:
         return None, [Violation("TOS-CC-RULE-MANIFEST", path, 0, message)]
 
-    manifest, violations = load_manifest(manifest_path)
+    manifest, violations = load_manifest(manifest_path, sources)
     if manifest is None:
         return fail(
             "기각 토큰 정본을 읽을 수 없다 (manifest 자체가 red) — REF 축이 눈먼다: "
@@ -3295,7 +3346,10 @@ def derive_md_citations(doc: ContractDoc) -> list[tuple[int, str]]:
 
 
 def check_ref_rejected(
-    doc: ContractDoc, manifest_path: Path, repo_root: Path
+    doc: ContractDoc,
+    manifest_path: Path,
+    repo_root: Path,
+    sources: Mapping[Path, str] | None = None,
 ) -> list[Violation]:
     """REF — «기각된» 문서를 가리키는 인용 줄이 그 기각을 말하지 않으면 red (REF-1).
 
@@ -3303,11 +3357,12 @@ def check_ref_rejected(
         doc: 계약 문서.
         manifest_path: 기각 토큰 정본(S-25 manifest) 경로.
         repo_root: 인용 경로를 해소할 저장소 루트.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         위반 목록.  모집단을 파생하지 못하면 `TOS-CC-PARSE` (fail-closed).
     """
-    tokens, violations = derive_rejection_tokens(manifest_path)
+    tokens, violations = derive_rejection_tokens(manifest_path, sources)
     if tokens is None:
         return violations
 
@@ -3404,7 +3459,7 @@ def is_table_separator_row(line: str) -> bool:
 
 
 def derive_closed_tables(
-    manifest_path: Path,
+    manifest_path: Path, sources: Mapping[Path, str] | None = None
 ) -> tuple[list[ClosedTable] | None, list[Violation]]:
     """닫힌 표 정본을 S-25 manifest 에서 읽는다 — **부재하면 fail-closed**.
 
@@ -3414,6 +3469,7 @@ def derive_closed_tables(
 
     Args:
         manifest_path: S-25 manifest 경로.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         `(닫힌 표 목록 또는 None, 위반 목록)`.  `None` 이면 축을 돌리지 않는다.
@@ -3423,7 +3479,7 @@ def derive_closed_tables(
     def fail(message: str) -> tuple[None, list[Violation]]:
         return None, [Violation("TOS-CC-RULE-MANIFEST", path, 0, message)]
 
-    manifest, violations = load_manifest(manifest_path)
+    manifest, violations = load_manifest(manifest_path, sources)
     if manifest is None:
         return fail(
             "닫힌 표 정본이 «어디에도» 없다 (manifest 자체가 red) — CLOSED-1 축이 "
@@ -3457,11 +3513,14 @@ def derive_closed_tables(
     return out, []
 
 
-def read_closed_table_baseline(path: Path) -> dict[str, int]:
+def read_closed_table_baseline(
+    path: Path, sources: Mapping[Path, str] | None = None
+) -> dict[str, int]:
     """기준선 파일에서 «닫힌 표 → 행 수» 사상을 읽는다 — 부재·형태 위반은 fail-closed.
 
     Args:
         path: 기준선 JSON 경로.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         헤더 앵커 → 데이터 행 수.
@@ -3470,7 +3529,7 @@ def read_closed_table_baseline(path: Path) -> dict[str, int]:
         ContractParseError: 읽기·파싱 실패 또는 키/타입 위반.
     """
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = _read_source_text(path, sources)
     except OSError as exc:
         raise ContractParseError(f"기준선 파일을 읽지 못했다 ({path}): {exc}") from exc
     try:
@@ -3576,7 +3635,11 @@ def derive_closed_table_rows(
 # 갱신은 재심 카운터(S-26 ⑥: 계약 편집이 «2회 연속 청정»을 0 으로 되돌린다) 사이클
 # **밖**의 별도 판이다.  여기 주석으로 남기는 이유가 그것이다.
 def check_closed_tables(
-    doc: ContractDoc, manifest_path: Path, baseline_path: Path, repo_root: Path
+    doc: ContractDoc,
+    manifest_path: Path,
+    baseline_path: Path,
+    repo_root: Path,
+    sources: Mapping[Path, str] | None = None,
 ) -> list[Violation]:
     """CLOSED-TABLE — 닫힌 표의 데이터 행 수가 «측정 출처 blob» 과 같은지 (CLOSED-1).
 
@@ -3604,6 +3667,7 @@ def check_closed_tables(
         manifest_path: 닫힌 표 정본(manifest) 경로.
         baseline_path: 행 수 기준선 JSON 경로.
         repo_root: 측정 출처 blob 을 읽을 저장소 루트.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         위반 목록.
@@ -3614,7 +3678,7 @@ def check_closed_tables(
             출처 blob 쪽 실패는 여기서 red 로 접는다 — 기준을 잃은 상태를 조용히
             건너뛰지 않는다.
     """
-    tables, violations = derive_closed_tables(manifest_path)
+    tables, violations = derive_closed_tables(manifest_path, sources)
     if tables is None:
         return violations
 
@@ -3622,7 +3686,7 @@ def check_closed_tables(
         return [Violation("TOS-CC-CLOSED-TABLE", doc.display_path, line, message)]
 
     try:
-        record = read_unanchored_baseline(baseline_path)
+        record = read_unanchored_baseline(baseline_path, sources)
         # `allow_mutable` 을 넘기지 «않는다» — 가변 출처 거부는 리더의 기본값이다.
         source = read_baseline_source(repo_root, record)
         blob = derive_closed_table_rows(ContractDoc(source, "<blob>"), tables)
@@ -3636,7 +3700,7 @@ def check_closed_tables(
     )
 
     try:
-        baseline = read_closed_table_baseline(baseline_path)
+        baseline = read_closed_table_baseline(baseline_path, sources)
     except ContractParseError as exc:
         # 기준선 부재를 «0 위반» 으로 접으면 이 축이 장식이 된다 (RATCHET-1 과 같은 극성).
         return fail(
@@ -3727,10 +3791,12 @@ def default_repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def _manifest_step_prefixes(manifest_path: Path) -> list[str]:
+def _manifest_step_prefixes(
+    manifest_path: Path, sources: Mapping[Path, str] | None = None
+) -> list[str]:
     """manifest 에서 C4C 접두 어휘 정본을 읽는다 (읽기 실패는 «빈 목록» = 축이 red)."""
     try:
-        data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        data = yaml.safe_load(_read_source_text(manifest_path, sources))
     except (OSError, yaml.YAMLError):
         return []
     if not isinstance(data, dict):
@@ -3741,7 +3807,9 @@ def _manifest_step_prefixes(manifest_path: Path) -> list[str]:
     return [str(x) for x in raw if isinstance(x, str)]
 
 
-def _manifest_fixture_rows(manifest_path: Path) -> list[str]:
+def _manifest_fixture_rows(
+    manifest_path: Path, sources: Mapping[Path, str] | None = None
+) -> list[str]:
     """manifest 에서 픽스처 행 앵커 정본을 읽는다 — 부재·형태 위반은 fail-closed.
 
     `check_rule` 과 달리 여기서는 «위반 목록»을 낼 자리가 없다(픽스처 구성·기준선 측정
@@ -3750,6 +3818,7 @@ def _manifest_fixture_rows(manifest_path: Path) -> list[str]:
 
     Args:
         manifest_path: RULE 축 manifest 경로.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         픽스처 행 앵커 목록.
@@ -3762,7 +3831,7 @@ def _manifest_fixture_rows(manifest_path: Path) -> list[str]:
             f"PyYAML 을 임포트하지 못했다 — manifest 를 읽을 수 없다: {YAML_IMPORT_ERROR}"
         )
     try:
-        data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        data = yaml.safe_load(_read_source_text(manifest_path, sources))
     except (OSError, yaml.YAMLError) as exc:
         raise ContractParseError(
             f"manifest 를 읽지 못했다 ({manifest_path}): {exc}"
@@ -3789,6 +3858,7 @@ def check_document(
     notices: list[str] | None = None,
     repo_root: Path | None = None,
     manifest_path: Path | None = None,
+    sources: Mapping[Path, str] | None = None,
 ) -> list[Violation]:
     """계약 문서 텍스트에 모든 축을 적용한다.
 
@@ -3803,6 +3873,9 @@ def check_document(
         repo_root: C2UP 가 측정 출처 blob 을 읽을 저장소 루트.
         manifest_path: RULE 축 manifest 경로.  None 이면 저장소 기본 경로 —
             «지정 안 함»을 «검사 안 함»으로 접지 않는다.
+        sources: 인메모리 «경로 → 원본» 사상.  기본값 `None` 이면 정본을 전부
+            디스크에서 읽는다 — 게이트 경로는 이 인자를 넘기지 않는다.  넘기는 것은
+            자기검사 배터리뿐이다(`_read_source_text`).
 
     Returns:
         위반 목록.  파생 자체가 실패하면 `TOS-CC-PARSE` 단일 위반을 돌려준다
@@ -3820,14 +3893,17 @@ def check_document(
     axes: Sequence[tuple[str, CheckFn]] = (
         ("C1", check_c1),
         ("C2", lambda d: check_c2(d, min_anchor)),
-        ("C2U", lambda d: check_c2u(d, baseline, notices)),
-        ("C2UP", lambda d: check_c2up(d, baseline, root)),
+        ("C2U", lambda d: check_c2u(d, baseline, notices, sources)),
+        ("C2UP", lambda d: check_c2up(d, baseline, root, sources)),
         ("C3", check_c3),
         ("C4", check_c4),
-        ("C4C", lambda d: check_c4c(d, _manifest_step_prefixes(manifest))),
-        ("RULE", lambda d: check_rule(d, manifest, baseline, root)),
-        ("REF", lambda d: check_ref_rejected(d, manifest, root)),
-        ("CLOSED-TABLE", lambda d: check_closed_tables(d, manifest, baseline, root)),
+        ("C4C", lambda d: check_c4c(d, _manifest_step_prefixes(manifest, sources))),
+        ("RULE", lambda d: check_rule(d, manifest, baseline, root, sources)),
+        ("REF", lambda d: check_ref_rejected(d, manifest, root, sources)),
+        (
+            "CLOSED-TABLE",
+            lambda d: check_closed_tables(d, manifest, baseline, root, sources),
+        ),
     )
     for name, fn in axes:
         try:
@@ -3927,6 +4003,11 @@ Outcome = namedtuple(
 `bucket` 이 `None` 이면 통과다.  `mismatch` 는 앵커 불일치일 때의 구조적 근거
 (어느 앵커가 · 몇 회) — 진단 문구를 다시 파싱하지 않고 판정에 쓰기 위한 것이다.
 """
+
+#: 배터리 픽스처 경로의 «합성» 접두.  디스크에 만들지 않는다 — 키는 인메모리 사상
+#: 안에서만 살고, `str(path)` 는 진단 문구에서 여전히 뜻을 갖는다.  임시 디렉터리를
+#: 쓰지 않으므로 쓰기 가능한 경로가 없는 샌드박스에서도 배터리가 돈다.
+SELFTEST_FIXTURE_DIR = Path("<selftest>")
 
 #: 기준선 픽스처 키.
 FIXTURE_MEASURED = "measured"  # 검사 «대상 문서» 실측값으로 핀 → C2U green 보장
@@ -4898,7 +4979,7 @@ def _closed_table_anchor_gone(which: str) -> Callable[[str], str]:
 
 
 def build_manifest_fixtures(
-    tmpdir: Path, real_manifest: Path
+    sources: dict[Path, str], real_manifest: Path
 ) -> dict[str | None, Path]:
     """RULE 대조군이 요구하는 manifest 픽스처들을 만든다.
 
@@ -4906,7 +4987,7 @@ def build_manifest_fixtures(
     바꾸면 어느 술어가 잡았는지 알 수 없어 대조군이 판별력을 잃는다.
 
     Args:
-        tmpdir: 픽스처를 쓸 임시 디렉터리.
+        sources: 픽스처 원본을 적재할 «경로 → 원본» 사상 (이 함수가 채운다).
         real_manifest: 실운용 manifest 경로.
 
     Returns:
@@ -4930,11 +5011,8 @@ def build_manifest_fixtures(
     def write(key: str, mutate: Callable[[dict[str, object]], None]) -> Path:
         payload = copy.deepcopy(manifest)
         mutate(payload)
-        path = tmpdir / f"{key}.yaml"
-        path.write_text(
-            yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
-        )
+        path = SELFTEST_FIXTURE_DIR / f"{key}.yaml"
+        sources[path] = yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
         return path
 
     def add_phantom_rule(payload: dict[str, object]) -> None:
@@ -4980,12 +5058,12 @@ def build_manifest_fixtures(
         # «계수 거부» 술어 자신이 판별했음이 증명된다 (규칙 서브트리와 같은 형태).
         tables[0]["header_anchor"] = 9
 
-    not_yaml = tmpdir / "not-a-manifest.yaml"
-    not_yaml.write_text("이것은 매핑이 아니다\n", encoding="utf-8")
+    not_yaml = SELFTEST_FIXTURE_DIR / "not-a-manifest.yaml"
+    sources[not_yaml] = "이것은 매핑이 아니다\n"
 
     return {
         None: real_manifest,
-        MFIXTURE_MISSING: tmpdir / "there-is-no-such-manifest.yaml",
+        MFIXTURE_MISSING: SELFTEST_FIXTURE_DIR / "there-is-no-such-manifest.yaml",
         MFIXTURE_NOT_YAML: not_yaml,
         MFIXTURE_EXTRA_RULE: write(MFIXTURE_EXTRA_RULE, add_phantom_rule),
         MFIXTURE_UNKNOWN_DERIV: write(MFIXTURE_UNKNOWN_DERIV, unknown_derivation),
@@ -6439,15 +6517,17 @@ def build_classifier_controls(text: str) -> list[tuple[Mutation, int]]:
     ]
 
 
-def _write_fixture(path: Path, payload: dict[str, object]) -> Path:
-    """픽스처 기준선 파일 하나를 쓴다."""
-    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+def _write_fixture(
+    sources: dict[Path, str], path: Path, payload: dict[str, object]
+) -> Path:
+    """픽스처 기준선 하나를 인메모리 사상에 적재하고 그 «경로» 를 돌려준다."""
+    sources[path] = json.dumps(payload, ensure_ascii=False)
     return path
 
 
 def build_baseline_fixtures(
     text: str,
-    tmpdir: Path,
+    sources: dict[Path, str],
     real_baseline: Path,
     repo_root: Path,
     manifest_path: Path,
@@ -6465,7 +6545,7 @@ def build_baseline_fixtures(
 
     Args:
         text: 검사 대상 문서 텍스트.
-        tmpdir: 픽스처를 쓸 임시 디렉터리.
+        sources: 픽스처 원본을 적재할 «경로 → 원본» 사상 (이 함수가 채운다).
         real_baseline: 실운용 기준선 경로 (출처 필드를 빌려온다).
         repo_root: 출처 blob 을 읽을 저장소 루트.
         manifest_path: 픽스처 행 앵커 정본(RULE 축 manifest) 경로.
@@ -6526,7 +6606,8 @@ def build_baseline_fixtures(
     return {
         None: real_baseline,
         FIXTURE_MEASURED: _write_fixture(
-            tmpdir / "measured.json",
+            sources,
+            SELFTEST_FIXTURE_DIR / "measured.json",
             {
                 BASELINE_UNANCHORED_KEY: count_unanchored_in_text(text),
                 BASELINE_PROVENANCE_KEY: prov,
@@ -6534,10 +6615,11 @@ def build_baseline_fixtures(
                 **fixture_cells,
             },
         ),
-        FIXTURE_MISSING: tmpdir / "there-is-no-such-file.json",
+        FIXTURE_MISSING: SELFTEST_FIXTURE_DIR / "there-is-no-such-file.json",
         FIXTURE_NOT_JSON: Path(__file__).resolve(),
         FIXTURE_PROVENANCE_OK: _write_fixture(
-            tmpdir / "prov-ok.json",
+            sources,
+            SELFTEST_FIXTURE_DIR / "prov-ok.json",
             {
                 BASELINE_UNANCHORED_KEY: blob_count,
                 BASELINE_PROVENANCE_KEY: prov,
@@ -6546,7 +6628,8 @@ def build_baseline_fixtures(
             },
         ),
         FIXTURE_STALE_COUNT: _write_fixture(
-            tmpdir / "stale-count.json",
+            sources,
+            SELFTEST_FIXTURE_DIR / "stale-count.json",
             {
                 BASELINE_UNANCHORED_KEY: blob_count + 1,
                 BASELINE_PROVENANCE_KEY: prov,
@@ -6555,7 +6638,8 @@ def build_baseline_fixtures(
             },
         ),
         FIXTURE_BAD_COMMIT: _write_fixture(
-            tmpdir / "bad-commit.json",
+            sources,
+            SELFTEST_FIXTURE_DIR / "bad-commit.json",
             {
                 BASELINE_UNANCHORED_KEY: blob_count,
                 BASELINE_PROVENANCE_KEY: {
@@ -6568,13 +6652,15 @@ def build_baseline_fixtures(
             },
         ),
         FIXTURE_NO_PROVENANCE: _write_fixture(
-            tmpdir / "no-provenance.json",
+            sources,
+            SELFTEST_FIXTURE_DIR / "no-provenance.json",
             {BASELINE_UNANCHORED_KEY: blob_count, **closed, **fixture_cells},
         ),
         # 닫힌 표 계수만 빠진 기준선 — 나머지는 정직하다.  부재를 «0 위반»으로
         # 접으면 CLOSED-1 축이 장식이 된다.
         FIXTURE_NO_CLOSED_ROWS: _write_fixture(
-            tmpdir / "no-closed-rows.json",
+            sources,
+            SELFTEST_FIXTURE_DIR / "no-closed-rows.json",
             {
                 BASELINE_UNANCHORED_KEY: blob_count,
                 BASELINE_PROVENANCE_KEY: prov,
@@ -6585,7 +6671,8 @@ def build_baseline_fixtures(
         # 이 축에 두 다리를 놓기 전에는 이 형태가 위반 0건이었다(기입값과 워킹트리
         # 실측을 서로만 견줬으므로 둘을 함께 올리면 조용했다).
         FIXTURE_CLOSED_ROWS_BUMPED: _write_fixture(
-            tmpdir / "closed-rows-bumped.json",
+            sources,
+            SELFTEST_FIXTURE_DIR / "closed-rows-bumped.json",
             {
                 BASELINE_UNANCHORED_KEY: blob_count,
                 BASELINE_PROVENANCE_KEY: prov,
@@ -6594,7 +6681,8 @@ def build_baseline_fixtures(
             },
         ),
         FIXTURE_FIXTURE_CELLS_BUMPED: _write_fixture(
-            tmpdir / "fixture-cells-bumped.json",
+            sources,
+            SELFTEST_FIXTURE_DIR / "fixture-cells-bumped.json",
             {
                 BASELINE_UNANCHORED_KEY: blob_count,
                 BASELINE_PROVENANCE_KEY: prov,
@@ -6606,7 +6694,8 @@ def build_baseline_fixtures(
         # 여야 한다: 맞는 값을 가변 문서에서 쟀다는 주장은 다음 편집에 스스로 거짓이
         # 된다.  값 불일치가 아니라 **출처의 불변성**을 겨눈 직접 대조군이다.
         FIXTURE_PROVENANCE_WORKTREE: _write_fixture(
-            tmpdir / "prov-worktree.json",
+            sources,
+            SELFTEST_FIXTURE_DIR / "prov-worktree.json",
             {
                 BASELINE_UNANCHORED_KEY: blob_count,
                 BASELINE_PROVENANCE_KEY: worktree_prov,
@@ -6618,7 +6707,8 @@ def build_baseline_fixtures(
         # 「셀 추가 · 기입값 상향 · 출처를 가변으로 전환」 세 수를 한 커밋에 묶는
         # 우회가 그대로 재현된다.
         FIXTURE_WORKTREE_CELLS_BUMPED: _write_fixture(
-            tmpdir / "worktree-cells-bumped.json",
+            sources,
+            SELFTEST_FIXTURE_DIR / "worktree-cells-bumped.json",
             {
                 BASELINE_UNANCHORED_KEY: blob_count,
                 BASELINE_PROVENANCE_KEY: worktree_prov,
@@ -6649,31 +6739,37 @@ def run_self_test(
         min_anchor: C2B 앵커 최소 길이.
         baseline_path: 실운용 C2U 래칫 기준선 경로.
         repo_root: C2UP 가 측정 출처 blob 을 읽을 저장소 루트.
+        manifest_path: RULE 축 manifest 경로.
 
     Returns:
         프로세스 종료 코드 (죽은 검사가 하나라도 있으면 1).
     """
-    with tempfile.TemporaryDirectory(prefix="tos-contract-selftest-") as tmp:
-        try:
-            fixtures = build_baseline_fixtures(
-                text, Path(tmp), baseline_path, repo_root, manifest_path
-            )
-            manifests = build_manifest_fixtures(Path(tmp), manifest_path)
-        except ContractParseError as exc:
-            # 픽스처를 못 만들면 배터리 전체가 «green 인 기준»을 잃는다.  조용히
-            # 축소 실행하지 않고 여기서 시끄럽게 실패한다.
-            print(f"self-test: FAIL — 대조군 픽스처 구성 실패: {exc}")
-            return 1
-        return _run_battery(
-            text,
-            display_path,
-            min_anchor,
-            baseline_path,
-            repo_root,
-            fixtures,
-            manifest_path,
-            manifests,
+    # 픽스처는 디스크에 쓰지 «않는다» — 원본을 인메모리 사상에 담아 리더까지
+    # 명시적으로 흘린다(`_read_source_text`).  쓰기 가능한 임시 디렉터리가 없는
+    # 샌드박스에서도 배터리가 도는 것이 그 귀결이고, 게이트 경로는 사상을 넘기지
+    # 않으므로 «무엇을 읽는가» 는 그대로다.
+    sources: dict[Path, str] = {}
+    try:
+        fixtures = build_baseline_fixtures(
+            text, sources, baseline_path, repo_root, manifest_path
         )
+        manifests = build_manifest_fixtures(sources, manifest_path)
+    except ContractParseError as exc:
+        # 픽스처를 못 만들면 배터리 전체가 «green 인 기준»을 잃는다.  조용히
+        # 축소 실행하지 않고 여기서 시끄럽게 실패한다.
+        print(f"self-test: FAIL — 대조군 픽스처 구성 실패: {exc}")
+        return 1
+    return _run_battery(
+        text,
+        display_path,
+        min_anchor,
+        baseline_path,
+        repo_root,
+        fixtures,
+        manifest_path,
+        manifests,
+        sources,
+    )
 
 
 def _reference_index(
@@ -6684,6 +6780,7 @@ def _reference_index(
     baseline: Path,
     manifest: Path,
     cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]],
+    sources: Mapping[Path, str],
 ) -> tuple[dict[str, int], dict[str, set[int]]]:
     """어떤 (기준선, manifest) 픽스처 짝에 대한 «원본 문서» 발화 색인을 (캐시해) 준다."""
     key = (baseline, manifest)
@@ -6691,7 +6788,15 @@ def _reference_index(
         counts: dict[str, int] = {}
         sites: dict[str, set[int]] = {}
         for v in check_document(
-            text, display_path, min_anchor, False, baseline, None, repo_root, manifest
+            text,
+            display_path,
+            min_anchor,
+            False,
+            baseline,
+            None,
+            repo_root,
+            manifest,
+            sources,
         ):
             counts[v.rule] = counts.get(v.rule, 0) + 1
             sites.setdefault(v.rule, set()).add(v.line)
@@ -6736,6 +6841,7 @@ def _evaluate_mutation(
     fixtures: dict[str | None, Path],
     manifests: dict[str | None, Path],
     cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]],
+    sources: Mapping[Path, str],
 ) -> Outcome:
     """대조군 한 건을 돌려 «어느 부류인지» 판정한다.
 
@@ -6751,6 +6857,7 @@ def _evaluate_mutation(
         fixtures: 기준선 픽스처 사상.
         manifests: manifest 픽스처 사상.
         cache: 기준 실행 색인 캐시.
+        sources: 픽스처 «경로 → 원본» 사상.
 
     Returns:
         판정 결과.  `bucket is None` 이 통과다.
@@ -6786,6 +6893,7 @@ def _evaluate_mutation(
         fixtures[mut.ref_baseline],
         manifests[mut.ref_manifest],
         cache,
+        sources,
     )
     notices: list[str] = []
     got = check_document(
@@ -6797,6 +6905,7 @@ def _evaluate_mutation(
         notices,
         repo_root,
         manifests[mut.manifest],
+        sources,
     )
     got_count = sum(1 for v in got if v.rule == mut.rule)
     got_sites = {v.line for v in got if v.rule == mut.rule}
@@ -6873,6 +6982,7 @@ def _run_classifier_controls(
     fixtures: dict[str | None, Path],
     manifests: dict[str | None, Path],
     cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]],
+    sources: Mapping[Path, str],
 ) -> list[str]:
     """«앵커 불일치» 분류 **자체**를 고정하는 메타 대조군을 돌린다.
 
@@ -6894,7 +7004,15 @@ def _run_classifier_controls(
 
     for mut, expected_count in controls:
         outcome = _evaluate_mutation(
-            mut, text, display_path, min_anchor, repo_root, fixtures, manifests, cache
+            mut,
+            text,
+            display_path,
+            min_anchor,
+            repo_root,
+            fixtures,
+            manifests,
+            cache,
+            sources,
         )
         # rc 는 배터리 본체와 **같은 함수**로 잰다 — 여기만 따로 계산하면 «분류되면
         # 통과» 라는 회귀를 이 대조군이 놓친다.
@@ -6933,11 +7051,19 @@ def _run_battery(
     fixtures: dict[str | None, Path],
     manifest_path: Path,
     manifests: dict[str | None, Path],
+    sources: Mapping[Path, str],
 ) -> int:
     """대조군 배터리 본체 (픽스처가 준비된 뒤 실행된다)."""
     cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]] = {}
     base_count, base_sites = _reference_index(
-        text, display_path, min_anchor, repo_root, baseline_path, manifest_path, cache
+        text,
+        display_path,
+        min_anchor,
+        repo_root,
+        baseline_path,
+        manifest_path,
+        cache,
+        sources,
     )
 
     print(f"self-test: 기준선 위반 {sum(base_count.values())}건 (실운용 기준선 기준)")
@@ -6951,7 +7077,15 @@ def _run_battery(
     mutations = build_mutations()
     for mut in mutations:
         outcome = _evaluate_mutation(
-            mut, text, display_path, min_anchor, repo_root, fixtures, manifests, cache
+            mut,
+            text,
+            display_path,
+            min_anchor,
+            repo_root,
+            fixtures,
+            manifests,
+            cache,
+            sources,
         )
         if outcome.bucket is not None:
             buckets[outcome.bucket].append(
@@ -6964,7 +7098,7 @@ def _run_battery(
 
     print()
     meta = _run_classifier_controls(
-        text, display_path, min_anchor, repo_root, fixtures, manifests, cache
+        text, display_path, min_anchor, repo_root, fixtures, manifests, cache, sources
     )
 
     print()
