@@ -301,11 +301,22 @@ PROVENANCE-1 — 기준선의 «측정 출처» 주장을 기계로 강제한다
   * 출처 필드 부재·형태 위반       → red (검증 불가를 통과로 접지 않는다)
   * 커밋이 16진 sha 가 아님        → red (`HEAD`·브랜치 같은 «움직이는 ref» 는 매 실행마다
                                     다른 대상을 가리켜 주장 자체가 성립하지 않는다)
+  * 출처 종류가 `worktree`         → red (**가변 출처**.  50차 이전에는 이 자리가 «운영
+                                    안내»였고 안내는 통과였다 — 기입값·출처·검사 대상이
+                                    한꺼번에 같은 가변 문서를 가리켜 무엇을 바꾸든 함께
+                                    움직였다.  재심 #10 의 반례가 그 자리를 밟았다)
   * git 실행 실패·커밋/경로 부재   → red
+
+거부는 **저작 레벨**에 둔다: 출처를 읽는 유일한 리더 `read_baseline_source` 의 기본값이
+«불변만»이고, 편의 경로(`measure_baseline`)만 `allow_mutable=True` 를 넘긴다.  호출자마다
+가드를 얹는 형태는 기각했다 — 다음 축이 가드를 빠뜨리면 구멍이 조용히 다시 열린다.
+그래서 가변 출처는 이 리더에 매달린 **모든** 축(C2UP · CAP-2 셀 수)에서 함께 red 다.
 
 갱신 절차도 기계화한다 — `--measure-baseline <rev>` 는 **커밋 blob** 에서 재어 붙여넣을
 JSON 을 출력한다.  **파일은 쓰지 않는다**(RATCHET-1 과 같은 이유: 기입은 사람의 기록
-행위여야 한다).  ref 는 그 자리에서 불변 sha 로 해소해 출력한다.
+행위여야 한다).  ref 는 그 자리에서 불변 sha 로 해소해 출력한다.  `worktree` 를 주면
+실측 표시만 내고 **출처 블록을 내주지 않는다** — 종래에는 그 출력을 그대로 붙여넣는
+것만으로 게이트를 통과하는 기준선이 만들어졌다(편의 경로가 곧 우회 경로였다).
 
 ------------------------------------------------------------------------------
 REF-1 — «기각된 문서를 정본으로 가리키는» 인용 (TOS-CC-REF-REJECTED)
@@ -522,7 +533,12 @@ BASELINE_PROVENANCE_KEY = "measured_against"
 #: 측정 출처의 «종류».  둘뿐이며, 이름을 강제로 적게 하는 이유는 «어디서 쟀는지»를
 #: 산문이 아니라 **판정 가능한 값**으로 남기기 위해서다.
 BASELINE_KIND_COMMIT = "commit"  # 불변 커밋 blob — 재현 가능한 정상 상태
-BASELINE_KIND_WORKTREE = "worktree"  # 커밋 전 워킹트리 — 과도기의 정직한 기입
+#: 워킹트리 — **게이트 경로에서 거부되는 값**이다(50차).  가변 문서를 가리키므로
+#: 기입값·출처·검사 대상이 한꺼번에 움직여 «그 출처에서 쟀다»는 주장이 검증되지
+#: 않는다.  이 이름이 남아 있는 이유는 `--measure-baseline worktree` 가 «지금 이
+#: 자리를 쟀다»를 표시하기 위해서다 — **측정 표시 전용**이고, 기준선 파일에 기입하면
+#: C2UP·CAP2-FIXTURE 두 축 모두에서 red 다.
+BASELINE_KIND_WORKTREE = "worktree"
 BASELINE_KIND_KEY = "kind"
 
 #: 측정 출처 커밋은 **불변 객체 이름**이어야 한다.  `HEAD`·브랜치명 같은 움직이는 ref 를
@@ -1586,21 +1602,32 @@ def read_unanchored_baseline(path: Path) -> BaselineRecord:
     return BaselineRecord(value, _str(BASELINE_KIND_KEY), _str("commit"), _str("path"))
 
 
-def read_baseline_source(repo_root: Path, record: BaselineRecord) -> str:
+def read_baseline_source(
+    repo_root: Path, record: BaselineRecord, *, allow_mutable: bool = False
+) -> str:
     """기준선이 «여기서 쟀다»고 주장하는 원본을, **그 주장 그대로** 읽는다.
 
     이 함수가 출처 종류별 유일한 리더다 — 검증과 픽스처 구성이 같은 경로를 쓰지 않으면
     «blob 을 잰다»는 주장과 실제 읽는 대상이 조용히 갈라질 수 있다.
 
+    **기본값이 «불변만» 이다**(50차).  `allow_mutable` 을 넘기지 «않는» 모든 호출자는
+    워킹트리 출처를 거부하고, 현재 넘기는 곳은 `measure_baseline` 하나뿐이다.
+    호출자마다 가드를 얹는 형태는 **명시적으로 기각했다** — 그러면 다음 축이 가드를
+    빠뜨렸을 때 구멍이 조용히 다시 열리고, 그것이 이 아크가 반복해 온 «부분 스윕»
+    결함이다.  **잠금은 표면이 아니라 저작 레벨에 둔다.**
+
     Args:
         repo_root: 저장소 루트.
         record: 기준선 레코드.
+        allow_mutable: 가변 출처(워킹트리)를 읽어도 되는가.  게이트 경로가 아니라
+            **측정 편의 경로**에서만 참이다.
 
     Returns:
         원본 텍스트.
 
     Raises:
-        ContractParseError: 출처 종류·형태 위반 또는 읽기 실패.
+        ContractParseError: 출처 종류·형태 위반 또는 읽기 실패.  게이트 경로에서
+            가변 출처를 만났을 때도 여기에 포함된다.
     """
     if record.path is None:
         raise ContractParseError(
@@ -1618,6 +1645,14 @@ def read_baseline_source(repo_root: Path, record: BaselineRecord) -> str:
             )
         return read_commit_blob(repo_root, record.commit, record.path)
     if record.kind == BASELINE_KIND_WORKTREE:
+        if not allow_mutable:
+            raise ContractParseError(
+                f"측정 출처 종류가 '{BASELINE_KIND_WORKTREE}' 다 — 워킹트리는 불변이 "
+                "아니므로 «그 출처에서 쟀다»는 주장을 검증 불가로 만든다 (기입값·출처·"
+                "검사 대상이 같은 가변 문서를 가리켜 무엇을 바꾸든 함께 움직인다). "
+                "계약 편집을 커밋한 뒤 `--measure-baseline <sha>` 로 재측정해 "
+                f"'{BASELINE_KIND_KEY}': '{BASELINE_KIND_COMMIT}' 로 승격하라"
+            )
         try:
             return (repo_root / record.path).read_text(encoding="utf-8")
         except OSError as exc:
@@ -1669,7 +1704,6 @@ def check_c2up(
     doc: ContractDoc,
     baseline_path: Path,
     repo_root: Path,
-    notices: list[str] | None = None,
 ) -> list[Violation]:
     """C2UP — 기준선이 «자기 측정 출처에 대해 하는 주장»을 기계로 강제한다.
 
@@ -1679,13 +1713,16 @@ def check_c2up(
     **그 blob 을 다시 재어** 기입값과 대조한다 — 불일치면 red.
 
     커밋 이름은 16진 sha 만 받는다.  `HEAD`·브랜치명 같은 «움직이는 ref» 를 허용하면
-    주장이 매 실행마다 다른 대상을 가리켜 검증이 성립하지 않는다.
+    주장이 매 실행마다 다른 대상을 가리켜 검증이 성립하지 않는다.  같은 이유로 **가변
+    출처(`worktree`)도 red 다** — `read_baseline_source` 가 게이트 경로에서 거부하고,
+    이 함수는 그 예외를 위반으로 바꾼다(50차).  종래에는 그 자리를 «위반이 아닌 운영
+    안내»로 냈는데, 안내는 통과이므로 셀 추가·기입값 상향·`kind` 전환을 한 커밋에 묶으면
+    위반 0건이었다(재심 #10 반례).
 
     Args:
         doc: 계약 문서 컨텍스트(진단 경로 표기용).
         baseline_path: 기준선 JSON 경로.
         repo_root: 저장소 루트.
-        notices: 위반이 아닌 운영 안내를 모으는 목록(있으면).
 
     Returns:
         위반 목록.
@@ -1715,17 +1752,6 @@ def check_c2up(
             f"기준선의 자기 주장이 거짓이다 — '{BASELINE_UNANCHORED_KEY}'={record.count} "
             f"이지만 {origin} 을 다시 재면 {remeasured} 다 "
             "(다른 대상을 재고 출처만 적었을 때 나타나는 형태)"
-        )
-
-    if record.kind == BASELINE_KIND_WORKTREE and notices is not None:
-        # 위반은 아니다 — 운영자가 «커밋 전»이라고 정직하게 적은 과도기 상태다.  다만
-        # 워킹트리는 불변 객체가 아니라서 이 주장은 언제든 스스로 거짓이 될 수 있다.
-        # 그 사실을 매 실행 표면에 남긴다(조용한 과도기는 영구가 된다).
-        notices.append(
-            f"[TOS-CC-C2UP] 기준선 측정 출처가 «{BASELINE_KIND_WORKTREE}»(커밋 전)다. "
-            "워킹트리는 불변이 아니므로 이 결속은 잠정이다 — 계약 편집을 커밋한 뒤 "
-            f"`--measure-baseline <sha>` 로 재측정해 "
-            f"'{BASELINE_KIND_KEY}': '{BASELINE_KIND_COMMIT}' 로 승격하라."
         )
 
     logger.info(
@@ -2508,6 +2534,11 @@ def check_fixture_row_shape(
     넓었다.  그래서 여기에 같은 다리를 놓는다: `measured_against` 가 가리키는 **불변
     blob** 을 다시 재고, **기입값과 워킹트리 행을 둘 다** 그 blob 에 대조한다.
     기입 정수는 더 이상 권위가 아니라 «검증 대상 주장»이다.
+
+    다만 49차의 «불변» 은 그 판에서는 아직 **문언이었다** — 리더가 출처 종류 `worktree`
+    를 그대로 읽었으므로 `kind` 한 글자만 뒤집으면 기준이 다시 가변 문서가 되었고,
+    기입값·출처·검사 대상 셋이 함께 움직여 위반 0건이 되었다(재심 #10).  50차가 그
+    자리를 `read_baseline_source` 의 **기본값**으로 닫아 «불변» 을 능력으로 만들었다.
 
     **닫히지 «않는» 자리(등재)**: 핀을 «셀이 이미 늘어난 커밋»으로 옮기면 통과한다.
     그 전이가 정당한지 세탁인지는 기계가 구별하지 못한다 — 구별하는 것은 그것이
@@ -3624,7 +3655,7 @@ def check_document(
         ("C1", check_c1),
         ("C2", lambda d: check_c2(d, min_anchor)),
         ("C2U", lambda d: check_c2u(d, baseline, notices)),
-        ("C2UP", lambda d: check_c2up(d, baseline, root, notices)),
+        ("C2UP", lambda d: check_c2up(d, baseline, root)),
         ("C3", check_c3),
         ("C4", check_c4),
         ("C4C", lambda d: check_c4c(d, _manifest_step_prefixes(manifest))),
@@ -3741,6 +3772,11 @@ FIXTURE_BAD_COMMIT = "bad-commit"  # 움직이는 ref
 FIXTURE_NO_PROVENANCE = "no-provenance"  # 출처 필드 자체가 없다
 FIXTURE_NO_CLOSED_ROWS = "no-closed-rows"  # 닫힌 표의 행 수 기준선이 없다
 FIXTURE_FIXTURE_CELLS_BUMPED = "fixture-cells-bumped"  # 셀 수 기입값만 출처보다 크다
+#: 출처 «종류»만 가변(worktree)으로 바꾼 판.  나머지 필드는 실운용에서 물려받는다 —
+#: 「한 가지만 바꾼다」 규율이라야 어느 술어가 잡았는지가 계수에 남는다.
+FIXTURE_PROVENANCE_WORKTREE = "prov-worktree"  # 출처가 불변 blob 이 아니다
+#: 재심 #10 의 반례를 기준선 쪽에서 재현한 판 — 가변 출처 **와** 셀 수 기입값 상향.
+FIXTURE_WORKTREE_CELLS_BUMPED = "worktree-cells-bumped"  # 가변 출처 + 셀 수 상향
 
 #: RULE 축 manifest 픽스처 키.  기준선 픽스처와 «축»이 다르므로 별도 사상에 둔다.
 MFIXTURE_MISSING = "m-missing"  # 파일 자체가 없다 (부재를 «0 위반»으로 접지 않는다)
@@ -5318,6 +5354,18 @@ def build_mutations() -> list[Mutation]:
             FIXTURE_PROVENANCE_OK,
         ),
         Mutation(
+            "C2UP-worktree-provenance-is-red",
+            "TOS-CC-C2UP",
+            "inject",
+            # **[50차 · 재심 #10]** 값은 전부 출처 실측과 «맞는데» 출처 종류만 가변이다.
+            # 49차까지 이 자리는 «운영 안내»(= 통과)였고, 그래서 기입값·출처·검사 대상을
+            # 한꺼번에 같은 가변 문서로 옮기는 우회가 위반 0건이었다.  이제 red 다.
+            lambda t: t,
+            None,
+            FIXTURE_PROVENANCE_WORKTREE,
+            FIXTURE_PROVENANCE_OK,
+        ),
+        Mutation(
             "C2UP-real-baseline-provenance-verifies",
             "TOS-CC-C2UP",
             "clean",
@@ -5566,8 +5614,13 @@ def build_mutations() -> list[Mutation]:
             "CAP2-fixture-row-cell-added-is-red",
             "TOS-CC-CAP2-FIXTURE",
             "inject",
-            # **[48차]** 정당한 대조군 셀을 더해도 red 다 — 기준선 갱신은 «사람의 기록
-            # 행위»여야 한다(C2U 래칫과 같은 규율).  이것이 «수»로 옮긴 정체의 값이다.
+            # **[48차 · 문언 정정 50차]** 정당한 대조군 셀을 더해도 red 다 — 이것이
+            # «수»로 옮긴 정체의 값이다.  48차 주석은 그 근거를 「기준선 갱신은 사람의
+            # 기록 행위여야 한다(C2U 래칫과 같은 규율)」로 적었지만 **49차가 그것을
+            # 반증했다**: 그 판은 기입 정수만 견줬으므로 셀 추가와 기준값 상향을 한
+            # 커밋에 묶으면 통과했다(사람의 기록 행위 하나로 둘 다 되었다).  지금 이
+            # 대조군이 red 인 근거는 그 산문이 아니라 **기준이 출처 blob 이라는 사실**
+            # 이고, 그 blob 의 불변성 자체는 50차가 세웠다.
             _append_cell_to_fixture_row(
                 " **(ㅎ-9)** 음성 — `total_count` 1,001 주입 "
                 "→ `PREVENTION_UNVERIFIABLE` |"
@@ -5594,12 +5647,63 @@ def build_mutations() -> list[Mutation]:
             # «함께» 올리는 우회.  48차 판은 두 값을 서로 견줬으므로 이 짝맞춤이 위반
             # 0건이었다(실측).  기준이 불변 blob 이면 둘을 함께 올려도 red 다 —
             # 기준선 픽스처가 양쪽 실행에서 같으므로 늘어나는 것은 «문서 쪽 다리»뿐이다.
+            # **그 «불변»은 출처 종류가 `commit` 일 때만 성립했다**(50차) — `kind` 를
+            # 가변으로 뒤집는 판은 아래 6세대 대조군이 짝으로 든다.
             _append_cell_to_fixture_row(
                 " 신규 규범: `total_count > 1000` → `PREVENTION_UNVERIFIABLE` |"
             ),
             None,
             FIXTURE_FIXTURE_CELLS_BUMPED,
             FIXTURE_FIXTURE_CELLS_BUMPED,
+        ),
+        # ---- CAP-2 6세대 — 출처의 «불변성» (50차 · 재심 #10) -------------------
+        Mutation(
+            "CAP2-FIXTURE-worktree-provenance-is-red",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # C2UP 와 **같은 기준선 픽스처**를 이 축에서도 건다.  두 축이 같은 리더
+            # (`read_baseline_source`)에 매달려 있으므로, 가변 출처는 둘 다에서
+            # 근거를 잃어야 한다 — 한쪽만 red 면 잠금이 표면에 붙어 있다는 뜻이다.
+            lambda t: t,
+            None,
+            FIXTURE_PROVENANCE_WORKTREE,
+            FIXTURE_PROVENANCE_OK,
+        ),
+        Mutation(
+            "CAP2-escape-new-cell-with-baseline-bumped-and-worktree",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # **재심 #10 의 반례 그대로**: 문서에 셀 +1 · 기입값을 그 수로 상향 ·
+            # 출처를 가변(`worktree`)으로 전환 — 세 수를 한 커밋에 묶는다.  49차 판은
+            # 이 짝맞춤이 위반 0건이었다(실측): 가변 출처에서는 기입값·출처·검사 대상이
+            # 전부 같은 문서를 가리켜 셋이 함께 움직였다.
+            #
+            # **기준(ref)은 정직한 기준선이다.**  `CAP2-escape-new-cell-with-baseline-
+            # bumped` 는 양쪽을 같은 픽스처로 고정했지만, 여기서 같은 배치를 쓰면 가변
+            # 출처 거부가 양쪽 실행 모두를 line 0 한 건으로 만들어 delta 0 — 즉 «죽은
+            # 검사»로 계수된다(실측).  우회의 정체는 «녹색 상태에서 red 로 뒤집힌다»
+            # 이므로 기준은 녹색인 자리여야 한다.
+            _append_cell_to_fixture_row(
+                " 신규 규범: `total_count > 1000` → `PREVENTION_UNVERIFIABLE` |"
+            ),
+            None,
+            FIXTURE_WORKTREE_CELLS_BUMPED,
+            FIXTURE_PROVENANCE_OK,
+        ),
+        Mutation(
+            "CAP2-FIXTURE-commit-provenance-is-silent",
+            "TOS-CC-CAP2-FIXTURE",
+            "clean",
+            # 역방향 양성 — 새 거부가 **정직한 기준선까지** 잡지는 않는지 본다.
+            # `C2UP-real-baseline-provenance-verifies` 와 같은 성격이고, 같은 이유로
+            # **실운용** 기준선을 쓰고 «0 건» 이라는 **절대** 기대를 건다: 사람이
+            # 커밋에 결속해 적어 둔 값만이 리더와 독립한 oracle 이다.
+            lambda t: _append(
+                t, "대조군 — 문서 말미 편집은 픽스처 행의 셀 수를 바꾸지 않는다."
+            ),
+            None,
+            None,
+            None,
         ),
         Mutation(
             "C4C-escape-no-space-separator",
@@ -6177,6 +6281,10 @@ def build_baseline_fixtures(
     # 커밋 이름만 적은」 형태의 직접 대조군이고, 문서 변이와 짝지으면 「셀 추가와 기준값
     # 갱신을 함께 하는」 우회(재심 #9)를 재현한다.
     bumped = {BASELINE_FIXTURE_KEY: {a: s.cells + 1 for a, s in blob_cells.items()}}
+    # 출처 «종류»만 가변으로 뒤집는다 — 커밋·경로는 그대로 물려받아 「한 가지만 바꾼다」
+    # 를 지킨다.  재심 #10 이 실제로 밟은 형태가 이것이다: 커밋 블록을 손에 쥔 채
+    # `kind` 만 `worktree` 로 적으면 검사 대상이 가변 문서로 옮겨 갔다.
+    worktree_prov = {**prov, BASELINE_KIND_KEY: BASELINE_KIND_WORKTREE}
 
     return {
         None: real_baseline,
@@ -6241,6 +6349,30 @@ def build_baseline_fixtures(
             {
                 BASELINE_UNANCHORED_KEY: blob_count,
                 BASELINE_PROVENANCE_KEY: prov,
+                **closed,
+                **bumped,
+            },
+        ),
+        # 출처 종류만 가변인 기준선 — 값은 전부 출처 blob 실측과 «맞다».  그래도 red
+        # 여야 한다: 맞는 값을 가변 문서에서 쟀다는 주장은 다음 편집에 스스로 거짓이
+        # 된다.  값 불일치가 아니라 **출처의 불변성**을 겨눈 직접 대조군이다.
+        FIXTURE_PROVENANCE_WORKTREE: _write_fixture(
+            tmpdir / "prov-worktree.json",
+            {
+                BASELINE_UNANCHORED_KEY: blob_count,
+                BASELINE_PROVENANCE_KEY: worktree_prov,
+                **closed,
+                **fixture_cells,
+            },
+        ),
+        # 재심 #10 의 반례를 기준선 쪽에서 재현한 판 — 문서 변이(셀 +1)와 짝지으면
+        # 「셀 추가 · 기입값 상향 · 출처를 가변으로 전환」 세 수를 한 커밋에 묶는
+        # 우회가 그대로 재현된다.
+        FIXTURE_WORKTREE_CELLS_BUMPED: _write_fixture(
+            tmpdir / "worktree-cells-bumped.json",
+            {
+                BASELINE_UNANCHORED_KEY: blob_count,
+                BASELINE_PROVENANCE_KEY: worktree_prov,
                 **closed,
                 **bumped,
             },
@@ -6628,6 +6760,13 @@ def measure_baseline(
     기록 행위가 그 키를 만들 수 없어 «기입은 사람이 한다»는 규율이 그 축에서만 공허해진다.
     재지 «않는» 키는 출력 말미에 명시한다 — 통째로 붙여넣으면 그 키가 사라진다.
 
+    `rev` 로 `worktree` 를 주면 **실측 표시만** 낸다.  출력 JSON 에서 출처 블록
+    (`measured_against`)을 빼는 이유는 50차에 실측된 것 때문이다: 종래에는 워킹트리
+    측정도 출처 블록을 함께 내주었고, 그 출력을 그대로 붙여넣으면 게이트를 **통과하는**
+    기준선이 만들어졌다 — **편의 경로가 곧 우회 경로였다.**  이제 붙여넣을 출처 블록은
+    불변 커밋을 잰 경우에만 나오고, 워킹트리 측정은 그 사실을 명시 출력한다.
+    종료 코드는 두 경우 모두 0 이다 — 이것은 측정 명령이지 게이트가 아니다.
+
     Args:
         repo_root: 저장소 루트.
         rev: 측정할 리비전 (ref 도 받아 sha 로 해소한다).
@@ -6662,7 +6801,9 @@ def measure_baseline(
             sha = proc.stdout.decode().strip()
             record = BaselineRecord(0, BASELINE_KIND_COMMIT, sha, rel_path)
             origin = f"{sha[:8]}:{rel_path} blob"
-        source = read_baseline_source(repo_root, record)
+        # 이 명령이 `allow_mutable=True` 를 넘기는 **유일한** 자리다 — 게이트 경로는
+        # 기본값(불변만)을 그대로 쓴다.
+        source = read_baseline_source(repo_root, record, allow_mutable=True)
         count = count_unanchored_in_text(source)
         # 검사가 쓰는 것과 **같은 파생**으로 잰다 — 다른 경로로 만들면 이 명령이 내는
         # 값과 검사기가 재는 값이 조용히 갈라진다.
@@ -6676,17 +6817,36 @@ def measure_baseline(
         print(f"tos-contract: ERROR — 기준선 측정 실패: {exc}")
         return 2
 
-    prov: dict[str, object] = {BASELINE_KIND_KEY: record.kind, "path": rel_path}
-    if record.kind == BASELINE_KIND_COMMIT:
-        prov["commit"] = record.commit
-    payload = {
-        BASELINE_PROVENANCE_KEY: prov,
+    measured: dict[str, object] = {
         BASELINE_UNANCHORED_KEY: count,
         BASELINE_FIXTURE_KEY: cells,
     }
+    # 출처 블록은 **불변 커밋을 잰 경우에만** 낸다.  워킹트리 판까지 내주면 그 출력을
+    # 그대로 붙여넣는 것만으로 게이트를 통과하는 기준선이 만들어진다 — 편의 경로가 곧
+    # 우회 경로가 되는 형태이고, 재심 #10 의 반례가 정확히 그 자리를 밟았다.
+    payload: dict[str, object] = (
+        {
+            BASELINE_PROVENANCE_KEY: {
+                BASELINE_KIND_KEY: record.kind,
+                "path": rel_path,
+                "commit": record.commit,
+            },
+            **measured,
+        }
+        if record.kind == BASELINE_KIND_COMMIT
+        else measured
+    )
     print(f"tos-contract: {origin} 실측 미앵커 좌표 = {count}자리")
     print(f"tos-contract: {origin} 실측 픽스처 행 셀 수 = {cells}")
-    print("아래를 기준선 파일에 «사람이» 반영하라 (이 명령은 파일을 쓰지 않는다):")
+    if record.kind == BASELINE_KIND_COMMIT:
+        print("아래를 기준선 파일에 «사람이» 반영하라 (이 명령은 파일을 쓰지 않는다):")
+    else:
+        print(
+            "이 형태는 게이트를 통과하지 못한다 — 아래 조각에 "
+            f"'{BASELINE_PROVENANCE_KEY}' 가 «없는» 것이 그 사실이다. "
+            "붙여넣을 출처 블록은 계약 편집을 커밋한 뒤 "
+            "`--measure-baseline <sha>` 로 측정해야 나온다:"
+        )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     print(
         f"이 명령이 재지 «않는» 키: '{BASELINE_CLOSED_TABLE_KEY}' — "
@@ -6758,9 +6918,10 @@ def main(argv: list[str] | None = None) -> int:
         metavar="COMMIT|worktree",
         default=None,
         help=(
-            "그 커밋의 blob 에서 미앵커 좌표를 재어 붙여넣을 기준선 JSON 을 **출력만** "
-            "한다 (자동 갱신하지 않는다 — RATCHET-1).  커밋 전 과도기에는 'worktree' 를 "
-            "주면 워킹트리를 재고 그 사실을 kind 로 기입한다"
+            "그 커밋의 blob 에서 미앵커 좌표와 픽스처 행 셀 수를 재어 붙여넣을 기준선 "
+            "JSON 을 **출력만** 한다 (자동 갱신하지 않는다 — RATCHET-1).  'worktree' 를 "
+            "주면 지금 워킹트리를 재어 «표시»만 하고 출처 블록은 내주지 않는다 — 가변 "
+            "출처 기준선은 게이트에서 거부된다"
         ),
     )
     parser.add_argument(
