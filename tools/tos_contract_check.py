@@ -376,7 +376,12 @@ CLOSED-1 — «닫힌 표»의 행 수 등호 (TOS-CC-CLOSED-TABLE)
 
   * `header_anchor` 를 담은 행이 **정확히 1개** · `closing_anchor` 도 **정확히 1개**.
   * 헤더 행 **다음** 행이 구분자(`|---|…`).
-  * 구분자 다음부터 **연속하는 표 행**(구분자 행 제외)을 세어 기준선 값과 **등호**.
+  * 구분자 다음부터 **연속하는 표 행**(구분자 행 제외)을 세어 **측정 출처 blob** 의
+    같은 표 행 수와 **등호**.  기준 blob 은 `measured_against` 가 가리키는 불변
+    커밋이고, `kind: worktree` 는 리더의 기본값이 거부한다(50차).
+  * 기준선의 기입값(`closed_table_rows`)도 **그 blob 실측과 등호** — 기입 정수는
+    권위가 아니라 «검증 대상 주장»이다(51차 · 두 다리).  이 다리가 없으면 행을
+    더하면서 기준값을 함께 올리는 편집이 위반 0건이 된다.
 
 **등호이지 래칫이 아니다.**  C2U(RATCHET-1)는 «늘지 않는다»만 보장하는 축이라 잔여를
 줄이는 편집을 막지 않는다.  닫힌 표는 성격이 다르다 — 행이 **늘면** 표가 다시 열린 것이고,
@@ -394,7 +399,11 @@ CLOSED-1 — «닫힌 표»의 행 수 등호 (TOS-CC-CLOSED-TABLE)
   * «측정된 계수»(행 수)   → 기준선 파일(`.tos_contract_baseline.json`).  계약 본문에
     둘 수 없는 이유는 6차 ⓑ 다 — 「자기 문서를 세는 숫자는 그 문서에 두지 않는다」.
     그 파일이 `unanchored_self_citations` 로 이미 쓰는 자리이고, 값 갱신이 **사람의 기록
-    행위**로 남는다(닫힌 표의 행이 정당하게 바뀌는 일은 운영자 결정이다).
+    행위**로 남는다(닫힌 표의 행이 정당하게 바뀌는 일은 운영자 결정이다).  **그 기록
+    행위 자체는 보증이 아니다**(51차) — 행 추가와 기준값 상향을 한 커밋에 묶으면
+    산문 규율은 그대로 통과한다.  그래서 기입 정수는 권위가 아니라 «검증 대상 주장»
+    이고, 기준은 `measured_against` 가 가리키는 **불변 blob** 이다 (CAP2-FIXTURE 가
+    셀 수 축에 놓은 것과 같은 두 다리).
   * «측정»                 → 이 파일.  둘 다 신뢰하지 않고 대조만 한다.
 
 기준선에 그 표의 값이 **없으면** red 다 — 부재를 «0 위반»으로 접으면 축이 장식이 된다
@@ -537,7 +546,8 @@ BASELINE_KIND_COMMIT = "commit"  # 불변 커밋 blob — 재현 가능한 정�
 #: 기입값·출처·검사 대상이 한꺼번에 움직여 «그 출처에서 쟀다»는 주장이 검증되지
 #: 않는다.  이 이름이 남아 있는 이유는 `--measure-baseline worktree` 가 «지금 이
 #: 자리를 쟀다»를 표시하기 위해서다 — **측정 표시 전용**이고, 기준선 파일에 기입하면
-#: C2UP·CAP2-FIXTURE 두 축 모두에서 red 다.
+#: C2UP·CAP2-FIXTURE·CLOSED-TABLE 세 축 모두에서 red 다 — 잠금이 리더의 기본값에
+#: 있으므로 출처를 다시 재는 축이 늘 때마다 자동으로 따라온다.
 BASELINE_KIND_WORKTREE = "worktree"
 BASELINE_KIND_KEY = "kind"
 
@@ -1560,8 +1570,9 @@ BaselineRecord = namedtuple("BaselineRecord", ["count", "kind", "commit", "path"
 def read_unanchored_baseline(path: Path) -> BaselineRecord:
     """래칫 기준선을 읽는다 — 부재·손상·형태 위반은 전부 fail-closed 사유다.
 
-    측정 출처(`measured_against`)는 여기서 «형태»만 본다.  그 주장이 참인지는
-    `check_c2up` 이 실제 blob 을 다시 재어 판정한다 (PROVENANCE-1).
+    측정 출처(`measured_against`)는 여기서 «형태»만 본다.  그 주장이 참인지는 계수를
+    쓰는 축들이 실제 blob 을 다시 재어 판정한다 (PROVENANCE-1) — `check_c2up`(계수) ·
+    `check_fixture_row_shape`(셀 수) · `check_closed_tables`(닫힌 표 행 수).
 
     Args:
         path: 기준선 JSON 경로.
@@ -3460,51 +3471,120 @@ def closed_table_row_lines(doc: ContractDoc, header_line: int) -> list[int]:
     return rows
 
 
+ClosedTableShape = namedtuple(
+    "ClosedTableShape", ["header_line", "closing_line", "rows"]
+)
+
+
+def derive_closed_table_rows(
+    doc: ContractDoc, tables: Sequence[ClosedTable]
+) -> dict[str, ClosedTableShape]:
+    """닫힌 표의 «자리와 행 수»를 구조에서 파생한다 (측정의 유일 소스).
+
+    문서든 출처 blob 이든 **이 함수로만** 잰다 — 두 경로로 재면 «무엇을 재는가»가
+    조용히 갈라진다 (`derive_fixture_row_cells` 가 셀 수 축에 세운 같은 규율).
+    앵커 둘을 **양쪽에서 다** 확인하는 것도 그 규율의 일부다: 한쪽만 보면 blob 에서
+    앵커가 유일하지 않은 상태가 «측정된 0» 과 같은 이름을 갖는다.
+
+    Args:
+        doc: 잴 대상 문서 컨텍스트.
+        tables: manifest 가 선언한 닫힌 표 목록.
+
+    Returns:
+        헤더 앵커 → `(헤더 행번호, 닫힘 선언 행번호, 데이터 행 수)`.
+
+    Raises:
+        ContractParseError: 앵커가 유일하지 않거나 표 형상을 찾지 못했을 때 —
+            «무엇을» 세는지 잃은 상태를 «0 행»으로 접지 않는다.
+    """
+    out: dict[str, ClosedTableShape] = {}
+    for table in tables:
+        header_line = _unique_anchor_line(doc, table.header_anchor)
+        closing_line = _unique_anchor_line(doc, table.closing_anchor)
+        out[table.header_anchor] = ClosedTableShape(
+            header_line, closing_line, len(closed_table_row_lines(doc, header_line))
+        )
+    return out
+
+
+# 계약 본문(`:3899`)은 이 축의 provenance 결속을 아직 «닫는 자리는 C2UP 의 우주다»라는
+# **등재**로 적고 있다.  51차가 그 자리를 여기서 닫았으므로 그 등재 문언은 이 시점에
+# **stale** 이다 — 방향은 「문언이 능력보다 좁다」쪽이라 안전한 극성이고, 계약 본문
+# 갱신은 재심 카운터(S-26 ⑥: 계약 편집이 «2회 연속 청정»을 0 으로 되돌린다) 사이클
+# **밖**의 별도 판이다.  여기 주석으로 남기는 이유가 그것이다.
 def check_closed_tables(
-    doc: ContractDoc, manifest_path: Path, baseline_path: Path
+    doc: ContractDoc, manifest_path: Path, baseline_path: Path, repo_root: Path
 ) -> list[Violation]:
-    """CLOSED-TABLE — 닫힌 표의 데이터 행 수가 기준선과 **같은지** (CLOSED-1).
+    """CLOSED-TABLE — 닫힌 표의 데이터 행 수가 «측정 출처 blob» 과 같은지 (CLOSED-1).
 
     래칫이 아니라 등호다.  행이 늘면 «닫았다»는 선언이 거짓이 되고, 줄면 종결된 이력이
     훼손된다 — 한쪽만 보는 술어는 다른 쪽에 눈이 먼다.
+
+    **기준은 기입 정수가 아니다**(51차).  50차까지 이 축은 워킹트리 실측을 기준선 파일의
+    «정수»와만 견줬다.  그 둘은 같은 커밋에서 함께 편집할 수 있으므로, 행을 더하면서
+    기준값도 같이 올리면 위반이 0 건이었다 — 48차가 셀 수 축에 냈던 것과 같은 형상이고
+    49·50차가 이미 처분한 결함 클래스다.  그래서 `check_fixture_row_shape` 와 **같은 두
+    다리**를 놓는다: `measured_against` 가 가리키는 **불변 blob** 을 다시 재고, ①기입값과
+    ②워킹트리 행을 둘 다 그 blob 에 대조한다.  기입 정수는 권위가 아니라 «검증 대상
+    주장»이다.
+
+    출처의 «불변» 은 문언이 아니라 능력이다 — `read_baseline_source` 에 `allow_mutable`
+    을 넘기지 «않으므로» `kind: worktree` 기준선은 이 축에서도 자동으로 red 다(50차가
+    저작 레벨에 둔 잠금의 상속).
+
+    **닫히지 «않는» 자리(등재)**: 핀을 «행이 이미 늘어난 커밋»으로 옮기면 통과한다.
+    그 전이가 정당한지 세탁인지는 기계가 구별하지 못한다 — 구별하는 것은 그것이
+    diff 에 보이는 사람의 기록 행위라는 사실뿐이고, C2U 가 사는 체제와 같다.
 
     Args:
         doc: 계약 문서 컨텍스트.
         manifest_path: 닫힌 표 정본(manifest) 경로.
         baseline_path: 행 수 기준선 JSON 경로.
+        repo_root: 측정 출처 blob 을 읽을 저장소 루트.
 
     Returns:
         위반 목록.
 
     Raises:
-        ContractParseError: 앵커가 유일하지 않거나 표 형상을 찾지 못했을 때
+        ContractParseError: **문서 쪽** 앵커가 유일하지 않거나 표 형상을 찾지 못했을 때
             (호출부가 `TOS-CC-PARSE` 로 접는다 — «검사 불능»과 «위반 0»은 다르다).
+            출처 blob 쪽 실패는 여기서 red 로 접는다 — 기준을 잃은 상태를 조용히
+            건너뛰지 않는다.
     """
     tables, violations = derive_closed_tables(manifest_path)
     if tables is None:
         return violations
 
+    def fail(message: str, line: int = 0) -> list[Violation]:
+        return [Violation("TOS-CC-CLOSED-TABLE", doc.display_path, line, message)]
+
+    try:
+        record = read_unanchored_baseline(baseline_path)
+        # `allow_mutable` 을 넘기지 «않는다» — 가변 출처 거부는 리더의 기본값이다.
+        source = read_baseline_source(repo_root, record)
+        blob = derive_closed_table_rows(ContractDoc(source, "<blob>"), tables)
+    except ContractParseError as exc:
+        return fail(f"닫힌 표의 «행 수»를 측정 출처에서 재지 못했다 — {exc}")
+
+    origin = (
+        f"{record.commit}:{record.path}"
+        if record.kind == BASELINE_KIND_COMMIT
+        else f"워킹트리 {record.path}"
+    )
+
     try:
         baseline = read_closed_table_baseline(baseline_path)
     except ContractParseError as exc:
         # 기준선 부재를 «0 위반» 으로 접으면 이 축이 장식이 된다 (RATCHET-1 과 같은 극성).
-        return [
-            Violation(
-                "TOS-CC-CLOSED-TABLE",
-                doc.display_path,
-                0,
-                f"닫힌 표의 행 수 기준선을 확립할 수 없다 — {exc} "
-                f"(선언된 닫힌 표 {len(tables)}건 · 부재를 «0 위반»으로 접지 않는다)",
-            )
-        ]
+        return fail(
+            f"닫힌 표의 행 수 기준선을 확립할 수 없다 — {exc} "
+            f"(선언된 닫힌 표 {len(tables)}건 · 부재를 «0 위반»으로 접지 않는다)"
+        )
 
     out: list[Violation] = []
+    # 다리 A — 기입값이 «출처를 다시 재면» 참인가.  기준선의 자기 주장을 검증한다.
     for table in tables:
-        # 앵커가 유일하지 않으면 «무엇의» 표인지 잃는다 — 여기서 오르는 예외는
-        # 호출부에서 `TOS-CC-PARSE` 가 된다 (위반이 아니라 «검사 불능»).
-        header_line = _unique_anchor_line(doc, table.header_anchor)
-        closing_line = _unique_anchor_line(doc, table.closing_anchor)
-        actual = len(closed_table_row_lines(doc, header_line))
+        measured = blob[table.header_anchor].rows
         expected = baseline.get(table.header_anchor)
         if expected is None:
             out.append(
@@ -3513,33 +3593,56 @@ def check_closed_tables(
                     str(baseline_path),
                     0,
                     f"기준선에 닫힌 표 «{_ellipsis(table.header_anchor)}» 의 행 수가 "
-                    f"없다 (실측 {actual}행) — 선언된 표에 기준선이 없으면 그 표는 "
+                    f"없다 (출처 {measured}행) — 선언된 표에 기준선이 없으면 그 표는 "
                     "«닫혔다»고 적혀 있을 뿐 아무도 세지 않는다",
                 )
             )
             continue
-        if actual != expected:
-            direction = "늘었다" if actual > expected else "줄었다"
+        if expected != measured:
+            out.append(
+                Violation(
+                    "TOS-CC-CLOSED-TABLE",
+                    str(baseline_path),
+                    0,
+                    f"기준선의 자기 주장이 거짓이다 — "
+                    f"'{BASELINE_CLOSED_TABLE_KEY}[{table.header_anchor!r}]'="
+                    f"{expected} 이지만 {origin} 을 다시 재면 {measured} 다 "
+                    "(워킹트리를 재고 커밋 이름만 적었을 때 나타나는 형태)",
+                )
+            )
+
+    # 앵커가 유일하지 않으면 «무엇의» 표인지 잃는다 — 여기서 오르는 예외는
+    # 호출부에서 `TOS-CC-PARSE` 가 된다 (위반이 아니라 «검사 불능»).
+    actual = derive_closed_table_rows(doc, tables)
+
+    # 다리 B — 워킹트리 행이 «출처 blob» 과 같은가.  기입 정수는 여기 관여하지 않는다.
+    for table in tables:
+        shape = actual[table.header_anchor]
+        measured = blob[table.header_anchor].rows
+        if shape.rows != measured:
+            direction = "늘었다" if shape.rows > measured else "줄었다"
             out.append(
                 Violation(
                     "TOS-CC-CLOSED-TABLE",
                     doc.display_path,
-                    header_line,
+                    shape.header_line,
                     f"닫힌 표 «{_ellipsis(table.header_anchor)}» 의 데이터 행이 "
-                    f"기준선 {expected} 에서 {actual} 로 {direction} — 이 표는 "
-                    f"{closing_line}행에서 «닫힌다»고 선언됐다.  늘면 선언이 거짓이 "
-                    "되고 줄면 종결된 이력이 훼손된다(등호이지 래칫이 아니다).  "
-                    f"행이 정당하게 바뀌었다면 {baseline_path} 의 "
-                    f"'{BASELINE_CLOSED_TABLE_KEY}' 를 **사람이** 갱신하라",
+                    f"측정 출처 {measured} 에서 {shape.rows} 로 {direction} "
+                    f"(출처 {origin}) — 이 표는 {shape.closing_line}행에서 «닫힌다»고 "
+                    "선언됐다.  늘면 선언이 거짓이 되고 줄면 종결된 이력이 "
+                    "훼손된다(등호이지 래칫이 아니다).  행이 정당하게 바뀌었다면 "
+                    "`--measure-baseline <sha>` 로 **provenance 전이**를 기록하라",
                 )
             )
         logger.info(
-            "CLOSED-TABLE: «%s» 헤더 %d행 · 닫힘 선언 %d행 · 데이터 %d행 (기준선 %s)",
+            "CLOSED-TABLE: «%s» 헤더 %d행 · 닫힘 선언 %d행 · 데이터 %d행 "
+            "(출처 %d · 기준선 %s)",
             _ellipsis(table.header_anchor),
-            header_line,
-            closing_line,
-            actual,
-            expected,
+            shape.header_line,
+            shape.closing_line,
+            shape.rows,
+            measured,
+            baseline.get(table.header_anchor),
         )
     return out
 
@@ -3661,7 +3764,7 @@ def check_document(
         ("C4C", lambda d: check_c4c(d, _manifest_step_prefixes(manifest))),
         ("RULE", lambda d: check_rule(d, manifest, baseline, root)),
         ("REF", lambda d: check_ref_rejected(d, manifest, root)),
-        ("CLOSED-TABLE", lambda d: check_closed_tables(d, manifest, baseline)),
+        ("CLOSED-TABLE", lambda d: check_closed_tables(d, manifest, baseline, root)),
     )
     for name, fn in axes:
         try:
@@ -3771,6 +3874,7 @@ FIXTURE_STALE_COUNT = "stale-count"  # 출처는 참이나 개수가 blob 과 �
 FIXTURE_BAD_COMMIT = "bad-commit"  # 움직이는 ref
 FIXTURE_NO_PROVENANCE = "no-provenance"  # 출처 필드 자체가 없다
 FIXTURE_NO_CLOSED_ROWS = "no-closed-rows"  # 닫힌 표의 행 수 기준선이 없다
+FIXTURE_CLOSED_ROWS_BUMPED = "closed-rows-bumped"  # 행 수 기입값만 출처보다 크다
 FIXTURE_FIXTURE_CELLS_BUMPED = "fixture-cells-bumped"  # 셀 수 기입값만 출처보다 크다
 #: 출처 «종류»만 가변(worktree)으로 바꾼 판.  나머지 필드는 실운용에서 물려받는다 —
 #: 「한 가지만 바꾼다」 규율이라야 어느 술어가 잡았는지가 계수에 남는다.
@@ -6124,6 +6228,61 @@ def build_mutations() -> list[Mutation]:
             "clean",
             _benign_append,
         ),
+        # ---- CLOSED-1 2세대 — 행 수의 «기준»이 출처 blob 인가 (51차) --------------
+        Mutation(
+            "CLOSED-TABLE-baseline-disagrees-with-blob",
+            "TOS-CC-CLOSED-TABLE",
+            "inject",
+            # 출처 blob 은 참인데 «기입값만» 다르다 = 워킹트리를 재고 커밋 이름만 적은
+            # 형태.  C2UP 가 계수 축에서, CAP2-FIXTURE 가 셀 수 축에서 잡는 그 형상의
+            # 행 수 축 짝이다 — 50차까지 이 축에는 그 다리가 없었다.
+            lambda t: t,
+            None,
+            FIXTURE_CLOSED_ROWS_BUMPED,
+            FIXTURE_PROVENANCE_OK,
+        ),
+        Mutation(
+            "CLOSED-TABLE-worktree-provenance-is-red",
+            "TOS-CC-CLOSED-TABLE",
+            "inject",
+            # C2UP·CAP2-FIXTURE 와 **같은 기준선 픽스처**를 이 축에서도 건다.  세 축이
+            # 같은 리더(`read_baseline_source`)의 기본값에 매달려 있으므로 가변 출처는
+            # 셋 다에서 근거를 잃어야 한다 — 한 축만 조용하면 잠금이 저작 레벨이 아니라
+            # 표면에 붙어 있다는 뜻이다.
+            lambda t: t,
+            None,
+            FIXTURE_PROVENANCE_WORKTREE,
+            FIXTURE_PROVENANCE_OK,
+        ),
+        Mutation(
+            "CLOSED-TABLE-escape-row-added-with-baseline-bumped",
+            "TOS-CC-CLOSED-TABLE",
+            "inject",
+            # **paired mutant**: 문서에 데이터 행을 더하면서 기준값도 «함께» 올리는
+            # 우회.  50차 판은 두 값을 서로 견줬으므로 이 짝맞춤이 위반 0건이었다.
+            # 기준이 불변 blob 이면 둘을 함께 올려도 red 다 — 기준선 픽스처가 양쪽
+            # 실행에서 같으므로 늘어나는 것은 «문서 쪽 다리»뿐이다
+            # (`CAP2-escape-new-cell-with-baseline-bumped` 와 같은 배치).
+            _closed_table_add_row,
+            None,
+            FIXTURE_CLOSED_ROWS_BUMPED,
+            FIXTURE_CLOSED_ROWS_BUMPED,
+        ),
+        Mutation(
+            "CLOSED-TABLE-commit-provenance-is-silent",
+            "TOS-CC-CLOSED-TABLE",
+            "clean",
+            # 역방향 양성 — 새 두 다리가 **정직한 기준선까지** 잡지는 않는지 본다.
+            # `CAP2-FIXTURE-commit-provenance-is-silent` 와 같은 성격이고, 같은 이유로
+            # **실운용** 기준선을 쓰고 «0 건» 이라는 **절대** 기대를 건다: 사람이
+            # 커밋에 결속해 적어 둔 값만이 리더와 독립한 oracle 이다.
+            lambda t: _append(
+                t, "대조군 — 문서 말미 편집은 닫힌 표의 데이터 행 수를 바꾸지 않는다."
+            ),
+            None,
+            None,
+            None,
+        ),
     ]
 
 
@@ -6265,10 +6424,25 @@ def build_baseline_fixtures(
     # 조용히 갈라져 C2UP 대조군이 자기 자신을 검증하게 된다.
     source = read_baseline_source(repo_root, record)
     blob_count = count_unanchored_in_text(source)
-    # 닫힌 표 계수는 «한 가지만 바꾼다» 규율에 따라 실운용 값을 그대로 물려준다 —
+    # 닫힌 표 계수도 «한 가지만 바꾼다» 규율에 따라 모든 픽스처가 물려받는다 —
     # 물려주지 않으면 모든 기준선 픽스처가 CLOSED-1 축에서 함께 red 가 되어, 어느
-    # 술어가 잡았는지 알 수 없어진다.
-    closed = {BASELINE_CLOSED_TABLE_KEY: read_closed_table_baseline(real_baseline)}
+    # 술어가 잡았는지 알 수 없어진다.  값은 실운용 기입값이 아니라 **출처 blob 실측**
+    # 이다(51차) — 기준이 blob 으로 옮겨 갔으므로 기입값을 물려받으면 그것이 stale 한
+    # 날 픽스처 전체가 조용히 red 로 포화한다(48차가 셀 수 축에서 밟은 그 자리).
+    closed_tables, closed_violations = derive_closed_tables(manifest_path)
+    if closed_tables is None:
+        raise ContractParseError(
+            "닫힌 표 정본을 읽지 못해 기준선 픽스처를 만들 수 없다: "
+            f"{[v.message for v in closed_violations]}"
+        )
+    blob_rows = derive_closed_table_rows(ContractDoc(source, "<blob>"), closed_tables)
+    closed = {BASELINE_CLOSED_TABLE_KEY: {a: s.rows for a, s in blob_rows.items()}}
+    # 행 수 «기입값만» 출처보다 큰 기준선 — 문서는 건드리지 않는다.  단독으로는 「기준선의
+    # 자기 주장이 거짓」 대조군이고, 「행 추가」 변이와 짝지으면 「행 추가와 기준값 갱신을
+    # 함께 하는」 우회(48차가 셀 수 축에서 낸 것과 같은 형상)를 재현한다.
+    closed_bumped = {
+        BASELINE_CLOSED_TABLE_KEY: {a: s.rows + 1 for a, s in blob_rows.items()}
+    }
     # 픽스처 행 셀 수도 같은 규율이다 — 48차는 이 키를 «필수»로 만들면서 상속을 하지
     # 않아 모든 기준선 픽스처가 CAP2-FIXTURE 축에서 함께 red 였다(49차 부수 적발).
     # 값은 계수와 **같은 자리에서 같은 소스**(출처 blob)로 잰다.
@@ -6334,13 +6508,25 @@ def build_baseline_fixtures(
             tmpdir / "no-provenance.json",
             {BASELINE_UNANCHORED_KEY: blob_count, **closed, **fixture_cells},
         ),
-        # 닫힌 표 계수만 빠진 기준선 — 나머지는 실운용과 같다.  부재를 «0 위반»으로
+        # 닫힌 표 계수만 빠진 기준선 — 나머지는 정직하다.  부재를 «0 위반»으로
         # 접으면 CLOSED-1 축이 장식이 된다.
         FIXTURE_NO_CLOSED_ROWS: _write_fixture(
             tmpdir / "no-closed-rows.json",
             {
                 BASELINE_UNANCHORED_KEY: blob_count,
                 BASELINE_PROVENANCE_KEY: prov,
+                **fixture_cells,
+            },
+        ),
+        # 닫힌 표 행 수 «기입값만» 출처보다 큰 기준선 — 나머지는 정직하다.  51차가
+        # 이 축에 두 다리를 놓기 전에는 이 형태가 위반 0건이었다(기입값과 워킹트리
+        # 실측을 서로만 견줬으므로 둘을 함께 올리면 조용했다).
+        FIXTURE_CLOSED_ROWS_BUMPED: _write_fixture(
+            tmpdir / "closed-rows-bumped.json",
+            {
+                BASELINE_UNANCHORED_KEY: blob_count,
+                BASELINE_PROVENANCE_KEY: prov,
+                **closed_bumped,
                 **fixture_cells,
             },
         ),
@@ -6756,9 +6942,10 @@ def measure_baseline(
     명령은 «워킹트리가 아니라 커밋 blob 에서 재는» 절차만 기계화하고 기입은 사람에게
     남긴다.  ref 는 여기서 즉시 불변 sha 로 해소해 출력한다.
 
-    재는 키는 미앵커 좌표 계수와 픽스처 행 셀 수 **둘**이다.  후자를 내지 않으면 사람의
-    기록 행위가 그 키를 만들 수 없어 «기입은 사람이 한다»는 규율이 그 축에서만 공허해진다.
-    재지 «않는» 키는 출력 말미에 명시한다 — 통째로 붙여넣으면 그 키가 사라진다.
+    재는 키는 미앵커 좌표 계수 · 픽스처 행 셀 수 · 닫힌 표 행 수 **셋**이고, 그것이 기준선
+    파일이 담는 계수 키 전부다.  하나라도 빠뜨리면 사람의 기록 행위가 그 키를 만들 수
+    없어 «기입은 사람이 한다»는 규율이 그 축에서만 공허해진다 — 51차가 닫힌 표 축의
+    기준을 출처 blob 으로 옮기면서 그 키도 여기서 나와야 하게 됐다.
 
     `rev` 로 `worktree` 를 주면 **실측 표시만** 낸다.  출력 JSON 에서 출처 블록
     (`measured_against`)을 빼는 이유는 50차에 실측된 것 때문이다: 종래에는 워킹트리
@@ -6771,7 +6958,7 @@ def measure_baseline(
         repo_root: 저장소 루트.
         rev: 측정할 리비전 (ref 도 받아 sha 로 해소한다).
         rel_path: 저장소 상대 계약 문서 경로.
-        manifest_path: 픽스처 행 앵커 정본(RULE 축 manifest) 경로.
+        manifest_path: 픽스처 행 앵커·닫힌 표 정본(RULE 축 manifest) 경로.
 
     Returns:
         종료 코드 — 0 성공, 2 측정 실패.
@@ -6813,12 +7000,25 @@ def measure_baseline(
                 ContractDoc(source, "<blob>"), _manifest_fixture_rows(manifest_path)
             ).items()
         }
+        tables, table_violations = derive_closed_tables(manifest_path)
+        if tables is None:
+            raise ContractParseError(
+                "닫힌 표 정본을 읽지 못했다: "
+                f"{[v.message for v in table_violations]}"
+            )
+        closed_rows = {
+            anchor: shape.rows
+            for anchor, shape in derive_closed_table_rows(
+                ContractDoc(source, "<blob>"), tables
+            ).items()
+        }
     except ContractParseError as exc:
         print(f"tos-contract: ERROR — 기준선 측정 실패: {exc}")
         return 2
 
     measured: dict[str, object] = {
         BASELINE_UNANCHORED_KEY: count,
+        BASELINE_CLOSED_TABLE_KEY: closed_rows,
         BASELINE_FIXTURE_KEY: cells,
     }
     # 출처 블록은 **불변 커밋을 잰 경우에만** 낸다.  워킹트리 판까지 내주면 그 출력을
@@ -6838,6 +7038,7 @@ def measure_baseline(
     )
     print(f"tos-contract: {origin} 실측 미앵커 좌표 = {count}자리")
     print(f"tos-contract: {origin} 실측 픽스처 행 셀 수 = {cells}")
+    print(f"tos-contract: {origin} 실측 닫힌 표 행 수 = {closed_rows}")
     if record.kind == BASELINE_KIND_COMMIT:
         print("아래를 기준선 파일에 «사람이» 반영하라 (이 명령은 파일을 쓰지 않는다):")
     else:
@@ -6848,10 +7049,6 @@ def measure_baseline(
             "`--measure-baseline <sha>` 로 측정해야 나온다:"
         )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
-    print(
-        f"이 명령이 재지 «않는» 키: '{BASELINE_CLOSED_TABLE_KEY}' — "
-        "위 조각을 통째로 붙여넣으면 그 키가 사라진다(기존 값을 남겨 두라)."
-    )
     return 0
 
 
