@@ -1,0 +1,57 @@
+# config/tos_completion.yaml — TOS Phase 0 완료 계약의 정식 설정 아티팩트 (D0-A 최초 산출물)
+#
+# 정본 계약: docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
+#   §12.1   D0-A 트리 — 이 파일의 항목 열거가 그 절에서 온다 (D0A-FIRST = 이 파일의 도입 커밋)
+#   §12.1.2 U-14 — 정본 추출 규칙: 이 파일 = «정본 A(커밋된 기대값)» ·
+#           검사기가 구조에서 재파생한 값 = «정본 B(관측값)» · 기계 대조 = (A == B) ·
+#           불일치·부재는 fail-closed red.  문서의 표(§4.2.2 · §5.2.8.0 · §13.2.1)는
+#           리뷰 사본이며 검사기는 읽지 않는다.
+#   §13.6.4 U-1a — 임계값 3종의 유일 런타임 소스는 이 파일이다.  문서도 검사기도
+#           리터럴로 갖지 않는다 (CLAUDE.md 비협상: thresholds belong in config).
+#
+# 규율: 앵커 갱신은 리뷰 표면이다 — 재파생 소스(레지스터 데이터)가 정당하게 변하면
+#   이 파일도 같은 리뷰 안에서 diff 로 함께 남아야 한다.  앵커와 데이터를 한 커밋에서
+#   함께 고치면 기계는 통과한다(§8.3 canary 성질) — 그 한계는 UNCHK-021 이 등재한다.
+
+# ── U-1a owner_track 문법 임계값 (§13.6.4) ────────────────────────────────────
+# 값의 근거는 데이터가 아니라 원리다: 범위 배정이 «배정»이려면 phase 공간(0..7)의
+# 최소 절반을 배제해야 한다 → 8개 중 4개 이하 지목 = 폭 상한 3 (m − n ≤ 3).
+owner_track_range_max_width: 3
+phase_min: 0
+phase_max: 7
+
+# ── T-71 분류 분포 앵커 (§4.2.1 표 11행 · §4.2.2 결합 규칙) ──────────────────
+# 정본 B 재파생 소스: D0-A 가 물질화하는 11행 분류 데이터(생성기 입력).
+# 강도는 ATTESTED 다 — 재파생 소스가 이 계약의 저작물이라 «사본 대 사본»이며,
+# U-14 는 이 앵커에 대해 뒤집기의 이득을 갖지 못한다(§12.1.2 — 숨기지 않는다).
+anchor_classification_checkable: 2
+anchor_classification_partial: 3
+anchor_classification_nmc: 6
+
+# ── U-9a closable=NO 집합 앵커 (§13.2 시드) ──────────────────────────────────
+# 정본 B 재파생 소스: PHASE0-UNCHECKABLE-REGISTER.csv 의 closable 열 (D0-A 산출물 —
+# 시드 등재 §13.2 의 closable=NO 는 UNCHK-014 1행 · closable_no_rows = 1).
+# U-9/U-9a 는 §11 종료조건에서 철회됐고(v2.3 F7) 레지스터 위생 규칙으로만 남는다 —
+# 이 앵커는 완료 증거가 아니라 U-16 전이 provenance 와 U-10 계수의 입력이다.
+anchor_closable_no_ids: UNCHK-014
+
+# ── T-76 레벨 원시값 앵커 — 26종 (값, 행수) (§5.2.8.0) ───────────────────────
+# 정본 B 재파생 소스 (build 산출물 tos-spec/book 제외 · csv 파서 사용 — naive
+# split 금지 §5.2.10):
+#   tos-spec/src/part-1-foundation/verification/EVIDENCE-REGISTER-002.csv
+#   tos-spec/src/part-3-development/verification/EVIDENCE-REGISTER-DEV.csv
+# 의 minimum_evidence_level 열.  도입 시점 실측: 490행 · 고유값 26종 ·
+# §5.2.8.0 스냅샷 표와 전 쌍 일치.  EV-L0/1(1행)과 EV-L0/L1(12행)은 같은 집합의
+# 두 표기로 데이터에 실재하며(§5.2.8.0) 정규화 없이 원시값 그대로 앵커한다 —
+# 표기 정규화는 T-47 소관이지 이 앵커의 소관이 아니다.
+# 표기: `값=행수` 콤마 결합 · 정렬 = 행수 내림차순, 동수는 값의 C-로캘 오름차순.
+# 대조는 쌍 집합 동일성이며 순서는 diff 안정성을 위한 저작 규약이다.
+anchor_evidence_level_distribution: EV-L1=81,EV-L2/3+Security=78,EV-L3=68,EV-L1/3=48,EV-L3+Security=33,EV-L2/3+Broker=28,EV-L1/3+Security=27,EV-L2/3=21,EV-L3/5=19,EV-L1/3+Broker=14,EV-L0/L1=12,EV-L3+Broker=11,EV-L2/3+Broker+Security=8,EV-L1/2=7,EV-L0=6,EV-L1/2/3+Broker=5,EV-L2=5,EV-L1/2/3=4,EV-L3/5+Security=3,Profile-dependent=3,EV-L1/2/3+Security=2,EV-L3+Broker+Security=2,EV-L3/5+Broker+Security=2,EV-L0/1=1,EV-L1/2+Security=1,EV-L1/2/3+Broker+Security=1
+
+# ── OQ-11 무응답 기한 (§12.3.1 ④ · U-12) — 운영자 게이트 · named-TBD ─────────
+# 값은 운영자 결정이며 이 도입 커밋은 값을 발명하지 않는다(P0-3-DEV named-TBD 선례).
+# 아래 리터럴은 «값 미정»의 명시 표기다.  소비자는 이것을 기한으로 해석하지 않고
+# oq11_raise_state = DEADLINE_UNSET (차단 · T-78-⑤ 검사) 으로 노출한다 —
+# 미정은 무한대 기한이 아니라 차단이다(§12.1 v2.6 · 표현 불가능화).
+# 이 값의 교체(실제 기한 기입)는 운영자 결정만이 하며, 그 diff 가 결정 기록이다.
+oq11_response_deadline: DEADLINE_UNSET
