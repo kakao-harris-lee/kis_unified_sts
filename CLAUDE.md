@@ -131,6 +131,24 @@ strategy config -> backtest -> tracking/optimization -> paper/live validation ->
      to implementation, and any plan can be gated on request.
 - **Do not reinvent the wheel.** A bespoke parser/tokenizer/checker is the
   last resort, not the first move; prefer proven tooling and existing modules.
+- **Read the index before the contract (operator directive, 2026-09-01).** Any
+  task touching the Phase-0 completion contract
+  (`docs/plans/2026-08-12-tos-phase0-completion-contract-design.md`, 10k lines /
+  1.3MB) starts with the derived index, not the document:
+
+  ```bash
+  python tools/tos_contract_index.py --locate S-26     # section/identifier -> line range
+  python tools/tos_contract_index.py                   # full derived map
+  ```
+
+  Locate the identifier or section first, then read only that range. Do not scan
+  the whole file, and do not summarize it — this arc failed seven consecutive
+  reviews writing summaries (`dad94fd3`); the disposition that passed was
+  "point at the source, do not paraphrase". The index is a generated artifact:
+  if `--check` reports stale, regenerate it rather than trusting it.
+  The contract body is frozen and blob-bound (`bound_set_digest`) — never edit
+  it as a side effect of other work; any byte change resets the S-26 closure
+  counter and blocks D0-A entry.
 
 ## Development Commands
 
