@@ -5,14 +5,20 @@
 (blob 결속 — 이 파일은 절대 편집하지 않는다.  모호한 지점은
 ``python tools/tos_contract_index.py --locate <id>`` 로 절만 확인한다).
 
-이 검사기는 증분 C1 이 강제하는 다음 등록 id만 다룬다::
+이 검사기는 증분 C1 + C2a 가 강제하는 다음 등록 id만 다룬다::
 
     K-1 · K-2 · K-3 · K-4 · K-5/FWD-METRICS · K-6 · K-9 · K-11 · K-12 · K-13
-    · K-14 · U-14
+    · K-14 · U-14 (C1)
+    U-12 · U-13 · U-1a · U-4 · U-5 (C2a)
 
-``DEFERRED_CONTRACTS`` 에 등재된 계약(U-12 · U-13 · U-15 · U-16 · U-17 ·
-U-1a · T-71 축)은 C2 이후 소관이며, 이 파일에는 강제 지점이 없다
-(UNCHK-019 축 — 정직 노출).
+``DEFERRED_CONTRACTS`` 에 등재된 계약(U-15 · U-16 · U-17 · T-71 축)은
+C2a 이후 소관이며, 이 파일에는 강제 지점이 없다(UNCHK-019 축 — 정직 노출).
+
+git 소비 규율 (C2a — §12.3.1 "공통: git 소비"): U-12/U-13 의 권위 판정
+입력(OQ-11 아티팩트 · bound 문서 2종 · OQ-11 원장)은 워킹트리가 아니라
+**HEAD blob** 을 ``git show HEAD:<path>`` 로 소비한다.  이력 판정(trigger
+commit·도입 커밋)은 ``git log``/``git rev-list``/``git cat-file`` 로
+파생한다.  config/tos_completion.yaml 은 C1 과 동일하게 워킹트리 소비.
 
 rc 의미론 (핀 — 이 문서가 정본):
     * 계약 위반(``Finding``) >= 1  ->  exit 1
@@ -21,19 +27,24 @@ rc 의미론 (핀 — 이 문서가 정본):
     않는다 — "완료 관측 (§11 소관 · rc 비결합)" 섹션에 인쇄만 한다.  근거:
     §12.2 "신규 검사는 처음부터 green 인 상태로 도입" + "Phase 0 의 종료
     조건은 FWD-a 에만 걸린다"(§5.2.4) — 완료 미도달은 repo 결함이 아니다.
-    U-12/U-15/U-16 상태 기계의 rc 결합(T-78/T-81/T-82)은 C2 소관이다.
+    U-12 상태 기계의 rc 결합(T-78 — 상태 ≠ NOT_REQUIRED 는 전부 위반)은
+    C2a 에서 구현된다.  U-15/U-16 상태 기계의 rc 결합(T-81/T-82)은 이후
+    증분 소관이다.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import re
 import subprocess
 import sys
+import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path, PurePosixPath
 
@@ -50,10 +61,19 @@ REQUIRED_KINDS_REL = Path("tos-spec/src/verification/EVIDENCE-REQUIRED-KINDS.csv
 SURFACE_MAP_REL = Path("tos-spec/src/verification/EVIDENCE-SURFACE-MAP.csv")
 UNCHECKABLE_REL = Path("tos-spec/src/verification/PHASE0-UNCHECKABLE-REGISTER.csv")
 OQ11_REL = Path("tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md")
+OQ11_LEDGER_REL = Path("tos-spec/src/part-1-foundation/decisions/OQ-11-RAISE-LEDGER.md")
 TOS_SPEC_SRC_REL = Path("tos-spec/src")
+
+# U-12 §12.3.1 BOUND_PATHS — 정확히 이 둘 · 이 표기(경로 문자열이 digest 입력에 실린다).
+U12_BOUND_PATHS: tuple[Path, ...] = (
+    Path("docs/plans/2026-08-12-tos-phase0-completion-contract-design.md"),
+    Path("docs/plans/2026-08-11-tos-completion-development-plan.md"),
+)
 
 KIND_VOCAB = frozenset({"PACKAGE", "RUNTIME", "TEST", "FAULT", "REVIEWER"})
 MARKER = "PLANNED_UNASSIGNED"
+
+_UNSET = object()  # "인자 미전달" 표지 — None 과 구별해야 하는 캐시 우회용 sentinel.
 
 REGISTER_FIELDS = (
     "evidence_id",
@@ -93,19 +113,15 @@ UNCHECKABLE_FIELDS = (
     "blocks_gate",
 )
 
-# C2 이후 소관 — 이 파일에는 강제 지점이 없다 (UNCHK-019 축 · 정직 노출).
+# C2a 이후 소관 — 이 파일에는 강제 지점이 없다 (UNCHK-019 축 · 정직 노출).
 DEFERRED_CONTRACTS: tuple[str, ...] = (
-    "U-12",
-    "U-13",
     "U-15",
     "U-16",
     "U-17",
-    "U-1a",
     "T-71",
 )
 
 _VERIFIABLE_LEVEL_KINDS = frozenset({"PACKAGE", "TEST", "REVIEWER"})
-_OWNER_TRACK_RANGE_RE = re.compile(r"Phase \d+-\d+")
 
 
 @dataclass(frozen=True)
@@ -134,6 +150,9 @@ class CheckContext:
     level_kind_map: dict[int, frozenset[str]] | None
     preload_findings: dict[str, list[Finding]]
     observations: list[str] = field(default_factory=list)
+    state_lines: list[str] = field(default_factory=list)
+    oq11_artifact_head: dict[str, object] | None = None
+    _owner_track_cache: dict[str, list[Finding]] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +296,112 @@ def _load_level_kind_map(
     return mapping, []
 
 
+# ---------------------------------------------------------------------------
+# C2a — git 소비 (커밋-전용 규율 · §12.3.1 "공통: git 소비")
+# ---------------------------------------------------------------------------
+
+_GIT_TIMEOUT = 30
+_OQ11_YAML_FENCE_RE = re.compile(r"```yaml\n(.*?)\n```", re.DOTALL)
+
+
+def _git_show_blob(rel_path: Path, commit: str, repo_root: Path) -> bytes | None:
+    """``git show <commit>:<rel_path>``.  blob 부재/실패 -> None (예외를 던지지 않는다)."""
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{commit}:{rel_path.as_posix()}"],
+            cwd=repo_root,
+            capture_output=True,
+            timeout=_GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _parse_oq11_yaml_fence(blob: bytes) -> dict[str, object] | None:
+    """아티팩트 본문 첫 fenced ```yaml 블록을 파싱한다."""
+    try:
+        text = blob.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    m = _OQ11_YAML_FENCE_RE.search(text)
+    if not m:
+        return None
+    try:
+        data = yaml.safe_load(m.group(1))
+    except yaml.YAMLError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _load_oq11_artifact_at(commit: str, repo_root: Path) -> dict[str, object] | None:
+    """OQ-11 아티팩트(``OQ11_REL``)를 ``commit`` 시점 blob 에서 파싱한다."""
+    blob = _git_show_blob(OQ11_REL, commit, repo_root)
+    if blob is None:
+        return None
+    return _parse_oq11_yaml_fence(blob)
+
+
+_OQ11_DISPOSITION_VOCAB = frozenset(
+    {
+        "RESOLVED_MAPPING_APPROVED",
+        "RESOLVED_MAPPING_REJECTED",
+        "DEFERRED_WITH_SCOPE",
+        "REFUSED",
+    }
+)
+
+
+def _compute_bound_set_digest(
+    paths: Sequence[Path], commit: str, repo_root: Path
+) -> str | None:
+    """U-12 digest 레시피 — 바이트 정확 복제.
+
+    ``LC_ALL=C`` 정렬 후 각 경로의 ``commit`` 시점 blob sha256 hex 를
+    ``<hex>  <path>\\n`` 행으로 이어붙인 바이트열의 sha256 hex.  blob 이
+    하나라도 부재하면 ``None`` (호출자가 "(iv) 불일치로 접는다"를 담당).
+    """
+    posix_paths = sorted({p.as_posix() for p in paths})
+    lines: list[bytes] = []
+    for p in posix_paths:
+        blob = _git_show_blob(Path(p), commit, repo_root)
+        if blob is None:
+            return None
+        file_hash = hashlib.sha256(blob).hexdigest()
+        lines.append(f"{file_hash}  {p}\n".encode())
+    return hashlib.sha256(b"".join(lines)).hexdigest()
+
+
+def oq11_rebinding_required(
+    commit: str,
+    repo_root: Path,
+    *,
+    artifact: dict[str, object] | None = _UNSET,  # type: ignore[assignment]
+) -> bool:
+    """U-12 ① 트리거 술어 — 임의 커밋 ``commit`` 에서 평가 가능하게 함수화.
+
+    (i) 아티팩트 blob 부재 (ii) disposition 어휘 밖 (iii) bound_paths 불일치
+    (iv) digest 재계산 불일치(blob 부재 경로 포함) 중 하나라도 참이면 True.
+    """
+    if artifact is _UNSET:
+        artifact = _load_oq11_artifact_at(commit, repo_root)
+    if artifact is None:
+        return True  # (i)
+    disposition = artifact.get("disposition")
+    if disposition not in _OQ11_DISPOSITION_VOCAB:
+        return True  # (ii)
+    declared_paths = artifact.get("bound_paths")
+    expected_paths = {p.as_posix() for p in U12_BOUND_PATHS}
+    if not isinstance(declared_paths, list) or set(declared_paths) != expected_paths:
+        return True  # (iii)
+    bound_digest = artifact.get("bound_set_digest")
+    recomputed = _compute_bound_set_digest(U12_BOUND_PATHS, commit, repo_root)
+    return recomputed is None or recomputed != bound_digest  # (iv)
+
+
 def build_context(repo_root: Path) -> CheckContext:
     """repo_root 아래 코퍼스를 전부 로드해 ``CheckContext`` 를 구성한다."""
     preload: dict[str, list[Finding]] = {}
@@ -317,6 +442,9 @@ def build_context(repo_root: Path) -> CheckContext:
     if level_findings:
         preload.setdefault("K-14", []).extend(level_findings)
 
+    # C2a — U-12/U-13 권위 판정 입력: OQ-11 아티팩트는 HEAD blob 소비 (워킹트리 아님).
+    oq11_artifact_head = _load_oq11_artifact_at("HEAD", repo_root)
+
     return CheckContext(
         repo_root=repo_root,
         config=config,
@@ -328,6 +456,7 @@ def build_context(repo_root: Path) -> CheckContext:
         uncheckable_rows=uncheckable_rows,
         level_kind_map=level_kind_map,
         preload_findings=preload,
+        oq11_artifact_head=oq11_artifact_head,
     )
 
 
@@ -855,24 +984,608 @@ def check_u14(ctx: CheckContext) -> list[Finding]:
     elif not isinstance(ctx.config["oq11_response_deadline"], str):
         findings.append(Finding("U-14", "config 키 oq11_response_deadline 타입 불일치"))
 
-    # §13.2.1 지표 (비차단·인쇄).
+    # §13.2.1 지표 (비차단·인쇄).  imprecise_owner_track 은 U-1a/U-4/U-5 공용 계산
+    # (``_owner_track_report``) 으로 이관됐다 — 문법 판정(§13.6.4)과 계수를 단일
+    # 소스로 결속해, C1 의 옛 정규식 계수(``Phase \d+-\d+`` 부분일치)와 값이
+    # 갈라지지 않게 한다 — 실코퍼스 기준 두 계산이 동치임을 검증했다.
     if ctx.uncheckable_rows is not None:
         closable_no_rows = sum(
             1 for row in ctx.uncheckable_rows if row["closable"] == "NO"
-        )
-        imprecise_owner_track = sum(
-            1
-            for row in ctx.uncheckable_rows
-            if _OWNER_TRACK_RANGE_RE.search(row["owner_track"])
         )
         blank_normative_ref_rows = sum(
             1 for row in ctx.uncheckable_rows if not row["normative_ref"].strip()
         )
         ctx.observations.append(f"closable_no_rows={closable_no_rows}")
-        ctx.observations.append(f"imprecise_owner_track={imprecise_owner_track}")
         ctx.observations.append(f"blank_normative_ref_rows={blank_normative_ref_rows}")
+    _owner_track_report(ctx)  # imprecise_owner_track·unassigned_owner_rows 관측 보장
 
     return findings
+
+
+# ---------------------------------------------------------------------------
+# U-12 — OQ-11 raise ledger 파싱 (HEAD blob 소비)
+# ---------------------------------------------------------------------------
+
+_LEDGER_HEADER = ("episode_id", "raised_at", "trigger_at_head", "closed_by")
+_LEDGER_HEADING_RE = re.compile(r"^## 에피소드\s*$", re.MULTILINE)
+_NEXT_HEADING_RE = re.compile(r"^## ", re.MULTILINE)
+_TABLE_SEPARATOR_RE = re.compile(r"^:?-+:?$")
+
+
+@dataclass(frozen=True)
+class LedgerRow:
+    """OQ-11-RAISE-LEDGER.md 의 정규화된 한 행 (U-12 ② 행 스키마)."""
+
+    episode_id: str
+    raised_at: str
+    trigger_at_head: str
+    closed_by: str
+
+    def as_tuple(self) -> tuple[str, str, str, str]:
+        return (self.episode_id, self.raised_at, self.trigger_at_head, self.closed_by)
+
+
+def _split_table_row(line: str) -> list[str]:
+    inner = line.strip()
+    if inner.startswith("|"):
+        inner = inner[1:]
+    if inner.endswith("|"):
+        inner = inner[:-1]
+    return [c.strip() for c in inner.split("|")]
+
+
+def _extract_episode_table(text: str) -> tuple[list[str], list[list[str]]] | None:
+    """ "## 에피소드" 절 아래 첫 md 표를 (header, data_rows) 로 반환."""
+    m = _LEDGER_HEADING_RE.search(text)
+    if not m:
+        return None
+    rest = text[m.end() :]
+    next_m = _NEXT_HEADING_RE.search(rest)
+    section = rest[: next_m.start()] if next_m else rest
+    table_lines = [
+        ln.strip() for ln in section.splitlines() if ln.strip().startswith("|")
+    ]
+    if not table_lines:
+        return None
+    header = _split_table_row(table_lines[0])
+    body_lines = table_lines[1:]
+    if body_lines:
+        first_cells = _split_table_row(body_lines[0])
+        if first_cells and all(_TABLE_SEPARATOR_RE.match(c) for c in first_cells):
+            body_lines = body_lines[1:]
+    data_rows = [_split_table_row(ln) for ln in body_lines]
+    return header, data_rows
+
+
+def _parse_utc_iso8601(value: str) -> datetime:
+    v = value.strip()
+    if v.endswith(("Z", "z")):
+        v = v[:-1] + "+00:00"
+    dt = datetime.fromisoformat(v)
+    if dt.tzinfo is None:
+        raise ValueError("timezone 정보 없음(UTC 명시 필요)")
+    return dt.astimezone(UTC)
+
+
+def _validate_ledger_rows(
+    header: list[str], data_rows: list[list[str]]
+) -> tuple[list[LedgerRow] | None, str | None]:
+    """U-12 ② 행 스키마 검증 — 필드 누락·형식 오류·중복 열린 행."""
+    if tuple(header) != _LEDGER_HEADER:
+        return None, f"헤더 불일치: {header} != {list(_LEDGER_HEADER)}"
+    rows: list[LedgerRow] = []
+    open_count = 0
+    for idx, cells in enumerate(data_rows):
+        if len(cells) != 4:
+            return None, f"행 {idx}: 필드 수 불일치 ({len(cells)} != 4)"
+        episode_id, raised_at, trigger_at_head, closed_by = cells
+        if not episode_id.strip():
+            return None, f"행 {idx}: episode_id 누락"
+        if not raised_at.strip():
+            return None, f"행 {idx}: raised_at 누락"
+        if not trigger_at_head.strip():
+            return None, f"행 {idx}: trigger_at_head 누락"
+        try:
+            _parse_utc_iso8601(raised_at)
+        except ValueError as exc:
+            return None, f"행 {idx}: raised_at 파싱 실패 ({exc})"
+        if not closed_by.strip():
+            open_count += 1
+        rows.append(
+            LedgerRow(
+                episode_id.strip(),
+                raised_at.strip(),
+                trigger_at_head.strip(),
+                closed_by.strip(),
+            )
+        )
+    if open_count > 1:
+        return None, f"열린 행 중복: {open_count}개"
+    return rows, None
+
+
+def _load_ledger_rows_at(
+    commit: str, repo_root: Path
+) -> tuple[list[LedgerRow] | None, str | None]:
+    """원장을 ``commit`` 시점 blob 에서 로드·검증한다.  U-12 ①-②(1)(2)."""
+    blob = _git_show_blob(OQ11_LEDGER_REL, commit, repo_root)
+    if blob is None:
+        return None, "원장 blob 부재"
+    try:
+        text = blob.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return None, f"원장 디코딩 실패: {exc}"
+    table = _extract_episode_table(text)
+    if table is None:
+        return None, "원장 표 파싱 불가(## 에피소드 절 없음)"
+    return _validate_ledger_rows(*table)
+
+
+# ---------------------------------------------------------------------------
+# U-12 — git 이력 구조 파생 (trigger_commit · 발효 커밋 · 행 도입 커밋)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_commit(ref: str, repo_root: Path) -> str:
+    """``ref``(``HEAD`` 등)를 실제 커밋 해시로 해석한다 — graph 조회 키 정합용."""
+    result = subprocess.run(
+        ["git", "rev-parse", ref],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def _git_ancestor_graph(
+    commit: str, repo_root: Path
+) -> dict[str, tuple[int, list[str]]]:
+    """``commit`` 의 전체 조상(포함)을 ``{hash: (author_epoch, [parent hashes])}`` 로."""
+    result = subprocess.run(
+        ["git", "log", "--pretty=format:%H|%at|%P", commit],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT,
+        check=True,
+    )
+    graph: dict[str, tuple[int, list[str]]] = {}
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        h, at, parents = line.split("|", 2)
+        parent_list = parents.split() if parents.strip() else []
+        graph[h] = (int(at), parent_list)
+    return graph
+
+
+def _find_trigger_commit(
+    head: str, graph: dict[str, tuple[int, list[str]]], repo_root: Path
+) -> tuple[str, int] | None:
+    """①-b — HEAD 에서 모든 부모를 역탐색, 술어 False 커밋에서 하강 중단.
+
+    True-영역 R 을 구성하고 경계 B(부모 없음 ∨ 어떤 부모가 False)를 뽑아
+    (author date 최소, commit id 사전순 최소) 로 유일화한다.
+    """
+    pred_cache: dict[str, bool] = {}
+
+    def pred(c: str) -> bool:
+        if c not in pred_cache:
+            pred_cache[c] = oq11_rebinding_required(c, repo_root)
+        return pred_cache[c]
+
+    if head not in graph or not pred(head):
+        return None
+
+    boundary: set[str] = set()
+    visited: set[str] = set()
+    stack = [head]
+    while stack:
+        c = stack.pop()
+        if c in visited:
+            continue
+        visited.add(c)
+        if not pred(c):
+            continue
+        _, parents = graph.get(c, (0, []))
+        if not parents:
+            boundary.add(c)
+            continue
+        any_false = False
+        for p in parents:
+            if p in graph and pred(p):
+                stack.append(p)
+            else:
+                any_false = True
+        if any_false:
+            boundary.add(c)
+
+    if not boundary:
+        return None
+    best = min(boundary, key=lambda c: (graph[c][0], c))
+    return best, graph[best][0]
+
+
+def _find_introduction_commits(
+    graph: dict[str, tuple[int, list[str]]], repo_root: Path, rel_path: Path
+) -> list[str]:
+    """D = {x : blob(x) 존재 ∧ ∀p∈parents(x): blob(p) 부재} — 파일 도입 커밋."""
+    exists_cache: dict[str, bool] = {}
+
+    def exists(c: str) -> bool:
+        if c not in exists_cache:
+            result = subprocess.run(
+                ["git", "cat-file", "-e", f"{c}:{rel_path.as_posix()}"],
+                cwd=repo_root,
+                capture_output=True,
+                timeout=_GIT_TIMEOUT,
+                check=False,
+            )
+            exists_cache[c] = result.returncode == 0
+        return exists_cache[c]
+
+    found: list[str] = []
+    for commit in graph:
+        if not exists(commit):
+            continue
+        _, parents = graph[commit]
+        if all(not exists(p) for p in parents):
+            found.append(commit)
+    return found
+
+
+def _find_row_introduction_commits(
+    graph: dict[str, tuple[int, list[str]]],
+    repo_root: Path,
+    target_row: tuple[str, str, str, str],
+) -> list[str]:
+    """행∈rows(x) ∧ ∀p: 행∉rows(p) — 정규화 4필드 튜플의 도입 커밋."""
+    rows_cache: dict[str, set[tuple[str, str, str, str]]] = {}
+
+    def rows_at(c: str) -> set[tuple[str, str, str, str]]:
+        if c not in rows_cache:
+            parsed, _err = _load_ledger_rows_at(c, repo_root)
+            rows_cache[c] = {r.as_tuple() for r in parsed} if parsed else set()
+        return rows_cache[c]
+
+    found: list[str] = []
+    for commit in graph:
+        if target_row not in rows_at(commit):
+            continue
+        _, parents = graph[commit]
+        if all(target_row not in rows_at(p) for p in parents):
+            found.append(commit)
+    return found
+
+
+_DEADLINE_DAYS_RE = re.compile(r"^(\d+)d$")
+
+
+def _parse_deadline_days(raw: str) -> int:
+    m = _DEADLINE_DAYS_RE.match(raw.strip())
+    if not m:
+        raise ValueError(f"형식 밖(<정수>d 필요): {raw!r}")
+    return int(m.group(1))
+
+
+def derive_oq11_raise_state(ctx: CheckContext) -> tuple[str, str]:
+    """U-12 §12.3.1 — 7값 상태 기계.  평가 순서 핀(문서 순서 그대로):
+
+    1/2. 원장 blob 부재·표 파싱 불가·스키마 위반           -> RAISE_MALFORMED
+    3.   required = oq11_rebinding_required(HEAD); False   -> NOT_REQUIRED (유일 통과)
+    4.   (required) 열린 에피소드 0                         -> RAISE_MISSING
+    5.   구조 파생 실패(trigger_commit·발효 커밋·행 도입     -> RAISE_PROVENANCE_UNVERIFIABLE
+         커밋 중 |D| != 1)
+    6.   trigger_at_head 기재 != 재파생 trigger_commit      -> RAISE_MALFORMED
+    7.   config.oq11_response_deadline == 'DEADLINE_UNSET'  -> DEADLINE_UNSET
+    8.   now - raised_at_effective <= deadline              -> PENDING_WITHIN
+         >  deadline                                        -> NO_RESPONSE
+
+    Returns:
+        (state, detail) — detail 은 사람이 읽는 근거 문자열(rc 에 영향 없음).
+    """
+    repo_root = ctx.repo_root
+
+    # 1/2.
+    rows, err = _load_ledger_rows_at("HEAD", repo_root)
+    if rows is None:
+        return "RAISE_MALFORMED", err or "원장 로드 실패"
+
+    # 3.
+    required = oq11_rebinding_required(
+        "HEAD", repo_root, artifact=ctx.oq11_artifact_head
+    )
+    if not required:
+        return "NOT_REQUIRED", "재결속 불필요(트리거 4항 전부 불성립)"
+
+    # 4.
+    open_rows = [r for r in rows if not r.closed_by]
+    if not open_rows:
+        return "RAISE_MISSING", "재결속 트리거 성립 · 열린 에피소드 없음"
+    open_row = open_rows[0]
+
+    # 5 (trigger_commit).
+    head_commit = _resolve_commit("HEAD", repo_root)
+    graph = _git_ancestor_graph(head_commit, repo_root)
+    trigger = _find_trigger_commit(head_commit, graph, repo_root)
+    if trigger is None:
+        return "RAISE_PROVENANCE_UNVERIFIABLE", "trigger_commit 유일화 실패"
+    trigger_commit, trigger_epoch = trigger
+
+    # 5 (LEDGER 발효 커밋).
+    ledger_intro = _find_introduction_commits(graph, repo_root, OQ11_LEDGER_REL)
+    if len(ledger_intro) != 1:
+        return (
+            "RAISE_PROVENANCE_UNVERIFIABLE",
+            f"LEDGER 발효 커밋 |D|={len(ledger_intro)}",
+        )
+    ledger_intro_epoch = graph[ledger_intro[0]][0]
+    trigger_at_derived_epoch = max(trigger_epoch, ledger_intro_epoch)
+
+    # 5 (행 도입 커밋).
+    row_intro = _find_row_introduction_commits(graph, repo_root, open_row.as_tuple())
+    if len(row_intro) != 1:
+        return "RAISE_PROVENANCE_UNVERIFIABLE", f"행 도입 커밋 |D|={len(row_intro)}"
+    row_intro_epoch = graph[row_intro[0]][0]
+
+    # 6.
+    if open_row.trigger_at_head != trigger_commit:
+        return (
+            "RAISE_MALFORMED",
+            f"trigger_at_head={open_row.trigger_at_head!r} != 재파생 trigger_commit="
+            f"{trigger_commit!r}",
+        )
+
+    # 7.
+    deadline_raw = (ctx.config or {}).get("oq11_response_deadline")
+    if deadline_raw == "DEADLINE_UNSET":
+        return "DEADLINE_UNSET", "config.oq11_response_deadline == DEADLINE_UNSET"
+    if not isinstance(deadline_raw, str):
+        return (
+            "RAISE_MALFORMED",
+            f"oq11_response_deadline 타입 불일치: {deadline_raw!r}",
+        )
+    try:
+        deadline_days = _parse_deadline_days(deadline_raw)
+    except ValueError as exc:
+        return "RAISE_MALFORMED", f"oq11_response_deadline 형식 위반: {exc}"
+
+    # 8.
+    raised_at_epoch = int(_parse_utc_iso8601(open_row.raised_at).timestamp())
+    raised_at_effective_epoch = min(
+        raised_at_epoch, row_intro_epoch, trigger_at_derived_epoch
+    )
+    now_epoch = int(time.time())
+    elapsed_days = (now_epoch - raised_at_effective_epoch) / 86400.0
+    if elapsed_days <= deadline_days:
+        return (
+            "PENDING_WITHIN",
+            f"elapsed={elapsed_days:.4f}d <= deadline={deadline_days}d",
+        )
+    return "NO_RESPONSE", f"elapsed={elapsed_days:.4f}d > deadline={deadline_days}d"
+
+
+def check_u12(ctx: CheckContext) -> list[Finding]:
+    """U-12 — oq11_raise_state 7값 상태 기계.  상태 != NOT_REQUIRED 는 전부 위반(T-78)."""
+    state, detail = derive_oq11_raise_state(ctx)
+    ctx.state_lines.append(f"oq11_raise_state={state}")
+    if state == "NOT_REQUIRED":
+        return []
+    return [Finding("U-12", f"{state}: {detail}")]
+
+
+# ---------------------------------------------------------------------------
+# U-13 — deferred_scope 스키마 (§12.3.1 U-13 · OQ-11 아티팩트는 HEAD blob 소비)
+# ---------------------------------------------------------------------------
+
+_EVIDENCE_ID_RE = re.compile(r"^[A-Z]+-EV-[0-9]{3}$")
+
+
+def check_u13(ctx: CheckContext) -> list[Finding]:
+    """U-13-a..f — deferred_scope 존재/일치·GLOBAL/ROW_SUBSET 스키마·우주 결속."""
+    findings: list[Finding] = []
+    artifact = ctx.oq11_artifact_head
+    if artifact is None:
+        return findings  # 부재/파싱 실패는 U-12 트리거 술어 (i)/(ii) 가 이미 포섭
+
+    disposition = artifact.get("disposition")
+    has_scope = "deferred_scope" in artifact
+    scope = artifact.get("deferred_scope")
+
+    # U-13-a
+    if disposition == "DEFERRED_WITH_SCOPE" and not has_scope:
+        findings.append(
+            Finding("U-13", "U-13-a: DEFERRED_WITH_SCOPE 인데 deferred_scope 없음")
+        )
+    if disposition != "DEFERRED_WITH_SCOPE" and has_scope:
+        findings.append(
+            Finding(
+                "U-13", f"U-13-a: disposition={disposition!r} 인데 deferred_scope 존재"
+            )
+        )
+
+    if not has_scope or not isinstance(scope, dict):
+        return findings
+
+    # U-13-d 우주 (+ 보조 fail-closed — 문법 밖 evidence_id 즉시 red)
+    all_ids = [row["evidence_id"] for row in ctx.register_rows]
+    bad_ids = sorted({eid for eid in all_ids if not _EVIDENCE_ID_RE.match(eid)})
+    if bad_ids:
+        findings.append(
+            Finding("U-13", f"U-13-d: 레지스터에 문법 밖 evidence_id: {bad_ids}")
+        )
+    universe = {eid for eid in all_ids if _EVIDENCE_ID_RE.match(eid)}
+
+    kind = scope.get("kind")
+    if kind == "GLOBAL":
+        # U-13-b
+        if "rows" in scope:
+            findings.append(Finding("U-13", "U-13-b: kind=GLOBAL 인데 rows 존재"))
+        ctx.observations.append(
+            "U-13 deferred_scope kind=GLOBAL — REFUSED 동일 처분(완료 관측)"
+        )
+    elif kind == "ROW_SUBSET":
+        # U-13-c
+        raw_rows = scope.get("rows")
+        if not isinstance(raw_rows, list) or not raw_rows:
+            findings.append(Finding("U-13", "U-13-c: rows 비었거나 부재"))
+            rows_list: list[object] = raw_rows if isinstance(raw_rows, list) else []
+        else:
+            rows_list = raw_rows
+            if len(rows_list) != len(set(rows_list)):
+                findings.append(Finding("U-13", "U-13-c: rows 중복"))
+        orphan = sorted(str(r) for r in (set(rows_list) - universe))
+        if orphan:
+            findings.append(
+                Finding("U-13", f"U-13-c: rows 가 우주 밖 id 포함: {orphan}")
+            )
+        remainder_ok = scope.get("remainder_mapping_approved")
+        if remainder_ok is not True:
+            findings.append(
+                Finding(
+                    "U-13",
+                    f"U-13-c: remainder_mapping_approved != true ({remainder_ok!r})",
+                )
+            )
+
+        # U-13-e/f — DEFERRED_WITH_SCOPE 일 때 전문 인쇄(완료 관측 · rc 비결합).
+        if disposition == "DEFERRED_WITH_SCOPE" and ctx.register_by_id is not None:
+            judged = {
+                eid
+                for eid, row in ctx.register_by_id.items()
+                if row["status"] in ("PASS", "READY")
+            }
+            rows_set = set(rows_list)
+            fwd_a_excluded_rows = sorted(str(r) for r in (rows_set & judged))
+            remainder_rows = sorted(str(r) for r in (rows_set - judged))
+            ctx.observations.append(f"U-13 fwd_a_excluded_rows={fwd_a_excluded_rows}")
+            ctx.observations.append(f"U-13 remainder_rows={remainder_rows}")
+    else:
+        findings.append(Finding("U-13", f"U-13-c: kind 어휘 밖 또는 누락: {kind!r}"))
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# U-1a · U-4 · U-5 — UNCHECKABLE 레지스터 규칙 (§13.6.4 · §13.3)
+# ---------------------------------------------------------------------------
+
+_OWNER_TRACK_RANGE_FULL_RE = re.compile(r"^Phase (\d+)-(\d+)$")
+_OWNER_TRACK_UNIT_RE = re.compile(r"^(?:GOV-001|Phase (\d+))$")
+
+
+def _validate_owner_track_value(
+    value: str, phase_min: int, phase_max: int, max_width: int
+) -> tuple[bool, bool]:
+    """owner_track 문법 판정(§13.6.4).  Returns (valid, is_range).
+
+    ``range`` 는 단독으로만 허용된다 — '+' 결합체의 각 유닛은 range 문법을
+    받아들이지 않으므로(``_OWNER_TRACK_UNIT_RE``), 결합 시도는 자연히 거부된다.
+    """
+    range_m = _OWNER_TRACK_RANGE_FULL_RE.match(value)
+    if range_m:
+        low, high = int(range_m.group(1)), int(range_m.group(2))
+        valid = phase_min <= low < high <= phase_max and (high - low) <= max_width
+        return valid, True
+    for unit in value.split("+"):
+        unit_m = _OWNER_TRACK_UNIT_RE.match(unit)
+        if not unit_m:
+            return False, False
+        phase_str = unit_m.group(1)
+        if phase_str is not None and not (phase_min <= int(phase_str) <= phase_max):
+            return False, False
+    return True, False
+
+
+def _owner_track_report(ctx: CheckContext) -> dict[str, list[Finding]]:
+    """U-1a/U-4/U-5 공용 계산 — ``ctx`` 에 캐시해 관측(§13.2.1)을 1회만 인쇄한다."""
+    if ctx._owner_track_cache is not None:
+        return ctx._owner_track_cache
+
+    result: dict[str, list[Finding]] = {"U-1a": [], "U-4": []}
+    if ctx.uncheckable_rows is None or ctx.config is None:
+        ctx._owner_track_cache = result
+        return result
+
+    raw_width = ctx.config.get("owner_track_range_max_width")
+    raw_phase_min = ctx.config.get("phase_min")
+    raw_phase_max = ctx.config.get("phase_max")
+    config_valid = (
+        isinstance(raw_width, int)
+        and not isinstance(raw_width, bool)
+        and isinstance(raw_phase_min, int)
+        and not isinstance(raw_phase_min, bool)
+        and isinstance(raw_phase_max, int)
+        and not isinstance(raw_phase_max, bool)
+    )
+    width: int = raw_width if isinstance(raw_width, int) else 0
+    phase_min: int = raw_phase_min if isinstance(raw_phase_min, int) else 0
+    phase_max: int = raw_phase_max if isinstance(raw_phase_max, int) else 0
+
+    imprecise_count = 0
+    unassigned_count = 0
+    for row in ctx.uncheckable_rows:
+        rid = row["id"]
+        closable = row["closable"]
+        owner_track = row["owner_track"]
+        blocked_by = row["blocked_by"]
+
+        # U-4
+        if not blocked_by.strip():
+            result["U-4"].append(Finding("U-4", f"{rid}: blocked_by 공란"))
+
+        if closable == "YES":
+            stripped = owner_track.strip()
+            if not stripped or stripped == "미배정":
+                result["U-1a"].append(
+                    Finding("U-1a", f"{rid}: closable=YES 인데 owner_track 미배정")
+                )
+                unassigned_count += 1
+            elif config_valid:
+                valid, is_range = _validate_owner_track_value(
+                    stripped, phase_min, phase_max, width
+                )
+                if not valid:
+                    result["U-1a"].append(
+                        Finding("U-1a", f"{rid}: owner_track 문법 밖: {owner_track!r}")
+                    )
+                elif is_range:
+                    imprecise_count += 1
+        elif closable == "NO":
+            if owner_track.strip():
+                result["U-1a"].append(
+                    Finding(
+                        "U-1a",
+                        f"{rid}: closable=NO 인데 owner_track 비공란: {owner_track!r}",
+                    )
+                )
+        else:
+            result["U-1a"].append(
+                Finding("U-1a", f"{rid}: closable 어휘 밖: {closable!r}")
+            )
+
+    ctx.observations.append(f"imprecise_owner_track={imprecise_count}")
+    ctx.observations.append(f"unassigned_owner_rows={unassigned_count}")
+    ctx._owner_track_cache = result
+    return result
+
+
+def check_u1a(ctx: CheckContext) -> list[Finding]:
+    """U-1a — closable=YES 미배정('공란'/'미배정')·closable=NO 비공란·문법 밖."""
+    return list(_owner_track_report(ctx)["U-1a"])
+
+
+def check_u4(ctx: CheckContext) -> list[Finding]:
+    """U-4 — blocked_by 공란 행 (§13.3)."""
+    return list(_owner_track_report(ctx)["U-4"])
+
+
+def check_u5(ctx: CheckContext) -> list[Finding]:
+    """U-5 — unassigned_owner_rows 1급 지표 인쇄 (완료 관측 · rc 비결합 · 위반 없음)."""
+    _owner_track_report(ctx)
+    return []
 
 
 CONTRACT_CHECKS: dict[str, Callable[[CheckContext], list[Finding]]] = {
@@ -888,6 +1601,11 @@ CONTRACT_CHECKS: dict[str, Callable[[CheckContext], list[Finding]]] = {
     "K-13": check_k13,
     "K-14": check_k14,
     "U-14": check_u14,
+    "U-12": check_u12,
+    "U-13": check_u13,
+    "U-1a": check_u1a,
+    "U-4": check_u4,
+    "U-5": check_u5,
 }
 
 
@@ -917,9 +1635,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"tos-completion-status: ERROR — 내부 예외 (rc=2): {exc}")
         return 2
 
-    print("미구현(C2 이후) — 강제 지점 미등록:")
+    print("미구현(C2a 이후) — 강제 지점 미등록:")
     for check_id in DEFERRED_CONTRACTS:
         print(f"  - {check_id}")
+    print()
+
+    print("상태 라인 (rc 비결합 — 상태별 rc 결합은 해당 check_id 의 Finding 이 담당):")
+    for line in ctx.state_lines:
+        print(f"  {line}")
     print()
 
     print("완료 관측 (§11 소관 · rc 비결합):")
