@@ -26,8 +26,13 @@ Three independent reasons converge:
 
 1. production canonicalization is unresolved — every digest here rides
    ``ev-l1-provisional-0``, explicitly non-production;
-2. the Phase-0 bounds approval and independent-reviewer designation are incomplete, so several
-   bounds this package consumes (the DSL evaluation budget above all) are provisional values;
+2. the DSL evaluation budget this package's sequencer consumes (``dsl_evaluation_budget_steps``,
+   DCE-INV-007) is **not a VERIFICATION-PROFILE-002 key at all** — no such name is in the
+   profile's bounds/limits census (:mod:`tos.engine.records` ``EngineConfiguration``); the
+   profile does carry ``MAX_dsl_evaluation_ms`` (non-null), but that bounds a distinct,
+   still-deferred wall-clock metering layer, not this slice's symbolic step counter. Independent-reviewer
+   designation (P0-3) is likewise a register concern (``EVIDENCE-REGISTER-DEV.csv``), not a
+   profile key, and no evidence-register row is scoped to ``tos.engine`` to check it against;
 3. the authority runtimes this sequencer calls in order — Independent Approval, the Aggregate Risk
    Authority, the Action Flow Governor, and above all the RCL's atomic commit — exist here only as
    **NON-AUTHORITATIVE PROVISIONAL** stand-ins (:mod:`tos.engine.standins`). Without a real

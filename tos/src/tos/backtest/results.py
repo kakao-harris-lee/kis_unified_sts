@@ -91,9 +91,12 @@ class BacktestRun:
         """Always ``True`` — a slice-1 run is a mechanism / parity demonstration (design #33 §1.1).
 
         Not a parameter, so no caller can flip it. The three converging reasons are on the package
-        docstring: non-production canonicalization, incomplete Phase-0 bounds approval, and
-        authority runtimes that exist only as ``NON_AUTHORITATIVE_PROVISIONAL`` stand-ins — plus,
-        for D-E3 specifically, the ADR-DEV-010 §8:191-192 single-run disqualifier.
+        docstring: non-production canonicalization, bounds this harness consumes that are
+        provisional independent of P0-1's now-approved profile status (``dsl_evaluation_budget_steps``
+        is not a ``VERIFICATION-PROFILE-002`` key at all; the resolver's trustworthy-time bounds
+        remain unbound register candidates), and authority runtimes that exist only as
+        ``NON_AUTHORITATIVE_PROVISIONAL`` stand-ins — plus, for D-E3 specifically, the
+        ADR-DEV-010 §8:191-192 single-run disqualifier.
         """
         return True
 

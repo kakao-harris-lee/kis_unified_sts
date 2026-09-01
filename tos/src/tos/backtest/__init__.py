@@ -15,8 +15,18 @@ trace artifact (design #33 §0.2-1/§7).
 top-level honesty declaration). Four independent reasons converge:
 
 1. production canonicalization is unresolved — every digest rides ``ev-l1-provisional-0``;
-2. the Phase-0 bounds approval (P0-1) and independent-reviewer designation (P0-3) are incomplete, so
-   every bound consumed here is a provisional value;
+2. the Phase-0 bounds approval (P0-1) is now **profile-level APPROVED** (operator, 2026-07-29,
+   over most of ``VERIFICATION-PROFILE-002``'s keys) — but ``dsl_evaluation_budget_steps``,
+   the DSL-evaluation bound this harness transitively consumes through ``EngineCore.run``
+   (DCE-INV-007), is **not itself a profile key at all** (absent from the profile's bounds/limits
+   census;
+   :mod:`tos.engine.records` ``EngineConfiguration``), and the trustworthy-time bounds
+   :class:`~tos.backtest.resolver.BarTimeProjection` injects remain register §8-1 candidates
+   whose key-level profile binding is not established in code — so every bound consumed here is
+   still a provisional value, just not for the reason "P0-1 incomplete" any more. Independent-
+   reviewer designation (P0-3) is a register concern (``EVIDENCE-REGISTER-DEV.csv``), not a
+   profile key: the reviewer for this scope's ``BTE-EV-001``..``BTE-EV-007`` rows is assigned
+   (``ai-review(decorrelated)+operator-countersign``), so that half is no longer incomplete either;
 3. the authority runtimes the sequencer calls exist only as ``NON_AUTHORITATIVE_PROVISIONAL``
    stand-ins, and the fill model is a **synthetic band**, not a broker;
 4. **the single-run disqualifier.** ADR-DEV-010 §8:191-192 names "unrepresentative population — too
