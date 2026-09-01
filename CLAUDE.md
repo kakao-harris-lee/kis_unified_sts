@@ -180,10 +180,12 @@ plan review) in an independent model lane.
 above. Reject any finding that would violate them and record the reason.
 
 **Model lanes (cost discipline):** orchestration and `deep-reasoner` run on Opus;
-every implementation, test, debugging, audit-lens, and frontend agent runs on
-Sonnet 5 (`model:` in each `.claude/agents/*.md` file governs — do not override at
-call time); `runner`-class chores run on Haiku; the Codex forwarders stay on Haiku
-because they only relay Codex stdout. Opus for a coding agent is an exception that
+every implementation, test, debugging, and frontend agent runs on Sonnet 5, and so
+do the audit lenses except `architecture-auditor` and `security-auditor`, which
+stay on Opus along with the fallback review lane (`code-reviewer`,
+`review-synthesizer`) (`model:` in each `.claude/agents/*.md` file governs — do not
+override at call time); `runner`-class chores run on Haiku; the Codex forwarders
+stay on Haiku because they only relay Codex stdout. Opus for a coding agent is an exception that
 needs a stated reason (sonnet actually failed, or the change is hard to reverse).
 The `sonnet -> Opus` env remap in `~/.claude/fable/env.sh` was removed — sonnet
 means sonnet.
@@ -199,6 +201,7 @@ Agent roster, skill list, directory layout, and execution detail live under
 | 2026-08-11 | Adjudication moved to Codex — added `codex-reviewer` / `codex-plan-reviewer` / `codex-gate`; demoted `code-reviewer` and `review-synthesizer` to fallback-only; replaced the `code-audit` fan-in | `agents/`, `skills/` | Prevent self-approval and secure cross-model independent adjudication |
 | 2026-08-21 | Disabled per-turn Codex stop review; kept explicit scoped `codex-gate` reviews and moved thin reviewer forwarders to Haiku | review harness | Prevent duplicate fresh Codex tasks, long Stop-hook stalls, and avoidable Claude token use |
 | 2026-08-25 | Cost rebalance — pinned `model:` per agent (Sonnet 5 for execution/audit lenses, Opus only for `architecture-auditor`, `security-auditor`, and the fallback review lane), removed the global `sonnet -> Opus` env remap, made Codex adjudication explicitly operator-triggered | `agents/`, `~/.claude/fable/`, harness docs | Every subagent was silently running on Opus; review ran more often than it was asked for |
+| 2026-08-30 | Doc-only fix to the model-lanes paragraph: it claimed every audit lens runs on Sonnet 5, contradicting the 2026-08-25 row and the actual frontmatter (`architecture-auditor`/`security-auditor` are Opus) | CLAUDE.md | Cost audit found the prose had drifted from the pinned `model:` values; agent files unchanged |
 
 ## Documentation Map
 
