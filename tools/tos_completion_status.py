@@ -5,7 +5,7 @@
 (blob 결속 — 이 파일은 절대 편집하지 않는다.  모호한 지점은
 ``python tools/tos_contract_index.py --locate <id>`` 로 절만 확인한다).
 
-이 검사기는 증분 C1 + C2a + C2b 가 강제하는 다음 등록 id만 다룬다::
+이 검사기는 증분 C1 + C2a + C2b + C2c 가 강제하는 다음 등록 id만 다룬다::
 
     K-1 · K-2 · K-3 · K-4 · K-5/FWD-METRICS · K-6 · K-9 · K-11 · K-12 · K-13
     · K-14 · U-14 (C1)
@@ -14,15 +14,23 @@
     상태 기계의 승계.  좌변 명세·회귀 기준선은 ``tools/tos_entry_harness.sh``
     이며 그 판정 로직을 Python 으로 정확 복제한다.  우변은 §12.3.4 U-15-g
     사후 provenance 관측이다.)
+    U-16 (C2c — §13.6.5 closable_no_provenance_state 12값 상태 기계.  판정
+    입력을 격리 git 스냅샷 안에서 소비한다 — §13.6.5 "격리 스냅샷 기층".)
 
-``DEFERRED_CONTRACTS`` 에 등재된 계약(U-16 · U-17 · T-71 축)은 C2b 이후
-소관이며, 이 파일에는 강제 지점이 없다(UNCHK-019 축 — 정직 노출).
+``DEFERRED_CONTRACTS`` 에 등재된 계약(T-71 축)은 C2c 이후 소관이며, 이
+파일에는 강제 지점이 없다(UNCHK-019 축 — 정직 노출).  U-17 은 DEFERRED 가
+아니라 ``--check`` 밖의 별도 강제 지점(가드 체인·live —
+``tools/u17-verify.sh``)이다 — main() 이 별도 섹션으로 처분을 인쇄한다.
 
 git 소비 규율 (C2a — §12.3.1 "공통: git 소비"): U-12/U-13 의 권위 판정
 입력(OQ-11 아티팩트 · bound 문서 2종 · OQ-11 원장)은 워킹트리가 아니라
 **HEAD blob** 을 ``git show HEAD:<path>`` 로 소비한다.  이력 판정(trigger
 commit·도입 커밋)은 ``git log``/``git rev-list``/``git cat-file`` 로
 파생한다.  config/tos_completion.yaml 은 C1 과 동일하게 워킹트리 소비.
+
+U-16 은 조상성·원장·레지스터 blob 소비를 전부 **격리 git 스냅샷**
+(``git clone --no-local --no-hardlinks`` + replace/grafts canary) 안에서
+수행한다 — §13.6.5 "격리 스냅샷 기층".  판정 후 스냅샷은 즉시 삭제한다.
 
 rc 의미론 (핀 — 이 문서가 정본):
     * 계약 위반(``Finding``) >= 1  ->  exit 1
@@ -32,8 +40,8 @@ rc 의미론 (핀 — 이 문서가 정본):
     §12.2 "신규 검사는 처음부터 green 인 상태로 도입" + "Phase 0 의 종료
     조건은 FWD-a 에만 걸린다"(§5.2.4) — 완료 미도달은 repo 결함이 아니다.
     U-12 상태 기계의 rc 결합(T-78 — 상태 ≠ NOT_REQUIRED 는 전부 위반)은
-    C2a 에서 구현된다.  U-15/U-16 상태 기계의 rc 결합(T-81/T-82)은 이후
-    증분 소관이다.
+    C2a 에서 구현된다.  U-16 상태 기계의 rc 결합(T-82 — 상태 ≠
+    NO_ROWS_CLEAR 는 전부 위반)은 C2c 에서 구현된다.
 """
 
 from __future__ import annotations
@@ -41,9 +49,12 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
@@ -66,6 +77,10 @@ SURFACE_MAP_REL = Path("tos-spec/src/verification/EVIDENCE-SURFACE-MAP.csv")
 UNCHECKABLE_REL = Path("tos-spec/src/verification/PHASE0-UNCHECKABLE-REGISTER.csv")
 OQ11_REL = Path("tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md")
 OQ11_LEDGER_REL = Path("tos-spec/src/part-1-foundation/decisions/OQ-11-RAISE-LEDGER.md")
+# U-16 §13.6.5 — closable=NO 전이 승인 원장 (OQ-11 원장과 별도 파일 · U-16-b).
+U16_LEDGER_REL = Path(
+    "tos-spec/src/part-1-foundation/decisions/CLOSABLE-NO-APPROVAL-LEDGER.md"
+)
 TOS_SPEC_SRC_REL = Path("tos-spec/src")
 
 # U-15 §12.3.4-R — tools/tos_entry_harness.sh 의 권위 입력 경로 (BP1/BP2 는
@@ -121,12 +136,10 @@ UNCHECKABLE_FIELDS = (
     "blocks_gate",
 )
 
-# C2b 이후 소관 — 이 파일에는 강제 지점이 없다 (UNCHK-019 축 · 정직 노출).
-DEFERRED_CONTRACTS: tuple[str, ...] = (
-    "U-16",
-    "U-17",
-    "T-71",
-)
+# C2c 이후 소관 — 이 파일에는 강제 지점이 없다 (UNCHK-019 축 · 정직 노출).
+# U-16 은 C2c 에서 CONTRACT_CHECKS 로 승격됐다.  U-17 은 DEFERRED 가 아니라
+# `--check` 밖의 별도 강제 지점(가드 체인·live — tools/u17-verify.sh)이다.
+DEFERRED_CONTRACTS: tuple[str, ...] = ("T-71",)
 
 _VERIFIABLE_LEVEL_KINDS = frozenset({"PACKAGE", "TEST", "REVIEWER"})
 
@@ -1068,9 +1081,11 @@ def _split_table_row(line: str) -> list[str]:
     return [c.strip() for c in inner.split("|")]
 
 
-def _extract_episode_table(text: str) -> tuple[list[str], list[list[str]]] | None:
-    """ "## 에피소드" 절 아래 첫 md 표를 (header, data_rows) 로 반환."""
-    m = _LEDGER_HEADING_RE.search(text)
+def _extract_md_table_after_heading(
+    text: str, heading_re: re.Pattern[str]
+) -> tuple[list[str], list[list[str]]] | None:
+    """``heading_re`` 절 아래 첫 md 표를 (header, data_rows) 로 반환 (U-12/U-16 공용)."""
+    m = heading_re.search(text)
     if not m:
         return None
     rest = text[m.end() :]
@@ -1089,6 +1104,11 @@ def _extract_episode_table(text: str) -> tuple[list[str], list[list[str]]] | Non
             body_lines = body_lines[1:]
     data_rows = [_split_table_row(ln) for ln in body_lines]
     return header, data_rows
+
+
+def _extract_episode_table(text: str) -> tuple[list[str], list[list[str]]] | None:
+    """ "## 에피소드" 절 아래 첫 md 표를 (header, data_rows) 로 반환."""
+    return _extract_md_table_after_heading(text, _LEDGER_HEADING_RE)
 
 
 def _parse_utc_iso8601(value: str) -> datetime:
@@ -2005,6 +2025,643 @@ def check_u15(ctx: CheckContext) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# U-16 — closable_no_provenance_state (12값 · §13.6.5).  판정 입력은 격리
+# git 스냅샷(clone + replace/grafts canary) 안에서만 소비한다.
+# ---------------------------------------------------------------------------
+
+_U16_STATE_ORDER: tuple[str, ...] = (
+    "CONSUMER_ABSENT",
+    "PROVENANCE_UNVERIFIABLE",
+    "APPROVAL_MALFORMED",
+    "APPROVAL_MISSING",
+    "APPROVAL_SAME_COMMIT",
+    "APPROVAL_AFTER",
+    "APPROVAL_CONTENT_DRIFT",
+    "APPROVAL_HEAD_INVALID",
+    "APPROVAL_ROW_MUTATED",
+    "APPROVAL_UNBOUND",
+    "APPROVAL_ORDER_INVALID",
+    "NO_ROWS_CLEAR",
+)
+_U16_RANK: dict[str, int] = {name: idx for idx, name in enumerate(_U16_STATE_ORDER)}
+
+_U16_LEDGER_HEADER: tuple[str, ...] = (
+    "row_id",
+    "transition",
+    "row_content_digest",
+    "approved_at_head",
+    "reviewer_ref",
+    "rationale_ref",
+)
+_U16_LEDGER_HEADING_RE = re.compile(r"^## 승인 행\s*$", re.MULTILINE)
+_U16_RATIONALE_RE = re.compile(r"^(?P<ref>.+?)\s+§(?P<num>\d+(?:\.\d+)*)$")
+
+
+class _U16Unverifiable(Exception):
+    """U-16 구조 파생 실패 — 전역 PROVENANCE_UNVERIFIABLE 로 접는 내부 신호."""
+
+
+@dataclass(frozen=True)
+class U16ApprovalRow:
+    """``CLOSABLE-NO-APPROVAL-LEDGER.md`` "## 승인 행" 표의 정규화된 한 행."""
+
+    row_id: str
+    transition: str
+    row_content_digest: str
+    approved_at_head: str
+    reviewer_ref: str
+    rationale_ref: str
+
+    def structural_key(self) -> tuple[str, str, str]:
+        return (self.row_id, self.transition, self.row_content_digest)
+
+
+# ---------------------------------------------------------------------------
+# U-16 — 격리 스냅샷 기층
+# ---------------------------------------------------------------------------
+
+
+def _create_u16_snapshot(repo_root: Path) -> tuple[Path | None, Path | None]:
+    """``git clone --no-local --no-hardlinks`` + replace/grafts canary.
+
+    Returns:
+        (snapshot_root, cleanup_root) — 실패 시 ``(None, None)`` (fail-closed).
+        호출자는 ``cleanup_root`` 를 판정 후 ``shutil.rmtree`` 로 삭제한다.
+    """
+    cleanup_root = Path(tempfile.mkdtemp(prefix="tos-u16-snap-"))
+    dest = cleanup_root / "snapshot"
+    env = dict(os.environ)
+    env["GIT_NO_REPLACE_OBJECTS"] = "1"
+    try:
+        result = subprocess.run(
+            ["git", "clone", "--no-local", "--no-hardlinks", str(repo_root), str(dest)],
+            capture_output=True,
+            timeout=_GIT_TIMEOUT * 4,
+            check=False,
+            env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        shutil.rmtree(cleanup_root, ignore_errors=True)
+        return None, None
+    if result.returncode != 0:
+        shutil.rmtree(cleanup_root, ignore_errors=True)
+        return None, None
+
+    try:
+        rep = subprocess.run(
+            ["git", "replace", "-l"],
+            cwd=dest,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+            check=False,
+            env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        shutil.rmtree(cleanup_root, ignore_errors=True)
+        return None, None
+    if rep.returncode != 0 or rep.stdout.strip():
+        shutil.rmtree(cleanup_root, ignore_errors=True)
+        return None, None
+
+    try:
+        gp = subprocess.run(
+            ["git", "rev-parse", "--git-path", "info/grafts"],
+            cwd=dest,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+            check=False,
+            env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        shutil.rmtree(cleanup_root, ignore_errors=True)
+        return None, None
+    if gp.returncode != 0:
+        shutil.rmtree(cleanup_root, ignore_errors=True)
+        return None, None
+    grafts_rel = gp.stdout.strip()
+    grafts_path = Path(grafts_rel)
+    if not grafts_path.is_absolute():
+        grafts_path = dest / grafts_path
+    if grafts_path.exists():
+        shutil.rmtree(cleanup_root, ignore_errors=True)
+        return None, None
+
+    return dest, cleanup_root
+
+
+def _git_cat_file_commit_parents_raw(commit: str, repo_root: Path) -> list[str] | None:
+    """``git --no-replace-objects cat-file commit <x>`` 의 parent 줄 직접 파싱 (㉠)."""
+    try:
+        result = subprocess.run(
+            ["git", "--no-replace-objects", "cat-file", "commit", commit],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    parents: list[str] = []
+    for line in result.stdout.splitlines():
+        if line.startswith("parent "):
+            parents.append(line[len("parent ") :].strip())
+        elif not line.strip():
+            break
+    return parents
+
+
+def _u16_safe_parents(commit: str, repo_root: Path) -> list[str] | None:
+    """부모 재파생(㉠) — raw cat-file 과 ``%P`` 뷰 불일치 시 ``None``.
+
+    ㉢ 얕은 경계(``.git/shallow`` 목록) 커밋은 부모 *객체*가 조회 불가하므로
+    (metadata 상 parent 줄이 살아 있어도) 무조건 ``None`` — 그렇지 않으면
+    얕은 클론에서 부모의 blob 조회가 조용히 "ABSENT" 로 성공해버려
+    PROVENANCE_UNVERIFIABLE 를 우회한다.  (호출자는 전부 전역
+    ``_U16Unverifiable`` 로 접는다 — 이 저장소 규모에서 로컬/전역 경계
+    분기는 T-82 배터리가 요구하지 않아 단순화했다.)
+    """
+    if commit in _git_shallow_boundary_commits(repo_root):
+        return None
+    raw = _git_cat_file_commit_parents_raw(commit, repo_root)
+    if raw is None:
+        return None
+    via_format = _git_parents(commit, repo_root)
+    if via_format is None:
+        return None
+    if sorted(raw) != sorted(via_format):
+        return None
+    return raw
+
+
+# ---------------------------------------------------------------------------
+# U-16 — 원장·레지스터 blob 파싱
+# ---------------------------------------------------------------------------
+
+
+def _load_u16_ledger_rows_at(
+    commit: str, repo_root: Path
+) -> tuple[list[U16ApprovalRow] | None, str, str | None]:
+    """``## 승인 행`` 표를 ``commit`` blob 에서 파싱.
+
+    Returns:
+        (rows, error_class, detail) — ``error_class`` 는 ``""``(성공) ·
+        ``"ABSENT"``(blob/절 부재) · ``"MALFORMED"``(스키마 위반) 중 하나.
+    """
+    blob = _git_show_blob(U16_LEDGER_REL, commit, repo_root)
+    if blob is None:
+        return None, "ABSENT", "원장 blob 부재"
+    try:
+        text = blob.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return None, "ABSENT", f"원장 디코딩 실패: {exc}"
+    table = _extract_md_table_after_heading(text, _U16_LEDGER_HEADING_RE)
+    if table is None:
+        return None, "ABSENT", "원장 표 파싱 불가(## 승인 행 절 없음)"
+    header, data_rows = table
+    if tuple(header) != _U16_LEDGER_HEADER:
+        return None, "MALFORMED", f"헤더 불일치: {header} != {list(_U16_LEDGER_HEADER)}"
+    rows: list[U16ApprovalRow] = []
+    for idx, cells in enumerate(data_rows):
+        if len(cells) != len(_U16_LEDGER_HEADER):
+            return None, "MALFORMED", f"행 {idx}: 필드 수 불일치"
+        row_id, transition, digest, approved_at_head, reviewer_ref, rationale_ref = (
+            c.strip() for c in cells
+        )
+        if not all(
+            (row_id, transition, digest, approved_at_head, reviewer_ref, rationale_ref)
+        ):
+            return None, "MALFORMED", f"행 {idx}: 필드 공란"
+        rows.append(
+            U16ApprovalRow(
+                row_id,
+                transition,
+                digest,
+                approved_at_head,
+                reviewer_ref,
+                rationale_ref,
+            )
+        )
+    return rows, "", None
+
+
+_U16LedgerCache = dict[str, tuple[list[U16ApprovalRow] | None, str, str | None]]
+
+
+def _ledger_rows_cached(
+    commit: str, repo_root: Path, cache_: _U16LedgerCache
+) -> tuple[list[U16ApprovalRow] | None, str, str | None]:
+    if commit not in cache_:
+        cache_[commit] = _load_u16_ledger_rows_at(commit, repo_root)
+    return cache_[commit]
+
+
+def _load_uncheckable_rows_at(
+    commit: str, repo_root: Path
+) -> dict[str, dict[str, str]] | None:
+    """{id: row} — ``UNCHECKABLE_REL`` 을 ``commit`` blob 에서 파싱.  실패 -> ``None``."""
+    blob = _git_show_blob(UNCHECKABLE_REL, commit, repo_root)
+    if blob is None:
+        return None
+    try:
+        text = blob.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return None
+    try:
+        reader = csv.DictReader(text.splitlines())
+        fieldnames = tuple(reader.fieldnames or ())
+        if fieldnames != UNCHECKABLE_FIELDS:
+            return None
+        rows = list(reader)
+    except csv.Error:
+        return None
+    return {row["id"]: row for row in rows}
+
+
+def _row_canonical_digest(row: dict[str, str]) -> str:
+    """U-16-c v2.20 g2 — 열이름 정렬(``LC_ALL=C``) + ``<열>=<값>\\0`` 연접 sha256."""
+    parts: list[bytes] = []
+    for key in sorted(row.keys()):
+        parts.append(f"{key}={row[key]}".encode() + b"\x00")
+    return hashlib.sha256(b"".join(parts)).hexdigest()
+
+
+def _u16_heading_present(text: str, num: str) -> bool:
+    num_re = re.escape(num)
+    heading_re = re.compile(rf"^#{{1,6}}\s*{num_re}[.\s]", re.MULTILINE)
+    literal_re = re.compile(rf"^#{{1,6}}.*§{num_re}(?!\d)", re.MULTILINE)
+    return bool(heading_re.search(text) or literal_re.search(text))
+
+
+def _resolve_rationale_ref(value: str, repo_root: Path, src_root: Path) -> bool:
+    """g4 — ``<repo 상대경로 또는 tos-spec DOC-ID> §<번호>`` 해석 (워킹트리 소비 · K-4 방식)."""
+    m = _U16_RATIONALE_RE.match(value.strip())
+    if not m:
+        return False
+    ref, num = m.group("ref"), m.group("num")
+    candidate = repo_root / ref
+    if candidate.is_file():
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        return _u16_heading_present(text, num)
+    if not src_root.is_dir():
+        return False
+    matches = sorted(
+        p
+        for p in src_root.rglob(f"{ref}*.md")
+        if "patches" not in p.relative_to(src_root).parts
+    )
+    if len(matches) != 1:
+        return False
+    try:
+        text = matches[0].read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return _u16_heading_present(text, num)
+
+
+# ---------------------------------------------------------------------------
+# U-16 — 구조 파생 (EDGES · c_APP · C_R)
+# ---------------------------------------------------------------------------
+
+
+def _u16_compute_edges(
+    row_id: str,
+    candidates: list[str],
+    repo_root: Path,
+    states_cache: dict[str, dict[str, dict[str, str]] | None],
+) -> list[tuple[str | None, str, str]]:
+    """EDGES(r) — 후보(레지스터 touching 커밋) 위 부모별 상태 비교.
+
+    Returns:
+        [(parent_or_None, commit, edge_type)] — ``parent`` 가 ``None`` 이면
+        무부모(∅, state=ABSENT).
+    """
+
+    def rows_at(c: str) -> dict[str, dict[str, str]] | None:
+        if c not in states_cache:
+            states_cache[c] = _load_uncheckable_rows_at(c, repo_root)
+        return states_cache[c]
+
+    def state_of(c: str) -> str:
+        rows = rows_at(c)
+        if rows is None:
+            return "ABSENT"
+        row = rows.get(row_id)
+        return row["closable"] if row else "ABSENT"
+
+    edges: list[tuple[str | None, str, str]] = []
+    for c in candidates:
+        if state_of(c) != "NO":
+            continue
+        parents = _u16_safe_parents(c, repo_root)
+        if parents is None:
+            raise _U16Unverifiable(f"부모 파생 실패(EDGES): {c}")
+        if not parents:
+            edges.append((None, c, "ABSENT->NO"))
+            continue
+        for p in parents:
+            state_p = state_of(p)
+            if state_p == "NO":
+                continue
+            edges.append((p, c, f"{state_p}->NO"))
+    return edges
+
+
+def _u16_compute_c_app(
+    structural_key: tuple[str, str, str],
+    head_commit: str,
+    repo_root: Path,
+    ledger_cache: _U16LedgerCache,
+) -> list[str]:
+    """c_APP(a) = {x ⊑ HEAD : a∈rows(x:원장) ∧ ∀p: a∉rows(p:원장)}."""
+    candidates = _git_rev_list_full_history(U16_LEDGER_REL, repo_root, ref=head_commit)
+    if candidates is None:
+        raise _U16Unverifiable("원장 이력 조회 실패(c_APP)")
+
+    def has_key(c: str) -> bool:
+        rows, _err, _detail = _ledger_rows_cached(c, repo_root, ledger_cache)
+        if rows is None:
+            return False
+        return any(r.structural_key() == structural_key for r in rows)
+
+    found: list[str] = []
+    for c in candidates:
+        if not has_key(c):
+            continue
+        parents = _u16_safe_parents(c, repo_root)
+        if parents is None:
+            raise _U16Unverifiable(f"부모 파생 실패(c_APP): {c}")
+        if all(not has_key(p) for p in parents):
+            found.append(c)
+    return found
+
+
+def _get_ledger_row_by_key(
+    commit: str,
+    key: tuple[str, str, str],
+    repo_root: Path,
+    ledger_cache: _U16LedgerCache,
+) -> U16ApprovalRow | None:
+    rows, _err, _detail = _ledger_rows_cached(commit, repo_root, ledger_cache)
+    if rows is None:
+        return None
+    for r in rows:
+        if r.structural_key() == key:
+            return r
+    return None
+
+
+def _u16_compute_c_r(
+    reviewer_ref: str, target_blob: bytes, edge_commit: str, repo_root: Path
+) -> list[str]:
+    """C_R(c) — ``reviewer_ref`` blob(``target_blob``)의 도입 커밋, ``c`` 조상 한정."""
+    candidates = _git_rev_list_full_history(
+        Path(reviewer_ref), repo_root, ref=edge_commit
+    )
+    if candidates is None:
+        raise _U16Unverifiable("reviewer_ref 이력 조회 실패(C_R)")
+    blob_cache: dict[str, bytes | None] = {}
+
+    def blob_at(c: str) -> bytes | None:
+        if c not in blob_cache:
+            blob_cache[c] = _git_show_blob(Path(reviewer_ref), c, repo_root)
+        return blob_cache[c]
+
+    found: list[str] = []
+    for c in candidates:
+        if blob_at(c) != target_blob:
+            continue
+        parents = _u16_safe_parents(c, repo_root)
+        if parents is None:
+            raise _U16Unverifiable(f"부모 파생 실패(C_R): {c}")
+        if all(blob_at(p) != target_blob for p in parents):
+            found.append(c)
+    return found
+
+
+# ---------------------------------------------------------------------------
+# U-16 — 후보 행 평가 (g1~g6 · h · 전순서)
+# ---------------------------------------------------------------------------
+
+
+def _u16_evaluate_candidate(
+    a: U16ApprovalRow,
+    edge_commit: str,
+    head_row: dict[str, str],
+    repo_root: Path,
+    src_root: Path,
+    ledger_cache: _U16LedgerCache,
+    head_commit: str,
+) -> str:
+    """단일 후보 행이 단일 간선을 «덮는가» 평가.  ``"OK"`` 또는 위반 상태명."""
+    c_app_list = _u16_compute_c_app(
+        a.structural_key(), head_commit, repo_root, ledger_cache
+    )
+    if len(c_app_list) == 0:
+        return "PROVENANCE_UNVERIFIABLE"
+    if len(c_app_list) > 1:
+        return "APPROVAL_MALFORMED"
+    c_app = c_app_list[0]
+
+    # g4 (rank 3) — SAME_COMMIT/AFTER(5/6)보다 앞서 평가해 전순서를 지킨다.
+    if not _resolve_rationale_ref(a.rationale_ref, repo_root, src_root):
+        return "APPROVAL_MALFORMED"
+
+    if c_app == edge_commit:
+        return "APPROVAL_SAME_COMMIT"
+    if not _git_is_ancestor(c_app, edge_commit, repo_root):
+        return "APPROVAL_AFTER"
+
+    # g2
+    if _row_canonical_digest(head_row) != a.row_content_digest:
+        return "APPROVAL_CONTENT_DRIFT"
+
+    # g3
+    if not _git_is_ancestor(a.approved_at_head, edge_commit, repo_root):
+        return "APPROVAL_HEAD_INVALID"
+    reviewer_blob = _git_show_blob(Path(a.reviewer_ref), a.approved_at_head, repo_root)
+    if reviewer_blob is None:
+        return "APPROVAL_HEAD_INVALID"
+
+    # g5
+    row_at_capp = _get_ledger_row_by_key(
+        c_app, a.structural_key(), repo_root, ledger_cache
+    )
+    if row_at_capp is None or row_at_capp != a:
+        return "APPROVAL_ROW_MUTATED"
+
+    # h
+    try:
+        reviewer_text = reviewer_blob.decode("utf-8")
+    except UnicodeDecodeError:
+        return "APPROVAL_UNBOUND"
+    if a.row_content_digest not in reviewer_text:
+        return "APPROVAL_UNBOUND"
+
+    # g6
+    c_r = _u16_compute_c_r(a.reviewer_ref, reviewer_blob, edge_commit, repo_root)
+    if not c_r:
+        return "PROVENANCE_UNVERIFIABLE"
+    if not any(x != c_app and _git_is_ancestor(x, c_app, repo_root) for x in c_r):
+        return "APPROVAL_ORDER_INVALID"
+
+    return "OK"
+
+
+def _u16_edge_status(
+    row_id: str,
+    edge_type: str,
+    edge_commit: str,
+    head_rows: list[U16ApprovalRow],
+    head_row: dict[str, str],
+    repo_root: Path,
+    src_root: Path,
+    ledger_cache: _U16LedgerCache,
+    head_commit: str,
+) -> str | None:
+    """단일 간선의 위반 상태 — ``None`` 이면 정확히 한 행이 덮어 문제 없음."""
+    candidates = [
+        a for a in head_rows if a.row_id == row_id and a.transition == edge_type
+    ]
+    if not candidates:
+        return "APPROVAL_MISSING"
+    statuses: list[str] = []
+    ok_count = 0
+    for a in candidates:
+        status = _u16_evaluate_candidate(
+            a, edge_commit, head_row, repo_root, src_root, ledger_cache, head_commit
+        )
+        if status == "OK":
+            ok_count += 1
+        else:
+            statuses.append(status)
+    if ok_count >= 2:
+        return "APPROVAL_MALFORMED"
+    if ok_count == 1:
+        return None
+    return min(statuses, key=lambda s: _U16_RANK[s])
+
+
+def _u16_orphan_present(
+    head_rows: list[U16ApprovalRow], all_edges: list[tuple[str, str | None, str, str]]
+) -> bool:
+    """고아 행 — 같은 (row_id, transition) 간선이 하나도 없는 승인 행 존재?"""
+    edge_pairs = {(row_id, edge_type) for row_id, _p, _c, edge_type in all_edges}
+    return any((a.row_id, a.transition) not in edge_pairs for a in head_rows)
+
+
+# ---------------------------------------------------------------------------
+# U-16 — 최상위 오케스트레이션
+# ---------------------------------------------------------------------------
+
+
+def _derive_u16_state_inner(ctx: CheckContext, snap_root: Path) -> tuple[str, str]:
+    repo_root = snap_root
+    src_root = ctx.repo_root / TOS_SPEC_SRC_REL
+
+    head_commit = _resolve_commit("HEAD", repo_root)
+
+    register_head = _load_uncheckable_rows_at(head_commit, repo_root)
+    if register_head is None:
+        return "CONSUMER_ABSENT", "레지스터 부재/파싱 실패"
+
+    ledger_cache: _U16LedgerCache = {}
+    head_ledger_rows, err_class, detail = _ledger_rows_cached(
+        head_commit, repo_root, ledger_cache
+    )
+    if head_ledger_rows is None:
+        if err_class == "ABSENT":
+            return "CONSUMER_ABSENT", detail or "원장 부재"
+        return "APPROVAL_MALFORMED", detail or "원장 스키마 위반"
+
+    no_rows = sorted(
+        rid for rid, row in register_head.items() if row.get("closable") == "NO"
+    )
+    if not no_rows:
+        return "NO_ROWS_CLEAR", "NO_ROWS(HEAD) 공집합"
+
+    register_candidates = _git_rev_list_full_history(
+        UNCHECKABLE_REL, repo_root, ref=head_commit
+    )
+    if register_candidates is None:
+        return "PROVENANCE_UNVERIFIABLE", "레지스터 이력 조회 실패"
+
+    states_cache: dict[str, dict[str, dict[str, str]] | None] = {
+        head_commit: register_head
+    }
+    all_edges: list[tuple[str, str | None, str, str]] = []
+    for row_id in no_rows:
+        edges = _u16_compute_edges(row_id, register_candidates, repo_root, states_cache)
+        if not edges:
+            return (
+                "PROVENANCE_UNVERIFIABLE",
+                f"{row_id}: EDGES 공집합(공집합 통과 금지)",
+            )
+        for p, c, et in edges:
+            all_edges.append((row_id, p, c, et))
+
+    worst: list[str] = []
+    if _u16_orphan_present(head_ledger_rows, all_edges):
+        worst.append("APPROVAL_MALFORMED")
+
+    for row_id, _p, c, et in all_edges:
+        status = _u16_edge_status(
+            row_id,
+            et,
+            c,
+            head_ledger_rows,
+            register_head[row_id],
+            repo_root,
+            src_root,
+            ledger_cache,
+            head_commit,
+        )
+        if status is not None:
+            worst.append(status)
+
+    if not worst:
+        return "NO_ROWS_CLEAR", "전 NO 행·간선 전순서 위반 0"
+    final = min(worst, key=lambda s: _U16_RANK[s])
+    return final, f"위반 상태 집합={sorted(set(worst))}"
+
+
+def derive_u16_state(ctx: CheckContext) -> tuple[str, str]:
+    """§13.6.5 U-16 — closable_no_provenance_state (12값).
+
+    판정 미산출 경로 폐쇄 — 미예기 예외·구조 파생 실패는 전부
+    ``PROVENANCE_UNVERIFIABLE`` 로 접는다(fail-closed).
+    """
+    snap_root, cleanup_root = _create_u16_snapshot(ctx.repo_root)
+    if snap_root is None:
+        return "PROVENANCE_UNVERIFIABLE", "격리 스냅샷 생성/canary 실패"
+    try:
+        return _derive_u16_state_inner(ctx, snap_root)
+    except _U16Unverifiable as exc:
+        return "PROVENANCE_UNVERIFIABLE", str(exc)
+    except Exception as exc:  # noqa: BLE001 — 판정 미산출 경로 폐쇄
+        return "PROVENANCE_UNVERIFIABLE", f"미예기 예외: {exc}"
+    finally:
+        if cleanup_root is not None:
+            shutil.rmtree(cleanup_root, ignore_errors=True)
+
+
+def check_u16(ctx: CheckContext) -> list[Finding]:
+    """U-16 — closable_no_provenance_state.  ``NO_ROWS_CLEAR`` 외 전부 위반(T-82)."""
+    state, detail = derive_u16_state(ctx)
+    ctx.state_lines.append(f"closable_no_provenance_state={state}")
+    if state == "NO_ROWS_CLEAR":
+        return []
+    return [Finding("U-16", f"{state}: {detail}")]
+
+
+# ---------------------------------------------------------------------------
 # U-1a · U-4 · U-5 — UNCHECKABLE 레지스터 규칙 (§13.6.4 · §13.3)
 # ---------------------------------------------------------------------------
 
@@ -2140,6 +2797,7 @@ CONTRACT_CHECKS: dict[str, Callable[[CheckContext], list[Finding]]] = {
     "U-12": check_u12,
     "U-13": check_u13,
     "U-15": check_u15,
+    "U-16": check_u16,
     "U-1a": check_u1a,
     "U-4": check_u4,
     "U-5": check_u5,
@@ -2172,9 +2830,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"tos-completion-status: ERROR — 내부 예외 (rc=2): {exc}")
         return 2
 
-    print("미구현(C2a 이후) — 강제 지점 미등록:")
+    print("미구현(C2c 이후) — 강제 지점 미등록:")
     for check_id in DEFERRED_CONTRACTS:
         print(f"  - {check_id}")
+    print()
+
+    print("--check 밖 강제 지점:")
+    print("  - U-17 → tools/u17-verify.sh (가드 체인·live)")
     print()
 
     print("상태 라인 (rc 비결합 — 상태별 rc 결합은 해당 check_id 의 Finding 이 담당):")

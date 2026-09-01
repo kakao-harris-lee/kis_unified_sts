@@ -17,6 +17,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -273,6 +274,149 @@ def _ledger_text(rows: list[tuple[str, str, str, str]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# U-16 — closable_no_provenance_state(12값) fixture (§13.6.5 · C2c)
+# ---------------------------------------------------------------------------
+
+U16_RATIONALE_DOC_REL = "docs/u16-mini-rationale.md"
+U16_RATIONALE_REF = f"{U16_RATIONALE_DOC_REL} §5"
+U16_RATIONALE_REF_ALT = f"{U16_RATIONALE_DOC_REL} §6"
+U16_RATIONALE_DOC_TEXT = (
+    "# Mini Rationale\n\n## 5. Section Five\n\nbody.\n\n## 6. Section Six\n\nbody.\n"
+)
+
+
+def _write_u16_rationale_doc(root: Path) -> None:
+    path = root / U16_RATIONALE_DOC_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(U16_RATIONALE_DOC_TEXT, encoding="utf-8")
+
+
+def _u16_row(row_id: str, closable: str, **overrides: str) -> dict[str, str]:
+    row = {
+        "id": row_id,
+        "axis": "mini axis",
+        "reason": "mini reason",
+        "blocked_by": "mini blocker",
+        "owner_track": "",
+        "exposed_in": "TOS-COMPLETION-STATUS",
+        "normative_ref": "",
+        "closable": closable,
+        "blocks_gate": "",
+    }
+    row.update(overrides)
+    return row
+
+
+def _u16_row_canonical_digest(row: dict[str, str]) -> str:
+    """``tos_completion_status._row_canonical_digest`` 의 순수-파이썬 재현."""
+    parts: list[bytes] = []
+    for key in sorted(row.keys()):
+        parts.append(f"{key}={row[key]}".encode() + b"\x00")
+    return hashlib.sha256(b"".join(parts)).hexdigest()
+
+
+def _write_u16_register(root: Path, rows: list[dict[str, str]]) -> None:
+    _write_csv(root / tcs.UNCHECKABLE_REL, tcs.UNCHECKABLE_FIELDS, rows)
+
+
+def _u16_ledger_text(
+    rows: list[tuple[str, str, str, str, str, str]],
+) -> str:
+    lines = [
+        "# Closable-NO Approval Ledger (synthetic)",
+        "",
+        "## 승인 행",
+        "",
+        "| row_id | transition | row_content_digest | approved_at_head "
+        "| reviewer_ref | rationale_ref |",
+        "|---|---|---|---|---|---|",
+    ]
+    for (
+        row_id,
+        transition,
+        digest,
+        approved_at_head,
+        reviewer_ref,
+        rationale_ref,
+    ) in rows:
+        lines.append(
+            f"| {row_id} | {transition} | {digest} | {approved_at_head} "
+            f"| {reviewer_ref} | {rationale_ref} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _write_u16_ledger(
+    root: Path, rows: list[tuple[str, str, str, str, str, str]]
+) -> None:
+    path = root / tcs.U16_LEDGER_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_u16_ledger_text(rows), encoding="utf-8")
+
+
+def _write_u16_reviewer(root: Path, rel: str, digest: str) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"# Synthetic U-16 reviewer artifact\n\nrow_content_digest = {digest}\n",
+        encoding="utf-8",
+    )
+
+
+def _u16_build_basic_chain(
+    tmp_path: Path,
+    row_id: str = "MINI-UNCHK-001",
+    reviewer_rel: str = "docs/reviews/u16-synthetic/REVIEW.md",
+) -> dict[str, Any]:
+    """R(reviewer) -> L(ledger 승인 행) -> C(register born-NO) 3-커밋 양성 체인.
+
+    실코퍼스(UNCHK-014)와 동형인 최소 happy-path — g1~g6·h 전부 충족.
+    """
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+
+    row = _u16_row(row_id, "NO")
+    digest = _u16_row_canonical_digest(row)
+
+    _write_u16_reviewer(tmp_path, reviewer_rel, digest)
+    reviewer_commit = _git_commit_all(
+        tmp_path, "u16 reviewer artifact", "2026-01-01T00:00:00Z"
+    )
+
+    _write_u16_ledger(
+        tmp_path,
+        [
+            (
+                row_id,
+                "ABSENT->NO",
+                digest,
+                reviewer_commit,
+                reviewer_rel,
+                U16_RATIONALE_REF,
+            )
+        ],
+    )
+    ledger_commit = _git_commit_all(
+        tmp_path, "u16 ledger approval row", "2026-01-02T00:00:00Z"
+    )
+
+    _write_u16_register(tmp_path, [row])
+    edge_commit = _git_commit_all(
+        tmp_path, "u16 register born-NO", "2026-01-03T00:00:00Z"
+    )
+
+    return {
+        "reviewer_commit": reviewer_commit,
+        "ledger_commit": ledger_commit,
+        "edge_commit": edge_commit,
+        "digest": digest,
+        "row": row,
+        "row_id": row_id,
+        "reviewer_rel": reviewer_rel,
+    }
+
+
 def _git(
     repo: Path, *args: str, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess:
@@ -318,6 +462,40 @@ def _git_merge(repo: Path, other_ref: str, message: str, when: str) -> str:
     env["GIT_COMMITTER_DATE"] = git_date
     _git(repo, "merge", "--no-ff", "-q", "-m", message, other_ref, env=env)
     return _git(repo, "rev-parse", "HEAD").stdout.strip()
+
+
+def _git_merge_resolving(
+    repo: Path,
+    other_ref: str,
+    message: str,
+    when: str,
+    resolved_paths: dict[str, bytes],
+) -> str:
+    """머지 시도; 충돌 시 ``resolved_paths``(경로 -> 최종 바이트열)로 수동 해결.
+
+    T-82 ⑱/⑳ⓐ — 형제 브랜치가 같은 md 표에 행을 각각 추가하는 시나리오는
+    git 이 충돌 없이 합칠 수도, 충돌로 멈출 수도 있다(내용 동일 여부에
+    따라) — 어느 쪽이든 최종 트리는 ``resolved_paths`` 로 고정한다.
+    """
+    git_date = when[:-1] + " +0000" if when.endswith("Z") else when
+    env = dict(os.environ)
+    env["GIT_AUTHOR_DATE"] = git_date
+    env["GIT_COMMITTER_DATE"] = git_date
+    result = subprocess.run(
+        ["git", "merge", "--no-ff", "-m", message, other_ref],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if result.returncode != 0:
+        for rel, content in resolved_paths.items():
+            path = repo / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", message, env=env)
+    return str(_git(repo, "rev-parse", "HEAD").stdout.strip())
 
 
 def _register_row(**overrides: str) -> dict[str, str]:
@@ -462,6 +640,13 @@ def write_corpus(
     ``d0a_entry_provenance_state`` 기본값을 ``NOT_STARTED``(비차단)로 지킨다
     — U-12/U-13 은 ``config`` 를 git 이 아니라 디스크로 읽으므로 영향받지
     않는다.
+
+    ``git_commit=True`` 면 ``uncheckable_rows`` 에 ``UNCHECKABLE_ROW_1``
+    (``closable=NO``)가 포함돼 있는 한 U-16 도 기본으로
+    ``NO_ROWS_CLEAR`` 가 되도록 그 행 앞에 reviewer(R)·ledger(L) 승인
+    커밋 2개를 얹고, 레지스터 CSV(그 NO 행을 포함) 커밋(C)을 그 뒤에
+    둔다 — c_APP(L) 이 edge 커밋(C) 의 **진 조상**이어야 하므로
+    (U-16-c g1 SAME_COMMIT 회피) 셋을 한 커밋으로 묶을 수 없다.
     """
     if register_rows is None:
         register_rows = [REGISTER_ROW_1, REGISTER_ROW_2, REGISTER_ROW_3_PROFILE]
@@ -495,7 +680,6 @@ def write_corpus(
         _write_csv(root / tcs.REQUIRED_KINDS_REL, header, required_kinds_rows)
 
     _write_csv(root / tcs.SURFACE_MAP_REL, tcs.SURFACE_MAP_FIELDS, map_rows)
-    _write_csv(root / tcs.UNCHECKABLE_REL, tcs.UNCHECKABLE_FIELDS, uncheckable_rows)
 
     oq11_path = root / tcs.OQ11_REL
     oq11_path.parent.mkdir(parents=True, exist_ok=True)
@@ -514,8 +698,48 @@ def write_corpus(
     doc_path.parent.mkdir(parents=True, exist_ok=True)
     doc_path.write_text(doc_text, encoding="utf-8")
 
+    _write_u16_rationale_doc(root)
+
     if git_commit:
         _git_init(root)
+
+        # U-16 기본 배선 — UNCHECKABLE_ROW_1(closable=NO)이 살아있는 한
+        # R(reviewer) -> L(ledger 승인) 커밋을 레지스터 CSV 커밋(C) 앞에 둔다.
+        default_no_row = next(
+            (
+                r
+                for r in uncheckable_rows
+                if r.get("id") == UNCHECKABLE_ROW_1["id"] and r.get("closable") == "NO"
+            ),
+            None,
+        )
+        if default_no_row is not None:
+            digest = _u16_row_canonical_digest(default_no_row)
+            reviewer_rel = (
+                "docs/reviews/phase0-completion-contract/synthetic-u16/REVIEW.md"
+            )
+            _write_u16_reviewer(root, reviewer_rel, digest)
+            reviewer_commit = _git_commit_all(
+                root, "synthetic corpus: u16 reviewer artifact", commit_when
+            )
+            _write_u16_ledger(
+                root,
+                [
+                    (
+                        default_no_row["id"],
+                        "ABSENT->NO",
+                        digest,
+                        reviewer_commit,
+                        reviewer_rel,
+                        U16_RATIONALE_REF,
+                    )
+                ],
+            )
+            _git_commit_all(
+                root, "synthetic corpus: u16 ledger approval row", commit_when
+            )
+
+        _write_csv(root / tcs.UNCHECKABLE_REL, tcs.UNCHECKABLE_FIELDS, uncheckable_rows)
         base_commit = _git_commit_all(root, "synthetic corpus", commit_when)
         if include_u15_verdict_stamp:
             _write_verdict_stamp(
@@ -524,6 +748,8 @@ def write_corpus(
                 _u15_verdict_body(reviewed_at_head=base_commit),
             )
             _git_commit_all(root, "synthetic corpus: U-15 verdict stamp", commit_when)
+    else:
+        _write_csv(root / tcs.UNCHECKABLE_REL, tcs.UNCHECKABLE_FIELDS, uncheckable_rows)
 
     # config 는 U-15-g 기준선을 NOT_STARTED 로 지키려 커밋 밖(워킹트리 전용)에
     # 둔다 — git_commit=False 호출자는 자신의 커밋에서 원하면 포함시킨다.
@@ -1261,10 +1487,12 @@ def test_t39_all_registered_checks_are_invoked(
 
 def test_t39_deferred_contracts_disjoint_from_contract_checks() -> None:
     assert set(tcs.DEFERRED_CONTRACTS).isdisjoint(set(tcs.CONTRACT_CHECKS.keys()))
-    for expected in ("U-12", "U-13", "U-15", "U-1a", "U-4", "U-5"):
+    for expected in ("U-12", "U-13", "U-15", "U-16", "U-1a", "U-4", "U-5"):
         assert expected in tcs.CONTRACT_CHECKS
-    for expected in ("U-16", "U-17", "T-71"):
-        assert expected in tcs.DEFERRED_CONTRACTS
+    assert tcs.DEFERRED_CONTRACTS == ("T-71",)
+    assert "U-16" not in tcs.DEFERRED_CONTRACTS
+    assert "U-17" not in tcs.DEFERRED_CONTRACTS
+    assert "U-17" not in tcs.CONTRACT_CHECKS
 
 
 # ---------------------------------------------------------------------------
@@ -1821,3 +2049,1002 @@ def test_u15_battery_19_gg_parallel_introduction_identical_content_is_multiple(
     ctx, findings = _run_ctx(tmp_path)
     assert "d0a_entry_provenance_state=MULTIPLE_INTRODUCTIONS" in ctx.state_lines
     assert "U-15" in _ids(findings)
+
+
+# ---------------------------------------------------------------------------
+# 22. U-16 — closable_no_provenance_state(12값) 실코퍼스 패리티
+# ---------------------------------------------------------------------------
+
+
+def test_real_corpus_u16_state_is_no_rows_clear() -> None:
+    result = subprocess.run(
+        [sys.executable, str(_MODULE_PATH), "--check"],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "closable_no_provenance_state=NO_ROWS_CLEAR" in result.stdout
+
+
+def test_t39_u16_registered_and_not_deferred() -> None:
+    assert "U-16" in tcs.CONTRACT_CHECKS
+    assert "U-16" not in tcs.DEFERRED_CONTRACTS
+
+
+# ---------------------------------------------------------------------------
+# 23. T-82 배터리 — closable_no_provenance_state(12값) 변이 (§13.6.5)
+# ---------------------------------------------------------------------------
+
+
+def test_u16_battery_0_basic_chain_is_green(tmp_path: Path) -> None:
+    """양성 기준선 — R -> L -> C(ABSENT->NO) happy-path, g1~g6·h 전부 충족."""
+    _u16_build_basic_chain(tmp_path)
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=NO_ROWS_CLEAR" in ctx.state_lines
+    assert "U-16" not in _ids(findings)
+
+
+def test_u16_battery_1_same_commit_is_red(tmp_path: Path) -> None:
+    """① 단일 커밋 우회 — 승인 행이 edge 커밋과 같은 커밋 -> APPROVAL_SAME_COMMIT."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row = _u16_row("MINI-UNCHK-001-1", "NO")
+    digest = _u16_row_canonical_digest(row)
+    reviewer_rel = "docs/reviews/u16/REVIEW-1.md"
+    _write_u16_reviewer(tmp_path, reviewer_rel, digest)
+    reviewer_commit = _git_commit_all(tmp_path, "reviewer", "2026-01-01T00:00:00Z")
+    _write_u16_ledger(
+        tmp_path,
+        [
+            (
+                row["id"],
+                "ABSENT->NO",
+                digest,
+                reviewer_commit,
+                reviewer_rel,
+                U16_RATIONALE_REF,
+            )
+        ],
+    )
+    _write_u16_register(tmp_path, [row])
+    _git_commit_all(
+        tmp_path, "ledger + register in the same commit", "2026-01-02T00:00:00Z"
+    )
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_SAME_COMMIT" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_2_transition_without_approval_is_missing(tmp_path: Path) -> None:
+    """② YES->NO 전이에 승인 없음 -> APPROVAL_MISSING."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row_yes = _u16_row("MINI-UNCHK-002", "YES")
+    _write_u16_register(tmp_path, [row_yes])
+    _write_u16_ledger(tmp_path, [])
+    _git_commit_all(tmp_path, "born YES, empty ledger", "2026-01-01T00:00:00Z")
+
+    row_no = dict(row_yes, closable="NO")
+    _write_u16_register(tmp_path, [row_no])
+    _git_commit_all(tmp_path, "flip to NO without approval", "2026-01-02T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_MISSING" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_3_approval_after_transition_is_red(tmp_path: Path) -> None:
+    """③ 전이 뒤에 승인(원장이 edge 커밋의 조상이 아님) -> APPROVAL_AFTER."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row = _u16_row("MINI-UNCHK-003", "NO")
+    digest = _u16_row_canonical_digest(row)
+    _write_u16_register(tmp_path, [row])
+    _git_commit_all(tmp_path, "born NO (no approval yet)", "2026-01-01T00:00:00Z")
+
+    reviewer_rel = "docs/reviews/u16/REVIEW-3.md"
+    _write_u16_reviewer(tmp_path, reviewer_rel, digest)
+    reviewer_commit = _git_commit_all(
+        tmp_path, "reviewer after the fact", "2026-01-02T00:00:00Z"
+    )
+    _write_u16_ledger(
+        tmp_path,
+        [
+            (
+                row["id"],
+                "ABSENT->NO",
+                digest,
+                reviewer_commit,
+                reviewer_rel,
+                U16_RATIONALE_REF,
+            )
+        ],
+    )
+    _git_commit_all(tmp_path, "ledger after the fact", "2026-01-03T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_AFTER" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_4_born_no_without_approval_is_blocked(tmp_path: Path) -> None:
+    """④ 출생-NO 무승인 -> 차단 (ABSENT->NO 간선 포섭 증명)."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row = _u16_row("MINI-UNCHK-004", "NO")
+    _write_u16_ledger(tmp_path, [])
+    _write_u16_register(tmp_path, [row])
+    _git_commit_all(tmp_path, "born NO directly, no approval", "2026-01-01T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_MISSING" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_5_delete_then_reintroduce_as_no_is_blocked(tmp_path: Path) -> None:
+    """⑤ YES 행 삭제 후 다른 id 로 NO 재도입 -> ABSENT->NO 포섭·차단."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row_yes = _u16_row("MINI-UNCHK-005", "YES")
+    _write_u16_register(tmp_path, [row_yes])
+    _write_u16_ledger(tmp_path, [])
+    _git_commit_all(tmp_path, "born YES", "2026-01-01T00:00:00Z")
+
+    _write_u16_register(tmp_path, [])
+    _git_commit_all(tmp_path, "delete row entirely", "2026-01-02T00:00:00Z")
+
+    row_no = _u16_row("MINI-UNCHK-005B", "NO")
+    _write_u16_register(tmp_path, [row_no])
+    _git_commit_all(tmp_path, "reintroduce under new id as NO", "2026-01-03T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert ctx.state_lines[-1] != "closable_no_provenance_state=NO_ROWS_CLEAR"
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_6_orphan_approval_row_is_malformed(tmp_path: Path) -> None:
+    """⑥ 레지스터에 없는 row_id 를 가리키는 승인 행 -> APPROVAL_MALFORMED(고아)."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row = _u16_row("MINI-UNCHK-006", "NO")
+    digest = _u16_row_canonical_digest(row)
+    reviewer_rel = "docs/reviews/u16/REVIEW-6.md"
+    _write_u16_reviewer(tmp_path, reviewer_rel, digest)
+    reviewer_commit = _git_commit_all(tmp_path, "reviewer", "2026-01-01T00:00:00Z")
+    _write_u16_ledger(
+        tmp_path,
+        [
+            (
+                "MINI-UNCHK-DOES-NOT-EXIST",
+                "ABSENT->NO",
+                digest,
+                reviewer_commit,
+                reviewer_rel,
+                U16_RATIONALE_REF,
+            )
+        ],
+    )
+    _git_commit_all(
+        tmp_path, "orphan ledger row (unrelated id)", "2026-01-02T00:00:00Z"
+    )
+    _write_u16_register(tmp_path, [row])
+    _git_commit_all(tmp_path, "register born-NO (different id)", "2026-01-03T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_MALFORMED" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_7_shallow_clone_is_provenance_unverifiable(tmp_path: Path) -> None:
+    """⑦ 얕은 클론(--depth 1) -> PROVENANCE_UNVERIFIABLE (green 이면 실패)."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _u16_build_basic_chain(src, row_id="MINI-UNCHK-007")
+    clone_dir = tmp_path / "clone"
+    subprocess.run(
+        ["git", "clone", "--depth", "1", f"file://{src}", str(clone_dir)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    ctx, findings = _run_ctx(clone_dir)
+    assert "closable_no_provenance_state=PROVENANCE_UNVERIFIABLE" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_8_unbound_digest_is_red(tmp_path: Path) -> None:
+    """⑧ 무관한 기존 리뷰(digest 미포함)를 가리키는 승인 -> APPROVAL_UNBOUND."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row = _u16_row("MINI-UNCHK-008", "NO")
+    digest = _u16_row_canonical_digest(row)
+    reviewer_rel = "docs/reviews/u16/REVIEW-8.md"
+    (tmp_path / reviewer_rel).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / reviewer_rel).write_text(
+        "# unrelated review, digest not present here\n", encoding="utf-8"
+    )
+    reviewer_commit = _git_commit_all(
+        tmp_path, "unrelated reviewer artifact", "2026-01-01T00:00:00Z"
+    )
+    _write_u16_ledger(
+        tmp_path,
+        [
+            (
+                row["id"],
+                "ABSENT->NO",
+                digest,
+                reviewer_commit,
+                reviewer_rel,
+                U16_RATIONALE_REF,
+            )
+        ],
+    )
+    _git_commit_all(
+        tmp_path, "ledger points at unbound reviewer", "2026-01-02T00:00:00Z"
+    )
+    _write_u16_register(tmp_path, [row])
+    _git_commit_all(tmp_path, "register born-NO", "2026-01-03T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_UNBOUND" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_9a_head_invalid_non_ancestor(tmp_path: Path) -> None:
+    """⑨(a) approved_at_head 가 edge 커밋의 비조상(형제 브랜치) -> APPROVAL_HEAD_INVALID."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row = _u16_row("MINI-UNCHK-009A", "NO")
+    digest = _u16_row_canonical_digest(row)
+    _git_commit_all(tmp_path, "base", "2026-01-01T00:00:00Z")
+    main_branch = _git_current_branch(tmp_path)
+
+    _git_checkout_new_branch(tmp_path, "side")
+    reviewer_rel = "docs/reviews/u16/REVIEW-9a.md"
+    _write_u16_reviewer(tmp_path, reviewer_rel, digest)
+    side_commit = _git_commit_all(
+        tmp_path, "reviewer on side branch (never merged)", "2026-01-02T00:00:00Z"
+    )
+
+    _git_checkout(tmp_path, main_branch)
+    _write_u16_ledger(
+        tmp_path,
+        [
+            (
+                row["id"],
+                "ABSENT->NO",
+                digest,
+                side_commit,
+                reviewer_rel,
+                U16_RATIONALE_REF,
+            )
+        ],
+    )
+    _git_commit_all(tmp_path, "ledger references side commit", "2026-01-03T00:00:00Z")
+    _write_u16_register(tmp_path, [row])
+    _git_commit_all(tmp_path, "register born-NO on main", "2026-01-04T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_HEAD_INVALID" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_9b_head_invalid_missing_reviewer_at_head(tmp_path: Path) -> None:
+    """⑨(b) approved_at_head 는 조상이나 그 시점 reviewer_ref 부재 -> APPROVAL_HEAD_INVALID."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row = _u16_row("MINI-UNCHK-009B", "NO")
+    digest = _u16_row_canonical_digest(row)
+    base_commit = _git_commit_all(
+        tmp_path, "base (no reviewer file yet)", "2026-01-01T00:00:00Z"
+    )
+
+    reviewer_rel = "docs/reviews/u16/REVIEW-9b.md"  # 어느 커밋에도 실재하지 않는다.
+    _write_u16_ledger(
+        tmp_path,
+        [
+            (
+                row["id"],
+                "ABSENT->NO",
+                digest,
+                base_commit,
+                reviewer_rel,
+                U16_RATIONALE_REF,
+            )
+        ],
+    )
+    _git_commit_all(
+        tmp_path,
+        "ledger references base (reviewer absent there)",
+        "2026-01-02T00:00:00Z",
+    )
+    _write_u16_register(tmp_path, [row])
+    _git_commit_all(tmp_path, "register born-NO", "2026-01-03T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_HEAD_INVALID" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_10_content_drift_is_red(tmp_path: Path) -> None:
+    """⑩ 승인·전이 후 레지스터 행 내용 변경 -> APPROVAL_CONTENT_DRIFT."""
+    chain = _u16_build_basic_chain(tmp_path, row_id="MINI-UNCHK-010")
+    mutated_row = dict(chain["row"], reason="mutated reason text (post-approval)")
+    _write_u16_register(tmp_path, [mutated_row])
+    _git_commit_all(
+        tmp_path, "mutate NO row content post-approval", "2026-01-04T00:00:00Z"
+    )
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_CONTENT_DRIFT" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_11_transition_mismatch_is_malformed(tmp_path: Path) -> None:
+    """⑪ 원장 transition=YES->NO 기재·실간선=ABSENT->NO -> MALFORMED."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row = _u16_row("MINI-UNCHK-011", "NO")
+    digest = _u16_row_canonical_digest(row)
+    reviewer_rel = "docs/reviews/u16/REVIEW-11.md"
+    _write_u16_reviewer(tmp_path, reviewer_rel, digest)
+    reviewer_commit = _git_commit_all(tmp_path, "reviewer", "2026-01-01T00:00:00Z")
+    _write_u16_ledger(
+        tmp_path,
+        [
+            (
+                row["id"],
+                "YES->NO",
+                digest,
+                reviewer_commit,
+                reviewer_rel,
+                U16_RATIONALE_REF,
+            )
+        ],
+    )
+    _git_commit_all(
+        tmp_path, "ledger declares wrong transition", "2026-01-02T00:00:00Z"
+    )
+    _write_u16_register(tmp_path, [row])
+    _git_commit_all(
+        tmp_path, "register born-NO (ABSENT->NO in reality)", "2026-01-03T00:00:00Z"
+    )
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_MALFORMED" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_12_late_digest_insertion_still_unbound(tmp_path: Path) -> None:
+    """⑫ H0(무관 리뷰)->H1(승인)->H2(전이)->H3(리뷰에 digest 사후 삽입) -> APPROVAL_UNBOUND."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row = _u16_row("MINI-UNCHK-012", "NO")
+    digest = _u16_row_canonical_digest(row)
+    reviewer_rel = "docs/reviews/u16/REVIEW-12.md"
+    _write_u16_reviewer(tmp_path, reviewer_rel, "0" * 64)
+    h0 = _git_commit_all(tmp_path, "H0 unrelated review", "2026-01-01T00:00:00Z")
+
+    _write_u16_ledger(
+        tmp_path,
+        [(row["id"], "ABSENT->NO", digest, h0, reviewer_rel, U16_RATIONALE_REF)],
+    )
+    _git_commit_all(tmp_path, "H1 approval referencing H0", "2026-01-02T00:00:00Z")
+
+    _write_u16_register(tmp_path, [row])
+    _git_commit_all(tmp_path, "H2 transition", "2026-01-03T00:00:00Z")
+
+    _write_u16_reviewer(tmp_path, reviewer_rel, digest)
+    _git_commit_all(tmp_path, "H3 late digest insertion", "2026-01-04T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_UNBOUND" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_13_row_mutated_is_red(tmp_path: Path) -> None:
+    """⑬ 원장 행 도입 후 편집(구조 키는 그대로) -> APPROVAL_ROW_MUTATED."""
+    chain = _u16_build_basic_chain(tmp_path, row_id="MINI-UNCHK-013")
+    _write_u16_ledger(
+        tmp_path,
+        [
+            (
+                chain["row_id"],
+                "ABSENT->NO",
+                chain["digest"],
+                chain["reviewer_commit"],
+                chain["reviewer_rel"],
+                U16_RATIONALE_REF_ALT,  # rationale_ref 만 편집 — 구조 키(row_id/transition/digest) 불변.
+            )
+        ],
+    )
+    _git_commit_all(
+        tmp_path, "edit ledger row after introduction", "2026-01-04T00:00:00Z"
+    )
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_ROW_MUTATED" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_14_merge_unapproved_side_edge_breaks_universal(
+    tmp_path: Path,
+) -> None:
+    """⑭ 2-parent 위상 — X 브랜치 무승인 NO 가 merge 를 거쳐도 전칭을 깬다."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row_id = "MINI-UNCHK-014"
+    row_yes = _u16_row(row_id, "YES")
+    _write_u16_ledger(tmp_path, [])
+    _write_u16_register(tmp_path, [row_yes])
+    _git_commit_all(tmp_path, "G: YES", "2026-01-01T00:00:00Z")
+    main_branch = _git_current_branch(tmp_path)
+
+    _git_checkout_new_branch(tmp_path, "x-branch")
+    row_no = dict(row_yes, closable="NO")
+    _write_u16_register(tmp_path, [row_no])
+    _git_commit_all(tmp_path, "X: unapproved NO", "2026-01-02T00:00:00Z")
+
+    _git_checkout(tmp_path, main_branch)
+    _git_checkout_new_branch(tmp_path, "a-branch")
+    digest = _u16_row_canonical_digest(row_no)
+    reviewer_rel = "docs/reviews/u16/REVIEW-14.md"
+    _write_u16_reviewer(tmp_path, reviewer_rel, digest)
+    reviewer_commit = _git_commit_all(
+        tmp_path, "reviewer on A branch", "2026-01-03T00:00:00Z"
+    )
+    _write_u16_ledger(
+        tmp_path,
+        [
+            (
+                row_id,
+                "ABSENT->NO",
+                digest,
+                reviewer_commit,
+                reviewer_rel,
+                U16_RATIONALE_REF,
+            )
+        ],
+    )
+    _git_commit_all(tmp_path, "A: unrelated approval row added", "2026-01-04T00:00:00Z")
+
+    _git_checkout(tmp_path, main_branch)
+    _git_merge(tmp_path, "x-branch", "merge X into main", "2026-01-05T00:00:00Z")
+    _git_merge(tmp_path, "a-branch", "merge A into main", "2026-01-06T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert ctx.state_lines[-1] != "closable_no_provenance_state=NO_ROWS_CLEAR"
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_15_r_parallel_a_merge_is_order_invalid(tmp_path: Path) -> None:
+    """⑮ R∥A 병렬 머지 — g3 은 통과(둘 다 조상)하지만 R⋠A -> APPROVAL_ORDER_INVALID."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row_id = "MINI-UNCHK-015"
+    row_yes = _u16_row(row_id, "YES")
+    row_no = dict(row_yes, closable="NO")
+    digest = _u16_row_canonical_digest(row_no)
+    reviewer_rel = "docs/reviews/u16/REVIEW-15.md"
+
+    _write_u16_register(tmp_path, [row_yes])
+    _write_u16_ledger(tmp_path, [])
+    _git_commit_all(tmp_path, "H0: YES, empty ledger", "2026-01-01T00:00:00Z")
+    main_branch = _git_current_branch(tmp_path)
+
+    _git_checkout_new_branch(tmp_path, "r-branch")
+    _write_u16_reviewer(tmp_path, reviewer_rel, digest)
+    r_commit = _git_commit_all(tmp_path, "R: reviewer artifact", "2026-01-02T00:00:00Z")
+
+    _git_checkout(tmp_path, main_branch)
+    _git_checkout_new_branch(tmp_path, "a-branch")
+    _write_u16_ledger(
+        tmp_path,
+        [(row_id, "YES->NO", digest, r_commit, reviewer_rel, U16_RATIONALE_REF)],
+    )
+    _git_commit_all(
+        tmp_path,
+        "A: approval row referencing R (parallel branch)",
+        "2026-01-03T00:00:00Z",
+    )
+
+    _git_checkout(tmp_path, main_branch)
+    _git_merge(tmp_path, "r-branch", "merge R into main", "2026-01-04T00:00:00Z")
+    _git_merge(tmp_path, "a-branch", "merge A into main", "2026-01-05T00:00:00Z")
+
+    _write_u16_register(tmp_path, [row_no])
+    _git_commit_all(tmp_path, "transition to NO", "2026-01-06T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_ORDER_INVALID" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_17a_existing_path_parallel_order_invalid(tmp_path: Path) -> None:
+    """⑰ⓐ 기존 경로 B∥A — C_R={B}(blob 동일성)·B⋠A -> APPROVAL_ORDER_INVALID."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row_id = "MINI-UNCHK-017A"
+    row_yes = _u16_row(row_id, "YES")
+    row_no = dict(row_yes, closable="NO")
+    digest = _u16_row_canonical_digest(row_no)
+    reviewer_rel = "docs/reviews/u16/REVIEW-17A.md"
+
+    _write_u16_register(tmp_path, [row_yes])
+    _write_u16_ledger(tmp_path, [])
+    (tmp_path / reviewer_rel).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / reviewer_rel).write_text(
+        "# unrelated placeholder, no digest\n", encoding="utf-8"
+    )
+    _git_commit_all(
+        tmp_path,
+        "H0: YES, empty ledger, unrelated reviewer path",
+        "2026-01-01T00:00:00Z",
+    )
+    main_branch = _git_current_branch(tmp_path)
+
+    _git_checkout_new_branch(tmp_path, "b-branch")
+    _write_u16_reviewer(
+        tmp_path, reviewer_rel, digest
+    )  # B: 같은 경로를 실제 내용으로 덮어쓴다.
+    b_commit = _git_commit_all(
+        tmp_path, "B: insert digest into existing path", "2026-01-02T00:00:00Z"
+    )
+
+    _git_checkout(tmp_path, main_branch)
+    _git_checkout_new_branch(tmp_path, "a-branch")
+    _write_u16_ledger(
+        tmp_path,
+        [(row_id, "YES->NO", digest, b_commit, reviewer_rel, U16_RATIONALE_REF)],
+    )
+    _git_commit_all(
+        tmp_path,
+        "A: approval row referencing B (parallel branch)",
+        "2026-01-03T00:00:00Z",
+    )
+
+    _git_checkout(tmp_path, main_branch)
+    _git_merge(tmp_path, "b-branch", "merge B into main", "2026-01-04T00:00:00Z")
+    _git_merge(tmp_path, "a-branch", "merge A into main", "2026-01-05T00:00:00Z")
+
+    _write_u16_register(tmp_path, [row_no])
+    _git_commit_all(tmp_path, "transition to NO", "2026-01-06T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_ORDER_INVALID" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_17b_digest_introduced_after_approved_at_head_is_unbound(
+    tmp_path: Path,
+) -> None:
+    """⑰ⓑ digest 는 approved_at_head(B) 이후 별도 브랜치에서 도입 -> h 선발화 -> APPROVAL_UNBOUND."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row_id = "MINI-UNCHK-017B"
+    row_yes = _u16_row(row_id, "YES")
+    row_no = dict(row_yes, closable="NO")
+    digest = _u16_row_canonical_digest(row_no)
+    reviewer_rel = "docs/reviews/u16/REVIEW-17B.md"
+
+    _write_u16_register(tmp_path, [row_yes])
+    _write_u16_ledger(tmp_path, [])
+    (tmp_path / reviewer_rel).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / reviewer_rel).write_text(
+        "# unrelated placeholder, no digest\n", encoding="utf-8"
+    )
+    _git_commit_all(
+        tmp_path,
+        "H0: YES, empty ledger, unrelated reviewer path",
+        "2026-01-01T00:00:00Z",
+    )
+    main_branch = _git_current_branch(tmp_path)
+
+    _git_checkout_new_branch(tmp_path, "b-branch")
+    # B 는 승인 대상 커밋이지만 reviewer 파일은 그대로(digest 없음) — approved_at_head 로 쓰인다.
+    b_commit = _git_commit_all(
+        tmp_path, "B: approved_at_head marker (no digest yet)", "2026-01-02T00:00:00Z"
+    )
+
+    _git_checkout(tmp_path, main_branch)
+    _git_checkout_new_branch(tmp_path, "digest-branch")
+    _write_u16_reviewer(
+        tmp_path, reviewer_rel, digest
+    )  # digest 는 별도 브랜치에서 도입.
+    _git_commit_all(
+        tmp_path, "D: insert digest on a separate branch", "2026-01-02T30:00:00Z"
+    )
+
+    _git_checkout(tmp_path, main_branch)
+    _git_checkout_new_branch(tmp_path, "a-branch")
+    _write_u16_ledger(
+        tmp_path,
+        [(row_id, "YES->NO", digest, b_commit, reviewer_rel, U16_RATIONALE_REF)],
+    )
+    _git_commit_all(tmp_path, "A: approval row referencing B", "2026-01-03T00:00:00Z")
+
+    _git_checkout(tmp_path, main_branch)
+    _git_merge(
+        tmp_path,
+        "digest-branch",
+        "merge digest-branch into main",
+        "2026-01-04T00:00:00Z",
+    )
+    _git_merge(tmp_path, "b-branch", "merge B into main", "2026-01-05T00:00:00Z")
+    _git_merge(tmp_path, "a-branch", "merge A into main", "2026-01-06T00:00:00Z")
+
+    _write_u16_register(tmp_path, [row_no])
+    _git_commit_all(tmp_path, "transition to NO", "2026-01-07T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_UNBOUND" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_17c_shared_reviewer_blob_witness_exists_is_green(
+    tmp_path: Path,
+) -> None:
+    """⑰ⓒ 양성 — B1·B2 가 동일 blob 을 독립 삽입, A 는 B1 자손 -> B1⊰A 증인 존재 -> green."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row_id = "MINI-UNCHK-017C"
+    row_yes = _u16_row(row_id, "YES")
+    row_no = dict(row_yes, closable="NO")
+    digest = _u16_row_canonical_digest(row_no)
+    reviewer_rel = "docs/reviews/u16/REVIEW-17C.md"
+
+    _write_u16_register(tmp_path, [row_yes])
+    _write_u16_ledger(tmp_path, [])
+    h0 = _git_commit_all(
+        tmp_path, "H0: YES, empty ledger, no reviewer file", "2026-01-01T00:00:00Z"
+    )
+    main_branch = _git_current_branch(tmp_path)
+
+    _git_checkout_new_branch(tmp_path, "b1-branch")
+    _write_u16_reviewer(tmp_path, reviewer_rel, digest)
+    b1_commit = _git_commit_all(
+        tmp_path, "B1: reviewer content", "2026-01-02T00:00:00Z"
+    )
+    _write_u16_ledger(
+        tmp_path,
+        [(row_id, "YES->NO", digest, b1_commit, reviewer_rel, U16_RATIONALE_REF)],
+    )
+    _git_commit_all(
+        tmp_path, "A: approval row descending from B1", "2026-01-03T00:00:00Z"
+    )
+
+    _git_checkout(tmp_path, main_branch)
+    _git_checkout_new_branch(tmp_path, "b2-branch")
+    _write_u16_reviewer(tmp_path, reviewer_rel, digest)  # 바이트-동일 독립 삽입.
+    _git_commit_all(
+        tmp_path,
+        "B2: identical reviewer content, independent branch",
+        "2026-01-02T30:00:00Z",
+    )
+
+    _git_checkout(tmp_path, main_branch)
+    _git_merge(tmp_path, "b1-branch", "merge B1+A into main", "2026-01-04T00:00:00Z")
+    _git_merge(tmp_path, "b2-branch", "merge B2 into main", "2026-01-05T00:00:00Z")
+
+    _write_u16_register(tmp_path, [row_no])
+    _git_commit_all(tmp_path, "transition to NO", "2026-01-06T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=NO_ROWS_CLEAR" in ctx.state_lines
+    assert "U-16" not in _ids(findings)
+    assert h0  # H0 는 대조군 증거일 뿐 assert 대상 아님 — 참조로 lint 무시 방지.
+
+
+def test_u16_battery_18_sibling_branches_each_approve_one_edge_is_green(
+    tmp_path: Path,
+) -> None:
+    """⑱ 병렬 반복 이력 양성 — 두 →NO 간선을 형제 브랜치가 각각 승인 -> NO_ROWS_CLEAR."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row_id = "MINI-UNCHK-018"
+    row_no = _u16_row(row_id, "NO")
+    row_yes = dict(row_no, closable="YES")
+    digest = _u16_row_canonical_digest(row_no)
+    reviewer_rel1 = "docs/reviews/u16/REVIEW-18-1.md"
+    reviewer_rel2 = "docs/reviews/u16/REVIEW-18-2.md"
+
+    _write_u16_reviewer(tmp_path, reviewer_rel1, digest)
+    _write_u16_reviewer(tmp_path, reviewer_rel2, digest)
+    _write_u16_ledger(tmp_path, [])
+    h0 = _git_commit_all(
+        tmp_path,
+        "H0: reviewers ready, no register yet, empty ledger",
+        "2026-01-01T00:00:00Z",
+    )
+    main_branch = _git_current_branch(tmp_path)
+
+    row1 = (row_id, "ABSENT->NO", digest, h0, reviewer_rel1, U16_RATIONALE_REF)
+    row2 = (row_id, "YES->NO", digest, h0, reviewer_rel2, U16_RATIONALE_REF_ALT)
+
+    _git_checkout_new_branch(tmp_path, "ledger1-branch")
+    _write_u16_ledger(tmp_path, [row1])
+    _git_commit_all(tmp_path, "L1: approve edge 1 (ABSENT->NO)", "2026-01-02T00:00:00Z")
+
+    _git_checkout(tmp_path, main_branch)
+    _git_checkout_new_branch(tmp_path, "ledger2-branch")
+    _write_u16_ledger(tmp_path, [row2])
+    _git_commit_all(tmp_path, "L2: approve edge 2 (YES->NO)", "2026-01-02T30:00:00Z")
+
+    _git_checkout(tmp_path, main_branch)
+    _git_merge_resolving(
+        tmp_path,
+        "ledger1-branch",
+        "merge L1 into main",
+        "2026-01-03T00:00:00Z",
+        {str(tcs.U16_LEDGER_REL): _u16_ledger_text([row1]).encode("utf-8")},
+    )
+    _git_merge_resolving(
+        tmp_path,
+        "ledger2-branch",
+        "merge L2 into main",
+        "2026-01-04T00:00:00Z",
+        {str(tcs.U16_LEDGER_REL): _u16_ledger_text([row1, row2]).encode("utf-8")},
+    )
+
+    _write_u16_register(tmp_path, [row_no])
+    _git_commit_all(tmp_path, "C1: born NO (edge 1)", "2026-01-05T00:00:00Z")
+    _write_u16_register(tmp_path, [row_yes])
+    _git_commit_all(tmp_path, "C2: flip to YES", "2026-01-06T00:00:00Z")
+    _write_u16_register(tmp_path, [row_no])
+    _git_commit_all(tmp_path, "C3: back to NO (edge 2)", "2026-01-07T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=NO_ROWS_CLEAR" in ctx.state_lines
+    assert "U-16" not in _ids(findings)
+
+
+def test_u16_battery_19_preplaced_digest_carrier_is_order_invalid(
+    tmp_path: Path,
+) -> None:
+    """⑲ digest 선배치 — 빈 운반자(H0) != 실내용 blob(B) -> C_R={B}·B⋠A -> APPROVAL_ORDER_INVALID."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row_id = "MINI-UNCHK-019"
+    row_yes = _u16_row(row_id, "YES")
+    row_no = dict(row_yes, closable="NO")
+    digest = _u16_row_canonical_digest(row_no)
+    reviewer_rel = "docs/reviews/u16/REVIEW-19.md"
+
+    _write_u16_register(tmp_path, [row_yes])
+    _write_u16_ledger(tmp_path, [])
+    (tmp_path / reviewer_rel).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / reviewer_rel).write_text(
+        f"row_content_digest = {digest}\n", encoding="utf-8"
+    )  # H0: digest 만 담은 빈 운반자.
+    _git_commit_all(tmp_path, "H0: bare digest carrier", "2026-01-01T00:00:00Z")
+    main_branch = _git_current_branch(tmp_path)
+
+    _git_checkout_new_branch(tmp_path, "b-branch")
+    (tmp_path / reviewer_rel).write_text(
+        "# Full review write-up\n\n"
+        f"row_content_digest = {digest}\n\n"
+        "(실제 심사 서술 — H0 운반자와 바이트가 다르다.)\n",
+        encoding="utf-8",
+    )
+    b_commit = _git_commit_all(
+        tmp_path,
+        "B: full review content (still contains digest)",
+        "2026-01-02T00:00:00Z",
+    )
+
+    _git_checkout(tmp_path, main_branch)
+    _git_checkout_new_branch(tmp_path, "a-branch")
+    _write_u16_ledger(
+        tmp_path,
+        [(row_id, "YES->NO", digest, b_commit, reviewer_rel, U16_RATIONALE_REF)],
+    )
+    _git_commit_all(
+        tmp_path,
+        "A: approval row referencing B (parallel branch)",
+        "2026-01-03T00:00:00Z",
+    )
+
+    _git_checkout(tmp_path, main_branch)
+    _git_merge(tmp_path, "b-branch", "merge B into main", "2026-01-04T00:00:00Z")
+    _git_merge(tmp_path, "a-branch", "merge A into main", "2026-01-05T00:00:00Z")
+
+    _write_u16_register(tmp_path, [row_no])
+    _git_commit_all(tmp_path, "transition to NO", "2026-01-06T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_ORDER_INVALID" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_20a_identical_sibling_ledger_rows_is_malformed(
+    tmp_path: Path,
+) -> None:
+    """⑳ⓐ 동일 승인 행을 형제 둘이 독립 도입 후 merge -> |c_APP|=2 -> APPROVAL_MALFORMED."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row_id = "MINI-UNCHK-020A"
+    row_yes = _u16_row(row_id, "YES")
+    row_no = dict(row_yes, closable="NO")
+    digest = _u16_row_canonical_digest(row_no)
+    reviewer_rel = "docs/reviews/u16/REVIEW-20A.md"
+
+    _write_u16_reviewer(tmp_path, reviewer_rel, digest)
+    _write_u16_register(tmp_path, [row_yes])
+    _write_u16_ledger(tmp_path, [])
+    h0 = _git_commit_all(
+        tmp_path, "H0: YES, reviewer ready, empty ledger", "2026-01-01T00:00:00Z"
+    )
+    main_branch = _git_current_branch(tmp_path)
+
+    shared_row = (row_id, "YES->NO", digest, h0, reviewer_rel, U16_RATIONALE_REF)
+
+    _git_checkout_new_branch(tmp_path, "s1-branch")
+    _write_u16_ledger(tmp_path, [shared_row])
+    _git_commit_all(tmp_path, "S1: introduce approval row", "2026-01-02T00:00:00Z")
+
+    _git_checkout(tmp_path, main_branch)
+    _git_checkout_new_branch(tmp_path, "s2-branch")
+    _write_u16_ledger(tmp_path, [shared_row])  # byte-동일 독립 도입.
+    _git_commit_all(
+        tmp_path, "S2: introduce identical approval row", "2026-01-02T30:00:00Z"
+    )
+
+    _git_checkout(tmp_path, main_branch)
+    _git_merge_resolving(
+        tmp_path,
+        "s1-branch",
+        "merge S1 into main",
+        "2026-01-03T00:00:00Z",
+        {str(tcs.U16_LEDGER_REL): _u16_ledger_text([shared_row]).encode("utf-8")},
+    )
+    _git_merge_resolving(
+        tmp_path,
+        "s2-branch",
+        "merge S2 into main",
+        "2026-01-04T00:00:00Z",
+        {str(tcs.U16_LEDGER_REL): _u16_ledger_text([shared_row]).encode("utf-8")},
+    )
+
+    _write_u16_register(tmp_path, [row_no])
+    _git_commit_all(tmp_path, "transition to NO", "2026-01-05T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=APPROVAL_MALFORMED" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_20b_shallow_clone_of_20a_is_provenance_unverifiable(
+    tmp_path: Path,
+) -> None:
+    """⑳ⓑ ⑳ⓐ 를 얕은 클론에서 — 선-검사 전순서(2 < 3) -> PROVENANCE_UNVERIFIABLE."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _git_init(src)
+    _write_u16_rationale_doc(src)
+    row_id = "MINI-UNCHK-020B"
+    row_yes = _u16_row(row_id, "YES")
+    row_no = dict(row_yes, closable="NO")
+    digest = _u16_row_canonical_digest(row_no)
+    reviewer_rel = "docs/reviews/u16/REVIEW-20B.md"
+
+    _write_u16_reviewer(src, reviewer_rel, digest)
+    _write_u16_register(src, [row_yes])
+    _write_u16_ledger(src, [])
+    h0 = _git_commit_all(
+        src, "H0: YES, reviewer ready, empty ledger", "2026-01-01T00:00:00Z"
+    )
+    main_branch = _git_current_branch(src)
+
+    shared_row = (row_id, "YES->NO", digest, h0, reviewer_rel, U16_RATIONALE_REF)
+
+    _git_checkout_new_branch(src, "s1-branch")
+    _write_u16_ledger(src, [shared_row])
+    _git_commit_all(src, "S1: introduce approval row", "2026-01-02T00:00:00Z")
+
+    _git_checkout(src, main_branch)
+    _git_checkout_new_branch(src, "s2-branch")
+    _write_u16_ledger(src, [shared_row])
+    _git_commit_all(src, "S2: introduce identical approval row", "2026-01-02T30:00:00Z")
+
+    _git_checkout(src, main_branch)
+    _git_merge_resolving(
+        src,
+        "s1-branch",
+        "merge S1 into main",
+        "2026-01-03T00:00:00Z",
+        {str(tcs.U16_LEDGER_REL): _u16_ledger_text([shared_row]).encode("utf-8")},
+    )
+    _git_merge_resolving(
+        src,
+        "s2-branch",
+        "merge S2 into main",
+        "2026-01-04T00:00:00Z",
+        {str(tcs.U16_LEDGER_REL): _u16_ledger_text([shared_row]).encode("utf-8")},
+    )
+
+    _write_u16_register(src, [row_no])
+    _git_commit_all(src, "transition to NO", "2026-01-05T00:00:00Z")
+
+    clone_dir = tmp_path / "clone"
+    subprocess.run(
+        ["git", "clone", "--depth", "1", f"file://{src}", str(clone_dir)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    ctx, findings = _run_ctx(clone_dir)
+    assert "closable_no_provenance_state=PROVENANCE_UNVERIFIABLE" in ctx.state_lines
+    assert "U-16" in _ids(findings)
+
+
+def test_u16_battery_16_repeated_no_transitions_each_approved_is_green(
+    tmp_path: Path,
+) -> None:
+    """⑯ 양성 — ABSENT->NO->YES->NO 선형 반복, 두 간선 각각 승인 -> NO_ROWS_CLEAR."""
+    _git_init(tmp_path)
+    _write_u16_rationale_doc(tmp_path)
+    row_id = "MINI-UNCHK-016"
+    row_no = _u16_row(row_id, "NO")
+    digest_no = _u16_row_canonical_digest(row_no)
+
+    reviewer_rel1 = "docs/reviews/u16/REVIEW-16-1.md"
+    _write_u16_reviewer(tmp_path, reviewer_rel1, digest_no)
+    r1 = _git_commit_all(tmp_path, "reviewer 1", "2026-01-01T00:00:00Z")
+    _write_u16_ledger(
+        tmp_path,
+        [(row_id, "ABSENT->NO", digest_no, r1, reviewer_rel1, U16_RATIONALE_REF)],
+    )
+    _git_commit_all(tmp_path, "approve edge 1 (ABSENT->NO)", "2026-01-02T00:00:00Z")
+    _write_u16_register(tmp_path, [row_no])
+    _git_commit_all(tmp_path, "C1: born NO", "2026-01-03T00:00:00Z")
+
+    row_yes = dict(row_no, closable="YES")
+    _write_u16_register(tmp_path, [row_yes])
+    _git_commit_all(tmp_path, "C2: flip to YES", "2026-01-04T00:00:00Z")
+
+    reviewer_rel2 = "docs/reviews/u16/REVIEW-16-2.md"
+    _write_u16_reviewer(tmp_path, reviewer_rel2, digest_no)
+    r2 = _git_commit_all(tmp_path, "reviewer 2", "2026-01-05T00:00:00Z")
+    _write_u16_ledger(
+        tmp_path,
+        [
+            (row_id, "ABSENT->NO", digest_no, r1, reviewer_rel1, U16_RATIONALE_REF),
+            (row_id, "YES->NO", digest_no, r2, reviewer_rel2, U16_RATIONALE_REF),
+        ],
+    )
+    _git_commit_all(tmp_path, "approve edge 2 (YES->NO)", "2026-01-06T00:00:00Z")
+    _write_u16_register(tmp_path, [row_no])
+    _git_commit_all(tmp_path, "C3: back to NO (2nd time)", "2026-01-07T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=NO_ROWS_CLEAR" in ctx.state_lines
+    assert "U-16" not in _ids(findings)
+
+
+def test_u16_battery_20c_graft_on_origin_does_not_affect_snapshot_judgment(
+    tmp_path: Path,
+) -> None:
+    """⑳ⓒ 격리 검증 — 원본에 graft 를 심어도 스냅샷 소비 구현은 판정 불변."""
+    _u16_build_basic_chain(tmp_path, row_id="MINI-UNCHK-020C")
+    ctx_before, findings_before = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=NO_ROWS_CLEAR" in ctx_before.state_lines
+    assert "U-16" not in _ids(findings_before)
+
+    head = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+    root_commit = (
+        _git(tmp_path, "rev-list", "--max-parents=0", "HEAD")
+        .stdout.strip()
+        .splitlines()[0]
+    )
+    # 후보 밖 graft — HEAD 를 자기 자신의 조상(가짜 root)에 접붙인다.  U-16
+    # 판정과 무관한 커밋에만 영향을 주므로 판정 자체는 불변이어야 한다.
+    _git(tmp_path, "replace", "--graft", root_commit, root_commit)
+
+    ctx_after, findings_after = _run_ctx(tmp_path)
+    assert "closable_no_provenance_state=NO_ROWS_CLEAR" in ctx_after.state_lines
+    assert "U-16" not in _ids(findings_after)
+    assert head == _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
