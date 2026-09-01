@@ -5,14 +5,18 @@
 (blob 결속 — 이 파일은 절대 편집하지 않는다.  모호한 지점은
 ``python tools/tos_contract_index.py --locate <id>`` 로 절만 확인한다).
 
-이 검사기는 증분 C1 + C2a 가 강제하는 다음 등록 id만 다룬다::
+이 검사기는 증분 C1 + C2a + C2b 가 강제하는 다음 등록 id만 다룬다::
 
     K-1 · K-2 · K-3 · K-4 · K-5/FWD-METRICS · K-6 · K-9 · K-11 · K-12 · K-13
     · K-14 · U-14 (C1)
     U-12 · U-13 · U-1a · U-4 · U-5 (C2a)
+    U-15 (C2b — d0a_entry_state 9값 · d0a_entry_provenance_state 8값 두
+    상태 기계의 승계.  좌변 명세·회귀 기준선은 ``tools/tos_entry_harness.sh``
+    이며 그 판정 로직을 Python 으로 정확 복제한다.  우변은 §12.3.4 U-15-g
+    사후 provenance 관측이다.)
 
-``DEFERRED_CONTRACTS`` 에 등재된 계약(U-15 · U-16 · U-17 · T-71 축)은
-C2a 이후 소관이며, 이 파일에는 강제 지점이 없다(UNCHK-019 축 — 정직 노출).
+``DEFERRED_CONTRACTS`` 에 등재된 계약(U-16 · U-17 · T-71 축)은 C2b 이후
+소관이며, 이 파일에는 강제 지점이 없다(UNCHK-019 축 — 정직 노출).
 
 git 소비 규율 (C2a — §12.3.1 "공통: git 소비"): U-12/U-13 의 권위 판정
 입력(OQ-11 아티팩트 · bound 문서 2종 · OQ-11 원장)은 워킹트리가 아니라
@@ -64,6 +68,10 @@ OQ11_REL = Path("tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md")
 OQ11_LEDGER_REL = Path("tos-spec/src/part-1-foundation/decisions/OQ-11-RAISE-LEDGER.md")
 TOS_SPEC_SRC_REL = Path("tos-spec/src")
 
+# U-15 §12.3.4-R — tools/tos_entry_harness.sh 의 권위 입력 경로 (BP1/BP2 는
+# U12_BOUND_PATHS 와 정확히 같은 두 문서).
+STAMPS_REL = Path("docs/reviews/phase0-completion-contract")
+
 # U-12 §12.3.1 BOUND_PATHS — 정확히 이 둘 · 이 표기(경로 문자열이 digest 입력에 실린다).
 U12_BOUND_PATHS: tuple[Path, ...] = (
     Path("docs/plans/2026-08-12-tos-phase0-completion-contract-design.md"),
@@ -113,9 +121,8 @@ UNCHECKABLE_FIELDS = (
     "blocks_gate",
 )
 
-# C2a 이후 소관 — 이 파일에는 강제 지점이 없다 (UNCHK-019 축 · 정직 노출).
+# C2b 이후 소관 — 이 파일에는 강제 지점이 없다 (UNCHK-019 축 · 정직 노출).
 DEFERRED_CONTRACTS: tuple[str, ...] = (
-    "U-15",
     "U-16",
     "U-17",
     "T-71",
@@ -355,24 +362,51 @@ _OQ11_DISPOSITION_VOCAB = frozenset(
 )
 
 
-def _compute_bound_set_digest(
-    paths: Sequence[Path], commit: str, repo_root: Path
+def _bound_set_digest_from_getter(
+    paths: Sequence[Path], get_bytes: Callable[[str], bytes | None]
 ) -> str | None:
-    """U-12 digest 레시피 — 바이트 정확 복제.
+    """U-12/U-15 digest 레시피 공용 코어 — 바이트 정확 복제.
 
-    ``LC_ALL=C`` 정렬 후 각 경로의 ``commit`` 시점 blob sha256 hex 를
-    ``<hex>  <path>\\n`` 행으로 이어붙인 바이트열의 sha256 hex.  blob 이
-    하나라도 부재하면 ``None`` (호출자가 "(iv) 불일치로 접는다"를 담당).
+    ``LC_ALL=C`` 정렬 후 각 경로의 바이트열(``get_bytes`` 가 공급) sha256 hex
+    를 ``<hex>  <path>\\n`` 행으로 이어붙인 바이트열의 sha256 hex.  바이트를
+    하나라도 얻지 못하면 ``None`` (호출자가 "불일치로 접는다"를 담당).
     """
     posix_paths = sorted({p.as_posix() for p in paths})
     lines: list[bytes] = []
     for p in posix_paths:
-        blob = _git_show_blob(Path(p), commit, repo_root)
+        blob = get_bytes(p)
         if blob is None:
             return None
         file_hash = hashlib.sha256(blob).hexdigest()
         lines.append(f"{file_hash}  {p}\n".encode())
     return hashlib.sha256(b"".join(lines)).hexdigest()
+
+
+def _compute_bound_set_digest(
+    paths: Sequence[Path], commit: str, repo_root: Path
+) -> str | None:
+    """U-12 digest 레시피 — ``commit`` 시점 blob 기준(커밋-전용 규율)."""
+    return _bound_set_digest_from_getter(
+        paths, lambda p: _git_show_blob(Path(p), commit, repo_root)
+    )
+
+
+def _compute_bound_set_digest_worktree(
+    paths: Sequence[Path], repo_root: Path
+) -> str | None:
+    """U-15 R-2 digest 레시피 — **워킹트리 파일** 기준(§12.3.4-R 좌변 규율).
+
+    ``_compute_bound_set_digest`` 와 레시피(정렬·해시 결합)를 공유하되,
+    소스만 커밋 blob 대신 워킹트리 파일로 바뀐다.
+    """
+
+    def _read(p: str) -> bytes | None:
+        try:
+            return (repo_root / p).read_bytes()
+        except OSError:
+            return None
+
+    return _bound_set_digest_from_getter(paths, _read)
 
 
 def oq11_rebinding_required(
@@ -1469,6 +1503,508 @@ def check_u13(ctx: CheckContext) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# U-15 — d0a_entry_state(9값) · d0a_entry_provenance_state(8값) 두 상태 기계
+# (증분 C2b · §12.3.4-R · §12.3.4 U-15-g).  좌변 명세·회귀 기준선은
+# ``tools/tos_entry_harness.sh`` — 이 섹션은 그 판정 로직의 Python 복제다.
+# ---------------------------------------------------------------------------
+
+_D0A_ENTRY_STATES: tuple[str, ...] = (
+    "ENTRY_OK",
+    "HARNESS_ABORTED",
+    "FREEZE_VIOLATED",
+    "REBINDING_REQUIRED",
+    "APPROVAL_ABSENT",
+    "APPROVAL_NOT_APPROVE",
+    "APPROVAL_SCOPE_MISMATCH",
+    "APPROVAL_PROVENANCE_UNVERIFIABLE",
+    "APPROVAL_STALE",
+)
+
+_D0A_ENTRY_PROVENANCE_STATES: tuple[str, ...] = (
+    "ENTRY_PROVENANCE_CLEAR",
+    "NOT_STARTED",
+    "PROVENANCE_UNVERIFIABLE",
+    "MULTIPLE_INTRODUCTIONS",
+    "ENTRY_TRAILER_MALFORMED",
+    "PARENT_MISMATCH",
+    "TRANSCRIPT_NOT_ENTRY_OK",
+    "TRANSCRIPT_MISSING",
+)
+
+
+def _git_status_porcelain_paths(paths: Sequence[Path], repo_root: Path) -> str | None:
+    """``git status --porcelain -- <paths...>``.  실패 -> ``None``."""
+    args = ["git", "status", "--porcelain", "--", *[p.as_posix() for p in paths]]
+    try:
+        result = subprocess.run(
+            args,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _git_ls_tree_dirs(rel: Path, commit: str, repo_root: Path) -> list[str]:
+    """``git ls-tree -d --name-only <commit> <rel>/`` — 직계 하위 디렉터리만."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-tree", "-d", "--name-only", commit, f"{rel.as_posix()}/"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    # LC_ALL=C 정렬 — ASCII 이름(타임스탬프 디렉터리)은 codepoint 순과 동치.
+    return sorted(line.strip() for line in result.stdout.splitlines() if line.strip())
+
+
+def _git_cat_file_exists(ref: str, repo_root: Path) -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "cat-file", "-e", ref],
+            cwd=repo_root,
+            capture_output=True,
+            timeout=_GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def _git_is_ancestor(ancestor: str, descendant: str, repo_root: Path) -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+            cwd=repo_root,
+            capture_output=True,
+            timeout=_GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def _git_log_touching(
+    range_spec: str, paths: Sequence[Path], repo_root: Path
+) -> str | None:
+    args = [
+        "git",
+        "log",
+        "--full-history",
+        "--format=%H",
+        range_spec,
+        "--",
+        *[p.as_posix() for p in paths],
+    ]
+    try:
+        result = subprocess.run(
+            args,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def derive_d0a_entry_state(ctx: CheckContext) -> tuple[str, str]:
+    """§12.3.4-R U-15 — ``tools/tos_entry_harness.sh`` R-0~R-7 의 Python 복제.
+
+    판정 미산출 경로 폐쇄 — 미예기 예외는 전부 ``HARNESS_ABORTED`` 로 접는다
+    (하니스 ``trap EXIT`` 의 등가물).
+
+    Returns:
+        (state, detail) — detail 은 사람이 읽는 근거 문자열(rc 에 영향 없음).
+    """
+    try:
+        return _derive_d0a_entry_state_inner(ctx)
+    except Exception as exc:  # noqa: BLE001 — 판정 미산출 경로 폐쇄
+        return "HARNESS_ABORTED", f"판정 미산출 상태로 종료 — 미예기 예외: {exc}"
+
+
+def _derive_d0a_entry_state_inner(ctx: CheckContext) -> tuple[str, str]:
+    repo_root = ctx.repo_root
+    bp1, bp2 = U12_BOUND_PATHS
+    expected_paths = {p.as_posix() for p in U12_BOUND_PATHS}
+    want_sorted = sorted(expected_paths)
+
+    # R-0 — 실행 시점 결속 + 권위 입력 전부의 동결 확인.
+    try:
+        _resolve_commit("HEAD", repo_root)
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
+        return "HARNESS_ABORTED", "git rev-parse 실패"
+
+    for f in (bp1, bp2):
+        if not (repo_root / f).exists():
+            return "HARNESS_ABORTED", f"입력 부재: {f}"
+
+    dirty = _git_status_porcelain_paths((bp1, bp2, OQ11_REL, STAMPS_REL), repo_root)
+    if dirty is None:
+        return "HARNESS_ABORTED", "git status 실패"
+    if dirty.strip():
+        return "FREEZE_VIOLATED", f"권위 입력 미커밋 변경: {dirty.strip()}"
+
+    # R-1 — bound_paths 집합 == 계약이 요구하는 그 둘.
+    artifact = ctx.oq11_artifact_head
+    if artifact is None:
+        return "REBINDING_REQUIRED", "아티팩트가 HEAD 에 부재 — U-12 (i)"
+    declared_paths = artifact.get("bound_paths")
+    if not isinstance(declared_paths, list) or set(declared_paths) != expected_paths:
+        return "REBINDING_REQUIRED", "bound_paths 집합 불일치"
+
+    # R-2 — bound_set_digest 재계산(워킹트리) == 보유값 · disposition 어휘.
+    held = artifact.get("bound_set_digest")
+    if not isinstance(held, str) or not held:
+        return "REBINDING_REQUIRED", "bound_set_digest 미기재"
+    calc = _compute_bound_set_digest_worktree(U12_BOUND_PATHS, repo_root)
+    if calc is None or calc != held:
+        return "REBINDING_REQUIRED", "bound_set_digest 불일치"
+    disposition = artifact.get("disposition")
+    if disposition not in _OQ11_DISPOSITION_VOCAB:
+        return "REBINDING_REQUIRED", f"disposition 어휘 밖: {disposition!r}"
+
+    # R-3 — 최신 verdict 스탬프. 우주=HEAD 트리 · 선택자=verdict.md 를 가진
+    # 디렉터리 중 사전순(LC_ALL=C) 마지막.
+    vd: str | None = None
+    for d in _git_ls_tree_dirs(STAMPS_REL, "HEAD", repo_root):
+        if _git_cat_file_exists(f"HEAD:{d}/verdict.md", repo_root):
+            vd = d
+    if vd is None:
+        return "APPROVAL_ABSENT", "HEAD 에 verdict.md 를 가진 스탬프 없음"
+    vbody_bytes = _git_show_blob(Path(f"{vd}/verdict.md"), "HEAD", repo_root)
+    if vbody_bytes is None:
+        return "APPROVAL_ABSENT", f"verdict.md 가 HEAD 에 부재: {vd}"
+    verdict_doc = _parse_oq11_yaml_fence(vbody_bytes)
+    if not isinstance(verdict_doc, dict):
+        return "APPROVAL_ABSENT", f"verdict.md 파싱 실패: {vd}"
+
+    # R-4 — 심판 계열·판정 어휘.
+    adjudicator = verdict_doc.get("adjudicator")
+    verdict_val = verdict_doc.get("verdict")
+    if adjudicator != "codex" or verdict_val != "approve":
+        return (
+            "APPROVAL_NOT_APPROVE",
+            f"adjudicator={adjudicator!r} verdict={verdict_val!r}",
+        )
+
+    # R-5 — 심사 범위 == 요구 결속 경로 집합.
+    reviewed_paths = verdict_doc.get("reviewed_plan_paths")
+    if not isinstance(reviewed_paths, list) or sorted(reviewed_paths) != want_sorted:
+        return "APPROVAL_SCOPE_MISMATCH", "reviewed_plan_paths 불일치"
+
+    # R-6 — reviewed_at_head 가 HEAD 의 조상인가.
+    reviewed_at_head = verdict_doc.get("reviewed_at_head")
+    if not isinstance(reviewed_at_head, str) or not reviewed_at_head:
+        return "APPROVAL_PROVENANCE_UNVERIFIABLE", "reviewed_at_head 미기재"
+    if not _git_cat_file_exists(f"{reviewed_at_head}^{{commit}}", repo_root):
+        return (
+            "APPROVAL_PROVENANCE_UNVERIFIABLE",
+            "커밋 부재 — 얕은 클론·이력 재작성",
+        )
+    if not _git_is_ancestor(reviewed_at_head, "HEAD", repo_root):
+        return (
+            "APPROVAL_PROVENANCE_UNVERIFIABLE",
+            "reviewed_at_head 가 HEAD 의 조상이 아님",
+        )
+
+    # R-7 — 승인 이후 bound_paths 를 건드린 커밋 — 공집합인가.
+    touch = _git_log_touching(f"{reviewed_at_head}..HEAD", (bp1, bp2), repo_root)
+    if touch is None:
+        return "HARNESS_ABORTED", "git log 실패"
+    if touch.strip():
+        return "APPROVAL_STALE", f"승인 이후 변경: {touch.strip()}"
+
+    return "ENTRY_OK", "R-0~R-7 전부 기대와 일치"
+
+
+# ---------------------------------------------------------------------------
+# U-15-g — d0a_entry_provenance_state (§12.3.4 U-15-g 사후 관측)
+# ---------------------------------------------------------------------------
+
+_ENTRY_TRAILER_KEYS: tuple[str, ...] = (
+    "Entry-Transcript",
+    "Entry-Transcript-Run",
+    "Entry-Transcript-SHA256",
+)
+_RUN_OPEN_RE = re.compile(r"^R-0 head=(\S+)\s*$", re.MULTILINE)
+_ENTRY_STATE_LINE_RE = re.compile(r"^d0a_entry_state=(\S+)\s*$", re.MULTILINE)
+_SHA256_HEX_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+
+
+def _git_rev_list_full_history(
+    rel_path: Path, repo_root: Path, ref: str = "HEAD"
+) -> list[str] | None:
+    """후보 축소 — ``git rev-list --full-history <ref> -- <rel_path>``."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-list", "--full-history", ref, "--", rel_path.as_posix()],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _git_parents(commit: str, repo_root: Path) -> list[str] | None:
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%P", commit],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.split()
+
+
+def _git_commit_message(commit: str, repo_root: Path) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%B", commit],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _git_shallow_boundary_commits(repo_root: Path) -> set[str]:
+    """``.git/shallow`` 경계 커밋 집합 — 얕은 클론에서 부모 정보가 절단된 커밋."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-path", "shallow"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    if result.returncode != 0:
+        return set()
+    shallow_path = repo_root / result.stdout.strip()
+    if not shallow_path.exists():
+        return set()
+    try:
+        return {
+            ln.strip() for ln in shallow_path.read_text().splitlines() if ln.strip()
+        }
+    except OSError:
+        return set()
+
+
+def _find_config_introduction_commits(
+    rel_path: Path, repo_root: Path
+) -> list[str] | None:
+    """U-15-g-1 — D = {x ⊑ HEAD : path∈tree(x) ∧ ∀p∈parents(x): path∉tree(p)}.
+
+    후보 축소는 ``git rev-list --full-history`` 로 하고, 판정은 후보 위
+    구조 술어(부모 tree 의 blob 존재 여부)로 한다.  얕은 클론 경계 등
+    부모 정보가 신뢰 불가하면 ``None`` (호출자가 PROVENANCE_UNVERIFIABLE
+    로 접는다).
+    """
+    candidates = _git_rev_list_full_history(rel_path, repo_root)
+    if candidates is None:
+        return None
+    shallow_boundary = _git_shallow_boundary_commits(repo_root)
+    found: list[str] = []
+    for c in candidates:
+        if not _git_cat_file_exists(f"{c}:{rel_path.as_posix()}", repo_root):
+            continue
+        if c in shallow_boundary:
+            return None  # 부모 정보 절단 — 신뢰 불가
+        parents = _git_parents(c, repo_root)
+        if parents is None:
+            return None
+        if all(
+            not _git_cat_file_exists(f"{p}:{rel_path.as_posix()}", repo_root)
+            for p in parents
+        ):
+            found.append(c)
+    return found
+
+
+def _parse_entry_trailers(message: str) -> dict[str, str] | None:
+    """U-15-f-5 — 트레일러 3종 각각 정확히 1회 + 형식 검증.  위반 -> ``None``."""
+    values: dict[str, str] = {}
+    for key in _ENTRY_TRAILER_KEYS:
+        pattern = re.compile(rf"^{re.escape(key)}: (.*)$", re.MULTILINE)
+        matches = pattern.findall(message)
+        if len(matches) != 1:
+            return None
+        values[key] = matches[0].strip()
+    run_str = values["Entry-Transcript-Run"]
+    if not run_str.isdigit() or int(run_str) < 1:
+        return None
+    sha_str = values["Entry-Transcript-SHA256"]
+    if not _SHA256_HEX_RE.match(sha_str):
+        return None
+    if not values["Entry-Transcript"].strip():
+        return None
+    return values
+
+
+def _locate_transcript_run(text: str, k: int) -> tuple[str, str] | None:
+    """RUNS(U-15-e 4c-2) — k(1-기반) 번째 run 의 (R-0 head, 상태) 를 반환.
+
+    run 범위 = 그 ``R-0 head=`` 라인부터 다음 ``R-0 head=`` 직전.  그 범위
+    안의 ``d0a_entry_state=`` 라인이 정확히 1개가 아니면 형식 미충족.
+    """
+    opens = list(_RUN_OPEN_RE.finditer(text))
+    if k < 1 or k > len(opens):
+        return None
+    start = opens[k - 1]
+    end = opens[k].start() if k < len(opens) else len(text)
+    r0_head = start.group(1)
+    span = text[start.end() : end]
+    status_matches = _ENTRY_STATE_LINE_RE.findall(span)
+    if len(status_matches) != 1:
+        return None
+    return r0_head, status_matches[0]
+
+
+def derive_d0a_entry_provenance_state(ctx: CheckContext) -> tuple[str, str]:
+    """§12.3.4 U-15-g — d0a_entry_provenance_state (8값) 사후 관측.
+
+    전순서(핀): PROVENANCE_UNVERIFIABLE > MULTIPLE_INTRODUCTIONS >
+    ENTRY_TRAILER_MALFORMED > PARENT_MISMATCH > TRANSCRIPT_NOT_ENTRY_OK >
+    TRANSCRIPT_MISSING > ENTRY_PROVENANCE_CLEAR (각 경로는 상호 배타적).
+    """
+    try:
+        return _derive_provenance_state_inner(ctx)
+    except Exception as exc:  # noqa: BLE001 — 판정 미산출 경로 폐쇄
+        return "PROVENANCE_UNVERIFIABLE", f"미예기 예외: {exc}"
+
+
+def _derive_provenance_state_inner(ctx: CheckContext) -> tuple[str, str]:
+    repo_root = ctx.repo_root
+
+    # U-15-g-1 — D 구조 정의.
+    d_list = _find_config_introduction_commits(CONFIG_REL, repo_root)
+    if d_list is None:
+        return "PROVENANCE_UNVERIFIABLE", "도입 커밋 구조 파생 불가(부모 신뢰 불가)"
+    if len(d_list) == 0:
+        return "NOT_STARTED", f"{CONFIG_REL} 도입 커밋 없음(비차단·정상)"
+    if len(d_list) > 1:
+        return (
+            "MULTIPLE_INTRODUCTIONS",
+            f"도입 커밋 |D|={len(d_list)}: {sorted(d_list)}",
+        )
+
+    d = d_list[0]
+    message = _git_commit_message(d, repo_root)
+    if message is None:
+        return "PROVENANCE_UNVERIFIABLE", f"커밋 메시지 조회 실패: {d}"
+
+    # U-15-f-5 — 트레일러 3종.
+    trailers = _parse_entry_trailers(message)
+    if trailers is None:
+        return "ENTRY_TRAILER_MALFORMED", "트레일러 3종 형식 위반(누락/중복/형식오류)"
+
+    t_path = trailers["Entry-Transcript"]
+    t_run = int(trailers["Entry-Transcript-Run"])
+    t_sha = trailers["Entry-Transcript-SHA256"].lower()
+
+    # 지목 transcript — HEAD blob 소비.  경로 부재 -> TRANSCRIPT_MISSING
+    # (SHA 계산 불가이므로 ENTRY_TRAILER_MALFORMED 가 아니다).
+    blob = _git_show_blob(Path(t_path), "HEAD", repo_root)
+    if blob is None:
+        return "TRANSCRIPT_MISSING", f"transcript 경로가 HEAD 에 부재: {t_path}"
+
+    actual_sha = hashlib.sha256(blob).hexdigest()
+    if actual_sha != t_sha:
+        return (
+            "ENTRY_TRAILER_MALFORMED",
+            f"SHA256 불일치: trailer={t_sha} actual={actual_sha}",
+        )
+
+    try:
+        text = blob.decode("utf-8")
+    except UnicodeDecodeError:
+        return "TRANSCRIPT_MISSING", "transcript 디코딩 실패"
+
+    run_info = _locate_transcript_run(text, t_run)
+    if run_info is None:
+        return "TRANSCRIPT_MISSING", f"run {t_run} 부재 또는 형식 미충족"
+    run_r0_head, run_status = run_info
+
+    parents = _git_parents(d, repo_root)
+    parent = parents[0] if parents and len(parents) == 1 else None
+    if parent is None or run_r0_head != parent:
+        return (
+            "PARENT_MISMATCH",
+            f"run R-0 head={run_r0_head!r} != parent(d)={parent!r}",
+        )
+    if run_status != "ENTRY_OK":
+        return "TRANSCRIPT_NOT_ENTRY_OK", f"run 상태={run_status}"
+
+    return "ENTRY_PROVENANCE_CLEAR", f"d={d} run={t_run} 전부 정합"
+
+
+def check_u15(ctx: CheckContext) -> list[Finding]:
+    """U-15 — d0a_entry_state(9값) · d0a_entry_provenance_state(8값) 승계.
+
+    rc 결합: ``d0a_entry_state`` != ``ENTRY_OK`` 는 전부 위반.
+    ``d0a_entry_provenance_state`` 는 ``{ENTRY_PROVENANCE_CLEAR,
+    NOT_STARTED}`` 만 green, 나머지 여섯은 전부 위반.
+    """
+    findings: list[Finding] = []
+
+    entry_state, entry_detail = derive_d0a_entry_state(ctx)
+    ctx.state_lines.append(f"d0a_entry_state={entry_state}")
+    if entry_state != "ENTRY_OK":
+        findings.append(
+            Finding("U-15", f"d0a_entry_state={entry_state}: {entry_detail}")
+        )
+
+    prov_state, prov_detail = derive_d0a_entry_provenance_state(ctx)
+    ctx.state_lines.append(f"d0a_entry_provenance_state={prov_state}")
+    if prov_state not in ("ENTRY_PROVENANCE_CLEAR", "NOT_STARTED"):
+        findings.append(
+            Finding("U-15", f"d0a_entry_provenance_state={prov_state}: {prov_detail}")
+        )
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # U-1a · U-4 · U-5 — UNCHECKABLE 레지스터 규칙 (§13.6.4 · §13.3)
 # ---------------------------------------------------------------------------
 
@@ -1603,6 +2139,7 @@ CONTRACT_CHECKS: dict[str, Callable[[CheckContext], list[Finding]]] = {
     "U-14": check_u14,
     "U-12": check_u12,
     "U-13": check_u13,
+    "U-15": check_u15,
     "U-1a": check_u1a,
     "U-4": check_u4,
     "U-5": check_u5,

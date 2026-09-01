@@ -12,6 +12,7 @@ import csv
 import hashlib
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -92,6 +93,147 @@ def _bound_set_digest(bound_docs: dict[str, bytes]) -> str:
 
 U12_CORRECT_DIGEST = _bound_set_digest(U12_DEFAULT_BOUND_DOCS)
 U12_BROKEN_DIGEST = "0" * 64
+
+
+# ---------------------------------------------------------------------------
+# U-15 — §12.3.4-R d0a_entry_state / U-15-g d0a_entry_provenance_state fixture
+# ---------------------------------------------------------------------------
+
+U15_VERDICT_STAMP_DIR = "20260101-010101"
+
+
+def _u15_verdict_body(
+    *,
+    adjudicator: str = "codex",
+    verdict: str = "approve",
+    reviewed_at_head: str,
+    reviewed_plan_paths: list[str] | None = None,
+) -> str:
+    paths = (
+        reviewed_plan_paths
+        if reviewed_plan_paths is not None
+        else [U12_BOUND_DOC_A, U12_BOUND_DOC_B]
+    )
+    data: dict[str, object] = {
+        "adjudicator": adjudicator,
+        "verdict": verdict,
+        "reviewed_at_head": reviewed_at_head,
+        "reviewed_plan_paths": paths,
+    }
+    body = yaml.safe_dump(data, sort_keys=False)
+    return f"```yaml\n{body}```\n"
+
+
+def _write_verdict_stamp(root: Path, stamp_dir: str, body: str) -> None:
+    path = root / tcs.STAMPS_REL / stamp_dir / "verdict.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+
+
+def _transcript_text(r0_head: str, status: str) -> str:
+    return f"R-0 head={r0_head}\nreason=synthetic\nd0a_entry_state={status}\n"
+
+
+def _write_transcript(root: Path, rel: str, text: str) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _commit_config_with_message(root: Path, message: str, when: str) -> str:
+    """config 파일이 이미 워킹트리에 쓰여 있다고 가정 — 임의 커밋 메시지로 커밋."""
+    git_date = when[:-1] + " +0000" if when.endswith("Z") else when
+    env = dict(os.environ)
+    env["GIT_AUTHOR_DATE"] = git_date
+    env["GIT_COMMITTER_DATE"] = git_date
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", message, env=env)
+    return _git(root, "rev-parse", "HEAD").stdout.strip()
+
+
+def _commit_config_with_trailers(
+    root: Path,
+    *,
+    config_body: str,
+    transcript_rel: str,
+    run: int,
+    sha256: str,
+    when: str,
+) -> str:
+    config_path = root / tcs.CONFIG_REL
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(config_body, encoding="utf-8")
+    message = (
+        "feat(tos): D0A-FIRST synthetic — config/tos_completion.yaml 도입\n\n"
+        f"Entry-Transcript: {transcript_rel}\n"
+        f"Entry-Transcript-Run: {run}\n"
+        f"Entry-Transcript-SHA256: {sha256}\n"
+    )
+    return _commit_config_with_message(root, message, when)
+
+
+def _setup_u15_base_no_config(tmp_path: Path) -> str:
+    """전체 코퍼스(config 제외)를 쓰고 커밋한다 — U-15-g 기준선 = ``NOT_STARTED``."""
+    write_corpus(tmp_path, git_commit=False)
+    (tmp_path / tcs.CONFIG_REL).unlink()
+    _git_init(tmp_path)
+    return _git_commit_all(tmp_path, "base corpus (no config)", "2026-01-01T00:00:00Z")
+
+
+def _setup_u15_ok_repo(tmp_path: Path) -> tuple[str, str]:
+    """R-0~R-7 전부 통과하는 최소 repo.  Returns (base_commit, head_commit)."""
+    base = _setup_u15_base_no_config(tmp_path)
+    body = _u15_verdict_body(reviewed_at_head=base)
+    _write_verdict_stamp(tmp_path, U15_VERDICT_STAMP_DIR, body)
+    head = _git_commit_all(tmp_path, "add verdict stamp", "2026-01-02T00:00:00Z")
+    return base, head
+
+
+def _setup_ok_head_with_transcript(
+    tmp_path: Path, suffix: str, *, status: str = "ENTRY_OK"
+) -> tuple[str, str, str, str]:
+    """base -> verdict stamp(head1, 진짜 ENTRY_OK 성립)까지만 구성한다.
+
+    transcript 내용·sha256 을 사전 계산해 반환한다 — 착지(T)는 호출자가
+    d 커밋 뒤에 별도로 수행한다(H -> d -> T 흐름 순서 · G6).
+
+    Returns (head1, transcript_rel, transcript_sha256, transcript_text).
+    """
+    base, head1 = _setup_u15_ok_repo(tmp_path)
+    transcript_rel = (
+        f"docs/reviews/phase0-completion-contract/synthetic-{suffix}/TRANSCRIPT.md"
+    )
+    transcript_text = _transcript_text(head1, status)
+    transcript_sha = hashlib.sha256(transcript_text.encode("utf-8")).hexdigest()
+    return head1, transcript_rel, transcript_sha, transcript_text
+
+
+_HARNESS_PATH = _REPO_ROOT / "tools" / "tos_entry_harness.sh"
+_HARNESS_STATE_RE = re.compile(r"^d0a_entry_state=(\S+)$", re.MULTILINE)
+
+
+def _harness_entry_state(root: Path) -> tuple[int, str | None]:
+    result = subprocess.run(
+        ["bash", str(_HARNESS_PATH)],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    combined = result.stdout + result.stderr
+    m = _HARNESS_STATE_RE.search(combined)
+    return result.returncode, (m.group(1) if m else None)
+
+
+def _assert_harness_parity(root: Path, expected_state: str) -> None:
+    rc, state = _harness_entry_state(root)
+    assert (
+        state == expected_state
+    ), f"harness state={state!r} rc={rc} != {expected_state!r}"
+    if expected_state == "ENTRY_OK":
+        assert rc == 0
+    else:
+        assert rc != 0
 
 
 def _oq11_artifact_text(
@@ -303,6 +445,7 @@ def write_corpus(
     ledger_text_override: str | None = None,
     git_commit: bool = True,
     commit_when: str = "2026-01-01T00:00:00Z",
+    include_u15_verdict_stamp: bool = True,
 ) -> None:
     """합성 미니 코퍼스를 ``root`` 아래 실제 코퍼스와 같은 상대 경로로 쓴다.
 
@@ -311,6 +454,14 @@ def write_corpus(
     기본 fixture 값들은 서로 결속(digest 일치)해 ``oq11_raise_state
     =NOT_REQUIRED`` 가 되도록 맞춰져 있다.  U-12 전용 다중-커밋 이력
     시나리오는 ``git_commit=False`` 로 받아 호출자가 직접 커밋을 쌓는다.
+
+    ``git_commit=True`` 면 U-15 ``d0a_entry_state`` 도 기본으로 ``ENTRY_OK``
+    가 되도록 두 번째 커밋으로 codex-approve verdict 스탬프를 얹는다
+    (``include_u15_verdict_stamp=False`` 로 끌 수 있다).  ``config`` 파일은
+    두 커밋 모두의 **밖**(워킹트리 전용)에 남겨 U-15-g
+    ``d0a_entry_provenance_state`` 기본값을 ``NOT_STARTED``(비차단)로 지킨다
+    — U-12/U-13 은 ``config`` 를 git 이 아니라 디스크로 읽으므로 영향받지
+    않는다.
     """
     if register_rows is None:
         register_rows = [REGISTER_ROW_1, REGISTER_ROW_2, REGISTER_ROW_3_PROFILE]
@@ -346,10 +497,6 @@ def write_corpus(
     _write_csv(root / tcs.SURFACE_MAP_REL, tcs.SURFACE_MAP_FIELDS, map_rows)
     _write_csv(root / tcs.UNCHECKABLE_REL, tcs.UNCHECKABLE_FIELDS, uncheckable_rows)
 
-    config_path = root / tcs.CONFIG_REL
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
-
     oq11_path = root / tcs.OQ11_REL
     oq11_path.parent.mkdir(parents=True, exist_ok=True)
     oq11_path.write_text(oq11_text, encoding="utf-8")
@@ -369,7 +516,20 @@ def write_corpus(
 
     if git_commit:
         _git_init(root)
-        _git_commit_all(root, "synthetic corpus", commit_when)
+        base_commit = _git_commit_all(root, "synthetic corpus", commit_when)
+        if include_u15_verdict_stamp:
+            _write_verdict_stamp(
+                root,
+                U15_VERDICT_STAMP_DIR,
+                _u15_verdict_body(reviewed_at_head=base_commit),
+            )
+            _git_commit_all(root, "synthetic corpus: U-15 verdict stamp", commit_when)
+
+    # config 는 U-15-g 기준선을 NOT_STARTED 로 지키려 커밋 밖(워킹트리 전용)에
+    # 둔다 — git_commit=False 호출자는 자신의 커밋에서 원하면 포함시킨다.
+    config_path = root / tcs.CONFIG_REL
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 
 
 def _run(root: Path) -> list:
@@ -1101,7 +1261,563 @@ def test_t39_all_registered_checks_are_invoked(
 
 def test_t39_deferred_contracts_disjoint_from_contract_checks() -> None:
     assert set(tcs.DEFERRED_CONTRACTS).isdisjoint(set(tcs.CONTRACT_CHECKS.keys()))
-    for expected in ("U-12", "U-13", "U-1a", "U-4", "U-5"):
+    for expected in ("U-12", "U-13", "U-15", "U-1a", "U-4", "U-5"):
         assert expected in tcs.CONTRACT_CHECKS
-    for expected in ("U-15", "U-16", "U-17", "T-71"):
+    for expected in ("U-16", "U-17", "T-71"):
         assert expected in tcs.DEFERRED_CONTRACTS
+
+
+# ---------------------------------------------------------------------------
+# 20. U-15 — d0a_entry_state(9값) 승계 실코퍼스 패리티
+# ---------------------------------------------------------------------------
+
+
+def test_real_corpus_u15_entry_state_matches_harness() -> None:
+    """실코퍼스 --check 의 U-15 상태 라인 2종 + 실제 하니스와의 패리티(rc·값)."""
+    result = subprocess.run(
+        [sys.executable, str(_MODULE_PATH), "--check"],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "d0a_entry_state=ENTRY_OK" in result.stdout
+    assert "d0a_entry_provenance_state=ENTRY_PROVENANCE_CLEAR" in result.stdout
+
+    harness_rc, harness_state = _harness_entry_state(_REPO_ROOT)
+    assert harness_rc == 0
+    assert harness_state == "ENTRY_OK"
+
+
+# ---------------------------------------------------------------------------
+# 21. T-81 배터리 ①~⑩ — d0a_entry_state(9값) 변이
+# ---------------------------------------------------------------------------
+
+
+def test_u15_battery_1_bound_doc_edit_after_approval_is_rebinding_required(
+    tmp_path: Path,
+) -> None:
+    _setup_u15_ok_repo(tmp_path)
+    (tmp_path / U12_BOUND_DOC_A).write_bytes(b"edited content (no digest update)\n")
+    _git_commit_all(
+        tmp_path, "edit BP1 without rebinding digest", "2026-01-03T00:00:00Z"
+    )
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_state=REBINDING_REQUIRED" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+    _assert_harness_parity(tmp_path, "REBINDING_REQUIRED")
+
+
+def test_u15_battery_1e_rebinding_with_digest_update_is_approval_stale(
+    tmp_path: Path,
+) -> None:
+    _setup_u15_ok_repo(tmp_path)
+    new_bp1 = b"edited content (with digest rebind)\n"
+    (tmp_path / U12_BOUND_DOC_A).write_bytes(new_bp1)
+    new_digest = _bound_set_digest(
+        {
+            U12_BOUND_DOC_A: new_bp1,
+            U12_BOUND_DOC_B: U12_DEFAULT_BOUND_DOCS[U12_BOUND_DOC_B],
+        }
+    )
+    (tmp_path / tcs.OQ11_REL).write_text(
+        _oq11_artifact_text(digest=new_digest), encoding="utf-8"
+    )
+    _git_commit_all(tmp_path, "edit BP1 + rebind digest", "2026-01-03T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_state=APPROVAL_STALE" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+    _assert_harness_parity(tmp_path, "APPROVAL_STALE")
+
+
+def test_u15_battery_2_digest_mismatch_is_rebinding_required(tmp_path: Path) -> None:
+    _setup_u15_ok_repo(tmp_path)
+    (tmp_path / tcs.OQ11_REL).write_text(
+        _oq11_artifact_text(digest=U12_BROKEN_DIGEST), encoding="utf-8"
+    )
+    _git_commit_all(tmp_path, "corrupt digest", "2026-01-03T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_state=REBINDING_REQUIRED" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+    _assert_harness_parity(tmp_path, "REBINDING_REQUIRED")
+
+
+def test_u15_battery_3_reviewed_plan_paths_missing_one_is_scope_mismatch(
+    tmp_path: Path,
+) -> None:
+    base, _head = _setup_u15_ok_repo(tmp_path)
+    body = _u15_verdict_body(
+        reviewed_at_head=base, reviewed_plan_paths=[U12_BOUND_DOC_A]
+    )
+    _write_verdict_stamp(tmp_path, U15_VERDICT_STAMP_DIR, body)
+    _git_commit_all(tmp_path, "narrow reviewed_plan_paths", "2026-01-03T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_state=APPROVAL_SCOPE_MISMATCH" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+    _assert_harness_parity(tmp_path, "APPROVAL_SCOPE_MISMATCH")
+
+
+def test_u15_battery_4_needs_attention_verdict_is_not_approve(tmp_path: Path) -> None:
+    base, _head = _setup_u15_ok_repo(tmp_path)
+    body = _u15_verdict_body(reviewed_at_head=base, verdict="needs-attention")
+    _write_verdict_stamp(tmp_path, U15_VERDICT_STAMP_DIR, body)
+    _git_commit_all(tmp_path, "downgrade verdict", "2026-01-03T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_state=APPROVAL_NOT_APPROVE" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+    _assert_harness_parity(tmp_path, "APPROVAL_NOT_APPROVE")
+
+
+def test_u15_battery_4_non_codex_adjudicator_is_not_approve(tmp_path: Path) -> None:
+    base, _head = _setup_u15_ok_repo(tmp_path)
+    body = _u15_verdict_body(reviewed_at_head=base, adjudicator="claude")
+    _write_verdict_stamp(tmp_path, U15_VERDICT_STAMP_DIR, body)
+    _git_commit_all(tmp_path, "non-codex adjudicator", "2026-01-03T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_state=APPROVAL_NOT_APPROVE" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+    _assert_harness_parity(tmp_path, "APPROVAL_NOT_APPROVE")
+
+
+def test_u15_battery_5_shallow_clone_is_provenance_unverifiable(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    _setup_u15_ok_repo(src)
+    clone_dir = tmp_path / "clone"
+    subprocess.run(
+        ["git", "clone", "--depth", "1", f"file://{src}", str(clone_dir)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    ctx, findings = _run_ctx(clone_dir)
+    assert "d0a_entry_state=APPROVAL_PROVENANCE_UNVERIFIABLE" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+    _assert_harness_parity(clone_dir, "APPROVAL_PROVENANCE_UNVERIFIABLE")
+
+
+def test_u15_battery_6_no_verdict_stamp_is_approval_absent(tmp_path: Path) -> None:
+    _setup_u15_base_no_config(tmp_path)  # verdict 스탬프 없이 HEAD 확정
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_state=APPROVAL_ABSENT" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+    _assert_harness_parity(tmp_path, "APPROVAL_ABSENT")
+
+
+def test_u15_battery_7_uncommitted_bp_edit_is_freeze_violated(tmp_path: Path) -> None:
+    _setup_u15_ok_repo(tmp_path)
+    (tmp_path / U12_BOUND_DOC_A).write_bytes(b"dirty uncommitted edit\n")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_state=FREEZE_VIOLATED" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+    _assert_harness_parity(tmp_path, "FREEZE_VIOLATED")
+
+
+def test_u15_battery_8_committed_bp_deletion_is_harness_aborted(tmp_path: Path) -> None:
+    _setup_u15_ok_repo(tmp_path)
+    (tmp_path / U12_BOUND_DOC_A).unlink()
+    _git_commit_all(tmp_path, "delete BP1", "2026-01-03T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_state=HARNESS_ABORTED" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+    _assert_harness_parity(tmp_path, "HARNESS_ABORTED")
+
+
+def test_u15_battery_9_git_tool_failure_is_aborted_not_rebinding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _setup_u15_ok_repo(tmp_path)
+    ctx = tcs.build_context(tmp_path)
+
+    def _boom(*_args: object, **_kwargs: object) -> str:
+        raise OSError("git not found (simulated)")
+
+    monkeypatch.setattr(tcs, "_resolve_commit", _boom)
+    findings = tcs.check_u15(ctx)
+
+    assert "d0a_entry_state=HARNESS_ABORTED" in ctx.state_lines
+    assert "d0a_entry_state=REBINDING_REQUIRED" not in ctx.state_lines
+    assert "U-15" in _ids(findings)
+
+
+def test_u15_battery_10_uncommitted_authority_forgery_is_red_not_ok(
+    tmp_path: Path,
+) -> None:
+    _base, head = _setup_u15_ok_repo(tmp_path)
+    # 워킹트리에서만 아티팩트 digest 갱신(미커밋).
+    (tmp_path / tcs.OQ11_REL).write_text(
+        _oq11_artifact_text(digest=U12_BROKEN_DIGEST), encoding="utf-8"
+    )
+    # 가짜 스탬프도 미커밋으로 신설.
+    _write_verdict_stamp(
+        tmp_path, "99999999-999999", _u15_verdict_body(reviewed_at_head=head)
+    )
+
+    ctx, findings = _run_ctx(tmp_path)
+    entry_state = next(
+        s.split("=", 1)[1] for s in ctx.state_lines if s.startswith("d0a_entry_state=")
+    )
+    assert entry_state in ("FREEZE_VIOLATED", "REBINDING_REQUIRED")
+    assert "U-15" in _ids(findings)
+    _assert_harness_parity(tmp_path, entry_state)
+
+
+# ---------------------------------------------------------------------------
+# 22. T-81 배터리 ⑪~⑫ — U-15-f-1 가드 3단 실측(차단 vs ENTRY_OK)
+# ---------------------------------------------------------------------------
+
+
+def _run_guard(tmp_path: Path, config_yaml_text: str) -> int:
+    """U-15-f-1 3단 가드의 최소 재현: 하니스 && config 생성 && commit."""
+    script = (
+        "set -e\n"
+        f"bash {_HARNESS_PATH}\n"
+        "cat > config/tos_completion.yaml <<'EOF_CFG'\n"
+        f"{config_yaml_text}"
+        "EOF_CFG\n"
+        "git add config/tos_completion.yaml\n"
+        'git commit -q -m "feat(tos): D0A-FIRST guarded intro"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", script], cwd=tmp_path, capture_output=True, text=True
+    )
+    return result.returncode
+
+
+def test_u15_battery_11_blocked_guard_leaves_config_and_intro_absent(
+    tmp_path: Path,
+) -> None:
+    _setup_u15_base_no_config(tmp_path)  # verdict 스탬프 없음 -> APPROVAL_ABSENT(차단)
+
+    rc = _run_guard(tmp_path, yaml.safe_dump(dict(CONFIG_BASE)))
+
+    assert rc != 0
+    assert not (tmp_path / tcs.CONFIG_REL).exists()
+    d = tcs._find_config_introduction_commits(tcs.CONFIG_REL, tmp_path)
+    assert d == []
+
+
+def test_u15_battery_12_entry_ok_guard_produces_single_introduction_commit(
+    tmp_path: Path,
+) -> None:
+    base = _setup_u15_base_no_config(tmp_path)
+    body = _u15_verdict_body(reviewed_at_head=base)
+    _write_verdict_stamp(tmp_path, U15_VERDICT_STAMP_DIR, body)
+    _git_commit_all(tmp_path, "add verdict stamp", "2026-01-02T00:00:00Z")
+
+    rc = _run_guard(tmp_path, yaml.safe_dump(dict(CONFIG_BASE)))
+
+    assert rc == 0
+    assert (tmp_path / tcs.CONFIG_REL).exists()
+    d = tcs._find_config_introduction_commits(tcs.CONFIG_REL, tmp_path)
+    assert d is not None
+    assert len(d) == 1
+
+
+# ---------------------------------------------------------------------------
+# 23. T-81 배터리 ⑬~⑲ — d0a_entry_provenance_state(8값) 변이
+# ---------------------------------------------------------------------------
+
+
+def test_u15_battery_13_parent_mismatch(tmp_path: Path) -> None:
+    head1, transcript_rel, transcript_sha, transcript_text = (
+        _setup_ok_head_with_transcript(tmp_path, "13")
+    )
+    (tmp_path / "unrelated.txt").write_text("noop\n", encoding="utf-8")
+    _git_commit_all(tmp_path, "unrelated no-op commit", "2026-01-025T00:00:00Z")
+    _commit_config_with_trailers(
+        tmp_path,
+        config_body=yaml.safe_dump(dict(CONFIG_BASE)),
+        transcript_rel=transcript_rel,
+        run=1,
+        sha256=transcript_sha,
+        when="2026-01-03T00:00:00Z",
+    )
+    _write_transcript(tmp_path, transcript_rel, transcript_text)
+    _git_commit_all(tmp_path, "land transcript (T)", "2026-01-04T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert head1  # R-0 head 가 실제 재파생 가능함(어긋난 값과의 비교 대상)
+    assert "d0a_entry_provenance_state=PARENT_MISMATCH" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+
+
+def test_u15_battery_14_config_commit_without_trailers_is_malformed(
+    tmp_path: Path,
+) -> None:
+    _setup_u15_base_no_config(tmp_path)
+    config_path = tmp_path / tcs.CONFIG_REL
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(yaml.safe_dump(dict(CONFIG_BASE)), encoding="utf-8")
+    _commit_config_with_message(
+        tmp_path, "feat(tos): config intro without trailers", "2026-01-02T00:00:00Z"
+    )
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_provenance_state=ENTRY_TRAILER_MALFORMED" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+
+
+def test_u15_battery_15_forward_merge_without_trailers_is_red(tmp_path: Path) -> None:
+    _setup_u15_base_no_config(tmp_path)
+    main_branch = _git_current_branch(tmp_path)
+
+    _git_checkout_new_branch(tmp_path, "feature")
+    config_path = tmp_path / tcs.CONFIG_REL
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(yaml.safe_dump(dict(CONFIG_BASE)), encoding="utf-8")
+    _commit_config_with_message(
+        tmp_path, "d: config intro (no trailers)", "2026-01-02T00:00:00Z"
+    )
+
+    _git_checkout(tmp_path, main_branch)
+    _git_merge(
+        tmp_path, "feature", "merge feature forward (no-ff)", "2026-01-03T00:00:00Z"
+    )
+
+    ctx, findings = _run_ctx(tmp_path)
+    prov_line = next(
+        s for s in ctx.state_lines if s.startswith("d0a_entry_provenance_state=")
+    )
+    assert prov_line not in (
+        "d0a_entry_provenance_state=ENTRY_PROVENANCE_CLEAR",
+        "d0a_entry_provenance_state=NOT_STARTED",
+    )
+    assert "U-15" in _ids(findings)
+
+
+def test_u15_battery_16_trailerless_d_then_later_transcript_still_malformed(
+    tmp_path: Path,
+) -> None:
+    _setup_u15_base_no_config(tmp_path)
+    config_path = tmp_path / tcs.CONFIG_REL
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(yaml.safe_dump(dict(CONFIG_BASE)), encoding="utf-8")
+    _commit_config_with_message(
+        tmp_path, "d: config intro (no trailers)", "2026-01-02T00:00:00Z"
+    )
+    # 사후 t'/d' 별도 착지 — 파일 «재도입» 이 아니라 무관 후속 커밋일 뿐이다.
+    _write_transcript(
+        tmp_path,
+        "docs/reviews/phase0-completion-contract/synthetic-16/TRANSCRIPT.md",
+        "R-0 head=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\nd0a_entry_state=ENTRY_OK\n",
+    )
+    _git_commit_all(
+        tmp_path, "t': transcript landing (post-hoc)", "2026-01-03T00:00:00Z"
+    )
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_provenance_state=ENTRY_TRAILER_MALFORMED" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+
+
+def test_u15_battery_17a_trailer_missing_one_line_is_malformed(tmp_path: Path) -> None:
+    _head1, transcript_rel, transcript_sha, transcript_text = (
+        _setup_ok_head_with_transcript(tmp_path, "17a")
+    )
+    config_path = tmp_path / tcs.CONFIG_REL
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(yaml.safe_dump(dict(CONFIG_BASE)), encoding="utf-8")
+    message = (
+        "feat(tos): D0A-FIRST synthetic 17a\n\n"
+        f"Entry-Transcript: {transcript_rel}\n"
+        f"Entry-Transcript-SHA256: {transcript_sha}\n"  # Run 트레일러 누락(ⓐ)
+    )
+    _commit_config_with_message(tmp_path, message, "2026-01-03T00:00:00Z")
+    _write_transcript(tmp_path, transcript_rel, transcript_text)
+    _git_commit_all(tmp_path, "land transcript (T)", "2026-01-04T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_provenance_state=ENTRY_TRAILER_MALFORMED" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+
+
+def test_u15_battery_17b_trailer_duplicate_line_is_malformed(tmp_path: Path) -> None:
+    _head1, transcript_rel, transcript_sha, transcript_text = (
+        _setup_ok_head_with_transcript(tmp_path, "17b")
+    )
+    config_path = tmp_path / tcs.CONFIG_REL
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(yaml.safe_dump(dict(CONFIG_BASE)), encoding="utf-8")
+    message = (
+        "feat(tos): D0A-FIRST synthetic 17b\n\n"
+        f"Entry-Transcript: {transcript_rel}\n"
+        "Entry-Transcript-Run: 1\n"
+        "Entry-Transcript-Run: 1\n"  # 같은 줄 2회(ⓑ)
+        f"Entry-Transcript-SHA256: {transcript_sha}\n"
+    )
+    _commit_config_with_message(tmp_path, message, "2026-01-03T00:00:00Z")
+    _write_transcript(tmp_path, transcript_rel, transcript_text)
+    _git_commit_all(tmp_path, "land transcript (T)", "2026-01-04T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_provenance_state=ENTRY_TRAILER_MALFORMED" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+
+
+def test_u15_battery_17c_trailer_sha_mismatch_is_malformed(tmp_path: Path) -> None:
+    _head1, transcript_rel, _transcript_sha, transcript_text = (
+        _setup_ok_head_with_transcript(tmp_path, "17c")
+    )
+    config_path = tmp_path / tcs.CONFIG_REL
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(yaml.safe_dump(dict(CONFIG_BASE)), encoding="utf-8")
+    message = (
+        "feat(tos): D0A-FIRST synthetic 17c\n\n"
+        f"Entry-Transcript: {transcript_rel}\n"
+        "Entry-Transcript-Run: 1\n"
+        f"Entry-Transcript-SHA256: {'0' * 64}\n"  # SHA 불일치(ⓒ)
+    )
+    _commit_config_with_message(tmp_path, message, "2026-01-03T00:00:00Z")
+    _write_transcript(tmp_path, transcript_rel, transcript_text)
+    _git_commit_all(tmp_path, "land transcript (T)", "2026-01-04T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_provenance_state=ENTRY_TRAILER_MALFORMED" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+
+
+def test_u15_battery_18_run_status_not_entry_ok_is_transcript_not_entry_ok(
+    tmp_path: Path,
+) -> None:
+    _head1, transcript_rel, transcript_sha, transcript_text = (
+        _setup_ok_head_with_transcript(tmp_path, "18", status="REBINDING_REQUIRED")
+    )
+    _commit_config_with_trailers(
+        tmp_path,
+        config_body=yaml.safe_dump(dict(CONFIG_BASE)),
+        transcript_rel=transcript_rel,
+        run=1,
+        sha256=transcript_sha,
+        when="2026-01-03T00:00:00Z",
+    )
+    _write_transcript(tmp_path, transcript_rel, transcript_text)
+    _git_commit_all(tmp_path, "land transcript (T)", "2026-01-04T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_provenance_state=TRANSCRIPT_NOT_ENTRY_OK" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+
+
+def test_u15_battery_18_transcript_missing_run_is_transcript_missing(
+    tmp_path: Path,
+) -> None:
+    """run 부재/형식 미충족 — 경로/run 부재 시 SHA 계산 불가라 3 이 아니라 6."""
+    _head1, transcript_rel, _transcript_sha, _transcript_text = (
+        _setup_ok_head_with_transcript(tmp_path, "18b")
+    )
+    # transcript 내용에 「R-0 head=」 여는 라인 자체가 없다 — run 자체가 미발견.
+    malformed_transcript = "이 파일에는 run 여는 라인이 없다.\n"
+    malformed_sha = hashlib.sha256(malformed_transcript.encode("utf-8")).hexdigest()
+    _commit_config_with_trailers(
+        tmp_path,
+        config_body=yaml.safe_dump(dict(CONFIG_BASE)),
+        transcript_rel=transcript_rel,
+        run=1,
+        sha256=malformed_sha,
+        when="2026-01-03T00:00:00Z",
+    )
+    _write_transcript(tmp_path, transcript_rel, malformed_transcript)
+    _git_commit_all(tmp_path, "land malformed transcript (T)", "2026-01-04T00:00:00Z")
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_provenance_state=TRANSCRIPT_MISSING" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+
+
+def _parallel_introduction_merge(
+    tmp_path: Path, *, content_a: bytes, content_b: bytes, resolve_with: bytes
+) -> tuple[str, str]:
+    """두 브랜치가 독립적으로 config 를 도입 → 머지(충돌 시 ``resolve_with`` 로 해소)."""
+    _setup_u15_base_no_config(tmp_path)
+    main_branch = _git_current_branch(tmp_path)
+    cfg = tmp_path / tcs.CONFIG_REL
+
+    _git_checkout_new_branch(tmp_path, "branch-a")
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_bytes(content_a)
+    commit_a = _git_commit_all(
+        tmp_path, "branch-a: introduce config", "2026-01-02T00:00:00Z"
+    )
+
+    _git_checkout(tmp_path, main_branch)
+    _git_checkout_new_branch(tmp_path, "branch-b")
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_bytes(content_b)
+    commit_b = _git_commit_all(
+        tmp_path, "branch-b: introduce config", "2026-01-02T00:00:01Z"
+    )
+
+    _git_checkout(tmp_path, main_branch)
+    _git_merge(tmp_path, "branch-a", "merge branch-a", "2026-01-03T00:00:00Z")
+
+    merge_env = dict(os.environ)
+    merge_env["GIT_AUTHOR_DATE"] = "2026-01-04T00:00:00 +0000"
+    merge_env["GIT_COMMITTER_DATE"] = "2026-01-04T00:00:00 +0000"
+    merge_result = subprocess.run(
+        ["git", "merge", "--no-ff", "-m", "merge branch-b", "branch-b"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=merge_env,
+    )
+    if merge_result.returncode != 0:
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_bytes(resolve_with)
+        _git(tmp_path, "add", "-A")
+        _git(tmp_path, "commit", "-q", "-m", "resolve add/add conflict", env=merge_env)
+
+    return commit_a, commit_b
+
+
+def test_u15_battery_19_gu_parallel_introduction_conflict_pick_one_is_multiple(
+    tmp_path: Path,
+) -> None:
+    _parallel_introduction_merge(
+        tmp_path, content_a=b"a: 1\n", content_b=b"b: 2\n", resolve_with=b"a: 1\n"
+    )
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_provenance_state=MULTIPLE_INTRODUCTIONS" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+
+
+def test_u15_battery_19_uu_parallel_introduction_conflict_blend_is_multiple(
+    tmp_path: Path,
+) -> None:
+    _parallel_introduction_merge(
+        tmp_path,
+        content_a=b"a: 1\n",
+        content_b=b"b: 2\n",
+        resolve_with=b"a: 1\nb: 2\n",
+    )
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_provenance_state=MULTIPLE_INTRODUCTIONS" in ctx.state_lines
+    assert "U-15" in _ids(findings)
+
+
+def test_u15_battery_19_gg_parallel_introduction_identical_content_is_multiple(
+    tmp_path: Path,
+) -> None:
+    """byte-동일 병렬 도입 — ``--diff-filter=A`` 류 구현이면 |D|=1 로 오판한다."""
+    same = b"identical: content\n"
+    commit_a, commit_b = _parallel_introduction_merge(
+        tmp_path, content_a=same, content_b=same, resolve_with=same
+    )
+    d = tcs._find_config_introduction_commits(tcs.CONFIG_REL, tmp_path)
+    assert d is not None
+    assert set(d) == {commit_a, commit_b}
+
+    ctx, findings = _run_ctx(tmp_path)
+    assert "d0a_entry_provenance_state=MULTIPLE_INTRODUCTIONS" in ctx.state_lines
+    assert "U-15" in _ids(findings)
