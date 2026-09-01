@@ -57,7 +57,7 @@ import sys
 import tempfile
 import time
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import cache
@@ -139,7 +139,9 @@ UNCHECKABLE_FIELDS = (
 # C2c 이후 소관 — 이 파일에는 강제 지점이 없다 (UNCHK-019 축 · 정직 노출).
 # U-16 은 C2c 에서 CONTRACT_CHECKS 로 승격됐다.  U-17 은 DEFERRED 가 아니라
 # `--check` 밖의 별도 강제 지점(가드 체인·live — tools/u17-verify.sh)이다.
-DEFERRED_CONTRACTS: tuple[str, ...] = ("T-71",)
+# T-71 은 C3(D0-1 생성기)에서 CONTRACT_CHECKS 로 승격됐다(U-14 확장) — 이제
+# 비어 있다.
+DEFERRED_CONTRACTS: tuple[str, ...] = ()
 
 _VERIFIABLE_LEVEL_KINDS = frozenset({"PACKAGE", "TEST", "REVIEWER"})
 
@@ -1015,6 +1017,40 @@ def check_u14(ctx: CheckContext) -> list[Finding]:
                     "U-14",
                     f"U-9a 앵커 불일치: expected={sorted(expected_ids)} "
                     f"actual={sorted(actual_ids)}",
+                )
+            )
+
+    # T-71 — §4.2.1 분류 분포 앵커 (정본 A = config · 정본 B = 커밋된
+    # GATE_PREDICATES 자체 — §12.1.2 가 명시하는 낮은 파생 강도의 "사본 대
+    # 사본" 앵커.  재파생 소스가 이 코드 상수라는 점이 다른 앵커와 다르다.
+    checkable_cfg = ctx.config.get("anchor_classification_checkable")
+    partial_cfg = ctx.config.get("anchor_classification_partial")
+    nmc_cfg = ctx.config.get("anchor_classification_nmc")
+    if not all(
+        isinstance(v, int) and not isinstance(v, bool)
+        for v in (checkable_cfg, partial_cfg, nmc_cfg)
+    ):
+        findings.append(
+            Finding(
+                "U-14",
+                "T-71 앵커 키 부재/타입 불일치: "
+                f"checkable={checkable_cfg!r} partial={partial_cfg!r} nmc={nmc_cfg!r}",
+            )
+        )
+    else:
+        t71_dist = Counter(p.classification for p in GATE_PREDICATES)
+        t71_actual = (
+            t71_dist.get("CHECKABLE", 0),
+            t71_dist.get("PARTIAL", 0),
+            t71_dist.get("NMC", 0),
+        )
+        t71_expected = (checkable_cfg, partial_cfg, nmc_cfg)
+        if t71_actual != t71_expected:
+            findings.append(
+                Finding(
+                    "U-14",
+                    f"T-71 분포 앵커 불일치: config={t71_expected} "
+                    f"GATE_PREDICATES={t71_actual}",
                 )
             )
 
@@ -2781,6 +2817,497 @@ def check_u5(ctx: CheckContext) -> list[Finding]:
     return []
 
 
+# ---------------------------------------------------------------------------
+# C3 — TOS-COMPLETION-STATUS 생성기 (구 D0-1).  §4 가 정본.
+# ---------------------------------------------------------------------------
+
+GATE_REGISTRY: dict[str, str] = {
+    "G1": "COMPLETION",
+    "G2": "COMPLETION",
+    "G3": "COMPLETION",
+    "G4": "AUTHORITY",
+}
+
+GENERATED_MD_REL = Path("tos-spec/src/TOS-COMPLETION-STATUS.md")
+
+# G4 는 AUTHORITY-STATUS.csv 외 어떤 소스에서도 파생되지 않는다(INV-C2).
+AUTHORITY_CSV_REL = Path("tos-spec/src/AUTHORITY-STATUS.csv")
+# tos_spec_status.AUTHORITY_STATES 와 동일 어휘의 사본 — 두 CLI 는 독립
+# 실행체라 import 대신 값을 복제하고 이 주석으로 결속 근거를 남긴다.
+_AUTHORITY_STATES = frozenset({"NOT_AUTHORIZED", "AUTHORIZED"})
+_AUTHORITY_AXES: tuple[str, ...] = ("restricted_live", "production")
+
+# G2-2 판정 소스 — tos_spec_status.EVIDENCE_STATES 와 동일 집합(사본).
+_EVIDENCE_STATUS_VOCAB = frozenset(
+    {
+        "NOT_IMPLEMENTED",
+        "READY",
+        "RUNNING",
+        "PASS",
+        "FAIL",
+        "INCONCLUSIVE",
+        "BLOCKED",
+        "EXPIRED",
+        "SUPERSEDED",
+        "WAIVED_WITH_RESIDUAL_RISK",
+    }
+)
+
+
+@dataclass(frozen=True)
+class GatePredicate:
+    """§4.2.1 11행 표의 한 행 — id = (gate, 행 순번)."""
+
+    predicate_id: str
+    gate: str
+    condition: str
+    classification: str  # "CHECKABLE" | "PARTIAL" | "NMC"
+    unchk_ref: str | None
+
+
+# §4.2.1 — 상위 계획 §3 G1~G3 전 조건(11개)의 전수 결속.  T-21 이 행수 11 을
+# 고정하고, T-71(§4.2.2·config 앵커)이 분포 CHECKABLE 2 / PARTIAL 3 / NMC 6 을
+# 고정한다.  분류는 리뷰 표면(UNCHK-005 가 그 축을 등재)이며 이 상수를 손대는
+# 것은 §4.2.1 자체를 재작성하는 것과 같다 — 앵커(config)와 함께 리뷰돼야 한다.
+GATE_PREDICATES: tuple[GatePredicate, ...] = (
+    GatePredicate(
+        "G1-1",
+        "G1",
+        "19-step standard flow has zero non-authoritative stand-ins",
+        "CHECKABLE",
+        None,
+    ),
+    GatePredicate(
+        "G1-2",
+        "G1",
+        "every authority actor and durable-state owner is bound to a real implementation",
+        "PARTIAL",
+        "UNCHK-003",
+    ),
+    GatePredicate(
+        "G1-3",
+        "G1",
+        "synthetic, VirtualBroker, and broker-consuming transport share one verification boundary",
+        "NMC",
+        "UNCHK-005",
+    ),
+    GatePredicate(
+        "G1-4",
+        "G1",
+        "normal, rejected, UNKNOWN, and crash paths all leave evidence",
+        "NMC",
+        "UNCHK-003",
+    ),
+    GatePredicate(
+        "G1-5",
+        "G1",
+        "runs as an independent package/process without the root process",
+        "PARTIAL",
+        "UNCHK-011",
+    ),
+    GatePredicate(
+        "G2-1",
+        "G2",
+        "required evidence rows executed at EV-L1..L4 with independent review",
+        "PARTIAL",
+        "UNCHK-012",
+    ),
+    GatePredicate(
+        "G2-2",
+        "G2",
+        "no not-yet-executed row's status was turned into an arbitrary PASS",
+        "CHECKABLE",
+        None,
+    ),
+    GatePredicate(
+        "G2-3",
+        "G2",
+        "synthetic/VirtualBroker E2E, restart, partition, clock, partial-fill, unknown-finality, and replay scenarios pass",
+        "NMC",
+        "UNCHK-005",
+    ),
+    GatePredicate(
+        "G3-1",
+        "G3",
+        "versioned contract, migration, and rollback protocol are frozen",
+        "NMC",
+        "UNCHK-005",
+    ),
+    GatePredicate(
+        "G3-2",
+        "G3",
+        "generation, credential, queue, and network-route fencing are verified",
+        "NMC",
+        "UNCHK-005",
+    ),
+    GatePredicate(
+        "G3-3",
+        "G3",
+        "sole start condition for the root refactor",
+        "NMC",
+        "UNCHK-013",
+    ),
+)
+
+
+def _allowed_blocks_gate_values() -> frozenset[str]:
+    """U-8b — 허용 집합은 GATE_REGISTRY 에서 kind==COMPLETION 인 게이트만
+    구조적으로 파생한다(리터럴 목록 금지 · AUTHORITY kind 는 INV-C1 근거로
+    구조적 제외)."""
+    return frozenset(g for g, kind in GATE_REGISTRY.items() if kind == "COMPLETION")
+
+
+def compute_gate_reasons(
+    uncheckable_rows: Iterable[dict[str, str]] | None,
+    allowed_gate_ids: Iterable[str],
+) -> dict[str, frozenset[str]]:
+    """U-8a — blocks_gate=X 인 행의 id 를 게이트 X 의 사유 집합에만 기여시킨다."""
+    reasons: dict[str, set[str]] = {g: set() for g in allowed_gate_ids}
+    if uncheckable_rows is not None:
+        for row in uncheckable_rows:
+            bg = row["blocks_gate"].strip()
+            if bg in reasons:
+                reasons[bg].add(row["id"])
+    return {g: frozenset(ids) for g, ids in reasons.items()}
+
+
+def check_u8(ctx: CheckContext) -> list[Finding]:
+    """U-8 — normative_ref 비공란 행은 blocks_gate 필수(공란=red).
+    U-8b — blocks_gate 는 게이트 판정 레지스트리에서 파생된 허용 집합
+    (kind==COMPLETION) 밖 값이면 red."""
+    findings: list[Finding] = []
+    if ctx.uncheckable_rows is None:
+        return findings
+    allowed = _allowed_blocks_gate_values()
+    for row in ctx.uncheckable_rows:
+        normative_ref = row["normative_ref"].strip()
+        blocks_gate = row["blocks_gate"].strip()
+        if normative_ref and not blocks_gate:
+            findings.append(
+                Finding(
+                    "U-8", f"{row['id']}: normative_ref 비공란인데 blocks_gate 공란"
+                )
+            )
+        elif blocks_gate and blocks_gate not in allowed:
+            findings.append(
+                Finding(
+                    "U-8b",
+                    f"{row['id']}: blocks_gate 허용 밖 값 {blocks_gate!r} "
+                    f"(허용={sorted(allowed)})",
+                )
+            )
+    return findings
+
+
+_SECTION_TOKEN_RE = re.compile(r"§(\d+(?:\.\d+)*)")
+
+
+def check_u9(ctx: CheckContext) -> list[Finding]:
+    """U-9(위생) — closable=NO 행의 reason 에서 §<번호> 인용 전부가 계약
+    문서(U12_BOUND_PATHS[0])에서 해석 가능해야 한다(T-63).  미해석=red."""
+    findings: list[Finding] = []
+    if ctx.uncheckable_rows is None:
+        return findings
+    contract_path = ctx.repo_root / U12_BOUND_PATHS[0]
+    try:
+        contract_text = contract_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [Finding("U-9", f"계약 문서 읽기 실패: {exc}")]
+    for row in ctx.uncheckable_rows:
+        if row["closable"] != "NO":
+            continue
+        tokens = _SECTION_TOKEN_RE.findall(row["reason"])
+        if not tokens:
+            findings.append(Finding("U-9", f"{row['id']}: reason 에 § 인용 없음"))
+            continue
+        for num in tokens:
+            if not _u16_heading_present(contract_text, num):
+                findings.append(
+                    Finding(
+                        "U-9",
+                        f"{row['id']}: reason 의 §{num} 인용이 계약 문서에서 해석 불가",
+                    )
+                )
+    return findings
+
+
+def _real_checkable_results(ctx: CheckContext) -> dict[str, bool | None]:
+    """CHECKABLE 술어 2행의 실코퍼스 판정.  입력 부재 -> None(INV-C3 이
+    NOT_MET 으로 접는다)."""
+    results: dict[str, bool | None] = {}
+
+    if ctx.surface_map_rows is None:
+        results["G1-1"] = None
+    else:
+        results["G1-1"] = not any(
+            row["existence"] == "STAND_IN" for row in ctx.surface_map_rows
+        )
+
+    if not ctx.register_rows:
+        results["G2-2"] = None
+    else:
+        results["G2-2"] = all(
+            row["status"] in _EVIDENCE_STATUS_VOCAB for row in ctx.register_rows
+        )
+
+    return results
+
+
+def evaluate_gates(
+    uncheckable_rows: Iterable[dict[str, str]] | None,
+    predicates: Sequence[GatePredicate] = GATE_PREDICATES,
+    checkable_results: Mapping[str, bool | None] | None = None,
+) -> tuple[dict[str, str], dict[str, frozenset[str]], dict[str, str]]:
+    """§4.2.2 결합 규칙 + U-8a/U-11.
+
+    Returns:
+        (verdicts, reasons, contributions) — ``verdicts``: 게이트 id ->
+        MET|NOT_MET.  ``reasons``(U-8a): 게이트 id -> UNCHECKABLE id 집합.
+        ``contributions``(U-11): 술어 id -> MET|NOT_MET(``predicates`` 전항).
+
+    ``predicates`` 는 인자다(U-11a) — 기본값은 커밋된 §4.2.1 표(T-71 이
+    고정)이고, 합성 벡터를 주입하면 T-75(all-MET 도달성)를 구성할 수 있다.
+    """
+    if checkable_results is None:
+        checkable_results = {}
+    allowed = _allowed_blocks_gate_values()
+    reasons = compute_gate_reasons(uncheckable_rows, allowed)
+
+    contributions: dict[str, str] = {}
+    verdicts: dict[str, str] = {}
+    gates_seen = list(dict.fromkeys(p.gate for p in predicates))
+    for gate in gates_seen:
+        gate_met = True
+        for p in predicates:
+            if p.gate != gate:
+                continue
+            if p.classification == "CHECKABLE":
+                res = checkable_results.get(p.predicate_id)
+                value = "MET" if res is True else "NOT_MET"  # INV-C3
+            else:
+                value = "NOT_MET"  # INV-C4 — PARTIAL/NMC 는 MET 에 기여 못함
+            contributions[p.predicate_id] = value
+            if value != "MET":
+                gate_met = False
+        verdicts[gate] = "MET" if gate_met else "NOT_MET"
+    return verdicts, reasons, contributions
+
+
+def derive_g4_authority(repo_root: Path) -> str:
+    """G4 — AUTHORITY-STATUS.csv 외 어떤 소스도 읽지 않는다(INV-C2).
+    파일 부재·파싱 실패·어휘 밖 값·축 누락은 전부 fail-closed NOT_AUTHORIZED."""
+    path = repo_root / AUTHORITY_CSV_REL
+    if not path.exists():
+        return "NOT_AUTHORIZED"
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as fh:
+            rows = list(csv.DictReader(fh))
+    except (OSError, csv.Error):
+        return "NOT_AUTHORIZED"
+    statuses: dict[str, str] = {}
+    for row in rows:
+        axis = row.get("axis", "")
+        status = row.get("status", "")
+        if status not in _AUTHORITY_STATES:
+            return "NOT_AUTHORIZED"
+        statuses[axis] = status
+    if not all(axis in statuses for axis in _AUTHORITY_AXES):
+        return "NOT_AUTHORIZED"
+    if all(statuses[axis] == "AUTHORIZED" for axis in _AUTHORITY_AXES):
+        return "AUTHORIZED"
+    return "NOT_AUTHORIZED"
+
+
+# ---------------------------------------------------------------------------
+# INV-C5 — 금지 어휘 리터럴 검사 (생성기 자신이 수행)
+# ---------------------------------------------------------------------------
+
+_FORBIDDEN_VOCAB_RE = re.compile(r"\b(ready|authorized|approved)\b", re.IGNORECASE)
+
+# 저작 프로즈(코드 상수) — corpus 파생 데이터가 아니므로 실행 순서와 무관하게
+# 항상 스캔 가능하다(T-21 과 같은 이유로 ctx 의존을 피한다).  §13 레지스터
+# 원문(예: UNCHK-001 의 "approved", UNCHK-016 의 "READY")처럼 그대로 노출해야
+# 하는 인용 데이터는 U-3 소관이라 여기 포함하지 않는다 — INV-C5 는 "게이트
+# 상태의 동의어" 금지이지 인용 데이터 금지가 아니다.
+_STATIC_PROSE = """
+TOS Completion Status (generated)
+Generated by python tools/tos_completion_status.py --write from
+config/tos_completion.yaml, the Phase-0 unchecked-axis register, and the
+evidence registers under tos-spec/src/. Do not edit this file by hand.
+This document grants no authorization of any kind, for any gate, axis, or
+account. A MET or NOT_MET value records only that machine-checkable
+predicates evaluated true or false at generation time; it is not a release,
+deploy, or live-trading decision. Consult AUTHORITY-STATUS.csv for the only
+governing source of the G4 axis states.
+Gate verdicts (G1-G3 completion, G4 authority)
+Gate predicates (11 rows, T-21 / T-71)
+State machine values
+U-10 metrics and completion observations
+Phase-0 unchecked-axis register (full exposure, U-3)
+Phase 0 termination-condition overview (section 11)
+U-17 requires a live evaluation at completion-judgment time; this generated
+document does not perform that evaluation. Unevaluated counts as unmet
+(fail-closed).
+RES-1 remains unmet: STATE-EV-004 FWD-a-0 is not satisfied.
+"""
+
+
+def _scan_forbidden_vocabulary(text: str) -> list[str]:
+    scrubbed = text.replace("NOT_AUTHORIZED", "")
+    return [m.group(1).lower() for m in _FORBIDDEN_VOCAB_RE.finditer(scrubbed)]
+
+
+def check_d0_1(ctx: CheckContext) -> list[Finding]:  # noqa: ARG001
+    """D0-1(C3) — 생성기 자신의 구조 불변식.
+
+    T-21: §4.2.1 술어 표가 정확히 11행이어야 한다(그 외는 이 함수를 계속
+    실행할 신뢰 기반이 없어 즉시 반환한다).
+    INV-C5: 저작 프로즈에 금지 어휘("ready"/"authorized"/"approved")가
+    없어야 한다 — corpus 로 검사할 수 없는 자기-검사라 ctx 를 쓰지 않는다.
+    """
+    findings: list[Finding] = []
+    if len(GATE_PREDICATES) != 11:
+        findings.append(
+            Finding("D0-1", f"§4.2.1 술어 표 행수={len(GATE_PREDICATES)} != 11 (T-21)")
+        )
+        return findings
+
+    combined = "\n".join((_STATIC_PROSE, *(p.condition for p in GATE_PREDICATES)))
+    forbidden = _scan_forbidden_vocabulary(combined)
+    if forbidden:
+        findings.append(
+            Finding(
+                "D0-1", f"INV-C5 금지 어휘 검출(저작 프로즈): {sorted(set(forbidden))}"
+            )
+        )
+    return findings
+
+
+def _md_escape_cell(value: str) -> str:
+    return value.replace("|", "\\|").replace("\n", " ").replace("\r", " ")
+
+
+# check_id 와 그 아래에서 실제 나올 수 있는 Finding.check_id 표기(들)의 결속 —
+# "K-5/FWD-METRICS" 는 자기 자신, "U-8" 은 U-8/U-8b 둘 다 포함한다.
+_CHECK_ID_ALIASES: dict[str, tuple[str, ...]] = {
+    "U-8": ("U-8", "U-8b"),
+}
+
+
+def _check_is_clean(check_id: str, findings: Sequence[Finding]) -> bool:
+    aliases = _CHECK_ID_ALIASES.get(check_id, (check_id,))
+    return not any(f.check_id in aliases for f in findings)
+
+
+def render_completion_status(
+    ctx: CheckContext, findings: Sequence[Finding]
+) -> tuple[str, str]:
+    """§4.2 D0-1 생성 규칙 — 결정적 렌더(타임스탬프·HEAD sha 없음).
+
+    Returns:
+        (전체 markdown, §13 레지스터 표 블록) — 후자는 ``main()`` 이 INV-C5
+        스캔 범위에서 제외하는 데 쓴다(U-3 인용 데이터 예외).
+    """
+    checkable_results = _real_checkable_results(ctx)
+    verdicts, reasons, contributions = evaluate_gates(
+        ctx.uncheckable_rows, GATE_PREDICATES, checkable_results
+    )
+    g4 = derive_g4_authority(ctx.repo_root)
+
+    lines: list[str] = []
+    lines.append("# TOS Completion Status (generated)")
+    lines.append("")
+    lines.append(
+        "> Generated by `python tools/tos_completion_status.py --write` from\n"
+        "> `config/tos_completion.yaml`, the Phase-0 unchecked-axis register,\n"
+        "> and the evidence registers under `tos-spec/src/`. Do not edit this\n"
+        "> file by hand. This document grants no authorization of any kind,\n"
+        "> for any gate, axis, or account. A `MET`/`NOT_MET` value records only\n"
+        "> that machine-checkable predicates evaluated true or false at\n"
+        "> generation time; it is not a release, deploy, or live-trading\n"
+        "> decision. Consult `AUTHORITY-STATUS.csv` for the only governing\n"
+        "> source of the G4 axis states."
+    )
+    lines.append("")
+
+    lines.append("## Gate verdicts (G1-G3 completion, G4 authority)")
+    lines.append("")
+    lines.append("| Gate | Kind | Verdict | Reasons (blocks_gate) |")
+    lines.append("|---|---|---|---|")
+    for gate in ("G1", "G2", "G3"):
+        reason_ids = ", ".join(f"`{i}`" for i in sorted(reasons.get(gate, ()))) or "-"
+        lines.append(
+            f"| {gate} | `{GATE_REGISTRY[gate]}` | `{verdicts.get(gate, 'NOT_MET')}` "
+            f"| {reason_ids} |"
+        )
+    lines.append(f"| G4 | `{GATE_REGISTRY['G4']}` | `{g4}` | - |")
+    lines.append("")
+
+    lines.append("## Gate predicates (11 rows, T-21 / T-71)")
+    lines.append("")
+    lines.append(
+        "| Predicate | Gate | Condition | Classification | Contribution | UNCHK ref |"
+    )
+    lines.append("|---|---|---|---|---|---|")
+    for p in GATE_PREDICATES:
+        contrib = contributions.get(p.predicate_id, "NOT_MET")
+        unchk = f"`{p.unchk_ref}`" if p.unchk_ref else "-"
+        lines.append(
+            f"| `{p.predicate_id}` | {p.gate} | {_md_escape_cell(p.condition)} | "
+            f"`{p.classification}` | `{contrib}` | {unchk} |"
+        )
+    lines.append("")
+
+    lines.append("## State machine values")
+    lines.append("")
+    for line in ctx.state_lines:
+        lines.append(f"- `{line}`")
+    lines.append("")
+
+    lines.append("## U-10 metrics and completion observations")
+    lines.append("")
+    lines.append(
+        "U-10 metrics (non-blocking, must stay visible): "
+        "`superset_declared_pairs`, `imprecise_owner_track`, "
+        "`blank_normative_ref_rows`, `closable_no_rows`."
+    )
+    lines.append("")
+    for obs in ctx.observations:
+        lines.append(f"- `{obs}`")
+    lines.append("")
+
+    register_lines: list[str] = []
+    register_lines.append("## Phase-0 unchecked-axis register (full exposure, U-3)")
+    register_lines.append("")
+    register_lines.append("| " + " | ".join(UNCHECKABLE_FIELDS) + " |")
+    register_lines.append("|" + "---|" * len(UNCHECKABLE_FIELDS))
+    for row in ctx.uncheckable_rows or []:
+        cells = [_md_escape_cell(row.get(field, "")) for field in UNCHECKABLE_FIELDS]
+        register_lines.append("| " + " | ".join(cells) + " |")
+    register_lines.append("")
+    register_block = "\n".join(register_lines)
+    lines.append(register_block)
+
+    lines.append("## Phase 0 termination-condition overview (section 11)")
+    lines.append("")
+    for check_id in CONTRACT_CHECKS:
+        state = "MET" if _check_is_clean(check_id, findings) else "NOT_MET"
+        lines.append(f"- `{check_id}`: `{state}`")
+    lines.append(
+        "- `U-17`: requires a live evaluation at completion-judgment time; "
+        "this generated document does not perform that evaluation. "
+        "Unevaluated counts as unmet (fail-closed)."
+    )
+    lines.append(
+        "- `RES-1`: unmet — `STATE-EV-004` `FWD-a-0` is not satisfied "
+        "(see the `FWD-a-0` observation above)."
+    )
+    lines.append("")
+
+    full = "\n".join(lines).rstrip() + "\n"
+    return full, register_block
+
+
 CONTRACT_CHECKS: dict[str, Callable[[CheckContext], list[Finding]]] = {
     "K-1": check_k1,
     "K-2": check_k2,
@@ -2801,6 +3328,9 @@ CONTRACT_CHECKS: dict[str, Callable[[CheckContext], list[Finding]]] = {
     "U-1a": check_u1a,
     "U-4": check_u4,
     "U-5": check_u5,
+    "U-8": check_u8,
+    "U-9": check_u9,
+    "D0-1": check_d0_1,
 }
 
 
@@ -2813,22 +3343,54 @@ def run_checks(ctx: CheckContext) -> list[Finding]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
         "--check",
         action="store_true",
-        required=True,
-        help="D0-A 완료 계약 증분 C1(데이터-플레인) 강제 검사를 실행한다",
+        help=(
+            "D0-A 완료 계약 강제 검사 + TOS-COMPLETION-STATUS.md currency 를 "
+            "검사한다"
+        ),
     )
-    parser.parse_args(argv)  # --check 는 존재 자체가 게이트다; 값은 쓰지 않는다
+    mode.add_argument(
+        "--write",
+        action="store_true",
+        help="TOS-COMPLETION-STATUS.md (C3 생성물)를 생성한다",
+    )
+    parser.add_argument("--root", type=Path, default=REPO_ROOT, help="repository root")
+    args = parser.parse_args(argv)
 
     try:
-        ctx = build_context(REPO_ROOT)
+        ctx = build_context(args.root)
         findings = run_checks(ctx)
     except (
         Exception
     ) as exc:  # noqa: BLE001 — 내부 예외로 조용히 green 이 되어선 안 된다
         print(f"tos-completion-status: ERROR — 내부 예외 (rc=2): {exc}")
         return 2
+
+    rendered, register_block = render_completion_status(ctx, findings)
+    forbidden = _scan_forbidden_vocabulary(rendered.replace(register_block, ""))
+    if forbidden:
+        findings.append(
+            Finding("D0-1", f"INV-C5 금지 어휘 검출(생성물): {sorted(set(forbidden))}")
+        )
+
+    output_path = args.root / GENERATED_MD_REL
+    if args.write:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        print(f"wrote {output_path}")
+    else:
+        actual = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+        if actual != rendered:
+            findings.append(
+                Finding(
+                    "D0-1",
+                    f"{output_path}: 생성물 부재/불일치 — "
+                    "python tools/tos_completion_status.py --write 로 재생성 필요",
+                )
+            )
 
     print("미구현(C2c 이후) — 강제 지점 미등록:")
     for check_id in DEFERRED_CONTRACTS:

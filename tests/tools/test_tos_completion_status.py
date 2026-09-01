@@ -77,8 +77,10 @@ OQ11_TABLE = """## ③ 승인된 매핑표 (정본)
 
 U12_BOUND_DOC_A = "docs/plans/2026-08-12-tos-phase0-completion-contract-design.md"
 U12_BOUND_DOC_B = "docs/plans/2026-08-11-tos-completion-development-plan.md"
+# U-9(위생) 이 인용을 해석하는 대상이 U12_BOUND_DOC_A 자체다(§13.5 는 U-9
+# 시드 행 UNCHECKABLE_ROW_1 의 기본 reason 인용과 맞춘 mini 헤딩).
 U12_DEFAULT_BOUND_DOCS: dict[str, bytes] = {
-    U12_BOUND_DOC_A: b"mini design doc placeholder\n",
+    U12_BOUND_DOC_A: b"mini design doc placeholder\n\n### 13.5 mini heading\n\nbody\n",
     U12_BOUND_DOC_B: b"mini dev-plan doc placeholder\n",
 }
 
@@ -567,7 +569,10 @@ MAP_ROW_3 = {
 UNCHECKABLE_ROW_1 = {
     "id": "MINI-UNCHK-001",
     "axis": "mini axis",
-    "reason": "mini reason",
+    # U-9(위생) — closable=NO 이므로 reason 의 §-인용이 실제 계약 문서
+    # (U12_BOUND_PATHS[0])에서 해석 가능해야 한다.  §13.5 는 그 문서의 실재
+    # 헤딩("### 13.5 U-2의 입력 우주...")이다.
+    "reason": "mini reason (§13.5)",
     "blocked_by": "mini blocker",
     "owner_track": "",
     "exposed_in": "TOS-COMPLETION-STATUS",
@@ -594,7 +599,35 @@ CONFIG_BASE: dict[str, object] = {
     "anchor_evidence_level_distribution": "EV-L1=1,EV-L3=1,Profile-dependent=1",
     "anchor_closable_no_ids": "MINI-UNCHK-001",
     "oq11_response_deadline": "DEADLINE_UNSET",
+    # T-71 — GATE_PREDICATES 는 corpus 무관 고정 11행(CHECKABLE 2/PARTIAL 3/
+    # NMC 6) 이므로 이 세 앵커는 실코퍼스·합성 코퍼스 어디서나 이 값이어야
+    # green 이다.
+    "anchor_classification_checkable": 2,
+    "anchor_classification_partial": 3,
+    "anchor_classification_nmc": 6,
 }
+
+AUTHORITY_ROW_RESTRICTED_LIVE = {
+    "axis": "restricted_live",
+    "status": "NOT_AUTHORIZED",
+    "governing_source": "mini governing source",
+    "change_authority": "mini authority",
+    "notes": "mini note",
+}
+AUTHORITY_ROW_PRODUCTION = {
+    "axis": "production",
+    "status": "NOT_AUTHORIZED",
+    "governing_source": "mini governing source",
+    "change_authority": "mini authority",
+    "notes": "mini note",
+}
+AUTHORITY_FIELDS = (
+    "axis",
+    "status",
+    "governing_source",
+    "change_authority",
+    "notes",
+)
 
 
 def _write_csv(path: Path, fields: tuple[str, ...], rows: list[dict[str, str]]) -> None:
@@ -624,6 +657,7 @@ def write_corpus(
     git_commit: bool = True,
     commit_when: str = "2026-01-01T00:00:00Z",
     include_u15_verdict_stamp: bool = True,
+    authority_rows: list[dict[str, str]] | None = None,
 ) -> None:
     """합성 미니 코퍼스를 ``root`` 아래 실제 코퍼스와 같은 상대 경로로 쓴다.
 
@@ -664,6 +698,9 @@ def write_corpus(
         doc_text = DOC_MD
     if bound_docs is None:
         bound_docs = U12_DEFAULT_BOUND_DOCS
+    if authority_rows is None:
+        authority_rows = [AUTHORITY_ROW_RESTRICTED_LIVE, AUTHORITY_ROW_PRODUCTION]
+    _write_csv(root / tcs.AUTHORITY_CSV_REL, AUTHORITY_FIELDS, authority_rows)
     if ledger_text_override is not None:
         ledger_text = ledger_text_override
     else:
@@ -1487,9 +1524,21 @@ def test_t39_all_registered_checks_are_invoked(
 
 def test_t39_deferred_contracts_disjoint_from_contract_checks() -> None:
     assert set(tcs.DEFERRED_CONTRACTS).isdisjoint(set(tcs.CONTRACT_CHECKS.keys()))
-    for expected in ("U-12", "U-13", "U-15", "U-16", "U-1a", "U-4", "U-5"):
+    for expected in (
+        "U-12",
+        "U-13",
+        "U-15",
+        "U-16",
+        "U-1a",
+        "U-4",
+        "U-5",
+        "U-8",
+        "U-9",
+        "D0-1",
+    ):
         assert expected in tcs.CONTRACT_CHECKS
-    assert tcs.DEFERRED_CONTRACTS == ("T-71",)
+    # C3 승격 — T-71 은 이제 U-14 확장으로 CONTRACT_CHECKS 에 강제된다.
+    assert tcs.DEFERRED_CONTRACTS == ()
     assert "U-16" not in tcs.DEFERRED_CONTRACTS
     assert "U-17" not in tcs.DEFERRED_CONTRACTS
     assert "U-17" not in tcs.CONTRACT_CHECKS
@@ -3048,3 +3097,339 @@ def test_u16_battery_20c_graft_on_origin_does_not_affect_snapshot_judgment(
     assert "closable_no_provenance_state=NO_ROWS_CLEAR" in ctx_after.state_lines
     assert "U-16" not in _ids(findings_after)
     assert head == _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+
+
+# ---------------------------------------------------------------------------
+# 21. C3 — TOS-COMPLETION-STATUS 생성기 (구 D0-1)
+# ---------------------------------------------------------------------------
+
+
+def test_real_corpus_gate_verdicts_match_expectations() -> None:
+    """§4.2 예상: 실코퍼스에서 G1~G3 = NOT_MET · G4 = NOT_AUTHORIZED."""
+    ctx = tcs.build_context(_REPO_ROOT)
+    tcs.run_checks(ctx)
+    verdicts, reasons, _contributions = tcs.evaluate_gates(
+        ctx.uncheckable_rows, tcs.GATE_PREDICATES, tcs._real_checkable_results(ctx)
+    )
+    assert verdicts == {"G1": "NOT_MET", "G2": "NOT_MET", "G3": "NOT_MET"}
+    assert tcs.derive_g4_authority(_REPO_ROOT) == "NOT_AUTHORIZED"
+    # 현행: UNCHK-016·017·018 → G2 reasons(§13.6.2 U-8a 주).
+    assert reasons["G2"] == frozenset({"UNCHK-016", "UNCHK-017", "UNCHK-018"})
+    assert reasons["G1"] == frozenset()
+    assert reasons["G3"] == frozenset()
+
+
+def test_real_corpus_generator_write_check_cycle() -> None:
+    result = subprocess.run(
+        [sys.executable, str(_MODULE_PATH), "--write"],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    result2 = subprocess.run(
+        [sys.executable, str(_MODULE_PATH), "--check"],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result2.returncode == 0, result2.stdout + result2.stderr
+    assert "RESULT: GREEN (violations=0)" in result2.stdout
+
+
+def test_generator_write_then_check_is_green(tmp_path: Path) -> None:
+    write_corpus(tmp_path)
+    assert tcs.main(["--write", "--root", str(tmp_path)]) == 0
+    assert tcs.main(["--check", "--root", str(tmp_path)]) == 0
+
+
+def test_generator_missing_file_is_red(tmp_path: Path) -> None:
+    write_corpus(tmp_path)
+    assert tcs.main(["--check", "--root", str(tmp_path)]) == 1
+
+
+def test_generator_currency_one_byte_mutation_is_red(tmp_path: Path) -> None:
+    write_corpus(tmp_path)
+    assert tcs.main(["--write", "--root", str(tmp_path)]) == 0
+    md_path = tmp_path / tcs.GENERATED_MD_REL
+    md_path.write_bytes(md_path.read_bytes() + b"x")
+    assert tcs.main(["--check", "--root", str(tmp_path)]) == 1
+
+
+def test_missing_write_and_check_flags_is_usage_error() -> None:
+    result = subprocess.run(
+        [sys.executable, str(_MODULE_PATH), "--write", "--check"],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+
+
+def test_t73_removing_a_u10_metric_line_from_generated_file_is_red(
+    tmp_path: Path,
+) -> None:
+    write_corpus(tmp_path)
+    assert tcs.main(["--write", "--root", str(tmp_path)]) == 0
+    md_path = tmp_path / tcs.GENERATED_MD_REL
+    text = md_path.read_text(encoding="utf-8")
+    mutated = "\n".join(
+        line for line in text.splitlines() if "closable_no_rows=" not in line
+    )
+    md_path.write_text(mutated, encoding="utf-8")
+    assert tcs.main(["--check", "--root", str(tmp_path)]) == 1
+
+
+def test_t23_truncating_register_table_row_in_generated_file_is_red(
+    tmp_path: Path,
+) -> None:
+    write_corpus(tmp_path)
+    assert tcs.main(["--write", "--root", str(tmp_path)]) == 0
+    md_path = tmp_path / tcs.GENERATED_MD_REL
+    lines = md_path.read_text(encoding="utf-8").splitlines()
+    for idx in range(len(lines) - 1, -1, -1):
+        if lines[idx].startswith("| MINI-UNCHK-001"):
+            del lines[idx]
+            break
+    else:
+        raise AssertionError("MINI-UNCHK-001 행을 찾지 못함")
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert tcs.main(["--check", "--root", str(tmp_path)]) == 1
+
+
+def test_t21_predicate_table_below_11_rows_is_red(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_corpus(tmp_path)
+    monkeypatch.setattr(tcs, "GATE_PREDICATES", tcs.GATE_PREDICATES[:10])
+    assert "D0-1" in _ids(_run(tmp_path))
+
+
+def test_t21_predicate_table_is_exactly_11_rows_with_2_3_6_distribution() -> None:
+    assert len(tcs.GATE_PREDICATES) == 11
+    checkable = sum(1 for p in tcs.GATE_PREDICATES if p.classification == "CHECKABLE")
+    partial = sum(1 for p in tcs.GATE_PREDICATES if p.classification == "PARTIAL")
+    nmc = sum(1 for p in tcs.GATE_PREDICATES if p.classification == "NMC")
+    assert (checkable, partial, nmc) == (2, 3, 6)
+
+
+def test_t80_t71_forward_mismatch_is_red(tmp_path: Path) -> None:
+    bad_config = dict(CONFIG_BASE, anchor_classification_checkable=99)
+    write_corpus(tmp_path, config=bad_config)
+    assert "U-14" in _ids(_run(tmp_path))
+
+
+def test_t80_t71_reverse_mismatch_is_red(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_corpus(tmp_path)
+    all_checkable = tuple(
+        tcs.GatePredicate(p.predicate_id, p.gate, p.condition, "CHECKABLE", None)
+        for p in tcs.GATE_PREDICATES
+    )
+    monkeypatch.setattr(tcs, "GATE_PREDICATES", all_checkable)
+    assert "U-14" in _ids(_run(tmp_path))
+
+
+def test_t80_t71_key_missing_is_red(tmp_path: Path) -> None:
+    bad_config = dict(CONFIG_BASE)
+    del bad_config["anchor_classification_partial"]
+    write_corpus(tmp_path, config=bad_config)
+    assert "U-14" in _ids(_run(tmp_path))
+
+
+def test_t80_t71_type_error_is_red(tmp_path: Path) -> None:
+    bad_config = dict(CONFIG_BASE, anchor_classification_nmc="6")
+    write_corpus(tmp_path, config=bad_config)
+    assert "U-14" in _ids(_run(tmp_path))
+
+
+def test_t75_all_met_reachability() -> None:
+    """T-75 — 계약이 all-MET 을 표현할 수 있음을 합성 벡터로 양성 증명한다."""
+    synthetic = tuple(
+        tcs.GatePredicate(f"SYN-{i}", gate, "synthetic", "CHECKABLE", None)
+        for i, gate in enumerate(["G1"] * 5 + ["G2"] * 3 + ["G3"] * 3)
+    )
+    results = {p.predicate_id: True for p in synthetic}
+    verdicts, _reasons, contributions = tcs.evaluate_gates([], synthetic, results)
+    assert verdicts == {"G1": "MET", "G2": "MET", "G3": "MET"}
+    assert set(contributions) == {p.predicate_id for p in synthetic}
+    assert all(v == "MET" for v in contributions.values())
+
+
+def test_t69_gate_predicate_fold_is_isolated_per_predicate() -> None:
+    """T-69 — 한 술어의 분류 변형이 다른 술어의 기여 항을 건드리지 않는다."""
+    _verdicts, _reasons, baseline = tcs.evaluate_gates([], tcs.GATE_PREDICATES, {})
+    assert set(baseline.values()) == {"NOT_MET"}
+    for target in tcs.GATE_PREDICATES:
+        forced = tuple(
+            (
+                tcs.GatePredicate(
+                    p.predicate_id, p.gate, p.condition, "CHECKABLE", None
+                )
+                if p.predicate_id == target.predicate_id
+                else p
+            )
+            for p in tcs.GATE_PREDICATES
+        )
+        _v, _r, contrib = tcs.evaluate_gates([], forced, {target.predicate_id: True})
+        for p in tcs.GATE_PREDICATES:
+            expected = "MET" if p.predicate_id == target.predicate_id else "NOT_MET"
+            assert contrib[p.predicate_id] == expected, (
+                target.predicate_id,
+                p.predicate_id,
+            )
+
+
+def test_t2_authority_mutation_does_not_affect_g1_g3(tmp_path: Path) -> None:
+    """T-2(INV-C1 회귀) — AUTHORITY-STATUS.csv 뮤테이션은 G1~G3 verdict·reasons
+    를 바꾸지 않고 G4 만 바꾼다."""
+    write_corpus(tmp_path)
+    ctx1 = tcs.build_context(tmp_path)
+    verdicts1, reasons1, _c1 = tcs.evaluate_gates(
+        ctx1.uncheckable_rows, tcs.GATE_PREDICATES, tcs._real_checkable_results(ctx1)
+    )
+    g4_before = tcs.derive_g4_authority(tmp_path)
+    assert g4_before == "NOT_AUTHORIZED"
+
+    write_corpus(
+        tmp_path,
+        authority_rows=[
+            dict(AUTHORITY_ROW_RESTRICTED_LIVE, status="AUTHORIZED"),
+            dict(AUTHORITY_ROW_PRODUCTION, status="AUTHORIZED"),
+        ],
+    )
+    ctx2 = tcs.build_context(tmp_path)
+    verdicts2, reasons2, _c2 = tcs.evaluate_gates(
+        ctx2.uncheckable_rows, tcs.GATE_PREDICATES, tcs._real_checkable_results(ctx2)
+    )
+    g4_after = tcs.derive_g4_authority(tmp_path)
+
+    assert verdicts1 == verdicts2
+    assert reasons1 == reasons2
+    assert g4_after == "AUTHORIZED"
+    assert g4_before != g4_after
+
+
+def test_t11_g4_unaffected_by_non_authority_sources(tmp_path: Path) -> None:
+    """T-11(INV-C2) — G4 는 AUTHORITY-STATUS.csv 외 어떤 소스 뮤테이션에도
+    불변이다."""
+    write_corpus(tmp_path)
+    g4_before = tcs.derive_g4_authority(tmp_path)
+
+    mutated_row = dict(
+        UNCHECKABLE_ROW_2_YES, id="MINI-UNCHK-999", blocks_gate="", normative_ref=""
+    )
+    write_corpus(
+        tmp_path,
+        uncheckable_rows=[UNCHECKABLE_ROW_1, UNCHECKABLE_ROW_2_YES, mutated_row],
+    )
+    g4_after = tcs.derive_g4_authority(tmp_path)
+
+    assert g4_before == g4_after == "NOT_AUTHORIZED"
+
+
+def test_t58_u8_blank_blocks_gate_on_nonblank_normative_ref_is_red(
+    tmp_path: Path,
+) -> None:
+    bad_row = dict(
+        UNCHECKABLE_ROW_2_YES,
+        id="MINI-UNCHK-058",
+        normative_ref="VER-002-001 §5 Composite Notation (:168)",
+        blocks_gate="",
+    )
+    write_corpus(tmp_path, uncheckable_rows=[UNCHECKABLE_ROW_1, bad_row])
+    assert "U-8" in _ids(_run(tmp_path))
+
+
+def test_t68_u8b_allowed_set_derives_from_gate_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bad_row = dict(
+        UNCHECKABLE_ROW_2_YES, id="MINI-UNCHK-068", normative_ref="x", blocks_gate="G7"
+    )
+    write_corpus(tmp_path, uncheckable_rows=[UNCHECKABLE_ROW_1, bad_row])
+
+    assert "U-8b" in _ids(_run(tmp_path))
+
+    monkeypatch.setattr(tcs, "GATE_REGISTRY", {**tcs.GATE_REGISTRY, "G7": "AUTHORITY"})
+    assert "U-8b" in _ids(_run(tmp_path))
+
+    monkeypatch.setattr(tcs, "GATE_REGISTRY", {**tcs.GATE_REGISTRY, "G7": "COMPLETION"})
+    assert "U-8b" not in _ids(_run(tmp_path))
+
+
+def test_t61_moving_blocks_gate_moves_reason_membership() -> None:
+    allowed = frozenset({"G1", "G2", "G3"})
+    row = dict(UNCHECKABLE_ROW_2_YES, id="X", normative_ref="ref", blocks_gate="G2")
+    reasons = tcs.compute_gate_reasons([row], allowed)
+    assert "X" in reasons["G2"]
+    assert "X" not in reasons["G3"]
+
+    row2 = dict(row, blocks_gate="G3")
+    reasons2 = tcs.compute_gate_reasons([row2], allowed)
+    assert "X" not in reasons2["G2"]
+    assert "X" in reasons2["G3"]
+
+
+def test_t70_two_nonempty_gate_reason_sets_are_not_identical() -> None:
+    allowed = frozenset({"G1", "G2", "G3"})
+    rows = [
+        dict(UNCHECKABLE_ROW_2_YES, id="A", normative_ref="ref", blocks_gate="G2"),
+        dict(UNCHECKABLE_ROW_2_YES, id="B", normative_ref="ref", blocks_gate="G3"),
+    ]
+    reasons = tcs.compute_gate_reasons(rows, allowed)
+    nonempty_values = [ids for ids in reasons.values() if ids]
+    assert len(nonempty_values) >= 2
+    assert len({frozenset(v) for v in nonempty_values}) == len(nonempty_values)
+    # 공집합 위양성 회피(v2.2) — 사유가 아직 없는 게이트끼리는 ∅==∅ 이어도 정상.
+    assert reasons["G1"] == frozenset()
+
+
+def test_t63_u9_unresolvable_citation_is_red(tmp_path: Path) -> None:
+    bad_row = dict(UNCHECKABLE_ROW_1, reason="mini reason (§99.9)")
+    write_corpus(tmp_path, uncheckable_rows=[bad_row])
+    assert "U-9" in _ids(_run(tmp_path))
+
+
+def test_t63_u9_freeform_prose_without_citation_is_red(tmp_path: Path) -> None:
+    bad_row = dict(UNCHECKABLE_ROW_1, reason="나중에 봄")
+    write_corpus(tmp_path, uncheckable_rows=[bad_row])
+    assert "U-9" in _ids(_run(tmp_path))
+
+
+def test_t74_closable_yes_to_no_transition_without_anchor_update_is_red(
+    tmp_path: Path,
+) -> None:
+    transitioned = dict(
+        UNCHECKABLE_ROW_2_YES,
+        closable="NO",
+        owner_track="",
+        reason="mini reason (§13.5)",
+    )
+    write_corpus(tmp_path, uncheckable_rows=[UNCHECKABLE_ROW_1, transitioned])
+    assert "U-14" in _ids(_run(tmp_path))
+
+
+def test_scrub_removes_not_authorized_before_forbidden_vocab_scan() -> None:
+    assert tcs._scan_forbidden_vocabulary("state=NOT_AUTHORIZED") == []
+    assert tcs._scan_forbidden_vocabulary("this was already done") == []
+    assert tcs._scan_forbidden_vocabulary("this gate is ready") == ["ready"]
+    assert tcs._scan_forbidden_vocabulary("plan approved") == ["approved"]
+
+
+def test_inv_c5_forbidden_vocabulary_in_static_prose_is_red(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_corpus(tmp_path)
+    monkeypatch.setattr(
+        tcs, "_STATIC_PROSE", tcs._STATIC_PROSE + "\nThis gate is ready.\n"
+    )
+    assert "D0-1" in _ids(_run(tmp_path))
+
+
+def test_inv_c5_real_static_prose_is_clean() -> None:
+    assert tcs._scan_forbidden_vocabulary(tcs._STATIC_PROSE) == []

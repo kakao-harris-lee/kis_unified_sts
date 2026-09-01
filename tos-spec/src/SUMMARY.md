@@ -2,6 +2,7 @@
 
 - [Preface](preface.md)
 - [Current TOS Status (generated)](CURRENT-STATUS.md)
+- [TOS Completion Status (generated)](TOS-COMPLETION-STATUS.md)
 - [Migration and Conformance Register](MIGRATION-CONFORMANCE-REGISTER.md)
 - [Vision](part-0-introduction/vision.md)
 - [Philosophy](part-0-introduction/philosophy.md)
