@@ -272,7 +272,7 @@ runtime shell은 적어도 다음을 소유한다.
 - **예방 통제 활성**: tos-gate required check(룰셋 — `required_status_checks.checks[].app_id`
   == Actions app id)·`.github/workflows/tos-gate.yml`(하니스 `tools/tos_entry_harness.sh`
   경로·sha256 검증 스텝 포함) **및 그 하니스 파일 `tools/tos_entry_harness.sh` 의
-  실체화(계약 §12.3.4-R 블록 결속값 sha 1817c9ef…)** **및 `u17-verify` 실행기의 실체화**
+  실체화(계약 §12.3.4-R 블록 결속값 sha 059e13f2…)** **및 `u17-verify` 실행기의 실체화**
   도입 → D0-A 착수 전 `PREVENTION_ACTIVE`(계약 §12.3.4 `U-17`).
   - **`u17-verify` 는 하니스와 «구별되는» 필수 산출물**이다 — 계약의 가드 체인은 3단
     (`bash <§12.3.4-R 하니스> && bash <u17-verify> && <D0A-FIRST>`)이고, 하니스는
@@ -291,7 +291,7 @@ runtime shell은 적어도 다음을 소유한다.
     «자기 봉쇄»의 두 번째 형상).  **그 조건의 유일 소스는 계약 §12.2 이고 여기서는 참조만 한다**(S-14).
     **현재 상태(실측 — [2026-08-29 재심 F1(high) 처분] «착지»와 «의미 정합»을 갈라 적는다)**:
     · **파일 «착지» 완료** = `.github/workflows/tos-gate.yml` · `tools/tos_entry_harness.sh`
-      (정본 블록 sha `1817c9ef…` 와 byte-동일) · `tools/u17-verify.sh` · 운영자 countersign 완료.
+      (정본 블록 sha `059e13f2…` 와 byte-동일) · `tools/u17-verify.sh` · 운영자 countersign 완료.
     · **`u17-verify` 의 «의미 정합»은 미이행**이다.  실행기는 계약 에라타 5차 세대이고,
       **계약이 판정 경로에서 «제거»한 `commits/{sha}/check-runs` 를 여전히 열거**한다(실측).
       계약의 현행 경로(①-R 런 열거 → ②-S suite 사상 → ③-C suite별 소비)와 세 상한

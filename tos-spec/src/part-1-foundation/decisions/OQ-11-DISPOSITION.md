@@ -12,7 +12,7 @@ deferred_scope:                            # 계약 U-13 (§12.3.1) 문법 — R
   rows:
     - STATE-EV-004
   remainder_mapping_approved: true
-bound_set_digest: daaba47b1c4b2b31717c098c8d761d9fd2b0cd1eb7e0d55b48d46a4e059f1c3b
+bound_set_digest: e0729ff3ccbbab41b007464742290e4e875c07846b5a87d228727abc2ae4480f
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
@@ -23,7 +23,7 @@ authority: 운영자 (this repository's corpus owner)
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: 279d59cc23b6b66846ee44a5cfe5babb84088905
+decided_at_head: 8199bb38687a191523ccb74be1f313ea67e001f8
 ```
 
 **RES-1 ① 처분 기록 (2026-09-02)**: 위 `disposition`/`deferred_scope` 는 운영자가
@@ -815,6 +815,46 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 > 인용»을 «서 있는 주장»으로 오독했다 — 이 아크가 이미 적어 둔 교훈이다.
 >
 > **S-26 (2) 카운터는 열한 판 연속 0.**
+
+> **재결속 기록 (현행 사이클 — 2026-09-02, v2.22 내용 · 에라타 51차 이후)**: 이 연속
+> 트랙의 **열두 번째**다.  51차는 §12.3.4-R 하니스의 **EPIPE 결함**을 수리했다 —
+> Linux CI(gawk·one-true-awk)에서 `yaml_list`/`yaml_scalar` 의 조기 `exit` 가 상류
+> `printf` 에 EPIPE 를 주어 `HARNESS_ABORTED` 를 오발화시키던 자리를, `exit` 대신
+> `done` 플래그로 전 입력을 소비하도록 고쳤다(종래 「첫 키만」 의미는 바이트 단위로
+> 보존 — 의미 보존 패리티 708/0 실증).  같은 판에서 결속 경로 두 파일에 **정본 블록
+> sha 재핀**(`1817c9ef…` → `059e13f2…`)이 lockstep 으로 들어갔다 — 계약 §12.3.4-R
+> 정본 블록·상위 계획의 「실체화」 진술 둘·`.github/workflows/tos-gate.yml`·
+> `tools/wfcanon-v222.py`·`tools/u17-verify.sh`·`PHASE0-UNCHECKABLE-REGISTER.csv`
+> UNCHK-008 행·**신규 3차 층**(`tests/tools/test_tos_completion_status.py` 의
+> `bound_set_digest` 리터럴)이 한 커밋(`8199bb38`)으로 함께 움직였다.  이 재결속은
+> **그 결속 경로 두 파일(계약·상위 개발계획) 자체의 내용 변경**에 대한 것이다 —
+> O-6 의 정상 거동.
+>
+> **이 재결속이 결속하는 내용**: 계약 blob `0f8f3568…` · **10,165행**(51차에서
+> +89/−25) · 개발계획 blob `ec3464c0…` · **612행**(sha 재핀 두 자리, 행수 불변).
+> 계약 blob 은 §12.3.4-R 정본 블록 교체(+7행) + 에라타 51차 산문 + 여섯 자리 sha 재핀
+> + `현행(51차 이후)` 커런시 태그 스윕 4곳 + 좌표 드리프트 정정 다섯 자리를 담는다.
+>
+> `bound_set_digest daaba47b1c4b2b31717c098c8d761d9fd2b0cd1eb7e0d55b48d46a4e059f1c3b`
+> → **`e0729ff3ccbbab41b007464742290e4e875c07846b5a87d228727abc2ae4480f`** ·
+> `decided_at_head 279d59cc23b6b66846ee44a5cfe5babb84088905` →
+> **`8199bb38687a191523ccb74be1f313ea67e001f8`**(재결속 편집 «직전» 실측 HEAD = C1 커밋) ·
+> `requesting_plan_version` 은 **v2.22 로 유지**(열네 사이클 연속 — 에라타는 버전을
+> 올리지 않는다).  `disposition`/`deferred_scope`(`21c47e42` 전사분)는 **무접촉**이다 —
+> 이번은 그 반대 방향으로 digest «만» 움직인다.
+>
+> **U-12 원장(`OQ-11-RAISE-LEDGER.md`)에는 행을 쓰지 않는다** — 트리거(bound_set_digest
+> 불일치)가 C1..C2 구간에서 순간 성립했고 append-only 라 잘못 쓴 행은 되돌릴 수 없으므로,
+> 원장 기입 여부는 운영자 판단으로 남긴다(§12.3.4-R 하니스가 C1 직후
+> `REBINDING_REQUIRED` 를 실측으로 냈다 — 이 재결속으로 그 상태를 해소한다).
+>
+> **동결 실측**: 편집 후 digest 재계산이 **불변**임을 확인했다 — 이 아티팩트는
+> `tos-spec/` 에 있어 피측정 범위 «밖»이다(측정자를 피측정 범위 밖에 둔다).
+>
+> **S-26 ② 카운터는 51차 계약 편집 자체로 이미 0 이다**(⑥ 의 자기 적용 — 계약 에라타
+> 51차 항이 명시했다).  이 재결속은 그 리셋을 되돌리지 않는다.
+>
+> D0/P-0 착수 금지 불변 · `restricted_live`·`production` 권한 불변.
 
 > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
 > `plan_scope_digest` 를 본문에 적으면
