@@ -858,6 +858,26 @@ def test_real_corpus_check_passes() -> None:
     assert "RESULT: GREEN (violations=0)" in result.stdout
 
 
+def test_real_corpus_map_never_mixes_marker_and_real_binding_for_same_pair() -> None:
+    """FWD-a 매핑 아크 1차 — (evidence_id, surface_kind) 쌍마다 마커 행과 실결속
+    행이 병존해서는 안 된다(``planned_unassigned_pairs`` 는 "마커만 있는 쌍" 계수
+    이므로 병존은 그 지표를 조용히 왜곡한다). 결속이 생기면 마커 행은 제거된다."""
+    with open(_REPO_ROOT / tcs.SURFACE_MAP_REL, encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    marker_pairs = {
+        (r["evidence_id"], r["surface_kind"])
+        for r in rows
+        if r["surface_ref"] == "PLANNED_UNASSIGNED"
+    }
+    real_pairs = {
+        (r["evidence_id"], r["surface_kind"])
+        for r in rows
+        if r["surface_ref"] != "PLANNED_UNASSIGNED"
+    }
+    coexisting = marker_pairs & real_pairs
+    assert coexisting == set(), coexisting
+
+
 def test_missing_check_flag_is_usage_error() -> None:
     result = subprocess.run(
         [sys.executable, str(_MODULE_PATH)],
@@ -929,6 +949,103 @@ def test_k4_unresolvable_basis_is_red(tmp_path: Path) -> None:
     ]
     write_corpus(tmp_path, required_kinds_rows=bad_required)
     assert "K-4" in _ids(_run(tmp_path))
+
+
+# ---------------------------------------------------------------------------
+# 6b. K-4 — MAP.binding_basis 신규 <repo 경로>:<행> 형식 (FWD-a 매핑 아크 1차)
+# ---------------------------------------------------------------------------
+
+
+def test_k4_path_line_basis_literal_present_is_not_flagged(tmp_path: Path) -> None:
+    sample_path = tmp_path / "shared" / "pkg" / "sample.py"
+    sample_path.parent.mkdir(parents=True, exist_ok=True)
+    sample_path.write_text(
+        "placeholder\nMINI-EV-001 substrate\nunrelated\n", encoding="utf-8"
+    )
+    map_rows = [
+        dict(
+            MAP_ROW_1,
+            surface_ref="shared/pkg/sample.py",
+            existence="PRESENT",
+            binding_basis="shared/pkg/sample.py:2",
+        ),
+        MAP_ROW_2,
+        MAP_ROW_3,
+    ]
+    write_corpus(tmp_path, map_rows=map_rows)
+    assert "K-4" not in _ids(_run(tmp_path))
+
+
+def test_k4_path_line_basis_literal_absent_is_red(tmp_path: Path) -> None:
+    sample_path = tmp_path / "shared" / "pkg" / "sample.py"
+    sample_path.parent.mkdir(parents=True, exist_ok=True)
+    sample_path.write_text(
+        "placeholder\nMINI-EV-001 substrate\nunrelated\n", encoding="utf-8"
+    )
+    map_rows = [
+        dict(
+            MAP_ROW_1,
+            surface_ref="shared/pkg/sample.py",
+            existence="PRESENT",
+            # 행 3 에는 evidence_id 리터럴이 없다 — 행이 이동/오기입되면 red.
+            binding_basis="shared/pkg/sample.py:3",
+        ),
+        MAP_ROW_2,
+        MAP_ROW_3,
+    ]
+    write_corpus(tmp_path, map_rows=map_rows)
+    assert "K-4" in _ids(_run(tmp_path))
+
+
+# ---------------------------------------------------------------------------
+# 6c. K-3 — TEST 배치 수집 (단일 pytest --collect-only 호출, ref 별 개별 실행 아님)
+# ---------------------------------------------------------------------------
+
+
+def test_k3_test_batch_collection_positive_and_negative(tmp_path: Path) -> None:
+    test_pkg = tmp_path / "tos" / "tests"
+    test_pkg.mkdir(parents=True, exist_ok=True)
+    (test_pkg / "test_mini.py").write_text(
+        "def test_something() -> None:\n    assert True\n",
+        encoding="utf-8",
+    )
+    map_rows = [
+        dict(MAP_ROW_1, surface_ref="shared/pkg/does_not_matter.py"),
+        # 양성 — 실제로 수집되는 노드 ID.
+        dict(
+            MAP_ROW_2,
+            # 합성 코퍼스에는 tos/pyproject.toml(ini_options)이 없어 pytest
+            # rootdir 이 tmp_path 자체로 잡힌다 — 노드 ID 에 "tos/" 접두가
+            # 남는다(실코퍼스는 tos/ 를 rootdir 로 앵커해 접두가 없다).
+            surface_ref="tos/tests/test_mini.py::test_something",
+            existence="PRESENT",
+        ),
+        MAP_ROW_3,
+    ]
+    write_corpus(tmp_path, map_rows=map_rows)
+    findings = _ids(_run(tmp_path))
+    assert "K-3" not in findings
+
+
+def test_k3_test_batch_collection_uncollected_ref_is_red(tmp_path: Path) -> None:
+    test_pkg = tmp_path / "tos" / "tests"
+    test_pkg.mkdir(parents=True, exist_ok=True)
+    (test_pkg / "test_mini.py").write_text(
+        "def test_something() -> None:\n    assert True\n",
+        encoding="utf-8",
+    )
+    map_rows = [
+        MAP_ROW_1,
+        # 음성 — 구문은 정상이지만 실제로 수집되지 않는 노드 ID.
+        dict(
+            MAP_ROW_2,
+            surface_ref="tests/test_mini.py::test_does_not_exist",
+            existence="PRESENT",
+        ),
+        MAP_ROW_3,
+    ]
+    write_corpus(tmp_path, map_rows=map_rows)
+    assert "K-3" in _ids(_run(tmp_path))
 
 
 # ---------------------------------------------------------------------------

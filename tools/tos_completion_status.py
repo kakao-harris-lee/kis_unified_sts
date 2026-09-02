@@ -515,10 +515,14 @@ def build_context(repo_root: Path) -> CheckContext:
 
 
 # ---------------------------------------------------------------------------
-# K-4 — binding_basis 해석 (DOC-ID §번호)
+# K-4 — binding_basis 해석 (DOC-ID §번호 · MAP 전용 <repo 경로>:<행>)
 # ---------------------------------------------------------------------------
 
 _BASIS_RE = re.compile(r"^(?P<doc>[A-Za-z0-9][A-Za-z0-9_.-]*)\s+§(?P<num>\d+)$")
+# FWD-a 매핑 아크 1차 — MAP.binding_basis 전용 신규 형식(자기-검증형: 그 파일 그
+# 행에 evidence_id 리터럴이 실재해야 통과). REQUIRED-KINDS.basis 는 여전히
+# DOC-ID §번호 형식만 받는다(``_resolve_basis`` 불변).
+_PATH_LINE_BASIS_RE = re.compile(r"^(?P<path>[\w./-]+):(?P<line>\d+)$")
 
 
 @cache
@@ -547,6 +551,43 @@ def _resolve_basis(basis: str, src_root: Path) -> str | None:
     if not m:
         return f"basis 형식 불일치: {basis!r}"
     return _resolve_basis_cached(m.group("doc"), m.group("num"), src_root)
+
+
+def _resolve_path_line_basis(
+    evidence_id: str, rel: str, line_no: int, repo_root: Path
+) -> str | None:
+    """``<repo 경로>:<행>`` 해석 — 그 행에 ``evidence_id`` 리터럴이 실재해야 한다.
+
+    자기-검증형 basis: 행이 이동하면(파일 편집) 재검증에서 자연히 red 가 된다.
+    """
+    pure = PurePosixPath(rel)
+    if rel.startswith("./") or pure.is_absolute() or any(p == ".." for p in pure.parts):
+        return f"경로:행 basis 형식 위반: {rel!r}"
+    target = repo_root / rel
+    if not target.is_file():
+        return f"경로:행 basis 대상 파일 부재: {rel!r}"
+    try:
+        lines = target.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        return f"경로:행 basis 파일 읽기 실패: {exc}"
+    if not (1 <= line_no <= len(lines)):
+        return f"경로:행 basis 행 번호 범위 밖: {rel}:{line_no} (파일 {len(lines)}행)"
+    if evidence_id not in lines[line_no - 1]:
+        return f"경로:행 basis 행에 evidence_id 리터럴 부재: {rel}:{line_no}"
+    return None
+
+
+def _resolve_binding_basis(
+    evidence_id: str, basis: str, src_root: Path, repo_root: Path
+) -> str | None:
+    """MAP.binding_basis 전용 해석기 — 신규 ``<경로>:<행>`` 우선 시도, 아니면 DOC-ID §."""
+    stripped = basis.strip()
+    m_path = _PATH_LINE_BASIS_RE.match(stripped)
+    if m_path:
+        return _resolve_path_line_basis(
+            evidence_id, m_path.group("path"), int(m_path.group("line")), repo_root
+        )
+    return _resolve_basis(basis, src_root)
 
 
 # ---------------------------------------------------------------------------
@@ -590,27 +631,41 @@ def _check_byte_ref(ref: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# K-3 — pytest collect-only
+# K-3 — pytest collect-only (단일 배치 수집 — ref 별 개별 실행 금지, 성능)
 # ---------------------------------------------------------------------------
 
+_PYTEST_COLLECT_TIMEOUT = 180
 
-def _collect_pytest_paths(refs: Iterable[str], repo_root: Path) -> set[str]:
-    present: set[str] = set()
-    for ref in refs:
-        try:
-            result = subprocess.run(
-                [sys.executable, "-m", "pytest", "--collect-only", "-q", ref],
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        if result.returncode == 0:
-            present.add(ref)
-    return present
+
+def _collect_all_test_node_ids(repo_root: Path) -> set[str]:
+    """``tos/tests`` 전체를 단일 ``pytest --collect-only -q`` 호출로 수집한다.
+
+    ``tos/pyproject.toml`` 의 ``addopts = "-ra -q --strict-markers"`` 가 CLI 의
+    ``-q`` 와 누적되어(pytest 9 기준 verbosity -2) ``--collect-only -q`` 가 개별
+    노드 ID 대신 파일별 개수 요약을 출력하므로, ``-o addopts=`` 로 ini addopts 를
+    무효화해 classic 한 줄-당-노드 출력(그대로 surface_ref 값)을 복원한다.
+    """
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tos/tests",
+                "-o",
+                "addopts=",
+                "--collect-only",
+                "-q",
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=_PYTEST_COLLECT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    return {line for line in result.stdout.splitlines() if "::" in line}
 
 
 # ---------------------------------------------------------------------------
@@ -679,16 +734,13 @@ def check_k3(ctx: CheckContext) -> list[Finding]:
     if ctx.surface_map_rows is None:
         return findings
 
-    non_marker_test_refs = sorted(
-        {
-            row["surface_ref"]
-            for row in ctx.surface_map_rows
-            if row["surface_kind"] == "TEST" and row["surface_ref"] != MARKER
-        }
+    has_non_marker_test = any(
+        row["surface_kind"] == "TEST" and row["surface_ref"] != MARKER
+        for row in ctx.surface_map_rows
     )
     collected_tests: set[str] = set()
-    if non_marker_test_refs:
-        collected_tests = _collect_pytest_paths(non_marker_test_refs, ctx.repo_root)
+    if has_non_marker_test:
+        collected_tests = _collect_all_test_node_ids(ctx.repo_root)
 
     for row in ctx.surface_map_rows:
         eid = row["evidence_id"]
@@ -724,7 +776,8 @@ def check_k3(ctx: CheckContext) -> list[Finding]:
 
 
 def check_k4(ctx: CheckContext) -> list[Finding]:
-    """K-4 — binding_basis/basis 의 <DOC-ID> §<번호> 해석 가능성."""
+    """K-4 — REQUIRED-KINDS.basis 는 <DOC-ID> §<번호>; MAP.binding_basis 는 그 형식
+    또는 <repo 경로>:<행>(그 행에 evidence_id 리터럴 실재) 중 하나로 해석 가능해야 한다."""
     findings: list[Finding] = []
     src_root = ctx.repo_root / TOS_SPEC_SRC_REL
     if ctx.required_kinds_rows is not None:
@@ -738,7 +791,9 @@ def check_k4(ctx: CheckContext) -> list[Finding]:
                 )
     if ctx.surface_map_rows is not None:
         for row in ctx.surface_map_rows:
-            err = _resolve_basis(row["binding_basis"], src_root)
+            err = _resolve_binding_basis(
+                row["evidence_id"], row["binding_basis"], src_root, ctx.repo_root
+            )
             if err:
                 findings.append(
                     Finding("K-4", f"{row['evidence_id']} (MAP binding_basis): {err}")
