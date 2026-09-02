@@ -29,9 +29,13 @@ deterministically**, and **step 4 Independent Approval validates that candidate 
 all-false RFC-002 §9.1:553 authority block (design #34 §3.3).
 
 ⚠ **provisional** (design #34 §3.1): the *values* are not approved — the price value surface is
-D-E2's and the sizing bound is P0-1's — so a slice run wires provisional numbers and closes no
-EV. What is confirmed now is the **seam**: what may flow, what is forbidden, and which artifact
-encloses the bound.
+D-E2's, and the sizing bound (:class:`~tos.egressgw.records.SizingBound` — ``risk_budget``,
+``per_unit_risk``, ``lot_size``, ``min_quantity``/``max_quantity``, ``max_notional``) is **not a
+VERIFICATION-PROFILE-002 key at all**: none of those field names is in the profile's bounds/limits
+census, so this is not a P0-1 (Phase-0 bounds approval) gap. Governance of these
+values belongs to Order Construction Policy (RFC-002 §9.1:553), a separate, still-unratified
+artifact — so a slice run wires provisional numbers and closes no EV. What is confirmed now is
+the **seam**: what may flow, what is forbidden, and which artifact encloses the bound.
 
 Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #34 §0.3). No clock, no RNG.
 """

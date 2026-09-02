@@ -7,7 +7,10 @@ addendum-5 가 낸 네 건은 전부 같은 클래스다: **계약이 자기 자
 
 검사 축 (각 축은 모집단을 **문서 구조에서 파생**한다; 자리 열거를 하드코딩하지 않는다)::
 
-  C1  TOS-CC-C1   「(4) 열거」의 **기수를 말하는 모든 문장** ≡ 실제 열거 원소 수.
+  C1  TOS-CC-C1   「(4) 열거」를 참조하며 **기수 토큰**(정본 = `CARDINALITY_TOKEN_RE`)을
+                  담은 문장 ≡ 실제 열거 원소 수.  **«모든 기수 문장»이 아니다** — 그
+                  패턴에 맞지 않는 표기(한글 수사·다른 단위)는 보지 못한다(등재된 잔여 ·
+                  `check_c1` docstring).
       TOS-CC-C1X  실제 원소 집합의 **두 독립 파생**(구분자 분해 · 원형숫자 분해)이 불일치.
   C2  TOS-CC-C2R  자기인용 좌표가 문서 행 범위 «밖».
       TOS-CC-C2A  인용 «목록» + 문장이 병기한 «포섭 술어» ↔ 피인용 행 실측 불일치.
@@ -21,6 +24,7 @@ addendum-5 가 낸 네 건은 전부 같은 클래스다: **계약이 자기 자
       TOS-CC-C3B  머리말이 스스로 열거한 «미래 지향 필드» 어휘 + 동일 major 리터럴 버전이
                   **같은 마크다운 표 «셀»** 안에 공존 (아래 CELL-1).
   C4  TOS-CC-C4A  currency 층 태그 «현행(N차 이후)» 의 N ≠ 현행 회차.
+      TOS-CC-C4C  미래 지향 «다음 =» 단계 열거의 회차 리터럴 (S-11 의 기계 소비자).
       TOS-CC-C4B  currency 어휘를 쓰면서 층 태그가 «전무»한 자리.
       TOS-CC-C4C  층 태그를 «단» 필드 안에서, 태그 밖 산문이 회차를 **리터럴**로
                   가리키며 그 태그와 어긋난 자리 (아래 LAYER-REF-1).
@@ -49,8 +53,10 @@ stale 인 채 green 이 나왔다(A-F5).  같은 fail-open 을 되풀이하지 �
   * currency 어휘     — 본문이 성문화한 `「…」 어휘 스윕` 의 「」 안을 분해.
   * (4) 열거 원소     — 「(4) 대상 = …」 정의 자리에서 구분자(`·`)로 분해하고,
                         「(4) 열거 N원소에 … 전수 적용」 블록의 원형숫자 분해와 **교차 검증**.
-  * (4) 기수 진술     — 그 열거가 사는 «코드펜스» 안에서 (4) 를 참조하며 수량을 말하는
-                        모든 문장을 정규식으로 수집(자리 목록이 아니라 술어).
+  * (4) 기수 진술     — 그 열거가 사는 «코드펜스» 안에서 (4) 를 참조하며 **기수 토큰을
+                        담은** 문장을 정규식으로 수집(자리 목록이 아니라 술어).  모집단은
+                        `CARDINALITY_TOKEN_RE` 하나이므로 **«수량을 말하는 모든 문장»이
+                        아니다** — 재심 #16·#17 이 그 전칭을 두 자리에서 적발했다.
   * 인용 «목록»       — «구분자로 이어진 좌표 둘 이상» 이라는 **형상**으로 파생하되,
                         그 모집단은 **앵커를 채택한 목록에만** 쓴다(아래 LIST-1).
 
@@ -300,11 +306,28 @@ PROVENANCE-1 — 기준선의 «측정 출처» 주장을 기계로 강제한다
   * 출처 필드 부재·형태 위반       → red (검증 불가를 통과로 접지 않는다)
   * 커밋이 16진 sha 가 아님        → red (`HEAD`·브랜치 같은 «움직이는 ref» 는 매 실행마다
                                     다른 대상을 가리켜 주장 자체가 성립하지 않는다)
+  * 출처 종류가 `worktree`         → red (**가변 출처**.  50차 이전에는 이 자리가 «운영
+                                    안내»였고 안내는 통과였다 — 기입값·출처·검사 대상이
+                                    한꺼번에 같은 가변 문서를 가리켜 무엇을 바꾸든 함께
+                                    움직였다.  재심 #10 의 반례가 그 자리를 밟았다)
   * git 실행 실패·커밋/경로 부재   → red
+
+거부는 **저작 레벨**에 둔다: 출처를 읽는 유일한 리더 `read_baseline_source` 의 기본값이
+«불변만»이고, 편의 경로(`measure_baseline`)만 `allow_mutable=True` 를 넘긴다.  호출자마다
+가드를 얹는 형태는 기각했다 — 다음 축이 가드를 빠뜨리면 구멍이 조용히 다시 열린다.
+그래서 가변 출처는 이 리더에 매달린 **모든** 축(C2UP · CAP-2 셀 수 · 닫힌 표 행 수)에서
+함께 red 다.  **이 괄호는 축이 늘 때 함께 늘어야 한다** — 51차가 세 번째 축을 매달면서
+여기와 CLI 도움말을 둘 다 갱신하지 않았다(부분 스윕).  **발견 주체는 갈린다**: CLI 도움말은
+**재심 #13 의 유일한 finding** 이고, 이 괄호는 그 판정 «밖»에서 저작자가 스윕 모집단을
+넓히다 찾아 52차에 함께 고쳤다(#13 판정문의 «오케스트레이터 관측» 1번).  52차 문언은 둘 다
+#13 이 적발한 것처럼 적었고 **재심 #14 가 그 거짓 귀속을 material 로 냈다** — 런타임은 안
+바뀌지만 이력을 거짓으로 만들면 이후 감사의 근거가 오염된다.
 
 갱신 절차도 기계화한다 — `--measure-baseline <rev>` 는 **커밋 blob** 에서 재어 붙여넣을
 JSON 을 출력한다.  **파일은 쓰지 않는다**(RATCHET-1 과 같은 이유: 기입은 사람의 기록
-행위여야 한다).  ref 는 그 자리에서 불변 sha 로 해소해 출력한다.
+행위여야 한다).  ref 는 그 자리에서 불변 sha 로 해소해 출력한다.  `worktree` 를 주면
+실측 표시만 내고 **출처 블록을 내주지 않는다** — 종래에는 그 출력을 그대로 붙여넣는
+것만으로 게이트를 통과하는 기준선이 만들어졌다(편의 경로가 곧 우회 경로였다).
 
 ------------------------------------------------------------------------------
 REF-1 — «기각된 문서를 정본으로 가리키는» 인용 (TOS-CC-REF-REJECTED)
@@ -364,7 +387,12 @@ CLOSED-1 — «닫힌 표»의 행 수 등호 (TOS-CC-CLOSED-TABLE)
 
   * `header_anchor` 를 담은 행이 **정확히 1개** · `closing_anchor` 도 **정확히 1개**.
   * 헤더 행 **다음** 행이 구분자(`|---|…`).
-  * 구분자 다음부터 **연속하는 표 행**(구분자 행 제외)을 세어 기준선 값과 **등호**.
+  * 구분자 다음부터 **연속하는 표 행**(구분자 행 제외)을 세어 **측정 출처 blob** 의
+    같은 표 행 수와 **등호**.  기준 blob 은 `measured_against` 가 가리키는 불변
+    커밋이고, `kind: worktree` 는 리더의 기본값이 거부한다(50차).
+  * 기준선의 기입값(`closed_table_rows`)도 **그 blob 실측과 등호** — 기입 정수는
+    권위가 아니라 «검증 대상 주장»이다(51차 · 두 다리).  이 다리가 없으면 행을
+    더하면서 기준값을 함께 올리는 편집이 위반 0건이 된다.
 
 **등호이지 래칫이 아니다.**  C2U(RATCHET-1)는 «늘지 않는다»만 보장하는 축이라 잔여를
 줄이는 편집을 막지 않는다.  닫힌 표는 성격이 다르다 — 행이 **늘면** 표가 다시 열린 것이고,
@@ -382,7 +410,11 @@ CLOSED-1 — «닫힌 표»의 행 수 등호 (TOS-CC-CLOSED-TABLE)
   * «측정된 계수»(행 수)   → 기준선 파일(`.tos_contract_baseline.json`).  계약 본문에
     둘 수 없는 이유는 6차 ⓑ 다 — 「자기 문서를 세는 숫자는 그 문서에 두지 않는다」.
     그 파일이 `unanchored_self_citations` 로 이미 쓰는 자리이고, 값 갱신이 **사람의 기록
-    행위**로 남는다(닫힌 표의 행이 정당하게 바뀌는 일은 운영자 결정이다).
+    행위**로 남는다(닫힌 표의 행이 정당하게 바뀌는 일은 운영자 결정이다).  **그 기록
+    행위 자체는 보증이 아니다**(51차) — 행 추가와 기준값 상향을 한 커밋에 묶으면
+    산문 규율은 그대로 통과한다.  그래서 기입 정수는 권위가 아니라 «검증 대상 주장»
+    이고, 기준은 `measured_against` 가 가리키는 **불변 blob** 이다 (CAP2-FIXTURE 가
+    셀 수 축에 놓은 것과 같은 두 다리).
   * «측정»                 → 이 파일.  둘 다 신뢰하지 않고 대조만 한다.
 
 기준선에 그 표의 값이 **없으면** red 다 — 부재를 «0 위반»으로 접으면 축이 장식이 된다
@@ -424,15 +456,16 @@ from __future__ import annotations
 
 import argparse
 import copy
+import errno
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
-import tempfile
 import unicodedata
 from collections import namedtuple
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from functools import cache
 from pathlib import Path
 
@@ -471,6 +504,9 @@ MANIFEST_TOP_KEYS = frozenset(
         "census_vocabulary",
         "rejected_markers",
         "closed_tables",
+        # [43차] 픽스처 표식 · 미래 지향 단계 접두 어휘 — 둘 다 «의도»이므로 manifest 가 자리다.
+        "fixture_rows",
+        "future_step_prefixes",
         "rules",
     }
 )
@@ -491,9 +527,13 @@ MANIFEST_SCHEMA_VERSION = 1
 
 #: 검사기가 «구현하는» 파생 질의의 이름.  manifest 가 모르는 이름을 쓰면 red —
 #: 모르는 질의를 «검사 없음»으로 접으면 그 규칙이 조용히 사라진다(fail-open).
-UNIVERSE_DERIVATIONS = frozenset({"separated_code_spans_in_block"})
-CONSUMER_DERIVATIONS = frozenset({"circled_items_in_block"})
-ELEMENT_ID_DERIVATIONS = frozenset({"code_span_verbatim"})
+UNIVERSE_DERIVATIONS = frozenset(
+    {"separated_code_spans_in_block", "cap_guard_expressions"}
+)
+CONSUMER_DERIVATIONS = frozenset(
+    {"circled_items_in_block", "structural_term_guard_expressions"}
+)
+ELEMENT_ID_DERIVATIONS = frozenset({"code_span_verbatim", "guard_expression_verbatim"})
 
 #: RATCHET-1 기준선 파일 — 검사기 «밖»에 두어 개수 갱신이 사람의 기록 행위로 남게 한다.
 #: 검사기가 스스로 낮출 수 있는 자리에 두면 래칫이 성립하지 않는다.
@@ -514,7 +554,13 @@ BASELINE_PROVENANCE_KEY = "measured_against"
 #: 측정 출처의 «종류».  둘뿐이며, 이름을 강제로 적게 하는 이유는 «어디서 쟀는지»를
 #: 산문이 아니라 **판정 가능한 값**으로 남기기 위해서다.
 BASELINE_KIND_COMMIT = "commit"  # 불변 커밋 blob — 재현 가능한 정상 상태
-BASELINE_KIND_WORKTREE = "worktree"  # 커밋 전 워킹트리 — 과도기의 정직한 기입
+#: 워킹트리 — **게이트 경로에서 거부되는 값**이다(50차).  가변 문서를 가리키므로
+#: 기입값·출처·검사 대상이 한꺼번에 움직여 «그 출처에서 쟀다»는 주장이 검증되지
+#: 않는다.  이 이름이 남아 있는 이유는 `--measure-baseline worktree` 가 «지금 이
+#: 자리를 쟀다»를 표시하기 위해서다 — **측정 표시 전용**이고, 기준선 파일에 기입하면
+#: C2UP·CAP2-FIXTURE·CLOSED-TABLE 세 축 모두에서 red 다 — 잠금이 리더의 기본값에
+#: 있으므로 출처를 다시 재는 축이 늘 때마다 자동으로 따라온다.
+BASELINE_KIND_WORKTREE = "worktree"
 BASELINE_KIND_KEY = "kind"
 
 #: 측정 출처 커밋은 **불변 객체 이름**이어야 한다.  `HEAD`·브랜치명 같은 움직이는 ref 를
@@ -938,7 +984,15 @@ CardinalitySite = namedtuple(
 def iter_cardinality_statements(
     doc: ContractDoc, lo: int, hi: int
 ) -> Iterator[CardinalitySite]:
-    """코드펜스 `(lo, hi)` 안에서 (4) 를 참조하며 수량을 말하는 자리를 훑는다.
+    """코드펜스 `(lo, hi)` 안에서 (4) 를 참조하며 **기수 토큰**을 담은 자리를 훑는다.
+
+    **«수량을 말하는 자리»가 아니다** — 참조 뒤 `CARDINALITY_WINDOW` 자 창에서
+    `CARDINALITY_TOKEN_RE` 가 맞는 것만 찾는다.  **그 정규식이 정본이며 여기서 다시
+    풀어 적지 않는다** — 58차까지 이 자리를 풀어 적을 때마다 실제 술어와 어긋났다.
+    등재된 잔여: 그 패턴에 맞지 않는 표기(한글 수사 「여덟」·다른 단위 「항목」·「건」)로 적은
+    거짓 기수 진술은 **보지 못한다**.  반대로 `\\d` 는 파이썬에서 **유니코드 십진 숫자**를
+    받으므로 `८개`(Devanagari)·`９개`(전각)는 **잡힌다** — 재심 #19 실측(57차가 「아라비아
+    숫자」로 좁혀 적은 것이 거짓이었다).
 
     검사(C1)와 대조군 주입이 **같은 술어**를 쓰게 하려고 함수로 뽑았다.  둘이 갈라지면
     «검사가 보는 자리»와 «변이가 건드리는 자리»가 달라져 대조군이 판별력을 잃는다.
@@ -1042,7 +1096,15 @@ def derive_enum_elements_secondary(doc: ContractDoc) -> tuple[list[str], int] | 
 
 
 def check_c1(doc: ContractDoc) -> list[Violation]:
-    """C1 — (4) 를 참조하며 기수를 말하는 모든 문장을 실제 열거 크기와 대조한다."""
+    """C1 — (4) 를 참조하며 «기수 토큰»을 담은 문장을 실제 열거 크기와 대조한다.
+
+    **«모든 기수 문장»이 아니다.**  모집단의 정본은 `CARDINALITY_TOKEN_RE` 이고 **여기서
+    풀어 적지 않는다** — 55~57차가 세 번 풀어 적었고 세 번 다 실제 술어와 어긋났다.
+    **등재된 잔여**: 그 패턴에 맞지 않는 표기(한글 수사 「여덟」·다른 단위 「항목」·「건」·
+    「자리」)로 적은 거짓 기수 진술은 **보지 못한다** — 재심 #16 실측(「아래 9개」→
+    「아래 여덟 항목」이면 위반 0건).  반대로 `\\d` 는 **유니코드 십진 숫자**를 받으므로
+    `८개`·`９개` 는 **잡힌다** — 재심 #19 실측.
+    """
     elements, def_line, violations = derive_enum_elements(doc)
     actual = len(elements)
 
@@ -1530,17 +1592,119 @@ def derive_unanchored_citations(doc: ContractDoc) -> list[tuple[int, str]]:
     return sites
 
 
+# ============================================================================
+# 원본 읽기 — 게이트는 디스크, 배터리는 인메모리 사상 (부재는 «명시»)
+# ============================================================================
+
+
+class SourceAbsent:
+    """인메모리 사상 안에서 «이 경로에는 파일이 없다» 를 뜻하는 표지의 형(型).
+
+    쓰이는 인스턴스는 `SOURCE_ABSENT` 다.  참/거짓 문맥에서 쓰면 `TypeError` 가
+    난다 — 표지가 «원본 문자열» 자리로 새면 조용히 falsy 로 접히지 않고 그 자리에서
+    시끄럽게 죽는 편이 낫기 때문이다.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "SOURCE_ABSENT"
+
+    def __bool__(self) -> bool:
+        raise TypeError("SOURCE_ABSENT 는 참/거짓 문맥에서 쓸 수 없다")
+
+
+#: 부재 표지.  사상의 값이 이것이면 리더는 디스크로 내려가지 «않는다».
+SOURCE_ABSENT = SourceAbsent()
+
+#: 리더가 받는 «경로 → 원본» 사상.  값이 문자열이면 그 원본, `SOURCE_ABSENT` 면 부재.
+SourceMap = Mapping[Path, "str | SourceAbsent"]
+#: 픽스처를 «짓는» 쪽이 채우는 같은 사상의 가변 판.
+MutableSourceMap = dict[Path, "str | SourceAbsent"]
+
+#: 배터리 픽스처 경로의 «합성» 접두.  디스크에 만들지 않는다 — 키는 인메모리 사상
+#: 안에서만 살고, `str(path)` 는 진단 문구에서 여전히 뜻을 갖는다.  임시 디렉터리를
+#: 쓰지 않으므로 쓰기 가능한 경로가 없는 샌드박스에서도 배터리가 돈다.  고정 상대
+#: 경로이므로 같은 이름의 실제 파일이 작업 디렉터리 기준으로 «있을 수» 있다 — 그래서
+#: 이 접두 아래에서는 사상이 «유일한 우주»다(`_read_source_text`).
+SELFTEST_FIXTURE_DIR = Path("<selftest>")
+
+
+def _absent_source(path: Path) -> FileNotFoundError:
+    """실제 부재와 «같은» 예외를 짓는다.
+
+    호출부는 `OSError` 를 잡아 `ContractParseError` 로 접으며 예외 문구를 그대로
+    끼워 넣는다.  그 문구가 디스크의 실제 부재와 같아야 부재 대조군이 «같은 판정»을
+    유지하므로, errno 와 문구를 리터럴로 적지 않고 `os.strerror` 에서 받는다.
+    """
+    return FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))
+
+
+def _absent_fixture(sources: MutableSourceMap, path: Path) -> Path:
+    """부재 픽스처 하나를 사상에 «명시» 로 등재하고 그 «경로» 를 돌려준다.
+
+    부재를 사상에서 생략하면 리더가 디스크로 내려가고, 같은 이름의 실제 파일이
+    합성 좌표에 있으면 부재 대조군이 조용히 «존재» 로 바뀐다 (재심 #20).
+    """
+    sources[path] = SOURCE_ABSENT
+    return path
+
+
+def _read_source_text(path: Path, sources: SourceMap | None) -> str:
+    """픽스처를 받는 리더들이 **공유하는** 읽기 자리.
+
+    `sources` 는 «경로 → 원본» 인메모리 사상이다.  기본값 `None` 이면 디스크에서
+    읽는다 — 게이트 경로는 이 인자를 넘기지 «않으므로» 구성상 동작이 불변이다.
+    사상을 넘기는 자리는 자기검사 배터리(`run_self_test`)이고, 그 키는 디스크에
+    만들지 않는 합성 경로다(`SELFTEST_FIXTURE_DIR`).
+
+    리더가 저마다 자기 자리에서 읽으면 «무엇을 읽는가» 가 조용히 갈라진다.  그래서
+    자리를 하나로 둔다 — 잠금은 표면이 아니라 저작 레벨이다.
+
+    사상을 받은 경로에서 부재는 «생략» 이 아니라 «명시» 로 표현한다.  값이
+    `SOURCE_ABSENT` 면 디스크로 내려가지 않고 `_absent_source` 의 예외를 올린다.
+    합성 접두 아래인데 사상에 키가 아예 없을 때도 같게 접는다 — 합성 좌표는 고정
+    상대 경로라 같은 이름의 실제 파일이 존재할 수 있고, 그것을 읽으면 부재 대조군이
+    조용히 «존재» 로 바뀌기 때문이다.  사상 밖의 실제 경로(실운용 정본 등)는 그대로
+    디스크에서 읽는다.
+
+    Args:
+        path: 읽을 경로.  사상의 키이기도 하다.
+        sources: 인메모리 원본 사상 (`None` = 디스크에서 읽는다).
+
+    Returns:
+        원본 텍스트.
+
+    Raises:
+        OSError: 부재로 접힌 합성 좌표, 또는 디스크에서 읽지 못했을 때.
+    """
+    if sources is None:
+        return path.read_text(encoding="utf-8")
+    if path in sources:
+        text = sources[path]
+        if isinstance(text, str):
+            return text
+        raise _absent_source(path)
+    if path.is_relative_to(SELFTEST_FIXTURE_DIR):
+        raise _absent_source(path)
+    return path.read_text(encoding="utf-8")
+
+
 BaselineRecord = namedtuple("BaselineRecord", ["count", "kind", "commit", "path"])
 
 
-def read_unanchored_baseline(path: Path) -> BaselineRecord:
+def read_unanchored_baseline(
+    path: Path, sources: SourceMap | None = None
+) -> BaselineRecord:
     """래칫 기준선을 읽는다 — 부재·손상·형태 위반은 전부 fail-closed 사유다.
 
-    측정 출처(`measured_against`)는 여기서 «형태»만 본다.  그 주장이 참인지는
-    `check_c2up` 이 실제 blob 을 다시 재어 판정한다 (PROVENANCE-1).
+    측정 출처(`measured_against`)는 여기서 «형태»만 본다.  그 주장이 참인지는 계수를
+    쓰는 축들이 실제 blob 을 다시 재어 판정한다 (PROVENANCE-1) — `check_c2up`(계수) ·
+    `check_fixture_row_shape`(셀 수) · `check_closed_tables`(닫힌 표 행 수).
 
     Args:
         path: 기준선 JSON 경로.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         `(개수, 측정 커밋, 측정 경로)`.
@@ -1549,7 +1713,7 @@ def read_unanchored_baseline(path: Path) -> BaselineRecord:
         ContractParseError: 읽기·파싱 실패 또는 키/타입 위반.
     """
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = _read_source_text(path, sources)
     except OSError as exc:
         raise ContractParseError(f"기준선 파일을 읽지 못했다 ({path}): {exc}") from exc
     try:
@@ -1578,21 +1742,32 @@ def read_unanchored_baseline(path: Path) -> BaselineRecord:
     return BaselineRecord(value, _str(BASELINE_KIND_KEY), _str("commit"), _str("path"))
 
 
-def read_baseline_source(repo_root: Path, record: BaselineRecord) -> str:
+def read_baseline_source(
+    repo_root: Path, record: BaselineRecord, *, allow_mutable: bool = False
+) -> str:
     """기준선이 «여기서 쟀다»고 주장하는 원본을, **그 주장 그대로** 읽는다.
 
     이 함수가 출처 종류별 유일한 리더다 — 검증과 픽스처 구성이 같은 경로를 쓰지 않으면
     «blob 을 잰다»는 주장과 실제 읽는 대상이 조용히 갈라질 수 있다.
 
+    **기본값이 «불변만» 이다**(50차).  `allow_mutable` 을 넘기지 «않는» 모든 호출자는
+    워킹트리 출처를 거부하고, 현재 넘기는 곳은 `measure_baseline` 하나뿐이다.
+    호출자마다 가드를 얹는 형태는 **명시적으로 기각했다** — 그러면 다음 축이 가드를
+    빠뜨렸을 때 구멍이 조용히 다시 열리고, 그것이 이 아크가 반복해 온 «부분 스윕»
+    결함이다.  **잠금은 표면이 아니라 저작 레벨에 둔다.**
+
     Args:
         repo_root: 저장소 루트.
         record: 기준선 레코드.
+        allow_mutable: 가변 출처(워킹트리)를 읽어도 되는가.  게이트 경로가 아니라
+            **측정 편의 경로**에서만 참이다.
 
     Returns:
         원본 텍스트.
 
     Raises:
-        ContractParseError: 출처 종류·형태 위반 또는 읽기 실패.
+        ContractParseError: 출처 종류·형태 위반 또는 읽기 실패.  게이트 경로에서
+            가변 출처를 만났을 때도 여기에 포함된다.
     """
     if record.path is None:
         raise ContractParseError(
@@ -1610,6 +1785,14 @@ def read_baseline_source(repo_root: Path, record: BaselineRecord) -> str:
             )
         return read_commit_blob(repo_root, record.commit, record.path)
     if record.kind == BASELINE_KIND_WORKTREE:
+        if not allow_mutable:
+            raise ContractParseError(
+                f"측정 출처 종류가 '{BASELINE_KIND_WORKTREE}' 다 — 워킹트리는 불변이 "
+                "아니므로 «그 출처에서 쟀다»는 주장을 검증 불가로 만든다 (기입값·출처·"
+                "검사 대상이 같은 가변 문서를 가리켜 무엇을 바꾸든 함께 움직인다). "
+                "계약 편집을 커밋한 뒤 `--measure-baseline <sha>` 로 재측정해 "
+                f"'{BASELINE_KIND_KEY}': '{BASELINE_KIND_COMMIT}' 로 승격하라"
+            )
         try:
             return (repo_root / record.path).read_text(encoding="utf-8")
         except OSError as exc:
@@ -1661,7 +1844,7 @@ def check_c2up(
     doc: ContractDoc,
     baseline_path: Path,
     repo_root: Path,
-    notices: list[str] | None = None,
+    sources: SourceMap | None = None,
 ) -> list[Violation]:
     """C2UP — 기준선이 «자기 측정 출처에 대해 하는 주장»을 기계로 강제한다.
 
@@ -1671,13 +1854,17 @@ def check_c2up(
     **그 blob 을 다시 재어** 기입값과 대조한다 — 불일치면 red.
 
     커밋 이름은 16진 sha 만 받는다.  `HEAD`·브랜치명 같은 «움직이는 ref» 를 허용하면
-    주장이 매 실행마다 다른 대상을 가리켜 검증이 성립하지 않는다.
+    주장이 매 실행마다 다른 대상을 가리켜 검증이 성립하지 않는다.  같은 이유로 **가변
+    출처(`worktree`)도 red 다** — `read_baseline_source` 가 게이트 경로에서 거부하고,
+    이 함수는 그 예외를 위반으로 바꾼다(50차).  종래에는 그 자리를 «위반이 아닌 운영
+    안내»로 냈는데, 안내는 통과이므로 셀 추가·기입값 상향·`kind` 전환을 한 커밋에 묶으면
+    위반 0건이었다(재심 #10 반례).
 
     Args:
         doc: 계약 문서 컨텍스트(진단 경로 표기용).
         baseline_path: 기준선 JSON 경로.
         repo_root: 저장소 루트.
-        notices: 위반이 아닌 운영 안내를 모으는 목록(있으면).
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         위반 목록.
@@ -1687,7 +1874,7 @@ def check_c2up(
         return [Violation("TOS-CC-C2UP", doc.display_path, 0, message)]
 
     try:
-        record = read_unanchored_baseline(baseline_path)
+        record = read_unanchored_baseline(baseline_path, sources)
     except ContractParseError as exc:
         return fail(f"기준선을 읽지 못해 측정 출처를 검증할 수 없다 — {exc}")
 
@@ -1709,17 +1896,6 @@ def check_c2up(
             "(다른 대상을 재고 출처만 적었을 때 나타나는 형태)"
         )
 
-    if record.kind == BASELINE_KIND_WORKTREE and notices is not None:
-        # 위반은 아니다 — 운영자가 «커밋 전»이라고 정직하게 적은 과도기 상태다.  다만
-        # 워킹트리는 불변 객체가 아니라서 이 주장은 언제든 스스로 거짓이 될 수 있다.
-        # 그 사실을 매 실행 표면에 남긴다(조용한 과도기는 영구가 된다).
-        notices.append(
-            f"[TOS-CC-C2UP] 기준선 측정 출처가 «{BASELINE_KIND_WORKTREE}»(커밋 전)다. "
-            "워킹트리는 불변이 아니므로 이 결속은 잠정이다 — 계약 편집을 커밋한 뒤 "
-            f"`--measure-baseline <sha>` 로 재측정해 "
-            f"'{BASELINE_KIND_KEY}': '{BASELINE_KIND_COMMIT}' 로 승격하라."
-        )
-
     logger.info(
         "C2UP: 기준선 %d == %s 재측정 %d (측정 출처 검증됨 · kind=%s)",
         record.count,
@@ -1731,7 +1907,10 @@ def check_c2up(
 
 
 def check_c2u(
-    doc: ContractDoc, baseline_path: Path, notices: list[str] | None
+    doc: ContractDoc,
+    baseline_path: Path,
+    notices: list[str] | None,
+    sources: SourceMap | None = None,
 ) -> list[Violation]:
     """C2U — 미앵커 좌표 잔여가 «늘지 않는다»만 보장한다 (닫음이 아니라 래칫).
 
@@ -1739,6 +1918,7 @@ def check_c2u(
         doc: 계약 문서 컨텍스트.
         baseline_path: 기준선 JSON 경로.
         notices: 위반이 아닌 운영 안내를 모으는 목록(있으면).
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         위반 목록.
@@ -1747,7 +1927,7 @@ def check_c2u(
     actual = len(sites)
 
     try:
-        baseline = read_unanchored_baseline(baseline_path).count
+        baseline = read_unanchored_baseline(baseline_path, sources).count
     except ContractParseError as exc:
         # 기준선 부재를 «0 위반» 으로 접으면 래칫이 장식이 된다 — 부재 자체가 red.
         return [
@@ -1918,6 +2098,78 @@ def check_c3(doc: ContractDoc) -> list[Violation]:
 # ============================================================================
 
 
+#: C4C — 미래 지향 «단계 열거»의 회차 리터럴.  접두 어휘의 정본은 **manifest**
+#: (`future_step_prefixes`)이고 검사기는 **표기 변형만 정규화**한다 — 43차 재심 #3 F3 이
+#: 「구분자 뒤 공백 하나로 탈출」을 실측했다(`다음 단계=42차`).  구분자는 `=`·`:`·전각 `：`
+#: 를 받고 공백은 선택이며, 열거가 다음 행으로 이어지는 경우까지 창에 넣는다.
+#: `»` 가 바로 붙는 것은 토큰 «언급»이라 제외한다(축 자신을 설명하는 문장이 자기 위반이
+#: 되면 그 축은 못 산다).
+STEP_SEP_RE = r"\s*[=:]\s*"
+#: 단계 화살표 — `→` 만이 아니다(44차 실측: `⇒` 우회).  표기 변형은 여기서 닫고
+#: 접두 «어휘»는 manifest 가 진다 — 둘을 섞으면 목록이 다시 표기 의존이 된다.
+STEP_ARROW_RE = re.compile(r"[→⇒➡]")
+#: 그 열거 안의 회차·addendum 리터럴.  이것이 «갱신해야 살아 있는 값»의 형상이다.
+STEP_ROUND_RE = re.compile(r"\d+\s*차|addendum-\d|[０-９]+\s*차")
+
+
+def _step_enum_re(prefixes: Sequence[str]) -> re.Pattern[str]:
+    """manifest 접두 어휘로 단계-열거 정규식을 만든다 (긴 접두가 먼저 걸리게 정렬)."""
+    alt = "|".join(
+        re.escape(p) for p in sorted(prefixes, key=len, reverse=True) if p.strip()
+    )
+    return re.compile(rf"(?:{alt}){STEP_SEP_RE}(?!»)([^·|\n]{{0,120}})")
+
+
+def check_c4c(doc: ContractDoc, prefixes: Sequence[str]) -> list[Violation]:
+    """C4C — 미래 지향 «단계 열거»에 회차 리터럴을 두지 않는다 (S-11 의 기계 소비자).
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+        prefixes: manifest 가 선언한 접두 어휘(정본).
+
+    Returns:
+        위반 목록.  이력 행은 면제한다 — 「그때 참이었던 기록」은 갱신 대상이 아니다.
+    """
+    if not prefixes:
+        return [
+            Violation(
+                "TOS-CC-C4C",
+                doc.display_path,
+                0,
+                "manifest `future_step_prefixes` 가 비었다 — 접두 정본이 없으면 이 축은 "
+                "조용히 0을 반환한다(모집단 붕괴는 «위반 0» 이 아니다)",
+            )
+        ]
+    pattern = _step_enum_re(prefixes)
+    out: list[Violation] = []
+    for lineno, line in enumerate(doc.lines, start=1):
+        if doc.is_history_row(lineno):
+            continue
+        # 44차 재심 #4 F2: 주석 삽입·전각 구분자·여러 행 래핑이 전부 우회였다.
+        # 정규화는 NFKC 표준에 위임하고, 뒤따르는 **두 행**까지 이어 붙인다.
+        scan = _normalize_scan_text(line)
+        tail = " ".join(
+            _normalize_scan_text(doc.lines[k])
+            for k in range(lineno, min(lineno + 2, len(doc.lines)))
+        )
+        for m in pattern.finditer(scan):
+            seg = m.group(1)
+            if not STEP_ARROW_RE.search(seg):
+                seg = seg + " " + tail[:200]
+            if STEP_ARROW_RE.search(seg) and STEP_ROUND_RE.search(seg):
+                out.append(
+                    Violation(
+                        "TOS-CC-C4C",
+                        doc.display_path,
+                        lineno,
+                        "미래 지향 «단계 열거»에 회차 리터럴이 있다 — "
+                        f"«{_ellipsis(seg)}».  S-11 은 미래 지향 필드를 리터럴 대신 "
+                        "술어로 적게 한다(갱신할 값을 두지 않으면 stale 될 값도 없다)",
+                    )
+                )
+    return out
+
+
 def _prose_round_refs(
     cell: str,
 ) -> tuple[list[tuple[int, int, str]], list[re.Match[str]]]:
@@ -2067,6 +2319,7 @@ def check_c4(doc: ContractDoc) -> list[Violation]:
 #
 #   TOS-CC-RULE-ANCHOR    `statement_anchor` 가 문서에 0회 또는 2회 이상.
 #   TOS-CC-RULE-MISSING   universe ∖ consumers ≠ ∅  (R-F3 의 본체).
+#                         CAP-2 에서는 «차단 술어에 구조 파생 항이 없다» 가 이 형태로 뜬다.
 #   TOS-CC-RULE-EXTRA     consumers ∖ universe ≠ ∅  (사라진 원소를 가리키는 stale 소비처).
 #   TOS-CC-RULE-DUP       같은 (rule, element) 가 2회 이상.
 #   TOS-CC-RULE-MANIFEST  manifest 부재·파손·스키마 위반·미구현 파생 이름.
@@ -2195,6 +2448,417 @@ def derive_consumers_circled(
     return consumers, line_no
 
 
+#: 차단문의 **결과 토큰** — 모집단의 구조적 시작점.
+#: [43차 — 재심 #3 F1·F2] 42차 판은 «화살표와 같은 행의 마지막 코드스팬 셋»을 봤고, 그것도
+#: **표기 의존**이었다(실측 탈출 셋: 백틱 없는 선행항 · 임계 뒤 스팬 셋 · 줄바꿈 분리).
+#: 이제 **선행 «창»** 을 본다 — 백틱을 벗기고, 직전 행까지 이어 붙이며, 표 행도 포함한다.
+GUARD_ARROW_RE = re.compile(r"→\s*\*{0,2}`?PREVENTION_UNVERIFIABLE`?")
+#: 선행 창의 비교 연산자.  «비교가 없다» = 상한 차단이 아니다(열거 실패·http 오류 등).
+GUARD_CMP_RE = re.compile(r"[><≥]=?|==")
+#: 임계 수치 — 구분자(`_`·`,`·공백)와 **전각 숫자**를 허용한다.  세 자리 이상만 본다:
+#: `?page=3`·`|E| ≥ 1` 같은 «작은 수» 비교는 상한이 아니다.
+GUARD_CAPNUM_RE = re.compile(r"\d[\d_,\u00a0 ]{2,}\d|\d{3,}|[０-９]{3,}")
+#: 구조 파생 항 — «수집한 집합의 크기»를 피연산자로 쓰는 항(`|S| >= 1000` 형상).
+STRUCTURAL_TERM_RE = re.compile(
+    r"\\?\|\s*[A-Za-z_][A-Za-z0-9_₀-₉]*\s*\\?\|\s*[><≥]?=\s*[\d０-９]"
+)
+#: 선행 창의 길이(문자) — 같은 문단 안의 술어를 담되 문서 전체가 딸려오지 않을 만큼.
+GUARD_WINDOW = 300
+
+
+#: 인라인 HTML 주석 — 렌더링에 보이지 «않으므로» 술어 판별에서 제거한다.
+#: 44차 재심 #4 F2 실측: `다음 단계<!-- … -->=44차` 가 주석 하나로 우주 밖이었다.
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def _normalize_scan_text(text: str) -> str:
+    """판별 전 정규화 — **표준 유니코드 NFKC** + 주석 제거 + 백틱 제거.
+
+    NFKC 는 «검증된 표준»이다(전각 `＞`·`１０００`·`：` → 반각).  40~43차가 표기 변형을
+    정규식으로 하나씩 쫓다가 매 회차 새 우회를 냈다 — **표기 정규화는 발명하지 않고
+    표준에 위임**한다(바퀴 재발명 금지).
+
+    Args:
+        text: 원문 조각.
+
+    Returns:
+        정규화된 조각.
+    """
+    return unicodedata.normalize("NFKC", HTML_COMMENT_RE.sub(" ", text)).replace(
+        "`", ""
+    )
+
+
+#: [44차 — 펜스 배제를 «철회»한다]  초안은 「코드펜스 안 예시는 규범이 아니다」로 배제했다.
+#: **전제가 거짓이었다** — 이 계약은 규범 술어를 ```text 블록 «안»에 쓴다(실측: §12.3.4 의
+#: 상한 차단 셋이 6275 개시 블록 안에 있고, 배제하면 모집단이 4 → 1 로 조용히 줄었다).
+#: 자기검사 배터리가 그 축소를 «죽은 검사 2건»으로 잡았다.  **펜스는 이 문서에서 정체가
+#: 아니다.**  그러므로 «펜스 안 예시»에 대한 위양성은 이 판이 닫지 «못한다» — 등재한다:
+#: 문서화 예시를 guard 형상으로 적으려면 manifest 가 지목한 픽스처 행에 두거나 표현을 바꾼다.
+
+
+#: 대조군 식별자 «형상» — `(ㅎ-4)`·`(ㅈ-1)` 처럼 «한글 한 자 + 하이픈 + 숫자».
+#: 45차 재심 #5 F1 처분: 픽스처 면제를 **행 전체**로 주면 그 행에 규범 셀을 하나 더 넣어
+#: 우회할 수 있다(실측).  면제는 **대조군 식별자를 가진 셀**에만 준다 — 목록이 아니라 형상이다.
+#: **[46차 — 재심 #6 F2] 괄호를 «닫아야» 한다**: 45차 판은 여는 괄호만 봐서 `(ㅎ-4x` 같은
+#: 미닫힘 접두가 셀 전체 면제키가 됐다(실측).  문언이 정의한 형상은 닫힌 형태였고
+#: 구현이 그보다 넓었다 — **면제는 문언보다 넓으면 안 된다**.
+CONTROL_ID_RE = re.compile(r"\([ㄱ-ㅎ]-\d+[′']?\)")
+
+
+def _fixture_row_id(line: str, fixture_rows: Sequence[str]) -> bool:
+    """이 행이 manifest 가 지목한 **픽스처 행 «정체»** 인가 — 접두 일치가 아니라 첫 셀 «완전일치».
+
+    45차 재심 #5 F1 실측: `startswith` 는 `| **T-84**-NORM |` 같은 **접두 네임스페이스**를
+    같은 행으로 읽어 통째로 면제했다.  정체는 **첫 셀의 완전일치**로만 성립한다.
+
+    Args:
+        line: 원문 한 행.
+        fixture_rows: manifest 가 선언한 픽스처 행 앵커(예: `| **T-84**`).
+
+    Returns:
+        픽스처 행이면 True.
+    """
+    cells = _split_cells(line)
+    if len(cells) < 2:
+        return False
+    first = cells[1][1].strip()
+    return any(first == anchor.lstrip("| ").strip() for anchor in fixture_rows)
+
+
+def _scan_chunks(line: str, fixture_rows: Sequence[str]) -> list[str]:
+    """훑을 조각 목록 — 픽스처 행은 «통째로» 면제되어 빈 목록이다.
+
+    Args:
+        line: 원문 한 행.
+        fixture_rows: manifest 가 선언한 픽스처 행 앵커.
+
+    Returns:
+        훑을 텍스트 조각들.  픽스처 행이면 빈 목록, 아니면 `[line]` 하나.
+    """
+    if not _fixture_row_id(line, fixture_rows):
+        return [line]
+    # **[46차 — 재심 #6 F1] 비면제 셀을 «이어 붙인다».**  45차 판은 셀마다 독립 문자열을
+    # 돌려줘서, 비교식과 결과 토큰을 **서로 다른 셀에 나눠 두면** 결합되지 않았다(실측).
+    # 셀 경계는 «면제의 단위»이지 «술어의 단위»가 아니다 — 남은 셀은 한 조각으로 훑는다.
+    # **[47차 — 재심 #7]** 식별자 탐색은 **주석을 제거한 뒤**에 한다.  47차 이전 판은 원문
+    # 셀에서 먼저 찾아, `<!-- (ㅎ-4) -->` 처럼 **렌더링되지 않는** 식별자가 셀 전체를 면제로
+    # 승격시켰다(실측).  **비가시 문자열은 정체를 부여하지 못한다** — 면제는 문언보다 넓으면
+    # 안 된다는 46차 ⓑ 규율의 같은 적용이다.
+    # **[48차 — 재심 #8]  내용 기반 정체를 «폐기»한다.**  45~47차는 셀의 «내용»(대조군
+    # 식별자)으로 면제를 갈랐고, 그 정체는 매 회차 새 운반체로 위조됐다 —
+    # 미닫힘 괄호 → HTML 주석 → `<span hidden>`/`<template>`.  태그를 벗겨도 «내용»은
+    # 남으므로 이 방향은 끝이 없다(운반체 열거는 폐쇄되지 않는다).
+    # **정체를 «형상»에서 «수»로 옮긴다**: 픽스처 행은 통째로 면제하되 그 행의 **셀 수**를
+    # 기준선 파일에 래칫한다.  셀을 «더하면» 수가 어긋나 red 다 — 규범을 픽스처 행에
+    # 밀어 넣는 유일한 방법이 막힌다.  **잔여(등재)**: 기존 셀 «안»에 숨기는 것은 여전히
+    # 탐지되지 않는다(면제의 정의상 불가피 — 계약 잔여 1).
+    return []
+
+
+def _cap_guard_sites(
+    doc: ContractDoc, fixture_rows: Sequence[str]
+) -> list[tuple[int, list[str]]]:
+    """살아 있는 **상한 차단문** 자리를 구조로 파생한다.
+
+    **표 행을 통째로 빼지 않는다**(43차 재심 F2) — 그러나 **떠다니는 표식 문자열로도 빼지
+    않는다**(44차 재심 #4 F1: 표식을 규범 문장에 오용하거나 직전 행에 두면 조용히 빠졌다).
+    면제는 **행 정체**로 한다 — 술어의 정본은 `_fixture_row_id` 이고 **여기서 풀어 적지
+    않는다**.  두 가지만 기록한다(둘 다 실측):
+    **접두 일치가 아니다**(45차 재심 #5 F1 · #18 실측: `| **T-84**-NORM |` 행에 guard 를
+    넣으면 모집단 4 → **5** = 면제되지 «않는다» · 완전일치 행이면 **4**).
+    **정규화하지 «않는다»**(재심 #19: 57차가 「정규화한 첫 셀」이라 적은 것이 거짓 —
+    비교는 `strip()` 끼리이고 NFKC 를 거치지 않으므로 `| **Ｔ-８４** |` 같은 전각 변형은
+    **정체로 인정되지 않아** 면제에서 빠진다).  후자는 **등재된 잔여**다.
+    **배제는 «후보 행»에만 걸리고 코드펜스는 배제 대상이 아니다**(각 근거는 그 자리에 있다):
+    ① **이력 행** — `doc.is_history_row(lineno)` 면 그 행은 **후보에서** 빠진다.
+    ② **픽스처 행** — `_scan_chunks` 가 빈 목록을 돌려주어 그 행은 **후보에서** 빠진다.
+    ③ **HTML 주석 «내용»** — `_normalize_scan_text` 가 `HTML_COMMENT_RE.sub` 로 지운다.
+
+    **①·② 는 «통째 배제»가 아니다 — 선행 창(`prev`)이 그 행의 내용을 다시 들인다.**
+    `prev` 는 `doc.lines[lineno - 2]` 를 **무조건** 읽으므로, 이력 행·픽스처 행에 비교식을
+    두고 **바로 다음 행**에 결과 토큰을 두면 그 짝이 guard 창에서 결합할 **수 있다**.
+    **«바로 다음 행»은 필요조건이지 충분조건이 아니다**(재심 #18): 판정 창은
+    **아래 `win = ...` 한 줄이 정본**이며 여기서 그 식을 옮겨 적지 않는다 — 57차가 옮겨
+    적으면서 **결합 공백 한 자를 빠뜨려** 재심 #19 가 그것을 material 로 냈다.  성질만
+    적는다: 창은 **뒤에서 `GUARD_WINDOW` 자**만 남으므로 **비교식이 창 밖으로 밀리면 결합하지
+    않고**, `prev` 는 `_normalize_scan_text` 를 거치므로 **HTML 주석 내용은 먼저 지워진다**.
+    실측(#17·#18 탐침 재현 · 오케스트레이터 확인): 짧은 두 줄이면 모집단 4 → **5**,
+    비교식 뒤에 `GUARD_WINDOW` 를 넘기는 채움을 넣으면 **4 불변**,
+    같은 내용을 배제 행 «한 줄»에 몰아도 **4 불변**.  **등재된 잔여**다 — 선행 창까지 배제로
+    넓히면 46차가 세운 「셀 경계는 «면제의 단위»이지 «술어의 단위»가 아니다」가 깨지고
+    모집단이 줄어든다(44차의 펜스 배제가 4 → 1 로 줄여 «죽은 검사 2건»을 만든 것과 같은
+    극성).  그러므로 이 판은 **문언을 능력까지 낮추고 구현은 건드리지 않는다**.
+    **코드펜스 «안»은 배제하지 않는다**: 44차가 펜스 배제를 **철회**했다 — 이 계약은 규범
+    술어를 ```text 블록 «안»에 쓰므로 배제하면 모집단이 4 → 1 로 줄고 배터리가 그것을
+    «죽은 검사 2건»으로 잡았다(근거는 `GUARD_ARROW_RE` 위 주석).  귀결로 **펜스 안 문서화
+    예시의 위양성은 열려 있는 «등재된 잔여»** 이지 닫힌 능력이 아니다.  표기 변형은
+    **NFKC 표준**에 위임한다.
+
+    **이 자리의 이력(둘 다 능력 과대서술이었다)**: 44차(`df72ae5b`)가 철회 선언과 같은
+    커밋에 옛 「펜스를 훑지 않는다」를 남겼고 **재심 #15 가 냈다**.  54차가 그것을 고치면서
+    이번에는 **반대 방향으로 다시 틀렸다** — 「HTML 주석도 배제하지 않는다 · 면제는 픽스처
+    행 하나뿐」은 ①·③ 을 빠뜨린 거짓이고, 근거로 든 `_fence_spans`/`_enclosing_fence` 는
+    **저장소에 없는 팬텀 식별자**였다(실제는 `ContractDoc.fence_spans` 속성과
+    `ContractDoc.enclosing_fence` 메서드이며, **이 함수는 그 어느 것도 호출하지 않는다**).
+    **재심 #16 이 그 둘을 냈다.**  교훈: 결론이 옳아도 근거는 따로 실측해야 한다.
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+        fixture_rows: manifest 가 선언한 픽스처 행 앵커 목록.
+
+    Returns:
+        `(행번호, [선행 창])` — 임계 비교를 담은 자리만.
+    """
+    out: list[tuple[int, list[str]]] = []
+    for lineno, line in enumerate(doc.lines, start=1):
+        if doc.is_history_row(lineno):
+            continue
+        prev = _normalize_scan_text(doc.lines[lineno - 2]) if lineno >= 2 else ""
+        for chunk in _scan_chunks(line, fixture_rows):
+            cur = _normalize_scan_text(chunk)
+            hit = False
+            for m in GUARD_ARROW_RE.finditer(cur):
+                win = (prev + " " + cur[: m.start()])[-GUARD_WINDOW:]
+                if GUARD_CMP_RE.search(win) and GUARD_CAPNUM_RE.search(win):
+                    out.append((lineno, [win]))
+                    hit = True
+                    break
+            if hit:
+                break
+    return out
+
+
+BASELINE_FIXTURE_KEY = "fixture_row_cells"
+
+
+def read_fixture_row_baseline(
+    path: Path, sources: SourceMap | None = None
+) -> dict[str, int]:
+    """기준선 파일에서 «픽스처 행 → 셀 수» 사상을 읽는다 — 부재·형태 위반은 fail-closed.
+
+    Args:
+        path: 기준선 JSON 경로.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
+
+    Returns:
+        행 앵커 → 셀 수.
+
+    Raises:
+        ContractParseError: 읽기·파싱 실패 또는 키/타입 위반.
+    """
+    try:
+        data = json.loads(_read_source_text(path, sources))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ContractParseError(f"기준선 파일을 읽지 못했다 ({path}): {exc}") from exc
+    table = data.get(BASELINE_FIXTURE_KEY) if isinstance(data, dict) else None
+    if not isinstance(table, dict) or not table:
+        raise ContractParseError(
+            f"기준선 파일에 '{BASELINE_FIXTURE_KEY}' 가 비지 않은 매핑으로 없다 ({path})"
+        )
+    out: dict[str, int] = {}
+    for key, value in table.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ContractParseError(
+                f"'{BASELINE_FIXTURE_KEY}[{key!r}]' 가 음이 아닌 정수가 아니다: {value!r}"
+            )
+        out[str(key)] = value
+    return out
+
+
+FixtureRowShape = namedtuple("FixtureRowShape", ["lineno", "cells"])
+
+
+def derive_fixture_row_cells(
+    doc: ContractDoc, fixture_rows: Sequence[str]
+) -> dict[str, FixtureRowShape]:
+    """픽스처 행의 «자리와 셀 수»를 구조에서 파생한다 (측정의 유일 소스).
+
+    문서든 출처 blob 이든 **이 함수로만** 잰다 — 두 경로로 재면 «무엇을 재는가»가
+    조용히 갈라진다 (`count_unanchored_in_text` 가 계수 축에 세운 같은 규율).
+
+    Args:
+        doc: 잴 대상 문서 컨텍스트.
+        fixture_rows: manifest 가 선언한 픽스처 행 앵커.
+
+    Returns:
+        앵커 → `(행번호, 셀 수)`.
+
+    Raises:
+        ContractParseError: 어떤 앵커가 정확히 1회가 아니면 — 0회는 픽스처 행 소실,
+            2회 이상은 앵커가 행을 특정하지 못한다.  둘 다 «수»를 잴 수 없는 상태다.
+    """
+    out: dict[str, FixtureRowShape] = {}
+    for anchor in fixture_rows:
+        shapes = [
+            FixtureRowShape(lineno, len(_split_cells(line)))
+            for lineno, line in enumerate(doc.lines, start=1)
+            if _fixture_row_id(line, [anchor])
+        ]
+        seen = len(shapes)
+        if seen != 1:
+            raise ContractParseError(
+                f"픽스처 행 {anchor!r} 가 문서에 {seen}회 — 정확히 1회여야 한다"
+            )
+        out[anchor] = shapes[0]
+    return out
+
+
+def check_fixture_row_shape(
+    doc: ContractDoc,
+    fixture_rows: Sequence[str],
+    baseline: Path,
+    repo_root: Path,
+    sources: SourceMap | None = None,
+) -> list[Violation]:
+    """픽스처 행의 **셀 수 래칫** — 기준은 기입 정수가 아니라 «측정 출처 blob» 이다.
+
+    48차 판은 문서 행의 셀 수를 기준선 파일의 «정수»와만 견줬다.  그 둘은 같은 커밋에서
+    함께 편집할 수 있으므로, 셀을 더하면서 기준값도 같이 올리면 위반이 0 건이었다
+    (49차 재심 #9 실측).  48차 문언은 그것을 「C2U 래칫과 같은 규율」이라 적었지만
+    **C2U 는 그 규율을 산문이 아니라 기계(`check_c2up`)로 진다** — 문언이 능력보다
+    넓었다.  그래서 여기에 같은 다리를 놓는다: `measured_against` 가 가리키는 **불변
+    blob** 을 다시 재고, **기입값과 워킹트리 행을 둘 다** 그 blob 에 대조한다.
+    기입 정수는 더 이상 권위가 아니라 «검증 대상 주장»이다.
+
+    다만 49차의 «불변» 은 그 판에서는 아직 **문언이었다** — 리더가 출처 종류 `worktree`
+    를 그대로 읽었으므로 `kind` 한 글자만 뒤집으면 기준이 다시 가변 문서가 되었고,
+    기입값·출처·검사 대상 셋이 함께 움직여 위반 0건이 되었다(재심 #10).  50차가 그
+    자리를 `read_baseline_source` 의 **기본값**으로 닫아 «불변» 을 능력으로 만들었다.
+
+    **닫히지 «않는» 자리(등재)**: 핀을 «셀이 이미 늘어난 커밋»으로 옮기면 통과한다.
+    그 전이가 정당한지 세탁인지는 기계가 구별하지 못한다 — 구별하는 것은 그것이
+    diff 에 보이는 사람의 기록 행위라는 사실뿐이고, C2U 가 사는 체제와 같다.
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+        fixture_rows: manifest 가 선언한 픽스처 행 앵커.
+        baseline: 기준선 JSON 경로.
+        repo_root: 측정 출처 blob 을 읽을 저장소 루트.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
+
+    Returns:
+        위반 목록.
+    """
+
+    def fail(message: str, line: int = 0) -> list[Violation]:
+        return [Violation("TOS-CC-CAP2-FIXTURE", doc.display_path, line, message)]
+
+    try:
+        record = read_unanchored_baseline(baseline, sources)
+        source = read_baseline_source(repo_root, record)
+        blob = derive_fixture_row_cells(ContractDoc(source, "<blob>"), fixture_rows)
+    except ContractParseError as exc:
+        return fail(f"면제받는 행의 «수»를 측정 출처에서 재지 못했다 — {exc}")
+
+    origin = (
+        f"{record.commit}:{record.path}"
+        if record.kind == BASELINE_KIND_COMMIT
+        else f"워킹트리 {record.path}"
+    )
+
+    try:
+        recorded = read_fixture_row_baseline(baseline, sources)
+    except ContractParseError as exc:
+        return fail(str(exc))
+
+    out: list[Violation] = []
+    for anchor in fixture_rows:
+        want = recorded.get(anchor)
+        if want is None:
+            out.append(
+                Violation(
+                    "TOS-CC-CAP2-FIXTURE",
+                    doc.display_path,
+                    0,
+                    f"픽스처 행 {anchor!r} 의 셀 수 기준선이 없다 — 면제받는 행의 «수»가 "
+                    "고정되지 않으면 그 면제가 곧 우회키다",
+                )
+            )
+            continue
+        if want != blob[anchor].cells:
+            out.append(
+                Violation(
+                    "TOS-CC-CAP2-FIXTURE",
+                    doc.display_path,
+                    0,
+                    f"기준선의 자기 주장이 거짓이다 — "
+                    f"'{BASELINE_FIXTURE_KEY}[{anchor!r}]'={want} 이지만 {origin} 을 "
+                    f"다시 재면 {blob[anchor].cells} 다 "
+                    "(워킹트리를 재고 커밋 이름만 적었을 때 나타나는 형태)",
+                )
+            )
+
+    try:
+        actual = derive_fixture_row_cells(doc, fixture_rows)
+    except ContractParseError as exc:
+        return out + fail(f"면제받는 행의 «수»를 문서에서 재지 못했다 — {exc}")
+
+    for anchor in fixture_rows:
+        if actual[anchor].cells == blob[anchor].cells:
+            continue
+        out.append(
+            Violation(
+                "TOS-CC-CAP2-FIXTURE",
+                doc.display_path,
+                actual[anchor].lineno,
+                f"픽스처 행 {anchor!r} 의 셀 수가 측정 출처와 다르다 "
+                f"(출처 {blob[anchor].cells} · 실측 {actual[anchor].cells}) — "
+                "면제받는 행에 셀이 늘거나 줄었다.  정당한 변경이면 "
+                "`--measure-baseline <sha>` 로 **provenance 전이**를 기록하라",
+            )
+        )
+    return out
+
+
+def derive_cap_guards(
+    doc: ContractDoc, anchor: str, fixture_rows: Sequence[str] = ()
+) -> list[tuple[int, str, list[str]]]:
+    """CAP-2 모집단 — 살아 있는 상한 차단문 (구조 파생).
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+        anchor: manifest 가 선언한 결과 토큰 앵커.
+
+    Returns:
+        `(행번호, 정규화된 guard 식, 선행 항 목록)` 목록.
+
+    Raises:
+        ContractParseError: 앵커가 문서에 없거나 모집단이 비면 — **모집단 붕괴는
+            «위반 0» 이 아니라 측정 불가**다(우주 블록 부재와 같은 극성).
+    """
+    if not any(anchor in line for line in doc.lines):
+        raise ContractParseError(f"guard 앵커가 문서에 부재: {anchor!r}")
+    sites = _cap_guard_sites(doc, fixture_rows)
+    if not sites:
+        raise ContractParseError(
+            f"상한 차단 모집단이 비었다 (앵커 {anchor!r}) — 형상 변경이면 이 축이 "
+            "조용히 사라지므로 fail-closed 로 죽는다"
+        )
+    return [(n, " ∨ ".join(spans), spans) for n, spans in sites]
+
+
+def derive_universe_cap_guards(
+    doc: ContractDoc, anchor: str, fixture_rows: Sequence[str] = ()
+) -> tuple[list[str], int]:
+    """CAP-2 우주 — 살아 있는 상한 차단문 전부(픽스처 표식이 붙은 자리는 뺀다)."""
+    guards = derive_cap_guards(doc, anchor, fixture_rows)
+    return [g[1] for g in guards], guards[0][0]
+
+
+def derive_consumers_cap_guards(
+    doc: ContractDoc, anchor: str, fixture_rows: Sequence[str] = ()
+) -> tuple[list[RuleConsumer], int]:
+    """CAP-2 소비처 — 그중 **구조 파생 항을 실제로 가진** 자리."""
+    guards = derive_cap_guards(doc, anchor, fixture_rows)
+    consumers = [
+        RuleConsumer(expr, expr, expr)
+        for _, expr, terms in guards
+        if any(STRUCTURAL_TERM_RE.search(t) for t in terms)
+    ]
+    return consumers, guards[0][0]
+
+
 def default_manifest_path() -> Path:
     """RULE 축 manifest 의 기본 경로 (저장소 루트 기준)."""
     return default_repo_root() / DEFAULT_MANIFEST_PATH
@@ -2257,7 +2921,7 @@ def _reject_numeric(node: object, where: str, path: str, out: list[Violation]) -
 
 
 def load_manifest(
-    manifest_path: Path,
+    manifest_path: Path, sources: SourceMap | None = None
 ) -> tuple[dict[str, object] | None, list[Violation]]:
     """manifest 를 읽고 스키마를 강제한다.
 
@@ -2267,6 +2931,7 @@ def load_manifest(
 
     Args:
         manifest_path: manifest 파일 경로.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         `(적재된 manifest 또는 None, 위반 목록)`.
@@ -2283,7 +2948,7 @@ def load_manifest(
             )
         ]
     try:
-        raw = manifest_path.read_text(encoding="utf-8")
+        raw = _read_source_text(manifest_path, sources)
     except OSError as exc:
         return None, [
             Violation(
@@ -2469,13 +3134,53 @@ def check_rule_vocabulary(
     return out
 
 
-def check_rule(doc: ContractDoc, manifest_path: Path) -> list[Violation]:
-    """RULE — manifest 가 등재한 각 규칙의 우주 ↔ 소비처를 전수 대조한다."""
-    manifest, violations = load_manifest(manifest_path)
+def check_rule(
+    doc: ContractDoc,
+    manifest_path: Path,
+    baseline: Path,
+    repo_root: Path,
+    sources: SourceMap | None = None,
+) -> list[Violation]:
+    """RULE — manifest 가 등재한 각 규칙의 우주 ↔ 소비처를 전수 대조한다.
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+        manifest_path: RULE 축 manifest 경로.
+        baseline: 기준선 JSON 경로 — 픽스처 행 셀 수 축이 쓴다.  종래 이 축은 인자를
+            무시하고 항상 기본 경로를 써서 `--baseline` 이 닿지 않았다(49차 관측 처분).
+        repo_root: 측정 출처 blob 을 읽을 저장소 루트.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
+
+    Returns:
+        위반 목록.
+    """
+    manifest, violations = load_manifest(manifest_path, sources)
     if manifest is None:
         return violations
     mpath = str(manifest_path)
     violations.extend(check_rule_vocabulary(manifest, mpath))
+    # 픽스처 표식 — «대조군 서술»과 «규범 술어»를 가르는 유일 소스(43차 · 재심 #3 F2).
+    # 부재하면 fail-closed: 표식 없이 표 전체를 배제하던 42차 판이 우회키였다.
+    rows = manifest.get("fixture_rows")
+    if (
+        not isinstance(rows, list)
+        or not rows
+        or not all(isinstance(x, str) and x.strip() for x in rows)
+    ):
+        violations.append(
+            Violation(
+                "TOS-CC-RULE-MANIFEST",
+                mpath,
+                0,
+                "`fixture_rows` 가 비지 않은 문자열 목록이 아니다 — 픽스처를 «행 정체»로 "
+                "가르는 정본이 없으면 면제가 다시 떠다니는 문자열로 되돌아간다",
+            )
+        )
+        return violations
+    fixture_rows = [str(x) for x in rows]
+    violations.extend(
+        check_fixture_row_shape(doc, fixture_rows, baseline, repo_root, sources)
+    )
 
     rules = manifest["rules"]
     assert isinstance(rules, list)
@@ -2500,11 +3205,27 @@ def check_rule(doc: ContractDoc, manifest_path: Path) -> list[Violation]:
         universe_q = rule["universe"]
         consumers_q = rule["consumers"]
         assert isinstance(universe_q, dict) and isinstance(consumers_q, dict)
-        universe, universe_line = derive_universe_separated(
-            doc, str(universe_q["block_anchor"])
-        )
+        # **선언된 파생 이름으로 «디스패치»한다.**  종래 이 자리는 이름을 검증만 하고
+        # 호출은 한 벌로 고정돼 있었다 — 등록된 다른 이름을 선언해도 **조용히 같은
+        # 파생이 돌았다**(fail-open: manifest 의 «의도»와 측정자의 «행위»가 갈릴 수 있었다).
+        # 이름 → 함수 사상을 두면 그 창이 닫힌다.
+        universe_name = str(universe_q.get("derivation"))
+        consumers_name = str(consumers_q.get("derivation"))
+        if universe_name == "cap_guard_expressions":
+            universe, universe_line = derive_universe_cap_guards(
+                doc, str(universe_q["block_anchor"]), fixture_rows
+            )
+        else:
+            universe, universe_line = derive_universe_separated(
+                doc, str(universe_q["block_anchor"])
+            )
 
-        found = derive_consumers_circled(doc, str(consumers_q["block_anchor"]))
+        if consumers_name == "structural_term_guard_expressions":
+            found = derive_consumers_cap_guards(
+                doc, str(consumers_q["block_anchor"]), fixture_rows
+            )
+        else:
+            found = derive_consumers_circled(doc, str(consumers_q["block_anchor"]))
         if found is None:
             violations.append(
                 Violation(
@@ -2622,7 +3343,7 @@ def read_first_heading(abs_path: str) -> CitedHeading:
 
 
 def derive_rejection_tokens(
-    manifest_path: Path,
+    manifest_path: Path, sources: SourceMap | None = None
 ) -> tuple[list[str] | None, list[Violation]]:
     """기각 토큰 정본을 S-25 manifest 에서 읽는다 — **부재하면 fail-closed**.
 
@@ -2632,6 +3353,7 @@ def derive_rejection_tokens(
 
     Args:
         manifest_path: S-25 manifest 경로.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         `(정규화된 토큰 목록 또는 None, 위반 목록)`.  `None` 이면 축을 돌리지 않는다.
@@ -2641,7 +3363,7 @@ def derive_rejection_tokens(
     def fail(message: str) -> tuple[None, list[Violation]]:
         return None, [Violation("TOS-CC-RULE-MANIFEST", path, 0, message)]
 
-    manifest, violations = load_manifest(manifest_path)
+    manifest, violations = load_manifest(manifest_path, sources)
     if manifest is None:
         return fail(
             "기각 토큰 정본을 읽을 수 없다 (manifest 자체가 red) — REF 축이 눈먼다: "
@@ -2695,7 +3417,10 @@ def derive_md_citations(doc: ContractDoc) -> list[tuple[int, str]]:
 
 
 def check_ref_rejected(
-    doc: ContractDoc, manifest_path: Path, repo_root: Path
+    doc: ContractDoc,
+    manifest_path: Path,
+    repo_root: Path,
+    sources: SourceMap | None = None,
 ) -> list[Violation]:
     """REF — «기각된» 문서를 가리키는 인용 줄이 그 기각을 말하지 않으면 red (REF-1).
 
@@ -2703,11 +3428,12 @@ def check_ref_rejected(
         doc: 계약 문서.
         manifest_path: 기각 토큰 정본(S-25 manifest) 경로.
         repo_root: 인용 경로를 해소할 저장소 루트.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         위반 목록.  모집단을 파생하지 못하면 `TOS-CC-PARSE` (fail-closed).
     """
-    tokens, violations = derive_rejection_tokens(manifest_path)
+    tokens, violations = derive_rejection_tokens(manifest_path, sources)
     if tokens is None:
         return violations
 
@@ -2804,7 +3530,7 @@ def is_table_separator_row(line: str) -> bool:
 
 
 def derive_closed_tables(
-    manifest_path: Path,
+    manifest_path: Path, sources: SourceMap | None = None
 ) -> tuple[list[ClosedTable] | None, list[Violation]]:
     """닫힌 표 정본을 S-25 manifest 에서 읽는다 — **부재하면 fail-closed**.
 
@@ -2814,6 +3540,7 @@ def derive_closed_tables(
 
     Args:
         manifest_path: S-25 manifest 경로.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         `(닫힌 표 목록 또는 None, 위반 목록)`.  `None` 이면 축을 돌리지 않는다.
@@ -2823,7 +3550,7 @@ def derive_closed_tables(
     def fail(message: str) -> tuple[None, list[Violation]]:
         return None, [Violation("TOS-CC-RULE-MANIFEST", path, 0, message)]
 
-    manifest, violations = load_manifest(manifest_path)
+    manifest, violations = load_manifest(manifest_path, sources)
     if manifest is None:
         return fail(
             "닫힌 표 정본이 «어디에도» 없다 (manifest 자체가 red) — CLOSED-1 축이 "
@@ -2857,11 +3584,14 @@ def derive_closed_tables(
     return out, []
 
 
-def read_closed_table_baseline(path: Path) -> dict[str, int]:
+def read_closed_table_baseline(
+    path: Path, sources: SourceMap | None = None
+) -> dict[str, int]:
     """기준선 파일에서 «닫힌 표 → 행 수» 사상을 읽는다 — 부재·형태 위반은 fail-closed.
 
     Args:
         path: 기준선 JSON 경로.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         헤더 앵커 → 데이터 행 수.
@@ -2870,7 +3600,7 @@ def read_closed_table_baseline(path: Path) -> dict[str, int]:
         ContractParseError: 읽기·파싱 실패 또는 키/타입 위반.
     """
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = _read_source_text(path, sources)
     except OSError as exc:
         raise ContractParseError(f"기준선 파일을 읽지 못했다 ({path}): {exc}") from exc
     try:
@@ -2934,51 +3664,125 @@ def closed_table_row_lines(doc: ContractDoc, header_line: int) -> list[int]:
     return rows
 
 
+ClosedTableShape = namedtuple(
+    "ClosedTableShape", ["header_line", "closing_line", "rows"]
+)
+
+
+def derive_closed_table_rows(
+    doc: ContractDoc, tables: Sequence[ClosedTable]
+) -> dict[str, ClosedTableShape]:
+    """닫힌 표의 «자리와 행 수»를 구조에서 파생한다 (측정의 유일 소스).
+
+    문서든 출처 blob 이든 **이 함수로만** 잰다 — 두 경로로 재면 «무엇을 재는가»가
+    조용히 갈라진다 (`derive_fixture_row_cells` 가 셀 수 축에 세운 같은 규율).
+    앵커 둘을 **양쪽에서 다** 확인하는 것도 그 규율의 일부다: 한쪽만 보면 blob 에서
+    앵커가 유일하지 않은 상태가 «측정된 0» 과 같은 이름을 갖는다.
+
+    Args:
+        doc: 잴 대상 문서 컨텍스트.
+        tables: manifest 가 선언한 닫힌 표 목록.
+
+    Returns:
+        헤더 앵커 → `(헤더 행번호, 닫힘 선언 행번호, 데이터 행 수)`.
+
+    Raises:
+        ContractParseError: 앵커가 유일하지 않거나 표 형상을 찾지 못했을 때 —
+            «무엇을» 세는지 잃은 상태를 «0 행»으로 접지 않는다.
+    """
+    out: dict[str, ClosedTableShape] = {}
+    for table in tables:
+        header_line = _unique_anchor_line(doc, table.header_anchor)
+        closing_line = _unique_anchor_line(doc, table.closing_anchor)
+        out[table.header_anchor] = ClosedTableShape(
+            header_line, closing_line, len(closed_table_row_lines(doc, header_line))
+        )
+    return out
+
+
+# 계약 본문(`:3899`)은 이 축의 provenance 결속을 아직 «닫는 자리는 C2UP 의 우주다»라는
+# **등재**로 적고 있다.  51차가 그 자리를 여기서 닫았으므로 그 등재 문언은 이 시점에
+# **stale** 이다 — 방향은 「문언이 능력보다 좁다」쪽이라 안전한 극성이고, 계약 본문
+# 갱신은 재심 카운터(S-26 ⑥: 계약 편집이 «2회 연속 청정»을 0 으로 되돌린다) 사이클
+# **밖**의 별도 판이다.  여기 주석으로 남기는 이유가 그것이다.
 def check_closed_tables(
-    doc: ContractDoc, manifest_path: Path, baseline_path: Path
+    doc: ContractDoc,
+    manifest_path: Path,
+    baseline_path: Path,
+    repo_root: Path,
+    sources: SourceMap | None = None,
 ) -> list[Violation]:
-    """CLOSED-TABLE — 닫힌 표의 데이터 행 수가 기준선과 **같은지** (CLOSED-1).
+    """CLOSED-TABLE — 닫힌 표의 데이터 행 수가 «측정 출처 blob» 과 같은지 (CLOSED-1).
 
     래칫이 아니라 등호다.  행이 늘면 «닫았다»는 선언이 거짓이 되고, 줄면 종결된 이력이
     훼손된다 — 한쪽만 보는 술어는 다른 쪽에 눈이 먼다.
+
+    **기준은 기입 정수가 아니다**(51차).  50차까지 이 축은 워킹트리 실측을 기준선 파일의
+    «정수»와만 견줬다.  그 둘은 같은 커밋에서 함께 편집할 수 있으므로, 행을 더하면서
+    기준값도 같이 올리면 위반이 0 건이었다 — 48차가 셀 수 축에 냈던 것과 같은 형상이고
+    49·50차가 이미 처분한 결함 클래스다.  그래서 `check_fixture_row_shape` 와 **같은 두
+    다리**를 놓는다: `measured_against` 가 가리키는 **불변 blob** 을 다시 재고, ①기입값과
+    ②워킹트리 행을 둘 다 그 blob 에 대조한다.  기입 정수는 권위가 아니라 «검증 대상
+    주장»이다.
+
+    출처의 «불변» 은 문언이 아니라 능력이다 — `read_baseline_source` 에 `allow_mutable`
+    을 넘기지 «않으므로» `kind: worktree` 기준선은 이 축에서도 자동으로 red 다(50차가
+    저작 레벨에 둔 잠금의 상속).
+
+    **닫히지 «않는» 자리(등재)**: 핀을 «행이 이미 늘어난 커밋»으로 옮기면 통과한다.
+    그 전이가 정당한지 세탁인지는 기계가 구별하지 못한다 — 구별하는 것은 그것이
+    diff 에 보이는 사람의 기록 행위라는 사실뿐이고, C2U 가 사는 체제와 같다.
 
     Args:
         doc: 계약 문서 컨텍스트.
         manifest_path: 닫힌 표 정본(manifest) 경로.
         baseline_path: 행 수 기준선 JSON 경로.
+        repo_root: 측정 출처 blob 을 읽을 저장소 루트.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
 
     Returns:
         위반 목록.
 
     Raises:
-        ContractParseError: 앵커가 유일하지 않거나 표 형상을 찾지 못했을 때
+        ContractParseError: **문서 쪽** 앵커가 유일하지 않거나 표 형상을 찾지 못했을 때
             (호출부가 `TOS-CC-PARSE` 로 접는다 — «검사 불능»과 «위반 0»은 다르다).
+            출처 blob 쪽 실패는 여기서 red 로 접는다 — 기준을 잃은 상태를 조용히
+            건너뛰지 않는다.
     """
-    tables, violations = derive_closed_tables(manifest_path)
+    tables, violations = derive_closed_tables(manifest_path, sources)
     if tables is None:
         return violations
 
+    def fail(message: str, line: int = 0) -> list[Violation]:
+        return [Violation("TOS-CC-CLOSED-TABLE", doc.display_path, line, message)]
+
     try:
-        baseline = read_closed_table_baseline(baseline_path)
+        record = read_unanchored_baseline(baseline_path, sources)
+        # `allow_mutable` 을 넘기지 «않는다» — 가변 출처 거부는 리더의 기본값이다.
+        source = read_baseline_source(repo_root, record)
+        blob = derive_closed_table_rows(ContractDoc(source, "<blob>"), tables)
+    except ContractParseError as exc:
+        return fail(f"닫힌 표의 «행 수»를 측정 출처에서 재지 못했다 — {exc}")
+
+    origin = (
+        f"{record.commit}:{record.path}"
+        if record.kind == BASELINE_KIND_COMMIT
+        else f"워킹트리 {record.path}"
+    )
+
+    try:
+        baseline = read_closed_table_baseline(baseline_path, sources)
     except ContractParseError as exc:
         # 기준선 부재를 «0 위반» 으로 접으면 이 축이 장식이 된다 (RATCHET-1 과 같은 극성).
-        return [
-            Violation(
-                "TOS-CC-CLOSED-TABLE",
-                doc.display_path,
-                0,
-                f"닫힌 표의 행 수 기준선을 확립할 수 없다 — {exc} "
-                f"(선언된 닫힌 표 {len(tables)}건 · 부재를 «0 위반»으로 접지 않는다)",
-            )
-        ]
+        return fail(
+            f"닫힌 표의 행 수 기준선을 확립할 수 없다 — {exc} "
+            f"(선언된 닫힌 표 {len(tables)}건 · 부재를 «0 위반»으로 접지 않는다)"
+        )
 
     out: list[Violation] = []
+    # 다리 A — 기입값이 «출처를 다시 재면» 참인가.  기준선의 자기 주장을 검증한다.
     for table in tables:
-        # 앵커가 유일하지 않으면 «무엇의» 표인지 잃는다 — 여기서 오르는 예외는
-        # 호출부에서 `TOS-CC-PARSE` 가 된다 (위반이 아니라 «검사 불능»).
-        header_line = _unique_anchor_line(doc, table.header_anchor)
-        closing_line = _unique_anchor_line(doc, table.closing_anchor)
-        actual = len(closed_table_row_lines(doc, header_line))
+        measured = blob[table.header_anchor].rows
         expected = baseline.get(table.header_anchor)
         if expected is None:
             out.append(
@@ -2987,33 +3791,56 @@ def check_closed_tables(
                     str(baseline_path),
                     0,
                     f"기준선에 닫힌 표 «{_ellipsis(table.header_anchor)}» 의 행 수가 "
-                    f"없다 (실측 {actual}행) — 선언된 표에 기준선이 없으면 그 표는 "
+                    f"없다 (출처 {measured}행) — 선언된 표에 기준선이 없으면 그 표는 "
                     "«닫혔다»고 적혀 있을 뿐 아무도 세지 않는다",
                 )
             )
             continue
-        if actual != expected:
-            direction = "늘었다" if actual > expected else "줄었다"
+        if expected != measured:
+            out.append(
+                Violation(
+                    "TOS-CC-CLOSED-TABLE",
+                    str(baseline_path),
+                    0,
+                    f"기준선의 자기 주장이 거짓이다 — "
+                    f"'{BASELINE_CLOSED_TABLE_KEY}[{table.header_anchor!r}]'="
+                    f"{expected} 이지만 {origin} 을 다시 재면 {measured} 다 "
+                    "(워킹트리를 재고 커밋 이름만 적었을 때 나타나는 형태)",
+                )
+            )
+
+    # 앵커가 유일하지 않으면 «무엇의» 표인지 잃는다 — 여기서 오르는 예외는
+    # 호출부에서 `TOS-CC-PARSE` 가 된다 (위반이 아니라 «검사 불능»).
+    actual = derive_closed_table_rows(doc, tables)
+
+    # 다리 B — 워킹트리 행이 «출처 blob» 과 같은가.  기입 정수는 여기 관여하지 않는다.
+    for table in tables:
+        shape = actual[table.header_anchor]
+        measured = blob[table.header_anchor].rows
+        if shape.rows != measured:
+            direction = "늘었다" if shape.rows > measured else "줄었다"
             out.append(
                 Violation(
                     "TOS-CC-CLOSED-TABLE",
                     doc.display_path,
-                    header_line,
+                    shape.header_line,
                     f"닫힌 표 «{_ellipsis(table.header_anchor)}» 의 데이터 행이 "
-                    f"기준선 {expected} 에서 {actual} 로 {direction} — 이 표는 "
-                    f"{closing_line}행에서 «닫힌다»고 선언됐다.  늘면 선언이 거짓이 "
-                    "되고 줄면 종결된 이력이 훼손된다(등호이지 래칫이 아니다).  "
-                    f"행이 정당하게 바뀌었다면 {baseline_path} 의 "
-                    f"'{BASELINE_CLOSED_TABLE_KEY}' 를 **사람이** 갱신하라",
+                    f"측정 출처 {measured} 에서 {shape.rows} 로 {direction} "
+                    f"(출처 {origin}) — 이 표는 {shape.closing_line}행에서 «닫힌다»고 "
+                    "선언됐다.  늘면 선언이 거짓이 되고 줄면 종결된 이력이 "
+                    "훼손된다(등호이지 래칫이 아니다).  행이 정당하게 바뀌었다면 "
+                    "`--measure-baseline <sha>` 로 **provenance 전이**를 기록하라",
                 )
             )
         logger.info(
-            "CLOSED-TABLE: «%s» 헤더 %d행 · 닫힘 선언 %d행 · 데이터 %d행 (기준선 %s)",
+            "CLOSED-TABLE: «%s» 헤더 %d행 · 닫힘 선언 %d행 · 데이터 %d행 "
+            "(출처 %d · 기준선 %s)",
             _ellipsis(table.header_anchor),
-            header_line,
-            closing_line,
-            actual,
-            expected,
+            shape.header_line,
+            shape.closing_line,
+            shape.rows,
+            measured,
+            baseline.get(table.header_anchor),
         )
     return out
 
@@ -3035,6 +3862,64 @@ def default_repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def _manifest_step_prefixes(
+    manifest_path: Path, sources: SourceMap | None = None
+) -> list[str]:
+    """manifest 에서 C4C 접두 어휘 정본을 읽는다 (읽기 실패는 «빈 목록» = 축이 red)."""
+    try:
+        data = yaml.safe_load(_read_source_text(manifest_path, sources))
+    except (OSError, yaml.YAMLError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    raw = data.get("future_step_prefixes")
+    if not isinstance(raw, list):
+        return []
+    return [str(x) for x in raw if isinstance(x, str)]
+
+
+def _manifest_fixture_rows(
+    manifest_path: Path, sources: SourceMap | None = None
+) -> list[str]:
+    """manifest 에서 픽스처 행 앵커 정본을 읽는다 — 부재·형태 위반은 fail-closed.
+
+    `check_rule` 과 달리 여기서는 «위반 목록»을 낼 자리가 없다(픽스처 구성·기준선 측정
+    경로다).  그래서 조용히 빈 목록으로 접지 않고 시끄럽게 실패한다 — 앵커를 잃은 채
+    구성된 픽스처는 새 축을 통째로 장식으로 만든다.
+
+    Args:
+        manifest_path: RULE 축 manifest 경로.
+        sources: 인메모리 원본 사상 (`None` = 디스크).
+
+    Returns:
+        픽스처 행 앵커 목록.
+
+    Raises:
+        ContractParseError: 읽기 실패 또는 `fixture_rows` 형태 위반.
+    """
+    if yaml is None:
+        raise ContractParseError(
+            f"PyYAML 을 임포트하지 못했다 — manifest 를 읽을 수 없다: {YAML_IMPORT_ERROR}"
+        )
+    try:
+        data = yaml.safe_load(_read_source_text(manifest_path, sources))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ContractParseError(
+            f"manifest 를 읽지 못했다 ({manifest_path}): {exc}"
+        ) from exc
+    rows = data.get("fixture_rows") if isinstance(data, dict) else None
+    if (
+        not isinstance(rows, list)
+        or not rows
+        or not all(isinstance(x, str) and x.strip() for x in rows)
+    ):
+        raise ContractParseError(
+            f"manifest 에 `fixture_rows` 가 비지 않은 문자열 목록으로 없다 "
+            f"({manifest_path})"
+        )
+    return [str(x) for x in rows]
+
+
 def check_document(
     text: str,
     display_path: str,
@@ -3044,6 +3929,7 @@ def check_document(
     notices: list[str] | None = None,
     repo_root: Path | None = None,
     manifest_path: Path | None = None,
+    sources: SourceMap | None = None,
 ) -> list[Violation]:
     """계약 문서 텍스트에 모든 축을 적용한다.
 
@@ -3058,6 +3944,9 @@ def check_document(
         repo_root: C2UP 가 측정 출처 blob 을 읽을 저장소 루트.
         manifest_path: RULE 축 manifest 경로.  None 이면 저장소 기본 경로 —
             «지정 안 함»을 «검사 안 함»으로 접지 않는다.
+        sources: 인메모리 «경로 → 원본» 사상.  기본값 `None` 이면 정본을 디스크에서
+            읽는다 — 게이트 경로는 이 인자를 넘기지 않는다.  넘기는 자리는 자기검사
+            배터리다 (읽기 자체는 `_read_source_text` 가 진다).
 
     Returns:
         위반 목록.  파생 자체가 실패하면 `TOS-CC-PARSE` 단일 위반을 돌려준다
@@ -3075,13 +3964,17 @@ def check_document(
     axes: Sequence[tuple[str, CheckFn]] = (
         ("C1", check_c1),
         ("C2", lambda d: check_c2(d, min_anchor)),
-        ("C2U", lambda d: check_c2u(d, baseline, notices)),
-        ("C2UP", lambda d: check_c2up(d, baseline, root, notices)),
+        ("C2U", lambda d: check_c2u(d, baseline, notices, sources)),
+        ("C2UP", lambda d: check_c2up(d, baseline, root, sources)),
         ("C3", check_c3),
         ("C4", check_c4),
-        ("RULE", lambda d: check_rule(d, manifest)),
-        ("REF", lambda d: check_ref_rejected(d, manifest, root)),
-        ("CLOSED-TABLE", lambda d: check_closed_tables(d, manifest, baseline)),
+        ("C4C", lambda d: check_c4c(d, _manifest_step_prefixes(manifest, sources))),
+        ("RULE", lambda d: check_rule(d, manifest, baseline, root, sources)),
+        ("REF", lambda d: check_ref_rejected(d, manifest, root, sources)),
+        (
+            "CLOSED-TABLE",
+            lambda d: check_closed_tables(d, manifest, baseline, root, sources),
+        ),
     )
     for name, fn in axes:
         try:
@@ -3182,15 +4075,22 @@ Outcome = namedtuple(
 (어느 앵커가 · 몇 회) — 진단 문구를 다시 파싱하지 않고 판정에 쓰기 위한 것이다.
 """
 
-#: 기준선 픽스처 키.
+#: 기준선 픽스처 키.  합성 접두는 `SELFTEST_FIXTURE_DIR` 이며 리더 곁에 산다.
 FIXTURE_MEASURED = "measured"  # 검사 «대상 문서» 실측값으로 핀 → C2U green 보장
-FIXTURE_MISSING = "missing"  # 존재하지 않는 경로
+FIXTURE_MISSING = "missing"  # 부재 (사상에 `SOURCE_ABSENT` 로 명시)
 FIXTURE_NOT_JSON = "not-json"  # 존재하지만 JSON 이 아닌 파일
 FIXTURE_PROVENANCE_OK = "prov-ok"  # 출처 blob 실측값으로 핀 → C2UP green 보장
 FIXTURE_STALE_COUNT = "stale-count"  # 출처는 참이나 개수가 blob 과 불일치
 FIXTURE_BAD_COMMIT = "bad-commit"  # 움직이는 ref
 FIXTURE_NO_PROVENANCE = "no-provenance"  # 출처 필드 자체가 없다
 FIXTURE_NO_CLOSED_ROWS = "no-closed-rows"  # 닫힌 표의 행 수 기준선이 없다
+FIXTURE_CLOSED_ROWS_BUMPED = "closed-rows-bumped"  # 행 수 기입값만 출처보다 크다
+FIXTURE_FIXTURE_CELLS_BUMPED = "fixture-cells-bumped"  # 셀 수 기입값만 출처보다 크다
+#: 출처 «종류»만 가변(worktree)으로 바꾼 판.  나머지 필드는 실운용에서 물려받는다 —
+#: 「한 가지만 바꾼다」 규율이라야 어느 술어가 잡았는지가 계수에 남는다.
+FIXTURE_PROVENANCE_WORKTREE = "prov-worktree"  # 출처가 불변 blob 이 아니다
+#: 재심 #10 의 반례를 기준선 쪽에서 재현한 판 — 가변 출처 **와** 셀 수 기입값 상향.
+FIXTURE_WORKTREE_CELLS_BUMPED = "worktree-cells-bumped"  # 가변 출처 + 셀 수 상향
 
 #: RULE 축 manifest 픽스처 키.  기준선 픽스처와 «축»이 다르므로 별도 사상에 둔다.
 MFIXTURE_MISSING = "m-missing"  # 파일 자체가 없다 (부재를 «0 위반»으로 접지 않는다)
@@ -3223,6 +4123,71 @@ def _replace_line_once(text: str, old_line: str, new_line: str) -> str:
             old_line, count, "문서", f"주입 대상 행이 유일하지 않다 (count={count})"
         )
     return text.replace(old_line, new_line, 1)
+
+
+def _strip_structural_term(old: str, new: str) -> Callable[[str], str]:
+    """CAP-2 대조군 — 차단 술어에서 **구조 파생 항만** 걷어낸다.
+
+    guard 의 «형상»은 살려 둔다(여전히 `1000` 을 담은 술어 → `PREVENTION_UNVERIFIABLE`).
+    형상까지 깨면 모집단에서 사라져 `PARSE` 로 죽고, 그것은 이 대조군이 재려는 것이
+    아니다 — 재려는 것은 **«자기신고 전용으로 퇴행한 차단 자리»가 red 인가**다.
+
+    Args:
+        old: 원문에 정확히 1회 있는 축자 조각.
+        new: 구조 파생 항을 뺀 조각.
+
+    Returns:
+        뮤테이션 함수.
+    """
+
+    def _mutate(text: str) -> str:
+        return _replace_line_once(text, old, new)
+
+    return _mutate
+
+
+def _append_cell_to_fixture_row(suffix: str) -> Callable[[str], str]:
+    """픽스처 행(`| **T-84**` 로 시작하는 그 행)에 셀을 «추가»하는 뮤테이션을 만든다.
+
+    Args:
+        suffix: 행 끝에 붙일 셀 문자열(선행 공백 · 후행 `|` 포함).
+
+    Returns:
+        뮤테이션 함수.
+
+    Raises:
+        ContractParseError: 픽스처 행을 찾지 못하면 — 대조군이 조용히 무의미해지지 않도록.
+    """
+
+    def _mutate(text: str) -> str:
+        lines = text.split("\n")
+        for i, line in enumerate(lines):
+            if line.startswith("| **T-84** |"):
+                lines[i] = line + suffix
+                return "\n".join(lines)
+        raise ContractParseError("픽스처 행(`| **T-84** |`)을 찾지 못했다")
+
+    return _mutate
+
+
+def _append_good_anchor(text: str) -> str:
+    """«앵커가 실재하는» 자기인용 하나를 붙인다 — 좌표는 문서에서 파생한다.
+
+    Args:
+        text: 계약 문서 텍스트.
+
+    Returns:
+        말미에 유효한 앵커 인용 한 줄을 더한 텍스트.
+
+    Raises:
+        ContractParseError: 앵커 어휘가 문서에 없으면 (대조군이 조용히 무의미해지지
+            않도록 시끄럽게 실패한다).
+    """
+    token = "재결속"
+    for idx, line in enumerate(text.split("\n"), start=1):
+        if token in line:
+            return _append(text, f"앵커 대조군 `:{idx}`«{token}»")
+    raise ContractParseError(f"대조군 앵커 어휘가 문서에 없다: {token!r}")
 
 
 def _append_in_enum_fence(suffix: str) -> Callable[[str], str]:
@@ -4080,7 +5045,7 @@ def _closed_table_anchor_gone(which: str) -> Callable[[str], str]:
 
 
 def build_manifest_fixtures(
-    tmpdir: Path, real_manifest: Path
+    sources: MutableSourceMap, real_manifest: Path
 ) -> dict[str | None, Path]:
     """RULE 대조군이 요구하는 manifest 픽스처들을 만든다.
 
@@ -4088,7 +5053,7 @@ def build_manifest_fixtures(
     바꾸면 어느 술어가 잡았는지 알 수 없어 대조군이 판별력을 잃는다.
 
     Args:
-        tmpdir: 픽스처를 쓸 임시 디렉터리.
+        sources: 픽스처 원본을 적재할 «경로 → 원본» 사상 (이 함수가 채운다).
         real_manifest: 실운용 manifest 경로.
 
     Returns:
@@ -4112,11 +5077,8 @@ def build_manifest_fixtures(
     def write(key: str, mutate: Callable[[dict[str, object]], None]) -> Path:
         payload = copy.deepcopy(manifest)
         mutate(payload)
-        path = tmpdir / f"{key}.yaml"
-        path.write_text(
-            yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
-        )
+        path = SELFTEST_FIXTURE_DIR / f"{key}.yaml"
+        sources[path] = yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
         return path
 
     def add_phantom_rule(payload: dict[str, object]) -> None:
@@ -4162,12 +5124,14 @@ def build_manifest_fixtures(
         # «계수 거부» 술어 자신이 판별했음이 증명된다 (규칙 서브트리와 같은 형태).
         tables[0]["header_anchor"] = 9
 
-    not_yaml = tmpdir / "not-a-manifest.yaml"
-    not_yaml.write_text("이것은 매핑이 아니다\n", encoding="utf-8")
+    not_yaml = SELFTEST_FIXTURE_DIR / "not-a-manifest.yaml"
+    sources[not_yaml] = "이것은 매핑이 아니다\n"
 
     return {
         None: real_manifest,
-        MFIXTURE_MISSING: tmpdir / "there-is-no-such-manifest.yaml",
+        MFIXTURE_MISSING: _absent_fixture(
+            sources, SELFTEST_FIXTURE_DIR / "there-is-no-such-manifest.yaml"
+        ),
         MFIXTURE_NOT_YAML: not_yaml,
         MFIXTURE_EXTRA_RULE: write(MFIXTURE_EXTRA_RULE, add_phantom_rule),
         MFIXTURE_UNKNOWN_DERIV: write(MFIXTURE_UNKNOWN_DERIV, unknown_derivation),
@@ -4379,7 +5343,12 @@ def build_mutations() -> list[Mutation]:
             "C2C-inject-good-anchor-is-silent",
             "TOS-CC-C2C",
             "silent",
-            lambda t: _append(t, "앵커 대조군 `:103`«재결속»"),
+            # **좌표를 «파생»한다.**  종래 이 픽스처는 `:103` 을 리터럴로 박았고, 계약
+            # 본문 위쪽에 행이 삽입되는 순간 그 행이 밀려 **대조군 자신이 위양성**을
+            # 냈다(v2.22 에라타 40차 실측 — 헤더 블록 삽입 +14 행).  «좋은 앵커는
+            # 조용하다»가 이 대조군의 의도인데, 리터럴은 그 의도를 문서 편집에
+            # 종속시킨다.  갱신할 값을 두지 않으면 stale 될 값도 없다.
+            _append_good_anchor,
         ),
         # ---- C2C 이력 행 면제의 «좁힘» (ANCHOR-2) -------------------------
         Mutation(
@@ -4698,6 +5667,18 @@ def build_mutations() -> list[Mutation]:
             FIXTURE_PROVENANCE_OK,
         ),
         Mutation(
+            "C2UP-worktree-provenance-is-red",
+            "TOS-CC-C2UP",
+            "inject",
+            # **[50차 · 재심 #10]** 값은 전부 출처 실측과 «맞는데» 출처 종류만 가변이다.
+            # 49차까지 이 자리는 «운영 안내»(= 통과)였고, 그래서 기입값·출처·검사 대상을
+            # 한꺼번에 같은 가변 문서로 옮기는 우회가 위반 0건이었다.  이제 red 다.
+            lambda t: t,
+            None,
+            FIXTURE_PROVENANCE_WORKTREE,
+            FIXTURE_PROVENANCE_OK,
+        ),
+        Mutation(
             "C2UP-real-baseline-provenance-verifies",
             "TOS-CC-C2UP",
             "clean",
@@ -4748,6 +5729,389 @@ def build_mutations() -> list[Mutation]:
                 t, ANCHOR_PARSE_ENUM_DEF, "(4) 삭제 대조군 **배열(목록)"
             ),
             anchors=(ANCHOR_PARSE_ENUM_DEF,),
+        ),
+        # ---- C4C — 미래 지향 단계 열거의 회차 리터럴 (41차 ⓑ · 재심 F3) -------
+        Mutation(
+            "C4C-inject-round-literal-step-enumeration",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(
+                t, "다음 = 42차 → addendum-9 → O-6 재결속 → «현행 버전 다음 판» 재심."
+            ),
+        ),
+        Mutation(
+            "C4C-predicate-form-is-silent",
+            "TOS-CC-C4C",
+            "silent",
+            # 역방향 — 술어 형태(회차 리터럴 없음)는 조용해야 한다.  이것이 없으면 축이
+            # «→ 를 담은 모든 문장»을 잡는 과잉 차단으로 퇴행해도 배터리가 통과한다.
+            lambda t: _append(t, "다음 = 동결 → 운영자 재결속(O-6) → 현행 버전 재심."),
+        ),
+        # ---- CAP-2 4세대 — 픽스처 «셀 정체» (45차 · 재심 #5 F1) ---------------
+        # 44차의 행-앵커 면제는 `startswith` 였다.  접두 네임스페이스(`| **T-84**-NORM |`)와
+        # 그 행의 «새 셀» 둘 다 통째로 면제됐다(실측).  정체는 첫 셀 완전일치 + 대조군
+        # 식별자를 가진 «셀»에만 준다.
+        Mutation(
+            "CAP2-escape-fixture-row-prefix",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "| **T-84**-NORM | 신규 규범: `total_count > 1000` "
+                "→ `PREVENTION_UNVERIFIABLE` |",
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-new-cell-in-fixture-row",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # **[46차 교정]** 45차 판은 «별도 행»을 삽입해 이 경계를 검증하지 «못했다»
+            # (재심 #6 이 그 대조군의 결함을 짚었다).  실제 픽스처 행에 셀을 «추가»한다.
+            _append_cell_to_fixture_row(
+                " 신규 규범: `total_count > 1000` → `PREVENTION_UNVERIFIABLE` |"
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-guard-split-across-cells",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # 셀 경계로 술어를 쪼개는 우회(재심 #6 F1).
+            _append_cell_to_fixture_row(
+                " `total_count > 1000` | → `PREVENTION_UNVERIFIABLE` |"
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-hidden-span-control-id",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # 태그 운반체로 식별자를 숨기는 우회(재심 #8 F1).
+            _append_cell_to_fixture_row(
+                " <span hidden>(ㅎ-4)</span> `total_count > 1000` "
+                "→ `PREVENTION_UNVERIFIABLE` |"
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-template-hidden-control-id",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            _append_cell_to_fixture_row(
+                " <template>(ㅎ-4)</template> `total_count > 1000` "
+                "→ `PREVENTION_UNVERIFIABLE` |"
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-comment-hidden-control-id",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # 비가시(HTML 주석) 식별자로 셀 전체를 면제시키는 우회(재심 #7 F1).
+            _append_cell_to_fixture_row(
+                " 신규 규범 <!-- (ㅎ-4) --> `total_count > 1000` "
+                "→ `PREVENTION_UNVERIFIABLE` |"
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-unclosed-control-id",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # 미닫힘 식별자 접두가 면제키가 되는 우회(재심 #6 F2).
+            _append_cell_to_fixture_row(
+                " (ㅎ-4x 신규 규범: `total_count > 1000` → `PREVENTION_UNVERIFIABLE` |"
+            ),
+        ),
+        # ---- CAP-2/C4C 3세대 — 표기 정규화·행 정체·양극성 (44차 · 재심 #4) -----
+        # 이 판은 **양쪽 극성이 다 깨져 있었다**: 우회는 조용하고(6종) 예시는 red(2종).
+        # 대조군도 양방향으로 못박는다 — «잡아야 할 것»과 «잡으면 안 되는 것» 둘 다.
+        Mutation(
+            "CAP2-escape-marker-misuse-inline",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "신규 규범 [대조군]: `total_count > 1000` → `PREVENTION_UNVERIFIABLE`.",
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-marker-on-previous-line",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "[대조군] 앞 문단.\n신규 규범: `total_count > 1000` "
+                "→ `PREVENTION_UNVERIFIABLE`.",
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-fullwidth-operator",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t, "신규 상한: `total_count ＞ 1000` → `PREVENTION_UNVERIFIABLE`."
+            ),
+        ),
+        Mutation(
+            "CAP2-html-comment-example-is-silent",
+            "TOS-CC-RULE-MISSING",
+            "silent",
+            # 역방향 — 주석 «안»의 예시는 규범 술어가 아니다(위양성이었다).
+            lambda t: _append(
+                t, "<!-- 예시: `total_count > 1000` → `PREVENTION_UNVERIFIABLE` -->"
+            ),
+        ),
+        Mutation(
+            "C4C-escape-html-comment-in-prefix",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(t, "다음 단계<!-- 비표시 -->=44차 → addendum-9 → 재심."),
+        ),
+        Mutation(
+            "C4C-escape-three-line-wrap",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(t, "다음 단계 =\n44차\n→ addendum-9 → 재심."),
+        ),
+        Mutation(
+            "C4C-escape-double-arrow",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(t, "다음 단계=44차 ⇒ addendum-9 ⇒ 재심."),
+        ),
+        # ---- CAP-2/C4C 모집단 «탈출» 대조군 2세대 (43차 · 재심 #3 F1·F2·F3) ----
+        # 42차 판의 탈출 대조군은 «그 네 예시»만 잡았다.  심판이 같은 축에서 여섯 개를 더
+        # 찾아냈다 — 표기 의존이 남아 있던 자리들이다.  자리마다 하나씩 못박는다.
+        Mutation(
+            "CAP2-escape-no-backtick-antecedent",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "신규 상한: total_count > 1000 → `PREVENTION_UNVERIFIABLE`(전순서 1).",
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-spans-after-threshold",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "신규 상한: `total_count > 1000` 이면 `a` · `b` · `c` "
+                "→ `PREVENTION_UNVERIFIABLE`.",
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-line-break-split",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "신규 상한: `total_count > 1000` 이면\n  → `PREVENTION_UNVERIFIABLE`(전순서 1).",
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-fullwidth-digits",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t, "신규 상한: `total_count > １０００` → `PREVENTION_UNVERIFIABLE`."
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-normative-table-row",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            # 42차는 표 행을 통째로 뺐다 — 그것이 규범 술어에 준 무료 우회키였다.
+            lambda t: _append(
+                t, "| 신규 규범 | `total_count > 1000` → `PREVENTION_UNVERIFIABLE` |"
+            ),
+        ),
+        Mutation(
+            "CAP2-fixture-row-cell-added-is-red",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # **[48차 · 문언 정정 50차]** 정당한 대조군 셀을 더해도 red 다 — 이것이
+            # «수»로 옮긴 정체의 값이다.  48차 주석은 그 근거를 「기준선 갱신은 사람의
+            # 기록 행위여야 한다(C2U 래칫과 같은 규율)」로 적었지만 **49차가 그것을
+            # 반증했다**: 그 판은 기입 정수만 견줬으므로 셀 추가와 기준값 상향을 한
+            # 커밋에 묶으면 통과했다(사람의 기록 행위 하나로 둘 다 되었다).  지금 이
+            # 대조군이 red 인 근거는 그 산문이 아니라 **기준이 출처 blob 이라는 사실**
+            # 이고, 그 blob 의 불변성 자체는 50차가 세웠다.
+            _append_cell_to_fixture_row(
+                " **(ㅎ-9)** 음성 — `total_count` 1,001 주입 "
+                "→ `PREVENTION_UNVERIFIABLE` |"
+            ),
+        ),
+        # ---- CAP-2 5세대 — 셀 수의 «기준»이 출처 blob 인가 (49차 · 재심 #9) ------
+        Mutation(
+            "CAP2-FIXTURE-baseline-disagrees-with-blob",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # 출처 blob 은 참인데 «기입값만» 다르다 = 워킹트리를 재고 커밋 이름만 적은
+            # 형태.  실운용 기준선이 실제로 그 형태였다(핀의 T-84 는 15셀인데 기입값은
+            # 17 이었다) — C2UP 가 계수 축에서 잡는 그 형상의 셀 수 축 짝이다.
+            lambda t: t,
+            None,
+            FIXTURE_FIXTURE_CELLS_BUMPED,
+            FIXTURE_PROVENANCE_OK,
+        ),
+        Mutation(
+            "CAP2-escape-new-cell-with-baseline-bumped",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # **재심 #9 이 이름 지어 요구한 paired mutant**: 문서에 셀을 더하면서 기준값도
+            # «함께» 올리는 우회.  48차 판은 두 값을 서로 견줬으므로 이 짝맞춤이 위반
+            # 0건이었다(실측).  기준이 불변 blob 이면 둘을 함께 올려도 red 다 —
+            # 기준선 픽스처가 양쪽 실행에서 같으므로 늘어나는 것은 «문서 쪽 다리»뿐이다.
+            # **그 «불변»은 출처 종류가 `commit` 일 때만 성립했다**(50차) — `kind` 를
+            # 가변으로 뒤집는 판은 아래 6세대 대조군이 짝으로 든다.
+            _append_cell_to_fixture_row(
+                " 신규 규범: `total_count > 1000` → `PREVENTION_UNVERIFIABLE` |"
+            ),
+            None,
+            FIXTURE_FIXTURE_CELLS_BUMPED,
+            FIXTURE_FIXTURE_CELLS_BUMPED,
+        ),
+        # ---- CAP-2 6세대 — 출처의 «불변성» (50차 · 재심 #10) -------------------
+        Mutation(
+            "CAP2-FIXTURE-worktree-provenance-is-red",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # C2UP 와 **같은 기준선 픽스처**를 이 축에서도 건다.  두 축이 같은 리더
+            # (`read_baseline_source`)에 매달려 있으므로, 가변 출처는 둘 다에서
+            # 근거를 잃어야 한다 — 한쪽만 red 면 잠금이 표면에 붙어 있다는 뜻이다.
+            lambda t: t,
+            None,
+            FIXTURE_PROVENANCE_WORKTREE,
+            FIXTURE_PROVENANCE_OK,
+        ),
+        Mutation(
+            "CAP2-escape-new-cell-with-baseline-bumped-and-worktree",
+            "TOS-CC-CAP2-FIXTURE",
+            "inject",
+            # **재심 #10 의 반례 그대로**: 문서에 셀 +1 · 기입값을 그 수로 상향 ·
+            # 출처를 가변(`worktree`)으로 전환 — 세 수를 한 커밋에 묶는다.  49차 판은
+            # 이 짝맞춤이 위반 0건이었다(실측): 가변 출처에서는 기입값·출처·검사 대상이
+            # 전부 같은 문서를 가리켜 셋이 함께 움직였다.
+            #
+            # **기준(ref)은 정직한 기준선이다.**  `CAP2-escape-new-cell-with-baseline-
+            # bumped` 는 양쪽을 같은 픽스처로 고정했지만, 여기서 같은 배치를 쓰면 가변
+            # 출처 거부가 양쪽 실행 모두를 line 0 한 건으로 만들어 delta 0 — 즉 «죽은
+            # 검사»로 계수된다(실측).  우회의 정체는 «녹색 상태에서 red 로 뒤집힌다»
+            # 이므로 기준은 녹색인 자리여야 한다.
+            _append_cell_to_fixture_row(
+                " 신규 규범: `total_count > 1000` → `PREVENTION_UNVERIFIABLE` |"
+            ),
+            None,
+            FIXTURE_WORKTREE_CELLS_BUMPED,
+            FIXTURE_PROVENANCE_OK,
+        ),
+        Mutation(
+            "CAP2-FIXTURE-commit-provenance-is-silent",
+            "TOS-CC-CAP2-FIXTURE",
+            "clean",
+            # 역방향 양성 — 새 거부가 **정직한 기준선까지** 잡지는 않는지 본다.
+            # `C2UP-real-baseline-provenance-verifies` 와 같은 성격이고, 같은 이유로
+            # **실운용** 기준선을 쓰고 «0 건» 이라는 **절대** 기대를 건다: 사람이
+            # 커밋에 결속해 적어 둔 값만이 리더와 독립한 oracle 이다.
+            lambda t: _append(
+                t, "대조군 — 문서 말미 편집은 픽스처 행의 셀 수를 바꾸지 않는다."
+            ),
+            None,
+            None,
+            None,
+        ),
+        Mutation(
+            "C4C-escape-no-space-separator",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(t, "다음 단계=42차 → addendum-9 → O-6 재결속 → 재심."),
+        ),
+        Mutation(
+            "C4C-escape-fullwidth-colon",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(t, "다음 단계： 42차 → addendum-9 → O-6 재결속 → 재심."),
+        ),
+        Mutation(
+            "C4C-escape-newline-enumeration",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(
+                t, "다음 단계 =\n  42차 → addendum-9 → O-6 재결속 → 재심."
+            ),
+        ),
+        # ---- CAP-2/C4C 모집단 «탈출» 대조군 (42차 · 재심 F1·F2) -------------
+        # 41차 판은 대조군이 전부 red 였는데도 **모집단 밖 신규 표기**가 조용히 통과했다.
+        # 「대조군이 red 인 것」과 「모집단이 닫힌 것」은 다른 주장이다 — 그 차이를 여기 넷이 진다.
+        Mutation(
+            "CAP2-escape-underscore-thousand",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "신규 상한: `total_count > 1_000` → `PREVENTION_UNVERIFIABLE`(전순서 1).",
+            ),
+        ),
+        Mutation(
+            "CAP2-escape-comma-thousand",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            lambda t: _append(
+                t,
+                "신규 상한: `total_count > 1,000` → `PREVENTION_UNVERIFIABLE`(전순서 1).",
+            ),
+        ),
+        Mutation(
+            "C4C-escape-next-step-notation",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(t, "다음 단계 = 42차 → addendum-9 → O-6 재결속 → 재심."),
+        ),
+        Mutation(
+            "C4C-escape-colon-notation",
+            "TOS-CC-C4C",
+            "inject",
+            lambda t: _append(t, "다음: 42차 → addendum-9 → O-6 재결속 → 재심."),
+        ),
+        # ---- CAP-2 — 차단 술어의 «구조 파생 항» 전수 적용 (41차 ⓐ · 재심 F2) ----
+        # **이 넷이 없어서 40차가 죽은 검사를 냈다.**  세 소비처의 구조 파생 항을
+        # 각각 지운 변이가 전부 green 이었고(실측), 심판이 그것을 high 로 적발했다.
+        # 자리마다 하나씩 둔다 — «한 자리만 보는» 검사가 이 아크의 반복 결함이다.
+        Mutation(
+            "CAP2-strip-structural-term-S",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            _strip_structural_term(
+                "**`|S| >= 1000` ∨ `S.total_count > 1000` →",
+                "**`S.total_count > 1000` →",
+            ),
+        ),
+        Mutation(
+            "CAP2-strip-structural-term-Rs",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            _strip_structural_term(
+                "**`|R_s| >= 1000` ∨ `total_count > 1000` →",
+                "**`total_count > 1000` →",
+            ),
+        ),
+        Mutation(
+            "CAP2-strip-structural-term-R",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            _strip_structural_term(
+                "**`|R| >= 1000` ∨ `total_count > 1000` →",
+                "**`total_count > 1000` →",
+            ),
+        ),
+        Mutation(
+            "CAP2-strip-structural-term-E",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            # limb ⑤ 는 «처음부터» 구조 파생이었던 선례다 — 그 자리도 퇴행하면 red 여야
+            # 한다(선례라고 면제하면 규칙의 우주가 조용히 좁아진다).
+            _strip_structural_term(
+                "**`|E| >= 1000`(문서화된 임계) →",
+                "**`total_count > 1000`(문서화된 임계) →",
+            ),
         ),
         # ---- RULE — 규칙 ↔ 소비처 전수 대응 (S-25 · R-F3) -------------------
         # 문서 변이 (manifest 는 실운용 그대로).
@@ -5073,6 +6437,61 @@ def build_mutations() -> list[Mutation]:
             "clean",
             _benign_append,
         ),
+        # ---- CLOSED-1 2세대 — 행 수의 «기준»이 출처 blob 인가 (51차) --------------
+        Mutation(
+            "CLOSED-TABLE-baseline-disagrees-with-blob",
+            "TOS-CC-CLOSED-TABLE",
+            "inject",
+            # 출처 blob 은 참인데 «기입값만» 다르다 = 워킹트리를 재고 커밋 이름만 적은
+            # 형태.  C2UP 가 계수 축에서, CAP2-FIXTURE 가 셀 수 축에서 잡는 그 형상의
+            # 행 수 축 짝이다 — 50차까지 이 축에는 그 다리가 없었다.
+            lambda t: t,
+            None,
+            FIXTURE_CLOSED_ROWS_BUMPED,
+            FIXTURE_PROVENANCE_OK,
+        ),
+        Mutation(
+            "CLOSED-TABLE-worktree-provenance-is-red",
+            "TOS-CC-CLOSED-TABLE",
+            "inject",
+            # C2UP·CAP2-FIXTURE 와 **같은 기준선 픽스처**를 이 축에서도 건다.  세 축이
+            # 같은 리더(`read_baseline_source`)의 기본값에 매달려 있으므로 가변 출처는
+            # 셋 다에서 근거를 잃어야 한다 — 한 축만 조용하면 잠금이 저작 레벨이 아니라
+            # 표면에 붙어 있다는 뜻이다.
+            lambda t: t,
+            None,
+            FIXTURE_PROVENANCE_WORKTREE,
+            FIXTURE_PROVENANCE_OK,
+        ),
+        Mutation(
+            "CLOSED-TABLE-escape-row-added-with-baseline-bumped",
+            "TOS-CC-CLOSED-TABLE",
+            "inject",
+            # **paired mutant**: 문서에 데이터 행을 더하면서 기준값도 «함께» 올리는
+            # 우회.  50차 판은 두 값을 서로 견줬으므로 이 짝맞춤이 위반 0건이었다.
+            # 기준이 불변 blob 이면 둘을 함께 올려도 red 다 — 기준선 픽스처가 양쪽
+            # 실행에서 같으므로 늘어나는 것은 «문서 쪽 다리»뿐이다
+            # (`CAP2-escape-new-cell-with-baseline-bumped` 와 같은 배치).
+            _closed_table_add_row,
+            None,
+            FIXTURE_CLOSED_ROWS_BUMPED,
+            FIXTURE_CLOSED_ROWS_BUMPED,
+        ),
+        Mutation(
+            "CLOSED-TABLE-commit-provenance-is-silent",
+            "TOS-CC-CLOSED-TABLE",
+            "clean",
+            # 역방향 양성 — 새 두 다리가 **정직한 기준선까지** 잡지는 않는지 본다.
+            # `CAP2-FIXTURE-commit-provenance-is-silent` 와 같은 성격이고, 같은 이유로
+            # **실운용** 기준선을 쓰고 «0 건» 이라는 **절대** 기대를 건다: 사람이
+            # 커밋에 결속해 적어 둔 값만이 리더와 독립한 oracle 이다.
+            lambda t: _append(
+                t, "대조군 — 문서 말미 편집은 닫힌 표의 데이터 행 수를 바꾸지 않는다."
+            ),
+            None,
+            None,
+            None,
+        ),
     ]
 
 
@@ -5166,14 +6585,24 @@ def build_classifier_controls(text: str) -> list[tuple[Mutation, int]]:
     ]
 
 
-def _write_fixture(path: Path, payload: dict[str, object]) -> Path:
-    """픽스처 기준선 파일 하나를 쓴다."""
-    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+def _write_fixture(
+    sources: MutableSourceMap, path: Path, payload: dict[str, object]
+) -> Path:
+    """픽스처 기준선 하나를 인메모리 사상에 적재하고 그 «경로» 를 돌려준다.
+
+    이름의 `write` 는 «픽스처를 짓는다» 는 뜻이다 — 디스크 쓰기가 아니다.  돌려주는
+    경로는 `SELFTEST_FIXTURE_DIR` 아래의 합성 좌표이고 그 파일은 만들어지지 않는다.
+    """
+    sources[path] = json.dumps(payload, ensure_ascii=False)
     return path
 
 
 def build_baseline_fixtures(
-    text: str, tmpdir: Path, real_baseline: Path, repo_root: Path
+    text: str,
+    sources: MutableSourceMap,
+    real_baseline: Path,
+    repo_root: Path,
+    manifest_path: Path,
 ) -> dict[str | None, Path]:
     """대조군이 요구하는 기준선 픽스처들을 만든다.
 
@@ -5188,9 +6617,10 @@ def build_baseline_fixtures(
 
     Args:
         text: 검사 대상 문서 텍스트.
-        tmpdir: 픽스처를 쓸 임시 디렉터리.
+        sources: 픽스처 원본을 적재할 «경로 → 원본» 사상 (이 함수가 채운다).
         real_baseline: 실운용 기준선 경로 (출처 필드를 빌려온다).
         repo_root: 출처 blob 을 읽을 저장소 루트.
+        manifest_path: 픽스처 행 앵커 정본(RULE 축 manifest) 경로.
 
     Returns:
         픽스처 키 → 경로 사상 (`None` 은 실운용 경로).
@@ -5207,42 +6637,83 @@ def build_baseline_fixtures(
     }
     # 검증과 같은 리더를 쓴다 — 픽스처의 기대값을 다른 경로로 만들면 «무엇을 재는가»가
     # 조용히 갈라져 C2UP 대조군이 자기 자신을 검증하게 된다.
-    blob_count = count_unanchored_in_text(read_baseline_source(repo_root, record))
-    # 닫힌 표 계수는 «한 가지만 바꾼다» 규율에 따라 실운용 값을 그대로 물려준다 —
+    source = read_baseline_source(repo_root, record)
+    blob_count = count_unanchored_in_text(source)
+    # 닫힌 표 계수도 «한 가지만 바꾼다» 규율에 따라 모든 픽스처가 물려받는다 —
     # 물려주지 않으면 모든 기준선 픽스처가 CLOSED-1 축에서 함께 red 가 되어, 어느
-    # 술어가 잡았는지 알 수 없어진다.
-    closed = {BASELINE_CLOSED_TABLE_KEY: read_closed_table_baseline(real_baseline)}
+    # 술어가 잡았는지 알 수 없어진다.  값은 실운용 기입값이 아니라 **출처 blob 실측**
+    # 이다(51차) — 기준이 blob 으로 옮겨 갔으므로 기입값을 물려받으면 그것이 stale 한
+    # 날 픽스처 전체가 조용히 red 로 포화한다(48차가 셀 수 축에서 밟은 그 자리).
+    closed_tables, closed_violations = derive_closed_tables(manifest_path)
+    if closed_tables is None:
+        raise ContractParseError(
+            "닫힌 표 정본을 읽지 못해 기준선 픽스처를 만들 수 없다: "
+            f"{[v.message for v in closed_violations]}"
+        )
+    blob_rows = derive_closed_table_rows(ContractDoc(source, "<blob>"), closed_tables)
+    closed = {BASELINE_CLOSED_TABLE_KEY: {a: s.rows for a, s in blob_rows.items()}}
+    # 행 수 «기입값만» 출처보다 큰 기준선 — 문서는 건드리지 않는다.  단독으로는 「기준선의
+    # 자기 주장이 거짓」 대조군이고, 「행 추가」 변이와 짝지으면 「행 추가와 기준값 갱신을
+    # 함께 하는」 우회(48차가 셀 수 축에서 낸 것과 같은 형상)를 재현한다.
+    closed_bumped = {
+        BASELINE_CLOSED_TABLE_KEY: {a: s.rows + 1 for a, s in blob_rows.items()}
+    }
+    # 픽스처 행 셀 수도 같은 규율이다 — 48차는 이 키를 «필수»로 만들면서 상속을 하지
+    # 않아 모든 기준선 픽스처가 CAP2-FIXTURE 축에서 함께 red 였다(49차 부수 적발).
+    # 값은 계수와 **같은 자리에서 같은 소스**(출처 blob)로 잰다.
+    fixture_anchors = _manifest_fixture_rows(manifest_path)
+    blob_cells = derive_fixture_row_cells(
+        ContractDoc(source, "<blob>"), fixture_anchors
+    )
+    fixture_cells = {BASELINE_FIXTURE_KEY: {a: s.cells for a, s in blob_cells.items()}}
+    # 셀 수 «기입값만» 출처보다 큰 기준선 — 문서는 건드리지 않는다.  「워킹트리를 재고
+    # 커밋 이름만 적은」 형태의 직접 대조군이고, 문서 변이와 짝지으면 「셀 추가와 기준값
+    # 갱신을 함께 하는」 우회(재심 #9)를 재현한다.
+    bumped = {BASELINE_FIXTURE_KEY: {a: s.cells + 1 for a, s in blob_cells.items()}}
+    # 출처 «종류»만 가변으로 뒤집는다 — 커밋·경로는 그대로 물려받아 「한 가지만 바꾼다」
+    # 를 지킨다.  재심 #10 이 실제로 밟은 형태가 이것이다: 커밋 블록을 손에 쥔 채
+    # `kind` 만 `worktree` 로 적으면 검사 대상이 가변 문서로 옮겨 갔다.
+    worktree_prov = {**prov, BASELINE_KIND_KEY: BASELINE_KIND_WORKTREE}
 
     return {
         None: real_baseline,
         FIXTURE_MEASURED: _write_fixture(
-            tmpdir / "measured.json",
+            sources,
+            SELFTEST_FIXTURE_DIR / "measured.json",
             {
                 BASELINE_UNANCHORED_KEY: count_unanchored_in_text(text),
                 BASELINE_PROVENANCE_KEY: prov,
                 **closed,
+                **fixture_cells,
             },
         ),
-        FIXTURE_MISSING: tmpdir / "there-is-no-such-file.json",
+        FIXTURE_MISSING: _absent_fixture(
+            sources, SELFTEST_FIXTURE_DIR / "there-is-no-such-file.json"
+        ),
         FIXTURE_NOT_JSON: Path(__file__).resolve(),
         FIXTURE_PROVENANCE_OK: _write_fixture(
-            tmpdir / "prov-ok.json",
+            sources,
+            SELFTEST_FIXTURE_DIR / "prov-ok.json",
             {
                 BASELINE_UNANCHORED_KEY: blob_count,
                 BASELINE_PROVENANCE_KEY: prov,
                 **closed,
+                **fixture_cells,
             },
         ),
         FIXTURE_STALE_COUNT: _write_fixture(
-            tmpdir / "stale-count.json",
+            sources,
+            SELFTEST_FIXTURE_DIR / "stale-count.json",
             {
                 BASELINE_UNANCHORED_KEY: blob_count + 1,
                 BASELINE_PROVENANCE_KEY: prov,
                 **closed,
+                **fixture_cells,
             },
         ),
         FIXTURE_BAD_COMMIT: _write_fixture(
-            tmpdir / "bad-commit.json",
+            sources,
+            SELFTEST_FIXTURE_DIR / "bad-commit.json",
             {
                 BASELINE_UNANCHORED_KEY: blob_count,
                 BASELINE_PROVENANCE_KEY: {
@@ -5251,17 +6722,73 @@ def build_baseline_fixtures(
                     "path": record.path,
                 },
                 **closed,
+                **fixture_cells,
             },
         ),
         FIXTURE_NO_PROVENANCE: _write_fixture(
-            tmpdir / "no-provenance.json",
-            {BASELINE_UNANCHORED_KEY: blob_count, **closed},
+            sources,
+            SELFTEST_FIXTURE_DIR / "no-provenance.json",
+            {BASELINE_UNANCHORED_KEY: blob_count, **closed, **fixture_cells},
         ),
-        # 닫힌 표 계수만 빠진 기준선 — 나머지는 실운용과 같다.  부재를 «0 위반»으로
+        # 닫힌 표 계수만 빠진 기준선 — 나머지는 정직하다.  부재를 «0 위반»으로
         # 접으면 CLOSED-1 축이 장식이 된다.
         FIXTURE_NO_CLOSED_ROWS: _write_fixture(
-            tmpdir / "no-closed-rows.json",
-            {BASELINE_UNANCHORED_KEY: blob_count, BASELINE_PROVENANCE_KEY: prov},
+            sources,
+            SELFTEST_FIXTURE_DIR / "no-closed-rows.json",
+            {
+                BASELINE_UNANCHORED_KEY: blob_count,
+                BASELINE_PROVENANCE_KEY: prov,
+                **fixture_cells,
+            },
+        ),
+        # 닫힌 표 행 수 «기입값만» 출처보다 큰 기준선 — 나머지는 정직하다.  51차가
+        # 이 축에 두 다리를 놓기 전에는 이 형태가 위반 0건이었다(기입값과 워킹트리
+        # 실측을 서로만 견줬으므로 둘을 함께 올리면 조용했다).
+        FIXTURE_CLOSED_ROWS_BUMPED: _write_fixture(
+            sources,
+            SELFTEST_FIXTURE_DIR / "closed-rows-bumped.json",
+            {
+                BASELINE_UNANCHORED_KEY: blob_count,
+                BASELINE_PROVENANCE_KEY: prov,
+                **closed_bumped,
+                **fixture_cells,
+            },
+        ),
+        FIXTURE_FIXTURE_CELLS_BUMPED: _write_fixture(
+            sources,
+            SELFTEST_FIXTURE_DIR / "fixture-cells-bumped.json",
+            {
+                BASELINE_UNANCHORED_KEY: blob_count,
+                BASELINE_PROVENANCE_KEY: prov,
+                **closed,
+                **bumped,
+            },
+        ),
+        # 출처 종류만 가변인 기준선 — 값은 전부 출처 blob 실측과 «맞다».  그래도 red
+        # 여야 한다: 맞는 값을 가변 문서에서 쟀다는 주장은 다음 편집에 스스로 거짓이
+        # 된다.  값 불일치가 아니라 **출처의 불변성**을 겨눈 직접 대조군이다.
+        FIXTURE_PROVENANCE_WORKTREE: _write_fixture(
+            sources,
+            SELFTEST_FIXTURE_DIR / "prov-worktree.json",
+            {
+                BASELINE_UNANCHORED_KEY: blob_count,
+                BASELINE_PROVENANCE_KEY: worktree_prov,
+                **closed,
+                **fixture_cells,
+            },
+        ),
+        # 재심 #10 의 반례를 기준선 쪽에서 재현한 판 — 문서 변이(셀 +1)와 짝지으면
+        # 「셀 추가 · 기입값 상향 · 출처를 가변으로 전환」 세 수를 한 커밋에 묶는
+        # 우회가 그대로 재현된다.
+        FIXTURE_WORKTREE_CELLS_BUMPED: _write_fixture(
+            sources,
+            SELFTEST_FIXTURE_DIR / "worktree-cells-bumped.json",
+            {
+                BASELINE_UNANCHORED_KEY: blob_count,
+                BASELINE_PROVENANCE_KEY: worktree_prov,
+                **closed,
+                **bumped,
+            },
         ),
     }
 
@@ -5286,31 +6813,38 @@ def run_self_test(
         min_anchor: C2B 앵커 최소 길이.
         baseline_path: 실운용 C2U 래칫 기준선 경로.
         repo_root: C2UP 가 측정 출처 blob 을 읽을 저장소 루트.
+        manifest_path: RULE 축 manifest 경로.
 
     Returns:
         프로세스 종료 코드 (죽은 검사가 하나라도 있으면 1).
     """
-    with tempfile.TemporaryDirectory(prefix="tos-contract-selftest-") as tmp:
-        try:
-            fixtures = build_baseline_fixtures(
-                text, Path(tmp), baseline_path, repo_root
-            )
-            manifests = build_manifest_fixtures(Path(tmp), manifest_path)
-        except ContractParseError as exc:
-            # 픽스처를 못 만들면 배터리 전체가 «green 인 기준»을 잃는다.  조용히
-            # 축소 실행하지 않고 여기서 시끄럽게 실패한다.
-            print(f"self-test: FAIL — 대조군 픽스처 구성 실패: {exc}")
-            return 1
-        return _run_battery(
-            text,
-            display_path,
-            min_anchor,
-            baseline_path,
-            repo_root,
-            fixtures,
-            manifest_path,
-            manifests,
+    # 픽스처는 디스크에 쓰지 «않는다» — 원본을 인메모리 사상에 담아 리더까지
+    # 명시적으로 흘린다(`_read_source_text`).  쓰기 가능한 임시 디렉터리가 없는
+    # 샌드박스에서도 배터리가 도는 것이 그 귀결이고, 게이트 경로는 사상을 넘기지
+    # 않으므로 «무엇을 읽는가» 는 그대로다.  부재 픽스처도 «생략» 이 아니라 사상에
+    # 명시로 등재한다(`_absent_fixture`).
+    sources: MutableSourceMap = {}
+    try:
+        fixtures = build_baseline_fixtures(
+            text, sources, baseline_path, repo_root, manifest_path
         )
+        manifests = build_manifest_fixtures(sources, manifest_path)
+    except ContractParseError as exc:
+        # 픽스처를 못 만들면 배터리 전체가 «green 인 기준»을 잃는다.  조용히
+        # 축소 실행하지 않고 여기서 시끄럽게 실패한다.
+        print(f"self-test: FAIL — 대조군 픽스처 구성 실패: {exc}")
+        return 1
+    return _run_battery(
+        text,
+        display_path,
+        min_anchor,
+        baseline_path,
+        repo_root,
+        fixtures,
+        manifest_path,
+        manifests,
+        sources,
+    )
 
 
 def _reference_index(
@@ -5321,6 +6855,7 @@ def _reference_index(
     baseline: Path,
     manifest: Path,
     cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]],
+    sources: SourceMap,
 ) -> tuple[dict[str, int], dict[str, set[int]]]:
     """어떤 (기준선, manifest) 픽스처 짝에 대한 «원본 문서» 발화 색인을 (캐시해) 준다."""
     key = (baseline, manifest)
@@ -5328,7 +6863,15 @@ def _reference_index(
         counts: dict[str, int] = {}
         sites: dict[str, set[int]] = {}
         for v in check_document(
-            text, display_path, min_anchor, False, baseline, None, repo_root, manifest
+            text,
+            display_path,
+            min_anchor,
+            False,
+            baseline,
+            None,
+            repo_root,
+            manifest,
+            sources,
         ):
             counts[v.rule] = counts.get(v.rule, 0) + 1
             sites.setdefault(v.rule, set()).add(v.line)
@@ -5373,6 +6916,7 @@ def _evaluate_mutation(
     fixtures: dict[str | None, Path],
     manifests: dict[str | None, Path],
     cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]],
+    sources: SourceMap,
 ) -> Outcome:
     """대조군 한 건을 돌려 «어느 부류인지» 판정한다.
 
@@ -5388,6 +6932,7 @@ def _evaluate_mutation(
         fixtures: 기준선 픽스처 사상.
         manifests: manifest 픽스처 사상.
         cache: 기준 실행 색인 캐시.
+        sources: 픽스처 «경로 → 원본» 사상.
 
     Returns:
         판정 결과.  `bucket is None` 이 통과다.
@@ -5423,6 +6968,7 @@ def _evaluate_mutation(
         fixtures[mut.ref_baseline],
         manifests[mut.ref_manifest],
         cache,
+        sources,
     )
     notices: list[str] = []
     got = check_document(
@@ -5434,6 +6980,7 @@ def _evaluate_mutation(
         notices,
         repo_root,
         manifests[mut.manifest],
+        sources,
     )
     got_count = sum(1 for v in got if v.rule == mut.rule)
     got_sites = {v.line for v in got if v.rule == mut.rule}
@@ -5510,6 +7057,7 @@ def _run_classifier_controls(
     fixtures: dict[str | None, Path],
     manifests: dict[str | None, Path],
     cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]],
+    sources: SourceMap,
 ) -> list[str]:
     """«앵커 불일치» 분류 **자체**를 고정하는 메타 대조군을 돌린다.
 
@@ -5531,7 +7079,15 @@ def _run_classifier_controls(
 
     for mut, expected_count in controls:
         outcome = _evaluate_mutation(
-            mut, text, display_path, min_anchor, repo_root, fixtures, manifests, cache
+            mut,
+            text,
+            display_path,
+            min_anchor,
+            repo_root,
+            fixtures,
+            manifests,
+            cache,
+            sources,
         )
         # rc 는 배터리 본체와 **같은 함수**로 잰다 — 여기만 따로 계산하면 «분류되면
         # 통과» 라는 회귀를 이 대조군이 놓친다.
@@ -5570,11 +7126,19 @@ def _run_battery(
     fixtures: dict[str | None, Path],
     manifest_path: Path,
     manifests: dict[str | None, Path],
+    sources: SourceMap,
 ) -> int:
     """대조군 배터리 본체 (픽스처가 준비된 뒤 실행된다)."""
     cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]] = {}
     base_count, base_sites = _reference_index(
-        text, display_path, min_anchor, repo_root, baseline_path, manifest_path, cache
+        text,
+        display_path,
+        min_anchor,
+        repo_root,
+        baseline_path,
+        manifest_path,
+        cache,
+        sources,
     )
 
     print(f"self-test: 기준선 위반 {sum(base_count.values())}건 (실운용 기준선 기준)")
@@ -5588,7 +7152,15 @@ def _run_battery(
     mutations = build_mutations()
     for mut in mutations:
         outcome = _evaluate_mutation(
-            mut, text, display_path, min_anchor, repo_root, fixtures, manifests, cache
+            mut,
+            text,
+            display_path,
+            min_anchor,
+            repo_root,
+            fixtures,
+            manifests,
+            cache,
+            sources,
         )
         if outcome.bucket is not None:
             buckets[outcome.bucket].append(
@@ -5601,7 +7173,7 @@ def _run_battery(
 
     print()
     meta = _run_classifier_controls(
-        text, display_path, min_anchor, repo_root, fixtures, manifests, cache
+        text, display_path, min_anchor, repo_root, fixtures, manifests, cache, sources
     )
 
     print()
@@ -5633,17 +7205,32 @@ def _run_battery(
 # ============================================================================
 
 
-def measure_baseline(repo_root: Path, rev: str, rel_path: str) -> int:
-    """`rev` 의 blob 에서 미앵커 좌표를 재어 붙여넣을 JSON 조각을 출력한다.
+def measure_baseline(
+    repo_root: Path, rev: str, rel_path: str, manifest_path: Path
+) -> int:
+    """`rev` 의 blob 에서 기준선 값들을 재어 붙여넣을 JSON 조각을 출력한다.
 
     **파일을 쓰지 않는다.**  래칫의 기준선 갱신은 사람의 기록 행위여야 하므로, 이
     명령은 «워킹트리가 아니라 커밋 blob 에서 재는» 절차만 기계화하고 기입은 사람에게
     남긴다.  ref 는 여기서 즉시 불변 sha 로 해소해 출력한다.
 
+    재는 키는 미앵커 좌표 계수 · 픽스처 행 셀 수 · 닫힌 표 행 수 **셋**이고, 그것이 기준선
+    파일이 담는 계수 키 전부다.  하나라도 빠뜨리면 사람의 기록 행위가 그 키를 만들 수
+    없어 «기입은 사람이 한다»는 규율이 그 축에서만 공허해진다 — 51차가 닫힌 표 축의
+    기준을 출처 blob 으로 옮기면서 그 키도 여기서 나와야 하게 됐다.
+
+    `rev` 로 `worktree` 를 주면 **실측 표시만** 낸다.  출력 JSON 에서 출처 블록
+    (`measured_against`)을 빼는 이유는 50차에 실측된 것 때문이다: 종래에는 워킹트리
+    측정도 출처 블록을 함께 내주었고, 그 출력을 그대로 붙여넣으면 게이트를 **통과하는**
+    기준선이 만들어졌다 — **편의 경로가 곧 우회 경로였다.**  이제 붙여넣을 출처 블록은
+    불변 커밋을 잰 경우에만 나오고, 워킹트리 측정은 그 사실을 명시 출력한다.
+    종료 코드는 두 경우 모두 0 이다 — 이것은 측정 명령이지 게이트가 아니다.
+
     Args:
         repo_root: 저장소 루트.
         rev: 측정할 리비전 (ref 도 받아 sha 로 해소한다).
         rel_path: 저장소 상대 계약 문서 경로.
+        manifest_path: 픽스처 행 앵커·닫힌 표 정본(RULE 축 manifest) 경로.
 
     Returns:
         종료 코드 — 0 성공, 2 측정 실패.
@@ -5673,20 +7260,66 @@ def measure_baseline(repo_root: Path, rev: str, rel_path: str) -> int:
             sha = proc.stdout.decode().strip()
             record = BaselineRecord(0, BASELINE_KIND_COMMIT, sha, rel_path)
             origin = f"{sha[:8]}:{rel_path} blob"
-        count = count_unanchored_in_text(read_baseline_source(repo_root, record))
+        # 이 명령이 `allow_mutable=True` 를 넘기는 **유일한** 자리다 — 게이트 경로는
+        # 기본값(불변만)을 그대로 쓴다.
+        source = read_baseline_source(repo_root, record, allow_mutable=True)
+        count = count_unanchored_in_text(source)
+        # 검사가 쓰는 것과 **같은 파생**으로 잰다 — 다른 경로로 만들면 이 명령이 내는
+        # 값과 검사기가 재는 값이 조용히 갈라진다.
+        cells = {
+            anchor: shape.cells
+            for anchor, shape in derive_fixture_row_cells(
+                ContractDoc(source, "<blob>"), _manifest_fixture_rows(manifest_path)
+            ).items()
+        }
+        tables, table_violations = derive_closed_tables(manifest_path)
+        if tables is None:
+            raise ContractParseError(
+                "닫힌 표 정본을 읽지 못했다: "
+                f"{[v.message for v in table_violations]}"
+            )
+        closed_rows = {
+            anchor: shape.rows
+            for anchor, shape in derive_closed_table_rows(
+                ContractDoc(source, "<blob>"), tables
+            ).items()
+        }
     except ContractParseError as exc:
         print(f"tos-contract: ERROR — 기준선 측정 실패: {exc}")
         return 2
 
-    prov: dict[str, object] = {BASELINE_KIND_KEY: record.kind, "path": rel_path}
-    if record.kind == BASELINE_KIND_COMMIT:
-        prov["commit"] = record.commit
-    payload = {
-        BASELINE_PROVENANCE_KEY: prov,
+    measured: dict[str, object] = {
         BASELINE_UNANCHORED_KEY: count,
+        BASELINE_CLOSED_TABLE_KEY: closed_rows,
+        BASELINE_FIXTURE_KEY: cells,
     }
+    # 출처 블록은 **불변 커밋을 잰 경우에만** 낸다.  워킹트리 판까지 내주면 그 출력을
+    # 그대로 붙여넣는 것만으로 게이트를 통과하는 기준선이 만들어진다 — 편의 경로가 곧
+    # 우회 경로가 되는 형태이고, 재심 #10 의 반례가 정확히 그 자리를 밟았다.
+    payload: dict[str, object] = (
+        {
+            BASELINE_PROVENANCE_KEY: {
+                BASELINE_KIND_KEY: record.kind,
+                "path": rel_path,
+                "commit": record.commit,
+            },
+            **measured,
+        }
+        if record.kind == BASELINE_KIND_COMMIT
+        else measured
+    )
     print(f"tos-contract: {origin} 실측 미앵커 좌표 = {count}자리")
-    print("아래를 기준선 파일에 «사람이» 반영하라 (이 명령은 파일을 쓰지 않는다):")
+    print(f"tos-contract: {origin} 실측 픽스처 행 셀 수 = {cells}")
+    print(f"tos-contract: {origin} 실측 닫힌 표 행 수 = {closed_rows}")
+    if record.kind == BASELINE_KIND_COMMIT:
+        print("아래를 기준선 파일에 «사람이» 반영하라 (이 명령은 파일을 쓰지 않는다):")
+    else:
+        print(
+            "이 형태는 게이트를 통과하지 못한다 — 아래 조각에 "
+            f"'{BASELINE_PROVENANCE_KEY}' 가 «없는» 것이 그 사실이다. "
+            "붙여넣을 출처 블록은 계약 편집을 커밋한 뒤 "
+            "`--measure-baseline <sha>` 로 측정해야 나온다:"
+        )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
@@ -5754,9 +7387,11 @@ def main(argv: list[str] | None = None) -> int:
         metavar="COMMIT|worktree",
         default=None,
         help=(
-            "그 커밋의 blob 에서 미앵커 좌표를 재어 붙여넣을 기준선 JSON 을 **출력만** "
-            "한다 (자동 갱신하지 않는다 — RATCHET-1).  커밋 전 과도기에는 'worktree' 를 "
-            "주면 워킹트리를 재고 그 사실을 kind 로 기입한다"
+            "그 커밋의 blob 에서 미앵커 좌표 · 픽스처 행 셀 수 · 닫힌 표 행 수 **셋**을 "
+            "재어 붙여넣을 기준선 JSON 을 **출력만** 한다 "
+            "(자동 갱신하지 않는다 — RATCHET-1).  'worktree' 를 "
+            "주면 지금 워킹트리를 재어 «표시»만 하고 출처 블록은 내주지 않는다 — 가변 "
+            "출처 기준선은 게이트에서 거부된다"
         ),
     )
     parser.add_argument(
@@ -5790,7 +7425,7 @@ def main(argv: list[str] | None = None) -> int:
     baseline_path = (args.baseline or default_baseline_path()).resolve()
     manifest_path = (args.manifest or repo_root / DEFAULT_MANIFEST_PATH).resolve()
     if args.measure_baseline:
-        return measure_baseline(repo_root, args.measure_baseline, rel)
+        return measure_baseline(repo_root, args.measure_baseline, rel, manifest_path)
 
     notices: list[str] = []
     try:

@@ -76,6 +76,17 @@ jobs:
       - name: tos hermetic package tests
         run: pytest tos/tests
 
+      # §12.2 (완료 계약 F-9): 코퍼스 무결성 검사기와 완료 계약 검사기를 CI 에
+      # 편입한다 — Phase 1 로 미루면 Phase 0 산출물이 회귀 방어 없이 병합된다.
+      # 두 검사기의 git-이력 파생(U-12 트리거·U-15 조상성·U-16 진 조상)은 얕은
+      # 클론에서 전부 PROVENANCE_UNVERIFIABLE 로 떨어지므로 위 checkout 의
+      # `fetch-depth: 0` 이 전제다 (§12.2 체크아웃 깊이 행).
+      - name: tos-spec corpus integrity (tos_spec_status --check)
+        run: python tools/tos_spec_status.py --check
+
+      - name: phase0 completion contract checks (tos_completion_status --check)
+        run: python tools/tos_completion_status.py --check
+
       # Layer 4 — Phase 0 완료 계약의 «자기참조 stale» 게이트.
       #
       # 별도 잡·별도 워크플로가 아니라 이 잡의 «스텝»이다: 별도 잡이면 브랜치

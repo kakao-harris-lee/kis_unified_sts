@@ -25,6 +25,8 @@ from pathlib import Path
 
 import yaml
 
+from tools.tos_profile_census import _profile_null_key_census
+
 EVIDENCE_STATES = (
     "NOT_IMPLEMENTED",
     "READY",
@@ -52,6 +54,14 @@ GENERATED_MD = Path("tos-spec/src/CURRENT-STATUS.md")
 TRACEABILITY_MD = Path(
     "tos-spec/src/part-1-foundation/verification/TRACEABILITY-MATRIX-002.md"
 )
+VERIFICATION_PROFILE_YAML = Path(
+    "tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml"
+)
+# Non-normative: the completion plan's §1 baseline table is a point-in-time
+# snapshot, not a canonical input.  A drift here is reported as a WARNING (see
+# ``_profile_baseline_plan_warning``), never a StatusError -- this file must not
+# become the plan's hostage.
+BASELINE_PLAN_MD = Path("docs/plans/2026-08-11-tos-completion-development-plan.md")
 P2_DISPOSITION_CSV = Path("tos-spec/src/part-2-decision/P2-DISPOSITION-REGISTER.csv")
 P2_DISPOSITION_MD = Path("tos-spec/src/part-2-decision/P2-DISPOSITION-PACKAGE.md")
 ECO_PROFILE_SCHEMA = Path(
@@ -335,6 +345,9 @@ class StatusSnapshot:
     broker_site_rows: int
     transcription_sites: int
     order_sender_symbols: tuple[str, ...]
+    profile_total: int
+    profile_null_keys: int
+    profile_plan_warning: str | None
 
 
 def _read_csv(path: Path, required_fields: Sequence[str]) -> list[dict[str, str]]:
@@ -713,6 +726,7 @@ _GATE_STATUS_MD = "part-1-foundation/ARCHITECTURE-GATE-STATUS.md"
 _COMPLEXITY_REGISTER_MD = "part-1-foundation/COMPLEXITY-REGISTER-002.md"
 _IMPLEMENTATION_PLAN_MD = "part-1-foundation/verification/IMPLEMENTATION-PLAN-002.md"
 _PREFACE_MD = "preface.md"
+_PROFILE_YAML = "part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml"
 
 _PART1_STATE_KEYS = ("part1.NOT_IMPLEMENTED", "part1.READY", "part1.PASS")
 
@@ -809,6 +823,50 @@ _COUNT_TRANSCRIPTIONS: tuple[_CountTranscription, ...] = (
         re.compile(r"EVIDENCE-REGISTER-DEV \((\d+) items at this revision"),
         ("development.TOTAL",),
     ),
+    # S-1/S-2 (design §3.3.2): the two prose/table transcriptions of the direct
+    # Traceability table count. Anchors require the "source gap"/"gap" literal
+    # context alongside the digits -- like S-3 (``_DIRECT_TABLE_SUMMARY``) -- so a
+    # rewrite that keeps only the numbers still fails.
+    _CountTranscription(
+        _GATE_STATUS_MD,
+        "direct-table count (prose, S-1)",
+        re.compile(r"Direct tables now stand at \*\*(\d+)/(\d+) with 1 source gap\*\*"),
+        ("direct_traceability.count", "direct_traceability.total"),
+    ),
+    _CountTranscription(
+        _GATE_STATUS_MD,
+        "direct-table count (table cell, S-2)",
+        re.compile(r"leaving (\d+)/(\d+) direct tables and 1 gap"),
+        ("direct_traceability.count", "direct_traceability.total"),
+    ),
+    # Profile null-key census (design §6.3.2). Only ``163`` (total numeric keys)
+    # and ``16`` (null keys) are derived-and-checked here; the ``147`` (non-null)
+    # figure that appears alongside them is UNCHK-001 (design §6.3.3) -- the
+    # profile's per-key ``approved`` predicate is not machine-derivable yet (the
+    # ``limits`` provenance markers live in YAML comments, not values), so ``147``
+    # stays required literal context for anchor specificity but is never compared
+    # against a derived value.
+    _CountTranscription(
+        _GATE_STATUS_MD,
+        "profile null-key census (gate status)",
+        re.compile(
+            r"147/(\d+) numeric keys carry approved values "
+            r"\(`MIN_evidence_retention_ms` approved 2026-08-07, §3\.26\); "
+            r"(\d+) keys \(10 broker bounds pending P0-2 measurement, 6 "
+            r"instance/architecture limits under ratified trigger-bound "
+            r"deferrals\) remain key-level unapproved and fail-closed"
+        ),
+        ("profile.total", "profile.null"),
+    ),
+    _CountTranscription(
+        _PROFILE_YAML,
+        "profile null-key census (profile header)",
+        re.compile(
+            r"147 of the (\d+) numeric keys now carry approved values; "
+            r"(\d+) keys stay null —"
+        ),
+        ("profile.total", "profile.null"),
+    ),
 )
 
 
@@ -831,14 +889,24 @@ def _derived_register_counts(
 
 
 def validate_count_transcriptions(
-    source_root: Path, part1: EvidenceRegister, development: EvidenceRegister
+    source_root: Path,
+    part1: EvidenceRegister,
+    development: EvidenceRegister,
+    extra_derived: Mapping[str, int] | None = None,
 ) -> int:
     """Check every registered hand-transcribed register count against the CSVs.
 
     The registered documents are required to exist: deleting one, deleting an
     anchored sentence, or editing a transcribed number all fail.
+
+    ``extra_derived`` folds in derived counts that do not come from the two
+    evidence registers -- the direct-traceability (S-1/S-2) and profile
+    null-key-census (§6.3.2) axes are computed by the caller and merged in here
+    so every count anchor is checked through this one loop.
     """
     derived = _derived_register_counts(part1, development)
+    if extra_derived:
+        derived.update(extra_derived)
     errors: list[str] = []
     checked = 0
     texts: dict[str, str] = {}
@@ -1061,6 +1129,73 @@ def validate_direct_traceability(
                     f"{matrix_path}: {safe_id} does not directly reach {adr}/{family}"
                 )
     return len(safe_sets), len(adr_paths)
+
+
+_PROFILE_BASELINE_PLAN_CELL = re.compile(
+    r"Verification Profile \| (\d+)/(\d+) 값 승인, (\d+)개 null/fail-closed"
+)
+
+
+def _load_profile_key_census(repo_root: Path) -> tuple[int, int]:
+    """``(total numeric keys, null keys)`` for VERIFICATION-PROFILE-002.
+
+    Delegates to the shared :func:`tools.tos_profile_census._profile_null_key_census`
+    so this file and ``tools/tos_evidence_run.py`` derive the same numbers from one
+    authored implementation (CLAUDE.md DRY; design §6.3.2). Unlike the evidence-run
+    approval reader -- which folds an uncountable census into UNKNOWN, because
+    UNKNOWN is a legitimate approval state -- this corpus-integrity check has no
+    fail-closed placeholder to fall back to, so an uncountable census aborts here.
+    """
+    path = repo_root / VERIFICATION_PROFILE_YAML
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
+    except OSError as exc:
+        raise StatusError(f"{path}: could not be read: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise StatusError(f"{path}: invalid YAML: {exc}") from exc
+    if not isinstance(doc, dict):
+        raise StatusError(f"{path}: profile document root must be a mapping")
+    census = _profile_null_key_census(doc)
+    if census is None:
+        raise StatusError(
+            f"{path}: null-key census could not be derived (unrecognised bounds/"
+            "limits shape)"
+        )
+    total, null_names = census
+    return total, len(null_names)
+
+
+def profile_baseline_plan_warning(
+    repo_root: Path, profile_total: int, profile_null: int
+) -> str | None:
+    """Non-blocking drift check for the completion plan's §1 baseline table.
+
+    ``docs/plans/2026-08-11-tos-completion-development-plan.md`` is a non-normative,
+    bound planning document (design §6.3.3: "상위 계획 §1은 비규범 문서이므로 차단
+    대상이 아니라 경고 대상으로 한다"). This never raises ``StatusError`` -- a stale
+    or missing baseline cell is reported as a warning string for the caller to print,
+    never a check failure, so the plan can never hold the corpus-integrity gate
+    hostage.
+    """
+    path = repo_root / BASELINE_PLAN_MD
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return f"{BASELINE_PLAN_MD}: baseline plan document is unreadable"
+    match = _PROFILE_BASELINE_PLAN_CELL.search(text)
+    if match is None:
+        return (
+            f"{BASELINE_PLAN_MD}: §1 baseline table no longer states the "
+            "Verification Profile row in the expected form"
+        )
+    _approved, total, null_keys = (int(value) for value in match.groups())
+    if total != profile_total or null_keys != profile_null:
+        return (
+            f"{BASELINE_PLAN_MD}: §1 baseline table reads "
+            f"{total}/{null_keys} null but the profile now derives "
+            f"{profile_total}/{profile_null} null (non-normative; not blocking)"
+        )
+    return None
 
 
 def validate_p2_dispositions(csv_path: Path, package_path: Path) -> int:
@@ -1933,9 +2068,23 @@ def collect_status(repo_root: Path) -> StatusSnapshot:
     validate_markdown_mirror(repo_root / PART1_MD, part1)
     validate_markdown_mirror(repo_root / DEV_MD, development)
     authorities = load_authorities(repo_root / AUTHORITY_CSV, source_root)
-    transcription_sites = validate_count_transcriptions(source_root, part1, development)
     direct_traceability_count, direct_traceability_total = validate_direct_traceability(
         source_root, part1, repo_root / TRACEABILITY_MD
+    )
+    profile_total, profile_null_keys = _load_profile_key_census(repo_root)
+    transcription_sites = validate_count_transcriptions(
+        source_root,
+        part1,
+        development,
+        extra_derived={
+            "direct_traceability.count": direct_traceability_count,
+            "direct_traceability.total": direct_traceability_total,
+            "profile.total": profile_total,
+            "profile.null": profile_null_keys,
+        },
+    )
+    profile_plan_warning = profile_baseline_plan_warning(
+        repo_root, profile_total, profile_null_keys
     )
     p2_carried_questions = validate_p2_dispositions(
         repo_root / P2_DISPOSITION_CSV, repo_root / P2_DISPOSITION_MD
@@ -1980,6 +2129,9 @@ def collect_status(repo_root: Path) -> StatusSnapshot:
         broker_site_rows,
         transcription_sites,
         tuple(sorted(broker_vocabulary.order_senders)),
+        profile_total,
+        profile_null_keys,
+        profile_plan_warning,
     )
 
 
@@ -2040,6 +2192,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"migration_rows={snapshot.migration_rows}, "
                 f"broker_sites={snapshot.broker_site_rows}, "
                 f"count_transcriptions={snapshot.transcription_sites}, "
+                f"profile_keys={snapshot.profile_total}, "
+                f"profile_null_keys={snapshot.profile_null_keys}, "
                 f"restricted_live={snapshot.authorities['restricted_live']}, "
                 f"production={snapshot.authorities['production']}"
             )
@@ -2052,6 +2206,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "MOCK_CONFINED_ORDER_SITE); none is an invocable "
                     f"{'/'.join(snapshot.order_sender_symbols)} entrypoint: "
                     + ", ".join(snapshot.unregistered_broker_sites)
+                )
+            if snapshot.profile_plan_warning:
+                print(
+                    f"  baseline-plan WARNING (non-blocking): {snapshot.profile_plan_warning}"
                 )
     except (OSError, StatusError) as exc:
         print(f"TOS spec status FAIL: {exc}", file=sys.stderr)

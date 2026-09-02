@@ -1197,3 +1197,10 @@ L1-decidable인지(#7 under-realization 인접). (vii) orthostate Intent/Attempt
 하는지 — #13 orthostate 판정과 동일 구조). (viii) `compiler_deterministic` property를 `EVL1ProvisionalCanonicalizer`+
 모델 compiler로 검증하는 것이 프로덕션 compiler 계약을 충분히 확정하는지 vs canonical scheme Phase-0 확정 전에는
 property가 vacuous한지(§4.2 honest boundary).
+
+## 에라타 (2026-09-02) — evidence-id 리터럴 앵커
+
+- IOC-EV-002 substrate = §5.1 `command_conforms` (tos/src/tos/ioc/predicates.py) —
+  account/instrument/contract/environment/route substitution axes; 앵커 전용, 설계
+  내용 불변.
+

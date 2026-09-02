@@ -123,10 +123,14 @@ class SizingBound(FrozenModel):
     the constructor a quantity, because no quantity field exists — only the bound the governance
     artifact carries and the rule that consumes it.
 
-    ⚠ **Every value here is P0-1-unapproved and therefore provisional** (design #34 §9): the
-    register carries no approved risk-budget / per-unit / lot policy, so a slice run wires
-    provisional values and its output is provisional. A ``None`` on any field is a denial at
-    :func:`~tos.egressgw.construction.derive_order_size` — never a default.
+    ⚠ **Every value here is provisional** (design #34 §9): ``risk_budget`` / ``per_unit_risk`` /
+    ``lot_size`` / ``lot_rounding`` / ``min_quantity`` / ``max_quantity`` / ``max_notional`` are
+    **not VERIFICATION-PROFILE-002 keys** — none of those names is in the profile's bounds/limits
+    set, so this is not a P0-1 (Phase-0 bounds approval) matter. Governance of
+    these values belongs to Order Construction Policy (RFC-002 §9.1:553), which has not ratified
+    any of them, so a slice run wires provisional values and its output is provisional. A
+    ``None`` on any field is a denial at :func:`~tos.egressgw.construction.derive_order_size` —
+    never a default.
 
     ``admitted_quantity_bases`` is the closed set of ``Proposal.quantity_basis`` tokens this
     envelope authorizes. An **empty** set authorizes nothing (∅ fail-closed, both-ways): a

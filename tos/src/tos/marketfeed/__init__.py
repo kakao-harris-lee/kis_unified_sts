@@ -50,8 +50,13 @@ engine}; nothing imports marketfeed.
   values differ in their recorded signature (§3.2 (3b)).
 
 ⚠ **Provisional; closes no EV** (design #32 §1.1). Three independent reasons: (a) production
-canonicalization is unresolved — every digest here rides ``ev-l1-provisional-0``; (b) the Phase-0
-bounds approval and independent-reviewer designation are incomplete; (c) this is a *model plus
+canonicalization is unresolved — every digest here rides ``ev-l1-provisional-0``; (b) this
+package carries **no VERIFICATION-PROFILE-002 bound of its own** — grep of ``tos/src/tos/marketfeed``
+finds no ``MAX_``/``MIN_``/``B_`` profile-key reference at all; the time coordinates it forwards
+come from an externally injected ``TimeCoordinateProjection`` (``resolver.py``) wired by its
+D-E3/D-E4 caller, not held here. Independent-reviewer designation (P0-3) is a register concern
+(``EVIDENCE-REGISTER-DEV.csv``), not a profile key, and no evidence-register row is scoped to
+``tos.marketfeed`` to check it against; (c) this is a *model plus
 properties*, not the Context Integrity Service runtime that collects, assembles, and issues
 snapshots — that runtime is explicitly out of scope (design #2 §0.2), and this package only
 **consumes** its output — **through the admitted-snapshot injection port** (``SnapshotStore`` +

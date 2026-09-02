@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MODULE_PATH = _REPO_ROOT / "tools" / "tos_spec_status.py"
@@ -186,6 +187,25 @@ def _real_registers() -> tuple[object, object]:
         _REPO_ROOT / status.DEV_CSV, "Parts 2/3 development"
     )
     return part1, development
+
+
+def _real_extra_derived(part1) -> dict[str, int]:
+    """The direct-traceability and profile-census counts that ``_COUNT_TRANSCRIPTIONS``
+    anchors now check alongside the two evidence registers, derived from the real
+    (unmodified) corpus.  Tests below exercise ``validate_count_transcriptions``
+    against copies of the *real* anchor documents (``_transcription_corpus``), so
+    the values here must match what those real documents actually transcribe.
+    """
+    count, total = status.validate_direct_traceability(
+        _REPO_ROOT / "tos-spec/src", part1, _REPO_ROOT / status.TRACEABILITY_MD
+    )
+    profile_total, profile_null = status._load_profile_key_census(_REPO_ROOT)
+    return {
+        "direct_traceability.count": count,
+        "direct_traceability.total": total,
+        "profile.total": profile_total,
+        "profile.null": profile_null,
+    }
 
 
 # --------------------------------------------------------------------------
@@ -1552,7 +1572,10 @@ def test_registered_transcriptions_agree_with_the_real_corpus():
     part1, development = _real_registers()
 
     checked = status.validate_count_transcriptions(
-        _REPO_ROOT / "tos-spec/src", part1, development
+        _REPO_ROOT / "tos-spec/src",
+        part1,
+        development,
+        extra_derived=_real_extra_derived(part1),
     )
 
     assert checked == len(status._COUNT_TRANSCRIPTIONS)
@@ -1572,7 +1595,9 @@ def test_hand_edited_gate_status_counts_are_detected(tmp_path):
     )
 
     with pytest.raises(status.StatusError) as excinfo:
-        status.validate_count_transcriptions(source_root, part1, development)
+        status.validate_count_transcriptions(
+            source_root, part1, development, extra_derived=_real_extra_derived(part1)
+        )
 
     message = str(excinfo.value)
     assert "ARCHITECTURE-GATE-STATUS.md" in message
@@ -1585,7 +1610,9 @@ def test_missing_architecture_gate_status_file_fails(tmp_path):
     (source_root / _GATE_STATUS_REL).unlink()
 
     with pytest.raises(status.StatusError, match="required transcription source"):
-        status.validate_count_transcriptions(source_root, part1, development)
+        status.validate_count_transcriptions(
+            source_root, part1, development, extra_derived=_real_extra_derived(part1)
+        )
 
 
 def test_deleted_transcription_sentence_fails(tmp_path):
@@ -1600,13 +1627,210 @@ def test_deleted_transcription_sentence_fails(tmp_path):
     gate.write_text("\n".join(kept) + "\n", encoding="utf-8")
 
     with pytest.raises(status.StatusError, match="transcription anchor not found"):
-        status.validate_count_transcriptions(source_root, part1, development)
+        status.validate_count_transcriptions(
+            source_root, part1, development, extra_derived=_real_extra_derived(part1)
+        )
 
 
 def test_unedited_transcription_corpus_copy_still_passes(tmp_path):
     part1, development = _real_registers()
     source_root = _transcription_corpus(tmp_path)
 
-    assert status.validate_count_transcriptions(source_root, part1, development) == len(
-        status._COUNT_TRANSCRIPTIONS
+    assert status.validate_count_transcriptions(
+        source_root, part1, development, extra_derived=_real_extra_derived(part1)
+    ) == len(status._COUNT_TRANSCRIPTIONS)
+
+
+# --------------------------------------------------------------------------
+# D0-4a: the count axis expands to S-1/S-2 (direct traceability) and the
+# profile null-key census (design §6.3.2/§3.3.2).
+# --------------------------------------------------------------------------
+
+
+def test_profile_null_key_census_is_a_single_shared_implementation():
+    """§6.3.2: the census is authored once; both tools import the same object."""
+    ev_path = _REPO_ROOT / "tools" / "tos_evidence_run.py"
+    spec = importlib.util.spec_from_file_location("tos_evidence_run", ev_path)
+    assert spec and spec.loader
+    evidence_run = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = evidence_run
+    spec.loader.exec_module(evidence_run)
+
+    assert status._profile_null_key_census is evidence_run._profile_null_key_census
+
+
+def test_profile_null_key_census_matches_the_documented_147_163_16():
+    total, null_count = status._load_profile_key_census(_REPO_ROOT)
+    assert total == 163
+    assert null_count == 16
+    assert total - null_count == 147
+
+
+def test_profile_null_key_census_is_derived_from_profile_key_universe():
+    """§6.3.2 follow-up (D0-4b repair) — ``_profile_null_key_census`` must be a
+    thin post-processing of ``profile_key_universe``'s single walk, and the
+    combined result must stay byte-identical to what the pre-refactor
+    two-loop implementation returned for the real profile document."""
+    from tools.tos_profile_census import _profile_null_key_census, profile_key_universe
+
+    profile_path = _REPO_ROOT / status.VERIFICATION_PROFILE_YAML
+    doc = yaml.safe_load(profile_path.read_text(encoding="utf-8-sig"))
+
+    universe = profile_key_universe(doc)
+    assert universe is not None
+    assert len(universe) == 163
+    assert sum(1 for is_null in universe.values() if is_null) == 16
+
+    derived_total = len(universe)
+    derived_null_names = sorted(name for name, is_null in universe.items() if is_null)
+
+    total, null_names = _profile_null_key_census(doc)
+    assert (total, null_names) == (derived_total, derived_null_names)
+    # 163/16 문서화된 상수는 test_profile_null_key_census_matches_the_
+    # documented_147_163_16 이 이미 고정한다 — 여기서는 universe 파생과의
+    # 등가성만 재확인한다.
+
+
+def test_hand_edited_profile_null_count_in_gate_status_is_detected(tmp_path):
+    part1, development = _real_registers()
+    source_root = _transcription_corpus(tmp_path)
+    gate = source_root / _GATE_STATUS_REL
+    gate.write_text(
+        gate.read_text(encoding="utf-8").replace(
+            "16 keys (10 broker bounds pending P0-2 measurement",
+            "15 keys (10 broker bounds pending P0-2 measurement",
+        ),
+        encoding="utf-8",
     )
+
+    with pytest.raises(status.StatusError) as excinfo:
+        status.validate_count_transcriptions(
+            source_root, part1, development, extra_derived=_real_extra_derived(part1)
+        )
+
+    message = str(excinfo.value)
+    assert "profile.null" in message
+    assert "15" in message
+
+
+def test_hand_edited_profile_null_count_in_profile_yaml_is_detected(tmp_path):
+    part1, development = _real_registers()
+    source_root = _transcription_corpus(tmp_path)
+    profile = source_root / status._PROFILE_YAML
+    profile.write_text(
+        profile.read_text(encoding="utf-8").replace(
+            "147 of the 163 numeric keys now carry approved values; 16 keys stay "
+            "null —",
+            "147 of the 163 numeric keys now carry approved values; 15 keys stay "
+            "null —",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(status.StatusError) as excinfo:
+        status.validate_count_transcriptions(
+            source_root, part1, development, extra_derived=_real_extra_derived(part1)
+        )
+
+    message = str(excinfo.value)
+    assert "VERIFICATION-PROFILE-002.yaml" in message
+    assert "profile.null" in message
+
+
+def test_a_null_bound_shifts_the_profile_census_and_the_anchors_go_red(tmp_path):
+    """Flip one approved bound to null in a scratch copy (no real doc edits): the
+    census-derived null count moves 16 -> 17, and the untouched real anchor text
+    (still transcribing 16) now disagrees with it.
+    """
+    part1, development = _real_registers()
+    source_root = _transcription_corpus(tmp_path)
+    profile_path = source_root / status._PROFILE_YAML
+    doc = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    flipped = False
+    for entry in doc["bounds"].values():
+        if entry.get("value_ms") is not None:
+            entry["value_ms"] = None
+            flipped = True
+            break
+    assert flipped, "fixture assumption: at least one approved bound exists"
+    profile_path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+
+    total, null_count = status._load_profile_key_census(source_root.parent.parent)
+    assert total == 163
+    assert null_count == 17
+
+    extra_derived = _real_extra_derived(part1)
+    extra_derived["profile.total"] = total
+    extra_derived["profile.null"] = null_count
+
+    with pytest.raises(status.StatusError) as excinfo:
+        status.validate_count_transcriptions(
+            source_root, part1, development, extra_derived=extra_derived
+        )
+
+    message = str(excinfo.value)
+    assert "profile.null" in message
+    assert "17" in message
+
+
+def test_direct_traceability_anchors_target_at_least_two_locations():
+    """T-3c: the S-1/S-2 anchor set must not degenerate to a singleton."""
+    targets = [
+        entry
+        for entry in status._COUNT_TRANSCRIPTIONS
+        if "direct_traceability.count" in entry.derived_keys
+    ]
+    assert len(targets) >= 2
+
+
+def test_direct_traceability_number_mutation_is_detected(tmp_path):
+    part1, development = _real_registers()
+    source_root = _transcription_corpus(tmp_path)
+    gate = source_root / _GATE_STATUS_REL
+    gate.write_text(
+        gate.read_text(encoding="utf-8").replace(
+            "**29/30 with 1 source gap**", "**28/30 with 1 source gap**"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(status.StatusError) as excinfo:
+        status.validate_count_transcriptions(
+            source_root, part1, development, extra_derived=_real_extra_derived(part1)
+        )
+
+    message = str(excinfo.value)
+    assert "direct_traceability.count" in message
+    assert "28" in message
+
+
+def test_direct_traceability_source_gap_phrase_removal_is_detected(tmp_path):
+    part1, development = _real_registers()
+    source_root = _transcription_corpus(tmp_path)
+    gate = source_root / _GATE_STATUS_REL
+    gate.write_text(
+        gate.read_text(encoding="utf-8").replace(
+            "Direct tables now stand at\n  **29/30 with 1 source gap**.",
+            "Direct tables now stand at\n  **29/30.**",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(status.StatusError, match="transcription anchor not found"):
+        status.validate_count_transcriptions(
+            source_root, part1, development, extra_derived=_real_extra_derived(part1)
+        )
+
+
+def test_profile_baseline_plan_warning_is_none_for_the_real_corpus():
+    total, null_count = status._load_profile_key_census(_REPO_ROOT)
+    assert status.profile_baseline_plan_warning(_REPO_ROOT, total, null_count) is None
+
+
+def test_profile_baseline_plan_warning_is_non_blocking_on_drift(tmp_path):
+    """§6.3.3: the completion plan's §1 baseline is non-normative -- drift is a
+    warning string, never a StatusError.
+    """
+    warning = status.profile_baseline_plan_warning(_REPO_ROOT, 163, 999)
+    assert warning is not None
+    assert "not blocking" in warning
