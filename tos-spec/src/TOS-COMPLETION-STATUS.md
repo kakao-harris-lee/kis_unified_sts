@@ -47,10 +47,10 @@
 U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `imprecise_owner_track`, `blank_normative_ref_rows`, `closable_no_rows`.
 
 - `unmapped_pairs=0`
-- `planned_unassigned_pairs=874`
+- `planned_unassigned_pairs=816`
 - `superset_declared_pairs=0`
 - `FWD-a-0 불충족 evidence_id=['STATE-EV-004']`
-- `FWD-a 미충족 72행 (표본=['AFG-EV-001', 'AFG-EV-002', 'AFG-EV-007', 'AFG-EV-008', 'ARE-EV-001', 'ARE-EV-002', 'ARE-EV-004', 'CII-EV-001', 'CII-EV-004', 'CII-EV-005'])`
+- `FWD-a 미충족 16행 (표본=['ARE-EV-001', 'ARE-EV-002', 'ARE-EV-004', 'CII-EV-005', 'ERI-EV-007', 'IOC-EV-002', 'IOC-EV-006', 'RCLP-EV-005', 'SBR-EV-009', 'SPG-EV-003'])`
 - `ref_reuse_max=8`
 - `ref_reuse_top=[('tos/src/tos/hag/predicates.py', 8), ('tos/src/tos/capsule/predicates.py', 6), ('tos/src/tos/spg/predicates.py', 6), ('tos/src/tos/sbr/predicates.py', 5), ('tos/src/tos/evidence/predicates.py', 4)]`
 - `profile_dependent_blocked=['BC-EV-003', 'ECO-EV-012', 'IOM-EV-008']`
