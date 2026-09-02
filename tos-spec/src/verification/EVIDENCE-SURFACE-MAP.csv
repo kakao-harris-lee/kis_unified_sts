@@ -272,7 +272,7 @@ RCLP-EV-001,TEST,tests/rcl/test_rcl_reducer.py::test_unidentified_draft_command_
 RCLP-EV-002,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 RCLP-EV-003,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 RCLP-EV-004,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-RCLP-EV-005,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+RCLP-EV-005,PACKAGE,tos/src/tos/canonical/record_pair.py,PRESENT,docs/plans/2026-07-21-tos-risk-capacity-ledger-design.md:749
 RCLP-EV-005,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 RCLP-EV-005,TEST,tests/rcl/test_rcl_conflict.py::test_all_four_kinds_reachable_on_command_pairs,PRESENT,tos/tests/rcl/test_rcl_conflict.py:1
 RCLP-EV-005,TEST,tests/rcl/test_rcl_conflict.py::test_conflict_iff_same_id_and_different_bytes,PRESENT,tos/tests/rcl/test_rcl_conflict.py:1
@@ -583,7 +583,7 @@ ERI-EV-006,TEST,tests/test_evidence_ordering.py::test_quorum_index_orders,PRESEN
 ERI-EV-006,TEST,tests/test_evidence_ordering.py::test_same_continuity_monotonic_orders,PRESENT,tos/tests/test_evidence_ordering.py:1
 ERI-EV-006,TEST,tests/test_evidence_ordering.py::test_typed_causal_link_orders,PRESENT,tos/tests/test_evidence_ordering.py:1
 ERI-EV-006,TEST,tests/test_evidence_ordering.py::test_wall_clock_alone_does_not_order,PRESENT,tos/tests/test_evidence_ordering.py:1
-ERI-EV-007,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+ERI-EV-007,PACKAGE,tos/src/tos/evidence/replay.py,PRESENT,docs/plans/2026-07-20-tos-evidence-store-design.md:734
 ERI-EV-007,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ERI-EV-007,TEST,tests/test_evidence_replay.py::test_all_good_is_match,PRESENT,docs/plans/2026-07-20-tos-evidence-store-design.md:734
 ERI-EV-007,TEST,tests/test_evidence_replay.py::test_changed_baseline_unsupported,PRESENT,docs/plans/2026-07-20-tos-evidence-store-design.md:734
@@ -705,7 +705,7 @@ CII-EV-004,TEST,tests/test_lineage.py::test_missing_parent_is_invalid,PRESENT,to
 CII-EV-004,TEST,tests/test_lineage.py::test_non_reproducible_is_invalid,PRESENT,tos/tests/test_lineage.py:1
 CII-EV-004,TEST,tests/test_lineage.py::test_reproducible_with_complete_parents_is_valid,PRESENT,tos/tests/test_lineage.py:1
 CII-EV-004,TEST,tests/test_lineage.py::test_stochastic_without_seed_is_invalid,PRESENT,tos/tests/test_lineage.py:1
-CII-EV-005,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+CII-EV-005,PACKAGE,tos/src/tos/capsule/predicates.py,PRESENT,docs/plans/2026-07-20-tos-decision-context-capsule-snapshot-design.md:562
 CII-EV-005,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 CII-EV-005,TEST,tests/test_snapshot_validity.py::test_all_gates_pass_is_valid,PRESENT,tos/tests/test_snapshot_validity.py:67
 CII-EV-005,TEST,tests/test_snapshot_validity.py::test_blocking_non_valid_propagates,PRESENT,tos/tests/test_snapshot_validity.py:67
