@@ -4422,4 +4422,121 @@ def test_d1_profile_universe_not_needed_when_unbound_resolves_first(
     dispositions, profile_blocked = tcs.compute_d1_dispositions(tmp_path)
     assert dispositions["d1probe"][0] == "UNBOUND"
     assert profile_blocked == ()
+
+
+# ---------------------------------------------------------------------------
+# 23. UNCHK-024 후속 처분 — resolver.py BarTimeProjection docstring shape
+#     (delay_bounds 4키 합성-결속 · max_age_bound UNBOUND 잔여 ·
+#     5필드 구조적 비대상 선언). resolver 사이트의 D-1 disposition 자체는
+#     22번 섹션의 test_d1_real_corpus_dispositions_match_expected 가 계속
+#     UNBOUND 를 실측한다 — 이 섹션은 그 UNBOUND 를 만드는 docstring 내용의
+#     shape 를 실측 + mutation-control 로 고정한다.
+# ---------------------------------------------------------------------------
+
+_DELAY_BOUNDS_COMPOSITE_KEYS = (
+    "MAX_time_transport_and_queue_uncertainty_ms",
+    "MAX_clock_domain_conversion_uncertainty_ms",
+    "MAX_time_source_precision_ms",
+    "MAX_time_source_sequence_gap_ms",
+)
+
+
+def _real_resolver_class_docstring() -> str:
+    """The real ``BarTimeProjection`` class docstring, via the checker's own
+    site table + extractor (``tcs.D1_SITES`` / ``tcs._extract_d1_docstring``)
+    — avoids re-authoring the site-lookup/AST-walk a second time (§6.3.2:
+    derivation logic gets one authoring site, not two)."""
+    for name, rel, kind, target in tcs.D1_SITES:
+        if name == "resolver":
+            source = (_REPO_ROOT / rel).read_text(encoding="utf-8")
+            docstring = tcs._extract_d1_docstring(source, kind, target)
+            assert docstring is not None
+            return docstring
+    raise AssertionError("resolver site missing from D1_SITES")
+
+
+def test_d1_resolver_docstring_binds_delay_bounds_composite_keys() -> None:
+    """``delay_bounds`` 는 ADR-002-008 §9 의 4키 합성-멤버십으로 결속돼야
+    한다 — 네 리터럴 전부 backtick 키로 등장."""
+    docstring = _real_resolver_class_docstring()
+    literals = set(tcs._D1_BACKTICK_RE.findall(docstring))
+    for key in _DELAY_BOUNDS_COMPOSITE_KEYS:
+        assert key in literals, key
+    assert "delay_bounds" in docstring
+    assert "composite" in docstring.lower()
+
+
+def test_d1_resolver_docstring_declares_max_age_bound_unbound() -> None:
+    """``max_age_bound`` 는 1:1 후보가 없어 register §8-1 잔여로 UNBOUND
+    선언이 명시적으로 남아 있어야 한다."""
+    docstring = _real_resolver_class_docstring()
+    assert "max_age_bound" in docstring
+    flat = docstring.replace("`", "").replace("*", "")
+    assert "no VERIFICATION-PROFILE-002 bound" in flat
+
+
+def test_d1_resolver_docstring_declares_five_fields_structurally_not_governed() -> None:
+    """나머지 5필드(``source_age``·``snapshot_age_bound``·``interval_width``·
+    ``boundary_lag``·``health_state``)는 register §8-1 잔여(``max_age_bound``
+    류)가 «아니라» 구조적으로 프로파일 비대상이라는, 서로 구별되는 선언을
+    지녀야 한다."""
+    docstring = _real_resolver_class_docstring()
+    for field in (
+        "source_age",
+        "snapshot_age_bound",
+        "interval_width",
+        "boundary_lag",
+        "health_state",
+    ):
+        assert field in docstring, field
+    assert "design #33 §3.3" in docstring
+    assert "structural" in docstring.lower()
+    # max_age_bound 의 "register §8-1 category incomplete" 잔여 프레이밍과
+    # 명시적으로 구별하는 문언이 남아 있어야 한다.
+    assert "category incomplete" in docstring
+
+
+def test_d1_resolver_docstring_composite_key_removal_is_detectable() -> None:
+    """Mutation control: ``delay_bounds`` 4키 중 하나를 docstring 에서
+    지우면(불완전한 편집이 저지를 법한 실수) 그 즉시 backtick-리터럴
+    추출 결과에서 사라져야 한다 — D-1 검사기가 쓰는 것과 동일한 추출기
+    (``tcs._D1_BACKTICK_RE``)로 재확인한다."""
+    docstring = _real_resolver_class_docstring()
+    literals = tcs._D1_BACKTICK_RE.findall(docstring)
+    for key in _DELAY_BOUNDS_COMPOSITE_KEYS:
+        assert key in literals
+
+    mutated = docstring.replace("``MAX_time_source_sequence_gap_ms``", "", 1)
+    mutated_literals = tcs._D1_BACKTICK_RE.findall(mutated)
+    assert "MAX_time_source_sequence_gap_ms" not in mutated_literals
+    assert mutated_literals != literals
+
+
+def test_d1_removing_unbound_declaration_flips_synthetic_site_away_from_unbound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation control: strip every UNBOUND-declaration phrase from a
+    docstring shaped like the resolver's post-UNCHK-024 update (a
+    ``delay_bounds``-style composite key literal present, no UNBOUND
+    sentence anywhere) — the disposition must flip away from UNBOUND to a
+    backtick-literal match. This is what proves the UNBOUND sentence (not
+    merely the presence of composite key literals) is what pins the real
+    resolver site's disposition at UNBOUND in
+    ``test_d1_real_corpus_dispositions_match_expected``."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"MAX_time_transport_and_queue_uncertainty_ms": {"value_ms": 50}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(
+        tmp_path,
+        "delay_bounds is bound to the composite-membership sum including "
+        "``MAX_time_transport_and_queue_uncertainty_ms``.",
+    )
+    dispositions, _profile_blocked = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"] == (
+        "VALUED",
+        "MAX_time_transport_and_queue_uncertainty_ms",
+    )
     assert "D-1" not in _ids(_run(tmp_path))

@@ -41,7 +41,11 @@ from tos.capsule import DecisionContextCapsule
 from tos.engine import DecisionTickPayload, InstrumentKey, TimeAdmissionInputs
 from tos.time import HealthState, SessionContext, UncertaintyInterval
 
-__all__ = ["BarTimeProjection", "ProvisionalContextResolver", "resolved_value_surface_absent"]
+__all__ = [
+    "BarTimeProjection",
+    "ProvisionalContextResolver",
+    "resolved_value_surface_absent",
+]
 
 
 class BarTimeProjection(FrozenModel):
@@ -51,15 +55,34 @@ class BarTimeProjection(FrozenModel):
     *provisional*: the trustworthy-time bounds are register §8-1 new-key candidates and the Phase-0
     bounds approval (P0-1) is incomplete, so a run built on them closes no EV (design #33 §1.1).
 
-    Two of these injected fields are bound to a VERIFICATION-PROFILE-002 key and each key carries a
-    value: ``future_tolerance`` is bound to ``MAX_future_timestamp_tolerance_ms`` (profile rationale
-    — "a timestamp from the future outside this tolerance is rejected", ADR-002-008 §9), and
-    ``maximum_consumer_age_ms`` is bound to ``MAX_critical_input_consumer_receipt_age_ms`` (profile
-    rationale — "consumer-local receipt age …", ADR-002-018 §14). The remaining injected bounds
-    (``source_age``, ``delay_bounds``, ``max_age_bound``, ``snapshot_age_bound``,
-    ``interval_width``, ``boundary_lag``, ``health_state``) are **not VERIFICATION-PROFILE-002
-    keys** — their trustworthy-time bound category (register §8-1) is not yet established; tracked
-    as UNCHK-024.
+    Two of these injected fields are bound to a VERIFICATION-PROFILE-002 key **1:1**, each key
+    carrying a value: ``future_tolerance`` is bound to ``MAX_future_timestamp_tolerance_ms``
+    (profile rationale — "a timestamp from the future outside this tolerance is rejected",
+    ADR-002-008 §9), and ``maximum_consumer_age_ms`` is bound to
+    ``MAX_critical_input_consumer_receipt_age_ms`` (profile rationale — "consumer-local receipt
+    age …", ADR-002-018 §14).
+
+    A third field, ``delay_bounds``, carries a **composite-membership** bind — weaker in kind than
+    the two 1:1 literal binds above, because the field is a tuple that ``freshness_verdict`` sums
+    unconditionally (``total_age = source_age + sum(delay_bounds)``, order-agnostic) rather than a
+    single scalar checked against one key. It is bound to the sum of four VERIFICATION-PROFILE-002
+    keys drawn from ADR-002-008 §9's delay-class list: ``MAX_time_transport_and_queue_uncertainty_ms``,
+    ``MAX_clock_domain_conversion_uncertainty_ms``, ``MAX_time_source_precision_ms``, and
+    ``MAX_time_source_sequence_gap_ms``.
+
+    ``max_age_bound`` has no VERIFICATION-PROFILE-002 bound and stays **UNBOUND**: it is the single
+    top-level freshness ceiling ``source_age + sum(delay_bounds)`` is checked against, and no
+    existing profile key cleanly represents that role — its trustworthy-time bound category
+    (register §8-1) is not yet established; tracked as UNCHK-024.
+
+    The remaining five injected fields — ``source_age``, ``snapshot_age_bound``,
+    ``interval_width``, ``boundary_lag``, ``health_state`` — are **not VERIFICATION-PROFILE-002
+    keys** for a different, structural reason: each is a bar-derived observation, a derived/injected
+    composite, a reference-frame construction parameter, or an enum (design #33 §3.3,
+    ``docs/plans/2026-07-29-tos-backtest-design.md:324-325``) — never a ``MAX_*``/``MIN_*``
+    threshold a profile key could hold. That makes this disposition final rather than a
+    "register §8-1 category incomplete" gap like ``max_age_bound``'s: no key, present or future,
+    could ever bind these five.
 
     Two coordinates are genuinely **bar-derived** rather than constant:
 
@@ -73,27 +96,41 @@ class BarTimeProjection(FrozenModel):
     observation pipeline to derive it from, and inventing one would be a phantom.
     """
 
-    #: The injected conservative source-event age (negative = future-dated; never clamped).
+    #: The injected conservative source-event age (negative = future-dated; never clamped). Not
+    #: VERIFICATION-PROFILE-002-governed — structurally an injected observation, not a bound
+    #: (design #33 §3.3; see class docstring).
     source_age: int
-    #: The applicable injected delay-class upper bounds (ADR-002-008 §9).
+    #: The applicable injected delay-class upper bounds (ADR-002-008 §9). Bound to the
+    #: composite-membership sum of ``MAX_time_transport_and_queue_uncertainty_ms`` +
+    #: ``MAX_clock_domain_conversion_uncertainty_ms`` + ``MAX_time_source_precision_ms`` +
+    #: ``MAX_time_source_sequence_gap_ms`` (order-agnostic; see class docstring).
     delay_bounds: tuple[int | None, ...] = ()
-    #: The injected freshness threshold.
+    #: The injected freshness threshold. Not a VERIFICATION-PROFILE-002 key — stays UNBOUND,
+    #: register §8-1 residual (no clean 1:1 candidate; see class docstring).
     max_age_bound: int
     #: The injected future-timestamp tolerance. Bound to VERIFICATION-PROFILE-002 key
     #: ``MAX_future_timestamp_tolerance_ms`` (ADR-002-008 §9).
     future_tolerance: int
-    #: The injected effective snapshot age bound.
+    #: The injected effective snapshot age bound. Not VERIFICATION-PROFILE-002-governed —
+    #: structurally a derived/injected observation, not a bound (design #33 §3.3; see class
+    #: docstring).
     snapshot_age_bound: int
     #: The injected maximum consumer age. Bound to VERIFICATION-PROFILE-002 key
     #: ``MAX_critical_input_consumer_receipt_age_ms`` (ADR-002-018 §14).
     maximum_consumer_age_ms: int
-    #: The width of the reference-frame uncertainty window anchored at the bar coordinate.
+    #: The width of the reference-frame uncertainty window anchored at the bar coordinate. Not
+    #: VERIFICATION-PROFILE-002-governed — a reference-frame construction parameter, not a bound
+    #: (design #33 §3.3; see class docstring).
     interval_width: int
-    #: How far **before** the window the injected session boundary sits (strictly positive).
+    #: How far **before** the window the injected session boundary sits (strictly positive). Not
+    #: VERIFICATION-PROFILE-002-governed — a resolver-internal backtest construction device, not a
+    #: bound (design #33 §3.3; see class docstring).
     boundary_lag: int
     #: The injected calendar/session authority determination (never recomputed here).
     session_template: SessionContext
-    #: The injected time health state; only ``TRUSTED`` permits new normal risk.
+    #: The injected time health state; only ``TRUSTED`` permits new normal risk. Not
+    #: VERIFICATION-PROFILE-002-governed — structurally an enum state, not a bound a profile key
+    #: could constrain (design #33 §3.3; see class docstring).
     health_state: HealthState
 
     @model_validator(mode="after")
@@ -143,7 +180,9 @@ class BarTimeProjection(FrozenModel):
             session_context=self.session_template.model_copy(
                 update={"boundary_value": anchor - self.boundary_lag}
             ),
-            uncertainty_interval=UncertaintyInterval(lo=anchor, hi=anchor + self.interval_width),
+            uncertainty_interval=UncertaintyInterval(
+                lo=anchor, hi=anchor + self.interval_width
+            ),
             health_state=self.health_state,
         )
 
