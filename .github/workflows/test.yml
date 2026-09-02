@@ -32,6 +32,15 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Full history — tests/tools/test_u17_verify.py::* and other
+          # tests/tools ancestry-derivation checkers (U-12/U-15/U-16-class:
+          # `git show <commit>:<path>` blob re-measurement, parent-commit
+          # provenance) fail-closed to PROVENANCE_UNVERIFIABLE under the
+          # default `fetch-depth: 1` shallow clone — see the identical
+          # rationale + real-CI-observed failure at
+          # .github/workflows/tos-firewall.yml:28-40 (PR #637/#638).
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -44,6 +53,40 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install prometheus-client
+
+      - name: Pin mikefarah yq v4.48.1 (WFCANON M-4 parser gate)
+        # tools/wfcanon-v222.py [M-4] pins the judgment parser to
+        # `yq (mikefarah) v4.48.x` (YQ_FLAVOR/YQ_MAJMIN) and fails closed
+        # (WF-P0 PREVENTION_UNVERIFIABLE) on any other version — including
+        # a newer mikefarah release — so it never silently trusts an
+        # unpinned parser on an arbitrary PATH. ubuntu-latest preinstalls a
+        # newer yq (v4.53.6 as of this writing) at /usr/bin/yq
+        # (github/actions/runner-images images/ubuntu/scripts/build/install-yq.sh
+        # installs to /usr/bin/yq).
+        #
+        # tests/tools/test_u17_verify.py::_run_script drives tools/u17-verify.sh
+        # (which shells out to wfcanon-v222.py) under a from-scratch,
+        # non-inherited env with a literal PATH:
+        #   /usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin
+        # `/usr/bin` is FIRST in that literal, `/usr/local/bin` LAST — so
+        # installing the pin to /usr/local/bin (the naive choice, since it's
+        # the conventional "override the system copy" location) would be
+        # shadowed by the preinstalled /usr/bin/yq for this test's subprocess
+        # and the fix would silently no-op. The pin must overwrite
+        # /usr/bin/yq itself. Nothing on the runner's real job PATH (used by
+        # any other in-job "yq" lookup) installs a yq ahead of /usr/bin
+        # either, so this one install satisfies both call sites.
+        run: |
+          set -euo pipefail
+          curl -sL -o /tmp/yq_linux_amd64 \
+            https://github.com/mikefarah/yq/releases/download/v4.48.1/yq_linux_amd64
+          # sha256 of the raw `yq_linux_amd64` binary (not the .tar.gz), taken
+          # from the `SHA256 (yq_linux_amd64) = ...` line of the release's
+          # checksums-bsd file:
+          # https://github.com/mikefarah/yq/releases/download/v4.48.1/checksums-bsd
+          echo "99df6047f5b577a9d25f969f7c3823ada3488de2e2115b30a0abb10d9324fd9f  /tmp/yq_linux_amd64" | sha256sum -c -
+          sudo install -m 0755 /tmp/yq_linux_amd64 /usr/bin/yq
+          yq --version
 
       - name: Run tests
         # Two passes:
