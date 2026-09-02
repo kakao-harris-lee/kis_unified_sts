@@ -423,7 +423,7 @@ SPG-EV-002,TEST,tests/spg/test_spg_records.py::test_extra_field_forbidden_all_ci
 SPG-EV-002,TEST,tests/spg/test_spg_records.py::test_extra_field_forbidden_all_citizens[RuntimeSafetyProfile],PRESENT,tos/tests/spg/test_spg_records.py:203
 SPG-EV-002,TEST,tests/spg/test_spg_records.py::test_extra_field_forbidden_all_citizens[SafetyConfigurationBundle],PRESENT,tos/tests/spg/test_spg_records.py:203
 SPG-EV-003,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SPG-EV-003,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+SPG-EV-003,PACKAGE,tos/src/tos/spg/records.py,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:1320
 SPG-EV-003,TEST,tests/spg/test_spg_l2_fault.py::test_catalog_is_the_design_section_4_table,PRESENT,tos/tests/spg/test_spg_l2_fault.py:217
 SPG-EV-003,TEST,tests/spg/test_spg_l2_fault.py::test_spg_11_omitted_mandatory_dimension_cannot_pass_vacuously,PRESENT,tos/tests/spg/test_spg_l2_fault.py:519
 SPG-EV-003,TEST,tests/spg/test_spg_records.py::test_extra_field_forbidden_all_citizens[ActivationRecord],PRESENT,tos/tests/spg/test_spg_records.py:202
@@ -798,9 +798,38 @@ VTG-EV-012,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IOC-EV-001,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IOC-EV-001,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IOC-EV-001,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-IOC-EV-002,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+IOC-EV-002,PACKAGE,tos/src/tos/ioc/predicates.py,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
 IOC-EV-002,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-IOC-EV-002,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_absent_envelope_permits_no_construction,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_clean_command_still_conformant_after_guards,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_command_declaring_subset_of_axes_is_unknown_not_surplus,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_default_account_substitute_is_non_conformant,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_direction_side_position_effect_are_independent_axes,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_drop_one_command_axis_is_unknown[ACCOUNT],PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_drop_one_command_axis_is_unknown[DIRECTION],PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_drop_one_command_axis_is_unknown[ENVIRONMENT],PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_drop_one_command_axis_is_unknown[INSTRUMENT],PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_drop_one_command_axis_is_unknown[POSITION_EFFECT],PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_drop_one_command_axis_is_unknown[SIDE],PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_drop_one_intent_axis_is_unknown[ACCOUNT],PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_drop_one_intent_axis_is_unknown[DIRECTION],PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_drop_one_intent_axis_is_unknown[ENVIRONMENT],PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_drop_one_intent_axis_is_unknown[INSTRUMENT],PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_drop_one_intent_axis_is_unknown[POSITION_EFFECT],PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_drop_one_intent_axis_is_unknown[SIDE],PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_duplicate_axis_on_command_is_non_conformant,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_duplicate_axis_on_envelope_is_non_conformant,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_duplicate_axis_on_intent_is_non_conformant,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_duplicate_axis_with_conflicting_values_is_non_conformant,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_exact_match_on_every_axis_is_conformant,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_mismatch_dominates_missing_axis,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_missing_policy_is_unknown,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_none_intent_or_command_is_unknown,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_open_ended_empty_envelope_is_non_conformant,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_side_flip_is_non_conformant,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_surplus_axis_outside_envelope_is_non_conformant,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_symbol_alias_is_non_conformant,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
+IOC-EV-002,TEST,tests/ioc/test_ioc_truthy_sentinel.py::test_is_conformant_gate_rejects_denials,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
 IOC-EV-003,PACKAGE,tos/src/tos/ioc/predicates.py,PRESENT,tos/src/tos/ioc/predicates.py:181
 IOC-EV-003,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IOC-EV-003,TEST,tests/ioc/test_ioc_determinism.py::test_absent_envelope_denies_construction,PRESENT,tos/tests/ioc/test_ioc_determinism.py:1
@@ -864,7 +893,11 @@ ARE-EV-003,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ARE-EV-003,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ARE-EV-004,PACKAGE,tos/src/tos/are/predicates.py,PRESENT,tos/src/tos/are/predicates.py:431
 ARE-EV-004,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-ARE-EV-004,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+ARE-EV-004,TEST,tests/are/test_are_decision.py::test_dimension_integrity_empty_descriptors_fails_closed,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:774
+ARE-EV-004,TEST,tests/are/test_are_decision.py::test_dimension_integrity_missing_conversion_coefficient_fails_closed,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:774
+ARE-EV-004,TEST,tests/are/test_are_decision.py::test_dimension_integrity_positive,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:774
+ARE-EV-004,TEST,tests/are/test_are_decision.py::test_dimension_integrity_undescribed_cell_dimension_fails_closed,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:774
+ARE-EV-004,TEST,tests/are/test_are_decision.py::test_dimension_integrity_unknown_higher_limit_fails_closed,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:774
 ARE-EV-005,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ARE-EV-005,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ARE-EV-006,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5

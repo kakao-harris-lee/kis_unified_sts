@@ -1314,3 +1314,10 @@ liveauth `atomic_activation_ok`(이미 구현)와 spg `activation_atomic`의 소
 liveauth가 fold하는 분할이 중복인지 정합인지(§3.5 표). (iv) §8.1 candidate 신규 키 4종이 진짜 누락인지 vs
 기존 키로 커버되는지(over-claim 위험 — #10 lesson). (v) core tier 8행이 실제로 전부 L1-decidable substrate를
 갖는지(특히 SPG-EV-001 `+Security`·SPG-EV-003 `+Security`의 L1 부분과 +Security 부분 분리가 정확한지).
+
+## 에라타 (2026-09-02) — evidence-id 리터럴 앵커
+
+- SPG-EV-003 substrate = §7 unknown-field 거부 (`extra="forbid"`, 공유 베이스 경유
+  `tos/src/tos/spg/records.py`) — Canonical Artifact Contract 스키마 안전성(미선언
+  필드 거부) 축; 앵커 전용, 설계 내용 불변.
+
