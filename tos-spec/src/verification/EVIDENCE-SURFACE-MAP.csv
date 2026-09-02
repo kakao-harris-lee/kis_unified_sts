@@ -434,18 +434,37 @@ SPG-EV-003,TEST,tests/spg/test_spg_records.py::test_extra_field_forbidden_all_ci
 SPG-EV-004,PACKAGE,tos/src/tos/spg/predicates.py,PRESENT,tos/src/tos/spg/predicates.py:614
 SPG-EV-004,PACKAGE,tos/src/tos/spg/vocabulary.py,PRESENT,tos/src/tos/spg/vocabulary.py:181
 SPG-EV-004,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SPG-EV-004,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+SPG-EV-004,TEST,tests/spg/test_seam_liveauth.py::test_four_bools_fold_committable_in_both_layers,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:958
+SPG-EV-004,TEST,tests/spg/test_seam_liveauth.py::test_four_bools_fold_denied_in_both_layers,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:958
+SPG-EV-004,TEST,tests/spg/test_spg_activation.py::test_activation_atomic_never_vacuously_committable,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:958
+SPG-EV-004,TEST,tests/spg/test_spg_activation.py::test_committable_positive_side,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:958
+SPG-EV-004,TEST,tests/spg/test_spg_activation.py::test_default_activation_inputs_defer,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:958
+SPG-EV-004,TEST,tests/spg/test_spg_activation.py::test_each_missing_positive_condition_denies,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:958
+SPG-EV-004,TEST,tests/spg/test_spg_activation.py::test_incomplete_staging_defers,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:958
+SPG-EV-004,TEST,tests/spg/test_spg_activation.py::test_mixed_versions_denied,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:958
 SPG-EV-005,PACKAGE,tos/src/tos/spg/predicates.py,PRESENT,tos/src/tos/spg/predicates.py:657
 SPG-EV-005,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SPG-EV-005,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+SPG-EV-005,TEST,tests/spg/test_spg_activation.py::test_serializable_iff_predecessor_equals_current,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:982
+SPG-EV-005,TEST,tests/spg/test_spg_activation.py::test_serializable_none_fails_closed,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:982
+SPG-EV-005,TEST,tests/spg/test_spg_activation.py::test_serializable_positive_side,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:982
+SPG-EV-005,TEST,tests/spg/test_spg_activation.py::test_stale_base_rejected,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:982
 SPG-EV-006,PACKAGE,tos/src/tos/spg/predicates.py,PRESENT,tos/src/tos/spg/predicates.py:691
 SPG-EV-006,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SPG-EV-006,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+SPG-EV-006,TEST,tests/spg/test_spg_restrictive_expiry.py::test_default_direction_is_authority_increasing,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:995
+SPG-EV-006,TEST,tests/spg/test_spg_restrictive_expiry.py::test_each_unpreserved_flag_blocks_override,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:995
+SPG-EV-006,TEST,tests/spg/test_spg_restrictive_expiry.py::test_non_restrictive_direction_never_admissible,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:995
+SPG-EV-006,TEST,tests/spg/test_spg_restrictive_expiry.py::test_previously_denied_now_permitted_is_authority_increasing,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:995
+SPG-EV-006,TEST,tests/spg/test_spg_restrictive_expiry.py::test_pure_tightening_is_restrictive,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:995
+SPG-EV-006,TEST,tests/spg/test_spg_restrictive_expiry.py::test_restrictive_override_positive_side,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:995
+SPG-EV-006,TEST,tests/spg/test_spg_restrictive_expiry.py::test_semantics_change_forbids_restrictive_presumption,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:995
+SPG-EV-006,TEST,tests/spg/test_spg_restrictive_expiry.py::test_unorderable_folds_to_authority_increasing,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:995
+SPG-EV-006,TEST,tests/spg/test_spg_restrictive_expiry.py::test_widening_is_permissive,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:995
 SPG-EV-007,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 SPG-EV-007,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 SPG-EV-008,PACKAGE,tos/src/tos/spg/predicates.py,PRESENT,tos/src/tos/spg/predicates.py:767
 SPG-EV-008,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SPG-EV-008,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+SPG-EV-008,TEST,tests/spg/test_spg_restrictive_expiry.py::test_expiry_revives_nothing_unconditionally,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:1014
+SPG-EV-008,TEST,tests/spg/test_spg_restrictive_expiry.py::test_expiry_suspends_new_risk_both_ways,PRESENT,docs/plans/2026-07-25-tos-safety-profile-governance-design.md:1014
 SPG-EV-009,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 SPG-EV-009,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 SPG-EV-010,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
@@ -566,7 +585,15 @@ ERI-EV-006,TEST,tests/test_evidence_ordering.py::test_typed_causal_link_orders,P
 ERI-EV-006,TEST,tests/test_evidence_ordering.py::test_wall_clock_alone_does_not_order,PRESENT,tos/tests/test_evidence_ordering.py:1
 ERI-EV-007,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ERI-EV-007,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-ERI-EV-007,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+ERI-EV-007,TEST,tests/test_evidence_replay.py::test_all_good_is_match,PRESENT,docs/plans/2026-07-20-tos-evidence-store-design.md:734
+ERI-EV-007,TEST,tests/test_evidence_replay.py::test_changed_baseline_unsupported,PRESENT,docs/plans/2026-07-20-tos-evidence-store-design.md:734
+ERI-EV-007,TEST,tests/test_evidence_replay.py::test_digest_mismatch_diverges,PRESENT,docs/plans/2026-07-20-tos-evidence-store-design.md:734
+ERI-EV-007,TEST,tests/test_evidence_replay.py::test_match_iff_everything_holds,PRESENT,docs/plans/2026-07-20-tos-evidence-store-design.md:734
+ERI-EV-007,TEST,tests/test_evidence_replay.py::test_missing_input_never_match,PRESENT,docs/plans/2026-07-20-tos-evidence-store-design.md:734
+ERI-EV-007,TEST,tests/test_evidence_replay.py::test_not_run_when_no_actual_digest,PRESENT,docs/plans/2026-07-20-tos-evidence-store-design.md:734
+ERI-EV-007,TEST,tests/test_evidence_replay.py::test_schema_incompatibility_never_match,PRESENT,docs/plans/2026-07-20-tos-evidence-store-design.md:734
+ERI-EV-007,TEST,tests/test_evidence_replay.py::test_unbounded_nondeterminism_never_match,PRESENT,docs/plans/2026-07-20-tos-evidence-store-design.md:734
+ERI-EV-007,TEST,tests/test_evidence_replay.py::test_unsupported_baseline_never_match,PRESENT,docs/plans/2026-07-20-tos-evidence-store-design.md:734
 ERI-EV-008,PACKAGE,tos/src/tos/evidence/predicates.py,PRESENT,tos/src/tos/evidence/predicates.py:24
 ERI-EV-008,PACKAGE,tos/src/tos/evidence/replay.py,PRESENT,tos/src/tos/evidence/replay.py:248
 ERI-EV-008,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
@@ -638,7 +665,19 @@ SBR-EV-008,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 SBR-EV-008,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 SBR-EV-009,PACKAGE,tos/src/tos/sbr/predicates.py,PRESENT,tos/src/tos/sbr/predicates.py:439
 SBR-EV-009,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SBR-EV-009,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+SBR-EV-009,TEST,tests/sbr/test_sbr_closure.py::test_invalidation_empty_change_invalidates_nothing,PRESENT,docs/plans/2026-07-26-tos-startup-recovery-design.md:783
+SBR-EV-009,TEST,tests/sbr/test_sbr_closure.py::test_invalidation_reaches_every_affected_readiness_no_escape,PRESENT,docs/plans/2026-07-26-tos-startup-recovery-design.md:783
+SBR-EV-009,TEST,tests/sbr/test_sbr_closure.py::test_invalidation_single_trigger_self_included,PRESENT,docs/plans/2026-07-26-tos-startup-recovery-design.md:783
+SBR-EV-009,TEST,tests/sbr/test_sbr_closure.py::test_invalidation_unproven_edge_expands,PRESENT,docs/plans/2026-07-26-tos-startup-recovery-design.md:783
+SBR-EV-009,TEST,tests/sbr/test_sbr_closure.py::test_invalidation_unrelated_readiness_stays_valid,PRESENT,docs/plans/2026-07-26-tos-startup-recovery-design.md:783
+SBR-EV-009,TEST,tests/sbr/test_sbr_closure.py::test_shared_kernel_completeness_no_dependent_escapes,PRESENT,docs/plans/2026-07-26-tos-startup-recovery-design.md:783
+SBR-EV-009,TEST,tests/sbr/test_sbr_closure.py::test_shared_kernel_scope_and_invalidation_agree,PRESENT,docs/plans/2026-07-26-tos-startup-recovery-design.md:783
+SBR-EV-009,TEST,tests/sbr/test_sbr_void_canaries.py::test_empty_change_invalidates_nothing_but_material_change_reaches_all,PRESENT,docs/plans/2026-07-26-tos-startup-recovery-design.md:783
+SBR-EV-009,TEST,tests/sbr/test_seam_iap.py::test_property_all_three_closures_agree,PRESENT,docs/plans/2026-07-26-tos-startup-recovery-design.md:783
+SBR-EV-009,TEST,tests/sbr/test_seam_iap.py::test_property_all_three_expand_uncertain_edges_identically,PRESENT,docs/plans/2026-07-26-tos-startup-recovery-design.md:783
+SBR-EV-009,TEST,tests/sbr/test_seam_iap.py::test_three_implementations_agree_on_a_fixed_graph,PRESENT,docs/plans/2026-07-26-tos-startup-recovery-design.md:783
+SBR-EV-009,TEST,tests/sbr/test_seam_iap.py::test_three_implementations_agree_on_empty_graph,PRESENT,docs/plans/2026-07-26-tos-startup-recovery-design.md:783
+SBR-EV-009,TEST,tests/sbr/test_seam_iap.py::test_three_implementations_expand_an_uncertain_edge,PRESENT,docs/plans/2026-07-26-tos-startup-recovery-design.md:783
 SBR-EV-010,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 SBR-EV-010,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 SBR-EV-011,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
@@ -785,7 +824,17 @@ IOC-EV-005,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IOC-EV-005,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IOC-EV-006,PACKAGE,tos/src/tos/ioc/predicates.py,PRESENT,tos/src/tos/ioc/predicates.py:375
 IOC-EV-006,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-IOC-EV-006,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+IOC-EV-006,TEST,tests/ioc/test_ioc_economic_effect.py::test_both_empty_is_not_dominated,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:814
+IOC-EV-006,TEST,tests/ioc/test_ioc_economic_effect.py::test_committed_below_on_one_dimension_is_not_dominated,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:814
+IOC-EV-006,TEST,tests/ioc/test_ioc_economic_effect.py::test_committed_dominates_every_governed_dimension,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:814
+IOC-EV-006,TEST,tests/ioc/test_ioc_economic_effect.py::test_empty_committed_is_not_dominated,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:814
+IOC-EV-006,TEST,tests/ioc/test_ioc_economic_effect.py::test_empty_envelope_is_not_dominated,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:814
+IOC-EV-006,TEST,tests/ioc/test_ioc_economic_effect.py::test_envelope_type_is_rcl_capacity_vector,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:814
+IOC-EV-006,TEST,tests/ioc/test_ioc_economic_effect.py::test_missing_committed_dimension_is_not_dominated,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:814
+IOC-EV-006,TEST,tests/ioc/test_ioc_economic_effect.py::test_none_committed_magnitude_is_not_dominated,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:814
+IOC-EV-006,TEST,tests/ioc/test_ioc_economic_effect.py::test_none_envelope_magnitude_is_not_dominated,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:814
+IOC-EV-006,TEST,tests/ioc/test_ioc_truthy_sentinel.py::test_bool_predicate_is_true_gate,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:814
+IOC-EV-006,TEST,tests/ioc/test_seam_rcl.py::test_envelope_coordinate_matches_rcl_commit_coordinate,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:814
 IOC-EV-007,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IOC-EV-007,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IOC-EV-008,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
@@ -801,10 +850,15 @@ IOC-EV-012,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ARE-EV-001,PACKAGE,tos/src/tos/are/__init__.py,PRESENT,tos/src/tos/are/__init__.py:40
 ARE-EV-001,PACKAGE,tos/src/tos/are/predicates.py,PRESENT,tos/src/tos/are/predicates.py:16
 ARE-EV-001,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-ARE-EV-001,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+ARE-EV-001,TEST,tests/are/test_are_decision.py::test_snapshot_scope_complete_positive,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:718
+ARE-EV-001,TEST,tests/are/test_are_decision.py::test_snapshot_scope_empty_required_fails_closed,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:718
+ARE-EV-001,TEST,tests/are/test_are_decision.py::test_snapshot_scope_exclude_omission_rejected,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:718
+ARE-EV-001,TEST,tests/are/test_are_decision.py::test_snapshot_scope_missing_attribution_fails_closed,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:718
 ARE-EV-002,PACKAGE,tos/src/tos/are/predicates.py,PRESENT,tos/src/tos/are/predicates.py:270
 ARE-EV-002,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-ARE-EV-002,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+ARE-EV-002,TEST,tests/are/test_are_decision.py::test_exact_binding_none_fails_closed,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:735
+ARE-EV-002,TEST,tests/are/test_are_decision.py::test_exact_binding_positive,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:735
+ARE-EV-002,TEST,tests/are/test_are_decision.py::test_exact_binding_substitute_rejected,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:735
 ARE-EV-003,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ARE-EV-003,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ARE-EV-003,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
