@@ -1694,6 +1694,357 @@ def test_u13_register_id_outside_grammar_is_red(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 17b. RES-1 ① — U-13 제외 목록 소비 (FWD-a 종료조건 · §11 파생 렌더링)
+#
+# MINI-EV-002/EV-L3 (REQUIRED_KINDS_ROW_2 = RUNTIME) 는 STATE-EV-004 의 정확한
+# 미니 아날로그다: RUNTIME 은 _VERIFIABLE_LEVEL_KINDS 밖이라 status 를
+# PASS/READY 로 두면 verifiable 집합이 항상 공집합이 되어 FWD-a-0 이
+# 무조건 불충족한다(§5.3).
+# ---------------------------------------------------------------------------
+
+_RES1_MINI_REGISTER_ROWS = [
+    REGISTER_ROW_1,
+    _register_row(
+        evidence_id="MINI-EV-002", minimum_evidence_level="EV-L3", status="READY"
+    ),
+    REGISTER_ROW_3_PROFILE,
+]
+
+_RES1_MINI_DEFERRED_SCOPE = {
+    "kind": "ROW_SUBSET",
+    "rows": ["MINI-EV-002"],
+    "remainder_mapping_approved": True,
+}
+
+
+def test_u13_exclusion_removes_row_from_fwd_a_zero(tmp_path: Path) -> None:
+    write_corpus(
+        tmp_path,
+        register_rows=_RES1_MINI_REGISTER_ROWS,
+        oq11_text=_oq11_artifact_text(
+            disposition="DEFERRED_WITH_SCOPE",
+            deferred_scope=_RES1_MINI_DEFERRED_SCOPE,
+        ),
+    )
+    ctx, findings = _run_ctx(tmp_path)
+    assert "U-13" not in _ids(findings)
+    assert "K-5/FWD-METRICS" not in _ids(findings)
+    full_zero = next(
+        o for o in ctx.observations if o.startswith("FWD-a-0 불충족 evidence_id=")
+    )
+    assert "MINI-EV-002" in full_zero
+    eff_zero = next(
+        o
+        for o in ctx.observations
+        if o.startswith("FWD-a-0 불충족(제외 후) evidence_id=")
+    )
+    assert eff_zero == "FWD-a-0 불충족(제외 후) evidence_id=[]"
+    eff_unmet = next(
+        o for o in ctx.observations if o.startswith("FWD-a 미충족(제외 후) ")
+    )
+    assert eff_unmet == "FWD-a 미충족(제외 후) 0행"
+
+
+def test_u13_absent_exclusion_keeps_row_in_fwd_a_zero(tmp_path: Path) -> None:
+    """뮤테이션 대조군 — 선언이 없으면 (제외 후) 관측 자체가 인쇄되지 않고,
+    전체 FWD-a-0 목록에도 행이 그대로 남는다.  이 대조군이 없으면 양성
+    테스트(``test_u13_exclusion_removes_row_from_fwd_a_zero``)는 아무것도
+    증명하지 못한다."""
+    write_corpus(tmp_path, register_rows=_RES1_MINI_REGISTER_ROWS)
+    ctx, findings = _run_ctx(tmp_path)
+    assert "K-5/FWD-METRICS" not in _ids(findings)
+    full_zero = next(
+        o for o in ctx.observations if o.startswith("FWD-a-0 불충족 evidence_id=")
+    )
+    assert "MINI-EV-002" in full_zero
+    assert not any(
+        o.startswith("FWD-a-0 불충족(제외 후)") or o.startswith("FWD-a 미충족(제외 후)")
+        for o in ctx.observations
+    )
+
+
+def test_u13_global_kind_produces_no_exclusion(tmp_path: Path) -> None:
+    write_corpus(
+        tmp_path,
+        register_rows=_RES1_MINI_REGISTER_ROWS,
+        oq11_text=_oq11_artifact_text(
+            disposition="DEFERRED_WITH_SCOPE",
+            deferred_scope={"kind": "GLOBAL"},
+        ),
+    )
+    ctx, findings = _run_ctx(tmp_path)
+    assert "U-13" not in _ids(findings)
+    assert not any(
+        o.startswith("FWD-a-0 불충족(제외 후)") or o.startswith("FWD-a 미충족(제외 후)")
+        for o in ctx.observations
+    )
+
+
+def test_u13_remainder_false_produces_no_exclusion(tmp_path: Path) -> None:
+    write_corpus(
+        tmp_path,
+        register_rows=_RES1_MINI_REGISTER_ROWS,
+        oq11_text=_oq11_artifact_text(
+            disposition="DEFERRED_WITH_SCOPE",
+            deferred_scope={
+                "kind": "ROW_SUBSET",
+                "rows": ["MINI-EV-002"],
+                "remainder_mapping_approved": False,
+            },
+        ),
+    )
+    ctx, findings = _run_ctx(tmp_path)
+    assert "U-13" in _ids(findings)
+    assert not any(
+        o.startswith("FWD-a-0 불충족(제외 후)") or o.startswith("FWD-a 미충족(제외 후)")
+        for o in ctx.observations
+    )
+
+
+def test_u13_row_outside_judged_set_is_reported_not_absorbed(tmp_path: Path) -> None:
+    """U-13-f — MINI-EV-001 은 기본 status=NOT_IMPLEMENTED(비-judged) 라
+    ``fwd_a_excluded_rows`` 에 조용히 흡수되지 않고 ``remainder_rows`` 에
+    문자 그대로 노출돼야 한다.  접두어만이 아니라 내용을 단언한다."""
+    write_corpus(
+        tmp_path,
+        oq11_text=_oq11_artifact_text(
+            disposition="DEFERRED_WITH_SCOPE",
+            deferred_scope={
+                "kind": "ROW_SUBSET",
+                "rows": ["MINI-EV-001"],
+                "remainder_mapping_approved": True,
+            },
+        ),
+    )
+    ctx, findings = _run_ctx(tmp_path)
+    assert "U-13" not in _ids(findings)
+    excl = next(
+        o for o in ctx.observations if o.startswith("U-13 fwd_a_excluded_rows=")
+    )
+    remainder = next(
+        o for o in ctx.observations if o.startswith("U-13 remainder_rows=")
+    )
+    assert excl == "U-13 fwd_a_excluded_rows=[]"
+    assert remainder == "U-13 remainder_rows=['MINI-EV-001']"
+
+
+def test_u13_exclusion_of_already_passing_row_is_reported_not_refused(
+    tmp_path: Path,
+) -> None:
+    """열린 질문에 대한 계획의 결정 — judged 이지만 이미 FWD-a-0 을 충족하는
+    행을 제외 목록에 넣는 것은 거부가 아니라 보고다(U-13-f, 계약이 «judged
+    이면서 이미 통과» 케이스에는 침묵하고, U-13-e 교집합은 이를 그대로
+    받아들인다 — 과잉 봉합은 이 계약이 결함으로 취급하는 방향이다)."""
+    register_rows = [
+        _register_row(
+            evidence_id="MINI-EV-001", minimum_evidence_level="EV-L1", status="PASS"
+        ),
+        REGISTER_ROW_2,
+        REGISTER_ROW_3_PROFILE,
+    ]
+    map_rows = [
+        dict(MAP_ROW_1, surface_ref="shared/mini/real_package.py", existence="PRESENT"),
+        dict(MAP_ROW_2, surface_ref="tests/mini/real_test.py", existence="PRESENT"),
+        MAP_ROW_3,
+    ]
+    write_corpus(
+        tmp_path,
+        register_rows=register_rows,
+        map_rows=map_rows,
+        oq11_text=_oq11_artifact_text(
+            disposition="DEFERRED_WITH_SCOPE",
+            deferred_scope={
+                "kind": "ROW_SUBSET",
+                "rows": ["MINI-EV-001"],
+                "remainder_mapping_approved": True,
+            },
+        ),
+    )
+    ctx, findings = _run_ctx(tmp_path)
+    assert "U-13" not in _ids(findings)  # 거부 아님
+    excl = next(
+        o for o in ctx.observations if o.startswith("U-13 fwd_a_excluded_rows=")
+    )
+    assert "MINI-EV-001" in excl  # 보고됨
+    full_zero = next(
+        o for o in ctx.observations if o.startswith("FWD-a-0 불충족 evidence_id=")
+    )
+    assert "MINI-EV-001" not in full_zero  # 애초에 실패한 적 없음
+
+
+def test_u13_exclusion_universe_is_register_derived(tmp_path: Path) -> None:
+    """U-13-d — 우주는 레지스터 파생이다.  레지스터에 없는 id 는 제외 목록에
+    흡수되지 않고(고아), 같은 id 를 레지스터에 추가하면 (다른 조건이 갖춰지면)
+    받아들여진다 — 하드코딩 census 는 신규 항목을 영원히 못 찾는 결함류를
+    닫는 카나리."""
+    oq11_text = _oq11_artifact_text(
+        disposition="DEFERRED_WITH_SCOPE",
+        deferred_scope={
+            "kind": "ROW_SUBSET",
+            "rows": ["MINI-EV-777"],
+            "remainder_mapping_approved": True,
+        },
+    )
+
+    before = tmp_path / "before"
+    write_corpus(before, oq11_text=oq11_text)
+    ctx_before, findings_before = _run_ctx(before)
+    assert "U-13" in _ids(findings_before)  # 고아 id — red
+    excluded_before, _, _ = tcs.derive_fwd_a_exclusions(ctx_before)
+    assert "MINI-EV-777" not in excluded_before
+
+    after = tmp_path / "after"
+    register_rows = [
+        REGISTER_ROW_1,
+        REGISTER_ROW_2,
+        REGISTER_ROW_3_PROFILE,
+        _register_row(
+            evidence_id="MINI-EV-777", minimum_evidence_level="EV-L3", status="READY"
+        ),
+    ]
+    required_kinds_rows = [
+        REQUIRED_KINDS_ROW_1,
+        REQUIRED_KINDS_ROW_2,
+        {"evidence_id": "MINI-EV-777", "required_kinds": "RUNTIME", "basis": BASIS_5},
+    ]
+    map_rows = [
+        MAP_ROW_1,
+        MAP_ROW_2,
+        MAP_ROW_3,
+        {
+            "evidence_id": "MINI-EV-777",
+            "surface_kind": "RUNTIME",
+            "surface_ref": "PLANNED_UNASSIGNED",
+            "existence": "ABSENT",
+            "binding_basis": BASIS_5,
+        },
+    ]
+    write_corpus(
+        after,
+        register_rows=register_rows,
+        required_kinds_rows=required_kinds_rows,
+        map_rows=map_rows,
+        oq11_text=oq11_text,
+    )
+    ctx_after, findings_after = _run_ctx(after)
+    assert "U-13" not in _ids(findings_after)
+    excluded_after, _, _ = tcs.derive_fwd_a_exclusions(ctx_after)
+    assert "MINI-EV-777" in excluded_after
+
+
+def test_res1_line_is_derived_from_exclusion(tmp_path: Path) -> None:
+    register_rows = [
+        REGISTER_ROW_1,
+        _register_row(
+            evidence_id="STATE-EV-004", minimum_evidence_level="EV-L3", status="READY"
+        ),
+        REGISTER_ROW_3_PROFILE,
+    ]
+    required_kinds_rows = [
+        REQUIRED_KINDS_ROW_1,
+        {"evidence_id": "STATE-EV-004", "required_kinds": "RUNTIME", "basis": BASIS_5},
+    ]
+    map_rows = [
+        MAP_ROW_1,
+        MAP_ROW_2,
+        {
+            "evidence_id": "STATE-EV-004",
+            "surface_kind": "RUNTIME",
+            "surface_ref": "PLANNED_UNASSIGNED",
+            "existence": "ABSENT",
+            "binding_basis": BASIS_5,
+        },
+    ]
+
+    with_decl = tmp_path / "with_decl"
+    write_corpus(
+        with_decl,
+        register_rows=register_rows,
+        required_kinds_rows=required_kinds_rows,
+        map_rows=map_rows,
+        oq11_text=_oq11_artifact_text(
+            disposition="DEFERRED_WITH_SCOPE",
+            deferred_scope={
+                "kind": "ROW_SUBSET",
+                "rows": ["STATE-EV-004"],
+                "remainder_mapping_approved": True,
+            },
+        ),
+    )
+    ctx, findings = _run_ctx(with_decl)
+    rendered, _ = tcs.render_completion_status(ctx, findings)
+    assert (
+        "- `RES-1`: `MET` — `STATE-EV-004` is excluded from the `FWD-a` "
+        "termination condition by the checker-derived exclusion list "
+        "(`U-13 fwd_a_excluded_rows` above; contract U-13-e)." in rendered
+    )
+    assert "- `RES-1`: unmet" not in rendered
+
+    without_decl = tmp_path / "without_decl"
+    write_corpus(
+        without_decl,
+        register_rows=register_rows,
+        required_kinds_rows=required_kinds_rows,
+        map_rows=map_rows,
+    )
+    ctx2, findings2 = _run_ctx(without_decl)
+    rendered2, _ = tcs.render_completion_status(ctx2, findings2)
+    assert (
+        "- `RES-1`: unmet — `STATE-EV-004` `FWD-a-0` is not satisfied "
+        "(see the `FWD-a-0` observation above)." in rendered2
+    )
+    assert "`RES-1`: `MET`" not in rendered2
+
+
+def test_t79_4_stale_exclusion_list_in_generated_doc_is_red(tmp_path: Path) -> None:
+    """T-79 ④(:2994) — 생성물의 ``fwd_a_excluded_rows`` 줄을 손으로 고치면
+    재실행이 이를 정직하게 감지해야 한다.  이 분기는 U-13 제외 목록 소비
+    전에는 발화 불가능했다(제외가 늘 공집합이라 뮤테이션할 대상이 없었다)."""
+    write_corpus(
+        tmp_path,
+        register_rows=_RES1_MINI_REGISTER_ROWS,
+        oq11_text=_oq11_artifact_text(
+            disposition="DEFERRED_WITH_SCOPE",
+            deferred_scope=_RES1_MINI_DEFERRED_SCOPE,
+        ),
+    )
+    assert tcs.main(["--write", "--root", str(tmp_path)]) == 0
+    md_path = tmp_path / tcs.GENERATED_MD_REL
+    text = md_path.read_text(encoding="utf-8")
+    mutated = text.replace(
+        "U-13 fwd_a_excluded_rows=['MINI-EV-002']",
+        "U-13 fwd_a_excluded_rows=[]",
+    )
+    assert mutated != text
+    md_path.write_text(mutated, encoding="utf-8")
+    assert tcs.main(["--check", "--root", str(tmp_path)]) == 1
+
+
+def test_fwd_a_exclusion_does_not_couple_rc(tmp_path: Path) -> None:
+    write_corpus(
+        tmp_path,
+        register_rows=_RES1_MINI_REGISTER_ROWS,
+        oq11_text=_oq11_artifact_text(
+            disposition="DEFERRED_WITH_SCOPE",
+            deferred_scope=_RES1_MINI_DEFERRED_SCOPE,
+        ),
+    )
+    findings = _run(tmp_path)
+    assert findings == [], [str(f) for f in findings]
+    assert tcs.main(["--write", "--root", str(tmp_path)]) == 0
+    assert tcs.main(["--check", "--root", str(tmp_path)]) == 0
+
+
+def test_real_corpus_generated_doc_byte_identical_when_no_declaration() -> None:
+    """Lane A 의 핵심 불변식 — 선언 부재 시 실코퍼스 렌더는 커밋본과 byte-불변."""
+    ctx = tcs.build_context(_REPO_ROOT)
+    findings = tcs.run_checks(ctx)
+    rendered, _ = tcs.render_completion_status(ctx, findings)
+    committed = (_REPO_ROOT / tcs.GENERATED_MD_REL).read_text(encoding="utf-8")
+    assert rendered == committed
+
+
+# ---------------------------------------------------------------------------
 # 18. U-1a · U-4 · U-5 — UNCHECKABLE 레지스터 규칙
 # ---------------------------------------------------------------------------
 

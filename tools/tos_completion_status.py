@@ -943,6 +943,17 @@ def check_k5_fwd_metrics(ctx: CheckContext) -> list[Finding]:
 
     ctx.observations.append(f"FWD-a-0 불충족 evidence_id={sorted(unmet_zero)}")
     ctx.observations.append(f"FWD-a 미충족 {len(unmet)}행 (표본={sorted(unmet)[:10]})")
+
+    # U-13-e 제외 목록 소비(RES-1 ① — S-14 공유 파생).  선언 부재 시 excluded
+    # 는 항상 빈 집합이라 아래는 no-op — 생성물은 byte-불변으로 남는다.
+    excluded, _excluded_sorted, _remainder_sorted = derive_fwd_a_exclusions(ctx)
+    if excluded:
+        eff_zero = [e for e in unmet_zero if e not in excluded]
+        eff_unmet = [e for e in unmet if e not in excluded]
+        ctx.observations.append(
+            f"FWD-a-0 불충족(제외 후) evidence_id={sorted(eff_zero)}"
+        )
+        ctx.observations.append(f"FWD-a 미충족(제외 후) {len(eff_unmet)}행")
     return findings
 
 
@@ -1584,6 +1595,62 @@ def check_u12(ctx: CheckContext) -> list[Finding]:
 _EVIDENCE_ID_RE = re.compile(r"^[A-Z]+-EV-[0-9]{3}$")
 
 
+def _evidence_id_universe(ctx: CheckContext) -> frozenset[str]:
+    """U-13-d 우주 — 레지스터의 문법 적합 evidence_id 전체 (판정 아님, 소재 표본)."""
+    return frozenset(
+        row["evidence_id"]
+        for row in ctx.register_rows
+        if _EVIDENCE_ID_RE.match(row["evidence_id"])
+    )
+
+
+def _judged_evidence_ids(ctx: CheckContext) -> frozenset[str]:
+    """status ∈ {PASS, READY} 인 evidence_id — U-13-e 교집합 우변이자 FWD-a
+    판정 모집단과 동일한 술어(§5.3)."""
+    if ctx.register_by_id is None:
+        return frozenset()
+    return frozenset(
+        eid
+        for eid, row in ctx.register_by_id.items()
+        if row["status"] in ("PASS", "READY")
+    )
+
+
+def derive_fwd_a_exclusions(
+    ctx: CheckContext,
+) -> tuple[frozenset[str], list[str], list[str]]:
+    """U-13-e/f — (excluded, excluded_sorted, remainder_sorted).  매 실행 재파생.
+
+    커밋된 목록을 신뢰하지 않는다(계약 §12.3.1 U-13-e) — HEAD blob 의 OQ-11
+    아티팩트에서 매번 다시 판독한다.  선언 부재·어휘 불일치·스키마 위반은
+    전부 «제외 없음» 으로 접는다 — 검증(Finding 생성)은 ``check_u13`` 이
+    전담하고 이 함수는 판정을 흉내내지 않는다(fail-closed 방향: 애매하면
+    제외를 만들지 않는다).  ``check_u13`` 과 ``check_k5_fwd_metrics`` 가
+    이 한 함수를 공유 소비한다(S-14 — 같은 계약을 두 절이 각자 기술하지
+    않는다).
+    """
+    empty: frozenset[str] = frozenset()
+    artifact = ctx.oq11_artifact_head
+    if artifact is None or ctx.register_by_id is None:
+        return empty, [], []
+    if artifact.get("disposition") != "DEFERRED_WITH_SCOPE":
+        return empty, [], []
+    scope = artifact.get("deferred_scope")
+    if not isinstance(scope, dict) or scope.get("kind") != "ROW_SUBSET":
+        return empty, [], []
+    if scope.get("remainder_mapping_approved") is not True:
+        return empty, [], []
+    raw_rows = scope.get("rows")
+    if not isinstance(raw_rows, list) or not raw_rows:
+        return empty, [], []
+    universe = _evidence_id_universe(ctx)
+    rows_set = {str(r) for r in raw_rows if str(r) in universe}
+    judged = _judged_evidence_ids(ctx)
+    excluded = frozenset(rows_set & judged)
+    remainder_sorted = sorted(rows_set - judged)
+    return excluded, sorted(excluded), remainder_sorted
+
+
 def check_u13(ctx: CheckContext) -> list[Finding]:
     """U-13-a..f — deferred_scope 존재/일치·GLOBAL/ROW_SUBSET 스키마·우주 결속."""
     findings: list[Finding] = []
@@ -1617,7 +1684,7 @@ def check_u13(ctx: CheckContext) -> list[Finding]:
         findings.append(
             Finding("U-13", f"U-13-d: 레지스터에 문법 밖 evidence_id: {bad_ids}")
         )
-    universe = {eid for eid in all_ids if _EVIDENCE_ID_RE.match(eid)}
+    universe = _evidence_id_universe(ctx)
 
     kind = scope.get("kind")
     if kind == "GLOBAL":
@@ -1652,15 +1719,12 @@ def check_u13(ctx: CheckContext) -> list[Finding]:
             )
 
         # U-13-e/f — DEFERRED_WITH_SCOPE 일 때 전문 인쇄(완료 관측 · rc 비결합).
+        # 파생은 derive_fwd_a_exclusions 하나(S-14) — check_k5_fwd_metrics 와
+        # 이 관측 두 줄이 같은 결과를 공유 소비한다.
         if disposition == "DEFERRED_WITH_SCOPE" and ctx.register_by_id is not None:
-            judged = {
-                eid
-                for eid, row in ctx.register_by_id.items()
-                if row["status"] in ("PASS", "READY")
-            }
-            rows_set = set(rows_list)
-            fwd_a_excluded_rows = sorted(str(r) for r in (rows_set & judged))
-            remainder_rows = sorted(str(r) for r in (rows_set - judged))
+            _excluded, fwd_a_excluded_rows, remainder_rows = derive_fwd_a_exclusions(
+                ctx
+            )
             ctx.observations.append(f"U-13 fwd_a_excluded_rows={fwd_a_excluded_rows}")
             ctx.observations.append(f"U-13 remainder_rows={remainder_rows}")
     else:
@@ -3776,6 +3840,9 @@ U-17 requires a live evaluation at completion-judgment time; this generated
 document does not perform that evaluation. Unevaluated counts as unmet
 (fail-closed).
 RES-1 remains unmet: STATE-EV-004 FWD-a-0 is not satisfied.
+RES-1 MET: STATE-EV-004 is excluded from the FWD-a termination condition by
+the checker-derived exclusion list (U-13 fwd_a_excluded_rows above; contract
+U-13-e).
 """
 
 
@@ -3808,6 +3875,11 @@ def check_d0_1(ctx: CheckContext) -> list[Finding]:  # noqa: ARG001
             )
         )
     return findings
+
+
+# RES-1 (§9 :4126 · §11 :4193) 이 지목하는 행 — 계약 리터럴.  census 가 아니다:
+# RES-1 의 주어가 이 행이며, 검사기가 발견하는 것이 아니라 계약이 이름을 박는다.
+_RES1_ROW_ID = "STATE-EV-004"
 
 
 def _md_escape_cell(value: str) -> str:
@@ -3951,10 +4023,18 @@ def render_completion_status(
         "this generated document does not perform that evaluation. "
         "Unevaluated counts as unmet (fail-closed)."
     )
-    lines.append(
-        "- `RES-1`: unmet — `STATE-EV-004` `FWD-a-0` is not satisfied "
-        "(see the `FWD-a-0` observation above)."
-    )
+    excluded, _excluded_sorted, _remainder_sorted = derive_fwd_a_exclusions(ctx)
+    if _RES1_ROW_ID in excluded:
+        lines.append(
+            f"- `RES-1`: `MET` — `{_RES1_ROW_ID}` is excluded from the `FWD-a` "
+            "termination condition by the checker-derived exclusion list "
+            "(`U-13 fwd_a_excluded_rows` above; contract U-13-e)."
+        )
+    else:
+        lines.append(
+            f"- `RES-1`: unmet — `{_RES1_ROW_ID}` `FWD-a-0` is not satisfied "
+            "(see the `FWD-a-0` observation above)."
+        )
     lines.append("")
 
     full = "\n".join(lines).rstrip() + "\n"
