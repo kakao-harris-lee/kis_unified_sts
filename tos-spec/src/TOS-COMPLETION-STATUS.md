@@ -51,6 +51,8 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
 - `superset_declared_pairs=0`
 - `FWD-a-0 불충족 evidence_id=['STATE-EV-004']`
 - `FWD-a 미충족 1행 (표본=['STATE-EV-004'])`
+- `FWD-a-0 불충족(제외 후) evidence_id=[]`
+- `FWD-a 미충족(제외 후) 0행`
 - `ref_reuse_max=8`
 - `ref_reuse_top=[('tos/src/tos/hag/predicates.py', 8), ('tos/src/tos/capsule/predicates.py', 7), ('tos/src/tos/spg/predicates.py', 6), ('tos/src/tos/sbr/predicates.py', 5), ('tos/src/tos/evidence/predicates.py', 4)]`
 - `profile_dependent_blocked=['BC-EV-003', 'ECO-EV-012', 'IOM-EV-008']`
@@ -58,6 +60,8 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
 - `blank_normative_ref_rows=21`
 - `imprecise_owner_track=9`
 - `unassigned_owner_rows=0`
+- `U-13 fwd_a_excluded_rows=['STATE-EV-004']`
+- `U-13 remainder_rows=[]`
 - `A-2: ARCHITECTURE-GATE-STATUS.md 에 기계 파싱 가능한 권한 축-표기 없음(실측 확인 — §6.4 대조 대상에서 제외)`
 - `D0-5[backtest__init__]=UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`
 - `D0-5[resolver]=UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`
@@ -138,4 +142,4 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
 - `D-1`: `MET`
 - `D0-5`: `MET`
 - `U-17`: requires a live evaluation at completion-judgment time; this generated document does not perform that evaluation. Unevaluated counts as unmet (fail-closed).
-- `RES-1`: unmet — `STATE-EV-004` `FWD-a-0` is not satisfied (see the `FWD-a-0` observation above).
+- `RES-1`: `MET` — `STATE-EV-004` is excluded from the `FWD-a` termination condition by the checker-derived exclusion list (`U-13 fwd_a_excluded_rows` above; contract U-13-e).

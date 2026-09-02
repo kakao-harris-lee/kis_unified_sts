@@ -6,7 +6,12 @@
 > asserting one. No evidence state, ADR acceptance, or authorization changes.
 
 ```yaml
-disposition: RESOLVED_MAPPING_APPROVED
+disposition: DEFERRED_WITH_SCOPE          # 2026-09-02 운영자 RES-1 ① 처분 (직전값 RESOLVED_MAPPING_APPROVED — 매핑 승인 내용은 불변, 아래 remainder_mapping_approved)
+deferred_scope:                            # 계약 U-13 (§12.3.1) 문법 — RES-1 ① 의 제외 목록은 이 기제를 재사용한다(S-14 두 벌 금지)
+  kind: ROW_SUBSET
+  rows:
+    - STATE-EV-004
+  remainder_mapping_approved: true
 bound_set_digest: daaba47b1c4b2b31717c098c8d761d9fd2b0cd1eb7e0d55b48d46a4e059f1c3b
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
@@ -18,8 +23,20 @@ authority: 운영자 (this repository's corpus owner)
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: 7c200c1c8276d11b4c74151099440bef6454dbd5
+decided_at_head: 279d59cc23b6b66846ee44a5cfe5babb84088905
 ```
+
+**RES-1 ① 처분 기록 (2026-09-02)**: 위 `disposition`/`deferred_scope` 는 운영자가
+계약 §9 `RES-1`(:4126) 의 선택지 **① «FWD-a 종료조건에서 명시 제외 + 계수 노출»**
+을 지시(«1번으로»)한 것을 U-13 문법으로 **축자 전사**한 것이다. 의미는 셋뿐이다.
+① `STATE-EV-004`(단독 `EV-L3`, `READY`)는 FWD-a-0 을 여전히 통과하지 못하며
+**통과 행이 아니다** — 검사기가 파생한 제외 목록(`fwd_a_excluded_rows`)으로
+`TOS-COMPLETION-STATUS` 에 1급 노출되고 §11 `RES-1` 은 그 파생값으로 렌더된다.
+② `remainder_mapping_approved: true` — §12.3.1 필수 내용 ③ 의 레벨→kind 매핑 표와
+그 승인(6e)은 **그대로**다; 유예되는 것은 이 한 행의 FWD-a 종료조건 적용뿐이다.
+③ **재결속이 아니다** — `bound_set_digest`·`bound_paths` 는 무접촉이므로 U-12
+(iii)/(iv) 는 발화하지 않는다. `decided_at_head` 는 기입 규칙대로 결정 행위 시점의
+repo 위치(레인 A `279d59cc` 직후)이며 결속 대상이 아니다.
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
 대한 해시다. 계획이 개정되거나 **문서가 추가·제거·개명되면** 값이 달라지므로,
