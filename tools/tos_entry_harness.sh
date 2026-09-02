@@ -19,18 +19,25 @@ emit() {                                  # emit <state> <reason>
 trap '[ "$EMITTED" -eq 1 ] || { printf "d0a_entry_state=%s\nreason=%s\n" \
       HARNESS_ABORTED "판정 미산출 상태로 종료"; exit 1; }' EXIT
 
+# **awk 는 `exit` 하지 않는다 — 전 입력을 소비한다.**  [Linux CI 실측]
+# 조기 `exit` 는 상류 `printf` 에 EPIPE 를 주고, `-o pipefail` 이 그 141 을
+# 파이프라인 상태로 올려 `|| emit HARNESS_ABORTED` 가 발화한다(R-1 에서
+# `printf: write error: Broken pipe`).  macOS 에서는 나지 않아 «환경이 판정을
+# 가른다» — 판정 하니스에 허용되지 않는 성질이다.  `done` 플래그가 «첫 키만»
+# 이라는 종래 의미를 바이트 단위로 보존한다(중복 키 문서 실재 · 대조군 있음).
 yaml_list() {   # stdin 에서 <key> 의 리스트 원소를 1행씩
   awk -v k="$1" '
+    done { next }
     $0 ~ "^"k":" {f=1; next}
     f && /^[[:space:]]*-[[:space:]]/ {
       sub(/^[[:space:]]*-[[:space:]]*/,""); sub(/[[:space:]]*#.*$/,"");
       sub(/[[:space:]]*$/,""); print; next }
-    f && /^[^[:space:]]/ { exit }'
+    f && /^[^[:space:]]/ { f=0; done=1 }'
 }
 yaml_scalar() { # stdin 에서 <key> 의 스칼라
-  awk -v k="$1" '$0 ~ "^"k":" {
+  awk -v k="$1" '!done && $0 ~ "^"k":" {
       sub("^"k":[[:space:]]*",""); sub(/[[:space:]]*#.*$/,"");
-      sub(/[[:space:]]*$/,""); print; exit }'
+      sub(/[[:space:]]*$/,""); print; done=1 }'
 }
 
 # ── R-0  실행 시점 결속 + **권위 입력 전부**의 동결 확인
