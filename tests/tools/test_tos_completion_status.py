@@ -1049,6 +1049,120 @@ def test_k3_test_batch_collection_uncollected_ref_is_red(tmp_path: Path) -> None
 
 
 # ---------------------------------------------------------------------------
+# 6d. K-3 — CI 호환: 수집 subprocess env/실패 가시화 (CI run 33603770295)
+# ---------------------------------------------------------------------------
+#
+# CI "test" 잡은 tos 패키지를 pip-install 하지 않는다(루트 패키지 .[dev] 만
+# 설치) — 수집 시 tos.* import 가 전부 실패해 stdout 에 "::" 라인이 0개가
+# 되고, 과거 구현은 이를 빈 set 으로 조용히 삼켜 모든 실 TEST 행을 ABSENT
+# 로 오판했다(K-3 대량 오탐, job "test" 에서 실측). 고정 요건: (1) 수집
+# subprocess 는 상속 env + tos/src 를 앞에 얹은 PYTHONPATH 로 자족해야
+# 한다, (2) 그래도 실패하면 무음이 아니라 단일 가시 Finding 을 내야 한다.
+
+
+def test_collect_all_test_node_ids_sets_pythonpath_and_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout="tos/tests/test_mini.py::test_something\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = tcs._collect_all_test_node_ids(tmp_path)
+
+    assert result == {"tos/tests/test_mini.py::test_something"}
+    assert captured["cwd"] == tmp_path
+    env = captured["env"]
+    assert env["PYTHONPATH"].startswith(str(tmp_path / "tos" / "src"))
+
+
+def test_collect_all_test_node_ids_prepends_to_existing_pythonpath(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.setenv("PYTHONPATH", "/some/other/path")
+
+    def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(
+            args=args, returncode=0, stdout="x::y\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    tcs._collect_all_test_node_ids(tmp_path)
+
+    expected = f"{tmp_path / 'tos' / 'src'}{os.pathsep}/some/other/path"
+    assert captured["env"]["PYTHONPATH"] == expected
+
+
+def test_k3_collection_rc_failure_is_single_visible_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CI 재현: rc=2(ImportError 류) + stdout 0개 -> 대량 ABSENT 오탐이 아니라
+    원인이 드러나는 K-3 Finding 정확히 1건."""
+    map_rows = [
+        MAP_ROW_1,
+        dict(
+            MAP_ROW_2,
+            surface_ref="tos/tests/test_mini.py::test_something",
+            existence="PRESENT",
+        ),
+        MAP_ROW_3,
+    ]
+    write_corpus(tmp_path, map_rows=map_rows)
+
+    def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=2,
+            stdout="",
+            stderr="ImportError: No module named 'tos'\n",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    ctx = tcs.build_context(tmp_path)
+    findings = tcs.check_k3(ctx)
+    k3_findings = [f for f in findings if f.check_id == "K-3"]
+
+    assert len(k3_findings) == 1, [str(f) for f in findings]
+    assert "수집 실패" in k3_findings[0].message
+    assert "ImportError" in k3_findings[0].message
+
+
+def test_k3_collection_oserror_is_single_visible_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    map_rows = [
+        MAP_ROW_1,
+        dict(
+            MAP_ROW_2,
+            surface_ref="tos/tests/test_mini.py::test_something",
+            existence="PRESENT",
+        ),
+        MAP_ROW_3,
+    ]
+    write_corpus(tmp_path, map_rows=map_rows)
+
+    def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+        raise OSError("pytest executable not found")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    ctx = tcs.build_context(tmp_path)
+    findings = tcs.check_k3(ctx)
+    k3_findings = [f for f in findings if f.check_id == "K-3"]
+
+    assert len(k3_findings) == 1, [str(f) for f in findings]
+    assert "수집 실패" in k3_findings[0].message
+
+
+# ---------------------------------------------------------------------------
 # 7. K-6 — 누락·잉여
 # ---------------------------------------------------------------------------
 

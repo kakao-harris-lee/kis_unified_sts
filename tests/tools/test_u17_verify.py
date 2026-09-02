@@ -27,6 +27,7 @@ import functools
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,13 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "tools" / "u17-verify.sh"
+# The executor's WFCANON predicate needs PyYAML (absent from a bare system
+# python3). Prefer the repo .venv when it exists (local dev); otherwise fall
+# back to the interpreter running pytest itself — on CI that interpreter is
+# the one `pip install -e ".[dev]"` ran under, and `pyyaml` is a base
+# (non-dev) dependency in pyproject.toml, so it is present there too.
+_VENV_PYBIN = REPO_ROOT / ".venv" / "bin" / "python"
+PYBIN = str(_VENV_PYBIN) if _VENV_PYBIN.exists() else sys.executable
 WORKFLOW_PATH = ".github/workflows/tos-gate.yml"
 REAL_WORKFLOW_TEXT = (REPO_ROOT / WORKFLOW_PATH).read_text(encoding="utf-8")
 
@@ -136,7 +144,7 @@ def _run_script(repo: Path, responder_dir: Path) -> subprocess.CompletedProcess:
     env = {
         "U17_RESPONDER": f"file:{responder_dir}",
         "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin",
-        "U17_PYBIN": str(REPO_ROOT / ".venv" / "bin" / "python"),
+        "U17_PYBIN": PYBIN,
     }
     return subprocess.run(
         ["bash", str(SCRIPT), str(repo)],

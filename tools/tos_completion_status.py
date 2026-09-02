@@ -637,6 +637,19 @@ def _check_byte_ref(ref: str) -> str | None:
 _PYTEST_COLLECT_TIMEOUT = 180
 
 
+class _TestCollectionError(RuntimeError):
+    """K-3 배치 pytest 수집 실패 — 무음 빈-set 대신 원인을 드러낸다.
+
+    CI ``test`` 잡은 ``tos`` 패키지를 pip-install 하지 않는다(루트 패키지
+    ``.[dev]`` 만 설치) — 수집 시 ``tos.*`` import 가 전부 실패해 stdout 에
+    ``::`` 라인이 0개가 되고, 과거 구현은 이를 빈 set 으로 조용히 삼켜
+    ``check_k3`` 가 모든 실 TEST 행을 ``ABSENT`` 로 오판했다(K-3 대량 오탐).
+    ``env`` 에 ``tos/src`` 를 ``PYTHONPATH`` 로 실어 수집 자체를 자족시키는
+    것이 1차 방어선이고, 이 예외는 그래도 실패할 때 원인(rc·stderr)을
+    ``check_k3`` 가 단일 Finding 으로 보고하게 하는 2차 방어선이다.
+    """
+
+
 def _collect_all_test_node_ids(repo_root: Path) -> set[str]:
     """``tos/tests`` 전체를 단일 ``pytest --collect-only -q`` 호출로 수집한다.
 
@@ -644,7 +657,25 @@ def _collect_all_test_node_ids(repo_root: Path) -> set[str]:
     ``-q`` 와 누적되어(pytest 9 기준 verbosity -2) ``--collect-only -q`` 가 개별
     노드 ID 대신 파일별 개수 요약을 출력하므로, ``-o addopts=`` 로 ini addopts 를
     무효화해 classic 한 줄-당-노드 출력(그대로 surface_ref 값)을 복원한다.
+
+    수집을 실행 환경(에디터블 설치 유무)에 기대지 않도록, 상속 환경을
+    복사한 뒤 ``tos/src`` 를 ``PYTHONPATH`` 선두에 얹어 ``tos.*`` import 가
+    ``tos`` 편집가능 설치 없이도 되도록 한다.
+
+    Raises:
+        _TestCollectionError: 하위 프로세스 실행 자체가 실패했거나(``OSError``/
+            타임아웃), 0/5 이외의 rc 로 종료했으면서 ``::`` 라인을 0개
+            수집했거나, ``tos/tests`` 가 실재하는데도 ``::`` 라인을 0개
+            수집한 경우 — 실패를 무음으로 삼키지 않고 원인을 드러낸다.
     """
+    env = dict(os.environ)
+    tos_src = str(repo_root / "tos" / "src")
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        f"{tos_src}{os.pathsep}{existing_pythonpath}"
+        if existing_pythonpath
+        else tos_src
+    )
     try:
         result = subprocess.run(
             [
@@ -661,11 +692,21 @@ def _collect_all_test_node_ids(repo_root: Path) -> set[str]:
             capture_output=True,
             text=True,
             timeout=_PYTEST_COLLECT_TIMEOUT,
+            env=env,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return set()
-    return {line for line in result.stdout.splitlines() if "::" in line}
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise _TestCollectionError(f"pytest 수집 subprocess 실패: {exc!r}") from exc
+
+    node_ids = {line for line in result.stdout.splitlines() if "::" in line}
+    if node_ids:
+        return node_ids
+
+    tests_dir_exists = (repo_root / "tos" / "tests").exists()
+    if result.returncode not in (0, 5) or tests_dir_exists:
+        stderr_excerpt = result.stderr[-300:]
+        raise _TestCollectionError(f"rc={result.returncode} {stderr_excerpt}")
+    return node_ids
 
 
 # ---------------------------------------------------------------------------
@@ -739,8 +780,13 @@ def check_k3(ctx: CheckContext) -> list[Finding]:
         for row in ctx.surface_map_rows
     )
     collected_tests: set[str] = set()
+    collection_failed = False
     if has_non_marker_test:
-        collected_tests = _collect_all_test_node_ids(ctx.repo_root)
+        try:
+            collected_tests = _collect_all_test_node_ids(ctx.repo_root)
+        except _TestCollectionError as exc:
+            findings.append(Finding("K-3", f"TEST 수집 실패: {exc}"))
+            collection_failed = True
 
     for row in ctx.surface_map_rows:
         eid = row["evidence_id"]
@@ -753,6 +799,11 @@ def check_k3(ctx: CheckContext) -> list[Finding]:
         elif kind == "PACKAGE":
             expected = "PRESENT" if (ctx.repo_root / ref).exists() else "ABSENT"
         elif kind == "TEST":
+            if collection_failed:
+                # 수집 자체가 실패 — 원인은 위에서 이미 단일 Finding 으로
+                # 보고했다. 개별 행을 ABSENT 로 판정하면 대량 오탐(K-3)이
+                # 되므로 여기서는 판정을 보류한다.
+                continue
             expected = "PRESENT" if ref in collected_tests else "ABSENT"
         elif kind == "REVIEWER":
             reg_row = (ctx.register_by_id or {}).get(eid)
