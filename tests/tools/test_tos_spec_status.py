@@ -1666,6 +1666,31 @@ def test_profile_null_key_census_matches_the_documented_147_163_16():
     assert total - null_count == 147
 
 
+def test_profile_null_key_census_is_derived_from_profile_key_universe():
+    """§6.3.2 follow-up (D0-4b repair) — ``_profile_null_key_census`` must be a
+    thin post-processing of ``profile_key_universe``'s single walk, and the
+    combined result must stay byte-identical to what the pre-refactor
+    two-loop implementation returned for the real profile document."""
+    from tools.tos_profile_census import _profile_null_key_census, profile_key_universe
+
+    profile_path = _REPO_ROOT / status.VERIFICATION_PROFILE_YAML
+    doc = yaml.safe_load(profile_path.read_text(encoding="utf-8-sig"))
+
+    universe = profile_key_universe(doc)
+    assert universe is not None
+    assert len(universe) == 163
+    assert sum(1 for is_null in universe.values() if is_null) == 16
+
+    derived_total = len(universe)
+    derived_null_names = sorted(name for name, is_null in universe.items() if is_null)
+
+    total, null_names = _profile_null_key_census(doc)
+    assert (total, null_names) == (derived_total, derived_null_names)
+    # 163/16 문서화된 상수는 test_profile_null_key_census_matches_the_
+    # documented_147_163_16 이 이미 고정한다 — 여기서는 universe 파생과의
+    # 등가성만 재확인한다.
+
+
 def test_hand_edited_profile_null_count_in_gate_status_is_detected(tmp_path):
     part1, development = _real_registers()
     source_root = _transcription_corpus(tmp_path)

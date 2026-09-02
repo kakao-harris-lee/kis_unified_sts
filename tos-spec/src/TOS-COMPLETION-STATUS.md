@@ -55,9 +55,17 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
 - `ref_reuse_top=[]`
 - `profile_dependent_blocked=['BC-EV-003', 'ECO-EV-012', 'IOM-EV-008']`
 - `closable_no_rows=1`
-- `blank_normative_ref_rows=19`
-- `imprecise_owner_track=8`
+- `blank_normative_ref_rows=21`
+- `imprecise_owner_track=9`
 - `unassigned_owner_rows=0`
+- `A-2: ARCHITECTURE-GATE-STATUS.md 에 기계 파싱 가능한 권한 축-표기 없음(실측 확인 — §6.4 대조 대상에서 제외)`
+- `D0-5[backtest__init__]=UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`
+- `D0-5[resolver]=UNDECIDED (키 미공급(잔여))`
+- `D0-5[results]=UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`
+- `D0-5[construction]=UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`
+- `D0-5[records]=UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`
+- `D0-5[engine]=UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`
+- `D0-5[marketfeed]=UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`
 
 ## Phase-0 unchecked-axis register (full exposure, U-3)
 
@@ -85,6 +93,20 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
 | UNCHK-021 | closable 값의 저작자 재량 + 앵커 동시 수정 + YES→NO 전이의 의무 우회 | U-9a가 closable=NO 집합을 앵커로 고정하지만 앵커와 데이터를 한 커밋에서 함께 고치면 통과한다(모든 canary의 성질, §8.3). 또 U-9의 인용 검사는 인용이 해석되는지만 보고 그 절이 실제로 원리적 불가능성을 확립하는지는 보지 못한다 — UNCHK-020과 같은 의미 판정 계열이며, 직교 2필드의 나머지 한 축이다. [v2.5 — 심판 F7] U-9/U-9a 가 §11 종료조건에서 철회된 뒤(§11 U-9·U-9a 철회 행)에는 이 재량이 U-1a 소유자 의무까지 우회한다: closable=YES 행이 무관한 실재 절을 근거로 NO 로 전이하면 U-1a(YES 한정)·철회된 U-9·U-9a·집계 findings 를 전부 벗어나고, 잔여 가시성은 비차단 closable_no_rows(U-10) 뿐이다 | [v2.6 — 심판 F#4] 두 갈래로 분리한다 (v2.5 는 한 칸에 섞어 써서 blocked_by 의 "Phase 1 이연"이 owner_track 과 어긋나 보였다). (가) 의미 판정 갈래 — 이 축의 소유를 결정한다: evidence 별 "이 절이 이 축의 불가능성을 확립하는가"의 수용 기준. UNCHK-007·015·020 과 같은 계열이며 그 셋 전부 Phase 2-5 다. (나) 보호 복원 갈래 — 소유를 옮기지 않는다: YES→NO 전이에 독립 리뷰 provenance 를 결속하고 그 승인을 소비하는 지점을 둔다(전이가 승인 provenance 를 참조하지 않으면 전이 자체를 거부). [v2.7 정정 — 심판 #3] "단일 커밋 내 기계 폐쇄는 불가"는 거짓이었다. canary 는 *값*을 비교하므로 앵커·데이터 동시 갱신에 침묵하지만, 커밋 위상(승인 행 도입 커밋이 전이 커밋의 진 조상인가)을 비교하면 동일 커밋이 곧 위반 신호가 된다 — U-16(§13.6.5)이 그 구조이며 Phase 0 차단으로 승격한다(§11). (나)는 더 이상 Phase 1 비차단 리뷰 표면이 아니다. 다만 (가)는 그대로 남고, U-16 이 닫지 못하는 것도 셋 남는다: 승인 내용의 진정성(→UNCHK-012)·조상 관계의 신뢰 기반(→UNCHK-023)·closable 값 자체의 적절성(→(가)) | Phase 2-5 | TOS-COMPLETION-STATUS |  | YES |  |
 | UNCHK-023 | git 이력 파생의 신뢰 기반 — 커밋 타임스탬프 자기공급 · 이력 재작성 가능성 | [v2.7 신설 — 자체 스윕] 네 계약(U-12 기산점 · U-15-b (3)(4) · U-16-c 순서 제약 · U-12 트리거 파생)이 전부 git 이력을 구조 파생 소스로 쓰는데, 그 소스의 두 성질은 저장소 안에서 증명되지 않는다: ① author date 는 GIT_AUTHOR_DATE 로 저작자가 공급한다 — min 3항도 커밋 메타데이터 위조에 의한 연기는 막지 못한다 ② 조상 관계는 이력 재작성(rebase·force-push)으로 구성 가능하다. v2.6 은 이 의존을 등재하지 않은 채 "자기신고 → 구조 파생"이라고만 적었다 — 파생이 자기신고보다 강한 것은 맞으나 무조건 강한 것은 아니고, 그 조건이 미등재였다(§13.1 이 비판한 "검사되는 것처럼 보이는 문장" 의 형태) | 제3자가 증언한 타임스탬프의 도입 — 서명 커밋(GPG/Sigstore) · CI 실행 메타데이터 · push 이벤트 기록 중 하나를 추적 아티팩트로 결속. 그리고 이력 재작성 방지는 저장소 밖 브랜치 보호 설정이라 UNCHK-008 과 같은 계열이다(파일로 증명 불가) | Phase 1 | TOS-COMPLETION-STATUS |  | YES |  |
 | UNCHK-020 | normative_ref 공란·무관 인용의 저작자 재량 | 기계는 인용의 해석 가능성만 본다(T-66). 조항을 대지 못하면 공란이고, 공란이면 blocks_gate 의무가 사라진다 — 저작자가 공란을 골라 차단을 피할 수 있고, 반대로 무관한 실재 조항을 넣어도 검사를 통과한다 (심판 high) | evidence별 "이 조항이 이 축을 요구하는가"의 수용 기준 — UNCHK-007·015와 같은 의미 판정 계열 | Phase 2-5 | TOS-COMPLETION-STATUS |  | YES |  |
+| UNCHK-024 | BarTimeProjection 시간 bound 필드의 VER-002 키 결속 | 코드 어디에도 필드↔키 결속 표면이 없고 동형 후보 다수라 키 공급이 추측이 된다 (§7.4 D-1) | 필드별 결속의 정본 표면(코드 상수 또는 프로파일 문서) 도입 | Phase 1 | TOS-COMPLETION-STATUS |  | YES |  |
+| UNCHK-025 | VER-002 프로파일 밖 bound 값의 소관 아티팩트 검증 | SizingBound 6필드(소관 Order Construction Policy RFC-002 §9.1)·dsl_evaluation_budget_steps(소관 EngineConfiguration/DCE-INV-007)는 프로파일 검사 우주 밖 — 소관 아티팩트의 비준·검증은 별도 축 | Order Construction Policy 비준 및 결속 검사 신설 | Phase 2-5 | TOS-COMPLETION-STATUS |  | YES |  |
+
+## D0-5 disposition table (7 rows, §7.4)
+
+| site | disposition | key/declaration |
+|---|---|---|
+| backtest__init__ | `UNBOUND` | docstring 에 UNBOUND 선언 문언 존재 |
+| resolver | `UNDECIDED` | 키 미공급(잔여) |
+| results | `UNBOUND` | docstring 에 UNBOUND 선언 문언 존재 |
+| construction | `UNBOUND` | docstring 에 UNBOUND 선언 문언 존재 |
+| records | `UNBOUND` | docstring 에 UNBOUND 선언 문언 존재 |
+| engine | `UNBOUND` | docstring 에 UNBOUND 선언 문언 존재 |
+| marketfeed | `UNBOUND` | docstring 에 UNBOUND 선언 문언 존재 |
 
 ## Phase 0 termination-condition overview (section 11)
 
@@ -110,5 +132,10 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
 - `U-8`: `MET`
 - `U-9`: `MET`
 - `D0-1`: `MET`
+- `A-1`: `MET`
+- `A-2`: `MET`
+- `A-3`: `MET`
+- `D-1`: `MET`
+- `D0-5`: UNDECIDED 1(resolver) → D0-5 완료 차단
 - `U-17`: requires a live evaluation at completion-judgment time; this generated document does not perform that evaluation. Unevaluated counts as unmet (fail-closed).
 - `RES-1`: unmet — `STATE-EV-004` `FWD-a-0` is not satisfied (see the `FWD-a-0` observation above).

@@ -47,14 +47,18 @@ rc 의미론 (핀 — 이 문서가 정본):
 from __future__ import annotations
 
 import argparse
+import ast
 import csv
 import hashlib
+import importlib.util
+import inspect
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -62,6 +66,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path, PurePosixPath
+from types import ModuleType
 
 import yaml
 
@@ -3119,6 +3124,522 @@ def derive_g4_authority(repo_root: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
+# D0-4b — authority 축 (§6.4 A-1/A-2/A-3)
+# ---------------------------------------------------------------------------
+
+CURRENT_STATUS_REL = Path("tos-spec/src/CURRENT-STATUS.md")
+ARCH_GATE_STATUS_REL = Path(
+    "tos-spec/src/part-1-foundation/ARCHITECTURE-GATE-STATUS.md"
+)
+
+# CURRENT-STATUS.md 의 axis 표 행 라벨 -> AUTHORITY-STATUS.csv 의 axis 값.
+# 같은 정규식을 ARCHITECTURE-GATE-STATUS.md 에도 적용한다(A-2 — 기계 파싱
+# 가능한 표기가 있으면 대조하고, 없으면 실측 확인만 하고 건너뛴다).
+_AXIS_TABLE_LABELS: dict[str, str] = {
+    "Restricted-live": "restricted_live",
+    "Production authorization": "production",
+}
+_AXIS_TABLE_ROW_RE = re.compile(
+    r"^\|\s*(Restricted-live|Production authorization)\s*\|\s*`([A-Z_]+)`",
+    re.MULTILINE,
+)
+_G4_ROW_RE = re.compile(r"\|\s*G4\s*\|\s*`AUTHORITY`\s*\|\s*`([A-Z_]+)`")
+
+
+def _parse_axis_table_authority(text: str) -> dict[str, str]:
+    """CURRENT-STATUS.md 형식의 axis 표 행에서 restricted_live/production 값을
+    파싱한다(같은 표기 규약을 ARCHITECTURE-GATE-STATUS.md 대조에도 재사용)."""
+    return {
+        _AXIS_TABLE_LABELS[label]: value
+        for label, value in _AXIS_TABLE_ROW_RE.findall(text)
+    }
+
+
+def _load_authority_source_values(
+    repo_root: Path,
+) -> tuple[dict[str, str] | None, str | None]:
+    """AUTHORITY-STATUS.csv 원시 axis->status 매핑(어휘 검증 없이) — A-2 대조 기준선."""
+    path = repo_root / AUTHORITY_CSV_REL
+    if not path.exists():
+        return None, f"파일 부재: {path}"
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as fh:
+            rows = list(csv.DictReader(fh))
+    except (OSError, csv.Error) as exc:
+        return None, f"파싱 실패: {exc}"
+    return {row.get("axis", ""): row.get("status", "") for row in rows}, None
+
+
+def check_a1(ctx: CheckContext) -> list[Finding]:
+    """A-1(§6.4) — restricted_live/production 값이 AUTHORITY-STATUS.csv 에서
+    파생됨을 등록한다.  derive_g4_authority(INV-C2)가 이미 그 파생 구현이므로
+    재구현하지 않고, 그 입력 코퍼스가 구조적으로 파생 가능한 형태인지
+    (파일 실재·두 축 모두 실재·source 어휘 AUTHORITY_STATES 준수)를 검사한다
+    — 이상이 있으면 derive_g4_authority 는 fail-closed NOT_AUTHORIZED 로
+    조용히 접지만, A-1 은 그 이상 자체를 가시화한다."""
+    findings: list[Finding] = []
+    path = ctx.repo_root / AUTHORITY_CSV_REL
+    if not path.exists():
+        return [Finding("A-1", f"파일 부재: {path}")]
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as fh:
+            rows = list(csv.DictReader(fh))
+    except (OSError, csv.Error) as exc:
+        return [Finding("A-1", f"파싱 실패: {exc}")]
+    statuses: dict[str, str] = {}
+    for row in rows:
+        axis = row.get("axis", "")
+        status = row.get("status", "")
+        if status not in _AUTHORITY_STATES:
+            findings.append(
+                Finding(
+                    "A-1", f"axis={axis!r} status 가 AUTHORITY_STATES 밖: {status!r}"
+                )
+            )
+            continue
+        statuses[axis] = status
+    for axis in _AUTHORITY_AXES:
+        if axis not in statuses:
+            findings.append(Finding("A-1", f"axis 누락: {axis!r}"))
+    return findings
+
+
+def check_a2(ctx: CheckContext) -> list[Finding]:
+    """A-2(§6.4) — CURRENT-STATUS.md · TOS-COMPLETION-STATUS.md · gate status
+    (ARCHITECTURE-GATE-STATUS.md, 있는 경우) 가 AUTHORITY-STATUS.csv 와 같은
+    값을 보고하는지 대조한다.  표면에 값이 있는데 소스와 다르면 red, 표면에
+    값이 아예 없으면(부재) 그 표면을 건너뛰지 않고 red(fail-closed) — 단
+    ARCHITECTURE-GATE-STATUS.md 는 기계 파싱 가능한 축-표기가 실재하지
+    않음을 실측 확인한 뒤 대조 대상에서 제외한다(관측으로 근거만 남긴다)."""
+    findings: list[Finding] = []
+    source_values, source_err = _load_authority_source_values(ctx.repo_root)
+    if source_values is None:
+        return [Finding("A-2", f"AUTHORITY-STATUS.csv {source_err}")]
+
+    current_status_path = ctx.repo_root / CURRENT_STATUS_REL
+    if not current_status_path.exists():
+        findings.append(Finding("A-2", f"파일 부재: {current_status_path}"))
+    else:
+        parsed = _parse_axis_table_authority(
+            current_status_path.read_text(encoding="utf-8")
+        )
+        for axis in _AUTHORITY_AXES:
+            if axis not in parsed:
+                findings.append(
+                    Finding("A-2", f"{current_status_path}: axis={axis!r} 표기 부재")
+                )
+            elif parsed[axis] != source_values.get(axis):
+                findings.append(
+                    Finding(
+                        "A-2",
+                        f"{current_status_path}: axis={axis!r} 값 불일치 "
+                        f"(표면={parsed[axis]!r} != 소스={source_values.get(axis)!r})",
+                    )
+                )
+
+    tcs_path = ctx.repo_root / GENERATED_MD_REL
+    if not tcs_path.exists():
+        findings.append(Finding("A-2", f"파일 부재: {tcs_path}"))
+    else:
+        m = _G4_ROW_RE.search(tcs_path.read_text(encoding="utf-8"))
+        if not m:
+            findings.append(Finding("A-2", f"{tcs_path}: G4 권한 표기 부재"))
+        else:
+            expected = derive_g4_authority(ctx.repo_root)
+            if m.group(1) != expected:
+                findings.append(
+                    Finding(
+                        "A-2",
+                        f"{tcs_path}: G4 값 불일치 "
+                        f"(표면={m.group(1)!r} != 파생={expected!r})",
+                    )
+                )
+
+    arch_path = ctx.repo_root / ARCH_GATE_STATUS_REL
+    if arch_path.exists():
+        arch_parsed = _parse_axis_table_authority(arch_path.read_text(encoding="utf-8"))
+        if arch_parsed:
+            for axis, value in arch_parsed.items():
+                if value != source_values.get(axis):
+                    findings.append(
+                        Finding(
+                            "A-2",
+                            f"{arch_path}: axis={axis!r} 값 불일치 "
+                            f"(표면={value!r} != 소스={source_values.get(axis)!r})",
+                        )
+                    )
+        else:
+            ctx.observations.append(
+                "A-2: ARCHITECTURE-GATE-STATUS.md 에 기계 파싱 가능한 권한 축-표기 "
+                "없음(실측 확인 — §6.4 대조 대상에서 제외)"
+            )
+    return findings
+
+
+# A-3(§6.4) — 부재 증명: derive_g4_authority 의 호출 그래프가 evidence 표면의
+# 이름을 소비하지 않음을 AST 수준에서 단언한다.  "부재 증명"이라 존재 검사가
+# 아니라 (호출 그래프가 참조하는 이름 집합) ∩ (evidence 표면 이름 집합) = ∅
+# 을 구조적으로 확인한다.  네 갈래로 분류한 evidence 표면 이름 — register
+# 파싱 · MAP(EVIDENCE-SURFACE-MAP) · REQUIRED-KINDS · 게이트 술어.
+_A3_EVIDENCE_SYMBOLS = frozenset(
+    {
+        # register 파싱
+        "register_by_id",
+        "register_rows",
+        "REGISTER_FIELDS",
+        "PART1_REL",
+        "DEV_REL",
+        "_load_registers",
+        # MAP (EVIDENCE-SURFACE-MAP)
+        "SURFACE_MAP_REL",
+        "SURFACE_MAP_FIELDS",
+        "surface_map_rows",
+        # REQUIRED-KINDS
+        "REQUIRED_KINDS_REL",
+        "REQUIRED_KINDS_FIELDS",
+        "required_kinds_rows",
+        "required_kinds_by_id",
+        "KIND_VOCAB",
+        "derive_floor",
+        "parse_level",
+        "level_kind_map",
+        # 게이트 술어
+        "GATE_PREDICATES",
+        "GatePredicate",
+        "evaluate_gates",
+        "compute_gate_reasons",
+        "_real_checkable_results",
+        "_allowed_blocks_gate_values",
+        "GATE_REGISTRY",
+        "_EVIDENCE_STATUS_VOCAB",
+    }
+)
+
+
+def _referenced_names_in_function(fn: Callable) -> set[str]:
+    """함수 소스를 AST 로 파싱해 참조되는 모든 이름(``Name.id`` ·
+    ``Attribute.attr``)을 모은다.  소스를 얻을 수 없으면 빈 집합(호출자가
+    그래프 순회를 계속하지 못하게 하지 않는다 — 단, 이 경로는 evidence 심볼
+    누락을 조용히 놓칠 수 있으므로 A-3 자신은 항상 실제 정의된 함수만
+    대상으로 한다)."""
+    try:
+        src = inspect.getsource(fn)
+    except (OSError, TypeError):
+        return set()
+    tree = ast.parse(textwrap.dedent(src))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+    return names
+
+
+def _call_graph_closure(entry_fn: Callable) -> set[str]:
+    """``entry_fn`` 이 참조하는 모든 이름 + 그 중 같은 모듈 전역에 바인딩된
+    함수는 재귀적으로 펼친 참조 이름의 합집합(호출 그래프)."""
+    module_globals = getattr(entry_fn, "__globals__", {})
+    seen: set[int] = set()
+    names: set[str] = set()
+    stack = [entry_fn]
+    while stack:
+        fn = stack.pop()
+        if id(fn) in seen:
+            continue
+        seen.add(id(fn))
+        refs = _referenced_names_in_function(fn)
+        names |= refs
+        for ref in refs:
+            candidate = module_globals.get(ref)
+            if (
+                candidate is not None
+                and inspect.isfunction(candidate)
+                and id(candidate) not in seen
+            ):
+                stack.append(candidate)
+    return names
+
+
+def check_a3(ctx: CheckContext) -> list[Finding]:  # noqa: ARG001
+    """A-3(§6.4) — 부재 증명.  derive_g4_authority 의 호출 그래프가 evidence
+    심볼(register 파싱·MAP·REQUIRED-KINDS·게이트 술어)을 전혀 소비하지 않음을
+    AST 로 단언한다.  기존 INV-C1/INV-C2 회귀 테스트(T-2/T-11)는 실코퍼스
+    뮤테이션으로 *결과*가 격리됨을 보이는 존재 검사이고, 이것은 *경로 자체가
+    없음*을 구조로 보이는 부재 증명이라 서로 다른 층이다."""
+    consumed = _call_graph_closure(derive_g4_authority)
+    intersection = consumed & _A3_EVIDENCE_SYMBOLS
+    if intersection:
+        return [
+            Finding(
+                "A-3",
+                "derive_g4_authority 호출 그래프가 evidence 심볼을 소비함: "
+                f"{sorted(intersection)}",
+            )
+        ]
+    return []
+
+
+# ---------------------------------------------------------------------------
+# D0-5b — D-1 처분 검사기 (§7.4) + U-6(§13.6.6)
+# ---------------------------------------------------------------------------
+
+VERIFICATION_PROFILE_002_REL = Path(
+    "tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml"
+)
+
+# §7.1 실측 — 정확히 이 7곳.  짧은 이름은 §7.3/§7.4 계약 문언이 쓰는 토큰과
+# 정확히 같다(construction/records/engine/backtest__init__/marketfeed/results/
+# resolver).  kind: "module" | "class" | "method"(``ClassName.method_name``).
+D1_SITES: tuple[tuple[str, Path, str, str], ...] = (
+    ("backtest__init__", Path("tos/src/tos/backtest/__init__.py"), "module", ""),
+    (
+        "resolver",
+        Path("tos/src/tos/backtest/resolver.py"),
+        "class",
+        "BarTimeProjection",
+    ),
+    (
+        "results",
+        Path("tos/src/tos/backtest/results.py"),
+        "method",
+        "BacktestRun.closes_no_ev",
+    ),
+    ("construction", Path("tos/src/tos/egressgw/construction.py"), "module", ""),
+    ("records", Path("tos/src/tos/egressgw/records.py"), "class", "SizingBound"),
+    ("engine", Path("tos/src/tos/engine/__init__.py"), "module", ""),
+    ("marketfeed", Path("tos/src/tos/marketfeed/__init__.py"), "module", ""),
+)
+
+# UNBOUND 선언 문언 감지 — "not a VERIFICATION-PROFILE-002 key"/"not itself a
+# profile key"/"not ... profile keys"/"no VERIFICATION-PROFILE-002 bound" 류.
+# 매칭 전 backtick·강조(``*``)를 제거한 평문에 적용한다(RST 인라인 마크업이
+# 문구 중간에 끼어드는 것을 흡수).  UNBOUND 판정이 backtick 키 매칭보다
+# 우선한다 — 대조용으로만 인용된 실재 프로파일 키(예: engine/__init__.py 의
+# ``MAX_dsl_evaluation_ms``)가 "이 사이트의 의존 키가 아니다"라는 저작자
+# 결론을 뒤집지 못하게 한다.
+_D1_UNBOUND_RE = re.compile(
+    r"not\s+(?:a\s+|itself a\s+)?(?:VERIFICATION-PROFILE-002|profile)\s+keys?\b"
+    r"|no\s+(?:VERIFICATION-PROFILE-002|profile)\s+bound",
+    re.IGNORECASE,
+)
+_D1_BACKTICK_RE = re.compile(r"`{1,2}([A-Za-z_][A-Za-z0-9_]*)`{1,2}")
+
+
+def _extract_d1_docstring(source: str, kind: str, target: str) -> str | None:
+    """§7.1 대상 docstring 실측 — module/class/method(``ClassName.method``) 3종."""
+    tree = ast.parse(source)
+    if kind == "module":
+        return ast.get_docstring(tree)
+    if kind == "class":
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == target:
+                return ast.get_docstring(node)
+        return None
+    if kind == "method":
+        class_name, _, method_name = target.partition(".")
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == class_name:
+                for sub in node.body:
+                    if isinstance(sub, ast.FunctionDef) and sub.name == method_name:
+                        return ast.get_docstring(sub)
+        return None
+    raise ValueError(f"알 수 없는 docstring kind: {kind!r}")
+
+
+@cache
+def _load_tos_profile_census_module() -> ModuleType:
+    """공유 census 모듈(``tools/tos_profile_census.py``)을 importlib 경로
+    부트스트랩으로 로드한다.
+
+    ``from tools.tos_profile_census import ...`` 형태의 패키지 상대 import
+    는 쓰지 않는다 — 그 형태는 ``python tools/tos_completion_status.py``
+    로 직접(맨) 실행할 때, 리포 루트가 ``sys.path`` 에 없는 한(예: 저장소를
+    editable 설치하지 않은 인터프리터) ``tools`` 가 패키지로 해석되지 않아
+    깨진다.  ``tests/tools/test_tos_completion_status.py`` 가 이 파일 자체를
+    로드하는 데 이미 쓰는 것과 같은 ``importlib.util.spec_from_file_location``
+    패턴이라 실행 컨텍스트에 무관하다.  파생 로직 자체는 여기서 재저작하지
+    않는다 — ``tools/tos_profile_census.py`` 에 단 한 번만 저작돼 있고, 이
+    함수는 그 파일을 로드하는 부트스트랩일 뿐이다(§6.3.2 "파생 로직 두 벌
+    저작 0" — 어휘 상수 사본인 ``_AUTHORITY_STATES`` 선례와는 다른 층)."""
+    module_path = Path(__file__).resolve().parent / "tos_profile_census.py"
+    spec = importlib.util.spec_from_file_location("tos_profile_census", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"tos_profile_census 부트스트랩 실패: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_profile_universe(
+    repo_root: Path,
+) -> tuple[dict[str, bool] | None, str | None]:
+    """VERIFICATION-PROFILE-002.yaml 의 ``{key: is_null}`` 전체 우주 — 공유
+    구현 ``tools.tos_profile_census.profile_key_universe`` 의 얇은 래퍼.
+
+    이 함수의 몫은 YAML 로드와 예외를 사유 문자열로 바꾸는 것뿐이다.
+    bounds/limits 워크와 그 fail-closed 형상 검증(인식 불가 shape 는 조용히
+    건너뛰지 않고 전체를 None 으로 중단)은 공유 모듈에 한 번만 저작돼 있다."""
+    path = repo_root / VERIFICATION_PROFILE_002_REL
+    if not path.exists():
+        return None, f"프로파일 문서 부재: {path}"
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
+    except (OSError, yaml.YAMLError) as exc:
+        return None, f"프로파일 문서 파싱 실패: {exc}"
+    if not isinstance(doc, dict):
+        return None, "프로파일 문서 최상위가 매핑이 아님"
+    census_module = _load_tos_profile_census_module()
+    universe = census_module.profile_key_universe(doc)
+    if universe is None:
+        return None, "프로파일 문서 형상을 census 가 인식하지 못함(fail-closed)"
+    return universe, None
+
+
+def _derive_d1_disposition(
+    docstring: str, universe: dict[str, bool] | None
+) -> tuple[str, str]:
+    """§7.4 처분 파생 — ``(처분, 근거)``.  처분은 검사기가 파생하고 저작자는
+    고르지 않는다: UNBOUND 선언 문언 우선, 그다음 프로파일 키 우주 소속
+    backtick 리터럴(VALUED/BLOCKED), 어느 것도 없으면 잔여 UNDECIDED."""
+    flat = docstring.replace("`", "").replace("*", "")
+    if _D1_UNBOUND_RE.search(flat):
+        return "UNBOUND", "docstring 에 UNBOUND 선언 문언 존재"
+    if universe is not None:
+        for candidate in _D1_BACKTICK_RE.findall(docstring):
+            if candidate in universe:
+                is_null = universe[candidate]
+                return ("BLOCKED" if is_null else "VALUED"), candidate
+    return "UNDECIDED", "키 미공급(잔여)"
+
+
+def compute_d1_dispositions(
+    repo_root: Path,
+) -> tuple[dict[str, tuple[str, str]], tuple[str, ...]]:
+    """§7.1 7사이트의 ``({site: (처분, 근거)}, profile_blocked_sites)``.
+
+    사이트 파일이 존재하지 않으면(합성/부분 코퍼스 — tos/ 는 이 검사기의
+    register/CSV 코퍼스 스키마 밖 층이다) 그 사이트는 결과에서 조용히
+    제외한다.
+
+    두 번째 항목(``profile_blocked_sites``)은 UNBOUND 선언으로 즉시
+    해소되지 않아 프로파일 우주 대조가 실제로 필요했는데 그 우주 로드 자체가
+    실패한 사이트들이다.  disposition 어휘를 VALUED/BLOCKED/UNBOUND/
+    UNDECIDED 넷으로 유지하기 위해 이런 사이트도 표에는 ``UNDECIDED`` 로
+    기록되지만, 그 UNDECIDED 는 "키를 공급하지 못했다"(§7.4 잔여)가 아니라
+    "우주를 못 읽어 판정 불가"다 — 의미가 다르므로 호출자(``check_d1``)는
+    이 목록이 비어있지 않으면 U-6(§13 등재)로 접지 말고 D-1 자체의
+    fail-closed violation 을 보고해야 한다."""
+    result: dict[str, tuple[str, str]] = {}
+    profile_blocked_sites: list[str] = []
+    universe: dict[str, bool] | None = None
+    universe_error: str | None = None
+    universe_attempted = False
+    for name, rel, kind, target in D1_SITES:
+        path = repo_root / rel
+        if not path.exists():
+            continue
+        try:
+            docstring = _extract_d1_docstring(
+                path.read_text(encoding="utf-8"), kind, target
+            )
+        except (OSError, SyntaxError) as exc:
+            result[name] = ("UNDECIDED", f"읽기/파싱 실패: {exc}")
+            continue
+        if docstring is None:
+            result[name] = ("UNDECIDED", f"대상 docstring 부재 ({kind} {target!r})")
+            continue
+        flat = docstring.replace("`", "").replace("*", "")
+        needs_profile = _D1_UNBOUND_RE.search(flat) is None
+        if needs_profile and not universe_attempted:
+            universe, universe_error = _load_profile_universe(repo_root)
+            universe_attempted = True
+        disposition, basis = _derive_d1_disposition(docstring, universe)
+        if needs_profile and universe is None:
+            profile_blocked_sites.append(name)
+            basis = (
+                f"프로파일 우주 로드 실패로 판정 불가(fail-closed): {universe_error}"
+            )
+        result[name] = (disposition, basis)
+    return result, tuple(profile_blocked_sites)
+
+
+def _d1_site_lookup_tokens(site_name: str) -> tuple[str, ...]:
+    """사이트 이름 -> §13 레지스터 매칭용 후보 리터럴(사이트 이름 자체 +
+    D1_SITES 의 docstring 대상 식별자).  UNCHK-024 는 ``resolver`` 라는
+    짧은 이름이 아니라 그 사이트의 docstring 대상 클래스
+    ``BarTimeProjection`` 을 리터럴로 인용하므로, 등재 판정은 이름 하나가
+    아니라 이 후보 집합 중 하나라도 등장하는지를 본다."""
+    for name, _rel, _kind, target in D1_SITES:
+        if name == site_name:
+            return (name, target) if target else (name,)
+    return (site_name,)
+
+
+def check_d1(ctx: CheckContext) -> list[Finding]:
+    """D-1(§7.4) — D0-5 7사이트 처분 파생 + U-6(§13.6.6) 강제.
+
+    처분 자체(VALUED/BLOCKED/UNBOUND/UNDECIDED)는 완료 관측(§11 소관 · rc
+    비결합)이라 findings 를 만들지 않는다 — ``render_completion_status`` 가
+    ``compute_d1_dispositions`` 를 다시 불러 D0-5 표와 §11 요약행을 만든다.
+    rc 에 결합하는 것은 둘뿐이다:
+
+    * 프로파일 우주 로드 실패로 판정 불가한 사이트(``profile_blocked_sites``)
+      — VALUED/BLOCKED 판정이 필요했는데 그 우주를 읽지 못했다는 것 자체가
+      fail-closed 로 D-1 위반이다. 이 사이트들은 UNDECIDED 로 조용히 접히지
+      않는다.
+    * U-6 — 그 외의(genuine) UNDECIDED 사이트가 §13 uncheckable 레지스터에
+      개별 행으로(그 사이트 이름 또는 docstring 대상 식별자가 axis/reason
+      텍스트에 등장하는 행으로) 등재돼 있지 않으면 계약 위반."""
+    dispositions, profile_blocked_sites = compute_d1_dispositions(ctx.repo_root)
+    for name, (disposition, basis) in dispositions.items():
+        ctx.observations.append(f"D0-5[{name}]={disposition} ({basis})")
+
+    findings: list[Finding] = []
+    if profile_blocked_sites:
+        findings.append(
+            Finding(
+                "D-1",
+                "VERIFICATION-PROFILE-002.yaml 우주를 로드하지 못해 VALUED/"
+                f"BLOCKED 판정이 불가한 사이트(fail-closed): "
+                f"{sorted(profile_blocked_sites)}",
+            )
+        )
+
+    undecided_sites = sorted(
+        name
+        for name, (disposition, _basis) in dispositions.items()
+        if disposition == "UNDECIDED" and name not in profile_blocked_sites
+    )
+    if undecided_sites:
+        if ctx.uncheckable_rows is None:
+            for site in undecided_sites:
+                findings.append(
+                    Finding(
+                        "U-6",
+                        f"D0-5 UNDECIDED 사이트 {site!r} 등재 여부를 확인할 수 없음"
+                        " (§13 레지스터 부재)",
+                    )
+                )
+        else:
+            registered_text = " ".join(
+                f"{row.get('axis', '')} {row.get('reason', '')}"
+                for row in ctx.uncheckable_rows
+            )
+            for site in undecided_sites:
+                tokens = _d1_site_lookup_tokens(site)
+                if not any(token in registered_text for token in tokens):
+                    findings.append(
+                        Finding(
+                            "U-6",
+                            f"D0-5 UNDECIDED 사이트 {site!r} 가 §13 레지스터에 "
+                            "등재돼 있지 않음",
+                        )
+                    )
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # INV-C5 — 금지 어휘 리터럴 검사 (생성기 자신이 수행)
 # ---------------------------------------------------------------------------
 
@@ -3191,6 +3712,7 @@ def _md_escape_cell(value: str) -> str:
 # "K-5/FWD-METRICS" 는 자기 자신, "U-8" 은 U-8/U-8b 둘 다 포함한다.
 _CHECK_ID_ALIASES: dict[str, tuple[str, ...]] = {
     "U-8": ("U-8", "U-8b"),
+    "D-1": ("D-1", "U-6"),
 }
 
 
@@ -3288,11 +3810,36 @@ def render_completion_status(
     register_block = "\n".join(register_lines)
     lines.append(register_block)
 
+    d1_dispositions, _d1_profile_blocked = compute_d1_dispositions(ctx.repo_root)
+    lines.append("## D0-5 disposition table (7 rows, §7.4)")
+    lines.append("")
+    lines.append("| site | disposition | key/declaration |")
+    lines.append("|---|---|---|")
+    for site_name, _rel, _kind, _target in D1_SITES:
+        if site_name in d1_dispositions:
+            disposition, basis = d1_dispositions[site_name]
+        else:
+            disposition, basis = "N/A", "사이트 파일 부재(코퍼스 범위 밖)"
+        lines.append(f"| {site_name} | `{disposition}` | {_md_escape_cell(basis)} |")
+    lines.append("")
+
     lines.append("## Phase 0 termination-condition overview (section 11)")
     lines.append("")
     for check_id in CONTRACT_CHECKS:
         state = "MET" if _check_is_clean(check_id, findings) else "NOT_MET"
         lines.append(f"- `{check_id}`: `{state}`")
+    d1_undecided = sorted(
+        site_name
+        for site_name, (disposition, _basis) in d1_dispositions.items()
+        if disposition == "UNDECIDED"
+    )
+    if d1_undecided:
+        lines.append(
+            f"- `D0-5`: UNDECIDED {len(d1_undecided)}({', '.join(d1_undecided)}) "
+            "→ D0-5 완료 차단"
+        )
+    else:
+        lines.append("- `D0-5`: `MET`")
     lines.append(
         "- `U-17`: requires a live evaluation at completion-judgment time; "
         "this generated document does not perform that evaluation. "
@@ -3331,6 +3878,10 @@ CONTRACT_CHECKS: dict[str, Callable[[CheckContext], list[Finding]]] = {
     "U-8": check_u8,
     "U-9": check_u9,
     "D0-1": check_d0_1,
+    "A-1": check_a1,
+    "A-2": check_a2,
+    "A-3": check_a3,
+    "D-1": check_d1,
 }
 
 

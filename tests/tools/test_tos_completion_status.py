@@ -629,6 +629,25 @@ AUTHORITY_FIELDS = (
     "notes",
 )
 
+# A-2(§6.4) — CURRENT-STATUS.md/TOS-COMPLETION-STATUS.md 대조 표면 기본값.
+# 기본 AUTHORITY_ROW_* (둘 다 NOT_AUTHORIZED) 와 결속돼 있어 write_corpus 의
+# 기본 호출은 A-2 를 clean 으로 남긴다 — 불일치 뮤테이션은 이 텍스트를 직접
+# override 한다.
+DEFAULT_CURRENT_STATUS_MD = """# Mini Current Status
+
+| Axis | Value | Notes |
+|---|---|---|
+| Restricted-live | `NOT_AUTHORIZED` | mini note |
+| Production authorization | `NOT_AUTHORIZED` | mini note |
+"""
+
+DEFAULT_COMPLETION_STATUS_MD = """# Mini Completion Status
+
+| Gate | Kind | Verdict | Reasons (blocks_gate) |
+|---|---|---|---|
+| G4 | `AUTHORITY` | `NOT_AUTHORIZED` | - |
+"""
+
 
 def _write_csv(path: Path, fields: tuple[str, ...], rows: list[dict[str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -658,6 +677,8 @@ def write_corpus(
     commit_when: str = "2026-01-01T00:00:00Z",
     include_u15_verdict_stamp: bool = True,
     authority_rows: list[dict[str, str]] | None = None,
+    current_status_text: str | None = None,
+    completion_status_text: str | None = None,
 ) -> None:
     """합성 미니 코퍼스를 ``root`` 아래 실제 코퍼스와 같은 상대 경로로 쓴다.
 
@@ -700,7 +721,17 @@ def write_corpus(
         bound_docs = U12_DEFAULT_BOUND_DOCS
     if authority_rows is None:
         authority_rows = [AUTHORITY_ROW_RESTRICTED_LIVE, AUTHORITY_ROW_PRODUCTION]
+    if current_status_text is None:
+        current_status_text = DEFAULT_CURRENT_STATUS_MD
+    if completion_status_text is None:
+        completion_status_text = DEFAULT_COMPLETION_STATUS_MD
     _write_csv(root / tcs.AUTHORITY_CSV_REL, AUTHORITY_FIELDS, authority_rows)
+    current_status_path = root / tcs.CURRENT_STATUS_REL
+    current_status_path.parent.mkdir(parents=True, exist_ok=True)
+    current_status_path.write_text(current_status_text, encoding="utf-8")
+    completion_status_path = root / tcs.GENERATED_MD_REL
+    completion_status_path.parent.mkdir(parents=True, exist_ok=True)
+    completion_status_path.write_text(completion_status_text, encoding="utf-8")
     if ledger_text_override is not None:
         ledger_text = ledger_text_override
     else:
@@ -1535,6 +1566,10 @@ def test_t39_deferred_contracts_disjoint_from_contract_checks() -> None:
         "U-8",
         "U-9",
         "D0-1",
+        "A-1",
+        "A-2",
+        "A-3",
+        "D-1",
     ):
         assert expected in tcs.CONTRACT_CHECKS
     # C3 승격 — T-71 은 이제 U-14 확장으로 CONTRACT_CHECKS 에 강제된다.
@@ -3433,3 +3468,376 @@ def test_inv_c5_forbidden_vocabulary_in_static_prose_is_red(
 
 def test_inv_c5_real_static_prose_is_clean() -> None:
     assert tcs._scan_forbidden_vocabulary(tcs._STATIC_PROSE) == []
+
+
+# ---------------------------------------------------------------------------
+# 21. D0-4b — A-1/A-2/A-3 authority 축 (§6.4)
+# ---------------------------------------------------------------------------
+
+
+def test_a1_real_corpus_source_vocabulary_is_clean() -> None:
+    ctx = tcs.build_context(_REPO_ROOT)
+    assert tcs.check_a1(ctx) == []
+
+
+def test_a1_synthetic_default_is_clean(tmp_path: Path) -> None:
+    write_corpus(tmp_path)
+    assert "A-1" not in _ids(_run(tmp_path))
+
+
+def test_a1_bad_status_vocabulary_is_red(tmp_path: Path) -> None:
+    write_corpus(
+        tmp_path,
+        authority_rows=[
+            dict(AUTHORITY_ROW_RESTRICTED_LIVE, status="MAYBE"),
+            AUTHORITY_ROW_PRODUCTION,
+        ],
+    )
+    assert "A-1" in _ids(_run(tmp_path))
+
+
+def test_a1_missing_axis_is_red(tmp_path: Path) -> None:
+    write_corpus(tmp_path, authority_rows=[AUTHORITY_ROW_RESTRICTED_LIVE])
+    assert "A-1" in _ids(_run(tmp_path))
+
+
+def test_a1_missing_file_is_red(tmp_path: Path) -> None:
+    write_corpus(tmp_path)
+    (tmp_path / tcs.AUTHORITY_CSV_REL).unlink()
+    assert "A-1" in _ids(_run(tmp_path))
+
+
+def test_a2_real_corpus_three_surfaces_agree() -> None:
+    ctx = tcs.build_context(_REPO_ROOT)
+    assert tcs.check_a2(ctx) == []
+
+
+MISMATCHED_CURRENT_STATUS_MD = """# Mini Current Status
+
+| Axis | Value | Notes |
+|---|---|---|
+| Restricted-live | `AUTHORIZED` | mini note |
+| Production authorization | `NOT_AUTHORIZED` | mini note |
+"""
+
+
+def test_a2_current_status_value_mismatch_is_red(tmp_path: Path) -> None:
+    """A-2 — tmp 사본 값 불일치 뮤테이션(CURRENT-STATUS.md 만 AUTHORIZED 로 드리프트)."""
+    write_corpus(tmp_path, current_status_text=MISMATCHED_CURRENT_STATUS_MD)
+    assert "A-2" in _ids(_run(tmp_path))
+
+
+def test_a2_current_status_missing_axis_is_red(tmp_path: Path) -> None:
+    text = "# Mini Current Status\n\n| Restricted-live | `NOT_AUTHORIZED` | note |\n"
+    write_corpus(tmp_path, current_status_text=text)
+    assert "A-2" in _ids(_run(tmp_path))
+
+
+def test_a2_current_status_file_missing_is_red(tmp_path: Path) -> None:
+    write_corpus(tmp_path)
+    (tmp_path / tcs.CURRENT_STATUS_REL).unlink()
+    assert "A-2" in _ids(_run(tmp_path))
+
+
+def test_a2_completion_status_g4_mismatch_is_red(tmp_path: Path) -> None:
+    text = "| G4 | `AUTHORITY` | `AUTHORIZED` | - |\n"
+    write_corpus(tmp_path, completion_status_text=text)
+    assert "A-2" in _ids(_run(tmp_path))
+
+
+def test_a2_completion_status_g4_row_missing_is_red(tmp_path: Path) -> None:
+    write_corpus(tmp_path, completion_status_text="# nothing here\n")
+    assert "A-2" in _ids(_run(tmp_path))
+
+
+def test_a2_architecture_gate_status_prose_only_is_not_flagged(tmp_path: Path) -> None:
+    write_corpus(tmp_path)
+    arch_path = tmp_path / tcs.ARCH_GATE_STATUS_REL
+    arch_path.parent.mkdir(parents=True, exist_ok=True)
+    arch_path.write_text(
+        "restricted-live and production authorization (both `NOT_AUTHORIZED`)\n",
+        encoding="utf-8",
+    )
+    assert "A-2" not in _ids(_run(tmp_path))
+
+
+def test_a2_architecture_gate_status_parseable_mismatch_is_red(tmp_path: Path) -> None:
+    write_corpus(tmp_path)
+    arch_path = tmp_path / tcs.ARCH_GATE_STATUS_REL
+    arch_path.parent.mkdir(parents=True, exist_ok=True)
+    arch_path.write_text(
+        "| Restricted-live | `AUTHORIZED` | note |\n", encoding="utf-8"
+    )
+    assert "A-2" in _ids(_run(tmp_path))
+
+
+def test_a3_real_derive_g4_authority_is_clean() -> None:
+    ctx = tcs.build_context(_REPO_ROOT)
+    assert tcs.check_a3(ctx) == []
+
+
+def test_a3_synthetic_default_is_clean(tmp_path: Path) -> None:
+    write_corpus(tmp_path)
+    assert "A-3" not in _ids(_run(tmp_path))
+
+
+def test_a3_evidence_symbol_injection_is_detected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A-3 — evidence 심볼 주입 뮤테이션: derive_g4_authority 를 GATE_PREDICATES
+    (게이트 술어 evidence 표면)를 참조하는 함수로 바꿔치기하면 검출돼야 한다."""
+
+    def mutated_derive_g4_authority(_repo_root: Path) -> str:
+        if tcs.GATE_PREDICATES:
+            pass
+        return "NOT_AUTHORIZED"
+
+    write_corpus(tmp_path)
+    monkeypatch.setattr(tcs, "derive_g4_authority", mutated_derive_g4_authority)
+    ctx = tcs.build_context(tmp_path)
+    assert "A-3" in _ids(tcs.check_a3(ctx))
+
+
+def _d1_probe_leaf_referencing_evidence_symbol() -> None:
+    """모듈 최상위 함수 — ``__globals__`` 를 통해 호출 그래프가 실제로 펼쳐
+    보이는 대상이 되려면 이 함수가 (닫힘 지역변수가 아니라) 이 테스트 모듈의
+    전역 이름으로 존재해야 한다."""
+    _ = tcs.REGISTER_FIELDS  # evidence 심볼 (register 파싱)
+
+
+def _mutated_derive_g4_authority_calls_leaf(_repo_root: Path) -> str:
+    _d1_probe_leaf_referencing_evidence_symbol()
+    return "NOT_AUTHORIZED"
+
+
+def test_a3_call_graph_closure_follows_module_level_callees(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A-3 의 호출 그래프 순회가 entry 함수 자신뿐 아니라, 그 함수가 호출하는
+    같은 모듈의 다른 함수까지 펼쳐 evidence 심볼을 잡아낸다."""
+    monkeypatch.setattr(
+        tcs, "derive_g4_authority", _mutated_derive_g4_authority_calls_leaf
+    )
+    consumed = tcs._call_graph_closure(tcs.derive_g4_authority)
+    assert "REGISTER_FIELDS" in consumed
+
+
+# ---------------------------------------------------------------------------
+# 22. D0-5b — D-1 처분 검사기 + U-6 (§7.4/§13.6.6)
+# ---------------------------------------------------------------------------
+
+D1_TEST_SITE_REL = Path("d1_test_pkg/probe_module.py")
+D1_TEST_SITES = (("d1probe", D1_TEST_SITE_REL, "module", ""),)
+
+
+def _write_d1_test_site(root: Path, docstring_body: str) -> None:
+    path = root / D1_TEST_SITE_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'"""{docstring_body}"""\n', encoding="utf-8")
+
+
+def _write_mini_profile(
+    root: Path, *, bounds: dict[str, dict[str, object]], limits: dict[str, object]
+) -> None:
+    path = root / tcs.VERIFICATION_PROFILE_002_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump({"bounds": bounds, "limits": limits}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+
+def test_d1_real_corpus_dispositions_match_expected() -> None:
+    """§7.4 실측 기대: 6곳 UNBOUND · resolver 1곳만 UNDECIDED."""
+    dispositions, _profile_blocked = tcs.compute_d1_dispositions(_REPO_ROOT)
+    assert dispositions["resolver"][0] == "UNDECIDED"
+    for name in (
+        "backtest__init__",
+        "results",
+        "construction",
+        "records",
+        "engine",
+        "marketfeed",
+    ):
+        assert dispositions[name][0] == "UNBOUND", (name, dispositions[name])
+
+
+def test_d1_real_corpus_u6_registered_is_clean() -> None:
+    ctx = tcs.build_context(_REPO_ROOT)
+    assert tcs.check_d1(ctx) == []
+
+
+def test_d1_unbound_declaration_phrase_is_derived(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_d1_test_site(
+        tmp_path,
+        "some_field is not a VERIFICATION-PROFILE-002 key at all, absent from census.",
+    )
+    dispositions, _profile_blocked = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNBOUND"
+
+
+def test_d1_valued_nonnull_backtick_key_is_derived(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, "This module consumes ``B_probe_bound``.")
+    dispositions, _profile_blocked = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"] == ("VALUED", "B_probe_bound")
+
+
+def test_d1_blocked_null_backtick_key_is_derived(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": None}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, "This module consumes ``B_probe_bound``.")
+    dispositions, _profile_blocked = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"] == ("BLOCKED", "B_probe_bound")
+
+
+def test_d1_unbound_declaration_wins_over_incidental_profile_key_mention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """engine/__init__.py 재현 — 대조용으로 실재 프로파일 키를 인용해도
+    UNBOUND 선언 문언이 우선한다(§7.4 — 저작자 결론이 우선)."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(
+        tmp_path,
+        "The real dependency is not a VERIFICATION-PROFILE-002 key at all; "
+        "for contrast the profile does carry ``B_probe_bound`` (non-null) but that "
+        "bounds something else entirely.",
+    )
+    dispositions, _profile_blocked = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNBOUND"
+
+
+def test_d1_key_not_supplied_is_undecided(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    # 우주는 정상 로드되지만(genuine 케이스와 profile-load-failure 케이스를
+    # 구별하려면 프로파일이 유효해야 한다) 이 docstring 은 어떤 키도 인용하지
+    # 않는다.
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 1}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, "No bound is named or cited here at all.")
+    dispositions, profile_blocked = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNDECIDED"
+    assert profile_blocked == ()
+
+
+def test_d1_missing_site_file_is_excluded_from_dispositions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    dispositions, _profile_blocked = tcs.compute_d1_dispositions(tmp_path)
+    assert "d1probe" not in dispositions
+
+
+def test_u6_undecided_site_without_register_row_is_red(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    write_corpus(tmp_path)
+    # 유효한 프로파일을 둬야 이 UNDECIDED 가 genuine("키 미공급")임을
+    # 확인할 수 있다 — 프로파일이 아예 없으면 profile-load-failure 축으로
+    # 새는 별도 D-1 violation(과 이 테스트가 검증하려는 U-6 이 아니게 된다).
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 1}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, "No bound is named or cited here at all.")
+    findings = _run(tmp_path)
+    assert "U-6" in _ids(findings)
+    assert "D-1" not in _ids(findings)
+
+
+def test_u6_undecided_site_with_register_row_is_green(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    registered_row = dict(
+        UNCHECKABLE_ROW_2_YES,
+        id="MINI-UNCHK-D1PROBE",
+        axis="d1probe 사이트의 결속 축",
+        reason="d1probe 는 UNDECIDED 로 §7.4 D-1 이 파생했다",
+    )
+    write_corpus(tmp_path, uncheckable_rows=[UNCHECKABLE_ROW_1, registered_row])
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 1}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, "No bound is named or cited here at all.")
+    findings = _run(tmp_path)
+    assert "U-6" not in _ids(findings)
+    assert "D-1" not in _ids(findings)
+
+
+def test_d1_profile_universe_load_failure_is_fail_closed_violation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """profile_key_universe 가 None(형상 불인식)을 반환하면, 프로파일 대조가
+    필요했던 사이트는 (제대로 판정했다면 VALUED/BLOCKED 였을 수도 있으므로)
+    조용히 UNDECIDED 로 접히지 않고 D-1 자체의 fail-closed violation 이
+    돼야 한다 — U-6(§13 등재)로는 구제되지 않는다."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    write_corpus(tmp_path)
+    # bounds 섹션이 없는 프로파일 — profile_key_universe 의 형상 검증에
+    # 걸려 None 을 반환해야 한다(fail-closed).
+    profile_path = tmp_path / tcs.VERIFICATION_PROFILE_002_REL
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(
+        yaml.safe_dump({"limits": {"MAX_probe": 1}}), encoding="utf-8"
+    )
+    _write_d1_test_site(tmp_path, "This module consumes ``B_probe_bound``.")
+
+    dispositions, profile_blocked = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNDECIDED"
+    assert "d1probe" in profile_blocked
+
+    findings = _run(tmp_path)
+    assert "D-1" in _ids(findings)
+    # U-6 은 이 사이트에 대해 별도로 발화하지 않는다 — 실패 사유가 다르다.
+    assert not any(f.check_id == "U-6" and "d1probe" in f.message for f in findings)
+
+
+def test_d1_profile_universe_not_needed_when_unbound_resolves_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """UNBOUND 선언으로 즉시 해소되는 사이트는 프로파일이 깨져 있어도
+    영향받지 않는다(우주가 애초에 필요 없다)."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    write_corpus(tmp_path)
+    profile_path = tmp_path / tcs.VERIFICATION_PROFILE_002_REL
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(yaml.safe_dump({"limits": {}}), encoding="utf-8")
+    _write_d1_test_site(
+        tmp_path, "some_field is not a VERIFICATION-PROFILE-002 key at all."
+    )
+
+    dispositions, profile_blocked = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNBOUND"
+    assert profile_blocked == ()
+    assert "D-1" not in _ids(_run(tmp_path))
