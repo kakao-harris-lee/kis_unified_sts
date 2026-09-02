@@ -473,7 +473,20 @@ SPG-EV-011,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 SPG-EV-011,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 SPG-EV-012,PACKAGE,tos/src/tos/spg/records.py,PRESENT,tos/src/tos/spg/records.py:528
 SPG-EV-012,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SPG-EV-012,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+SPG-EV-012,TEST,tests/spg/test_spg_replay_substrate.py::test_activation_digest_equals_record_canonical_digest,PRESENT,tos/tests/spg/test_spg_replay_substrate.py:86
+SPG-EV-012,TEST,tests/spg/test_spg_replay_substrate.py::test_activation_digest_is_a_plain_scalar_not_an_authority_object,PRESENT,tos/tests/spg/test_spg_replay_substrate.py:287
+SPG-EV-012,TEST,tests/spg/test_spg_replay_substrate.py::test_activation_record_grants_no_authority,PRESENT,tos/tests/spg/test_spg_replay_substrate.py:267
+SPG-EV-012,TEST,tests/spg/test_spg_replay_substrate.py::test_activation_record_replay_fields_reject_mutation[activation_id-act-forged],PRESENT,tos/tests/spg/test_spg_replay_substrate.py:243
+SPG-EV-012,TEST,tests/spg/test_spg_replay_substrate.py::test_activation_record_replay_fields_reject_mutation[envelope_digest-forged-digest],PRESENT,tos/tests/spg/test_spg_replay_substrate.py:243
+SPG-EV-012,TEST,tests/spg/test_spg_replay_substrate.py::test_activation_record_replay_fields_reject_mutation[predecessor_generation-99],PRESENT,tos/tests/spg/test_spg_replay_substrate.py:243
+SPG-EV-012,TEST,tests/spg/test_spg_replay_substrate.py::test_activation_record_replay_fields_reject_mutation[restrictive_generation_effects-value1],PRESENT,tos/tests/spg/test_spg_replay_substrate.py:243
+SPG-EV-012,TEST,tests/spg/test_spg_replay_substrate.py::test_active_envelope_generation_absent_and_present,PRESENT,tos/tests/spg/test_spg_replay_substrate.py:72
+SPG-EV-012,TEST,tests/spg/test_spg_replay_substrate.py::test_active_envelope_version_absent_and_present,PRESENT,tos/tests/spg/test_spg_replay_substrate.py:56
+SPG-EV-012,TEST,tests/spg/test_spg_replay_substrate.py::test_active_profile_generation_absent_and_present,PRESENT,tos/tests/spg/test_spg_replay_substrate.py:79
+SPG-EV-012,TEST,tests/spg/test_spg_replay_substrate.py::test_active_profile_version_absent_and_present,PRESENT,tos/tests/spg/test_spg_replay_substrate.py:64
+SPG-EV-012,TEST,tests/spg/test_spg_replay_substrate.py::test_replay_coordinates_are_re_wrap_stable,PRESENT,tos/tests/spg/test_spg_replay_substrate.py:182
+SPG-EV-012,TEST,tests/spg/test_spg_replay_substrate.py::test_replay_coordinates_reconstruct_denial_too,PRESENT,tos/tests/spg/test_spg_replay_substrate.py:209
+SPG-EV-012,TEST,tests/spg/test_spg_replay_substrate.py::test_replay_coordinates_reconstruct_value_equal,PRESENT,tos/tests/spg/test_spg_replay_substrate.py:156
 HAG-EV-001,PACKAGE,tos/src/tos/hag/__init__.py,PRESENT,tos/src/tos/hag/__init__.py:62
 HAG-EV-001,PACKAGE,tos/src/tos/hag/predicates.py,PRESENT,tos/src/tos/hag/predicates.py:18
 HAG-EV-001,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
