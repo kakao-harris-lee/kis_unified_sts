@@ -51,6 +51,16 @@ class BarTimeProjection(FrozenModel):
     *provisional*: the trustworthy-time bounds are register §8-1 new-key candidates and the Phase-0
     bounds approval (P0-1) is incomplete, so a run built on them closes no EV (design #33 §1.1).
 
+    Two of these injected fields are bound to a VERIFICATION-PROFILE-002 key and each key carries a
+    value: ``future_tolerance`` is bound to ``MAX_future_timestamp_tolerance_ms`` (profile rationale
+    — "a timestamp from the future outside this tolerance is rejected", ADR-002-008 §9), and
+    ``maximum_consumer_age_ms`` is bound to ``MAX_critical_input_consumer_receipt_age_ms`` (profile
+    rationale — "consumer-local receipt age …", ADR-002-018 §14). The remaining injected bounds
+    (``source_age``, ``delay_bounds``, ``max_age_bound``, ``snapshot_age_bound``,
+    ``interval_width``, ``boundary_lag``, ``health_state``) are **not VERIFICATION-PROFILE-002
+    keys** — their trustworthy-time bound category (register §8-1) is not yet established; tracked
+    as UNCHK-024.
+
     Two coordinates are genuinely **bar-derived** rather than constant:
 
     * ``uncertainty_interval`` = ``[bar.timestamp_coordinate, + interval_width]`` — the reference
@@ -69,11 +79,13 @@ class BarTimeProjection(FrozenModel):
     delay_bounds: tuple[int | None, ...] = ()
     #: The injected freshness threshold.
     max_age_bound: int
-    #: The injected future-timestamp tolerance.
+    #: The injected future-timestamp tolerance. Bound to VERIFICATION-PROFILE-002 key
+    #: ``MAX_future_timestamp_tolerance_ms`` (ADR-002-008 §9).
     future_tolerance: int
     #: The injected effective snapshot age bound.
     snapshot_age_bound: int
-    #: The injected maximum consumer age.
+    #: The injected maximum consumer age. Bound to VERIFICATION-PROFILE-002 key
+    #: ``MAX_critical_input_consumer_receipt_age_ms`` (ADR-002-018 §14).
     maximum_consumer_age_ms: int
     #: The width of the reference-frame uncertainty window anchored at the bar coordinate.
     interval_width: int

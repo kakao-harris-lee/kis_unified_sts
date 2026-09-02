@@ -3765,11 +3765,11 @@ def _write_mini_profile(
 
 
 def test_d1_real_corpus_dispositions_match_expected() -> None:
-    """§7.4 실측 기대: 6곳 UNBOUND · resolver 1곳만 UNDECIDED."""
+    """§7.4 실측 기대: 7곳 전부 UNBOUND (UNCHK-024 부분 해소 — resolver 도 UNBOUND)."""
     dispositions, _profile_blocked = tcs.compute_d1_dispositions(_REPO_ROOT)
-    assert dispositions["resolver"][0] == "UNDECIDED"
     for name in (
         "backtest__init__",
+        "resolver",
         "results",
         "construction",
         "records",
