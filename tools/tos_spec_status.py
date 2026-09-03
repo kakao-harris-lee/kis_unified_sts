@@ -17,6 +17,7 @@ import argparse
 import csv
 import os
 import re
+import subprocess
 import sys
 from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -1673,15 +1674,100 @@ class BrokerConstructionSite:
     is_entrypoint: bool
 
 
+def _reverse_scan_source_is_eligible(relative_path: str) -> bool:
+    """True if ``relative_path`` is within the reverse census's filters.
+
+    Shared by the git-aware universe and the ``os.walk`` fallback below so the
+    two paths cannot drift: every path component -- directories and the file
+    name alike -- must avoid ``_REVERSE_SCAN_SKIPPED_DIRS`` and a leading
+    ``.``, and the file itself must be a ``*.py`` file that is neither
+    ``test_*.py`` nor ``conftest.py``.
+    """
+    parts = relative_path.split("/")
+    if any(
+        part in _REVERSE_SCAN_SKIPPED_DIRS or part.startswith(".") for part in parts
+    ):
+        return False
+    file_name = parts[-1]
+    if not file_name.endswith(".py"):
+        return False
+    return not (file_name.startswith("test_") or file_name == "conftest.py")
+
+
+def _reverse_scan_git_universe(repo_root: Path) -> tuple[str, ...] | None:
+    """Return the git-aware census universe, or ``None`` when git is unavailable.
+
+    The universe is every file git does *not* consider ignored: tracked files
+    plus untracked-but-not-ignored files, via
+    ``git ls-files --cached --others --exclude-standard``.  This keeps a
+    gitignored local checkout -- a vendored SDK, say -- out of census input
+    while still scanning a brand-new untracked top-level package, so the scan
+    still cannot go blind the way a hardcoded route range would.
+
+    Returns ``None`` (never raises) when ``repo_root`` is not a git work tree,
+    ``git`` is not on ``PATH``, or the invocation otherwise fails, so the
+    caller can fall back to the directory-pruned walk.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            capture_output=True,
+            check=False,
+            cwd=repo_root,
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    paths: list[str] = []
+    for chunk in result.stdout.split(b"\x00"):
+        if not chunk:
+            continue
+        try:
+            paths.append(chunk.decode("utf-8"))
+        except UnicodeDecodeError:
+            continue
+    return tuple(paths)
+
+
 def _iter_reverse_scan_sources(repo_root: Path) -> Iterator[tuple[str, str]]:
     """Yield ``(relative_path, text)`` for every file the reverse census covers.
 
-    Directory pruning rather than an allowlist: a brand-new top-level package is
-    scanned automatically, so the scan cannot go blind the way a hardcoded route
-    range does.  Both the construction scan and the definition anchor below walk
-    exactly this set, which is what makes the anchor meaningful -- a symbol is
-    grounded in the same tree the census is able to observe.
+    The universe comes from git when ``repo_root`` is a git work tree with a
+    runnable ``git``: every file git does not consider ignored (tracked plus
+    untracked-but-not-ignored), via ``git ls-files --cached --others
+    --exclude-standard``.  This is not an allowlist -- a brand-new untracked
+    top-level package is still scanned automatically, so the scan cannot go
+    blind the way a hardcoded route range does -- but it does mean a
+    gitignored local checkout (a vendored SDK, say) is never census input.
+    When git is unavailable (not a work tree, ``git`` missing, or the call
+    fails) the universe falls back to a directory-pruned ``os.walk`` that
+    knows nothing about ``.gitignore``.
+
+    Both paths apply the identical filters, via
+    ``_reverse_scan_source_is_eligible``, so they cannot drift: skip a
+    skipped or dot-prefixed directory (or file), keep only ``*.py``, and skip
+    ``test_*.py`` and ``conftest.py``.  Both the construction scan and the
+    definition anchor below walk exactly this set, which is what makes the
+    anchor meaningful -- a symbol is grounded in the same tree the census is
+    able to observe.
     """
+    git_universe = _reverse_scan_git_universe(repo_root)
+    if git_universe is not None:
+        for relative_path in sorted(
+            path for path in git_universe if _reverse_scan_source_is_eligible(path)
+        ):
+            path = repo_root / relative_path
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                # A file may be in the git index (or newly untracked) but
+                # absent or unreadable in the worktree; skip it rather than
+                # fail the whole scan closed over one path.
+                continue
+            yield relative_path, text
+        return
+
     for dir_path, dir_names, file_names in os.walk(repo_root):
         dir_names[:] = sorted(
             name
@@ -1689,16 +1775,15 @@ def _iter_reverse_scan_sources(repo_root: Path) -> Iterator[tuple[str, str]]:
             if name not in _REVERSE_SCAN_SKIPPED_DIRS and not name.startswith(".")
         )
         for file_name in sorted(file_names):
-            if not file_name.endswith(".py"):
-                continue
-            if file_name.startswith("test_") or file_name in {"conftest.py"}:
-                continue
             path = Path(dir_path) / file_name
+            relative_path = path.relative_to(repo_root).as_posix()
+            if not _reverse_scan_source_is_eligible(relative_path):
+                continue
             try:
                 text = path.read_text(encoding="utf-8")
             except (UnicodeDecodeError, OSError):
                 continue
-            yield path.relative_to(repo_root).as_posix(), text
+            yield relative_path, text
 
 
 def scan_broker_construction_sites(

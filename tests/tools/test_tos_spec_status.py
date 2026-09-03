@@ -6,6 +6,7 @@ import csv
 import importlib.util
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -750,6 +751,97 @@ def test_reverse_scan_reports_non_entrypoint_constructions_without_failing(tmp_p
     assert status.validate_legacy_route_reverse_census(
         repo, repo / "register.csv", frozenset(), _real_vocabulary()
     ) == ("shared/execution/mirror.py",)
+
+
+# --------------------------------------------------------------------------
+# Git-aware census universe: a gitignored local checkout (e.g. a vendored SDK
+# excluded via .gitignore) must never be census input, while a brand-new
+# untracked-but-not-ignored package must still be scanned -- the "not an
+# allowlist / cannot go blind" property has to survive git-awareness.
+# --------------------------------------------------------------------------
+
+
+def _run_git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+def test_gitignored_untracked_dir_is_excluded_from_the_census(tmp_path):
+    if shutil.which("git") is None:
+        pytest.skip("git is not available in this environment")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    (repo / ".gitignore").write_text("vendor/\n", encoding="utf-8")
+    # Both files are left untracked (no `git add`); only vendor/x.py is
+    # ignored, so services/y.py must still be scanned as an untracked-but-not
+    # -ignored package.
+    _fake_repo(repo, "vendor/x.py", _SENDER_ENTRYPOINT)
+    _fake_repo(repo, "services/y.py", _SENDER_ENTRYPOINT)
+
+    sites = status.scan_broker_construction_sites(repo, _real_vocabulary())
+
+    assert [site.relative_path for site in sites] == ["services/y.py"]
+
+
+def test_control_the_same_layout_without_git_scans_both_files(tmp_path):
+    # Control for the test above.  With no git repo at all (the directory-
+    # pruned os.walk fallback the tmp_path fake repos already rely on), both
+    # files are scanned -- proving the git path above is what excludes
+    # vendor/x.py, not some other filter.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".gitignore").write_text("vendor/\n", encoding="utf-8")
+    _fake_repo(repo, "vendor/x.py", _SENDER_ENTRYPOINT)
+    _fake_repo(repo, "services/y.py", _SENDER_ENTRYPOINT)
+
+    sites = status.scan_broker_construction_sites(repo, _real_vocabulary())
+
+    assert sorted(site.relative_path for site in sites) == [
+        "services/y.py",
+        "vendor/x.py",
+    ]
+
+
+def test_anchor_tree_matches_the_git_aware_census_tree(tmp_path):
+    # A registered symbol whose only class definition lives under a
+    # gitignored directory must still be rejected as ungrounded: the anchor
+    # tree is deliberately the same tree the (now git-aware) census scans.
+    if shutil.which("git") is None:
+        pytest.skip("git is not available in this environment")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    (repo / ".gitignore").write_text("vendor/\n", encoding="utf-8")
+    vocabulary = _vocabulary(
+        tmp_path / "corpus", [_symbol_row("GhostSender", "ORDER_SENDER")]
+    )
+    _fake_repo(repo, "vendor/ghost.py", "class GhostSender:\n    pass\n")
+
+    with pytest.raises(status.StatusError, match="no class definition"):
+        status.validate_broker_symbols_are_grounded(
+            repo, repo / "register.csv", vocabulary
+        )
+
+
+def test_skipped_dirs_and_dot_dirs_are_excluded_on_the_git_path(tmp_path):
+    # The existing skipped-dir (tests/) and dot-dir (.hidden/) filters must
+    # still apply once the universe comes from `git ls-files` instead of
+    # os.walk -- both paths share one filter helper so they cannot drift.
+    if shutil.which("git") is None:
+        pytest.skip("git is not available in this environment")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    vocabulary = _vocabulary(
+        tmp_path / "corpus", [_symbol_row("DirFiltered", "ORDER_SENDER")]
+    )
+    _fake_repo(repo, "tests/unit/planted.py", "class DirFiltered:\n    pass\n")
+    _fake_repo(repo, ".hidden/planted.py", "class DirFiltered:\n    pass\n")
+
+    with pytest.raises(status.StatusError, match="DirFiltered"):
+        status.validate_broker_symbols_are_grounded(
+            repo, repo / "register.csv", vocabulary
+        )
 
 
 # --------------------------------------------------------------------------
