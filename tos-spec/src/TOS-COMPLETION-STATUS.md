@@ -63,13 +63,13 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
 - `U-13 fwd_a_excluded_rows=['STATE-EV-004']`
 - `U-13 remainder_rows=[]`
 - `A-2: ARCHITECTURE-GATE-STATUS.md 에 기계 파싱 가능한 권한 축-표기 없음(실측 확인 — §6.4 대조 대상에서 제외)`
-- `D0-5[backtest__init__]=UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`
-- `D0-5[resolver]=UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`
-- `D0-5[results]=UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`
-- `D0-5[construction]=UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`
-- `D0-5[records]=UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`
-- `D0-5[engine]=UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`
-- `D0-5[marketfeed]=UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`
+- `D0-5[backtest__init__]=UNBOUND (dsl_evaluation_budget_steps)`
+- `D0-5[resolver]=UNBOUND (MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND)`
+- `D0-5[results]=UNBOUND (dsl_evaluation_budget_steps)`
+- `D0-5[construction]=UNBOUND (risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND)`
+- `D0-5[records]=UNBOUND (risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; lot_rounding:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND)`
+- `D0-5[engine]=UNBOUND (dsl_evaluation_budget_steps; CONTRAST: MAX_dsl_evaluation_ms)`
+- `D0-5[marketfeed]=UNBOUND (VER-002-KEYS: NONE — tos/src/tos/marketfeed 6개 파일 스캔, 프로파일 키 참조 0)`
 
 ## Phase-0 unchecked-axis register (full exposure, U-3)
 
@@ -104,13 +104,13 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
 
 | site | disposition | key/declaration |
 |---|---|---|
-| backtest__init__ | `UNBOUND` | docstring 에 UNBOUND 선언 문언 존재 |
-| resolver | `UNBOUND` | docstring 에 UNBOUND 선언 문언 존재 |
-| results | `UNBOUND` | docstring 에 UNBOUND 선언 문언 존재 |
-| construction | `UNBOUND` | docstring 에 UNBOUND 선언 문언 존재 |
-| records | `UNBOUND` | docstring 에 UNBOUND 선언 문언 존재 |
-| engine | `UNBOUND` | docstring 에 UNBOUND 선언 문언 존재 |
-| marketfeed | `UNBOUND` | docstring 에 UNBOUND 선언 문언 존재 |
+| backtest__init__ | `UNBOUND` | dsl_evaluation_budget_steps |
+| resolver | `UNBOUND` | MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND |
+| results | `UNBOUND` | dsl_evaluation_budget_steps |
+| construction | `UNBOUND` | risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND |
+| records | `UNBOUND` | risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; lot_rounding:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND |
+| engine | `UNBOUND` | dsl_evaluation_budget_steps; CONTRAST: MAX_dsl_evaluation_ms |
+| marketfeed | `UNBOUND` | VER-002-KEYS: NONE — tos/src/tos/marketfeed 6개 파일 스캔, 프로파일 키 참조 0 |
 
 ## Phase 0 termination-condition overview (section 11)
 

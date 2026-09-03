@@ -69,6 +69,8 @@ the environment-injection point does not repeat it. Look-ahead is checked agains
 Each of those is a producer-honesty boundary this layer detects rather than enforces, and none of
 them is claimed as closed.
 
+VER-002-KEYS: NONE
+
 Public surface groups by module:
 
 * :mod:`tos.marketfeed.vocabulary` — the closed disposition / rejection-reason vocabulary.

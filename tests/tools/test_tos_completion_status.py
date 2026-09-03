@@ -658,6 +658,73 @@ def _write_csv(path: Path, fields: tuple[str, ...], rows: list[dict[str, str]]) 
             writer.writerow(row)
 
 
+# ---------------------------------------------------------------------------
+# D0-5b — write_corpus 기본 배선용 D-1 사이트/프로파일 fixture (§7.4)
+#
+# ``compute_d1_dispositions`` 는 이제 D1_SITES 7사이트 전부에 대해
+# fail-closed 판정을 낸다(파일 부재 포함) — 그래서 D-1 을 검사 대상으로
+# 삼지 않는 나머지 수십 개 write_corpus 호출부가 D-1/U-6 오탐으로 깨지지
+# 않으려면, write_corpus 기본 호출 자체가 7사이트 + 최소 프로파일을
+# 함께 배선해야 한다.  실 사이트 표(``tcs.D1_SITES``)를 재저작하지 않고
+# 그대로 재사용한다(§6.3.2 파생 로직 1벌 저작).
+# ---------------------------------------------------------------------------
+
+_D1_DEFAULT_PROFILE_BOUNDS = {"B_d1_default_baseline_bound": {"value_ms": 500}}
+_D1_DEFAULT_PROFILE_LIMITS = {"MAX_d1_default_baseline_ceiling": 1}
+
+
+_D1_NONE_DOC_LINES = (
+    "Synthetic D0-5 default site (write_corpus).",
+    "",
+    "VER-002-KEYS: NONE",
+)
+
+
+def _d1_default_site_source(kind: str, target: str) -> str:
+    """write_corpus 기본 배선용 최소 유효 소스 — 전부 ``VER-002-KEYS: NONE``
+    선언(검사기의 NONE 실측 스캔이 통과하도록 프로파일 키를 어디에도
+    인용하지 않는다)."""
+    if kind == "module":
+        body = "\n".join(_D1_NONE_DOC_LINES)
+        return f'"""{body}\n"""\n'
+    if kind == "class":
+        body = "\n    ".join(_D1_NONE_DOC_LINES)
+        return f'class {target}:\n    """{body}\n    """\n'
+    if kind == "method":
+        class_name, _, method_name = target.partition(".")
+        body = "\n        ".join(_D1_NONE_DOC_LINES)
+        return (
+            f"class {class_name}:\n"
+            f"    def {method_name}(self) -> None:\n"
+            f'        """{body}\n        """\n'
+        )
+    raise ValueError(f"알 수 없는 D1 site kind: {kind!r}")
+
+
+def _write_default_d1_corpus(root: Path) -> None:
+    """D0-5 7사이트 기본 배선 — 실 저장소와 같은 상대 경로에 최소 유효
+    (``VER-002-KEYS: NONE``) 소스를 쓰고, 그 선언이 요구하는 최소 프로파일
+    우주도 함께 쓴다(§7.4/D-1 은 이제 모든 선언 형태가 우주 로드를
+    필요로 한다). ``write_corpus(..., write_d1_sites=False)`` 로 끄면
+    호출자가 ``tcs.D1_SITES`` 를 monkeypatch 해 직접 배선한다."""
+    for _name, rel, kind, target in tcs.D1_SITES:
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_d1_default_site_source(kind, target), encoding="utf-8")
+    profile_path = root / tcs.VERIFICATION_PROFILE_002_REL
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(
+        yaml.safe_dump(
+            {
+                "bounds": _D1_DEFAULT_PROFILE_BOUNDS,
+                "limits": _D1_DEFAULT_PROFILE_LIMITS,
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def write_corpus(
     root: Path,
     *,
@@ -679,6 +746,7 @@ def write_corpus(
     authority_rows: list[dict[str, str]] | None = None,
     current_status_text: str | None = None,
     completion_status_text: str | None = None,
+    write_d1_sites: bool = True,
 ) -> None:
     """합성 미니 코퍼스를 ``root`` 아래 실제 코퍼스와 같은 상대 경로로 쓴다.
 
@@ -702,7 +770,17 @@ def write_corpus(
     커밋 2개를 얹고, 레지스터 CSV(그 NO 행을 포함) 커밋(C)을 그 뒤에
     둔다 — c_APP(L) 이 edge 커밋(C) 의 **진 조상**이어야 하므로
     (U-16-c g1 SAME_COMMIT 회피) 셋을 한 커밋으로 묶을 수 없다.
+
+    ``write_d1_sites=True``(기본)면 D0-5 7사이트(``tcs.D1_SITES``)와 최소
+    프로파일을 함께 배선해 D-1/U-6 을 clean 으로 유지한다(§7.4 D-1 절
+    참고 — ``compute_d1_dispositions`` 가 사이트 부재를 fail-closed 로
+    다루므로, D-1 을 검사 대상으로 삼지 않는 호출부는 이 배선이 없으면
+    가짜 D-1/U-6 findings 를 받는다). D-1 자체를 표적하는 테스트는
+    ``tcs.D1_SITES`` 를 단일 합성 사이트로 monkeypatch 하므로
+    ``write_d1_sites=False`` 로 이 기본 배선과의 중복을 피한다.
     """
+    if write_d1_sites:
+        _write_default_d1_corpus(root)
     if register_rows is None:
         register_rows = [REGISTER_ROW_1, REGISTER_ROW_2, REGISTER_ROW_3_PROFILE]
     if required_kinds_rows is None:
@@ -4231,7 +4309,7 @@ def _write_mini_profile(
 
 def test_d1_real_corpus_dispositions_match_expected() -> None:
     """§7.4 실측 기대: 7곳 전부 UNBOUND (UNCHK-024 부분 해소 — resolver 도 UNBOUND)."""
-    dispositions, _profile_blocked = tcs.compute_d1_dispositions(_REPO_ROOT)
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(_REPO_ROOT)
     for name in (
         "backtest__init__",
         "resolver",
@@ -4249,19 +4327,32 @@ def test_d1_real_corpus_u6_registered_is_clean() -> None:
     assert tcs.check_d1(ctx) == []
 
 
-def test_d1_unbound_declaration_phrase_is_derived(
+def test_d1_declaration_missing_is_undecided(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """§7.4/D-2 — 선언 행이 아예 없으면(구식 산문뿐이어도) UNDECIDED. 그
+    산문 자체는 더 이상 처분 입력이 아니다(Codex verdict
+    review-mtljvycx-ouye7r finding 2 — 산문이 우주 대조를 단락하던 구
+    경로 폐지)."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 1}},
+        limits={"MAX_probe_ceiling": 1},
+    )
     _write_d1_test_site(
         tmp_path,
         "some_field is not a VERIFICATION-PROFILE-002 key at all, absent from census.",
     )
-    dispositions, _profile_blocked = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNBOUND"
+    dispositions, fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"] == (
+        "UNDECIDED",
+        "VER-002-KEYS 선언 부재 — 키 미공급",
+    )
+    assert fail_closed == ()
 
 
-def test_d1_valued_nonnull_backtick_key_is_derived(
+def test_d1_valued_nonnull_declared_key_is_derived(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
@@ -4270,12 +4361,16 @@ def test_d1_valued_nonnull_backtick_key_is_derived(
         bounds={"B_probe_bound": {"value_ms": 500}},
         limits={"MAX_probe_ceiling": 1},
     )
-    _write_d1_test_site(tmp_path, "This module consumes ``B_probe_bound``.")
-    dispositions, _profile_blocked = tcs.compute_d1_dispositions(tmp_path)
+    _write_d1_test_site(
+        tmp_path,
+        "VER-002-KEYS: ``B_probe_bound``\n\n"
+        "This module consumes ``B_probe_bound`` for its timing check.",
+    )
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
     assert dispositions["d1probe"] == ("VALUED", "B_probe_bound")
 
 
-def test_d1_blocked_null_backtick_key_is_derived(
+def test_d1_blocked_null_declared_key_is_derived(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
@@ -4284,16 +4379,43 @@ def test_d1_blocked_null_backtick_key_is_derived(
         bounds={"B_probe_bound": {"value_ms": None}},
         limits={"MAX_probe_ceiling": 1},
     )
-    _write_d1_test_site(tmp_path, "This module consumes ``B_probe_bound``.")
-    dispositions, _profile_blocked = tcs.compute_d1_dispositions(tmp_path)
+    _write_d1_test_site(
+        tmp_path,
+        "VER-002-KEYS: ``B_probe_bound``\n\n"
+        "This module consumes ``B_probe_bound`` for its timing check.",
+    )
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
     assert dispositions["d1probe"] == ("BLOCKED", "B_probe_bound")
 
 
-def test_d1_unbound_declaration_wins_over_incidental_profile_key_mention(
+def test_d1_unbound_derived_from_declared_key_absent_from_universe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """engine/__init__.py 재현 — 대조용으로 실재 프로파일 키를 인용해도
-    UNBOUND 선언 문언이 우선한다(§7.4 — 저작자 결론이 우선)."""
+    """§7.4 — UNBOUND 는 이제 산문 문구가 아니라 «선언 키가 우주에 없다»는
+    구조적 사실에서만 나온다."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(
+        tmp_path,
+        "VER-002-KEYS: ``some_field``\n\n"
+        "``some_field`` is discussed at length here but is absent from census.",
+    )
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"] == ("UNBOUND", "some_field")
+
+
+def test_d1_forged_prose_with_zero_declared_keys_cannot_derive_unbound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """[flipped, Codex verdict review-mtljvycx-ouye7r finding 2] 이전에는
+    이 정확한 입력(산문 + 대조용 실재 non-null 키 인용)이 UNBOUND 를
+    강제했다 — 산문이 우주 대조를 단락했기 때문이다. 이제는 ``VER-002-
+    KEYS:`` 선언이 없으므로 UNDECIDED(선언 부재)로 차단된다: 저작자가
+    처분을 고르는 경로가 닫혔다."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
     _write_mini_profile(
         tmp_path,
@@ -4306,8 +4428,223 @@ def test_d1_unbound_declaration_wins_over_incidental_profile_key_mention(
         "for contrast the profile does carry ``B_probe_bound`` (non-null) but that "
         "bounds something else entirely.",
     )
-    dispositions, _profile_blocked = tcs.compute_d1_dispositions(tmp_path)
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNDECIDED"
+    assert "D-1" not in _ids(_run(tmp_path))
+
+
+def test_d1_stray_universe_key_in_body_outside_declaration_is_undecided(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """혼재 대조군(설계 규칙 3 — 계약 조항 아님) — 선언 키 하나 + 선언 밖에서 인용된 별개의 실재
+    프로파일 키가 섞이면 그 혼재 자체가 차단된다."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={
+            "B_probe_bound": {"value_ms": 500},
+            "B_other_bound": {"value_ms": 1},
+        },
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(
+        tmp_path,
+        "VER-002-KEYS: ``B_probe_bound``\n\n"
+        "This module consumes ``B_probe_bound`` and, incidentally, ``B_other_bound``.",
+    )
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNDECIDED"
+    assert "B_other_bound" in dispositions["d1probe"][1]
+
+
+def test_d1_declared_key_missing_from_body_is_undecided(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-1(b) — 선언 키는 선언 행 밖 본문에도 리터럴로 등장해야 한다."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(
+        tmp_path, "VER-002-KEYS: ``B_probe_bound``\n\nNothing else mentions it."
+    )
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"] == (
+        "UNDECIDED",
+        "선언 키 본문 부재: B_probe_bound",
+    )
+
+
+def test_d1_declaration_duplicated_is_undecided(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(
+        tmp_path,
+        "VER-002-KEYS: ``B_probe_bound``\n\n"
+        "This mentions ``B_probe_bound`` twice.\n\n"
+        "VER-002-KEYS: NONE",
+    )
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"] == ("UNDECIDED", "VER-002-KEYS 선언 중복")
+
+
+def test_d1_declaration_malformed_is_undecided(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, "VER-002-KEYS: B_probe_bound (no backticks)")
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNDECIDED"
+    assert "형식 오류" in dispositions["d1probe"][1]
+
+
+def test_d1_multi_key_priority_unbound_over_blocked_and_valued(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """설계 규칙 5(계약 조항 아님) — 다중 키 접기는 UNBOUND > BLOCKED > VALUED."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_valued": {"value_ms": 500}, "B_blocked": {"value_ms": None}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(
+        tmp_path,
+        "VER-002-KEYS: ``B_valued``, ``B_blocked``, ``not_a_key``\n\n"
+        "Uses ``B_valued``, ``B_blocked``, and ``not_a_key``.",
+    )
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
     assert dispositions["d1probe"][0] == "UNBOUND"
+
+
+def test_d1_multi_key_priority_blocked_over_valued(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_valued": {"value_ms": 500}, "B_blocked": {"value_ms": None}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(
+        tmp_path,
+        "VER-002-KEYS: ``B_valued``, ``B_blocked``\n\n"
+        "Uses ``B_valued`` and ``B_blocked``.",
+    )
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "BLOCKED"
+
+
+def test_d1_contrast_key_pins_unbound_engine_style(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """engine/__init__.py 재현 — CONTRAST 로 인용된 실재 non-null 키는
+    처분에 기여하지 않는다(근거에만 나열)."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(
+        tmp_path,
+        "VER-002-KEYS: ``some_field``; CONTRAST: ``B_probe_bound``\n\n"
+        "``some_field`` is the real dependency; for contrast, the profile "
+        "does carry ``B_probe_bound`` (non-null) but that bounds something "
+        "else entirely.",
+    )
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNBOUND"
+    assert "CONTRAST: B_probe_bound" in dispositions["d1probe"][1]
+
+
+def test_d1_contrast_key_not_in_universe_is_undecided(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(
+        tmp_path,
+        "VER-002-KEYS: ``B_probe_bound``; CONTRAST: ``not_a_key``\n\n"
+        "Uses ``B_probe_bound``; for contrast, mentions ``not_a_key``.",
+    )
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNDECIDED"
+
+
+def test_d1_contrast_key_missing_from_body_is_undecided(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={
+            "B_probe_bound": {"value_ms": 500},
+            "B_other_bound": {"value_ms": 1},
+        },
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(
+        tmp_path,
+        "VER-002-KEYS: ``B_probe_bound``; CONTRAST: ``B_other_bound``\n\n"
+        "Uses only ``B_probe_bound`` here.",
+    )
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNDECIDED"
+
+
+def test_d1_none_declaration_with_zero_scope_references_is_unbound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(
+        tmp_path, "This package touches nothing profile-shaped.\n\nVER-002-KEYS: NONE"
+    )
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNBOUND"
+    assert "VER-002-KEYS: NONE" in dispositions["d1probe"][1]
+
+
+def test_d1_none_declaration_contradicted_by_scope_reference_is_undecided(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """설계 규칙 6(계약 조항 아님) — NONE 선언은 검사기 실측(스캔)으로 검증된다. module kind 는
+    패키지 디렉터리 전체가 스캔 범위이므로, 같은 디렉터리의 *다른* 파일이
+    참조해도 모순이 걸려야 한다."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, "VER-002-KEYS: NONE")
+    sibling = (tmp_path / D1_TEST_SITE_REL).parent / "sibling.py"
+    sibling.write_text("REAL_KEY = 'B_probe_bound'\n", encoding="utf-8")
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNDECIDED"
+    assert "NONE 선언과 모순" in dispositions["d1probe"][1]
 
 
 def test_d1_key_not_supplied_is_undecided(
@@ -4315,25 +4652,29 @@ def test_d1_key_not_supplied_is_undecided(
 ) -> None:
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
     # 우주는 정상 로드되지만(genuine 케이스와 profile-load-failure 케이스를
-    # 구별하려면 프로파일이 유효해야 한다) 이 docstring 은 어떤 키도 인용하지
-    # 않는다.
+    # 구별하려면 프로파일이 유효해야 한다) 이 docstring 은 선언 행이 없다.
     _write_mini_profile(
         tmp_path,
         bounds={"B_probe_bound": {"value_ms": 1}},
         limits={"MAX_probe_ceiling": 1},
     )
     _write_d1_test_site(tmp_path, "No bound is named or cited here at all.")
-    dispositions, profile_blocked = tcs.compute_d1_dispositions(tmp_path)
+    dispositions, fail_closed = tcs.compute_d1_dispositions(tmp_path)
     assert dispositions["d1probe"][0] == "UNDECIDED"
-    assert profile_blocked == ()
+    assert fail_closed == ()
 
 
-def test_d1_missing_site_file_is_excluded_from_dispositions(
+def test_d1_missing_site_file_is_fail_closed_violation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """[flipped, Codex verdict review-mtljvycx-ouye7r finding 1] 사이트
+    파일 부재는 더 이상 결과에서 조용히 제외되지 않는다 — UNDECIDED 로
+    기록되고 ``fail_closed_sites`` 에 올라 D-1 위반이 된다."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
-    dispositions, _profile_blocked = tcs.compute_d1_dispositions(tmp_path)
-    assert "d1probe" not in dispositions
+    dispositions, fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNDECIDED"
+    assert "d1probe" in fail_closed
+    assert "D-1" in _ids(_run(tmp_path))
 
 
 def test_u6_undecided_site_without_register_row_is_red(
@@ -4341,7 +4682,7 @@ def test_u6_undecided_site_without_register_row_is_red(
 ) -> None:
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
     write_corpus(tmp_path)
-    # 유효한 프로파일을 둬야 이 UNDECIDED 가 genuine("키 미공급")임을
+    # 유효한 프로파일을 둬야 이 UNDECIDED 가 genuine("선언 부재")임을
     # 확인할 수 있다 — 프로파일이 아예 없으면 profile-load-failure 축으로
     # 새는 별도 D-1 violation(과 이 테스트가 검증하려는 U-6 이 아니게 된다).
     _write_mini_profile(
@@ -4380,10 +4721,11 @@ def test_u6_undecided_site_with_register_row_is_green(
 def test_d1_profile_universe_load_failure_is_fail_closed_violation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """profile_key_universe 가 None(형상 불인식)을 반환하면, 프로파일 대조가
-    필요했던 사이트는 (제대로 판정했다면 VALUED/BLOCKED 였을 수도 있으므로)
-    조용히 UNDECIDED 로 접히지 않고 D-1 자체의 fail-closed violation 이
-    돼야 한다 — U-6(§13 등재)로는 구제되지 않는다."""
+    """profile_key_universe 가 None(형상 불인식)을 반환하면, 선언이 있어
+    우주 대조가 실제로 필요했던 사이트는 (제대로 판정했다면 VALUED/
+    BLOCKED/UNBOUND 였을 수도 있으므로) 조용히 UNDECIDED 로 접히지 않고
+    D-1 자체의 fail-closed violation 이 돼야 한다 — U-6(§13 등재)로는
+    구제되지 않는다."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
     write_corpus(tmp_path)
     # bounds 섹션이 없는 프로파일 — profile_key_universe 의 형상 검증에
@@ -4393,11 +4735,14 @@ def test_d1_profile_universe_load_failure_is_fail_closed_violation(
     profile_path.write_text(
         yaml.safe_dump({"limits": {"MAX_probe": 1}}), encoding="utf-8"
     )
-    _write_d1_test_site(tmp_path, "This module consumes ``B_probe_bound``.")
+    _write_d1_test_site(
+        tmp_path,
+        "VER-002-KEYS: ``B_probe_bound``\n\nThis module consumes ``B_probe_bound``.",
+    )
 
-    dispositions, profile_blocked = tcs.compute_d1_dispositions(tmp_path)
+    dispositions, fail_closed = tcs.compute_d1_dispositions(tmp_path)
     assert dispositions["d1probe"][0] == "UNDECIDED"
-    assert "d1probe" in profile_blocked
+    assert "d1probe" in fail_closed
 
     findings = _run(tmp_path)
     assert "D-1" in _ids(findings)
@@ -4405,23 +4750,27 @@ def test_d1_profile_universe_load_failure_is_fail_closed_violation(
     assert not any(f.check_id == "U-6" and "d1probe" in f.message for f in findings)
 
 
-def test_d1_profile_universe_not_needed_when_unbound_resolves_first(
+def test_d1_profile_universe_broken_blocks_even_declared_unbound_site(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """UNBOUND 선언으로 즉시 해소되는 사이트는 프로파일이 깨져 있어도
-    영향받지 않는다(우주가 애초에 필요 없다)."""
+    """[flipped, 설계 규칙 7] 선언이 있으면 UNBOUND 로 판정될 값이라도
+    이제는 우주 로드가 필요하다 — «UNBOUND 는 우주가 필요 없다»던 구
+    가정은 거짓이다. 우주가 깨지면 선언이 있는 사이트는 무조건
+    fail-closed."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
     write_corpus(tmp_path)
     profile_path = tmp_path / tcs.VERIFICATION_PROFILE_002_REL
     profile_path.parent.mkdir(parents=True, exist_ok=True)
     profile_path.write_text(yaml.safe_dump({"limits": {}}), encoding="utf-8")
     _write_d1_test_site(
-        tmp_path, "some_field is not a VERIFICATION-PROFILE-002 key at all."
+        tmp_path,
+        "VER-002-KEYS: ``some_field``\n\n"
+        "some_field is discussed here but is absent from census.",
     )
 
-    dispositions, profile_blocked = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNBOUND"
-    assert profile_blocked == ()
+    dispositions, fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNDECIDED"
+    assert "d1probe" in fail_closed
 
 
 # ---------------------------------------------------------------------------
@@ -4500,29 +4849,31 @@ def test_d1_resolver_docstring_composite_key_removal_is_detectable() -> None:
     """Mutation control: ``delay_bounds`` 4키 중 하나를 docstring 에서
     지우면(불완전한 편집이 저지를 법한 실수) 그 즉시 backtick-리터럴
     추출 결과에서 사라져야 한다 — D-1 검사기가 쓰는 것과 동일한 추출기
-    (``tcs._D1_BACKTICK_RE``)로 재확인한다."""
+    (``tcs._D1_BACKTICK_RE``)로 재확인한다.  이 키는 이제 본문 prose 와
+    ``VER-002-KEYS:`` 선언 행 둘 다에 등장하므로(D-1(b) 요구), 전건
+    제거(``count`` 미지정)로 두 자리 모두를 지운다 — 그중 하나만 지우면
+    다른 자리가 남아 이 대조군이 무력화된다."""
     docstring = _real_resolver_class_docstring()
     literals = tcs._D1_BACKTICK_RE.findall(docstring)
     for key in _DELAY_BOUNDS_COMPOSITE_KEYS:
         assert key in literals
 
-    mutated = docstring.replace("``MAX_time_source_sequence_gap_ms``", "", 1)
+    mutated = docstring.replace("``MAX_time_source_sequence_gap_ms``", "")
     mutated_literals = tcs._D1_BACKTICK_RE.findall(mutated)
     assert "MAX_time_source_sequence_gap_ms" not in mutated_literals
     assert mutated_literals != literals
 
 
-def test_d1_removing_unbound_declaration_flips_synthetic_site_away_from_unbound(
+def test_d1_removing_unbound_key_from_declaration_flips_synthetic_site_to_valued(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Mutation control: strip every UNBOUND-declaration phrase from a
-    docstring shaped like the resolver's post-UNCHK-024 update (a
-    ``delay_bounds``-style composite key literal present, no UNBOUND
-    sentence anywhere) — the disposition must flip away from UNBOUND to a
-    backtick-literal match. This is what proves the UNBOUND sentence (not
-    merely the presence of composite key literals) is what pins the real
-    resolver site's disposition at UNBOUND in
-    ``test_d1_real_corpus_dispositions_match_expected``."""
+    """Mutation control (신 문법): resolver 사이트의 선언은 6개의 실재
+    non-null 키 + ``max_age_bound``(우주 밖) 하나로 구성된다. 접기
+    우선순위(UNBOUND > BLOCKED > VALUED, 설계 규칙 5)상 그 ``max_age_bound``
+    단 하나가 사이트 전체를 UNBOUND 로 고정한다 — 선언에서 그 키를
+    빼면 disposition 이 즉시 VALUED 로 넘어가야 한다. 이것이
+    ``test_d1_real_corpus_dispositions_match_expected`` 가 관측하는 실
+    resolver 사이트의 UNBOUND 를 무엇이 고정하는지 보이는 대조군이다."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
     _write_mini_profile(
         tmp_path,
@@ -4531,11 +4882,23 @@ def test_d1_removing_unbound_declaration_flips_synthetic_site_away_from_unbound(
     )
     _write_d1_test_site(
         tmp_path,
+        "VER-002-KEYS: ``MAX_time_transport_and_queue_uncertainty_ms``, "
+        "``max_age_bound``\n\n"
+        "delay_bounds is bound to the composite-membership sum including "
+        "``MAX_time_transport_and_queue_uncertainty_ms``, and ``max_age_bound`` "
+        "stays UNBOUND.",
+    )
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"][0] == "UNBOUND"
+
+    _write_d1_test_site(
+        tmp_path,
+        "VER-002-KEYS: ``MAX_time_transport_and_queue_uncertainty_ms``\n\n"
         "delay_bounds is bound to the composite-membership sum including "
         "``MAX_time_transport_and_queue_uncertainty_ms``.",
     )
-    dispositions, _profile_blocked = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"] == (
+    dispositions2, _fail_closed2 = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions2["d1probe"] == (
         "VALUED",
         "MAX_time_transport_and_queue_uncertainty_ms",
     )

@@ -34,6 +34,8 @@ top-level honesty declaration). Four independent reasons converge:
    "it is not 'weaker evidence' … it is out". A slice-1 single-strategy single-run backtest cannot
    pass that bar in principle.
 
+VER-002-KEYS: ``dsl_evaluation_budget_steps``
+
 So this package produces a **mechanism / parity demonstration** and nothing else. Of ADR-DEV-010
 §7:157's five admissibility conjuncts it realizes three *structurally* — cost realism (injected,
 never optimistic), no look-ahead (the converter cannot express it), hermetic and reproducible

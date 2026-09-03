@@ -37,6 +37,8 @@ values belongs to Order Construction Policy (RFC-002 §9.1:553), a separate, sti
 artifact — so a slice run wires provisional numbers and closes no EV. What is confirmed now is
 the **seam**: what may flow, what is forbidden, and which artifact encloses the bound.
 
+VER-002-KEYS: ``risk_budget``, ``per_unit_risk``, ``lot_size``, ``min_quantity``, ``max_quantity``, ``max_notional``
+
 Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #34 §0.3). No clock, no RNG.
 """
 

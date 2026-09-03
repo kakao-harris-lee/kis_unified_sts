@@ -3581,19 +3581,127 @@ D1_SITES: tuple[tuple[str, Path, str, str], ...] = (
     ("marketfeed", Path("tos/src/tos/marketfeed/__init__.py"), "module", ""),
 )
 
-# UNBOUND 선언 문언 감지 — "not a VERIFICATION-PROFILE-002 key"/"not itself a
-# profile key"/"not ... profile keys"/"no VERIFICATION-PROFILE-002 bound" 류.
-# 매칭 전 backtick·강조(``*``)를 제거한 평문에 적용한다(RST 인라인 마크업이
-# 문구 중간에 끼어드는 것을 흡수).  UNBOUND 판정이 backtick 키 매칭보다
-# 우선한다 — 대조용으로만 인용된 실재 프로파일 키(예: engine/__init__.py 의
-# ``MAX_dsl_evaluation_ms``)가 "이 사이트의 의존 키가 아니다"라는 저작자
-# 결론을 뒤집지 못하게 한다.
-_D1_UNBOUND_RE = re.compile(
-    r"not\s+(?:a\s+|itself a\s+)?(?:VERIFICATION-PROFILE-002|profile)\s+keys?\b"
-    r"|no\s+(?:VERIFICATION-PROFILE-002|profile)\s+bound",
-    re.IGNORECASE,
-)
+# §7.4/D-1/D-2 — 의존 키 선언 문법(``VER-002-KEYS: ...``) 파싱.  구 산문
+# 판별(``not a VERIFICATION-PROFILE-002 key`` 류 정규식)은 폐지했다 — 그
+# 판별은 저작자 산문을 처분 입력으로 받아들이는 것이었고, §7.4 "저작자가
+# 처분을 고르면 그 자체가 자기신고"와 정면 충돌했다(Codex verdict
+# review-mtljvycx-ouye7r finding 2).  이제 처분의 유일한 입력은 이 선언
+# 행 + 프로파일 우주 대조뿐이다 — 산문은 근거 문서일 뿐 검사기 입력이
+# 아니다.
 _D1_BACKTICK_RE = re.compile(r"`{1,2}([A-Za-z_][A-Za-z0-9_]*)`{1,2}")
+_D1_IDENTIFIER_RE = r"[A-Za-z_][A-Za-z0-9_]*"
+_D1_KEY_TOKEN_RE = rf"``{_D1_IDENTIFIER_RE}``"
+_D1_KEY_LIST_RE = rf"{_D1_KEY_TOKEN_RE}(?:,\s*{_D1_KEY_TOKEN_RE})*"
+# 선언 행 탐지 — 행 앞 공백만 허용, 그 외 형식은 전부 아래 두 패턴 중 하나로
+# 검증한다(어느 쪽에도 안 걸리면 "형식 오류").
+_D1_DECLARATION_LINE_RE = re.compile(r"^[ \t]*(VER-002-KEYS:.*)$", re.MULTILINE)
+_D1_DECLARATION_NONE_RE = re.compile(r"^VER-002-KEYS:\s*NONE\s*$")
+_D1_DECLARATION_KEYS_RE = re.compile(
+    rf"^VER-002-KEYS:\s*(?P<keys>{_D1_KEY_LIST_RE})"
+    rf"(?:;\s*CONTRAST:\s*(?P<contrast>{_D1_KEY_LIST_RE}))?\s*$"
+)
+
+
+class _D1Declaration:
+    """``VER-002-KEYS:`` 선언 행 1개의 파싱 결과.
+
+    ``kind``: ``"missing"``(선언 0줄) | ``"duplicate"``(2줄 이상) |
+    ``"malformed"``(문법 위반) | ``"none"``(``NONE``) | ``"keys"``(K 목록 —
+    ``keys``/``contrast`` 에 후보 리터럴)."""
+
+    __slots__ = ("kind", "keys", "contrast", "line")
+
+    def __init__(
+        self,
+        kind: str,
+        keys: tuple[str, ...] = (),
+        contrast: tuple[str, ...] = (),
+        line: str = "",
+    ) -> None:
+        self.kind = kind
+        self.keys = keys
+        self.contrast = contrast
+        self.line = line
+
+
+def _parse_d1_declaration(docstring: str) -> _D1Declaration:
+    """docstring 안의 ``VER-002-KEYS:`` 선언 행을 파싱한다(§7.4 D-1/D-2)."""
+    lines = [m.group(1).strip() for m in _D1_DECLARATION_LINE_RE.finditer(docstring)]
+    if not lines:
+        return _D1Declaration("missing")
+    if len(lines) > 1:
+        return _D1Declaration("duplicate")
+    line = lines[0]
+    if _D1_DECLARATION_NONE_RE.match(line):
+        return _D1Declaration("none", line=line)
+    match = _D1_DECLARATION_KEYS_RE.match(line)
+    if not match:
+        return _D1Declaration("malformed", line=line)
+    keys = tuple(_D1_BACKTICK_RE.findall(match.group("keys")))
+    contrast = tuple(_D1_BACKTICK_RE.findall(match.group("contrast") or ""))
+    return _D1Declaration("keys", keys=keys, contrast=contrast, line=line)
+
+
+def _d1_body_without_declaration(docstring: str, declaration_line: str) -> str:
+    """선언 행 자신을 제외한 본문 — D-1(b)/설계 규칙 3 은 선언 행 *밖의* backtick
+    리터럴만 본다(선언 행 자체의 키 나열이 "본문 등장"으로 자기-충족되는
+    것을 막는다)."""
+    if not declaration_line:
+        return docstring
+    return docstring.replace(declaration_line, "", 1)
+
+
+def _d1_scope_paths(repo_root: Path, rel: Path, kind: str) -> tuple[Path, ...]:
+    """``NONE`` 선언의 실측 스캔 범위 — module 은 그 패키지 디렉터리 재귀
+    ``*.py`` 전부, class/method 는 그 파일 하나뿐(설계 규칙 6 — 계약 조항이
+    아니라 이 검사기의 파생 규칙이다; 에라타 후보 기록 (b) 참조)."""
+    path = repo_root / rel
+    if kind == "module":
+        return tuple(sorted(path.parent.rglob("*.py")))
+    return (path,)
+
+
+def _d1_scan_scope_for_universe_refs(
+    paths: tuple[Path, ...], universe: dict[str, bool]
+) -> list[tuple[str, Path]]:
+    """``paths`` 전체에서 프로파일 우주 키의 토큰-경계 리터럴 참조를 찾는다
+    — ``NONE`` 선언이 실측과 모순되지 않는지 검증하는 유일한 근거."""
+    hits: list[tuple[str, Path]] = []
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        for key in universe:
+            pattern = rf"(?<![A-Za-z0-9_]){re.escape(key)}(?![A-Za-z0-9_])"
+            if re.search(pattern, text):
+                hits.append((key, path))
+    return hits
+
+
+_D1_DISPOSITION_PRIORITY = ("UNBOUND", "BLOCKED", "VALUED")
+
+
+def _d1_classify_key(key: str, universe: dict[str, bool]) -> str:
+    """단일 키 -> ``UNBOUND``(우주 밖) / ``BLOCKED``(null) / ``VALUED``
+    (non-null)."""
+    if key not in universe:
+        return "UNBOUND"
+    return "BLOCKED" if universe[key] else "VALUED"
+
+
+def _d1_fold_key_dispositions(
+    keys: tuple[str, ...], universe: dict[str, bool]
+) -> tuple[str, str]:
+    """다중 키의 사이트-단위 접기 — ``UNBOUND`` > ``BLOCKED`` > ``VALUED``
+    (설계 규칙 5 — 계약 조항이 아니라 이 검사기의 접기 규칙이다; 에라타 후보
+    기록 (a) 참조) + 키별 근거(단일 키면 그 키 이름 그대로, 다중 키면 ``k:상태``
+    나열)."""
+    per_key = [(key, _d1_classify_key(key, universe)) for key in keys]
+    present = {disposition for _, disposition in per_key}
+    disposition = next(d for d in _D1_DISPOSITION_PRIORITY if d in present)
+    if len(per_key) == 1:
+        basis = per_key[0][0]
+    else:
+        basis = "; ".join(f"{k}:{v}" for k, v in per_key)
+    return disposition, basis
 
 
 def _extract_d1_docstring(source: str, kind: str, target: str) -> str | None:
@@ -3667,47 +3775,94 @@ def _load_profile_universe(
 
 
 def _derive_d1_disposition(
-    docstring: str, universe: dict[str, bool] | None
-) -> tuple[str, str]:
-    """§7.4 처분 파생 — ``(처분, 근거)``.  처분은 검사기가 파생하고 저작자는
-    고르지 않는다: UNBOUND 선언 문언 우선, 그다음 프로파일 키 우주 소속
-    backtick 리터럴(VALUED/BLOCKED), 어느 것도 없으면 잔여 UNDECIDED."""
-    flat = docstring.replace("`", "").replace("*", "")
-    if _D1_UNBOUND_RE.search(flat):
-        return "UNBOUND", "docstring 에 UNBOUND 선언 문언 존재"
-    if universe is not None:
-        for candidate in _D1_BACKTICK_RE.findall(docstring):
-            if candidate in universe:
-                is_null = universe[candidate]
-                return ("BLOCKED" if is_null else "VALUED"), candidate
-    return "UNDECIDED", "키 미공급(잔여)"
+    repo_root: Path,
+    rel: Path,
+    kind: str,
+    docstring: str,
+    decl: _D1Declaration,
+    universe: dict[str, bool] | None,
+    universe_error: str | None,
+) -> tuple[str, str, bool]:
+    """§7.4 처분 파생 — ``(처분, 근거, needs_universe)``.  ``needs_universe``
+    는 호출자가 우주 로드 실패를 이 사이트의 fail-closed 사유로 접어야
+    하는지 판단하는 데 쓴다 — 선언 자체가 형식상 판정 불가(부재/중복/형식
+    오류)한 사이트는 우주를 보지 않고도 이미 판정됐으므로 ``False``다."""
+    if decl.kind == "missing":
+        return "UNDECIDED", "VER-002-KEYS 선언 부재 — 키 미공급", False
+    if decl.kind == "duplicate":
+        return "UNDECIDED", "VER-002-KEYS 선언 중복", False
+    if decl.kind == "malformed":
+        return "UNDECIDED", f"VER-002-KEYS 선언 형식 오류: {decl.line!r}", False
+    if universe is None:
+        return (
+            "UNDECIDED",
+            f"프로파일 우주 로드 실패로 판정 불가(fail-closed): {universe_error}",
+            True,
+        )
+    if decl.kind == "none":
+        paths = _d1_scope_paths(repo_root, rel, kind)
+        hits = _d1_scan_scope_for_universe_refs(paths, universe)
+        if hits:
+            key, hit_path = min(hits)
+            return "UNDECIDED", f"NONE 선언과 모순: {key} @ {hit_path}", True
+        scope_desc = str(rel.parent if kind == "module" else rel)
+        return (
+            "UNBOUND",
+            f"VER-002-KEYS: NONE — {scope_desc} {len(paths)}개 파일 스캔, "
+            "프로파일 키 참조 0",
+            True,
+        )
+
+    body = _d1_body_without_declaration(docstring, decl.line)
+    body_literals = set(_D1_BACKTICK_RE.findall(body))
+    for key in decl.keys:
+        if key not in body_literals:
+            return "UNDECIDED", f"선언 키 본문 부재: {key}", True
+    declared_and_contrast = set(decl.keys) | set(decl.contrast)
+    stray = sorted((body_literals & universe.keys()) - declared_and_contrast)
+    if stray:
+        return "UNDECIDED", f"인용 프로파일 키 미선언: {stray[0]}", True
+    for key in decl.contrast:
+        if key not in universe:
+            return "UNDECIDED", f"CONTRAST 키가 프로파일 키가 아님: {key}", True
+        if key not in body_literals:
+            return "UNDECIDED", f"CONTRAST 키가 본문에 부재: {key}", True
+    disposition, key_basis = _d1_fold_key_dispositions(decl.keys, universe)
+    basis = key_basis
+    if decl.contrast:
+        basis += "; CONTRAST: " + ", ".join(decl.contrast)
+    return disposition, basis, True
 
 
 def compute_d1_dispositions(
     repo_root: Path,
 ) -> tuple[dict[str, tuple[str, str]], tuple[str, ...]]:
-    """§7.1 7사이트의 ``({site: (처분, 근거)}, profile_blocked_sites)``.
+    """§7.1 7사이트의 ``({site: (처분, 근거)}, fail_closed_sites)``.
 
-    사이트 파일이 존재하지 않으면(합성/부분 코퍼스 — tos/ 는 이 검사기의
-    register/CSV 코퍼스 스키마 밖 층이다) 그 사이트는 결과에서 조용히
-    제외한다.
+    표에는 ``D1_SITES`` 의 7개 이름이 **항상 전부** 등장한다 — 사이트
+    파일이 없거나 읽기/파싱에 실패하거나 대상 docstring 이 없어도 조용히
+    제외하지 않는다: 완료 기준(§7.4/§11)이 "정확히 7개 사이트 전부가
+    판정됐을 때"를 요구하므로, 사이트 부재를 vacuous MET 로 접을 수 없다
+    (Codex verdict review-mtljvycx-ouye7r finding 1).
 
-    두 번째 항목(``profile_blocked_sites``)은 UNBOUND 선언으로 즉시
-    해소되지 않아 프로파일 우주 대조가 실제로 필요했는데 그 우주 로드 자체가
-    실패한 사이트들이다.  disposition 어휘를 VALUED/BLOCKED/UNBOUND/
-    UNDECIDED 넷으로 유지하기 위해 이런 사이트도 표에는 ``UNDECIDED`` 로
-    기록되지만, 그 UNDECIDED 는 "키를 공급하지 못했다"(§7.4 잔여)가 아니라
-    "우주를 못 읽어 판정 불가"다 — 의미가 다르므로 호출자(``check_d1``)는
-    이 목록이 비어있지 않으면 U-6(§13 등재)로 접지 말고 D-1 자체의
-    fail-closed violation 을 보고해야 한다."""
+    두 번째 항목(``fail_closed_sites``)은 검사기가 원인과 무관하게
+    구조적으로 판정에 도달할 수 없었던 사이트 전부 — 파일/문서 부재,
+    읽기·파싱 실패, 프로파일 우주 로드 실패(선언이 그 우주를 필요로 한
+    경우)를 아우른다.  표에는 여전히 ``UNDECIDED`` 로 기록되지만, 그
+    UNDECIDED 는 "저작자가 아직 판정하지 않았다"(U-6 §13 등재로 면제
+    가능)가 **아니라** 검사기 자신이 판정에 도달할 수 없었다는 뜻이므로
+    호출자(``check_d1``)는 U-6 으로 접지 말고 D-1 자체의 위반으로
+    보고해야 한다."""
     result: dict[str, tuple[str, str]] = {}
-    profile_blocked_sites: list[str] = []
+    fail_closed_sites: list[str] = []
     universe: dict[str, bool] | None = None
     universe_error: str | None = None
     universe_attempted = False
     for name, rel, kind, target in D1_SITES:
         path = repo_root / rel
         if not path.exists():
+            result[name] = ("UNDECIDED", f"사이트 파일 부재: {rel}")
+            fail_closed_sites.append(name)
             continue
         try:
             docstring = _extract_d1_docstring(
@@ -3715,23 +3870,23 @@ def compute_d1_dispositions(
             )
         except (OSError, SyntaxError) as exc:
             result[name] = ("UNDECIDED", f"읽기/파싱 실패: {exc}")
+            fail_closed_sites.append(name)
             continue
         if docstring is None:
             result[name] = ("UNDECIDED", f"대상 docstring 부재 ({kind} {target!r})")
+            fail_closed_sites.append(name)
             continue
-        flat = docstring.replace("`", "").replace("*", "")
-        needs_profile = _D1_UNBOUND_RE.search(flat) is None
-        if needs_profile and not universe_attempted:
+        decl = _parse_d1_declaration(docstring)
+        if decl.kind in ("none", "keys") and not universe_attempted:
             universe, universe_error = _load_profile_universe(repo_root)
             universe_attempted = True
-        disposition, basis = _derive_d1_disposition(docstring, universe)
-        if needs_profile and universe is None:
-            profile_blocked_sites.append(name)
-            basis = (
-                f"프로파일 우주 로드 실패로 판정 불가(fail-closed): {universe_error}"
-            )
+        disposition, basis, needed_universe = _derive_d1_disposition(
+            repo_root, rel, kind, docstring, decl, universe, universe_error
+        )
+        if needed_universe and universe is None:
+            fail_closed_sites.append(name)
         result[name] = (disposition, basis)
-    return result, tuple(profile_blocked_sites)
+    return result, tuple(fail_closed_sites)
 
 
 def _d1_site_lookup_tokens(site_name: str) -> tuple[str, ...]:
@@ -3754,32 +3909,34 @@ def check_d1(ctx: CheckContext) -> list[Finding]:
     ``compute_d1_dispositions`` 를 다시 불러 D0-5 표와 §11 요약행을 만든다.
     rc 에 결합하는 것은 둘뿐이다:
 
-    * 프로파일 우주 로드 실패로 판정 불가한 사이트(``profile_blocked_sites``)
-      — VALUED/BLOCKED 판정이 필요했는데 그 우주를 읽지 못했다는 것 자체가
-      fail-closed 로 D-1 위반이다. 이 사이트들은 UNDECIDED 로 조용히 접히지
-      않는다.
+    * 구조적으로 판정에 도달할 수 없는 사이트(``fail_closed_sites``) —
+      사이트 파일/문서 부재, 읽기·파싱 실패, 또는 VALUED/BLOCKED/UNBOUND
+      판정에 프로파일 우주가 필요했는데 그 우주를 읽지 못한 경우를 모두
+      아우른다.  어느 경우든 검사기 자신이 판정에 도달하지 못했다는 뜻이라
+      fail-closed 로 D-1 위반이다 — 이 사이트들은 UNDECIDED 로 조용히
+      접히지 않고, 완료 표(§11)에서도 vacuous MET 의 근거가 되지 않는다
+      (Codex verdict review-mtljvycx-ouye7r finding 1).
     * U-6 — 그 외의(genuine) UNDECIDED 사이트가 §13 uncheckable 레지스터에
       개별 행으로(그 사이트 이름 또는 docstring 대상 식별자가 axis/reason
       텍스트에 등장하는 행으로) 등재돼 있지 않으면 계약 위반."""
-    dispositions, profile_blocked_sites = compute_d1_dispositions(ctx.repo_root)
+    dispositions, fail_closed_sites = compute_d1_dispositions(ctx.repo_root)
     for name, (disposition, basis) in dispositions.items():
         ctx.observations.append(f"D0-5[{name}]={disposition} ({basis})")
 
     findings: list[Finding] = []
-    if profile_blocked_sites:
+    if fail_closed_sites:
         findings.append(
             Finding(
                 "D-1",
-                "VERIFICATION-PROFILE-002.yaml 우주를 로드하지 못해 VALUED/"
-                f"BLOCKED 판정이 불가한 사이트(fail-closed): "
-                f"{sorted(profile_blocked_sites)}",
+                "구조적으로 판정에 도달할 수 없는 사이트(fail-closed): "
+                f"{sorted(fail_closed_sites)}",
             )
         )
 
     undecided_sites = sorted(
         name
         for name, (disposition, _basis) in dispositions.items()
-        if disposition == "UNDECIDED" and name not in profile_blocked_sites
+        if disposition == "UNDECIDED" and name not in fail_closed_sites
     )
     if undecided_sites:
         if ctx.uncheckable_rows is None:
@@ -3988,16 +4145,17 @@ def render_completion_status(
     register_block = "\n".join(register_lines)
     lines.append(register_block)
 
-    d1_dispositions, _d1_profile_blocked = compute_d1_dispositions(ctx.repo_root)
+    # compute_d1_dispositions 는 D1_SITES 의 7개 이름을 항상 전부 채워 돌려준다
+    # (사이트 파일 부재도 UNDECIDED 로 기록되지, 결과에서 제외되지 않는다) —
+    # 그래서 여기서는 "N/A"/부재 분기가 필요 없다(구 fail-open 경로 제거,
+    # Codex verdict review-mtljvycx-ouye7r finding 1).
+    d1_dispositions, _d1_fail_closed = compute_d1_dispositions(ctx.repo_root)
     lines.append("## D0-5 disposition table (7 rows, §7.4)")
     lines.append("")
     lines.append("| site | disposition | key/declaration |")
     lines.append("|---|---|---|")
     for site_name, _rel, _kind, _target in D1_SITES:
-        if site_name in d1_dispositions:
-            disposition, basis = d1_dispositions[site_name]
-        else:
-            disposition, basis = "N/A", "사이트 파일 부재(코퍼스 범위 밖)"
+        disposition, basis = d1_dispositions[site_name]
         lines.append(f"| {site_name} | `{disposition}` | {_md_escape_cell(basis)} |")
     lines.append("")
 
@@ -4006,18 +4164,26 @@ def render_completion_status(
     for check_id in CONTRACT_CHECKS:
         state = "MET" if _check_is_clean(check_id, findings) else "NOT_MET"
         lines.append(f"- `{check_id}`: `{state}`")
+    d1_site_names = {site_name for site_name, _rel, _kind, _target in D1_SITES}
+    d1_missing = sorted(d1_site_names - set(d1_dispositions))
     d1_undecided = sorted(
         site_name
         for site_name, (disposition, _basis) in d1_dispositions.items()
         if disposition == "UNDECIDED"
     )
-    if d1_undecided:
-        lines.append(
-            f"- `D0-5`: UNDECIDED {len(d1_undecided)}({', '.join(d1_undecided)}) "
-            "→ D0-5 완료 차단"
-        )
-    else:
+    # 완료 기준(v1.8): 7개 사이트 전부가 VALUED/BLOCKED/UNBOUND 중 하나를
+    # 배정받았을 때만 MET — 처분 키 집합이 D1_SITES 7 이름과 정확히
+    # 일치하지 않는 경우(구조상 지금은 불변식으로 항상 일치하지만, 그
+    # 불변식이 깨지는 방향의 회귀를 이 문 하나로 잡는다)도 차단한다.
+    if not d1_missing and not d1_undecided:
         lines.append("- `D0-5`: `MET`")
+    else:
+        parts = []
+        if d1_undecided:
+            parts.append(f"UNDECIDED {len(d1_undecided)}({', '.join(d1_undecided)})")
+        if d1_missing:
+            parts.append(f"부재 {len(d1_missing)}({', '.join(d1_missing)})")
+        lines.append(f"- `D0-5`: {' / '.join(parts)} → D0-5 완료 차단")
     lines.append(
         "- `U-17`: requires a live evaluation at completion-judgment time; "
         "this generated document does not perform that evaluation. "
