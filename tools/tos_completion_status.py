@@ -916,8 +916,8 @@ def check_k5_fwd_metrics(ctx: CheckContext) -> list[Finding]:
             status = row["status"]
             if status not in ("PASS", "READY"):
                 continue
-            kinds = ctx.required_kinds_by_id.get(eid)
-            if kinds is None:
+            required_kinds = ctx.required_kinds_by_id.get(eid)
+            if required_kinds is None:
                 continue
             try:
                 levels = parse_level(row["minimum_evidence_level"])
@@ -926,7 +926,7 @@ def check_k5_fwd_metrics(ctx: CheckContext) -> list[Finding]:
             if levels is None:
                 continue
             expected_floor = derive_floor(levels, ctx.level_kind_map)
-            verifiable = kinds & expected_floor & _VERIFIABLE_LEVEL_KINDS
+            verifiable = required_kinds & expected_floor & _VERIFIABLE_LEVEL_KINDS
             if not verifiable:
                 unmet_zero.append(eid)
                 unmet.append(eid)
