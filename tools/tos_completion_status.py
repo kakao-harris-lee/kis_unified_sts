@@ -3979,11 +3979,15 @@ def _d1_u6prime_row_state(
     ``reason`` 부분문자열 검사(변경 없음).
 
     (2) 스캔 결과 — ``reason`` 을 ``_d1_u6prime_segments`` 로 구획 분할한
-    뒤, 그 구획 목록 안에 ``_d1_u6prime_scan_result_segment(
-    candidate_universe_size, scope_desc, file_count)`` 와 **완전히 같은**
-    구획이 하나 있어야 한다. 세 값이 부분문자열로 ``reason`` 어딘가에
-    흩어져 있는 것으로는(구판 회귀) 부족하다 — 실제 스캔 범위가 다른
-    구획에 적힌 무관한 remark 로는 대체되지 못하고, 실제 스캔 구획이
+    뒤, 그 구획 목록 중 라벨 ``스캔 결과:`` 로 시작하는(label match =
+    ``segment.startswith(label)``) 구획이 **정확히 하나**여야 하고, 그
+    유일한 구획이 ``_d1_u6prime_scan_result_segment(candidate_universe_size,
+    scope_desc, file_count)`` 와 **완전히 같아야** 한다. 0개면 (2) 미충족,
+    2개 이상이면 그 자체로 카디널리티 위반으로 미충족(모순되는 두 번째
+    ``스캔 결과:`` 구획을 병기해도 통과하던 구멍 — 레인 B 재심
+    20260905-041033 finding 1 처분). 세 값이 부분문자열로 ``reason``
+    어딘가에 흩어져 있는 것으로는(구판 회귀) 부족하다 — 실제 스캔 범위가
+    다른 구획에 적힌 무관한 remark 로는 대체되지 못하고, 실제 스캔 구획이
     엉뚱한 범위(``other_pkg``)를 적으면 그 자체로 막힌다(레인 B 재심
     20260905-033432 finding 1(a) 처분).
 
@@ -3995,13 +3999,17 @@ def _d1_u6prime_row_state(
     로부터 파생한 ``record_path``(정본 형식: 그 스탬프 디렉터리의
     ``verdict.md`` repo-relative 전체 경로, 예:
     ``docs/reviews/d1-no-dependency/<site_id>/<stamp>/verdict.md``)를
-    넘긴다 — 구획 목록 안에 ``_d1_u6prime_record_segment(record_path)``
-    와 **완전히 같은** 구획이 하나 있어야 한다. 부분문자열 일치로는(구판
-    회귀) 접미사(``<record_path>.not-the-selected-record``)나 같은 구획
-    안에 나란히 적힌 두 번째 경로도 통과했다 — 이제 구획 전체가 그 값과
-    글자 단위로 같아야 하므로 둘 다 막힌다(레인 B 재심 20260905-033432
-    finding 1(b) 처분). ``record_path`` 가 ``None``(선택된 기록이 없음)
-    이면 (4)는 그 자체로 미충족이다."""
+    넘긴다 — 구획 목록 중 라벨 ``독립 리뷰 기록:`` 로 시작하는 구획이
+    **정확히 하나**여야 하고, 그 유일한 구획이
+    ``_d1_u6prime_record_segment(record_path)`` 와 **완전히 같아야** 한다.
+    0개면 (4) 미충족, 2개 이상이면(서로 다른 경로를 각각 담은 두 번째
+    ``독립 리뷰 기록:`` 구획을 병기해도) 그 자체로 카디널리티 위반으로
+    미충족 — 레인 B 재심 20260905-041033 finding 1 처분. 부분문자열
+    일치로는(구판 회귀) 접미사(``<record_path>.not-the-selected-record``)나
+    같은 구획 안에 나란히 적힌 두 번째 경로도 통과했다 — 이제 구획 전체가
+    그 값과 글자 단위로 같아야 하므로 둘 다 막힌다(레인 B 재심
+    20260905-033432 finding 1(b) 처분). ``record_path`` 가 ``None``(선택된
+    기록이 없음)이면 (4)는 그 자체로 미충족이다."""
     if uncheckable_rows is None:
         return False, "§13 레지스터 부재로 확인 불가", None
     axis = _d1_u6prime_axis(site_id)
@@ -4023,7 +4031,22 @@ def _d1_u6prime_row_state(
     scan_segment = _d1_u6prime_scan_result_segment(
         candidate_universe_size, scope_desc, file_count
     )
-    if scan_segment not in segments:
+    # 라벨 매치 = ``segment.startswith(label)``. ``scope_desc`` 는 호출자가
+    # ``_d1_scope_paths`` 계열에서 파생한 repo-relative 경로이고 구획
+    # 구분자(" · ", ";", "\n")를 담지 않는다 — 만약 담는다면(호출자 계약
+    # 위반) 그 값이 스캔 결과 구획을 둘 이상으로 쪼개 아래 카디널리티
+    # 검사가 fail-closed 로 그 행을 red 처리한다(fail-open 아님).
+    scan_matches = [seg for seg in segments if seg.startswith("스캔 결과:")]
+    if not scan_matches:
+        missing.append(
+            "(2) 스캔 결과(후보 우주 크기·스캔 범위·파일 수) — 요구 구획: "
+            f"{scan_segment!r}"
+        )
+    elif len(scan_matches) > 1:
+        missing.append(
+            f"(2) 스캔 결과 구획 중복({len(scan_matches)}건 — 카디널리티 위반)"
+        )
+    elif scan_matches[0] != scan_segment:
         missing.append(
             "(2) 스캔 결과(후보 우주 크기·스캔 범위·파일 수) — 요구 구획: "
             f"{scan_segment!r}"
@@ -4032,11 +4055,24 @@ def _d1_u6prime_row_state(
         missing.append("(3) 경계 문장")
     if record_path is None:
         missing.append("(4) D-4 (마) 독립 리뷰 기록의 정확한 경로")
-    elif _d1_u6prime_record_segment(record_path) not in segments:
-        missing.append(
-            "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로 — 요구 구획: "
-            f"{_d1_u6prime_record_segment(record_path)!r}"
-        )
+    else:
+        record_segment = _d1_u6prime_record_segment(record_path)
+        record_matches = [seg for seg in segments if seg.startswith("독립 리뷰 기록:")]
+        if not record_matches:
+            missing.append(
+                "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로 — 요구 구획: "
+                f"{record_segment!r}"
+            )
+        elif len(record_matches) > 1:
+            missing.append(
+                f"(4) 독립 리뷰 기록 구획 중복({len(record_matches)}건 — "
+                "카디널리티 위반)"
+            )
+        elif record_matches[0] != record_segment:
+            missing.append(
+                "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로 — 요구 구획: "
+                f"{record_segment!r}"
+            )
     if missing:
         return False, f"§13 행 reason 미충족(ㄹ): {', '.join(missing)}", row
     return True, f"§13 행 그래머 충족(axis={axis!r})", row

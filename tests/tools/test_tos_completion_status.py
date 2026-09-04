@@ -5570,6 +5570,153 @@ def test_d1_none_declaration_row_reason_record_path_second_path_is_undecided_con
     assert "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in detail
 
 
+def test_d1_none_declaration_row_reason_duplicate_scan_segment_dot_sep_is_undecided_control_12a() -> (
+    None
+):
+    """[레인 B 재심 20260905-041033 finding 1] 대조군 ⑫-a — 정확한 스캔
+    결과 구획과 함께, 다른(가운뎃점으로 구분된) 구획에 모순되는 두 번째
+    ``스캔 결과:`` 구획을 병기하면 (ㄹ)(2) 미충족으로 red — 개정 전
+    구현은 정본 구획이 목록 안에 «존재하는지»만 보아 이 병기를 통과시켰다
+    (레인 B 재심 20260905-041033 finding 1 처분)."""
+    reason = (
+        "VER-002-KEYS: NONE 선언 · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "스캔 결과: 후보 우주 99개, 스캔 범위 other_pkg, 파일 99개 · "
+        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(2) 스캔 결과" in detail
+
+
+def test_d1_none_declaration_row_reason_duplicate_scan_segment_semicolon_sep_is_undecided_control_12b() -> (
+    None
+):
+    """[레인 B 재심 20260905-041033 finding 1] 대조군 ⑫-b — ⑫-a 와 동일한
+    모순 병기를 세미콜론 구분자로 구성해도 (ㄹ)(2) 미충족으로 red —
+    카디널리티 검사가 구획 구분자 종류에 무관함을 확인한다."""
+    reason = (
+        "VER-002-KEYS: NONE 선언 · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개;"
+        "스캔 결과: 후보 우주 99개, 스캔 범위 other_pkg, 파일 99개 · "
+        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert "(2) 스캔 결과" in detail
+
+
+def test_d1_none_declaration_row_reason_duplicate_scan_segment_newline_sep_is_undecided_control_12c() -> (
+    None
+):
+    """[레인 B 재심 20260905-041033 finding 1] 대조군 ⑫-c — ⑫-a 와 동일한
+    모순 병기를 개행 구분자로 구성해도 (ㄹ)(2) 미충족으로 red."""
+    reason = (
+        "VER-002-KEYS: NONE 선언 · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개\n"
+        "스캔 결과: 후보 우주 99개, 스캔 범위 other_pkg, 파일 99개 · "
+        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert "(2) 스캔 결과" in detail
+
+
+def test_d1_none_declaration_row_reason_duplicate_record_segment_second_path_is_undecided_control_12d() -> (
+    None
+):
+    """[레인 B 재심 20260905-041033 finding 1] 대조군 ⑫-d — 정확한 독립
+    리뷰 기록 구획과 함께, 다른 구획에 두 번째(다른 경로를 담은)
+    ``독립 리뷰 기록:`` 구획을 병기하면 (ㄹ)(4) 미충족으로 red — 개정 전
+    구현은 정본 구획이 목록 안에 «존재하는지»만 보아 이 병기를 통과시켰다."""
+    record_path = "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    other_path = "docs/reviews/d1-no-dependency/noneprobe/99990101-000000/verdict.md"
+    reason = (
+        "VER-002-KEYS: NONE 선언 · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        f"독립 리뷰 기록: {record_path} · "
+        f"독립 리뷰 기록: {other_path}"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=record_path,
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(4) 독립 리뷰 기록 구획 중복" in detail
+
+
+def test_d1_none_declaration_row_reason_duplicate_identical_scan_segments_is_undecided_control_12e() -> (
+    None
+):
+    """[레인 B 재심 20260905-041033 finding 1] 대조군 ⑫-e — 정본과
+    글자 단위로 완전히 동일한 ``스캔 결과:`` 구획이 (다른 구획으로) 두 번
+    등장해도 (ㄹ)(2) 미충족으로 red — 중복 자체가 카디널리티 위반이므로
+    두 구획이 서로 모순되지 않아도(둘 다 정본과 같아도) 통과해서는 안
+    된다."""
+    scan_segment = "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개"
+    reason = (
+        "VER-002-KEYS: NONE 선언 · "
+        f"{scan_segment} · "
+        f"{scan_segment} · "
+        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(2) 스캔 결과" in detail
+
+
 def test_d1_none_declaration_reason_cites_earlier_unselected_stamp_is_undecided_control_10d(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
