@@ -4350,13 +4350,18 @@ def _write_mini_profile(
 
 
 def test_d1_real_corpus_dispositions_match_expected() -> None:
-    """[flipped, C4 — 계약 §7.4 D-3/D-4/D-5 구현] §7.4 실측 기대: 5곳은
-    균일 다중/단일 키로 ``UNBOUND``. ``resolver`` 와 ``marketfeed``
-    (독립 확인 ``review-mtmg2lz7-88qdyb`` 가 그 ``NONE`` 자기신고를 거짓으로
-    판정한 뒤 docstring 을 D-5 재분류한 결과, C4 lockstep)는 이제 «같은»
-    7키 선언(6개 VALUED + ``max_age_bound`` 1개 UNBOUND)에서 파생된
-    ``VALUED+UNBOUND`` — D-3 이 접지 않고 «집합»으로 판정됨이다. 두
-    사이트 모두 ``kind == "keys"``이고 ``NO_DEPENDENCY`` 후보(``kind ==
+    """[flipped, C4 — 계약 §7.4 D-3/D-4/D-5 구현; 2026-09-04 UNCHK-024
+    갱신] §7.4 실측 기대: 5곳은 균일 다중/단일 키로 ``UNBOUND``.
+    ``resolver`` 와 ``marketfeed`` (독립 확인 ``review-mtmg2lz7-88qdyb``
+    가 그 ``NONE`` 자기신고를 거짓으로 판정한 뒤 docstring 을 D-5
+    재분류한 결과, C4 lockstep)는 «같은» 7키 선언에서 파생되지만, 잔여
+    1필드 ``max_age_bound`` 가 2026-09-04 ``MAX_time_conservative_
+    freshness_age_ms`` 로 1:1 결속된 뒤(disposition draft
+    ``docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md``
+    §2, §5) 그 키가 프로파일에 값 null 로 등록되어 이제 ``VALUED+BLOCKED``
+    — D-3 이 접지 않고 «집합»으로 판정됨이다(6개 VALUED + 1개 BLOCKED, 더
+    이상 UNBOUND 가 아니다 — 우주 밖이 아니라 우주 안·값 없음). 두 사이트
+    모두 ``kind == "keys"``이고 ``NO_DEPENDENCY`` 후보(``kind ==
     "none"``)는 실코퍼스에 0 개다."""
     dispositions, fail_closed = tcs.compute_d1_dispositions(_REPO_ROOT)
     assert fail_closed == ()
@@ -4372,11 +4377,11 @@ def test_d1_real_corpus_dispositions_match_expected() -> None:
     for name in ("resolver", "marketfeed"):
         record = dispositions[name]
         assert record.kind == "keys", (name, record)
-        assert record.cell == "VALUED+UNBOUND", (name, record)
+        assert record.cell == "VALUED+BLOCKED", (name, record)
         states = {state for _key, state in record.per_key}
-        assert states == {"VALUED", "UNBOUND"}
+        assert states == {"VALUED", "BLOCKED"}
         assert sum(1 for _k, s in record.per_key if s == "VALUED") == 6
-        assert sum(1 for _k, s in record.per_key if s == "UNBOUND") == 1
+        assert sum(1 for _k, s in record.per_key if s == "BLOCKED") == 1
     # 실코퍼스에 NONE 선언 사이트는 0 개다(marketfeed 재분류 후) — D-4/U-6′
     # 어휘는 여전히 구현돼 있지만 오늘의 소비자는 없다(56차 "부수 사실").
     assert all(record.kind != "none" for record in dispositions.values())
@@ -4390,13 +4395,15 @@ def test_d1_real_corpus_check_d1_is_clean() -> None:
 
 
 def test_d1_real_corpus_d0_5_met() -> None:
-    """[flipped, C4] real corpus 렌더는 이제 D0-5 를 ``MET`` 으로 낸다 —
-    7사이트 전부가 D-3(``keys``)으로 판정됨이다."""
+    """[flipped, C4; 2026-09-04 UNCHK-024 갱신] real corpus 렌더는 이제
+    D0-5 를 ``MET`` 으로 낸다 — 7사이트 전부가 D-3(``keys``)으로 판정됨이다.
+    resolver/marketfeed 는 신설 키 등록(값 null) 이후 ``VALUED+BLOCKED``
+    (더 이상 ``VALUED+UNBOUND`` 가 아니다)."""
     ctx = tcs.build_context(_REPO_ROOT)
     findings = tcs.run_checks(ctx)
     rendered, _ = tcs.render_completion_status(ctx, findings)
     assert "- `D0-5`: `MET`" in rendered
-    assert "VALUED+UNBOUND" in rendered
+    assert "VALUED+BLOCKED" in rendered
 
 
 def test_d1_declaration_missing_is_undecided(
@@ -5233,10 +5240,15 @@ def test_d1_candidate_universe_derivation_includes_every_declared_and_contrast_k
     )
 
 
-def test_d1_candidate_universe_real_corpus_includes_max_age_bound() -> None:
-    """실코퍼스 대조군 — ``max_age_bound`` 는 ``VERIFICATION-PROFILE-002``
-    우주 밖이지만 ``resolver``/``marketfeed`` 가 D-5 로 선언하므로 후보
-    우주에 실재해야 한다(53차 (나)가 막는 우회의 증인)."""
+def test_d1_candidate_universe_real_corpus_max_age_bound_now_bound() -> None:
+    """실코퍼스 대조군 [갱신, 2026-09-04 UNCHK-024 처분] — ``max_age_bound``
+    리터럴은 더 이상 ``resolver``/``marketfeed`` docstring 의 VER-002-KEYS
+    선언에 나타나지 않는다: 1:1 결속 키 이름
+    ``MAX_time_conservative_freshness_age_ms`` 로 교체됐다(disposition draft
+    ``docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md``
+    §5). 그 신설 키는 이제 ``VERIFICATION-PROFILE-002`` 우주 **안**에
+    실재한다(값 null → BLOCKED, 우주 밖이 아니다) — 53차 (나)가 막는
+    우회의 증인이었던 이전 상태(우주 밖 의존 키)는 종결됐다."""
     universe, err = tcs._load_profile_universe(_REPO_ROOT)
     assert universe is not None, err
     decls = []
@@ -5247,8 +5259,9 @@ def test_d1_candidate_universe_real_corpus_includes_max_age_bound() -> None:
         assert doc is not None
         decls.append(tcs._parse_d1_declaration(doc))
     candidate_universe = tcs._d1_candidate_universe(universe, decls)
-    assert "max_age_bound" in candidate_universe
-    assert "max_age_bound" not in universe
+    assert "max_age_bound" not in candidate_universe
+    assert "MAX_time_conservative_freshness_age_ms" in universe
+    assert "MAX_time_conservative_freshness_age_ms" in candidate_universe
 
 
 def test_d1_none_declaration_row_absent_is_undecided_control_5a(
@@ -6006,12 +6019,13 @@ def test_check_d1_finding_when_d1_sites_table_truncated(
 
 # ---------------------------------------------------------------------------
 # 23. UNCHK-024 후속 처분 — resolver.py BarTimeProjection docstring shape
-#     (delay_bounds 4키 합성-결속 · max_age_bound UNBOUND 잔여 ·
+#     (delay_bounds 4키 합성-결속 · max_age_bound 는 2026-09-04부터
+#     MAX_time_conservative_freshness_age_ms 에 1:1 결속(값 null) ·
 #     5필드 구조적 비대상 선언). resolver 사이트의 D-1 disposition 자체는
-#     [C4 갱신] 22번 섹션의 test_d1_real_corpus_dispositions_match_expected
-#     가 ``VALUED+UNBOUND``(6 VALUED + max_age_bound 1개 UNBOUND, decided)
-#     를 실측한다 — 이 섹션은 그 집합을 만드는 docstring 내용의 shape 를
-#     실측 + mutation-control 로 고정한다.
+#     [C4 갱신, 2026-09-04 재갱신] 22번 섹션의
+#     test_d1_real_corpus_dispositions_match_expected 가 ``VALUED+BLOCKED``
+#     (6 VALUED + 1개 BLOCKED, decided)를 실측한다 — 이 섹션은 그 집합을
+#     만드는 docstring 내용의 shape 를 실측 + mutation-control 로 고정한다.
 # ---------------------------------------------------------------------------
 
 _DELAY_BOUNDS_COMPOSITE_KEYS = (
@@ -6047,13 +6061,23 @@ def test_d1_resolver_docstring_binds_delay_bounds_composite_keys() -> None:
     assert "composite" in docstring.lower()
 
 
-def test_d1_resolver_docstring_declares_max_age_bound_unbound() -> None:
-    """``max_age_bound`` 는 1:1 후보가 없어 register §8-1 잔여로 UNBOUND
-    선언이 명시적으로 남아 있어야 한다."""
+def test_d1_resolver_docstring_declares_max_age_bound_bound_to_new_key() -> None:
+    """[갱신, 2026-09-04 UNCHK-024 처분] ``max_age_bound`` 는 더 이상
+    UNBOUND 가 아니다 — 신설 키 ``MAX_time_conservative_freshness_age_ms``
+    에 1:1 결속되고(값 null → BLOCKED), VER-002-KEYS 선언 행의 리터럴도
+    그 신설 키로 교체돼 있어야 한다."""
     docstring = _real_resolver_class_docstring()
-    assert "max_age_bound" in docstring
+    assert "max_age_bound" in docstring  # still the Python field name
+    assert "MAX_time_conservative_freshness_age_ms" in docstring
     flat = docstring.replace("`", "").replace("*", "")
-    assert "no VERIFICATION-PROFILE-002 bound" in flat
+    assert "no VERIFICATION-PROFILE-002 bound" not in flat
+    assert "bound 1:1 to VERIFICATION-PROFILE-002 key" in flat
+    # The VER-002-KEYS declaration line's trailing token is the new key, not
+    # the bare field-name literal.
+    assert "VER-002-KEYS:" in docstring
+    keys_line = next(line for line in docstring.splitlines() if "VER-002-KEYS:" in line)
+    assert "``max_age_bound``" not in keys_line
+    assert "``MAX_time_conservative_freshness_age_ms``" in keys_line
 
 
 def test_d1_resolver_docstring_declares_five_fields_structurally_not_governed() -> None:
@@ -6072,9 +6096,11 @@ def test_d1_resolver_docstring_declares_five_fields_structurally_not_governed() 
         assert field in docstring, field
     assert "design #33 §3.3" in docstring
     assert "structural" in docstring.lower()
-    # max_age_bound 의 "register §8-1 category incomplete" 잔여 프레이밍과
-    # 명시적으로 구별하는 문언이 남아 있어야 한다.
-    assert "category incomplete" in docstring
+    # max_age_bound 의 (이제 닫힌) register §8-1 잔여 프레이밍과 명시적으로
+    # 구별하는 문언이 남아 있어야 한다 — 2026-09-04 UNCHK-024 처분 이후
+    # "category incomplete" 는 더 이상 참이 아니므로(키 등록으로 닫힘) 그
+    # 구별 자체는 "used to be ... now closed" 문언으로 표현된다.
+    assert "now closed by key registration" in docstring
 
 
 def test_d1_resolver_docstring_composite_key_removal_is_detectable() -> None:

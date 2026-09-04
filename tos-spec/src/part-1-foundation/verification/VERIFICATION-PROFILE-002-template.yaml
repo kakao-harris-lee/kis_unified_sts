@@ -922,6 +922,7 @@ limits:
   MIN_holdover_safety_margin_ms: null
   MAX_time_source_precision_ms: null
   MAX_time_source_sequence_gap_ms: null
+  MAX_time_conservative_freshness_age_ms: null
   MIN_reserved_protective_capacity: null
   MIN_capacity_domain_voter_quorum: null
   MAX_quarantined_capacity_age_ms: null

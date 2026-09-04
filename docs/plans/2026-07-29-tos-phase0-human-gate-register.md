@@ -191,7 +191,7 @@ DSL/Time 트랙으로 흡수). 이관 항목 총 **375건** = 공통 인스턴�
 
 ## 8. 수치 키 전수 (3-tier)
 
-### 8-1. 확정 누락 — 프로파일에 키 자체가 없음 (신설 26항)
+### 8-1. 확정 누락 — 프로파일에 키 자체가 없음 (신설 27항)
 
 | 항목 | 출처 |
 |---|---|
@@ -221,6 +221,7 @@ DSL/Time 트랙으로 흡수). 이관 항목 총 **375건** = 공통 인스턴�
 | blast-radius 상한(cell-blast) | failuredomain:693–695 |
 | safety-cell HALT→global HALT 에스컬레이션 조건 | failuredomain:695–696 |
 | DCE-INV-007 DSL evaluation time/resource bound | strategy-dsl:540–546 |
+| `MAX_time_conservative_freshness_age_ms` (UNCHK-024 잔여 1필드 — resolver `BarTimeProjection.max_age_bound`) | ADR-002-008 §9; 등록 2026-09-04(값 null, 승인 대기) — `docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md` §2 |
 
 ### 8-2. Candidate (누락 확정도 커버 확정도 아님 — 8군)
 

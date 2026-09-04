@@ -856,7 +856,9 @@ _COUNT_TRANSCRIPTIONS: tuple[_CountTranscription, ...] = (
             r"\(`MIN_evidence_retention_ms` approved 2026-08-07, §3\.26\); "
             r"(\d+) keys \(10 broker bounds pending P0-2 measurement, 6 "
             r"instance/architecture limits under ratified trigger-bound "
-            r"deferrals\) remain key-level unapproved and fail-closed"
+            r"deferrals, 1 trustworthy-time freshness ceiling registered "
+            r"2026-09-04 pending value approval \(§3\.27\)\) remain "
+            r"key-level unapproved and fail-closed"
         ),
         ("profile.total", "profile.null"),
     ),

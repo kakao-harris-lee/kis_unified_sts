@@ -1,13 +1,14 @@
-# VERIFICATION-PROFILE-002 — APPROVED (scope-limited; 16 null keys remain
+# VERIFICATION-PROFILE-002 — APPROVED (scope-limited; 17 null keys remain
 # key-level UNAPPROVED and fail-closed)
 #
 # STATUS: APPROVED at profile level (operator, 2026-07-29) for the 146 keys
 # carrying approved values at that date; MIN_evidence_retention_ms was approved
-# separately on 2026-08-07 (see the 2026-08-07 record below), so 147 of the 163
+# separately on 2026-08-07 (see the 2026-08-07 record below), so 147 of the 164
 # numeric keys now carry approved values. Per VER-002-001 §6 the key-level rule
 # is unchanged: an unapproved or placeholder bound is not an approved bound —
-# the 16 null keys (10 broker bounds pending P0-2 measurement, 6 instance/
-# architecture limits) remain unapproved and fail-closed.
+# the 17 null keys (10 broker bounds pending P0-2 measurement, 6 instance/
+# architecture limits, and 1 trustworthy-time freshness ceiling registered
+# 2026-09-04 pending value approval) remain unapproved and fail-closed.
 #
 # Rules for ratification (all required before status -> APPROVED):
 #   - each `value_ms` is confirmed or replaced by the accountable owner;
@@ -68,7 +69,7 @@
 #     It is a floor, not a ceiling: the open-economic-effect and legal-hold
 #     record classes are state predicates owned by the Evidence Integrity Policy
 #     and are not truncated by it.
-#   - 147 of the 163 numeric keys now carry approved values; 16 keys stay null —
+#   - 147 of the 164 numeric keys now carry approved values; 17 keys stay null —
 #     10 broker bounds awaiting P0-2 measurement from an approved Broker
 #     Capability Profile, and 6 instance/architecture limits whose
 #     trigger-bound deferrals are RATIFIED by this same decision.
@@ -82,6 +83,29 @@
 #     a key-level act, not a profile re-approval. scope.environment stays
 #     non-live-test, Live-Armer stays unassigned, and no acceptance,
 #     restricted-live, or live authority follows.
+#
+# 2026-09-04 key registration (operator directive "max_age_bound 키 신설 진행";
+# project record
+# `docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md`
+# §2, §5; ARCHITECTURE-GATE-STATUS §3.27; PATCH-0058):
+#   - Registers `MAX_time_conservative_freshness_age_ms` in the `limits:` block,
+#     trustworthy-time group, immediately after
+#     `MAX_time_source_sequence_gap_ms`. This is the UNCHK-024 residual-field
+#     bound: the ADR-002-008 §9 conservative upper-bound age (source age plus
+#     the applicable delay-class bounds) that `BarTimeProjection.max_age_bound`
+#     (`tos/src/tos/backtest/resolver.py`, lockstep in
+#     `tos/src/tos/marketfeed/__init__.py`) is now bound 1:1 to.
+#   - Registered value: null. Per VER-002-001 §6 and the PATCH-0054 precedent,
+#     registering a key approves nothing and creates no bound; the disposition
+#     package §4 recommends 1000 ms, but that recommendation is not an approval
+#     — §6 of that package is an empty form awaiting the Bounds-Approver.
+#   - Effect on this file: total numeric keys 163 -> 164; null keys 16 -> 17.
+#     The `tools/tos_completion_status.py` D-1 cell for the resolver and
+#     marketfeed sites moves UNBOUND -> BLOCKED (in-universe, value pending),
+#     not VALUED.
+#   - status, approved_by, effective_from, and review_due are unchanged; this
+#     is a key-level registration act, not a profile re-approval. No value
+#     approval, acceptance, restricted-live, or live authority follows.
 
 profile_id: VERIFICATION-PROFILE-002
 version: "2.1"
@@ -1019,6 +1043,7 @@ limits:
   MIN_holdover_safety_margin_ms: 2000                  # APPROVE per lease class; the margin subtracted when deriving conservative usable lifetime, distinct from the MAX_degraded_lease_holdover_ms total budget (ADR-002-008 §11.2; source: 2026-07-21 trustworthy-time design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-F floor range 100s ms-seconds, conservative high end that keeps holdover usable] owner=operator; review_date=2027-01-29
   MAX_time_source_precision_ms: 50                     # APPROVE per reference-source class; source timestamp precision and uncertainty enter the conservative freshness upper bound (ADR-002-008 §9; source: 2026-07-21 trustworthy-time design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L4 range ~50-500, conservative low end] owner=operator; review_date=2027-01-29
   MAX_time_source_sequence_gap_ms: 50                  # APPROVE per reference-source class; an unknown or unbounded source sequence gap denies TRUSTED time (ADR-002-008 §9; source: 2026-07-21 trustworthy-time design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L4 range ~50-500, conservative low end] owner=operator; review_date=2027-01-29
+  MAX_time_conservative_freshness_age_ms: null         # APPROVE per critical-input consumer scope; ceiling on the ADR-002-008 §9 conservative upper-bound age (source age + applicable delay-class bounds); exceeding it or an unestablishable bound is STALE and denies dependent new risk, never coerced to zero (ADR-002-008 §9; source: UNCHK-024 / tos backtest resolver BarTimeProjection.max_age_bound; disposition draft docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md §2-§4) -- [REGISTERED 2026-09-04 null; value pending Bounds-Approver (draft §6); owner TBD]
   MIN_reserved_protective_capacity: null               # APPROVE per capacity scope; normal strategy activity cannot consume the configured minimum Reserved Protective Capacity, and an unknown minimum is not a satisfied minimum (ADR-002-002 INV-009; source: 2026-07-21 risk-capacity-ledger design §8) -- [DEFERRED 2026-07-29: instance/architecture decision; value stays null, owner TBD]
   MIN_capacity_domain_voter_quorum: null               # APPROVE together with the Capacity Domain boundary and fault-tolerance model, which is a separate architecture decision; this key registers the numeric gap only and grants no consensus model (ADR-002-012; source: 2026-07-21 risk-capacity-ledger design §8) -- [DEFERRED 2026-07-29: instance/architecture decision; value stays null, owner TBD]
   MAX_quarantined_capacity_age_ms: 30000               # APPROVE only as escalation deadline; age never releases quarantined capacity or converts UNKNOWN to resolved (ADR-002-002 §37; source: 2026-07-21 risk-capacity-ledger design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L3] owner=operator; review_date=2027-01-29
