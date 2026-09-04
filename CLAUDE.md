@@ -52,6 +52,31 @@ strategy config -> backtest -> tracking/optimization -> paper/live validation ->
 - `config/`: YAML strategy/risk/execution/storage/infra config.
 - `cli/main.py`: `sts` command entrypoint.
 
+## tos Kernel Boundary (two projects in one repo)
+
+- `tos/` is the greenfield Trading Operating System kernel: its own
+  distribution (`tos/pyproject.toml`), hermetic tests, pinned deps, and a
+  CI-enforced **asymmetric import firewall**: nothing outside `tos/` may
+  import `tos`; `tos/` may import only six ratified pure-commons packages
+  (`shared.models`, `.indicators`, `.resilience`, `.utils`, `.exceptions`,
+  `.determinism`); every other direct import is denied by the AST gate, and
+  `.importlinter` additionally forbids transitive reach into the §2.3
+  operational set (`shared.execution/kis/streaming/llm/storage/backtest`,
+  `shared.config.secrets`, `services`, `cli`)
+  (design: `docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md` §3).
+- **tos work starts from `tos/CLAUDE.md`**, which lists the tos working set
+  (`tos/`, `tos-spec/`, `tos-evidence/`, `tools/tos_*`, `tests/tools/test_tos_*`,
+  `docs/plans/*tos*`, `config/tos_completion.yaml`). Agents on tos tasks should
+  search and edit inside that set and treat `shared/`, `services/`, and the
+  frontend as out of scope.
+- Repo split is deferred to the live gate (design §6.2) and, when it happens,
+  removes the legacy runtime rather than moving `tos/`: Phase-0 governance is
+  bound to this repo's git history. Do not relocate `tos/` as a side effect.
+- CI: `tos-gate` (required) and `tos-firewall` run on every PR without path
+  gating; the legacy `test` workflow is path-gated away from tos and docs-only
+  changes and no longer runs the tos governance tests (they live in
+  `tos-firewall.yml`).
+
 ## Web/API Surface
 
 - Caddy is the only host-published web entry. Default host port is
