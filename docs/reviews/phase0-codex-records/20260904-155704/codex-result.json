@@ -1,0 +1,76 @@
+{
+  "job": {
+    "createdAt": "2026-09-04T07:50:34.153Z",
+    "updatedAt": "2026-09-04T07:52:38.462Z",
+    "id": "review-mtmnmhm1-pc6tnu",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "SHIP. 재심 #5 finding 1은 해소됐다. HEAD c5550229는 claim 파싱 결과를 `<canonical_site_id> — <지정 문장>`과 전체 문자열 완전 일치로 비교한다. 부정 포장, 두 site_id, 접두·접미 잉여, 후행·내부 공백, ASCII 대시 치환이 각각 독립 red이며, C5(2c2bc607)에서는 11개 대조군이 실패하고 HEAD에서는 모두 통과한 mutation 로그가 이를 입증한다. YAML은 인용부호 같은 직렬화 문법만 제거할 뿐 scalar 내부를 strip하거나 정규화하지 않아 우회가 없다. 단일 표면 형식은 계약이 고정한 두 내용 요소를 결정적으로 직렬화하는 fail-closed 구현 선택이며, 허용 의미를 넓히거나 다른 주장을 완료로 인정하지 않으므로 material 계약 위반으로 보지 않는다. 이전 확정 항목의 회귀도 확인되지 않았다. 로컬 재실행은 사용 가능한 TMPDIR 부재로 시작 전에 차단됐지만, 정확한 HEAD에 결속된 제공 로그는 focused 243 tests, completion check, ENTRY_OK, ruff, black, mypy 성공을 기록한다.",
+    "write": false,
+    "sessionId": "8bf0fa45-e214-454b-9940-35031e7bbce0",
+    "status": "completed",
+    "startedAt": "2026-09-04T07:50:34.225Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtmnmhm1-pc6tnu.log",
+    "threadId": "01a06b65-e74a-70c0-8f18-ccc6cd2ca6c2",
+    "turnId": "01a06b65-e8ba-7812-88ee-2e1696c59112",
+    "completedAt": "2026-09-04T07:52:38.323Z"
+  },
+  "storedJob": {
+    "id": "review-mtmnmhm1-pc6tnu",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "Adversarial Review branch diff against 28475ca1^",
+    "write": false,
+    "createdAt": "2026-09-04T07:50:34.153Z",
+    "sessionId": "8bf0fa45-e214-454b-9940-35031e7bbce0",
+    "status": "completed",
+    "startedAt": "2026-09-04T07:50:34.225Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtmnmhm1-pc6tnu.log",
+    "threadId": "01a06b65-e74a-70c0-8f18-ccc6cd2ca6c2",
+    "turnId": "01a06b65-e8ba-7812-88ee-2e1696c59112",
+    "completedAt": "2026-09-04T07:52:38.323Z",
+    "result": {
+      "review": "Adversarial Review",
+      "target": {
+        "mode": "branch",
+        "label": "branch diff against 28475ca1^",
+        "baseRef": "28475ca1^",
+        "explicit": true
+      },
+      "threadId": "01a06b65-e74a-70c0-8f18-ccc6cd2ca6c2",
+      "context": {
+        "repoRoot": "/Users/harris/Development/private/kis_unified_sts",
+        "branch": "mission-critical-trading-operating-system",
+        "summary": "Reviewing branch mission-critical-trading-operating-system against 28475ca1^ from merge-base e2048397eb7497c9a45287f2a3532f2e38619150."
+      },
+      "codex": {
+        "status": 0,
+        "stderr": "",
+        "stdout": "{\"verdict\":\"approve\",\"summary\":\"SHIP. 재심 #5 finding 1은 해소됐다. HEAD c5550229는 claim 파싱 결과를 `<canonical_site_id> — <지정 문장>`과 전체 문자열 완전 일치로 비교한다. 부정 포장, 두 site_id, 접두·접미 잉여, 후행·내부 공백, ASCII 대시 치환이 각각 독립 red이며, C5(2c2bc607)에서는 11개 대조군이 실패하고 HEAD에서는 모두 통과한 mutation 로그가 이를 입증한다. YAML은 인용부호 같은 직렬화 문법만 제거할 뿐 scalar 내부를 strip하거나 정규화하지 않아 우회가 없다. 단일 표면 형식은 계약이 고정한 두 내용 요소를 결정적으로 직렬화하는 fail-closed 구현 선택이며, 허용 의미를 넓히거나 다른 주장을 완료로 인정하지 않으므로 material 계약 위반으로 보지 않는다. 이전 확정 항목의 회귀도 확인되지 않았다. 로컬 재실행은 사용 가능한 TMPDIR 부재로 시작 전에 차단됐지만, 정확한 HEAD에 결속된 제공 로그는 focused 243 tests, completion check, ENTRY_OK, ruff, black, mypy 성공을 기록한다.\",\"findings\":[],\"next_steps\":[\"재심 #6을 approve로 기록한 뒤 Phase 0 완료 판정 §11로 진행한다.\"]}",
+        "reasoning": []
+      },
+      "result": {
+        "verdict": "approve",
+        "summary": "SHIP. 재심 #5 finding 1은 해소됐다. HEAD c5550229는 claim 파싱 결과를 `<canonical_site_id> — <지정 문장>`과 전체 문자열 완전 일치로 비교한다. 부정 포장, 두 site_id, 접두·접미 잉여, 후행·내부 공백, ASCII 대시 치환이 각각 독립 red이며, C5(2c2bc607)에서는 11개 대조군이 실패하고 HEAD에서는 모두 통과한 mutation 로그가 이를 입증한다. YAML은 인용부호 같은 직렬화 문법만 제거할 뿐 scalar 내부를 strip하거나 정규화하지 않아 우회가 없다. 단일 표면 형식은 계약이 고정한 두 내용 요소를 결정적으로 직렬화하는 fail-closed 구현 선택이며, 허용 의미를 넓히거나 다른 주장을 완료로 인정하지 않으므로 material 계약 위반으로 보지 않는다. 이전 확정 항목의 회귀도 확인되지 않았다. 로컬 재실행은 사용 가능한 TMPDIR 부재로 시작 전에 차단됐지만, 정확한 HEAD에 결속된 제공 로그는 focused 243 tests, completion check, ENTRY_OK, ruff, black, mypy 성공을 기록한다.",
+        "findings": [],
+        "next_steps": [
+          "재심 #6을 approve로 기록한 뒤 Phase 0 완료 판정 §11로 진행한다."
+        ]
+      },
+      "rawOutput": "{\"verdict\":\"approve\",\"summary\":\"SHIP. 재심 #5 finding 1은 해소됐다. HEAD c5550229는 claim 파싱 결과를 `<canonical_site_id> — <지정 문장>`과 전체 문자열 완전 일치로 비교한다. 부정 포장, 두 site_id, 접두·접미 잉여, 후행·내부 공백, ASCII 대시 치환이 각각 독립 red이며, C5(2c2bc607)에서는 11개 대조군이 실패하고 HEAD에서는 모두 통과한 mutation 로그가 이를 입증한다. YAML은 인용부호 같은 직렬화 문법만 제거할 뿐 scalar 내부를 strip하거나 정규화하지 않아 우회가 없다. 단일 표면 형식은 계약이 고정한 두 내용 요소를 결정적으로 직렬화하는 fail-closed 구현 선택이며, 허용 의미를 넓히거나 다른 주장을 완료로 인정하지 않으므로 material 계약 위반으로 보지 않는다. 이전 확정 항목의 회귀도 확인되지 않았다. 로컬 재실행은 사용 가능한 TMPDIR 부재로 시작 전에 차단됐지만, 정확한 HEAD에 결속된 제공 로그는 focused 243 tests, completion check, ENTRY_OK, ruff, black, mypy 성공을 기록한다.\",\"findings\":[],\"next_steps\":[\"재심 #6을 approve로 기록한 뒤 Phase 0 완료 판정 §11로 진행한다.\"]}",
+      "parseError": null,
+      "reasoningSummary": []
+    },
+    "rendered": "# Codex Adversarial Review\n\nTarget: branch diff against 28475ca1^\nVerdict: approve\n\nSHIP. 재심 #5 finding 1은 해소됐다. HEAD c5550229는 claim 파싱 결과를 `<canonical_site_id> — <지정 문장>`과 전체 문자열 완전 일치로 비교한다. 부정 포장, 두 site_id, 접두·접미 잉여, 후행·내부 공백, ASCII 대시 치환이 각각 독립 red이며, C5(2c2bc607)에서는 11개 대조군이 실패하고 HEAD에서는 모두 통과한 mutation 로그가 이를 입증한다. YAML은 인용부호 같은 직렬화 문법만 제거할 뿐 scalar 내부를 strip하거나 정규화하지 않아 우회가 없다. 단일 표면 형식은 계약이 고정한 두 내용 요소를 결정적으로 직렬화하는 fail-closed 구현 선택이며, 허용 의미를 넓히거나 다른 주장을 완료로 인정하지 않으므로 material 계약 위반으로 보지 않는다. 이전 확정 항목의 회귀도 확인되지 않았다. 로컬 재실행은 사용 가능한 TMPDIR 부재로 시작 전에 차단됐지만, 정확한 HEAD에 결속된 제공 로그는 focused 243 tests, completion check, ENTRY_OK, ruff, black, mypy 성공을 기록한다.\n\nNo material findings.\n\nNext steps:\n- 재심 #6을 approve로 기록한 뒤 Phase 0 완료 판정 §11로 진행한다.\n"
+  }
+}

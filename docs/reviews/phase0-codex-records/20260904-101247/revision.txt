@@ -1,0 +1,10 @@
+lane: B (plan)
+reviewed_at_head: 26db89c92fedef044ddbfb1c7dc93545a6187033
+reviewed_plan_paths:
+  - docs/plans/2026-07-25-tos-intent-order-conformance-design.md
+  - docs/plans/2026-07-25-tos-safety-profile-governance-design.md
+reviewed_scope_digest: f2d02c4f92ced7a8c96b0b063ec3a92c7e26317e73ff6a76e9b22a8cf10949c7
+digest_kind: plan_scope_digest (HEAD + 두 경로의 워킹트리 내용)
+scope_commit: 15b65212 (git diff 15b65212^ 15b65212 -- <두 경로> · +7/+7 · 이후 무변경)
+captured_at_utc: 2026-09-04T01:12:47Z
+requested_by: 레인 A 재심 #2 verdict .omc/review/20260904-100015/verdict.md finding 1

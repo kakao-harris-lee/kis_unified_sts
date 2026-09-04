@@ -1,0 +1,34 @@
+레인 A 재심 #2 — Phase 0 완료 계약 §12.3 절차표 9행 «codex-reviewer 적대적 코드 리뷰». 재심 #1(잡 review-mtlo6mst-93vt2j · needs-attention · high 2 / medium 1)의 해소 여부를 심사한다. 이 판정이 Phase 0 완료 판정(§11)에 앞서는 기록 심판(reviewer of record)이다.
+
+먼저 읽을 것 (순서대로):
+1. CLAUDE.md — 비협상 규칙(선물 long/short 대칭 · 실계좌 선물 영구 차단 · 주식 EOD 일괄청산 금지 · ClickHouse 신규 사용 금지 · RL/TFT 부활 금지 · 임계값/심볼/포트/Redis DB/스케줄 하드코딩 금지 · Redis DB 1 + TTL · KST 세션 판정). 이 규칙에 배치되는 권고는 내지 마라.
+2. .omc/review/20260904-001114/verdict.md — 재심 #1 판정 원문(verbatim JSON) + 오케스트레이터 수용검사(채택 3/3 · 기각 0). 1차 finding 3건은 재심 #1 이 «해소» 로 판정했으므로 재판정하지 말고, 이번 수정이 그 해소를 되돌리지 않았는지만 확인하라. **1순위 질문: 재심 #1 의 세 finding 이 실제로 해소됐는가, 아니면 회피됐는가** — 테스트 무력화 · 조건 완화 · 문구만 추가 · 새 우회로 개설. finding 마다 «수정 전 코드(2e5edb4a)로 되돌리면 새 red 테스트가 실제로 실패하는가» 를 뮤테이션 관점으로 표본 검증하라(파일을 편집하지 말고 논리로 · 또는 임시 사본에서).
+3. .omc/review/20260904-100015/evidence/ — 4렌즈 증거는 1차 스탬프(HEAD b5d2448a 기준) 사본이다. 수정된 두 파일군은 렌즈가 보지 못했으므로 직접 재실측하라. **evidence/verification-run.md 는 오케스트레이터가 쓰기 가능한 환경에서 돌린 pytest · --check · ruff/black/mypy 실행 로그다** — 재심 #1 next_steps 4(당신의 샌드박스에 임시 디렉터리가 없어 미실행)에 대한 대체 증거이며, 자기 승인이 아니라 실행 출력 원문이다. 가능하면 `TMPDIR` 을 저장소 안 쓰기 가능한 경로(예: `.omc/tmp`)로 지정해 직접 재실행을 시도하라.
+
+이번 수정 커밋: 26db89c9 (재심 #1 finding 1+3) (tools/tos_completion_status.py · tests/tools/test_tos_completion_status.py · tos-spec/src/verification/PHASE0-UNCHECKABLE-REGISTER.csv UNCHK-026 1행 · docs/reviews/phase0-completion-contract/20260903-165133/D1-DERIVATION-ERRATUM-CANDIDATE.md (e) 절 · tos-spec/src/TOS-COMPLETION-STATUS.md 재생성). tos/src 무편집 · docs/plans 무편집.
+
+심사 범위: 1차·재심 #1 과 동일 — `git diff 28475ca1^ HEAD -- . ':!docs/plans' ':!docs/reviews'` (HEAD = 26db89c92fedef044ddbfb1c7dc93545a6187033). approve 는 D0 구현 블록 **전체**에 대한 진술이다 — 수정분만 보고 승인하지 마라.
+
+**재심 #1 finding 2(docs/plans diff ≠ 0)에 대한 정정 — 사실 기재**: 재심 #1 focus 의 「docs/plans stat 은 0 파일이어야 한다」 는 오케스트레이터의 허위 전제였다. 사실은 `git diff 28475ca1^ HEAD --stat -- docs/plans` = 4 파일(+88/−17)이며 출처는 이 레인의 수정 커밋보다 선행하는 두 커밋이다:
+ - `15b65212` (2026-09-02 · docs/plans/2026-07-25-tos-intent-order-conformance-design.md +7 · docs/plans/2026-07-25-tos-safety-profile-governance-design.md +7 — FWD-a 매핑 5차 설계 에라타 앵커) — PR #638 merge `f49c3728` 에 포함 → 레인 B Codex approve 기록 `docs/reviews/phase0-completion-contract/20260902-174919/verdict.md` (adjudicator codex · approve · reviewed_at_head f49c3728).
+ - `8199bb38` (2026-09-02 · 계약 +72/−15 · 개발계획 +2/−2 — §12.3.4-R 하니스 EPIPE 수리 · sha 재핀 · 운영자 명시 지시) → 레인 B Codex approve 기록 `docs/reviews/phase0-completion-contract/20260902-195656/verdict.md` (adjudicator codex · approve · reviewed_at_head cdecb692 · reviewed_plan_paths 두 문서 · bound_set_digest e0729ff3…).
+ 두 커밋은 D0 블록 50 커밋 중 28·36번째라 기준점 이동으로는 제외할 수 없고(제외하면 D0 구현 커밋도 빠진다), companion 의 `--scope branch` 는 경로 제외를 모른다. 따라서 이 레인 A 의 심사 대상은 **`docs/plans`·`docs/reviews` 를 제외한 코드/데이터/생성물**이며, 두 계획 커밋은 레인 B 산출물로 위 두 approve 로 별도 심판됐다. 이 정정으로 finding 2 가 해소되는지(범위 결속이 바로잡혔는지) 판단하라 — 해소가 아니라면 무엇이 더 필요한지 구체적으로 적어라. 계약 본문 편집을 권고하지 마라.
+
+**재심 #1 finding 1 해소 설계**(`tools/tos_completion_status.py` D-1): 다중 키 우선순위 접기(`_D1_DISPOSITION_PRIORITY`)를 삭제했다. 키별 처분이 전부 같을 때만 그 처분이 사이트 처분이 되고(균일 통과 — 어느 키를 K 로 봐도 같은 처분이라 접기 규칙이 필요 없다), 다르면 UNDECIDED(basis 에 키별 내역). `VER-002-KEYS: NONE` 은 스캔을 유지하되(모순 노출용) 참조 0 이어도 UNDECIDED 다 — «§7.4 어휘 밖 · 운영자 에라타 처분 대기». 결과: resolver(6 VALUED + 1 UNBOUND 혼합)·marketfeed(NONE) UNDECIDED → **§11 `D0-5` 는 NOT_MET(UNDECIDED 2)** 로 정직 노출된다. U-6 을 위해 marketfeed 를 §13 레지스터 `UNCHK-026` 으로 등재했다(resolver 는 UNCHK-024 의 `BarTimeProjection` 리터럴로 기존 등재). 합성 코퍼스 기본 배선은 NONE 에서 합성 키 1개(우주 밖 → 균일 UNBOUND)로 바꿨다.
+확인 질문(각각 file:line 실측으로 답하라):
+ (a) NONE 이 UNBOUND 를 내는 경로가 남았는가. 균일 다중 키 통과가 «접기 규칙» 의 재도입인가 아니면 정당한가 — 계약 §7.4(색인 `python tools/tos_contract_index.py --locate "§7.4"` → :2682-2823) 의 단일 K 어휘와 대조해 답하라.
+ (b) UNCHK-026 등재가 U-6 의 정당한 사용인가, 아니면 «UNDECIDED 를 레지스터 행 하나로 무해화» 하는 우회인가 — U-6 의 계약 문언(§13.6.6)과 UNCHK-024 선례(resolver UNDECIDED 등재 · 커밋 049f4282 이전)와 비교하라. §11 D0-5 가 NOT_MET 로 남는 한 완료값은 만들어지지 않는다는 점을 감안하라.
+ (c) 합성 코퍼스 배선 교체가 기존 테스트의 판별력을 죽이지 않는가.
+ (d) 뒤집힌 테스트(다중 키 우선순위 2건 · NONE green 1건)가 «같은 입력 · 반대 기대» 인가, 삭제·완화인가.
+ (e) 재생성된 tos-spec/src/TOS-COMPLETION-STATUS.md 의 D0-5 표·§11 `D0-5` 행이 검사기 출력과 일치하고 `--check` rc 0 · `d0a_entry_state=ENTRY_OK` 인가.
+ (f) 에라타 후보 문서 (e) 절이 «구현이 계약보다 충실» 류의 자기 정당화 없이 사실만 적었는가.
+
+**재심 #1 finding 3 해소 설계**(렌더러): 고정 상수 `D1_CONTRACT_SITE_NAMES`(리터럴 7 이름 · D1_SITES 와 독립) + `D1_ALLOWED_DISPOSITIONS` + `_d1_completion_blockers()` — (a) D1_SITES 불변식(길이 7 · 이름 집합 일치) (b) 처분 키 집합 == 7 이름(부재·여분 각각 보고) (c) 모든 처분 ∈ {VALUED,BLOCKED,UNBOUND}(UNDECIDED · 어휘 밖 값 각각 보고). `check_d1` 도 불변식 위반을 D-1 finding(rc 결합)으로 낸다. red 대조군: 사이트 1개 삭제 · 여분 사이트 · 어휘 밖 값 · check_d1 불변식.
+확인 질문:
+ (a) D1_SITES 에서 한 항목을 지우면(monkeypatch) 렌더러가 MET 를 내지 않는가 — 테스트가 실제로 그 경로를 치는가.
+ (b) 상수가 D1_SITES 로부터 파생되지 않았는가(리터럴인가).
+ (c) 어휘 밖 값·여분 사이트가 실제로 차단되는가.
+
+1차/재심 #1 에서 등재 축으로 분류된 것들(UNCHK-012 · UNCHK-008 · UNCHK-023)은 재판정하지 말고 분류를 유지하되, 이번 수정이 그 경로를 «새로 열거나 넓혔는지» 만 답하라.
+
+출력: verdict(approve | needs-attention) · summary · findings[] (severity critical/high/medium/low · title · body · file · line_start/line_end · confidence · recommendation) · next_steps[]. finding 의 file:line 은 HEAD 26db89c92fedef044ddbfb1c7dc93545a6187033 에 실재해야 한다. 재심 #1 finding 3건 각각에 대해 summary 또는 findings 에서 «해소 / 부분 해소 / 미해소 / 회피» 중 하나를 명시하라. 범위 밖 기존 부채는 pre-existing 으로 표기하라.

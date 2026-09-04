@@ -1,0 +1,88 @@
+{
+  "job": {
+    "createdAt": "2026-09-04T04:19:09.379Z",
+    "updatedAt": "2026-09-04T04:22:21.271Z",
+    "id": "review-mtmg2lz7-88qdyb",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "NO-SHIP: claim은 거짓이다. 전문 실측: tos/src/tos/marketfeed/__init__.py 165줄, _base.py 127줄, records.py 240줄, resolver.py 226줄, value.py 688줄, vocabulary.py 94줄(총 1,540줄). scope_content_digest b3bf8f18e3e2109939524d2f27076c09286a65953d5076f2eb3c00c71b260947도 재현했다. 163개 프로파일 키의 직접 토큰 참조와 프로파일 로더 경로는 0건이고 선언은 72행의 정확히 한 줄이지만, resolver의 런타임 주입 경계가 프로파일 결속 값과 우주 밖 bound를 포함하는 TimeAdmissionInputs를 받아 전달하므로 (a)와 (c)가 성립하지 않는다.",
+    "write": false,
+    "sessionId": "8bf0fa45-e214-454b-9940-35031e7bbce0",
+    "status": "completed",
+    "startedAt": "2026-09-04T04:19:09.450Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtmg2lz7-88qdyb.log",
+    "threadId": "01a06aa4-5946-76c2-841b-b2e4b9bd9e52",
+    "turnId": "01a06aa4-5aa7-7ae1-aa7d-93ee793ff22e",
+    "completedAt": "2026-09-04T04:22:21.132Z"
+  },
+  "storedJob": {
+    "id": "review-mtmg2lz7-88qdyb",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "Adversarial Review branch diff against 28475ca1^",
+    "write": false,
+    "createdAt": "2026-09-04T04:19:09.379Z",
+    "sessionId": "8bf0fa45-e214-454b-9940-35031e7bbce0",
+    "status": "completed",
+    "startedAt": "2026-09-04T04:19:09.450Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtmg2lz7-88qdyb.log",
+    "threadId": "01a06aa4-5946-76c2-841b-b2e4b9bd9e52",
+    "turnId": "01a06aa4-5aa7-7ae1-aa7d-93ee793ff22e",
+    "completedAt": "2026-09-04T04:22:21.132Z",
+    "result": {
+      "review": "Adversarial Review",
+      "target": {
+        "mode": "branch",
+        "label": "branch diff against 28475ca1^",
+        "baseRef": "28475ca1^",
+        "explicit": true
+      },
+      "threadId": "01a06aa4-5946-76c2-841b-b2e4b9bd9e52",
+      "context": {
+        "repoRoot": "/Users/harris/Development/private/kis_unified_sts",
+        "branch": "mission-critical-trading-operating-system",
+        "summary": "Reviewing branch mission-critical-trading-operating-system against 28475ca1^ from merge-base e2048397eb7497c9a45287f2a3532f2e38619150."
+      },
+      "codex": {
+        "status": 0,
+        "stderr": "",
+        "stdout": "{\"verdict\":\"needs-attention\",\"summary\":\"NO-SHIP: claim은 거짓이다. 전문 실측: tos/src/tos/marketfeed/__init__.py 165줄, _base.py 127줄, records.py 240줄, resolver.py 226줄, value.py 688줄, vocabulary.py 94줄(총 1,540줄). scope_content_digest b3bf8f18e3e2109939524d2f27076c09286a65953d5076f2eb3c00c71b260947도 재현했다. 163개 프로파일 키의 직접 토큰 참조와 프로파일 로더 경로는 0건이고 선언은 72행의 정확히 한 줄이지만, resolver의 런타임 주입 경계가 프로파일 결속 값과 우주 밖 bound를 포함하는 TimeAdmissionInputs를 받아 전달하므로 (a)와 (c)가 성립하지 않는다.\",\"findings\":[{\"severity\":\"high\",\"title\":\"TimeCoordinateProjection 포트가 프로파일 결속 값과 UNBOUND 값을 실제 payload로 소비한다\",\"body\":\"MarketFeedContextResolver는 `time_projection`을 주입받고(152행), 이를 호출해 반환된 `TimeAdmissionInputs`를 취득한 뒤(199–203행) `DecisionTickPayload.time`에 넣는다(204–208행). 이 타입은 delay_bounds, max_age_bound, future_tolerance, snapshot_age_bound, maximum_consumer_age_ms를 운반한다. 실제 생산자 `BarTimeProjection`은 future_tolerance와 maximum_consumer_age_ms를 각각 VER-002 키에, delay_bounds를 네 VER-002 키의 합성값에 결속하며, max_age_bound는 우주 밖 UNBOUND로 명시한다. 따라서 marketfeed가 단순 시간 좌표만 전달한다는 __init__.py:54–57의 설명과 달리 bound-bearing 설정 객체 전체를 런타임 경로에서 소비·전달한다. 직접 키 토큰이 없다는 검사기 결과는 이 의미 의존을 포착하지 못한다.\",\"file\":\"tos/src/tos/marketfeed/resolver.py\",\"line_start\":152,\"line_end\":208,\"confidence\":0.99,\"recommendation\":\"marketfeed의 NO_DEPENDENCY 승인을 기록하지 말고, 모듈 docstring과 D-5 선언에 실제 결속된 6개 프로파일 키(MAX_future_timestamp_tolerance_ms, MAX_critical_input_consumer_receipt_age_ms, MAX_time_transport_and_queue_uncertainty_ms, MAX_clock_domain_conversion_uncertainty_ms, MAX_time_source_precision_ms, MAX_time_source_sequence_gap_ms) 및 우주 밖 bound인 max_age_bound를 공개해 키별 처분을 받도록 한다.\"}],\"next_steps\":[\"이 심판 결과는 approve provenance가 아니라 needs-attention으로 처리한다.\",\"marketfeed의 `VER-002-KEYS: NONE`을 실제 time-projection 의존 선언으로 재분류한 뒤 독립 심사를 다시 수행한다.\"]}",
+        "reasoning": []
+      },
+      "result": {
+        "verdict": "needs-attention",
+        "summary": "NO-SHIP: claim은 거짓이다. 전문 실측: tos/src/tos/marketfeed/__init__.py 165줄, _base.py 127줄, records.py 240줄, resolver.py 226줄, value.py 688줄, vocabulary.py 94줄(총 1,540줄). scope_content_digest b3bf8f18e3e2109939524d2f27076c09286a65953d5076f2eb3c00c71b260947도 재현했다. 163개 프로파일 키의 직접 토큰 참조와 프로파일 로더 경로는 0건이고 선언은 72행의 정확히 한 줄이지만, resolver의 런타임 주입 경계가 프로파일 결속 값과 우주 밖 bound를 포함하는 TimeAdmissionInputs를 받아 전달하므로 (a)와 (c)가 성립하지 않는다.",
+        "findings": [
+          {
+            "severity": "high",
+            "title": "TimeCoordinateProjection 포트가 프로파일 결속 값과 UNBOUND 값을 실제 payload로 소비한다",
+            "body": "MarketFeedContextResolver는 `time_projection`을 주입받고(152행), 이를 호출해 반환된 `TimeAdmissionInputs`를 취득한 뒤(199–203행) `DecisionTickPayload.time`에 넣는다(204–208행). 이 타입은 delay_bounds, max_age_bound, future_tolerance, snapshot_age_bound, maximum_consumer_age_ms를 운반한다. 실제 생산자 `BarTimeProjection`은 future_tolerance와 maximum_consumer_age_ms를 각각 VER-002 키에, delay_bounds를 네 VER-002 키의 합성값에 결속하며, max_age_bound는 우주 밖 UNBOUND로 명시한다. 따라서 marketfeed가 단순 시간 좌표만 전달한다는 __init__.py:54–57의 설명과 달리 bound-bearing 설정 객체 전체를 런타임 경로에서 소비·전달한다. 직접 키 토큰이 없다는 검사기 결과는 이 의미 의존을 포착하지 못한다.",
+            "file": "tos/src/tos/marketfeed/resolver.py",
+            "line_start": 152,
+            "line_end": 208,
+            "confidence": 0.99,
+            "recommendation": "marketfeed의 NO_DEPENDENCY 승인을 기록하지 말고, 모듈 docstring과 D-5 선언에 실제 결속된 6개 프로파일 키(MAX_future_timestamp_tolerance_ms, MAX_critical_input_consumer_receipt_age_ms, MAX_time_transport_and_queue_uncertainty_ms, MAX_clock_domain_conversion_uncertainty_ms, MAX_time_source_precision_ms, MAX_time_source_sequence_gap_ms) 및 우주 밖 bound인 max_age_bound를 공개해 키별 처분을 받도록 한다."
+          }
+        ],
+        "next_steps": [
+          "이 심판 결과는 approve provenance가 아니라 needs-attention으로 처리한다.",
+          "marketfeed의 `VER-002-KEYS: NONE`을 실제 time-projection 의존 선언으로 재분류한 뒤 독립 심사를 다시 수행한다."
+        ]
+      },
+      "rawOutput": "{\"verdict\":\"needs-attention\",\"summary\":\"NO-SHIP: claim은 거짓이다. 전문 실측: tos/src/tos/marketfeed/__init__.py 165줄, _base.py 127줄, records.py 240줄, resolver.py 226줄, value.py 688줄, vocabulary.py 94줄(총 1,540줄). scope_content_digest b3bf8f18e3e2109939524d2f27076c09286a65953d5076f2eb3c00c71b260947도 재현했다. 163개 프로파일 키의 직접 토큰 참조와 프로파일 로더 경로는 0건이고 선언은 72행의 정확히 한 줄이지만, resolver의 런타임 주입 경계가 프로파일 결속 값과 우주 밖 bound를 포함하는 TimeAdmissionInputs를 받아 전달하므로 (a)와 (c)가 성립하지 않는다.\",\"findings\":[{\"severity\":\"high\",\"title\":\"TimeCoordinateProjection 포트가 프로파일 결속 값과 UNBOUND 값을 실제 payload로 소비한다\",\"body\":\"MarketFeedContextResolver는 `time_projection`을 주입받고(152행), 이를 호출해 반환된 `TimeAdmissionInputs`를 취득한 뒤(199–203행) `DecisionTickPayload.time`에 넣는다(204–208행). 이 타입은 delay_bounds, max_age_bound, future_tolerance, snapshot_age_bound, maximum_consumer_age_ms를 운반한다. 실제 생산자 `BarTimeProjection`은 future_tolerance와 maximum_consumer_age_ms를 각각 VER-002 키에, delay_bounds를 네 VER-002 키의 합성값에 결속하며, max_age_bound는 우주 밖 UNBOUND로 명시한다. 따라서 marketfeed가 단순 시간 좌표만 전달한다는 __init__.py:54–57의 설명과 달리 bound-bearing 설정 객체 전체를 런타임 경로에서 소비·전달한다. 직접 키 토큰이 없다는 검사기 결과는 이 의미 의존을 포착하지 못한다.\",\"file\":\"tos/src/tos/marketfeed/resolver.py\",\"line_start\":152,\"line_end\":208,\"confidence\":0.99,\"recommendation\":\"marketfeed의 NO_DEPENDENCY 승인을 기록하지 말고, 모듈 docstring과 D-5 선언에 실제 결속된 6개 프로파일 키(MAX_future_timestamp_tolerance_ms, MAX_critical_input_consumer_receipt_age_ms, MAX_time_transport_and_queue_uncertainty_ms, MAX_clock_domain_conversion_uncertainty_ms, MAX_time_source_precision_ms, MAX_time_source_sequence_gap_ms) 및 우주 밖 bound인 max_age_bound를 공개해 키별 처분을 받도록 한다.\"}],\"next_steps\":[\"이 심판 결과는 approve provenance가 아니라 needs-attention으로 처리한다.\",\"marketfeed의 `VER-002-KEYS: NONE`을 실제 time-projection 의존 선언으로 재분류한 뒤 독립 심사를 다시 수행한다.\"]}",
+      "parseError": null,
+      "reasoningSummary": []
+    },
+    "rendered": "# Codex Adversarial Review\n\nTarget: branch diff against 28475ca1^\nVerdict: needs-attention\n\nNO-SHIP: claim은 거짓이다. 전문 실측: tos/src/tos/marketfeed/__init__.py 165줄, _base.py 127줄, records.py 240줄, resolver.py 226줄, value.py 688줄, vocabulary.py 94줄(총 1,540줄). scope_content_digest b3bf8f18e3e2109939524d2f27076c09286a65953d5076f2eb3c00c71b260947도 재현했다. 163개 프로파일 키의 직접 토큰 참조와 프로파일 로더 경로는 0건이고 선언은 72행의 정확히 한 줄이지만, resolver의 런타임 주입 경계가 프로파일 결속 값과 우주 밖 bound를 포함하는 TimeAdmissionInputs를 받아 전달하므로 (a)와 (c)가 성립하지 않는다.\n\nFindings:\n- [high] TimeCoordinateProjection 포트가 프로파일 결속 값과 UNBOUND 값을 실제 payload로 소비한다 (tos/src/tos/marketfeed/resolver.py:152-208)\n  MarketFeedContextResolver는 `time_projection`을 주입받고(152행), 이를 호출해 반환된 `TimeAdmissionInputs`를 취득한 뒤(199–203행) `DecisionTickPayload.time`에 넣는다(204–208행). 이 타입은 delay_bounds, max_age_bound, future_tolerance, snapshot_age_bound, maximum_consumer_age_ms를 운반한다. 실제 생산자 `BarTimeProjection`은 future_tolerance와 maximum_consumer_age_ms를 각각 VER-002 키에, delay_bounds를 네 VER-002 키의 합성값에 결속하며, max_age_bound는 우주 밖 UNBOUND로 명시한다. 따라서 marketfeed가 단순 시간 좌표만 전달한다는 __init__.py:54–57의 설명과 달리 bound-bearing 설정 객체 전체를 런타임 경로에서 소비·전달한다. 직접 키 토큰이 없다는 검사기 결과는 이 의미 의존을 포착하지 못한다.\n  Recommendation: marketfeed의 NO_DEPENDENCY 승인을 기록하지 말고, 모듈 docstring과 D-5 선언에 실제 결속된 6개 프로파일 키(MAX_future_timestamp_tolerance_ms, MAX_critical_input_consumer_receipt_age_ms, MAX_time_transport_and_queue_uncertainty_ms, MAX_clock_domain_conversion_uncertainty_ms, MAX_time_source_precision_ms, MAX_time_source_sequence_gap_ms) 및 우주 밖 bound인 max_age_bound를 공개해 키별 처분을 받도록 한다.\n\nNext steps:\n- 이 심판 결과는 approve provenance가 아니라 needs-attention으로 처리한다.\n- marketfeed의 `VER-002-KEYS: NONE`을 실제 time-projection 의존 선언으로 재분류한 뒤 독립 심사를 다시 수행한다.\n"
+  }
+}

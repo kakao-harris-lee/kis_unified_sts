@@ -39,6 +39,8 @@ Three independent reasons converge:
    linearizable ledger and a real independent approver, capacity and approval evidence cannot be
    produced *in principle*.
 
+VER-002-KEYS: ``dsl_evaluation_budget_steps``; CONTRAST: ``MAX_dsl_evaluation_ms``
+
 So this slice demonstrates the **wiring** — the call order, the binding hand-off, the fail-closed
 stop, and backtest/live parity — and it demonstrates nothing about the decision, execution, or risk
 models' acceptance. Of ADR-002-002 §11's nineteen steps this package realizes exactly **two**

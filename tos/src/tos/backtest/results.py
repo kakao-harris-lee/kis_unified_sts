@@ -97,6 +97,8 @@ class BacktestRun:
         remain unbound register candidates), and authority runtimes that exist only as
         ``NON_AUTHORITATIVE_PROVISIONAL`` stand-ins — plus, for D-E3 specifically, the
         ADR-DEV-010 §8:191-192 single-run disqualifier.
+
+        VER-002-KEYS: ``dsl_evaluation_budget_steps``
         """
         return True
 

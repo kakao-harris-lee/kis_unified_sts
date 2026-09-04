@@ -1,0 +1,89 @@
+{
+  "job": {
+    "createdAt": "2026-09-04T02:22:09.519Z",
+    "updatedAt": "2026-09-04T02:28:11.304Z",
+    "id": "review-mtmbw5f3-xpo98b",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "출하 차단. O-6의 두 digest, C1 decided_at_head, blob/행수는 일치했고 계약 검사와 145개 self-test는 rc 0이었다. 그러나 D-4는 NONE을 구조적으로 검증하지 못해 저작자가 UNBOUND 또는 간접 의존을 NO_DEPENDENCY로 바꿀 수 있다. 또한 요청된 `tos_contract_index.py --check` 직접 실행은 `--out` 부재로 rc 2였다.",
+    "write": false,
+    "sessionId": "8bf0fa45-e214-454b-9940-35031e7bbce0",
+    "status": "completed",
+    "startedAt": "2026-09-04T02:22:09.589Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtmbw5f3-xpo98b.log",
+    "threadId": "01a06a39-3c20-7682-92e6-d7901a775ca4",
+    "turnId": "01a06a39-3d93-7542-86c2-d4c382112c3c",
+    "completedAt": "2026-09-04T02:28:11.167Z"
+  },
+  "storedJob": {
+    "id": "review-mtmbw5f3-xpo98b",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "Adversarial Review branch diff against 26db89c9",
+    "write": false,
+    "createdAt": "2026-09-04T02:22:09.519Z",
+    "sessionId": "8bf0fa45-e214-454b-9940-35031e7bbce0",
+    "status": "completed",
+    "startedAt": "2026-09-04T02:22:09.589Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtmbw5f3-xpo98b.log",
+    "threadId": "01a06a39-3c20-7682-92e6-d7901a775ca4",
+    "turnId": "01a06a39-3d93-7542-86c2-d4c382112c3c",
+    "completedAt": "2026-09-04T02:28:11.167Z",
+    "result": {
+      "review": "Adversarial Review",
+      "target": {
+        "mode": "branch",
+        "label": "branch diff against 26db89c9",
+        "baseRef": "26db89c9",
+        "explicit": true
+      },
+      "threadId": "01a06a39-3c20-7682-92e6-d7901a775ca4",
+      "context": {
+        "repoRoot": "/Users/harris/Development/private/kis_unified_sts",
+        "branch": "mission-critical-trading-operating-system",
+        "summary": "Reviewing branch mission-critical-trading-operating-system against 26db89c9 from merge-base 26db89c92fedef044ddbfb1c7dc93545a6187033."
+      },
+      "codex": {
+        "status": 0,
+        "stderr": "",
+        "stdout": "{\"verdict\":\"needs-attention\",\"summary\":\"출하 차단. O-6의 두 digest, C1 decided_at_head, blob/행수는 일치했고 계약 검사와 145개 self-test는 rc 0이었다. 그러나 D-4는 NONE을 구조적으로 검증하지 못해 저작자가 UNBOUND 또는 간접 의존을 NO_DEPENDENCY로 바꿀 수 있다. 또한 요청된 `tos_contract_index.py --check` 직접 실행은 `--out` 부재로 rc 2였다.\",\"findings\":[{\"severity\":\"high\",\"title\":\"D-4가 NONE 자기신고를 막지 못해 UNBOUND 의존을 숨길 수 있다\",\"body\":\"D-4는 `NONE` 선언을 검증할 때 현재 VER-002 우주 키의 로컬 토큰 참조만 찾는다. 따라서 우주 밖 의존 키(정의상 D-3에서는 UNBOUND여야 함)는 같은 스캔 범위에 리터럴로 존재해도 검출 대상이 아니어서, 저작자가 그 키를 선언하는 대신 NONE을 쓰면 NO_DEPENDENCY와 §13 면제를 얻는다. 실제 resolver의 `max_age_bound`가 바로 이런 우주 밖 키 클래스다. 또한 module은 패키지 재귀, class/method는 파일 하나만 보므로 외부 helper가 실제 키를 읽고 사이트가 그 결과를 소비하는 경우도 0건으로 접힌다. 계약은 별칭·간접 참조를 못 본다고 인정하지만, 그러면서도 0건을 완료 처분으로 사용하므로 UNDECIDED 차단을 다시 연다. `토큰 리터럴 참조`도 식별자·문자열·주석 중 무엇을 세는지 정의하지 않아 C4 구현이 여러 비동치 해석으로 갈릴 수 있다.\",\"file\":\"docs/plans/2026-08-12-tos-phase0-completion-contract-design.md\",\"line_start\":2829,\"line_end\":2841,\"confidence\":0.99,\"recommendation\":\"NONE 검증의 후보 우주와 의존 경계를 닫아라. 최소한 우주 밖 의존 후보도 UNBOUND로 포착하고, 외부 호출을 통한 전이 의존의 귀속 규칙 및 토큰화·주석/문자열 처리 규칙을 명시해 미확정 사례는 UNDECIDED로 차단해야 한다. 계약 본문 추가 편집이므로 S-26 ⑥에 따라 ② 카운터가 다시 0으로 리셋되고 O-6 재결속·레인 B 재심 비용이 발생함을 함께 기록하라.\"}],\"next_steps\":[\"D-4의 우주 밖 키 및 스캔 범위 밖 간접 의존 대조군을 추가하고, 둘 다 NO_DEPENDENCY가 아닌 UNDECIDED 또는 UNBOUND로 귀속되는지 검증한다.\",\"계약 수정 후 plan_scope_digest와 bound_set_digest를 다시 계산하고 O-6를 재결속한 뒤 레인 B 재심을 반복한다.\",\"색인 검증은 실제 생성 산출물 경로를 `--out`으로 지정해 다시 실행한다. 현재 요청에 적힌 `python tools/tos_contract_index.py --check` 그대로는 rc 2다.\"]}",
+        "reasoning": []
+      },
+      "result": {
+        "verdict": "needs-attention",
+        "summary": "출하 차단. O-6의 두 digest, C1 decided_at_head, blob/행수는 일치했고 계약 검사와 145개 self-test는 rc 0이었다. 그러나 D-4는 NONE을 구조적으로 검증하지 못해 저작자가 UNBOUND 또는 간접 의존을 NO_DEPENDENCY로 바꿀 수 있다. 또한 요청된 `tos_contract_index.py --check` 직접 실행은 `--out` 부재로 rc 2였다.",
+        "findings": [
+          {
+            "severity": "high",
+            "title": "D-4가 NONE 자기신고를 막지 못해 UNBOUND 의존을 숨길 수 있다",
+            "body": "D-4는 `NONE` 선언을 검증할 때 현재 VER-002 우주 키의 로컬 토큰 참조만 찾는다. 따라서 우주 밖 의존 키(정의상 D-3에서는 UNBOUND여야 함)는 같은 스캔 범위에 리터럴로 존재해도 검출 대상이 아니어서, 저작자가 그 키를 선언하는 대신 NONE을 쓰면 NO_DEPENDENCY와 §13 면제를 얻는다. 실제 resolver의 `max_age_bound`가 바로 이런 우주 밖 키 클래스다. 또한 module은 패키지 재귀, class/method는 파일 하나만 보므로 외부 helper가 실제 키를 읽고 사이트가 그 결과를 소비하는 경우도 0건으로 접힌다. 계약은 별칭·간접 참조를 못 본다고 인정하지만, 그러면서도 0건을 완료 처분으로 사용하므로 UNDECIDED 차단을 다시 연다. `토큰 리터럴 참조`도 식별자·문자열·주석 중 무엇을 세는지 정의하지 않아 C4 구현이 여러 비동치 해석으로 갈릴 수 있다.",
+            "file": "docs/plans/2026-08-12-tos-phase0-completion-contract-design.md",
+            "line_start": 2829,
+            "line_end": 2841,
+            "confidence": 0.99,
+            "recommendation": "NONE 검증의 후보 우주와 의존 경계를 닫아라. 최소한 우주 밖 의존 후보도 UNBOUND로 포착하고, 외부 호출을 통한 전이 의존의 귀속 규칙 및 토큰화·주석/문자열 처리 규칙을 명시해 미확정 사례는 UNDECIDED로 차단해야 한다. 계약 본문 추가 편집이므로 S-26 ⑥에 따라 ② 카운터가 다시 0으로 리셋되고 O-6 재결속·레인 B 재심 비용이 발생함을 함께 기록하라."
+          }
+        ],
+        "next_steps": [
+          "D-4의 우주 밖 키 및 스캔 범위 밖 간접 의존 대조군을 추가하고, 둘 다 NO_DEPENDENCY가 아닌 UNDECIDED 또는 UNBOUND로 귀속되는지 검증한다.",
+          "계약 수정 후 plan_scope_digest와 bound_set_digest를 다시 계산하고 O-6를 재결속한 뒤 레인 B 재심을 반복한다.",
+          "색인 검증은 실제 생성 산출물 경로를 `--out`으로 지정해 다시 실행한다. 현재 요청에 적힌 `python tools/tos_contract_index.py --check` 그대로는 rc 2다."
+        ]
+      },
+      "rawOutput": "{\"verdict\":\"needs-attention\",\"summary\":\"출하 차단. O-6의 두 digest, C1 decided_at_head, blob/행수는 일치했고 계약 검사와 145개 self-test는 rc 0이었다. 그러나 D-4는 NONE을 구조적으로 검증하지 못해 저작자가 UNBOUND 또는 간접 의존을 NO_DEPENDENCY로 바꿀 수 있다. 또한 요청된 `tos_contract_index.py --check` 직접 실행은 `--out` 부재로 rc 2였다.\",\"findings\":[{\"severity\":\"high\",\"title\":\"D-4가 NONE 자기신고를 막지 못해 UNBOUND 의존을 숨길 수 있다\",\"body\":\"D-4는 `NONE` 선언을 검증할 때 현재 VER-002 우주 키의 로컬 토큰 참조만 찾는다. 따라서 우주 밖 의존 키(정의상 D-3에서는 UNBOUND여야 함)는 같은 스캔 범위에 리터럴로 존재해도 검출 대상이 아니어서, 저작자가 그 키를 선언하는 대신 NONE을 쓰면 NO_DEPENDENCY와 §13 면제를 얻는다. 실제 resolver의 `max_age_bound`가 바로 이런 우주 밖 키 클래스다. 또한 module은 패키지 재귀, class/method는 파일 하나만 보므로 외부 helper가 실제 키를 읽고 사이트가 그 결과를 소비하는 경우도 0건으로 접힌다. 계약은 별칭·간접 참조를 못 본다고 인정하지만, 그러면서도 0건을 완료 처분으로 사용하므로 UNDECIDED 차단을 다시 연다. `토큰 리터럴 참조`도 식별자·문자열·주석 중 무엇을 세는지 정의하지 않아 C4 구현이 여러 비동치 해석으로 갈릴 수 있다.\",\"file\":\"docs/plans/2026-08-12-tos-phase0-completion-contract-design.md\",\"line_start\":2829,\"line_end\":2841,\"confidence\":0.99,\"recommendation\":\"NONE 검증의 후보 우주와 의존 경계를 닫아라. 최소한 우주 밖 의존 후보도 UNBOUND로 포착하고, 외부 호출을 통한 전이 의존의 귀속 규칙 및 토큰화·주석/문자열 처리 규칙을 명시해 미확정 사례는 UNDECIDED로 차단해야 한다. 계약 본문 추가 편집이므로 S-26 ⑥에 따라 ② 카운터가 다시 0으로 리셋되고 O-6 재결속·레인 B 재심 비용이 발생함을 함께 기록하라.\"}],\"next_steps\":[\"D-4의 우주 밖 키 및 스캔 범위 밖 간접 의존 대조군을 추가하고, 둘 다 NO_DEPENDENCY가 아닌 UNDECIDED 또는 UNBOUND로 귀속되는지 검증한다.\",\"계약 수정 후 plan_scope_digest와 bound_set_digest를 다시 계산하고 O-6를 재결속한 뒤 레인 B 재심을 반복한다.\",\"색인 검증은 실제 생성 산출물 경로를 `--out`으로 지정해 다시 실행한다. 현재 요청에 적힌 `python tools/tos_contract_index.py --check` 그대로는 rc 2다.\"]}",
+      "parseError": null,
+      "reasoningSummary": []
+    },
+    "rendered": "# Codex Adversarial Review\n\nTarget: branch diff against 26db89c9\nVerdict: needs-attention\n\n출하 차단. O-6의 두 digest, C1 decided_at_head, blob/행수는 일치했고 계약 검사와 145개 self-test는 rc 0이었다. 그러나 D-4는 NONE을 구조적으로 검증하지 못해 저작자가 UNBOUND 또는 간접 의존을 NO_DEPENDENCY로 바꿀 수 있다. 또한 요청된 `tos_contract_index.py --check` 직접 실행은 `--out` 부재로 rc 2였다.\n\nFindings:\n- [high] D-4가 NONE 자기신고를 막지 못해 UNBOUND 의존을 숨길 수 있다 (docs/plans/2026-08-12-tos-phase0-completion-contract-design.md:2829-2841)\n  D-4는 `NONE` 선언을 검증할 때 현재 VER-002 우주 키의 로컬 토큰 참조만 찾는다. 따라서 우주 밖 의존 키(정의상 D-3에서는 UNBOUND여야 함)는 같은 스캔 범위에 리터럴로 존재해도 검출 대상이 아니어서, 저작자가 그 키를 선언하는 대신 NONE을 쓰면 NO_DEPENDENCY와 §13 면제를 얻는다. 실제 resolver의 `max_age_bound`가 바로 이런 우주 밖 키 클래스다. 또한 module은 패키지 재귀, class/method는 파일 하나만 보므로 외부 helper가 실제 키를 읽고 사이트가 그 결과를 소비하는 경우도 0건으로 접힌다. 계약은 별칭·간접 참조를 못 본다고 인정하지만, 그러면서도 0건을 완료 처분으로 사용하므로 UNDECIDED 차단을 다시 연다. `토큰 리터럴 참조`도 식별자·문자열·주석 중 무엇을 세는지 정의하지 않아 C4 구현이 여러 비동치 해석으로 갈릴 수 있다.\n  Recommendation: NONE 검증의 후보 우주와 의존 경계를 닫아라. 최소한 우주 밖 의존 후보도 UNBOUND로 포착하고, 외부 호출을 통한 전이 의존의 귀속 규칙 및 토큰화·주석/문자열 처리 규칙을 명시해 미확정 사례는 UNDECIDED로 차단해야 한다. 계약 본문 추가 편집이므로 S-26 ⑥에 따라 ② 카운터가 다시 0으로 리셋되고 O-6 재결속·레인 B 재심 비용이 발생함을 함께 기록하라.\n\nNext steps:\n- D-4의 우주 밖 키 및 스캔 범위 밖 간접 의존 대조군을 추가하고, 둘 다 NO_DEPENDENCY가 아닌 UNDECIDED 또는 UNBOUND로 귀속되는지 검증한다.\n- 계약 수정 후 plan_scope_digest와 bound_set_digest를 다시 계산하고 O-6를 재결속한 뒤 레인 B 재심을 반복한다.\n- 색인 검증은 실제 생성 산출물 경로를 `--out`으로 지정해 다시 실행한다. 현재 요청에 적힌 `python tools/tos_contract_index.py --check` 그대로는 rc 2다.\n"
+  }
+}

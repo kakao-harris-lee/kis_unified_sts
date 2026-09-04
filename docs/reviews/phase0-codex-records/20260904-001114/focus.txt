@@ -1,0 +1,37 @@
+레인 A 재심 — Phase 0 완료 계약 §12.3 절차표 9행 «codex-reviewer 적대적 코드 리뷰». 1차 판정(잡 review-mtljvycx-ouye7r · needs-attention · high 2 / medium 1)의 해소 여부를 심사한다. 이 판정이 Phase 0 완료 판정(§11)에 앞서는 기록 심판(reviewer of record)이다.
+
+먼저 읽을 것 (순서대로):
+1. CLAUDE.md — 비협상 규칙(선물 long/short 대칭 · 실계좌 선물 영구 차단 · 주식 EOD 일괄청산 금지 · ClickHouse 신규 사용 금지 · RL/TFT 부활 금지 · 임계값/심볼/포트/Redis DB/스케줄 하드코딩 금지 · Redis DB 1 + TTL · KST 세션 판정). 이 규칙에 배치되는 권고는 내지 마라.
+2. .omc/review/20260903-165133/verdict.md — 직전 판정 원문(verbatim JSON) + 오케스트레이터 수용검사(채택 3/3 · 기각 0). **1순위 질문: 세 finding 이 실제로 해소됐는가, 아니면 회피됐는가** — 테스트 무력화 · 조건 완화 · 문구만 추가 · 기존 대조군을 반대 기대로 뒤집기만 하고 판별력 상실 · 새 우회로 개설. 각 finding 마다 «수정 전 코드로 되돌리면 새 red 테스트가 실제로 실패하는가»를 뮤테이션 관점으로 표본 검증하라(파일을 편집하지 말고 논리로 · 또는 임시 사본에서).
+3. .omc/review/20260904-001114/evidence/ — 4렌즈 증거(architecture · security · performance · style). **1차 스탬프에서 복사한 것이며 HEAD b5d2448a 기준(수정 커밋 이전)이다.** 수정된 영역(아래 두 파일군)은 렌즈가 보지 못했으므로 그 부분은 당신이 직접 재실측하라. 나머지 30여 파일에 대한 렌즈 관측은 그대로 유효하나 «점검했고 건전함» 목록은 그대로 믿지 말고 표본을 재실측하라.
+
+수정 커밋: 2e5edb4a (F1+F2 · tools/tos_completion_status.py · tests/tools/test_tos_completion_status.py · D0-5 7 사이트 docstring 선언 행 · tos-spec/src/TOS-COMPLETION-STATUS.md 재생성 · docs/reviews/phase0-completion-contract/20260903-165133/D1-DERIVATION-ERRATUM-CANDIDATE.md) · 067ecb2e (F3 · tools/tos_spec_status.py · tests/tools/test_tos_spec_status.py).
+
+심사 범위: 1차와 동일 — `git diff 28475ca1^ HEAD -- . ':!docs/plans' ':!docs/reviews'` (HEAD = 2e5edb4a). approve 는 D0 구현 블록 **전체**에 대한 진술이다 — 수정분만 보고 승인하지 마라. 1차에서 finding 이 되지 않았던 영역도 approve 의 대상이다.
+
+범위 밖(심사하지 말 것): docs/plans/ 두 계획 문서의 산문(레인 B 소관 · 동결 · blob 결속). 계약 참조가 필요하면 `python tools/tos_contract_index.py --locate "§7.4"`(→ :2682-2823) 처럼 색인으로 구간을 잡아 그 범위만 읽어라. **계약 편집이 0 인지 `git diff 28475ca1^ HEAD --stat -- docs/plans` 로 확인하라(0 파일이어야 한다).** 계약 본문 편집을 권고하지 마라 — 결함이 계약 쪽이면 «계약 에라타 대상»으로 분류만.
+
+F1/F2 해소 설계(검사기 `tools/tos_completion_status.py` D-1/D0-5): 산문(`not a VERIFICATION-PROFILE-002 key` 류)을 처분 입력에서 제거하고, 각 사이트 docstring 의 선언 행 `VER-002-KEYS: ``k``, … [; CONTRAST: ``MAX_x``]` 또는 `VER-002-KEYS: NONE` 에서 K 를 추출해 프로파일 우주(VERIFICATION-PROFILE-002.yaml · 163 키)와 교차 검증한다. 규칙: 선언 0/중복/형식오류 → UNDECIDED · 선언 키가 선언 행 밖 본문에 부재 → UNDECIDED(D-1 (b)) · 본문에 인용된 우주 키가 선언∪CONTRAST 에 없음 → UNDECIDED(혼재 차단) · 키별 ∉우주→UNBOUND / null→BLOCKED / non-null→VALUED · 사이트 = UNBOUND>BLOCKED>VALUED(키별 내역을 basis 에 노출) · NONE 은 검사기가 사이트 범위(module 사이트 = 패키지 디렉터리 재귀 *.py · class/method 사이트 = 그 파일)를 우주 키 토큰으로 스캔해 참조 0 이면 UNBOUND, 1 이상이면 UNDECIDED · 사이트 파일 부재/파싱 실패/docstring 부재 = 구조적 fail-closed → check_d1 D-1 finding(rc 결합 · U-6 레지스터 면제 경로 아님) · 렌더러 `D0-5: MET` 는 처분 키 집합이 D1_SITES 7 이름과 정확히 일치하고 전부 결정됐을 때만.
+확인 질문(각각 file:line 실측으로 답하라):
+ (a) 산문 정규식(`_D1_UNBOUND_RE`)이 처분 경로에서 완전히 제거됐는가 — 잔존 참조를 grep 하라. 남아 있다면 어디에 어떤 효과로.
+ (b) 선언 0 · 중복 · 형식오류 · 본문 부재 · 미선언 인용 · NONE 모순 여섯 경로가 전부 UNDECIDED 로 떨어지고 §11 D0-5 MET 를 막는가. 하나라도 MET 로 새는 경로가 있는가.
+ (c) 파일 부재가 U-6(레지스터 등재로 면제)로 새지 않고 D-1 finding(rc≠0)인가. `/definitely-not-a-repo` 류 루트에서 빈 dict 가 아니라 7 사이트 전부 fail-closed 인가.
+ (d) 렌더러 MET 조건이 «7 이름 정확 일치 AND 전부 ∈ {VALUED,BLOCKED,UNBOUND}» 인가 — 6/7 로 MET 가 나오는 경로가 남았는가. 「N/A 코퍼스 범위 밖」 행이 사라졌는가.
+ (e) 7 실사이트 선언이 docstring 본문의 실제 의존과 맞는가 — 특히 engine 의 CONTRAST(``MAX_dsl_evaluation_ms``) 와 marketfeed 의 NONE(검사기 스캔 실측) 이 자기신고의 재도입인지 구조 파생인지. resolver 는 6 VALUED + ``max_age_bound`` UNBOUND 로 접히는데(UNCHK-024 처분과 정합) 그 접기 규칙(UNBOUND 우선)이 계약 §7.4 「사이트마다 정확히 하나의 처분」과 어떻게 정합하는지 — 에라타 후보 기록이 이를 정직하게 적었는가.
+ (f) `write_corpus` 가 7 사이트 + 미니 프로파일을 기본으로 쓰게 된 것이 기존 테스트의 판별력을 죽이지 않는가(합성 코퍼스가 «항상 MET» 인 사이트를 공급해 다른 검사의 실패를 가리는지).
+ (g) 기존 대조군 3건(1차 body 가 지목한 4292-4310 · 4331-4336 · 4408-4424)이 «같은 입력 · 반대 기대» 로 뒤집혔는가, 삭제·완화됐는가.
+ (h) 계약 §7.4 원문과 정합 — D-1 (a)(b) · UNDECIDED 차단 · 완료 기준 v1.8. 「이 값은 VER-002 프로파일 키가 아니다」 문언 요구는 저작자 의무로 남고 검사기 입력이 아닌 것이 §7.4 와 모순되는가.
+ (i) 재생성된 tos-spec/src/TOS-COMPLETION-STATUS.md 의 D0-5 표 7행 basis 가 검사기 출력과 일치하고, `--check` 가 rc 0 · `d0a_entry_state=ENTRY_OK` 인가(직접 실행하라).
+ (j) 7 사이트 편집이 docstring 전용인가 — 코드 토큰 diff 0 · import-firewall 무영향.
+
+F3 해소 설계(코퍼스 검사기 `tools/tos_spec_status.py`): `_reverse_scan_git_universe` 가 None 대신 StatusError(git 부재 · rc≠0 · 디코딩 실패 각각 사유 포함) · `_iter_reverse_scan_sources(..., universe: Literal["git","walk"]="git")` · 세 스캔 함수 + `validate_legacy_route_reverse_census`(지시 밖 관통 — 정당성 판단 요망)에 키워드 관통 · `--check`/main 은 항상 git · CLI 플래그 없음 · 기존 18 테스트가 `universe="walk"` 명시 · 신규 red 6건.
+확인 질문:
+ (a) `--check` 경로에서 walk 에 도달하는 경로가 하나라도 있는가(호출 그래프 실측).
+ (b) StatusError 가 main 에서 rc≠0 으로 끝나는가(예외가 다른 곳에서 삼켜지지 않는가).
+ (c) 디코딩 실패도 차단인가(1차 body 「디코딩 실패」).
+ (d) 18개 테스트의 walk 명시 전환이 판별력을 잃게 하지 않았는가 — walk 를 쓰는 테스트가 «git 배제 성질»을 검증한다고 주장하는 곳이 있는가.
+ (e) `validate_legacy_route_reverse_census` 관통이 정당한가, 아니면 그 함수의 권위 호출 경로에 walk 가 새어드는가.
+
+1차 판정에서 approve 를 막지 않았으나 등재 축으로 분류된 것들(UNCHK-012 · UNCHK-008 · UNCHK-023)은 재심에서 재판정하지 말고 1차 분류를 유지하라 — 단, 이번 수정이 그 경로를 «새로 열거나 넓혔는지»는 답하라.
+
+출력: verdict(approve | needs-attention) · summary · findings[] (severity critical/high/medium/low · title · body · file · line_start/line_end · confidence · recommendation) · next_steps[]. finding 의 file:line 은 HEAD 2e5edb4a 에 실재해야 한다. 1차 finding 3건 각각에 대해 summary 또는 findings 에서 «해소 / 부분 해소 / 미해소 / 회피» 중 하나를 명시하라. 범위 밖 기존 부채는 pre-existing 으로 표기하라.

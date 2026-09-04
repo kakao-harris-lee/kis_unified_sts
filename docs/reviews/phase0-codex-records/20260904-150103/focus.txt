@@ -1,0 +1,23 @@
+레인 A 재심 #4 — Phase 0 완료 계약 §12.3 절차표 9행 «codex-reviewer 적대적 코드 리뷰». 재심 #3(잡 review-mtm9l68o-mpbdaq · approve @ 26db89c9 · low 1 비차단)이 연 게이트는 그 뒤 코드가 바뀌어(C4) 무효가 됐다 — 이 재심은 그 C4 를 심사한다. 이 판정이 Phase 0 완료 판정(§11)에 앞서는 기록 심판(reviewer of record)이다.
+
+먼저 읽을 것 (순서대로):
+1. CLAUDE.md — 비협상 규칙(선물 long/short 대칭 · 실계좌 선물 영구 차단 · 주식 EOD 일괄청산 금지 · ClickHouse 신규 사용 금지 · RL/TFT 부활 금지 · 임계값/심볼/포트/Redis DB/스케줄 하드코딩 금지 · Redis DB 1 + TTL · KST) 및 «Read the index before the contract».
+2. .omc/review/20260904-101638/verdict.md — 재심 #3 approve(HEAD 26db89c9 · low 1: `U-6(§13.6.6)` 팬텀 인용). 그 뒤 계약이 운영자 지시로 에라타 52·53·54차를 받았고(레인 B approve 20260904-133500 · docs/reviews/phase0-completion-contract/20260904-133500/verdict.md), C4 커밋 7bf83226 가 그 에라타(§7.4 D-3/D-4/D-5 · U-6′)를 검사기에 구현했다. **1순위 질문: C4 가 계약 텍스트를 정확히 구현했는가 — 넓히지도(완료값 합성) 좁히지도(정직한 판정을 UNDECIDED 로 방치) 않았는가.**
+3. 계약 §7.4(`python tools/tos_contract_index.py --locate "§7.4"` — 그 범위만): 처분 어휘 블록(NO_DEPENDENCY 항) · D-3/D-4/D-5 펜스 · 53차 (가)(나)(다) · 54차 D-4 말미(완료 근거 3중) · U-6/U-6′ 펜스 · «대조군과 발효 시점» ①~⑤ · 완료 기준 대체 문장 · §11 D0-5/U-6 행.
+4. .omc/review/20260904-150103/evidence/ — 4렌즈 증거(1차 사본) + verification-run.md(오케스트레이터가 쓰기 가능한 환경에서 HEAD 7bf83226f9a12db6c81f13fc7ee16134ea862753 로 돌린 pytest · --check · ruff/black/mypy 로그 — 실행 출력 원문). 가능하면 `TMPDIR` 을 저장소 안 쓰기 가능한 경로로 지정해 직접 재실행을 시도하라.
+
+심사 범위: 1차~#3 과 동일 — `git diff 28475ca1^ HEAD -- . ':!docs/plans' ':!docs/reviews'` (HEAD = 7bf83226f9a12db6c81f13fc7ee16134ea862753). approve 는 D0 구현 블록 전체에 대한 진술이다. 다만 재심 #1~#3 이 «해소» 로 판정한 항목은 재판정하지 말고 회귀만 확인하라. docs/plans 4+N 파일의 변경은 전부 레인 B 기록으로 결속된다: 15b65212 → .omc/review/20260904-101247/verdict.md · 8199bb38 → docs/reviews/phase0-completion-contract/20260902-195656/verdict.md · 에라타 52/53/54차(C1 76a4e423 · C1′ 97cfad8d · C1″ ab495780) → docs/reviews/phase0-completion-contract/20260904-133500/verdict.md.
+
+C4 구현 요지(저작 측 진술 — 검증은 심판 소관): 사이트 처분 = 레코드(kind · per_key · cell · basis) · cell 은 per_key 에서 파생한 «VALUED/BLOCKED/UNBOUND 순 · 중복 제거 · + 결합» 표기이며 술어는 cell 이 아니라 per_key 를 읽는다 · 어휘 상수 분리(`D1_KEY_DISPOSITIONS` / `D1_SITE_ONLY_DISPOSITIONS`) 에 `+` 결합 문자열 없음 · NONE: 후보 우주 = 우주 키 ∪ §7.1 전 사이트 선언 키(CONTRAST 포함 · 코드가 선언에서 파생) · 원문 전 행 단어경계 regex · 0건 + §13 행 실재 → NO_DEPENDENCY, 행 부재 → 판정됨 아님 + U-6′ finding(rc) · UNCHK-026 은 U-6′ (1)(2)(3) 공시 행으로 유지 · 대조군 ①~⑤ + 양성 대조군 · 실코퍼스 D0-5 MET(5 UNBOUND · resolver VALUED+UNBOUND · marketfeed NO_DEPENDENCY) · §13.6.6 팬텀 인용 정정.
+
+확인 질문(각각 file:line 실측으로 답하라):
+ (a) D-3: 갈린 키 집합이 어느 한 이름으로 접히는 경로가 남았는가. cell 문자열이 어디서든 술어 입력으로 쓰이는가(«VALUED+UNBOUND» 리터럴 비교 포함).
+ (b) D-4/53차: 후보 우주가 코드에서 선언으로부터 파생되는가(하드코딩 키 없음) · CONTRAST 포함 · 스캔이 원문(주석 포함) 단어경계인가 · 히트 시 UNDECIDED 사유가 «선언 누락» 인가.
+ (c) 54차/U-6′: NO_DEPENDENCY 사이트의 §13 행 부재가 «판정됨 아님» + rc 결합 finding 둘 다를 만드는가 · 행 매칭 규칙(사이트 이름/도큐스트링 대상 리터럴)이 U-6 과 같은가 · UNCHK-026 reason 이 (1)(2)(3)을 담는가.
+ (d) D-5: 선언 0/중복/형식오류 · 선언 키 본문 부재 · 미선언 우주 키 인용 · CONTRAST 규칙이 byte-동일하게 유지됐는가.
+ (e) 대조군 ①~⑤가 계약 문단의 서술과 1:1 인가 · 각각 «수정 전 코드(26db89c9)로 되돌리면 실패» 하는가(뮤테이션 관점 표본 검증) · 죽은 검사가 없는가(특히 ⑤의 두 갈래).
+ (f) 렌더러 고정 7 이름 · 여분 · 어휘 밖 값 차단이 레코드 표현 전환 뒤에도 살아 있는가.
+ (g) 재생성 생성물의 D0-5 표·§11 행이 검사기 출력과 일치하고 `--check` rc 0 · `d0a_entry_state=ENTRY_OK` 인가.
+ (h) 1차 finding 3건 · 재심 #1 finding 1·3 · 재심 #2 범위 결속의 회귀 없음.
+
+출력: verdict(approve | needs-attention) · summary · findings[] (severity · title · body · file · line_start/line_end · confidence · recommendation) · next_steps[]. finding 의 file:line 은 HEAD 7bf83226f9a12db6c81f13fc7ee16134ea862753 에 실재해야 한다. 계약 본문 편집을 권고하지 마라 — 결함이 계약 쪽이면 «계약 에라타 대상» 으로 분류만.

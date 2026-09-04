@@ -1,0 +1,25 @@
+레인 B 계획 «재심» — Phase 0 완료 계약 v2.22 에라타 52차(§7.4 D-1 다중 키 판정 · NONE 어휘) + O-6 재결속. 운영자 명시 지시(2026-09-04 «§7.4 에라타 저작 + 레인 B 재심» 진행)로 2026-08-30 재심 정지가 이 에라타 범위에 한해 해제됐다. 심사 범위는 이 에라타 diff 로 한정하고 계약의 다른 내용은 재심하지 않는다(sha 재핀 재결속 심사 docs/reviews/phase0-completion-contract/20260902-195656/verdict.md 와 같은 형식).
+
+먼저 읽을 것 (순서대로):
+1. CLAUDE.md — 비협상 규칙(선물 long/short 대칭 · 실계좌 선물 영구 차단 · 주식 EOD 일괄청산 금지 · ClickHouse 신규 사용 금지 · RL/TFT 부활 금지 · 하드코딩 금지 · Redis DB 1 + TTL · KST) 및 «Read the index before the contract» — 계약은 `python tools/tos_contract_index.py --locate "§7.4"` 로 구간을 잡아 그 범위만 읽어라. 전체 스캔·요약 금지.
+2. docs/reviews/phase0-completion-contract/20260903-165133/D1-DERIVATION-ERRATUM-CANDIDATE.md — 에라타 후보 (a)(b)(c)(e). 이 에라타의 문제 정의.
+3. .omc/review/20260904-001114/verdict.md (레인 A 재심 #1 · finding 1: NONE·다중 키 접기는 §7.4 어휘 밖) · .omc/review/20260904-101638/verdict.md (레인 A 재심 #3 approve · 균일 다중 키 통과 수용 · NONE 은 UNDECIDED 유지 · 스캔 보존). 이 에라타는 그 finding 의 «운영자 에라타 처분» 이다.
+4. 심사 대상 diff: `git diff 26db89c9 091b0fad8e5396f3c15fa97196d385c500d3b908 -- docs/plans/2026-08-12-tos-phase0-completion-contract-design.md docs/plans/2026-08-11-tos-completion-development-plan.md` (C1 76a4e423 에라타 본문 · C2 091b0fad O-6 재결속은 tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md — 결속 경로 밖이지만 재결속 정합을 함께 보라).
+
+결속 필드(디스패치 직전 포착 · .omc/review/20260904-112156/revision.txt): reviewed_at_head 091b0fad8e5396f3c15fa97196d385c500d3b908 · reviewed_plan_paths = 위 두 경로 · reviewed_scope_digest(plan_scope_digest) de021febceb91e8e88aa3fea313e841b117108e07200fb7f67b46389ba63d46d · bound_set_digest(O-6) 961135fd91c80b27d6f2822d80411a5212c94ca90442b96d76d53f1be382c41e. 재계산해 대조하라 — plan_scope_digest 스니펫: `{ git rev-parse HEAD; printf '%s\0' <두 경로> | LC_ALL=C sort -z -u | xargs -0 -r shasum -a 256; } | shasum -a 256`.
+
+에라타 내용(저작 측 진술 — «타당» 판정은 심판 소관): §7.4 의 처분 어휘는 공급된 단일 K 에 대한 VALUED/BLOCKED/UNBOUND 와 K 미공급 UNDECIDED 뿐이었다. 실측 7 사이트 중 resolver 는 여러 키(6 VALUED + 1 UNBOUND)에, marketfeed 는 키 0 에 걸려 있어 frozen 어휘로는 «분석이 끝났는데 UNDECIDED» 가 된다. 52차는 (D-3) 다중 키 사이트의 판정 완료 조건과 사이트 처분 표기, (D-4) NONE 을 저작자 선언이 아니라 검사기 범위 스캔(module=패키지 재귀 · class/method=그 파일 · 프로파일 키 리터럴 참조 0)으로 파생되는 결론 어휘로 도입한다. 우선순위 접기(UNBOUND>BLOCKED>VALUED)는 도입하지 않는다. UNDECIDED 는 여전히 D0-5 를 차단하고 §13 등재로 면제되지 않는다.
+
+적대적 확인 질문(각각 file:line 실측으로 답하라):
+ (a) D-3/D-4 가 «저작자가 처분을 고르는» 경로를 다시 여는가 — 특히 NONE: 선언 한 줄로 UNDECIDED 를 벗어날 수 있는가, 아니면 스캔이 구조적으로 막는가. 스캔 범위 정의가 우회 가능한가(패키지 밖 모듈에서 키를 쓰고 사이트 패키지는 깨끗하게 두는 경우 등 — 그것이 이 사이트의 «의존» 인지 아닌지까지).
+ (b) D-3 이 사실상의 우선순위 접기인가 — 혼합 사이트의 표기가 완료값을 조용히 합성하지 않는가. v1.8 완료 기준 재진술이 UNDECIDED 차단을 약화시키지 않는가.
+ (c) S-11/S-12/S-14/S-22/S-24 준수 — v2.23 리터럴 0 · 이력 행 무접촉 · 형제 자리(«정확히 하나의 처분» · 처분 어휘 표 · §11 D0-5 행 · U-6 문언) 전수 전파 또는 명시적 이력 판단 · 근거는 정본 지목(재서술 0) · 52차 등재 자리 단일 소스.
+ (d) S-26 ⑥ 자기 적용이 기록됐는가(② 카운터 0) · 종결을 주장하지 않는가.
+ (e) O-6 재결속: 새 bound_set_digest 가 두 결속 경로의 실제 내용(워크트리 레시피)과 일치하는가 · `decided_at_head` 가 C1 인가 · 재결속 기록 문단이 사실과 맞는가(blob id · 행수) · 옛 digest e0729ff3… 의 살아 있는 핀이 남았는가(이력 자리 제외).
+ (f) tools/tos_contract_check.py(+ --self-test) · tools/tos_contract_index.py --check 가 rc 0 인가(직접 실행). 앵커·색인 lockstep 이 빠진 자리가 있는가.
+ (g) 개발계획(결속 경로 2)에 §7.4 규칙 재진술이 있어 lockstep 이 필요했는데 빠졌는가.
+ (h) 이 에라타가 검사기 구현(후속 C4)에 모호성을 남기는가 — D-3/D-4 를 코드로 옮길 때 둘 이상의 해석이 가능한 문장을 지목하라.
+
+범위 밖: 계약의 다른 절 · 코드 · 레인 A 심판 결과(별도 approve 있음) · UNCHK-024 의 max_age_bound 키 신설 여부(운영자 별건).
+
+출력: verdict(approve | needs-attention) · summary · findings[] (severity · title · body · file · line_start/line_end · confidence · recommendation) · next_steps[]. finding 의 file:line 은 HEAD 091b0fad8e5396f3c15fa97196d385c500d3b908 에 실재해야 한다. 계약 본문 «추가 편집» 을 권고할 때는 그 편집이 다시 S-26 ⑥ 리셋을 부른다는 비용을 함께 적어라.

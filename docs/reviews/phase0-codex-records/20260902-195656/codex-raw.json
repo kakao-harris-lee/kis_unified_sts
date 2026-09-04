@@ -1,0 +1,74 @@
+{
+  "job": {
+    "createdAt": "2026-09-02T11:03:59.620Z",
+    "updatedAt": "2026-09-02T11:10:10.411Z",
+    "id": "review-mtjznj44-qzsjpk",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "SHIP. 하니스 펜스와 파일은 byte-identical이고 sha 059e13f2…와 O-6 digest e0729ff3…도 재계산값과 일치한다. awk 변경은 첫 키 선택을 유지하면서 전 입력만 소비하며 T-81 ⑨의 fail-closed 경로도 보존한다. 옛 sha의 살아 있는 누락, currency/좌표 불일치, §12.1·§8·O-6 규칙 위반은 발견되지 않았다.",
+    "write": false,
+    "sessionId": "74346560-23f1-4760-8ce0-21819ccfd2ff",
+    "status": "completed",
+    "startedAt": "2026-09-02T11:03:59.703Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtjznj44-qzsjpk.log",
+    "threadId": "01a061ca-48b3-7bf0-8aa3-373569f7cf68",
+    "turnId": "01a061ca-4a7c-7d61-a402-e8cdb9e05117",
+    "completedAt": "2026-09-02T11:10:10.093Z"
+  },
+  "storedJob": {
+    "id": "review-mtjznj44-qzsjpk",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "Adversarial Review branch diff against origin/main",
+    "write": false,
+    "createdAt": "2026-09-02T11:03:59.620Z",
+    "sessionId": "74346560-23f1-4760-8ce0-21819ccfd2ff",
+    "status": "completed",
+    "startedAt": "2026-09-02T11:03:59.703Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtjznj44-qzsjpk.log",
+    "threadId": "01a061ca-48b3-7bf0-8aa3-373569f7cf68",
+    "turnId": "01a061ca-4a7c-7d61-a402-e8cdb9e05117",
+    "completedAt": "2026-09-02T11:10:10.093Z",
+    "result": {
+      "review": "Adversarial Review",
+      "target": {
+        "mode": "branch",
+        "label": "branch diff against origin/main",
+        "baseRef": "origin/main",
+        "explicit": true
+      },
+      "threadId": "01a061ca-48b3-7bf0-8aa3-373569f7cf68",
+      "context": {
+        "repoRoot": "/Users/harris/Development/private/kis_unified_sts",
+        "branch": "mission-critical-trading-operating-system",
+        "summary": "Reviewing branch mission-critical-trading-operating-system against origin/main from merge-base e46dbd88bdd1f779699578615a2d7c2c5d9519b4."
+      },
+      "codex": {
+        "status": 0,
+        "stderr": "",
+        "stdout": "{\"verdict\":\"approve\",\"summary\":\"SHIP. 하니스 펜스와 파일은 byte-identical이고 sha 059e13f2…와 O-6 digest e0729ff3…도 재계산값과 일치한다. awk 변경은 첫 키 선택을 유지하면서 전 입력만 소비하며 T-81 ⑨의 fail-closed 경로도 보존한다. 옛 sha의 살아 있는 누락, currency/좌표 불일치, §12.1·§8·O-6 규칙 위반은 발견되지 않았다.\",\"findings\":[],\"next_steps\":[]}",
+        "reasoning": []
+      },
+      "result": {
+        "verdict": "approve",
+        "summary": "SHIP. 하니스 펜스와 파일은 byte-identical이고 sha 059e13f2…와 O-6 digest e0729ff3…도 재계산값과 일치한다. awk 변경은 첫 키 선택을 유지하면서 전 입력만 소비하며 T-81 ⑨의 fail-closed 경로도 보존한다. 옛 sha의 살아 있는 누락, currency/좌표 불일치, §12.1·§8·O-6 규칙 위반은 발견되지 않았다.",
+        "findings": [],
+        "next_steps": []
+      },
+      "rawOutput": "{\"verdict\":\"approve\",\"summary\":\"SHIP. 하니스 펜스와 파일은 byte-identical이고 sha 059e13f2…와 O-6 digest e0729ff3…도 재계산값과 일치한다. awk 변경은 첫 키 선택을 유지하면서 전 입력만 소비하며 T-81 ⑨의 fail-closed 경로도 보존한다. 옛 sha의 살아 있는 누락, currency/좌표 불일치, §12.1·§8·O-6 규칙 위반은 발견되지 않았다.\",\"findings\":[],\"next_steps\":[]}",
+      "parseError": null,
+      "reasoningSummary": []
+    },
+    "rendered": "# Codex Adversarial Review\n\nTarget: branch diff against origin/main\nVerdict: approve\n\nSHIP. 하니스 펜스와 파일은 byte-identical이고 sha 059e13f2…와 O-6 digest e0729ff3…도 재계산값과 일치한다. awk 변경은 첫 키 선택을 유지하면서 전 입력만 소비하며 T-81 ⑨의 fail-closed 경로도 보존한다. 옛 sha의 살아 있는 누락, currency/좌표 불일치, §12.1·§8·O-6 규칙 위반은 발견되지 않았다.\n\nNo material findings.\n"
+  }
+}

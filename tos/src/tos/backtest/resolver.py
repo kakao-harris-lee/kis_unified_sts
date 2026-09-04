@@ -75,6 +75,8 @@ class BarTimeProjection(FrozenModel):
     existing profile key cleanly represents that role — its trustworthy-time bound category
     (register §8-1) is not yet established; tracked as UNCHK-024.
 
+    VER-002-KEYS: ``MAX_future_timestamp_tolerance_ms``, ``MAX_critical_input_consumer_receipt_age_ms``, ``MAX_time_transport_and_queue_uncertainty_ms``, ``MAX_clock_domain_conversion_uncertainty_ms``, ``MAX_time_source_precision_ms``, ``MAX_time_source_sequence_gap_ms``, ``max_age_bound``
+
     The remaining five injected fields — ``source_age``, ``snapshot_age_bound``,
     ``interval_width``, ``boundary_lag``, ``health_state`` — are **not VERIFICATION-PROFILE-002
     keys** for a different, structural reason: each is a bar-derived observation, a derived/injected

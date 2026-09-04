@@ -17,11 +17,13 @@ import argparse
 import csv
 import os
 import re
+import subprocess
 import sys
 from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import yaml
 
@@ -1673,15 +1675,129 @@ class BrokerConstructionSite:
     is_entrypoint: bool
 
 
-def _iter_reverse_scan_sources(repo_root: Path) -> Iterator[tuple[str, str]]:
+def _reverse_scan_source_is_eligible(relative_path: str) -> bool:
+    """True if ``relative_path`` is within the reverse census's filters.
+
+    Shared by the git-aware universe and the ``os.walk`` fallback below so the
+    two paths cannot drift: every path component -- directories and the file
+    name alike -- must avoid ``_REVERSE_SCAN_SKIPPED_DIRS`` and a leading
+    ``.``, and the file itself must be a ``*.py`` file that is neither
+    ``test_*.py`` nor ``conftest.py``.
+    """
+    parts = relative_path.split("/")
+    if any(
+        part in _REVERSE_SCAN_SKIPPED_DIRS or part.startswith(".") for part in parts
+    ):
+        return False
+    file_name = parts[-1]
+    if not file_name.endswith(".py"):
+        return False
+    return not (file_name.startswith("test_") or file_name == "conftest.py")
+
+
+def _reverse_scan_git_universe(repo_root: Path) -> tuple[str, ...]:
+    """Return the git-aware census universe: every file git does not ignore.
+
+    The universe is every file git does *not* consider ignored: tracked files
+    plus untracked-but-not-ignored files, via
+    ``git ls-files --cached --others --exclude-standard``.  This keeps a
+    gitignored local checkout -- a vendored SDK, say -- out of census input
+    while still scanning a brand-new untracked top-level package, so the scan
+    still cannot go blind the way a hardcoded route range would.
+
+    Raises ``StatusError`` -- never silently substitutes another universe --
+    when ``git`` is not on ``PATH``, the invocation otherwise fails (a
+    nonzero exit, most commonly because ``repo_root`` is not a git work
+    tree), or a path in the output cannot be decoded.  The census this feeds
+    is what ``validate_broker_symbols_are_grounded`` uses to decide whether a
+    registered broker symbol is real; silently substituting a
+    ``.gitignore``-blind ``os.walk`` universe on git failure would let a
+    gitignored decoy definition satisfy that check.  A caller that
+    deliberately wants the non-authoritative walk universe asks for it
+    explicitly via ``_iter_reverse_scan_sources(..., universe="walk")``
+    instead of going through this function.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            capture_output=True,
+            check=False,
+            cwd=repo_root,
+        )
+    except FileNotFoundError as exc:
+        raise StatusError("reverse census universe: git executable not found") from exc
+    except OSError as exc:
+        raise StatusError(
+            f"reverse census universe: git invocation failed: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        stderr_lines = result.stderr.decode("utf-8", errors="replace").splitlines()
+        detail = stderr_lines[0] if stderr_lines else "<no stderr output>"
+        raise StatusError(
+            "reverse census universe: git ls-files failed "
+            f"(rc={result.returncode}): {detail}"
+        )
+    paths: list[str] = []
+    for chunk in result.stdout.split(b"\x00"):
+        if not chunk:
+            continue
+        try:
+            paths.append(chunk.decode("utf-8"))
+        except UnicodeDecodeError as exc:
+            raise StatusError(
+                f"reverse census universe: undecodable path in git output: {chunk!r}"
+            ) from exc
+    return tuple(paths)
+
+
+def _iter_reverse_scan_sources(
+    repo_root: Path, *, universe: Literal["git", "walk"] = "git"
+) -> Iterator[tuple[str, str]]:
     """Yield ``(relative_path, text)`` for every file the reverse census covers.
 
-    Directory pruning rather than an allowlist: a brand-new top-level package is
-    scanned automatically, so the scan cannot go blind the way a hardcoded route
-    range does.  Both the construction scan and the definition anchor below walk
-    exactly this set, which is what makes the anchor meaningful -- a symbol is
-    grounded in the same tree the census is able to observe.
+    ``universe="git"`` (the default, and the only mode the authoritative
+    ``--check`` path uses) requires every file git does not consider ignored
+    (tracked plus untracked-but-not-ignored), via ``git ls-files --cached
+    --others --exclude-standard``.  This is not an allowlist -- a brand-new
+    untracked top-level package is still scanned automatically, so the scan
+    cannot go blind the way a hardcoded route range does -- but it does mean
+    a gitignored local checkout (a vendored SDK, say) is never census input.
+    When git fails (not a work tree, ``git`` missing, or the call otherwise
+    fails) this mode raises ``StatusError`` rather than silently substituting
+    a ``.gitignore``-blind universe.
+
+    ``universe="walk"`` is an explicit, non-authoritative opt-in for a
+    synthetic corpus or fixture tree with no git repository at all: a
+    directory-pruned ``os.walk`` that knows nothing about ``.gitignore``.
+    Any other value raises ``ValueError``.
+
+    Both modes apply the identical filters, via
+    ``_reverse_scan_source_is_eligible``, so they cannot drift: skip a
+    skipped or dot-prefixed directory (or file), keep only ``*.py``, and skip
+    ``test_*.py`` and ``conftest.py``.  Both the construction scan and the
+    definition anchor below walk exactly this set, which is what makes the
+    anchor meaningful -- a symbol is grounded in the same tree the census is
+    able to observe.
     """
+    if universe == "git":
+        for relative_path in sorted(
+            path
+            for path in _reverse_scan_git_universe(repo_root)
+            if _reverse_scan_source_is_eligible(path)
+        ):
+            path = repo_root / relative_path
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                # A file may be in the git index (or newly untracked) but
+                # absent or unreadable in the worktree; skip it rather than
+                # fail the whole scan closed over one path.
+                continue
+            yield relative_path, text
+        return
+    if universe != "walk":
+        raise ValueError(f"unknown reverse scan universe: {universe!r}")
+
     for dir_path, dir_names, file_names in os.walk(repo_root):
         dir_names[:] = sorted(
             name
@@ -1689,25 +1805,31 @@ def _iter_reverse_scan_sources(repo_root: Path) -> Iterator[tuple[str, str]]:
             if name not in _REVERSE_SCAN_SKIPPED_DIRS and not name.startswith(".")
         )
         for file_name in sorted(file_names):
-            if not file_name.endswith(".py"):
-                continue
-            if file_name.startswith("test_") or file_name in {"conftest.py"}:
-                continue
             path = Path(dir_path) / file_name
+            relative_path = path.relative_to(repo_root).as_posix()
+            if not _reverse_scan_source_is_eligible(relative_path):
+                continue
             try:
                 text = path.read_text(encoding="utf-8")
             except (UnicodeDecodeError, OSError):
                 continue
-            yield path.relative_to(repo_root).as_posix(), text
+            yield relative_path, text
 
 
 def scan_broker_construction_sites(
-    repo_root: Path, vocabulary: BrokerTransportVocabulary
+    repo_root: Path,
+    vocabulary: BrokerTransportVocabulary,
+    *,
+    universe: Literal["git", "walk"] = "git",
 ) -> tuple[BrokerConstructionSite, ...]:
     """Find every non-TOS, non-test source file that constructs a broker client.
 
     ``vocabulary`` comes from the corpus registry, so a brand-new broker symbol
     is scanned for without touching this file.
+
+    ``universe`` is forwarded to ``_iter_reverse_scan_sources`` verbatim; see
+    that function for what ``"git"`` (the default, authoritative mode) and
+    ``"walk"`` (an explicit, non-authoritative opt-in) mean.
 
     Known blind spot: only a bare ``Symbol(`` construction is matched.  Dotted or
     indirect construction (``module.Symbol(cfg)``, an aliased import, a factory
@@ -1716,7 +1838,7 @@ def scan_broker_construction_sites(
     rather than implying the scan is complete.
     """
     sites: list[BrokerConstructionSite] = []
-    for relative_path, text in _iter_reverse_scan_sources(repo_root):
+    for relative_path, text in _iter_reverse_scan_sources(repo_root, universe=universe):
         found: set[str] = set()
         for line in text.splitlines():
             stripped = line.lstrip()
@@ -1739,12 +1861,20 @@ def scan_broker_construction_sites(
 
 
 def scan_broker_symbol_definitions(
-    repo_root: Path, vocabulary: BrokerTransportVocabulary
+    repo_root: Path,
+    vocabulary: BrokerTransportVocabulary,
+    *,
+    universe: Literal["git", "walk"] = "git",
 ) -> dict[str, tuple[str, ...]]:
-    """Map each registered symbol to the files that actually define it as a class."""
+    """Map each registered symbol to the files that actually define it as a class.
+
+    ``universe`` is forwarded to ``_iter_reverse_scan_sources`` verbatim; see
+    that function for what ``"git"`` (the default, authoritative mode) and
+    ``"walk"`` (an explicit, non-authoritative opt-in) mean.
+    """
     definition = _compile_broker_definition(vocabulary.symbols)
     found: dict[str, list[str]] = {symbol: [] for symbol in vocabulary.symbols}
-    for relative_path, text in _iter_reverse_scan_sources(repo_root):
+    for relative_path, text in _iter_reverse_scan_sources(repo_root, universe=universe):
         for match in definition.finditer(text):
             sites = found[match.group("name")]
             if relative_path not in sites:
@@ -1753,7 +1883,11 @@ def scan_broker_symbol_definitions(
 
 
 def validate_broker_symbols_are_grounded(
-    repo_root: Path, csv_path: Path, vocabulary: BrokerTransportVocabulary
+    repo_root: Path,
+    csv_path: Path,
+    vocabulary: BrokerTransportVocabulary,
+    *,
+    universe: Literal["git", "walk"] = "git",
 ) -> dict[str, tuple[str, ...]]:
     """Require every registered symbol to resolve to a real class definition.
 
@@ -1777,8 +1911,15 @@ def validate_broker_symbols_are_grounded(
       the census could never observe in deployed code is not a transport binding
       of this deployment, and a test file would otherwise be a trivial place to
       plant an anchor for a decoy.
+
+    ``universe`` is forwarded to ``scan_broker_symbol_definitions`` verbatim;
+    see ``_iter_reverse_scan_sources`` for what ``"git"`` (the default,
+    authoritative mode) and ``"walk"`` (an explicit, non-authoritative
+    opt-in) mean.
     """
-    definitions = scan_broker_symbol_definitions(repo_root, vocabulary)
+    definitions = scan_broker_symbol_definitions(
+        repo_root, vocabulary, universe=universe
+    )
     undefined = sorted(symbol for symbol, sites in definitions.items() if not sites)
     if undefined:
         raise StatusError(
@@ -1819,8 +1960,14 @@ def validate_legacy_route_reverse_census(
     vocabulary: BrokerTransportVocabulary,
     *,
     warning_exempt_components: frozenset[str] = frozenset(),
+    universe: Literal["git", "walk"] = "git",
 ) -> tuple[str, ...]:
     """Look for broker-order routes that nobody registered.
+
+    ``universe`` is forwarded to ``scan_broker_construction_sites`` verbatim;
+    see ``_iter_reverse_scan_sources`` for what ``"git"`` (the default,
+    authoritative mode) and ``"walk"`` (an explicit, non-authoritative
+    opt-in) mean.
 
     Fail-closed tier: an *operator- or service-invocable* entrypoint that
     constructs a registered ``ORDER_SENDER`` symbol must be a registered
@@ -1849,7 +1996,9 @@ def validate_legacy_route_reverse_census(
     unregistered_senders: list[str] = []
     unregistered: list[str] = []
     warning_exempt = registered_components | warning_exempt_components
-    for site in scan_broker_construction_sites(repo_root, vocabulary):
+    for site in scan_broker_construction_sites(
+        repo_root, vocabulary, universe=universe
+    ):
         # The fail-closed tier is evaluated *before* and independently of the
         # warning exemption, and consults ``registered_components`` only.  An
         # earlier shape tested it after a ``continue`` on the exemption set,

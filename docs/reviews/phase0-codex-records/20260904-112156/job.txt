@@ -1,0 +1,3 @@
+2026-09-04T02:22:09Z launched (레인 B 에라타 52차 · base 26db89c9 · scope branch)
+job_id: review-mtmbw5f3-xpo98b
+kind: adversarial-review (--wait · setsid · base 26db89c9 · scope branch · 레인 B 에라타 52차)

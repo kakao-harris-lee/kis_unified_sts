@@ -6,6 +6,7 @@ import csv
 import importlib.util
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -701,7 +702,11 @@ def test_unregistered_order_sending_entrypoint_fails_and_names_the_file(tmp_path
 
     with pytest.raises(status.StatusError) as excinfo:
         status.validate_legacy_route_reverse_census(
-            repo, repo / "register.csv", frozenset(), _real_vocabulary()
+            repo,
+            repo / "register.csv",
+            frozenset(),
+            _real_vocabulary(),
+            universe="walk",
         )
 
     assert "scripts/trading/flatten_everything.py" in str(excinfo.value)
@@ -718,6 +723,7 @@ def test_registered_order_sending_entrypoint_passes(tmp_path):
             repo / "register.csv",
             frozenset({"scripts/trading/flatten_everything.py"}),
             _real_vocabulary(),
+            universe="walk",
         )
         == ()
     )
@@ -727,7 +733,10 @@ def test_reverse_scan_ignores_tos_and_test_sources(tmp_path):
     repo = _fake_repo(tmp_path, "tos/src/tos/egressgw/send.py", _SENDER_ENTRYPOINT)
     _fake_repo(tmp_path, "tests/unit/test_sender.py", _SENDER_ENTRYPOINT)
 
-    assert status.scan_broker_construction_sites(repo, _real_vocabulary()) == ()
+    assert (
+        status.scan_broker_construction_sites(repo, _real_vocabulary(), universe="walk")
+        == ()
+    )
 
 
 def test_reverse_scan_does_not_mistake_a_class_definition_for_a_construction(tmp_path):
@@ -737,7 +746,10 @@ def test_reverse_scan_does_not_mistake_a_class_definition_for_a_construction(tmp
         "class KISClient(AsyncSessionMixin):\n    pass\n",
     )
 
-    assert status.scan_broker_construction_sites(repo, _real_vocabulary()) == ()
+    assert (
+        status.scan_broker_construction_sites(repo, _real_vocabulary(), universe="walk")
+        == ()
+    )
 
 
 def test_reverse_scan_reports_non_entrypoint_constructions_without_failing(tmp_path):
@@ -748,8 +760,223 @@ def test_reverse_scan_reports_non_entrypoint_constructions_without_failing(tmp_p
     )
 
     assert status.validate_legacy_route_reverse_census(
-        repo, repo / "register.csv", frozenset(), _real_vocabulary()
+        repo, repo / "register.csv", frozenset(), _real_vocabulary(), universe="walk"
     ) == ("shared/execution/mirror.py",)
+
+
+# --------------------------------------------------------------------------
+# Git-aware census universe: a gitignored local checkout (e.g. a vendored SDK
+# excluded via .gitignore) must never be census input, while a brand-new
+# untracked-but-not-ignored package must still be scanned -- the "not an
+# allowlist / cannot go blind" property has to survive git-awareness.
+# --------------------------------------------------------------------------
+
+
+def _run_git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+def test_gitignored_untracked_dir_is_excluded_from_the_census(tmp_path):
+    if shutil.which("git") is None:
+        pytest.skip("git is not available in this environment")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    (repo / ".gitignore").write_text("vendor/\n", encoding="utf-8")
+    # Both files are left untracked (no `git add`); only vendor/x.py is
+    # ignored, so services/y.py must still be scanned as an untracked-but-not
+    # -ignored package.
+    _fake_repo(repo, "vendor/x.py", _SENDER_ENTRYPOINT)
+    _fake_repo(repo, "services/y.py", _SENDER_ENTRYPOINT)
+
+    sites = status.scan_broker_construction_sites(repo, _real_vocabulary())
+
+    assert [site.relative_path for site in sites] == ["services/y.py"]
+
+
+def test_explicit_walk_mode_control_scans_both_files_ignoring_gitignore(tmp_path):
+    # Control for the test above.  With no git repo at all, and the
+    # non-authoritative ``universe="walk"`` opt-in explicitly requested, both
+    # files are scanned -- proving the git path above is what excludes
+    # vendor/x.py, not some other filter.  This universe is never selected by
+    # accident: git failing here would now raise ``StatusError`` (see the
+    # fail-closed tests below) rather than silently falling back to this walk.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".gitignore").write_text("vendor/\n", encoding="utf-8")
+    _fake_repo(repo, "vendor/x.py", _SENDER_ENTRYPOINT)
+    _fake_repo(repo, "services/y.py", _SENDER_ENTRYPOINT)
+
+    sites = status.scan_broker_construction_sites(
+        repo, _real_vocabulary(), universe="walk"
+    )
+
+    assert sorted(site.relative_path for site in sites) == [
+        "services/y.py",
+        "vendor/x.py",
+    ]
+
+
+def test_anchor_tree_matches_the_git_aware_census_tree(tmp_path):
+    # A registered symbol whose only class definition lives under a
+    # gitignored directory must still be rejected as ungrounded: the anchor
+    # tree is deliberately the same tree the (now git-aware) census scans.
+    if shutil.which("git") is None:
+        pytest.skip("git is not available in this environment")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    (repo / ".gitignore").write_text("vendor/\n", encoding="utf-8")
+    vocabulary = _vocabulary(
+        tmp_path / "corpus", [_symbol_row("GhostSender", "ORDER_SENDER")]
+    )
+    _fake_repo(repo, "vendor/ghost.py", "class GhostSender:\n    pass\n")
+
+    with pytest.raises(status.StatusError, match="no class definition"):
+        status.validate_broker_symbols_are_grounded(
+            repo, repo / "register.csv", vocabulary
+        )
+
+
+def test_skipped_dirs_and_dot_dirs_are_excluded_on_the_git_path(tmp_path):
+    # The existing skipped-dir (tests/) and dot-dir (.hidden/) filters must
+    # still apply once the universe comes from `git ls-files` instead of
+    # os.walk -- both paths share one filter helper so they cannot drift.
+    if shutil.which("git") is None:
+        pytest.skip("git is not available in this environment")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    vocabulary = _vocabulary(
+        tmp_path / "corpus", [_symbol_row("DirFiltered", "ORDER_SENDER")]
+    )
+    _fake_repo(repo, "tests/unit/planted.py", "class DirFiltered:\n    pass\n")
+    _fake_repo(repo, ".hidden/planted.py", "class DirFiltered:\n    pass\n")
+
+    with pytest.raises(status.StatusError, match="DirFiltered"):
+        status.validate_broker_symbols_are_grounded(
+            repo, repo / "register.csv", vocabulary
+        )
+
+
+# --------------------------------------------------------------------------
+# Fail-closed on the authoritative (default) universe: a git failure of any
+# kind must never be silently absorbed into an os.walk fallback that cannot
+# see .gitignore.  Absorbing it would let an ignored decoy class definition
+# satisfy validate_broker_symbols_are_grounded / scan_broker_construction_sites
+# for a corpus §2 baseline defined by `git ls-files`.
+# --------------------------------------------------------------------------
+
+
+def test_default_universe_never_silently_substitutes_walk_over_an_ignored_decoy(
+    tmp_path,
+):
+    # No git repo at all, and a decoy class definition living where the
+    # os.walk fallback used to see it but `git ls-files` never would (it is
+    # simply untracked with no git repository present).  The default
+    # ("git") universe must raise StatusError rather than quietly falling
+    # back to the walk universe and reporting the decoy as grounded.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    vocabulary = _vocabulary(
+        tmp_path / "corpus", [_symbol_row("DecoySender", "ORDER_SENDER")]
+    )
+    _fake_repo(repo, "vendor/decoy.py", "class DecoySender:\n    pass\n")
+
+    with pytest.raises(status.StatusError, match="git"):
+        status.validate_broker_symbols_are_grounded(
+            repo, repo / "register.csv", vocabulary
+        )
+
+    with pytest.raises(status.StatusError, match="git"):
+        status.scan_broker_construction_sites(repo, vocabulary)
+
+
+def test_default_universe_fails_closed_on_a_nonzero_git_exit(tmp_path):
+    # A ".git" that is present but broken (not a valid git dir) makes
+    # `git ls-files` exit nonzero.  The error message must carry the exit
+    # code so an operator is not left guessing.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").write_text(
+        "gitdir: /nonexistent/path/does/not/exist\n", encoding="utf-8"
+    )
+    vocabulary = _real_vocabulary()
+
+    with pytest.raises(status.StatusError, match=r"rc=\d+"):
+        status.scan_broker_construction_sites(repo, vocabulary)
+
+
+def test_default_universe_fails_closed_when_git_is_not_on_path(tmp_path, monkeypatch):
+    # git missing entirely from PATH must also fail closed, not fall back.
+    empty_path_dir = tmp_path / "empty-path"
+    empty_path_dir.mkdir()
+    monkeypatch.setenv("PATH", str(empty_path_dir))
+    assert shutil.which("git") is None
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _fake_repo(repo, "services/y.py", _SENDER_ENTRYPOINT)
+
+    with pytest.raises(status.StatusError, match="git executable not found"):
+        status.scan_broker_construction_sites(repo, _real_vocabulary())
+
+
+def test_default_universe_fails_closed_on_undecodable_git_output(tmp_path, monkeypatch):
+    # A path git reports that cannot be decoded as UTF-8 must raise, not be
+    # silently skipped -- a silent skip could hide a decoy definition sitting
+    # at exactly that undecodable path.
+    import subprocess as subprocess_module
+
+    class _FakeCompletedProcess:
+        returncode = 0
+        stdout = b"ok.py\x00\xff\xfe.py\x00"
+        stderr = b""
+
+    def _fake_run(*args, **kwargs):
+        return _FakeCompletedProcess()
+
+    monkeypatch.setattr(subprocess_module, "run", _fake_run)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    with pytest.raises(status.StatusError, match="undecodable path"):
+        status.scan_broker_construction_sites(repo, _real_vocabulary())
+
+
+def test_real_git_repo_positive_control_still_excludes_ignored_files(tmp_path):
+    # Positive control for the fail-closed tests above: a real, healthy git
+    # repository must still take the default ("git") path successfully and
+    # exclude ignored files, exactly as before this change.
+    if shutil.which("git") is None:
+        pytest.skip("git is not available in this environment")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    (repo / ".gitignore").write_text("vendor/\n", encoding="utf-8")
+    _fake_repo(repo, "vendor/x.py", _SENDER_ENTRYPOINT)
+    _fake_repo(repo, "services/y.py", _SENDER_ENTRYPOINT)
+
+    sites = status.scan_broker_construction_sites(repo, _real_vocabulary())
+
+    assert [site.relative_path for site in sites] == ["services/y.py"]
+
+
+def test_cli_check_fails_closed_and_reports_git_failure_on_stderr(
+    tmp_path, monkeypatch, capsys
+):
+    # End-to-end: `--check` against the real corpus, with git made
+    # unavailable, must exit nonzero and name the git failure on stderr --
+    # not silently pass by falling back to the .gitignore-blind walk.
+    empty_path_dir = tmp_path / "empty-path"
+    empty_path_dir.mkdir()
+    monkeypatch.setenv("PATH", str(empty_path_dir))
+    assert shutil.which("git") is None
+
+    rc = status.main(["--check", "--root", str(_REPO_ROOT)])
+
+    assert rc != 0
+    assert "git executable not found" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------
@@ -779,6 +1006,7 @@ def test_warning_only_registration_silences_the_warning_tier(tmp_path):
             frozenset(),
             _real_vocabulary(),
             warning_exempt_components=frozenset({"services/market_ingest/main.py"}),
+            universe="walk",
         )
         == ()
     )
@@ -797,6 +1025,7 @@ def test_warning_only_registration_does_not_exempt_the_fail_closed_tier(tmp_path
             frozenset(),
             _real_vocabulary(),
             warning_exempt_components=frozenset({"services/market_ingest/main.py"}),
+            universe="walk",
         )
 
     assert "services/market_ingest/main.py" in str(excinfo.value)
@@ -815,6 +1044,7 @@ def test_mock_confined_site_still_fails_closed_once_it_gains_an_entrypoint(tmp_p
             frozenset(),
             _real_vocabulary(),
             warning_exempt_components=frozenset({"shared/execution/mock_mirror.py"}),
+            universe="walk",
         )
 
     assert "shared/execution/mock_mirror.py" in str(excinfo.value)
@@ -832,6 +1062,7 @@ def test_legacy_route_registration_still_exempts_both_tiers(tmp_path):
             repo / "register.csv",
             frozenset({"scripts/trading/flatten_all.py"}),
             _real_vocabulary(),
+            universe="walk",
         )
         == ()
     )
@@ -851,6 +1082,7 @@ def test_a_new_unregistered_read_site_is_still_reported(tmp_path):
         frozenset(),
         _real_vocabulary(),
         warning_exempt_components=frozenset({"services/market_ingest/main.py"}),
+        universe="walk",
     ) == ("services/brand_new_collector/main.py",)
 
 
@@ -916,7 +1148,7 @@ def test_a_second_brokers_client_is_scanned_after_a_registry_edit_alone(tmp_path
         f"def build():\n    return {_ACME}(config)\n",
     )
 
-    sites = status.scan_broker_construction_sites(repo, vocabulary)
+    sites = status.scan_broker_construction_sites(repo, vocabulary, universe="walk")
 
     assert [site.relative_path for site in sites] == ["services/acme_gateway/main.py"]
     assert sites[0].classes == frozenset({_ACME})
@@ -943,7 +1175,7 @@ def test_a_second_brokers_order_sender_reaches_the_blocking_tier(tmp_path):
 
     with pytest.raises(status.StatusError) as excinfo:
         status.validate_legacy_route_reverse_census(
-            repo, repo / "register.csv", frozenset(), vocabulary
+            repo, repo / "register.csv", frozenset(), vocabulary, universe="walk"
         )
 
     assert "scripts/trading/acme_flatten.py" in str(excinfo.value)
@@ -963,7 +1195,9 @@ def test_deregistering_a_symbol_blinds_the_scan_to_it(tmp_path):
         "def build():\n    return KISClient(config)\n",
     )
 
-    assert status.scan_broker_construction_sites(repo, vocabulary) == ()
+    assert (
+        status.scan_broker_construction_sites(repo, vocabulary, universe="walk") == ()
+    )
 
 
 def test_registry_still_seeds_the_vocabulary_the_tool_used_to_hardcode():
@@ -1018,7 +1252,7 @@ def test_a_registered_symbol_that_defines_nothing_is_rejected(tmp_path):
 
     with pytest.raises(status.StatusError) as excinfo:
         status.validate_broker_symbols_are_grounded(
-            repo, repo / "register.csv", vocabulary
+            repo, repo / "register.csv", vocabulary, universe="walk"
         )
 
     assert "NoSuchSender" in str(excinfo.value)
@@ -1053,7 +1287,7 @@ def test_a_symbol_defined_only_in_a_test_is_not_grounded(tmp_path):
 
     with pytest.raises(status.StatusError, match="TestOnlySender"):
         status.validate_broker_symbols_are_grounded(
-            repo, repo / "register.csv", vocabulary
+            repo, repo / "register.csv", vocabulary, universe="walk"
         )
 
 
@@ -1072,7 +1306,7 @@ def test_a_symbol_defined_in_two_places_is_accepted(tmp_path):
     )
 
     definitions = status.validate_broker_symbols_are_grounded(
-        repo, repo / "register.csv", vocabulary
+        repo, repo / "register.csv", vocabulary, universe="walk"
     )
 
     assert definitions["TwiceDefined"] == ("shared/a/one.py", "shared/b/two.py")
@@ -1090,7 +1324,7 @@ def test_a_nested_class_is_not_a_grounding_definition(tmp_path):
 
     with pytest.raises(status.StatusError, match="NestedOnly"):
         status.validate_broker_symbols_are_grounded(
-            repo, repo / "register.csv", vocabulary
+            repo, repo / "register.csv", vocabulary, universe="walk"
         )
 
 

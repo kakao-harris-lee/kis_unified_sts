@@ -1,0 +1,74 @@
+{
+  "job": {
+    "createdAt": "2026-09-02T10:58:14.677Z",
+    "updatedAt": "2026-09-02T11:05:06.116Z",
+    "id": "review-mtjzg4yd-1w38uv",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "SHIP. 지정된 두 문서에서 차단할 결함을 찾지 못했다. 하니스 펜스와 파일은 byte-identical이며 sha256 059e13f2…가 일치한다. 구·신 awk의 708개 코퍼스 비교 결과 차이 0이고, awk 부재 시 비정상 종료도 유지된다. 활성 sha 결속 자리와 O-6 digest e0729ff3…는 lockstep으로 일치하며, S-26 카운터 0 리셋·51차 currency·§12.1/§8 순서도 정합하다. 수정은 pipefail을 우회하지 않고 전 입력 소비로 EPIPE 원인을 제거한다.",
+    "write": false,
+    "sessionId": "74346560-23f1-4760-8ce0-21819ccfd2ff",
+    "status": "completed",
+    "startedAt": "2026-09-02T10:58:14.749Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtjzg4yd-1w38uv.log",
+    "threadId": "01a061c5-0218-7f60-bdcb-3db5956971b8",
+    "turnId": "01a061c5-041b-7f60-aa9a-36047caf2050",
+    "completedAt": "2026-09-02T11:05:05.967Z"
+  },
+  "storedJob": {
+    "id": "review-mtjzg4yd-1w38uv",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "Adversarial Review branch diff against origin/main",
+    "write": false,
+    "createdAt": "2026-09-02T10:58:14.677Z",
+    "sessionId": "74346560-23f1-4760-8ce0-21819ccfd2ff",
+    "status": "completed",
+    "startedAt": "2026-09-02T10:58:14.749Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtjzg4yd-1w38uv.log",
+    "threadId": "01a061c5-0218-7f60-bdcb-3db5956971b8",
+    "turnId": "01a061c5-041b-7f60-aa9a-36047caf2050",
+    "completedAt": "2026-09-02T11:05:05.967Z",
+    "result": {
+      "review": "Adversarial Review",
+      "target": {
+        "mode": "branch",
+        "label": "branch diff against origin/main",
+        "baseRef": "origin/main",
+        "explicit": true
+      },
+      "threadId": "01a061c5-0218-7f60-bdcb-3db5956971b8",
+      "context": {
+        "repoRoot": "/Users/harris/Development/private/kis_unified_sts",
+        "branch": "mission-critical-trading-operating-system",
+        "summary": "Reviewing branch mission-critical-trading-operating-system against origin/main from merge-base e46dbd88bdd1f779699578615a2d7c2c5d9519b4."
+      },
+      "codex": {
+        "status": 0,
+        "stderr": "",
+        "stdout": "{\"verdict\":\"approve\",\"summary\":\"SHIP. 지정된 두 문서에서 차단할 결함을 찾지 못했다. 하니스 펜스와 파일은 byte-identical이며 sha256 059e13f2…가 일치한다. 구·신 awk의 708개 코퍼스 비교 결과 차이 0이고, awk 부재 시 비정상 종료도 유지된다. 활성 sha 결속 자리와 O-6 digest e0729ff3…는 lockstep으로 일치하며, S-26 카운터 0 리셋·51차 currency·§12.1/§8 순서도 정합하다. 수정은 pipefail을 우회하지 않고 전 입력 소비로 EPIPE 원인을 제거한다.\",\"findings\":[],\"next_steps\":[]}",
+        "reasoning": []
+      },
+      "result": {
+        "verdict": "approve",
+        "summary": "SHIP. 지정된 두 문서에서 차단할 결함을 찾지 못했다. 하니스 펜스와 파일은 byte-identical이며 sha256 059e13f2…가 일치한다. 구·신 awk의 708개 코퍼스 비교 결과 차이 0이고, awk 부재 시 비정상 종료도 유지된다. 활성 sha 결속 자리와 O-6 digest e0729ff3…는 lockstep으로 일치하며, S-26 카운터 0 리셋·51차 currency·§12.1/§8 순서도 정합하다. 수정은 pipefail을 우회하지 않고 전 입력 소비로 EPIPE 원인을 제거한다.",
+        "findings": [],
+        "next_steps": []
+      },
+      "rawOutput": "{\"verdict\":\"approve\",\"summary\":\"SHIP. 지정된 두 문서에서 차단할 결함을 찾지 못했다. 하니스 펜스와 파일은 byte-identical이며 sha256 059e13f2…가 일치한다. 구·신 awk의 708개 코퍼스 비교 결과 차이 0이고, awk 부재 시 비정상 종료도 유지된다. 활성 sha 결속 자리와 O-6 digest e0729ff3…는 lockstep으로 일치하며, S-26 카운터 0 리셋·51차 currency·§12.1/§8 순서도 정합하다. 수정은 pipefail을 우회하지 않고 전 입력 소비로 EPIPE 원인을 제거한다.\",\"findings\":[],\"next_steps\":[]}",
+      "parseError": null,
+      "reasoningSummary": []
+    },
+    "rendered": "# Codex Adversarial Review\n\nTarget: branch diff against origin/main\nVerdict: approve\n\nSHIP. 지정된 두 문서에서 차단할 결함을 찾지 못했다. 하니스 펜스와 파일은 byte-identical이며 sha256 059e13f2…가 일치한다. 구·신 awk의 708개 코퍼스 비교 결과 차이 0이고, awk 부재 시 비정상 종료도 유지된다. 활성 sha 결속 자리와 O-6 digest e0729ff3…는 lockstep으로 일치하며, S-26 카운터 0 리셋·51차 currency·§12.1/§8 순서도 정합하다. 수정은 pipefail을 우회하지 않고 전 입력 소비로 EPIPE 원인을 제거한다.\n\nNo material findings.\n"
+  }
+}

@@ -135,6 +135,8 @@ class SizingBound(FrozenModel):
     ``admitted_quantity_bases`` is the closed set of ``Proposal.quantity_basis`` tokens this
     envelope authorizes. An **empty** set authorizes nothing (∅ fail-closed, both-ways): a
     vacuous "every basis is fine" is not authorization.
+
+    VER-002-KEYS: ``risk_budget``, ``per_unit_risk``, ``lot_size``, ``lot_rounding``, ``min_quantity``, ``max_quantity``, ``max_notional``
     """
 
     #: The governance-supplied risk budget (``None`` ⇒ denial; must be > 0).

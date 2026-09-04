@@ -1,0 +1,89 @@
+[codex] Starting Codex task thread.
+[codex] Thread ready (01a06aa4-5946-76c2-841b-b2e4b9bd9e52).
+[codex] Turn started (01a06aa4-5aa7-7ae1-aa7d-93ee793ff22e).
+[codex] Assistant message captured: {"verdict":"approve","summary":"심사 지시의 정확한 범위에 맞춰 CLAUDE.md, §7.4 D-4 지정 블록, 163키 프로파일, marke...
+[codex] Running command: /bin/zsh -lc 'rg -n "kis_unified_sts|completion-contract|NO_DEPENDENCY|marketfeed|D-4" /Users...
+[codex] Command completed: /bin/zsh -lc 'rg -n "kis_unified_sts|completion-contract|NO_DEPENDENCY|marketfeed|D-4" /Users... (exit 0)
+[codex] Running command: /bin/zsh -lc 'wc -l tos/src/tos/marketfeed/__init__.py tos/src/tos/marketfeed/_base.py tos/sr...
+[codex] Command failed: /bin/zsh -lc 'wc -l tos/src/tos/marketfeed/__init__.py tos/src/tos/marketfeed/_base.py tos/sr... (exit 1)
+[codex] Running command: /bin/zsh -lc "sed -n '1,260p' CLAUDE.md"
+[codex] Running command: /bin/zsh -lc "python tools/tos_contract_index.py --locate '§7.4'"
+[codex] Command completed: /bin/zsh -lc "sed -n '1,260p' CLAUDE.md" (exit 0)
+[codex] Command completed: /bin/zsh -lc "python tools/tos_contract_index.py --locate '§7.4'" (exit 0)
+[codex] Running command: /bin/zsh -lc "rg --files | rg 'VERIFICATION-PROFILE-002\\.ya?ml"'$|marketfeed/(?:__init__|_ba...
+[codex] Command completed: /bin/zsh -lc "rg --files | rg 'VERIFICATION-PROFILE-002\\.ya?ml"'$|marketfeed/(?:__init__|_ba... (exit 0)
+[codex] Assistant message captured: {"verdict":"approve","summary":"대상 프로파일의 실제 위치가 지시문보다 한 단계 깊은 `tos-spec/src/part-1-foundation...
+[codex] Running command: /bin/zsh -lc 'nl -ba tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml'
+[codex] Running command: /bin/zsh -lc 'nl -ba tos/src/tos/marketfeed/__init__.py; nl -ba tos/src/tos/marketfeed/_base....
+[codex] Command completed: /bin/zsh -lc 'nl -ba tos/src/tos/marketfeed/__init__.py; nl -ba tos/src/tos/marketfeed/_base.... (exit 0)
+[codex] Command completed: /bin/zsh -lc 'nl -ba tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml' (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '2810,2920p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Command completed: /bin/zsh -lc "sed -n '2810,2920p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Running command: /bin/zsh -lc 'nl -ba tos/src/tos/marketfeed/resolver.py'
+[codex] Command completed: /bin/zsh -lc 'nl -ba tos/src/tos/marketfeed/resolver.py' (exit 0)
+[codex] Running command: /bin/zsh -lc 'nl -ba tos/src/tos/marketfeed/vocabulary.py; rg -n "[0-9]|timeout|age|fresh|sta...
+[codex] Command completed: /bin/zsh -lc 'nl -ba tos/src/tos/marketfeed/vocabulary.py; rg -n "[0-9]|timeout|age|fresh|sta... (exit 0)
+[codex] Running command: /bin/zsh -lc 'nl -ba tos/src/tos/marketfeed/__init__.py'
+[codex] Command completed: /bin/zsh -lc 'nl -ba tos/src/tos/marketfeed/__init__.py' (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '1,220p' tools/tos_profile_census.py; rg -n \"class TimeAdmissionInputs|...
+[codex] Command completed: /bin/zsh -lc "sed -n '1,220p' tools/tos_profile_census.py; rg -n \"class TimeAdmissionInputs|... (exit 0)
+[codex] Running command: /bin/zsh -lc 'git status --short; git diff --name-only 28475ca1''^ -- tos/src/tos/marketfeed;...
+[codex] Running command: /bin/zsh -lc "sed -n '110,170p' tos/src/tos/engine/records.py; sed -n '35,100p' tos/src/tos/c...
+[codex] Running command: /bin/zsh -lc 'rg -n "profile_key_universe|VER-002-KEYS|CONTRAST|scope_content_digest|reviewed...
+[codex] Command completed: /bin/zsh -lc 'rg -n "profile_key_universe|VER-002-KEYS|CONTRAST|scope_content_digest|reviewed... (exit 0)
+[codex] Command completed: /bin/zsh -lc "sed -n '110,170p' tos/src/tos/engine/records.py; sed -n '35,100p' tos/src/tos/c... (exit 0)
+[codex] Command completed: /bin/zsh -lc 'git status --short; git diff --name-only 28475ca1''^ -- tos/src/tos/marketfeed;... (exit 0)
+[codex] Assistant message captured: {"verdict":"needs-attention","summary":"핵심 반례 후보가 확인됐습니다. `resolver.py`의 주입 포트는 단순 시각 좌표가 아니라...
+[codex] Running command: /bin/zsh -lc "sed -n '3590,3890p' tools/tos_completion_status.py"
+[codex] Command completed: /bin/zsh -lc "sed -n '3590,3890p' tools/tos_completion_status.py" (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n \"MarketFeedContextResolver\\(|time_projection=|TimeAdmissionInputs\\(\" ...
+[codex] Running command: /bin/zsh -lc 'rg -n "max_age_bound|future_tolerance|snapshot_age_bound|maximum_consumer_age_m...
+[codex] Command completed: /bin/zsh -lc 'rg -n "max_age_bound|future_tolerance|snapshot_age_bound|maximum_consumer_age_m... (exit 0)
+[codex] Command completed: /bin/zsh -lc "rg -n \"MarketFeedContextResolver\\(|time_projection=|TimeAdmissionInputs\\(\" ... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba tos/src/tos/backtest/resolver.py | sed -n '1,230p'; nl -ba tos/src/tos/e...
+[codex] Command completed: /bin/zsh -lc "nl -ba tos/src/tos/backtest/resolver.py | sed -n '1,230p'; nl -ba tos/src/tos/e... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba tos/src/tos/marketfeed/value.py | sed -n '181,360p'"
+[codex] Command completed: /bin/zsh -lc "nl -ba tos/src/tos/marketfeed/value.py | sed -n '181,360p'" (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba tos/src/tos/marketfeed/value.py | sed -n '361,540p'"
+[codex] Command completed: /bin/zsh -lc "nl -ba tos/src/tos/marketfeed/value.py | sed -n '361,540p'" (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba tos/src/tos/marketfeed/value.py | sed -n '1,180p'"
+[codex] Command completed: /bin/zsh -lc "nl -ba tos/src/tos/marketfeed/value.py | sed -n '1,180p'" (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba tos/src/tos/marketfeed/value.py | sed -n '541,720p'; nl -ba tos/src/tos/...
+[codex] Command completed: /bin/zsh -lc "nl -ba tos/src/tos/marketfeed/value.py | sed -n '541,720p'; nl -ba tos/src/tos/... (exit 0)
+[codex] Running command: /bin/zsh -lc "python - <<'PY' import ast,re,yaml,hashlib from pathlib import Path root=Path('...
+[codex] Command completed: /bin/zsh -lc "python - <<'PY' import ast,re,yaml,hashlib from pathlib import Path root=Path('... (exit 0)
+[codex] Running command: /bin/zsh -lc 'for p in tos/src/tos/marketfeed/__init__.py tos/src/tos/marketfeed/_base.py tos...
+[codex] Running command: /bin/zsh -lc "python -c 'import yaml; from pathlib import Path; p=yaml.safe_load(Path(\"tos-s...
+[codex] Running command: /bin/zsh -lc 'python tools/tos_completion_status.py --check'
+[codex] Command failed: /bin/zsh -lc 'for p in tos/src/tos/marketfeed/__init__.py tos/src/tos/marketfeed/_base.py tos... (exit 1)
+[codex] Command completed: /bin/zsh -lc "python -c 'import yaml; from pathlib import Path; p=yaml.safe_load(Path(\"tos-s... (exit 0)
+[codex] Command failed: /bin/zsh -lc 'python tools/tos_completion_status.py --check' (exit 2)
+[codex] Running command: /bin/zsh -lc "rg -n \"def .*scope.*digest|scope_content_digest|reviewed_plan_paths\" tools/to...
+[codex] Command completed: /bin/zsh -lc "rg -n \"def .*scope.*digest|scope_content_digest|reviewed_plan_paths\" tools/to... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '1860,1970p' tools/tos_completion_status.py; rg -n \"content_digest|scop...
+[codex] Command completed: /bin/zsh -lc "sed -n '1860,1970p' tools/tos_completion_status.py; rg -n \"content_digest|scop... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '360,415p' tools/tos_completion_status.py; rg -n \"NO_DEPENDENCY|d1-no-d...
+[codex] Command completed: /bin/zsh -lc "sed -n '360,415p' tools/tos_completion_status.py; rg -n \"NO_DEPENDENCY|d1-no-d... (exit 0)
+[codex] Running command: /bin/zsh -lc 'for p in tos/src/tos/marketfeed/_base.py tos/src/tos/marketfeed/__init__.py tos...
+[codex] Command completed: /bin/zsh -lc 'for p in tos/src/tos/marketfeed/_base.py tos/src/tos/marketfeed/__init__.py tos... (exit 0)
+[codex] Running command: /bin/zsh -lc "python -c 'import hashlib,pathlib; ps=sorted({pathlib.Path(x) for x in \"tos/sr...
+[codex] Command completed: /bin/zsh -lc "python -c 'import hashlib,pathlib; ps=sorted({pathlib.Path(x) for x in \"tos/sr... (exit 0)
+[codex] Running command: /bin/zsh -lc "python -c 'import re,yaml,pathlib; ps=list(pathlib.Path(\"tos/src/tos/marketfee...
+[codex] Command completed: /bin/zsh -lc "python -c 'import re,yaml,pathlib; ps=list(pathlib.Path(\"tos/src/tos/marketfee... (exit 0)
+[codex] Assistant message captured: {"verdict":"needs-attention","summary":"NO-SHIP: claim은 거짓이다. 전문 실측: tos/src/tos/marketfeed/_...
+[codex] Turn completion inferred after the main thread finished and subagent work drained.
+# Codex Adversarial Review
+
+Target: branch diff against 28475ca1^
+Verdict: needs-attention
+
+NO-SHIP: claim은 거짓이다. 전문 실측: tos/src/tos/marketfeed/__init__.py 165줄, _base.py 127줄, records.py 240줄, resolver.py 226줄, value.py 688줄, vocabulary.py 94줄(총 1,540줄). scope_content_digest b3bf8f18e3e2109939524d2f27076c09286a65953d5076f2eb3c00c71b260947도 재현했다. 163개 프로파일 키의 직접 토큰 참조와 프로파일 로더 경로는 0건이고 선언은 72행의 정확히 한 줄이지만, resolver의 런타임 주입 경계가 프로파일 결속 값과 우주 밖 bound를 포함하는 TimeAdmissionInputs를 받아 전달하므로 (a)와 (c)가 성립하지 않는다.
+
+Findings:
+- [high] TimeCoordinateProjection 포트가 프로파일 결속 값과 UNBOUND 값을 실제 payload로 소비한다 (tos/src/tos/marketfeed/resolver.py:152-208)
+  MarketFeedContextResolver는 `time_projection`을 주입받고(152행), 이를 호출해 반환된 `TimeAdmissionInputs`를 취득한 뒤(199–203행) `DecisionTickPayload.time`에 넣는다(204–208행). 이 타입은 delay_bounds, max_age_bound, future_tolerance, snapshot_age_bound, maximum_consumer_age_ms를 운반한다. 실제 생산자 `BarTimeProjection`은 future_tolerance와 maximum_consumer_age_ms를 각각 VER-002 키에, delay_bounds를 네 VER-002 키의 합성값에 결속하며, max_age_bound는 우주 밖 UNBOUND로 명시한다. 따라서 marketfeed가 단순 시간 좌표만 전달한다는 __init__.py:54–57의 설명과 달리 bound-bearing 설정 객체 전체를 런타임 경로에서 소비·전달한다. 직접 키 토큰이 없다는 검사기 결과는 이 의미 의존을 포착하지 못한다.
+  Recommendation: marketfeed의 NO_DEPENDENCY 승인을 기록하지 말고, 모듈 docstring과 D-5 선언에 실제 결속된 6개 프로파일 키(MAX_future_timestamp_tolerance_ms, MAX_critical_input_consumer_receipt_age_ms, MAX_time_transport_and_queue_uncertainty_ms, MAX_clock_domain_conversion_uncertainty_ms, MAX_time_source_precision_ms, MAX_time_source_sequence_gap_ms) 및 우주 밖 bound인 max_age_bound를 공개해 키별 처분을 받도록 한다.
+
+Next steps:
+- 이 심판 결과는 approve provenance가 아니라 needs-attention으로 처리한다.
+- marketfeed의 `VER-002-KEYS: NONE`을 실제 time-projection 의존 선언으로 재분류한 뒤 독립 심사를 다시 수행한다.

@@ -1,0 +1,14 @@
+kind: d1-no-dependency independent review record (§7.4 D-4 (마))
+site_id: marketfeed
+reviewed_plan_paths:
+  - tos/src/tos/marketfeed/__init__.py
+  - tos/src/tos/marketfeed/_base.py
+  - tos/src/tos/marketfeed/records.py
+  - tos/src/tos/marketfeed/resolver.py
+  - tos/src/tos/marketfeed/value.py
+  - tos/src/tos/marketfeed/vocabulary.py
+reviewed_scope_digest: b3bf8f18e3e2109939524d2f27076c09286a65953d5076f2eb3c00c71b260947
+digest_kind: scope_content_digest (내용 전용 · HEAD 미포함)
+reviewed_at_head: c8209c34af581e899b9f07418909dde27a605931
+captured_at_utc: 2026-09-04T04:19:09Z
+claim: marketfeed — tos/src/tos/marketfeed 패키지는 VERIFICATION-PROFILE-002 의 결속 값을 소비하지 않는다

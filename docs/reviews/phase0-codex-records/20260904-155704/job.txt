@@ -1,0 +1,3 @@
+2026-09-04T07:50:33Z launched (레인 A 재심 #6 · C6 c5550229)
+job_id: review-mtmnmhm1-pc6tnu
+kind: adversarial-review (--wait · setsid · base 28475ca1^ · scope branch · 레인 A 재심 #6)

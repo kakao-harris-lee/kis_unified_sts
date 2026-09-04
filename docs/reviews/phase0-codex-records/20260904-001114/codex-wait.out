@@ -1,0 +1,68 @@
+[codex] Starting Codex task thread.
+[codex] Thread ready (01a067d9-adc3-7130-805a-37e2bfe3cd81).
+[codex] Turn started (01a067d9-af37-7e30-acfb-ef946de2b56d).
+[codex] Codex error: Reconnecting... 2/5
+[codex] Codex error: Reconnecting... 3/5
+[codex] Codex error: Reconnecting... 4/5
+[codex] Codex error: Reconnecting... 5/5
+[codex] Assistant message captured: {"verdict":"approve","summary":"리뷰에 필요한 저장소 규칙·직전 판정·증거를 먼저 읽고, 지정 diff와 검사기 호출 그래프 및 테스트의 뮤테...
+[codex] Running command: /bin/zsh -lc "sed -n '1,260p' CLAUDE.md"
+[codex] Command completed: /bin/zsh -lc "sed -n '1,260p' CLAUDE.md" (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n \"review-mtljvycx|165133|tos_completion_status|tos_spec_status|D-1|shell-...
+[codex] Command completed: /bin/zsh -lc "rg -n \"review-mtljvycx|165133|tos_completion_status|tos_spec_status|D-1|shell-... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '1,220p' .omc/review/20260904-001114/evidence/architecture.md sed -n '1,...
+[codex] Command completed: /bin/zsh -lc "sed -n '1,220p' .omc/review/20260904-001114/evidence/architecture.md sed -n '1,... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '2682,2823p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Command completed: /bin/zsh -lc "sed -n '2682,2823p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba tools/tos_completion_status.py | sed -n '3550,3980p' nl -ba tools/tos_co...
+[codex] Command completed: /bin/zsh -lc "nl -ba tools/tos_completion_status.py | sed -n '3550,3980p' nl -ba tools/tos_co... (exit 0)
+[codex] Assistant message captured: {"verdict":"needs-attention","summary":"중간 실측에서 두 가지 즉시 의심점이 나왔습니다. §11 렌더러는 현재 ‘정확히 7개 이름’이 ...
+[codex] Running command: /bin/zsh -lc "nl -ba tools/tos_spec_status.py | sed -n '1818,2025p' nl -ba tools/tos_spec_sta...
+[codex] Command completed: /bin/zsh -lc "nl -ba tools/tos_spec_status.py | sed -n '1818,2025p' nl -ba tools/tos_spec_sta... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba tools/tos_spec_status.py | sed -n '2298,2372p' rg -n \"exact|extra|d1_mi...
+[codex] Command completed: /bin/zsh -lc "nl -ba tools/tos_spec_status.py | sed -n '2298,2372p' rg -n \"exact|extra|d1_mi... (exit 0)
+[codex] Running command: /bin/zsh -lc 'git log --oneline 28475ca1''^..HEAD -- docs/plans git diff --numstat 28475ca1''...
+[codex] Command completed: /bin/zsh -lc 'git log --oneline 28475ca1''^..HEAD -- docs/plans git diff --numstat 28475ca1''... (exit 0)
+[codex] Running command: /bin/zsh -lc "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tests/tools/test_tos_compl...
+[codex] Command failed: /bin/zsh -lc "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tests/tools/test_tos_compl... (exit 1)
+[codex] Running command: /bin/zsh -lc 'PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tools/tos_spec_status.py --check'
+[codex] Running command: /bin/zsh -lc 'bash tools/tos_entry_harness.sh'
+[codex] Running command: /bin/zsh -lc 'PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tools/tos_completion_status.py --check'
+[codex] Command completed: /bin/zsh -lc 'PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tools/tos_spec_status.py --check' (exit 0)
+[codex] Command completed: /bin/zsh -lc 'bash tools/tos_entry_harness.sh' (exit 0)
+[codex] Command failed: /bin/zsh -lc 'PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tools/tos_completion_status.py --check' (exit 2)
+[codex] Running command: /bin/zsh -lc "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<'PY' import importlib.util from ...
+[codex] Command completed: /bin/zsh -lc "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<'PY' import importlib.util from ... (exit 0)
+[codex] Running command: /bin/zsh -lc "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -c 'import importlib.util,pathlib; p...
+[codex] Command failed: /bin/zsh -lc "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -c 'import importlib.util,pathlib; p... (exit 1)
+[codex] Running command: /bin/zsh -lc "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -c 'import importlib.util,pathlib,sy...
+[codex] Command completed: /bin/zsh -lc "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -c 'import importlib.util,pathlib,sy... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba docs/plans/2026-08-12-tos-phase0-completion-contract-design.md | sed -n ...
+[codex] Command completed: /bin/zsh -lc "nl -ba docs/plans/2026-08-12-tos-phase0-completion-contract-design.md | sed -n ... (exit 0)
+[codex] Running command: /bin/zsh -lc "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -c 'import importlib.util,pathlib,sy...
+[codex] Command failed: /bin/zsh -lc "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -c 'import importlib.util,pathlib,sy... (exit 1)
+[codex] Assistant message captured: {"verdict":"needs-attention","summary":"출하 차단. 직전 finding #1(파일 부재 fail-open), #2(UNBOUND 산문 ...
+[codex] Turn completion inferred after the main thread finished and subagent work drained.
+# Codex Adversarial Review
+
+Target: branch diff against 28475ca1^
+Verdict: needs-attention
+
+출하 차단. 직전 finding #1(파일 부재 fail-open), #2(UNBOUND 산문 자기신고), #3(git 실패 시 walk 폴백)는 모두 해소됐다. 구 구현으로 되돌리면 각각 새 missing-site/prose/git-failure 대조군이 실패하며, `/definitely-not-a-repo`도 7/7 UNDECIDED·fail-closed를 반환한다. 선언 오류·본문 부재·미선언 인용·NONE 모순은 UNDECIDED로 접히고, 권위 tos_spec_status 경로는 git만 사용하며 StatusError가 rc 1로 전파된다. 그러나 D0-5는 계약에 없는 NONE 및 다중 키 우선순위로 MET를 만들고, 렌더러의 ‘정확히 7개’ 조건도 실제로는 6/6 같은 축소 우주를 허용한다. 또한 요구된 docs/plans 무편집 검사가 0파일이 아니라 4파일(+88/-17)이다. 현재 생성물의 7행 basis는 직접 파생 결과와 일치하고 d0a_entry_state=ENTRY_OK이며 tos_spec_status --check와 하니스는 rc 0이었다. tos_completion_status --check 및 pytest는 실행 환경에 사용 가능한 임시 디렉터리가 없어 각각 rc 2/수집 전 실패하여 재검증되지 않았다. 2e5edb4a의 7사이트 변경은 docstring-only이고 import firewall 실행 코드에는 영향이 없다. UNCHK-012·008·023 경로는 이번 수정으로 새로 열리거나 넓어지지 않았다.
+
+Findings:
+- [high] D0-5가 계약에 없는 NONE·다중 키 접기 규칙으로 완료를 선언한다 (tools/tos_completion_status.py:3679-3814)
+  §7.4는 저작자가 의존 키 K를 공급하고, 키 미공급은 UNDECIDED로 완료를 차단한다고 규정한다. 하지만 구현은 다중 키를 UNBOUND>BLOCKED>VALUED로 접고, NONE 선언은 소스 토큰 스캔에서 우주 키가 안 보이면 UNBOUND로 만든다. marketfeed는 실제로 NONE 경로로 UNBOUND가 되고 resolver는 6 VALUED+1 UNBOUND를 UNBOUND 하나로 접어 현재 D0-5 MET에 기여한다. 에라타 후보도 두 규칙이 계약에 없음을 정직하게 인정하므로 은폐는 아니지만, 운영자 채택 전에는 frozen 계약의 완료 판정 근거가 아니다. 특히 NONE은 ‘키를 공급하지 못함’을 저작자 선언 하나로 UNBOUND로 바꾸는 새 우회로다.
+  Recommendation: 이를 계약 에라타 대상으로 유지하고 운영자 처분 전에는 NONE 및 혼합 처분 사이트를 UNDECIDED로 처리해 D0-5 MET를 막아라. 이 레인에서 frozen 계약 본문을 편집하지 마라.
+- [high] 검토 기준점 이후 frozen 계획·계약 diff가 0이 아니다 (docs/plans/2026-08-12-tos-phase0-completion-contract-design.md:8007-8011)
+  요구된 `git diff 28475ca1^ HEAD --stat -- docs/plans`는 4파일, +88/-17을 반환했고 Phase-0 계약 자체가 +72/-15다. 변경은 15b65212와 8199bb38에서 유입되어 이번 두 수정 커밋보다 선행하지만, 전체 D0 블록의 지정 기준점에는 포함된다. 따라서 ‘계약 편집 0파일’ 전제가 거짓이며, 계약 밖 에라타 메모가 주장하는 무편집 상태도 이 리뷰 범위 전체에는 적용되지 않는다. 이는 산문 내용 재심이 아니라 frozen/blob-bound 입력이 목표 diff에서 바뀌었다는 기계적 범위 위반이다.
+  Recommendation: 계약을 고치지 말고, 계획 변경 커밋이 제외되는 올바른 기준점으로 심사 범위를 다시 결속하거나 해당 변경을 별도 레인 B 산출물로 분리한 뒤 docs/plans stat이 0임을 재확인하라.
+- [medium] 렌더러의 정확히 7사이트 조건이 축소된 D1_SITES를 기준으로 재정의된다 (tools/tos_completion_status.py:4167-4179)
+  MET 계산은 고정된 계약상 7개 이름과 비교하지 않고 현재 `D1_SITES`에서 기대 집합을 다시 만든다. 따라서 D1_SITES에서 한 항목을 제거하면 compute 결과와 기대 집합이 함께 6개로 줄어 `d1_missing=[]`, `d1_undecided=[]`가 되어 6/6으로 MET가 된다. 여분 disposition이나 허용 어휘 밖 값도 명시적으로 거부하지 않는다. 현 테스트의 하드코딩된 실사이트 기대는 일부 변이를 잡지만, 렌더러 자체의 주장인 ‘정확 일치 AND 전부 허용 처분’은 구현되지 않았다.
+  Recommendation: 계약상 고정 7개 이름과 `set(d1_dispositions)`의 완전 동등성, D1_SITES의 길이·이름 불변식, 모든 처분이 VALUED/BLOCKED/UNBOUND 중 하나임을 각각 검사하라. 한 사이트 삭제, 여분 사이트, 잘못된 처분을 주입하면 MET가 실패하는 렌더러 대조군을 추가하라.
+
+Next steps:
+- NONE·혼합 키 규칙에 대한 운영자 계약 에라타 처분 전 D0-5 MET를 차단한다.
+- 렌더러를 고정 7개 이름 및 허용 처분 집합에 대해 fail-closed로 고친다.
+- docs/plans diff가 0이 되는 기준점 또는 분리된 레인 B 범위로 리뷰 결속을 바로잡는다.
+- 쓰기 가능한 임시 디렉터리가 있는 환경에서 focused pytest와 `tos_completion_status.py --check`를 재실행한다.

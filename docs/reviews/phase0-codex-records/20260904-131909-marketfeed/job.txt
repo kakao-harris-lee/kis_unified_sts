@@ -1,0 +1,3 @@
+2026-09-04T04:19:09Z launched (marketfeed 독립 확인 · scope_content_digest b3bf8f18e3e2109939524d2f27076c09286a65953d5076f2eb3c00c71b260947)
+job_id: review-mtmg2lz7-88qdyb
+kind: adversarial-review (--wait · setsid · marketfeed 패키지 독립 확인 · D-4 (마) 기록용)

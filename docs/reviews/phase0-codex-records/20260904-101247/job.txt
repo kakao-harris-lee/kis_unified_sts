@@ -1,0 +1,3 @@
+2026-09-04T01:13:31Z launched (lane B · base 15b65212^ · scope branch)
+job_id: review-mtm9fvsu-e0tyho
+kind: adversarial-review (--wait · setsid pid 27894 · base 15b65212^ · scope branch · 레인 B · 두 7월 설계 문서 에라타 절)

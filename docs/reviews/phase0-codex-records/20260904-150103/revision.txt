@@ -1,0 +1,6 @@
+reviewed_at_head: 7bf83226f9a12db6c81f13fc7ee16134ea862753
+reviewed_scope_digest: f0c4ea56445f5acbdca0356a27e59ba65095a6383e6d71e1a80ddbd17012b760
+captured_at_utc: 2026-09-04T06:01:03Z
+prior_verdict: .omc/review/20260904-101638/verdict.md (approve @ 26db89c9 · 게이트는 이후 C4 코드 변경으로 무효)
+lane_b_records: docs/reviews/phase0-completion-contract/20260904-133500/verdict.md (에라타 52~56차 approve) · docs/reviews/phase0-completion-contract/20260902-195656/verdict.md (8199bb38) · .omc/review/20260904-101247/verdict.md (15b65212)
+c4_commit: 7bf83226f9a12db6c81f13fc7ee16134ea862753
