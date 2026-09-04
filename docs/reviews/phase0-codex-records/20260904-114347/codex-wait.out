@@ -1,0 +1,75 @@
+[codex] Starting Codex task thread.
+[codex] Thread ready (01a06a4d-44ef-7033-ac3a-0f23195faffd).
+[codex] Turn started (01a06a4d-4668-7c33-9e7d-96c3442a4354).
+[codex] Assistant message captured: {"verdict":"approve","summary":"검토를 시작합니다. 지정된 순서대로 CLAUDE.md와 §7.4 색인 범위를 먼저 고정한 뒤, 재심 #1 fi...
+[codex] Running command: /bin/zsh -lc "sed -n '1,240p' CLAUDE.md"
+[codex] Command completed: /bin/zsh -lc "sed -n '1,240p' CLAUDE.md" (exit 0)
+[codex] Running command: /bin/zsh -lc 'rg -n "kis_unified_sts|completion-contract|OQ-11|S-26|shell-write gate|review_s...
+[codex] Command completed: /bin/zsh -lc 'rg -n "kis_unified_sts|completion-contract|OQ-11|S-26|shell-write gate|review_s... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '888,1010p' /Users/harris/.codex/memories/MEMORY.md"
+[codex] Command completed: /bin/zsh -lc "sed -n '888,1010p' /Users/harris/.codex/memories/MEMORY.md" (exit 0)
+[codex] Running command: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "§7.4"'
+[codex] Command completed: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "§7.4"' (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '1,260p' .omc/review/20260904-112156/verdict.md"
+[codex] Command completed: /bin/zsh -lc "sed -n '1,260p' .omc/review/20260904-112156/verdict.md" (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '2682,2990p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Command completed: /bin/zsh -lc "sed -n '2682,2990p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Assistant message captured: {"verdict":"approve","summary":"§7.4 범위를 고정해 52·53차 정본을 확인했습니다. 이제 S-26·§11·O-6는 각각 색인으로 별도 구...
+[codex] Running command: /bin/zsh -lc "python tools/tos_contract_index.py --locate 'S-26'"
+[codex] Command failed: /bin/zsh -lc "python tools/tos_contract_index.py --locate 'S-26'" (exit 3)
+[codex] Running command: /bin/zsh -lc "python tools/tos_contract_index.py --locate '§11'"
+[codex] Command completed: /bin/zsh -lc "python tools/tos_contract_index.py --locate '§11'" (exit 0)
+[codex] Running command: /bin/zsh -lc "python tools/tos_contract_index.py --locate 'O-6'"
+[codex] Command failed: /bin/zsh -lc "python tools/tos_contract_index.py --locate 'O-6'" (exit 1)
+[codex] Running command: /bin/zsh -lc "rg -n '"'^#{1,6} .*S-26|'"\\*\\*S-26|O-6|bound_set_digest|decided_at_head|D0-5'...
+[codex] Command completed: /bin/zsh -lc "rg -n '"'^#{1,6} .*S-26|'"\\*\\*S-26|O-6|bound_set_digest|decided_at_head|D0-5'... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '3560,3750p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Command completed: /bin/zsh -lc "sed -n '3560,3750p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '4395,4509p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Command completed: /bin/zsh -lc "sed -n '4395,4509p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '5348,5410p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Command completed: /bin/zsh -lc "sed -n '5348,5410p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '3690,3750p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Command completed: /bin/zsh -lc "sed -n '3690,3750p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Running command: /bin/zsh -lc "git rev-parse HEAD git status --short sed -n '1,120p' .omc/review/20260904-1143...
+[codex] Command completed: /bin/zsh -lc "git rev-parse HEAD git status --short sed -n '1,120p' .omc/review/20260904-1143... (exit 0)
+[codex] Running command: /bin/zsh -lc 'git diff --unified=5 26db89c9 d8ee64dd82eb0537bc43de0c65a4a3ea0d92ae35 -- docs/...
+[codex] Command completed: /bin/zsh -lc 'git diff --unified=5 26db89c9 d8ee64dd82eb0537bc43de0c65a4a3ea0d92ae35 -- docs/... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '1,260p' .omc/review/20260904-114347/evidence/lockstep-diff.patch"
+[codex] Command completed: /bin/zsh -lc "sed -n '1,260p' .omc/review/20260904-114347/evidence/lockstep-diff.patch" (exit 0)
+[codex] Running command: /bin/zsh -lc "python tools/tos_contract_index.py --locate \"§7.1\" wc -l docs/plans/2026-08-1...
+[codex] Command completed: /bin/zsh -lc "python tools/tos_contract_index.py --locate \"§7.1\" wc -l docs/plans/2026-08-1... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '2619,2648p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Command completed: /bin/zsh -lc "sed -n '2619,2648p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '3600,3630p' tools/tos_completion_status.py sed -n '60,90p' tos/src/tos/...
+[codex] Command completed: /bin/zsh -lc "sed -n '3600,3630p' tools/tos_completion_status.py sed -n '60,90p' tos/src/tos/... (exit 0)
+[codex] Assistant message captured: {"verdict":"needs-attention","summary":"핵심 반례가 남아 있습니다. `max_age_bound` 자체는 resolver의 D-5 선언 ...
+[codex] Running command: /bin/zsh -lc 'python tools/tos_contract_check.py python tools/tos_contract_check.py --self-test'
+[codex] Command completed: /bin/zsh -lc 'python tools/tos_contract_check.py python tools/tos_contract_check.py --self-test' (exit 0)
+[codex] Running command: /bin/zsh -lc "git diff --unified=2 091b0fad8e5396f3c15fa97196d385c500d3b908 97cfad8d2128c7793...
+[codex] Command completed: /bin/zsh -lc "git diff --unified=2 091b0fad8e5396f3c15fa97196d385c500d3b908 97cfad8d2128c7793... (exit 0)
+[codex] Running command: /bin/zsh -lc "git diff --unified=0 091b0fad8e5396f3c15fa97196d385c500d3b908 97cfad8d2128c7793...
+[codex] Command completed: /bin/zsh -lc "git diff --unified=0 091b0fad8e5396f3c15fa97196d385c500d3b908 97cfad8d2128c7793... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba docs/plans/2026-08-12-tos-phase0-completion-contract-design.md | sed -n ...
+[codex] Command completed: /bin/zsh -lc "nl -ba docs/plans/2026-08-12-tos-phase0-completion-contract-design.md | sed -n ... (exit 0)
+[codex] Running command: /bin/zsh -lc 'rg -n "MAX_|MIN_|dsl_evaluation_budget_steps|risk_budget|per_unit_risk|lot_size...
+[codex] Command completed: /bin/zsh -lc 'rg -n "MAX_|MIN_|dsl_evaluation_budget_steps|risk_budget|per_unit_risk|lot_size... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'v2\\.23' docs/plans/2026-08-12-tos-phase0-completion-contract-design.md ...
+[codex] Command completed: /bin/zsh -lc "rg -n 'v2\\.23' docs/plans/2026-08-12-tos-phase0-completion-contract-design.md ... (exit 0)
+[codex] Assistant message captured: {"verdict":"needs-attention","summary":"출하 차단. 재심 #1 finding은 부분 해소다. `max_age_bound`·토큰화·C4 ...
+[codex] Turn completion inferred after the main thread finished and subagent work drained.
+# Codex Adversarial Review
+
+Target: branch diff against 26db89c9
+Verdict: needs-attention
+
+출하 차단. 재심 #1 finding은 부분 해소다. `max_age_bound`·토큰화·C4 대조군은 보강됐지만, 후보 우주가 저작자 선언으로부터 파생되어 미선언 UNBOUND 키의 NONE 우회가 남는다. HEAD, plan_scope_digest, bound_set_digest, C1′ decided_at_head는 일치했고 옛 digest는 이력에만 남았다. 계약 검사와 self-test 145종은 rc 0이었다.
+
+Findings:
+- [high] 자기신고로 후보 우주에서 키를 제거할 수 있어 NONE 우회가 남는다 (docs/plans/2026-08-12-tos-phase0-completion-contract-design.md:2843-2856)
+  재심 #1 finding은 «부분 해소»다. 현재 `max_age_bound`는 resolver의 D-5 선언 덕분에 합집합에 들어가지만, 후보 우주 자체가 같은 D-5 선언들에서 파생된다. 따라서 저작자가 우주 밖 키를 모든 선언에서 빼면 그 키는 docstring에 리터럴로 남아도 스캔 후보에서 사라진다. 계약은 미선언 프로파일 키만 UNDECIDED로 열거하고, 미선언 UNBOUND 키는 명시적으로 감지하지 않는다. 예컨대 resolver 선언에서 `max_age_bound`만 제거한 뒤 NONE 사이트 범위에 이를 두면 제시된 네 대조군과 달리 후보 우주가 먼저 축소되어 NO_DEPENDENCY가 가능하다. 이는 UNBOUND와 §13 등재를 NONE으로 바꾸던 원래 우회의 자기삭제 변형이다. 외부-helper 사례는 D-1 정의 축소로 경계를 정직하게 명시했지만, 이 선언-파생 순환은 문제를 정의로 없앤 것이 아니다.
+  Recommendation: 후보 우주를 사이트 저작자의 D-5 선언과 독립적으로 열거하거나, 독립 열거가 불가능하면 NONE을 완료값으로 쓰지 말고 미선언 UNBOUND 리터럴을 UNDECIDED로 차단하라. C4에는 `max_age_bound`의 donor 선언을 삭제한 상태에서 NONE 범위에 같은 리터럴을 두는 대조군을 추가하라. 계약 본문 추가 편집이므로 S-26 ⑥ 카운터 재리셋, O-6 재결속, 레인 B 재심 비용을 함께 기록해야 한다.
+
+Next steps:
+- D-4 후보 우주의 선언-파생 순환을 제거하고 donor 선언 삭제 대조군을 C4 동일 커밋 계약에 추가한다.
+- 수정 후 plan_scope_digest와 bound_set_digest를 재계산하고 O-6를 다시 결속한 뒤 레인 B 재심을 반복한다.

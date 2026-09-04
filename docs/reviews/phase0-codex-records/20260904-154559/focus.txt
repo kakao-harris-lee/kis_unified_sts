@@ -1,0 +1,11 @@
+레인 A 재심 #5 — Phase 0 완료 계약 §12.3 절차표 9행 «codex-reviewer 적대적 코드 리뷰». 재심 #4(잡 review-mtmjt61i-d0f3oc · needs-attention · high 1)의 해소 여부를 심사한다. 이 판정이 Phase 0 완료 판정(§11)에 앞서는 기록 심판(reviewer of record)이다.
+
+먼저 읽을 것 (순서대로):
+1. CLAUDE.md — 비협상 규칙 및 «Read the index before the contract».
+2. .omc/review/20260904-150103/verdict.md — 재심 #4 판정 원문 + 수용검사(채택 1/1). **1순위 질문: finding 1 이 해소됐는가, 회피됐는가** — D-4 (마) 기록 검증이 이제 (a) adjudicator 별 provenance 필드(codex→job_id · operator→countersigned_by) 필수·비공백 (b) reviewed_at_head 필수 (c) claim 이 계약 (마) 지정 문장 verbatim + canonical site_id 토큰 정확 일치 (d) 누락 provenance · 부분문자열 site_id(`resolverx`) · 반대 의미 claim · 다른 사이트 claim · verdict≠approve 각각 red 인가. 수정 커밋 2c2bc607 를 «수정 전 코드(7bf83226)로 되돌리면 새 red 테스트가 실패하는가» 관점으로 표본 검증하라.
+3. 계약 §7.4 D-4 (마)·55차 블록(`python tools/tos_contract_index.py --locate "§7.4"` 범위만) — 기록 필드·지정 claim 문장의 정본.
+4. .omc/review/20260904-154559/evidence/ — 4렌즈 증거(1차 사본) + verification-run.md(HEAD 2c2bc607b95bdcd82cad66c6e8c6b71760e92bbc 실행 로그: pytest · --check · ruff/black/mypy). 가능하면 `TMPDIR` 을 저장소 안 쓰기 가능한 경로로 지정해 직접 재실행을 시도하라.
+
+심사 범위: 1차~#4 와 동일 — `git diff 28475ca1^ HEAD -- . ':!docs/plans' ':!docs/reviews'` (HEAD = 2c2bc607b95bdcd82cad66c6e8c6b71760e92bbc). approve 는 D0 구현 블록 전체에 대한 진술이다. 재심 #4 가 확인한 항목(D-3/D-4/D-5 파생 · 고정 7사이트 · 생성물·ENTRY_OK 일치 · 이전 findings 회귀 없음 · marketfeed keys 재분류 · UNCHK-026 삭제 · NONE 사이트 0)은 재판정하지 말고 회귀만 확인하라. docs/plans 변경의 레인 B 결속: 15b65212 → .omc/review/20260904-101247/verdict.md · 8199bb38 → docs/reviews/phase0-completion-contract/20260902-195656/verdict.md · 에라타 52~56차 → docs/reviews/phase0-completion-contract/20260904-133500/verdict.md(approve).
+
+출력: verdict(approve | needs-attention) · summary · findings[] (severity · title · body · file · line_start/line_end · confidence · recommendation) · next_steps[]. finding 의 file:line 은 HEAD 2c2bc607b95bdcd82cad66c6e8c6b71760e92bbc 에 실재해야 한다. 재심 #4 finding 1 에 «해소 / 부분 해소 / 미해소 / 회피» 를 명시하라. 계약 본문 편집을 권고하지 마라.

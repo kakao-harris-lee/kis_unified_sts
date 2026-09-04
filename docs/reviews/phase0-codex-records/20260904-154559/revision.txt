@@ -1,0 +1,7 @@
+reviewed_at_head: 2c2bc607b95bdcd82cad66c6e8c6b71760e92bbc
+reviewed_scope_digest: a1c1b00dd4d0cb879ea3fafb15c22f30ea2976531e96ec4518f2854f6a149c6d
+captured_at_utc: 2026-09-04T06:50:42Z
+prior_verdict: .omc/review/20260904-150103/verdict.md (재심 #4 needs-attention · 채택 1/1)
+lane_b_records: docs/reviews/phase0-completion-contract/20260904-133500/verdict.md · docs/reviews/phase0-completion-contract/20260902-195656/verdict.md · .omc/review/20260904-101247/verdict.md
+c4_commit: 7bf83226f9a12db6c81f13fc7ee16134ea862753
+c5_commit: 2c2bc607b95bdcd82cad66c6e8c6b71760e92bbc

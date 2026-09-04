@@ -1,0 +1,89 @@
+{
+  "job": {
+    "createdAt": "2026-09-04T04:20:26.236Z",
+    "updatedAt": "2026-09-04T04:25:14.098Z",
+    "id": "review-mtmg49a4-g8ab13",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "출하 불가. 재심 #3 (ㄱ) 정보 이득 축은 해소됐다: NONE 완료는 허용된 독립 심판, 파생 범위 파일 집합, HEAD blob 재계산 digest에 결속된다. 그러나 (ㄴ) U-6′ 문법 축은 부분 해소에 그쳤다. O-6·plan_scope_digest는 일치했고 계약 검사와 self-test 145종은 rc 0이었다.",
+    "write": false,
+    "sessionId": "8bf0fa45-e214-454b-9940-35031e7bbce0",
+    "status": "completed",
+    "startedAt": "2026-09-04T04:20:26.298Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtmg49a4-g8ab13.log",
+    "threadId": "01a06aa5-8589-7410-a59e-8892a65504b0",
+    "turnId": "01a06aa5-8706-7623-be22-4d22476878ec",
+    "completedAt": "2026-09-04T04:25:13.956Z"
+  },
+  "storedJob": {
+    "id": "review-mtmg49a4-g8ab13",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "Adversarial Review branch diff against 26db89c9",
+    "write": false,
+    "createdAt": "2026-09-04T04:20:26.236Z",
+    "sessionId": "8bf0fa45-e214-454b-9940-35031e7bbce0",
+    "status": "completed",
+    "startedAt": "2026-09-04T04:20:26.298Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtmg49a4-g8ab13.log",
+    "threadId": "01a06aa5-8589-7410-a59e-8892a65504b0",
+    "turnId": "01a06aa5-8706-7623-be22-4d22476878ec",
+    "completedAt": "2026-09-04T04:25:13.956Z",
+    "result": {
+      "review": "Adversarial Review",
+      "target": {
+        "mode": "branch",
+        "label": "branch diff against 26db89c9",
+        "baseRef": "26db89c9",
+        "explicit": true
+      },
+      "threadId": "01a06aa5-8589-7410-a59e-8892a65504b0",
+      "context": {
+        "repoRoot": "/Users/harris/Development/private/kis_unified_sts",
+        "branch": "mission-critical-trading-operating-system",
+        "summary": "Reviewing branch mission-critical-trading-operating-system against 26db89c9 from merge-base 26db89c92fedef044ddbfb1c7dc93545a6187033."
+      },
+      "codex": {
+        "status": 0,
+        "stderr": "",
+        "stdout": "{\"verdict\":\"needs-attention\",\"summary\":\"출하 불가. 재심 #3 (ㄱ) 정보 이득 축은 해소됐다: NONE 완료는 허용된 독립 심판, 파생 범위 파일 집합, HEAD blob 재계산 digest에 결속된다. 그러나 (ㄴ) U-6′ 문법 축은 부분 해소에 그쳤다. O-6·plan_scope_digest는 일치했고 계약 검사와 self-test 145종은 rc 0이었다.\",\"findings\":[{\"severity\":\"high\",\"title\":\"U-6′의 prefix 규칙이 exact-axis 계약과 충돌한다\",\"body\":\"(ㄴ) 부분 해소. 규칙은 axis가 `D0-5 NONE: <site_id>`로 “시작”하면 된다고 규정한다. 따라서 구현이 문언 그대로 `startswith`를 사용하면 `D0-5 NONE: resolver_x` 또는 `D0-5 NONE: resolver / marketfeed` 같은 접미·복수-site 변이가 resolver 행으로 통과할 수 있다. 바로 뒤의 site_id 정확 일치·행당 한 사이트 선언 및 ⑧의 부분문자열 red 요구와 모순되어 C4 구현에 하나의 해석만 남기지 않는다. ⑧도 catch-all·중복·부분문자열만 열거해 유효 prefix 뒤 접미/복수-site 변이를 별도로 고정하지 않는다. 이 상태에서는 검사기 구현에 따라 D0-5 완료 판정이 달라질 수 있다.\",\"file\":\"docs/plans/2026-08-12-tos-phase0-completion-contract-design.md\",\"line_start\":3148,\"line_end\":3154,\"confidence\":0.99,\"recommendation\":\"`axis` 필드 전체가 정규화 없이 `D0-5 NONE: <canonical_site_id>`와 byte-for-byte 동일해야 한다고 바꾸고, 유효 prefix 뒤 임의 접미 및 두 번째 site_id를 붙인 변이를 각각 red 대조군으로 추가하라. 계약 본문 추가 편집이므로 S-26 ⑥ 카운터를 다시 0으로 리셋하고 O-6를 재결속한 뒤 레인 B 재심을 다시 수행해야 한다.\"}],\"next_steps\":[\"U-6′의 “시작”을 필드 전체 exact equality로 교체한다.\",\"suffix와 복수-site axis 변이를 독립 red 대조군으로 명시한다.\",\"S-26 ⑥ 리셋, O-6 재결속, 갱신된 범위 digest 검증 후 레인 B 재심을 다시 실행한다.\"]}",
+        "reasoning": []
+      },
+      "result": {
+        "verdict": "needs-attention",
+        "summary": "출하 불가. 재심 #3 (ㄱ) 정보 이득 축은 해소됐다: NONE 완료는 허용된 독립 심판, 파생 범위 파일 집합, HEAD blob 재계산 digest에 결속된다. 그러나 (ㄴ) U-6′ 문법 축은 부분 해소에 그쳤다. O-6·plan_scope_digest는 일치했고 계약 검사와 self-test 145종은 rc 0이었다.",
+        "findings": [
+          {
+            "severity": "high",
+            "title": "U-6′의 prefix 규칙이 exact-axis 계약과 충돌한다",
+            "body": "(ㄴ) 부분 해소. 규칙은 axis가 `D0-5 NONE: <site_id>`로 “시작”하면 된다고 규정한다. 따라서 구현이 문언 그대로 `startswith`를 사용하면 `D0-5 NONE: resolver_x` 또는 `D0-5 NONE: resolver / marketfeed` 같은 접미·복수-site 변이가 resolver 행으로 통과할 수 있다. 바로 뒤의 site_id 정확 일치·행당 한 사이트 선언 및 ⑧의 부분문자열 red 요구와 모순되어 C4 구현에 하나의 해석만 남기지 않는다. ⑧도 catch-all·중복·부분문자열만 열거해 유효 prefix 뒤 접미/복수-site 변이를 별도로 고정하지 않는다. 이 상태에서는 검사기 구현에 따라 D0-5 완료 판정이 달라질 수 있다.",
+            "file": "docs/plans/2026-08-12-tos-phase0-completion-contract-design.md",
+            "line_start": 3148,
+            "line_end": 3154,
+            "confidence": 0.99,
+            "recommendation": "`axis` 필드 전체가 정규화 없이 `D0-5 NONE: <canonical_site_id>`와 byte-for-byte 동일해야 한다고 바꾸고, 유효 prefix 뒤 임의 접미 및 두 번째 site_id를 붙인 변이를 각각 red 대조군으로 추가하라. 계약 본문 추가 편집이므로 S-26 ⑥ 카운터를 다시 0으로 리셋하고 O-6를 재결속한 뒤 레인 B 재심을 다시 수행해야 한다."
+          }
+        ],
+        "next_steps": [
+          "U-6′의 “시작”을 필드 전체 exact equality로 교체한다.",
+          "suffix와 복수-site axis 변이를 독립 red 대조군으로 명시한다.",
+          "S-26 ⑥ 리셋, O-6 재결속, 갱신된 범위 digest 검증 후 레인 B 재심을 다시 실행한다."
+        ]
+      },
+      "rawOutput": "{\"verdict\":\"needs-attention\",\"summary\":\"출하 불가. 재심 #3 (ㄱ) 정보 이득 축은 해소됐다: NONE 완료는 허용된 독립 심판, 파생 범위 파일 집합, HEAD blob 재계산 digest에 결속된다. 그러나 (ㄴ) U-6′ 문법 축은 부분 해소에 그쳤다. O-6·plan_scope_digest는 일치했고 계약 검사와 self-test 145종은 rc 0이었다.\",\"findings\":[{\"severity\":\"high\",\"title\":\"U-6′의 prefix 규칙이 exact-axis 계약과 충돌한다\",\"body\":\"(ㄴ) 부분 해소. 규칙은 axis가 `D0-5 NONE: <site_id>`로 “시작”하면 된다고 규정한다. 따라서 구현이 문언 그대로 `startswith`를 사용하면 `D0-5 NONE: resolver_x` 또는 `D0-5 NONE: resolver / marketfeed` 같은 접미·복수-site 변이가 resolver 행으로 통과할 수 있다. 바로 뒤의 site_id 정확 일치·행당 한 사이트 선언 및 ⑧의 부분문자열 red 요구와 모순되어 C4 구현에 하나의 해석만 남기지 않는다. ⑧도 catch-all·중복·부분문자열만 열거해 유효 prefix 뒤 접미/복수-site 변이를 별도로 고정하지 않는다. 이 상태에서는 검사기 구현에 따라 D0-5 완료 판정이 달라질 수 있다.\",\"file\":\"docs/plans/2026-08-12-tos-phase0-completion-contract-design.md\",\"line_start\":3148,\"line_end\":3154,\"confidence\":0.99,\"recommendation\":\"`axis` 필드 전체가 정규화 없이 `D0-5 NONE: <canonical_site_id>`와 byte-for-byte 동일해야 한다고 바꾸고, 유효 prefix 뒤 임의 접미 및 두 번째 site_id를 붙인 변이를 각각 red 대조군으로 추가하라. 계약 본문 추가 편집이므로 S-26 ⑥ 카운터를 다시 0으로 리셋하고 O-6를 재결속한 뒤 레인 B 재심을 다시 수행해야 한다.\"}],\"next_steps\":[\"U-6′의 “시작”을 필드 전체 exact equality로 교체한다.\",\"suffix와 복수-site axis 변이를 독립 red 대조군으로 명시한다.\",\"S-26 ⑥ 리셋, O-6 재결속, 갱신된 범위 digest 검증 후 레인 B 재심을 다시 실행한다.\"]}",
+      "parseError": null,
+      "reasoningSummary": []
+    },
+    "rendered": "# Codex Adversarial Review\n\nTarget: branch diff against 26db89c9\nVerdict: needs-attention\n\n출하 불가. 재심 #3 (ㄱ) 정보 이득 축은 해소됐다: NONE 완료는 허용된 독립 심판, 파생 범위 파일 집합, HEAD blob 재계산 digest에 결속된다. 그러나 (ㄴ) U-6′ 문법 축은 부분 해소에 그쳤다. O-6·plan_scope_digest는 일치했고 계약 검사와 self-test 145종은 rc 0이었다.\n\nFindings:\n- [high] U-6′의 prefix 규칙이 exact-axis 계약과 충돌한다 (docs/plans/2026-08-12-tos-phase0-completion-contract-design.md:3148-3154)\n  (ㄴ) 부분 해소. 규칙은 axis가 `D0-5 NONE: <site_id>`로 “시작”하면 된다고 규정한다. 따라서 구현이 문언 그대로 `startswith`를 사용하면 `D0-5 NONE: resolver_x` 또는 `D0-5 NONE: resolver / marketfeed` 같은 접미·복수-site 변이가 resolver 행으로 통과할 수 있다. 바로 뒤의 site_id 정확 일치·행당 한 사이트 선언 및 ⑧의 부분문자열 red 요구와 모순되어 C4 구현에 하나의 해석만 남기지 않는다. ⑧도 catch-all·중복·부분문자열만 열거해 유효 prefix 뒤 접미/복수-site 변이를 별도로 고정하지 않는다. 이 상태에서는 검사기 구현에 따라 D0-5 완료 판정이 달라질 수 있다.\n  Recommendation: `axis` 필드 전체가 정규화 없이 `D0-5 NONE: <canonical_site_id>`와 byte-for-byte 동일해야 한다고 바꾸고, 유효 prefix 뒤 임의 접미 및 두 번째 site_id를 붙인 변이를 각각 red 대조군으로 추가하라. 계약 본문 추가 편집이므로 S-26 ⑥ 카운터를 다시 0으로 리셋하고 O-6를 재결속한 뒤 레인 B 재심을 다시 수행해야 한다.\n\nNext steps:\n- U-6′의 “시작”을 필드 전체 exact equality로 교체한다.\n- suffix와 복수-site axis 변이를 독립 red 대조군으로 명시한다.\n- S-26 ⑥ 리셋, O-6 재결속, 갱신된 범위 digest 검증 후 레인 B 재심을 다시 실행한다.\n"
+  }
+}

@@ -1,0 +1,17 @@
+레인 B 계획 심판 — 7월 설계 문서 2건에 append 된 «에라타 (2026-09-02) — evidence-id 리터럴 앵커» 절(커밋 15b65212 · 각 +7행)의 독립 심사. 이 심판은 레인 A 재심 #2(잡 review-mtm957x1-fzj64e · .omc/review/20260904-100015/verdict.md) 유일 finding 「제외된 July 계획 문서 두 개에 별도 Lane B 심판 결속이 없다」에 답하기 위한 것이다. 심사 결과는 reviewed_plan_paths 두 경로 + plan_scope_digest 로 결속된다(.omc/review/20260904-101247/revision.txt).
+
+먼저 읽을 것: CLAUDE.md 의 비협상 규칙(선물 long/short 대칭 · 실계좌 선물 영구 차단 · 주식 EOD 일괄청산 금지 · ClickHouse 신규 사용 금지 · RL/TFT 부활 금지 · 하드코딩 금지 · Redis DB 1 + TTL · KST) — 이에 배치되는 권고를 내지 마라. 그리고 «Read the index before the contract» 지침 — Phase-0 계약 문서는 이 심사 범위가 아니며 열 필요도 없다.
+
+**심사 범위(이것만)**: `git diff 15b65212^ 15b65212 -- docs/plans/2026-07-25-tos-intent-order-conformance-design.md docs/plans/2026-07-25-tos-safety-profile-governance-design.md` — 사본이 .omc/review/20260904-101247/evidence/scope-diff.patch 에 있다. 두 문서는 그 커밋 이후 HEAD 26db89c92fedef044ddbfb1c7dc93545a6187033 까지 무변경이다(`git diff 15b65212 HEAD -- <두 경로>` = 0). `--base 15b65212^ --scope branch` 로 넘겨진 나머지 브랜치 diff 는 **범위 밖**이다 — 코드·계약·다른 문서를 재심하지 마라. 두 문서의 본문(에라타 절 이전 내용)도 원 저작 심판(.omc/review/20260812-* 스탬프)이 이미 다뤘으므로 재심 대상이 아니다 — 다만 에라타 절이 그 본문과 모순되는지는 본다.
+
+배경: FWD-a 매핑(tos-spec/src/verification/EVIDENCE-SURFACE-MAP.csv)의 규칙 D/D′ 는 evidence-id 의 «K-4 리터럴 앵커»(설계 문서의 한 행에 evidence-id 와 substrate 가 함께 적힌 것)를 basis 로 요구한다. IOC-EV-002 와 SPG-EV-003 은 기존 인용이 전부 범위형(`IOC-EV-001/002` 처럼 묶음 표기)이라 리터럴 앵커가 없었고, 15b65212 는 두 설계 문서 말미에 앵커 1행씩을 append 해 그 요구를 채웠다(커밋 메시지 「앵커 전용 · 설계 내용 불변」). 소비처: EVIDENCE-SURFACE-MAP.csv 의 IOC-EV-002 PACKAGE/TEST 행(basis `…intent-order-conformance-design.md:1203`)과 SPG-EV-003 PACKAGE 행(basis `…safety-profile-governance-design.md:1320`).
+
+적대적 확인 질문(각각 file:line 실측으로 답하라):
+ (a) 변경이 정말 append-only 인가 — 기존 행의 삭제·수정이 0 인가(diff 의 - 행 0). 문서의 다른 절이 참조하는 앵커·번호·표를 건드리지 않았는가.
+ (b) 앵커가 가리키는 substrate 가 실재하는가 — IOC 술어 모듈(tos/src/tos/ioc 의 predicates 모듈)의 `command_conforms` 가 설계 §5.1 의 술어인가(§5.1 원문과 대조) · SPG 레코드 모듈(tos/src/tos/spg 의 records 모듈)의 레코드 클래스가 공유 베이스로 `extra="forbid"` 를 실제로 갖는가(§7 원문과 대조). 앵커 문장이 설계 본문에 없는 새 주장(새 축·새 요구)을 도입하는가 — 도입한다면 «앵커 전용 · 설계 내용 불변» 은 거짓이다.
+ (c) 이 앵커 저작이 검사기 규칙(K-4 리터럴 요구)을 만족시키려고 «리터럴을 제조»한 우회인가, 아니면 이미 성립하는 설계-구현 대응을 기계가 읽을 수 있게 적은 것인가 — 판단 기준: 앵커가 없어도 사람이 §5.1/§7 본문에서 같은 대응을 도출할 수 있는가.
+ (d) EVIDENCE-SURFACE-MAP.csv 의 basis 행 번호(:1203 · :1320)가 현재 파일의 실제 앵커 행과 일치하는가(오프셋 드리프트).
+ (e) 두 문서는 Phase-0 계약의 U-12 bound paths(계약·개발계획 2건)가 아니다 — 이 변경이 계약 blob 결속(S-26/O-6)에 영향을 주는가(주지 않아야 정상).
+ (f) 두 앵커 절의 제목·형식이 서로 일관되고, 날짜(2026-09-02)·evidence-id 표기가 EVIDENCE-REQUIRED-KINDS.csv 의 id 와 정확히 일치하는가.
+
+출력: verdict(approve | needs-attention) · summary · findings[] (severity critical/high/medium/low · title · body · file · line_start/line_end · confidence · recommendation) · next_steps[]. finding 의 file:line 은 HEAD 26db89c92fedef044ddbfb1c7dc93545a6187033 에 실재해야 한다. 범위 밖 사항은 finding 으로 올리지 말고 summary 에 pre-existing/out-of-scope 로만 표기하라. 계약 본문 편집을 권고하지 마라.

@@ -1,0 +1,4 @@
+reviewed_at_head: 2e5edb4adeb54756b2d20887886c2663adb16d37
+reviewed_scope_digest: b05927447416c4d14735807222019e90b58b05a891f9103947d99a60811971e9
+captured_at_utc: 2026-09-03T15:15:12Z
+prior_verdict: .omc/review/20260903-165133/verdict.md

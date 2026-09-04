@@ -1,0 +1,24 @@
+레인 B 계획 «재심 #5» — Phase 0 완료 계약 v2.22 에라타 52차(§7.4 D-3/D-4/D-5) + 53차(D-4 후보 우주) + 54차(U-6′) + 55차(NONE 완료의 독립 확인 기록 결속) + 56차(U-6′ (ㄱ) axis 정확 동일 · ⑧-b/⑧-c) + O-6 재결속. 운영자 명시 지시(2026-09-04 «§7.4 에라타 저작 + 레인 B 재심» 진행 · 재심 #3 권고 채택 = 선택지 A). 심사 범위는 다섯 에라타의 diff 로 한정하고 계약의 다른 내용은 재심하지 않는다.
+
+먼저 읽을 것 (순서대로):
+1. CLAUDE.md — 비협상 규칙 및 «Read the index before the contract»(`python tools/tos_contract_index.py --locate "§7.4"` 로 구간을 잡아 그 범위만 읽어라. 전체 스캔·요약 금지. 색인 산출물 파일은 없으므로 `--check` 는 요구하지 않는다).
+2. .omc/review/20260904-132009/verdict.md — 재심 #4 판정(needs-attention · high 1 · (ㄱ) 해소 · (ㄴ) 부분 해소 · 채택 1/1). **1순위 질문: (ㄴ) 이 해소됐는가** — U-6′ (ㄱ) 이 «axis 필드 전체 · 정규화 없음 · `D0-5 NONE: <canonical_site_id>` 와 byte-for-byte 동일» 로 바뀌어 prefix 해석이 남지 않는가 · ⑧-b(유효 prefix + 임의 접미 · 후행 공백) · ⑧-c(두 번째 site_id 부가)가 각각 독립 red 대조군으로 고정됐는가 · (ㄱ)~(ㄹ)과 ⑧ 사이에 남은 모순이 없는가.
+3. 52~56차 본문: `--locate "§7.4"` 범위 안의 다섯 에라타 블록 · D-4 말미(완료 근거 4중) · U-6/U-6′ 펜스 · «대조군과 발효 시점» ①~⑧ · S-26 의 52~56차 자기 적용 항 · §11 D0-5/U-6 행.
+4. 심사 대상 diff: `git diff 26db89c9 48243cd2e07c1357a389e670cf2f23af479d1595 -- docs/plans/2026-08-12-tos-phase0-completion-contract-design.md docs/plans/2026-08-11-tos-completion-development-plan.md` (C1 76a4e423 · C2 091b0fad · C1′ 97cfad8d · C2′ d8ee64dd · C1″ ab495780 · C2″ a311eac1 · C1‴ 89b27c46 · C2‴ c8209c34 · C1⁗ 8923aab2 56차 · C2⁗ 48243cd2e07c1357a389e670cf2f23af479d1595). 사본 .omc/review/20260904-133500/evidence/scope-diff.patch · lockstep .omc/review/20260904-133500/evidence/lockstep-diff.patch.
+
+결속 필드(디스패치 직전 포착 · .omc/review/20260904-133500/revision.txt): reviewed_at_head 48243cd2e07c1357a389e670cf2f23af479d1595 · reviewed_plan_paths = 위 두 경로 · reviewed_scope_digest(plan_scope_digest) 116ee2fdf0b24869585f34d10eb8ccad2c3d3792e9e88640ab7ea34a1c21633a · bound_set_digest(O-6) 4e6c975f794696066a25abe4ee827594afa18f8fac8bfb5e7bf31d43508b3c2f. 재계산해 대조하라 — `{ git rev-parse HEAD; printf '%s\0' <두 경로> | LC_ALL=C sort -z -u | xargs -0 -r shasum -a 256; } | shasum -a 256`.
+
+재심 #1~#4 에서 이미 일치 확인된 것(재판정하지 말고 56차가 깨지 않았는지만): O-6 digest·decided_at_head·blob/행수 · tos_contract_check + self-test 145 rc 0 · 52차 D-3/D-5 · 53차 (가)(나)(다) · 54차 U-6 확장 · 55차 (i)~(iv)·(라)·(마)·scope_content_digest·기록 위치·(ㄱ) 정보 이득 축 해소.
+
+부수 사실(계약 밖 · 판정 대상 아님): 병행 독립 확인(`.omc/review/20260904-131909-marketfeed/verdict.md` · review-mtmg2lz7-88qdyb)이 marketfeed 의 NONE claim 을 거짓으로 판정했다(time_projection 포트 경유 TimeAdmissionInputs 소비). 따라서 C4 에서 marketfeed 는 D-5 선언을 실제 의존(6 VER-002 키 + max_age_bound)으로 재분류하며 이 HEAD 의 §7.1 사이트 중 D-4 를 쓰는 사이트는 0 이 될 예정이다 — D-4/U-6′ 는 장래 사이트를 위한 어휘로 남는다. 이 사실이 계약 문언의 결정성 요구를 낮추지는 않는다.
+
+추가 확인 질문:
+ (e) S-11/S-12/S-14/S-22/S-24 준수 — v2.23 리터럴 0 · 이력 행 무접촉 · 56차가 55차 문장을 대체한 자리가 마커+대체 관행에 맞는가 · 근거는 정본 지목.
+ (f) S-26 ⑥ 자기 적용이 52~56차 각각 기록됐는가 · 종결을 주장하지 않는가.
+ (g) O-6 재결속: 새 bound_set_digest 일치 · `decided_at_head` = C1⁗ · 옛 digest(e0729ff3 · 961135fd · 4c65d626 · 8988849e · e260c339)의 살아 있는 핀 없음(이력 제외).
+ (h) tools/tos_contract_check.py + --self-test rc 0(직접 실행).
+ (i) C4 구현 모호성 — 남은 문장 중 둘 이상의 해석이 가능한 것을 지목하라.
+
+범위 밖: 계약의 다른 절 · 코드 · 레인 A 심판 결과 · marketfeed 재분류 자체(C4 · 레인 A 재심 대상) · UNCHK-024 의 max_age_bound 키 신설 여부(운영자 별건).
+
+출력: verdict(approve | needs-attention) · summary · findings[] (severity · title · body · file · line_start/line_end · confidence · recommendation) · next_steps[]. finding 의 file:line 은 HEAD 48243cd2e07c1357a389e670cf2f23af479d1595 에 실재해야 한다. 재심 #4 finding (ㄴ) 에 «해소 / 부분 해소 / 미해소 / 회피» 를 명시하라. 계약 본문 «추가 편집» 을 권고할 때는 S-26 ⑥ 리셋·O-6 재결속·재심 비용을 함께 적어라.

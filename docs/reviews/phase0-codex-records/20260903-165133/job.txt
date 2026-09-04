@@ -1,0 +1,7 @@
+job_id: review-mtljvycx-ouye7r
+kind: adversarial-review (--wait, detached setsid pid 95648)
+base: 28475ca1^
+scope: branch
+started_at: 2026-09-03T13:18:11Z
+out: .omc/review/20260903-165133/codex-wait.out
+superseded_job: review-mtlis0hw-gtg7qz (cancelled — companion process killed by dispatch-shell timeout at ~12:50Z; no verdict produced)

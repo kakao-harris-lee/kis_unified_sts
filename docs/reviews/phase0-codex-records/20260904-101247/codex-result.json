@@ -1,0 +1,77 @@
+{
+  "job": {
+    "createdAt": "2026-09-04T01:13:31.326Z",
+    "updatedAt": "2026-09-04T01:15:43.862Z",
+    "id": "review-mtm9fvsu-e0tyho",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "SHIP. (a) 두 변경은 파일 말미 append-only +7/−0이다(IOC 계획:1201-1206, SPG 계획:1318-1323). 기존 행·절·표는 수정되지 않았고 15b65212 이후 HEAD까지 두 파일은 무변경이다. (b) IOC §5.1은 identity 축 정확 일치와 substitution 거부를 이미 규정한다(IOC 계획:744-764); 실제 command_conforms도 같은 substrate를 구현한다(tos/src/tos/ioc/predicates.py:92-106,137-177). SPG 본문은 §7 Canonical Artifact Contract의 unknown-field 거부를 extra=\"forbid\"로 실현한다고 이미 명시한다(SPG 계획:470-475,493-501,937-955); records.py의 다섯 레코드 클래스는 IndependentIdArtifact를 상속하고(records.py:320,411,476,520,566), 공유 FrozenModel은 실제 extra=\"forbid\"다(tos/src/tos/canonical/_base.py:73-87). 새 축이나 요구는 없다. (c) 동일 대응은 에라타 없이도 위 본문에서 도출되므로 검사기 통과만 위한 허위 substrate 제조가 아니라 기존 대응의 단일-ID 기계 판독 앵커다. (d) MAP basis :1203과 :1320은 현재 실제 앵커 행과 정확히 일치한다(EVIDENCE-SURFACE-MAP.csv:426,814-816). (e) U-12 bound_paths는 계약·개발계획 두 파일뿐이다(OQ-11-DISPOSITION.md:15-18); 15b65212는 이들을 변경하지 않아 S-26/O-6 blob 결속에 영향이 없다. (f) 두 절의 제목·날짜·형식은 일치하며 IOC-EV-002와 SPG-EV-003은 REQUIRED-KINDS 정본 ID와 정확히 일치한다(EVIDENCE-REQUIRED-KINDS.csv:162,233). reviewed_plan_paths와 재계산 plan_scope_digest f2d02c4f…도 revision.txt:2-8과 일치한다. 나머지 브랜치 diff와 기존 본문 심사는 범위 밖이다.",
+    "write": false,
+    "sessionId": "8bf0fa45-e214-454b-9940-35031e7bbce0",
+    "status": "completed",
+    "startedAt": "2026-09-04T01:13:31.391Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtm9fvsu-e0tyho.log",
+    "threadId": "01a069fa-65d5-7583-acf6-91cba91cdda7",
+    "turnId": "01a069fa-677c-7d42-8a96-a8801ed194d7",
+    "completedAt": "2026-09-04T01:15:43.731Z"
+  },
+  "storedJob": {
+    "id": "review-mtm9fvsu-e0tyho",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "Adversarial Review branch diff against 15b65212^",
+    "write": false,
+    "createdAt": "2026-09-04T01:13:31.326Z",
+    "sessionId": "8bf0fa45-e214-454b-9940-35031e7bbce0",
+    "status": "completed",
+    "startedAt": "2026-09-04T01:13:31.391Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtm9fvsu-e0tyho.log",
+    "threadId": "01a069fa-65d5-7583-acf6-91cba91cdda7",
+    "turnId": "01a069fa-677c-7d42-8a96-a8801ed194d7",
+    "completedAt": "2026-09-04T01:15:43.731Z",
+    "result": {
+      "review": "Adversarial Review",
+      "target": {
+        "mode": "branch",
+        "label": "branch diff against 15b65212^",
+        "baseRef": "15b65212^",
+        "explicit": true
+      },
+      "threadId": "01a069fa-65d5-7583-acf6-91cba91cdda7",
+      "context": {
+        "repoRoot": "/Users/harris/Development/private/kis_unified_sts",
+        "branch": "mission-critical-trading-operating-system",
+        "summary": "Reviewing branch mission-critical-trading-operating-system against 15b65212^ from merge-base 0d5306ba56193aeff49eb78f6427a8514206835b."
+      },
+      "codex": {
+        "status": 0,
+        "stderr": "",
+        "stdout": "{\"verdict\":\"approve\",\"summary\":\"SHIP. (a) 두 변경은 파일 말미 append-only +7/−0이다(IOC 계획:1201-1206, SPG 계획:1318-1323). 기존 행·절·표는 수정되지 않았고 15b65212 이후 HEAD까지 두 파일은 무변경이다. (b) IOC §5.1은 identity 축 정확 일치와 substitution 거부를 이미 규정한다(IOC 계획:744-764); 실제 command_conforms도 같은 substrate를 구현한다(tos/src/tos/ioc/predicates.py:92-106,137-177). SPG 본문은 §7 Canonical Artifact Contract의 unknown-field 거부를 extra=\\\"forbid\\\"로 실현한다고 이미 명시한다(SPG 계획:470-475,493-501,937-955); records.py의 다섯 레코드 클래스는 IndependentIdArtifact를 상속하고(records.py:320,411,476,520,566), 공유 FrozenModel은 실제 extra=\\\"forbid\\\"다(tos/src/tos/canonical/_base.py:73-87). 새 축이나 요구는 없다. (c) 동일 대응은 에라타 없이도 위 본문에서 도출되므로 검사기 통과만 위한 허위 substrate 제조가 아니라 기존 대응의 단일-ID 기계 판독 앵커다. (d) MAP basis :1203과 :1320은 현재 실제 앵커 행과 정확히 일치한다(EVIDENCE-SURFACE-MAP.csv:426,814-816). (e) U-12 bound_paths는 계약·개발계획 두 파일뿐이다(OQ-11-DISPOSITION.md:15-18); 15b65212는 이들을 변경하지 않아 S-26/O-6 blob 결속에 영향이 없다. (f) 두 절의 제목·날짜·형식은 일치하며 IOC-EV-002와 SPG-EV-003은 REQUIRED-KINDS 정본 ID와 정확히 일치한다(EVIDENCE-REQUIRED-KINDS.csv:162,233). reviewed_plan_paths와 재계산 plan_scope_digest f2d02c4f…도 revision.txt:2-8과 일치한다. 나머지 브랜치 diff와 기존 본문 심사는 범위 밖이다.\",\"findings\":[],\"next_steps\":[\"이 approve 판정을 두 reviewed_plan_paths와 현재 plan_scope_digest에 결속해 Lane B 기록으로 보존한다.\",\"레인 A 재심 #3에서 해당 Lane B 결속을 소비한다. 계약 본문 편집은 필요 없다.\"]}",
+        "reasoning": []
+      },
+      "result": {
+        "verdict": "approve",
+        "summary": "SHIP. (a) 두 변경은 파일 말미 append-only +7/−0이다(IOC 계획:1201-1206, SPG 계획:1318-1323). 기존 행·절·표는 수정되지 않았고 15b65212 이후 HEAD까지 두 파일은 무변경이다. (b) IOC §5.1은 identity 축 정확 일치와 substitution 거부를 이미 규정한다(IOC 계획:744-764); 실제 command_conforms도 같은 substrate를 구현한다(tos/src/tos/ioc/predicates.py:92-106,137-177). SPG 본문은 §7 Canonical Artifact Contract의 unknown-field 거부를 extra=\"forbid\"로 실현한다고 이미 명시한다(SPG 계획:470-475,493-501,937-955); records.py의 다섯 레코드 클래스는 IndependentIdArtifact를 상속하고(records.py:320,411,476,520,566), 공유 FrozenModel은 실제 extra=\"forbid\"다(tos/src/tos/canonical/_base.py:73-87). 새 축이나 요구는 없다. (c) 동일 대응은 에라타 없이도 위 본문에서 도출되므로 검사기 통과만 위한 허위 substrate 제조가 아니라 기존 대응의 단일-ID 기계 판독 앵커다. (d) MAP basis :1203과 :1320은 현재 실제 앵커 행과 정확히 일치한다(EVIDENCE-SURFACE-MAP.csv:426,814-816). (e) U-12 bound_paths는 계약·개발계획 두 파일뿐이다(OQ-11-DISPOSITION.md:15-18); 15b65212는 이들을 변경하지 않아 S-26/O-6 blob 결속에 영향이 없다. (f) 두 절의 제목·날짜·형식은 일치하며 IOC-EV-002와 SPG-EV-003은 REQUIRED-KINDS 정본 ID와 정확히 일치한다(EVIDENCE-REQUIRED-KINDS.csv:162,233). reviewed_plan_paths와 재계산 plan_scope_digest f2d02c4f…도 revision.txt:2-8과 일치한다. 나머지 브랜치 diff와 기존 본문 심사는 범위 밖이다.",
+        "findings": [],
+        "next_steps": [
+          "이 approve 판정을 두 reviewed_plan_paths와 현재 plan_scope_digest에 결속해 Lane B 기록으로 보존한다.",
+          "레인 A 재심 #3에서 해당 Lane B 결속을 소비한다. 계약 본문 편집은 필요 없다."
+        ]
+      },
+      "rawOutput": "{\"verdict\":\"approve\",\"summary\":\"SHIP. (a) 두 변경은 파일 말미 append-only +7/−0이다(IOC 계획:1201-1206, SPG 계획:1318-1323). 기존 행·절·표는 수정되지 않았고 15b65212 이후 HEAD까지 두 파일은 무변경이다. (b) IOC §5.1은 identity 축 정확 일치와 substitution 거부를 이미 규정한다(IOC 계획:744-764); 실제 command_conforms도 같은 substrate를 구현한다(tos/src/tos/ioc/predicates.py:92-106,137-177). SPG 본문은 §7 Canonical Artifact Contract의 unknown-field 거부를 extra=\\\"forbid\\\"로 실현한다고 이미 명시한다(SPG 계획:470-475,493-501,937-955); records.py의 다섯 레코드 클래스는 IndependentIdArtifact를 상속하고(records.py:320,411,476,520,566), 공유 FrozenModel은 실제 extra=\\\"forbid\\\"다(tos/src/tos/canonical/_base.py:73-87). 새 축이나 요구는 없다. (c) 동일 대응은 에라타 없이도 위 본문에서 도출되므로 검사기 통과만 위한 허위 substrate 제조가 아니라 기존 대응의 단일-ID 기계 판독 앵커다. (d) MAP basis :1203과 :1320은 현재 실제 앵커 행과 정확히 일치한다(EVIDENCE-SURFACE-MAP.csv:426,814-816). (e) U-12 bound_paths는 계약·개발계획 두 파일뿐이다(OQ-11-DISPOSITION.md:15-18); 15b65212는 이들을 변경하지 않아 S-26/O-6 blob 결속에 영향이 없다. (f) 두 절의 제목·날짜·형식은 일치하며 IOC-EV-002와 SPG-EV-003은 REQUIRED-KINDS 정본 ID와 정확히 일치한다(EVIDENCE-REQUIRED-KINDS.csv:162,233). reviewed_plan_paths와 재계산 plan_scope_digest f2d02c4f…도 revision.txt:2-8과 일치한다. 나머지 브랜치 diff와 기존 본문 심사는 범위 밖이다.\",\"findings\":[],\"next_steps\":[\"이 approve 판정을 두 reviewed_plan_paths와 현재 plan_scope_digest에 결속해 Lane B 기록으로 보존한다.\",\"레인 A 재심 #3에서 해당 Lane B 결속을 소비한다. 계약 본문 편집은 필요 없다.\"]}",
+      "parseError": null,
+      "reasoningSummary": []
+    },
+    "rendered": "# Codex Adversarial Review\n\nTarget: branch diff against 15b65212^\nVerdict: approve\n\nSHIP. (a) 두 변경은 파일 말미 append-only +7/−0이다(IOC 계획:1201-1206, SPG 계획:1318-1323). 기존 행·절·표는 수정되지 않았고 15b65212 이후 HEAD까지 두 파일은 무변경이다. (b) IOC §5.1은 identity 축 정확 일치와 substitution 거부를 이미 규정한다(IOC 계획:744-764); 실제 command_conforms도 같은 substrate를 구현한다(tos/src/tos/ioc/predicates.py:92-106,137-177). SPG 본문은 §7 Canonical Artifact Contract의 unknown-field 거부를 extra=\"forbid\"로 실현한다고 이미 명시한다(SPG 계획:470-475,493-501,937-955); records.py의 다섯 레코드 클래스는 IndependentIdArtifact를 상속하고(records.py:320,411,476,520,566), 공유 FrozenModel은 실제 extra=\"forbid\"다(tos/src/tos/canonical/_base.py:73-87). 새 축이나 요구는 없다. (c) 동일 대응은 에라타 없이도 위 본문에서 도출되므로 검사기 통과만 위한 허위 substrate 제조가 아니라 기존 대응의 단일-ID 기계 판독 앵커다. (d) MAP basis :1203과 :1320은 현재 실제 앵커 행과 정확히 일치한다(EVIDENCE-SURFACE-MAP.csv:426,814-816). (e) U-12 bound_paths는 계약·개발계획 두 파일뿐이다(OQ-11-DISPOSITION.md:15-18); 15b65212는 이들을 변경하지 않아 S-26/O-6 blob 결속에 영향이 없다. (f) 두 절의 제목·날짜·형식은 일치하며 IOC-EV-002와 SPG-EV-003은 REQUIRED-KINDS 정본 ID와 정확히 일치한다(EVIDENCE-REQUIRED-KINDS.csv:162,233). reviewed_plan_paths와 재계산 plan_scope_digest f2d02c4f…도 revision.txt:2-8과 일치한다. 나머지 브랜치 diff와 기존 본문 심사는 범위 밖이다.\n\nNo material findings.\n\nNext steps:\n- 이 approve 판정을 두 reviewed_plan_paths와 현재 plan_scope_digest에 결속해 Lane B 기록으로 보존한다.\n- 레인 A 재심 #3에서 해당 Lane B 결속을 소비한다. 계약 본문 편집은 필요 없다.\n"
+  }
+}

@@ -1,0 +1,6 @@
+attempt1: job review-mtlo2gcn-4065ze FAILED 2026-09-03T15:15Z — backend 404 after reconnect 5/5 (transient) · out=codex-wait.attempt1-failed.out
+attempt2: job review-mtlo3qd7-w4774c FAILED 2026-09-03T15:16Z — same backend 404 · out=codex-wait.attempt2-failed.out
+incident: status.openai.com «Elevated errors across ChatGPT and Codex» — investigating (observed 2026-09-03T15:19Z) · codex login status = Logged in using ChatGPT · retry loop armed (5 min × up to 10, attempts 3..12)
+attempt3: FINISHED 2026-09-03T15:21:58Z · out=codex-wait.out
+job_id: review-mtlo6mst-93vt2j
+kind: adversarial-review (--wait · setsid · base 28475ca1^ · scope branch · attempt3 via retry loop)

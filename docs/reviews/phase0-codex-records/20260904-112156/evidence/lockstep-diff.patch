@@ -1,0 +1,112 @@
+diff --git a/tests/tools/test_tos_completion_status.py b/tests/tools/test_tos_completion_status.py
+index 07d456a5..f7ac5a5d 100644
+--- a/tests/tools/test_tos_completion_status.py
++++ b/tests/tools/test_tos_completion_status.py
+@@ -1687,7 +1687,7 @@ def test_real_corpus_reports_oq11_not_required_and_reproduces_digest() -> None:
+     assert "oq11_raise_state=NOT_REQUIRED" in result.stdout
+ 
+     digest = tcs._compute_bound_set_digest(tcs.U12_BOUND_PATHS, "HEAD", _REPO_ROOT)
+-    assert digest == "e0729ff3ccbbab41b007464742290e4e875c07846b5a87d228727abc2ae4480f"
++    assert digest == "961135fd91c80b27d6f2822d80411a5212c94ca90442b96d76d53f1be382c41e"
+ 
+ 
+ # ---------------------------------------------------------------------------
+diff --git a/tools/tos_contract_check.py b/tools/tos_contract_check.py
+index 8673896a..f25cc2c3 100644
+--- a/tools/tos_contract_check.py
++++ b/tools/tos_contract_check.py
+@@ -5571,14 +5571,18 @@ def build_mutations() -> list[Mutation]:
+         # 아래 둘은 «검사기 자신의 잠복 fail-open» 대조군이다.  `\d{2,4}` 상한이 있던
+         # 판에서는 `:10234` 가 `:1023` 으로 조용히 절단돼 1023행을 검사했고, 배터리
+         # 29종 전부가 이 자리를 놓쳤다.  포착값을 직접 대조해 재발을 고정한다.
++        # 픽스처 리터럴은 «계약 문서 행수의 함수»다 — 범위 «밖»이어야 C2R 이 발화하고,
++        # 그 4자리 절단값은 범위 «안»이어야 절단 버그와 정직한 판을 가른다.  계약이
++        # 10,234행을 넘어서면서(v2.22 에라타 52차) 위 값이 범위 «안»으로
++        # 들어와 이 검사가 죽었다 → `:12345` 로 회전(절단값 `:1234` 는 여전히 범위 안).
+         Mutation(
+             "C2R-capture-5digit-coordinate",
+             "TOS-CC-C2R",
+             "capture",
+             lambda t: _append(
+-                t, "대조군 — 자기인용 `:10234` 를 절단 없이 포착해야 한다."
++                t, "대조군 — 자기인용 `:12345` 를 절단 없이 포착해야 한다."
+             ),
+-            ":10234",
++            ":12345",
+         ),
+         Mutation(
+             "C2R-capture-5digit-range",
+diff --git a/tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md b/tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md
+index f3912b9e..6843d3ef 100644
+--- a/tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md
++++ b/tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md
+@@ -12,7 +12,7 @@ deferred_scope:                            # 계약 U-13 (§12.3.1) 문법 — R
+   rows:
+     - STATE-EV-004
+   remainder_mapping_approved: true
+-bound_set_digest: e0729ff3ccbbab41b007464742290e4e875c07846b5a87d228727abc2ae4480f
++bound_set_digest: 961135fd91c80b27d6f2822d80411a5212c94ca90442b96d76d53f1be382c41e
+ bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
+   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
+   - docs/plans/2026-08-11-tos-completion-development-plan.md
+@@ -23,7 +23,7 @@ authority: 운영자 (this repository's corpus owner)
+ # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
+ # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
+ # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
+-decided_at_head: 8199bb38687a191523ccb74be1f313ea67e001f8
++decided_at_head: 76a4e42333fafb0d28af6e64b08a285b77798fb1
+ ```
+ 
+ **RES-1 ① 처분 기록 (2026-09-02)**: 위 `disposition`/`deferred_scope` 는 운영자가
+@@ -856,6 +856,51 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
+ >
+ > D0/P-0 착수 금지 불변 · `restricted_live`·`production` 권한 불변.
+ 
++> **재결속 기록 (현행 사이클 — 2026-09-04, v2.22 내용 · 에라타 52차 이후)**: 이 연속
++> 트랙의 **열세 번째**다.  52차는 **§7.4 D-1 처분 어휘의 두 공백**을 닫았다 —
++> 다중 키 사이트에서 「정확히 하나의 처분」의 **단위를 «사이트»에서 «선언된 키»로**
++> 재정의하고(D-3), 「의존 키가 없다」는 사례에 **처분 이름 하나**를 신설했다
++> (D-4 `NO_DEPENDENCY` — 검사기의 구조 스캔이 참조 0 을 세웠을 때만 파생).
++> 근거는 레인 A 심판 `review-mtlo6mst-93vt2j` finding 1(채택 3/3)이고, 편집 허가는
++> **운영자 지시 2026-09-04**(「§7.4 에라타 저작 + 레인 B 재심」)다.  이 재결속은
++> **결속 경로 두 파일 중 계약 자신의 내용 변경**에 대한 것이다 — O-6 의 정상 거동.
++>
++> **이 재결속이 결속하는 내용**: 계약 blob `18d04368…` · **10,286행**(52차에서
++> +130/−9) · 개발계획 blob `ec3464c0…` · **612행**(**무접촉** — 이 판의 lockstep
++> 스윕에서 §7.4 처분 규칙·D0-5 완료 문언의 재기술이 그 문서에 **0건**임을 전수
++> 확인했다).  계약 blob 이 담는 것: §7.4 판정 절차 블록의 단위 재정의 · 처분 어휘
++> 블록의 `NO_DEPENDENCY` 항 · v1.6 교정 문장과 v1.8 완료 기준의 대체 마커 ·
++> 에라타 52차 본체(D-3/D-4/D-5 + 기각 근거 둘 + 정직 경계) · S-26 의 52차 자기
++> 적용 항 · §11 D0-5 종료조건 행 · `현행(52차 이후)` 커런시 태그 스윕 4곳 ·
++> 좌표 드리프트 정정 **여섯 좌표**(2943→3053 · 5103→5224 · 5360→5481 · 7245→7366 ·
++> 7312→7433 · 7393→7514 — 인용 자리는 `:264` 와 `:7434` 둘).
++>
++> **계약 «밖» lockstep 한 층**: 계약 행수가 10,234 를 넘어서면서
++> `tools/tos_contract_check.py` 의 self-test 픽스처 `C2R-capture-5digit-coordinate`
++> 가 **죽은 검사**가 됐다(5자리 좌표 `:10234` 가 이제 범위 «안»이라 발화하지 않는다).
++> `:12345` 로 회전했다 — 절단값 `:1234` 는 여전히 범위 안이라 «절단 fail-open 판별»
++> 이라는 그 대조군의 하중은 보존된다.  51차의 3차 층(테스트 digest 리터럴)과 같은
++> 계열이다: **계약 문서의 크기·좌표에 값이 결속된 자리는 계약 편집의 lockstep 이다.**
++>
++> `bound_set_digest e0729ff3ccbbab41b007464742290e4e875c07846b5a87d228727abc2ae4480f`
++> → **`961135fd91c80b27d6f2822d80411a5212c94ca90442b96d76d53f1be382c41e`** ·
++> `decided_at_head` 는 **재결속 편집 «직전» 실측 HEAD(= C1 커밋)** 로 오케스트레이터가
++> 기입했다(`76a4e423` — 저작 시점에는 그 커밋이 아직 없어 자리표시자로 두었다가 C1 커밋 직후 채웠다) ·
++> `requesting_plan_version` 은 **v2.22 로 유지**(열다섯 사이클 연속 — 에라타는 버전을
++> 올리지 않는다).  `disposition`/`deferred_scope` 는 **무접촉**이다.
++>
++> **U-12 원장(`OQ-11-RAISE-LEDGER.md`)에는 행을 쓰지 않는다** — 51차와 같은 형상이다:
++> 트리거(bound_set_digest 불일치)가 C1..C2 구간에서 순간 성립하고 원장은 append-only 라
++> 잘못 쓴 행을 되돌릴 수 없으므로, 기입 여부는 운영자 판단으로 남긴다.
++>
++> **동결 실측**: 이 아티팩트를 편집한 «뒤» digest 를 재계산해 **불변**임을 확인했다 —
++> `tos-spec/` 은 결속 경로가 아니라 피측정 범위 «밖»이다(측정자를 피측정 범위 밖에 둔다).
++>
++> **S-26 ② 카운터는 52차 계약 편집 자체로 이미 0 이다**(⑥ 의 자기 적용 — 계약 에라타
++> 52차 항이 명시했다).  이 재결속은 그 리셋을 되돌리지 않는다.
++>
++> D0/P-0 착수 금지 불변 · `restricted_live`·`production` 권한 불변.
++
+ > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
+ > `plan_scope_digest` 를 본문에 적으면
+ > **고정점이 없다** — 적는 행위가 값을 바꾸므로 갱신할 때마다 다시 틀린다.

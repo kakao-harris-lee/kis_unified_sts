@@ -1,0 +1,18 @@
+레인 A 재심 #3 — Phase 0 완료 계약 §12.3 절차표 9행 «codex-reviewer 적대적 코드 리뷰». 재심 #2(잡 review-mtm957x1-fzj64e · needs-attention · high 1)의 유일 finding 해소 여부를 심사한다. 이 판정이 Phase 0 완료 판정(§11)에 앞서는 기록 심판(reviewer of record)이다. **코드는 재심 #2 이후 변경되지 않았다** — HEAD 26db89c92fedef044ddbfb1c7dc93545a6187033 동일 · review_scope_digest 동일(e29542e1…). 바뀐 것은 심판 결속 기록 하나다.
+
+먼저 읽을 것 (순서대로):
+1. CLAUDE.md — 비협상 규칙(선물 long/short 대칭 · 실계좌 선물 영구 차단 · 주식 EOD 일괄청산 금지 · ClickHouse 신규 사용 금지 · RL/TFT 부활 금지 · 임계값/심볼/포트/Redis DB/스케줄 하드코딩 금지 · Redis DB 1 + TTL · KST 세션 판정). 이 규칙에 배치되는 권고는 내지 마라.
+2. .omc/review/20260904-100015/verdict.md — 재심 #2 판정 원문(verbatim JSON) + 수용검사(채택 1/1). 재심 #2 는 재심 #1 finding 1·3 을 «해소», finding 2 를 «부분 해소» 로 판정했고 유일 finding 은 「15b65212 의 7월 설계 문서 두 개에 별도 Lane B 심판 결속이 없다」였다.
+3. **.omc/review/20260904-101247/verdict.md — 그 finding 에 답하는 레인 B Codex 판정(잡 review-mtm9fvsu-e0tyho · approve · findings 0)**: reviewed_plan_paths = docs/plans/2026-07-25-tos-intent-order-conformance-design.md + docs/plans/2026-07-25-tos-safety-profile-governance-design.md · reviewed_scope_digest(plan_scope_digest) = f2d02c4f92ced7a8c96b0b063ec3a92c7e26317e73ff6a76e9b22a8cf10949c7 · reviewed_at_head 26db89c9 · 범위 = `git diff 15b65212^ 15b65212 -- <두 경로>`(evidence/scope-diff.patch · append-only +7/+7 · 이후 무변경). **1순위 질문: 이 기록이 재심 #2 finding 이 요구한 «두 July 설계 문서의 정확한 diff/path 를 reviewed_plan_paths 와 digest 에 결속한 별도 Lane B Codex 판정» 인가.** 결속 필드를 직접 재계산해 대조하라 — plan_scope_digest 스니펫: `{ git rev-parse HEAD; printf '%s\0' <경로들> | LC_ALL=C sort -z -u | xargs -0 -r shasum -a 256; } | shasum -a 256`.
+4. .omc/review/20260904-101638/evidence/ — 4렌즈 증거(1차 스탬프 사본 · HEAD b5d2448a 기준)와 verification-run.md(오케스트레이터가 쓰기 가능한 환경에서 HEAD 26db89c9 로 돌린 pytest 209/209 · --check rc 0 · ruff/black/mypy 로그 — 자기 승인이 아니라 실행 출력 원문). 가능하면 `TMPDIR` 을 저장소 안 쓰기 가능한 경로(예: .omc/tmp)로 지정해 직접 재실행을 시도하라.
+
+심사 범위: 1차·재심 #1·#2 와 동일 — `git diff 28475ca1^ HEAD -- . ':!docs/plans' ':!docs/reviews'` (HEAD = 26db89c92fedef044ddbfb1c7dc93545a6187033). approve 는 D0 구현 블록 **전체**에 대한 진술이다 — 결속 기록만 보고 승인하지 마라. 다만 재심 #1·#2 가 이미 «해소» 로 판정한 항목(1차 finding 3건 · 재심 #1 finding 1·3)은 재판정하지 말고 회귀 여부만 확인하라(코드 무변경이므로 회귀는 없어야 한다).
+
+레인 A 범위에서 제외된 docs/plans 4 파일(`git diff 28475ca1^ HEAD --stat -- docs/plans` = 4 files · +88/−17)의 결속 기록 — 전부 별도 Codex 판정으로 덮인다:
+ - `15b65212` → docs/plans/2026-07-25-tos-intent-order-conformance-design.md(+7) · docs/plans/2026-07-25-tos-safety-profile-governance-design.md(+7) → **레인 B .omc/review/20260904-101247/verdict.md**(approve · reviewed_plan_paths 두 경로 · plan_scope_digest f2d02c4f…).
+ - `8199bb38` → docs/plans/2026-08-12-tos-phase0-completion-contract-design.md(+72/−15) · docs/plans/2026-08-11-tos-completion-development-plan.md(+2/−2) → **레인 B docs/reviews/phase0-completion-contract/20260902-195656/verdict.md**(approve · reviewed_at_head cdecb692 · reviewed_plan_paths 그 두 문서 · bound_set_digest e0729ff3…).
+ 두 계획 커밋은 D0 블록 50 커밋 중 28·36번째라 기준점 이동으로 제외할 수 없고 companion `--scope branch` 는 경로 제외를 모른다 — 그래서 산문으로 제외하고 위 두 기록으로 결속한다. 이 결속이 완전한지(4 파일 전부 · 각 파일의 해당 diff 전부) 판단하라.
+
+부수 정정(재심 #2 summary 지적): 재심 #1 focus 가 U-6 의 출처를 «§13.6.6» 이라 적은 것은 팬텀 인용이었다 — 실제 U-6 문언은 §7.4 :2802-2807 이다. 코드 docstring(check_d1)에 같은 «§13.6.6» 표기가 남아 있으면 file:line 으로 지목하라(코드 무변경 상태라 이번 HEAD 에는 그대로 있을 수 있다 — 이는 주석 정확성 문제이며 판정 논리에는 영향이 없음을 감안해 severity 를 정하라).
+
+출력: verdict(approve | needs-attention) · summary · findings[] (severity critical/high/medium/low · title · body · file · line_start/line_end · confidence · recommendation) · next_steps[]. finding 의 file:line 은 HEAD 26db89c92fedef044ddbfb1c7dc93545a6187033 에 실재해야 한다. 재심 #2 유일 finding 에 대해 «해소 / 부분 해소 / 미해소 / 회피» 중 하나를 명시하라. 범위 밖 기존 부채는 pre-existing 으로 표기하라. 계약 본문 편집을 권고하지 마라.

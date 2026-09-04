@@ -1,0 +1,3 @@
+2026-09-04T02:44:02Z launched (레인 B 재심 #2 · 52+53차 · base 26db89c9)
+job_id: review-mtmcoagb-uym46j
+kind: adversarial-review (--wait · setsid · base 26db89c9 · scope branch · 레인 B 재심 #2)

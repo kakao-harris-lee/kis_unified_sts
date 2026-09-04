@@ -1,0 +1,3 @@
+2026-09-04T06:03:47Z launched (레인 A 재심 #4 · C4 7bf83226)
+job_id: review-mtmjt61i-d0f3oc
+kind: adversarial-review (--wait · setsid · base 28475ca1^ · scope branch · 레인 A 재심 #4)

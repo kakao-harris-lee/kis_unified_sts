@@ -1,0 +1,76 @@
+{
+  "job": {
+    "createdAt": "2026-09-02T08:52:26.594Z",
+    "updatedAt": "2026-09-02T08:55:23.393Z",
+    "id": "review-mtjuycte-68jupi",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "SHIP. 두 계획 문서는 0c44610a 대비 byte-identical이고 bound_set_digest daaba47b…도 일치한다. f49c3728은 --full-history R-7에 변경 커밋으로 잡혀 직전 승인 자체는 stale이지만, 이는 내용 결함이 아니라 merge 위상 효과이며 이번 HEAD 재승인으로 범위가 다시 결속된다. §12.1 순서와 §8 커밋 규율을 깨뜨린 레인 B 근거도 발견하지 못했다.",
+    "write": false,
+    "sessionId": "74346560-23f1-4760-8ce0-21819ccfd2ff",
+    "status": "completed",
+    "startedAt": "2026-09-02T08:52:26.665Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtjuycte-68jupi.log",
+    "threadId": "01a06151-d74c-7e51-906c-d8a6ee42e2ac",
+    "turnId": "01a06151-d8fa-73e3-9bf9-8ede62a6d2b5",
+    "completedAt": "2026-09-02T08:55:23.252Z"
+  },
+  "storedJob": {
+    "id": "review-mtjuycte-68jupi",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "Adversarial Review branch diff against origin/main",
+    "write": false,
+    "createdAt": "2026-09-02T08:52:26.594Z",
+    "sessionId": "74346560-23f1-4760-8ce0-21819ccfd2ff",
+    "status": "completed",
+    "startedAt": "2026-09-02T08:52:26.665Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtjuycte-68jupi.log",
+    "threadId": "01a06151-d74c-7e51-906c-d8a6ee42e2ac",
+    "turnId": "01a06151-d8fa-73e3-9bf9-8ede62a6d2b5",
+    "completedAt": "2026-09-02T08:55:23.252Z",
+    "result": {
+      "review": "Adversarial Review",
+      "target": {
+        "mode": "branch",
+        "label": "branch diff against origin/main",
+        "baseRef": "origin/main",
+        "explicit": true
+      },
+      "threadId": "01a06151-d74c-7e51-906c-d8a6ee42e2ac",
+      "context": {
+        "repoRoot": "/Users/harris/Development/private/kis_unified_sts",
+        "branch": "main",
+        "summary": "Reviewing branch main against origin/main from merge-base 0932645d1ba44d1067ac793780bf10ba4f41e591."
+      },
+      "codex": {
+        "status": 0,
+        "stderr": "",
+        "stdout": "{\"verdict\":\"approve\",\"summary\":\"SHIP. 두 계획 문서는 0c44610a 대비 byte-identical이고 bound_set_digest daaba47b…도 일치한다. f49c3728은 --full-history R-7에 변경 커밋으로 잡혀 직전 승인 자체는 stale이지만, 이는 내용 결함이 아니라 merge 위상 효과이며 이번 HEAD 재승인으로 범위가 다시 결속된다. §12.1 순서와 §8 커밋 규율을 깨뜨린 레인 B 근거도 발견하지 못했다.\",\"findings\":[],\"next_steps\":[\"이번 판정을 reviewed_at_head=f49c37280a895ee63795147084ec79436d08f685로 기록해 R-7 기준점을 재설정한다.\"]}",
+        "reasoning": []
+      },
+      "result": {
+        "verdict": "approve",
+        "summary": "SHIP. 두 계획 문서는 0c44610a 대비 byte-identical이고 bound_set_digest daaba47b…도 일치한다. f49c3728은 --full-history R-7에 변경 커밋으로 잡혀 직전 승인 자체는 stale이지만, 이는 내용 결함이 아니라 merge 위상 효과이며 이번 HEAD 재승인으로 범위가 다시 결속된다. §12.1 순서와 §8 커밋 규율을 깨뜨린 레인 B 근거도 발견하지 못했다.",
+        "findings": [],
+        "next_steps": [
+          "이번 판정을 reviewed_at_head=f49c37280a895ee63795147084ec79436d08f685로 기록해 R-7 기준점을 재설정한다."
+        ]
+      },
+      "rawOutput": "{\"verdict\":\"approve\",\"summary\":\"SHIP. 두 계획 문서는 0c44610a 대비 byte-identical이고 bound_set_digest daaba47b…도 일치한다. f49c3728은 --full-history R-7에 변경 커밋으로 잡혀 직전 승인 자체는 stale이지만, 이는 내용 결함이 아니라 merge 위상 효과이며 이번 HEAD 재승인으로 범위가 다시 결속된다. §12.1 순서와 §8 커밋 규율을 깨뜨린 레인 B 근거도 발견하지 못했다.\",\"findings\":[],\"next_steps\":[\"이번 판정을 reviewed_at_head=f49c37280a895ee63795147084ec79436d08f685로 기록해 R-7 기준점을 재설정한다.\"]}",
+      "parseError": null,
+      "reasoningSummary": []
+    },
+    "rendered": "# Codex Adversarial Review\n\nTarget: branch diff against origin/main\nVerdict: approve\n\nSHIP. 두 계획 문서는 0c44610a 대비 byte-identical이고 bound_set_digest daaba47b…도 일치한다. f49c3728은 --full-history R-7에 변경 커밋으로 잡혀 직전 승인 자체는 stale이지만, 이는 내용 결함이 아니라 merge 위상 효과이며 이번 HEAD 재승인으로 범위가 다시 결속된다. §12.1 순서와 §8 커밋 규율을 깨뜨린 레인 B 근거도 발견하지 못했다.\n\nNo material findings.\n\nNext steps:\n- 이번 판정을 reviewed_at_head=f49c37280a895ee63795147084ec79436d08f685로 기록해 R-7 기준점을 재설정한다.\n"
+  }
+}

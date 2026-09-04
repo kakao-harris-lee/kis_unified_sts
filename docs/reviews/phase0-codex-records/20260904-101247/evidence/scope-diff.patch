@@ -1,0 +1,30 @@
+diff --git a/docs/plans/2026-07-25-tos-intent-order-conformance-design.md b/docs/plans/2026-07-25-tos-intent-order-conformance-design.md
+index 202db00d..f4f311c5 100644
+--- a/docs/plans/2026-07-25-tos-intent-order-conformance-design.md
++++ b/docs/plans/2026-07-25-tos-intent-order-conformance-design.md
+@@ -1197,3 +1197,10 @@ L1-decidable인지(#7 under-realization 인접). (vii) orthostate Intent/Attempt
+ 하는지 — #13 orthostate 판정과 동일 구조). (viii) `compiler_deterministic` property를 `EVL1ProvisionalCanonicalizer`+
+ 모델 compiler로 검증하는 것이 프로덕션 compiler 계약을 충분히 확정하는지 vs canonical scheme Phase-0 확정 전에는
+ property가 vacuous한지(§4.2 honest boundary).
++
++## 에라타 (2026-09-02) — evidence-id 리터럴 앵커
++
++- IOC-EV-002 substrate = §5.1 `command_conforms` (tos/src/tos/ioc/predicates.py) —
++  account/instrument/contract/environment/route substitution axes; 앵커 전용, 설계
++  내용 불변.
++
+diff --git a/docs/plans/2026-07-25-tos-safety-profile-governance-design.md b/docs/plans/2026-07-25-tos-safety-profile-governance-design.md
+index e8a597e2..960bb16d 100644
+--- a/docs/plans/2026-07-25-tos-safety-profile-governance-design.md
++++ b/docs/plans/2026-07-25-tos-safety-profile-governance-design.md
+@@ -1314,3 +1314,10 @@ liveauth `atomic_activation_ok`(이미 구현)와 spg `activation_atomic`의 소
+ liveauth가 fold하는 분할이 중복인지 정합인지(§3.5 표). (iv) §8.1 candidate 신규 키 4종이 진짜 누락인지 vs
+ 기존 키로 커버되는지(over-claim 위험 — #10 lesson). (v) core tier 8행이 실제로 전부 L1-decidable substrate를
+ 갖는지(특히 SPG-EV-001 `+Security`·SPG-EV-003 `+Security`의 L1 부분과 +Security 부분 분리가 정확한지).
++
++## 에라타 (2026-09-02) — evidence-id 리터럴 앵커
++
++- SPG-EV-003 substrate = §7 unknown-field 거부 (`extra="forbid"`, 공유 베이스 경유
++  `tos/src/tos/spg/records.py`) — Canonical Artifact Contract 스키마 안전성(미선언
++  필드 거부) 축; 앵커 전용, 설계 내용 불변.
++
