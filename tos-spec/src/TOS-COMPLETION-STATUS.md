@@ -38,7 +38,7 @@
 ## State machine values
 
 - `oq11_raise_state=NOT_REQUIRED`
-- `d0a_entry_state=ENTRY_OK`
+- `d0a_entry_state=APPROVAL_STALE`
 - `d0a_entry_provenance_state=ENTRY_PROVENANCE_CLEAR`
 - `closable_no_provenance_state=NO_ROWS_CLEAR`
 
@@ -129,7 +129,7 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
 - `U-14`: `MET`
 - `U-12`: `MET`
 - `U-13`: `MET`
-- `U-15`: `MET`
+- `U-15`: `NOT_MET`
 - `U-16`: `MET`
 - `U-1a`: `MET`
 - `U-4`: `MET`
