@@ -1687,7 +1687,7 @@ def test_real_corpus_reports_oq11_not_required_and_reproduces_digest() -> None:
     assert "oq11_raise_state=NOT_REQUIRED" in result.stdout
 
     digest = tcs._compute_bound_set_digest(tcs.U12_BOUND_PATHS, "HEAD", _REPO_ROOT)
-    assert digest == "e0729ff3ccbbab41b007464742290e4e875c07846b5a87d228727abc2ae4480f"
+    assert digest == "961135fd91c80b27d6f2822d80411a5212c94ca90442b96d76d53f1be382c41e"
 
 
 # ---------------------------------------------------------------------------
