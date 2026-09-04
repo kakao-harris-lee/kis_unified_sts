@@ -3551,7 +3551,7 @@ def check_a3(ctx: CheckContext) -> list[Finding]:  # noqa: ARG001
 
 
 # ---------------------------------------------------------------------------
-# D0-5b — D-1 처분 검사기 (§7.4) + U-6(§13.6.6)
+# D0-5b — D-1 처분 검사기 (§7.4) + U-6(§7.4)
 # ---------------------------------------------------------------------------
 
 VERIFICATION_PROFILE_002_REL = Path(
@@ -3597,7 +3597,48 @@ D1_CONTRACT_SITE_NAMES: frozenset[str] = frozenset(
         "marketfeed",
     }
 )
-D1_ALLOWED_DISPOSITIONS: frozenset[str] = frozenset({"VALUED", "BLOCKED", "UNBOUND"})
+# 계약 §7.4 D-3/D-4/D-5(v2.22 에라타 52차·53차) — 어휘를 두 층으로 가른다.
+# ``D1_KEY_DISPOSITIONS`` 는 개별 «선언된 키» 하나의 처분(D-3)이고,
+# ``D1_SITE_ONLY_DISPOSITIONS`` 는 키가 아니라 «사이트 전체»에만 붙는 처분(D-4)
+# 이다. 어느 쪽에도 ``"VALUED+UNBOUND"`` 같은 ``+`` 결합 문자열을 리터럴로
+# 넣지 않는다 — 그 문자열은 새 처분 이름이 아니라 ``per_key`` 의 집합
+# 표기일 뿐이고, 허용 어휘 검사는 항상 ``per_key`` 의 원소마다 수행한다
+# (계약이 명시적으로 금지 — "허용 어휘 목록에 리터럴로 넣지 않고 원소마다
+# 검사한다"). 옛 ``D1_ALLOWED_DISPOSITIONS`` 단일 상수는 이 구분이 없어
+# 접힌 값(문자열 결합)이 어휘 검사를 우연히 통과할 길을 열었다.
+D1_KEY_DISPOSITIONS: frozenset[str] = frozenset({"VALUED", "BLOCKED", "UNBOUND"})
+D1_SITE_ONLY_DISPOSITIONS: frozenset[str] = frozenset({"NO_DEPENDENCY"})
+
+# 계약이 고정한 D-3 cell 표기 순서 — dedup 후 이 순서로 ``+`` 결합한다
+# (VALUED, BLOCKED, UNBOUND 순).
+_D1_CELL_ORDER: tuple[str, ...] = ("VALUED", "BLOCKED", "UNBOUND")
+
+
+@dataclass(frozen=True)
+class D1SiteRecord:
+    """§7.1 사이트 1개의 D0-5 처분 레코드(계약 §7.4 D-3/D-4/D-5).
+
+    ``kind`` — ``"keys"``(D-3, 선언된 키 1개 이상이 전부 배정됨) ·
+    ``"none"``(D-4, ``VER-002-KEYS: NONE`` 선언이 구조 스캔 0건을 통과해
+    NO_DEPENDENCY 후보가 됨 — 완료 여부는 §13 행(U-6′)과 D-4 (마) 독립
+    리뷰 기록에 추가로 달려 있다) · ``"undecided"``(다섯 UNDECIDED 게이트,
+    NONE 선언과 스캔의 모순, 또는 검사기 자신의 fail-closed).
+
+    ``per_key`` — ``kind == "keys"`` 일 때만 채워지는 ``(키, 처분)`` 튜플들.
+    ``cell`` — 렌더러가 그대로 찍는 표시값. ``kind == "keys"`` 면
+    ``per_key`` 의 처분 집합을 ``_D1_CELL_ORDER`` 순으로 dedup·``+`` 결합한
+    것(균일하면 원소 하나라 종래 표기와 같다), ``kind == "none"`` 이면
+    ``"NO_DEPENDENCY"`` 또는(완료 미충족) ``"UNDECIDED"``, ``kind ==
+    "undecided"`` 면 언제나 ``"UNDECIDED"``.
+
+    술어는 전부 ``per_key``/``kind`` 를 읽지 ``cell`` 문자열을 파싱하지
+    않는다 — ``cell`` 은 표시 전용이다."""
+
+    kind: str
+    per_key: tuple[tuple[str, str], ...]
+    cell: str
+    basis: str
+
 
 # §7.4/D-1/D-2 — 의존 키 선언 문법(``VER-002-KEYS: ...``) 파싱.  구 산문
 # 판별(``not a VERIFICATION-PROFILE-002 key`` 류 정규식)은 폐지했다 — 그
@@ -3670,9 +3711,8 @@ def _d1_body_without_declaration(docstring: str, declaration_line: str) -> str:
 
 
 def _d1_scope_paths(repo_root: Path, rel: Path, kind: str) -> tuple[Path, ...]:
-    """``NONE`` 선언의 실측 스캔 범위 — module 은 그 패키지 디렉터리 재귀
-    ``*.py`` 전부, class/method 는 그 파일 하나뿐(설계 규칙 6 — 계약 조항이
-    아니라 이 검사기의 파생 규칙이다; 에라타 후보 기록 (b) 참조)."""
+    """``NONE`` 선언의 실측 스캔 범위(계약 §7.4 D-4 「스캔 범위」) — module 은
+    그 패키지 디렉터리 재귀 ``*.py`` 전부, class/method 는 그 파일 하나뿐."""
     path = repo_root / rel
     if kind == "module":
         return tuple(sorted(path.parent.rglob("*.py")))
@@ -3680,18 +3720,43 @@ def _d1_scope_paths(repo_root: Path, rel: Path, kind: str) -> tuple[Path, ...]:
 
 
 def _d1_scan_scope_for_universe_refs(
-    paths: tuple[Path, ...], universe: dict[str, bool]
+    paths: tuple[Path, ...], candidate_universe: Iterable[str]
 ) -> list[tuple[str, Path]]:
-    """``paths`` 전체에서 프로파일 우주 키의 토큰-경계 리터럴 참조를 찾는다
-    — ``NONE`` 선언이 실측과 모순되지 않는지 검증하는 유일한 근거."""
+    """``paths`` 전체에서 «후보 우주»(계약 §7.4 D-4 (나))의 토큰-경계 리터럴
+    참조를 찾는다 — ``NONE`` 선언의 완료 후보 자격을 걸러내는 유일한 근거.
+
+    (다) 토큰화 — 원문 전 행에 대해 코드·문자열·주석·docstring 을
+    구별하지 않는 단어 경계 정규식으로 찾는다(과잉 차단 방향이 계약이
+    명시한 의도)."""
     hits: list[tuple[str, Path]] = []
     for path in paths:
         text = path.read_text(encoding="utf-8")
-        for key in universe:
+        for key in candidate_universe:
             pattern = rf"(?<![A-Za-z0-9_]){re.escape(key)}(?![A-Za-z0-9_])"
             if re.search(pattern, text):
                 hits.append((key, path))
     return hits
+
+
+def _d1_candidate_universe(
+    profile_universe: dict[str, bool] | None,
+    parsed_sites: Iterable[_D1Declaration | None],
+) -> frozenset[str]:
+    """계약 §7.4 D-4 (나) — NONE 스캔의 후보 우주를 기계로 파생한다.
+
+    ``VERIFICATION-PROFILE-002`` 우주 키 **∪** §7.1 일곱 사이트가 D-5 로
+    선언한 키 전부(``VER-002-KEYS`` 및 ``CONTRAST``). 53차 전에는 앞의
+    것뿐이라, 그 우주 밖 의존 키(예: ``resolver`` 의 ``max_age_bound``)를
+    선언 대신 ``NONE`` 으로 적으면 스캔이 놓치는 우회가 열려 있었다 — 이
+    함수가 그 우회를 닫는다. 키 이름을 하드코딩하지 않고 실제 7사이트
+    선언에서 매번 다시 파생한다."""
+    universe_keys = set(profile_universe) if profile_universe is not None else set()
+    declared: set[str] = set()
+    for decl in parsed_sites:
+        if decl is not None and decl.kind == "keys":
+            declared.update(decl.keys)
+            declared.update(decl.contrast)
+    return frozenset(universe_keys | declared)
 
 
 def _d1_classify_key(key: str, universe: dict[str, bool]) -> str:
@@ -3704,32 +3769,30 @@ def _d1_classify_key(key: str, universe: dict[str, bool]) -> str:
 
 def _d1_site_disposition_from_keys(
     keys: tuple[str, ...], universe: dict[str, bool]
-) -> tuple[str, str]:
-    """다중 키의 사이트-단위 처분(설계 규칙 5 — 계약 조항이 아니라 이
-    검사기의 파생 규칙이다; 에라타 후보 기록 (a) 참조).
+) -> tuple[tuple[tuple[str, str], ...], str, str]:
+    """다중 키의 사이트-단위 처분(계약 §7.4 D-3, v2.22 에라타 52차).
 
     Codex verdict review-mtlo6mst-93vt2j finding 1 — 이전 구현은
     ``UNBOUND > BLOCKED > VALUED`` 우선순위로 항상 사이트 하나에 정확히
-    하나의 처분을 «접었다». §7.4 는 단일 키 K 에 대해서만 VALUED/BLOCKED/
-    UNBOUND 를 정의하고, K 미공급은 UNDECIDED 다 — 여러 키를 하나로 접는
-    규칙 자체가 계약 어휘 밖이라, 그 우선순위는 완료값을 조용히 합성하는
-    우회로였다. 지금은 접지 않는다: 전 키의 처분이 같으면(우선순위 없이도
-    유일하게 정해지는 경우) 그 처분을 그대로 쓰고, 갈리면 계약이 다루지
-    않는 조합이므로 UNDECIDED(혼합 처분)로 멈춘다 — 운영자 에라타 처분
-    전까지 완료값을 만들지 않는다. 근거(단일 키면 그 키 이름 그대로, 다중
-    키면 ``k:상태`` 나열)는 접힘 여부와 무관하게 항상 키별 세부를 노출한다."""
-    per_key = [(key, _d1_classify_key(key, universe)) for key in keys]
-    dispositions = {disposition for _, disposition in per_key}
+    하나의 처분을 «접었다». D-3 은 그 접기를 명시적으로 금지한다 — 「하나」
+    의 단위는 «사이트»가 아니라 «선언된 키»다. 이 함수는 이제 접지 «않고»
+    ``per_key``(키별 세부) 와 그 «집합»을 표기하는 ``cell``(``VALUED``,
+    ``BLOCKED``, ``UNBOUND`` 순으로 dedup·``+`` 결합 — 균일하면 원소
+    하나라 종래 표기와 같다)을 함께 돌려준다. 갈린 처분(``VALUED+UNBOUND``
+    류)도 **새 처분 이름이 아니라 집합의 표기**이며 완료를 막지 않는다 —
+    ``D1_KEY_DISPOSITIONS``/``D1_SITE_ONLY_DISPOSITIONS`` 어느 쪽에도 이
+    결합 문자열을 리터럴로 넣지 않고 원소마다 검사한다.
+
+    근거(``basis``)는 단일 키면 그 키 이름 그대로, 다중 키면 ``k:상태``
+    나열 — D-3 이 키별 내역을 근거에 «의무»로 함께 적으라고 요구한다."""
+    per_key = tuple((key, _d1_classify_key(key, universe)) for key in keys)
+    present = {disposition for _, disposition in per_key}
+    cell = "+".join(name for name in _D1_CELL_ORDER if name in present)
     if len(per_key) == 1:
         basis = per_key[0][0]
     else:
         basis = "; ".join(f"{k}:{v}" for k, v in per_key)
-    if len(dispositions) == 1:
-        return next(iter(dispositions)), basis
-    return (
-        "UNDECIDED",
-        f"혼합 처분(§7.4 어휘 밖 · 운영자 에라타 처분 대기): {basis}",
-    )
+    return per_key, cell, basis
 
 
 def _extract_d1_docstring(source: str, kind: str, target: str) -> str | None:
@@ -3802,49 +3865,285 @@ def _load_profile_universe(
     return universe, None
 
 
+_D1_NO_DEPENDENCY_ADJUDICATORS: frozenset[str] = frozenset({"codex", "operator"})
+_D1_NO_DEPENDENCY_RECORDS_ROOT = Path("docs/reviews/d1-no-dependency")
+_D1_U6PRIME_BOUNDARY_SENTENCE = "후보 우주 밖의 이름은 보지 못한다"
+
+
+def _d1_u6prime_axis(site_id: str) -> str:
+    """U-6′ (ㄱ) — ``axis`` 필드가 byte-for-byte 동일해야 하는 정본 문자열
+    (v2.22 에라타 56차, «시작» 이 아니라 «동일»). ``site_id`` 는 D-4 (라)의
+    일곱 canonical 이름 중 하나여야 하고, 콜론 뒤 공백은 정확히 하나다."""
+    return f"D0-5 NONE: {site_id}"
+
+
+def _d1_u6prime_row_state(
+    uncheckable_rows: Sequence[Mapping[str, str]] | None,
+    site_id: str,
+    *,
+    candidate_universe_size: int,
+    scope_desc: str,
+    file_count: int,
+) -> tuple[bool, str, Mapping[str, str] | None]:
+    """U-6′ (ㄱ)~(ㄹ)(계약 §7.4, v2.22 에라타 54~56차) — ``site_id`` 의 §13
+    행 그래머를 확인한다. 반환: ``(충족 여부, 근거, 매칭된 행 또는 None)``.
+
+    (ㄱ) 행의 ``axis`` 는 ``_d1_u6prime_axis(site_id)`` 와 **정규화 없이
+    byte-for-byte 동일**해야 한다 — 부분문자열·prefix·trim·대소문자 접기
+    금지(56차, «시작» 문언 폐기). (ㄴ) 사이트당 정확히 한 행 — 0행이면
+    미충족, 2행 이상이면 위반. (ㄷ) 행당 최대 한 사이트 — 위 axis 매칭
+    자체가 사이트를 하나만 이름하므로 기계로 선다. (ㄹ) (1)~(4)는 그 한
+    행의 ``reason`` 안에 있어야 한다: (1) ``VER-002-KEYS: NONE`` 선언
+    사실, (2) 스캔 결과(후보 우주 크기·스캔 범위 파일 수), (3) 경계 문장
+    「후보 우주 밖의 이름은 보지 못한다」, (4) D-4 (마) 독립 리뷰 기록의
+    경로 접두사."""
+    if uncheckable_rows is None:
+        return False, "§13 레지스터 부재로 확인 불가", None
+    axis = _d1_u6prime_axis(site_id)
+    matches = [row for row in uncheckable_rows if row.get("axis", "") == axis]
+    if not matches:
+        return (
+            False,
+            f"§13 행 부재(axis == {axis!r} 정확 일치 0건 — (ㄱ)(ㄴ))",
+            None,
+        )
+    if len(matches) > 1:
+        return False, f"§13 행 중복({len(matches)}건 — (ㄴ) 위반)", None
+    row = matches[0]
+    reason = row.get("reason", "")
+    missing: list[str] = []
+    if "VER-002-KEYS: NONE" not in reason:
+        missing.append("(1) VER-002-KEYS: NONE 선언 사실")
+    if not (
+        "후보 우주" in reason
+        and str(candidate_universe_size) in reason
+        and str(file_count) in reason
+    ):
+        missing.append("(2) 스캔 결과(후보 우주 크기·스캔 범위 파일 수)")
+    if _D1_U6PRIME_BOUNDARY_SENTENCE not in reason:
+        missing.append("(3) 경계 문장")
+    record_path_prefix = f"{_D1_NO_DEPENDENCY_RECORDS_ROOT.as_posix()}/{site_id}/"
+    if record_path_prefix not in reason:
+        missing.append("(4) D-4 (마) 독립 리뷰 기록 경로")
+    if missing:
+        return False, f"§13 행 reason 미충족(ㄹ): {', '.join(missing)}", row
+    return True, f"§13 행 그래머 충족(axis={axis!r})", row
+
+
+def _d1_scope_content_digest(
+    repo_root: Path, scope_paths: Sequence[Path], ref: str = "HEAD"
+) -> str | None:
+    """D-4 (마) — ``scope_content_digest``. codex-gate 레인 B
+    ``plan_scope_digest`` 에서 ``git rev-parse HEAD`` 한 줄을 뺀 형태 —
+    **내용 전용**이라 사이트와 무관한 커밋에는 영향받지 않는다(HEAD 를
+    넣으면 사이트 범위 밖 커밋 하나에도 기록이 무효가 되어 «결속이 아니라
+    자살»이 된다).
+
+    레시피: 경로를 ``LC_ALL=C`` 정렬·중복 제거한 뒤 각 경로의 (``ref`` 의)
+    blob 을 ``sha256`` 하고, ``"<해시 hex>  <경로>\\n"`` 을 이어 붙여 다시
+    ``sha256`` 한다. blob 이 하나라도 ``ref`` 에 부재하면 ``None``(호출자가
+    "판정됨 아님"으로 접는다).
+
+    ``scope_paths`` 는 ``_d1_scope_paths`` 가 돌려주는 **절대** 경로다 —
+    git 은 repo-relative 경로만 받으므로, 여기서 ``repo_root`` 기준
+    상대화한 POSIX 문자열로 정규화한 뒤에만 ``git show``/해시 입력에
+    쓴다(절대 경로를 그대로 넘기면 blob 조회가 항상 실패한다)."""
+    rels = sorted({p.relative_to(repo_root).as_posix() for p in scope_paths})
+    lines: list[str] = []
+    for rel in rels:
+        blob = _git_show_blob(Path(rel), ref, repo_root)
+        if blob is None:
+            return None
+        lines.append(f"{hashlib.sha256(blob).hexdigest()}  {rel}\n")
+    return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
+
+
+def _d1_locate_no_dependency_record_stamp(repo_root: Path, site_id: str) -> str | None:
+    """``docs/reviews/d1-no-dependency/<site_id>/`` 아래 ``verdict.md`` 를
+    가진 스탬프 디렉터리 중 **HEAD 트리 기준** 사전순(``LC_ALL=C``) 마지막
+    — U-15 R-3 이 계약 verdict 스탬프를 고르는 것과 같은 선택자다.
+
+    반환값은 (있다면) verdict.md 를 담은 디렉터리의 **repo-relative 전체
+    경로** — ``_git_ls_tree_dirs`` 가 이미 그 형태로 돌려준다(U-15 R-3 의
+    ``STAMPS_REL`` 소비 패턴과 동일). 호출자가 ``rel / site_id`` 를 다시
+    앞에 붙이면 경로가 중복된다 — 붙이지 않는다."""
+    rel = _D1_NO_DEPENDENCY_RECORDS_ROOT / site_id
+    stamp: str | None = None
+    for d in _git_ls_tree_dirs(rel, "HEAD", repo_root):
+        if _git_cat_file_exists(f"HEAD:{d}/verdict.md", repo_root):
+            stamp = d
+    return stamp
+
+
+def _d1_no_dependency_record_state(
+    repo_root: Path, site_id: str, scope_paths: Sequence[Path]
+) -> tuple[bool, str]:
+    """D-4 (i)~(iv)의 (iv) — 독립 리뷰 기록(계약 §7.4 D-4 (마), v2.22 에라타
+    55차). 저작자가 «아닌» 심판(``adjudicator`` ∈ {codex, operator})이
+    「이 사이트 범위는 VERIFICATION-PROFILE-002 결속 값을 소비하지
+    않는다」에 서명했고, 그 서명이 이 HEAD 의 범위 소스 바이트에 그대로
+    결속돼 있는지를 본다. 형식은 codex-gate 레인 B ``verdict.md`` 그대로 —
+    새 형식을 발명하지 않는다(S-14).
+
+    ``reviewed_at_head`` 는 **비결속 provenance** 다(대조 항이 아니다) —
+    내용을 지는 것은 ``reviewed_scope_digest`` 뿐이다."""
+    stamp_dir = _d1_locate_no_dependency_record_stamp(repo_root, site_id)
+    if stamp_dir is None:
+        return (
+            False,
+            f"독립 리뷰 기록 부재({_D1_NO_DEPENDENCY_RECORDS_ROOT}/{site_id}/"
+            "<stamp>/verdict.md 가 HEAD 에 없음)",
+        )
+    rel = Path(f"{stamp_dir}/verdict.md")
+    blob = _git_show_blob(rel, "HEAD", repo_root)
+    if blob is None:
+        return False, f"독립 리뷰 기록 blob 이 HEAD 에 부재: {rel}"
+    doc = _parse_oq11_yaml_fence(blob)
+    if not isinstance(doc, dict):
+        return False, f"독립 리뷰 기록 yaml 파싱 실패: {rel}"
+    adjudicator = doc.get("adjudicator")
+    if adjudicator not in _D1_NO_DEPENDENCY_ADJUDICATORS:
+        return False, f"adjudicator 불허용(저작자 레인 거부): {adjudicator!r}"
+    if doc.get("verdict") != "approve":
+        return False, f"verdict != approve: {doc.get('verdict')!r}"
+    reviewed_paths = doc.get("reviewed_plan_paths")
+    # scope_paths 는 ``_d1_scope_paths`` 의 절대 경로다 — 기록은
+    # repo-relative POSIX 경로를 담으므로 상대화한 뒤에 비교한다.
+    want = {p.relative_to(repo_root).as_posix() for p in scope_paths}
+    if not isinstance(reviewed_paths, list) or set(reviewed_paths) != want:
+        return False, "reviewed_plan_paths 가 파생된 범위 파일 집합과 불일치"
+    held_digest = doc.get("reviewed_scope_digest")
+    calc_digest = _d1_scope_content_digest(repo_root, scope_paths, "HEAD")
+    if calc_digest is None:
+        return False, "scope_content_digest 를 HEAD 에서 재계산할 수 없음(blob 부재)"
+    if held_digest != calc_digest:
+        return False, "reviewed_scope_digest 가 재계산값과 불일치(stale — 범위 변경)"
+    claim = doc.get("claim")
+    if not isinstance(claim, str) or site_id not in claim:
+        return False, "claim 에 site_id 부재"
+    return True, f"독립 리뷰 기록 확인됨: {rel}"
+
+
 def _derive_d1_disposition(
     repo_root: Path,
+    name: str,
     rel: Path,
     kind: str,
     docstring: str,
     decl: _D1Declaration,
     universe: dict[str, bool] | None,
     universe_error: str | None,
-) -> tuple[str, str, bool]:
-    """§7.4 처분 파생 — ``(처분, 근거, needs_universe)``.  ``needs_universe``
-    는 호출자가 우주 로드 실패를 이 사이트의 fail-closed 사유로 접어야
+    candidate_universe: frozenset[str],
+    uncheckable_rows: Sequence[Mapping[str, str]] | None,
+) -> tuple[D1SiteRecord, bool]:
+    """계약 §7.4 D-3/D-4/D-5(v2.22 에라타 52차·53차·54차·55차·56차) 처분
+    파생 — ``(D1SiteRecord, needs_universe)``. ``needs_universe`` 는
+    호출자가 우주 로드 실패를 이 사이트의 fail-closed 사유로 접어야
     하는지 판단하는 데 쓴다 — 선언 자체가 형식상 판정 불가(부재/중복/형식
-    오류)한 사이트는 우주를 보지 않고도 이미 판정됐으므로 ``False``다."""
+    오류)한 사이트는 우주를 보지 않고도 이미 판정됐으므로 ``False``다.
+
+    다섯 UNDECIDED 게이트(선언 부재/중복/형식 오류·선언 키 본문 부재·인용
+    프로파일 키 미선언)와 CONTRAST 검사는 바뀌지 않는다. ``NONE`` 분기만
+    D-4 전체(가~마)로 갈린다: 후보 우주(53차) 참조가 하나라도 있으면
+    UNDECIDED(«선언 누락» — 그 키를 D-5 로 선언하면 D-3 이 처분한다).
+    0건이면 그 자체로는 아직 완료 근거가 아니다 — U-6′ §13 행(54·55·56차)
+    과 D-4 (마) 독립 리뷰 기록이 «둘 다» 서야 ``NO_DEPENDENCY`` 로
+    판정된다. 하나라도 없으면 그 사이트는 «판정됨이 아니다»."""
     if decl.kind == "missing":
-        return "UNDECIDED", "VER-002-KEYS 선언 부재 — 키 미공급", False
+        return (
+            D1SiteRecord(
+                "undecided", (), "UNDECIDED", "VER-002-KEYS 선언 부재 — 키 미공급"
+            ),
+            False,
+        )
     if decl.kind == "duplicate":
-        return "UNDECIDED", "VER-002-KEYS 선언 중복", False
+        return (
+            D1SiteRecord("undecided", (), "UNDECIDED", "VER-002-KEYS 선언 중복"),
+            False,
+        )
     if decl.kind == "malformed":
-        return "UNDECIDED", f"VER-002-KEYS 선언 형식 오류: {decl.line!r}", False
+        return (
+            D1SiteRecord(
+                "undecided",
+                (),
+                "UNDECIDED",
+                f"VER-002-KEYS 선언 형식 오류: {decl.line!r}",
+            ),
+            False,
+        )
     if universe is None:
         return (
-            "UNDECIDED",
-            f"프로파일 우주 로드 실패로 판정 불가(fail-closed): {universe_error}",
+            D1SiteRecord(
+                "undecided",
+                (),
+                "UNDECIDED",
+                f"프로파일 우주 로드 실패로 판정 불가(fail-closed): {universe_error}",
+            ),
             True,
         )
     if decl.kind == "none":
         paths = _d1_scope_paths(repo_root, rel, kind)
-        hits = _d1_scan_scope_for_universe_refs(paths, universe)
+        hits = _d1_scan_scope_for_universe_refs(paths, candidate_universe)
+        scope_desc = str(rel.parent if kind == "module" else rel)
         if hits:
             key, hit_path = min(hits)
-            return "UNDECIDED", f"NONE 선언과 모순: {key} @ {hit_path}", True
-        # Codex verdict review-mtlo6mst-93vt2j finding 1 — NONE("의존 키
-        # 없음")은 §7.4 어휘 밖이다: 계약은 K 공급/미공급만 알고, "K 가
-        # 원래 없다"는 저작자 선언을 완료값(UNBOUND)으로 바꾸는 조항이
-        # 없다. 스캔은 그대로 유지한다 — NONE 자기신고와 실측이 모순되면
-        # 여전히 걸러야 하지만(위 hits 분기), 모순이 없다고 해서 그 자체가
-        # 완료 처분의 근거가 되지는 않는다.
-        scope_desc = str(rel.parent if kind == "module" else rel)
+            return (
+                D1SiteRecord(
+                    "undecided",
+                    (),
+                    "UNDECIDED",
+                    f"선언 누락 의심: {key} @ {hit_path}",
+                ),
+                True,
+            )
+        # 53차가 세운 스캔은 그대로 둔다 — 선언이 살아 있는 동안 선언 누락을
+        # 잡는 가드일 뿐, 완료 처분의 근거는 아니다(54차가 회피로 판정된
+        # 자리). 완료 근거는 (i) NONE 선언 + (ii) 스캔 0건 + (iii) §13 U-6′
+        # 행 + (iv) D-4 (마) 독립 리뷰 기록의 논리곱이다(55차) — 뒤 둘은
+        # 저작자가 혼자 만들 수 없다.
+        row_ok, row_detail, matched_row = _d1_u6prime_row_state(
+            uncheckable_rows,
+            name,
+            candidate_universe_size=len(candidate_universe),
+            scope_desc=scope_desc,
+            file_count=len(paths),
+        )
+        if not row_ok:
+            return (
+                D1SiteRecord(
+                    "none",
+                    (),
+                    "UNDECIDED",
+                    f"U-6′ §13 행 미충족: {row_detail} · {scope_desc} "
+                    f"{len(paths)}개 파일 스캔 · 후보 우주 {len(candidate_universe)}개 · 참조 0",
+                ),
+                True,
+            )
+        record_ok, record_detail = _d1_no_dependency_record_state(
+            repo_root, name, paths
+        )
+        if not record_ok:
+            row_axis = matched_row.get("axis", "") if matched_row is not None else ""
+            return (
+                D1SiteRecord(
+                    "none",
+                    (),
+                    "UNDECIDED",
+                    f"D-4 (마) 독립 리뷰 기록 미충족: {record_detail} · §13 행 "
+                    f"{row_axis!r} 는 그래머 충족",
+                ),
+                True,
+            )
+        row_axis = matched_row.get("axis", "") if matched_row is not None else ""
         return (
-            "UNDECIDED",
-            f"VER-002-KEYS: NONE — §7.4 어휘 밖(키 미공급) · 운영자 에라타 "
-            f"처분 대기 · {scope_desc} {len(paths)}개 파일 스캔, 프로파일 "
-            "키 참조 0",
+            D1SiteRecord(
+                "none",
+                (),
+                "NO_DEPENDENCY",
+                f"VER-002-KEYS: NONE · {scope_desc} {len(paths)}개 파일 스캔 · "
+                f"후보 우주 {len(candidate_universe)}개 · 참조 0 · §13 {row_axis!r} · "
+                f"{record_detail}",
+            ),
             True,
         )
 
@@ -3852,27 +4151,54 @@ def _derive_d1_disposition(
     body_literals = set(_D1_BACKTICK_RE.findall(body))
     for key in decl.keys:
         if key not in body_literals:
-            return "UNDECIDED", f"선언 키 본문 부재: {key}", True
+            return (
+                D1SiteRecord("undecided", (), "UNDECIDED", f"선언 키 본문 부재: {key}"),
+                True,
+            )
     declared_and_contrast = set(decl.keys) | set(decl.contrast)
     stray = sorted((body_literals & universe.keys()) - declared_and_contrast)
     if stray:
-        return "UNDECIDED", f"인용 프로파일 키 미선언: {stray[0]}", True
+        return (
+            D1SiteRecord(
+                "undecided", (), "UNDECIDED", f"인용 프로파일 키 미선언: {stray[0]}"
+            ),
+            True,
+        )
     for key in decl.contrast:
         if key not in universe:
-            return "UNDECIDED", f"CONTRAST 키가 프로파일 키가 아님: {key}", True
+            return (
+                D1SiteRecord(
+                    "undecided",
+                    (),
+                    "UNDECIDED",
+                    f"CONTRAST 키가 프로파일 키가 아님: {key}",
+                ),
+                True,
+            )
         if key not in body_literals:
-            return "UNDECIDED", f"CONTRAST 키가 본문에 부재: {key}", True
-    disposition, key_basis = _d1_site_disposition_from_keys(decl.keys, universe)
+            return (
+                D1SiteRecord(
+                    "undecided", (), "UNDECIDED", f"CONTRAST 키가 본문에 부재: {key}"
+                ),
+                True,
+            )
+    per_key, cell, key_basis = _d1_site_disposition_from_keys(decl.keys, universe)
     basis = key_basis
     if decl.contrast:
         basis += "; CONTRAST: " + ", ".join(decl.contrast)
-    return disposition, basis, True
+    return D1SiteRecord("keys", per_key, cell, basis), True
 
 
 def compute_d1_dispositions(
     repo_root: Path,
-) -> tuple[dict[str, tuple[str, str]], tuple[str, ...]]:
-    """§7.1 7사이트의 ``({site: (처분, 근거)}, fail_closed_sites)``.
+    uncheckable_rows: Sequence[Mapping[str, str]] | None = None,
+) -> tuple[dict[str, D1SiteRecord], tuple[str, ...]]:
+    """§7.1 7사이트의 ``({site: D1SiteRecord}, fail_closed_sites)``(계약
+    §7.4 D-3/D-4/D-5, v2.22 에라타 52차·53차·54차·55차·56차).
+
+    ``uncheckable_rows`` 는 D-4 (iii)/U-6′ — ``NONE`` 선언 사이트의 §13 행
+    그래머 확인에 쓰인다. ``None`` 이면(§13 레지스터를 아직 로드하지
+    못한 호출) 그 사이트들은 「판정됨」이 될 수 없다(row 부재로 접는다).
 
     표에는 ``D1_SITES`` 의 7개 이름이 **항상 전부** 등장한다 — 사이트
     파일이 없거나 읽기/파싱에 실패하거나 대상 docstring 이 없어도 조용히
@@ -3880,47 +4206,86 @@ def compute_d1_dispositions(
     판정됐을 때"를 요구하므로, 사이트 부재를 vacuous MET 로 접을 수 없다
     (Codex verdict review-mtljvycx-ouye7r finding 1).
 
-    두 번째 항목(``fail_closed_sites``)은 검사기가 원인과 무관하게
+    **두 단계로 나눈다.** 1단계는 7사이트 전부의 선언(``VER-002-KEYS:``)을
+    먼저 파싱한다 — D-4 (나)의 후보 우주(``VERIFICATION-PROFILE-002`` 우주
+    ∪ 7사이트가 선언한 키 전부)는 «다른» 사이트들의 선언에 의존하므로,
+    한 사이트씩 순서대로 판정하면서 그때그때 계산할 수 없다. 2단계가 그
+    고정된 후보 우주로 각 사이트의 최종 처분을 파생한다.
+
+    두 번째 반환값(``fail_closed_sites``)은 검사기가 원인과 무관하게
     구조적으로 판정에 도달할 수 없었던 사이트 전부 — 파일/문서 부재,
     읽기·파싱 실패, 프로파일 우주 로드 실패(선언이 그 우주를 필요로 한
     경우)를 아우른다.  표에는 여전히 ``UNDECIDED`` 로 기록되지만, 그
     UNDECIDED 는 "저작자가 아직 판정하지 않았다"(U-6 §13 등재로 면제
     가능)가 **아니라** 검사기 자신이 판정에 도달할 수 없었다는 뜻이므로
     호출자(``check_d1``)는 U-6 으로 접지 말고 D-1 자체의 위반으로
-    보고해야 한다."""
-    result: dict[str, tuple[str, str]] = {}
-    fail_closed_sites: list[str] = []
-    universe: dict[str, bool] | None = None
-    universe_error: str | None = None
-    universe_attempted = False
+    보고해야 한다. D-4 (나)의 §13 행/(마) 독립 리뷰 기록 미충족은
+    fail-closed 가 «아니다» — 그것은 U-6′ 소관의 정상적 미완료다."""
+    parsed: dict[
+        str, tuple[Path, str, str, str | None, _D1Declaration | None, str | None]
+    ] = {}
     for name, rel, kind, target in D1_SITES:
         path = repo_root / rel
         if not path.exists():
-            result[name] = ("UNDECIDED", f"사이트 파일 부재: {rel}")
-            fail_closed_sites.append(name)
+            parsed[name] = (rel, kind, target, None, None, f"사이트 파일 부재: {rel}")
             continue
         try:
             docstring = _extract_d1_docstring(
                 path.read_text(encoding="utf-8"), kind, target
             )
         except (OSError, SyntaxError) as exc:
-            result[name] = ("UNDECIDED", f"읽기/파싱 실패: {exc}")
-            fail_closed_sites.append(name)
+            parsed[name] = (rel, kind, target, None, None, f"읽기/파싱 실패: {exc}")
             continue
         if docstring is None:
-            result[name] = ("UNDECIDED", f"대상 docstring 부재 ({kind} {target!r})")
-            fail_closed_sites.append(name)
+            parsed[name] = (
+                rel,
+                kind,
+                target,
+                None,
+                None,
+                f"대상 docstring 부재 ({kind} {target!r})",
+            )
             continue
         decl = _parse_d1_declaration(docstring)
-        if decl.kind in ("none", "keys") and not universe_attempted:
-            universe, universe_error = _load_profile_universe(repo_root)
-            universe_attempted = True
-        disposition, basis, needed_universe = _derive_d1_disposition(
-            repo_root, rel, kind, docstring, decl, universe, universe_error
+        parsed[name] = (rel, kind, target, docstring, decl, None)
+
+    needs_universe = any(
+        decl is not None and decl.kind in ("none", "keys")
+        for _rel, _kind, _target, _doc, decl, _fail in parsed.values()
+    )
+    universe: dict[str, bool] | None = None
+    universe_error: str | None = None
+    if needs_universe:
+        universe, universe_error = _load_profile_universe(repo_root)
+
+    candidate_universe = _d1_candidate_universe(
+        universe, (decl for _r, _k, _t, _d, decl, _f in parsed.values())
+    )
+
+    result: dict[str, D1SiteRecord] = {}
+    fail_closed_sites: list[str] = []
+    for name, rel, kind, _target in D1_SITES:
+        _p_rel, _p_kind, _p_target, docstring, parsed_decl, fail_reason = parsed[name]
+        if fail_reason is not None:
+            result[name] = D1SiteRecord("undecided", (), "UNDECIDED", fail_reason)
+            fail_closed_sites.append(name)
+            continue
+        assert parsed_decl is not None and docstring is not None  # pass-1 invariant
+        record, needed_universe = _derive_d1_disposition(
+            repo_root,
+            name,
+            rel,
+            kind,
+            docstring,
+            parsed_decl,
+            universe,
+            universe_error,
+            candidate_universe,
+            uncheckable_rows,
         )
         if needed_universe and universe is None:
             fail_closed_sites.append(name)
-        result[name] = (disposition, basis)
+        result[name] = record
     return result, tuple(fail_closed_sites)
 
 
@@ -3943,8 +4308,27 @@ def _d1_site_table_invariant_violation() -> str | None:
     return f"D1_SITES 불변식 위반: 부재 {missing} / 여분 {extra}"
 
 
-def _d1_completion_blockers(dispositions: Mapping[str, tuple[str, str]]) -> list[str]:
-    """D0-5 완료(§7.4/§11)를 막는 사유 전부 — 빈 리스트면 MET.
+def _d1_record_in_vocab(record: D1SiteRecord) -> bool:
+    """계약 §7.4 D-3/D-4 허용 어휘 원소 검사 — ``cell`` 문자열 자체가 아니라
+    ``per_key``/``kind`` 의 구조를 검사한다(집합 표기 문자열을 어휘에
+    리터럴로 넣지 않는다는 계약의 명시적 금지)."""
+    if record.cell == "UNDECIDED":
+        return True
+    if record.kind == "keys":
+        if not record.per_key:
+            return False
+        states = {state for _key, state in record.per_key}
+        if not states <= D1_KEY_DISPOSITIONS:
+            return False
+        expected_cell = "+".join(name for name in _D1_CELL_ORDER if name in states)
+        return record.cell == expected_cell
+    if record.kind == "none":
+        return record.cell in D1_SITE_ONLY_DISPOSITIONS
+    return False
+
+
+def _d1_completion_blockers(dispositions: Mapping[str, D1SiteRecord]) -> list[str]:
+    """D0-5 완료(계약 §7.4/§11)를 막는 사유 전부 — 빈 리스트면 MET.
 
     Codex verdict review-mtlo6mst-93vt2j finding 3 대응. 검사 순서(전부
     보고 — 첫 위반에서 멈추지 않는다):
@@ -3952,9 +4336,12 @@ def _d1_completion_blockers(dispositions: Mapping[str, tuple[str, str]]) -> list
     (a) ``D1_SITES`` 자체의 불변식(``_d1_site_table_invariant_violation``).
     (b) ``dispositions`` 의 키 집합이 ``D1_CONTRACT_SITE_NAMES`` 와 정확히
         일치 — 부재/여분을 따로 보고한다.
-    (c) 모든 처분값이 ``D1_ALLOWED_DISPOSITIONS``(VALUED/BLOCKED/UNBOUND)
-        중 하나 — UNDECIDED 는 완료를 막는 정상 상태라 별도 형식으로,
-        그 외 값은 "허용 어휘 밖 처분"으로 보고한다."""
+    (c) 원소별 검사(D-3/D-4) — ``kind == "keys"`` 사이트는 ``per_key`` 가
+        1개 이상이고 그 전부가 ``D1_KEY_DISPOSITIONS`` 안에 있어야
+        완료(D-3 "1개 이상 · 전부 배정"); ``kind == "none"`` 사이트는
+        ``cell == "NO_DEPENDENCY"`` 여야 완료(D-4, U-6′ 미충족이면 여전히
+        ``UNDECIDED``). ``UNDECIDED`` 는 완료를 막는 정상 상태라 별도
+        형식으로, 그 외 어긋난 값은 "허용 어휘 밖 처분"으로 보고한다."""
     blockers: list[str] = []
 
     invariant_violation = _d1_site_table_invariant_violation()
@@ -3970,17 +4357,15 @@ def _d1_completion_blockers(dispositions: Mapping[str, tuple[str, str]]) -> list
         blockers.append(f"여분 {len(extra_names)}({', '.join(extra_names)})")
 
     undecided = sorted(
-        name
-        for name, (disposition, _basis) in dispositions.items()
-        if disposition == "UNDECIDED"
+        name for name, record in dispositions.items() if record.cell == "UNDECIDED"
     )
     if undecided:
         blockers.append(f"UNDECIDED {len(undecided)}({', '.join(undecided)})")
 
     out_of_vocab = sorted(
-        f"{name}={disposition}"
-        for name, (disposition, _basis) in dispositions.items()
-        if disposition not in D1_ALLOWED_DISPOSITIONS and disposition != "UNDECIDED"
+        f"{name}={record.cell}"
+        for name, record in dispositions.items()
+        if not _d1_record_in_vocab(record)
     )
     if out_of_vocab:
         blockers.append("허용 어휘 밖 처분: " + ", ".join(out_of_vocab))
@@ -4001,23 +4386,33 @@ def _d1_site_lookup_tokens(site_name: str) -> tuple[str, ...]:
 
 
 def check_d1(ctx: CheckContext) -> list[Finding]:
-    """D-1(§7.4) — D0-5 7사이트 처분 파생 + U-6(§13.6.6) 강제.
+    """D-1(§7.4) — D0-5 7사이트 처분 파생 + U-6(§7.4)/U-6′(§7.4) 강제.
 
-    처분 자체(VALUED/BLOCKED/UNBOUND/UNDECIDED)는 완료 관측(§11 소관 · rc
-    비결합)이라 findings 를 만들지 않는다 — ``render_completion_status`` 가
-    ``compute_d1_dispositions`` 를 다시 불러 D0-5 표와 §11 요약행을 만든다.
-    rc 에 결합하는 것은 둘뿐이다:
+    처분 자체(``cell`` — 키별 VALUED/BLOCKED/UNBOUND 집합, NO_DEPENDENCY,
+    UNDECIDED)는 완료 관측(§11 소관 · rc 비결합)이라 findings 를 만들지
+    않는다 — ``render_completion_status`` 가 ``compute_d1_dispositions`` 를
+    다시 불러 D0-5 표와 §11 요약행을 만든다. rc 에 결합하는 것은 셋이다:
 
     * 구조적으로 판정에 도달할 수 없는 사이트(``fail_closed_sites``) —
-      사이트 파일/문서 부재, 읽기·파싱 실패, 또는 VALUED/BLOCKED/UNBOUND
-      판정에 프로파일 우주가 필요했는데 그 우주를 읽지 못한 경우를 모두
-      아우른다.  어느 경우든 검사기 자신이 판정에 도달하지 못했다는 뜻이라
-      fail-closed 로 D-1 위반이다 — 이 사이트들은 UNDECIDED 로 조용히
-      접히지 않고, 완료 표(§11)에서도 vacuous MET 의 근거가 되지 않는다
-      (Codex verdict review-mtljvycx-ouye7r finding 1).
-    * U-6 — 그 외의(genuine) UNDECIDED 사이트가 §13 uncheckable 레지스터에
-      개별 행으로(그 사이트 이름 또는 docstring 대상 식별자가 axis/reason
-      텍스트에 등장하는 행으로) 등재돼 있지 않으면 계약 위반.
+      사이트 파일/문서 부재, 읽기·파싱 실패, 또는 프로파일 우주가
+      필요했는데 그 우주를 읽지 못한 경우를 모두 아우른다.  어느 경우든
+      검사기 자신이 판정에 도달하지 못했다는 뜻이라 fail-closed 로 D-1
+      위반이다 — 이 사이트들은 UNDECIDED 로 조용히 접히지 않고, 완료
+      표(§11)에서도 vacuous MET 의 근거가 되지 않는다(Codex verdict
+      review-mtljvycx-ouye7r finding 1).
+    * U-6 — ``NONE`` 선언이 «아닌» genuine UNDECIDED 사이트가 §13
+      uncheckable 레지스터에 개별 행으로(그 사이트 이름 또는 docstring
+      대상 식별자가 axis/reason 텍스트에 등장하는 행으로) 등재돼 있지
+      않으면 계약 위반. ``NONE`` 선언 사이트는 아래 U-6′ 가 대신 진다
+      (U-6 자체는 «불변» — 술어는 그대로이고 어느 사이트가 UNDECIDED 인지만
+      바뀐다, v2.22 에라타 52차).
+    * U-6′(v2.22 에라타 54~56차) — ``NONE`` 선언 사이트(선언 자체가 후보
+      우주 스캔을 통과해 D-4 후보가 된 사이트) 전부가 최종적으로
+      ``NO_DEPENDENCY`` 로 «판정됨»이어야 한다.  ``compute_d1_dispositions``
+      가 이미 §13 행 그래머(U-6′ (ㄱ)~(ㄹ))와 D-4 (마) 독립 리뷰 기록을
+      검증해 ``cell`` 을 정했으므로, 여기서는 ``kind == "none"`` 인데
+      ``cell != "NO_DEPENDENCY"`` 인 사이트마다 그 ``basis``(어떤 항이
+      미충족인지)를 실어 rc 결합 finding 을 낸다.
     * ``D1_SITES`` 불변식(Codex verdict review-mtlo6mst-93vt2j finding 3) —
       이 표 자체가 계약이 고정한 7 이름과 어긋나면(항목 삭제/추가) rc 에
       결합하는 D-1 위반이다. rc 밖(§11 렌더러)의 완료-표 미스매치와는
@@ -4026,9 +4421,11 @@ def check_d1(ctx: CheckContext) -> list[Finding]:
     invariant_violation = _d1_site_table_invariant_violation()
     if invariant_violation is not None:
         findings.append(Finding("D-1", invariant_violation))
-    dispositions, fail_closed_sites = compute_d1_dispositions(ctx.repo_root)
-    for name, (disposition, basis) in dispositions.items():
-        ctx.observations.append(f"D0-5[{name}]={disposition} ({basis})")
+    dispositions, fail_closed_sites = compute_d1_dispositions(
+        ctx.repo_root, ctx.uncheckable_rows
+    )
+    for name, record in dispositions.items():
+        ctx.observations.append(f"D0-5[{name}]={record.cell} ({record.basis})")
 
     if fail_closed_sites:
         findings.append(
@@ -4041,8 +4438,10 @@ def check_d1(ctx: CheckContext) -> list[Finding]:
 
     undecided_sites = sorted(
         name
-        for name, (disposition, _basis) in dispositions.items()
-        if disposition == "UNDECIDED" and name not in fail_closed_sites
+        for name, record in dispositions.items()
+        if record.cell == "UNDECIDED"
+        and record.kind != "none"
+        and name not in fail_closed_sites
     )
     if undecided_sites:
         if ctx.uncheckable_rows is None:
@@ -4069,6 +4468,22 @@ def check_d1(ctx: CheckContext) -> list[Finding]:
                             "등재돼 있지 않음",
                         )
                     )
+
+    none_kind_sites = sorted(
+        name
+        for name, record in dispositions.items()
+        if record.kind == "none" and name not in fail_closed_sites
+    )
+    for site in none_kind_sites:
+        record = dispositions[site]
+        if record.cell != "NO_DEPENDENCY":
+            findings.append(
+                Finding(
+                    "U-6′",
+                    f"D0-5 NO_DEPENDENCY 후보 사이트 {site!r} 판정됨 아님: "
+                    f"{record.basis}",
+                )
+            )
     return findings
 
 
@@ -4255,7 +4670,9 @@ def render_completion_status(
     # (사이트 파일 부재도 UNDECIDED 로 기록되지, 결과에서 제외되지 않는다) —
     # 그래서 여기서는 "N/A"/부재 분기가 필요 없다(구 fail-open 경로 제거,
     # Codex verdict review-mtljvycx-ouye7r finding 1).
-    d1_dispositions, _d1_fail_closed = compute_d1_dispositions(ctx.repo_root)
+    d1_dispositions, _d1_fail_closed = compute_d1_dispositions(
+        ctx.repo_root, ctx.uncheckable_rows
+    )
     lines.append("## D0-5 disposition table (7 rows, §7.4)")
     lines.append("")
     lines.append("| site | disposition | key/declaration |")
@@ -4263,14 +4680,17 @@ def render_completion_status(
     # 계약이 고정한 7 이름을 기준으로 행을 만든다(``D1_SITES`` 가 아니라) —
     # ``d1_dispositions`` 에 이름이 부재해도(불변식이 깨진 회귀) KeyError 로
     # 죽지 않고 fail-closed 행을 낸다(Codex verdict review-mtlo6mst-93vt2j
-    # finding 3).
+    # finding 3). 표에는 ``record.cell``(D-3 집합 표기 또는 D-4
+    # NO_DEPENDENCY/UNDECIDED)을 찍고, 근거 열에는 ``record.basis`` 를 찍는다
+    # — 어느 술어도 ``cell`` 문자열을 파싱하지 않는다.
     for site_name in sorted(D1_CONTRACT_SITE_NAMES):
-        entry = d1_dispositions.get(site_name)
-        if entry is None:
+        record = d1_dispositions.get(site_name)
+        if record is None:
             lines.append(f"| {site_name} | `—` | 처분 부재 |")
             continue
-        disposition, basis = entry
-        lines.append(f"| {site_name} | `{disposition}` | {_md_escape_cell(basis)} |")
+        lines.append(
+            f"| {site_name} | `{record.cell}` | {_md_escape_cell(record.basis)} |"
+        )
     lines.append("")
 
     lines.append("## Phase 0 termination-condition overview (section 11)")

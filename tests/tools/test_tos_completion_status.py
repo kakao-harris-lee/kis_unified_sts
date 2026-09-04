@@ -4308,15 +4308,32 @@ def test_a3_call_graph_closure_follows_module_level_callees(
 
 
 # ---------------------------------------------------------------------------
-# 22. D0-5b — D-1 처분 검사기 + U-6 (§7.4/§13.6.6)
+# 22. D0-5b — D-1 처분 검사기 + U-6/U-6′ (계약 §7.4 D-3/D-4/D-5, v2.22
+#     에라타 52차·53차·54차·55차·56차)
 # ---------------------------------------------------------------------------
 
 D1_TEST_SITE_REL = Path("d1_test_pkg/probe_module.py")
 D1_TEST_SITES = (("d1probe", D1_TEST_SITE_REL, "module", ""),)
 
+D1_NONE_SITE_REL = Path("d1_none_pkg/probe.py")
+D1_NONE_SITE_2_REL = Path("d1_none_pkg2/probe2.py")
+D1_DONOR_SITE_REL = Path("d1_donor_pkg/donor.py")
 
-def _write_d1_test_site(root: Path, docstring_body: str) -> None:
-    path = root / D1_TEST_SITE_REL
+D1_NONE_TEST_SITES = (("noneprobe", D1_NONE_SITE_REL, "module", ""),)
+D1_NONE_TEST_SITES_WITH_DONOR = (
+    ("noneprobe", D1_NONE_SITE_REL, "module", ""),
+    ("donorprobe", D1_DONOR_SITE_REL, "module", ""),
+)
+D1_NONE_TEST_SITES_DUAL = (
+    ("noneprobe", D1_NONE_SITE_REL, "module", ""),
+    ("noneprobe2", D1_NONE_SITE_2_REL, "module", ""),
+)
+
+
+def _write_d1_test_site(
+    root: Path, docstring_body: str, rel: Path = D1_TEST_SITE_REL
+) -> None:
+    path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f'"""{docstring_body}"""\n', encoding="utf-8")
 
@@ -4333,13 +4350,16 @@ def _write_mini_profile(
 
 
 def test_d1_real_corpus_dispositions_match_expected() -> None:
-    """[flipped, Codex verdict review-mtlo6mst-93vt2j finding 1] §7.4 실측
-    기대: 5곳은 균일 다중/단일 키로 ``UNBOUND``, ``resolver`` 는 실재
-    non-null 키 6개(VALUED) + ``max_age_bound`` 1개(UNBOUND) 가 갈려
-    UNDECIDED(혼합 처분), ``marketfeed`` 는 ``NONE`` 선언이라 UNDECIDED
-    (§7.4 어휘 밖). 예전 우선순위 접기는 이 둘을 조용히 UNBOUND 로
-    합성했었다."""
-    dispositions, _fail_closed = tcs.compute_d1_dispositions(_REPO_ROOT)
+    """[flipped, C4 — 계약 §7.4 D-3/D-4/D-5 구현] §7.4 실측 기대: 5곳은
+    균일 다중/단일 키로 ``UNBOUND``. ``resolver`` 와 ``marketfeed``
+    (독립 확인 ``review-mtmg2lz7-88qdyb`` 가 그 ``NONE`` 자기신고를 거짓으로
+    판정한 뒤 docstring 을 D-5 재분류한 결과, C4 lockstep)는 이제 «같은»
+    7키 선언(6개 VALUED + ``max_age_bound`` 1개 UNBOUND)에서 파생된
+    ``VALUED+UNBOUND`` — D-3 이 접지 않고 «집합»으로 판정됨이다. 두
+    사이트 모두 ``kind == "keys"``이고 ``NO_DEPENDENCY`` 후보(``kind ==
+    "none"``)는 실코퍼스에 0 개다."""
+    dispositions, fail_closed = tcs.compute_d1_dispositions(_REPO_ROOT)
+    assert fail_closed == ()
     for name in (
         "backtest__init__",
         "results",
@@ -4347,29 +4367,36 @@ def test_d1_real_corpus_dispositions_match_expected() -> None:
         "records",
         "engine",
     ):
-        assert dispositions[name][0] == "UNBOUND", (name, dispositions[name])
-    assert dispositions["resolver"][0] == "UNDECIDED"
-    assert "혼합 처분" in dispositions["resolver"][1]
-    assert dispositions["marketfeed"][0] == "UNDECIDED"
-    assert "§7.4 어휘 밖" in dispositions["marketfeed"][1]
+        assert dispositions[name].cell == "UNBOUND", (name, dispositions[name])
+        assert dispositions[name].kind == "keys"
+    for name in ("resolver", "marketfeed"):
+        record = dispositions[name]
+        assert record.kind == "keys", (name, record)
+        assert record.cell == "VALUED+UNBOUND", (name, record)
+        states = {state for _key, state in record.per_key}
+        assert states == {"VALUED", "UNBOUND"}
+        assert sum(1 for _k, s in record.per_key if s == "VALUED") == 6
+        assert sum(1 for _k, s in record.per_key if s == "UNBOUND") == 1
+    # 실코퍼스에 NONE 선언 사이트는 0 개다(marketfeed 재분류 후) — D-4/U-6′
+    # 어휘는 여전히 구현돼 있지만 오늘의 소비자는 없다(56차 "부수 사실").
+    assert all(record.kind != "none" for record in dispositions.values())
 
 
-def test_d1_real_corpus_u6_registered_is_clean() -> None:
-    """resolver(UNCHK-024)·marketfeed(UNCHK-026) 둘 다 UNDECIDED 지만 §13
-    레지스터에 등재돼 있어 U-6 은 clean 이다."""
+def test_d1_real_corpus_check_d1_is_clean() -> None:
+    """[renamed, C4] resolver·marketfeed 둘 다 이제 decided(``keys``)라
+    U-6/U-6′ 어느 쪽도 발화하지 않는다 — 등재 의무 자체가 없다."""
     ctx = tcs.build_context(_REPO_ROOT)
     assert tcs.check_d1(ctx) == []
 
 
-def test_d1_real_corpus_d0_5_not_met_with_two_undecided() -> None:
-    """신규(§E-viii 인접) — real corpus 렌더는 D0-5 를 더 이상 MET 로
-    주장하지 않는다: resolver + marketfeed 가 UNDECIDED 라 완료가 정직하게
-    차단돼야 한다(계약 어휘 밖 규칙으로 완료를 합성하지 않는다)."""
+def test_d1_real_corpus_d0_5_met() -> None:
+    """[flipped, C4] real corpus 렌더는 이제 D0-5 를 ``MET`` 으로 낸다 —
+    7사이트 전부가 D-3(``keys``)으로 판정됨이다."""
     ctx = tcs.build_context(_REPO_ROOT)
     findings = tcs.run_checks(ctx)
     rendered, _ = tcs.render_completion_status(ctx, findings)
-    assert "- `D0-5`: `MET`" not in rendered
-    assert "UNDECIDED 2(marketfeed, resolver)" in rendered
+    assert "- `D0-5`: `MET`" in rendered
+    assert "VALUED+UNBOUND" in rendered
 
 
 def test_d1_declaration_missing_is_undecided(
@@ -4390,9 +4417,8 @@ def test_d1_declaration_missing_is_undecided(
         "some_field is not a VERIFICATION-PROFILE-002 key at all, absent from census.",
     )
     dispositions, fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"] == (
-        "UNDECIDED",
-        "VER-002-KEYS 선언 부재 — 키 미공급",
+    assert dispositions["d1probe"] == tcs.D1SiteRecord(
+        "undecided", (), "UNDECIDED", "VER-002-KEYS 선언 부재 — 키 미공급"
     )
     assert fail_closed == ()
 
@@ -4412,7 +4438,9 @@ def test_d1_valued_nonnull_declared_key_is_derived(
         "This module consumes ``B_probe_bound`` for its timing check.",
     )
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"] == ("VALUED", "B_probe_bound")
+    assert dispositions["d1probe"] == tcs.D1SiteRecord(
+        "keys", (("B_probe_bound", "VALUED"),), "VALUED", "B_probe_bound"
+    )
 
 
 def test_d1_blocked_null_declared_key_is_derived(
@@ -4430,7 +4458,9 @@ def test_d1_blocked_null_declared_key_is_derived(
         "This module consumes ``B_probe_bound`` for its timing check.",
     )
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"] == ("BLOCKED", "B_probe_bound")
+    assert dispositions["d1probe"] == tcs.D1SiteRecord(
+        "keys", (("B_probe_bound", "BLOCKED"),), "BLOCKED", "B_probe_bound"
+    )
 
 
 def test_d1_unbound_derived_from_declared_key_absent_from_universe(
@@ -4450,7 +4480,9 @@ def test_d1_unbound_derived_from_declared_key_absent_from_universe(
         "``some_field`` is discussed at length here but is absent from census.",
     )
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"] == ("UNBOUND", "some_field")
+    assert dispositions["d1probe"] == tcs.D1SiteRecord(
+        "keys", (("some_field", "UNBOUND"),), "UNBOUND", "some_field"
+    )
 
 
 def test_d1_forged_prose_with_zero_declared_keys_cannot_derive_unbound(
@@ -4474,15 +4506,15 @@ def test_d1_forged_prose_with_zero_declared_keys_cannot_derive_unbound(
         "bounds something else entirely.",
     )
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNDECIDED"
+    assert dispositions["d1probe"].cell == "UNDECIDED"
     assert "D-1" not in _ids_excluding_d1_site_table_invariant(_run(tmp_path))
 
 
 def test_d1_stray_universe_key_in_body_outside_declaration_is_undecided(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """혼재 대조군(설계 규칙 3 — 계약 조항 아님) — 선언 키 하나 + 선언 밖에서 인용된 별개의 실재
-    프로파일 키가 섞이면 그 혼재 자체가 차단된다."""
+    """혼재 대조군(계약 §7.4 D-1(b)) — 선언 키 하나 + 선언 밖에서 인용된
+    별개의 실재 프로파일 키가 섞이면 그 혼재 자체가 차단된다."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
     _write_mini_profile(
         tmp_path,
@@ -4498,8 +4530,8 @@ def test_d1_stray_universe_key_in_body_outside_declaration_is_undecided(
         "This module consumes ``B_probe_bound`` and, incidentally, ``B_other_bound``.",
     )
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNDECIDED"
-    assert "B_other_bound" in dispositions["d1probe"][1]
+    assert dispositions["d1probe"].cell == "UNDECIDED"
+    assert "B_other_bound" in dispositions["d1probe"].basis
 
 
 def test_d1_declared_key_missing_from_body_is_undecided(
@@ -4516,9 +4548,8 @@ def test_d1_declared_key_missing_from_body_is_undecided(
         tmp_path, "VER-002-KEYS: ``B_probe_bound``\n\nNothing else mentions it."
     )
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"] == (
-        "UNDECIDED",
-        "선언 키 본문 부재: B_probe_bound",
+    assert dispositions["d1probe"] == tcs.D1SiteRecord(
+        "undecided", (), "UNDECIDED", "선언 키 본문 부재: B_probe_bound"
     )
 
 
@@ -4538,7 +4569,9 @@ def test_d1_declaration_duplicated_is_undecided(
         "VER-002-KEYS: NONE",
     )
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"] == ("UNDECIDED", "VER-002-KEYS 선언 중복")
+    assert dispositions["d1probe"] == tcs.D1SiteRecord(
+        "undecided", (), "UNDECIDED", "VER-002-KEYS 선언 중복"
+    )
 
 
 def test_d1_declaration_malformed_is_undecided(
@@ -4552,17 +4585,34 @@ def test_d1_declaration_malformed_is_undecided(
     )
     _write_d1_test_site(tmp_path, "VER-002-KEYS: B_probe_bound (no backticks)")
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNDECIDED"
-    assert "형식 오류" in dispositions["d1probe"][1]
+    assert dispositions["d1probe"].cell == "UNDECIDED"
+    assert "형식 오류" in dispositions["d1probe"].basis
 
 
-def test_d1_multi_key_mixed_unbound_blocked_valued_is_undecided(
+def test_d1_declaration_with_zero_keys_is_undecided(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """[flipped, Codex verdict review-mtlo6mst-93vt2j finding 1] 다중 키의
-    처분이 갈리면(UNBOUND/BLOCKED/VALUED 혼재) 더 이상 우선순위로 접히지
-    않는다 — §7.4 는 이 조합을 다루는 어휘가 없으므로 UNDECIDED(혼합
-    처분)로 멈춘다."""
+    """계약 §7.4 D-3 「1개 이상」 대조군③ — 키를 하나도 나열하지 않은
+    ``VER-002-KEYS:`` 행은 ``keys``/``none`` 어느 정규식에도 걸리지 않아
+    ``malformed`` -> UNDECIDED 다."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, "VER-002-KEYS: \n\nNo keys declared at all.")
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
+    assert dispositions["d1probe"].cell == "UNDECIDED"
+    assert dispositions["d1probe"].kind == "undecided"
+
+
+def test_d1_multi_key_mixed_unbound_blocked_valued_is_decided(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """[flipped, C4 — D-3] 다중 키의 처분이 갈려도(UNBOUND/BLOCKED/VALUED
+    혼재) 더 이상 UNDECIDED 로 멈추지 않는다 — D-3 이 「하나」의 단위를
+    «선언된 키»로 재정의해, 갈린 집합도 ``+`` 결합으로 그대로 판정됨이다."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
     _write_mini_profile(
         tmp_path,
@@ -4575,15 +4625,21 @@ def test_d1_multi_key_mixed_unbound_blocked_valued_is_undecided(
         "Uses ``B_valued``, ``B_blocked``, and ``not_a_key``.",
     )
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNDECIDED"
-    assert "혼합 처분" in dispositions["d1probe"][1]
+    record = dispositions["d1probe"]
+    assert record.kind == "keys"
+    assert record.cell == "VALUED+BLOCKED+UNBOUND"
+    assert set(record.per_key) == {
+        ("B_valued", "VALUED"),
+        ("B_blocked", "BLOCKED"),
+        ("not_a_key", "UNBOUND"),
+    }
 
 
-def test_d1_multi_key_mixed_blocked_and_valued_is_undecided(
+def test_d1_multi_key_mixed_blocked_and_valued_is_decided(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """[flipped, Codex verdict review-mtlo6mst-93vt2j finding 1] BLOCKED +
-    VALUED 혼재도 마찬가지로 UNDECIDED — 예전엔 BLOCKED 로 접혔다."""
+    """[flipped, C4 — D-3] BLOCKED + VALUED 혼재도 마찬가지로 결정됨 —
+    예전엔 BLOCKED 로 접혔고, 그 직전엔 UNDECIDED 로 멈췄다."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
     _write_mini_profile(
         tmp_path,
@@ -4596,15 +4652,46 @@ def test_d1_multi_key_mixed_blocked_and_valued_is_undecided(
         "Uses ``B_valued`` and ``B_blocked``.",
     )
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNDECIDED"
-    assert "혼합 처분" in dispositions["d1probe"][1]
+    assert dispositions["d1probe"] == tcs.D1SiteRecord(
+        "keys",
+        (("B_valued", "VALUED"), ("B_blocked", "BLOCKED")),
+        "VALUED+BLOCKED",
+        "B_valued:VALUED; B_blocked:BLOCKED",
+    )
+
+
+def test_d1_multi_key_mixed_folded_to_single_name_is_out_of_vocab(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """계약 «대조군과 발효 시점» ① — 갈린 키 집합이 ``VALUED+UNBOUND`` 로
+    «보여야» 하고, 어느 한 이름으로 접히면 red 여야 한다. 이 뮤테이션은
+    실제 파생 함수가 아니라 ``_d1_record_in_vocab``/``_d1_completion_
+    blockers`` 가 접힌 값을 실제로 걸러내는지를 직접 겨눈다 — 파생
+    함수(``_d1_site_disposition_from_keys``)는 접지 않는다는 것을 별도
+    유닛 테스트가 보증하므로, 여기서는 «만약 접혔다면» 허용 어휘 검사가
+    잡아야 한다는 것을 검증한다."""
+    folded = tcs.D1SiteRecord(
+        "keys",
+        (("B_valued", "VALUED"), ("some_field", "UNBOUND")),
+        "UNBOUND",  # 접힌 값 — 원래는 "VALUED+UNBOUND" 여야 한다
+        "B_valued:VALUED; some_field:UNBOUND",
+    )
+    assert tcs._d1_record_in_vocab(folded) is False
+
+    dispositions = dict.fromkeys(
+        tcs.D1_CONTRACT_SITE_NAMES,
+        tcs.D1SiteRecord("keys", (("stub_key", "UNBOUND"),), "UNBOUND", "stub"),
+    )
+    dispositions["resolver"] = folded
+    blockers = tcs._d1_completion_blockers(dispositions)
+    assert any("허용 어휘 밖 처분" in b and "resolver=UNBOUND" in b for b in blockers)
 
 
 def test_d1_multi_key_uniform_unbound_is_unbound(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """신규(§E-i) — 다중 키의 처분이 전부 같으면(균일) 그 처분을 그대로
-    쓴다. 우선순위 없이도 유일하게 정해지는 경우다."""
+    """다중 키의 처분이 전부 같으면(균일) 그 처분을 그대로 쓴다 — 우선순위
+    없이도 유일하게 정해지는 경우다."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
     _write_mini_profile(
         tmp_path,
@@ -4617,7 +4704,9 @@ def test_d1_multi_key_uniform_unbound_is_unbound(
         "Uses ``not_a_key_1`` and ``not_a_key_2``.",
     )
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"] == (
+    assert dispositions["d1probe"] == tcs.D1SiteRecord(
+        "keys",
+        (("not_a_key_1", "UNBOUND"), ("not_a_key_2", "UNBOUND")),
         "UNBOUND",
         "not_a_key_1:UNBOUND; not_a_key_2:UNBOUND",
     )
@@ -4626,7 +4715,7 @@ def test_d1_multi_key_uniform_unbound_is_unbound(
 def test_d1_multi_key_uniform_valued_is_valued(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """신규(§E-i) — 균일 VALUED 도 마찬가지로 접지 않고 그대로 쓴다."""
+    """균일 VALUED 도 마찬가지로 접지 않고 그대로 쓴다."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
     _write_mini_profile(
         tmp_path,
@@ -4638,7 +4727,12 @@ def test_d1_multi_key_uniform_valued_is_valued(
         "VER-002-KEYS: ``B_one``, ``B_two``\n\nUses ``B_one`` and ``B_two``.",
     )
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"] == ("VALUED", "B_one:VALUED; B_two:VALUED")
+    assert dispositions["d1probe"] == tcs.D1SiteRecord(
+        "keys",
+        (("B_one", "VALUED"), ("B_two", "VALUED")),
+        "VALUED",
+        "B_one:VALUED; B_two:VALUED",
+    )
 
 
 def test_d1_contrast_key_pins_unbound_engine_style(
@@ -4660,8 +4754,8 @@ def test_d1_contrast_key_pins_unbound_engine_style(
         "else entirely.",
     )
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNBOUND"
-    assert "CONTRAST: B_probe_bound" in dispositions["d1probe"][1]
+    assert dispositions["d1probe"].cell == "UNBOUND"
+    assert "CONTRAST: B_probe_bound" in dispositions["d1probe"].basis
 
 
 def test_d1_contrast_key_not_in_universe_is_undecided(
@@ -4679,7 +4773,7 @@ def test_d1_contrast_key_not_in_universe_is_undecided(
         "Uses ``B_probe_bound``; for contrast, mentions ``not_a_key``.",
     )
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNDECIDED"
+    assert dispositions["d1probe"].cell == "UNDECIDED"
 
 
 def test_d1_contrast_key_missing_from_body_is_undecided(
@@ -4700,50 +4794,7 @@ def test_d1_contrast_key_missing_from_body_is_undecided(
         "Uses only ``B_probe_bound`` here.",
     )
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNDECIDED"
-
-
-def test_d1_none_declaration_with_zero_scope_references_is_undecided(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """[flipped, Codex verdict review-mtlo6mst-93vt2j finding 1] ``NONE``
-    (의존 키 없음)은 §7.4 어휘 밖이다 — 실측 스캔이 모순을 찾지 못해도(0건)
-    그 자체가 완료 처분(UNBOUND)의 근거가 되지 않는다. 운영자 에라타 처분
-    전까지 UNDECIDED 로 멈춘다. ``UNBOUND`` 는 NONE 경로에서 결코 나오지
-    않아야 한다."""
-    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
-    _write_mini_profile(
-        tmp_path,
-        bounds={"B_probe_bound": {"value_ms": 500}},
-        limits={"MAX_probe_ceiling": 1},
-    )
-    _write_d1_test_site(
-        tmp_path, "This package touches nothing profile-shaped.\n\nVER-002-KEYS: NONE"
-    )
-    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNDECIDED"
-    assert "UNBOUND" not in dispositions["d1probe"][0]
-    assert "§7.4 어휘 밖" in dispositions["d1probe"][1]
-
-
-def test_d1_none_declaration_contradicted_by_scope_reference_is_undecided(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """설계 규칙 6(계약 조항 아님) — NONE 선언은 검사기 실측(스캔)으로 검증된다. module kind 는
-    패키지 디렉터리 전체가 스캔 범위이므로, 같은 디렉터리의 *다른* 파일이
-    참조해도 모순이 걸려야 한다."""
-    monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
-    _write_mini_profile(
-        tmp_path,
-        bounds={"B_probe_bound": {"value_ms": 500}},
-        limits={"MAX_probe_ceiling": 1},
-    )
-    _write_d1_test_site(tmp_path, "VER-002-KEYS: NONE")
-    sibling = (tmp_path / D1_TEST_SITE_REL).parent / "sibling.py"
-    sibling.write_text("REAL_KEY = 'B_probe_bound'\n", encoding="utf-8")
-    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNDECIDED"
-    assert "NONE 선언과 모순" in dispositions["d1probe"][1]
+    assert dispositions["d1probe"].cell == "UNDECIDED"
 
 
 def test_d1_key_not_supplied_is_undecided(
@@ -4759,7 +4810,7 @@ def test_d1_key_not_supplied_is_undecided(
     )
     _write_d1_test_site(tmp_path, "No bound is named or cited here at all.")
     dispositions, fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNDECIDED"
+    assert dispositions["d1probe"].cell == "UNDECIDED"
     assert fail_closed == ()
 
 
@@ -4771,7 +4822,7 @@ def test_d1_missing_site_file_is_fail_closed_violation(
     기록되고 ``fail_closed_sites`` 에 올라 D-1 위반이 된다."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
     dispositions, fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNDECIDED"
+    assert dispositions["d1probe"].cell == "UNDECIDED"
     assert "d1probe" in fail_closed
     assert "D-1" in _ids(_run(tmp_path))
 
@@ -4840,7 +4891,7 @@ def test_d1_profile_universe_load_failure_is_fail_closed_violation(
     )
 
     dispositions, fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNDECIDED"
+    assert dispositions["d1probe"].cell == "UNDECIDED"
     assert "d1probe" in fail_closed
 
     findings = _run(tmp_path)
@@ -4852,10 +4903,9 @@ def test_d1_profile_universe_load_failure_is_fail_closed_violation(
 def test_d1_profile_universe_broken_blocks_even_declared_unbound_site(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """[flipped, 설계 규칙 7] 선언이 있으면 UNBOUND 로 판정될 값이라도
-    이제는 우주 로드가 필요하다 — «UNBOUND 는 우주가 필요 없다»던 구
-    가정은 거짓이다. 우주가 깨지면 선언이 있는 사이트는 무조건
-    fail-closed."""
+    """[flipped, C4] 선언이 있으면 UNBOUND 로 판정될 값이라도 이제는 우주
+    로드가 필요하다 — «UNBOUND 는 우주가 필요 없다»던 구 가정은 거짓이다.
+    우주가 깨지면 선언이 있는 사이트는 무조건 fail-closed."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
     write_corpus(tmp_path)
     profile_path = tmp_path / tcs.VERIFICATION_PROFILE_002_REL
@@ -4868,8 +4918,630 @@ def test_d1_profile_universe_broken_blocks_even_declared_unbound_site(
     )
 
     dispositions, fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNDECIDED"
+    assert dispositions["d1probe"].cell == "UNDECIDED"
     assert "d1probe" in fail_closed
+
+
+# ---------------------------------------------------------------------------
+# 22a. D-4/D-5/U-6′ — NO_DEPENDENCY 완료 근거 넷의 논리곱(계약 §7.4,
+#      v2.22 에라타 53차·54차·55차·56차). 실코퍼스는 NONE 선언 사이트가
+#      0 개(marketfeed 재분류 후)이므로 이 어휘는 합성 코퍼스로만
+#      실증한다 — 어휘가 결정적이라는 것이 이 회차의 값이다(56차 부수
+#      사실).
+# ---------------------------------------------------------------------------
+
+
+def _d1_none_docstring(extra_prose: str = "") -> str:
+    body = "This package touches nothing profile-shaped."
+    if extra_prose:
+        body += "\n\n" + extra_prose
+    body += "\n\nVER-002-KEYS: NONE"
+    return body
+
+
+def _d1_keys_docstring(key: str) -> str:
+    return f"VER-002-KEYS: ``{key}``\n\nDepends on ``{key}`` (not a profile key)."
+
+
+def _d1_expected_scan_facts(root: Path, site_id: str) -> tuple[str, int, int]:
+    """현재(monkeypatch 된) ``tcs.D1_SITES`` 기준으로 ``site_id`` 의
+    (scope_desc, file_count, candidate_universe_size) 를 프로덕션
+    함수(``tcs._d1_candidate_universe``/``tcs._d1_scope_paths``)로 다시
+    계산한다 — 파생 로직을 테스트에서 재저작하지 않는다(§6.3.2)."""
+    universe, _err = tcs._load_profile_universe(root)
+    decls = []
+    target_rel: Path | None = None
+    target_kind: str | None = None
+    for name, rel, kind, target in tcs.D1_SITES:
+        path = root / rel
+        doc = tcs._extract_d1_docstring(path.read_text(encoding="utf-8"), kind, target)
+        assert doc is not None
+        decl = tcs._parse_d1_declaration(doc)
+        decls.append(decl)
+        if name == site_id:
+            target_rel, target_kind = rel, kind
+    assert target_rel is not None and target_kind is not None
+    candidate_universe = tcs._d1_candidate_universe(universe, decls)
+    scope_paths = tcs._d1_scope_paths(root, target_rel, target_kind)
+    scope_desc = str(target_rel.parent if target_kind == "module" else target_rel)
+    return scope_desc, len(scope_paths), len(candidate_universe)
+
+
+def _scope_content_digest_from_worktree(root: Path, rel_paths: list[str]) -> str:
+    """프로덕션 ``_d1_scope_content_digest`` 레시피의 워킹트리 등가물 —
+    커밋 직전이면 워킹트리 바이트 == HEAD blob 바이트다."""
+    lines = []
+    for rel in sorted(set(rel_paths)):
+        data = (root / rel).read_bytes()
+        lines.append(f"{hashlib.sha256(data).hexdigest()}  {rel}\n")
+    return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
+
+
+def _write_d1_no_dependency_record(
+    root: Path,
+    site_id: str,
+    rel: Path,
+    kind: str,
+    *,
+    stamp: str = "20260101-000000",
+    adjudicator: str = "codex",
+    verdict: str = "approve",
+    claim: str | None = None,
+    reviewed_plan_paths: list[str] | None = None,
+    reviewed_scope_digest: str | None = None,
+    reviewed_at_head: str = "0" * 40,
+) -> str:
+    """§7.4 D-4 (마) 독립 리뷰 기록을 워킹트리에 쓴다(커밋은 호출자 몫).
+    ``reviewed_plan_paths``/``reviewed_scope_digest`` 를 지정하지 않으면
+    실제 스캔 범위·재계산 digest 로 «올바른» 기록을 만든다 — 대조군은
+    개별 인자를 어긋나게 넘겨 만든다. 기록의 repo-relative POSIX 경로를
+    돌려준다(§13 행 reason (4)에 인용하는 데 쓴다)."""
+    scope_paths = tcs._d1_scope_paths(root, rel, kind)
+    rels = sorted(p.relative_to(root).as_posix() for p in scope_paths)
+    if reviewed_plan_paths is None:
+        reviewed_plan_paths = rels
+    if reviewed_scope_digest is None:
+        reviewed_scope_digest = _scope_content_digest_from_worktree(root, rels)
+    if claim is None:
+        claim = (
+            f"{site_id} — synthetic scope does not consume "
+            "VERIFICATION-PROFILE-002 bound values"
+        )
+    data = {
+        "adjudicator": adjudicator,
+        "verdict": verdict,
+        "kind": "d1-no-dependency independent review record (§7.4 D-4 (마))",
+        "site_id": site_id,
+        "reviewed_plan_paths": reviewed_plan_paths,
+        "reviewed_scope_digest": reviewed_scope_digest,
+        "digest_kind": "scope_content_digest (내용 전용 · HEAD 미포함)",
+        "reviewed_at_head": reviewed_at_head,
+        "claim": claim,
+    }
+    body = yaml.safe_dump(data, sort_keys=False)
+    rel_out = f"docs/reviews/d1-no-dependency/{site_id}/{stamp}/verdict.md"
+    path = root / rel_out
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"```yaml\n{body}```\n", encoding="utf-8")
+    return rel_out
+
+
+def _d1_u6prime_row(
+    site_id: str,
+    *,
+    id_suffix: str = "",
+    axis: str | None = None,
+    candidate_size: int,
+    scope_desc: str,
+    file_count: int,
+    record_rel: str,
+    closable: str = "YES",
+) -> dict[str, str]:
+    """U-6′ (ㄱ)~(ㄹ) 그래머를 만족하는 §13 행 — 대조군은 ``axis``/
+    ``record_rel``/포함 여부를 어긋나게 만든다."""
+    if axis is None:
+        axis = f"D0-5 NONE: {site_id}"
+    reason = (
+        "VER-002-KEYS: NONE 선언 · "
+        f"후보 우주 {candidate_size}개 키 · {scope_desc} {file_count}개 파일 스캔 · "
+        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        f"독립 리뷰 기록: {record_rel}"
+    )
+    return {
+        "id": f"MINI-UNCHK-D4-{site_id}{id_suffix}",
+        "axis": axis,
+        "reason": reason,
+        "blocked_by": "독립 리뷰 기록 결속",
+        "owner_track": "Phase 2-5",
+        "exposed_in": "TOS-COMPLETION-STATUS",
+        "normative_ref": "",
+        "closable": closable,
+        "blocks_gate": "",
+    }
+
+
+def test_d1_none_declaration_positive_all_four_conjuncts_is_no_dependency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """양성 대조군(계약 «대조군과 발효 시점» 양성) — (i) NONE 선언 (ii) 스캔
+    0건 (iii) §13 U-6′ 행 (iv) D-4 (마) 독립 리뷰 기록, 넷 다 서면
+    ``NO_DEPENDENCY`` 로 판정되고 D0-5 는 MET 다.
+
+    D0-5 MET 는 계약이 고정한 7 이름 «전부»가 판정됨일 때만 서므로(D-3
+    또는 D-4), 이 대조군은 ``D1_TEST_SITES`` 같은 이물 이름이 아니라 실
+    ``D1_SITES`` 7개 이름을 그대로 쓰고 ``marketfeed`` 자리 하나만 이
+    합성 NONE 사이트 경로로 바꿔치기한다 — 나머지 6곳은 기본 배선
+    (``_d1_default_site_source``, write_corpus 기본 배선용 헬퍼)으로
+    균일 UNBOUND(decided)를 채운다."""
+    canonical_sites = tuple(
+        (
+            ("marketfeed", D1_NONE_SITE_REL, "module", "")
+            if name == "marketfeed"
+            else (name, rel, kind, target)
+        )
+        for name, rel, kind, target in tcs.D1_SITES
+    )
+    monkeypatch.setattr(tcs, "D1_SITES", canonical_sites)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    for name, rel, kind, target in canonical_sites:
+        if name == "marketfeed":
+            continue
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_d1_default_site_source(kind, target), encoding="utf-8")
+    _write_d1_test_site(tmp_path, _d1_none_docstring(), rel=D1_NONE_SITE_REL)
+    scope_desc, file_count, candidate_size = _d1_expected_scan_facts(
+        tmp_path, "marketfeed"
+    )
+    record_rel = _write_d1_no_dependency_record(
+        tmp_path, "marketfeed", D1_NONE_SITE_REL, "module"
+    )
+    row = _d1_u6prime_row(
+        "marketfeed",
+        candidate_size=candidate_size,
+        scope_desc=scope_desc,
+        file_count=file_count,
+        record_rel=record_rel,
+    )
+    write_corpus(tmp_path, write_d1_sites=False, uncheckable_rows=[row])
+
+    ctx = tcs.build_context(tmp_path)
+    assert tcs.check_d1(ctx) == []
+    dispositions, fail_closed = tcs.compute_d1_dispositions(
+        tmp_path, ctx.uncheckable_rows
+    )
+    assert fail_closed == ()
+    record = dispositions["marketfeed"]
+    assert record.kind == "none"
+    assert record.cell == "NO_DEPENDENCY"
+    for other in tcs.D1_CONTRACT_SITE_NAMES - {"marketfeed"}:
+        assert dispositions[other].cell == "UNBOUND", (other, dispositions[other])
+
+    findings = tcs.run_checks(ctx)
+    rendered, _ = tcs.render_completion_status(ctx, findings)
+    assert "- `D0-5`: `MET`" in rendered
+    assert "NO_DEPENDENCY" in rendered
+    assert "NO_DEPENDENCY" in rendered
+
+
+def test_d1_none_declaration_scan_hit_is_undecided_declaration_gap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """계약 «대조군과 발효 시점» ② — NONE 사이트 범위 안에(주석 줄 포함,
+    53차 (다)) 프로파일 우주 키 리터럴이 하나라도 있으면 UNDECIDED(«선언
+    누락») 다. 이 축은 §13 행/기록 유무와 무관하게 스캔만으로 멈춘다."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_NONE_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(
+        tmp_path,
+        _d1_none_docstring("# incidentally mentions B_probe_bound in a comment line"),
+        rel=D1_NONE_SITE_REL,
+    )
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path, None)
+    record = dispositions["noneprobe"]
+    assert record.cell == "UNDECIDED"
+    assert "선언 누락 의심" in record.basis
+    assert "B_probe_bound" in record.basis
+
+
+def test_d1_none_declaration_candidate_universe_includes_other_site_declared_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """계약 §7.4 D-4 (나) + «대조군과 발효 시점» ④ — 프로파일 우주 «밖»
+    이면서 «다른» §7.1 사이트가 D-5 로 선언한 키(실재 증인 = ``resolver``
+    의 ``max_age_bound``)를 NONE 사이트 범위에 리터럴로 주입하면
+    UNDECIDED(«선언 누락»)다. 53차 전 정의(프로파일 우주만)로 되돌리면
+    이 대조군이 green 으로 죽는다."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_NONE_TEST_SITES_WITH_DONOR)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(
+        tmp_path, _d1_keys_docstring("donor_only_key"), rel=D1_DONOR_SITE_REL
+    )
+    _write_d1_test_site(
+        tmp_path,
+        _d1_none_docstring(
+            "``donor_only_key`` incidentally appears here but is not declared."
+        ),
+        rel=D1_NONE_SITE_REL,
+    )
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path, None)
+    record = dispositions["noneprobe"]
+    assert record.cell == "UNDECIDED"
+    assert "선언 누락 의심" in record.basis
+    assert "donor_only_key" in record.basis
+    # 후보 우주가 실제로 donor 의 선언 키를 포함했다는 것도 직접 확인한다.
+    universe, _err = tcs._load_profile_universe(tmp_path)
+    decls = [
+        tcs._parse_d1_declaration(
+            tcs._extract_d1_docstring(
+                (tmp_path / rel).read_text(encoding="utf-8"), kind, target
+            )
+        )
+        for _name, rel, kind, target in tcs.D1_SITES
+    ]
+    candidate_universe = tcs._d1_candidate_universe(universe, decls)
+    assert "donor_only_key" in candidate_universe
+
+
+def test_d1_candidate_universe_derivation_includes_every_declared_and_contrast_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``_d1_candidate_universe`` 유닛 테스트 — 프로파일 우주 밖의 키라도
+    어느 사이트가 ``VER-002-KEYS``(또는 ``CONTRAST``)로 선언하면 후보
+    우주에 반드시 들어간다(53차 (나) 합집합 파생)."""
+    universe = {"B_in_universe": False}
+    decls = [
+        tcs._D1Declaration("keys", keys=("out_of_universe_a",), contrast=()),
+        tcs._D1Declaration(
+            "keys", keys=("B_in_universe",), contrast=("out_of_universe_b",)
+        ),
+        tcs._D1Declaration("none"),
+        tcs._D1Declaration("missing"),
+    ]
+    candidate = tcs._d1_candidate_universe(universe, decls)
+    assert candidate == frozenset(
+        {"B_in_universe", "out_of_universe_a", "out_of_universe_b"}
+    )
+
+
+def test_d1_candidate_universe_real_corpus_includes_max_age_bound() -> None:
+    """실코퍼스 대조군 — ``max_age_bound`` 는 ``VERIFICATION-PROFILE-002``
+    우주 밖이지만 ``resolver``/``marketfeed`` 가 D-5 로 선언하므로 후보
+    우주에 실재해야 한다(53차 (나)가 막는 우회의 증인)."""
+    universe, err = tcs._load_profile_universe(_REPO_ROOT)
+    assert universe is not None, err
+    decls = []
+    for _name, rel, kind, target in tcs.D1_SITES:
+        doc = tcs._extract_d1_docstring(
+            (_REPO_ROOT / rel).read_text(encoding="utf-8"), kind, target
+        )
+        assert doc is not None
+        decls.append(tcs._parse_d1_declaration(doc))
+    candidate_universe = tcs._d1_candidate_universe(universe, decls)
+    assert "max_age_bound" in candidate_universe
+    assert "max_age_bound" not in universe
+
+
+def test_d1_none_declaration_row_absent_is_undecided_control_5a(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑤-a — 완료 후보(스캔 0건)이지만 §13 행이 아예 없으면
+    U-6′ (ㄴ) 0행 미충족으로 red."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_NONE_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, _d1_none_docstring(), rel=D1_NONE_SITE_REL)
+    _write_d1_no_dependency_record(tmp_path, "noneprobe", D1_NONE_SITE_REL, "module")
+    write_corpus(tmp_path, write_d1_sites=False, uncheckable_rows=[])
+
+    ctx = tcs.build_context(tmp_path)
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(
+        tmp_path, ctx.uncheckable_rows
+    )
+    assert dispositions["noneprobe"].cell == "UNDECIDED"
+    findings = tcs.check_d1(ctx)
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_row_present_record_absent_is_undecided_control_5b(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑤-b — §13 행은 있으나 D-4 (마) 독립 리뷰 기록이 없으면
+    (54차의 «공시 의무만으로는 통과» 회피를 닫는 자리) red."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_NONE_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, _d1_none_docstring(), rel=D1_NONE_SITE_REL)
+    scope_desc, file_count, candidate_size = _d1_expected_scan_facts(
+        tmp_path, "noneprobe"
+    )
+    row = _d1_u6prime_row(
+        "noneprobe",
+        candidate_size=candidate_size,
+        scope_desc=scope_desc,
+        file_count=file_count,
+        record_rel="docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md",
+    )
+    write_corpus(tmp_path, write_d1_sites=False, uncheckable_rows=[row])
+
+    ctx = tcs.build_context(tmp_path)
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(
+        tmp_path, ctx.uncheckable_rows
+    )
+    assert dispositions["noneprobe"].cell == "UNDECIDED"
+    assert "독립 리뷰 기록 미충족" in dispositions["noneprobe"].basis
+    findings = tcs.check_d1(ctx)
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_stale_digest_after_scope_edit_is_undecided_control_6(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑥ — 기록은 있으나 승인 뒤 사이트 범위 파일 하나를 건드려
+    ``scope_content_digest`` 가 달라지면 stale 로 red(리비전 결속이 살아
+    있는지). 무관한 커밋을 얹는 변이는 green 이어야 한다는 비대칭이 「HEAD
+    를 뺀」 이유다 — 이 테스트는 stale 축만 겨눈다."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_NONE_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, _d1_none_docstring(), rel=D1_NONE_SITE_REL)
+    scope_desc, file_count, candidate_size = _d1_expected_scan_facts(
+        tmp_path, "noneprobe"
+    )
+    record_rel = _write_d1_no_dependency_record(
+        tmp_path, "noneprobe", D1_NONE_SITE_REL, "module"
+    )
+    row = _d1_u6prime_row(
+        "noneprobe",
+        candidate_size=candidate_size,
+        scope_desc=scope_desc,
+        file_count=file_count,
+        record_rel=record_rel,
+    )
+    write_corpus(tmp_path, write_d1_sites=False, uncheckable_rows=[row])
+
+    ctx = tcs.build_context(tmp_path)
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(
+        tmp_path, ctx.uncheckable_rows
+    )
+    assert dispositions["noneprobe"].cell == "NO_DEPENDENCY"
+
+    # 승인 뒤 범위 파일을 건드린다(선언·스캔에는 영향 없는 순수 주석 추가).
+    site_path = tmp_path / D1_NONE_SITE_REL
+    site_path.write_text(
+        site_path.read_text(encoding="utf-8") + "\n# unrelated post-approval edit\n",
+        encoding="utf-8",
+    )
+    _git_commit_all(tmp_path, "post-approval scope edit", "2026-01-02T00:00:00Z")
+
+    ctx2 = tcs.build_context(tmp_path)
+    dispositions2, _fail_closed2 = tcs.compute_d1_dispositions(
+        tmp_path, ctx2.uncheckable_rows
+    )
+    record2 = dispositions2["noneprobe"]
+    assert record2.cell == "UNDECIDED"
+    assert "stale" in record2.basis or "불일치" in record2.basis
+
+
+def test_d1_none_declaration_disallowed_adjudicator_is_undecided_control_7(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑦ — 기록의 ``adjudicator`` 가 저작자 레인(``fallback-claude``
+    류)이면 red. ``codex``/``operator`` 로 되돌리면 green(독립성 축)."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_NONE_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, _d1_none_docstring(), rel=D1_NONE_SITE_REL)
+    scope_desc, file_count, candidate_size = _d1_expected_scan_facts(
+        tmp_path, "noneprobe"
+    )
+    record_rel = _write_d1_no_dependency_record(
+        tmp_path,
+        "noneprobe",
+        D1_NONE_SITE_REL,
+        "module",
+        adjudicator="fallback-claude",
+    )
+    row = _d1_u6prime_row(
+        "noneprobe",
+        candidate_size=candidate_size,
+        scope_desc=scope_desc,
+        file_count=file_count,
+        record_rel=record_rel,
+    )
+    write_corpus(tmp_path, write_d1_sites=False, uncheckable_rows=[row])
+
+    ctx = tcs.build_context(tmp_path)
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(
+        tmp_path, ctx.uncheckable_rows
+    )
+    record = dispositions["noneprobe"]
+    assert record.cell == "UNDECIDED"
+    assert "adjudicator" in record.basis
+
+
+def test_d1_none_declaration_catch_all_axis_row_is_undecided_control_8a() -> None:
+    """대조군 ⑧-a(catch-all) — ``axis`` 가 site_id 토큰을 정확히 담지
+    않으면(예: ``D0-5 NONE:`` 만) 0행과 동치로 취급돼 red."""
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE:", "reason": "catch-all"}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+    )
+    assert ok is False
+    assert matched is None
+    assert "부재" in detail
+
+
+def test_d1_none_declaration_duplicate_rows_is_undecided_control_8a_dup() -> None:
+    """대조군 ⑧-a(중복 행) — 같은 사이트에 2행이면 red."""
+    rows = [
+        {"axis": "D0-5 NONE: noneprobe", "reason": "first"},
+        {"axis": "D0-5 NONE: noneprobe", "reason": "second"},
+    ]
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        rows, "noneprobe", candidate_universe_size=1, scope_desc="x", file_count=1
+    )
+    assert ok is False
+    assert matched is None
+    assert "중복" in detail
+
+
+def test_d1_none_declaration_substring_axis_is_undecided_control_8a_substring() -> None:
+    """대조군 ⑧-a(부분문자열) — ``resolverx`` 류로 ``resolver`` 를
+    충족시키려는 시도는 정확 일치가 아니라 red."""
+    ok, _detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobex", "reason": "substring attempt"}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="x",
+        file_count=1,
+    )
+    assert ok is False
+    assert matched is None
+
+
+def test_d1_none_declaration_trailing_suffix_axis_is_undecided_control_8b() -> None:
+    """[v2.22 에라타 56차] 대조군 ⑧-b(유효 prefix + 임의 접미) —
+    ``D0-5 NONE: noneprobe_x`` 는 옛 «시작» 문언은 통과하지만 새 «동일»
+    문언은 통과하지 못해야 한다."""
+    ok, _detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe_x", "reason": "suffix attempt"}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="x",
+        file_count=1,
+    )
+    assert ok is False
+    assert matched is None
+
+
+def test_d1_none_declaration_trailing_space_axis_is_undecided_control_8b_space() -> (
+    None
+):
+    """[v2.22 에라타 56차] 대조군 ⑧-b(후행 공백) — ``D0-5 NONE: noneprobe ``
+    (콜론 뒤 정확히 한 칸 규칙을 어긴 후행 공백 하나)도 동일하게 red —
+    trim 을 적용하면(구현 회귀) 이 대조군이 green 으로 죽는다."""
+    ok, _detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe ", "reason": "trailing space attempt"}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="x",
+        file_count=1,
+    )
+    assert ok is False
+    assert matched is None
+
+
+def test_d1_none_declaration_two_site_ids_one_row_is_undecided_control_8c(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """[v2.22 에라타 56차] 대조군 ⑧-c(두 번째 site_id 부가) —
+    ``D0-5 NONE: noneprobe / noneprobe2`` 한 행으로 두 사이트를 충족시키려는
+    시도는 «행당 최대 한 사이트»(ㄷ) 를 어겨 «둘 다» red 여야 한다."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_NONE_TEST_SITES_DUAL)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, _d1_none_docstring(), rel=D1_NONE_SITE_REL)
+    _write_d1_test_site(tmp_path, _d1_none_docstring(), rel=D1_NONE_SITE_2_REL)
+    _write_d1_no_dependency_record(tmp_path, "noneprobe", D1_NONE_SITE_REL, "module")
+    _write_d1_no_dependency_record(tmp_path, "noneprobe2", D1_NONE_SITE_2_REL, "module")
+    combined_row = {
+        "id": "MINI-UNCHK-D4-COMBINED",
+        "axis": "D0-5 NONE: noneprobe / noneprobe2",
+        "reason": (
+            "VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · 두 사이트 모두 스캔 "
+            "· 프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+            "독립 리뷰 기록: docs/reviews/d1-no-dependency/"
+        ),
+        "blocked_by": "-",
+        "owner_track": "Phase 2-5",
+        "exposed_in": "TOS-COMPLETION-STATUS",
+        "normative_ref": "",
+        "closable": "YES",
+        "blocks_gate": "",
+    }
+    write_corpus(tmp_path, write_d1_sites=False, uncheckable_rows=[combined_row])
+
+    ctx = tcs.build_context(tmp_path)
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(
+        tmp_path, ctx.uncheckable_rows
+    )
+    assert dispositions["noneprobe"].cell == "UNDECIDED"
+    assert dispositions["noneprobe2"].cell == "UNDECIDED"
+    findings = tcs.check_d1(ctx)
+    u6prime_sites = {f.message for f in findings if f.check_id == "U-6′"}
+    assert any("noneprobe'" in m or "'noneprobe'" in m for m in u6prime_sites)
+    assert any("noneprobe2" in m for m in u6prime_sites)
+
+
+def test_d1_none_declaration_row_reason_missing_boundary_sentence_is_undecided(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U-6′ (ㄹ)(3) — reason 에 경계 문장 「후보 우주 밖의 이름은 보지
+    못한다」가 없으면(내용 미충족) red."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_NONE_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, _d1_none_docstring(), rel=D1_NONE_SITE_REL)
+    record_rel = _write_d1_no_dependency_record(
+        tmp_path, "noneprobe", D1_NONE_SITE_REL, "module"
+    )
+    row = {
+        "id": "MINI-UNCHK-D4-noneprobe",
+        "axis": "D0-5 NONE: noneprobe",
+        "reason": (
+            f"VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · d1_none_pkg 1개 파일 "
+            f"스캔 · 프로파일 키 참조 0 · 독립 리뷰 기록: {record_rel}"
+        ),
+        "blocked_by": "-",
+        "owner_track": "Phase 2-5",
+        "exposed_in": "TOS-COMPLETION-STATUS",
+        "normative_ref": "",
+        "closable": "YES",
+        "blocks_gate": "",
+    }
+    write_corpus(tmp_path, write_d1_sites=False, uncheckable_rows=[row])
+
+    ctx = tcs.build_context(tmp_path)
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(
+        tmp_path, ctx.uncheckable_rows
+    )
+    record = dispositions["noneprobe"]
+    assert record.cell == "UNDECIDED"
+    assert "(3)" in record.basis
 
 
 # ---------------------------------------------------------------------------
@@ -4881,17 +5553,18 @@ def test_d1_profile_universe_broken_blocks_even_declared_unbound_site(
 def test_render_d0_5_not_met_when_d1_sites_table_truncated(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """신규(§E-iv) — ``D1_SITES`` 에서 항목 하나가 사라지면(회귀), 그 잘린
-    표에서 기대 집합을 다시 만들던 예전 렌더러는 6/6 로 MET 를 통과시켰다.
-    이제는 계약이 고정한 상수와 비교해 불변식 위반을 보고하고 MET 를
-    내지 않는다."""
+    """``D1_SITES`` 에서 항목 하나가 사라지면(회귀), 그 잘린 표에서 기대
+    집합을 다시 만들던 예전 렌더러는 6/6 로 MET 를 통과시켰다. 이제는
+    계약이 고정한 상수와 비교해 불변식 위반을 보고하고 MET 를 내지
+    않는다."""
     truncated = tcs.D1_SITES[:-1]
     monkeypatch.setattr(tcs, "D1_SITES", truncated)
-    valid_result = {
-        name: ("UNBOUND", "stub") for name, _rel, _kind, _target in truncated
-    }
+    stub = tcs.D1SiteRecord("keys", (("stub_key", "UNBOUND"),), "UNBOUND", "stub")
+    valid_result = {name: stub for name, _rel, _kind, _target in truncated}
     monkeypatch.setattr(
-        tcs, "compute_d1_dispositions", lambda repo_root: (valid_result, ())
+        tcs,
+        "compute_d1_dispositions",
+        lambda repo_root, uncheckable_rows=None: (valid_result, ()),
     )
     write_corpus(tmp_path, write_d1_sites=False)
     ctx, findings = _run_ctx(tmp_path)
@@ -4903,12 +5576,17 @@ def test_render_d0_5_not_met_when_d1_sites_table_truncated(
 def test_render_d0_5_not_met_when_dispositions_have_extra_site(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """신규(§E-v) — ``compute_d1_dispositions`` 가 계약 7 이름 밖의 여분
-    사이트를 하나 더 얹어 돌려주면(예: 파생 로직 회귀), MET 를 내지 않고
-    여분을 보고해야 한다."""
-    result = dict.fromkeys(tcs.D1_CONTRACT_SITE_NAMES, ("UNBOUND", "stub"))
-    result["phantom"] = ("UNBOUND", "stub")
-    monkeypatch.setattr(tcs, "compute_d1_dispositions", lambda repo_root: (result, ()))
+    """``compute_d1_dispositions`` 가 계약 7 이름 밖의 여분 사이트를 하나
+    더 얹어 돌려주면(예: 파생 로직 회귀), MET 를 내지 않고 여분을 보고해야
+    한다."""
+    stub = tcs.D1SiteRecord("keys", (("stub_key", "UNBOUND"),), "UNBOUND", "stub")
+    result = dict.fromkeys(tcs.D1_CONTRACT_SITE_NAMES, stub)
+    result["phantom"] = stub
+    monkeypatch.setattr(
+        tcs,
+        "compute_d1_dispositions",
+        lambda repo_root, uncheckable_rows=None: (result, ()),
+    )
     write_corpus(tmp_path)
     ctx, findings = _run_ctx(tmp_path)
     rendered, _ = tcs.render_completion_status(ctx, findings)
@@ -4920,12 +5598,16 @@ def test_render_d0_5_not_met_when_dispositions_have_extra_site(
 def test_render_d0_5_not_met_when_disposition_value_out_of_vocabulary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """신규(§E-vi) — 처분값이 VALUED/BLOCKED/UNBOUND/UNDECIDED 어휘 밖이면
-    (예: 파생 로직이 실수로 다른 상태 문자열을 반환) MET 를 내지 않고
-    "허용 어휘 밖 처분" 으로 보고해야 한다."""
-    result = dict.fromkeys(tcs.D1_CONTRACT_SITE_NAMES, ("UNBOUND", "stub"))
-    result["engine"] = ("MET", "stub")
-    monkeypatch.setattr(tcs, "compute_d1_dispositions", lambda repo_root: (result, ()))
+    """처분값이 허용 어휘 밖이면(예: 파생 로직이 실수로 다른 상태 문자열을
+    반환) MET 를 내지 않고 "허용 어휘 밖 처분" 으로 보고해야 한다."""
+    stub = tcs.D1SiteRecord("keys", (("stub_key", "UNBOUND"),), "UNBOUND", "stub")
+    result = dict.fromkeys(tcs.D1_CONTRACT_SITE_NAMES, stub)
+    result["engine"] = tcs.D1SiteRecord("keys", (), "MET", "stub")
+    monkeypatch.setattr(
+        tcs,
+        "compute_d1_dispositions",
+        lambda repo_root, uncheckable_rows=None: (result, ()),
+    )
     write_corpus(tmp_path)
     ctx, findings = _run_ctx(tmp_path)
     rendered, _ = tcs.render_completion_status(ctx, findings)
@@ -4937,42 +5619,22 @@ def test_render_d0_5_not_met_when_disposition_value_out_of_vocabulary(
 def test_check_d1_finding_when_d1_sites_table_truncated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """신규(§E-vii) — ``check_d1`` 자신도 ``D1_SITES`` 형태를 신뢰하기 전에
-    확인한다: 표에서 항목 하나가 사라지면 rc 에 결합하는 D-1 위반이다."""
+    """``check_d1`` 자신도 ``D1_SITES`` 형태를 신뢰하기 전에 확인한다: 표에서
+    항목 하나가 사라지면 rc 에 결합하는 D-1 위반이다."""
     monkeypatch.setattr(tcs, "D1_SITES", tcs.D1_SITES[:-1])
     ctx = tcs.build_context(_REPO_ROOT)
     findings = tcs.check_d1(ctx)
     assert any(f.check_id == "D-1" and "불변식 위반" in f.message for f in findings)
 
 
-def test_d1_real_corpus_marketfeed_u6_registration_control() -> None:
-    """신규(§E-viii) — ``marketfeed``(UNCHK-026) 등재의 대조군: 실코퍼스는
-    clean 이고, 그 등재 행을 뺀 사본은 U-6 을 ``marketfeed`` 를 지목해
-    발화해야 한다(대조군 없는 «위반 0» 은 의견이다)."""
-    ctx = tcs.build_context(_REPO_ROOT)
-    assert tcs.check_d1(ctx) == []
-
-    ctx_without_026 = tcs.build_context(_REPO_ROOT)
-    assert ctx_without_026.uncheckable_rows is not None
-    ctx_without_026.uncheckable_rows = [
-        row for row in ctx_without_026.uncheckable_rows if row["id"] != "UNCHK-026"
-    ]
-    findings = tcs.check_d1(ctx_without_026)
-    u6_findings = [f for f in findings if f.check_id == "U-6"]
-    assert u6_findings, [str(f) for f in findings]
-    assert any("marketfeed" in f.message for f in u6_findings)
-
-
 # ---------------------------------------------------------------------------
 # 23. UNCHK-024 후속 처분 — resolver.py BarTimeProjection docstring shape
 #     (delay_bounds 4키 합성-결속 · max_age_bound UNBOUND 잔여 ·
 #     5필드 구조적 비대상 선언). resolver 사이트의 D-1 disposition 자체는
-#     [갱신, Codex verdict review-mtlo6mst-93vt2j finding 1] 22번 섹션의
-#     test_d1_real_corpus_dispositions_match_expected 가 UNDECIDED(혼합
-#     처분 — 실재 non-null 키 6개 VALUED + max_age_bound 1개 UNBOUND)를
-#     실측한다(예전엔 우선순위 접기로 UNBOUND 하나였다) — 이 섹션은 그
-#     혼합을 만드는 docstring 내용의 shape 를 실측 + mutation-control 로
-#     고정한다.
+#     [C4 갱신] 22번 섹션의 test_d1_real_corpus_dispositions_match_expected
+#     가 ``VALUED+UNBOUND``(6 VALUED + max_age_bound 1개 UNBOUND, decided)
+#     를 실측한다 — 이 섹션은 그 집합을 만드는 docstring 내용의 shape 를
+#     실측 + mutation-control 로 고정한다.
 # ---------------------------------------------------------------------------
 
 _DELAY_BOUNDS_COMPOSITE_KEYS = (
@@ -5060,15 +5722,13 @@ def test_d1_resolver_docstring_composite_key_removal_is_detectable() -> None:
 def test_d1_removing_unbound_key_from_declaration_flips_synthetic_site_to_valued(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """[flipped, Codex verdict review-mtlo6mst-93vt2j finding 1] resolver
-    사이트의 실 선언은 6개의 실재 non-null 키 + ``max_age_bound``(우주 밖)
-    하나로 구성된다. 예전엔 접기 우선순위(UNBOUND > BLOCKED > VALUED,
-    구 설계 규칙 5)가 ``max_age_bound`` 하나만으로 사이트 전체를 UNBOUND
-    로 고정했다 — 지금은 접지 않으므로 이 혼합은 UNDECIDED(혼합 처분)다.
-    선언에서 그 키를 빼면(우주 밖 키가 하나도 안 남아 균일 VALUED) 비로소
-    VALUED 로 판정된다. 이것이 ``test_d1_real_corpus_dispositions_match_
-    expected`` 가 관측하는 실 resolver 사이트의 UNDECIDED 를 무엇이
-    만드는지 보이는 대조군이다."""
+    """[flipped, C4] resolver 사이트의 실 선언은 6개의 실재 non-null 키 +
+    ``max_age_bound``(우주 밖) 하나로 구성된다. D-3 은 접지 않으므로 이
+    혼합은 결정됨(``VALUED+UNBOUND``)이다 — 이것이 ``test_d1_real_corpus_
+    dispositions_match_expected`` 가 관측하는 실 resolver/marketfeed
+    사이트의 처분을 무엇이 만드는지 보이는 대조군이다. 선언에서 그 키를
+    빼면(우주 밖 키가 하나도 안 남아 균일 VALUED) 비로소 단일-원소
+    ``VALUED`` 로 판정된다."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_TEST_SITES)
     _write_mini_profile(
         tmp_path,
@@ -5084,8 +5744,13 @@ def test_d1_removing_unbound_key_from_declaration_flips_synthetic_site_to_valued
         "stays UNBOUND.",
     )
     dispositions, _fail_closed = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions["d1probe"][0] == "UNDECIDED"
-    assert "혼합 처분" in dispositions["d1probe"][1]
+    record = dispositions["d1probe"]
+    assert record.kind == "keys"
+    assert record.cell == "VALUED+UNBOUND"
+    assert set(record.per_key) == {
+        ("MAX_time_transport_and_queue_uncertainty_ms", "VALUED"),
+        ("max_age_bound", "UNBOUND"),
+    }
 
     _write_d1_test_site(
         tmp_path,
@@ -5094,7 +5759,9 @@ def test_d1_removing_unbound_key_from_declaration_flips_synthetic_site_to_valued
         "``MAX_time_transport_and_queue_uncertainty_ms``.",
     )
     dispositions2, _fail_closed2 = tcs.compute_d1_dispositions(tmp_path)
-    assert dispositions2["d1probe"] == (
+    assert dispositions2["d1probe"] == tcs.D1SiteRecord(
+        "keys",
+        (("MAX_time_transport_and_queue_uncertainty_ms", "VALUED"),),
         "VALUED",
         "MAX_time_transport_and_queue_uncertainty_ms",
     )

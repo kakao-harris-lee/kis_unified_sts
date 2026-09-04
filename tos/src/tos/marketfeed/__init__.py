@@ -51,10 +51,23 @@ engine}; nothing imports marketfeed.
 
 ⚠ **Provisional; closes no EV** (design #32 §1.1). Three independent reasons: (a) production
 canonicalization is unresolved — every digest here rides ``ev-l1-provisional-0``; (b) this
-package carries **no VERIFICATION-PROFILE-002 bound of its own** — grep of ``tos/src/tos/marketfeed``
-finds no ``MAX_``/``MIN_``/``B_`` profile-key reference at all; the time coordinates it forwards
-come from an externally injected ``TimeCoordinateProjection`` (``resolver.py``) wired by its
-D-E3/D-E4 caller, not held here. Independent-reviewer designation (P0-3) is a register concern
+package's own source holds **no VERIFICATION-PROFILE-002 profile-key literal** — grep of
+``tos/src/tos/marketfeed`` finds no ``MAX_``/``MIN_``/``B_`` reference — but that is not the same
+claim as "no dependency" (independent review ``review-mtmg2lz7-88qdyb`` found the earlier "NONE"
+declaration here false and this paragraph corrects it, C4 lockstep). ``MarketFeedContextResolver``
+(``resolver.py:152-208``) is injected with a ``time_projection`` port
+(:class:`TimeCoordinateProjection`) and forwards the ``TimeAdmissionInputs`` it produces —
+concretely ``tos.backtest.resolver.BarTimeProjection`` — as ``DecisionTickPayload.time``. That
+producer binds ``future_tolerance`` to ``MAX_future_timestamp_tolerance_ms``,
+``maximum_consumer_age_ms`` to ``MAX_critical_input_consumer_receipt_age_ms``, and
+``delay_bounds`` to the sum of ``MAX_time_transport_and_queue_uncertainty_ms``,
+``MAX_clock_domain_conversion_uncertainty_ms``, ``MAX_time_source_precision_ms``, and
+``MAX_time_source_sequence_gap_ms``; ``max_age_bound`` carries no VERIFICATION-PROFILE-002 bound
+and stays UNBOUND (tracked as UNCHK-024 at the ``resolver`` site, unaffected by this correction).
+This package does not compute or own those bounds — it is the D-E2 consumption boundary through
+which the injected port's already-bound values reach the engine, not their producer — but §7.4
+D-1/D-4 (가) treat forwarding a bound-bearing type as this site's declared dependency regardless of
+who computes the values. Independent-reviewer designation (P0-3) is a register concern
 (``EVIDENCE-REGISTER-DEV.csv``), not a profile key, and no evidence-register row is scoped to
 ``tos.marketfeed`` to check it against; (c) this is a *model plus
 properties*, not the Context Integrity Service runtime that collects, assembles, and issues
@@ -69,7 +82,7 @@ the environment-injection point does not repeat it. Look-ahead is checked agains
 Each of those is a producer-honesty boundary this layer detects rather than enforces, and none of
 them is claimed as closed.
 
-VER-002-KEYS: NONE
+VER-002-KEYS: ``MAX_future_timestamp_tolerance_ms``, ``MAX_critical_input_consumer_receipt_age_ms``, ``MAX_time_transport_and_queue_uncertainty_ms``, ``MAX_clock_domain_conversion_uncertainty_ms``, ``MAX_time_source_precision_ms``, ``MAX_time_source_sequence_gap_ms``, ``max_age_bound``
 
 Public surface groups by module:
 
