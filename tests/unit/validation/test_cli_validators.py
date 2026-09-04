@@ -33,7 +33,11 @@ class TestValidateCSVFile:
 
         assert len(result) == 2
         assert "datetime" in result.columns
-        assert result["datetime"].dtype == "datetime64[ns]"
+        # pandas >= 2.2 infers non-nanosecond resolution (e.g. "datetime64[us]"
+        # on pandas 3.x) when parsing datetimes from CSV strings; the
+        # validator's contract is only "a datetime column", not a specific
+        # unit, so assert unit-agnostically.
+        assert pd.api.types.is_datetime64_any_dtype(result["datetime"])
 
     def test_missing_datetime_column(self, tmp_path):
         """Test validation fails when datetime column is missing."""
