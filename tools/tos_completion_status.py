@@ -3581,6 +3581,24 @@ D1_SITES: tuple[tuple[str, Path, str, str], ...] = (
     ("marketfeed", Path("tos/src/tos/marketfeed/__init__.py"), "module", ""),
 )
 
+# 계약이 고정한 7 이름 — ``D1_SITES`` 와 독립된 리터럴 상수(Codex verdict
+# review-mtlo6mst-93vt2j finding 3). 렌더러의 "정확히 7사이트 전부 판정"
+# 조건은 이 상수와 비교해야 한다: ``D1_SITES`` 자체에서 기대 집합을
+# 다시 만들면, 그 튜플에서 항목 하나를 지우는 회귀가 기대 집합도 함께
+# 줄여 6/6 을 MET 로 통과시킨다.
+D1_CONTRACT_SITE_NAMES: frozenset[str] = frozenset(
+    {
+        "backtest__init__",
+        "resolver",
+        "results",
+        "construction",
+        "records",
+        "engine",
+        "marketfeed",
+    }
+)
+D1_ALLOWED_DISPOSITIONS: frozenset[str] = frozenset({"VALUED", "BLOCKED", "UNBOUND"})
+
 # §7.4/D-1/D-2 — 의존 키 선언 문법(``VER-002-KEYS: ...``) 파싱.  구 산문
 # 판별(``not a VERIFICATION-PROFILE-002 key`` 류 정규식)은 폐지했다 — 그
 # 판별은 저작자 산문을 처분 입력으로 받아들이는 것이었고, §7.4 "저작자가
@@ -3676,9 +3694,6 @@ def _d1_scan_scope_for_universe_refs(
     return hits
 
 
-_D1_DISPOSITION_PRIORITY = ("UNBOUND", "BLOCKED", "VALUED")
-
-
 def _d1_classify_key(key: str, universe: dict[str, bool]) -> str:
     """단일 키 -> ``UNBOUND``(우주 밖) / ``BLOCKED``(null) / ``VALUED``
     (non-null)."""
@@ -3687,21 +3702,34 @@ def _d1_classify_key(key: str, universe: dict[str, bool]) -> str:
     return "BLOCKED" if universe[key] else "VALUED"
 
 
-def _d1_fold_key_dispositions(
+def _d1_site_disposition_from_keys(
     keys: tuple[str, ...], universe: dict[str, bool]
 ) -> tuple[str, str]:
-    """다중 키의 사이트-단위 접기 — ``UNBOUND`` > ``BLOCKED`` > ``VALUED``
-    (설계 규칙 5 — 계약 조항이 아니라 이 검사기의 접기 규칙이다; 에라타 후보
-    기록 (a) 참조) + 키별 근거(단일 키면 그 키 이름 그대로, 다중 키면 ``k:상태``
-    나열)."""
+    """다중 키의 사이트-단위 처분(설계 규칙 5 — 계약 조항이 아니라 이
+    검사기의 파생 규칙이다; 에라타 후보 기록 (a) 참조).
+
+    Codex verdict review-mtlo6mst-93vt2j finding 1 — 이전 구현은
+    ``UNBOUND > BLOCKED > VALUED`` 우선순위로 항상 사이트 하나에 정확히
+    하나의 처분을 «접었다». §7.4 는 단일 키 K 에 대해서만 VALUED/BLOCKED/
+    UNBOUND 를 정의하고, K 미공급은 UNDECIDED 다 — 여러 키를 하나로 접는
+    규칙 자체가 계약 어휘 밖이라, 그 우선순위는 완료값을 조용히 합성하는
+    우회로였다. 지금은 접지 않는다: 전 키의 처분이 같으면(우선순위 없이도
+    유일하게 정해지는 경우) 그 처분을 그대로 쓰고, 갈리면 계약이 다루지
+    않는 조합이므로 UNDECIDED(혼합 처분)로 멈춘다 — 운영자 에라타 처분
+    전까지 완료값을 만들지 않는다. 근거(단일 키면 그 키 이름 그대로, 다중
+    키면 ``k:상태`` 나열)는 접힘 여부와 무관하게 항상 키별 세부를 노출한다."""
     per_key = [(key, _d1_classify_key(key, universe)) for key in keys]
-    present = {disposition for _, disposition in per_key}
-    disposition = next(d for d in _D1_DISPOSITION_PRIORITY if d in present)
+    dispositions = {disposition for _, disposition in per_key}
     if len(per_key) == 1:
         basis = per_key[0][0]
     else:
         basis = "; ".join(f"{k}:{v}" for k, v in per_key)
-    return disposition, basis
+    if len(dispositions) == 1:
+        return next(iter(dispositions)), basis
+    return (
+        "UNDECIDED",
+        f"혼합 처분(§7.4 어휘 밖 · 운영자 에라타 처분 대기): {basis}",
+    )
 
 
 def _extract_d1_docstring(source: str, kind: str, target: str) -> str | None:
@@ -3805,11 +3833,18 @@ def _derive_d1_disposition(
         if hits:
             key, hit_path = min(hits)
             return "UNDECIDED", f"NONE 선언과 모순: {key} @ {hit_path}", True
+        # Codex verdict review-mtlo6mst-93vt2j finding 1 — NONE("의존 키
+        # 없음")은 §7.4 어휘 밖이다: 계약은 K 공급/미공급만 알고, "K 가
+        # 원래 없다"는 저작자 선언을 완료값(UNBOUND)으로 바꾸는 조항이
+        # 없다. 스캔은 그대로 유지한다 — NONE 자기신고와 실측이 모순되면
+        # 여전히 걸러야 하지만(위 hits 분기), 모순이 없다고 해서 그 자체가
+        # 완료 처분의 근거가 되지는 않는다.
         scope_desc = str(rel.parent if kind == "module" else rel)
         return (
-            "UNBOUND",
-            f"VER-002-KEYS: NONE — {scope_desc} {len(paths)}개 파일 스캔, "
-            "프로파일 키 참조 0",
+            "UNDECIDED",
+            f"VER-002-KEYS: NONE — §7.4 어휘 밖(키 미공급) · 운영자 에라타 "
+            f"처분 대기 · {scope_desc} {len(paths)}개 파일 스캔, 프로파일 "
+            "키 참조 0",
             True,
         )
 
@@ -3827,7 +3862,7 @@ def _derive_d1_disposition(
             return "UNDECIDED", f"CONTRAST 키가 프로파일 키가 아님: {key}", True
         if key not in body_literals:
             return "UNDECIDED", f"CONTRAST 키가 본문에 부재: {key}", True
-    disposition, key_basis = _d1_fold_key_dispositions(decl.keys, universe)
+    disposition, key_basis = _d1_site_disposition_from_keys(decl.keys, universe)
     basis = key_basis
     if decl.contrast:
         basis += "; CONTRAST: " + ", ".join(decl.contrast)
@@ -3889,6 +3924,70 @@ def compute_d1_dispositions(
     return result, tuple(fail_closed_sites)
 
 
+def _d1_site_table_invariant_violation() -> str | None:
+    """``D1_SITES`` 자체가 계약이 고정한 7 이름(``D1_CONTRACT_SITE_NAMES``)과
+    정확히 일치하는지 — ``None`` 이면 위반 없음.
+
+    Codex verdict review-mtlo6mst-93vt2j finding 3 — 렌더러의 "정확히 7사이트
+    전부 판정" 조건이 예전엔 ``D1_SITES`` 자체에서 기대 집합을 다시 만들어
+    비교했다. 그 튜플에서 항목 하나를 지우면 기대 집합도 함께 줄어 6/6 을
+    MET 로 통과시켰다 — 이 함수는 ``D1_SITES`` 를 계약이 고정한 상수와
+    독립적으로 대조해 그 회귀 자체를 잡는다. ``check_d1``(rc 결합) 과
+    ``_d1_completion_blockers``(렌더러) 양쪽에서 공유한다(§6.3.2 파생 로직
+    1벌 저작)."""
+    site_table_names = {name for name, _rel, _kind, _target in D1_SITES}
+    if site_table_names == D1_CONTRACT_SITE_NAMES and len(D1_SITES) == 7:
+        return None
+    missing = sorted(D1_CONTRACT_SITE_NAMES - site_table_names)
+    extra = sorted(site_table_names - D1_CONTRACT_SITE_NAMES)
+    return f"D1_SITES 불변식 위반: 부재 {missing} / 여분 {extra}"
+
+
+def _d1_completion_blockers(dispositions: Mapping[str, tuple[str, str]]) -> list[str]:
+    """D0-5 완료(§7.4/§11)를 막는 사유 전부 — 빈 리스트면 MET.
+
+    Codex verdict review-mtlo6mst-93vt2j finding 3 대응. 검사 순서(전부
+    보고 — 첫 위반에서 멈추지 않는다):
+
+    (a) ``D1_SITES`` 자체의 불변식(``_d1_site_table_invariant_violation``).
+    (b) ``dispositions`` 의 키 집합이 ``D1_CONTRACT_SITE_NAMES`` 와 정확히
+        일치 — 부재/여분을 따로 보고한다.
+    (c) 모든 처분값이 ``D1_ALLOWED_DISPOSITIONS``(VALUED/BLOCKED/UNBOUND)
+        중 하나 — UNDECIDED 는 완료를 막는 정상 상태라 별도 형식으로,
+        그 외 값은 "허용 어휘 밖 처분"으로 보고한다."""
+    blockers: list[str] = []
+
+    invariant_violation = _d1_site_table_invariant_violation()
+    if invariant_violation is not None:
+        blockers.append(invariant_violation)
+
+    disposition_names = set(dispositions)
+    missing_names = sorted(D1_CONTRACT_SITE_NAMES - disposition_names)
+    extra_names = sorted(disposition_names - D1_CONTRACT_SITE_NAMES)
+    if missing_names:
+        blockers.append(f"부재 {len(missing_names)}({', '.join(missing_names)})")
+    if extra_names:
+        blockers.append(f"여분 {len(extra_names)}({', '.join(extra_names)})")
+
+    undecided = sorted(
+        name
+        for name, (disposition, _basis) in dispositions.items()
+        if disposition == "UNDECIDED"
+    )
+    if undecided:
+        blockers.append(f"UNDECIDED {len(undecided)}({', '.join(undecided)})")
+
+    out_of_vocab = sorted(
+        f"{name}={disposition}"
+        for name, (disposition, _basis) in dispositions.items()
+        if disposition not in D1_ALLOWED_DISPOSITIONS and disposition != "UNDECIDED"
+    )
+    if out_of_vocab:
+        blockers.append("허용 어휘 밖 처분: " + ", ".join(out_of_vocab))
+
+    return blockers
+
+
 def _d1_site_lookup_tokens(site_name: str) -> tuple[str, ...]:
     """사이트 이름 -> §13 레지스터 매칭용 후보 리터럴(사이트 이름 자체 +
     D1_SITES 의 docstring 대상 식별자).  UNCHK-024 는 ``resolver`` 라는
@@ -3918,12 +4017,19 @@ def check_d1(ctx: CheckContext) -> list[Finding]:
       (Codex verdict review-mtljvycx-ouye7r finding 1).
     * U-6 — 그 외의(genuine) UNDECIDED 사이트가 §13 uncheckable 레지스터에
       개별 행으로(그 사이트 이름 또는 docstring 대상 식별자가 axis/reason
-      텍스트에 등장하는 행으로) 등재돼 있지 않으면 계약 위반."""
+      텍스트에 등장하는 행으로) 등재돼 있지 않으면 계약 위반.
+    * ``D1_SITES`` 불변식(Codex verdict review-mtlo6mst-93vt2j finding 3) —
+      이 표 자체가 계약이 고정한 7 이름과 어긋나면(항목 삭제/추가) rc 에
+      결합하는 D-1 위반이다. rc 밖(§11 렌더러)의 완료-표 미스매치와는
+      독립적으로, 검사 경로 자신도 이 표를 신뢰하기 전에 형태를 확인한다."""
+    findings: list[Finding] = []
+    invariant_violation = _d1_site_table_invariant_violation()
+    if invariant_violation is not None:
+        findings.append(Finding("D-1", invariant_violation))
     dispositions, fail_closed_sites = compute_d1_dispositions(ctx.repo_root)
     for name, (disposition, basis) in dispositions.items():
         ctx.observations.append(f"D0-5[{name}]={disposition} ({basis})")
 
-    findings: list[Finding] = []
     if fail_closed_sites:
         findings.append(
             Finding(
@@ -4154,8 +4260,16 @@ def render_completion_status(
     lines.append("")
     lines.append("| site | disposition | key/declaration |")
     lines.append("|---|---|---|")
-    for site_name, _rel, _kind, _target in D1_SITES:
-        disposition, basis = d1_dispositions[site_name]
+    # 계약이 고정한 7 이름을 기준으로 행을 만든다(``D1_SITES`` 가 아니라) —
+    # ``d1_dispositions`` 에 이름이 부재해도(불변식이 깨진 회귀) KeyError 로
+    # 죽지 않고 fail-closed 행을 낸다(Codex verdict review-mtlo6mst-93vt2j
+    # finding 3).
+    for site_name in sorted(D1_CONTRACT_SITE_NAMES):
+        entry = d1_dispositions.get(site_name)
+        if entry is None:
+            lines.append(f"| {site_name} | `—` | 처분 부재 |")
+            continue
+        disposition, basis = entry
         lines.append(f"| {site_name} | `{disposition}` | {_md_escape_cell(basis)} |")
     lines.append("")
 
@@ -4164,26 +4278,16 @@ def render_completion_status(
     for check_id in CONTRACT_CHECKS:
         state = "MET" if _check_is_clean(check_id, findings) else "NOT_MET"
         lines.append(f"- `{check_id}`: `{state}`")
-    d1_site_names = {site_name for site_name, _rel, _kind, _target in D1_SITES}
-    d1_missing = sorted(d1_site_names - set(d1_dispositions))
-    d1_undecided = sorted(
-        site_name
-        for site_name, (disposition, _basis) in d1_dispositions.items()
-        if disposition == "UNDECIDED"
-    )
     # 완료 기준(v1.8): 7개 사이트 전부가 VALUED/BLOCKED/UNBOUND 중 하나를
-    # 배정받았을 때만 MET — 처분 키 집합이 D1_SITES 7 이름과 정확히
-    # 일치하지 않는 경우(구조상 지금은 불변식으로 항상 일치하지만, 그
-    # 불변식이 깨지는 방향의 회귀를 이 문 하나로 잡는다)도 차단한다.
-    if not d1_missing and not d1_undecided:
+    # 배정받았을 때만 MET. 기대 집합은 ``D1_SITES``(가변 상수)가 아니라
+    # 계약이 고정한 ``D1_CONTRACT_SITE_NAMES`` — ``D1_SITES`` 에서 항목을
+    # 지우는 회귀가 기대 집합도 함께 줄여 축소 우주로 MET 를 통과시키는
+    # 경로를 막는다(Codex verdict review-mtlo6mst-93vt2j finding 3).
+    d1_blockers = _d1_completion_blockers(d1_dispositions)
+    if not d1_blockers:
         lines.append("- `D0-5`: `MET`")
     else:
-        parts = []
-        if d1_undecided:
-            parts.append(f"UNDECIDED {len(d1_undecided)}({', '.join(d1_undecided)})")
-        if d1_missing:
-            parts.append(f"부재 {len(d1_missing)}({', '.join(d1_missing)})")
-        lines.append(f"- `D0-5`: {' / '.join(parts)} → D0-5 완료 차단")
+        lines.append(f"- `D0-5`: {' / '.join(d1_blockers)} → D0-5 완료 차단")
     lines.append(
         "- `U-17`: requires a live evaluation at completion-judgment time; "
         "this generated document does not perform that evaluation. "

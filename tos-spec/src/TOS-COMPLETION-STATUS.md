@@ -57,19 +57,19 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
 - `ref_reuse_top=[('tos/src/tos/hag/predicates.py', 8), ('tos/src/tos/capsule/predicates.py', 7), ('tos/src/tos/spg/predicates.py', 6), ('tos/src/tos/sbr/predicates.py', 5), ('tos/src/tos/evidence/predicates.py', 4)]`
 - `profile_dependent_blocked=['BC-EV-003', 'ECO-EV-012', 'IOM-EV-008']`
 - `closable_no_rows=1`
-- `blank_normative_ref_rows=21`
+- `blank_normative_ref_rows=22`
 - `imprecise_owner_track=9`
 - `unassigned_owner_rows=0`
 - `U-13 fwd_a_excluded_rows=['STATE-EV-004']`
 - `U-13 remainder_rows=[]`
 - `A-2: ARCHITECTURE-GATE-STATUS.md 에 기계 파싱 가능한 권한 축-표기 없음(실측 확인 — §6.4 대조 대상에서 제외)`
 - `D0-5[backtest__init__]=UNBOUND (dsl_evaluation_budget_steps)`
-- `D0-5[resolver]=UNBOUND (MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND)`
+- `D0-5[resolver]=UNDECIDED (혼합 처분(§7.4 어휘 밖 · 운영자 에라타 처분 대기): MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND)`
 - `D0-5[results]=UNBOUND (dsl_evaluation_budget_steps)`
 - `D0-5[construction]=UNBOUND (risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND)`
 - `D0-5[records]=UNBOUND (risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; lot_rounding:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND)`
 - `D0-5[engine]=UNBOUND (dsl_evaluation_budget_steps; CONTRAST: MAX_dsl_evaluation_ms)`
-- `D0-5[marketfeed]=UNBOUND (VER-002-KEYS: NONE — tos/src/tos/marketfeed 6개 파일 스캔, 프로파일 키 참조 0)`
+- `D0-5[marketfeed]=UNDECIDED (VER-002-KEYS: NONE — §7.4 어휘 밖(키 미공급) · 운영자 에라타 처분 대기 · tos/src/tos/marketfeed 6개 파일 스캔, 프로파일 키 참조 0)`
 
 ## Phase-0 unchecked-axis register (full exposure, U-3)
 
@@ -99,18 +99,19 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
 | UNCHK-020 | normative_ref 공란·무관 인용의 저작자 재량 | 기계는 인용의 해석 가능성만 본다(T-66). 조항을 대지 못하면 공란이고, 공란이면 blocks_gate 의무가 사라진다 — 저작자가 공란을 골라 차단을 피할 수 있고, 반대로 무관한 실재 조항을 넣어도 검사를 통과한다 (심판 high) | evidence별 "이 조항이 이 축을 요구하는가"의 수용 기준 — UNCHK-007·015와 같은 의미 판정 계열 | Phase 2-5 | TOS-COMPLETION-STATUS |  | YES |  |
 | UNCHK-024 | BarTimeProjection 시간 bound 필드의 VER-002 키 결속 | 코드 어디에도 필드↔키 결속 표면이 없고 동형 후보 다수라 키 공급이 추측이 된다 (§7.4 D-1). 부분 해소(2026-09-02, 갱신) — 9필드 전부 처분 확정: ① 2필드(future_tolerance·maximum_consumer_age_ms)는 1:1 키 결속 확정: future_tolerance↔MAX_future_timestamp_tolerance_ms, maximum_consumer_age_ms↔MAX_critical_input_consumer_receipt_age_ms(둘 다 값 보유). ② delay_bounds는 4키 합성-멤버십 결속(1:1보다 약한 결속): MAX_time_transport_and_queue_uncertainty_ms + MAX_clock_domain_conversion_uncertainty_ms + MAX_time_source_precision_ms + MAX_time_source_sequence_gap_ms(ADR-002-008 §9 — freshness_verdict 에서 무순서 합산). ③ 5필드(source_age·snapshot_age_bound·interval_width·boundary_lag·health_state)는 register §8-1 미완 범주가 아니라 애초에 MAX_*/MIN_* 문턱이 될 수 없는 관측값/파생 합성/기준틀 구성 파라미터/열거형이라 구조적으로 프로파일 비대상 선언(design #33 §3.3). 전부 resolver.py BarTimeProjection docstring 리터럴 결속/선언. ④ 잔여 1필드(max_age_bound)만 register §8-1 trustworthy-time bound 범주 미완이라 결속 불가 — UNBOUND 유지. | register §8-1 trustworthy-time bound 키 신설·범주 확정(운영자/P0-2 소관) — 잔여 1필드(max_age_bound)에만 해당; 나머지 8필드는 1:1/합성 결속 또는 구조적 비대상 선언으로 처분 완료 | Phase 1 | TOS-COMPLETION-STATUS |  | YES |  |
 | UNCHK-025 | VER-002 프로파일 밖 bound 값의 소관 아티팩트 검증 | SizingBound 6필드(소관 Order Construction Policy RFC-002 §9.1)·dsl_evaluation_budget_steps(소관 EngineConfiguration/DCE-INV-007)는 프로파일 검사 우주 밖 — 소관 아티팩트의 비준·검증은 별도 축 | Order Construction Policy 비준 및 결속 검사 신설 | Phase 2-5 | TOS-COMPLETION-STATUS |  | YES |  |
+| UNCHK-026 | marketfeed 사이트의 D-1 처분 — 의존 키 부재(NONE) 는 §7.4 어휘 밖 | 모듈 tos/src/tos/marketfeed/__init__.py 는 VER-002-KEYS: NONE 을 선언한다. 검사기의 실측 스캔(패키지 디렉터리 재귀 6개 파일)은 프로파일 키 리터럴 참조 0건을 찾아 NONE 선언과 모순되지 않는다. 그러나 §7.4 는 저작자가 공급한 단일 키 K 에 대해서만 VALUED/BLOCKED/UNBOUND 를 정의하고, K 미공급은 UNDECIDED 다 — "의존 키가 원래 없다"(NONE) 는 사례를 다루는 어휘가 계약에 없어, frozen 계약만으로는 이 사이트를 판정할 수 없다. 운영자 에라타 처분(D1-DERIVATION-ERRATUM-CANDIDATE.md (b))까지 UNDECIDED 로 유지한다. Codex verdict review-mtlo6mst-93vt2j finding 1 로 식별됨. | 계약 에라타 처분(운영자) — §7.4 에 «의존 키 없음(NONE)» 어휘 도입 여부 | Phase 0 | TOS-COMPLETION-STATUS |  | YES |  |
 
 ## D0-5 disposition table (7 rows, §7.4)
 
 | site | disposition | key/declaration |
 |---|---|---|
 | backtest__init__ | `UNBOUND` | dsl_evaluation_budget_steps |
-| resolver | `UNBOUND` | MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND |
-| results | `UNBOUND` | dsl_evaluation_budget_steps |
 | construction | `UNBOUND` | risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND |
-| records | `UNBOUND` | risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; lot_rounding:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND |
 | engine | `UNBOUND` | dsl_evaluation_budget_steps; CONTRAST: MAX_dsl_evaluation_ms |
-| marketfeed | `UNBOUND` | VER-002-KEYS: NONE — tos/src/tos/marketfeed 6개 파일 스캔, 프로파일 키 참조 0 |
+| marketfeed | `UNDECIDED` | VER-002-KEYS: NONE — §7.4 어휘 밖(키 미공급) · 운영자 에라타 처분 대기 · tos/src/tos/marketfeed 6개 파일 스캔, 프로파일 키 참조 0 |
+| records | `UNBOUND` | risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; lot_rounding:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND |
+| resolver | `UNDECIDED` | 혼합 처분(§7.4 어휘 밖 · 운영자 에라타 처분 대기): MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND |
+| results | `UNBOUND` | dsl_evaluation_budget_steps |
 
 ## Phase 0 termination-condition overview (section 11)
 
@@ -140,6 +141,6 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
 - `A-2`: `MET`
 - `A-3`: `MET`
 - `D-1`: `MET`
-- `D0-5`: `MET`
+- `D0-5`: UNDECIDED 2(marketfeed, resolver) → D0-5 완료 차단
 - `U-17`: requires a live evaluation at completion-judgment time; this generated document does not perform that evaluation. Unevaluated counts as unmet (fail-closed).
 - `RES-1`: `MET` — `STATE-EV-004` is excluded from the `FWD-a` termination condition by the checker-derived exclusion list (`U-13 fwd_a_excluded_rows` above; contract U-13-e).

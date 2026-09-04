@@ -56,3 +56,31 @@ bound...")은 여전히 사람이 읽는 근거 문서로 docstring 에 남아 �
 운영자가 검토할 수 있도록 별도로 기록한 것뿐이다. 계약 개정 여부와 시점은
 운영자 소관이다. 이 기록은 Codex verdict `review-mtljvycx-ouye7r` finding 2
 권고의 이행이다.
+
+## (e) 재심 처분 (2026-09-04)
+
+Codex 재심 `review-mtlo6mst-93vt2j` finding 1 은 (a)의 다중 키 접기 규칙과
+(b)의 `NONE` 규칙 둘 다 §7.4 어휘 밖이며, 운영자 채택 전에는 완료값을
+만들 수 없다고 판정했다(채택 3/3 — 오케스트레이터 수용검사 기록
+`.omc/review/20260904-001114/verdict.md`). 검사기는 이제 아무것도 접지
+않는다:
+
+- 사이트 하나가 여러 키에 걸쳐 있어도 그 키들의 처분이 전부 같으면
+  (우선순위 없이 유일하게 정해지는 경우) 그 처분을 그대로 사이트 처분으로
+  쓴다 — `backtest__init__`/`results`/`construction`/`records`/`engine` 은
+  전부 이 경로로 여전히 균일 `UNBOUND` 다.
+- 키들의 처분이 갈리면(`resolver`: 실재 non-null 키 6개 VALUED + 
+  `max_age_bound` 1개 UNBOUND) `UNDECIDED`(혼합 처분)로 멈춘다.
+- `NONE` 선언은(`marketfeed`) 실측 스캔이 모순을 찾지 못해도 그 자체로는
+  완료 처분의 근거가 되지 않는다 — `UNDECIDED`(§7.4 어휘 밖)로 유지된다.
+  스캔은 `NONE` 자기신고와의 모순 여부를 걸러내는 용도로만 남는다.
+
+실측 효과: `resolver` + `marketfeed` 가 `UNDECIDED` 로 전환되어 `D0-5` 는
+`NOT MET`(2 UNDECIDED)이 된다. `marketfeed` 는 `UNCHK-026` 으로 신규 등재했고
+`resolver` 는 기존 `UNCHK-024` 가 이미 다루고 있어 U-6 은 여전히 clean 이다.
+`MET` 복원은 운영자의 계약 에라타 처분(§7.4 에 `NONE` 어휘 도입 및/또는
+다중 키 처분 규칙 도입)으로만 가능하다 — 계약 본문은 이번에도 편집하지
+않았다.
+
+참고: `UNCHK-024`(PR #640)가 등재한 `max_age_bound` `UNBOUND` 는 이 에라타의
+근거 자료이지 §7.4 규칙의 확장은 아니다 — 위 (a) 의 부수 실측 문단과 같다.
