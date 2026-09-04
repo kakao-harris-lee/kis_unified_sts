@@ -204,7 +204,10 @@ convention은 금지다(재사용 분석 S4: convention 순수성은 이미 실�
    파싱하여 (a) 최상위 import가 §3.2 허용목록에 없으면 실패, (b) §3.2 금지
    stdlib 직접 import 검출, (c) `os.environ`/`os.getenv` 사용 검출(C2), (d)
    `importlib.import_module`/`__import__`/`exec`/`eval` 검출(동적 import 우회
-   차단), (e) repo 전체 스캔으로 tos/ 밖 파일의 `import tos` 검출(R-역방향).
+   차단), (e) repo 전체 스캔으로 tos/ 밖 파일의 `import tos` 검출(R-역방향),
+   (f) 심볼릭 링크의 부분트리가 어느 방향으로든 tos/ 경계와 교차하면 위반
+   (fail-closed — 끊어진 링크 포함, `tos/` 자신도 심볼릭 링크일 수 없다,
+   §6.1 2026-09-04 상세).
 2. **② import-linter (2차, 내부 금지 패키지의 전이 방어)** — repo 루트
    `.importlinter`에 forbidden contract: source `tos` → forbidden `shared.execution`,
    `shared.kis`, `shared.streaming`, `shared.llm`, `shared.storage`,
@@ -343,6 +346,89 @@ ADR-002-007/025 게이트를 통해서만, 별도 비준으로 추가된다. 그
     차단), AST `SHARED_ALLOWED`에서 `shared.config` 제거(layer① 직접 차단). 코드
     리뷰 발견(설계 #2 Phase-1 구현 리뷰). 정책 로딩은 설계 #2 §0.3대로 pyyaml
     단일 수단.
+  - 2026-09-04: `tools/tos_firewall_check.py`의 순방향 스캔(§3.3-①)이 개발자가
+    `cd tos && uv sync`를 실행하면 생성되는 gitignored 최상위 `tos/.venv/`까지
+    걸어 들어가 site-packages를 대량 오탐 위반으로 보고하던 결함을 수정 —
+    최상위 `tos/.venv/` 트리만 제외한다(`.venv`는 유효한 Python 식별자가 아니므로
+    패키지 경로 구성요소가 될 수 없어 최상위 한정 배제는 우회 위험이 없다).
+    디렉터리 이름 기준 임의 깊이 배제(역방향 스캔의 `_REVERSE_SCAN_PRUNE`을
+    그대로 모사)는 Codex 리뷰에서 기각됨 — `node_modules`·`__pycache__`는 유효한
+    식별자라 그 이름의 실제 패키지(`tos/src/tos/node_modules/`)가 있으면 A-D
+    규칙에서 조용히 누락되어 방화벽 자체를 우회하는 구멍이 되기 때문.
+  - 2026-09-04: 순방향 스캔의 기존 `__pycache__` 디렉터리 스킵도 같은 사유로
+    제거 — `__pycache__` 역시 유효한 Python 식별자라 그 이름의 실제 패키지가
+    있으면 A-D 규칙에서 우회당한다(Codex 재리뷰). 실제 컴파일 캐시는 `.pyc`만
+    담으며 `*.py` glob에 애초에 걸리지 않으므로 별도 배제가 불필요하다.
+  - 2026-09-04: 역방향 스캔(`_walk_repo_py`, rule e)의 이름 기준 임의 깊이
+    배제(`_REVERSE_SCAN_PRUNE = {"tos", ".git", ".venv", "node_modules",
+    "__pycache__", ".omc", ".history"}`)도 같은 우회 부류로 판명되어 제거 —
+    `tos`·`node_modules`·`__pycache__`는 유효한 식별자라 `services/tos/x.py`나
+    `shared/node_modules/x.py`의 `import tos`가 rule e에서 조용히 누락되면서도
+    실제로는 import 가능했다(Codex 재리뷰). 1차 대체안인 `isidentifier()` 술어
+    (유효한 Python 식별자가 아닌 디렉터리만 임의 깊이로 배제)도 Codex 재재심에서
+    기각됨 — §3.2 R-역방향은 tos/ 밖 **모든** `.py`를 스캔하라고 요구하는데,
+    `docs/reviews/phase0-completion-contract/probe.py` 같은 비식별자 디렉터리
+    아래 스크립트도 경로로 실행되므로 디렉터리 이름이 하이픈·점을 포함한다는
+    사실 자체는 import 불가능성을 의미하지 않는다. 최종 설계: 명시적 루트
+    집합만 저장소 루트 기준 경로 동일성으로 배제(임의 깊이·이름 매칭 전부
+    금지) — VCS/생성물/gitignore 루트(`.git`·`.venv`·`.omc`·`.history`) +
+    저장소 최상위 `tos/`(순방향 스캔 영역, 이름이 아니라 경로 동일성) +
+    실측 후 추가된 두 벌크 루트: `open-trading-api/`(gitignored·미추적·KIS
+    샘플코드 클론·`.py` 12,247개·`import tos` 0건 — 실측 wall time ~7.7s의
+    지배적 비용) · `strategy-builder-ui/node_modules`(gitignored npm 벤더
+    트리·서브디렉터리 2995개 — 단 `.py` 0개가 아니라 실측 1개[벤더 패키지의
+    부속 Python 브리지 스크립트, `import tos` 없음]이므로 "Python 없음"이
+    아니라 명시적 스코프 트레이드오프). 프루닝 직후 1차 실측 ~1.3s(당시
+    기준 — 이후 라운드에서 규칙 S·git 프로브 등이 추가됨에 따라 갱신 필요;
+    2026-09-04 최신 실측은 ~1.3s user / ~1.6s wall, 3회 반복 측정).
+    **재재재심(Codex re-review #7)에서 프루닝 자체의 잔여 결함 적발**: `git
+    add -f`는 gitignore된 프루닝 루트 아래 파일도 강제 추적할 수 있고, CI는
+    그 파일을 실체화하지만 파일시스템 워크는 디렉터리를 아예 내려가지 않으므로
+    rule e가 못 본다(`open-trading-api/x.py`를 `git add -f`한 뒤 `import tos`를
+    넣는 시나리오로 실증). 수정: `_walk_repo_py`가 프루닝된 파일시스템 워크에
+    **`git ls-files`로 얻은, `tos` 이외 프루닝 루트 아래 git 추적 `.py` 전체의
+    합집합**을 반환하도록 변경(`tos`는 여전히 질의 자체에서 제외 — 순방향 스캔
+    소관). git 저장소가 아니면(테스트 fixture의 `tmp_path`) 합집합 조회를 조용히
+    생략하고, 저장소인데 `git ls-files`가 실패하면 조용히 넘어가지 않고
+    `RuntimeError`로 하드 실패한다(fail-closed). **집행 불변식**: rule e = 프루닝된
+    파일시스템 워크 ∪ `tos`를 제외한 모든 프루닝 루트 아래 git 추적 `.py` 전체 —
+    따라서 프루닝이 숨길 수 있는 것은 **미추적** 파일뿐이며, 미추적 파일은 애초에
+    CI에 도달할 수 없다. 위 "오늘 시점 추적 파일 0건" 실측은 배경 맥락일 뿐, 불변식
+    자체가 방어 근거다. **재재재재심(Codex re-review #8)**: 경계 판정은 어디까지나
+    **어휘적(lexical) 경로**로만 이루어지며 심볼릭 링크 해소(`.resolve()`) 결과로는
+    결코 판정하지 않는다 — 그래야 심볼릭 링크가 어느 방향으로도 tos/ 경계를
+    "옮길" 수 없다(tos/ 밖 심볼릭 링크가 tos/ 안을 가리켜도 rule e 판정은 그
+    링크 자신의 경로 기준이며, 위반 보고 경로도 링크의 타깃이 아니라 링크 자신을
+    가리킨다). **재재재재재심(Codex re-review #9)**: 디렉터리 심볼릭 링크는
+    `os.walk(followlinks=False)`가 애초에 내려가지 않고 `git ls-files`도 그
+    링크가 가리키는 내용물까지 나열하지 않으므로, 순회로는 경계 양쪽 어느
+    스캔도 그 너머를 볼 수 없다 — 이를 순회로 해결하려 하지 않고, **신규 규칙
+    S(TOS-FW-S)**로 "경계를 넘는 심볼릭 링크(파일이든 디렉터리든, 워크로
+    발견되든 git 추적으로 발견되든)" 자체를 금지한다: 판정은 "어느 쪽인가"가
+    아니라 **부분트리 교집합**이다(Claude 측 리뷰, 2026-09-04 — 최초 구현은
+    tos/ 밖 링크가 tos/ 의 **조상**을 가리키는 경우[`shared/up -> 저장소
+    루트`]를 놓쳤다: 저장소 루트도 "밖"이라 같은 쪽으로 오판했지만, 그
+    조상의 부분트리는 tos/ 를 포함하므로 `shared.up.tos.src.tos` 로 커널에
+    도달 가능하다). 최종 판정: tos/ 밖 링크는 타깃이 tos_dir 자신·그 자손·
+    또는 **조상**(부분트리가 tos_dir 에 닿는 경우) 중 하나면 위반이고,
+    tos/ 안 링크는 타깃의 부분트리가 tos_dir 부분트리에 완전히 포함되지
+    않으면(조상 포함) 위반이다. 타깃을 판별할 수 없는 (끊어진) 링크도
+    위반으로 취급한다(fail-closed). **같은 리뷰가 두 번째 구멍도 적발**:
+    `tos` 자기 자신이 심볼릭 링크인 경우 — 역방향 규칙 S 루프도 정방향
+    미러도 구조적으로 `tos_dir` 자기 자신은 검사하지 못했고(전자는 그것을
+    "tos/ 안"으로 건너뛰고 후자는 애초에 tos_dir 를 walk 의 뿌리로 삼으므로),
+    구 `run_checks` 는 정방향 스캔 전체(a-d 규칙 + 정방향 S 미러)를
+    `tos_dir.is_dir()` 에 게이팅해 끊어진 `tos` 링크 하나로 그 전부가 조용히
+    사라지고 PASS 를 냈다. 수정: `tos/` 는 절대 심볼릭 링크가 될 수 없으며,
+    `run_checks` 최초에 무조건 확인한다 — 파일시스템(`os.path.islink`)과 git
+    색인(추적된 `120000` 모드) 양쪽을 fail-closed 로 검사하고, 심볼릭 링크나
+    부재/비-디렉터리 상태는 항상 가시적인 실패로 보고하며 침묵하는 PASS를
+    내지 않는다.
+  - 2026-09-04: `tos/pyproject.toml`의 `numpy` 핀을 `2.4.0`에서 `2.4.1`로 변경 —
+    PyPI가 `2.4.0`을 "Backward compatibility bug" 사유로 yank하여 신규
+    설치/lock이 더 이상 그 버전을 받을 수 없게 됨. 모노레포 루트 `.venv`
+    actual도 동일 버전으로 lockstep 갱신(§3.2 미러링 요건), `tos/uv.lock`
+    재생성.
 
 ### 6.2 repo 분리(전략 C) 재검토 트리거 — 아래 중 하나라도 발생 시
 

@@ -15,8 +15,10 @@ precondition of the tests.
 
 ⚠ This directory is **outside** ``tos/``. The firewall's forward rules (allowlist /
 forbidden stdlib / ``os.environ``) do not apply here — ``subprocess`` is legitimate —
-but the **reverse** rule TOS-FW-R does: ``tools/tos_firewall_check.py`` prunes only a
-directory literally named ``tos`` (``_REVERSE_SCAN_PRUNE``, line 114-116), so nothing
+but the **reverse** rule TOS-FW-R does: ``tools/tos_firewall_check.py``'s
+``_walk_repo_py`` prunes ONLY an explicit set of repo-root-relative VCS/generated
+roots plus the repo-root ``tos/`` directory (each matched by resolved-path identity,
+never by name or at any depth); ``tests/tos_l3`` is none of those roots, so nothing
 here may ``import tos``. That prohibition is not an inconvenience, it is the design's
 structural oracle-independence guarantee (§5.3 / O-3).
 """
