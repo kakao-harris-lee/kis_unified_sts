@@ -3883,12 +3883,22 @@ _D1_NO_DEPENDENCY_CLAIM_SENTENCE = (
 _D1_REVIEWED_AT_HEAD_RE = re.compile(r"[0-9a-f]{40}")
 
 
-def _d1_no_dependency_site_token_re(site_id: str) -> re.Pattern[str]:
-    """D-4 (라) — claim 안의 canonical ``site_id`` 를 **단어 경계 정확
-    일치**로만 인정한다. ``resolverx``/``d1probex`` 류 부분문자열은
-    앞뒤 문맥 문자([A-Za-z0-9_])가 이어 붙어 있어 이 패턴에 걸리지
-    않는다(56차가 §13 axis 에 쓴 것과 같은 부분문자열-금지 원리)."""
-    return re.compile(rf"(?<![A-Za-z0-9_]){re.escape(site_id)}(?![A-Za-z0-9_])")
+def _d1_no_dependency_claim_canonical(site_id: str) -> str:
+    """D-4 (마) — ``claim`` 필드가 만족해야 하는 **단일 결정적 정본
+    형식**. 계약 (마) 본문은 claim 의 «내용»만 고정한다(site_id 와 위
+    문장) — 이 함수는 그 내용을 하나의 byte-exact **표면** 형식으로
+    못박는다: ``f"{site_id} — {_D1_NO_DEPENDENCY_CLAIM_SENTENCE}"``
+    (site_id 뒤 정확히 한 칸 + U+2014 EM DASH(``—``) + 정확히 한 칸 +
+    지정 문장, 그 앞뒤 잉여 텍스트 없음).
+
+    v2.22 에라타 55차 · Codex 레인 A 재심 #5(review-mtmlkbm4-t1ovxs)
+    finding 1 — 개정 전 구현은 «site_id 단어-경계 존재» 와 «지정 문장
+    부분문자열 존재» 를 별도 논리곱으로 검사해, ``resolver — 다음 주장은
+    거짓이다: <지정 문장>`` 같은 부정 포장 claim 이나 기대 site_id 외의
+    canonical site_id 를 함께 담은 claim 도 두 조건을 각각 만족시켜
+    통과시켰다. 이 함수가 돌려주는 정본과 claim 전체값을 byte-for-byte
+    비교하면(정규화 없음) 그 두 우회로가 모두 불일치가 된다."""
+    return f"{site_id} — {_D1_NO_DEPENDENCY_CLAIM_SENTENCE}"
 
 
 def _d1_u6prime_axis(site_id: str) -> str:
@@ -4010,17 +4020,26 @@ def _d1_no_dependency_record_state(
     재심 #4 finding 1: 개정 전 구현은 adjudicator/verdict/path/digest 만
     보고 ``site_id in claim`` 부분문자열만 확인해, ``job_id``/
     ``countersigned_by``/``reviewed_at_head`` 부재나 claim 의 부분문자열
-    site_id·반대 의미 문장도 통과시켰다. 이제 아래 순서로 전부 확인한다 —
-    하나라도 미충족이면 그 필드를 명시한 채 즉시 거부한다(호출자가
-    ``record_detail`` 을 U-6′ finding 에 그대로 싣는다):
+    site_id·반대 의미 문장도 통과시켰다. 그 뒤 개정(재심 #4 대응)은
+    «site_id 단어-경계 존재» 와 «지정 문장 부분문자열 존재» 를 별도
+    논리곱으로 만들었으나, 재심 #5(review-mtmlkbm4-t1ovxs) finding 1 이
+    다시 뚫었다 — 두 술어가 독립이라 ``resolver — 다음 주장은 거짓이다:
+    <지정 문장>`` 같은 부정 포장 claim 이나 기대 site_id 외의 canonical
+    site_id 를 함께 담은 claim 도 각각의 조건은 만족시켜 통과했다. 이제
+    아래 순서로 전부 확인한다 — 하나라도 미충족이면 그 필드를 명시한 채
+    즉시 거부한다(호출자가 ``record_detail`` 을 U-6′ finding 에 그대로
+    싣는다):
     (1) adjudicator 허용 집합 (2) verdict == approve (3) reviewed_plan_paths
     == 파생 범위 (4) reviewed_scope_digest == 재계산값 (5) reviewed_at_head
     실재 + 40-hex(비결속 provenance 지만 (마)가 요구하는 필드 자체는 실재
     의무) (6) adjudicator 별 provenance 필드 — codex 는 ``job_id``, operator
     는 ``countersigned_by``(다른 adjudicator 의 필드만 있으면 미충족) (7)
-    claim — canonical site_id **단어 경계 정확 일치**(부분문자열·다른
-    site_id 이름 모두 거부) **그리고** 지정 문장의 **byte-equal 부분문자열**
-    (정규화·반대 의미 금지)."""
+    claim — ``_d1_no_dependency_claim_canonical(site_id)`` 정본과
+    **claim 전체값의 byte-for-byte 완전 일치**(정규화 없음 · 부분문자열도
+    잉여 접두/접미도 허용하지 않는다). 계약 (마) 본문은 claim 의 «내용»만
+    고정한다(site_id 와 위 문장) — 이 함수가 그 내용에 대한 **단일
+    결정적 표면 형식**을 못박아, «두 조건의 독립 만족」이라는 우회 형태
+    자체를 없앤다."""
     stamp_dir = _d1_locate_no_dependency_record_stamp(repo_root, site_id)
     if stamp_dir is None:
         return (
@@ -4071,16 +4090,12 @@ def _d1_no_dependency_record_state(
     claim = doc.get("claim")
     if not isinstance(claim, str):
         return False, "claim 부재"
-    if not _d1_no_dependency_site_token_re(site_id).search(claim):
+    expected_claim = _d1_no_dependency_claim_canonical(site_id)
+    if claim != expected_claim:
         return (
             False,
-            f"claim 에 canonical site_id 단어-경계 정확 일치 부재: {site_id!r}",
-        )
-    if _D1_NO_DEPENDENCY_CLAIM_SENTENCE not in claim:
-        return (
-            False,
-            "claim 에 지정 문장(§7.4 D-4 (마)) byte-equal 부재 — "
-            "반대 의미/다른 문장으로는 미충족",
+            f"claim 정본 불일치(§7.4 D-4 (마)) — 기대: {expected_claim!r}, "
+            f"실제: {claim!r}",
         )
     return True, f"독립 리뷰 기록 확인됨: {rel}"
 

@@ -5692,7 +5692,8 @@ def test_d1_none_declaration_claim_substring_site_id_is_undecided_control_9f(
 ) -> None:
     """대조군 ⑨-f(재심 #4 finding 1) — claim 이 ``noneprobe`` 를
     부분문자열로만 담은 ``noneprobex`` 류면 red(옛 ``site_id in claim``
-    부분문자열 검사가 통과시켰던 자리)."""
+    부분문자열 검사가 통과시켰던 자리). C6(재심 #5) 이후는 단일 정본
+    완전일치 검사가 이를 «claim 정본 불일치» 로 거부한다."""
     _setup_noneprobe_no_dependency_fixture(
         tmp_path,
         monkeypatch,
@@ -5703,7 +5704,7 @@ def test_d1_none_declaration_claim_substring_site_id_is_undecided_control_9f(
     )
     record, findings = _noneprobe_dispositions(tmp_path)
     assert record.cell == "UNDECIDED"
-    assert "site_id" in record.basis
+    assert "claim 정본 불일치" in record.basis
     assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
 
 
@@ -5712,7 +5713,7 @@ def test_d1_none_declaration_claim_names_another_site_is_undecided_control_9g(
 ) -> None:
     """대조군 ⑨-g — claim 이 다른 canonical site_id(``engine``)를 이름하고
     ``noneprobe`` 는 전혀 등장하지 않으면 red(다른 사이트 심사로는 이
-    사이트를 판정할 수 없다)."""
+    사이트를 판정할 수 없다). C6 이후는 «claim 정본 불일치» 로 거부한다."""
     _setup_noneprobe_no_dependency_fixture(
         tmp_path,
         monkeypatch,
@@ -5723,7 +5724,7 @@ def test_d1_none_declaration_claim_names_another_site_is_undecided_control_9g(
     )
     record, findings = _noneprobe_dispositions(tmp_path)
     assert record.cell == "UNDECIDED"
-    assert "site_id" in record.basis
+    assert "claim 정본 불일치" in record.basis
     assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
 
 
@@ -5731,8 +5732,9 @@ def test_d1_none_declaration_claim_opposite_meaning_is_undecided_control_9h(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """대조군 ⑨-h(재심 #4 finding 1) — claim 이 site_id 는 담되 지정
-    문장의 **반대 의미**(«소비한다», «않는다» 없음)면 red. 지정 문장이
-    byte-equal 로 부재하므로 미충족이다."""
+    문장의 **반대 의미**(«소비한다», «않는다» 없음)면 red. C6 이후는
+    claim 전체가 정본과 완전일치하지 않으므로 «claim 정본 불일치» 로
+    거부된다."""
     _setup_noneprobe_no_dependency_fixture(
         tmp_path,
         monkeypatch,
@@ -5743,7 +5745,7 @@ def test_d1_none_declaration_claim_opposite_meaning_is_undecided_control_9h(
     )
     record, findings = _noneprobe_dispositions(tmp_path)
     assert record.cell == "UNDECIDED"
-    assert "지정 문장" in record.basis
+    assert "claim 정본 불일치" in record.basis
     assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
 
 
@@ -5751,7 +5753,8 @@ def test_d1_none_declaration_claim_sentence_absent_is_undecided_control_9i(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """대조군 ⑨-i — claim 이 site_id 는 담되 지정 문장을 아예 다른
-    문장으로 대체하면(무관한 서술) red."""
+    문장으로 대체하면(무관한 서술) red. C6 이후는 «claim 정본 불일치»
+    로 거부된다."""
     _setup_noneprobe_no_dependency_fixture(
         tmp_path,
         monkeypatch,
@@ -5759,7 +5762,148 @@ def test_d1_none_declaration_claim_sentence_absent_is_undecided_control_9i(
     )
     record, findings = _noneprobe_dispositions(tmp_path)
     assert record.cell == "UNDECIDED"
-    assert "지정 문장" in record.basis
+    assert "claim 정본 불일치" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_claim_negation_wrapper_is_undecided_control_9k(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-k(Codex 재심 #5 review-mtmlkbm4-t1ovxs finding 1) — claim
+    이 지정 문장을 «부정 포장»(``다음 주장은 거짓이다:``)으로 감싸 인용하면
+    red. 개정 전(«site_id 단어-경계» ∧ «지정 문장 부분문자열» 별개 검사)
+    구현은 두 술어를 각각 만족시켜 이 claim 을 통과시켰다 — 단일 정본
+    완전일치가 이를 막는다."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path,
+        monkeypatch,
+        claim=(
+            "noneprobe resolver — 다음 주장은 거짓이다: 이 사이트 범위는 "
+            "VERIFICATION-PROFILE-002 결속 값을 소비하지 않는다"
+        ),
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "claim 정본 불일치" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_claim_two_site_ids_prefix_is_undecided_control_9l(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-l(재심 #5 finding 1) — claim 이 기대 site_id 외에 다른
+    canonical site_id(``resolver``)도 함께 담아 모호하면 red — 두 canonical
+    site_id 를 병기해도 단일 정본과는 완전일치할 수 없다."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path,
+        monkeypatch,
+        claim=(
+            "noneprobe resolver — 이 사이트 범위는 VERIFICATION-PROFILE-002 "
+            "결속 값을 소비하지 않는다"
+        ),
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "claim 정본 불일치" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_claim_two_site_ids_suffix_is_undecided_control_9m(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-m(재심 #5 finding 1) — claim 이 지정 문장 뒤에 다른
+    canonical site_id 를 병기한 잉여 접미(``(engine)``)를 붙이면 red."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path,
+        monkeypatch,
+        claim=(
+            "noneprobe — 이 사이트 범위는 VERIFICATION-PROFILE-002 결속 값을 "
+            "소비하지 않는다 (engine)"
+        ),
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "claim 정본 불일치" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_claim_leading_extra_text_is_undecided_control_9n(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-n — claim 앞에 잉여 텍스트가 붙으면(정본이 claim 의
+    «접미»일 뿐이면) red."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path,
+        monkeypatch,
+        claim=(
+            "확인함: noneprobe — 이 사이트 범위는 VERIFICATION-PROFILE-002 "
+            "결속 값을 소비하지 않는다"
+        ),
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "claim 정본 불일치" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_claim_trailing_space_is_undecided_control_9o(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-o — claim 끝에 공백 한 칸이 더 있으면(byte-for-byte 불일치)
+    red. 이 claim 은 non-ASCII(한글/EM DASH)를 담아 ``yaml.safe_dump``
+    (``allow_unicode=False``)가 이미 이스케이프-이중따옴표 스타일로
+    렌더하므로, 트레일링 공백은 따옴표 안에 보존되어 파서를 거쳐도
+    살아 있다(``yaml.safe_load`` 왕복 확인은 이 파일 작성 시 직접
+    검증됨) — 정본에는 그 공백이 없어 완전일치가 깨진다."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path,
+        monkeypatch,
+        claim=(
+            "noneprobe — 이 사이트 범위는 VERIFICATION-PROFILE-002 결속 값을 "
+            "소비하지 않는다 "
+        ),
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "claim 정본 불일치" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_claim_internal_double_space_is_undecided_control_9q(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-q — 지정 문장 내부에 공백이 두 칸 겹치면(단어 사이 하나
+    더) 정본과 byte-for-byte 불일치이므로 red."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path,
+        monkeypatch,
+        claim=(
+            "noneprobe — 이 사이트 범위는  VERIFICATION-PROFILE-002 결속 값을 "
+            "소비하지 않는다"
+        ),
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "claim 정본 불일치" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_claim_hyphen_dash_is_undecided_control_9r(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-r — 정본 구분자 U+2014(EM DASH, ``—``) 대신 ASCII 하이픈
+    (``-``)을 쓰면 byte-for-byte 불일치이므로 red."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path,
+        monkeypatch,
+        claim=(
+            "noneprobe - 이 사이트 범위는 VERIFICATION-PROFILE-002 결속 값을 "
+            "소비하지 않는다"
+        ),
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "claim 정본 불일치" in record.basis
     assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
 
 
