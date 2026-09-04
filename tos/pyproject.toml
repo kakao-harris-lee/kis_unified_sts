@@ -23,7 +23,7 @@ authors = [{ name = "Harris Lee" }]
 # Adding/changing a pin requires a PR editing the design doc §3.2 (§6.1).
 dependencies = [
     "pydantic==2.12.5",
-    "numpy==2.4.0",
+    "numpy==2.4.1",
     "pandas==2.3.3",
     "pyyaml==6.0.3",
 ]
