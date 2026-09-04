@@ -1893,11 +1893,11 @@ def test_profile_null_key_census_is_a_single_shared_implementation():
     assert status._profile_null_key_census is evidence_run._profile_null_key_census
 
 
-def test_profile_null_key_census_matches_the_documented_147_164_17():
+def test_profile_null_key_census_matches_the_documented_148_164_16():
     total, null_count = status._load_profile_key_census(_REPO_ROOT)
     assert total == 164
-    assert null_count == 17
-    assert total - null_count == 147
+    assert null_count == 16
+    assert total - null_count == 148
 
 
 def test_profile_null_key_census_is_derived_from_profile_key_universe():
@@ -1913,15 +1913,15 @@ def test_profile_null_key_census_is_derived_from_profile_key_universe():
     universe = profile_key_universe(doc)
     assert universe is not None
     assert len(universe) == 164
-    assert sum(1 for is_null in universe.values() if is_null) == 17
+    assert sum(1 for is_null in universe.values() if is_null) == 16
 
     derived_total = len(universe)
     derived_null_names = sorted(name for name, is_null in universe.items() if is_null)
 
     total, null_names = _profile_null_key_census(doc)
     assert (total, null_names) == (derived_total, derived_null_names)
-    # 164/17 문서화된 상수는 test_profile_null_key_census_matches_the_
-    # documented_147_164_17 이 이미 고정한다 — 여기서는 universe 파생과의
+    # 164/16 문서화된 상수는 test_profile_null_key_census_matches_the_
+    # documented_148_164_16 이 이미 고정한다 — 여기서는 universe 파생과의
     # 등가성만 재확인한다.
 
 
@@ -1931,8 +1931,8 @@ def test_hand_edited_profile_null_count_in_gate_status_is_detected(tmp_path):
     gate = source_root / _GATE_STATUS_REL
     gate.write_text(
         gate.read_text(encoding="utf-8").replace(
-            "17 keys (10 broker bounds pending P0-2 measurement",
             "16 keys (10 broker bounds pending P0-2 measurement",
+            "15 keys (10 broker bounds pending P0-2 measurement",
         ),
         encoding="utf-8",
     )
@@ -1944,7 +1944,7 @@ def test_hand_edited_profile_null_count_in_gate_status_is_detected(tmp_path):
 
     message = str(excinfo.value)
     assert "profile.null" in message
-    assert "16" in message
+    assert "15" in message
 
 
 def test_hand_edited_profile_null_count_in_profile_yaml_is_detected(tmp_path):
@@ -1953,9 +1953,9 @@ def test_hand_edited_profile_null_count_in_profile_yaml_is_detected(tmp_path):
     profile = source_root / status._PROFILE_YAML
     profile.write_text(
         profile.read_text(encoding="utf-8").replace(
-            "147 of the 164 numeric keys now carry approved values; 17 keys stay "
+            "148 of the 164 numeric keys now carry approved values; 16 keys stay "
             "null —",
-            "147 of the 164 numeric keys now carry approved values; 16 keys stay "
+            "148 of the 164 numeric keys now carry approved values; 15 keys stay "
             "null —",
         ),
         encoding="utf-8",
@@ -1973,8 +1973,8 @@ def test_hand_edited_profile_null_count_in_profile_yaml_is_detected(tmp_path):
 
 def test_a_null_bound_shifts_the_profile_census_and_the_anchors_go_red(tmp_path):
     """Flip one approved bound to null in a scratch copy (no real doc edits): the
-    census-derived null count moves 17 -> 18, and the untouched real anchor text
-    (still transcribing 17) now disagrees with it.
+    census-derived null count moves 16 -> 17, and the untouched real anchor text
+    (still transcribing 16) now disagrees with it.
     """
     part1, development = _real_registers()
     source_root = _transcription_corpus(tmp_path)
@@ -1991,7 +1991,7 @@ def test_a_null_bound_shifts_the_profile_census_and_the_anchors_go_red(tmp_path)
 
     total, null_count = status._load_profile_key_census(source_root.parent.parent)
     assert total == 164
-    assert null_count == 18
+    assert null_count == 17
 
     extra_derived = _real_extra_derived(part1)
     extra_derived["profile.total"] = total
@@ -2004,7 +2004,7 @@ def test_a_null_bound_shifts_the_profile_census_and_the_anchors_go_red(tmp_path)
 
     message = str(excinfo.value)
     assert "profile.null" in message
-    assert "18" in message
+    assert "17" in message
 
 
 def test_direct_traceability_anchors_target_at_least_two_locations():
@@ -2057,17 +2057,18 @@ def test_direct_traceability_source_gap_phrase_removal_is_detected(tmp_path):
 
 
 def test_profile_baseline_plan_warning_is_none_for_the_real_corpus():
-    """[갱신, 2026-09-04 UNCHK-024 처분] 프로파일 census 는 이제 164/17
-    (신설 키 ``MAX_time_conservative_freshness_age_ms`` 등록)이지만, 동결된
-    ``docs/plans/2026-08-11-tos-completion-development-plan.md`` §1 baseline
-    표는 (계약 부속 문서라 이 작업이 건드리지 않는다) 여전히 163/16 을
-    적는다 — drift 경고가 이제 정상적으로 발생해야 한다(비차단)."""
+    """[갱신, 2026-09-04 UNCHK-024 값 승인] 프로파일 census 는 이제 164/16
+    (신설 키 ``MAX_time_conservative_freshness_age_ms`` 값 1000ms 승인)이지만,
+    동결된 ``docs/plans/2026-08-11-tos-completion-development-plan.md`` §1
+    baseline 표는 (계약 부속 문서라 이 작업이 건드리지 않는다) 여전히 163/16 을
+    적는다 — drift 경고가 이제도 계속 발생해야 한다(비차단; total 이 163→164
+    로 갈렸으므로 163/16 과 164/16 은 다른 문자열이다)."""
     total, null_count = status._load_profile_key_census(_REPO_ROOT)
-    assert (total, null_count) == (164, 17)
+    assert (total, null_count) == (164, 16)
     warning = status.profile_baseline_plan_warning(_REPO_ROOT, total, null_count)
     assert warning is not None
     assert "163/16 null" in warning
-    assert "164/17 null" in warning
+    assert "164/16 null" in warning
     assert "not blocking" in warning
 
 

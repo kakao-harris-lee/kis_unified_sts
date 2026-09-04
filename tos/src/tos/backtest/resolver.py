@@ -75,11 +75,10 @@ class BarTimeProjection(FrozenModel):
     disposition, ``docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md``
     §2, §5): it is the single top-level conservative freshness ceiling
     ``source_age + sum(delay_bounds)`` is checked against, and that key now
-    carries the role 1:1. The registered value is **null** — registering a
-    key is not a value approval (VER-002-001 §6; PATCH-0054/PATCH-0058
-    precedent) — so this field reads **BLOCKED** (in-universe, key exists, no
-    value) rather than **VALUED** until the Bounds-Approver fills the
-    disposition draft's §6 form.
+    carries the role 1:1. The key's value was approved the same day —
+    **1000 ms** (operator, Bounds-Approver; disposition draft §6) — so this
+    field reads **VALUED** (in-universe, key exists, value approved), not
+    ``BLOCKED``.
 
     VER-002-KEYS: ``MAX_future_timestamp_tolerance_ms``, ``MAX_critical_input_consumer_receipt_age_ms``, ``MAX_time_transport_and_queue_uncertainty_ms``, ``MAX_clock_domain_conversion_uncertainty_ms``, ``MAX_time_source_precision_ms``, ``MAX_time_source_sequence_gap_ms``, ``MAX_time_conservative_freshness_age_ms``
 
@@ -89,8 +88,8 @@ class BarTimeProjection(FrozenModel):
     composite, a reference-frame construction parameter, or an enum (design #33 §3.3,
     ``docs/plans/2026-07-29-tos-backtest-design.md:324-325``) — never a ``MAX_*``/``MIN_*``
     threshold a profile key could hold. That makes this disposition final rather than a
-    register §8-1 gap like ``max_age_bound``'s used to be (now closed by key registration,
-    value pending): no key, present or future, could ever bind these five.
+    register §8-1 gap like ``max_age_bound``'s used to be (now closed by key registration
+    and value approval): no key, present or future, could ever bind these five.
 
     Two coordinates are genuinely **bar-derived** rather than constant:
 
@@ -114,8 +113,8 @@ class BarTimeProjection(FrozenModel):
     #: ``MAX_time_source_sequence_gap_ms`` (order-agnostic; see class docstring).
     delay_bounds: tuple[int | None, ...] = ()
     #: The injected freshness threshold. Bound 1:1 to VERIFICATION-PROFILE-002 key
-    #: ``MAX_time_conservative_freshness_age_ms`` (registered 2026-09-04, value null; reads
-    #: BLOCKED pending Bounds-Approver value approval — see class docstring).
+    #: ``MAX_time_conservative_freshness_age_ms`` (registered 2026-09-04, value 1000 ms
+    #: approved 2026-09-04; reads VALUED — see class docstring).
     max_age_bound: int
     #: The injected future-timestamp tolerance. Bound to VERIFICATION-PROFILE-002 key
     #: ``MAX_future_timestamp_tolerance_ms`` (ADR-002-008 §9).

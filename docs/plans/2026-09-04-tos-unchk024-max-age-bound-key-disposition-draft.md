@@ -3,7 +3,7 @@
 **Date:** 2026-09-04
 **Track:** Phase 0 human gate register §8-1 (trustworthy-time bound 범주) · P0-1 Bounds-Approver 후속
 **Operator directive:** 2026-09-04 「max_age_bound 키 신설 진행」
-**Status:** DRAFT — §6 승인 기록은 빈 양식이다. 이 문서는 값을 승인하지 않는다.
+**Status:** APPROVED — §6 filled 2026-09-04 (operator, Bounds-Approver)
 **Precedent:** `docs/plans/2026-08-06-tos-phase0-p01-residual-17key-disposition-draft.md`(§4.1 도출 → §6 운영자 기입, ARCHITECTURE-GATE-STATUS §3.26) · PATCH-0054(키 등록은 승인이 아니다)
 
 ---
@@ -88,11 +88,12 @@ freshness age» 는 §9 첫 문장의 용어를 그대로 쓴다.
 ```yaml
 key: MAX_time_conservative_freshness_age_ms
 recommended_value_ms: 1000
-approved_value_ms:            # 운영자 기입
-approved_by:                  # operator (Bounds-Approver)
-approved_at_utc:              # 운영자 기입
+approved_value_ms: 1000
+approved_by: operator (Bounds-Approver)
+approved_at_utc: 2026-09-04T23:36:21Z
 review_date: 2027-01-29       # 2026-07-29 승인분과 같은 주기
 derivation: this package §4 at the commit that introduces it
+operator_directive: "키 값 1000ms 승인 진행 (2026-09-04)"
 ```
 
 이 양식이 채워진 diff 가 승인 기록이다(§3.26 선례 — «§6 기입 커밋을 인용하라, 도입 커밋이 아니라»).

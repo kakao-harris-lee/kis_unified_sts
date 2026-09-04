@@ -1160,6 +1160,59 @@ section; the §11 completion determination of 2026-09-04 (`222dc4de`) already
 accounted for this field as `UNBOUND`, and this registration closes the §8-1
 residual honestly without reopening or amending that determination.
 
+### 3.28 Trustworthy-time freshness-ceiling value approval — the 2026-09-04 Bounds-Approver decision (17 → 16 null keys) — APPLIED
+
+**What was decided.** The operator, as Bounds-Approver, approved the value of
+`MAX_time_conservative_freshness_age_ms` — registered null by Patch-0058
+(§3.27) — at **1000 ms**, filling the empty §6 form of the disposition
+package
+(`docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md`).
+Operator directive, verbatim: **"키 값 1000ms 승인 진행"** (2026-09-04,
+approval timestamp `2026-09-04T23:36:21Z`). The approval adopts the package's
+§4 recommendation as written; no different value was substituted.
+
+**Derivation (package §4, not re-derived here).** A satisfiability lower
+bound: the composite `delay_bounds` floor (4 already-approved keys summing to
+200 ms) means any ceiling at or below 200 ms would reject every bar
+regardless of source age, so the value must exceed 200 ms. A same-class
+ceiling: the 2026-07-29 §6-L1 normal-freshness anchor
+(`MAX_normal_capability_age_ms` = 1000 ms) and the already-approved
+`MAX_critical_input_snapshot_age_ms` / `MAX_critical_input_consumer_receipt_
+age_ms` (both 1000 ms) are the same class of top-level age ceiling, so this
+value has no reason to exceed that anchor. 1000 ms satisfies both: it is
+conservative (fail-closed direction is LOWER — a smaller value rejects more),
+not a relaxation.
+
+**Effect on the profile.** `MAX_time_conservative_freshness_age_ms` now
+carries an approved value of **1000 ms**, `owner: operator`, `review_date:
+2027-01-29` (the same cadence as every other 2026-07-29/2026-08-07 approval in
+this file). **148 of the 164 numeric keys now carry approved values**, and
+**16 remain null and fail-closed** — 10 broker bounds awaiting P0-2
+measurement and 6 instance/architecture limits under ratified trigger-bound
+deferrals. `status`, `approved_by`, `effective_from`, and `review_due` are
+unchanged: this is a **key-level** act, not a profile re-approval.
+
+**Effect on D-1.** `tools/tos_completion_status.py` §7.4 D-1 previously
+rendered the `resolver` and `marketfeed` sites `VALUED+BLOCKED` (§3.27): 6 of
+7 declared keys `VALUED`, 1 (`MAX_time_conservative_freshness_age_ms`)
+`BLOCKED`. With this approval, all 7 declared keys at both sites are
+`VALUED`, and D-3's cell-folding renders the uniform state as `VALUED` — not
+`VALUED+BLOCKED` — for both sites. D0-5 was already `MET` before this change
+(a decided disposition, however split, satisfies D0-5); this section does not
+change that verdict, it only removes the last split key.
+
+**No runtime effect.** `BarTimeProjection.max_age_bound` is caller-injected
+(test fixtures and callers supply it); no code under `tos/` reads this
+profile file (firewall-enforced: no import path from `tos/src` to
+`VERIFICATION-PROFILE-002.yaml`). This value is an EV-L1..L3 harness ceiling
+for future test fixtures, not live calibration. `scope.environment:
+non-live-test` is unchanged, Live-Armer stays unassigned, and no acceptance,
+restricted-live, or live authority follows. **The Phase 0 completion contract
+body is untouched** by this section; the §11 completion determination of
+2026-09-04 (`222dc4de`) already accounted for this field's disposition track,
+and this approval closes the §8-1 residual honestly without reopening or
+amending that determination.
+
 ---
 
 ## 4. Remaining Architecture and Acceptance Work
@@ -1170,7 +1223,7 @@ ADR-002-007 selects the single-use capability currentness model, ADR-002-012 sel
 
 Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-030, but all remain `NOT_IMPLEMENTED`. Verification Profile `2.1-PROPOSED` has matching actual/template key sets with 91 scope keys, 84 bounds, and 79 limits (Patch-0054, §3.21, added 26 null placeholder keys from the project-side design-cycle census; Patch-0055, §3.22, then completed the per-bound shape with `applicable_scope` and `review_date`). Of the 163 numeric keys, **146 values were approved by the accountable owner on 2026-07-29** (74 bounds, 72 limits, each carrying `owner: operator` where the shape has an owner field, a per-key approval-provenance marker, and `review_date: 2027-01-29`); **17 remain null and fail-closed** — 10 broker bounds pending P0-2 measurement, 6 instance/architecture limits, and `MIN_evidence_retention_ms` — and therefore keep every scope depending on them contained. Because those 17 are unresolved, **the profile itself stays `2.1-PROPOSED` with `approved_by: []`**: per-key value approval is not profile approval, and the review-disposition records above that describe bounds as unapproved remain accurate as records of their review dates. It additionally binds the proposed Post-Trade Finality Policy, Post-Trade Obligation Generation, complete Active Economic Obligation Set, Statement Coverage Manifest, and their effect-to-obligation, change-detection, break-to-restriction, egress-denial, generation-fence, statement-gap, obligation/finality/statement/break/transfer age quantities — all of which are now among the 146 owner-approved values, while the broker-dependent quantities they rely on stay null. The profile remains unapproved with `approved_by: []`; an approved value is a harness ceiling awaiting EV-L2/L3 execution, not evidence, and the still-unresolved values keep the affected scope contained and live operation prohibited.
 
-**Currency note (2026-08-06).** The statements in the paragraph above that the profile "stays `2.1-PROPOSED` with `approved_by: []`" were accurate when recorded and were superseded on 2026-07-29 by the P0-1 profile-level approval (operator as Bounds-Approver, commit `53980b64`, recorded in-header in `verification/VERIFICATION-PROFILE-002.yaml`): the profile now reads `version: "2.1"`, `status: APPROVED` (scope-limited to the 146 keys carrying approved values), `approved_by: ["operator"]`, `effective_from: 2026-07-29`, `review_due: 2027-01-29`. The 17 null keys — 10 broker bounds pending P0-2 measurement, 6 instance/architecture limits, and `MIN_evidence_retention_ms` — remain key-level unapproved and fail-closed per the profile's own rules, and `scope.environment: non-live-test` is unchanged. Approving bounds arms nothing: separation of duties is preserved (Live-Armer unassigned), and no acceptance, restricted-live, or production authority follows. §3.22 carries the companion record of the two same-day acts. **[2026-08-07]** The 17 above has since moved to 147/163 approved with 16 null keys (§3.26; §5 reflects the current state). **[2026-09-04]** The 16 above has since moved to 147/164 approved with 17 null keys — a new key, `MAX_time_conservative_freshness_age_ms`, was registered (value null; not an approval) (§3.27; §5 reflects the current state).
+**Currency note (2026-08-06).** The statements in the paragraph above that the profile "stays `2.1-PROPOSED` with `approved_by: []`" were accurate when recorded and were superseded on 2026-07-29 by the P0-1 profile-level approval (operator as Bounds-Approver, commit `53980b64`, recorded in-header in `verification/VERIFICATION-PROFILE-002.yaml`): the profile now reads `version: "2.1"`, `status: APPROVED` (scope-limited to the 146 keys carrying approved values), `approved_by: ["operator"]`, `effective_from: 2026-07-29`, `review_due: 2027-01-29`. The 17 null keys — 10 broker bounds pending P0-2 measurement, 6 instance/architecture limits, and `MIN_evidence_retention_ms` — remain key-level unapproved and fail-closed per the profile's own rules, and `scope.environment: non-live-test` is unchanged. Approving bounds arms nothing: separation of duties is preserved (Live-Armer unassigned), and no acceptance, restricted-live, or production authority follows. §3.22 carries the companion record of the two same-day acts. **[2026-08-07]** The 17 above has since moved to 147/163 approved with 16 null keys (§3.26; §5 reflects the current state). **[2026-09-04]** The 16 above has since moved to 147/164 approved with 17 null keys — a new key, `MAX_time_conservative_freshness_age_ms`, was registered (value null; not an approval) (§3.27; §5 reflects the current state). **[2026-09-04 approval → §3.28]** That key's value has since been approved (1000 ms; operator, Bounds-Approver), moving the count to 148/164 approved with 16 null keys (§3.28; §5 reflects the current state).
 
 ### 4.1 Latest Review Disposition
 
@@ -1412,7 +1465,7 @@ registration introduce no SAFE-xxx and create no authority.
 | ADR-002-029 | Proposed | YES | NO |
 | ADR-002-030 | Proposed | YES | NO |
 | VER-002-001 | Proposed, ready for test implementation | YES | after evidence workflow review |
-| Verification Profile 2.1 | `APPROVED` at profile level, scope-limited (operator as Bounds-Approver, 2026-07-29, commit `53980b64`); 147/164 numeric keys carry approved values (`MIN_evidence_retention_ms` approved 2026-08-07, §3.26); 17 keys (10 broker bounds pending P0-2 measurement, 6 instance/architecture limits under ratified trigger-bound deferrals, 1 trustworthy-time freshness ceiling registered 2026-09-04 pending value approval (§3.27)) remain key-level unapproved and fail-closed | YES | NO |
+| Verification Profile 2.1 | `APPROVED` at profile level, scope-limited (operator as Bounds-Approver, 2026-07-29, commit `53980b64`); 148/164 numeric keys carry approved values (`MIN_evidence_retention_ms` approved 2026-08-07, §3.26; `MAX_time_conservative_freshness_age_ms` approved 2026-09-04, §3.28); 16 keys (10 broker bounds pending P0-2 measurement, 6 instance/architecture limits under ratified trigger-bound deferrals) remain key-level unapproved and fail-closed | YES | NO |
 | Broker-specific Capability Profile | Template only in tos-spec (schema-complete against ADR-002-004 §21 after Patch-0056, §3.23; all values `TBD`/`null`/`UNKNOWN`, `conformance_class: CLASS_D_NON_LIVE`). One non-normative project-side INSTANCE candidate exists (`docs/broker-profiles/…-draft.yaml`, `status: DRAFT`, `approvers: []`, 0 executed capability evidence), which authorizes nothing and does not close P0-2 | YES | NO |
 | Human authority artifacts | Templates only, all non-authorizing | YES | NO |
 | Evidence integrity and replay artifacts | Templates only, all DRAFT/unverified/non-authorizing | YES | NO |

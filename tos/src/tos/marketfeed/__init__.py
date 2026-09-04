@@ -63,9 +63,9 @@ producer binds ``future_tolerance`` to ``MAX_future_timestamp_tolerance_ms``,
 ``delay_bounds`` to the sum of ``MAX_time_transport_and_queue_uncertainty_ms``,
 ``MAX_clock_domain_conversion_uncertainty_ms``, ``MAX_time_source_precision_ms``, and
 ``MAX_time_source_sequence_gap_ms``; ``max_age_bound`` is bound 1:1 to VERIFICATION-PROFILE-002
-key ``MAX_time_conservative_freshness_age_ms`` (registered 2026-09-04, value null; reads BLOCKED
-pending Bounds-Approver value approval — UNCHK-024 disposition at the ``resolver`` site, lockstep
-here, unaffected by this correction).
+key ``MAX_time_conservative_freshness_age_ms`` (registered 2026-09-04, value 1000 ms approved the
+same day by the Bounds-Approver; reads VALUED — UNCHK-024 disposition at the ``resolver`` site,
+lockstep here, unaffected by this correction).
 This package does not compute or own those bounds — it is the D-E2 consumption boundary through
 which the injected port's already-bound values reach the engine, not their producer — but §7.4
 D-1/D-4 (가) treat forwarding a bound-bearing type as this site's declared dependency regardless of
