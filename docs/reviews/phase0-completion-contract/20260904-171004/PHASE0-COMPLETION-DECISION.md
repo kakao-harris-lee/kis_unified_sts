@@ -1,15 +1,18 @@
-# Phase 0 완료 판정 — 결정 기록 (DRAFT · 운영자 countersign 대기)
+# Phase 0 완료 판정 — 결정 기록 (운영자 countersign 기입 · 2026-09-04)
 
-> **Document class**: 완료 판단 **초안**. `decision` 필드가 `PENDING_OPERATOR_COUNTERSIGN`인
-> 동안 이 기록은 어떤 판정도 발효시키지 않는다 — 기계 상태·계약·§11 어느 것도 바꾸지 않는다.
-> 아래 `operator_countersign`의 자리표시자(placeholder)를 운영자가 실제 식별값·ISO-8601 UTC로
-> 치환하고 커밋해야만 이 결정이 유효해진다(맨 아래 「효력」 절 참조).
+> **Document class**: 완료 판단 **결정 기록**(운영자 서명). 이 기록이 담는 것은 «계약 §11 종료 조건이
+> 판정 대상 head 에서 충족됐다» 는 운영자 판단 하나다. 기계 상태(`prevention_control_state`·
+> `d0a_entry_state`·§11 overview)·계약·상위 계획·`tos-spec/`·`tools/` 는 이 기록으로 바뀌지 않으며,
+> G1~G3 를 부여하지 않고 `restricted_live`/`production` `NOT_AUTHORIZED` 는 불변이다. 초안 단계
+> (`decision: PENDING_OPERATOR_COUNTERSIGN`)는 커밋 `b99be174` 에 이력으로 남아 있다.
 
 ```yaml
-decision: PENDING_OPERATOR_COUNTERSIGN
+decision: PHASE0_SECTION11_COMPLETE_ACCEPTED_AT_JUDGMENT
 judged_head: d07646c2923784e90ace718d98511a80c2d2fef7
 measurement_record: docs/reviews/phase0-completion-contract/20260904-171004/PHASE0-COMPLETION-JUDGMENT-LIVE.md
-operator_countersign: "<운영자 식별> <ISO-8601 UTC>"   # 예: "operator 2026-08-19T00:00:00Z" — 계약 :8637 형식 그대로 인용한 자리표시자
+decided_on: 2026-09-04
+authority: 운영자 (this repository's corpus owner)
+operator_countersign: "chihun,lee 2026-09-04T08:26:30Z"   # 계약 :8637 형식 · D0A-PREVENTION-CONTROL.md 와 같은 식별자 표기
 ```
 
 `operator_countersign`의 형식·자리표시자 문언은
@@ -90,8 +93,10 @@ operator_countersign: "<운영자 식별> <ISO-8601 UTC>"   # 예: "operator 202
 
 ## 효력
 
-이 결정은 **초안**이다. 위 yaml의 `decision: PENDING_OPERATOR_COUNTERSIGN`과
-`operator_countersign`의 자리표시자 문자열이 남아 있는 한 어떤 판정도 발효되지 않는다.
-운영자가 `operator_countersign`을 실제 식별값과 ISO-8601 UTC 시각으로 치환하고 그 변경을
-커밋해야만 — 그리고 오직 그 시점에만 — 이 결정이 유효해진다. 이 파일 자신은 그 치환을
-대신하지 않으며, 치환 전까지 §11·S-26 어느 쪽의 상태도 이 파일로 인해 바뀌지 않는다.
+이 결정은 위 yaml 의 `operator_countersign` 이 실제 식별값과 ISO-8601 UTC 시각으로 기입되고
+그 변경이 커밋된 시점(운영자 지시 2026-09-04 «countersign 기입 후 커밋»)에 발효했다. 발효의
+범위는 «판정 대상 head `d07646c2` 에서 계약 §11 종료 조건이 충족됐다는 운영자 판단» 이다.
+발효가 바꾸지 «않는» 것: 기계 상태(`tools/u17-verify.sh` 는 여전히
+`PREVENTION_UNVERIFIED_REVISION` 을 내고 `--check` 의 상태값은 그대로다) · 계약 S-26 종결 자격
+(미충족 · 별개 축) · G1~G3 · `restricted_live`/`production` 권한. 초안 단계의 문면은 커밋
+`b99be174` 에 이력으로 보존된다.
