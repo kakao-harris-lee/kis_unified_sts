@@ -11,9 +11,11 @@ Not because it must — a ``multiprocessing`` spawn inside ``tos/tests`` would a
 distinct pid and a distinct interpreter, and the kernel's own closure tests already use
 one (design §5.2 MAJOR-1, measured). It lives here because of what the placement
 **structurally forbids**: the firewall's reverse rule TOS-FW-R
-(``tools/tos_firewall_check.py``; ``_REVERSE_SCAN_PRUNE`` at line 114-116 prunes only a
-directory literally named ``tos``, so this path is scanned) makes ``import tos``
-impossible here. This suite therefore **cannot** call
+(``tools/tos_firewall_check.py``'s ``_walk_repo_py`` prunes ONLY an explicit set of
+repo-root-relative VCS/generated roots plus the repo-root ``tos/`` directory, each
+matched by resolved-path identity, never by name or at any depth; ``tests/tos_l3`` is
+none of those roots, so this path is scanned) makes ``import tos`` impossible here.
+This suite therefore **cannot** call
 ``tos.orthostate.reconstruct_conservative``, and its Expecteds are necessarily
 hand-derived anchors rather than a second invocation of the implementation under test.
 

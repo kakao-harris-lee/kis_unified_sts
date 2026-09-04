@@ -20,7 +20,12 @@ on:
 jobs:
   tos-firewall:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 10 → 30: the tos governance test batteries (last step) took ~6.5 min
+    # locally (subprocess-heavy git-repo fixtures in test_u17_verify.py and
+    # tests/tos_l3); with the firewall + checker steps that already ran here
+    # the old 10-minute backstop would name the batteries as "hung" on a slow
+    # hosted runner. Still a hard fail-fast, just sized to the job's new content.
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
@@ -67,6 +72,26 @@ jobs:
           #  저장소 도구가 쓰는 것이지 `tos` 패키지가 임포트하는 것이 아니다.)
           pip install "pyyaml>=6.0"
 
+      - name: Pin mikefarah yq v4.48.1 (WFCANON M-4 parser gate)
+        # tools/wfcanon-v222.py [M-4] pins the judgment parser to
+        # `yq (mikefarah) v4.48.x` (YQ_FLAVOR/YQ_MAJMIN) and fails closed
+        # (WF-P0 PREVENTION_UNVERIFIABLE) on any other version. ubuntu-latest
+        # preinstalls a newer yq at /usr/bin/yq, and
+        # tests/tools/test_u17_verify.py::_run_script drives tools/u17-verify.sh
+        # (which shells out to wfcanon-v222.py) under a from-scratch,
+        # non-inherited env with a literal PATH where /usr/bin is FIRST — so
+        # the pin must overwrite /usr/bin/yq itself (installing to
+        # /usr/local/bin would be shadowed). Condensed from the identical
+        # rationale in .github/workflows/test.yml (source of this step, now
+        # moved here with tests/tools/test_u17_verify.py — see below).
+        run: |
+          set -euo pipefail
+          curl -sL -o /tmp/yq_linux_amd64 \
+            https://github.com/mikefarah/yq/releases/download/v4.48.1/yq_linux_amd64
+          echo "99df6047f5b577a9d25f969f7c3823ada3488de2e2115b30a0abb10d9324fd9f  /tmp/yq_linux_amd64" | sha256sum -c -
+          sudo install -m 0755 /tmp/yq_linux_amd64 /usr/bin/yq
+          yq --version
+
       - name: Layer 1 — custom AST firewall (default-deny)
         run: python tools/tos_firewall_check.py
 
@@ -105,3 +130,17 @@ jobs:
       # addendum-5 A-F5 였다 — 통과하는 검사와 «지고 있는» 검사는 다르다.
       - name: Layer 4 self-test — mutation battery (dead-check 0)
         run: python tools/tos_contract_check.py --self-test
+
+      # tos governance test batteries — these test the checker scripts run as
+      # steps above (tools/tos_completion_status.py, tools/tos_contract_check.py,
+      # tools/tos_spec_status.py, tools/tos_firewall_check.py) plus
+      # tools/u17-verify.sh (needs the yq pin above) and the EV-L3 crash/restart
+      # battery under tests/tos_l3/. They need no runtime stack (imports are
+      # stdlib + pytest + pyyaml only — already installed above) and no Redis,
+      # so they live here rather than in the legacy `test` job in
+      # .github/workflows/test.yml, which is now path-gated away from tos/doc
+      # changes and would otherwise be the only thing gating a tos-only PR.
+      - name: tos governance test batteries
+        run: |
+          pytest tests/tools/test_tos_*.py tests/tools/test_u17_verify.py \
+            tests/tos_l3 -q -p no:cacheprovider
