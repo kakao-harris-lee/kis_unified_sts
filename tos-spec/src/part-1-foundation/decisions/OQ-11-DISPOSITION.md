@@ -12,7 +12,7 @@ deferred_scope:                            # 계약 U-13 (§12.3.1) 문법 — R
   rows:
     - STATE-EV-004
   remainder_mapping_approved: true
-bound_set_digest: e260c339f63bb0bbcbb56dfc0d6b58b6058976f2e52a8f6f7bdd3aecc6d2691b
+bound_set_digest: 4e6c975f794696066a25abe4ee827594afa18f8fac8bfb5e7bf31d43508b3c2f
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
@@ -23,7 +23,7 @@ authority: 운영자 (this repository's corpus owner)
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: 89b27c468405b503de8221938539fb3196e70a7f
+decided_at_head: 8923aab2188b5de7eb7a8c5fc282cde636ca969a
 ```
 
 **RES-1 ① 처분 기록 (2026-09-02)**: 위 `disposition`/`deferred_scope` 는 운영자가
@@ -1033,6 +1033,51 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 >
 > **S-26 ② 카운터는 0 에 머문다** — 52차 이래 **네 판 연속** 계약 편집이며 어느 판도 그
 > 카운터를 세우지 못했다(계약 에라타 55차 항이 그 형상을 ⑧ 의 실례로 적었다).
+>
+> D0/P-0 착수 금지 불변 · `restricted_live`·`production` 권한 불변.
+
+> **재결속 기록 (현행 사이클 — 2026-09-04, v2.22 내용 · 에라타 56차 이후)**: 이 연속
+> 트랙의 **열일곱 번째**이며, **같은 날 다섯 번째**다.  55차의 U-6′ (ㄱ)이 레인 B 재심
+> #4 에서 high 1 을 받았다(`review-mtmg49a4-g8ab13` finding 1 · 채택 1/1) — 「`axis` 가
+> `D0-5 NONE: <site_id>` 로 **시작**한다」는 문언이 바로 아래 «행당 한 사이트»·⑧ 부분
+> 문자열 red 와 충돌해, `startswith` 구현이면 `D0-5 NONE: resolver_x` 와
+> `D0-5 NONE: resolver / marketfeed` 가 통과한다.  56차는 그 낱말 하나를 고쳤다:
+> `axis` **필드 전체**가 **정규화 없이**(trim·대소문자 접기·공백 축약 금지)
+> `D0-5 NONE: <canonical_site_id>` 와 **byte-for-byte 동일**해야 하며 prefix 판정은
+> 금지된다.  대조군 ⑧ 은 ⑧-a(catch-all·중복·부분문자열)·**⑧-b**(유효 prefix + 임의
+> 접미)·**⑧-c**(두 번째 site_id 부가)로 갈렸고 ⑧-b·⑧-c 는 **각각 혼자서** red 여야
+> 한다.  이 재결속은 **결속 경로 두 파일 중 계약 자신의 내용 변경**에 대한 것이다 —
+> O-6 의 정상 거동.
+>
+> **이 재결속이 결속하는 내용**: 계약 blob `899689fc…` · **10,622행**(56차에서 +60/−11) ·
+> 개발계획 blob `ec3464c0…` · **612행**(**무접촉**).  계약 blob 이 담는 것: U-6′ (ㄱ)의
+> «동일» 문언 · 대조군 ⑧-a/⑧-b/⑧-c · 56차 블록 · S-26 의 56차 재적용 항 ·
+> `현행(56차 이후)` 커런시 태그 4곳 · 좌표 드리프트 정정 여섯 좌표(3305→3346 ·
+> 5511→5560 · 5768→5817 · 7653→7702 · 7720→7769 · 7801→7850 — 인용 자리는 `:264` 와
+> `:7770` 둘).
+>
+> **계약 밖 부수 사실(기록만)**: 병행한 `marketfeed` 독립 확인
+> (`review-mtmg2lz7-88qdyb`)이 그 사이트의 `NONE` claim 을 **거짓**으로 판정했다.
+> 따라서 이 HEAD 에서 D-4 를 쓸 §7.1 사이트는 **0 개**로 예상되며, D-4·U-6′ 어휘는
+> 장래 사이트를 위해 남는다 — 56차의 값은 그 어휘의 **결정성**에 있다.
+>
+> **계약 «밖» lockstep 은 이번에도 한 층뿐이다**: 테스트의 digest 핀.  계약 행수는
+> 10,622 로 늘었으나 self-test 5자리 좌표 픽스처의 임계(`:12345`)를 넘지 않아 52차가
+> 회전시킨 값이 그대로 유효하다 — 죽은 검사 0 을 실측으로 확인했다.
+>
+> `bound_set_digest e260c339f63bb0bbcbb56dfc0d6b58b6058976f2e52a8f6f7bdd3aecc6d2691b`
+> → **`4e6c975f794696066a25abe4ee827594afa18f8fac8bfb5e7bf31d43508b3c2f`** ·
+> `decided_at_head` 는 **재결속 편집 «직전» 실측 HEAD(= 56차 C1 커밋)** 로 오케스트레이터가
+> 기입한다 — 저작 시점에는 그 커밋이 아직 없다 ·
+> `requesting_plan_version` 은 **v2.22 로 유지**(열아홉 사이클 연속).
+> `disposition`/`deferred_scope` 는 **무접촉**이다.
+>
+> **U-12 원장(`OQ-11-RAISE-LEDGER.md`)에는 행을 쓰지 않는다** — 51차~55차와 같은 형상이다.
+>
+> **동결 실측**: 이 아티팩트를 편집한 «뒤» digest 를 재계산해 **불변**임을 확인했다.
+>
+> **S-26 ② 카운터는 0 에 머문다** — 52차 이래 **다섯 판 연속** 계약 편집이며 어느 판도
+> 그 카운터를 세우지 못했다(계약 에라타 56차 항이 명시했다).
 >
 > D0/P-0 착수 금지 불변 · `restricted_live`·`production` 권한 불변.
 
