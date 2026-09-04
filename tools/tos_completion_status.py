@@ -3908,6 +3908,53 @@ def _d1_u6prime_axis(site_id: str) -> str:
     return f"D0-5 NONE: {site_id}"
 
 
+# U-6′ (ㄹ) 구획 문법(레인 B 재심 20260905-033432 finding 1 처분) — ``reason``
+# 은 이 구분자들로 잘린 "구획(segment)" 들의 나열로 읽는다. 구분자: 공백을
+# 두른 가운뎃점(" · "), 세미콜론(";"), 개행. (1) ``VER-002-KEYS: NONE`` 선언
+# 사실과 (3) 경계 문장은 원자적 고정 문자열이라 전체 ``reason`` 부분문자열
+# 검사로 충분하지만((같은 값이 두 곳에 있어도 의미가 갈리지 않는다), (2)
+# 스캔 결과(후보 우주 크기·스캔 범위·파일 수)와 (4) 독립 리뷰 기록 경로는
+# **여러 값의 합성**이라 부분문자열 검사가 fail-open 이었다 — 각 값이
+# ``reason`` 어딘가에만 있으면 통과해, (a) 진짜 스캔 범위가 무관한 문장에
+# 우연히 등장하고 실제 스캔 구획은 다른 범위(``other_pkg``)를 적어도 통과,
+# (b) 선택된 기록 경로에 접미사(``.not-the-selected-record``)를 붙이거나
+# 두 번째 경로를 나란히 적어도 (경로가 부분문자열로는 여전히 존재하므로)
+# 통과했다. 이제 (2)·(4) 는 **구획 하나 전체**가 아래 정본 문자열과
+# byte-for-byte 동일해야 한다(부분문자열·prefix·접미사·구획 분할 전부
+# 불허) — 정규식이 아니라 분할 뒤 리스트 원소 완전 일치로 비교하므로
+# ``scope_desc``/``record_path`` 안의 정규식 메타문자(``.``, ``/`` 등)를
+# 이스케이프할 필요도, 그로 인한 오작동 위험도 없다:
+#   (2) ``f"스캔 결과: 후보 우주 {N}개, 스캔 범위 {scope_desc}, 파일 {F}개"``
+#   (4) ``f"독립 리뷰 기록: {record_path}"``
+# 구획 경계 밖(예: 다른 구획에 적힌 무관한 remark)에 진짜 값이 등장해도
+# 세지 않고, 정본 구획 안에 여분의 문자가 있어도(접두사·접미사·구획 분할)
+# 실패한다 — 값 셋이 한 구획 안에 공존해야만(co-location) 충족된다.
+_D1_U6PRIME_SEGMENT_SPLIT_RE = re.compile(r"\s*·\s*|\s*;\s*|\n")
+
+
+def _d1_u6prime_segments(reason: str) -> list[str]:
+    """``reason`` 을 U-6′ (ㄹ) 구획 문법대로 분할한다 — 빈 구획(연속
+    구분자·선두/말미 구분자로 생기는)은 버린다."""
+    return [seg for seg in _D1_U6PRIME_SEGMENT_SPLIT_RE.split(reason) if seg]
+
+
+def _d1_u6prime_scan_result_segment(
+    candidate_universe_size: int, scope_desc: str, file_count: int
+) -> str:
+    """(ㄹ)(2) 스캔 결과 구획의 정본 문자열 — 후보 우주 크기·스캔 범위·
+    파일 수 셋이 한 구획 안에 공존해야 한다는 요구를 문자열 하나로 고정."""
+    return (
+        f"스캔 결과: 후보 우주 {candidate_universe_size}개, "
+        f"스캔 범위 {scope_desc}, 파일 {file_count}개"
+    )
+
+
+def _d1_u6prime_record_segment(record_path: str) -> str:
+    """(ㄹ)(4) 독립 리뷰 기록 구획의 정본 문자열 — 구획 전체가 이 값과
+    같아야 하므로 접미사·병기된 두 번째 경로는 구조적으로 불일치가 된다."""
+    return f"독립 리뷰 기록: {record_path}"
+
+
 def _d1_u6prime_row_state(
     uncheckable_rows: Sequence[Mapping[str, str]] | None,
     site_id: str,
@@ -3917,30 +3964,44 @@ def _d1_u6prime_row_state(
     file_count: int,
     record_path: str | None = None,
 ) -> tuple[bool, str, Mapping[str, str] | None]:
-    """U-6′ (ㄱ)~(ㄹ)(계약 §7.4, v2.22 에라타 54~56차) — ``site_id`` 의 §13
-    행 그래머를 확인한다. 반환: ``(충족 여부, 근거, 매칭된 행 또는 None)``.
+    """U-6′ (ㄱ)~(ㄹ)(계약 §7.4, v2.22 에라타 54~56차 · 레인 B 재심
+    20260905-033432 finding 1) — ``site_id`` 의 §13 행 그래머를 확인한다.
+    반환: ``(충족 여부, 근거, 매칭된 행 또는 None)``.
 
     (ㄱ) 행의 ``axis`` 는 ``_d1_u6prime_axis(site_id)`` 와 **정규화 없이
     byte-for-byte 동일**해야 한다 — 부분문자열·prefix·trim·대소문자 접기
     금지(56차, «시작» 문언 폐기). (ㄴ) 사이트당 정확히 한 행 — 0행이면
     미충족, 2행 이상이면 위반. (ㄷ) 행당 최대 한 사이트 — 위 axis 매칭
     자체가 사이트를 하나만 이름하므로 기계로 선다. (ㄹ) (1)~(4)는 그 한
-    행의 ``reason`` 안에 있어야 한다: (1) ``VER-002-KEYS: NONE`` 선언
-    사실, (2) 스캔 결과 — ``scope_desc``(스캔 범위)와 ``file_count``(파일
-    수)가 **각각** ``reason`` 에 정확히 등장해야 한다(후보 우주 크기도
-    그대로 유지), (3) 경계 문장 「후보 우주 밖의 이름은 보지 못한다」,
+    행의 ``reason`` 안에 있어야 한다:
+
+    (1) ``VER-002-KEYS: NONE`` 선언 사실 — 원자적 고정 문자열, 전체
+    ``reason`` 부분문자열 검사(변경 없음).
+
+    (2) 스캔 결과 — ``reason`` 을 ``_d1_u6prime_segments`` 로 구획 분할한
+    뒤, 그 구획 목록 안에 ``_d1_u6prime_scan_result_segment(
+    candidate_universe_size, scope_desc, file_count)`` 와 **완전히 같은**
+    구획이 하나 있어야 한다. 세 값이 부분문자열로 ``reason`` 어딘가에
+    흩어져 있는 것으로는(구판 회귀) 부족하다 — 실제 스캔 범위가 다른
+    구획에 적힌 무관한 remark 로는 대체되지 못하고, 실제 스캔 구획이
+    엉뚱한 범위(``other_pkg``)를 적으면 그 자체로 막힌다(레인 B 재심
+    20260905-033432 finding 1(a) 처분).
+
+    (3) 경계 문장 「후보 우주 밖의 이름은 보지 못한다」 — 원자적 고정
+    문자열, 전체 ``reason`` 부분문자열 검사(변경 없음).
+
     (4) D-4 (마) 독립 리뷰 기록의 **정확한 경로** — 호출자가 검사기가
     실제로 선택·검증한 스탬프(``_d1_locate_no_dependency_record_stamp``)
     로부터 파생한 ``record_path``(정본 형식: 그 스탬프 디렉터리의
     ``verdict.md`` repo-relative 전체 경로, 예:
     ``docs/reviews/d1-no-dependency/<site_id>/<stamp>/verdict.md``)를
-    넘긴다 — 접두사 일치가 아니라 이 값과 ``reason`` 의 부분문자열
-    **완전 일치**를 요구한다. ``record_path`` 가 ``None``(선택된 기록이
-    없음)이면 (4)는 그 자체로 미충족이다 — ``reason`` 이 그럴듯한 경로를
-    적어도 통과하지 못한다(레인 B 재심 20260904-233516 finding 1 처분:
-    이전에는 ``scope_desc``/``file_count`` 를 소비하지 않고 디렉터리
-    접두사만 봐서, ``reason`` 이 실제 스캔 범위나 검증된 기록과 무관한
-    값을 적어도 rc 0 을 얻었다)."""
+    넘긴다 — 구획 목록 안에 ``_d1_u6prime_record_segment(record_path)``
+    와 **완전히 같은** 구획이 하나 있어야 한다. 부분문자열 일치로는(구판
+    회귀) 접미사(``<record_path>.not-the-selected-record``)나 같은 구획
+    안에 나란히 적힌 두 번째 경로도 통과했다 — 이제 구획 전체가 그 값과
+    글자 단위로 같아야 하므로 둘 다 막힌다(레인 B 재심 20260905-033432
+    finding 1(b) 처분). ``record_path`` 가 ``None``(선택된 기록이 없음)
+    이면 (4)는 그 자체로 미충족이다."""
     if uncheckable_rows is None:
         return False, "§13 레지스터 부재로 확인 불가", None
     axis = _d1_u6prime_axis(site_id)
@@ -3955,20 +4016,27 @@ def _d1_u6prime_row_state(
         return False, f"§13 행 중복({len(matches)}건 — (ㄴ) 위반)", None
     row = matches[0]
     reason = row.get("reason", "")
+    segments = _d1_u6prime_segments(reason)
     missing: list[str] = []
     if "VER-002-KEYS: NONE" not in reason:
         missing.append("(1) VER-002-KEYS: NONE 선언 사실")
-    if not (
-        "후보 우주" in reason
-        and str(candidate_universe_size) in reason
-        and scope_desc in reason
-        and str(file_count) in reason
-    ):
-        missing.append("(2) 스캔 결과(후보 우주 크기·스캔 범위·파일 수)")
+    scan_segment = _d1_u6prime_scan_result_segment(
+        candidate_universe_size, scope_desc, file_count
+    )
+    if scan_segment not in segments:
+        missing.append(
+            "(2) 스캔 결과(후보 우주 크기·스캔 범위·파일 수) — 요구 구획: "
+            f"{scan_segment!r}"
+        )
     if _D1_U6PRIME_BOUNDARY_SENTENCE not in reason:
         missing.append("(3) 경계 문장")
-    if record_path is None or record_path not in reason:
+    if record_path is None:
         missing.append("(4) D-4 (마) 독립 리뷰 기록의 정확한 경로")
+    elif _d1_u6prime_record_segment(record_path) not in segments:
+        missing.append(
+            "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로 — 요구 구획: "
+            f"{_d1_u6prime_record_segment(record_path)!r}"
+        )
     if missing:
         return False, f"§13 행 reason 미충족(ㄹ): {', '.join(missing)}", row
     return True, f"§13 행 그래머 충족(axis={axis!r})", row

@@ -5062,12 +5062,20 @@ def _d1_u6prime_row(
     closable: str = "YES",
 ) -> dict[str, str]:
     """U-6′ (ㄱ)~(ㄹ) 그래머를 만족하는 §13 행 — 대조군은 ``axis``/
-    ``record_rel``/포함 여부를 어긋나게 만든다."""
+    ``record_rel``/포함 여부를 어긋나게 만든다.
+
+    [레인 B 재심 20260905-033432 finding 1] (2) 스캔 결과는 이제 구획
+    문법(``tcs._d1_u6prime_scan_result_segment``)이 요구하는 단일 구획
+    ``"스캔 결과: 후보 우주 {N}개, 스캔 범위 {scope_desc}, 파일 {F}개"``
+    로 합쳐 쓴다 — 예전처럼 «후보 우주 N개 키»·«{scope_desc} {F}개 파일
+    스캔»을 서로 다른 구획으로 흩어 쓰면 co-location 요구를 충족하지
+    못한다."""
     if axis is None:
         axis = f"D0-5 NONE: {site_id}"
     reason = (
         "VER-002-KEYS: NONE 선언 · "
-        f"후보 우주 {candidate_size}개 키 · {scope_desc} {file_count}개 파일 스캔 · "
+        f"스캔 결과: 후보 우주 {candidate_size}개, 스캔 범위 {scope_desc}, "
+        f"파일 {file_count}개 · "
         "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
         f"독립 리뷰 기록: {record_rel}"
     )
@@ -5336,12 +5344,12 @@ def test_d1_none_declaration_row_present_record_absent_is_undecided_control_5b(
 def test_d1_none_declaration_row_reason_missing_scope_desc_is_undecided_control_10a() -> (
     None
 ):
-    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-a — reason 에
-    후보 우주 크기·파일 수는 있으나 ``scope_desc``(스캔 범위) 자체가
-    빠지면 (ㄹ)(2) 미충족으로 red. 구판은 ``scope_desc`` 를 전혀 소비하지
-    않아 이 누락을 못 잡았다."""
+    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-a — reason 의 스캔
+    결과 구획에 후보 우주 크기·파일 수는 있으나 ``scope_desc``(스캔 범위)
+    자체가 빠지면 (ㄹ)(2) 미충족으로 red. 구판은 ``scope_desc`` 를 전혀
+    소비하지 않아 이 누락을 못 잡았다."""
     reason = (
-        "VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · 1개 파일 스캔 · "
+        "VER-002-KEYS: NONE 선언 · 스캔 결과: 후보 우주 1개, 파일 1개 · "
         "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
         "독립 리뷰 기록: "
         "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
@@ -5364,12 +5372,102 @@ def test_d1_none_declaration_row_reason_missing_scope_desc_is_undecided_control_
 def test_d1_none_declaration_row_reason_wrong_scope_desc_is_undecided_control_10b() -> (
     None
 ):
-    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-b — reason 이 실제
-    스캔 범위(``d1_none_pkg``) 대신 무관한 범위 문자열(``other_pkg``)을
-    적으면 (ㄹ)(2) 미충족으로 red — reason 이 실제 스캔 범위와 무관한
-    값을 적어도 통과하던 회피를 막는다."""
+    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-b — reason 의 스캔
+    결과 구획이 실제 스캔 범위(``d1_none_pkg``) 대신 무관한 범위 문자열
+    (``other_pkg``)을 적으면 (ㄹ)(2) 미충족으로 red — reason 이 실제 스캔
+    범위와 무관한 값을 적어도 통과하던 회피를 막는다."""
     reason = (
-        "VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · other_pkg 1개 파일 스캔 · "
+        "VER-002-KEYS: NONE 선언 · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 other_pkg, 파일 1개 · "
+        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert "(2) 스캔 결과" in detail
+
+
+def test_d1_none_declaration_row_reason_scope_elsewhere_scan_segment_other_pkg_is_undecided_control_11a() -> (
+    None
+):
+    """[레인 B 재심 20260905-033432 finding 1(a)] 대조군 ⑪-a — 실제 스캔
+    범위(``d1_none_pkg``)가 스캔 결과 구획과 무관한 다른 구획(remark)에
+    등장하고, 진짜 스캔 결과 구획은 엉뚱한 범위(``other_pkg``)를 적는다.
+    구판(20260904-233516 처분)은 ``scope_desc in reason`` 부분문자열만
+    보아 이 치환을 통과시켰다 — 이제는 스캔 결과 구획 «전체»가 일치해야
+    하므로 무관한 구획에 있는 진짜 값은 세지 않고 (2)가 그대로 미충족."""
+    reason = (
+        "VER-002-KEYS: NONE 선언 · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 other_pkg, 파일 1개 · "
+        "d1_none_pkg 는 참고용 무관 remark일 뿐이다 · "
+        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(2) 스캔 결과" in detail
+
+
+def test_d1_none_declaration_row_reason_wrong_candidate_size_right_scope_is_undecided_control_11d() -> (
+    None
+):
+    """[레인 B 재심 20260905-033432 finding 1] 대조군 ⑪-d — 스캔 결과
+    구획의 ``scope_desc`` 는 맞지만 후보 우주 크기가 틀리면(2개 vs 실제
+    1개) (2) 미충족으로 red — 범위 문자열만 맞으면 통과하는 회귀가 없는지
+    본다."""
+    reason = (
+        "VER-002-KEYS: NONE 선언 · "
+        "스캔 결과: 후보 우주 2개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert "(2) 스캔 결과" in detail
+
+
+def test_d1_none_declaration_row_reason_scan_result_split_across_segments_is_undecided_control_11e() -> (
+    None
+):
+    """[레인 B 재심 20260905-033432 finding 1] 대조군 ⑪-e — 스캔 결과의
+    세 값(후보 우주 크기·스캔 범위·파일 수)이 정본이 요구하는 «한 구획»이
+    아니라 서로 다른 두 구획으로 쪼개지면(가운뎃점을 하나 더 끼워 넣는
+    실수) (2) 미충족으로 red — co-location 요구가 실제로 구획 경계를
+    본다는 것을 확인한다."""
+    reason = (
+        "VER-002-KEYS: NONE 선언 · "
+        "스캔 결과: 후보 우주 1개 · 스캔 범위 d1_none_pkg, 파일 1개 · "
         "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
         "독립 리뷰 기록: "
         "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
@@ -5397,7 +5495,8 @@ def test_d1_none_declaration_row_reason_unselected_prefix_record_path_is_undecid
     가짜 스탬프 경로를 인용하면 (ㄹ)(4) 미충족으로 red — 구판의 접두사
     일치 검사는 이 치환을 통과시켰다."""
     reason = (
-        "VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · d1_none_pkg 1개 파일 스캔 · "
+        "VER-002-KEYS: NONE 선언 · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
         "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
         "독립 리뷰 기록: "
         "docs/reviews/d1-no-dependency/noneprobe/99990101-000000/verdict.md"
@@ -5411,6 +5510,60 @@ def test_d1_none_declaration_row_reason_unselected_prefix_record_path_is_undecid
         record_path=(
             "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
         ),
+    )
+    assert ok is False
+    assert "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in detail
+
+
+def test_d1_none_declaration_row_reason_record_path_with_suffix_is_undecided_control_11b() -> (
+    None
+):
+    """[레인 B 재심 20260905-033432 finding 1(b)] 대조군 ⑪-b — 독립 리뷰
+    기록 구획이 실제 선택·검증된 ``record_path`` 뒤에 접미사
+    (``.not-the-selected-record``)를 덧붙이면 (ㄹ)(4) 미충족으로 red —
+    구판(``record_path in reason`` 부분문자열)은 이 치환을 통과시켰다
+    (record_path 자체가 여전히 부분문자열로 존재하므로)."""
+    record_path = "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    reason = (
+        "VER-002-KEYS: NONE 선언 · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        f"독립 리뷰 기록: {record_path}.not-the-selected-record"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=record_path,
+    )
+    assert ok is False
+    assert "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in detail
+
+
+def test_d1_none_declaration_row_reason_record_path_second_path_is_undecided_control_11c() -> (
+    None
+):
+    """[레인 B 재심 20260905-033432 finding 1(b)] 대조군 ⑪-c — 독립 리뷰
+    기록 구획에 실제 ``record_path`` 뒤로 두 번째(무관한) 경로를 나란히
+    적으면 (ㄹ)(4) 미충족으로 red — 구판은 record_path 가 부분문자열로
+    존재하는 한 이 병기를 통과시켰다."""
+    record_path = "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    other_path = "docs/reviews/d1-no-dependency/noneprobe/99990101-000000/verdict.md"
+    reason = (
+        "VER-002-KEYS: NONE 선언 · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        f"독립 리뷰 기록: {record_path} {other_path}"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=record_path,
     )
     assert ok is False
     assert "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in detail
@@ -5471,13 +5624,15 @@ def test_d1_none_declaration_reason_cites_earlier_unselected_stamp_is_undecided_
 def test_d1_none_declaration_row_reason_exact_strings_is_grammar_ok_control_10e() -> (
     None
 ):
-    """[레인 B 재심 20260904-233516 finding 1] 양성 대조군(단위) — 실제
-    ``scope_desc``/``file_count``/``record_path`` 를 그대로 담은 reason
-    은 (ㄱ)~(ㄹ) 그래머를 충족한다(전체 파이프라인 없이 함수 하나만
-    빠르게 확인)."""
+    """[레인 B 재심 20260904-233516 finding 1 · 20260905-033432 finding 1]
+    양성 대조군(단위) — 실제 ``scope_desc``/``file_count``/``record_path``
+    를 구획 문법이 요구하는 정본 구획 형태로 그대로 담은 reason 은
+    (ㄱ)~(ㄹ) 그래머를 충족한다(전체 파이프라인 없이 함수 하나만 빠르게
+    확인)."""
     record_path = "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
     reason = (
-        "VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · d1_none_pkg 1개 파일 스캔 · "
+        "VER-002-KEYS: NONE 선언 · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
         "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
         f"독립 리뷰 기록: {record_path}"
     )
@@ -5724,8 +5879,9 @@ def test_d1_none_declaration_row_reason_missing_boundary_sentence_is_undecided(
         "id": "MINI-UNCHK-D4-noneprobe",
         "axis": "D0-5 NONE: noneprobe",
         "reason": (
-            f"VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · d1_none_pkg 1개 파일 "
-            f"스캔 · 프로파일 키 참조 0 · 독립 리뷰 기록: {record_rel}"
+            "VER-002-KEYS: NONE 선언 · "
+            "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+            f"프로파일 키 참조 0 · 독립 리뷰 기록: {record_rel}"
         ),
         "blocked_by": "-",
         "owner_track": "Phase 2-5",
