@@ -3868,6 +3868,27 @@ def _load_profile_universe(
 _D1_NO_DEPENDENCY_ADJUDICATORS: frozenset[str] = frozenset({"codex", "operator"})
 _D1_NO_DEPENDENCY_RECORDS_ROOT = Path("docs/reviews/d1-no-dependency")
 _D1_U6PRIME_BOUNDARY_SENTENCE = "후보 우주 밖의 이름은 보지 못한다"
+# D-4 (마) — adjudicator 별 provenance 필드 이름. codex 기록은 job_id, operator
+# 기록은 countersigned_by 를 지어야 한다(다른 쪽 필드만 있으면 그 adjudicator엔
+# 미충족). 위 _D1_NO_DEPENDENCY_ADJUDICATORS 의 두 값과 1:1 대응한다.
+_D1_NO_DEPENDENCY_PROVENANCE_FIELD: dict[str, str] = {
+    "codex": "job_id",
+    "operator": "countersigned_by",
+}
+# D-4 (마) — 지정 claim 문장, 계약 §7.4 D-4 (마)/55차 (iv) 원문 그대로(byte-equal
+# 부분문자열 비교 대상 — 정규화하지 않는다).
+_D1_NO_DEPENDENCY_CLAIM_SENTENCE = (
+    "이 사이트 범위는 VERIFICATION-PROFILE-002 결속 값을 소비하지 않는다"
+)
+_D1_REVIEWED_AT_HEAD_RE = re.compile(r"[0-9a-f]{40}")
+
+
+def _d1_no_dependency_site_token_re(site_id: str) -> re.Pattern[str]:
+    """D-4 (라) — claim 안의 canonical ``site_id`` 를 **단어 경계 정확
+    일치**로만 인정한다. ``resolverx``/``d1probex`` 류 부분문자열은
+    앞뒤 문맥 문자([A-Za-z0-9_])가 이어 붙어 있어 이 패턴에 걸리지
+    않는다(56차가 §13 axis 에 쓴 것과 같은 부분문자열-금지 원리)."""
+    return re.compile(rf"(?<![A-Za-z0-9_]){re.escape(site_id)}(?![A-Za-z0-9_])")
 
 
 def _d1_u6prime_axis(site_id: str) -> str:
@@ -3978,15 +3999,28 @@ def _d1_locate_no_dependency_record_stamp(repo_root: Path, site_id: str) -> str 
 def _d1_no_dependency_record_state(
     repo_root: Path, site_id: str, scope_paths: Sequence[Path]
 ) -> tuple[bool, str]:
-    """D-4 (i)~(iv)의 (iv) — 독립 리뷰 기록(계약 §7.4 D-4 (마), v2.22 에라타
-    55차). 저작자가 «아닌» 심판(``adjudicator`` ∈ {codex, operator})이
-    「이 사이트 범위는 VERIFICATION-PROFILE-002 결속 값을 소비하지
-    않는다」에 서명했고, 그 서명이 이 HEAD 의 범위 소스 바이트에 그대로
-    결속돼 있는지를 본다. 형식은 codex-gate 레인 B ``verdict.md`` 그대로 —
-    새 형식을 발명하지 않는다(S-14).
+    """D-4 (i)~(iv)의 (iv) — 독립 리뷰 기록(계약 §7.4 D-4 (마) · v2.22 에라타
+    55차 · Codex 레인 A 재심 #4 review-mtmjt61i-d0f3oc finding 1). 저작자가
+    «아닌» 심판(``adjudicator`` ∈ {codex, operator})이 「이 사이트 범위는
+    VERIFICATION-PROFILE-002 결속 값을 소비하지 않는다」에 서명했고, 그
+    서명이 이 HEAD 의 범위 소스 바이트에 그대로 결속돼 있는지를 본다.
+    형식은 codex-gate 레인 B ``verdict.md`` 그대로 — 새 형식을 발명하지
+    않는다(S-14).
 
-    ``reviewed_at_head`` 는 **비결속 provenance** 다(대조 항이 아니다) —
-    내용을 지는 것은 ``reviewed_scope_digest`` 뿐이다."""
+    재심 #4 finding 1: 개정 전 구현은 adjudicator/verdict/path/digest 만
+    보고 ``site_id in claim`` 부분문자열만 확인해, ``job_id``/
+    ``countersigned_by``/``reviewed_at_head`` 부재나 claim 의 부분문자열
+    site_id·반대 의미 문장도 통과시켰다. 이제 아래 순서로 전부 확인한다 —
+    하나라도 미충족이면 그 필드를 명시한 채 즉시 거부한다(호출자가
+    ``record_detail`` 을 U-6′ finding 에 그대로 싣는다):
+    (1) adjudicator 허용 집합 (2) verdict == approve (3) reviewed_plan_paths
+    == 파생 범위 (4) reviewed_scope_digest == 재계산값 (5) reviewed_at_head
+    실재 + 40-hex(비결속 provenance 지만 (마)가 요구하는 필드 자체는 실재
+    의무) (6) adjudicator 별 provenance 필드 — codex 는 ``job_id``, operator
+    는 ``countersigned_by``(다른 adjudicator 의 필드만 있으면 미충족) (7)
+    claim — canonical site_id **단어 경계 정확 일치**(부분문자열·다른
+    site_id 이름 모두 거부) **그리고** 지정 문장의 **byte-equal 부분문자열**
+    (정규화·반대 의미 금지)."""
     stamp_dir = _d1_locate_no_dependency_record_stamp(repo_root, site_id)
     if stamp_dir is None:
         return (
@@ -4018,9 +4052,36 @@ def _d1_no_dependency_record_state(
         return False, "scope_content_digest 를 HEAD 에서 재계산할 수 없음(blob 부재)"
     if held_digest != calc_digest:
         return False, "reviewed_scope_digest 가 재계산값과 불일치(stale — 범위 변경)"
+    reviewed_at_head = doc.get("reviewed_at_head")
+    if not isinstance(reviewed_at_head, str) or not _D1_REVIEWED_AT_HEAD_RE.fullmatch(
+        reviewed_at_head
+    ):
+        return (
+            False,
+            f"reviewed_at_head 부재 또는 40-hex 형식 아님: {reviewed_at_head!r}",
+        )
+    provenance_field = _D1_NO_DEPENDENCY_PROVENANCE_FIELD[adjudicator]
+    provenance_value = doc.get(provenance_field)
+    if not isinstance(provenance_value, str) or not provenance_value.strip():
+        return (
+            False,
+            f"adjudicator={adjudicator!r} 인데 provenance 필드 {provenance_field!r} "
+            "부재(다른 adjudicator 의 필드만으로는 미충족)",
+        )
     claim = doc.get("claim")
-    if not isinstance(claim, str) or site_id not in claim:
-        return False, "claim 에 site_id 부재"
+    if not isinstance(claim, str):
+        return False, "claim 부재"
+    if not _d1_no_dependency_site_token_re(site_id).search(claim):
+        return (
+            False,
+            f"claim 에 canonical site_id 단어-경계 정확 일치 부재: {site_id!r}",
+        )
+    if _D1_NO_DEPENDENCY_CLAIM_SENTENCE not in claim:
+        return (
+            False,
+            "claim 에 지정 문장(§7.4 D-4 (마)) byte-equal 부재 — "
+            "반대 의미/다른 문장으로는 미충족",
+        )
     return True, f"독립 리뷰 기록 확인됨: {rel}"
 
 

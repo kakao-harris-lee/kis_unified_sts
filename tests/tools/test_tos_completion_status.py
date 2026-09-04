@@ -4990,12 +4990,24 @@ def _write_d1_no_dependency_record(
     reviewed_plan_paths: list[str] | None = None,
     reviewed_scope_digest: str | None = None,
     reviewed_at_head: str = "0" * 40,
+    job_id: str | None = "review-mtsynthetic-fixture",
+    countersigned_by: str | None = None,
+    omit_reviewed_at_head: bool = False,
 ) -> str:
     """§7.4 D-4 (마) 독립 리뷰 기록을 워킹트리에 쓴다(커밋은 호출자 몫).
     ``reviewed_plan_paths``/``reviewed_scope_digest`` 를 지정하지 않으면
     실제 스캔 범위·재계산 digest 로 «올바른» 기록을 만든다 — 대조군은
     개별 인자를 어긋나게 넘겨 만든다. 기록의 repo-relative POSIX 경로를
-    돌려준다(§13 행 reason (4)에 인용하는 데 쓴다)."""
+    돌려준다(§13 행 reason (4)에 인용하는 데 쓴다).
+
+    ``job_id``/``countersigned_by`` 는 adjudicator 별 provenance 필드다
+    (재심 #4 finding 1 — 기존 픽스처가 ``job_id`` 없이 통과했던 자리).
+    기본값은 ``adjudicator="codex"`` 에 맞춘 ``job_id`` 뿐이다 —
+    operator 변형을 쓰려면 호출자가 ``job_id=None, countersigned_by=...``
+    를 명시한다(둘 다 세팅해도 검사기는 adjudicator 가 요구하는 필드만
+    본다). ``claim`` 기본값은 계약 §7.4 D-4 (마)/55차 (iv) 지정 문장을
+    byte-equal 로 포함하고 canonical site_id 를 단어 경계로 포함한다 —
+    대조군은 이 둘 중 하나를 어긋나게 만든다."""
     scope_paths = tcs._d1_scope_paths(root, rel, kind)
     rels = sorted(p.relative_to(root).as_posix() for p in scope_paths)
     if reviewed_plan_paths is None:
@@ -5004,10 +5016,10 @@ def _write_d1_no_dependency_record(
         reviewed_scope_digest = _scope_content_digest_from_worktree(root, rels)
     if claim is None:
         claim = (
-            f"{site_id} — synthetic scope does not consume "
-            "VERIFICATION-PROFILE-002 bound values"
+            f"{site_id} — 이 사이트 범위는 VERIFICATION-PROFILE-002 결속 값을 "
+            "소비하지 않는다"
         )
-    data = {
+    data: dict[str, object] = {
         "adjudicator": adjudicator,
         "verdict": verdict,
         "kind": "d1-no-dependency independent review record (§7.4 D-4 (마))",
@@ -5015,9 +5027,14 @@ def _write_d1_no_dependency_record(
         "reviewed_plan_paths": reviewed_plan_paths,
         "reviewed_scope_digest": reviewed_scope_digest,
         "digest_kind": "scope_content_digest (내용 전용 · HEAD 미포함)",
-        "reviewed_at_head": reviewed_at_head,
         "claim": claim,
     }
+    if not omit_reviewed_at_head:
+        data["reviewed_at_head"] = reviewed_at_head
+    if job_id is not None:
+        data["job_id"] = job_id
+    if countersigned_by is not None:
+        data["countersigned_by"] = countersigned_by
     body = yaml.safe_dump(data, sort_keys=False)
     rel_out = f"docs/reviews/d1-no-dependency/{site_id}/{stamp}/verdict.md"
     path = root / rel_out
@@ -5542,6 +5559,222 @@ def test_d1_none_declaration_row_reason_missing_boundary_sentence_is_undecided(
     record = dispositions["noneprobe"]
     assert record.cell == "UNDECIDED"
     assert "(3)" in record.basis
+
+
+def _setup_noneprobe_no_dependency_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **record_kwargs: object
+) -> None:
+    """22a-2 대조군 공통 배선 — ``noneprobe`` 단일 NONE 사이트 + §13
+    U-6′ 행을 세우고, D-4 (마) 독립 리뷰 기록만 ``record_kwargs`` 로
+    어긋나게 만든다(다른 세 결속축은 그대로 두어 기록 검증만 겨눈다)."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_NONE_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, _d1_none_docstring(), rel=D1_NONE_SITE_REL)
+    scope_desc, file_count, candidate_size = _d1_expected_scan_facts(
+        tmp_path, "noneprobe"
+    )
+    record_rel = _write_d1_no_dependency_record(
+        tmp_path, "noneprobe", D1_NONE_SITE_REL, "module", **record_kwargs
+    )
+    row = _d1_u6prime_row(
+        "noneprobe",
+        candidate_size=candidate_size,
+        scope_desc=scope_desc,
+        file_count=file_count,
+        record_rel=record_rel,
+    )
+    write_corpus(tmp_path, write_d1_sites=False, uncheckable_rows=[row])
+
+
+def _noneprobe_dispositions(
+    tmp_path: Path,
+) -> tuple[tcs.D1SiteRecord, list[tcs.Finding]]:
+    ctx = tcs.build_context(tmp_path)
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(
+        tmp_path, ctx.uncheckable_rows
+    )
+    return dispositions["noneprobe"], tcs.check_d1(ctx)
+
+
+def test_d1_none_declaration_operator_variant_positive_is_no_dependency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """양성 대조군(operator 변형) — ``adjudicator: operator`` +
+    ``countersigned_by``(job_id 없이)로도 ``NO_DEPENDENCY`` 로 판정돼야
+    한다. codex/operator 두 provenance 필드가 대칭으로 인정됨을 본다."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path,
+        monkeypatch,
+        adjudicator="operator",
+        job_id=None,
+        countersigned_by="operator-alice",
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "NO_DEPENDENCY", record.basis
+    assert not any(f.check_id == "U-6′" for f in findings)
+
+
+def test_d1_none_declaration_codex_missing_job_id_is_undecided_control_9a(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-a(재심 #4 finding 1) — ``adjudicator: codex`` 인데
+    ``job_id`` 가 없으면(옛 구현이 통과시켰던 자리) red. 나머지 세 축은
+    그대로 서 있어야 이 축만 겨눈 대조군이다."""
+    _setup_noneprobe_no_dependency_fixture(tmp_path, monkeypatch, job_id=None)
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "job_id" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_operator_missing_countersigned_by_is_undecided_control_9b(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-b — ``adjudicator: operator`` 인데 ``countersigned_by``
+    가 없으면 red(다른 adjudicator 의 필드가 있어도 대신하지 않는다)."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path, monkeypatch, adjudicator="operator", job_id=None
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "countersigned_by" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_codex_with_countersigned_by_only_is_undecided_control_9c(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-c — ``adjudicator: codex`` 인데 ``job_id`` 대신
+    ``countersigned_by`` 만 있으면 red(다른 adjudicator 의 provenance
+    필드는 이 adjudicator 를 대신 충족시키지 못한다)."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path, monkeypatch, job_id=None, countersigned_by="operator-bob"
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "job_id" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_missing_reviewed_at_head_is_undecided_control_9d(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-d — ``reviewed_at_head`` 필드 자체가 없으면 red
+    (비결속 provenance 지만 (마)가 요구하는 필드의 실재는 별도 의무다)."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path, monkeypatch, omit_reviewed_at_head=True
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "reviewed_at_head" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_reviewed_at_head_not_40_hex_is_undecided_control_9e(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-e — ``reviewed_at_head`` 가 40-hex 형식이 아니면 red."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path, monkeypatch, reviewed_at_head="not-a-commit-sha"
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "reviewed_at_head" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_claim_substring_site_id_is_undecided_control_9f(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-f(재심 #4 finding 1) — claim 이 ``noneprobe`` 를
+    부분문자열로만 담은 ``noneprobex`` 류면 red(옛 ``site_id in claim``
+    부분문자열 검사가 통과시켰던 자리)."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path,
+        monkeypatch,
+        claim=(
+            "noneprobex — 이 사이트 범위는 VERIFICATION-PROFILE-002 결속 값을 "
+            "소비하지 않는다"
+        ),
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "site_id" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_claim_names_another_site_is_undecided_control_9g(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-g — claim 이 다른 canonical site_id(``engine``)를 이름하고
+    ``noneprobe`` 는 전혀 등장하지 않으면 red(다른 사이트 심사로는 이
+    사이트를 판정할 수 없다)."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path,
+        monkeypatch,
+        claim=(
+            "engine — 이 사이트 범위는 VERIFICATION-PROFILE-002 결속 값을 "
+            "소비하지 않는다"
+        ),
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "site_id" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_claim_opposite_meaning_is_undecided_control_9h(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-h(재심 #4 finding 1) — claim 이 site_id 는 담되 지정
+    문장의 **반대 의미**(«소비한다», «않는다» 없음)면 red. 지정 문장이
+    byte-equal 로 부재하므로 미충족이다."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path,
+        monkeypatch,
+        claim=(
+            "noneprobe — 이 사이트 범위는 VERIFICATION-PROFILE-002 결속 값을 "
+            "소비한다"
+        ),
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "지정 문장" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_claim_sentence_absent_is_undecided_control_9i(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-i — claim 이 site_id 는 담되 지정 문장을 아예 다른
+    문장으로 대체하면(무관한 서술) red."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path,
+        monkeypatch,
+        claim="noneprobe — 이 기록은 검토를 마쳤다는 사실만 진술한다",
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "지정 문장" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_record_verdict_not_approve_is_undecided_control_9j(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """대조군 ⑨-j — 독립 리뷰 기록의 ``verdict`` 가 ``approve`` 가
+    아니면(예: ``needs-attention``) red."""
+    _setup_noneprobe_no_dependency_fixture(
+        tmp_path, monkeypatch, verdict="needs-attention"
+    )
+    record, findings = _noneprobe_dispositions(tmp_path)
+    assert record.cell == "UNDECIDED"
+    assert "verdict" in record.basis
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
 
 
 # ---------------------------------------------------------------------------
