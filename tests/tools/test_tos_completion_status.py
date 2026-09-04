@@ -5292,7 +5292,15 @@ def test_d1_none_declaration_row_present_record_absent_is_undecided_control_5b(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """대조군 ⑤-b — §13 행은 있으나 D-4 (마) 독립 리뷰 기록이 없으면
-    (54차의 «공시 의무만으로는 통과» 회피를 닫는 자리) red."""
+    (54차의 «공시 의무만으로는 통과» 회피를 닫는 자리) red.
+
+    [레인 B 재심 20260904-233516 finding 1 처분 이후] reason 이 그럴듯한
+    경로를 적어도, 그 경로에 실제 스탬프(``verdict.md``)가 없으면
+    ``_d1_locate_no_dependency_record_stamp`` 는 아무것도 선택하지 못해
+    ``record_path`` 가 ``None`` 이다 — 이제는 이 자리가 §13 행 그래머
+    (ㄹ)(4) 미충족으로 **먼저** 막힌다(구판은 디렉터리 접두사만 보고
+    이 행을 통과시켜, 실패 지점이 그 뒤 D-4 (마) 기록 검증으로 늦게
+    옮겨졌었다)."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_NONE_TEST_SITES)
     _write_mini_profile(
         tmp_path,
@@ -5317,9 +5325,172 @@ def test_d1_none_declaration_row_present_record_absent_is_undecided_control_5b(
         tmp_path, ctx.uncheckable_rows
     )
     assert dispositions["noneprobe"].cell == "UNDECIDED"
-    assert "독립 리뷰 기록 미충족" in dispositions["noneprobe"].basis
+    assert "U-6′ §13 행 미충족" in dispositions["noneprobe"].basis
+    assert (
+        "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in dispositions["noneprobe"].basis
+    )
     findings = tcs.check_d1(ctx)
     assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_row_reason_missing_scope_desc_is_undecided_control_10a() -> (
+    None
+):
+    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-a — reason 에
+    후보 우주 크기·파일 수는 있으나 ``scope_desc``(스캔 범위) 자체가
+    빠지면 (ㄹ)(2) 미충족으로 red. 구판은 ``scope_desc`` 를 전혀 소비하지
+    않아 이 누락을 못 잡았다."""
+    reason = (
+        "VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · 1개 파일 스캔 · "
+        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(2) 스캔 결과" in detail
+
+
+def test_d1_none_declaration_row_reason_wrong_scope_desc_is_undecided_control_10b() -> (
+    None
+):
+    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-b — reason 이 실제
+    스캔 범위(``d1_none_pkg``) 대신 무관한 범위 문자열(``other_pkg``)을
+    적으면 (ㄹ)(2) 미충족으로 red — reason 이 실제 스캔 범위와 무관한
+    값을 적어도 통과하던 회피를 막는다."""
+    reason = (
+        "VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · other_pkg 1개 파일 스캔 · "
+        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert "(2) 스캔 결과" in detail
+
+
+def test_d1_none_declaration_row_reason_unselected_prefix_record_path_is_undecided_control_10c() -> (
+    None
+):
+    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-c — reason 이
+    실제로 선택·검증된 기록(``record_path``)과는 다른, 같은 디렉터리
+    접두사(``docs/reviews/d1-no-dependency/noneprobe/``)를 공유하는
+    가짜 스탬프 경로를 인용하면 (ㄹ)(4) 미충족으로 red — 구판의 접두사
+    일치 검사는 이 치환을 통과시켰다."""
+    reason = (
+        "VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · d1_none_pkg 1개 파일 스캔 · "
+        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/99990101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in detail
+
+
+def test_d1_none_declaration_reason_cites_earlier_unselected_stamp_is_undecided_control_10d(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-d — 스탬프
+    디렉터리가 **둘 다 실재**하고 검사기는 ``_d1_locate_no_dependency_record_stamp``
+    의 사전순 마지막(최신)을 선택하는데, §13 행 reason 이 그보다 이른
+    스탬프를 인용하면 (ㄹ)(4) 미충족으로 red — «선택된 기록»과 «인용된
+    경로»가 서로 다른 값일 수 있다는 개념적 결합을 막는 자리다."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_NONE_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, _d1_none_docstring(), rel=D1_NONE_SITE_REL)
+    scope_desc, file_count, candidate_size = _d1_expected_scan_facts(
+        tmp_path, "noneprobe"
+    )
+    earlier_rel = _write_d1_no_dependency_record(
+        tmp_path,
+        "noneprobe",
+        D1_NONE_SITE_REL,
+        "module",
+        stamp="20260101-000000",
+    )
+    _write_d1_no_dependency_record(
+        tmp_path,
+        "noneprobe",
+        D1_NONE_SITE_REL,
+        "module",
+        stamp="20260102-000000",
+    )
+    row = _d1_u6prime_row(
+        "noneprobe",
+        candidate_size=candidate_size,
+        scope_desc=scope_desc,
+        file_count=file_count,
+        record_rel=earlier_rel,
+    )
+    write_corpus(tmp_path, write_d1_sites=False, uncheckable_rows=[row])
+
+    ctx = tcs.build_context(tmp_path)
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(
+        tmp_path, ctx.uncheckable_rows
+    )
+    record = dispositions["noneprobe"]
+    assert record.cell == "UNDECIDED"
+    assert "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in record.basis
+    findings = tcs.check_d1(ctx)
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_row_reason_exact_strings_is_grammar_ok_control_10e() -> (
+    None
+):
+    """[레인 B 재심 20260904-233516 finding 1] 양성 대조군(단위) — 실제
+    ``scope_desc``/``file_count``/``record_path`` 를 그대로 담은 reason
+    은 (ㄱ)~(ㄹ) 그래머를 충족한다(전체 파이프라인 없이 함수 하나만
+    빠르게 확인)."""
+    record_path = "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    reason = (
+        "VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · d1_none_pkg 1개 파일 스캔 · "
+        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        f"독립 리뷰 기록: {record_path}"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=record_path,
+    )
+    assert ok is True, detail
+    assert matched is not None
 
 
 def test_d1_none_declaration_stale_digest_after_scope_edit_is_undecided_control_6(

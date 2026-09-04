@@ -3915,6 +3915,7 @@ def _d1_u6prime_row_state(
     candidate_universe_size: int,
     scope_desc: str,
     file_count: int,
+    record_path: str | None = None,
 ) -> tuple[bool, str, Mapping[str, str] | None]:
     """U-6′ (ㄱ)~(ㄹ)(계약 §7.4, v2.22 에라타 54~56차) — ``site_id`` 의 §13
     행 그래머를 확인한다. 반환: ``(충족 여부, 근거, 매칭된 행 또는 None)``.
@@ -3925,9 +3926,21 @@ def _d1_u6prime_row_state(
     미충족, 2행 이상이면 위반. (ㄷ) 행당 최대 한 사이트 — 위 axis 매칭
     자체가 사이트를 하나만 이름하므로 기계로 선다. (ㄹ) (1)~(4)는 그 한
     행의 ``reason`` 안에 있어야 한다: (1) ``VER-002-KEYS: NONE`` 선언
-    사실, (2) 스캔 결과(후보 우주 크기·스캔 범위 파일 수), (3) 경계 문장
-    「후보 우주 밖의 이름은 보지 못한다」, (4) D-4 (마) 독립 리뷰 기록의
-    경로 접두사."""
+    사실, (2) 스캔 결과 — ``scope_desc``(스캔 범위)와 ``file_count``(파일
+    수)가 **각각** ``reason`` 에 정확히 등장해야 한다(후보 우주 크기도
+    그대로 유지), (3) 경계 문장 「후보 우주 밖의 이름은 보지 못한다」,
+    (4) D-4 (마) 독립 리뷰 기록의 **정확한 경로** — 호출자가 검사기가
+    실제로 선택·검증한 스탬프(``_d1_locate_no_dependency_record_stamp``)
+    로부터 파생한 ``record_path``(정본 형식: 그 스탬프 디렉터리의
+    ``verdict.md`` repo-relative 전체 경로, 예:
+    ``docs/reviews/d1-no-dependency/<site_id>/<stamp>/verdict.md``)를
+    넘긴다 — 접두사 일치가 아니라 이 값과 ``reason`` 의 부분문자열
+    **완전 일치**를 요구한다. ``record_path`` 가 ``None``(선택된 기록이
+    없음)이면 (4)는 그 자체로 미충족이다 — ``reason`` 이 그럴듯한 경로를
+    적어도 통과하지 못한다(레인 B 재심 20260904-233516 finding 1 처분:
+    이전에는 ``scope_desc``/``file_count`` 를 소비하지 않고 디렉터리
+    접두사만 봐서, ``reason`` 이 실제 스캔 범위나 검증된 기록과 무관한
+    값을 적어도 rc 0 을 얻었다)."""
     if uncheckable_rows is None:
         return False, "§13 레지스터 부재로 확인 불가", None
     axis = _d1_u6prime_axis(site_id)
@@ -3948,14 +3961,14 @@ def _d1_u6prime_row_state(
     if not (
         "후보 우주" in reason
         and str(candidate_universe_size) in reason
+        and scope_desc in reason
         and str(file_count) in reason
     ):
-        missing.append("(2) 스캔 결과(후보 우주 크기·스캔 범위 파일 수)")
+        missing.append("(2) 스캔 결과(후보 우주 크기·스캔 범위·파일 수)")
     if _D1_U6PRIME_BOUNDARY_SENTENCE not in reason:
         missing.append("(3) 경계 문장")
-    record_path_prefix = f"{_D1_NO_DEPENDENCY_RECORDS_ROOT.as_posix()}/{site_id}/"
-    if record_path_prefix not in reason:
-        missing.append("(4) D-4 (마) 독립 리뷰 기록 경로")
+    if record_path is None or record_path not in reason:
+        missing.append("(4) D-4 (마) 독립 리뷰 기록의 정확한 경로")
     if missing:
         return False, f"§13 행 reason 미충족(ㄹ): {', '.join(missing)}", row
     return True, f"§13 행 그래머 충족(axis={axis!r})", row
@@ -4007,7 +4020,10 @@ def _d1_locate_no_dependency_record_stamp(repo_root: Path, site_id: str) -> str 
 
 
 def _d1_no_dependency_record_state(
-    repo_root: Path, site_id: str, scope_paths: Sequence[Path]
+    repo_root: Path,
+    site_id: str,
+    scope_paths: Sequence[Path],
+    stamp_dir: str | None,
 ) -> tuple[bool, str]:
     """D-4 (i)~(iv)의 (iv) — 독립 리뷰 기록(계약 §7.4 D-4 (마) · v2.22 에라타
     55차 · Codex 레인 A 재심 #4 review-mtmjt61i-d0f3oc finding 1). 저작자가
@@ -4016,6 +4032,15 @@ def _d1_no_dependency_record_state(
     서명이 이 HEAD 의 범위 소스 바이트에 그대로 결속돼 있는지를 본다.
     형식은 codex-gate 레인 B ``verdict.md`` 그대로 — 새 형식을 발명하지
     않는다(S-14).
+
+    ``stamp_dir`` 은 호출자가 ``_d1_locate_no_dependency_record_stamp`` 로
+    **미리** 위치를 찾은 값을 그대로 받는다(레인 B 재심 20260904-233516
+    finding 1 처분) — 이 함수가 다시 독립적으로 찾지 않는다. 그래야 §13
+    행 reason 의 (4)가 인용하는 경로(``_d1_u6prime_row_state`` 의
+    ``record_path``)와 이 함수가 실제로 열어 검증하는 기록이 **항상 같은
+    선택**이 된다; 두 함수가 각자 다시 찾으면 결정적으로는 같은 값을
+    내더라도 "인용된 경로"와 "검증된 기록"이 서로 다른 값일 수 있다는
+    개념적 결합이 남는다.
 
     재심 #4 finding 1: 개정 전 구현은 adjudicator/verdict/path/digest 만
     보고 ``site_id in claim`` 부분문자열만 확인해, ``job_id``/
@@ -4040,7 +4065,6 @@ def _d1_no_dependency_record_state(
     고정한다(site_id 와 위 문장) — 이 함수가 그 내용에 대한 **단일
     결정적 표면 형식**을 못박아, «두 조건의 독립 만족」이라는 우회 형태
     자체를 없앤다."""
-    stamp_dir = _d1_locate_no_dependency_record_stamp(repo_root, site_id)
     if stamp_dir is None:
         return (
             False,
@@ -4177,12 +4201,21 @@ def _derive_d1_disposition(
         # 자리). 완료 근거는 (i) NONE 선언 + (ii) 스캔 0건 + (iii) §13 U-6′
         # 행 + (iv) D-4 (마) 독립 리뷰 기록의 논리곱이다(55차) — 뒤 둘은
         # 저작자가 혼자 만들 수 없다.
+        #
+        # 기록 스탬프는 여기서 «한 번만» 찾는다(레인 B 재심 20260904-233516
+        # finding 1 처분) — §13 행 (4)가 인용해야 하는 경로(row state 의
+        # ``record_path``)와 D-4 (마) 검증이 실제로 여는 기록(record state
+        # 의 ``stamp_dir``)이 서로 다시 찾은 두 값이면, reason 이 가리키는
+        # 기록과 실제로 검증된 기록이 개념적으로 갈릴 수 있는 자리가 남는다.
+        stamp_dir = _d1_locate_no_dependency_record_stamp(repo_root, name)
+        record_path = f"{stamp_dir}/verdict.md" if stamp_dir is not None else None
         row_ok, row_detail, matched_row = _d1_u6prime_row_state(
             uncheckable_rows,
             name,
             candidate_universe_size=len(candidate_universe),
             scope_desc=scope_desc,
             file_count=len(paths),
+            record_path=record_path,
         )
         if not row_ok:
             return (
@@ -4196,7 +4229,7 @@ def _derive_d1_disposition(
                 True,
             )
         record_ok, record_detail = _d1_no_dependency_record_state(
-            repo_root, name, paths
+            repo_root, name, paths, stamp_dir
         )
         if not record_ok:
             row_axis = matched_row.get("axis", "") if matched_row is not None else ""
