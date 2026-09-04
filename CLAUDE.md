@@ -125,10 +125,12 @@ strategy config -> backtest -> tracking/optimization -> paper/live validation ->
   2. Check what this repo already implements (`shared/`, `tos/`, `tools/`,
      `services/`) — reuse or extend before writing new surfaces.
   3. Write the plan (reuse targets, rejected alternatives with a one-line
-     reason, minimal new surface), then implement. Send the plan through
-     `codex-gate` when it is a new feature, a new surface, or a change that is
-     hard to reverse — routine fixes, config edits, and doc changes go straight
-     to implementation, and any plan can be gated on request.
+     reason, minimal new surface), then implement. **Goals, milestones,
+     roadmaps, and specs are written solo by the session model (Opus 5 [1m] or
+     Fable 5.1 [1m]) — operator directive 2026-09-04.** No planner / architect /
+     deep-reasoner pipeline and no `codex-gate` on plan documents: the session
+     model reads the repo and types the plan directly; the operator reviews it.
+     Routine fixes, config edits, and doc changes go straight to implementation.
 - **Do not reinvent the wheel.** A bespoke parser/tokenizer/checker is the
   last resort, not the first move; prefer proven tooling and existing modules.
 - **Read the index before the contract (operator directive, 2026-09-01).** Any
@@ -180,18 +182,21 @@ plan review) in an independent model lane.
 
 - Platform work (strategy, ops, frontend, DevX, data, execution) → use the
   `trading-harness` skill.
-- Review is **opt-in, not automatic.** Run `codex-gate` when the operator
-  explicitly asks for a review, merge gate, blocking verdict, or plan critique —
-  finishing an implementation, passing tests, or making a commit is not by itself
-  a trigger. When it does run, Codex is the reviewer of record; Claude agents
-  produce evidence, not verdicts.
+- **Codex review excludes code and plans (operator directive 2026-09-04).**
+  Code diffs, PRs, implementation results, and plan/spec documents are never
+  sent to Codex. Code review is a Claude-side pass (`code-reviewer` /
+  `review-synthesizer`, separate from the author); plans are reviewed by the
+  operator. `codex-gate` remains only for non-code artifacts the operator names
+  explicitly, still opt-in — finishing an implementation, passing tests, or
+  making a commit is not a trigger. Reason: paid external calls had become too
+  frequent.
 - Scope every gate run to the diff or plan under question. Do not re-adjudicate
   already-disposed material; a fresh full-corpus review is an operator decision.
 - Keep the OpenAI Codex Claude Code plugin enabled, but keep its optional
   stop-time review gate disabled. Run scoped reviews explicitly through
   `codex-gate`; do not launch a fresh generic Codex task on every Claude stop.
-- Plan *authoring* is unchanged and stays on the existing Claude path. Only plan
-  *adjudication* moved to Codex.
+- Plan *authoring* is the session model's solo job (see Development Discipline);
+  plan *adjudication* by Codex was withdrawn on 2026-09-04.
 - Simple questions can be answered directly without the harness.
 
 **Adjudication override:** A Codex verdict never overrides the Non-Negotiable Rules
@@ -219,6 +224,7 @@ Agent roster, skill list, directory layout, and execution detail live under
 | 2026-08-11 | Adjudication moved to Codex — added `codex-reviewer` / `codex-plan-reviewer` / `codex-gate`; demoted `code-reviewer` and `review-synthesizer` to fallback-only; replaced the `code-audit` fan-in | `agents/`, `skills/` | Prevent self-approval and secure cross-model independent adjudication |
 | 2026-08-21 | Disabled per-turn Codex stop review; kept explicit scoped `codex-gate` reviews and moved thin reviewer forwarders to Haiku | review harness | Prevent duplicate fresh Codex tasks, long Stop-hook stalls, and avoidable Claude token use |
 | 2026-08-25 | Cost rebalance — pinned `model:` per agent (Sonnet 5 for execution/audit lenses, Opus only for `architecture-auditor`, `security-auditor`, and the fallback review lane), removed the global `sonnet -> Opus` env remap, made Codex adjudication explicitly operator-triggered | `agents/`, `~/.claude/fable/`, harness docs | Every subagent was silently running on Opus; review ran more often than it was asked for |
+| 2026-09-04 | **Codex review excludes code and plans** — `codex-gate` / `codex-reviewer` / `codex-plan-reviewer` return `SCOPE_EXCLUDED` for code diffs and plan docs; code review is the Claude-side fallback lane, plan review is the operator · **plans/specs/roadmaps authored solo by the session model (Opus 5 [1m] / Fable 5.1 [1m])**, no planner/deep-reasoner pipeline | CLAUDE.md, codex-gate, codex-reviewer, codex-plan-reviewer | Operator directive — paid external calls too frequent, spec authoring too slow |
 | 2026-08-30 | Doc-only fix to the model-lanes paragraph: it claimed every audit lens runs on Sonnet 5, contradicting the 2026-08-25 row and the actual frontmatter (`architecture-auditor`/`security-auditor` are Opus) | CLAUDE.md | Cost audit found the prose had drifted from the pinned `model:` values; agent files unchanged |
 
 ## Documentation Map

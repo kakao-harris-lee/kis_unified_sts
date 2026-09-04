@@ -1,9 +1,16 @@
 ---
 name: codex-gate
-description: "심판 게이트 오케스트레이터. 코드와 계획의 최종 심사를 Codex(다른 모델 계열)에 위임해 자기 승인을 차단한다. 리뷰, 코드 리뷰, PR 리뷰, 머지 전 점검, 머지해도 되나, 차단 판정, 심판, 적대적 리뷰, 감사 통합, 계획 검토, 계획 리뷰, 이 계획 괜찮은지, 착수 전 점검, 릴리스 전 점검, 승격 게이트 요청 시 사용. 후속 요청 — 재리뷰, 다시 리뷰, 재심, 수정 후 재심, 지적사항 고쳤어, 계획 재검토, 리뷰 업데이트 — 에도 반드시 이 스킬로 다시 들어온다. 계획 저작은 이 스킬 소관이 아니다."
+description: "심판 게이트 오케스트레이터 — 2026-09-04부터 코드 diff·PR·계획 문서는 게이트 대상에서 제외. 운영자가 명시 지정한 코드 외 산출물만. 코드와 계획의 최종 심사를 Codex(다른 모델 계열)에 위임해 자기 승인을 차단한다. 리뷰, 코드 리뷰, PR 리뷰, 머지 전 점검, 머지해도 되나, 차단 판정, 심판, 적대적 리뷰, 감사 통합, 계획 검토, 계획 리뷰, 이 계획 괜찮은지, 착수 전 점검, 릴리스 전 점검, 승격 게이트 요청 시 사용. 후속 요청 — 재리뷰, 다시 리뷰, 재심, 수정 후 재심, 지적사항 고쳤어, 계획 재검토, 리뷰 업데이트 — 에도 반드시 이 스킬로 다시 들어온다. 계획 저작은 이 스킬 소관이 아니다."
 ---
 
 # Codex Gate — 심판 게이트 오케스트레이터
+
+> **Scope restriction (operator directive 2026-09-04): code diffs, PRs, implementation
+> results, and plan/spec documents are OUT of Codex scope.** If such a target is passed
+> in, do not run Codex — return `SCOPE_EXCLUDED: code/plan is out of codex scope since
+> 2026-09-04`. Code review is the Claude-side lane; plans are reviewed by the operator.
+> Only non-code artifacts the operator names explicitly remain; the rules below apply
+> to that residual scope.
 
 코드와 계획의 **최종 심사(judgment)** 를 Codex에 위임하는 게이트.
 Claude는 저작하고, Codex는 심판한다.
