@@ -1,0 +1,12 @@
+97596460309e25a6bce55b453d832eb6e566f4ab
+f24deb8440164ae91f0b0b23085c50b90334d062 dc900970c64b7b062a40a9c74037cbfd7594e4d9
+Merge origin/main (PR #462 dc900970) into mission-critical-trading-operating-system — 진입 하니스 R-7 정합: 리뷰 head 의 조상에 main 을 포함시켜 PR merge ref 가 bound_paths 이력에 잡히지 않게 한다 (계약·bound_paths 무접촉)
+
+ config/stock_regime.yaml                    |  10 +++
+ services/stock_strategy/daemon.py           |  49 +++++++++++-
+ services/trading/indicator_queries.py       |  26 +++++++
+ shared/streaming/stock_regime.py            |  45 ++++++++++-
+ tests/unit/stock_strategy/test_daemon.py    | 111 +++++++++++++++++++++++++++-
+ tests/unit/streaming/test_stock_regime.py   |  77 +++++++++++++++++++
+ tests/unit/trading/test_indicator_engine.py |  39 +++++++++-
+ 7 files changed, 352 insertions(+), 5 deletions(-)

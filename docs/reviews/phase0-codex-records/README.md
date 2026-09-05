@@ -71,6 +71,7 @@ currency 태그 계수 3→4 오류 → C2″ 정정) → #9(**approve · findin
 | `20260905-142639` | B 재심 #7 | review-mtnxyiaq-1bfaf7 | needs-attention 1 | 038c2227 | 「「공백」 코드 포인트 미특정 → 58차」 · 〃 |
 | `20260905-143827` | B 재심 #8 (57차+58차) | review-mtnydobs-g6hrlt | needs-attention 1 | 3e8931e8 | 「OQ-11 기록 태그 계수 3→4」 · 〃 |
 | `20260905-144700` | **B 재심 #9 (57차+58차)** | review-mtnyojac-nhulgc | **approve · findings 0** | 38bfb1fd | 57차+58차 approve · UNCHK-027 종결 · 정본 verdict 는 계약 스탬프 dir |
+| `20260905-214532` | **B 재심 #10 (결속 head 갱신)** | review-mtodn6sx-1fg1eh | **approve · findings 0** | 97596460 | 계약·digest 불변 · main dc900970(PR #462) 머지 head 를 새 RH 로 — PR #644 merge ref 의 R-7 `--full-history` 머지 커밋 나열(main 이 RH 조상 아님) 해소 · 정본 verdict 는 계약 스탬프 dir |
 
 ## 파일 구성(스탬프마다)
 

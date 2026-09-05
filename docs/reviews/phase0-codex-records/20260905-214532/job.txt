@@ -1,0 +1,3 @@
+2026-09-05T12:46:42Z launched (레인 B 재심 #10 · 결속 head 갱신 · base 38bfb1fd · scope branch)
+job_id: review-mtodn6sx-1fg1eh
+kind: adversarial-review (--wait · base 38bfb1fd · scope branch · 레인 B 재심 #10 · 결속 head 갱신)
