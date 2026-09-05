@@ -6244,6 +6244,125 @@ def test_d1_none_declaration_row_reason_reordered_alt_delimiters_is_grammar_ok_c
     assert matched is not None
 
 
+# ⑮ 배터리 — 재심 #6(review-mtnw4hor-zdytup, 20260905-140531) finding 1
+# 처분: 검사기 구분자 정규식이 계약 (ㅁ)(v2.22 에라타 57차)보다 «넓었다»
+# (``\s*·\s*|\s*;\s*|\n`` 은 CR·NBSP·TAB 등 임의 유니코드 공백류를 ``;``/``·``
+# 둘레에서 흡수했다 — 문언은 ASCII 공백(U+0020)만 ``·`` 둘레에 허용하고
+# ``;``/LF 는 bare 다). 아래 red 대조군 넷은 재심이 실측한 우회(정본 넷을
+# CR·NBSP·TAB 로 이어 붙이거나, LF 사이 공백-만 구획을 다음 ``·`` 의 흡수로
+# 지워 없애는 시도)가 tightened 정규식(``_D1_U6PRIME_SEGMENT_SPLIT_RE``)
+# 아래서는 전부 red 임을 고정한다. ⑮-e 는 문언이 명시적으로 허용하는
+# 범위(``·`` 둘레 ASCII 공백 0개 이상)가 그대로 green 임을 보는 대조군.
+def test_d1_none_declaration_row_reason_cr_semicolon_glue_is_undecided_control_15a() -> (
+    None
+):
+    """[재심 #6 finding 1] 대조군 ⑮-a — 정본 넷을 ``\\r;\\r``(bare 세미콜론
+    앞뒤에 CR)로 이어 붙이면 red. 문언은 ``;`` 둘레 공백을 허용하지 않으므로
+    ``;`` 자체만 구분자이고, 그 앞뒤 ``\\r`` 은 인접 구획에 그대로 남아
+    정본 (1)~(4) 어느 것과도 byte-for-byte 다른 구획이 된다(구판의
+    ``\\s*;\\s*`` 는 ``\\r`` 을 흡수해 이 우회를 green 으로 오판했다)."""
+    reason = "\r;\r".join(
+        [
+            _D1_U6PRIME_14_DECL,
+            _D1_U6PRIME_14_SCAN,
+            _D1_U6PRIME_14_BOUNDARY,
+            _D1_U6PRIME_14_RECORD,
+        ]
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_nbsp_around_dot_is_undecided_control_15b() -> (
+    None
+):
+    """[재심 #6 finding 1] 대조군 ⑮-b — 가운뎃점 둘레를 ASCII 공백이 아니라
+    NBSP(``U+00A0``)로 두르면(``"\\xa0·\\xa0"``) red. 문언은 (ㅁ)에서 가운뎃점
+    둘레에 «ASCII 공백» 만 허용한다고 못박았으므로 NBSP 는 구분자 문법에
+    포함되지 않는다 — 정규식은 ``·`` 자체만 소비하고 NBSP 는 인접 구획에
+    남아 정본과 불일치한다(구판의 ``\\s*`` 는 NBSP 도 공백류로 흡수해 이
+    우회를 green 으로 오판했다)."""
+    reason = " · ".join(
+        [
+            _D1_U6PRIME_14_DECL,
+            _D1_U6PRIME_14_SCAN,
+            _D1_U6PRIME_14_BOUNDARY,
+            _D1_U6PRIME_14_RECORD,
+        ]
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_whitespace_only_segment_before_dot_is_undecided_control_15c() -> (
+    None
+):
+    """[재심 #6 finding 1] 대조군 ⑮-c — 두 LF 사이에 공백 하나만 있는 구획
+    (``"\\n \\n·"``) 뒤에 다음 정본 구획이 가운뎃점으로 이어지면 red. 구판
+    ``\\s*·\\s*`` 는 ``·`` 앞의 임의 공백류(개행 포함)를 전부 삼켜 그 공백-만
+    구획을 «흡수해 없앴다»(green 으로 오판). 문언 (ㅁ)은 ``·`` 둘레에 ASCII
+    공백만 허용하므로 이 구획의 두 번째 LF와 뒤따르는 단일 공백은 소비되지
+    않고 살아남아 다섯 번째(허용되지 않은) 구획이 된다 — 공백"만"인 구획은
+    빈 구획이 아니다(모듈 주석 참조)."""
+    reason = (
+        _D1_U6PRIME_14_DECL
+        + "\n \n·"
+        + _D1_U6PRIME_14_SCAN
+        + " · "
+        + _D1_U6PRIME_14_BOUNDARY
+        + " · "
+        + _D1_U6PRIME_14_RECORD
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_tab_around_semicolon_is_undecided_control_15d() -> (
+    None
+):
+    """[재심 #6 finding 1] 대조군 ⑮-d — 세미콜론 둘레를 TAB 으로 두르면
+    (``"\\t;\\t"``) red. (ㅁ)은 ``;`` 를 bare 로 못박아 둘레 공백류를 전혀
+    허용하지 않으므로 TAB 은 구분자에 흡수되지 않고 인접 구획에 남는다."""
+    reason = "\t;\t".join(
+        [
+            _D1_U6PRIME_14_DECL,
+            _D1_U6PRIME_14_SCAN,
+            _D1_U6PRIME_14_BOUNDARY,
+            _D1_U6PRIME_14_RECORD,
+        ]
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_dot_with_zero_or_many_ascii_spaces_is_grammar_ok_control_15e() -> (
+    None
+):
+    """양성 대조군 ⑮-e — 가운뎃점 둘레에 ASCII 공백이 0개(``"·"``)이거나
+    여럿(``"   ·   "``)이어도 그래머는 충족된다 — (ㅁ)이 명시한 «앞뒤 ASCII
+    공백 허용, 0개 이상»의 두 극단이 둘 다 green 임을 고정한다."""
+    reason = (
+        _D1_U6PRIME_14_DECL
+        + "·"
+        + _D1_U6PRIME_14_SCAN
+        + "   ·   "
+        + _D1_U6PRIME_14_BOUNDARY
+        + " · "
+        + _D1_U6PRIME_14_RECORD
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is True, detail
+    assert matched is not None
+
+
 def test_d1_none_declaration_stale_digest_after_scope_edit_is_undecided_control_6(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
