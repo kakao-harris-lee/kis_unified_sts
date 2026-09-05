@@ -60,7 +60,6 @@ import sys
 import tempfile
 import textwrap
 import time
-import unicodedata
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -3909,64 +3908,74 @@ def _d1_u6prime_axis(site_id: str) -> str:
     return f"D0-5 NONE: {site_id}"
 
 
-# U-6′ (ㄹ) 구획 문법(레인 B 재심 20260905-033432 finding 1 처분) — ``reason``
-# 은 이 구분자들로 잘린 "구획(segment)" 들의 나열로 읽는다. 구분자: 공백을
-# 두른 가운뎃점(" · "), 세미콜론(";"), 개행. (1) ``VER-002-KEYS: NONE`` 선언
-# 사실과 (3) 경계 문장은 원자적 고정 문자열이라 전체 ``reason`` 부분문자열
-# 검사로 충분하지만((같은 값이 두 곳에 있어도 의미가 갈리지 않는다), (2)
-# 스캔 결과(후보 우주 크기·스캔 범위·파일 수)와 (4) 독립 리뷰 기록 경로는
-# **여러 값의 합성**이라 부분문자열 검사가 fail-open 이었다 — 각 값이
-# ``reason`` 어딘가에만 있으면 통과해, (a) 진짜 스캔 범위가 무관한 문장에
-# 우연히 등장하고 실제 스캔 구획은 다른 범위(``other_pkg``)를 적어도 통과,
-# (b) 선택된 기록 경로에 접미사(``.not-the-selected-record``)를 붙이거나
-# 두 번째 경로를 나란히 적어도 (경로가 부분문자열로는 여전히 존재하므로)
-# 통과했다. 이제 (2)·(4) 는 **구획 하나 전체**가 아래 정본 문자열과
-# byte-for-byte 동일해야 한다(부분문자열·prefix·접미사·구획 분할 전부
-# 불허) — 정규식이 아니라 분할 뒤 리스트 원소 완전 일치로 비교하므로
-# ``scope_desc``/``record_path`` 안의 정규식 메타문자(``.``, ``/`` 등)를
-# 이스케이프할 필요도, 그로 인한 오작동 위험도 없다:
+# U-6′ (ㄹ) 구획 문법 — **닫힌 세계(closed-world) 판정**으로 재설계(레인 B
+# 재심 5라운드 처분 이후: 20260904-233516 → 20260905-033432 →
+# 20260905-041033 → 20260905-091036 → 그리고 99abc081 이후 오케스트레이터
+# 자체 적대적 리뷰가 이 파일의 NFKC+Cf 라벨 인식을 콜론 동형이의 문자
+# (Armenian full stop U+0589, MODIFIER LETTER COLON U+A789, RATIO U+2236),
+# braille blank(U+2800, NFKC 로 접히지 않고 Cf 도 아님), combining acute
+# (U+0301), variation selector U+FE0F 로 다시 깼다. 다섯 라운드 전부
+# **같은 구조적 결함**이 반복됐다 — 판정이 "이 구획이 라벨 L 을 언급하는가"
+# 를 어떤 정규화(트림·NFKC·Cf 제거)로 감지하려 했고, 매번 그 정규화가
+# 놓치는 새 위장 형태(공백류, 유니코드 등가 문자, 보이지 않는 문자, 라벨
+# 중간 삽입 문자)가 나왔다. **위장 형태의 블랙리스트는 원리상 완결될 수
+# 없다** — 감지해야 할 표면이 "L 을 닮았지만 L 이 아닌 모든 문자열"이라는
+# 열린 집합이기 때문이다. 계약 U-6′ (ㄹ)은 reason 에 «넷을 적는다»고만
+# 하므로, 판정은 그 넷을 **감지**하는 문제가 아니라 그 넷**만**을
+# **허용**하는 문제로 뒤집을 수 있다 — 열린 세계 블랙리스트 대신 닫힌
+# 세계 화이트리스트:
+#
+#   ``reason`` 을 아래 구분자로 나눈 "구획(segment)" 목록이, 이 네 정본
+#   구획의 **다중집합과 정확히 같아야** 한다 — 넷이 각각 정확히 한 번씩,
+#   그 이상도 이하도 아니고, 다른 어떤 구획도 없어야 한다. 구분자: 공백을
+#   두른 가운뎃점(" · "), 세미콜론(";"), 개행.
+#
+#   (1) ``"선언: VER-002-KEYS: NONE"`` (``_D1_U6PRIME_DECLARATION_SEGMENT``)
 #   (2) ``f"스캔 결과: 후보 우주 {N}개, 스캔 범위 {scope_desc}, 파일 {F}개"``
-#   (4) ``f"독립 리뷰 기록: {record_path}"``
-# 구획 경계 밖(예: 다른 구획에 적힌 무관한 remark)에 진짜 값이 등장해도
-# 세지 않고, 정본 구획 안에 여분의 문자가 있어도(접두사·접미사·구획 분할)
-# 실패한다 — 값 셋이 한 구획 안에 공존해야만(co-location) 충족된다.
+#       (``_d1_u6prime_scan_result_segment``)
+#   (3) ``_D1_U6PRIME_BOUNDARY_SENTENCE`` — 「후보 우주 밖의 이름은 보지
+#       못한다」
+#   (4) ``f"독립 리뷰 기록: {record_path}"`` (``_d1_u6prime_record_segment``)
+#
+# 이 설계에는 "라벨을 언급하는가"를 감지하는 정규화가 아예 없다 —
+# 동형이의 콜론·보이지 않는 문자·결합 문자·변이 선택자로 위장한 구획은
+# 그 무엇을 흉내 내든 정본 넷 중 어느 것과도 byte-for-byte 같지 않으므로
+# 그냥 **허용되지 않은 구획**(foreign segment)이다. 분류할 필요 자체가
+# 없으므로 우회할 분류기도 없다. 빈 구획(연속 구분자·선두/말미 구분자로
+# 생기는)은 버리지만, 공백"만"으로 된 구획(예: ``" "``)은 버리지 않고
+# 허용되지 않은 구획으로 센다 — trailing delimiter 가 만든 진짜 빈 문자열
+# 과, 저작자가 실수로 넣은 공백류 구획을 구분하기 위함이다.
 _D1_U6PRIME_SEGMENT_SPLIT_RE = re.compile(r"\s*·\s*|\s*;\s*|\n")
+
+# U-6′ (ㄹ)(1) 정본 구획 — 다른 세 라벨(``스캔 결과:``/``독립 리뷰 기록:``)
+# 과 같은 ``"라벨: 값"`` 형태로 통일한다(옛 ``"VER-002-KEYS: NONE 선언"``
+# 어순 대신). 닫힌 세계에서는 «부분문자열 포함»이 아니라 «구획 하나
+# 전체가 이 값과 같음»만 (1)을 충족시킨다.
+_D1_U6PRIME_DECLARATION_SEGMENT = "선언: VER-002-KEYS: NONE"
 
 
 def _d1_u6prime_segments(reason: str) -> list[str]:
-    """``reason`` 을 U-6′ (ㄹ) 구획 문법대로 분할한다 — 빈 구획(연속
-    구분자·선두/말미 구분자로 생기는)은 버린다."""
-    return [seg for seg in _D1_U6PRIME_SEGMENT_SPLIT_RE.split(reason) if seg]
+    """``reason`` 을 U-6′ (ㄹ) 구획 문법대로 분할한다 — 연속 구분자·
+    선두/말미 구분자로 생기는 **빈** 구획만 버린다(공백"만"으로 된
+    구획은 버리지 않는다 — 닫힌 세계에서는 허용되지 않은 구획이 된다)."""
+    return [seg for seg in _D1_U6PRIME_SEGMENT_SPLIT_RE.split(reason) if seg != ""]
 
 
-def _d1_u6prime_classification_key(segment: str) -> str:
-    """U-6′ (ㄹ)(2)/(4) **라벨 분류 전용** 정규화(레인 B 재심
-    20260905-091036 finding 1 처분) — 구획이 «이 라벨을 언급하는가»를
-    판별할 때만 쓰는 느슨한 사본을 만든다. 두 단계:
-
-    1. Unicode 카테고리 ``Cf``(형식 문자 — 예: ZWSP ``U+200B``, BOM/ZWNBSP
-       ``U+FEFF``)를 전부 제거한다. 이런 문자는 화면에 아무것도 그리지
-       않으면서 라벨 앞에 끼어들어 옛 ``segment.startswith(label)`` 판정을
-       피해 간다.
-    2. 나머지에 ``unicodedata.normalize("NFKC", …)`` 를 적용한다 — NBSP
-       (``U+00A0``)를 일반 스페이스로, 전각 콜론(``U+FF1A``)을 반각
-       ``:`` 로 접는 등 호환 등가 문자를 정규 형태로 통일한다.
-
-    이 정규화는 **분류에만** 쓰고 채택 판정(구획 전체가 정본 문자열과
-    글자 단위로 같은가)에는 절대 쓰지 않는다 — 그래서 라벨 앞에 이런
-    문자가 낀 구획은 "이 구획은 해당 라벨을 언급한다"로 잡혀 카디널리티
-    검사(1개 초과 시 위반)에는 걸리되, 원본 그대로 정본과 비교하는
-    채택 검사는 여전히 실패한다(fail-closed 유지 — 병기 우회를 막는
-    목적이지, 회피 표기를 유효한 정본으로 승격시키는 것이 아니다)."""
-    stripped = "".join(ch for ch in segment if unicodedata.category(ch) != "Cf")
-    return unicodedata.normalize("NFKC", stripped)
-
-
-def _d1_u6prime_segment_mentions_label(segment: str, label: str) -> bool:
-    """``segment`` 가 (정규화된 사본 안 어디에든) ``label`` 을 언급하는지
-    — U-6′ (ㄹ)(2)/(4) 카디널리티 분류의 유일한 판별식. 원문 ``segment``
-    자체는 건드리지 않는다(``_d1_u6prime_classification_key`` 참조)."""
-    return label in _d1_u6prime_classification_key(segment)
+def _d1_u6prime_canonical_segments(
+    candidate_universe_size: int, scope_desc: str, file_count: int, record_path: str
+) -> tuple[str, str, str, str]:
+    """U-6′ (ㄹ) 이 허용하는 정본 구획 넷(닫힌 세계의 유일한 허용 표) —
+    (1) 선언, (2) 스캔 결과, (3) 경계 문장, (4) 독립 리뷰 기록, 이 순서로
+    반환한다(``reason`` 안의 실제 등장 순서는 무관 — 판정은 순서 불문
+    다중집합 비교다)."""
+    return (
+        _D1_U6PRIME_DECLARATION_SEGMENT,
+        _d1_u6prime_scan_result_segment(
+            candidate_universe_size, scope_desc, file_count
+        ),
+        _D1_U6PRIME_BOUNDARY_SENTENCE,
+        _d1_u6prime_record_segment(record_path),
+    )
 
 
 def _d1_u6prime_scan_result_segment(
@@ -3995,65 +4004,61 @@ def _d1_u6prime_row_state(
     file_count: int,
     record_path: str | None = None,
 ) -> tuple[bool, str, Mapping[str, str] | None]:
-    """U-6′ (ㄱ)~(ㄹ)(계약 §7.4, v2.22 에라타 54~56차 · 레인 B 재심
-    20260905-033432 finding 1) — ``site_id`` 의 §13 행 그래머를 확인한다.
-    반환: ``(충족 여부, 근거, 매칭된 행 또는 None)``.
+    """U-6′ (ㄱ)~(ㄹ)(계약 §7.4, v2.22 에라타 54~56차 · 레인 B 재심 5라운드
+    20260904-233516~20260905-091036 · 99abc081 이후 동형이의 문자 우회
+    종결) — ``site_id`` 의 §13 행 그래머를 확인한다. 반환: ``(충족 여부,
+    근거, 매칭된 행 또는 None)``.
 
     (ㄱ) 행의 ``axis`` 는 ``_d1_u6prime_axis(site_id)`` 와 **정규화 없이
     byte-for-byte 동일**해야 한다 — 부분문자열·prefix·trim·대소문자 접기
     금지(56차, «시작» 문언 폐기). (ㄴ) 사이트당 정확히 한 행 — 0행이면
     미충족, 2행 이상이면 위반. (ㄷ) 행당 최대 한 사이트 — 위 axis 매칭
-    자체가 사이트를 하나만 이름하므로 기계로 선다. (ㄹ) (1)~(4)는 그 한
-    행의 ``reason`` 안에 있어야 한다:
+    자체가 사이트를 하나만 이름하므로 기계로 선다.
 
-    (1) ``VER-002-KEYS: NONE`` 선언 사실 — 원자적 고정 문자열, 전체
-    ``reason`` 부분문자열 검사(변경 없음).
+    (ㄹ) — **닫힌 세계 그래머**(모듈 상단 주석 · ``_d1_u6prime_canonical_
+    segments`` 참조). 그 한 행의 ``reason`` 을 ``_d1_u6prime_segments`` 로
+    구획 분할한 뒤, 그 구획들의 **다중집합**이 아래 네 정본 구획과
+    **정확히** 같아야 한다 — 넷이 각각 정확히 한 번씩, 그 이상도 이하도
+    아니고, 다른 어떤 구획도(위장·무관한 remark·중복이든) 없어야 한다:
 
-    (2) 스캔 결과 — ``reason`` 을 ``_d1_u6prime_segments`` 로 구획 분할한
-    뒤, 그 구획 목록 중 라벨 ``스캔 결과:`` 를 언급하는 구획이 **정확히
-    하나**여야 하고, 그 유일한 구획이 원문 그대로(정규화 없이)
-    ``_d1_u6prime_scan_result_segment(candidate_universe_size, scope_desc,
-    file_count)`` 와 **완전히 같아야** 한다. 「언급하는가」의 분류는
-    ``_d1_u6prime_segment_mentions_label`` 이 판별한다 — 구획을 Unicode
-    카테고리 ``Cf``(형식 문자: ZWSP ``U+200B``, ZWNBSP/BOM ``U+FEFF`` 등)
-    제거 후 NFKC 정규화(NBSP→스페이스, 전각 콜론→반각 등)한 사본에서
-    라벨이 **어디든** 등장하면 그 구획을 라벨 언급으로 센다(구판은
-    ``segment.startswith(label)`` 이라 라벨 앞에 그런 문자 하나만 끼거나
-    라벨이 구획 중간에 있으면 못 셌다 — 레인 B 재심 20260905-091036
-    finding 1 처분). 이 정규화는 분류에만 쓰고, 채택 비교(구획이 정본과
-    같은지)는 항상 **원문 그대로** 하므로 선행 공백·NBSP·ZWSP 가 낀
-    「정본처럼 보이는」 구획도 채택 검사에서는 여전히 실패한다
-    (fail-closed 유지). 0개면 (2) 미충족, 2개 이상이면(라벨을 언급하는
-    구획이 둘 이상이면 — 모순되는 두 번째 언급이 공백·NBSP·ZWSP 로
-    시작하든, 전각 콜론 표기든, 다른 remark 중간에 박혀 있든 무관하게)
-    그 자체로 카디널리티 위반으로 미충족(레인 B 재심 20260905-041033
-    finding 1 · 20260905-091036 finding 1 처분). 세 값이 부분문자열로
-    ``reason`` 어딘가에 흩어져 있는 것으로는(구판 회귀) 부족하다 — 실제
-    스캔 범위가 다른 구획에 적힌 무관한 remark 로는 대체되지 못하고,
-    실제 스캔 구획이 엉뚱한 범위(``other_pkg``)를 적으면 그 자체로
-    막힌다(레인 B 재심 20260905-033432 finding 1(a) 처분).
+      (1) ``_D1_U6PRIME_DECLARATION_SEGMENT`` = ``"선언: VER-002-KEYS: NONE"``
+      (2) ``_d1_u6prime_scan_result_segment(candidate_universe_size,
+          scope_desc, file_count)``
+      (3) ``_D1_U6PRIME_BOUNDARY_SENTENCE`` — 「후보 우주 밖의 이름은 보지
+          못한다」
+      (4) ``_d1_u6prime_record_segment(record_path)`` — ``record_path`` 가
+          ``None``(선택된 기록이 없음)이면 (4)의 정본을 만들 수 없으므로
+          그 자체로 미충족이다(이 경우 (1)~(3) 은 평가하지 않고 즉시
+          반환한다 — 정본 넷을 구성할 수 없는 상태에서 다중집합 비교는
+          무의미하다).
 
-    (3) 경계 문장 「후보 우주 밖의 이름은 보지 못한다」 — 원자적 고정
-    문자열, 전체 ``reason`` 부분문자열 검사(변경 없음).
+    구판(54~56차)은 "이 구획이 라벨 L 을 언급하는가"를 감지하려 했고
+    (부분문자열 검사 → 구획 분할 → NFKC+``Cf`` 제거 라벨 인식으로 다섯
+    라운드 걸쳐 강화), 그때마다 그 감지를 피하는 새 위장 형태(부분문자열
+    합성 · 접미사/병기 · 공백/NBSP/ZWSP 선행 · 전각 콜론 · 동형이의 콜론
+    U+0589/U+A789/U+2236 · braille blank U+2800 · combining acute U+0301 ·
+    variation selector U+FE0F)가 나왔다 — **위장 형태의 블랙리스트는
+    원리상 완결될 수 없다**. 이 구현에는 "라벨을 언급하는가"를 감지하는
+    정규화가 아예 없으므로 위 우회는 전부 구조적으로 막힌다: 어떤 문자로
+    위장하든 그 구획은 정본 넷 중 어느 것과도 byte-for-byte 같지 않으므로
+    그냥 **허용되지 않은 구획**(foreign segment)이고, 분류 자체가 없으니
+    우회할 분류기도 없다.
 
-    (4) D-4 (마) 독립 리뷰 기록의 **정확한 경로** — 호출자가 검사기가
-    실제로 선택·검증한 스탬프(``_d1_locate_no_dependency_record_stamp``)
-    로부터 파생한 ``record_path``(정본 형식: 그 스탬프 디렉터리의
-    ``verdict.md`` repo-relative 전체 경로, 예:
-    ``docs/reviews/d1-no-dependency/<site_id>/<stamp>/verdict.md``)를
-    넘긴다 — 구획 목록 중 라벨 ``독립 리뷰 기록:`` 을 언급하는 구획이
-    (분류 규칙은 (2)와 동일 — ``_d1_u6prime_segment_mentions_label``)
-    **정확히 하나**여야 하고, 그 유일한 구획이 원문 그대로
-    ``_d1_u6prime_record_segment(record_path)`` 와 **완전히 같아야** 한다.
-    0개면 (4) 미충족, 2개 이상이면(서로 다른 경로를 각각 담은 두 번째
-    언급이 병기되거나, 그 언급 앞에 공백·NBSP·ZWSP 가 끼거나, 전각 콜론
-    표기거나) 그 자체로 카디널리티 위반으로 미충족 — 레인 B 재심
-    20260905-041033 finding 1 · 20260905-091036 finding 1 처분. 부분문자열
-    일치로는(구판 회귀) 접미사(``<record_path>.not-the-selected-record``)나
-    같은 구획 안에 나란히 적힌 두 번째 경로도 통과했다 — 이제 구획 전체가
-    그 값과 글자 단위로 같아야 하므로 둘 다 막힌다(레인 B 재심
-    20260905-033432 finding 1(b) 처분). ``record_path`` 가 ``None``(선택된
-    기록이 없음)이면 (4)는 그 자체로 미충족이다."""
+    위반 종류별 메시지:
+    - 정본 구획이 0개면 그 조항의 "… 누락 — 요구 구획: …" 메시지.
+    - **같은 정본 구획**(글자 단위로 완전히 동일한 것)이 2개 이상이면 그
+      조항의 "… 구획 중복(N건 — 카디널리티 위반)" 메시지 — 예:
+      ⑫-e(정본과 완전히 동일한 구획이 두 번 등장). 내용이 다른 두 번째
+      "스캔 결과:"/"독립 리뷰 기록:" 류 구획(예: ⑫-a~d, ⑬-a~f)은 정본과
+      글자 단위로 다르므로 «같은 조항의 중복»이 아니라 그냥 허용되지
+      않은 구획이다 — 라벨 인식이 없으므로 «이 구획이 (2)/(4)를
+      의도했다»고 분류할 근거가 없다(닫힌 세계 설계의 직접적 귀결).
+    - 위 넷에 속하지 않는 구획이 하나라도 있으면(무관한 remark·위장
+      라벨·공백만인 구획 포함) "(ㄹ) 허용되지 않은 구획 N건 — 최초
+      위반: …" 메시지에 최초 위반 구획의 ``repr`` 을 붙인다.
+
+    미충족 근거에는 참고용으로 그대로 붙여 쓸 수 있는 정본 reason 전체
+    (넷을 ``" · "`` 로 이은 문자열)를 함께 담는다."""
     if uncheckable_rows is None:
         return False, "§13 레지스터 부재로 확인 불가", None
     axis = _d1_u6prime_axis(site_id)
@@ -4068,66 +4073,66 @@ def _d1_u6prime_row_state(
         return False, f"§13 행 중복({len(matches)}건 — (ㄴ) 위반)", None
     row = matches[0]
     reason = row.get("reason", "")
-    segments = _d1_u6prime_segments(reason)
-    missing: list[str] = []
-    if "VER-002-KEYS: NONE" not in reason:
-        missing.append("(1) VER-002-KEYS: NONE 선언 사실")
-    scan_segment = _d1_u6prime_scan_result_segment(
-        candidate_universe_size, scope_desc, file_count
-    )
-    # 라벨 매치 = ``_d1_u6prime_segment_mentions_label`` — Cf 제거+NFKC
-    # 정규화한 사본에서 라벨이 어디든 등장하면 셈(구판 ``startswith`` 는
-    # 라벨 앞 공백/NBSP/ZWSP 나 라벨의 구획-중간 등장을 놓쳤다 — 레인 B
-    # 재심 20260905-091036 finding 1). ``scope_desc`` 는 호출자가
-    # ``_d1_scope_paths`` 계열에서 파생한 repo-relative 경로이고 구획
-    # 구분자(" · ", ";", "\n")를 담지 않는다 — 만약 담는다면(호출자 계약
-    # 위반) 그 값이 스캔 결과 구획을 둘 이상으로 쪼개 아래 카디널리티
-    # 검사가 fail-closed 로 그 행을 red 처리한다(fail-open 아님).
-    scan_matches = [
-        seg for seg in segments if _d1_u6prime_segment_mentions_label(seg, "스캔 결과:")
-    ]
-    if not scan_matches:
-        missing.append(
-            "(2) 스캔 결과(후보 우주 크기·스캔 범위·파일 수) — 요구 구획: "
-            f"{scan_segment!r}"
-        )
-    elif len(scan_matches) > 1:
-        missing.append(
-            f"(2) 스캔 결과 구획 중복({len(scan_matches)}건 — 카디널리티 위반)"
-        )
-    elif scan_matches[0] != scan_segment:
-        missing.append(
-            "(2) 스캔 결과(후보 우주 크기·스캔 범위·파일 수) — 요구 구획: "
-            f"{scan_segment!r}"
-        )
-    if _D1_U6PRIME_BOUNDARY_SENTENCE not in reason:
-        missing.append("(3) 경계 문장")
+
     if record_path is None:
-        missing.append("(4) D-4 (마) 독립 리뷰 기록의 정확한 경로")
-    else:
-        record_segment = _d1_u6prime_record_segment(record_path)
-        record_matches = [
-            seg
-            for seg in segments
-            if _d1_u6prime_segment_mentions_label(seg, "독립 리뷰 기록:")
-        ]
-        if not record_matches:
-            missing.append(
-                "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로 — 요구 구획: "
-                f"{record_segment!r}"
-            )
-        elif len(record_matches) > 1:
-            missing.append(
-                f"(4) 독립 리뷰 기록 구획 중복({len(record_matches)}건 — "
-                "카디널리티 위반)"
-            )
-        elif record_matches[0] != record_segment:
-            missing.append(
-                "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로 — 요구 구획: "
-                f"{record_segment!r}"
-            )
+        return (
+            False,
+            "§13 행 reason 미충족(ㄹ): (4) D-4 (마) 독립 리뷰 기록의 정확한 "
+            "경로 — 요구 구획을 구성할 수 없음(선택된 독립 리뷰 기록 없음)",
+            row,
+        )
+
+    segments = _d1_u6prime_segments(reason)
+    canonical = (
+        (
+            "(1) VER-002-KEYS: NONE 선언 사실",
+            "(1) VER-002-KEYS: NONE 선언 구획 중복",
+            _D1_U6PRIME_DECLARATION_SEGMENT,
+        ),
+        (
+            "(2) 스캔 결과(후보 우주 크기·스캔 범위·파일 수) — 요구 구획",
+            "(2) 스캔 결과 구획 중복",
+            _d1_u6prime_scan_result_segment(
+                candidate_universe_size, scope_desc, file_count
+            ),
+        ),
+        (
+            "(3) 경계 문장 — 요구 구획",
+            "(3) 경계 문장 구획 중복",
+            _D1_U6PRIME_BOUNDARY_SENTENCE,
+        ),
+        (
+            "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로 — 요구 구획",
+            "(4) 독립 리뷰 기록 구획 중복",
+            _d1_u6prime_record_segment(record_path),
+        ),
+    )
+    canonical_values = {value for _missing_label, _dup_label, value in canonical}
+    counts = Counter(segments)
+
+    missing: list[str] = []
+    for missing_label, dup_label, value in canonical:
+        n = counts.get(value, 0)
+        if n == 0:
+            missing.append(f"{missing_label}: {value!r}")
+        elif n > 1:
+            missing.append(f"{dup_label}({n}건 — 카디널리티 위반)")
+
+    foreign = [seg for seg in segments if seg not in canonical_values]
+    if foreign:
+        missing.append(
+            f"(ㄹ) 허용되지 않은 구획 {len(foreign)}건 — 최초 위반: {foreign[0]!r}"
+        )
+
     if missing:
-        return False, f"§13 행 reason 미충족(ㄹ): {', '.join(missing)}", row
+        expected_reason = " · ".join(value for _ml, _dl, value in canonical)
+        return (
+            False,
+            "§13 행 reason 미충족(ㄹ): "
+            + ", ".join(missing)
+            + f" · 정본 reason(그대로 붙여 쓸 수 있음): {expected_reason!r}",
+            row,
+        )
     return True, f"§13 행 그래머 충족(axis={axis!r})", row
 
 
