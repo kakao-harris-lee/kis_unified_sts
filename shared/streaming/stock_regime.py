@@ -21,13 +21,21 @@ fallback: insufficient MFI coverage publishes ``low_confidence_regime``
 Payload schema (JSON string at ``redis_key``)::
 
     {"regime": "BEAR_STRONG", "mfi": 31.2, "mfi_symbols": 12,
-     "low_confidence": false, "computed_at_ms": 1781136000000}
+     "low_confidence": false, "computed_at_ms": 1781136000000,
+     "last_tick_ts_ms": 1781135998000}
+
+``last_tick_ts_ms`` (issue #460) is the most recent tick timestamp feeding
+the publisher's candle accumulators (null when unknown). The staleness gate
+validates *publish* time only — ``computed_at_ms - last_tick_ts_ms``
+(``indicator_lag_seconds``) is the observability signal for "publishing
+fresh payloads computed from stale candles" (e.g. a tick-stream stall).
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass
 from statistics import median
 from typing import Any
@@ -43,6 +51,7 @@ __all__ = [
     "BEAR_REGIMES",
     "StockRegimeConfig",
     "compute_regime_payload",
+    "indicator_lag_seconds",
     "is_bear_regime",
     "parse_market_state",
 ]
@@ -64,6 +73,7 @@ class StockRegimeConfig:
     low_confidence_regime: str = "UNKNOWN"
     block_entries_in_bear: bool = True
     max_age_seconds: float = 300.0
+    warn_indicator_lag_seconds: float = 180.0
 
     def __post_init__(self) -> None:
         # Low-confidence classification must never trigger liquidation —
@@ -96,6 +106,11 @@ class StockRegimeConfig:
                     raw.get("block_entries_in_bear", cls.block_entries_in_bear)
                 ),
                 max_age_seconds=float(raw.get("max_age_seconds", cls.max_age_seconds)),
+                warn_indicator_lag_seconds=float(
+                    raw.get(
+                        "warn_indicator_lag_seconds", cls.warn_indicator_lag_seconds
+                    )
+                ),
             )
         except Exception:
             logger.warning("stock_regime.yaml load failed; using defaults")
@@ -108,12 +123,16 @@ def compute_regime_payload(
     config: StockRegimeConfig,
     now_ms: int,
     classifier: MarketClassifier | None = None,
+    last_tick_ts_ms: int | None = None,
 ) -> dict[str, Any]:
     """Classify the market from per-symbol MFI values into a publishable payload.
 
     Insufficient coverage (``len(mfi_by_symbol) < min_mfi_symbols``) publishes
     ``low_confidence_regime`` with ``low_confidence=true`` — the raw
     classification is preserved in ``raw_regime`` for observability.
+
+    ``last_tick_ts_ms`` is the freshest tick timestamp feeding the MFI
+    candles (None when the engine cannot provide one) — see module docstring.
     """
     classifier = classifier or MarketClassifier()
     mfi = float(median(mfi_by_symbol.values())) if mfi_by_symbol else None
@@ -129,7 +148,31 @@ def compute_regime_payload(
         "mfi_symbols": len(mfi_by_symbol),
         "low_confidence": low_confidence,
         "computed_at_ms": now_ms,
+        "last_tick_ts_ms": last_tick_ts_ms,
     }
+
+
+def indicator_lag_seconds(payload: dict[str, Any]) -> float | None:
+    """Seconds between payload compute time and its freshest candle tick.
+
+    ``(computed_at_ms - last_tick_ts_ms) / 1000`` — the "publishing fresh
+    payloads from stale candles" signal (issue #460). Returns None when either
+    field is missing or non-finite (old-schema payloads carry no
+    ``last_tick_ts_ms``; JSON ``NaN`` literals parse but compare False to
+    every bound — reject via ``isfinite``, never a magnitude comparison).
+    Sub-second negative lag (a tick landing between the engine read and the
+    ``now_ms`` capture) clamps to 0.
+    """
+    computed_at = payload.get("computed_at_ms")
+    last_tick = payload.get("last_tick_ts_ms")
+    if not isinstance(computed_at, (int, float)) or not isinstance(
+        last_tick, (int, float)
+    ):
+        return None
+    lag = (float(computed_at) - float(last_tick)) / 1000.0
+    if not math.isfinite(lag):
+        return None
+    return max(0.0, lag)
 
 
 def parse_market_state(

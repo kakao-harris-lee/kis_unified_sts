@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import UTC, datetime, time
 from unittest.mock import patch
 
 from services.trading.indicator_engine import StreamingIndicatorEngine
@@ -504,6 +504,43 @@ class TestMarketMfiActiveSymbols:
         engine = _build_warm_engine("005930")
         mfi = engine.get_market_mfi(active_symbols=None)
         assert mfi is not None
+
+
+class TestMarketLatestTickTs:
+    """get_market_latest_tick_ts — candle-freshness marker for regime MFI (#460)."""
+
+    def test_returns_max_across_symbols_utc_aware(self):
+        engine = _build_warm_engine("005930")
+        # second symbol with a strictly newer last tick
+        engine.on_tick(
+            "000660",
+            {"close": 200000, "high": 200100, "low": 199900, "volume": 100},
+            datetime(2026, 2, 17, 11, 0, 0),
+        )
+
+        ts = engine.get_market_latest_tick_ts()
+
+        assert ts is not None
+        assert ts.tzinfo is not None  # naive inputs normalized to UTC-aware
+        assert ts == datetime(2026, 2, 17, 11, 0, 0, tzinfo=UTC)
+
+    def test_respects_active_symbols_filter(self):
+        engine = _build_warm_engine("005930")
+        engine.on_tick(
+            "000660",
+            {"close": 200000, "high": 200100, "low": 199900, "volume": 100},
+            datetime(2026, 2, 17, 11, 0, 0),
+        )
+
+        only_old = engine.get_market_latest_tick_ts(active_symbols={"005930"})
+        assert only_old is not None
+        assert only_old < datetime(2026, 2, 17, 11, 0, 0, tzinfo=UTC)
+
+        assert engine.get_market_latest_tick_ts(active_symbols={"NONEXIST"}) is None
+
+    def test_returns_none_without_ticks(self):
+        engine = StreamingIndicatorEngine(bb_period=20, staleness_seconds=0)
+        assert engine.get_market_latest_tick_ts() is None
 
 
 class TestMomentumDecayEodGuard:
