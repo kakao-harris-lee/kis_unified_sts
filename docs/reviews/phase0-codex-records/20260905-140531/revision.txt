@@ -1,0 +1,15 @@
+lane: B (plan) — 계약 v2.22 에라타 57차(U-6′ (ㅁ) reason 배타 문법) + O-6 재결속 · 재심 #6
+reviewed_at_head: 3201484f092b9f76ffed4b3adcaf6beea0a89f18
+reviewed_plan_paths:
+  - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
+  - docs/plans/2026-08-11-tos-completion-development-plan.md
+reviewed_scope_digest: 9b9a713716be8e1934b5d05fbb08c85d81d6bf573d2638ccdbd12a85e531f89d
+digest_kind: plan_scope_digest
+bound_set_digest: 16e97f44e9b32882d03c7d9327a2d088ef5f4b385e6b3823aa2e92fb59cf4f46
+decided_at_head: 5dfcb236b2f5849086985fb3d2a227739657b1b6
+base: 5fd23a6cbdbe567b3decbb0eca10d1b13ac7ce3f (에라타 직전 HEAD)
+commits: C1 5dfcb236 · C2 3201484f092b9f76ffed4b3adcaf6beea0a89f18
+contract_blob: 3411f241803f6e1586f3d9fbfdf17b5fe4c76d02
+devplan_blob: ec3464c068dff2030e0764f3b05c985a821730f5
+captured_at_utc: 2026-09-05T05:05:31Z
+prior_verdict: .omc/review/20260905-133502/verdict.md

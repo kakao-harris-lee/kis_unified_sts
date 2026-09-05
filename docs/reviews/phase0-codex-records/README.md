@@ -31,6 +31,17 @@
 R-3 선택자(사전순 마지막 스탬프)가 R-4/R-5 approve 로 읽어 ENTRY 를 깨뜨리기 때문에, 5건 전부
 정본 계약 판정 디렉터리가 아니라 이 보존소에 둔다.
 
+## 에라타 57차+58차 아크(2026-09-05)
+
+운영자 지시(2026-09-05 「배타 문법 계약 명문화 진행」 — 직전 S-26 재개 아크 5회차가 UNCHK-027 로
+등재한 잔여[U-6′ 닫힌-세계 검사기/계약 불일치]가 요구한 계약층 결정)로 U-6′ (ㅁ) reason 배타 문법을
+계약에 명문화하는 에라타 57차+58차가 돌았다. 레인 B 재심 4회: #6(needs-attention · 검사기 구분자
+강도 > (ㅁ) 문언 → C4-a 로 검사기를 문언 강도로 좁힘) → #7(needs-attention · 「공백」의 코드
+포인트 미특정 → 58차로 ASCII U+0020 만 명시) → #8(needs-attention · O-6 재결속 기록의 58차
+currency 태그 계수 3→4 오류 → C2″ 정정) → #9(**approve · findings 0**). 네 판 전부 채택 1/1·
+기각 0 — 회피 없음. #9 approve 로 UNCHK-027 종결, U-6′ (ㄹ)/(ㅁ) 검사기 구현이 계약 문언과
+동일 강도로 정합됐다. 이 커밋(C3)은 bound_paths 무접촉이라 R-7 이 ENTRY_OK 로 복귀한다.
+
 ## 스탬프 색인
 
 | 스탬프 | 레인 | 잡 | 판정 | 결속 head | 비고 |
@@ -56,6 +67,10 @@ R-3 선택자(사전순 마지막 스탬프)가 R-4/R-5 approve 로 읽어 ENTRY
 | `20260905-041033` | B S-26 재개 3회차 | review-mtnby9g3-rkrbdd | needs-attention 1 | 0140b866 | 「구획 존재만 · 유일성 미검사」 |
 | `20260905-091036` | B S-26 재개 4회차 | review-mtnmo7fu-vfu543 | needs-attention 1 | 9f80f6a1 | 「startswith 라벨 분류 · 공백/NBSP/ZWSP 병기」 |
 | `20260905-133502` | B S-26 재개 5회차·최종 | review-mtnw4hor-zdytup | needs-attention 1 | 1fd98450 | 「닫힌 세계 과잉 차단 → UNCHK 등재(운영자 지시 종료)」 |
+| `20260905-140531` | B 재심 #6 (57차) | review-mtnx7eix-0bq0s8 | needs-attention 1 | 3201484f | 「검사기 구분자 강도 > (ㅁ) 문언」 · 정본 verdict 는 계약 스탬프 dir |
+| `20260905-142639` | B 재심 #7 | review-mtnxyiaq-1bfaf7 | needs-attention 1 | 038c2227 | 「「공백」 코드 포인트 미특정 → 58차」 · 〃 |
+| `20260905-143827` | B 재심 #8 (57차+58차) | review-mtnydobs-g6hrlt | needs-attention 1 | 3e8931e8 | 「OQ-11 기록 태그 계수 3→4」 · 〃 |
+| `20260905-144700` | **B 재심 #9 (57차+58차)** | review-mtnyojac-nhulgc | **approve · findings 0** | 38bfb1fd | 57차+58차 approve · UNCHK-027 종결 · 정본 verdict 는 계약 스탬프 dir |
 
 ## 파일 구성(스탬프마다)
 

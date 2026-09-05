@@ -1,0 +1,3 @@
+2026-09-05T05:27:36Z launched (레인 B 재심 #7 · 57차 · base 5fd23a6c · scope branch)
+job_id: review-mtnxyiaq-1bfaf7
+kind: adversarial-review (--wait · base 5fd23a6c · scope branch · 레인 B 재심 #7 · 57차)

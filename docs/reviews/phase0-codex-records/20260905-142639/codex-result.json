@@ -1,0 +1,88 @@
+{
+  "job": {
+    "createdAt": "2026-09-05T05:27:37.250Z",
+    "updatedAt": "2026-09-05T05:33:07.325Z",
+    "id": "review-mtnxyiaq-1bfaf7",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "NO-SHIP. 재심 #6 finding 1은 «부분 해소»다. 구현은 중점에만 공백을 허용하며 기존 두 공격을 막았지만, 계약의 `공백`이 ASCII U+0020만 뜻한다는 해석은 유일하지 않다. 직접 호출표: `\\r;\\r`=False, `\\n \\n·`=False, 정본 ` · `/`;`/LF 결합=True, 중점 공백 0개·다수=True, 연속·인접 구분자와 선두·말미 빈 구획=True, 정본 내부 공백 변형·NBSP·CRLF=False. HEAD·plan_scope_digest·contract blob·O-6 digest·decided_at_head는 모두 결속값과 일치했다. contract check와 self-test 145종은 rc 0. completion-status와 focused pytest는 사용 가능한 임시 디렉터리 부재로 rc 2여서 예상 2건 외 위반은 확인하지 못했다. UNCHK-027은 blocked_by가 비어 있지 않고 owner_track=`Phase 0`이라 U-4/U-5와 정합한다.",
+    "write": false,
+    "sessionId": "f062da15-ff4e-4803-ba88-8e368a96a4f3",
+    "status": "completed",
+    "startedAt": "2026-09-05T05:27:37.326Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtnxyiaq-1bfaf7.log",
+    "threadId": "01a07009-642e-7971-a6db-abb98af75bef",
+    "turnId": "01a07009-65cd-7491-9738-43ac48d8252f",
+    "completedAt": "2026-09-05T05:33:07.184Z"
+  },
+  "storedJob": {
+    "id": "review-mtnxyiaq-1bfaf7",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "Adversarial Review branch diff against 5fd23a6c",
+    "write": false,
+    "createdAt": "2026-09-05T05:27:37.250Z",
+    "sessionId": "f062da15-ff4e-4803-ba88-8e368a96a4f3",
+    "status": "completed",
+    "startedAt": "2026-09-05T05:27:37.326Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtnxyiaq-1bfaf7.log",
+    "threadId": "01a07009-642e-7971-a6db-abb98af75bef",
+    "turnId": "01a07009-65cd-7491-9738-43ac48d8252f",
+    "completedAt": "2026-09-05T05:33:07.184Z",
+    "result": {
+      "review": "Adversarial Review",
+      "target": {
+        "mode": "branch",
+        "label": "branch diff against 5fd23a6c",
+        "baseRef": "5fd23a6c",
+        "explicit": true
+      },
+      "threadId": "01a07009-642e-7971-a6db-abb98af75bef",
+      "context": {
+        "repoRoot": "/Users/harris/Development/private/kis_unified_sts",
+        "branch": "mission-critical-trading-operating-system",
+        "summary": "Reviewing branch mission-critical-trading-operating-system against 5fd23a6c from merge-base 5fd23a6cbdbe567b3decbb0eca10d1b13ac7ce3f."
+      },
+      "codex": {
+        "status": 0,
+        "stderr": "",
+        "stdout": "{\"verdict\":\"needs-attention\",\"summary\":\"NO-SHIP. 재심 #6 finding 1은 «부분 해소»다. 구현은 중점에만 공백을 허용하며 기존 두 공격을 막았지만, 계약의 `공백`이 ASCII U+0020만 뜻한다는 해석은 유일하지 않다. 직접 호출표: `\\\\r;\\\\r`=False, `\\\\n \\\\n·`=False, 정본 ` · `/`;`/LF 결합=True, 중점 공백 0개·다수=True, 연속·인접 구분자와 선두·말미 빈 구획=True, 정본 내부 공백 변형·NBSP·CRLF=False. HEAD·plan_scope_digest·contract blob·O-6 digest·decided_at_head는 모두 결속값과 일치했다. contract check와 self-test 145종은 rc 0. completion-status와 focused pytest는 사용 가능한 임시 디렉터리 부재로 rc 2여서 예상 2건 외 위반은 확인하지 못했다. UNCHK-027은 blocked_by가 비어 있지 않고 owner_track=`Phase 0`이라 U-4/U-5와 정합한다.\",\"findings\":[{\"severity\":\"medium\",\"title\":\"ASCII 공백 한정이 계약 문언에 존재하지 않는다\",\"body\":\"(ㅁ)은 중점 U+00B7과 LF를 코드 포인트 수준으로 특정하면서 중점 주변에는 단지 `공백`을 허용한다고 쓴다. 중점에만 수식된다는 점은 명확하지만, `공백`이 U+0020만인지 Unicode whitespace인지 문언만으로 결정되지 않는다. `byte-for-byte 동일`과 `정규화 없음`은 분할 후 구획 비교 규칙이지 어떤 문자가 구분자에 흡수되는지를 정의하지 않으므로 이 모호성을 해소하지 못한다. 반면 검사기는 ` *· *|;|\\\\n`으로 U+0020만 허용하여 NBSP를 거부한다. 따라서 기존 CR 및 공백-only 은닉 공격은 닫혔어도, 계약과 구현이 같은 강도라는 결론은 특정 해석을 전제한다. 다른 독립 구현이나 재심이 Unicode 공백 해석을 택하면 동일한 계약 행에 상반된 완료 판정을 내릴 수 있다.\",\"file\":\"docs/plans/2026-08-12-tos-phase0-completion-contract-design.md\",\"line_start\":3254,\"line_end\":3255,\"confidence\":0.98,\"recommendation\":\"`앞뒤 ASCII 공백 U+0020 0개 이상 허용`처럼 허용 코드 포인트와 수량을 계약에 축자로 명시하라. 계약 본문 편집이므로 S-26 ⑥ 카운터를 리셋하고 O-6를 재결속한 뒤 레인 B 재심 비용을 다시 부담해야 한다.\"}],\"next_steps\":[\"계약의 `공백`을 U+0020으로 정밀화하고 S-26 ⑥ 리셋·O-6 재결속·재심을 수행한다.\",\"쓰기 가능한 임시 디렉터리가 있는 환경에서 completion-status와 control_14/control_15 테스트를 재실행해 예상된 APPROVAL_STALE·생성물 불일치 외 위반이 없는지 확인한다.\"]}",
+        "reasoning": []
+      },
+      "result": {
+        "verdict": "needs-attention",
+        "summary": "NO-SHIP. 재심 #6 finding 1은 «부분 해소»다. 구현은 중점에만 공백을 허용하며 기존 두 공격을 막았지만, 계약의 `공백`이 ASCII U+0020만 뜻한다는 해석은 유일하지 않다. 직접 호출표: `\\r;\\r`=False, `\\n \\n·`=False, 정본 ` · `/`;`/LF 결합=True, 중점 공백 0개·다수=True, 연속·인접 구분자와 선두·말미 빈 구획=True, 정본 내부 공백 변형·NBSP·CRLF=False. HEAD·plan_scope_digest·contract blob·O-6 digest·decided_at_head는 모두 결속값과 일치했다. contract check와 self-test 145종은 rc 0. completion-status와 focused pytest는 사용 가능한 임시 디렉터리 부재로 rc 2여서 예상 2건 외 위반은 확인하지 못했다. UNCHK-027은 blocked_by가 비어 있지 않고 owner_track=`Phase 0`이라 U-4/U-5와 정합한다.",
+        "findings": [
+          {
+            "severity": "medium",
+            "title": "ASCII 공백 한정이 계약 문언에 존재하지 않는다",
+            "body": "(ㅁ)은 중점 U+00B7과 LF를 코드 포인트 수준으로 특정하면서 중점 주변에는 단지 `공백`을 허용한다고 쓴다. 중점에만 수식된다는 점은 명확하지만, `공백`이 U+0020만인지 Unicode whitespace인지 문언만으로 결정되지 않는다. `byte-for-byte 동일`과 `정규화 없음`은 분할 후 구획 비교 규칙이지 어떤 문자가 구분자에 흡수되는지를 정의하지 않으므로 이 모호성을 해소하지 못한다. 반면 검사기는 ` *· *|;|\\n`으로 U+0020만 허용하여 NBSP를 거부한다. 따라서 기존 CR 및 공백-only 은닉 공격은 닫혔어도, 계약과 구현이 같은 강도라는 결론은 특정 해석을 전제한다. 다른 독립 구현이나 재심이 Unicode 공백 해석을 택하면 동일한 계약 행에 상반된 완료 판정을 내릴 수 있다.",
+            "file": "docs/plans/2026-08-12-tos-phase0-completion-contract-design.md",
+            "line_start": 3254,
+            "line_end": 3255,
+            "confidence": 0.98,
+            "recommendation": "`앞뒤 ASCII 공백 U+0020 0개 이상 허용`처럼 허용 코드 포인트와 수량을 계약에 축자로 명시하라. 계약 본문 편집이므로 S-26 ⑥ 카운터를 리셋하고 O-6를 재결속한 뒤 레인 B 재심 비용을 다시 부담해야 한다."
+          }
+        ],
+        "next_steps": [
+          "계약의 `공백`을 U+0020으로 정밀화하고 S-26 ⑥ 리셋·O-6 재결속·재심을 수행한다.",
+          "쓰기 가능한 임시 디렉터리가 있는 환경에서 completion-status와 control_14/control_15 테스트를 재실행해 예상된 APPROVAL_STALE·생성물 불일치 외 위반이 없는지 확인한다."
+        ]
+      },
+      "rawOutput": "{\"verdict\":\"needs-attention\",\"summary\":\"NO-SHIP. 재심 #6 finding 1은 «부분 해소»다. 구현은 중점에만 공백을 허용하며 기존 두 공격을 막았지만, 계약의 `공백`이 ASCII U+0020만 뜻한다는 해석은 유일하지 않다. 직접 호출표: `\\\\r;\\\\r`=False, `\\\\n \\\\n·`=False, 정본 ` · `/`;`/LF 결합=True, 중점 공백 0개·다수=True, 연속·인접 구분자와 선두·말미 빈 구획=True, 정본 내부 공백 변형·NBSP·CRLF=False. HEAD·plan_scope_digest·contract blob·O-6 digest·decided_at_head는 모두 결속값과 일치했다. contract check와 self-test 145종은 rc 0. completion-status와 focused pytest는 사용 가능한 임시 디렉터리 부재로 rc 2여서 예상 2건 외 위반은 확인하지 못했다. UNCHK-027은 blocked_by가 비어 있지 않고 owner_track=`Phase 0`이라 U-4/U-5와 정합한다.\",\"findings\":[{\"severity\":\"medium\",\"title\":\"ASCII 공백 한정이 계약 문언에 존재하지 않는다\",\"body\":\"(ㅁ)은 중점 U+00B7과 LF를 코드 포인트 수준으로 특정하면서 중점 주변에는 단지 `공백`을 허용한다고 쓴다. 중점에만 수식된다는 점은 명확하지만, `공백`이 U+0020만인지 Unicode whitespace인지 문언만으로 결정되지 않는다. `byte-for-byte 동일`과 `정규화 없음`은 분할 후 구획 비교 규칙이지 어떤 문자가 구분자에 흡수되는지를 정의하지 않으므로 이 모호성을 해소하지 못한다. 반면 검사기는 ` *· *|;|\\\\n`으로 U+0020만 허용하여 NBSP를 거부한다. 따라서 기존 CR 및 공백-only 은닉 공격은 닫혔어도, 계약과 구현이 같은 강도라는 결론은 특정 해석을 전제한다. 다른 독립 구현이나 재심이 Unicode 공백 해석을 택하면 동일한 계약 행에 상반된 완료 판정을 내릴 수 있다.\",\"file\":\"docs/plans/2026-08-12-tos-phase0-completion-contract-design.md\",\"line_start\":3254,\"line_end\":3255,\"confidence\":0.98,\"recommendation\":\"`앞뒤 ASCII 공백 U+0020 0개 이상 허용`처럼 허용 코드 포인트와 수량을 계약에 축자로 명시하라. 계약 본문 편집이므로 S-26 ⑥ 카운터를 리셋하고 O-6를 재결속한 뒤 레인 B 재심 비용을 다시 부담해야 한다.\"}],\"next_steps\":[\"계약의 `공백`을 U+0020으로 정밀화하고 S-26 ⑥ 리셋·O-6 재결속·재심을 수행한다.\",\"쓰기 가능한 임시 디렉터리가 있는 환경에서 completion-status와 control_14/control_15 테스트를 재실행해 예상된 APPROVAL_STALE·생성물 불일치 외 위반이 없는지 확인한다.\"]}",
+      "parseError": null,
+      "reasoningSummary": []
+    },
+    "rendered": "# Codex Adversarial Review\n\nTarget: branch diff against 5fd23a6c\nVerdict: needs-attention\n\nNO-SHIP. 재심 #6 finding 1은 «부분 해소»다. 구현은 중점에만 공백을 허용하며 기존 두 공격을 막았지만, 계약의 `공백`이 ASCII U+0020만 뜻한다는 해석은 유일하지 않다. 직접 호출표: `\\r;\\r`=False, `\\n \\n·`=False, 정본 ` · `/`;`/LF 결합=True, 중점 공백 0개·다수=True, 연속·인접 구분자와 선두·말미 빈 구획=True, 정본 내부 공백 변형·NBSP·CRLF=False. HEAD·plan_scope_digest·contract blob·O-6 digest·decided_at_head는 모두 결속값과 일치했다. contract check와 self-test 145종은 rc 0. completion-status와 focused pytest는 사용 가능한 임시 디렉터리 부재로 rc 2여서 예상 2건 외 위반은 확인하지 못했다. UNCHK-027은 blocked_by가 비어 있지 않고 owner_track=`Phase 0`이라 U-4/U-5와 정합한다.\n\nFindings:\n- [medium] ASCII 공백 한정이 계약 문언에 존재하지 않는다 (docs/plans/2026-08-12-tos-phase0-completion-contract-design.md:3254-3255)\n  (ㅁ)은 중점 U+00B7과 LF를 코드 포인트 수준으로 특정하면서 중점 주변에는 단지 `공백`을 허용한다고 쓴다. 중점에만 수식된다는 점은 명확하지만, `공백`이 U+0020만인지 Unicode whitespace인지 문언만으로 결정되지 않는다. `byte-for-byte 동일`과 `정규화 없음`은 분할 후 구획 비교 규칙이지 어떤 문자가 구분자에 흡수되는지를 정의하지 않으므로 이 모호성을 해소하지 못한다. 반면 검사기는 ` *· *|;|\\n`으로 U+0020만 허용하여 NBSP를 거부한다. 따라서 기존 CR 및 공백-only 은닉 공격은 닫혔어도, 계약과 구현이 같은 강도라는 결론은 특정 해석을 전제한다. 다른 독립 구현이나 재심이 Unicode 공백 해석을 택하면 동일한 계약 행에 상반된 완료 판정을 내릴 수 있다.\n  Recommendation: `앞뒤 ASCII 공백 U+0020 0개 이상 허용`처럼 허용 코드 포인트와 수량을 계약에 축자로 명시하라. 계약 본문 편집이므로 S-26 ⑥ 카운터를 리셋하고 O-6를 재결속한 뒤 레인 B 재심 비용을 다시 부담해야 한다.\n\nNext steps:\n- 계약의 `공백`을 U+0020으로 정밀화하고 S-26 ⑥ 리셋·O-6 재결속·재심을 수행한다.\n- 쓰기 가능한 임시 디렉터리가 있는 환경에서 completion-status와 control_14/control_15 테스트를 재실행해 예상된 APPROVAL_STALE·생성물 불일치 외 위반이 없는지 확인한다.\n"
+  }
+}

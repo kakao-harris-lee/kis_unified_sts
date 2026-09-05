@@ -1,0 +1,19 @@
+레인 B 계획 «재심 #7» — Phase 0 완료 계약 v2.22 에라타 57차(§7.4 U-6′ (ㅁ) reason 배타 문법 · 대조군 ⑧-d/⑧-e/⑧-f · S-26 57차 항) + O-6 재결속. 운영자 명시 지시(2026-09-05 「배타 문법 계약 명문화 진행」). 재심 #6(.omc/review/20260905-140531/verdict.md · needs-attention · medium 1)의 finding 1 — 검사기 구분자 정규식이 (ㅁ) 문언보다 넓음(`\s*` · CR·유니코드 공백 흡수 · LF 사이 공백-only 구획 은닉) — 을 **계약 무접촉**으로 검사기 쪽에서 처분했다(C4-a 038c2227: `_D1_U6PRIME_SEGMENT_SPLIT_RE` = ` *· *|;|\n` · ASCII space U+0020 만 · 중점 전용 · 공백-only 구획은 외부 구획 → red · 대조군 ⑮-a~d red(`\r;\r` · NBSP+`·` · `\n \n·` · `\t;\t`) · ⑮-e green(`·` 무공백·다중 ASCII 공백)). 계약 blob 은 재심 #6 과 동일(`3411f241…` · bound_set_digest 16e97f44… 불변 · 재결속 불필요). 심사 범위는 57차 에라타 diff + 그 lockstep 으로 한정한다.
+
+먼저 읽을 것 (순서대로):
+1. CLAUDE.md — 비협상 규칙 및 «Read the index before the contract»(`python tools/tos_contract_index.py --locate "§7.4"`, `--locate S-26` 로 구간을 잡아 그 범위만 읽어라. 전체 스캔·요약 금지).
+2. .omc/review/20260905-140531/verdict.md — 재심 #6. **1순위 질문: finding 1 이 «해소 / 부분 해소 / 미해소 / 회피» 중 무엇인가** — 구현이 (ㅁ) 의 구분자 문언과 이제 같은 강도인가(문언: 「중점 `·`(U+00B7 · 앞뒤 공백 허용) · 세미콜론 `;` · LF 개행 셋 · 빈 구획은 무시」). 오케스트레이터의 해석(수용검사에 기록): 「앞뒤 공백 허용」은 중점에만 붙고 ASCII space 를 뜻한다 — 이 해석이 문언에서 유일하게 읽히는지, 아니면 계약 문언 쪽 정밀화가 필요한지(그 경우 S-26 ⑥ 리셋·O-6 재결속·재심 비용을 함께 적어라).
+3. 심사 대상 diff: 계약 `git diff 5fd23a6c 038c2227 -- docs/plans/2026-08-12-tos-phase0-completion-contract-design.md docs/plans/2026-08-11-tos-completion-development-plan.md`(사본 .omc/review/20260905-142639/evidence/scope-diff.patch · 재심 #6 과 동일 내용) · lockstep `.omc/review/20260905-142639/evidence/lockstep-diff.patch`(C2 O-6 재결속 · C4-a 검사기 구분자 + ⑮ 대조군 + UNCHK-027 종결 문언).
+4. 검사기 대조: `tools/tos_completion_status.py` 의 `_D1_U6PRIME_SEGMENT_SPLIT_RE`·`_d1_u6prime_segments`·`_d1_u6prime_row_state` 가 (ㅁ) 과 같은 강도인가 — 직접 `_d1_u6prime_row_state` 를 호출해 재심 #6 의 두 공격(`\r;\r` · `\n \n·`)이 False 인지, 정본 넷을 ` · `/`;`/LF 로 결합한 행과 ⑮-e 형상이 True 인지, 그리고 당신이 고안한 새 형상(예: ` *· *` 의 공백 0개·다수 · `·` 연속 · 구분자 인접 빈 구획 · 정본 구획 내부의 공백 변형)을 시험해 표로 적어라.
+
+결속 필드(디스패치 직전 포착 · .omc/review/20260905-142639/revision.txt): reviewed_at_head 038c2227de30e6945b7ca1d16317f403a72acf47 · reviewed_plan_paths = 위 두 경로 · reviewed_scope_digest(plan_scope_digest) 0aa465a5d9e12b598470cdf5ab716b2e4e34a1721f4871bb8fa1b4b6b37c162a · bound_set_digest(O-6) 16e97f44e9b32882d03c7d9327a2d088ef5f4b385e6b3823aa2e92fb59cf4f46 · decided_at_head 5dfcb236(C1). 재계산해 대조하라 — `{ git rev-parse HEAD; printf '%s\0' <두 경로> | LC_ALL=C sort -z -u | xargs -0 -r shasum -a 256; } | shasum -a 256`. O-6 digest 는 두 결속 경로 HEAD blob 으로 재계산(`<sha256hex>  <path>\n` 경로순 결합의 sha256).
+
+재심 #6 에서 이미 일치 확인된 것(재판정하지 말고 C4-a 가 깨지 않았는지만): 직전 finding(재개 아크 5회차)의 «해소» 판정 · v2.23 리터럴 0 · 개발계획·이력 무접촉 · 57차 S-26 ⑥/② 0 기록 · 좌표 정정 여섯 · currency 태그 3곳 · control_14 배터리 · contract check + self-test 145 rc 0.
+
+추가 확인 질문:
+ (h) `python tools/tos_contract_check.py` + `--self-test` rc 0(직접 실행). `python tools/tos_completion_status.py --check` 는 C3(이 verdict 착지) 전이라 `[U-15] APPROVAL_STALE` + `[D0-1] 생성물 불일치` 2건이 예상값 — 그 둘 «외»의 위반이 없는지만(샌드박스 rc 2 면 사실을 적어라).
+ (i) UNCHK-027 행의 종결 문언이 §13 위생(U-4 blocked_by · U-5 owner_track)과 정합하는가.
+
+범위 밖: 계약의 다른 절 · 코드 품질 · D0/P-0 착수 금지·restricted_live·production 불변(재판정 금지).
+
+출력: verdict(approve | needs-attention) · summary · findings[] (severity · title · body · file · line_start/line_end 는 HEAD 038c2227 에 실재 · confidence · recommendation) · next_steps[]. 재심 #6 finding 1 에 «해소 / 부분 해소 / 미해소 / 회피» 를 명시하라. 계약 본문 «추가 편집» 을 권고할 때는 S-26 ⑥ 리셋·O-6 재결속·재심 비용을 함께 적어라.

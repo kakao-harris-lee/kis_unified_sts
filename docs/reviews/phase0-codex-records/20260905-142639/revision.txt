@@ -1,0 +1,15 @@
+lane: B (plan) — 계약 v2.22 에라타 57차 + O-6 재결속 · 재심 #7 (재심 #6 finding 1 = 검사기 구분자 정합 C4-a 038c2227 처분 후 · 계약 무접촉)
+reviewed_at_head: 038c2227de30e6945b7ca1d16317f403a72acf47
+reviewed_plan_paths:
+  - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
+  - docs/plans/2026-08-11-tos-completion-development-plan.md
+reviewed_scope_digest: 0aa465a5d9e12b598470cdf5ab716b2e4e34a1721f4871bb8fa1b4b6b37c162a
+digest_kind: plan_scope_digest
+bound_set_digest: 16e97f44e9b32882d03c7d9327a2d088ef5f4b385e6b3823aa2e92fb59cf4f46
+decided_at_head: 5dfcb236b2f5849086985fb3d2a227739657b1b6
+base: 5fd23a6cbdbe567b3decbb0eca10d1b13ac7ce3f
+commits: C1 5dfcb236 · C2 3201484f · C4-a 038c2227
+contract_blob: 3411f241803f6e1586f3d9fbfdf17b5fe4c76d02
+devplan_blob: ec3464c068dff2030e0764f3b05c985a821730f5
+captured_at_utc: 2026-09-05T05:26:39Z
+prior_verdict: .omc/review/20260905-140531/verdict.md

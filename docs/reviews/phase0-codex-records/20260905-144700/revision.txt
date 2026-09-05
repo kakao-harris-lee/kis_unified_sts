@@ -1,0 +1,15 @@
+lane: B (plan) — 계약 v2.22 에라타 57차+58차 + O-6 재결속 · 재심 #9 (재심 #8 finding 1 = OQ-11 기록 계수 정정 C2″ 후 · 계약·digest 불변)
+reviewed_at_head: 38bfb1fd2aa5e7b5fee337adbcbb7c8098b7f36b
+reviewed_plan_paths:
+  - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
+  - docs/plans/2026-08-11-tos-completion-development-plan.md
+reviewed_scope_digest: d669993de505522e44614b11d3bb6adbc5ae4e0fd5669b152e66aa4ef2ba967e
+digest_kind: plan_scope_digest
+bound_set_digest: 045f3ae7565860df6e0c38d3c7ee49c76f3a4d3784d646279cd1be2727dbb429
+decided_at_head: 1db8f9b8b96880d1e92154b92ea8197466588ae3
+base: 5fd23a6cbdbe567b3decbb0eca10d1b13ac7ce3f
+commits: C1 5dfcb236 · C2 3201484f · C4-a 038c2227 · C1′ 1db8f9b8 · C2′ 3e8931e8 · C2″ 38bfb1fd2aa5e7b5fee337adbcbb7c8098b7f36b
+contract_blob: 6f94dfbbafd48fa3d1b4c73266fdfda19da9bce5
+devplan_blob: ec3464c068dff2030e0764f3b05c985a821730f5
+captured_at_utc: 2026-09-05T05:47:01Z
+prior_verdict: .omc/review/20260905-143827/verdict.md
