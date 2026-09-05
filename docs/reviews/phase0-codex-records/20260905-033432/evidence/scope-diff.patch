@@ -1,0 +1,1016 @@
+diff --git a/docs/plans/2026-07-29-tos-phase0-human-gate-register.md b/docs/plans/2026-07-29-tos-phase0-human-gate-register.md
+index 6589eae4..5614a607 100644
+--- a/docs/plans/2026-07-29-tos-phase0-human-gate-register.md
++++ b/docs/plans/2026-07-29-tos-phase0-human-gate-register.md
+@@ -191,7 +191,7 @@ DSL/Time 트랙으로 흡수). 이관 항목 총 **375건** = 공통 인스턴
+ 
+ ## 8. 수치 키 전수 (3-tier)
+ 
+-### 8-1. 확정 누락 — 프로파일에 키 자체가 없음 (신설 26항)
++### 8-1. 확정 누락 — 프로파일에 키 자체가 없음 (신설 27항)
+ 
+ | 항목 | 출처 |
+ |---|---|
+@@ -221,6 +221,7 @@ DSL/Time 트랙으로 흡수). 이관 항목 총 **375건** = 공통 인스턴
+ | blast-radius 상한(cell-blast) | failuredomain:693–695 |
+ | safety-cell HALT→global HALT 에스컬레이션 조건 | failuredomain:695–696 |
+ | DCE-INV-007 DSL evaluation time/resource bound | strategy-dsl:540–546 |
++| `MAX_time_conservative_freshness_age_ms` (UNCHK-024 잔여 1필드 — resolver `BarTimeProjection.max_age_bound`) | ADR-002-008 §9; 등록 2026-09-04(값 null, 승인 대기) — `docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md` §2 |
+ 
+ ### 8-2. Candidate (누락 확정도 커버 확정도 아님 — 8군)
+ 
+diff --git a/docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md b/docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md
+new file mode 100644
+index 00000000..ba9bc32d
+--- /dev/null
++++ b/docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md
+@@ -0,0 +1,98 @@
++# UNCHK-024 잔여 1필드 `max_age_bound` — VERIFICATION-PROFILE-002 신설 키 처분 패키지 (draft)
++
++**Date:** 2026-09-04
++**Track:** Phase 0 human gate register §8-1 (trustworthy-time bound 범주) · P0-1 Bounds-Approver 후속
++**Operator directive:** 2026-09-04 「max_age_bound 키 신설 진행」
++**Status:** DRAFT — §6 승인 기록은 빈 양식이다. 이 문서는 값을 승인하지 않는다.
++**Precedent:** `docs/plans/2026-08-06-tos-phase0-p01-residual-17key-disposition-draft.md`(§4.1 도출 → §6 운영자 기입, ARCHITECTURE-GATE-STATUS §3.26) · PATCH-0054(키 등록은 승인이 아니다)
++
++---
++
++## 1. 문제
++
++`tos/src/tos/backtest/resolver.py::BarTimeProjection` 의 아홉 주입 필드 중 여덟은 2026-09-02
++(`44ffce5e`)에 처분이 확정됐다 — 2필드 1:1 키 결속 · `delay_bounds` 4키 합성 결속 · 5필드 구조적
++비대상 선언. **`max_age_bound` 하나만 `UNBOUND`** 로 남았다: 그것은 `freshness_verdict` 가
++`source_age + sum(delay_bounds)` 를 대조하는 **최상위 신선도 상한**인데, 그 역할을 지는 프로파일
++키가 없었고 register §8-1 trustworthy-time 범주에도 그 항목이 없었다.
++
++기계 노출: `tools/tos_completion_status.py` §7.4 D-1 이 `resolver`·`marketfeed` 두 사이트를
++`VALUED+UNBOUND` 로 렌더한다(D0-5 는 MET — 갈린 처분도 결정된 처분이다). 계약 §11 은 이 상태로
++2026-09-04 완료 판단이 발효됐다(`222dc4de`). 이 패키지는 그 판단을 바꾸지 않는다 — §8-1 잔여의
++정직한 종결이다.
++
++## 2. 신설 키 정의
++
++| 항목 | 값 |
++|---|---|
++| 키 | `MAX_time_conservative_freshness_age_ms` |
++| 블록 | `limits:` · PATCH-0054 trustworthy-time 군(`MAX_time_source_sequence_gap_ms` 다음) |
++| 소유 결정 | ADR-002-008 §9 — 「Freshness SHALL be evaluated using a conservative upper bound … Freshness thresholds belong in an approved Safety Profile or Verification Profile.」 |
++| 의미 | ADR-002-008 §9 보수적 상한 age(source age + 적용되는 delay-class bound 의 합)가 이 값을 넘거나, 상한 자체를 세울 수 없으면 `STALE` — 의존 신규 리스크를 거부한다. 0 으로 강제하거나 fresh 로 수용하지 않는다(§9 마지막 두 문장). |
++| semantics | hard_maximum |
++| applicable_scope | per critical-input consumer scope (bar-time projection 등 §9 상한을 소비하는 자리) |
++| 결속 표면 | `resolver.py` BarTimeProjection docstring `VER-002-KEYS:` 선언 — `max_age_bound` 리터럴을 이 키로 교체(1:1). `tos/src/tos/marketfeed/__init__.py` 동일 선언 lockstep. |
++| 등록 시 값 | `null` — 등록은 승인이 아니다(VER-002-001 §6 · PATCH-0054 선례). D-1 셀은 `UNBOUND` → `BLOCKED`(우주 안 · 값 없음)로 바뀐다. §6 기입 후 `VALUED`. |
++
++**이름 근거.** 이 키는 ADR-002-008(trustworthy time) §9 의 산물이라 `MAX_time_*` 군을 따른다
++(`MAX_time_transport_and_queue_uncertainty_ms` 등 같은 §9 의 항들과 같은 접두). «conservative
++freshness age» 는 §9 첫 문장의 용어를 그대로 쓴다.
++
++## 3. 기각한 대안
++
++| 대안 | 기각 이유 (한 줄) |
++|---|---|
++| `MAX_critical_input_snapshot_age_ms`(1000) 재사용 | ADR-002-018 §14 가 snapshot age 와 delay class 를 **접지 말라**고 명시하고, resolver 도 `snapshot_age_bound` 를 별개 필드로 갖는다 — 총합 상한에 snapshot age 키를 붙이면 그 분리가 깨진다. |
++| `MAX_time_health_snapshot_age_ms`(1000) 재사용 | 대상이 Time Health **proof** 의 소비자 보유 age 다 — bar 시각 투영의 총합 신선도가 아니다. 주석의 「including transport uncertainty」는 folded 표기로, 2026-07-21 설계 §8 이 바로 그 folding 을 §8-1 누락 근거로 삼았다. |
++| `UNBOUND` 유지(정직 등재) | 2026-09-02 까지의 처분. 운영자 지시(2026-09-04)로 종결 경로를 택한다. 유지해도 §11 은 MET 였으므로 이 신설은 완료 판단의 근거를 «고치는» 것이 아니라 잔여를 «닫는» 것이다. |
++| 검사기 쪽에서 `max_age_bound` 를 구조적 비대상으로 재분류 | 거짓이다 — 이 필드는 `MAX_*` 문턱 그 자체다(5필드와 달리 관측값·파생 합성·열거형이 아니다). |
++
++## 4. 값 도출 (권고 · 승인 아님)
++
++**권고값: 1000 ms.**
++
++1. **만족 가능성 하한.** `freshness_verdict` 는 `source_age + sum(delay_bounds)` 를 이 상한과
++   대조한다. 합성 결속된 delay bound 4키는 각 50 ms(승인값) → 합 200 ms. 상한이 200 ms 이하이면
++   source age 0 인 bar 도 STALE 이 되어 키가 «모든 것을 거부»하는 상수가 된다. 하한 = 200 ms 초과.
++2. **동류 앵커.** 2026-07-29 draft package §6-L1(정상-신선도 age 상한 38키 · 1000 ms · 「per
++   scope; ≤ `MAX_normal_capability_age_ms`=1000, 느린 소스 클래스만 상향」)이 같은 클래스다.
++   `MAX_critical_input_snapshot_age_ms`·`MAX_critical_input_consumer_receipt_age_ms` 도 1000 이다
++   — 총합 상한이 그 구성항의 상한들보다 작을 이유가 없고, §6-L1 앵커를 넘길 이유도 없다.
++3. **보수 방향.** 더 작은 값이 더 많이 거부한다(fail-closed 방향 = LOWER). 1000 ms 는 §6-L1
++   앵커와 같아 상향이 아니다.
++4. **런타임 영향 0.** 이 키는 D-1 **선언 결속**이다. `BarTimeProjection.max_age_bound` 값은
++   테스트 픽스처와 호출자가 주입하며 프로파일 값을 읽는 코드는 없다(구조 파생: `tos/` 안에
++   VERIFICATION-PROFILE-002.yaml 을 읽는 import 가 없다 — 방화벽상 불가). 값 승인은 EV-L1..L3
++   하네스 상한의 등재이며 라이브 캘리브레이션이 아니다(프로파일 헤더 scope 문언과 동일).
++
++## 5. 기계적 파급 (등록 커밋이 함께 움직여야 하는 자리)
++
++| 자리 | 변화 |
++|---|---|
++| `VERIFICATION-PROFILE-002.yaml` + `-template.yaml` | 키 1 등록(null) · 헤더 census 163→164 · null 16→17 · 2026-09-04 기록 블록 |
++| `tools/tos_spec_status.py` 전사 검사 | 헤더/게이트 status 의 census 문장 정규식이 「10 broker + 6 instance」괄호를 축자로 요구한다 → 신설 범주 1건을 문장과 정규식에 함께 반영(CI `tos-firewall` 의 `--check`) |
++| `ARCHITECTURE-GATE-STATUS.md` | §3.27 등록 기록(Patch-0058 · APPLIED · 값 미승인) · :1075/:1375 census 문장 |
++| `patches/VERIFICATION-PROFILE-002-Patch-0058.md` | 키 등록 패치 기록(PATCH-0054 양식) |
++| `resolver.py` · `marketfeed/__init__.py` docstring | `VER-002-KEYS` 의 `max_age_bound` → 신설 키 · 결속 문단 재기술 |
++| `PHASE0-UNCHECKABLE-REGISTER.csv` UNCHK-024 | ④ 잔여 문언 갱신(키 등록 · 값 승인 대기) |
++| human-gate register §8-1 | 행 1 추가(27항) |
++| `TOS-COMPLETION-STATUS.md` | `--write` 재생성 — D0-5[resolver]/[marketfeed] `VALUED+BLOCKED` |
++| `tests/tools/test_tos_completion_status.py` | 실코퍼스 대조군(`max_age_bound` 우주 밖 핀) → 신설 키 우주 안·null 핀 |
++| **계약 본문** | **무접촉.** :2974/:2979 의 「UNCHK-024 무영향」은 당시-참 기록이다. S-26 ⑥ 리셋 없음. |
++
++§6 기입(값 승인) 시 추가로 움직이는 자리: 프로파일 값·마커 · census 147→148(헤더·게이트 status·
++`tos_spec_status.py` 의 `147` 리터럴) · UNCHK-024 행 종결 · `--write` 재생성(`VALUED`).
++
++## 6. 승인 기록 (Bounds-Approver · 빈 양식)
++
++```yaml
++key: MAX_time_conservative_freshness_age_ms
++recommended_value_ms: 1000
++approved_value_ms:            # 운영자 기입
++approved_by:                  # operator (Bounds-Approver)
++approved_at_utc:              # 운영자 기입
++review_date: 2027-01-29       # 2026-07-29 승인분과 같은 주기
++derivation: this package §4 at the commit that introduces it
++```
++
++이 양식이 채워진 diff 가 승인 기록이다(§3.26 선례 — «§6 기입 커밋을 인용하라, 도입 커밋이 아니라»).
+diff --git a/tests/tools/test_tos_completion_status.py b/tests/tools/test_tos_completion_status.py
+index e85d3477..c4f0dc54 100644
+--- a/tests/tools/test_tos_completion_status.py
++++ b/tests/tools/test_tos_completion_status.py
+@@ -4350,13 +4350,18 @@ def _write_mini_profile(
+ 
+ 
+ def test_d1_real_corpus_dispositions_match_expected() -> None:
+-    """[flipped, C4 — 계약 §7.4 D-3/D-4/D-5 구현] §7.4 실측 기대: 5곳은
+-    균일 다중/단일 키로 ``UNBOUND``. ``resolver`` 와 ``marketfeed``
+-    (독립 확인 ``review-mtmg2lz7-88qdyb`` 가 그 ``NONE`` 자기신고를 거짓으로
+-    판정한 뒤 docstring 을 D-5 재분류한 결과, C4 lockstep)는 이제 «같은»
+-    7키 선언(6개 VALUED + ``max_age_bound`` 1개 UNBOUND)에서 파생된
+-    ``VALUED+UNBOUND`` — D-3 이 접지 않고 «집합»으로 판정됨이다. 두
+-    사이트 모두 ``kind == "keys"``이고 ``NO_DEPENDENCY`` 후보(``kind ==
++    """[flipped, C4 — 계약 §7.4 D-3/D-4/D-5 구현; 2026-09-04 UNCHK-024
++    갱신] §7.4 실측 기대: 5곳은 균일 다중/단일 키로 ``UNBOUND``.
++    ``resolver`` 와 ``marketfeed`` (독립 확인 ``review-mtmg2lz7-88qdyb``
++    가 그 ``NONE`` 자기신고를 거짓으로 판정한 뒤 docstring 을 D-5
++    재분류한 결과, C4 lockstep)는 «같은» 7키 선언에서 파생되지만, 잔여
++    1필드 ``max_age_bound`` 가 2026-09-04 ``MAX_time_conservative_
++    freshness_age_ms`` 로 1:1 결속된 뒤(disposition draft
++    ``docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md``
++    §2, §5) 그 키가 프로파일에 값 null 로 등록되어 이제 ``VALUED+BLOCKED``
++    — D-3 이 접지 않고 «집합»으로 판정됨이다(6개 VALUED + 1개 BLOCKED, 더
++    이상 UNBOUND 가 아니다 — 우주 밖이 아니라 우주 안·값 없음). 두 사이트
++    모두 ``kind == "keys"``이고 ``NO_DEPENDENCY`` 후보(``kind ==
+     "none"``)는 실코퍼스에 0 개다."""
+     dispositions, fail_closed = tcs.compute_d1_dispositions(_REPO_ROOT)
+     assert fail_closed == ()
+@@ -4372,11 +4377,11 @@ def test_d1_real_corpus_dispositions_match_expected() -> None:
+     for name in ("resolver", "marketfeed"):
+         record = dispositions[name]
+         assert record.kind == "keys", (name, record)
+-        assert record.cell == "VALUED+UNBOUND", (name, record)
++        assert record.cell == "VALUED+BLOCKED", (name, record)
+         states = {state for _key, state in record.per_key}
+-        assert states == {"VALUED", "UNBOUND"}
++        assert states == {"VALUED", "BLOCKED"}
+         assert sum(1 for _k, s in record.per_key if s == "VALUED") == 6
+-        assert sum(1 for _k, s in record.per_key if s == "UNBOUND") == 1
++        assert sum(1 for _k, s in record.per_key if s == "BLOCKED") == 1
+     # 실코퍼스에 NONE 선언 사이트는 0 개다(marketfeed 재분류 후) — D-4/U-6′
+     # 어휘는 여전히 구현돼 있지만 오늘의 소비자는 없다(56차 "부수 사실").
+     assert all(record.kind != "none" for record in dispositions.values())
+@@ -4390,13 +4395,15 @@ def test_d1_real_corpus_check_d1_is_clean() -> None:
+ 
+ 
+ def test_d1_real_corpus_d0_5_met() -> None:
+-    """[flipped, C4] real corpus 렌더는 이제 D0-5 를 ``MET`` 으로 낸다 —
+-    7사이트 전부가 D-3(``keys``)으로 판정됨이다."""
++    """[flipped, C4; 2026-09-04 UNCHK-024 갱신] real corpus 렌더는 이제
++    D0-5 를 ``MET`` 으로 낸다 — 7사이트 전부가 D-3(``keys``)으로 판정됨이다.
++    resolver/marketfeed 는 신설 키 등록(값 null) 이후 ``VALUED+BLOCKED``
++    (더 이상 ``VALUED+UNBOUND`` 가 아니다)."""
+     ctx = tcs.build_context(_REPO_ROOT)
+     findings = tcs.run_checks(ctx)
+     rendered, _ = tcs.render_completion_status(ctx, findings)
+     assert "- `D0-5`: `MET`" in rendered
+-    assert "VALUED+UNBOUND" in rendered
++    assert "VALUED+BLOCKED" in rendered
+ 
+ 
+ def test_d1_declaration_missing_is_undecided(
+@@ -5233,10 +5240,15 @@ def test_d1_candidate_universe_derivation_includes_every_declared_and_contrast_k
+     )
+ 
+ 
+-def test_d1_candidate_universe_real_corpus_includes_max_age_bound() -> None:
+-    """실코퍼스 대조군 — ``max_age_bound`` 는 ``VERIFICATION-PROFILE-002``
+-    우주 밖이지만 ``resolver``/``marketfeed`` 가 D-5 로 선언하므로 후보
+-    우주에 실재해야 한다(53차 (나)가 막는 우회의 증인)."""
++def test_d1_candidate_universe_real_corpus_max_age_bound_now_bound() -> None:
++    """실코퍼스 대조군 [갱신, 2026-09-04 UNCHK-024 처분] — ``max_age_bound``
++    리터럴은 더 이상 ``resolver``/``marketfeed`` docstring 의 VER-002-KEYS
++    선언에 나타나지 않는다: 1:1 결속 키 이름
++    ``MAX_time_conservative_freshness_age_ms`` 로 교체됐다(disposition draft
++    ``docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md``
++    §5). 그 신설 키는 이제 ``VERIFICATION-PROFILE-002`` 우주 **안**에
++    실재한다(값 null → BLOCKED, 우주 밖이 아니다) — 53차 (나)가 막는
++    우회의 증인이었던 이전 상태(우주 밖 의존 키)는 종결됐다."""
+     universe, err = tcs._load_profile_universe(_REPO_ROOT)
+     assert universe is not None, err
+     decls = []
+@@ -5247,8 +5259,9 @@ def test_d1_candidate_universe_real_corpus_includes_max_age_bound() -> None:
+         assert doc is not None
+         decls.append(tcs._parse_d1_declaration(doc))
+     candidate_universe = tcs._d1_candidate_universe(universe, decls)
+-    assert "max_age_bound" in candidate_universe
+-    assert "max_age_bound" not in universe
++    assert "max_age_bound" not in candidate_universe
++    assert "MAX_time_conservative_freshness_age_ms" in universe
++    assert "MAX_time_conservative_freshness_age_ms" in candidate_universe
+ 
+ 
+ def test_d1_none_declaration_row_absent_is_undecided_control_5a(
+@@ -5279,7 +5292,15 @@ def test_d1_none_declaration_row_present_record_absent_is_undecided_control_5b(
+     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+ ) -> None:
+     """대조군 ⑤-b — §13 행은 있으나 D-4 (마) 독립 리뷰 기록이 없으면
+-    (54차의 «공시 의무만으로는 통과» 회피를 닫는 자리) red."""
++    (54차의 «공시 의무만으로는 통과» 회피를 닫는 자리) red.
++
++    [레인 B 재심 20260904-233516 finding 1 처분 이후] reason 이 그럴듯한
++    경로를 적어도, 그 경로에 실제 스탬프(``verdict.md``)가 없으면
++    ``_d1_locate_no_dependency_record_stamp`` 는 아무것도 선택하지 못해
++    ``record_path`` 가 ``None`` 이다 — 이제는 이 자리가 §13 행 그래머
++    (ㄹ)(4) 미충족으로 **먼저** 막힌다(구판은 디렉터리 접두사만 보고
++    이 행을 통과시켜, 실패 지점이 그 뒤 D-4 (마) 기록 검증으로 늦게
++    옮겨졌었다)."""
+     monkeypatch.setattr(tcs, "D1_SITES", D1_NONE_TEST_SITES)
+     _write_mini_profile(
+         tmp_path,
+@@ -5304,11 +5325,174 @@ def test_d1_none_declaration_row_present_record_absent_is_undecided_control_5b(
+         tmp_path, ctx.uncheckable_rows
+     )
+     assert dispositions["noneprobe"].cell == "UNDECIDED"
+-    assert "독립 리뷰 기록 미충족" in dispositions["noneprobe"].basis
++    assert "U-6′ §13 행 미충족" in dispositions["noneprobe"].basis
++    assert (
++        "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in dispositions["noneprobe"].basis
++    )
++    findings = tcs.check_d1(ctx)
++    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
++
++
++def test_d1_none_declaration_row_reason_missing_scope_desc_is_undecided_control_10a() -> (
++    None
++):
++    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-a — reason 에
++    후보 우주 크기·파일 수는 있으나 ``scope_desc``(스캔 범위) 자체가
++    빠지면 (ㄹ)(2) 미충족으로 red. 구판은 ``scope_desc`` 를 전혀 소비하지
++    않아 이 누락을 못 잡았다."""
++    reason = (
++        "VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · 1개 파일 스캔 · "
++        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
++        "독립 리뷰 기록: "
++        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
++    )
++    ok, detail, matched = tcs._d1_u6prime_row_state(
++        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
++        "noneprobe",
++        candidate_universe_size=1,
++        scope_desc="d1_none_pkg",
++        file_count=1,
++        record_path=(
++            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
++        ),
++    )
++    assert ok is False
++    assert matched is not None
++    assert "(2) 스캔 결과" in detail
++
++
++def test_d1_none_declaration_row_reason_wrong_scope_desc_is_undecided_control_10b() -> (
++    None
++):
++    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-b — reason 이 실제
++    스캔 범위(``d1_none_pkg``) 대신 무관한 범위 문자열(``other_pkg``)을
++    적으면 (ㄹ)(2) 미충족으로 red — reason 이 실제 스캔 범위와 무관한
++    값을 적어도 통과하던 회피를 막는다."""
++    reason = (
++        "VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · other_pkg 1개 파일 스캔 · "
++        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
++        "독립 리뷰 기록: "
++        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
++    )
++    ok, detail, matched = tcs._d1_u6prime_row_state(
++        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
++        "noneprobe",
++        candidate_universe_size=1,
++        scope_desc="d1_none_pkg",
++        file_count=1,
++        record_path=(
++            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
++        ),
++    )
++    assert ok is False
++    assert "(2) 스캔 결과" in detail
++
++
++def test_d1_none_declaration_row_reason_unselected_prefix_record_path_is_undecided_control_10c() -> (
++    None
++):
++    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-c — reason 이
++    실제로 선택·검증된 기록(``record_path``)과는 다른, 같은 디렉터리
++    접두사(``docs/reviews/d1-no-dependency/noneprobe/``)를 공유하는
++    가짜 스탬프 경로를 인용하면 (ㄹ)(4) 미충족으로 red — 구판의 접두사
++    일치 검사는 이 치환을 통과시켰다."""
++    reason = (
++        "VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · d1_none_pkg 1개 파일 스캔 · "
++        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
++        "독립 리뷰 기록: "
++        "docs/reviews/d1-no-dependency/noneprobe/99990101-000000/verdict.md"
++    )
++    ok, detail, matched = tcs._d1_u6prime_row_state(
++        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
++        "noneprobe",
++        candidate_universe_size=1,
++        scope_desc="d1_none_pkg",
++        file_count=1,
++        record_path=(
++            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
++        ),
++    )
++    assert ok is False
++    assert "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in detail
++
++
++def test_d1_none_declaration_reason_cites_earlier_unselected_stamp_is_undecided_control_10d(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-d — 스탬프
++    디렉터리가 **둘 다 실재**하고 검사기는 ``_d1_locate_no_dependency_record_stamp``
++    의 사전순 마지막(최신)을 선택하는데, §13 행 reason 이 그보다 이른
++    스탬프를 인용하면 (ㄹ)(4) 미충족으로 red — «선택된 기록»과 «인용된
++    경로»가 서로 다른 값일 수 있다는 개념적 결합을 막는 자리다."""
++    monkeypatch.setattr(tcs, "D1_SITES", D1_NONE_TEST_SITES)
++    _write_mini_profile(
++        tmp_path,
++        bounds={"B_probe_bound": {"value_ms": 500}},
++        limits={"MAX_probe_ceiling": 1},
++    )
++    _write_d1_test_site(tmp_path, _d1_none_docstring(), rel=D1_NONE_SITE_REL)
++    scope_desc, file_count, candidate_size = _d1_expected_scan_facts(
++        tmp_path, "noneprobe"
++    )
++    earlier_rel = _write_d1_no_dependency_record(
++        tmp_path,
++        "noneprobe",
++        D1_NONE_SITE_REL,
++        "module",
++        stamp="20260101-000000",
++    )
++    _write_d1_no_dependency_record(
++        tmp_path,
++        "noneprobe",
++        D1_NONE_SITE_REL,
++        "module",
++        stamp="20260102-000000",
++    )
++    row = _d1_u6prime_row(
++        "noneprobe",
++        candidate_size=candidate_size,
++        scope_desc=scope_desc,
++        file_count=file_count,
++        record_rel=earlier_rel,
++    )
++    write_corpus(tmp_path, write_d1_sites=False, uncheckable_rows=[row])
++
++    ctx = tcs.build_context(tmp_path)
++    dispositions, _fail_closed = tcs.compute_d1_dispositions(
++        tmp_path, ctx.uncheckable_rows
++    )
++    record = dispositions["noneprobe"]
++    assert record.cell == "UNDECIDED"
++    assert "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in record.basis
+     findings = tcs.check_d1(ctx)
+     assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+ 
+ 
++def test_d1_none_declaration_row_reason_exact_strings_is_grammar_ok_control_10e() -> (
++    None
++):
++    """[레인 B 재심 20260904-233516 finding 1] 양성 대조군(단위) — 실제
++    ``scope_desc``/``file_count``/``record_path`` 를 그대로 담은 reason
++    은 (ㄱ)~(ㄹ) 그래머를 충족한다(전체 파이프라인 없이 함수 하나만
++    빠르게 확인)."""
++    record_path = "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
++    reason = (
++        "VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · d1_none_pkg 1개 파일 스캔 · "
++        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
++        f"독립 리뷰 기록: {record_path}"
++    )
++    ok, detail, matched = tcs._d1_u6prime_row_state(
++        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
++        "noneprobe",
++        candidate_universe_size=1,
++        scope_desc="d1_none_pkg",
++        file_count=1,
++        record_path=record_path,
++    )
++    assert ok is True, detail
++    assert matched is not None
++
++
+ def test_d1_none_declaration_stale_digest_after_scope_edit_is_undecided_control_6(
+     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+ ) -> None:
+@@ -6006,12 +6190,13 @@ def test_check_d1_finding_when_d1_sites_table_truncated(
+ 
+ # ---------------------------------------------------------------------------
+ # 23. UNCHK-024 후속 처분 — resolver.py BarTimeProjection docstring shape
+-#     (delay_bounds 4키 합성-결속 · max_age_bound UNBOUND 잔여 ·
++#     (delay_bounds 4키 합성-결속 · max_age_bound 는 2026-09-04부터
++#     MAX_time_conservative_freshness_age_ms 에 1:1 결속(값 null) ·
+ #     5필드 구조적 비대상 선언). resolver 사이트의 D-1 disposition 자체는
+-#     [C4 갱신] 22번 섹션의 test_d1_real_corpus_dispositions_match_expected
+-#     가 ``VALUED+UNBOUND``(6 VALUED + max_age_bound 1개 UNBOUND, decided)
+-#     를 실측한다 — 이 섹션은 그 집합을 만드는 docstring 내용의 shape 를
+-#     실측 + mutation-control 로 고정한다.
++#     [C4 갱신, 2026-09-04 재갱신] 22번 섹션의
++#     test_d1_real_corpus_dispositions_match_expected 가 ``VALUED+BLOCKED``
++#     (6 VALUED + 1개 BLOCKED, decided)를 실측한다 — 이 섹션은 그 집합을
++#     만드는 docstring 내용의 shape 를 실측 + mutation-control 로 고정한다.
+ # ---------------------------------------------------------------------------
+ 
+ _DELAY_BOUNDS_COMPOSITE_KEYS = (
+@@ -6047,13 +6232,23 @@ def test_d1_resolver_docstring_binds_delay_bounds_composite_keys() -> None:
+     assert "composite" in docstring.lower()
+ 
+ 
+-def test_d1_resolver_docstring_declares_max_age_bound_unbound() -> None:
+-    """``max_age_bound`` 는 1:1 후보가 없어 register §8-1 잔여로 UNBOUND
+-    선언이 명시적으로 남아 있어야 한다."""
++def test_d1_resolver_docstring_declares_max_age_bound_bound_to_new_key() -> None:
++    """[갱신, 2026-09-04 UNCHK-024 처분] ``max_age_bound`` 는 더 이상
++    UNBOUND 가 아니다 — 신설 키 ``MAX_time_conservative_freshness_age_ms``
++    에 1:1 결속되고(값 null → BLOCKED), VER-002-KEYS 선언 행의 리터럴도
++    그 신설 키로 교체돼 있어야 한다."""
+     docstring = _real_resolver_class_docstring()
+-    assert "max_age_bound" in docstring
++    assert "max_age_bound" in docstring  # still the Python field name
++    assert "MAX_time_conservative_freshness_age_ms" in docstring
+     flat = docstring.replace("`", "").replace("*", "")
+-    assert "no VERIFICATION-PROFILE-002 bound" in flat
++    assert "no VERIFICATION-PROFILE-002 bound" not in flat
++    assert "bound 1:1 to VERIFICATION-PROFILE-002 key" in flat
++    # The VER-002-KEYS declaration line's trailing token is the new key, not
++    # the bare field-name literal.
++    assert "VER-002-KEYS:" in docstring
++    keys_line = next(line for line in docstring.splitlines() if "VER-002-KEYS:" in line)
++    assert "``max_age_bound``" not in keys_line
++    assert "``MAX_time_conservative_freshness_age_ms``" in keys_line
+ 
+ 
+ def test_d1_resolver_docstring_declares_five_fields_structurally_not_governed() -> None:
+@@ -6072,9 +6267,11 @@ def test_d1_resolver_docstring_declares_five_fields_structurally_not_governed()
+         assert field in docstring, field
+     assert "design #33 §3.3" in docstring
+     assert "structural" in docstring.lower()
+-    # max_age_bound 의 "register §8-1 category incomplete" 잔여 프레이밍과
+-    # 명시적으로 구별하는 문언이 남아 있어야 한다.
+-    assert "category incomplete" in docstring
++    # max_age_bound 의 (이제 닫힌) register §8-1 잔여 프레이밍과 명시적으로
++    # 구별하는 문언이 남아 있어야 한다 — 2026-09-04 UNCHK-024 처분 이후
++    # "category incomplete" 는 더 이상 참이 아니므로(키 등록으로 닫힘) 그
++    # 구별 자체는 "used to be ... now closed" 문언으로 표현된다.
++    assert "now closed by key registration" in docstring
+ 
+ 
+ def test_d1_resolver_docstring_composite_key_removal_is_detectable() -> None:
+diff --git a/tests/tools/test_tos_spec_status.py b/tests/tools/test_tos_spec_status.py
+index 358aa12d..c99332f9 100644
+--- a/tests/tools/test_tos_spec_status.py
++++ b/tests/tools/test_tos_spec_status.py
+@@ -1893,10 +1893,10 @@ def test_profile_null_key_census_is_a_single_shared_implementation():
+     assert status._profile_null_key_census is evidence_run._profile_null_key_census
+ 
+ 
+-def test_profile_null_key_census_matches_the_documented_147_163_16():
++def test_profile_null_key_census_matches_the_documented_147_164_17():
+     total, null_count = status._load_profile_key_census(_REPO_ROOT)
+-    assert total == 163
+-    assert null_count == 16
++    assert total == 164
++    assert null_count == 17
+     assert total - null_count == 147
+ 
+ 
+@@ -1912,16 +1912,16 @@ def test_profile_null_key_census_is_derived_from_profile_key_universe():
+ 
+     universe = profile_key_universe(doc)
+     assert universe is not None
+-    assert len(universe) == 163
+-    assert sum(1 for is_null in universe.values() if is_null) == 16
++    assert len(universe) == 164
++    assert sum(1 for is_null in universe.values() if is_null) == 17
+ 
+     derived_total = len(universe)
+     derived_null_names = sorted(name for name, is_null in universe.items() if is_null)
+ 
+     total, null_names = _profile_null_key_census(doc)
+     assert (total, null_names) == (derived_total, derived_null_names)
+-    # 163/16 문서화된 상수는 test_profile_null_key_census_matches_the_
+-    # documented_147_163_16 이 이미 고정한다 — 여기서는 universe 파생과의
++    # 164/17 문서화된 상수는 test_profile_null_key_census_matches_the_
++    # documented_147_164_17 이 이미 고정한다 — 여기서는 universe 파생과의
+     # 등가성만 재확인한다.
+ 
+ 
+@@ -1931,8 +1931,8 @@ def test_hand_edited_profile_null_count_in_gate_status_is_detected(tmp_path):
+     gate = source_root / _GATE_STATUS_REL
+     gate.write_text(
+         gate.read_text(encoding="utf-8").replace(
++            "17 keys (10 broker bounds pending P0-2 measurement",
+             "16 keys (10 broker bounds pending P0-2 measurement",
+-            "15 keys (10 broker bounds pending P0-2 measurement",
+         ),
+         encoding="utf-8",
+     )
+@@ -1944,7 +1944,7 @@ def test_hand_edited_profile_null_count_in_gate_status_is_detected(tmp_path):
+ 
+     message = str(excinfo.value)
+     assert "profile.null" in message
+-    assert "15" in message
++    assert "16" in message
+ 
+ 
+ def test_hand_edited_profile_null_count_in_profile_yaml_is_detected(tmp_path):
+@@ -1953,9 +1953,9 @@ def test_hand_edited_profile_null_count_in_profile_yaml_is_detected(tmp_path):
+     profile = source_root / status._PROFILE_YAML
+     profile.write_text(
+         profile.read_text(encoding="utf-8").replace(
+-            "147 of the 163 numeric keys now carry approved values; 16 keys stay "
++            "147 of the 164 numeric keys now carry approved values; 17 keys stay "
+             "null —",
+-            "147 of the 163 numeric keys now carry approved values; 15 keys stay "
++            "147 of the 164 numeric keys now carry approved values; 16 keys stay "
+             "null —",
+         ),
+         encoding="utf-8",
+@@ -1973,8 +1973,8 @@ def test_hand_edited_profile_null_count_in_profile_yaml_is_detected(tmp_path):
+ 
+ def test_a_null_bound_shifts_the_profile_census_and_the_anchors_go_red(tmp_path):
+     """Flip one approved bound to null in a scratch copy (no real doc edits): the
+-    census-derived null count moves 16 -> 17, and the untouched real anchor text
+-    (still transcribing 16) now disagrees with it.
++    census-derived null count moves 17 -> 18, and the untouched real anchor text
++    (still transcribing 17) now disagrees with it.
+     """
+     part1, development = _real_registers()
+     source_root = _transcription_corpus(tmp_path)
+@@ -1990,8 +1990,8 @@ def test_a_null_bound_shifts_the_profile_census_and_the_anchors_go_red(tmp_path)
+     profile_path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+ 
+     total, null_count = status._load_profile_key_census(source_root.parent.parent)
+-    assert total == 163
+-    assert null_count == 17
++    assert total == 164
++    assert null_count == 18
+ 
+     extra_derived = _real_extra_derived(part1)
+     extra_derived["profile.total"] = total
+@@ -2004,7 +2004,7 @@ def test_a_null_bound_shifts_the_profile_census_and_the_anchors_go_red(tmp_path)
+ 
+     message = str(excinfo.value)
+     assert "profile.null" in message
+-    assert "17" in message
++    assert "18" in message
+ 
+ 
+ def test_direct_traceability_anchors_target_at_least_two_locations():
+@@ -2057,8 +2057,18 @@ def test_direct_traceability_source_gap_phrase_removal_is_detected(tmp_path):
+ 
+ 
+ def test_profile_baseline_plan_warning_is_none_for_the_real_corpus():
++    """[갱신, 2026-09-04 UNCHK-024 처분] 프로파일 census 는 이제 164/17
++    (신설 키 ``MAX_time_conservative_freshness_age_ms`` 등록)이지만, 동결된
++    ``docs/plans/2026-08-11-tos-completion-development-plan.md`` §1 baseline
++    표는 (계약 부속 문서라 이 작업이 건드리지 않는다) 여전히 163/16 을
++    적는다 — drift 경고가 이제 정상적으로 발생해야 한다(비차단)."""
+     total, null_count = status._load_profile_key_census(_REPO_ROOT)
+-    assert status.profile_baseline_plan_warning(_REPO_ROOT, total, null_count) is None
++    assert (total, null_count) == (164, 17)
++    warning = status.profile_baseline_plan_warning(_REPO_ROOT, total, null_count)
++    assert warning is not None
++    assert "163/16 null" in warning
++    assert "164/17 null" in warning
++    assert "not blocking" in warning
+ 
+ 
+ def test_profile_baseline_plan_warning_is_non_blocking_on_drift(tmp_path):
+diff --git a/tools/tos_completion_status.py b/tools/tos_completion_status.py
+index 405d8d59..c174b256 100644
+--- a/tools/tos_completion_status.py
++++ b/tools/tos_completion_status.py
+@@ -3915,6 +3915,7 @@ def _d1_u6prime_row_state(
+     candidate_universe_size: int,
+     scope_desc: str,
+     file_count: int,
++    record_path: str | None = None,
+ ) -> tuple[bool, str, Mapping[str, str] | None]:
+     """U-6′ (ㄱ)~(ㄹ)(계약 §7.4, v2.22 에라타 54~56차) — ``site_id`` 의 §13
+     행 그래머를 확인한다. 반환: ``(충족 여부, 근거, 매칭된 행 또는 None)``.
+@@ -3925,9 +3926,21 @@ def _d1_u6prime_row_state(
+     미충족, 2행 이상이면 위반. (ㄷ) 행당 최대 한 사이트 — 위 axis 매칭
+     자체가 사이트를 하나만 이름하므로 기계로 선다. (ㄹ) (1)~(4)는 그 한
+     행의 ``reason`` 안에 있어야 한다: (1) ``VER-002-KEYS: NONE`` 선언
+-    사실, (2) 스캔 결과(후보 우주 크기·스캔 범위 파일 수), (3) 경계 문장
+-    「후보 우주 밖의 이름은 보지 못한다」, (4) D-4 (마) 독립 리뷰 기록의
+-    경로 접두사."""
++    사실, (2) 스캔 결과 — ``scope_desc``(스캔 범위)와 ``file_count``(파일
++    수)가 **각각** ``reason`` 에 정확히 등장해야 한다(후보 우주 크기도
++    그대로 유지), (3) 경계 문장 「후보 우주 밖의 이름은 보지 못한다」,
++    (4) D-4 (마) 독립 리뷰 기록의 **정확한 경로** — 호출자가 검사기가
++    실제로 선택·검증한 스탬프(``_d1_locate_no_dependency_record_stamp``)
++    로부터 파생한 ``record_path``(정본 형식: 그 스탬프 디렉터리의
++    ``verdict.md`` repo-relative 전체 경로, 예:
++    ``docs/reviews/d1-no-dependency/<site_id>/<stamp>/verdict.md``)를
++    넘긴다 — 접두사 일치가 아니라 이 값과 ``reason`` 의 부분문자열
++    **완전 일치**를 요구한다. ``record_path`` 가 ``None``(선택된 기록이
++    없음)이면 (4)는 그 자체로 미충족이다 — ``reason`` 이 그럴듯한 경로를
++    적어도 통과하지 못한다(레인 B 재심 20260904-233516 finding 1 처분:
++    이전에는 ``scope_desc``/``file_count`` 를 소비하지 않고 디렉터리
++    접두사만 봐서, ``reason`` 이 실제 스캔 범위나 검증된 기록과 무관한
++    값을 적어도 rc 0 을 얻었다)."""
+     if uncheckable_rows is None:
+         return False, "§13 레지스터 부재로 확인 불가", None
+     axis = _d1_u6prime_axis(site_id)
+@@ -3948,14 +3961,14 @@ def _d1_u6prime_row_state(
+     if not (
+         "후보 우주" in reason
+         and str(candidate_universe_size) in reason
++        and scope_desc in reason
+         and str(file_count) in reason
+     ):
+-        missing.append("(2) 스캔 결과(후보 우주 크기·스캔 범위 파일 수)")
++        missing.append("(2) 스캔 결과(후보 우주 크기·스캔 범위·파일 수)")
+     if _D1_U6PRIME_BOUNDARY_SENTENCE not in reason:
+         missing.append("(3) 경계 문장")
+-    record_path_prefix = f"{_D1_NO_DEPENDENCY_RECORDS_ROOT.as_posix()}/{site_id}/"
+-    if record_path_prefix not in reason:
+-        missing.append("(4) D-4 (마) 독립 리뷰 기록 경로")
++    if record_path is None or record_path not in reason:
++        missing.append("(4) D-4 (마) 독립 리뷰 기록의 정확한 경로")
+     if missing:
+         return False, f"§13 행 reason 미충족(ㄹ): {', '.join(missing)}", row
+     return True, f"§13 행 그래머 충족(axis={axis!r})", row
+@@ -4007,7 +4020,10 @@ def _d1_locate_no_dependency_record_stamp(repo_root: Path, site_id: str) -> str
+ 
+ 
+ def _d1_no_dependency_record_state(
+-    repo_root: Path, site_id: str, scope_paths: Sequence[Path]
++    repo_root: Path,
++    site_id: str,
++    scope_paths: Sequence[Path],
++    stamp_dir: str | None,
+ ) -> tuple[bool, str]:
+     """D-4 (i)~(iv)의 (iv) — 독립 리뷰 기록(계약 §7.4 D-4 (마) · v2.22 에라타
+     55차 · Codex 레인 A 재심 #4 review-mtmjt61i-d0f3oc finding 1). 저작자가
+@@ -4017,6 +4033,15 @@ def _d1_no_dependency_record_state(
+     형식은 codex-gate 레인 B ``verdict.md`` 그대로 — 새 형식을 발명하지
+     않는다(S-14).
+ 
++    ``stamp_dir`` 은 호출자가 ``_d1_locate_no_dependency_record_stamp`` 로
++    **미리** 위치를 찾은 값을 그대로 받는다(레인 B 재심 20260904-233516
++    finding 1 처분) — 이 함수가 다시 독립적으로 찾지 않는다. 그래야 §13
++    행 reason 의 (4)가 인용하는 경로(``_d1_u6prime_row_state`` 의
++    ``record_path``)와 이 함수가 실제로 열어 검증하는 기록이 **항상 같은
++    선택**이 된다; 두 함수가 각자 다시 찾으면 결정적으로는 같은 값을
++    내더라도 "인용된 경로"와 "검증된 기록"이 서로 다른 값일 수 있다는
++    개념적 결합이 남는다.
++
+     재심 #4 finding 1: 개정 전 구현은 adjudicator/verdict/path/digest 만
+     보고 ``site_id in claim`` 부분문자열만 확인해, ``job_id``/
+     ``countersigned_by``/``reviewed_at_head`` 부재나 claim 의 부분문자열
+@@ -4040,7 +4065,6 @@ def _d1_no_dependency_record_state(
+     고정한다(site_id 와 위 문장) — 이 함수가 그 내용에 대한 **단일
+     결정적 표면 형식**을 못박아, «두 조건의 독립 만족」이라는 우회 형태
+     자체를 없앤다."""
+-    stamp_dir = _d1_locate_no_dependency_record_stamp(repo_root, site_id)
+     if stamp_dir is None:
+         return (
+             False,
+@@ -4177,12 +4201,21 @@ def _derive_d1_disposition(
+         # 자리). 완료 근거는 (i) NONE 선언 + (ii) 스캔 0건 + (iii) §13 U-6′
+         # 행 + (iv) D-4 (마) 독립 리뷰 기록의 논리곱이다(55차) — 뒤 둘은
+         # 저작자가 혼자 만들 수 없다.
++        #
++        # 기록 스탬프는 여기서 «한 번만» 찾는다(레인 B 재심 20260904-233516
++        # finding 1 처분) — §13 행 (4)가 인용해야 하는 경로(row state 의
++        # ``record_path``)와 D-4 (마) 검증이 실제로 여는 기록(record state
++        # 의 ``stamp_dir``)이 서로 다시 찾은 두 값이면, reason 이 가리키는
++        # 기록과 실제로 검증된 기록이 개념적으로 갈릴 수 있는 자리가 남는다.
++        stamp_dir = _d1_locate_no_dependency_record_stamp(repo_root, name)
++        record_path = f"{stamp_dir}/verdict.md" if stamp_dir is not None else None
+         row_ok, row_detail, matched_row = _d1_u6prime_row_state(
+             uncheckable_rows,
+             name,
+             candidate_universe_size=len(candidate_universe),
+             scope_desc=scope_desc,
+             file_count=len(paths),
++            record_path=record_path,
+         )
+         if not row_ok:
+             return (
+@@ -4196,7 +4229,7 @@ def _derive_d1_disposition(
+                 True,
+             )
+         record_ok, record_detail = _d1_no_dependency_record_state(
+-            repo_root, name, paths
++            repo_root, name, paths, stamp_dir
+         )
+         if not record_ok:
+             row_axis = matched_row.get("axis", "") if matched_row is not None else ""
+diff --git a/tools/tos_spec_status.py b/tools/tos_spec_status.py
+index 9e64da35..d82fc6bb 100644
+--- a/tools/tos_spec_status.py
++++ b/tools/tos_spec_status.py
+@@ -856,7 +856,9 @@ _COUNT_TRANSCRIPTIONS: tuple[_CountTranscription, ...] = (
+             r"\(`MIN_evidence_retention_ms` approved 2026-08-07, §3\.26\); "
+             r"(\d+) keys \(10 broker bounds pending P0-2 measurement, 6 "
+             r"instance/architecture limits under ratified trigger-bound "
+-            r"deferrals\) remain key-level unapproved and fail-closed"
++            r"deferrals, 1 trustworthy-time freshness ceiling registered "
++            r"2026-09-04 pending value approval \(§3\.27\)\) remain "
++            r"key-level unapproved and fail-closed"
+         ),
+         ("profile.total", "profile.null"),
+     ),
+diff --git a/tos-spec/src/TOS-COMPLETION-STATUS.md b/tos-spec/src/TOS-COMPLETION-STATUS.md
+index b1bec7de..10beb7e4 100644
+--- a/tos-spec/src/TOS-COMPLETION-STATUS.md
++++ b/tos-spec/src/TOS-COMPLETION-STATUS.md
+@@ -64,12 +64,12 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
+ - `U-13 remainder_rows=[]`
+ - `A-2: ARCHITECTURE-GATE-STATUS.md 에 기계 파싱 가능한 권한 축-표기 없음(실측 확인 — §6.4 대조 대상에서 제외)`
+ - `D0-5[backtest__init__]=UNBOUND (dsl_evaluation_budget_steps)`
+-- `D0-5[resolver]=VALUED+UNBOUND (MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND)`
++- `D0-5[resolver]=VALUED+BLOCKED (MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; MAX_time_conservative_freshness_age_ms:BLOCKED)`
+ - `D0-5[results]=UNBOUND (dsl_evaluation_budget_steps)`
+ - `D0-5[construction]=UNBOUND (risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND)`
+ - `D0-5[records]=UNBOUND (risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; lot_rounding:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND)`
+ - `D0-5[engine]=UNBOUND (dsl_evaluation_budget_steps; CONTRAST: MAX_dsl_evaluation_ms)`
+-- `D0-5[marketfeed]=VALUED+UNBOUND (MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND)`
++- `D0-5[marketfeed]=VALUED+BLOCKED (MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; MAX_time_conservative_freshness_age_ms:BLOCKED)`
+ 
+ ## Phase-0 unchecked-axis register (full exposure, U-3)
+ 
+@@ -97,7 +97,7 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
+ | UNCHK-021 | closable 값의 저작자 재량 + 앵커 동시 수정 + YES→NO 전이의 의무 우회 | U-9a가 closable=NO 집합을 앵커로 고정하지만 앵커와 데이터를 한 커밋에서 함께 고치면 통과한다(모든 canary의 성질, §8.3). 또 U-9의 인용 검사는 인용이 해석되는지만 보고 그 절이 실제로 원리적 불가능성을 확립하는지는 보지 못한다 — UNCHK-020과 같은 의미 판정 계열이며, 직교 2필드의 나머지 한 축이다. [v2.5 — 심판 F7] U-9/U-9a 가 §11 종료조건에서 철회된 뒤(§11 U-9·U-9a 철회 행)에는 이 재량이 U-1a 소유자 의무까지 우회한다: closable=YES 행이 무관한 실재 절을 근거로 NO 로 전이하면 U-1a(YES 한정)·철회된 U-9·U-9a·집계 findings 를 전부 벗어나고, 잔여 가시성은 비차단 closable_no_rows(U-10) 뿐이다 | [v2.6 — 심판 F#4] 두 갈래로 분리한다 (v2.5 는 한 칸에 섞어 써서 blocked_by 의 "Phase 1 이연"이 owner_track 과 어긋나 보였다). (가) 의미 판정 갈래 — 이 축의 소유를 결정한다: evidence 별 "이 절이 이 축의 불가능성을 확립하는가"의 수용 기준. UNCHK-007·015·020 과 같은 계열이며 그 셋 전부 Phase 2-5 다. (나) 보호 복원 갈래 — 소유를 옮기지 않는다: YES→NO 전이에 독립 리뷰 provenance 를 결속하고 그 승인을 소비하는 지점을 둔다(전이가 승인 provenance 를 참조하지 않으면 전이 자체를 거부). [v2.7 정정 — 심판 #3] "단일 커밋 내 기계 폐쇄는 불가"는 거짓이었다. canary 는 *값*을 비교하므로 앵커·데이터 동시 갱신에 침묵하지만, 커밋 위상(승인 행 도입 커밋이 전이 커밋의 진 조상인가)을 비교하면 동일 커밋이 곧 위반 신호가 된다 — U-16(§13.6.5)이 그 구조이며 Phase 0 차단으로 승격한다(§11). (나)는 더 이상 Phase 1 비차단 리뷰 표면이 아니다. 다만 (가)는 그대로 남고, U-16 이 닫지 못하는 것도 셋 남는다: 승인 내용의 진정성(→UNCHK-012)·조상 관계의 신뢰 기반(→UNCHK-023)·closable 값 자체의 적절성(→(가)) | Phase 2-5 | TOS-COMPLETION-STATUS |  | YES |  |
+ | UNCHK-023 | git 이력 파생의 신뢰 기반 — 커밋 타임스탬프 자기공급 · 이력 재작성 가능성 | [v2.7 신설 — 자체 스윕] 네 계약(U-12 기산점 · U-15-b (3)(4) · U-16-c 순서 제약 · U-12 트리거 파생)이 전부 git 이력을 구조 파생 소스로 쓰는데, 그 소스의 두 성질은 저장소 안에서 증명되지 않는다: ① author date 는 GIT_AUTHOR_DATE 로 저작자가 공급한다 — min 3항도 커밋 메타데이터 위조에 의한 연기는 막지 못한다 ② 조상 관계는 이력 재작성(rebase·force-push)으로 구성 가능하다. v2.6 은 이 의존을 등재하지 않은 채 "자기신고 → 구조 파생"이라고만 적었다 — 파생이 자기신고보다 강한 것은 맞으나 무조건 강한 것은 아니고, 그 조건이 미등재였다(§13.1 이 비판한 "검사되는 것처럼 보이는 문장" 의 형태) | 제3자가 증언한 타임스탬프의 도입 — 서명 커밋(GPG/Sigstore) · CI 실행 메타데이터 · push 이벤트 기록 중 하나를 추적 아티팩트로 결속. 그리고 이력 재작성 방지는 저장소 밖 브랜치 보호 설정이라 UNCHK-008 과 같은 계열이다(파일로 증명 불가) | Phase 1 | TOS-COMPLETION-STATUS |  | YES |  |
+ | UNCHK-020 | normative_ref 공란·무관 인용의 저작자 재량 | 기계는 인용의 해석 가능성만 본다(T-66). 조항을 대지 못하면 공란이고, 공란이면 blocks_gate 의무가 사라진다 — 저작자가 공란을 골라 차단을 피할 수 있고, 반대로 무관한 실재 조항을 넣어도 검사를 통과한다 (심판 high) | evidence별 "이 조항이 이 축을 요구하는가"의 수용 기준 — UNCHK-007·015와 같은 의미 판정 계열 | Phase 2-5 | TOS-COMPLETION-STATUS |  | YES |  |
+-| UNCHK-024 | BarTimeProjection 시간 bound 필드의 VER-002 키 결속 | 코드 어디에도 필드↔키 결속 표면이 없고 동형 후보 다수라 키 공급이 추측이 된다 (§7.4 D-1). 부분 해소(2026-09-02, 갱신) — 9필드 전부 처분 확정: ① 2필드(future_tolerance·maximum_consumer_age_ms)는 1:1 키 결속 확정: future_tolerance↔MAX_future_timestamp_tolerance_ms, maximum_consumer_age_ms↔MAX_critical_input_consumer_receipt_age_ms(둘 다 값 보유). ② delay_bounds는 4키 합성-멤버십 결속(1:1보다 약한 결속): MAX_time_transport_and_queue_uncertainty_ms + MAX_clock_domain_conversion_uncertainty_ms + MAX_time_source_precision_ms + MAX_time_source_sequence_gap_ms(ADR-002-008 §9 — freshness_verdict 에서 무순서 합산). ③ 5필드(source_age·snapshot_age_bound·interval_width·boundary_lag·health_state)는 register §8-1 미완 범주가 아니라 애초에 MAX_*/MIN_* 문턱이 될 수 없는 관측값/파생 합성/기준틀 구성 파라미터/열거형이라 구조적으로 프로파일 비대상 선언(design #33 §3.3). 전부 resolver.py BarTimeProjection docstring 리터럴 결속/선언. ④ 잔여 1필드(max_age_bound)만 register §8-1 trustworthy-time bound 범주 미완이라 결속 불가 — UNBOUND 유지. | register §8-1 trustworthy-time bound 키 신설·범주 확정(운영자/P0-2 소관) — 잔여 1필드(max_age_bound)에만 해당; 나머지 8필드는 1:1/합성 결속 또는 구조적 비대상 선언으로 처분 완료 | Phase 1 | TOS-COMPLETION-STATUS |  | YES |  |
++| UNCHK-024 | BarTimeProjection 시간 bound 필드의 VER-002 키 결속 | 코드 어디에도 필드↔키 결속 표면이 없고 동형 후보 다수라 키 공급이 추측이 된다 (§7.4 D-1). 부분 해소(2026-09-02, 갱신) — 9필드 전부 처분 확정: ① 2필드(future_tolerance·maximum_consumer_age_ms)는 1:1 키 결속 확정: future_tolerance↔MAX_future_timestamp_tolerance_ms, maximum_consumer_age_ms↔MAX_critical_input_consumer_receipt_age_ms(둘 다 값 보유). ② delay_bounds는 4키 합성-멤버십 결속(1:1보다 약한 결속): MAX_time_transport_and_queue_uncertainty_ms + MAX_clock_domain_conversion_uncertainty_ms + MAX_time_source_precision_ms + MAX_time_source_sequence_gap_ms(ADR-002-008 §9 — freshness_verdict 에서 무순서 합산). ③ 5필드(source_age·snapshot_age_bound·interval_width·boundary_lag·health_state)는 register §8-1 미완 범주가 아니라 애초에 MAX_*/MIN_* 문턱이 될 수 없는 관측값/파생 합성/기준틀 구성 파라미터/열거형이라 구조적으로 프로파일 비대상 선언(design #33 §3.3). 전부 resolver.py BarTimeProjection docstring 리터럴 결속/선언. ④ 잔여 1필드(max_age_bound)는 2026-09-04 신설 키 MAX_time_conservative_freshness_age_ms 에 1:1 결속 확정 (값 null 등록 — 등록은 승인이 아니다; disposition draft docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md §2, §5). D-1 은 UNBOUND → BLOCKED(우주 안·값 없음)로 이행 — 잔여는 Bounds-Approver 값 승인(draft §6)뿐. | Bounds-Approver 값 승인만 잔존(운영자 소관; draft §6) — 키 자체는 2026-09-04 등록 완료(MAX_time_conservative_freshness_age_ms, 값 null); 나머지 8필드는 1:1/합성 결속 또는 구조적 비대상 선언으로 처분 완료 | Phase 1 | TOS-COMPLETION-STATUS |  | YES |  |
+ | UNCHK-025 | VER-002 프로파일 밖 bound 값의 소관 아티팩트 검증 | SizingBound 6필드(소관 Order Construction Policy RFC-002 §9.1)·dsl_evaluation_budget_steps(소관 EngineConfiguration/DCE-INV-007)는 프로파일 검사 우주 밖 — 소관 아티팩트의 비준·검증은 별도 축 | Order Construction Policy 비준 및 결속 검사 신설 | Phase 2-5 | TOS-COMPLETION-STATUS |  | YES |  |
+ 
+ ## D0-5 disposition table (7 rows, §7.4)
+@@ -107,9 +107,9 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
+ | backtest__init__ | `UNBOUND` | dsl_evaluation_budget_steps |
+ | construction | `UNBOUND` | risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND |
+ | engine | `UNBOUND` | dsl_evaluation_budget_steps; CONTRAST: MAX_dsl_evaluation_ms |
+-| marketfeed | `VALUED+UNBOUND` | MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND |
++| marketfeed | `VALUED+BLOCKED` | MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; MAX_time_conservative_freshness_age_ms:BLOCKED |
+ | records | `UNBOUND` | risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; lot_rounding:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND |
+-| resolver | `VALUED+UNBOUND` | MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND |
++| resolver | `VALUED+BLOCKED` | MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; MAX_time_conservative_freshness_age_ms:BLOCKED |
+ | results | `UNBOUND` | dsl_evaluation_budget_steps |
+ 
+ ## Phase 0 termination-condition overview (section 11)
+diff --git a/tos-spec/src/part-1-foundation/ARCHITECTURE-GATE-STATUS.md b/tos-spec/src/part-1-foundation/ARCHITECTURE-GATE-STATUS.md
+index cc705551..9fb5eff2 100644
+--- a/tos-spec/src/part-1-foundation/ARCHITECTURE-GATE-STATUS.md
++++ b/tos-spec/src/part-1-foundation/ARCHITECTURE-GATE-STATUS.md
+@@ -1120,6 +1120,46 @@ evidence. The D5 attribution gate closed by item 1 of the same operator response
+ is a separate project-side record and moves nothing in this document.
+ Independent EV-L0 review of this decision is owed.
+ 
++### 3.27 Trustworthy-time freshness-ceiling key registration (Patch-0058) — APPLIED
++
++**What changed.** UNCHK-024 left one field of `BarTimeProjection`
++(`tos/src/tos/backtest/resolver.py`, lockstep in
++`tos/src/tos/marketfeed/__init__.py`) — `max_age_bound` — without a profile key
++to bind to: the eight sibling fields were dispositioned on 2026-09-02
++(1:1 key bindings, a 4-key `delay_bounds` composite binding, and a 5-field
++structural non-target declaration), but no `VERIFICATION-PROFILE-002` key
++carried the ADR-002-008 §9 top-level conservative freshness ceiling. Following
++the operator directive "max_age_bound 키 신설 진행" (2026-09-04), Patch-0058
++registers `MAX_time_conservative_freshness_age_ms` in the `limits:` block,
++trustworthy-time group, immediately after `MAX_time_source_sequence_gap_ms`
++(project record
++`docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md`
++§2, §5). `max_age_bound` in both docstrings is rebound 1:1 to this key.
++
++**Registration only — no value approved.** The registered value is **null**.
++Per VER-002-001 §6 and the PATCH-0054 precedent (§3.21), registering a key
++approves nothing and creates no bound: the disposition package §4 recommends
++1000 ms (derived from the already-approved `delay_bounds` composite floor and
++the §6-L1 normal-freshness anchor), but package §6 is an **empty form**
++awaiting the Bounds-Approver — this section does not fill it.
++
++**Effect on the profile and the census.** Total numeric keys move **163 ->
++164**; null keys move **16 -> 17** — 10 broker bounds pending P0-2
++measurement, 6 instance/architecture limits under ratified trigger-bound
++deferrals, and this 1 trustworthy-time freshness ceiling. `status`,
++`approved_by`, `effective_from`, and `review_due` are unchanged; this is a
++key-level registration act, not a profile re-approval.
++
++**Effect on D-1.** `tools/tos_completion_status.py` §7.4 D-1 previously
++rendered the `resolver` and `marketfeed` sites `VALUED+UNBOUND` for this field
++(in-universe, but no profile key existed to carry a value). With the key
++registered, both sites move to `VALUED+BLOCKED` (in-universe, key exists,
++value is null) — still not `VALUED` outright, because no value has been
++approved. **The Phase 0 completion contract body is untouched** by this
++section; the §11 completion determination of 2026-09-04 (`222dc4de`) already
++accounted for this field as `UNBOUND`, and this registration closes the §8-1
++residual honestly without reopening or amending that determination.
++
+ ---
+ 
+ ## 4. Remaining Architecture and Acceptance Work
+@@ -1130,7 +1170,7 @@ ADR-002-007 selects the single-use capability currentness model, ADR-002-012 sel
+ 
+ Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-030, but all remain `NOT_IMPLEMENTED`. Verification Profile `2.1-PROPOSED` has matching actual/template key sets with 91 scope keys, 84 bounds, and 79 limits (Patch-0054, §3.21, added 26 null placeholder keys from the project-side design-cycle census; Patch-0055, §3.22, then completed the per-bound shape with `applicable_scope` and `review_date`). Of the 163 numeric keys, **146 values were approved by the accountable owner on 2026-07-29** (74 bounds, 72 limits, each carrying `owner: operator` where the shape has an owner field, a per-key approval-provenance marker, and `review_date: 2027-01-29`); **17 remain null and fail-closed** — 10 broker bounds pending P0-2 measurement, 6 instance/architecture limits, and `MIN_evidence_retention_ms` — and therefore keep every scope depending on them contained. Because those 17 are unresolved, **the profile itself stays `2.1-PROPOSED` with `approved_by: []`**: per-key value approval is not profile approval, and the review-disposition records above that describe bounds as unapproved remain accurate as records of their review dates. It additionally binds the proposed Post-Trade Finality Policy, Post-Trade Obligation Generation, complete Active Economic Obligation Set, Statement Coverage Manifest, and their effect-to-obligation, change-detection, break-to-restriction, egress-denial, generation-fence, statement-gap, obligation/finality/statement/break/transfer age quantities — all of which are now among the 146 owner-approved values, while the broker-dependent quantities they rely on stay null. The profile remains unapproved with `approved_by: []`; an approved value is a harness ceiling awaiting EV-L2/L3 execution, not evidence, and the still-unresolved values keep the affected scope contained and live operation prohibited.
+ 
+-**Currency note (2026-08-06).** The statements in the paragraph above that the profile "stays `2.1-PROPOSED` with `approved_by: []`" were accurate when recorded and were superseded on 2026-07-29 by the P0-1 profile-level approval (operator as Bounds-Approver, commit `53980b64`, recorded in-header in `verification/VERIFICATION-PROFILE-002.yaml`): the profile now reads `version: "2.1"`, `status: APPROVED` (scope-limited to the 146 keys carrying approved values), `approved_by: ["operator"]`, `effective_from: 2026-07-29`, `review_due: 2027-01-29`. The 17 null keys — 10 broker bounds pending P0-2 measurement, 6 instance/architecture limits, and `MIN_evidence_retention_ms` — remain key-level unapproved and fail-closed per the profile's own rules, and `scope.environment: non-live-test` is unchanged. Approving bounds arms nothing: separation of duties is preserved (Live-Armer unassigned), and no acceptance, restricted-live, or production authority follows. §3.22 carries the companion record of the two same-day acts. **[2026-08-07]** The 17 above has since moved to 147/163 approved with 16 null keys (§3.26; §5 reflects the current state).
++**Currency note (2026-08-06).** The statements in the paragraph above that the profile "stays `2.1-PROPOSED` with `approved_by: []`" were accurate when recorded and were superseded on 2026-07-29 by the P0-1 profile-level approval (operator as Bounds-Approver, commit `53980b64`, recorded in-header in `verification/VERIFICATION-PROFILE-002.yaml`): the profile now reads `version: "2.1"`, `status: APPROVED` (scope-limited to the 146 keys carrying approved values), `approved_by: ["operator"]`, `effective_from: 2026-07-29`, `review_due: 2027-01-29`. The 17 null keys — 10 broker bounds pending P0-2 measurement, 6 instance/architecture limits, and `MIN_evidence_retention_ms` — remain key-level unapproved and fail-closed per the profile's own rules, and `scope.environment: non-live-test` is unchanged. Approving bounds arms nothing: separation of duties is preserved (Live-Armer unassigned), and no acceptance, restricted-live, or production authority follows. §3.22 carries the companion record of the two same-day acts. **[2026-08-07]** The 17 above has since moved to 147/163 approved with 16 null keys (§3.26; §5 reflects the current state). **[2026-09-04]** The 16 above has since moved to 147/164 approved with 17 null keys — a new key, `MAX_time_conservative_freshness_age_ms`, was registered (value null; not an approval) (§3.27; §5 reflects the current state).
+ 
+ ### 4.1 Latest Review Disposition
+ 
+@@ -1372,7 +1412,7 @@ registration introduce no SAFE-xxx and create no authority.
+ | ADR-002-029 | Proposed | YES | NO |
+ | ADR-002-030 | Proposed | YES | NO |
+ | VER-002-001 | Proposed, ready for test implementation | YES | after evidence workflow review |
+-| Verification Profile 2.1 | `APPROVED` at profile level, scope-limited (operator as Bounds-Approver, 2026-07-29, commit `53980b64`); 147/163 numeric keys carry approved values (`MIN_evidence_retention_ms` approved 2026-08-07, §3.26); 16 keys (10 broker bounds pending P0-2 measurement, 6 instance/architecture limits under ratified trigger-bound deferrals) remain key-level unapproved and fail-closed | YES | NO |
++| Verification Profile 2.1 | `APPROVED` at profile level, scope-limited (operator as Bounds-Approver, 2026-07-29, commit `53980b64`); 147/164 numeric keys carry approved values (`MIN_evidence_retention_ms` approved 2026-08-07, §3.26); 17 keys (10 broker bounds pending P0-2 measurement, 6 instance/architecture limits under ratified trigger-bound deferrals, 1 trustworthy-time freshness ceiling registered 2026-09-04 pending value approval (§3.27)) remain key-level unapproved and fail-closed | YES | NO |
+ | Broker-specific Capability Profile | Template only in tos-spec (schema-complete against ADR-002-004 §21 after Patch-0056, §3.23; all values `TBD`/`null`/`UNKNOWN`, `conformance_class: CLASS_D_NON_LIVE`). One non-normative project-side INSTANCE candidate exists (`docs/broker-profiles/…-draft.yaml`, `status: DRAFT`, `approvers: []`, 0 executed capability evidence), which authorizes nothing and does not close P0-2 | YES | NO |
+ | Human authority artifacts | Templates only, all non-authorizing | YES | NO |
+ | Evidence integrity and replay artifacts | Templates only, all DRAFT/unverified/non-authorizing | YES | NO |
+diff --git a/tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002-template.yaml b/tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002-template.yaml
+index cabb270c..374533f9 100644
+--- a/tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002-template.yaml
++++ b/tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002-template.yaml
+@@ -922,6 +922,7 @@ limits:
+   MIN_holdover_safety_margin_ms: null
+   MAX_time_source_precision_ms: null
+   MAX_time_source_sequence_gap_ms: null
++  MAX_time_conservative_freshness_age_ms: null
+   MIN_reserved_protective_capacity: null
+   MIN_capacity_domain_voter_quorum: null
+   MAX_quarantined_capacity_age_ms: null
+diff --git a/tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml b/tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml
+index f370089a..9841ae1c 100644
+--- a/tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml
++++ b/tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml
+@@ -1,13 +1,14 @@
+-# VERIFICATION-PROFILE-002 — APPROVED (scope-limited; 16 null keys remain
++# VERIFICATION-PROFILE-002 — APPROVED (scope-limited; 17 null keys remain
+ # key-level UNAPPROVED and fail-closed)
+ #
+ # STATUS: APPROVED at profile level (operator, 2026-07-29) for the 146 keys
+ # carrying approved values at that date; MIN_evidence_retention_ms was approved
+-# separately on 2026-08-07 (see the 2026-08-07 record below), so 147 of the 163
++# separately on 2026-08-07 (see the 2026-08-07 record below), so 147 of the 164
+ # numeric keys now carry approved values. Per VER-002-001 §6 the key-level rule
+ # is unchanged: an unapproved or placeholder bound is not an approved bound —
+-# the 16 null keys (10 broker bounds pending P0-2 measurement, 6 instance/
+-# architecture limits) remain unapproved and fail-closed.
++# the 17 null keys (10 broker bounds pending P0-2 measurement, 6 instance/
++# architecture limits, and 1 trustworthy-time freshness ceiling registered
++# 2026-09-04 pending value approval) remain unapproved and fail-closed.
+ #
+ # Rules for ratification (all required before status -> APPROVED):
+ #   - each `value_ms` is confirmed or replaced by the accountable owner;
+@@ -68,7 +69,7 @@
+ #     It is a floor, not a ceiling: the open-economic-effect and legal-hold
+ #     record classes are state predicates owned by the Evidence Integrity Policy
+ #     and are not truncated by it.
+-#   - 147 of the 163 numeric keys now carry approved values; 16 keys stay null —
++#   - 147 of the 164 numeric keys now carry approved values; 17 keys stay null —
+ #     10 broker bounds awaiting P0-2 measurement from an approved Broker
+ #     Capability Profile, and 6 instance/architecture limits whose
+ #     trigger-bound deferrals are RATIFIED by this same decision.
+@@ -82,6 +83,29 @@
+ #     a key-level act, not a profile re-approval. scope.environment stays
+ #     non-live-test, Live-Armer stays unassigned, and no acceptance,
+ #     restricted-live, or live authority follows.
++#
++# 2026-09-04 key registration (operator directive "max_age_bound 키 신설 진행";
++# project record
++# `docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md`
++# §2, §5; ARCHITECTURE-GATE-STATUS §3.27; PATCH-0058):
++#   - Registers `MAX_time_conservative_freshness_age_ms` in the `limits:` block,
++#     trustworthy-time group, immediately after
++#     `MAX_time_source_sequence_gap_ms`. This is the UNCHK-024 residual-field
++#     bound: the ADR-002-008 §9 conservative upper-bound age (source age plus
++#     the applicable delay-class bounds) that `BarTimeProjection.max_age_bound`
++#     (`tos/src/tos/backtest/resolver.py`, lockstep in
++#     `tos/src/tos/marketfeed/__init__.py`) is now bound 1:1 to.
++#   - Registered value: null. Per VER-002-001 §6 and the PATCH-0054 precedent,
++#     registering a key approves nothing and creates no bound; the disposition
++#     package §4 recommends 1000 ms, but that recommendation is not an approval
++#     — §6 of that package is an empty form awaiting the Bounds-Approver.
++#   - Effect on this file: total numeric keys 163 -> 164; null keys 16 -> 17.
++#     The `tools/tos_completion_status.py` D-1 cell for the resolver and
++#     marketfeed sites moves UNBOUND -> BLOCKED (in-universe, value pending),
++#     not VALUED.
++#   - status, approved_by, effective_from, and review_due are unchanged; this
++#     is a key-level registration act, not a profile re-approval. No value
++#     approval, acceptance, restricted-live, or live authority follows.
+ 
+ profile_id: VERIFICATION-PROFILE-002
+ version: "2.1"
+@@ -1019,6 +1043,7 @@ limits:
+   MIN_holdover_safety_margin_ms: 2000                  # APPROVE per lease class; the margin subtracted when deriving conservative usable lifetime, distinct from the MAX_degraded_lease_holdover_ms total budget (ADR-002-008 §11.2; source: 2026-07-21 trustworthy-time design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-F floor range 100s ms-seconds, conservative high end that keeps holdover usable] owner=operator; review_date=2027-01-29
+   MAX_time_source_precision_ms: 50                     # APPROVE per reference-source class; source timestamp precision and uncertainty enter the conservative freshness upper bound (ADR-002-008 §9; source: 2026-07-21 trustworthy-time design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L4 range ~50-500, conservative low end] owner=operator; review_date=2027-01-29
+   MAX_time_source_sequence_gap_ms: 50                  # APPROVE per reference-source class; an unknown or unbounded source sequence gap denies TRUSTED time (ADR-002-008 §9; source: 2026-07-21 trustworthy-time design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L4 range ~50-500, conservative low end] owner=operator; review_date=2027-01-29
++  MAX_time_conservative_freshness_age_ms: null         # APPROVE per critical-input consumer scope; ceiling on the ADR-002-008 §9 conservative upper-bound age (source age + applicable delay-class bounds); exceeding it or an unestablishable bound is STALE and denies dependent new risk, never coerced to zero (ADR-002-008 §9; source: UNCHK-024 / tos backtest resolver BarTimeProjection.max_age_bound; disposition draft docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md §2-§4) -- [REGISTERED 2026-09-04 null; value pending Bounds-Approver (draft §6); owner TBD]
+   MIN_reserved_protective_capacity: null               # APPROVE per capacity scope; normal strategy activity cannot consume the configured minimum Reserved Protective Capacity, and an unknown minimum is not a satisfied minimum (ADR-002-002 INV-009; source: 2026-07-21 risk-capacity-ledger design §8) -- [DEFERRED 2026-07-29: instance/architecture decision; value stays null, owner TBD]
+   MIN_capacity_domain_voter_quorum: null               # APPROVE together with the Capacity Domain boundary and fault-tolerance model, which is a separate architecture decision; this key registers the numeric gap only and grants no consensus model (ADR-002-012; source: 2026-07-21 risk-capacity-ledger design §8) -- [DEFERRED 2026-07-29: instance/architecture decision; value stays null, owner TBD]
+   MAX_quarantined_capacity_age_ms: 30000               # APPROVE only as escalation deadline; age never releases quarantined capacity or converts UNKNOWN to resolved (ADR-002-002 §37; source: 2026-07-21 risk-capacity-ledger design §8) -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L3] owner=operator; review_date=2027-01-29
+diff --git a/tos-spec/src/verification/PHASE0-UNCHECKABLE-REGISTER.csv b/tos-spec/src/verification/PHASE0-UNCHECKABLE-REGISTER.csv
+index fa9f78bb..6cb1496a 100644
+--- a/tos-spec/src/verification/PHASE0-UNCHECKABLE-REGISTER.csv
++++ b/tos-spec/src/verification/PHASE0-UNCHECKABLE-REGISTER.csv
+@@ -21,5 +21,5 @@ UNCHK-022,INV-C3 의 관측 범위 한계 (2축),"v2.3 실측 정정. ① 범위
+ UNCHK-021,closable 값의 저작자 재량 + 앵커 동시 수정 + YES→NO 전이의 의무 우회,"U-9a가 closable=NO 집합을 앵커로 고정하지만 앵커와 데이터를 한 커밋에서 함께 고치면 통과한다(모든 canary의 성질, §8.3). 또 U-9의 인용 검사는 인용이 해석되는지만 보고 그 절이 실제로 원리적 불가능성을 확립하는지는 보지 못한다 — UNCHK-020과 같은 의미 판정 계열이며, 직교 2필드의 나머지 한 축이다. [v2.5 — 심판 F7] U-9/U-9a 가 §11 종료조건에서 철회된 뒤(§11 U-9·U-9a 철회 행)에는 이 재량이 U-1a 소유자 의무까지 우회한다: closable=YES 행이 무관한 실재 절을 근거로 NO 로 전이하면 U-1a(YES 한정)·철회된 U-9·U-9a·집계 findings 를 전부 벗어나고, 잔여 가시성은 비차단 closable_no_rows(U-10) 뿐이다","[v2.6 — 심판 F#4] 두 갈래로 분리한다 (v2.5 는 한 칸에 섞어 써서 blocked_by 의 ""Phase 1 이연""이 owner_track 과 어긋나 보였다). (가) 의미 판정 갈래 — 이 축의 소유를 결정한다: evidence 별 ""이 절이 이 축의 불가능성을 확립하는가""의 수용 기준. UNCHK-007·015·020 과 같은 계열이며 그 셋 전부 Phase 2-5 다. (나) 보호 복원 갈래 — 소유를 옮기지 않는다: YES→NO 전이에 독립 리뷰 provenance 를 결속하고 그 승인을 소비하는 지점을 둔다(전이가 승인 provenance 를 참조하지 않으면 전이 자체를 거부). [v2.7 정정 — 심판 #3] ""단일 커밋 내 기계 폐쇄는 불가""는 거짓이었다. canary 는 *값*을 비교하므로 앵커·데이터 동시 갱신에 침묵하지만, 커밋 위상(승인 행 도입 커밋이 전이 커밋의 진 조상인가)을 비교하면 동일 커밋이 곧 위반 신호가 된다 — U-16(§13.6.5)이 그 구조이며 Phase 0 차단으로 승격한다(§11). (나)는 더 이상 Phase 1 비차단 리뷰 표면이 아니다. 다만 (가)는 그대로 남고, U-16 이 닫지 못하는 것도 셋 남는다: 승인 내용의 진정성(→UNCHK-012)·조상 관계의 신뢰 기반(→UNCHK-023)·closable 값 자체의 적절성(→(가))",Phase 2-5,TOS-COMPLETION-STATUS,,YES,
+ UNCHK-023,git 이력 파생의 신뢰 기반 — 커밋 타임스탬프 자기공급 · 이력 재작성 가능성,"[v2.7 신설 — 자체 스윕] 네 계약(U-12 기산점 · U-15-b (3)(4) · U-16-c 순서 제약 · U-12 트리거 파생)이 전부 git 이력을 구조 파생 소스로 쓰는데, 그 소스의 두 성질은 저장소 안에서 증명되지 않는다: ① author date 는 GIT_AUTHOR_DATE 로 저작자가 공급한다 — min 3항도 커밋 메타데이터 위조에 의한 연기는 막지 못한다 ② 조상 관계는 이력 재작성(rebase·force-push)으로 구성 가능하다. v2.6 은 이 의존을 등재하지 않은 채 ""자기신고 → 구조 파생""이라고만 적었다 — 파생이 자기신고보다 강한 것은 맞으나 무조건 강한 것은 아니고, 그 조건이 미등재였다(§13.1 이 비판한 ""검사되는 것처럼 보이는 문장"" 의 형태)",제3자가 증언한 타임스탬프의 도입 — 서명 커밋(GPG/Sigstore) · CI 실행 메타데이터 · push 이벤트 기록 중 하나를 추적 아티팩트로 결속. 그리고 이력 재작성 방지는 저장소 밖 브랜치 보호 설정이라 UNCHK-008 과 같은 계열이다(파일로 증명 불가),Phase 1,TOS-COMPLETION-STATUS,,YES,
+ UNCHK-020,normative_ref 공란·무관 인용의 저작자 재량,"기계는 인용의 해석 가능성만 본다(T-66). 조항을 대지 못하면 공란이고, 공란이면 blocks_gate 의무가 사라진다 — 저작자가 공란을 골라 차단을 피할 수 있고, 반대로 무관한 실재 조항을 넣어도 검사를 통과한다 (심판 high)","evidence별 ""이 조항이 이 축을 요구하는가""의 수용 기준 — UNCHK-007·015와 같은 의미 판정 계열",Phase 2-5,TOS-COMPLETION-STATUS,,YES,
+-UNCHK-024,BarTimeProjection 시간 bound 필드의 VER-002 키 결속,"코드 어디에도 필드↔키 결속 표면이 없고 동형 후보 다수라 키 공급이 추측이 된다 (§7.4 D-1). 부분 해소(2026-09-02, 갱신) — 9필드 전부 처분 확정: ① 2필드(future_tolerance·maximum_consumer_age_ms)는 1:1 키 결속 확정: future_tolerance↔MAX_future_timestamp_tolerance_ms, maximum_consumer_age_ms↔MAX_critical_input_consumer_receipt_age_ms(둘 다 값 보유). ② delay_bounds는 4키 합성-멤버십 결속(1:1보다 약한 결속): MAX_time_transport_and_queue_uncertainty_ms + MAX_clock_domain_conversion_uncertainty_ms + MAX_time_source_precision_ms + MAX_time_source_sequence_gap_ms(ADR-002-008 §9 — freshness_verdict 에서 무순서 합산). ③ 5필드(source_age·snapshot_age_bound·interval_width·boundary_lag·health_state)는 register §8-1 미완 범주가 아니라 애초에 MAX_*/MIN_* 문턱이 될 수 없는 관측값/파생 합성/기준틀 구성 파라미터/열거형이라 구조적으로 프로파일 비대상 선언(design #33 §3.3). 전부 resolver.py BarTimeProjection docstring 리터럴 결속/선언. ④ 잔여 1필드(max_age_bound)만 register §8-1 trustworthy-time bound 범주 미완이라 결속 불가 — UNBOUND 유지.",register §8-1 trustworthy-time bound 키 신설·범주 확정(운영자/P0-2 소관) — 잔여 1필드(max_age_bound)에만 해당; 나머지 8필드는 1:1/합성 결속 또는 구조적 비대상 선언으로 처분 완료,Phase 1,TOS-COMPLETION-STATUS,,YES,
++UNCHK-024,BarTimeProjection 시간 bound 필드의 VER-002 키 결속,"코드 어디에도 필드↔키 결속 표면이 없고 동형 후보 다수라 키 공급이 추측이 된다 (§7.4 D-1). 부분 해소(2026-09-02, 갱신) — 9필드 전부 처분 확정: ① 2필드(future_tolerance·maximum_consumer_age_ms)는 1:1 키 결속 확정: future_tolerance↔MAX_future_timestamp_tolerance_ms, maximum_consumer_age_ms↔MAX_critical_input_consumer_receipt_age_ms(둘 다 값 보유). ② delay_bounds는 4키 합성-멤버십 결속(1:1보다 약한 결속): MAX_time_transport_and_queue_uncertainty_ms + MAX_clock_domain_conversion_uncertainty_ms + MAX_time_source_precision_ms + MAX_time_source_sequence_gap_ms(ADR-002-008 §9 — freshness_verdict 에서 무순서 합산). ③ 5필드(source_age·snapshot_age_bound·interval_width·boundary_lag·health_state)는 register §8-1 미완 범주가 아니라 애초에 MAX_*/MIN_* 문턱이 될 수 없는 관측값/파생 합성/기준틀 구성 파라미터/열거형이라 구조적으로 프로파일 비대상 선언(design #33 §3.3). 전부 resolver.py BarTimeProjection docstring 리터럴 결속/선언. ④ 잔여 1필드(max_age_bound)는 2026-09-04 신설 키 MAX_time_conservative_freshness_age_ms 에 1:1 결속 확정 (값 null 등록 — 등록은 승인이 아니다; disposition draft docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md §2, §5). D-1 은 UNBOUND → BLOCKED(우주 안·값 없음)로 이행 — 잔여는 Bounds-Approver 값 승인(draft §6)뿐.","Bounds-Approver 값 승인만 잔존(운영자 소관; draft §6) — 키 자체는 2026-09-04 등록 완료(MAX_time_conservative_freshness_age_ms, 값 null); 나머지 8필드는 1:1/합성 결속 또는 구조적 비대상 선언으로 처분 완료",Phase 1,TOS-COMPLETION-STATUS,,YES,
+ UNCHK-025,VER-002 프로파일 밖 bound 값의 소관 아티팩트 검증,SizingBound 6필드(소관 Order Construction Policy RFC-002 §9.1)·dsl_evaluation_budget_steps(소관 EngineConfiguration/DCE-INV-007)는 프로파일 검사 우주 밖 — 소관 아티팩트의 비준·검증은 별도 축,Order Construction Policy 비준 및 결속 검사 신설,Phase 2-5,TOS-COMPLETION-STATUS,,YES,
+diff --git a/tos/src/tos/backtest/resolver.py b/tos/src/tos/backtest/resolver.py
+index 4cfa5602..ff54becc 100644
+--- a/tos/src/tos/backtest/resolver.py
++++ b/tos/src/tos/backtest/resolver.py
+@@ -70,12 +70,18 @@ class BarTimeProjection(FrozenModel):
+     ``MAX_clock_domain_conversion_uncertainty_ms``, ``MAX_time_source_precision_ms``, and
+     ``MAX_time_source_sequence_gap_ms``.
+ 
+-    ``max_age_bound`` has no VERIFICATION-PROFILE-002 bound and stays **UNBOUND**: it is the single
+-    top-level freshness ceiling ``source_age + sum(delay_bounds)`` is checked against, and no
+-    existing profile key cleanly represents that role — its trustworthy-time bound category
+-    (register §8-1) is not yet established; tracked as UNCHK-024.
+-
+-    VER-002-KEYS: ``MAX_future_timestamp_tolerance_ms``, ``MAX_critical_input_consumer_receipt_age_ms``, ``MAX_time_transport_and_queue_uncertainty_ms``, ``MAX_clock_domain_conversion_uncertainty_ms``, ``MAX_time_source_precision_ms``, ``MAX_time_source_sequence_gap_ms``, ``max_age_bound``
++    ``max_age_bound`` is now bound **1:1** to VERIFICATION-PROFILE-002 key
++    ``MAX_time_conservative_freshness_age_ms`` (registered 2026-09-04; UNCHK-024
++    disposition, ``docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md``
++    §2, §5): it is the single top-level conservative freshness ceiling
++    ``source_age + sum(delay_bounds)`` is checked against, and that key now
++    carries the role 1:1. The registered value is **null** — registering a
++    key is not a value approval (VER-002-001 §6; PATCH-0054/PATCH-0058
++    precedent) — so this field reads **BLOCKED** (in-universe, key exists, no
++    value) rather than **VALUED** until the Bounds-Approver fills the
++    disposition draft's §6 form.
++
++    VER-002-KEYS: ``MAX_future_timestamp_tolerance_ms``, ``MAX_critical_input_consumer_receipt_age_ms``, ``MAX_time_transport_and_queue_uncertainty_ms``, ``MAX_clock_domain_conversion_uncertainty_ms``, ``MAX_time_source_precision_ms``, ``MAX_time_source_sequence_gap_ms``, ``MAX_time_conservative_freshness_age_ms``
+ 
+     The remaining five injected fields — ``source_age``, ``snapshot_age_bound``,
+     ``interval_width``, ``boundary_lag``, ``health_state`` — are **not VERIFICATION-PROFILE-002
+@@ -83,8 +89,8 @@ class BarTimeProjection(FrozenModel):
+     composite, a reference-frame construction parameter, or an enum (design #33 §3.3,
+     ``docs/plans/2026-07-29-tos-backtest-design.md:324-325``) — never a ``MAX_*``/``MIN_*``
+     threshold a profile key could hold. That makes this disposition final rather than a
+-    "register §8-1 category incomplete" gap like ``max_age_bound``'s: no key, present or future,
+-    could ever bind these five.
++    register §8-1 gap like ``max_age_bound``'s used to be (now closed by key registration,
++    value pending): no key, present or future, could ever bind these five.
+ 
+     Two coordinates are genuinely **bar-derived** rather than constant:
+ 
+@@ -107,8 +113,9 @@ class BarTimeProjection(FrozenModel):
+     #: ``MAX_clock_domain_conversion_uncertainty_ms`` + ``MAX_time_source_precision_ms`` +
+     #: ``MAX_time_source_sequence_gap_ms`` (order-agnostic; see class docstring).
+     delay_bounds: tuple[int | None, ...] = ()
+-    #: The injected freshness threshold. Not a VERIFICATION-PROFILE-002 key — stays UNBOUND,
+-    #: register §8-1 residual (no clean 1:1 candidate; see class docstring).
++    #: The injected freshness threshold. Bound 1:1 to VERIFICATION-PROFILE-002 key
++    #: ``MAX_time_conservative_freshness_age_ms`` (registered 2026-09-04, value null; reads
++    #: BLOCKED pending Bounds-Approver value approval — see class docstring).
+     max_age_bound: int
+     #: The injected future-timestamp tolerance. Bound to VERIFICATION-PROFILE-002 key
+     #: ``MAX_future_timestamp_tolerance_ms`` (ADR-002-008 §9).
+diff --git a/tos/src/tos/marketfeed/__init__.py b/tos/src/tos/marketfeed/__init__.py
+index e7aaf226..cdd4ba21 100644
+--- a/tos/src/tos/marketfeed/__init__.py
++++ b/tos/src/tos/marketfeed/__init__.py
+@@ -62,8 +62,10 @@ producer binds ``future_tolerance`` to ``MAX_future_timestamp_tolerance_ms``,
+ ``maximum_consumer_age_ms`` to ``MAX_critical_input_consumer_receipt_age_ms``, and
+ ``delay_bounds`` to the sum of ``MAX_time_transport_and_queue_uncertainty_ms``,
+ ``MAX_clock_domain_conversion_uncertainty_ms``, ``MAX_time_source_precision_ms``, and
+-``MAX_time_source_sequence_gap_ms``; ``max_age_bound`` carries no VERIFICATION-PROFILE-002 bound
+-and stays UNBOUND (tracked as UNCHK-024 at the ``resolver`` site, unaffected by this correction).
++``MAX_time_source_sequence_gap_ms``; ``max_age_bound`` is bound 1:1 to VERIFICATION-PROFILE-002
++key ``MAX_time_conservative_freshness_age_ms`` (registered 2026-09-04, value null; reads BLOCKED
++pending Bounds-Approver value approval — UNCHK-024 disposition at the ``resolver`` site, lockstep
++here, unaffected by this correction).
+ This package does not compute or own those bounds — it is the D-E2 consumption boundary through
+ which the injected port's already-bound values reach the engine, not their producer — but §7.4
+ D-1/D-4 (가) treat forwarding a bound-bearing type as this site's declared dependency regardless of
+@@ -82,7 +84,7 @@ the environment-injection point does not repeat it. Look-ahead is checked agains
+ Each of those is a producer-honesty boundary this layer detects rather than enforces, and none of
+ them is claimed as closed.
+ 
+-VER-002-KEYS: ``MAX_future_timestamp_tolerance_ms``, ``MAX_critical_input_consumer_receipt_age_ms``, ``MAX_time_transport_and_queue_uncertainty_ms``, ``MAX_clock_domain_conversion_uncertainty_ms``, ``MAX_time_source_precision_ms``, ``MAX_time_source_sequence_gap_ms``, ``max_age_bound``
++VER-002-KEYS: ``MAX_future_timestamp_tolerance_ms``, ``MAX_critical_input_consumer_receipt_age_ms``, ``MAX_time_transport_and_queue_uncertainty_ms``, ``MAX_clock_domain_conversion_uncertainty_ms``, ``MAX_time_source_precision_ms``, ``MAX_time_source_sequence_gap_ms``, ``MAX_time_conservative_freshness_age_ms``
+ 
+ Public surface groups by module:
+ 

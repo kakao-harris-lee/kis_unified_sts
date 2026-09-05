@@ -1,0 +1,89 @@
+{
+  "job": {
+    "createdAt": "2026-09-04T14:37:19.279Z",
+    "updatedAt": "2026-09-04T14:46:54.493Z",
+    "id": "review-mtn25kq7-vv0bgv",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "출하 보류. S-26 ② 불성립: 이번 독립 재심에서 신규 material finding 1건(medium)이 확인되어 material-0 2회 연속이 아니다. ③ 성립: 직전 판과 이번 판의 tos_contract_check가 rc 0이다. ④ 성립: 이번 validator는 CUR/CIT/VER/CARD/RULE 위반 0으로 PASS했다. ⑤ 성립: self-test rc 0, 145종 전건 판별·죽은 검사 0·역방향 과잉 차단 0이다. ⑥ 성립: 48243cd2..HEAD의 두 결속 경로 이력과 diff가 공집합이고 blob 899689fc/ec3464c0가 불변이다. 결속 HEAD·plan_scope_digest·bound_set_digest·decided_at_head도 제시값과 일치하며 R-3은 보존소에 오염되지 않고 ENTRY_OK를 냈다. ⑧은 기존대로 열린 교착이며 이번 판의 종료 요구가 아니다. 별도 상태 검사는 읽기 전용 실행환경에 임시 디렉터리가 없어 rc 2로 재파생 검증하지 못했지만, HEAD 생성물은 d0a_entry_state=ENTRY_OK 및 §11 상태를 보유한다.",
+    "write": false,
+    "sessionId": "f062da15-ff4e-4803-ba88-8e368a96a4f3",
+    "status": "completed",
+    "startedAt": "2026-09-04T14:37:19.347Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtn25kq7-vv0bgv.log",
+    "threadId": "01a06cda-4f73-78e0-a151-74955d85fb38",
+    "turnId": "01a06cda-514d-7731-8fd0-33b7840bda88",
+    "completedAt": "2026-09-04T14:46:54.364Z"
+  },
+  "storedJob": {
+    "id": "review-mtn25kq7-vv0bgv",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "Adversarial Review branch diff against 48243cd2",
+    "write": false,
+    "createdAt": "2026-09-04T14:37:19.279Z",
+    "sessionId": "f062da15-ff4e-4803-ba88-8e368a96a4f3",
+    "status": "completed",
+    "startedAt": "2026-09-04T14:37:19.347Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtn25kq7-vv0bgv.log",
+    "threadId": "01a06cda-4f73-78e0-a151-74955d85fb38",
+    "turnId": "01a06cda-514d-7731-8fd0-33b7840bda88",
+    "completedAt": "2026-09-04T14:46:54.364Z",
+    "result": {
+      "review": "Adversarial Review",
+      "target": {
+        "mode": "branch",
+        "label": "branch diff against 48243cd2",
+        "baseRef": "48243cd2",
+        "explicit": true
+      },
+      "threadId": "01a06cda-4f73-78e0-a151-74955d85fb38",
+      "context": {
+        "repoRoot": "/Users/harris/Development/private/kis_unified_sts",
+        "branch": "mission-critical-trading-operating-system",
+        "summary": "Reviewing branch mission-critical-trading-operating-system against 48243cd2 from merge-base 48243cd2e07c1357a389e670cf2f23af479d1595."
+      },
+      "codex": {
+        "status": 0,
+        "stderr": "",
+        "stdout": "{\"verdict\":\"needs-attention\",\"summary\":\"출하 보류. S-26 ② 불성립: 이번 독립 재심에서 신규 material finding 1건(medium)이 확인되어 material-0 2회 연속이 아니다. ③ 성립: 직전 판과 이번 판의 tos_contract_check가 rc 0이다. ④ 성립: 이번 validator는 CUR/CIT/VER/CARD/RULE 위반 0으로 PASS했다. ⑤ 성립: self-test rc 0, 145종 전건 판별·죽은 검사 0·역방향 과잉 차단 0이다. ⑥ 성립: 48243cd2..HEAD의 두 결속 경로 이력과 diff가 공집합이고 blob 899689fc/ec3464c0가 불변이다. 결속 HEAD·plan_scope_digest·bound_set_digest·decided_at_head도 제시값과 일치하며 R-3은 보존소에 오염되지 않고 ENTRY_OK를 냈다. ⑧은 기존대로 열린 교착이며 이번 판의 종료 요구가 아니다. 별도 상태 검사는 읽기 전용 실행환경에 임시 디렉터리가 없어 rc 2로 재파생 검증하지 못했지만, HEAD 생성물은 d0a_entry_state=ENTRY_OK 및 §11 상태를 보유한다.\",\"findings\":[{\"severity\":\"medium\",\"title\":\"U-6′ 검사기가 실제 스캔 범위와 독립 기록 경로가 빠진 공시 행을 승인한다\",\"body\":\"계약 §7.4 U-6′은 reason에 후보 우주 크기와 실제 스캔 범위(파일 수 포함), 그리고 사용한 D-4 독립 리뷰 기록의 경로를 요구한다. 그러나 구현은 '후보 우주'와 두 숫자가 어디엔가 나타나는지만 확인하고 scope_desc를 전혀 소비하지 않으며, 기록도 site_id 디렉터리 접두사만 찾는다. 직접 호출에서 실제 범위 문자열을 완전히 생략하고 임의의 미래 verdict 경로를 적은 행도 ok=True가 됐다. 이후 기록 검증은 별도로 최신 verdict를 선택하므로 reason이 가리킨 기록과 실제 승인 기록이 달라도 통과할 수 있다. 현재 NONE 사이트가 0이라 현행 D0-5 값은 바뀌지 않지만, 다음 NONE 사이트에서는 불완전하거나 거짓인 감사 공시가 rc 0과 NO_DEPENDENCY를 얻어 C4~C6이 구현했다고 주장한 동결 계약과 갈린다.\",\"file\":\"tools/tos_completion_status.py\",\"line_start\":3948,\"line_end\":3958,\"confidence\":0.99,\"recommendation\":\"계약 본문은 편집하지 말고 검사기를 고쳐 reason에 정확한 scope_desc와 file_count를 결속하고, (4)는 실제 선택·검증한 verdict.md의 정확한 repo-relative 경로와 일치시키라. 범위 설명 삭제·다른 범위 대체·존재하지 않는 같은-prefix 기록·최신 기록과 다른 경로를 각각 red로 만드는 테스트를 추가하라.\"}],\"next_steps\":[\"tools/tos_completion_status.py와 관련 테스트만 수정해 U-6′ reason의 스캔 범위 및 실제 기록 경로를 정확 결속한다.\",\"수정 후 tos_contract_check, 145종 self-test, tos_completion_status.py --check를 쓰기 가능한 임시 디렉터리가 있는 환경에서 다시 실행한다.\",\"도구 수정은 결속된 두 계획 경로를 건드리지 않으므로 계약 편집·S-26 ⑥ 리셋·O-6 재결속 없이 처분할 수 있다.\"]}",
+        "reasoning": []
+      },
+      "result": {
+        "verdict": "needs-attention",
+        "summary": "출하 보류. S-26 ② 불성립: 이번 독립 재심에서 신규 material finding 1건(medium)이 확인되어 material-0 2회 연속이 아니다. ③ 성립: 직전 판과 이번 판의 tos_contract_check가 rc 0이다. ④ 성립: 이번 validator는 CUR/CIT/VER/CARD/RULE 위반 0으로 PASS했다. ⑤ 성립: self-test rc 0, 145종 전건 판별·죽은 검사 0·역방향 과잉 차단 0이다. ⑥ 성립: 48243cd2..HEAD의 두 결속 경로 이력과 diff가 공집합이고 blob 899689fc/ec3464c0가 불변이다. 결속 HEAD·plan_scope_digest·bound_set_digest·decided_at_head도 제시값과 일치하며 R-3은 보존소에 오염되지 않고 ENTRY_OK를 냈다. ⑧은 기존대로 열린 교착이며 이번 판의 종료 요구가 아니다. 별도 상태 검사는 읽기 전용 실행환경에 임시 디렉터리가 없어 rc 2로 재파생 검증하지 못했지만, HEAD 생성물은 d0a_entry_state=ENTRY_OK 및 §11 상태를 보유한다.",
+        "findings": [
+          {
+            "severity": "medium",
+            "title": "U-6′ 검사기가 실제 스캔 범위와 독립 기록 경로가 빠진 공시 행을 승인한다",
+            "body": "계약 §7.4 U-6′은 reason에 후보 우주 크기와 실제 스캔 범위(파일 수 포함), 그리고 사용한 D-4 독립 리뷰 기록의 경로를 요구한다. 그러나 구현은 '후보 우주'와 두 숫자가 어디엔가 나타나는지만 확인하고 scope_desc를 전혀 소비하지 않으며, 기록도 site_id 디렉터리 접두사만 찾는다. 직접 호출에서 실제 범위 문자열을 완전히 생략하고 임의의 미래 verdict 경로를 적은 행도 ok=True가 됐다. 이후 기록 검증은 별도로 최신 verdict를 선택하므로 reason이 가리킨 기록과 실제 승인 기록이 달라도 통과할 수 있다. 현재 NONE 사이트가 0이라 현행 D0-5 값은 바뀌지 않지만, 다음 NONE 사이트에서는 불완전하거나 거짓인 감사 공시가 rc 0과 NO_DEPENDENCY를 얻어 C4~C6이 구현했다고 주장한 동결 계약과 갈린다.",
+            "file": "tools/tos_completion_status.py",
+            "line_start": 3948,
+            "line_end": 3958,
+            "confidence": 0.99,
+            "recommendation": "계약 본문은 편집하지 말고 검사기를 고쳐 reason에 정확한 scope_desc와 file_count를 결속하고, (4)는 실제 선택·검증한 verdict.md의 정확한 repo-relative 경로와 일치시키라. 범위 설명 삭제·다른 범위 대체·존재하지 않는 같은-prefix 기록·최신 기록과 다른 경로를 각각 red로 만드는 테스트를 추가하라."
+          }
+        ],
+        "next_steps": [
+          "tools/tos_completion_status.py와 관련 테스트만 수정해 U-6′ reason의 스캔 범위 및 실제 기록 경로를 정확 결속한다.",
+          "수정 후 tos_contract_check, 145종 self-test, tos_completion_status.py --check를 쓰기 가능한 임시 디렉터리가 있는 환경에서 다시 실행한다.",
+          "도구 수정은 결속된 두 계획 경로를 건드리지 않으므로 계약 편집·S-26 ⑥ 리셋·O-6 재결속 없이 처분할 수 있다."
+        ]
+      },
+      "rawOutput": "{\"verdict\":\"needs-attention\",\"summary\":\"출하 보류. S-26 ② 불성립: 이번 독립 재심에서 신규 material finding 1건(medium)이 확인되어 material-0 2회 연속이 아니다. ③ 성립: 직전 판과 이번 판의 tos_contract_check가 rc 0이다. ④ 성립: 이번 validator는 CUR/CIT/VER/CARD/RULE 위반 0으로 PASS했다. ⑤ 성립: self-test rc 0, 145종 전건 판별·죽은 검사 0·역방향 과잉 차단 0이다. ⑥ 성립: 48243cd2..HEAD의 두 결속 경로 이력과 diff가 공집합이고 blob 899689fc/ec3464c0가 불변이다. 결속 HEAD·plan_scope_digest·bound_set_digest·decided_at_head도 제시값과 일치하며 R-3은 보존소에 오염되지 않고 ENTRY_OK를 냈다. ⑧은 기존대로 열린 교착이며 이번 판의 종료 요구가 아니다. 별도 상태 검사는 읽기 전용 실행환경에 임시 디렉터리가 없어 rc 2로 재파생 검증하지 못했지만, HEAD 생성물은 d0a_entry_state=ENTRY_OK 및 §11 상태를 보유한다.\",\"findings\":[{\"severity\":\"medium\",\"title\":\"U-6′ 검사기가 실제 스캔 범위와 독립 기록 경로가 빠진 공시 행을 승인한다\",\"body\":\"계약 §7.4 U-6′은 reason에 후보 우주 크기와 실제 스캔 범위(파일 수 포함), 그리고 사용한 D-4 독립 리뷰 기록의 경로를 요구한다. 그러나 구현은 '후보 우주'와 두 숫자가 어디엔가 나타나는지만 확인하고 scope_desc를 전혀 소비하지 않으며, 기록도 site_id 디렉터리 접두사만 찾는다. 직접 호출에서 실제 범위 문자열을 완전히 생략하고 임의의 미래 verdict 경로를 적은 행도 ok=True가 됐다. 이후 기록 검증은 별도로 최신 verdict를 선택하므로 reason이 가리킨 기록과 실제 승인 기록이 달라도 통과할 수 있다. 현재 NONE 사이트가 0이라 현행 D0-5 값은 바뀌지 않지만, 다음 NONE 사이트에서는 불완전하거나 거짓인 감사 공시가 rc 0과 NO_DEPENDENCY를 얻어 C4~C6이 구현했다고 주장한 동결 계약과 갈린다.\",\"file\":\"tools/tos_completion_status.py\",\"line_start\":3948,\"line_end\":3958,\"confidence\":0.99,\"recommendation\":\"계약 본문은 편집하지 말고 검사기를 고쳐 reason에 정확한 scope_desc와 file_count를 결속하고, (4)는 실제 선택·검증한 verdict.md의 정확한 repo-relative 경로와 일치시키라. 범위 설명 삭제·다른 범위 대체·존재하지 않는 같은-prefix 기록·최신 기록과 다른 경로를 각각 red로 만드는 테스트를 추가하라.\"}],\"next_steps\":[\"tools/tos_completion_status.py와 관련 테스트만 수정해 U-6′ reason의 스캔 범위 및 실제 기록 경로를 정확 결속한다.\",\"수정 후 tos_contract_check, 145종 self-test, tos_completion_status.py --check를 쓰기 가능한 임시 디렉터리가 있는 환경에서 다시 실행한다.\",\"도구 수정은 결속된 두 계획 경로를 건드리지 않으므로 계약 편집·S-26 ⑥ 리셋·O-6 재결속 없이 처분할 수 있다.\"]}",
+      "parseError": null,
+      "reasoningSummary": []
+    },
+    "rendered": "# Codex Adversarial Review\n\nTarget: branch diff against 48243cd2\nVerdict: needs-attention\n\n출하 보류. S-26 ② 불성립: 이번 독립 재심에서 신규 material finding 1건(medium)이 확인되어 material-0 2회 연속이 아니다. ③ 성립: 직전 판과 이번 판의 tos_contract_check가 rc 0이다. ④ 성립: 이번 validator는 CUR/CIT/VER/CARD/RULE 위반 0으로 PASS했다. ⑤ 성립: self-test rc 0, 145종 전건 판별·죽은 검사 0·역방향 과잉 차단 0이다. ⑥ 성립: 48243cd2..HEAD의 두 결속 경로 이력과 diff가 공집합이고 blob 899689fc/ec3464c0가 불변이다. 결속 HEAD·plan_scope_digest·bound_set_digest·decided_at_head도 제시값과 일치하며 R-3은 보존소에 오염되지 않고 ENTRY_OK를 냈다. ⑧은 기존대로 열린 교착이며 이번 판의 종료 요구가 아니다. 별도 상태 검사는 읽기 전용 실행환경에 임시 디렉터리가 없어 rc 2로 재파생 검증하지 못했지만, HEAD 생성물은 d0a_entry_state=ENTRY_OK 및 §11 상태를 보유한다.\n\nFindings:\n- [medium] U-6′ 검사기가 실제 스캔 범위와 독립 기록 경로가 빠진 공시 행을 승인한다 (tools/tos_completion_status.py:3948-3958)\n  계약 §7.4 U-6′은 reason에 후보 우주 크기와 실제 스캔 범위(파일 수 포함), 그리고 사용한 D-4 독립 리뷰 기록의 경로를 요구한다. 그러나 구현은 '후보 우주'와 두 숫자가 어디엔가 나타나는지만 확인하고 scope_desc를 전혀 소비하지 않으며, 기록도 site_id 디렉터리 접두사만 찾는다. 직접 호출에서 실제 범위 문자열을 완전히 생략하고 임의의 미래 verdict 경로를 적은 행도 ok=True가 됐다. 이후 기록 검증은 별도로 최신 verdict를 선택하므로 reason이 가리킨 기록과 실제 승인 기록이 달라도 통과할 수 있다. 현재 NONE 사이트가 0이라 현행 D0-5 값은 바뀌지 않지만, 다음 NONE 사이트에서는 불완전하거나 거짓인 감사 공시가 rc 0과 NO_DEPENDENCY를 얻어 C4~C6이 구현했다고 주장한 동결 계약과 갈린다.\n  Recommendation: 계약 본문은 편집하지 말고 검사기를 고쳐 reason에 정확한 scope_desc와 file_count를 결속하고, (4)는 실제 선택·검증한 verdict.md의 정확한 repo-relative 경로와 일치시키라. 범위 설명 삭제·다른 범위 대체·존재하지 않는 같은-prefix 기록·최신 기록과 다른 경로를 각각 red로 만드는 테스트를 추가하라.\n\nNext steps:\n- tools/tos_completion_status.py와 관련 테스트만 수정해 U-6′ reason의 스캔 범위 및 실제 기록 경로를 정확 결속한다.\n- 수정 후 tos_contract_check, 145종 self-test, tos_completion_status.py --check를 쓰기 가능한 임시 디렉터리가 있는 환경에서 다시 실행한다.\n- 도구 수정은 결속된 두 계획 경로를 건드리지 않으므로 계약 편집·S-26 ⑥ 리셋·O-6 재결속 없이 처분할 수 있다.\n"
+  }
+}

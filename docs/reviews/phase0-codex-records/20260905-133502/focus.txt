@@ -1,0 +1,23 @@
+레인 B 계획 «재심» — Phase 0 완료 계약 v2.22, S-26 ② «독립 재심 2회 연속» 트랙 5회차 = **최종 회차**. 운영자 지시(2026-09-05): 「5회차 결과 무관하게 종료하고 잔여는 UNCHK 등재로 처분」. 따라서 이 판의 finding 은 수리·재심 루프로 가지 않고 §13 UNCHECKABLE 레지스터에 «잔여 등재»로 처분된다 — finding 을 적을 때 등재 가능한 형태(축 · 사유 · 차단 요인 · 소관 트랙)로 적어라. 직전 판(.omc/review/20260905-091036/verdict.md · needs-attention · medium 1)의 finding 1 을 계약 편집 없이 검사기 **설계 변경**으로 처분했다(커밋 99abc081 → 1fd98450). 1순위 질문: 그 finding 이 «해소 / 부분 해소 / 미해소 / 회피» 중 무엇인가. 2순위: 계약 밖 변경이 동결 문언을 stale·거짓으로 만들었는가. 계약 결속 경로 두 문서는 재심 #5 approve(48243cd2) 이래 byte 불변(blob 899689fc / ec3464c0). 계약의 다른 절을 새로 훑어 산문 결함을 찾는 것은 범위가 아니다(계약 K-10 · 2026-08-30 정지 지시 사유).
+
+먼저 읽을 것 (순서대로):
+1. CLAUDE.md — 비협상 규칙 및 «Read the index before the contract»(`python tools/tos_contract_index.py --locate S-26`, `--locate "§7.4"`, `--locate "§13"` 로 구간을 잡아 그 범위만 읽어라. 전체 스캔·요약 금지).
+2. .omc/review/20260905-091036/verdict.md — 직전 판. finding 1: 라벨 분류 `startswith` 가 선행 공백·탭·NBSP·ZWSP 병기 구획을 카디널리티에서 빠뜨림. 그 판의 수용검사가 적은 것: 네 판 연속 «직전 수리 표면에서 다음 결함».
+3. 처분 이력 두 커밋(`git diff 9f80f6a1 1fd98450 -- tools/tos_completion_status.py tests/tools/test_tos_completion_status.py`; 사본 .omc/review/20260905-133502/evidence/fix-diff.patch):
+   - 99abc081: 라벨 분류를 NFKC·Cf-제거 정규화 부분문자열로 — 그러나 Claude 측 적대 리뷰(사본 evidence/attack_u6prime.txt 의 공격 스크립트)가 콜론 동형이의(U+0589·U+A789·U+2236)·braille blank U+2800·결합 문자 U+0301·variation selector U+FE0F 로 곧장 파열시켰다(모두 True).
+   - **1fd98450(이 판의 처분)**: 설계 전환 — 라벨을 «인식해» 모순 구획을 잡는 블랙리스트를 폐기하고 **닫힌 세계 문법**으로: `_d1_u6prime_segments`(` · ` / `;` / 개행 분할 · 빈 구획만 제거)의 결과 다중집합이 정본 구획 넷(`선언: VER-002-KEYS: NONE` · `스캔 결과: 후보 우주 {N}개, 스캔 범위 {scope_desc}, 파일 {F}개` · `_D1_U6PRIME_BOUNDARY_SENTENCE` 축자 · `독립 리뷰 기록: {record_path}`)과 **정확히 같아야** 한다 — 각 1회 · byte-exact · 그 외 구획은 종류 불문 `(ㄹ) 허용되지 않은 구획` 으로 red. 라벨 인식 헬퍼·`unicodedata` 제거. 미충족 메시지에 정본 reason 전체를 실어 저작자가 붙여 쓸 수 있게 함. 대조군 ⑭-a~i(동형이의 콜론 셋 · braille · U+0301 · U+FE0F · 자유 텍스트 구획 · 공백만 구획 · CRLF) + ⑭-j green(순서 무관 · `;`/개행 혼용).
+   판단하라: (a) 닫힌 세계가 U-6′ (ㄹ) 문언(「그 행의 reason 은 넷을 적는다」)과 정합하는가 — 계약이 정하지 않은 문법을 검사기가 «허용 집합»으로 정한 것이 허용되는 형상인지(D-5 `VER-002-KEYS:` 는 계약이 정했다), 넷 «이외의 것을 금지»하는 것이 문언보다 강한지 그리고 그것이 문제인지; (b) 남은 우회가 있는가 — 구획 분할기 자체(`\s*·\s*|\s*;\s*|\n` · `\r` · U+2028/2029 · 다른 중점 유사 문자는 분할하지 않으므로 정본 구획에 붙어 byte-exact 실패 → red) · 정본 문자열 생성 함수(scope_desc·record_path 가 구분자를 포함할 때 정본 자체가 분할되어 red = fail-closed 방향) · 순서·중복; 직접 시험하라; (c) 역방향 과잉 차단 — 정당한 저작자가 정본 넷 외에 아무것도 못 쓴다(예: 부수 설명). 그것이 계약 U-4·U-5(blocked_by·owner_track 필수)와 충돌하는가(그 둘은 reason 열이 아니라 별 열이다 — 확인).
+4. 별건 커밋(재판정 금지 · 직전 판들이 판정): 93f4f6bd·8e14069a(UNCHK-024 키 등록·값 1000 ms 승인 · D0-5 VALUED 7/7 · census 148/16).
+5. S-26 ①~⑧ 항별 독립 측정을 다시 하고 summary 에 명시하라(② 는 이 판이 material 0 이면 «1/2», 아니면 «0/2»). ⑧ 은 기존 교착 그대로.
+
+결속 필드(디스패치 직전 포착 · .omc/review/20260905-133502/revision.txt): reviewed_at_head 1fd98450cbc1a0967c723d102b388f7c694e239e · reviewed_plan_paths = docs/plans/2026-08-12-tos-phase0-completion-contract-design.md, docs/plans/2026-08-11-tos-completion-development-plan.md · reviewed_scope_digest(plan_scope_digest) c54629787e3d60331b43ca15d4577c86d228bb9ce1f46679c35ae1fda589befb · bound_set_digest(O-6, tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md:15) 4e6c975f794696066a25abe4ee827594afa18f8fac8bfb5e7bf31d43508b3c2f · decided_at_head 8923aab2. 재계산해 대조하라 — `{ git rev-parse HEAD; printf '%s\0' <두 경로> | LC_ALL=C sort -z -u | xargs -0 -r shasum -a 256; } | shasum -a 256`.
+
+독립 측정 (직접 실행 · rc 를 읽어라):
+ (a) `python tools/tos_contract_check.py` (③·④) 및 `--self-test` (⑤).
+ (b) `python tools/tos_completion_status.py --check` — GREEN · ENTRY_OK(샌드박스 rc 2 면 HEAD 생성물 대체 확인).
+ (c) `git rev-list --full-history 48243cd2..HEAD -- <두 결속 경로>` 공집합(⑥·①).
+ (d) 직접 대조군: `_d1_u6prime_row_state` 에 evidence/attack_u6prime.txt 의 공격 문자열 전부 + 당신이 고안한 새 형상(분할기 변형 · 정본 구획 안 삽입 · 순서 · 빈 구획)을 넣어 결과를 표로 적어라.
+
+이미 확정된 것(재판정 금지): §11 완료 판단 · 값 승인 · 레인 A(Codex 코드 심사 제외 · Claude 측 적대 리뷰가 별 레인) · D0/P-0 착수 금지·restricted_live·production 불변 · **이 판 이후 재심은 없다(운영자 지시)**.
+
+출력: verdict(approve | needs-attention) · summary(직전 finding 1 의 «해소/부분 해소/미해소/회피» 명시 · S-26 ②~⑥ 각 항 성립/불성립 · ② 카운터 «1/2» 또는 «0/2» · ⑧ 한 줄) · findings[] (severity · title · body · file · line_start/line_end 는 HEAD 1fd98450 에 실재 · confidence · recommendation — recommendation 은 «UNCHK 등재 문안» 형태로: 축 이름 · 사유 · blocked_by · owner_track 후보) · next_steps[].

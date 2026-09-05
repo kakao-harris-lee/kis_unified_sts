@@ -1,0 +1,18 @@
+fbb1a364 fix(tools): tos_completion_status U-6′ (ㄹ) — reason 에 실제 스캔 범위·선택된 D-4 (마) 기록 경로를 정확 결속 (레인 B 재심 20260904-233516 finding 1)
+93f4f6bd docs(tos): UNCHK-024 — register MAX_time_conservative_freshness_age_ms (null · value pending Bounds-Approver) · resolver/marketfeed 1:1 결속 · census 164/17 · Patch-0058
+11ac075d Merge pull request #643 from kakao-harris-lee/mission-critical-trading-operating-system
+3f9d2491 test(validation): make the CSV datetime dtype assertion resolution-agnostic (pandas 3 infers M8[us])
+8ab185e9 build(tos): pin numpy 2.4.1 (2.4.0 yanked upstream) + commit tos/uv.lock
+7d9b4671 fix(tools): tos_firewall_check — scan-scope hardening, rule S (boundary-crossing symlinks), fail-closed git probes
+0ccfe892 docs: tos/CLAUDE.md agent-scope guide + root CLAUDE.md "tos Kernel Boundary" section
+a57aa628 ci: path-gate the legacy test workflow away from tos/docs; move tos governance batteries into tos-firewall
+ecf0024a docs(harness): Codex plan critique stays available on explicit operator request
+9a21f2d7 docs(harness): codex review excludes code and plans; specs are authored solo by the session model
+7e3e4081 Merge pull request #642 from kakao-harris-lee/mission-critical-trading-operating-system
+222dc4de docs(tos): Phase 0 완료 판정 §11 — 결정 기록 발효 (운영자 countersign 기입 · 스탬프 20260904-171004)
+b99be174 docs(tos): Phase 0 완료 판정 §11 — 2차 «완료 판단 시점 live» 실측 기록 + 결정 초안 (스탬프 20260904-171004 · 운영자 countersign 대기)
+d07646c2 docs(reviews): Phase 0 Codex 심판 기록 보존소 — .omc 에만 있던 16 스탬프를 docs/reviews/phase0-codex-records/ 로 (운영자 지시)
+c5550229 fix(tools): tos_completion_status D-4 (마) claim 을 단일 정본 형식과 byte 전체 일치로 검증 (C6)
+2c2bc607 fix(tools): tos_completion_status D-4 (마) 독립 기록 검증 강화 — provenance 필드·reviewed_at_head 필수 · claim 지정 문장+site_id 정확 일치 (C5)
+7bf83226 feat(tools): tos_completion_status D-1 — 계약 §7.4 D-3/D-4/D-5 · U-6′(v2.22 에라타 52~56차) 구현 + marketfeed 선언 재분류 (C4)
+a673e827 docs(tos): U-15 R-7 재승인 — Codex 레인 B 재심 verdict 스탬프 20260904-133500 (reviewed_at_head 48243cd2 · §7.4 에라타 52~56차) + 재심 #1~#4 이력 스탬프 (C3)

@@ -1,0 +1,20 @@
+commit 8e14069a06f241ad57d4218306918e444bc158d8
+Author: harris.lee <harris.lee@kakaocorp.com>
+Date:   Sat Sep 5 08:54:20 2026 +0900
+
+    docs(tos): UNCHK-024 종결 — MAX_time_conservative_freshness_age_ms = 1000 ms 승인 (operator · Bounds-Approver · 2026-09-04) · census 148/16 · D0-5 resolver/marketfeed VALUED · §3.28
+    
+    Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+
+ .../2026-07-29-tos-phase0-human-gate-register.md   |  2 +-
+ ...unchk024-max-age-bound-key-disposition-draft.md |  9 ++--
+ tests/tools/test_tos_completion_status.py          | 63 +++++++++++-----------
+ tests/tools/test_tos_spec_status.py                | 43 +++++++--------
+ tools/tos_spec_status.py                           | 17 +++---
+ tos-spec/src/TOS-COMPLETION-STATUS.md              | 10 ++--
+ .../part-1-foundation/ARCHITECTURE-GATE-STATUS.md  | 57 +++++++++++++++++++-
+ .../verification/VERIFICATION-PROFILE-002.yaml     | 50 +++++++++++++----
+ .../verification/PHASE0-UNCHECKABLE-REGISTER.csv   |  2 +-
+ tos/src/tos/backtest/resolver.py                   | 17 +++---
+ tos/src/tos/marketfeed/__init__.py                 |  6 +--
+ 11 files changed, 183 insertions(+), 93 deletions(-)

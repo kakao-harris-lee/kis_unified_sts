@@ -57,7 +57,7 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
 - `ref_reuse_top=[('tos/src/tos/hag/predicates.py', 8), ('tos/src/tos/capsule/predicates.py', 7), ('tos/src/tos/spg/predicates.py', 6), ('tos/src/tos/sbr/predicates.py', 5), ('tos/src/tos/evidence/predicates.py', 4)]`
 - `profile_dependent_blocked=['BC-EV-003', 'ECO-EV-012', 'IOM-EV-008']`
 - `closable_no_rows=1`
-- `blank_normative_ref_rows=21`
+- `blank_normative_ref_rows=22`
 - `imprecise_owner_track=9`
 - `unassigned_owner_rows=0`
 - `U-13 fwd_a_excluded_rows=['STATE-EV-004']`
@@ -99,6 +99,7 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
 | UNCHK-020 | normative_ref 공란·무관 인용의 저작자 재량 | 기계는 인용의 해석 가능성만 본다(T-66). 조항을 대지 못하면 공란이고, 공란이면 blocks_gate 의무가 사라진다 — 저작자가 공란을 골라 차단을 피할 수 있고, 반대로 무관한 실재 조항을 넣어도 검사를 통과한다 (심판 high) | evidence별 "이 조항이 이 축을 요구하는가"의 수용 기준 — UNCHK-007·015와 같은 의미 판정 계열 | Phase 2-5 | TOS-COMPLETION-STATUS |  | YES |  |
 | UNCHK-024 | BarTimeProjection 시간 bound 필드의 VER-002 키 결속 | 코드 어디에도 필드↔키 결속 표면이 없고 동형 후보 다수라 키 공급이 추측이 된다 (§7.4 D-1). 부분 해소(2026-09-02, 갱신) — 9필드 전부 처분 확정: ① 2필드(future_tolerance·maximum_consumer_age_ms)는 1:1 키 결속 확정: future_tolerance↔MAX_future_timestamp_tolerance_ms, maximum_consumer_age_ms↔MAX_critical_input_consumer_receipt_age_ms(둘 다 값 보유). ② delay_bounds는 4키 합성-멤버십 결속(1:1보다 약한 결속): MAX_time_transport_and_queue_uncertainty_ms + MAX_clock_domain_conversion_uncertainty_ms + MAX_time_source_precision_ms + MAX_time_source_sequence_gap_ms(ADR-002-008 §9 — freshness_verdict 에서 무순서 합산). ③ 5필드(source_age·snapshot_age_bound·interval_width·boundary_lag·health_state)는 register §8-1 미완 범주가 아니라 애초에 MAX_*/MIN_* 문턱이 될 수 없는 관측값/파생 합성/기준틀 구성 파라미터/열거형이라 구조적으로 프로파일 비대상 선언(design #33 §3.3). 전부 resolver.py BarTimeProjection docstring 리터럴 결속/선언. ④ 잔여 1필드(max_age_bound)는 2026-09-04 신설 키 MAX_time_conservative_freshness_age_ms 에 1:1 결속 확정 (값 null 등록 — 등록은 승인이 아니다; disposition draft docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md §2, §5). D-1 은 UNBOUND → BLOCKED(우주 안·값 없음)로 이행 — 잔여는 Bounds-Approver 값 승인(draft §6)뿐. ⑤ 2026-09-04 Bounds-Approver 값 승인 완료 — MAX_time_conservative_freshness_age_ms = 1000 ms(operator; disposition draft §6, 이 커밋이 채운 양식). D-1 은 BLOCKED → VALUED 로 이행(resolver·marketfeed 두 사이트 모두 7키 전부 VALUED — 더 이상 갈리지 않는다). 9필드 전체 처분 완료, 잔여 없음. | 종결 — 2026-09-04 Bounds-Approver 값 승인(1000 ms, disposition draft docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md §6)으로 9필드 전체 처분 완료; 잔여 블로커 없음 | Phase 1 | TOS-COMPLETION-STATUS |  | YES |  |
 | UNCHK-025 | VER-002 프로파일 밖 bound 값의 소관 아티팩트 검증 | SizingBound 6필드(소관 Order Construction Policy RFC-002 §9.1)·dsl_evaluation_budget_steps(소관 EngineConfiguration/DCE-INV-007)는 프로파일 검사 우주 밖 — 소관 아티팩트의 비준·검증은 별도 축 | Order Construction Policy 비준 및 결속 검사 신설 | Phase 2-5 | TOS-COMPLETION-STATUS |  | YES |  |
+| UNCHK-027 | U-6′ reason 닫힌-세계 검사기/동결 계약 불일치 | 계약은 정본 네 사실의 동일행 포함만 요구 · 검사기는 부수 reason 구획 전부 금지 → 계약 충족 행도 red · 배경: 재개 아크 5판(2026-09-04/05 · 스탬프 20260904-233516 → 20260905-133502) 에서 포함-검사는 모순 구획 병기 우회 4종을 못 막고 배타-검사는 문언보다 강함 · 포함/배타는 계약 층 결정 · 현재 NONE 사이트 0 이라 생성물 불변 · 검사기는 fail-closed(닫힌 세계) 쪽에 둠 | 운영자 결정 — U-6′ 배타 문법을 계약에 명문화(계약 편집 = S-26 ⑥ 리셋·O-6 재결속·레인 B 재심) 또는 검사기의 과잉 차단 제거(포함-검사로 회귀 시 우회 4종 재개) | Phase 0 | TOS-COMPLETION-STATUS |  | YES |  |
 
 ## D0-5 disposition table (7 rows, §7.4)
 

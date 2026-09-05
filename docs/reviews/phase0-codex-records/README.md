@@ -19,6 +19,18 @@
 - 레인 B 계약 판정의 정본 `verdict.md` 는 `phase0-completion-contract/<stamp>/` 에 있고, 여기에는 그 심판의 원문 JSON ·
   focus · evidence 만 보존한다(`VERDICT-POINTER.md` 참조).
 
+## S-26 재개 아크(2026-09-04/05)
+
+운영자 지시(2026-09-04 「S-26 재심 재개」)로 레인 B 계약 재심이 5회 더 돌았다. 5회 전부
+`needs-attention` 이었고, S-26 ② 카운터는 재개 아크 5판 동안 0/2 로 종결됐다(3회차부터는 ⑤ 도
+불성립). 5회차(스탬프 `20260905-133502`)에서 잔여를 §13 UNCHECKABLE 레지스터에 등재하는 것으로
+처분하라는 운영자 지시(2026-09-05 「5회차 결과 무관하게 종료하고 잔여는 UNCHK 등재로 처분」)가
+내려와, 신규 행 `UNCHK-027`(축: `U-6′ reason 닫힌-세계 검사기/계약 불일치`)을
+`tos-spec/src/verification/PHASE0-UNCHECKABLE-REGISTER.csv` 에 등재했다. 아래 5개 스탬프의
+`verdict.md` 는 어느 것도 **계약 판정**이 아니다 — `docs/reviews/phase0-completion-contract/` 의
+R-3 선택자(사전순 마지막 스탬프)가 R-4/R-5 approve 로 읽어 ENTRY 를 깨뜨리기 때문에, 5건 전부
+정본 계약 판정 디렉터리가 아니라 이 보존소에 둔다.
+
 ## 스탬프 색인
 
 | 스탬프 | 레인 | 잡 | 판정 | 결속 head | 비고 |
@@ -39,6 +51,11 @@
 | `20260904-150103` | A 재심 #4 (C4) | review-mtmjt61i-d0f3oc | needs-attention 1 | 7bf83226 | (마) 기록 검증 느슨 |
 | `20260904-154559` | A 재심 #5 (C5) | review-mtmlkbm4-t1ovxs | needs-attention 1 | 2c2bc607 | claim 포함 검사 |
 | `20260904-155704` | **A 재심 #6 (C6)** | review-mtmnmhm1-pc6tnu | **approve · findings 0** | c5550229 | §12.3 절차표 9행 게이트 개방 · D0-5 MET 7/7 |
+| `20260904-233516` | B S-26 재개 1회차 | review-mtn25kq7-vv0bgv | needs-attention 1 | 11ac075d | 「U-6′ (ㄹ) scope_desc 미소비·기록 경로 접두사」 |
+| `20260905-033432` | B S-26 재개 2회차 | review-mtnao2oh-wio0nf | needs-attention 1 | fbb1a364 | 「부분문자열 대조」 |
+| `20260905-041033` | B S-26 재개 3회차 | review-mtnby9g3-rkrbdd | needs-attention 1 | 0140b866 | 「구획 존재만 · 유일성 미검사」 |
+| `20260905-091036` | B S-26 재개 4회차 | review-mtnmo7fu-vfu543 | needs-attention 1 | 9f80f6a1 | 「startswith 라벨 분류 · 공백/NBSP/ZWSP 병기」 |
+| `20260905-133502` | B S-26 재개 5회차·최종 | review-mtnw4hor-zdytup | needs-attention 1 | 1fd98450 | 「닫힌 세계 과잉 차단 → UNCHK 등재(운영자 지시 종료)」 |
 
 ## 파일 구성(스탬프마다)
 
