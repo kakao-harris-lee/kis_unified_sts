@@ -841,22 +841,25 @@ _COUNT_TRANSCRIPTIONS: tuple[_CountTranscription, ...] = (
         re.compile(r"leaving (\d+)/(\d+) direct tables and 1 gap"),
         ("direct_traceability.count", "direct_traceability.total"),
     ),
-    # Profile null-key census (design §6.3.2). Only ``163`` (total numeric keys)
-    # and ``16`` (null keys) are derived-and-checked here; the ``147`` (non-null)
+    # Profile null-key census (design §6.3.2). Only ``164`` (total numeric keys)
+    # and ``16`` (null keys) are derived-and-checked here; the ``148`` (non-null)
     # figure that appears alongside them is UNCHK-001 (design §6.3.3) -- the
     # profile's per-key ``approved`` predicate is not machine-derivable yet (the
-    # ``limits`` provenance markers live in YAML comments, not values), so ``147``
+    # ``limits`` provenance markers live in YAML comments, not values), so ``148``
     # stays required literal context for anchor specificity but is never compared
     # against a derived value.
     _CountTranscription(
         _GATE_STATUS_MD,
         "profile null-key census (gate status)",
         re.compile(
-            r"147/(\d+) numeric keys carry approved values "
-            r"\(`MIN_evidence_retention_ms` approved 2026-08-07, §3\.26\); "
+            r"148/(\d+) numeric keys carry approved values "
+            r"\(`MIN_evidence_retention_ms` approved 2026-08-07, §3\.26; "
+            r"`MAX_time_conservative_freshness_age_ms` approved 2026-09-04, "
+            r"§3\.28\); "
             r"(\d+) keys \(10 broker bounds pending P0-2 measurement, 6 "
             r"instance/architecture limits under ratified trigger-bound "
-            r"deferrals\) remain key-level unapproved and fail-closed"
+            r"deferrals\) remain "
+            r"key-level unapproved and fail-closed"
         ),
         ("profile.total", "profile.null"),
     ),
@@ -864,7 +867,7 @@ _COUNT_TRANSCRIPTIONS: tuple[_CountTranscription, ...] = (
         _PROFILE_YAML,
         "profile null-key census (profile header)",
         re.compile(
-            r"147 of the (\d+) numeric keys now carry approved values; "
+            r"148 of the (\d+) numeric keys now carry approved values; "
             r"(\d+) keys stay null —"
         ),
         ("profile.total", "profile.null"),

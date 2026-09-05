@@ -1687,7 +1687,7 @@ def test_real_corpus_reports_oq11_not_required_and_reproduces_digest() -> None:
     assert "oq11_raise_state=NOT_REQUIRED" in result.stdout
 
     digest = tcs._compute_bound_set_digest(tcs.U12_BOUND_PATHS, "HEAD", _REPO_ROOT)
-    assert digest == "4e6c975f794696066a25abe4ee827594afa18f8fac8bfb5e7bf31d43508b3c2f"
+    assert digest == "045f3ae7565860df6e0c38d3c7ee49c76f3a4d3784d646279cd1be2727dbb429"
 
 
 # ---------------------------------------------------------------------------
@@ -4350,14 +4350,20 @@ def _write_mini_profile(
 
 
 def test_d1_real_corpus_dispositions_match_expected() -> None:
-    """[flipped, C4 — 계약 §7.4 D-3/D-4/D-5 구현] §7.4 실측 기대: 5곳은
-    균일 다중/단일 키로 ``UNBOUND``. ``resolver`` 와 ``marketfeed``
-    (독립 확인 ``review-mtmg2lz7-88qdyb`` 가 그 ``NONE`` 자기신고를 거짓으로
-    판정한 뒤 docstring 을 D-5 재분류한 결과, C4 lockstep)는 이제 «같은»
-    7키 선언(6개 VALUED + ``max_age_bound`` 1개 UNBOUND)에서 파생된
-    ``VALUED+UNBOUND`` — D-3 이 접지 않고 «집합»으로 판정됨이다. 두
-    사이트 모두 ``kind == "keys"``이고 ``NO_DEPENDENCY`` 후보(``kind ==
-    "none"``)는 실코퍼스에 0 개다."""
+    """[flipped, C4 — 계약 §7.4 D-3/D-4/D-5 구현; 2026-09-04 UNCHK-024
+    값 승인 갱신] §7.4 실측 기대: 5곳은 균일 다중/단일 키로 ``UNBOUND``.
+    ``resolver`` 와 ``marketfeed`` (독립 확인 ``review-mtmg2lz7-88qdyb``
+    가 그 ``NONE`` 자기신고를 거짓으로 판정한 뒤 docstring 을 D-5
+    재분류한 결과, C4 lockstep)는 «같은» 7키 선언에서 파생된다. 잔여
+    1필드 ``max_age_bound`` 가 2026-09-04 ``MAX_time_conservative_
+    freshness_age_ms`` 로 1:1 결속된 뒤(disposition draft
+    ``docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md``
+    §2, §5) 그 키가 프로파일에 값 null 로 등록돼 한동안 ``VALUED+BLOCKED``
+    였으나(6 VALUED + 1 BLOCKED), 같은 날 Bounds-Approver 가 그 키의 값을
+    1000ms 로 승인(draft §6)하면서 7키 전부 ``VALUED`` 로 균일해졌다 —
+    D-3 은 균일 상태를 접지 않고 그대로 ``VALUED`` 로 렌더한다(더 이상
+    ``VALUED+BLOCKED`` 가 아니다). 두 사이트 모두 ``kind == "keys"``이고
+    ``NO_DEPENDENCY`` 후보(``kind == "none"``)는 실코퍼스에 0 개다."""
     dispositions, fail_closed = tcs.compute_d1_dispositions(_REPO_ROOT)
     assert fail_closed == ()
     for name in (
@@ -4372,11 +4378,10 @@ def test_d1_real_corpus_dispositions_match_expected() -> None:
     for name in ("resolver", "marketfeed"):
         record = dispositions[name]
         assert record.kind == "keys", (name, record)
-        assert record.cell == "VALUED+UNBOUND", (name, record)
+        assert record.cell == "VALUED", (name, record)
         states = {state for _key, state in record.per_key}
-        assert states == {"VALUED", "UNBOUND"}
-        assert sum(1 for _k, s in record.per_key if s == "VALUED") == 6
-        assert sum(1 for _k, s in record.per_key if s == "UNBOUND") == 1
+        assert states == {"VALUED"}
+        assert sum(1 for _k, s in record.per_key if s == "VALUED") == 7
     # 실코퍼스에 NONE 선언 사이트는 0 개다(marketfeed 재분류 후) — D-4/U-6′
     # 어휘는 여전히 구현돼 있지만 오늘의 소비자는 없다(56차 "부수 사실").
     assert all(record.kind != "none" for record in dispositions.values())
@@ -4390,13 +4395,16 @@ def test_d1_real_corpus_check_d1_is_clean() -> None:
 
 
 def test_d1_real_corpus_d0_5_met() -> None:
-    """[flipped, C4] real corpus 렌더는 이제 D0-5 를 ``MET`` 으로 낸다 —
-    7사이트 전부가 D-3(``keys``)으로 판정됨이다."""
+    """[flipped, C4; 2026-09-04 UNCHK-024 값 승인 갱신] real corpus 렌더는
+    이제도 D0-5 를 ``MET`` 으로 낸다 — 7사이트 전부가 D-3(``keys``)으로
+    판정됨이다. resolver/marketfeed 는 신설 키 값 승인(1000ms) 이후
+    ``VALUED`` 로 균일하다(더 이상 ``VALUED+BLOCKED`` 도
+    ``VALUED+UNBOUND`` 도 아니다)."""
     ctx = tcs.build_context(_REPO_ROOT)
     findings = tcs.run_checks(ctx)
     rendered, _ = tcs.render_completion_status(ctx, findings)
     assert "- `D0-5`: `MET`" in rendered
-    assert "VALUED+UNBOUND" in rendered
+    assert "VALUED+BLOCKED" not in rendered
 
 
 def test_d1_declaration_missing_is_undecided(
@@ -5054,14 +5062,23 @@ def _d1_u6prime_row(
     record_rel: str,
     closable: str = "YES",
 ) -> dict[str, str]:
-    """U-6′ (ㄱ)~(ㄹ) 그래머를 만족하는 §13 행 — 대조군은 ``axis``/
-    ``record_rel``/포함 여부를 어긋나게 만든다."""
+    """U-6′ (ㄱ)~(ㄹ) 닫힌 세계 그래머를 만족하는 §13 행 — 대조군은
+    ``axis``/``record_rel``/포함 여부를 어긋나게 만든다.
+
+    [닫힌 세계 재설계] ``reason`` 은 정확히 네 정본 구획만 담는다(각
+    한 번씩, 다른 구획 없음) — (1) ``tcs._D1_U6PRIME_DECLARATION_SEGMENT``,
+    (2) ``tcs._d1_u6prime_scan_result_segment(...)`` (후보 우주 크기·
+    스캔 범위·파일 수가 한 구획에 공존), (3) 경계 문장, (4)
+    ``tcs._d1_u6prime_record_segment(record_rel)``. 옛 버전이 다섯째
+    구획으로 병기하던 «프로파일 키 참조 0» 자유 텍스트는 닫힌 세계에서
+    허용되지 않은(foreign) 구획이 되므로 뺐다."""
     if axis is None:
         axis = f"D0-5 NONE: {site_id}"
     reason = (
-        "VER-002-KEYS: NONE 선언 · "
-        f"후보 우주 {candidate_size}개 키 · {scope_desc} {file_count}개 파일 스캔 · "
-        "프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+        "선언: VER-002-KEYS: NONE · "
+        f"스캔 결과: 후보 우주 {candidate_size}개, 스캔 범위 {scope_desc}, "
+        f"파일 {file_count}개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
         f"독립 리뷰 기록: {record_rel}"
     )
     return {
@@ -5233,10 +5250,15 @@ def test_d1_candidate_universe_derivation_includes_every_declared_and_contrast_k
     )
 
 
-def test_d1_candidate_universe_real_corpus_includes_max_age_bound() -> None:
-    """실코퍼스 대조군 — ``max_age_bound`` 는 ``VERIFICATION-PROFILE-002``
-    우주 밖이지만 ``resolver``/``marketfeed`` 가 D-5 로 선언하므로 후보
-    우주에 실재해야 한다(53차 (나)가 막는 우회의 증인)."""
+def test_d1_candidate_universe_real_corpus_max_age_bound_now_bound() -> None:
+    """실코퍼스 대조군 [갱신, 2026-09-04 UNCHK-024 처분 · 같은 날 값 승인] —
+    ``max_age_bound`` 리터럴은 더 이상 ``resolver``/``marketfeed`` docstring 의
+    VER-002-KEYS 선언에 나타나지 않는다: 1:1 결속 키 이름
+    ``MAX_time_conservative_freshness_age_ms`` 로 교체됐다(disposition draft
+    ``docs/plans/2026-09-04-tos-unchk024-max-age-bound-key-disposition-draft.md``
+    §5). 그 신설 키는 이제 ``VERIFICATION-PROFILE-002`` 우주 **안**에
+    실재한다(값 1000ms 승인 → VALUED, 우주 밖이 아니다) — 53차 (나)가 막는
+    우회의 증인이었던 이전 상태(우주 밖 의존 키)는 종결됐다."""
     universe, err = tcs._load_profile_universe(_REPO_ROOT)
     assert universe is not None, err
     decls = []
@@ -5247,8 +5269,9 @@ def test_d1_candidate_universe_real_corpus_includes_max_age_bound() -> None:
         assert doc is not None
         decls.append(tcs._parse_d1_declaration(doc))
     candidate_universe = tcs._d1_candidate_universe(universe, decls)
-    assert "max_age_bound" in candidate_universe
-    assert "max_age_bound" not in universe
+    assert "max_age_bound" not in candidate_universe
+    assert "MAX_time_conservative_freshness_age_ms" in universe
+    assert "MAX_time_conservative_freshness_age_ms" in candidate_universe
 
 
 def test_d1_none_declaration_row_absent_is_undecided_control_5a(
@@ -5279,7 +5302,15 @@ def test_d1_none_declaration_row_present_record_absent_is_undecided_control_5b(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """대조군 ⑤-b — §13 행은 있으나 D-4 (마) 독립 리뷰 기록이 없으면
-    (54차의 «공시 의무만으로는 통과» 회피를 닫는 자리) red."""
+    (54차의 «공시 의무만으로는 통과» 회피를 닫는 자리) red.
+
+    [레인 B 재심 20260904-233516 finding 1 처분 이후] reason 이 그럴듯한
+    경로를 적어도, 그 경로에 실제 스탬프(``verdict.md``)가 없으면
+    ``_d1_locate_no_dependency_record_stamp`` 는 아무것도 선택하지 못해
+    ``record_path`` 가 ``None`` 이다 — 이제는 이 자리가 §13 행 그래머
+    (ㄹ)(4) 미충족으로 **먼저** 막힌다(구판은 디렉터리 접두사만 보고
+    이 행을 통과시켜, 실패 지점이 그 뒤 D-4 (마) 기록 검증으로 늦게
+    옮겨졌었다)."""
     monkeypatch.setattr(tcs, "D1_SITES", D1_NONE_TEST_SITES)
     _write_mini_profile(
         tmp_path,
@@ -5304,9 +5335,1032 @@ def test_d1_none_declaration_row_present_record_absent_is_undecided_control_5b(
         tmp_path, ctx.uncheckable_rows
     )
     assert dispositions["noneprobe"].cell == "UNDECIDED"
-    assert "독립 리뷰 기록 미충족" in dispositions["noneprobe"].basis
+    assert "U-6′ §13 행 미충족" in dispositions["noneprobe"].basis
+    assert (
+        "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in dispositions["noneprobe"].basis
+    )
     findings = tcs.check_d1(ctx)
     assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_row_reason_missing_scope_desc_is_undecided_control_10a() -> (
+    None
+):
+    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-a — reason 의 스캔
+    결과 구획에 후보 우주 크기·파일 수는 있으나 ``scope_desc``(스캔 범위)
+    자체가 빠지면 (ㄹ)(2) 미충족으로 red. 구판은 ``scope_desc`` 를 전혀
+    소비하지 않아 이 누락을 못 잡았다."""
+    reason = (
+        "선언: VER-002-KEYS: NONE · 스캔 결과: 후보 우주 1개, 파일 1개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(2) 스캔 결과" in detail
+
+
+def test_d1_none_declaration_row_reason_wrong_scope_desc_is_undecided_control_10b() -> (
+    None
+):
+    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-b — reason 의 스캔
+    결과 구획이 실제 스캔 범위(``d1_none_pkg``) 대신 무관한 범위 문자열
+    (``other_pkg``)을 적으면 (ㄹ)(2) 미충족으로 red — reason 이 실제 스캔
+    범위와 무관한 값을 적어도 통과하던 회피를 막는다."""
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 other_pkg, 파일 1개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert "(2) 스캔 결과" in detail
+
+
+def test_d1_none_declaration_row_reason_scope_elsewhere_scan_segment_other_pkg_is_undecided_control_11a() -> (
+    None
+):
+    """[레인 B 재심 20260905-033432 finding 1(a)] 대조군 ⑪-a — 실제 스캔
+    범위(``d1_none_pkg``)가 스캔 결과 구획과 무관한 다른 구획(remark)에
+    등장하고, 진짜 스캔 결과 구획은 엉뚱한 범위(``other_pkg``)를 적는다.
+    구판(20260904-233516 처분)은 ``scope_desc in reason`` 부분문자열만
+    보아 이 치환을 통과시켰다 — 이제는 스캔 결과 구획 «전체»가 일치해야
+    하므로 무관한 구획에 있는 진짜 값은 세지 않고 (2)가 그대로 미충족."""
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 other_pkg, 파일 1개 · "
+        "d1_none_pkg 는 참고용 무관 remark일 뿐이다 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(2) 스캔 결과" in detail
+
+
+def test_d1_none_declaration_row_reason_wrong_candidate_size_right_scope_is_undecided_control_11d() -> (
+    None
+):
+    """[레인 B 재심 20260905-033432 finding 1] 대조군 ⑪-d — 스캔 결과
+    구획의 ``scope_desc`` 는 맞지만 후보 우주 크기가 틀리면(2개 vs 실제
+    1개) (2) 미충족으로 red — 범위 문자열만 맞으면 통과하는 회귀가 없는지
+    본다."""
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 2개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert "(2) 스캔 결과" in detail
+
+
+def test_d1_none_declaration_row_reason_scan_result_split_across_segments_is_undecided_control_11e() -> (
+    None
+):
+    """[레인 B 재심 20260905-033432 finding 1] 대조군 ⑪-e — 스캔 결과의
+    세 값(후보 우주 크기·스캔 범위·파일 수)이 정본이 요구하는 «한 구획»이
+    아니라 서로 다른 두 구획으로 쪼개지면(가운뎃점을 하나 더 끼워 넣는
+    실수) (2) 미충족으로 red — co-location 요구가 실제로 구획 경계를
+    본다는 것을 확인한다."""
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개 · 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert "(2) 스캔 결과" in detail
+
+
+def test_d1_none_declaration_row_reason_unselected_prefix_record_path_is_undecided_control_10c() -> (
+    None
+):
+    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-c — reason 이
+    실제로 선택·검증된 기록(``record_path``)과는 다른, 같은 디렉터리
+    접두사(``docs/reviews/d1-no-dependency/noneprobe/``)를 공유하는
+    가짜 스탬프 경로를 인용하면 (ㄹ)(4) 미충족으로 red — 구판의 접두사
+    일치 검사는 이 치환을 통과시켰다."""
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/99990101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in detail
+
+
+def test_d1_none_declaration_row_reason_record_path_with_suffix_is_undecided_control_11b() -> (
+    None
+):
+    """[레인 B 재심 20260905-033432 finding 1(b)] 대조군 ⑪-b — 독립 리뷰
+    기록 구획이 실제 선택·검증된 ``record_path`` 뒤에 접미사
+    (``.not-the-selected-record``)를 덧붙이면 (ㄹ)(4) 미충족으로 red —
+    구판(``record_path in reason`` 부분문자열)은 이 치환을 통과시켰다
+    (record_path 자체가 여전히 부분문자열로 존재하므로)."""
+    record_path = "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        f"독립 리뷰 기록: {record_path}.not-the-selected-record"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=record_path,
+    )
+    assert ok is False
+    assert "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in detail
+
+
+def test_d1_none_declaration_row_reason_record_path_second_path_is_undecided_control_11c() -> (
+    None
+):
+    """[레인 B 재심 20260905-033432 finding 1(b)] 대조군 ⑪-c — 독립 리뷰
+    기록 구획에 실제 ``record_path`` 뒤로 두 번째(무관한) 경로를 나란히
+    적으면 (ㄹ)(4) 미충족으로 red — 구판은 record_path 가 부분문자열로
+    존재하는 한 이 병기를 통과시켰다."""
+    record_path = "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    other_path = "docs/reviews/d1-no-dependency/noneprobe/99990101-000000/verdict.md"
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        f"독립 리뷰 기록: {record_path} {other_path}"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=record_path,
+    )
+    assert ok is False
+    assert "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in detail
+
+
+def test_d1_none_declaration_row_reason_duplicate_scan_segment_dot_sep_is_undecided_control_12a() -> (
+    None
+):
+    """[레인 B 재심 20260905-041033 finding 1 · 닫힌 세계 재설계] 대조군
+    ⑫-a — 정확한 스캔 결과 구획과 함께, 다른(가운뎃점으로 구분된) 구획에
+    모순되는 두 번째 ``스캔 결과:`` 구획을 병기하면 red. 닫힌 세계에는
+    "이 구획이 (2)를 의도했는가"를 판별하는 라벨 인식이 없으므로, 내용이
+    다른 두 번째 구획은 «(2) 중복»이 아니라 그냥 **허용되지 않은
+    구획**(정본 넷 중 어느 것과도 다름)으로 잡힌다 — 결과는 여전히 red."""
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "스캔 결과: 후보 우주 99개, 스캔 범위 other_pkg, 파일 99개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_duplicate_scan_segment_semicolon_sep_is_undecided_control_12b() -> (
+    None
+):
+    """[레인 B 재심 20260905-041033 finding 1 · 닫힌 세계 재설계] 대조군
+    ⑫-b — ⑫-a 와 동일한 모순 병기를 세미콜론 구분자로 구성해도(허용되지
+    않은 구획으로) red — 판정이 구획 구분자 종류에 무관함을 확인한다."""
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개;"
+        "스캔 결과: 후보 우주 99개, 스캔 범위 other_pkg, 파일 99개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_duplicate_scan_segment_newline_sep_is_undecided_control_12c() -> (
+    None
+):
+    """[레인 B 재심 20260905-041033 finding 1 · 닫힌 세계 재설계] 대조군
+    ⑫-c — ⑫-a 와 동일한 모순 병기를 개행 구분자로 구성해도(허용되지
+    않은 구획으로) red."""
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개\n"
+        "스캔 결과: 후보 우주 99개, 스캔 범위 other_pkg, 파일 99개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_duplicate_record_segment_second_path_is_undecided_control_12d() -> (
+    None
+):
+    """[레인 B 재심 20260905-041033 finding 1 · 닫힌 세계 재설계] 대조군
+    ⑫-d — 정확한 독립 리뷰 기록 구획과 함께, 다른 구획에 두 번째(다른
+    경로를 담은) ``독립 리뷰 기록:`` 구획을 병기하면 red. 두 번째 구획은
+    정본 (4)와 내용이 다르므로 «(4) 중복»이 아니라 허용되지 않은 구획으로
+    잡힌다."""
+    record_path = "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    other_path = "docs/reviews/d1-no-dependency/noneprobe/99990101-000000/verdict.md"
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        f"독립 리뷰 기록: {record_path} · "
+        f"독립 리뷰 기록: {other_path}"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=record_path,
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_duplicate_identical_scan_segments_is_undecided_control_12e() -> (
+    None
+):
+    """[레인 B 재심 20260905-041033 finding 1] 대조군 ⑫-e — 정본과
+    글자 단위로 완전히 동일한 ``스캔 결과:`` 구획이 (다른 구획으로) 두 번
+    등장해도 (ㄹ)(2) 미충족으로 red — 중복 자체가 카디널리티 위반이므로
+    두 구획이 서로 모순되지 않아도(둘 다 정본과 같아도) 통과해서는 안
+    된다."""
+    scan_segment = "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개"
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        f"{scan_segment} · "
+        f"{scan_segment} · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(2) 스캔 결과" in detail
+
+
+def test_d1_none_declaration_row_reason_space_prefixed_duplicate_scan_segment_after_newline_is_undecided_control_13a() -> (
+    None
+):
+    """[레인 B 재심 20260905-091036 finding 1 · 닫힌 세계 재설계] 대조군
+    ⑬-a — 정확한 스캔 결과 구획 뒤, 개행으로 분할되는 두 번째 구획이 선두
+    공백 하나(``\\n  스캔 결과: …``)를 두고 모순되는 값을 병기하면 red —
+    선두 공백이 있든 없든 그 구획은 정본과 byte-for-byte 다르므로 그냥
+    허용되지 않은 구획이다(라벨 인식 자체가 없어 위장이 통하지 않는다)."""
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md\n"
+        "  스캔 결과: 후보 우주 99개, 스캔 범위 other_pkg, 파일 99개"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_tab_prefixed_duplicate_record_segment_after_newline_is_undecided_control_13b() -> (
+    None
+):
+    """[레인 B 재심 20260905-091036 finding 1 · 닫힌 세계 재설계] 대조군
+    ⑬-b — 정확한 독립 리뷰 기록 구획 뒤, 개행으로 분할되는 두 번째 구획이
+    선두 탭 하나(``\\n\\t독립 리뷰 기록: …``)를 두고 다른 경로를 병기하면
+    red — 선두 탭 여부와 무관하게 정본과 다른 구획은 허용되지 않는다."""
+    record_path = "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    other_path = "docs/reviews/d1-no-dependency/noneprobe/99990101-000000/verdict.md"
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        f"독립 리뷰 기록: {record_path}\n"
+        f"\t독립 리뷰 기록: {other_path}"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=record_path,
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_nbsp_prefixed_duplicate_scan_segment_after_newline_is_undecided_control_13c() -> (
+    None
+):
+    """[레인 B 재심 20260905-091036 finding 1 · 닫힌 세계 재설계] 대조군
+    ⑬-c — 두 번째 구획이 NBSP(``U+00A0``) 하나를 앞에 두고 모순되는 스캔
+    결과를 병기하면 red — NBSP 를 정규화해 "인식"할 필요가 없다: 그
+    구획은 애초에 정본과 다르므로 허용되지 않은 구획이다."""
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md\n"
+        " 스캔 결과: 후보 우주 99개, 스캔 범위 other_pkg, 파일 99개"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_zwsp_prefixed_duplicate_record_segment_after_newline_is_undecided_control_13d() -> (
+    None
+):
+    """[레인 B 재심 20260905-091036 finding 1 · 닫힌 세계 재설계] 대조군
+    ⑬-d — 두 번째 구획이 폭 없는 스페이스(ZWSP, ``U+200B``) 하나를 앞에
+    두고 다른 경로를 병기하면 red — ZWSP 를 지우는 정규화가 없어도, 그
+    구획은 정본 (4)와 byte-for-byte 다르므로 허용되지 않는다."""
+    record_path = "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    other_path = "docs/reviews/d1-no-dependency/noneprobe/99990101-000000/verdict.md"
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        f"독립 리뷰 기록: {record_path}\n"
+        f"​독립 리뷰 기록: {other_path}"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=record_path,
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_label_mid_segment_in_unrelated_remark_is_undecided_control_13e() -> (
+    None
+):
+    """[레인 B 재심 20260905-091036 finding 1 · 닫힌 세계 재설계] 대조군
+    ⑬-e — 라벨과 닮은 문자열이 다른 remark 중간에 등장해도(``참고 스캔
+    결과: …``) red — «라벨을 언급하는가»를 감지하는 코드가 없으므로 이
+    구획이 (2)와 무관함을 판별할 필요조차 없다: 정본과 다르면 그냥
+    허용되지 않은 구획이다."""
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "참고 스캔 결과: 이전 실행에서는 달랐다 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_fullwidth_colon_lookalike_duplicate_scan_segment_is_undecided_control_13f() -> (
+    None
+):
+    """[레인 B 재심 20260905-091036 finding 1 · 닫힌 세계 재설계] 대조군
+    ⑬-f — 두 번째 구획이 전각 콜론(``：`` U+FF1A)으로 쓴 「스캔 결과：」
+    표기를 병기하면 red — 전각 콜론을 반각으로 접는 정규화가 없어도, 그
+    구획은 정본과 byte-for-byte 다르므로 허용되지 않는다(동형이의 콜론
+    우회 계열의 대표 사례 — 99abc081 적대적 리뷰가 실제로 이 축을
+    Armenian full stop U+0589 등으로 뚫었다)."""
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "스캔 결과：후보 우주 99개, 스캔 범위 other_pkg, 파일 99개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        "독립 리뷰 기록: "
+        "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=(
+            "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+        ),
+    )
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_reason_cites_earlier_unselected_stamp_is_undecided_control_10d(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """[레인 B 재심 20260904-233516 finding 1] 대조군 ⑩-d — 스탬프
+    디렉터리가 **둘 다 실재**하고 검사기는 ``_d1_locate_no_dependency_record_stamp``
+    의 사전순 마지막(최신)을 선택하는데, §13 행 reason 이 그보다 이른
+    스탬프를 인용하면 (ㄹ)(4) 미충족으로 red — «선택된 기록»과 «인용된
+    경로»가 서로 다른 값일 수 있다는 개념적 결합을 막는 자리다."""
+    monkeypatch.setattr(tcs, "D1_SITES", D1_NONE_TEST_SITES)
+    _write_mini_profile(
+        tmp_path,
+        bounds={"B_probe_bound": {"value_ms": 500}},
+        limits={"MAX_probe_ceiling": 1},
+    )
+    _write_d1_test_site(tmp_path, _d1_none_docstring(), rel=D1_NONE_SITE_REL)
+    scope_desc, file_count, candidate_size = _d1_expected_scan_facts(
+        tmp_path, "noneprobe"
+    )
+    earlier_rel = _write_d1_no_dependency_record(
+        tmp_path,
+        "noneprobe",
+        D1_NONE_SITE_REL,
+        "module",
+        stamp="20260101-000000",
+    )
+    _write_d1_no_dependency_record(
+        tmp_path,
+        "noneprobe",
+        D1_NONE_SITE_REL,
+        "module",
+        stamp="20260102-000000",
+    )
+    row = _d1_u6prime_row(
+        "noneprobe",
+        candidate_size=candidate_size,
+        scope_desc=scope_desc,
+        file_count=file_count,
+        record_rel=earlier_rel,
+    )
+    write_corpus(tmp_path, write_d1_sites=False, uncheckable_rows=[row])
+
+    ctx = tcs.build_context(tmp_path)
+    dispositions, _fail_closed = tcs.compute_d1_dispositions(
+        tmp_path, ctx.uncheckable_rows
+    )
+    record = dispositions["noneprobe"]
+    assert record.cell == "UNDECIDED"
+    assert "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in record.basis
+    findings = tcs.check_d1(ctx)
+    assert any(f.check_id == "U-6′" and "noneprobe" in f.message for f in findings)
+
+
+def test_d1_none_declaration_row_reason_exact_strings_is_grammar_ok_control_10e() -> (
+    None
+):
+    """[레인 B 재심 20260904-233516 finding 1 · 20260905-033432 finding 1]
+    양성 대조군(단위) — 실제 ``scope_desc``/``file_count``/``record_path``
+    를 구획 문법이 요구하는 정본 구획 형태로 그대로 담은 reason 은
+    (ㄱ)~(ㄹ) 그래머를 충족한다(전체 파이프라인 없이 함수 하나만 빠르게
+    확인)."""
+    record_path = "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+    reason = (
+        "선언: VER-002-KEYS: NONE · "
+        "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+        "후보 우주 밖의 이름은 보지 못한다 · "
+        f"독립 리뷰 기록: {record_path}"
+    )
+    ok, detail, matched = tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=record_path,
+    )
+    assert ok is True, detail
+    assert matched is not None
+
+
+# ⑭ 배터리 — 닫힌 세계 그래머 도입 계기가 된 적대적 리뷰(99abc081, 스크립트
+# ``attack_u6prime.py``)의 우회 시도를 그대로 재현한 red 대조군 + 순서/구분자
+# 불변성을 보는 green 대조군. 다섯 라운드 모두 "라벨을 언급하는가"를 감지하는
+# 정규화(트림 → NFKC → Cf 제거)를 겨눴었다 — 닫힌 세계에는 그 감지 자체가
+# 없으므로, 아래 위장 문자들이 무엇을 흉내 내든 결과는 한결같이 "허용되지
+# 않은 구획"이다.
+_D1_U6PRIME_14_RECORD_PATH = (
+    "docs/reviews/d1-no-dependency/noneprobe/20260101-000000/verdict.md"
+)
+_D1_U6PRIME_14_DECL = "선언: VER-002-KEYS: NONE"
+_D1_U6PRIME_14_SCAN = "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개"
+_D1_U6PRIME_14_BOUNDARY = "후보 우주 밖의 이름은 보지 못한다"
+_D1_U6PRIME_14_RECORD = f"독립 리뷰 기록: {_D1_U6PRIME_14_RECORD_PATH}"
+
+
+def _d1_u6prime_14_check(reason: str) -> tuple[bool, str, object]:
+    return tcs._d1_u6prime_row_state(
+        [{"axis": "D0-5 NONE: noneprobe", "reason": reason}],
+        "noneprobe",
+        candidate_universe_size=1,
+        scope_desc="d1_none_pkg",
+        file_count=1,
+        record_path=_D1_U6PRIME_14_RECORD_PATH,
+    )
+
+
+def test_d1_none_declaration_row_reason_armenian_full_stop_colon_homoglyph_is_undecided_control_14a() -> (
+    None
+):
+    """[99abc081 적대적 리뷰 · attack_u6prime.py 후보 1] 대조군 ⑭-a — 정확한
+    넷에 더해, 콜론을 Armenian full stop(``U+0589``)으로 바꾼 모순 구획
+    「스캔 결과֏: …」류를 병기하면 red — 이 구획은 진짜 콜론(``:``)을 쓰지
+    않으므로 애초에 정본 (2)와 byte-for-byte 다르다. 라벨 인식이 없으므로
+    "콜론처럼 보이는 문자"를 접어 줄 정규화도 없고, 그래서 접어 줄 필요조차
+    없다 — 그냥 허용되지 않은 구획이다."""
+    contradiction = "스캔 결과։ 후보 우주 999개, 스캔 범위 other_evil_pkg, 파일 999개"
+    reason = " · ".join(
+        [
+            _D1_U6PRIME_14_DECL,
+            _D1_U6PRIME_14_SCAN,
+            contradiction,
+            _D1_U6PRIME_14_BOUNDARY,
+            _D1_U6PRIME_14_RECORD,
+        ]
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_modifier_letter_colon_homoglyph_is_undecided_control_14b() -> (
+    None
+):
+    """[99abc081 적대적 리뷰 · attack_u6prime.py 후보 2] 대조군 ⑭-b —
+    MODIFIER LETTER COLON(``U+A789``)으로 위장한 모순 구획도 동일하게
+    허용되지 않은 구획으로 red."""
+    contradiction = "스캔 결과꞉ 후보 우주 999개, 스캔 범위 other_evil_pkg, 파일 999개"
+    reason = " · ".join(
+        [
+            _D1_U6PRIME_14_DECL,
+            _D1_U6PRIME_14_SCAN,
+            contradiction,
+            _D1_U6PRIME_14_BOUNDARY,
+            _D1_U6PRIME_14_RECORD,
+        ]
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_ratio_colon_homoglyph_is_undecided_control_14c() -> (
+    None
+):
+    """[99abc081 적대적 리뷰 · attack_u6prime.py 후보 3] 대조군 ⑭-c —
+    RATIO(``U+2236``)로 위장한 모순 구획도 동일하게 허용되지 않은 구획으로
+    red."""
+    contradiction = "스캔 결과∶ 후보 우주 999개, 스캔 범위 other_evil_pkg, 파일 999개"
+    reason = " · ".join(
+        [
+            _D1_U6PRIME_14_DECL,
+            _D1_U6PRIME_14_SCAN,
+            contradiction,
+            _D1_U6PRIME_14_BOUNDARY,
+            _D1_U6PRIME_14_RECORD,
+        ]
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_braille_blank_inside_label_is_undecided_control_14d() -> (
+    None
+):
+    """[99abc081 적대적 리뷰 · attack_u6prime.py 후보 11] 대조군 ⑭-d —
+    braille blank(``U+2800``, Unicode 카테고리 ``So`` — ``Cf`` 도 아니고
+    NFKC 로도 접히지 않는다)를 라벨 글자 사이에 끼운 모순 구획(「스⠀캔
+    결과: …」)도 허용되지 않은 구획으로 red — 이 문자는 구판의 두 정규화
+    (Cf 제거·NFKC) 어느 쪽도 지우지 못해 다섯 라운드 중 유일하게 «구획을
+    아예 다른 라벨로도 분류 못 시키는» 위장이었지만, 닫힌 세계에서는 분류
+    자체가 없으므로 이 구별이 무의미하다."""
+    contradiction = "스⠀캔 결과: 후보 우주 999개, 스캔 범위 other_evil_pkg, 파일 999개"
+    reason = " · ".join(
+        [
+            _D1_U6PRIME_14_DECL,
+            _D1_U6PRIME_14_SCAN,
+            contradiction,
+            _D1_U6PRIME_14_BOUNDARY,
+            _D1_U6PRIME_14_RECORD,
+        ]
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_combining_acute_after_colon_is_undecided_control_14e() -> (
+    None
+):
+    """[99abc081 적대적 리뷰 · attack_u6prime.py 후보 12] 대조군 ⑭-e —
+    콜론 뒤에 combining acute(``U+0301``)를 붙인 모순 구획(「스캔
+    결과:́ …」)도 허용되지 않은 구획으로 red."""
+    contradiction = "스캔 결과:́ 후보 우주 999개, 스캔 범위 other_evil_pkg, 파일 999개"
+    reason = " · ".join(
+        [
+            _D1_U6PRIME_14_DECL,
+            _D1_U6PRIME_14_SCAN,
+            contradiction,
+            _D1_U6PRIME_14_BOUNDARY,
+            _D1_U6PRIME_14_RECORD,
+        ]
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_variation_selector_inside_label_is_undecided_control_14f() -> (
+    None
+):
+    """[99abc081 적대적 리뷰 · attack_u6prime.py 후보 15] 대조군 ⑭-f —
+    variation selector-16(``U+FE0F``)을 라벨 글자 사이에 끼운 모순 구획
+    (「스캔️ 결과: …」)도 허용되지 않은 구획으로 red."""
+    contradiction = "스캔️ 결과: 후보 우주 999개, 스캔 범위 other_evil_pkg, 파일 999개"
+    reason = " · ".join(
+        [
+            _D1_U6PRIME_14_DECL,
+            _D1_U6PRIME_14_SCAN,
+            contradiction,
+            _D1_U6PRIME_14_BOUNDARY,
+            _D1_U6PRIME_14_RECORD,
+        ]
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_arbitrary_free_text_extra_segment_is_undecided_control_14g() -> (
+    None
+):
+    """대조군 ⑭-g — 정확한 넷에 더해, 어떤 라벨도 흉내 내지 않는 임의의
+    자유 텍스트 구획(「참고: 아무 말」)을 병기해도 red — 닫힌 세계는 "이
+    구획이 무해한 remark인가"를 봐주지 않는다: 정본 넷이 아니면 무엇이든
+    허용되지 않은 구획이다."""
+    reason = " · ".join(
+        [
+            _D1_U6PRIME_14_DECL,
+            _D1_U6PRIME_14_SCAN,
+            _D1_U6PRIME_14_BOUNDARY,
+            _D1_U6PRIME_14_RECORD,
+            "참고: 아무 말",
+        ]
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_trailing_whitespace_only_segment_is_undecided_control_14h() -> (
+    None
+):
+    """대조군 ⑭-h — 정확한 넷 뒤에 개행 하나와 공백 하나만 있는 «말미
+    구획»을 남기면 red — ``_d1_u6prime_segments`` 는 진짜 **빈** 구획(연속
+    구분자·선두/말미 구분자가 만드는)만 버리고, 공백"만"으로 된 구획은
+    버리지 않는다(모듈 주석 · ``_d1_u6prime_segments`` docstring 참조).
+    trailing delimiter 가 만드는 무해한 빈 문자열과, 저작자가 실수로 남긴
+    공백류 구획을 구분하기 위한 설계 선택이다."""
+    reason = (
+        " · ".join(
+            [
+                _D1_U6PRIME_14_DECL,
+                _D1_U6PRIME_14_SCAN,
+                _D1_U6PRIME_14_BOUNDARY,
+                _D1_U6PRIME_14_RECORD,
+            ]
+        )
+        + "\n "
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_crlf_glued_to_canonical_segment_is_undecided_control_14i() -> (
+    None
+):
+    """대조군 ⑭-i — bare CR(``\\r``)을 정본 (4) 구획 바로 뒤에 이어 붙여
+    다른 텍스트를 «녹여» 붙이면((4) 뒤에 구분자 없이 ``\\r`` + 잡음) red —
+    ``\\r`` 은 구획 구분자가 아니므로 이 결합체는 정본 (4)와 다른 하나의
+    구획이 되고, 그래서 (4)는 미충족(정본 구획 부재)이면서 동시에 그
+    결합체 자체가 허용되지 않은 구획이다."""
+    glued_record = (
+        _D1_U6PRIME_14_RECORD
+        + "\r스캔 결과: 후보 우주 999개, 스캔 범위 other_evil_pkg, 파일 999개"
+    )
+    reason = " · ".join(
+        [
+            _D1_U6PRIME_14_DECL,
+            _D1_U6PRIME_14_SCAN,
+            _D1_U6PRIME_14_BOUNDARY,
+            glued_record,
+        ]
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로" in detail
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_reordered_alt_delimiters_is_grammar_ok_control_14j() -> (
+    None
+):
+    """양성 대조군 ⑭-j — 정본 넷을 (1)(2)(3)(4) 기재 순서가 아니라 뒤섞은
+    순서로, 그것도 가운뎃점이 아니라 세미콜론·개행을 섞어 구분해도 그래머는
+    충족된다 — 판정은 순서 불문 다중집합 비교이지 문자열 전체 일치가
+    아니다(그래서 구획 구분자 종류·기재 순서는 자유롭고, 넷의 «내용»만
+    고정이다)."""
+    reason = (
+        _D1_U6PRIME_14_BOUNDARY
+        + "\n"
+        + _D1_U6PRIME_14_RECORD
+        + ";"
+        + _D1_U6PRIME_14_SCAN
+        + " · "
+        + _D1_U6PRIME_14_DECL
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is True, detail
+    assert matched is not None
+
+
+# ⑮ 배터리 — 재심 #6(review-mtnw4hor-zdytup, 20260905-140531) finding 1
+# 처분: 검사기 구분자 정규식이 계약 (ㅁ)(v2.22 에라타 57차)보다 «넓었다»
+# (``\s*·\s*|\s*;\s*|\n`` 은 CR·NBSP·TAB 등 임의 유니코드 공백류를 ``;``/``·``
+# 둘레에서 흡수했다 — 문언은 ASCII 공백(U+0020)만 ``·`` 둘레에 허용하고
+# ``;``/LF 는 bare 다). 아래 red 대조군 넷은 재심이 실측한 우회(정본 넷을
+# CR·NBSP·TAB 로 이어 붙이거나, LF 사이 공백-만 구획을 다음 ``·`` 의 흡수로
+# 지워 없애는 시도)가 tightened 정규식(``_D1_U6PRIME_SEGMENT_SPLIT_RE``)
+# 아래서는 전부 red 임을 고정한다. ⑮-e 는 문언이 명시적으로 허용하는
+# 범위(``·`` 둘레 ASCII 공백 0개 이상)가 그대로 green 임을 보는 대조군.
+def test_d1_none_declaration_row_reason_cr_semicolon_glue_is_undecided_control_15a() -> (
+    None
+):
+    """[재심 #6 finding 1] 대조군 ⑮-a — 정본 넷을 ``\\r;\\r``(bare 세미콜론
+    앞뒤에 CR)로 이어 붙이면 red. 문언은 ``;`` 둘레 공백을 허용하지 않으므로
+    ``;`` 자체만 구분자이고, 그 앞뒤 ``\\r`` 은 인접 구획에 그대로 남아
+    정본 (1)~(4) 어느 것과도 byte-for-byte 다른 구획이 된다(구판의
+    ``\\s*;\\s*`` 는 ``\\r`` 을 흡수해 이 우회를 green 으로 오판했다)."""
+    reason = "\r;\r".join(
+        [
+            _D1_U6PRIME_14_DECL,
+            _D1_U6PRIME_14_SCAN,
+            _D1_U6PRIME_14_BOUNDARY,
+            _D1_U6PRIME_14_RECORD,
+        ]
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_nbsp_around_dot_is_undecided_control_15b() -> (
+    None
+):
+    """[재심 #6 finding 1] 대조군 ⑮-b — 가운뎃점 둘레를 ASCII 공백이 아니라
+    NBSP(``U+00A0``)로 두르면(``"\\xa0·\\xa0"``) red. 문언은 (ㅁ)에서 가운뎃점
+    둘레에 «ASCII 공백» 만 허용한다고 못박았으므로 NBSP 는 구분자 문법에
+    포함되지 않는다 — 정규식은 ``·`` 자체만 소비하고 NBSP 는 인접 구획에
+    남아 정본과 불일치한다(구판의 ``\\s*`` 는 NBSP 도 공백류로 흡수해 이
+    우회를 green 으로 오판했다)."""
+    reason = " · ".join(
+        [
+            _D1_U6PRIME_14_DECL,
+            _D1_U6PRIME_14_SCAN,
+            _D1_U6PRIME_14_BOUNDARY,
+            _D1_U6PRIME_14_RECORD,
+        ]
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_whitespace_only_segment_before_dot_is_undecided_control_15c() -> (
+    None
+):
+    """[재심 #6 finding 1] 대조군 ⑮-c — 두 LF 사이에 공백 하나만 있는 구획
+    (``"\\n \\n·"``) 뒤에 다음 정본 구획이 가운뎃점으로 이어지면 red. 구판
+    ``\\s*·\\s*`` 는 ``·`` 앞의 임의 공백류(개행 포함)를 전부 삼켜 그 공백-만
+    구획을 «흡수해 없앴다»(green 으로 오판). 문언 (ㅁ)은 ``·`` 둘레에 ASCII
+    공백만 허용하므로 이 구획의 두 번째 LF와 뒤따르는 단일 공백은 소비되지
+    않고 살아남아 다섯 번째(허용되지 않은) 구획이 된다 — 공백"만"인 구획은
+    빈 구획이 아니다(모듈 주석 참조)."""
+    reason = (
+        _D1_U6PRIME_14_DECL
+        + "\n \n·"
+        + _D1_U6PRIME_14_SCAN
+        + " · "
+        + _D1_U6PRIME_14_BOUNDARY
+        + " · "
+        + _D1_U6PRIME_14_RECORD
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_tab_around_semicolon_is_undecided_control_15d() -> (
+    None
+):
+    """[재심 #6 finding 1] 대조군 ⑮-d — 세미콜론 둘레를 TAB 으로 두르면
+    (``"\\t;\\t"``) red. (ㅁ)은 ``;`` 를 bare 로 못박아 둘레 공백류를 전혀
+    허용하지 않으므로 TAB 은 구분자에 흡수되지 않고 인접 구획에 남는다."""
+    reason = "\t;\t".join(
+        [
+            _D1_U6PRIME_14_DECL,
+            _D1_U6PRIME_14_SCAN,
+            _D1_U6PRIME_14_BOUNDARY,
+            _D1_U6PRIME_14_RECORD,
+        ]
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is False
+    assert matched is not None
+    assert "(ㄹ) 허용되지 않은 구획" in detail
+
+
+def test_d1_none_declaration_row_reason_dot_with_zero_or_many_ascii_spaces_is_grammar_ok_control_15e() -> (
+    None
+):
+    """양성 대조군 ⑮-e — 가운뎃점 둘레에 ASCII 공백이 0개(``"·"``)이거나
+    여럿(``"   ·   "``)이어도 그래머는 충족된다 — (ㅁ)이 명시한 «앞뒤 ASCII
+    공백 허용, 0개 이상»의 두 극단이 둘 다 green 임을 고정한다."""
+    reason = (
+        _D1_U6PRIME_14_DECL
+        + "·"
+        + _D1_U6PRIME_14_SCAN
+        + "   ·   "
+        + _D1_U6PRIME_14_BOUNDARY
+        + " · "
+        + _D1_U6PRIME_14_RECORD
+    )
+    ok, detail, matched = _d1_u6prime_14_check(reason)
+    assert ok is True, detail
+    assert matched is not None
 
 
 def test_d1_none_declaration_stale_digest_after_scope_edit_is_undecided_control_6(
@@ -5497,7 +6551,7 @@ def test_d1_none_declaration_two_site_ids_one_row_is_undecided_control_8c(
         "axis": "D0-5 NONE: noneprobe / noneprobe2",
         "reason": (
             "VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · 두 사이트 모두 스캔 "
-            "· 프로파일 키 참조 0 · 후보 우주 밖의 이름은 보지 못한다 · "
+            "· 후보 우주 밖의 이름은 보지 못한다 · "
             "독립 리뷰 기록: docs/reviews/d1-no-dependency/"
         ),
         "blocked_by": "-",
@@ -5540,8 +6594,9 @@ def test_d1_none_declaration_row_reason_missing_boundary_sentence_is_undecided(
         "id": "MINI-UNCHK-D4-noneprobe",
         "axis": "D0-5 NONE: noneprobe",
         "reason": (
-            f"VER-002-KEYS: NONE 선언 · 후보 우주 1개 키 · d1_none_pkg 1개 파일 "
-            f"스캔 · 프로파일 키 참조 0 · 독립 리뷰 기록: {record_rel}"
+            "선언: VER-002-KEYS: NONE · "
+            "스캔 결과: 후보 우주 1개, 스캔 범위 d1_none_pkg, 파일 1개 · "
+            f"독립 리뷰 기록: {record_rel}"
         ),
         "blocked_by": "-",
         "owner_track": "Phase 2-5",
@@ -6006,12 +7061,14 @@ def test_check_d1_finding_when_d1_sites_table_truncated(
 
 # ---------------------------------------------------------------------------
 # 23. UNCHK-024 후속 처분 — resolver.py BarTimeProjection docstring shape
-#     (delay_bounds 4키 합성-결속 · max_age_bound UNBOUND 잔여 ·
-#     5필드 구조적 비대상 선언). resolver 사이트의 D-1 disposition 자체는
-#     [C4 갱신] 22번 섹션의 test_d1_real_corpus_dispositions_match_expected
-#     가 ``VALUED+UNBOUND``(6 VALUED + max_age_bound 1개 UNBOUND, decided)
-#     를 실측한다 — 이 섹션은 그 집합을 만드는 docstring 내용의 shape 를
-#     실측 + mutation-control 로 고정한다.
+#     (delay_bounds 4키 합성-결속 · max_age_bound 는 2026-09-04부터
+#     MAX_time_conservative_freshness_age_ms 에 1:1 결속, 같은 날 값
+#     1000ms 승인(Bounds-Approver) · 5필드 구조적 비대상 선언). resolver
+#     사이트의 D-1 disposition 자체는 [C4 갱신, 2026-09-04 값 승인 재갱신]
+#     22번 섹션의 test_d1_real_corpus_dispositions_match_expected 가
+#     ``VALUED``(7 VALUED, uniform, decided)를 실측한다 — 이 섹션은 그
+#     집합을 만드는 docstring 내용의 shape 를 실측 + mutation-control 로
+#     고정한다.
 # ---------------------------------------------------------------------------
 
 _DELAY_BOUNDS_COMPOSITE_KEYS = (
@@ -6047,13 +7104,24 @@ def test_d1_resolver_docstring_binds_delay_bounds_composite_keys() -> None:
     assert "composite" in docstring.lower()
 
 
-def test_d1_resolver_docstring_declares_max_age_bound_unbound() -> None:
-    """``max_age_bound`` 는 1:1 후보가 없어 register §8-1 잔여로 UNBOUND
-    선언이 명시적으로 남아 있어야 한다."""
+def test_d1_resolver_docstring_declares_max_age_bound_bound_to_new_key() -> None:
+    """[갱신, 2026-09-04 UNCHK-024 처분 · 같은 날 값 승인] ``max_age_bound``
+    는 더 이상 UNBOUND 가 아니다 — 신설 키
+    ``MAX_time_conservative_freshness_age_ms`` 에 1:1 결속되고(값 1000ms
+    승인 → VALUED), VER-002-KEYS 선언 행의 리터럴도 그 신설 키로 교체돼
+    있어야 한다."""
     docstring = _real_resolver_class_docstring()
-    assert "max_age_bound" in docstring
+    assert "max_age_bound" in docstring  # still the Python field name
+    assert "MAX_time_conservative_freshness_age_ms" in docstring
     flat = docstring.replace("`", "").replace("*", "")
-    assert "no VERIFICATION-PROFILE-002 bound" in flat
+    assert "no VERIFICATION-PROFILE-002 bound" not in flat
+    assert "bound 1:1 to VERIFICATION-PROFILE-002 key" in flat
+    # The VER-002-KEYS declaration line's trailing token is the new key, not
+    # the bare field-name literal.
+    assert "VER-002-KEYS:" in docstring
+    keys_line = next(line for line in docstring.splitlines() if "VER-002-KEYS:" in line)
+    assert "``max_age_bound``" not in keys_line
+    assert "``MAX_time_conservative_freshness_age_ms``" in keys_line
 
 
 def test_d1_resolver_docstring_declares_five_fields_structurally_not_governed() -> None:
@@ -6072,9 +7140,11 @@ def test_d1_resolver_docstring_declares_five_fields_structurally_not_governed() 
         assert field in docstring, field
     assert "design #33 §3.3" in docstring
     assert "structural" in docstring.lower()
-    # max_age_bound 의 "register §8-1 category incomplete" 잔여 프레이밍과
-    # 명시적으로 구별하는 문언이 남아 있어야 한다.
-    assert "category incomplete" in docstring
+    # max_age_bound 의 (이제 닫힌) register §8-1 잔여 프레이밍과 명시적으로
+    # 구별하는 문언이 남아 있어야 한다 — 2026-09-04 UNCHK-024 처분 이후
+    # "category incomplete" 는 더 이상 참이 아니므로(키 등록으로 닫힘) 그
+    # 구별 자체는 "used to be ... now closed" 문언으로 표현된다.
+    assert "now closed by key registration" in docstring
 
 
 def test_d1_resolver_docstring_composite_key_removal_is_detectable() -> None:

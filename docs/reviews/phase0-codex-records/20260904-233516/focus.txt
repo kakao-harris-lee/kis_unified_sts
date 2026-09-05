@@ -1,0 +1,22 @@
+레인 B 계획 «재심» — Phase 0 완료 계약 v2.22, S-26 ② «독립 재심 2회 연속» 트랙 재개. 운영자 명시 지시(2026-09-04 「S-26 재심 재개」)로 2026-08-30 재심 정지가 이 회차에 한해 해제됐다. 이 판은 계약 본문 편집 «없이» 돈다 — 직전 approve(스탬프 20260904-133500 · head 48243cd2 · findings 0) 이후 결속 경로 두 문서는 byte 불변이다(`git diff --stat 48243cd2 HEAD -- <두 경로>` = ∅ · blob 899689fc / ec3464c0). 바뀐 것은 계약 «밖» 16커밋이다(아래 4). 심사 질문은 하나다: **그 16커밋이 동결된 계약 문언을 stale·거짓·불일치로 만들었는가(신규 material finding high|medium 이 있는가).** 계약의 다른 절을 새로 훑어 산문 결함을 찾는 것은 이 판의 범위가 아니다 — 계약 자신의 K-10(기계 소비자 없는 표면)과 2026-08-30 정지 지시의 사유가 그것이다.
+
+먼저 읽을 것 (순서대로):
+1. CLAUDE.md — 비협상 규칙 및 «Read the index before the contract»(`python tools/tos_contract_index.py --locate S-26`, `--locate "§7.4"`, `--locate "§11"`, `--locate "§12.3.4"` 로 구간을 잡아 그 범위만 읽어라. 전체 스캔·요약 금지).
+2. .omc/review/20260904-133500/verdict.md — 직전 approve(재심 #5). 그 판이 확인한 것은 재판정하지 말고 «이후 16커밋이 그것을 깨지 않았는지»만 본다.
+3. S-26 블록(①~⑧): ② «서로 다른 심판 잡에서 신규 material 0 · 2회 연속», ③ validator rc 0, ④ CUR/CIT/VER/CARD/RULE 0, ⑤ 뮤테이션 배터리(«전건 red · 죽은 검사 0 · 역방향 과잉 차단 0»), ⑥ 계약 편집 시 카운터 리셋(측정자 = `git rev-list --full-history 48243cd2..HEAD -- <계약 경로>` 공집합), ⑧ 도달 가능성 교착(초안 1~6 기각 · 운영자 결정 축). 이 판은 ⑧ 을 닫으라고 요구하지 않는다 — ②~⑥ 이 이 회차에서 성립하는지를 독립 측정하고 그 결과를 summary 에 «명시적으로» 적어라(성립/불성립 각 항).
+4. 계약 밖 변경 16커밋 `git log --format='%h %s' 48243cd2..HEAD`: C3 a673e827(재심 #5 verdict 착지 · U-15 R-7 재승인) · C4 7bf83226(검사기 §7.4 D-3/D-4/D-5·U-6′ 구현 · marketfeed NONE→선언 재분류) · C5 2c2bc607 · C6 c5550229(D-4 (마) 기록 검증) · d07646c2(Codex 기록 보존소 docs/reviews/phase0-codex-records/) · b99be174·222dc4de(§11 완료 판정 결정 기록 + 운영자 countersign · 스탬프 20260904-171004) · 7e3e4081(PR #642 머지) · 9a21f2d7·ecf0024a(하네스 문서: Codex 코드 심사 제외) · a57aa628(CI 경로 게이팅 · tos 거버넌스 배터리를 tos-firewall 로) · 0ccfe892(tos/CLAUDE.md) · 7d9b4671(tos_firewall_check 하드닝) · 8ab185e9·3f9d2491(numpy 핀 · pandas 3 dtype 테스트) · 11ac075d(PR #643 머지). 사본: .omc/review/20260904-233516/evidence/commits.txt · 계약이 인용하는 파일들의 diff 는 .omc/review/20260904-233516/evidence/scope-diff.patch(코드 심사가 아니라 «계약 문언이 그 파일을 어떻게 인용하는가»의 currency 확인용).
+
+결속 필드(디스패치 직전 포착 · .omc/review/20260904-233516/revision.txt): reviewed_at_head 11ac075d1ce7ca679397f9b80d4e27d127cfe68d · reviewed_plan_paths = docs/plans/2026-08-12-tos-phase0-completion-contract-design.md, docs/plans/2026-08-11-tos-completion-development-plan.md · reviewed_scope_digest(plan_scope_digest) 84a96db339a5c00caa6da1bbc9a47126558beafcefa02266ec0d01d1cc10751e · bound_set_digest(O-6, OQ-11-DISPOSITION.md:15) 4e6c975f794696066a25abe4ee827594afa18f8fac8bfb5e7bf31d43508b3c2f · decided_at_head 8923aab2. 재계산해 대조하라 — `{ git rev-parse HEAD; printf '%s\0' <두 경로> | LC_ALL=C sort -z -u | xargs -0 -r shasum -a 256; } | shasum -a 256`.
+
+독립 측정 (직접 실행 · rc 를 읽어라):
+ (a) `python tools/tos_contract_check.py` (③·④) 및 `python tools/tos_contract_check.py --self-test` (⑤ — 145종 전건 판별 · 죽은 검사 0 · 역방향 과잉 차단 0 을 출력에서 확인).
+ (b) `python tools/tos_completion_status.py --check` — RESULT GREEN · `d0a_entry_state=ENTRY_OK` · §11 행 상태. 생성물 `tos-spec/src/TOS-COMPLETION-STATUS.md` 가 HEAD 트리와 일치하는가(--check 가 그것을 재파생 대조한다).
+ (c) `git rev-list --full-history 48243cd2..HEAD -- <두 결속 경로>` 가 공집합인가(⑥ · ①).
+ (d) 계약 문언 currency — 16커밋이 바꾼 «계약이 이름으로 인용하는 것들»: (i) §7.4 D-1/D-3/D-4/D-5·U-6′ 가 요구한 검사기 동작을 C4~C6 이 «그대로» 구현했는가, 문언이 요구하지 않은 동작을 더해 문언과 갈리는 자리는 없는가(구현이 더 충실하면 에라타가 아니라 문언이 정답인지 판단) · (ii) §11 완료 판정 기록(스탬프 20260904-171004 · `PHASE0-COMPLETION-DECISION.md` · countersign)이 계약 §11/§12.3 이 정한 형식·전제(S-26 미종결 명시 · 기계 상태 불변 · G1~G3 불변)와 모순되지 않는가 · (iii) a57aa628 이 옮긴 CI 잡(tos 거버넌스 테스트 → tos-firewall)이 계약 §12.3.4-R·U-17 이 이름으로 인용하는 잡·경로·sha 핀을 stale 로 만들지 않았는가(`tos-gate.yml:17` sha 핀 · `tools/u17-verify.sh` · `tools/wfcanon-v222.py`) · (iv) docs/reviews/phase0-codex-records/ 보존소가 R-3 선택자(phase0-completion-contract 디렉터리의 사전순 마지막 verdict.md)를 오염시키지 않는가.
+ (e) S-11/S-12/S-14/S-22/S-24 — 계약이 편집되지 않았으므로 새 위반은 구조적으로 없어야 한다. 그 전제가 참인지만 확인한다.
+
+이미 확정된 것(재판정 금지): §11 완료 판단 자체(운영자 countersign 222dc4de — 사람의 결정) · 레인 A 코드 심판(Codex 코드 심사는 2026-09-04 부로 제외) · UNCHK-024 max_age_bound 키 신설(별 워크트리 진행 중 · 이 HEAD 에 없음 · 판정 대상 아님) · D0/P-0 착수 금지·restricted_live·production 불변.
+
+범위 밖: 계약 본문의 산문 품질 · 코드 품질 · 위 (d) 와 무관한 파일.
+
+출력: verdict(approve | needs-attention) · summary(S-26 ②~⑥ 각 항 성립/불성립 명시 · ⑧ 상태 한 줄) · findings[] (severity · title · body · file · line_start/line_end 는 HEAD 11ac075d 에 실재 · confidence · recommendation) · next_steps[]. 계약 본문 «편집» 을 권고할 때는 S-26 ⑥ 리셋·O-6 재결속·재심 비용을 함께 적어라 — 편집 없이 닫을 수 있는 처분(tools/·기록·등재)이 있으면 그것을 우선 적어라.

@@ -1,0 +1,2735 @@
+diff --git a/.github/workflows/test.yml b/.github/workflows/test.yml
+index 5aed9e2d..69d78915 100644
+--- a/.github/workflows/test.yml
++++ b/.github/workflows/test.yml
+@@ -1,11 +1,35 @@
+ # .github/workflows/test.yml
+ name: Tests
+ 
++# paths-ignore below (push + pull_request only — schedule is unaffected and
++# always runs the full weekly performance sweep): the tos governance test
++# batteries (tests/tools/test_tos_*.py, tests/tools/test_u17_verify.py,
++# tests/tos_l3/) moved to .github/workflows/tos-firewall.yml, which already
++# runs on every PR/push with no path gating. This job carries the heavy
++# runtime stack (Redis service, full `.[dev]` install, ~25min) and gates
++# nothing tos-specific, so a PR that only touches tos/tos-spec/docs/config
++# no longer needs to pay for it.
+ on:
+   push:
+     branches: [main, develop]
++    paths-ignore: &paths-ignore
++      - 'tos/**'
++      - 'tos-spec/**'
++      - 'tos-evidence/**'
++      - 'docs/**'
++      - '**.md'
++      - '.claude/**'
++      - 'config/tos_completion.yaml'
++      - 'tools/tos_*'
++      - 'tools/u17-verify.sh'
++      - 'tools/wfcanon-v222.py'
++      - 'tests/tools/test_tos_*'
++      - 'tests/tools/test_u17_verify.py'
++      - 'tests/tos_l3/**'
++      - '.github/workflows/tos-*.yml'
+   pull_request:
+     branches: [main]
++    paths-ignore: *paths-ignore
+   schedule:
+     # Run performance tests weekly on Monday at 00:00 UTC
+     - cron: '0 0 * * 1'
+@@ -54,40 +78,6 @@ jobs:
+           pip install -e ".[dev]"
+           pip install prometheus-client
+ 
+-      - name: Pin mikefarah yq v4.48.1 (WFCANON M-4 parser gate)
+-        # tools/wfcanon-v222.py [M-4] pins the judgment parser to
+-        # `yq (mikefarah) v4.48.x` (YQ_FLAVOR/YQ_MAJMIN) and fails closed
+-        # (WF-P0 PREVENTION_UNVERIFIABLE) on any other version — including
+-        # a newer mikefarah release — so it never silently trusts an
+-        # unpinned parser on an arbitrary PATH. ubuntu-latest preinstalls a
+-        # newer yq (v4.53.6 as of this writing) at /usr/bin/yq
+-        # (github/actions/runner-images images/ubuntu/scripts/build/install-yq.sh
+-        # installs to /usr/bin/yq).
+-        #
+-        # tests/tools/test_u17_verify.py::_run_script drives tools/u17-verify.sh
+-        # (which shells out to wfcanon-v222.py) under a from-scratch,
+-        # non-inherited env with a literal PATH:
+-        #   /usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin
+-        # `/usr/bin` is FIRST in that literal, `/usr/local/bin` LAST — so
+-        # installing the pin to /usr/local/bin (the naive choice, since it's
+-        # the conventional "override the system copy" location) would be
+-        # shadowed by the preinstalled /usr/bin/yq for this test's subprocess
+-        # and the fix would silently no-op. The pin must overwrite
+-        # /usr/bin/yq itself. Nothing on the runner's real job PATH (used by
+-        # any other in-job "yq" lookup) installs a yq ahead of /usr/bin
+-        # either, so this one install satisfies both call sites.
+-        run: |
+-          set -euo pipefail
+-          curl -sL -o /tmp/yq_linux_amd64 \
+-            https://github.com/mikefarah/yq/releases/download/v4.48.1/yq_linux_amd64
+-          # sha256 of the raw `yq_linux_amd64` binary (not the .tar.gz), taken
+-          # from the `SHA256 (yq_linux_amd64) = ...` line of the release's
+-          # checksums-bsd file:
+-          # https://github.com/mikefarah/yq/releases/download/v4.48.1/checksums-bsd
+-          echo "99df6047f5b577a9d25f969f7c3823ada3488de2e2115b30a0abb10d9324fd9f  /tmp/yq_linux_amd64" | sha256sum -c -
+-          sudo install -m 0755 /tmp/yq_linux_amd64 /usr/bin/yq
+-          yq --version
+-
+       - name: Run tests
+         # Two passes:
+         #  1. Parallel (pytest-xdist `-n auto`) over everything NOT marked
+@@ -101,15 +91,31 @@ jobs:
+         # tests/performance/ is excluded here; the dedicated `performance` job
+         # below runs it with its own Redis isolation and regression baseline.
+         #
++        # tests/tools/test_tos_*.py, tests/tools/test_u17_verify.py, and
++        # tests/tos_l3/ are also excluded — they moved to the
++        # tos-firewall.yml `tos-firewall` job (no runtime stack needed, no
++        # path gating there) so this path-gated, runtime-heavy job doesn't
++        # also run them (this job is now paths-ignore'd away from tos
++        # changes anyway; the --ignore below is defense-in-depth for the case
++        # where a PR touches both tos/ and non-ignored paths).
++        #
+         # --timeout=180 --timeout-method=thread: if any single test exceeds 180s
+         # (no legit test runs that long), pytest-timeout dumps all thread stacks
+         # and fails — NAMING the hung test instead of stalling the job. `thread`
+         # is the xdist-safe method (works inside parallel workers).
+         run: |
+-          pytest tests/ --ignore=tests/performance -n auto -m "not serial" \
++          pytest tests/ --ignore=tests/performance \
++            --ignore-glob='tests/tools/test_tos_*.py' \
++            --ignore=tests/tools/test_u17_verify.py \
++            --ignore=tests/tos_l3 \
++            -n auto -m "not serial" \
+             --timeout=180 --timeout-method=thread \
+             -q --cov=shared --cov=services --cov-report= && \
+-          pytest tests/ --ignore=tests/performance -m serial \
++          pytest tests/ --ignore=tests/performance \
++            --ignore-glob='tests/tools/test_tos_*.py' \
++            --ignore=tests/tools/test_u17_verify.py \
++            --ignore=tests/tos_l3 \
++            -m serial \
+             --timeout=180 --timeout-method=thread \
+             -q --cov=shared --cov=services --cov-append \
+             --cov-report=xml --cov-report=term-missing
+diff --git a/.github/workflows/tos-firewall.yml b/.github/workflows/tos-firewall.yml
+index 2ae1e0cd..b07c7221 100644
+--- a/.github/workflows/tos-firewall.yml
++++ b/.github/workflows/tos-firewall.yml
+@@ -20,7 +20,12 @@ on:
+ jobs:
+   tos-firewall:
+     runs-on: ubuntu-latest
+-    timeout-minutes: 10
++    # 10 → 30: the tos governance test batteries (last step) took ~6.5 min
++    # locally (subprocess-heavy git-repo fixtures in test_u17_verify.py and
++    # tests/tos_l3); with the firewall + checker steps that already ran here
++    # the old 10-minute backstop would name the batteries as "hung" on a slow
++    # hosted runner. Still a hard fail-fast, just sized to the job's new content.
++    timeout-minutes: 30
+ 
+     steps:
+       - name: Checkout code
+@@ -67,6 +72,26 @@ jobs:
+           #  저장소 도구가 쓰는 것이지 `tos` 패키지가 임포트하는 것이 아니다.)
+           pip install "pyyaml>=6.0"
+ 
++      - name: Pin mikefarah yq v4.48.1 (WFCANON M-4 parser gate)
++        # tools/wfcanon-v222.py [M-4] pins the judgment parser to
++        # `yq (mikefarah) v4.48.x` (YQ_FLAVOR/YQ_MAJMIN) and fails closed
++        # (WF-P0 PREVENTION_UNVERIFIABLE) on any other version. ubuntu-latest
++        # preinstalls a newer yq at /usr/bin/yq, and
++        # tests/tools/test_u17_verify.py::_run_script drives tools/u17-verify.sh
++        # (which shells out to wfcanon-v222.py) under a from-scratch,
++        # non-inherited env with a literal PATH where /usr/bin is FIRST — so
++        # the pin must overwrite /usr/bin/yq itself (installing to
++        # /usr/local/bin would be shadowed). Condensed from the identical
++        # rationale in .github/workflows/test.yml (source of this step, now
++        # moved here with tests/tools/test_u17_verify.py — see below).
++        run: |
++          set -euo pipefail
++          curl -sL -o /tmp/yq_linux_amd64 \
++            https://github.com/mikefarah/yq/releases/download/v4.48.1/yq_linux_amd64
++          echo "99df6047f5b577a9d25f969f7c3823ada3488de2e2115b30a0abb10d9324fd9f  /tmp/yq_linux_amd64" | sha256sum -c -
++          sudo install -m 0755 /tmp/yq_linux_amd64 /usr/bin/yq
++          yq --version
++
+       - name: Layer 1 — custom AST firewall (default-deny)
+         run: python tools/tos_firewall_check.py
+ 
+@@ -105,3 +130,17 @@ jobs:
+       # addendum-5 A-F5 였다 — 통과하는 검사와 «지고 있는» 검사는 다르다.
+       - name: Layer 4 self-test — mutation battery (dead-check 0)
+         run: python tools/tos_contract_check.py --self-test
++
++      # tos governance test batteries — these test the checker scripts run as
++      # steps above (tools/tos_completion_status.py, tools/tos_contract_check.py,
++      # tools/tos_spec_status.py, tools/tos_firewall_check.py) plus
++      # tools/u17-verify.sh (needs the yq pin above) and the EV-L3 crash/restart
++      # battery under tests/tos_l3/. They need no runtime stack (imports are
++      # stdlib + pytest + pyyaml only — already installed above) and no Redis,
++      # so they live here rather than in the legacy `test` job in
++      # .github/workflows/test.yml, which is now path-gated away from tos/doc
++      # changes and would otherwise be the only thing gating a tos-only PR.
++      - name: tos governance test batteries
++        run: |
++          pytest tests/tools/test_tos_*.py tests/tools/test_u17_verify.py \
++            tests/tos_l3 -q -p no:cacheprovider
+diff --git a/docs/reviews/phase0-completion-contract/20260904-112156/verdict.md b/docs/reviews/phase0-completion-contract/20260904-112156/verdict.md
+new file mode 100644
+index 00000000..07d04300
+--- /dev/null
++++ b/docs/reviews/phase0-completion-contract/20260904-112156/verdict.md
+@@ -0,0 +1,42 @@
++---
++adjudicator: codex
++verdict: needs-attention
++lane: B (plan) — 계약 v2.22 에라타 52차(§7.4 D-3/D-4/D-5) + O-6 재결속 · 재심 #1
++reviewed_at_head: 091b0fad8e5396f3c15fa97196d385c500d3b908
++reviewed_plan_paths:
++  - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
++  - docs/plans/2026-08-11-tos-completion-development-plan.md
++reviewed_scope_digest: de021febceb91e8e88aa3fea313e841b117108e07200fb7f67b46389ba63d46d
++digest_kind: plan_scope_digest
++bound_set_digest: 961135fd91c80b27d6f2822d80411a5212c94ca90442b96d76d53f1be382c41e
++base: 26db89c92fedef044ddbfb1c7dc93545a6187033 (에라타 직전 HEAD)
++commits: C1 76a4e42333fafb0d28af6e64b08a285b77798fb1 (에라타+lockstep) · C2 091b0fad8e5396f3c15fa97196d385c500d3b908 (O-6 재결속)
++captured_at_utc: 2026-09-04T02:21:56Z
++prior_verdict: docs/reviews/phase0-completion-contract/20260902-195656/verdict.md
++job_id: review-mtmbw5f3-xpo98b
++subcommand: adversarial-review (--wait · setsid · base 26db89c9 · scope branch · focus 로 두 결속 경로 diff 로 한정)
++verdict_recovered_at_utc: 2026-09-04T02:28:11.167Z
++verbatim_sources: codex-result.json · codex-wait.out · evidence/scope-diff.patch · evidence/lockstep-diff.patch
++---
++
++# Codex verdict — verbatim (structured output, 무편집)
++
++```json
++{"verdict":"needs-attention","summary":"출하 차단. O-6의 두 digest, C1 decided_at_head, blob/행수는 일치했고 계약 검사와 145개 self-test는 rc 0이었다. 그러나 D-4는 NONE을 구조적으로 검증하지 못해 저작자가 UNBOUND 또는 간접 의존을 NO_DEPENDENCY로 바꿀 수 있다. 또한 요청된 `tos_contract_index.py --check` 직접 실행은 `--out` 부재로 rc 2였다.","findings":[{"severity":"high","title":"D-4가 NONE 자기신고를 막지 못해 UNBOUND 의존을 숨길 수 있다","body":"D-4는 `NONE` 선언을 검증할 때 현재 VER-002 우주 키의 로컬 토큰 참조만 찾는다. 따라서 우주 밖 의존 키(정의상 D-3에서는 UNBOUND여야 함)는 같은 스캔 범위에 리터럴로 존재해도 검출 대상이 아니어서, 저작자가 그 키를 선언하는 대신 NONE을 쓰면 NO_DEPENDENCY와 §13 면제를 얻는다. 실제 resolver의 `max_age_bound`가 바로 이런 우주 밖 키 클래스다. 또한 module은 패키지 재귀, class/method는 파일 하나만 보므로 외부 helper가 실제 키를 읽고 사이트가 그 결과를 소비하는 경우도 0건으로 접힌다. 계약은 별칭·간접 참조를 못 본다고 인정하지만, 그러면서도 0건을 완료 처분으로 사용하므로 UNDECIDED 차단을 다시 연다. `토큰 리터럴 참조`도 식별자·문자열·주석 중 무엇을 세는지 정의하지 않아 C4 구현이 여러 비동치 해석으로 갈릴 수 있다.","file":"docs/plans/2026-08-12-tos-phase0-completion-contract-design.md","line_start":2829,"line_end":2841,"confidence":0.99,"recommendation":"NONE 검증의 후보 우주와 의존 경계를 닫아라. 최소한 우주 밖 의존 후보도 UNBOUND로 포착하고, 외부 호출을 통한 전이 의존의 귀속 규칙 및 토큰화·주석/문자열 처리 규칙을 명시해 미확정 사례는 UNDECIDED로 차단해야 한다. 계약 본문 추가 편집이므로 S-26 ⑥에 따라 ② 카운터가 다시 0으로 리셋되고 O-6 재결속·레인 B 재심 비용이 발생함을 함께 기록하라."}],"next_steps":["D-4의 우주 밖 키 및 스캔 범위 밖 간접 의존 대조군을 추가하고, 둘 다 NO_DEPENDENCY가 아닌 UNDECIDED 또는 UNBOUND로 귀속되는지 검증한다.","계약 수정 후 plan_scope_digest와 bound_set_digest를 다시 계산하고 O-6를 재결속한 뒤 레인 B 재심을 반복한다.","색인 검증은 실제 생성 산출물 경로를 `--out`으로 지정해 다시 실행한다. 현재 요청에 적힌 `python tools/tos_contract_index.py --check` 그대로는 rc 2다."]}
++```
++
++# 수용검사 (오케스트레이터 = Claude)
++
++| # | sev | file:line 실재 | silenced | 비협상 배치 | 처분 |
++|---|---|---|---|---|---|
++| 1 | high | 실재 — 계약 :2829-2841 D-4 본문(52차 · C1 76a4e423). 스캔 후보 = VER-002 우주 키만 → 우주 밖 의존 키(D-3 에서 UNBOUND · §13 등재 의무)를 선언 대신 `NONE` 으로 적으면 스캔이 잡지 못하고 NO_DEPENDENCY(§13 면제)를 얻는다. resolver 의 `max_age_bound` 가 실재하는 그 클래스. 또 «토큰 리터럴 참조» 의 토큰화(식별자·문자열·주석)와 전이 의존 귀속 규칙이 미정의 | 아니오 — 52차 «정직 경계» 문단이 별칭·간접 참조를 못 본다고 자인했으나, 자인은 0건을 완료값으로 쓰는 것을 정당화하지 않는다(v1.6 「막아야 닫힌다」) | 없음(계약 편집 비용을 함께 기록하라는 권고 — 수용) | **채택** → 53차 에라타 |
++
++기각 0 · 채택 1/1. Codex 가 확인한 것: O-6 두 digest · decided_at_head=C1 · blob/행수 일치 · tos_contract_check + self-test 145 rc 0. next_steps 3(색인 `--check` 는 `--out` 산출물이 필요)은 focus 의 오기 — 이 저장소에 색인 산출물 파일은 없고 `--locate` 만 쓴다. 다음 focus 에서 그 요구를 제거한다.
++
++## 처분 (53차 에라타 설계 — 저작은 Opus 레인 · 심판은 Codex)
++
++1. **의존의 정의를 D-1 로 환원**: 사이트의 «의존 키» 는 D-1 이 정의한 대로 docstring 이 리터럴로 인용하는 키다. 외부 helper 가 키를 읽어 파생값을 넘기는 전이 소비는 그 helper 의 의존이지 이 docstring 사이트의 의존 키가 아니며(§7.1 이 사이트 7곳을 고정), 스캔은 그 정의 위의 «추가 가드» 다.
++2. **NONE 스캔의 후보 우주를 닫는다**: VER-002 우주 키 ∪ §7.1 전 사이트가 선언한 키 전부(D-5 의 VER-002-KEYS 및 CONTRAST — 기계 파생 가능한 닫힌 집합). 후보 중 하나라도 사이트 범위에 리터럴로 있으면 UNDECIDED(선언 누락 의심 — 그 키를 선언하면 D-3 으로 UNBOUND/VALUED/BLOCKED 가 된다). resolver 의 `max_age_bound` 류가 이 집합에 들어가 Codex 가 든 사례가 닫힌다.
++3. **토큰화 규칙 명시**: 범위 안 모든 `*.py` 의 원문 전 행(코드·문자열·주석·docstring 구분 없이) 에 대해 단어 경계 정규식 `(?<![A-Za-z0-9_])KEY(?![A-Za-z0-9_])` — 상위집합(보수적) 이라 주석 안의 언급도 UNDECIDED 를 만든다(정직: 과잉 차단 방향).
++4. **정직 경계 재진술**: 후보 우주 «밖» 의 이름(어느 사이트도 선언하지 않은 새 의존)은 여전히 못 본다 — UNCHK-015 의 거울상 그대로. 이것은 UNBOUND 의 K 적절성과 같은 한계이지 NONE 고유의 구멍이 아니다.
++5. 비용 기록: 계약 편집이므로 S-26 ⑥ 재적용(② 카운터 0 유지) · O-6 재결속 · 레인 B 재심 반복.
+diff --git a/docs/reviews/phase0-completion-contract/20260904-114347/verdict.md b/docs/reviews/phase0-completion-contract/20260904-114347/verdict.md
+new file mode 100644
+index 00000000..24529cec
+--- /dev/null
++++ b/docs/reviews/phase0-completion-contract/20260904-114347/verdict.md
+@@ -0,0 +1,72 @@
++# 레인 B 계획 «재심» — 계약 v2.22 에라타 52차+53차 + O-6 재결속 · 재심 #2 (head d8ee64dd)
++
++```yaml
++adjudicator: codex
++verdict: needs-attention
++reviewed_at_head: d8ee64dd82eb0537bc43de0c65a4a3ea0d92ae35
++reviewed_plan_paths:
++  - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
++  - docs/plans/2026-08-11-tos-completion-development-plan.md
++reviewed_scope_digest: 54b97e14c658de22761b22f9ba6fd68ab8a25ca636aba9994c757463a5cd1a9a
++bound_set_digest: 4c65d626bb034263f66312426d3f1bde551baff8558718bb2ba0205525ad982c
++job_id: review-mtmcoagb-uym46j
++job_class: review
++base: 26db89c92fedef044ddbfb1c7dc93545a6187033
++scope: branch
++prior_verdict: .omc/review/20260904-112156/verdict.md
++completed_at_utc: 2026-09-04T02:48:58.941Z
++```
++
++**needs-attention · findings 1(high) · 재심 #1 finding = «부분 해소».** 심사 범위는 `git diff 26db89c9 d8ee64dd -- <두 결속 경로>`
++(52차 +130/−9 · 53차 +93/−16 계약 · 개발계획 무접촉). Codex 가 확인한 것: HEAD · plan_scope_digest `54b97e14…` ·
++bound_set_digest `4c65d626…` · C1′ decided_at_head 일치 · 옛 digest 는 이력에만 · `tos_contract_check` + self-test 145 rc 0 ·
++`max_age_bound`·토큰화·C4 대조군은 보강됨.
++
++## 수용검사 (오케스트레이터)
++
++| # | sev | file:line 실재 | silenced | 비협상 배치 | 처분 |
++|---|---|---|---|---|---|
++| 1 | high | 실재 — 계약 :2843-2856 D-4 (나)(53차 · C1′ 97cfad8d). 후보 우주 = 우주 키 ∪ §7.1 사이트들의 D-5 선언 키 → 선언에서 키를 빼면 후보에서도 빠진다(선언-파생 순환). 재현 논리: resolver 선언에서 `max_age_bound` 를 제거하고 NONE 사이트 범위에 그 리터럴을 두면 후보 우주가 먼저 축소돼 NO_DEPENDENCY 가능 | 아니오 | 없음 | **채택** → 54차 |
++
++기각 0 · 채택 1/1.
++
++**오케스트레이터 대조 메모(판정 아님)**: Codex 가 든 «선언 삭제» 는 NONE 이 없어도 성립한다 — resolver 선언에서
++`max_age_bound` 를 빼면 D-3 만으로 resolver 는 6 VALUED «판정됨» 이 되고 그 UNBOUND 와 §13 행은 사라진다. 이것은
++계약이 **UNCHK-015**(공급된 K 의 적절성 · 의미 판정)로 이미 등재한 경계이며, «우주 밖 의존 키의 전수 집합» 은
++저작자 독립적으로 열거할 수 없다(열거 가능한 것은 우주 키뿐). 따라서 54차는 열거를 확장하는 방향(또 다른 자기신고
++파생)이 아니라 **우회의 이득을 제거**하는 방향으로 간다: `NO_DEPENDENCY` 는 `UNBOUND` 와 같은 급의 결론이므로 같은
++§13 개별 등재 의무를 진다(U-6′ — 검사기 rc 결합). NONE 으로 바꿔도 등재를 피할 수 없으면 «UNBOUND+등재 → NONE+면제»
++라는 우회의 동기가 없다. 53차의 후보 우주 스캔은 그대로 두되(선언 누락의 기계 검출), Codex 의 donor 삭제 시나리오는
++C4 대조군으로 «관측 가능한 귀결»(등재 행 부재 시 rc≠0)을 고정한다. 이 처분이 정당한지는 다음 재심에서 Codex 가 판단한다.
++
++
++---
++
++## Codex 판정 (verbatim — 손대지 않음)
++
++```json
++{
++  "verdict": "needs-attention",
++  "summary": "출하 차단. 재심 #1 finding은 부분 해소다. `max_age_bound`·토큰화·C4 대조군은 보강됐지만, 후보 우주가 저작자 선언으로부터 파생되어 미선언 UNBOUND 키의 NONE 우회가 남는다. HEAD, plan_scope_digest, bound_set_digest, C1′ decided_at_head는 일치했고 옛 digest는 이력에만 남았다. 계약 검사와 self-test 145종은 rc 0이었다.",
++  "findings": [
++    {
++      "severity": "high",
++      "title": "자기신고로 후보 우주에서 키를 제거할 수 있어 NONE 우회가 남는다",
++      "body": "재심 #1 finding은 «부분 해소»다. 현재 `max_age_bound`는 resolver의 D-5 선언 덕분에 합집합에 들어가지만, 후보 우주 자체가 같은 D-5 선언들에서 파생된다. 따라서 저작자가 우주 밖 키를 모든 선언에서 빼면 그 키는 docstring에 리터럴로 남아도 스캔 후보에서 사라진다. 계약은 미선언 프로파일 키만 UNDECIDED로 열거하고, 미선언 UNBOUND 키는 명시적으로 감지하지 않는다. 예컨대 resolver 선언에서 `max_age_bound`만 제거한 뒤 NONE 사이트 범위에 이를 두면 제시된 네 대조군과 달리 후보 우주가 먼저 축소되어 NO_DEPENDENCY가 가능하다. 이는 UNBOUND와 §13 등재를 NONE으로 바꾸던 원래 우회의 자기삭제 변형이다. 외부-helper 사례는 D-1 정의 축소로 경계를 정직하게 명시했지만, 이 선언-파생 순환은 문제를 정의로 없앤 것이 아니다.",
++      "file": "docs/plans/2026-08-12-tos-phase0-completion-contract-design.md",
++      "line_start": 2843,
++      "line_end": 2856,
++      "confidence": 0.98,
++      "recommendation": "후보 우주를 사이트 저작자의 D-5 선언과 독립적으로 열거하거나, 독립 열거가 불가능하면 NONE을 완료값으로 쓰지 말고 미선언 UNBOUND 리터럴을 UNDECIDED로 차단하라. C4에는 `max_age_bound`의 donor 선언을 삭제한 상태에서 NONE 범위에 같은 리터럴을 두는 대조군을 추가하라. 계약 본문 추가 편집이므로 S-26 ⑥ 카운터 재리셋, O-6 재결속, 레인 B 재심 비용을 함께 기록해야 한다."
++    }
++  ],
++  "next_steps": [
++    "D-4 후보 우주의 선언-파생 순환을 제거하고 donor 선언 삭제 대조군을 C4 동일 커밋 계약에 추가한다.",
++    "수정 후 plan_scope_digest와 bound_set_digest를 재계산하고 O-6를 다시 결속한 뒤 레인 B 재심을 반복한다."
++  ]
++}
++```
++
++원문 전체는 `.omc/review/20260904-114347/codex-result.json`(`parseError: null` · `adversarial-review` 구조화 출력).
++디스패치 focus 는 `.omc/review/20260904-114347/focus.txt`, 심사 대상 diff 사본은 같은 스탬프의 `evidence/scope-diff.patch`
++·`evidence/lockstep-diff.patch`.
+diff --git a/docs/reviews/phase0-completion-contract/20260904-115942/verdict.md b/docs/reviews/phase0-completion-contract/20260904-115942/verdict.md
+new file mode 100644
+index 00000000..deeda366
+--- /dev/null
++++ b/docs/reviews/phase0-completion-contract/20260904-115942/verdict.md
+@@ -0,0 +1,65 @@
++# 레인 B 계획 «재심» — 계약 v2.22 에라타 52차+53차+54차 + O-6 재결속 · 재심 #3 (head a311eac1)
++
++```yaml
++adjudicator: codex
++verdict: needs-attention
++reviewed_at_head: a311eac1f9c6fbb816230cc7e89b21daafdb7642
++reviewed_plan_paths:
++  - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
++  - docs/plans/2026-08-11-tos-completion-development-plan.md
++reviewed_scope_digest: 1c1616aa56439560bf8ecb94ce7e194f497cb33de31ba06951e7a6d91320446d
++bound_set_digest: 8988849e7673a02001d11b4cadff8b65e1b7ac78c9ef2cbbaa0dd454809b730a
++job_id: review-mtmd8qat-c1u166
++job_class: review
++base: 26db89c92fedef044ddbfb1c7dc93545a6187033
++scope: branch
++prior_verdict: .omc/review/20260904-114347/verdict.md
++completed_at_utc: 2026-09-04T03:04:45.700Z
++```
++
++**needs-attention · findings 1(high) · 재심 #2 finding = «회피» 판정.** 심사 범위 `git diff 26db89c9 a311eac1 -- <두 결속 경로>`
++(52차 +130/−9 · 53차 +93/−16 · 54차 +114/−20 · 개발계획 무접촉). Codex 가 확인한 것: HEAD · plan_scope_digest `1c1616aa…` ·
++bound_set_digest `8988849e…` · C1″ decided_at_head · blob/행수 · diff 사본 일치 · `tos_contract_check` + self-test 145 rc 0 ·
++53차의 후보 우주·토큰화·전이 귀속은 되돌려지지 않음.
++
++## 수용검사 (오케스트레이터)
++
++| # | sev | file:line 실재 | silenced | 비협상 배치 | 처분 |
++|---|---|---|---|---|---|
++| 1 | high | 실재 — 계약 :3001-3038(54차 블록 + U-6/U-6′ 펜스 · C1″ ab495780). 두 축: (ㄱ) UNBOUND 행은 «실제 키 + 소관 아티팩트» 를 공개하는데 NONE 행(U-6′ (1)(2)(3))은 후보 우주 크기·스캔 범위·일반적 사각지대만 적으므로 «특정 의존과 소관 분석을 숨기는» 이득이 남는다 · 대조군 ⑤는 행 «부재» 만 red 라 행이 있는 자기삭제와 정직한 marketfeed 를 구별 못 한다 (ㄴ) U-6′ 행 판정 문법 미정의(부분문자열/정확 일치 · 행 유일성 · 한 행의 복수 사이트 · (1)~(3) 동일 행 여부) → catch-all 행 우회 | 아니오 | 없음 | **채택** — 처분 방향은 운영자 결정(아래) |
++
++기각 0 · 채택 1/1.
++
++**오케스트레이터 대조 메모(판정 아님)**: (ㄴ)은 문법 명시로 닫히는 기계적 결함이다(사이트별 정확히 한 행 · 행별 최대 한 사이트 · (1)~(3) 동일 행 · site_id 정확 일치). (ㄱ)은 설계 결정이다 — Codex 권고는 «NONE 완료 = canonical site_id + 소스 리비전(사이트 범위 파일 blob)에 결속된 **독립 리뷰 provenance**(저작자 아닌 심판/운영자가 «의미상 의존 없음» 을 검토했다는 기록)» 이며, 그 전까지 NONE 은 차단 상태. 이는 이 아크의 원리(저작-심판 분리 · 자기신고를 리뷰 표면으로)와 정합하지만 **새 아티팩트 종류와 서명 주체**를 도입한다 → 4번째 에라타 라운드를 자동으로 돌리지 않고 운영자 결정을 받는다. 그때까지 계약은 54차 상태(NO_DEPENDENCY 는 텍스트상 완료값이나 검사기 미구현 = 완료값 창 없음), `d0a_entry_state=APPROVAL_STALE`(레인 B approve 미착지), D0-5 NOT_MET 그대로다.
++
++
++---
++
++## Codex 판정 (verbatim — 손대지 않음)
++
++```json
++{
++  "verdict": "needs-attention",
++  "summary": "출하 차단. 재심 #2 finding은 «회피»다. 54차는 후보 우주의 자기삭제를 막지 않고 일반적 공시로 허용했으며, UNBOUND가 공개하는 실제 키·소관 아티팩트를 NONE에서는 숨길 이득이 남는다. 대조군 ⑤는 행 부재 시 rc≠0만 고정한다. 반면 53차의 후보 우주·토큰화·전이 귀속은 되돌려지지 않았고, HEAD·scope digest·bound digest·C1″ decided_at_head·blob/행수·diff 사본은 일치했다. 계약 검사와 self-test 145종도 rc 0이었다.",
++  "findings": [
++    {
++      "severity": "high",
++      "title": "U-6′는 자기삭제 우회의 정보 이득을 제거하지 못하고 행 판정도 불명확하다",
++      "body": "54차는 열거 불가능성과 UNCHK-015 경계를 정직하게 인정하지만, 이를 완료 가능한 NO_DEPENDENCY로 재정의해 재심 #2 문제를 회피한다. donor에서 `max_age_bound`를 삭제한 시나리오에서 UNBOUND 행은 실제 키와 소관 아티팩트를 공개하지만, NONE 행은 후보 우주 크기·스캔 범위·일반적 사각지대만 기록한다. 따라서 특정 의존과 소관 분석을 숨기는 실질적 이득이 남는다. 대조군 ⑤도 행을 제거한 경우만 red로 만들므로, 행이 존재하는 자기삭제 사례와 정직한 marketfeed 사례를 구별하지 못한다. 또한 U-6′는 사이트 토큰의 부분문자열/정확 일치, 후보 행의 유일성, 한 행의 복수 사이트 충족 가능성, (1)~(3)이 동일 행에 있어야 하는지를 정의하지 않는다. C4가 포괄 axis/reason 문자열에서 존재만 검사하면 하나의 catch-all 행이나 우연한 토큰으로 여러 사이트가 완료될 수 있다.",
++      "file": "docs/plans/2026-08-12-tos-phase0-completion-contract-design.md",
++      "line_start": 3001,
++      "line_end": 3038,
++      "confidence": 0.98,
++      "recommendation": "열린 세계 이름의 전수 열거를 요구하지 말고, NONE 완료를 정확한 canonical site_id와 소스 리비전에 결속된 독립 리뷰 provenance에 걸어 의미상 의존 없음이 검토됐음을 요구하라. 또한 사이트별 정확히 한 행, 행별 최대 한 사이트, 동일 행 안의 (1)~(3), 정확 일치 문법을 규정하고 catch-all·부분문자열·분할 reason·중복 행 변이를 red로 고정하라. 이 보강 전에는 NONE을 완료값이 아닌 차단 상태로 유지한다. 계약 본문 편집이므로 S-26 ⑥을 다시 리셋하고 O-6 재결속과 레인 B 재심 비용을 함께 기록해야 한다."
++    }
++  ],
++  "next_steps": [
++    "U-6′의 독립 provenance와 1:1 행 결속 계약을 명확히 한 뒤 대조군 ⑤를 행 존재 상태의 자기삭제도 차단하도록 확장한다.",
++    "S-26 ⑥ 재적용, O-6 재결속, 두 digest 재계산 후 레인 B 재심을 반복한다."
++  ]
++}
++```
++
++원문 전체는 `.omc/review/20260904-115942/codex-result.json`(`parseError: null` · `adversarial-review` 구조화 출력).
++디스패치 focus 는 `.omc/review/20260904-115942/focus.txt`, 심사 대상 diff 사본은 같은 스탬프의 `evidence/scope-diff.patch`
++·`evidence/lockstep-diff.patch`.
+diff --git a/docs/reviews/phase0-completion-contract/20260904-132009/verdict.md b/docs/reviews/phase0-completion-contract/20260904-132009/verdict.md
+new file mode 100644
+index 00000000..9c069818
+--- /dev/null
++++ b/docs/reviews/phase0-completion-contract/20260904-132009/verdict.md
+@@ -0,0 +1,64 @@
++# 레인 B 계획 «재심» — 계약 v2.22 에라타 52~55차 + O-6 재결속 · 재심 #4 (head c8209c34)
++
++```yaml
++adjudicator: codex
++verdict: needs-attention
++reviewed_at_head: c8209c34af581e899b9f07418909dde27a605931
++reviewed_plan_paths:
++  - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
++  - docs/plans/2026-08-11-tos-completion-development-plan.md
++reviewed_scope_digest: 02e852f1db13cdf9abe3623d659ff4a73cb55e7df675832b9b3dcc8224551e1f
++bound_set_digest: e260c339f63bb0bbcbb56dfc0d6b58b6058976f2e52a8f6f7bdd3aecc6d2691b
++job_id: review-mtmg49a4-g8ab13
++job_class: review
++base: 26db89c92fedef044ddbfb1c7dc93545a6187033
++scope: branch
++prior_verdict: .omc/review/20260904-115942/verdict.md
++completed_at_utc: 2026-09-04T04:25:13.956Z
++```
++
++**needs-attention · findings 1(high) · 재심 #3 finding: (ㄱ) 정보 이득 = «해소» · (ㄴ) U-6′ 문법 = «부분 해소».** 심사 범위
++`git diff 26db89c9 c8209c34 -- <두 결속 경로>`(52~55차). Codex 가 확인한 것: NONE 완료가 허용된 독립 심판·파생 범위 파일 집합·HEAD blob
++재계산 digest 에 결속됨 · O-6 digest `e260c339…`·plan_scope_digest `02e852f1…` 일치 · `tos_contract_check` + self-test 145 rc 0.
++
++## 수용검사 (오케스트레이터)
++
++| # | sev | file:line 실재 | silenced | 비협상 배치 | 처분 |
++|---|---|---|---|---|---|
++| 1 | high | 실재 — 계약 :3148-3154 U-6′ (ㄱ) «axis 는 `D0-5 NONE: <site_id>` 로 시작» — `startswith` 구현이면 `D0-5 NONE: resolver_x`·`D0-5 NONE: resolver / marketfeed` 가 통과해 바로 뒤의 정확 일치·행당 1사이트·⑧ 부분문자열 red 와 모순 · ⑧ 이 접미/복수-site 변이를 별도 고정하지 않음 | 아니오 | 없음 | **채택** → 56차: axis 필드 «전체» 가 정규화 없이 `D0-5 NONE: <canonical_site_id>` 와 byte-for-byte 동일 · ⑧ 에 «유효 prefix + 임의 접미»·«두 번째 site_id 부가» 를 각각 red 대조군으로 추가 |
++
++기각 0 · 채택 1/1. 부수 사실(계약 밖): 병행한 marketfeed 독립 확인(`review-mtmg2lz7-88qdyb`)이 NONE claim 을 거짓으로 판정해 실코퍼스의
++NONE 사이트는 0 이 될 예정이다 — D-4/U-6′ 는 장래 사이트를 위한 어휘로 남으며, 이 finding 의 해소 가치는 그 어휘의 결정성에 있다.
++
++
++---
++
++## Codex 판정 (verbatim — 손대지 않음)
++
++```json
++{
++  "verdict": "needs-attention",
++  "summary": "출하 불가. 재심 #3 (ㄱ) 정보 이득 축은 해소됐다: NONE 완료는 허용된 독립 심판, 파생 범위 파일 집합, HEAD blob 재계산 digest에 결속된다. 그러나 (ㄴ) U-6′ 문법 축은 부분 해소에 그쳤다. O-6·plan_scope_digest는 일치했고 계약 검사와 self-test 145종은 rc 0이었다.",
++  "findings": [
++    {
++      "severity": "high",
++      "title": "U-6′의 prefix 규칙이 exact-axis 계약과 충돌한다",
++      "body": "(ㄴ) 부분 해소. 규칙은 axis가 `D0-5 NONE: <site_id>`로 “시작”하면 된다고 규정한다. 따라서 구현이 문언 그대로 `startswith`를 사용하면 `D0-5 NONE: resolver_x` 또는 `D0-5 NONE: resolver / marketfeed` 같은 접미·복수-site 변이가 resolver 행으로 통과할 수 있다. 바로 뒤의 site_id 정확 일치·행당 한 사이트 선언 및 ⑧의 부분문자열 red 요구와 모순되어 C4 구현에 하나의 해석만 남기지 않는다. ⑧도 catch-all·중복·부분문자열만 열거해 유효 prefix 뒤 접미/복수-site 변이를 별도로 고정하지 않는다. 이 상태에서는 검사기 구현에 따라 D0-5 완료 판정이 달라질 수 있다.",
++      "file": "docs/plans/2026-08-12-tos-phase0-completion-contract-design.md",
++      "line_start": 3148,
++      "line_end": 3154,
++      "confidence": 0.99,
++      "recommendation": "`axis` 필드 전체가 정규화 없이 `D0-5 NONE: <canonical_site_id>`와 byte-for-byte 동일해야 한다고 바꾸고, 유효 prefix 뒤 임의 접미 및 두 번째 site_id를 붙인 변이를 각각 red 대조군으로 추가하라. 계약 본문 추가 편집이므로 S-26 ⑥ 카운터를 다시 0으로 리셋하고 O-6를 재결속한 뒤 레인 B 재심을 다시 수행해야 한다."
++    }
++  ],
++  "next_steps": [
++    "U-6′의 “시작”을 필드 전체 exact equality로 교체한다.",
++    "suffix와 복수-site axis 변이를 독립 red 대조군으로 명시한다.",
++    "S-26 ⑥ 리셋, O-6 재결속, 갱신된 범위 digest 검증 후 레인 B 재심을 다시 실행한다."
++  ]
++}
++```
++
++원문 전체는 `.omc/review/20260904-132009/codex-result.json`(`parseError: null` · `adversarial-review` 구조화 출력).
++디스패치 focus 는 `.omc/review/20260904-132009/focus.txt`, 심사 대상 diff 사본은 같은 스탬프의 `evidence/scope-diff.patch`
++·`evidence/lockstep-diff.patch`.
+diff --git a/docs/reviews/phase0-completion-contract/20260904-133500/verdict.md b/docs/reviews/phase0-completion-contract/20260904-133500/verdict.md
+new file mode 100644
+index 00000000..3bc76204
+--- /dev/null
++++ b/docs/reviews/phase0-completion-contract/20260904-133500/verdict.md
+@@ -0,0 +1,59 @@
++# 레인 B 계획 «재심» — 계약 v2.22 에라타 52~56차(§7.4 D-3/D-4/D-5 · U-6′) + O-6 재결속 · 재심 #5 · approve (head 48243cd2)
++
++```yaml
++adjudicator: codex
++verdict: approve
++reviewed_at_head: 48243cd2e07c1357a389e670cf2f23af479d1595
++reviewed_plan_paths:
++  - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
++  - docs/plans/2026-08-11-tos-completion-development-plan.md
++reviewed_scope_digest: 116ee2fdf0b24869585f34d10eb8ccad2c3d3792e9e88640ab7ea34a1c21633a
++bound_set_digest: 4e6c975f794696066a25abe4ee827594afa18f8fac8bfb5e7bf31d43508b3c2f
++job_id: review-mtmgna46-osp4fm
++job_class: review
++base: 26db89c92fedef044ddbfb1c7dc93545a6187033
++scope: branch
++prior_verdict: .omc/review/20260904-132009/verdict.md
++completed_at_utc: 2026-09-04T04:40:54.373Z
++```
++
++**approve · findings 0 · 재심 #4 finding (ㄴ) = «해소».** 심사 범위 `git diff 26db89c9 48243cd2 -- <두 결속 경로>` — v2.22 에라타
++52차(D-3 다중 키 · D-4 NO_DEPENDENCY · D-5 선언 형식) · 53차(D-4 후보 우주 폐쇄 · 의존 정의 D-1 환원 · 토큰화) · 54차(U-6′ §13 등재
++의무) · 55차(NONE 완료의 독립 확인 기록 결속 · (라) canonical site_id · (마) 기록 형식 = 레인 B verdict.md 재사용 · scope_content_digest) ·
++56차(U-6′ (ㄱ) axis 필드 전체 byte 동일 · ⑧-a/b/c) + O-6 재결속 5회. 운영자 명시 지시(2026-09-04 «§7.4 에라타 저작 + 레인 B 재심» 진행 ·
++재심 #3 권고 채택 = 선택지 A)로 2026-08-30 재심 정지가 이 에라타 범위에 한해 해제된 상태에서 수행됐다.
++
++Codex 가 확인한 것: prefix 해석 제거 · ⑧-b/⑧-c 각각 red 고정 · (ㄱ)~(ㄹ)·⑧ 사이 모순 없음 · C4 복수 해석 없음 · S-26 ⑥ 52~56차 각각 적용 ·
++종결 미주장 · 활성 v2.23 리터럴 0 · 이력 행 무접촉 · bound_set_digest `4e6c975f…`·decided_at_head `8923aab2` 재계산 일치 · 구 digest 는
++이력에만 · plan_scope_digest `116ee2fd…` 일치 · tos_contract_check + self-test 145 rc 0.
++
++## 수용검사 (오케스트레이터)
++
++- findings 0 — 기각·분리 대상 없음.
++- 리비전 결속: `reviewed_scope_digest` 는 codex-gate `plan_scope_digest`(HEAD + 두 경로 워킹트리 내용)로 디스패치 직전 계산(`116ee2fd…`);
++  디스패치와 기록 사이 편집 0 · 기록 직전 재계산 일치.
++- 재심 체인(전부 채택 · 기각 0): #1 `20260904-112156`(D-4 우주 키만 스캔) → #2 `20260904-114347`(후보 우주의 선언-파생 순환) →
++  #3 `20260904-115942`(54차 «회피» · 독립 provenance 권고) → #4 `20260904-132009`(U-6′ prefix 충돌) → #5 이 파일(approve).
++  네 needs-attention 스탬프의 verdict.md 도 같은 커밋에 이력으로 착지한다(S-11/S-12) — R-3 선택자는 사전순 마지막인 이 스탬프를 읽는다.
++- 병행 사실: marketfeed 독립 확인(`.omc/review/20260904-131909-marketfeed/verdict.md` · review-mtmg2lz7-88qdyb)이 NONE claim 을 거짓으로
++  판정 → C4 에서 marketfeed 는 D-5 선언을 실제 의존(6 VER-002 키 + max_age_bound)으로 재분류. 이 HEAD 의 §7.1 사이트 중 D-4 사용 0.
++- 이 verdict 착지 커밋(C3)은 bound_paths 무접촉 → R-7 `48243cd2..HEAD -- bound_paths` = ∅ → `d0a_entry_state` 는 ENTRY_OK 로 복귀해야
++  한다(착지 후 `--write`/`--check` 로 실측).
++
++
++---
++
++## Codex 판정 (verbatim — 손대지 않음)
++
++```json
++{
++  "verdict": "approve",
++  "summary": "출하 가능. 재심 #4 finding (ㄴ)은 해소됐다. U-6′ (ㄱ)은 axis 필드 전체의 무정규화 byte-for-byte 동일을 요구해 prefix 해석을 제거하며, ⑧-b의 임의 접미·후행 공백 변이와 ⑧-c의 두 번째 site_id 변이는 각각 red로 고정됐다. (ㄱ)~(ㄹ) 및 ⑧ 사이에 남은 모순이나 C4 복수 해석은 찾지 못했다. S-26 ⑥은 52~56차 각각 적용되고 종결을 주장하지 않는다. 활성 v2.23 리터럴은 0이며 기존 이력 행은 무접촉이다. O-6의 bound_set_digest 4e6c975f…와 decided_at_head 8923aab2…가 재계산값에 일치하고, 구 digest는 이력 기록에만 남는다. plan_scope_digest는 116ee2fd…로 일치했으며 tos_contract_check와 self-test 145종 모두 rc 0이었다.",
++  "findings": [],
++  "next_steps": []
++}
++```
++
++원문 전체는 `.omc/review/20260904-133500/codex-result.json`(`parseError: null` · `adversarial-review` 구조화 출력).
++디스패치 focus 는 `.omc/review/20260904-133500/focus.txt`, 심사 대상 diff 사본은 같은 스탬프의 `evidence/scope-diff.patch`
++·`evidence/lockstep-diff.patch`.
+diff --git a/docs/reviews/phase0-completion-contract/20260904-171004/PHASE0-COMPLETION-DECISION.md b/docs/reviews/phase0-completion-contract/20260904-171004/PHASE0-COMPLETION-DECISION.md
+new file mode 100644
+index 00000000..90681e3a
+--- /dev/null
++++ b/docs/reviews/phase0-completion-contract/20260904-171004/PHASE0-COMPLETION-DECISION.md
+@@ -0,0 +1,102 @@
++# Phase 0 완료 판정 — 결정 기록 (운영자 countersign 기입 · 2026-09-04)
++
++> **Document class**: 완료 판단 **결정 기록**(운영자 서명). 이 기록이 담는 것은 «계약 §11 종료 조건이
++> 판정 대상 head 에서 충족됐다» 는 운영자 판단 하나다. 기계 상태(`prevention_control_state`·
++> `d0a_entry_state`·§11 overview)·계약·상위 계획·`tos-spec/`·`tools/` 는 이 기록으로 바뀌지 않으며,
++> G1~G3 를 부여하지 않고 `restricted_live`/`production` `NOT_AUTHORIZED` 는 불변이다. 초안 단계
++> (`decision: PENDING_OPERATOR_COUNTERSIGN`)는 커밋 `b99be174` 에 이력으로 남아 있다.
++
++```yaml
++decision: PHASE0_SECTION11_COMPLETE_ACCEPTED_AT_JUDGMENT
++judged_head: d07646c2923784e90ace718d98511a80c2d2fef7
++measurement_record: docs/reviews/phase0-completion-contract/20260904-171004/PHASE0-COMPLETION-JUDGMENT-LIVE.md
++decided_on: 2026-09-04
++authority: 운영자 (this repository's corpus owner)
++operator_countersign: "chihun,lee 2026-09-04T08:26:30Z"   # 계약 :8637 형식 · D0A-PREVENTION-CONTROL.md 와 같은 식별자 표기
++```
++
++`operator_countersign`의 형식·자리표시자 문언은
++`docs/plans/2026-08-12-tos-phase0-completion-contract-design.md:8637`
++(`operator_countersign: "<운영자 식별> <ISO-8601 UTC>"   # 예: "operator 2026-08-19T00:00:00Z"`)
++에서 그대로 옮긴 것이다(`grep -n "operator_countersign:" docs/plans/2026-08-12-tos-phase0-completion-contract-design.md`
++재확인).
++
++---
++
++## §11 조건표 — 측정값과 출처
++
++각 행은 측정 기록(`PHASE0-COMPLETION-JUDGMENT-LIVE.md`, 위 `measurement_record`)의 해당
++줄을 가리킨다. 이 표는 그 파일이 이미 인용한 생성물(`tos-spec/src/TOS-COMPLETION-STATUS.md`)의
++값을 다시 옮긴 것이며, 별도로 재판정하지 않는다.
++
++| 계약 §11 항 | 측정값 | 측정 기록 출처 |
++| --- | --- | --- |
++| `K-1` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:163` |
++| `K-2` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:164` |
++| `K-3` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:165` |
++| `K-4` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:166` |
++| `K-5/FWD-METRICS` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:167` |
++| `K-6` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:168` |
++| `K-9` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:169` |
++| `K-11` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:170` |
++| `K-12` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:171` |
++| `K-13` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:172` |
++| `K-14` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:173` |
++| `U-14` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:174` |
++| `U-12` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:175` |
++| `U-13` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:176` |
++| `U-15` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:177` |
++| `U-16` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:178` |
++| `U-1a` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:179` |
++| `U-4` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:180` |
++| `U-5` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:181` |
++| `U-8` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:182` |
++| `U-9` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:183` |
++| `D0-1` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:184` |
++| `A-1` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:185` |
++| `A-2` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:186` |
++| `A-3` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:187` |
++| `D-1` | `MET` | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:188` |
++| `D0-5` | `MET`(7/7 판정 · 5 UNBOUND · resolver/marketfeed `VALUED+UNBOUND`) | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:189`(생성물 표기) · 하위 셀 근거는 `:113-119`(§2 `--check` 출력) |
++| `U-17` | 생성물 자신은 미평가(「requires a live evaluation at completion-judgment time」) — 그 평가가 §1이다: **`prevention_control_state=PREVENTION_UNVERIFIED_REVISION`**, 사유 `(b)② d=28475ca1… head=21c47e42… check-run 100181808552 failure`. 이 삼중값은 `U17-B2-DEVIATION-ACCEPTANCE.md`의 `scope:`와 일치하며, 그 문서는 이 편차를 「완료 판단 시점에 수용」 처분했다(범위 한정). α·β 두 축은 통과. **기계 상태 자체는 MET이 아니다 — 수용은 사람의 처분이지 상태값의 변경이 아니다.** | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:190`(생성물 문언) · `:53-58`(fire/reason/rc 전사) · `:64-68`((b)② 삼중값-scope 일치 진술) |
++| `RES-1` | `MET`(checker 파생 제외 목록 — `STATE-EV-004`가 `FWD-a` 종료조건에서 U-13-e 근거로 제외) | `PHASE0-COMPLETION-JUDGMENT-LIVE.md:191` |
++
++---
++
++## 표준 이탈(standing deviation) 두 건 — §11과 별도 축
++
++이 결정 초안은 아래 두 이탈을 **§11 표의 값을 바꾸지 않고** 별도로 명시한다. 계약 §11.1이
++정한 대로, §11(종료 조건)과 계약 자신의 종결 자격(S-26)은 별개 축이며, 이 두 이탈 중 하나는
++전자(U-17 (b)②의 편차 수용), 하나는 후자(S-26 미충족)에 속한다.
++
++1. **U-17 (b)② 편차 — 운영자 완료 판단 시점 수용**: 근거
++   `tos-spec/src/part-1-foundation/decisions/U17-B2-DEVIATION-ACCEPTANCE.md`
++   (`decision: U17_B2_DEVIATION_ACCEPTED_AT_COMPLETION_JUDGMENT`, `decided_on: 2026-09-02`,
++   `authority: 운영자`). 그 문서 자신이 명시하는 대로 (i) 기계 상태는 이 수용으로 바뀌지
++   않는다 — `tools/u17-verify.sh`는 이 기록 이후에도 `PREVENTION_UNVERIFIED_REVISION`을
++   낸다. (ii) 이 수용의 소비처는 완료 판단(사람)뿐이다. (iii) 계약 개정이 아니다. (iv)
++   `D0A-PREVENTION-CONTROL.md`의 `operator_countersign`과는 별개다 — 그 서명은 불변이며
++   이 결정의 `operator_countersign`(위 yaml)과는 다른 서명이다. 범위는 `scope:`에 기재된
++   `d=28475ca1…`/`landing_head=21c47e42…`/`check_run_id=100181808552` 삼중값에 **한정**되며,
++   이 측정 기록(§1)의 live 실측이 정확히 같은 삼중값을 재확인했다.
++
++2. **S-26 계약-종결 자격 — 미충족(별개 축, §11.1)**: 계약 §11.1은 §11 표를 만족해도 계약
++   자신의 «종결»(S-26)은 자동으로 성립하지 않는다고 명시한다(`§11.1 은 포인터일 뿐 —
++   S-26 이 유일 정본`). 측정 기록 §6이 진술하듯 (a) 계약 blob 최종 편집(`8923aab2`) 이후
++   material-0 독립 재심은 1건(`20260904-133500`)뿐이라 S-26 ②의 «연속 2회» 요건이
++   미충족이고, (b) S-26 ⑤·⑧은 계약 본문에 열린 상태로 남아 있다. 따라서 계약은 아직
++   «종결»을 주장할 수 없다 — **이 사실은 §11 Phase 0 종료 조건의 충족 여부와는 무관한
++   별개 축**이며, 이 결정 초안이 Phase 0 §11 완료를 다루는 것을 막지 않는다(계약
++   §11.1이 그 분리를 명시적으로 허용한다).
++
++---
++
++## 효력
++
++이 결정은 위 yaml 의 `operator_countersign` 이 실제 식별값과 ISO-8601 UTC 시각으로 기입되고
++그 변경이 커밋된 시점(운영자 지시 2026-09-04 «countersign 기입 후 커밋»)에 발효했다. 발효의
++범위는 «판정 대상 head `d07646c2` 에서 계약 §11 종료 조건이 충족됐다는 운영자 판단» 이다.
++발효가 바꾸지 «않는» 것: 기계 상태(`tools/u17-verify.sh` 는 여전히
++`PREVENTION_UNVERIFIED_REVISION` 을 내고 `--check` 의 상태값은 그대로다) · 계약 S-26 종결 자격
++(미충족 · 별개 축) · G1~G3 · `restricted_live`/`production` 권한. 초안 단계의 문면은 커밋
++`b99be174` 에 이력으로 보존된다.
+diff --git a/docs/reviews/phase0-completion-contract/20260904-171004/PHASE0-COMPLETION-JUDGMENT-LIVE.md b/docs/reviews/phase0-completion-contract/20260904-171004/PHASE0-COMPLETION-JUDGMENT-LIVE.md
+new file mode 100644
+index 00000000..663d876f
+--- /dev/null
++++ b/docs/reviews/phase0-completion-contract/20260904-171004/PHASE0-COMPLETION-JUDGMENT-LIVE.md
+@@ -0,0 +1,333 @@
++# Phase 0 완료 판정 — 완료 판단 시점 live 실측 기록 (2차)
++
++> **Document class**: 비규범 **측정 전사**(측정 기록). Phase 0 완료 판정(계약 §11) 자체가
++> 아니다 — verdict YAML·`operator_countersign`·판정 어휘를 포함하지 않는다. 완료의
++> *결정*은 별도 기록(`PHASE0-COMPLETION-DECISION.md`, 같은 디렉터리)이 별도로 담당한다.
++> 이 기록은 2026-09-03 실측 기록
++> (`docs/reviews/phase0-completion-contract/20260903-073904/PHASE0-COMPLETION-JUDGMENT-LIVE.md`)
++> 이후 변경분을 반영한 **재측정**이다. 계약
++> `docs/plans/2026-08-12-tos-phase0-completion-contract-design.md`,
++> 상위 계획 `docs/plans/2026-08-11-tos-completion-development-plan.md`, `tos-spec/`,
++> `config/`, `tools/`, `.github/` 는 이 기록이 편집하지 않는다.
++
++## §0 결속
++
++| 항 | 값 | 출처 |
++| --- | --- | --- |
++| 성격 | Phase 0 완료 판정(§11)용 «완료 판단 시점 live» 실측 기록(2차) — 판정 자체가 아니다 | 이 기록 |
++| 측정 대상 head | `d07646c2923784e90ace718d98511a80c2d2fef7`(local branch `mission-critical-trading-operating-system`) | `$S/judgment/versions.log` |
++| 그 head 와 push/merge 위치 | 원격 추적 브랜치 HEAD = `c555022922f2ad9efb09e90f734bdfd18884efb0`(측정 head 는 push 대비 1커밋 앞 — `d07646c2` docs(reviews) 전용, `git diff --stat c5550229 d07646c2` = `docs/reviews/phase0-codex-records/**` 137개 파일 전량 신규 추가·+18,852/−0); `main`=`70b100e7`(09-03 기록과 동일, 그 뒤 main 착지 없음) | `$S/judgment/ci.log`(「Commits ahead of tracking branch」·「Tracking branch HEAD」), 직접 재실행 `git diff --stat c5550229 d07646c2` |
++| 계약 blob(`docs/plans/2026-08-12-tos-phase0-completion-contract-design.md`) | `899689fccdf7bed1705e927e2745ad839dc63875`(09-03 기록의 `0f8f3568…`에서 변경 — 에라타 52~56차 5커밋 반영) | `$S/judgment/binding.log` §「Contract design file blob」 |
++| 상위 계획 blob(`docs/plans/2026-08-11-tos-completion-development-plan.md`) | `ec3464c068dff2030e0764f3b05c985a821730f5`(09-03 기록과 동일 — 무편집) | `$S/judgment/binding.log` §「Development plan file blob」 |
++| `bound_set_digest`(OQ-11-DISPOSITION.md 명령으로 재계산) | `4e6c975f794696066a25abe4ee827594afa18f8fac8bfb5e7bf31d43508b3c2f` == `tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md`의 값 == `docs/reviews/phase0-completion-contract/20260904-133500/verdict.md`의 `bound_set_digest`(09-03 기록의 `e0729ff3…`에서 O-6 재결속으로 변경) | `$S/judgment/binding.log` §「Computing digest」·§「OQ-11 DISPOSITION binding info」·§「Latest verdict binding info」; 직접 대조 확인(OQ-11-DISPOSITION.md·레인 B verdict 재열람) |
++| U-15 R-7 currency (`git rev-list --full-history 48243cd2..HEAD -- <두 bound path>`) | `0` 커밋 | `$S/judgment/binding.log` §「Full history commit count (contract plan files)」; 직접 재실행 결과도 `0`(`wc -l`) |
++| `tools/tos_entry_harness.sh` sha256 | `059e13f22397d53c53211895cc321fef81ab7925135b196e27315e813d723177` == `.github/workflows/tos-gate.yml:17` 핀(09-03 기록과 동일 — 무변경) | `$S/judgment/binding.log` §「Tool and harness shasum」·§「CI workflow references」 |
++| `tools/u17-verify.sh` sha256 | `0b68ef856836380817dac179aee07e09276dbd9cb66feea9817c669bcdf9814e`(09-03 기록과 동일 — 무변경) | `$S/judgment/binding.log` §「Tool and harness shasum」 |
++| `tos-spec/src/part-1-foundation/decisions/D0A-PREVENTION-CONTROL.md` `operator_countersign` | `"chihun,lee 2026-08-28T05:23:48Z"`(그대로 인용 — 이 기록은 갱신하지 않는다) | `$S/judgment/binding.log` §「Operator countersign references」 |
++| U-17 (b)② `scope:` (U17-B2-DEVIATION-ACCEPTANCE.md) | `d=28475ca1…`·`landing_pr=638`·`landing_head=21c47e42…`·`check_run_id=100181808552`·`repaired_by=d56785ab`·`independent_readjudication=docs/reviews/phase0-completion-contract/20260902-195656/verdict.md`(09-03 기록과 동일 삼중값) | `$S/judgment/binding.log` §「U17 scope」; `tos-spec/src/part-1-foundation/decisions/U17-B2-DEVIATION-ACCEPTANCE.md` 직접 재열람 |
++| gh 인증 | `kakao-harris-lee`(keyring) · Active account: true · 전부 GET | `$S/judgment/u17-live.log:8-13`, 파일 말미 `=== gh auth status ===` 블록 |
++| 실행 UTC | u17 live 스크립트 시작 `2026-09-04T08:10:16Z`(파일 1행), 첫 GitHub API 호출(U17-A00) `utc=2026-09-04T08:12:41Z`, 이 기록 저작 시각 `2026-09-04T08:18Z` 무렵 | `$S/judgment/u17-live.log:1`, `$S/judgment/u17-live.log:16`, 직접 실행 `date -u` |
++
++---
++
++## §1 U-17 live 실측 원문
++
++전체 로그는 저작 세션의 스크래치패드에만 보존되며(`u17-live.log` 369,964 bytes·`u17-live.raw` 368,226 bytes,
++`gh` JSON 덤프 포함) 이 기록에는 커밋하지 않는다 — 아래 `utc=`·`x-github-request-id=` 값이
++재조회·대조의 근거다(계약 U-17 「리뷰어가 재조회해 대조」).
++
++```text
++16:    15	U17-A00 apps/github-actions  utc=2026-09-04T08:12:41Z  http=200  x-github-request-id=2710:12BE1B:4DB829:664EDD:6A9A7D78
++18:    17	U17-A0 repos/kakao-harris-lee/kis_unified_sts  utc=2026-09-04T08:12:41Z  http=200  x-github-request-id=F1C6:12F955:4E3019:66C8AF:6A9A7D79  (.default_branch=main)
++19:    18	U17-A0W repos/kakao-harris-lee/kis_unified_sts/actions/workflows/tos-gate.yml  utc=2026-09-04T08:12:42Z  http=200  x-github-request-id=BB8F:3BF92E:4FCD0D:68663E:6A9A7D79
++21:    20	U17-0w 핀 workflow_id=343700405 (state=active · repos/kakao-harris-lee/kis_unified_sts/actions/workflows/tos-gate.yml 의 .id · 구조 파생 · ①-R 전 결속 · 폴백 없음)
++62:    61	U17-α0 적용 룰셋(연속성 입력우주) = [21886181]  (rules/branches/main 의 ruleset_id · rulesets 목록 전체=[17017682 21886181])
++63:    62	u17_live_state=PREVENTION_ACTIVE
++140:   139	U17-C1R repos/kakao-harris-lee/kis_unified_sts/actions/workflows/343700405/runs?head_sha=21c47e42ff1487282ce2f9da0df11756ff146a3a&per_page=100  utc=2026-09-04T08:12:54Z  http=200  x-github-request-id=B441:3ED3A:4D6F54:660910:6A9A7D85
++149:   148	U17-C1R ①-R 1,000-런 상한 관측: 수집 런 수=1 · total_count=1
++161:   160	U17-C3 ③-C 합집합 |E₀|=1 (S_R 전체 소비 완료 · 1,000-suite 잘림의 대상 아님 — GitHub 처방 이행)
++172:   171	U17-ALFA1 S_A(포함 조건: head_sha==21c47e42ff1487282ce2f9da0df11756ff146a3a ∧ app.id==15368) = ["91075486666", "91075486707", "91075486743"]
++197:   196	U17-ALFA5 α 축 통과: (i) S_R⊆S_A ∧ (ii) S_A∖S_R 전 원소 «확인된 타 워크플로»
++208:   207	U17-BETA1 β 축 통과: 좌=1 == 우=1
++210:   209	U17-C1Rr ①-R run 결속 맵 구성(추가 HTTP 없음 — R 자체가 path/head_sha 를 담는다): 1개
++223:   222	U17-fire PREVENTION_UNVERIFIED_REVISION: (b)② d=28475ca1ca82fe99054a2cc04cf1b58e4550097a head=21c47e42ff1487282ce2f9da0df11756ff146a3a 4단계 ∀-success 위배 — [(0, 100181808552, 'failure')] (∃-증인 금지 · 케이스 ③ «정본 fail + decoy success» 포함)
++224:   223	U17-α t_land = min{merged_at(착지 PR) : d∈D} = 2026-09-02T08:57:41Z  (서버 부여 값만 · 커밋 author/committer date 불신)
++225:   224	U17-α ruleset 21886181: ruleset 21886181 created_at=2026-08-30T23:51:12.269000+00:00 ≤ t_land ∧ updated_at=2026-09-02T08:57:40.403000+00:00 ≤ t_land
++225: prevention_control_state=PREVENTION_UNVERIFIED_REVISION
++226: reason=(b)② d=28475ca1ca82fe99054a2cc04cf1b58e4550097a head=21c47e42ff1487282ce2f9da0df11756ff146a3a 4단계 ∀-success 위배 — [(0, 100181808552, 'failure')] (∃-증인 금지 · 케이스 ③ «정본 fail + decoy success» 포함) [수집 1건 중 전순서 최소]
++rc=1
++```
++
++행 번호는 `$S/judgment/u17-live.log`의 `cat -n` 행 번호(왼쪽 숫자, 저작 세션이 이미 붙인 것)와
++파일 내부 오프셋 라벨(오른쪽 숫자, `U17-*` 태그 옆)을 함께 적었다. `prevention_control_state=`·
++`reason=`·`rc=1`은 파일 말미의 `sed -n '220,234p'` 재확인으로 다음 위치에 있다(브리핑 메모 (1)
++그대로): 스크립트 자신의 종료 코드는 이 전사문 직후의 `rc=1` 줄이고, 그 뒤에 이어지는 `gh auth
++status` 블록의 `rc=0`은 그 별개 명령의 종료 코드다 — 혼동해 U-17 자체를 `rc=0`으로 읽지 않는다.
++
++`(b)②`의 이유는 09-03 기록과 **완전히 동일한 삼중값**(`d=28475ca1…`, `head=21c47e42…`,
++check-run `100181808552` `failure`)을 지목한다. 이 삼중값은
++`tos-spec/src/part-1-foundation/decisions/U17-B2-DEVIATION-ACCEPTANCE.md`의 `scope:`가
++기록한 삼중값과 **일치한다**(§0 표에 인용):
++
++```yaml
++scope:
++  d: 28475ca1ca82fe99054a2cc04cf1b58e4550097a          # D0A-FIRST (config/tos_completion.yaml 도입 커밋)
++  landing_pr: 638
++  landing_head: 21c47e42ff1487282ce2f9da0df11756ff146a3a
++  check_run_id: 100181808552                             # tos-gate · conclusion=failure
++  repaired_by: d56785ab                                  # PR #639 병합 커밋 (§12.3.4-R 재핀 · 하니스 sha 059e13f2…)
++  independent_readjudication: docs/reviews/phase0-completion-contract/20260902-195656/verdict.md
++```
++
++두 기록이 같은 삼중값을 담고 있다는 사실만을 이 기록은 진술한다 — 그 편차를 받아들일지는
++완료 판단(결정 기록)의 소관이다. 다른 편차는 발화하지 않았다: `u17_live_state=PREVENTION_ACTIVE`,
++α(U17-ALFA5)와 β(U17-BETA1) 둘 다 통과, ①-R/②-S/③-C 상한 미도달(148/160행 관측 수=1·
++total_count=1, 1,000 미만) — 09-03 기록과 값이 동일하다(같은 두 커밋 `d`/`landing_head`에 대한
++재측정이므로 서버 판정이 바뀔 이유가 없다).
++
++---
++
++## §2 기계 표면 (§11)
++
++명령 `.venv/bin/python tools/tos_completion_status.py --check`, rc 0, 출력 전문
++(`$S/judgment/completion-check.log`):
++
++```text
++미구현(C2c 이후) — 강제 지점 미등록:
++
++--check 밖 강제 지점:
++  - U-17 → tools/u17-verify.sh (가드 체인·live)
++
++상태 라인 (rc 비결합 — 상태별 rc 결합은 해당 check_id 의 Finding 이 담당):
++  oq11_raise_state=NOT_REQUIRED
++  d0a_entry_state=ENTRY_OK
++  d0a_entry_provenance_state=ENTRY_PROVENANCE_CLEAR
++  closable_no_provenance_state=NO_ROWS_CLEAR
++
++완료 관측 (§11 소관 · rc 비결합):
++  unmapped_pairs=0
++  planned_unassigned_pairs=799
++  superset_declared_pairs=0
++  FWD-a-0 불충족 evidence_id=['STATE-EV-004']
++  FWD-a 미충족 1행 (표본=['STATE-EV-004'])
++  FWD-a-0 불충족(제외 후) evidence_id=[]
++  FWD-a 미충족(제외 후) 0행
++  ref_reuse_max=8
++  ref_reuse_top=[('tos/src/tos/hag/predicates.py', 8), ('tos/src/tos/capsule/predicates.py', 7), ('tos/src/tos/spg/predicates.py', 6), ('tos/src/tos/sbr/predicates.py', 5), ('tos/src/tos/evidence/predicates.py', 4)]
++  profile_dependent_blocked=['BC-EV-003', 'ECO-EV-012', 'IOM-EV-008']
++  closable_no_rows=1
++  blank_normative_ref_rows=21
++  imprecise_owner_track=9
++  unassigned_owner_rows=0
++  U-13 fwd_a_excluded_rows=['STATE-EV-004']
++  U-13 remainder_rows=[]
++  A-2: ARCHITECTURE-GATE-STATUS.md 에 기계 파싱 가능한 권한 축-표기 없음(실측 확인 — §6.4 대조 대상에서 제외)
++  D0-5[backtest__init__]=UNBOUND (dsl_evaluation_budget_steps)
++  D0-5[resolver]=VALUED+UNBOUND (MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND)
++  D0-5[results]=UNBOUND (dsl_evaluation_budget_steps)
++  D0-5[construction]=UNBOUND (risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND)
++  D0-5[records]=UNBOUND (risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; lot_rounding:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND)
++  D0-5[engine]=UNBOUND (dsl_evaluation_budget_steps; CONTRAST: MAX_dsl_evaluation_ms)
++  D0-5[marketfeed]=VALUED+UNBOUND (MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND)
++
++RESULT: GREEN (violations=0)
++RESULT: rc=0
++
++=== git status check (should be empty) ===
++end git status check
++```
++
++09-03 기록 대비 변화: `D0-5[resolver]`가 `UNBOUND (docstring 에 UNBOUND 선언 문언 존재)`에서
++**`VALUED+UNBOUND`(6개 필드 VALUED·`max_age_bound`만 UNBOUND)로**, `D0-5[marketfeed]`도
++동일하게 **`UNBOUND`에서 `VALUED+UNBOUND`로** 재분류됐다. 09-03 기록의 marketfeed `NONE`
++주장은 독립 심사로 거짓 판정됐다(§5 참조) — `UNCHK-026`은 제거됐다.
++
++`tos-spec/src/TOS-COMPLETION-STATUS.md`(HEAD 시점) 발췌, `$S/judgment/status-doc.log`에서
++그대로 인용:
++
++State machine values(`status-doc.log:40-43`):
++
++```text
++- `oq11_raise_state=NOT_REQUIRED`
++- `d0a_entry_state=ENTRY_OK`
++- `d0a_entry_provenance_state=ENTRY_PROVENANCE_CLEAR`
++- `closable_no_provenance_state=NO_ROWS_CLEAR`
++```
++
++U-10 metrics / completion observations(`status-doc.log:49-72`) — 위 `--check` 출력과
++완전 일치(D0-5 7행 포함, `VALUED+UNBOUND` 2행 포함).
++
++Phase 0 termination-condition overview §11(`status-doc.log:115-145`, 그대로 인용):
++
++```text
++- `K-1`: `MET`
++- `K-2`: `MET`
++- `K-3`: `MET`
++- `K-4`: `MET`
++- `K-5/FWD-METRICS`: `MET`
++- `K-6`: `MET`
++- `K-9`: `MET`
++- `K-11`: `MET`
++- `K-12`: `MET`
++- `K-13`: `MET`
++- `K-14`: `MET`
++- `U-14`: `MET`
++- `U-12`: `MET`
++- `U-13`: `MET`
++- `U-15`: `MET`
++- `U-16`: `MET`
++- `U-1a`: `MET`
++- `U-4`: `MET`
++- `U-5`: `MET`
++- `U-8`: `MET`
++- `U-9`: `MET`
++- `D0-1`: `MET`
++- `A-1`: `MET`
++- `A-2`: `MET`
++- `A-3`: `MET`
++- `D-1`: `MET`
++- `D0-5`: `MET`
++- `U-17`: requires a live evaluation at completion-judgment time; this generated document does not perform that evaluation. Unevaluated counts as unmet (fail-closed).
++- `RES-1`: `MET` — `STATE-EV-004` is excluded from the `FWD-a` termination condition by the checker-derived exclusion list (`U-13 fwd_a_excluded_rows` above; contract U-13-e).
++```
++
++`U-17` 행이 명시하는 「live evaluation at completion-judgment time」이 §1의 실측이다 — 이
++생성물 자신은 그 평가를 수행하지 않는다고 스스로 적고 있다. 09-03 기록과 이 표 자체는 동일
++(D0-5는 이미 그때도 `MET` 표기였다 — 변화는 D0-5 판정을 구성하는 하위 셀의 값역/근거이지
++상태값 자체가 아니다).
++
++---
++
++## §3 §11 «추가» 표 실측
++
++| 항목 | 계약 기준 | 실측 | 명령/출처 |
++| --- | --- | --- | --- |
++| `tos/tests` 전량 green | 8,742(계약 §2 표) | dots(진행 문자 수)=8756 · nondot=0 · rc=0 | `$S/judgment/tos-tests.log`(`dots=    8756` / `nondot=       0` / `rc=0`) |
++| `tos/tests` collect-only 총량(교차검증) | - | `grep -c "::"` 결과 = **0**(pytest 9.0.2 `--collect-only -q`가 `<path>: <count>` 파일-집계 형식을 출력해 `::` 토큰이 없다 — 브리핑이 지목한 대로 원 `collect=` 라인은 사용 불가) · 파일별 집계값을 직접 합산하면 **8756**(=`dots`와 일치) | 직접 실행: `PYTHONPATH=tos/src .venv/bin/python -m pytest tos/tests --collect-only -q -p no:cacheprovider 2>/dev/null \| grep -c "::"` → `0`; 대체 합산: 같은 명령에 `2>&1 \| awk -F': ' '/^tests\// {sum+=$2} END {print sum}'` → `8756` |
++| completion-status 테스트 스위트 | - | 242 tests · rc 0(실행 로그는 진행 점만 표시하며 요약 카운트 라인은 캡처되지 않았다 — 진행 문자 수를 세면 72+72+72+26=242) | `$S/pytest-c6.log`(4개 진행 라인 `[ 29%]/[ 59%]/[ 89%]/[100%]`; 브리핑이 명시한 「242 tests, rc」) |
++| `ruff check tos/src tos/tests tests/tos_l3 tools` | - | `All checks passed!` rc 0 | `$S/judgment/ruff.log` |
++| `black --check tos/src tos/tests tests/tos_l3 tools` | 70 | `69 files would be reformatted, 751 files would be left unchanged.`(black 26.5.1) — 무증가(−1) | `$S/judgment/black.log`; 이 명령의 `rc=0`은 파이프의 종료 코드이지 black 자신의 것이 아니다(브리핑 메모 (2) — black은 `--check`에서 재포맷 대상이 있으면 통상 비0을 반환하므로, 이 로그의 `rc=0`을 black 통과로 읽지 않는다) |
++| `mypy tos/src/tos --ignore-missing-imports --no-error-summary` | 8 | `error:` 8건(mypy 2.3.1) · `error_count=8` · `rc=1` — 무증가(0) | `$S/judgment/mypy.log` |
++| `tools/tos_spec_status.py --check` | - | rc 0 · `TOS spec status PASS: documents=13, ADRs=45, ... restricted_live=NOT_AUTHORIZED, production=NOT_AUTHORIZED` | `$S/judgment/spec-check.log` |
++| `tools/tos_contract_check.py`(Layer 4) | - | rc 0 · `tos-contract: PASS — 자기참조 stale 위반 없음` | `$S/judgment/contract-check.log`(RUN 1) |
++| `tools/tos_contract_check.py --self-test`(Layer 4) | - | rc 0 · `self-test: PASS — 뮤테이션 145종 전부 판별 · 죽은 검사 0 · 앵커 불일치 0 · 역방향 과잉 차단 0 · 대조군 무효 0 · 분류기 대조군 2종 전건 통과` | `$S/judgment/contract-check.log`(RUN 2, 말미) |
++
++`Phase 0 완료 주장은 D0-A 이후에만`(계약 `:4541`): D0A-FIRST `28475ca1`은 PR #638로 main에
++착지했다(`merged_at=2026-09-02T08:57:41Z` — §1 223행, 09-03/09-04 두 실측이 동일 값).
++
++---
++
++## §4 CI 실측 (gh · GET)
++
++측정 head `d07646c2`, 그 직전 push된 head `c5550229`에는 **CI run 이 없다** — `tos-gate`는
++`on: [pull_request]` 전용 워크플로이고 현재 이 브랜치에 열린 PR이 없기 때문이다(브리핑 메모 (4)).
++이 head 의 CI 판정은 **미측정 — PR 미개설**로 기록한다.
++
++브랜치 `mission-critical-trading-operating-system`의 가장 최근 CI run 12건(모두 PR head 였던
++과거 리비전에 대한 결과이며 `d07646c2`/`c5550229`에 대한 것이 아니다):
++
++| 워크플로 | head | 결과 | 시각 |
++| --- | --- | --- | --- |
++| tos-gate | `1964de73` | success | `2026-09-02T13:29:00Z` |
++| tos-firewall | `1964de73` | success | `2026-09-02T13:29:00Z` |
++| Tests | `1964de73` | success | `2026-09-02T13:29:00Z` |
++| tos-gate | `44ffce5e` | success | `2026-09-02T13:05:40Z` |
++| tos-firewall | `44ffce5e` | success | `2026-09-02T13:05:40Z` |
++| Tests | `44ffce5e` | success | `2026-09-02T13:05:40Z` |
++| Tests | `a9da27b0` | success | `2026-09-02T11:12:40Z` |
++| tos-gate | `a9da27b0` | success | `2026-09-02T11:12:40Z` |
++| tos-firewall | `a9da27b0` | success | `2026-09-02T11:12:40Z` |
++| Tests | `21c47e42` | **failure** | `2026-09-02T08:37:52Z` |
++| tos-gate | `21c47e42` | **failure** | `2026-09-02T08:37:52Z` |
++| tos-firewall | `21c47e42` | **failure** | `2026-09-02T08:37:52Z` |
++
++`main`의 최근 CI(6건, main push 트리거이므로 `tos-gate` 없음):
++
++| 워크플로 | head | 결과 | 시각 |
++| --- | --- | --- | --- |
++| tos-firewall | `70b100e7` | success | `2026-09-02T13:36:15Z` |
++| Tests | `70b100e7` | success | `2026-09-02T13:36:15Z` |
++| tos-firewall | `4a0d122b` | success | `2026-09-02T13:13:44Z` |
++| Tests | `4a0d122b` | success | `2026-09-02T13:13:44Z` |
++| tos-firewall | `d56785ab` | success | `2026-09-02T11:20:05Z` |
++| Tests | `d56785ab` | success | `2026-09-02T11:20:05Z` |
++
++09-03 기록 대비 CI 표는 변화가 없다(같은 리비전 집합) — 유일한 차이는 측정 head 가
++`faea9720`(09-03)에서 `d07646c2`(09-04)로 이동했고, 두 head 모두 PR 미개설로 CI 미측정
++상태라는 점이다.
++
++출처: `$S/judgment/ci.log`.
++
++---
++
++## §5 §12.3 절차표 9행(codex-reviewer 적대적 코드 리뷰) 실측
++
++09-03 기록은 이 행을 「미실행으로 관측됨」으로 남겼다. 그 사이 레인 A가 **실행되어
++approve로 종결**됐다:
++
++- 정본: `docs/reviews/phase0-codex-records/20260904-155704/verdict.md`
++  (`job_id: review-mtmnmhm1-pc6tnu` · `reviewed_at_head: c555022922f2ad9efb09e90f734bdfd18884efb0`
++  · `verdict: approve` · `findings: []`(0건) · `subcommand: adversarial-review (--wait ·
++  setsid · base 28475ca1^ · scope branch · 재심 #6)`).
++- 판정문 그대로: 「§12.3 절차표 9행 레인 A 게이트 개방(HEAD c5550229). §11 `D0-5` = MET(7/7
++  판정됨 · 5 UNBOUND · resolver/marketfeed VALUED+UNBOUND). 이 approve 는 작업 트리 전체에
++  결속된다 — 코드 한 줄이라도 바뀌면 무효·재심.」
++- 재심 이력(레인 A, `docs/reviews/phase0-codex-records/README.md` 색인표): 1차
++  `20260903-165133`(needs-attention 3) → #1 `20260904-001114`(needs-attention 3) → #2
++  `20260904-100015`(needs-attention 1) → 레인 B 측면 `20260904-101247`(approve) → #3
++  `20260904-101638`(approve · 이후 C4로 무효) → #4 `20260904-150103`(needs-attention 1) →
++  #5 `20260904-154559`(needs-attention 1) → #6 `20260904-155704`(**approve · findings 0**).
++- 레인 B(계약) 최신 approve: `docs/reviews/phase0-completion-contract/20260904-133500/verdict.md`
++  (`job_id: review-mtmgna46-osp4fm` · `reviewed_at_head: 48243cd2e07c1357a389e670cf2f23af479d1595`
++  · `verdict: approve` · 에라타 52~56차 + O-6 재결속).
++
++**이 approve가 결속하는 head 는 `c5550229`다.** 그 뒤 1커밋(`d07646c2`)이 붙었는데,
++`git diff --stat c5550229 d07646c2`는 `docs/reviews/phase0-codex-records/**` 137개 파일
++전량 신규 추가(+18,852/−0)뿐이며, 레인 A 심사 범위 지정(`git diff 28475ca1^ HEAD -- .
++':!docs/plans' ':!docs/reviews'`)이 `docs/reviews`를 이미 제외한다 — 따라서 그 커밋은
++승인 범위 밖의 docs 전용 변경이다. 다만 `docs/reviews/phase0-codex-records/README.md`
++자신이 명시하듯 「`reviewed_scope_digest`는 HEAD `c5550229`의 작업 트리 전체에 결속되며,
++그 이후 트리 digest가 바뀌면 codex-gate 규율상 재심 대상」이다 — **레인 A를 `d07646c2`에
++대해 재실행할지는 운영자 결정**이며, 이 기록은 그 결정을 대신하지 않는다.
++
++또한 09-03 기록이 `NONE`으로 남겨두었던 marketfeed 완료 주장은 독립 확인 심사
++(`docs/reviews/phase0-codex-records/20260904-131909-marketfeed/verdict.md`,
++`verdict: needs-attention`, `claim: marketfeed — tos/src/tos/marketfeed 패키지는
++VERIFICATION-PROFILE-002 의 결속 값을 소비하지 않는다`)로 **거짓으로 판정**되어
++`UNCHK-026`이 제거되고 D0-5 marketfeed 셀이 `VALUED+UNBOUND`로 재분류됐다(§2 참조).
++
++---
++
++## §6 S-26(계약 자신의 종결 자격) 실측 — 종결 주장이 아니다
++
++계약 §11.1 은 §11 표(Phase 0 종료 조건)와 S-26(계약 «종결» 자격)을 별개 축으로 분리한다
++(`§11.1: R-F4 수렴하지 않는다 → S-26 이 유일 정본, §11.1 은 포인터일 뿐`). 이 절은 측정값만
++기록한다.
++
++- ① 계약 blob 은 마지막 편집(C1⁗ `8923aab2`, 에라타 56차) 이후 무변경(bound-path 커밋 0건 —
++  §0 U-15 R-7 currency).
++- ② 그 편집 이후 material 0 인 독립 재심 = **1건**(`docs/reviews/phase0-completion-contract/
++  20260904-133500/verdict.md`, approve, findings 0). S-26 ②는 **연속 2회**를 요구하므로
++  이 1건만으로는 미충족.
++- ⑤·⑧: 계약 본문에 열린 상태로 기록돼 있다(09-03 기록 이후 이 두 축을 닫는 처분은
++  관측되지 않았다).
++- 따라서 S-26의 AND는 **충족되지 않으며**, 이 기록은 부분·전체를 불문하고 종결을 주장하지
++  않는다(S-26 머리말이 「부분 종결」 표기를 금지한다).
++- 2026-08-30 운영자 지시(재심 #21 종결)는 유효하며, 이 기록은 그 재심을 재개하지 않는다.
++  다만 2026-09-04 운영자 지시로 그 정지는 **에라타 52~56차 범위에 한해서만** 해제되어
++  레인 B 재심이 위 5커밋에 대해 진행됐다 — 그 범위 밖에서는 정지가 여전히 유효하다.
++- S-26 ⓒ: 종결 판정 기록은 문서 «밖»에서만 이뤄진다 — 이 파일은 계약 문서 밖이다.
++
++---
++
++## §7 이 기록이 하지 않는 것
++
++- 계약·상위 계획 무편집(bound paths), `tos-spec/**`·`tools/**`·`config/**`·`.github/**` 무편집.
++- 기계 상태 불변 — `prevention_control_state`·`d0a_entry_state` 등 어떤 상태값도 이
++  기록으로 바뀌지 않는다.
++- G1~G3 미부여(§10).
++- `restricted_live`/`production` `NOT_AUTHORIZED` 불변.
++- verdict·countersign 이 아니다 — 완료 판단은 별도 기록(`PHASE0-COMPLETION-DECISION.md`,
++  현재 `decision: PENDING_OPERATOR_COUNTERSIGN` 초안)의 소관이다.
++- 레인 A(`c5550229` 결속)를 측정 head(`d07646c2`)로 재실행하는 결정 — 운영자 소관(§5).
++- S-26 종결 판정 — §6은 측정값만 기록하며 AND 미충족을 스스로 진술한다.
+diff --git a/tools/tos_completion_status.py b/tools/tos_completion_status.py
+index 64775a25..405d8d59 100644
+--- a/tools/tos_completion_status.py
++++ b/tools/tos_completion_status.py
+@@ -3551,7 +3551,7 @@ def check_a3(ctx: CheckContext) -> list[Finding]:  # noqa: ARG001
+ 
+ 
+ # ---------------------------------------------------------------------------
+-# D0-5b — D-1 처분 검사기 (§7.4) + U-6(§13.6.6)
++# D0-5b — D-1 처분 검사기 (§7.4) + U-6(§7.4)
+ # ---------------------------------------------------------------------------
+ 
+ VERIFICATION_PROFILE_002_REL = Path(
+@@ -3597,7 +3597,48 @@ D1_CONTRACT_SITE_NAMES: frozenset[str] = frozenset(
+         "marketfeed",
+     }
+ )
+-D1_ALLOWED_DISPOSITIONS: frozenset[str] = frozenset({"VALUED", "BLOCKED", "UNBOUND"})
++# 계약 §7.4 D-3/D-4/D-5(v2.22 에라타 52차·53차) — 어휘를 두 층으로 가른다.
++# ``D1_KEY_DISPOSITIONS`` 는 개별 «선언된 키» 하나의 처분(D-3)이고,
++# ``D1_SITE_ONLY_DISPOSITIONS`` 는 키가 아니라 «사이트 전체»에만 붙는 처분(D-4)
++# 이다. 어느 쪽에도 ``"VALUED+UNBOUND"`` 같은 ``+`` 결합 문자열을 리터럴로
++# 넣지 않는다 — 그 문자열은 새 처분 이름이 아니라 ``per_key`` 의 집합
++# 표기일 뿐이고, 허용 어휘 검사는 항상 ``per_key`` 의 원소마다 수행한다
++# (계약이 명시적으로 금지 — "허용 어휘 목록에 리터럴로 넣지 않고 원소마다
++# 검사한다"). 옛 ``D1_ALLOWED_DISPOSITIONS`` 단일 상수는 이 구분이 없어
++# 접힌 값(문자열 결합)이 어휘 검사를 우연히 통과할 길을 열었다.
++D1_KEY_DISPOSITIONS: frozenset[str] = frozenset({"VALUED", "BLOCKED", "UNBOUND"})
++D1_SITE_ONLY_DISPOSITIONS: frozenset[str] = frozenset({"NO_DEPENDENCY"})
++
++# 계약이 고정한 D-3 cell 표기 순서 — dedup 후 이 순서로 ``+`` 결합한다
++# (VALUED, BLOCKED, UNBOUND 순).
++_D1_CELL_ORDER: tuple[str, ...] = ("VALUED", "BLOCKED", "UNBOUND")
++
++
++@dataclass(frozen=True)
++class D1SiteRecord:
++    """§7.1 사이트 1개의 D0-5 처분 레코드(계약 §7.4 D-3/D-4/D-5).
++
++    ``kind`` — ``"keys"``(D-3, 선언된 키 1개 이상이 전부 배정됨) ·
++    ``"none"``(D-4, ``VER-002-KEYS: NONE`` 선언이 구조 스캔 0건을 통과해
++    NO_DEPENDENCY 후보가 됨 — 완료 여부는 §13 행(U-6′)과 D-4 (마) 독립
++    리뷰 기록에 추가로 달려 있다) · ``"undecided"``(다섯 UNDECIDED 게이트,
++    NONE 선언과 스캔의 모순, 또는 검사기 자신의 fail-closed).
++
++    ``per_key`` — ``kind == "keys"`` 일 때만 채워지는 ``(키, 처분)`` 튜플들.
++    ``cell`` — 렌더러가 그대로 찍는 표시값. ``kind == "keys"`` 면
++    ``per_key`` 의 처분 집합을 ``_D1_CELL_ORDER`` 순으로 dedup·``+`` 결합한
++    것(균일하면 원소 하나라 종래 표기와 같다), ``kind == "none"`` 이면
++    ``"NO_DEPENDENCY"`` 또는(완료 미충족) ``"UNDECIDED"``, ``kind ==
++    "undecided"`` 면 언제나 ``"UNDECIDED"``.
++
++    술어는 전부 ``per_key``/``kind`` 를 읽지 ``cell`` 문자열을 파싱하지
++    않는다 — ``cell`` 은 표시 전용이다."""
++
++    kind: str
++    per_key: tuple[tuple[str, str], ...]
++    cell: str
++    basis: str
++
+ 
+ # §7.4/D-1/D-2 — 의존 키 선언 문법(``VER-002-KEYS: ...``) 파싱.  구 산문
+ # 판별(``not a VERIFICATION-PROFILE-002 key`` 류 정규식)은 폐지했다 — 그
+@@ -3670,9 +3711,8 @@ def _d1_body_without_declaration(docstring: str, declaration_line: str) -> str:
+ 
+ 
+ def _d1_scope_paths(repo_root: Path, rel: Path, kind: str) -> tuple[Path, ...]:
+-    """``NONE`` 선언의 실측 스캔 범위 — module 은 그 패키지 디렉터리 재귀
+-    ``*.py`` 전부, class/method 는 그 파일 하나뿐(설계 규칙 6 — 계약 조항이
+-    아니라 이 검사기의 파생 규칙이다; 에라타 후보 기록 (b) 참조)."""
++    """``NONE`` 선언의 실측 스캔 범위(계약 §7.4 D-4 「스캔 범위」) — module 은
++    그 패키지 디렉터리 재귀 ``*.py`` 전부, class/method 는 그 파일 하나뿐."""
+     path = repo_root / rel
+     if kind == "module":
+         return tuple(sorted(path.parent.rglob("*.py")))
+@@ -3680,20 +3720,45 @@ def _d1_scope_paths(repo_root: Path, rel: Path, kind: str) -> tuple[Path, ...]:
+ 
+ 
+ def _d1_scan_scope_for_universe_refs(
+-    paths: tuple[Path, ...], universe: dict[str, bool]
++    paths: tuple[Path, ...], candidate_universe: Iterable[str]
+ ) -> list[tuple[str, Path]]:
+-    """``paths`` 전체에서 프로파일 우주 키의 토큰-경계 리터럴 참조를 찾는다
+-    — ``NONE`` 선언이 실측과 모순되지 않는지 검증하는 유일한 근거."""
++    """``paths`` 전체에서 «후보 우주»(계약 §7.4 D-4 (나))의 토큰-경계 리터럴
++    참조를 찾는다 — ``NONE`` 선언의 완료 후보 자격을 걸러내는 유일한 근거.
++
++    (다) 토큰화 — 원문 전 행에 대해 코드·문자열·주석·docstring 을
++    구별하지 않는 단어 경계 정규식으로 찾는다(과잉 차단 방향이 계약이
++    명시한 의도)."""
+     hits: list[tuple[str, Path]] = []
+     for path in paths:
+         text = path.read_text(encoding="utf-8")
+-        for key in universe:
++        for key in candidate_universe:
+             pattern = rf"(?<![A-Za-z0-9_]){re.escape(key)}(?![A-Za-z0-9_])"
+             if re.search(pattern, text):
+                 hits.append((key, path))
+     return hits
+ 
+ 
++def _d1_candidate_universe(
++    profile_universe: dict[str, bool] | None,
++    parsed_sites: Iterable[_D1Declaration | None],
++) -> frozenset[str]:
++    """계약 §7.4 D-4 (나) — NONE 스캔의 후보 우주를 기계로 파생한다.
++
++    ``VERIFICATION-PROFILE-002`` 우주 키 **∪** §7.1 일곱 사이트가 D-5 로
++    선언한 키 전부(``VER-002-KEYS`` 및 ``CONTRAST``). 53차 전에는 앞의
++    것뿐이라, 그 우주 밖 의존 키(예: ``resolver`` 의 ``max_age_bound``)를
++    선언 대신 ``NONE`` 으로 적으면 스캔이 놓치는 우회가 열려 있었다 — 이
++    함수가 그 우회를 닫는다. 키 이름을 하드코딩하지 않고 실제 7사이트
++    선언에서 매번 다시 파생한다."""
++    universe_keys = set(profile_universe) if profile_universe is not None else set()
++    declared: set[str] = set()
++    for decl in parsed_sites:
++        if decl is not None and decl.kind == "keys":
++            declared.update(decl.keys)
++            declared.update(decl.contrast)
++    return frozenset(universe_keys | declared)
++
++
+ def _d1_classify_key(key: str, universe: dict[str, bool]) -> str:
+     """단일 키 -> ``UNBOUND``(우주 밖) / ``BLOCKED``(null) / ``VALUED``
+     (non-null)."""
+@@ -3704,32 +3769,30 @@ def _d1_classify_key(key: str, universe: dict[str, bool]) -> str:
+ 
+ def _d1_site_disposition_from_keys(
+     keys: tuple[str, ...], universe: dict[str, bool]
+-) -> tuple[str, str]:
+-    """다중 키의 사이트-단위 처분(설계 규칙 5 — 계약 조항이 아니라 이
+-    검사기의 파생 규칙이다; 에라타 후보 기록 (a) 참조).
++) -> tuple[tuple[tuple[str, str], ...], str, str]:
++    """다중 키의 사이트-단위 처분(계약 §7.4 D-3, v2.22 에라타 52차).
+ 
+     Codex verdict review-mtlo6mst-93vt2j finding 1 — 이전 구현은
+     ``UNBOUND > BLOCKED > VALUED`` 우선순위로 항상 사이트 하나에 정확히
+-    하나의 처분을 «접었다». §7.4 는 단일 키 K 에 대해서만 VALUED/BLOCKED/
+-    UNBOUND 를 정의하고, K 미공급은 UNDECIDED 다 — 여러 키를 하나로 접는
+-    규칙 자체가 계약 어휘 밖이라, 그 우선순위는 완료값을 조용히 합성하는
+-    우회로였다. 지금은 접지 않는다: 전 키의 처분이 같으면(우선순위 없이도
+-    유일하게 정해지는 경우) 그 처분을 그대로 쓰고, 갈리면 계약이 다루지
+-    않는 조합이므로 UNDECIDED(혼합 처분)로 멈춘다 — 운영자 에라타 처분
+-    전까지 완료값을 만들지 않는다. 근거(단일 키면 그 키 이름 그대로, 다중
+-    키면 ``k:상태`` 나열)는 접힘 여부와 무관하게 항상 키별 세부를 노출한다."""
+-    per_key = [(key, _d1_classify_key(key, universe)) for key in keys]
+-    dispositions = {disposition for _, disposition in per_key}
++    하나의 처분을 «접었다». D-3 은 그 접기를 명시적으로 금지한다 — 「하나」
++    의 단위는 «사이트»가 아니라 «선언된 키»다. 이 함수는 이제 접지 «않고»
++    ``per_key``(키별 세부) 와 그 «집합»을 표기하는 ``cell``(``VALUED``,
++    ``BLOCKED``, ``UNBOUND`` 순으로 dedup·``+`` 결합 — 균일하면 원소
++    하나라 종래 표기와 같다)을 함께 돌려준다. 갈린 처분(``VALUED+UNBOUND``
++    류)도 **새 처분 이름이 아니라 집합의 표기**이며 완료를 막지 않는다 —
++    ``D1_KEY_DISPOSITIONS``/``D1_SITE_ONLY_DISPOSITIONS`` 어느 쪽에도 이
++    결합 문자열을 리터럴로 넣지 않고 원소마다 검사한다.
++
++    근거(``basis``)는 단일 키면 그 키 이름 그대로, 다중 키면 ``k:상태``
++    나열 — D-3 이 키별 내역을 근거에 «의무»로 함께 적으라고 요구한다."""
++    per_key = tuple((key, _d1_classify_key(key, universe)) for key in keys)
++    present = {disposition for _, disposition in per_key}
++    cell = "+".join(name for name in _D1_CELL_ORDER if name in present)
+     if len(per_key) == 1:
+         basis = per_key[0][0]
+     else:
+         basis = "; ".join(f"{k}:{v}" for k, v in per_key)
+-    if len(dispositions) == 1:
+-        return next(iter(dispositions)), basis
+-    return (
+-        "UNDECIDED",
+-        f"혼합 처분(§7.4 어휘 밖 · 운영자 에라타 처분 대기): {basis}",
+-    )
++    return per_key, cell, basis
+ 
+ 
+ def _extract_d1_docstring(source: str, kind: str, target: str) -> str | None:
+@@ -3802,49 +3865,361 @@ def _load_profile_universe(
+     return universe, None
+ 
+ 
++_D1_NO_DEPENDENCY_ADJUDICATORS: frozenset[str] = frozenset({"codex", "operator"})
++_D1_NO_DEPENDENCY_RECORDS_ROOT = Path("docs/reviews/d1-no-dependency")
++_D1_U6PRIME_BOUNDARY_SENTENCE = "후보 우주 밖의 이름은 보지 못한다"
++# D-4 (마) — adjudicator 별 provenance 필드 이름. codex 기록은 job_id, operator
++# 기록은 countersigned_by 를 지어야 한다(다른 쪽 필드만 있으면 그 adjudicator엔
++# 미충족). 위 _D1_NO_DEPENDENCY_ADJUDICATORS 의 두 값과 1:1 대응한다.
++_D1_NO_DEPENDENCY_PROVENANCE_FIELD: dict[str, str] = {
++    "codex": "job_id",
++    "operator": "countersigned_by",
++}
++# D-4 (마) — 지정 claim 문장, 계약 §7.4 D-4 (마)/55차 (iv) 원문 그대로(byte-equal
++# 부분문자열 비교 대상 — 정규화하지 않는다).
++_D1_NO_DEPENDENCY_CLAIM_SENTENCE = (
++    "이 사이트 범위는 VERIFICATION-PROFILE-002 결속 값을 소비하지 않는다"
++)
++_D1_REVIEWED_AT_HEAD_RE = re.compile(r"[0-9a-f]{40}")
++
++
++def _d1_no_dependency_claim_canonical(site_id: str) -> str:
++    """D-4 (마) — ``claim`` 필드가 만족해야 하는 **단일 결정적 정본
++    형식**. 계약 (마) 본문은 claim 의 «내용»만 고정한다(site_id 와 위
++    문장) — 이 함수는 그 내용을 하나의 byte-exact **표면** 형식으로
++    못박는다: ``f"{site_id} — {_D1_NO_DEPENDENCY_CLAIM_SENTENCE}"``
++    (site_id 뒤 정확히 한 칸 + U+2014 EM DASH(``—``) + 정확히 한 칸 +
++    지정 문장, 그 앞뒤 잉여 텍스트 없음).
++
++    v2.22 에라타 55차 · Codex 레인 A 재심 #5(review-mtmlkbm4-t1ovxs)
++    finding 1 — 개정 전 구현은 «site_id 단어-경계 존재» 와 «지정 문장
++    부분문자열 존재» 를 별도 논리곱으로 검사해, ``resolver — 다음 주장은
++    거짓이다: <지정 문장>`` 같은 부정 포장 claim 이나 기대 site_id 외의
++    canonical site_id 를 함께 담은 claim 도 두 조건을 각각 만족시켜
++    통과시켰다. 이 함수가 돌려주는 정본과 claim 전체값을 byte-for-byte
++    비교하면(정규화 없음) 그 두 우회로가 모두 불일치가 된다."""
++    return f"{site_id} — {_D1_NO_DEPENDENCY_CLAIM_SENTENCE}"
++
++
++def _d1_u6prime_axis(site_id: str) -> str:
++    """U-6′ (ㄱ) — ``axis`` 필드가 byte-for-byte 동일해야 하는 정본 문자열
++    (v2.22 에라타 56차, «시작» 이 아니라 «동일»). ``site_id`` 는 D-4 (라)의
++    일곱 canonical 이름 중 하나여야 하고, 콜론 뒤 공백은 정확히 하나다."""
++    return f"D0-5 NONE: {site_id}"
++
++
++def _d1_u6prime_row_state(
++    uncheckable_rows: Sequence[Mapping[str, str]] | None,
++    site_id: str,
++    *,
++    candidate_universe_size: int,
++    scope_desc: str,
++    file_count: int,
++) -> tuple[bool, str, Mapping[str, str] | None]:
++    """U-6′ (ㄱ)~(ㄹ)(계약 §7.4, v2.22 에라타 54~56차) — ``site_id`` 의 §13
++    행 그래머를 확인한다. 반환: ``(충족 여부, 근거, 매칭된 행 또는 None)``.
++
++    (ㄱ) 행의 ``axis`` 는 ``_d1_u6prime_axis(site_id)`` 와 **정규화 없이
++    byte-for-byte 동일**해야 한다 — 부분문자열·prefix·trim·대소문자 접기
++    금지(56차, «시작» 문언 폐기). (ㄴ) 사이트당 정확히 한 행 — 0행이면
++    미충족, 2행 이상이면 위반. (ㄷ) 행당 최대 한 사이트 — 위 axis 매칭
++    자체가 사이트를 하나만 이름하므로 기계로 선다. (ㄹ) (1)~(4)는 그 한
++    행의 ``reason`` 안에 있어야 한다: (1) ``VER-002-KEYS: NONE`` 선언
++    사실, (2) 스캔 결과(후보 우주 크기·스캔 범위 파일 수), (3) 경계 문장
++    「후보 우주 밖의 이름은 보지 못한다」, (4) D-4 (마) 독립 리뷰 기록의
++    경로 접두사."""
++    if uncheckable_rows is None:
++        return False, "§13 레지스터 부재로 확인 불가", None
++    axis = _d1_u6prime_axis(site_id)
++    matches = [row for row in uncheckable_rows if row.get("axis", "") == axis]
++    if not matches:
++        return (
++            False,
++            f"§13 행 부재(axis == {axis!r} 정확 일치 0건 — (ㄱ)(ㄴ))",
++            None,
++        )
++    if len(matches) > 1:
++        return False, f"§13 행 중복({len(matches)}건 — (ㄴ) 위반)", None
++    row = matches[0]
++    reason = row.get("reason", "")
++    missing: list[str] = []
++    if "VER-002-KEYS: NONE" not in reason:
++        missing.append("(1) VER-002-KEYS: NONE 선언 사실")
++    if not (
++        "후보 우주" in reason
++        and str(candidate_universe_size) in reason
++        and str(file_count) in reason
++    ):
++        missing.append("(2) 스캔 결과(후보 우주 크기·스캔 범위 파일 수)")
++    if _D1_U6PRIME_BOUNDARY_SENTENCE not in reason:
++        missing.append("(3) 경계 문장")
++    record_path_prefix = f"{_D1_NO_DEPENDENCY_RECORDS_ROOT.as_posix()}/{site_id}/"
++    if record_path_prefix not in reason:
++        missing.append("(4) D-4 (마) 독립 리뷰 기록 경로")
++    if missing:
++        return False, f"§13 행 reason 미충족(ㄹ): {', '.join(missing)}", row
++    return True, f"§13 행 그래머 충족(axis={axis!r})", row
++
++
++def _d1_scope_content_digest(
++    repo_root: Path, scope_paths: Sequence[Path], ref: str = "HEAD"
++) -> str | None:
++    """D-4 (마) — ``scope_content_digest``. codex-gate 레인 B
++    ``plan_scope_digest`` 에서 ``git rev-parse HEAD`` 한 줄을 뺀 형태 —
++    **내용 전용**이라 사이트와 무관한 커밋에는 영향받지 않는다(HEAD 를
++    넣으면 사이트 범위 밖 커밋 하나에도 기록이 무효가 되어 «결속이 아니라
++    자살»이 된다).
++
++    레시피: 경로를 ``LC_ALL=C`` 정렬·중복 제거한 뒤 각 경로의 (``ref`` 의)
++    blob 을 ``sha256`` 하고, ``"<해시 hex>  <경로>\\n"`` 을 이어 붙여 다시
++    ``sha256`` 한다. blob 이 하나라도 ``ref`` 에 부재하면 ``None``(호출자가
++    "판정됨 아님"으로 접는다).
++
++    ``scope_paths`` 는 ``_d1_scope_paths`` 가 돌려주는 **절대** 경로다 —
++    git 은 repo-relative 경로만 받으므로, 여기서 ``repo_root`` 기준
++    상대화한 POSIX 문자열로 정규화한 뒤에만 ``git show``/해시 입력에
++    쓴다(절대 경로를 그대로 넘기면 blob 조회가 항상 실패한다)."""
++    rels = sorted({p.relative_to(repo_root).as_posix() for p in scope_paths})
++    lines: list[str] = []
++    for rel in rels:
++        blob = _git_show_blob(Path(rel), ref, repo_root)
++        if blob is None:
++            return None
++        lines.append(f"{hashlib.sha256(blob).hexdigest()}  {rel}\n")
++    return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
++
++
++def _d1_locate_no_dependency_record_stamp(repo_root: Path, site_id: str) -> str | None:
++    """``docs/reviews/d1-no-dependency/<site_id>/`` 아래 ``verdict.md`` 를
++    가진 스탬프 디렉터리 중 **HEAD 트리 기준** 사전순(``LC_ALL=C``) 마지막
++    — U-15 R-3 이 계약 verdict 스탬프를 고르는 것과 같은 선택자다.
++
++    반환값은 (있다면) verdict.md 를 담은 디렉터리의 **repo-relative 전체
++    경로** — ``_git_ls_tree_dirs`` 가 이미 그 형태로 돌려준다(U-15 R-3 의
++    ``STAMPS_REL`` 소비 패턴과 동일). 호출자가 ``rel / site_id`` 를 다시
++    앞에 붙이면 경로가 중복된다 — 붙이지 않는다."""
++    rel = _D1_NO_DEPENDENCY_RECORDS_ROOT / site_id
++    stamp: str | None = None
++    for d in _git_ls_tree_dirs(rel, "HEAD", repo_root):
++        if _git_cat_file_exists(f"HEAD:{d}/verdict.md", repo_root):
++            stamp = d
++    return stamp
++
++
++def _d1_no_dependency_record_state(
++    repo_root: Path, site_id: str, scope_paths: Sequence[Path]
++) -> tuple[bool, str]:
++    """D-4 (i)~(iv)의 (iv) — 독립 리뷰 기록(계약 §7.4 D-4 (마) · v2.22 에라타
++    55차 · Codex 레인 A 재심 #4 review-mtmjt61i-d0f3oc finding 1). 저작자가
++    «아닌» 심판(``adjudicator`` ∈ {codex, operator})이 「이 사이트 범위는
++    VERIFICATION-PROFILE-002 결속 값을 소비하지 않는다」에 서명했고, 그
++    서명이 이 HEAD 의 범위 소스 바이트에 그대로 결속돼 있는지를 본다.
++    형식은 codex-gate 레인 B ``verdict.md`` 그대로 — 새 형식을 발명하지
++    않는다(S-14).
++
++    재심 #4 finding 1: 개정 전 구현은 adjudicator/verdict/path/digest 만
++    보고 ``site_id in claim`` 부분문자열만 확인해, ``job_id``/
++    ``countersigned_by``/``reviewed_at_head`` 부재나 claim 의 부분문자열
++    site_id·반대 의미 문장도 통과시켰다. 그 뒤 개정(재심 #4 대응)은
++    «site_id 단어-경계 존재» 와 «지정 문장 부분문자열 존재» 를 별도
++    논리곱으로 만들었으나, 재심 #5(review-mtmlkbm4-t1ovxs) finding 1 이
++    다시 뚫었다 — 두 술어가 독립이라 ``resolver — 다음 주장은 거짓이다:
++    <지정 문장>`` 같은 부정 포장 claim 이나 기대 site_id 외의 canonical
++    site_id 를 함께 담은 claim 도 각각의 조건은 만족시켜 통과했다. 이제
++    아래 순서로 전부 확인한다 — 하나라도 미충족이면 그 필드를 명시한 채
++    즉시 거부한다(호출자가 ``record_detail`` 을 U-6′ finding 에 그대로
++    싣는다):
++    (1) adjudicator 허용 집합 (2) verdict == approve (3) reviewed_plan_paths
++    == 파생 범위 (4) reviewed_scope_digest == 재계산값 (5) reviewed_at_head
++    실재 + 40-hex(비결속 provenance 지만 (마)가 요구하는 필드 자체는 실재
++    의무) (6) adjudicator 별 provenance 필드 — codex 는 ``job_id``, operator
++    는 ``countersigned_by``(다른 adjudicator 의 필드만 있으면 미충족) (7)
++    claim — ``_d1_no_dependency_claim_canonical(site_id)`` 정본과
++    **claim 전체값의 byte-for-byte 완전 일치**(정규화 없음 · 부분문자열도
++    잉여 접두/접미도 허용하지 않는다). 계약 (마) 본문은 claim 의 «내용»만
++    고정한다(site_id 와 위 문장) — 이 함수가 그 내용에 대한 **단일
++    결정적 표면 형식**을 못박아, «두 조건의 독립 만족」이라는 우회 형태
++    자체를 없앤다."""
++    stamp_dir = _d1_locate_no_dependency_record_stamp(repo_root, site_id)
++    if stamp_dir is None:
++        return (
++            False,
++            f"독립 리뷰 기록 부재({_D1_NO_DEPENDENCY_RECORDS_ROOT}/{site_id}/"
++            "<stamp>/verdict.md 가 HEAD 에 없음)",
++        )
++    rel = Path(f"{stamp_dir}/verdict.md")
++    blob = _git_show_blob(rel, "HEAD", repo_root)
++    if blob is None:
++        return False, f"독립 리뷰 기록 blob 이 HEAD 에 부재: {rel}"
++    doc = _parse_oq11_yaml_fence(blob)
++    if not isinstance(doc, dict):
++        return False, f"독립 리뷰 기록 yaml 파싱 실패: {rel}"
++    adjudicator = doc.get("adjudicator")
++    if adjudicator not in _D1_NO_DEPENDENCY_ADJUDICATORS:
++        return False, f"adjudicator 불허용(저작자 레인 거부): {adjudicator!r}"
++    if doc.get("verdict") != "approve":
++        return False, f"verdict != approve: {doc.get('verdict')!r}"
++    reviewed_paths = doc.get("reviewed_plan_paths")
++    # scope_paths 는 ``_d1_scope_paths`` 의 절대 경로다 — 기록은
++    # repo-relative POSIX 경로를 담으므로 상대화한 뒤에 비교한다.
++    want = {p.relative_to(repo_root).as_posix() for p in scope_paths}
++    if not isinstance(reviewed_paths, list) or set(reviewed_paths) != want:
++        return False, "reviewed_plan_paths 가 파생된 범위 파일 집합과 불일치"
++    held_digest = doc.get("reviewed_scope_digest")
++    calc_digest = _d1_scope_content_digest(repo_root, scope_paths, "HEAD")
++    if calc_digest is None:
++        return False, "scope_content_digest 를 HEAD 에서 재계산할 수 없음(blob 부재)"
++    if held_digest != calc_digest:
++        return False, "reviewed_scope_digest 가 재계산값과 불일치(stale — 범위 변경)"
++    reviewed_at_head = doc.get("reviewed_at_head")
++    if not isinstance(reviewed_at_head, str) or not _D1_REVIEWED_AT_HEAD_RE.fullmatch(
++        reviewed_at_head
++    ):
++        return (
++            False,
++            f"reviewed_at_head 부재 또는 40-hex 형식 아님: {reviewed_at_head!r}",
++        )
++    provenance_field = _D1_NO_DEPENDENCY_PROVENANCE_FIELD[adjudicator]
++    provenance_value = doc.get(provenance_field)
++    if not isinstance(provenance_value, str) or not provenance_value.strip():
++        return (
++            False,
++            f"adjudicator={adjudicator!r} 인데 provenance 필드 {provenance_field!r} "
++            "부재(다른 adjudicator 의 필드만으로는 미충족)",
++        )
++    claim = doc.get("claim")
++    if not isinstance(claim, str):
++        return False, "claim 부재"
++    expected_claim = _d1_no_dependency_claim_canonical(site_id)
++    if claim != expected_claim:
++        return (
++            False,
++            f"claim 정본 불일치(§7.4 D-4 (마)) — 기대: {expected_claim!r}, "
++            f"실제: {claim!r}",
++        )
++    return True, f"독립 리뷰 기록 확인됨: {rel}"
++
++
+ def _derive_d1_disposition(
+     repo_root: Path,
++    name: str,
+     rel: Path,
+     kind: str,
+     docstring: str,
+     decl: _D1Declaration,
+     universe: dict[str, bool] | None,
+     universe_error: str | None,
+-) -> tuple[str, str, bool]:
+-    """§7.4 처분 파생 — ``(처분, 근거, needs_universe)``.  ``needs_universe``
+-    는 호출자가 우주 로드 실패를 이 사이트의 fail-closed 사유로 접어야
++    candidate_universe: frozenset[str],
++    uncheckable_rows: Sequence[Mapping[str, str]] | None,
++) -> tuple[D1SiteRecord, bool]:
++    """계약 §7.4 D-3/D-4/D-5(v2.22 에라타 52차·53차·54차·55차·56차) 처분
++    파생 — ``(D1SiteRecord, needs_universe)``. ``needs_universe`` 는
++    호출자가 우주 로드 실패를 이 사이트의 fail-closed 사유로 접어야
+     하는지 판단하는 데 쓴다 — 선언 자체가 형식상 판정 불가(부재/중복/형식
+-    오류)한 사이트는 우주를 보지 않고도 이미 판정됐으므로 ``False``다."""
++    오류)한 사이트는 우주를 보지 않고도 이미 판정됐으므로 ``False``다.
++
++    다섯 UNDECIDED 게이트(선언 부재/중복/형식 오류·선언 키 본문 부재·인용
++    프로파일 키 미선언)와 CONTRAST 검사는 바뀌지 않는다. ``NONE`` 분기만
++    D-4 전체(가~마)로 갈린다: 후보 우주(53차) 참조가 하나라도 있으면
++    UNDECIDED(«선언 누락» — 그 키를 D-5 로 선언하면 D-3 이 처분한다).
++    0건이면 그 자체로는 아직 완료 근거가 아니다 — U-6′ §13 행(54·55·56차)
++    과 D-4 (마) 독립 리뷰 기록이 «둘 다» 서야 ``NO_DEPENDENCY`` 로
++    판정된다. 하나라도 없으면 그 사이트는 «판정됨이 아니다»."""
+     if decl.kind == "missing":
+-        return "UNDECIDED", "VER-002-KEYS 선언 부재 — 키 미공급", False
++        return (
++            D1SiteRecord(
++                "undecided", (), "UNDECIDED", "VER-002-KEYS 선언 부재 — 키 미공급"
++            ),
++            False,
++        )
+     if decl.kind == "duplicate":
+-        return "UNDECIDED", "VER-002-KEYS 선언 중복", False
++        return (
++            D1SiteRecord("undecided", (), "UNDECIDED", "VER-002-KEYS 선언 중복"),
++            False,
++        )
+     if decl.kind == "malformed":
+-        return "UNDECIDED", f"VER-002-KEYS 선언 형식 오류: {decl.line!r}", False
++        return (
++            D1SiteRecord(
++                "undecided",
++                (),
++                "UNDECIDED",
++                f"VER-002-KEYS 선언 형식 오류: {decl.line!r}",
++            ),
++            False,
++        )
+     if universe is None:
+         return (
+-            "UNDECIDED",
+-            f"프로파일 우주 로드 실패로 판정 불가(fail-closed): {universe_error}",
++            D1SiteRecord(
++                "undecided",
++                (),
++                "UNDECIDED",
++                f"프로파일 우주 로드 실패로 판정 불가(fail-closed): {universe_error}",
++            ),
+             True,
+         )
+     if decl.kind == "none":
+         paths = _d1_scope_paths(repo_root, rel, kind)
+-        hits = _d1_scan_scope_for_universe_refs(paths, universe)
++        hits = _d1_scan_scope_for_universe_refs(paths, candidate_universe)
++        scope_desc = str(rel.parent if kind == "module" else rel)
+         if hits:
+             key, hit_path = min(hits)
+-            return "UNDECIDED", f"NONE 선언과 모순: {key} @ {hit_path}", True
+-        # Codex verdict review-mtlo6mst-93vt2j finding 1 — NONE("의존 키
+-        # 없음")은 §7.4 어휘 밖이다: 계약은 K 공급/미공급만 알고, "K 가
+-        # 원래 없다"는 저작자 선언을 완료값(UNBOUND)으로 바꾸는 조항이
+-        # 없다. 스캔은 그대로 유지한다 — NONE 자기신고와 실측이 모순되면
+-        # 여전히 걸러야 하지만(위 hits 분기), 모순이 없다고 해서 그 자체가
+-        # 완료 처분의 근거가 되지는 않는다.
+-        scope_desc = str(rel.parent if kind == "module" else rel)
++            return (
++                D1SiteRecord(
++                    "undecided",
++                    (),
++                    "UNDECIDED",
++                    f"선언 누락 의심: {key} @ {hit_path}",
++                ),
++                True,
++            )
++        # 53차가 세운 스캔은 그대로 둔다 — 선언이 살아 있는 동안 선언 누락을
++        # 잡는 가드일 뿐, 완료 처분의 근거는 아니다(54차가 회피로 판정된
++        # 자리). 완료 근거는 (i) NONE 선언 + (ii) 스캔 0건 + (iii) §13 U-6′
++        # 행 + (iv) D-4 (마) 독립 리뷰 기록의 논리곱이다(55차) — 뒤 둘은
++        # 저작자가 혼자 만들 수 없다.
++        row_ok, row_detail, matched_row = _d1_u6prime_row_state(
++            uncheckable_rows,
++            name,
++            candidate_universe_size=len(candidate_universe),
++            scope_desc=scope_desc,
++            file_count=len(paths),
++        )
++        if not row_ok:
++            return (
++                D1SiteRecord(
++                    "none",
++                    (),
++                    "UNDECIDED",
++                    f"U-6′ §13 행 미충족: {row_detail} · {scope_desc} "
++                    f"{len(paths)}개 파일 스캔 · 후보 우주 {len(candidate_universe)}개 · 참조 0",
++                ),
++                True,
++            )
++        record_ok, record_detail = _d1_no_dependency_record_state(
++            repo_root, name, paths
++        )
++        if not record_ok:
++            row_axis = matched_row.get("axis", "") if matched_row is not None else ""
++            return (
++                D1SiteRecord(
++                    "none",
++                    (),
++                    "UNDECIDED",
++                    f"D-4 (마) 독립 리뷰 기록 미충족: {record_detail} · §13 행 "
++                    f"{row_axis!r} 는 그래머 충족",
++                ),
++                True,
++            )
++        row_axis = matched_row.get("axis", "") if matched_row is not None else ""
+         return (
+-            "UNDECIDED",
+-            f"VER-002-KEYS: NONE — §7.4 어휘 밖(키 미공급) · 운영자 에라타 "
+-            f"처분 대기 · {scope_desc} {len(paths)}개 파일 스캔, 프로파일 "
+-            "키 참조 0",
++            D1SiteRecord(
++                "none",
++                (),
++                "NO_DEPENDENCY",
++                f"VER-002-KEYS: NONE · {scope_desc} {len(paths)}개 파일 스캔 · "
++                f"후보 우주 {len(candidate_universe)}개 · 참조 0 · §13 {row_axis!r} · "
++                f"{record_detail}",
++            ),
+             True,
+         )
+ 
+@@ -3852,27 +4227,54 @@ def _derive_d1_disposition(
+     body_literals = set(_D1_BACKTICK_RE.findall(body))
+     for key in decl.keys:
+         if key not in body_literals:
+-            return "UNDECIDED", f"선언 키 본문 부재: {key}", True
++            return (
++                D1SiteRecord("undecided", (), "UNDECIDED", f"선언 키 본문 부재: {key}"),
++                True,
++            )
+     declared_and_contrast = set(decl.keys) | set(decl.contrast)
+     stray = sorted((body_literals & universe.keys()) - declared_and_contrast)
+     if stray:
+-        return "UNDECIDED", f"인용 프로파일 키 미선언: {stray[0]}", True
++        return (
++            D1SiteRecord(
++                "undecided", (), "UNDECIDED", f"인용 프로파일 키 미선언: {stray[0]}"
++            ),
++            True,
++        )
+     for key in decl.contrast:
+         if key not in universe:
+-            return "UNDECIDED", f"CONTRAST 키가 프로파일 키가 아님: {key}", True
++            return (
++                D1SiteRecord(
++                    "undecided",
++                    (),
++                    "UNDECIDED",
++                    f"CONTRAST 키가 프로파일 키가 아님: {key}",
++                ),
++                True,
++            )
+         if key not in body_literals:
+-            return "UNDECIDED", f"CONTRAST 키가 본문에 부재: {key}", True
+-    disposition, key_basis = _d1_site_disposition_from_keys(decl.keys, universe)
++            return (
++                D1SiteRecord(
++                    "undecided", (), "UNDECIDED", f"CONTRAST 키가 본문에 부재: {key}"
++                ),
++                True,
++            )
++    per_key, cell, key_basis = _d1_site_disposition_from_keys(decl.keys, universe)
+     basis = key_basis
+     if decl.contrast:
+         basis += "; CONTRAST: " + ", ".join(decl.contrast)
+-    return disposition, basis, True
++    return D1SiteRecord("keys", per_key, cell, basis), True
+ 
+ 
+ def compute_d1_dispositions(
+     repo_root: Path,
+-) -> tuple[dict[str, tuple[str, str]], tuple[str, ...]]:
+-    """§7.1 7사이트의 ``({site: (처분, 근거)}, fail_closed_sites)``.
++    uncheckable_rows: Sequence[Mapping[str, str]] | None = None,
++) -> tuple[dict[str, D1SiteRecord], tuple[str, ...]]:
++    """§7.1 7사이트의 ``({site: D1SiteRecord}, fail_closed_sites)``(계약
++    §7.4 D-3/D-4/D-5, v2.22 에라타 52차·53차·54차·55차·56차).
++
++    ``uncheckable_rows`` 는 D-4 (iii)/U-6′ — ``NONE`` 선언 사이트의 §13 행
++    그래머 확인에 쓰인다. ``None`` 이면(§13 레지스터를 아직 로드하지
++    못한 호출) 그 사이트들은 「판정됨」이 될 수 없다(row 부재로 접는다).
+ 
+     표에는 ``D1_SITES`` 의 7개 이름이 **항상 전부** 등장한다 — 사이트
+     파일이 없거나 읽기/파싱에 실패하거나 대상 docstring 이 없어도 조용히
+@@ -3880,47 +4282,86 @@ def compute_d1_dispositions(
+     판정됐을 때"를 요구하므로, 사이트 부재를 vacuous MET 로 접을 수 없다
+     (Codex verdict review-mtljvycx-ouye7r finding 1).
+ 
+-    두 번째 항목(``fail_closed_sites``)은 검사기가 원인과 무관하게
++    **두 단계로 나눈다.** 1단계는 7사이트 전부의 선언(``VER-002-KEYS:``)을
++    먼저 파싱한다 — D-4 (나)의 후보 우주(``VERIFICATION-PROFILE-002`` 우주
++    ∪ 7사이트가 선언한 키 전부)는 «다른» 사이트들의 선언에 의존하므로,
++    한 사이트씩 순서대로 판정하면서 그때그때 계산할 수 없다. 2단계가 그
++    고정된 후보 우주로 각 사이트의 최종 처분을 파생한다.
++
++    두 번째 반환값(``fail_closed_sites``)은 검사기가 원인과 무관하게
+     구조적으로 판정에 도달할 수 없었던 사이트 전부 — 파일/문서 부재,
+     읽기·파싱 실패, 프로파일 우주 로드 실패(선언이 그 우주를 필요로 한
+     경우)를 아우른다.  표에는 여전히 ``UNDECIDED`` 로 기록되지만, 그
+     UNDECIDED 는 "저작자가 아직 판정하지 않았다"(U-6 §13 등재로 면제
+     가능)가 **아니라** 검사기 자신이 판정에 도달할 수 없었다는 뜻이므로
+     호출자(``check_d1``)는 U-6 으로 접지 말고 D-1 자체의 위반으로
+-    보고해야 한다."""
+-    result: dict[str, tuple[str, str]] = {}
+-    fail_closed_sites: list[str] = []
+-    universe: dict[str, bool] | None = None
+-    universe_error: str | None = None
+-    universe_attempted = False
++    보고해야 한다. D-4 (나)의 §13 행/(마) 독립 리뷰 기록 미충족은
++    fail-closed 가 «아니다» — 그것은 U-6′ 소관의 정상적 미완료다."""
++    parsed: dict[
++        str, tuple[Path, str, str, str | None, _D1Declaration | None, str | None]
++    ] = {}
+     for name, rel, kind, target in D1_SITES:
+         path = repo_root / rel
+         if not path.exists():
+-            result[name] = ("UNDECIDED", f"사이트 파일 부재: {rel}")
+-            fail_closed_sites.append(name)
++            parsed[name] = (rel, kind, target, None, None, f"사이트 파일 부재: {rel}")
+             continue
+         try:
+             docstring = _extract_d1_docstring(
+                 path.read_text(encoding="utf-8"), kind, target
+             )
+         except (OSError, SyntaxError) as exc:
+-            result[name] = ("UNDECIDED", f"읽기/파싱 실패: {exc}")
+-            fail_closed_sites.append(name)
++            parsed[name] = (rel, kind, target, None, None, f"읽기/파싱 실패: {exc}")
+             continue
+         if docstring is None:
+-            result[name] = ("UNDECIDED", f"대상 docstring 부재 ({kind} {target!r})")
+-            fail_closed_sites.append(name)
++            parsed[name] = (
++                rel,
++                kind,
++                target,
++                None,
++                None,
++                f"대상 docstring 부재 ({kind} {target!r})",
++            )
+             continue
+         decl = _parse_d1_declaration(docstring)
+-        if decl.kind in ("none", "keys") and not universe_attempted:
+-            universe, universe_error = _load_profile_universe(repo_root)
+-            universe_attempted = True
+-        disposition, basis, needed_universe = _derive_d1_disposition(
+-            repo_root, rel, kind, docstring, decl, universe, universe_error
++        parsed[name] = (rel, kind, target, docstring, decl, None)
++
++    needs_universe = any(
++        decl is not None and decl.kind in ("none", "keys")
++        for _rel, _kind, _target, _doc, decl, _fail in parsed.values()
++    )
++    universe: dict[str, bool] | None = None
++    universe_error: str | None = None
++    if needs_universe:
++        universe, universe_error = _load_profile_universe(repo_root)
++
++    candidate_universe = _d1_candidate_universe(
++        universe, (decl for _r, _k, _t, _d, decl, _f in parsed.values())
++    )
++
++    result: dict[str, D1SiteRecord] = {}
++    fail_closed_sites: list[str] = []
++    for name, rel, kind, _target in D1_SITES:
++        _p_rel, _p_kind, _p_target, docstring, parsed_decl, fail_reason = parsed[name]
++        if fail_reason is not None:
++            result[name] = D1SiteRecord("undecided", (), "UNDECIDED", fail_reason)
++            fail_closed_sites.append(name)
++            continue
++        assert parsed_decl is not None and docstring is not None  # pass-1 invariant
++        record, needed_universe = _derive_d1_disposition(
++            repo_root,
++            name,
++            rel,
++            kind,
++            docstring,
++            parsed_decl,
++            universe,
++            universe_error,
++            candidate_universe,
++            uncheckable_rows,
+         )
+         if needed_universe and universe is None:
+             fail_closed_sites.append(name)
+-        result[name] = (disposition, basis)
++        result[name] = record
+     return result, tuple(fail_closed_sites)
+ 
+ 
+@@ -3943,8 +4384,27 @@ def _d1_site_table_invariant_violation() -> str | None:
+     return f"D1_SITES 불변식 위반: 부재 {missing} / 여분 {extra}"
+ 
+ 
+-def _d1_completion_blockers(dispositions: Mapping[str, tuple[str, str]]) -> list[str]:
+-    """D0-5 완료(§7.4/§11)를 막는 사유 전부 — 빈 리스트면 MET.
++def _d1_record_in_vocab(record: D1SiteRecord) -> bool:
++    """계약 §7.4 D-3/D-4 허용 어휘 원소 검사 — ``cell`` 문자열 자체가 아니라
++    ``per_key``/``kind`` 의 구조를 검사한다(집합 표기 문자열을 어휘에
++    리터럴로 넣지 않는다는 계약의 명시적 금지)."""
++    if record.cell == "UNDECIDED":
++        return True
++    if record.kind == "keys":
++        if not record.per_key:
++            return False
++        states = {state for _key, state in record.per_key}
++        if not states <= D1_KEY_DISPOSITIONS:
++            return False
++        expected_cell = "+".join(name for name in _D1_CELL_ORDER if name in states)
++        return record.cell == expected_cell
++    if record.kind == "none":
++        return record.cell in D1_SITE_ONLY_DISPOSITIONS
++    return False
++
++
++def _d1_completion_blockers(dispositions: Mapping[str, D1SiteRecord]) -> list[str]:
++    """D0-5 완료(계약 §7.4/§11)를 막는 사유 전부 — 빈 리스트면 MET.
+ 
+     Codex verdict review-mtlo6mst-93vt2j finding 3 대응. 검사 순서(전부
+     보고 — 첫 위반에서 멈추지 않는다):
+@@ -3952,9 +4412,12 @@ def _d1_completion_blockers(dispositions: Mapping[str, tuple[str, str]]) -> list
+     (a) ``D1_SITES`` 자체의 불변식(``_d1_site_table_invariant_violation``).
+     (b) ``dispositions`` 의 키 집합이 ``D1_CONTRACT_SITE_NAMES`` 와 정확히
+         일치 — 부재/여분을 따로 보고한다.
+-    (c) 모든 처분값이 ``D1_ALLOWED_DISPOSITIONS``(VALUED/BLOCKED/UNBOUND)
+-        중 하나 — UNDECIDED 는 완료를 막는 정상 상태라 별도 형식으로,
+-        그 외 값은 "허용 어휘 밖 처분"으로 보고한다."""
++    (c) 원소별 검사(D-3/D-4) — ``kind == "keys"`` 사이트는 ``per_key`` 가
++        1개 이상이고 그 전부가 ``D1_KEY_DISPOSITIONS`` 안에 있어야
++        완료(D-3 "1개 이상 · 전부 배정"); ``kind == "none"`` 사이트는
++        ``cell == "NO_DEPENDENCY"`` 여야 완료(D-4, U-6′ 미충족이면 여전히
++        ``UNDECIDED``). ``UNDECIDED`` 는 완료를 막는 정상 상태라 별도
++        형식으로, 그 외 어긋난 값은 "허용 어휘 밖 처분"으로 보고한다."""
+     blockers: list[str] = []
+ 
+     invariant_violation = _d1_site_table_invariant_violation()
+@@ -3970,17 +4433,15 @@ def _d1_completion_blockers(dispositions: Mapping[str, tuple[str, str]]) -> list
+         blockers.append(f"여분 {len(extra_names)}({', '.join(extra_names)})")
+ 
+     undecided = sorted(
+-        name
+-        for name, (disposition, _basis) in dispositions.items()
+-        if disposition == "UNDECIDED"
++        name for name, record in dispositions.items() if record.cell == "UNDECIDED"
+     )
+     if undecided:
+         blockers.append(f"UNDECIDED {len(undecided)}({', '.join(undecided)})")
+ 
+     out_of_vocab = sorted(
+-        f"{name}={disposition}"
+-        for name, (disposition, _basis) in dispositions.items()
+-        if disposition not in D1_ALLOWED_DISPOSITIONS and disposition != "UNDECIDED"
++        f"{name}={record.cell}"
++        for name, record in dispositions.items()
++        if not _d1_record_in_vocab(record)
+     )
+     if out_of_vocab:
+         blockers.append("허용 어휘 밖 처분: " + ", ".join(out_of_vocab))
+@@ -4001,23 +4462,33 @@ def _d1_site_lookup_tokens(site_name: str) -> tuple[str, ...]:
+ 
+ 
+ def check_d1(ctx: CheckContext) -> list[Finding]:
+-    """D-1(§7.4) — D0-5 7사이트 처분 파생 + U-6(§13.6.6) 강제.
++    """D-1(§7.4) — D0-5 7사이트 처분 파생 + U-6(§7.4)/U-6′(§7.4) 강제.
+ 
+-    처분 자체(VALUED/BLOCKED/UNBOUND/UNDECIDED)는 완료 관측(§11 소관 · rc
+-    비결합)이라 findings 를 만들지 않는다 — ``render_completion_status`` 가
+-    ``compute_d1_dispositions`` 를 다시 불러 D0-5 표와 §11 요약행을 만든다.
+-    rc 에 결합하는 것은 둘뿐이다:
++    처분 자체(``cell`` — 키별 VALUED/BLOCKED/UNBOUND 집합, NO_DEPENDENCY,
++    UNDECIDED)는 완료 관측(§11 소관 · rc 비결합)이라 findings 를 만들지
++    않는다 — ``render_completion_status`` 가 ``compute_d1_dispositions`` 를
++    다시 불러 D0-5 표와 §11 요약행을 만든다. rc 에 결합하는 것은 셋이다:
+ 
+     * 구조적으로 판정에 도달할 수 없는 사이트(``fail_closed_sites``) —
+-      사이트 파일/문서 부재, 읽기·파싱 실패, 또는 VALUED/BLOCKED/UNBOUND
+-      판정에 프로파일 우주가 필요했는데 그 우주를 읽지 못한 경우를 모두
+-      아우른다.  어느 경우든 검사기 자신이 판정에 도달하지 못했다는 뜻이라
+-      fail-closed 로 D-1 위반이다 — 이 사이트들은 UNDECIDED 로 조용히
+-      접히지 않고, 완료 표(§11)에서도 vacuous MET 의 근거가 되지 않는다
+-      (Codex verdict review-mtljvycx-ouye7r finding 1).
+-    * U-6 — 그 외의(genuine) UNDECIDED 사이트가 §13 uncheckable 레지스터에
+-      개별 행으로(그 사이트 이름 또는 docstring 대상 식별자가 axis/reason
+-      텍스트에 등장하는 행으로) 등재돼 있지 않으면 계약 위반.
++      사이트 파일/문서 부재, 읽기·파싱 실패, 또는 프로파일 우주가
++      필요했는데 그 우주를 읽지 못한 경우를 모두 아우른다.  어느 경우든
++      검사기 자신이 판정에 도달하지 못했다는 뜻이라 fail-closed 로 D-1
++      위반이다 — 이 사이트들은 UNDECIDED 로 조용히 접히지 않고, 완료
++      표(§11)에서도 vacuous MET 의 근거가 되지 않는다(Codex verdict
++      review-mtljvycx-ouye7r finding 1).
++    * U-6 — ``NONE`` 선언이 «아닌» genuine UNDECIDED 사이트가 §13
++      uncheckable 레지스터에 개별 행으로(그 사이트 이름 또는 docstring
++      대상 식별자가 axis/reason 텍스트에 등장하는 행으로) 등재돼 있지
++      않으면 계약 위반. ``NONE`` 선언 사이트는 아래 U-6′ 가 대신 진다
++      (U-6 자체는 «불변» — 술어는 그대로이고 어느 사이트가 UNDECIDED 인지만
++      바뀐다, v2.22 에라타 52차).
++    * U-6′(v2.22 에라타 54~56차) — ``NONE`` 선언 사이트(선언 자체가 후보
++      우주 스캔을 통과해 D-4 후보가 된 사이트) 전부가 최종적으로
++      ``NO_DEPENDENCY`` 로 «판정됨»이어야 한다.  ``compute_d1_dispositions``
++      가 이미 §13 행 그래머(U-6′ (ㄱ)~(ㄹ))와 D-4 (마) 독립 리뷰 기록을
++      검증해 ``cell`` 을 정했으므로, 여기서는 ``kind == "none"`` 인데
++      ``cell != "NO_DEPENDENCY"`` 인 사이트마다 그 ``basis``(어떤 항이
++      미충족인지)를 실어 rc 결합 finding 을 낸다.
+     * ``D1_SITES`` 불변식(Codex verdict review-mtlo6mst-93vt2j finding 3) —
+       이 표 자체가 계약이 고정한 7 이름과 어긋나면(항목 삭제/추가) rc 에
+       결합하는 D-1 위반이다. rc 밖(§11 렌더러)의 완료-표 미스매치와는
+@@ -4026,9 +4497,11 @@ def check_d1(ctx: CheckContext) -> list[Finding]:
+     invariant_violation = _d1_site_table_invariant_violation()
+     if invariant_violation is not None:
+         findings.append(Finding("D-1", invariant_violation))
+-    dispositions, fail_closed_sites = compute_d1_dispositions(ctx.repo_root)
+-    for name, (disposition, basis) in dispositions.items():
+-        ctx.observations.append(f"D0-5[{name}]={disposition} ({basis})")
++    dispositions, fail_closed_sites = compute_d1_dispositions(
++        ctx.repo_root, ctx.uncheckable_rows
++    )
++    for name, record in dispositions.items():
++        ctx.observations.append(f"D0-5[{name}]={record.cell} ({record.basis})")
+ 
+     if fail_closed_sites:
+         findings.append(
+@@ -4041,8 +4514,10 @@ def check_d1(ctx: CheckContext) -> list[Finding]:
+ 
+     undecided_sites = sorted(
+         name
+-        for name, (disposition, _basis) in dispositions.items()
+-        if disposition == "UNDECIDED" and name not in fail_closed_sites
++        for name, record in dispositions.items()
++        if record.cell == "UNDECIDED"
++        and record.kind != "none"
++        and name not in fail_closed_sites
+     )
+     if undecided_sites:
+         if ctx.uncheckable_rows is None:
+@@ -4069,6 +4544,22 @@ def check_d1(ctx: CheckContext) -> list[Finding]:
+                             "등재돼 있지 않음",
+                         )
+                     )
++
++    none_kind_sites = sorted(
++        name
++        for name, record in dispositions.items()
++        if record.kind == "none" and name not in fail_closed_sites
++    )
++    for site in none_kind_sites:
++        record = dispositions[site]
++        if record.cell != "NO_DEPENDENCY":
++            findings.append(
++                Finding(
++                    "U-6′",
++                    f"D0-5 NO_DEPENDENCY 후보 사이트 {site!r} 판정됨 아님: "
++                    f"{record.basis}",
++                )
++            )
+     return findings
+ 
+ 
+@@ -4255,7 +4746,9 @@ def render_completion_status(
+     # (사이트 파일 부재도 UNDECIDED 로 기록되지, 결과에서 제외되지 않는다) —
+     # 그래서 여기서는 "N/A"/부재 분기가 필요 없다(구 fail-open 경로 제거,
+     # Codex verdict review-mtljvycx-ouye7r finding 1).
+-    d1_dispositions, _d1_fail_closed = compute_d1_dispositions(ctx.repo_root)
++    d1_dispositions, _d1_fail_closed = compute_d1_dispositions(
++        ctx.repo_root, ctx.uncheckable_rows
++    )
+     lines.append("## D0-5 disposition table (7 rows, §7.4)")
+     lines.append("")
+     lines.append("| site | disposition | key/declaration |")
+@@ -4263,14 +4756,17 @@ def render_completion_status(
+     # 계약이 고정한 7 이름을 기준으로 행을 만든다(``D1_SITES`` 가 아니라) —
+     # ``d1_dispositions`` 에 이름이 부재해도(불변식이 깨진 회귀) KeyError 로
+     # 죽지 않고 fail-closed 행을 낸다(Codex verdict review-mtlo6mst-93vt2j
+-    # finding 3).
++    # finding 3). 표에는 ``record.cell``(D-3 집합 표기 또는 D-4
++    # NO_DEPENDENCY/UNDECIDED)을 찍고, 근거 열에는 ``record.basis`` 를 찍는다
++    # — 어느 술어도 ``cell`` 문자열을 파싱하지 않는다.
+     for site_name in sorted(D1_CONTRACT_SITE_NAMES):
+-        entry = d1_dispositions.get(site_name)
+-        if entry is None:
++        record = d1_dispositions.get(site_name)
++        if record is None:
+             lines.append(f"| {site_name} | `—` | 처분 부재 |")
+             continue
+-        disposition, basis = entry
+-        lines.append(f"| {site_name} | `{disposition}` | {_md_escape_cell(basis)} |")
++        lines.append(
++            f"| {site_name} | `{record.cell}` | {_md_escape_cell(record.basis)} |"
++        )
+     lines.append("")
+ 
+     lines.append("## Phase 0 termination-condition overview (section 11)")
+diff --git a/tools/tos_firewall_check.py b/tools/tos_firewall_check.py
+index 0fc32eb4..b975b9a8 100644
+--- a/tools/tos_firewall_check.py
++++ b/tools/tos_firewall_check.py
+@@ -24,6 +24,41 @@ that imports a forbidden module breaks the hermetic claim) and enforces:
+   (e) TOS-FW-R  no file OUTSIDE ``tos/`` may ``import tos`` (R-reverse — §3.2):
+                 the operational system must never depend on the unverified
+                 kernel.
++  (f) TOS-FW-S  no SYMLINK (file or directory, walked or git-tracked) may
++                cross the tos/ boundary: crossing means SUBTREE
++                INTERSECTION, not merely "which side" — a link outside
++                tos/ pointing at tos/ itself, a descendant of it, OR an
++                ANCESTOR of it (whose subtree therefore reaches tos/ too,
++                e.g. ``shared/up -> <repo root>``) all cross; a link inside
++                tos/ pointing anywhere outside its own subtree (ancestors
++                included) crosses. Dangling targets always cross
++                (fail-closed; an unresolvable target is presumed to cross,
++                never presumed safe). Closes a bypass neither (e)'s content
++                scan nor the git-tracked-``.py`` union can reach: a
++                directory symlink is never traversed by ``os.walk``
++                regardless of where it points, and git tracks a symlink as
++                one index entry, never descending through it either — so
++                nothing on the far side of the alias is ever visible to
++                either scan. Rather than try to traverse through it, rule S
++                forbids the alias itself. The repo-root ``tos/`` entry may
++                NEVER be a symlink, checked first and unconditionally in
++                ``run_checks`` before rules (a)-(d) even attempt to run —
++                a missing or symlinked ``tos/`` is always a visible,
++                reported failure, never a silent PASS.
++
++Two further diagnostic IDs are structural, not content rules, and so sit
++outside the (a)-(f) enumeration above (parallel to how a build tool reports
++"file not found" separately from its lint rules) — named here so neither is
++an undocumented orphan string:
++
++  TOS-FW-SYNTAX  a ``tos/`` ``.py`` file failed to AST-parse; a file that
++                 does not parse cannot be certified against (a)-(d).
++  TOS-FW-MISSING the repo-root ``tos/`` entry does not exist, or exists but
++                 is not a directory (and is not a symlink either — that
++                 case is TOS-FW-S, above). Rules (a)-(d) and the forward
++                 rule-S mirror cannot be evaluated with no ``tos/`` to
++                 evaluate them against; ``run_checks`` reports this
++                 explicitly rather than silently producing zero violations.
+ 
+ Exit code is 1 with ``path:line [RULE-ID] message`` diagnostics on any
+ violation, 0 otherwise.
+@@ -47,6 +82,7 @@ import argparse
+ import ast
+ import os
+ import re
++import subprocess
+ import sys
+ from collections import namedtuple
+ from pathlib import Path
+@@ -109,12 +145,88 @@ SHARED_ALLOWED: frozenset[str] = frozenset(
+ # Full stdlib top-level module name set (§3.3-① mandates sys.stdlib_module_names).
+ STDLIB: frozenset[str] = frozenset(sys.stdlib_module_names)
+ 
+-# Directory names pruned from the repo-wide reverse scan (rule e). Matches the
+-# design task's exclusion set exactly.
+-_REVERSE_SCAN_PRUNE: frozenset[str] = frozenset(
+-    {"tos", ".git", ".venv", "node_modules", "__pycache__", ".omc", ".history"}
++# The reverse scan (rule e / R-reverse, repo files OUTSIDE tos/) prunes ONLY
++# an explicit, small set of repo-root-relative roots, matched by
++# resolved-path IDENTITY — never by name, and never at any depth. Each root
++# below is resolved once (as `repo_root / rel`) before the walk starts.
++#
++# `_REVERSE_SCAN_PRUNE_ROOTS` = VCS/generated/gitignored roots — `.git`
++# (VCS internals), `.venv` (this repo's own dev venv), `.omc` and `.history`
++# (tooling scratch dirs) — verified 2026-09-04 to be where this checkout's
++# gitignored `.py` files live (`git ls-files --others --ignored --exclude-standard
++# | grep '\.py$'`). Plus `tos` at the repo root: the forward scan's territory
++# (rules a-d), not a name-based exclusion — a NESTED dir literally named
++# `tos` (e.g. `services/tos/`) is NOT this root and IS scanned.
++#
++# Two earlier versions of this were both rejected by Codex review:
++#   1. A fixed name set (`_REVERSE_SCAN_PRUNE = {"tos", ".git", ".venv",
++#      "node_modules", "__pycache__", ".omc", ".history"}`) pruned at ANY
++#      depth — `tos`, `node_modules`, `__pycache__` are valid identifiers, so
++#      e.g. `shared/node_modules/x.py` containing `import tos` would have
++#      been silently skipped by rule e yet remained importable.
++#   2. An `isidentifier()` predicate (prune any dir whose name is not a
++#      valid Python identifier, at any depth) was rejected too: §3.2
++#      R-역방향 requires scanning EVERY Python file outside tos/, and a
++#      tracked script under a non-identifier-named directory (e.g.
++#      `docs/reviews/phase0-completion-contract/probe.py`) still executes by
++#      path — a hyphenated/dotted directory name says nothing about
++#      importability. `node_modules`/`__pycache__`/hyphenated dirs like
++#      `strategy-builder-ui` are therefore NOT pruned; they are ordinary,
++#      scanned directories under this design.
++#
++# Two further explicit roots, added after measuring the live-tree wall time
++# (2026-09-04):
++#
++#   - `open-trading-api/` — a gitignored, root-level clone of KIS's own
++#     sample-code repo (`.gitignore:60`; `git ls-files open-trading-api` = 0
++#     tracked files). Measured 12,247 `.py` files, by far the dominant cost
++#     of this scan (`grep -rl '^import tos\|^from tos' open-trading-api` = 0
++#     matches — an independent, unrelated codebase that was never going to
++#     trip rule e). This alone was the majority of the ~7.7s live-tree wall
++#     time before pruning.
++#   - `strategy-builder-ui/node_modules` — npm's vendor tree (gitignored,
++#     2995 subdirectories). NOTE this is a deliberate scope tradeoff, not a
++#     "zero Python" claim: it in fact contains exactly one `.py` file
++#     measured (`flatted/python/flatted.py`, a vendored npm package's
++#     optional Python bridge script, unrelated to this repo's own `tos`
++#     package and never containing `import tos`). `strategy-builder-ui/`
++#     itself is NOT pruned — only its `node_modules/` subtree — so a real
++#     script directly under `strategy-builder-ui/` is still scanned.
++_REVERSE_SCAN_PRUNE_ROOTS: tuple[str, ...] = (
++    ".git",
++    ".venv",
++    ".omc",
++    ".history",
++    "tos",
++    "open-trading-api",
++    "strategy-builder-ui/node_modules",
+ )
+ 
++# The forward scan (rules a-d, inside tos/ itself) excludes ONLY the
++# uv-generated top-level `tos/.venv/` tree — i.e. `p.relative_to(tos_dir).parts[0]
++# == ".venv"`, not any-depth pruning by directory name. `.venv` is not a valid
++# Python identifier, so it can never be a package/module path component; a
++# top-level-only check is therefore safe with zero bypass risk. An earlier
++# version of this fix pruned `node_modules`/`__pycache__`/`.git`/`.venv` at ANY
++# depth (mirroring `_REVERSE_SCAN_PRUNE`), but that was rejected on Codex
++# review: `node_modules` and `__pycache__` ARE valid identifiers, so a tracked
++# `tos/src/tos/node_modules/egress.py` would have been silently skipped by
++# rules A-D yet remained importable via `from .node_modules import egress` —
++# an exact bypass of the firewall this file exists to enforce. Rationale for
++# excluding `.venv` at all: a developer running `cd tos && uv sync` creates a
++# gitignored `tos/.venv/`, and without this exclusion the forward scan walks
++# into its vendored site-packages and reports thousands of false violations.
++#
++# `_iter_py_files` deliberately does NOT skip `__pycache__` directories either
++# (a second Codex review finding, 2026-09-04): `__pycache__` is likewise a
++# valid identifier, so a package literally named that would have been
++# silently skipped by rules A-D yet remained importable via
++# `from .__pycache__ import egress` — the same bypass class as `node_modules`
++# above. No exclusion is needed for the *real* compiled-cache use case: Python
++# writes only `.pyc` files under `__pycache__/`, and `root.rglob("*.py")`
++# never matches those, so the directory is already inert to this scan without
++# any special-casing.
++
+ # Line-level fallback used only when a repo file outside tos/ fails to AST-parse
+ # (a SyntaxError must not let an `import tos` slip through silently).
+ _REVERSE_LINE_RE = re.compile(r"^\s*(?:import|from)\s+tos(?:\.|\s|$)")
+@@ -276,7 +388,8 @@ def check_tos_file(path: Path, rel_display: str) -> list[Violation]:
+ 
+ def _iter_py_files(root: Path):
+     for p in sorted(root.rglob("*.py")):
+-        if "__pycache__" in p.parts:
++        rel_parts = p.relative_to(root).parts
++        if rel_parts and rel_parts[0] == ".venv":
+             continue
+         yield p
+ 
+@@ -285,33 +398,436 @@ def _iter_py_files(root: Path):
+ # Reverse scan — repo files OUTSIDE tos/ (rule e / R-reverse)
+ # ============================================================================
+ 
++# Sentinel for an "unset" keyword-only parameter, distinct from `None` (which
++# is itself a meaningful value here — "no git work tree"). Lets a caller that
++# already computed something ONCE (`run_checks`) pass it down explicitly,
++# while a caller that has no such value (a test calling a function directly)
++# leaves the parameter at its default and gets it computed on demand —
++# without conflating "not yet computed" with "computed as None".
++_UNSET = object()
++
++
++def _run_git(args: list[str], repo_root: Path) -> subprocess.CompletedProcess:
++    """Run ``git -C repo_root <args>``, bytes in and out (Claude-side review
++    batch 2, LOW: ``text=True`` would raise ``UnicodeDecodeError`` on a
++    non-UTF-8 filename anywhere in the output; every caller here decodes
++    path bytes itself with ``os.fsdecode`` instead, which round-trips even
++    surrogate-escaped bytes).
++
++    Forces ``LC_ALL=C`` so git's fatal/error messages come back in English
++    and are safe to substring-match, regardless of the invoking user's
++    locale — verified 2026-09-04 that this is NOT a hypothetical concern:
++    this very checkout's git prints Korean-locale messages by default (e.g.
++    "fatal: not a git repository" renders as "깃 저장소가 아닙니다" without
++    this), which would have silently broken the not-a-work-tree detection
++    in ``_git_toplevel_or_none`` below on this exact machine.
++    """
++    env = dict(os.environ)
++    env["LC_ALL"] = "C"
++    return subprocess.run(
++        ["git", "-C", str(repo_root), *args],
++        capture_output=True,
++        env=env,
++        check=False,
++    )
++
++
++def _git_toplevel_or_none(repo_root: Path) -> Path | None:
++    """Resolved toplevel of the git work tree containing ``repo_root``, but
++    ONLY if ``repo_root`` itself IS that toplevel — ``None`` otherwise
++    (covers both "no git work tree here at all" and "inside SOME work tree,
++    but not its toplevel").
++
++    Called ONCE per ``run_checks`` invocation and threaded through every
++    caller that needs it (``_walk_repo_py``, ``_git_tracked_py_under_pruned_roots``,
++    ``_git_tracked_symlinks``, ``_tos_root_is_symlink``) — this used to be a
++    verbatim-duplicated probe inside each of the latter two (DRY, CLAUDE.md
++    non-negotiable), and duplicating it meant up to three separate
++    ``rev-parse`` subprocess calls per firewall run for no reason.
++
++    Fail-open (return ``None``, no error) ONLY when genuinely not inside a
++    git work tree at all (``git rev-parse --show-toplevel``'s own stderr
++    says so) or git is not installed. Fail-CLOSED (raise ``RuntimeError``)
++    for ANY OTHER probe failure — most importantly a real work tree that
++    git refuses to probe for "dubious ownership" reasons (CVE-2022-24765;
++    a live scenario for a CI checkout owned by a different uid than the
++    one running this tool). Claude-side review, batch 2: the earlier code
++    treated every non-zero exit as "not a work tree", which would silently
++    have dropped the tracked-``.py`` union AND the tracked-symlink source —
++    exactly the class of bypass this whole rule-R/rule-S effort exists to
++    close — with no error, no warning, nothing.
++    """
++    try:
++        result = _run_git(["rev-parse", "--show-toplevel"], repo_root)
++    except FileNotFoundError:
++        return None  # git itself is not installed
++    if result.returncode == 0:
++        toplevel = Path(os.fsdecode(result.stdout.strip())).resolve()
++        return toplevel if toplevel == repo_root.resolve() else None
++    stderr = result.stderr.decode("utf-8", errors="replace")
++    if "not a git repository" in stderr:
++        return None  # genuinely no git work tree here
++    raise RuntimeError(
++        "tos_firewall_check: `git rev-parse --show-toplevel` failed "
++        "unexpectedly (not a plain \"not a git repository\" case — this "
++        f"could be masking a real work tree, exit {result.returncode}): "
++        f"{stderr.strip()}"
++    )
++
++
++def _git_ls_files(repo_root: Path, args: list[str]) -> bytes:
++    """Run ``git -C repo_root ls-files <args>`` and return raw stdout bytes.
++
++    By the time this is called, the caller has already established (via
++    ``_git_toplevel_or_none``) that ``repo_root`` genuinely IS a git work
++    tree's toplevel — so a non-zero exit here is never "not a repo" and
++    must never be silently swallowed; it always raises ``RuntimeError``.
++    """
++    result = _run_git(["ls-files", *args], repo_root)
++    if result.returncode != 0:
++        raise RuntimeError(
++            f"tos_firewall_check: `git ls-files {' '.join(args)}` failed "
++            f"(exit {result.returncode}): "
++            f"{result.stderr.decode('utf-8', errors='replace').strip()}"
++        )
++    return result.stdout
+ 
+-def _walk_repo_py(repo_root: Path):
++
++def _git_tracked_py_under_pruned_roots(
++    repo_root: Path, toplevel: Path | None
++) -> list[Path]:
++    """Every git-tracked ``.py`` beneath a pruned root OTHER than ``tos``.
++
++    Closes a bypass (Codex re-review #7, 2026-09-04): ``git add -f`` can
++    force-track a file under a normally-pruned root (e.g.
++    ``open-trading-api/x.py``, ``.venv/x.py``) even though that root is
++    gitignored. CI checks out and runs that file, but ``_walk_repo_py``'s
++    filesystem-walk-only scan would never see it — the walk prunes the
++    directory before descending, so the AST never gets a chance to catch an
++    `import tos`. The fix is the UNION of the pruned walk with this: every
++    git-tracked ``.py`` under a pruned root. ``tos`` itself is excluded from
++    the query (the forward scan's territory, not rule e's).
++
++    ``toplevel`` must be the result of ONE prior ``_git_toplevel_or_none(repo_root)``
++    call (that function owns all the git-availability / fail-open-vs-fail-closed
++    semantics — this function trusts its answer and does not re-probe).
++    ``None`` means "not a usable git work tree here" — return ``[]``.
++    """
++    if toplevel is None:
++        return []
++
++    pruned_roots_for_union = [r for r in _REVERSE_SCAN_PRUNE_ROOTS if r != "tos"]
++    raw = _git_ls_files(repo_root, ["-z", "--", *pruned_roots_for_union])
++
++    # Lexical (not resolved): a force-tracked symlink under a pruned root
++    # must be identified by its OWN path, never by the path its target
++    # happens to resolve to (Codex re-review #8 — see `check_reverse_imports`
++    # and the module-level comment on lexical boundary classification).
++    return [
++        Path(os.path.abspath(repo_root / os.fsdecode(rel)))
++        for rel in raw.split(b"\0")
++        if rel and rel.endswith(b".py")
++    ]
++
++
++def _walk_repo_py(
++    repo_root: Path,
++    *,
++    symlinks_out: list[Path] | None = None,
++    toplevel: Path | None = _UNSET,  # type: ignore[assignment]
++):
++    """Yield every ``.py`` reachable outside the pruned roots.
++
++    ``symlinks_out``, if given, is a side-channel: every ``dirnames``/
++    ``filenames`` entry the walk visits that is itself a symlink (file OR
++    directory, ANY extension) is appended to it as a lexical absolute path,
++    recorded BEFORE that entry is pruned — so a directory symlink that would
++    otherwise be stripped from ``dirnames`` (because its RESOLVED target
++    happens to equal a pruned root's identity) is still recorded first. This
++    feeds rule S (TOS-FW-S, see the module docstring); ``symlinks_out`` is
++    fully populated only once this generator has been drained to completion.
++
++    ``toplevel``: pass the result of a prior ``_git_toplevel_or_none(repo_root)``
++    call to avoid re-probing (DRY — see that function's docstring); left at
++    its default, this computes it itself (one ``rev-parse``), so a direct
++    standalone call (as this module's own tests make) still works.
++    """
++    if toplevel is _UNSET:
++        toplevel = _git_toplevel_or_none(repo_root)
++    # Resolve each explicit prune root once, before the walk starts (see the
++    # module-level comment above `_REVERSE_SCAN_PRUNE_ROOTS`).
++    pruned_roots_resolved = frozenset(
++        (repo_root / rel).resolve() for rel in _REVERSE_SCAN_PRUNE_ROOTS
++    )
++    # Lexical (abspath, not resolved) dedup keys — must match the lexical
++    # paths `_git_tracked_py_under_pruned_roots` returns, so the union
++    # de-duplicates like-for-like rather than comparing a walked path's
++    # lexical location against a tracked path's resolved target (or vice
++    # versa), which could silently under- or over-count.
++    walked_lexical: set[Path] = set()
+     for dirpath, dirnames, filenames in os.walk(repo_root):
+-        # Prune noise / vendored / vcs dirs (and any nested dir literally named
+-        # `tos`, whose forward rules are enforced separately).
+-        dirnames[:] = [d for d in dirnames if d not in _REVERSE_SCAN_PRUNE]
++        if symlinks_out is not None:
++            for name in (*dirnames, *filenames):
++                candidate = Path(dirpath) / name
++                if os.path.islink(candidate):
++                    symlinks_out.append(Path(os.path.abspath(candidate)))
++        dirnames[:] = [
++            d
++            for d in dirnames
++            if (Path(dirpath) / d).resolve() not in pruned_roots_resolved
++        ]
+         for fn in filenames:
+             if fn.endswith(".py"):
+-                yield Path(dirpath) / fn
++                p = Path(dirpath) / fn
++                walked_lexical.add(Path(os.path.abspath(p)))
++                yield p
++
++    # UNION: close the "git add -f under a pruned root" bypass — see
++    # `_git_tracked_py_under_pruned_roots`'s docstring. Sorted for
++    # determinism; de-duplicated against the walk (paths already yielded
++    # above can never come from inside a pruned dir, so no real overlap is
++    # expected, but the guard is cheap and correctness should not depend on
++    # that never happening).
++    for p in sorted(_git_tracked_py_under_pruned_roots(repo_root, toplevel), key=str):
++        if p not in walked_lexical:
++            yield p
++
++
++def _git_tracked_symlinks(repo_root: Path, toplevel: Path | None) -> list[Path]:
++    """Every git-tracked symlink (index mode ``120000``) EXCEPT beneath
++    (strictly under) the repo-root ``tos/`` (the forward-scan mirror owns
++    tos-INTERNAL symlinks — see ``_forward_scan_boundary_symlinks``). A
++    tracked symlink AT ``tos`` itself IS returned — narrowed from
++    ``rel == "tos" or rel.startswith("tos/")`` to `rel.startswith("tos/")``
++    only (Claude-side review, 2026-09-04): the repo-root `tos` path is not
++    "inside tos/", it IS the boundary marker, and ``_tos_root_is_symlink``
++    (called from ``run_checks``) needs this function's output to detect a
++    tracked-but-not-yet-materialized symlink there. Lexical paths, not
++    resolved.
++
++    Closes the directory-symlink half of the same bypass class as
++    ``_git_tracked_py_under_pruned_roots`` (Codex re-review #9):
++    ``os.walk(followlinks=False)`` never descends into ANY directory
++    symlink, regardless of where it points or whether its parent is a
++    pruned root — so a directory alias force-tracked under a pruned root
++    (e.g. ``open-trading-api/link -> tos/src/tos``) is invisible to
++    ``_walk_repo_py``'s side-channel too (the walk never reaches
++    ``open-trading-api/`` at all once it is pruned). ``git ls-files -s``
++    finds the symlink OBJECT directly from the index, with no directory
++    traversal at all.
++
++    ``toplevel`` must be the result of ONE prior ``_git_toplevel_or_none(repo_root)``
++    call — see that function's docstring (this function does not re-probe).
++    ``None`` means "not a usable git work tree here" — return ``[]``.
++    """
++    if toplevel is None:
++        return []
++
++    raw = _git_ls_files(repo_root, ["-s", "-z"])
++    symlinks: list[Path] = []
++    for record in raw.split(b"\0"):
++        if not record:
++            continue
++        # `-s` record format: "<mode> <object-sha> <stage>\t<path>"
++        meta, sep, rel_bytes = record.partition(b"\t")
++        if not sep:
++            continue
++        mode = meta.split(b" ", 1)[0]
++        if mode != b"120000":
++            continue
++        rel = os.fsdecode(rel_bytes)
++        if rel.startswith("tos/"):
++            continue  # forward-scan mirror's territory (tos-INTERNAL only)
++        symlinks.append(Path(os.path.abspath(repo_root / rel)))
++    return symlinks
++
++
++def _subtree_contains(root: Path, candidate: Path) -> bool:
++    """True if ``candidate`` IS ``root``, or lies within ``root``'s subtree.
++
++    Comparison is EXACT-CASE (``PurePath.__eq__`` on POSIX never folds
++    case). On a case-INSENSITIVE filesystem (the default on macOS dev
++    machines) two differently-cased paths can name the same physical file
++    while comparing unequal here — a gap noted, not closed: enforcement is
++    Linux CI, where the filesystem is case-sensitive and this is exact by
++    construction (LOW, Claude-side review batch 2).
++    """
++    return candidate == root or root in candidate.parents
++
++
++def _classify_symlink_crossing(
++    link_lexical: Path, tos_dir_lexical: Path
++) -> tuple[bool, Path | None]:
++    """Does ``link_lexical`` (a symlink) cross the tos/ boundary?
++
++    Crossing is SUBTREE INTERSECTION, not "which side is the target on"
++    (Claude-side review, 2026-09-04 — the earlier "which side" check missed
++    a link OUTSIDE tos/ pointing at an ANCESTOR of tos/, e.g.
++    ``shared/up -> <repo root>``: the repo root is "outside" tos/ too, so
++    the old same-side/different-side comparison judged it clean, even
++    though the ancestor's subtree obviously *contains* tos/ —
++    ``shared.up.tos.src.tos`` reaches the kernel through it, invisible to
++    rule R's own walk since a directory symlink is never traversed):
++
++      - Link lexically OUTSIDE tos/: crossing iff the target's subtree and
++        tos_dir's subtree overlap AT ALL — target IS tos_dir, target is a
++        DESCENDANT of tos_dir, OR target is an ANCESTOR of tos_dir (its
++        subtree therefore reaches tos_dir too).
++      - Link lexically INSIDE tos/: crossing iff the target's subtree is
++        NOT entirely contained within tos_dir's subtree — anything outside,
++        ancestors of tos_dir included. (An ancestor that is still WITHIN
++        tos_dir's own subtree, e.g. a deep link pointing back up at
++        ``tos/src``, stays clean — its subtree is still wholly inside.)
++
++    Returns ``(crosses, target_lexical)``. A dangling or otherwise
++    unresolvable target is ALWAYS treated as crossing regardless of the
++    link's side (fail-closed — an unknown target could later resolve to
++    either side, so it is never presumed safe); ``target_lexical`` is
++    ``None`` in that case.
++    """
++    link_inside = _subtree_contains(tos_dir_lexical, link_lexical)
++    target_real = Path(os.path.realpath(link_lexical))
++    if not target_real.exists():
++        return True, None
++    target_lexical = Path(os.path.abspath(target_real))
++
++    if link_inside:
++        crosses = not _subtree_contains(tos_dir_lexical, target_lexical)
++    else:
++        crosses = _subtree_contains(
++            tos_dir_lexical, target_lexical
++        ) or _subtree_contains(target_lexical, tos_dir_lexical)
++    return crosses, target_lexical
++
++
++def _forward_scan_boundary_symlinks(repo_root: Path, tos_dir: Path) -> list[Violation]:
++    """Rule S, mirrored for symlinks lexically INSIDE tos/ (the forward
++    scan's side of the boundary): a directory or file alias under tos/
++    pointing OUTSIDE it looks tos-governed (importable as ``tos.*``,
++    forward-scanned by rules a-d) but is physically living — and mutable —
++    somewhere else entirely. Walks ``tos_dir`` directly with
++    ``os.walk(followlinks=False)`` (never descends into a directory
++    symlink), mirroring ``_iter_py_files``'s top-level `.venv/` exclusion so
++    this stays as cheap as the forward `.py` scan. Known residue (Claude-side
++    review pass 2, SUGGESTION): the `.venv` entry itself is classified, but a
++    symlink one level deeper (``tos/.venv/leak -> ../../shared/real``) is not
++    reached because the tree is pruned after recording; bounded, since nothing
++    under ``tos/.venv`` is importable as ``tos.*``.
++
++    RECORDS symlinks in ``dirnames``/``filenames`` BEFORE pruning `.venv`
++    out of ``dirnames`` — same discipline as ``_walk_repo_py``'s
++    ``symlinks_out`` side-channel. An earlier version pruned `.venv` FIRST
++    (Claude-side review batch 2, MEDIUM): a force-tracked (or merely
++    present) `tos/.venv` symlink to somewhere outside tos/ was stripped out
++    of ``dirnames`` before the islink check ever ran, so nothing ever
++    reported it.
++    """
++    tos_dir_lexical = Path(os.path.abspath(tos_dir))
++    violations: list[Violation] = []
++    is_top = True
++    for dirpath, dirnames, filenames in os.walk(tos_dir):
++        for name in (*dirnames, *filenames):
++            candidate = Path(dirpath) / name
++            if not os.path.islink(candidate):
++                continue
++            link_lexical = Path(os.path.abspath(candidate))
++            crosses, target_lexical = _classify_symlink_crossing(
++                link_lexical, tos_dir_lexical
++            )
++            if not crosses:
++                continue
++            violations.append(
++                _make_symlink_crossing_violation(link_lexical, target_lexical, repo_root)
++            )
++        if is_top:
++            dirnames[:] = [d for d in dirnames if d != ".venv"]
++            is_top = False
++    return violations
+ 
+ 
+ def _safe_rel(path: Path, root: Path) -> str:
++    """Relative path of ``path`` under ``root`` for display — LEXICAL, not
++    resolved (``os.path.relpath`` normalises to absolute but never follows
++    symlinks). A violation must name the file that actually contains it: if
++    ``path`` is a symlink, resolving it here would substitute its TARGET's
++    path in the report, misattributing the violation to a different file
++    (Codex re-review #8 — the same lexical-vs-resolved bug class as the
++    boundary classification in ``check_reverse_imports`` below).
++    """
+     try:
+-        return str(path.resolve().relative_to(root.resolve()))
++        return os.path.relpath(path, root)
+     except ValueError:
++        # Windows: `path` and `root` on different drives — no relative path
++        # is expressible at all; fall back to the absolute string.
+         return str(path)
+ 
+ 
+-def check_reverse_imports(repo_root: Path, tos_dir: Path) -> list[Violation]:
+-    """Detect any file outside ``tos/`` that imports the ``tos`` package."""
++def _make_symlink_crossing_violation(
++    link_lexical: Path, target_lexical: Path | None, repo_root: Path
++) -> Violation:
++    """Build the one ``TOS-FW-S`` ``Violation`` shape both the reverse loop
++    (``check_reverse_imports``) and the forward mirror
++    (``_forward_scan_boundary_symlinks``) need — DRY (they used to build
++    this inline, verbatim, in both places).
++
++    Message wording: a dangling target (``target_lexical is None``) gets
++    its own wording, "dangling symlink (target unresolvable) — fail-closed",
++    rather than reusing the generic "crosses the tos/ boundary" phrasing —
++    a dangling link hasn't been PROVEN to cross anything; it is flagged
++    because its status is unknown, and that distinction is worth keeping
++    visible in the message itself (LOW, Claude-side review batch 2).
++    """
++    rel = _safe_rel(link_lexical, repo_root)
++    if target_lexical is None:
++        message = "dangling symlink (target unresolvable) — fail-closed"
++    else:
++        message = f"symlink crosses the tos/ boundary (target: {_safe_rel(target_lexical, repo_root)})"
++    return Violation("TOS-FW-S", rel, 0, message)
++
++
++def check_reverse_imports(
++    repo_root: Path,
++    tos_dir: Path,
++    *,
++    toplevel: Path | None = _UNSET,  # type: ignore[assignment]
++    tracked_symlinks: list[Path] = _UNSET,  # type: ignore[assignment]
++) -> list[Violation]:
++    """Detect any file outside ``tos/`` that imports the ``tos`` package
++    (rule R), plus (rule S) any symlink lexically OUTSIDE tos/ whose
++    resolved target crosses to the other side of the boundary.
++
++    ``toplevel``/``tracked_symlinks``: pass ``run_checks``'s already-computed
++    values to avoid re-probing git (DRY — see ``_git_toplevel_or_none``'s
++    docstring); left at their defaults, both are computed here (a direct
++    standalone call, as this module's own tests make throughout, still
++    works with exactly one ``rev-parse`` and two ``ls-files`` calls).
++    """
++    if toplevel is _UNSET:
++        toplevel = _git_toplevel_or_none(repo_root)
++    if tracked_symlinks is _UNSET:
++        tracked_symlinks = _git_tracked_symlinks(repo_root, toplevel)
++
+     violations: list[Violation] = []
+-    tos_dir_resolved = tos_dir.resolve()
++    # LEXICAL boundary, not resolved: a file's tos/-membership is decided by
++    # where it lexically SITS in the tree, never by what a symlink resolves
++    # to. `.resolve()` here would misclassify a symlink OUTSIDE tos/ whose
++    # target happens to live inside tos/ as tos-internal, silently exempting
++    # it from rule e even though it is importable exactly where it sits
++    # (Codex re-review #8). `os.path.abspath` normalises without following
++    # symlinks.
++    tos_dir_lexical = Path(os.path.abspath(tos_dir))
+ 
+-    for path in _walk_repo_py(repo_root):
+-        rp = path.resolve()
+-        if rp == tos_dir_resolved or tos_dir_resolved in rp.parents:
+-            continue  # inside tos/ — governed by the forward rules
++    # ---- rule S sources, gathered alongside rule R's walk ----
++    # (1) every symlink `_walk_repo_py` sees during its walk (recorded before
++    # any pruning — see that function's docstring); (2) every git-tracked
++    # symlink outside tos/, including ones under a pruned root that source
++    # (1) can never reach (see `_git_tracked_symlinks`'s docstring).
++    walked_symlinks: list[Path] = []
++
++    for path in _walk_repo_py(repo_root, symlinks_out=walked_symlinks, toplevel=toplevel):
++        path_lexical = Path(os.path.abspath(path))
++        if path_lexical == tos_dir_lexical or tos_dir_lexical in path_lexical.parents:
++            continue  # inside tos/ (lexically) — governed by the forward rules
+         try:
+             text = path.read_text(encoding="utf-8")
+         except (OSError, UnicodeDecodeError):
+@@ -363,6 +879,30 @@ def check_reverse_imports(repo_root: Path, tos_dir: Path) -> list[Violation]:
+                         )
+                     )
+ 
++    # ---- rule S: boundary-crossing symlinks lexically OUTSIDE tos/ ----
++    # (symlinks lexically INSIDE tos/, strictly under it, are
++    # `_forward_scan_boundary_symlinks`'s job — `walked_symlinks` and
++    # `_git_tracked_symlinks` already exclude those by construction, but the
++    # `in .parents` half of the guard below is kept as an explicit invariant
++    # check, not dead code removed for looking redundant. `tos` ITSELF is
++    # neither this loop's job NOR the forward mirror's — see
++    # `_tos_root_is_symlink`, called unconditionally from `run_checks`
++    # before anything else; the `== tos_dir_lexical` half of the guard below
++    # exists only to keep this generic per-symlink loop from double-counting
++    # that dedicated, more specific check).
++    all_symlinks = {*walked_symlinks, *tracked_symlinks}
++    for link_lexical in sorted(all_symlinks, key=str):
++        if link_lexical == tos_dir_lexical or tos_dir_lexical in link_lexical.parents:
++            continue  # tos/ itself, or strictly inside it
++        crosses, target_lexical = _classify_symlink_crossing(
++            link_lexical, tos_dir_lexical
++        )
++        if not crosses:
++            continue
++        violations.append(
++            _make_symlink_crossing_violation(link_lexical, target_lexical, repo_root)
++        )
++
+     return violations
+ 
+ 
+@@ -371,13 +911,110 @@ def check_reverse_imports(repo_root: Path, tos_dir: Path) -> list[Violation]:
+ # ============================================================================
+ 
+ 
++def _tos_root_is_symlink(
++    tos_dir: Path, tracked_symlinks: list[Path]
++) -> tuple[bool, Path | None]:
++    """Is the repo-root ``tos/`` entry ITSELF a symlink?
++
++    ``tos/`` must NEVER be a symlink — it IS the boundary marker every other
++    check in this file is anchored to; there is no target that keeps it "on
++    the same side", because the symlink's mere existence means the kernel's
++    real content lives somewhere physically else. Checked FIRST, from
++    ``run_checks``, before anything else runs (Claude-side review,
++    2026-09-04): neither the reverse rule-S loop (which explicitly skips
++    anything lexically equal to ``tos_dir``) nor the forward mirror (which
++    walks INSIDE ``tos_dir`` as its OWN root, so it structurally can never
++    inspect ``tos_dir`` itself) can ever catch this — and the old
++    ``run_checks`` gated the ENTIRE forward scan (rules a-d AND the forward
++    rule-S mirror) on ``tos_dir.is_dir()``, so a dangling symlink at ``tos``
++    made every one of those checks silently vanish, reporting a clean PASS
++    despite the kernel being structurally unverifiable.
++
++    Two independent sources, fail-closed if EITHER says yes:
++      1. The filesystem (``os.path.islink`` directly on ``tos_dir``).
++      2. The git index — ``tracked_symlinks`` (mode ``120000``, from ONE
++         prior ``_git_tracked_symlinks`` call, reused rather than re-probed
++         here — DRY, see ``_git_toplevel_or_none``'s docstring): the working
++         tree might not currently reflect what the index claims (e.g.
++         before a checkout materializes it), and the index is what CI
++         actually checks out, so it is checked too even when (1) says no.
++
++    Returns ``(is_symlink, target_lexical)`` — ``target_lexical`` is
++    ``None`` when dangling, or when the answer came only from source (2)
++    and there is nothing on the filesystem yet to resolve.
++    """
++    if os.path.islink(tos_dir):
++        target_real = Path(os.path.realpath(tos_dir))
++        if target_real.exists():
++            return True, Path(os.path.abspath(target_real))
++        return True, None
++
++    tos_dir_lexical = Path(os.path.abspath(tos_dir))
++    for tracked in tracked_symlinks:
++        if tracked == tos_dir_lexical:
++            # Index says symlink; filesystem disagrees (or has nothing at
++            # all there) — still fail-closed, since CI trusts the index.
++            return True, None
++    return False, None
++
++
+ def run_checks(repo_root: Path) -> list[Violation]:
+-    """Run the full firewall (forward tos/ scan + reverse repo scan)."""
++    """Run the full firewall (forward tos/ scan + reverse repo scan).
++
++    ``tos/`` itself is checked FIRST, unconditionally: a symlink there, or a
++    missing/non-directory entry there, is ALWAYS a visible, reported
++    failure — never a silent PASS (see ``_tos_root_is_symlink``).
++
++    Git is probed exactly ONCE here (``_git_toplevel_or_none``) and the
++    tracked-symlink query exactly ONCE (``_git_tracked_symlinks``); both
++    results are threaded down to every function that needs them
++    (``_tos_root_is_symlink``, ``check_reverse_imports`` and, through it,
++    ``_walk_repo_py``) instead of each re-probing independently (DRY,
++    CLAUDE.md non-negotiable — this used to be up to three separate
++    ``rev-parse`` calls and two duplicate ``ls-files -s`` calls per run).
++    """
+     repo_root = repo_root.resolve()
+     tos_dir = repo_root / "tos"
+     violations: list[Violation] = []
+ 
+-    if tos_dir.is_dir():
++    toplevel = _git_toplevel_or_none(repo_root)
++    tracked_symlinks = _git_tracked_symlinks(repo_root, toplevel)
++
++    is_tos_symlink, tos_symlink_target = _tos_root_is_symlink(tos_dir, tracked_symlinks)
++    if is_tos_symlink:
++        tgt_display = (
++            "<dangling>"
++            if tos_symlink_target is None
++            else _safe_rel(tos_symlink_target, repo_root)
++        )
++        violations.append(
++            Violation(
++                "TOS-FW-S",
++                "tos",
++                0,
++                f"tos/ itself is a symlink (target: {tgt_display}); "
++                "tos/ may never be a symlink, regardless of target",
++            )
++        )
++        violations.append(
++            Violation(
++                "TOS-FW-S",
++                "tos",
++                0,
++                "tos/ is a symlink; forward rules a-d cannot be evaluated",
++            )
++        )
++    elif not tos_dir.is_dir():
++        violations.append(
++            Violation(
++                "TOS-FW-MISSING",
++                "tos",
++                0,
++                "tos/ does not exist or is not a directory; "
++                "forward rules a-d cannot be evaluated",
++            )
++        )
++    else:
+         for path in _iter_py_files(tos_dir):
+             rel = _safe_rel(path, repo_root)
+             try:
+@@ -391,8 +1028,14 @@ def run_checks(repo_root: Path) -> list[Violation]:
+                         f"could not parse tos file: {exc.msg}",
+                     )
+                 )
++        # rule S, forward side: symlinks lexically INSIDE tos/ crossing OUT.
++        violations.extend(_forward_scan_boundary_symlinks(repo_root, tos_dir))
+ 
+-    violations.extend(check_reverse_imports(repo_root, tos_dir))
++    violations.extend(
++        check_reverse_imports(
++            repo_root, tos_dir, toplevel=toplevel, tracked_symlinks=tracked_symlinks
++        )
++    )
+     return violations
+ 
+ 
+diff --git a/tos-spec/src/TOS-COMPLETION-STATUS.md b/tos-spec/src/TOS-COMPLETION-STATUS.md
+index 4b9a9308..b1bec7de 100644
+--- a/tos-spec/src/TOS-COMPLETION-STATUS.md
++++ b/tos-spec/src/TOS-COMPLETION-STATUS.md
+@@ -38,7 +38,7 @@
+ ## State machine values
+ 
+ - `oq11_raise_state=NOT_REQUIRED`
+-- `d0a_entry_state=APPROVAL_STALE`
++- `d0a_entry_state=ENTRY_OK`
+ - `d0a_entry_provenance_state=ENTRY_PROVENANCE_CLEAR`
+ - `closable_no_provenance_state=NO_ROWS_CLEAR`
+ 
+@@ -57,19 +57,19 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
+ - `ref_reuse_top=[('tos/src/tos/hag/predicates.py', 8), ('tos/src/tos/capsule/predicates.py', 7), ('tos/src/tos/spg/predicates.py', 6), ('tos/src/tos/sbr/predicates.py', 5), ('tos/src/tos/evidence/predicates.py', 4)]`
+ - `profile_dependent_blocked=['BC-EV-003', 'ECO-EV-012', 'IOM-EV-008']`
+ - `closable_no_rows=1`
+-- `blank_normative_ref_rows=22`
++- `blank_normative_ref_rows=21`
+ - `imprecise_owner_track=9`
+ - `unassigned_owner_rows=0`
+ - `U-13 fwd_a_excluded_rows=['STATE-EV-004']`
+ - `U-13 remainder_rows=[]`
+ - `A-2: ARCHITECTURE-GATE-STATUS.md 에 기계 파싱 가능한 권한 축-표기 없음(실측 확인 — §6.4 대조 대상에서 제외)`
+ - `D0-5[backtest__init__]=UNBOUND (dsl_evaluation_budget_steps)`
+-- `D0-5[resolver]=UNDECIDED (혼합 처분(§7.4 어휘 밖 · 운영자 에라타 처분 대기): MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND)`
++- `D0-5[resolver]=VALUED+UNBOUND (MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND)`
+ - `D0-5[results]=UNBOUND (dsl_evaluation_budget_steps)`
+ - `D0-5[construction]=UNBOUND (risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND)`
+ - `D0-5[records]=UNBOUND (risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; lot_rounding:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND)`
+ - `D0-5[engine]=UNBOUND (dsl_evaluation_budget_steps; CONTRAST: MAX_dsl_evaluation_ms)`
+-- `D0-5[marketfeed]=UNDECIDED (VER-002-KEYS: NONE — §7.4 어휘 밖(키 미공급) · 운영자 에라타 처분 대기 · tos/src/tos/marketfeed 6개 파일 스캔, 프로파일 키 참조 0)`
++- `D0-5[marketfeed]=VALUED+UNBOUND (MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND)`
+ 
+ ## Phase-0 unchecked-axis register (full exposure, U-3)
+ 
+@@ -99,7 +99,6 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
+ | UNCHK-020 | normative_ref 공란·무관 인용의 저작자 재량 | 기계는 인용의 해석 가능성만 본다(T-66). 조항을 대지 못하면 공란이고, 공란이면 blocks_gate 의무가 사라진다 — 저작자가 공란을 골라 차단을 피할 수 있고, 반대로 무관한 실재 조항을 넣어도 검사를 통과한다 (심판 high) | evidence별 "이 조항이 이 축을 요구하는가"의 수용 기준 — UNCHK-007·015와 같은 의미 판정 계열 | Phase 2-5 | TOS-COMPLETION-STATUS |  | YES |  |
+ | UNCHK-024 | BarTimeProjection 시간 bound 필드의 VER-002 키 결속 | 코드 어디에도 필드↔키 결속 표면이 없고 동형 후보 다수라 키 공급이 추측이 된다 (§7.4 D-1). 부분 해소(2026-09-02, 갱신) — 9필드 전부 처분 확정: ① 2필드(future_tolerance·maximum_consumer_age_ms)는 1:1 키 결속 확정: future_tolerance↔MAX_future_timestamp_tolerance_ms, maximum_consumer_age_ms↔MAX_critical_input_consumer_receipt_age_ms(둘 다 값 보유). ② delay_bounds는 4키 합성-멤버십 결속(1:1보다 약한 결속): MAX_time_transport_and_queue_uncertainty_ms + MAX_clock_domain_conversion_uncertainty_ms + MAX_time_source_precision_ms + MAX_time_source_sequence_gap_ms(ADR-002-008 §9 — freshness_verdict 에서 무순서 합산). ③ 5필드(source_age·snapshot_age_bound·interval_width·boundary_lag·health_state)는 register §8-1 미완 범주가 아니라 애초에 MAX_*/MIN_* 문턱이 될 수 없는 관측값/파생 합성/기준틀 구성 파라미터/열거형이라 구조적으로 프로파일 비대상 선언(design #33 §3.3). 전부 resolver.py BarTimeProjection docstring 리터럴 결속/선언. ④ 잔여 1필드(max_age_bound)만 register §8-1 trustworthy-time bound 범주 미완이라 결속 불가 — UNBOUND 유지. | register §8-1 trustworthy-time bound 키 신설·범주 확정(운영자/P0-2 소관) — 잔여 1필드(max_age_bound)에만 해당; 나머지 8필드는 1:1/합성 결속 또는 구조적 비대상 선언으로 처분 완료 | Phase 1 | TOS-COMPLETION-STATUS |  | YES |  |
+ | UNCHK-025 | VER-002 프로파일 밖 bound 값의 소관 아티팩트 검증 | SizingBound 6필드(소관 Order Construction Policy RFC-002 §9.1)·dsl_evaluation_budget_steps(소관 EngineConfiguration/DCE-INV-007)는 프로파일 검사 우주 밖 — 소관 아티팩트의 비준·검증은 별도 축 | Order Construction Policy 비준 및 결속 검사 신설 | Phase 2-5 | TOS-COMPLETION-STATUS |  | YES |  |
+-| UNCHK-026 | marketfeed 사이트의 D-1 처분 — 의존 키 부재(NONE) 는 §7.4 어휘 밖 | 모듈 tos/src/tos/marketfeed/__init__.py 는 VER-002-KEYS: NONE 을 선언한다. 검사기의 실측 스캔(패키지 디렉터리 재귀 6개 파일)은 프로파일 키 리터럴 참조 0건을 찾아 NONE 선언과 모순되지 않는다. 그러나 §7.4 는 저작자가 공급한 단일 키 K 에 대해서만 VALUED/BLOCKED/UNBOUND 를 정의하고, K 미공급은 UNDECIDED 다 — "의존 키가 원래 없다"(NONE) 는 사례를 다루는 어휘가 계약에 없어, frozen 계약만으로는 이 사이트를 판정할 수 없다. 운영자 에라타 처분(D1-DERIVATION-ERRATUM-CANDIDATE.md (b))까지 UNDECIDED 로 유지한다. Codex verdict review-mtlo6mst-93vt2j finding 1 로 식별됨. | 계약 에라타 처분(운영자) — §7.4 에 «의존 키 없음(NONE)» 어휘 도입 여부 | Phase 0 | TOS-COMPLETION-STATUS |  | YES |  |
+ 
+ ## D0-5 disposition table (7 rows, §7.4)
+ 
+@@ -108,9 +107,9 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
+ | backtest__init__ | `UNBOUND` | dsl_evaluation_budget_steps |
+ | construction | `UNBOUND` | risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND |
+ | engine | `UNBOUND` | dsl_evaluation_budget_steps; CONTRAST: MAX_dsl_evaluation_ms |
+-| marketfeed | `UNDECIDED` | VER-002-KEYS: NONE — §7.4 어휘 밖(키 미공급) · 운영자 에라타 처분 대기 · tos/src/tos/marketfeed 6개 파일 스캔, 프로파일 키 참조 0 |
++| marketfeed | `VALUED+UNBOUND` | MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND |
+ | records | `UNBOUND` | risk_budget:UNBOUND; per_unit_risk:UNBOUND; lot_size:UNBOUND; lot_rounding:UNBOUND; min_quantity:UNBOUND; max_quantity:UNBOUND; max_notional:UNBOUND |
+-| resolver | `UNDECIDED` | 혼합 처분(§7.4 어휘 밖 · 운영자 에라타 처분 대기): MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND |
++| resolver | `VALUED+UNBOUND` | MAX_future_timestamp_tolerance_ms:VALUED; MAX_critical_input_consumer_receipt_age_ms:VALUED; MAX_time_transport_and_queue_uncertainty_ms:VALUED; MAX_clock_domain_conversion_uncertainty_ms:VALUED; MAX_time_source_precision_ms:VALUED; MAX_time_source_sequence_gap_ms:VALUED; max_age_bound:UNBOUND |
+ | results | `UNBOUND` | dsl_evaluation_budget_steps |
+ 
+ ## Phase 0 termination-condition overview (section 11)
+@@ -129,7 +128,7 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
+ - `U-14`: `MET`
+ - `U-12`: `MET`
+ - `U-13`: `MET`
+-- `U-15`: `NOT_MET`
++- `U-15`: `MET`
+ - `U-16`: `MET`
+ - `U-1a`: `MET`
+ - `U-4`: `MET`
+@@ -141,6 +140,6 @@ U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `impr
+ - `A-2`: `MET`
+ - `A-3`: `MET`
+ - `D-1`: `MET`
+-- `D0-5`: UNDECIDED 2(marketfeed, resolver) → D0-5 완료 차단
++- `D0-5`: `MET`
+ - `U-17`: requires a live evaluation at completion-judgment time; this generated document does not perform that evaluation. Unevaluated counts as unmet (fail-closed).
+ - `RES-1`: `MET` — `STATE-EV-004` is excluded from the `FWD-a` termination condition by the checker-derived exclusion list (`U-13 fwd_a_excluded_rows` above; contract U-13-e).
+diff --git a/tos-spec/src/verification/PHASE0-UNCHECKABLE-REGISTER.csv b/tos-spec/src/verification/PHASE0-UNCHECKABLE-REGISTER.csv
+index 4cd35860..fa9f78bb 100644
+--- a/tos-spec/src/verification/PHASE0-UNCHECKABLE-REGISTER.csv
++++ b/tos-spec/src/verification/PHASE0-UNCHECKABLE-REGISTER.csv
+@@ -23,4 +23,3 @@ UNCHK-023,git 이력 파생의 신뢰 기반 — 커밋 타임스탬프 자기
+ UNCHK-020,normative_ref 공란·무관 인용의 저작자 재량,"기계는 인용의 해석 가능성만 본다(T-66). 조항을 대지 못하면 공란이고, 공란이면 blocks_gate 의무가 사라진다 — 저작자가 공란을 골라 차단을 피할 수 있고, 반대로 무관한 실재 조항을 넣어도 검사를 통과한다 (심판 high)","evidence별 ""이 조항이 이 축을 요구하는가""의 수용 기준 — UNCHK-007·015와 같은 의미 판정 계열",Phase 2-5,TOS-COMPLETION-STATUS,,YES,
+ UNCHK-024,BarTimeProjection 시간 bound 필드의 VER-002 키 결속,"코드 어디에도 필드↔키 결속 표면이 없고 동형 후보 다수라 키 공급이 추측이 된다 (§7.4 D-1). 부분 해소(2026-09-02, 갱신) — 9필드 전부 처분 확정: ① 2필드(future_tolerance·maximum_consumer_age_ms)는 1:1 키 결속 확정: future_tolerance↔MAX_future_timestamp_tolerance_ms, maximum_consumer_age_ms↔MAX_critical_input_consumer_receipt_age_ms(둘 다 값 보유). ② delay_bounds는 4키 합성-멤버십 결속(1:1보다 약한 결속): MAX_time_transport_and_queue_uncertainty_ms + MAX_clock_domain_conversion_uncertainty_ms + MAX_time_source_precision_ms + MAX_time_source_sequence_gap_ms(ADR-002-008 §9 — freshness_verdict 에서 무순서 합산). ③ 5필드(source_age·snapshot_age_bound·interval_width·boundary_lag·health_state)는 register §8-1 미완 범주가 아니라 애초에 MAX_*/MIN_* 문턱이 될 수 없는 관측값/파생 합성/기준틀 구성 파라미터/열거형이라 구조적으로 프로파일 비대상 선언(design #33 §3.3). 전부 resolver.py BarTimeProjection docstring 리터럴 결속/선언. ④ 잔여 1필드(max_age_bound)만 register §8-1 trustworthy-time bound 범주 미완이라 결속 불가 — UNBOUND 유지.",register §8-1 trustworthy-time bound 키 신설·범주 확정(운영자/P0-2 소관) — 잔여 1필드(max_age_bound)에만 해당; 나머지 8필드는 1:1/합성 결속 또는 구조적 비대상 선언으로 처분 완료,Phase 1,TOS-COMPLETION-STATUS,,YES,
+ UNCHK-025,VER-002 프로파일 밖 bound 값의 소관 아티팩트 검증,SizingBound 6필드(소관 Order Construction Policy RFC-002 §9.1)·dsl_evaluation_budget_steps(소관 EngineConfiguration/DCE-INV-007)는 프로파일 검사 우주 밖 — 소관 아티팩트의 비준·검증은 별도 축,Order Construction Policy 비준 및 결속 검사 신설,Phase 2-5,TOS-COMPLETION-STATUS,,YES,
+-UNCHK-026,marketfeed 사이트의 D-1 처분 — 의존 키 부재(NONE) 는 §7.4 어휘 밖,"모듈 tos/src/tos/marketfeed/__init__.py 는 VER-002-KEYS: NONE 을 선언한다. 검사기의 실측 스캔(패키지 디렉터리 재귀 6개 파일)은 프로파일 키 리터럴 참조 0건을 찾아 NONE 선언과 모순되지 않는다. 그러나 §7.4 는 저작자가 공급한 단일 키 K 에 대해서만 VALUED/BLOCKED/UNBOUND 를 정의하고, K 미공급은 UNDECIDED 다 — ""의존 키가 원래 없다""(NONE) 는 사례를 다루는 어휘가 계약에 없어, frozen 계약만으로는 이 사이트를 판정할 수 없다. 운영자 에라타 처분(D1-DERIVATION-ERRATUM-CANDIDATE.md (b))까지 UNDECIDED 로 유지한다. Codex verdict review-mtlo6mst-93vt2j finding 1 로 식별됨.",계약 에라타 처분(운영자) — §7.4 에 «의존 키 없음(NONE)» 어휘 도입 여부,Phase 0,TOS-COMPLETION-STATUS,,YES,

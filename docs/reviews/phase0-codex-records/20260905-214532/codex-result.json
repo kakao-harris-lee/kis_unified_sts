@@ -1,0 +1,77 @@
+{
+  "job": {
+    "createdAt": "2026-09-05T12:46:42.993Z",
+    "updatedAt": "2026-09-05T12:50:29.004Z",
+    "id": "review-mtodn6sx-1fg1eh",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "SHIP. C3 7d6fc076은 R-3 정본·보존 기록·README만 추가했고, C4 f24deb84는 tos-spec/src/TOS-COMPLETION-STATUS.md만 재생성했다. 머지 97596460이 첫 부모에 도입한 변경은 PR #462의 지정된 7파일뿐이다. 38bfb1fd→97596460에서 두 결속 경로의 최종 diff는 공집합이며 blob은 계약 6f94dfbbafd48fa3d1b4c73266fdfda19da9bce5, 개발계획 ec3464c068dff2030e0764f3b05c985a821730f5로 재심 #9와 byte 동일하다. plan_scope_digest는 5748fc5bb2e7e1a8ca292dd95daa8af1eae9caf113f3fbbf469728d28ae2a5fb, bound_set_digest는 커밋·워킹트리 모두 045f3ae7565860df6e0c38d3c7ee49c76f3a4d3784d646279cd1be2727dbb429로 포착값과 일치한다. origin/main dc900970은 새 reviewed_at_head의 조상이다. contract check와 145종 self-test는 rc 0이다. completion-status --check는 읽기 전용 샌드박스에서 사용 가능한 임시 디렉터리가 없어 rc 2였으므로 예상된 U-15/D0-1 두 건만인지 직접 확인하지 못했다.",
+    "write": false,
+    "sessionId": "f062da15-ff4e-4803-ba88-8e368a96a4f3",
+    "status": "completed",
+    "startedAt": "2026-09-05T12:46:43.070Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtodn6sx-1fg1eh.log",
+    "threadId": "01a0719b-64b1-7f13-a95c-1fd9ab27631b",
+    "turnId": "01a0719b-6629-7841-9865-515918733a00",
+    "completedAt": "2026-09-05T12:50:28.838Z"
+  },
+  "storedJob": {
+    "id": "review-mtodn6sx-1fg1eh",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "Adversarial Review branch diff against 38bfb1fd",
+    "write": false,
+    "createdAt": "2026-09-05T12:46:42.993Z",
+    "sessionId": "f062da15-ff4e-4803-ba88-8e368a96a4f3",
+    "status": "completed",
+    "startedAt": "2026-09-05T12:46:43.070Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtodn6sx-1fg1eh.log",
+    "threadId": "01a0719b-64b1-7f13-a95c-1fd9ab27631b",
+    "turnId": "01a0719b-6629-7841-9865-515918733a00",
+    "completedAt": "2026-09-05T12:50:28.838Z",
+    "result": {
+      "review": "Adversarial Review",
+      "target": {
+        "mode": "branch",
+        "label": "branch diff against 38bfb1fd",
+        "baseRef": "38bfb1fd",
+        "explicit": true
+      },
+      "threadId": "01a0719b-64b1-7f13-a95c-1fd9ab27631b",
+      "context": {
+        "repoRoot": "/Users/harris/Development/private/kis_unified_sts",
+        "branch": "mission-critical-trading-operating-system",
+        "summary": "Reviewing branch mission-critical-trading-operating-system against 38bfb1fd from merge-base 38bfb1fd2aa5e7b5fee337adbcbb7c8098b7f36b."
+      },
+      "codex": {
+        "status": 0,
+        "stderr": "",
+        "stdout": "{\"verdict\":\"approve\",\"summary\":\"SHIP. C3 7d6fc076은 R-3 정본·보존 기록·README만 추가했고, C4 f24deb84는 tos-spec/src/TOS-COMPLETION-STATUS.md만 재생성했다. 머지 97596460이 첫 부모에 도입한 변경은 PR #462의 지정된 7파일뿐이다. 38bfb1fd→97596460에서 두 결속 경로의 최종 diff는 공집합이며 blob은 계약 6f94dfbbafd48fa3d1b4c73266fdfda19da9bce5, 개발계획 ec3464c068dff2030e0764f3b05c985a821730f5로 재심 #9와 byte 동일하다. plan_scope_digest는 5748fc5bb2e7e1a8ca292dd95daa8af1eae9caf113f3fbbf469728d28ae2a5fb, bound_set_digest는 커밋·워킹트리 모두 045f3ae7565860df6e0c38d3c7ee49c76f3a4d3784d646279cd1be2727dbb429로 포착값과 일치한다. origin/main dc900970은 새 reviewed_at_head의 조상이다. contract check와 145종 self-test는 rc 0이다. completion-status --check는 읽기 전용 샌드박스에서 사용 가능한 임시 디렉터리가 없어 rc 2였으므로 예상된 U-15/D0-1 두 건만인지 직접 확인하지 못했다.\",\"findings\":[],\"next_steps\":[\"97596460을 reviewed_at_head로 하는 재심 #10 verdict를 결속 경로 무접촉으로 착지한다.\",\"쓰기 가능한 환경에서 verdict 착지 후 TOS-COMPLETION-STATUS를 재생성하고 python tools/tos_completion_status.py --check를 다시 실행해 추가 위반이 없음을 확인한다.\"]}",
+        "reasoning": []
+      },
+      "result": {
+        "verdict": "approve",
+        "summary": "SHIP. C3 7d6fc076은 R-3 정본·보존 기록·README만 추가했고, C4 f24deb84는 tos-spec/src/TOS-COMPLETION-STATUS.md만 재생성했다. 머지 97596460이 첫 부모에 도입한 변경은 PR #462의 지정된 7파일뿐이다. 38bfb1fd→97596460에서 두 결속 경로의 최종 diff는 공집합이며 blob은 계약 6f94dfbbafd48fa3d1b4c73266fdfda19da9bce5, 개발계획 ec3464c068dff2030e0764f3b05c985a821730f5로 재심 #9와 byte 동일하다. plan_scope_digest는 5748fc5bb2e7e1a8ca292dd95daa8af1eae9caf113f3fbbf469728d28ae2a5fb, bound_set_digest는 커밋·워킹트리 모두 045f3ae7565860df6e0c38d3c7ee49c76f3a4d3784d646279cd1be2727dbb429로 포착값과 일치한다. origin/main dc900970은 새 reviewed_at_head의 조상이다. contract check와 145종 self-test는 rc 0이다. completion-status --check는 읽기 전용 샌드박스에서 사용 가능한 임시 디렉터리가 없어 rc 2였으므로 예상된 U-15/D0-1 두 건만인지 직접 확인하지 못했다.",
+        "findings": [],
+        "next_steps": [
+          "97596460을 reviewed_at_head로 하는 재심 #10 verdict를 결속 경로 무접촉으로 착지한다.",
+          "쓰기 가능한 환경에서 verdict 착지 후 TOS-COMPLETION-STATUS를 재생성하고 python tools/tos_completion_status.py --check를 다시 실행해 추가 위반이 없음을 확인한다."
+        ]
+      },
+      "rawOutput": "{\"verdict\":\"approve\",\"summary\":\"SHIP. C3 7d6fc076은 R-3 정본·보존 기록·README만 추가했고, C4 f24deb84는 tos-spec/src/TOS-COMPLETION-STATUS.md만 재생성했다. 머지 97596460이 첫 부모에 도입한 변경은 PR #462의 지정된 7파일뿐이다. 38bfb1fd→97596460에서 두 결속 경로의 최종 diff는 공집합이며 blob은 계약 6f94dfbbafd48fa3d1b4c73266fdfda19da9bce5, 개발계획 ec3464c068dff2030e0764f3b05c985a821730f5로 재심 #9와 byte 동일하다. plan_scope_digest는 5748fc5bb2e7e1a8ca292dd95daa8af1eae9caf113f3fbbf469728d28ae2a5fb, bound_set_digest는 커밋·워킹트리 모두 045f3ae7565860df6e0c38d3c7ee49c76f3a4d3784d646279cd1be2727dbb429로 포착값과 일치한다. origin/main dc900970은 새 reviewed_at_head의 조상이다. contract check와 145종 self-test는 rc 0이다. completion-status --check는 읽기 전용 샌드박스에서 사용 가능한 임시 디렉터리가 없어 rc 2였으므로 예상된 U-15/D0-1 두 건만인지 직접 확인하지 못했다.\",\"findings\":[],\"next_steps\":[\"97596460을 reviewed_at_head로 하는 재심 #10 verdict를 결속 경로 무접촉으로 착지한다.\",\"쓰기 가능한 환경에서 verdict 착지 후 TOS-COMPLETION-STATUS를 재생성하고 python tools/tos_completion_status.py --check를 다시 실행해 추가 위반이 없음을 확인한다.\"]}",
+      "parseError": null,
+      "reasoningSummary": []
+    },
+    "rendered": "# Codex Adversarial Review\n\nTarget: branch diff against 38bfb1fd\nVerdict: approve\n\nSHIP. C3 7d6fc076은 R-3 정본·보존 기록·README만 추가했고, C4 f24deb84는 tos-spec/src/TOS-COMPLETION-STATUS.md만 재생성했다. 머지 97596460이 첫 부모에 도입한 변경은 PR #462의 지정된 7파일뿐이다. 38bfb1fd→97596460에서 두 결속 경로의 최종 diff는 공집합이며 blob은 계약 6f94dfbbafd48fa3d1b4c73266fdfda19da9bce5, 개발계획 ec3464c068dff2030e0764f3b05c985a821730f5로 재심 #9와 byte 동일하다. plan_scope_digest는 5748fc5bb2e7e1a8ca292dd95daa8af1eae9caf113f3fbbf469728d28ae2a5fb, bound_set_digest는 커밋·워킹트리 모두 045f3ae7565860df6e0c38d3c7ee49c76f3a4d3784d646279cd1be2727dbb429로 포착값과 일치한다. origin/main dc900970은 새 reviewed_at_head의 조상이다. contract check와 145종 self-test는 rc 0이다. completion-status --check는 읽기 전용 샌드박스에서 사용 가능한 임시 디렉터리가 없어 rc 2였으므로 예상된 U-15/D0-1 두 건만인지 직접 확인하지 못했다.\n\nNo material findings.\n\nNext steps:\n- 97596460을 reviewed_at_head로 하는 재심 #10 verdict를 결속 경로 무접촉으로 착지한다.\n- 쓰기 가능한 환경에서 verdict 착지 후 TOS-COMPLETION-STATUS를 재생성하고 python tools/tos_completion_status.py --check를 다시 실행해 추가 위반이 없음을 확인한다.\n"
+  }
+}

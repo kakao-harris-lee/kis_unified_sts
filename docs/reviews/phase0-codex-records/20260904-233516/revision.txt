@@ -1,0 +1,14 @@
+lane: B (plan) — S-26 ② 재개 회차 (계약 편집 없음 · 계약 밖 16커밋 currency)
+reviewed_at_head: 11ac075d1ce7ca679397f9b80d4e27d127cfe68d
+reviewed_plan_paths:
+  - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
+  - docs/plans/2026-08-11-tos-completion-development-plan.md
+reviewed_scope_digest: 84a96db339a5c00caa6da1bbc9a47126558beafcefa02266ec0d01d1cc10751e
+digest_kind: plan_scope_digest
+bound_set_digest: 4e6c975f794696066a25abe4ee827594afa18f8fac8bfb5e7bf31d43508b3c2f
+decided_at_head: 8923aab2188b5de7eb7a8c5fc282cde636ca969a
+base: 48243cd2e07c1357a389e670cf2f23af479d1595 (직전 approve head · 재심 #5)
+contract_blob: 899689fccdf7bed1705e927e2745ad839dc63875
+devplan_blob: ec3464c068dff2030e0764f3b05c985a821730f5
+captured_at_utc: 2026-09-04T14:37:04Z
+prior_verdict: .omc/review/20260904-133500/verdict.md

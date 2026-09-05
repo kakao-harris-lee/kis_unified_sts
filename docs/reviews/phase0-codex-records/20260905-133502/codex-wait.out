@@ -1,0 +1,144 @@
+[codex] Starting Codex task thread.
+[codex] Thread ready (01a06fda-64c0-7022-86c5-7f26e1227d71).
+[codex] Turn started (01a06fda-666c-7b50-8e25-df0d4b071626).
+[codex] Assistant message captured: {"verdict":"approve","summary":"검토 지시의 정확한 범위대로 CLAUDE.md, 인덱스로 찾은 계약 구간, 직전 판, 처분 diff와 증거를 ...
+[codex] Running command: /bin/zsh -lc "sed -n '1,260p' CLAUDE.md"
+[codex] Command completed: /bin/zsh -lc "sed -n '1,260p' CLAUDE.md" (exit 0)
+[codex] Running command: /bin/zsh -lc 'rg -n "kis_unified_sts|completion-contract-design|stopReviewGate|S-26|U-6" /Use...
+[codex] Command completed: /bin/zsh -lc 'rg -n "kis_unified_sts|completion-contract-design|stopReviewGate|S-26|U-6" /Use... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '827,872p' /Users/harris/.codex/memories/MEMORY.md"
+[codex] Command completed: /bin/zsh -lc "sed -n '827,872p' /Users/harris/.codex/memories/MEMORY.md" (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '1,240p' tos/CLAUDE.md && python tools/tos_contract_index.py --locate S-...
+[codex] Command failed: /bin/zsh -lc "sed -n '1,240p' tos/CLAUDE.md && python tools/tos_contract_index.py --locate S-... (exit 3)
+[codex] Running command: /bin/zsh -lc 'python tools/tos_contract_index.py --locate S-26'
+[codex] Running command: /bin/zsh -lc "python tools/tos_contract_index.py --locate '§13'"
+[codex] Running command: /bin/zsh -lc "python tools/tos_contract_index.py --locate '§7.4'"
+[codex] Command failed: /bin/zsh -lc 'python tools/tos_contract_index.py --locate S-26' (exit 3)
+[codex] Command completed: /bin/zsh -lc "python tools/tos_contract_index.py --locate '§13'" (exit 0)
+[codex] Command completed: /bin/zsh -lc "python tools/tos_contract_index.py --locate '§7.4'" (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '3037p;3844p' docs/plans/2026-08-12-tos-phase0-completion-contract-desig...
+[codex] Command completed: /bin/zsh -lc "sed -n '3037p;3844p' docs/plans/2026-08-12-tos-phase0-completion-contract-desig... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '1,240p' .omc/review/20260905-091036/verdict.md"
+[codex] Running command: /bin/zsh -lc "sed -n '2682,3226p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Command completed: /bin/zsh -lc "sed -n '1,240p' .omc/review/20260905-091036/verdict.md" (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '1,120p' .omc/review/20260905-133502/revision.txt"
+[codex] Running command: /bin/zsh -lc "sed -n '1,260p' .omc/review/20260905-133502/evidence/attack_u6prime.txt"
+[codex] Command completed: /bin/zsh -lc "sed -n '2682,3226p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '1,260p' .omc/review/20260905-133502/evidence/fix-diff.patch"
+[codex] Command completed: /bin/zsh -lc "sed -n '1,120p' .omc/review/20260905-133502/revision.txt" (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '9238,10622p' docs/plans/2026-08-12-tos-phase0-completion-contract-desig...
+[codex] Command completed: /bin/zsh -lc "sed -n '1,260p' .omc/review/20260905-133502/evidence/attack_u6prime.txt" (exit 0)
+[codex] Running command: /bin/zsh -lc 'git diff 9f80f6a1 1fd98450 -- tools/tos_completion_status.py tests/tools/test_t...
+[codex] Command completed: /bin/zsh -lc "sed -n '1,260p' .omc/review/20260905-133502/evidence/fix-diff.patch" (exit 0)
+[codex] Command completed: /bin/zsh -lc "sed -n '9238,10622p' docs/plans/2026-08-12-tos-phase0-completion-contract-desig... (exit 0)
+[codex] Command completed: /bin/zsh -lc 'git diff 9f80f6a1 1fd98450 -- tools/tos_completion_status.py tests/tools/test_t... (exit 0)
+[codex] Running command: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "S-26 **[v2.22"'
+[codex] Running command: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "U-5"'
+[codex] Running command: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "U-4"'
+[codex] Running command: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "S-26 ①"'
+[codex] Running command: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "U-6′"'
+[codex] Command completed: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "U-5"' (exit 0)
+[codex] Command failed: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "S-26 **[v2.22"' (exit 1)
+[codex] Command completed: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "U-4"' (exit 0)
+[codex] Command failed: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "U-6′"' (exit 1)
+[codex] Command failed: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "S-26 ①"' (exit 1)
+[codex] Running command: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "§13"'
+[codex] Running command: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "U-6"'
+[codex] Running command: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "§7.4"'
+[codex] Command completed: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "U-6"' (exit 0)
+[codex] Command completed: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "§13"' (exit 0)
+[codex] Command completed: /bin/zsh -lc 'python tools/tos_contract_index.py --locate "§7.4"' (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '1,220p' .omc/review/20260905-091036/verdict.md"
+[codex] Running command: /bin/zsh -lc "nl -ba tools/tos_completion_status.py | sed -n '1340,1515p'"
+[codex] Command completed: /bin/zsh -lc "sed -n '1,220p' .omc/review/20260905-091036/verdict.md" (exit 0)
+[codex] Running command: /bin/zsh -lc 'git rev-parse HEAD docs/plans/2026-08-12-tos-phase0-completion-contract-design....
+[codex] Command completed: /bin/zsh -lc "nl -ba tools/tos_completion_status.py | sed -n '1340,1515p'" (exit 0)
+[codex] Running command: /bin/zsh -lc 'git diff 99abc081 1fd98450 -- tools/tos_completion_status.py'
+[codex] Running command: /bin/zsh -lc 'git rev-list --full-history 48243cd2..HEAD -- docs/plans/2026-08-12-tos-phase0-...
+[codex] Command completed: /bin/zsh -lc 'git rev-parse HEAD docs/plans/2026-08-12-tos-phase0-completion-contract-design.... (exit 0)
+[codex] Command completed: /bin/zsh -lc 'git diff 99abc081 1fd98450 -- tools/tos_completion_status.py' (exit 0)
+[codex] Running command: /bin/zsh -lc "git diff 99abc081 1fd98450 -- tests/tools/test_tos_completion_status.py | sed -...
+[codex] Command completed: /bin/zsh -lc 'git rev-list --full-history 48243cd2..HEAD -- docs/plans/2026-08-12-tos-phase0-... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md | sed -n '...
+[codex] Running command: /bin/zsh -lc "sed -n '3838,3918p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Running command: /bin/zsh -lc "sed -n '9400,9455p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Running command: /bin/zsh -lc "sed -n '3130,3226p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Command completed: /bin/zsh -lc "git diff 99abc081 1fd98450 -- tests/tools/test_tos_completion_status.py | sed -... (exit 0)
+[codex] Command completed: /bin/zsh -lc "nl -ba tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md | sed -n '... (exit 0)
+[codex] Command completed: /bin/zsh -lc "sed -n '3838,3918p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Command completed: /bin/zsh -lc "sed -n '9400,9455p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Command completed: /bin/zsh -lc "sed -n '3130,3226p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba tools/tos_completion_status.py | sed -n '3960,4145p'"
+[codex] Running command: /bin/zsh -lc "sed -n '1,180p' .omc/review/20260905-091036/verdict.md"
+[codex] Running command: /bin/zsh -lc "sed -n '3918,4028p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Command completed: /bin/zsh -lc "sed -n '3918,4028p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba tools/tos_completion_status.py | sed -n '60,150p'"
+[codex] Command completed: /bin/zsh -lc "nl -ba tools/tos_completion_status.py | sed -n '3960,4145p'" (exit 0)
+[codex] Running command: /bin/zsh -lc 'git diff 99abc081 1fd98450 -- tests/tools/test_tos_completion_status.py | tail ...
+[codex] Command completed: /bin/zsh -lc "sed -n '1,180p' .omc/review/20260905-091036/verdict.md" (exit 0)
+[codex] Command completed: /bin/zsh -lc "nl -ba tools/tos_completion_status.py | sed -n '60,150p'" (exit 0)
+[codex] Command completed: /bin/zsh -lc 'git diff 99abc081 1fd98450 -- tests/tools/test_tos_completion_status.py | tail ... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '3844,4600p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Command completed: /bin/zsh -lc "sed -n '3844,4600p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n '_D1_U6PRIME_(SEGMENT_SPLIT_RE|DECLARATION_SEGMENT|BOUNDARY_SENTENCE)' to...
+[codex] Running command: /bin/zsh -lc "sed -n '4045,4135p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Command completed: /bin/zsh -lc "sed -n '4045,4135p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Command completed: /bin/zsh -lc "rg -n '_D1_U6PRIME_(SEGMENT_SPLIT_RE|DECLARATION_SEGMENT|BOUNDARY_SENTENCE)' to... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '4528,4542p' docs/plans/2026-08-12-tos-phase0-completion-contract-design...
+[codex] Command completed: /bin/zsh -lc "sed -n '4528,4542p' docs/plans/2026-08-12-tos-phase0-completion-contract-design... (exit 0)
+[codex] Assistant message captured: {"verdict":"approve","summary":"계약 범위와 직전 판을 확인했습니다. 이제 검증기 rc, 결속 digest·이력, 그리고 공격 문자열·새 분할...
+[codex] Running command: /bin/zsh -lc 'python tools/tos_contract_check.py'
+[codex] Running command: /bin/zsh -lc 'git rev-parse HEAD'
+[codex] Running command: /bin/zsh -lc 'python tools/tos_completion_status.py --check'
+[codex] Running command: /bin/zsh -lc 'python tools/tos_contract_check.py --self-test'
+[codex] Command completed: /bin/zsh -lc 'git rev-parse HEAD' (exit 0)
+[codex] Running command: /bin/zsh -lc 'git rev-parse HEAD:docs/plans/2026-08-12-tos-phase0-completion-contract-design....
+[codex] Running command: /bin/zsh -lc 'git rev-list --full-history 48243cd2..HEAD -- docs/plans/2026-08-12-tos-phase0-...
+[codex] Running command: /bin/zsh -lc "{ git rev-parse HEAD; printf '%s\\0' docs/plans/2026-08-12-tos-phase0-completio...
+[codex] Running command: /bin/zsh -lc "printf '%s\\0' docs/plans/2026-08-12-tos-phase0-completion-contract-design.md d...
+[codex] Running command: /bin/zsh -lc 'python -m pytest tests/tools/test_tos_completion_status.py -q'
+[codex] Command completed: /bin/zsh -lc 'git rev-parse HEAD:docs/plans/2026-08-12-tos-phase0-completion-contract-design.... (exit 0)
+[codex] Command completed: /bin/zsh -lc 'git rev-list --full-history 48243cd2..HEAD -- docs/plans/2026-08-12-tos-phase0-... (exit 0)
+[codex] Command completed: /bin/zsh -lc "{ git rev-parse HEAD; printf '%s\\0' docs/plans/2026-08-12-tos-phase0-completio... (exit 0)
+[codex] Command completed: /bin/zsh -lc "printf '%s\\0' docs/plans/2026-08-12-tos-phase0-completion-contract-design.md d... (exit 0)
+[codex] Command failed: /bin/zsh -lc 'python -m pytest tests/tools/test_tos_completion_status.py -q' (exit 1)
+[codex] Command completed: /bin/zsh -lc 'python tools/tos_contract_check.py' (exit 0)
+[codex] Command failed: /bin/zsh -lc 'python tools/tos_completion_status.py --check' (exit 2)
+[codex] Running command: /bin/zsh -lc 'python tools/tos_contract_check.py --self-test'
+[codex] Command completed: /bin/zsh -lc 'python tools/tos_contract_check.py --self-test' (exit 0)
+[codex] Command completed: /bin/zsh -lc 'python tools/tos_contract_check.py --self-test' (exit 0)
+[codex] Assistant message captured: {"verdict":"approve","summary":"검증기 본검사는 rc 0, 결속 digest·HEAD·두 blob·이력 공집합은 모두 디스패치 값과 일치했습니...
+[codex] Running command: /bin/zsh -lc "printf %s 'from tools import tos_completion_status as m axis=m._d1_u6prime_axis...
+[codex] Command completed: /bin/zsh -lc "printf %s 'from tools import tos_completion_status as m axis=m._d1_u6prime_axis... (exit 0)
+[codex] Running command: /bin/zsh -lc 'rg -n "ENTRY_OK|GREEN" tos-spec/src/TOS-COMPLETION-STATUS.md && git show HEAD:t...
+[codex] Command completed: /bin/zsh -lc 'rg -n "ENTRY_OK|GREEN" tos-spec/src/TOS-COMPLETION-STATUS.md && git show HEAD:t... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '1,55p' tos-spec/src/TOS-COMPLETION-STATUS.md && git status --short"
+[codex] Command completed: /bin/zsh -lc "sed -n '1,55p' tos-spec/src/TOS-COMPLETION-STATUS.md && git status --short" (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba tools/tos_completion_status.py | sed -n '3925,3965p;4015,4055p;4080,4130...
+[codex] Command completed: /bin/zsh -lc "nl -ba tools/tos_completion_status.py | sed -n '3925,3965p;4015,4055p;4080,4130... (exit 0)
+[codex] Running command: /bin/zsh -lc 'rg -n "arbitrary_free_text|참고: 아무 말|whitespace_only_segment" tests/tools/test_t...
+[codex] Command completed: /bin/zsh -lc 'rg -n "arbitrary_free_text|참고: 아무 말|whitespace_only_segment" tests/tools/test_t... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba docs/plans/2026-08-12-tos-phase0-completion-contract-design.md | sed -n ...
+[codex] Command completed: /bin/zsh -lc "nl -ba docs/plans/2026-08-12-tos-phase0-completion-contract-design.md | sed -n ... (exit 0)
+[codex] Assistant message captured: {"verdict":"needs-attention","summary":"출하 보류. 직전 finding 1은 «회피»: 선행 공백·NBSP·ZWSP 및 U+0589/U...
+[codex] Turn completion inferred after the main thread finished and subagent work drained.
+# Codex Adversarial Review
+
+Target: branch diff against 48243cd2
+Verdict: needs-attention
+
+출하 보류. 직전 finding 1은 «회피»: 선행 공백·NBSP·ZWSP 및 U+0589/U+A789/U+2236·U+2800·U+0301·U+FE0F 병기는 모두 red가 되어 원래 우회는 닫혔지만, 계약이 요구한 네 사실의 포함·동일행 검증을 계약에 없는 닫힌 허용집합으로 바꿔 역방향 과잉 차단을 만들었다. 그 결과 계약 밖 변경이 동결 문언을 실질적으로 거짓으로 만들었다.
+S-26: ① 성립(이력 공집합, blobs 899689fc/ec3464c0) · ② 불성립 0/2(material medium 1) · ③ 성립(직전·현재 validator rc 0) · ④ 성립(CUR/CIT/VER/CARD/RULE 위반 0) · ⑤ 불성립(self-test rc 0·145종 PASS이나 직접 역방향 대조군이 실패) · ⑥ 성립(결속 문서 byte 불변) · ⑦ 권한 불변 · ⑧ 기존 도달 가능성 교착 그대로.
+결속 재계산: HEAD 1fd98450cbc1a0967c723d102b388f7c694e239e, plan digest c54629787e3d60331b43ca15d4577c86d228bb9ce1f46679c35ae1fda589befb, bound digest 4e6c975f794696066a25abe4ee827594afa18f8fac8bfb5e7bf31d43508b3c2f, decided head 8923aab2 모두 일치. completion-status는 임시 디렉터리 부재로 rc 2였고 HEAD 생성물에서 ENTRY_OK, D0-5 MET, resolver/marketfeed VALUED를 확인했다.
+직접 대조: baseline=true; 공격 스크립트의 동형이의·보이지 않는 문자·결합문자·variation-selector 전부=false; CR/U+2028/U+2029/전각 세미콜론/유사 중점=false; 정본 내부 삽입=false; 순서 변경 및 ;/개행 혼용=true; 정본 중복=false; 빈 구획만 추가=true; 공백 구획=false; scope_desc·record_path 구분자 포함=false(fail-closed); 정본 넷 뒤 부수 설명=false.
+
+Findings:
+- [medium] 계약에 없는 닫힌 세계가 정당한 reason 확장을 차단한다 (tools/tos_completion_status.py:4121-4125)
+  계약은 U-6′ (ㄹ)에서 네 사실이 «그 한 행의 reason 안에» 있어야 한다고 정하고 네 항목을 열거하지만, reason 전체가 그 네 구획과 정확히 같아야 한다거나 다른 설명을 금지하지 않는다. 반면 이 코드는 정본 넷에 속하지 않는 모든 구획을 거부한다. 직접 시험에서 정본 넷을 모두 유지한 채 `부수 설명: 범위 산정 근거`를 추가하자 False가 됐다. 따라서 계약을 충족하는 공시 행도 NO_DEPENDENCY 완료를 차단할 수 있으며, 테스트 ⑭-g는 이 과잉 차단을 의도된 동작으로 고정한다. U-4의 blocked_by와 U-5의 owner_track은 별도 열이므로 그 두 규칙과의 충돌은 아니지만, S-26 ⑤의 «역방향 과잉 차단 0»은 성립하지 않는다. 현재 NONE 사이트가 0이라 즉시 생성물 값은 바뀌지 않으나 장래 NONE 사이트에서 D0-5를 부당하게 막는 잠복 결함이다.
+  Recommendation: §13 UNCHK 잔여 등재 문안 — 축: `U-6′ reason 닫힌-세계 검사기/동결 계약 불일치`; 사유: `계약은 정본 네 사실의 동일행 포함만 요구하지만 검사기는 모든 부수 reason 구획을 금지하여 계약 충족 행도 red`; blocked_by: `운영자 승인 아래 U-6′ 배타 문법을 명문화하거나 검사기의 과잉 차단을 제거하는 결속 결정`; owner_track 후보: `Phase-0 completion-contract/checker lockstep`.
+
+Next steps:
+- 이 finding을 권고 문안대로 §13 UNCHECKABLE 레지스터의 잔여로 등재한다.
+- 운영자 지시에 따라 5회차를 ②=0/2, ⑤ 불성립으로 종결하고 추가 수리·재심을 시작하지 않는다.
+- D0/P-0 착수 금지, restricted_live 및 production 권한 불변을 유지한다.
+rc=0

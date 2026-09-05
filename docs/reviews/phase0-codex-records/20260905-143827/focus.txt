@@ -1,0 +1,21 @@
+레인 B 계획 «재심 #8» — Phase 0 완료 계약 v2.22 에라타 57차(§7.4 U-6′ (ㅁ) reason 배타 문법 · 대조군 ⑧-d/⑧-e/⑧-f · S-26 57차 항) + **58차**((ㅁ) 「공백」= ASCII U+0020 만 · 0개 이상 · 중점 전용 · 세미콜론/LF 무공백 · 빈 구획 = 길이 0 · S-26 58차 항) + O-6 재결속. 운영자 명시 지시(2026-09-05 「배타 문법 계약 명문화 진행」). 재심 #7(.omc/review/20260905-142639/verdict.md · needs-attention · medium 1 · «공백»의 코드 포인트 미특정)의 finding 1 을 계약 에라타 58차(C1′ 1db8f9b8)로 처분했다 — **1순위 질문: 그 finding 이 «해소 / 부분 해소 / 미해소 / 회피» 중 무엇인가.** 심사 범위는 57차+58차 에라타 diff 와 그 lockstep 으로 한정한다.
+
+먼저 읽을 것 (순서대로):
+1. CLAUDE.md — 비협상 규칙 및 «Read the index before the contract»(`python tools/tos_contract_index.py --locate "§7.4"`, `--locate S-26` 로 구간을 잡아 그 범위만 읽어라. 전체 스캔·요약 금지).
+2. .omc/review/20260905-142639/verdict.md — 재심 #7. 권고 문안 「`앞뒤 ASCII 공백 U+0020 0개 이상 허용`처럼 허용 코드 포인트와 수량을 계약에 축자로 명시」 — 58차 문단(사본 .omc/review/20260905-143827/evidence/delta-58.patch)이 그것을 충족하는가 · 남은 해석 여지(예: 「0개 이상」의 상한 · 중점 «앞뒤» 비대칭 · 「빈 구획」 정의)가 있는가.
+3. 심사 대상 diff: 계약 `git diff 5fd23a6c 3e8931e89954870d7a0784de5b80c02c280b06b0 -- docs/plans/2026-08-12-tos-phase0-completion-contract-design.md docs/plans/2026-08-11-tos-completion-development-plan.md`(사본 evidence/scope-diff.patch · 57차+58차 누적) · 58차 델타만 `evidence/delta-58.patch`(C1′ 1db8f9b8) · lockstep `evidence/lockstep-diff.patch`(C2 3201484f · C4-a 038c2227 · C2′ 3e8931e8 · 테스트 digest 핀). 개발계획은 무접촉이다.
+4. 검사기 대조: `tools/tos_completion_status.py` 의 `_D1_U6PRIME_SEGMENT_SPLIT_RE`(` *· *|;|\n`)·`_d1_u6prime_segments`·`_d1_u6prime_row_state`(038c2227 이후 불변)가 58차 문언과 **같은 강도**인가 — 문언이 구현보다 넓거나 좁은 자리가 남았는지 직접 `_d1_u6prime_row_state` 호출로 시험하라(재심 #7 의 호출표 + 당신의 새 형상).
+
+결속 필드(디스패치 직전 포착 · .omc/review/20260905-143827/revision.txt): reviewed_at_head 3e8931e89954870d7a0784de5b80c02c280b06b0 · reviewed_plan_paths = 위 두 경로 · reviewed_scope_digest(plan_scope_digest) 0a2e079bebf20e7c02a60c30d8979651f3fb7c00a45bb354ad18a25a3f046489 · bound_set_digest(O-6, OQ-11-DISPOSITION.md:15) 045f3ae7565860df6e0c38d3c7ee49c76f3a4d3784d646279cd1be2727dbb429 · decided_at_head 1db8f9b8(C1′). 재계산해 대조하라 — `{ git rev-parse HEAD; printf '%s\0' <두 경로> | LC_ALL=C sort -z -u | xargs -0 -r shasum -a 256; } | shasum -a 256`. O-6 digest 는 두 결속 경로 HEAD blob 으로 재계산(`<sha256hex>  <path>\n` 경로순 결합의 sha256).
+
+재심 #6·#7 에서 이미 일치 확인된 것(재판정하지 말고 58차가 깨지 않았는지만): 재개 아크 5회차 finding «해소» · 배타 선택의 정당성(회피 아님) · v2.23 리터럴 0 · 개발계획·이력 무접촉 · 좌표 정정 · control_14/15 배터리 · UNCHK-027 종결 문언 U-4/U-5 정합 · contract check + self-test 145 rc 0.
+
+추가 확인 질문:
+ (e) S-11/S-12/S-14/S-22/S-24 — 58차가 57차 문장을 지우지 않고 마커로 특정했는가 · 판정 재기술 없음.
+ (f) S-26 58차 항 — ⑥ 재적용 기록 · ② 0 · 종결 미주장.
+ (g) 좌표 드리프트 정정 여섯(3415→3425 · 5643→5661 · 5900→5918 · 7785→7803 · 7852→7870 · 7933→7951 · 인용 자리 `:264`·`:7871`) · `현행(58차 이후)` 태그 3곳.
+ (h) `python tools/tos_contract_check.py` + `--self-test` rc 0(직접 실행). `--check` 는 C3 전이라 `[U-15] APPROVAL_STALE` + `[D0-1] 생성물 불일치` 2건이 예상값(샌드박스 rc 2 면 사실을 적어라).
+
+범위 밖: 계약의 다른 절 · 코드 품질 · D0/P-0 착수 금지·restricted_live·production 불변(재판정 금지).
+
+출력: verdict(approve | needs-attention) · summary · findings[] (severity · title · body · file · line_start/line_end 는 HEAD 3e8931e8 에 실재 · confidence · recommendation) · next_steps[]. 재심 #7 finding 1 에 «해소 / 부분 해소 / 미해소 / 회피» 를 명시하라. 계약 본문 «추가 편집» 을 권고할 때는 S-26 ⑥ 리셋·O-6 재결속·재심 비용을 함께 적어라.

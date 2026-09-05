@@ -1,0 +1,89 @@
+{
+  "job": {
+    "createdAt": "2026-09-05T05:39:24.904Z",
+    "updatedAt": "2026-09-05T05:45:15.013Z",
+    "id": "review-mtnydobs-g6hrlt",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "NO-SHIP. 재심 #7 finding 1은 «해소»다: 58차는 ASCII U+0020만, 양측 각각 0개 이상, 중점 전용, 세미콜론/LF 무공백, 길이 0의 빈 구획을 명시했고 직접 호출 결과가 검사기와 일치했다. 그러나 O-6 재결속 기록은 58차 currency 태그를 3곳이라고 잘못 계수한다. 결속 digest들은 일치했고 contract check 및 self-test 145종은 rc 0이었다. `tos_completion_status.py --check`는 샌드박스의 사용 가능한 임시 디렉터리 부재로 rc 2여서 예상된 두 상태는 이번 환경에서 재확인하지 못했다.",
+    "write": false,
+    "sessionId": "f062da15-ff4e-4803-ba88-8e368a96a4f3",
+    "status": "completed",
+    "startedAt": "2026-09-05T05:39:24.973Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtnydobs-g6hrlt.log",
+    "threadId": "01a07014-2fad-77f1-8e62-4ce256d803b5",
+    "turnId": "01a07014-3123-7260-b21e-345099110b18",
+    "completedAt": "2026-09-05T05:45:14.872Z"
+  },
+  "storedJob": {
+    "id": "review-mtnydobs-g6hrlt",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "Adversarial Review branch diff against 5fd23a6c",
+    "write": false,
+    "createdAt": "2026-09-05T05:39:24.904Z",
+    "sessionId": "f062da15-ff4e-4803-ba88-8e368a96a4f3",
+    "status": "completed",
+    "startedAt": "2026-09-05T05:39:24.973Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtnydobs-g6hrlt.log",
+    "threadId": "01a07014-2fad-77f1-8e62-4ce256d803b5",
+    "turnId": "01a07014-3123-7260-b21e-345099110b18",
+    "completedAt": "2026-09-05T05:45:14.872Z",
+    "result": {
+      "review": "Adversarial Review",
+      "target": {
+        "mode": "branch",
+        "label": "branch diff against 5fd23a6c",
+        "baseRef": "5fd23a6c",
+        "explicit": true
+      },
+      "threadId": "01a07014-2fad-77f1-8e62-4ce256d803b5",
+      "context": {
+        "repoRoot": "/Users/harris/Development/private/kis_unified_sts",
+        "branch": "mission-critical-trading-operating-system",
+        "summary": "Reviewing branch mission-critical-trading-operating-system against 5fd23a6c from merge-base 5fd23a6cbdbe567b3decbb0eca10d1b13ac7ce3f."
+      },
+      "codex": {
+        "status": 0,
+        "stderr": "",
+        "stdout": "{\"verdict\":\"needs-attention\",\"summary\":\"NO-SHIP. 재심 #7 finding 1은 «해소»다: 58차는 ASCII U+0020만, 양측 각각 0개 이상, 중점 전용, 세미콜론/LF 무공백, 길이 0의 빈 구획을 명시했고 직접 호출 결과가 검사기와 일치했다. 그러나 O-6 재결속 기록은 58차 currency 태그를 3곳이라고 잘못 계수한다. 결속 digest들은 일치했고 contract check 및 self-test 145종은 rc 0이었다. `tos_completion_status.py --check`는 샌드박스의 사용 가능한 임시 디렉터리 부재로 rc 2여서 예상된 두 상태는 이번 환경에서 재확인하지 못했다.\",\"findings\":[{\"severity\":\"medium\",\"title\":\"O-6 재결속 기록이 currency 태그 수를 과소 계수한다\",\"body\":\"재결속 기록은 계약 blob에 `현행(58차 이후)` 태그가 3곳 있다고 주장하지만, 58차 델타는 실제로 네 곳을 57차에서 58차로 갱신했다: 계약 HEAD의 110, 5660, 5661, 5871행이다. 따라서 결속 해시 자체는 유효해도 이를 설명하는 동결 실측 기록은 실제 diff와 불일치한다. 이 오계수는 요청된 lockstep 및 S-22 전파 검산을 통과하지 못하며 이후 감사자가 네 번째 갱신 지점을 누락된 범위로 오판하게 만든다.\",\"file\":\"tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md\",\"line_start\":1143,\"line_end\":1145,\"confidence\":0.99,\"recommendation\":\"재결속 기록의 `커런시 태그 3곳`을 `4곳`으로 정정하고 네 좌표를 명시적으로 대조한 뒤 revision의 HEAD/plan_scope_digest를 다시 포착해 재심하라. 계약 본문 편집은 필요 없으므로 이 정정 자체는 S-26 ⑥ 리셋이나 새로운 O-6 재결속을 요구하지 않는다.\"}],\"next_steps\":[\"OQ-11 재결속 기록의 태그 계수를 4로 정정하고 네 실제 위치를 검산한다.\",\"새 HEAD에 대해 plan_scope_digest를 재포착한 뒤 레인 B 재심을 반복한다.\",\"쓰기 가능한 임시 디렉터리가 있는 환경에서 `tos_completion_status.py --check`의 예상 두 건만 발생하는지 확인한다.\"]}",
+        "reasoning": []
+      },
+      "result": {
+        "verdict": "needs-attention",
+        "summary": "NO-SHIP. 재심 #7 finding 1은 «해소»다: 58차는 ASCII U+0020만, 양측 각각 0개 이상, 중점 전용, 세미콜론/LF 무공백, 길이 0의 빈 구획을 명시했고 직접 호출 결과가 검사기와 일치했다. 그러나 O-6 재결속 기록은 58차 currency 태그를 3곳이라고 잘못 계수한다. 결속 digest들은 일치했고 contract check 및 self-test 145종은 rc 0이었다. `tos_completion_status.py --check`는 샌드박스의 사용 가능한 임시 디렉터리 부재로 rc 2여서 예상된 두 상태는 이번 환경에서 재확인하지 못했다.",
+        "findings": [
+          {
+            "severity": "medium",
+            "title": "O-6 재결속 기록이 currency 태그 수를 과소 계수한다",
+            "body": "재결속 기록은 계약 blob에 `현행(58차 이후)` 태그가 3곳 있다고 주장하지만, 58차 델타는 실제로 네 곳을 57차에서 58차로 갱신했다: 계약 HEAD의 110, 5660, 5661, 5871행이다. 따라서 결속 해시 자체는 유효해도 이를 설명하는 동결 실측 기록은 실제 diff와 불일치한다. 이 오계수는 요청된 lockstep 및 S-22 전파 검산을 통과하지 못하며 이후 감사자가 네 번째 갱신 지점을 누락된 범위로 오판하게 만든다.",
+            "file": "tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md",
+            "line_start": 1143,
+            "line_end": 1145,
+            "confidence": 0.99,
+            "recommendation": "재결속 기록의 `커런시 태그 3곳`을 `4곳`으로 정정하고 네 좌표를 명시적으로 대조한 뒤 revision의 HEAD/plan_scope_digest를 다시 포착해 재심하라. 계약 본문 편집은 필요 없으므로 이 정정 자체는 S-26 ⑥ 리셋이나 새로운 O-6 재결속을 요구하지 않는다."
+          }
+        ],
+        "next_steps": [
+          "OQ-11 재결속 기록의 태그 계수를 4로 정정하고 네 실제 위치를 검산한다.",
+          "새 HEAD에 대해 plan_scope_digest를 재포착한 뒤 레인 B 재심을 반복한다.",
+          "쓰기 가능한 임시 디렉터리가 있는 환경에서 `tos_completion_status.py --check`의 예상 두 건만 발생하는지 확인한다."
+        ]
+      },
+      "rawOutput": "{\"verdict\":\"needs-attention\",\"summary\":\"NO-SHIP. 재심 #7 finding 1은 «해소»다: 58차는 ASCII U+0020만, 양측 각각 0개 이상, 중점 전용, 세미콜론/LF 무공백, 길이 0의 빈 구획을 명시했고 직접 호출 결과가 검사기와 일치했다. 그러나 O-6 재결속 기록은 58차 currency 태그를 3곳이라고 잘못 계수한다. 결속 digest들은 일치했고 contract check 및 self-test 145종은 rc 0이었다. `tos_completion_status.py --check`는 샌드박스의 사용 가능한 임시 디렉터리 부재로 rc 2여서 예상된 두 상태는 이번 환경에서 재확인하지 못했다.\",\"findings\":[{\"severity\":\"medium\",\"title\":\"O-6 재결속 기록이 currency 태그 수를 과소 계수한다\",\"body\":\"재결속 기록은 계약 blob에 `현행(58차 이후)` 태그가 3곳 있다고 주장하지만, 58차 델타는 실제로 네 곳을 57차에서 58차로 갱신했다: 계약 HEAD의 110, 5660, 5661, 5871행이다. 따라서 결속 해시 자체는 유효해도 이를 설명하는 동결 실측 기록은 실제 diff와 불일치한다. 이 오계수는 요청된 lockstep 및 S-22 전파 검산을 통과하지 못하며 이후 감사자가 네 번째 갱신 지점을 누락된 범위로 오판하게 만든다.\",\"file\":\"tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md\",\"line_start\":1143,\"line_end\":1145,\"confidence\":0.99,\"recommendation\":\"재결속 기록의 `커런시 태그 3곳`을 `4곳`으로 정정하고 네 좌표를 명시적으로 대조한 뒤 revision의 HEAD/plan_scope_digest를 다시 포착해 재심하라. 계약 본문 편집은 필요 없으므로 이 정정 자체는 S-26 ⑥ 리셋이나 새로운 O-6 재결속을 요구하지 않는다.\"}],\"next_steps\":[\"OQ-11 재결속 기록의 태그 계수를 4로 정정하고 네 실제 위치를 검산한다.\",\"새 HEAD에 대해 plan_scope_digest를 재포착한 뒤 레인 B 재심을 반복한다.\",\"쓰기 가능한 임시 디렉터리가 있는 환경에서 `tos_completion_status.py --check`의 예상 두 건만 발생하는지 확인한다.\"]}",
+      "parseError": null,
+      "reasoningSummary": []
+    },
+    "rendered": "# Codex Adversarial Review\n\nTarget: branch diff against 5fd23a6c\nVerdict: needs-attention\n\nNO-SHIP. 재심 #7 finding 1은 «해소»다: 58차는 ASCII U+0020만, 양측 각각 0개 이상, 중점 전용, 세미콜론/LF 무공백, 길이 0의 빈 구획을 명시했고 직접 호출 결과가 검사기와 일치했다. 그러나 O-6 재결속 기록은 58차 currency 태그를 3곳이라고 잘못 계수한다. 결속 digest들은 일치했고 contract check 및 self-test 145종은 rc 0이었다. `tos_completion_status.py --check`는 샌드박스의 사용 가능한 임시 디렉터리 부재로 rc 2여서 예상된 두 상태는 이번 환경에서 재확인하지 못했다.\n\nFindings:\n- [medium] O-6 재결속 기록이 currency 태그 수를 과소 계수한다 (tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md:1143-1145)\n  재결속 기록은 계약 blob에 `현행(58차 이후)` 태그가 3곳 있다고 주장하지만, 58차 델타는 실제로 네 곳을 57차에서 58차로 갱신했다: 계약 HEAD의 110, 5660, 5661, 5871행이다. 따라서 결속 해시 자체는 유효해도 이를 설명하는 동결 실측 기록은 실제 diff와 불일치한다. 이 오계수는 요청된 lockstep 및 S-22 전파 검산을 통과하지 못하며 이후 감사자가 네 번째 갱신 지점을 누락된 범위로 오판하게 만든다.\n  Recommendation: 재결속 기록의 `커런시 태그 3곳`을 `4곳`으로 정정하고 네 좌표를 명시적으로 대조한 뒤 revision의 HEAD/plan_scope_digest를 다시 포착해 재심하라. 계약 본문 편집은 필요 없으므로 이 정정 자체는 S-26 ⑥ 리셋이나 새로운 O-6 재결속을 요구하지 않는다.\n\nNext steps:\n- OQ-11 재결속 기록의 태그 계수를 4로 정정하고 네 실제 위치를 검산한다.\n- 새 HEAD에 대해 plan_scope_digest를 재포착한 뒤 레인 B 재심을 반복한다.\n- 쓰기 가능한 임시 디렉터리가 있는 환경에서 `tos_completion_status.py --check`의 예상 두 건만 발생하는지 확인한다.\n"
+  }
+}

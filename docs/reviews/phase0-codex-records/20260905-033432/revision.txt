@@ -1,0 +1,14 @@
+lane: B (plan) — S-26 ② 재개 2회차 (재심 20260904-233516 finding 1 처분 후 · 계약 편집 없음)
+reviewed_at_head: fbb1a36461161683887451fbacbc8dc518a918dd
+reviewed_plan_paths:
+  - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
+  - docs/plans/2026-08-11-tos-completion-development-plan.md
+reviewed_scope_digest: 41d967596b4c4757ada5ddb73945eff6199184659586043a22c0406f230313e7
+digest_kind: plan_scope_digest
+bound_set_digest: 4e6c975f794696066a25abe4ee827594afa18f8fac8bfb5e7bf31d43508b3c2f
+decided_at_head: 8923aab2188b5de7eb7a8c5fc282cde636ca969a
+base: 48243cd2e07c1357a389e670cf2f23af479d1595 (재심 #5 approve head)
+contract_blob: 899689fccdf7bed1705e927e2745ad839dc63875
+devplan_blob: ec3464c068dff2030e0764f3b05c985a821730f5
+captured_at_utc: 2026-09-04T18:34:33Z
+prior_verdict: .omc/review/20260904-233516/verdict.md

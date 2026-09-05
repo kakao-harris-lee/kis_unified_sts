@@ -1,0 +1,3 @@
+2026-09-04T14:37:19Z launched (레인 B S-26 ② 재개 · base 48243cd2 · scope branch)
+job_id: review-mtn25kq7-vv0bgv
+kind: adversarial-review (--wait · base 48243cd2 · scope branch · 레인 B S-26 ② 재개 회차)

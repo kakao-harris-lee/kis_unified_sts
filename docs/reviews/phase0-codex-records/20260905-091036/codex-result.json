@@ -1,0 +1,89 @@
+{
+  "job": {
+    "createdAt": "2026-09-05T00:11:40.842Z",
+    "updatedAt": "2026-09-05T00:16:54.581Z",
+    "id": "review-mtnmo7fu-vfu543",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "출하 보류. 직전 finding 1은 «부분 해소»: 무공백 라벨의 ` · `/`;`/개행 병기와 기록 경로 중복은 이제 False지만, 개행 뒤 선행 공백·탭·NBSP·zero-width space가 붙은 모순 구획은 라벨 카디널리티에서 제외되어 정확 구획과 함께 True다. S-26 ① 성립(결속 문서 이력 공집합, blobs 899689fc/ec3464c0) · ② 불성립 0/2(신규 medium 1) · ③ 성립(직전·현재 validator rc 0) · ④ 성립(CUR/CIT/VER/CARD/RULE 위반 0) · ⑤ 성립(self-test rc 0, 145종 전건 판별·죽은 검사 0·역방향 과잉 차단 0) · ⑥ 성립(계약 본문 byte 불변). 결속값 HEAD 9f80f6a1, plan digest ea4ea16c…, bound digest 4e6c975f…, decided head 8923aab2가 모두 일치했다. completion-status는 임시 디렉터리 부재로 rc 2였고 HEAD 생성물에서 ENTRY_OK 및 resolver/marketfeed VALUED를 대체 확인했다. 8e14069a의 비-null 값은 §7.4 VALUED 및 §11 행과 정합하며, 지정된 역사 문언은 S-12 기록이므로 동결 계약을 새로 stale·거짓으로 만들지 않았다. ⑧은 기존 도달 가능성 교착 그대로이며 이 판의 종료 요구가 아니다.",
+    "write": false,
+    "sessionId": "f062da15-ff4e-4803-ba88-8e368a96a4f3",
+    "status": "completed",
+    "startedAt": "2026-09-05T00:11:40.918Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtnmo7fu-vfu543.log",
+    "threadId": "01a06ee8-23cb-7290-abe3-fa709e5e3b1b",
+    "turnId": "01a06ee8-2565-7161-b199-f4bde0a349e4",
+    "completedAt": "2026-09-05T00:16:54.449Z"
+  },
+  "storedJob": {
+    "id": "review-mtnmo7fu-vfu543",
+    "kind": "adversarial-review",
+    "kindLabel": "adversarial-review",
+    "title": "Codex Adversarial Review",
+    "workspaceRoot": "/Users/harris/Development/private/kis_unified_sts",
+    "jobClass": "review",
+    "summary": "Adversarial Review branch diff against 48243cd2",
+    "write": false,
+    "createdAt": "2026-09-05T00:11:40.842Z",
+    "sessionId": "f062da15-ff4e-4803-ba88-8e368a96a4f3",
+    "status": "completed",
+    "startedAt": "2026-09-05T00:11:40.918Z",
+    "phase": "done",
+    "pid": null,
+    "logFile": "/Users/harris/.claude/plugins/data/codex-openai-codex/state/kis_unified_sts-73c7f7f4de3280b4/jobs/review-mtnmo7fu-vfu543.log",
+    "threadId": "01a06ee8-23cb-7290-abe3-fa709e5e3b1b",
+    "turnId": "01a06ee8-2565-7161-b199-f4bde0a349e4",
+    "completedAt": "2026-09-05T00:16:54.449Z",
+    "result": {
+      "review": "Adversarial Review",
+      "target": {
+        "mode": "branch",
+        "label": "branch diff against 48243cd2",
+        "baseRef": "48243cd2",
+        "explicit": true
+      },
+      "threadId": "01a06ee8-23cb-7290-abe3-fa709e5e3b1b",
+      "context": {
+        "repoRoot": "/Users/harris/Development/private/kis_unified_sts",
+        "branch": "mission-critical-trading-operating-system",
+        "summary": "Reviewing branch mission-critical-trading-operating-system against 48243cd2 from merge-base 48243cd2e07c1357a389e670cf2f23af479d1595."
+      },
+      "codex": {
+        "status": 0,
+        "stderr": "",
+        "stdout": "{\"verdict\":\"needs-attention\",\"summary\":\"출하 보류. 직전 finding 1은 «부분 해소»: 무공백 라벨의 ` · `/`;`/개행 병기와 기록 경로 중복은 이제 False지만, 개행 뒤 선행 공백·탭·NBSP·zero-width space가 붙은 모순 구획은 라벨 카디널리티에서 제외되어 정확 구획과 함께 True다. S-26 ① 성립(결속 문서 이력 공집합, blobs 899689fc/ec3464c0) · ② 불성립 0/2(신규 medium 1) · ③ 성립(직전·현재 validator rc 0) · ④ 성립(CUR/CIT/VER/CARD/RULE 위반 0) · ⑤ 성립(self-test rc 0, 145종 전건 판별·죽은 검사 0·역방향 과잉 차단 0) · ⑥ 성립(계약 본문 byte 불변). 결속값 HEAD 9f80f6a1, plan digest ea4ea16c…, bound digest 4e6c975f…, decided head 8923aab2가 모두 일치했다. completion-status는 임시 디렉터리 부재로 rc 2였고 HEAD 생성물에서 ENTRY_OK 및 resolver/marketfeed VALUED를 대체 확인했다. 8e14069a의 비-null 값은 §7.4 VALUED 및 §11 행과 정합하며, 지정된 역사 문언은 S-12 기록이므로 동결 계약을 새로 stale·거짓으로 만들지 않았다. ⑧은 기존 도달 가능성 교착 그대로이며 이 판의 종료 요구가 아니다.\",\"findings\":[{\"severity\":\"medium\",\"title\":\"선행 공백을 붙인 모순 구획이 U-6′ 카디널리티 검사를 우회한다\",\"body\":\"구획 분할 후 `startswith(\\\"스캔 결과:\\\")`와 `startswith(\\\"독립 리뷰 기록:\\\")`만 세므로, 개행 뒤 공백이나 탭이 붙은 구획은 같은 라벨을 명백히 표시해도 종류별 개수에서 빠진다. 직접 대조에서 정본 구획 하나 뒤에 `\\\\n  스캔 결과: 후보 우주 99개, ...` 또는 `\\\\n\\\\t독립 리뷰 기록: .../99990101-000000/verdict.md`를 병기했을 때 함수가 모두 True를 반환했다. NBSP와 zero-width-space 접두도 True였다. 따라서 정본을 미끼로 남기고 상충하는 스캔 범위나 기록 경로를 사람이 읽을 수 있는 별도 구획에 공시하면서 NO_DEPENDENCY 문법 충족을 얻을 수 있다. 현재 NONE 사이트가 0이라 즉시 상태값을 바꾸지는 않지만, 장래 NONE 사이트에 적용될 U-6′의 fail-open이므로 직전 finding은 완전히 해소되지 않았다.\",\"file\":\"tools/tos_completion_status.py\",\"line_start\":4039,\"line_end\":4060,\"confidence\":0.99,\"recommendation\":\"계약은 편집하지 말고, 보호 라벨을 카디널리티용으로 분류할 때 선행 Unicode 공백과 default-ignorable 문자를 포함한 변형 및 다른 구획 안의 라벨 출현을 fail-closed로 포착하되, 유일 구획의 정본 비교는 계속 byte-exact로 유지하라. 공백·탭·NBSP·zero-width-space가 붙은 모순 스캔/기록 구획 병기를 각각 red 대조군으로 추가하라.\"}],\"next_steps\":[\"라벨 분류 우회를 검사기와 대조군만 수정해 닫는다. 계약 무편집이므로 S-26 ⑥ 리셋과 O-6 재결속은 불필요하다.\",\"수정 후 새 공백·유니코드 병기 대조군, 기존 ⑩~⑫, validator, 145종 self-test를 재실행한다.\",\"다음 material 0 독립 재심에서 S-26 ② 카운터를 1/2로 다시 시작한다.\"]}",
+        "reasoning": []
+      },
+      "result": {
+        "verdict": "needs-attention",
+        "summary": "출하 보류. 직전 finding 1은 «부분 해소»: 무공백 라벨의 ` · `/`;`/개행 병기와 기록 경로 중복은 이제 False지만, 개행 뒤 선행 공백·탭·NBSP·zero-width space가 붙은 모순 구획은 라벨 카디널리티에서 제외되어 정확 구획과 함께 True다. S-26 ① 성립(결속 문서 이력 공집합, blobs 899689fc/ec3464c0) · ② 불성립 0/2(신규 medium 1) · ③ 성립(직전·현재 validator rc 0) · ④ 성립(CUR/CIT/VER/CARD/RULE 위반 0) · ⑤ 성립(self-test rc 0, 145종 전건 판별·죽은 검사 0·역방향 과잉 차단 0) · ⑥ 성립(계약 본문 byte 불변). 결속값 HEAD 9f80f6a1, plan digest ea4ea16c…, bound digest 4e6c975f…, decided head 8923aab2가 모두 일치했다. completion-status는 임시 디렉터리 부재로 rc 2였고 HEAD 생성물에서 ENTRY_OK 및 resolver/marketfeed VALUED를 대체 확인했다. 8e14069a의 비-null 값은 §7.4 VALUED 및 §11 행과 정합하며, 지정된 역사 문언은 S-12 기록이므로 동결 계약을 새로 stale·거짓으로 만들지 않았다. ⑧은 기존 도달 가능성 교착 그대로이며 이 판의 종료 요구가 아니다.",
+        "findings": [
+          {
+            "severity": "medium",
+            "title": "선행 공백을 붙인 모순 구획이 U-6′ 카디널리티 검사를 우회한다",
+            "body": "구획 분할 후 `startswith(\"스캔 결과:\")`와 `startswith(\"독립 리뷰 기록:\")`만 세므로, 개행 뒤 공백이나 탭이 붙은 구획은 같은 라벨을 명백히 표시해도 종류별 개수에서 빠진다. 직접 대조에서 정본 구획 하나 뒤에 `\\n  스캔 결과: 후보 우주 99개, ...` 또는 `\\n\\t독립 리뷰 기록: .../99990101-000000/verdict.md`를 병기했을 때 함수가 모두 True를 반환했다. NBSP와 zero-width-space 접두도 True였다. 따라서 정본을 미끼로 남기고 상충하는 스캔 범위나 기록 경로를 사람이 읽을 수 있는 별도 구획에 공시하면서 NO_DEPENDENCY 문법 충족을 얻을 수 있다. 현재 NONE 사이트가 0이라 즉시 상태값을 바꾸지는 않지만, 장래 NONE 사이트에 적용될 U-6′의 fail-open이므로 직전 finding은 완전히 해소되지 않았다.",
+            "file": "tools/tos_completion_status.py",
+            "line_start": 4039,
+            "line_end": 4060,
+            "confidence": 0.99,
+            "recommendation": "계약은 편집하지 말고, 보호 라벨을 카디널리티용으로 분류할 때 선행 Unicode 공백과 default-ignorable 문자를 포함한 변형 및 다른 구획 안의 라벨 출현을 fail-closed로 포착하되, 유일 구획의 정본 비교는 계속 byte-exact로 유지하라. 공백·탭·NBSP·zero-width-space가 붙은 모순 스캔/기록 구획 병기를 각각 red 대조군으로 추가하라."
+          }
+        ],
+        "next_steps": [
+          "라벨 분류 우회를 검사기와 대조군만 수정해 닫는다. 계약 무편집이므로 S-26 ⑥ 리셋과 O-6 재결속은 불필요하다.",
+          "수정 후 새 공백·유니코드 병기 대조군, 기존 ⑩~⑫, validator, 145종 self-test를 재실행한다.",
+          "다음 material 0 독립 재심에서 S-26 ② 카운터를 1/2로 다시 시작한다."
+        ]
+      },
+      "rawOutput": "{\"verdict\":\"needs-attention\",\"summary\":\"출하 보류. 직전 finding 1은 «부분 해소»: 무공백 라벨의 ` · `/`;`/개행 병기와 기록 경로 중복은 이제 False지만, 개행 뒤 선행 공백·탭·NBSP·zero-width space가 붙은 모순 구획은 라벨 카디널리티에서 제외되어 정확 구획과 함께 True다. S-26 ① 성립(결속 문서 이력 공집합, blobs 899689fc/ec3464c0) · ② 불성립 0/2(신규 medium 1) · ③ 성립(직전·현재 validator rc 0) · ④ 성립(CUR/CIT/VER/CARD/RULE 위반 0) · ⑤ 성립(self-test rc 0, 145종 전건 판별·죽은 검사 0·역방향 과잉 차단 0) · ⑥ 성립(계약 본문 byte 불변). 결속값 HEAD 9f80f6a1, plan digest ea4ea16c…, bound digest 4e6c975f…, decided head 8923aab2가 모두 일치했다. completion-status는 임시 디렉터리 부재로 rc 2였고 HEAD 생성물에서 ENTRY_OK 및 resolver/marketfeed VALUED를 대체 확인했다. 8e14069a의 비-null 값은 §7.4 VALUED 및 §11 행과 정합하며, 지정된 역사 문언은 S-12 기록이므로 동결 계약을 새로 stale·거짓으로 만들지 않았다. ⑧은 기존 도달 가능성 교착 그대로이며 이 판의 종료 요구가 아니다.\",\"findings\":[{\"severity\":\"medium\",\"title\":\"선행 공백을 붙인 모순 구획이 U-6′ 카디널리티 검사를 우회한다\",\"body\":\"구획 분할 후 `startswith(\\\"스캔 결과:\\\")`와 `startswith(\\\"독립 리뷰 기록:\\\")`만 세므로, 개행 뒤 공백이나 탭이 붙은 구획은 같은 라벨을 명백히 표시해도 종류별 개수에서 빠진다. 직접 대조에서 정본 구획 하나 뒤에 `\\\\n  스캔 결과: 후보 우주 99개, ...` 또는 `\\\\n\\\\t독립 리뷰 기록: .../99990101-000000/verdict.md`를 병기했을 때 함수가 모두 True를 반환했다. NBSP와 zero-width-space 접두도 True였다. 따라서 정본을 미끼로 남기고 상충하는 스캔 범위나 기록 경로를 사람이 읽을 수 있는 별도 구획에 공시하면서 NO_DEPENDENCY 문법 충족을 얻을 수 있다. 현재 NONE 사이트가 0이라 즉시 상태값을 바꾸지는 않지만, 장래 NONE 사이트에 적용될 U-6′의 fail-open이므로 직전 finding은 완전히 해소되지 않았다.\",\"file\":\"tools/tos_completion_status.py\",\"line_start\":4039,\"line_end\":4060,\"confidence\":0.99,\"recommendation\":\"계약은 편집하지 말고, 보호 라벨을 카디널리티용으로 분류할 때 선행 Unicode 공백과 default-ignorable 문자를 포함한 변형 및 다른 구획 안의 라벨 출현을 fail-closed로 포착하되, 유일 구획의 정본 비교는 계속 byte-exact로 유지하라. 공백·탭·NBSP·zero-width-space가 붙은 모순 스캔/기록 구획 병기를 각각 red 대조군으로 추가하라.\"}],\"next_steps\":[\"라벨 분류 우회를 검사기와 대조군만 수정해 닫는다. 계약 무편집이므로 S-26 ⑥ 리셋과 O-6 재결속은 불필요하다.\",\"수정 후 새 공백·유니코드 병기 대조군, 기존 ⑩~⑫, validator, 145종 self-test를 재실행한다.\",\"다음 material 0 독립 재심에서 S-26 ② 카운터를 1/2로 다시 시작한다.\"]}",
+      "parseError": null,
+      "reasoningSummary": []
+    },
+    "rendered": "# Codex Adversarial Review\n\nTarget: branch diff against 48243cd2\nVerdict: needs-attention\n\n출하 보류. 직전 finding 1은 «부분 해소»: 무공백 라벨의 ` · `/`;`/개행 병기와 기록 경로 중복은 이제 False지만, 개행 뒤 선행 공백·탭·NBSP·zero-width space가 붙은 모순 구획은 라벨 카디널리티에서 제외되어 정확 구획과 함께 True다. S-26 ① 성립(결속 문서 이력 공집합, blobs 899689fc/ec3464c0) · ② 불성립 0/2(신규 medium 1) · ③ 성립(직전·현재 validator rc 0) · ④ 성립(CUR/CIT/VER/CARD/RULE 위반 0) · ⑤ 성립(self-test rc 0, 145종 전건 판별·죽은 검사 0·역방향 과잉 차단 0) · ⑥ 성립(계약 본문 byte 불변). 결속값 HEAD 9f80f6a1, plan digest ea4ea16c…, bound digest 4e6c975f…, decided head 8923aab2가 모두 일치했다. completion-status는 임시 디렉터리 부재로 rc 2였고 HEAD 생성물에서 ENTRY_OK 및 resolver/marketfeed VALUED를 대체 확인했다. 8e14069a의 비-null 값은 §7.4 VALUED 및 §11 행과 정합하며, 지정된 역사 문언은 S-12 기록이므로 동결 계약을 새로 stale·거짓으로 만들지 않았다. ⑧은 기존 도달 가능성 교착 그대로이며 이 판의 종료 요구가 아니다.\n\nFindings:\n- [medium] 선행 공백을 붙인 모순 구획이 U-6′ 카디널리티 검사를 우회한다 (tools/tos_completion_status.py:4039-4060)\n  구획 분할 후 `startswith(\"스캔 결과:\")`와 `startswith(\"독립 리뷰 기록:\")`만 세므로, 개행 뒤 공백이나 탭이 붙은 구획은 같은 라벨을 명백히 표시해도 종류별 개수에서 빠진다. 직접 대조에서 정본 구획 하나 뒤에 `\\n  스캔 결과: 후보 우주 99개, ...` 또는 `\\n\\t독립 리뷰 기록: .../99990101-000000/verdict.md`를 병기했을 때 함수가 모두 True를 반환했다. NBSP와 zero-width-space 접두도 True였다. 따라서 정본을 미끼로 남기고 상충하는 스캔 범위나 기록 경로를 사람이 읽을 수 있는 별도 구획에 공시하면서 NO_DEPENDENCY 문법 충족을 얻을 수 있다. 현재 NONE 사이트가 0이라 즉시 상태값을 바꾸지는 않지만, 장래 NONE 사이트에 적용될 U-6′의 fail-open이므로 직전 finding은 완전히 해소되지 않았다.\n  Recommendation: 계약은 편집하지 말고, 보호 라벨을 카디널리티용으로 분류할 때 선행 Unicode 공백과 default-ignorable 문자를 포함한 변형 및 다른 구획 안의 라벨 출현을 fail-closed로 포착하되, 유일 구획의 정본 비교는 계속 byte-exact로 유지하라. 공백·탭·NBSP·zero-width-space가 붙은 모순 스캔/기록 구획 병기를 각각 red 대조군으로 추가하라.\n\nNext steps:\n- 라벨 분류 우회를 검사기와 대조군만 수정해 닫는다. 계약 무편집이므로 S-26 ⑥ 리셋과 O-6 재결속은 불필요하다.\n- 수정 후 새 공백·유니코드 병기 대조군, 기존 ⑩~⑫, validator, 145종 self-test를 재실행한다.\n- 다음 material 0 독립 재심에서 S-26 ② 카운터를 1/2로 다시 시작한다.\n"
+  }
+}
