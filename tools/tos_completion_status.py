@@ -60,6 +60,7 @@ import sys
 import tempfile
 import textwrap
 import time
+import unicodedata
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -3938,6 +3939,36 @@ def _d1_u6prime_segments(reason: str) -> list[str]:
     return [seg for seg in _D1_U6PRIME_SEGMENT_SPLIT_RE.split(reason) if seg]
 
 
+def _d1_u6prime_classification_key(segment: str) -> str:
+    """U-6′ (ㄹ)(2)/(4) **라벨 분류 전용** 정규화(레인 B 재심
+    20260905-091036 finding 1 처분) — 구획이 «이 라벨을 언급하는가»를
+    판별할 때만 쓰는 느슨한 사본을 만든다. 두 단계:
+
+    1. Unicode 카테고리 ``Cf``(형식 문자 — 예: ZWSP ``U+200B``, BOM/ZWNBSP
+       ``U+FEFF``)를 전부 제거한다. 이런 문자는 화면에 아무것도 그리지
+       않으면서 라벨 앞에 끼어들어 옛 ``segment.startswith(label)`` 판정을
+       피해 간다.
+    2. 나머지에 ``unicodedata.normalize("NFKC", …)`` 를 적용한다 — NBSP
+       (``U+00A0``)를 일반 스페이스로, 전각 콜론(``U+FF1A``)을 반각
+       ``:`` 로 접는 등 호환 등가 문자를 정규 형태로 통일한다.
+
+    이 정규화는 **분류에만** 쓰고 채택 판정(구획 전체가 정본 문자열과
+    글자 단위로 같은가)에는 절대 쓰지 않는다 — 그래서 라벨 앞에 이런
+    문자가 낀 구획은 "이 구획은 해당 라벨을 언급한다"로 잡혀 카디널리티
+    검사(1개 초과 시 위반)에는 걸리되, 원본 그대로 정본과 비교하는
+    채택 검사는 여전히 실패한다(fail-closed 유지 — 병기 우회를 막는
+    목적이지, 회피 표기를 유효한 정본으로 승격시키는 것이 아니다)."""
+    stripped = "".join(ch for ch in segment if unicodedata.category(ch) != "Cf")
+    return unicodedata.normalize("NFKC", stripped)
+
+
+def _d1_u6prime_segment_mentions_label(segment: str, label: str) -> bool:
+    """``segment`` 가 (정규화된 사본 안 어디에든) ``label`` 을 언급하는지
+    — U-6′ (ㄹ)(2)/(4) 카디널리티 분류의 유일한 판별식. 원문 ``segment``
+    자체는 건드리지 않는다(``_d1_u6prime_classification_key`` 참조)."""
+    return label in _d1_u6prime_classification_key(segment)
+
+
 def _d1_u6prime_scan_result_segment(
     candidate_universe_size: int, scope_desc: str, file_count: int
 ) -> str:
@@ -3979,17 +4010,28 @@ def _d1_u6prime_row_state(
     ``reason`` 부분문자열 검사(변경 없음).
 
     (2) 스캔 결과 — ``reason`` 을 ``_d1_u6prime_segments`` 로 구획 분할한
-    뒤, 그 구획 목록 중 라벨 ``스캔 결과:`` 로 시작하는(label match =
-    ``segment.startswith(label)``) 구획이 **정확히 하나**여야 하고, 그
-    유일한 구획이 ``_d1_u6prime_scan_result_segment(candidate_universe_size,
-    scope_desc, file_count)`` 와 **완전히 같아야** 한다. 0개면 (2) 미충족,
-    2개 이상이면 그 자체로 카디널리티 위반으로 미충족(모순되는 두 번째
-    ``스캔 결과:`` 구획을 병기해도 통과하던 구멍 — 레인 B 재심
-    20260905-041033 finding 1 처분). 세 값이 부분문자열로 ``reason``
-    어딘가에 흩어져 있는 것으로는(구판 회귀) 부족하다 — 실제 스캔 범위가
-    다른 구획에 적힌 무관한 remark 로는 대체되지 못하고, 실제 스캔 구획이
-    엉뚱한 범위(``other_pkg``)를 적으면 그 자체로 막힌다(레인 B 재심
-    20260905-033432 finding 1(a) 처분).
+    뒤, 그 구획 목록 중 라벨 ``스캔 결과:`` 를 언급하는 구획이 **정확히
+    하나**여야 하고, 그 유일한 구획이 원문 그대로(정규화 없이)
+    ``_d1_u6prime_scan_result_segment(candidate_universe_size, scope_desc,
+    file_count)`` 와 **완전히 같아야** 한다. 「언급하는가」의 분류는
+    ``_d1_u6prime_segment_mentions_label`` 이 판별한다 — 구획을 Unicode
+    카테고리 ``Cf``(형식 문자: ZWSP ``U+200B``, ZWNBSP/BOM ``U+FEFF`` 등)
+    제거 후 NFKC 정규화(NBSP→스페이스, 전각 콜론→반각 등)한 사본에서
+    라벨이 **어디든** 등장하면 그 구획을 라벨 언급으로 센다(구판은
+    ``segment.startswith(label)`` 이라 라벨 앞에 그런 문자 하나만 끼거나
+    라벨이 구획 중간에 있으면 못 셌다 — 레인 B 재심 20260905-091036
+    finding 1 처분). 이 정규화는 분류에만 쓰고, 채택 비교(구획이 정본과
+    같은지)는 항상 **원문 그대로** 하므로 선행 공백·NBSP·ZWSP 가 낀
+    「정본처럼 보이는」 구획도 채택 검사에서는 여전히 실패한다
+    (fail-closed 유지). 0개면 (2) 미충족, 2개 이상이면(라벨을 언급하는
+    구획이 둘 이상이면 — 모순되는 두 번째 언급이 공백·NBSP·ZWSP 로
+    시작하든, 전각 콜론 표기든, 다른 remark 중간에 박혀 있든 무관하게)
+    그 자체로 카디널리티 위반으로 미충족(레인 B 재심 20260905-041033
+    finding 1 · 20260905-091036 finding 1 처분). 세 값이 부분문자열로
+    ``reason`` 어딘가에 흩어져 있는 것으로는(구판 회귀) 부족하다 — 실제
+    스캔 범위가 다른 구획에 적힌 무관한 remark 로는 대체되지 못하고,
+    실제 스캔 구획이 엉뚱한 범위(``other_pkg``)를 적으면 그 자체로
+    막힌다(레인 B 재심 20260905-033432 finding 1(a) 처분).
 
     (3) 경계 문장 「후보 우주 밖의 이름은 보지 못한다」 — 원자적 고정
     문자열, 전체 ``reason`` 부분문자열 검사(변경 없음).
@@ -3999,12 +4041,14 @@ def _d1_u6prime_row_state(
     로부터 파생한 ``record_path``(정본 형식: 그 스탬프 디렉터리의
     ``verdict.md`` repo-relative 전체 경로, 예:
     ``docs/reviews/d1-no-dependency/<site_id>/<stamp>/verdict.md``)를
-    넘긴다 — 구획 목록 중 라벨 ``독립 리뷰 기록:`` 로 시작하는 구획이
-    **정확히 하나**여야 하고, 그 유일한 구획이
+    넘긴다 — 구획 목록 중 라벨 ``독립 리뷰 기록:`` 을 언급하는 구획이
+    (분류 규칙은 (2)와 동일 — ``_d1_u6prime_segment_mentions_label``)
+    **정확히 하나**여야 하고, 그 유일한 구획이 원문 그대로
     ``_d1_u6prime_record_segment(record_path)`` 와 **완전히 같아야** 한다.
     0개면 (4) 미충족, 2개 이상이면(서로 다른 경로를 각각 담은 두 번째
-    ``독립 리뷰 기록:`` 구획을 병기해도) 그 자체로 카디널리티 위반으로
-    미충족 — 레인 B 재심 20260905-041033 finding 1 처분. 부분문자열
+    언급이 병기되거나, 그 언급 앞에 공백·NBSP·ZWSP 가 끼거나, 전각 콜론
+    표기거나) 그 자체로 카디널리티 위반으로 미충족 — 레인 B 재심
+    20260905-041033 finding 1 · 20260905-091036 finding 1 처분. 부분문자열
     일치로는(구판 회귀) 접미사(``<record_path>.not-the-selected-record``)나
     같은 구획 안에 나란히 적힌 두 번째 경로도 통과했다 — 이제 구획 전체가
     그 값과 글자 단위로 같아야 하므로 둘 다 막힌다(레인 B 재심
@@ -4031,12 +4075,17 @@ def _d1_u6prime_row_state(
     scan_segment = _d1_u6prime_scan_result_segment(
         candidate_universe_size, scope_desc, file_count
     )
-    # 라벨 매치 = ``segment.startswith(label)``. ``scope_desc`` 는 호출자가
+    # 라벨 매치 = ``_d1_u6prime_segment_mentions_label`` — Cf 제거+NFKC
+    # 정규화한 사본에서 라벨이 어디든 등장하면 셈(구판 ``startswith`` 는
+    # 라벨 앞 공백/NBSP/ZWSP 나 라벨의 구획-중간 등장을 놓쳤다 — 레인 B
+    # 재심 20260905-091036 finding 1). ``scope_desc`` 는 호출자가
     # ``_d1_scope_paths`` 계열에서 파생한 repo-relative 경로이고 구획
     # 구분자(" · ", ";", "\n")를 담지 않는다 — 만약 담는다면(호출자 계약
     # 위반) 그 값이 스캔 결과 구획을 둘 이상으로 쪼개 아래 카디널리티
     # 검사가 fail-closed 로 그 행을 red 처리한다(fail-open 아님).
-    scan_matches = [seg for seg in segments if seg.startswith("스캔 결과:")]
+    scan_matches = [
+        seg for seg in segments if _d1_u6prime_segment_mentions_label(seg, "스캔 결과:")
+    ]
     if not scan_matches:
         missing.append(
             "(2) 스캔 결과(후보 우주 크기·스캔 범위·파일 수) — 요구 구획: "
@@ -4057,7 +4106,11 @@ def _d1_u6prime_row_state(
         missing.append("(4) D-4 (마) 독립 리뷰 기록의 정확한 경로")
     else:
         record_segment = _d1_u6prime_record_segment(record_path)
-        record_matches = [seg for seg in segments if seg.startswith("독립 리뷰 기록:")]
+        record_matches = [
+            seg
+            for seg in segments
+            if _d1_u6prime_segment_mentions_label(seg, "독립 리뷰 기록:")
+        ]
         if not record_matches:
             missing.append(
                 "(4) D-4 (마) 독립 리뷰 기록의 정확한 경로 — 요구 구획: "
