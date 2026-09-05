@@ -12,7 +12,7 @@ deferred_scope:                            # 계약 U-13 (§12.3.1) 문법 — R
   rows:
     - STATE-EV-004
   remainder_mapping_approved: true
-bound_set_digest: 16e97f44e9b32882d03c7d9327a2d088ef5f4b385e6b3823aa2e92fb59cf4f46
+bound_set_digest: 045f3ae7565860df6e0c38d3c7ee49c76f3a4d3784d646279cd1be2727dbb429
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
@@ -23,7 +23,7 @@ authority: 운영자 (this repository's corpus owner)
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: 5dfcb236b2f5849086985fb3d2a227739657b1b6
+decided_at_head: 1db8f9b8b96880d1e92154b92ea8197466588ae3
 ```
 
 **RES-1 ① 처분 기록 (2026-09-02)**: 위 `disposition`/`deferred_scope` 는 운영자가
@@ -1123,6 +1123,43 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 >
 > **S-26 ② 카운터는 0 에 머문다** — 재개 아크 다섯 판이 세우지 못했고 이 편집이 ⑥ 으로
 > 리셋한다(계약 에라타 57차 항이 명시했다).  다음 레인 B 재심 #6 이 ②·⑤ 를 다시 측정한다.
+>
+> D0/P-0 착수 금지 불변 · `restricted_live`·`production` 권한 불변.
+
+> **재결속 기록 (현행 사이클 — 2026-09-05, v2.22 내용 · 에라타 58차 이후)**: 이 연속
+> 트랙의 **열아홉 번째**이며 같은 날 두 번째다.  57차의 레인 B 재심 #6
+> (`review-mtnx7eix-0bq0s8`)은 직전 finding(닫힌 세계 과잉 차단)을 «해소»로 판정하고
+> 검사기 구분자 정규식이 문언보다 넓다는 medium 1 을 냈다 — **계약 무접촉**으로 검사기
+> 쪽에서 처분했다(`038c2227` · ` *· *|;|\n` · 대조군 ⑮-a~e).  재심 #7
+> (`review-mtnxyiaq-1bfaf7`)은 그것을 «부분 해소»로 보고, (ㅁ)의 「앞뒤 공백 허용」의
+> **공백**이 U+0020 만인지 유니코드 공백인지 문언이 결정하지 않는다는 medium 1 을 냈다.
+> 58차는 그 구절 하나를 특정했다: 중점 앞뒤 **ASCII 공백 U+0020 만 · 0개 이상** · 세미콜론
+> ·LF 에는 어떤 공백도 붙지 않음 · CR·탭·NBSP·그 밖의 유니코드 공백은 구획 바이트로 남아
+> red · 「빈 구획」= 길이 0 만.  검사기 `038c2227` 이 그 실체화라 **코드 변경 0**.
+> 이 재결속은 **결속 경로 두 파일 중 계약 자신의 내용 변경**에 대한 것이다 — O-6 의 정상 거동.
+>
+> **이 재결속이 결속하는 내용**: 계약 blob `6f94dfbb…` · **10,723행**(58차에서 +25/−7) ·
+> 개발계획 blob `ec3464c0…` · **612행**(**무접촉**).  계약 blob 이 담는 것: (ㅁ) 58차 특정
+> 문단 · S-26 의 58차 재적용 항 · `현행(58차 이후)` 커런시 태그 3곳 · 좌표 드리프트 정정
+> 여섯 좌표(3415→3425 · 5643→5661 · 5900→5918 · 7785→7803 · 7852→7870 · 7933→7951 —
+> 인용 자리는 `:264` 와 `:7871` 둘).
+>
+> **계약 «밖» lockstep 은 한 층뿐이다**: 테스트의 digest 핀(C1′ 에 동봉).  계약 행수
+> 10,723 은 self-test 5자리 좌표 픽스처의 임계(`:12345`)를 넘지 않는다 — self-test 145종
+> PASS 를 C1′ 직전 실측했다.
+>
+> `bound_set_digest 16e97f44e9b32882d03c7d9327a2d088ef5f4b385e6b3823aa2e92fb59cf4f46`
+> → **`045f3ae7565860df6e0c38d3c7ee49c76f3a4d3784d646279cd1be2727dbb429`** ·
+> `decided_at_head` = **재결속 편집 «직전» 실측 HEAD(= 58차 C1′ 커밋 `1db8f9b8`)** ·
+> `requesting_plan_version` 은 **v2.22 로 유지**(스물한 사이클 연속).
+> `disposition`/`deferred_scope` 는 **무접촉**이다.
+>
+> **U-12 원장(`OQ-11-RAISE-LEDGER.md`)에는 행을 쓰지 않는다** — 51차~57차와 같은 형상이다.
+>
+> **동결 실측**: 이 아티팩트를 편집한 «뒤» digest 를 재계산해 **불변**임을 확인했다.
+>
+> **S-26 ② 카운터는 0 에 머문다** — 57차·58차 두 편집이 ⑥ 으로 리셋한다.  다음 레인 B
+> 재심 #8 이 ②·⑤ 를 다시 측정한다.
 >
 > D0/P-0 착수 금지 불변 · `restricted_live`·`production` 권한 불변.
 
