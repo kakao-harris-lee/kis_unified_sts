@@ -9,12 +9,52 @@ import contextlib
 import logging
 import os
 import threading
+from typing import Any
 
 import redis
+from redis.backoff import NoBackoff
+from redis.retry import Retry
 
 from shared.config.tls import build_redis_tls_params
 
 logger = logging.getLogger(__name__)
+
+# Fail-fast connect defaults (operator decision 2026-09-06): redis-py 7.x's
+# built-in `redis.Redis(...)` default is `Retry(ExponentialWithJitterBackoff(base=1,
+# cap=10), retries=3)`, applied to connection errors (not just command errors).
+# Against an unreachable Redis, that makes a single failed acquisition take
+# ~9.6s — and `shared/strategy/gates/adapter_helper.py::acquire_infra_clients()`
+# calls this on the strategy hot path claiming "hot-path safe". These env vars
+# make the connect-time behavior config-driven; defaults keep the previously
+# hardcoded socket_timeout unchanged but cut connect_timeout and disable
+# connection retries so a down Redis fails fast instead of stalling.
+_DEFAULT_CONNECT_TIMEOUT_SECONDS = 1.0
+_DEFAULT_SOCKET_TIMEOUT_SECONDS = 5.0
+_DEFAULT_CONNECT_RETRIES = 0
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read a float env var, raising ValueError with a clear message if set but invalid."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid {name}={raw!r}: expected a number of seconds"
+        ) from exc
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an int env var, raising ValueError with a clear message if set but invalid."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid {name}={raw!r}: expected an integer") from exc
 
 
 class RedisClient:
@@ -36,15 +76,48 @@ class RedisClient:
         password = os.environ.get("REDIS_PASSWORD", None) or None
         db = int(os.environ.get("REDIS_DB", "1"))
 
-        # Base connection parameters
-        connection_params = {
+        connect_timeout = _env_float(
+            "REDIS_CONNECT_TIMEOUT_SECONDS", _DEFAULT_CONNECT_TIMEOUT_SECONDS
+        )
+        socket_timeout = _env_float(
+            "REDIS_SOCKET_TIMEOUT_SECONDS", _DEFAULT_SOCKET_TIMEOUT_SECONDS
+        )
+        connect_retries = _env_int("REDIS_CONNECT_RETRIES", _DEFAULT_CONNECT_RETRIES)
+
+        # redis-py's own retry guard is `if self._retries >= 0 and failures >
+        # self._retries`: a negative retry count makes that condition never
+        # hold, i.e. infinite retries — with NoBackoff that is a tight busy
+        # loop against a down Redis. Timeouts <= 0 are similarly nonsensical.
+        # Fail construction loudly instead of silently misbehaving.
+        if connect_retries < 0:
+            raise ValueError(
+                f"Invalid REDIS_CONNECT_RETRIES={connect_retries!r}: must be >= 0 "
+                "(negative retries means infinite retries with NoBackoff)"
+            )
+        if connect_timeout <= 0:
+            raise ValueError(
+                f"Invalid REDIS_CONNECT_TIMEOUT_SECONDS={connect_timeout!r}: "
+                "must be > 0"
+            )
+        if socket_timeout <= 0:
+            raise ValueError(
+                f"Invalid REDIS_SOCKET_TIMEOUT_SECONDS={socket_timeout!r}: "
+                "must be > 0"
+            )
+
+        # Base connection parameters. `retry` overrides redis-py's own default
+        # (3 retries with exponential-jitter backoff) so a down Redis fails
+        # fast; NoBackoff + 0 retries by default means exactly one connect
+        # attempt bounded by socket_connect_timeout.
+        connection_params: dict[str, Any] = {
             "host": host,
             "port": port,
             "password": password,
             "db": db,
             "decode_responses": True,
-            "socket_connect_timeout": 5,
-            "socket_timeout": 5,
+            "socket_connect_timeout": connect_timeout,
+            "socket_timeout": socket_timeout,
+            "retry": Retry(NoBackoff(), connect_retries),
         }
 
         # Add TLS parameters if enabled
@@ -56,7 +129,7 @@ class RedisClient:
         else:
             logger.debug(f"Redis TLS disabled: {host}:{port}")
 
-        client = redis.Redis(**connection_params)
+        client: redis.Redis = redis.Redis(**connection_params)
         client.ping()
         logger.debug(f"Redis 연결 성공: {host}:{port}")
         return client

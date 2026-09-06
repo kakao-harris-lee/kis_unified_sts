@@ -318,6 +318,12 @@ class MarketRiskRedisSettings(BaseModel):
     vol_forecast_key: str = Field(default="forecast:vol:current")
 
 
+class MarketRiskCloseSettings(BaseModel):
+    """Close-mode fallback policy (O12-②, operator decision 2026-09-06)."""
+
+    publish_regime_on_fallback: bool = Field(default=False)
+
+
 class MarketRiskRunnerSettings(BaseModel):
     """One-shot runner behavior (services/market_risk_engine)."""
 
@@ -355,6 +361,7 @@ class MarketRiskConfig(ServiceConfigBase):
     hysteresis: HysteresisSettings = Field(default_factory=HysteresisSettings)
     unified_regime: UnifiedRegimeSettings = Field(default_factory=UnifiedRegimeSettings)
     redis: MarketRiskRedisSettings = Field(default_factory=MarketRiskRedisSettings)
+    close: MarketRiskCloseSettings = Field(default_factory=MarketRiskCloseSettings)
     runner: MarketRiskRunnerSettings = Field(default_factory=MarketRiskRunnerSettings)
     alerts: MarketRiskAlertSettings = Field(default_factory=MarketRiskAlertSettings)
 

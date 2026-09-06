@@ -90,6 +90,13 @@ collector:
     - stock_investor
     - fx
     - overseas
+  # Components scored only for the premarket snapshot (O11-③, operator
+  # decision 2026-09-06): a Friday-night KRX K200 futures close only exists
+  # ahead of the premarket run, so close-mode coverage never counts it.
+  # coverage_ratio = collected / len(components + premarket_only_components)
+  # for the premarket snapshot; len(components) for close.
+  premarket_only_components:
+    - night
   health:
     # /api/health/summary freshness: market:structure:latest asof older than
     # this is "stale". 14h > the longest intra-week publish gap

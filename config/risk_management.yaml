@@ -42,6 +42,25 @@ risk_management:
   daily_loss_limit_points: ${RISK_DAILY_LOSS_LIMIT_POINTS:60}
 
   # =============================================================================
+  # Kill-switch Redis risk-state feed (O13, 2026-09-06 operator decision)
+  # =============================================================================
+
+  # The in-memory RiskManager above (daily_loss_limit_pct/points,
+  # max_consecutive_losses) only gates the orchestrator's own entry checks —
+  # it never reaches services/kill_switch, which reads the durable
+  # risk:state:{asset_class} Redis hash written by shared.risk.runtime_state.
+  # RuntimeRiskState (see services/order_router for the decoupled-pipeline
+  # writer). When the monolithic orchestrator runs the futures paper/live
+  # path (still the default per CLAUDE.md until an explicit futures
+  # decoupled cutover), it must feed the same hash so kill_switch's daily/
+  # weekly/monthly-loss and consecutive-loss conditions actually see trades.
+  # Futures-only; never touches stock (the decoupled stock pipeline already
+  # owns stock risk-state). Set to false to fall back to the pre-O13
+  # behavior (orchestrator risk state stays in-process only).
+  risk_state:
+    monolithic_writer_enabled: ${RISK_STATE_MONOLITHIC_WRITER_ENABLED:true}
+
+  # =============================================================================
   # Portfolio Drawdown Monitoring
   # =============================================================================
 

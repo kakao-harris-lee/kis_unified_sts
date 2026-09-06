@@ -140,6 +140,24 @@ since 2026-06-28 — recent Setup D commits tuned parameters only.
 
 ## Recent Decisions
 
+**2026-09-06 (later)** - Operator decisions landed (PR #646): O13 monolithic
+futures paper path now feeds `risk:state:futures` so the kill-switch's
+daily/weekly/consecutive-loss conditions are evaluated (same `RuntimeRiskState`
+API as the decoupled `PseudoOCO`, KRW via contract multiplier, refuses to wire
+on a non-positive multiplier, session-start daily reset; gate
+`risk_state.monolithic_writer_enabled`); O14-① enforce-mode market-risk-gate
+rejects recorded to the ledger `signal_decisions` via a shared DTO (fail-open);
+O12-② fallback close no longer publishes `regime:unified:daily`
+(`close.publish_regime_on_fallback`, score payload tagged `source`); O11-③
+`night` is a premarket-only coverage component (denominator 8 -> 9); Redis
+client fails fast on connect (1 s, 0 retries, env-driven) with the dashboard
+WebSocket pubsub loop made self-healing per iteration and publish-path guards
+in fusion_ranker/screener/stock_strategy; CI `lint` job and ruff step are no
+longer `continue-on-error` (ruff shows red but only `tos-gate` is a required
+check — promoting ruff into the ruleset is a separate operator call). Still
+deferred: deterministic reject signal ids, ledger write off the event loop,
+black (1,668 files) and mypy (~655) debt.
+
 **2026-09-06** - Non-tos side tracks while tos observation runs on the paper
 server: unit-suite hermeticity, review follow-ups O11/O14/O17, hygiene.
 - Root cause of the "hung" local unit suite: adapter unit tests reached the

@@ -355,6 +355,27 @@ def _code_set_signature(codes: list[str]) -> str:
     return json.dumps(sorted(str(code) for code in codes), ensure_ascii=False)
 
 
+def _safe_set(redis_client: Any, key: str, value: str, *, ex: int) -> bool:
+    """SET with a TTL, tolerating a down Redis instead of raising.
+
+    Redis connect_retries defaults to 0 (fail-fast connect,
+    shared/streaming/client.py) since 2026-09-06, so a transient outage now
+    surfaces as a single raised ConnectionError instead of being absorbed by
+    redis-py's built-in retries. Letting that raise here would abort the rest
+    of the current screener cycle (notify / volume-surge / dip-candidate
+    publishing) via the outer loop's catch-all — log and skip this one
+    publish instead.
+    """
+    try:
+        redis_client.set(key, value, ex=ex)
+    except Exception as exc:  # noqa: BLE001 - best-effort cache publish
+        logger.warning(
+            "Redis SET failed for key=%s (skipping this cycle): %s", key, exc
+        )
+        return False
+    return True
+
+
 def _should_publish_snapshot(
     *,
     signature: str,
@@ -1018,14 +1039,20 @@ async def run_screener(config: ScreenerConfig) -> None:
                         heartbeat_seconds=publish_heartbeat,
                     ):
                         publisher.publish(payload)
-                        redis_client.set(
+                        if _safe_set(
+                            redis_client,
                             config.universe_latest_key,
                             json.dumps(payload, ensure_ascii=False),
                             ex=86400,
-                        )
-                        last_universe_signature = signature
-                        last_universe_publish_time = now
-                        logger.info(f"Published new universe: {len(codes)} codes")
+                        ):
+                            # Only mark this code set as "published" when the
+                            # cache write actually succeeded (reviewer
+                            # guidance 2026-09-06): otherwise a Redis blip
+                            # would be silently reported as success, and the
+                            # unchanged signature would never be retried.
+                            last_universe_signature = signature
+                            last_universe_publish_time = now
+                            logger.info(f"Published new universe: {len(codes)} codes")
 
                     current_set = set(codes)
                     set_changed = current_set != last_notified_codes
@@ -1092,7 +1119,8 @@ async def run_screener(config: ScreenerConfig) -> None:
                                 "date_kst": date_kst,
                                 "surges": list(surge_flags.values()),
                             }
-                            redis_client.set(
+                            _safe_set(
+                                redis_client,
                                 config.volume_surge_key,
                                 json.dumps(surge_payload, ensure_ascii=False),
                                 ex=config.volume_surge_ttl_seconds,
@@ -1127,14 +1155,19 @@ async def run_screener(config: ScreenerConfig) -> None:
                         last_publish_time=last_dip_publish_time,
                         heartbeat_seconds=publish_heartbeat,
                     ):
-                        redis_client.set(
+                        if _safe_set(
+                            redis_client,
                             config.dip_latest_key,
                             json.dumps(dip_payload, ensure_ascii=False),
                             ex=86400,
-                        )
-                        last_dip_signature = dip_signature
-                        last_dip_publish_time = now
-                        logger.info(f"Published dip candidates: {len(dip_codes)} codes")
+                        ):
+                            # Same success-gating as the universe-latest
+                            # publish above (reviewer guidance 2026-09-06).
+                            last_dip_signature = dip_signature
+                            last_dip_publish_time = now
+                            logger.info(
+                                f"Published dip candidates: {len(dip_codes)} codes"
+                            )
 
             except APIError as e:
                 logger.warning(f"Screener iteration failed (API error): {e}")

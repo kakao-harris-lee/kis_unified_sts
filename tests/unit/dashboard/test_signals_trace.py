@@ -1,5 +1,6 @@
 """Tests for signal decision trace endpoint."""
 
+from datetime import UTC
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -750,6 +751,97 @@ async def test_signal_trace_market_risk_gate_falls_back_to_ledger_payload(tmp_pa
     gate = response.json()["market_risk_gate"]
     assert gate is not None
     assert gate["band"] == "HIGH"
+    assert gate["reason"] == "market_risk band=HIGH score=74.2 rule=block_new_long"
+
+
+@pytest.mark.asyncio
+async def test_signal_trace_falls_back_to_gate_decision_record_reject_payload(
+    tmp_path,
+):
+    """O14-① wire-format check: a GateDecisionRecord reject row (the shape
+    services/decision_engine writes on an enforce-mode block) round-trips
+    through the trace route's ledger fallback exactly like the existing
+    hand-built ledger fallback fixture above.
+
+    Note: the daemon mints a synthetic ``signal_id`` for a rejected candidate
+    (it never reaches ``_publish``, so no real signal_id is ever assigned) —
+    this test wires the reader's signal to that same id to exercise the
+    lookup path; a rejected candidate does not otherwise appear in the
+    dashboard's live signal list today.
+    """
+    from datetime import datetime
+
+    from services.dashboard.routes import signals as signals_route
+    from shared.risk.gate_decision_record import GateDecisionRecord
+    from shared.risk.market_risk_gate import MarketRiskGateDecision
+    from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+
+    decision = MarketRiskGateDecision(
+        allow=False,
+        would_block=True,
+        size_factor=1.0,
+        min_confidence=None,
+        reason="market_risk band=HIGH score=74.2 rule=block_new_long",
+        band="HIGH",
+        score=74.2,
+        regime="risk_off",
+        degraded=False,
+        stale=False,
+        mode="enforce",
+    )
+    record = GateDecisionRecord.from_gate_decision(
+        signal_id="sig-gate-reject-1",
+        asset_class="futures",
+        symbol="101S6000",
+        strategy="A_gap_reversion",
+        decision=decision,
+        created_at=datetime(2026, 7, 2, 9, 20, tzinfo=UTC),
+    )
+
+    db_path = tmp_path / "runtime.db"
+    ledger = SQLiteRuntimeLedger(db_path)
+    ledger.record_signal_decision(record.to_ledger_payload(), track_id="C")
+    ledger.close()
+
+    reader = _reader_with_signals(
+        [
+            {
+                "id": "sig-gate-reject-1",
+                "symbol": "101S6000",
+                "side": "BUY",
+                "signal_type": "entry",
+                "strategy": "A_gap_reversion",
+                "price": 390.25,
+                "confidence": 0.72,
+                "timestamp": "2026-07-02T00:20:00+00:00",
+                "executed": False,
+            }
+        ]
+    )
+
+    with (
+        patch.object(signals_route, "_get_reader", return_value=reader),
+        patch.object(
+            signals_route,
+            "_get_trace_ledger",
+            side_effect=lambda: SQLiteRuntimeLedger(db_path),
+        ),
+        patch.object(
+            signals_route,
+            "_build_trace_lifecycle",
+            return_value=_missing_lifecycle(signals_route),
+        ),
+    ):
+        response = await _get(
+            "/api/signals/sig-gate-reject-1/trace?asset_class=futures"
+        )
+
+    assert response.status_code == 200
+    gate = response.json()["market_risk_gate"]
+    assert gate is not None
+    assert gate["mode"] == "enforce"
+    assert gate["band"] == "HIGH"
+    assert gate["allow"] is False
     assert gate["reason"] == "market_risk band=HIGH score=74.2 rule=block_new_long"
 
 

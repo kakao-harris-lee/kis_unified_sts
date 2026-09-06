@@ -28,6 +28,12 @@ DEFAULT_COMPONENTS: tuple[str, ...] = (
     "overseas",
 )
 
+# Components scored only for the ``premarket`` snapshot (O11-③, operator
+# decision 2026-09-06): a Friday-night KRX K200 futures close only exists
+# ahead of the premarket run (services/night_futures_collector), so the
+# close-mode coverage computation must never count it as missing.
+DEFAULT_PREMARKET_ONLY_COMPONENTS: tuple[str, ...] = ("night",)
+
 
 class MarketStructureRedisSettings(BaseModel):
     """Redis DB 1 publication keys and TTLs (project policy: keys need TTLs)."""
@@ -95,6 +101,9 @@ class MarketStructureCollectorConfig(ServiceConfigBase):
         default_factory=MarketStructureDerivedSettings
     )
     components: list[str] = Field(default_factory=lambda: list(DEFAULT_COMPONENTS))
+    premarket_only_components: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_PREMARKET_ONLY_COMPONENTS)
+    )
     health: MarketStructureHealthSettings = Field(
         default_factory=MarketStructureHealthSettings
     )
