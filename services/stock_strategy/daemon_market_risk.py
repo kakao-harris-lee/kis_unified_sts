@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from shared.models.signal import Signal
+from shared.risk.log_throttle import gate_log_throttle_key
 from shared.risk.market_risk_gate import (
     MarketRiskGateDecision,
     evaluate_market_risk_gate,
@@ -46,17 +47,22 @@ class StockStrategyMarketRiskMixin:
     def _log_market_risk_would_block(
         self, decision: MarketRiskGateDecision, now_ts: float
     ) -> None:
-        """Shadow-mode observation log, throttled per reason.
+        """Shadow-mode observation log, throttled per band (not per reason).
 
         The shadow verdict repeats every eval cycle (~60s) for as long as the
         band holds, so this logs at most once per configured interval per
-        reason (same pattern as the throttled setup-eval / LLM-skip logs).
+        band (same pattern as the throttled setup-eval / LLM-skip logs).
+        Keyed on ``decision.band`` (falling back to ``decision.reason`` only
+        for fail-open paths that carry no band) via
+        ``gate_log_throttle_key`` — NOT the raw ``reason`` string, which
+        embeds ``score`` and would otherwise reset the throttle on every
+        eval cycle's score tick (review finding, O14-③). Stock is
+        long-only (``side="long"`` always — see
+        ``_evaluate_market_risk_gate``), so no ``side`` is needed here.
         """
-        interval = self._market_risk_wiring.would_block_log_interval_seconds
-        last_logged = self._market_risk_log_cache.get(decision.reason)
-        if last_logged is not None and now_ts - last_logged < interval:
+        key = gate_log_throttle_key(band=decision.band, reason=decision.reason)
+        if not self._market_risk_log_throttle.should_log(key, now_ts):
             return
-        self._market_risk_log_cache[decision.reason] = now_ts
         logger.info(
             "market risk gate (shadow): would block new stock entries — %s "
             "(band=%s score=%s regime=%s)",
