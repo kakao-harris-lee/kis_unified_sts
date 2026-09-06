@@ -53,6 +53,8 @@ class Tier3Watch:
     trigger_threshold: float
     triggered: bool
     asof_ts: datetime
+    history_rows: int
+    history_partial: bool
 
 
 @dataclass
@@ -111,12 +113,24 @@ def evaluate_tier3_watch(
     peak_window_days: int,
     trigger_threshold: float,
     asof_ts: datetime,
+    min_history_rows: int,
 ) -> Tier3Watch | None:
     """Fold the close history into a watch snapshot (None when insufficient).
 
     ``closes`` may arrive unordered; rows after ``trade_date`` are excluded
     (no look-ahead) and the rolling peak covers the last ``peak_window_days``
     rows INCLUDING the latest close.
+
+    A partial-backfill window (fewer than ``min_history_rows`` usable rows)
+    makes the rolling peak shallow and the drawdown under-computed (O17-①).
+    The watch is NEVER suppressed for this — a missed real drawdown is worse
+    than a noisy one — but ``history_rows``/``history_partial`` flag it for
+    downstream consumers and one warning is logged per evaluation.
+
+    ``min_history_rows`` has no default: the only production caller
+    (:func:`run_tier3_watch`) always threads it from
+    ``Tier3WatchConfig.min_history_rows`` — a hardcoded default here would be
+    a fourth silent copy of that floor value (Pydantic field, YAML, docs).
     """
     usable = sorted(
         (day, float(close))
@@ -126,6 +140,15 @@ def evaluate_tier3_watch(
     if not usable:
         return None
     window = usable[-peak_window_days:]
+    history_rows = len(window)
+    history_partial = history_rows < min_history_rows
+    if history_partial:
+        logger.warning(
+            "tier3 watch: partial history — %d rows < min_history_rows floor %d"
+            " (rolling peak may be shallow)",
+            history_rows,
+            min_history_rows,
+        )
     kospi_close = window[-1][1]
     kospi_peak = max(close for _, close in window)
     drawdown = (kospi_close - kospi_peak) / kospi_peak if kospi_peak > 0 else 0.0
@@ -137,6 +160,8 @@ def evaluate_tier3_watch(
         # Inclusive: exactly -15% counts as "고점 대비 -15% 이상 하락".
         triggered=drawdown <= trigger_threshold,
         asof_ts=asof_ts,
+        history_rows=history_rows,
+        history_partial=history_partial,
     )
 
 
@@ -158,6 +183,8 @@ def publish_watch(redis: Any, watch_cfg: Tier3WatchConfig, watch: Tier3Watch) ->
         "trigger_threshold": _fmt(watch.trigger_threshold),
         "triggered": "true" if watch.triggered else "false",
         "asof_ts": watch.asof_ts.isoformat(),
+        "history_rows": str(watch.history_rows),
+        "history_partial": "true" if watch.history_partial else "false",
     }
     # delete-then-hset so stale fields from a previous publish never linger.
     redis.delete(watch_cfg.redis_key)
@@ -240,6 +267,7 @@ def run_tier3_watch(
         peak_window_days=watch_cfg.peak_window_days,
         trigger_threshold=activation.kospi_drawdown_from_peak,
         asof_ts=now,
+        min_history_rows=watch_cfg.min_history_rows,
     )
     if watch is None:
         logger.warning(

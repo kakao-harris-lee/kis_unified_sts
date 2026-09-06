@@ -166,6 +166,32 @@ class TestPhase3BSections:
         assert monitor.redis.stream_ttl_seconds == 86400
         assert monitor.alerts.notify_stages == ["REDUCE", "HALT_NEW", "FULL_STOP"]
 
+    def test_tier3_watch_min_history_rows_default(self):
+        # O17-①: floor for a trustworthy rolling peak; the repo YAML must
+        # carry the same value (see test_repo_yaml_loads_and_matches_defaults).
+        assert PortfolioConfig().monitor.tier3_watch.min_history_rows == 120
+
+    def test_tier3_watch_min_history_rows_yaml_override(self, monkeypatch, tmp_path):
+        (tmp_path / "portfolio.yaml").write_text(
+            """
+monitor:
+  tier3_watch:
+    min_history_rows: 60
+""",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("KIS_CONFIG_DIR", str(tmp_path))
+        from shared.config.loader import ConfigLoader
+
+        ConfigLoader.set_config_dir(str(tmp_path))
+
+        config = PortfolioConfig.load_or_default()
+        assert config.monitor.tier3_watch.min_history_rows == 60
+
+    def test_tier3_watch_min_history_rows_must_be_positive(self):
+        with pytest.raises(ValidationError):
+            PortfolioConfig(monitor={"tier3_watch": {"min_history_rows": 0}})
+
     def test_capital_base_yaml_overrides(self, monkeypatch, tmp_path):
         (tmp_path / "portfolio.yaml").write_text(
             """
