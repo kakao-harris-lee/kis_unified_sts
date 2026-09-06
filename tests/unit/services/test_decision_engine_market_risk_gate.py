@@ -112,7 +112,9 @@ def _provider_for(count: int = 1):
     return _provider
 
 
-def _make_daemon(*, redis, setups, provider, mode: str, gate_redis):
+def _make_daemon(
+    *, redis, setups, provider, mode: str, gate_redis, runtime_ledger=None
+):
     return DecisionEngineDaemon(
         redis=redis,
         setups=setups,
@@ -122,6 +124,7 @@ def _make_daemon(*, redis, setups, provider, mode: str, gate_redis):
         tick_interval_seconds=0.001,
         market_risk_gate_config=MarketRiskGateConfig(mode=mode),
         market_risk_redis=gate_redis,
+        runtime_ledger=runtime_ledger,
     )
 
 
@@ -535,3 +538,133 @@ async def test_critical_enforce_leaves_exit_streams_untouched(redis, gate_redis)
     assert await redis.xrange(CANDIDATE_STREAM) == []  # entries blocked
     assert await redis.xrange(FILL_STREAM) == fill_before  # exits untouched
     assert await redis.xrange(FINAL_STREAM) == final_before
+
+
+# ---------------------------------------------------------------------------
+# O14-① — enforce-mode REJECTs land in RuntimeLedger.signal_decisions
+# ---------------------------------------------------------------------------
+
+
+def _signal_decision_rows(db_path) -> list[dict]:
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        return [dict(row) for row in conn.execute("SELECT * FROM signal_decisions")]
+
+
+class _RaisingLedger:
+    """Stand-in ledger whose record_signal_decision always raises."""
+
+    def record_signal_decision(self, *_args, **_kwargs):
+        raise RuntimeError("ledger unavailable")
+
+
+@pytest.mark.asyncio
+async def test_enforce_reject_writes_one_signal_decisions_row(
+    redis, gate_redis, tmp_path
+):
+    from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+
+    _seed_gate_hash(gate_redis, "HIGH", score=74.2)
+    db_path = tmp_path / "runtime.db"
+    with SQLiteRuntimeLedger(db_path) as ledger:
+        daemon = _make_daemon(
+            redis=redis,
+            setups=[_DirectionSetup("long")],
+            provider=_provider_for(),
+            mode="enforce",
+            gate_redis=gate_redis,
+            runtime_ledger=ledger,
+        )
+        await _run_until_drained(daemon)
+
+    rows = _signal_decision_rows(db_path)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["asset_class"] == "futures"
+    assert row["symbol"] == "A05603"
+    assert row["strategy"] == "A_gap_reversion"
+    assert row["decision"] == "reject"
+    assert row["track_id"] == "C"  # shared.portfolio.config.TRACK_FUTURES
+    payload = json.loads(row["payload_json"])
+    assert payload["market_risk_gate"]["band"] == "HIGH"
+    assert payload["market_risk_gate"]["mode"] == "enforce"
+    assert "block_new_long" in payload["reason"]
+
+
+@pytest.mark.asyncio
+async def test_shadow_would_block_writes_no_signal_decisions_row(
+    redis, gate_redis, tmp_path
+):
+    """Shadow would-block is log-only; the ledger stays untouched."""
+    from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+
+    _seed_gate_hash(gate_redis, "HIGH", score=74.2)
+    db_path = tmp_path / "runtime.db"
+    with SQLiteRuntimeLedger(db_path) as ledger:
+        daemon = _make_daemon(
+            redis=redis,
+            setups=[_DirectionSetup("long")],
+            provider=_provider_for(),
+            mode="shadow",
+            gate_redis=gate_redis,
+            runtime_ledger=ledger,
+        )
+        await _run_until_drained(daemon)
+
+    # Shadow never rejects — the candidate is published, not blocked.
+    assert len(await redis.xrange(CANDIDATE_STREAM)) == 1
+    assert _signal_decision_rows(db_path) == []
+
+
+@pytest.mark.asyncio
+async def test_ledger_write_failure_does_not_break_the_decision_loop(
+    redis, gate_redis, caplog
+):
+    """A raising ledger must never block or delay the decision loop."""
+    _seed_gate_hash(gate_redis, "HIGH", score=74.2)
+    daemon = _make_daemon(
+        redis=redis,
+        setups=[_DirectionSetup("long")],
+        provider=_provider_for(count=2),
+        mode="enforce",
+        gate_redis=gate_redis,
+        runtime_ledger=_RaisingLedger(),
+    )
+
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        await _run_until_drained(daemon)
+
+    # Both ticks still ran to completion (the second context wasn't starved
+    # by a hang in the first tick's ledger write) — the reject log line fires
+    # for each.
+    rejects = [
+        r.getMessage()
+        for r in caplog.records
+        if "event=entry_rejected" in r.getMessage()
+    ]
+    assert len(rejects) == 2
+    warnings = [
+        r.getMessage()
+        for r in caplog.records
+        if "ledger write failed" in r.getMessage()
+    ]
+    assert len(warnings) == 2
+
+
+@pytest.mark.asyncio
+async def test_no_runtime_ledger_is_a_pure_noop_on_reject(redis, gate_redis):
+    """Default (no ledger wired) — reject behavior is unchanged, no crash."""
+    _seed_gate_hash(gate_redis, "HIGH", score=74.2)
+    daemon = _make_daemon(
+        redis=redis,
+        setups=[_DirectionSetup("long")],
+        provider=_provider_for(),
+        mode="enforce",
+        gate_redis=gate_redis,
+    )
+
+    await _run_until_drained(daemon)
+
+    assert await redis.xrange(CANDIDATE_STREAM) == []

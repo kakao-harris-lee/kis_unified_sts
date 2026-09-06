@@ -34,6 +34,8 @@ from services.decision_engine.config import DecisionEngineMarketRiskGateWiring
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.decision.context import MarketContext
 from shared.decision.setup_base import Setup
+from shared.portfolio.config import track_for_asset_class
+from shared.risk.gate_decision_record import GateDecisionRecord
 from shared.risk.log_throttle import ReasonLogThrottle, gate_log_throttle_key
 from shared.risk.market_risk_gate import (
     MarketRiskGateConfig,
@@ -67,6 +69,7 @@ class DecisionEngineDaemon:
         futures_context_redis: Any | None = None,
         futures_context_key: str = "futures:context:latest",
         volatility_publisher: Any | None = None,
+        runtime_ledger: Any | None = None,
     ) -> None:
         self.redis = redis
         self.setups = setups
@@ -115,6 +118,10 @@ class DecisionEngineDaemon:
         # change. Publishing is read-only w.r.t. this daemon's own output: it
         # never gates or sizes a candidate here.
         self.volatility_publisher = volatility_publisher
+        # O14-①: optional RuntimeLedger sink for enforce-mode gate REJECTS
+        # (shared/risk/gate_decision_record.py). None => no-op — every
+        # existing test/wiring path that omits this argument is unaffected.
+        self.runtime_ledger = runtime_ledger
         self._stop = asyncio.Event()
 
     async def _publish_volatility_reference(self) -> None:
@@ -180,6 +187,12 @@ class DecisionEngineDaemon:
                             reason=gate_decision.reason,
                         )
                     )
+                    # O14-①: this branch is enforce-mode-only by the gate's
+                    # own contract (allow=False never happens in shadow/off),
+                    # so every reject reaching here is exactly the row that
+                    # belongs in signal_decisions — shadow's would-block stays
+                    # log-only via _maybe_log_shadow_gate above, untouched.
+                    self._record_gate_reject(signal, gate_decision)
                     continue
 
                 try:
@@ -253,6 +266,49 @@ class DecisionEngineDaemon:
                 reason=decision.reason,
             )
         )
+
+    def _record_gate_reject(
+        self, signal: Any, gate_decision: MarketRiskGateDecision
+    ) -> None:
+        """Persist one enforce-mode market-risk-gate REJECT into the ledger.
+
+        Mirrors the stock decoupled lane's eval-lane recorder (O14-①
+        operator decision 2026-09-06): the audit log line above is
+        observability-only and rotates out, so a reject with no downstream
+        fill previously left zero durable evidence. ``self.runtime_ledger``
+        is None when unwired (tests, or ``StorageConfig`` resolving to a
+        non-sqlite backend) — a pure no-op in that case. A ledger write
+        failure is logged and swallowed: it must never block or delay the
+        decision loop (fail-open, same discipline as every other trace write
+        in this daemon).
+        """
+        if self.runtime_ledger is None:
+            return
+        try:
+            record = GateDecisionRecord.from_gate_decision(
+                # The candidate never reached _publish (rejected upstream of
+                # signal_id assignment), so this id exists only to key this
+                # ledger row / the dashboard trace route's lookup — it was
+                # never emitted on any stream.
+                signal_id=uuid.uuid4().hex,
+                asset_class="futures",
+                symbol=signal.symbol,
+                strategy=signal.setup_type,
+                decision=gate_decision,
+                created_at=signal.generated_at,
+            )
+            self.runtime_ledger.record_signal_decision(
+                record.to_ledger_payload(),
+                track_id=track_for_asset_class("futures"),
+            )
+        except Exception:
+            logger.warning(
+                "market_risk_gate reject: ledger write failed; continuing "
+                "decision loop (%s %s)",
+                signal.setup_type,
+                signal.symbol,
+                exc_info=True,
+            )
 
     def _futures_context_trace(self) -> dict[str, Any] | None:
         """Read futures:context:latest into a trace payload (or None if unwired).
@@ -557,6 +613,7 @@ def _build_daemon(
     candidate_stream: str,
     market_risk_redis: Any,
     volatility_publisher: Any | None,
+    runtime_ledger: Any | None = None,
 ) -> DecisionEngineDaemon:
     """Construct the production ``DecisionEngineDaemon`` from resolved deps.
 
@@ -565,7 +622,9 @@ def _build_daemon(
     the prior end-to-end wiring had zero coverage — deleting the
     ``shadow_gate_log_interval_seconds=`` argument left every test green).
     Loads ``MarketRiskGateConfig``/``DecisionEngineMarketRiskGateWiring`` ONCE
-    here — the hot path never reparses YAML.
+    here — the hot path never reparses YAML. ``runtime_ledger`` defaults to
+    None (keyword, optional) so every existing caller of this function keeps
+    working unchanged.
     """
     market_risk_gate_config = MarketRiskGateConfig.load_or_default()
     market_risk_gate_wiring = DecisionEngineMarketRiskGateWiring.load_or_default()
@@ -574,6 +633,7 @@ def _build_daemon(
         redis=redis_client,
         setups=setups,
         context_provider=context_provider,
+        runtime_ledger=runtime_ledger,
         candidate_stream=candidate_stream,
         candidate_maxlen=10_000,
         tick_interval_seconds=60.0,
@@ -624,6 +684,18 @@ async def _build_and_run() -> int:
 
     market_risk_redis = _redis_sync.Redis.from_url(redis_url, decode_responses=True)
 
+    # O14-①: RuntimeLedger sink for enforce-mode gate REJECTS. Same
+    # backend-select convention as services/order_router/main.py — None when
+    # the configured backend isn't sqlite, so the daemon's no-op path covers
+    # every non-sqlite deployment without a second branch here.
+    from shared.storage import SQLiteRuntimeLedger
+    from shared.storage.config import StorageConfig
+
+    runtime_ledger = None
+    storage_config = StorageConfig.load_or_default()
+    if storage_config.runtime_storage.backend == "sqlite":
+        runtime_ledger = SQLiteRuntimeLedger(storage_config.runtime_storage.sqlite)
+
     daemon = _build_daemon(
         redis_client=redis_client,
         setups=setups,
@@ -631,6 +703,7 @@ async def _build_and_run() -> int:
         candidate_stream=candidate_stream,
         market_risk_redis=market_risk_redis,
         volatility_publisher=volatility_publisher,
+        runtime_ledger=runtime_ledger,
     )
 
     loop = asyncio.get_running_loop()
@@ -646,6 +719,8 @@ async def _build_and_run() -> int:
             sync_redis.close()
         market_risk_redis.close()
         await redis_client.aclose()
+        if runtime_ledger is not None:
+            runtime_ledger.close()
     return 0
 
 
