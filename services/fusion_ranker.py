@@ -274,7 +274,11 @@ class FusionRanker:
         """Fetch multiple keys in one round-trip, falling back to sequential GET.
 
         The real Redis client supports MGET; fakes/clients that only implement
-        ``get`` (e.g. in tests) transparently fall back.
+        ``get`` (e.g. in tests) transparently fall back. A per-key GET failure
+        (e.g. a transient ConnectionError with Redis connect_retries=0, see
+        shared/streaming/client.py) is treated the same way an MGET failure
+        already is — as a missing value for that key — rather than raising
+        out of a ranking cycle.
         """
         mget = getattr(self.redis, "mget", None)
         if callable(mget):
@@ -285,7 +289,15 @@ class FusionRanker:
             else:
                 if len(values) == len(keys):
                     return values
-        return [self.redis.get(key) for key in keys]
+
+        fallback_values: list[Any] = []
+        for key in keys:
+            try:
+                fallback_values.append(self.redis.get(key))
+            except Exception as exc:  # noqa: BLE001 - treat as missing, like MGET
+                logger.debug("GET failed for key=%s, treating as missing: %s", key, exc)
+                fallback_values.append(None)
+        return fallback_values
 
     @staticmethod
     def _parse_generated_at(payload: dict[str, Any]) -> datetime | None:
@@ -695,11 +707,27 @@ class FusionRanker:
             return False
 
         self.publisher.publish(payload)
-        self.redis.set(
-            self.config.output_key,
-            json.dumps(payload, ensure_ascii=False),
-            ex=int(self.config.output_ttl_seconds),
-        )
+        try:
+            self.redis.set(
+                self.config.output_key,
+                json.dumps(payload, ensure_ascii=False),
+                ex=int(self.config.output_ttl_seconds),
+            )
+        except Exception as exc:  # noqa: BLE001 - a transient Redis blip
+            # (connect_retries=0, see shared/streaming/client.py) must not
+            # raise out of the ranking cycle, but this cache write IS the
+            # published/latest-value contract for GET-based consumers of
+            # output_key. Do not mark the fingerprint as delivered or log a
+            # success line — reviewer guidance (2026-09-06): a publish-path
+            # failure must be reported as a failure (False), not silently
+            # treated as success, so the next cycle retries this payload
+            # instead of skipping it as a duplicate.
+            logger.warning(
+                "Failed to publish fused trade targets to Redis (key=%s): %s",
+                self.config.output_key,
+                exc,
+            )
+            return False
         self._last_payload_fingerprint = fingerprint
         logger.info(f"Published fused trade targets: {len(payload.get('codes', []))}")
         return True

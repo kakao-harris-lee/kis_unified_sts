@@ -84,6 +84,27 @@ class RedisClient:
         )
         connect_retries = _env_int("REDIS_CONNECT_RETRIES", _DEFAULT_CONNECT_RETRIES)
 
+        # redis-py's own retry guard is `if self._retries >= 0 and failures >
+        # self._retries`: a negative retry count makes that condition never
+        # hold, i.e. infinite retries — with NoBackoff that is a tight busy
+        # loop against a down Redis. Timeouts <= 0 are similarly nonsensical.
+        # Fail construction loudly instead of silently misbehaving.
+        if connect_retries < 0:
+            raise ValueError(
+                f"Invalid REDIS_CONNECT_RETRIES={connect_retries!r}: must be >= 0 "
+                "(negative retries means infinite retries with NoBackoff)"
+            )
+        if connect_timeout <= 0:
+            raise ValueError(
+                f"Invalid REDIS_CONNECT_TIMEOUT_SECONDS={connect_timeout!r}: "
+                "must be > 0"
+            )
+        if socket_timeout <= 0:
+            raise ValueError(
+                f"Invalid REDIS_SOCKET_TIMEOUT_SECONDS={socket_timeout!r}: "
+                "must be > 0"
+            )
+
         # Base connection parameters. `retry` overrides redis-py's own default
         # (3 retries with exponential-jitter backoff) so a down Redis fails
         # fast; NoBackoff + 0 retries by default means exactly one connect

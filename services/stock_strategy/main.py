@@ -106,6 +106,7 @@ async def _build_and_run() -> int:
     """
     import signal as signal_mod
 
+    import redis
     import redis.asyncio as aioredis
 
     redis_url = redis_url_from_env()
@@ -216,15 +217,46 @@ async def _build_and_run() -> int:
         parse_watchlist_codes,
     )
 
+    # Last successfully-read raw universe values, for the Redis-outage
+    # fallback in `_watchlist_reader` below (operator review 2026-09-06:
+    # Redis connect_retries=0 means a transient outage now raises a single
+    # ConnectionError from `.get()` instead of being absorbed by redis-py's
+    # built-in retries).
+    _last_watchlist_raw: tuple[Any, Any, Any, Any] | None = None
+
     def _watchlist_reader() -> Any:
         # Universe = managed effective entry universe when available, otherwise
         # daily-watchlist (scanner) ∪ trade_targets (screener) plus manual
         # include/exclude overrides. market-ingest reads the same effective key.
+        nonlocal _last_watchlist_raw
+        try:
+            raw_values = (
+                sync_redis.get(watchlist_key),
+                sync_redis.get(trade_targets_key),
+                sync_redis.get(overrides_key),
+                sync_redis.get(effective_universe_key),
+            )
+        except redis.exceptions.RedisError as exc:
+            if _last_watchlist_raw is None:
+                # No prior successful read to fall back to. This daemon is a
+                # live production service — silently starting with an empty
+                # universe would be worse than a loud failure, so propagate
+                # as before.
+                raise
+            logger.warning(
+                "Watchlist Redis read failed, reusing last known universe: %s",
+                exc,
+            )
+            raw_values = _last_watchlist_raw
+        else:
+            _last_watchlist_raw = raw_values
+
+        watchlist_raw, trade_targets_raw, overrides_raw, effective_raw = raw_values
         return build_effective_watchlist(
-            watchlist_raw=sync_redis.get(watchlist_key),
-            trade_targets_raw=sync_redis.get(trade_targets_key),
-            overrides_raw=sync_redis.get(overrides_key),
-            effective_raw=sync_redis.get(effective_universe_key),
+            watchlist_raw=watchlist_raw,
+            trade_targets_raw=trade_targets_raw,
+            overrides_raw=overrides_raw,
+            effective_raw=effective_raw,
             max_symbols=_max_symbols,
         )
 

@@ -274,6 +274,56 @@ class TestFailFastConnectDefaults:
         ), f"_create_client took {elapsed:.2f}s against a closed port"
 
 
+class TestConnectParamValidation:
+    """Operator review (2026-09-06): redis-py's own retry guard is
+    `if self._retries >= 0 and failures > self._retries` — so a negative
+    REDIS_CONNECT_RETRIES (e.g. -1) means "retries always <= failures" is
+    never true, i.e. infinite retries, and with NoBackoff that is a tight
+    busy loop against a down Redis. Zero or negative timeouts are similarly
+    nonsensical (a non-positive socket_connect_timeout/socket_timeout).
+    These must raise ValueError at construction, not silently misbehave.
+    """
+
+    def test_negative_connect_retries_raises_value_error(self, monkeypatch):
+        monkeypatch.setenv("REDIS_CONNECT_RETRIES", "-1")
+
+        with patch("shared.streaming.client.redis.Redis"):
+            with pytest.raises(ValueError, match="REDIS_CONNECT_RETRIES"):
+                RedisClient.get_client()
+
+    @pytest.mark.parametrize("bad_value", ["0", "-1", "-0.5"])
+    def test_non_positive_connect_timeout_raises_value_error(
+        self, monkeypatch, bad_value
+    ):
+        monkeypatch.setenv("REDIS_CONNECT_TIMEOUT_SECONDS", bad_value)
+
+        with patch("shared.streaming.client.redis.Redis"):
+            with pytest.raises(ValueError, match="REDIS_CONNECT_TIMEOUT_SECONDS"):
+                RedisClient.get_client()
+
+    @pytest.mark.parametrize("bad_value", ["0", "-1", "-2.5"])
+    def test_non_positive_socket_timeout_raises_value_error(
+        self, monkeypatch, bad_value
+    ):
+        monkeypatch.setenv("REDIS_SOCKET_TIMEOUT_SECONDS", bad_value)
+
+        with patch("shared.streaming.client.redis.Redis"):
+            with pytest.raises(ValueError, match="REDIS_SOCKET_TIMEOUT_SECONDS"):
+                RedisClient.get_client()
+
+    def test_zero_connect_retries_is_still_valid(self, monkeypatch):
+        """0 retries (the fail-fast default) must not be rejected."""
+        monkeypatch.setenv("REDIS_CONNECT_RETRIES", "0")
+        mock_instance = MagicMock(spec=redis.Redis)
+
+        with patch(
+            "shared.streaming.client.redis.Redis", return_value=mock_instance
+        ) as mock_cls:
+            RedisClient.get_client()
+
+        assert mock_cls.call_args.kwargs["retry"]._retries == 0
+
+
 class TestThreadSafety:
     def test_get_client_thread_safe_single_instance(self):
         """Concurrent get_client() calls must produce only one Redis instance."""
