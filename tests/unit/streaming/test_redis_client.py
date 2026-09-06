@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 import redis
+from redis.backoff import NoBackoff
 
 from shared.streaming.client import RedisClient
 
@@ -150,8 +152,8 @@ class TestCreateClientParams:
             RedisClient.get_client()
 
         _, kwargs = mock_cls.call_args
-        assert kwargs.get("socket_connect_timeout") == 5
-        assert kwargs.get("socket_timeout") == 5
+        assert kwargs.get("socket_connect_timeout") == 1.0
+        assert kwargs.get("socket_timeout") == 5.0
         assert kwargs.get("decode_responses") is True
 
     def test_create_client_env_override(self, monkeypatch):
@@ -183,6 +185,93 @@ class TestCreateClientParams:
 
         _, kwargs = mock_cls.call_args
         assert kwargs["password"] is None
+
+
+class TestFailFastConnectDefaults:
+    """Operator decision 2026-09-06: connect must fail fast against a down Redis.
+
+    redis-py 7.x's own `redis.Redis(...)` default retry is
+    `Retry(ExponentialWithJitterBackoff(base=1, cap=10), retries=3)`, applied to
+    connection errors — against an unreachable Redis that makes a single failed
+    acquisition take ~9.6s on the strategy hot path
+    (`shared/strategy/gates/adapter_helper.py::acquire_infra_clients`). These
+    tests pin `_create_client`'s override: NoBackoff + 0 retries by default.
+    """
+
+    def test_default_retry_is_no_backoff_zero_retries(self):
+        """By default, _create_client must pass retry=Retry(NoBackoff(), 0)."""
+        mock_instance = MagicMock(spec=redis.Redis)
+
+        with patch(
+            "shared.streaming.client.redis.Redis", return_value=mock_instance
+        ) as mock_cls:
+            RedisClient.get_client()
+
+        _, kwargs = mock_cls.call_args
+        retry = kwargs.get("retry")
+        assert retry is not None
+        assert retry._retries == 0
+        assert isinstance(retry._backoff, NoBackoff)
+
+    def test_env_overrides_flow_through(self, monkeypatch):
+        """REDIS_CONNECT_TIMEOUT_SECONDS / SOCKET_TIMEOUT_SECONDS / CONNECT_RETRIES override defaults."""
+        monkeypatch.setenv("REDIS_CONNECT_TIMEOUT_SECONDS", "2.5")
+        monkeypatch.setenv("REDIS_SOCKET_TIMEOUT_SECONDS", "7.5")
+        monkeypatch.setenv("REDIS_CONNECT_RETRIES", "3")
+
+        mock_instance = MagicMock(spec=redis.Redis)
+
+        with patch(
+            "shared.streaming.client.redis.Redis", return_value=mock_instance
+        ) as mock_cls:
+            RedisClient.get_client()
+
+        _, kwargs = mock_cls.call_args
+        assert kwargs.get("socket_connect_timeout") == 2.5
+        assert kwargs.get("socket_timeout") == 7.5
+        assert kwargs["retry"]._retries == 3
+
+    @pytest.mark.parametrize(
+        "env_name,bad_value",
+        [
+            ("REDIS_CONNECT_TIMEOUT_SECONDS", "not-a-number"),
+            ("REDIS_SOCKET_TIMEOUT_SECONDS", "soon"),
+            ("REDIS_CONNECT_RETRIES", "three"),
+        ],
+    )
+    def test_invalid_env_value_raises_value_error(
+        self, monkeypatch, env_name, bad_value
+    ):
+        """An invalid env value must raise ValueError at construction, not silently fall back."""
+        monkeypatch.setenv(env_name, bad_value)
+
+        with patch("shared.streaming.client.redis.Redis"):
+            with pytest.raises(ValueError, match=env_name):
+                RedisClient.get_client()
+
+    def test_closed_port_fails_fast(self, monkeypatch):
+        """A real connect attempt against a closed local port must fail within 2s wall time.
+
+        Deliberately NOT marked `live_infra`: that marker is skipped by
+        default (tests/conftest.py, unless KIS_RUN_LIVE_INFRA_TESTS=1) and is
+        meant for tests touching a real Redis *service*. A closed TCP port on
+        localhost refuses the connection immediately at the OS level and needs
+        no server at all, so this stays hermetic and always runs. This file is
+        already excluded from tests/unit/conftest.py's hermetic-Redis guard
+        (see that module's docstring), so `_create_client` reaches the real
+        `redis.Redis(...)` here, as intended.
+        """
+        monkeypatch.setenv("REDIS_HOST", "127.0.0.1")
+        monkeypatch.setenv("REDIS_PORT", "1")
+
+        start = time.monotonic()
+        with pytest.raises((redis.ConnectionError, redis.TimeoutError, OSError)):
+            RedisClient._create_client()
+        elapsed = time.monotonic() - start
+
+        assert (
+            elapsed < 2.0
+        ), f"_create_client took {elapsed:.2f}s against a closed port"
 
 
 class TestThreadSafety:
