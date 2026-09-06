@@ -26,9 +26,27 @@ These tests pin:
      identical ``risk:state:futures`` hash contents as the same trade recorded
      through the decoupled order_router's writer, and
      ``services/kill_switch`` conditions trip identically against either.
+  6. Multiplier guard: a resolved ``multiplier_krw_per_point <= 0`` must not
+     wire the writer (``_init_futures_runtime_risk_state``) and
+     ``_record_risk_realized_pnl`` must not touch a writer that is somehow
+     wired with a non-positive multiplier — a zeroed multiplier makes every
+     trade's ``pnl_krw`` come out ``0.0``, which is always ``record_win()``
+     and silently resets ``consecutive_losses`` on every trade, disabling the
+     kill_switch's 6-consecutive-loss condition (independent-review finding,
+     2026-09-06).
+  7. Daily reset: ``_reset_futures_daily_risk_state_at_session_start`` resets
+     ``risk:state:futures`` once per new KST calendar day and is a no-op
+     (idempotent, no double-reset) on a same-day re-call — mirroring the M5c
+     cron (``scripts/maintenance/daily_risk_reset.py``) and
+     ``stock_risk_filter``'s per-cycle guard (independent-review finding,
+     2026-09-06).
 """
 
 from __future__ import annotations
+
+from datetime import datetime
+from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import fakeredis.aioredis
 import pytest
@@ -36,6 +54,8 @@ import pytest
 from services.kill_switch.main import ConsecutiveLossesCondition, DailyLossCondition
 from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 from shared.risk.runtime_state import RuntimeRiskState
+
+_KST = ZoneInfo("Asia/Seoul")
 
 
 def _futures_orchestrator() -> TradingOrchestrator:
@@ -209,3 +229,181 @@ class TestKillSwitchParityWithOrderRouterWriter:
         assert daily_cond.check(snapshot=snap_b) is True
         assert consec_cond.check(snapshot=snap_a) is False
         assert consec_cond.check(snapshot=snap_b) is False
+
+
+class TestMultiplierGuard:
+    """A non-positive multiplier_krw_per_point must never wire, or be used
+    by, the O13 writer — see module docstring pin 6.
+    """
+
+    def test_zero_multiplier_symbol_stays_unwired(self, monkeypatch, caplog):
+        from shared.instruments.contract_spec import ContractSpec
+
+        zero_spec = ContractSpec(
+            name="zero_mult_test",
+            multiplier_krw_per_point=0,
+            tick_size_points=0.02,
+            tick_value_krw=0,
+            commission_rate=0.00003,
+            symbol_prefix="A05",
+        )
+        monkeypatch.setattr(
+            "shared.execution.contract_spec.resolve_contract_spec",
+            lambda symbol, registry: zero_spec,
+        )
+
+        orch = _futures_orchestrator()
+        orch._guard_redis = fakeredis.aioredis.FakeRedis(db=1)
+
+        with caplog.at_level("WARNING"):
+            orch._init_futures_runtime_risk_state()
+
+        assert orch._futures_risk_state is None
+        assert orch._futures_risk_state_multiplier_krw == 0.0
+        assert any(
+            "NOT wired" in r.getMessage() and "not positive" in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_negative_multiplier_symbol_stays_unwired(self, monkeypatch):
+        from shared.instruments.contract_spec import ContractSpec
+
+        negative_spec = ContractSpec(
+            name="negative_mult_test",
+            multiplier_krw_per_point=-50_000,
+            tick_size_points=0.02,
+            tick_value_krw=1000,
+            commission_rate=0.00003,
+            symbol_prefix="A05",
+        )
+        monkeypatch.setattr(
+            "shared.execution.contract_spec.resolve_contract_spec",
+            lambda symbol, registry: negative_spec,
+        )
+
+        orch = _futures_orchestrator()
+        orch._guard_redis = fakeredis.aioredis.FakeRedis(db=1)
+
+        orch._init_futures_runtime_risk_state()  # must not raise
+
+        assert orch._futures_risk_state is None
+        assert orch._futures_risk_state_multiplier_krw == 0.0
+
+    @pytest.mark.asyncio
+    async def test_record_risk_realized_pnl_skips_zero_multiplier_writer(self):
+        """Defensive branch: even if a writer somehow got wired with a
+        non-positive multiplier, _record_risk_realized_pnl must not call
+        record_trade/record_loss/record_win against it (would post
+        pnl_krw=0.0 -> record_win() -> masks consecutive losses).
+        """
+        orch = _futures_orchestrator()
+        orch._risk_manager = None
+        broken_writer = AsyncMock()
+        orch._futures_risk_state = broken_writer
+        orch._futures_risk_state_multiplier_krw = 0.0
+
+        await orch._record_risk_realized_pnl(-5.0)
+
+        broken_writer.record_trade.assert_not_called()
+        broken_writer.record_loss.assert_not_called()
+        broken_writer.record_win.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_record_risk_realized_pnl_unchanged_for_positive_multiplier(self):
+        """Sanity check: a positive multiplier keeps writing (unchanged
+        behavior vs. before this guard was added).
+        """
+        orch = _futures_orchestrator()
+        orch._risk_manager = None
+        orch._futures_risk_state = RuntimeRiskState(
+            redis=fakeredis.aioredis.FakeRedis(db=1), asset_class="futures"
+        )
+        orch._futures_risk_state_multiplier_krw = 50_000.0
+
+        await orch._record_risk_realized_pnl(-2.0)
+
+        snap = await orch._futures_risk_state.snapshot()
+        assert snap.daily_pnl_krw == -100_000.0
+        assert snap.consecutive_losses == 1
+
+
+class TestFuturesDailyRiskStateResetAtSessionStart:
+    """``_reset_futures_daily_risk_state_at_session_start`` — see module
+    docstring pin 7.
+    """
+
+    @pytest.mark.asyncio
+    async def test_noop_when_writer_not_wired(self):
+        orch = _futures_orchestrator()
+        assert orch._futures_risk_state is None
+
+        # Must not raise even though there is nothing to reset against.
+        await orch._reset_futures_daily_risk_state_at_session_start()
+
+    @pytest.mark.asyncio
+    async def test_new_kst_day_resets_daily_counters(self):
+        redis_client = fakeredis.aioredis.FakeRedis(db=1)
+        orch = _futures_orchestrator()
+        orch._risk_manager = None
+        orch._futures_risk_state = RuntimeRiskState(
+            redis=redis_client, asset_class="futures"
+        )
+        orch._futures_risk_state_multiplier_krw = 50_000.0
+
+        day1 = datetime(2026, 9, 5, 8, 45, tzinfo=_KST)
+        # Simulate yesterday's session already having traded.
+        await orch._futures_risk_state.record_trade(pnl_krw=-1_000_000.0)
+        snap_before = await orch._futures_risk_state.snapshot()
+        assert snap_before.daily_pnl_krw == -1_000_000.0
+        # Stamp yesterday's reset explicitly (as if day1's own session-start
+        # reset had already run).
+        await orch._futures_risk_state.reset_daily(now_kst=day1)
+        await orch._futures_risk_state.record_trade(pnl_krw=-1_000_000.0)
+
+        day2 = datetime(2026, 9, 6, 8, 45, tzinfo=_KST)
+        await orch._reset_futures_daily_risk_state_at_session_start(now_kst=day2)
+
+        snap_after = await orch._futures_risk_state.snapshot()
+        assert snap_after.daily_pnl_krw == 0.0
+        assert snap_after.daily_trade_count == 0
+        # Cumulative fields must survive the daily reset.
+        assert snap_after.weekly_pnl_krw == -2_000_000.0
+
+    @pytest.mark.asyncio
+    async def test_same_kst_day_recall_is_noop(self):
+        redis_client = fakeredis.aioredis.FakeRedis(db=1)
+        orch = _futures_orchestrator()
+        orch._risk_manager = None
+        orch._futures_risk_state = RuntimeRiskState(
+            redis=redis_client, asset_class="futures"
+        )
+        orch._futures_risk_state_multiplier_krw = 50_000.0
+
+        today = datetime(2026, 9, 6, 8, 45, tzinfo=_KST)
+        await orch._reset_futures_daily_risk_state_at_session_start(now_kst=today)
+        await orch._futures_risk_state.record_trade(pnl_krw=-500_000.0)
+
+        # A same-day re-call (e.g. a mid-day process restart) must not wipe
+        # the counters _record_trade just accumulated.
+        later_same_day = datetime(2026, 9, 6, 13, 0, tzinfo=_KST)
+        await orch._reset_futures_daily_risk_state_at_session_start(
+            now_kst=later_same_day
+        )
+
+        snap = await orch._futures_risk_state.snapshot()
+        assert snap.daily_pnl_krw == -500_000.0
+        assert snap.daily_trade_count == 1
+
+    @pytest.mark.asyncio
+    async def test_redis_failure_is_swallowed(self):
+        orch = _futures_orchestrator()
+        orch._risk_manager = None
+        broken_state = AsyncMock()
+        broken_state.should_reset_daily.side_effect = ConnectionError("redis down")
+        orch._futures_risk_state = broken_state
+
+        # Must not raise — best-effort, same discipline as
+        # _record_risk_realized_pnl's O13 sink.
+        await orch._reset_futures_daily_risk_state_at_session_start(
+            now_kst=datetime(2026, 9, 6, 8, 45, tzinfo=_KST)
+        )

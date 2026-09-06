@@ -7,9 +7,22 @@ stock + futures. Cumulative fields (``consecutive_losses`` / ``weekly_pnl_krw``)
 are preserved. A ``should_reset_daily()`` guard makes the run idempotent — a
 mid-day re-run skips, never wiping the session's accumulated counters.
 
-No shadow/live mode: ``risk:state:{asset}`` is written/read only by the decoupled
-M4 daemons (the orchestrator uses a separate in-memory RiskManager), so there is
-no live key to clobber. Market-day gating is the crontab's job.
+No shadow/live mode: ``risk:state:{asset}`` has a single unsuffixed key shared
+by every writer of a given asset class — there is no separate live key to
+clobber. For stock, ``risk:state:stock`` is written only by the decoupled M4
+daemons. For futures, both the decoupled ``order_router``/kill_switch pipeline
+AND the monolithic orchestrator's futures paper/live path write
+``risk:state:futures`` (O13, 2026-09-06): the orchestrator mirrors closed-trade
+PnL into it via ``TradingOrchestrator._record_risk_realized_pnl`` and also
+resets its own daily counters at session start
+(``_reset_futures_daily_risk_state_at_session_start``, gated on
+``risk_state.monolithic_writer_enabled`` in the same way) — but the monolithic
+and decoupled futures runtimes are never the active runtime at the same time
+(CLAUDE.md cutover discipline), so there is still only one writer at a time.
+This cron remains the backstop: if a host's futures runtime is not currently
+running when the KST session would start (or its session-start reset failed),
+this cron still reaches the daily-boundary reset. Market-day gating is the
+crontab's job.
 
 REDIS_URL defaults to redis://localhost:6379/1; the operator sets it per
 environment (paper=6381, live=6382) in the crontab.

@@ -107,6 +107,7 @@ from shared.risk.models import DrawdownLevel
 from shared.storage.config import StorageConfig
 from shared.storage.market_data_store import ParquetMarketDataStore
 from shared.strategy.base import EntryContext, MarketStateAdapter
+from shared.strategy.market_time import now_kst as _now_kst
 from shared.streaming.candle_warmup import StockPrewarmConfig, warmup_engine
 from shared.utils.calc import calc_order_quantity
 
@@ -600,6 +601,21 @@ class TradingOrchestrator:
 
         # Initialize components
         await self._initialize_components()
+
+        if self.config.asset_class == "futures":
+            # O13 follow-up: reset risk:state:futures daily counters at
+            # session start, mirroring the M5c cron
+            # (scripts/maintenance/daily_risk_reset.py) and
+            # stock_risk_filter's per-cycle should_reset_daily/reset_daily
+            # guard. Without this, daily_pnl_krw (24h-TTL-refreshed by every
+            # trade) can accumulate across multi-day sessions whenever the
+            # operator cron is absent from the host, tripping the 3%
+            # daily-loss kill condition on stale cross-day totals rather than
+            # the current day's real loss. Gated on _futures_risk_state being
+            # built, which already reflects
+            # risk_state.monolithic_writer_enabled (see
+            # _init_futures_runtime_risk_state).
+            await self._reset_futures_daily_risk_state_at_session_start()
 
         # Prefetch daily reference (prev_close) for futures symbols.
         # Setup A (gap_reversion) requires prev_close to compute gap_pct; the
@@ -1572,7 +1588,15 @@ class TradingOrchestrator:
             except (InfrastructureError, ValidationError, ValueError, TypeError) as e:
                 logger.warning("risk realized P&L update skipped: %s", e)
 
-        if self._futures_risk_state is not None:
+        if (
+            self._futures_risk_state is not None
+            and self._futures_risk_state_multiplier_krw > 0.0
+        ):
+            # Defensive mirror of PseudoOCO._record_pnl's own
+            # ``self._multiplier <= 0.0`` early return: _init_futures_
+            # runtime_risk_state already refuses to build the writer for a
+            # non-positive multiplier, so this branch is normally dead, but
+            # it must stay in lockstep if that invariant is ever weakened.
             try:
                 pnl_krw = float(pnl) * self._futures_risk_state_multiplier_krw
                 await self._futures_risk_state.record_trade(pnl_krw=pnl_krw)
@@ -1634,10 +1658,29 @@ class TradingOrchestrator:
             symbol = (self.config.symbols or [""])[0]
             contract_specs = ContractSpecRegistry.from_yaml("config/execution.yaml")
             spec = resolve_contract_spec(symbol, contract_specs)
+            multiplier = float(spec.multiplier_krw_per_point)
 
-            self._futures_risk_state_multiplier_krw = float(
-                spec.multiplier_krw_per_point
-            )
+            if multiplier <= 0.0:
+                # PseudoOCO._record_pnl refuses to record against a
+                # non-positive multiplier; mirror that here at the source
+                # instead of silently writing pnl_krw=0.0 for every trade.
+                # A zeroed pnl_krw makes every trade look like a win
+                # (record_win()), which resets consecutive_losses on every
+                # closed trade and silently disables the kill_switch's
+                # 6-consecutive-loss condition.
+                logger.warning(
+                    "O13 monolithic futures risk-state writer NOT wired: "
+                    "resolved multiplier_krw_per_point=%.4f for symbol=%s is "
+                    "not positive (kill_switch consecutive-loss condition "
+                    "would be silently disabled)",
+                    multiplier,
+                    symbol,
+                )
+                self._futures_risk_state = None
+                self._futures_risk_state_multiplier_krw = 0.0
+                return
+
+            self._futures_risk_state_multiplier_krw = multiplier
             self._futures_risk_state = RuntimeRiskState(
                 redis=self._guard_redis, asset_class="futures"
             )
@@ -1669,6 +1712,47 @@ class TradingOrchestrator:
             )
             self._futures_risk_state = None
             self._futures_risk_state_multiplier_krw = 0.0
+
+    async def _reset_futures_daily_risk_state_at_session_start(
+        self, *, now_kst: datetime | None = None
+    ) -> None:
+        """O13 follow-up: zero ``risk:state:futures`` daily counters once per
+        KST trading day, at session start.
+
+        A no-op when the O13 writer was never built (``self._futures_risk_state
+        is None`` — either ``asset_class != "futures"`` or
+        ``risk_state.monolithic_writer_enabled`` is off). Otherwise reuses the
+        same :meth:`RuntimeRiskState.should_reset_daily` /
+        :meth:`RuntimeRiskState.reset_daily` pair the M5c cron
+        (``scripts/maintenance/daily_risk_reset.py``) and
+        ``stock_risk_filter``'s per-cycle guard call: ``should_reset_daily``
+        makes this idempotent across same-day restarts (a mid-day crash
+        restart, or the operator cron having already run today), so the
+        session's accumulated ``daily_pnl_krw`` / ``daily_trade_count`` are
+        never wiped mid-day. ``run_session`` calls ``start()`` at most once
+        per KST calendar day in both single-session and daemon (``run()``)
+        mode, so no additional in-memory day guard is needed here.
+
+        Best-effort: a Redis failure is logged and swallowed — it must not
+        block trading start, mirroring ``_record_risk_realized_pnl``'s
+        best-effort O13 sink.
+        """
+        if self._futures_risk_state is None:
+            return
+        now = now_kst if now_kst is not None else _now_kst()
+        try:
+            if await self._futures_risk_state.should_reset_daily(now_kst=now):
+                await self._futures_risk_state.reset_daily(now_kst=now)
+                logger.info(
+                    "O13 futures daily risk counters reset for KST date %s",
+                    now.date(),
+                )
+        except Exception as e:
+            logger.warning(
+                "O13 futures daily risk-state reset skipped "
+                "(risk:state:futures): %s",
+                e,
+            )
 
     ACCUMULATION_REDIS_KEY = "system:accumulation:latest"
 
