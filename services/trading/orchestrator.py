@@ -303,6 +303,20 @@ class TradingOrchestrator:
         self._live_mode_guard: LiveModeGuard | None = None
         self._guard_redis: Any | None = None
         self._live_guard_warned: bool = False
+        # O13 (2026-09-06 operator decision): mirrors closed-futures-trade P&L
+        # into the durable risk:state:futures Redis hash so services/kill_switch
+        # (a separate process reading only Redis) evaluates its daily/weekly/
+        # monthly-loss and consecutive-loss conditions against the monolithic
+        # orchestrator's own paper/live futures trades, not just the decoupled
+        # order_router pipeline. Built in _init_execution_layer for futures
+        # only, gated by risk_management.yaml::risk_state.monolithic_writer_enabled
+        # (default on). None for non-futures or when disabled — never consulted.
+        self._futures_risk_state: Any | None = None
+        # KRW notional per index point for the active futures symbol, resolved
+        # once from config/execution.yaml's futures_contract_spec (same source
+        # PseudoOCO/order_router use) — closed_position.unrealized_pnl is in
+        # raw index points for futures, but risk:state:futures stores KRW.
+        self._futures_risk_state_multiplier_krw: float = 0.0
         self._mock_mirror: Any | None = None
         self._mock_mirror_stats: dict[str, int] = {
             "entry_success": 0,
@@ -1340,6 +1354,7 @@ class TradingOrchestrator:
 
             self._live_mode_guard = LiveModeGuard.from_yaml()
             self._guard_redis = aioredis.from_url(redis_url_from_env())
+            self._init_futures_runtime_risk_state()
             logger.info(
                 "futures live-mode guard active (enabled=%s, suspend_key=%s)",
                 self._live_mode_guard.enabled,
@@ -1539,14 +1554,121 @@ class TradingOrchestrator:
             logger.debug("record_running_totals skipped: %s", e)
 
     async def _record_risk_realized_pnl(self, pnl: float) -> None:
-        """Feed closed-trade P&L into the entry risk gate immediately."""
-        if self._risk_manager is None:
-            return
+        """Feed closed-trade P&L into the entry risk gate immediately.
+
+        Two independent, best-effort sinks — neither's failure blocks the
+        other or the caller (a just-closed exit must never be lost over a
+        risk-state write failure):
+
+        1. The in-process ``RiskManager`` entry gate (unchanged behavior).
+        2. O13: the durable ``risk:state:futures`` Redis hash that
+           ``services/kill_switch`` polls — futures only, see
+           :meth:`_init_futures_runtime_risk_state`.
+        """
+        if self._risk_manager is not None:
+            try:
+                self._risk_manager.record_realized_pnl(float(pnl))
+                await self._risk_manager.save_to_redis()
+            except (InfrastructureError, ValidationError, ValueError, TypeError) as e:
+                logger.warning("risk realized P&L update skipped: %s", e)
+
+        if self._futures_risk_state is not None:
+            try:
+                pnl_krw = float(pnl) * self._futures_risk_state_multiplier_krw
+                await self._futures_risk_state.record_trade(pnl_krw=pnl_krw)
+                if pnl_krw < 0:
+                    await self._futures_risk_state.record_loss()
+                else:
+                    await self._futures_risk_state.record_win()
+            except Exception as e:
+                # Best-effort kill-switch feed: a Redis blip here must not
+                # affect the exit that already happened or the in-process
+                # risk gate updated above.
+                logger.warning(
+                    "kill-switch risk-state update skipped (risk:state:futures): %s",
+                    e,
+                )
+
+    def _init_futures_runtime_risk_state(self) -> None:
+        """O13 (2026-09-06 operator decision): wire the monolithic futures
+        paper/live path into the same ``risk:state:futures`` Redis hash the
+        decoupled ``services/order_router`` writes and ``services/kill_switch``
+        reads (:mod:`shared.risk.runtime_state.RuntimeRiskState`).
+
+        Called from ``_init_execution_layer`` only when
+        ``self.config.asset_class == "futures"``, right after ``_guard_redis``
+        is built — reuses that connection rather than opening a second one.
+        Deliberately writes the *unsuffixed* ``risk:state:futures`` key (not
+        order_router paper's ``:shadow`` suffix): this is the key
+        ``services/kill_switch`` actually polls, and the monolithic
+        orchestrator and the decoupled order_router are never the active
+        futures runtime at the same time (CLAUDE.md cutover discipline), so
+        there is no concurrent-writer collision.
+
+        Degrades to a no-op (``self._futures_risk_state`` stays ``None``) on
+        any config/resolution failure — the in-process ``RiskManager`` gate in
+        ``_record_risk_realized_pnl`` is unaffected either way.
+        """
         try:
-            self._risk_manager.record_realized_pnl(float(pnl))
-            await self._risk_manager.save_to_redis()
-        except (InfrastructureError, ValidationError, ValueError, TypeError) as e:
-            logger.warning("risk realized P&L update skipped: %s", e)
+            risk_params = (
+                ConfigLoader.load("risk_management.yaml").get("risk_management", {})
+                or {}
+            )
+            writer_enabled = str(
+                (risk_params.get("risk_state", {}) or {}).get(
+                    "monolithic_writer_enabled", True
+                )
+            ).strip().lower() in {"1", "true", "yes", "on"}
+            if not writer_enabled:
+                logger.info(
+                    "O13 monolithic futures risk-state writer disabled via config"
+                )
+                return
+
+            from shared.execution.contract_spec import (
+                ContractSpecRegistry,
+                resolve_contract_spec,
+            )
+            from shared.risk.runtime_state import RuntimeRiskState
+
+            symbol = (self.config.symbols or [""])[0]
+            contract_specs = ContractSpecRegistry.from_yaml("config/execution.yaml")
+            spec = resolve_contract_spec(symbol, contract_specs)
+
+            self._futures_risk_state_multiplier_krw = float(
+                spec.multiplier_krw_per_point
+            )
+            self._futures_risk_state = RuntimeRiskState(
+                redis=self._guard_redis, asset_class="futures"
+            )
+            logger.info(
+                "O13 monolithic futures risk-state writer active "
+                "(symbol=%s multiplier_krw_per_point=%.0f)",
+                symbol,
+                self._futures_risk_state_multiplier_krw,
+            )
+        except (
+            InvalidConfigError,
+            MissingConfigError,
+            ConfigurationError,
+            ValueError,
+            LookupError,
+            OSError,
+            AttributeError,
+        ) as e:
+            # AttributeError is included deliberately: this must degrade the
+            # same way the rest of _init_execution_layer does when called
+            # against a minimal/test config double that lacks `.symbols` —
+            # see test_orchestrator_execution_config.py's "documented live
+            # deploy shape must not raise" tests. A production config missing
+            # `.symbols` is caught earlier by _validate_futures_product_contract.
+            logger.warning(
+                "O13 monolithic futures risk-state writer init failed "
+                "(kill_switch will not see this process's trades): %s",
+                e,
+            )
+            self._futures_risk_state = None
+            self._futures_risk_state_multiplier_krw = 0.0
 
     ACCUMULATION_REDIS_KEY = "system:accumulation:latest"
 
