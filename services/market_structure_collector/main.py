@@ -71,6 +71,8 @@ COMPONENT_COLUMNS: dict[str, tuple[str, ...]] = {
         "nq_futures_change_pct",
         "sox_change_pct",
     ),
+    # Premarket-only (O11-③): present iff _read_night_close merged a payload.
+    "night": ("night_close",),
 }
 
 # Defensive KIS field-name candidates. The exact program-TR row shape awaits
@@ -703,7 +705,11 @@ async def collect_premarket(
         logger.warning("market-structure macro read failed: %s", exc)
     row.update(_read_night_close(redis, config))
 
-    coverage, missing = _coverage(row, config.components)
+    # Premarket-only components (night) are added on top of the always-on
+    # set (O11-③) — close-mode coverage never expects them (see collect_close).
+    coverage, missing = _coverage(
+        row, config.components + config.premarket_only_components
+    )
     row["coverage_ratio"] = coverage
     row["missing_components"] = missing
     row["asof_ts"] = _now_kst()

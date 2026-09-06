@@ -30,6 +30,7 @@ import asyncio
 import json
 import logging
 import sys
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -58,6 +59,13 @@ _MODES = ("premarket", "intraday", "close")
 # Fixed Redis contract field name (Phase 1c UI lane): the smoothed score is
 # published as ``score_ema3`` regardless of the configured ema_span.
 _EMA_FIELD = "score_ema3"
+
+# ``source`` tag on ``market:risk:latest`` (O12-② — consumers must ignore
+# unknown/blank values; not part of the fixed §4.3 field set beyond this key).
+_SOURCE_CLOSE_ROW = "close_row"
+_SOURCE_PREMARKET_ROW = "premarket_row"
+_SOURCE_STRUCTURE_LATEST = "structure_latest"
+_SOURCE_FALLBACK = "structure_latest_fallback"
 
 
 _now_kst = now_kst_naive  # shared.strategy.market_time (O11-④, dedup)
@@ -116,9 +124,25 @@ def _read_store_row(store: Any, day: date, snapshot: str) -> dict[str, Any]:
     return {key: value for key, value in records[0].items() if _is_present(value)}
 
 
+@dataclass
+class CurrentRowResult:
+    """Resolved input row for one engine run, plus its provenance.
+
+    ``from_fallback`` is True only when the mode's own snapshot row (close or
+    premarket) was entirely absent from the store and the engine degraded to
+    the unconfirmed ``market:structure:latest`` hash (O12-②). Intraday's
+    primary source already is ``market:structure:latest``, so it is never
+    flagged as a fallback here.
+    """
+
+    row: dict[str, Any]
+    effective_day: date
+    from_fallback: bool = False
+
+
 def load_current_row(
     mode: str, day: date, store: Any, redis: Any, config: MarketRiskConfig
-) -> tuple[dict[str, Any], date]:
+) -> CurrentRowResult:
     """Resolve the row to score plus its effective trade date."""
     if mode == "intraday":
         row = _read_structure_latest(redis, config)
@@ -132,19 +156,23 @@ def load_current_row(
                     logger.warning(
                         "unparseable trade_date in latest hash: %r", effective
                     )
-            return row, parsed
-        return _read_store_row(store, day, _SNAPSHOT_PREMARKET), day
+            return CurrentRowResult(row=row, effective_day=parsed)
+        return CurrentRowResult(
+            row=_read_store_row(store, day, _SNAPSHOT_PREMARKET), effective_day=day
+        )
 
     snapshot = _SNAPSHOT_PREMARKET if mode == "premarket" else _SNAPSHOT_CLOSE
     row = _read_store_row(store, day, snapshot)
     if row:
-        return row, day
+        return CurrentRowResult(row=row, effective_day=day)
     logger.warning(
         "no %s row stored for %s; falling back to market:structure:latest",
         snapshot,
         day,
     )
-    return _read_structure_latest(redis, config), day
+    return CurrentRowResult(
+        row=_read_structure_latest(redis, config), effective_day=day, from_fallback=True
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -241,9 +269,17 @@ def write_band_state(redis: Any, config: MarketRiskConfig, state: BandState) -> 
 
 
 def publish_result(
-    redis: Any, config: MarketRiskConfig, result: MarketRiskResult
+    redis: Any,
+    config: MarketRiskConfig,
+    result: MarketRiskResult,
+    *,
+    source: str = "",
 ) -> None:
-    """Publish ``market:risk:latest`` (hash) + ``stream:market.risk`` (stream)."""
+    """Publish ``market:risk:latest`` (hash) + ``stream:market.risk`` (stream).
+
+    ``source`` (O12-②) is an informational provenance tag, not part of the
+    fixed §4.3 field set — consumers must tolerate it being blank or unknown.
+    """
     latest = {
         "score": _fmt(result.score),
         _EMA_FIELD: _fmt(result.score_ema),
@@ -255,6 +291,7 @@ def publish_result(
         "asof_ts": result.asof_ts.isoformat(),
         "kind": result.kind,
         "components": json.dumps(result.components_payload(), ensure_ascii=False),
+        "source": source,
     }
     latest_key = config.redis.latest_key
     # delete-then-hset so stale fields from a previous publish never linger.
@@ -441,7 +478,12 @@ def run_mode(
         logger.info("%s outside intraday session window; skipping", current_time.time())
         return 0
 
-    row, effective_day = load_current_row(mode, day, store, redis, config)
+    current = load_current_row(mode, day, store, redis, config)
+    row, effective_day, from_fallback = (
+        current.row,
+        current.effective_day,
+        current.from_fallback,
+    )
     if not row:
         logger.warning("no market-structure inputs available for %s (%s)", day, mode)
 
@@ -468,12 +510,30 @@ def run_mode(
         asof_ts=current_time,
     )
 
-    publish_result(redis, config, result)
+    if from_fallback:
+        source = _SOURCE_FALLBACK
+    elif mode == "close":
+        source = _SOURCE_CLOSE_ROW
+    elif mode == "premarket":
+        source = _SOURCE_PREMARKET_ROW
+    else:
+        source = _SOURCE_STRUCTURE_LATEST
+
+    publish_result(redis, config, result, source=source)
     write_band_state(redis, config, next_state)
 
     if mode == "close":
-        publish_regime_daily(redis, config, result)
-        _write_close_row(store, effective_day, result, injected_columns)
+        if from_fallback and not config.close.publish_regime_on_fallback:
+            logger.info(
+                "close row for %s came from market:structure:latest fallback;"
+                " skipping regime:unified:daily publish (O12-②)",
+                effective_day,
+            )
+        else:
+            publish_regime_daily(redis, config, result)
+        _write_close_row(
+            store, effective_day, result, injected_columns, from_fallback=from_fallback
+        )
 
     if result.band_changed:
         active_ledger = ledger if ledger is not None else _default_ledger()
@@ -510,11 +570,21 @@ def _write_close_row(
     day: date,
     result: MarketRiskResult,
     injected_columns: dict[str, float] | None = None,
+    *,
+    from_fallback: bool = False,
 ) -> None:
     """Merge score columns into the existing close row (idempotent).
 
     Injected raw inputs (e.g. har_rv_pred from the vol forecast) are persisted
     alongside the score so the rolling normalization history accumulates.
+
+    ``from_fallback`` (O12-②) marks that the scored row came from
+    ``market:structure:latest`` rather than a confirmed close row. In
+    practice the close-row read here mirrors :func:`load_current_row`'s own
+    lookup, so a fallback run always finds ``base`` empty (nothing to merge
+    into) and this is a no-op today; the explicit ``finalized=False`` tag
+    below is defense-in-depth against a future change to that lookup ever
+    persisting a fallback-derived row as a confirmed close.
     """
     base = _read_store_row(store, day, _SNAPSHOT_CLOSE)
     if not base:
@@ -523,6 +593,8 @@ def _write_close_row(
     if injected_columns:
         base.update(injected_columns)
     base.update(risk_row_fields(result))
+    if from_fallback:
+        base["finalized"] = False
     store.replace_day(day, _SNAPSHOT_CLOSE, base)
 
 

@@ -226,6 +226,20 @@ redis:
   vol_forecast_key: "forecast:vol:current"
 
 # ---------------------------------------------------------------------------
+# Close-mode fallback policy (O12-②, operator decision 2026-09-06).
+# ---------------------------------------------------------------------------
+close:
+  # When the day's confirmed close row is entirely absent from the
+  # market_structure_daily store and the engine falls back to the
+  # unconfirmed ``market:structure:latest`` hash, do NOT publish a
+  # confirmed regime:unified:daily from that provisional read.
+  # market:risk:latest is still published for shadow observability (tagged
+  # source=structure_latest_fallback); the Parquet close row is not written
+  # either way (there is no base row to merge score columns into). Flip to
+  # true to restore the pre-O12-② behavior of always publishing on close.
+  publish_regime_on_fallback: false
+
+# ---------------------------------------------------------------------------
 # Runner (services/market_risk_engine) — one-shot modes via cron.
 # ---------------------------------------------------------------------------
 runner:

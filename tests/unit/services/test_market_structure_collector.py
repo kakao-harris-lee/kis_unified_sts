@@ -204,6 +204,8 @@ class TestCollectClose:
         assert row["days_to_expiry"] >= 0
         # price down + OI up = new shorts (roadmap §4.1 quadrant)
         assert row["oi_price_signal"] == "new_shorts"
+        # O11-③: "night" is premarket-only and must never count against
+        # close-mode coverage, even though no night data was collected here.
         assert row["coverage_ratio"] == 1.0
         assert json.loads(row["missing_components"]) == []
         assert bool(row["finalized"]) is True
@@ -403,6 +405,8 @@ class TestCollectPremarket:
 
         row = _stored_row(store, TRADE_DAY, "premarket")
         missing = json.loads(row["missing_components"])
+        # No night_close_key set either -> "night" (premarket-only) is also
+        # missing (O11-③): 9-component denominator (8 always-on + night).
         assert set(missing) == {
             "foreign_futures",
             "program",
@@ -410,8 +414,9 @@ class TestCollectPremarket:
             "k200",
             "basis",
             "stock_investor",
+            "night",
         }
-        assert row["coverage_ratio"] == pytest.approx(2 / 8)
+        assert row["coverage_ratio"] == pytest.approx(2 / 9)
         assert row["usdkrw"] == 1391.5
 
     def test_does_not_carry_same_day_close(self, redis, store, config, macro):

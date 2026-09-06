@@ -41,6 +41,7 @@ _CONTRACT_FIELDS = {
     "asof_ts",
     "kind",
     "components",
+    "source",
 }
 
 
@@ -181,6 +182,7 @@ class TestRedisContract:
         latest = redis.hgetall(config.redis.latest_key)
         assert set(latest) == _CONTRACT_FIELDS
         assert latest["kind"] == "close"
+        assert latest["source"] == "close_row"
         assert latest["degraded"] == "false"
         assert float(latest["score"]) > 85.0
         assert float(latest["score_ema3"]) > 85.0
@@ -325,6 +327,70 @@ class TestClosePersistence:
         frame = store.read_range(TRADE_DAY, TRADE_DAY, snapshot="premarket")
         assert len(frame) == 1
         assert SCORE_COLUMN not in frame.columns
+
+
+# ---------------------------------------------------------------------------
+# O12-② — close row absent -> market:structure:latest fallback
+# ---------------------------------------------------------------------------
+
+
+class TestCloseFallback:
+    def _seed_structure_latest(self, redis, config) -> None:
+        redis.hset(
+            config.redis.structure_latest_key,
+            mapping={
+                "flow_cum": "-10000.0",
+                "usdkrw": "9999.0",
+                "k200_ret_20d": "-5.0",
+            },
+        )
+
+    def test_fallback_close_skips_regime_daily_but_tags_latest(
+        self, redis, store, config
+    ):
+        _seed_history(store)
+        self._seed_structure_latest(redis, config)
+        # No "close" row stored for TRADE_DAY at all — the confirmed-close
+        # read is entirely absent, forcing the market:structure:latest read.
+
+        _run("close", store=store, redis=redis, config=config, now=CLOSE_TS)
+
+        assert redis.get(config.redis.regime_daily_key) is None
+        latest = redis.hgetall(config.redis.latest_key)
+        assert latest["kind"] == "close"
+        assert latest["source"] == "structure_latest_fallback"
+        assert float(latest["score"]) > 85.0
+        # Nothing to merge into (no base close row) -> not persisted as a
+        # confirmed Parquet close row.
+        frame = store.read_range(TRADE_DAY, TRADE_DAY, snapshot="close")
+        assert frame.empty
+
+    def test_normal_close_writes_regime_daily_and_tags_close_row(
+        self, redis, store, config
+    ):
+        _seed_history(store)
+        store.replace_day(TRADE_DAY, "close", _risky_row())
+
+        _run("close", store=store, redis=redis, config=config, now=CLOSE_TS)
+
+        assert redis.get(config.redis.regime_daily_key) is not None
+        assert redis.hgetall(config.redis.latest_key)["source"] == "close_row"
+
+    def test_publish_regime_on_fallback_flag_restores_old_behavior(
+        self, redis, store, config
+    ):
+        _seed_history(store)
+        self._seed_structure_latest(redis, config)
+        config.close.publish_regime_on_fallback = True
+
+        _run("close", store=store, redis=redis, config=config, now=CLOSE_TS)
+
+        payload = json.loads(redis.get(config.redis.regime_daily_key))
+        assert payload["date"] == TRADE_DAY.isoformat()
+        assert (
+            redis.hgetall(config.redis.latest_key)["source"]
+            == "structure_latest_fallback"
+        )
 
 
 # ---------------------------------------------------------------------------
