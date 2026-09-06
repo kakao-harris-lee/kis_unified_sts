@@ -6,15 +6,18 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from shared.utils.parsing import parse_float
+
 THEME_CANDIDATE_STATES = ("active", "watch", "quarantine")
 _STATE_SET = set(THEME_CANDIDATE_STATES)
 
-
-def _as_float(value: Any) -> float:
-    try:
-        return float(value or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
+# Identical semantics to shared.utils.parsing.parse_float for the numeric
+# score fields this module handles — never comma-formatted (O11-④, dedup).
+# Bool is unchanged by this delegation: the old `float(value or 0.0)` body
+# already returned 1.0/0.0 for True/False (Python's `or` returns the truthy
+# left operand itself, not 0.0, for True), matching parse_float; the sole
+# call site (`leader_score`, a float dataclass field) is never a bool anyway.
+_as_float = parse_float
 
 
 def _as_int(value: Any) -> int:

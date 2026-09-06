@@ -69,7 +69,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -80,6 +79,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from shared.risk.atr_percentile import DEFAULT_ATR_PERCENTILE, atr_percentile
 from shared.strategy.market_time import now_kst_naive as _now_kst_naive
+from shared.utils.coercion import to_float
 
 logger = logging.getLogger(__name__)
 
@@ -379,20 +379,12 @@ class VolatilityReference:
         return (reference_now - asof).total_seconds() > max_age_seconds
 
 
-def _as_float(raw: Any) -> float | None:
-    """Coerce a Redis LIST member to a finite float, or ``None``.
-
-    NaN and +/-inf are rejected rather than passed through: an infinite sample
-    would drag the percentile to infinity (blocking nothing) and a NaN sample
-    would silently shrink the effective window.
-    """
-    if isinstance(raw, (bytes, bytearray)):
-        raw = raw.decode("utf-8", errors="replace")
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return None
-    return value if math.isfinite(value) else None
+# NaN and +/-inf are rejected rather than passed through: an infinite sample
+# would drag the percentile to infinity (blocking nothing) and a NaN sample
+# would silently shrink the effective window. ``float()`` already parses
+# ``bytes``/``bytearray`` (a Redis LIST member) directly, so the shared
+# ``to_float`` (O11-④, dedup) needs no extra decode step here.
+_as_float = to_float
 
 
 class VolatilityReferencePublisher:

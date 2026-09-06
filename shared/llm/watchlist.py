@@ -26,6 +26,7 @@ from shared.llm.collectors import (
     NaverFinanceNewsCollector,
     StockDataCollector,
 )
+from shared.utils.parsing import parse_float
 
 logger = logging.getLogger(__name__)
 
@@ -35,13 +36,6 @@ def _get_col(df, candidates: list[str]) -> str | None:
         if c in df.columns:
             return c
     return None
-
-
-def _safe_float(v: Any, default: float = 0.0) -> float:
-    try:
-        return float(v)
-    except Exception:
-        return default
 
 
 def _safe_int(v: Any, default: int = 0) -> int:
@@ -181,7 +175,9 @@ class WatchlistGenerator:
         open_col = _get_col(market_df, ["시가", "open"])
         vol_col = _get_col(market_df, ["거래량", "volume"])
         cap_col = _get_col(market_df, ["시가총액", "market_cap"])
-        value_col = _get_col(market_df, ["거래대금", "거래대금(원)", "trade_value", "거래대금(백만원)"])
+        value_col = _get_col(
+            market_df, ["거래대금", "거래대금(원)", "trade_value", "거래대금(백만원)"]
+        )
 
         if not price_col or not open_col or not vol_col:
             logger.error(
@@ -249,7 +245,9 @@ class WatchlistGenerator:
 
         import pandas as pd  # local import to keep import surface small
 
-        cand_df = pd.concat(candidates, axis=0) if len(candidates) > 1 else candidates[0]
+        cand_df = (
+            pd.concat(candidates, axis=0) if len(candidates) > 1 else candidates[0]
+        )
         return cand_df[~cand_df.index.duplicated(keep="first")]
 
     def _compute_trend_features(self, hist) -> tuple[float, float, float]:
@@ -267,11 +265,19 @@ class WatchlistGenerator:
         try:
             if h_vol:
                 v5 = float(hist[h_vol].tail(5).mean())
-                v20 = float(hist[h_vol].tail(20).mean()) if len(hist) >= 20 else float(hist[h_vol].mean())
+                v20 = (
+                    float(hist[h_vol].tail(20).mean())
+                    if len(hist) >= 20
+                    else float(hist[h_vol].mean())
+                )
                 volume_trend = v5 / v20 if v20 > 0 else 1.0
             if h_value:
                 tv5 = float(hist[h_value].tail(5).mean())
-                tv20 = float(hist[h_value].tail(20).mean()) if len(hist) >= 20 else float(hist[h_value].mean())
+                tv20 = (
+                    float(hist[h_value].tail(20).mean())
+                    if len(hist) >= 20
+                    else float(hist[h_value].mean())
+                )
                 value_trend = tv5 / tv20 if tv20 > 0 else 1.0
             if h_close and len(hist) >= 6:
                 c_now = float(hist[h_close].iloc[-1])
@@ -297,10 +303,10 @@ class WatchlistGenerator:
             market = row.get("시장", "") or ""
             name = self.stock_collector.get_stock_name(code)
 
-            prev_close = _safe_float(row.get(price_col))
+            prev_close = parse_float(row.get(price_col))
             prev_volume = _safe_int(row.get(vol_col))
-            prev_trade_value = _safe_float(row.get(value_col))
-            change_pct = _safe_float(row.get("_change_pct"))
+            prev_trade_value = parse_float(row.get(value_col))
+            change_pct = parse_float(row.get("_change_pct"))
 
             hist = self.stock_collector.get_stock_history(code, days=history_days)
             volume_trend, value_trend, momentum_5d = self._compute_trend_features(hist)
@@ -329,7 +335,11 @@ class WatchlistGenerator:
             liquidity = math.log(tv)
             trend = (it.value_trend - 1.0) * 100.0 + (it.volume_trend - 1.0) * 50.0
             mom = it.momentum_5d * 0.5
-            it.score = liquidity * 0.6 + _clip(trend, -50, 200) * 0.3 + _clip(mom, -20, 50) * 0.1
+            it.score = (
+                liquidity * 0.6
+                + _clip(trend, -50, 200) * 0.3
+                + _clip(mom, -20, 50) * 0.1
+            )
 
     def _enrich_news(
         self,
@@ -352,12 +362,18 @@ class WatchlistGenerator:
             mk = self._safe_collect(self.mk_news, it.code)
             nv = self._safe_collect(self.naver_news, it.code)
 
-            all_news = (mk.get("stock_news", []) or []) + (nv.get("stock_news", []) or [])
-            sentiment = self.mk_news.analyze_sentiment(all_news).value if all_news else "중립"
+            all_news = (mk.get("stock_news", []) or []) + (
+                nv.get("stock_news", []) or []
+            )
+            sentiment = (
+                self.mk_news.analyze_sentiment(all_news).value if all_news else "중립"
+            )
 
             it.news_count = len(all_news)
             it.news_sentiment = sentiment
-            it.news_headlines = [n.get("title", "") for n in all_news[:5] if n.get("title")]
+            it.news_headlines = [
+                n.get("title", "") for n in all_news[:5] if n.get("title")
+            ]
 
             s = float(sentiment_map.get(sentiment, 0))
             it.score += s * 2.0 + _clip(float(it.news_count), 0.0, 10.0) * 0.2
