@@ -35,7 +35,10 @@ from shared.config.runtime_defaults import redis_url_from_env
 from shared.decision.context import MarketContext
 from shared.decision.setup_base import Setup
 from shared.portfolio.config import track_for_asset_class
-from shared.risk.gate_decision_record import GateDecisionRecord
+from shared.risk.gate_decision_record import (
+    GateDecisionRecord,
+    deterministic_reject_signal_id,
+)
 from shared.risk.log_throttle import ReasonLogThrottle, gate_log_throttle_key
 from shared.risk.market_risk_gate import (
     MarketRiskGateConfig,
@@ -192,7 +195,7 @@ class DecisionEngineDaemon:
                     # so every reject reaching here is exactly the row that
                     # belongs in signal_decisions — shadow's would-block stays
                     # log-only via _maybe_log_shadow_gate above, untouched.
-                    self._record_gate_reject(signal, gate_decision)
+                    await self._record_gate_reject(signal, gate_decision)
                     continue
 
                 try:
@@ -267,7 +270,7 @@ class DecisionEngineDaemon:
             )
         )
 
-    def _record_gate_reject(
+    async def _record_gate_reject(
         self, signal: Any, gate_decision: MarketRiskGateDecision
     ) -> None:
         """Persist one enforce-mode market-risk-gate REJECT into the ledger.
@@ -277,27 +280,60 @@ class DecisionEngineDaemon:
         observability-only and rotates out, so a reject with no downstream
         fill previously left zero durable evidence. ``self.runtime_ledger``
         is None when unwired (tests, or ``StorageConfig`` resolving to a
-        non-sqlite backend) — a pure no-op in that case. A ledger write
-        failure is logged and swallowed: it must never block or delay the
-        decision loop (fail-open, same discipline as every other trace write
-        in this daemon).
+        non-sqlite backend) — a pure no-op in that case, returned before any
+        thread hop so the unwired path stays synchronous-cheap.
+
+        The ``signal_id`` is derived deterministically
+        (:func:`deterministic_reject_signal_id`) from the candidate's
+        identity plus the gate verdict that rejected it, rather than a fresh
+        ``uuid4()`` per write (review follow-up on commit 16e215eb). This is
+        NOT cross-tick dedupe: ``signal.generated_at`` advances on every
+        decision-loop tick (Setup A/C both stamp ``generated_at=ctx.now``,
+        and ``context_provider`` supplies a fresh ``now`` each tick), so the
+        SAME candidate rejected again on the NEXT tick gets a DIFFERENT id
+        and a NEW row — row count per tick is unchanged from the previous
+        ``uuid4()`` scheme. What it does buy: a byte-identical retry/replay
+        of the SAME emission (same candidate, same ``generated_at``, same
+        gate band/side/mode) reproduces the same id and upserts the existing
+        row instead of leaving an uncorrelatable duplicate. See
+        :func:`deterministic_reject_signal_id` for why the gate's raw
+        free-text ``reason`` is deliberately excluded from that identity.
+
+        The actual write runs on a worker thread via ``asyncio.to_thread``:
+        ``SQLiteRuntimeLedger.record_signal_decision`` is a blocking
+        synchronous SQLite call and must not run on the event loop, which
+        this daemon's single-threaded tick/publish path shares with every
+        other candidate on the stream. ``SQLiteRuntimeLedger`` opens its
+        connection with ``check_same_thread=False`` and guards every
+        statement with its own ``threading.RLock``
+        (``shared/storage/runtime_ledger.py``), so calling it from a
+        thread-pool worker while the event loop thread continues is safe.
+        A ledger write failure (including inside that worker thread) is
+        logged and swallowed: it must never block or delay the decision loop
+        (fail-open, same discipline as every other trace write in this
+        daemon).
         """
         if self.runtime_ledger is None:
             return
         try:
+            signal_id = deterministic_reject_signal_id(
+                asset_class="futures",
+                symbol=signal.symbol,
+                strategy=signal.setup_type,
+                direction=signal.direction,
+                generated_at=signal.generated_at,
+                decision=gate_decision,
+            )
             record = GateDecisionRecord.from_gate_decision(
-                # The candidate never reached _publish (rejected upstream of
-                # signal_id assignment), so this id exists only to key this
-                # ledger row / the dashboard trace route's lookup — it was
-                # never emitted on any stream.
-                signal_id=uuid.uuid4().hex,
+                signal_id=signal_id,
                 asset_class="futures",
                 symbol=signal.symbol,
                 strategy=signal.setup_type,
                 decision=gate_decision,
                 created_at=signal.generated_at,
             )
-            self.runtime_ledger.record_signal_decision(
+            await asyncio.to_thread(
+                self.runtime_ledger.record_signal_decision,
                 record.to_ledger_payload(),
                 track_id=track_for_asset_class("futures"),
             )

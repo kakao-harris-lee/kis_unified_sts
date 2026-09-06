@@ -13,7 +13,10 @@ from datetime import UTC, datetime, timedelta, timezone
 import pytest
 from pydantic import ValidationError
 
-from shared.risk.gate_decision_record import GateDecisionRecord
+from shared.risk.gate_decision_record import (
+    GateDecisionRecord,
+    deterministic_reject_signal_id,
+)
 from shared.risk.market_risk_gate import MarketRiskGateDecision
 
 _KST = timezone(timedelta(hours=9))
@@ -139,3 +142,108 @@ def test_extra_field_is_rejected():
             market_risk_gate={},
             unexpected_field="nope",
         )
+
+
+# ---------------------------------------------------------------------------
+# deterministic_reject_signal_id
+#
+# Review follow-up (carried over from O14-① / commit 16e215eb): a plain
+# uuid4() per reject meant every write was uncorrelatable, even a retry of
+# the exact same emission. The id must be a pure function of the emission's
+# identity + the verdict's STRUCTURAL fields (band/side/mode) — NOT the
+# gate's raw score-bearing `reason` string, which changes on every gate-hash
+# refresh and would otherwise mint a fresh id for the identical band/side
+# verdict. This is NOT cross-tick dedupe: `generated_at` advances every
+# tick in production, so the same candidate re-evaluated on the NEXT tick
+# gets a different id and a new row, same as the old uuid4() scheme. What
+# this buys is narrower: a byte-identical retry/replay of ONE emission
+# reproduces the same id and upserts instead of duplicating.
+# ---------------------------------------------------------------------------
+
+_GENERATED_AT = datetime(2026, 9, 6, 9, 30, tzinfo=_KST)
+
+
+def _id_kwargs(**overrides) -> dict:
+    base = {
+        "asset_class": "futures",
+        "symbol": "A05603",
+        "strategy": "A_gap_reversion",
+        "direction": "long",
+        "generated_at": _GENERATED_AT,
+        "decision": _decision(),
+    }
+    base.update(overrides)
+    return base
+
+
+def test_deterministic_reject_signal_id_is_stable_for_the_identical_candidate():
+    id1 = deterministic_reject_signal_id(**_id_kwargs())
+    id2 = deterministic_reject_signal_id(**_id_kwargs())
+    assert id1 == id2
+    assert isinstance(id1, str)
+    assert len(id1) == 32
+    # hex digest -> only hex chars, safe as a SQLite TEXT primary key value.
+    int(id1, 16)
+
+
+def test_deterministic_reject_signal_id_changes_with_generated_at():
+    id1 = deterministic_reject_signal_id(**_id_kwargs())
+    id2 = deterministic_reject_signal_id(
+        **_id_kwargs(generated_at=_GENERATED_AT.replace(minute=31))
+    )
+    assert id1 != id2
+
+
+def test_deterministic_reject_signal_id_changes_with_symbol():
+    id1 = deterministic_reject_signal_id(**_id_kwargs())
+    id2 = deterministic_reject_signal_id(**_id_kwargs(symbol="A05604"))
+    assert id1 != id2
+
+
+def test_deterministic_reject_signal_id_changes_with_strategy():
+    id1 = deterministic_reject_signal_id(**_id_kwargs())
+    id2 = deterministic_reject_signal_id(**_id_kwargs(strategy="C_event_reaction"))
+    assert id1 != id2
+
+
+def test_deterministic_reject_signal_id_changes_with_direction():
+    id1 = deterministic_reject_signal_id(**_id_kwargs())
+    id2 = deterministic_reject_signal_id(**_id_kwargs(direction="short"))
+    assert id1 != id2
+
+
+def test_deterministic_reject_signal_id_changes_with_asset_class():
+    id1 = deterministic_reject_signal_id(**_id_kwargs())
+    id2 = deterministic_reject_signal_id(**_id_kwargs(asset_class="stock"))
+    assert id1 != id2
+
+
+def test_deterministic_reject_signal_id_changes_with_gate_band():
+    other = _decision(
+        band="CRITICAL",
+        score=90.0,
+        reason="market_risk band=CRITICAL score=90.0 rule=block_new_long",
+    )
+    id1 = deterministic_reject_signal_id(**_id_kwargs())
+    id2 = deterministic_reject_signal_id(**_id_kwargs(decision=other))
+    assert id1 != id2
+
+
+def test_deterministic_reject_signal_id_changes_with_gate_mode():
+    other = _decision(mode="shadow")
+    id1 = deterministic_reject_signal_id(**_id_kwargs())
+    id2 = deterministic_reject_signal_id(**_id_kwargs(decision=other))
+    assert id1 != id2
+
+
+def test_deterministic_reject_signal_id_is_stable_across_a_same_band_score_refresh():
+    """A gate-hash cron refresh changes only the score embedded in `reason`
+    (same band, same side) — this must NOT mint a new id, mirroring the
+    exact throttle-key discipline `_maybe_log_shadow_gate` already applies
+    (O14-③): score is deliberately excluded from the hashed identity."""
+    higher_score = _decision(
+        reason="market_risk band=HIGH score=91.0 rule=block_new_long", score=91.0
+    )
+    id1 = deterministic_reject_signal_id(**_id_kwargs())
+    id2 = deterministic_reject_signal_id(**_id_kwargs(decision=higher_score))
+    assert id1 == id2
