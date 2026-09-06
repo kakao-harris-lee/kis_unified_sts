@@ -145,14 +145,12 @@ jobs:
 
       - name: Install linters
         run: |
-          pip install ruff black
+          pip install black
 
-      # ruff is a real gate (2026-09-06 operator decision): the tree is clean and
-      # must stay clean. black/mypy stay advisory (continue-on-error) because the
-      # formatting/typing debt (~400 files / ~650 errors) is tracked separately.
-      - name: Run ruff
-        run: ruff check . --output-format=github
-
+      # ruff moved to .github/workflows/ruff.yml (2026-09-06 operator decision
+      # 2a): that workflow has no path gating so it can be a required check.
+      # black/mypy stay advisory (continue-on-error) because the formatting/
+      # typing debt (~400 files / ~650 errors) is tracked separately.
       - name: Check formatting with black
         run: black --check --diff .
         continue-on-error: true

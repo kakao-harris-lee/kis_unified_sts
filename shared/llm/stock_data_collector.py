@@ -13,6 +13,7 @@ import pandas as pd
 from shared.calendar import MarketCalendar
 from shared.config.secrets import SecretsManager
 from shared.kis.auth import KISAuthConfig, KISAuthManager
+from shared.utils.parsing import parse_float
 
 from .collector_base import DataCollector
 from .config import LLMConfig
@@ -195,11 +196,17 @@ class StockDataCollector(DataCollector):
             output = payload.get("output2", []) or payload.get("output1", []) or []
             rows: list[dict[str, Any]] = []
 
-            def _to_float(value: Any) -> float:
-                try:
-                    return float(str(value).replace(",", "").strip() or 0)
-                except Exception:
-                    return 0.0
+            # shared.utils.parsing.parse_float already strips commas and
+            # defaults to 0.0 (O11-④, dedup). The old body caught bare
+            # `Exception` (parse_float only catches ValueError internally);
+            # that only matters if `str(value)` itself can raise, and every
+            # `value` here is `item.get(...)` off `payload = response.json()`
+            # (KIS `inquire-daily-itemchartprice` output rows) — plain JSON
+            # scalars (str/int/float/None), whose `__str__` never raises. A
+            # bool would map to 1.0/0.0 here (was 0.0/0.0 via the old
+            # `float(str(True))` -> ValueError path) but this API's numeric
+            # fields (stck_oprc/stck_hgpr/...) are never booleans.
+            _to_float = parse_float
 
             def _to_int(value: Any) -> int:
                 return int(_to_float(value))

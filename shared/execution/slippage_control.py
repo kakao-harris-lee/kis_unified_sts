@@ -18,6 +18,8 @@ from datetime import UTC, datetime, time, timedelta
 from enum import StrEnum
 from typing import Any
 
+from shared.utils.parsing import parse_float
+
 logger = logging.getLogger(__name__)
 
 
@@ -219,9 +221,7 @@ def parse_orderbook_snapshot(
     if close <= 0:
         close = (ask + bid) / 2.0
 
-    timestamp = (
-        _parse_timestamp(payload.get("timestamp")) or now or datetime.now(UTC)
-    )
+    timestamp = _parse_timestamp(payload.get("timestamp")) or now or datetime.now(UTC)
 
     return OrderBookSnapshot(
         symbol=symbol,
@@ -537,13 +537,15 @@ class FuturesSlippageController:
         )
 
 
-def _to_float(value: Any) -> float:
-    if value is None:
-        return 0.0
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
+# Identical semantics to shared.utils.parsing.parse_float for the internal
+# market-data fields this module handles — never comma-formatted (O11-④,
+# dedup). Equivalence to the old `float(value)` body relies on these fields
+# never being raw `bytes`: they arrive either already numeric (an in-process
+# feed's orderbook snapshot) or as `str` decoded by `RedisClient`, which sets
+# `decode_responses: True` (shared/streaming/client.py:117).
+# `float(b"1.5")` == 1.5 but `parse_float(b"1.5")` == 0.0 (goes through
+# `str()` first), so this would NOT hold for raw undecoded bytes.
+_to_float = parse_float
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:

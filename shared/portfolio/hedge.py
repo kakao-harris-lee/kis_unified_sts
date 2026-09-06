@@ -41,6 +41,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from shared.config.base import ServiceConfigBase
 from shared.config.loader import ConfigNotFoundError
+from shared.utils.coercion import to_float
 
 logger = logging.getLogger(__name__)
 
@@ -381,12 +382,12 @@ def side_sign(side: Any) -> float:
     return -1.0 if str(side).strip().lower() in {"short", "sell"} else 1.0
 
 
-def _to_float(value: Any) -> float | None:
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return None
-    return result if math.isfinite(result) else None
+# Identical semantics to shared.utils.coercion.to_float (O11-④, dedup):
+# ``float(None)``/``float("")`` already raise (TypeError/ValueError) so the
+# explicit early-return in ``to_float`` is redundant here, not a behavior
+# difference. Imported (not re-exported directly) to keep the ``_to_float``
+# name call sites already use.
+_to_float = to_float
 
 
 def is_price_fresh(

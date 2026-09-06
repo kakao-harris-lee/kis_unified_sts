@@ -15,6 +15,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 
 import fakeredis
@@ -668,3 +669,229 @@ async def test_no_runtime_ledger_is_a_pure_noop_on_reject(redis, gate_redis):
     await _run_until_drained(daemon)
 
     assert await redis.xrange(CANDIDATE_STREAM) == []
+
+
+# ---------------------------------------------------------------------------
+# review follow-ups (carried over from O14-① / commit 16e215eb):
+#   1. deterministic reject signal_id (correlate re-evaluations, upsert safely)
+#   2. ledger write moved off the event loop (asyncio.to_thread)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_repeated_identical_reject_write_upserts_the_same_row_instead_of_duplicating(
+    redis, gate_redis, tmp_path, caplog
+):
+    """A repeated write of the exact same emission (same candidate identity,
+    same ``generated_at``, same gate verdict) must share one deterministic
+    signal_id and upsert one ledger row — not a fresh uuid4() row per write.
+
+    NOT a production-tick claim: this pins the context provider to return
+    the identical ``MarketContext`` object on every tick, which artificially
+    holds ``generated_at`` fixed purely to exercise the repeat-write/upsert
+    path directly. In production ``generated_at`` advances every tick (see
+    ``deterministic_reject_signal_id``'s docstring), so this scenario models
+    a retry/replay of one emission, not two distinct ticks colliding.
+    """
+    from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+
+    _seed_gate_hash(gate_redis, "HIGH", score=74.2)
+    db_path = tmp_path / "runtime.db"
+    ctx = _ctx()  # pinned on purpose: see docstring above
+
+    async def _provider():
+        return ctx
+
+    with SQLiteRuntimeLedger(db_path) as ledger:
+        daemon = _make_daemon(
+            redis=redis,
+            setups=[_DirectionSetup("long")],
+            provider=_provider,
+            mode="enforce",
+            gate_redis=gate_redis,
+            runtime_ledger=ledger,
+        )
+        with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+            await _run_until_drained(daemon, duration=0.02)
+
+    # Many writes happened (tick_interval_seconds=0.001 over 20ms), all
+    # replaying the identical emission — but only one row should land, and
+    # no write should have errored (a uniqueness violation would show up as
+    # a swallowed "ledger write failed" warning instead of a clean upsert).
+    rejects = [
+        r.getMessage()
+        for r in caplog.records
+        if "event=entry_rejected" in r.getMessage()
+    ]
+    assert len(rejects) > 1
+    warnings = [
+        r.getMessage()
+        for r in caplog.records
+        if "ledger write failed" in r.getMessage()
+    ]
+    assert warnings == []
+
+    rows = _signal_decision_rows(db_path)
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_reject_upserts_across_a_same_band_score_refresh_within_one_emission(
+    redis, gate_redis, tmp_path
+):
+    """One emission (fixed candidate + fixed generated_at) rejected twice by
+    gate verdicts that differ only in the score embedded in ``reason`` (same
+    band, same side) must upsert one row, not two — score is deliberately
+    excluded from the hashed id (mirrors the ``gate_log_throttle_key``
+    discipline ``_maybe_log_shadow_gate`` already applies, O14-③)."""
+    from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+
+    db_path = tmp_path / "runtime.db"
+    signal = _DirectionSetup("long").check(_ctx())
+    decision_low_score = MarketRiskGateDecision(
+        allow=False,
+        would_block=True,
+        size_factor=1.0,
+        min_confidence=None,
+        reason="market_risk band=HIGH score=74.2 rule=block_new_long",
+        band="HIGH",
+        score=74.2,
+        regime="risk_off",
+        degraded=False,
+        stale=False,
+        mode="enforce",
+    )
+    decision_high_score = dataclasses.replace(
+        decision_low_score,
+        reason="market_risk band=HIGH score=91.0 rule=block_new_long",
+        score=91.0,
+    )
+
+    with SQLiteRuntimeLedger(db_path) as ledger:
+        daemon = _make_daemon(
+            redis=redis,
+            setups=[],
+            provider=_provider_for(),
+            mode="enforce",
+            gate_redis=gate_redis,
+            runtime_ledger=ledger,
+        )
+        await daemon._record_gate_reject(signal, decision_low_score)
+        await daemon._record_gate_reject(signal, decision_high_score)
+
+    rows = _signal_decision_rows(db_path)
+    assert len(rows) == 1
+    assert rows[0]["signal_id"]  # non-empty deterministic id
+
+
+@pytest.mark.asyncio
+async def test_reject_signal_id_differs_across_distinct_generated_at(
+    redis, gate_redis, tmp_path
+):
+    """Two distinct candidates (different generated_at, from _provider_for's
+    per-tick context) must land as two rows with two distinct signal_ids."""
+    from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+
+    _seed_gate_hash(gate_redis, "HIGH", score=74.2)
+    db_path = tmp_path / "runtime.db"
+    with SQLiteRuntimeLedger(db_path) as ledger:
+        daemon = _make_daemon(
+            redis=redis,
+            setups=[_DirectionSetup("long")],
+            provider=_provider_for(count=2),
+            mode="enforce",
+            gate_redis=gate_redis,
+            runtime_ledger=ledger,
+        )
+        await _run_until_drained(daemon)
+
+    rows = _signal_decision_rows(db_path)
+    assert len(rows) == 2
+    ids = {row["signal_id"] for row in rows}
+    assert len(ids) == 2
+
+
+def test_record_gate_reject_is_a_coroutine_function():
+    """Must be awaitable so the call site can move the write off the loop."""
+    assert asyncio.iscoroutinefunction(DecisionEngineDaemon._record_gate_reject)
+
+
+@pytest.mark.asyncio
+async def test_record_gate_reject_writes_via_a_worker_thread_not_the_event_loop(
+    redis, gate_redis
+):
+    """The blocking SQLite write must run off the event-loop thread
+    (asyncio.to_thread / run_in_executor), so a slow ledger write cannot
+    stall the decision loop."""
+    main_thread_id = threading.get_ident()
+    recorded_thread_ids: list[int] = []
+
+    class _ThreadRecordingLedger:
+        def record_signal_decision(self, *_args, **_kwargs):
+            recorded_thread_ids.append(threading.get_ident())
+            return "row-1"
+
+    daemon = _make_daemon(
+        redis=redis,
+        setups=[_DirectionSetup("long")],
+        provider=_provider_for(),
+        mode="enforce",
+        gate_redis=gate_redis,
+        runtime_ledger=_ThreadRecordingLedger(),
+    )
+    signal = _DirectionSetup("long").check(_ctx())
+    gate_decision = MarketRiskGateDecision(
+        allow=False,
+        would_block=True,
+        size_factor=1.0,
+        min_confidence=None,
+        reason="market_risk band=HIGH score=74.2 rule=block_new_long",
+        band="HIGH",
+        score=74.2,
+        regime="risk_off",
+        degraded=False,
+        stale=False,
+        mode="enforce",
+    )
+
+    await daemon._record_gate_reject(signal, gate_decision)
+
+    assert recorded_thread_ids == [recorded_thread_ids[0]]  # exactly one write
+    assert recorded_thread_ids[0] != main_thread_id
+
+
+@pytest.mark.asyncio
+async def test_record_gate_reject_none_ledger_is_a_cheap_noop_without_a_thread_hop(
+    redis, gate_redis, monkeypatch
+):
+    """The None-ledger (unwired) branch must return before spawning a
+    thread at all — it stays synchronous-cheap."""
+    daemon = _make_daemon(
+        redis=redis,
+        setups=[_DirectionSetup("long")],
+        provider=_provider_for(),
+        mode="enforce",
+        gate_redis=gate_redis,
+        runtime_ledger=None,
+    )
+    signal = _DirectionSetup("long").check(_ctx())
+    gate_decision = MarketRiskGateDecision(
+        allow=False,
+        would_block=True,
+        size_factor=1.0,
+        min_confidence=None,
+        reason="market_risk band=HIGH score=74.2 rule=block_new_long",
+        band="HIGH",
+        score=74.2,
+        regime="risk_off",
+        degraded=False,
+        stale=False,
+        mode="enforce",
+    )
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("asyncio.to_thread must not run on the None-ledger path")
+
+    monkeypatch.setattr(asyncio, "to_thread", _boom)
+
+    await daemon._record_gate_reject(signal, gate_decision)  # must not raise

@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from shared.streaming.client import RedisClient
+from shared.utils.parsing import parse_float
 
 from .data_classes import StockInfo
 
@@ -260,11 +261,14 @@ def _json_list(raw: str) -> list[str]:
     return [str(item).strip() for item in parsed if str(item).strip()]
 
 
-def _to_float(raw: str) -> float:
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return 0.0
+# Identical semantics to shared.utils.parsing.parse_float for the plain
+# numeric score strings this module handles (O11-④, dedup). Equivalence to
+# the old `float(raw)` body relies on these fields always being `str` (never
+# `bytes`) — guaranteed by `RedisClient` setting `decode_responses: True`
+# (shared/streaming/client.py:117), which is where `_s()` above reads
+# `raw_entries` from; `float(b"1.5")` == 1.5 but `parse_float(b"1.5")` == 0.0
+# (goes through `str()` first), so this would NOT hold for raw bytes.
+_to_float = parse_float
 
 
 def _to_int(raw: str) -> int:

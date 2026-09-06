@@ -31,6 +31,7 @@ from datetime import date
 from typing import Any
 
 from shared.portfolio.config import TRACK_CORE, TRACK_FUTURES, TRACK_STOCK
+from shared.utils.coercion import to_float
 
 # Track render order — stable across every report kind (6B contract).
 TRACK_IDS: tuple[str, ...] = (TRACK_STOCK, TRACK_FUTURES, TRACK_CORE)
@@ -62,14 +63,8 @@ def _finite(value: float | None, ndigits: int) -> float | None:
     return round(f, ndigits) if math.isfinite(f) else None
 
 
-def _float_or_none(value: Any) -> float | None:
-    if value is None or value == "":
-        return None
-    try:
-        f = float(value)
-    except (TypeError, ValueError):
-        return None
-    return f if math.isfinite(f) else None
+# Identical semantics to shared.utils.coercion.to_float (O11-④, dedup).
+_float_or_none = to_float
 
 
 def _months_between(start: date, end: date) -> int:

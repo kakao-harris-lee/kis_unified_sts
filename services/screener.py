@@ -391,6 +391,102 @@ def _should_publish_snapshot(
     return (now - last_publish_time) >= heartbeat_seconds
 
 
+def _publish_universe_snapshot(
+    *,
+    redis_client: Any,
+    publisher: Any,
+    universe_latest_key: str,
+    codes: list[str],
+    payload: dict[str, Any],
+    now: float,
+    last_signature: str | None,
+    last_publish_time: float,
+    heartbeat_seconds: float,
+) -> tuple[str | None, float]:
+    """Publish the universe stream record + latest-cache snapshot if due.
+
+    Extracted from ``run_screener`` (2026-09-06 review follow-up) so the
+    publish-and-mark behavior is independently testable without driving the
+    whole screener loop. Behavior is unchanged: the stream publish always
+    fires once a publish is due (code-set changed, or heartbeat elapsed);
+    the returned ``(signature, publish_time)`` only advances past the
+    caller's current values when the latest-cache SET also succeeds. So a
+    Redis blip leaves the signature unchanged, and the next cycle sees the
+    same code set as still "not yet published": it re-publishes to the
+    stream (a duplicate stream snapshot) and retries the cache write. That
+    duplicate is the accepted trade-off for guaranteeing the latest-cache
+    key eventually catches up instead of going stale on a transient outage.
+
+    Returns the ``(last_signature, last_publish_time)`` pair the caller
+    should keep tracking (unchanged when no publish was due or the cache
+    write failed).
+    """
+    signature = _code_set_signature(codes)
+    if not _should_publish_snapshot(
+        signature=signature,
+        last_signature=last_signature,
+        now=now,
+        last_publish_time=last_publish_time,
+        heartbeat_seconds=heartbeat_seconds,
+    ):
+        return last_signature, last_publish_time
+
+    publisher.publish(payload)
+    if _safe_set(
+        redis_client,
+        universe_latest_key,
+        json.dumps(payload, ensure_ascii=False),
+        ex=86400,
+    ):
+        # Only mark this code set as "published" when the cache write
+        # actually succeeded (reviewer guidance 2026-09-06): otherwise a
+        # Redis blip would be silently reported as success, and the
+        # unchanged signature would never be retried.
+        logger.info(f"Published new universe: {len(codes)} codes")
+        return signature, now
+    return last_signature, last_publish_time
+
+
+def _publish_dip_snapshot(
+    *,
+    redis_client: Any,
+    dip_latest_key: str,
+    dip_codes: list[str],
+    dip_payload: dict[str, Any],
+    now: float,
+    last_signature: str | None,
+    last_publish_time: float,
+    heartbeat_seconds: float,
+) -> tuple[str | None, float]:
+    """Publish the dip-candidates latest-cache snapshot if due.
+
+    Same extraction and retry-on-failure rationale as
+    ``_publish_universe_snapshot``, minus the stream publish (dip
+    candidates have no stream, only the latest-cache key).
+    """
+    signature = _code_set_signature(dip_codes)
+    if not _should_publish_snapshot(
+        signature=signature,
+        last_signature=last_signature,
+        now=now,
+        last_publish_time=last_publish_time,
+        heartbeat_seconds=heartbeat_seconds,
+    ):
+        return last_signature, last_publish_time
+
+    if _safe_set(
+        redis_client,
+        dip_latest_key,
+        json.dumps(dip_payload, ensure_ascii=False),
+        ex=86400,
+    ):
+        # Same success-gating as the universe-latest publish above
+        # (reviewer guidance 2026-09-06).
+        logger.info(f"Published dip candidates: {len(dip_codes)} codes")
+        return signature, now
+    return last_signature, last_publish_time
+
+
 def _select_top_codes(
     sources: dict[str, Any],
     *,
@@ -1030,29 +1126,19 @@ async def run_screener(config: ScreenerConfig) -> None:
                         },
                     }
                     now = time.time()
-                    signature = _code_set_signature(codes)
-                    if _should_publish_snapshot(
-                        signature=signature,
-                        last_signature=last_universe_signature,
-                        now=now,
-                        last_publish_time=last_universe_publish_time,
-                        heartbeat_seconds=publish_heartbeat,
-                    ):
-                        publisher.publish(payload)
-                        if _safe_set(
-                            redis_client,
-                            config.universe_latest_key,
-                            json.dumps(payload, ensure_ascii=False),
-                            ex=86400,
-                        ):
-                            # Only mark this code set as "published" when the
-                            # cache write actually succeeded (reviewer
-                            # guidance 2026-09-06): otherwise a Redis blip
-                            # would be silently reported as success, and the
-                            # unchanged signature would never be retried.
-                            last_universe_signature = signature
-                            last_universe_publish_time = now
-                            logger.info(f"Published new universe: {len(codes)} codes")
+                    last_universe_signature, last_universe_publish_time = (
+                        _publish_universe_snapshot(
+                            redis_client=redis_client,
+                            publisher=publisher,
+                            universe_latest_key=config.universe_latest_key,
+                            codes=codes,
+                            payload=payload,
+                            now=now,
+                            last_signature=last_universe_signature,
+                            last_publish_time=last_universe_publish_time,
+                            heartbeat_seconds=publish_heartbeat,
+                        )
+                    )
 
                     current_set = set(codes)
                     set_changed = current_set != last_notified_codes
@@ -1147,27 +1233,16 @@ async def run_screener(config: ScreenerConfig) -> None:
                         "generated_at": datetime.now().isoformat(),
                     }
                     now = time.time()
-                    dip_signature = _code_set_signature(dip_codes)
-                    if _should_publish_snapshot(
-                        signature=dip_signature,
-                        last_signature=last_dip_signature,
+                    last_dip_signature, last_dip_publish_time = _publish_dip_snapshot(
+                        redis_client=redis_client,
+                        dip_latest_key=config.dip_latest_key,
+                        dip_codes=dip_codes,
+                        dip_payload=dip_payload,
                         now=now,
+                        last_signature=last_dip_signature,
                         last_publish_time=last_dip_publish_time,
                         heartbeat_seconds=publish_heartbeat,
-                    ):
-                        if _safe_set(
-                            redis_client,
-                            config.dip_latest_key,
-                            json.dumps(dip_payload, ensure_ascii=False),
-                            ex=86400,
-                        ):
-                            # Same success-gating as the universe-latest
-                            # publish above (reviewer guidance 2026-09-06).
-                            last_dip_signature = dip_signature
-                            last_dip_publish_time = now
-                            logger.info(
-                                f"Published dip candidates: {len(dip_codes)} codes"
-                            )
+                    )
 
             except APIError as e:
                 logger.warning(f"Screener iteration failed (API error): {e}")

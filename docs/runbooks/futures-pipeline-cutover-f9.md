@@ -330,6 +330,10 @@ signed off, with every non-parity row marked CLOSED or ACCEPTED.
 **HARD PREREQUISITE:** Phase-5 Gate 1–3 + operator written approval per
 `docs/runbooks/phase5-verification.md`. Do not run the live cutover without it.
 
+**HARD PREREQUISITE (live only):** `risk:state:futures*` in the live stack's
+Redis is empty before the first live order (Cutover Sequence step 1). The O13
+paper writer shares the unsuffixed key with the live kill_switch.
+
 ## Cutover Sequence (Run Off-Hours)
 
 1. Flatten and clear disposable state:
@@ -339,7 +343,21 @@ signed off, with every non-parity row marked CLOSED or ACCEPTED.
    docker compose --env-file .env.paper --profile trading stop trader-futures
    # paper — host Redis (db 1, no auth). For live, target the live stack's Redis.
    redis-cli -p 6379 -n 1 del futures:monitor:positions trading:futures:positions risk:state:futures
+   # O13 (2026-09-06): the monolithic paper orchestrator now writes the
+   # UNSUFFIXED risk:state:futures hash (same key kill_switch reads), and its
+   # period counters (daily/weekly/monthly PnL, consecutive losses) persist
+   # until the period rolls over. Purge every variant so paper-accumulated
+   # losses can never seed a live kill-switch decision. Review the keys first.
+   # These two lines also use the PAPER target (-p 6379 -n 1); at the live
+   # cutover run them against the LIVE stack's Redis (see "Redis access" above)
+   # — purging paper's copy does nothing for a live kill_switch.
+   redis-cli -p 6379 -n 1 --scan --pattern 'risk:state:futures*'
+   redis-cli -p 6379 -n 1 --scan --pattern 'risk:state:futures*' | xargs -r redis-cli -p 6379 -n 1 del
    ```
+
+   The purge is mandatory before the **live** cutover (Gate 2 checklist): the
+   live kill_switch reads `risk:state:futures` verbatim, and a monthly counter
+   carried over from paper would be evaluated against live thresholds.
 
 2. Block the orchestrator futures path (F-8 double-trade guard). In the env file:
 
@@ -471,7 +489,10 @@ automatically — verify each before going live:
 - `futures:monitor:positions` is the futures_monitor working store
   (HSET/HDEL/recover on restart).
 - `risk:state:futures[:shadow]` is the PseudoOCO realized-PnL / risk-counter store
-  (shadow run writes the `:shadow` variant; isolated from live).
+  (shadow run writes the `:shadow` variant; isolated from live). Since O13
+  (2026-09-06, PR #646) the monolithic `trader-futures` paper path also writes
+  the unsuffixed key (gate `risk_state.monolithic_writer_enabled`), so in paper
+  the unsuffixed hash holds paper PnL — purge it at cutover (step 1 above).
 - `trading:futures:*[:shadow]` are the dashboard-native keys owned by
   `TradingStatePublisher`.
 - The F-8 `FUTURES_ORCHESTRATOR_ENABLED` guard (`cli/main.py`, default `true`)

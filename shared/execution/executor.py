@@ -1,4 +1,5 @@
 """Order execution engine."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +16,7 @@ from zoneinfo import ZoneInfo
 import aiohttp
 
 from shared.kis.auth import is_token_expired_error, retry_once_on_token_expiry
+from shared.utils.parsing import parse_float
 
 from .config import ExecutionConfig, TradingMode
 from .exceptions import OrderExecutionError, RateLimitExceeded
@@ -218,11 +220,11 @@ def _to_int(value: Any) -> int:
         return 0
 
 
-def _to_float(value: Any) -> float:
-    try:
-        return float(str(value).replace(",", "").strip() or "0")
-    except (TypeError, ValueError):
-        return 0.0
+# Identical semantics to shared.utils.parsing.parse_float (comma-strip +
+# 0.0 default) (O11-④, dedup). A bool would now map True->1.0 (old body:
+# `float(str(True))` -> ValueError -> 0.0); the sole call site
+# (`row.get("avg_idx")`, a broker fill-price ledger column) is never a bool.
+_to_float = parse_float
 
 
 class OrderExecutor:
@@ -265,6 +267,7 @@ class OrderExecutor:
         self._cancel_rate_limiter: RedisRateLimiter | None = None
         if config.redis_url:
             from .rate_limiter import RedisRateLimiter
+
             self._rate_limiter = RedisRateLimiter(
                 redis_url=config.redis_url,
                 key_prefix=config.rate_limit_key,
@@ -306,10 +309,10 @@ class OrderExecutor:
         if not self._initialized:
             # Configure connection pool for optimal performance
             connector = aiohttp.TCPConnector(
-                limit=10,               # Total connection pool size
-                limit_per_host=5,       # Per-host connection limit
-                ttl_dns_cache=300,      # DNS cache TTL (5 minutes)
-                keepalive_timeout=30,   # Keep-alive for connection reuse
+                limit=10,  # Total connection pool size
+                limit_per_host=5,  # Per-host connection limit
+                ttl_dns_cache=300,  # DNS cache TTL (5 minutes)
+                keepalive_timeout=30,  # Keep-alive for connection reuse
             )
             self.session = aiohttp.ClientSession(connector=connector)
             self._initialized = True
@@ -341,8 +344,12 @@ class OrderExecutor:
 
         try:
             # HEAD request to establish connection without full response
-            async with self.session.head(base_url, timeout=aiohttp.ClientTimeout(total=5)) as response:
-                logger.info(f"Connection warmup to {base_url}: status={response.status}")
+            async with self.session.head(
+                base_url, timeout=aiohttp.ClientTimeout(total=5)
+            ) as response:
+                logger.info(
+                    f"Connection warmup to {base_url}: status={response.status}"
+                )
                 return True
         except Exception as e:
             logger.warning(f"Connection warmup failed for {base_url}: {e}")
@@ -375,8 +382,7 @@ class OrderExecutor:
                 await self._rate_limiter.acquire(timeout=self.config.rate_limit_timeout)
             except RateLimitExceeded:
                 return OrderResponse(
-                    success=False,
-                    message="Rate limit exceeded, try again later"
+                    success=False, message="Rate limit exceeded, try again later"
                 )
 
         throttle_streak = 0
@@ -396,7 +402,9 @@ class OrderExecutor:
                     )
                     return response
 
-                logger.warning(f"Order attempt {attempt + 1} failed: {response.message}")
+                logger.warning(
+                    f"Order attempt {attempt + 1} failed: {response.message}"
+                )
                 if attempt < self.config.max_retries - 1:
                     if response.broker_msg_cd == KIS_THROTTLE_MSG_CD:
                         throttle_streak += 1
@@ -432,8 +440,7 @@ class OrderExecutor:
                     return OrderResponse(success=False, message=str(e))
 
         return OrderResponse(
-            success=False,
-            message=f"Failed after {self.config.max_retries} retries"
+            success=False, message=f"Failed after {self.config.max_retries} retries"
         )
 
     @staticmethod
@@ -473,7 +480,9 @@ class OrderExecutor:
         is_mock = mode == TradingMode.MOCK.value
         if self._is_futures_order(order):
             if is_mock:
-                logger.warning("KIS mock server does not support futures; routing to real server")
+                logger.warning(
+                    "KIS mock server does not support futures; routing to real server"
+                )
             return await self._send_kis_futures_order(order, is_mock=False)
         return await self._send_kis_stock_order(order, is_mock=is_mock)
 
@@ -509,21 +518,35 @@ class OrderExecutor:
         # Select TR code based on venue, mode, and side
         if is_ats:
             if order.side == OrderSide.BUY.value:
-                tr_id = self.config.tr_code_ats_buy_mock if is_mock else self.config.tr_code_ats_buy_real
+                tr_id = (
+                    self.config.tr_code_ats_buy_mock
+                    if is_mock
+                    else self.config.tr_code_ats_buy_real
+                )
             else:
-                tr_id = self.config.tr_code_ats_sell_mock if is_mock else self.config.tr_code_ats_sell_real
+                tr_id = (
+                    self.config.tr_code_ats_sell_mock
+                    if is_mock
+                    else self.config.tr_code_ats_sell_real
+                )
         else:
             if order.side == OrderSide.BUY.value:
-                tr_id = self.config.tr_code_buy_mock if is_mock else self.config.tr_code_buy_real
+                tr_id = (
+                    self.config.tr_code_buy_mock
+                    if is_mock
+                    else self.config.tr_code_buy_real
+                )
             else:
-                tr_id = self.config.tr_code_sell_mock if is_mock else self.config.tr_code_sell_real
+                tr_id = (
+                    self.config.tr_code_sell_mock
+                    if is_mock
+                    else self.config.tr_code_sell_real
+                )
 
         headers = await self._build_auth_headers(tr_id=tr_id)
         if headers is None:
             return OrderResponse(
-                success=False,
-                message="Failed to get auth headers",
-                venue=venue
+                success=False, message="Failed to get auth headers", venue=venue
             )
 
         body = {
@@ -536,7 +559,9 @@ class OrderExecutor:
         }
 
         # Route to venue-specific endpoint
-        base_url = self.config.kis_mock_base_url if is_mock else self.config.kis_real_base_url
+        base_url = (
+            self.config.kis_mock_base_url if is_mock else self.config.kis_real_base_url
+        )
         endpoint = "order-ats" if is_ats else "order-cash"
         url = f"{base_url}/uapi/domestic-stock/v1/trading/{endpoint}"
 
@@ -592,9 +617,7 @@ class OrderExecutor:
         headers = await self._build_auth_headers(tr_id=tr_id)
         if headers is None:
             return OrderResponse(
-                success=False,
-                message="Failed to get auth headers",
-                venue=venue
+                success=False, message="Failed to get auth headers", venue=venue
             )
 
         ord_dvsn_cd = self._map_futures_order_type(order.order_type)
@@ -614,7 +637,9 @@ class OrderExecutor:
             "ORD_DVSN_CD": ord_dvsn_cd,
         }
 
-        base_url = self.config.kis_mock_base_url if is_mock else self.config.kis_real_base_url
+        base_url = (
+            self.config.kis_mock_base_url if is_mock else self.config.kis_real_base_url
+        )
         url = f"{base_url}/uapi/domestic-futureoption/v1/trading/order"
         data, status = await self._request_json("POST", url, headers=headers, json=body)
         if status != 200 or data.get("rt_cd") != "0":
@@ -727,8 +752,10 @@ class OrderExecutor:
                 fill_state_unknown=last_outcome is FillQueryOutcome.QUERY_FAILED,
             )
 
-        cancel_qty = last_status.remaining_qty if last_status.remaining_qty > 0 else max(
-            0, order.quantity - last_status.filled_qty
+        cancel_qty = (
+            last_status.remaining_qty
+            if last_status.remaining_qty > 0
+            else max(0, order.quantity - last_status.filled_qty)
         )
         cancel_resp = await self._cancel_futures_order(
             order_no=order_no,
@@ -871,7 +898,11 @@ class OrderExecutor:
                 params["FUOP_DVSN_CD"] = ""
                 params["SCRN_DVSN"] = "02"
 
-            base_url = self.config.kis_mock_base_url if is_mock else self.config.kis_real_base_url
+            base_url = (
+                self.config.kis_mock_base_url
+                if is_mock
+                else self.config.kis_real_base_url
+            )
             url = f"{base_url}{path}"
             try:
                 data, status = await self._request_json(
@@ -1032,7 +1063,9 @@ class OrderExecutor:
             "ORD_DVSN_CD": "01",
         }
 
-        base_url = self.config.kis_mock_base_url if is_mock else self.config.kis_real_base_url
+        base_url = (
+            self.config.kis_mock_base_url if is_mock else self.config.kis_real_base_url
+        )
         url = f"{base_url}/uapi/domestic-futureoption/v1/trading/order-rvsecncl"
 
         attempts = max(int(self.config.futures_cancel_max_attempts), 1)
@@ -1184,7 +1217,9 @@ class OrderExecutor:
             except RateLimitExceeded:
                 return {"rt_cd": "RATE_LIMIT", "msg1": "Rate limit exceeded"}, 429
 
-        async def do_request(current_headers: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        async def do_request(
+            current_headers: dict[str, Any],
+        ) -> tuple[dict[str, Any], int]:
             request_timeout = aiohttp.ClientTimeout(
                 total=float(self.config.order_request_timeout_seconds)
             )
@@ -1204,7 +1239,9 @@ class OrderExecutor:
                         "rt_cd": str(response.status),
                         "msg1": text,
                     }
-                return data if isinstance(data, dict) else {"output": data}, int(response.status)
+                return data if isinstance(data, dict) else {"output": data}, int(
+                    response.status
+                )
 
         async def attempt(retry: int) -> tuple[dict[str, Any], int]:
             current_headers = headers

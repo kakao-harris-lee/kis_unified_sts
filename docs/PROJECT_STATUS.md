@@ -140,6 +140,24 @@ since 2026-06-28 — recent Setup D commits tuned parameters only.
 
 ## Recent Decisions
 
+**2026-09-06 (evening)** - Operator decisions on the PR #646 carry-overs
+(1a/2a/3b/4a/5a/6c/7b): the five small follow-ups land as one PR — enforce-mode
+market-risk-gate reject rows now carry a deterministic `signal_id` (sha256 of
+the candidate identity, shared helper in `gate_decision_record`) and the ledger
+write runs off the event loop (`asyncio.to_thread`, still fail-open); the two
+screener publish-failure callers have end-to-end tests; duplicated private float
+parsers whose semantics matched `shared.utils.coercion.to_float` /
+`shared.utils.parsing.parse_float` delegate to them (O11-④, value-preserving;
+parsers with different defaults/NaN/`%` handling stay put); the F-9 cutover
+runbook gains a mandatory `risk:state:futures*` purge before live (the O13 paper
+writer shares the unsuffixed key with the live kill_switch). ruff is promoted to
+a merge-blocking check via a new ungated `ruff.yml` workflow (`test.yml` is
+path-gated, so a required check there would block tos/docs-only PRs) plus the
+`ruff` context in the `tos-gate` ruleset. black stays advisory and is applied
+only to files a PR touches (3b); the paper server is redeployed to main so the
+O13 kill-switch feed and Redis fail-fast go live (4a). Deferred by decision:
+O16 sector pipeline (6c) and O12-① premarket score persistence (7b).
+
 **2026-09-06 (later)** - Operator decisions landed (PR #646): O13 monolithic
 futures paper path now feeds `risk:state:futures` so the kill-switch's
 daily/weekly/consecutive-loss conditions are evaluated (same `RuntimeRiskState`
