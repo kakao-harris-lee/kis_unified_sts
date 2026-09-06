@@ -25,7 +25,11 @@ strategy config -> backtest -> tracking/optimization -> paper/live validation ->
   per-asset service code.
 - Redis: use DB 1 for this project (`redis://localhost:6379/1` unless an env file
   intentionally overrides it). New Redis keys need TTLs; default operational TTL
-  is 24h, accumulation snapshots use 48h.
+  is 24h, accumulation snapshots use 48h. Any other TTL is an exception that
+  must be justified in a comment next to the YAML value (e.g. the night-futures
+  close key uses 51h so Friday's capture survives to Monday premarket) and every
+  freshness check on that key must read the same config value, not a second
+  hardcoded bound.
 - Timezone: trading/session logic and cron schedules are KST-native. Convert
   timestamps to KST before comparing against Korean market hours.
 - Secrets: never commit real credentials, `.kis_token_*`, or filled `.env` files.

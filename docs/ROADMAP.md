@@ -1,6 +1,6 @@
 # Roadmap — KIS Unified Trading Platform
 
-> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-07-04 KST.**
+> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-09-06 KST.**
 
 This is the single per-asset roadmap. For the live runtime snapshot see
 [PROJECT_STATUS.md](PROJECT_STATUS.md); for the plan catalogue see
@@ -242,6 +242,8 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | Orchestrator decomposition | 🔄 in-progress | `services/trading/orchestrator.py` remains the compatibility runtime; pure initialization guard helpers, kill-switch request parsing, entry-priority sorting, signals_all row mapping, session wake calculation, and runtime-capital risk alignment now live in owner modules, while the next larger slices are execution/order lifecycle, kill-switch/live guard side effects, universe/market-data runtime, and position transitions |
 | Runtime refactoring next priorities | 🔄 in-progress | [superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md) tracks completed CLI/dashboard/KIS/OHLCV second-wave splits plus remaining P1/P2/P3 lanes, tests, verification commands, and conflict rules |
 | Event-driven futures primary runtime | ⏳ planned | Keep F-9 as the only approved replacement path for the monolithic futures runtime; validate shadow chain and O13 kill-switch coverage before cutover |
+| New-architecture plan P0–P6 (TA-Lib SoT · declarative builder · vectorbt · risk primitives · futures read-models) | 🔄 in-progress | [plans/2026-07-08-new-architecture-refactoring-plan.md](plans/2026-07-08-new-architecture-refactoring-plan.md) — P0/P1/P3 landed, P2 pilots deferred (vocabulary gap), P4 filters landed (margin_gate/leverage enforce on paper since 2026-07-12), P5 read-models advisory-only; open: single risk orchestrator, legacy backtest engine retirement, `FuturesMarketContextV2` exposure, Hedge v2, KIS facade (after F-9) |
+| Unified-system review follow-ups O11–O17 | 🔄 in-progress | [plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md) §8 — 2026-09-06 code re-check: O15-① resolved; small fixes landed for O14-③/④, O11-② (missing `futs_prdy_ctrt` → None), O11-③ TTL 51h + single-sourced staleness/max-age bound, O17-① history floor, O11-④ KST-now helper; operator decisions still open for O13 (kill-switch coverage), O14-① (futures reject ledger wiring), O11-③ `night` coverage component, O12-② fallback regime write |
 
 ### Open next-steps
 
