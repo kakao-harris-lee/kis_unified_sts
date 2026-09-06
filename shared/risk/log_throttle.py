@@ -74,6 +74,11 @@ def gate_log_throttle_key(
     e.g. HIGH blocking new longs while allowing shorts at a reduced size.
     Pass it when the caller has it directly (never parsed out of ``reason``);
     omit it for asymmetric-free callers (stock is long-only).
+
+    Both branches are namespaced (``band:...`` / ``reason:...``) so a
+    fail-open ``reason`` string can never collide with a band label that
+    happens to read the same (e.g. a reason literally equal to ``"HIGH"``
+    would otherwise share a cache slot with band ``HIGH``).
     """
-    base = band if band is not None else reason
+    base = f"band:{band}" if band is not None else f"reason:{reason}"
     return f"{base}:{side}" if side is not None else base

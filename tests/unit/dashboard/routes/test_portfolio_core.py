@@ -33,20 +33,27 @@ def _publish_tier3_hash(
     drawdown: str = "-0.08",
     triggered: str = "false",
     asof: datetime | None = None,
+    history_rows: str | None = None,
+    history_partial: str | None = None,
 ):
     asof = asof or _now_kst_naive()
-    redis.hset(
-        TIER3_KEY,
-        mapping={
-            "kospi_close": "2585.5",
-            "kospi_peak": "2810.32",
-            # Fixed contract: drawdown/threshold are FRACTIONS (−0.16 = −16%).
-            "drawdown": drawdown,
-            "trigger_threshold": "-0.15",
-            "triggered": triggered,
-            "asof_ts": asof.isoformat(),
-        },
-    )
+    fields = {
+        "kospi_close": "2585.5",
+        "kospi_peak": "2810.32",
+        # Fixed contract: drawdown/threshold are FRACTIONS (−0.16 = −16%).
+        "drawdown": drawdown,
+        "trigger_threshold": "-0.15",
+        "triggered": triggered,
+        "asof_ts": asof.isoformat(),
+    }
+    # O17-①: history_rows/history_partial are optional on the wire — omitted
+    # here by default so the "old payload, no such fields" case is exercised
+    # by every test that doesn't explicitly pass them.
+    if history_rows is not None:
+        fields["history_rows"] = history_rows
+    if history_partial is not None:
+        fields["history_partial"] = history_partial
+    redis.hset(TIER3_KEY, mapping=fields)
 
 
 def _sector_specs() -> dict[str, SimpleNamespace]:
@@ -143,6 +150,21 @@ def test_core_tier3_ok_parses_contract_hash(monkeypatch, redis_client):
     assert tier3["triggered"] is False
     assert tier3["stale"] is False
     assert tier3["age_s"] is not None
+    # O17-①: payload published without these fields (pre-existing contract)
+    # degrades to None rather than erroring.
+    assert tier3["history_rows"] is None
+    assert tier3["history_partial"] is None
+
+
+def test_core_tier3_history_partial_fields_pass_through(monkeypatch, redis_client):
+    _publish_tier3_hash(redis_client, history_rows="11", history_partial="true")
+    client = _client(monkeypatch, redis_client)
+
+    body = client.get("/api/portfolio/core").json()
+
+    tier3 = body["tier3"]
+    assert tier3["history_rows"] == 11
+    assert tier3["history_partial"] is True
 
 
 def test_core_tier3_triggered_flag_passes_through(monkeypatch, redis_client):

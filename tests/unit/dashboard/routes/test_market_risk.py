@@ -295,6 +295,31 @@ def test_default_night_close_stale_seconds_falls_back_when_config_load_fails(
     assert _default_night_close_stale_seconds() == 183600
 
 
+def test_night_close_stale_seconds_module_constant_matches_the_config_default():
+    """The unpatched module constant itself — not just the helper function —
+    must equal the config's redis_ttl_seconds when no env override is set.
+
+    Every other test in this file monkeypatches
+    ``market_risk._NIGHT_CLOSE_STALE_SECONDS`` to a literal, so nothing else
+    exercises the module-load-time assignment
+    (``_NIGHT_CLOSE_STALE_SECONDS = int(os.environ.get(..., str(
+    _default_night_close_stale_seconds())))``) against the real config load.
+    """
+    import os
+
+    from services.dashboard.routes import market_risk
+    from services.night_futures_collector.config import NightCloseCaptureConfig
+
+    if os.environ.get("MARKET_RISK_NIGHT_STALE_SECONDS") is not None:
+        pytest.skip("MARKET_RISK_NIGHT_STALE_SECONDS overridden in this environment")
+
+    assert (
+        NightCloseCaptureConfig.load_or_default().redis_ttl_seconds
+        == market_risk._NIGHT_CLOSE_STALE_SECONDS
+    )
+    assert market_risk._NIGHT_CLOSE_STALE_SECONDS == 183600
+
+
 def test_latest_degraded_flag_maps_to_status(monkeypatch, redis_client):
     _publish_risk_hash(redis_client, degraded="true")
     client = _client(monkeypatch, redis_client, None)

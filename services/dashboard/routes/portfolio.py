@@ -606,6 +606,12 @@ def _tier3_summary(redis: Any) -> dict[str, Any] | None:
     −0.16 = −16%) — the UI multiplies by 100 for display. ``triggered`` is
     the watch lane's own verdict ("true"/"false"); it is never re-derived
     here from drawdown vs threshold.
+
+    ``history_rows``/``history_partial`` (O17-①, added alongside the fixed
+    fields above) flag a partial-backfill window where the rolling peak may
+    be shallow. Both are optional on the wire — a payload published before
+    O17-① carries neither field, and both coerce to ``None``/absent so old
+    payloads still render.
     """
     payload = _redis_hgetall(redis, _TIER3_WATCH_KEY)
     if not payload:
@@ -622,6 +628,8 @@ def _tier3_summary(redis: Any) -> dict[str, Any] | None:
         "asof": asof.isoformat() if asof else None,
         "age_s": age_s,
         "stale": age_s is not None and age_s > _TIER3_STALE_SECONDS,
+        "history_rows": _coerce_int(payload.get("history_rows")),
+        "history_partial": _coerce_bool(payload.get("history_partial")),
     }
 
 

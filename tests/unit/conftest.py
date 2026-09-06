@@ -36,6 +36,8 @@ mocked (so it never touches the network or the real retry policy). Patching
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 import redis
 
@@ -56,11 +58,18 @@ def _is_excluded(request: pytest.FixtureRequest) -> bool:
 @pytest.fixture(autouse=True)
 def _hermetic_redis_guard(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Block real Redis connections for unit tests (see module docstring)."""
-    RedisClient._instance = None
+) -> Iterator[None]:
+    """Block real Redis connections for unit tests (see module docstring).
 
+    The ``_instance`` reset is scoped to the SAME condition as the
+    ``_create_client`` patch below — ``live_infra``-marked tests and the
+    excluded ``test_redis_client.py`` file manage the singleton themselves
+    (they exercise ``_create_client``'s own control flow, or intentionally
+    reach real infra), so this fixture must not null it out from under them
+    on either side of the yield.
+    """
     if "live_infra" not in request.node.keywords and not _is_excluded(request):
+        RedisClient._instance = None
 
         def _deny_real_connection(cls: type[RedisClient]) -> redis.Redis:
             raise redis.exceptions.ConnectionError(
@@ -73,6 +82,8 @@ def _hermetic_redis_guard(
             RedisClient, "_create_client", classmethod(_deny_real_connection)
         )
 
-    yield
+        yield
 
-    RedisClient._instance = None
+        RedisClient._instance = None
+    else:
+        yield

@@ -97,6 +97,17 @@ def test_key_is_stable_without_a_side_argument():
     assert key1 == key2
 
 
+def test_key_namespaces_band_and_reason_so_they_never_collide():
+    """A fail-open ``reason`` that happens to read the same as a band label
+    must not share a throttle slot with that band (namespacing fix)."""
+    band_key = gate_log_throttle_key(band="HIGH", reason="market_risk band=HIGH")
+    reason_key = gate_log_throttle_key(band=None, reason="HIGH")
+
+    assert band_key != reason_key
+    assert band_key == "band:HIGH"
+    assert reason_key == "reason:HIGH"
+
+
 def test_key_end_to_end_with_the_throttle():
     """Same band, two different scores, within the interval: logs once."""
     throttle = ReasonLogThrottle(interval_seconds=300.0)
