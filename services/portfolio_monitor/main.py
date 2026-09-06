@@ -67,6 +67,7 @@ from shared.portfolio.equity import (
     month_key,
     track_label,
 )
+from shared.strategy.market_time import now_kst_naive
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +85,7 @@ _TRACK_ASSET_CLASSES: dict[str, str] = {
 PositionsProvider = Callable[[], Sequence[Mapping[str, Any]]]
 
 
-def _now_kst() -> datetime:
-    return datetime.now(KST).replace(tzinfo=None)
+_now_kst = now_kst_naive  # shared.strategy.market_time (O11-④, dedup)
 
 
 def _fmt(value: float | None) -> str:

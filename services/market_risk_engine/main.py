@@ -45,6 +45,7 @@ from shared.risk.market_risk_score import (
     risk_row_fields,
     seed_state_from_records,
 )
+from shared.strategy.market_time import now_kst_naive
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +60,7 @@ _MODES = ("premarket", "intraday", "close")
 _EMA_FIELD = "score_ema3"
 
 
-def _now_kst() -> datetime:
-    return datetime.now(KST).replace(tzinfo=None)
+_now_kst = now_kst_naive  # shared.strategy.market_time (O11-④, dedup)
 
 
 def _is_present(value: Any) -> bool:

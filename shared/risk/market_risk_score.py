@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from shared.config.base import ServiceConfigBase
 from shared.config.loader import ConfigNotFoundError
+from shared.strategy.market_time import now_kst_naive
 
 logger = logging.getLogger(__name__)
 
@@ -832,7 +833,7 @@ def compute_market_risk(
             "history contains rows at/after the scored trade_date (look-ahead)"
         )
 
-    asof = asof_ts or datetime.now(KST).replace(tzinfo=None)
+    asof = asof_ts or now_kst_naive()
     row_asof = current_row.get("asof_ts")
     if _is_present(row_asof):
         default_asof = (

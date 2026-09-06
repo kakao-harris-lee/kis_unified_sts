@@ -116,6 +116,7 @@ from shared.decision.signal import Signal
 from shared.risk.filters.base import FilterResult, RiskFilter
 from shared.risk.futures_margin import MarginProductSpec, spec_for_symbol
 from shared.risk.state import RiskStateSnapshot
+from shared.strategy.market_time import now_kst_naive
 from shared.utils.coercion import to_float
 
 logger = logging.getLogger(__name__)
@@ -180,9 +181,7 @@ class LeverageFilter(RiskFilter):
         #: signal on the hot path, so an un-deduped warning would flood the log.
         self._warned_unresolved_symbols: set[str] = set()
         self.stale_max_age_seconds: int | None = stale_max_age_seconds
-        self._now_provider = now_provider or (
-            lambda: datetime.now(KST).replace(tzinfo=None)
-        )
+        self._now_provider = now_provider or now_kst_naive
 
     # ------------------------------------------------------------------
     # RiskFilter interface

@@ -41,6 +41,7 @@ from shared.storage.config import StorageConfig
 
 # Reuse the sister store's dependency guards (same package, same deps).
 from shared.storage.market_data_store import _require_duckdb, _require_pandas
+from shared.strategy.market_time import now_kst_naive as _now_kst_naive
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -157,10 +158,6 @@ class MarketStructureConfig(ServiceConfigBase):
 def _empty_frame() -> Any:
     pd = _require_pandas()
     return pd.DataFrame(columns=_META_COLUMNS)
-
-
-def _now_kst_naive() -> datetime:
-    return datetime.now(KST).replace(tzinfo=None)
 
 
 def _to_kst_naive(value: Any) -> datetime:

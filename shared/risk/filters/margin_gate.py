@@ -78,6 +78,7 @@ from shared.decision.signal import Signal
 from shared.risk.filters.base import FilterResult, RiskFilter
 from shared.risk.futures_margin import RISK_LEVELS
 from shared.risk.state import RiskStateSnapshot
+from shared.strategy.market_time import now_kst_naive
 
 logger = logging.getLogger(__name__)
 
@@ -189,9 +190,7 @@ class MarginGateFilter(RiskFilter):
         self._snapshot_provider = snapshot_provider or _default_snapshot_provider(
             latest_key
         )
-        self._now_provider = now_provider or (
-            lambda: datetime.now(KST).replace(tzinfo=None)
-        )
+        self._now_provider = now_provider or now_kst_naive
 
     # ------------------------------------------------------------------
     # RiskFilter interface

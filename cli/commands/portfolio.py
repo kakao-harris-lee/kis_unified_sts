@@ -205,6 +205,7 @@ def portfolio_record(
     from shared.portfolio.config import TRACK_CORE
     from shared.storage import SQLiteRuntimeLedger
     from shared.storage.config import StorageConfig
+    from shared.strategy.market_time import now_kst_naive
 
     if shares <= 0 or price <= 0:
         click.echo("Error: shares/price는 양수여야 합니다", err=True)
@@ -219,7 +220,7 @@ def portfolio_record(
             err=True,
         )
 
-    now = datetime.now(KST).replace(tzinfo=None)
+    now = now_kst_naive()
     trade: dict[str, object] = {
         "asset_class": "stock",
         "symbol": symbol,

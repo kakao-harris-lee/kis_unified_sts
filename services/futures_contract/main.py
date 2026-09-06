@@ -38,6 +38,7 @@ from shared.instruments.futures import (
     compute_contract_state,
     contract_state_to_fields,
 )
+from shared.strategy.market_time import now_kst_naive
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +50,7 @@ _LONG_TTL_MODES = frozenset({"premarket", "close"})
 _MODES = ("premarket", "intraday", "close")
 
 
-def _now_kst() -> datetime:
-    return datetime.now(KST).replace(tzinfo=None)
+_now_kst = now_kst_naive  # shared.strategy.market_time (O11-④, dedup)
 
 
 def resolve_night_symbols(

@@ -47,6 +47,7 @@ from shared.risk.product_specs import (
     build_product_specs,
     load_execution_contract_specs,
 )
+from shared.strategy.market_time import now_kst_naive
 from shared.utils.coercion import to_float as _parse_float
 
 # ``build_product_specs`` moved to ``shared/risk/product_specs.py`` (P5-3 F3) so
@@ -65,8 +66,7 @@ AccountSnapshotProvider = Callable[[], tuple[float | None, float | None, bool]]
 ATRProvider = Callable[[Sequence[str]], Mapping[str, float]]
 
 
-def _now_kst() -> datetime:
-    return datetime.now(KST).replace(tzinfo=None)
+_now_kst = now_kst_naive  # shared.strategy.market_time (O11-④, dedup)
 
 
 # ---------------------------------------------------------------------------

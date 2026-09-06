@@ -56,6 +56,7 @@ from shared.reports.feedback import (
     render_markdown,
     to_json,
 )
+from shared.strategy.market_time import now_kst_naive
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +70,7 @@ MarketRowsProvider = Callable[[date, date], Sequence[Mapping[str, Any]]]
 ExpectationLoader = Callable[[str], Mapping[str, Any] | None]
 
 
-def _now_kst() -> datetime:
-    return datetime.now(KST).replace(tzinfo=None)
+_now_kst = now_kst_naive  # shared.strategy.market_time (O11-④, dedup)
 
 
 def _end_iso(day: date) -> str:
