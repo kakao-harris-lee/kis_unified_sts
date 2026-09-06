@@ -179,6 +179,11 @@ class Tier3WatchConfig(BaseModel):
     ttl_seconds: int = Field(default=86400, gt=0)
     # Rolling-peak window in TRADING days over the daily close history.
     peak_window_days: int = Field(default=252, gt=0)
+    # Minimum rows for a trustworthy rolling peak (O17-①). Below this floor
+    # the peak is shallow — the watch still publishes (never suppressed, a
+    # missed real drawdown is worse than a noisy one) but flags
+    # ``history_partial``/``history_rows`` in the payload and logs a warning.
+    min_history_rows: int = Field(default=120, ge=1)
     # market_structure_daily column used as the KOSPI proxy. The dataset
     # carries the KOSPI200 index (k200_close); switch here if/when a KOSPI
     # composite column is collected.

@@ -27,7 +27,11 @@ import numpy as np
 import pandas as pd
 
 import shared.llm.market_analyzers as market_analyzers_mod
-from shared.llm.analyzers import FuturesTechnicalAnalyzer, StockBacktester, StockTechnicalAnalyzer
+from shared.llm.analyzers import (
+    FuturesTechnicalAnalyzer,
+    StockBacktester,
+    StockTechnicalAnalyzer,
+)
 from shared.llm.market_analyzers import IndexAnalyzer, TechnicalAnalyzerForFutures
 from shared.llm.stock_screening import calc_momentum_metrics
 

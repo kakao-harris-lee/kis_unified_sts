@@ -11,8 +11,16 @@ indicator math is being moved behind the indicator package
 * ``TRIX_GOLDEN_EXIT``    — swing-low (rolling extrema) stop
 * ``track_a_exit``        — rolling-window max-adverse-move (crash guard)
 
-Scenarios use seeded synthetic data and are asserted for EXACT equality (the
-refactor must be bit-identical; JSON float round-trip is exact for float64).
+Scenarios use seeded synthetic data and are asserted structurally: ints,
+strings, bools, and ``None`` must match exactly (the refactor must be
+bit-identical there), but float leaves are compared with a tolerance
+(``_FLOAT_REL_TOL`` / ``_FLOAT_ABS_TOL``) rather than exact equality. This
+mirrors the pandas/numpy arm64 (Apple Silicon) FMA-kernel drift class already
+pinned elsewhere in this repo (see ``EMA_REL_TOL`` in
+``tests/unit/trading/test_p1b3_trading_residuals_golden.py``): compiled
+``ewm``/MACD kernels can differ from the x86 CI host at the ULP level
+(observed relative diff ~1e-13 on the ``macd_ema_crossover`` scenario), which
+plain ``==`` comparison after a JSON round-trip does not tolerate.
 
 Regenerate (only when intentionally re-pinning, from repo root):
 
@@ -388,6 +396,50 @@ def build_golden() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+#: Tolerance for float-leaf comparison in ``_assert_structurally_close``.
+#: Sized to the observed arm64 (Apple Silicon) vs. x86 (CI) ULP-level drift
+#: on compiled pandas/numpy ewm/MACD kernels (~1e-13 relative on the
+#: macd_ema_crossover scenario) with headroom, while still catching any
+#: real regression (see the negative-case tests below).
+_FLOAT_REL_TOL = 1e-9
+_FLOAT_ABS_TOL = 1e-12
+
+
+def _assert_structurally_close(got: Any, want: Any, path: str = "root") -> None:
+    """Assert ``got`` matches ``want`` structurally.
+
+    Ints, strings, bools, and ``None`` must match exactly. Floats are
+    compared with :func:`pytest.approx` (``_FLOAT_REL_TOL`` /
+    ``_FLOAT_ABS_TOL``) to tolerate platform-level ULP drift without masking
+    real regressions, but ``got`` must still be an actual ``float`` where
+    ``want`` is a float — an int (or bool) standing in for a golden float is a
+    type regression, not tolerable drift, and is rejected. Dict key sets and
+    list lengths must match exactly.
+    """
+    if isinstance(want, bool) or isinstance(got, bool):
+        assert type(got) is type(want) and got == want, f"{path}: {got!r} != {want!r}"
+    elif isinstance(want, float):
+        assert isinstance(got, float), f"{path}: expected float, got {type(got)!r}"
+        assert got == pytest.approx(
+            want, rel=_FLOAT_REL_TOL, abs=_FLOAT_ABS_TOL
+        ), f"{path}: {got!r} !~= {want!r}"
+    elif isinstance(want, dict):
+        assert isinstance(got, dict), f"{path}: expected dict, got {type(got)!r}"
+        assert (
+            got.keys() == want.keys()
+        ), f"{path}: key mismatch {sorted(got)} != {sorted(want)}"
+        for key in want:
+            _assert_structurally_close(got[key], want[key], f"{path}.{key}")
+    elif isinstance(want, list):
+        assert isinstance(got, list), f"{path}: expected list, got {type(got)!r}"
+        assert len(got) == len(want), f"{path}: length {len(got)} != {len(want)}"
+        for i, (g, w) in enumerate(zip(got, want, strict=True)):
+            _assert_structurally_close(g, w, f"{path}[{i}]")
+    else:
+        # int, str, None (and any other exact-match leaf type).
+        assert type(got) is type(want) and got == want, f"{path}: {got!r} != {want!r}"
+
+
 @pytest.fixture(scope="module")
 def golden() -> dict[str, Any]:
     return json.loads(_GOLDEN_PATH.read_text())
@@ -396,15 +448,47 @@ def golden() -> dict[str, Any]:
 @pytest.mark.parametrize("name", sorted(_SCENARIOS))
 def test_scenario_matches_golden(name: str, golden: dict[str, Any]) -> None:
     got = _SCENARIOS[name]()
-    # Exact equality: the delegation refactor must be bit-identical, and JSON
-    # float64 round-trips are exact.
-    assert json.loads(json.dumps(got)) == golden[name], name
+    # Structural equality: ints/strings/bools/None must be bit-identical;
+    # float leaves tolerate ULP-level platform drift (see
+    # _assert_structurally_close docstring above).
+    _assert_structurally_close(json.loads(json.dumps(got)), golden[name], name)
 
 
 @pytest.mark.parametrize("name", sorted(_SCENARIOS))
 def test_scenario_is_non_trivial(name: str, golden: dict[str, Any]) -> None:
     """Guard against a silently-empty pin (a scenario that never fires)."""
     assert golden[name], f"golden scenario '{name}' pinned no events"
+
+
+def test_structural_close_rejects_relative_float_drift() -> None:
+    """A 1e-3 relative float difference is far above ULP noise and must fail."""
+    want = {"bar": 68, "metadata": {"macd_line": 0.19968240950831273}}
+    got = {"bar": 68, "metadata": {"macd_line": 0.19968240950831273 * 1.001}}
+    with pytest.raises(AssertionError):
+        _assert_structurally_close(got, want)
+
+
+def test_structural_close_rejects_changed_int() -> None:
+    """A changed ``bar`` int must fail even though nested floats still match."""
+    want = {"bar": 68, "metadata": {"macd_line": 0.19968240950831273}}
+    got = {"bar": 69, "metadata": {"macd_line": 0.19968240950831273}}
+    with pytest.raises(AssertionError):
+        _assert_structurally_close(got, want)
+
+
+def test_structural_close_rejects_int_for_golden_float() -> None:
+    """An int (or bool) standing in for a golden float must fail, not pass."""
+    want = {"bar": 68, "metadata": {"macd_line": 0.5}}
+    got = {"bar": 68, "metadata": {"macd_line": 0}}
+    with pytest.raises(AssertionError):
+        _assert_structurally_close(got, want)
+
+
+def test_structural_close_accepts_ulp_level_float_drift() -> None:
+    """Sanity check: the observed arm64 ULP-level drift is accepted."""
+    want = {"bar": 68, "metadata": {"macd_line": 0.19968240950831273}}
+    got = {"bar": 68, "metadata": {"macd_line": 0.19968240950829852}}
+    _assert_structurally_close(got, want)  # must not raise
 
 
 if __name__ == "__main__":

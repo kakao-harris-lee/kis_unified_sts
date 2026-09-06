@@ -50,7 +50,7 @@ try:
     HAS_MLFLOW = True
 except ImportError:
     HAS_MLFLOW = False
-    mlflow = None
+    mlflow = None  # type: ignore[assignment]
 
 
 @dataclass
@@ -220,7 +220,7 @@ class StrategyOptimizer:
             show_progress_bar=show_progress_bar,
         )
 
-        best_params = self.study.best_params
+        best_params: dict[str, Any] = self.study.best_params
         best_value = self.study.best_value
 
         logger.info("Optimization complete!")
@@ -264,7 +264,10 @@ class StrategyOptimizer:
         except Exception as e:
             logger.warning(f"Trial failed: {e}")
             # 실패한 trial은 최악의 값 반환
-            return float("-inf") if self.study.direction.name == "MAXIMIZE" else float("inf")
+            study = self.study
+            if study is None:
+                raise RuntimeError("_objective called before study was created") from e
+            return float("-inf") if study.direction.name == "MAXIMIZE" else float("inf")
 
     def _sample_params(self, trial: Trial) -> dict[str, Any]:
         """파라미터 샘플링"""
@@ -272,6 +275,10 @@ class StrategyOptimizer:
 
         for spec in self.param_specs:
             if spec.param_type == "int":
+                if spec.low is None or spec.high is None:
+                    raise ValueError(
+                        f"int param spec '{spec.name}' requires low and high"
+                    )
                 params[spec.name] = trial.suggest_int(
                     spec.name,
                     int(spec.low),
@@ -279,6 +286,10 @@ class StrategyOptimizer:
                     step=int(spec.step) if spec.step else 1,
                 )
             elif spec.param_type == "float":
+                if spec.low is None or spec.high is None:
+                    raise ValueError(
+                        f"float param spec '{spec.name}' requires low and high"
+                    )
                 if spec.step:
                     params[spec.name] = trial.suggest_float(
                         spec.name,
@@ -313,7 +324,8 @@ class StrategyOptimizer:
         if self.study is None:
             raise ValueError("No optimization has been run yet.")
 
-        return self.study.trials_dataframe()
+        history: pd.DataFrame = self.study.trials_dataframe()
+        return history
 
     def get_param_importances(self) -> dict[str, float]:
         """파라미터 중요도 반환"""
@@ -321,7 +333,10 @@ class StrategyOptimizer:
             raise ValueError("No optimization has been run yet.")
 
         try:
-            return optuna.importance.get_param_importances(self.study)
+            importances: dict[str, float] = optuna.importance.get_param_importances(
+                self.study
+            )
+            return importances
         except Exception as e:
             logger.warning(f"Could not calculate importances: {e}")
             return {}

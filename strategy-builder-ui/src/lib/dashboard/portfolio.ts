@@ -149,6 +149,12 @@ export interface Tier3WatchSnapshot {
   asof: string | null;
   age_s: number | null;
   stale: boolean;
+  /** O17-①: rolling-peak window row count. Absent on payloads published
+   *  before this field existed. */
+  history_rows?: number | null;
+  /** O17-①: true when history_rows fell short of the configured floor
+   *  (rolling peak may be shallow). Absent on older payloads. */
+  history_partial?: boolean | null;
 }
 
 export interface CoreHoldingValuation {

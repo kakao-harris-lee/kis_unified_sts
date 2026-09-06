@@ -53,3 +53,17 @@ setup_d_vwap_reversion:
   stop_atr_mult: 1.5                       # hard stop = entry ± 1.5 × ATR14
   min_reward_risk: 1.0                     # VWAP-revert target at least 1.0R away
   signal_ttl_minutes: 10
+
+# services/decision_engine consumer-side wiring for the shared market-risk
+# ENTRY gate (unified roadmap Phase 2D, §5.2 track C). The gate itself —
+# mode, reaction matrix, staleness bound, Redis key — lives in
+# config/market_risk_gate.yaml; THAT file's `mode` is the single
+# off/shadow/enforce switch. This section only controls how the decision_engine
+# daemon interprets the gate's shadow-mode output; mirrors
+# config/stock_market_risk_gate.yaml for the stock M4-P pipeline.
+market_risk_gate:
+  # Shadow-mode would-block observations repeat every eval cycle (~60s tick)
+  # for as long as the band holds; log at most once per interval per reason
+  # (shared.risk.log_throttle.ReasonLogThrottle, same pattern as the stock
+  # side's would_block_log_interval_seconds).
+  would_block_log_interval_seconds: 300.0

@@ -19,6 +19,8 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
+from shared.strategy.market_time import now_kst as _now_kst_shared
+
 # This project is KST-native (Korea); all time math uses Asia/Seoul, not UTC.
 KST = ZoneInfo("Asia/Seoul")
 
@@ -280,8 +282,11 @@ def _parse_datetime(raw: Any) -> datetime | None:
     return dt.astimezone(KST)
 
 
-def _now_kst() -> datetime:
-    return datetime.now(KST)
+_now_kst = _now_kst_shared  # shared.strategy.market_time.now_kst (O11-④, dedup)
+# NOTE: unlike the other _now_kst copies in this repo, this one stays
+# tz-AWARE (datetime.now(KST), no tzinfo strip) — _parse_datetime() above
+# converts generated_at to an aware KST datetime too, so both sides of the
+# staleness/skew comparison must stay aware. Do not swap in now_kst_naive().
 
 
 def _setup_d_max_age_seconds() -> float:

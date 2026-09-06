@@ -1,6 +1,6 @@
 # Project Status - KIS Unified Trading Platform
 
-**Last updated**: 2026-07-04
+**Last updated**: 2026-09-06
 
 > Phased roadmap (Cross-Asset + Stock + Futures): [ROADMAP.md](ROADMAP.md) —
 > authoritative. Cross-asset detail:
@@ -22,6 +22,37 @@
   `scheduler` and `producers`.
 - Dashboard `/experiments` now supports stock strategy experiment reports and
   on-demand jobs backed by `shared/backtest/experiment_runner.py`.
+- Indicator math has a single source of truth: the TA-Lib backed
+  `shared/indicators` engine (2026-07-04..07-09, PRs #561-#611). Hand-rolled
+  RSI/ADX/ATR/BB/EMA/MFI calculators in regime, streaming, strategy, backtest,
+  scanner, and LLM paths delegate to the engine (value-preserving, parity
+  gated). Strategy Builder schema v2 (signal direction, named exit primitives,
+  gates, percentile operators) plus a signal-equivalence migration harness
+  exist; the three enabled stock strategies stay on legacy YAML because the
+  declarative vocabulary cannot express them yet (P2-c, PR #612).
+- Backtest has an opt-in vectorbt engine (`VectorbtRunner`, futures harness
+  `from_orders` wrapper, `--engine vectorbt` on walk-forward/optimizer scripts)
+  behind a parity gate against the legacy engine; state-machine exits
+  (`three_stage`) stay on the legacy path via `legacy_exit: true`
+  (PRs #613-#616). The `backtest` extra (vectorbt/numba/plotly) is advisory-only
+  in CI and not in runtime images.
+- Risk layer: shared primitives (`shared/risk/primitives/`), futures-native
+  circuit breakers (catastrophic-only, PR #600), concurrent-entry, margin-gate,
+  and leverage filters. `risk.margin_gate` and `risk.leverage` were flipped
+  shadow -> enforce for futures paper on 2026-07-12 (PR #629); the rest of the
+  new filters stay shadow. Re-entry cooldown is keyed on the entry strategy
+  (guard was dead before PR #601).
+- Dashboard realtime `/ws` path is live again (bridge mounted, pub/sub
+  producer, data-freshness writer, PR #574); `/universe` has an operator "My
+  List" with permanent manual includes (PR #597); Telegram alerts are
+  interactive (approve/reject gate, close, links, PR #598, runbook PR #607).
+- Stock-regime observability: payloads carry `last_tick_ts_ms` and the M4-P
+  daemon logs indicator lag with an in-session WARNING above
+  `warn_indicator_lag_seconds` (PR #462, 2026-09-05). The staleness gate itself
+  is unchanged pending operator lag data.
+- `tos/` is a separate greenfield kernel inside this repo with its own CI
+  (`tos-gate`, `tos-firewall`) and an import firewall; legacy runtime work does
+  not touch it. See `tos/CLAUDE.md`.
 - Quant Ops Workbench P0/P1 UI is in place: `/risk`, `/coverage`, `/trades`
   lifecycle timelines, `/builder` promotion Kanban, enriched signal decision
   trace details, and backtest-vs-paper comparison panels are read-only or
@@ -108,6 +139,77 @@ since 2026-06-28 — recent Setup D commits tuned parameters only.
 | Futures | `llm_directed_indicator` | Deprecated | Not an active path without a separate redefinition gate. |
 
 ## Recent Decisions
+
+**2026-09-06** - Non-tos side tracks while tos observation runs on the paper
+server: unit-suite hermeticity, review follow-ups O11/O14/O17, hygiene.
+- Root cause of the "hung" local unit suite: adapter unit tests reached the
+  real `RedisClient` singleton and, with no local Redis, redis-py's default
+  connection retry made every failed acquisition take ~9.6 s (28 calls per
+  file). CI never saw it because the `test` job runs a Redis service.
+  `tests/unit/conftest.py` now denies real connections for every unit test not
+  marked `live_infra`; three orchestrator state tests that silently depended on
+  the CI Redis were moved to fakeredis. Setup D adapter + orchestrator tests now
+  finish in ~3.5 s with Redis unreachable.
+- Config-driven follow-ups landed: futures shadow-gate would-block log throttle
+  moved from a hardcoded 300 s to `config/decision_engine.yaml` and shares a
+  per-reason throttle helper with the stock daemon (`shared/risk/log_throttle.py`,
+  O14-③); exact-boundary test at `min_confidence == 0.7` (O14-④); missing
+  `futs_prdy_ctrt` now yields `change=None` instead of a fake flat 0.0 (O11-②);
+  night-futures close TTL 24h -> 51h so Friday's night close survives to Monday
+  premarket, with the dashboard staleness bound and a new collector max-age
+  check single-sourced from that same TTL (O11-③, TTL half only; review found
+  the first 72h cut contradicted the dashboard's hardcoded 24h bound); Tier 3 watch flags `history_partial` /
+  `history_rows` below `min_history_rows` (default 120) without suppressing the
+  watch (O17-①); nine copy-pasted `_now_kst()` helpers converge on
+  `shared.strategy.market_time.now_kst_naive` (O11-④, KST half only).
+  Independent Claude-side review (separate lane from the authors) raised five
+  warnings on the throttle and TTL tracks — hardcoded default shadowed not
+  removed, config→daemon wiring untested, throttle keyed on the score-bearing
+  reason string, TTL vs dashboard bound, no freshness bound in the collector —
+  all five fixed (throttle now keys on band + side; a `_build_daemon` seam is
+  tested end to end). O15-① was already resolved. Still operator decisions: O13, O14-① (futures
+  reject ledger wiring), O11-③ `night` coverage component, O12-② fallback
+  regime write.
+- Hygiene: ruff clean; the 15 mypy errors visible in a bare venv fixed
+  (cast/narrowing only in the Setup A path). Note that a fully provisioned env
+  (CI too) reports ~655 mypy errors under the strict config, and the CI
+  `lint`/`type-check` jobs are `continue-on-error` — black 26 would reformat
+  ~400 tracked files. Neither is enforced today; making them blocking is an
+  operator decision. MACD embedded-math golden test made tolerant to arm64 FMA
+  drift (ints/strings still exact).
+- Docs re-synced to code: this file, `ROADMAP.md`, and the 2026-07-08 plan
+  checkboxes (P0 dead code, TA-Lib gate, P5 flow stub, P6 parity contract).
+
+**2026-08-03** - Futures balance TR fixed and never-fund directive made explicit.
+`get_futures_balance` (CTFO6118R) now sends the required `MGNA_DVSN` /
+`EXCC_STAT_CD` parameters (PR #635). `CLAUDE.md` states that the real futures
+account is never funded with margin and that real-money futures order paths are
+policy-blocked (PR #636).
+
+**2026-07-05 to 2026-07-12** - New-architecture refactoring plan P0-P6 executed
+(TA-Lib SoT, declarative builder, vectorbt, risk primitives, futures read-models).
+Plan: [plans/2026-07-08-new-architecture-refactoring-plan.md](plans/2026-07-08-new-architecture-refactoring-plan.md)
+(checkboxes re-synced to code on 2026-09-06). Landed: dead-package removal +
+TA-Lib/vectorbt CI gates (P0, PR #604); indicator engine as the single source of
+truth with parity-gated delegation of every hand-rolled site (P1, PRs #561-#611);
+builder schema v2 + declarative pilot migrations with a signal-equivalence gate
+(P2, PRs #609-#612 — active strategies deferred as inexpressible); vectorbt
+runner, parity gate, state-machine exit handling, futures `from_orders` wrapper,
+`--engine` opt-in (P3, PRs #613-#616); risk primitives library, exit-generator
+delegation, breaker predicate sharing, concurrent-entry/margin/leverage filters,
+`RiskStateStore` rename, duplicate breaker delegation (P4, PRs #617-#630);
+dormant futures read-model services scheduled advisory-only, foreign-futures
+flow stub resolved from `market:structure:latest`, leverage provider wiring (P5,
+PRs #626-#628); MarketContext live-vs-replay field parity contract and the
+broken `flatten_all`/`recover_positions` operator scripts fixed (P6 PR-0, PRs
+#633-#634). Operational fixes in the same window: dead futures circuit breaker
+wired catastrophic-only (PR #600), dead re-entry guard fixed (PR #601), setup
+backtest naive-KST-as-UTC bug (PR #593), LLM mixin staticmethod crashes (PRs
+#631-#632). Still open in that plan: builder-side `StrategyFactory` special
+case, legacy backtest engine retirement after parity, single risk orchestrator +
+kill-switch consuming shared filters, `FuturesMarketContextV2` exposure to Setup
+context/dashboard, Hedge v2 advisory completion, KIS data facade (YAGNI until
+F-9 live cutover), fill-model calibration, live stock order path.
 
 **2026-07-04** - Runtime refactoring follow-ups merged and next priorities
 documented.

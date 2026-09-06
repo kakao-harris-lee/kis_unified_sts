@@ -275,6 +275,25 @@ async def test_shadow_would_block_logged_once_per_interval(caplog):
 
 
 @pytest.mark.asyncio
+async def test_shadow_would_block_throttle_survives_a_same_band_score_change(caplog):
+    """O14-③ review finding 5: a score tick within the same band must NOT
+    reset the throttle. Keying on the raw ``reason`` string (which embeds
+    ``score``) would have logged twice here; keying on ``band`` logs once."""
+    gate_redis = _gate_redis("HIGH")
+    d = _gated_daemon("shadow", "HIGH", market_risk_gate_redis=gate_redis)
+
+    with caplog.at_level(logging.INFO, logger="services.stock_strategy.daemon"):
+        await d.evaluate_once()
+        gate_redis.hset(_LATEST_KEY, mapping={"score": "80.5000"})  # same band
+        await d.evaluate_once()
+
+    shadow_logs = [
+        r for r in caplog.records if "market risk gate (shadow)" in r.getMessage()
+    ]
+    assert len(shadow_logs) == 1
+
+
+@pytest.mark.asyncio
 async def test_shadow_elevated_low_confidence_still_publishes():
     """Shadow reports min_confidence in the trace but must never reject."""
     redis = _FakeRedis()
@@ -378,6 +397,23 @@ async def test_enforce_elevated_admits_high_confidence():
     published = await d.evaluate_once()
 
     assert published == 1  # 0.9 >= HIGH threshold (0.7)
+    trace = _published_metadata(redis)["market_risk_gate"]
+    assert trace["mode"] == "enforce"
+    assert trace["min_confidence"] == "HIGH"
+    assert trace["allow"] is True
+
+
+@pytest.mark.asyncio
+async def test_enforce_elevated_admits_exactly_at_min_confidence():
+    """Boundary: confidence == threshold admits (`>=`, not `>`)."""
+    redis = _FakeRedis()
+    d = _gated_daemon(
+        "enforce", "ELEVATED", redis=redis, manager=_Manager(confidence=0.7)
+    )
+
+    published = await d.evaluate_once()
+
+    assert published == 1  # 0.7 >= HIGH threshold (0.7)
     trace = _published_metadata(redis)["market_risk_gate"]
     assert trace["mode"] == "enforce"
     assert trace["min_confidence"] == "HIGH"

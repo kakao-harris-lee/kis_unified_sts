@@ -26,7 +26,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 
@@ -42,7 +42,7 @@ try:
     HAS_MLFLOW = True
 except ImportError:
     HAS_MLFLOW = False
-    mlflow = None
+    mlflow = None  # type: ignore[assignment]
 
 try:
     import matplotlib.pyplot as plt
@@ -50,7 +50,7 @@ try:
     HAS_MATPLOTLIB = True
 except ImportError:
     HAS_MATPLOTLIB = False
-    plt = None
+    plt = None  # type: ignore[assignment]
 
 try:
     import seaborn as sns
@@ -173,7 +173,7 @@ class MLflowTracker:
 
         ax.plot(
             equity_series.index,
-            equity_series.values,
+            cast(Any, equity_series.values),
             label="Strategy",
             linewidth=2,
             color="blue",
@@ -185,7 +185,7 @@ class MLflowTracker:
             bench_series = pd.Series(bench_values, index=pd.to_datetime(bench_dates))
             ax.plot(
                 bench_series.index,
-                bench_series.values,
+                cast(Any, bench_series.values),
                 label="Benchmark",
                 linewidth=1.5,
                 color="gray",
@@ -231,13 +231,13 @@ class MLflowTracker:
         ax.fill_between(
             drawdown.index,
             0,
-            drawdown.values,
+            cast(Any, drawdown.values),
             color="red",
             alpha=0.3,
         )
         ax.plot(
             drawdown.index,
-            drawdown.values,
+            cast(Any, drawdown.values),
             color="red",
             linewidth=1,
         )
@@ -275,10 +275,11 @@ class MLflowTracker:
         if len(monthly_returns) < 2:
             return
 
+        monthly_index = cast(pd.DatetimeIndex, monthly_returns.index)
         df = pd.DataFrame(
             {
-                "year": monthly_returns.index.year,
-                "month": monthly_returns.index.month,
+                "year": monthly_index.year,
+                "month": monthly_index.month,
                 "return": monthly_returns.values,
             }
         )
@@ -298,7 +299,7 @@ class MLflowTracker:
             "Nov",
             "Dec",
         ]
-        pivot.columns = [month_names[m - 1] for m in pivot.columns]
+        pivot.columns = [month_names[int(m) - 1] for m in pivot.columns]
 
         fig, ax = plt.subplots(figsize=(12, max(4, len(pivot) * 0.8)))
 
@@ -405,11 +406,14 @@ class MLflowTracker:
         if not HAS_MLFLOW:
             raise ImportError("MLflow is required")
 
-        return mlflow.search_runs(
-            experiment_names=[experiment_name],
-            filter_string=filter_string,
-            order_by=order_by,
-            max_results=max_results,
+        return cast(
+            pd.DataFrame,
+            mlflow.search_runs(
+                experiment_names=[experiment_name],
+                filter_string=filter_string or "",
+                order_by=order_by,
+                max_results=max_results,
+            ),
         )
 
     @staticmethod
@@ -472,4 +476,5 @@ def track_backtest(
 
     with tracker.start_run(run_name=run_name) as run:
         tracker.log_result(result, strategy_config)
-        return run.info.run_id
+        run_id: str = run.info.run_id
+        return run_id

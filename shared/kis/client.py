@@ -649,7 +649,13 @@ class KISClient(AsyncSessionMixin):
             }
 
     async def _get_futures_price(self, symbol: str) -> dict[str, Any]:
-        """Fetch current price for a Futures symbol."""
+        """Fetch current price for a Futures symbol.
+
+        ``change`` (prior-day change %, ``futs_prdy_ctrt`` / 100) is ``None``
+        when the server omits the field — never a silent ``0.0`` — so callers
+        can distinguish "missing" from "flat" (unchanged), the same contract
+        ``open_interest``/``open_interest_change`` already follow.
+        """
         session = await self._get_session()
         headers = await self.auth_manager.get_auth_headers_async()
 
@@ -702,6 +708,11 @@ class KISClient(AsyncSessionMixin):
             # omits the field so callers can tell "missing" from "flat".
             oi_raw = output.get("hts_otst_stpl_qty")
             oi_change_raw = output.get("otst_stpl_qty_icdc")
+            # Prior-day change % (futs_prdy_ctrt): ``None`` (not 0.0) when the
+            # server omits the field — same "missing vs flat" distinction as
+            # the OI fields above. A silent 0.0 previously disguised a missing
+            # read as a flat (unchanged) market, which is a real value.
+            change_raw = output.get("futs_prdy_ctrt")
 
             return {
                 "code": symbol,
@@ -713,9 +724,7 @@ class KISClient(AsyncSessionMixin):
                 "prev_close": prev_close,
                 "previous_close": prev_close,  # alias for downstream consumers
                 "change": (
-                    float(output.get("futs_prdy_ctrt", 0)) / 100.0
-                    if output.get("futs_prdy_ctrt")
-                    else 0.0
+                    float(change_raw) / 100.0 if change_raw not in (None, "") else None
                 ),
                 "open_interest": (
                     parse_float(oi_raw) if oi_raw not in (None, "") else None

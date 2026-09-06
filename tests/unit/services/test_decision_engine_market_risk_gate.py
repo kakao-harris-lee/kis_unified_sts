@@ -12,6 +12,7 @@ client for the market:risk:latest hash (the shared evaluator is sync).
 """
 
 import asyncio
+import dataclasses
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -24,7 +25,7 @@ from services.decision_engine.main import DecisionEngineDaemon
 from shared.decision.context import MarketContext
 from shared.decision.setup_base import Setup
 from shared.decision.signal import Signal
-from shared.risk.market_risk_gate import MarketRiskGateConfig
+from shared.risk.market_risk_gate import MarketRiskGateConfig, MarketRiskGateDecision
 from shared.risk.market_risk_score import KST
 
 CANDIDATE_STREAM = "signal.candidate.futures"
@@ -218,6 +219,108 @@ async def test_shadow_observation_log_is_throttled(redis, gate_redis, caplog):
         r for r in caplog.records if "event=market_risk_gate_shadow" in r.getMessage()
     ]
     assert len(shadow_logs) == 1  # default 300 s interval >> test runtime
+
+
+def test_shadow_log_throttle_is_per_reason_not_a_single_global_timestamp(
+    redis, gate_redis, caplog
+):
+    """O14-③: converges futures onto the stock-side per-reason throttle.
+
+    A single global last-logged timestamp would suppress a brand-new reason
+    just because a DIFFERENT reason logged moments ago. The shared
+    ``ReasonLogThrottle`` (shared/risk/log_throttle.py) must not do that: two
+    distinct reasons within the same interval both log; repeating the SAME
+    reason within the interval is still suppressed.
+    """
+    daemon = _make_daemon(
+        redis=redis,
+        setups=[_DirectionSetup("long")],
+        provider=_provider_for(),
+        mode="shadow",
+        gate_redis=gate_redis,
+    )
+    high = MarketRiskGateDecision(
+        allow=True,
+        would_block=True,
+        size_factor=0.5,
+        min_confidence=None,
+        reason="market_risk band=HIGH score=74.2 rule=block_new_long",
+        band="HIGH",
+        score=74.2,
+        regime="risk_off",
+        degraded=False,
+        stale=False,
+        mode="shadow",
+    )
+    critical = dataclasses.replace(
+        high,
+        size_factor=0.0,
+        reason="market_risk band=CRITICAL score=90.0 rule=block_new_long",
+        band="CRITICAL",
+        score=90.0,
+    )
+    signal = _DirectionSetup("long").check(_ctx())
+
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        daemon._maybe_log_shadow_gate(signal, high)
+        daemon._maybe_log_shadow_gate(signal, critical)  # distinct reason: logs
+        daemon._maybe_log_shadow_gate(signal, high)  # repeat of HIGH: suppressed
+
+    shadow_logs = [
+        r.getMessage()
+        for r in caplog.records
+        if "event=market_risk_gate_shadow" in r.getMessage()
+    ]
+    assert len(shadow_logs) == 2
+    assert any("band=HIGH" in msg for msg in shadow_logs)
+    assert any("band=CRITICAL" in msg for msg in shadow_logs)
+
+
+def test_shadow_log_throttle_survives_a_same_band_score_change(
+    redis, gate_redis, caplog
+):
+    """O14-③ review finding 5: a score tick within the same band (e.g. a
+    later gate-refresh cron run) must NOT reset the throttle. Keying on the
+    raw ``reason`` string (which embeds ``score``) would have logged twice
+    here; keying on ``(band, side)`` via ``gate_log_throttle_key`` logs once.
+    """
+    daemon = _make_daemon(
+        redis=redis,
+        setups=[_DirectionSetup("long")],
+        provider=_provider_for(),
+        mode="shadow",
+        gate_redis=gate_redis,
+    )
+    low_score = MarketRiskGateDecision(
+        allow=True,
+        would_block=True,
+        size_factor=0.5,
+        min_confidence=None,
+        reason="market_risk band=HIGH score=74.2 rule=block_new_long",
+        band="HIGH",
+        score=74.2,
+        regime="risk_off",
+        degraded=False,
+        stale=False,
+        mode="shadow",
+    )
+    high_score = dataclasses.replace(
+        low_score,
+        reason="market_risk band=HIGH score=91.0 rule=block_new_long",
+        score=91.0,
+    )
+    signal = _DirectionSetup("long").check(_ctx())
+
+    with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
+        daemon._maybe_log_shadow_gate(signal, low_score)
+        daemon._maybe_log_shadow_gate(signal, high_score)
+
+    shadow_logs = [
+        r.getMessage()
+        for r in caplog.records
+        if "event=market_risk_gate_shadow" in r.getMessage()
+    ]
+    assert len(shadow_logs) == 1
 
 
 # ---------------------------------------------------------------------------

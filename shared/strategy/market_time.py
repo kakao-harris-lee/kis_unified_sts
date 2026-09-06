@@ -29,6 +29,17 @@ def now_kst() -> datetime:
     return datetime.now(KST)
 
 
+def now_kst_naive() -> datetime:
+    """Current KST wall-clock time with tzinfo stripped.
+
+    For Parquet/Redis rows that store naive KST timestamps (this project is
+    KST-native — see CLAUDE.md). Equivalent to
+    ``now_kst().replace(tzinfo=None)``, factored out of the many per-service
+    ``_now_kst``/``_now_kst_naive`` copies (O11-④).
+    """
+    return datetime.now(KST).replace(tzinfo=None)
+
+
 def is_trading_day_kst(dt: datetime) -> bool:
     """Check trading day using KRX calendar."""
     calendar = get_market_calendar()

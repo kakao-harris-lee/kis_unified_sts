@@ -7,6 +7,7 @@ YAML for the night-code (fo_cme_code.mst) resolution notes.
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime
 from datetime import time as dt_time
@@ -15,6 +16,8 @@ from typing import ClassVar
 from pydantic import Field, field_validator, model_validator
 
 from shared.config.base import ServiceConfigBase
+
+logger = logging.getLogger(__name__)
 
 _HHMM_PATTERN = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
@@ -41,7 +44,35 @@ class NightCloseCaptureConfig(ServiceConfigBase):
     window_start_kst: str = Field(default="05:50")
     window_end_kst: str = Field(default="06:00")
     redis_key: str = Field(default="market:structure:night_close")
-    redis_ttl_seconds: int = Field(default=86400, gt=0)
+    # 183600s = 51h (not the 24h operational default): the Friday night
+    # session closes ~06:00 KST Saturday, and Monday's premarket read at
+    # ~05:48 KST is ~47h48m later — a 24h TTL would expire over that weekend
+    # gap, while 51h leaves a missed-capture case a day later (~71h48m)
+    # comfortably past the bound. This is also the SINGLE source for the
+    # freshness bound both the dashboard (_night_close_summary) and the
+    # market-structure collector (_read_night_close) reuse — see
+    # config/night_futures.yaml for the full rationale.
+    redis_ttl_seconds: int = Field(default=183600, gt=0)
+
+    @classmethod
+    def load_or_default(cls, path: str | None = None) -> NightCloseCaptureConfig:
+        """Load from YAML when available; defaults on any read/parse problem.
+
+        Same graceful-degradation contract as
+        ``MarketRiskGateConfig.load_or_default`` /
+        ``DecisionEngineMarketRiskGateWiring.load_or_default`` — used by
+        consumers of this config OTHER than the collector's own one-shot
+        CLI (``services/night_futures_collector/main.py`` keeps its stricter
+        ``from_yaml()`` call: a missing config there is a real operator
+        error). The dashboard's staleness bound and the market-structure
+        collector's freshness bound both call this so a missing/malformed
+        YAML never breaks their (unrelated) read paths.
+        """
+        try:
+            return cls.from_yaml(path)
+        except Exception:
+            logger.warning("night_futures.yaml load failed; using defaults")
+            return cls()
 
     @field_validator("window_start_kst", "window_end_kst")
     @classmethod

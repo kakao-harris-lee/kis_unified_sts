@@ -1,5 +1,8 @@
 # 신규 아키텍처 리팩토링 계획 (2026-07-08)
 
+> 체크박스 동기화 2026-09-06: P0 dead code/TA-Lib 게이트(PR #604), P5 외인선물 stub(PR #628),
+> P6 MarketContext parity(PR #633)를 코드 실측으로 완료 표시. 잔여 미완 항목은 본문 그대로.
+
 > 지시서: [docs/2026-07-08_new_architencture.md](../2026-07-08_new_architencture.md)
 > 근거 분석: [2026-07-08-new-architecture-gap-analysis.md](2026-07-08-new-architecture-gap-analysis.md)
 
@@ -40,7 +43,7 @@
 
 **목표**: 이후 Phase의 잡음 제거. 기능 변화 0.
 
-- [ ] Dead code 제거 (~2,600 LOC + 고아):
+- [x] Dead code 제거 (~2,600 LOC + 고아) — **완료 (PR #604, 2026-07-08)**; 2026-09-06 트리 재확인: `shared/ml`·`shared/trend`·`shared/ensemble`·`shared/position` 전부 부재, `shared/arbitrage`는 존치:
   `shared/ml`(pycache만 잔존), `shared/trend`(880, 런타임 importer 0),
   `shared/ensemble`(435),
   `shared/position`(~694, test-only 고아 — PositionTracker로 대체됨),
@@ -49,9 +52,9 @@
   ⚠️ `market_structure_collector`/`market_risk_engine`은 통합투자시스템 P0/P1 소속 — 삭제 금지.
   ⚠️ `shared/arbitrage`(332)도 **삭제 금지** — `market_structure_collector`가
   `BasisCalculator`를 소비 중(이전의 "소비자 미배선" 판정은 사실 오류, §7 참조).
-- [ ] `shared/position/monitor.py` dead stub(:137 항상 False) 및
+- [x] (PR #604에서 `shared/position` 패키지 제거로 함께 종결) `shared/position/monitor.py` dead stub(:137 항상 False) 및
   `exit_checker.py`(three_stage와 중복 상태머신) 정리 — 소비자 확인 후 three_stage로 단일화.
-- [ ] **TA-Lib 설치 게이트**: CI와 배포 호스트 .venv에 TA-Lib 존재를 검증하는 체크 추가
+- [x] **TA-Lib 설치 게이트** — CI는 `backtest-extra` 잡의 `import talib` 스모크(`.github/workflows/test.yml`), 배포 호스트는 `scripts/ops/ops_readiness_check.py`의 talib 체크로 검증(PR #604): CI와 배포 호스트 .venv에 TA-Lib 존재를 검증하는 체크 추가
   (미설치 시 shadow-parity가 조용히 스킵되는 기존 함정 차단).
 - [x] vectorbt CI 레인: `.[backtest]` extra 설치 + import smoke 테스트 (P3 준비).
   P3-a 에서 VectorbtRunner parity 스위트 실행으로 확장됨 (advisory lane).
@@ -591,7 +594,7 @@ vectorbt 필요 → 머지 게이트는 정적 층만, 전 매트릭스는 배�
   compose 변경 불필요(리빌드+recreate만). **무주문 불변식 유지**: 세 서비스는
   order_router/place_order/executor를 import하지 않는 read-model 발행 전용
   (import-graph 가드로 확인) — 스케줄 등록이 오더 경로를 건드리지 않음.
-- [ ] 외인선물 수집 stub(`shared/llm/futures_flow_collector.py:38`) 해소 —
+- [x] **완료 (PR #628, 2026-07-11)** 외인선물 수집 stub(`shared/llm/futures_flow_collector.py`) 해소 —
   market_structure_collector가 이미 수집하는 `fut_foreign_net_qty`를 정식 소스로 배선.
 - [ ] `FuturesMarketContextV2`(basis/OI/외인/롤/증거금/틱가치 regime 분류)를
   Setup 컨텍스트·대시보드에 노출 (관측 전용 유지, 게이팅은 별도 결정).
@@ -628,7 +631,7 @@ vectorbt 필요 → 머지 게이트는 정적 층만, 전 매트릭스는 배�
   - **잔여 finding (파사드 착수 시 정리)**: `KISAuthConfig`-from-env 구성이 ~10곳 중복(DRY
     대상)이나 사이트별 real/mock 자격증명 분기가 섞여 있어 behavior-0 지뢰 — 무분별한
     동질화 금지. 파사드 도입 시 팩토리로 통합.
-- [ ] **MarketContext 필드 parity 계약**: 라이브 producer와 backtest replay가 채우는 필드를
+- [x] **완료 (PR #633, 2026-07-12 · `tests/unit/decision/test_market_context_parity.py`)** **MarketContext 필드 parity 계약**: 라이브 producer와 backtest replay가 채우는 필드를
   스키마로 고정하고 계약 테스트로 강제 — `last_15min_high/low` 함정(#533/#537) 구조적 재발 방지.
 - [ ] 체결 모델 문서화·정렬: 백테스트(다음바 시가±0.3틱) vs 라이브(passive limit) 괴리를
   vbt 슬리피지 파라미터로 보정하는 캘리브레이션 리포트(paper 체결 데이터 기반).

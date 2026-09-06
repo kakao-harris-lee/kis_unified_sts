@@ -4,6 +4,7 @@ from datetime import date, time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import fakeredis
 import pytest
 
 
@@ -282,6 +283,7 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_start_changes_state(self, monkeypatch):
         """start() 호출 시 상태 변경"""
+        import shared.streaming.client
         from services.monitoring.metrics import MetricsCollector
         from services.trading.orchestrator import (
             TradingConfig,
@@ -291,6 +293,20 @@ class TestTradingOrchestrator:
 
         monkeypatch.setattr(
             MetricsCollector, "start_prometheus_server", lambda *a, **kw: None
+        )
+        # start() reaches RedisClient.get_client() several times during the
+        # startup sequence (TickStreamPublisher tick mirroring, swing-position /
+        # risk-state hydration, etc.). A bare MagicMock breaks those callers —
+        # they call real dict/json-shaped Redis methods (get/hget/...) and choke
+        # on a MagicMock return value. Use fakeredis instead (see
+        # tests/unit/streaming/test_trading_state_pubsub.py's fake_redis fixture
+        # for the same decode_responses=True pattern mirroring production
+        # RedisClient.get_client()) so every call behaves like a real, empty Redis.
+        fake_redis = fakeredis.FakeStrictRedis(decode_responses=True)
+        monkeypatch.setattr(
+            shared.streaming.client.RedisClient,
+            "get_client",
+            staticmethod(lambda: fake_redis),
         )
 
         config = TradingConfig.stock()
@@ -304,6 +320,7 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_stop_changes_state(self, monkeypatch):
         """stop() 호출 시 상태 변경"""
+        import shared.streaming.client
         from services.monitoring.metrics import MetricsCollector
         from services.trading.orchestrator import (
             TradingConfig,
@@ -316,6 +333,14 @@ class TestTradingOrchestrator:
         )
         monkeypatch.setattr(
             TradingOrchestrator, "_init_llm_context_publisher", lambda *a, **kw: None
+        )
+        # See test_start_changes_state: start() reaches RedisClient.get_client()
+        # several times during startup and needs a real-shaped Redis substitute.
+        fake_redis = fakeredis.FakeStrictRedis(decode_responses=True)
+        monkeypatch.setattr(
+            shared.streaming.client.RedisClient,
+            "get_client",
+            staticmethod(lambda: fake_redis),
         )
 
         config = TradingConfig.stock()
@@ -399,6 +424,7 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_pause_and_resume(self, monkeypatch):
         """pause/resume 동작"""
+        import shared.streaming.client
         from services.monitoring.metrics import MetricsCollector
         from services.trading.orchestrator import (
             TradingConfig,
@@ -411,6 +437,14 @@ class TestTradingOrchestrator:
         )
         monkeypatch.setattr(
             TradingOrchestrator, "_init_llm_context_publisher", lambda *a, **kw: None
+        )
+        # See test_start_changes_state: start() reaches RedisClient.get_client()
+        # several times during startup and needs a real-shaped Redis substitute.
+        fake_redis = fakeredis.FakeStrictRedis(decode_responses=True)
+        monkeypatch.setattr(
+            shared.streaming.client.RedisClient,
+            "get_client",
+            staticmethod(lambda: fake_redis),
         )
 
         config = TradingConfig.stock()

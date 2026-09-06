@@ -210,6 +210,7 @@ export default function Tier3WatchCard({
           <p className="text-[11px] text-slate-400">
             트리거 {fmtPct(tier3.trigger_threshold)} ·{" "}
             {formatKstDateTime(tier3.asof, "-")} KST
+            {tier3.history_partial ? ` · 부분 히스토리 (${tier3.history_rows ?? "?"}행)` : ""}
           </p>
         </div>
       )}

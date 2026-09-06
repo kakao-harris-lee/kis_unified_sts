@@ -27,7 +27,8 @@ DAY = date(2026, 7, 6)  # Monday
 NOW = datetime(2026, 7, 6, 19, 0)
 WATCH_KEY = "portfolio:tier3:watch"
 
-# Fixed contract with the 5E UI lane — exact field-name set.
+# Fixed contract with the 5E UI lane — exact field-name set. history_rows/
+# history_partial were added for O17-① (partial-backfill drawdown flagging).
 _CONTRACT_FIELDS = {
     "kospi_close",
     "kospi_peak",
@@ -35,6 +36,8 @@ _CONTRACT_FIELDS = {
     "trigger_threshold",
     "triggered",
     "asof_ts",
+    "history_rows",
+    "history_partial",
 }
 
 
@@ -142,6 +145,7 @@ class TestEvaluation:
             peak_window_days=6,  # 5×400 + today's 380 — the 500 falls out
             trigger_threshold=-0.15,
             asof_ts=NOW,
+            min_history_rows=1,  # irrelevant to this test — see TestHistoryPartialFlag
         )
         assert watch is not None
         assert watch.kospi_peak == pytest.approx(400.0)
@@ -156,6 +160,7 @@ class TestEvaluation:
             peak_window_days=252,
             trigger_threshold=-0.15,
             asof_ts=NOW,
+            min_history_rows=1,  # irrelevant to this test — see TestHistoryPartialFlag
         )
         assert watch is not None
         assert watch.kospi_close == pytest.approx(380.0)
@@ -168,6 +173,7 @@ class TestEvaluation:
             peak_window_days=252,
             trigger_threshold=-0.15,
             asof_ts=NOW,
+            min_history_rows=1,  # irrelevant to this test — see TestHistoryPartialFlag
         )
         assert watch is not None
         assert watch.kospi_peak == pytest.approx(400.0)
@@ -181,10 +187,101 @@ class TestEvaluation:
             peak_window_days=252,
             trigger_threshold=-0.15,
             asof_ts=NOW,
+            min_history_rows=1,  # irrelevant to this test — see TestHistoryPartialFlag
         )
         assert watch is not None
         assert watch.kospi_close == pytest.approx(336.0)
         assert watch.triggered
+
+
+# ---------------------------------------------------------------------------
+# Partial-backfill history flag (O17-①) — never suppresses, only flags/warns.
+# ---------------------------------------------------------------------------
+
+
+class TestHistoryPartialFlag:
+    def test_partial_history_flags_warns_and_still_computes_drawdown(self, caplog):
+        import logging
+
+        # _closes() yields 11 rows — below the 120-row default floor.
+        closes = _closes(latest_close=336.0)  # -16% from 400
+        with caplog.at_level(logging.WARNING):
+            watch = evaluate_tier3_watch(
+                closes,
+                trade_date=DAY,
+                peak_window_days=252,
+                trigger_threshold=-0.15,
+                asof_ts=NOW,
+                min_history_rows=120,
+            )
+        assert watch is not None
+        assert watch.history_rows == 11
+        assert watch.history_partial is True
+        assert watch.drawdown == pytest.approx(-0.16)
+        assert watch.triggered
+        assert any("partial history" in record.message for record in caplog.records)
+
+    def test_full_history_is_not_partial_and_does_not_warn(self, caplog):
+        import logging
+
+        rows = [(DAY - timedelta(days=offset), 400.0) for offset in range(120, 0, -1)]
+        rows.append((DAY, 336.0))  # 121 usable rows, -16% from the 400 peak
+        with caplog.at_level(logging.WARNING):
+            watch = evaluate_tier3_watch(
+                rows,
+                trade_date=DAY,
+                peak_window_days=252,
+                trigger_threshold=-0.15,
+                asof_ts=NOW,
+                min_history_rows=120,
+            )
+        assert watch is not None
+        assert watch.history_rows == 121
+        assert watch.history_partial is False
+        assert not any("partial history" in record.message for record in caplog.records)
+
+    def test_zero_rows_none_path_unchanged(self):
+        # Insufficient-data None path is untouched by the new floor.
+        watch = evaluate_tier3_watch(
+            [],
+            trade_date=DAY,
+            peak_window_days=252,
+            trigger_threshold=-0.15,
+            asof_ts=NOW,
+            min_history_rows=120,
+        )
+        assert watch is None
+
+    def test_run_tier3_watch_publishes_history_fields_from_config(self, redis):
+        config = PortfolioConfig()
+        config.monitor.tier3_watch.min_history_rows = 5
+        watch = _run(redis, _closes(latest_close=336.0), config=config)  # 11 rows
+        assert watch is not None
+        assert watch.history_partial is False  # 11 >= 5
+        raw = redis.hgetall(WATCH_KEY)
+        assert raw["history_rows"] == "11"
+        assert raw["history_partial"] == "false"
+
+    def test_run_tier3_watch_flags_partial_with_default_floor(self, redis):
+        watch = _run(redis, _closes(latest_close=336.0))  # 11 rows < default 120
+        assert watch is not None
+        assert watch.history_partial is True
+        raw = redis.hgetall(WATCH_KEY)
+        assert raw["history_rows"] == "11"
+        assert raw["history_partial"] == "true"
+
+    def test_min_history_rows_has_no_silent_default(self):
+        # min_history_rows must always be threaded explicitly from config —
+        # a hardcoded fallback here would be a 4th copy of the floor value
+        # (Pydantic field default, YAML, docs are the other 3).
+        with pytest.raises(TypeError):
+            evaluate_tier3_watch(  # type: ignore[call-arg]
+                _closes(latest_close=336.0),
+                trade_date=DAY,
+                peak_window_days=252,
+                trigger_threshold=-0.15,
+                asof_ts=NOW,
+            )
 
 
 # ---------------------------------------------------------------------------

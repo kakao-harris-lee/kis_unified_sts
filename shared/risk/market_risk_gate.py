@@ -51,6 +51,7 @@ from pydantic import BaseModel, Field, model_validator
 from shared.config.base import ServiceConfigBase
 from shared.config.loader import ConfigNotFoundError
 from shared.risk.market_risk_score import KST
+from shared.strategy.market_time import now_kst_naive
 
 logger = logging.getLogger(__name__)
 
@@ -433,5 +434,4 @@ def _kst_naive(ts: datetime) -> datetime:
     return ts
 
 
-def _now_kst() -> datetime:
-    return datetime.now(KST).replace(tzinfo=None)
+_now_kst = now_kst_naive  # shared.strategy.market_time (O11-④, dedup)

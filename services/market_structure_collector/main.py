@@ -33,6 +33,7 @@ from services.market_structure_collector import derived
 from services.market_structure_collector.config import MarketStructureCollectorConfig
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.macro.base import read_latest_macro_snapshot
+from shared.strategy.market_time import now_kst_naive
 
 logger = logging.getLogger(__name__)
 
@@ -139,8 +140,7 @@ def _coverage(row: dict[str, Any], components: list[str]) -> tuple[float, list[s
     return (total - len(missing)) / total, missing
 
 
-def _now_kst() -> datetime:
-    return datetime.now(KST).replace(tzinfo=None)
+_now_kst = now_kst_naive  # shared.strategy.market_time (O11-④, dedup)
 
 
 def _resolve_trade_date(trade_date: date | None) -> date:
@@ -548,10 +548,55 @@ async def collect_close(
 # ---------------------------------------------------------------------------
 
 
+def _night_close_max_age_seconds() -> int:
+    """Max age for a night-close payload, single-sourced with its Redis TTL.
+
+    O11-③ review: the 24h TTL used to be the de-facto freshness guard (an
+    over-age key would simply have expired out of Redis). Now that the TTL
+    is wide enough to survive the Friday-close -> Monday-premarket weekend
+    gap (config/night_futures.yaml::redis_ttl_seconds, 183600s = 51h), a
+    payload that missed its capture window can sit inside Redis well past
+    the point it should still be trusted, so this needs its own explicit
+    check — reusing the SAME value (not a second, independently-tunable
+    bound) is what keeps the two from drifting apart.
+    """
+    try:
+        from services.night_futures_collector.config import NightCloseCaptureConfig
+
+        return int(NightCloseCaptureConfig.load_or_default().redis_ttl_seconds)
+    except Exception:
+        logger.warning(
+            "night_futures.yaml load failed for the collector's freshness "
+            "bound; using the shipped fallback"
+        )
+        return 183600  # mirrors NightCloseCaptureConfig's shipped default
+
+
+def _parse_night_close_asof(raw: Any) -> datetime | None:
+    """Parse ``asof_ts`` to a KST-naive datetime, or ``None`` if unusable."""
+    text = str(raw).strip() if raw is not None else ""
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(KST).replace(tzinfo=None)
+    return parsed
+
+
 def _read_night_close(
     redis: Any, config: MarketStructureCollectorConfig
 ) -> dict[str, Any]:
-    """Optional Wave 2e night-futures capture, ``night_``-prefixed columns."""
+    """Optional Wave 2e night-futures capture, ``night_``-prefixed columns.
+
+    A payload older than :func:`_night_close_max_age_seconds` (or one whose
+    ``asof_ts`` is missing/unparseable — fail CLOSED, since we cannot prove
+    it's fresh) is dropped and behaves exactly like the absent-key case
+    (empty dict, one warning) rather than merging stale/unverifiable
+    ``night_*`` columns into the premarket row.
+    """
     key = config.redis.night_close_key
     payload: dict[str, Any] = {}
     try:
@@ -573,6 +618,24 @@ def _read_night_close(
             except (TypeError, ValueError):
                 payload = {}
     if not payload:
+        return {}
+
+    asof = _parse_night_close_asof(payload.get("asof_ts"))
+    if asof is None:
+        logger.warning(
+            "night-close payload has a missing/unparseable asof_ts; "
+            "dropping (fail-closed, treated as absent)"
+        )
+        return {}
+    age_seconds = (_now_kst() - asof).total_seconds()
+    max_age = _night_close_max_age_seconds()
+    if age_seconds > max_age:
+        logger.warning(
+            "night-close payload is over-age (%.0fs > %ds bound); dropping "
+            "(treated as absent)",
+            age_seconds,
+            max_age,
+        )
         return {}
 
     columns: dict[str, Any] = {}

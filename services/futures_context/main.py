@@ -29,6 +29,7 @@ from shared.models.futures_context import (
     build_futures_context,
     context_to_fields,
 )
+from shared.strategy.market_time import now_kst_naive
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,7 @@ KST = ZoneInfo("Asia/Seoul")
 _MODES = ("premarket", "intraday", "close")
 
 
-def _now_kst() -> datetime:
-    return datetime.now(KST).replace(tzinfo=None)
+_now_kst = now_kst_naive  # shared.strategy.market_time (O11-④, dedup)
 
 
 def _read_hash(redis: Any, key: str, label: str) -> dict[str, Any]:

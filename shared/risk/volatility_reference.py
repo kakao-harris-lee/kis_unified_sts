@@ -79,6 +79,7 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, Field, model_validator
 
 from shared.risk.atr_percentile import DEFAULT_ATR_PERCENTILE, atr_percentile
+from shared.strategy.market_time import now_kst_naive as _now_kst_naive
 
 logger = logging.getLogger(__name__)
 
@@ -110,10 +111,6 @@ def samples_key(
 ) -> str:
     """Redis LIST key holding one symbol's rolling ATR sample window."""
     return f"{prefix}:{asset_class}:{symbol}"
-
-
-def _now_kst_naive() -> datetime:
-    return datetime.now(KST).replace(tzinfo=None)
 
 
 class SymbolWarningThrottle:

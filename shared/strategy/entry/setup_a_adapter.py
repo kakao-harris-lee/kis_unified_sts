@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from shared.decision.daily_bias import DailyBiasProvider as _default_DailyBiasProvider
 from shared.strategy.base import EntryContext, EntrySignalGenerator
@@ -101,7 +101,7 @@ def _apply_regime_gate(*args: Any, **kwargs: Any) -> Any:
 
 def _now_kst() -> datetime:
     fn = _facade_attr("now_kst", _default_now_kst)
-    return fn()
+    return cast(datetime, fn())
 
 
 def _daily_bias_provider_class() -> Any:
@@ -150,7 +150,8 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
         """Return the gap entry threshold in percent units."""
         fi = self.config.forecast_integration
         if fi.enabled and forecast is not None:
-            return fi.gap_threshold_vol_mult * forecast.forecast_pct
+            threshold: float = fi.gap_threshold_vol_mult * forecast.forecast_pct
+            return threshold
         return self.config.min_kr_gap_pct
 
     def _gap_within_reversion_range(self, gap_pct: float, forecast: Any | None) -> bool:
@@ -158,7 +159,7 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
         fi = self.config.forecast_integration
         if not fi.enabled or forecast is None:
             return True
-        max_pct = fi.max_gap_for_reversion_vol_mult * forecast.forecast_pct
+        max_pct: float = fi.max_gap_for_reversion_vol_mult * forecast.forecast_pct
         return gap_pct <= max_pct
 
     def _compute_event_size_mult(self, event_score: Any | None) -> float:
@@ -168,7 +169,8 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
             return 1.0
         if event_score is None:
             return 1.0
-        return 1.0 / (1.0 + event_score.impact_score / 100.0)
+        impact_score: float = event_score.impact_score
+        return 1.0 / (1.0 + impact_score / 100.0)
 
     def _validate_config(self) -> None:
         """Validate config fields."""
@@ -346,11 +348,14 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
                         break
                 except (TypeError, ValueError):
                     pass
-        return _decision_signal_to_orchestrator_signal(
-            decision_signal,
-            strategy_name=self.name,
-            timestamp=ts,
-            confidence_override=confidence_override,
-            entry_atr=atr_14,
-            extra_metadata=llm_metadata,
+        return cast(
+            "OrchestratorSignal | None",
+            _decision_signal_to_orchestrator_signal(
+                decision_signal,
+                strategy_name=self.name,
+                timestamp=ts,
+                confidence_override=confidence_override,
+                entry_atr=atr_14,
+                extra_metadata=llm_metadata,
+            ),
         )

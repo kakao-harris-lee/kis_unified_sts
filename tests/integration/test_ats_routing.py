@@ -32,7 +32,12 @@ def _build_paper_execution_config():
 @pytest.mark.integration
 def test_stock_order_router_policy_defaults_to_krx_only():
     from shared.execution.config import ATSRoutingConfig
-    from shared.execution.models import ExecutionVenue, OrderRequest, OrderSide, OrderType
+    from shared.execution.models import (
+        ExecutionVenue,
+        OrderRequest,
+        OrderSide,
+        OrderType,
+    )
     from shared.execution.venue_router import MarketData, VenueRouter
 
     router = VenueRouter(ATSRoutingConfig(enabled=False, default_venue="KRX"))

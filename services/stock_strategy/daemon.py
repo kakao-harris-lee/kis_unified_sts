@@ -44,6 +44,7 @@ from services.stock_strategy.universe import (
     parse_watchlist_codes,
 )
 from shared.models.signal import Signal
+from shared.risk.log_throttle import ReasonLogThrottle
 from shared.risk.market_risk_gate import (
     MarketRiskGateConfig,
 )
@@ -203,9 +204,12 @@ class StockStrategyDaemon(
         self._market_risk_gate_config = market_risk_gate_config
         self._market_risk_gate_redis = market_risk_gate_redis
         self._market_risk_wiring = market_risk_wiring or MarketRiskGateWiringConfig()
-        # Throttle cache for shadow-mode would-block logs (reason → last ts),
-        # mirroring the _llm_skip_log_cache throttled-logging pattern.
-        self._market_risk_log_cache: dict[str, float] = {}
+        # Shared per-reason throttle for shadow-mode would-block logs
+        # (shared.risk.log_throttle) — the same helper the futures
+        # decision_engine's shadow-gate log consumes.
+        self._market_risk_log_throttle = ReasonLogThrottle(
+            interval_seconds=self._market_risk_wiring.would_block_log_interval_seconds
+        )
         self._universe: list[str] = []
         # Raw watchlist payload ({"strategies": {...}}) from the last refresh.
         # Injected into EntryContext.metadata so daily-watchlist-gated strategies

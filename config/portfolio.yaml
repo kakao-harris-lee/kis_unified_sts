@@ -107,6 +107,10 @@ monitor:
     redis_key: "portfolio:tier3:watch"
     ttl_seconds: 86400
     peak_window_days: 252 # rolling-peak window (trading days)
+    # Minimum rows for a trustworthy rolling peak. Below this floor the watch
+    # still publishes (never suppressed) but flags history_partial/history_rows
+    # in the payload and logs a warning (O17-①).
+    min_history_rows: 120
     # market_structure_daily column used as the KOSPI proxy. The dataset
     # currently carries the KOSPI200 index close (k200_close); repoint here
     # if/when a KOSPI composite close column is collected.

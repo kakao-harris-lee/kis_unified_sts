@@ -30,9 +30,11 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from services.decision_engine.config import DecisionEngineMarketRiskGateWiring
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.decision.context import MarketContext
 from shared.decision.setup_base import Setup
+from shared.risk.log_throttle import ReasonLogThrottle, gate_log_throttle_key
 from shared.risk.market_risk_gate import (
     MarketRiskGateConfig,
     MarketRiskGateDecision,
@@ -61,7 +63,7 @@ class DecisionEngineDaemon:
         tick_interval_seconds: float,
         market_risk_gate_config: MarketRiskGateConfig | None = None,
         market_risk_redis: Any | None = None,
-        shadow_gate_log_interval_seconds: float = 300.0,
+        shadow_gate_log_interval_seconds: float | None = None,
         futures_context_redis: Any | None = None,
         futures_context_key: str = "futures:context:latest",
         volatility_publisher: Any | None = None,
@@ -86,8 +88,24 @@ class DecisionEngineDaemon:
         # behavior, e.g. tests constructing the daemon without gate args).
         self.market_risk_gate_config = market_risk_gate_config
         self.market_risk_redis = market_risk_redis
-        self.shadow_gate_log_interval_seconds = shadow_gate_log_interval_seconds
-        self._last_shadow_gate_log_monotonic: float | None = None
+        # ``None`` resolves to the wiring config's own field default rather
+        # than a THIRD hardcoded copy of 300.0 (the Pydantic default on
+        # DecisionEngineMarketRiskGateWiring.would_block_log_interval_seconds
+        # is the single source; config/decision_engine.yaml is the second).
+        if shadow_gate_log_interval_seconds is None:
+            shadow_gate_log_interval_seconds = (
+                DecisionEngineMarketRiskGateWiring().would_block_log_interval_seconds
+            )
+        # Shared per-reason throttle (shared.risk.log_throttle) — the same
+        # helper the stock M4-P shadow-gate log consumes. Per-reason (not a
+        # single global timestamp) so a newly-appearing band/reason is never
+        # masked by a recent log for a different reason. The throttle is the
+        # only owner of the interval value after construction — nothing else
+        # on the daemon reads it back (O14-③ review: no unread duplicate
+        # instance attribute).
+        self._shadow_gate_log_throttle = ReasonLogThrottle(
+            interval_seconds=shadow_gate_log_interval_seconds
+        )
         # Per-symbol volatility reference publisher (shared/risk/
         # volatility_reference.py). This daemon owns the only futures
         # StreamingIndicatorEngine, so it is the only place that can supply the
@@ -207,13 +225,21 @@ class DecisionEngineDaemon:
 
         Shadow mode never rejects and never resizes — this log plus the
         ``market_risk_gate`` trace field on the published candidate are the
-        only shadow outputs.
+        only shadow outputs. Throttle key is ``(band, signal.direction)`` via
+        ``gate_log_throttle_key`` — NOT the raw ``reason`` string, which
+        embeds ``score`` and would otherwise reset the throttle on every
+        gate refresh (review finding, O14-③). ``side`` is included (unlike
+        the stock consumer) because the SAME band can produce two
+        structurally different verdicts here — e.g. HIGH blocks new longs
+        while allowing shorts at a reduced size — and those must not share
+        a throttle slot.
         """
         now = time.monotonic()
-        last = self._last_shadow_gate_log_monotonic
-        if last is not None and now - last < self.shadow_gate_log_interval_seconds:
+        key = gate_log_throttle_key(
+            band=decision.band, reason=decision.reason, side=signal.direction
+        )
+        if not self._shadow_gate_log_throttle.should_log(key, now):
             return
-        self._last_shadow_gate_log_monotonic = now
         logger.info(
             format_audit_kv(
                 event="market_risk_gate_shadow",
@@ -523,6 +549,46 @@ def _build_volatility_publisher(redis_client: Any, atr_readings: Any) -> Any | N
 # ---------------------------------------------------------------------------
 
 
+def _build_daemon(
+    *,
+    redis_client: Any,
+    setups: list[Setup],
+    context_provider: Callable[[], Awaitable[MarketContext | None]],
+    candidate_stream: str,
+    market_risk_redis: Any,
+    volatility_publisher: Any | None,
+) -> DecisionEngineDaemon:
+    """Construct the production ``DecisionEngineDaemon`` from resolved deps.
+
+    Extracted out of :func:`_build_and_run` so tests can exercise the
+    market-risk-gate config -> daemon-wiring seam directly (O14-③ review:
+    the prior end-to-end wiring had zero coverage — deleting the
+    ``shadow_gate_log_interval_seconds=`` argument left every test green).
+    Loads ``MarketRiskGateConfig``/``DecisionEngineMarketRiskGateWiring`` ONCE
+    here — the hot path never reparses YAML.
+    """
+    market_risk_gate_config = MarketRiskGateConfig.load_or_default()
+    market_risk_gate_wiring = DecisionEngineMarketRiskGateWiring.load_or_default()
+
+    return DecisionEngineDaemon(
+        redis=redis_client,
+        setups=setups,
+        context_provider=context_provider,
+        candidate_stream=candidate_stream,
+        candidate_maxlen=10_000,
+        tick_interval_seconds=60.0,
+        market_risk_gate_config=market_risk_gate_config,
+        market_risk_redis=market_risk_redis,
+        shadow_gate_log_interval_seconds=(
+            market_risk_gate_wiring.would_block_log_interval_seconds
+        ),
+        # Phase C structured-context trace: reuse the sync client that reads
+        # market:risk:latest — it reads futures:context:latest the same way.
+        futures_context_redis=market_risk_redis,
+        volatility_publisher=volatility_publisher,
+    )
+
+
 async def _build_and_run() -> int:
     """Production entrypoint — flag-gated (FUTURES_STRATEGY_DAEMON=off|shadow|live).
 
@@ -551,27 +617,19 @@ async def _build_and_run() -> int:
     )
     volatility_publisher = _build_volatility_publisher(redis_client, atr_readings)
 
-    # Market-risk ENTRY gate (roadmap §5.2 track C): config loaded ONCE at
-    # startup — the hot path never reparses YAML. The shared evaluator reads
-    # the market:risk:latest hash via a dedicated SYNC client (redis-py
+    # Market-risk ENTRY gate (roadmap §5.2 track C): the shared evaluator
+    # reads the market:risk:latest hash via a dedicated SYNC client (redis-py
     # connects lazily, so inert/off modes never open the connection).
     import redis as _redis_sync
 
-    market_risk_gate_config = MarketRiskGateConfig.load_or_default()
     market_risk_redis = _redis_sync.Redis.from_url(redis_url, decode_responses=True)
 
-    daemon = DecisionEngineDaemon(
-        redis=redis_client,
+    daemon = _build_daemon(
+        redis_client=redis_client,
         setups=setups,
         context_provider=context_provider,
         candidate_stream=candidate_stream,
-        candidate_maxlen=10_000,
-        tick_interval_seconds=60.0,
-        market_risk_gate_config=market_risk_gate_config,
         market_risk_redis=market_risk_redis,
-        # Phase C structured-context trace: reuse the sync client that reads
-        # market:risk:latest — it reads futures:context:latest the same way.
-        futures_context_redis=market_risk_redis,
         volatility_publisher=volatility_publisher,
     )
 
