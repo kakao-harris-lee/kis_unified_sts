@@ -91,7 +91,11 @@ class TestNightCloseCaptureConfig:
         assert cfg.window_start_kst == "05:50"
         assert cfg.window_end_kst == "06:00"
         assert cfg.redis_key == "market:structure:night_close"
-        assert cfg.redis_ttl_seconds == 86400
+        # 51h (not the 24h operational default): survives the Friday-close ->
+        # Monday-premarket weekend gap while still flagging a missed-capture
+        # case a day later (O11-③ review: 72h let a genuinely stale payload
+        # through the dashboard's staleness check).
+        assert cfg.redis_ttl_seconds == 183600
 
     def test_from_yaml_absolute_path_reads_section(self, tmp_path):
         yaml_path = tmp_path / "night_futures.yaml"
@@ -120,6 +124,22 @@ class TestNightCloseCaptureConfig:
         cfg = NightCloseCaptureConfig.from_yaml(str(repo_yaml))
         assert cfg.redis_key == "market:structure:night_close"
         assert cfg.window_start_kst < cfg.window_end_kst
+
+    def test_load_or_default_reads_the_shipped_ttl(self):
+        """Config round-trip: the single-source redis_ttl_seconds value the
+        dashboard and collector both reuse as their freshness bound."""
+        from pathlib import Path
+
+        repo_yaml = (
+            Path(__file__).resolve().parents[3] / "config" / "night_futures.yaml"
+        )
+        cfg = NightCloseCaptureConfig.load_or_default(str(repo_yaml))
+        assert cfg.redis_ttl_seconds == 183600
+
+    def test_load_or_default_falls_back_when_yaml_absent(self, tmp_path):
+        cfg = NightCloseCaptureConfig.load_or_default(str(tmp_path / "absent.yaml"))
+        assert cfg.redis_ttl_seconds == 183600
+        assert cfg.enabled is True
 
     @pytest.mark.parametrize("bad", ["5:50", "05:5", "24:00", "05:60", "0550", ""])
     def test_invalid_window_time_rejected(self, bad):

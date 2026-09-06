@@ -260,5 +260,23 @@ async def test_futures_quote_missing_oi_fields_are_none_not_zero(client):
 
     quote = await client.get_current_price("101S6000")
 
+    assert quote["change"] is None  # missing futs_prdy_ctrt, not flat
     assert quote["open_interest"] is None
     assert quote["open_interest_change"] is None
+
+
+@pytest.mark.asyncio
+async def test_futures_quote_present_change_parses_to_fraction(client):
+    payload = {
+        "rt_cd": "0",
+        "output1": {
+            "futs_prpr": "381.40",
+            "futs_prdy_clpr": "384.30",
+            "futs_prdy_ctrt": "1.23",
+        },
+    }
+    _install(client, [_response(payload)])
+
+    quote = await client.get_current_price("101S6000")
+
+    assert quote["change"] == pytest.approx(0.0123)

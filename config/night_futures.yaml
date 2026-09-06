@@ -41,4 +41,14 @@ night_close_capture:
   # open_interest, acml_vol, asof_ts (KST ISO), product_code.
   # No trades inside the window → key is NOT published (no empty values).
   redis_key: "market:structure:night_close"
-  redis_ttl_seconds: 86400  # project policy: operational keys 24h
+  # 183600s = 51h, not the 24h operational default: Friday's night session
+  # closes ~06:00 KST Saturday, and Monday's premarket read at ~05:48 KST is
+  # ~47h48m later — a 24h TTL would have expired the key over the weekend
+  # gap. 51h (not 72h) keeps a real margin under a missed-capture case a day
+  # later still reading as stale (~71h48m > 51h) — see
+  # services/dashboard/routes/market_risk.py's _night_close_summary and
+  # services/market_structure_collector/main.py's _read_night_close, which
+  # both reuse this SAME value (redis_ttl_seconds) as their freshness bound
+  # so the Redis-expiry bound and the "is this too old to trust" bound
+  # cannot drift apart.
+  redis_ttl_seconds: 183600

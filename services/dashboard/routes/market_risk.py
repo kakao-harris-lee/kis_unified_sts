@@ -33,8 +33,43 @@ _RISK_LATEST_KEY = os.environ.get("MARKET_RISK_LATEST_KEY", "market:risk:latest"
 # widest legitimate gap is close → next premarket (~13.3h), so reuse the
 # market-structure stale threshold (14h) unless overridden.
 _RISK_STALE_SECONDS = int(os.environ.get("MARKET_RISK_STALE_SECONDS", "50400"))
+
+# Fallback shipped default (mirrors NightCloseCaptureConfig's own field
+# default) — used only if the config load itself fails; keep this in sync
+# with config/night_futures.yaml, though _default_night_close_stale_seconds
+# reading the config directly is the actual source of truth.
+_NIGHT_CLOSE_STALE_FALLBACK_SECONDS = 183600
+
+
+def _default_night_close_stale_seconds() -> int:
+    """Night-close staleness bound, single-sourced with the collector's TTL.
+
+    O11-③ review: this used to be an independent hardcoded 86400 that could
+    (and did) drift from ``config/night_futures.yaml``'s
+    ``redis_ttl_seconds`` — once that TTL widened to survive the
+    Friday-close -> Monday-premarket weekend gap, the old hardcoded 24h bound
+    would have rendered a legitimately fresh Monday read as ``stale``.
+    Reusing ``redis_ttl_seconds`` here (rather than adding a second,
+    independently-tunable field) is what keeps the two bounds from drifting
+    apart again — see ``NightCloseCaptureConfig.redis_ttl_seconds``'s
+    docstring/comment for the full rationale.
+    """
+    try:
+        from services.night_futures_collector.config import NightCloseCaptureConfig
+
+        return int(NightCloseCaptureConfig.load_or_default().redis_ttl_seconds)
+    except Exception:
+        logger.warning(
+            "night_futures.yaml load failed for the dashboard staleness bound; "
+            "using the shipped fallback"
+        )
+        return _NIGHT_CLOSE_STALE_FALLBACK_SECONDS
+
+
 _NIGHT_CLOSE_STALE_SECONDS = int(
-    os.environ.get("MARKET_RISK_NIGHT_STALE_SECONDS", "86400")
+    os.environ.get(
+        "MARKET_RISK_NIGHT_STALE_SECONDS", str(_default_night_close_stale_seconds())
+    )
 )
 
 # Component names in the fixed Phase 1a contract order.

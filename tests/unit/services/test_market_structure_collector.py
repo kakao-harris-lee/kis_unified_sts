@@ -10,8 +10,9 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import fakeredis
 import pytest
@@ -33,6 +34,18 @@ from shared.storage.market_structure_store import ParquetMarketStructureStore
 
 TRADE_DAY = date(2026, 7, 2)  # Thursday, KRX market day
 PREV_DAY = date(2026, 7, 1)
+_KST = ZoneInfo("Asia/Seoul")
+
+
+def _fresh_asof(offset: timedelta = timedelta(minutes=-1)) -> str:
+    """A real-wall-clock KST-naive ``asof_ts`` for night-close freshness tests.
+
+    ``_read_night_close``'s age check compares against real ``now`` (KST),
+    not the fixed simulated ``TRADE_DAY`` this file otherwise uses for
+    Parquet-day bucketing, so night-close payload timestamps must be
+    generated relative to actual wall-clock time.
+    """
+    return (datetime.now(_KST) + offset).replace(tzinfo=None).isoformat()
 
 
 class _AlwaysOpenCalendar:
@@ -195,6 +208,29 @@ class TestCollectClose:
         assert json.loads(row["missing_components"]) == []
         assert bool(row["finalized"]) is True
 
+    def test_missing_futures_change_yields_none_not_neutral(
+        self, redis, store, config, macro
+    ):
+        """O11-②: a missing futs_prdy_ctrt must not read as a flat market.
+
+        shared/kis/client.py now returns ``change=None`` (not ``0.0``) when
+        the KIS response omits ``futs_prdy_ctrt``. This must propagate as
+        ``fut_change_pct=None`` and, in turn, ``oi_price_signal=None`` (never
+        guesses a direction) — distinct from a genuinely flat market, which
+        would report ``fut_change_pct=0.0`` and ``oi_price_signal="neutral"``.
+        """
+
+        class _NoneChangeKISClient(FakeKISClient):
+            async def get_current_price(self, symbol):
+                quote = await super().get_current_price(symbol)
+                return {**quote, "change": None}
+
+        assert _run_close(redis, store, config, kis=_NoneChangeKISClient()) == 0
+
+        row = _stored_row(store, TRADE_DAY, "close")
+        assert row["fut_change_pct"] is None
+        assert row["oi_price_signal"] is None
+
     def test_redis_publication_keys_and_ttls(self, redis, store, config, macro):
         _run_close(redis, store, config)
 
@@ -328,13 +364,14 @@ class TestCollectPremarket:
 
     def test_carries_prev_close_and_merges_overnight(self, redis, store, config, macro):
         self._seed_prev_close(store)
+        asof_ts = _fresh_asof()
         redis.hset(
             config.redis.night_close_key,
             mapping={
                 "close": "412.35",
                 "mrkt_basis": "0.85",
                 "open_interest": "24810",
-                "asof_ts": "2026-07-02T05:59:30+09:00",
+                "asof_ts": asof_ts,
                 "product_code": "101W9000",
             },
         )
@@ -352,7 +389,7 @@ class TestCollectPremarket:
         # night capture merged with night_ prefix; text fields kept as strings
         assert row["night_close"] == 412.35
         assert row["night_mrkt_basis"] == 0.85
-        assert row["night_asof_ts"] == "2026-07-02T05:59:30+09:00"
+        assert row["night_asof_ts"] == asof_ts
         assert row["night_product_code"] == "101W9000"
         assert bool(row["finalized"]) is False
         assert row["coverage_ratio"] == 1.0
@@ -404,28 +441,84 @@ class TestCollectPremarket:
 
 class TestReadNightClose:
     def test_reads_hash_with_prefix(self, redis, config):
+        asof_ts = _fresh_asof()
         redis.hset(
             config.redis.night_close_key,
-            mapping={"close": "411.0", "dprt": "-0.15", "product_code": "101W9000"},
+            mapping={
+                "close": "411.0",
+                "dprt": "-0.15",
+                "product_code": "101W9000",
+                "asof_ts": asof_ts,
+            },
         )
         columns = _read_night_close(redis, config)
         assert columns == {
             "night_close": 411.0,
             "night_dprt": -0.15,
             "night_product_code": "101W9000",
+            "night_asof_ts": asof_ts,
         }
 
     def test_json_string_fallback(self, redis, config):
+        asof_ts = _fresh_asof()
         redis.set(
             config.redis.night_close_key,
-            json.dumps({"close": 410.5, "asof_ts": "2026-07-02T05:59:00"}),
+            json.dumps({"close": 410.5, "asof_ts": asof_ts}),
         )
         columns = _read_night_close(redis, config)
         assert columns["night_close"] == 410.5
-        assert columns["night_asof_ts"] == "2026-07-02T05:59:00"
+        assert columns["night_asof_ts"] == asof_ts
 
     def test_absent_key_is_soft_miss(self, redis, config):
         assert _read_night_close(redis, config) == {}
+
+    def test_fresh_payload_within_bound_merges(self, redis, config):
+        """~47h48m old — inside the 51h bound (survives the weekend gap)."""
+        asof_ts = _fresh_asof(timedelta(hours=-47, minutes=-48))
+        redis.hset(
+            config.redis.night_close_key,
+            mapping={"close": "412.0", "asof_ts": asof_ts},
+        )
+        columns = _read_night_close(redis, config)
+        assert columns["night_close"] == 412.0
+
+    def test_over_age_payload_is_dropped_with_warning(self, redis, config, caplog):
+        """~71h48m old — a genuinely missed capture, not the weekend gap."""
+        asof_ts = _fresh_asof(timedelta(hours=-71, minutes=-48))
+        redis.hset(
+            config.redis.night_close_key,
+            mapping={"close": "412.0", "asof_ts": asof_ts},
+        )
+        with caplog.at_level("WARNING"):
+            columns = _read_night_close(redis, config)
+        assert columns == {}
+        assert any("over-age" in r.getMessage() for r in caplog.records)
+
+    def test_missing_asof_ts_is_dropped_fail_closed(self, redis, config, caplog):
+        """No asof_ts at all: cannot prove freshness, so treat as over-age."""
+        redis.hset(
+            config.redis.night_close_key,
+            mapping={"close": "412.0", "product_code": "101W9000"},
+        )
+        with caplog.at_level("WARNING"):
+            columns = _read_night_close(redis, config)
+        assert columns == {}
+        assert any(
+            "missing/unparseable asof_ts" in r.getMessage() for r in caplog.records
+        )
+
+    def test_unparseable_asof_ts_is_dropped_fail_closed(self, redis, config, caplog):
+        """A garbled asof_ts also fails closed, same as missing."""
+        redis.hset(
+            config.redis.night_close_key,
+            mapping={"close": "412.0", "asof_ts": "not-a-timestamp"},
+        )
+        with caplog.at_level("WARNING"):
+            columns = _read_night_close(redis, config)
+        assert columns == {}
+        assert any(
+            "missing/unparseable asof_ts" in r.getMessage() for r in caplog.records
+        )
 
 
 # ---------------------------------------------------------------------------
