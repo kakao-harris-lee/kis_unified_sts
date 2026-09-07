@@ -42,3 +42,9 @@
 - 두 패키지 테스트 green · 커널 `tos/tests` 불변 · mypy runtime 0 · 방화벽/lint-imports/budget/Black/Ruff 0
 - 장애 계약 ①~⑦(M) · custody 6종(N) red-선행 테스트 · 독립 리뷰 approve
 - 실 브로커 transport 0 · `order` 자격증명 로드 경로 0 · EV 상태 변경 0
+
+## 5. 실행 결과·독립 리뷰 처분 (2026-09-08)
+
+- 착지: 레인 N `278062e3`(custody 1,474줄·테스트 27) · 레인 M `42f8cbf5`(SqliteCommitLog 815줄·테스트 32 · 커널 diff 0).
+- 리뷰 1차 **needs-attention**: HIGH-1 `from_state` 가 보유 상태와 결속되지 않아 RELEASED 재기동 가능(ADR-002-012 :37) · MEDIUM-1 매니페스트 경로가 root 밖/절대/`..` 허용 · MEDIUM-2 `order.*` 금지가 표본 검사(집합 동일성 미고정) · MEDIUM-3 NULL digest 중복이 PARTIAL_COMMIT_SUSPECTED 로 오분류 · MEDIUM-4 `verify_replay` 가 payload 형상으로 접어 위조 가능한 CORRUPTION · LOW 3(읽기 전 검사 문언 · evidence 선-커밋 후 RCL 롤백 미고정 · 불변 bytes 0 채움 불가). 전건 수용 → 처분 레인 진행.
+- **리뷰 판정(렌즈 4) — 미충족 커널 포트는 선택지 (a) 채택**: `tos.rcl.commitlog.CapacityReservationTransition` 이 `InstrumentKey` 결속 필드를 얻는다. 근거: 커널 자신이 engine 투영을 «이 레코드의 하류 읽기 투영» 으로 선언(`commitlog.py:226-228`)하므로 투영이 키잉하는 스코프를 소스 레코드가 담아야 하고 · 포트 레코드의 필드는 데이터 형상이지 기본 구현이 아니라 D1 «커널은 포트만 안다» 를 침해하지 않으며 · (b) 런타임 레지스트리는 결속을 커밋된 접두 밖에 두어 ADR-002-012 :491 독립 replay 재구성을 깨고 · ADR-002-002 §10 은 예약 정체성을 1급·RELEASED 종단으로 다뤄 durable 결속을 요구. **후속 슬라이스(커널 편집 라운드)에서 구현** — 이 슬라이스는 보고까지.
