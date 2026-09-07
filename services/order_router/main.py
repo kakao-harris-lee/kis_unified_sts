@@ -239,8 +239,9 @@ class OrderRouterDaemon(StreamStage):
             self.refused_due_to_recovery_sentinel = True
             logger.critical(
                 "recovery sentinel present at %s — refusing to %s. "
-                "Run scripts/trading/recover_positions.py review, then rm "
-                "the sentinel after operator review.",
+                "Run scripts/trading/recover_positions.py review, then clear "
+                "with scripts/kill_switch_clear.sh --recovery after operator "
+                "review.",
                 path,
                 phase,
             )
