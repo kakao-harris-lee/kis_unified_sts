@@ -380,7 +380,7 @@ class TestPositionSizerGracefulDegradation:
 class TestStrategyManagerGracefulDegradation:
     """Test StrategyManager handles missing LLM context gracefully."""
 
-    @patch("shared.strategy.manager.LLMContextProvider")
+    @patch("shared.llm.context_provider.LLMContextProvider")
     def test_strategy_manager_handles_none_context(self, mock_provider_class):
         """Test StrategyManager works when LLMContextProvider returns None."""
         # Setup mock provider that returns None
@@ -398,7 +398,7 @@ class TestStrategyManagerGracefulDegradation:
         # This is tested implicitly through strategy tests above
         assert mock_provider.get_context.return_value is None
 
-    @patch("shared.strategy.manager.LLMContextProvider")
+    @patch("shared.llm.context_provider.LLMContextProvider")
     def test_strategy_manager_handles_provider_exception(self, mock_provider_class):
         """Test StrategyManager handles LLMContextProvider exceptions gracefully."""
         # Setup mock provider that raises exception
