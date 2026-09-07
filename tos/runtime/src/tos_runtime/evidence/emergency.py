@@ -16,6 +16,19 @@ only reached one of the two paths is not a success, even though the sqlite
 side, once committed, is durably and irreversibly recorded regardless (design
 #40 §2 item 2 "하나라도 실패 = 예외 · 성공 과대 보고 금지").
 
+**Both paths carry the SAME scrubbed payload (2026-09-08 independent-review
+HIGH-1 fix).** An earlier revision wrote the RAW ``payload`` straight to the
+JSONL line — only the sqlite side ever saw
+:func:`~tos.evidence.scrub_secret_fields`, since ``secret_keys`` is
+store-private. A plaintext secret therefore reached the emergency file even
+though the sqlite copy was clean. :func:`record_halt` now calls
+:meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.scrub_payload` FIRST
+(the store's own ``secret_keys``, never a second, possibly-divergent list),
+passes that ALREADY-scrubbed payload into :meth:`SqliteEvidenceStore.append`
+(idempotent to re-scrub — see that method's own docstring), and writes the
+SAME scrubbed object to the JSONL line. Both copies are therefore
+byte-identical AND both are clean.
+
 Only :data:`~tos.evidence.DurabilityClass.EMERGENCY_DURABLE` records are
 accepted — :func:`record_halt` refuses any other durability class rather than
 silently writing a non-emergency record through the emergency path.
@@ -112,8 +125,9 @@ def record_halt(
             f"(got {durability_class!r}) — this path is reserved for "
             "HALT / protective-action records (design #40 §2 item 2)"
         )
+    scrubbed_payload, masked_keys = store.scrub_payload(payload)
     receipt = store.append(
-        payload,
+        scrubbed_payload,
         kind=kind,
         record_class=record_class,
         runtime_identity=runtime_identity,
@@ -127,7 +141,8 @@ def record_halt(
             "kind": kind,
             "record_class": record_class,
             "durability_class": durability_class.value,
-            "payload": dict(payload),
+            "payload": scrubbed_payload,
+            "masked_keys": list(masked_keys),
         }
     )
     return receipt

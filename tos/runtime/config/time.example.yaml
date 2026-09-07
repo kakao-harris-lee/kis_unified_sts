@@ -44,10 +44,22 @@ MAX_time_source_disagreement_ms: null
 
 # Minimum independent reference-source count required to reach TRUSTED
 # (compared against tos.time.independent_reference_count's return value).
-# Phase 2 implements exactly ONE reference source kind (the local system
-# clock, tos_runtime.time.sources.LocalSystemClockReader) — a profile that
-# sets this above 1 will honestly never observe TRUSTED from this package
-# alone (ADR-002-008 :184 single-source residual; not a bug to work around).
+# Phase 2 implements exactly ONE reference source KIND (the local system
+# clock, tos_runtime.time.sources.LocalSystemClockReader) — the runtime
+# constructor does NOT itself enforce "at most one reader wired": a caller
+# may inject any number of readers (tos_runtime.time.service's own
+# docstring: "accepts a sequence so a later profile can add a second
+# independent source"). Two honesty guarantees hold regardless of how many
+# readers are wired: (a) every LocalSystemClockReader instance declares the
+# SAME common_mode_group, so N instances collapse to exactly 1 independent
+# contribution, never N (HIGH-2 fix, review of ba7d438f); (b) with MORE than
+# one reachable source, no pairwise disagreement comparison is performed
+# (Phase 2 has no comparator), so disagreement is reported UNKNOWN and
+# TRUSTED is refused, never silently asserted as "in bound". So a profile
+# that sets this above 1 will honestly never observe TRUSTED from this
+# package as currently implemented (ADR-002-008 :184 single-source residual;
+# not a bug to work around — a real second independent source kind is future
+# work, not a wiring trick).
 MIN_time_independent_reference_count: null
 
 # --- non-bound identity/version strings -----------------------------------

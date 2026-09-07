@@ -90,6 +90,20 @@ class ReferenceSourceReader(Protocol):
         ...
 
 
+#: Every :class:`LocalSystemClockReader` instance in one process reads the
+#: SAME physical clock (``time.time_ns()``, the OS wall-clock syscall) — so
+#: every instance shares this ONE concrete ``common_mode_group`` label. This
+#: is what makes ``tos.time.independent_reference_count`` collapse any number
+#: of ``LocalSystemClockReader`` instances to a single independent
+#: contribution (its own docstring: "Multiple names served by one clock/path/
+#: hypervisor/daemon SHALL NOT be claimed as independent" — HIGH-2, review of
+#: ba7d438f: an earlier cut left this ``None``, which let two instances of
+#: this reader count as 2 independent references for a profile requiring
+#: ``MIN_time_independent_reference_count=2``, even though both are the same
+#: OS clock).
+_LOCAL_SYSTEM_CLOCK_GROUP = "LOCAL_SYSTEM_CLOCK"
+
+
 class LocalSystemClockReader:
     """Phase 2's only implemented reference source: the local system wall clock.
 
@@ -97,12 +111,13 @@ class LocalSystemClockReader:
     §1 item 1): NTP and any broker-time reference are NOT implemented here. A
     verification profile requiring more than one independent reference
     (``MIN_time_independent_reference_count`` > 1,
-    :mod:`tos_runtime.time.config`) can therefore never be satisfied by this
-    reader alone — a conservative, honestly-reported outcome
-    (``tos.time.independent_reference_count`` reports exactly ``1``), not a gap
-    this reader tries to paper over. No ``common_mode_group`` is declared
-    (``None``): with only one physical source in this process, no shared-clock
-    membership is known or claimed.
+    :mod:`tos_runtime.time.config`) can therefore never be satisfied by any
+    number of this reader — a conservative, honestly-reported outcome: every
+    instance declares the SAME ``common_mode_group``
+    (:data:`_LOCAL_SYSTEM_CLOCK_GROUP`), so
+    ``tos.time.independent_reference_count`` collapses any number of them to
+    exactly ``1`` independent contribution, never a gap this reader tries to
+    paper over by claiming more independence than it has.
     """
 
     def read(self) -> ReferenceObservation:
@@ -118,5 +133,5 @@ class LocalSystemClockReader:
             reachable=True,
             healthy=True,
             quality="LOCAL_SYSTEM_CLOCK",
-            common_mode_group=None,
+            common_mode_group=_LOCAL_SYSTEM_CLOCK_GROUP,
         )

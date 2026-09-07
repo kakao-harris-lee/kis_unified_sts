@@ -54,6 +54,7 @@ from tos_runtime.evidence.sinks import (
     GatewayEvidenceSinkAdapter,
 )
 from tos_runtime.evidence.store import (
+    ChainVerification,
     EvidenceCorruption,
     InjectedCrash,
     KeyProvider,
@@ -62,6 +63,7 @@ from tos_runtime.evidence.store import (
 
 __all__ = [
     "BackupManifest",
+    "ChainVerification",
     "EmergencyAppendLog",
     "EngineEvidenceSinkAdapter",
     "EvidenceAppendPort",

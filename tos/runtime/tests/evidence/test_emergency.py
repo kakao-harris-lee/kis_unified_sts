@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -9,6 +10,8 @@ import pytest
 from tos.evidence import DurabilityClass
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
+
+from .conftest import FixedKeyProvider
 
 
 def test_record_halt_writes_to_both_paths(
@@ -103,3 +106,66 @@ def test_record_halt_raises_when_store_append_fails_before_touching_emergency_lo
         )
     store._crash_hook = None
     assert not (tmp_path / "emergency.jsonl").exists()
+
+
+# ============================================================================
+# HIGH-1 (2026-09-08 independent review) — the JSONL copy must be scrubbed too
+# ============================================================================
+
+
+def test_emergency_log_never_contains_the_raw_secret_bytes(tmp_path: Path) -> None:
+    """The secret must be absent from the RAW JSONL file bytes, not just sqlite.
+
+    An earlier revision wrote the caller's raw ``payload`` straight to the
+    JSONL line — only the sqlite side was ever scrubbed. This greps the
+    emergency log's own file bytes (never the store) for the secret.
+    """
+    secret_value = "sk-emergency-secret-marker-13579246800"
+    scrubbing_store = SqliteEvidenceStore(
+        tmp_path / "scrubbing_evidence.sqlite3",
+        key_provider=FixedKeyProvider(),
+        secret_keys=frozenset({"api_key"}),
+    )
+    log = EmergencyAppendLog(tmp_path / "emergency.jsonl")
+    record_halt(
+        scrubbing_store,
+        log,
+        payload={"account": "acct-1", "api_key": secret_value},
+        kind="FLOW_HALTED",
+        record_class="HALT",
+    )
+    scrubbing_store.close()
+
+    raw_bytes = (tmp_path / "emergency.jsonl").read_bytes()
+    assert secret_value.encode("utf-8") not in raw_bytes
+
+
+def test_sqlite_and_jsonl_copies_of_a_halt_record_carry_the_same_scrubbed_payload(
+    tmp_path: Path,
+) -> None:
+    """Both durable copies of one HALT record must be byte-identically scrubbed."""
+    scrubbing_store = SqliteEvidenceStore(
+        tmp_path / "scrubbing_evidence2.sqlite3",
+        key_provider=FixedKeyProvider(),
+        secret_keys=frozenset({"api_key"}),
+    )
+    log = EmergencyAppendLog(tmp_path / "emergency2.jsonl")
+    receipt = record_halt(
+        scrubbing_store,
+        log,
+        payload={"account": "acct-1", "api_key": "shh-secret"},
+        kind="FLOW_HALTED",
+        record_class="HALT",
+    )
+
+    sqlite_row = scrubbing_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE seq = ?", (receipt.seq,)
+    ).fetchone()
+    sqlite_payload = json.loads(sqlite_row[0])["payload"]
+    scrubbing_store.close()
+
+    jsonl_line = (tmp_path / "emergency2.jsonl").read_text().strip().splitlines()[0]
+    jsonl_payload = json.loads(jsonl_line)["payload"]
+
+    assert sqlite_payload == jsonl_payload
+    assert sqlite_payload["api_key"] == "***REDACTED***"

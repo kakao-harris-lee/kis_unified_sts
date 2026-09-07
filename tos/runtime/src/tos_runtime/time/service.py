@@ -47,7 +47,6 @@ from tos.time import (
     freshness_verdict,
     health_transition_allowed,
     independent_reference_count,
-    recovery_generation_revives_nothing,
     snapshot_age_admissible,
     source_disagreement_within_bound,
     transition_to_trusted_requires_new_generation,
@@ -59,7 +58,11 @@ from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.generation import GenerationCounter
 from tos_runtime.time.sources import MonotonicSource, ReferenceSourceReader
 
-__all__ = ["TimeServiceNotStarted", "TrustworthyTimeService"]
+__all__ = [
+    "RecoveryGenerationNotAdvanced",
+    "TimeServiceNotStarted",
+    "TrustworthyTimeService",
+]
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
@@ -74,15 +77,33 @@ class TimeServiceNotStarted(RuntimeError):
     ``start()`` is called twice on the same service instance."""
 
 
+class RecoveryGenerationNotAdvanced(RuntimeError):
+    """Raised when a recovery out of ``UNTRUSTED`` would not carry a strictly
+    greater generation than the last exposed snapshot (LOW-5, review of
+    ba7d438f). ``tos.time.recovery_generation_revives_nothing`` documents the
+    rule this enforces, but the kernel predicate itself is an unconditional
+    ``True`` for any input — it cannot detect a violation, only describe one.
+    This exception is the real, falsifiable guard at the one place a
+    violation would actually matter."""
+
+
 class TrustworthyTimeService:
     """Composition root for one process's Trustworthy Time health-check cycle.
 
     Args:
         monotonic: The injected monotonic-clock port.
-        references: The injected reference-source ports (Phase 2 wires exactly
-            one — :class:`~tos_runtime.time.sources.LocalSystemClockReader` —
-            but the service accepts a sequence so a later profile can add a
-            second independent source without a service-shape change).
+        references: The injected reference-source ports. The typical Phase 2
+            wiring is exactly one —
+            :class:`~tos_runtime.time.sources.LocalSystemClockReader` — but
+            this constructor does NOT itself enforce "at most one": a caller
+            may inject any number. Multiple instances of the same reader kind
+            still collapse to one independent contribution (every
+            ``LocalSystemClockReader`` declares the same
+            ``common_mode_group``), and with more than one genuinely
+            independent reachable source, ``_required_ok`` reports
+            disagreement as UNKNOWN rather than asserting agreement it never
+            measured (HIGH-2 fix, review of ba7d438f) — see
+            :meth:`_required_ok`.
         config: The fully-valued, fail-closed-loaded config
             (:func:`tos_runtime.time.config.load_time_config`).
         identity: This process's :class:`tos.workload.RuntimeIdentity`
@@ -238,11 +259,20 @@ class TrustworthyTimeService:
             max_suspension_ms=self._config.max_process_suspension_ms,
         )
 
-    def _read_reference_sources(self) -> tuple[tuple[ReferenceSource, ...], bool]:
+    def _read_reference_sources(self) -> tuple[tuple[ReferenceSource, ...], int]:
         """Read every injected reference source; return the kernel-shaped
-        records plus whether at least one is reachable+healthy this cycle."""
+        records plus how many are reachable+healthy this cycle.
+
+        The count — not just a bool — matters as of the HIGH-2 fix (review of
+        ba7d438f): whether disagreement can be honestly asserted as 0 depends
+        on whether there is exactly one reachable source (nothing to disagree
+        with) or more than one (a real comparison would be needed, and Phase 2
+        performs none) — see :meth:`_required_ok`.
+        """
         observations = [reader.read() for reader in self._references]
-        reachable = any(obs.reachable and obs.healthy for obs in observations)
+        reachable_count = sum(
+            1 for obs in observations if obs.reachable and obs.healthy
+        )
         kernel_sources = tuple(
             ReferenceSource(
                 common_mode_group=obs.common_mode_group,
@@ -255,26 +285,37 @@ class TrustworthyTimeService:
             )
             for obs in observations
         )
-        return kernel_sources, reachable
+        return kernel_sources, reachable_count
 
     def _required_ok(
         self,
         anchor_ok: bool,
         kernel_sources: tuple[ReferenceSource, ...],
-        reachable: bool,
+        reachable_count: int,
     ) -> bool:
         """Fold every kernel predicate this cycle's observations feed into the
         single "may this be TRUSTED" gate (fault contracts ⑥/⑦)."""
+        reachable = reachable_count > 0
         reference_count = (
             independent_reference_count(kernel_sources) if reachable else 0
         )
 
-        # Phase 2 wires at most one physical reader (module docstring residual
-        # note): with zero or one reachable source there is nothing to disagree
-        # with, so the disagreement observation is trivially 0; an unreachable
-        # source reports no disagreement observation at all (None -> UNKNOWN,
-        # fail-closed, never silently "in bound").
-        disagreement_ms = 0 if reachable else None
+        # HIGH-2 fix (review of ba7d438f): the precondition "at most one
+        # reachable source" is NOT enforced by the constructor — a caller can
+        # wire any number of ReferenceSourceReaders (module docstring
+        # "accepts a sequence so a later profile can add a second independent
+        # source"). So disagreement is asserted as 0 ONLY in the genuinely
+        # single-source case (exactly one reachable source — nothing to
+        # disagree with); with MORE than one reachable source, Phase 2
+        # performs no pairwise comparison at all (no comparator exists yet),
+        # so the disagreement observation is UNKNOWN (``None``), which
+        # source_disagreement_within_bound fails closed on — never silently
+        # asserted as "in bound". An earlier cut asserted 0 for any reachable
+        # count, which let un-measured multi-source agreement pass as
+        # measured agreement.
+        # reachable_count == 0 -> None (no observation at all); == 1 -> 0
+        # (nothing to disagree with); > 1 -> None (unmeasured, fail-closed).
+        disagreement_ms: int | None = 0 if reachable_count == 1 else None
         disagreement_ok = source_disagreement_within_bound(
             disagreement_ms, self._config.max_time_source_disagreement_ms
         )
@@ -361,11 +402,32 @@ class TrustworthyTimeService:
             to_state is HealthState.SYNCHRONIZING
             and from_state is HealthState.UNTRUSTED
         ):
-            assert recovery_generation_revives_nothing(
-                invalidated_under_generation=generation.current,
-                new_generation=generation.current,
+            # tos.time.recovery_generation_revives_nothing is the kernel rule
+            # this enforces ("a new generation does not revive what an
+            # earlier one invalidated") — but that predicate is an
+            # unconditional True for any input (LOW-5, review of ba7d438f):
+            # it documents the rule, it cannot detect a violation of it. The
+            # REAL, falsifiable guard is this explicit generation-advance
+            # check: recovery must mint a generation strictly greater than
+            # whatever the last exposed snapshot carried. A plain `assert`
+            # here would (a) vanish entirely under `python -O` and (b) never
+            # fail regardless of -O, since both of its would-be arguments
+            # were the same value — this `if ... raise` cannot be stripped
+            # and is genuinely falsifiable.
+            last_generation = (
+                self._snapshot.generation
+                if self._snapshot is not None
+                else generation.current
             )
-            next_anchor = self._build_anchor(now_ms, generation.current)
+            new_generation = generation.peek_next()
+            if last_generation is None or new_generation <= last_generation:
+                raise RecoveryGenerationNotAdvanced(
+                    "recovery from UNTRUSTED must mint a strictly-new "
+                    f"generation (last exposed snapshot generation="
+                    f"{last_generation!r}, candidate={new_generation!r})"
+                )
+            next_anchor = self._build_anchor(now_ms, new_generation)
+            commit_generation = new_generation
         return to_state, None, commit_generation, next_anchor
 
     @staticmethod
@@ -445,8 +507,8 @@ class TrustworthyTimeService:
         now_ms = self._monotonic.now_ms()
 
         anchor_ok = self._anchor_ok(anchor, now_ms)
-        kernel_sources, reachable = self._read_reference_sources()
-        required_ok = self._required_ok(anchor_ok, kernel_sources, reachable)
+        kernel_sources, reachable_count = self._read_reference_sources()
+        required_ok = self._required_ok(anchor_ok, kernel_sources, reachable_count)
 
         applied_state, reason, commit_generation, next_anchor = self._decide_transition(
             self._health_state, anchor_ok, required_ok, generation, anchor, now_ms

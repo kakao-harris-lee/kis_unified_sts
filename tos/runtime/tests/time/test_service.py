@@ -19,7 +19,12 @@ from tos.time import HealthState, TimeHealthSnapshot, snapshot_consumer_binding_
 from tos.workload import RuntimeIdentity
 from tos_runtime.time import service as service_module
 from tos_runtime.time.config import TrustworthyTimeConfig
-from tos_runtime.time.service import TimeServiceNotStarted, TrustworthyTimeService
+from tos_runtime.time.generation import GenerationCounter
+from tos_runtime.time.service import (
+    RecoveryGenerationNotAdvanced,
+    TimeServiceNotStarted,
+    TrustworthyTimeService,
+)
 from tos_runtime.time.sources import ReferenceObservation
 
 # ----------------------------------------------------------------------------
@@ -259,13 +264,17 @@ def test_new_generation_after_recovery_makes_old_snapshot_binding_fail() -> None
     service.evaluate()
     assert service.health_state is HealthState.UNTRUSTED
 
-    monotonic.value = 2000  # recovery: UNTRUSTED -> SYNCHRONIZING (re-anchors)
-    service.evaluate()
+    # recovery: UNTRUSTED -> SYNCHRONIZING (re-anchors AND mints generation 2 —
+    # LOW-5 fix, review of ba7d438f: recovery itself must strictly advance the
+    # generation past whatever the last exposed [UNTRUSTED] snapshot carried).
+    monotonic.value = 2000
+    recovery_snapshot = service.evaluate()
     assert service.health_state is HealthState.SYNCHRONIZING
+    assert recovery_snapshot.generation == 2
 
-    monotonic.value = 2010  # SYNCHRONIZING -> TRUSTED, generation 2
+    monotonic.value = 2010  # SYNCHRONIZING -> TRUSTED, generation 3
     new_snapshot = service.evaluate()
-    assert new_snapshot.generation == 2
+    assert new_snapshot.generation == 3
 
     # The OLD snapshot's binding fails against the NEW generation — the new
     # generation does not revive the old snapshot's authority.
@@ -283,6 +292,45 @@ def test_new_generation_after_recovery_makes_old_snapshot_binding_fail() -> None
         expected_canonical_digest=old_snapshot.canonical_digest,
         expected_generation=old_snapshot.generation,
     )
+
+
+# ----------------------------------------------------------------------------
+# LOW-5 (review of ba7d438f): the recovery generation-advance guard is real,
+# not a stripped-under-`-O` `assert` that always passed anyway
+# ----------------------------------------------------------------------------
+
+
+def test_recovery_raises_when_generation_would_not_strictly_advance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale snapshot must not become current after recovery without a
+    strictly-new generation: forcing GenerationCounter.peek_next() to NOT
+    advance (simulating a corrupted/non-monotonic counter) must make the
+    recovery step raise, leaving the stale snapshot as the exposed one."""
+    monotonic = FakeMonotonicSource(1000)
+    service, _ = _build(monotonic=monotonic)
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING
+    monotonic.value = 1010
+    service.evaluate()  # -> TRUSTED, generation 1
+
+    monotonic.value = 500  # regression -> UNTRUSTED
+    stale_snapshot = service.evaluate()
+    assert service.health_state is HealthState.UNTRUSTED
+    assert stale_snapshot.generation == 1
+
+    # Force the recovery step's generation candidate to NOT advance.
+    monkeypatch.setattr(GenerationCounter, "peek_next", lambda self: self.current)
+
+    monotonic.value = 2000
+    with pytest.raises(RecoveryGenerationNotAdvanced):
+        service.evaluate()
+
+    # No snapshot was silently re-exposed or advanced past the stale one, and
+    # health state did not move — the failed recovery attempt left no trace.
+    assert service.current_snapshot().generation == stale_snapshot.generation
+    assert service.current_snapshot() is stale_snapshot
+    assert service.health_state is HealthState.UNTRUSTED
 
 
 # ----------------------------------------------------------------------------
@@ -321,6 +369,80 @@ def test_single_reference_source_with_two_required_never_reaches_trusted() -> No
     from tos.time import independent_reference_count
 
     assert independent_reference_count(snap.reference_sources) == 1
+
+
+# ----------------------------------------------------------------------------
+# HIGH-2 (review of ba7d438f): same-clock instances must not count as
+# independent, and un-measured disagreement must not be asserted as agreement
+# ----------------------------------------------------------------------------
+
+
+def test_single_reader_reaches_trusted_unchanged_control() -> None:
+    """Control: the pre-fix single-reader path is untouched by the HIGH-2 fix."""
+    monotonic = FakeMonotonicSource(1000)
+    service, _ = _build(monotonic=monotonic)  # default: one FakeReferenceReader
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING
+    monotonic.value = 1010
+    snap = service.evaluate()  # -> TRUSTED, same as before the fix
+
+    assert service.health_state is HealthState.TRUSTED
+    assert snap.health_state is HealthState.TRUSTED
+
+
+def test_two_same_clock_readers_never_reach_trusted_with_min_two_required() -> None:
+    """HIGH-2 red-proof, now green: two readers sharing ONE common_mode_group
+    (the real LocalSystemClockReader case) must collapse to 1 independent
+    reference, never satisfying a profile requiring 2."""
+    monotonic = FakeMonotonicSource(1000)
+    same_group_readers = [
+        FakeReferenceReader(common_mode_group="LOCAL_SYSTEM_CLOCK"),
+        FakeReferenceReader(common_mode_group="LOCAL_SYSTEM_CLOCK"),
+    ]
+    service, _ = _build(
+        monotonic=monotonic,
+        references=same_group_readers,
+        config=_config(min_time_independent_reference_count=2),
+    )
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING
+    monotonic.value = 1010
+    snap = service.evaluate()
+
+    assert service.health_state is HealthState.SYNCHRONIZING  # never TRUSTED
+    from tos.time import independent_reference_count
+
+    assert independent_reference_count(snap.reference_sources) == 1
+
+
+def test_two_distinct_group_readers_with_no_comparison_never_reach_trusted() -> None:
+    """HIGH-2: two readers with genuinely DISTINCT common_mode_group values
+    satisfy the independent-count requirement (2 >= 2), but Phase 2 performs
+    no pairwise disagreement comparison — disagreement must be reported
+    UNKNOWN, not silently asserted as 0/agreeing, so TRUSTED still must not
+    be reached."""
+    monotonic = FakeMonotonicSource(1000)
+    distinct_group_readers = [
+        FakeReferenceReader(common_mode_group="SOURCE_A"),
+        FakeReferenceReader(common_mode_group="SOURCE_B"),
+    ]
+    service, _ = _build(
+        monotonic=monotonic,
+        references=distinct_group_readers,
+        config=_config(min_time_independent_reference_count=2),
+    )
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING
+    monotonic.value = 1010
+    snap = service.evaluate()
+
+    from tos.time import independent_reference_count
+
+    # The independent-count gate alone WOULD pass (2 distinct groups)...
+    assert independent_reference_count(snap.reference_sources) == 2
+    # ...but un-measured disagreement still fails closed, so TRUSTED is
+    # correctly refused anyway.
+    assert service.health_state is HealthState.SYNCHRONIZING  # never TRUSTED
 
 
 # ----------------------------------------------------------------------------

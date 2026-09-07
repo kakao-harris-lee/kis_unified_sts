@@ -41,14 +41,26 @@ Contract  How :class:`SqliteEvidenceStore` satisfies it
          :class:`~tos.evidence.chain.ArtifactIntegrityError`-free — it
          returns ``False`` on any mismatch; this module raises
          :class:`EvidenceCorruption` when :meth:`verify` is asked to
-         raise instead of report (see :meth:`verify_or_raise`).
+         raise instead of report (see :meth:`verify_or_raise`). Plain
+         ``bool`` ``verify()`` is vacuously ``True`` on an empty store
+         (:func:`verify_chain`'s own "nothing to falsify" contract) —
+         :meth:`verify_detailed` (2026-09-08 independent-review LOW-4)
+         returns a :class:`ChainVerification` so a caller can tell
+         "0 links, vacuously ok" apart from "N links, genuinely
+         verified" instead of collapsing both to the same ``True``.
 ⑦        Any sqlite failure during the transaction (locked file,
          read-only filesystem, disk full) propagates as the underlying
          :class:`sqlite3.Error` from inside the ``try``/``except`` that
          guards ``COMMIT``; the ``except`` clause always issues
          ``ROLLBACK`` first, so a partial write never becomes a partial
          commit. No :class:`~tos.evidence.EvidenceAppendReceipt` is
-         constructed on any exception path.
+         constructed on any exception path. If ``ROLLBACK`` ITSELF
+         raises (2026-09-08 independent-review LOW-6), that rollback
+         failure is caught, attached to the ORIGINAL commit-path
+         exception via :meth:`BaseException.add_note`, and the
+         ORIGINAL exception is what propagates — never silently
+         replaced by the rollback failure's own (possibly unrelated)
+         type.
 =======  ============================================================
 
 **Canonicalization version note.** Design #40 D3.1 fixes only the *chain*
@@ -83,6 +95,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import NamedTuple, Protocol, runtime_checkable
 
+from pydantic import BaseModel, ConfigDict
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.evidence import (
     ChainedEntry,
@@ -96,6 +109,7 @@ from tos.workload import RuntimeIdentity
 from tos_runtime.evidence import outbox as _outbox
 
 __all__ = [
+    "ChainVerification",
     "EvidenceCorruption",
     "InjectedCrash",
     "KeyProvider",
@@ -151,6 +165,31 @@ class InjectedCrash(RuntimeError):
     Never raised by production code paths — this module only *calls* the
     injected hook; the hook itself decides whether, and with what, to raise.
     """
+
+
+class ChainVerification(BaseModel):
+    """The detailed result of :meth:`SqliteEvidenceStore.verify_detailed` (contract ⑤).
+
+    A plain ``bool`` (:meth:`SqliteEvidenceStore.verify`) cannot distinguish
+    "0 links, vacuously ``True``" (an empty store — :func:`verify_chain`'s
+    own "nothing to falsify" contract) from "N links, genuinely re-derived" —
+    both collapse to the same ``True``. This record keeps ``ok`` (so a
+    caller that only wants the boolean still gets it) but ALSO reports how
+    many links were actually re-verified, so the two cases stay
+    distinguishable (2026-09-08 independent-review LOW-4).
+
+    ``verified_links`` is fail-closed on failure: :func:`verify_chain` is
+    "the WHOLE chain fails, never partially" (its own docstring) — it does
+    not report which link broke or how far it got — so this record never
+    overclaims a partial count when ``ok`` is ``False``; ``verified_links``
+    is ``0`` in that case, not "however many links exist".
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    ok: bool
+    verified_links: int
+    last_seq: int | None
 
 
 @runtime_checkable
@@ -271,6 +310,30 @@ class SqliteEvidenceStore:
         last_seq, last_chain_digest = row
         return last_seq + 1, last_chain_digest
 
+    def scrub_payload(
+        self, payload: Mapping[str, object]
+    ) -> tuple[dict[str, object], tuple[str, ...]]:
+        """Scrub ``payload`` with this store's OWN configured ``secret_keys``.
+
+        Exposed so a caller writing the SAME record to a second, non-sqlite
+        path (e.g. :mod:`tos_runtime.evidence.emergency`'s JSONL log) can
+        obtain byte-identical scrubbed content without re-implementing or
+        duplicating the secret-field list — :meth:`append` calls this exact
+        function internally too, so scrubbing a payload here and then
+        passing the ALREADY-scrubbed result into :meth:`append` is safe:
+        :func:`~tos.evidence.scrub_secret_fields` is idempotent (masking an
+        already-``"***REDACTED***"`` value under the same key re-masks it to
+        the identical value), so nothing is double-redacted or corrupted.
+
+        Args:
+            payload: The record's own fields, prior to scrubbing.
+
+        Returns:
+            The ``(scrubbed_payload, masked_keys)`` pair
+            :func:`~tos.evidence.scrub_secret_fields` returns.
+        """
+        return scrub_secret_fields(payload, self._secret_keys)
+
     def _compute_entry_digest(
         self,
         *,
@@ -331,6 +394,37 @@ class SqliteEvidenceStore:
             The commit receipt — ``durable=True`` by construction, only ever
             returned after ``COMMIT`` succeeds.
         """
+        return self._append_with_scheme(
+            payload,
+            kind=kind,
+            record_class=record_class,
+            segment_id=segment_id,
+            runtime_identity=runtime_identity,
+            outbox_targets=outbox_targets,
+            scheme=self._scheme,
+        )
+
+    def _append_with_scheme(
+        self,
+        payload: Mapping[str, object],
+        *,
+        kind: str,
+        record_class: str,
+        segment_id: str | None,
+        runtime_identity: RuntimeIdentity | None,
+        outbox_targets: Sequence[str],
+        scheme: Sha256HmacChainScheme,
+    ) -> EvidenceAppendReceipt:
+        """The whole durable-append body, signed under an EXPLICIT ``scheme``.
+
+        :meth:`append` always passes ``self._scheme`` (the store's current,
+        already-committed-to generation). :meth:`rotate` is the one other
+        caller: it passes a LOCAL, not-yet-assigned scheme so the
+        rotation-commit entry is signed under the new generation while
+        ``self._scheme`` itself stays untouched until that append durably
+        succeeds — see :meth:`rotate`'s own docstring for why this
+        parameterization is what makes rotation atomic.
+        """
         scrubbed_payload, masked_keys = scrub_secret_fields(payload, self._secret_keys)
         entry_digest = self._compute_entry_digest(
             kind=kind,
@@ -344,9 +438,7 @@ class SqliteEvidenceStore:
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             next_seq, last_chain_digest = self._read_tail()
-            chain_digest = self._scheme.verify_append(
-                last_chain_digest, (entry_digest,)
-            )
+            chain_digest = scheme.verify_append(last_chain_digest, (entry_digest,))
             runtime_identity_json = (
                 json.dumps(runtime_identity.model_dump(mode="json"), sort_keys=True)
                 if runtime_identity is not None
@@ -371,7 +463,7 @@ class SqliteEvidenceStore:
                     payload_json,
                     entry_digest,
                     chain_digest,
-                    self._scheme.key_generation,
+                    scheme.key_generation,
                     appended_at_ns,
                 ),
             )
@@ -380,8 +472,24 @@ class SqliteEvidenceStore:
             if self._crash_hook is not None:
                 self._crash_hook("before_commit")
             self._conn.execute("COMMIT")
-        except BaseException:
-            self._conn.execute("ROLLBACK")
+        except BaseException as commit_error:
+            # LOW-6 (2026-09-08 independent review): if ROLLBACK itself
+            # raises, catching it here (rather than letting it propagate
+            # unguarded) stops it from REPLACING commit_error as the
+            # exception the caller sees. The rollback failure is recorded as
+            # a note on the ORIGINAL error instead, and the bare `raise`
+            # below re-raises `commit_error` — never the rollback failure —
+            # so the root cause always survives, and no receipt is ever
+            # constructed on this path either way.
+            try:
+                self._conn.execute("ROLLBACK")
+            except Exception as rollback_error:
+                commit_error.add_note(
+                    f"ROLLBACK also failed after this error: {rollback_error!r} — "
+                    "the original commit-path error above is what propagates; "
+                    "this store's on-disk state is not authoritative until "
+                    "reopened and independently verified"
+                )
             raise
         if self._crash_hook is not None:
             self._crash_hook("after_commit_before_receipt")
@@ -389,16 +497,23 @@ class SqliteEvidenceStore:
             segment_id=segment_id,
             seq=next_seq,
             chain_digest=chain_digest,
-            key_generation=self._scheme.key_generation,
+            key_generation=scheme.key_generation,
         )
 
     def rotate(self, new_generation: int, new_key: bytes) -> EvidenceAppendReceipt:
         """Rotate the signing key: append a rotation-commit entry under the new key.
 
-        Design #40 D4.1 "겹침 0" — the new scheme instance takes over for
-        this and every subsequent append; nothing already committed is
-        retroactively re-signed. Returns the rotation-commit entry's own
-        receipt.
+        **Atomic.** ``self._scheme`` is assigned the new generation ONLY
+        after the rotation-commit entry has durably committed and its
+        receipt has been built — never before. The new scheme is built
+        LOCALLY and passed straight to :meth:`_append_with_scheme` (which
+        signs the rotation-commit entry under it), so a failure anywhere in
+        that append (the same ``BEGIN IMMEDIATE``/``COMMIT``/``ROLLBACK``
+        discipline every other append uses) propagates BEFORE
+        ``self._scheme`` is ever touched: the store's generation, its
+        ``verify()`` behaviour against the OLD key, and every already-signed
+        entry are all left exactly as they were (design #40 D4.1 "겹침 0" —
+        no generation is ever live without a committed marker proving it).
 
         Args:
             new_generation: The new monotonic key-epoch (must be greater
@@ -411,18 +526,31 @@ class SqliteEvidenceStore:
         Returns:
             The receipt for the rotation-commit entry itself.
         """
-        if new_generation <= self._scheme.key_generation:
+        current_generation = self._scheme.key_generation
+        if new_generation <= current_generation:
             raise ValueError(
                 "SqliteEvidenceStore.rotate requires a strictly increasing "
-                f"key_generation (current={self._scheme.key_generation}, "
+                f"key_generation (current={current_generation}, "
                 f"new={new_generation}) — design #40 D4.1 겹침 0"
             )
-        self._scheme = Sha256HmacChainScheme(key=new_key, key_generation=new_generation)
-        return self.append(
-            {"new_key_generation": new_generation},
+        new_scheme = Sha256HmacChainScheme(key=new_key, key_generation=new_generation)
+        receipt = self._append_with_scheme(
+            {
+                "previous_key_generation": current_generation,
+                "new_key_generation": new_generation,
+            },
             kind="KEY_ROTATION",
             record_class="SYSTEM_KEY_ROTATION",
+            segment_id=None,
+            runtime_identity=None,
+            outbox_targets=(),
+            scheme=new_scheme,
         )
+        # Only reached after the rotation-commit entry is durably committed —
+        # see this method's own docstring on why the assignment happens here
+        # and not before the append.
+        self._scheme = new_scheme
+        return receipt
 
     def replay(self) -> Iterator[ChainedEntry]:
         """Yield every committed entry, in commit order, for :func:`verify_chain`."""
@@ -437,8 +565,37 @@ class SqliteEvidenceStore:
             )
 
     def verify(self, keys_by_generation: Mapping[int, bytes]) -> bool:
-        """Re-verify the whole chain (contract ⑤); ``True`` iff every link re-derives."""
+        """Re-verify the whole chain (contract ⑤); ``True`` iff every link re-derives.
+
+        See :meth:`verify_detailed` if the caller needs to tell an empty
+        store's vacuous ``True`` apart from a populated chain's genuine
+        ``True`` (LOW-4) — this method keeps its original plain-``bool``
+        contract unchanged for existing callers.
+        """
         return verify_chain(tuple(self.replay()), keys_by_generation)
+
+    def verify_detailed(
+        self, keys_by_generation: Mapping[int, bytes]
+    ) -> ChainVerification:
+        """Like :meth:`verify`, but reports how many links were actually verified.
+
+        Args:
+            keys_by_generation: The HMAC keys, keyed by ``key_generation``.
+
+        Returns:
+            A :class:`ChainVerification` — ``verified_links`` is the entry
+            count when ``ok`` is ``True`` (an empty store is ``ok=True,
+            verified_links=0`` — the vacuous case, now visible instead of
+            indistinguishable from a real N-link verification) and ``0``
+            when ``ok`` is ``False`` (never a partial/overclaimed count —
+            see this type's own docstring).
+        """
+        entries = tuple(self.replay())
+        ok = bool(verify_chain(entries, keys_by_generation))
+        last_seq, _, _ = self.last_committed()
+        return ChainVerification(
+            ok=ok, verified_links=len(entries) if ok else 0, last_seq=last_seq
+        )
 
     def verify_or_raise(self, keys_by_generation: Mapping[int, bytes]) -> None:
         """Like :meth:`verify`, but raises :class:`EvidenceCorruption` on mismatch."""
