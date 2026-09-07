@@ -16,11 +16,23 @@ without any extra bookkeeping here: a new process's generation 0 shares no
 provable relationship with whatever an earlier process invalidated, and
 ``tos.time.recovery_generation_revives_nothing`` documents that this is by
 design, never accidental.
+
+**Slice #2 durable-seed helper** (slice plan #2 §3 "레인 간·후속 계약": "M 이
+``acquire_epoch`` 와 함께 ``runtime_generation`` 을 ``epochs`` 행에 기록하되
+**두 epoch 를 동일시하지 않는다** ... ``GenerationCounter`` 의 durable 시드는
+이 행에서 읽는다"). :func:`seed_from` below reads that durable value back —
+via a small structural :class:`_RuntimeGenerationSource` ``Protocol`` rather
+than an import of ``tos_runtime.rcl`` (lane M's own package), keeping this
+edit minimal and this module's dependency surface unchanged (duck-typed,
+matching the K/L "Protocol, not concrete import" inter-lane convention from
+slice #1 §3).
 """
 
 from __future__ import annotations
 
-__all__ = ["GenerationCounter"]
+from typing import Protocol, runtime_checkable
+
+__all__ = ["GenerationCounter", "seed_from"]
 
 
 class GenerationCounter:
@@ -62,3 +74,39 @@ class GenerationCounter:
         """Advance and return the new current generation."""
         self._current += 1
         return self._current
+
+
+@runtime_checkable
+class _RuntimeGenerationSource(Protocol):
+    """The minimal seam :func:`seed_from` depends on — satisfied structurally by
+    ``tos_runtime.rcl.log.SqliteCommitLog`` without an import edge from this
+    module to ``tos_runtime.rcl``.
+    """
+
+    def latest_runtime_generation(self) -> int | None:
+        """The most recently durably recorded ``runtime_generation``, or ``None``."""
+        ...
+
+
+def seed_from(source: _RuntimeGenerationSource) -> GenerationCounter:
+    """Seed a fresh :class:`GenerationCounter` from the RCL log's durable record.
+
+    "durable 은 순서 3 에서 RCL 로그와 결합" — this is that combination point:
+    a freshly started process reads whatever ``runtime_generation`` the RCL
+    log last durably recorded (via ``SqliteCommitLog.acquire_epoch``) instead
+    of always starting a brand-new counter at ``0``, so a restart can resume
+    counting from the last durably known generation. When the log has never
+    recorded one (a fresh, never-acquired log), this seeds at ``0`` — the
+    same starting point an in-process-only counter would use.
+
+    Args:
+        source: Anything satisfying :class:`_RuntimeGenerationSource` — in
+            practice, a live ``tos_runtime.rcl.log.SqliteCommitLog``.
+
+    Returns:
+        A new :class:`GenerationCounter` seeded from the durable value.
+    """
+    durable_generation = source.latest_runtime_generation()
+    return GenerationCounter(
+        start=0 if durable_generation is None else durable_generation
+    )
