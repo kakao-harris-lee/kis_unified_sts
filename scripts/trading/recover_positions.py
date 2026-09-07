@@ -45,10 +45,12 @@ Outputs, all advisory:
   ``shared.config.runtime_defaults.host_path_for_container_runtime_path``
   (override with ``--sentinel-path``), holding a JSON divergence record.
 
-Clearing: after operator review, delete the file (``rm <sentinel-path>``)
-before the order router's next start or loop iteration. There is no
-``scripts/recover_positions_clear.sh``; earlier revisions of this
-docstring pointed at one that was never written.
+Clearing: after operator review, run ``scripts/kill_switch_clear.sh
+--recovery`` (journals a snapshot, then removes the file) — or delete the
+file by hand (``rm <sentinel-path>``) — before the order router's next
+start or loop iteration. There is no separate
+``scripts/recover_positions_clear.sh``; the kill-switch clear script
+handles both sentinels.
 
 Registered as LEGACY-007 in
 ``tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.csv``. The named consumer

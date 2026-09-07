@@ -39,8 +39,9 @@ kill_switch:
   # services/order_router/main.py refuses to start or continue while this
   # file exists (same fail-closed treatment as sentinel_path above, but
   # reported under a distinct log line/counter so operators can tell which
-  # sentinel tripped). Clear with `rm` after operator review — there is no
-  # companion clear script (see recover_positions.py docstring).
+  # sentinel tripped). Clear after operator review with
+  # `scripts/kill_switch_clear.sh --recovery` (journals a snapshot, then
+  # removes the file) or by hand with `rm` (see recover_positions.py docstring).
   #
   # MUST stay under the shared /app/data/runtime mount (same convention as
   # sentinel_path above): order_router and recover_positions.py run in
