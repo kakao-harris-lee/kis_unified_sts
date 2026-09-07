@@ -71,6 +71,9 @@ jobs:
           # (`tos` 패키지의 §3.2 서드파티 allowlist 와는 무관하다 — `tools/` 의
           #  저장소 도구가 쓰는 것이지 `tos` 패키지가 임포트하는 것이 아니다.)
           pip install "pyyaml>=6.0"
+          # Black/mypy — Phase 1 작업 7 (계획 §2 표 7행). 로컬 .venv 와 정확히
+          # 같은 버전으로 핀 — CI 만 다른 버전에서 다른 판정을 내는 것을 막는다.
+          pip install "black==26.5.1" "mypy==2.3.1"
 
       - name: Pin mikefarah yq v4.48.1 (WFCANON M-4 parser gate)
         # tools/wfcanon-v222.py [M-4] pins the judgment parser to
@@ -100,6 +103,43 @@ jobs:
 
       - name: tos hermetic package tests
         run: pytest tos/tests
+
+      # Phase 1 작업 7 (계획 §2 표 7행) — 같은 잡의 스텝으로 추가한다(필수 체크
+      # 이름을 늘리지 않는다는 위 헤더 규율). Black/mypy 는 `cd tos` 로 실행해
+      # 로컬 검증(§1 기준선 측정 명령)과 정확히 동일한 호출을 재현한다 — mypy 는
+      # `tos/pyproject.toml` 에 `[tool.mypy]` 섹션이 없어 상위로 올라가 루트
+      # `pyproject.toml` 을 읽는다(로컬 실행 시
+      # "../pyproject.toml: note: unused section(s)" 로 실측 확인).
+      - name: Black (tos)
+        run: black --check tos/src tos/tests
+
+      - name: mypy (tos kernel)
+        run: cd tos && mypy src --ignore-missing-imports
+
+      - name: tos size budget
+        # config/tos_size_budget.yaml exceptions register — Phase 1 작업 6.
+        run: python tools/tos_size_budget.py --check
+
+      # tos-spec/book.toml is a byte-empty file (0 bytes) — mdbook defaults apply
+      # and the build was verified locally to succeed with them (homebrew mdbook
+      # v0.5.4, same tag as pinned below): rc=0, two "unclosed HTML tag" warnings
+      # + one "search index is very large" warning, none of which fail the build.
+      # rust-lang/mdbook publishes no separate .sha256 asset for this release, so
+      # the digest below is a locally-computed pin against the official GitHub
+      # release tarball (same pattern as the yq pin above — download once, verify
+      # forever), not an independently-published checksum.
+      - name: Pin mdBook v0.5.4 (tos-spec build)
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/mdbook.tar.gz \
+            https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz
+          echo "3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7  /tmp/mdbook.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/mdbook.tar.gz -C /tmp
+          sudo install -m 0755 /tmp/mdbook /usr/local/bin/mdbook
+          mdbook --version
+
+      - name: mdBook build (tos-spec)
+        run: mdbook build tos-spec --dest-dir /tmp/tos-spec-book
 
       # §12.2 (완료 계약 F-9): 코퍼스 무결성 검사기와 완료 계약 검사기를 CI 에
       # 편입한다 — Phase 1 로 미루면 Phase 0 산출물이 회귀 방어 없이 병합된다.

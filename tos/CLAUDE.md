@@ -73,6 +73,7 @@ python tools/tos_firewall_check.py && lint-imports
 python tools/tos_contract_check.py && python tools/tos_contract_check.py --self-test
 python tools/tos_completion_status.py --check
 python tools/tos_spec_status.py --check
+python tools/tos_size_budget.py --check
 ```
 
 ## Hard constraints specific to tos
