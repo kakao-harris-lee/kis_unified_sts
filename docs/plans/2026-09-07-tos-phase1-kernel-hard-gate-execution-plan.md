@@ -53,3 +53,22 @@
 ## 5. 제외 (운영자 지시)
 
 모의투자 서버 실측이 필요한 항목은 없음 — Phase 1 은 전부 로컬·CI 정적/동적 검사다.
+
+## 6. 실행 결과 (2026-09-07 · 브랜치 `feat/tos-phase1-kernel-hard-gate`)
+
+| 커밋 | 작업 | 내용 |
+|---|---|---|
+| `7da2fa36` | 5 | Black baseline 69파일 기계적 재포맷 |
+| `4ea58eae` | 1·2·4(A) | `CandidateConstruction` 결합 validator · TOS-GAP-001(item 13 None ⇒ UNKNOWN) · egressgw mypy 2건 · 테스트 21건 |
+| `8b0ad4bf` | 4(C)·6·7 | staterestore/capsule mypy 6건(narrowing) · `tools/tos_size_budget.py` + `config/tos_size_budget.yaml`(등재 29건 = 모듈 11 · 함수 18) · 테스트 12건 · `tos-firewall` 잡에 Black/mypy/budget/mdBook 스텝 |
+| `b6c1639f` | 3 | POTENTIALLY_LIVE 이후 예외 불변식 I1/I2/I3 · `SendHaltReason` 2종 신설 · 결함 주입 테스트 10건(HEAD 대조군에서 가드 4건 red 실증) |
+
+종료 조건 실측 (최종 트리):
+
+- 전체 `tos/tests` green · Ruff 0 · Black 0 · mypy 0 (245 파일) · size budget 0 위반(등재 29)
+- firewall PASS · import-linter KEPT · contract check PASS + self-test 145종 · completion `--check` GREEN(ENTRY_OK) · spec `--check` PASS
+- **U-17 live (`bash tools/u17-verify.sh`, gh 응답기)**: `u17_live_state=PREVENTION_ACTIVE`((a) 룰셋 True) ·
+  (b)② `PREVENTION_UNVERIFIED_REVISION` — 기존 수용 편차(`decisions/U17-B2-DEVIATION-ACCEPTANCE.md`) 그대로 ·
+  (α) `PREVENTION_CONTINUITY_UNVERIFIABLE` — 룰셋 21886181 `updated_at` 2026-09-06T15:21Z > t_land 2026-09-02 (착지 후 설정 변경 · benign/malign 구별 불가 · **운영자 재심사 경로, 영구 차단 아님**). Phase 1 코드 변경과 무관한 저장소 밖 표면.
+
+미해결·운영자 소관: (α) 연속성 재심사 · 필수 체크 지정(룰셋) · 크기 예외 register 의 `expires_on`(2026-12-31) 조정 · 분해 착수 시점.
