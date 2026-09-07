@@ -675,22 +675,6 @@ class TradingOrchestrator:
         """Initialize trading components"""
         await run_trading_startup_sequence(self)
 
-    @staticmethod
-    def _deep_merge_config_dict(
-        base: dict[str, Any], override: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Recursively merge two config dictionaries without mutating inputs."""
-        merged: dict[str, Any] = dict(base)
-        for key, value in override.items():
-            current = merged.get(key)
-            if isinstance(current, dict) and isinstance(value, dict):
-                merged[key] = TradingOrchestrator._deep_merge_config_dict(
-                    current, value
-                )
-            else:
-                merged[key] = value
-        return merged
-
     def _load_entry_reentry_guard_config(self) -> EntryReentryGuardConfig:
         """Load post-exit re-entry guard config from execution.yaml."""
         try:
@@ -723,32 +707,22 @@ class TradingOrchestrator:
         if not should_require_futures_contract_validation(self.config.asset_class):
             return
 
+        from shared.execution.slippage_control import (
+            FuturesSlippageController,
+            SlippageControlConfig,
+            load_futures_slippage_raw,
+        )
+
         try:
             exec_cfg = ConfigLoader.load("execution.yaml")
-            raw = exec_cfg.get("futures_slippage_control", {})
-            raw = {} if not isinstance(raw, dict) else dict(raw)
-
-            paper_override = raw.pop("paper_override", None)
-            if self.config.paper_trading and isinstance(paper_override, dict):
-                if bool(paper_override.get("enabled", False)):
-                    override_payload = {
-                        k: v for k, v in paper_override.items() if k != "enabled"
-                    }
-                    raw = self._deep_merge_config_dict(raw, override_payload)
-                    logger.info(
-                        "Applied paper override for futures slippage control: %s",
-                        ",".join(sorted(override_payload.keys())),
-                    )
+            raw = load_futures_slippage_raw(
+                exec_cfg, paper_trading=self.config.paper_trading
+            )
         except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError) as e:
             logger.warning(f"Failed to load futures slippage config: {e}")
             raw = {}
 
         try:
-            from shared.execution.slippage_control import (
-                FuturesSlippageController,
-                SlippageControlConfig,
-            )
-
             cfg = SlippageControlConfig.from_dict(raw)
             if not cfg.enabled:
                 logger.info("Futures slippage control disabled")

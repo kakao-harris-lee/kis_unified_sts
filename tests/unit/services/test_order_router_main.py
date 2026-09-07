@@ -1298,3 +1298,313 @@ async def test_full_fill_writes_the_full_quantity_to_the_fill_stream(
     ]
     entry_rows = [r for r in entries if r["trade_role"] == "entry"]
     assert entry_rows[0]["quantity"] == "3"
+
+
+# -----------------------------------------------------------------------------
+# F-9 Gate 1b control-parity closure (§2-B) — send-time slippage/liquidity gate
+# -----------------------------------------------------------------------------
+
+
+class _FakeOrderbookFeed:
+    """Minimal stand-in for KISFuturesPriceFeed's orderbook + price surface."""
+
+    def __init__(self, quotes: dict | None = None) -> None:
+        self._quotes = quotes or {}
+
+    def get_orderbook_snapshot(self, symbol: str) -> dict:
+        return dict(self._quotes.get(symbol, {}))
+
+    async def get_current_price(self, symbol: str) -> dict:  # noqa: ARG002
+        # Exit-monitor compatibility only — not exercised by the gate tests.
+        return {}
+
+
+def _slippage_controller(**overrides):
+    from shared.execution.slippage_control import (
+        FuturesSlippageController,
+        SlippageControlConfig,
+    )
+
+    data = {
+        "enabled": True,
+        "tick_size": 0.02,
+        "max_spread_ticks": 1,
+        "min_depth_multiplier": 1.0,
+        # Large so the fixed `_signal()` generated_at (2026-04-28) never
+        # trips the unrelated stale-signal filter in these gate tests.
+        "max_signal_age_seconds": 10**9,
+        "cross_asset": {"enabled": False},
+    }
+    data.update(overrides)
+    return FuturesSlippageController(SlippageControlConfig.from_dict(data))
+
+
+def _quote(*, bid: float, ask: float, bid_qty: float = 10.0, ask_qty: float = 10.0):
+    return {
+        "bid_price_1": bid,
+        "ask_price_1": ask,
+        "bid_qty_1": bid_qty,
+        "ask_qty_1": ask_qty,
+        "close": (bid + ask) / 2.0,
+        "timestamp": datetime.now(UTC).timestamp(),
+    }
+
+
+@pytest.mark.asyncio
+async def test_slippage_gate_blocks_wide_spread_consumed_no_send(
+    redis, kis, fill_logger, pseudo_oco, caplog
+):
+    """Wide spread -> blocked, consumed (no XACK retry), zero sends."""
+    import logging
+
+    controller = _slippage_controller()
+    feed = _FakeOrderbookFeed(
+        {"A05603": _quote(bid=331.18, ask=331.42)}  # 12 ticks, > max_spread_ticks=1
+    )
+    from shared.execution.passive_maker import PassiveMaker
+
+    passive = PassiveMaker(kis_client=kis, fill_logger=fill_logger)
+    daemon = OrderRouterDaemon(
+        redis=redis,
+        passive_maker=passive,
+        pseudo_oco=pseudo_oco,
+        contract_spec=_spec(),
+        final_stream=FINAL_STREAM,
+        consumer_group=GROUP,
+        worker_id="test-worker",
+        xread_block_ms=10,
+        batch_size=10,
+        passive_timeout_seconds=5,
+        futures_price_feed=feed,
+        slippage_controller=controller,
+    )
+    await _publish_final(redis, _signal("long"))
+
+    with caplog.at_level(logging.WARNING, logger="services.order_router.main"):
+        await _run_one_batch(daemon)
+
+    kis.place_futures_order.assert_not_awaited()
+    fill_logger.log_fill.assert_not_awaited()
+    assert daemon.slippage_blocked_count == 1
+    # Confirms the block is caused by the spread filter specifically, not
+    # some other reason that happens to also block.
+    assert any("reason=wide_spread" in r.getMessage() for r in caplog.records), [
+        r.getMessage() for r in caplog.records
+    ]
+
+    pending = await redis.xpending(FINAL_STREAM, GROUP)
+    if isinstance(pending, dict):
+        assert int(pending.get("pending", 0)) == 0
+    elif pending:
+        assert int(pending[0]) == 0
+
+
+@pytest.mark.asyncio
+async def test_slippage_gate_blocked_entry_does_not_consume_daily_trade_budget(
+    redis, kis, fill_logger, pseudo_oco, caplog
+):
+    """Regression (review 2026-09-07): the slippage gate must run BEFORE the
+    live daily_trade_cap INCR. The monolith has no coupling between its
+    slippage guard and a trade-count budget — a signal the gate blocks must
+    not burn any of `max_daily_trades`, or a live session could exhaust its
+    daily trade budget entirely on wide-spread rejects with zero real entries.
+    """
+    import logging
+
+    from services.order_router.main import _DAILY_TRADE_KEY_PREFIX, _kst_date_key
+    from shared.execution.live_mode_guard import LiveModeGuard
+    from shared.execution.passive_maker import PassiveMaker
+
+    guard = LiveModeGuard(enabled=True, max_daily_trades=2)
+    controller = _slippage_controller()
+    feed = _FakeOrderbookFeed(
+        {"A05603": _quote(bid=331.18, ask=331.42)}  # 12 ticks, > max_spread_ticks=1
+    )
+    passive = PassiveMaker(kis_client=kis, fill_logger=fill_logger)
+    daemon = OrderRouterDaemon(
+        redis=redis,
+        passive_maker=passive,
+        pseudo_oco=pseudo_oco,
+        contract_spec=_spec(),
+        final_stream=FINAL_STREAM,
+        consumer_group=GROUP,
+        worker_id="test-worker",
+        xread_block_ms=10,
+        batch_size=10,
+        passive_timeout_seconds=5,
+        live_mode_guard=guard,
+        futures_price_feed=feed,
+        slippage_controller=controller,
+    )
+    await _publish_final(redis, _signal("long"))
+
+    with caplog.at_level(logging.WARNING, logger="services.order_router.main"):
+        await _run_one_batch(daemon)
+
+    kis.place_futures_order.assert_not_awaited()
+    assert daemon.slippage_blocked_count == 1
+    assert daemon.daily_trade_blocked_count == 0
+    assert any("reason=wide_spread" in r.getMessage() for r in caplog.records), [
+        r.getMessage() for r in caplog.records
+    ]
+
+    counter_key = f"{_DAILY_TRADE_KEY_PREFIX}{_kst_date_key()}"
+    assert await redis.get(counter_key) is None
+
+
+@pytest.mark.asyncio
+async def test_slippage_gate_allows_tight_spread_and_sends(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """Tight spread within limits -> proceeds to place the order."""
+    from shared.execution.passive_maker import PassiveMaker
+
+    # max_spread_ticks=2 gives float-imprecision headroom around the exact
+    # 1-tick spread below (331.22 - 331.20 == 0.02 doesn't divide back to a
+    # clean 1.0 in float64).
+    controller = _slippage_controller(max_spread_ticks=2)
+    feed = _FakeOrderbookFeed({"A05603": _quote(bid=331.20, ask=331.22)})  # ~1 tick
+    passive = PassiveMaker(kis_client=kis, fill_logger=fill_logger)
+    daemon = OrderRouterDaemon(
+        redis=redis,
+        passive_maker=passive,
+        pseudo_oco=pseudo_oco,
+        contract_spec=_spec(),
+        final_stream=FINAL_STREAM,
+        consumer_group=GROUP,
+        worker_id="test-worker",
+        xread_block_ms=10,
+        batch_size=10,
+        passive_timeout_seconds=5,
+        futures_price_feed=feed,
+        slippage_controller=controller,
+    )
+    await _publish_final(redis, _signal("long"))
+
+    await _run_one_batch(daemon)
+
+    kis.place_futures_order.assert_awaited_once()
+    assert daemon.slippage_blocked_count == 0
+
+
+@pytest.mark.asyncio
+async def test_slippage_gate_none_controller_leaves_path_unchanged(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """slippage_controller=None (default) -> gate is a no-op, existing behavior."""
+    daemon = _make_daemon(
+        redis=redis, kis=kis, fill_logger=fill_logger, pseudo_oco=pseudo_oco
+    )
+    assert daemon.slippage_controller is None
+    await _publish_final(redis, _signal("long"))
+
+    await _run_one_batch(daemon)
+
+    kis.place_futures_order.assert_awaited_once()
+    assert daemon.slippage_blocked_count == 0
+
+
+@pytest.mark.asyncio
+async def test_slippage_gate_missing_quote_applies_controllers_own_block(
+    redis, kis, fill_logger, pseudo_oco, caplog
+):
+    """No cached orderbook for the symbol -> controller blocks (orderbook_unavailable)."""
+    import logging
+
+    from shared.execution.passive_maker import PassiveMaker
+
+    controller = _slippage_controller()
+    feed = _FakeOrderbookFeed({})  # nothing cached for A05603
+    passive = PassiveMaker(kis_client=kis, fill_logger=fill_logger)
+    daemon = OrderRouterDaemon(
+        redis=redis,
+        passive_maker=passive,
+        pseudo_oco=pseudo_oco,
+        contract_spec=_spec(),
+        final_stream=FINAL_STREAM,
+        consumer_group=GROUP,
+        worker_id="test-worker",
+        xread_block_ms=10,
+        batch_size=10,
+        passive_timeout_seconds=5,
+        futures_price_feed=feed,
+        slippage_controller=controller,
+    )
+    await _publish_final(redis, _signal("long"))
+
+    with caplog.at_level(logging.WARNING, logger="services.order_router.main"):
+        await _run_one_batch(daemon)
+
+    kis.place_futures_order.assert_not_awaited()
+    assert daemon.slippage_blocked_count == 1
+    assert any(
+        "reason=orderbook_unavailable" in r.getMessage() for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+
+
+def _signal_missing_generated_at(direction: str = "long") -> Signal:
+    """`_signal()` with `generated_at=None` — round-trips through
+    `to_stream_dict()`/`_signal_from_stream_fields` as an empty
+    `generated_at_ms` field, exactly like a malformed/legacy stream record."""
+    return Signal(
+        setup_type="A_gap_reversion",
+        direction=direction,
+        symbol="A05603",
+        entry_price=331.20,
+        stop_loss=330.50,
+        take_profit=332.50,
+        confidence=0.85,
+        valid_until=datetime(2026, 4, 28, 6, 0, tzinfo=UTC),
+        generated_at=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_slippage_gate_blocks_when_signal_generated_at_missing(
+    redis, kis, fill_logger, pseudo_oco, caplog
+):
+    """Fail-closed: a missing timestamp must not look "brand new" and bypass
+    the stale-signal filter — it must block before ``evaluate_entry`` runs.
+
+    Regression guard (review 2026-09-07): with the default
+    ``max_spread_ticks=1``, the quote below's true spread is exactly 1 tick
+    but float64 rounding makes ``spread_ticks`` evaluate to
+    ``1.0000000000019...`` — i.e. this test previously "passed" even under
+    the old fail-open code because the *spread* filter (not the timestamp
+    check) was the one doing the blocking. ``max_spread_ticks=2`` plus the
+    explicit ``reason=signal_timestamp_missing`` assertion below closes that
+    hole: only the missing-timestamp branch can produce this exact reason.
+    """
+    import logging
+
+    from shared.execution.passive_maker import PassiveMaker
+
+    controller = _slippage_controller(max_spread_ticks=2)
+    # Quote is otherwise perfectly acceptable — only the missing timestamp
+    # should cause the block, proving this isn't spread/depth doing it.
+    feed = _FakeOrderbookFeed({"A05603": _quote(bid=331.20, ask=331.22)})
+    passive = PassiveMaker(kis_client=kis, fill_logger=fill_logger)
+    daemon = OrderRouterDaemon(
+        redis=redis,
+        passive_maker=passive,
+        pseudo_oco=pseudo_oco,
+        contract_spec=_spec(),
+        final_stream=FINAL_STREAM,
+        consumer_group=GROUP,
+        worker_id="test-worker",
+        xread_block_ms=10,
+        batch_size=10,
+        passive_timeout_seconds=5,
+        futures_price_feed=feed,
+        slippage_controller=controller,
+    )
+    await _publish_final(redis, _signal_missing_generated_at())
+
+    with caplog.at_level(logging.WARNING, logger="services.order_router.main"):
+        await _run_one_batch(daemon)
+
+    kis.place_futures_order.assert_not_awaited()
+    assert daemon.slippage_blocked_count == 1
+    assert any(
+        "reason=signal_timestamp_missing" in r.getMessage() for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]

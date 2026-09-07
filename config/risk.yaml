@@ -34,13 +34,28 @@ risk:
   #  max_positions_per_asset=asset_limits.futures.max_positions) — P4-h2 통일 대비.
   # 캡은 World-A risk_management.yaml과 동일한 env 인다이렉션(${VAR:default})을
   # 재사용 — 같은 env 변수로 두 세계가 함께 움직인다(P4-h2 수렴 대비).
-  # 운영자 flip(2026-07-12): margin_gate/leverage와 달리 count provider 미배선 —
-  # enforce로 켜도 fail-open no-op(실차단 불가)이므로 그대로 disabled 유지.
-  # count provider 배선(P4-h2) 후 flip.
+  # F-9 Gate 1b §2-C (2026-09-07): count provider 배선 완료
+  # (services/risk_filter/main.py::_build_open_positions_count_provider —
+  # futures:monitor:positions HLEN, 같은 키를 has_open_position_provider와
+  # 공유) → enabled: false→true. max_positions_per_asset 기본값 11은 모놀리식
+  # 실효 상한과 동등: services/trading/orchestrator.py:901-910 가
+  # global_max = sum(strategy.position_sizer.config.max_positions for
+  # strategy in enabled futures strategies) 로 계산한다. 현재 enabled:true인
+  # 선물 전략 3종(config/strategies/futures/{setup_a_gap_reversion,
+  # setup_c_event_reaction,setup_d_vwap_reversion}.yaml) 중 앞의 둘은
+  # position.params 에 max_positions 를 지정하지 않아
+  # shared/strategy/position/llm_adaptive_sizer.py:152 의 기본값 5 를 쓰고,
+  # setup_d 는 fixed 사이저로 setup_d_vwap_reversion.yaml:147 에서 1 을 명시
+  # — 5+5+1=11. 이 값은 활성 전략 구성이 바뀌면 같이 재측정해야 한다(자동
+  # 동기화 없음). 이 11은 FUTURES_TRADING_STRATEGY 가 비어있다고 가정한다
+  # (docker-compose.yml:166 기본값 빈 문자열 ⇒ StrategyManager가 enabled:true인
+  # 선물 전략 전부를 로드— services/trading/strategy_manager.py:309-325); 그
+  # 변수로 전략을 하나로 고정하면 모놀리식 캡은 그 전략 하나의 max_positions로
+  # 줄어든다. max_total_positions 은 이번 동등성 범위 밖 — 손대지 않음.
   concurrent_positions:
-    enabled: false
-    max_total_positions: ${RISK_MAX_TOTAL_POSITIONS:20}      # World-A risk_management.max_total_positions
-    max_positions_per_asset: ${RISK_FUTURES_MAX_POSITIONS:5} # World-A asset_limits.futures.max_positions
+    enabled: true
+    max_total_positions: ${RISK_MAX_TOTAL_POSITIONS:20}       # World-A risk_management.max_total_positions
+    max_positions_per_asset: ${RISK_FUTURES_MAX_POSITIONS:11} # 모놀리식 실효 상한과 동등(위 주석 근거)
   # Phase 4-f: 선물 증거금 진입 게이트 (shared/risk/futures_margin.py 읽기모델을
   # World-B RiskFilterLayer 진입 게이트로 배선). FUTURES-ONLY — from_config가
   # _asset_class == 'futures'일 때만 필터를 만든다(risk_stock에는 추가하지 않음).

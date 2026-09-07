@@ -198,6 +198,127 @@ async def test_xack_after_both_writes(redis, signals_writer):
         assert int(pending[0]) == 0
 
 
+# ---------------------------------------------------------------------------
+# F-9 Gate 1b §2-C: ConcurrentPositionsFilter wired via
+# _build_open_positions_count_provider, exercised end-to-end through the
+# daemon (not the _StubLayer — this is the real RiskFilterLayer + real filter
+# + real provider function, only the sync-Redis HLEN source is faked).
+# ---------------------------------------------------------------------------
+
+
+class _FakeSyncRedisForCount:
+    """Stand-in for RedisClient.get_client(); only HLEN is exercised here."""
+
+    def __init__(self, count: int) -> None:
+        self._count = count
+
+    def hlen(self, key: str) -> int:  # noqa: ARG002
+        return self._count
+
+
+def _concurrent_positions_layer(*, count: int, cap: int) -> RiskFilterLayer:
+    from services.risk_filter.main import _build_open_positions_count_provider
+    from shared.risk.filters.concurrent_positions import ConcurrentPositionsFilter
+
+    provider = _build_open_positions_count_provider(
+        _FakeSyncRedisForCount(count), "futures:monitor:positions"
+    )
+    return RiskFilterLayer(
+        filters=[
+            ConcurrentPositionsFilter(
+                asset_class="futures",
+                open_positions_count_provider=provider,
+                max_positions_per_asset=cap,
+            )
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_positions_provider_rejects_at_cap(redis, signals_writer):
+    """count >= cap: the filter rejects and no signal reaches the final stream."""
+    layer = _concurrent_positions_layer(count=2, cap=2)
+    daemon = _make_daemon(redis=redis, signals_writer=signals_writer, layer=layer)
+    await _publish_candidate(redis, _signal("long"))
+
+    import asyncio
+
+    async def _stop_after():
+        await asyncio.sleep(0.05)
+        await daemon.stop()
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+    final_entries = await redis.xrange(FINAL_STREAM)
+    assert final_entries == []
+    signals_writer.enqueue.assert_awaited_once()
+    kwargs = signals_writer.enqueue.call_args
+    assert kwargs.kwargs["executed"] is False
+    layer_result = kwargs.args[1]
+    assert layer_result.skip_reason == "max_positions_per_asset"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_positions_provider_passes_below_cap(redis, signals_writer):
+    """count < cap: the filter passes and the signal reaches the final stream."""
+    layer = _concurrent_positions_layer(count=1, cap=2)
+    daemon = _make_daemon(redis=redis, signals_writer=signals_writer, layer=layer)
+    await _publish_candidate(redis, _signal("long"))
+
+    import asyncio
+
+    async def _stop_after():
+        await asyncio.sleep(0.05)
+        await daemon.stop()
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+    final_entries = await redis.xrange(FINAL_STREAM)
+    assert len(final_entries) == 1
+    signals_writer.enqueue.assert_awaited_once()
+    assert signals_writer.enqueue.call_args.kwargs["executed"] is True
+
+
+@pytest.mark.asyncio
+async def test_concurrent_positions_provider_fails_closed_on_redis_error(
+    redis, signals_writer
+):
+    """A Redis HLEN error must reject (fail-closed), not silently pass."""
+    from services.risk_filter.main import _build_open_positions_count_provider
+    from shared.risk.filters.concurrent_positions import ConcurrentPositionsFilter
+
+    class _RaisingSyncRedis:
+        def hlen(self, key: str) -> int:  # noqa: ARG002
+            raise RuntimeError("redis down")
+
+    provider = _build_open_positions_count_provider(
+        _RaisingSyncRedis(), "futures:monitor:positions"
+    )
+    layer = RiskFilterLayer(
+        filters=[
+            ConcurrentPositionsFilter(
+                asset_class="futures",
+                open_positions_count_provider=provider,
+                max_positions_per_asset=2,
+            )
+        ]
+    )
+    daemon = _make_daemon(redis=redis, signals_writer=signals_writer, layer=layer)
+    await _publish_candidate(redis, _signal("long"))
+
+    import asyncio
+
+    async def _stop_after():
+        await asyncio.sleep(0.05)
+        await daemon.stop()
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+    final_entries = await redis.xrange(FINAL_STREAM)
+    assert final_entries == []
+    assert signals_writer.enqueue.call_args.kwargs["executed"] is False
+
+
 @pytest.mark.asyncio
 async def test_signal_id_threaded_to_signals_writer(redis, signals_writer):
     """signals_all rows must use the stream signal_id, not a fresh uuid (spec §5.3)."""

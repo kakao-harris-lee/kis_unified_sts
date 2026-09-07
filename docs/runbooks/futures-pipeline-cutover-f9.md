@@ -168,12 +168,12 @@ inventory"). Line numbers here are as of `26fc52b0` and will drift.
 | Control | Monolith (`trader-futures`, today) | Decoupled (post-F-9) | Status |
 |---|---|---|---|
 | Duplicate entry, per symbol | `can_open_position(signal.code)` — `orchestrator.py:5445`, def `position_tracker.py:166-178`, cap `max_positions_per_symbol = 1` (`position_models.py:40`, a dataclass default the orchestrator never overrides) | `OpenPositionFilter` (`layer.py:257`, check `open_position.py:103`) — provider wired at `risk_filter/main.py:456`, `HEXISTS futures:monitor:positions` (`risk_filter/main.py:64`), fail-closed on Redis error | **present** — wired in `26fc52b0` |
-| Duplicate entry, global count | `can_open_position()` — `orchestrator.py:4976`, cap summed from per-strategy sizer limits (`orchestrator.py:900-907`) | `ConcurrentPositionsFilter`, built only when `concurrent_positions.enabled` (`layer.py:283`); no count provider is passed at `risk_filter/main.py:453`, so it fails open (`layer.py:306`) | **unwired — cannot fire** |
-| Spread | `FuturesSlippageController` gate at `slippage_control.py:360`; `max_spread_ticks: 1` (`execution.yaml:200`), `enabled: true` (`execution.yaml:196`) | `SpreadFilter` (`layer.py:253`, compare `spread.py:94`), threshold `max_spread_ticks: 2` (`risk.yaml:21`); `current_spread_provider` not passed → stub returns `0.0` (`layer.py:220`) | **unwired — cannot fire** |
-| Order-book depth | `slippage_control.py:369`, `min_depth_multiplier: 3.0` (`execution.yaml:201`) | none | **absent** |
-| Volatility spike | cooldown armed on every tick (`slippage_control.py:294`, fed by `orchestrator.py:1136`), enforced at entry (`slippage_control.py:341`) | `VolatilityFilter` (`layer.py:252`, compare `volatility.py:102`) — `current_atr_provider` stubbed to `0.0` (`layer.py:211`) **and** the other side of the comparison, `RiskStateSnapshot.atr_90th_percentile`, defaults `0.0` (`state.py:43`) with no production writer | **unwired on both sides — cannot fire** |
-| Stale signal | `slippage_control.py:322`, `max_signal_age_seconds: 2.0` (`execution.yaml:207`) | none | **absent** |
-| Intraday blackout windows | `slippage_control.py:336`, `blocked_time_windows` 08:45–08:50 / 15:40–15:45 (`execution.yaml:222`) | `TradingHoursFilter` enforces session windows only (`risk.yaml:84`); the blackouts have no counterpart | **partial** |
+| Duplicate entry, global count | `can_open_position()` — `orchestrator.py:4976`, cap summed from per-strategy sizer limits (`orchestrator.py:900-907`) | `ConcurrentPositionsFilter` with `open_positions_count_provider` (HLEN `futures:monitor:positions`, `services/risk_filter/main.py::_build_open_positions_count_provider`), `concurrent_positions.enabled: true` cap 11 | wired 2026-09-07 (plan 2026-09-07-f9-gate1b-control-parity-closure) — shadow rejection evidence pending |
+| Spread | `FuturesSlippageController` gate at `slippage_control.py:360`; `max_spread_ticks: 1` (`execution.yaml:200`), `enabled: true` (`execution.yaml:196`) | order_router pre-send `FuturesSlippageController` (plan 2026-09-07-f9-gate1b-control-parity-closure §2-B) — shadow rejection evidence pending | wired 2026-09-07 (plan 2026-09-07-f9-gate1b-control-parity-closure) — shadow rejection evidence pending |
+| Order-book depth | `slippage_control.py:369`, `min_depth_multiplier: 3.0` (`execution.yaml:201`) | order_router pre-send `FuturesSlippageController` (plan 2026-09-07-f9-gate1b-control-parity-closure §2-B) — shadow rejection evidence pending | wired 2026-09-07 (plan 2026-09-07-f9-gate1b-control-parity-closure) — shadow rejection evidence pending |
+| Volatility spike | cooldown armed on every tick (`slippage_control.py:294`, fed by `orchestrator.py:1136`), enforced at entry (`slippage_control.py:341`) | order_router pre-send `FuturesSlippageController` (plan 2026-09-07-f9-gate1b-control-parity-closure §2-B) — shadow rejection evidence pending | wired 2026-09-07 (plan 2026-09-07-f9-gate1b-control-parity-closure) — shadow rejection evidence pending |
+| Stale signal | `slippage_control.py:322`, `max_signal_age_seconds: 2.0` (`execution.yaml:207`) | order_router pre-send `FuturesSlippageController` (plan 2026-09-07-f9-gate1b-control-parity-closure §2-B) — shadow rejection evidence pending | wired 2026-09-07 (plan 2026-09-07-f9-gate1b-control-parity-closure) — shadow rejection evidence pending |
+| Intraday blackout windows | `slippage_control.py:336`, `blocked_time_windows` 08:45–08:50 / 15:40–15:45 (`execution.yaml:222`) | order_router pre-send `FuturesSlippageController` (plan 2026-09-07-f9-gate1b-control-parity-closure §2-B) — shadow rejection evidence pending | wired 2026-09-07 (plan 2026-09-07-f9-gate1b-control-parity-closure) — shadow rejection evidence pending |
 | Daily trade ceiling | none on this path | `DailyTradeCountFilter` (`layer.py:251`, compare `daily_trade_count.py:68`), `max_daily_trades: 3` (`risk.yaml:6`) | **present** — see caveat below |
 
 The five order-book rows (spread, depth, volatility, stale signal, blackout
@@ -298,6 +298,46 @@ rather than trusting it. In order of authority:
    ```bash
    docker compose --env-file .env.paper logs futures-risk-filter | grep -i inert
    ```
+
+   **Note (plan 2026-09-07-f9-gate1b-control-parity-closure §2-E):** the
+   spread/depth/volatility/stale-signal/blackout parity path does not run
+   through `risk_filter` — it is the order_router pre-send
+   `FuturesSlippageController` gate (§2-B). `risk_filter`'s own
+   `SpreadFilter`/`VolatilityFilter` `inert` log lines are therefore
+   **expected to keep appearing** and are not a regression; they are not this
+   closure's path. Verify parity instead from the order_router startup log
+   line `Futures slippage control enabled (paper|live)` and its
+   `slippage_gate: blocked` warning log lines on rejection:
+
+   ```bash
+   docker compose --env-file .env.paper logs futures-order-router | grep "slippage_gate: blocked"
+   ```
+
+   `slippage_blocked_count` is a plain in-process instance attribute with no
+   exporter (no Prometheus metric, no log line carrying its running value) —
+   it is useful for an interactive/debugger inspection of a live daemon, not
+   for `docker compose logs` grepping.
+
+   **Deliberate divergences from the monolith (not parity gaps):**
+
+   1. **Stale-signal polarity is inverted, on purpose, stricter.** The
+      decoupled order_router blocks fail-**closed** when `signal.generated_at`
+      is missing (`order_router/main.py:491-501`, reason
+      `signal_timestamp_missing`), whereas the monolith is fail-**open** on a
+      non-`datetime` timestamp — it falls back to `datetime.now(UTC)`, i.e.
+      always fresh, and lets the entry through
+      (`services/trading/orchestrator.py:5805-5809`). This is not a gap to
+      close; the decoupled chain is already the stricter of the two.
+   2. **Per-strategy position cap has no decoupled counterpart, and is outside
+      Gate 1b's inventory.** The monolith additionally caps open positions
+      *per strategy* (`orchestrator.py:5666-5680`: rejects once
+      `current_count >= strategy_max` for that one strategy), on top of the
+      per-symbol and global-count caps this gate already tracks.
+      `ConcurrentPositionsFilter` only enforces total/per-asset-class caps —
+      it has no per-strategy dimension — so the decoupled chain stays more
+      permissive on this one axis even after §2-C's global-count wiring.
+      Left for the operator to accept explicitly at Gate 2 or open as a
+      follow-up; it was never in the six-row inventory above.
 
 2. **Source, shows what is actually passed.** Dump the production
    `from_config` call and compare its kwargs against the provider parameters the
