@@ -8,6 +8,16 @@
 #   2. lint-imports                        — layer ② (transitive forbidden-pkg)
 #   3. pytest tos/tests                     — hermetic package tests (§2.4)
 #
+# tos/runtime/ (design #40 D1.3, PROPOSED 2026-09-07 — same-PR-as-ratification
+# per that document's §0): the runtime-scope allowlist split lives INSIDE
+# tools/tos_firewall_check.py's single forward scan (rules a-d apply the R1
+# allowlist per-file via scope_for_tos_path) — layer ① above already covers
+# BOTH tos/ scopes in its one invocation, no extra firewall step is added
+# here. Only two things are new: installing the tos-runtime distribution
+# editable (so lint-imports's static analysis can resolve `tos_runtime` as a
+# root package for the transitive contracts in .importlinter, and so its own
+# hermetic test suite is importable) and running that suite as its own step.
+#
 # NOTE: marking this job a *required* check is a GitHub branch-protection
 # setting and is NOT configured here — see the handoff report.
 name: tos-firewall
@@ -62,6 +72,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e "./tos[test]"
+          # tos-runtime (design #40 D1.3 item 5, PROPOSED) — installed AFTER
+          # the kernel above, since its own dependency (`tos @ {root:uri}/../`
+          # in tos/runtime/pyproject.toml) resolves to this same kernel
+          # checkout; editable so lint-imports below can statically locate
+          # `tos_runtime` as a root package and so `pytest tos/runtime/tests`
+          # can import it.
+          pip install -e "./tos/runtime[test]"
           pip install import-linter
           pip install -e . --no-deps
           # Layer 4 의 RULE 축은 S-25 manifest(YAML)를 읽는다.  루트 프로젝트는
@@ -103,6 +120,14 @@ jobs:
 
       - name: tos hermetic package tests
         run: pytest tos/tests
+
+      # design #40 D1.3 item 5 (PROPOSED) — the runtime shell's own hermetic
+      # suite (D1.4: zero external network/ambient env/writes outside
+      # tmp_path — tos/runtime/tests/conftest.py's autouse socket guard).
+      # Isolated rootdir via tos/runtime/pyproject.toml's own
+      # [tool.pytest.ini_options], same pattern as the kernel step above.
+      - name: tos-runtime hermetic package tests
+        run: pytest tos/runtime/tests
 
       # Phase 1 작업 7 (계획 §2 표 7행) — 같은 잡의 스텝으로 추가한다(필수 체크
       # 이름을 늘리지 않는다는 위 헤더 규율). Black/mypy 는 `cd tos` 로 실행해

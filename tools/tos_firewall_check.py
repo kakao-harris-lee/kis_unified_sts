@@ -23,7 +23,9 @@ that imports a forbidden module breaks the hermetic claim) and enforces:
                 escape hatch that would let (a)/(b) be bypassed at runtime.
   (e) TOS-FW-R  no file OUTSIDE ``tos/`` may ``import tos`` (R-reverse — §3.2):
                 the operational system must never depend on the unverified
-                kernel.
+                kernel. EXTENDED (design #40 D1.3 item 3, 2026-09-07 —
+                PROPOSED) to ``tos_runtime`` too: no file outside ``tos/``
+                may import the runtime shell either.
   (f) TOS-FW-S  no SYMLINK (file or directory, walked or git-tracked) may
                 cross the tos/ boundary: crossing means SUBTREE
                 INTERSECTION, not merely "which side" — a link outside
@@ -46,8 +48,65 @@ that imports a forbidden module breaks the hermetic claim) and enforces:
                 a missing or symlinked ``tos/`` is always a visible,
                 reported failure, never a silent PASS.
 
+  (g) TOS-FW-G  a KERNEL-scope file imports ``tos_runtime`` (design #40 D1.3
+                item 2, 2026-09-07 — PROPOSED pending operator ratification).
+                Kernel and runtime are asymmetric by design: runtime may
+                depend on the kernel, never the reverse. Rule (e)/TOS-FW-R is
+                separately extended so a file OUTSIDE ``tos/`` entirely that
+                imports ``tos_runtime`` is caught too (same reverse scan,
+                second root name) — see that rule's docstring.
+  (h) TOS-FW-H  a RUNTIME-scope file imports ANY ``shared.*`` module — even
+                one of the six commons packages the KERNEL is itself allowed
+                to import under §3.2 (design #40 D1.1, corrected v1.2,
+                2026-09-07 — PROPOSED pending operator ratification: an
+                earlier draft of R1 unioned in the kernel's `shared.*`
+                allowance; the operator's decision was that D1.1's "runtime
+                opens no new commons dependency" wins, so R1 excludes all of
+                `shared.*`, full stop, regardless of the kernel's own
+                allowlist).
+
+------------------------------------------------------------------------------
+SCOPE SPLIT (design #40 D1.3, 2026-09-07 — PROPOSED pending operator
+ratification; same-PR-as-ratification per that document's §0)
+------------------------------------------------------------------------------
+Rules (a)-(d) above enforce ONE of TWO allowlists depending on which part of
+``tos/`` a ``.py`` file lives under — the scope is decided by a single
+path-prefix predicate (``scope_for_tos_path``), fail-closed toward the
+stricter (kernel) allowlist for any path it does not recognize as runtime:
+
+  KERNEL scope   ``tos/`` minus ``tos/runtime/`` — the §3.2 allowlist below,
+                 UNCHANGED by this split.
+  RUNTIME scope  ``tos/runtime/**`` — allowlist **R1** = (the kernel
+                 allowlist MINUS all six ``shared.*`` commons packages — rule
+                 (h) above; v1.2 correction, 2026-09-07) ∪ ``tos.*`` (the
+                 kernel — the one EXPECTED dependency direction) ∪
+                 ``tos_runtime.*`` (self) ∪ the stdlib egress primitives
+                 ``socket``/``ssl``/``http``/``urllib.request`` (``sqlite3``
+                 was already unrestricted in the kernel allowlist;
+                 ``hmac``/``hashlib``/``secrets`` were never forbidden
+                 either, so R1 names them for completeness without changing
+                 their status). ``subprocess``, ``ctypes``, ``ftplib``,
+                 ``smtplib``, ``poplib``, ``imaplib``, ``telnetlib``,
+                 ``os.environ``/``os.getenv``, and dynamic import/exec/eval
+                 stay forbidden in BOTH scopes (rules (b)/(c)/(d) are
+                 scope-invariant). No third-party addition (§3.2's set is
+                 unchanged for both scopes — Phase 2 closes on stdlib per
+                 design #40 D2/D3). R1 is therefore NOT a superset of the
+                 kernel allowlist — it is the kernel allowlist with
+                 `shared.*` carved OUT and the stdlib egress primitives
+                 carved IN.
+
+``tos/runtime/`` is itself a SEPARATE distribution (`tos-runtime` /
+``tos_runtime``, its own ``pyproject.toml`` under ``tos/runtime/``) — its
+tests and package are NOT part of the ``tos`` kernel package tested by
+``pytest tos/tests``; see ``tos/runtime/tests`` instead. This checker's own
+forward scan (``_iter_py_files``) is unchanged and still walks all of
+``tos/`` in one pass — the scope split happens per-file during
+classification, not as a second checker invocation (CI step count is
+unaffected, see design #40 D1.3 item 5).
+
 Two further diagnostic IDs are structural, not content rules, and so sit
-outside the (a)-(f) enumeration above (parallel to how a build tool reports
+outside the (a)-(h) enumeration above (parallel to how a build tool reports
 "file not found" separately from its lint rules) — named here so neither is
 an undocumented orphan string:
 
@@ -64,13 +123,22 @@ Exit code is 1 with ``path:line [RULE-ID] message`` diagnostics on any
 violation, 0 otherwise.
 
 ------------------------------------------------------------------------------
-ALLOWLIST CONTRACT (SoT = design doc §3.2)
+ALLOWLIST CONTRACT (SoT = design doc §3.2; RUNTIME_* constants' SoT = design
+doc #40 D1.3, PROPOSED 2026-09-07)
 ------------------------------------------------------------------------------
-The allowlist / forbidden constants below are a *ratified contract*. Their
-Source of Truth is the design document §3.2. They may be changed ONLY by a PR
-that edits that document and records a §6.1 revision-log line (governance
-§6.1). Do not edit them here in isolation — this file merely mechanizes the
-contract, it does not own it.
+The KERNEL allowlist / forbidden constants below are a *ratified contract*.
+Their Source of Truth is design document #1 (`2026-07-20-tos-boundary-and-
+import-firewall-design.md`) §3.2. They may be changed ONLY by a PR that edits
+that document and records a §6.1 revision-log line (governance §6.1). Do not
+edit them here in isolation — this file merely mechanizes the contract, it
+does not own it.
+
+The RUNTIME_* constants (allowlist R1) mechanize design document #40
+(`2026-09-07-tos-phase2-runtime-shell-preliminary-decisions.md`) §D1.3 item 2,
+cross-referenced into design #1 §3.2/§3.3 by the same PR (design #40 §D1.3
+item 6). Design #40 is PROPOSED, not yet operator-ratified, at the time this
+scope split lands — see that document's §0 for why the skeleton this enables
+(``tos/runtime/``) contains no I/O.
 
 This gate itself lives under ``tools/`` (outside ``tos/``) and is therefore NOT
 governed by the firewall; it may use ``os``/``argparse``/etc. freely.
@@ -144,6 +212,46 @@ SHARED_ALLOWED: frozenset[str] = frozenset(
 
 # Full stdlib top-level module name set (§3.3-① mandates sys.stdlib_module_names).
 STDLIB: frozenset[str] = frozenset(sys.stdlib_module_names)
+
+# ============================================================================
+# R1 allowlist — tos/runtime/** scope only (design #40 D1.3 item 2, PROPOSED
+# 2026-09-07; see the module docstring's SCOPE SPLIT section). Cross-
+# referenced into design #1 §3.2/§3.3 by the same PR (design #40 §D1.3
+# item 6). Do not edit in isolation from that document.
+#
+# v1.2 correction (2026-09-07, same day, operator decision): an earlier cut
+# of R1 defined it as a UNION with the full kernel allowlist, which would
+# have carried SHARED_ALLOWED's six commons packages into runtime scope too
+# — contradicting design #40 D1.1's own table ("tos_runtime -> shared.* ✘").
+# The operator resolved the contradiction in D1.1's favor: R1 EXCLUDES all of
+# `shared.*` (rule (h)/TOS-FW-H, enforced in `classify_module` below, not by
+# a set constant here — `shared` needs a scope-conditional branch, not a
+# subtraction, since the kernel's own `shared` handling already branches on
+# SHARED_ALLOWED).
+# ============================================================================
+
+# The self-import name of the new `tos-runtime` distribution (design #40
+# D1.1). Allowed ONLY in runtime scope, as ``tos_runtime.*`` (self) — a
+# KERNEL-scope file importing it is rule (g)/TOS-FW-G, and a file outside
+# ``tos/`` entirely importing it is the rule-(e) extension/TOS-FW-R.
+TOS_RUNTIME_PACKAGE_NAME: str = "tos_runtime"
+
+# stdlib egress primitives carved OUT of FORBIDDEN_STDLIB for runtime scope
+# only (design #40 D1.3 item 2 — the runtime shell is where D2/D3's sqlite3
+# WAL and future broker transport egress live; the kernel stays non-
+# transmitting). ``sqlite3`` needs no carve-out — it was never in
+# FORBIDDEN_STDLIB to begin with (already allowed in BOTH scopes). ``hmac``,
+# ``hashlib``, ``secrets`` likewise were never forbidden; D1.3 names them for
+# completeness only, so they are not repeated here as a set operation.
+RUNTIME_STDLIB_CARVEOUT: frozenset[str] = frozenset(
+    {"socket", "ssl", "http", "urllib.request"}
+)
+
+# Runtime scope's forbidden-stdlib set: the kernel's FORBIDDEN_STDLIB minus
+# the carve-out above. ``subprocess``, ``ctypes``, ``ftplib``, ``smtplib``,
+# ``poplib``, ``imaplib``, ``telnetlib`` stay forbidden in BOTH scopes (design
+# #40 D1.3 item 2 "계속 금지" list).
+FORBIDDEN_STDLIB_RUNTIME: frozenset[str] = FORBIDDEN_STDLIB - RUNTIME_STDLIB_CARVEOUT
 
 # The reverse scan (rule e / R-reverse, repo files OUTSIDE tos/) prunes ONLY
 # an explicit, small set of repo-root-relative roots, matched by
@@ -227,9 +335,16 @@ _REVERSE_SCAN_PRUNE_ROOTS: tuple[str, ...] = (
 # never matches those, so the directory is already inert to this scan without
 # any special-casing.
 
+# The names rule R/rule-(e) scans for: the kernel package AND, since design
+# #40 D1.3 item 3 ("규칙 (e) 확장"), the runtime distribution — a file OUTSIDE
+# tos/ entirely may import NEITHER, symmetric with rule (g)'s kernel-scope
+# prohibition on `tos_runtime` above.
+_REVERSE_SCAN_TARGET_NAMES: frozenset[str] = frozenset({"tos", "tos_runtime"})
+
 # Line-level fallback used only when a repo file outside tos/ fails to AST-parse
-# (a SyntaxError must not let an `import tos` slip through silently).
-_REVERSE_LINE_RE = re.compile(r"^\s*(?:import|from)\s+tos(?:\.|\s|$)")
+# (a SyntaxError must not let an `import tos`/`import tos_runtime` slip through
+# silently).
+_REVERSE_LINE_RE = re.compile(r"^\s*(?:import|from)\s+(?:tos|tos_runtime)(?:\.|\s|$)")
 
 # ============================================================================
 # Model
@@ -243,8 +358,33 @@ def _matches_prefix(dotted: str, names: frozenset[str]) -> bool:
     return any(dotted == n or dotted.startswith(n + ".") for n in names)
 
 
-def classify_module(dotted: str) -> tuple[bool, str | None]:
-    """Classify an absolute dotted module path against the §3.2 allowlist.
+def scope_for_tos_path(rel_display: str) -> str:
+    """Classify a ``tos/`` file's repo-root-relative display path into
+    ``"kernel"`` or ``"runtime"`` scope (design #40 D1.3 item 1).
+
+    The decision is a single path-prefix predicate: a path whose first two
+    components are ``tos`` then ``runtime`` is RUNTIME scope; every other
+    path — including one under ``tos/`` alone (no ``runtime/`` component) or
+    any hypothetical new sibling directory of ``tos/runtime/`` — is KERNEL
+    scope. This is deliberately fail-closed toward the stricter allowlist:
+    an unrecognized path never gets the more permissive runtime treatment.
+
+    ``rel_display`` need not actually start with ``tos/`` (several direct
+    unit-test calls pass a bare filename like ``"m.py"``, matching this
+    module's existing ``check_tos_file`` test-call convention) — such inputs
+    simply fall through to the "kernel" default, which is what those
+    existing tests already assumed before this scope split existed.
+    """
+    parts = Path(rel_display).parts
+    if len(parts) >= 2 and parts[0] == "tos" and parts[1] == "runtime":
+        return "runtime"
+    return "kernel"
+
+
+def classify_module(dotted: str, scope: str = "kernel") -> tuple[bool, str | None]:
+    """Classify an absolute dotted module path against the §3.2 allowlist
+    (kernel scope, the default) or the R1 allowlist (``scope="runtime"`` —
+    design #40 D1.3 item 2).
 
     Returns ``(allowed, rule_id)`` where ``rule_id`` is the violated rule ID
     when ``allowed`` is False, else None.
@@ -252,13 +392,36 @@ def classify_module(dotted: str) -> tuple[bool, str | None]:
     if not dotted:
         return True, None
     # (b) forbidden stdlib is checked first so `socket`, `http.client`,
-    # `urllib.request` etc. report as B rather than a generic A.
-    if _matches_prefix(dotted, FORBIDDEN_STDLIB):
+    # `urllib.request` etc. report as B rather than a generic A. Runtime
+    # scope checks against the carved-out R1 forbidden set instead.
+    forbidden_stdlib = (
+        FORBIDDEN_STDLIB_RUNTIME if scope == "runtime" else FORBIDDEN_STDLIB
+    )
+    if _matches_prefix(dotted, forbidden_stdlib):
         return False, "TOS-FW-B"
     top = dotted.split(".")[0]
-    if top == "tos":  # self
+    if top == "tos":
+        # Self (kernel scope) OR the kernel dependency (runtime scope — D1.1
+        # `tos_runtime → tos` ✔, the one direction runtime is EXPECTED to
+        # import the kernel).
         return True, None
+    if top == "tos_runtime":
+        if scope == "runtime":
+            return True, None  # self
+        # Kernel scope importing the runtime shell — rule (g): the asymmetry
+        # is the whole point of D1 (runtime depends on kernel, never the
+        # reverse). A file OUTSIDE tos/ entirely importing tos_runtime is a
+        # separate case, caught by the rule-(e) extension in
+        # `check_reverse_imports`, not here.
+        return False, "TOS-FW-G"
     if top == "shared":
+        if scope == "runtime":
+            # design #40 D1.1 (corrected v1.2, 2026-09-07 — operator
+            # decision): `tos_runtime -> shared.*` is forbidden OUTRIGHT, all
+            # six commons packages included. R1 is therefore the KERNEL
+            # allowlist MINUS `shared.*`, not a superset of it — the runtime
+            # shell opens no new commons dependency, full stop. Rule (h).
+            return False, "TOS-FW-H"
         if _matches_prefix(dotted, SHARED_ALLOWED):
             return True, None
         # e.g. shared.config (+ .secrets), shared.execution, bare `shared`
@@ -275,28 +438,56 @@ def classify_module(dotted: str) -> tuple[bool, str | None]:
 # ============================================================================
 
 
+def _import_violation_message(rule: str | None, name: str) -> str:
+    """Build the diagnostic message for an (a)/(b)/(g)/(h) import violation.
+
+    Rules (g) and (h) get bespoke wording (the reason for each is a specific
+    D1 asymmetry/decision, not merely "not on the allowlist") — every other
+    rule keeps the original generic phrasing.
+    """
+    if rule == "TOS-FW-G":
+        return (
+            f"kernel-scope file imports 'tos_runtime' via '{name}' — forbidden "
+            "(rule g, design #40 D1.3: runtime may depend on the kernel, "
+            "never the reverse)"
+        )
+    if rule == "TOS-FW-H":
+        return (
+            f"runtime-scope file imports 'shared.*' via '{name}' — forbidden "
+            "(rule h, design #40 D1.1/D1.3 v1.2: the runtime shell opens no "
+            "new commons dependency, even a commons package the KERNEL is "
+            "itself allowed to import)"
+        )
+    return f"disallowed import '{name}'"
+
+
 def check_tos_file(path: Path, rel_display: str) -> list[Violation]:
-    """AST-scan a single ``tos/`` .py file for rules (a)-(d).
+    """AST-scan a single ``tos/`` .py file for rules (a)-(d)/(g)/(h).
+
+    ``rel_display`` also decides KERNEL vs RUNTIME scope for rules
+    (a)/(b)/(g)/(h) — see ``scope_for_tos_path`` (design #40 D1.3 item 1,
+    SCOPE SPLIT in the module docstring). Rules (c)/(d) are scope-invariant.
 
     Raises ``SyntaxError`` if the file cannot be parsed (surfaced by callers as
     a hard failure — a tos file that does not parse cannot be certified).
     """
+    scope = scope_for_tos_path(rel_display)
     text = path.read_text(encoding="utf-8")
     tree = ast.parse(text, filename=str(path))
     violations: list[Violation] = []
 
     for node in ast.walk(tree):
-        # ---- (a)/(b) imports (top-level AND nested — ast.walk visits all) ----
+        # ---- (a)/(b)/(g) imports (top-level AND nested — ast.walk visits all) ----
         if isinstance(node, ast.Import):
             for alias in node.names:
-                allowed, rule = classify_module(alias.name)
+                allowed, rule = classify_module(alias.name, scope)
                 if not allowed:
                     violations.append(
                         Violation(
                             rule,
                             rel_display,
                             node.lineno,
-                            f"disallowed import '{alias.name}'",
+                            _import_violation_message(rule, alias.name),
                         )
                     )
         elif isinstance(node, ast.ImportFrom):
@@ -310,14 +501,14 @@ def check_tos_file(path: Path, rel_display: str) -> list[Violation]:
                 module = node.module or ""
                 for alias in node.names:
                     cand = f"{module}.{alias.name}" if module else alias.name
-                    allowed, rule = classify_module(cand)
+                    allowed, rule = classify_module(cand, scope)
                     if not allowed:
                         violations.append(
                             Violation(
                                 rule,
                                 rel_display,
                                 node.lineno,
-                                f"disallowed import '{cand}'",
+                                _import_violation_message(rule, cand),
                             )
                         )
             # else: relative import (`from . import x`) resolves within tos → self.
@@ -469,7 +660,7 @@ def _git_toplevel_or_none(repo_root: Path) -> Path | None:
         return None  # genuinely no git work tree here
     raise RuntimeError(
         "tos_firewall_check: `git rev-parse --show-toplevel` failed "
-        "unexpectedly (not a plain \"not a git repository\" case — this "
+        'unexpectedly (not a plain "not a git repository" case — this '
         f"could be masking a real work tree, exit {result.returncode}): "
         f"{stderr.strip()}"
     )
@@ -737,7 +928,9 @@ def _forward_scan_boundary_symlinks(repo_root: Path, tos_dir: Path) -> list[Viol
             if not crosses:
                 continue
             violations.append(
-                _make_symlink_crossing_violation(link_lexical, target_lexical, repo_root)
+                _make_symlink_crossing_violation(
+                    link_lexical, target_lexical, repo_root
+                )
             )
         if is_top:
             dirnames[:] = [d for d in dirnames if d != ".venv"]
@@ -824,7 +1017,9 @@ def check_reverse_imports(
     # (1) can never reach (see `_git_tracked_symlinks`'s docstring).
     walked_symlinks: list[Path] = []
 
-    for path in _walk_repo_py(repo_root, symlinks_out=walked_symlinks, toplevel=toplevel):
+    for path in _walk_repo_py(
+        repo_root, symlinks_out=walked_symlinks, toplevel=toplevel
+    ):
         path_lexical = Path(os.path.abspath(path))
         if path_lexical == tos_dir_lexical or tos_dir_lexical in path_lexical.parents:
             continue  # inside tos/ (lexically) — governed by the forward rules
@@ -855,7 +1050,7 @@ def check_reverse_imports(
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name == "tos" or alias.name.startswith("tos."):
+                    if _matches_prefix(alias.name, _REVERSE_SCAN_TARGET_NAMES):
                         violations.append(
                             Violation(
                                 "TOS-FW-R",
@@ -868,7 +1063,7 @@ def check_reverse_imports(
                 if (
                     not node.level
                     and node.module
-                    and (node.module == "tos" or node.module.startswith("tos."))
+                    and _matches_prefix(node.module, _REVERSE_SCAN_TARGET_NAMES)
                 ):
                     violations.append(
                         Violation(

@@ -193,6 +193,44 @@ tos/
 없다 — `shared/`, `services/`, `cli/`, `core/`, `jobs/`, `scripts/`, `tests/`,
 repo 루트 모듈 전부 포함. (v1의 열거식 3개 패키지는 불완전 — §6.1.)
 
+#### 3.2-R 런타임 범위 허용목록 R1 — `tos/runtime/**` (설계 #40 D1.3, **PROPOSED**, 운영자 비준 대기)
+
+`tos/runtime/` 은 별도 배포 단위 `tos-runtime`(import 이름 `tos_runtime`)이며,
+위 §3.2 허용목록(이하 "커널 허용목록")과 **다른** 스캔 범위를 갖는다. 범위
+판별은 경로 접두 하나: `tos/runtime/` 아래는 **런타임 범위**, `tos/` 아래
+그 밖의 모든 경로(신설 형제 디렉터리 포함)는 **커널 범위**로 fail-closed.
+
+> **v1.2 정정(2026-09-07, 같은 날, 운영자 결정)**: 최초 초안은 R1을 "커널
+> 허용목록 전체(커먼즈 포함) ∪ ..." 로 정의해, 커널만 허용된 여섯 커먼즈
+> 패키지(`SHARED_ALLOWED`)가 런타임 범위에도 그대로 유입되는 모순이 있었다
+> — 바로 아래 D1.1 표의 "`tos_runtime → shared.*` ✘" 와 충돌. 운영자가 D1.1
+> 손을 들어줬다: **R1은 `shared.*` 전체를 제외한다**, 커널이 허용하는
+> 여섯 패키지도 예외 없이. 아래 표·규칙 (h)는 이 정정을 반영한 최종본이다.
+
+| 분류 | 허용 항목 | 비고 |
+|---|---|---|
+| = 커널 허용목록 **빼기** `shared.*` | 위 §3.2 표에서 표준 라이브러리(비금지분)·서드파티·`tos.*` (커먼즈 여섯 패키지는 **제외** — 아래 규칙 (h)) | 신규 서드파티는 0(Phase 2 는 stdlib 로 닫는다 — 설계 #40 D2/D3). 커널 허용목록의 상위집합이 **아니다** — `shared.*` 는 빠지고 stdlib 카브아웃(아래)이 더해진다 |
+| stdlib 카브아웃 | `socket`, `ssl`, `http`, `urllib.request` | 커널 허용목록에서는 금지(위 표)이지만 런타임 범위에서만 허용. `sqlite3`는 원래도 금지 목록에 없었으므로(이미 허용) 카브아웃 대상 아님. `hmac`·`hashlib`·`secrets` 도 원래 금지된 적이 없어 상태 변화 없음(설계 #40 §D1.3 item 2 는 완전성을 위해 열거) |
+| 자기 자신 | `tos_runtime.*` | — |
+| 커널 | `tos.*` | D1.1 이 정의한 유일한 기대 방향(`tos_runtime → tos`) |
+
+**계속 금지(양쪽 범위 공통)**: `subprocess`, `ctypes`, `ftplib`, `smtplib`,
+`poplib`, `imaplib`, `telnetlib`, `os.environ`/`os.getenv`(C2), 동적
+import/`exec`/`eval`(§3.3-①d).
+
+**신규 규칙 (g)**: 커널 범위의 어떤 파일도 `tos_runtime`을 import할 수 없다
+— `tos → tos_runtime` 방향은 설계 #40 D1.1 이 정의한 비대칭의 핵심(런타임은
+커널에 의존할 수 있으나 역방향은 불가)이다. **규칙 (e) 확장**: `tos/` 밖의
+어떤 파이썬 코드도 `tos_runtime`을 import할 수 없다 — R-역방향과 동일한 논거,
+대상만 `tos_runtime`으로 확장.
+
+**신규 규칙 (h)**(v1.2 정정): 런타임 범위의 어떤 파일도 `shared.*` 를
+import할 수 없다 — 커널이 허용하는 여섯 커먼즈 패키지(`shared.models` 등)
+포함, 예외 없음. D1.1: "런타임은 새 커먼즈 의존을 열지 않는다"가 문언
+그대로 기계 강제된다. `.importlinter`의 `tos-runtime-must-not-import-shared`
+계약(source `tos_runtime` → forbidden `shared`)이 이 규칙의 전이 방어
+대응짝이다 — 직접 import는 AST 게이트가, 전이(간접) import는 이 계약이 잡는다.
+
 ### 3.3 기계적 강제 — CI hard gate
 
 convention은 금지다(재사용 분석 S4: convention 순수성은 이미 실패한 전례).
@@ -207,16 +245,32 @@ convention은 금지다(재사용 분석 S4: convention 순수성은 이미 실�
    차단), (e) repo 전체 스캔으로 tos/ 밖 파일의 `import tos` 검출(R-역방향),
    (f) 심볼릭 링크의 부분트리가 어느 방향으로든 tos/ 경계와 교차하면 위반
    (fail-closed — 끊어진 링크 포함, `tos/` 자신도 심볼릭 링크일 수 없다,
-   §6.1 2026-09-04 상세).
+   §6.1 2026-09-04 상세), **(g) 커널 범위 파일의 `tos_runtime` import 검출**
+   (설계 #40 D1.3, **PROPOSED** — §3.2-R 신설 런타임 범위 R1 과 짝을 이룸;
+   (e) 는 `tos/` 밖 파일의 `import tos_runtime` 도 함께 잡도록 확장됨),
+   **(h) 런타임 범위 파일의 `shared.*` import 검출**(설계 #40 D1.1, v1.2
+   정정, **PROPOSED** — 커널이 허용하는 여섯 커먼즈 패키지도 예외 없이 런타임
+   범위에서는 금지). 이 전부가 **한 번의 스캔 호출**로 수행된다 —
+   `tos/runtime/` 은 같은 파일이 런타임 범위 허용목록으로 판정될 뿐, 별도
+   검사기 실행이 추가되지 않는다.
 2. **② import-linter (2차, 내부 금지 패키지의 전이 방어)** — repo 루트
-   `.importlinter`에 forbidden contract: source `tos` → forbidden `shared.execution`,
-   `shared.kis`, `shared.streaming`, `shared.llm`, `shared.storage`,
-   `shared.backtest`, `services`, `cli`. **간접(전이) 검출 활성 상태로 운영한다**
+   `.importlinter`에 forbidden contract: source `tos`, `tos_runtime` →
+   forbidden `shared.execution`, `shared.kis`, `shared.streaming`,
+   `shared.llm`, `shared.storage`, `shared.backtest`, `services`, `cli`
+   (설계 #40 D1.3 item 4, **PROPOSED** — `tos_runtime` 을 `root_packages`와
+   이 계약의 `source_modules`에 추가해 런타임에도 같은 전이 방어를 적용).
+   **간접(전이) 검출 활성 상태로 운영한다**
    (`allow_indirect_imports` 사용 금지) — 허용 커먼즈가 금지 패키지를 끌어오면
-   여기서 실패한다.
+   여기서 실패한다. 별도 계약 `tos-kernel-must-not-import-runtime`(forbidden,
+   source `tos` → forbidden `tos_runtime`, 설계 #40 D1.3 item 3-4)이 규칙
+   (g)의 전이 방어 대응짝을 담당하고, 또 별도 계약
+   `tos-runtime-must-not-import-shared`(forbidden, source `tos_runtime` →
+   forbidden `shared`, 설계 #40 D1.1 v1.2 정정)가 규칙 (h)의 전이 방어
+   대응짝을 담당한다.
 3. **③ CI 잡 `tos-firewall`**: 모든 PR에서 실행(경로 게이팅 없이 — 저비용이고
-   우회 여지를 없앤다). ①+② + `pytest tos/tests`(hermetic). **required check**로
-   지정 — 실패 시 머지 불가.
+   우회 여지를 없앤다). ①+② + `pytest tos/tests`(hermetic) + `pytest
+   tos/runtime/tests`(hermetic, 설계 #40 D1.4 — 별도 스텝, **PROPOSED**).
+   **required check**로 지정 — 실패 시 머지 불가.
 4. **우회 기록**: 게이트를 우회(계약·게이트 스크립트 수정 포함)하는 모든 변경은
    §6.1 개정 로그에 사유와 함께 기록한다. 반복 우회는 (C) 추출 트리거다(§6.2).
 
@@ -429,6 +483,27 @@ ADR-002-007/025 게이트를 통해서만, 별도 비준으로 추가된다. 그
     설치/lock이 더 이상 그 버전을 받을 수 없게 됨. 모노레포 루트 `.venv`
     actual도 동일 버전으로 lockstep 갱신(§3.2 미러링 요건), `tos/uv.lock`
     재생성.
+  - 2026-09-07: **PROPOSED — 운영자 비준 시 효력.** D1 — `tos/runtime/` 런타임
+    범위 신설·allowlist R1·규칙 (g)·(e) 확장 (설계 #40 D1.3). 스캔 범위를
+    커널(`tos/` minus `tos/runtime/`, 기존 허용목록 불변)과 런타임
+    (`tos/runtime/**`, 신설 §3.2-R)으로 이원화; 규칙 (g) 신설(커널 범위의
+    `tos_runtime` import 금지); 규칙 (e) 확장(`tos/` 밖 파일의 `tos_runtime`
+    import 도 금지); `.importlinter`에 `tos_runtime` root package·
+    `tos-operational-firewall` 계약 `source_modules` 추가 + 별도 계약
+    `tos-kernel-must-not-import-runtime` 신설; CI `tos-firewall` 잡에
+    `pytest tos/runtime/tests` 스텝 추가(기존 firewall 검사기 호출은 불변 —
+    한 번의 스캔이 양쪽 범위를 이미 커버); `config/tos_size_budget.yaml`
+    scope에 `tos/runtime/src` 추가; `tos/runtime/` 스켈레톤 신설(별도 배포
+    단위 `tos-runtime`, I/O 코드 0 — 상위 계획 §4.2 "경계 ADR 승인 전 tos/
+    커널 안에 네트워크 코드를 넣지 않는다"를 같은 정신으로 이 신규 패키지에도
+    적용, D2/D3 구현은 후속 별도 비준). **같은 날 v1.2 정정(운영자 결정,
+    같은 PR)**: 최초 R1 정의가 커널 허용목록 전체(커먼즈 6종 포함)를 그대로
+    합집합해 D1.1 표("`tos_runtime → shared.*` ✘")와 모순됐다 — 운영자가
+    D1.1 손을 들어 **R1에서 `shared.*` 전체를 제외**하도록 정정. 신규 규칙
+    (h) 추가(런타임 범위의 `shared.*` import 전면 금지, 커널 허용 여섯
+    패키지도 예외 없음); `.importlinter`에 계약
+    `tos-runtime-must-not-import-shared`(forbidden, source `tos_runtime` →
+    forbidden `shared`) 신설로 규칙 (h)의 전이 방어 대응짝 확보.
 
 ### 6.2 repo 분리(전략 C) 재검토 트리거 — 아래 중 하나라도 발생 시
 

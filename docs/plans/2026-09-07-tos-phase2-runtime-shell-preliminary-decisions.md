@@ -42,7 +42,7 @@ failure-domain·자격증명 격리는 최강이나, (i) IPC 스키마·durabili
 ### D1.3 방화벽 설계 개정(#1 §3.2/§3.3/§6.1) — 이 문서 비준 시 **같은 PR** 에서 적용
 
 1. **스캔 범위 이원화**: `tools/tos_firewall_check.py` 정방향 스캔을 «커널 범위»(`tos/src`·`tos/tests` — 현행 allowlist v2 그대로)와 «런타임 범위»(`tos/runtime/**` — 아래 allowlist R1)로 나눈다. 범위 판별은 경로 접두 하나이며, `tos/` 아래 그 밖의 경로(예: 새 형제 디렉터리)는 **커널 범위로 fail-closed**(모르는 곳은 엄격한 쪽).
-2. **allowlist R1(런타임 직접 import)** = 커널 allowlist v2 ∪ `tos_runtime.*` ∪ stdlib `socket`·`ssl`·`http`·`urllib.request`·`sqlite3`(이미 허용)·`hmac`·`hashlib`·`secrets`. **계속 금지**: `subprocess`·`ctypes`·`ftplib`·`smtplib`·`poplib`·`imaplib`·`telnetlib`·`os.environ`/`os.getenv`·동적 import. 서드파티 추가는 0(Phase 2 는 stdlib 로 닫는다 — D2/D3).
+2. **allowlist R1(런타임 직접 import)** = (커널 allowlist v2 **에서 커먼즈 6종 `shared.*` 를 뺀 것**) ∪ `tos.*` ∪ `tos_runtime.*` ∪ stdlib `socket`·`ssl`·`http`·`urllib.request`·`sqlite3`(이미 허용)·`hmac`·`hashlib`·`secrets`. `shared.*` 는 런타임 범위에서 **직접 import 전면 거부**(D1.1 표 «tos_runtime → shared.* ✘» 의 기계 강제 — 커널이 커먼즈 0 사용인데 런타임이 레거시 의존을 새로 여는 것을 막는다). **계속 금지**: `subprocess`·`ctypes`·`ftplib`·`smtplib`·`poplib`·`imaplib`·`telnetlib`·`os.environ`/`os.getenv`·동적 import. 서드파티 추가는 0(Phase 2 는 stdlib 로 닫는다 — D2/D3). *(v1.2 정정: v1 문언은 커먼즈를 포함해 D1.1 과 모순이었다 — 준비 레인이 적발.)*
 3. **신규 규칙 (g)**: 커널 범위의 어떤 파일도 `tos_runtime` 을 import 하지 못한다(AST) + `.importlinter` 에 `source tos → forbidden tos_runtime` 계약 추가. **규칙 (e) 확장**: `tos/` 밖 파일의 `import tos_runtime` 도 위반.
 4. `.importlinter` 의 `tos-operational-firewall` 계약 `source_modules` 에 `tos_runtime` 추가(전이 방어를 런타임에도).
 5. CI `tos-firewall` 잡: 런타임 범위 스캔은 같은 검사기 한 번의 호출에 포함(스텝 추가 없음) · `pytest tos/runtime/tests` 스텝 추가 · 크기 budget `scope` 에 `tos/runtime/src` 추가 · `tos-gate.yml`·하니스는 불변.
