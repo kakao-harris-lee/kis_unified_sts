@@ -255,6 +255,19 @@ class SendHaltReason(StrEnum):
     SINGLE_USE_CLAIM_REFUSED = "SINGLE_USE_CLAIM_REFUSED"
     TRANSPORT_UNAVAILABLE = "TRANSPORT_UNAVAILABLE"
     TRANSPORT_RAISED = "TRANSPORT_RAISED"
+    #: Deriving the outbound coordinates (:func:`~tos.egressgw.gateway.outbound_coordinates`)
+    #: raised, *before* the transport was ever called. Kept distinct from ``TRANSPORT_RAISED`` —
+    #: folding it in there would misattribute a pre-send derivation fault to the transport call
+    #: itself, which is exactly the silent-misattribution the recorded-reason discipline forbids
+    #: (design #34 §4.2 "a restrictive termination without a recorded reason is a silent stop,
+    #: not a fail-closed one").
+    OUTBOUND_COORDINATE_DERIVATION_RAISED = "OUTBOUND_COORDINATE_DERIVATION_RAISED"
+    #: The transport call itself succeeded (``send_once`` returned), but the result object it
+    #: returned could not be read — an attribute access on ``result`` (identity, kind, fill
+    #: magnitudes) raised. Handled the same way ``TRANSPORT_RAISED`` is: the send already
+    #: happened and is never repeated, and the reservation stays POTENTIALLY_LIVE
+    #: (UNKNOWN-restrictive, §4.2 "unknown preserves capacity, deny").
+    RESULT_UNREADABLE = "RESULT_UNREADABLE"
     RESULT_ATTEMPT_IDENTITY_MISMATCH = "RESULT_ATTEMPT_IDENTITY_MISMATCH"
 
 

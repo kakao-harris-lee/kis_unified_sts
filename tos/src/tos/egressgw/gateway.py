@@ -1486,7 +1486,20 @@ class BrokerEgressGateway:
         detail: str | None,
         item: SendVerifyItem | None = None,
     ) -> SendHandoff:
-        """Record a recorded-reason halt and refuse the hand-off (design #34 §4.2)."""
+        """Record a recorded-reason halt and refuse the hand-off (design #34 §4.2).
+
+        ⚠ **If the evidence sink itself raises while recording this halt, that exception is not
+        caught here — it propagates.** A "halt" this method could not actually record would be
+        exactly the silent stop the ``SendHaltReason`` vocabulary rules out ("a restrictive
+        termination without a recorded reason is a silent stop, not a fail-closed one"). No
+        retry is attempted (design #34 §5.4 — no retries anywhere): this call *is* the one
+        recorded attempt. Any claim already made on the attempt is untouched — the ledger never
+        releases a claim on a halt — and once the ``POTENTIALLY_LIVE_OBSERVED`` record has been
+        written, the reservation projection stays possibly-live regardless of what this method
+        does next, so a caller-visible crash from here on is the design's expected outcome, not
+        an unhandled bug (design #34 §4.6: "a crash from here on is deliberately treated as
+        possibly-live").
+        """
         self._sink.record(
             GatewayEvidenceRecord(
                 kind="SEND_REFUSED",
@@ -1630,10 +1643,25 @@ class BrokerEgressGateway:
                 ),
             )
         try:
+            coordinates = outbound_coordinates(context)
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - a derivation fault precedes the send entirely
+            return self._halt(
+                attempt_id=attempt_id,
+                reason=SendHaltReason.OUTBOUND_COORDINATE_DERIVATION_RAISED,
+                detail=(
+                    f"deriving the outbound coordinates raised {type(exc).__name__}: {exc} — "
+                    "this happens before the transport is ever called, so it is recorded under "
+                    "its true cause instead of being folded into TRANSPORT_RAISED (design #34 "
+                    "§4.2 recorded-reason discipline)"
+                ),
+            )
+        try:
             result = self._transport.send_once(
                 attempt,
                 instrument_key=context.instrument_key,
-                coordinates=outbound_coordinates(context),
+                coordinates=coordinates,
                 quantity=context.outbound_quantity,
                 price=context.outbound_price,
                 side=context.outbound_side,
@@ -1654,7 +1682,27 @@ class BrokerEgressGateway:
             )
 
         # -- step 19: evidence ------------------------------------------------------------
-        if result.attempt_id != attempt_id:
+        # send_once above is now the *only* transport call this attempt will ever make
+        # (single-shot by construction, §5.4) — everything below only reads and records what
+        # already happened. A fault reading the result is UNKNOWN-restrictive (§4.2 "unknown
+        # preserves capacity, deny"), so it halts under its own recorded reason rather than
+        # being misread as a transport failure.
+        try:
+            attempt_identity_mismatch = result.attempt_id != attempt_id
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - an unreadable result is UNKNOWN, not "not sent"
+            return self._halt(
+                attempt_id=attempt_id,
+                reason=SendHaltReason.RESULT_UNREADABLE,
+                detail=(
+                    f"reading the transport result's identity raised {type(exc).__name__}: "
+                    f"{exc} — the send already happened (single send_once call, never "
+                    "repeated) and the reservation stays POTENTIALLY_LIVE; this is its own "
+                    "recorded cause rather than a transport failure"
+                ),
+            )
+        if attempt_identity_mismatch:
             return self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.RESULT_ATTEMPT_IDENTITY_MISMATCH,
@@ -1664,9 +1712,9 @@ class BrokerEgressGateway:
                     "can never transition another reservation (design #31 §2.1(ii))"
                 ),
             )
-        self.results += (result,)
-        self._sink.record(
-            GatewayEvidenceRecord(
+
+        try:
+            result_record = GatewayEvidenceRecord(
                 kind="EGRESS_RESULT_RECORDED",
                 attempt_id=attempt_id,
                 detail=(
@@ -1675,8 +1723,40 @@ class BrokerEgressGateway:
                     "fill and the filled part is never re-requested (RFC-005 §11:338-339)"
                 ),
             )
-        )
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - unreadable result fields, same conservative halt
+            return self._halt(
+                attempt_id=attempt_id,
+                reason=SendHaltReason.RESULT_UNREADABLE,
+                detail=(
+                    f"reading the transport result's fields raised {type(exc).__name__}: {exc} "
+                    "while building the EGRESS_RESULT_RECORDED evidence — the send already "
+                    "happened, is never repeated, and the reservation stays POTENTIALLY_LIVE"
+                ),
+            )
+
+        self.results += (result,)
+        # ⚠ The write below is the one recorded attempt at the terminal, disposition-bearing
+        # evidence for a completed send (result.attempt_id already matched and every field
+        # above was readable — the send genuinely happened). If the sink itself raises here,
+        # recording a SEND_REFUSED in its place would fabricate a refusal for something that
+        # was, in fact, accepted and sent — the recorded-reason discipline forbids that
+        # fabrication as firmly as it forbids a silent skip. Retrying the same write is not an
+        # option either (no retries anywhere, design #34 §5.4). So the exception propagates
+        # uncaught: the caller sees a crash, which design #34 §4.6 treats as the deliberate,
+        # expected outcome from this point on ("a crash from here on is deliberately treated as
+        # possibly-live") — the same "a missing acknowledgement is NOT a non-acceptance"
+        # principle RFC-005 §11:322-323 states for a raised transport, applied here to a raised
+        # evidence write instead of a raised send.
+        self._sink.record(result_record)
+
         if result.kind in UNCERTAIN_RESULT_KINDS:
+            # Same reasoning: EGRESS_RESULT_RECORDED has already been written, so the
+            # disposition is already on record. A failure recording the supplementary
+            # uncertain-send ladder is not silently dropped (that would misreport the ladder as
+            # recorded when it was not) and is not repainted as a refusal (the send already
+            # went out) — it propagates uncaught, same as the write above.
             self._record_uncertain(attempt_id, context)
         return SendHandoff(accepted_for_transmission=True, handoff_reference=attempt_id)
 
