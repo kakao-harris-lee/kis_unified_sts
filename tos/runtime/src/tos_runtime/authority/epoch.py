@@ -61,6 +61,7 @@ the maximum embedded ``new_epoch``. No cache, no separate projection table.
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -265,15 +266,16 @@ class SafetyAuthorityEpochService:
 
         Re-reads ``log.read_linearizable`` every call — never cached. A
         stale-epoch read (this instance's ``writer_epoch`` has been usurped)
-        or any other log-read failure yields the fully-``None`` (fenced)
-        state — the kernel's own ``authority_epoch_current`` already treats
-        ``None`` coordinates as fenced, so this is the honest, fail-closed
-        answer rather than a raised exception for a routine currentness
-        check.
+        or any other log-read failure (e.g. the underlying sqlite file being
+        locked/unreachable — ``sqlite3.Error``, 2026-09-08 independent-review
+        MEDIUM fix) yields the fully-``None`` (fenced) state — the kernel's
+        own ``authority_epoch_current`` already treats ``None`` coordinates
+        as fenced, so this is the honest, fail-closed answer rather than a
+        raised exception for a routine currentness check.
         """
         try:
             view = self._log.read_linearizable(writer_epoch=self._writer_epoch)
-        except StaleEpochRead:
+        except (StaleEpochRead, sqlite3.Error):
             return AuthorityEpochState()
         prefix = f"{_EPOCH_TRANSITION_PREFIX}:{self._authority_domain}:"
         max_epoch: int | None = None
@@ -304,26 +306,52 @@ class SafetyAuthorityEpochService:
     def witness(self) -> CurrentnessWitness:
         """The online currentness witness (ADR-002-003 §12.1; slice plan §1 item 1).
 
-        ``present=True`` only when (a) the injected time service's snapshot is
-        currently ``HealthState.TRUSTED``, (b) the containment bound is
-        configured, (c) a fresh ``read_linearizable`` on this instance's log
-        succeeds, and (d) the elapsed monotonic time since the last time this
-        method itself last succeeded is within
-        ``config.containment_bound_ms`` (the online-verification containment
-        window — first-ever call establishes the baseline at age 0). Any
-        failure clears the high-water mark, so a subsequent recovery must
-        re-establish currentness from scratch rather than resume a stale
-        window.
+        **The baseline is the monotonic instant of the last call that returned
+        ``present=True`` — never anything else.** ``present=True`` only when
+        (a) the injected time service's snapshot is currently
+        ``HealthState.TRUSTED``, (b) the containment bound is configured,
+        (c) a fresh ``read_linearizable`` on this instance's log succeeds, and
+        (d) the elapsed monotonic time since that baseline is within
+        ``config.containment_bound_ms`` (first-ever successful verification
+        establishes the baseline at age 0).
+
+        **Every ``present=False`` path leaves the baseline COMPLETELY
+        UNTOUCHED** (2026-09-08 independent-review MEDIUM fix) — it is never
+        reset to "now" and never cleared to ``None``. This closes a fail-open
+        this module previously had: resetting the baseline to "now" on an
+        expired-window return meant a second, immediately-following call (same
+        time-service snapshot, no further ``evaluate()``) computed age 0
+        against that just-reset baseline and reported ``present=True`` again —
+        the containment gate was measuring call *cadence*, not a genuine
+        online re-verification (ADR-002-003 :183 "a cached grant SHALL NOT
+        authorize after online verification is lost"). With the baseline
+        frozen at the last TRUE instant, a caller that lets the window expire
+        gets ``present=False`` on every subsequent call, indefinitely, until a
+        read that is *itself* within ``containment_bound_ms`` of that frozen
+        baseline succeeds — which is exactly why a **transient** failure (the
+        log briefly unreachable, or time briefly not ``TRUSTED``, resolved
+        before real time has moved past the bound) recovers to ``True`` on
+        the next successful read, while a **caller that simply stops polling
+        long enough for real time to exceed the bound** does not recover on
+        its own — the window is a one-way door once genuinely violated,
+        deliberately (a Safety Authority currentness bound is not a self-
+        healing cache-refresh timer; a real re-establishment event, e.g. a
+        fresh epoch ``transition``, is what the design otherwise consults).
+        A ``containment_bound_ms`` of ``0`` (never returned by
+        :func:`load_authority_config`, which requires a positive int, but
+        directly constructible via :class:`AuthorityRuntimeConfig` — e.g. in
+        a test) is therefore ``present=True`` only at the exact read instant
+        that establishes/re-confirms the baseline (age exactly ``0``) and
+        ``False`` on every subsequent call once monotonic time has moved on
+        at all.
         """
         try:
             snapshot = self._time.current_snapshot()
         except TimeServiceNotStarted:
-            self._last_verified_monotonic_ms = None
             return CurrentnessWitness(
                 present=False, witness_source="time_service_not_started"
             )
         if snapshot.health_state is not HealthState.TRUSTED:
-            self._last_verified_monotonic_ms = None
             return CurrentnessWitness(
                 present=False, witness_source="time_health_not_trusted"
             )
@@ -334,34 +362,40 @@ class SafetyAuthorityEpochService:
         try:
             self._log.read_linearizable(writer_epoch=self._writer_epoch)
         except StaleEpochRead:
-            self._last_verified_monotonic_ms = None
             return CurrentnessWitness(present=False, witness_source="stale_epoch_read")
+        except sqlite3.Error:
+            # The underlying log file is locked/unreachable — a genuine read
+            # failure (2026-09-08 independent-review MEDIUM fix), never a
+            # raised exception for a routine currentness check.
+            return CurrentnessWitness(present=False, witness_source="log_unreachable")
         now_ms = snapshot.evaluated_monotonic_anchor.monotonic_anchor_value
         if now_ms is None:
             # The snapshot itself carries no concrete monotonic reading — an
             # unestablished coordinate is never treated as fresh (fail-closed,
             # mirrors the kernel's own None-coordinate discipline).
-            self._last_verified_monotonic_ms = None
             return CurrentnessWitness(
                 present=False, witness_source="snapshot_monotonic_value_absent"
             )
         previous = self._last_verified_monotonic_ms
         if previous is None:
+            # First-ever successful online verification — establish the
+            # baseline now, at age 0.
             self._last_verified_monotonic_ms = now_ms
             return CurrentnessWitness(
                 present=True, within_containment_bound=True, witness_source="rcl_log"
             )
         age_ms = now_ms - previous
         if age_ms < 0 or age_ms > self._config.containment_bound_ms:
-            # A regression or an expired window: never treat as fresh, and
-            # reset the baseline so the NEXT call re-establishes it at age 0
-            # instead of a permanently-stuck stale window.
-            self._last_verified_monotonic_ms = now_ms
+            # A regression, or a genuinely expired window: never treat as
+            # fresh, and — critically — never touch the baseline (it stays
+            # frozen at `previous`; see the method docstring).
             return CurrentnessWitness(
                 present=False,
                 within_containment_bound=False,
                 witness_source="rcl_log",
             )
+        # A successful, still-within-bound re-verification: ratchet the
+        # baseline forward to this instant.
         self._last_verified_monotonic_ms = now_ms
         return CurrentnessWitness(
             present=True, within_containment_bound=True, witness_source="rcl_log"

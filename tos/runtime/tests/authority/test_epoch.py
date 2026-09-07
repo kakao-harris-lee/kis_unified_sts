@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -310,6 +311,115 @@ def test_witness_stays_present_within_the_containment_bound(
     second = epoch_service.witness()
     assert second.present is True
     assert second.within_containment_bound is True
+
+
+def test_witness_stays_false_on_an_immediate_repeat_call_after_expiry(
+    epoch_service: SafetyAuthorityEpochService,
+    time_service: TrustworthyTimeService,
+    time_monotonic: FakeMonotonicSource,
+) -> None:
+    """2026-09-08 independent-review MEDIUM repro: expiring the window must
+    NOT reset the baseline to "now" — an immediate second call (same
+    time-service snapshot, no further ``evaluate()``) must stay ``False``,
+    never flip back to ``True`` merely because the prior call reset the
+    baseline against itself."""
+    make_trusted(time_service)
+    first = epoch_service.witness()
+    assert first.present is True
+
+    time_monotonic.value += 10_000
+    time_service.evaluate()
+
+    second = epoch_service.witness()
+    assert second.present is False
+
+    third = epoch_service.witness()  # immediately again — same snapshot
+    assert third.present is False
+    assert third.within_containment_bound is False
+
+
+def test_witness_stays_false_forever_after_a_genuine_expiry(
+    epoch_service: SafetyAuthorityEpochService,
+    time_service: TrustworthyTimeService,
+    time_monotonic: FakeMonotonicSource,
+) -> None:
+    """The frozen baseline never self-heals just because more time passes —
+    a Safety Authority currentness bound is a one-way door once genuinely
+    violated (method docstring)."""
+    make_trusted(time_service)
+    assert epoch_service.witness().present is True
+
+    time_monotonic.value += 10_000
+    time_service.evaluate()
+    assert epoch_service.witness().present is False
+
+    # Advancing further (and evaluating again) does not recover it — the
+    # baseline is frozen at the original TRUE instant, and real elapsed time
+    # only grows relative to it.
+    time_monotonic.value += 10_000
+    time_service.evaluate()
+    assert epoch_service.witness().present is False
+
+
+def test_witness_recovers_after_a_transient_log_failure(
+    epoch_service: SafetyAuthorityEpochService,
+    time_service: TrustworthyTimeService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A locked/unreachable log (``sqlite3.Error``) is a genuine failure —
+    present=False while it lasts — but recovers to ``True`` once a read
+    succeeds again, provided real elapsed time never exceeded the bound
+    while the log was unreachable (2026-09-08 independent-review MEDIUM
+    fix's "successful read after failure" contract)."""
+    make_trusted(time_service)
+    real_read = epoch_service._log.read_linearizable  # noqa: SLF001
+    calls = {"n": 0}
+
+    def failing_read(*args: object, **kwargs: object) -> object:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise sqlite3.OperationalError("database is locked")
+        return real_read(*args, **kwargs)
+
+    monkeypatch.setattr(
+        epoch_service._log, "read_linearizable", failing_read
+    )  # noqa: SLF001
+
+    first = epoch_service.witness()
+    assert first.present is False
+    assert first.witness_source == "log_unreachable"
+
+    second = epoch_service.witness()
+    assert second.present is False  # still failing — stays False, not reset
+
+    third = epoch_service.witness()  # the log becomes reachable again
+    assert third.present is True
+
+
+def test_witness_zero_bound_is_true_only_at_the_exact_read_instant(
+    log: SqliteCommitLog,
+    time_service: TrustworthyTimeService,
+    evidence_port: FakeEvidenceAppendPort,
+    writer_epoch: int,
+) -> None:
+    """``containment_bound_ms=0`` (never returned by
+    :func:`load_authority_config`, which requires a positive int — see the
+    config tests below; directly constructible here) is ``True`` only when
+    age is exactly ``0`` (the read instant that established/re-confirmed the
+    baseline) and ``False`` on every later call once monotonic time has
+    moved on at all — the method docstring's documented ``bound=0`` shape."""
+    make_trusted(time_service)
+    zero_bound = AuthorityRuntimeConfig(containment_bound_ms=0)
+    service = SafetyAuthorityEpochService(
+        log,
+        time_service,
+        evidence_port,
+        authority_domain="acct-main",
+        writer_epoch=writer_epoch,
+        config=zero_bound,
+    )
+    assert service.witness().present is True  # establishes the baseline, age 0
+    assert service.witness().present is True  # same snapshot -> still age 0
 
 
 # ============================================================================
