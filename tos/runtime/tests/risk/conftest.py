@@ -82,6 +82,41 @@ class FakeEvidenceAppendPort:
         return [kind for _payload, kind, _record_class in self.calls]
 
 
+class CountingCommitLog:
+    """Wraps a real :class:`~tos_runtime.rcl.log.SqliteCommitLog`, counting
+    calls to the two commit-entry methods (``apply_reservation_transition`` /
+    ``append_cas``) so a test can assert exactly one commit-entry call
+    happened per :class:`~tos_runtime.risk.ledger_stages.AtomicCommitStage`
+    invocation — pinning that module's own "single transaction, never split"
+    invariant (independent review MEDIUM, 2026-09-08: a mutation splitting the
+    step-9 commit into two separate calls left every existing test green).
+
+    Every other attribute (``read_linearizable``, ``reservation_rows``, the
+    private ``_conn``, etc.) is forwarded verbatim to the wrapped log via
+    ``__getattr__`` — only the two counted methods are intercepted.
+    """
+
+    def __init__(self, log: SqliteCommitLog) -> None:
+        self._log = log
+        self.apply_reservation_transition_calls = 0
+        self.append_cas_calls = 0
+
+    def apply_reservation_transition(self, *args: Any, **kwargs: Any) -> Any:
+        self.apply_reservation_transition_calls += 1
+        return self._log.apply_reservation_transition(*args, **kwargs)
+
+    def append_cas(self, *args: Any, **kwargs: Any) -> Any:
+        self.append_cas_calls += 1
+        return self._log.append_cas(*args, **kwargs)
+
+    @property
+    def total_commit_calls(self) -> int:
+        return self.apply_reservation_transition_calls + self.append_cas_calls
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._log, name)
+
+
 @pytest.fixture
 def evidence_port() -> FakeEvidenceAppendPort:
     return FakeEvidenceAppendPort()

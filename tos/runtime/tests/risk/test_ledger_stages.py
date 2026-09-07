@@ -27,6 +27,7 @@ from tos_runtime.risk.ledger_stages import (
 )
 
 from .conftest import (
+    CountingCommitLog,
     FakeEvidenceAppendPort,
     grant_shaped_afg_inputs,
     grant_shaped_are_inputs,
@@ -281,6 +282,88 @@ def test_step9_commits_reservation_and_permit_in_one_transaction(
     )
 
 
+def test_step9_commits_via_exactly_one_commit_entry_call(
+    log: SqliteCommitLog,
+    writer_epoch: int,
+    instrument_key: InstrumentKey,
+    afg_governor: ActionFlowGovernor,
+) -> None:
+    """Pins the module docstring's "ONE apply_reservation_transition call,
+    never split into two transactions" invariant: a mutation splitting the
+    step-9 commit into two separate calls (reservation first, nonce/digest
+    binding second) must fail this test, even though every *outcome*-level
+    assertion elsewhere in this file would still pass (independent review
+    MEDIUM, 2026-09-08)."""
+    permit = _committed_permit(afg_governor)
+    counting_log = CountingCommitLog(log)
+    stage = AtomicCommitStage(
+        counting_log,
+        writer_epoch=writer_epoch,
+        permit_provider=lambda _r: permit,
+        reservation_id_provider=lambda _r: "reservation-1",
+        time_permits_new_risk=lambda: True,
+    )
+    verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
+    assert verdict.outcome is StageOutcome.ADMIT
+    assert counting_log.total_commit_calls == 1
+    assert counting_log.apply_reservation_transition_calls == 1
+    assert counting_log.append_cas_calls == 0
+
+
+def test_step9_single_entry_carries_both_the_reservation_and_the_permit_binding(
+    log: SqliteCommitLog,
+    writer_epoch: int,
+    instrument_key: InstrumentKey,
+    afg_governor: ActionFlowGovernor,
+) -> None:
+    """Independent content check (not the call-count wrapper above): exactly
+    ONE row exists in ``entries`` for this attempt, and that ONE row's
+    ``command_id``/``command_digest`` (the permit's single-use claim) sit on
+    the SAME entry as the reservation transition's own
+    ``is_reservation_transition=1``/scope/state — a two-call split would
+    either leave two ``entries`` rows (caught by the ``COUNT(*)`` check) or a
+    reservation row whose commit fields never proved they came from ONE
+    transaction (independent review MEDIUM, 2026-09-08)."""
+    permit = _committed_permit(afg_governor)
+    stage = AtomicCommitStage(
+        log,
+        writer_epoch=writer_epoch,
+        permit_provider=lambda _r: permit,
+        reservation_id_provider=lambda _r: "reservation-1",
+        time_permits_new_risk=lambda: True,
+    )
+    verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
+    assert verdict.outcome is StageOutcome.ADMIT
+
+    (entry_count,) = log._conn.execute("SELECT COUNT(*) FROM entries").fetchone()
+    assert entry_count == 1
+
+    row = log._conn.execute(
+        "SELECT e.command_id, e.command_digest, e.is_reservation_transition, "
+        "r.reservation_id, r.state, r.scope_account, r.scope_instrument "
+        "FROM entries e JOIN reservations r ON r.last_seq = e.seq "
+        "WHERE r.reservation_id = ?",
+        ("reservation-1",),
+    ).fetchone()
+    assert row is not None
+    (
+        command_id,
+        command_digest,
+        is_reservation_transition,
+        reservation_id,
+        state,
+        scope_account,
+        scope_instrument,
+    ) = row
+    assert command_id == permit.claim_nonce
+    assert command_digest == permit.canonical_digest
+    assert is_reservation_transition == 1
+    assert reservation_id == "reservation-1"
+    assert state == CapacityState.COMMITTED_UNBOUND.value
+    assert scope_account == instrument_key.account
+    assert scope_instrument == instrument_key.instrument
+
+
 def test_step9_is_unknown_when_no_permit_is_available(
     log: SqliteCommitLog, writer_epoch: int, instrument_key: InstrumentKey
 ) -> None:
@@ -451,6 +534,21 @@ def test_step9_atomic_commit_leaves_neither_reservation_nor_permit_on_a_crash_be
         reader = SqliteReservationProjectionReader(reopened)
         assert reader.instrument_state(instrument_key) is None
         assert dict(reader.all_reservations()) == {}
+
+        # Nothing leaked: the SAME permit's nonce was never durably claimed by
+        # the crashed attempt, so a fresh stage call over the reopened log can
+        # still claim it (proving the crash consumed no single-use state).
+        retry_stage = AtomicCommitStage(
+            reopened,
+            writer_epoch=epoch,
+            permit_provider=lambda _r: permit,
+            reservation_id_provider=lambda _r: "reservation-1",
+            time_permits_new_risk=lambda: True,
+        )
+        retry_verdict = retry_stage(
+            _request(CommitmentStep.ATOMIC_COMMIT, instrument_key)
+        )
+        assert retry_verdict.outcome is StageOutcome.ADMIT
     finally:
         reopened.close()
 
