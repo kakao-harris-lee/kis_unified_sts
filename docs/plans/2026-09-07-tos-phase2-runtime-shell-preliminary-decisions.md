@@ -134,6 +134,16 @@ failure-domain·자격증명 격리는 최강이나, (i) IPC 스키마·durabili
 
 각 순서는 장애 계약 테스트 → 정상 API 순으로(상위 계획). 순서 1·2 는 병렬 가능(레인 2개), 3 이후는 직렬. 종료 조건은 상위 계획 Phase 2 그대로 + 이 문서 편차 2건의 레지스터 등재.
 
+## 5-A. D1 비준 «전» 에 착지 가능한 선행 작업 (운영자 지시 «병렬 착수» 이행 · 전부 되돌리기 쉬움)
+
+| 레인 | 내용 | 왜 비준 전에 가능한가 |
+|---|---|---|
+| D1.3 준비 | 방화벽 검사기 범위 이원화·규칙 (g)·(e) 확장·`.importlinter` 계약·설계 #1 §6.1 개정 로그·`tos/runtime/` 스켈레톤(pyproject·빈 패키지·hermetic conftest)·CI 스텝·budget scope | §6.1 절차가 «본 문서를 수정하는 PR» 이므로 비준은 곧 그 PR 의 머지다. 스켈레톤에는 네트워크·sqlite 코드가 없다(상위 계획 §4.2 준수). |
+| D3 커널 측 | `EvidenceCommitReceipt` 레코드 · `Sha256HmacChainScheme`(stdlib hashlib/hmac · 키 바이트는 주입 · 기존 `SegmentCommitmentScheme` Protocol 구현) · `retention_deletable(...)` 순수 술어(기간 값은 주입 · 열린/live 레코드는 항상 False) | 순수 · I/O 0 · 커널 allowlist 안 |
+| D4 커널 측 | `RuntimeIdentity` 레코드(cell_id·runtime_generation·process_nonce·code_digest — 전부 주입 스칼라) · `environment_label_consistent(runtime_label, manifest_label)` 술어(None/불일치 = False) | 순수 · custody 는 여전히 런타임 소관(커널은 비밀을 모른다) |
+
+D2 커널 측(포트·술어)은 `8ea42a8d` 로 착지 완료.
+
 ## 6. 운영자 확인 사항 (비준 체크리스트)
 
 1. D1 A안 · `tos/runtime/` 배치 · allowlist R1 · 규칙 (g)/(e) 확장 — **방화벽 설계 #1 개정을 승인하는가**.
