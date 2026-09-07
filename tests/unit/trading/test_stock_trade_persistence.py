@@ -45,13 +45,11 @@ async def test_save_stock_trade_rejects_negative_hold_window():
     """exit_time이 entry_time보다 빠른 불가능한 거래는 적재하지 않는다."""
     config = PositionTrackerConfig(asset_class="stock", batch_size=50)
     tracker = PositionTracker(config=config)
-    tracker._get_db_client = MagicMock(return_value=(MagicMock(), "market"))
 
     position = _make_closed_stock_position(hold_minutes=-30)
     result = await tracker.save_stock_trade_to_db(position)
 
     assert result is False
-    assert tracker._pending_stock_trades == []
 
 
 @pytest.mark.asyncio
@@ -64,7 +62,6 @@ async def test_save_stock_trade_rejects_futures_asset_class():
     result = await tracker.save_stock_trade_to_db(position)
 
     assert result is False
-    assert tracker._pending_stock_trades == []
 
 
 class TestOrchestratorRouting:

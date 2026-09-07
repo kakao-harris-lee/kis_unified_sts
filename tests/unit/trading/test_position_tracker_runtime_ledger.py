@@ -128,9 +128,6 @@ async def test_runtime_ledger_backend_does_not_fill_legacy_batches(tmp_path):
     assert await tracker.save_closed_to_db(position) is True
     assert await tracker.save_stock_trade_to_db(position) is True
 
-    assert tracker._pending_swing_positions == []
-    assert tracker._pending_stock_trades == []
-
 
 # --- Durable open-position persistence (SQLite) ---
 

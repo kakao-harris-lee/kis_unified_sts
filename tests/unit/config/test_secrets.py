@@ -1,7 +1,35 @@
 """Tests for secrets management module."""
+
 import os
 
 import pytest
+from pydantic import BaseModel
+
+
+class _TelegramCredentialsConfig(BaseModel):
+    """Local stand-in for the removed ``shared.alerts.models.AlertConfig``.
+
+    Only exists to exercise ``SecretsManager`` credential loading through a
+    ``from_env``-style entry point; it is not a production model.
+    """
+
+    telegram_token: str | None = None
+    telegram_chat_id: str | None = None
+    rate_limit_seconds: int = 60
+
+    @classmethod
+    def from_env(cls, **overrides: object) -> "_TelegramCredentialsConfig":
+        from shared.config.secrets import SecretsManager
+
+        return cls(
+            telegram_token=overrides.get(
+                "telegram_token", SecretsManager.telegram_token()
+            ),
+            telegram_chat_id=overrides.get(
+                "telegram_chat_id", SecretsManager.telegram_chat_id()
+            ),
+            rate_limit_seconds=overrides.get("rate_limit_seconds", 60),
+        )
 
 
 def test_secrets_manager_get_from_env():
@@ -88,8 +116,7 @@ def test_telegram_token_helper():
 
 
 def test_alert_config_from_env():
-    """Test AlertConfig.from_env() loads credentials from environment."""
-    from shared.alerts.models import AlertConfig
+    """Test a from_env()-style config loads credentials from environment."""
     from shared.config.secrets import SecretsManager
 
     SecretsManager.clear_cache()
@@ -97,7 +124,7 @@ def test_alert_config_from_env():
     os.environ["TELEGRAM_CHAT_ID"] = "123456"
 
     try:
-        config = AlertConfig.from_env()
+        config = _TelegramCredentialsConfig.from_env()
         assert config.telegram_token == "test_token"
         assert config.telegram_chat_id == "123456"
     finally:
@@ -107,15 +134,14 @@ def test_alert_config_from_env():
 
 
 def test_alert_config_from_env_with_overrides():
-    """Test AlertConfig.from_env() accepts overrides."""
-    from shared.alerts.models import AlertConfig
+    """Test a from_env()-style config accepts overrides."""
     from shared.config.secrets import SecretsManager
 
     SecretsManager.clear_cache()
     os.environ["TELEGRAM_BOT_TOKEN"] = "env_token"
 
     try:
-        config = AlertConfig.from_env(
+        config = _TelegramCredentialsConfig.from_env(
             telegram_token="override_token",
             rate_limit_seconds=30,
         )

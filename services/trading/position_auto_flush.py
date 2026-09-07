@@ -89,8 +89,8 @@ class PositionAutoFlushMixin:
             except TradingSystemError as e:
                 logger.warning(f"Error while stopping auto-flush task: {e}")
 
-        # Final flush to ensure all pending positions are written
-        # flush_pending_positions also flushes _pending_stock_trades via _flush_stock_trades_batch
+        # Final flush of the runtime ledger's write-behind buffer (no in-memory batch
+        # remains since the external DB path was removed; counts are always 0).
         swing_count, futures_count = await self.flush_pending_positions()
         if swing_count > 0 or futures_count > 0:
             logger.info(

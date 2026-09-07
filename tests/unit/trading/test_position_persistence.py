@@ -89,12 +89,3 @@ class TestSaveClosedToRuntimeLedger:
 
         assert result is True
         assert db_path.exists()
-
-
-def test_removed_db_client_raises_clear_error():
-    from shared.db.client import ClickHouseRemovedError
-
-    tracker = PositionTracker()
-
-    with pytest.raises(ClickHouseRemovedError, match="RuntimeLedger"):
-        tracker._get_db_client()

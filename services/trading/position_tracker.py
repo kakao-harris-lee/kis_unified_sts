@@ -58,7 +58,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 # Validation constants
 
 
@@ -133,18 +132,12 @@ class PositionTracker(PositionPersistenceMixin):
             maxlen=self.config.max_closed_positions
         )
 
-        # Batch accumulators for DB inserts
-        self._pending_swing_positions: list[tuple[Any, ...]] = []
-        self._pending_futures_trades: list[tuple[Any, ...]] = []
-        self._pending_stock_trades: list[tuple[Any, ...]] = []
-        self._batch_lock: asyncio.Lock = asyncio.Lock()
         self._runtime_ledger: RuntimeLedger | None = runtime_ledger
 
         # Auto-flush background task
         self._auto_flush_task: asyncio.Task | None = None
 
         _ = ch_fail_tracker, redis_client
-        self._ch_fail_tracker: Any | None = None
 
         logger.info(
             f"PositionTracker initialized: max_positions={self.config.max_positions}"
@@ -853,47 +846,3 @@ class PositionTracker(PositionPersistenceMixin):
             ),
             "events_count": len(self._events),
         }
-
-    # Shared SQL column list for swing_positions INSERT (DRY)
-    _SWING_INSERT_COLS = (
-        "(id, code, name, entry_date, entry_price, quantity, strategy, "
-        "execution_venue, stop_loss_price, high_since_entry, current_state, is_open, "
-        "exit_date, exit_price, exit_reason, pnl, side, fee_rate)"
-    )
-    _FUTURES_TRADE_INSERT_COLS = (
-        "(id, asset_class, code, name, side, strategy, execution_venue, entry_date, entry_price, "
-        "exit_date, exit_price, quantity, pnl, pnl_pct, hold_seconds, exit_reason, metadata_json)"
-    )
-    _FUTURES_TRADES_SCHEMA_TEMPLATE = """
-        CREATE TABLE IF NOT EXISTS {database}.rl_trades (
-            id String,
-            asset_class LowCardinality(String),
-            code String,
-            name String,
-            side LowCardinality(String),
-            strategy LowCardinality(String),
-            execution_venue LowCardinality(String) DEFAULT 'KRX',
-            entry_date DateTime,
-            entry_price Float64,
-            exit_date DateTime,
-            exit_price Float64,
-            quantity Int32,
-            pnl Float64,
-            pnl_pct Float64,
-            hold_seconds UInt32,
-            exit_reason String,
-            metadata_json String,
-            created_at DateTime DEFAULT now()
-        ) ENGINE = MergeTree()
-        PARTITION BY toYYYYMM(exit_date)
-        ORDER BY (asset_class, strategy, exit_date, id)
-        TTL exit_date + INTERVAL 180 DAY
-        COMMENT 'Closed futures trade records for performance analytics'
-    """
-
-    _STOCK_TRADE_INSERT_COLS = (
-        "(id, code, name, side, strategy, execution_venue, "
-        "entry_date, entry_price, exit_date, exit_price, quantity, "
-        "pnl, pnl_pct, commission, slippage, hold_seconds, "
-        "exit_reason, exit_state, metadata_json)"
-    )

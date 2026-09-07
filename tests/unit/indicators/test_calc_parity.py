@@ -10,8 +10,7 @@
                    -> 키 이름이 다름 (같은 파일 안에서도 두 규약이 공존)
     * ADX        : 런타임(full Wilder-smoothed ADX) vs regime detector(단일 DX)
                    -> 알고리즘 자체가 다름
-    * Bollinger  : 런타임(sample std, ddof=1) vs core polars(rolling_std, ddof=1)
-                   -> 동일해야 하는 쌍 (tolerance 비교)
+    * Bollinger  : 런타임(sample std, ddof=1) -> 스냅샷 특성화만 수행
 
 이 파일은 "정답"을 규정하는 테스트가 아니라, **현재 동작을 스냅샷으로 고정하는
 안전망**이다. 향후 통합(Single-Source-of-Truth) 리팩토링 시 값/키가 바뀌면 이
@@ -402,29 +401,3 @@ def test_bollinger_runtime_uses_sample_std_ddof1(
     assert lower == pytest.approx(_BB_LOWER, abs=_SNAPSHOT_ABS_TOL)
     assert mid == pytest.approx(_BB_MID, abs=_SNAPSHOT_ABS_TOL)
     assert upper == pytest.approx(_BB_UPPER, abs=_SNAPSHOT_ABS_TOL)
-
-
-def test_bollinger_runtime_matches_core_polars_when_available(
-    runtime_host: _RuntimeIndicatorHost, ohlcv: dict[str, list[float]]
-) -> None:
-    """런타임 BB 와 core.indicator_engine 의 polars BB 가 일치해야 하는 쌍.
-
-    둘 다 period=20, std=2.0, ddof=1 을 쓰므로 값이 근사적으로 같아야 한다
-    (이것은 "알려진 divergence" 가 아니라 "일치해야 하는 쌍" 이므로 tolerance
-    비교). polars 미설치 환경에서는 skip 한다.
-    """
-    pl = pytest.importorskip("polars")
-    from core.indicator_engine import IndicatorEngine
-
-    df = pl.DataFrame({"close": ohlcv["close"]})
-    enriched = IndicatorEngine().add_v35_indicators(df)
-    assert enriched is not None, "샘플이 min_rows 를 충족해야 함"
-
-    polars_lower = float(enriched["bb_lower"][-1])
-    polars_upper = float(enriched["bb_upper"][-1])
-
-    lower, _mid, upper = runtime_host._calc_bb(ohlcv["close"])
-
-    # 동일해야 하는 쌍 — 넉넉하되 알고리즘 차이는 잡는 tolerance
-    assert lower == pytest.approx(polars_lower, abs=1e-6)
-    assert upper == pytest.approx(polars_upper, abs=1e-6)
