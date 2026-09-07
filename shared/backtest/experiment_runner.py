@@ -28,8 +28,6 @@ from typing import Any
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from shared.utils.coercion import to_bool
-
 logger = logging.getLogger(__name__)
 
 # Default loader is imported lazily inside the runner so importing this module
@@ -256,8 +254,13 @@ def _run_registry_strategy(
     bar_loader: BarLoader,
 ) -> StrategyOutcome:
     """Run one registry strategy through the real BacktestEngine over the universe."""
-    from shared.backtest import BacktestConfig, BacktestEngine
+    from shared.backtest import BacktestConfig
     from shared.backtest.adapter import BacktestStrategyAdapter
+    from shared.backtest.backend import (
+        load_default_engine,
+        resolve_backend,
+        run_with_backend,
+    )
     from shared.backtest.config import RiskConfig
     from shared.backtest.daily_adapter import DailyBacktestAdapter
     from shared.config.loader import ConfigLoader
@@ -285,46 +288,17 @@ def _run_registry_strategy(
         )
 
     bt = strategy_config.get("strategy", {}).get("backtest", {})
-    # Opt-in backend seam (plan 2026-07-08 §5 P3-a): default stays the legacy
-    # BacktestEngine; `strategy.backtest.engine: vectorbt` routes through the
-    # VectorbtRunner with automatic legacy fallback on NotImplementedError /
-    # ImportError. Unknown values fall back to legacy WITH a warning so a
-    # typo ("vbt") cannot silently produce a legacy run labeled as intended.
-    engine_backend = str(bt.get("engine", "") or "legacy").lower()
-    if engine_backend not in ("legacy", "vectorbt"):
-        logger.warning(
-            "experiment %s: unknown backtest engine %r — using legacy "
-            "(valid: legacy | vectorbt)",
-            sid,
-            engine_backend,
-        )
-        engine_backend = "legacy"
-
-    # Explicit legacy-exit escape hatch (plan §5 P3-c): a strategy whose exit is
-    # a state machine the vectorbt runner cannot express (e.g. three_stage's
-    # staged partial exits) sets `strategy.backtest.legacy_exit: true` to force
-    # the legacy engine WITHOUT even attempting the runner — an operator-visible
-    # marker, not a reliance on the runner's own refusal+fallback. Coerced as a
-    # tri-state (bool / "true"/"1"/"yes" …); an unrecognized value is NOT
-    # silently honored — warn and ignore it, mirroring the unknown-engine path.
-    raw_legacy_exit = bt.get("legacy_exit", False)
-    # 빈 키(`legacy_exit:` → None)는 "미설정"이다 — 경고 없이 False 취급.
-    legacy_exit = False if raw_legacy_exit is None else to_bool(raw_legacy_exit)
-    if legacy_exit is None:
-        logger.warning(
-            "experiment %s: unrecognized backtest.legacy_exit %r — ignoring "
-            "(expected true/false)",
-            sid,
-            raw_legacy_exit,
-        )
-        legacy_exit = False
-    if legacy_exit and engine_backend != "legacy":
-        logger.info(
-            "experiment %s: backtest.legacy_exit=true — forcing legacy engine "
-            "(state-machine exit); vectorbt runner not attempted",
-            sid,
-        )
-        engine_backend = "legacy"
+    # Backend resolution (plan 2026-09-07 §1-B/C, docs/plans/
+    # 2026-09-07-vectorbt-default-flip.md): the default engine now comes from
+    # config/backtest.yaml (env-overridable via BACKTEST_DEFAULT_ENGINE)
+    # instead of a code literal; `strategy.backtest.engine` still overrides
+    # it. Resolution + the legacy_exit escape hatch live in
+    # shared/backtest/backend.py so experiment_runner and optimizer share one
+    # implementation (was duplicated — optimizer used to bypass this seam
+    # entirely and call BacktestEngine directly).
+    engine_backend = resolve_backend(
+        bt, load_default_engine(), context=f"experiment {sid}"
+    )
     position_params = (
         strategy_config.get("strategy", {}).get("position", {}).get("params", {})
     )
@@ -364,46 +338,23 @@ def _run_registry_strategy(
             )
             if "risk" in bt:
                 config.risk = RiskConfig.from_dict(bt["risk"])
-            result = None
-            symbol_backend = "backtest_engine"
-            if engine_backend == "vectorbt":
-                from shared.backtest.vbt_runner import (
-                    VectorbtParityError,
-                    VectorbtRunner,
-                )
-
-                try:
-                    result = VectorbtRunner(_build_adapter(), config).run(df)
-                    symbol_backend = "vectorbt"
-                except (NotImplementedError, ImportError) as unsupported:
-                    # NotImplementedError: 러너 표현범위 밖 (정상 폴백 경로).
-                    # ImportError: vectorbt 자체가 없는 환경 — 러너의 사전
-                    # 가드가 대부분 잡지만(find_spec), 깨진 설치 등 늦게
-                    # 터지는 케이스도 legacy 로 폴백해야 한다.
-                    logger.warning(
-                        "experiment %s/%s: vectorbt runner unavailable/"
-                        "unsupported (%s); falling back to legacy engine",
-                        sid,
-                        symbol,
-                        unsupported,
-                    )
-                except VectorbtParityError as parity_err:
-                    # 러너 내부 cross-check(resolver 원장 ↔ vbt 원장) 불일치 —
-                    # 러너 결함 신호다. 심볼을 버리면(per-symbol except 로 떨어져
-                    # loaded:False) 등가중 집계가 조용히 왜곡되므로, legacy 로
-                    # 폴백해 결과를 보존하고 조사용 경고만 남긴다. 폴백은 아래
-                    # _build_adapter() 재호출로 fresh adapter 를 쓴다(오염 무관).
-                    logger.warning(
-                        "experiment %s/%s: vectorbt parity cross-check FAILED "
-                        "(%s); falling back to legacy engine — investigate "
-                        "vbt_runner",
-                        sid,
-                        symbol,
-                        parity_err,
-                    )
-            if result is None:
-                result = BacktestEngine(_build_adapter(), config).run(df)
-                symbol_backend = "backtest_engine"
+            # Dispatch through the shared backend seam (backend.py) — attempts
+            # vectorbt when resolved, falls back to legacy on refusal
+            # (NotImplementedError/ImportError) or a parity cross-check
+            # failure, and reports which engine actually ran.
+            run = run_with_backend(
+                _build_adapter,
+                config,
+                df,
+                engine_backend,
+                experiment_id=f"experiment {sid}/{symbol}",
+                # (spec.id, sid) pair — deliberately NOT symbol-scoped, so a
+                # static NotImplementedError refusal (e.g. every symbol of a
+                # daily strategy) logs at INFO once, not once per symbol.
+                dedupe_key=f"{spec.id}:{sid}",
+            )
+            result = run.result
+            symbol_backend = run.engine
             used_backends.add(symbol_backend)
         except Exception as exc:  # noqa: BLE001 - isolate per-symbol failure
             logger.warning("experiment %s/%s failed", sid, symbol, exc_info=True)
