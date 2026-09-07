@@ -38,7 +38,7 @@ Also realizes the reservation-lifecycle + release-admission piece of D2.1 line 6
 트리거이며 자동 re-arm 없음") and ADR-002-012 line 37 ("Quorum restoration, leader
 election, node restart, snapshot restore, or membership recovery SHALL NOT
 automatically re-arm live operation or revive a prior capability") via
-:func:`release_admissible` and :func:`reservation_transition_legal`.
+:func:`release_admissible` and :func:`reservation_transition_structurally_legal`.
 
 **Anti-phantom greps recorded** (methodology playbook §2.C/§3.5 — negative-token
 verification: existence AND absence claims below are both grepped, not asserted):
@@ -112,7 +112,7 @@ __all__ = [
     "duplicate_command",
     "release_admissible",
     "replay_reproduces_state",
-    "reservation_transition_legal",
+    "reservation_transition_structurally_legal",
     "stale_writer_epoch",
 ]
 
@@ -417,7 +417,7 @@ def release_admissible(
     ``None``/UNKNOWN never admits). Every other destination — in particular
     ``POTENTIALLY_LIVE``, which "never auto-releases" by never reaching this gate
     at all — is unconditionally admissible here (cause-level legality is
-    :func:`reservation_transition_legal`'s separate concern).
+    :func:`reservation_transition_structurally_legal`'s separate concern).
 
     Args:
         transition: The proposed reservation-lifecycle transition.
@@ -464,16 +464,34 @@ _LEGAL_RESERVATION_TRANSITIONS: frozenset[tuple[CapacityState, CapacityState]] =
 )
 
 
-def reservation_transition_legal(
+def reservation_transition_structurally_legal(
     from_state: CapacityState | None,
     to_state: CapacityState | None,
 ) -> bool:
     """Whether ``(from_state, to_state)`` is a structurally legal reservation transition.
 
+    **Renamed from ``reservation_transition_legal`` (independent-review LOW
+    finding, 2026-09-08) — no behaviour change, name-only.** The prior name read
+    broader than the check: this predicate is cause-agnostic and admits 72 of the
+    81 ``CapacityState`` pairs (every pair except a transition away from the
+    terminal ``RELEASED`` state, per the ``_LEGAL_RESERVATION_TRANSITIONS``
+    docstring above) — it does **not** enforce ADR-002-002 §10.2's "a weak cause
+    cannot lower conservatism" requirement, which is a *cause-specific* check
+    :func:`tos.rcl.predicates.transition_allowed` alone owns. ``_structurally_``
+    makes that scope explicit in the name itself.
+
     A pure membership test against the closed, derived
     :data:`_LEGAL_RESERVATION_TRANSITIONS` whitelist — "everything else illegal"
     (fail-closed by construction: an unmapped or ``None`` state is never
     admitted).
+
+    **This predicate alone never admits a transition.** A runtime MUST also
+    evaluate :func:`tos.rcl.predicates.transition_allowed` with the concrete
+    :class:`~tos.rcl.vocabulary.TransitionCause` in effect before applying a
+    transition — this function only proves the pair is *reachable under some*
+    cause (structural shape), never that the actual cause at hand justifies it
+    (cause-level legality, the authority-layer concern this predicate explicitly
+    does not duplicate).
 
     Args:
         from_state: The reservation's current capacity state.

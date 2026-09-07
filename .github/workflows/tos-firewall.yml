@@ -73,12 +73,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e "./tos[test]"
           # tos-runtime (design #40 D1.3 item 5, PROPOSED) — installed AFTER
-          # the kernel above, since its own dependency (`tos @ {root:uri}/../`
-          # in tos/runtime/pyproject.toml) resolves to this same kernel
-          # checkout; editable so lint-imports below can statically locate
-          # `tos_runtime` as a root package and so `pytest tos/runtime/tests`
-          # can import it.
-          pip install -e "./tos/runtime[test]"
+          # the kernel above, editable, with --no-deps. Reproduced 2026-09-08
+          # (independent review finding, MEDIUM) in a throwaway venv: WITHOUT
+          # --no-deps, `pip install -e "./tos/runtime[test]"` resolves
+          # tos/runtime/pyproject.toml's `tos @ {root:uri}/../` dependency
+          # itself, which pip treats as "(re)install this requirement" —
+          # SILENTLY REPLACING the kernel's editable install from the step
+          # above with a non-editable, built wheel (`pip list --editable`
+          # afterward showed `tos-runtime` only, `tos` gone). --no-deps skips
+          # that resolution entirely, so the kernel's prior editable install
+          # is left untouched (`pip list --editable` then shows BOTH `tos`
+          # and `tos-runtime`, verified in the same throwaway-venv
+          # reproduction). The `[test]` extra (pytest/hypothesis) is NOT
+          # requested here — it is not needed: both are already installed,
+          # pinned to the SAME versions, by the kernel's own `[test]` extra
+          # one line above (verified: `pytest tos/runtime/tests` imports and
+          # runs cleanly with no separate test-extra install).
+          pip install -e "./tos/runtime" --no-deps
           pip install import-linter
           pip install -e . --no-deps
           # Layer 4 의 RULE 축은 S-25 manifest(YAML)를 읽는다.  루트 프로젝트는

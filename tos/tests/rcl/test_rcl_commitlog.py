@@ -18,6 +18,7 @@ import ast
 from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from tos.rcl import (
@@ -34,7 +35,7 @@ from tos.rcl import (
     duplicate_command,
     release_admissible,
     replay_reproduces_state,
-    reservation_transition_legal,
+    reservation_transition_structurally_legal,
     stale_writer_epoch,
     transition_allowed,
 )
@@ -274,6 +275,28 @@ def test_release_admissible_unknown_destination_fails_closed() -> None:
     assert release_admissible(transition, True) is False
 
 
+@pytest.mark.parametrize("truthy_non_true_witness", [1, "y", [True]])
+def test_release_admissible_rejects_truthy_non_true_witness(
+    truthy_non_true_witness: object,
+) -> None:
+    """Mutation-killing (independent review LOW finding, 2026-09-08): the gate is
+    ``finality_witness is True``, not ``bool(finality_witness)`` — a truthy-but-
+    not-True witness (``1``, ``"y"``, ``[True]``) must still refuse for both
+    finality destinations. Confirmed to actually kill the mutation: mutating
+    line 435 to ``return bool(finality_witness)`` made all 33 pre-existing tests
+    in this module pass (verified in a scratch worktree) because every prior
+    case used only ``True``/``False``/``None`` witnesses, none of which
+    distinguish the two implementations."""
+    released = CapacityReservationTransition(to_state=CapacityState.RELEASED)
+    confirmed_analog = CapacityReservationTransition(
+        to_state=CapacityState.POSITION_CONSUMED
+    )
+    assert release_admissible(released, truthy_non_true_witness) is False  # type: ignore[arg-type]
+    assert (
+        release_admissible(confirmed_analog, truthy_non_true_witness) is False  # type: ignore[arg-type]
+    )
+
+
 @given(state=CAPACITY_STATES)
 def test_release_admissible_never_admits_finality_states_without_true_witness(
     state: CapacityState,
@@ -289,33 +312,48 @@ def test_release_admissible_never_admits_finality_states_without_true_witness(
 
 
 # ===========================================================================
-# reservation_transition_legal — closed whitelist exhaustiveness
+# reservation_transition_structurally_legal — closed whitelist exhaustiveness
 # ===========================================================================
 
 
-def test_reservation_transition_legal_none_never_admits() -> None:
-    assert reservation_transition_legal(None, CapacityState.POTENTIALLY_LIVE) is False
-    assert reservation_transition_legal(CapacityState.POTENTIALLY_LIVE, None) is False
-    assert reservation_transition_legal(None, None) is False
+def test_reservation_transition_structurally_legal_none_never_admits() -> None:
+    assert (
+        reservation_transition_structurally_legal(None, CapacityState.POTENTIALLY_LIVE)
+        is False
+    )
+    assert (
+        reservation_transition_structurally_legal(CapacityState.POTENTIALLY_LIVE, None)
+        is False
+    )
+    assert reservation_transition_structurally_legal(None, None) is False
 
 
-def test_reservation_transition_legal_from_released_is_always_illegal() -> None:
+def test_reservation_transition_structurally_legal_from_released_is_always_illegal() -> (
+    None
+):
     """RELEASED is terminal (ADR-002-002 §10.1 line 562) — no transition may leave it."""
     for to_state in CapacityState:
-        assert reservation_transition_legal(CapacityState.RELEASED, to_state) is False
+        assert (
+            reservation_transition_structurally_legal(CapacityState.RELEASED, to_state)
+            is False
+        )
 
 
-def test_reservation_transition_legal_from_non_released_is_always_legal() -> None:
+def test_reservation_transition_structurally_legal_from_non_released_is_always_legal() -> (
+    None
+):
     """Every pair whose origin is not RELEASED is reachable under some cause."""
     for from_state in CapacityState:
         if from_state is CapacityState.RELEASED:
             continue
         for to_state in CapacityState:
-            assert reservation_transition_legal(from_state, to_state) is True
+            assert (
+                reservation_transition_structurally_legal(from_state, to_state) is True
+            )
 
 
 @given(from_state=CAPACITY_STATES, to_state=CAPACITY_STATES)
-def test_reservation_transition_legal_matches_any_cause_derivation(
+def test_reservation_transition_structurally_legal_matches_any_cause_derivation(
     from_state: CapacityState, to_state: CapacityState
 ) -> None:
     """(exhaustiveness, hypothesis over the full enum product) The whitelist's
@@ -325,17 +363,17 @@ def test_reservation_transition_legal_matches_any_cause_derivation(
     expected = any(
         transition_allowed(from_state, to_state, cause) for cause in TransitionCause
     )
-    assert reservation_transition_legal(from_state, to_state) is expected
+    assert reservation_transition_structurally_legal(from_state, to_state) is expected
 
 
-def test_reservation_transition_legal_whitelist_pair_count() -> None:
+def test_reservation_transition_structurally_legal_whitelist_pair_count() -> None:
     """9 origins x 9 destinations, minus the 9 pairs whose origin is RELEASED."""
     n = len(list(CapacityState))
     legal_count = sum(
         1
         for from_state in CapacityState
         for to_state in CapacityState
-        if reservation_transition_legal(from_state, to_state)
+        if reservation_transition_structurally_legal(from_state, to_state)
     )
     assert legal_count == n * n - n
 

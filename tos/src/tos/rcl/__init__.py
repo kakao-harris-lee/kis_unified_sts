@@ -48,7 +48,7 @@ from tos.rcl.commitlog import (
     duplicate_command,
     release_admissible,
     replay_reproduces_state,
-    reservation_transition_legal,
+    reservation_transition_structurally_legal,
     stale_writer_epoch,
 )
 from tos.rcl.predicates import (
@@ -148,7 +148,7 @@ __all__ = [
     "duplicate_command",
     "release_admissible",
     "replay_reproduces_state",
-    "reservation_transition_legal",
+    "reservation_transition_structurally_legal",
     "stale_writer_epoch",
     # records
     "AuthoritativeSnapshot",
