@@ -46,6 +46,9 @@ Public surface groups by module:
 * :mod:`tos.brokercap.records` — the digest-bound profile + value / injected-input models.
 * :mod:`tos.brokercap.predicates` — admissibility / fallback / uncertain-send / version /
   drift / FQP / environment / partition predicates.
+* :mod:`tos.brokercap.routing` — the plan §5.1-§5.3 environment/operation capability axes
+  (:class:`CapabilityTuple`), the closed §5.2 routing whitelist
+  (:func:`routing_admissibility`), and the kernel-representable §5.3 routing invariants.
 """
 
 from __future__ import annotations
@@ -89,6 +92,18 @@ from tos.brokercap.records import (
     ProfileVersion,
     RequiredCapabilitySet,
     UncertainSendVerdict,
+)
+from tos.brokercap.routing import (
+    AssetScope,
+    AuthorizationClass,
+    BrokerEnvironment,
+    CapabilityTuple,
+    EconomicEffect,
+    OperationClass,
+    ProbeManifest,
+    credential_principal_separation_ok,
+    endpoint_binding_from_profile_ok,
+    routing_admissibility,
 )
 from tos.brokercap.vocabulary import (
     ASSURANCE_LEVEL_RANK,
@@ -141,6 +156,17 @@ __all__ = [
     "ProfileVersion",
     "RequiredCapabilitySet",
     "UncertainSendVerdict",
+    # routing (§5.1-§5.3 capability axes / whitelist / routing invariants)
+    "AssetScope",
+    "AuthorizationClass",
+    "BrokerEnvironment",
+    "CapabilityTuple",
+    "EconomicEffect",
+    "OperationClass",
+    "ProbeManifest",
+    "credential_principal_separation_ok",
+    "endpoint_binding_from_profile_ok",
+    "routing_admissibility",
     # predicates
     "active_conformance_class",
     "active_profile_version",
