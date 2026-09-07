@@ -144,3 +144,4 @@ failure-domain·자격증명 격리는 최강이나, (i) IPC 스키마·durabili
 ## 7. 개정 로그
 
 - 2026-09-07: v1 최초 저작(세션 모델 단독 · 서베이 2건 실측 반영).
+- 2026-09-07: v1.1 — D2 커널 측 포트 착지(`8ea42a8d`, `tos.rcl.commitlog` · I/O 0 · D1 비준과 무관한 순수 술어) 에서 드러난 정정 둘. ① D2.1 의 예약 생명주기 약칭 `RESERVED → POTENTIALLY_LIVE → CONFIRMED|RELEASED|QUARANTINED` 는 새 enum 이 아니라 기존 `tos.rcl.CapacityState` 9종(ADR-002-002 §10.1 · `engine/state.py` 가 이미 예약 생명주기로 소비)에 사상한다 — RESERVED≈COMMITTED_UNBOUND/ATTEMPT_BOUND · CONFIRMED≈POSITION_CONSUMED · QUARANTINED=QUARANTINED_UNKNOWN · POTENTIALLY_LIVE/RELEASED 는 동명. 해제 admit 의 finality 목적지는 {RELEASED, POSITION_CONSUMED}. ② `WriterEpoch` 는 RCL 로컬 `int` 이며 `tos.authority` 의 Safety Authority epoch 와 **동일시하지 않는다**(ADR-002-012 §5.5 :129-131) — D2.1 「epoch = 로그 순서 그 자체」 문장은 «RCL writer epoch» 에 한정된 진술로 읽는다. 런타임 `SqliteCommitLog` 는 두 epoch 의 사상을 **증명 없이 결합하지 않는다**(같은 트랜잭션에서 둘 다 기록하되 별 컬럼).
