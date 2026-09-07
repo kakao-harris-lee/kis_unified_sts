@@ -105,13 +105,24 @@ jobs:
         run: pytest tos/tests
 
       # Phase 1 작업 7 (계획 §2 표 7행) — 같은 잡의 스텝으로 추가한다(필수 체크
-      # 이름을 늘리지 않는다는 위 헤더 규율). Black/mypy 는 `cd tos` 로 실행해
-      # 로컬 검증(§1 기준선 측정 명령)과 정확히 동일한 호출을 재현한다 — mypy 는
-      # `tos/pyproject.toml` 에 `[tool.mypy]` 섹션이 없어 상위로 올라가 루트
-      # `pyproject.toml` 을 읽는다(로컬 실행 시
-      # "../pyproject.toml: note: unused section(s)" 로 실측 확인).
+      # 이름을 늘리지 않는다는 위 헤더 규율). 두 스텝의 실행 위치가 다르다 —
+      # (독립 리뷰 Low-4, 2026-09-07: 이전 주석은 «둘 다 `cd tos`」로 실행한다고 잘못
+      # 적었으나 실제로는 mypy만 그렇다):
+      #   * Black 은 **저장소 루트**에서 실행하며, 루트 `pyproject.toml` 의
+      #     `[tool.black]` 설정을 읽는다(로컬 §1 기준선 측정 명령과 동일한 호출).
+      #     대상은 `tos/src tos/tests` 에 더해 **정확히** 이 잡이 소유하는 저장소
+      #     레벨 파일 둘 — `tools/tos_size_budget.py`·
+      #     `tests/tools/test_tos_size_budget.py` — 만 명시로 얹는다(독립 리뷰
+      #     Low-4 후속, 2026-09-07: 이 둘은 이전엔 이 스텝의 게이트 밖이었다).
+      #     `tools/`·`tests/tools/` 전체로 넓히지 않는다 — 그 아래 다른 파일들이
+      #     Black-clean 이라는 보장이 없다.
+      #   * mypy 는 `cd tos` 로 이동해 `src` 를 검사하며, `tos/pyproject.toml` 에
+      #     `[tool.mypy]` 섹션이 없어 상위로 올라가 루트 `pyproject.toml` 을 읽는다
+      #     (로컬 실행 시 "../pyproject.toml: note: unused section(s)" 로 실측 확인).
       - name: Black (tos)
-        run: black --check tos/src tos/tests
+        run: >-
+          black --check tos/src tos/tests tools/tos_size_budget.py
+          tests/tools/test_tos_size_budget.py
 
       - name: mypy (tos kernel)
         run: cd tos && mypy src --ignore-missing-imports

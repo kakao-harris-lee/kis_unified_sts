@@ -72,3 +72,21 @@
   (α) `PREVENTION_CONTINUITY_UNVERIFIABLE` — 룰셋 21886181 `updated_at` 2026-09-06T15:21Z > t_land 2026-09-02 (착지 후 설정 변경 · benign/malign 구별 불가 · **운영자 재심사 경로, 영구 차단 아님**). Phase 1 코드 변경과 무관한 저장소 밖 표면.
 
 미해결·운영자 소관: (α) 연속성 재심사 · 필수 체크 지정(룰셋) · 크기 예외 register 의 `expires_on`(2026-12-31) 조정 · 분해 착수 시점.
+
+## 7. PR #655 리뷰 처분 (Claude 측 `code-reviewer` 레인 · 저작자와 분리 · 2026-09-07)
+
+verdict **needs-attention** · 비협상 규칙 위반 0 · CI 8/8 통과 상태에서 심사.
+
+| # | 심각도 | 지적 | 처분 |
+|---|---|---|---|
+| M1 | medium | TOS-GAP-001 수정(item 13 None ⇒ UNKNOWN)에 테스트 부재 — validator 가 그 번들을 구성 불가로 만들어 정상 경로로 도달 불가, 가드를 되돌려도 스위트 green | 수용 — `model_construct` 우회 canary 2건(WDR 2층 관용구 `tos/tests/wdr/test_wdr_malformed_model.py:85-97`) · 스크래치 워크트리에서 red 실증 |
+| M2 | medium | 크기 register 의 `measured` 가 장식값 — 등재 후 성장해도 green · 이 PR 안에서 이미 드리프트(gateway.py 1712→1792 · `__call__` 181→248) · decomposition_order 주장도 거짓 | 수용 — 위반 클래스 (f) `measured != actual` red(래칫: 성장은 의도적 재등재로만) · register 재실측·재정렬 · 테스트 |
+| L1 | low | RESULT_UNREADABLE 시 `self.results` 미등재 불변식에 canary 없음 | 수용 — 단언 추가 + red 실증 |
+| L2 | low | 검사기 `end_lineno is None` 을 조용히 건너뜀(fail-open 방향) | 수용 — red 로 전환 + 테스트 |
+| L3 | low | scope 부재·파싱 불가·root 밖 심볼릭 링크의 red 경로 미검증(bare ValueError) | 수용 — 설정 오류 클래스로 통일 + 테스트 3건 |
+| L4 | low | CI 주석이 Black 도 `cd tos` 로 돈다고 오기 | 수용 — 주석 정정(명령 불변) |
+| L5 | low | 신규 repo-level 파일 2개가 Black 스텝 범위 밖 | 수용 — 그 두 경로만 스텝에 추가 |
+| L6 | low | 클래스 본문은 budget 대상이 아님(작은 메서드로 된 큰 클래스는 미등재 통과) | **비범위 기록** — 계획 §3 은 모듈·함수만 정의. 클래스 budget 은 후속 결정(값·register 형식 필요) |
+| L7 | low | mdBook digest 가 자기증명(공표 체크섬 부재) | **변경 없음** — 워크플로 주석이 이미 그 사실을 명시 · 오케스트레이터 독립 재계산 일치 |
+
+무결함 렌즈(리뷰어 확인 방법 기록): 임계값은 YAML 만(`config/tos_size_budget.yaml:11-12`) · 동결 표면 미편집(`git diff --stat`) · 방화벽 신규 import 는 `typing.TypeVar` 뿐 · 재시도/폴백 0(grep) · validator 3형상이 생성 자리 3곳과 정합(슬라이스 e2e 가 대조군) · step 15~19 순서 불변 · `gateway.results` 소비자 1곳(`test_seam_engine_brokeradapter.py:286`, accepted True 이후만) · `SendHaltReason` 신설 2종이 닫힌 열거 소비처 없음 · `_typed_marker` 는 `read_markers` 의 enum 강제 뒤라 도달 불가 · numerical UNKNOWN 극성은 ADR-002-020 §14 정합.
