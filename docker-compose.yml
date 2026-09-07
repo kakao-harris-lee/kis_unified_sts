@@ -173,6 +173,9 @@ services:
       # (spread_points / tick_size) blocks every entry. MAX_SPREAD_TICKS widens the
       # paper spread cap (F200 ~10 ticks vs mini ~13; default 6 blocks both).
       FUTURES_TRADING_PRODUCT: "${FUTURES_TRADING_PRODUCT:-mini}"
+      # Optional explicit contract pin (runbook "Mode knobs"): when set, the
+      # orchestrator and the decoupled daemons must all read the same value.
+      FUTURES_STRATEGY_SYMBOL: "${FUTURES_STRATEGY_SYMBOL:-}"
       FUTURES_SLIPPAGE_TICK_SIZE: "${FUTURES_SLIPPAGE_TICK_SIZE:-0.02}"
       FUTURES_PAPER_MAX_SPREAD_TICKS: "${FUTURES_PAPER_MAX_SPREAD_TICKS:-6}"
     volumes: *trading-runtime-volumes
@@ -305,9 +308,10 @@ services:
       # stock daemons above. Without it these containers log in UTC.
       TZ: "Asia/Seoul"
       # Front-month contract resolution must match `trader-futures`: every
-      # futures daemon calls resolve_futures_instrument_from_env(), which
-      # defaults to `mini` (A05xxx) when FUTURES_TRADING_PRODUCT is absent from
-      # the container env. `.env.paper` is interpolation-only (no env_file), so
+      # futures daemon that resolves a contract (ingest, decision-engine,
+      # order-router, monitor) calls resolve_futures_instrument_from_env(),
+      # which defaults to `mini` (A05xxx) when FUTURES_TRADING_PRODUCT is
+      # absent from the container env. `.env.paper` is interpolation-only (no env_file), so
       # the knob has to be plumbed here or the decoupled chain silently
       # ingests/decides on a different contract than the orchestrator's
       # raw_data ticks (F-9 Gate 1 shadow: A05609 vs A01609, 2026-09-07).
@@ -356,6 +360,15 @@ services:
       # See futures-market-ingest: must match trader-futures' contract.
       FUTURES_TRADING_PRODUCT: "${FUTURES_TRADING_PRODUCT:-mini}"
       FUTURES_STRATEGY_SYMBOL: "${FUTURES_STRATEGY_SYMBOL:-}"
+      # The send-time slippage gate (F-9 Gate 1b, load_futures_slippage_config
+      # over config/execution.yaml) resolves tick_size and the paper spread cap
+      # from ${FUTURES_SLIPPAGE_TICK_SIZE} / ${FUTURES_PAPER_MAX_SPREAD_TICKS}
+      # inside this container. They travel with the product — same coupling
+      # and defaults as trader-futures above (mini 0.02 / F200 0.05): a
+      # product switch without the tick size mis-reads every spread and
+      # blocks every entry.
+      FUTURES_SLIPPAGE_TICK_SIZE: "${FUTURES_SLIPPAGE_TICK_SIZE:-0.02}"
+      FUTURES_PAPER_MAX_SPREAD_TICKS: "${FUTURES_PAPER_MAX_SPREAD_TICKS:-6}"
       # Publishes the kill-switch api_error_rate metric for the decoupled futures
       # pipeline under its own source key (…:order_router), fed by OrderExecutor
       # REST outcomes. Opt out via ORDER_ROUTER_PUBLISH_KIS_ERROR_RATE=false.
