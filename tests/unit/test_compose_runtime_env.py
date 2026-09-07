@@ -308,6 +308,59 @@ def test_futures_pipeline_compose_services_are_profile_gated():
     )
 
 
+def test_futures_daemons_share_contract_resolution_env_with_orchestrator():
+    """Every futures daemon that calls resolve_futures_instrument_from_env()
+    must receive the same FUTURES_TRADING_PRODUCT / FUTURES_STRATEGY_SYMBOL
+    knobs as `trader-futures`, or it silently defaults to `mini` and shadows a
+    different contract than the orchestrator's raw_data ticks (F-9 Gate 1,
+    2026-09-07: A05609 vs A01609). `.env.paper` is interpolation-only, so the
+    knob has to be plumbed in compose. TZ keeps their logs KST like the stock
+    daemons (logging-only)."""
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    services = compose["services"]
+    orchestrator_env = services["trader-futures"]["environment"]
+    product = orchestrator_env["FUTURES_TRADING_PRODUCT"]
+    symbol = orchestrator_env["FUTURES_STRATEGY_SYMBOL"]
+    assert product == "${FUTURES_TRADING_PRODUCT:-mini}"
+    assert symbol == "${FUTURES_STRATEGY_SYMBOL:-}"
+
+    instrument_resolvers = (
+        "futures-market-ingest",
+        "futures-decision-engine",
+        "futures-order-router",
+        "futures-monitor",
+    )
+    for service_name in instrument_resolvers:
+        env = services[service_name]["environment"]
+        assert env["FUTURES_TRADING_PRODUCT"] == product, service_name
+        assert env["FUTURES_STRATEGY_SYMBOL"] == symbol, service_name
+
+    # order_router runs the send-time slippage gate (F-9 Gate 1b) from the same
+    # execution.yaml as the orchestrator; tick size and the paper spread cap are
+    # env-interpolated inside the container and MUST travel with the product
+    # (mini 0.02 / F200 0.05) — otherwise spread_ticks = spread / tick_size is
+    # mis-scaled and every entry is blocked.
+    router_env = services["futures-order-router"]["environment"]
+    for knob in ("FUTURES_SLIPPAGE_TICK_SIZE", "FUTURES_PAPER_MAX_SPREAD_TICKS"):
+        assert router_env[knob] == orchestrator_env[knob], knob
+    assert (
+        router_env["FUTURES_SLIPPAGE_TICK_SIZE"]
+        == "${FUTURES_SLIPPAGE_TICK_SIZE:-0.02}"
+    )
+    assert (
+        router_env["FUTURES_PAPER_MAX_SPREAD_TICKS"]
+        == "${FUTURES_PAPER_MAX_SPREAD_TICKS:-6}"
+    )
+
+    for service_name in instrument_resolvers + (
+        "futures-risk-filter",
+        "futures-kill-switch",
+    ):
+        assert services[service_name]["environment"]["TZ"] == "Asia/Seoul", service_name
+
+
 def test_scheduler_mounts_data_market_and_reports_writable():
     """The scheduler runs EOD backfills + report jobs, so data/market and reports
     must be writable (the shared pipeline-service mount is data/market:ro and does
