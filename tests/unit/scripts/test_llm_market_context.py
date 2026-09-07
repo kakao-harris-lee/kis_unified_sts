@@ -43,9 +43,7 @@ def test_run_once_shadow_runs_and_publishes(monkeypatch: pytest.MonkeyPatch) -> 
         return_value=MagicMock(regime="BULL_STRONG", confidence=0.8)
     )
     cls = MagicMock(return_value=inst)
-    monkeypatch.setattr(
-        "services.trading.llm_context_publisher.LLMContextPublisher", cls
-    )
+    monkeypatch.setattr("shared.llm.context_publisher.LLMContextPublisher", cls)
     monkeypatch.setenv("TRADING_STATE_KEY_SUFFIX", "")
 
     rc = asyncio.run(m.run_once("shadow"))
@@ -61,9 +59,7 @@ def test_run_once_none_analysis_skips_publish(monkeypatch: pytest.MonkeyPatch) -
     inst = MagicMock()
     inst.run_analysis = AsyncMock(return_value=None)  # OpenAI failure -> None
     cls = MagicMock(return_value=inst)
-    monkeypatch.setattr(
-        "services.trading.llm_context_publisher.LLMContextPublisher", cls
-    )
+    monkeypatch.setattr("shared.llm.context_publisher.LLMContextPublisher", cls)
     monkeypatch.setenv("TRADING_STATE_KEY_SUFFIX", "")
 
     rc = asyncio.run(m.run_once("shadow"))

@@ -26,7 +26,7 @@ Output is two passes:
 ## Interpreting results
 
 - The live real-time path recomputes momentum only when a timeframe bar closes
-  (`services/trading/indicator_engine.py` momentum cache, keyed by candle
+  (`shared/indicators/streaming/engine.py` momentum cache, keyed by candle
   count) — **not per tick**. So indicator cost mainly bites **uncached** paths:
   backtests / Optuna sweeps and warmup/seed bursts.
 - Look for Python-level `.apply(lambda ...)` callbacks and chains of pandas

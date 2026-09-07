@@ -9,7 +9,7 @@ import pytest
 
 import scripts.analysis.llm_market_context as m
 import shared.streaming.trading_state as ts
-from services.trading import llm_context_publisher as lcp
+from shared.llm import context_publisher as lcp
 from shared.llm.market_context import MarketContext
 from shared.streaming.trading_state import TradingStateReader
 

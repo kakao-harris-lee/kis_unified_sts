@@ -21,13 +21,13 @@ from scripts.analysis.shadow_parity_realdata import (  # noqa: E402
     _json_safe,
     _LegacyShim,
 )
-from services.trading.indicator_candles import Candle  # noqa: E402
 from shared.indicators.engine import (  # noqa: E402
     IndicatorSpec,
     default_engine,
 )
 from shared.indicators.engine.adapters import window_from_bars  # noqa: E402
 from shared.indicators.engine.spec import OHLCVWindow  # noqa: E402
+from shared.indicators.streaming.candles import Candle  # noqa: E402
 
 
 @pytest.fixture(scope="module")

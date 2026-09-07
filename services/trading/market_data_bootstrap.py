@@ -127,7 +127,7 @@ def _init_stock_price_feed(kis_config: Any) -> PriceFeedInitResult:
     if source_mode == "stream":
         import redis.asyncio as aioredis
 
-        from services.trading.stream_consumer_feed import StreamConsumerFeed
+        from shared.streaming.consumer_feed import StreamConsumerFeed
 
         stream_name = os.getenv("MARKET_TICK_STREAM", "market:ticks")
         stream_redis = aioredis.from_url(redis_url_from_env())

@@ -1,4 +1,4 @@
-"""Unit tests for services/trading/llm_context_publisher.py
+"""Unit tests for shared/llm/context_publisher.py
 
 Covers Phase 1.1-a (futures analysis branch + prompt addendum) and
 Phase 1.1-b (1h interval config, request_refresh idempotence).
@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from services.trading.llm_context_publisher import LLMContextPublisher
 from shared.llm.config import LLMConfig
+from shared.llm.context_publisher import LLMContextPublisher
 from shared.llm.data_classes import MarketSignal, RiskMode
 from shared.llm.market_context import MarketContext
 
@@ -417,7 +417,7 @@ class TestStockModeUnchanged:
         assert context is not None
         assert isinstance(context, MarketContext)
 
-    @patch("services.trading.llm_context_publisher.HAS_PROMETHEUS", False)
+    @patch("shared.llm.context_publisher.HAS_PROMETHEUS", False)
     def test_stock_publisher_prompt_addendum_always_empty(self):
         """Stock publisher always has empty _prompt_addendum, regardless of config."""
         for addendum_value in ("some addendum", "", "   "):

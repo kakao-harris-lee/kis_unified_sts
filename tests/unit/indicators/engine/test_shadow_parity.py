@@ -27,16 +27,16 @@ import pytest
 
 talib = pytest.importorskip("talib")
 
-from services.trading.indicator_calculations import (  # noqa: E402
-    IndicatorCalculationMixin as Legacy,
-)
-from services.trading.indicator_candles import Candle  # noqa: E402
 from shared.indicators.engine import (  # noqa: E402
     IndicatorSpec,
     default_engine,
 )
 from shared.indicators.engine.adapters import window_from_bars  # noqa: E402
 from shared.indicators.engine.shadow import ShadowDelta  # noqa: E402
+from shared.indicators.streaming.calculations import (  # noqa: E402
+    IndicatorCalculationMixin as Legacy,
+)
+from shared.indicators.streaming.candles import Candle  # noqa: E402
 
 
 @pytest.fixture(scope="module")

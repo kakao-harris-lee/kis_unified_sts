@@ -10,7 +10,7 @@ from __future__ import annotations
 # Depth of the live per-symbol candle history, in completed 1-minute bars.
 # Producers/consumers that cap candle history MUST reference this constant:
 # - ``StreamingIndicatorEngine(candle_maxlen=...)`` default
-#   (services/trading/indicator_engine.py) — CandleAccumulator deque maxlen.
+#   (shared/indicators/streaming/engine.py) — CandleAccumulator deque maxlen.
 # - ``StreamingIndicatorResolver`` ``get_recent_candles(limit=...)``
 #   (shared/indicators/resolver.py) — the ``ohlcv`` window handed to
 #   builder_v1 strategies.

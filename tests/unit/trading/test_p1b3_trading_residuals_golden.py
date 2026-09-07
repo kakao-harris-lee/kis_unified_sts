@@ -1,7 +1,7 @@
 """Golden pins: services/trading indicator residuals (P1-b3, Priority A).
 
 Pins the exact numeric behavior of the last hand-rolled indicator math in
-``services/trading/indicator_calculations.py`` BEFORE/AFTER its delegation to
+``shared/indicators/streaming/calculations.py`` BEFORE/AFTER its delegation to
 ``shared.indicators.series`` (``docs/plans/2026-07-08-new-architecture-refactoring-plan.md``
 §3, P1-b item 3):
 
@@ -30,8 +30,8 @@ from collections import deque
 import numpy as np
 import pytest
 
-from services.trading.indicator_candles import Candle
-from services.trading.indicator_engine import StreamingIndicatorEngine
+from shared.indicators.streaming.candles import Candle
+from shared.indicators.streaming.engine import StreamingIndicatorEngine
 
 # Last-ulp band for EMA-derived floats (see module docstring: FMA contraction
 # in compiled pandas kernels makes exact ``==`` platform-dependent).

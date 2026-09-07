@@ -49,9 +49,6 @@ from shared.strategy.registry import (
 if TYPE_CHECKING:
     from shared.llm.market_context import MarketContext
 
-# Local import to avoid circular dependencies
-from services.trading.llm_context_provider import LLMContextProvider
-
 logger = logging.getLogger(__name__)
 
 
@@ -269,7 +266,15 @@ class StrategyManager:
         else:
             self.cost_filter = None
 
-        # LLM context provider for market analysis
+        # LLM context provider for market analysis. Imported lazily here (not
+        # at module level) because shared.llm/__init__.py is an eager package
+        # init that pulls llm_analyzer/unified_market_analyzer/krx_api_client
+        # -> the openai and anthropic SDKs. A module-level import would put
+        # both SDKs on StrategyManager's cold import path (e.g.
+        # services/stock_strategy/main.py), which imports no other shared.llm
+        # symbol and has no other reason to pay that cost.
+        from shared.llm.context_provider import LLMContextProvider
+
         self._llm_context_provider = LLMContextProvider(asset_class=asset_class)
 
         # Throttle for cycle summary logging (every 60s)

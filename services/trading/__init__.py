@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     )
     from services.trading.runtime_config import TradingConfig
     from services.trading.session_calendar import TradingState
-    from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
 
 _EXPORT_MODULES = {
     # Orchestrator facade
@@ -35,8 +34,6 @@ _EXPORT_MODULES = {
     "DataProviderConfig": "services.trading.data_provider",
     "PositionTracker": "services.trading.position_tracker",
     "PositionTrackerConfig": "services.trading.position_tracker",
-    "StrategyManager": "services.trading.strategy_manager",
-    "StrategyManagerConfig": "services.trading.strategy_manager",
 }
 
 _SUBMODULES = {
@@ -56,7 +53,6 @@ _SUBMODULES = {
     "session_calendar": "services.trading.session_calendar",
     "signals_all_runtime": "services.trading.signals_all_runtime",
     "startup_sequence": "services.trading.startup_sequence",
-    "strategy_manager": "services.trading.strategy_manager",
 }
 
 __all__ = [
@@ -73,8 +69,6 @@ __all__ = [
     "DataProviderConfig",
     "PositionTracker",
     "PositionTrackerConfig",
-    "StrategyManager",
-    "StrategyManagerConfig",
 ]
 
 

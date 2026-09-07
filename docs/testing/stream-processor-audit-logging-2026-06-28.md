@@ -21,7 +21,7 @@ run on the mock/paper trading machine after the next session.
 | `pytest tests/unit/streaming/test_stream_audit.py tests/unit/streaming/test_stream_stage.py tests/unit/streaming/test_multi_stream_stage.py -q` | Exit 0. |
 | `pytest tests/unit/futures_monitor/test_daemon.py tests/unit/stock_monitor/test_daemon.py tests/unit/trading/test_stream_consumer_feed.py tests/unit/services/test_decision_engine_main.py tests/unit/stock_strategy/test_daemon.py -q` | Exit 0. |
 | `pytest tests/unit/streaming/test_stream_audit.py tests/unit/streaming/test_stream_stage.py tests/unit/streaming/test_multi_stream_stage.py tests/unit/futures_monitor/test_daemon.py tests/unit/stock_monitor/test_daemon.py tests/unit/trading/test_stream_consumer_feed.py tests/unit/services/test_decision_engine_main.py tests/unit/stock_strategy/test_daemon.py -q` | Exit 0. |
-| `ruff check shared/streaming/audit.py shared/streaming/stage.py services/futures_monitor/daemon.py services/stock_monitor/daemon.py services/trading/stream_consumer_feed.py tests/unit/streaming/test_stream_audit.py tests/unit/streaming/test_stream_stage.py tests/unit/streaming/test_multi_stream_stage.py` | Exit 0. |
+| `ruff check shared/streaming/audit.py shared/streaming/stage.py services/futures_monitor/daemon.py services/stock_monitor/daemon.py shared/streaming/consumer_feed.py tests/unit/streaming/test_stream_audit.py tests/unit/streaming/test_stream_stage.py tests/unit/streaming/test_multi_stream_stage.py` | Exit 0. |
 | `git diff --check` | Exit 0. |
 
 ## Runtime Checklist

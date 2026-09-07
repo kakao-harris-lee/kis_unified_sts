@@ -62,9 +62,9 @@ async def _build_and_run() -> int:
 
     from services.stock_monitor.alerts import AlertSink
     from services.stock_monitor.daemon import StockMonitorDaemon
-    from services.trading.stream_consumer_feed import StreamConsumerFeed
     from shared.config.loader import ConfigLoader
     from shared.notification.telegram import notifier_for_domain
+    from shared.streaming.consumer_feed import StreamConsumerFeed
     from shared.streaming.stock_keys import stock_daemon_positions_key
     from shared.streaming.trading_state import TradingStatePublisher
 

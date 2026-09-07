@@ -46,7 +46,6 @@ async def _build_and_run() -> int:
         return 0
 
     from services.stock_exit.daemon import StockExitDaemon
-    from services.trading.stream_consumer_feed import StreamConsumerFeed
     from shared.config.loader import ConfigLoader
     from shared.execution.fill_logger import FillLogger
     from shared.paper.broker import VirtualBroker
@@ -54,6 +53,7 @@ async def _build_and_run() -> int:
     from shared.storage import SQLiteRuntimeLedger
     from shared.storage.config import StorageConfig
     from shared.strategy.exit.three_stage import ThreeStageExit, ThreeStageExitConfig
+    from shared.streaming.consumer_feed import StreamConsumerFeed
     from shared.streaming.stock_bear_override import BearOverrideConfig
     from shared.streaming.stock_keys import stock_daemon_positions_key
     from shared.streaming.stock_regime import StockRegimeConfig

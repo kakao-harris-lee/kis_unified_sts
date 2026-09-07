@@ -14,12 +14,12 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from services.trading.strategy_manager import StrategyManager
 from shared.llm.data_classes import MarketSignal, RiskMode
 from shared.llm.market_context import MarketContext
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, ExitContext
 from shared.strategy.entry.mean_reversion import MeanReversionConfig, MeanReversionEntry
+from shared.strategy.manager import StrategyManager
 from shared.strategy.position.llm_adaptive_sizer import (
     LLMAdaptiveSizer,
     LLMAdaptiveSizerConfig,
@@ -380,7 +380,7 @@ class TestPositionSizerGracefulDegradation:
 class TestStrategyManagerGracefulDegradation:
     """Test StrategyManager handles missing LLM context gracefully."""
 
-    @patch("services.trading.strategy_manager.LLMContextProvider")
+    @patch("shared.strategy.manager.LLMContextProvider")
     def test_strategy_manager_handles_none_context(self, mock_provider_class):
         """Test StrategyManager works when LLMContextProvider returns None."""
         # Setup mock provider that returns None
@@ -398,7 +398,7 @@ class TestStrategyManagerGracefulDegradation:
         # This is tested implicitly through strategy tests above
         assert mock_provider.get_context.return_value is None
 
-    @patch("services.trading.strategy_manager.LLMContextProvider")
+    @patch("shared.strategy.manager.LLMContextProvider")
     def test_strategy_manager_handles_provider_exception(self, mock_provider_class):
         """Test StrategyManager handles LLMContextProvider exceptions gracefully."""
         # Setup mock provider that raises exception

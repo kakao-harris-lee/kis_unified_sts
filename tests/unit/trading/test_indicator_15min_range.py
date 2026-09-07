@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from services.trading.indicator_engine import StreamingIndicatorEngine
+from shared.indicators.streaming.engine import StreamingIndicatorEngine
 
 
 def _feed_minute(engine, symbol, minute_idx, high, low, close):

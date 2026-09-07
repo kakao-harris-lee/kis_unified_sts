@@ -109,7 +109,7 @@ class UnifiedMarketAnalyzer:
                 When non-empty, it is injected after the base system prompt so the
                 LLM focuses on a specific asset class or trading context.  Loaded
                 from ``config/llm.yaml::futures.prompt_addendum`` by
-                :class:`~services.trading.llm_context_publisher.LLMContextPublisher`
+                :class:`~shared.llm.context_publisher.LLMContextPublisher`
                 when ``asset_class="futures"``.
 
         Returns:

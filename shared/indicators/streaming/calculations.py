@@ -43,8 +43,7 @@ from shared.indicators.engine import (
 from shared.indicators.reference import ATRCalculator
 from shared.indicators.series import ema as series_ema
 from shared.indicators.series import trailing_max
-
-from .indicator_candles import Candle
+from shared.indicators.streaming.candles import Candle
 
 
 def _close_window(closes: list[float]) -> OHLCVWindow:
