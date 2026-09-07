@@ -32,6 +32,18 @@ def _broker(symbol: str, side: str, qty: int, avg_price: float = 100.0) -> dict:
     return {"code": symbol, "side": side, "quantity": qty, "avg_price": avg_price}
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_kis_account_no(monkeypatch):
+    """Isolate tests from whatever KIS_ACCOUNT_NO a developer's local .env
+    carries (``tests/conftest.py`` loads it once per pytest session, and a
+    common placeholder like "your_kis_account_no" fails ExecutionConfig's
+    10-digit validator). ``_build_and_run`` resolves ``ExecutionConfig``
+    unconditionally now (for the live-mode gate below), so every test here
+    needs a deterministic account_no regardless of ambient env.
+    """
+    monkeypatch.delenv("KIS_ACCOUNT_NO", raising=False)
+
+
 class TestBuildOpenPositions:
     def test_long_buy_to_long(self):
         positions = _build_open_positions([_broker("A05603", "BUY", 1)])
@@ -135,6 +147,7 @@ class TestFlattenAllAsync:
             force_close_executor=force_close,
             reason="test",
             now_ms=1000,
+            confirm=True,
         )
 
         assert len(results) == 2
@@ -159,6 +172,7 @@ class TestFlattenAllAsync:
             force_close_executor=force_close,
             reason="test",
             now_ms=1000,
+            confirm=True,
         )
 
         assert len(results) == 2
@@ -173,6 +187,7 @@ class TestFlattenAllAsync:
             force_close_executor=force_close,
             reason="test",
             now_ms=1000,
+            confirm=True,
         )
         assert results == []
         force_close.close_for_kill_switch.assert_not_awaited()
@@ -192,11 +207,59 @@ class TestFlattenAllAsync:
             force_close_executor=force_close,
             reason="custom_reason",
             now_ms=12345,
+            confirm=True,
         )
 
         kwargs = force_close.close_for_kill_switch.call_args.kwargs
         assert kwargs["reason"] == "custom_reason"
         assert kwargs["now_ms"] == 12345
+
+    @pytest.mark.asyncio
+    async def test_confirm_required_no_default(self):
+        # ``confirm`` is keyword-only with no default — a caller (e.g. a
+        # future kill_switch force_close_callback wiring) must decide
+        # explicitly rather than silently getting the "send real orders"
+        # behavior. LEGACY-006 register gap: this in-process seam previously
+        # had no confirm gate at all.
+        with pytest.raises(TypeError):
+            await flatten_all_async(  # type: ignore[call-arg]
+                broker_positions=[],
+                force_close_executor=AsyncMock(),
+                reason="test",
+                now_ms=1000,
+            )
+
+    @pytest.mark.asyncio
+    async def test_confirm_false_builds_no_client_and_sends_no_orders(self):
+        broker = [_broker("A05603", "BUY", 1, avg_price=331.20)]
+        force_close = AsyncMock()
+
+        summary = await flatten_all_async(
+            broker_positions=broker,
+            force_close_executor=force_close,
+            reason="test",
+            now_ms=1000,
+            confirm=False,
+        )
+
+        force_close.close_for_kill_switch.assert_not_awaited()
+        assert "A05603" in summary
+        assert "DRY-RUN" in summary
+
+    @pytest.mark.asyncio
+    async def test_confirm_false_with_no_positions(self):
+        force_close = AsyncMock()
+
+        summary = await flatten_all_async(
+            broker_positions=[],
+            force_close_executor=force_close,
+            reason="test",
+            now_ms=1000,
+            confirm=False,
+        )
+
+        force_close.close_for_kill_switch.assert_not_awaited()
+        assert "no open positions" in summary
 
 
 class TestBuildAndRunConstruction:
@@ -217,13 +280,19 @@ class TestBuildAndRunConstruction:
     ):
         import shared.kis.client as kis_client_mod
 
+        # KIS_FUTURES_MARKET=real is the normal value on the paper server —
+        # it only selects the market-DATA endpoint (KIS's mock server serves
+        # no futures data), so it does not imply real order placement here.
+        monkeypatch.setenv("KIS_FUTURES_MARKET", "real")
+        monkeypatch.setenv("TRADING_MODE", "PAPER")
+
         raw = [{"code": "A05603", "side": "BUY", "quantity": 1, "avg_price": 331.2}]
         balance_mock = AsyncMock(return_value=raw)
         monkeypatch.setattr(
             kis_client_mod.KISClient, "get_futures_balance", balance_mock
         )
 
-        args = SimpleNamespace(confirm=False, reason="test")
+        args = SimpleNamespace(confirm=False, reason="test", live=False)
         rc = await _module._build_and_run(args)
 
         # Dry-run returns 0 and lists the fetched position; no order issued.
@@ -232,3 +301,199 @@ class TestBuildAndRunConstruction:
         out = capsys.readouterr().out
         assert "A05603" in out
         assert "Re-run with --confirm" in out
+
+
+class TestMarketDataEnvResolution:
+    """LEGACY-006: KIS_FUTURES_MARKET must never silently default to real.
+
+    This only selects the market-DATA endpoint for the balance read (see
+    TestLiveModeGate below for the actual real-order money gate).
+    """
+
+    @pytest.mark.asyncio
+    async def test_unset_market_env_aborts_with_configuration_error(self, monkeypatch):
+        monkeypatch.delenv("KIS_FUTURES_MARKET", raising=False)
+        monkeypatch.setenv("TRADING_MODE", "PAPER")
+
+        args = SimpleNamespace(confirm=False, reason="test", live=False)
+        with pytest.raises(_module.ConfigurationError):
+            await _module._build_and_run(args)
+
+
+class TestLiveModeGate:
+    """Real order placement is gated by the executor's own trading_mode
+    resolution (``config/execution.yaml::execution.trading_mode``, driven
+    by ``TRADING_MODE`` / compose's ``FUTURES_EXECUTOR_TRADING_MODE``) —
+    NOT by ``KIS_FUTURES_MARKET``, which only selects the market-DATA
+    endpoint. ``.env.paper.example`` deliberately sets
+    ``KIS_FUTURES_MARKET=real`` on the paper server because KIS's mock
+    server serves no futures data at all, so keying the money gate off that
+    variable would make ``--confirm`` alone always abort on paper.
+    """
+
+    @pytest.mark.asyncio
+    async def test_live_trading_mode_without_live_flag_aborts_before_any_client(
+        self, monkeypatch, capsys
+    ):
+        import shared.kis.client as kis_client_mod
+
+        monkeypatch.setenv("KIS_FUTURES_MARKET", "real")
+        monkeypatch.setenv("TRADING_MODE", "REAL")
+
+        balance_mock = AsyncMock()
+        monkeypatch.setattr(
+            kis_client_mod.KISClient, "get_futures_balance", balance_mock
+        )
+        construction_count = {"n": 0}
+        original_init = kis_client_mod.KISClient.__init__
+
+        def _track_init(self, *a, **kw):
+            construction_count["n"] += 1
+            return original_init(self, *a, **kw)
+
+        monkeypatch.setattr(kis_client_mod.KISClient, "__init__", _track_init)
+
+        args = SimpleNamespace(confirm=True, reason="test", live=False)
+        rc = await _module._build_and_run(args)
+
+        assert rc != 0
+        # No KIS client was constructed at all — not even for the GET-only
+        # balance read — and no balance was fetched.
+        assert construction_count["n"] == 0
+        balance_mock.assert_not_awaited()
+        err = capsys.readouterr().err
+        assert "trading_mode" in err.lower()
+        assert "--live" in err
+        assert "kis_futures_market" not in err.lower()
+
+    @pytest.mark.asyncio
+    async def test_live_flag_in_paper_trading_mode_aborts(self, monkeypatch, capsys):
+        import shared.kis.client as kis_client_mod
+
+        monkeypatch.setenv("KIS_FUTURES_MARKET", "real")
+        monkeypatch.setenv("TRADING_MODE", "PAPER")
+
+        balance_mock = AsyncMock()
+        monkeypatch.setattr(
+            kis_client_mod.KISClient, "get_futures_balance", balance_mock
+        )
+
+        args = SimpleNamespace(confirm=True, reason="test", live=True)
+        rc = await _module._build_and_run(args)
+
+        assert rc != 0
+        balance_mock.assert_not_awaited()
+        err = capsys.readouterr().err
+        assert "trading_mode" in err.lower()
+        assert "--live" in err
+        assert "kis_futures_market" not in err.lower()
+
+    @pytest.mark.asyncio
+    async def test_paper_mode_with_confirm_proceeds_with_mock_executor(
+        self, monkeypatch, capsys
+    ):
+        # Full confirmed-path smoke test: PAPER trading_mode + --confirm
+        # (no --live) must actually reach flatten_all_async and place
+        # (simulated) orders, not merely fail to abort. Every
+        # network-touching class is replaced with a fake.
+        import redis.asyncio as aioredis_mod
+
+        import shared.execution.executor as executor_mod
+        import shared.execution.fill_logger as fill_logger_mod
+        import shared.execution.force_close as force_close_mod
+        import shared.execution.kis_futures_adapter as adapter_mod
+        import shared.kis.client as kis_client_mod
+        import shared.kis.futures_feed as feed_mod
+
+        monkeypatch.setenv("KIS_FUTURES_MARKET", "real")
+        monkeypatch.setenv("TRADING_MODE", "PAPER")
+
+        raw = [{"code": "A05603", "side": "BUY", "quantity": 1, "avg_price": 331.2}]
+        monkeypatch.setattr(
+            kis_client_mod.KISClient,
+            "get_futures_balance",
+            AsyncMock(return_value=raw),
+        )
+
+        fake_redis = SimpleNamespace(aclose=AsyncMock())
+        monkeypatch.setattr(aioredis_mod, "from_url", lambda *a, **kw: fake_redis)
+
+        monkeypatch.setattr(
+            fill_logger_mod,
+            "FillLogger",
+            lambda **kwargs: SimpleNamespace(flush=AsyncMock()),
+        )
+
+        order_executor_fake = SimpleNamespace(initialize=AsyncMock())
+        monkeypatch.setattr(
+            executor_mod, "OrderExecutor", lambda config: order_executor_fake
+        )
+
+        feed_fake = SimpleNamespace(
+            update_symbols=lambda symbols: None,
+            start=AsyncMock(),
+            stop=AsyncMock(),
+        )
+        monkeypatch.setattr(feed_mod, "KISFuturesPriceFeed", lambda config: feed_fake)
+
+        monkeypatch.setattr(
+            adapter_mod, "KISFuturesAdapter", lambda **kwargs: SimpleNamespace()
+        )
+
+        filled_result = SimpleNamespace(
+            state=SimpleNamespace(value="filled"), is_filled=True
+        )
+        force_close_fake = SimpleNamespace(
+            close_for_kill_switch=AsyncMock(return_value=filled_result)
+        )
+        monkeypatch.setattr(
+            force_close_mod, "ForceCloseExecutor", lambda **kwargs: force_close_fake
+        )
+
+        args = SimpleNamespace(confirm=True, reason="test", live=False)
+        rc = await _module._build_and_run(args)
+
+        assert rc == 0
+        force_close_fake.close_for_kill_switch.assert_awaited_once()
+        out = capsys.readouterr().out
+        assert "A05603" in out
+        assert "FILLED" in out
+
+
+class TestConfigLoadErrorHandling:
+    """_build_and_run's first act is ConfigLoader.load("execution.yaml")
+    (for the live-mode gate) — a missing/malformed config file must not
+    traceback with a bare exit code 1; it should report the same exit code
+    2 as every other configuration failure this script recognizes. The
+    catch lives in main() (not _build_and_run), matching how
+    ConfigurationError is already handled.
+    """
+
+    def test_config_load_error_exits_2_with_no_client_constructed(
+        self, monkeypatch, capsys
+    ):
+        import shared.config.loader as loader_mod
+        import shared.kis.client as kis_client_mod
+
+        def _raise_config_error(*args, **kwargs):
+            raise loader_mod.ConfigError("execution.yaml malformed")
+
+        monkeypatch.setattr(loader_mod.ConfigLoader, "load", _raise_config_error)
+
+        construction_count = {"n": 0}
+        original_init = kis_client_mod.KISClient.__init__
+
+        def _track_init(self, *a, **kw):
+            construction_count["n"] += 1
+            return original_init(self, *a, **kw)
+
+        monkeypatch.setattr(kis_client_mod.KISClient, "__init__", _track_init)
+        monkeypatch.setattr(sys, "argv", ["flatten_all.py"])
+
+        rc = _module.main()
+
+        assert rc == 2
+        assert construction_count["n"] == 0
+        err = capsys.readouterr().err
+        assert "ERROR" in err
+        assert "execution.yaml malformed" in err

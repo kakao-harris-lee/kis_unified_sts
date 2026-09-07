@@ -61,6 +61,16 @@ class KillSwitchConfig(ServiceConfigBase):
     check_interval_seconds: float = Field(default=30.0, gt=0)
     force_flat_on_trigger: bool = Field(default=True)
     sentinel_path: str = Field(default="/app/data/runtime/kis_kill_switch.tripped")
+    # LEGACY-007: written by scripts/trading/recover_positions.py on a
+    # broker/ledger divergence; services/order_router/main.py refuses to
+    # start or continue while this file exists (distinct from sentinel_path
+    # above). MUST stay under the shared /app/data/runtime mount — see
+    # config/kill_switch.yaml for the full rationale (order_router and
+    # recover_positions.py run in separate containers/processes; a
+    # container-local path would never be visible to order_router).
+    recovery_sentinel_path: str = Field(
+        default="/app/data/runtime/kis_position_recovery.tripped", min_length=1
+    )
     conditions: _ConditionsBlock = Field(default_factory=_ConditionsBlock)
 
 

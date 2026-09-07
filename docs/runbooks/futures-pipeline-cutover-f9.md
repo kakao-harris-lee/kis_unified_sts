@@ -338,6 +338,32 @@ rather than trusting it. In order of authority:
       permissive on this one axis even after §2-C's global-count wiring.
       Left for the operator to accept explicitly at Gate 2 or open as a
       follow-up; it was never in the six-row inventory above.
+      **Disposition (2026-09-07, measured):** vacuous under the current
+      decoupled deployment. `futures-order-router` subscribes exactly one
+      instrument (`resolve_futures_instrument_from_env()` →
+      `update_symbols([symbol])`, `services/order_router/main.py`) and
+      `decision_engine` decides for that same single symbol, while the
+      per-symbol duplicate guard (`OpenPositionFilter`, HEXISTS on
+      `futures:monitor:positions`) already caps open positions at 1 per
+      symbol. With one symbol, any per-strategy cap ≥ 1 cannot reject
+      anything the per-symbol guard has not already rejected. The gap becomes
+      real only if the decoupled chain is extended to multiple instruments;
+      re-open it in that design, not here. No code added on purpose.
+   3. **Legacy operator CLIs hardened independently of cutover (branch
+      `feat/f9-legacy-route-hardening`).** LEGACY-006/007 in
+      `tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.md` recorded that
+      `scripts/trading/flatten_all.py` and `recover_positions.py` built a
+      **real** KIS client when `KIS_FUTURES_MARKET` was unset, and that the
+      recovery sentinel had no consumer. Both are closed in that branch: an
+      unset `KIS_FUTURES_MARKET` aborts (no default in either direction —
+      note this variable selects the market-DATA endpoint only; the paper
+      server sets it to `real` on purpose because the KIS virtual server has
+      no futures feed), real-money sends are gated on the executor trading
+      mode (`TRADING_MODE` / `FUTURES_EXECUTOR_TRADING_MODE`) and need
+      `--live --confirm`, and order_router refuses to start or continue while
+      `kill_switch.recovery_sentinel_path` (under the mounted
+      `/app/data/runtime`, same convention as the kill-switch sentinel)
+      exists.
 
 2. **Source, shows what is actually passed.** Dump the production
    `from_config` call and compare its kwargs against the provider parameters the

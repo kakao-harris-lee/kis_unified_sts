@@ -327,3 +327,94 @@ def test_scheduler_mounts_data_market_and_reports_writable():
 
     # config stays read-only (jobs only read config).
     assert "./config:/app/config:ro" in volumes
+
+
+def test_recovery_sentinel_path_is_under_a_volume_mounted_into_order_router():
+    """LEGACY-007: config/kill_switch.yaml::kill_switch.recovery_sentinel_path is
+    read by services/order_router/main.py, which runs *inside* the
+    futures-order-router container — a container-local path (e.g. /var/run)
+    would never be visible to it. The sentinel's parent directory must be
+    inside a bind mount actually attached to that service, exactly like
+    sentinel_path (the kill-switch sentinel) already is."""
+    from services.kill_switch.config import KillSwitchConfig
+
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    order_router_volumes = compose["services"]["futures-order-router"]["volumes"]
+
+    cfg = KillSwitchConfig.from_yaml()
+    for container_path in (cfg.sentinel_path, cfg.recovery_sentinel_path):
+        container_dir = str(Path(container_path).parent)
+        mounted_container_dirs = [
+            v.split(":")[1] for v in order_router_volumes if ":" in v
+        ]
+        assert any(
+            container_dir == mount_dir or container_dir.startswith(mount_dir + "/")
+            for mount_dir in mounted_container_dirs
+        ), (
+            f"{container_path} (dir {container_dir}) is not under any volume "
+            f"mounted into futures-order-router: {order_router_volumes}"
+        )
+
+    # And the two sentinels are genuinely distinct files, not accidental aliases.
+    assert cfg.sentinel_path != cfg.recovery_sentinel_path
+
+
+def test_runtime_mount_helper_agrees_with_the_actual_compose_volume():
+    """shared.config.runtime_defaults.host_path_for_container_runtime_path()
+    hardcodes BOTH halves of the docker-compose.yml x-trading-runtime-volumes
+    bind mount (the container prefix it matches, and the host-relative dir
+    it derives). scripts/trading/recover_positions.py (host-run) uses that
+    helper to compute where to *write* the sentinel that order_router (in
+    the futures-order-router container) *reads* via config — if the two
+    halves of the mapping ever drift apart (someone edits docker-compose.yml
+    without touching the helper, or vice versa), the write and read paths
+    silently diverge and the guard never arms. This test derives the actual
+    mounted volume from docker-compose.yml (not a re-hardcoded literal) and
+    checks the helper's derived host path against it, so changing either
+    side alone fails CI."""
+    from shared.config.runtime_defaults import host_path_for_container_runtime_path
+
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    order_router_volumes = compose["services"]["futures-order-router"]["volumes"]
+
+    # Find the volume(s) whose container-side prefix the helper actually
+    # matches — probed via the public helper, not by importing its private
+    # prefix constant, so this test exercises the same code path
+    # recover_positions.py does.
+    matches: list[tuple[str, str, Path]] = []
+    for entry in order_router_volumes:
+        if ":" not in entry:
+            continue
+        host_part, container_part = entry.split(":")[0], entry.split(":")[1]
+        try:
+            derived = host_path_for_container_runtime_path(
+                container_part.rstrip("/") + "/__probe__"
+            )
+        except ValueError:
+            continue
+        matches.append((entry, host_part, derived.parent))
+
+    assert matches, (
+        "No volume mounted into futures-order-router matches the container "
+        "prefix host_path_for_container_runtime_path() expects — the helper "
+        f"and docker-compose.yml have drifted apart. volumes={order_router_volumes}"
+    )
+    assert len(matches) == 1, (
+        f"Ambiguous: more than one mounted volume matches the helper's "
+        f"container prefix: {matches}"
+    )
+
+    entry, host_part, derived_host_dir = matches[0]
+    assert host_part.startswith("./"), f"expected a repo-relative mount, got {entry!r}"
+    expected_host_dir = (_REPO_ROOT / host_part[2:]).resolve()
+
+    assert derived_host_dir == expected_host_dir, (
+        f"host_path_for_container_runtime_path() derives {derived_host_dir} "
+        f"but docker-compose.yml volume {entry!r} actually mounts "
+        f"{expected_host_dir} on the host — the two halves of the runtime "
+        "mount mapping have drifted apart."
+    )

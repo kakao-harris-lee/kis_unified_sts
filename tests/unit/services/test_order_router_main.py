@@ -94,6 +94,7 @@ def _make_daemon(
     fill_logger,
     pseudo_oco,
     sentinel_path=None,
+    recovery_sentinel_path=None,
     live_mode_guard=None,
     locked_symbol=None,
 ):
@@ -112,6 +113,7 @@ def _make_daemon(
         batch_size=10,
         passive_timeout_seconds=5,
         kill_switch_sentinel_path=sentinel_path,
+        recovery_sentinel_path=recovery_sentinel_path,
         live_mode_guard=live_mode_guard,
         locked_symbol=locked_symbol,
     )
@@ -255,6 +257,104 @@ async def test_no_sentinel_path_runs_normally(redis, kis, fill_logger, pseudo_oc
     await _run_one_batch(daemon)
 
     kis.place_futures_order.assert_awaited_once()
+    assert daemon.refused_due_to_sentinel is False
+
+
+@pytest.mark.asyncio
+async def test_recovery_sentinel_present_at_startup_refuses_to_run(
+    tmp_path, redis, kis, fill_logger, pseudo_oco
+):
+    """LEGACY-007: recover_positions.py's divergence sentinel blocks startup
+    just like the kill-switch sentinel, but is reported distinctly."""
+    recovery_sentinel = tmp_path / "recovery.tripped"
+    recovery_sentinel.write_text('{"divergence": true}')
+
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        recovery_sentinel_path=str(recovery_sentinel),
+    )
+    await _publish_final(redis, _signal("long"))
+
+    await daemon.run()
+
+    assert daemon.refused_due_to_recovery_sentinel is True
+    assert daemon.refused_due_to_sentinel is False
+    kis.place_futures_order.assert_not_awaited()
+    fill_logger.log_fill.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recovery_sentinel_appearing_mid_run_stops_consumption(
+    tmp_path, redis, kis, fill_logger, pseudo_oco
+):
+    recovery_sentinel = tmp_path / "recovery.tripped"
+
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        recovery_sentinel_path=str(recovery_sentinel),
+    )
+
+    async def _trip_after_a_moment():
+        await asyncio.sleep(0.03)
+        recovery_sentinel.write_text('{"divergence": true}')
+
+    await asyncio.gather(daemon.run(), _trip_after_a_moment())
+    assert daemon.refused_due_to_recovery_sentinel is True
+    assert daemon.refused_due_to_sentinel is False
+
+
+@pytest.mark.asyncio
+async def test_both_sentinels_absent_runs_normally(
+    redis, kis, fill_logger, pseudo_oco, tmp_path
+):
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        sentinel_path=str(tmp_path / "kill_switch.tripped"),
+        recovery_sentinel_path=str(tmp_path / "recovery.tripped"),
+    )
+    await _publish_final(redis, _signal("long"))
+
+    await _run_one_batch(daemon)
+
+    kis.place_futures_order.assert_awaited_once()
+    assert daemon.refused_due_to_sentinel is False
+    assert daemon.refused_due_to_recovery_sentinel is False
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_and_recovery_sentinels_are_distinct_files(
+    tmp_path, redis, kis, fill_logger, pseudo_oco
+):
+    """Only the recovery sentinel exists: kill-switch guard must not trip,
+    and the two sentinel paths on the daemon must not alias each other."""
+    kill_switch_sentinel = tmp_path / "kill_switch.tripped"
+    recovery_sentinel = tmp_path / "recovery.tripped"
+    recovery_sentinel.write_text('{"divergence": true}')
+
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        sentinel_path=str(kill_switch_sentinel),
+        recovery_sentinel_path=str(recovery_sentinel),
+    )
+
+    assert daemon.sentinel_path != daemon.recovery_sentinel_path
+    assert not kill_switch_sentinel.exists()
+
+    await daemon.run()
+
+    assert daemon.refused_due_to_recovery_sentinel is True
     assert daemon.refused_due_to_sentinel is False
 
 

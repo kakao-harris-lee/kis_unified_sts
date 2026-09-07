@@ -34,6 +34,24 @@ kill_switch:
   check_interval_seconds: 30
   force_flat_on_trigger: true
   sentinel_path: "/app/data/runtime/kis_kill_switch.tripped"
+  # LEGACY-007 closure: written by scripts/trading/recover_positions.py when
+  # the live-broker/Redis-ledger reconciliation finds a divergence.
+  # services/order_router/main.py refuses to start or continue while this
+  # file exists (same fail-closed treatment as sentinel_path above, but
+  # reported under a distinct log line/counter so operators can tell which
+  # sentinel tripped). Clear with `rm` after operator review — there is no
+  # companion clear script (see recover_positions.py docstring).
+  #
+  # MUST stay under the shared /app/data/runtime mount (same convention as
+  # sentinel_path above): order_router and recover_positions.py run in
+  # separate containers/processes, so a container-local path such as
+  # /var/run would never be visible to order_router and this interlock
+  # would be dead. docker-compose.yml x-trading-runtime-volumes binds host
+  # ./data/runtime here; recover_positions.py (host-run) derives its
+  # host-side write path from this same value via
+  # shared.config.runtime_defaults.host_path_for_container_runtime_path —
+  # do not hardcode a second literal for the host side.
+  recovery_sentinel_path: "/app/data/runtime/kis_position_recovery.tripped"
   conditions:
     daily_loss:
       enabled: true

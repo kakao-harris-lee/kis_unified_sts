@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from shared.execution.futures_instrument import (
     DEFAULT_FUTURES_PRODUCT,
     FuturesInstrumentConfig,
@@ -252,3 +254,96 @@ def test_resolved_product_allows_unknown_explicit_symbol_prefix(monkeypatch):
     assert result.symbol == "ZZ9999"
     assert result.symbol_source == "FUTURES_STRATEGY_SYMBOL"
     assert result.message == "futures product contract ok"
+
+
+# ---------------------------------------------------------------------------
+# resolve_futures_market_from_env — LEGACY-006/007 hardening.
+#
+# CLAUDE.md non-negotiable: real futures order paths are policy-blocked and
+# the real account is never funded, so an unset (or unrecognized)
+# KIS_FUTURES_MARKET must never silently resolve to the real broker. The
+# prior inline pattern used across scripts/trading/{flatten_all,
+# recover_positions}.py — ``os.environ.get("KIS_FUTURES_MARKET", "real")`` —
+# does exactly that. This resolver replaces it with a fail-closed lookup.
+# ---------------------------------------------------------------------------
+
+
+def test_market_unset_raises_configuration_error(monkeypatch):
+    from shared.exceptions import ConfigurationError
+    from shared.execution.futures_instrument import (
+        resolve_futures_market_from_env,
+    )
+
+    monkeypatch.delenv("KIS_FUTURES_MARKET", raising=False)
+
+    with pytest.raises(ConfigurationError):
+        resolve_futures_market_from_env()
+
+
+def test_market_blank_raises_configuration_error(monkeypatch):
+    from shared.exceptions import ConfigurationError
+    from shared.execution.futures_instrument import (
+        resolve_futures_market_from_env,
+    )
+
+    monkeypatch.setenv("KIS_FUTURES_MARKET", "   ")
+
+    with pytest.raises(ConfigurationError):
+        resolve_futures_market_from_env()
+
+
+def test_market_unrecognized_value_raises_configuration_error(monkeypatch):
+    from shared.exceptions import ConfigurationError
+    from shared.execution.futures_instrument import (
+        resolve_futures_market_from_env,
+    )
+
+    monkeypatch.setenv("KIS_FUTURES_MARKET", "sandbox")
+
+    with pytest.raises(ConfigurationError):
+        resolve_futures_market_from_env()
+
+
+def test_market_real_resolves_to_real(monkeypatch):
+    from shared.execution.futures_instrument import (
+        resolve_futures_market_from_env,
+    )
+
+    monkeypatch.setenv("KIS_FUTURES_MARKET", "REAL")
+    assert resolve_futures_market_from_env() == "real"
+
+
+def test_market_mock_resolves_to_paper():
+    # "mock" is the repo-wide convention for KIS's own 모의투자 (paper) account
+    # (see .env.example, KISAuthConfig.is_real docstring) — it must normalize
+    # to the same "paper" label the CLI flags use, not be rejected.
+    from shared.execution.futures_instrument import (
+        resolve_futures_market_from_env,
+    )
+
+    assert resolve_futures_market_from_env(environ={"KIS_FUTURES_MARKET": "Mock"}) == (
+        "paper"
+    )
+
+
+def test_market_paper_resolves_to_paper():
+    from shared.execution.futures_instrument import (
+        resolve_futures_market_from_env,
+    )
+
+    assert (
+        resolve_futures_market_from_env(environ={"KIS_FUTURES_MARKET": "paper"})
+        == "paper"
+    )
+
+
+def test_market_environ_param_does_not_read_process_env(monkeypatch):
+    from shared.execution.futures_instrument import (
+        resolve_futures_market_from_env,
+    )
+
+    monkeypatch.setenv("KIS_FUTURES_MARKET", "real")
+    assert (
+        resolve_futures_market_from_env(environ={"KIS_FUTURES_MARKET": "mock"})
+        == "paper"
+    )

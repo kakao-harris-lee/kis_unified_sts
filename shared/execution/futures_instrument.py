@@ -10,8 +10,9 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
+from shared.exceptions import ConfigurationError
 from shared.instruments.futures import (
     KOSPI200_LEGACY_PREFIX,
     KOSPI200_PREFIX,
@@ -22,6 +23,18 @@ from shared.instruments.futures import (
 
 DEFAULT_FUTURES_PRODUCT = "mini"
 SUPPORTED_FUTURES_PRODUCTS = frozenset({"mini", "kospi200"})
+
+# KIS_FUTURES_MARKET aliases -> normalized market label. "mock" is the
+# repo-wide convention for KIS's own 모의투자 (paper) account (see
+# .env.example, KISAuthConfig.is_real docstring: "실전투자 여부 (False: 모의투자)");
+# "paper" is accepted too so operator-facing flags/env can use either word
+# for the same thing. Anything outside this map is rejected rather than
+# silently treated as one side or the other.
+_FUTURES_MARKET_ALIASES: dict[str, Literal["paper", "real"]] = {
+    "real": "real",
+    "mock": "paper",
+    "paper": "paper",
+}
 
 
 @dataclass(frozen=True)
@@ -170,3 +183,57 @@ def resolve_futures_instrument_from_env(
         product=product,
         source="FUTURES_TRADING_PRODUCT",
     )
+
+
+def resolve_futures_market_from_env(
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> Literal["paper", "real"]:
+    """Resolve ``KIS_FUTURES_MARKET`` with no silent default in either direction.
+
+    CLAUDE.md non-negotiable: the real futures account is never funded and
+    real-money order paths are policy-blocked, so an unset (or
+    unrecognized) ``KIS_FUTURES_MARKET`` must never silently resolve to the
+    real broker. This replaces the prior inline pattern used across
+    ``scripts/trading/{flatten_all,recover_positions}.py`` —
+    ``os.environ.get("KIS_FUTURES_MARKET", "real")`` — which defaulted an
+    unset env var straight to the real KIS endpoint.
+
+    Accepts ``real`` for the real (실전투자) endpoint, and ``mock`` or
+    ``paper`` — synonyms for KIS's own 모의투자 (paper trading) account — for
+    the non-real endpoint, all case-insensitive. Any other value, including
+    unset or blank, raises.
+
+    This selects the market-DATA endpoint only — a paper deployment
+    routinely sets ``KIS_FUTURES_MARKET=real`` because KIS's mock server
+    serves no futures data at all. Real-money order placement is gated
+    separately by ``config/execution.yaml::execution.trading_mode`` (driven
+    by the ``TRADING_MODE`` env var — ``FUTURES_EXECUTOR_TRADING_MODE`` in
+    compose), never by this function's result.
+
+    Args:
+        environ: mapping to read from instead of ``os.environ`` (for tests).
+
+    Returns:
+        ``"real"`` or ``"paper"``.
+
+    Raises:
+        ConfigurationError: ``KIS_FUTURES_MARKET`` is unset, blank, or not
+            one of the recognized values.
+    """
+    env = os.environ if environ is None else environ
+    raw = env.get("KIS_FUTURES_MARKET")
+    if raw is None or not raw.strip():
+        raise ConfigurationError(
+            "KIS_FUTURES_MARKET is not set. An unset value must never "
+            "silently resolve to the real market — set it explicitly to "
+            "'real' or 'mock'/'paper'."
+        )
+    resolved = _FUTURES_MARKET_ALIASES.get(raw.strip().lower())
+    if resolved is None:
+        allowed = ", ".join(sorted(set(_FUTURES_MARKET_ALIASES)))
+        raise ConfigurationError(
+            f"KIS_FUTURES_MARKET={raw!r} is not a recognized value; "
+            f"expected one of: {allowed}"
+        )
+    return resolved

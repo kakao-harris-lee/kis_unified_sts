@@ -175,10 +175,16 @@ def _run_tier_backtest(
     track: bool,
     experiment: str | None,
     is_daily: bool = False,
+    engine_override: str | None = None,
 ):
     """Run backtest across multiple stocks by tier, print summary table."""
-    from shared.backtest import BacktestConfig, BacktestEngine
+    from shared.backtest import BacktestConfig
     from shared.backtest.adapter import BacktestStrategyAdapter
+    from shared.backtest.backend import (
+        load_default_engine,
+        resolve_backend,
+        run_with_backend,
+    )
     from shared.backtest.config import RiskConfig
     from shared.collector.historical.stock import (
         STOCK_UNIVERSE,
@@ -229,6 +235,28 @@ def _run_tier_backtest(
     start_d = start.date() if start else None
     end_d = end.date() if end else None
 
+    # Backend resolution — same seam as experiment_runner/optimizer (plan
+    # 2026-09-07 §1-B/C): config/backtest.yaml::backtest.default_engine
+    # (env-overridable) unless the strategy YAML sets `backtest.engine`, with
+    # `--engine` here taking precedence as an engine-key override and
+    # `backtest.legacy_exit: true` still winning over either.
+    bt_for_resolve = dict(bt_override)
+    if engine_override:
+        bt_for_resolve["engine"] = engine_override
+    engine_backend = resolve_backend(
+        bt_for_resolve, load_default_engine(), context=f"cli tier {asset}/{strategy}"
+    )
+
+    def _build_adapter():
+        # Fresh strategy + adapter per attempt — a mid-run vectorbt refusal
+        # must not reuse a warm/dirty adapter for the legacy fallback.
+        trading_strategy = StrategyFactory.create(strategy_config)
+        return (
+            DailyBacktestAdapter(trading_strategy, strategy_config)
+            if is_daily
+            else BacktestStrategyAdapter(trading_strategy, strategy_config)
+        )
+
     results = []
 
     for stock in stocks:
@@ -276,21 +304,26 @@ def _run_tier_backtest(
         if "risk" in bt_override:
             config.risk = RiskConfig.from_dict(bt_override["risk"])
 
-        trading_strategy = StrategyFactory.create(strategy_config)
-        if is_daily:
-            adapted = DailyBacktestAdapter(trading_strategy, strategy_config)
-        else:
-            adapted = BacktestStrategyAdapter(trading_strategy, strategy_config)
-        engine = BacktestEngine(adapted, config)
-
-        result = engine.run(df)
+        run = run_with_backend(
+            _build_adapter,
+            config,
+            df,
+            engine_backend,
+            experiment_id=f"cli tier {asset}/{strategy}/{code}",
+            # (asset, strategy) pair — NOT symbol-scoped, so a static
+            # NotImplementedError refusal logs once for the whole tier run,
+            # not once per stock.
+            dedupe_key=f"cli:{asset}:{strategy}",
+        )
+        result = run.result
 
         click.echo(
             f"  {code} {name}: "
             f"trades={result.total_trades} "
             f"return={result.total_return_pct:+.2f}% "
             f"WR={result.win_rate:.0f}% "
-            f"Sharpe={result.sharpe_ratio:.2f}"
+            f"Sharpe={result.sharpe_ratio:.2f} "
+            f"engine={run.engine}"
         )
 
         results.append(
@@ -428,6 +461,20 @@ def _run_tier_backtest(
     default=None,
     help="MLflow experiment name",
 )
+@click.option(
+    "--engine",
+    "engine_override",
+    default=None,
+    type=click.Choice(["legacy", "vectorbt"]),
+    help=(
+        "Override the resolved backtest engine for this run (default: "
+        "config/backtest.yaml::backtest.default_engine, itself overridden by "
+        "strategy backtest.engine). backtest.legacy_exit: true still forces "
+        "legacy regardless of this flag. Output label: legacy => "
+        "engine=backtest_engine, vectorbt => engine=vectorbt (same "
+        "vocabulary as experiment reports)."
+    ),
+)
 def backtest_run(
     strategy: str,
     asset: str,
@@ -439,6 +486,7 @@ def backtest_run(
     tier: str | None,
     track: bool,
     experiment: str | None,
+    engine_override: str | None,
 ):
     """백테스트 실행
 
@@ -448,8 +496,13 @@ def backtest_run(
         sts backtest run -s bb_reversion -a stock --start 2024-01-01 --end 2024-12-31
         sts backtest run -s bb_reversion -a stock -d ./data/005930.csv --track
     """
-    from shared.backtest import BacktestConfig, BacktestEngine, MLflowTracker
+    from shared.backtest import BacktestConfig, MLflowTracker
     from shared.backtest.adapter import BacktestStrategyAdapter
+    from shared.backtest.backend import (
+        load_default_engine,
+        resolve_backend,
+        run_with_backend,
+    )
     from shared.config.loader import ConfigLoader
     from shared.strategy.registry import StrategyFactory, register_builtin_components
     from shared.validation.cli_validators import (
@@ -543,6 +596,7 @@ def backtest_run(
             track=track,
             experiment=experiment,
             is_daily=is_daily,
+            engine_override=engine_override,
         )
         return
     else:
@@ -622,26 +676,46 @@ def backtest_run(
 
         config.risk = RiskConfig.from_dict(bt_override["risk"])
 
-    # 전략 생성
-    try:
-        trading_strategy = StrategyFactory.create(strategy_config)
-    except Exception as e:
-        click.echo(f"Error creating strategy: {e}", err=True)
-        sys.exit(1)
+    # 전략+어댑터 팩토리 — run_with_backend 가 시도마다 새로 호출한다
+    # (vectorbt 거부 시 legacy 폴백이 더러워진 어댑터를 재사용하지 않도록).
+    def _build_adapter():
+        try:
+            trading_strategy = StrategyFactory.create(strategy_config)
+        except Exception as e:
+            click.echo(f"Error creating strategy: {e}", err=True)
+            sys.exit(1)
+        if is_daily:
+            from shared.backtest.daily_adapter import DailyBacktestAdapter
 
-    # 어댑터로 감싸기 (TradingStrategy → StrategyProtocol)
-    if is_daily:
-        from shared.backtest.daily_adapter import DailyBacktestAdapter
+            return DailyBacktestAdapter(trading_strategy, strategy_config)
+        return BacktestStrategyAdapter(trading_strategy, strategy_config)
 
-        adapted = DailyBacktestAdapter(trading_strategy, strategy_config)
-    else:
-        adapted = BacktestStrategyAdapter(trading_strategy, strategy_config)
+    # 백테스트 실행 — experiment_runner/optimizer와 같은 백엔드 seam(plan
+    # 2026-09-07 §1-B/C): config/backtest.yaml::backtest.default_engine 이
+    # 기본값이고, 전략 YAML의 backtest.engine과 --engine 이 이를 오버라이드
+    # 하며(--engine 이 이번 실행에 한해 engine 키를 덮어씀), backtest.
+    # legacy_exit: true 는 둘 다보다 우선한다.
+    bt_for_resolve = dict(bt_override)
+    if engine_override:
+        bt_for_resolve["engine"] = engine_override
+    engine_backend = resolve_backend(
+        bt_for_resolve,
+        load_default_engine(),
+        context=f"cli backtest {asset}/{strategy}",
+    )
+    run = run_with_backend(
+        _build_adapter,
+        config,
+        df,
+        engine_backend,
+        experiment_id=f"cli:{asset}:{strategy}",
+        dedupe_key=f"cli:{asset}:{strategy}",
+    )
+    result = run.result
 
-    # 백테스트 실행
-    engine = BacktestEngine(adapted, config)
-    result = engine.run(df)
-
-    # 결과 출력
+    # 결과 출력 — 리포트 어휘(BackendRun.engine)와 동일한 라벨을 찍어 CLI
+    # 출력과 experiment 리포트가 비교 가능하게 한다.
+    click.echo(f"Engine: {run.engine}")
     result.print_summary()
 
     # MLflow 추적
