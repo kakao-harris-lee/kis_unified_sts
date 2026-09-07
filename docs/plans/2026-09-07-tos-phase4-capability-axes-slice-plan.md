@@ -33,6 +33,12 @@
 - YAML 로 허용 행렬 외부화 → brokercap 은 yaml 부재 핀(형제-엣지-0)이며 행렬은 «정책 값»이 아니라 «구조적 봉인» — 실행 시 바뀌면 안 되는 표. 값형 문턱이 아니다.
 - `is_mock: bool` 라우팅 유지 → 계획 §5.1 이 명시 기각.
 
+## 5-A. 슬라이스 #2 (같은 브랜치 · 슬라이스 #1 `5912a4f9` 위) — 작업 3 스키마 절반 + 작업 7 계약 고정
+
+**작업 3 스키마 절반 — provenance 클래스**: `tos/src/tos/brokercap/routing.py` 에 `ProvenanceClass{OFFICIAL_SDK, OFFICIAL_DOCUMENT, INTERNAL_CLIENT, CONTROLLED_GET_PROBE}`(상위 계획 작업 3 의 넷: 공식 `open-trading-api` · 공식 문서 · 내부 `shared/kis` · 통제된 GET probe — 커널에는 클래스 이름만, 구체 소스 이름은 인스턴스 소관) + `CapabilityProvenance(FrozenModel)`: `provenance_class` · `source_ref: str`(opaque) · `captured_at: str`(주입 스칼라 · 클록 없음) · `evidence_ref: BrokerEvidenceRef | None`(기존 records.py 재사용) · `probe_manifest: ProbeManifest | None` — 결합 validator: `CONTROLLED_GET_PROBE` ⇒ `probe_manifest` 필수(그 외 클래스는 None 필수). 술어 `provenance_admits_claim(provenance, claim_kind)`: 어떤 provenance 도 `REAL_ORDER` 관련 claim 을 admit 하지 않는다(구조) · `OFFICIAL_DOCUMENT`/`INTERNAL_CLIENT` 는 «측정값» claim 을 admit 하지 않는다(문서는 측정이 아니다) · 나머지는 주입 `evidence_ref` 존재 시만. **데이터 채움(P0-2 캠페인 결속)은 이 슬라이스 밖**.
+
+**작업 7 — adapter 1 outbound → 1 result 계약 고정**: `tos/src/tos/brokeradapter/protocol.py` 의 `Transport` 를 읽고 (a) 계약 docstring 에 «한 attempt 당 `send_once` 정확히 1회 · 내부 재시도 금지 · 결과 미도착은 UNKNOWN(비수락 아님)» 이 이미 있는지 확인, 부재 시만 추가 (b) 기존 합성 transport 구현(`brokeradapter/` 의 paper transport)이 내부 재시도 루프·`sleep`·`for _ in range` 재전송을 갖지 않음을 **negative-grep 테스트**로 고정 (c) `tos/tests/brokeradapter/` 에 «같은 attempt 로 `send_once` 두 번 호출 시 두 번째는 거부/예외» 가 이미 고정돼 있는지 확인, 부재 시 추가. src 변경은 docstring 외 0 이어야 하며 그 이상이 필요하면 보고.
+
 ## 5. 종료 조건
 
 - `tos/tests/brokercap` + 기존 전체 `tos/tests` green · mypy/ruff/black 0 · `tools/tos_size_budget.py --check` 0 · firewall PASS
