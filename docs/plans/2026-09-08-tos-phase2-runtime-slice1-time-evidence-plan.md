@@ -56,3 +56,9 @@
 - `tos/runtime/tests` green(hermetic 가드 위반 0) · 커널 `tos/tests` 불변 green · 방화벽/lint-imports/budget/Black/Ruff/mypy 0
 - 장애 계약 ④⑤⑥⑦(+②) 각각에 red-선행 테스트 존재 · 독립 리뷰 approve
 - 어떤 EV 행도 상태 변경 없음 · 실 브로커 transport 0 · 자격증명 파일 로드 코드 0(순서 4)
+
+## 5. 실행 결과·독립 리뷰 처분 (2026-09-08)
+
+- 착지: `ba7d438f`(레인 K `tos_runtime.time` 865줄·테스트 28 · 레인 L `tos_runtime.evidence` 1,489줄·테스트 51 · `tos/src/tos/py.typed` · CI `mypy (tos runtime)` 스텝) → 리뷰 **needs-attention**(HIGH-1 비상 로그 평문 · HIGH-2 같은 클록 2인스턴스 독립 계수+비교 없이 disagreement 0 · MEDIUM-3 rotate 가 스킴을 먼저 교체 · LOW-4/5/6) → 처분 `1872af9d` → **재심 approve**(6/6 재현 소멸 · 되돌림 뮤테이션 전부 사망 · runtime tests 108).
+- 리뷰 판정 기록: LOW-5 처분(회복 시 세대 발급 + TRUSTED 진입 시 재발급)은 ADR-002-008 §16 항목 1 «새 generation» 과 커널 `transition_to_trusted_requires_new_generation` 이 별개 요구라 이중 계수가 아님 · `DEGRADED_HOLDOVER` 회복은 TRUSTED 진입 시만 발급(앵커 무효화가 없었으므로 정합) · `_ratchet_anchor` 는 fail-closed 방향 · hermetic 쓰기 가드는 C-level `sqlite3.connect` 를 못 보므로 그 절반은 관례(정직 한계 기록).
+- 무결함 렌즈(1차): 크래시 주입 2지점 · append-only 트리거(독립 연결로 UPDATE/DELETE 시도) · WAL/FULL 연결마다 · 스크럽 직렬화 전 · outbox 같은 트랜잭션 · record_halt 두 경로 · fsync 1회 · backup/restore 새 세대 non_live · retention 삭제 0 · 커널 술어 8종 호출(자체 판정 0) · EvidenceAppendPort 계약 정확 일치 · 뮤테이션 4/6 사망(생존 2 는 benign).
