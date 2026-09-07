@@ -308,6 +308,42 @@ def test_futures_pipeline_compose_services_are_profile_gated():
     )
 
 
+def test_futures_daemons_share_contract_resolution_env_with_orchestrator():
+    """Every futures daemon that calls resolve_futures_instrument_from_env()
+    must receive the same FUTURES_TRADING_PRODUCT / FUTURES_STRATEGY_SYMBOL
+    knobs as `trader-futures`, or it silently defaults to `mini` and shadows a
+    different contract than the orchestrator's raw_data ticks (F-9 Gate 1,
+    2026-09-07: A05609 vs A01609). `.env.paper` is interpolation-only, so the
+    knob has to be plumbed in compose. TZ keeps their logs KST like the stock
+    daemons (logging-only)."""
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    services = compose["services"]
+    orchestrator_env = services["trader-futures"]["environment"]
+    product = orchestrator_env["FUTURES_TRADING_PRODUCT"]
+    assert product == "${FUTURES_TRADING_PRODUCT:-mini}"
+
+    instrument_resolvers = (
+        "futures-market-ingest",
+        "futures-decision-engine",
+        "futures-order-router",
+        "futures-monitor",
+    )
+    for service_name in instrument_resolvers:
+        env = services[service_name]["environment"]
+        assert env["FUTURES_TRADING_PRODUCT"] == product, service_name
+        assert (
+            env["FUTURES_STRATEGY_SYMBOL"] == "${FUTURES_STRATEGY_SYMBOL:-}"
+        ), service_name
+
+    for service_name in instrument_resolvers + (
+        "futures-risk-filter",
+        "futures-kill-switch",
+    ):
+        assert services[service_name]["environment"]["TZ"] == "Asia/Seoul", service_name
+
+
 def test_scheduler_mounts_data_market_and_reports_writable():
     """The scheduler runs EOD backfills + report jobs, so data/market and reports
     must be writable (the shared pipeline-service mount is data/market:ro and does
