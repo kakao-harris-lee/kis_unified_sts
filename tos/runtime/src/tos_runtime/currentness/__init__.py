@@ -13,6 +13,9 @@ Public surface groups by module:
 
 * :mod:`tos_runtime.currentness.vector` — :class:`~tos_runtime.currentness.
   vector.CurrentnessAssembler`, :class:`~tos_runtime.currentness.vector.
+  DimensionReport` (the exact shape lanes P/Q's injected readers return —
+  the owner decides ``positively_established``/``restrictive_floor``, never
+  this assembler), :class:`~tos_runtime.currentness.vector.
   SingleNodeCommitCertificate` (explicitly NOT a quorum certificate —
   R-RCL-F0), :class:`~tos_runtime.currentness.vector.Item3Fields`.
 * :mod:`tos_runtime.currentness.proof` — :class:`~tos_runtime.currentness.
@@ -47,6 +50,7 @@ from tos_runtime.currentness.stages import (
 )
 from tos_runtime.currentness.vector import (
     CurrentnessAssembler,
+    DimensionReport,
     Item3Fields,
     SingleNodeCommitCertificate,
 )
@@ -56,6 +60,7 @@ __all__ = [
     "CurrentnessAssembler",
     "CurrentnessConfig",
     "CurrentnessConfigError",
+    "DimensionReport",
     "EgressCurrentnessProofIssuer",
     "Item16Fields",
     "Item3Fields",

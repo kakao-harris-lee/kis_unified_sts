@@ -1,5 +1,10 @@
 """``AttemptBindVerificationStage`` (step 13) + ``TransmissionCapabilityStage``
-(step 14) tests (design #40 §5 order 6, lane R item 3)."""
+(step 14) tests (design #40 §5 order 6, lane R item 3).
+
+Covers the independent review fix of 39dd3993 (LOW-D: the RCL entry is keyed
+on the nonce, not the attempt id — nonce reuse is refused by the log, and a
+second capability request for an attempt that already has one is separately
+refused in memory)."""
 
 from __future__ import annotations
 
@@ -37,9 +42,9 @@ def _proposal() -> Proposal:
     return issued
 
 
-def _attempt() -> AttemptRequest:
+def _attempt(attempt_id: str = "att-1") -> AttemptRequest:
     return AttemptRequest(
-        attempt_id="att-1",
+        attempt_id=attempt_id,
         conformance_proof_digest="proof-digest-1",
         action_flow_permit_identity="permit-1",
         reference_coordinate_digest="ref-digest-1",
@@ -199,3 +204,47 @@ def test_transmission_capability_is_unknown_when_no_epoch_acquired(
         assert verdict.outcome is StageOutcome.UNKNOWN
     finally:
         unacquired_log.close()
+
+
+def test_transmission_capability_denies_a_second_request_for_the_same_attempt(
+    log: SqliteCommitLog, writer_epoch: int
+) -> None:
+    """LOW-D: an attempt is single-use for a TransmissionCapability — the
+    second request is refused in memory, before any second RCL append is
+    even attempted."""
+    stage = TransmissionCapabilityStage(
+        log, writer_epoch=writer_epoch, context_reader=lambda _r: _context()
+    )
+    request = _request(step=CommitmentStep.TRANSMISSION_CAPABILITY, attempt=_attempt())
+    first = stage(request)
+    assert first.outcome is StageOutcome.ADMIT
+
+    second = stage(request)
+    assert second.outcome is StageOutcome.DENY
+    assert len(list(log.replay())) == 1
+
+
+def test_transmission_capability_nonce_reuse_across_attempts_is_refused_by_the_log(
+    log: SqliteCommitLog, writer_epoch: int
+) -> None:
+    """LOW-D: the durable entry is keyed on the NONCE, not the attempt id —
+    forcing the same nonce for two DIFFERENT attempts must collide on the
+    RCL's own command_id and be refused, proving the log (not just the
+    in-memory attempt guard) is what enforces single-use."""
+    stage = TransmissionCapabilityStage(
+        log,
+        writer_epoch=writer_epoch,
+        context_reader=lambda _r: _context(),
+        nonce_factory=lambda: "fixed-nonce",
+    )
+    first = stage(
+        _request(step=CommitmentStep.TRANSMISSION_CAPABILITY, attempt=_attempt("att-1"))
+    )
+    assert first.outcome is StageOutcome.ADMIT
+
+    second = stage(
+        _request(step=CommitmentStep.TRANSMISSION_CAPABILITY, attempt=_attempt("att-2"))
+    )
+    assert second.outcome is StageOutcome.DENY
+    assert stage.nonce_for("att-2") is None
+    assert len(list(log.replay())) == 1

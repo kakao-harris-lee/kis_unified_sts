@@ -11,6 +11,24 @@ a caller-supplied claim carried on the request — the same "구조 파생 >
 자기신고" discipline ``tos.engine.sequencer._bindings_from`` already applies
 to step 12's own bindings, and the same discipline the slice plan's §0
 common rule states directly ("판정은 커널 술어만 한다").
+
+**Review fix (independent review of 39dd3993, LOW-D).**
+:class:`TransmissionCapabilityStage`'s durable RCL entry used to key
+``command_id`` on ``txcap-{capability_id}`` — and ``capability_id`` was
+itself derived from ``attempt.attempt_id``, not the nonce — so a genuine
+nonce collision across two different attempts would never be caught by the
+log's own UNIQUE constraint, even though the fault contract (mirroring
+``tos_runtime.currentness.proof``'s own "nonce reuse refused by the log")
+says nonce reuse is exactly what must be refused. The entry now keys on
+``txcap-{nonce}``. Nonce-level single-use and attempt-level single-issuance
+are two *different* invariants and are enforced two different ways: the
+RCL's own ``command_id`` UNIQUE constraint refuses a **reused nonce**
+(``__call__`` never reaches this stage's own memory for that check); this
+stage's own ``_nonces`` cache additionally refuses a **second capability
+request for an attempt that already has one** (checked first, in memory,
+before any RCL append is attempted) — an attempt is never issued two
+capabilities, and a nonce is never durably reused, and neither guard
+substitutes for the other.
 """
 
 from __future__ import annotations
@@ -34,7 +52,7 @@ from tos.rcl import (
     CommitEntry,
     TransmissionCapability,
 )
-from tos.rcl.commitlog import CommitLog, WriterEpoch
+from tos.rcl.commitlog import CommitLog, LogView, WriterEpoch
 
 __all__ = [
     "AttemptBindVerificationStage",
@@ -151,6 +169,11 @@ class TransmissionCapabilityStage:
         context_reader: Returns the :class:`TransmissionCapabilityContext`
             for ``request``, or ``None`` when unavailable.
         scheme: The canonicalization scheme.
+        nonce_factory: Produces the per-issuance nonce — defaults to
+            ``secrets.token_hex(16)`` (a real random token). Overridable only
+            so a test can force a nonce collision and observe the RCL log's
+            own duplicate-command refusal (LOW-D); production callers should
+            never override this.
     """
 
     def __init__(
@@ -160,11 +183,13 @@ class TransmissionCapabilityStage:
         writer_epoch: WriterEpoch,
         context_reader: Callable[[StageRequest], TransmissionCapabilityContext | None],
         scheme: CanonicalizationScheme = _SCHEME,
+        nonce_factory: Callable[[], str] = lambda: secrets.token_hex(16),
     ) -> None:
         self._log = log
         self._writer_epoch = writer_epoch
         self._context_reader = context_reader
         self._scheme = scheme
+        self._nonce_factory = nonce_factory
         self._nonces: dict[str, str] = {}
 
     def nonce_for(self, attempt_id: str) -> str | None:
@@ -173,47 +198,29 @@ class TransmissionCapabilityStage:
         ``SendBoundaryContext.capability_nonce`` (item 1)."""
         return self._nonces.get(attempt_id)
 
-    def __call__(self, request: StageRequest) -> StageVerdict:
-        attempt = request.attempt
-        if attempt is None:
-            return StageVerdict(
-                step=CommitmentStep.TRANSMISSION_CAPABILITY,
-                outcome=StageOutcome.UNKNOWN,
-                authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
-                reason="no attempt request is bound yet — UNKNOWN, never a pass",
-            )
-
-        context = self._context_reader(request)
-        if (
+    @staticmethod
+    def _context_incomplete(
+        context: TransmissionCapabilityContext | None,
+    ) -> bool:
+        """Whether ``context`` is absent or missing a required field — split
+        out of :meth:`__call__` to stay under the module size budget."""
+        return (
             context is None
             or context.reservation_identity is None
             or context.account_scope is None
             or context.instrument_scope is None
             or context.side_action_scope is None
-        ):
-            return StageVerdict(
-                step=CommitmentStep.TRANSMISSION_CAPABILITY,
-                outcome=StageOutcome.UNKNOWN,
-                authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
-                reason=(
-                    "TransmissionCapabilityContext is absent or incomplete — a "
-                    "missing required fact is a stop, never a skip "
-                    "(RFC-002 §10.8:761)"
-                ),
-            )
+        )
 
-        view = self._log.read_linearizable(writer_epoch=self._writer_epoch)
-        if (
-            not view.epoch
-        ):  # None or 0 (unacquired sentinel, tos_runtime.rcl.log.SqliteCommitLog.current_epoch)
-            return StageVerdict(
-                step=CommitmentStep.TRANSMISSION_CAPABILITY,
-                outcome=StageOutcome.UNKNOWN,
-                authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
-                reason="no Writer Epoch has been acquired — UNKNOWN, never a pass",
-            )
-
-        nonce = secrets.token_hex(16)
+    def _commit_capability(
+        self,
+        attempt: AttemptRequest,
+        context: TransmissionCapabilityContext,
+        view: LogView,
+    ) -> StageVerdict:
+        """Issue + durably commit the capability — split out of
+        :meth:`__call__` to stay under the module size budget."""
+        nonce = self._nonce_factory()
         capability = TransmissionCapability.issue(
             scheme=self._scheme,
             capability_id=f"cap-{attempt.attempt_id}",
@@ -231,7 +238,11 @@ class TransmissionCapabilityStage:
 
         expected_seq = -1 if view.last_seq is None else view.last_seq
         entry = CommitEntry(
-            command_id=f"txcap-{capability.capability_id}",
+            # LOW-D: the RCL idempotency key is the NONCE itself, not the
+            # capability/attempt id — single-use is enforced by the log's
+            # own command_id UNIQUE constraint, mirroring
+            # tos_runtime.currentness.proof's own convention.
+            command_id=f"txcap-{nonce}",
             command_digest=capability.canonical_digest,
             kind=CommandType.AUTHORIZE_TRANSMISSION_CAPABILITY,
             payload_digest=capability.canonical_digest,
@@ -258,3 +269,56 @@ class TransmissionCapabilityStage:
             bound_identity=capability.capability_id,
             reason="single-use TransmissionCapability committed to the RCL",
         )
+
+    def __call__(self, request: StageRequest) -> StageVerdict:
+        attempt = request.attempt
+        if attempt is None:
+            return StageVerdict(
+                step=CommitmentStep.TRANSMISSION_CAPABILITY,
+                outcome=StageOutcome.UNKNOWN,
+                authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
+                reason="no attempt request is bound yet — UNKNOWN, never a pass",
+            )
+
+        # LOW-D: an attempt is single-use for a TransmissionCapability too —
+        # a second request for an attempt that already has one is refused
+        # in memory, before any RCL append is even attempted (a distinct
+        # invariant from the nonce-reuse guard the RCL append enforces
+        # inside _commit_capability).
+        if attempt.attempt_id in self._nonces:
+            return StageVerdict(
+                step=CommitmentStep.TRANSMISSION_CAPABILITY,
+                outcome=StageOutcome.DENY,
+                authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
+                reason=(
+                    "a TransmissionCapability was already issued for this "
+                    "attempt — single-use, never re-issued"
+                ),
+            )
+
+        context = self._context_reader(request)
+        if self._context_incomplete(context):
+            return StageVerdict(
+                step=CommitmentStep.TRANSMISSION_CAPABILITY,
+                outcome=StageOutcome.UNKNOWN,
+                authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
+                reason=(
+                    "TransmissionCapabilityContext is absent or incomplete — a "
+                    "missing required fact is a stop, never a skip "
+                    "(RFC-002 §10.8:761)"
+                ),
+            )
+        assert context is not None  # narrowed by _context_incomplete
+
+        view = self._log.read_linearizable(writer_epoch=self._writer_epoch)
+        if (
+            not view.epoch
+        ):  # None or 0 (unacquired sentinel, tos_runtime.rcl.log.SqliteCommitLog.current_epoch)
+            return StageVerdict(
+                step=CommitmentStep.TRANSMISSION_CAPABILITY,
+                outcome=StageOutcome.UNKNOWN,
+                authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
+                reason="no Writer Epoch has been acquired — UNKNOWN, never a pass",
+            )
+
+        return self._commit_capability(attempt, context, view)

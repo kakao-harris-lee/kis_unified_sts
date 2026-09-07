@@ -46,7 +46,22 @@ silently resolved by force-reuse.
 Fault contract (design #3 §3 "장애 계약"): a non-``TRUSTED`` time snapshot
 refuses vector assembly outright (``state_permits_new_normal_risk``); an
 unacquired Writer Epoch (``read_linearizable`` reports no epoch) also
-refuses. Both return ``None`` rather than a partial/placeholder vector.
+refuses. An empty (acquired-but-nothing-committed) log yields a COMMIT_LOG
+dimension that is honestly **not** established (independent review of
+39dd3993, MEDIUM-B: "nothing committed yet ⇒ nothing current" — no ``-1``
+placeholder standing in for a real generation).
+
+**Owner verdicts are copied, never authored (independent review of 39dd3993,
+MEDIUM-A).** ``tos.cur.CurrentnessDimension.positively_established``'s own
+docstring calls this field "the owner's injected verdict" — the Safety
+Authority and Action Flow Permit dimensions are owned by lanes P/Q, not by
+this assembler, so it must not decide ``positively_established``/
+``restrictive_floor`` for them itself. :class:`DimensionReport` is the exact
+shape those lanes' injected readers return; the assembler only copies its
+fields into a :class:`~tos.cur.CurrentnessDimension` at the shared vector
+revision. A reader returning ``None`` means it could not observe the
+dimension at all — the dimension is omitted from the assembled vector, never
+defaulted to established.
 """
 
 from __future__ import annotations
@@ -75,6 +90,7 @@ from tos_runtime.time.service import TimeServiceNotStarted, TrustworthyTimeServi
 
 __all__ = [
     "CurrentnessAssembler",
+    "DimensionReport",
     "Item3Fields",
     "SingleNodeCommitCertificate",
 ]
@@ -85,6 +101,29 @@ _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 #: check (module docstring "Domain-label honesty") — never the Safety
 #: Authority epoch's own domain string.
 _RCL_COMMITMENT_EPOCH_DOMAIN = "RCL_COMMITMENT_EPOCH"
+
+
+@dataclass(frozen=True)
+class DimensionReport:
+    """One owner's injected currentness verdict for a single §9 dimension
+    (module docstring, MEDIUM-A). The owner decides every field here —
+    ``CurrentnessAssembler`` only copies them into a
+    :class:`~tos.cur.CurrentnessDimension` at the shared vector revision; it
+    never authors ``positively_established``/``restrictive_floor`` for a
+    dimension it does not itself own.
+
+    For the Safety Authority dimension, the natural owner-side construction
+    is ``positively_established=tos.authority.predicates.currentness_admissible
+    (witness)`` over that service's own :class:`~tos.authority.CurrentnessWitness`
+    — never a bare "state exists" check. ``restrictive_floor`` is the
+    owner's own explicit choice (Phase 2 has no floor-governance runtime
+    yet, so an owner reporting ``0`` is that owner's deliberate statement,
+    never one this assembler invents on the owner's behalf).
+    """
+
+    bound_generation: int | None
+    positively_established: bool
+    restrictive_floor: int
 
 
 @dataclass(frozen=True)
@@ -134,14 +173,17 @@ class CurrentnessAssembler:
             ``MANDATED_DIMENSION_FLOOR`` by the kernel's own
             :func:`~tos.cur.predicates.vector_complete` — this class does not
             re-floor it).
-        authority_epoch_reader: Injected callable returning the Safety
-            Authority epoch state, or ``None`` when unavailable — **never**
-            an import of ``tos_runtime.authority`` (lane P's own package;
-            cross-lane inputs are injected callables only, per the
-            coordinator's task brief).
-        permit_seq_reader: Injected callable returning the current Action
-            Flow Permit RCL seq, or ``None`` when unavailable — never an
-            import of ``tos_runtime.risk`` (lane Q's own package).
+        authority_dimension_reader: Injected callable returning lane P's own
+            :class:`DimensionReport` for the Safety Authority dimension, or
+            ``None`` when unavailable — **never** an import of
+            ``tos_runtime.authority`` (lane P's own package; cross-lane
+            inputs are injected callables only, per the coordinator's task
+            brief). The reader, not this assembler, decides
+            ``positively_established``/``restrictive_floor`` (MEDIUM-A).
+        action_flow_dimension_reader: Injected callable returning lane Q's
+            own :class:`DimensionReport` for the Action Flow Permit
+            dimension, analogously — never an import of ``tos_runtime.risk``
+            (lane Q's own package).
         scheme: The canonicalization scheme digests are computed under.
     """
 
@@ -153,8 +195,8 @@ class CurrentnessAssembler:
         writer_epoch: WriterEpoch,
         policy: CurrentnessPolicy,
         mandated: frozenset[DimensionKey],
-        authority_epoch_reader: Callable[[], AuthorityEpochState | None],
-        permit_seq_reader: Callable[[], int | None],
+        authority_dimension_reader: Callable[[], DimensionReport | None],
+        action_flow_dimension_reader: Callable[[], DimensionReport | None],
         scheme: CanonicalizationScheme = _SCHEME,
     ) -> None:
         self._log = log
@@ -162,8 +204,8 @@ class CurrentnessAssembler:
         self._writer_epoch = writer_epoch
         self._policy = policy
         self._mandated = mandated
-        self._authority_epoch_reader = authority_epoch_reader
-        self._permit_seq_reader = permit_seq_reader
+        self._authority_dimension_reader = authority_dimension_reader
+        self._action_flow_dimension_reader = action_flow_dimension_reader
         self._scheme = scheme
 
     def commit_certificate(self) -> SingleNodeCommitCertificate | None:
@@ -200,23 +242,32 @@ class CurrentnessAssembler:
         self,
         *,
         view: LogView,
-        effective_seq: int,
         revision: CurrentnessRevision,
         snapshot: TimeHealthSnapshot,
     ) -> list[CurrentnessDimension]:
         """The two dimensions this process can always structurally observe
         (RCL, Trustworthy Time) — split out of :meth:`assemble` to stay
-        under the module size budget."""
+        under the module size budget.
+
+        COMMIT_LOG's ``positively_established`` is ``view.last_seq is not
+        None`` — an empty (acquired-but-nothing-committed) log has nothing
+        current to report (MEDIUM-B), never a ``-1`` placeholder standing in
+        for a real generation. TRUSTWORTHY_TIME's ``positively_established``
+        is unconditionally ``True`` here because :meth:`assemble` already
+        refused to reach this point unless ``snapshot.health_state`` is
+        genuinely ``TRUSTED`` — a structural derivation from the real
+        TrustworthyTimeService state, not an invented default.
+        """
         return [
             CurrentnessDimension(
                 dimension_key=DimensionKey.COMMIT_LOG,
                 owner_identity="tos_runtime.rcl",
-                bound_generation=effective_seq,
+                bound_generation=view.last_seq,
                 bound_digest=self._scheme.compute_digest(
                     {"epoch": view.epoch, "last_seq": view.last_seq}
                 ),
                 restrictive_floor=0,
-                positively_established=True,
+                positively_established=view.last_seq is not None,
                 at_revision=revision,
             ),
             CurrentnessDimension(
@@ -230,51 +281,65 @@ class CurrentnessAssembler:
             ),
         ]
 
+    @staticmethod
+    def _dimension_from_report(
+        report: DimensionReport | None,
+        *,
+        dimension_key: DimensionKey,
+        owner_identity: str,
+        revision: CurrentnessRevision,
+        scheme: CanonicalizationScheme,
+    ) -> CurrentnessDimension | None:
+        """Copy an injected owner :class:`DimensionReport` into a
+        :class:`~tos.cur.CurrentnessDimension` verbatim — this assembler
+        authors none of ``positively_established``/``restrictive_floor``
+        itself (MEDIUM-A). ``None`` in, ``None`` out: an owner that could
+        not observe its own dimension contributes nothing, never a
+        defaulted-established placeholder."""
+        if report is None:
+            return None
+        return CurrentnessDimension(
+            dimension_key=dimension_key,
+            owner_identity=owner_identity,
+            bound_generation=report.bound_generation,
+            bound_digest=scheme.compute_digest(
+                {
+                    "dimension_key": dimension_key.value,
+                    "bound_generation": report.bound_generation,
+                }
+            ),
+            restrictive_floor=report.restrictive_floor,
+            positively_established=report.positively_established,
+            at_revision=revision,
+        )
+
     def _injected_dimensions(
         self, *, revision: CurrentnessRevision
     ) -> list[CurrentnessDimension]:
         """The Safety Authority / Action Flow Permit dimensions, present only
-        when their injected readers return a concrete value — split out of
-        :meth:`assemble` to stay under the module size budget."""
+        when their injected readers return a :class:`DimensionReport` —
+        split out of :meth:`assemble` to stay under the module size budget.
+        """
         dimensions: list[CurrentnessDimension] = []
+        authority_dimension = self._dimension_from_report(
+            self._authority_dimension_reader(),
+            dimension_key=DimensionKey.SAFETY_AUTHORITY,
+            owner_identity="tos_runtime.authority",
+            revision=revision,
+            scheme=self._scheme,
+        )
+        if authority_dimension is not None:
+            dimensions.append(authority_dimension)
 
-        authority_state = self._authority_epoch_reader()
-        if (
-            authority_state is not None
-            and authority_state.current_epoch_floor is not None
-        ):
-            dimensions.append(
-                CurrentnessDimension(
-                    dimension_key=DimensionKey.SAFETY_AUTHORITY,
-                    owner_identity="tos_runtime.authority",
-                    bound_generation=authority_state.current_epoch_floor,
-                    bound_digest=self._scheme.compute_digest(
-                        {
-                            "domain": authority_state.authority_domain,
-                            "floor": authority_state.current_epoch_floor,
-                        }
-                    ),
-                    restrictive_floor=0,
-                    positively_established=True,
-                    at_revision=revision,
-                )
-            )
-
-        permit_seq = self._permit_seq_reader()
-        if permit_seq is not None:
-            dimensions.append(
-                CurrentnessDimension(
-                    dimension_key=DimensionKey.ACTION_FLOW,
-                    owner_identity="tos_runtime.risk",
-                    bound_generation=permit_seq,
-                    bound_digest=self._scheme.compute_digest(
-                        {"permit_seq": permit_seq}
-                    ),
-                    restrictive_floor=0,
-                    positively_established=True,
-                    at_revision=revision,
-                )
-            )
+        action_flow_dimension = self._dimension_from_report(
+            self._action_flow_dimension_reader(),
+            dimension_key=DimensionKey.ACTION_FLOW,
+            owner_identity="tos_runtime.risk",
+            revision=revision,
+            scheme=self._scheme,
+        )
+        if action_flow_dimension is not None:
+            dimensions.append(action_flow_dimension)
         return dimensions
 
     def assemble(
@@ -316,20 +381,17 @@ class CurrentnessAssembler:
             not view.epoch
         ):  # None or 0 (unacquired sentinel, tos_runtime.rcl.log.SqliteCommitLog.current_epoch)
             return None
-        last_seq = view.last_seq
-        # -1 is the log's own "empty" sentinel (SqliteCommitLog.append_cas's
-        # own `expected_seq=-1` convention for an empty log) — a concrete,
-        # ORDERED value rather than None, so an empty-but-acquired log is
-        # honestly "established at seq -1", not "unestablished" (a None
-        # bound_generation would make dimension_positively_established fail
-        # closed even though the log's state IS positively known: empty).
-        effective_seq = -1 if last_seq is None else last_seq
+        # The revision identity carries whatever last_seq IS (including
+        # None for an empty log) — it is a shared ORDERING label every
+        # dimension must sit at (single_revision_consistent), not itself a
+        # claim of establishment; COMMIT_LOG's own establishment is decided
+        # separately in _owned_dimensions (MEDIUM-B — no -1 placeholder).
         revision = CurrentnessRevision(
-            revision_id=f"rev-{view.epoch}-{effective_seq}", commit_index=effective_seq
+            revision_id=f"rev-{view.epoch}-{view.last_seq}", commit_index=view.last_seq
         )
 
         dimensions = self._owned_dimensions(
-            view=view, effective_seq=effective_seq, revision=revision, snapshot=snapshot
+            view=view, revision=revision, snapshot=snapshot
         )
         dimensions.extend(self._injected_dimensions(revision=revision))
         dimensions.extend(extra_dimensions)
@@ -338,13 +400,13 @@ class CurrentnessAssembler:
         vector_digest = self._scheme.compute_digest(
             {
                 "epoch": view.epoch,
-                "last_seq": last_seq,
+                "last_seq": view.last_seq,
                 "dimension_count": len(dims_tuple),
             }
         )
         issued = SafetyCurrentnessVector.issue(
             scheme=self._scheme,
-            vector_id=f"vec-{view.epoch}-{last_seq}",
+            vector_id=f"vec-{view.epoch}-{view.last_seq}",
             currentness_revision=revision,
             vector_digest=vector_digest,
             policy_id=self._policy.policy_id,
