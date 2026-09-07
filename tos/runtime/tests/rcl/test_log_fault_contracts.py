@@ -7,6 +7,7 @@ slice plan calls out by name ("plus: evidence-append failure ...").
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -111,6 +112,81 @@ def test_fault_2_duplicate_command_id_different_bytes_is_contained_conflict(
     second = log.append_cas(
         conflicting_entry, expected_seq=first.seq, writer_epoch=epoch
     )
+    assert isinstance(second, AppendRefusal)
+    assert second.reason == AppendRefusalReason.COMMAND_BYTES_MISMATCH
+
+
+# ============================================================================
+# MEDIUM-3 (independent review, 2026-09-08) — a NULL command_digest on an
+# EXISTING row must not collapse into "no prior entry" and reach the
+# entries.command_id UNIQUE constraint unclassified.
+#
+# Red-before proof (empirically verified against the pre-fix code in a
+# scratch worktree at the commit under review, 2026-09-08): the exact repro
+# below returned ``AppendRefusal(reason=PARTIAL_COMMIT_SUSPECTED,
+# detail="IntegrityError('UNIQUE constraint failed: entries.command_id')")``
+# before this fix — the fix makes it ``DUPLICATE_COMMAND_ID`` instead.
+# ============================================================================
+
+
+def test_null_digest_duplicate_command_is_classified_as_duplicate_not_partial_commit(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    epoch = log.acquire_epoch(identity)
+    entry = CommitEntry(
+        command_id="cmd-1", command_digest=None, kind=CommandType.COMMIT_RESERVATION
+    )
+    first = log.append_cas(entry, expected_seq=-1, writer_epoch=epoch)
+    assert isinstance(first, AppendReceipt)
+
+    second = log.append_cas(entry, expected_seq=first.seq, writer_epoch=epoch)
+
+    assert isinstance(second, AppendRefusal)
+    assert second.reason == AppendRefusalReason.DUPLICATE_COMMAND_ID
+
+
+def test_null_digest_then_non_null_digest_is_command_bytes_mismatch(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    epoch = log.acquire_epoch(identity)
+    first_entry = CommitEntry(
+        command_id="cmd-1", command_digest=None, kind=CommandType.COMMIT_RESERVATION
+    )
+    first = log.append_cas(first_entry, expected_seq=-1, writer_epoch=epoch)
+    assert isinstance(first, AppendReceipt)
+
+    conflicting_entry = CommitEntry(
+        command_id="cmd-1",
+        command_digest="dig-not-null",
+        kind=CommandType.COMMIT_RESERVATION,
+    )
+    second = log.append_cas(
+        conflicting_entry, expected_seq=first.seq, writer_epoch=epoch
+    )
+
+    assert isinstance(second, AppendRefusal)
+    assert second.reason == AppendRefusalReason.COMMAND_BYTES_MISMATCH
+
+
+def test_non_null_digest_then_null_digest_is_command_bytes_mismatch(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    epoch = log.acquire_epoch(identity)
+    first_entry = CommitEntry(
+        command_id="cmd-1",
+        command_digest="dig-not-null",
+        kind=CommandType.COMMIT_RESERVATION,
+    )
+    first = log.append_cas(first_entry, expected_seq=-1, writer_epoch=epoch)
+    assert isinstance(first, AppendReceipt)
+
+    conflicting_entry = CommitEntry(
+        command_id="cmd-1", command_digest=None, kind=CommandType.COMMIT_RESERVATION
+    )
+    second = log.append_cas(
+        conflicting_entry, expected_seq=first.seq, writer_epoch=epoch
+    )
+
     assert isinstance(second, AppendRefusal)
     assert second.reason == AppendRefusalReason.COMMAND_BYTES_MISMATCH
 
@@ -222,6 +298,56 @@ def test_fault_4_crash_after_commit_before_receipt_leaves_entry_durable(
 
 
 # ============================================================================
+# LOW (independent review, 2026-09-08) — evidence append durably commits to
+# its own file before this log's own COMMIT; a failure AFTER that append but
+# still inside this transaction rolls back only the RCL side. Evidence may
+# therefore over-record an entry this log itself never holds — but the log
+# can never hold an entry without a prior successful evidence append.
+# ============================================================================
+
+
+def test_evidence_over_records_but_never_under_records_on_post_evidence_rollback(
+    log_path: Path, evidence_port: FakeEvidenceAppendPort, identity: RuntimeIdentity
+) -> None:
+    def crash_after_evidence_before_commit(point: str) -> None:
+        if point == "before_commit":
+            # By this point the evidence_port.append() call has already
+            # returned successfully (it happens earlier in _commit_entry,
+            # before this hook is called) — this simulates a crash in the
+            # narrow window between that success and this log's own COMMIT.
+            raise InjectedCrash(
+                "simulated crash after evidence append, before RCL commit"
+            )
+
+    crashing_log = SqliteCommitLog(
+        log_path,
+        evidence_port=evidence_port,
+        crash_hook=crash_after_evidence_before_commit,
+    )
+    epoch = crashing_log.acquire_epoch(identity)
+    entry = CommitEntry(
+        command_id="cmd-1", command_digest="dig-1", kind=CommandType.COMMIT_RESERVATION
+    )
+    with pytest.raises(InjectedCrash):
+        crashing_log.append_cas(entry, expected_seq=-1, writer_epoch=epoch)
+    crashing_log.close()
+
+    # Evidence store holds the record — it over-recorded an attempt that was
+    # then abandoned.
+    assert len(evidence_port.calls) == 1
+    recorded_payload, _kind, _record_class = evidence_port.calls[0]
+    assert recorded_payload["command_id"] == "cmd-1"
+
+    # But the RCL log itself holds NO entry — it never under-records the
+    # reverse (an entry can never exist here without a prior evidence record).
+    reopened = SqliteCommitLog(log_path, evidence_port=evidence_port)
+    try:
+        assert list(reopened.replay()) == []
+    finally:
+        reopened.close()
+
+
+# ============================================================================
 # ⑤ replay does not reproduce held state -> CommitLogCorruption
 # ============================================================================
 
@@ -262,6 +388,76 @@ def test_fault_5_replay_mismatch_raises_commit_log_corruption(
 
 def test_fault_5_verify_replay_passes_on_empty_log(log: SqliteCommitLog) -> None:
     log.verify_replay()  # no reservations at all — trivially consistent
+
+
+# ============================================================================
+# MEDIUM-4 (independent review, 2026-09-08) — the replay fold must not be
+# forgeable via a plain append_cas call's public payload_json argument.
+# ============================================================================
+
+
+def test_ghost_reservation_payload_via_append_cas_does_not_forge_corruption(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    """A plain ``append_cas`` call whose ``payload_json`` happens to decode to
+    ``{"reservation_id": ..., "to_state": ...}`` must NOT be folded into
+    ``verify_replay``'s reservation-state reconstruction — before the fix
+    this forged a ``CommitLogCorruption`` on an otherwise healthy, untouched
+    log (the entry's ``is_reservation_transition`` column, never
+    caller-settable, is what now excludes it).
+    """
+    epoch = log.acquire_epoch(identity)
+    ghost_payload_json = json.dumps(
+        {"reservation_id": "GHOST", "to_state": CapacityState.RELEASED.value}
+    )
+    entry = CommitEntry(
+        command_id="cmd-1", command_digest="dig-1", kind=CommandType.COMMIT_RESERVATION
+    )
+
+    result = log.append_cas(
+        entry, expected_seq=-1, writer_epoch=epoch, payload_json=ghost_payload_json
+    )
+
+    assert isinstance(result, AppendReceipt)
+    # No reservation was ever actually created (nothing went through
+    # apply_reservation_transition), and verify_replay must not disagree.
+    assert {rid: state for rid, state, _seq in log.reservation_rows()} == {}
+    log.verify_replay()  # must NOT raise
+
+
+def test_genuine_reservations_row_tamper_still_raises_after_medium_4_fix(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    """Regression guard: a REAL disagreement (the held ``reservations`` row
+    tampered directly, bypassing this log's own API) must still be detected
+    — the MEDIUM-4 fix narrows what is folded IN, it must not also silence a
+    genuine mismatch.
+    """
+    epoch = log.acquire_epoch(identity)
+    transition = CapacityReservationTransition(
+        reservation_id="res-1",
+        writer_epoch=epoch,
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.ATTEMPT_BOUND,
+    )
+    result = log.apply_reservation_transition(
+        transition,
+        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        command_type=CommandType.BIND_ATTEMPT,
+        command_id="cmd-1",
+        command_digest="dig-1",
+        expected_seq=-1,
+    )
+    assert isinstance(result, AppendReceipt)
+    log.verify_replay()  # legitimate — passes
+
+    log._conn.execute(
+        "UPDATE reservations SET state = ? WHERE reservation_id = ?",
+        (CapacityState.QUARANTINED_UNKNOWN.value, "res-1"),
+    )
+
+    with pytest.raises(CommitLogCorruption):
+        log.verify_replay()
 
 
 # ============================================================================

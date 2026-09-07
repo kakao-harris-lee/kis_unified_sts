@@ -6,6 +6,24 @@ single sqlite3 file, **separate from the evidence store's own file** (design
 #40 D3.1 "장애 도메인 분리"): ``journal_mode=WAL``, ``synchronous=FULL``, every
 mutation inside ``BEGIN IMMEDIATE`` ... ``COMMIT``.
 
+**Module layout note (size-budget decomposition, 2026-09-08).** The sqlite
+schema DDL/triggers live in :mod:`tos_runtime.rcl.schema`, and the pre-insert
+gate + replay-fold helpers (reservation from_state checking, duplicate-command
+classification, the replay fold itself) live in :mod:`tos_runtime.rcl.gates`
+— both extracted purely to keep this module under the repo's 1000-line
+module size budget (``tools/tos_size_budget.py``). No behavior changed by
+that extraction: every function there is called from exactly the places it
+used to be, over the exact same ``sqlite3.Connection``, inside the exact
+same transactions. Likewise, :meth:`SqliteCommitLog._commit_entry` was split
+into three sequentially-called private methods
+(:meth:`~SqliteCommitLog._pre_insert_checks`,
+:meth:`~SqliteCommitLog._insert_entry_and_reservation`,
+:meth:`~SqliteCommitLog._append_evidence_or_refuse`) to keep each under the
+100-line function size budget — **the ``BEGIN IMMEDIATE`` ... ``COMMIT``
+transaction boundary is unchanged**: all three still run synchronously
+inside the one ``try`` block :meth:`_commit_entry` opens, on the same
+connection, before that same ``COMMIT``.
+
 Fault-contract table (slice plan §1 "장애 계약"; column = how this module
 satisfies it):
 
@@ -28,7 +46,14 @@ Contract  How :class:`SqliteCommitLog` satisfies it
          identical bytes => ``DUPLICATE_COMMAND_ID`` (idempotent,
          contains no new effect); differing bytes =>
          ``COMMAND_BYTES_MISMATCH`` (contained conflict, never
-         last-write-wins).
+         last-write-wins). A stored ``command_digest`` of ``NULL`` is a
+         real prior entry, not "no prior entry" —
+         :func:`tos_runtime.rcl.gates.existing_command_row` reports
+         row-existence separately from the (possibly ``NULL``) digest so
+         :func:`tos_runtime.rcl.gates.classify_duplicate_command` never
+         lets a second ``command_digest=None`` append reach the
+         ``UNIQUE`` constraint unclassified (independent review
+         MEDIUM-3, 2026-09-08).
 ③        A file the process cannot open/lock (e.g. another connection
          holding an unreleased ``BEGIN IMMEDIATE`` reservation on the
          same file) makes ``BEGIN IMMEDIATE`` itself raise
@@ -53,6 +78,11 @@ Contract  How :class:`SqliteCommitLog` satisfies it
          :func:`tos.rcl.replay_reproduces_state`; any disagreement
          raises :class:`CommitLogCorruption` (the caller decides
          non-live disposition — this module only detects and reports).
+         The fold reads ONLY entries whose ``is_reservation_transition``
+         column is ``1`` (see "the replay fold is discriminated, not
+         payload-shape-matched" below) — a plain :meth:`append_cas` entry
+         can never be folded in, no matter what ``payload_json`` string a
+         caller supplies.
 ⑥        The log **never reads a clock to order anything** —
          ``issued_at_monotonic_ns`` on ``epochs`` is record-only
          (informational); every ordering coordinate (``epoch`` via
@@ -71,6 +101,86 @@ Contract  How :class:`SqliteCommitLog` satisfies it
          kernel's own "no third outcome" contract, ``commitlog.py``
          line 33-34).
 =======  ============================================================
+
+**A claimed ``from_state`` is checked against the held record, in-transaction
+(independent review HIGH-1, 2026-09-08).** :meth:`apply_reservation_transition`'s
+three kernel gates (structural legality, cause admissibility, release
+admissibility) all operate purely on the caller's *claimed*
+``transition.from_state`` — none of them reads what this log actually holds
+for ``reservation_id``. Left unchecked, a caller could submit a stale or
+simply mistaken ``from_state`` that happens to be structurally legal and
+cause-admissible (e.g. claiming ``COMMITTED_UNBOUND -> POTENTIALLY_LIVE`` for
+a reservation this log already holds at ``RELEASED``) and have it silently
+admitted — an automatic re-arm of a finalized reservation, exactly what
+ADR-002-012 line 37 forbids ("SHALL NOT automatically re-arm... or revive a
+prior capability"). :func:`tos_runtime.rcl.gates.check_reservation_from_state`
+closes this in the SAME ``BEGIN IMMEDIATE`` transaction as the write: when a
+row already exists for ``reservation_id``, the claimed ``from_state`` MUST
+equal the held ``state`` exactly, or the transition is refused; when no row
+exists yet, the claimed ``from_state`` must be one of
+:data:`tos_runtime.rcl.gates.INITIAL_RESERVATION_STATES` (a transition cannot
+originate from a state that was never held). This mirrors
+``tos.engine.state.ProvisionalReservationLedger._store``'s own forward-only,
+held-state-aware discipline (``engine/state.py`` lines 219-233 refuse a
+RANK regression against the held projection) — the sibling check a
+persistent, multi-writer log additionally needs is refusing a claim that
+disagrees with the held record at all, not only one that regresses its rank.
+No kernel ``AppendRefusalReason`` member names "claimed from_state disagrees
+with the held record" (the closed vocabulary is CAS-fencing / idempotency /
+storage-failure only); ``INTEGRITY_VIOLATION`` is reused for it rather than
+inventing a kernel member, because a from_state that disagrees with the held
+record is exactly the same integrity concern :func:`replay_reproduces_state`
+(fault ⑤) detects independently after the fact — this check catches it
+before admission instead of after.
+
+**The replay fold is discriminated, not payload-shape-matched (independent
+review MEDIUM-4, 2026-09-08).** :func:`tos_runtime.rcl.gates.fold_reservations_from_entries`
+(fault ⑤'s independent re-fold) used to select entries by SHAPE — any row
+whose ``payload_json`` happened to decode to an object containing
+``reservation_id`` and ``to_state`` keys. But ``payload_json`` is a public,
+caller-supplied argument of :meth:`append_cas` (the kernel ``CommitLog``
+Protocol method — any caller may pass any string there), so a plain
+``append_cas`` call with a crafted ``payload_json`` like
+``'{"reservation_id": "GHOST", "to_state": "RELEASED"}'`` would be folded in
+as if it were a real reservation transition, inventing a "GHOST" reservation
+that disagrees with the (unaffected) ``reservations`` table and forging a
+:class:`CommitLogCorruption` on an otherwise healthy log. A ``kind`` value
+was considered and rejected as the discriminator: ``kind`` on a plain
+``append_cas`` entry is *also* a caller-supplied ``CommandType`` (via
+``CommitEntry.kind``), so a caller could equally well set ``kind`` to
+whatever value this module might have picked to mean "reservation
+transition" — ``kind`` cannot distinguish "went through
+:meth:`apply_reservation_transition`" from "a plain ``append_cas`` caller
+chose a matching ``CommandType``" any more than payload shape can. The fix
+is a dedicated ``entries.is_reservation_transition`` column instead:
+:meth:`_insert_entry_and_reservation` sets it to ``1`` iff its own internal
+``reservation_update`` parameter is not ``None`` — a value :meth:`append_cas`
+NEVER supplies (it always passes ``reservation_update=None``) and that is
+not exposed as a public parameter of either :meth:`append_cas` or
+:meth:`apply_reservation_transition`, so no caller of the public API can
+ever set it, regardless of what ``payload_json``/``kind`` they choose.
+:func:`~tos_runtime.rcl.gates.fold_reservations_from_entries` reads only
+rows where this column is ``1``.
+
+**Evidence may over-record, but never under-records, on a post-evidence RCL
+failure (independent review LOW, 2026-09-08).** :meth:`_append_evidence_or_refuse`
+calls ``self._evidence_port.append(...)`` — a durable write to the EVIDENCE
+STORE'S OWN, separate sqlite file/connection (design #40 D3.1 "장애 도메인
+분리") — before this log's own ``COMMIT``. If the evidence append succeeds
+but something afterward in THIS transaction fails (the ``crash_hook``
+raising, or ``COMMIT`` itself raising a genuine :class:`sqlite3.Error`), this
+log's own ``ROLLBACK`` undoes the ``entries``/``reservations`` rows, but
+CANNOT undo the evidence store's already-committed record (it lives in a
+different file entirely — that is the whole point of D3.1's domain
+separation). The result: the evidence store may hold a record for an entry
+that, from this log's perspective, never existed. This is the deliberately
+CONSERVATIVE direction and is accepted as-is (an evidence record for an
+attempt that was later abandoned is over-reporting, never a lie of
+omission) — but the reverse can never happen: this log never holds an entry
+without a PRIOR successful evidence append (the evidence-append failure
+path, just above, refuses and rolls back before any entries/reservations row
+is left committed). See
+``test_evidence_over_records_but_never_under_records_on_post_evidence_rollback``.
 
 **Reservation-lifecycle refusal is a separate, runtime-local vocabulary
 (anti-phantom decision).** :meth:`apply_reservation_transition` gates a
@@ -113,7 +223,8 @@ platforms) and every correctness guarantee above comes from the
 Firewall: stdlib (``sqlite3``, ``json``, ``time``, ``fcntl``) + ``pydantic``
 (transitively, via ``tos.rcl``/``tos.canonical``/``tos.workload`` models) +
 ``tos.canonical``/``tos.rcl``/``tos.workload`` + ``tos_runtime.evidence``
-(the ``EvidenceAppendPort`` seam) only (R1 allowlist).
+(the ``EvidenceAppendPort`` seam) + ``tos_runtime.rcl`` (self — ``schema``/
+``gates`` siblings) only (R1 allowlist).
 """
 
 from __future__ import annotations
@@ -121,7 +232,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -138,7 +249,6 @@ from tos.rcl import (
     LogView,
     TransitionCause,
     WriterEpoch,
-    duplicate_command,
     release_admissible,
     replay_reproduces_state,
     reservation_transition_structurally_legal,
@@ -148,6 +258,19 @@ from tos.rcl import (
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.evidence.ports import EvidenceAppendPort
+from tos_runtime.rcl.gates import (
+    check_reservation_from_state,
+    classify_duplicate_command,
+    digest_of_reservation_map,
+    existing_command_row,
+    fold_reservations_from_entries,
+)
+from tos_runtime.rcl.schema import (
+    CREATE_ENTRIES_TABLE_SQL,
+    CREATE_EPOCHS_TABLE_SQL,
+    CREATE_RESERVATIONS_TABLE_SQL,
+    NO_MUTATION_TRIGGERS_SQL,
+)
 
 __all__ = [
     "CommitLogCorruption",
@@ -164,76 +287,6 @@ __all__ = [
 #: registered EV-L1 provisional scheme for the reservations-state digest
 #: :meth:`SqliteCommitLog.verify_replay` folds and compares.
 _CANONICALIZATION_VERSION = EV_L1_PROVISIONAL_VERSION
-
-_CREATE_EPOCHS_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS epochs (
-    epoch INTEGER PRIMARY KEY,
-    issued_at_monotonic_ns INTEGER NOT NULL,
-    runtime_generation INTEGER,
-    runtime_identity_json TEXT
-)
-"""
-
-_CREATE_ENTRIES_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS entries (
-    seq INTEGER PRIMARY KEY,
-    writer_epoch INTEGER NOT NULL,
-    command_id TEXT NOT NULL UNIQUE,
-    command_digest TEXT,
-    kind TEXT,
-    payload_digest TEXT,
-    payload_json TEXT
-)
-"""
-
-_CREATE_RESERVATIONS_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS reservations (
-    reservation_id TEXT PRIMARY KEY,
-    state TEXT NOT NULL,
-    last_seq INTEGER NOT NULL
-)
-"""
-
-_NO_MUTATION_TRIGGERS_SQL: tuple[str, ...] = (
-    """
-    CREATE TRIGGER IF NOT EXISTS epochs_no_update
-    BEFORE UPDATE ON epochs
-    BEGIN
-        SELECT RAISE(ABORT, 'tos_runtime rcl log: epochs is append-only — UPDATE forbidden');
-    END
-    """,
-    """
-    CREATE TRIGGER IF NOT EXISTS epochs_no_delete
-    BEFORE DELETE ON epochs
-    BEGIN
-        SELECT RAISE(ABORT, 'tos_runtime rcl log: epochs is append-only — DELETE forbidden');
-    END
-    """,
-    """
-    CREATE TRIGGER IF NOT EXISTS entries_no_update
-    BEFORE UPDATE ON entries
-    BEGIN
-        SELECT RAISE(ABORT, 'tos_runtime rcl log: entries is append-only — UPDATE forbidden');
-    END
-    """,
-    """
-    CREATE TRIGGER IF NOT EXISTS entries_no_delete
-    BEFORE DELETE ON entries
-    BEGIN
-        SELECT RAISE(ABORT, 'tos_runtime rcl log: entries is append-only — DELETE forbidden');
-    END
-    """,
-    # reservations is the ONE mutable projection table (design #40 D2.1 "컴팩션/
-    # 보존: 항목 삭제 0" + slice plan §1 item 6 "reservations 만 UPDATE 허용
-    # (그것이 투영)") — UPDATE is deliberately NOT blocked here; only DELETE is.
-    """
-    CREATE TRIGGER IF NOT EXISTS reservations_no_delete
-    BEFORE DELETE ON reservations
-    BEGIN
-        SELECT RAISE(ABORT, 'tos_runtime rcl log: reservations rows are never deleted');
-    END
-    """,
-)
 
 
 class CommitLogCorruption(RuntimeError):
@@ -352,10 +405,10 @@ class SqliteCommitLog:
         )
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
-        self._conn.execute(_CREATE_EPOCHS_TABLE_SQL)
-        self._conn.execute(_CREATE_ENTRIES_TABLE_SQL)
-        self._conn.execute(_CREATE_RESERVATIONS_TABLE_SQL)
-        for trigger_sql in _NO_MUTATION_TRIGGERS_SQL:
+        self._conn.execute(CREATE_EPOCHS_TABLE_SQL)
+        self._conn.execute(CREATE_ENTRIES_TABLE_SQL)
+        self._conn.execute(CREATE_RESERVATIONS_TABLE_SQL)
+        for trigger_sql in NO_MUTATION_TRIGGERS_SQL:
             self._conn.execute(trigger_sql)
 
     # -- lifecycle -------------------------------------------------------
@@ -631,7 +684,7 @@ class SqliteCommitLog:
             payload_json=payload_json,
             evidence_kind="RCL_RESERVATION_TRANSITION",
             evidence_record_class="RCL_RESERVATION",
-            reservation_update=(transition.reservation_id, to_state),
+            reservation_update=(transition.reservation_id, from_state, to_state),
         )
 
     def reservation_rows(self) -> Iterator[tuple[str, CapacityState, int]]:
@@ -658,9 +711,9 @@ class SqliteCommitLog:
             reservation_id: state.value
             for reservation_id, state, _ in self.reservation_rows()
         }
-        held_digest = self._digest_of_reservation_map(held)
-        replayed_digest = self._digest_of_reservation_map(
-            self._fold_reservations_from_entries()
+        held_digest = digest_of_reservation_map(self._canon_scheme, held)
+        replayed_digest = digest_of_reservation_map(
+            self._canon_scheme, fold_reservations_from_entries(self._conn)
         )
         reason = replay_reproduces_state(replayed_digest, held_digest)
         if reason is not None:
@@ -669,26 +722,6 @@ class SqliteCommitLog:
                 "reservations state disagrees with the held projection (non-live "
                 "disposition is the caller's responsibility, ADR-002-012 :491)"
             )
-
-    def _fold_reservations_from_entries(self) -> dict[str, str]:
-        """Re-derive the final ``{reservation_id: to_state}`` map by replaying every entry."""
-        rows = self._conn.execute(
-            "SELECT payload_json FROM entries WHERE payload_json IS NOT NULL ORDER BY seq ASC"
-        ).fetchall()
-        folded: dict[str, str] = {}
-        for (payload_json,) in rows:
-            payload = json.loads(payload_json)
-            reservation_id = payload.get("reservation_id")
-            to_state = payload.get("to_state")
-            if reservation_id is not None and to_state is not None:
-                folded[reservation_id] = to_state
-        return folded
-
-    def _digest_of_reservation_map(self, mapping: Mapping[str, str]) -> str:
-        """Canonical digest of a ``{reservation_id: state}`` map (sorted, deterministic)."""
-        return self._canon_scheme.compute_digest(
-            {"reservations": dict(sorted(mapping.items()))}
-        )
 
     # -- internals ---------------------------------------------------------
 
@@ -702,17 +735,161 @@ class SqliteCommitLog:
         row = self._conn.execute("SELECT MAX(seq) FROM entries").fetchone()
         return -1 if row is None or row[0] is None else int(row[0])
 
-    def _existing_digest_for_command(self, command_id: str) -> str | None:
-        row = self._conn.execute(
-            "SELECT command_digest FROM entries WHERE command_id = ?", (command_id,)
-        ).fetchone()
-        return None if row is None else row[0]
-
     def _safe_rollback(self) -> None:
         try:
             self._conn.execute("ROLLBACK")
         except sqlite3.Error:
             pass
+
+    def _pre_insert_checks(
+        self,
+        *,
+        writer_epoch: WriterEpoch,
+        expected_seq: int,
+        command_id: str,
+        command_digest: str | None,
+        reservation_update: tuple[str, CapacityState, CapacityState] | None,
+    ) -> AppendRefusal | None:
+        """Fence + CAS + duplicate + reservation-gate checks, in that order.
+
+        Split out of :meth:`_commit_entry` for the 100-line function size
+        budget (operator size-budget decomposition, 2026-09-08) — the
+        transaction boundary is UNCHANGED: this must still be called from
+        inside the same ``BEGIN IMMEDIATE`` transaction :meth:`_commit_entry`
+        holds (every read here — ``current_epoch()``, ``_current_seq_tip()``,
+        the ``reservations`` lookup — is consistent only within that one
+        transaction), and nothing is written by this method itself (faults
+        ①②, HIGH-1).
+
+        Returns:
+            An :class:`~tos.rcl.AppendRefusal` the instant any check fails
+            (nothing yet written), or ``None`` to proceed with the insert.
+        """
+        current = self.current_epoch()
+        stale_reason = stale_writer_epoch(current, writer_epoch)
+        if stale_reason is not None:
+            return AppendRefusal(reason=stale_reason)
+        tip = self._current_seq_tip()
+        if expected_seq != tip:
+            return AppendRefusal(
+                reason=AppendRefusalReason.SEQ_MISMATCH,
+                detail=f"expected_seq={expected_seq} but log tip is {tip}",
+            )
+        row_exists, existing_digest = existing_command_row(self._conn, command_id)
+        dup_reason = classify_duplicate_command(
+            row_exists, existing_digest, command_digest
+        )
+        if dup_reason is not None:
+            return AppendRefusal(reason=dup_reason)
+        if reservation_update is not None:
+            reservation_id, claimed_from_state, _to_state = reservation_update
+            from_state_refusal = check_reservation_from_state(
+                self._conn, reservation_id, claimed_from_state
+            )
+            if from_state_refusal is not None:
+                return from_state_refusal
+        return None
+
+    def _insert_entry_and_reservation(
+        self,
+        *,
+        next_seq: int,
+        writer_epoch: WriterEpoch,
+        command_id: str,
+        command_digest: str | None,
+        kind: str | None,
+        payload_digest: str | None,
+        payload_json: str | None,
+        reservation_update: tuple[str, CapacityState, CapacityState] | None,
+    ) -> None:
+        """``INSERT`` the ``entries`` row (+ ``UPSERT`` ``reservations``, if applicable).
+
+        Split out of :meth:`_commit_entry` for the 100-line function size
+        budget — the transaction boundary is UNCHANGED: this must still run
+        inside the same ``BEGIN IMMEDIATE`` transaction as the rest of
+        :meth:`_commit_entry`; it neither begins nor commits/rolls back
+        anything itself. ``is_reservation_transition`` is derived ONLY from
+        ``reservation_update`` — never from ``payload_json``/``kind``, and
+        never settable by a public caller (independent review MEDIUM-4; see
+        the module docstring's "replay fold is discriminated, not
+        payload-shape-matched" section).
+        """
+        self._conn.execute(
+            "INSERT INTO entries (seq, writer_epoch, command_id, command_digest, "
+            "kind, payload_digest, payload_json, is_reservation_transition) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                next_seq,
+                writer_epoch,
+                command_id,
+                command_digest,
+                kind,
+                payload_digest,
+                payload_json,
+                1 if reservation_update is not None else 0,
+            ),
+        )
+        if reservation_update is not None:
+            reservation_id, _claimed_from_state, to_state = reservation_update
+            self._conn.execute(
+                "INSERT INTO reservations (reservation_id, state, last_seq) "
+                "VALUES (?, ?, ?) ON CONFLICT(reservation_id) DO UPDATE SET "
+                "state=excluded.state, last_seq=excluded.last_seq",
+                (reservation_id, to_state.value, next_seq),
+            )
+
+    def _append_evidence_or_refuse(
+        self,
+        *,
+        next_seq: int,
+        writer_epoch: WriterEpoch,
+        command_id: str,
+        command_digest: str | None,
+        kind: str | None,
+        evidence_kind: str,
+        evidence_record_class: str,
+    ) -> AppendRefusal | None:
+        """Durably evidence this append; on failure, roll back and refuse (D2.1 item 1(f)).
+
+        Split out of :meth:`_commit_entry` for the 100-line function size
+        budget — the transaction boundary is UNCHANGED: this must still run
+        inside the same ``BEGIN IMMEDIATE`` transaction as the rest of
+        :meth:`_commit_entry`, strictly BEFORE that method's own ``COMMIT``.
+        Durably committed to the EVIDENCE STORE'S OWN, separate file/
+        connection (D3.1 domain separation) — a later failure in THIS
+        transaction rolls back only the RCL side, so evidence may
+        over-record an attempt this log itself never holds, but never the
+        reverse (independent review LOW, 2026-09-08; see the module
+        docstring's "evidence may over-record" section).
+
+        Returns:
+            An :class:`~tos.rcl.AppendRefusal` (already rolled back) if the
+            evidence append raised, else ``None`` to proceed to ``COMMIT``.
+        """
+        try:
+            self._evidence_port.append(
+                {
+                    "seq": next_seq,
+                    "writer_epoch": writer_epoch,
+                    "command_id": command_id,
+                    "command_digest": command_digest,
+                    "kind": kind,
+                },
+                kind=evidence_kind,
+                record_class=evidence_record_class,
+            )
+        except (
+            Exception
+        ) as evidence_error:  # noqa: BLE001 - any evidence failure refuses
+            self._safe_rollback()
+            return AppendRefusal(
+                reason=AppendRefusalReason.STORE_UNAVAILABLE,
+                detail=(
+                    "evidence append failed, entry not committed (D2.1 item 1(f)): "
+                    f"{evidence_error!r}"
+                ),
+            )
+        return None
 
     def _commit_entry(
         self,
@@ -726,9 +903,27 @@ class SqliteCommitLog:
         payload_json: str | None,
         evidence_kind: str,
         evidence_record_class: str,
-        reservation_update: tuple[str, CapacityState] | None,
+        reservation_update: tuple[str, CapacityState, CapacityState] | None,
     ) -> AppendReceipt | AppendRefusal:
-        """The whole durable-append body: fence, CAS, insert, evidence, commit (faults ①②③④⑥⑦)."""
+        """The whole durable-append body: fence, CAS, insert, evidence, commit (faults ①②③④⑥⑦).
+
+        Delegates to :meth:`_pre_insert_checks`,
+        :meth:`_insert_entry_and_reservation`, and
+        :meth:`_append_evidence_or_refuse` (a size-budget decomposition,
+        2026-09-08) — but the ``BEGIN IMMEDIATE`` ... ``COMMIT`` transaction
+        boundary is exactly what it always was: all three run synchronously,
+        in this order, inside the ONE ``try`` block below, on the same
+        connection, before this method's own ``COMMIT``. No transaction
+        boundary changed.
+
+        Args:
+            reservation_update: ``(reservation_id, claimed_from_state, to_state)``
+                for a reservation-lifecycle transition, or ``None`` for a
+                plain :meth:`append_cas` call. When present,
+                :meth:`_pre_insert_checks` gates the claimed ``from_state``
+                against the held record before anything is written
+                (independent review HIGH-1, 2026-09-08).
+        """
         try:
             self._conn.execute("BEGIN IMMEDIATE")
         except sqlite3.Error as exc:
@@ -737,68 +932,38 @@ class SqliteCommitLog:
                 detail=f"cannot start transaction: {exc!r}",
             )
         try:
-            current = self.current_epoch()
-            stale_reason = stale_writer_epoch(current, writer_epoch)
-            if stale_reason is not None:
-                self._conn.execute("ROLLBACK")
-                return AppendRefusal(reason=stale_reason)
-            tip = self._current_seq_tip()
-            if expected_seq != tip:
-                self._conn.execute("ROLLBACK")
-                return AppendRefusal(
-                    reason=AppendRefusalReason.SEQ_MISMATCH,
-                    detail=f"expected_seq={expected_seq} but log tip is {tip}",
-                )
-            existing_digest = self._existing_digest_for_command(command_id)
-            dup_reason = duplicate_command(existing_digest, command_digest)
-            if dup_reason is not None:
-                self._conn.execute("ROLLBACK")
-                return AppendRefusal(reason=dup_reason)
-            next_seq = tip + 1
-            self._conn.execute(
-                "INSERT INTO entries (seq, writer_epoch, command_id, command_digest, "
-                "kind, payload_digest, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    next_seq,
-                    writer_epoch,
-                    command_id,
-                    command_digest,
-                    kind,
-                    payload_digest,
-                    payload_json,
-                ),
+            refusal = self._pre_insert_checks(
+                writer_epoch=writer_epoch,
+                expected_seq=expected_seq,
+                command_id=command_id,
+                command_digest=command_digest,
+                reservation_update=reservation_update,
             )
-            if reservation_update is not None:
-                reservation_id, to_state = reservation_update
-                self._conn.execute(
-                    "INSERT INTO reservations (reservation_id, state, last_seq) "
-                    "VALUES (?, ?, ?) ON CONFLICT(reservation_id) DO UPDATE SET "
-                    "state=excluded.state, last_seq=excluded.last_seq",
-                    (reservation_id, to_state.value, next_seq),
-                )
-            try:
-                self._evidence_port.append(
-                    {
-                        "seq": next_seq,
-                        "writer_epoch": writer_epoch,
-                        "command_id": command_id,
-                        "command_digest": command_digest,
-                        "kind": kind,
-                    },
-                    kind=evidence_kind,
-                    record_class=evidence_record_class,
-                )
-            except (
-                Exception
-            ) as evidence_error:  # noqa: BLE001 - any evidence failure refuses
-                self._safe_rollback()
-                return AppendRefusal(
-                    reason=AppendRefusalReason.STORE_UNAVAILABLE,
-                    detail=(
-                        "evidence append failed, entry not committed (D2.1 item 1(f)): "
-                        f"{evidence_error!r}"
-                    ),
-                )
+            if refusal is not None:
+                self._conn.execute("ROLLBACK")
+                return refusal
+            next_seq = self._current_seq_tip() + 1
+            self._insert_entry_and_reservation(
+                next_seq=next_seq,
+                writer_epoch=writer_epoch,
+                command_id=command_id,
+                command_digest=command_digest,
+                kind=kind,
+                payload_digest=payload_digest,
+                payload_json=payload_json,
+                reservation_update=reservation_update,
+            )
+            evidence_refusal = self._append_evidence_or_refuse(
+                next_seq=next_seq,
+                writer_epoch=writer_epoch,
+                command_id=command_id,
+                command_digest=command_digest,
+                kind=kind,
+                evidence_kind=evidence_kind,
+                evidence_record_class=evidence_record_class,
+            )
+            if evidence_refusal is not None:
+                return evidence_refusal
             if self._crash_hook is not None:
                 self._crash_hook("before_commit")
             self._conn.execute("COMMIT")

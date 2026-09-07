@@ -159,11 +159,39 @@ class CredentialHandle:
     ``principal_id``, and whether the handle is closed, so an accidental
     ``print(handle)`` or an uncaught-exception traceback that stringifies a
     local variable never leaks the secret bytes.
+
+    **Zeroing happens ONLY through :meth:`close` (or the context-manager
+    ``__exit__`` that calls it) — there is deliberately no ``__del__``.** A
+    caller that never enters a ``with credential_handle:`` block and never
+    calls :meth:`close` explicitly gets a buffer that is NEVER zeroed by
+    this class; CPython finalizer timing (when, or whether, ``__del__``
+    runs — e.g. never, under a reference cycle, or at interpreter shutdown
+    in an unspecified order) is not a guarantee this class is willing to
+    lean on for a security property, so it provides no best-effort
+    finalizer at all rather than one that sometimes silently fails to run.
+    :meth:`value` raises :class:`CustodyError` once the handle is closed,
+    rather than returning stale all-zero bytes that could be mistaken for a
+    real (if degenerate) secret.
+
+    **Single-copy ownership (2026-09-08 independent-review LOW-2).**
+    :meth:`__init__` takes OWNERSHIP of a ``bytearray`` passed as ``data``
+    (no defensive copy) specifically so that a caller which itself read the
+    secret into a ``bytearray`` (never into an immutable ``bytes`` object,
+    which this class could never zero regardless of what it does
+    internally — see :meth:`__init__`'s own docstring) hands over the ONE
+    and ONLY copy of the secret that will ever exist, and closing this
+    handle is the end of its lifetime in memory. A caller that instead
+    passes an immutable ``bytes`` literal (this codebase's own tests do,
+    for convenience) gets a defensive COPY into a fresh ``bytearray`` — the
+    original ``bytes`` object stays unzeroable and outside this class's
+    control either way, so copying costs nothing additional there.
     """
 
     __slots__ = ("scope", "principal_id", "_buffer", "_closed")
 
-    def __init__(self, *, scope: str, principal_id: str, data: bytes) -> None:
+    def __init__(
+        self, *, scope: str, principal_id: str, data: bytes | bytearray
+    ) -> None:
         """Wrap ``data`` for ``scope``/``principal_id`` in a zeroable buffer.
 
         Args:
@@ -171,13 +199,21 @@ class CredentialHandle:
             principal_id: The distinct principal string bound to ``scope``
                 (ADR-002-013 :267-269 — every scope has its own principal,
                 never shared across scopes).
-            data: The raw secret bytes. Copied into an internal
-                ``bytearray``; the caller's own ``data`` object is untouched
-                by :meth:`close` (only this handle's private copy is zeroed).
+            data: The raw secret bytes. If already a ``bytearray``, this
+                handle takes OWNERSHIP of that exact object (no copy) — the
+                caller must not retain or reuse its own reference to it
+                afterward, since mutating or zeroing it outside this class
+                would silently corrupt or erase the handle's own view (see
+                the class docstring's "single-copy ownership" note). If an
+                immutable ``bytes`` object, it is copied into a fresh
+                ``bytearray`` instead (there is no ownership to take — Python
+                cannot zero a ``bytes`` object in place either way, so the
+                original stays unzeroable regardless of what this class
+                does).
         """
         self.scope = scope
         self.principal_id = principal_id
-        self._buffer = bytearray(data)
+        self._buffer = data if isinstance(data, bytearray) else bytearray(data)
         self._closed = False
 
     def __enter__(self) -> CredentialHandle:

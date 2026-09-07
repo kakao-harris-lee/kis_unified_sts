@@ -8,7 +8,7 @@ import hashlib
 from pathlib import Path
 
 import pytest
-from tos_runtime.custody.file_custody import FileCustody
+from tos_runtime.custody.file_custody import PROVISIONED_SCOPES, FileCustody
 from tos_runtime.custody.ports import (
     CredentialHandle,
     CustodyError,
@@ -75,6 +75,34 @@ def test_load_refuses_mode_0644(
         custody_root, evidence_double, expected_owner_uid=expected_owner_uid
     )
     write_scope_file(custody_root / "read.principal", b"secret-bytes", mode=0o644)
+
+    with pytest.raises(CustodyLoadRefused, match="0o600"):
+        custody.load("read.principal")
+
+
+def test_mode_0644_refuses_before_ever_opening_the_file(
+    custody_root: Path,
+    evidence_double: FakeEvidenceDouble,
+    expected_owner_uid: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LOW-1 (2026-09-08 independent review): the mode/owner gate must run
+    BEFORE ``FileCustody.load`` ever opens the file for reading — proven
+    here by making ``Path.open`` itself raise loudly, so a mode refusal that
+    somehow happened AFTER an open attempt would surface as that raise
+    instead of the expected ``CustodyLoadRefused``."""
+    custody = _make_custody(
+        custody_root, evidence_double, expected_owner_uid=expected_owner_uid
+    )
+    write_scope_file(custody_root / "read.principal", b"secret-bytes", mode=0o644)
+
+    def _fail_if_opened(self: Path, *args: object, **kwargs: object) -> None:
+        raise AssertionError(
+            f"FileCustody.load must not open {self} for reading before its "
+            "mode/owner gate refuses it"
+        )
+
+    monkeypatch.setattr(Path, "open", _fail_if_opened)
 
     with pytest.raises(CustodyLoadRefused, match="0o600"):
         custody.load("read.principal")
@@ -154,6 +182,58 @@ def test_load_refuses_order_scope(
         custody.load(scope)
 
     # No file-system access, no evidence write — refused BEFORE any I/O.
+    assert evidence_double.records == []
+
+
+def test_provisioned_scopes_is_pinned_exactly() -> None:
+    """MEDIUM-2 (2026-09-08 independent review): a mutation adding e.g.
+    ``"order.principal"`` to ``PROVISIONED_SCOPES`` broke ZERO existing
+    tests, because none of them asserted the constant's contents directly —
+    only that a few sampled strings were refused. This pins the exact set,
+    so ANY addition, removal, or rename is caught immediately regardless of
+    which specific scope strings the behavioural tests happen to exercise.
+    """
+    assert (
+        frozenset({"read.principal", "evidence.key", "replay.params"})
+        == PROVISIONED_SCOPES
+    )
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "order",
+        "Order",
+        "ORDER",
+        "oRdEr",
+        "order.principal",
+        "Order.Principal",
+        "ORDER.KEY",
+        "order.equity",
+        "order.futures",
+        "order_x",
+        "orderx",
+        "OrDeR.something.deeply.nested",
+    ],
+)
+def test_load_refuses_any_order_prefixed_scope_case_insensitive(
+    custody_root: Path,
+    evidence_double: FakeEvidenceDouble,
+    expected_owner_uid: int,
+    scope: str,
+) -> None:
+    """MEDIUM-2's behavioural companion to the exact-set pin above: every
+    casing of an ``order``-prefixed scope must be refused, not merely the
+    three literal strings the pre-review parametrize happened to cover.
+    """
+    assert scope.lower().startswith("order")  # the parametrize itself is honest
+    custody = _make_custody(
+        custody_root, evidence_double, expected_owner_uid=expected_owner_uid
+    )
+
+    with pytest.raises(CustodyScopeNotProvisioned):
+        custody.load(scope)
+
     assert evidence_double.records == []
 
 
@@ -258,6 +338,93 @@ def test_credential_handle_close_is_idempotent() -> None:
 
 
 # ============================================================================
+# LOW-2 (2026-09-08 independent review) — single-copy ownership + zeroing
+# ============================================================================
+
+
+def test_credential_handle_takes_ownership_of_a_bytearray_without_copying() -> None:
+    """A ``bytearray`` passed as ``data`` is the SAME object the handle
+    holds — not an equal-but-distinct copy — so there is exactly one copy
+    of the secret in memory from construction through :meth:`close`."""
+    secret = bytearray(b"single-copy-secret")
+
+    handle = CredentialHandle(scope="s", principal_id="p", data=secret)
+
+    assert handle._buffer is secret  # ownership, not a defensive copy
+    handle.close()
+    assert all(byte == 0 for byte in secret)  # closing the handle zeroed THIS object
+
+
+def test_file_custody_load_hands_credential_handle_the_only_copy(
+    custody_root: Path, evidence_double: FakeEvidenceDouble, expected_owner_uid: int
+) -> None:
+    """End-to-end: ``FileCustody.load`` must read the secret into a
+    ``bytearray`` (never an immutable ``bytes`` object it could not zero)
+    and hand that exact buffer to the returned handle, so closing the
+    handle actually erases the one and only in-memory copy the load path
+    produced."""
+    custody = _make_custody(
+        custody_root, evidence_double, expected_owner_uid=expected_owner_uid
+    )
+    secret = b"end-to-end-single-copy-secret"
+    write_scope_file(custody_root / "read.principal", secret, mode=0o600)
+
+    handle = custody.load("read.principal")
+
+    assert isinstance(handle._buffer, bytearray)
+    assert bytes(handle._buffer) == secret
+
+    handle.close()
+
+    assert all(byte == 0 for byte in handle._buffer)
+
+
+def test_load_zeroes_already_read_bytes_when_digest_check_refuses(
+    custody_root: Path,
+    evidence_double: FakeEvidenceDouble,
+    expected_owner_uid: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A digest mismatch is discovered only AFTER the file has already been
+    read (LOW-1's "check 5 runs on already-read bytes" — the read cannot be
+    undone), so the refusal path must zero that already-read buffer itself
+    rather than leaving it to a ``CredentialHandle`` that is never
+    constructed and therefore never gets the chance."""
+    import tos_runtime.custody.file_custody as file_custody_module
+
+    data = b"digest-mismatch-secret-bytes"
+    scopes = dict(_DEFAULT_SCOPES)
+    scopes["read.principal"] = {
+        "file": "read.principal",
+        "principal": "read-principal-v1",
+        "expected_sha256": "0" * 64,
+    }
+    custody = _make_custody(
+        custody_root,
+        evidence_double,
+        expected_owner_uid=expected_owner_uid,
+        scopes=scopes,
+    )
+    write_scope_file(custody_root / "read.principal", data, mode=0o600)
+
+    captured: dict[str, bytearray] = {}
+    real_read = file_custody_module._read_into_bytearray
+
+    def _capturing_read(path: Path) -> bytearray:
+        buffer = real_read(path)
+        captured["buffer"] = buffer
+        return buffer
+
+    monkeypatch.setattr(file_custody_module, "_read_into_bytearray", _capturing_read)
+
+    with pytest.raises(CustodyLoadRefused, match="digest"):
+        custody.load("read.principal")
+
+    assert "buffer" in captured
+    assert all(byte == 0 for byte in captured["buffer"])
+
+
+# ============================================================================
 # manifest digest pinning: mismatch ⇒ refuse; null ⇒ unpinned success
 # ============================================================================
 
@@ -354,3 +521,127 @@ def test_construction_refuses_malformed_manifest(
             expected_owner_uid=expected_owner_uid,
             evidence=evidence_double,
         )
+
+
+# ============================================================================
+# MEDIUM-1 (2026-09-08 independent review) — path-escape guard
+#
+# Reproduced pre-fix: an absolute path, a "../" value, AND a symlink whose
+# target lies outside root_dir all loaded successfully and were recorded as
+# a CUSTODY_LOAD evidence entry. Two layers now close this (see
+# file_custody.py's module docstring fault-contract table row "경로 이탈"):
+# (1) a manifest-parse-time string validator (absolute / ".." rejected as
+# CustodyManifestError from CustodyManifest.load, surfacing at FileCustody
+# CONSTRUCTION, before any scope is ever loaded); (2) a load-time resolved-
+# path containment check (catches a symlink, which layer (1) cannot).
+# ============================================================================
+
+
+def test_manifest_rejects_absolute_file_path(
+    custody_root: Path,
+    evidence_double: FakeEvidenceDouble,
+    expected_owner_uid: int,
+    tmp_path: Path,
+) -> None:
+    outside_secret = tmp_path / "outside_secret.pem"
+    write_scope_file(outside_secret, b"OUTSIDE-SECRET-ABSOLUTE", mode=0o600)
+    scopes = dict(_DEFAULT_SCOPES)
+    scopes["read.principal"] = {
+        "file": str(outside_secret),
+        "principal": "read-principal-v1",
+        "expected_sha256": None,
+    }
+    write_manifest(custody_root, environment_label="non-live-test", scopes=scopes)
+
+    with pytest.raises(CustodyManifestError, match="absolute"):
+        FileCustody(
+            root_dir=custody_root,
+            environment_label="non-live-test",
+            expected_owner_uid=expected_owner_uid,
+            evidence=evidence_double,
+        )
+
+    # Refused at CONSTRUCTION — no scope was ever loaded, no evidence write.
+    assert evidence_double.records == []
+
+
+def test_manifest_rejects_dotdot_file_path(
+    custody_root: Path,
+    evidence_double: FakeEvidenceDouble,
+    expected_owner_uid: int,
+    tmp_path: Path,
+) -> None:
+    outside_dir = tmp_path / "rel_outside"
+    outside_dir.mkdir()
+    write_scope_file(
+        outside_dir / "rel_secret.pem", b"OUTSIDE-SECRET-DOTDOT", mode=0o600
+    )
+    scopes = dict(_DEFAULT_SCOPES)
+    scopes["read.principal"] = {
+        "file": "../rel_outside/rel_secret.pem",
+        "principal": "read-principal-v1",
+        "expected_sha256": None,
+    }
+    write_manifest(custody_root, environment_label="non-live-test", scopes=scopes)
+
+    with pytest.raises(CustodyManifestError, match=r"\.\."):
+        FileCustody(
+            root_dir=custody_root,
+            environment_label="non-live-test",
+            expected_owner_uid=expected_owner_uid,
+            evidence=evidence_double,
+        )
+
+    assert evidence_double.records == []
+
+
+def test_load_refuses_symlink_escaping_root(
+    custody_root: Path,
+    evidence_double: FakeEvidenceDouble,
+    expected_owner_uid: int,
+    tmp_path: Path,
+) -> None:
+    """A symlink's OWN path string (``"read.principal"``) looks perfectly
+    relative and contained — only resolving it reveals the escape, which is
+    exactly what the manifest-parse-time string validator cannot do."""
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_secret = outside_dir / "outside_secret.pem"
+    write_scope_file(outside_secret, b"OUTSIDE-SECRET-VIA-SYMLINK", mode=0o600)
+
+    custody = _make_custody(
+        custody_root, evidence_double, expected_owner_uid=expected_owner_uid
+    )
+    (custody_root / "read.principal").symlink_to(outside_secret)
+
+    with pytest.raises(CustodyManifestError, match="escapes custody root"):
+        custody.load("read.principal")
+
+    assert evidence_double.records == []
+
+
+def test_load_succeeds_with_honest_relative_nested_path(
+    custody_root: Path, evidence_double: FakeEvidenceDouble, expected_owner_uid: int
+) -> None:
+    """Regression guard: the MEDIUM-1 fix must not reject a genuinely
+    contained relative path, including one nested in a subdirectory."""
+    scopes = dict(_DEFAULT_SCOPES)
+    scopes["read.principal"] = {
+        "file": "nested/read.principal",
+        "principal": "read-principal-v1",
+        "expected_sha256": None,
+    }
+    custody = _make_custody(
+        custody_root,
+        evidence_double,
+        expected_owner_uid=expected_owner_uid,
+        scopes=scopes,
+    )
+    nested_dir = custody_root / "nested"
+    nested_dir.mkdir()
+    write_scope_file(nested_dir / "read.principal", b"nested-honest-bytes", mode=0o600)
+
+    handle = custody.load("read.principal")
+
+    assert handle.value() == b"nested-honest-bytes"
+    assert len(evidence_double.records) == 1
