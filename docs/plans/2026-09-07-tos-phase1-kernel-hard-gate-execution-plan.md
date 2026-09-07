@@ -77,6 +77,8 @@
 
 verdict **needs-attention** · 비협상 규칙 위반 0 · CI 8/8 통과 상태에서 심사.
 
+**재심(처분 커밋 `6274fa99` 범위) verdict: approve** — M1 canary 2건·L1 단언 3건은 뮤테이션에서 red · 클래스 (f) 는 합성 register 에서 red, 실 register 29건 드리프트 0·정렬 참 · L2/L3 red 경로 4/4 · Black 스텝 793 파일 · `test_class_c_stale_exception` 조정은 약화가 아니라 (c)/(f) 축 독립화 · 비협상 위반 0.
+
 | # | 심각도 | 지적 | 처분 |
 |---|---|---|---|
 | M1 | medium | TOS-GAP-001 수정(item 13 None ⇒ UNKNOWN)에 테스트 부재 — validator 가 그 번들을 구성 불가로 만들어 정상 경로로 도달 불가, 가드를 되돌려도 스위트 green | 수용 — `model_construct` 우회 canary 2건(WDR 2층 관용구 `tos/tests/wdr/test_wdr_malformed_model.py:85-97`) · 스크래치 워크트리에서 red 실증 |
