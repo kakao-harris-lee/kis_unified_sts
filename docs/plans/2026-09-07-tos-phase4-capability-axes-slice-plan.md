@@ -56,6 +56,12 @@
 
 **작업 7 — adapter 1 outbound → 1 result 계약 고정**: `tos/src/tos/brokeradapter/protocol.py` 의 `Transport` 를 읽고 (a) 계약 docstring 에 «한 attempt 당 `send_once` 정확히 1회 · 내부 재시도 금지 · 결과 미도착은 UNKNOWN(비수락 아님)» 이 이미 있는지 확인, 부재 시만 추가 (b) 기존 합성 transport 구현(`brokeradapter/` 의 paper transport)이 내부 재시도 루프·`sleep`·`for _ in range` 재전송을 갖지 않음을 **negative-grep 테스트**로 고정 (c) `tos/tests/brokeradapter/` 에 «같은 attempt 로 `send_once` 두 번 호출 시 두 번째는 거부/예외» 가 이미 고정돼 있는지 확인, 부재 시 추가. src 변경은 docstring 외 0 이어야 하며 그 이상이 필요하면 보고.
 
+## 5-B. 독립 리뷰 처분 (Claude 측 `code-reviewer` 레인 · 2026-09-07)
+
+- 1차(`5912a4f9`·`ea770657`·`bda929dc`): **needs-attention** · medium 2(규칙 4 봉인 범위 · §5.2 축자 전사) · 비협상 위반 0 → §3-A v1.2 로 처분 · 커밋 `64d0cf80`.
+- 재심(`64d0cf80`): **approve** · 뮤테이션 M1~M3 실측(우회 tuple 핀 2건 red · MOCK 규칙/읽기 규칙 변조 시 양방향 테스트 red) · 360 전 곱 자체 재계수 ADMISSIBLE 22 · REDUCED 2 · PROHIBITED 156 · 표현 불가 180 · BROKER_PRODUCTION 주문 tuple 은 STOCK/FUTURES 모두 규칙 밖 · LOW 1(`ProbeManifest` docstring 과대 문언) → 이 커밋에서 정정.
+- 열린 운영자 확인 지점: §3-A R-2 파생 행렬(읽기 클래스 규칙 · MOCK 주식 CANCEL_REPLACE 편입)의 승인.
+
 ## 5. 종료 조건
 
 - `tos/tests/brokercap` + 기존 전체 `tos/tests` green · mypy/ruff/black 0 · `tools/tos_size_budget.py --check` 0 · firewall PASS

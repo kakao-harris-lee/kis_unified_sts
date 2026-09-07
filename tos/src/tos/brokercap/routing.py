@@ -505,10 +505,13 @@ class ProbeManifest(FrozenModel):
     "probe는 emits_orders=false, 허용 HTTP method/TR ID, 데이터 보존 범위, TTL, provenance를
     manifest에 기록한다" (plan §5.3) — this slice carries **only the shape**; filling
     provenance from a real P0-2 probe run and wiring a consumer are separate, later Phase-4
-    work (slice plan §1 exclusions). ``emits_orders: Literal[False]`` structurally seals a
-    probe manifest from ever claiming to emit an order — mirroring the
+    work (slice plan §1 exclusions). ``emits_orders: Literal[False]`` seals a probe manifest
+    from claiming to emit an order **under validated construction only** — mirroring the
     :class:`~tos.brokercap.records.UncertainSendVerdict` all-restrictive-ladder pattern
-    (design #10 §4.6): a permissive value is not a value this field can hold.
+    (design #10 §4.6). Like every pydantic validator, ``model_construct`` bypasses it, and
+    because no consumer of this record exists yet there is no second (whitelist) layer
+    behind it; ``test_probe_manifest_model_construct_bypasses_the_literal_seal`` records
+    that limit (slice plan §3-A R-1).
     """
 
     emits_orders: Literal[False] = False
