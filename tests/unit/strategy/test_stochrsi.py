@@ -116,7 +116,7 @@ def test_stochrsi_required_indicators():
 
 import math  # noqa: E402
 
-from services.trading.indicator_engine import StreamingIndicatorEngine  # noqa: E402
+from shared.indicators.streaming.engine import StreamingIndicatorEngine  # noqa: E402
 
 _STOCHRSI_SYMBOL = "101W9000"
 

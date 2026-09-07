@@ -241,7 +241,7 @@ def test_seeded_minute_bars_warm_the_engine_via_mtf_5m():
     MTF accumulator (5m_closed > 0) and report is_warm()==True. Before the fix
     the seeds had no datetime → minute=0 → 5m_closed=0 → is_warm()==False.
     """
-    from services.trading.indicator_engine import StreamingIndicatorEngine
+    from shared.indicators.streaming.engine import StreamingIndicatorEngine
 
     engine = StreamingIndicatorEngine(
         bb_period=20,
@@ -265,7 +265,7 @@ def test_seeded_minute_bars_collapse_to_bucket_zero_without_datetime():
     Documents the failure mode the fix prevents — same 120 bars with no
     datetime/minute never close a 5m bar, so the engine stays cold.
     """
-    from services.trading.indicator_engine import StreamingIndicatorEngine
+    from shared.indicators.streaming.engine import StreamingIndicatorEngine
 
     engine = StreamingIndicatorEngine(
         bb_period=20,

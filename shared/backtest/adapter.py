@@ -22,7 +22,6 @@ from typing import Any
 
 import pandas as pd
 
-from services.trading.indicator_engine import StreamingIndicatorEngine
 from shared.backtest.engine import ExitReason, SignalType
 from shared.backtest.metadata import load_backtest_metadata, resolve_symbol_metadata
 from shared.config import ConfigLoader
@@ -34,6 +33,7 @@ from shared.indicators.engine import (
     backtest_indicator_engine,
 )
 from shared.indicators.resolver import StreamingIndicatorResolver
+from shared.indicators.streaming.engine import StreamingIndicatorEngine
 from shared.models.position import Position as ModelPosition
 from shared.models.position import PositionSide
 from shared.regime.adaptive_detector import AdaptiveRegimeConfig, AdaptiveRegimeDetector

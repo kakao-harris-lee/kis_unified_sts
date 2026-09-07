@@ -1,0 +1,6 @@
+backtest:
+  # 실험/최적화 경로의 기본 백테스트 엔진. legacy | vectorbt.
+  # 전략 YAML 의 strategy.backtest.engine 이 우선한다. 러너가 지원하지 않는 경로
+  # (선물·ATS·멀티심볼·공매도·regime gate·일봉 어댑터·허용목록 밖 exit)는 legacy 로
+  # 자동 폴백된다. 롤백: BACKTEST_DEFAULT_ENGINE=legacy
+  default_engine: ${BACKTEST_DEFAULT_ENGINE:vectorbt}

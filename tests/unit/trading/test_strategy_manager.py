@@ -1,5 +1,7 @@
-"""Tests for services/trading/strategy_manager.py"""
+"""Tests for shared/strategy/manager.py"""
 
+import subprocess
+import sys
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,7 +13,7 @@ class TestStrategyManagerConfig:
 
     def test_default_values(self):
         """Test default configuration values"""
-        from services.trading.strategy_manager import StrategyManagerConfig
+        from shared.strategy.manager import StrategyManagerConfig
 
         config = StrategyManagerConfig()
         assert config.min_confidence == 0.3
@@ -23,7 +25,7 @@ class TestStrategyManagerConfig:
 
     def test_validation_passes(self):
         """Test valid configuration passes"""
-        from services.trading.strategy_manager import StrategyManagerConfig
+        from shared.strategy.manager import StrategyManagerConfig
 
         config = StrategyManagerConfig(
             min_confidence=0.5,
@@ -33,7 +35,7 @@ class TestStrategyManagerConfig:
 
     def test_validation_min_confidence_bounds(self):
         """Test min_confidence bounds validation"""
-        from services.trading.strategy_manager import StrategyManagerConfig
+        from shared.strategy.manager import StrategyManagerConfig
 
         with pytest.raises(ValueError, match="min_confidence"):
             StrategyManagerConfig(min_confidence=-0.1)
@@ -43,7 +45,7 @@ class TestStrategyManagerConfig:
 
     def test_validation_dedupe_window_bounds(self):
         """Test dedupe_window_seconds bounds validation"""
-        from services.trading.strategy_manager import StrategyManagerConfig
+        from shared.strategy.manager import StrategyManagerConfig
 
         with pytest.raises(ValueError, match="dedupe_window_seconds"):
             StrategyManagerConfig(dedupe_window_seconds=-1.0)
@@ -53,7 +55,7 @@ class TestStrategyManagerConfig:
 
     def test_from_dict(self):
         """Test from_dict factory method"""
-        from services.trading.strategy_manager import StrategyManagerConfig
+        from shared.strategy.manager import StrategyManagerConfig
 
         config = StrategyManagerConfig.from_dict(
             {
@@ -70,14 +72,14 @@ class TestStrategyManagerConfig:
 
     def test_from_dict_type_validation(self):
         """Test from_dict type validation"""
-        from services.trading.strategy_manager import StrategyManagerConfig
+        from shared.strategy.manager import StrategyManagerConfig
 
         with pytest.raises(TypeError, match="min_confidence"):
             StrategyManagerConfig.from_dict({"min_confidence": "invalid"})
 
     def test_validation_dedupe_scope(self):
         """Test dedupe_scope validation."""
-        from services.trading.strategy_manager import StrategyManagerConfig
+        from shared.strategy.manager import StrategyManagerConfig
 
         with pytest.raises(ValueError, match="dedupe_scope"):
             StrategyManagerConfig(dedupe_scope="invalid")
@@ -125,13 +127,13 @@ class TestStrategyManager:
     def test_init_registers_components(self):
         """Test initialization registers built-in components"""
         with patch(
-            "services.trading.strategy_manager.register_builtin_components"
+            "shared.strategy.manager.register_builtin_components"
         ) as mock_register, patch(
-            "services.trading.strategy_manager.StrategyFactory"
+            "shared.strategy.manager.StrategyFactory"
         ) as mock_factory:
             mock_factory.create_all.return_value = []
 
-            from services.trading.strategy_manager import StrategyManager
+            from shared.strategy.manager import StrategyManager
 
             _ = StrategyManager(asset_class="stock")
 
@@ -139,13 +141,13 @@ class TestStrategyManager:
 
     def test_add_strategy(self, mock_strategy):
         """Test adding strategy manually"""
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import StrategyManager
+                from shared.strategy.manager import StrategyManager
 
                 manager = StrategyManager(asset_class="stock")
                 manager.add_strategy(mock_strategy)
@@ -155,13 +157,13 @@ class TestStrategyManager:
 
     def test_remove_strategy(self, mock_strategy):
         """Test removing strategy"""
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import StrategyManager
+                from shared.strategy.manager import StrategyManager
 
                 manager = StrategyManager(asset_class="stock")
                 manager.add_strategy(mock_strategy)
@@ -171,13 +173,13 @@ class TestStrategyManager:
 
     def test_strategy_names_property(self, mock_strategy):
         """Test strategy_names property"""
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import StrategyManager
+                from shared.strategy.manager import StrategyManager
 
                 manager = StrategyManager(asset_class="stock")
                 manager.add_strategy(mock_strategy)
@@ -186,13 +188,13 @@ class TestStrategyManager:
 
     def test_required_indicators_property(self, mock_strategy):
         """Test required_indicators aggregates all strategies"""
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import StrategyManager
+                from shared.strategy.manager import StrategyManager
 
                 manager = StrategyManager(asset_class="stock")
                 manager.add_strategy(mock_strategy)
@@ -204,14 +206,14 @@ class TestStrategyManager:
     @pytest.mark.asyncio
     async def test_check_entries_empty_strategies(self):
         """Test check_entries with no strategies returns empty"""
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import StrategyManager
                 from shared.strategy.base import EntryContext
+                from shared.strategy.manager import StrategyManager
 
                 manager = StrategyManager(asset_class="stock")
 
@@ -225,17 +227,17 @@ class TestStrategyManager:
         """Test check_entries returns signals from strategies"""
         mock_strategy.check_entry = AsyncMock(return_value=mock_signal)
 
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import (
+                from shared.strategy.base import EntryContext
+                from shared.strategy.manager import (
                     StrategyManager,
                     StrategyManagerConfig,
                 )
-                from shared.strategy.base import EntryContext
 
                 manager = StrategyManager(
                     asset_class="stock",
@@ -259,14 +261,14 @@ class TestStrategyManager:
         mock_signal.confidence = 0.1  # Below threshold
         mock_strategy.check_entry = AsyncMock(return_value=mock_signal)
 
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import StrategyManager
                 from shared.strategy.base import EntryContext
+                from shared.strategy.manager import StrategyManager
 
                 manager = StrategyManager(asset_class="stock")
                 manager.add_strategy(mock_strategy)
@@ -281,17 +283,17 @@ class TestStrategyManager:
         """Test check_entries deduplicates signals"""
         mock_strategy.check_entry = AsyncMock(return_value=mock_signal)
 
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import (
+                from shared.strategy.base import EntryContext
+                from shared.strategy.manager import (
                     StrategyManager,
                     StrategyManagerConfig,
                 )
-                from shared.strategy.base import EntryContext
 
                 manager = StrategyManager(
                     asset_class="stock",
@@ -330,17 +332,17 @@ class TestStrategyManager:
         strategy2.exit = MagicMock()
         strategy2.check_entry = AsyncMock(return_value=signal2)
 
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import (
+                from shared.strategy.base import EntryContext
+                from shared.strategy.manager import (
                     StrategyManager,
                     StrategyManagerConfig,
                 )
-                from shared.strategy.base import EntryContext
 
                 manager = StrategyManager(
                     asset_class="stock",
@@ -363,13 +365,13 @@ class TestStrategyManager:
     @pytest.mark.asyncio
     async def test_check_exits_empty_positions(self, mock_strategy):
         """Test check_exits with no positions returns empty"""
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import StrategyManager
+                from shared.strategy.manager import StrategyManager
 
                 manager = StrategyManager(asset_class="stock")
                 manager.add_strategy(mock_strategy)
@@ -389,13 +391,13 @@ class TestStrategyManager:
         mock_exit_signal.priority = 1
         mock_strategy.exit.scan_positions = AsyncMock(return_value=[mock_exit_signal])
 
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import StrategyManager
+                from shared.strategy.manager import StrategyManager
 
                 manager = StrategyManager(asset_class="stock")
                 manager.add_strategy(mock_strategy)
@@ -417,13 +419,13 @@ class TestStrategyManager:
         mock_exit_signal.position_id = "pos-123"
         mock_strategy.exit.scan_positions = AsyncMock(return_value=[mock_exit_signal])
 
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import StrategyManager
+                from shared.strategy.manager import StrategyManager
 
                 manager = StrategyManager(asset_class="stock")
                 manager.add_strategy(mock_strategy)
@@ -443,13 +445,13 @@ class TestStrategyManager:
         """Test that check_exits passes correct arguments to scan_positions"""
         mock_strategy.exit.scan_positions = AsyncMock(return_value=[])
 
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import StrategyManager
+                from shared.strategy.manager import StrategyManager
 
                 manager = StrategyManager(asset_class="stock")
                 manager.add_strategy(mock_strategy)
@@ -472,13 +474,13 @@ class TestStrategyManager:
 
     def test_get_strategy_info(self, mock_strategy):
         """Test get_strategy_info returns details"""
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import StrategyManager
+                from shared.strategy.manager import StrategyManager
 
                 manager = StrategyManager(asset_class="stock")
                 manager.add_strategy(mock_strategy)
@@ -492,13 +494,13 @@ class TestStrategyManager:
 
     def test_get_stats(self, mock_strategy):
         """Test get_stats returns manager statistics"""
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import StrategyManager
+                from shared.strategy.manager import StrategyManager
 
                 manager = StrategyManager(asset_class="stock")
                 manager.add_strategy(mock_strategy)
@@ -512,17 +514,17 @@ class TestStrategyManager:
     @pytest.mark.asyncio
     async def test_cost_filter_integration(self, mock_strategy):
         """Test cost filter integration with StrategyManager"""
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import (
+                from shared.strategy.base import EntryContext
+                from shared.strategy.manager import (
                     StrategyManager,
                     StrategyManagerConfig,
                 )
-                from shared.strategy.base import EntryContext
 
                 # Test 1: CostFilter instantiated when enabled
                 config = StrategyManagerConfig(
@@ -604,7 +606,7 @@ class TestStrategyManager:
                 )
 
                 # Capture log output to verify rejection logging
-                with patch("services.trading.strategy_manager.logger") as mock_logger:
+                with patch("shared.strategy.manager.logger") as mock_logger:
                     signals_rejected = await manager.check_entries(context_low_atr)
                     assert len(signals_rejected) == 0
 
@@ -641,18 +643,18 @@ class TestStrategyManager:
     @pytest.mark.asyncio
     async def test_cost_filter_accepts_flat_symbol_context(self, mock_strategy):
         """Cost filter must support orchestrator's flat per-symbol EntryContext."""
-        with patch("services.trading.strategy_manager.register_builtin_components"):
+        with patch("shared.strategy.manager.register_builtin_components"):
             with patch(
-                "services.trading.strategy_manager.StrategyFactory"
+                "shared.strategy.manager.StrategyFactory"
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import (
+                from shared.models.signal import Signal
+                from shared.strategy.base import EntryContext
+                from shared.strategy.manager import (
                     StrategyManager,
                     StrategyManagerConfig,
                 )
-                from shared.models.signal import Signal
-                from shared.strategy.base import EntryContext
 
                 config = StrategyManagerConfig(
                     cost_filter_enabled=True,
@@ -698,17 +700,17 @@ class TestStrategyManager:
     async def test_cost_filter_accepts_daily_atr_alias(self, mock_strategy):
         """Daily strategy payloads use daily_atr but still need cost filtering."""
         with (
-            patch("services.trading.strategy_manager.register_builtin_components"),
-            patch("services.trading.strategy_manager.StrategyFactory") as mock_factory,
+            patch("shared.strategy.manager.register_builtin_components"),
+            patch("shared.strategy.manager.StrategyFactory") as mock_factory,
         ):
             mock_factory.create_all.return_value = []
 
-            from services.trading.strategy_manager import (
+            from shared.models.signal import Signal
+            from shared.strategy.base import EntryContext
+            from shared.strategy.manager import (
                 StrategyManager,
                 StrategyManagerConfig,
             )
-            from shared.models.signal import Signal
-            from shared.strategy.base import EntryContext
 
             config = StrategyManagerConfig(
                 cost_filter_enabled=True,
@@ -751,3 +753,29 @@ class TestStrategyManager:
             assert signals[0].code == "005930"
             assert context.indicators["daily_atr"] == 1500.0
             assert "atr" not in context.indicators
+
+
+def test_import_does_not_load_llm_sdks():
+    """Importing shared.strategy.manager must not pull in openai/anthropic.
+
+    shared/llm/__init__.py is an eager package init that transitively imports
+    llm_analyzer/unified_market_analyzer/krx_api_client -> the openai and
+    anthropic SDKs. StrategyManager only needs LLMContextProvider at instance-
+    construction time (see the lazy import in __init__), so importing the
+    module itself — the cold path taken by e.g.
+    services/stock_strategy/main.py, which imports no other shared.llm symbol
+    — must stay cheap. Run in a subprocess for a clean sys.modules baseline.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys, shared.strategy.manager; "
+            "print('openai' in sys.modules, 'anthropic' in sys.modules)",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "False False", result.stdout

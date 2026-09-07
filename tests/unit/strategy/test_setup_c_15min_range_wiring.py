@@ -36,11 +36,11 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
-from services.trading.indicator_engine import StreamingIndicatorEngine
 from shared.backtest.market_context_replay import MarketContextReplay
 from shared.decision.context import ScheduledEvent
 from shared.execution.contract_spec import ContractSpec
 from shared.indicators.resolver import StreamingIndicatorResolver
+from shared.indicators.streaming.engine import StreamingIndicatorEngine
 from shared.strategy.base import EntryContext
 from shared.strategy.entry.setup_adapters import (
     LLMTuningConfig,

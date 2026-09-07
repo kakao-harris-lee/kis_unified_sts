@@ -12,7 +12,7 @@ Why a log monitor
 -----------------
 Runtime strategy-manager logs are the deployment-correct source for this check:
 
-    ... services.trading.strategy_manager - INFO -
+    ... shared.strategy.manager - INFO -
         Signal cycle: <N> signals from [setup_a_gap_reversion,
                                         setup_c_event_reaction]
 
@@ -51,11 +51,11 @@ _REPORTS_DIR = _REPO_ROOT / "reports" / "setup_ac_timing"
 _LOG_DIR = _REPO_ROOT / "logs"
 
 # strategy_manager line — server logs in KST local time.
-#   2026-05-14 09:00:12,913 - services.trading.strategy_manager - INFO -
+#   2026-05-14 09:00:12,913 - shared.strategy.manager - INFO -
 #       Signal cycle: 0 signals from [setup_a_gap_reversion, ...]
 _LINE_RE = re.compile(
     r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ - "
-    r"services\.trading\.strategy_manager - INFO - "
+    r"shared\.strategy\.manager - INFO - "
     r"Signal cycle: (?P<n>\d+) signals from"
 )
 

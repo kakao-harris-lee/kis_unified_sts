@@ -32,15 +32,15 @@ from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
-from services.trading.indicator_calculations import IndicatorCalculationMixin
-from services.trading.indicator_candles import (
+from shared.indicators.constants import LIVE_CANDLE_HISTORY_MAXLEN
+from shared.indicators.engine import VolumeAccelerationCalculator, VWAPCalculator
+from shared.indicators.streaming.calculations import IndicatorCalculationMixin
+from shared.indicators.streaming.candles import (
     Candle,
     CandleAccumulator,
     MultiTimeframeCandleAccumulator,
 )
-from services.trading.indicator_queries import IndicatorQueryMixin
-from shared.indicators.constants import LIVE_CANDLE_HISTORY_MAXLEN
-from shared.indicators.engine import VolumeAccelerationCalculator, VWAPCalculator
+from shared.indicators.streaming.queries import IndicatorQueryMixin
 
 logger = logging.getLogger(__name__)
 

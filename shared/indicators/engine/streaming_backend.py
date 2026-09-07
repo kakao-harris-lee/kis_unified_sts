@@ -2,7 +2,7 @@
 
 The decoupled/monolith runtime historically computed RSI/Bollinger/MFI/ADX/
 Stochastic/RVOL with hand-rolled ``_calc_*`` methods on
-``services.trading.indicator_calculations.IndicatorCalculationMixin``. Those
+``shared.indicators.streaming.calculations.IndicatorCalculationMixin``. Those
 carry the runtime's *specific* conventions — first-delta-seeded Wilder RSI,
 sample-std (ddof=1) Bollinger, a lenient ADX warmup, fast %K Stochastic — which
 differ from TA-Lib's standard conventions on the short, early-session windows the

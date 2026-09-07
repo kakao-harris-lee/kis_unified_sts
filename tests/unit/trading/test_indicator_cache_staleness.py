@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from services.trading.indicator_engine import StreamingIndicatorEngine
+from shared.indicators.streaming.engine import StreamingIndicatorEngine
 
 
 def _candle(close: float) -> dict:
@@ -29,10 +29,10 @@ def _candle(close: float) -> dict:
 
 class TestAccumulatorMonotonicCounter:
     def test_candle_accumulator_counter_outlives_deque_cap(self):
-        from services.trading.indicator_engine import CandleAccumulator
+        from shared.indicators.streaming.engine import CandleAccumulator
 
         acc = CandleAccumulator(maxlen=10)
-        from services.trading.indicator_engine import Candle
+        from shared.indicators.streaming.engine import Candle
 
         for i in range(25):
             acc.add_completed(
@@ -42,7 +42,7 @@ class TestAccumulatorMonotonicCounter:
         assert acc.total_appended == 25  # counter did NOT saturate
 
     def test_mtf_accumulator_counter_outlives_deque_cap(self):
-        from services.trading.indicator_engine import (
+        from shared.indicators.streaming.engine import (
             Candle,
             MultiTimeframeCandleAccumulator,
         )

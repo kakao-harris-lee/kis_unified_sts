@@ -14,7 +14,7 @@ TA-Lib 정합화(2026-07-06) 이후 지표 계산에는 두 엔진이 공존한�
   (first-delta-seeded RSI, ddof=1 Bollinger, fast %K Stochastic, lenient ADX warmup).
   실시간/페이퍼 런타임이 사용.
 
-손구현 `_calc_*` 원본은 이미 파기됐고, `services/trading/indicator_calculations.py`의
+손구현 `_calc_*` 원본은 이미 파기됐고, `shared/indicators/streaming/calculations.py`의
 `_calc_rsi`/`_calc_bb`/`_calc_adx`/`_calc_stochastic`/`_calc_mfi`/`_calc_rvol`은 현재
 `streaming_indicator_engine()`에 위임하는 얇은 델리게이트다. 따라서 "값 보존" 명분이
 사라졌고, **streaming 백엔드를 `default_engine`(TA-Lib 표준)으로 수렴**시키면 같은 심볼의
@@ -32,7 +32,7 @@ Phase C는 **config 게이트**로 main에 이미 구현돼 있다 (StochRSI def
 - `shared/indicators/engine/registry.py::runtime_indicator_engine()` — env
   `STS_INDICATOR_CONVENTION`(기본 `streaming`)로 streaming/talib 엔진 선택. 알 수 없는 값은
   `streaming`으로 폴백(오타로 라이브 값이 바뀌지 않도록).
-- `services/trading/indicator_calculations.py` — 6개 `_calc_*`가
+- `shared/indicators/streaming/calculations.py` — 6개 `_calc_*`가
   `streaming_indicator_engine()` → `runtime_indicator_engine()`로 위임 변경.
 - `StreamingCompatBackend`와 `test_streaming_backend_golden.py`는 **그대로 유지** — 기본
   경로가 여전히 streaming이므로 라이브 값·골든 핀 불변.

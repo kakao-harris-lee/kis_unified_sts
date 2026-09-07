@@ -246,9 +246,10 @@
   전체는 advisory `backtest-extra` 레인(continue-on-error)과 배포 호스트에서
   돈다 — **운영자 flip 전 `scripts/vbt_parity_report.py` 재실행이 필수 게이트**
   (exit code 가 실데이터 포함 전 셀 판정).
-- [ ] 통과 후 `engine.py` 이벤트 루프·수제 성과지표(§3.2의 3벌)를 제거하고
-  experiment_runner/optimizer 백엔드 교체 — **미착수** (운영자 flip 게이트;
-  paper 관찰 + 허용목록 확장 선행). 미통과 항목은 원인 규명 전 교체 금지.
+- [x] 기본값 vectorbt 전환 + 허용목록 확장(mean_reversion_exit·MOMENTUM_DECAY_EXIT)
+  + optimizer seam — 2026-09-07 (plan 2026-09-07-vectorbt-default-flip);
+  engine.py 는 폴백 대상(선물·ATS·멀티심볼·공매도·regime gate·일봉 어댑터·
+  three_stage)이 0 이 될 때까지 잔존
 
 ### P3-c. 상태머신 exit 처리
 - [x] **`legacy_exit: true` 명시 플래그** (experiment_runner seam) —

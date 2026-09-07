@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from services.trading.orchestrator import TradingConfig, TradingOrchestrator
-from services.trading.stream_consumer_feed import StreamConsumerFeed
+from shared.streaming.consumer_feed import StreamConsumerFeed
 
 
 def test_init_price_feeds_stream_branch_builds_stream_consumer_feed(monkeypatch):

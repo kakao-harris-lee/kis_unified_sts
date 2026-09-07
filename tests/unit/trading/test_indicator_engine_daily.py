@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from services.trading.indicator_engine import StreamingIndicatorEngine
 from shared.indicators.daily import calculate_daily_indicators
+from shared.indicators.streaming.engine import StreamingIndicatorEngine
 
 
 class TestDailyCandleSeedingAndRetrieval:

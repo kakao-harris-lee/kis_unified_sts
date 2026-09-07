@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from services.trading.indicator_engine import StreamingIndicatorEngine
+from shared.indicators.streaming.engine import StreamingIndicatorEngine
 
 
 def _build_warm_mtf_engine(

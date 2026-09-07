@@ -106,17 +106,17 @@ async def test_daemon_receives_bear_override_config_when_enabled(monkeypatch):
             ),
         ),
         patch(
-            "services.trading.strategy_manager.StrategyManager",
+            "shared.strategy.manager.StrategyManager",
             return_value=MagicMock(
                 required_indicators=[], set_indicator_engine=MagicMock()
             ),
         ),
         patch(
-            "services.trading.indicator_engine.StreamingIndicatorEngine",
+            "shared.indicators.streaming.engine.StreamingIndicatorEngine",
             return_value=MagicMock(),
         ),
         patch(
-            "services.trading.stream_consumer_feed.StreamConsumerFeed",
+            "shared.streaming.consumer_feed.StreamConsumerFeed",
             return_value=MagicMock(),
         ),
         patch(
@@ -204,17 +204,17 @@ async def test_daemon_receives_none_bear_override_config_when_disabled(monkeypat
             ),
         ),
         patch(
-            "services.trading.strategy_manager.StrategyManager",
+            "shared.strategy.manager.StrategyManager",
             return_value=MagicMock(
                 required_indicators=[], set_indicator_engine=MagicMock()
             ),
         ),
         patch(
-            "services.trading.indicator_engine.StreamingIndicatorEngine",
+            "shared.indicators.streaming.engine.StreamingIndicatorEngine",
             return_value=MagicMock(),
         ),
         patch(
-            "services.trading.stream_consumer_feed.StreamConsumerFeed",
+            "shared.streaming.consumer_feed.StreamConsumerFeed",
             return_value=MagicMock(),
         ),
         patch(
@@ -305,17 +305,17 @@ def _watchlist_reader_test_patches(
             ),
         ),
         patch(
-            "services.trading.strategy_manager.StrategyManager",
+            "shared.strategy.manager.StrategyManager",
             return_value=MagicMock(
                 required_indicators=[], set_indicator_engine=MagicMock()
             ),
         ),
         patch(
-            "services.trading.indicator_engine.StreamingIndicatorEngine",
+            "shared.indicators.streaming.engine.StreamingIndicatorEngine",
             return_value=MagicMock(),
         ),
         patch(
-            "services.trading.stream_consumer_feed.StreamConsumerFeed",
+            "shared.streaming.consumer_feed.StreamConsumerFeed",
             return_value=MagicMock(),
         ),
         patch(

@@ -18,7 +18,7 @@ def _config(asset_class: str = "stock") -> SimpleNamespace:
 
 def test_init_price_feeds_stock_stream_returns_stream_feed(monkeypatch) -> None:
     from services.trading.market_data_bootstrap import init_price_feeds
-    from services.trading.stream_consumer_feed import StreamConsumerFeed
+    from shared.streaming.consumer_feed import StreamConsumerFeed
 
     fake_redis = object()
     monkeypatch.setenv("STOCK_MARKET_DATA_SOURCE", "stream")

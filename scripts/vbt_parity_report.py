@@ -287,8 +287,12 @@ def render(
         "`docs/plans/2026-07-05-indicator-engine-and-stream-schema-roadmap.md` §WS-A4"
     )
     a(
-        "- 러너: `shared/backtest/vbt_runner.py` (opt-in `strategy.backtest.engine: "
-        "vectorbt`; 기본값 legacy)"
+        "- 러너: `shared/backtest/vbt_runner.py` — 전략별 `strategy.backtest.engine` "
+        "이 process-wide 기본값을 오버라이드. 기본값은 `config/backtest.yaml::"
+        "backtest.default_engine` (2026-09-07 부로 `vectorbt`; 롤백은 env "
+        "`BACKTEST_DEFAULT_ENGINE=legacy`) — 러너가 지원하지 않는 경로(선물·ATS·"
+        "멀티심볼·공매도·regime gate·일봉 어댑터·허용목록 밖 exit)는 legacy 로 "
+        "자동 폴백"
     )
     a(
         "- 시나리오·전략·완화설정은 머지 게이트 테스트 모듈에서 직접 import — "
@@ -515,9 +519,10 @@ def render(
     )
     a("")
     a(
-        "운영자 flip(experiment 경로 `backtest.engine: vectorbt`) 은 본 증거 + "
-        "paper 관찰을 근거로 별도 게이트에서 결정한다. 이 PR 은 기본값을 "
-        "변경하지 않는다."
+        "운영자 flip(process-wide 기본값을 `config/backtest.yaml::"
+        "backtest.default_engine: vectorbt` 로 전환, "
+        "`docs/plans/2026-09-07-vectorbt-default-flip.md`) 은 본 리포트의 "
+        "rc==0 을 필수 게이트로 요구한다 — 이 실행이 그 게이트다."
     )
     a("")
     return "\n".join(lines)

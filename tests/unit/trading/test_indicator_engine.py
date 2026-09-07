@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, time
 from unittest.mock import patch
 
-from services.trading.indicator_engine import StreamingIndicatorEngine
+from shared.indicators.streaming.engine import StreamingIndicatorEngine
 
 
 def test_get_recent_candles_returns_ohlcv_dicts():

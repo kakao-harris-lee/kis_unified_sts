@@ -10,6 +10,13 @@ strategy:
   enabled: false
   description: "OVS profile A: score>=1.8 기반 진입"
 
+  # three_stage 는 스테이지별 부분(부분수량) 청산이라 vectorbt from_orders 의
+  # 풀포지션 원장 모델로 구조적 표현 불가 → 항상 legacy engine 강제 (P3-e,
+  # docs/plans/2026-09-07-vectorbt-default-flip.md §1-A; vbt_runner.py
+  # EXPRESSIBLE_EXIT_GENERATORS 는 이 exit 를 영구 제외).
+  backtest:
+    legacy_exit: true
+
   entry:
     type: opening_volume_surge
     params:

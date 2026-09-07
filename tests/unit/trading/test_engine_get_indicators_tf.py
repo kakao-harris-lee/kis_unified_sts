@@ -4,7 +4,7 @@ Verifies that BB/RSI are computed from CLOSED 15m candles only,
 and that insufficient-data guard returns an empty dict.
 """
 
-from services.trading.indicator_engine import (
+from shared.indicators.streaming.engine import (
     Candle,
     StreamingIndicatorEngine,
 )

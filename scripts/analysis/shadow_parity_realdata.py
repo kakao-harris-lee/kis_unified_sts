@@ -32,8 +32,6 @@ from typing import Any
 
 import numpy as np
 
-from services.trading.indicator_calculations import IndicatorCalculationMixin
-from services.trading.indicator_candles import Candle
 from shared.indicators.engine import (
     IndicatorComputationError,
     IndicatorSpec,
@@ -42,9 +40,11 @@ from shared.indicators.engine import (
     window_from_bars,
 )
 from shared.indicators.engine.shadow import ShadowDelta
+from shared.indicators.streaming.calculations import IndicatorCalculationMixin
+from shared.indicators.streaming.candles import Candle
 from shared.storage.market_data_store import ParquetMarketDataStore
 
-# Runtime defaults (services/trading/indicator_engine.py __init__): the harness
+# Runtime defaults (shared/indicators/streaming/engine.py __init__): the harness
 # compares engine vs legacy for the *same* params so a delta reflects convention
 # (Wilder vs SMA, ddof, fast vs slow), not a parameter mismatch.
 BB_PERIOD = 20

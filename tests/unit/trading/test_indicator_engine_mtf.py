@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from services.trading.indicator_engine import (
+from shared.indicators.streaming.engine import (
     Candle,
     MultiTimeframeCandleAccumulator,
     StreamingIndicatorEngine,

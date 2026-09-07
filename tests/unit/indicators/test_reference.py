@@ -21,9 +21,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-# Target (read/import only)
-from services.trading.indicator_calculations import IndicatorCalculationMixin
-from services.trading.indicator_candles import Candle
 from shared.indicators.momentum import RSICalculator
 from shared.indicators.reference import (
     ADXCalculator,
@@ -32,6 +29,10 @@ from shared.indicators.reference import (
     wilder_rma,
     wilder_rsi,
 )
+
+# Target (read/import only)
+from shared.indicators.streaming.calculations import IndicatorCalculationMixin
+from shared.indicators.streaming.candles import Candle
 from shared.regime.adaptive_detector import AdaptiveRegimeDetector
 
 pytestmark = pytest.mark.unit

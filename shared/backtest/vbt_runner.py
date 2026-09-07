@@ -52,14 +52,15 @@ docs/plans/2026-07-05-indicator-engine-and-stream-schema-roadmap.md §WS-A4.
 - Exit 생성기 허용목록 (:data:`EXPRESSIBLE_EXIT_GENERATORS`): legacy 엔진과의
   dual-run parity 증거가 있는 exit 만 통과한다 — v1(P3-b) williams_r_exit,
   P3-c 확장 atr_dynamic / chandelier_exit (분봉 어댑터 경로 한정 — 위 일봉
-  거부가 선행). 목록 밖(three_stage 등)은 전부 거부
-  (조용한 근사 금지, 호출자는 legacy 폴백). 러너는 어댑터를 legacy 와 동일한
-  bar/호출 순서로 재생성하므로 상태머신 exit 도 *기계적으로는* 지원하나, 이
-  목록은 표현가능성 제한이 아니라 **parity 증거** 게이트다. three_stage 만
-  부분(스테이지) 청산이라 ``from_orders`` 풀포지션 원장으로 구조적 표현 불가 →
-  영구 제외(2차 vbt custom order func 트랙에서 재검토). exit 가 상태머신을
-  강제하는 전략은 config ``backtest.legacy_exit: true`` 로 legacy 를 명시
-  강제한다 (experiment_runner seam; plan §5 P3-c).
+  거부가 선행), P3-e 확장 mean_reversion_exit / MOMENTUM_DECAY_EXIT. 목록 밖
+  (three_stage 등)은 전부 거부 (조용한 근사 금지, 호출자는 legacy 폴백). 러너는
+  어댑터를 legacy 와 동일한 bar/호출 순서로 재생성하므로 상태머신 exit 도
+  *기계적으로는* 지원하나, 이 목록은 표현가능성 제한이 아니라 **parity 증거**
+  게이트다. three_stage 만 부분(스테이지) 청산이라 ``from_orders`` 풀포지션
+  원장으로 구조적 표현 불가 → 영구 제외(2차 vbt custom order func 트랙에서
+  재검토). exit 가 상태머신을 강제하는 전략은 config
+  ``backtest.legacy_exit: true`` 로 legacy 를 명시 강제한다 (experiment_runner
+  seam; plan §5 P3-c/P3-e — opening_volume_surge.yaml 이 실사용례).
 - 동일 bar 내 *같은 포지션의* 진입+강제청산(마지막 bar 진입 → END_OF_DATA):
   ``from_orders`` 는 컬럼당 bar 당 주문 1건이므로 거부한다.
   (레거시가 허용하는 동일 bar "청산 → 재진입"은 지원한다 — 아래 참조.)
@@ -114,13 +115,27 @@ logger = logging.getLogger(__name__)
 #             프레임 → DailyBacktestAdapter 경로인데, 그 경로는 parity 미검증
 #             이라 _ensure_supported 가 정적으로 거부한다. 즉 chandelier_exit
 #             의 vbt 적격성은 **분봉(BacktestStrategyAdapter) 경로 한정**이다.
+#   P3-e 확장 (2026-09-07): mean_reversion_exit — ATR 동적 손절(cap) + BB
+#             middle 타겟 + 시간컷; 배포 bb_reversion.yaml 파라미터로 dual-run
+#             parity 확인(시나리오×리스크 매트릭스 전건 통과, target_reached/
+#             time_cut 발화 non-vacuity 확인).
+#             MOMENTUM_DECAY_EXIT — 리트레이스먼트+거래량 속도 기반 모멘텀
+#             소진 청산(name 은 클래스 상수 그대로 대문자 — 등록 키
+#             "momentum_decay" 와는 별개 필드); 배포 volume_accumulation.yaml
+#             파라미터로 동일 검증(momentum_decay/trailing_stop 발화 확인).
 # 각 이름의 parity 는 tests/unit/backtest/test_vbt_runner.py::TestRealExitParity
 # 가 실제 exit 클래스 인스턴스로 시나리오 × 리스크 매트릭스에서 고정한다.
 # three_stage 는 부분(스테이지) 청산이라 from_orders 풀포지션 원장으로 표현 불가 →
 # 영구 제외 (2차 vbt custom order func 트랙). 상태머신 exit 강제 전략은 config
 # `backtest.legacy_exit: true` 로 legacy 를 명시 강제한다 (experiment_runner seam).
 EXPRESSIBLE_EXIT_GENERATORS: frozenset[str] = frozenset(
-    {"williams_r_exit", "atr_dynamic", "chandelier_exit"}
+    {
+        "williams_r_exit",
+        "atr_dynamic",
+        "chandelier_exit",
+        "mean_reversion_exit",
+        "MOMENTUM_DECAY_EXIT",
+    }
 )
 
 _CROSS_CHECK_RTOL = 1e-6

@@ -37,6 +37,11 @@ from shared.models.position import PositionSide
 from shared.strategy.base import ExitContext
 from shared.strategy.exit.atr_dynamic import ATRDynamicExit, ATRDynamicExitConfig
 from shared.strategy.exit.chandelier_exit import ChandelierExit, ChandelierExitConfig
+from shared.strategy.exit.mean_reversion_exit import (
+    MeanReversionExit,
+    MeanReversionExitConfig,
+)
+from shared.strategy.exit.momentum_decay import MomentumDecayConfig, MomentumDecayExit
 
 pytestmark = pytest.mark.backtest
 
@@ -218,12 +223,18 @@ def _with_exit_indicators(data: pd.DataFrame) -> pd.DataFrame:
     하다(새 주입 경로를 발명하지 않음). atr 은 절대값(>0.5)이라 ATRDynamicExit
     의 normalized-ATR 감지에 걸리지 않는다. volume_velocity 는 음/양 혼합
     사이클로 주입해 atr_dynamic 의 momentum_decay 분기(retracement > ATR &&
-    velocity < 0)가 결정론적으로 발화 가능하게 한다 (decay 미사용 exit 는 무시).
+    velocity < 0)와 momentum_decay exit 의 동일 분기가 결정론적으로 발화
+    가능하게 한다 (decay 미사용 exit 는 무시). bb_middle 은 20-bar SMA(close)
+    로 주입한다 — mean_reversion_exit 의 primary target(BB middle band)이 읽는
+    지표이며, `_RealExitStrategy.on_bar` 의 진입 MA(동일 20-bar 윈도우)와 같은
+    정의라 entry/exit 양쪽이 같은 평균을 관측한다(새 지표 정의를 발명하지
+    않음 — 실제 BB middle = 20-SMA).
     """
     df = data.copy()
     df["atr"] = (df["close"] * 0.004).round(4)
     df["highest_high"] = df["high"]
     df["volume_velocity"] = (np.arange(len(df)) % 5) - 2.0  # -2..2 사이클
+    df["bb_middle"] = df["close"].rolling(20, min_periods=1).mean().round(4)
     return df
 
 
@@ -357,6 +368,67 @@ def _atr_dynamic_decay_strategy() -> _RealExitStrategy:
     )
 
 
+def _mean_reversion_exit_strategy() -> _RealExitStrategy:
+    """배포 bb_reversion 의 exit 설정 그대로.
+
+    config/strategies/stock/bb_reversion.yaml::strategy.exit.params 와 동일.
+    eod_close_hour/minute 은 배포값(23:59)도 실질 비활성 — effective_close_time
+    이 실 거래소 마감(15:30)으로 상한을 걸어, 합성 09:00 시작 200분 창(~12:20
+    종료)에서는 어차피 도달하지 않는다(배포 의도 그대로: 오버나이트 허용).
+    market_state 는 이 합성 하네스가 주입하지 않으므로(BEAR exit 은
+    `context.market_state` 필수) BEAR_EXIT 분기는 발화하지 않는다 — legacy/vbt
+    양쪽에서 동일하게 미도달이라 parity 에는 영향 없다.
+    """
+    return _RealExitStrategy(
+        MeanReversionExit(
+            MeanReversionExitConfig(
+                atr_stop_multiplier=2.0,
+                max_stop_loss_pct=-0.03,
+                target_bb_middle=True,
+                time_cut_minutes=120,
+                eod_close_hour=23,
+                eod_close_minute=59,
+                enable_bear_exit=True,
+                fee_rate=0.003,
+            )
+        ),
+        name="mean_reversion_exit_synth",
+    )
+
+
+def _momentum_decay_strategy() -> _RealExitStrategy:
+    """배포 volume_accumulation 의 exit 설정 그대로.
+
+    config/strategies/stock/volume_accumulation.yaml::strategy.exit.params 와
+    동일. eod_close_enabled=false(배포값) 라 EOD 분기는 wall-clock 무관하게
+    항상 스킵된다. max_hold_days/no_profit_days 는 거래일 캘린더 기반 —
+    합성 3~4일 창에서 발화 여부는 시나리오에 따라 갈리나 momentum_decay
+    (retracement+volume_velocity) 분기가 non-vacuity 증거의 주 대상이다.
+    """
+    return _RealExitStrategy(
+        MomentumDecayExit(
+            MomentumDecayConfig(
+                stop_loss_pct=-0.02,
+                eod_close_enabled=False,
+                decay_retracement_pct=0.015,
+                decay_volume_threshold=0.0,
+                vwap_breakdown_enabled=True,
+                trailing_activation_pct=0.05,
+                trailing_stop_pct=-0.05,
+                tight_trail_activation=0.10,
+                tight_trail_pct=-0.03,
+                no_profit_days=2,
+                max_hold_days=5,
+                close_before_weekend=False,
+                eod_close_hour=15,
+                eod_close_minute=15,
+                fee_rate=0.003,
+            )
+        ),
+        name="momentum_decay_synth",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Parity assertion helper
 # ---------------------------------------------------------------------------
@@ -482,20 +554,17 @@ class TestExpressibilityGate:
         with pytest.raises(NotImplementedError, match="multi-symbol"):
             runner.run(df)
 
-    @pytest.mark.parametrize("exit_cls_path", ["three_stage", "momentum_decay"])
+    @pytest.mark.parametrize("exit_cls_path", ["three_stage"])
     def test_stateful_exit_generator_denied(self, exit_cls_path):
         """실제 상태머신 exit 클래스 인스턴스가 게이트에서 거부되는지.
 
         fake 문자열 대신 실 클래스(NAME 상수)의 `.name` 을 게이트에 통과시켜,
         클래스 이름이 바뀌어도 게이트와 테스트가 함께 어긋나는 fidelity 갭을
-        차단한다.
+        차단한다. momentum_decay 는 P3-e 에서 parity 증거를 얻어 허용목록에
+        등재됐으므로(``TestRealExitParity``) 더 이상 "거부" 예시가 아니다 —
+        three_stage(부분 청산, 구조적으로 영구 제외)만 남긴다.
         """
-        if exit_cls_path == "three_stage":
-            from shared.strategy.exit.three_stage import ThreeStageExit as exit_cls
-        else:
-            from shared.strategy.exit.momentum_decay import (
-                MomentumDecayExit as exit_cls,
-            )
+        from shared.strategy.exit.three_stage import ThreeStageExit as exit_cls
 
         exit_generator = exit_cls(exit_cls.CONFIG_CLASS())
         assert exit_generator.name == exit_cls.NAME
@@ -733,6 +802,8 @@ _REAL_EXIT_FACTORIES = {
     "atr_dynamic": _atr_dynamic_strategy,
     "atr_dynamic_decay": _atr_dynamic_decay_strategy,  # 배포 momentum_breakout 설정
     "chandelier_exit": _chandelier_strategy,
+    "mean_reversion_exit": _mean_reversion_exit_strategy,  # 배포 bb_reversion 설정
+    "momentum_decay": _momentum_decay_strategy,  # 배포 volume_accumulation 설정
 }
 
 # 게이트 매트릭스(_SCENARIOS/_RISK_VARIANTS)에서 파생 — 리터럴 복제로 두
@@ -772,6 +843,26 @@ class TestRealExitParity:
         res_legacy, res_vbt = _run_both(data, config, make)
         _assert_parity(res_legacy, res_vbt)
 
+    # exit_label -> (시나리오, "엔진 리스크 안전장치는 절대 못 내는" 사유 집합).
+    # atr_dynamic 계열/chandelier/momentum_decay 는 기본 RiskConfig 가 트레일링을
+    # 비활성화하므로 trailing_stop/momentum_decay 가 생성기 전용 증거다.
+    # mean_reversion_exit 는 그 두 사유를 내지 않는 별개 생성기라, 엔진 자체
+    # 리스크 안전장치(vbt_runner._check_risk/engine._check_risk)의 어휘에 아예
+    # 없는 target_reached/time_cut/eod_close/bear_exit 를 증거로 쓴다(엔진은
+    # take_profit/time_limit/force_close 라는 다른 이름을 쓴다). trend_down 은
+    # 하락장에서 BB middle 복귀가 드물어 공허해질 수 있으므로 trend_up(평균
+    # 회귀가 실제로 걸리는 방향)으로 시나리오를 바꾼다.
+    _VACUITY_CASES = {
+        "atr_dynamic": ("trend_down", {"trailing_stop", "momentum_decay"}),
+        "atr_dynamic_decay": ("trend_down", {"trailing_stop", "momentum_decay"}),
+        "chandelier_exit": ("trend_down", {"trailing_stop", "momentum_decay"}),
+        "momentum_decay": ("trend_down", {"trailing_stop", "momentum_decay"}),
+        "mean_reversion_exit": (
+            "trend_up",
+            {"target_reached", "time_cut", "eod_close", "bear_exit"},
+        ),
+    }
+
     @pytest.mark.parametrize("exit_label", sorted(_REAL_EXIT_FACTORIES))
     def test_real_exit_is_exercised_not_vacuous(self, exit_label):
         """허용목록 확장이 공허(무거래/END_OF_DATA-only) parity 로 통과하지 않는지.
@@ -780,13 +871,14 @@ class TestRealExitParity:
         ``momentum_decay`` 사유는 오직 실 exit 생성기만 낼 수 있다 → 그 사유의
         존재가 생성기가 실제로 청산을 구동했다는 증거다(엔진 안전장치가 아니라).
         decay 변형은 momentum_decay 분기 발화까지 고정한다(배포 설정 커버).
+        mean_reversion_exit 는 다른 어휘 집합을 쓴다(``_VACUITY_CASES`` 주석).
         """
         make = _REAL_EXIT_FACTORIES[exit_label]
-        data = _REAL_EXIT_SCENARIOS["trend_down"]()
+        scenario, generator_only = self._VACUITY_CASES[exit_label]
+        data = _REAL_EXIT_SCENARIOS[scenario]()
         config = BacktestConfig.stock(initial_capital=10_000_000)
         res = BacktestEngine(make(), config).run(data)
         assert res.total_trades > 0
-        generator_only = {"trailing_stop", "momentum_decay"}
         assert any(
             res.exit_reasons.get(r, 0) > 0 for r in generator_only
         ), res.exit_reasons
@@ -1033,20 +1125,66 @@ class TestExperimentSeam:
         )
 
     def test_legacy_exit_bare_key_is_unset_without_warning(self, monkeypatch, caplog):
-        """빈 키(`legacy_exit:` → None)는 미설정 — 경고 없이 무시."""
+        """빈 키(`legacy_exit:` → None)는 미설정 — 경고 없이 무시.
+
+        이 테스트의 관심사는 legacy_exit 의 tri-state 파싱이지 공정 기본
+        엔진이 아니다 — spec 이 ``engine`` 키를 안 주므로
+        :func:`shared.backtest.backend.resolve_backend` 가 공정 기본값
+        (``config/backtest.yaml::backtest.default_engine`` — P3-e flip 이후
+        기본 vectorbt)으로 떨어진다. 기본값 자체를 픽스처로 고정해 "기본
+        legacy"라는 원래 의도를 유지한다 — ``config/backtest.yaml`` 은 캐시되므로
+        (:class:`~shared.config.loader.ConfigLoader`) env 변경 전후로 캐시를
+        비워야 재로드된다.
+        """
         import logging as _logging
 
         from shared.backtest.experiment_runner import run_stock_experiment
+        from shared.config.loader import ConfigLoader
 
-        self._patch_config(monkeypatch, legacy_exit=None)
-        with caplog.at_level(_logging.WARNING, logger="shared.backtest"):
+        monkeypatch.setenv("BACKTEST_DEFAULT_ENGINE", "legacy")
+        ConfigLoader.clear_cache()
+        try:
+            self._patch_config(monkeypatch, legacy_exit=None)
+            with caplog.at_level(_logging.WARNING, logger="shared.backtest"):
+                report = run_stock_experiment(
+                    self._williams_spec(),
+                    bar_loader=self._minute_loader,
+                    now=datetime(2026, 6, 3),
+                )
+            assert report["summaries"][0]["engine"] == "backtest_engine"  # 기본 legacy
+        finally:
+            ConfigLoader.clear_cache()
+        assert not any("legacy_exit" in r.message for r in caplog.records)
+
+    def test_default_engine_flip_routes_to_vectorbt_when_env_unset(self, monkeypatch):
+        """엔진 키 없음 + 허용 exit(williams_r) + 기본값 env 미설정 ⇒ vectorbt.
+
+        P3-e flip 증거: ``config/backtest.yaml::backtest.default_engine`` 이
+        코드 리터럴이 아니라 실제로 라우팅을 바꾼다는 것을 고정한다 (이전
+        기본값이었던 legacy 리터럴로는 이 테스트가 실패했을 것). 다른
+        seam 테스트(``test_legacy_exit_bare_key_is_unset_without_warning``
+        등)는 관심사가 아닌 곳에서 기본값을 legacy 로 픽스처 고정하지만,
+        이 테스트는 그 반대 — 아무것도 고정하지 않은 "진짜 기본값"이
+        vectorbt 임을 검증한다. ``BACKTEST_DEFAULT_ENGINE`` 이 이미 환경에
+        박혀 있을 가능성(CI/로컬 셸)을 배제하려 명시적으로 지운다.
+        """
+        pytest.importorskip("vectorbt")
+        from shared.backtest.experiment_runner import run_stock_experiment
+        from shared.config.loader import ConfigLoader
+
+        monkeypatch.delenv("BACKTEST_DEFAULT_ENGINE", raising=False)
+        ConfigLoader.clear_cache()
+        try:
             report = run_stock_experiment(
                 self._williams_spec(),
                 bar_loader=self._minute_loader,
                 now=datetime(2026, 6, 3),
             )
-        assert report["summaries"][0]["engine"] == "backtest_engine"  # 기본 legacy
-        assert not any("legacy_exit" in r.message for r in caplog.records)
+            summ = report["summaries"][0]
+            assert summ["engine"] == "vectorbt"
+            assert report["data_coverage"]["005930"]["engine"] == "vectorbt"
+        finally:
+            ConfigLoader.clear_cache()
 
     def test_parity_cross_check_failure_falls_back_to_legacy(self, monkeypatch, caplog):
         """러너 cross-check 불일치(VectorbtParityError)는 심볼 드랍이 아니라 폴백.

@@ -31,10 +31,10 @@ import pytest
 from services.decision_engine.context_provider import FuturesContextProvider
 from services.decision_engine.daily_reference import FuturesDailyReference
 from services.decision_engine.main import DecisionEngineDaemon
-from services.trading.indicator_engine import StreamingIndicatorEngine
-from services.trading.stream_consumer_feed import StreamConsumerFeed
 from shared.decision.context import ScheduledEvent
 from shared.decision.setups.event_reaction import SetupCEventReaction
+from shared.indicators.streaming.engine import StreamingIndicatorEngine
+from shared.streaming.consumer_feed import StreamConsumerFeed
 
 _SYMBOL = "A05"
 # 08:45 KST regular-session open. now_fn = _BASE + 25min = 09:25 KST, well inside
