@@ -61,10 +61,11 @@ dependencies = [
     # python:3.11-slim (Debian/glibc) base images with no C source build.
     "TA-Lib>=0.5.1",
     # NOTE: Polars (planned for the cache-engine batch/fan-out, WS-A2/WS-A4) is
-    # intentionally NOT added here yet — no code in this change imports it, and
-    # installing polars surfaces a pre-existing polars-1.x incompatibility in
-    # tests/unit/core/test_data_engine.py. It lands with the WS-A2 batch code
-    # that actually uses it (which also owns that data_engine compat fix).
+    # intentionally NOT added here yet — no code in this change imports it.
+    # The legacy `core/` package (data_engine, indicator_engine, state_manager,
+    # strategy_engine) that previously surfaced a polars-1.x incompatibility
+    # here was removed as dead code (2026-09-07); this note now only records
+    # why polars isn't a direct dependency.
 
     # HTTP Client
     "requests>=2.31",
@@ -212,7 +213,7 @@ Issues = "https://github.com/kakao-harris-lee/kis-unified-sts/issues"
 # =============================================================================
 
 [tool.hatch.build.targets.wheel]
-packages = ["shared", "services", "cli", "core"]
+packages = ["shared", "services", "cli"]
 
 [tool.black]
 line-length = 88
@@ -301,7 +302,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["shared", "services", "cli", "core"]
+known-first-party = ["shared", "services", "cli"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -342,7 +343,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["shared", "services", "core"]
+source = ["shared", "services"]
 branch = true
 omit = ["*/tests/*", "*/__pycache__/*"]
 

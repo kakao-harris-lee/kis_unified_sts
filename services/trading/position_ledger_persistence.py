@@ -5,7 +5,6 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from shared.exceptions import InfrastructureError
 from shared.models.position import Position, PositionSide, PositionState
 from shared.portfolio.config import track_for_asset_class
 from shared.storage.config import StorageConfig
@@ -15,10 +14,6 @@ logger = logging.getLogger("services.trading.position_tracker")
 
 
 class PositionLedgerPersistenceMixin:
-    def _uses_legacy_persistence(self) -> bool:
-        """Compatibility guard for removed external DB persistence."""
-        return False
-
     def _get_runtime_ledger(self) -> RuntimeLedger | None:
         """Return the configured RuntimeLedger, lazily creating SQLite backend."""
         backend = self.config.runtime_ledger_backend
@@ -220,67 +215,21 @@ class PositionLedgerPersistenceMixin:
         if not self._positions:
             return 0
 
-        if not self._uses_legacy_persistence():
-            ledger = self._get_runtime_ledger()
-            if ledger is None:
-                return 0
-            try:
-                for position in self._positions.values():
-                    await asyncio.to_thread(
-                        ledger.record_position_snapshot,
-                        self._position_snapshot_payload(position, is_open=True),
-                    )
-                logger.info(
-                    "Saved %d open positions to runtime ledger", len(self._positions)
-                )
-                return len(self._positions)
-            except RuntimeLedgerError as e:
-                logger.error("Failed to save open positions to runtime ledger: %s", e)
-                return 0
-
+        ledger = self._get_runtime_ledger()
+        if ledger is None:
+            return 0
         try:
-            ch, database = self._get_db_client()
-
-            rows = []
             for position in self._positions.values():
-                rows.append(
-                    (
-                        position.id,
-                        position.code,
-                        position.name,
-                        self._db_datetime(position.entry_time),
-                        position.entry_price,
-                        position.quantity,
-                        position.strategy,
-                        position.execution_venue,
-                        position.stop_price,
-                        position.highest_price,
-                        position.state.value,
-                        1,  # is_open
-                        None,  # exit_date
-                        None,  # exit_price
-                        None,  # exit_reason
-                        None,  # pnl
-                        position.side.value,
-                        position.fee_rate,
-                    )
+                await asyncio.to_thread(
+                    ledger.record_position_snapshot,
+                    self._position_snapshot_payload(position, is_open=True),
                 )
-
-            def _sync_save():
-                client = ch.get_sync_client()
-                client.execute(
-                    f"INSERT INTO {database}.swing_positions "
-                    f"{self._SWING_INSERT_COLS} VALUES",
-                    rows,
-                )
-
-            await asyncio.to_thread(_sync_save)
-
-            logger.info(f"Saved {len(rows)} swing positions to DB")
-            return len(rows)
-
-        except InfrastructureError as e:
-            logger.error(f"Failed to save swing positions: {e}")
+            logger.info(
+                "Saved %d open positions to runtime ledger", len(self._positions)
+            )
+            return len(self._positions)
+        except RuntimeLedgerError as e:
+            logger.error("Failed to save open positions to runtime ledger: %s", e)
             return 0
 
     @staticmethod
@@ -298,140 +247,25 @@ class PositionLedgerPersistenceMixin:
         Returns:
             Number of positions loaded
         """
-        if not self._uses_legacy_persistence():
-            ledger = self._get_runtime_ledger()
-            if ledger is None:
-                return 0
-            try:
-                asset_class = self.config.asset_class or None
-                rows = await asyncio.to_thread(ledger.load_open_positions, asset_class)
-                loaded = 0
-                for row in rows:
-                    position = self._position_from_ledger_row(row)
-                    if position is None:
-                        continue
-                    if position.id in self._positions:
-                        continue
-                    if self.add_recovered_position(position):
-                        loaded += 1
-
-                if loaded:
-                    logger.info("Loaded %d positions from runtime ledger", loaded)
-                return loaded
-            except RuntimeLedgerError as e:
-                logger.error("Failed to load positions from runtime ledger: %s", e)
-                return 0
-
+        ledger = self._get_runtime_ledger()
+        if ledger is None:
+            return 0
         try:
-            ch, database = self._get_db_client()
-
-            def _sync_load():
-                client = ch.get_sync_client()
-                return client.execute(f"""
-                    SELECT id, code, name, entry_date, entry_price, quantity,
-                           strategy, execution_venue, stop_loss_price, high_since_entry, current_state,
-                           side, fee_rate
-                    FROM {database}.swing_positions FINAL
-                    WHERE is_open = 1
-                    ORDER BY entry_date ASC
-                    """)
-
-            result = await asyncio.to_thread(_sync_load)
-
+            asset_class = self.config.asset_class or None
+            rows = await asyncio.to_thread(ledger.load_open_positions, asset_class)
             loaded = 0
-            for row in result:
-                if len(row) == 13:
-                    (
-                        pos_id,
-                        code,
-                        name,
-                        entry_time,
-                        entry_price,
-                        quantity,
-                        strategy,
-                        execution_venue,
-                        stop_price,
-                        high_since_entry,
-                        state_str,
-                        side_str,
-                        fee_rate_val,
-                    ) = row
-                elif len(row) == 12:
-                    (
-                        pos_id,
-                        code,
-                        name,
-                        entry_time,
-                        entry_price,
-                        quantity,
-                        strategy,
-                        stop_price,
-                        high_since_entry,
-                        state_str,
-                        side_str,
-                        fee_rate_val,
-                    ) = row
-                    execution_venue = "KRX"
-                else:
-                    logger.warning(
-                        "Skipping persisted position with unexpected column count: %s",
-                        len(row),
-                    )
+            for row in rows:
+                position = self._position_from_ledger_row(row)
+                if position is None:
                     continue
-
-                # Skip if already tracked
-                if pos_id in self._positions:
+                if position.id in self._positions:
                     continue
-
-                # Map state string to PositionState
-                try:
-                    state = PositionState(state_str)
-                except ValueError:
-                    state = PositionState.SURVIVAL
-
-                # Parse side
-                try:
-                    side = PositionSide(side_str)
-                except (ValueError, KeyError):
-                    side = PositionSide.LONG
-
-                position = Position(
-                    id=pos_id,
-                    code=code,
-                    name=name,
-                    side=side,
-                    quantity=quantity,
-                    entry_price=entry_price,
-                    entry_time=entry_time,
-                    current_price=entry_price,
-                    highest_price=high_since_entry or entry_price,
-                    lowest_price=entry_price,
-                    state=state,
-                    strategy=strategy,
-                    fee_rate=(
-                        fee_rate_val if fee_rate_val else self.config.default_fee_rate
-                    ),
-                    execution_venue=execution_venue if execution_venue else "KRX",
-                )
-                position.stop_price = stop_price or 0.0
-
-                # Add to tracker indices
-                self._positions[pos_id] = position
-
-                if code not in self._by_symbol:
-                    self._by_symbol[code] = []
-                self._by_symbol[code].append(pos_id)
-
-                if strategy not in self._by_strategy:
-                    self._by_strategy[strategy] = []
-                self._by_strategy[strategy].append(pos_id)
-
-                loaded += 1
+                if self.add_recovered_position(position):
+                    loaded += 1
 
             if loaded:
-                logger.info(f"Loaded {loaded} swing positions from DB")
+                logger.info("Loaded %d positions from runtime ledger", loaded)
             return loaded
-
-        except InfrastructureError as e:
-            logger.error(f"Failed to load swing positions: {e}")
+        except RuntimeLedgerError as e:
+            logger.error("Failed to load positions from runtime ledger: %s", e)
             return 0

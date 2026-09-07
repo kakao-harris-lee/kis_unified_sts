@@ -215,19 +215,19 @@ Server DB configs are not valid for new backtest or prewarm market-data sources.
 
 ## Runtime DB Dependency Policy
 
-Runtime-facing code must not import ClickHouse drivers or legacy client wrappers directly. The compatibility modules under `shared/db/` remain only to raise an explicit removal error for stale call sites.
+Runtime-facing code must not import ClickHouse drivers or legacy client wrappers directly. The `shared/db/` compatibility tombstone that used to raise an explicit removal error for stale call sites has itself been deleted (2026-09-07) now that nothing calls it.
 
 Runtime-facing roots covered by the policy guard:
 
 - `services/`
-- `core/`
 - `cli/`
 - `shared/strategy/gates/`
 
 The guard test is `tests/unit/storage/test_clickhouse_policy.py`. It fails if
 those roots import `clickhouse_driver` or
 `shared.db.client.ClickHouseClient` / `AsyncClickHouseClient` /
-`get_clickhouse_client` directly.
+`get_clickhouse_client` directly, and it separately asserts that `shared/db`
+no longer exists on disk.
 
 ## Compose Strategy
 
