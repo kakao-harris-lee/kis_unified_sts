@@ -152,6 +152,13 @@ jobs:
       - name: mypy (tos kernel)
         run: cd tos && mypy src --ignore-missing-imports
 
+      # tos/src/tos/py.typed (PEP 561 marker, added alongside this step) makes
+      # the kernel's own types visible to this check instead of resolving as
+      # `Any` — without it, every tos_runtime call into a kernel function/
+      # predicate/artifact silently typed as `Any`, masking real errors here.
+      - name: mypy (tos runtime)
+        run: mypy tos/runtime/src --ignore-missing-imports
+
       - name: tos size budget
         # config/tos_size_budget.yaml exceptions register — Phase 1 작업 6.
         run: python tools/tos_size_budget.py --check
