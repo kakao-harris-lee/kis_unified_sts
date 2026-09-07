@@ -18,17 +18,24 @@ authoritative and are not re-litigated here):
   instance concern), consumed here only through the injected ``environment_binding`` /
   ``asset_binding`` maps of :func:`endpoint_binding_from_profile_ok` — never a kernel
   constant.
-* **§5.2 — the allowed matrix is a closed whitelist.** :func:`routing_admissibility` maps a
-  :class:`CapabilityTuple` to the reused 3-token
+* **§5.2 — the allowed matrix is a closed whitelist, DERIVED from rules, not transcribed
+  (slice plan §3-A R-2).** The upstream plan's §5.2 is a use-case table, not an exhaustive
+  routing matrix (independent review finding, accepted). :func:`routing_admissibility` maps
+  a :class:`CapabilityTuple` to the reused 3-token
   :class:`~tos.brokercap.vocabulary.Admissibility` (no new vocabulary — slice plan §3
-  decision 4): a tuple is ``ADMISSIBLE``/``REDUCED`` only when it is one of the finitely many
-  sanctioned rows derived from the upstream plan's §5.2 table; **everything else is
-  ``PROHIBITED``** (denylist is forbidden — playbook §3.1/§2.E). The "선물 REAL 주문" row is
-  not merely absent from the whitelist: :class:`CapabilityTuple` makes the
-  ``BROKER_PRODUCTION`` x ``ORDER_SEND``/``CANCEL_REPLACE`` x ``FUTURES`` combination
-  *unconstructable* — the root ``CLAUDE.md`` non-negotiable "real futures account is never
-  funded with margin" / "real-money futures order paths are permanently blocked by policy"
-  is therefore a **type-level seal**, not a predicate a caller could route around. The
+  decision 4): a tuple is ``ADMISSIBLE`` only via the read-class rule (read never authorizes
+  an order — 18 tuples) or the synthetic-order rule (a synthetic fill has no economic effect
+  — 4 tuples; 22 total), ``REDUCED`` only via the MOCK-stock-order rule (2 tuples, gated on
+  ``profile_evidence_ok is True``); **everything else is ``PROHIBITED``** (denylist is
+  forbidden — playbook §3.1/§2.E). A ``BROKER_PRODUCTION`` order tuple (STOCK or FUTURES) is
+  never enumerated by any rule — the upstream plan has no real-order row for either asset.
+  For FUTURES specifically, :class:`CapabilityTuple` additionally rejects the combination at
+  *validated* construction time (rule 4) — but that is a **validated-construction seal**, not
+  absolute unconstructability (pydantic ``model_construct``/``model_copy(update=...)`` bypass
+  every validator; slice plan §3-A R-1): the closed-whitelist check is the seal's second,
+  bypass-proof layer, and both layers are pinned by tests. The root ``CLAUDE.md``
+  non-negotiable "real futures account is never funded with margin" / "real-money futures
+  order paths are permanently blocked by policy" is what both layers together realize. The
   "선물 실체결 필요 bound" row has **no** whitelist tuple at all (§5.2: "없음" endpoint, "실체결
   하지 않고 mock-derived bound 사용") — it is a compute-time policy outside the routing axes,
   not a routing case.
@@ -187,14 +194,30 @@ class CapabilityTuple(FrozenModel):
     * **(rule 3′)** ``SYNTHETIC_ORDER`` cannot coexist with any non-``SYNTHETIC`` environment
       — a synthetic fill is only meaningful inside the ``SYNTHETIC`` environment.
     * **(rule 4)** ``BROKER_PRODUCTION`` x (``ORDER_SEND`` or ``CANCEL_REPLACE``) x
-      ``FUTURES`` is **permanently unrepresentable** — the root ``CLAUDE.md`` non-negotiable
-      rule ("the real futures account is never funded with margin"; "real-money futures
-      order paths ... are permanently blocked by policy") is realized as a type-level
-      construction seal, not a predicate a caller could route around after the fact.
+      ``FUTURES`` is sealed by a **validated-construction seal** (slice plan §3-A R-1) — not
+      "unconstructable" in the absolute sense. pydantic's ``model_construct`` /
+      ``model_copy(update=...)`` bypass every validator, including this one, which is a
+      library-global fact this package cannot relativize (no other brokercap record has a
+      combined validator to bypass either — see the closing paragraph below). The seal is
+      therefore **two layers**: ① *validated* construction (``CapabilityTuple(...)`` the
+      normal way) rejects the combination outright at construction time; ② even a
+      bypass-constructed tuple carrying it is not a member of the closed
+      :func:`routing_admissibility` whitelist, so the verdict is still ``PROHIBITED`` for it
+      (§3 decision 4's "everything else is PROHIBITED" has no assume-admissible
+      fallthrough). Both layers are pinned by tests
+      (``tests/brokercap/test_brokercap_routing.py``) — layer ① via the ``pytest.raises``
+      construction test, layer ② via a ``model_construct`` / ``model_copy(update=...)``
+      bypass tuple asserted ``PROHIBITED`` from :func:`routing_admissibility` directly. The
+      root ``CLAUDE.md`` non-negotiable rule ("the real futures account is never funded with
+      margin"; "real-money futures order paths ... are permanently blocked by policy") is
+      what both layers together realize.
 
     Every rejection raises :class:`~tos.brokercap._base.ArtifactIntegrityError` (a
     ``ValueError`` subclass), which pydantic surfaces as a ``pydantic.ValidationError`` —
-    the same discipline as every other brokercap record (design #10 §4.1/§4.2).
+    **brokercap's first combined validator** (slice plan §3-A R-4): no other
+    ``tos.brokercap`` record combines a multi-field check into one ``model_validator``
+    (design #10 §4.1/§4.2 states the general fail-closed discipline these checks apply, not
+    a claim that another record already does this).
     """
 
     environment: BrokerEnvironment
@@ -255,32 +278,69 @@ class CapabilityTuple(FrozenModel):
         ):
             raise ArtifactIntegrityError(
                 "CapabilityTuple: BROKER_PRODUCTION x ORDER_SEND/CANCEL_REPLACE x FUTURES "
-                "is permanently unrepresentable — the real futures account is never funded "
-                "with margin and real-money futures order paths are policy-blocked (root "
-                "CLAUDE.md non-negotiable rules; slice plan §3 decision 3)"
+                "is rejected by the validated-construction seal — the real futures account "
+                "is never funded with margin and real-money futures order paths are "
+                "policy-blocked (root CLAUDE.md non-negotiable rules; slice plan §3-A R-1)"
             )
         return self
 
 
 # ===========================================================================
-# §5.2 — closed routing whitelist (plan §5.2 six rows; slice plan §3 decision 4)
+# §5.2 — closed routing whitelist, derived from rules (slice plan §3-A R-2)
+#
+# The upstream plan's §5.2 is a **use-case table**, not an exhaustive routing matrix (review
+# finding accepted, §3-A R-2) — this module does NOT transcribe its 6 rows literally. The
+# whitelist frozensets below are built BY the derived rules (comprehensions over the rule's
+# own quantifiers), never hand-enumerated, so the rule *is* the row set rather than a
+# separately-typed shadow of it. Each rule traces to an explicit upstream decision, never an
+# invented value (§3-A R-2).
 # ===========================================================================
 
-#: Row 1 — synthetic backtest/fill: non-authoritative, no economic effect, either asset.
-_ROW_1_SYNTHETIC_BACKTEST: frozenset[CapabilityTuple] = frozenset(
+#: The three read-class operations (§3-A R-2's read-class rule). CAPABILITY_PROBE is
+#: included here as "a probe, read-only" — its separate :class:`ProbeManifest` obligation
+#: (§5.3 "probe manifest required") is a provenance-layer concern, not this rule's (§3-A R-3:
+#: a probe against ``SYNTHETIC`` is honestly "a probe in a synthetic environment", never a
+#: stand-in for :class:`ProvenanceClass.OFFICIAL_DOCUMENT` — the "official spec" source in
+#: the upstream plan's row 4 is a **provenance** axis, not an **environment** axis; it does
+#: not belong on this tuple at all).
+_READ_CLASS_OPERATIONS: frozenset[OperationClass] = frozenset(
+    {
+        OperationClass.MARKET_DATA_READ,
+        OperationClass.ACCOUNT_READ,
+        OperationClass.CAPABILITY_PROBE,
+    }
+)
+
+#: The read-class rule (slice plan §3-A R-2): read never authorizes an order (upstream plan
+#: §0 decision 2 "REAL_READ is an acceptable observation capability, distinct from
+#: REAL_ORDER"; §5.3 "read credential 만"; §5.1's own ``NON_AUTHORIZING_READ`` definition), so
+#: every environment x every read-class operation x no economic effect x either asset x
+#: NON_AUTHORIZING_READ is unconditionally ADMISSIBLE — 3 environments x 3 operations x 2
+#: assets = 18 tuples. This absorbs the upstream plan's rows 1, 2, and 4 as instances of one
+#: rule rather than three separately-typed cases.
+_READ_CLASS_ADMISSIBLE: frozenset[CapabilityTuple] = frozenset(
     CapabilityTuple(
-        environment=BrokerEnvironment.SYNTHETIC,
-        operation_class=OperationClass.MARKET_DATA_READ,
+        environment=environment,
+        operation_class=operation,
         economic_effect=EconomicEffect.NONE,
         asset_scope=asset,
         authorization_class=AuthorizationClass.NON_AUTHORIZING_READ,
     )
+    for environment in BrokerEnvironment
+    for operation in _READ_CLASS_OPERATIONS
     for asset in AssetScope
 )
 
-#: Row 1b (v1.1) — synthetic order/cancel-replace: a non-authoritative synthetic fill has no
-#: economic effect by definition (the exemption to rule 1), either asset.
-_ROW_1B_SYNTHETIC_ORDER: frozenset[CapabilityTuple] = frozenset(
+#: The order-mutating operations the synthetic-order rule ranges over.
+_SYNTHETIC_ORDER_OPERATIONS: frozenset[OperationClass] = frozenset(
+    {OperationClass.ORDER_SEND, OperationClass.CANCEL_REPLACE}
+)
+
+#: The synthetic-order rule (§3-A R-2, v1.1 unchanged): a non-authoritative synthetic fill has
+#: no economic effect by definition (the ``CapabilityTuple`` rule-1 exemption) — SYNTHETIC x
+#: {ORDER_SEND, CANCEL_REPLACE} x NONE x either asset x SYNTHETIC_ORDER is unconditionally
+#: ADMISSIBLE — 1 environment x 2 operations x 2 assets = 4 tuples.
+_SYNTHETIC_ORDER_ADMISSIBLE: frozenset[CapabilityTuple] = frozenset(
     CapabilityTuple(
         environment=BrokerEnvironment.SYNTHETIC,
         operation_class=operation,
@@ -288,64 +348,41 @@ _ROW_1B_SYNTHETIC_ORDER: frozenset[CapabilityTuple] = frozenset(
         asset_scope=asset,
         authorization_class=AuthorizationClass.SYNTHETIC_ORDER,
     )
-    for operation in (OperationClass.ORDER_SEND, OperationClass.CANCEL_REPLACE)
+    for operation in _SYNTHETIC_ORDER_OPERATIONS
     for asset in AssetScope
 )
 
-#: Row 2 — futures paper + real quotes: read-only credential, zero real orders (futures only).
-_ROW_2_FUTURES_PAPER_REAL_QUOTES: frozenset[CapabilityTuple] = frozenset(
-    CapabilityTuple(
-        environment=BrokerEnvironment.BROKER_PRODUCTION,
-        operation_class=operation,
-        economic_effect=EconomicEffect.NONE,
-        asset_scope=AssetScope.FUTURES,
-        authorization_class=AuthorizationClass.NON_AUTHORIZING_READ,
-    )
-    for operation in (OperationClass.MARKET_DATA_READ, OperationClass.ACCOUNT_READ)
-)
-
-#: Row 4 — measuring conditions absent from MOCK: official spec (SYNTHETIC, non-authoritative)
-#: or a REAL GET probe, zero real orders, either asset. Runtime enforcement of the
-#: accompanying "probe manifest required" clause is a later task (§3 decision 5.iv) — this
-#: slice only shapes :class:`ProbeManifest`, it does not consume one here.
-_ROW_4_PROBE_BEYOND_MOCK: frozenset[CapabilityTuple] = frozenset(
-    CapabilityTuple(
-        environment=environment,
-        operation_class=OperationClass.CAPABILITY_PROBE,
-        economic_effect=EconomicEffect.NONE,
-        asset_scope=asset,
-        authorization_class=AuthorizationClass.NON_AUTHORIZING_READ,
-    )
-    for environment in (
-        BrokerEnvironment.SYNTHETIC,
-        BrokerEnvironment.BROKER_PRODUCTION,
-    )
-    for asset in AssetScope
-)
-
-#: The unconditionally-``ADMISSIBLE`` whitelist — plan §5.2 rows 1, 1b (v1.1), 2, 4. Row 5
-#: ("선물 실체결 필요 bound") contributes no tuple (no endpoint — a compute-time policy, not a
-#: routing case); row 6 ("선물 REAL 주문") is excluded by construction (see
-#: :class:`CapabilityTuple`).
+#: The unconditionally-``ADMISSIBLE`` whitelist — the union of the two derived admissible
+#: rules above (§3-A R-2): 18 (read-class) + 4 (synthetic-order) = **22** tuples. Nothing
+#: resembling a ``BROKER_PRODUCTION`` order (STOCK or FUTURES) is enumerated at all — the
+#: upstream plan §5.2 has no real-stock-order row, and the FUTURES case is additionally
+#: excluded by :class:`CapabilityTuple`'s validated-construction seal (rule 4).
 _ADMISSIBLE_WHITELIST: frozenset[CapabilityTuple] = (
-    _ROW_1_SYNTHETIC_BACKTEST
-    | _ROW_1B_SYNTHETIC_ORDER
-    | _ROW_2_FUTURES_PAPER_REAL_QUOTES
-    | _ROW_4_PROBE_BEYOND_MOCK
+    _READ_CLASS_ADMISSIBLE | _SYNTHETIC_ORDER_ADMISSIBLE
 )
 
-#: Row 3 — MOCK stock order verification: admitted only at the ``REDUCED`` ceiling, and only
-#: when the injected profile/evidence flag is positively ``True`` (plan §5.2 row 3; decision 4).
+#: The MOCK stock order verification rule (§3-A R-2, upstream plan §5.2 row 3):
+#: BROKER_SIMULATION x {ORDER_SEND, CANCEL_REPLACE} x BROKER_RESOURCE_ONLY x STOCK x
+#: MOCK_ORDER — admitted only at the ``REDUCED`` ceiling, and only when the injected
+#: profile/evidence flag is positively ``True``. The ``CANCEL_REPLACE`` join (the upstream
+#: plan's row 3 names only "주문") is derived from the upstream plan's §6 Phase 3 작업 5
+#: (partial-fill / cancel-replace vocabulary) — "order verification" includes amending an
+#: order, not send-only (§3-A R-2). A MOCK **futures** order is never enumerated: the
+#: upstream plan has no basis for one (§0 decision 3's premise is that the MOCK environment
+#: does not offer futures) — 1 environment x 2 operations x 1 asset = 2 tuples.
+_MOCK_STOCK_ORDER_OPERATIONS: frozenset[OperationClass] = frozenset(
+    {OperationClass.ORDER_SEND, OperationClass.CANCEL_REPLACE}
+)
+
 _REDUCED_WHITELIST: frozenset[CapabilityTuple] = frozenset(
-    {
-        CapabilityTuple(
-            environment=BrokerEnvironment.BROKER_SIMULATION,
-            operation_class=OperationClass.ORDER_SEND,
-            economic_effect=EconomicEffect.BROKER_RESOURCE_ONLY,
-            asset_scope=AssetScope.STOCK,
-            authorization_class=AuthorizationClass.MOCK_ORDER,
-        )
-    }
+    CapabilityTuple(
+        environment=BrokerEnvironment.BROKER_SIMULATION,
+        operation_class=operation,
+        economic_effect=EconomicEffect.BROKER_RESOURCE_ONLY,
+        asset_scope=AssetScope.STOCK,
+        authorization_class=AuthorizationClass.MOCK_ORDER,
+    )
+    for operation in _MOCK_STOCK_ORDER_OPERATIONS
 )
 
 
@@ -354,22 +391,23 @@ def routing_admissibility(
     *,
     profile_evidence_ok: bool | None = None,
 ) -> Admissibility:
-    """The closed §5.2 whitelist verdict for one capability tuple (slice plan §3 decision 4).
+    """The closed, rule-derived whitelist verdict for one capability tuple (§3-A R-2).
 
     Reuses the existing 3-token :class:`~tos.brokercap.vocabulary.Admissibility` (no new
-    vocabulary): ``ADMISSIBLE`` for the unconditional rows (plan §5.2 rows 1/1b/2/4),
-    ``REDUCED`` for the MOCK-stock-order row (row 3) **only** when ``profile_evidence_ok is
-    True``, and ``PROHIBITED`` for every other tuple — including row 3 when the evidence flag
-    is not positively ``True`` (``None``/``False`` both fail closed) and any tuple this
-    module never enumerates at all. There is deliberately no "assume-admissible" fallthrough
-    (design #10 §4.1): membership in a whitelist is the only path to anything but
-    ``PROHIBITED``.
+    vocabulary): ``ADMISSIBLE`` for the read-class rule and the synthetic-order rule (22
+    tuples total, unconditional), ``REDUCED`` for the MOCK-stock-order rule (2 tuples)
+    **only** when ``profile_evidence_ok is True``, and ``PROHIBITED`` for every other tuple
+    — including a MOCK-stock-order tuple when the evidence flag is not positively ``True``
+    (``None``/``False`` both fail closed) and any tuple no derived rule admits at all (e.g.
+    every ``BROKER_PRODUCTION`` order tuple — there is no rule for one). There is
+    deliberately no "assume-admissible" fallthrough (design #10 §4.1): membership in a
+    whitelist built from the derived rules is the only path to anything but ``PROHIBITED``.
 
     Args:
         capability_tuple: The tuple under test.
-        profile_evidence_ok: Whether the injected profile/evidence check for the row-3
-            (MOCK stock order) case is satisfied. ``True`` only is positive; ``None``/``False``
-            fail closed. Irrelevant to every other row.
+        profile_evidence_ok: Whether the injected profile/evidence check for the
+            MOCK-stock-order case is satisfied. ``True`` only is positive; ``None``/``False``
+            fail closed. Irrelevant to every other rule.
 
     Returns:
         The admissibility verdict.

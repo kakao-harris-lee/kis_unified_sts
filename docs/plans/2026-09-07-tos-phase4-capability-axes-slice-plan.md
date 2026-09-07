@@ -27,6 +27,23 @@
 5. **라우팅 불변식 술어(§5.3)** — 커널에서 표현 가능한 셋만: (i) `endpoint_binding_from_profile_ok(tuple, profile_key)` — tuple 의 환경·자산 축이 `ProfileKey.environment`/`instrument_class` 와 **정확히** 결속(문자열 대응표는 주입 인자, 커널 상수 아님 · 결속 부재 = False) (ii) `credential_principal_separation_ok(read_principal, order_principal)` — 둘이 같으면 False · None 은 False (iii) `unsupported_is_deny(...)` — MOCK 미지원 요청이 REAL 로 재작성될 수 없음을 tuple 불변(frozen)+환경 축 교체 금지로 표현: «재작성»을 표현하는 함수를 두지 않고, 그 부재를 negative-grep 테스트로 고정. (iv) probe manifest 는 작업 3 소관이라 이 슬라이스에서 **레코드 형상만**(`ProbeManifest`: `emits_orders: Literal[False]` · allowed_methods · retention · ttl · provenance 문자열) 두고 소비자는 두지 않는다.
 6. **테스트**(TDD · happy+negative): enum 카운트 핀 5종 · tuple 모순 조합 전수(음성) · 허용 6행 양성 + 목록 밖 무작위(hypothesis) 전부 PROHIBITED · `BROKER_PRODUCTION×ORDER_SEND×FUTURES` 표현 불가 · 술어 (i)(ii) 극성(None=False) · 임포트 closure(형제-엣지-0 유지 — `test_brokercap_import_closure.py` 확장) · `CapabilityDimension==17` 불변.
 
+### 3-A. v1.2 정정 (2026-09-07 · Phase 4 브랜치 독립 리뷰 medium 2건 처분)
+
+**R-1 «표현 불가»의 정확한 범위.** 규칙 4 의 봉인은 *validated construction* 에 한정된다 — pydantic 의 `model_construct`/`model_copy(update=)` 는 validator 를 건너뛰며 이것은 brokercap 안에서 상대화할 수 없는(다른 레코드에 validator 가 없다) 라이브러리 전역 사실이다. 따라서 봉인은 **2층**이다: ① validated 생성 거부 ② 닫힌 whitelist 가 우회 tuple 도 PROHIBITED 로 판정. 문언을 «validated-construction seal» 로 좁히고 ②를 **음성 테스트로 고정**한다(우회 tuple 2종 — `model_construct` · `model_copy(update=)` — 이 `routing_admissibility` 에서 PROHIBITED · `ProbeManifest.model_construct(emits_orders=True)` 는 소비 술어가 없으므로 «형상만» 이라는 기존 선언을 유지하고 테스트로 그 한계를 기록).
+
+**R-2 whitelist 는 §5.2 의 축자 전사가 아니라 파생이다.** 상위 계획 §5.2 는 «사용 사례 표»이고 라우팅 전수 행렬이 아니다(리뷰 판정 수용). 닫힌 whitelist 는 유지하되 행 집합을 다음 **파생 규칙**으로 정의한다 — 값을 발명하지 않고 상위 계획의 명시 결정에서만 끌어온다:
+- **읽기 클래스 규칙**(상위 계획 §0 결정 2 「`REAL_READ` 는 허용 가능한 관측 capability이고 `REAL_ORDER` 는 별도 권한」· §5.3 「read credential 만」· §5.1 `NON_AUTHORIZING_READ` 의 정의): `∀ env ∈ {SYNTHETIC, BROKER_SIMULATION, BROKER_PRODUCTION}` × `op ∈ {MARKET_DATA_READ, ACCOUNT_READ, CAPABILITY_PROBE}` × `NONE` × `∀ asset` × `NON_AUTHORIZING_READ` ⇒ ADMISSIBLE. 읽기는 정의상 권한을 만들지 않는다. (기존 1·2·4행은 이 규칙의 부분집합이 되어 흡수된다. `CAPABILITY_PROBE` 는 `ProbeManifest` 결속이 별도 의무 — §5.3 «probe manifest 필수»는 이 술어가 아니라 provenance 술어 소관.)
+- **합성 주문 규칙**(1b · v1.1 그대로): `SYNTHETIC` × {`ORDER_SEND`,`CANCEL_REPLACE`} × `NONE` × ∀ asset × `SYNTHETIC_ORDER` ⇒ ADMISSIBLE.
+- **MOCK 주식 주문 검증 규칙**(§5.2 3행): `BROKER_SIMULATION` × {`ORDER_SEND`, **`CANCEL_REPLACE`**} × `BROKER_RESOURCE_ONLY` × `STOCK` × `MOCK_ORDER` ⇒ REDUCED(`profile_evidence_ok is True` 만). CANCEL_REPLACE 포함은 «주문 검증»이 취소·정정을 포함한다는 상위 §6 Phase 3 작업 5(partial fill·cancel/replace 어휘) 에서 파생. MOCK **선물** 주문은 열거하지 않는다(상위 §5.2 에 근거 없음 · KIS MOCK 은 선물 미제공이 §0 결정 3 의 전제).
+- 그 밖 전부 PROHIBITED. 특히 `BROKER_PRODUCTION` × 주문 작업은 STOCK 이라도 열거하지 않는다(§5.2 에 실주식 주문 행 없음 — 리뷰 확인).
+- hypothesis 테스트는 «whitelist = 위 규칙의 외연» 을 **두 방향**으로 고정(규칙이 admit 하면 whitelist 에 있고, whitelist 에 있으면 규칙이 admit).
+
+**R-3 축 오버로드 해소.** §5.2 4행의 «공식 명세»는 환경이 아니라 **출처**다 — `ProvenanceClass.OFFICIAL_DOCUMENT` 가 담당하며 환경 축에 싣지 않는다. 읽기 클래스 규칙이 `SYNTHETIC×CAPABILITY_PROBE` 를 자동 포함하지만 이는 «합성 환경에서의 프로브» 라는 정직한 의미이고 문서 출처의 대역이 아니다(docstring 정정).
+
+**R-4 문언.** «the same discipline as every other brokercap record» → «brokercap 최초의 결합 validator» 로 정정.
+
+운영자 확인 지점: R-2 의 읽기 클래스 규칙과 3행 CANCEL_REPLACE 포함은 상위 계획에서 파생했으나 **행렬 자체는 상위 §5.2 소유자의 승인 대상**이다 — PR 리뷰 시 명시 확인 요청.
+
 ## 4. 기각 대안
 
 - vocabulary.py 에 enum 추가 → 카운트 핀·모듈 크기 budget 압박, 별도 모듈이 더 낮은 결합.

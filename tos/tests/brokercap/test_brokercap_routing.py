@@ -1,10 +1,12 @@
 """Broker environment/operation capability axes + closed routing whitelist (plan §5).
 
 Covers ``tos.brokercap.routing`` per the Phase 4 slice #1 plan
-(``docs/plans/2026-09-07-tos-phase4-capability-axes-slice-plan.md`` §3): the 5 §5.1 axis
-StrEnums, the ``CapabilityTuple`` combined-contradiction validator (including the
-BROKER_PRODUCTION x ORDER_SEND/CANCEL_REPLACE x FUTURES permanent-block seal), the closed
-§5.2 routing whitelist, and the two kernel-representable §5.3 routing-invariant predicates.
+(``docs/plans/2026-09-07-tos-phase4-capability-axes-slice-plan.md`` §3, amended by the v1.2
+§3-A review dispositions R-1..R-4): the 5 §5.1 axis StrEnums, the ``CapabilityTuple``
+combined-contradiction validator (including the BROKER_PRODUCTION x
+ORDER_SEND/CANCEL_REPLACE x FUTURES two-layer validated-construction seal — §3-A R-1), the
+closed whitelist DERIVED from rules rather than transcribed from §5.2's use-case table
+(§3-A R-2), and the two kernel-representable §5.3 routing-invariant predicates.
 
 TDD: this file is authored *before* ``tos/src/tos/brokercap/routing.py`` exists, so the
 first run is RED on the import (module not found) — expected per plan §3.6.
@@ -219,13 +221,15 @@ def test_synthetic_environment_rejects_real_or_mock_order(
     "authorization_class",
     [AuthorizationClass.REAL_ORDER, AuthorizationClass.MOCK_ORDER],
 )
-def test_broker_production_order_mutating_futures_permanently_unrepresentable(
+def test_broker_production_order_mutating_futures_rejected_by_validated_construction(
     operation_class: OperationClass, authorization_class: AuthorizationClass
 ) -> None:
-    """BROKER_PRODUCTION x ORDER_SEND/CANCEL_REPLACE x FUTURES is unconstructable — the
-    'permanent block' is a type-level seal, not a predicate (root CLAUDE.md non-negotiable:
+    """(§3-A R-1) BROKER_PRODUCTION x ORDER_SEND/CANCEL_REPLACE x FUTURES is rejected by
+    *validated* construction — layer ① of the two-layer seal (root CLAUDE.md non-negotiable:
     the real futures account is never funded; real futures order paths are policy-blocked).
-    """
+    Layer ②'s bypass-proof half is pinned separately below (``model_construct`` /
+    ``model_copy(update=...)`` skip this validator, so the closed whitelist is what still
+    denies a bypass-constructed tuple)."""
     with pytest.raises(pydantic.ValidationError):
         CapabilityTuple(
             **_base_kwargs(
@@ -308,125 +312,226 @@ def test_synthetic_synthetic_order_exempt_from_economic_effect_none_rule() -> No
 
 
 # ---------------------------------------------------------------------------
-# routing_admissibility — closed §5.2 whitelist (positive; decision 4)
+# routing_admissibility — closed whitelist DERIVED from rules (positive; §3-A R-2)
+#
+# §5.2 is a use-case table, not an exhaustive routing matrix (review finding accepted).
+# The rows below are reconstructed as the derived rules' own extension — independently of
+# routing.py's private whitelist constants (anti-phantom: this test does not import
+# routing's private sets) — so a bidirectional hypothesis test can compare "the rule admits
+# it" against "routing_admissibility says ADMISSIBLE/REDUCED" without circularity.
 # ---------------------------------------------------------------------------
 
-#: The plan §5.2 sanctioned rows, reconstructed independently of routing.py's private
-#: whitelist constants (anti-phantom: this test does not import routing's private sets).
-_SANCTIONED_ADMISSIBLE = (
-    [
-        # Row 1 — synthetic backtest/fill, non-authoritative, either asset.
-        CapabilityTuple(
-            environment=BrokerEnvironment.SYNTHETIC,
-            operation_class=OperationClass.MARKET_DATA_READ,
-            economic_effect=EconomicEffect.NONE,
-            asset_scope=asset,
-            authorization_class=AuthorizationClass.NON_AUTHORIZING_READ,
-        )
-        for asset in AssetScope
-    ]
-    + [
-        # Row 1b (v1.1) — synthetic order/cancel-replace: non-authoritative fills have no
-        # economic effect by definition, either asset.
-        CapabilityTuple(
-            environment=BrokerEnvironment.SYNTHETIC,
-            operation_class=operation,
-            economic_effect=EconomicEffect.NONE,
-            asset_scope=asset,
-            authorization_class=AuthorizationClass.SYNTHETIC_ORDER,
-        )
-        for operation in (OperationClass.ORDER_SEND, OperationClass.CANCEL_REPLACE)
-        for asset in AssetScope
-    ]
-    + [
-        # Row 2 — futures paper + real quotes: read-only credential, zero real orders.
-        CapabilityTuple(
-            environment=BrokerEnvironment.BROKER_PRODUCTION,
-            operation_class=operation,
-            economic_effect=EconomicEffect.NONE,
-            asset_scope=AssetScope.FUTURES,
-            authorization_class=AuthorizationClass.NON_AUTHORIZING_READ,
-        )
-        for operation in (OperationClass.MARKET_DATA_READ, OperationClass.ACCOUNT_READ)
-    ]
-    + [
-        # Row 4 — measuring conditions absent from MOCK: official spec or a REAL GET probe.
-        CapabilityTuple(
-            environment=environment,
-            operation_class=OperationClass.CAPABILITY_PROBE,
-            economic_effect=EconomicEffect.NONE,
-            asset_scope=asset,
-            authorization_class=AuthorizationClass.NON_AUTHORIZING_READ,
-        )
-        for environment in (
-            BrokerEnvironment.SYNTHETIC,
-            BrokerEnvironment.BROKER_PRODUCTION,
-        )
-        for asset in AssetScope
-    ]
+_READ_CLASS_OPERATIONS = (
+    OperationClass.MARKET_DATA_READ,
+    OperationClass.ACCOUNT_READ,
+    OperationClass.CAPABILITY_PROBE,
 )
+_ORDER_MUTATING_OPS = (OperationClass.ORDER_SEND, OperationClass.CANCEL_REPLACE)
 
-#: Row 3 — MOCK stock order verification (REDUCED ceiling, gated on profile_evidence_ok).
-_SANCTIONED_REDUCED = CapabilityTuple(
-    environment=BrokerEnvironment.BROKER_SIMULATION,
-    operation_class=OperationClass.ORDER_SEND,
-    economic_effect=EconomicEffect.BROKER_RESOURCE_ONLY,
-    asset_scope=AssetScope.STOCK,
-    authorization_class=AuthorizationClass.MOCK_ORDER,
-)
+
+def _read_class_rule_admits(tup: CapabilityTuple) -> bool:
+    """(§3-A R-2) Read never authorizes an order: any environment, any of the three
+    read-class operations, no economic effect, either asset, NON_AUTHORIZING_READ."""
+    return (
+        tup.operation_class in _READ_CLASS_OPERATIONS
+        and tup.economic_effect is EconomicEffect.NONE
+        and tup.authorization_class is AuthorizationClass.NON_AUTHORIZING_READ
+    )
+
+
+def _synthetic_order_rule_admits(tup: CapabilityTuple) -> bool:
+    """(§3-A R-2, v1.1 unchanged) A synthetic fill has no economic effect by definition:
+    SYNTHETIC x {ORDER_SEND, CANCEL_REPLACE} x NONE x either asset x SYNTHETIC_ORDER."""
+    return (
+        tup.environment is BrokerEnvironment.SYNTHETIC
+        and tup.operation_class in _ORDER_MUTATING_OPS
+        and tup.economic_effect is EconomicEffect.NONE
+        and tup.authorization_class is AuthorizationClass.SYNTHETIC_ORDER
+    )
+
+
+def _mock_stock_order_rule_admits(tup: CapabilityTuple) -> bool:
+    """(§3-A R-2, upstream plan §5.2 row 3 + §6 Phase 3 작업 5 cancel-replace join)
+    BROKER_SIMULATION x {ORDER_SEND, CANCEL_REPLACE} x BROKER_RESOURCE_ONLY x STOCK x
+    MOCK_ORDER — the REDUCED-ceiling rule (evidence-gated separately)."""
+    return (
+        tup.environment is BrokerEnvironment.BROKER_SIMULATION
+        and tup.operation_class in _ORDER_MUTATING_OPS
+        and tup.economic_effect is EconomicEffect.BROKER_RESOURCE_ONLY
+        and tup.asset_scope is AssetScope.STOCK
+        and tup.authorization_class is AuthorizationClass.MOCK_ORDER
+    )
+
+
+#: The read-class rule's extension: 3 environments x 3 operations x 2 assets = 18 tuples.
+_SANCTIONED_READ_CLASS = [
+    CapabilityTuple(
+        environment=environment,
+        operation_class=operation,
+        economic_effect=EconomicEffect.NONE,
+        asset_scope=asset,
+        authorization_class=AuthorizationClass.NON_AUTHORIZING_READ,
+    )
+    for environment in BrokerEnvironment
+    for operation in _READ_CLASS_OPERATIONS
+    for asset in AssetScope
+]
+
+#: The synthetic-order rule's extension: 1 environment x 2 operations x 2 assets = 4 tuples.
+_SANCTIONED_SYNTHETIC_ORDER = [
+    CapabilityTuple(
+        environment=BrokerEnvironment.SYNTHETIC,
+        operation_class=operation,
+        economic_effect=EconomicEffect.NONE,
+        asset_scope=asset,
+        authorization_class=AuthorizationClass.SYNTHETIC_ORDER,
+    )
+    for operation in _ORDER_MUTATING_OPS
+    for asset in AssetScope
+]
+
+#: The full ADMISSIBLE extension: 18 + 4 = 22 tuples (§3-A R-2 explicit pin).
+_SANCTIONED_ADMISSIBLE = _SANCTIONED_READ_CLASS + _SANCTIONED_SYNTHETIC_ORDER
+
+#: The MOCK-stock-order rule's extension: 1 environment x 2 operations x 1 asset = 2 tuples.
+_SANCTIONED_REDUCED = [
+    CapabilityTuple(
+        environment=BrokerEnvironment.BROKER_SIMULATION,
+        operation_class=operation,
+        economic_effect=EconomicEffect.BROKER_RESOURCE_ONLY,
+        asset_scope=AssetScope.STOCK,
+        authorization_class=AuthorizationClass.MOCK_ORDER,
+    )
+    for operation in _ORDER_MUTATING_OPS
+]
+
+
+def test_admissible_and_reduced_counts_pinned() -> None:
+    """(§3-A R-2 explicit pin) 18 (read-class: 3 envs x 3 ops x 2 assets) + 4
+    (synthetic-order: 1 env x 2 ops x 2 assets) = 22 ADMISSIBLE; 2 (MOCK stock order: 1 env
+    x 2 ops x 1 asset) REDUCED."""
+    assert len(_SANCTIONED_ADMISSIBLE) == 22
+    assert len(set(_SANCTIONED_ADMISSIBLE)) == 22  # no accidental duplicate tuple
+    assert len(_SANCTIONED_REDUCED) == 2
+    assert len(set(_SANCTIONED_REDUCED)) == 2
 
 
 @pytest.mark.parametrize("tup", _SANCTIONED_ADMISSIBLE)
 def test_sanctioned_rows_are_admissible(tup: CapabilityTuple) -> None:
-    """Plan §5.2 rows 1/2/4 are unconditionally ADMISSIBLE."""
+    """The read-class rule and the synthetic-order rule are unconditionally ADMISSIBLE."""
     assert routing_admissibility(tup) is Admissibility.ADMISSIBLE
-    # profile_evidence_ok is irrelevant to the unconditional rows.
+    # profile_evidence_ok is irrelevant to the unconditional rules.
     assert (
         routing_admissibility(tup, profile_evidence_ok=False)
         is Admissibility.ADMISSIBLE
     )
 
 
-def test_mock_stock_order_row_is_reduced_only_when_evidence_ok() -> None:
-    """Plan §5.2 row 3 (MOCK stock order) admits at the REDUCED ceiling, and only when
-    profile_evidence_ok is positively True — None/False stay PROHIBITED (fail-closed).
+@pytest.mark.parametrize("tup", _SANCTIONED_REDUCED)
+def test_mock_stock_order_rule_is_reduced_only_when_evidence_ok(
+    tup: CapabilityTuple,
+) -> None:
+    """The MOCK-stock-order rule (both ORDER_SEND and CANCEL_REPLACE — §3-A R-2's
+    cancel-replace join) admits at the REDUCED ceiling, and only when profile_evidence_ok is
+    positively True — None/False stay PROHIBITED (fail-closed)."""
+    assert routing_admissibility(tup, profile_evidence_ok=True) is Admissibility.REDUCED
+    assert (
+        routing_admissibility(tup, profile_evidence_ok=False)
+        is Admissibility.PROHIBITED
+    )
+    assert (
+        routing_admissibility(tup, profile_evidence_ok=None) is Admissibility.PROHIBITED
+    )
+    assert routing_admissibility(tup) is Admissibility.PROHIBITED
+
+
+def test_real_broker_production_order_has_no_rule_stock_or_futures() -> None:
+    """No derived rule ever admits a BROKER_PRODUCTION order tuple — not even for STOCK
+    (§3-A R-2: the upstream plan has no real-stock-order row either; a review-confirmed
+    finding). FUTURES is additionally excluded by the validated-construction seal (rule 4).
     """
-    assert (
-        routing_admissibility(_SANCTIONED_REDUCED, profile_evidence_ok=True)
-        is Admissibility.REDUCED
-    )
-    assert (
-        routing_admissibility(_SANCTIONED_REDUCED, profile_evidence_ok=False)
-        is Admissibility.PROHIBITED
-    )
-    assert (
-        routing_admissibility(_SANCTIONED_REDUCED, profile_evidence_ok=None)
-        is Admissibility.PROHIBITED
-    )
-    assert routing_admissibility(_SANCTIONED_REDUCED) is Admissibility.PROHIBITED
-
-
-def test_real_futures_order_row_is_permanently_prohibited() -> None:
-    """Plan §5.2 row 6 (선물 REAL 주문) has no whitelist entry — it cannot even be
-    constructed (covered above), so the closed-whitelist default (PROHIBITED) is the only
-    reachable verdict for anything resembling it."""
-    # The nearest constructible neighbor: same axes but STOCK instead of FUTURES.
-    near = CapabilityTuple(
+    stock_real_order = CapabilityTuple(
         environment=BrokerEnvironment.BROKER_PRODUCTION,
         operation_class=OperationClass.ORDER_SEND,
         economic_effect=EconomicEffect.POSITION_OR_CASH,
         asset_scope=AssetScope.STOCK,
         authorization_class=AuthorizationClass.REAL_ORDER,
     )
-    assert routing_admissibility(near) is Admissibility.PROHIBITED
+    assert routing_admissibility(stock_real_order) is Admissibility.PROHIBITED
     assert (
-        routing_admissibility(near, profile_evidence_ok=True)
+        routing_admissibility(stock_real_order, profile_evidence_ok=True)
         is Admissibility.PROHIBITED
     )
 
 
 # ---------------------------------------------------------------------------
-# routing_admissibility — closed whitelist, everything else PROHIBITED (hypothesis)
+# routing_admissibility — bypass-proof layer ② of the R-1 validated-construction seal
+# ---------------------------------------------------------------------------
+
+
+def test_model_construct_bypass_of_rule_4_is_still_prohibited_by_the_whitelist() -> (
+    None
+):
+    """(§3-A R-1, layer ②) ``model_construct`` skips every validator, including rule 4 — but
+    the resulting BROKER_PRODUCTION x ORDER_SEND x FUTURES tuple is still not a member of
+    any whitelist, so routing_admissibility still returns PROHIBITED."""
+    bypassed = CapabilityTuple.model_construct(
+        environment=BrokerEnvironment.BROKER_PRODUCTION,
+        operation_class=OperationClass.ORDER_SEND,
+        economic_effect=EconomicEffect.POSITION_OR_CASH,
+        asset_scope=AssetScope.FUTURES,
+        authorization_class=AuthorizationClass.REAL_ORDER,
+    )
+    assert routing_admissibility(bypassed) is Admissibility.PROHIBITED
+    assert (
+        routing_admissibility(bypassed, profile_evidence_ok=True)
+        is Admissibility.PROHIBITED
+    )
+
+
+def test_model_copy_update_bypass_of_rule_4_is_still_prohibited_by_the_whitelist() -> (
+    None
+):
+    """(§3-A R-1, layer ②) ``model_copy(update=...)`` also skips validators. Starting from a
+    *legally constructed* STOCK real-order tuple and updating only ``asset_scope`` to
+    FUTURES produces the same rule-4-violating tuple without ever calling the validator —
+    the closed whitelist is still what denies it."""
+    legal = CapabilityTuple(
+        environment=BrokerEnvironment.BROKER_PRODUCTION,
+        operation_class=OperationClass.ORDER_SEND,
+        economic_effect=EconomicEffect.POSITION_OR_CASH,
+        asset_scope=AssetScope.STOCK,
+        authorization_class=AuthorizationClass.REAL_ORDER,
+    )
+    bypassed = legal.model_copy(update={"asset_scope": AssetScope.FUTURES})
+    assert bypassed.asset_scope is AssetScope.FUTURES  # the bypass actually took effect
+    assert routing_admissibility(bypassed) is Admissibility.PROHIBITED
+    assert (
+        routing_admissibility(bypassed, profile_evidence_ok=True)
+        is Admissibility.PROHIBITED
+    )
+
+
+def test_probe_manifest_model_construct_bypasses_the_literal_seal() -> None:
+    """(§3-A R-1) ``ProbeManifest`` is record-shape-only with no consumer (slice plan §3
+    decision 5.iv) — its ``Literal[False]`` seal on ``emits_orders`` is a *validated*-
+    construction guarantee like ``CapabilityTuple``'s rule 4, and the same library-global
+    bypass applies: ``model_construct`` can still produce a manifest claiming
+    ``emits_orders=True``. Documented here because there is no whitelist-style second layer
+    for this record (no consumer exists yet to enforce it) — the limitation is real, not
+    hidden."""
+    bypassed = ProbeManifest.model_construct(
+        emits_orders=True,
+        allowed_methods=("GET",),
+        retention="180d",
+        ttl="24h",
+        provenance="official-spec",
+    )
+    assert bypassed.emits_orders is True
+
+
+# ---------------------------------------------------------------------------
+# routing_admissibility — bidirectional agreement with the derived rules (hypothesis)
 # ---------------------------------------------------------------------------
 
 _ENV_ST = st.sampled_from(list(BrokerEnvironment))
@@ -434,9 +539,6 @@ _OP_ST = st.sampled_from(list(OperationClass))
 _ECO_ST = st.sampled_from(list(EconomicEffect))
 _ASSET_ST = st.sampled_from(list(AssetScope))
 _AUTH_ST = st.sampled_from(list(AuthorizationClass))
-
-#: The full sanctioned set (admissible + reduced) — anything else must be PROHIBITED.
-_ALL_SANCTIONED = frozenset(_SANCTIONED_ADMISSIBLE) | frozenset({_SANCTIONED_REDUCED})
 
 
 @given(
@@ -447,17 +549,19 @@ _ALL_SANCTIONED = frozenset(_SANCTIONED_ADMISSIBLE) | frozenset({_SANCTIONED_RED
     authorization_class=_AUTH_ST,
 )
 @settings(max_examples=1000)
-def test_every_tuple_outside_the_whitelist_is_prohibited(
+def test_derived_rules_agree_with_routing_admissibility_bidirectionally(
     environment: BrokerEnvironment,
     operation_class: OperationClass,
     economic_effect: EconomicEffect,
     asset_scope: AssetScope,
     authorization_class: AuthorizationClass,
 ) -> None:
-    """(hypothesis, closed whitelist — decision 4) Any constructible tuple not in the
-    sanctioned set is PROHIBITED, regardless of profile_evidence_ok. Also re-confirms — over
-    the full 5-axis product, not just the targeted matrix above — that no constructible tuple
-    ever carries BROKER_PRODUCTION x ORDER_SEND/CANCEL_REPLACE x FUTURES."""
+    """(hypothesis, §3-A R-2 bidirectional check) Over the full 5-axis product: a derived
+    rule admits a tuple IFF routing_admissibility reports the matching verdict for it — not
+    just "whitelist => rule" (the old one-directional check) but "rule => whitelist" too, so
+    a rule and the whitelist it builds cannot silently drift apart. Also re-confirms that no
+    constructible tuple ever carries BROKER_PRODUCTION x ORDER_SEND/CANCEL_REPLACE x
+    FUTURES (rule 4)."""
     try:
         tup = CapabilityTuple(
             environment=environment,
@@ -470,16 +574,25 @@ def test_every_tuple_outside_the_whitelist_is_prohibited(
         return  # structurally unrepresentable — not a routing case
     assert not (
         environment is BrokerEnvironment.BROKER_PRODUCTION
-        and operation_class
-        in (OperationClass.ORDER_SEND, OperationClass.CANCEL_REPLACE)
+        and operation_class in _ORDER_MUTATING_OPS
         and asset_scope is AssetScope.FUTURES
     )
-    if tup in _ALL_SANCTIONED:
-        return  # covered by the positive tests above
-    assert routing_admissibility(tup) is Admissibility.PROHIBITED
-    assert (
-        routing_admissibility(tup, profile_evidence_ok=True) is Admissibility.PROHIBITED
+    admissible_by_rule = _read_class_rule_admits(tup) or _synthetic_order_rule_admits(
+        tup
     )
+    reduced_by_rule = _mock_stock_order_rule_admits(tup)
+    assert admissible_by_rule == (
+        routing_admissibility(tup) is Admissibility.ADMISSIBLE
+    )
+    assert reduced_by_rule == (
+        routing_admissibility(tup, profile_evidence_ok=True) is Admissibility.REDUCED
+    )
+    if not admissible_by_rule and not reduced_by_rule:
+        assert routing_admissibility(tup) is Admissibility.PROHIBITED
+        assert (
+            routing_admissibility(tup, profile_evidence_ok=True)
+            is Admissibility.PROHIBITED
+        )
 
 
 # ---------------------------------------------------------------------------
