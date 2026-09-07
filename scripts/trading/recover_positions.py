@@ -5,16 +5,16 @@ Compares the live KIS broker's open futures positions against the Redis
 snapshot at ``trading:futures:positions`` and records the divergence
 verdict for an operator to read and act on.
 
-**This is not a barrier. It blocks nothing.**
+**This script's exit code is still advisory — it blocks nothing on its own.**
 
-Nothing in this repository reads the sentinel file this script writes, and
-no process consults its exit code. ``services.order_router.main`` honours
-only the separate kill-switch sentinel
-(``config/kill_switch.yaml::kill_switch.sentinel_path``, a different file
-at a different path). A divergent broker view therefore does **not**
-prevent the order router — or anything else — from starting or resuming.
-Do not rely on this script as a fence, and do not cite it as one in a
-readiness or go-live review.
+The sentinel file it writes, however, is now a real barrier:
+``services.order_router.main`` reads it (``config/kill_switch.yaml::
+kill_switch.recovery_sentinel_path``, a separate file from the
+kill-switch sentinel at ``kill_switch.sentinel_path``) and refuses to
+enter — or continue — its consume loop while the file exists, both on
+startup and on each loop iteration. A divergent broker view therefore
+**does** prevent the order router from starting or continuing until an
+operator clears the sentinel.
 
 The reconciliation itself is still worth running: VirtualBroker is
 in-memory and was coherent with Redis by construction, whereas the live
@@ -26,23 +26,35 @@ is manual, carried out by the operator reading this output.
 Outputs, all advisory:
 
 - exit code 0 — broker and Redis agree.
+- exit code 2 — ``KIS_FUTURES_MARKET`` is unset or not a recognized value;
+  no verdict reached. This is a configuration error, not a broker failure —
+  an unset value is rejected rather than silently defaulting to the real
+  KIS endpoint (see ``shared.execution.futures_instrument.
+  resolve_futures_market_from_env``).
 - exit code 3 — divergence found; sentinel written; Telegram alert sent.
 - exit code 4 — broker query failed; no verdict reached.
-- sentinel file ``/var/run/kis_position_recovery.tripped`` (override with
-  ``--sentinel-path``), holding a JSON divergence record. Falls back to a
-  project-local path when the default isn't writable (phase-1 log-path
-  lesson, commit 41b5e3c).
+- exit code 5 — divergence found, but the sentinel could NOT be written
+  (permission/path failure at the resolved sentinel path); the write path
+  and the order_router *read* path (``kill_switch.recovery_sentinel_path``)
+  must always be the same file, so this no longer silently falls back to a
+  different path — it fails loudly instead. A distinct Telegram alert is
+  sent stating the sentinel was not written; operator must investigate the
+  path/permissions and re-run.
+- sentinel file: the host-side path derived from
+  ``config/kill_switch.yaml::kill_switch.recovery_sentinel_path`` via
+  ``shared.config.runtime_defaults.host_path_for_container_runtime_path``
+  (override with ``--sentinel-path``), holding a JSON divergence record.
 
-Clearing: because the sentinel has no consumer there is no lock to
-release — delete the file when the review is done (``rm <sentinel-path>``).
-There is no ``scripts/recover_positions_clear.sh``; earlier revisions of
-this docstring pointed at one that was never written.
+Clearing: after operator review, delete the file (``rm <sentinel-path>``)
+before the order router's next start or loop iteration. There is no
+``scripts/recover_positions_clear.sh``; earlier revisions of this
+docstring pointed at one that was never written.
 
 Registered as LEGACY-007 in
-``tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.csv``. Turning this into an
-actual barrier is an operator decision: it needs a named consumer that
-reads the sentinel at a defined point in startup and a declared fail
-polarity. Until that exists, keep these messages honest.
+``tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.csv``. The named consumer
+and fail polarity that turning this into an actual barrier required are
+now in place: ``services.order_router.main`` is that consumer, and its
+polarity is fail-closed (refuse to proceed while the sentinel exists).
 """
 
 from __future__ import annotations
@@ -61,11 +73,29 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from services.kill_switch.config import KillSwitchConfig
+from shared.config.runtime_defaults import host_path_for_container_runtime_path
+from shared.exceptions import ConfigurationError
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_SENTINEL_PATH = "/var/run/kis_position_recovery.tripped"
-FALLBACK_SENTINEL_PATH = str(
-    Path("/home/deploy/project/kis_unified_sts/logs/recovery") / "tripped"
+# Single source of truth: config/kill_switch.yaml::kill_switch.recovery_sentinel_path
+# (see services/order_router/main.py, which now consumes this same sentinel —
+# LEGACY-007). No silent literal fallback: if config loading itself fails,
+# that's a real environment problem and should raise, not paper over a
+# possibly-stale hardcoded path.
+#
+# The config value is container-side (``/app/data/runtime/...`` — what
+# order_router, running inside the futures-order-router container, actually
+# reads). This script runs on the host, not in a container, so it must write
+# to the host-side equivalent — derived from that same container path via
+# the shared mount-mapping helper, never a second hardcoded literal. That
+# keeps the read path (order_router's config) and the write path (this
+# script) from silently diverging onto two different files.
+DEFAULT_SENTINEL_PATH = str(
+    host_path_for_container_runtime_path(
+        KillSwitchConfig.from_yaml().recovery_sentinel_path
+    )
 )
 
 
@@ -142,7 +172,26 @@ def reconcile(
     return broker_only, redis_only, mismatched
 
 
+class SentinelWriteError(RuntimeError):
+    """Raised when the recovery sentinel cannot be written at its resolved path.
+
+    Deliberately fails loudly rather than falling back to a different path:
+    services/order_router/main.py reads exactly one configured path
+    (``kill_switch.recovery_sentinel_path``, mapped to its host equivalent —
+    see ``DEFAULT_SENTINEL_PATH`` above). A silent fallback to a second,
+    different path would make the write path diverge from the read path and
+    the fail-closed guard would never arm without anyone noticing.
+    """
+
+
 def _resolve_sentinel_path(requested: str | None) -> Path:
+    """Resolve the sentinel path and verify it is writable.
+
+    Raises:
+        SentinelWriteError: the resolved path's parent directory could not
+            be created, or is not writable. No fallback path is attempted —
+            see :class:`SentinelWriteError`.
+    """
     candidate = Path(requested) if requested else Path(DEFAULT_SENTINEL_PATH)
     try:
         candidate.parent.mkdir(parents=True, exist_ok=True)
@@ -151,16 +200,10 @@ def _resolve_sentinel_path(requested: str | None) -> Path:
         probe.write_text("ok")
         probe.unlink()
         return candidate
-    except (PermissionError, OSError):
-        fallback = Path(FALLBACK_SENTINEL_PATH)
-        fallback.parent.mkdir(parents=True, exist_ok=True)
-        logger.warning(
-            "Default sentinel path %s not writable; falling back to %s "
-            "(phase-1 log-path lesson)",
-            candidate,
-            fallback,
-        )
-        return fallback
+    except (PermissionError, OSError) as e:
+        raise SentinelWriteError(
+            f"sentinel path {candidate} is not writable: {e}"
+        ) from e
 
 
 def write_sentinel(
@@ -179,8 +222,10 @@ def write_sentinel(
     }
     sentinel_path.write_text(json.dumps(payload, indent=2))
     logger.critical(
-        "Divergence recorded to %s — ADVISORY ONLY: no process reads this file, "
-        "nothing is blocked, and resume is not prevented. Operator action required.",
+        "Divergence recorded to %s — order_router refuses to start or "
+        "continue while this file exists. Operator review required before "
+        "clearing it (rm %s).",
+        sentinel_path,
         sentinel_path,
     )
 
@@ -192,13 +237,17 @@ async def _fetch_redis_positions() -> list[dict[str, Any]]:
 
 
 async def _fetch_broker_positions() -> list[dict[str, Any]]:
+    from shared.execution.futures_instrument import resolve_futures_market_from_env
     from shared.kis.auth import KISAuthConfig
     from shared.kis.client import KISClient
 
+    # No silent default: an unset/unrecognized KIS_FUTURES_MARKET raises
+    # ConfigurationError instead of resolving to the real endpoint.
+    is_real = resolve_futures_market_from_env() == "real"
     auth_config = KISAuthConfig(
         app_key=os.environ.get("KIS_FUTURES_APP_KEY", ""),
         app_secret=os.environ.get("KIS_FUTURES_APP_SECRET", ""),
-        is_real=os.environ.get("KIS_FUTURES_MARKET", "real").lower() == "real",
+        is_real=is_real,
     )
     # KISClient builds/reuses its own KISAuthManager singleton from config
     # (KISAuthManager.get_instance(config)); it takes config only.
@@ -231,6 +280,9 @@ async def _build_and_run(args: argparse.Namespace) -> int:
     logger.info("Redis reports %d open futures positions", len(redis_positions))
     try:
         broker_positions = await _fetch_broker_positions()
+    except ConfigurationError as e:
+        logger.error("Configuration error — no reconciliation verdict reached: %s", e)
+        return 2
     except Exception:
         logger.exception("Broker query failed — no reconciliation verdict reached")
         return 4
@@ -241,7 +293,23 @@ async def _build_and_run(args: argparse.Namespace) -> int:
         logger.info("Position state coherent — broker and Redis agree.")
         return 0
 
-    sentinel_path = _resolve_sentinel_path(args.sentinel_path)
+    try:
+        sentinel_path = _resolve_sentinel_path(args.sentinel_path)
+    except SentinelWriteError as e:
+        logger.error(
+            "Divergence detected but the recovery sentinel could NOT be "
+            "written: %s. order_router's fail-closed guard did NOT arm — "
+            "operator must fix the path/permissions and re-run.",
+            e,
+        )
+        await _send_telegram(
+            "POSITION RECOVERY: broker/Redis divergence detected, but the "
+            f"recovery sentinel could NOT be written ({e}). The order_router "
+            "fail-closed guard did NOT arm. Operator action required "
+            "immediately."
+        )
+        return 5
+
     write_sentinel(
         sentinel_path,
         broker_only=broker_only,
@@ -250,8 +318,10 @@ async def _build_and_run(args: argparse.Namespace) -> int:
     )
 
     summary_parts = [
-        "POSITION RECOVERY: broker/Redis divergence detected. "
-        "ADVISORY ONLY — nothing is blocked; operator action required."
+        "POSITION RECOVERY: broker/Redis divergence detected. The recovery "
+        "sentinel has been written — order_router refuses to start or "
+        "continue until an operator reviews this and clears it "
+        f"(rm {sentinel_path})."
     ]
     if broker_only:
         summary_parts.append(f"  broker-only: {len(broker_only)} positions")

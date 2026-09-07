@@ -14,6 +14,14 @@ def test_loads_default_yaml():
     assert cfg.enabled is True
     assert cfg.check_interval_seconds == 30.0
     assert cfg.sentinel_path == "/app/data/runtime/kis_kill_switch.tripped"
+    assert (
+        cfg.recovery_sentinel_path == "/app/data/runtime/kis_position_recovery.tripped"
+    )
+    assert cfg.recovery_sentinel_path != cfg.sentinel_path
+    # Both sentinels must live under the same shared bind mount (docker-compose.yml
+    # x-trading-runtime-volumes) — a container-local path (e.g. /var/run) would
+    # never be visible to order_router, which runs in a separate container.
+    assert cfg.recovery_sentinel_path.startswith("/app/data/runtime/")
     assert cfg.conditions.daily_loss.limit_pct == 0.03
     assert cfg.conditions.weekly_loss.limit_pct == 0.07
     assert cfg.conditions.consecutive_losses.threshold == 6
@@ -57,3 +65,30 @@ def test_model_default_uses_shared_runtime_mount():
 def test_check_interval_must_be_positive():
     with pytest.raises(ValidationError):
         KillSwitchConfig(check_interval_seconds=0)
+
+
+def test_model_default_recovery_sentinel_path():
+    cfg = KillSwitchConfig()
+
+    assert (
+        cfg.recovery_sentinel_path == "/app/data/runtime/kis_position_recovery.tripped"
+    )
+
+
+def test_recovery_sentinel_path_must_be_non_empty():
+    with pytest.raises(ValidationError):
+        KillSwitchConfig(recovery_sentinel_path="")
+
+
+def test_loads_custom_recovery_sentinel_path(tmp_path):
+    custom = tmp_path / "kill_switch.yaml"
+    custom.write_text(textwrap.dedent("""
+            kill_switch:
+              enabled: true
+              check_interval_seconds: 30
+              sentinel_path: "/tmp/kill.tripped"
+              recovery_sentinel_path: "/tmp/recovery.tripped"
+            """).strip())
+    cfg = KillSwitchConfig.from_yaml(str(custom))
+
+    assert cfg.recovery_sentinel_path == "/tmp/recovery.tripped"

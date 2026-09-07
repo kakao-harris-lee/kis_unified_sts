@@ -141,6 +141,7 @@ class OrderRouterDaemon(StreamStage):
         passive_timeout_seconds: int,
         base_quantity: int = 1,
         kill_switch_sentinel_path: str | None = None,
+        recovery_sentinel_path: str | None = None,
         live_mode_guard: LiveModeGuard | None = None,
         locked_symbol: str | None = None,
         futures_price_feed: Any = None,
@@ -175,6 +176,15 @@ class OrderRouterDaemon(StreamStage):
         self.sentinel_path = (
             Path(kill_switch_sentinel_path) if kill_switch_sentinel_path else None
         )
+        # LEGACY-007: written by scripts/trading/recover_positions.py on a
+        # broker/ledger divergence. Distinct file from the kill-switch
+        # sentinel above (config/kill_switch.yaml::recovery_sentinel_path
+        # vs ::sentinel_path) — checked and reported separately so operators
+        # can tell which guard tripped, but honoured with the same
+        # fail-closed startup/per-iteration treatment.
+        self.recovery_sentinel_path = (
+            Path(recovery_sentinel_path) if recovery_sentinel_path else None
+        )
         self.live_mode_guard = live_mode_guard
         self.locked_symbol = locked_symbol
         self.futures_price_feed = futures_price_feed
@@ -182,6 +192,7 @@ class OrderRouterDaemon(StreamStage):
         self._exit_task: asyncio.Task[None] | None = None
         self.exits_fired_count: int = 0
         self.refused_due_to_sentinel: bool = False
+        self.refused_due_to_recovery_sentinel: bool = False
         self.live_suspended_count: int = 0
         # Phase 5 Gate-3 cap counters (observability + tests)
         self.symbol_lock_blocked_count: int = 0
@@ -194,21 +205,56 @@ class OrderRouterDaemon(StreamStage):
         self.slippage_controller = slippage_controller
         self.slippage_blocked_count: int = 0
 
-    def _sentinel_present(self) -> bool:
-        return self.sentinel_path is not None and self.sentinel_path.exists()
+    def _tripped_sentinel(self) -> tuple[str, Path] | None:
+        """Return ``(label, path)`` for whichever guard sentinel is present.
 
-    async def on_startup(self) -> None:
-        # Startup guard: refuse to consume if the kill switch tripped previously
-        # and an operator has not yet run scripts/kill_switch_clear.sh.
-        if self._sentinel_present():
+        Checks the kill-switch sentinel first, then the recovery sentinel
+        (LEGACY-007). Both are independent fail-closed guards with identical
+        startup/per-iteration treatment; the label lets callers log/count
+        them distinctly so operators can tell which one tripped. Returns
+        ``None`` when neither sentinel exists.
+        """
+        if self.sentinel_path is not None and self.sentinel_path.exists():
+            return "kill_switch", self.sentinel_path
+        if (
+            self.recovery_sentinel_path is not None
+            and self.recovery_sentinel_path.exists()
+        ):
+            return "recovery", self.recovery_sentinel_path
+        return None
+
+    def _sentinel_present(self) -> bool:
+        return self._tripped_sentinel() is not None
+
+    def _mark_sentinel_refusal(self, label: str, path: Path, *, phase: str) -> None:
+        if label == "kill_switch":
             self.refused_due_to_sentinel = True
             logger.critical(
-                "Kill switch sentinel exists at %s — refusing to start. "
+                "Kill switch sentinel exists at %s — refusing to %s. "
                 "Run scripts/kill_switch_clear.sh after operator review.",
-                self.sentinel_path,
+                path,
+                phase,
             )
+        else:
+            self.refused_due_to_recovery_sentinel = True
+            logger.critical(
+                "recovery sentinel present at %s — refusing to %s. "
+                "Run scripts/trading/recover_positions.py review, then rm "
+                "the sentinel after operator review.",
+                path,
+                phase,
+            )
+
+    async def on_startup(self) -> None:
+        # Startup guard: refuse to consume if either the kill switch or the
+        # recovery-divergence sentinel (LEGACY-007) tripped previously and
+        # an operator has not yet cleared it.
+        tripped = self._tripped_sentinel()
+        if tripped is not None:
+            label, path = tripped
+            self._mark_sentinel_refusal(label, path, phase="start")
             self._stop.set()  # prevent the consume loop from running any iteration
-        if self.futures_price_feed is not None and not self.refused_due_to_sentinel:
+        if self.futures_price_feed is not None and tripped is None:
             self._exit_task = asyncio.create_task(self._exit_monitor_loop())
 
     async def on_shutdown(self) -> None:
@@ -257,14 +303,12 @@ class OrderRouterDaemon(StreamStage):
                 raise
 
     async def pre_iteration_gate(self) -> bool:
-        # Per-iteration guard: a mid-session trip must drain pre-trip messages
-        # without placing further orders.
-        if self._sentinel_present():
-            self.refused_due_to_sentinel = True
-            logger.critical(
-                "Kill switch sentinel appeared at %s during run; exiting.",
-                self.sentinel_path,
-            )
+        # Per-iteration guard: a mid-session trip (either sentinel) must
+        # drain pre-trip messages without placing further orders.
+        tripped = self._tripped_sentinel()
+        if tripped is not None:
+            label, path = tripped
+            self._mark_sentinel_refusal(label, path, phase="continue")
             return False
         return True
 
@@ -962,6 +1006,7 @@ async def _build_and_run() -> int:
         passive_timeout_seconds=phase4_config.passive_timeout_seconds,
         base_quantity=phase4_config.base_quantity,
         kill_switch_sentinel_path=kill_config.sentinel_path,
+        recovery_sentinel_path=kill_config.recovery_sentinel_path,
         live_mode_guard=guard_for_daemon,
         locked_symbol=symbol,
         futures_price_feed=exit_feed,

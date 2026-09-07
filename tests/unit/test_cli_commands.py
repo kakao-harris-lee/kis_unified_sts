@@ -94,9 +94,9 @@ class TestBacktestCommands:
         """Tier backtests should use StorageConfig market-data source, not CH loaders."""
         import pandas as pd
 
-        import shared.backtest as backtest_module
         import shared.backtest.adapter as adapter_module
         import shared.backtest.daily_adapter as daily_adapter_module
+        import shared.backtest.engine as engine_module
         import shared.storage as storage_module
         import shared.strategy.registry as registry_module
         from cli.main import _run_tier_backtest
@@ -184,7 +184,11 @@ class TestBacktestCommands:
                 captured["rows"] = len(df)
                 return FakeResult()
 
-        monkeypatch.setattr(backtest_module, "BacktestEngine", FakeBacktestEngine)
+        # run_with_backend (shared/backtest/backend.py) imports BacktestEngine
+        # from shared.backtest.engine locally on every call — patch that
+        # module attribute directly rather than the shared.backtest re-export,
+        # which run_with_backend never reads.
+        monkeypatch.setattr(engine_module, "BacktestEngine", FakeBacktestEngine)
         monkeypatch.setattr(
             adapter_module,
             "BacktestStrategyAdapter",
@@ -211,13 +215,260 @@ class TestBacktestCommands:
             track=False,
             experiment=None,
             is_daily=is_daily,
+            # Force legacy so this test exercises FakeBacktestEngine
+            # deterministically regardless of the vectorbt-default config or
+            # whether vectorbt is importable in the test environment.
+            engine_override="legacy",
         )
 
         assert captured["symbol"] == "005930"
         assert captured["asset_class"] == "stock"
         assert captured["timeframe"] == timeframe
         assert captured["rows"] == 2
-        assert "Market data source: parquet" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "Market data source: parquet" in out
+        assert "engine=backtest_engine" in out
+
+
+class TestBacktestRunEngineResolution:
+    """``sts backtest run`` must honor config/backtest.yaml::backtest.default_engine
+    through the shared shared/backtest/backend.py seam (same as
+    experiment_runner/optimizer), and report which engine actually ran."""
+
+    @staticmethod
+    def _install_common_mocks(monkeypatch, *, backtest_block=None):
+        """Patch strategy config, strategy creation, adapters, and data
+        loading so ``backtest_run`` reaches the engine-dispatch call without
+        touching real config/storage/registry state. Returns the captured
+        dict the test can inspect."""
+        import pandas as pd
+
+        import shared.backtest.adapter as adapter_module
+        import shared.storage as storage_module
+        import shared.strategy.registry as registry_module
+        from shared.config.loader import ConfigLoader
+        from shared.storage import StorageConfig
+
+        monkeypatch.setattr(
+            ConfigLoader,
+            "load_strategy",
+            staticmethod(
+                lambda _asset, _strategy: {
+                    "strategy": {
+                        "name": "test_strategy",
+                        "timeframe": "minute",
+                        "backtest": backtest_block or {},
+                        "position": {"params": {"max_positions": 1}},
+                    }
+                }
+            ),
+        )
+        monkeypatch.setattr(
+            registry_module, "register_builtin_components", lambda: None
+        )
+        monkeypatch.setattr(
+            registry_module.StrategyFactory,
+            "create",
+            staticmethod(lambda _config: object()),
+        )
+        monkeypatch.setattr(
+            adapter_module,
+            "BacktestStrategyAdapter",
+            lambda _strategy, _config: object(),
+        )
+
+        def fake_load_market_bars_for_backtest(**_kwargs):
+            return pd.DataFrame(
+                {
+                    "code": ["005930", "005930"],
+                    "datetime": [
+                        pd.Timestamp("2026-06-03 09:00:00"),
+                        pd.Timestamp("2026-06-03 09:01:00"),
+                    ],
+                    "open": [100.0, 101.0],
+                    "high": [101.0, 102.0],
+                    "low": [99.0, 100.0],
+                    "close": [101.0, 102.0],
+                    "volume": [1000, 1200],
+                }
+            )
+
+        monkeypatch.setattr(
+            storage_module,
+            "load_market_bars_for_backtest",
+            fake_load_market_bars_for_backtest,
+        )
+        monkeypatch.setattr(
+            StorageConfig,
+            "load_or_default",
+            classmethod(lambda cls: cls()),
+        )
+
+    @staticmethod
+    def _fake_result():
+        class FakeResult:
+            def print_summary(self):
+                pass
+
+        return FakeResult()
+
+    @staticmethod
+    def _forbid_vectorbt(monkeypatch):
+        """Assert the vectorbt runner is never attempted for this call."""
+        import shared.backtest.vbt_runner as vbt_runner_module
+
+        def _fail(self, data):
+            raise AssertionError("vectorbt runner should not be attempted")
+
+        monkeypatch.setattr(vbt_runner_module.VectorbtRunner, "run", _fail)
+
+    def test_default_engine_legacy_from_env_override(self, runner, monkeypatch):
+        """BACKTEST_DEFAULT_ENGINE=legacy (rollback path) must resolve to the
+        legacy engine when the strategy YAML sets no engine of its own."""
+        import shared.backtest.engine as engine_module
+        from cli.main import cli
+
+        monkeypatch.setenv("BACKTEST_DEFAULT_ENGINE", "legacy")
+        self._install_common_mocks(monkeypatch)
+        self._forbid_vectorbt(monkeypatch)
+        monkeypatch.setattr(
+            engine_module.BacktestEngine,
+            "run",
+            lambda self, df: TestBacktestRunEngineResolution._fake_result(),
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "backtest",
+                "run",
+                "-s",
+                "test_strategy",
+                "-a",
+                "stock",
+                "--symbol",
+                "005930",
+                "--no-track",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Engine: backtest_engine" in result.output
+
+    def test_default_engine_reaches_vectorbt_when_importable(self, runner, monkeypatch):
+        """Unset BACKTEST_DEFAULT_ENGINE — config/backtest.yaml ships
+        ``default_engine: ${BACKTEST_DEFAULT_ENGINE:vectorbt}``, so resolution
+        should reach vectorbt when it is importable in this environment (the
+        seam falls back to legacy automatically otherwise — see
+        shared/backtest/backend.py's ImportError handling, covered directly
+        in tests/unit/backtest/test_backend.py)."""
+        pytest.importorskip("vectorbt")
+        import shared.backtest.vbt_runner as vbt_runner_module
+        from cli.main import cli
+
+        monkeypatch.delenv("BACKTEST_DEFAULT_ENGINE", raising=False)
+        self._install_common_mocks(monkeypatch)
+        monkeypatch.setattr(
+            vbt_runner_module.VectorbtRunner,
+            "run",
+            lambda self, df: TestBacktestRunEngineResolution._fake_result(),
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "backtest",
+                "run",
+                "-s",
+                "test_strategy",
+                "-a",
+                "stock",
+                "--symbol",
+                "005930",
+                "--no-track",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Engine: vectorbt" in result.output
+
+    def test_engine_option_overrides_default_to_legacy(self, runner, monkeypatch):
+        """--engine legacy must win even when the config default is vectorbt."""
+        import shared.backtest.engine as engine_module
+        from cli.main import cli
+
+        monkeypatch.delenv("BACKTEST_DEFAULT_ENGINE", raising=False)
+        self._install_common_mocks(monkeypatch)
+        self._forbid_vectorbt(monkeypatch)
+        monkeypatch.setattr(
+            engine_module.BacktestEngine,
+            "run",
+            lambda self, df: TestBacktestRunEngineResolution._fake_result(),
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "backtest",
+                "run",
+                "-s",
+                "test_strategy",
+                "-a",
+                "stock",
+                "--symbol",
+                "005930",
+                "--no-track",
+                "--engine",
+                "legacy",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Engine: backtest_engine" in result.output
+
+    def test_engine_vectorbt_override_still_yields_to_legacy_exit(
+        self, runner, monkeypatch, caplog
+    ):
+        """--engine vectorbt on a strategy with backtest.legacy_exit: true
+        must still resolve to legacy (state-machine exit escape hatch wins
+        over any engine override) and log the existing legacy_exit warning."""
+        import logging
+
+        import shared.backtest.engine as engine_module
+        from cli.main import cli
+
+        monkeypatch.delenv("BACKTEST_DEFAULT_ENGINE", raising=False)
+        self._install_common_mocks(monkeypatch, backtest_block={"legacy_exit": True})
+        self._forbid_vectorbt(monkeypatch)
+        monkeypatch.setattr(
+            engine_module.BacktestEngine,
+            "run",
+            lambda self, df: TestBacktestRunEngineResolution._fake_result(),
+        )
+
+        with caplog.at_level(logging.INFO, logger="shared.backtest"):
+            result = runner.invoke(
+                cli,
+                [
+                    "backtest",
+                    "run",
+                    "-s",
+                    "test_strategy",
+                    "-a",
+                    "stock",
+                    "--symbol",
+                    "005930",
+                    "--no-track",
+                    "--engine",
+                    "vectorbt",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert "Engine: backtest_engine" in result.output
+        assert any("legacy_exit=true" in r.message for r in caplog.records), [
+            r.message for r in caplog.records
+        ]
 
 
 class TestCollectCommands:

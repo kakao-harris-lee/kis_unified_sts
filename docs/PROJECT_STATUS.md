@@ -33,13 +33,16 @@
 - Backtest's default engine is vectorbt as of 2026-09-07
   (`config/backtest.yaml::backtest.default_engine`, rollback via
   `BACKTEST_DEFAULT_ENGINE=legacy`; plan
-  `plans/2026-09-07-vectorbt-default-flip.md`). `experiment_runner` and
-  `optimizer` share one resolve/dispatch seam (`shared/backtest/backend.py`)
-  that falls back to the legacy `BacktestEngine` on an unsupported path
+  `plans/2026-09-07-vectorbt-default-flip.md`). `experiment_runner`,
+  `optimizer`, and `sts backtest run`/`--tier` (`cli/main.py`) all share one
+  resolve/dispatch seam (`shared/backtest/backend.py`) that falls back to the
+  legacy `BacktestEngine` on an unsupported path
   (futures/ATS/multi-symbol/short/regime-gate/daily-adapter routes, and
   state-machine exits like `three_stage` via `legacy_exit: true`) — `engine.py`
-  stays until that fallback set reaches zero. The `backtest` extra
-  (vectorbt/numba/plotly) is advisory-only in CI and not in runtime images.
+  stays until that fallback set reaches zero. `sts backtest run` also takes a
+  per-invocation `--engine legacy|vectorbt` override and echoes the engine
+  that actually ran. The `backtest` extra (vectorbt/numba/plotly) is
+  advisory-only in CI and not in runtime images.
 - Risk layer: shared primitives (`shared/risk/primitives/`), futures-native
   circuit breakers (catastrophic-only, PR #600), concurrent-entry, margin-gate,
   and leverage filters. `risk.margin_gate` and `risk.leverage` were flipped
