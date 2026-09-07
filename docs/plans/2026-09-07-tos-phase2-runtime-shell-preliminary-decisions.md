@@ -144,6 +144,12 @@ failure-domain·자격증명 격리는 최강이나, (i) IPC 스키마·durabili
 
 D2 커널 측(포트·술어)은 `8ea42a8d` 로 착지 완료.
 
+## 5-B. 독립 리뷰 처분 (Claude 측 `code-reviewer` 레인 · 2026-09-08 · 코드 정합·품질만 — 설계 자체의 계획 심판은 운영자 명시 요청 시 Codex)
+
+- 1차(`9327fb0a`…`1e9bf11c`): **needs-attention** · 비협상 위반 0 · HIGH 1(스크럽이 list/tuple 안 비밀 누출) · MEDIUM 2(hermetic 가드 `connect_ex`/`sendto` 우회 + «tmp_path 밖 쓰기 0» 픽스처 부재 · CI 런타임 설치가 editable 커널을 비-editable 로 교체) · LOW 3(`release_admissible` truthy 극성 테스트 부재 · `reservation_transition_legal` 이름 과대 · `localhost` 허용) → 전건 수용 · 커밋 `bb2a38b0`.
+- 재심(`bb2a38b0`): **approve** · 신규 뮤테이션 5/5 사망 · 신선한 venv 에서 CI 두 스텝 재현(둘 다 editable 유지) · 회귀 0.
+- 무결함 렌즈(1차 기록): 런타임 I/O 코드 0(AST 전량 열거) · 방화벽 범위 fail-closed(형제 디렉터리·심볼릭 링크 양방향 red) · 규칙 (g)(h)(e) 실 발화 · importlinter 3계약 전이 차단 실측 · D2 포트 시그니처 정합 · WriterEpoch=int 는 ADR-002-012 §5.5 정합 · HMAC known-answer 독립 재계산 일치 · `retention_deletable` fail-open 셀 0 · `verify_chain` 빈 체인 True 는 정직 등재된 vacuity.
+
 ## 6. 운영자 확인 사항 (비준 체크리스트)
 
 1. D1 A안 · `tos/runtime/` 배치 · allowlist R1 · 규칙 (g)/(e) 확장 — **방화벽 설계 #1 개정을 승인하는가**.
