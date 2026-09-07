@@ -102,7 +102,9 @@ def test_a_non_monotone_stream_is_refused_rather_than_sorted() -> None:
     """(§3.1) A replay consumes bars in causal order; silently sorting would fabricate one."""
     first = _bar(bar_index=0, timestamp_coordinate=60)
     duplicate_index = _bar(bar_index=0, timestamp_coordinate=120)
-    with pytest.raises(BacktestIntegrityError, match="bar_index must strictly increase"):
+    with pytest.raises(
+        BacktestIntegrityError, match="bar_index must strictly increase"
+    ):
         validate_bar_stream([first, duplicate_index])
 
     stalled_time = _bar(bar_index=1, timestamp_coordinate=60)

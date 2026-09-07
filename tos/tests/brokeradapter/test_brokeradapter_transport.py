@@ -44,12 +44,16 @@ def _attempt(sequence: int = 1):
     return build_attempt_request(
         conformance_proof_digest=f"proof-{sequence}",
         action_flow_permit_identity=f"permit-{sequence}",
-        reference=OrderingEvent(event_id=f"ev-{sequence}", quorum_commit_index=sequence),
+        reference=OrderingEvent(
+            event_id=f"ev-{sequence}", quorum_commit_index=sequence
+        ),
         scheme=SCHEME,
     )
 
 
-def _send(transport: SyntheticPaperTransport, quantity: Decimal | None, sequence: int = 1):
+def _send(
+    transport: SyntheticPaperTransport, quantity: Decimal | None, sequence: int = 1
+):
     """Run one single-shot send through ``transport``."""
     return transport.send_once(
         _attempt(sequence),
@@ -85,20 +89,36 @@ def test_the_send_signature_admits_no_retry_or_idempotency_parameter() -> None:
         "side",
         "reference",
     }
-    for forbidden in ("retry", "retries", "attempts", "idempotency_key", "resend", "max_tries"):
+    for forbidden in (
+        "retry",
+        "retries",
+        "attempts",
+        "idempotency_key",
+        "resend",
+        "max_tries",
+    ):
         assert forbidden not in parameters
 
 
 def test_the_send_signature_admits_no_credential_or_session_parameter() -> None:
     """(§5.4 Q-IDEMP-2 / ADR-002-013 §1) Authentication is not part of a send."""
     parameters = set(inspect.signature(Transport.send_once).parameters)
-    for forbidden in ("token", "credential", "app_key", "app_secret", "session", "auth"):
+    for forbidden in (
+        "token",
+        "credential",
+        "app_key",
+        "app_secret",
+        "session",
+        "auth",
+    ):
         assert forbidden not in parameters
 
 
 def test_the_synthetic_transport_satisfies_the_protocol_structurally() -> None:
     """(§5.1) The Protocol is structural — the synthetic implementation is a runtime instance."""
-    transport = SyntheticPaperTransport(SyntheticFillPolicy(declared_kind=EgressResultKind.ACK))
+    transport = SyntheticPaperTransport(
+        SyntheticFillPolicy(declared_kind=EgressResultKind.ACK)
+    )
     assert isinstance(transport, Transport)
 
 
@@ -124,10 +144,20 @@ def test_the_transport_source_contains_no_loop_around_its_own_send() -> None:
 
 def test_the_transport_holds_no_credential_route_or_session_attribute() -> None:
     """(§4.5 / ADR-002-013 §1) Network 0, credentials 0, route 0 — structurally."""
-    transport = SyntheticPaperTransport(SyntheticFillPolicy(declared_kind=EgressResultKind.ACK))
+    transport = SyntheticPaperTransport(
+        SyntheticFillPolicy(declared_kind=EgressResultKind.ACK)
+    )
     for name in vars(transport):
         lowered = name.lower()
-        for fragment in ("credential", "token", "session", "socket", "route", "url", "host"):
+        for fragment in (
+            "credential",
+            "token",
+            "session",
+            "socket",
+            "route",
+            "url",
+            "host",
+        ):
             assert fragment not in lowered, f"the synthetic transport holds {name!r}"
 
 
@@ -217,7 +247,9 @@ def test_a_fill_kind_can_never_be_declared_by_policy() -> None:
 @pytest.mark.parametrize("kind", sorted(NON_FILL_DECLARABLE_KINDS))
 def test_a_non_fill_outcome_may_be_declared(kind: EgressResultKind) -> None:
     """(both ways) ACK / REJECT / UNKNOWN / TIMEOUT are scenario inputs, not derivations."""
-    result = _send(SyntheticPaperTransport(SyntheticFillPolicy(declared_kind=kind)), Decimal("20"))
+    result = _send(
+        SyntheticPaperTransport(SyntheticFillPolicy(declared_kind=kind)), Decimal("20")
+    )
     assert result.kind is kind
     assert result.filled_quantity is None
 
@@ -229,7 +261,9 @@ def test_a_non_fill_outcome_may_be_declared(kind: EgressResultKind) -> None:
 
 def test_a_policy_with_neither_mode_is_unconstructable() -> None:
     """(fail-closed) An undetermined transport is not a transport."""
-    with pytest.raises(ValidationError, match="neither an outcome nor a complete fill band"):
+    with pytest.raises(
+        ValidationError, match="neither an outcome nor a complete fill band"
+    ):
         SyntheticFillPolicy()
 
 
@@ -302,4 +336,7 @@ def test_every_call_is_recorded_so_a_second_send_would_be_visible() -> None:
     assert len(transport.requests) == 1
     _send(transport, Decimal("20"), sequence=2)
     assert len(transport.requests) == 2
-    assert transport.requests[0].attempt.attempt_id != transport.requests[1].attempt.attempt_id
+    assert (
+        transport.requests[0].attempt.attempt_id
+        != transport.requests[1].attempt.attempt_id
+    )

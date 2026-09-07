@@ -155,7 +155,9 @@ def test_a_single_core_drives_the_whole_run() -> None:
 # -- (a) exactly one paper-order hand-off ------------------------------------
 
 
-def test_a_exactly_one_paper_order_is_handed_off_and_the_second_signal_is_denied() -> None:
+def test_a_exactly_one_paper_order_is_handed_off_and_the_second_signal_is_denied() -> (
+    None
+):
     """(a) The band-crossing bar realizes one order; the next crossing is capacity-denied."""
     sliced = run_slice()
 
@@ -174,7 +176,9 @@ def test_a_exactly_one_paper_order_is_handed_off_and_the_second_signal_is_denied
 
     denied = sliced.result_for(DENIED_BAR_INDEX)
     assert denied.pipeline is not None
-    assert denied.pipeline.proposal is not None, "the second crossing did emit a proposal"
+    assert (
+        denied.pipeline.proposal is not None
+    ), "the second crossing did emit a proposal"
     assert denied.flow is not None
     assert denied.flow.handed_off is False
     assert denied.flow.halt_step is CommitmentStep.LEDGER_VERIFICATION
@@ -209,7 +213,9 @@ def test_b_a_bar_inside_the_band_is_a_no_action_and_starts_no_flow() -> None:
 # -- (c) the 17-item verify list ---------------------------------------------
 
 
-def test_c_the_seventeen_item_verify_list_admitted_with_a_positive_synthetic_na() -> None:
+def test_c_the_seventeen_item_verify_list_admitted_with_a_positive_synthetic_na() -> (
+    None
+):
     """(c) All seventeen items judged; the six deferred ones are positively N/A."""
     sliced = run_slice()
     assert len(sliced.gateway.verifications) == 1
@@ -223,7 +229,8 @@ def test_c_the_seventeen_item_verify_list_admitted_with_a_positive_synthetic_na(
     assert len(verification.verdicts) == len(SEND_VERIFY_ITEMS) == 17
     assert tuple(verdict.item for verdict in verification.verdicts) == SEND_VERIFY_ITEMS
     assert all(
-        verdict.outcome in ADMITTING_VERIFY_OUTCOMES for verdict in verification.verdicts
+        verdict.outcome in ADMITTING_VERIFY_OUTCOMES
+        for verdict in verification.verdicts
     )
 
     # ★ the N/A is a recorded positive judgement about a synthetic non-broker send, never a
@@ -237,7 +244,10 @@ def test_c_the_seventeen_item_verify_list_admitted_with_a_positive_synthetic_na(
     for verdict in verification.verdicts:
         if verdict.item in DEFERRED_ITEMS:
             assert verdict.disposition is VerifyDisposition.DEFERRED_APPLICABILITY
-            assert verdict.native_verdict_value == BrokerApplicability.NON_BROKER_SYNTHETIC.value
+            assert (
+                verdict.native_verdict_value
+                == BrokerApplicability.NON_BROKER_SYNTHETIC.value
+            )
         else:
             assert verdict.outcome is VerifyOutcome.SATISFIED
 
@@ -248,7 +258,9 @@ def test_c_the_seventeen_item_verify_list_admitted_with_a_positive_synthetic_na(
         index for index, kind in enumerate(kinds) if kind == "VERIFY_ITEM"
     )
     assert kinds.index("POTENTIALLY_LIVE_OBSERVED") > kinds.index("SEND_STARTED")
-    assert kinds.index("EGRESS_RESULT_RECORDED") > kinds.index("POTENTIALLY_LIVE_OBSERVED")
+    assert kinds.index("EGRESS_RESULT_RECORDED") > kinds.index(
+        "POTENTIALLY_LIVE_OBSERVED"
+    )
 
 
 def test_the_venue_shape_price_is_value_sourced_and_converged() -> None:
@@ -284,9 +296,10 @@ def test_the_venue_shape_price_is_value_sourced_and_converged() -> None:
     #   the crossing's. That is a real property of the retention model, so it is asserted rather
     #   than worked around — and the shape identity is then read where it is live, below.
     assert sliced.venue_stage.resolved_shape is not None
-    assert sliced.venue_stage.resolved_shape.price == sliced.book.context_for(
-        FLAT_BAR_INDEX
-    ).close
+    assert (
+        sliced.venue_stage.resolved_shape.price
+        == sliced.book.context_for(FLAT_BAR_INDEX).close
+    )
 
     # ★ …so the object identity is taken on a run that ends at the crossing: same shipped wiring,
     #   one fold, and the context the resolver produced carries **that object**, not a rebuild.
@@ -319,7 +332,9 @@ def test_the_venue_shape_price_is_value_sourced_and_converged() -> None:
     assert item11.outcome is VerifyOutcome.SATISFIED
 
 
-def test_the_synthetic_transport_was_called_exactly_once_with_the_bound_scalars() -> None:
+def test_the_synthetic_transport_was_called_exactly_once_with_the_bound_scalars() -> (
+    None
+):
     """(design #34 §5.1/§5.3) One verified outbound, one result, bound to the construction."""
     sliced = run_slice()
     (request,) = sliced.transport.requests
@@ -374,7 +389,9 @@ def test_d_two_runs_over_the_same_inputs_reproduce_every_identity() -> None:
     first = run_slice()
     second = run_slice()
 
-    assert trace_digest(first.run, scheme=SCHEME) == trace_digest(second.run, scheme=SCHEME)
+    assert trace_digest(first.run, scheme=SCHEME) == trace_digest(
+        second.run, scheme=SCHEME
+    )
     assert trace_document(first.run) == trace_document(second.run)
 
     for index in range(len(first.book.contexts)):
@@ -456,7 +473,9 @@ def test_e_the_run_emits_the_out_of_tree_oracle_trace_document() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_upper_band_cross_emits_a_flat_proposal_that_now_stops_at_the_capacity_seal() -> None:
+def test_the_upper_band_cross_emits_a_flat_proposal_that_now_stops_at_the_capacity_seal() -> (
+    None
+):
     """The exit branch is constructable, and the halt has **moved** (design #35 §5.3).
 
     Before GAP-4 the flat stopped at step 2 because ``derive_order_size`` had no
@@ -480,9 +499,7 @@ def test_the_upper_band_cross_emits_a_flat_proposal_that_now_stops_at_the_capaci
 
     # ★ step 2 now admits: the flat was sized, from the position the entry actually took.
     outcomes = {verdict.step: verdict.outcome for verdict in result.flow.verdicts}
-    assert (
-        outcomes[CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION] is StageOutcome.ADMIT
-    )
+    assert outcomes[CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION] is StageOutcome.ADMIT
 
     # ★ …and the stop is the capacity seal, named as such.
     assert result.halt_reason is HaltReason.AT_MOST_ONE_EXPOSURE_HELD

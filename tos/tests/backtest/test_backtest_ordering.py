@@ -130,9 +130,9 @@ def test_the_rejected_bar_coupled_scheme_produces_a_false_reversed_halt() -> Non
 
     assert ordering_admission(None, tick_0) is OrderingAdmission.MONOTONE
     assert ordering_admission(tick_0, tick_1) is OrderingAdmission.MONOTONE
-    assert ordering_admission(tick_1, egress_0) is OrderingAdmission.REVERSED, (
-        "the rejected bar-coupled scheme must produce the false REVERSED the design removed"
-    )
+    assert (
+        ordering_admission(tick_1, egress_0) is OrderingAdmission.REVERSED
+    ), "the rejected bar-coupled scheme must produce the false REVERSED the design removed"
 
     # ... and the core really halts on it, refusing the settlement outright.
     fill_model = build_fill_model(_next_bar_parameters())
@@ -207,7 +207,10 @@ def test_next_bar_settlement_is_monotone_end_to_end() -> None:
 
     admissions = [entry.ordering_admission for entry in run.trace.entries]
     assert admissions == [OrderingAdmission.MONOTONE] * 3
-    assert all(entry.halt_reason is not HaltReason.EVENT_ORDER_REVERSED for entry in run.trace.entries)
+    assert all(
+        entry.halt_reason is not HaltReason.EVENT_ORDER_REVERSED
+        for entry in run.trace.entries
+    )
 
     sequences = [entry.reference.source_native_sequence for entry in run.trace.entries]
     assert sequences == [1, 2, 3]
@@ -235,7 +238,9 @@ def test_the_coordinate_is_decoupled_from_the_bar_index() -> None:
 def test_same_bar_settlement_is_monotone_too() -> None:
     """(§8-1) The same counter serves same-bar settlement — no branch, no special case."""
     parameters = FillParameters(
-        mode=FillMode.ACKNOWLEDGE, side=FillSide.BUY, settlement=SettlementPolicy.SAME_BAR
+        mode=FillMode.ACKNOWLEDGE,
+        side=FillSide.BUY,
+        settlement=SettlementPolicy.SAME_BAR,
     )
     fill_model = build_fill_model(parameters)
     driver = build_driver(fill_model)
@@ -251,7 +256,11 @@ def test_same_bar_settlement_is_monotone_too() -> None:
     assert [entry.ordering_admission for entry in run.trace.entries] == (
         [OrderingAdmission.MONOTONE] * 3
     )
-    assert [entry.reference.source_native_sequence for entry in run.trace.entries] == [1, 2, 3]
+    assert [entry.reference.source_native_sequence for entry in run.trace.entries] == [
+        1,
+        2,
+        3,
+    ]
 
 
 def test_the_trace_order_is_the_processing_order() -> None:

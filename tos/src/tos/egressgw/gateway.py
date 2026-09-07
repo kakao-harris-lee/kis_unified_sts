@@ -343,7 +343,9 @@ class SendAttemptLedger:
         self._consumed_attempts.add(attempt_id)
         self._claims.append(
             ClaimObservation(
-                nonce=capability_nonce, principal=principal, request_digest=request_digest
+                nonce=capability_nonce,
+                principal=principal,
+                request_digest=request_digest,
             )
         )
         self._claims.append(
@@ -576,7 +578,9 @@ def verify_send_boundary(
                 ),
                 detail=verdict.reason,
             )
-    if applicability is BrokerApplicability.UNKNOWN:  # pragma: no cover - defence in depth
+    if (
+        applicability is BrokerApplicability.UNKNOWN
+    ):  # pragma: no cover - defence in depth
         return SendBoundaryVerification(
             attempt_id=attempt.attempt_id,
             applicability=applicability,
@@ -603,7 +607,9 @@ def _check_capability(
     """Item 1 — a valid and **unused** Transmission Capability (Realize; §10.8:743)."""
     del applicability
     item = SendVerifyItem.VALID_UNUSED_TRANSMISSION_CAPABILITY
-    capability_verdict = transmission_capability_verdict(context.transmission_capability)
+    capability_verdict = transmission_capability_verdict(
+        context.transmission_capability
+    )
     if capability_verdict.outcome is not StageOutcome.ADMIT:
         return _verdict(
             item,
@@ -747,9 +753,11 @@ def _check_allowance(
         if admissibility is not Admissibility.ADMISSIBLE:
             return _verdict(
                 item,
-                VerifyOutcome.UNKNOWN
-                if admissibility is Admissibility.REDUCED
-                else VerifyOutcome.DENIED,
+                (
+                    VerifyOutcome.UNKNOWN
+                    if admissibility is Admissibility.REDUCED
+                    else VerifyOutcome.DENIED
+                ),
                 reason=(
                     f"brokercap capability_admissible is {admissibility.value} for this "
                     "broker-resource-consuming send — a profile with no VERIFIED dimension "
@@ -1114,9 +1122,11 @@ def _check_currentness(
         preserved = unknown_preserves_capacity(False, context.worst_credible_capacity)
         return _verdict(
             item,
-            VerifyOutcome.UNKNOWN
-            if currentness.outcome is StageOutcome.UNKNOWN
-            else VerifyOutcome.DENIED,
+            (
+                VerifyOutcome.UNKNOWN
+                if currentness.outcome is StageOutcome.UNKNOWN
+                else VerifyOutcome.DENIED
+            ),
             reason=(
                 f"{currentness.reason or 'egress currentness did not admit'} — the "
                 f"worst-credible capacity obligation {preserved!r} stays preserved and nothing "
@@ -1237,7 +1247,9 @@ _check_dispatch_anchor()
 # ===========================================================================
 
 
-def outbound_coordinates(context: SendBoundaryContext) -> tuple[tuple[str, str | None], ...]:
+def outbound_coordinates(
+    context: SendBoundaryContext,
+) -> tuple[tuple[str, str | None], ...]:
     """The authorized egress coordinates as opaque ordered scalars for the transport (§5.1).
 
     The transport receives **opaque** coordinates in the fixed
@@ -1329,7 +1341,11 @@ def outbound_binding_mismatch(context: SendBoundaryContext) -> str | None:
         )
     request = context.egress_request
     command_digest = construction.command.canonical_digest
-    if request is None or request.canonical_command_digest is None or command_digest is None:
+    if (
+        request is None
+        or request.canonical_command_digest is None
+        or command_digest is None
+    ):
         return (
             "the outbound egress request carries no command digest to compare against the "
             "compiled command (EGRESS-INV-004:155-157)"
@@ -1360,8 +1376,10 @@ class BrokerEgressGateway:
     def __init__(
         self,
         *,
-        contexts: Mapping[str, SendBoundaryContext]
-        | Callable[[AttemptRequest], SendBoundaryContext | None],
+        contexts: (
+            Mapping[str, SendBoundaryContext]
+            | Callable[[AttemptRequest], SendBoundaryContext | None]
+        ),
         transport: SendTransport | None,
         sink: GatewayEvidenceSink,
         ledger: SendAttemptLedger | None = None,
@@ -1578,7 +1596,9 @@ class BrokerEgressGateway:
                 side=context.outbound_side,
                 reference=context.reference,
             )
-        except Exception as exc:  # noqa: BLE001 - a failed call is not proof of "not sent"
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - a failed call is not proof of "not sent"
             return self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.TRANSPORT_RAISED,
@@ -1615,9 +1635,7 @@ class BrokerEgressGateway:
         )
         if result.kind in UNCERTAIN_RESULT_KINDS:
             self._record_uncertain(attempt_id, context)
-        return SendHandoff(
-            accepted_for_transmission=True, handoff_reference=attempt_id
-        )
+        return SendHandoff(accepted_for_transmission=True, handoff_reference=attempt_id)
 
     def _record_uncertain(self, attempt_id: str, context: SendBoundaryContext) -> None:
         """Record brokercap's all-restrictive uncertain-send ladder (design #34 §5.4).

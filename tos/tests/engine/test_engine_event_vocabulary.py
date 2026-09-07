@@ -109,7 +109,9 @@ def test_an_event_may_not_carry_the_other_kinds_payload() -> None:
             kind=EventKind.DECISION_TICK,
             decision_tick=tick.decision_tick,
             egress_result=EgressResultPayload(
-                instrument_key=instrument_key(), attempt_id="a", kind=EgressResultKind.ACK
+                instrument_key=instrument_key(),
+                attempt_id="a",
+                kind=EgressResultKind.ACK,
             ),
         )
 

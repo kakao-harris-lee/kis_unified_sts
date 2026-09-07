@@ -60,9 +60,9 @@ def test_work_steps_are_derived_statically_from_the_policy_structure() -> None:
     policy = capsule_gated_policy()
     # one rule + one compare + two operands
     assert policy_work_steps(policy) == 1 + 1 + 2
-    assert policy_work_steps(capsule_gated_policy(fires=False)) == policy_work_steps(policy), (
-        "the count is structural — it does not depend on which branch would fire"
-    )
+    assert policy_work_steps(capsule_gated_policy(fires=False)) == policy_work_steps(
+        policy
+    ), "the count is structural — it does not depend on which branch would fire"
 
 
 def test_an_exhausted_budget_folds_to_a_no_action_outcome() -> None:
@@ -81,7 +81,8 @@ def test_a_degraded_outcome_never_enters_the_commitment_flow() -> None:
     """(§7.2-3 / §4.2 rule 4) The flow is not started and nothing reaches the send boundary."""
     transmit = RecordingTransmit()
     core, _ = build_core(
-        configuration=engine_configuration(dsl_evaluation_budget_steps=0), transmit=transmit
+        configuration=engine_configuration(dsl_evaluation_budget_steps=0),
+        transmit=transmit,
     )
     result = core.handle(decision_tick(sequence=1))
 
@@ -100,7 +101,9 @@ def test_the_degradation_is_recorded_distinctly_from_an_ordinary_no_action() -> 
     assert len(degraded) == 1
     assert degraded[0].halt_reason is HaltReason.DEGRADED_BOUND_EXHAUSTED
     assert degraded[0].detail is not None and "budget_steps" in degraded[0].detail
-    assert [r for r in sink.records if r.kind is EvidenceKind.DECISION_OUTCOME_EMITTED] == []
+    assert [
+        r for r in sink.records if r.kind is EvidenceKind.DECISION_OUTCOME_EMITTED
+    ] == []
 
     # ... and an ordinary no-action is recorded under the *other* kind and reason.
     ordinary_core, ordinary_sink = build_core(
@@ -109,7 +112,9 @@ def test_the_degradation_is_recorded_distinctly_from_an_ordinary_no_action() -> 
     )
     ordinary_core.handle(decision_tick(sequence=1))
     emitted = [
-        r for r in ordinary_sink.records if r.kind is EvidenceKind.DECISION_OUTCOME_EMITTED
+        r
+        for r in ordinary_sink.records
+        if r.kind is EvidenceKind.DECISION_OUTCOME_EMITTED
     ]
     assert len(emitted) == 1
     assert emitted[0].halt_reason is HaltReason.NO_ACTION_OUTCOME

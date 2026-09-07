@@ -253,7 +253,9 @@ def _closure_child(queue: mp.Queue) -> None:
     queue.put(
         {
             "tos_tops": tos_tops,
-            "forbidden": sorted(name for name in sys.modules if _is_forbidden_non_tos(name)),
+            "forbidden": sorted(
+                name for name in sys.modules if _is_forbidden_non_tos(name)
+            ),
         }
     )
 
@@ -267,7 +269,11 @@ def _engine_only_child(queue: mp.Queue) -> None:
     queue.put(
         {
             "tos_tops": sorted(
-                {top for name in sys.modules if (top := _tos_top_level(name)) is not None}
+                {
+                    top
+                    for name in sys.modules
+                    if (top := _tos_top_level(name)) is not None
+                }
             ),
             "forbidden": [],
         }
@@ -294,9 +300,15 @@ def _leak_canary_child(queue: mp.Queue) -> None:
     queue.put(
         {
             "tos_tops": sorted(
-                {top for name in sys.modules if (top := _tos_top_level(name)) is not None}
+                {
+                    top
+                    for name in sys.modules
+                    if (top := _tos_top_level(name)) is not None
+                }
             ),
-            "forbidden": sorted(name for name in sys.modules if _is_forbidden_non_tos(name)),
+            "forbidden": sorted(
+                name for name in sys.modules if _is_forbidden_non_tos(name)
+            ),
         }
     )
 
@@ -370,9 +382,9 @@ def test_runtime_closure_is_bounded_by_the_declared_set_plus_the_engine_edge() -
     engine = _run_child(_engine_only_child)
     bound = _ALLOWED_TOS_PACKAGES | set(engine["tos_tops"])
     extra = sorted(set(result["tos_tops"]) - bound)
-    assert extra == [], (
-        f"tos.egressgw closure escaped declared ∪ closure(tos.engine): {extra}"
-    )
+    assert (
+        extra == []
+    ), f"tos.egressgw closure escaped declared ∪ closure(tos.engine): {extra}"
 
 
 def test_closure_excludes_the_transport_twin_and_every_unrelated_sibling() -> None:
@@ -392,9 +404,9 @@ def test_the_egress_kernel_is_in_the_closure_because_it_is_consumed() -> None:
 def test_closure_has_no_forbidden_operational_package() -> None:
     """(§0.3) No shared.* operational package, no services/cli, and no numpy/pandas/yaml."""
     result = _run_child(_closure_child)
-    assert result["forbidden"] == [], (
-        f"forbidden packages reached the closure: {result['forbidden']}"
-    )
+    assert (
+        result["forbidden"] == []
+    ), f"forbidden packages reached the closure: {result['forbidden']}"
 
 
 def test_leak_canary_is_detected() -> None:
@@ -411,7 +423,12 @@ def test_leak_canary_is_detected() -> None:
 
 def test_allowlist_classifier_canaries() -> None:
     """The classifier admits every allowlisted package and rejects every excluded one."""
-    for allowed in ("tos.egressgw", "tos.egressgw.gateway", "tos.egress.predicates", "tos.ioc"):
+    for allowed in (
+        "tos.egressgw",
+        "tos.egressgw.gateway",
+        "tos.egress.predicates",
+        "tos.ioc",
+    ):
         assert _is_allowed_tos_module(allowed) is True
     for sibling in _FORBIDDEN_SIBLINGS | {"tos.not_yet_invented"}:
         assert _is_allowed_tos_module(sibling) is False
@@ -434,42 +451,64 @@ def _ast_offenders(path: Path) -> list[str]:
                 if root == "importlib":
                     offenders.append(f"{path.name}:{node.lineno} import {alias.name}")
                 if root in _CLOCK_MODULES:
-                    offenders.append(f"{path.name}:{node.lineno} clock import {alias.name}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} clock import {alias.name}"
+                    )
                 if root in _RNG_MODULES:
-                    offenders.append(f"{path.name}:{node.lineno} rng import {alias.name}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} rng import {alias.name}"
+                    )
                 if root in _NETWORK_MODULES:
-                    offenders.append(f"{path.name}:{node.lineno} network import {alias.name}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} network import {alias.name}"
+                    )
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             root = module.split(".")[0]
             if root == "importlib":
                 offenders.append(f"{path.name}:{node.lineno} from importlib import ...")
             if root in _CLOCK_MODULES:
-                offenders.append(f"{path.name}:{node.lineno} clock from {module} import ...")
+                offenders.append(
+                    f"{path.name}:{node.lineno} clock from {module} import ..."
+                )
             if root in _RNG_MODULES:
-                offenders.append(f"{path.name}:{node.lineno} rng from {module} import ...")
+                offenders.append(
+                    f"{path.name}:{node.lineno} rng from {module} import ..."
+                )
             if root in _NETWORK_MODULES:
-                offenders.append(f"{path.name}:{node.lineno} network from {module} import ...")
+                offenders.append(
+                    f"{path.name}:{node.lineno} network from {module} import ..."
+                )
             if module == "os":
                 for alias in node.names:
                     if alias.name in _AMBIENT_ENV_ATTRS:
-                        offenders.append(f"{path.name}:{node.lineno} from os import {alias.name}")
+                        offenders.append(
+                            f"{path.name}:{node.lineno} from os import {alias.name}"
+                        )
         elif isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name):
                 if func.id in _DYNAMIC_CALL_NAMES:
                     offenders.append(f"{path.name}:{node.lineno} call {func.id}()")
                 if func.id in _FORBIDDEN_BUILTIN_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic {func.id}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic {func.id}()"
+                    )
                 if func.id in _NONDETERMINISTIC_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic {func.id}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic {func.id}()"
+                    )
             elif isinstance(func, ast.Attribute):
                 if func.attr == "import_module":
                     offenders.append(f"{path.name}:{node.lineno} call import_module()")
                 if func.attr in _NONDETERMINISTIC_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic .{func.attr}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic .{func.attr}()"
+                    )
                 if func.attr in _FORBIDDEN_BUILTIN_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic .{func.attr}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic .{func.attr}()"
+                    )
         elif isinstance(node, ast.Attribute):
             if (
                 node.attr in _AMBIENT_ENV_ATTRS
@@ -487,7 +526,9 @@ def test_source_has_no_escape_env_clock_rng_or_network() -> None:
     offenders: list[str] = []
     for path in sources:
         offenders.extend(_ast_offenders(path))
-    assert offenders == [], f"forbidden construct found in tos.egressgw sources: {offenders}"
+    assert (
+        offenders == []
+    ), f"forbidden construct found in tos.egressgw sources: {offenders}"
 
 
 def test_ast_scan_detects_planted_escapes(tmp_path: Path) -> None:

@@ -260,7 +260,9 @@ def admitted_price_from_view(
     )
 
 
-def admitted_shape_price_from_view(view: ContextValueView, *, field_key: str) -> int | None:
+def admitted_shape_price_from_view(
+    view: ContextValueView, *, field_key: str
+) -> int | None:
     """Project one admitted Critical Input value onto an integer venue-shape price (design #36 §4).
 
     :attr:`~tos.venue.OrderShapeFields.price` is ``int`` and D-E2 exposes numeric
@@ -596,7 +598,9 @@ def construct_candidate_command(
             denial_reason=derivation.denial_reason
             or "the quantity derivation was denied",
         )
-    bindings = tuple(envelope.authorized_axis_bindings) + _derived_axis_bindings(derivation)
+    bindings = tuple(envelope.authorized_axis_bindings) + _derived_axis_bindings(
+        derivation
+    )
     intent: ApprovedIntentContract | None = None
     ioc_envelope: AuthorizedConstructionEnvelope | None = None
     policy: OrderConstructionPolicy | None = None
@@ -832,7 +836,11 @@ def build_order_conformance_proof(
         scheme=scheme,
         proof_id=proof_id,
         proof_generation=proof_generation,
-        policy_digest=None if construction.policy is None else construction.policy.canonical_digest,
+        policy_digest=(
+            None
+            if construction.policy is None
+            else construction.policy.canonical_digest
+        ),
         envelope_digest=construction.envelope.canonical_digest,
         command_digest=construction.command.canonical_digest,
         effect_digest=effect_digest,

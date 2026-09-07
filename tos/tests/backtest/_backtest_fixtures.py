@@ -93,12 +93,16 @@ PERMIT_IDENTITY = "permit-bt"
 INTEGRITY_ERRORS = (BacktestIntegrityError, ValidationError)
 
 
-def instrument_key(account: str = ACCOUNT, instrument: str = INSTRUMENT) -> InstrumentKey:
+def instrument_key(
+    account: str = ACCOUNT, instrument: str = INSTRUMENT
+) -> InstrumentKey:
     """The dispatch key used across the suite."""
     return InstrumentKey(account=account, instrument=instrument)
 
 
-def issue_capsule(*, instrument: str = INSTRUMENT, **overrides: Any) -> DecisionContextCapsule:
+def issue_capsule(
+    *, instrument: str = INSTRUMENT, **overrides: Any
+) -> DecisionContextCapsule:
     """Issue a valid Decision Context Capsule scoped to the suite's account and ``instrument``.
 
     Args:
@@ -109,8 +113,12 @@ def issue_capsule(*, instrument: str = INSTRUMENT, **overrides: Any) -> Decision
     """
     base: dict[str, Any] = {
         "issuer_principal_id": "iss-bt",
-        "critical_input_policy": PolicyRef(policy_id="pol-bt", canonical_digest="pd-bt"),
-        "critical_input_snapshot": SnapshotRef(snapshot_id="cis-bt", canonical_digest="sd-bt"),
+        "critical_input_policy": PolicyRef(
+            policy_id="pol-bt", canonical_digest="pd-bt"
+        ),
+        "critical_input_snapshot": SnapshotRef(
+            snapshot_id="cis-bt", canonical_digest="sd-bt"
+        ),
         "scope": CapsuleScope(
             environment="non-live-test",
             account=ACCOUNT,
@@ -129,7 +137,9 @@ def issue_capsule(*, instrument: str = INSTRUMENT, **overrides: Any) -> Decision
     return DecisionContextCapsule.issue(scheme=SCHEME, **base)
 
 
-def capsule_source(bar: Any) -> DecisionContextCapsule:  # noqa: ARG001 - the slot takes the bar
+def capsule_source(
+    bar: Any,
+) -> DecisionContextCapsule:  # noqa: ARG001 - the slot takes the bar
     """The injected per-bar Capsule source.
 
     Slice #1 issues the *same* Capsule content for every bar, which is the honest position: the
@@ -151,7 +161,9 @@ def capsule_source_for(instrument: str) -> Any:
         content is still identical for the same reason as :func:`capsule_source`.
     """
 
-    def _source(bar: Any) -> DecisionContextCapsule:  # noqa: ARG001 - the slot takes the bar
+    def _source(
+        bar: Any,
+    ) -> DecisionContextCapsule:  # noqa: ARG001 - the slot takes the bar
         return issue_capsule(instrument=instrument)
 
     return _source
@@ -216,7 +228,9 @@ def capsule_gated_policy(
     return DecisionPolicy(rules=(rule,), default=hold)
 
 
-def issue_strategy(policy: DecisionPolicy | None = None, **overrides: Any) -> AuthoredStrategy:
+def issue_strategy(
+    policy: DecisionPolicy | None = None, **overrides: Any
+) -> AuthoredStrategy:
     """Issue a valid Authored Strategy carrying ``policy`` (a capsule-gated one by default)."""
     base: dict[str, Any] = {
         "dsl_version": "dsl-bt",
@@ -358,7 +372,10 @@ def build_core(
 
 
 def build_fill_model(
-    parameters: FillParameters, *, scenario_id: Any = None, key: InstrumentKey | None = None
+    parameters: FillParameters,
+    *,
+    scenario_id: Any = None,
+    key: InstrumentKey | None = None,
 ) -> DeterministicFillModel:
     """Wire the deterministic synthetic fill band.
 
@@ -412,7 +429,9 @@ def offset_bars(count: int, *, coordinate_offset: int = 0) -> BarStream:
     return validate_bar_stream(
         [
             bar.model_copy(
-                update={"timestamp_coordinate": bar.timestamp_coordinate + coordinate_offset}
+                update={
+                    "timestamp_coordinate": bar.timestamp_coordinate + coordinate_offset
+                }
             )
             for bar in reference_bars(count)
         ]
@@ -493,8 +512,12 @@ def build_multi_symbol_driver(
     fill_models: dict[InstrumentKey, DeterministicFillModel] = {}
     for instrument, parameters in lanes:
         key = instrument_key(instrument=instrument)
-        converters[key] = build_converter(key=key, source=capsule_source_for(instrument))
-        fill_models[key] = build_fill_model(parameters, scenario_id=scenario_id, key=key)
+        converters[key] = build_converter(
+            key=key, source=capsule_source_for(instrument)
+        )
+        fill_models[key] = build_fill_model(
+            parameters, scenario_id=scenario_id, key=key
+        )
     driver = MultiSymbolBacktestDriver(
         converters=converters,
         fill_models=fill_models,
@@ -508,7 +531,9 @@ def stages_for(spec: ScenarioSpec) -> dict[CommitmentStep, Stage]:
     """Build the scenario's stand-in stage map (denials / no-decisions as the spec declares)."""
     overrides: dict[str, Any] = {}
     if spec.denied_steps:
-        overrides["denied_steps"] = dict.fromkeys(spec.denied_steps, spec.denial_reason or "")
+        overrides["denied_steps"] = dict.fromkeys(
+            spec.denied_steps, spec.denial_reason or ""
+        )
     if spec.unknown_steps:
         overrides["unknown_steps"] = frozenset(spec.unknown_steps)
     return admitting_stages(**overrides)

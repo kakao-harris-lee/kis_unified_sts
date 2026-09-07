@@ -154,7 +154,9 @@ def _iter_targets(policy: DecisionPolicy) -> Iterator[TargetSpec]:
         yield from decision.vector
 
 
-def declared_target_scopes(strategy: AuthoredStrategy) -> tuple[tuple[str | None, str | None], ...]:
+def declared_target_scopes(
+    strategy: AuthoredStrategy,
+) -> tuple[tuple[str | None, str | None], ...]:
     """Return the distinct (account, instrument) scopes the strategy's own targets declare.
 
     The **structural** source of the dispatch key (design #31 §3.3): the scopes are read out of
@@ -178,7 +180,9 @@ def declared_target_scopes(strategy: AuthoredStrategy) -> tuple[tuple[str | None
     return tuple(scopes)
 
 
-def derive_instrument_key(strategy: AuthoredStrategy) -> tuple[InstrumentKey | None, tuple[str, ...]]:
+def derive_instrument_key(
+    strategy: AuthoredStrategy,
+) -> tuple[InstrumentKey | None, tuple[str, ...]]:
     """Derive the dispatch key structurally from the strategy's declared scope (design #31 §3.3).
 
     Fail-closed in three ways, each a named refusal rather than a default:
@@ -239,7 +243,9 @@ def policy_work_steps(policy: DecisionPolicy) -> int:
     """
     rules = policy.rules
     compares = tuple(compare for rule in rules for compare in rule.all_of)
-    operands = tuple(operand for compare in compares for operand in (compare.left, compare.right))
+    operands = tuple(
+        operand for compare in compares for operand in (compare.left, compare.right)
+    )
     return len(rules) + len(compares) + len(operands)
 
 
@@ -270,7 +276,9 @@ def strategy_admissible(strategy: AuthoredStrategy) -> AdmissionResult:
     policy = strategy.policy
     if policy is None:
         reasons.append("strategy carries no embedded DecisionPolicy (design #31 §3.5)")
-        return AdmissionResult(verdict=AdmissionVerdict.INADMISSIBLE, reasons=tuple(reasons))
+        return AdmissionResult(
+            verdict=AdmissionVerdict.INADMISSIBLE, reasons=tuple(reasons)
+        )
 
     for index, compare in enumerate(iter_outcome_gating_compares(policy)):
         if not compare_has_capsule_operand(compare):
@@ -285,5 +293,7 @@ def strategy_admissible(strategy: AuthoredStrategy) -> AdmissionResult:
     reasons.extend(key_reasons)
 
     if reasons:
-        return AdmissionResult(verdict=AdmissionVerdict.INADMISSIBLE, reasons=tuple(reasons))
+        return AdmissionResult(
+            verdict=AdmissionVerdict.INADMISSIBLE, reasons=tuple(reasons)
+        )
     return AdmissionResult(verdict=AdmissionVerdict.ADMISSIBLE, instrument_key=key)

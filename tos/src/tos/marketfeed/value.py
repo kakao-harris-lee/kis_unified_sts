@@ -98,7 +98,9 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-def capsule_top_level_keys(capsule: DecisionContextCapsule | None = None) -> frozenset[str]:
+def capsule_top_level_keys(
+    capsule: DecisionContextCapsule | None = None,
+) -> frozenset[str]:
     """The Capsule's actual top-level key set (design #32 §3.2 (1)).
 
     Read off the shipped model rather than transcribed into a constant: a hand-copied list of
@@ -342,7 +344,9 @@ def lineage_state_for_output(
 # ---------------------------------------------------------------------------
 
 
-def project_scalar(token: ScalarValue) -> tuple[ScalarValue | None, ValueRejectionReason | None]:
+def project_scalar(
+    token: ScalarValue,
+) -> tuple[ScalarValue | None, ValueRejectionReason | None]:
     """Project a preimage token onto a DSL-comparable scalar, or refuse it (design #32 §2.5).
 
     Three admitted shapes and one refusal:
@@ -486,7 +490,9 @@ def _admit_one(
     scheme: CanonicalizationScheme,
 ) -> tuple[ContextValue | None, RejectedValue | None]:
     """Run every per-value gate for one candidate (design #32 §2.2/§2.3/§4.2/§5)."""
-    if is_wildcard_field_key(candidate.field_key):  # pragma: no cover - blocked at construction
+    if is_wildcard_field_key(
+        candidate.field_key
+    ):  # pragma: no cover - blocked at construction
         return None, _reject(candidate, ValueRejectionReason.WILDCARD_FIELD_KEY)
     if candidate.observation_ref in ambiguous:
         return None, _reject(
@@ -526,7 +532,9 @@ def _admit_one(
             projection_reason or ValueRejectionReason.NON_DETERMINISTIC_NUMERIC,
         )
 
-    state = value_field_state(observation, candidate.field_key, snapshot.field_evaluations)
+    state = value_field_state(
+        observation, candidate.field_key, snapshot.field_evaluations
+    )
     if state is not FieldState.VALID:
         return None, _reject(
             candidate,
@@ -623,7 +631,9 @@ def publish_context_value_view(
         if rejection is not None:
             rejected.append(rejection)
             continue
-        if value is not None:  # pragma: no branch - _admit_one returns exactly one of the two
+        if (
+            value is not None
+        ):  # pragma: no branch - _admit_one returns exactly one of the two
             admitted.append(value)
 
     # ★ source disagreement: a repeated field_key is refused wholesale, never folded onto one
@@ -650,7 +660,9 @@ def publish_context_value_view(
 
     snapshot_id = snapshot.snapshot_id
     snapshot_digest = snapshot.canonical_digest
-    if snapshot_id is None or snapshot_digest is None:  # pragma: no cover - binding gate precedes
+    if (
+        snapshot_id is None or snapshot_digest is None
+    ):  # pragma: no cover - binding gate precedes
         # Unreachable through ``snapshot_binds_capsule_reference``, kept as a fail-closed backstop
         # rather than an unchecked narrowing assumption.
         return ValueResolution(
@@ -671,7 +683,9 @@ def publish_context_value_view(
         canonicalization_version=scheme.version,
     )
     disposition = (
-        ValueViewDisposition.RESOLVED if ordered else ValueViewDisposition.EXPLICIT_EMPTY
+        ValueViewDisposition.RESOLVED
+        if ordered
+        else ValueViewDisposition.EXPLICIT_EMPTY
     )
     return ValueResolution(
         disposition=disposition,

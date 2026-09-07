@@ -319,7 +319,8 @@ def venue_shape_constraints(**overrides: Any) -> VenueShapeConstraints:
 
 
 def venue_decision(
-    result: OrderAdmissibilityResult = OrderAdmissibilityResult.ADMISSIBLE, **overrides: Any
+    result: OrderAdmissibilityResult = OrderAdmissibilityResult.ADMISSIBLE,
+    **overrides: Any,
 ) -> OrderAdmissibilityDecision:
     """An issued Order Admissibility Decision carrying ``result``."""
     base: dict[str, Any] = {
@@ -410,7 +411,9 @@ def egress_request(command_digest: str | None, **overrides: Any) -> EgressReques
     return issued
 
 
-def quorum_certificate(command_digest: str | None, **overrides: Any) -> QuorumCommitCertificate:
+def quorum_certificate(
+    command_digest: str | None, **overrides: Any
+) -> QuorumCommitCertificate:
     """⚠ A provisional QCC: only its command-digest axis is consumed (quorum runtime deferred)."""
     base: dict[str, Any] = {
         "qcc_id": "qcc-1",

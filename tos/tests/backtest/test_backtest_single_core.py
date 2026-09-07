@@ -48,7 +48,9 @@ _BACKTEST_SRC = Path(__file__).resolve().parents[2] / "src" / "tos" / "backtest"
 
 def _ack_model():  # noqa: ANN202 - a local builder
     """An acknowledging band."""
-    return build_fill_model(FillParameters(mode=FillMode.ACKNOWLEDGE, side=FillSide.BUY))
+    return build_fill_model(
+        FillParameters(mode=FillMode.ACKNOWLEDGE, side=FillSide.BUY)
+    )
 
 
 def test_a_second_different_core_is_refused() -> None:
@@ -128,11 +130,13 @@ def test_the_package_constructs_no_engine_core_anywhere() -> None:
             name = (
                 func.id
                 if isinstance(func, ast.Name)
-                else func.attr
-                if isinstance(func, ast.Attribute)
-                else None
+                else func.attr if isinstance(func, ast.Attribute) else None
             )
-            if name in {"EngineCore", "ProvisionalReservationLedger", "StrategyRegistry"}:
+            if name in {
+                "EngineCore",
+                "ProvisionalReservationLedger",
+                "StrategyRegistry",
+            }:
                 offenders.append(f"{path.name}:{node.lineno} {name}()")
     assert offenders == [], (
         f"tos.backtest constructs engine state itself: {offenders} — the core, its ledger, and its "
@@ -156,10 +160,17 @@ def test_the_driver_exposes_no_core_replacement_path() -> None:
         ),
     }
     for name, driver in drivers.items():
-        for forbidden in ("set_core", "rebind", "reset", "reset_core", "new_core", "rebuild"):
-            assert not hasattr(driver, forbidden), (
-                f"{name} exposes {forbidden!r} — a re-instantiation path defeats the seal"
-            )
+        for forbidden in (
+            "set_core",
+            "rebind",
+            "reset",
+            "reset_core",
+            "new_core",
+            "rebuild",
+        ):
+            assert not hasattr(
+                driver, forbidden
+            ), f"{name} exposes {forbidden!r} — a re-instantiation path defeats the seal"
 
 
 def test_every_shipped_driver_is_covered_by_the_replacement_canary() -> None:
@@ -199,6 +210,10 @@ def test_the_ledger_survives_the_whole_multi_bar_run() -> None:
     assert reservation is not None
     assert run.handoff_count == 1
     denials = [
-        halt for halt in run.halts if halt.halt_reason is HaltReason.AT_MOST_ONE_EXPOSURE_HELD
+        halt
+        for halt in run.halts
+        if halt.halt_reason is HaltReason.AT_MOST_ONE_EXPOSURE_HELD
     ]
-    assert len(denials) == 4, "bars 2-5 must each be denied — one ledger, one reservation"
+    assert (
+        len(denials) == 4
+    ), "bars 2-5 must each be denied — one ledger, one reservation"

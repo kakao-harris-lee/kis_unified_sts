@@ -153,7 +153,17 @@ _CLOCK_MODULES = frozenset({"time", "datetime"})
 _RNG_MODULES = frozenset({"random", "secrets", "uuid"})
 #: Network / process stdlib.
 _NETWORK_MODULES = frozenset(
-    {"socket", "ssl", "http", "urllib", "ftplib", "smtplib", "asyncio", "subprocess", "ctypes"}
+    {
+        "socket",
+        "ssl",
+        "http",
+        "urllib",
+        "ftplib",
+        "smtplib",
+        "asyncio",
+        "subprocess",
+        "ctypes",
+    }
 )
 #: Wall-clock / RNG call names that would be nondeterministic even without a module import.
 _NONDETERMINISTIC_CALLS = frozenset(
@@ -260,7 +270,9 @@ def _closure_child(queue: mp.Queue) -> None:
     queue.put(
         {
             "tos_tops": tos_tops,
-            "forbidden": sorted(name for name in sys.modules if _is_forbidden_non_tos(name)),
+            "forbidden": sorted(
+                name for name in sys.modules if _is_forbidden_non_tos(name)
+            ),
         }
     )
 
@@ -290,7 +302,9 @@ def _leak_canary_child(queue: mp.Queue) -> None:
     queue.put(
         {
             "tos_tops": tos_tops,
-            "forbidden": sorted(name for name in sys.modules if _is_forbidden_non_tos(name)),
+            "forbidden": sorted(
+                name for name in sys.modules if _is_forbidden_non_tos(name)
+            ),
         }
     )
 
@@ -311,9 +325,9 @@ def test_engine_tos_closure_is_within_the_allowlist() -> None:
     """(§0.3 allowlist) The tos closure ⊆ the 14 declared packages — wide, but still a subset."""
     result = _run_child(_closure_child)
     extra = sorted(set(result["tos_tops"]) - _ALLOWED_TOS_PACKAGES)
-    assert extra == [], (
-        f"tos.engine closure escaped the §0.3 allowlist {sorted(_ALLOWED_TOS_PACKAGES)}: {extra}"
-    )
+    assert (
+        extra == []
+    ), f"tos.engine closure escaped the §0.3 allowlist {sorted(_ALLOWED_TOS_PACKAGES)}: {extra}"
 
 
 def test_engine_closure_contains_every_declared_edge() -> None:
@@ -342,9 +356,9 @@ def test_engine_closure_excludes_the_send_boundary_siblings() -> None:
 def test_engine_closure_has_no_forbidden_operational_package() -> None:
     """(§0.3) No shared.* operational package, no services/cli, and no numpy/pandas/yaml."""
     result = _run_child(_closure_child)
-    assert result["forbidden"] == [], (
-        f"forbidden packages reached the closure: {result['forbidden']}"
-    )
+    assert (
+        result["forbidden"] == []
+    ), f"forbidden packages reached the closure: {result['forbidden']}"
 
 
 def test_leak_canary_is_detected() -> None:
@@ -365,7 +379,12 @@ def test_leak_canary_is_detected() -> None:
 
 def test_allowlist_classifier_canaries() -> None:
     """The classifier admits every allowlisted package and rejects every excluded one."""
-    for allowed in ("tos.engine", "tos.engine.sequencer", "tos.dsl.determinism", "tos.canonical"):
+    for allowed in (
+        "tos.engine",
+        "tos.engine.sequencer",
+        "tos.dsl.determinism",
+        "tos.canonical",
+    ):
         assert _is_allowed_tos_module(allowed) is True
     for sibling in _FORBIDDEN_SIBLINGS | {"tos.not_yet_invented"}:
         assert _is_allowed_tos_module(sibling) is False
@@ -390,42 +409,64 @@ def _ast_offenders(path: Path) -> list[str]:
                 if root == "importlib":
                     offenders.append(f"{path.name}:{node.lineno} import {alias.name}")
                 if root in _CLOCK_MODULES:
-                    offenders.append(f"{path.name}:{node.lineno} clock import {alias.name}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} clock import {alias.name}"
+                    )
                 if root in _RNG_MODULES:
-                    offenders.append(f"{path.name}:{node.lineno} rng import {alias.name}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} rng import {alias.name}"
+                    )
                 if root in _NETWORK_MODULES:
-                    offenders.append(f"{path.name}:{node.lineno} network import {alias.name}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} network import {alias.name}"
+                    )
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             root = module.split(".")[0]
             if root == "importlib":
                 offenders.append(f"{path.name}:{node.lineno} from importlib import ...")
             if root in _CLOCK_MODULES:
-                offenders.append(f"{path.name}:{node.lineno} clock from {module} import ...")
+                offenders.append(
+                    f"{path.name}:{node.lineno} clock from {module} import ..."
+                )
             if root in _RNG_MODULES:
-                offenders.append(f"{path.name}:{node.lineno} rng from {module} import ...")
+                offenders.append(
+                    f"{path.name}:{node.lineno} rng from {module} import ..."
+                )
             if root in _NETWORK_MODULES:
-                offenders.append(f"{path.name}:{node.lineno} network from {module} import ...")
+                offenders.append(
+                    f"{path.name}:{node.lineno} network from {module} import ..."
+                )
             if module == "os":
                 for alias in node.names:
                     if alias.name in _AMBIENT_ENV_ATTRS:
-                        offenders.append(f"{path.name}:{node.lineno} from os import {alias.name}")
+                        offenders.append(
+                            f"{path.name}:{node.lineno} from os import {alias.name}"
+                        )
         elif isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name):
                 if func.id in _DYNAMIC_CALL_NAMES:
                     offenders.append(f"{path.name}:{node.lineno} call {func.id}()")
                 if func.id in _FORBIDDEN_BUILTIN_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic {func.id}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic {func.id}()"
+                    )
                 if func.id in _NONDETERMINISTIC_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic {func.id}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic {func.id}()"
+                    )
             elif isinstance(func, ast.Attribute):
                 if func.attr == "import_module":
                     offenders.append(f"{path.name}:{node.lineno} call import_module()")
                 if func.attr in _NONDETERMINISTIC_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic .{func.attr}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic .{func.attr}()"
+                    )
                 if func.attr in _FORBIDDEN_BUILTIN_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic .{func.attr}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic .{func.attr}()"
+                    )
         elif isinstance(node, ast.Attribute):
             if (
                 node.attr in _AMBIENT_ENV_ATTRS
@@ -443,7 +484,9 @@ def test_source_has_no_escape_env_clock_rng_or_network() -> None:
     offenders: list[str] = []
     for path in sources:
         offenders.extend(_ast_offenders(path))
-    assert offenders == [], f"forbidden construct found in tos.engine sources: {offenders}"
+    assert (
+        offenders == []
+    ), f"forbidden construct found in tos.engine sources: {offenders}"
 
 
 def test_ast_scan_detects_planted_escapes(tmp_path: Path) -> None:

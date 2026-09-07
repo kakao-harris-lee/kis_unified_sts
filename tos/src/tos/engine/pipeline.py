@@ -139,8 +139,13 @@ def time_admits(inputs: TimeAdmissionInputs) -> tuple[bool, str | None]:
         future_tolerance=inputs.future_tolerance,
     )
     if verdict is not FreshnessVerdict.FRESH:
-        return False, f"freshness verdict is {verdict.value}, not FRESH (ADR-002-008 §9)"
-    if not snapshot_age_admissible(inputs.snapshot_age_bound, inputs.maximum_consumer_age_ms):
+        return (
+            False,
+            f"freshness verdict is {verdict.value}, not FRESH (ADR-002-008 §9)",
+        )
+    if not snapshot_age_admissible(
+        inputs.snapshot_age_bound, inputs.maximum_consumer_age_ms
+    ):
         return False, (
             "snapshot age bound is inadmissible or unestablished "
             f"(bound={inputs.snapshot_age_bound!r}, max={inputs.maximum_consumer_age_ms!r})"
@@ -151,7 +156,10 @@ def time_admits(inputs: TimeAdmissionInputs) -> tuple[bool, str | None]:
             "(ADR-002-008 §12:319)"
         )
     if not session_open_positively(inputs.session_context, inputs.uncertainty_interval):
-        return False, "the session is not positively, unambiguously open (ADR-002-008 §12:319)"
+        return (
+            False,
+            "the session is not positively, unambiguously open (ADR-002-008 §12:319)",
+        )
     if inputs.health_state is None:
         return False, "time health state is absent — new normal risk is not permitted"
     if not state_permits_new_normal_risk(inputs.health_state):
@@ -189,9 +197,15 @@ def capsule_admitted(
         return HaltReason.CAPSULE_INCOMPLETE, "capsule identity/digest is absent"
     missing = capsule.missing_required_fields()
     if missing:
-        return HaltReason.CAPSULE_INCOMPLETE, f"capsule required-covered fields missing: {missing}"
+        return (
+            HaltReason.CAPSULE_INCOMPLETE,
+            f"capsule required-covered fields missing: {missing}",
+        )
     key = payload.instrument_key
-    if capsule.scope.account != key.account or capsule.scope.instrument != key.instrument:
+    if (
+        capsule.scope.account != key.account
+        or capsule.scope.instrument != key.instrument
+    ):
         return HaltReason.CAPSULE_SCOPE_MISMATCH, (
             f"capsule scope ({capsule.scope.account!r}, {capsule.scope.instrument!r}) does not "
             f"match the event key ({key.account!r}, {key.instrument!r})"
@@ -267,7 +281,10 @@ def run_decision_pipeline(
     policy = entry.strategy.policy
     if policy is None:  # pragma: no cover - admission refuses a policy-less strategy
         return _withheld(
-            sink, key, HaltReason.CAPSULE_INCOMPLETE, "registered strategy carries no policy"
+            sink,
+            key,
+            HaltReason.CAPSULE_INCOMPLETE,
+            "registered strategy carries no policy",
         )
     work_steps = policy_work_steps(policy)
     bound_state = resolve_bound(
@@ -279,7 +296,9 @@ def run_decision_pipeline(
 
     if degrades_to_no_action(bound_state):
         degraded = select_outcome(
-            bound_state, completed_outcome=_on_exhaustion(), on_exhaustion=_on_exhaustion
+            bound_state,
+            completed_outcome=_on_exhaustion(),
+            on_exhaustion=_on_exhaustion,
         )
         sink.record(
             EngineEvidenceRecord(

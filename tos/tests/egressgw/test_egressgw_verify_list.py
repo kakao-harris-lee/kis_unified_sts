@@ -186,15 +186,18 @@ def test_the_baseline_run_is_six_satisfied_realize_and_six_not_applicable() -> N
     by_disposition: dict[VerifyDisposition, list[VerifyOutcome]] = {}
     for verdict in verification.verdicts:
         by_disposition.setdefault(verdict.disposition, []).append(verdict.outcome)
-    assert by_disposition[VerifyDisposition.REALIZED_STRUCTURAL] == [
-        VerifyOutcome.SATISFIED
-    ] * 6
-    assert by_disposition[VerifyDisposition.PROVISIONAL_STAND_IN] == [
-        VerifyOutcome.SATISFIED
-    ] * 5
-    assert by_disposition[VerifyDisposition.DEFERRED_APPLICABILITY] == [
-        VerifyOutcome.NOT_APPLICABLE
-    ] * 6
+    assert (
+        by_disposition[VerifyDisposition.REALIZED_STRUCTURAL]
+        == [VerifyOutcome.SATISFIED] * 6
+    )
+    assert (
+        by_disposition[VerifyDisposition.PROVISIONAL_STAND_IN]
+        == [VerifyOutcome.SATISFIED] * 5
+    )
+    assert (
+        by_disposition[VerifyDisposition.DEFERRED_APPLICABILITY]
+        == [VerifyOutcome.NOT_APPLICABLE] * 6
+    )
 
 
 def test_every_deferred_verdict_records_the_no_broker_reached_justification() -> None:

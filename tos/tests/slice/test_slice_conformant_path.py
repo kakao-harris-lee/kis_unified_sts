@@ -114,7 +114,8 @@ def _slice_sources() -> tuple[tuple[str, str], ...]:
     """Every ``.py`` file of this suite, as ``(name, text)``."""
     here = Path(__file__).resolve().parent
     return tuple(
-        (path.name, path.read_text(encoding="utf-8")) for path in sorted(here.glob("*.py"))
+        (path.name, path.read_text(encoding="utf-8"))
+        for path in sorted(here.glob("*.py"))
     )
 
 
@@ -132,7 +133,9 @@ def test_no_config_sourced_operand_path_appears_anywhere_in_this_suite() -> None
         ):
             if name == Path(__file__).name:
                 continue  # this file names the forbidden shapes in order to forbid them
-            assert forbidden not in text, f"{name} routes a value through the config channel"
+            assert (
+                forbidden not in text
+            ), f"{name} routes a value through the config channel"
 
 
 def test_the_grep_would_actually_fire() -> None:
@@ -230,7 +233,9 @@ def test_without_the_value_surface_every_decision_collapses_to_no_action() -> No
     assert resolved_value_surface_absent(payload) is True
 
 
-def test_a_refused_snapshot_binding_starves_the_decision_rather_than_substituting() -> None:
+def test_a_refused_snapshot_binding_starves_the_decision_rather_than_substituting() -> (
+    None
+):
     """(ADR-002-018 §15:386) A store that cannot resolve the reference publishes no view."""
 
     def empty_store(*, snapshot_id: str | None, canonical_digest: str | None) -> None:
@@ -247,13 +252,17 @@ def test_a_refused_snapshot_binding_starves_the_decision_rather_than_substitutin
         candidate_source=book.candidate_source,
         scheme=SCHEME,
     )
-    resolved = starving.resolve(book.context_for(0).capsule, instrument_key=instrument_key())
+    resolved = starving.resolve(
+        book.context_for(0).capsule, instrument_key=instrument_key()
+    )
     assert resolved.resolution.disposition is ValueViewDisposition.SNAPSHOT_UNRESOLVED
     assert resolved.payload.value_view is None
     assert resolved.value_surface_published is False
 
     # the healthy resolver over the same Capsule does publish — so the difference is the store.
-    healthy = resolver.resolve(book.context_for(0).capsule, instrument_key=instrument_key())
+    healthy = resolver.resolve(
+        book.context_for(0).capsule, instrument_key=instrument_key()
+    )
     assert healthy.value_surface_published is True
 
 
@@ -272,9 +281,17 @@ def test_the_band_values_the_policy_compared_are_the_ones_the_snapshot_covers() 
         assert by_key["upper_band"].value == UPPER_BAND
         for value in view.values:
             # the provenance pointer is the observation's own covered payload digest.
-            assert value.payload_digest == context.snapshot.observations[0].raw.payload_digest
-            assert value.observation_ref == context.snapshot.observations[0].raw.raw_event_id
-            assert value.as_of == context.snapshot.observations[0].time.source_event_time
+            assert (
+                value.payload_digest
+                == context.snapshot.observations[0].raw.payload_digest
+            )
+            assert (
+                value.observation_ref
+                == context.snapshot.observations[0].raw.raw_event_id
+            )
+            assert (
+                value.as_of == context.snapshot.observations[0].time.source_event_time
+            )
 
 
 def test_the_event_vocabulary_stayed_closed_across_the_slice() -> None:

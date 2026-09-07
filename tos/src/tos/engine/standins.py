@@ -154,7 +154,9 @@ def provisional_stage_map(
             else None
         )
         bound_identity = (
-            action_flow_permit_identity if step is CommitmentStep.ATOMIC_COMMIT else None
+            action_flow_permit_identity
+            if step is CommitmentStep.ATOMIC_COMMIT
+            else None
         )
         stages[step] = ProvisionalStandIn(
             step,

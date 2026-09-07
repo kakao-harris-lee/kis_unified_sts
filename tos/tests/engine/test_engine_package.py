@@ -69,7 +69,9 @@ _SUBMODULES = {
 def test_every_declared_export_resolves() -> None:
     """No ``__all__`` entry is a phantom (anti-phantom: existence claims are checked too)."""
     missing = [name for name in engine.__all__ if not hasattr(engine, name)]
-    assert missing == [], f"tos.engine.__all__ names symbols that do not exist: {missing}"
+    assert (
+        missing == []
+    ), f"tos.engine.__all__ names symbols that do not exist: {missing}"
 
 
 def test_the_export_list_has_no_duplicates() -> None:
@@ -218,7 +220,9 @@ def test_the_step_partition_is_exact_and_disjoint() -> None:
     """(§4.1/§4.3/§4.5) sequenced ∪ send-boundary = all; realized ∪ injected = sequenced."""
     assert set(SEQUENCED_STEPS) | SEND_BOUNDARY_STEPS == set(COMMITMENT_FLOW_ORDER)
     assert set(SEQUENCED_STEPS) & SEND_BOUNDARY_STEPS == set()
-    assert COORDINATOR_REALIZED_STEPS | set(INJECTED_STAGE_STEPS) == set(SEQUENCED_STEPS)
+    assert COORDINATOR_REALIZED_STEPS | set(INJECTED_STAGE_STEPS) == set(
+        SEQUENCED_STEPS
+    )
     assert COORDINATOR_REALIZED_STEPS & set(INJECTED_STAGE_STEPS) == set()
     assert set(SEQUENCED_STEPS) == GUARANTEED_FAIL_CLOSED_STEPS
     assert {
@@ -309,12 +313,16 @@ def test_no_numeric_bound_is_hardcoded_in_the_sources() -> None:
     for path in sorted(engine_src.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float, complex)):
+            if isinstance(node, ast.Constant) and isinstance(
+                node.value, (int, float, complex)
+            ):
                 if isinstance(node.value, bool):
                     continue
                 if node.value in structural:
                     continue
-                offenders.append(f"{path.name}:{node.lineno} numeric literal {node.value!r}")
+                offenders.append(
+                    f"{path.name}:{node.lineno} numeric literal {node.value!r}"
+                )
     assert offenders == [], f"hardcoded numeric bound found: {offenders}"
 
 
@@ -349,7 +357,13 @@ def test_the_five_design_plug_slots_are_all_declared() -> None:
         Transmit,
     )
 
-    for protocol in (DecisionContextResolver, Stage, Transmit, EventSource, EvidenceSink):
+    for protocol in (
+        DecisionContextResolver,
+        Stage,
+        Transmit,
+        EventSource,
+        EvidenceSink,
+    ):
         assert getattr(protocol, "_is_runtime_protocol", False) is True, (
             f"{protocol.__name__} must be a runtime-checkable Protocol so an injected "
             "implementation can be verified at the boundary"

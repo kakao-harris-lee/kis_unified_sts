@@ -41,7 +41,9 @@ from tos.marketfeed import (
 
 from ._marketfeed_fixtures import CLOSE_BAR_ONE, SCHEME, one_bar
 
-_CONFIG = EvaluationConfig(config_version="cfg-1", bindings={"threshold": CLOSE_BAR_ONE - 1})
+_CONFIG = EvaluationConfig(
+    config_version="cfg-1", bindings={"threshold": CLOSE_BAR_ONE - 1}
+)
 
 
 def _resolved_env():
@@ -50,7 +52,9 @@ def _resolved_env():
     resolution = publish_context_value_view(
         capsule=capsule, snapshot=snapshot, candidates=candidates, scheme=SCHEME
     )
-    return capsule, build_environment(capsule, _CONFIG, resolved_context=resolution.view)
+    return capsule, build_environment(
+        capsule, _CONFIG, resolved_context=resolution.view
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +76,9 @@ def test_disjointness_is_measured_against_the_real_dump_of_the_real_capsule() ->
     assert value_namespace_is_disjoint(capsule) is True
 
 
-def test_the_class_level_and_instance_level_key_sets_agree_on_the_declared_fields() -> None:
+def test_the_class_level_and_instance_level_key_sets_agree_on_the_declared_fields() -> (
+    None
+):
     """(anti-phantom §0.5) The fallback key set is a superset-consistent view, not a guess."""
     capsule, _, _ = one_bar()
     assert set(DecisionContextCapsule.model_fields) <= capsule_top_level_keys(capsule)
@@ -160,7 +166,8 @@ def test_an_unpublished_field_resolves_to_unknown_and_compares_false() -> None:
     assert resolve_operand(missing, env) is UNKNOWN
     for op in CompareOp:
         assert (
-            eval_compare(Compare(left=missing, op=op, right=Operand(const=0)), env) is False
+            eval_compare(Compare(left=missing, op=op, right=Operand(const=0)), env)
+            is False
         ), f"UNKNOWN must be restrictive under {op}"
 
 
@@ -169,7 +176,10 @@ def test_no_view_means_no_namespace_at_all() -> None:
     capsule, _, _ = one_bar()
     env = build_environment(capsule, _CONFIG)
     assert VALUE_NAMESPACE not in env["capsule"]
-    assert resolve_operand(Operand(ref=("capsule", VALUE_NAMESPACE, "close")), env) is UNKNOWN
+    assert (
+        resolve_operand(Operand(ref=("capsule", VALUE_NAMESPACE, "close")), env)
+        is UNKNOWN
+    )
 
 
 def test_an_explicit_empty_view_is_published_but_reaches_no_value() -> None:
@@ -181,7 +191,10 @@ def test_an_explicit_empty_view_is_published_but_reaches_no_value() -> None:
     assert resolution.disposition is ValueViewDisposition.EXPLICIT_EMPTY
     env = build_environment(capsule, _CONFIG, resolved_context=resolution.view)
     assert env["capsule"][VALUE_NAMESPACE] == {}
-    assert resolve_operand(Operand(ref=("capsule", VALUE_NAMESPACE, "close")), env) is UNKNOWN
+    assert (
+        resolve_operand(Operand(ref=("capsule", VALUE_NAMESPACE, "close")), env)
+        is UNKNOWN
+    )
 
 
 # ---------------------------------------------------------------------------

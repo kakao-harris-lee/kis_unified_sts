@@ -81,7 +81,9 @@ def _capsule_ref() -> DecisionContextCapsuleRef:
         scheme=_SCHEME,
         issuer_principal_id="iss-1",
         critical_input_policy=PolicyRef(policy_id="pol-1", canonical_digest="pd-1"),
-        critical_input_snapshot=SnapshotRef(snapshot_id="cis-ref", canonical_digest="sd-1"),
+        critical_input_snapshot=SnapshotRef(
+            snapshot_id="cis-ref", canonical_digest="sd-1"
+        ),
         scope=CapsuleScope(
             environment="non-live-test",
             account=ACCOUNT,
@@ -224,14 +226,16 @@ def _run_flow(*, transmit, action_class=None, price=None):
     )
     construction_stages = _construction_stages(price=price)
     if action_class is not None:
-        construction_stages[CommitmentStep.VENUE_ADMISSIBILITY_DECISION] = VenueConstraintStage(
-            observed_session_phase=PHASE,
-            action_class=action_class,
-            snapshot=venue_snapshot(),
-            policy=venue_policy(),
-            shape=venue_shape(),
-            constraints=venue_shape_constraints(),
-            decision=venue_decision(),
+        construction_stages[CommitmentStep.VENUE_ADMISSIBILITY_DECISION] = (
+            VenueConstraintStage(
+                observed_session_phase=PHASE,
+                action_class=action_class,
+                snapshot=venue_snapshot(),
+                policy=venue_policy(),
+                shape=venue_shape(),
+                constraints=venue_shape_constraints(),
+                decision=venue_decision(),
+            )
         )
     stages.update(construction_stages)
     ledger = ProvisionalReservationLedger(max_unresolved_send_per_scope=1)

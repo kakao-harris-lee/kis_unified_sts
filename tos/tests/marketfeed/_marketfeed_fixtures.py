@@ -61,7 +61,9 @@ CLOSE_BAR_TWO = 4_513_000
 def preimage(**tokens: Any) -> RawPayloadPreimage:
     """Build a raw-payload preimage from keyword field values (order-independent by construction)."""
     return RawPayloadPreimage(
-        entries=tuple(PreimageEntry(key=key, value=value) for key, value in tokens.items())
+        entries=tuple(
+            PreimageEntry(key=key, value=value) for key, value in tokens.items()
+        )
     )
 
 
@@ -84,7 +86,9 @@ def observation(
         raw=RawRef(
             raw_event_id=raw_event_id,
             payload_digest=(
-                payload_digest if payload_digest is not None else payload_digest_of(payload)
+                payload_digest
+                if payload_digest is not None
+                else payload_digest_of(payload)
             ),
         ),
         time=ObservationTime(source_event_time=as_of),
@@ -111,7 +115,8 @@ def lineage_node(
     return TransformationLineage(
         output_id=output_id,
         parents=tuple(
-            ParentRef(parent_id=parent, digest=f"digest-of-{parent}") for parent in parents
+            ParentRef(parent_id=parent, digest=f"digest-of-{parent}")
+            for parent in parents
         ),
         reproducible=reproducible,
         field_state=field_state,
@@ -145,7 +150,9 @@ def issue_snapshot(
     return CriticalInputSnapshot.issue(scheme=SCHEME, **base)  # type: ignore[return-value]
 
 
-def issue_capsule(snapshot: CriticalInputSnapshot, **overrides: Any) -> DecisionContextCapsule:
+def issue_capsule(
+    snapshot: CriticalInputSnapshot, **overrides: Any
+) -> DecisionContextCapsule:
     """Issue a Capsule whose ``SnapshotRef`` binds ``snapshot`` exactly."""
     base: dict[str, Any] = {
         "issuer_principal_id": "iss-1",
@@ -171,7 +178,9 @@ def issue_capsule(snapshot: CriticalInputSnapshot, **overrides: Any) -> Decision
     return DecisionContextCapsule.issue(scheme=SCHEME, **base)  # type: ignore[return-value]
 
 
-def candidate(field_key: str, observation_ref: str, payload: RawPayloadPreimage) -> AdmittedValue:
+def candidate(
+    field_key: str, observation_ref: str, payload: RawPayloadPreimage
+) -> AdmittedValue:
     """One producer-supplied candidate claim."""
     return AdmittedValue(
         field_key=field_key, observation_ref=observation_ref, preimage=payload

@@ -588,10 +588,12 @@ def send_boundary_context(
     conformance_proof: OrderConformanceProof | None,
     reference: OrderingEvent,
     # -- item 17 (Realize): the two artifacts that bind *this* command's digest ---------
-    egress_request_for_command: Callable[[str | None], EgressRequestRecord | None]
-    | None = None,
-    quorum_certificate_for_command: Callable[[str | None], QuorumCommitCertificate | None]
-    | None = None,
+    egress_request_for_command: (
+        Callable[[str | None], EgressRequestRecord | None] | None
+    ) = None,
+    quorum_certificate_for_command: (
+        Callable[[str | None], QuorumCommitCertificate | None] | None
+    ) = None,
     # -- scope + transport / environment (§4.2, §4.7) -----------------------------------
     instrument_key: InstrumentKey | None = None,
     transport_nature: TransportNature | None = None,
@@ -769,7 +771,9 @@ def send_boundary_context(
         construction=construction,
         conformance_proof=conformance_proof,
         approval_consumed_for_this_intent=approval_consumed_for_this_intent,
-        approval_intent_binding_digest=None if intent is None else intent.canonical_digest,
+        approval_intent_binding_digest=(
+            None if intent is None else intent.canonical_digest
+        ),
         action_flow_permit_identity=action_flow_permit_identity,
         action_flow_commitment_current=action_flow_commitment_current,
         egress_currentness_proof=egress_currentness_proof,
