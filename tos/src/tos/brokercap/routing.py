@@ -67,19 +67,23 @@ from typing import Literal
 from pydantic import model_validator
 
 from tos.brokercap._base import ArtifactIntegrityError, FrozenModel
-from tos.brokercap.records import ProfileKey
+from tos.brokercap.records import BrokerEvidenceRef, ProfileKey
 from tos.brokercap.vocabulary import Admissibility
 
 __all__ = [
     "AssetScope",
     "AuthorizationClass",
     "BrokerEnvironment",
+    "CapabilityProvenance",
     "CapabilityTuple",
+    "ClaimKind",
     "EconomicEffect",
     "OperationClass",
     "ProbeManifest",
+    "ProvenanceClass",
     "credential_principal_separation_ok",
     "endpoint_binding_from_profile_ok",
+    "provenance_admits_claim",
     "routing_admissibility",
 ]
 
@@ -474,3 +478,142 @@ class ProbeManifest(FrozenModel):
     retention: str
     ttl: str
     provenance: str
+
+
+# ===========================================================================
+# Phase 4 작업 3 schema half — provenance classes (slice plan §5-A)
+# ===========================================================================
+
+
+class ProvenanceClass(StrEnum):
+    """Where one capability fact came from (upstream plan Phase 4 작업 3; slice plan §5-A).
+
+    The kernel carries only the **class name** — never a concrete source identity. A
+    concrete source (the official ``open-trading-api`` SDK, a specific document URL, the
+    internal ``shared/kis`` client module, or a specific probe endpoint) is an **instance**
+    concern injected through :attr:`CapabilityProvenance.source_ref`, never a kernel
+    constant (the same broker-agnostic discipline :class:`BrokerEnvironment` already
+    applies — project memory ``tos-spec-broker-agnostic``).
+
+    ``OFFICIAL_SDK`` — the broker's own published SDK/API surface. ``OFFICIAL_DOCUMENT`` —
+    the broker's published documentation (not a measurement — see
+    :func:`provenance_admits_claim`). ``INTERNAL_CLIENT`` — this repo's own internal broker
+    client (also not a measurement of the *broker's* behavior). ``CONTROLLED_GET_PROBE`` — a
+    controlled, non-order-emitting GET probe against a live endpoint; the only class that
+    requires a :class:`ProbeManifest` (:class:`CapabilityProvenance`'s combined validator).
+    """
+
+    OFFICIAL_SDK = "OFFICIAL_SDK"
+    OFFICIAL_DOCUMENT = "OFFICIAL_DOCUMENT"
+    INTERNAL_CLIENT = "INTERNAL_CLIENT"
+    CONTROLLED_GET_PROBE = "CONTROLLED_GET_PROBE"
+
+
+class ClaimKind(StrEnum):
+    """The kind of claim a :class:`CapabilityProvenance` is asked to admit (slice plan §5-A).
+
+    A small closed vocabulary local to :func:`provenance_admits_claim` — not a general
+    claims taxonomy. ``MEASURED_BOUND`` — a numeric bound established by an actual
+    measurement (a probe or an SDK observation). ``DOCUMENTED_LIMIT`` — a limit merely
+    stated by a source, not measured. ``REAL_ORDER_CAPABILITY`` — a claim that a source
+    establishes the capability to place a *real* broker order; :func:`provenance_admits_claim`
+    never admits this claim from any provenance class (structural — root ``CLAUDE.md``
+    "real-money futures order paths ... are permanently blocked by policy" extends to the
+    provenance layer: no *evidence artifact* can stand in for that authorization either).
+    """
+
+    MEASURED_BOUND = "MEASURED_BOUND"
+    DOCUMENTED_LIMIT = "DOCUMENTED_LIMIT"
+    REAL_ORDER_CAPABILITY = "REAL_ORDER_CAPABILITY"
+
+
+#: Provenance classes that are never a measurement — a document / internal client describes
+#: or wraps broker behavior, it does not observe it directly (slice plan §5-A).
+_NON_MEASURING_CLASSES: frozenset[ProvenanceClass] = frozenset(
+    {ProvenanceClass.OFFICIAL_DOCUMENT, ProvenanceClass.INTERNAL_CLIENT}
+)
+
+
+class CapabilityProvenance(FrozenModel):
+    """Where one capability fact came from, plus its evidence anchor (slice plan §5-A).
+
+    ``provenance_class`` / ``source_ref`` / ``captured_at`` are all **required** (no
+    default) — a provenance with an unspecified class or an unspecified opaque source is not
+    a value this type can hold. ``source_ref`` is an opaque instance-level string (no
+    concrete source name in the kernel — see :class:`ProvenanceClass`). ``captured_at`` is an
+    **injected scalar** (an opaque string), never read from a clock — brokercap accesses no
+    clock (design #10 §3.5, the same discipline :class:`~tos.brokercap.records.ProfileVersion`
+    already applies to its dates). ``evidence_ref`` reuses
+    :class:`~tos.brokercap.records.BrokerEvidenceRef` (evidence is referenced, never
+    reimported — design #10 §3.5); it stays ``None`` until a real evidence pipeline supplies
+    one (data-filling is out of this slice — slice plan §5-A).
+
+    A combined validator enforces the ``CONTROLLED_GET_PROBE`` <=> ``probe_manifest``
+    biconditional in both directions (slice plan §5-A): a ``CONTROLLED_GET_PROBE``
+    provenance *must* carry a :class:`ProbeManifest` (a controlled probe without its manifest
+    is an unaccountable probe); every other class *must not* (a manifest on a non-probe
+    provenance would misrepresent where the fact came from).
+    """
+
+    provenance_class: ProvenanceClass
+    source_ref: str
+    captured_at: str
+    evidence_ref: BrokerEvidenceRef | None = None
+    probe_manifest: ProbeManifest | None = None
+
+    @model_validator(mode="after")
+    def _probe_manifest_iff_controlled_probe(self) -> CapabilityProvenance:
+        """Reject a CONTROLLED_GET_PROBE without a manifest, or any other class with one."""
+        is_probe = self.provenance_class is ProvenanceClass.CONTROLLED_GET_PROBE
+        has_manifest = self.probe_manifest is not None
+        if is_probe and not has_manifest:
+            raise ArtifactIntegrityError(
+                "CapabilityProvenance: CONTROLLED_GET_PROBE requires a probe_manifest — a "
+                "controlled probe without its manifest is an unaccountable probe (slice "
+                "plan §5-A)"
+            )
+        if not is_probe and has_manifest:
+            raise ArtifactIntegrityError(
+                "CapabilityProvenance: only CONTROLLED_GET_PROBE may carry a probe_manifest "
+                f"— {self.provenance_class} is not a probe (slice plan §5-A)"
+            )
+        return self
+
+
+def provenance_admits_claim(
+    provenance: CapabilityProvenance | None,
+    claim_kind: ClaimKind | None,
+) -> bool:
+    """Whether ``provenance`` admits a claim of ``claim_kind`` (slice plan §5-A).
+
+    Three rules, checked in order, all fail-closed:
+
+    1. **Structural denial.** ``REAL_ORDER_CAPABILITY`` is never admitted by any provenance
+       — no evidence artifact stands in for the root ``CLAUDE.md`` real-order-authorization
+       block (see :class:`ClaimKind`).
+    2. **Non-measuring classes.** ``OFFICIAL_DOCUMENT`` / ``INTERNAL_CLIENT`` never admit
+       ``MEASURED_BOUND`` — a document is not a measurement, regardless of any attached
+       ``evidence_ref``.
+    3. **Evidence-gated.** Every other (provenance class, claim kind) combination admits
+       **only** when ``evidence_ref is not None`` — an unevidenced provenance never admits a
+       claim (design #10 §4.1 fail-open seal, applied here).
+
+    ``None`` for either argument fails closed to ``False`` (§5-A: "None 은 어디든 False").
+
+    Args:
+        provenance: The candidate provenance (``None`` => ``False``).
+        claim_kind: The claim kind being asked about (``None`` => ``False``).
+
+    Returns:
+        ``True`` iff the provenance positively admits the claim.
+    """
+    if provenance is None or claim_kind is None:
+        return False
+    if claim_kind is ClaimKind.REAL_ORDER_CAPABILITY:
+        return False
+    if (
+        claim_kind is ClaimKind.MEASURED_BOUND
+        and provenance.provenance_class in _NON_MEASURING_CLASSES
+    ):
+        return False
+    return provenance.evidence_ref is not None
