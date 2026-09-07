@@ -102,6 +102,20 @@ Contract  How :class:`SqliteCommitLog` satisfies it
          line 33-34).
 =======  ============================================================
 
+**The kernel's ``InstrumentKey`` scope-binding port fix (laneO port-fix
+round, design #40 runtime slice #2 §5 disposition, 2026-09-08).**
+``CapacityReservationTransition`` now carries ``scope: ReservationScope``
+(a structural mirror of ``tos.engine.records.InstrumentKey`` — see
+``tos.rcl.commitlog``'s own docstring for why this is not an import),
+closing this module's own previously-reported gap: the engine's read
+projection is ``InstrumentKey``-keyed, but this log had no binding from
+``reservation_id`` to that scope. :meth:`apply_reservation_transition` now
+refuses (``COMMAND_BYTES_MISMATCH``) a transition with no ``scope``, exactly
+like it already refuses one missing ``reservation_id``/``writer_epoch``;
+``reservations.scope_account``/``scope_instrument`` (schema.py) persist it,
+the ``payload_json`` embeds it for the fault-⑤ fold (gates.py), and
+``projection.py`` now reads back by the real ``InstrumentKey``.
+
 **A claimed ``from_state`` is checked against the held record, in-transaction
 (independent review HIGH-1, 2026-09-08).** :meth:`apply_reservation_transition`'s
 three kernel gates (structural legality, cause admissibility, release
@@ -233,7 +247,6 @@ import json
 import sqlite3
 import time
 from collections.abc import Callable, Iterator
-from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -247,23 +260,24 @@ from tos.rcl import (
     CommandType,
     CommitEntry,
     LogView,
+    ReservationScope,
     TransitionCause,
     WriterEpoch,
-    release_admissible,
     replay_reproduces_state,
-    reservation_transition_structurally_legal,
     stale_writer_epoch,
-    transition_allowed,
 )
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.evidence.ports import EvidenceAppendPort
 from tos_runtime.rcl.gates import (
+    ReservationRefusalReason,
+    ReservationTransitionRefusal,
     check_reservation_from_state,
     classify_duplicate_command,
     digest_of_reservation_map,
     existing_command_row,
     fold_reservations_from_entries,
+    reservation_lifecycle_refusal,
 )
 from tos_runtime.rcl.schema import (
     CREATE_ENTRIES_TABLE_SQL,
@@ -287,6 +301,10 @@ __all__ = [
 #: registered EV-L1 provisional scheme for the reservations-state digest
 #: :meth:`SqliteCommitLog.verify_replay` folds and compares.
 _CANONICALIZATION_VERSION = EV_L1_PROVISIONAL_VERSION
+
+#: ``(reservation_id, claimed_from_state, to_state, scope)``, or ``None`` for
+#: a plain :meth:`SqliteCommitLog.append_cas` call.
+_ReservationUpdate = tuple[str, CapacityState, CapacityState, ReservationScope] | None
 
 
 class CommitLogCorruption(RuntimeError):
@@ -313,27 +331,6 @@ class StaleEpochRead(RuntimeError):
 
     def __init__(self, reason: AppendRefusalReason) -> None:
         super().__init__(f"read_linearizable refused: {reason}")
-        self.reason = reason
-
-
-class ReservationRefusalReason(StrEnum):
-    """Runtime-local (NOT the kernel's closed) reservation-lifecycle refusal reasons.
-
-    See the module docstring's "reservation-lifecycle refusal is a separate,
-    runtime-local vocabulary" section for why these are not force-fit onto
-    ``tos.rcl.AppendRefusalReason``.
-    """
-
-    NOT_STRUCTURALLY_LEGAL = "NOT_STRUCTURALLY_LEGAL"
-    CAUSE_NOT_ADMISSIBLE = "CAUSE_NOT_ADMISSIBLE"
-    FINALITY_WITNESS_REQUIRED = "FINALITY_WITNESS_REQUIRED"
-
-
-class ReservationTransitionRefusal(RuntimeError):
-    """Raised by :meth:`SqliteCommitLog.apply_reservation_transition` on a lifecycle gate refusal."""
-
-    def __init__(self, reason: ReservationRefusalReason, detail: str = "") -> None:
-        super().__init__(f"reservation transition refused: {reason} {detail}".strip())
         self.reason = reason
 
 
@@ -608,16 +605,15 @@ class SqliteCommitLog:
     ) -> AppendReceipt | AppendRefusal:
         """Commit one reservation-lifecycle transition (D2.1 item 4).
 
-        Gates through, in order: :func:`tos.rcl.reservation_transition_structurally_legal`
-        (the ADR-002-002 §10.1 whitelist), :func:`tos.rcl.transition_allowed`
-        (the cause-specific conservatism check), and — only for a
-        RELEASED/POSITION_CONSUMED destination —
-        :func:`tos.rcl.release_admissible` (the finality-witness gate).
+        Gates through :func:`~tos_runtime.rcl.gates.reservation_lifecycle_refusal`
+        (structural whitelist, cause admissibility, finality-witness — moved
+        to ``gates.py`` for the 100-line function size budget, laneO
+        port-fix round, 2026-09-08).
 
         Args:
             transition: The proposed transition (``reservation_id``,
-                ``from_state``, ``to_state``, ``writer_epoch`` — all
-                required, checked here).
+                ``from_state``, ``to_state``, ``writer_epoch``, ``scope`` —
+                all required, checked here).
             cause: The :class:`~tos.rcl.TransitionCause` driving it.
             command_type: The ``CommandType`` recorded as the entry's
                 ``kind`` (caller-supplied — this module does not infer a
@@ -637,32 +633,29 @@ class SqliteCommitLog:
                 gates refuses (see the module docstring's anti-phantom note
                 on why these are not ``AppendRefusal``).
         """
+        gate_failure = reservation_lifecycle_refusal(
+            transition, cause, finality_witness
+        )
+        if gate_failure is not None:
+            raise ReservationTransitionRefusal(*gate_failure)
         from_state = transition.from_state
         to_state = transition.to_state
         writer_epoch = transition.writer_epoch
-        if not reservation_transition_structurally_legal(from_state, to_state):
-            raise ReservationTransitionRefusal(
-                ReservationRefusalReason.NOT_STRUCTURALLY_LEGAL,
-                f"({from_state} -> {to_state}) is not on the closed whitelist",
-            )
         if (
-            from_state is None
+            transition.reservation_id is None
+            or writer_epoch is None
+            or transition.scope is None
+            or from_state is None
             or to_state is None
-            or not transition_allowed(from_state, to_state, cause)
         ):
-            raise ReservationTransitionRefusal(
-                ReservationRefusalReason.CAUSE_NOT_ADMISSIBLE,
-                f"cause {cause} does not authorize ({from_state} -> {to_state})",
-            )
-        if not release_admissible(transition, finality_witness):
-            raise ReservationTransitionRefusal(
-                ReservationRefusalReason.FINALITY_WITNESS_REQUIRED,
-                f"destination {to_state} requires finality_witness is True",
-            )
-        if transition.reservation_id is None or writer_epoch is None:
+            # from_state/to_state None is unreachable (the gate above always
+            # refuses it first) — kept so mypy narrows both to non-None below.
             return AppendRefusal(
                 reason=AppendRefusalReason.COMMAND_BYTES_MISMATCH,
-                detail="transition.reservation_id and .writer_epoch are required",
+                detail=(
+                    "transition.reservation_id, .writer_epoch, .scope, "
+                    ".from_state, and .to_state are required"
+                ),
             )
         payload_json = json.dumps(
             {
@@ -671,6 +664,10 @@ class SqliteCommitLog:
                 "to_state": to_state.value,
                 "cause": cause.value,
                 "finality_witness": finality_witness,
+                "scope": {
+                    "account": transition.scope.account,
+                    "instrument": transition.scope.instrument,
+                },
             },
             sort_keys=True,
         )
@@ -684,17 +681,29 @@ class SqliteCommitLog:
             payload_json=payload_json,
             evidence_kind="RCL_RESERVATION_TRANSITION",
             evidence_record_class="RCL_RESERVATION",
-            reservation_update=(transition.reservation_id, from_state, to_state),
+            reservation_update=(
+                transition.reservation_id,
+                from_state,
+                to_state,
+                transition.scope,
+            ),
         )
 
-    def reservation_rows(self) -> Iterator[tuple[str, CapacityState, int]]:
-        """Yield every held ``(reservation_id, state, last_seq)`` — the projection's read shape."""
+    def reservation_rows(
+        self,
+    ) -> Iterator[tuple[str, CapacityState, int, ReservationScope]]:
+        """Yield every held ``(reservation_id, state, last_seq, scope)`` — the projection's read shape."""
         rows = self._conn.execute(
-            "SELECT reservation_id, state, last_seq FROM reservations "
-            "ORDER BY reservation_id ASC"
+            "SELECT reservation_id, state, last_seq, scope_account, "
+            "scope_instrument FROM reservations ORDER BY reservation_id ASC"
         ).fetchall()
-        for reservation_id, state, last_seq in rows:
-            yield reservation_id, CapacityState(state), int(last_seq)
+        for reservation_id, state, last_seq, scope_account, scope_instrument in rows:
+            yield (
+                reservation_id,
+                CapacityState(state),
+                int(last_seq),
+                ReservationScope(account=scope_account, instrument=scope_instrument),
+            )
 
     # -- replay / corruption detection (fault ⑤) --------------------------
 
@@ -708,8 +717,12 @@ class SqliteCommitLog:
                 any disagreement, never a partial pass).
         """
         held = {
-            reservation_id: state.value
-            for reservation_id, state, _ in self.reservation_rows()
+            reservation_id: {
+                "state": state.value,
+                "scope_account": scope.account,
+                "scope_instrument": scope.instrument,
+            }
+            for reservation_id, state, _seq, scope in self.reservation_rows()
         }
         held_digest = digest_of_reservation_map(self._canon_scheme, held)
         replayed_digest = digest_of_reservation_map(
@@ -748,7 +761,7 @@ class SqliteCommitLog:
         expected_seq: int,
         command_id: str,
         command_digest: str | None,
-        reservation_update: tuple[str, CapacityState, CapacityState] | None,
+        reservation_update: _ReservationUpdate,
     ) -> AppendRefusal | None:
         """Fence + CAS + duplicate + reservation-gate checks, in that order.
 
@@ -782,7 +795,7 @@ class SqliteCommitLog:
         if dup_reason is not None:
             return AppendRefusal(reason=dup_reason)
         if reservation_update is not None:
-            reservation_id, claimed_from_state, _to_state = reservation_update
+            reservation_id, claimed_from_state, _to_state, _scope = reservation_update
             from_state_refusal = check_reservation_from_state(
                 self._conn, reservation_id, claimed_from_state
             )
@@ -800,7 +813,7 @@ class SqliteCommitLog:
         kind: str | None,
         payload_digest: str | None,
         payload_json: str | None,
-        reservation_update: tuple[str, CapacityState, CapacityState] | None,
+        reservation_update: _ReservationUpdate,
     ) -> None:
         """``INSERT`` the ``entries`` row (+ ``UPSERT`` ``reservations``, if applicable).
 
@@ -830,12 +843,21 @@ class SqliteCommitLog:
             ),
         )
         if reservation_update is not None:
-            reservation_id, _claimed_from_state, to_state = reservation_update
+            reservation_id, _claimed_from_state, to_state, scope = reservation_update
             self._conn.execute(
-                "INSERT INTO reservations (reservation_id, state, last_seq) "
-                "VALUES (?, ?, ?) ON CONFLICT(reservation_id) DO UPDATE SET "
-                "state=excluded.state, last_seq=excluded.last_seq",
-                (reservation_id, to_state.value, next_seq),
+                "INSERT INTO reservations (reservation_id, state, last_seq, "
+                "scope_account, scope_instrument) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(reservation_id) DO UPDATE SET "
+                "state=excluded.state, last_seq=excluded.last_seq, "
+                "scope_account=excluded.scope_account, "
+                "scope_instrument=excluded.scope_instrument",
+                (
+                    reservation_id,
+                    to_state.value,
+                    next_seq,
+                    scope.account,
+                    scope.instrument,
+                ),
             )
 
     def _append_evidence_or_refuse(
@@ -903,7 +925,7 @@ class SqliteCommitLog:
         payload_json: str | None,
         evidence_kind: str,
         evidence_record_class: str,
-        reservation_update: tuple[str, CapacityState, CapacityState] | None,
+        reservation_update: _ReservationUpdate,
     ) -> AppendReceipt | AppendRefusal:
         """The whole durable-append body: fence, CAS, insert, evidence, commit (faults ①②③④⑥⑦).
 
@@ -917,12 +939,10 @@ class SqliteCommitLog:
         boundary changed.
 
         Args:
-            reservation_update: ``(reservation_id, claimed_from_state, to_state)``
-                for a reservation-lifecycle transition, or ``None`` for a
-                plain :meth:`append_cas` call. When present,
-                :meth:`_pre_insert_checks` gates the claimed ``from_state``
-                against the held record before anything is written
-                (independent review HIGH-1, 2026-09-08).
+            reservation_update: See :data:`_ReservationUpdate`. When
+                present, :meth:`_pre_insert_checks` gates the claimed
+                ``from_state`` against the held record before anything is
+                written (independent review HIGH-1, 2026-09-08).
         """
         try:
             self._conn.execute("BEGIN IMMEDIATE")

@@ -30,7 +30,26 @@ Contents:
   independent review 2026-09-08 — see ``log.py``'s own module docstring's
   "the replay fold is discriminated, not payload-shape-matched" section for
   why a payload-shape match alone is forgeable via a plain ``append_cas``
-  call's public ``payload_json`` argument).
+  call's public ``payload_json`` argument). The folded value per
+  ``reservation_id`` now carries ``scope_account``/``scope_instrument``
+  alongside ``state`` (laneO port-fix round, design #40 runtime slice #2 §5
+  disposition, 2026-09-08): the kernel's ``CapacityReservationTransition.scope``
+  binding is part of what a transition commits, so a directly-tampered
+  ``reservations.scope_account``/``scope_instrument`` column must disagree
+  with the independent re-fold exactly like a tampered ``state`` column does
+  — the digest :func:`digest_of_reservation_map` computes now covers both.
+* :class:`ReservationRefusalReason` + :class:`ReservationTransitionRefusal` +
+  :func:`reservation_lifecycle_refusal` — moved here from ``log.py`` (laneO
+  port-fix round, design #40 runtime slice #2 §5, 2026-09-08; a pure
+  decomposition for the 100-line function size budget, same discipline as
+  every other extraction in this module's own history). The runtime-local
+  reservation-lifecycle refusal vocabulary (NOT the kernel's closed
+  ``tos.rcl.AppendRefusalReason`` — see ``log.py``'s own module docstring's
+  "reservation-lifecycle refusal is a separate, runtime-local vocabulary"
+  section for why) plus the pure evaluation of the three kernel lifecycle
+  gates (structural legality, cause admissibility, release/finality-witness
+  admissibility) :meth:`~tos_runtime.rcl.log.SqliteCommitLog.apply_reservation_transition`
+  raises on.
 
 Firewall: stdlib (``json``, ``sqlite3``) + ``tos.canonical``/``tos.rcl`` only
 (R1 allowlist) — no ``tos_runtime`` sibling import (this module has no
@@ -42,17 +61,31 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Mapping
+from enum import StrEnum
 
 from tos.canonical import CanonicalizationScheme
-from tos.rcl import AppendRefusal, AppendRefusalReason, CapacityState, duplicate_command
+from tos.rcl import (
+    AppendRefusal,
+    AppendRefusalReason,
+    CapacityReservationTransition,
+    CapacityState,
+    TransitionCause,
+    duplicate_command,
+    release_admissible,
+    reservation_transition_structurally_legal,
+    transition_allowed,
+)
 
 __all__ = [
     "INITIAL_RESERVATION_STATES",
+    "ReservationRefusalReason",
+    "ReservationTransitionRefusal",
     "check_reservation_from_state",
     "classify_duplicate_command",
     "digest_of_reservation_map",
     "existing_command_row",
     "fold_reservations_from_entries",
+    "reservation_lifecycle_refusal",
 ]
 
 #: The only capacity state a reservation-lifecycle transition may claim as its
@@ -200,8 +233,10 @@ def check_reservation_from_state(
     return None
 
 
-def fold_reservations_from_entries(conn: sqlite3.Connection) -> dict[str, str]:
-    """Re-derive the final ``{reservation_id: to_state}`` map by replaying every entry.
+def fold_reservations_from_entries(
+    conn: sqlite3.Connection,
+) -> dict[str, dict[str, str]]:
+    """Re-derive the final reservation-state map by replaying every entry.
 
     Reads ONLY entries whose ``is_reservation_transition`` column is ``1``
     (independent review MEDIUM-4, 2026-09-08) — never entries selected by
@@ -209,36 +244,144 @@ def fold_reservations_from_entries(conn: sqlite3.Connection) -> dict[str, str]:
     forge (see ``log.py``'s own module docstring's "replay fold is
     discriminated, not payload-shape-matched" section).
 
+    Each folded entry's ``payload_json`` carries a ``scope`` sub-object
+    (``{"account": ..., "instrument": ...}``) alongside ``to_state`` since
+    the kernel's ``CapacityReservationTransition.scope`` binding landed
+    (laneO port-fix round, 2026-09-08) — an entry missing either scope
+    component is excluded from the fold exactly like one missing
+    ``reservation_id``/``to_state``, rather than folded in with a
+    fabricated scope.
+
     Args:
         conn: The live sqlite3 connection.
 
     Returns:
-        The reconstructed ``{reservation_id: to_state}`` map.
+        The reconstructed ``{reservation_id: {"state": ..., "scope_account":
+        ..., "scope_instrument": ...}}`` map.
     """
     rows = conn.execute(
         "SELECT payload_json FROM entries WHERE is_reservation_transition = 1 "
         "ORDER BY seq ASC"
     ).fetchall()
-    folded: dict[str, str] = {}
+    folded: dict[str, dict[str, str]] = {}
     for (payload_json,) in rows:
         payload = json.loads(payload_json)
         reservation_id = payload.get("reservation_id")
         to_state = payload.get("to_state")
-        if reservation_id is not None and to_state is not None:
-            folded[reservation_id] = to_state
+        scope = payload.get("scope") or {}
+        scope_account = scope.get("account")
+        scope_instrument = scope.get("instrument")
+        if (
+            reservation_id is not None
+            and to_state is not None
+            and scope_account is not None
+            and scope_instrument is not None
+        ):
+            folded[reservation_id] = {
+                "state": to_state,
+                "scope_account": scope_account,
+                "scope_instrument": scope_instrument,
+            }
     return folded
 
 
 def digest_of_reservation_map(
-    scheme: CanonicalizationScheme, mapping: Mapping[str, str]
+    scheme: CanonicalizationScheme, mapping: Mapping[str, Mapping[str, str]]
 ) -> str:
-    """Canonical digest of a ``{reservation_id: state}`` map (sorted, deterministic).
+    """Canonical digest of a ``{reservation_id: {state, scope_account,
+    scope_instrument}}`` map (sorted, deterministic).
 
     Args:
         scheme: The registered ``tos.canonical`` scheme to digest with.
-        mapping: The reservation-state map to digest.
+        mapping: The reservation-state-and-scope map to digest.
 
     Returns:
         The canonical digest string.
     """
-    return scheme.compute_digest({"reservations": dict(sorted(mapping.items()))})
+    return scheme.compute_digest(
+        {
+            "reservations": {
+                reservation_id: dict(sorted(value.items()))
+                for reservation_id, value in sorted(mapping.items())
+            }
+        }
+    )
+
+
+# ===========================================================================
+# reservation-lifecycle refusal vocabulary + gate evaluation (moved from
+# log.py — laneO port-fix round, design #40 runtime slice #2 §5, 2026-09-08;
+# 100-line function / 1000-line module size-budget decomposition)
+# ===========================================================================
+
+
+class ReservationRefusalReason(StrEnum):
+    """Runtime-local (NOT the kernel's closed) reservation-lifecycle refusal reasons.
+
+    See ``log.py``'s own module docstring's "reservation-lifecycle refusal
+    is a separate, runtime-local vocabulary" section for why these are not
+    force-fit onto ``tos.rcl.AppendRefusalReason``.
+    """
+
+    NOT_STRUCTURALLY_LEGAL = "NOT_STRUCTURALLY_LEGAL"
+    CAUSE_NOT_ADMISSIBLE = "CAUSE_NOT_ADMISSIBLE"
+    FINALITY_WITNESS_REQUIRED = "FINALITY_WITNESS_REQUIRED"
+
+
+class ReservationTransitionRefusal(RuntimeError):
+    """Raised by :meth:`~tos_runtime.rcl.log.SqliteCommitLog.apply_reservation_transition`
+    on a lifecycle gate refusal."""
+
+    def __init__(self, reason: ReservationRefusalReason, detail: str = "") -> None:
+        super().__init__(f"reservation transition refused: {reason} {detail}".strip())
+        self.reason = reason
+
+
+def reservation_lifecycle_refusal(
+    transition: CapacityReservationTransition,
+    cause: TransitionCause,
+    finality_witness: bool | None,
+) -> tuple[ReservationRefusalReason, str] | None:
+    """Evaluate the three kernel reservation-lifecycle gates, in order.
+
+    :func:`tos.rcl.reservation_transition_structurally_legal` (the
+    ADR-002-002 §10.1 whitelist), :func:`tos.rcl.transition_allowed` (the
+    cause-specific conservatism check), and — only for a
+    RELEASED/POSITION_CONSUMED destination — :func:`tos.rcl.release_admissible`
+    (the finality-witness gate). Split out of ``log.py``'s
+    ``apply_reservation_transition`` (100-line function size budget); the
+    caller raises :class:`ReservationTransitionRefusal` with whatever this
+    returns.
+
+    Args:
+        transition: The proposed transition.
+        cause: The driving :class:`~tos.rcl.TransitionCause`.
+        finality_witness: The broker-truth / evidence witness for a
+            finality destination, or ``None``.
+
+    Returns:
+        ``(reason, detail)`` for the first gate that refuses, or ``None`` if
+        all three admit.
+    """
+    from_state = transition.from_state
+    to_state = transition.to_state
+    if not reservation_transition_structurally_legal(from_state, to_state):
+        return (
+            ReservationRefusalReason.NOT_STRUCTURALLY_LEGAL,
+            f"({from_state} -> {to_state}) is not on the closed whitelist",
+        )
+    if (
+        from_state is None
+        or to_state is None
+        or not transition_allowed(from_state, to_state, cause)
+    ):
+        return (
+            ReservationRefusalReason.CAUSE_NOT_ADMISSIBLE,
+            f"cause {cause} does not authorize ({from_state} -> {to_state})",
+        )
+    if not release_admissible(transition, finality_witness):
+        return (
+            ReservationRefusalReason.FINALITY_WITNESS_REQUIRED,
+            f"destination {to_state} requires finality_witness is True",
+        )
+    return None

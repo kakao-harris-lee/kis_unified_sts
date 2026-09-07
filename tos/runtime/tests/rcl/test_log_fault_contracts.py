@@ -21,12 +21,19 @@ from tos.rcl import (
     CommandType,
     CommitEntry,
     CommitLog,
+    ReservationScope,
     TransitionCause,
 )
 from tos.workload import RuntimeIdentity
 from tos_runtime.rcl.log import CommitLogCorruption, InjectedCrash, SqliteCommitLog
 
 from .conftest import FakeEvidenceAppendPort, FakeMonotonicClock
+
+#: A fixed scope for tests that exercise fault-contract mechanics, not scope
+#: semantics themselves (laneO port-fix round, design #40 runtime slice #2
+#: §5, 2026-09-08 — ``scope`` is now a required binding on every committed
+#: reservation-lifecycle transition).
+DEFAULT_SCOPE = ReservationScope(account="acct-1", instrument="101S06")
 
 # ============================================================================
 # ① stale epoch writer
@@ -361,6 +368,7 @@ def test_fault_5_replay_mismatch_raises_commit_log_corruption(
         writer_epoch=epoch,
         from_state=CapacityState.COMMITTED_UNBOUND,
         to_state=CapacityState.ATTEMPT_BOUND,
+        scope=DEFAULT_SCOPE,
     )
     result = log.apply_reservation_transition(
         transition,
@@ -388,6 +396,47 @@ def test_fault_5_replay_mismatch_raises_commit_log_corruption(
 
 def test_fault_5_verify_replay_passes_on_empty_log(log: SqliteCommitLog) -> None:
     log.verify_replay()  # no reservations at all — trivially consistent
+
+
+def test_fault_5_scope_tamper_raises_commit_log_corruption(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    """(laneO port-fix round, design #40 runtime slice #2 §5, 2026-09-08) A
+    directly-tampered ``scope_account``/``scope_instrument`` column must be
+    caught by ``verify_replay`` exactly like a tampered ``state`` column —
+    the fault ⑤ digest now covers the kernel's scope binding, not state
+    alone."""
+    epoch = log.acquire_epoch(identity)
+    transition = CapacityReservationTransition(
+        reservation_id="res-1",
+        writer_epoch=epoch,
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.ATTEMPT_BOUND,
+        scope=DEFAULT_SCOPE,
+    )
+    result = log.apply_reservation_transition(
+        transition,
+        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        command_type=CommandType.BIND_ATTEMPT,
+        command_id="cmd-1",
+        command_digest="dig-1",
+        expected_seq=-1,
+    )
+    assert isinstance(result, AppendReceipt)
+
+    # A legitimate log passes verify_replay before any tampering.
+    log.verify_replay()
+
+    # Tamper directly with the held projection's SCOPE (state untouched) —
+    # bypassing the log's own API — so the independently re-folded scope
+    # disagrees with what is held.
+    log._conn.execute(
+        "UPDATE reservations SET scope_account = ? WHERE reservation_id = ?",
+        ("acct-tampered", "res-1"),
+    )
+
+    with pytest.raises(CommitLogCorruption):
+        log.verify_replay()
 
 
 # ============================================================================
@@ -421,7 +470,7 @@ def test_ghost_reservation_payload_via_append_cas_does_not_forge_corruption(
     assert isinstance(result, AppendReceipt)
     # No reservation was ever actually created (nothing went through
     # apply_reservation_transition), and verify_replay must not disagree.
-    assert {rid: state for rid, state, _seq in log.reservation_rows()} == {}
+    assert {rid: state for rid, state, _seq, _scope in log.reservation_rows()} == {}
     log.verify_replay()  # must NOT raise
 
 
@@ -439,6 +488,7 @@ def test_genuine_reservations_row_tamper_still_raises_after_medium_4_fix(
         writer_epoch=epoch,
         from_state=CapacityState.COMMITTED_UNBOUND,
         to_state=CapacityState.ATTEMPT_BOUND,
+        scope=DEFAULT_SCOPE,
     )
     result = log.apply_reservation_transition(
         transition,

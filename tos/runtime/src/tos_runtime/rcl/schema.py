@@ -20,7 +20,12 @@ Three tables (design #40 D2.1, slice plan §1 item 1):
   payload-shape-matched" section for the full rationale).
 * ``reservations`` — the one mutable projection table (design #40 D2.1
   "컴팩션/보존: 항목 삭제 0" + slice plan §1 item 6 "reservations 만 UPDATE
-  허용(그것이 투영)").
+  허용(그것이 투영)"). ``scope_account``/``scope_instrument`` (laneO
+  port-fix round, design #40 runtime slice #2 §5 disposition, 2026-09-08)
+  persist the kernel's ``CapacityReservationTransition.scope`` binding —
+  ``NOT NULL`` because :meth:`SqliteCommitLog.apply_reservation_transition`
+  refuses any transition whose ``scope`` is absent before a row is ever
+  written (see ``log.py``'s own module docstring).
 
 ``epochs`` and ``entries`` reject both ``UPDATE`` and ``DELETE`` (append-only,
 mechanically unrepresentable — matching
@@ -67,7 +72,9 @@ CREATE_RESERVATIONS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS reservations (
     reservation_id TEXT PRIMARY KEY,
     state TEXT NOT NULL,
-    last_seq INTEGER NOT NULL
+    last_seq INTEGER NOT NULL,
+    scope_account TEXT NOT NULL,
+    scope_instrument TEXT NOT NULL
 )
 """
 

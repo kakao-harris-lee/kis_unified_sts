@@ -80,6 +80,27 @@ verification: existence AND absence claims below are both grepped, not asserted)
   explicitly rather than silently picking one.
 * ``git grep -n "class CommitLog" tos/src/tos`` (before this module) -> empty: no
   prior port under this name.
+* ``git grep -n "class InstrumentKey" tos/src/tos`` -> exactly one hit,
+  ``tos/src/tos/engine/records.py:94``. Runtime slice #2's independent review
+  (2026-09-08, design #40 §5 disposition) required binding
+  :class:`CapacityReservationTransition` to the ``(account, instrument)``
+  scope ``tos.engine.state.ProvisionalReservationLedger`` — this record's own
+  declared downstream read projection — is keyed by. Importing
+  ``tos.engine.records.InstrumentKey`` directly here was considered and
+  rejected: ``tos.engine.records`` itself imports ``from tos.rcl import
+  CapacityState`` (``engine -> rcl``), so an ``rcl -> engine`` import back
+  would be a reverse edge into a package that already depends on this one —
+  the exact same "conflict reported, not resolved by force-reuse" situation
+  the ``WriterEpoch``/``AuthorityEpochTransitionRecord`` note above already
+  describes. :class:`ReservationScope` below is a **structural field
+  mirror** of ``InstrumentKey`` instead (same two required ``str`` fields,
+  same names) — never a new enum-style shorthand, and never an import edge.
+  ``tos/tests/rcl/test_rcl_commitlog.py``'s
+  ``test_reservation_scope_field_set_mirrors_instrument_key`` cross-checks
+  the two field sets stay equal via a test-only import of
+  ``tos.engine.records`` (test files are not kernel source — the firewall's
+  AST gate and import-closure checks both scan ``tos/src``, not
+  ``tos/tests`` — so that import is not a firewall violation).
 
 Pure module: ``pydantic`` + stdlib (``enum``, ``typing``, ``collections.abc``) +
 ``tos.canonical`` + ``tos.rcl`` only — no ``shared.*``, no ``tos.evidence`` /
@@ -108,6 +129,7 @@ __all__ = [
     "CommitEntry",
     "CommitLog",
     "LogView",
+    "ReservationScope",
     "WriterEpoch",
     "duplicate_command",
     "release_admissible",
@@ -214,6 +236,25 @@ class LogView(FrozenModel):
     entries: tuple[CommitEntry, ...] = ()
 
 
+class ReservationScope(FrozenModel):
+    """The ``(account, instrument)`` scope a reservation transition is bound to.
+
+    A **structural field mirror** of ``tos.engine.records.InstrumentKey`` —
+    same two required ``str`` fields, same names — deliberately NOT the same
+    class, and NOT imported from ``tos.engine`` (see the module docstring's
+    anti-phantom grep on ``class InstrumentKey``: ``engine -> rcl`` already
+    exists, so ``rcl -> engine`` would be a reverse edge into a package that
+    depends on this one). It carries no validator of its own — the
+    non-empty / non-wildcard concreteness ``InstrumentKey`` enforces stays
+    the engine's own dispatch-layer concern (design #31 §3.3); this record's
+    only job is to let a committed :class:`CapacityReservationTransition`
+    durably state which scope it belongs to.
+    """
+
+    account: str
+    instrument: str
+
+
 class CapacityReservationTransition(FrozenModel):
     """One committed reservation-lifecycle transition (design #40 D2.1 line 64).
 
@@ -226,6 +267,25 @@ class CapacityReservationTransition(FrozenModel):
     ``tos.engine`` projection (``ProvisionalReservationLedger``) is a downstream,
     non-authoritative read projection of exactly this record (design §0 note:
     "현행 engine 투영은 이 로그의 읽기 투영으로 강등").
+
+    ``scope`` binds this transition to the :class:`ReservationScope` (account,
+    instrument) the engine's read projection is keyed by (independent review,
+    design #40 runtime slice #2 §5 disposition, 2026-09-08 — option (a) of the
+    two reported alternatives). It is required for this record to be useful
+    as the projection's source of truth: because the ``tos.engine`` projection
+    above is declared a *downstream* read projection of this exact record, the
+    scope it groups by must be recoverable from the committed record itself —
+    a runtime-local registry mapping ``reservation_id -> scope`` outside the
+    committed prefix would put that binding beyond what an independent replay
+    can reconstruct (ADR-002-012 :491: "Independent replay SHALL reproduce the
+    same deterministic state from the same committed prefix"). ADR-002-002 §10
+    also treats reservation identity as first-class, which this durable
+    binding respects rather than bolting scope on after the fact. Like every
+    other field on this record, ``scope`` stays ``| None`` at the type level
+    (this class's own None-is-never-silently-admitted convention); a runtime
+    ``CommitLog`` implementation is responsible for refusing to commit a
+    reservation-lifecycle transition whose ``scope`` is absent, exactly as it
+    already refuses one whose ``reservation_id``/``writer_epoch`` is absent.
     """
 
     reservation_id: str | None = None
@@ -233,6 +293,7 @@ class CapacityReservationTransition(FrozenModel):
     writer_epoch: WriterEpoch | None = None
     from_state: CapacityState | None = None
     to_state: CapacityState | None = None
+    scope: ReservationScope | None = None
 
 
 # ===========================================================================

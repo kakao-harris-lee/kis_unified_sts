@@ -30,6 +30,7 @@ from tos.rcl import (
     CommitEntry,
     CommitLog,
     LogView,
+    ReservationScope,
     TransitionCause,
     WriterEpoch,
     duplicate_command,
@@ -376,6 +377,56 @@ def test_reservation_transition_structurally_legal_whitelist_pair_count() -> Non
         if reservation_transition_structurally_legal(from_state, to_state)
     )
     assert legal_count == n * n - n
+
+
+# ===========================================================================
+# ReservationScope — the InstrumentKey field mirror (laneO port-fix round,
+# design #40 runtime slice #2 §5 disposition, 2026-09-08)
+# ===========================================================================
+
+
+def test_capacity_reservation_transition_scope_defaults_to_none() -> None:
+    """Like every other field on this record, an absent scope stays ``None`` —
+    never silently defaulted to some fabricated scope."""
+    transition = CapacityReservationTransition(to_state=CapacityState.RELEASED)
+    assert transition.scope is None
+
+
+def test_capacity_reservation_transition_carries_scope() -> None:
+    scope = ReservationScope(account="acct-1", instrument="101S06")
+    transition = CapacityReservationTransition(
+        reservation_id="res-1",
+        writer_epoch=1,
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.ATTEMPT_BOUND,
+        scope=scope,
+    )
+    assert transition.scope == scope
+    assert transition.scope.account == "acct-1"
+    assert transition.scope.instrument == "101S06"
+
+
+def test_reservation_scope_field_set_mirrors_instrument_key() -> None:
+    """(test-only cross-check) ``ReservationScope`` was added as a structural
+    mirror instead of importing ``tos.engine.records.InstrumentKey`` directly
+    — an ``rcl -> engine`` edge the module docstring's anti-phantom grep
+    reports as illegitimate (``engine`` already imports ``rcl``). This proves
+    the mirror claim is not just prose: the two field sets — names, types,
+    and required-ness — actually agree.
+
+    Importing ``tos.engine`` HERE is fine: this is a test file, not kernel
+    source. Both the AST gate (``tools/tos_firewall_check.py``) and the
+    import-closure test (``test_rcl_import_closure.py``) scan ``tos/src``
+    only, never ``tos/tests``.
+    """
+    from tos.engine.records import InstrumentKey
+
+    scope_fields = ReservationScope.model_fields
+    key_fields = InstrumentKey.model_fields
+    assert set(scope_fields) == set(key_fields) == {"account", "instrument"}
+    for name in scope_fields:
+        assert scope_fields[name].annotation == key_fields[name].annotation
+        assert scope_fields[name].is_required() == key_fields[name].is_required()
 
 
 # ===========================================================================
