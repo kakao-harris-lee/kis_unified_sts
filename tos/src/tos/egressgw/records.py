@@ -343,6 +343,68 @@ class CandidateConstruction(FrozenModel):
         AllFalseConstructionCoordinatorAuthority()
     )
 
+    @model_validator(mode="after")
+    def _shape_is_one_of_the_sanctioned_bundles(self) -> CandidateConstruction:
+        """Reject any bundle that is not a denied or a fully-built shape (design #34 §3.2).
+
+        ``construct_candidate_command`` only ever produces two shapes: **(a) denied** —
+        ``command is None``, a non-empty ``denial_reason``, and no ioc verdict at all
+        (``conformance_result`` / ``numerical_result`` / ``no_silent_widening_ok`` all ``None``,
+        whether the denial came from the derivation itself or from ``compile_command`` raising);
+        **(b) built** — ``command`` present alongside ``intent`` / ``envelope`` / ``policy`` and
+        both ioc verdicts (ioc always evaluates both dependent gates once the command compiles,
+        IOC-INV-006 "every dependent gate evaluated it"), with no ``denial_reason``. A bundle
+        that mixes the two — a command with no verdict, a verdict with no command, a "denial"
+        that also carries a verdict — is exactly the partially-formed artifact the series
+        refuses to let a later stage consume (module docstring); reject it here at construction
+        time so it can never reach the gateway (design #34 §4, TOS-GAP-001).
+        """
+        if self.command is None:
+            if not (self.denial_reason or "").strip():
+                raise ArtifactIntegrityError(
+                    "a denied CandidateConstruction (no command) must record a non-empty "
+                    "denial_reason — a restrictive stop without a recorded reason is a silent "
+                    "stop (design #34 §4.2)"
+                )
+            if (
+                self.conformance_result is not None
+                or self.numerical_result is not None
+                or self.no_silent_widening_ok is not None
+            ):
+                raise ArtifactIntegrityError(
+                    "a denied CandidateConstruction (no command) must carry no ioc verdict — "
+                    "conformance_result / numerical_result / no_silent_widening_ok must all be "
+                    "None; a verdict over a command that was never compiled is not a decision "
+                    "(design #34 §3.2)"
+                )
+            return self
+        # command is not None: the fully-built shape.
+        if self.denial_reason is not None:
+            raise ArtifactIntegrityError(
+                "a built CandidateConstruction (command present) must not carry a "
+                "denial_reason — a command and its own denial cannot coexist (design #34 §3.2)"
+            )
+        missing = [
+            name
+            for name, value in (
+                ("intent", self.intent),
+                ("envelope", self.envelope),
+                ("policy", self.policy),
+                ("conformance_result", self.conformance_result),
+                ("numerical_result", self.numerical_result),
+                ("no_silent_widening_ok", self.no_silent_widening_ok),
+            )
+            if value is None
+        ]
+        if missing:
+            raise ArtifactIntegrityError(
+                "a built CandidateConstruction (command present) must carry intent, envelope, "
+                "policy, and both ioc verdicts (conformance_result, numerical_result, "
+                f"no_silent_widening_ok) — missing: {', '.join(missing)} (design #34 §3.2 / "
+                "IOC-INV-006 every dependent gate evaluated it)"
+            )
+        return self
+
 
 # ===========================================================================
 # §4 — send-boundary verify records

@@ -43,6 +43,7 @@ from tos.engine import (
     EgressResultPayload,
     InstrumentKey,
 )
+from tos.ioc import ConformanceResult
 from tos.ordering import OrderingEvent
 from tos.venue import OrderAdmissibilityResult
 
@@ -719,6 +720,72 @@ def test_a_denied_construction_never_reaches_the_send_boundary() -> None:
     gateway, _ = build_gateway(attempt=attempt, context=context, transport=transport)
     assert gateway(attempt).accepted_for_transmission is None
     assert transport.requests == ()
+
+
+# ---------------------------------------------------------------------------
+# TOS-GAP-001 (item 13) — a None/UNKNOWN ioc verdict never crashes and never admits
+# ---------------------------------------------------------------------------
+
+
+def _built_construction() -> Any:
+    """A real, fully-built CandidateConstruction produced by the actual construction sites."""
+    built = construction()
+    assert built.command is not None
+    return built
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["conformance_result", "numerical_result"],
+    ids=["conformance-unknown", "numerical-unknown"],
+)
+def test_a_native_unknown_ioc_verdict_is_unknown_never_a_pass(field: str) -> None:
+    """(TOS-GAP-001 / ADR-002-020 §14:374) A native ``UNKNOWN`` ioc verdict on an otherwise
+    complete command must stop the send at item 13 with ``VerifyOutcome.UNKNOWN`` and a
+    ``SEND_REFUSED`` evidence record — never ``SATISFIED``, never an exception.
+
+    ``UNKNOWN`` is a decided (non-``None``) :class:`~tos.ioc.ConformanceResult` member, so this
+    bundle is still a *sanctioned* shape under the ``CandidateConstruction`` validator
+    (``records.py``) — the validator only demands presence, not a particular decided value.
+    """
+    malformed = _built_construction().model_copy(
+        update={field: ConformanceResult.UNKNOWN}
+    )
+    attempt, context = happy_context(construction=malformed)
+    transport = full_fill_transport()
+    gateway, sink = build_gateway(attempt=attempt, context=context, transport=transport)
+    handoff = gateway(attempt)
+    assert handoff.accepted_for_transmission is None
+    assert transport.requests == ()
+    (verification,) = gateway.verifications
+    outcomes = {v.item: v.outcome for v in verification.verdicts}
+    assert outcomes[SendVerifyItem.ORDER_CONSTRUCTION] is VerifyOutcome.UNKNOWN
+    refusal = sink.records[-1]
+    assert refusal.kind == "SEND_REFUSED"
+    assert refusal.item is SendVerifyItem.ORDER_CONSTRUCTION
+    assert refusal.halt_reason is SendHaltReason.VERIFY_ITEM_UNKNOWN
+    assert (refusal.detail or "").strip(), "a restrictive stop must record its reason"
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["conformance_result", "numerical_result"],
+    ids=["conformance-absent", "numerical-absent"],
+)
+def test_a_none_ioc_verdict_cannot_reach_the_send_boundary_context(field: str) -> None:
+    """(TOS-GAP-001) The exact ``conformance_result=None`` shape that used to raise
+    ``AttributeError`` inside item 13 cannot reach the gateway's ``__call__`` at all: pydantic
+    re-validates a nested model instance when it is embedded into ``SendBoundaryContext``, so
+    the ``CandidateConstruction`` shape validator (records.py) fires there and the malformed
+    bundle is rejected one layer before the send boundary — even though ``model_copy`` bypassed
+    that same validator when building the malformed bundle standalone. This is a stronger
+    guarantee than the item-13 defense in depth exercised by the UNKNOWN case above: a ``None``
+    ioc verdict on a bound command is structurally unconstructable in context, not merely
+    handled gracefully once encountered.
+    """
+    malformed = _built_construction().model_copy(update={field: None})
+    with pytest.raises(ValidationError, match="ioc verdict|missing"):
+        happy_context(construction=malformed)
 
 
 # ---------------------------------------------------------------------------

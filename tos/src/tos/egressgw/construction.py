@@ -464,6 +464,15 @@ def derive_order_size(
     assert bound.lot_size is not None  # narrowed by positive_decimal
     lot: Decimal = bound.lot_size
     assert price.value is not None
+    # mypy narrowing only (not a real defect): the venue-constraint completeness guard above
+    # already denied when ``not positive_decimal(venue_constraint.lot_size)`` — which is exactly
+    # the None case — so by this point the field is runtime-guaranteed present. ``positive_decimal``
+    # is a plain ``bool`` predicate, not a ``TypeGuard``, so mypy cannot see that guard as
+    # narrowing; the assert makes the already-true invariant visible to the checker (same pattern
+    # as ``bound.lot_size`` above). A ``None`` here would still fail loud via ``AssertionError``,
+    # never a silent clamp/skip (ADR-002-019 §12:309).
+    assert venue_constraint.lot_size is not None  # narrowed by positive_decimal
+    venue_lot: Decimal = venue_constraint.lot_size
     # ★ pinned context (NIT-1). Every Decimal operation from here on — the division, the lot
     # floor / remainder, the venue lot remainder, and the notional product — is context-sensitive
     # (a caller's ``prec`` can change the result, or make ``%`` raise ``DivisionImpossible``), so
@@ -506,7 +515,7 @@ def derive_order_size(
         if (
             quantity < venue_constraint.min_quantity
             or quantity > venue_constraint.max_quantity
-            or quantity % venue_constraint.lot_size != 0
+            or quantity % venue_lot != 0
         ):
             return _denied(
                 f"derived size {quantity} violates the venue / broker quantity constraint — "

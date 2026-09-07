@@ -930,13 +930,32 @@ def _check_construction(
             VerifyOutcome.UNKNOWN,
             reason="no candidate Canonical Broker Command is bound to this send",
         )
-    if construction.conformance_result is ConformanceResult.UNKNOWN:
+    # ★ TOS-GAP-001: ``conformance_result`` is ``ConformanceResult | None`` — the
+    # CandidateConstruction shape validator (records.py) now denies a *constructed* bundle from
+    # carrying ``command is not None`` alongside a ``None`` verdict, but this verify item stays
+    # defense-in-depth against any bundle that reaches the gateway some other way. An
+    # unestablished (``None``) result is treated exactly like the native ``UNKNOWN`` value —
+    # never a pass, never an ``AttributeError`` from a bare ``.value`` on ``None`` — so both
+    # collapse to the same restrictive ``UNKNOWN`` outcome the design already assigns to a
+    # native ``UNKNOWN`` (ADR-002-020 §14:374).
+    if construction.conformance_result is None or (
+        construction.conformance_result is ConformanceResult.UNKNOWN
+    ):
         return _verdict(
             item,
             VerifyOutcome.UNKNOWN,
-            reason="order conformance is UNKNOWN — denial (ADR-002-020 §14:374)",
+            reason=(
+                "order conformance is UNKNOWN — denial (ADR-002-020 §14:374)"
+                if construction.conformance_result is not None
+                else "order conformance was never established — an absent result is UNKNOWN, "
+                "never a pass (TOS-GAP-001)"
+            ),
             native=construction.conformance_result,
-            native_value=str(construction.conformance_result.value),
+            native_value=(
+                None
+                if construction.conformance_result is None
+                else str(construction.conformance_result.value)
+            ),
         )
     if construction.conformance_result is not ConformanceResult.CONFORMANT:
         return _verdict(
@@ -946,11 +965,35 @@ def _check_construction(
             native=construction.conformance_result,
             native_value=str(construction.conformance_result.value),
         )
+    # Same None/UNKNOWN-collapses-to-UNKNOWN discipline for the numerical-safety verdict — the
+    # positive-admit polarity is "only CONFORMANT passes; UNKNOWN (native or absent) is UNKNOWN;
+    # anything else (NON_CONFORMANT) is DENIED", matching the conformance_result branch above.
+    if construction.numerical_result is None or (
+        construction.numerical_result is ConformanceResult.UNKNOWN
+    ):
+        return _verdict(
+            item,
+            VerifyOutcome.UNKNOWN,
+            reason=(
+                "numerical safety is UNKNOWN — denial (ADR-002-020 §14:423)"
+                if construction.numerical_result is not None
+                else "numerical safety was never established — an absent result is UNKNOWN, "
+                "never a pass (TOS-GAP-001)"
+            ),
+            native=construction.numerical_result,
+            native_value=(
+                None
+                if construction.numerical_result is None
+                else str(construction.numerical_result.value)
+            ),
+        )
     if construction.numerical_result is not ConformanceResult.CONFORMANT:
         return _verdict(
             item,
             VerifyOutcome.DENIED,
             reason="numerical safety is not CONFORMANT (ADR-002-020 §14:423)",
+            native=construction.numerical_result,
+            native_value=str(construction.numerical_result.value),
         )
     if construction.no_silent_widening_ok is not True:
         return _verdict(
