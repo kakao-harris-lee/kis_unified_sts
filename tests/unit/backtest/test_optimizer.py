@@ -14,6 +14,7 @@ directly against a minimal stand-in object instead of constructing a real instan
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -74,3 +75,57 @@ def test_objective_raises_runtime_error_when_study_missing_on_trial_failure():
         RuntimeError, match="_objective called before study was created"
     ):
         StrategyOptimizer._objective(fake_self, trial=None, metric="sharpe_ratio")
+
+
+def test_objective_routes_a_trial_through_run_with_backend(monkeypatch):
+    """optimizer 도 experiment_runner 와 동일한 backend seam(backend.py) 을
+    통과해야 한다 (plan 2026-09-07 §1-C, docs/plans/
+    2026-09-07-vectorbt-default-flip.md) — 이전엔 optimizer._objective 가 seam
+    을 우회해 BacktestEngine 을 직접 생성했다.
+    """
+    from shared.backtest import backend as backend_mod
+
+    fake_result = object()
+    calls: list[tuple[Any, Any, str, str]] = []
+    made_with: list[dict[str, Any]] = []
+
+    def _fake_run_with_backend(
+        make_strategy, config, data, backend, *, experiment_id="", dedupe_key=None
+    ):
+        calls.append((config, data, backend, experiment_id, dedupe_key))
+        make_strategy()  # exercise the zero-arg factory like the real dispatcher
+        return backend_mod.BackendRun(result=fake_result, engine="backtest_engine")
+
+    monkeypatch.setattr(backend_mod, "run_with_backend", _fake_run_with_backend)
+    monkeypatch.setattr(backend_mod, "resolve_backend", lambda *a, **k: "legacy")
+    monkeypatch.setattr(backend_mod, "load_default_engine", lambda: "legacy")
+
+    class _FakeTrial:
+        number = 7
+
+    fake_self = SimpleNamespace(
+        strategy_factory=lambda params: made_with.append(params) or object(),
+        backtest_config=object(),
+        data=SimpleNamespace(copy=lambda: "DATA"),
+        mlflow_experiment=None,
+        best_result=None,
+        study=None,
+        backend_bt_cfg={},
+        _sample_params=lambda trial: {"bb_period": 20},
+        _get_metric_value=lambda result, metric: 1.23,
+    )
+
+    value = StrategyOptimizer._objective(
+        fake_self, trial=_FakeTrial(), metric="sharpe_ratio"
+    )
+
+    assert value == 1.23
+    assert made_with == [{"bb_period": 20}]
+    assert len(calls) == 1
+    _config, _data, used_backend, experiment_id, dedupe_key = calls[0]
+    assert used_backend == "legacy"
+    assert experiment_id == "optimizer trial 7"
+    # per-optimizer-instance, not per-trial (review fix 2026-09-07): a static
+    # NotImplementedError refusal must not spam INFO once per trial.
+    assert dedupe_key == f"optimizer:{id(fake_self)}"
+    assert fake_self.best_result is fake_result

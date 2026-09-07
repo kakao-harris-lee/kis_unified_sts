@@ -21,7 +21,7 @@ Usage:
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -96,7 +96,9 @@ class ParamSpec:
         log: bool = False,
     ) -> ParamSpec:
         """실수 파라미터"""
-        return cls(name=name, param_type="float", low=low, high=high, step=step, log=log)
+        return cls(
+            name=name, param_type="float", low=low, high=high, step=step, log=log
+        )
 
     @classmethod
     def categorical(cls, name: str, choices: list[Any]) -> ParamSpec:
@@ -130,6 +132,7 @@ class StrategyOptimizer:
         data: pd.DataFrame,
         backtest_config: BacktestConfig | None = None,
         mlflow_experiment: str | None = None,
+        backend_bt_cfg: Mapping[str, Any] | None = None,
     ):
         """
         Args:
@@ -137,6 +140,13 @@ class StrategyOptimizer:
             data: 백테스트 데이터
             backtest_config: 백테스트 설정
             mlflow_experiment: MLflow 실험 이름 (선택)
+            backend_bt_cfg: 전략 YAML 의 ``strategy.backtest`` 블록(선택) —
+                ``engine``/``legacy_exit`` 오버라이드를 실험 경로와 동일하게
+                적용하려면 넘긴다. 생략 시 process-wide 기본값
+                (``config/backtest.yaml``)만 적용된다. ``strategy_factory`` 가
+                만드는 객체가 ``vbt_signal_expressible`` 을 opt-in 하지 않는 한
+                (라이브러리 콜러 대부분의 경우) vectorbt 러너는 정적으로
+                거부되어 legacy 로 자동 폴백한다 — 결과는 기존과 동일.
         """
         if not HAS_OPTUNA:
             raise ImportError(
@@ -147,6 +157,7 @@ class StrategyOptimizer:
         self.data = data
         self.backtest_config = backtest_config or BacktestConfig()
         self.mlflow_experiment = mlflow_experiment
+        self.backend_bt_cfg = dict(backend_bt_cfg) if backend_bt_cfg else {}
 
         self.param_specs: list[ParamSpec] = []
         self.study: optuna.Study | None = None
@@ -231,18 +242,42 @@ class StrategyOptimizer:
 
     def _objective(self, trial: Trial, metric: str) -> float:
         """Optuna 목적 함수"""
-        from shared.backtest.engine import BacktestEngine
+        from shared.backtest.backend import (
+            load_default_engine,
+            resolve_backend,
+            run_with_backend,
+        )
 
         # 파라미터 샘플링
         params = self._sample_params(trial)
 
         try:
-            # 전략 생성
-            strategy = self.strategy_factory(params)
-
-            # 백테스트 실행
-            engine = BacktestEngine(strategy, self.backtest_config)
-            result = engine.run(self.data.copy())
+            trial_number = getattr(trial, "number", "?")
+            context = f"optimizer trial {trial_number}"
+            # 백엔드 결정 — experiment_runner 와 동일 seam(backend.py):
+            # 전략 backtest 블록(opt-in, 생략 가능) + process-wide 기본값.
+            backend = resolve_backend(
+                getattr(self, "backend_bt_cfg", None),
+                load_default_engine(),
+                context=context,
+            )
+            # 백테스트 실행 — 매 시도마다 fresh 전략 인스턴스(vectorbt 폴백이
+            # 이전 인스턴스를 재사용하지 않도록; backend.py 의
+            # run_with_backend 계약).
+            run = run_with_backend(
+                lambda: self.strategy_factory(params),
+                self.backtest_config,
+                self.data.copy(),
+                backend,
+                experiment_id=context,
+                # Per-optimizer-instance, NOT per-trial — a static
+                # NotImplementedError refusal (the common case: a raw
+                # strategy_factory object without vbt_signal_expressible)
+                # repeats identically every trial; dedupe across the whole
+                # optimize() run instead of logging once per trial.
+                dedupe_key=f"optimizer:{id(self)}",
+            )
+            result = run.result
 
             # 메트릭 추출
             value = self._get_metric_value(result, metric)
@@ -316,7 +351,9 @@ class StrategyOptimizer:
         """결과에서 메트릭 값 추출"""
         metrics = result.to_metrics_dict()
         if metric not in metrics:
-            raise ValueError(f"Unknown metric: {metric}. Available: {list(metrics.keys())}")
+            raise ValueError(
+                f"Unknown metric: {metric}. Available: {list(metrics.keys())}"
+            )
         return metrics[metric]
 
     def get_optimization_history(self) -> pd.DataFrame:
