@@ -19,8 +19,8 @@
 # SoT for the forbidden set: design §2.3 / §3.3-②. Changes to it require a PR
 # editing the design doc, with a §6.1 revision-log line.
 #
-# `tos_runtime` (design #40 D1.3 items 3-4, PROPOSED 2026-09-07 — same-PR-as-
-# ratification per that document's §0) is added below as a second root
+# `tos_runtime` (design #40 D1.3 items 3-4, ratified by the operator
+# 2026-09-08) is added below as a second root
 # package and a second `source_modules` entry of the operational-firewall
 # contract, so the same TRANSITIVE defense the kernel gets also covers the
 # runtime shell: an approved runtime adapter pulling in an operational-only
@@ -31,7 +31,7 @@
 # for that same asymmetry; this contract is its transitive-closure mirror.
 #
 # `tos-runtime-must-not-import-shared` (design #40 D1.1, corrected v1.2,
-# 2026-09-07 — operator decision, PROPOSED) mirrors AST rule (h)/TOS-FW-H's
+# 2026-09-07 operator decision, ratified 2026-09-08) mirrors AST rule (h)/TOS-FW-H's
 # TRANSITIVE closure: even a `shared.*` commons package the KERNEL is itself
 # allowed to import (e.g. `shared.determinism`) must not be reachable from
 # `tos_runtime` through ANY closure, direct or indirect. The AST gate only

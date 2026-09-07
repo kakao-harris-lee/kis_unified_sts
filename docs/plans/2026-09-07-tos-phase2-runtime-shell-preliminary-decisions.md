@@ -3,7 +3,7 @@
 - **상위 계획**: `docs/plans/2026-08-11-tos-completion-development-plan.md` §4.2 (운영 shell) · §6 Phase 2 «선행 결정 1~4»
 - **운영자 지시 (2026-09-07)**: 「모의투자 실측 제외하고 Phase 1 부터 진행」 · 「병렬로 Phase 진행 가능하면 바로 착수」
 - **저작**: 세션 모델 단독 (운영자 지시 2026-09-04 — 기획 파이프라인·자동 심판 없음). 운영자 검토 대상.
-- **상태**: **PROPOSED — 운영자 비준 대기.** 상위 계획 §4.2 「경계 ADR이 승인되기 전에는 네트워크 코드를 `tos/` 커널 안에 임시로 넣지 않는다」에 따라 D1 비준 전에는 어떤 런타임 I/O 코드도 착지하지 않는다.
+- **상태**: **RATIFIED — 운영자 비준 2026-09-08 (D1~D4 전건 · §6 체크리스트 1~4 전부 승인).** 상위 계획 §4.2 「경계 ADR이 승인되기 전에는 네트워크 코드를 `tos/` 커널 안에 임시로 넣지 않는다」에 따라 D1 비준 후에도 D2/D3 구현 레인이 착지하기 전까지는 어떤 런타임 I/O 코드도 착지하지 않는다.
 - **권한**: 이 문서는 어떤 게이트·축·계좌에도 권한을 부여하지 않는다. restricted-live/production 은 `AUTHORITY-STATUS.csv` 만이 바꾼다.
 
 ## 0. 이 문서가 확정하는 것 / 하지 않는 것
@@ -152,13 +152,14 @@ D2 커널 측(포트·술어)은 `8ea42a8d` 로 착지 완료.
 
 ## 6. 운영자 확인 사항 (비준 체크리스트)
 
-1. D1 A안 · `tos/runtime/` 배치 · allowlist R1 · 규칙 (g)/(e) 확장 — **방화벽 설계 #1 개정을 승인하는가**.
-2. D2 «단일 노드 f=0» 편차를 RESIDUAL-RISK-REGISTER-002 에 등재하는 방식으로 진행하는가(restricted-live NO 유지에 동의).
-3. D3 보존 기간 값은 named-TBD 로 두고 후속 승인하는가.
-4. D4 custody 디렉터리·환경 라벨 규약(파일 custody, 키체인/Vault 기각)에 동의하는가.
+1. D1 A안 · `tos/runtime/` 배치 · allowlist R1 · 규칙 (g)/(e) 확장 — **방화벽 설계 #1 개정을 승인하는가**. → 승인 (2026-09-08)
+2. D2 «단일 노드 f=0» 편차를 RESIDUAL-RISK-REGISTER-002 에 등재하는 방식으로 진행하는가(restricted-live NO 유지에 동의). → 승인 (2026-09-08)
+3. D3 보존 기간 값은 named-TBD 로 두고 후속 승인하는가. → 승인 (2026-09-08)
+4. D4 custody 디렉터리·환경 라벨 규약(파일 custody, 키체인/Vault 기각)에 동의하는가. → 승인 (2026-09-08)
 
 ## 7. 개정 로그
 
 - 2026-09-07: v1 최초 저작(세션 모델 단독 · 서베이 2건 실측 반영).
 - 2026-09-07: v1.2 — D1.3 항목 2 정정(런타임은 `shared.*` 직접 import 전면 거부 · 준비 레인 적발) · D3/D4 커널 측 착지에서 드러난 정정 둘: ① `key_generation` 은 **단일 축 `int`**(기존 `SegmentCommitmentScheme.link_anchor`·`IntegrityAnchor` 관례) — D3.1/D4.1 의 «키 세대» 는 그 축이며 문자열 라벨이 아니다 ② 기존 `tos.evidence.receipt.EvidenceCommitReceipt`(Phase 1 · 영구 UNVERIFIED 전용)와 이름 충돌 → durable 영수증은 `EvidenceAppendReceipt`(`tos.rcl.commitlog.AppendReceipt` 와 평행) · `RuntimeIdentity` 는 신설 `tos.workload` 패키지(failuredomain/sci/authority/egress 는 각각 다른 정체성 축을 소유 — anti-phantom grep 기록).
 - 2026-09-07: v1.1 — D2 커널 측 포트 착지(`8ea42a8d`, `tos.rcl.commitlog` · I/O 0 · D1 비준과 무관한 순수 술어) 에서 드러난 정정 둘. ① D2.1 의 예약 생명주기 약칭 `RESERVED → POTENTIALLY_LIVE → CONFIRMED|RELEASED|QUARANTINED` 는 새 enum 이 아니라 기존 `tos.rcl.CapacityState` 9종(ADR-002-002 §10.1 · `engine/state.py` 가 이미 예약 생명주기로 소비)에 사상한다 — RESERVED≈COMMITTED_UNBOUND/ATTEMPT_BOUND · CONFIRMED≈POSITION_CONSUMED · QUARANTINED=QUARANTINED_UNKNOWN · POTENTIALLY_LIVE/RELEASED 는 동명. 해제 admit 의 finality 목적지는 {RELEASED, POSITION_CONSUMED}. ② `WriterEpoch` 는 RCL 로컬 `int` 이며 `tos.authority` 의 Safety Authority epoch 와 **동일시하지 않는다**(ADR-002-012 §5.5 :129-131) — D2.1 「epoch = 로그 순서 그 자체」 문장은 «RCL writer epoch» 에 한정된 진술로 읽는다. 런타임 `SqliteCommitLog` 는 두 epoch 의 사상을 **증명 없이 결합하지 않는다**(같은 트랜잭션에서 둘 다 기록하되 별 컬럼).
+- 2026-09-08: v1.3 — 운영자 비준 · PROPOSED 마커 전량 해제 · D2.2 편차 RESIDUAL-RISK-REGISTER-002 등재(R-RCL-F0).

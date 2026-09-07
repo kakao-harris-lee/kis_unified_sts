@@ -43,7 +43,7 @@ tos work so agents do not scan the legacy runtime.
 | --- | --- |
 | Kernel code | `tos/src/tos/` (one package per RFC component: `rcl`, `authority`, `egressgw`, `engine`, `marketfeed`, `capsule`, `evidence`, `staterestore`, …) |
 | Hermetic tests | `tos/tests/` (no `.env`, no network, no Redis; pytest rootdir is `tos/`) |
-| Runtime shell (PROPOSED, design #40 D1 — 운영자 비준 대기) | `tos/runtime/` — SEPARATE distribution `tos-runtime` / `tos_runtime` (own `pyproject.toml`, src-layout `tos/runtime/src/tos_runtime/`), the composition root + I/O adapters for the kernel. `tos_runtime -> tos` allowed; `tos -> tos_runtime` FORBIDDEN (firewall rule (g) + `.importlinter` contract `tos-kernel-must-not-import-runtime`). Currently a skeleton only — no network/sqlite/I-O code lands here until D1 is ratified (upper plan §4.2). Hermetic tests: `tos/runtime/tests/` (D1.4 — zero external network/ambient env/writes outside `tmp_path`; `127.0.0.1`/`::1` and `tmp_path` sqlite files are the one exception, guarded by an autouse fixture in `tos/runtime/tests/conftest.py`) |
+| Runtime shell (ratified by the operator 2026-09-08, design #40 D1) | `tos/runtime/` — SEPARATE distribution `tos-runtime` / `tos_runtime` (own `pyproject.toml`, src-layout `tos/runtime/src/tos_runtime/`), the composition root + I/O adapters for the kernel. `tos_runtime -> tos` allowed; `tos -> tos_runtime` FORBIDDEN (firewall rule (g) + `.importlinter` contract `tos-kernel-must-not-import-runtime`). Currently a skeleton only — no network/sqlite/I-O code has landed here yet (upper plan §4.2 discipline stays in force until that code lands). Hermetic tests: `tos/runtime/tests/` (D1.4 — zero external network/ambient env/writes outside `tmp_path`; `127.0.0.1`/`::1` and `tmp_path` sqlite files are the one exception, guarded by an autouse fixture in `tos/runtime/tests/conftest.py`) |
 | Spec (normative, broker-agnostic) | `tos-spec/src/` — RFC/ADR/verification registers |
 | Evidence runs | `tos-evidence/` |
 | Governance tools | `tools/tos_*.py`, `tools/tos_entry_harness.sh`, `tools/u17-verify.sh`, `tools/wfcanon-v222.py` |
@@ -62,7 +62,7 @@ is out of scope for tos work unless the task says otherwise.
 # Hermetic package tests from the repo root venv
 PYTHONPATH=tos/src .venv/bin/python -m pytest tos/tests -q
 
-# Runtime shell hermetic tests (PROPOSED, design #40 D1 — see the table above).
+# Runtime shell hermetic tests (ratified by the operator 2026-09-08, design #40 D1 — see the table above).
 # Isolated rootdir (tos/runtime/pyproject.toml's own [tool.pytest.ini_options]),
 # same pattern as the kernel command above.
 PYTHONPATH=tos/runtime/src:tos/src .venv/bin/python -m pytest tos/runtime/tests -q

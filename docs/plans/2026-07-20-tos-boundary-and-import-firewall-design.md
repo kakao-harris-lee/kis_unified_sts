@@ -193,7 +193,7 @@ tos/
 없다 — `shared/`, `services/`, `cli/`, `core/`, `jobs/`, `scripts/`, `tests/`,
 repo 루트 모듈 전부 포함. (v1의 열거식 3개 패키지는 불완전 — §6.1.)
 
-#### 3.2-R 런타임 범위 허용목록 R1 — `tos/runtime/**` (설계 #40 D1.3, **PROPOSED**, 운영자 비준 대기)
+#### 3.2-R 런타임 범위 허용목록 R1 — `tos/runtime/**` (설계 #40 D1.3, 2026-09-08 운영자 비준)
 
 `tos/runtime/` 은 별도 배포 단위 `tos-runtime`(import 이름 `tos_runtime`)이며,
 위 §3.2 허용목록(이하 "커널 허용목록")과 **다른** 스캔 범위를 갖는다. 범위
@@ -246,10 +246,10 @@ convention은 금지다(재사용 분석 S4: convention 순수성은 이미 실�
    (f) 심볼릭 링크의 부분트리가 어느 방향으로든 tos/ 경계와 교차하면 위반
    (fail-closed — 끊어진 링크 포함, `tos/` 자신도 심볼릭 링크일 수 없다,
    §6.1 2026-09-04 상세), **(g) 커널 범위 파일의 `tos_runtime` import 검출**
-   (설계 #40 D1.3, **PROPOSED** — §3.2-R 신설 런타임 범위 R1 과 짝을 이룸;
+   (설계 #40 D1.3, 2026-09-08 운영자 비준 — §3.2-R 신설 런타임 범위 R1 과 짝을 이룸;
    (e) 는 `tos/` 밖 파일의 `import tos_runtime` 도 함께 잡도록 확장됨),
    **(h) 런타임 범위 파일의 `shared.*` import 검출**(설계 #40 D1.1, v1.2
-   정정, **PROPOSED** — 커널이 허용하는 여섯 커먼즈 패키지도 예외 없이 런타임
+   정정, 2026-09-08 운영자 비준 — 커널이 허용하는 여섯 커먼즈 패키지도 예외 없이 런타임
    범위에서는 금지). 이 전부가 **한 번의 스캔 호출**로 수행된다 —
    `tos/runtime/` 은 같은 파일이 런타임 범위 허용목록으로 판정될 뿐, 별도
    검사기 실행이 추가되지 않는다.
@@ -257,7 +257,7 @@ convention은 금지다(재사용 분석 S4: convention 순수성은 이미 실�
    `.importlinter`에 forbidden contract: source `tos`, `tos_runtime` →
    forbidden `shared.execution`, `shared.kis`, `shared.streaming`,
    `shared.llm`, `shared.storage`, `shared.backtest`, `services`, `cli`
-   (설계 #40 D1.3 item 4, **PROPOSED** — `tos_runtime` 을 `root_packages`와
+   (설계 #40 D1.3 item 4, 2026-09-08 운영자 비준 — `tos_runtime` 을 `root_packages`와
    이 계약의 `source_modules`에 추가해 런타임에도 같은 전이 방어를 적용).
    **간접(전이) 검출 활성 상태로 운영한다**
    (`allow_indirect_imports` 사용 금지) — 허용 커먼즈가 금지 패키지를 끌어오면
@@ -269,7 +269,7 @@ convention은 금지다(재사용 분석 S4: convention 순수성은 이미 실�
    대응짝을 담당한다.
 3. **③ CI 잡 `tos-firewall`**: 모든 PR에서 실행(경로 게이팅 없이 — 저비용이고
    우회 여지를 없앤다). ①+② + `pytest tos/tests`(hermetic) + `pytest
-   tos/runtime/tests`(hermetic, 설계 #40 D1.4 — 별도 스텝, **PROPOSED**).
+   tos/runtime/tests`(hermetic, 설계 #40 D1.4 — 별도 스텝, 2026-09-08 운영자 비준).
    **required check**로 지정 — 실패 시 머지 불가.
 4. **우회 기록**: 게이트를 우회(계약·게이트 스크립트 수정 포함)하는 모든 변경은
    §6.1 개정 로그에 사유와 함께 기록한다. 반복 우회는 (C) 추출 트리거다(§6.2).
@@ -483,7 +483,7 @@ ADR-002-007/025 게이트를 통해서만, 별도 비준으로 추가된다. 그
     설치/lock이 더 이상 그 버전을 받을 수 없게 됨. 모노레포 루트 `.venv`
     actual도 동일 버전으로 lockstep 갱신(§3.2 미러링 요건), `tos/uv.lock`
     재생성.
-  - 2026-09-07: **PROPOSED — 운영자 비준 시 효력.** D1 — `tos/runtime/` 런타임
+  - 2026-09-08: **운영자 비준 · 효력 발생** — D1 — `tos/runtime/` 런타임
     범위 신설·allowlist R1·규칙 (g)·(e) 확장 (설계 #40 D1.3). 스캔 범위를
     커널(`tos/` minus `tos/runtime/`, 기존 허용목록 불변)과 런타임
     (`tos/runtime/**`, 신설 §3.2-R)으로 이원화; 규칙 (g) 신설(커널 범위의

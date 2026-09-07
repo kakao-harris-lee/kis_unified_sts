@@ -23,9 +23,9 @@ that imports a forbidden module breaks the hermetic claim) and enforces:
                 escape hatch that would let (a)/(b) be bypassed at runtime.
   (e) TOS-FW-R  no file OUTSIDE ``tos/`` may ``import tos`` (R-reverse — §3.2):
                 the operational system must never depend on the unverified
-                kernel. EXTENDED (design #40 D1.3 item 3, 2026-09-07 —
-                PROPOSED) to ``tos_runtime`` too: no file outside ``tos/``
-                may import the runtime shell either.
+                kernel. EXTENDED (design #40 D1.3 item 3, ratified by the
+                operator 2026-09-08) to ``tos_runtime`` too: no file outside
+                ``tos/`` may import the runtime shell either.
   (f) TOS-FW-S  no SYMLINK (file or directory, walked or git-tracked) may
                 cross the tos/ boundary: crossing means SUBTREE
                 INTERSECTION, not merely "which side" — a link outside
@@ -49,7 +49,7 @@ that imports a forbidden module breaks the hermetic claim) and enforces:
                 reported failure, never a silent PASS.
 
   (g) TOS-FW-G  a KERNEL-scope file imports ``tos_runtime`` (design #40 D1.3
-                item 2, 2026-09-07 — PROPOSED pending operator ratification).
+                item 2, ratified by the operator 2026-09-08).
                 Kernel and runtime are asymmetric by design: runtime may
                 depend on the kernel, never the reverse. Rule (e)/TOS-FW-R is
                 separately extended so a file OUTSIDE ``tos/`` entirely that
@@ -58,7 +58,7 @@ that imports a forbidden module breaks the hermetic claim) and enforces:
   (h) TOS-FW-H  a RUNTIME-scope file imports ANY ``shared.*`` module — even
                 one of the six commons packages the KERNEL is itself allowed
                 to import under §3.2 (design #40 D1.1, corrected v1.2,
-                2026-09-07 — PROPOSED pending operator ratification: an
+                ratified by the operator 2026-09-08: an
                 earlier draft of R1 unioned in the kernel's `shared.*`
                 allowance; the operator's decision was that D1.1's "runtime
                 opens no new commons dependency" wins, so R1 excludes all of
@@ -66,8 +66,7 @@ that imports a forbidden module breaks the hermetic claim) and enforces:
                 allowlist).
 
 ------------------------------------------------------------------------------
-SCOPE SPLIT (design #40 D1.3, 2026-09-07 — PROPOSED pending operator
-ratification; same-PR-as-ratification per that document's §0)
+SCOPE SPLIT (design #40 D1.3, ratified by the operator 2026-09-08)
 ------------------------------------------------------------------------------
 Rules (a)-(d) above enforce ONE of TWO allowlists depending on which part of
 ``tos/`` a ``.py`` file lives under — the scope is decided by a single
@@ -124,7 +123,7 @@ violation, 0 otherwise.
 
 ------------------------------------------------------------------------------
 ALLOWLIST CONTRACT (SoT = design doc §3.2; RUNTIME_* constants' SoT = design
-doc #40 D1.3, PROPOSED 2026-09-07)
+doc #40 D1.3, ratified by the operator 2026-09-08)
 ------------------------------------------------------------------------------
 The KERNEL allowlist / forbidden constants below are a *ratified contract*.
 Their Source of Truth is design document #1 (`2026-07-20-tos-boundary-and-
@@ -136,9 +135,9 @@ does not own it.
 The RUNTIME_* constants (allowlist R1) mechanize design document #40
 (`2026-09-07-tos-phase2-runtime-shell-preliminary-decisions.md`) §D1.3 item 2,
 cross-referenced into design #1 §3.2/§3.3 by the same PR (design #40 §D1.3
-item 6). Design #40 is PROPOSED, not yet operator-ratified, at the time this
-scope split lands — see that document's §0 for why the skeleton this enables
-(``tos/runtime/``) contains no I/O.
+item 6). Design #40 is ratified by the operator (2026-09-08) — see that
+document's §0 for why the skeleton this enables (``tos/runtime/``) still
+contains no I/O until the D2/D3 implementation lanes land it.
 
 This gate itself lives under ``tools/`` (outside ``tos/``) and is therefore NOT
 governed by the firewall; it may use ``os``/``argparse``/etc. freely.
@@ -214,8 +213,8 @@ SHARED_ALLOWED: frozenset[str] = frozenset(
 STDLIB: frozenset[str] = frozenset(sys.stdlib_module_names)
 
 # ============================================================================
-# R1 allowlist — tos/runtime/** scope only (design #40 D1.3 item 2, PROPOSED
-# 2026-09-07; see the module docstring's SCOPE SPLIT section). Cross-
+# R1 allowlist — tos/runtime/** scope only (design #40 D1.3 item 2, ratified
+# by the operator 2026-09-08; see the module docstring's SCOPE SPLIT section). Cross-
 # referenced into design #1 §3.2/§3.3 by the same PR (design #40 §D1.3
 # item 6). Do not edit in isolation from that document.
 #

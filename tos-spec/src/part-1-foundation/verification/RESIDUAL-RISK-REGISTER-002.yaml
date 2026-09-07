@@ -23,6 +23,13 @@
 #   entries registered on 2026-08-06 (R-N, R-I, R-D). None claims a deviation,
 #   and R-N and R-I are additionally ineligible for that route on the same
 #   ground as R-1 — STATE-EV-004 is a Critical row.
+#   ADDED 2026-09-08 (v1.2): the statement above extends verbatim to R-RCL-F0
+#   (design #40 D2.2, operator-ratified 2026-09-08). It claims no deviation
+#   either — no ADR-002-026 request, decision, Active Deviation Set, or
+#   compensating-control acceptance — and design #40 §D2.2 itself says so in
+#   the same terms ("규범 완화가 아니라 «비-live 범위의 선택»"). The block it
+#   records comes from ADR-002-009 §10.1 item 6's own restricted-live/
+#   production boundary, not from a waived requirement.
 #
 # NON-UNION RULE
 #   §378 line 3308: "Separate residual risks SHALL NOT be unioned at a consumer;
@@ -37,6 +44,15 @@
 #   blocking scope is narrower than either — a power-loss durability claim only).
 #   The measured anchor for the non-union sentence in the current VER revision
 #   is line 3310; see ANCHOR DRIFT NOTE.
+#   ADDED 2026-09-08 (v1.2): the register now holds SEVEN independent entries —
+#   R-1, R-2, R-3, R-N, R-I, R-D, R-RCL-F0. The non-union rule applies across
+#   all seven with no exception and no sub-grouping. R-RCL-F0 (a Phase 2 design
+#   choice registered at authoring time, per design #40 D2.2) SHALL NOT be
+#   merged with any of the other six — its blocking scope (restricted-live/
+#   production `NO` for the single-node RCL substrate, ADR-002-009 §10.1 item
+#   6) is independent of theirs. The measured anchor for the non-union sentence
+#   remains line 3310 (re-verified 2026-09-08; unchanged since the v1.1
+#   measurement).
 #
 # ANCHOR DRIFT NOTE (added 2026-08-06 with v1.1)
 #   The VER-002-001 `line NNNN` citations in the 2026-07-29 entries (R-1, R-2,
@@ -97,7 +113,7 @@
 artifact_type: RESIDUAL_RISK_REGISTER
 schema_version: "1.0-DRAFT"
 register_id: RESIDUAL-RISK-REGISTER-002
-register_version: "1.1"
+register_version: "1.2"
 # register_version history:
 #   1.0 — 2026-07-29 — created with entries R-1, R-2, R-3.
 #   1.1 — 2026-08-06 — entries R-N, R-I, R-D registered (operator directive
@@ -107,6 +123,13 @@ register_version: "1.1"
 #         2026-07-29 (the register's own effective date is not restarted by an
 #         amendment); the new entries carry their own effective date inside
 #         `expiration_or_review_date.basis`.
+#   1.2 — 2026-09-08 — entry R-RCL-F0 registered (design #40 D2.2, operator
+#         ratification of design #40 D1-D4 2026-09-08, recorded at
+#         docs/plans/2026-09-07-tos-phase2-runtime-shell-preliminary-decisions.md
+#         §6 item 2). No existing field, entry, or text was removed.
+#         `effective_from` below stays 2026-07-29 (unchanged by this
+#         amendment, same rule as v1.1); the new entry carries its own
+#         registration date inside `expiration_or_review_date.basis`.
 canonical_digest: null   # no approved canonicalization scheme for spec-layer YAML; the git object is the integrity reference
 status: APPROVED
 approved_by: ["operator"]
@@ -148,6 +171,10 @@ union_prohibition: >-
   the non-union sentence in the current VER revision is line 3310 (the citation
   of 3308 above was correct for the 2026-07-29 revision — see ANCHOR DRIFT
   NOTE in the header).
+  DATED ADDITION 2026-09-08 (v1.2): the prohibition covers all SEVEN entries
+  (R-1, R-2, R-3, R-N, R-I, R-D, R-RCL-F0) with no sub-grouping. R-RCL-F0's own
+  `required_scope_reduction` restates this individually. Line 3310 re-verified
+  2026-09-08, unchanged since v1.1.
 
 deviation_binding_applicability: >-
   NOT_APPLICABLE — no entry claims an RFC-001 permitted deviation, so the §378
@@ -179,6 +206,15 @@ entries_scope_note: >-
   candidate above is UNCHANGED by this amendment: it is still not registered as
   R-4 and is still an open operator decision — the 2026-08-06 directive named
   R-N, R-I, and R-D only, and no entry is invented beyond what it named.
+  DATED ADDITION 2026-09-08 (v1.2): the register now holds SEVEN entries. The
+  six above, plus R-RCL-F0 — the Safety Commit Log single-node (f=0) deviation
+  from ADR-002-012's quorum-replicated model, proposed by design #40 D2.2
+  (docs/plans/2026-09-07-tos-phase2-runtime-shell-preliminary-decisions.md)
+  and registered here on operator ratification of design #40 D1-D4, 2026-09-08
+  (design's own §6 item 2). The ASS-DOM-05 candidate above remains UNCHANGED:
+  still not registered as R-4, still an open operator decision — this
+  amendment registers R-RCL-F0 only, and no entry is invented beyond what the
+  2026-09-08 ratification named.
 
 entries:
 
@@ -1117,6 +1153,192 @@ entries:
       - "tos-evidence/STATE-EV-004/review/20260806-operator-countersign.md (registration directive, verbatim)"
       - "VER-002-001 lines 132, 1026, 1046, 3310, 3312; ADR-002-005 lines 197, 237 — all re-measured 2026-08-06"
 
+  - risk_identity: >-
+      R-RCL-F0 — the Safety Commit Log's quorum-replicated consensus model is
+      unrealized. Design #40 D2.1 (ratified by the operator 2026-09-08)
+      implements the Risk Capacity Ledger's Safety Commit Log as
+      `tos_runtime.rcl.SqliteCommitLog`, a single-node linearizable log
+      (sqlite3 WAL, `BEGIN IMMEDIATE` compare-and-set, monotonic `seq`,
+      writer-epoch fencing) behind a replaceable `tos.rcl.CommitLog` port. It
+      is deliberately f=0: no quorum-replicated voter set exists and no
+      membership-change protocol exists, for Phase 2's non-live scope.
+    affected_requirement_and_adr:
+      requirement: >-
+        VER-002-001 FD-EV-007 — Risk Capacity Ledger Failover Fence (line
+        1141), Minimum Level EV-L3 plus security assessment (line 1143),
+        Injection "Partition the active writer, promote a replacement, resume
+        the stale writer, restore an old snapshot, and deliver delayed
+        mutation commands" (line 1145); and RCLP-EV-009 — Joint Membership
+        and Removed-Voter Fence (line 1419), Minimum Level EV-L3 plus
+        security assessment (line 1421), Injection "Add, remove, replace,
+        partition, pause, and resume voters during joint configuration;
+        attempt simultaneous replacement and removed-voter proof issuance"
+        (line 1423). Both rows presuppose a multi-voter deployment; a single
+        node with no voter set and no membership protocol cannot be exercised
+        against either Injection.
+      adr: >-
+        ADR-002-012 §1 (lines 17, 19): "Each Risk Capacity Ledger Capacity
+        Domain SHALL be implemented as a quorum-replicated deterministic
+        Safety Commit Log... the voting configuration SHALL contain at least
+        `2f + 1` voters." §14 Membership Change (lines 369-376): "Membership
+        change SHALL use joint consensus or an equivalent protocol that
+        proves an authoritative overlap between the old and new voter
+        configurations," plus the accompanying rules for catch-up,
+        removed-voter exclusion, and forced reconfiguration. Phase 2's f=0
+        single node satisfies neither clause.
+      measured_gap: >-
+        Recorded as a design decision at authoring time, not a defect found
+        after the fact: design #40
+        (docs/plans/2026-09-07-tos-phase2-runtime-shell-preliminary-decisions.md)
+        §D2.2 registers the gap before any runtime code lands, naming
+        ADR-002-012 :17/:19 (2f+1 quorum) and :369-376 (membership/joint
+        consensus) as the clauses Phase 2 does not implement. §D2.3 records
+        the rejected alternatives (an embedded raft library, Redis, an
+        external RDBMS, and promoting `staterestore.CompositeStateStore`) and
+        why none closes the gap inside Phase 2's non-live, zero-new-third-
+        party scope.
+      criticality_note: >-
+        This is not framed as a VER-002-001 line 132 WAIVED_WITH_RESIDUAL_RISK
+        question — no ADR-002-026 deviation request, decision, Active
+        Deviation Set, or compensating-control acceptance is claimed (this
+        register's header, THIS IS NOT A DEVIATION ACCEPTANCE). Design #40
+        §D2.2 states the same thing in its own words: the single-node choice
+        is "규범 완화가 아니라 «비-live 범위의 선택»" — a non-live-scope
+        implementation choice, not a normative relaxation. The block recorded
+        under `blocking_effect` below is structural, not a waived
+        requirement.
+      blocking_effect: >-
+        ADDITIVE. STATED EXACTLY: ADR-002-009 §10.1 item 6 (line 283) —
+        "cache or ordinary local application storage is not treated as the
+        sole Risk Capacity Ledger, Currentness Sequencer, or authoritative
+        fencing substrate without a separately approved mechanism and
+        executed partition/failover evidence" — and line 285 — "Until
+        credential inventory, route confinement, bypass prevention, and
+        fault testing prove this boundary, restricted-live and production
+        gates remain `NO`" — apply to this single-node RCL substrate
+        directly. This entry therefore blocks restricted-live and production
+        authorization for any scope whose Risk Capacity Ledger is this
+        `SqliteCommitLog`. It does NOT block Phase 2's own non-live
+        implementation, testing, or paper-scope use (design #40 §0 scope
+        note: "Phase 2 비-live 범위에서의 구현 선택"), and it does not
+        retroactively affect R-1, R-2, R-3, R-N, R-I, or R-D, whose scopes
+        are unrelated evidence rows.
+    broker_account_instrument_scope:
+      brokers: []
+      accounts: []
+      instruments: []
+      statement: >-
+        Non-live-test only; the affected artifact is
+        `tos_runtime.rcl.SqliteCommitLog` (design #40 D2.1), a local on-disk
+        sqlite3 WAL file with no network peers. No broker, account, or
+        instrument is in scope, and no broker limitation is invoked or
+        implied (VER-002-001 line 3310 non-union anchor; the blocking
+        citation above is an ADR-002-009 deployment boundary, not a broker
+        limitation).
+    credible_failure_sequence: >-
+      (1) The single RCL node's host or storage fails, or is partitioned, at
+      a moment when a capacity-affecting reservation is `POTENTIALLY_LIVE` or
+      a writer epoch has just advanced. (2) Because Phase 2 has no quorum and
+      no replica, there is no second voter that can durably confirm or reject
+      the pending transition — the design's own fault contract (§D2.1 장애
+      계약 item ③) maps "partition/quorum loss" to "log file inaccessible"
+      and denies all new risk, but it cannot recover or reconcile the state a
+      genuine multi-node deployment would. (3) A reader who treats this
+      SqliteCommitLog as satisfying ADR-002-012's quorum-replicated Safety
+      Commit Log requirement, rather than as the non-live placeholder it is,
+      would carry that premise into a restricted-live or production
+      authorization decision. (4) ADR-002-009's own boundary condition (item
+      6, line 283) already refuses that scope — restricted-live/production
+      stays `NO` — so the credible harm is not an unguarded live order path
+      today, but a future consumer citing this entry's evidence as if the
+      boundary had been proven rather than deliberately deferred.
+    maximum_economic_effect:
+      present: >-
+        None. Non-live-test scope only; no broker session, account, or order
+        path exists for this substrate (design #40 §0), and ADR-002-009's
+        own boundary keeps restricted-live/production `NO` independent of
+        this entry.
+      path_to_economic_effect: >-
+        Evidence-chain contamination only, narrower than a direct loss: the
+        contaminating artefact would be a future citation of this RCL
+        implementation as quorum-replicated, or as satisfying FD-EV-007/
+        RCLP-EV-009, without the f=0 qualifier — silently claiming a
+        replication and membership guarantee ADR-002-012 §1/§14 require and
+        this implementation does not provide. Any later live-scope decision
+        resting on such a citation inherits the same unbounded-by-record
+        ceiling as R-1/R-N/R-I/R-D (MAX_trial_authorized_economic_effect and
+        MAX_trial_concurrent_potential_effect null,
+        VERIFICATION-PROFILE-002.yaml lines 1033-1034).
+      statement: "No present economic effect; future effect unbounded-by-record, and reachable only through a citation that drops the single-node/f=0 qualifier."
+    existing_controls:
+      - "The gap is disclosed in-band at authoring time, before implementation: design #40 §D2.2 names the exact ADR-002-012 clauses (2f+1 quorum, membership/joint consensus) not implemented, rather than the gap surfacing after the fact."
+      - "The kernel exposes only the `tos.rcl.CommitLog` Protocol (append_cas / read_linearizable / current_epoch / replay); the runtime's single-node implementation and a future replicated implementation both satisfy the same port, so a later replacement does not require a kernel or call-site change (design #40 D2.1 포트 row, D1 direction)."
+      - "Writer fencing is still enforced within the single node: every write checks its own epoch against the current epoch in the same transaction (design #40 D2.1), so this entry does not claim an unfenced writer — only the absence of a second voter."
+      - "ADR-002-009 §10.1 item 6's own boundary condition independently keeps restricted-live/production `NO` for any RCL substrate lacking a separately approved mechanism and executed partition/failover evidence — this entry does not rely on operator memory to enforce the block."
+      - "Rejected alternatives are recorded (design #40 §D2.3): an embedded raft library, Redis, an external RDBMS, and promoting `staterestore.CompositeStateStore` were each considered and rejected with a stated reason, rather than the single-node choice being unexamined."
+    detection_and_containment_bound:
+      detection: >-
+        NOT_ESTABLISHED at the harness layer. Detecting a genuine multi-node
+        partition or quorum loss requires an actual replica set to
+        partition; a single node has no quorum to lose, so FD-EV-007's and
+        RCLP-EV-009's own Injection clauses cannot be run against this
+        implementation at all (they are BLOCKED, not FAILED, pending a
+        replicated implementation). Detection today is document-gate only,
+        at this register and at ADR-002-009 §10.1.
+      containment: >-
+        Claim-level only, the same shape as R-D. The implementation is
+        confined to non-live, single-node scope, and this entry's
+        `required_scope_reduction` makes that confinement explicit. There is
+        no runtime containment because there is no live route to contain.
+      resolution_path: >-
+        A replicated `tos.rcl.CommitLog` implementation satisfying
+        ADR-002-012 §1's `2f + 1` voting configuration and §14's
+        joint-consensus membership-change protocol, exercised against
+        FD-EV-007 and RCLP-EV-009 with executed partition/failover evidence
+        at EV-L3 (plus the security assessment both rows require) or above.
+        It is NOT resolvable by adding retry or timeout logic to the
+        single-node implementation — those do not create a second voter.
+      time_bound: "None claimed. A gate reviewed at most every 180 days is not a time-to-detect bound."
+    owner: operator
+    approver:
+      identity: operator
+      basis: >-
+        Operator ratification of design #40 (D1-D4), 2026-09-08, recorded at
+        docs/plans/2026-09-07-tos-phase2-runtime-shell-preliminary-decisions.md
+        §6 item 2 ("D2 «단일 노드 f=0» 편차를 RESIDUAL-RISK-REGISTER-002 에
+        등재하는 방식으로 진행하는가" → 승인, 2026-09-08). The design's own
+        §D2.2 names this register as the registration site for the
+        deviation.
+      separation_of_duties: >-
+        Not the Live-Armer (still unassigned, fail-closed). Per VER §2.6 not
+        eligible as the independent reviewer of the affected evidence.
+    expiration_or_review_date:
+      review_date: "2027-01-25"
+      basis: >-
+        Registered 2026-09-08. 180 days from 2026-09-08 is 2027-03-07
+        (MAX_residual_risk_review_interval_ms, profile line 1040); the
+        profile's own review_due is 2027-01-29 (profile line 147); this
+        register's own review_due is 2027-01-25 (this file, line 114). The
+        earliest, 2027-01-25, is adopted — bound-conforming, before both the
+        profile review and this entry's own 180-day bound, and on one cycle
+        with the other six entries.
+      expiry_semantics: >-
+        No auto-renewal and no ripening into acceptance. A missed review
+        restricts scope: specifically, an unreviewed R-RCL-F0 means
+        restricted-live and production stay `NO` for any scope resting on
+        this Safety Commit Log, not that the block lapses.
+    required_scope_reduction:
+      - "No consumer may cite `tos_runtime.rcl.SqliteCommitLog` (design #40 D2.1) as satisfying ADR-002-012 §1's quorum-replicated Safety Commit Log requirement or §14's membership-change protocol."
+      - "No consumer may claim FD-EV-007 or RCLP-EV-009 as PASS, or as any status other than BLOCKED, on the strength of a single-node implementation with no voter set."
+      - "No restricted-live or production authorization may rest on this RCL implementation as its capacity-fencing substrate (ADR-002-009 §10.1 item 6, line 283); the gate stays `NO` per line 285 until a separately approved mechanism and executed partition/failover evidence exist."
+      - "This entry SHALL be cited individually and SHALL NOT be summarised together with R-1, R-2, R-3, R-N, R-I, or R-D as one aggregate residual (VER-002-001 §378, non-union sentence at line 3310). Its scope is a Phase 2 design choice recorded at authoring time, not a post-hoc discovered defect like the others."
+    evidence_references:
+      - "docs/plans/2026-09-07-tos-phase2-runtime-shell-preliminary-decisions.md §D2.1 (SqliteCommitLog decision), §D2.2 (registered deviation, this register named as the site), §D2.3 (rejected alternatives), §6 item 2 (operator ratification, 2026-09-08)"
+      - "tos-spec/src/part-1-foundation/ADR-002-012-Risk-Capacity-Ledger-Persistence-Consensus-and-Writer-Fencing.md lines 17, 19 (quorum-replicated, 2f+1), 369-376 (§14 Membership Change)"
+      - "tos-spec/src/part-1-foundation/ADR-002-009-Failure-Domain-Isolation-and-Deployment-Safety.md lines 283, 285 (§10.1 item 6 and the restricted-live/production `NO` boundary)"
+      - "tos-spec/src/part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md lines 1141-1146 (FD-EV-007), 1419-1424 (RCLP-EV-009)"
+      - "tos/src/tos/rcl/ — the `CommitLog` Protocol port (design #40 D2.1); no runtime implementation commit is cited here because none has landed as of this registration"
+
 authority:
   accepts_residual_risk: false
   creates_capacity: false
@@ -1156,3 +1378,13 @@ authorization_notice: >-
   2026-08-06 is an evidence fact at the EV-L1/EV-L2 minimum level; this register
   neither creates it nor confers any authority through it, and no entry here
   authorises live, restricted-live, or production scope.
+  DATED ADDITION 2026-09-08 (v1.2): the paragraph above governs all seven
+  entries unchanged. R-RCL-F0 was added on operator ratification of design #40
+  D1-D4, 2026-09-08 (the design's own §6 item 2 names this register as the
+  approved registration site for the D2.2 deviation). That act accepts no
+  residual either: registration remains disclosure, not acceptance, and
+  R-RCL-F0 claims no ADR-002-026 deviation. Its blocking effect keeps
+  restricted-live and production `NO` for any scope whose Risk Capacity Ledger
+  is the single-node `SqliteCommitLog` (ADR-002-009 §10.1 item 6), and no entry
+  here — R-RCL-F0 included — authorises live, restricted-live, or production
+  scope.

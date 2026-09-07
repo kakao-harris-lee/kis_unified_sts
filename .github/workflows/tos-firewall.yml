@@ -8,8 +8,8 @@
 #   2. lint-imports                        — layer ② (transitive forbidden-pkg)
 #   3. pytest tos/tests                     — hermetic package tests (§2.4)
 #
-# tos/runtime/ (design #40 D1.3, PROPOSED 2026-09-07 — same-PR-as-ratification
-# per that document's §0): the runtime-scope allowlist split lives INSIDE
+# tos/runtime/ (design #40 D1.3, ratified by the operator 2026-09-08): the
+# runtime-scope allowlist split lives INSIDE
 # tools/tos_firewall_check.py's single forward scan (rules a-d apply the R1
 # allowlist per-file via scope_for_tos_path) — layer ① above already covers
 # BOTH tos/ scopes in its one invocation, no extra firewall step is added
@@ -72,7 +72,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e "./tos[test]"
-          # tos-runtime (design #40 D1.3 item 5, PROPOSED) — installed AFTER
+          # tos-runtime (design #40 D1.3 item 5, ratified by the operator 2026-09-08) — installed AFTER
           # the kernel above, editable, with --no-deps. Reproduced 2026-09-08
           # (independent review finding, MEDIUM) in a throwaway venv: WITHOUT
           # --no-deps, `pip install -e "./tos/runtime[test]"` resolves
@@ -132,7 +132,7 @@ jobs:
       - name: tos hermetic package tests
         run: pytest tos/tests
 
-      # design #40 D1.3 item 5 (PROPOSED) — the runtime shell's own hermetic
+      # design #40 D1.3 item 5 (ratified by the operator 2026-09-08) — the runtime shell's own hermetic
       # suite (D1.4: zero external network/ambient env/writes outside
       # tmp_path — tos/runtime/tests/conftest.py's autouse socket guard).
       # Isolated rootdir via tos/runtime/pyproject.toml's own

@@ -1,6 +1,5 @@
 # tos-runtime — the composition-root/adapter shell for the tos kernel
-# (design #40 D1, "runtime shell 경계", PROPOSED 2026-09-07; same-PR-as-
-# ratification per that document's §0).
+# (design #40 D1, "runtime shell 경계", ratified by the operator 2026-09-08).
 #
 # This is a SEPARATE distribution from BOTH the repo-root kis-unified-sts
 # package AND the `tos` kernel distribution (tos/pyproject.toml) — src-layout,
@@ -10,11 +9,11 @@
 # `tos-kernel-must-not-import-runtime` contract).
 #
 # Scope discipline (design #40 §0, upper plan §4.2): "경계 ADR이 승인되기
-# 전에는 네트워크 코드를 tos/ 커널 안에 임시로 넣지 않는다" — the SAME rule
-# applies here to this skeleton until design #40 is operator-ratified: this
-# package contains NO network/sqlite/I-O code, only the composition-root
-# shape (package + hermetic test fixture). D2 (RCL)/D3 (Evidence Store)
-# implementations land in later, separately-ratified lanes (design #40 §5).
+# 전에는 네트워크 코드를 tos/ 커널 안에 임시로 넣지 않는다" — design #40 D1 is
+# ratified by the operator (2026-09-08), but this skeleton still contains NO
+# network/sqlite/I-O code, only the composition-root shape (package +
+# hermetic test fixture), pending the D2 (RCL)/D3 (Evidence Store)
+# implementation lanes that land the code (design #40 §5).
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -22,7 +21,7 @@ build-backend = "hatchling.build"
 [project]
 name = "tos-runtime"
 version = "0.0.1"
-description = "tos runtime shell — composition root and I/O adapters for the tos kernel (PROPOSED, no I/O until design #40 D1 is ratified)"
+description = "tos runtime shell — composition root and I/O adapters for the tos kernel (design #40 D1 ratified by the operator 2026-09-08; no I/O lands until the D2/D3 implementation lanes)"
 requires-python = ">=3.11"
 authors = [{ name = "Harris Lee" }]
 
