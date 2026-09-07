@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, time, timedelta
 from enum import StrEnum
@@ -147,6 +148,10 @@ class SlippageControlConfig:
     cross_asset_max_spread_ticks: int = 2
     blocked_time_windows: list[TimeWindow] = field(default_factory=list)
     event_time_windows: list[TimeWindow] = field(default_factory=list)
+    # Rollback switch for the decoupled order_router gate only (F-9 Gate 1b
+    # control-parity closure) — the monolithic orchestrator does not read
+    # this key at all, so it has no effect on the legacy runtime.
+    order_router_gate: bool = True
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SlippageControlConfig:
@@ -194,7 +199,90 @@ class SlippageControlConfig:
             cross_asset_max_spread_ticks=int(cross_asset.get("max_spread_ticks", 2)),
             blocked_time_windows=blocked,
             event_time_windows=events,
+            order_router_gate=_to_bool(
+                data.get("order_router_gate", True), default=True
+            ),
         )
+
+
+def deep_merge_config_dict(
+    base: dict[str, Any], override: dict[str, Any]
+) -> dict[str, Any]:
+    """Recursively merge two config dictionaries without mutating inputs.
+
+    Moved here from ``services/trading/orchestrator.py`` (O-A, F-9 Gate 1b
+    control-parity closure) — no other caller existed, so the orchestrator's
+    former ``_deep_merge_config_dict`` static method is retired in favor of
+    this module function rather than kept as a wrapper.
+    """
+    merged: dict[str, Any] = dict(base)
+    for key, value in override.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = deep_merge_config_dict(current, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def load_futures_slippage_raw(
+    exec_cfg: Mapping[str, Any], *, paper_trading: bool
+) -> dict[str, Any]:
+    """Merge-only half of loading futures slippage config: pop + apply
+    ``paper_override``, but stop short of :meth:`SlippageControlConfig.from_dict`.
+
+    Split out from :func:`load_futures_slippage_config` (F-9 Gate 1b
+    control-parity closure, review 2026-09-07) so a caller that needs the
+    pre-refactor orchestrator's two-``try``-scope behavior can catch
+    config-load errors (missing file, bad YAML) separately from
+    ``from_dict``'s ``int()``/``float()`` coercion errors (e.g. a malformed
+    env override like ``FUTURES_PAPER_MAX_SPREAD_TICKS=six``). The latter
+    must only warn-and-disable the controller, never propagate out of
+    startup — collapsing both steps into one function put both error classes
+    under one ``try``, which regressed that value-preserving behavior.
+
+    Applies the ``paper_override`` block exactly as the pre-refactor
+    orchestrator inline logic did: the override is only merged when
+    ``paper_trading`` is true AND the override block's own ``enabled`` flag
+    is true, and the ``enabled`` key itself is dropped from the merged
+    payload (it gates whether to apply the override, not a slippage-control
+    field).
+    """
+    raw = exec_cfg.get("futures_slippage_control", {})
+    raw = {} if not isinstance(raw, dict) else dict(raw)
+
+    paper_override = raw.pop("paper_override", None)
+    if paper_trading and isinstance(paper_override, dict):
+        if bool(paper_override.get("enabled", False)):
+            override_payload = {
+                k: v for k, v in paper_override.items() if k != "enabled"
+            }
+            raw = deep_merge_config_dict(raw, override_payload)
+            logger.info(
+                "Applied paper override for futures slippage control: %s",
+                ",".join(sorted(override_payload.keys())),
+            )
+
+    return raw
+
+
+def load_futures_slippage_config(
+    exec_cfg: Mapping[str, Any], *, paper_trading: bool
+) -> SlippageControlConfig:
+    """Load :class:`SlippageControlConfig` from a parsed ``execution.yaml``.
+
+    Composes :func:`load_futures_slippage_raw` + ``from_dict``. Any caller
+    (order_router) gets identical values for the same YAML + same
+    ``paper_trading`` flag — paper cutover equivalence is "same config + same
+    merge rule", not constant duplication. A caller that needs to isolate
+    ``from_dict``'s coercion errors from the merge step's own config-load
+    errors (see :func:`load_futures_slippage_raw`'s docstring) should call
+    the two halves separately instead of this convenience wrapper — see
+    ``services/trading/orchestrator.py::_init_futures_slippage_controller``.
+    """
+    return SlippageControlConfig.from_dict(
+        load_futures_slippage_raw(exec_cfg, paper_trading=paper_trading)
+    )
 
 
 def parse_orderbook_snapshot(

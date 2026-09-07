@@ -414,6 +414,61 @@ def _build_open_position_provider(
     return _has_open_position
 
 
+#: Returned (as the sole asset class's count) when Redis is unreachable, so
+#: ``ConcurrentPositionsFilter``'s ``>=`` boundary check rejects regardless of
+#: the configured cap. The filter itself has a documented fail-OPEN contract
+#: (any exception from the provider, or a missing/non-mapping return, passes
+#: every signal — see shared/risk/filters/concurrent_positions.py), so
+#: matching ``_build_open_position_provider``'s fail-CLOSED polarity has to
+#: happen inside this provider: it must never raise, and must return a
+#: mapping whose count is large enough to trip both the total and per-asset
+#: caps rather than a mapping the filter would treat as "few open positions".
+_COUNT_FAIL_CLOSED_SENTINEL = 10**9
+
+
+def _build_open_positions_count_provider(
+    sync_redis: Any, positions_key: str, asset_class: str = _ASSET
+) -> Callable[[], Mapping[str, int]]:
+    """Build the ``ConcurrentPositionsFilter`` count provider for the futures chain.
+
+    Reads the same ``futures:monitor:positions`` hash
+    (``services/futures_monitor`` HSET on entry / HDEL on exit) that
+    :func:`_build_open_position_provider` already reads for the per-symbol
+    duplicate-entry guard, via ``HLEN`` for the total open-position count.
+    This is a read-only accessor — no new Redis key, no write path.
+
+    The provider returns ``{asset_class: count}`` — a single-asset-class
+    mapping, since this daemon only ever observes futures positions. Per the
+    filter's provider contract (shared/risk/filters/concurrent_positions.py),
+    a single-asset daemon's mapping under-counts a true cross-asset
+    ``max_total_positions``; this repo has no cross-asset position aggregator
+    today, so the total check effectively degrades to "futures-only total"
+    until one exists. This is a pre-existing scope limit of the filter design,
+    not something this wiring introduces.
+
+    Error polarity matches ``_build_open_position_provider``'s fail-CLOSED
+    choice (a duplicated/over-limit entry is the more expensive mistake than
+    a blocked one): a Redis error returns an inflated sentinel count rather
+    than raising, so it reads as "far over any cap" instead of the filter's
+    own default fail-OPEN response to a raised exception or missing mapping.
+    """
+
+    def _count() -> Mapping[str, int]:
+        try:
+            count = int(sync_redis.hlen(positions_key))
+        except Exception:
+            logger.warning(
+                "Redis error counting open futures positions (key=%s); "
+                "reporting an inflated count so ConcurrentPositionsFilter "
+                "rejects on uncertainty (fail-closed)",
+                positions_key,
+            )
+            return {asset_class: _COUNT_FAIL_CLOSED_SENTINEL}
+        return {asset_class: count}
+
+    return _count
+
+
 def _build_volatility_reference_provider(
     risk_config: FuturesRiskConfig, sync_redis: Any
 ) -> Callable[[str], Any] | None:
@@ -504,6 +559,9 @@ async def _build_and_run() -> int:
         risk_config,
         trading_windows,
         has_open_position_provider=_build_open_position_provider(
+            sync_redis, positions_key
+        ),
+        open_positions_count_provider=_build_open_positions_count_provider(
             sync_redis, positions_key
         ),
         leverage_snapshot_provider=leverage_provider,

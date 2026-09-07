@@ -247,12 +247,15 @@ class _FakeSyncRedis:
         hexists_result: bool = False,
         raises: bool = False,
         hget_result: str | None = None,
+        hlen_result: int = 0,
     ) -> None:
         self.hexists_calls: list[tuple[str, str]] = []
         self.hget_calls: list[tuple[str, str]] = []
+        self.hlen_calls: list[str] = []
         self._hexists_result = hexists_result
         self._raises = raises
         self._hget_result = hget_result
+        self._hlen_result = hlen_result
 
     def hexists(self, key: str, field: str) -> bool:
         self.hexists_calls.append((key, field))
@@ -268,6 +271,12 @@ class _FakeSyncRedis:
 
     def hgetall(self, key: str) -> dict[str, str]:  # noqa: ARG002
         return {}
+
+    def hlen(self, key: str) -> int:
+        self.hlen_calls.append(key)
+        if self._raises:
+            raise RuntimeError("redis down")
+        return self._hlen_result
 
 
 def _capture_call_site_kwargs(
@@ -382,6 +391,78 @@ def test_production_open_position_provider_fails_closed(
 
     provider = kwargs["has_open_position_provider"]
     assert provider(symbol) is True
+
+
+# ---------------------------------------------------------------------------
+# F-9 Gate 1b §2-C: the global concurrent-position count provider (futures only
+# — the stock chain's ``open_positions_count_provider`` wiring is out of scope
+# for this closure and untouched)
+# ---------------------------------------------------------------------------
+
+
+def test_production_call_site_wires_open_positions_count_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``ConcurrentPositionsFilter`` is armed in production, on the right hash.
+
+    Delete ``open_positions_count_provider=...`` from the futures call site
+    and this fails on the first assertion. ``risk.concurrent_positions.enabled``
+    is ``true`` in production config (F-9 Gate 1b §2-C), so an unwired provider
+    here would leave the filter fail-open (silent no-op) rather than merely
+    absent.
+    """
+    monkeypatch.delenv("FUTURES_MONITOR_POSITIONS_KEY", raising=False)
+    fake = _FakeSyncRedis(hlen_result=3)
+    kwargs = _capture_call_site_kwargs(
+        importlib.import_module("services.risk_filter.main"),
+        "FUTURES_RISK_FILTER",
+        monkeypatch,
+        fake,
+    )
+
+    assert "open_positions_count_provider" in kwargs, (
+        "services.risk_filter.main builds RiskFilterLayer without an "
+        "open_positions_count_provider — with risk.concurrent_positions.enabled "
+        "true in production config, from_config would leave "
+        "ConcurrentPositionsFilter fail-open (inert) instead of armed"
+    )
+    provider = kwargs["open_positions_count_provider"]
+    assert provider is not None
+    assert not provider.__qualname__.startswith(_STUB_QUALNAME_PREFIX)
+
+    # Exercising it proves the count reads the same hash the position writer
+    # writes and the has_open_position_provider guard already reads — HLEN
+    # rather than HEXISTS, same key.
+    assert provider() == {"futures": 3}
+    assert fake.hlen_calls == [_FUTURES_POSITIONS_KEY]
+
+
+def test_production_open_positions_count_provider_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Redis error must push the filter toward rejecting, not fail open.
+
+    ``ConcurrentPositionsFilter`` itself fails OPEN on a raised provider
+    exception (shared/risk/filters/concurrent_positions.py), so matching the
+    has_open_position_provider fail-CLOSED polarity requires the provider to
+    swallow the error and report an inflated count instead of raising —
+    otherwise a Redis outage would silently disable the concurrency cap at
+    exactly the moment its accuracy matters least.
+    """
+    monkeypatch.delenv("FUTURES_MONITOR_POSITIONS_KEY", raising=False)
+    fake = _FakeSyncRedis(raises=True)
+    kwargs = _capture_call_site_kwargs(
+        importlib.import_module("services.risk_filter.main"),
+        "FUTURES_RISK_FILTER",
+        monkeypatch,
+        fake,
+    )
+
+    provider = kwargs["open_positions_count_provider"]
+    counts = provider()
+    assert isinstance(counts, dict)
+    # Whatever cap an operator configures, this must be read as "over it".
+    assert counts["futures"] >= 10**6
 
 
 # ---------------------------------------------------------------------------

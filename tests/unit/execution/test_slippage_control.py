@@ -6,6 +6,7 @@ from shared.execution.slippage_control import (
     ExecutionAction,
     FuturesSlippageController,
     SlippageControlConfig,
+    load_futures_slippage_config,
     parse_orderbook_snapshot,
 )
 
@@ -312,10 +313,14 @@ def test_evaluate_entry_blocks_during_volatility_cooldown():
 
     # Build low-vol baseline first.
     for i, px in enumerate([330.50, 330.51, 330.52, 330.53, 330.54]):
-        controller.register_trade_tick("A05603", px, timestamp=base_ts + timedelta(seconds=i))
+        controller.register_trade_tick(
+            "A05603", px, timestamp=base_ts + timedelta(seconds=i)
+        )
 
     # Spike triggers cooldown.
-    controller.register_trade_tick("A05603", 330.70, timestamp=base_ts + timedelta(seconds=6))
+    controller.register_trade_tick(
+        "A05603", 330.70, timestamp=base_ts + timedelta(seconds=6)
+    )
 
     decision = controller.evaluate_entry(
         symbol="A05603",
@@ -348,3 +353,86 @@ def test_evaluate_retry_cancel_when_policy_abort():
     )
     assert retry.action == ExecutionAction.CANCEL
     assert retry.reason == "retry_policy_abort"
+
+
+# ---------------------------------------------------------------------------
+# load_futures_slippage_config — F-9 Gate 1b control-parity closure §2-A
+# ---------------------------------------------------------------------------
+
+
+def _exec_cfg(
+    *,
+    enabled: bool = True,
+    max_spread_ticks: int = 1,
+    order_router_gate: bool | None = None,
+    paper_override: dict | None = None,
+) -> dict:
+    section: dict = {
+        "enabled": enabled,
+        "tick_size": 0.02,
+        "max_spread_ticks": max_spread_ticks,
+        "min_depth_multiplier": 3.0,
+        "max_signal_age_seconds": 2.0,
+        "blocked_time_windows": [{"start": "08:45", "end": "08:50"}],
+        "cross_asset": {"enabled": True, "reference_symbol": "101S6000"},
+    }
+    if order_router_gate is not None:
+        section["order_router_gate"] = order_router_gate
+    if paper_override is not None:
+        section["paper_override"] = paper_override
+    return {"futures_slippage_control": section}
+
+
+def test_load_applies_paper_override_when_paper_trading_and_override_enabled():
+    exec_cfg = _exec_cfg(
+        max_spread_ticks=1,
+        paper_override={
+            "enabled": True,
+            "max_spread_ticks": 6,
+            "blocked_time_windows": [],
+        },
+    )
+    cfg = load_futures_slippage_config(exec_cfg, paper_trading=True)
+    assert cfg.max_spread_ticks == 6
+    assert cfg.blocked_time_windows == []
+
+
+def test_load_does_not_apply_override_when_not_paper_trading():
+    exec_cfg = _exec_cfg(
+        max_spread_ticks=1,
+        paper_override={"enabled": True, "max_spread_ticks": 6},
+    )
+    cfg = load_futures_slippage_config(exec_cfg, paper_trading=False)
+    assert cfg.max_spread_ticks == 1
+
+
+def test_load_does_not_apply_override_when_override_itself_disabled():
+    exec_cfg = _exec_cfg(
+        max_spread_ticks=1,
+        paper_override={"enabled": False, "max_spread_ticks": 6},
+    )
+    cfg = load_futures_slippage_config(exec_cfg, paper_trading=True)
+    assert cfg.max_spread_ticks == 1
+
+
+def test_load_respects_enabled_false():
+    exec_cfg = _exec_cfg(enabled=False)
+    cfg = load_futures_slippage_config(exec_cfg, paper_trading=True)
+    assert cfg.enabled is False
+
+
+def test_load_order_router_gate_defaults_true():
+    exec_cfg = _exec_cfg()
+    cfg = load_futures_slippage_config(exec_cfg, paper_trading=False)
+    assert cfg.order_router_gate is True
+
+
+def test_load_order_router_gate_reads_explicit_false():
+    exec_cfg = _exec_cfg(order_router_gate=False)
+    cfg = load_futures_slippage_config(exec_cfg, paper_trading=False)
+    assert cfg.order_router_gate is False
+
+
+def test_load_missing_section_returns_disabled_default():
+    cfg = load_futures_slippage_config({}, paper_trading=True)
+    assert cfg == SlippageControlConfig()

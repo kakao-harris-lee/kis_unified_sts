@@ -59,6 +59,7 @@ from shared.execution.contract_spec import ContractSpec
 from shared.execution.live_mode_guard import LiveModeGuard
 from shared.execution.passive_maker import PassiveMaker
 from shared.execution.pseudo_oco import PseudoOCO
+from shared.execution.slippage_control import ExecutionAction
 from shared.execution.tick_math import _compute_slippage_ticks
 from shared.streaming.stage import StreamStage
 
@@ -146,6 +147,7 @@ class OrderRouterDaemon(StreamStage):
         exit_poll_interval: float = 1.0,
         close_executor: Any = None,
         futures_positions_key: str | None = None,
+        slippage_controller: Any = None,
     ) -> None:
         super().__init__(
             redis=redis,
@@ -185,6 +187,12 @@ class OrderRouterDaemon(StreamStage):
         self.symbol_lock_blocked_count: int = 0
         self.daily_trade_blocked_count: int = 0
         self.position_size_capped_count: int = 0
+        # F-9 Gate 1b control-parity closure (§2-B): monolith-equivalent
+        # send-time slippage/liquidity/blackout gate. ``None`` preserves the
+        # pre-existing behavior (no gate) — see config/execution.yaml
+        # ``futures_slippage_control.order_router_gate``.
+        self.slippage_controller = slippage_controller
+        self.slippage_blocked_count: int = 0
 
     def _sentinel_present(self) -> bool:
         return self.sentinel_path is not None and self.sentinel_path.exists()
@@ -472,6 +480,65 @@ class OrderRouterDaemon(StreamStage):
             )
             quantity = guard.max_position_size_contracts
 
+        # F-9 Gate 1b control-parity closure (§2-B): send-time slippage/
+        # liquidity/blackout gate. This MUST run before the daily_trade_cap
+        # INCR below and after position_size_cap: the monolith has no
+        # coupling between its slippage guard and a trade-count budget, so a
+        # signal this gate blocks must not consume any of
+        # `max_daily_trades` — and the depth check inside `evaluate_entry`
+        # must see the already-clamped `quantity`, not the pre-clamp value.
+        if self.slippage_controller is not None:
+            if signal.generated_at is None:
+                # Fail-closed: `evaluate_entry`'s stale-signal filter compares
+                # `signal_timestamp` against now, so a missing timestamp must
+                # not be treated as "just generated" — that would make an
+                # unknown-age signal look brand-new and bypass the filter
+                # entirely (fail-open). Block before ever calling the
+                # controller.
+                self.slippage_blocked_count += 1
+                logger.warning(
+                    "slippage_gate: blocked signal_id=%s symbol=%s "
+                    "reason=signal_timestamp_missing",
+                    signal_id,
+                    signal.symbol,
+                )
+                return True  # consumed, no retry (mirrors monolith :5657 abort)
+
+            quote_payload = (
+                self.futures_price_feed.get_orderbook_snapshot(signal.symbol)
+                if self.futures_price_feed is not None
+                else None
+            )
+            cross_payload = None
+            if self.slippage_controller.config.cross_asset_enabled:
+                cross_payload = (
+                    self.futures_price_feed.get_orderbook_snapshot(
+                        self.slippage_controller.config.cross_asset_symbol
+                    )
+                    if self.futures_price_feed is not None
+                    else None
+                )
+            decision = self.slippage_controller.evaluate_entry(
+                symbol=signal.symbol,
+                is_buy=signal.direction == "long",
+                quantity=quantity,
+                signal_price=signal.entry_price,
+                signal_timestamp=signal.generated_at,
+                quote_payload=quote_payload,
+                cross_asset_payload=cross_payload,
+            )
+            if decision.action != ExecutionAction.PASSIVE_LIMIT:
+                self.slippage_blocked_count += 1
+                logger.warning(
+                    "slippage_gate: blocked signal_id=%s symbol=%s reason=%s "
+                    "spread_ticks=%s",
+                    signal_id,
+                    signal.symbol,
+                    decision.reason,
+                    decision.spread_ticks,
+                )
+                return True  # consumed, no retry (mirrors monolith :5657 abort)
+
         if guard is not None:
             counter_key = f"{_DAILY_TRADE_KEY_PREFIX}{_kst_date_key()}"
             try:
@@ -725,6 +792,10 @@ async def _build_and_run() -> int:
     from shared.execution.live_mode_guard import LiveModeGuard
     from shared.execution.passive_maker import PassiveMaker
     from shared.execution.pseudo_oco import PseudoOCO
+    from shared.execution.slippage_control import (
+        FuturesSlippageController,
+        load_futures_slippage_config,
+    )
     from shared.kis.auth import KISAuthConfig
     from shared.kis.futures_feed import KISFuturesPriceFeed
     from shared.risk.runtime_state import RuntimeRiskState
@@ -754,6 +825,33 @@ async def _build_and_run() -> int:
     symbol = instrument.symbol
     spec = resolve_contract_spec(symbol, contract_specs)
 
+    # F-9 Gate 1b control-parity closure (§2-B): send-time slippage/liquidity/
+    # blackout gate, monolith-equivalent config load (same YAML, same
+    # paper_override merge rule as services/trading/orchestrator.py). The
+    # `order_router_gate` key is this gate's own rollback switch — the
+    # monolith ignores it.
+    slippage_cfg = load_futures_slippage_config(
+        ConfigLoader.load("execution.yaml"), paper_trading=(mode == "paper")
+    )
+    slippage_controller: Any = None
+    if slippage_cfg.enabled and slippage_cfg.order_router_gate:
+        slippage_controller = FuturesSlippageController(slippage_cfg)
+        logger.info(
+            "Futures slippage control enabled (%s): spread<=%st, depth>=%.1fx, "
+            "deviation<=%st, cooldown=%.2fs, retry=%s, cross_asset=%s",
+            mode,
+            slippage_cfg.max_spread_ticks,
+            slippage_cfg.min_depth_multiplier,
+            slippage_cfg.max_price_deviation_ticks,
+            slippage_cfg.volatility_cooldown_seconds,
+            slippage_cfg.retry_policy.value,
+            (
+                slippage_cfg.cross_asset_symbol
+                if slippage_cfg.cross_asset_enabled
+                else "off"
+            ),
+        )
+
     fill_logger = FillLogger(
         redis=redis_client,
         archive_client=None,
@@ -774,7 +872,39 @@ async def _build_and_run() -> int:
         is_real=True,
     )
     futures_feed = KISFuturesPriceFeed(config=kis_auth)
-    futures_feed.update_symbols([symbol])
+    aux_symbols = None
+    if (
+        slippage_controller is not None
+        and slippage_cfg.cross_asset_enabled
+        and slippage_cfg.cross_asset_symbol
+        and slippage_cfg.cross_asset_symbol != symbol
+    ):
+        aux_symbols = [slippage_cfg.cross_asset_symbol]
+    futures_feed.update_symbols([symbol], auxiliary_symbols=aux_symbols)
+    if slippage_controller is not None:
+
+        def _register_slippage_tick(
+            tick_symbol: str, data: dict[str, Any], ts: datetime
+        ) -> None:
+            # Feed exposes a real tick callback (shared/kis/futures_feed.py) —
+            # wire it exactly like the monolithic orchestrator does
+            # (orchestrator.py `register_trade_tick` call site) so the
+            # controller's volatility baseline is fed continuously rather
+            # than only from the sparse self-supply inside `evaluate_entry`.
+            try:
+                price = float(data.get("close", 0.0) or 0.0)
+                if price > 0:
+                    slippage_controller.register_trade_tick(
+                        tick_symbol, price, timestamp=ts
+                    )
+            except Exception:
+                logger.debug(
+                    "slippage tick registration failed symbol=%s",
+                    tick_symbol,
+                    exc_info=True,
+                )
+
+        futures_feed.set_tick_callback(_register_slippage_tick)
     await futures_feed.start()
 
     if mode == "paper":
@@ -839,6 +969,7 @@ async def _build_and_run() -> int:
         # exit-monitor: None (synthetic fill) in paper, LiveExitExecutor in
         # live — one wallet-authority order-placement path either way.
         close_executor=exit_close_executor,
+        slippage_controller=slippage_controller,
     )
 
     loop = asyncio.get_running_loop()
