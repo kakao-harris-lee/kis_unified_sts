@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from services.trading.indicator_engine import StreamingIndicatorEngine
+from shared.indicators.streaming.engine import StreamingIndicatorEngine
 
 
 @pytest.fixture

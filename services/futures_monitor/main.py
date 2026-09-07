@@ -54,7 +54,6 @@ async def _build_and_run() -> int:
 
     from services.futures_monitor.daemon import FuturesMonitorDaemon
     from services.stock_monitor.alerts import AlertSink
-    from services.trading.stream_consumer_feed import StreamConsumerFeed
     from shared.config.loader import ConfigLoader
     from shared.execution.contract_spec import (
         ContractSpecRegistry,
@@ -62,6 +61,7 @@ async def _build_and_run() -> int:
     )
     from shared.execution.futures_instrument import resolve_futures_instrument_from_env
     from shared.notification.telegram import notifier_for_domain
+    from shared.streaming.consumer_feed import StreamConsumerFeed
     from shared.streaming.trading_state import TradingStatePublisher
 
     fill_default, signal_default = _streams_for(mode)

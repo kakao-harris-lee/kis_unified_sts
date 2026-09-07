@@ -1,7 +1,7 @@
 """Golden pin: StreamingCompatBackend == the pre-retirement _calc_* values.
 
 ``streaming_compat_golden.json`` was captured from
-``services.trading.indicator_calculations.IndicatorCalculationMixin._calc_*``
+``shared.indicators.streaming.calculations.IndicatorCalculationMixin._calc_*``
 BEFORE the math was relocated into the engine. These tests assert the backend (and
 therefore the delegated runtime ``_calc_*``) reproduce those values bit-for-bit
 across short/long/flat/insufficient windows — the guarantee that the value-

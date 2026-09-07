@@ -7,7 +7,7 @@ from datetime import datetime
 
 import pytest
 
-from services.trading.stream_consumer_feed import (
+from shared.streaming.consumer_feed import (
     StreamConsumerFeed,
     _parse_entry_fields,
 )
@@ -257,10 +257,8 @@ async def test_read_loop_rate_limits_repeated_xread_errors(monkeypatch, caplog):
         if len(sleep_calls) >= 3:
             feed._running = False
 
-    monkeypatch.setattr(
-        "services.trading.stream_consumer_feed.asyncio.sleep", fake_sleep
-    )
-    caplog.set_level(logging.ERROR, logger="services.trading.stream_consumer_feed")
+    monkeypatch.setattr("shared.streaming.consumer_feed.asyncio.sleep", fake_sleep)
+    caplog.set_level(logging.ERROR, logger="shared.streaming.consumer_feed")
 
     await feed._read_loop()
 

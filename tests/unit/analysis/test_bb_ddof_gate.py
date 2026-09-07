@@ -16,7 +16,7 @@ from scripts.analysis.bb_ddof_gate import (
     _delta,
     _verdict_lines,
 )
-from services.trading.indicator_calculations import IndicatorCalculationMixin
+from shared.indicators.streaming.calculations import IndicatorCalculationMixin
 
 
 def test_population_std_is_exactly_ddof0() -> None:

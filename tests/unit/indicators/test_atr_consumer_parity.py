@@ -15,8 +15,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from services.trading.indicator_calculations import IndicatorCalculationMixin
-from services.trading.indicator_candles import Candle
+from shared.indicators.streaming.calculations import IndicatorCalculationMixin
+from shared.indicators.streaming.candles import Candle
 from shared.llm.stock_screening import calc_atr_pct
 from shared.regime.adaptive_detector import AdaptiveRegimeDetector
 from shared.strategy.entry.trix_golden import TrixGoldenEntry

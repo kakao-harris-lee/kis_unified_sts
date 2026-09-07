@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import math
 
-from services.trading.indicator_engine import Candle, StreamingIndicatorEngine
+from shared.indicators.streaming.engine import Candle, StreamingIndicatorEngine
 
 
 class TestEMAHelpers:

@@ -46,9 +46,9 @@ Entry/Exit/Position sizing are **independent, composable components** registered
 | Component             | Purpose                                        | Location                               |
 | --------------------- | ---------------------------------------------- | -------------------------------------- |
 | `TradingOrchestrator` | Full trading lifecycle & main loop             | `services/trading/orchestrator.py`     |
-| `StrategyManager`     | Multi-strategy management & signal aggregation | `services/trading/strategy_manager.py` |
+| `StrategyManager`     | Multi-strategy management & signal aggregation | `shared/strategy/manager.py` |
 | `MarketDataProvider`  | Market data collection                         | `services/trading/data_provider.py`    |
-| `IndicatorEngine`     | Indicator calculation/caching                  | `services/trading/indicator_engine.py` |
+| `IndicatorEngine`     | Indicator calculation/caching                  | `shared/indicators/streaming/engine.py` |
 | `PositionTracker`     | Position tracking                              | `services/trading/position_tracker.py` |
 | `HolidayCache`        | Trading holiday cache                          | `services/trading/holiday_cache.py`    |
 | `TradingPipeline`     | Data pipeline orchestration                    | `services/trading/pipeline.py`         |

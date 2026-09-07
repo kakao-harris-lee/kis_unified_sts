@@ -29,7 +29,7 @@ alert-manager가 브리핑의 "전달(채널·스케줄)"을 맡는다면, 당�
 ## 참조 구조
 - LLM 코어: `shared/llm/` (`unified_market_analyzer.py`, `llm_analyzer.py`, `stock_analysis.py`, `analyzers.py`, `collectors.py`, `config.py`)
 - 브리핑 스크립트: `scripts/analysis/llm_nightly_analysis.py`, `scripts/llm_premarket_briefing.py`, `scripts/analysis/llm_market_close_briefing.py`
-- 컨텍스트 주입: `services/trading/llm_context_provider.py`, `llm_context_publisher.py`
+- 컨텍스트 주입: `shared/llm/context_provider.py`, `shared/llm/context_publisher.py`
 - 데이터 수집 서비스: `services/news_collector/`, `services/news_scorer/`, `services/macro_overnight_collector/`, `services/forecasting/`
 - 설정: `config/llm.yaml`, `config/news_scoring.yaml`, `config/macro_sources.yaml`
 - 공개 API: `run_unified_analysis()`, `get_stock_detail_briefing()`

@@ -10,10 +10,9 @@ from typing import Any
 
 from shared.exceptions import ValidationError
 from shared.indicators.engine.spec import flat_key
+from shared.indicators.streaming.candles import Candle, MultiTimeframeCandleAccumulator
 
-from .indicator_candles import Candle, MultiTimeframeCandleAccumulator
-
-logger = logging.getLogger("services.trading.indicator_engine")
+logger = logging.getLogger("shared.indicators.streaming.engine")
 
 # Flat payload key names derived from the shared ``flat_key`` catalog
 # (``shared/indicators/engine/spec.py``) — the single naming source of truth

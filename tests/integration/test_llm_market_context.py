@@ -148,7 +148,7 @@ def test_market_context_ttl_set(redis_client, sample_market_context):
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
 def test_provider_reads_from_redis(redis_client, sample_market_context):
     """Test LLMContextProvider can read MarketContext from Redis."""
-    from services.trading.llm_context_provider import LLMContextProvider
+    from shared.llm.context_provider import LLMContextProvider
     from shared.llm.data_classes import MarketSignal, RiskMode
     from shared.streaming.trading_state import TradingStatePublisher
 
@@ -178,7 +178,7 @@ def test_provider_reads_from_redis(redis_client, sample_market_context):
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
 def test_provider_caches_context(redis_client, sample_market_context):
     """Test LLMContextProvider caches context and respects TTL."""
-    from services.trading.llm_context_provider import LLMContextProvider
+    from shared.llm.context_provider import LLMContextProvider
     from shared.streaming.trading_state import TradingStatePublisher
 
     os.environ["TRADING_STATE_KEY_SUFFIX"] = "test"
@@ -218,7 +218,7 @@ def test_provider_caches_context(redis_client, sample_market_context):
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
 def test_provider_force_refresh(redis_client, sample_market_context):
     """Test force_refresh bypasses cache."""
-    from services.trading.llm_context_provider import LLMContextProvider
+    from shared.llm.context_provider import LLMContextProvider
     from shared.llm.data_classes import MarketSignal
     from shared.streaming.trading_state import TradingStatePublisher
 
@@ -270,8 +270,8 @@ async def test_end_to_end_publisher_to_provider():
     This test mocks UnifiedMarketAnalyzer to avoid LLM API calls but tests
     the full serialization/Redis/deserialization pipeline.
     """
-    from services.trading.llm_context_provider import LLMContextProvider
-    from services.trading.llm_context_publisher import LLMContextPublisher
+    from shared.llm.context_provider import LLMContextProvider
+    from shared.llm.context_publisher import LLMContextPublisher
     from shared.llm.data_classes import MarketAnalysis, MarketSignal, RiskMode
     from shared.streaming.trading_state import TradingStatePublisher
 
@@ -289,7 +289,7 @@ async def test_end_to_end_publisher_to_provider():
             key_points=["Tech sector strength", "Low risk environment"],
         )
 
-        with patch("services.trading.llm_context_publisher.UnifiedMarketAnalyzer") as MockAnalyzer:
+        with patch("shared.llm.context_publisher.UnifiedMarketAnalyzer") as MockAnalyzer:
             # Setup mock
             mock_instance = MockAnalyzer.return_value
             mock_instance.run_analysis.return_value = mock_analysis
@@ -332,7 +332,7 @@ async def test_end_to_end_publisher_to_provider():
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
 def test_provider_handles_missing_data(redis_client):
     """Test provider returns None when no data exists in Redis."""
-    from services.trading.llm_context_provider import LLMContextProvider
+    from shared.llm.context_provider import LLMContextProvider
 
     os.environ["TRADING_STATE_KEY_SUFFIX"] = "test"
 
@@ -353,7 +353,7 @@ def test_provider_handles_missing_data(redis_client):
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
 def test_provider_handles_corrupted_data(redis_client):
     """Test provider gracefully handles corrupted JSON in Redis."""
-    from services.trading.llm_context_provider import LLMContextProvider
+    from shared.llm.context_provider import LLMContextProvider
 
     os.environ["TRADING_STATE_KEY_SUFFIX"] = "test"
 
@@ -375,7 +375,7 @@ def test_provider_handles_corrupted_data(redis_client):
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
 def test_provider_handles_invalid_enum_values(redis_client):
     """Test provider handles invalid enum values in MarketContext data."""
-    from services.trading.llm_context_provider import LLMContextProvider
+    from shared.llm.context_provider import LLMContextProvider
 
     os.environ["TRADING_STATE_KEY_SUFFIX"] = "test"
 
@@ -408,9 +408,9 @@ def test_provider_handles_invalid_enum_values(redis_client):
 @pytest.mark.asyncio
 async def test_publisher_handles_analyzer_failure():
     """Test LLMContextPublisher returns None when analyzer fails."""
-    from services.trading.llm_context_publisher import LLMContextPublisher
+    from shared.llm.context_publisher import LLMContextPublisher
 
-    with patch("services.trading.llm_context_publisher.UnifiedMarketAnalyzer") as MockAnalyzer:
+    with patch("shared.llm.context_publisher.UnifiedMarketAnalyzer") as MockAnalyzer:
         # Setup mock to raise exception
         mock_instance = MockAnalyzer.return_value
         mock_instance.run_analysis.side_effect = Exception("API failure")
@@ -430,7 +430,7 @@ async def test_publisher_handles_analyzer_failure():
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
 def test_provider_clear_cache(redis_client, sample_market_context):
     """Test provider cache can be manually cleared."""
-    from services.trading.llm_context_provider import LLMContextProvider
+    from shared.llm.context_provider import LLMContextProvider
     from shared.streaming.trading_state import TradingStatePublisher
 
     os.environ["TRADING_STATE_KEY_SUFFIX"] = "test"
@@ -469,7 +469,7 @@ def test_provider_clear_cache(redis_client, sample_market_context):
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
 def test_provider_cache_age_tracking(redis_client, sample_market_context):
     """Test provider accurately tracks cache age."""
-    from services.trading.llm_context_provider import LLMContextProvider
+    from shared.llm.context_provider import LLMContextProvider
     from shared.streaming.trading_state import TradingStatePublisher
 
     os.environ["TRADING_STATE_KEY_SUFFIX"] = "test"
@@ -579,7 +579,7 @@ def test_strategy_manager_gets_market_context(redis_client, sample_market_contex
 
     This test verifies that the integration into StrategyManager works correctly.
     """
-    from services.trading.llm_context_provider import LLMContextProvider
+    from shared.llm.context_provider import LLMContextProvider
     from shared.streaming.trading_state import TradingStatePublisher
 
     os.environ["TRADING_STATE_KEY_SUFFIX"] = "test"
@@ -620,7 +620,7 @@ def test_strategy_continues_without_llm_context(redis_client):
     This verifies graceful degradation: strategies should continue operating
     even when market_context is None.
     """
-    from services.trading.llm_context_provider import LLMContextProvider
+    from shared.llm.context_provider import LLMContextProvider
 
     os.environ["TRADING_STATE_KEY_SUFFIX"] = "test"
 

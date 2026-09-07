@@ -6,7 +6,7 @@ Both indicator-context paths converge on it:
 
 * legacy/live — ``IndicatorResult.flat_latest()`` derives its keys from
   ``flat_key`` and the streaming payload assembly
-  (``services/trading/indicator_queries.py``) publishes the same names;
+  (``shared/indicators/streaming/queries.py``) publishes the same names;
 * builder — the evaluator columns are user-scoped ``alias.output``, but every
   canonical/scalar consumer (cache panel, ``flat_latest``) uses ``flat_key``.
 
@@ -24,7 +24,7 @@ from shared.indicators.engine.spec import flat_key
 
 # The shared vocabulary: every (indicator_id, output) whose flat key is
 # consumed by BOTH paths (live streaming payload literals in
-# services/trading/indicator_queries.py AND the builder catalog /
+# shared/indicators/streaming/queries.py AND the builder catalog /
 # flat_latest()). Values are the exact live payload key strings.
 _SHARED_VOCABULARY_PINS: dict[tuple[str, str], str] = {
     ("bollinger", "upper"): "bb_upper",

@@ -18,7 +18,7 @@ found to be either non-standard or outright defective across the runtime and
 regime paths:
 
     * ``ADXCalculator``            -- textbook Wilder-smoothed ADX. The runtime
-      ``services/trading/indicator_calculations._calc_adx`` is already correct
+      ``shared.indicators.streaming.calculations._calc_adx`` is already correct
       Wilder ADX; ``shared/regime/adaptive_detector._calc_adx`` is NOT -- it
       returns a single, SMA-smoothed DX (no directional-movement rule, no final
       DX smoothing). This class is the correct implementation the detector should
@@ -89,7 +89,7 @@ def wilder_rma(values: np.ndarray, period: int) -> np.ndarray:
     original form (Wilder 1978) yields identical DI values.
 
     This matches the smoothing used by the (correct) runtime ADX in
-    ``services/trading/indicator_calculations._calc_adx``.
+    ``shared.indicators.streaming.calculations._calc_adx``.
 
     Args:
         values: 1-D float array.

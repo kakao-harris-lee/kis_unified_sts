@@ -35,10 +35,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-# 대상 구현 (읽기/임포트 전용 — 수정 금지)
-from services.trading.indicator_calculations import IndicatorCalculationMixin
-from services.trading.indicator_candles import Candle
 from shared.indicators.momentum import RSICalculator, StochasticCalculator
+
+# 대상 구현 (읽기/임포트 전용 — 수정 금지)
+from shared.indicators.streaming.calculations import IndicatorCalculationMixin
+from shared.indicators.streaming.candles import Candle
 from shared.regime.adaptive_detector import AdaptiveRegimeDetector
 
 pytestmark = pytest.mark.unit
@@ -198,7 +199,7 @@ def test_rsi_runtime_uses_wilder_smoothing(
 ) -> None:
     """런타임 RSI 가 Wilder EMA(shared 표준)로 수렴했음을 스냅샷으로 고정 (M2).
 
-    ``services.trading.indicator_calculations._calc_rsi`` 는 이제 최근
+    ``shared.indicators.streaming.calculations._calc_rsi`` 는 이제 최근
     rsi_period 개 delta 의 SMA 가 아니라, first-delta 로 seed 한 뒤 전체 시계열에
     Wilder 재귀(alpha=1/period, adjust=False)를 적용한다 — shared RSICalculator 와
     동일 규약. 과거 rolling-SMA 값(60.198576)에서 47.099143 으로 이동했다.
@@ -251,7 +252,7 @@ def test_stochastic_key_schemas_coexist(
     """런타임 ``stoch_k``/``stoch_d`` 와 shared ``sto_k``/``sto_d`` 가 공존함을 명시.
 
     왜 다른가: 두 구현이 독립적으로 작성되며 서로 다른 키 규약을 채택했다.
-    실제로 ``services/trading/indicator_queries.py`` 는 한 파일 안에서
+    실제로 ``shared/indicators/streaming/queries.py`` 는 한 파일 안에서
     ``stoch_k``/``stoch_d`` (런타임 계산 경로)와 ``sto_k``/``sto_d`` (shared
     momentum 경로)를 **둘 다** 사용한다 — SoT 통합의 핵심 리스크 포인트.
     """

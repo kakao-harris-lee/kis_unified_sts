@@ -126,7 +126,7 @@ class TestIndicatorEngineHighPeriodWiring:
 
     def test_high_period_read_from_strategy_config(self):
         """Indicator engine init loop should read breakout_period from entry config."""
-        from services.trading.indicator_engine import StreamingIndicatorEngine
+        from shared.indicators.streaming.engine import StreamingIndicatorEngine
 
         # Simulate the config-reading loop from orchestrator.__init__
         bb_period, bb_std, rsi_period, high_period = 20, 2.0, 14, 5
@@ -158,7 +158,7 @@ class TestIndicatorEngineHighPeriodWiring:
 
     def test_default_high_period_when_no_breakout_config(self):
         """high_period should default to 5 when no strategy has breakout_period."""
-        from services.trading.indicator_engine import StreamingIndicatorEngine
+        from shared.indicators.streaming.engine import StreamingIndicatorEngine
 
         _bb_period, _bb_std, _rsi_period, high_period = 20, 2.0, 14, 5
 

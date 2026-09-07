@@ -37,10 +37,10 @@ import fakeredis.aioredis
 import pytest
 
 from services.stock_strategy.daemon import StockStrategyDaemon
-from services.trading.indicator_engine import StreamingIndicatorEngine
-from services.trading.strategy_manager import StrategyManager
-from services.trading.stream_consumer_feed import StreamConsumerFeed
 from shared.indicators.resolver import StreamingIndicatorResolver
+from shared.indicators.streaming.engine import StreamingIndicatorEngine
+from shared.strategy.manager import StrategyManager
+from shared.streaming.consumer_feed import StreamConsumerFeed
 
 _SYMBOL = "005930"
 # base = 2026-06-05 09:00 KST = 00:00 UTC. Ticks spread across 30 distinct

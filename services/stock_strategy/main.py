@@ -126,16 +126,16 @@ async def _build_and_run() -> int:
         StockStrategyDaemon,
     )
     from services.stock_strategy.market_risk import MarketRiskGateWiringConfig
-    from services.trading.indicator_engine import StreamingIndicatorEngine
-    from services.trading.strategy_manager import StrategyManager
-    from services.trading.stream_consumer_feed import StreamConsumerFeed
     from shared.config.loader import ConfigLoader
     from shared.indicators.contracts import IndicatorContract
     from shared.indicators.resolver import StreamingIndicatorResolver
+    from shared.indicators.streaming.engine import StreamingIndicatorEngine
     from shared.risk.market_risk_gate import MarketRiskGateConfig
     from shared.storage.config import StorageConfig
     from shared.storage.market_data_store import ParquetMarketDataStore
+    from shared.strategy.manager import StrategyManager
     from shared.streaming.client import RedisClient
+    from shared.streaming.consumer_feed import StreamConsumerFeed
     from shared.streaming.stock_bear_override import BearOverrideConfig
     from shared.streaming.stock_regime import StockRegimeConfig
     from shared.streaming.stock_signal_eval import StockSignalEvalConfig

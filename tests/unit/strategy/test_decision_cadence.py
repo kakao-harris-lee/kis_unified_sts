@@ -112,8 +112,8 @@ class _FakeStrategy:
 
 def _bare_manager(asset_class: str = "futures"):
     """Construct a StrategyManager without disk strategy loading."""
-    from services.trading.llm_context_provider import LLMContextProvider
-    from services.trading.strategy_manager import (
+    from shared.llm.context_provider import LLMContextProvider
+    from shared.strategy.manager import (
         StrategyManager,
         StrategyManagerConfig,
     )

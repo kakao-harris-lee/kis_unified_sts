@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 
-from services.trading.indicator_engine import StreamingIndicatorEngine
+from shared.indicators.streaming.engine import StreamingIndicatorEngine
 
 
 def _feed_candles(engine: StreamingIndicatorEngine, symbol: str, prices: list[float]):

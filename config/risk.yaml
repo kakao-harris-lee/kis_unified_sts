@@ -49,7 +49,7 @@ risk:
   # — 5+5+1=11. 이 값은 활성 전략 구성이 바뀌면 같이 재측정해야 한다(자동
   # 동기화 없음). 이 11은 FUTURES_TRADING_STRATEGY 가 비어있다고 가정한다
   # (docker-compose.yml:166 기본값 빈 문자열 ⇒ StrategyManager가 enabled:true인
-  # 선물 전략 전부를 로드— services/trading/strategy_manager.py:309-325); 그
+  # 선물 전략 전부를 로드— shared/strategy/manager.py:309-325); 그
   # 변수로 전략을 하나로 고정하면 모놀리식 캡은 그 전략 하나의 max_positions로
   # 줄어든다. max_total_positions 은 이번 동등성 범위 밖 — 손대지 않음.
   concurrent_positions:

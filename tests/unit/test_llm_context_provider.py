@@ -1,4 +1,4 @@
-"""Unit tests for services/trading/llm_context_provider.py
+"""Unit tests for shared/llm/context_provider.py
 
 Tests cache behavior, TTL expiration, Redis integration, and graceful
 degradation of LLMContextProvider.
@@ -11,7 +11,7 @@ from datetime import datetime
 from threading import Thread
 from unittest.mock import Mock, patch
 
-from services.trading.llm_context_provider import (
+from shared.llm.context_provider import (
     DEFAULT_CACHE_TTL_SECONDS,
     LLMContextProvider,
 )
@@ -80,7 +80,7 @@ class TestLLMContextProviderInit:
 class TestLLMContextProviderCache:
     """Test cache hit/miss/staleness logic."""
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_cache_miss_on_first_call(self, mock_reader_cls):
         """First get_context() call reads from Redis (cache miss)."""
         mock_context = _make_market_context()
@@ -94,7 +94,7 @@ class TestLLMContextProviderCache:
         assert result == mock_context
         mock_reader.get_market_context.assert_called_once()
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_cache_hit_on_second_call(self, mock_reader_cls):
         """Second get_context() within TTL returns cached value (no Redis call)."""
         mock_context = _make_market_context()
@@ -114,7 +114,7 @@ class TestLLMContextProviderCache:
         assert result2 == mock_context
         assert mock_reader.get_market_context.call_count == 1  # Still 1, not 2
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_cache_miss_after_ttl_expiration(self, mock_reader_cls):
         """get_context() after TTL expiry refreshes from Redis."""
         mock_context1 = _make_market_context(regime="BULL_STRONG")
@@ -139,7 +139,7 @@ class TestLLMContextProviderCache:
         assert result2.regime == "BEAR_MODERATE"
         assert mock_reader.get_market_context.call_count == 2
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_force_refresh_bypasses_cache(self, mock_reader_cls):
         """force_refresh=True bypasses cache even if fresh."""
         mock_context1 = _make_market_context(regime="BULL_STRONG")
@@ -159,7 +159,7 @@ class TestLLMContextProviderCache:
         assert result2.regime == "SIDEWAYS"
         assert mock_reader.get_market_context.call_count == 2
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_cache_updates_timestamp_on_refresh(self, mock_reader_cls):
         """Cache timestamp is updated after refresh."""
         mock_context = _make_market_context()
@@ -188,7 +188,7 @@ class TestLLMContextProviderCache:
 class TestLLMContextProviderGracefulDegradation:
     """Test graceful handling of Redis failures and missing data."""
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_redis_failure_returns_none(self, mock_reader_cls):
         """Redis connection error returns None instead of raising."""
         mock_reader = Mock()
@@ -201,7 +201,7 @@ class TestLLMContextProviderGracefulDegradation:
         assert result is None
         mock_reader.get_market_context.assert_called_once()
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_redis_returns_none(self, mock_reader_cls):
         """Redis returns None (no data) → provider returns None."""
         mock_reader = Mock()
@@ -213,7 +213,7 @@ class TestLLMContextProviderGracefulDegradation:
 
         assert result is None
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_redis_exception_returns_none(self, mock_reader_cls):
         """Any exception during Redis read returns None gracefully."""
         mock_reader = Mock()
@@ -225,7 +225,7 @@ class TestLLMContextProviderGracefulDegradation:
 
         assert result is None
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_cached_none_is_not_reused(self, mock_reader_cls):
         """Cached None is treated as stale → retries Redis on next call."""
         mock_context = _make_market_context()
@@ -254,7 +254,7 @@ class TestLLMContextProviderGracefulDegradation:
 class TestLLMContextProviderHelpers:
     """Test helper methods: clear_cache, get_cache_age."""
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_clear_cache(self, mock_reader_cls):
         """clear_cache() resets cached context and timestamp."""
         mock_context = _make_market_context()
@@ -273,7 +273,7 @@ class TestLLMContextProviderHelpers:
         assert provider._cached_context is None
         assert provider._cache_timestamp == 0.0
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_clear_cache_forces_refresh(self, mock_reader_cls):
         """After clear_cache(), next get_context() reads from Redis."""
         mock_context1 = _make_market_context(regime="BULL_STRONG")
@@ -296,13 +296,13 @@ class TestLLMContextProviderHelpers:
         assert result2.regime == "SIDEWAYS"
         assert mock_reader.get_market_context.call_count == 2
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_get_cache_age_empty_cache(self, mock_reader_cls):
         """get_cache_age() returns None when cache is empty."""
         provider = LLMContextProvider("stock")
         assert provider.get_cache_age() is None
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_get_cache_age_returns_elapsed_time(self, mock_reader_cls):
         """get_cache_age() returns elapsed seconds since cache was populated."""
         mock_context = _make_market_context()
@@ -319,7 +319,7 @@ class TestLLMContextProviderHelpers:
         assert age is not None
         assert 0.1 <= age <= 0.2  # Should be ~100ms
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_get_cache_age_after_clear(self, mock_reader_cls):
         """get_cache_age() returns None after clear_cache()."""
         mock_context = _make_market_context()
@@ -344,7 +344,7 @@ class TestLLMContextProviderHelpers:
 class TestLLMContextProviderThreadSafety:
     """Test thread-safe cache access."""
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_concurrent_access_does_not_corrupt_cache(self, mock_reader_cls):
         """Multiple threads accessing get_context() don't corrupt cache."""
         mock_context = _make_market_context()
@@ -373,7 +373,7 @@ class TestLLMContextProviderThreadSafety:
         # (others should use cache or wait)
         assert mock_reader.get_market_context.call_count >= 1
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_concurrent_clear_and_get(self, mock_reader_cls):
         """Concurrent clear_cache() and get_context() don't deadlock."""
         mock_context = _make_market_context()
@@ -411,7 +411,7 @@ class TestLLMContextProviderThreadSafety:
 class TestLLMContextProviderIntegration:
     """Integration-style tests with realistic scenarios."""
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_typical_usage_pattern(self, mock_reader_cls):
         """Simulate typical usage: periodic reads with occasional force refresh."""
         contexts = [
@@ -447,7 +447,7 @@ class TestLLMContextProviderIntegration:
         assert ctx4.regime == "BEAR_MODERATE"
         assert mock_reader.get_market_context.call_count == 3
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_recovery_after_redis_failure(self, mock_reader_cls):
         """Provider recovers after Redis failure."""
         mock_context = _make_market_context()
@@ -470,7 +470,7 @@ class TestLLMContextProviderIntegration:
         assert result2 == mock_context
         assert result2.regime == "BULL_STRONG"
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_lazy_reader_initialization(self, mock_reader_cls):
         """TradingStateReader is lazily initialized on first use."""
         provider = LLMContextProvider("stock")
@@ -495,7 +495,7 @@ class TestLLMContextProviderIntegration:
 class TestLLMContextProviderEdgeCases:
     """Test edge cases and boundary conditions."""
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_zero_ttl_always_refreshes(self, mock_reader_cls):
         """TTL=0 means cache is always stale → always refresh."""
         contexts = [
@@ -518,7 +518,7 @@ class TestLLMContextProviderEdgeCases:
         assert ctx3.regime == "SIDEWAYS"
         assert mock_reader.get_market_context.call_count == 3
 
-    @patch("services.trading.llm_context_provider.TradingStateReader")
+    @patch("shared.llm.context_provider.TradingStateReader")
     def test_very_long_ttl_caches_indefinitely(self, mock_reader_cls):
         """Very long TTL means cache is effectively permanent."""
         mock_context = _make_market_context()

@@ -46,7 +46,7 @@ async def run_once(mode: str) -> int:
 
     _ensure_shadow_isolation(mode)
 
-    from services.trading.llm_context_publisher import LLMContextPublisher
+    from shared.llm.context_publisher import LLMContextPublisher
 
     publisher = LLMContextPublisher("stock")
     context = await publisher.run_analysis()

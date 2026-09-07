@@ -75,7 +75,6 @@ from services.trading.signals_all_runtime import (
     build_signals_all_row,
 )
 from services.trading.startup_sequence import run_trading_startup_sequence
-from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
 from shared.config.loader import ConfigLoader
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.exceptions import (
@@ -107,6 +106,7 @@ from shared.risk.models import DrawdownLevel
 from shared.storage.config import StorageConfig
 from shared.storage.market_data_store import ParquetMarketDataStore
 from shared.strategy.base import EntryContext, MarketStateAdapter
+from shared.strategy.manager import StrategyManager, StrategyManagerConfig
 from shared.strategy.market_time import now_kst as _now_kst
 from shared.streaming.candle_warmup import StockPrewarmConfig, warmup_engine
 from shared.utils.calc import calc_order_quantity
@@ -864,7 +864,7 @@ class TradingOrchestrator:
                 return
 
             # Initialize publisher
-            from services.trading.llm_context_publisher import LLMContextPublisher
+            from shared.llm.context_publisher import LLMContextPublisher
 
             self._llm_context_publisher = LLMContextPublisher(
                 asset_class=self.config.asset_class
@@ -987,7 +987,7 @@ class TradingOrchestrator:
         """Initialize Streaming Indicator Engine"""
         self._indicator_resolver = None
         try:
-            from services.trading.indicator_engine import StreamingIndicatorEngine
+            from shared.indicators.streaming.engine import StreamingIndicatorEngine
 
             # Read indicator params from strategy entry configs
             bb_period, bb_std, rsi_period, high_period = 20, 2.0, 14, 5

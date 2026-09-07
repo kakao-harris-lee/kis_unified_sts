@@ -4,7 +4,7 @@
 The entire bb_reversion_15m productionizing effort (and the robust-gate
 result that motivates it) rests on ONE unproven assumption: the 15-minute
 bars produced by the *live* orchestrator path
-(`MultiTimeframeCandleAccumulator`, services/trading/indicator_engine.py)
+(`MultiTimeframeCandleAccumulator`, shared/indicators/streaming/engine.py)
 are equivalent to the offline 1m→15m pandas resample the probe used
 (`scripts/probe_bb_reversion_15m_gate.py::_resample_15m`) — the bars that
 actually passed the re-scoped robust gate.
@@ -40,7 +40,7 @@ import pandas as pd
 from optimize_llm_directed_indicator import _CSV_KW
 from probe_bb_reversion_15m_gate import _resample_15m
 
-from services.trading.indicator_engine import (
+from shared.indicators.streaming.engine import (
     Candle,
     MultiTimeframeCandleAccumulator,
 )

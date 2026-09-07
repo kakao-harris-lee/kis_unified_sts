@@ -33,7 +33,7 @@ import pytest
 def test_get_indicators_handles_naive_last_tick_ts_with_aware_now():
     """Legacy on_tick path may have left a naive last_tick_ts; querying with
     a tz-aware ``now`` argument used to raise inside the staleness guard."""
-    from services.trading.indicator_engine import (
+    from shared.indicators.streaming.engine import (
         CandleAccumulator,
         StreamingIndicatorEngine,
     )
@@ -41,7 +41,7 @@ def test_get_indicators_handles_naive_last_tick_ts_with_aware_now():
     engine = StreamingIndicatorEngine(bb_period=2, staleness_seconds=10)
     acc = CandleAccumulator(maxlen=10)
     # Two candles to clear the bb_period gate
-    from services.trading.indicator_engine import Candle as _Candle
+    from shared.indicators.streaming.engine import Candle as _Candle
 
     acc.candles.append(
         _Candle(open=100.0, high=100.0, low=100.0, close=100.0, volume=1.0, minute=900)
@@ -60,14 +60,14 @@ def test_get_indicators_handles_naive_last_tick_ts_with_aware_now():
 def test_get_indicators_handles_aware_last_tick_ts_with_naive_now():
     """Reverse direction: WebSocket ts is now tz-aware UTC; some legacy
     callers might still pass naive ``now``."""
-    from services.trading.indicator_engine import (
+    from shared.indicators.streaming.engine import (
         CandleAccumulator,
         StreamingIndicatorEngine,
     )
 
     engine = StreamingIndicatorEngine(bb_period=2, staleness_seconds=10)
     acc = CandleAccumulator(maxlen=10)
-    from services.trading.indicator_engine import Candle as _Candle
+    from shared.indicators.streaming.engine import Candle as _Candle
 
     acc.candles.append(
         _Candle(open=100.0, high=100.0, low=100.0, close=100.0, volume=1.0, minute=900)

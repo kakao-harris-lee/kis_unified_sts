@@ -1354,7 +1354,7 @@ class TestSetupAConfidenceCap:
         floor above the base range fails loudly instead of silently turning the
         multiplier into an admission lever.
         """
-        from services.trading.strategy_manager import StrategyManagerConfig
+        from shared.strategy.manager import StrategyManagerConfig
 
         floor = StrategyManagerConfig().min_confidence
 

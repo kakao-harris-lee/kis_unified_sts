@@ -23,7 +23,7 @@ def _market_context_rows(db_path):
 
 
 def test_redis_published_and_history_appended(monkeypatch, tmp_path):
-    from services.trading import llm_context_publisher as mod
+    from shared.llm import context_publisher as mod
 
     db_path = tmp_path / "runtime.db"
     _configure_runtime_ledger(monkeypatch, db_path)
@@ -61,7 +61,7 @@ def test_redis_published_and_history_appended(monkeypatch, tmp_path):
 
 
 def test_runtime_ledger_failure_does_not_break_redis(monkeypatch):
-    from services.trading import llm_context_publisher as mod
+    from shared.llm import context_publisher as mod
 
     redis_calls = []
 
@@ -89,7 +89,7 @@ def test_runtime_ledger_failure_does_not_break_redis(monkeypatch):
 
 
 def test_history_appended_even_if_redis_publish_raises(monkeypatch, tmp_path):
-    from services.trading import llm_context_publisher as mod
+    from shared.llm import context_publisher as mod
 
     db_path = tmp_path / "runtime.db"
     _configure_runtime_ledger(monkeypatch, db_path)
@@ -111,7 +111,7 @@ def test_history_appended_even_if_redis_publish_raises(monkeypatch, tmp_path):
 
 
 def test_external_mirror_is_not_used(monkeypatch, tmp_path):
-    from services.trading import llm_context_publisher as mod
+    from shared.llm import context_publisher as mod
 
     db_path = tmp_path / "runtime.db"
     _configure_runtime_ledger(monkeypatch, db_path)

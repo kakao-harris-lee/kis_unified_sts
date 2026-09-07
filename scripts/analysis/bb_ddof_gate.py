@@ -31,7 +31,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
-import services.trading.indicator_calculations as icalc
+import shared.indicators.streaming.calculations as icalc
 from shared.backtest.experiment_runner import (
     ExperimentSpec,
     ExperimentStrategy,

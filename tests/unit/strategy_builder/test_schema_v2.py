@@ -174,8 +174,8 @@ def test_window_cap_single_source_matches_live_runtime_default() -> None:
     backtest/live parity guarantee silently breaks."""
     import inspect
 
-    from services.trading.indicator_engine import StreamingIndicatorEngine
     from shared.indicators.constants import LIVE_CANDLE_HISTORY_MAXLEN
+    from shared.indicators.streaming.engine import StreamingIndicatorEngine
 
     signature = inspect.signature(StreamingIndicatorEngine.__init__)
     assert signature.parameters["candle_maxlen"].default == LIVE_CANDLE_HISTORY_MAXLEN

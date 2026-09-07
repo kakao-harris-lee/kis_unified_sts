@@ -29,7 +29,7 @@ model: sonnet
 
 ## 참조 구조
 - 런타임 루프: `services/trading/orchestrator.py`, `strategy_manager.py`
-- 지표 엔진: `services/trading/indicator_engine.py`, `shared/indicators/`
+- 지표 엔진: `shared/indicators/streaming/engine.py`, `shared/indicators/`
 - look-ahead: `shared/backtest/lookahead_guard.py`
 - 데이터 경로: `services/trading/data_provider.py`, `pipeline.py`, `shared/collector/`
 - rate limiter: `shared/execution/rate_limiter.py`
