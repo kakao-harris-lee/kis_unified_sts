@@ -17,14 +17,30 @@ receipt of an already-decided decision; it does not decide.
 :meth:`IntentRegistry.consume` performs exactly **one** ``append_cas`` whose
 success (or ``DUPLICATE_COMMAND_ID``/``COMMAND_BYTES_MISMATCH`` refusal) *is*
 the consumption outcome — the entry's ``command_id`` is content-addressed as
-``f"iap-consumption:{decision_id}"`` (:func:`_consumption_command_id`), fixed
-per decision regardless of who calls ``consume`` or how many times. A second
-consumption attempt against the same decision therefore collides on the log's
-own ``entries.command_id`` ``UNIQUE`` constraint — enforced by
-:class:`~tos_runtime.rcl.log.SqliteCommitLog` itself, not by an in-memory
-flag this class holds — so a freshly re-created :class:`IntentRegistry` over
-the SAME log (a simulated restart) refuses the second consumption identically
-to the still-running first instance would have.
+``f"iap-consumption:{request_id}:{decision_generation}:{decision_id}"``
+(:func:`_consumption_command_id`), fixed per decision regardless of who
+calls ``consume`` or how many times (the ``request_id``/``decision_generation``
+prefix is what lets :meth:`IntentRegistry.decision_current` derive
+proposal-scoped supersession from the log with no payload readback — see
+that method's own docstring). A second consumption attempt against the same
+decision therefore collides on the log's own ``entries.command_id``
+``UNIQUE`` constraint — enforced by :class:`~tos_runtime.rcl.log.SqliteCommitLog`
+itself, not by an in-memory flag this class holds — so a freshly re-created
+:class:`IntentRegistry` over the SAME log (a simulated restart) refuses the
+second consumption identically to the still-running first instance would
+have.
+
+**Decision currency has no kernel predicate (2026-09-08).**
+``tos.iap.predicates.approval_decision``/``tos.iap.state.consumption_transition``
+both take ``decision_current``/``generation_current`` as an **injected**
+``bool | None`` — ADR-002-023 §12 item 2 names "current governed policy
+generations" as a required fact but no ``tos.iap`` function computes it.
+:meth:`IntentRegistry.decision_current` is therefore this module's own input
+collection, not a kernel call: it authors exactly one comparison (equality
+of the decision's ``trading_approval_policy_generation`` against the
+registry's configured, currently-loaded value) plus one log-derived
+supersession check (a later-generation decision for the same proposal
+already consumed) — never anything more permissive than those two facts.
 
 **Reported ``CommandType`` gap (slice plan §5).** No member of the closed
 ``tos.rcl.vocabulary.CommandType`` vocabulary names "consume an Independent
@@ -41,6 +57,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,7 +80,7 @@ from tos.iap import (
 from tos.rcl import AppendReceipt, AppendRefusal, CommandType, CommitEntry
 
 from tos_runtime.custody.file_custody import verify_file_mode_and_owner
-from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.log import SqliteCommitLog, StaleEpochRead
 
 __all__ = [
     "ConsumeResult",
@@ -84,9 +101,27 @@ _EVIDENCE_KIND_DECISION = "IAP_DECISION_REGISTERED"
 _EVIDENCE_KIND_CONSUMPTION = "IAP_CONSUMPTION"
 
 
-def _consumption_command_id(decision_id: str) -> str:
-    """The content-addressed, log-visible id one decision's consumption commits under."""
-    return f"{_CONSUMPTION_PREFIX}:{decision_id}"
+def _consumption_command_id(decision: IndependentApprovalDecision) -> str:
+    """The content-addressed, log-visible id one decision's consumption commits under.
+
+    Encodes ``(request_id, decision_generation, decision_id)`` — never merely
+    ``decision_id`` — so :meth:`IntentRegistry.decision_current` can derive
+    proposal-scoped supersession purely from log-visible ``command_id``
+    strings (that method's own docstring), with no payload readback. A blank
+    ``request_id`` still yields a stable, decision-unique id (the
+    ``decision_generation``/``decision_id`` suffix alone is already unique
+    per decision) — it only forfeits proposal-scoped grouping, which
+    :meth:`IntentRegistry.decision_current` handles by returning ``None``
+    (undetermined) rather than risk grouping unrelated decisions under a
+    shared blank request id.
+    """
+    generation = (
+        decision.decision_generation if decision.decision_generation is not None else 0
+    )
+    return (
+        f"{_CONSUMPTION_PREFIX}:{decision.request_id or ''}:"
+        f"{generation}:{decision.decision_id or ''}"
+    )
 
 
 class OperatorApprovalFileError(RuntimeError):
@@ -253,6 +288,7 @@ class IntentRegistry:
         evidence: Any,
         *,
         writer_epoch: int,
+        trading_approval_policy_generation: int,
         canonicalization_version: str = EV_L1_PROVISIONAL_VERSION,
     ) -> None:
         """Compose the registry over its injected ports.
@@ -264,6 +300,13 @@ class IntentRegistry:
                 domain-labelled records are committed through.
             writer_epoch: The RCL Writer Epoch this instance's ``append_cas``
                 calls are fenced under.
+            trading_approval_policy_generation: The currently-loaded
+                :class:`~tos.iap.TradingApprovalPolicy`'s own
+                ``policy_generation`` (:func:`~tos_runtime.authority.epoch.load_authority_config`'s
+                ``trading_approval_policy_generation`` key — null refuses to
+                start; module docstring's "decision currency" section).
+                :meth:`decision_current` compares a decision's own
+                ``trading_approval_policy_generation`` against this value.
             canonicalization_version: The registered ``tos.canonical`` scheme
                 version used to digest every issued
                 :class:`~tos.iap.ApprovalConsumptionRecord`.
@@ -271,6 +314,7 @@ class IntentRegistry:
         self._log = log
         self._evidence = evidence
         self._writer_epoch = writer_epoch
+        self._trading_approval_policy_generation = trading_approval_policy_generation
         self._scheme: CanonicalizationScheme = get_scheme(canonicalization_version)
 
     def propose(
@@ -309,10 +353,10 @@ class IntentRegistry:
         return decision
 
     def _current_consumption(
-        self, decision_id: str
+        self, decision: IndependentApprovalDecision
     ) -> tuple[ConsumptionStatus, str | None, str | None]:
         """Derive ``(status, prior_command_identity, prior_command_digest)`` from the log."""
-        entry_command_id = _consumption_command_id(decision_id)
+        entry_command_id = _consumption_command_id(decision)
         view = self._log.read_linearizable(writer_epoch=self._writer_epoch)
         for entry in view.entries:
             if entry.kind is _CONSUMPTION_KIND and entry.command_id == entry_command_id:
@@ -322,6 +366,69 @@ class IntentRegistry:
                     entry.command_digest,
                 )
         return ConsumptionStatus.ELIGIBLE, None, None
+
+    def decision_current(self, decision: IndependentApprovalDecision) -> bool | None:
+        """Whether ``decision`` is current (module docstring's "decision
+        currency has no kernel predicate" section; ADR-002-023 §12 item 2).
+
+        The runtime's own input collection — exactly two checks, no more:
+
+        1. **Equality of generation identifiers** (the only comparison
+           authored here): ``decision.trading_approval_policy_generation``
+           must equal this registry's configured, currently-loaded
+           :class:`~tos.iap.TradingApprovalPolicy` generation.
+        2. **Log-derived proposal-scoped supersession**: no later-generation
+           decision for the SAME ``request_id`` has already been consumed
+           (a durable, restart-surviving check — supersession is detected
+           only once a newer decision has itself been consumed, since a mere
+           :meth:`approve` registration is evidence-only, not RCL-committed;
+           this is a real, documented limitation, not hidden).
+
+        Args:
+            decision: The decision to check.
+
+        Returns:
+            ``True`` only when both checks pass. ``False`` when the policy
+            generation mismatches, or a later decision for the same proposal
+            was already consumed. ``None`` when the decision carries no
+            ``trading_approval_policy_generation`` at all, when it carries no
+            ``request_id``/``decision_generation`` (proposal-scoped
+            supersession is then undeterminable — never assumed clear), or
+            when the log itself could not be read (stale epoch / unreachable
+            — genuinely unknown, never coerced to ``True`` or ``False``).
+        """
+        if decision.trading_approval_policy_generation is None:
+            return None
+        if (
+            decision.trading_approval_policy_generation
+            != self._trading_approval_policy_generation
+        ):
+            return False
+        if decision.request_id is None or decision.decision_generation is None:
+            # Proposal-scoped supersession cannot be grouped without a
+            # request_id, and there is no generation of THIS decision to
+            # compare a later one against — undetermined, never assumed clear.
+            return None
+        try:
+            view = self._log.read_linearizable(writer_epoch=self._writer_epoch)
+        except (StaleEpochRead, sqlite3.Error):
+            return None
+        prefix = f"{_CONSUMPTION_PREFIX}:{decision.request_id}:"
+        for entry in view.entries:
+            if entry.kind is not _CONSUMPTION_KIND or entry.command_id is None:
+                continue
+            if not entry.command_id.startswith(prefix):
+                continue
+            generation_str, _, _decision_id = entry.command_id[len(prefix) :].partition(
+                ":"
+            )
+            try:
+                other_generation = int(generation_str)
+            except ValueError:
+                continue  # malformed id from an unrelated caller — never trusted
+            if other_generation > decision.decision_generation:
+                return False
+        return True
 
     def consume(
         self,
@@ -367,7 +474,7 @@ class IntentRegistry:
             return rejection
 
         current_status, prior_identity, prior_digest = self._current_consumption(
-            decision.decision_id or ""
+            decision
         )
         predicted_status, predicted_outcome = consumption_transition(
             current_status=current_status,
@@ -457,7 +564,7 @@ class IntentRegistry:
         by this extraction)."""
         record = ApprovalConsumptionRecord.issue(
             scheme=self._scheme,
-            consumption_record_id=_consumption_command_id(decision.decision_id or ""),
+            consumption_record_id=_consumption_command_id(decision),
             consumption_generation=decision.decision_generation or 1,
             decision_id=decision.decision_id,
             decision_digest=decision.canonical_digest,

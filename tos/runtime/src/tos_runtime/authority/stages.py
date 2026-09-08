@@ -67,8 +67,8 @@ class IndependentApprovalStage:
         decision_provider: DecisionProvider,
         command_identity_provider: CommandFieldProvider,
         command_digest_provider: CommandFieldProvider,
-        decision_current_provider: BoolFieldProvider,
         envelope_equivalent_provider: BoolFieldProvider,
+        decision_current_provider: BoolFieldProvider | None = None,
     ) -> None:
         """Configure the stage.
 
@@ -80,17 +80,25 @@ class IndependentApprovalStage:
             command_identity_provider: The consuming command's own identity,
                 given the request and its resolved decision.
             command_digest_provider: The consuming command's canonical digest.
-            decision_current_provider: Whether the decision is current/
-                unexpired/unrevoked (``None``/``False`` => not consumable).
             envelope_equivalent_provider: Whether the approved-Intent envelope
                 is byte-for-byte equivalent (``None``/``False`` => not
                 consumable).
+            decision_current_provider: Whether the decision is current/
+                unexpired/unrevoked (``None``/``False`` => not consumable).
+                Defaults to ``registry.decision_current`` (2026-09-08 — the
+                composition root need not supply a lambda; see
+                :meth:`~tos_runtime.authority.iap.IntentRegistry.decision_current`'s
+                own docstring for exactly what it checks).
         """
         self._registry = registry
         self._decision_provider = decision_provider
         self._command_identity_provider = command_identity_provider
         self._command_digest_provider = command_digest_provider
-        self._decision_current_provider = decision_current_provider
+        self._decision_current_provider = (
+            decision_current_provider
+            if decision_current_provider is not None
+            else (lambda _request, decision: registry.decision_current(decision))
+        )
         self._envelope_equivalent_provider = envelope_equivalent_provider
 
     def __call__(self, request: StageRequest) -> StageVerdict:

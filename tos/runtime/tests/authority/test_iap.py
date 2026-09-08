@@ -230,7 +230,12 @@ def test_double_consume_refused_across_a_recreated_registry(
     """A brand-new IntentRegistry over the SAME log (simulated restart — no
     in-memory state carried over) still refuses a second consumption of the
     same decision (IAP-INV-006; module docstring)."""
-    first_registry = IntentRegistry(log, evidence_port, writer_epoch=writer_epoch)
+    first_registry = IntentRegistry(
+        log,
+        evidence_port,
+        writer_epoch=writer_epoch,
+        trading_approval_policy_generation=1,
+    )
     decision = _decision(first_registry, approvals_dir, expected_owner_uid)
     first = first_registry.consume(
         decision,
@@ -246,7 +251,10 @@ def test_double_consume_refused_across_a_recreated_registry(
     second_log = SqliteCommitLog(log_path, evidence_port=FakeEvidenceAppendPort())
     try:
         second_registry = IntentRegistry(
-            second_log, FakeEvidenceAppendPort(), writer_epoch=writer_epoch
+            second_log,
+            FakeEvidenceAppendPort(),
+            writer_epoch=writer_epoch,
+            trading_approval_policy_generation=1,
         )
         second = second_registry.consume(
             decision,
@@ -270,3 +278,173 @@ def test_double_consume_refused_across_a_recreated_registry(
         assert replay.outcome is ConsumptionOutcome.IDEMPOTENT_REPLAY
     finally:
         second_log.close()
+
+
+# ============================================================================
+# decision_current() — input collection: policy-generation equality + a
+# log-derived proposal-scoped supersession check (no kernel predicate exists)
+# ============================================================================
+
+
+def test_decision_current_true_when_policy_generation_matches(
+    intent_registry: IntentRegistry,
+    approvals_dir: Path,
+    expected_owner_uid: int,
+    trading_approval_policy_generation: int,
+) -> None:
+    path = write_approval_file(
+        approvals_dir / "p1.yaml",
+        decision_id="d1",
+        request_id="proposal-1",
+        decision_generation=1,
+        trading_approval_policy_generation=trading_approval_policy_generation,
+    )
+    decision = load_operator_approval_file(
+        path, expected_owner_uid=expected_owner_uid, environment_label="non-live-test"
+    )
+    assert intent_registry.decision_current(decision) is True
+
+
+def test_decision_current_false_when_policy_generation_mismatches(
+    intent_registry: IntentRegistry,
+    approvals_dir: Path,
+    expected_owner_uid: int,
+    trading_approval_policy_generation: int,
+) -> None:
+    path = write_approval_file(
+        approvals_dir / "p1.yaml",
+        decision_id="d1",
+        request_id="proposal-1",
+        decision_generation=1,
+        trading_approval_policy_generation=trading_approval_policy_generation + 1,
+    )
+    decision = load_operator_approval_file(
+        path, expected_owner_uid=expected_owner_uid, environment_label="non-live-test"
+    )
+    assert intent_registry.decision_current(decision) is False
+
+
+def test_decision_current_none_when_decision_carries_no_generation(
+    intent_registry: IntentRegistry, approvals_dir: Path, expected_owner_uid: int
+) -> None:
+    path = write_approval_file(
+        approvals_dir / "p1.yaml",
+        decision_id="d1",
+        request_id="proposal-1",
+        # trading_approval_policy_generation omitted -> None
+    )
+    decision = load_operator_approval_file(
+        path, expected_owner_uid=expected_owner_uid, environment_label="non-live-test"
+    )
+    assert decision.trading_approval_policy_generation is None
+    assert intent_registry.decision_current(decision) is None
+
+
+def test_decision_current_none_when_decision_carries_no_request_id(
+    intent_registry: IntentRegistry,
+    approvals_dir: Path,
+    expected_owner_uid: int,
+    trading_approval_policy_generation: int,
+) -> None:
+    path = write_approval_file(
+        approvals_dir / "p1.yaml",
+        decision_id="d1",
+        decision_generation=1,
+        trading_approval_policy_generation=trading_approval_policy_generation,
+        # request_id omitted -> supersession undeterminable
+    )
+    decision = load_operator_approval_file(
+        path, expected_owner_uid=expected_owner_uid, environment_label="non-live-test"
+    )
+    assert decision.request_id is None
+    assert intent_registry.decision_current(decision) is None
+
+
+def test_decision_current_false_when_superseded_by_a_later_consumed_decision(
+    intent_registry: IntentRegistry,
+    approvals_dir: Path,
+    expected_owner_uid: int,
+    trading_approval_policy_generation: int,
+) -> None:
+    """A later-generation decision for the SAME proposal, already consumed,
+    supersedes an older one (§11 line 298) — detected purely from the log's
+    own command-id encoding, no payload readback (module docstring)."""
+    older_path = write_approval_file(
+        approvals_dir / "older.yaml",
+        decision_id="d-older",
+        request_id="proposal-1",
+        decision_generation=1,
+        trading_approval_policy_generation=trading_approval_policy_generation,
+    )
+    older = load_operator_approval_file(
+        older_path,
+        expected_owner_uid=expected_owner_uid,
+        environment_label="non-live-test",
+    )
+    newer_path = write_approval_file(
+        approvals_dir / "newer.yaml",
+        decision_id="d-newer",
+        request_id="proposal-1",
+        decision_generation=2,
+        trading_approval_policy_generation=trading_approval_policy_generation,
+        supersedes_decision_id="d-older",
+    )
+    newer = load_operator_approval_file(
+        newer_path,
+        expected_owner_uid=expected_owner_uid,
+        environment_label="non-live-test",
+    )
+
+    # Only the newer decision is ever consumed — the older one is never
+    # itself consumed, so its currency depends entirely on the supersession
+    # check, not on its own consumption status.
+    consumed = intent_registry.consume(
+        newer,
+        command_identity="cmd-newer",
+        command_digest="digest-newer",
+        decision_current=True,
+        approved_intent_envelope_equivalent=True,
+    )
+    assert consumed.outcome is ConsumptionOutcome.CONSUMED_NEW
+
+    assert intent_registry.decision_current(older) is False
+    assert intent_registry.decision_current(newer) is True
+
+
+def test_decision_current_true_when_not_yet_superseded_by_anything_consumed(
+    intent_registry: IntentRegistry,
+    approvals_dir: Path,
+    expected_owner_uid: int,
+    trading_approval_policy_generation: int,
+) -> None:
+    """An unrelated proposal's consumption never affects this one's currency."""
+    path = write_approval_file(
+        approvals_dir / "p1.yaml",
+        decision_id="d1",
+        request_id="proposal-1",
+        decision_generation=1,
+        trading_approval_policy_generation=trading_approval_policy_generation,
+    )
+    decision = load_operator_approval_file(
+        path, expected_owner_uid=expected_owner_uid, environment_label="non-live-test"
+    )
+    other_path = write_approval_file(
+        approvals_dir / "other.yaml",
+        decision_id="d-other",
+        request_id="proposal-OTHER",
+        decision_generation=99,
+        trading_approval_policy_generation=trading_approval_policy_generation,
+    )
+    other = load_operator_approval_file(
+        other_path,
+        expected_owner_uid=expected_owner_uid,
+        environment_label="non-live-test",
+    )
+    intent_registry.consume(
+        other,
+        command_identity="cmd-other",
+        command_digest="digest-other",
+        decision_current=True,
+        approved_intent_envelope_equivalent=True,
+    )
+    assert intent_registry.decision_current(decision) is True

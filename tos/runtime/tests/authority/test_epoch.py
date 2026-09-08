@@ -429,16 +429,38 @@ def test_witness_zero_bound_is_true_only_at_the_exact_read_instant(
 
 def test_load_authority_config_null_bound_refuses_to_start(tmp_path: Path) -> None:
     path = tmp_path / "authority.yaml"
-    path.write_text(yaml.safe_dump({"containment_bound_ms": None}))
+    path.write_text(
+        yaml.safe_dump(
+            {"containment_bound_ms": None, "trading_approval_policy_generation": 1}
+        )
+    )
+    with pytest.raises(AuthorityConfigError):
+        load_authority_config(path)
+
+
+def test_load_authority_config_null_policy_generation_refuses_to_start(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "authority.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {"containment_bound_ms": 250, "trading_approval_policy_generation": None}
+        )
+    )
     with pytest.raises(AuthorityConfigError):
         load_authority_config(path)
 
 
 def test_load_authority_config_accepts_a_positive_bound(tmp_path: Path) -> None:
     path = tmp_path / "authority.yaml"
-    path.write_text(yaml.safe_dump({"containment_bound_ms": 250}))
+    path.write_text(
+        yaml.safe_dump(
+            {"containment_bound_ms": 250, "trading_approval_policy_generation": 3}
+        )
+    )
     config = load_authority_config(path)
     assert config.containment_bound_ms == 250
+    assert config.trading_approval_policy_generation == 3
 
 
 def test_load_authority_config_rejects_missing_file(tmp_path: Path) -> None:

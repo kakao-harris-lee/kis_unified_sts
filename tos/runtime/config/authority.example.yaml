@@ -12,3 +12,15 @@
 # (tos_runtime.authority.epoch.load_authority_config raises
 # AuthorityConfigError) until a Bounds-Approver assigns a real value.
 containment_bound_ms: null
+
+# trading_approval_policy_generation: the currently-loaded
+# tos.iap.TradingApprovalPolicy's own policy_generation (spec terms = code
+# terms). tos_runtime.authority.iap.IntentRegistry.decision_current compares
+# a decision's own trading_approval_policy_generation against this value
+# (equality of generation identifiers — the only comparison authored there;
+# ADR-002-023 names "current governed policy generations" as a required
+# fact, tos.iap.predicates takes it as an injected bool, no kernel predicate
+# computes it). Not a VER-002 bound (no threshold to approve) — an
+# operational value (which policy generation is active) — but still
+# configuration, not a code constant, and still fail-closed on null.
+trading_approval_policy_generation: null

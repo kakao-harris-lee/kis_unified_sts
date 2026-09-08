@@ -176,12 +176,23 @@ def epoch_service(
 
 
 @pytest.fixture
+def trading_approval_policy_generation() -> int:
+    return 1
+
+
+@pytest.fixture
 def intent_registry(
     log: SqliteCommitLog,
     evidence_port: FakeEvidenceAppendPort,
     writer_epoch: int,
+    trading_approval_policy_generation: int,
 ) -> IntentRegistry:
-    return IntentRegistry(log, evidence_port, writer_epoch=writer_epoch)
+    return IntentRegistry(
+        log,
+        evidence_port,
+        writer_epoch=writer_epoch,
+        trading_approval_policy_generation=trading_approval_policy_generation,
+    )
 
 
 @pytest.fixture

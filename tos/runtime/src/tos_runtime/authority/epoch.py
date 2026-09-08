@@ -134,11 +134,31 @@ class AuthorityRuntimeConfig:
     ``named-TBD`` key per slice plan §5, and a configured ``null`` value is a
     fail-closed refusal to start (:func:`load_authority_config`), never a
     silent default.
+
+    ``trading_approval_policy_generation`` is the currently-loaded Trading
+    Approval Policy's own ``policy_generation`` (:class:`tos.iap.TradingApprovalPolicy`
+    field name, "spec terms = code terms") —
+    :meth:`~tos_runtime.authority.iap.IntentRegistry.decision_current` (added
+    2026-09-08) compares a decision's own
+    ``trading_approval_policy_generation`` against this value (equality of
+    generation identifiers is the ONLY comparison authored there; no kernel
+    predicate judges decision currency — ADR-002-023 §12 item 2 only NAMES
+    the fact, ``tos.iap.predicates`` takes it as an injected ``bool | None``).
+    Unlike ``containment_bound_ms`` this is not a VER-002 bound at all (no
+    threshold to approve) — it is an operational value (which policy
+    generation is currently active) — but it is still configuration, not a
+    code constant, and a ``null`` value is still a fail-closed refusal to
+    start (:func:`load_authority_config`).
     """
 
-    __slots__ = ("containment_bound_ms",)
+    __slots__ = ("containment_bound_ms", "trading_approval_policy_generation")
 
-    def __init__(self, *, containment_bound_ms: int | None) -> None:
+    def __init__(
+        self,
+        *,
+        containment_bound_ms: int | None,
+        trading_approval_policy_generation: int | None = None,
+    ) -> None:
         """Args:
         containment_bound_ms: The bound in milliseconds.
             :func:`load_authority_config` never returns an instance with
@@ -148,12 +168,32 @@ class AuthorityRuntimeConfig:
             ``containment_bound_unconfigured`` fail-closed branch (e.g. in
             tests), which is exactly why this stays ``int | None`` rather
             than a plain ``int``.
+        trading_approval_policy_generation: The currently-loaded Trading
+            Approval Policy's own generation. :func:`load_authority_config`
+            never returns an instance with this ``None`` either — a direct
+            caller MAY still omit it (default ``None``) for tests that do
+            not exercise :meth:`~tos_runtime.authority.iap.IntentRegistry.decision_current`.
         """
         self.containment_bound_ms = containment_bound_ms
+        self.trading_approval_policy_generation = trading_approval_policy_generation
 
 
 class AuthorityConfigError(RuntimeError):
     """Raised by :func:`load_authority_config` on a missing/invalid/null config."""
+
+
+def _resolve_positive_int_key(
+    raw: dict[str, Any], key: str, path: Path, *, named_tbd_note: str
+) -> int:
+    """Shared fail-closed positive-int resolution for both config keys."""
+    value = raw.get(key)
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise AuthorityConfigError(
+            f"load_authority_config: {key!r} {named_tbd_note} and must be a "
+            f"positive integer once assigned — got {value!r} at {path}; "
+            "refusing to start (fail-closed, never a silent default)"
+        )
+    return value
 
 
 def load_authority_config(path: Path) -> AuthorityRuntimeConfig:
@@ -167,9 +207,9 @@ def load_authority_config(path: Path) -> AuthorityRuntimeConfig:
 
     Raises:
         AuthorityConfigError: The file is unreadable, not YAML, not a mapping,
-            or ``containment_bound_ms`` is absent/``null``/non-positive — a
-            ``named-TBD`` bound left unresolved is a refusal to start, never a
-            silent default (module docstring; slice plan §5).
+            or either ``containment_bound_ms`` / ``trading_approval_policy_generation``
+            is absent/``null``/non-positive — an unresolved key is a refusal
+            to start, never a silent default (module docstring; slice plan §5).
     """
     try:
         raw_text = path.read_text()
@@ -188,15 +228,22 @@ def load_authority_config(path: Path) -> AuthorityRuntimeConfig:
             f"load_authority_config: {path} must parse to a mapping "
             f"(got {type(raw).__name__})"
         )
-    bound = raw.get("containment_bound_ms")
-    if not isinstance(bound, int) or isinstance(bound, bool) or bound <= 0:
-        raise AuthorityConfigError(
-            "load_authority_config: 'containment_bound_ms' is a named-TBD key "
-            f"(no VER-002 profile key names this bound yet) and must be a "
-            f"positive integer once assigned — got {bound!r} at {path}; "
-            "refusing to start (fail-closed, never a silent default)"
-        )
-    return AuthorityRuntimeConfig(containment_bound_ms=bound)
+    bound = _resolve_positive_int_key(
+        raw,
+        "containment_bound_ms",
+        path,
+        named_tbd_note="is a named-TBD key (no VER-002 profile key names this bound yet)",
+    )
+    policy_generation = _resolve_positive_int_key(
+        raw,
+        "trading_approval_policy_generation",
+        path,
+        named_tbd_note="is the currently-loaded Trading Approval Policy generation",
+    )
+    return AuthorityRuntimeConfig(
+        containment_bound_ms=bound,
+        trading_approval_policy_generation=policy_generation,
+    )
 
 
 class SafetyAuthorityEpochService:
