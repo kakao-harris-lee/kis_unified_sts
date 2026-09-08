@@ -971,6 +971,12 @@ class TestCapacityObligationRecording:
     exhaustively covered by real components in
     ``tos/runtime/tests/rcl/test_obligation.py`` — this class is the
     wiring proof only, not a second copy of that behavioral coverage.
+
+    Independent review finding #6, restated plainly: production
+    reachability of the obligation branch is currently ZERO (the issuer
+    emits a proof only when its own result is already ``CURRENT``, i.e.
+    only on the ADMIT path) — this test class proves the wiring, not the
+    trigger.
     """
 
     def test_wired_sink_records_the_obligation_against_the_real_committed_reservation(

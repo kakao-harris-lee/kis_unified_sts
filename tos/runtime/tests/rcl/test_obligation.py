@@ -315,6 +315,92 @@ def test_attempt_id_none_never_calls_the_resolver(tmp_path: Path) -> None:
     log.close()
 
 
+class _MutableStateProjection:
+    """A :class:`~tos_runtime.rcl.projection.ReservationProjectionReader`
+    test double whose ONE reservation's state can be advanced mid-test —
+    used only to demonstrate the resolver's own limitation (independent
+    review finding #5): every attempt sharing this account+instrument
+    resolves to the SAME reservation id, so the recorder reads whatever
+    state that ONE shared reservation holds AT CALL TIME, never a
+    per-attempt snapshot."""
+
+    def __init__(self, reservation_id: str, state: CapacityState) -> None:
+        self._reservation_id = reservation_id
+        self.state = state
+
+    def reservation_state(self, reservation_id: str) -> CapacityState | None:
+        return self.state if reservation_id == self._reservation_id else None
+
+    def reservation_last_seq(self, reservation_id: str) -> int | None:
+        return 0 if reservation_id == self._reservation_id else None
+
+    def all_reservations(self) -> dict[str, CapacityState]:
+        return {self._reservation_id: self.state}
+
+    def instrument_state(self, _key: object) -> CapacityState | None:
+        return None
+
+    def instrument_last_seq(self, _key: object) -> int | None:
+        return None
+
+
+def test_resolver_is_not_attempt_scoped_reads_the_shared_reservations_current_state(
+    tmp_path: Path,
+) -> None:
+    """(module docstring, independent review finding #5) The injected
+    resolver is per-(account, instrument), not per-attempt: TWO different
+    attempts sharing this compose root's one account+instrument BOTH
+    resolve to the SAME reservation id. Attempt "a1" is refused while the
+    shared reservation is still POTENTIALLY_LIVE (consuming — obligation
+    holds, no halt). Before the recorder ever sees attempt "a2"'s refusal,
+    the SAME shared reservation legitimately advances to RELEASED. The
+    recorder for "a2" reads the reservation's state AS OF NOW, not as of
+    "a2"'s own refusal moment — there is no attempt-scoped snapshot to read
+    instead. This is the resolver's real, still-live limitation: it always
+    reads "the latest" shared state, never an attempt-bound one."""
+    store = _store(tmp_path)
+    emergency_log = _emergency_log(tmp_path)
+    reservation_id = "resv-acct-1-ES"
+    projection = _MutableStateProjection(reservation_id, CapacityState.POTENTIALLY_LIVE)
+
+    recorder = CapacityObligationRecorder(
+        store=store,
+        emergency_log=emergency_log,
+        projection=projection,
+        # The SAME resolver formula for every attempt, exactly as wired in
+        # production (_wiring.py) — it discards attempt_id entirely.
+        reservation_id_resolver=lambda _attempt_id: reservation_id,
+    )
+
+    recorder(
+        GatewayEvidenceRecord(
+            kind="SEND_REFUSED", attempt_id="a1", preserved_worst_credible_capacity=5
+        )
+    )
+    kinds_after_a1 = [m.kind for m in store.iter_entry_meta()]
+    assert kinds_after_a1.count("CAPACITY_OBLIGATION_PRESERVED") == 1
+    assert "CAPACITY_OBLIGATION_VIOLATION_ALERT" not in kinds_after_a1
+
+    # The SAME shared reservation legitimately advances — nothing to do
+    # with attempt "a1" specifically; this is what "not attempt-scoped"
+    # means in practice.
+    projection.state = CapacityState.RELEASED
+
+    recorder(
+        GatewayEvidenceRecord(
+            kind="SEND_REFUSED", attempt_id="a2", preserved_worst_credible_capacity=3
+        )
+    )
+    kinds_after_a2 = [m.kind for m in store.iter_entry_meta()]
+    assert kinds_after_a2.count("CAPACITY_OBLIGATION_PRESERVED") == 2
+    # "a2" halts because the SHARED reservation is now RELEASED — the
+    # recorder has no way to tell this apart from "a2" itself having
+    # caused or witnessed that release; it only ever reads the current
+    # shared state.
+    assert kinds_after_a2.count("CAPACITY_OBLIGATION_VIOLATION_ALERT") == 1
+    store.close()
+
+
 @pytest.mark.parametrize("state", list(CapacityState))
 def test_every_capacity_state_matches_the_kernel_predicate(
     tmp_path: Path, state: CapacityState

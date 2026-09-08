@@ -28,6 +28,22 @@ stop" reasoning ``BrokerEgressGateway._halt``'s own docstring gives for why
 its halt path itself never swallows a failure: an obligation the observer
 could not verify is not a success either.
 
+**Contract change (independent review finding #8).** Before ``on_refusal``
+existed, ``GatewayEvidenceSinkAdapter.record`` could raise only from the
+``store.append`` call itself — the refusal path could not raise for any
+OTHER reason. With ``on_refusal`` wired (as it is in every compose root that
+constructs :class:`~tos_runtime.rcl.obligation.CapacityObligationRecorder`),
+a failure inside the observer — e.g.
+:class:`~tos_runtime.rcl.projection.SqliteReservationProjectionReader`
+hitting a locked or unreachable sqlite database — now ALSO propagates out
+of this ``record()`` call and, transitively, out of
+:meth:`~tos.egressgw.gateway.BrokerEgressGateway.__call__` for a refused
+send. This is deliberate and fail-closed, consistent with the "never a
+silent stop" reasoning above: a ``SEND_REFUSED`` whose preserved-capacity
+obligation this process could not verify is not something the caller should
+be told succeeded (silently) either. It is still a genuine behavior change
+callers of the gateway need to be aware of.
+
 Firewall: stdlib + ``tos.engine``/``tos.egressgw``/``tos.workload`` +
 ``tos_runtime.evidence.store`` only.
 """
@@ -143,7 +159,11 @@ class GatewayEvidenceSinkAdapter:
         The injected ``on_refusal`` observer, if any, runs only AFTER this
         durable append has already committed, and only for a
         ``kind == "SEND_REFUSED"`` record — evidence first, verification
-        second, never the other way around.
+        second, never the other way around. Whatever the observer raises
+        propagates out of this call, and transitively out of
+        ``BrokerEgressGateway.__call__``, uncaught (module docstring's
+        "contract change" — the refusal path could not raise for this
+        reason before ``on_refusal`` was wired).
         """
         self._store.append(
             record.model_dump(mode="json"),

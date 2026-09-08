@@ -44,8 +44,9 @@ from tos_runtime.authority.epoch import (
 )
 from tos_runtime.authority.iap import (
     IntentRegistry,
+    LoadedApproval,
     OperatorApprovalFileError,
-    load_operator_approval_file,
+    load_operator_approval_with_receipt,
 )
 from tos_runtime.authority.stages import IndependentApprovalStage
 from tos_runtime.compose._boot_integrity import (
@@ -104,7 +105,7 @@ from tos_runtime.risk.ledger_stages import (
     CommitmentUnavailabilityStage,
     LedgerVerificationStage,
 )
-from tos_runtime.time.config import load_time_config
+from tos_runtime.time.config import TrustworthyTimeConfig, load_time_config
 from tos_runtime.time.generation import seed_from
 from tos_runtime.time.service import TimeServiceNotStarted, TrustworthyTimeService
 from tos_runtime.time.sources import (
@@ -192,15 +193,27 @@ def _rcl_tip_generation_provider(
 
 
 def _decision_provider(
-    custody_root: Path, environment_label: str, uid: int
-) -> Callable[[StageRequest], IndependentApprovalDecision | None]:
+    custody_root: Path,
+    environment_label: str,
+    uid: int,
+    time_service: TrustworthyTimeService,
+    time_config: TrustworthyTimeConfig,
+) -> Callable[[StageRequest], LoadedApproval | None]:
     """Lazily loads the operator approval file bound to a proposal's own
     digest (``approvals/<proposal_digest>.yaml``) — never computed, never
     cached across a restart (module docstring; ``tos_runtime.authority.iap``
-    "zero auto-approval")."""
+    "zero auto-approval").
+
+    Uses :func:`~tos_runtime.authority.iap.load_operator_approval_with_receipt`
+    (kernel round #1 §2.2 re-review finding #3, MEDIUM) so the resolved
+    :class:`~tos_runtime.authority.iap.LoadedApproval` carries the receipt-
+    time facts ``IndependentApprovalStage`` threads into both
+    ``decision_current`` and ``consume`` — the ONLY compose-root call site
+    that resolves an approval file, so this is where G-1's "expiry path
+    unwired" gap closes."""
     approvals_dir = custody_root / _APPROVALS_DIRNAME
 
-    def _provider(request: StageRequest) -> IndependentApprovalDecision | None:
+    def _provider(request: StageRequest) -> LoadedApproval | None:
         proposal = request.proposal
         digest = getattr(proposal, "canonical_digest", None)
         if digest is None:
@@ -209,8 +222,10 @@ def _decision_provider(
         if not path.is_file():
             return None
         try:
-            return load_operator_approval_file(
+            return load_operator_approval_with_receipt(
                 path,
+                time=time_service,
+                time_config=time_config,
                 expected_owner_uid=uid,
                 environment_label=environment_label,
             )
@@ -285,6 +300,7 @@ class _Infra:
     evidence_store: SqliteEvidenceStore
     emergency_log: EmergencyAppendLog
     time_service: TrustworthyTimeService
+    time_config: TrustworthyTimeConfig
 
 
 def _build_custody_evidence_time(
@@ -340,6 +356,7 @@ def _build_custody_evidence_time(
         evidence_store=evidence_store,
         emergency_log=emergency_log,
         time_service=time_service,
+        time_config=time_config,
     )
 
 
@@ -357,6 +374,7 @@ def _build_rcl_and_authority(
     identity: RuntimeIdentity,
     evidence_store: SqliteEvidenceStore,
     time_service: TrustworthyTimeService,
+    time_config: TrustworthyTimeConfig,
     authority_domain: str,
 ) -> _RclAndAuthority:
     """RCL log (``acquire_epoch`` + generation seed) + Safety Authority epoch
@@ -391,6 +409,14 @@ def _build_rcl_and_authority(
         evidence_store,
         writer_epoch=writer_epoch,
         trading_approval_policy_generation=policy_generation,
+        # Kernel round #1 §2.2 re-review finding #3 (MEDIUM): without these
+        # two, decision_current/consume always fall back to
+        # max_decision_age_ms's unconfigured branch — an approval file that
+        # SETS an expiry silently could never be enforced from this compose
+        # root. Wiring them here is what collapses G-1 to its one remaining,
+        # already-reported blocker (wall_clock_observation never populated).
+        time=time_service,
+        time_config=time_config,
     )
 
     return _RclAndAuthority(
@@ -517,6 +543,8 @@ def _build_step4_recorder(
     custody_root: Path,
     environment_label: str,
     uid: int,
+    time_service: TrustworthyTimeService,
+    time_config: TrustworthyTimeConfig,
 ) -> VerdictRecorder:
     """Step 4 (``IndependentApprovalStage``), wrapped for verdict recording."""
 
@@ -563,7 +591,9 @@ def _build_step4_recorder(
     return VerdictRecorder(
         IndependentApprovalStage(
             intent_registry,
-            decision_provider=_decision_provider(custody_root, environment_label, uid),
+            decision_provider=_decision_provider(
+                custody_root, environment_label, uid, time_service, time_config
+            ),
             command_identity_provider=_consuming_command_identity,
             command_digest_provider=_consuming_command_digest,
             # decision_current_provider omitted (team-lead follow-up guidance,
@@ -602,7 +632,13 @@ def _build_realized_stages(
     construction_stage = construction_stages.construction_stage
     proof_stage = construction_stages.proof_stage
     step4_recorder = _build_step4_recorder(
-        intent_registry, construction_stage, custody_root, environment_label, uid
+        intent_registry,
+        construction_stage,
+        custody_root,
+        environment_label,
+        uid,
+        infra.time_service,
+        infra.time_config,
     )
     time_gate = _time_permits_new_risk(infra.time_service)
     generation_provider = _rcl_tip_generation_provider(rcl_log, writer_epoch)
@@ -855,6 +891,14 @@ def _finalize(
             f"resv-{instrument_key.account}-{instrument_key.instrument}"
         ),
     )
+    # Independent review finding #8: wiring on_refusal here means a
+    # SEND_REFUSED whose obligation this recorder cannot verify (e.g. the
+    # rcl projection's sqlite read fails) now raises out of
+    # GatewayEvidenceSinkAdapter.record and transitively out of
+    # BrokerEgressGateway.__call__ — a contract change from before this
+    # observer existed (the refusal path could not previously raise for
+    # this reason). Deliberate, fail-closed (see sinks.py's own module +
+    # record() docstrings for the full rationale).
     gateway_sink = GatewayEvidenceSinkAdapter(
         infra.evidence_store,
         runtime_identity=identity,
@@ -945,6 +989,7 @@ def _boot_services(
         identity,
         infra.evidence_store,
         infra.time_service,
+        infra.time_config,
         authority_domain,
     )
     verify_rcl_log_or_halt(
