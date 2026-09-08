@@ -1,4 +1,14 @@
-"""Best-effort setup evaluation publishing for futures entry adapters."""
+"""Best-effort setup evaluation publishing for the futures entry paths.
+
+Two producers write here: the monolithic orchestrator's Setup A/C/D entry
+adapters (``shared/strategy/entry/setup_*_adapter.py``) and the decoupled
+``services/decision_engine`` daemon. They must NOT share a key while the
+decoupled chain runs in shadow alongside the orchestrator — a shadow row that
+overwrote the orchestrator's would make both unreadable — so every key is
+suffixable via ``key_suffix``. The daemon passes ``".shadow"`` in shadow mode,
+mirroring the ``signal.candidate.futures.shadow`` stream convention; the default
+``""`` reproduces the orchestrator's historical keys byte-for-byte.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +19,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from shared.risk.log_throttle import setup_eval_throttle_key
 from shared.strategy.gates.adapter_helper import acquire_infra_clients
 from shared.strategy.market_time import now_kst
 
@@ -16,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Redis hash holding each futures setup's latest per-cycle evaluation outcome so
 # "why didn't futures trade today?" is answerable at a glance. Best-effort only.
+# Producers append a ``key_suffix`` to this base (see the module docstring).
 SETUP_EVAL_KEY = "trading:futures:setup_eval"
 
 # Last (outcome, reason) logged per setup, so INFO fires only on state changes.
@@ -40,8 +52,13 @@ _OUT_OF_WINDOW_REJECT_PREFIXES = (
     "after_cutoff",
 )
 
-# In-process throttle: last in-window history state appended per (date_kst,
-# setup). Redis remains the durable record across restarts.
+# In-process dedup: last in-window history STATE appended per (date_kst, key).
+# Redis remains the durable record across restarts. The stored state is the
+# reason's structural kind, not the raw reason — see
+# ``shared.risk.log_throttle.setup_eval_reason_kind``: reasons embed live
+# measurements (``not_extreme(z=+0.42,need±1.8)``), so keying on the raw string
+# made "state changed" true on essentially every tick and appended one Redis
+# list row per cycle instead of one per real state change.
 _history_state: dict[tuple[str, str], str] = {}
 
 AcquireClients = Callable[[], tuple[Any, Any]]
@@ -56,9 +73,19 @@ def is_in_window_eval(outcome: str, reason: str) -> bool:
 
 
 def append_setup_eval_history(
-    redis: Any, name: str, outcome: str, reason: str, ts_kst: datetime
+    redis: Any,
+    name: str,
+    outcome: str,
+    reason: str,
+    ts_kst: datetime,
+    *,
+    key_suffix: str = "",
 ) -> None:
-    """Append an in-window eval to the per-day history list, throttled by state.
+    """Append an in-window eval to the per-day history list, deduped by state.
+
+    ``key_suffix`` isolates a producer's history list from the orchestrator's
+    (``""`` = the orchestrator's historical key). The list key is
+    ``<prefix><suffix>:<date_kst>``, so the date stays the last segment.
 
     This helper is intentionally best-effort and is normally called from inside
     ``publish_setup_eval``'s broad observability guard.
@@ -69,12 +96,15 @@ def append_setup_eval_history(
         return
 
     date_kst = ts_kst.date().isoformat()
-    state = f"{outcome}:{reason}"
-    if _history_state.get((date_kst, name)) == state:
+    # Structural state (measurements stripped) — a reason whose only change is
+    # its embedded numbers is the SAME state and must not append a second row.
+    state = setup_eval_throttle_key(name, outcome, reason)
+    dedup_key = (date_kst, f"{name}{key_suffix}")
+    if _history_state.get(dedup_key) == state:
         return
-    _history_state[(date_kst, name)] = state
+    _history_state[dedup_key] = state
 
-    key = f"{SETUP_EVAL_HISTORY_KEY_PREFIX}:{date_kst}"
+    key = f"{SETUP_EVAL_HISTORY_KEY_PREFIX}{key_suffix}:{date_kst}"
     redis.rpush(
         key,
         json.dumps(
@@ -98,8 +128,13 @@ def publish_setup_eval(
     acquire_clients: AcquireClients | None = None,
     now_fn: NowFn | None = None,
     log: logging.Logger | None = None,
+    key_suffix: str = "",
 ) -> None:
     """Log on state change and publish latest setup evaluation to Redis.
+
+    ``key_suffix`` namespaces BOTH Redis keys (hash and per-day history list)
+    so two producers can write concurrently without overwriting each other; the
+    default ``""`` is the orchestrator adapters' historical key set.
 
     Observability failures are swallowed so setup evaluation publishing never
     affects entry or exit decisions. ``acquire_clients`` and ``now_fn`` are
@@ -108,8 +143,8 @@ def publish_setup_eval(
     """
     target_log = log if log is not None else logger
     state = f"{outcome}:{reason}"
-    if _last_eval_log.get(name) != state:
-        _last_eval_log[name] = state
+    if _last_eval_log.get(f"{name}{key_suffix}") != state:
+        _last_eval_log[f"{name}{key_suffix}"] = state
         if outcome == "reject":
             target_log.info("[%s] no signal this cycle: %s", name, reason)
         else:
@@ -121,8 +156,9 @@ def publish_setup_eval(
         redis, _ = clients_fn()
         if redis is not None:
             now = current_time_fn()
+            eval_key = f"{SETUP_EVAL_KEY}{key_suffix}"
             redis.hset(
-                SETUP_EVAL_KEY,
+                eval_key,
                 name,
                 json.dumps(
                     {
@@ -132,8 +168,10 @@ def publish_setup_eval(
                     }
                 ),
             )
-            redis.expire(SETUP_EVAL_KEY, 86_400)
-            append_setup_eval_history(redis, name, outcome, reason, now)
+            redis.expire(eval_key, 86_400)
+            append_setup_eval_history(
+                redis, name, outcome, reason, now, key_suffix=key_suffix
+            )
     except Exception:  # noqa: BLE001 - observability must never break entries
         target_log.debug("[%s] setup-eval publish failed", name, exc_info=True)
 

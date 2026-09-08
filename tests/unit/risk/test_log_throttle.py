@@ -9,7 +9,14 @@ single-global-timestamp) throttling behavior.
 
 from __future__ import annotations
 
-from shared.risk.log_throttle import ReasonLogThrottle, gate_log_throttle_key
+import pytest
+
+from shared.risk.log_throttle import (
+    ReasonLogThrottle,
+    gate_log_throttle_key,
+    setup_eval_reason_kind,
+    setup_eval_throttle_key,
+)
 
 
 def test_first_observation_for_a_reason_always_logs():
@@ -133,3 +140,78 @@ def test_key_end_to_end_with_the_throttle():
     key_fail_open = gate_log_throttle_key(band=None, reason="fail_open:missing_hash")
     assert throttle.should_log(key_fail_open, now=1000.2) is True
     assert throttle.should_log(key_fail_open, now=1000.3) is False
+
+
+# ---------------------------------------------------------------------------
+# setup_eval keys — structural, measurements stripped
+# ---------------------------------------------------------------------------
+
+
+class TestSetupEvalThrottleKey:
+    """Setup reject reasons embed live measurements; the key must not."""
+
+    @pytest.mark.parametrize(
+        "reason, expected_kind",
+        [
+            ("not_extreme(z=+0.42,need±1.8)", "not_extreme"),
+            ("vol_below_gate(0.85<0.9)", "vol_below_gate"),
+            ("outside_time_window(297m∉[10,60])", "outside_time_window"),
+            ("low_confidence(0.55<0.6)", "low_confidence"),
+            # No measurement at all — the whole reason is the kind.
+            ("no_atr", "no_atr"),
+            ("no_vwap", "no_vwap"),
+            ("no_market_context", "no_market_context"),
+        ],
+    )
+    def test_reason_kind_strips_measurements(
+        self, reason: str, expected_kind: str
+    ) -> None:
+        assert setup_eval_reason_kind(reason) == expected_kind
+
+    def test_changing_measurements_share_one_key(self) -> None:
+        """The whole point: a moving z value is the SAME cause."""
+        keys = {
+            setup_eval_throttle_key("setup_d_vwap_reversion", "reject", reason)
+            for reason in (
+                "not_extreme(z=+0.42,need±1.8)",
+                "not_extreme(z=+0.91,need±1.8)",
+                "not_extreme(z=-1.55,need±1.8)",
+            )
+        }
+        assert len(keys) == 1
+
+    def test_different_causes_do_not_collide(self) -> None:
+        assert setup_eval_throttle_key(
+            "setup_d_vwap_reversion", "reject", "not_extreme(z=+0.4,need±1.8)"
+        ) != setup_eval_throttle_key(
+            "setup_d_vwap_reversion", "reject", "vol_below_gate(0.85<0.9)"
+        )
+
+    def test_setup_name_and_outcome_are_part_of_the_key(self) -> None:
+        assert setup_eval_throttle_key(
+            "setup_a_gap_reversion", "reject", "no_atr"
+        ) != setup_eval_throttle_key("setup_d_vwap_reversion", "reject", "no_atr")
+        assert setup_eval_throttle_key(
+            "setup_d_vwap_reversion", "reject", "short"
+        ) != setup_eval_throttle_key("setup_d_vwap_reversion", "fired", "short")
+
+    def test_namespaced_away_from_gate_keys(self) -> None:
+        """A shared ReasonLogThrottle cache must not mix the two key families."""
+        assert setup_eval_throttle_key("s", "reject", "HIGH").startswith("setup_eval:")
+        assert not gate_log_throttle_key(band="HIGH", reason="x").startswith(
+            "setup_eval:"
+        )
+
+    def test_throttle_actually_throttles_across_changing_numbers(self) -> None:
+        """End-to-end with ReasonLogThrottle: one log, not one per tick."""
+        throttle = ReasonLogThrottle(interval_seconds=300.0)
+        allowed = [
+            throttle.should_log(
+                setup_eval_throttle_key(
+                    "setup_d_vwap_reversion", "reject", f"not_extreme(z={z},need±1.8)"
+                ),
+                now,
+            )
+            for now, z in enumerate(("+0.10", "+0.42", "+0.91", "+1.55"))
+        ]
+        assert allowed == [True, False, False, False]
