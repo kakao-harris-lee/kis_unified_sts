@@ -22,8 +22,12 @@ scope:
   - tos/src/tos
   # design #40 D1.3 item 5 (PROPOSED 2026-09-07, same-PR-as-ratification per
   # that document's §0) — the runtime shell's own source tree gets the same
-  # module/function size discipline as the kernel from day one (skeleton is
-  # currently well under budget; no exceptions entry needed yet).
+  # module/function size discipline as the kernel from day one. No longer a
+  # skeleton (120 tracked files under tos/runtime as of 2026-09-08's slice
+  # #3 landing) — it currently passes at 0 violations with 0 registered
+  # exceptions of its own (all 29 below are tos/src/tos); an exception entry
+  # is added here the same way the kernel's own were, if/when a runtime
+  # target genuinely needs one.
   - tos/runtime/src
 
 # 2026-09-07 Phase 1 작업 6 등재 — 착수 시점 초과분 전건(모듈 11 · 함수 18 = 29건).
