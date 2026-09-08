@@ -57,6 +57,7 @@ from tos_runtime.compose._currentness_wiring import (
     _RiskAndCurrentness,
 )
 from tos_runtime.compose._egress_attestations import EgressAttestations
+from tos_runtime.compose._engine_config import load_engine_config
 from tos_runtime.compose._pending_dimensions import PendingDimensionSpec
 from tos_runtime.compose._risk_attestations import (
     wrap_action_flow_inputs_provider,
@@ -799,8 +800,28 @@ def _build_context_resolver(
     )
 
 
+_ENGINE_CONFIG_NAME = "engine.yaml"
+
+
+def _build_engine_configuration(config_dir: Path) -> EngineConfiguration:
+    """Load ``engine.yaml``'s two operator-configured bounds (pre-merge fix
+    F5, 2026-09-08 — CLAUDE.md non-negotiable: thresholds belong in config,
+    never a hardcoded literal) and construct the kernel's own
+    ``EngineConfiguration`` — the ``canonicalization_version``/
+    ``enforcement_mechanism_version`` fields are compose's own fixed
+    identity, not operator-configured, and stay as they were."""
+    engine_config = load_engine_config(config_dir / _ENGINE_CONFIG_NAME)
+    return EngineConfiguration(
+        dsl_evaluation_budget_steps=engine_config.dsl_evaluation_budget_steps,
+        max_unresolved_send_per_scope=engine_config.max_unresolved_send_per_scope,
+        canonicalization_version=EV_L1_PROVISIONAL_VERSION,
+        enforcement_mechanism_version="compose-paper-runtime-v1",
+    )
+
+
 def _finalize(
     *,
+    config_dir: Path,
     infra: _Infra,
     rcl: _RclAndAuthority,
     risk: _RiskAndCurrentness,
@@ -833,12 +854,7 @@ def _finalize(
     core = EngineCore(
         registry=resolved_registry,
         stages=stages,
-        configuration=EngineConfiguration(
-            dsl_evaluation_budget_steps=64,
-            max_unresolved_send_per_scope=1,
-            canonicalization_version=EV_L1_PROVISIONAL_VERSION,
-            enforcement_mechanism_version="compose-paper-runtime-v1",
-        ),
+        configuration=_build_engine_configuration(config_dir),
         transmit=gateway,
         sink=engine_sink,
     )

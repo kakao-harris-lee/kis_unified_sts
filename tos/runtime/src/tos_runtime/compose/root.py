@@ -133,19 +133,15 @@ def compose_paper_runtime(
     this module's own docstring for the exact order and every reported deviation).
 
     Args:
-        config_dir: Directory holding the five ``*.yaml`` configs (shaped
-            like ``tos/runtime/config/*.example.yaml``, every named-TBD filled).
+        config_dir: Directory holding every ``*.yaml`` config (shaped like
+            ``tos/runtime/config/*.example.yaml``, every named-TBD filled).
         data_dir: Directory for the RCL log / evidence store / emergency log.
         custody_root: The D4 custody directory.
         environment_label: Boot-argument environment label (never
             ``os.environ`` — CLI-sourced only, D1.1).
-        construction: Per-strategy Order Construction facts (steps 2/3/5/11) —
-            see :class:`ConstructionConfig`.
-        aggregate_risk_inputs_provider: Supplies step 6's
-            :class:`~tos_runtime.risk.aggregate.AggregateRiskDecisionInputs`
-            (``None`` => restrictive UNKNOWN); scenario-specific.
-        action_flow_inputs_provider: Supplies step 7's
-            :class:`~tos_runtime.risk.flow.ActionFlowDecisionInputs` analogously.
+        construction: Per-strategy Order Construction facts (steps 2/3/5/11) — see :class:`ConstructionConfig`.
+        aggregate_risk_inputs_provider: Supplies step 6's :class:`~tos_runtime.risk.aggregate.AggregateRiskDecisionInputs` (``None`` => restrictive UNKNOWN); scenario-specific.
+        action_flow_inputs_provider: Supplies step 7's :class:`~tos_runtime.risk.flow.ActionFlowDecisionInputs` analogously.
         registry: The strategy registry (defaults to an empty one).
         authority_domain: The Safety Authority epoch's governed domain name.
         continuity_id: The ordering-event continuity id.
@@ -200,6 +196,7 @@ def compose_paper_runtime(
     )
 
     return _finalize(
+        config_dir=config_dir,
         infra=infra,
         rcl=rcl,
         risk=risk,

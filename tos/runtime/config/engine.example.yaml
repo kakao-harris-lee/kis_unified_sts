@@ -1,0 +1,19 @@
+# EngineConfiguration bounds (tos_runtime.compose._engine_config).
+#
+# CLAUDE.md non-negotiable: thresholds belong in config, never a hardcoded
+# branch. dsl_evaluation_budget_steps/max_unresolved_send_per_scope were
+# previously bare literals in tos_runtime/compose/_wiring.py::_finalize.
+#
+# dsl_evaluation_budget_steps: the symbolic DSL-evaluation budget
+# (tos.engine.records.EngineConfiguration's own docstring table: "key
+# absent from VERIFICATION-PROFILE-002 — provisional"). Compared against a
+# statically derived work count, never a wall-time interrupt.
+#
+# max_unresolved_send_per_scope: MAX_unresolved_send_per_scope (register
+# §3:90; design #31 §8/§4.4). The engine observes the projection
+# restrictively against it; it never creates headroom (RFC-002 §9.1:558).
+#
+# Both are named-TBD `null` in this example — a missing or null value
+# refuses composition at startup (fail-closed, never a silent default).
+dsl_evaluation_budget_steps: null
+max_unresolved_send_per_scope: null

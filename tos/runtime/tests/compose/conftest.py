@@ -132,6 +132,13 @@ def config_dir(tmp_path: Path) -> Path:
         },
     )
     _write_yaml(
+        directory / "engine.yaml",
+        {
+            "dsl_evaluation_budget_steps": 64,
+            "max_unresolved_send_per_scope": 1,
+        },
+    )
+    _write_yaml(
         directory / "release.yaml",
         {
             "expected_code_digest": EXPECTED_CODE_DIGEST,
