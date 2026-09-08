@@ -31,6 +31,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from services.decision_engine.config import DecisionEngineMarketRiskGateWiring
+from shared.config.loader import ConfigLoader
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.decision.context import MarketContext
 from shared.decision.setup_base import Setup
@@ -54,6 +55,13 @@ from shared.streaming.parquet_warmup import (
 logger = logging.getLogger(__name__)
 
 _STREAM_TTL_SECONDS = 86400
+
+# Sink for setup-eval log lines the throttle has suppressed. Publishing still
+# happens (Redis is the durable record); only the INFO line is dropped, so a
+# reject reason that holds for a whole session cannot flood the log.
+_SILENCED_SETUP_EVAL_LOG = logging.getLogger(f"{__name__}.setup_eval.silenced")
+_SILENCED_SETUP_EVAL_LOG.addHandler(logging.NullHandler())
+_SILENCED_SETUP_EVAL_LOG.propagate = False
 
 
 class DecisionEngineDaemon:
@@ -112,6 +120,13 @@ class DecisionEngineDaemon:
         self._shadow_gate_log_throttle = ReasonLogThrottle(
             interval_seconds=shadow_gate_log_interval_seconds
         )
+        # Per-setup evaluation observability (plan §3-D). Same throttle class
+        # and the same configured interval as the shadow-gate log above: a
+        # reject reason repeats on every 60 s tick for as long as it holds, so
+        # it may log at most once per interval per (setup, outcome, reason).
+        self._setup_eval_log_throttle = ReasonLogThrottle(
+            interval_seconds=shadow_gate_log_interval_seconds
+        )
         # Per-symbol volatility reference publisher (shared/risk/
         # volatility_reference.py). This daemon owns the only futures
         # StreamingIndicatorEngine, so it is the only place that can supply the
@@ -167,7 +182,18 @@ class DecisionEngineDaemon:
                     )
                     continue
                 if signal is None:
+                    # "0 candidates" must be distinguishable from "never
+                    # evaluated": record WHY this setup declined, in the same
+                    # Redis hash/history the monolith adapters write, so
+                    # scripts/ops/setup_d_paper_observe.py and the evidence
+                    # bundles work unchanged against shadow data.
+                    self._publish_setup_eval(
+                        setup,
+                        "reject",
+                        getattr(setup, "last_reject_reason", None) or "setup_rejected",
+                    )
                     continue
+                self._publish_setup_eval(setup, "fired", signal.direction)
 
                 # Market-risk ENTRY gate — new-entry candidates only; exit /
                 # stop / kill_switch paths never flow through this daemon
@@ -211,6 +237,51 @@ class DecisionEngineDaemon:
 
     async def stop(self) -> None:
         self._stop.set()
+
+    def _setup_eval_clients(self) -> tuple[Any, Any]:
+        """``acquire_clients`` hook for :func:`publish_setup_eval`.
+
+        Reuses the daemon's existing SYNC Redis client (the one that already
+        reads ``market:risk:latest`` / ``futures:context:latest``) instead of
+        letting the publisher open a second connection through
+        ``shared.strategy.gates.adapter_helper.acquire_infra_clients``. ``None``
+        when the daemon is constructed without it (tests): the publisher then
+        logs and skips the write, exactly as it does on a Redis outage.
+        """
+        return self.market_risk_redis, None
+
+    def _publish_setup_eval(self, setup: Any, outcome: str, reason: str) -> None:
+        """Record one setup evaluation (reject/fired). Never affects signals.
+
+        Writes through the shared
+        ``shared.strategy.entry.setup_eval_publisher.publish_setup_eval`` so the
+        Redis key, the per-KST-day history list and the TTLs are the monolith's,
+        not a second format. A setup with no ``REGISTRY_NAME`` (test doubles) is
+        skipped rather than written under a guessed key.
+        """
+        name = getattr(setup, "REGISTRY_NAME", "")
+        if not name:
+            return
+        should_log = self._setup_eval_log_throttle.should_log(
+            f"{name}:{outcome}:{reason}", time.monotonic()
+        )
+        # Imported here, not at module scope: ``shared.strategy`` is an eager
+        # package init that builds the whole entry/exit registry (~1.4 s, pulls
+        # TA-Lib). This daemon exists to be decoupled from it, and in `off` mode
+        # it never evaluates a setup — so the cost is paid on the first real
+        # evaluation or not at all. Same pattern as _futures_context_trace.
+        from shared.strategy.entry.setup_eval_publisher import publish_setup_eval
+
+        try:
+            publish_setup_eval(
+                name,
+                outcome,
+                reason,
+                acquire_clients=self._setup_eval_clients,
+                log=logger if should_log else _SILENCED_SETUP_EVAL_LOG,
+            )
+        except Exception:  # noqa: BLE001 — observability must never block a signal
+            logger.debug("setup eval publish failed for %s", name, exc_info=True)
 
     def _evaluate_market_risk_gate(self, signal) -> MarketRiskGateDecision | None:
         """Evaluate the market-risk ENTRY gate for one fired candidate.
@@ -413,6 +484,160 @@ class DecisionEngineDaemon:
                 direction=fields.get("direction"),
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# Setup roster — driven by config/strategies/futures/*.yaml
+# ---------------------------------------------------------------------------
+
+#: Directory (relative to the config root) holding the futures strategy files
+#: whose ``strategy.enabled`` selects this daemon's roster and whose
+#: ``strategy.entry.params`` supplies every setup threshold. Same files the
+#: monolith's Setup adapters read — one operating point, not two.
+STRATEGIES_DIR = "strategies/futures"
+
+#: Dotted section inside each strategy file holding the setup parameters.
+#: ``ServiceConfigBase.from_yaml`` walks it and ignores adapter-only keys.
+STRATEGY_PARAMS_SECTION = "strategy.entry.params"
+
+#: Optional daemon-only roster subset: a comma-separated list of registry names.
+#: Empty/unset = every setup whose strategy YAML says ``enabled: true``. It
+#: exists because ``strategy.enabled`` is SHARED with the monolithic
+#: orchestrator, so flipping it off there also stops paper trading that setup;
+#: this env narrows the DECOUPLED roster without touching the shared switch.
+SETUPS_SUBSET_ENV = "FUTURES_DECISION_ENGINE_SETUPS"
+
+
+def _setup_registry() -> dict[str, tuple[type[Any], type[Setup]]]:
+    """Return ``{registry_name: (ConfigClass, SetupClass)}`` for the futures setups.
+
+    Explicit (not auto-discovered): the decoupled daemon's roster is a
+    deliberately small, reviewed set, and an import-scanning discovery would
+    make "which setups can this daemon run?" a runtime question. Imports are
+    local so importing this module stays cheap for the flag helpers.
+    """
+    from shared.decision.setups.event_reaction import SetupCConfig, SetupCEventReaction
+    from shared.decision.setups.gap_reversion import SetupAConfig, SetupAGapReversion
+    from shared.decision.setups.vwap_reversion import SetupDConfig, SetupDVWAPReversion
+
+    return {
+        SetupAGapReversion.REGISTRY_NAME: (SetupAConfig, SetupAGapReversion),
+        SetupCEventReaction.REGISTRY_NAME: (SetupCConfig, SetupCEventReaction),
+        SetupDVWAPReversion.REGISTRY_NAME: (SetupDConfig, SetupDVWAPReversion),
+    }
+
+
+def _resolve_setup_subset(subset_env: str) -> set[str] | None:
+    """Parse the daemon-only roster subset env var; ``None`` when unset/empty."""
+    import os
+
+    raw = os.getenv(subset_env, "").strip()
+    if not raw:
+        return None
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def _strategy_enabled(document: Any) -> bool:
+    """Read ``strategy.enabled`` from a loaded strategy YAML document.
+
+    Absent/malformed => False. A roster switch that cannot be read is treated
+    as OFF rather than defaulted ON: an unreadable strategy file must not put
+    an unconfigured setup on the live candidate stream.
+    """
+    if not isinstance(document, dict):
+        return False
+    strategy = document.get("strategy")
+    if not isinstance(strategy, dict):
+        return False
+    return bool(strategy.get("enabled", False))
+
+
+def _param_summary(config: Any) -> str:
+    """Compact ``k=v`` rendering of every field on a setup config.
+
+    Derived from the model itself (``model_dump``), so a new parameter shows up
+    in the startup log without editing a hand-maintained key list here.
+    """
+    try:
+        values = config.model_dump()
+    except AttributeError:
+        return repr(config)
+    return " ".join(f"{key}={values[key]}" for key in sorted(values))
+
+
+def _build_setups(
+    *,
+    strategies_dir: str = STRATEGIES_DIR,
+    subset_env: str = SETUPS_SUBSET_ENV,
+) -> list[Setup]:
+    """Build the daemon's Setup roster from ``config/strategies/futures/*.yaml``.
+
+    One source of truth for BOTH which setups run and what parameters they run
+    with: ``strategy.enabled`` gates the roster (same switch the monolithic
+    orchestrator's ``StrategyFactory.build_roster(enabled_only=True)`` reads),
+    ``strategy.entry.params`` fills the core config. Before this, the daemon
+    constructed ``Setup*()`` with no config, so every threshold came from the
+    Pydantic defaults while ``config/decision_engine.yaml`` carried a third,
+    unread set of values (plan §0-2).
+
+    A per-setup read/validation failure disables THAT setup and is logged; it
+    never takes the daemon down, and never silently substitutes defaults.
+    """
+    subset = _resolve_setup_subset(subset_env)
+    if subset is not None:
+        logger.info(
+            "%s restricts the decision_engine roster to: %s",
+            subset_env,
+            sorted(subset),
+        )
+        unknown = subset - set(_setup_registry())
+        if unknown:
+            logger.warning(
+                "%s names unknown setups (ignored): %s", subset_env, sorted(unknown)
+            )
+
+    setups: list[Setup] = []
+    enabled_names: list[str] = []
+    disabled_names: list[str] = []
+
+    for name, (config_cls, setup_cls) in _setup_registry().items():
+        path = f"{strategies_dir}/{name}.yaml"
+        try:
+            document = ConfigLoader.load(path)
+        except Exception:
+            logger.exception("setup %s: %s unreadable; setup disabled", name, path)
+            disabled_names.append(name)
+            continue
+        if not _strategy_enabled(document):
+            disabled_names.append(name)
+            continue
+        if subset is not None and name not in subset:
+            disabled_names.append(name)
+            continue
+        try:
+            config = config_cls.from_yaml(path=path, section=STRATEGY_PARAMS_SECTION)
+        except Exception:
+            logger.exception(
+                "setup %s: %s::%s failed to load; setup disabled",
+                name,
+                path,
+                STRATEGY_PARAMS_SECTION,
+            )
+            disabled_names.append(name)
+            continue
+        setups.append(setup_cls(config=config))
+        enabled_names.append(name)
+
+    logger.info(
+        "decision_engine setups: %s (disabled: %s)", enabled_names, disabled_names
+    )
+    for setup in setups:
+        logger.info(
+            "decision_engine setup %s params: %s",
+            setup.REGISTRY_NAME,
+            _param_summary(setup.config),
+        )
+    return setups
 
 
 # ---------------------------------------------------------------------------
@@ -701,10 +926,7 @@ async def _build_and_run() -> int:
     redis_url = redis_url_from_env()
     redis_client = aioredis.from_url(redis_url)
 
-    from shared.decision.setups.event_reaction import SetupCEventReaction
-    from shared.decision.setups.gap_reversion import SetupAGapReversion
-
-    setups = [SetupAGapReversion(), SetupCEventReaction()]
+    setups = _build_setups()
     mode = _resolve_mode()
     candidate_stream = _candidate_stream_for(mode)
 

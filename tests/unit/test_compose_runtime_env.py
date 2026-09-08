@@ -285,6 +285,19 @@ def test_futures_pipeline_compose_services_are_profile_gated():
         assert service["depends_on"]["redis"]["condition"] == "service_healthy"
         assert service_env[mode_env_key] == mode_value
 
+    # The decision_engine's roster/parameters come from
+    # config/strategies/futures/*.yaml (strategy.enabled + strategy.entry.params).
+    # This env is the optional DAEMON-ONLY subset: it narrows the decoupled
+    # roster without flipping the strategy.enabled switch that trader-futures
+    # shares. It must be plumbed in compose because `.env.paper` is
+    # interpolation-only, and it must default to empty (= every enabled setup).
+    assert (
+        services["futures-decision-engine"]["environment"][
+            "FUTURES_DECISION_ENGINE_SETUPS"
+        ]
+        == "${FUTURES_DECISION_ENGINE_SETUPS:-}"
+    )
+
     # order_router self-feeds a real KIS WS — needs futures creds.
     order_env = services["futures-order-router"]["environment"]
     assert "KIS_FUTURES_APP_KEY" in order_env
