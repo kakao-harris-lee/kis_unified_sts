@@ -56,6 +56,7 @@ from tos.egressgw._base import (
     CanonicalDecimal,
     FrozenModel,
 )
+from tos.egressgw.seal import SendSeal
 from tos.egressgw.vocabulary import (
     BrokerApplicability,
     DerivationOutcome,
@@ -592,6 +593,15 @@ class GatewayEvidenceRecord(FrozenModel):
     #: ``SEND_REFUSED`` the same unconditional way as :attr:`preserved_worst_credible_capacity`
     #: (kernel round #1 review #4). ``False`` unless item 16's own verdict flagged it.
     preserved_obligation_magnitude_unknown: bool = False
+    #: The whole pre-``SEND_STARTED`` :class:`~tos.egressgw.seal.SendSeal`, carried on the
+    #: ``SEND_SEALED`` record only (Phase 4 작업 6, design §1.2). ``None`` on every other kind —
+    #: the full seal is written exactly once, before the claim.
+    send_seal: SendSeal | None = None
+    #: The sealed :attr:`~tos.egressgw.seal.SendSeal.seal_digest`, carried on ``SEND_STARTED`` and
+    #: the terminal ``EGRESS_RESULT_RECORDED`` record (Phase 4 작업 6, design §1.2) — the compact
+    #: reference a durable Evidence Store row would use to point back at the full seal without
+    #: repeating it.
+    send_seal_digest: str | None = None
     authority_effect: AllFalseGatewayAuthority = AllFalseGatewayAuthority()
 
 
