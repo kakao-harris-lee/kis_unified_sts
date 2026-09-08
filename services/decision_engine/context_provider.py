@@ -43,8 +43,8 @@ class FuturesContextProvider:
         self._macro_reader = macro_reader
         self._events_provider = events_provider
         self._now_fn = now_fn
-        # State-change latch for the VWAP guard below: log the transition, not
-        # every 60 s tick (the guard holds for as long as the engine is cold).
+        # State-change latch for the VWAP availability log below: log the
+        # transition, not every 60 s tick (it holds until the first candle).
         self._vwap_unavailable = False
 
     async def __call__(self) -> MarketContext | None:
@@ -64,25 +64,34 @@ class FuturesContextProvider:
             # compute zero-width stops — suppress the context until ATR recovers.
             return None
 
-        # Session VWAP (shared/indicators/streaming/queries.py — VWAPCalculator,
-        # KST day reset, anchored on the 08:45 futures open tick). Setup D reads
-        # it as z = (price - vwap) / atr, so an absent VWAP is NOT a benign
-        # default: it collapses z to 0 and makes Setup D silently inert
-        # (#533/#537 class). Fail closed, exactly like the ATR guard above.
+        # Session VWAP from the streaming engine's VWAPCalculator. Setup D reads
+        # it as z = (price - vwap) / atr_14, so a MISSING vwap is not a benign
+        # default — substituting current_price collapses z to 0 and makes Setup
+        # D permanently inert (#533/#537 class). It is therefore passed through
+        # as-is (0.0 when absent) and the DAEMON skips only the setups that
+        # declare REQUIRES_VWAP; suppressing the whole context here would also
+        # darken Setup A/C, which never read vwap.
+        #
+        # Two known windows where it is 0.0 (engine behaviour, not fixed here):
+        #   * the accumulator is keyed on the UTC calendar date
+        #     (``ts.strftime("%Y%m%d")`` over a UTC timestamp,
+        #     shared/indicators/streaming/engine.py ~:225), so it RESETS at
+        #     09:00 KST — mid-session, not at the 08:45 open; and
+        #   * parquet cold-start warm-up does not seed it (``seed_candles``
+        #     never feeds ``_vwap_calc``), so it stays empty after a restart
+        #     until the first live candle completes.
         vwap = float(indicators.get("vwap", 0.0) or 0.0)
-        if vwap <= 0.0:
-            if not self._vwap_unavailable:
-                self._vwap_unavailable = True
-                logger.warning(
-                    "session VWAP unavailable for %s; suppressing MarketContext "
-                    "until it recovers (Setup D would otherwise fade a zero "
-                    "stretch)",
-                    symbol,
-                )
-            return None
-        if self._vwap_unavailable:
+        if vwap <= 0.0 and not self._vwap_unavailable:
+            self._vwap_unavailable = True
+            logger.warning(
+                "session VWAP unavailable for %s; vwap-dependent setups are "
+                "skipped until the first candle rebuilds it (Setup A/C keep "
+                "running)",
+                symbol,
+            )
+        elif vwap > 0.0 and self._vwap_unavailable:
             self._vwap_unavailable = False
-            logger.info("session VWAP recovered for %s; resuming context", symbol)
+            logger.info("session VWAP available again for %s", symbol)
 
         now = self._now_fn()
         now_kst = now.astimezone(_KST) if now.tzinfo else now.replace(tzinfo=_KST)

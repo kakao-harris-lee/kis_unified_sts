@@ -323,6 +323,10 @@ class SetupDVWAPReversion(Setup):
     CONFIG_CLASS = SetupDConfig
     #: Strategy-registry / ops name (see SetupAGapReversion.REGISTRY_NAME).
     REGISTRY_NAME: ClassVar[str] = "setup_d_vwap_reversion"
+    #: ``check`` reads ``ctx.vwap`` (``z = (price - vwap) / atr_14``). Without a
+    #: real session VWAP that stretch is identically 0 and the setup can never
+    #: fire, so a runner must skip it rather than evaluate it blind.
+    REQUIRES_VWAP: ClassVar[bool] = True
 
     def __init__(self, *, config: SetupDConfig | None = None) -> None:
         super().__init__(config=config)

@@ -219,13 +219,20 @@ def build_market_context(
     ``vwap`` is REQUIRED — it has no default. Setup D (VWAP reversion) reads it
     as ``z = (price - vwap)/atr``, so the former ``vwap := current_price``
     fallback did not degrade Setup D, it silenced it (z ≡ 0, never an extreme).
-    Both live producers now supply a real session VWAP — the decoupled
-    ``services/decision_engine/context_provider.py`` from the streaming
-    indicator engine (``get_indicators()['vwap']``, fail-closed when absent) and
-    the orchestrator ``shared/strategy/entry/setup_context_builder.py`` from
-    market data — so an omission here is a loud ``TypeError`` rather than a
-    silent #533/#537-class inert. Contract-pinned in
-    ``tests/unit/decision/test_market_context_parity.py``.
+    Making the parameter required means an omission is a loud ``TypeError``
+    rather than a silent #533/#537-class inert.
+
+    The two live producers still differ in what they do when their own source
+    has no vwap, and neither is "fail-closed" here:
+      * ``services/decision_engine/context_provider.py`` passes the streaming
+        engine's ``get_indicators()['vwap']`` through as-is (``0.0`` when the
+        engine has none) and the daemon skips only the setups that declare
+        ``REQUIRES_VWAP``; Setup A/C keep running.
+      * ``shared/strategy/entry/setup_context_builder.py`` still defaults a
+        missing ``vwap`` key to ``current_price`` (its own ``_get_float``
+        default). That is the orchestrator's pre-existing behaviour and is out
+        of scope here — it is on the monolith retirement track.
+    Contract-pinned in ``tests/unit/decision/test_market_context_parity.py``.
 
     ``market_open_hour`` / ``market_open_minute`` set the session open anchor
     used by ``minutes_since_open()``. When omitted they are read from

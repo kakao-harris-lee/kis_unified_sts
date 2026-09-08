@@ -34,10 +34,11 @@ The contract, in three layers:
       atr_90th→atr_14*1.5) are pinned against the replay's behaviour:
       ``current_spread_ticks`` is a SHARED constant (1.0) on both sides;
       ``atr_90th_percentile`` is a DOCUMENTED divergence (the replay computes a
-      data-driven value, the builder falls back to a default). ``vwap`` is NOT
-      in that set any more: it is REQUIRED of the builder and supplied by both
-      live producers (F-9 cutover), so replay and live compute the same
-      quantity.
+      data-driven value, the builder falls back to a default). ``vwap`` left
+      that set at the F-9 cutover — it is REQUIRED of the builder and supplied
+      by the live producers rather than defaulted — but live and replay still
+      compute it DIFFERENTLY (typical-price/KST-session vs close/UTC-date); see
+      the vwap section below for what is and is not asserted.
 
 This test is NOT tautological: it never feeds one producer's output into the
 other. The two code paths run independently on the same synthetic bars and are
@@ -586,47 +587,60 @@ def test_spread_default_policy_is_shared_constant() -> None:
     assert built_default.current_spread_ticks == _STUB_SPREAD_TICKS
 
 
-def test_vwap_is_live_supplied_by_both_producers() -> None:
-    """vwap is LIVE-SUPPLIED on both sides — no longer a documented divergence.
+# ---------------------------------------------------------------------------
+# vwap — required of the builder, live-supplied, still NOT replay-identical
+# ---------------------------------------------------------------------------
+# History: ``build_market_context`` used to fall back ``vwap := current_price``
+# while the decoupled live producer ``FuturesContextProvider`` omitted vwap
+# entirely, so Setup D's fade trigger ``z = (price - vwap)/atr`` collapsed to 0
+# and Setup D could NEVER fire on the decoupled chain (#533/#537 silent inert,
+# latent only because futures traded the orchestrator path). The predecessor of
+# these tests pinned that gap and named the F-9 cutover as the moment to close
+# it; it has been closed (plan 2026-09-08-setup-d-decoupled-port §3-B).
+#
+# What is NOT claimed here: that live and replay compute the same number. They
+# do not, and the difference is structural, not a rounding artefact:
+#   * PRICE TERM — the replay weights the TYPICAL price ``(H+L+C)/3``
+#     (``market_context_replay`` ~:278), the live streaming engine weights the
+#     candle CLOSE (``StreamingIndicatorEngine._on_tick`` feeds
+#     ``candle.close`` into ``VWAPCalculator``).
+#   * SESSION ANCHOR — the replay resets on the KST session date, the live
+#     accumulator is keyed on the UTC calendar date
+#     (``ts.strftime("%Y%m%d")``), so it resets at 09:00 KST — mid-session —
+#     and is not seeded by parquet warm-up.
+# Both are honest session VWAPs of the same tape; neither is derived from the
+# other. Closing that gap is an engine change and out of this contract's scope.
 
-    History: ``build_market_context`` used to fall back ``vwap := current_price``
-    while the decoupled live producer ``FuturesContextProvider`` omitted vwap
-    entirely. On that path Setup D's fade trigger ``z = (price - vwap)/atr``
-    collapsed to 0, so Setup D could NEVER fire on the decoupled chain — the
-    #533/#537 silent-inert failure mode, latent only because futures traded the
-    orchestrator path. The predecessor of this test pinned that gap and named
-    the F-9 cutover as the moment to close it.
 
-    That cutover has happened (plan 2026-09-08-setup-d-decoupled-port §3-B):
-      * ``FuturesContextProvider`` threads the streaming engine's session VWAP
-        (``get_indicators()['vwap']``) and returns None when it is absent —
-        fail-closed rather than silently inert; and
-      * ``build_market_context``'s ``vwap`` is a REQUIRED parameter with no
-        fallback, so a future omission is a loud TypeError.
-
-    Both halves are pinned below so neither can be reverted alone.
-    """
-    # (1) The builder honours a supplied vwap and does NOT substitute price.
+def test_builder_honours_a_supplied_vwap() -> None:
+    """The builder passes vwap through and never substitutes current_price."""
     built = build_market_context(**_builder_minimal_kwargs())
     assert built.vwap == _MINIMAL_VWAP
     assert built.vwap != built.current_price
 
-    # (2) The builder has no vwap fallback: omitting it is a TypeError, not a
-    #     silently-defaulted context.
+
+def test_builder_has_no_vwap_fallback() -> None:
+    """Omitting vwap is a loud TypeError, not a silently-defaulted context."""
     without_vwap = {k: v for k, v in _builder_minimal_kwargs().items() if k != "vwap"}
     with pytest.raises(TypeError):
         build_market_context(**without_vwap)
 
-    # (3) The decoupled live producer supplies it (AST pin — the inverse of the
-    #     pre-cutover assertion, so dropping the kwarg again fails here).
+
+def test_decoupled_producer_threads_vwap_into_the_builder() -> None:
+    """AST pin — the inverse of the pre-cutover assertion.
+
+    Dropping the kwarg again would reopen the Setup-D-inert gap, so it fails
+    here rather than going unnoticed until a shadow session produces nothing.
+    """
     assert "vwap" in _fcp_builder_call_kwargs(), (
         "FuturesContextProvider no longer passes vwap to build_market_context — "
         "the decoupled Setup-D-inert gap has been reopened. It must source the "
-        "engine's session VWAP (get_indicators()['vwap']) and fail closed when "
-        "it is absent."
+        "engine's session VWAP (get_indicators()['vwap'])."
     )
 
-    # (4) The replay's VWAP is genuinely data-driven (unchanged).
+
+def test_replay_vwap_is_data_driven_not_the_current_price() -> None:
+    """The replay computes a real volume-weighted average, not a price echo."""
     rows = _two_session_rows()
     ctx = _replay_ctx_at(rows, _PICK)
     assert ctx.vwap != pytest.approx(ctx.current_price)

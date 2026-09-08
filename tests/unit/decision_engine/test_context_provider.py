@@ -260,27 +260,32 @@ async def test_returns_none_when_atr_is_zero_or_absent():
 
 
 # ---------------------------------------------------------------------------
-# F-9: vwap must be sourced, and its absence must fail CLOSED
+# F-9: vwap is sourced from the engine; its absence must NOT darken Setup A/C
 # ---------------------------------------------------------------------------
 
 
 class _FakeEngineNoVwap:
-    """Warm engine with an ATR but no session VWAP (cold VWAPCalculator)."""
+    """Warm engine with an ATR but no session VWAP.
 
-    def is_warm(self, _symbol):
+    Two real windows produce this: the VWAP accumulator is keyed on the UTC
+    calendar date, so it resets at 09:00 KST mid-session, and parquet cold-start
+    warm-up never seeds it (``seed_candles`` does not feed ``_vwap_calc``).
+    """
+
+    def is_warm(self, _symbol: str) -> bool:
         return True
 
-    def get_last_price(self, _symbol):
+    def get_last_price(self, _symbol: str) -> float:
         return 352.0
 
-    def get_indicators(self, _symbol):
+    def get_indicators(self, _symbol: str) -> dict[str, float]:
         return {"atr": 2.0}
 
-    def get_recent_range(self, _symbol, _minutes=15):
+    def get_recent_range(self, _symbol: str, _minutes: int = 15) -> tuple[float, float]:
         return (360.0, 340.0)
 
 
-def _provider(engine):
+def _provider(engine: object) -> FuturesContextProvider:
     return FuturesContextProvider(
         engine=engine,
         daily_ref=_FakeDailyRef(),
@@ -292,28 +297,50 @@ def _provider(engine):
 
 
 @pytest.mark.asyncio
-async def test_returns_none_when_vwap_is_absent():
-    """No session VWAP must suppress the context, not default it.
+async def test_missing_vwap_still_builds_a_context_for_setup_a_and_c() -> None:
+    """A missing session VWAP must not suppress the whole tick.
 
-    Defaulting vwap to current_price collapses Setup D's fade trigger
-    z = (price - vwap)/atr to 0, so it could never fire — the #533/#537 silent
-    inert. Fail closed, same as the ATR guard.
+    Setup A/C never read vwap (F-4 invariance), so returning None here would
+    darken two working setups to protect one. The context is built with
+    ``vwap == 0.0`` and the daemon skips only ``REQUIRES_VWAP`` setups.
     """
-    assert await _provider(_FakeEngineNoVwap())() is None
+    ctx = await _provider(_FakeEngineNoVwap())()
+    assert ctx is not None
+    assert ctx.vwap == 0.0
+    # The fields Setup A/C read are intact.
+    assert ctx.atr_14 == 2.0
+    assert ctx.prev_close == 350.0 and ctx.today_open == 351.0
 
 
 @pytest.mark.asyncio
-async def test_returns_none_when_vwap_is_zero_or_negative():
-    for bad_vwap in (0.0, -1.0):
-        assert await _provider(_FakeEngine(vwap=bad_vwap))() is None
+async def test_vwap_is_passed_through_not_defaulted_to_price() -> None:
+    """The engine's value reaches the context verbatim (no current_price fallback)."""
+    ctx = await _provider(_FakeEngine(vwap=349.5, price=352.0))()
+    assert ctx is not None
+    assert ctx.vwap == 349.5
+    assert ctx.vwap != ctx.current_price
 
 
 @pytest.mark.asyncio
-async def test_vwap_guard_logs_once_per_state_change(caplog):
-    """The guard holds for as long as the engine is cold — log the transition."""
+async def test_vwap_unavailable_warns_once_per_state_change(caplog) -> None:
+    """The condition holds until the first candle — log the transition only."""
     provider = _provider(_FakeEngineNoVwap())
     with caplog.at_level("WARNING"):
-        assert await provider() is None
-        assert await provider() is None
+        assert await provider() is not None
+        assert await provider() is not None
     warnings = [r for r in caplog.records if "VWAP unavailable" in r.getMessage()]
     assert len(warnings) == 1
+
+
+@pytest.mark.asyncio
+async def test_vwap_recovery_is_logged_once(caplog) -> None:
+    """Recovery flips the latch back so a later outage warns again."""
+    engine = _FakeEngine(vwap=0.0)
+    provider = _provider(engine)
+    with caplog.at_level("INFO"):
+        await provider()  # unavailable -> warns
+        engine._vwap = 349.5
+        await provider()  # recovered -> info
+        await provider()  # still fine -> silent
+    recovered = [r for r in caplog.records if "available again" in r.getMessage()]
+    assert len(recovered) == 1
