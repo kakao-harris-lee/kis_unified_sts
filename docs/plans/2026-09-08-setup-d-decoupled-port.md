@@ -1,6 +1,6 @@
 # Setup D 디커플 체인 이식 — 로스터 설정 주도화 · VWAP 공급 · 평가 관측성
 
-작성 2026-09-08 · 세션 모델 단독 저작(운영자 지시 2026-09-04) · 기준 main `a8e2d4f0` · 상태 **초안(운영자 검토 대기, 구현 미착수)**
+작성 2026-09-08 · 세션 모델 단독 저작(운영자 지시 2026-09-04) · 기준 main `aa348ce1`(#654–#658 반영 후 재검증; 초안은 `a8e2d4f0`) · 상태 **초안(운영자 검토 대기, 구현 미착수)**
 
 배경: F-9 Gate 1 섀도 1일차(2026-09-08)에서 디커플 체인은 09:15~15:35 A01609 틱을 정상 소비했지만
 `signal.candidate.futures.shadow` 는 0건이었고, 같은 날 `trader-futures` 의 체결 20건은 전부
@@ -57,7 +57,8 @@
    ("FuturesContextProvider now threads vwap … make build_market_context's vwap REQUIRED … then update this pin"),
    `tests/unit/decision_engine/test_context_provider.py:97`, `tests/unit/decision/test_build_market_context.py`. 엔진은 세션
    VWAP 을 이미 계산한다(`shared/indicators/streaming/queries.py:157`, `VWAPCalculator` KST 일자 리셋 — 선물 첫 틱 08:45 앵커).
-4. **방향 차단** — 어댑터만 `short_blocked_regimes: ["BULL_STRONG"]` 적용(`setup_d_adapter.py:174-199`, YAML:114-116).
+4. **방향 차단** — 어댑터만 `short_blocked_regimes: ["BULL_STRONG"]` 적용(`setup_d_adapter.py:174-199`, YAML:118-120 — #658 이
+   머리말 주석을 정정해 4줄 밀림; `strategy.enabled: true` 는 불변).
    `regime_gate.enabled: false`, `trend_filter_enabled: false` 라 실제 활성 게이트는 이것 하나. 디커플 A/C 도 어댑터 계층
    게이트(LLM veto/tuning, regime gate, daily-bias) 없이 돌며 디커플의 진입 게이트는 `market_risk_gate` 하나다.
 5. **관측성** — 데몬은 `signal is None` 을 로그 없이 버린다(`main.py:169-170`, 오늘 evaluation 로그 0줄). `last_reject_reason`
@@ -66,7 +67,7 @@
    디커플에선 "0 신호 = 미평가" 와 "0 신호 = 전건 거부" 를 구별할 수 없다.
 6. **청산 의미론** — 모놀리식 D 청산은 `setup_target_exit`(stop/target + **EOD 15:15**). 디커플 PseudoOCO 는
    `register_bracket` 이 `signal.valid_until` 을 받아 `check_expiry` 가 그 시각에 **포지션을 강제 청산**(`shared/execution/
-   pseudo_oco.py:96-125, 167-198`, 호출 `order_router/main.py:291`). D 의 `signal_ttl_minutes: 10` 은 코어에선 진입 유효기간인데
+   pseudo_oco.py:96-125, 167-198`, 호출 `order_router/main.py:292`). D 의 `signal_ttl_minutes: 10` 은 코어에선 진입 유효기간인데
    디커플에선 10분 보유 상한이 된다. A(10분)/C(30분)도 같은 구조. 오늘 orchestrator D 왕복 10건 중 다수가 10분 초과
    (12:14→12:27, 13:55→14:05 등) → 방향은 맞아도 손익 궤적은 구조적으로 다르다. EOD flatten 은 디커플에 없다.
 7. **재진입 가드 부재** — `services/trading/reentry_guard.py` 는 orchestrator 전용. D 는 세션 내내 발화하며 2026-07-07
