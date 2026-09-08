@@ -1,6 +1,6 @@
 # Futures Trend-Day Strategy — Research, Design, and Validation
 
-Status: **[NEEDS-VALIDATION]** — prototype + walk-forward evidence pending review.
+Status: **[NO-SHIP]** — walk-forward on the clean window is net-negative (OOS Sharpe −0.18, IS→OOS inversion = overfitting) — NO-SHIP (PR #530, merged 2026-06-25; 문서 본문의 Status 가 머지 판정과 어긋나 2026-09-08 정정)
 Author: strategy-architect
 Date: 2026-06-25
 Branch: `feat/futures-trend-day-strategy`

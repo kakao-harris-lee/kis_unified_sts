@@ -7,7 +7,7 @@
 # open-only gap window misses (e.g. a +3% semiconductor-led day with no overnight
 # gap → Setup A fires 0 trades).
 #
-# STATUS: paper-only, NEEDS-VALIDATION. enabled=false by default.
+# STATUS: paper-only, NEEDS-VALIDATION. enabled=true (PAPER rollout activated 2026-06-26; see line below).
 #   Walk-forward on the clean Dec2025–Apr2026 101S6000 window:
 #     full-window Sharpe 3.78 (+413 pts); honest OOS (40d-IS/10d-OOS stride)
 #     Sharpe +1.97, +197 pts, 3/4 folds profitable (1 flat, 0 negative), both
