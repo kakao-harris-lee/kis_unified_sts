@@ -33,6 +33,7 @@ from __future__ import annotations
 from pydantic import model_validator
 
 from tos.canonical import (
+    EV_L1_PROVISIONAL_VERSION,
     ArtifactIntegrityError,
     ArtifactStatus,
     CanonicalDecimal,
@@ -45,6 +46,7 @@ from tos.canonical import (
 
 __all__ = [
     "CONSTRUCTION_SHALL_NOT_FLAGS",
+    "EV_L1_PROVISIONAL_VERSION",
     "GATEWAY_SHALL_NOT_FLAGS",
     "AllFalseConstructionCoordinatorAuthority",
     "AllFalseGatewayAuthority",

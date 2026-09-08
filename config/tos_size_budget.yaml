@@ -37,7 +37,7 @@ scope:
 # expires_on 경과 시 --check red(운영자 조정 가능한 값).
 exceptions:
 - target: tos/src/tos/egressgw/gateway.py
-  measured: 1850
+  measured: 1919
   owner: tos-kernel
   decomposition_order: 1
   expires_on: '2026-12-31'
@@ -59,6 +59,12 @@ exceptions:
     ``preserved_obligation_magnitude_unknown`` 필드 + validator 추가,
     ``_verdict``/``_check_currentness``/``_halt``/``__call__``/``_item16_obligation``
     전부 배선).
+    2026-09-09 Phase 4 작업 6(SendSeal, 레인 K) — measured 1850→1919(+69). 신규
+    ``_seal_and_claim`` 헬퍼(봉인 생성+claim을 한 곳에 인수) 추가, ``__call__`` 스텝
+    16-18 재배선(seal 소스 전환), 모듈 도크스트링 4번째 구조 확장, ``SendTransport``
+    docstring seal_digest 설명 추가. ``outbound_coordinates``/
+    ``OUTBOUND_COORDINATE_NAMES`` 자체는 ``seal.py`` 로 이관되어 이 모듈의 실측을
+    줄였으나(구 정의 ~30줄) 신규 배선이 net 증가.
 - target: tos/src/tos/sir/predicates.py
   measured: 1681
   owner: tos-kernel
@@ -126,7 +132,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/egressgw/gateway.py::BrokerEgressGateway.__call__
-  measured: 254
+  measured: 256
   owner: tos-kernel
   decomposition_order: 13
   expires_on: '2026-12-31'
@@ -141,6 +147,10 @@ exceptions:
     본체는 오히려 축소; 헬퍼 자체는 모듈 전체 measured 증가에 반영됨).
     2026-09-09 kernel round #1 review #4 (+5 lines) — measured 249→254
     (``preserved_obligation_magnitude_unknown`` 을 튜플로 함께 배선).
+    2026-09-09 Phase 4 작업 6(SendSeal, 레인 K) — measured 254→256(+2). 스텝
+    16-18 이 ``_seal_and_claim`` 호출 + ``SEND_SEALED`` 기록으로 재배선되며 본체는
+    순증 2줄(seal/claim 로직 대부분은 신규 헬퍼 ``_seal_and_claim`` 자체에 있고, 그
+    헬퍼의 실측은 모듈 전체 measured 증가에 반영됨 — 위 항목 참고).
 - target: tos/src/tos/egressgw/construction.py::derive_order_size
   measured: 246
   owner: tos-kernel

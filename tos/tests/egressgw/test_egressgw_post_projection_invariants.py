@@ -196,7 +196,7 @@ def _declared(kind: EgressResultKind) -> SyntheticPaperTransport:
 
 
 def test_the_happy_path_still_records_the_exact_step_order() -> None:
-    """(§1.3/§4.6, hypothesis-free control) verify -> SEND_STARTED -> POTENTIALLY_LIVE -> result."""
+    """(§1.3/§4.6, hypothesis-free control) verify -> SEALED -> STARTED -> LIVE -> result."""
     attempt, context = happy_context()
     gateway, sink = build_gateway(attempt=attempt, context=context)
 
@@ -206,6 +206,7 @@ def test_the_happy_path_still_records_the_exact_step_order() -> None:
     assert handoff.handoff_reference == attempt.attempt_id
     non_item_kinds = tuple(kind for kind in sink.kinds if kind != "VERIFY_ITEM")
     assert non_item_kinds == (
+        "SEND_SEALED",
         "SEND_STARTED",
         "POTENTIALLY_LIVE_OBSERVED",
         "EGRESS_RESULT_RECORDED",
@@ -222,7 +223,12 @@ def test_the_happy_path_still_records_the_exact_step_order() -> None:
 def test_a_coordinate_derivation_fault_halts_under_its_own_reason_before_any_send(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Misattributing this to TRANSPORT_RAISED would hide that the transport was never reached."""
+    """(Phase 4 작업 6) Absorbed into SEND_SEAL_UNCONSTRUCTABLE — this now runs before any claim.
+
+    Misattributing this to TRANSPORT_RAISED would hide that the transport was never reached;
+    tagging it with the old OUTBOUND_COORDINATE_DERIVATION_RAISED reason would misreport *where*
+    it happened now that coordinate derivation runs at seal-build time, before the step-16 claim.
+    """
     attempt, context = happy_context()
     transport = _UnreachableTransport()
     sink = RecordingGatewayEvidenceSink()
@@ -241,13 +247,14 @@ def test_a_coordinate_derivation_fault_halts_under_its_own_reason_before_any_sen
 
     assert handoff.accepted_for_transmission is None
     assert transport.calls == 0  # I3
-    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True  # I1
-    assert sink.records[-1].kind == "SEND_REFUSED"  # I2
     assert (
-        sink.records[-1].halt_reason
-        is SendHaltReason.OUTBOUND_COORDINATE_DERIVATION_RAISED
-    )
-    # A second call refuses without ever reaching the transport either.
+        gateway.ledger.attempt_consumed(attempt.attempt_id) is False
+    )  # nothing claimed
+    assert gateway.ledger.claims == ()
+    assert sink.records[-1].kind == "SEND_REFUSED"  # I2
+    assert sink.records[-1].halt_reason is SendHaltReason.SEND_SEAL_UNCONSTRUCTABLE
+    # A second call still refuses without ever reaching the transport — nothing was ever
+    # consumed, so this is a fresh evaluation each time, not a "consumed" replay refusal.
     assert gateway(attempt).accepted_for_transmission is None
     assert transport.calls == 0
 

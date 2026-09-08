@@ -36,6 +36,7 @@ from tos.egressgw import (
     VerifyOutcome,
     build_order_conformance_proof,
     outbound_binding_mismatch,
+    seal_matches_outbound,
     send_boundary_context,
     verify_send_boundary,
 )
@@ -138,7 +139,7 @@ def _declared(kind: EgressResultKind) -> SyntheticPaperTransport:
 
 
 def test_the_baseline_send_is_accepted_and_records_every_step_in_order() -> None:
-    """(§1.3 / §4.6) verify → SEND_STARTED → POTENTIALLY_LIVE → transport → evidence."""
+    """(§1.3 / §4.6) verify → SEND_SEALED → SEND_STARTED → POTENTIALLY_LIVE → transport → evidence."""
     attempt, context = happy_context()
     gateway, sink = build_gateway(attempt=attempt, context=context)
     handoff = gateway(attempt)
@@ -146,6 +147,7 @@ def test_the_baseline_send_is_accepted_and_records_every_step_in_order() -> None
     assert handoff.handoff_reference == attempt.attempt_id
     non_item_kinds = tuple(kind for kind in sink.kinds if kind != "VERIFY_ITEM")
     assert non_item_kinds == (
+        "SEND_SEALED",
         "SEND_STARTED",
         "POTENTIALLY_LIVE_OBSERVED",
         "EGRESS_RESULT_RECORDED",
@@ -163,6 +165,7 @@ def test_send_started_is_written_before_the_first_byte() -> None:
     )
     assert gateway(attempt).accepted_for_transmission is True
     assert transport.calls == 1
+    assert "SEND_SEALED" in transport.kinds_at_call
     assert "SEND_STARTED" in transport.kinds_at_call
     assert "EGRESS_RESULT_RECORDED" not in transport.kinds_at_call
 
@@ -531,6 +534,172 @@ def test_the_binding_predicate_accepts_the_consistent_baseline() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 4 작업 6 — SendSeal: sole source, seal failure, mutation pins (design §1.4)
+# ---------------------------------------------------------------------------
+
+
+def test_a_diverging_claim_and_active_principal_halts_as_seal_unconstructable() -> None:
+    """(design §1.1 A2) A gap none of the 17 items or the binding check close — the seal does.
+
+    ``context.principal`` (item 1's claim principal) and ``authorized_coordinates.
+    active_principal`` (item 17's coordinate) are never compared to each other anywhere in the
+    verify list or in ``outbound_binding_mismatch`` — only the seal's own validator does.
+    """
+    attempt, context = happy_context(principal="someone-else")
+    gateway, sink = build_gateway(attempt=attempt, context=context)
+
+    handoff = gateway(attempt)
+
+    assert handoff.accepted_for_transmission is None
+    assert gateway.ledger.claims == ()
+    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is False
+    assert "SEND_SEALED" not in sink.kinds
+    assert "SEND_STARTED" not in sink.kinds
+    assert sink.records[-1].halt_reason is SendHaltReason.SEND_SEAL_UNCONSTRUCTABLE
+
+
+def test_send_sealed_carries_the_full_seal_and_send_started_carries_only_its_digest() -> (
+    None
+):
+    """(design §1.2) ``SEND_SEALED`` carries the whole seal; ``SEND_STARTED`` only its digest."""
+    attempt, context = happy_context()
+    gateway, sink = build_gateway(attempt=attempt, context=context)
+
+    assert gateway(attempt).accepted_for_transmission is True
+
+    (sealed_record,) = [r for r in sink.records if r.kind == "SEND_SEALED"]
+    (started_record,) = [r for r in sink.records if r.kind == "SEND_STARTED"]
+    (result_record,) = [r for r in sink.records if r.kind == "EGRESS_RESULT_RECORDED"]
+
+    assert sealed_record.send_seal is not None
+    seal = sealed_record.send_seal
+    assert sealed_record.send_seal_digest is None
+    assert started_record.send_seal is None
+    assert started_record.send_seal_digest == seal.seal_digest
+    assert result_record.send_seal_digest == seal.seal_digest
+
+
+def test_the_claim_is_sourced_from_the_seal_not_context_request_digest() -> None:
+    """(design §1.2) The step-16 claim binds ``seal.request_bytes_digest``, not
+    ``context.request_digest`` — the two are deliberately different fixture values."""
+    attempt, context = happy_context()
+    assert context.request_digest == REQUEST_DIGEST
+    gateway, sink = build_gateway(attempt=attempt, context=context)
+
+    assert gateway(attempt).accepted_for_transmission is True
+
+    (sealed_record,) = [r for r in sink.records if r.kind == "SEND_SEALED"]
+    seal = sealed_record.send_seal
+    assert seal is not None
+    capability_claim, permit_claim = gateway.ledger.claims
+    assert capability_claim.request_digest == seal.request_bytes_digest
+    assert permit_claim.request_digest == seal.request_bytes_digest
+    assert seal.request_bytes_digest != REQUEST_DIGEST
+
+
+def test_transport_arguments_equal_the_seal_via_seal_matches_outbound() -> None:
+    """(design §1.4 "유일 원천") The exact values ``send_once`` received are the seal's own."""
+    attempt, context = happy_context()
+    transport = full_fill_transport()
+    gateway, sink = build_gateway(attempt=attempt, context=context, transport=transport)
+
+    assert gateway(attempt).accepted_for_transmission is True
+
+    (request,) = transport.requests
+    (sealed_record,) = [r for r in sink.records if r.kind == "SEND_SEALED"]
+    seal = sealed_record.send_seal
+    assert seal is not None
+    assert (
+        seal_matches_outbound(
+            seal,
+            coordinates=request.coordinates,
+            quantity=request.quantity,
+            price=request.price,
+            side=request.side,
+            instrument_key=request.instrument_key,
+            attempt_id=request.attempt.attempt_id,
+        )
+        is True
+    )
+
+
+def test_mk2_a_resolver_asked_twice_never_leaks_its_second_answer_into_the_transport_call() -> (
+    None
+):
+    """(mutation M-K2) The seal is built once, from one resolution; a later, differently-valued
+    resolution can never leak into the transport call because step 18 never re-reads context.
+
+    The resolver below would hand back a *different* outbound quantity on a second call — if the
+    gateway ever re-resolved context (instead of reading the already-built seal) between the seal
+    and the transport call, that different value would reach the transport. It never does.
+    """
+    attempt, context = happy_context()
+    calls = {"n": 0}
+
+    def _resolver(_: AttemptRequest) -> SendBoundaryContext:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return context
+        _, fresh = happy_context(outbound_quantity=Decimal("40"))
+        return fresh
+
+    transport = full_fill_transport()
+    sink = RecordingGatewayEvidenceSink()
+    gateway = BrokerEgressGateway(contexts=_resolver, transport=transport, sink=sink)
+
+    handoff = gateway(attempt)
+
+    assert handoff.accepted_for_transmission is True
+    assert calls["n"] == 1
+    (request,) = transport.requests
+    assert request.quantity == context.outbound_quantity
+    assert request.quantity != Decimal("40")
+
+
+def test_mk1_send_once_reads_only_seal_attributes_never_context_again() -> None:
+    """(mutation M-K1, structural pin) ``send_once``'s keyword arguments never read
+    ``context.*`` for the outbound-economic / identity fields — only ``seal.*`` may.
+
+    An AST scan of ``BrokerEgressGateway.__call__``'s own source: if a future edit changed
+    ``quantity=seal.outbound_quantity`` back to ``quantity=context.outbound_quantity`` (the
+    pre-Phase-4-작업-6 shape), this test fails loudly instead of silently reverting the seal's
+    "sole input source" guarantee.
+    """
+    import ast
+    import textwrap
+
+    source = textwrap.dedent(inspect.getsource(BrokerEgressGateway.__call__))
+    tree = ast.parse(source)
+    send_once_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "send_once"
+    ]
+    assert len(send_once_calls) == 1, "expected exactly one send_once call in __call__"
+    (call_node,) = send_once_calls
+    forbidden_context_attrs = {
+        "outbound_quantity",
+        "outbound_price",
+        "outbound_side",
+        "instrument_key",
+    }
+    offenders = [
+        f"{kw.arg}=context.{kw.value.attr}"
+        for kw in call_node.keywords
+        if isinstance(kw.value, ast.Attribute)
+        and isinstance(kw.value.value, ast.Name)
+        and kw.value.value.id == "context"
+        and kw.value.attr in forbidden_context_attrs
+    ]
+    assert offenders == [], (
+        f"send_once reads {offenders} from context — step 18 must source only from the seal "
+        "(design #34 phase 4 작업 6 §1.2, mutation M-K1)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # at-most-one: single-use consumption + no blind resubmit (§5.4 / §6)
 # ---------------------------------------------------------------------------
 
@@ -877,6 +1046,7 @@ def test_the_mapping_and_the_resolver_paths_produce_the_identical_verification()
     assert resolved_verification == mapped_verification
     assert resolved_gateway.results == mapped_gateway.results
     assert mapped_sink.kinds == ("VERIFY_ITEM",) * 17 + (
+        "SEND_SEALED",
         "SEND_STARTED",
         "POTENTIALLY_LIVE_OBSERVED",
         "EGRESS_RESULT_RECORDED",
