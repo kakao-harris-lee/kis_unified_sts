@@ -113,6 +113,7 @@ def _closure_child(queue: mp.Queue) -> None:
     import tos.brokercap._base  # noqa: F401
     import tos.brokercap.predicates  # noqa: F401
     import tos.brokercap.records  # noqa: F401
+    import tos.brokercap.routing  # noqa: F401
     import tos.brokercap.vocabulary  # noqa: F401
 
     leaked = sorted(name for name in sys.modules if _is_forbidden(name))

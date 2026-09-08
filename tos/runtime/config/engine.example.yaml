@@ -12,6 +12,10 @@
 # max_unresolved_send_per_scope: MAX_unresolved_send_per_scope (register
 # §3:90; design #31 §8/§4.4). The engine observes the projection
 # restrictively against it; it never creates headroom (RFC-002 §9.1:558).
+# The register's own approved reference point is 1 (VERIFICATION-PROFILE-002.yaml:1010,
+# "APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §9
+# reconfirmed" — review_date=2027-01-29); an operator still supplies the
+# concrete value here rather than the file defaulting to it.
 #
 # Both are named-TBD `null` in this example — a missing or null value
 # refuses composition at startup (fail-closed, never a silent default).

@@ -340,3 +340,84 @@ def test_every_call_is_recorded_so_a_second_send_would_be_visible() -> None:
         transport.requests[0].attempt.attempt_id
         != transport.requests[1].attempt.attempt_id
     )
+
+
+# ---------------------------------------------------------------------------
+# 작업 7 — adapter 1 outbound -> 1 result contract lock (slice plan §5-A)
+#
+# The stronger "same attempt sent twice is refused" invariant is already pinned at the
+# *gateway* layer, not here: ``tos/tests/egressgw/test_egressgw_gateway.py::
+# test_the_same_attempt_is_never_sent_twice`` (the single-use claim, gateway.py step 16,
+# ``ATTEMPT_ALREADY_CONSUMED``). This package's ``Transport`` is deliberately a dumb
+# single-shot port with no dedup state of its own — the negative-grep below fixes that
+# absence at the *implementation* level (no retry primitive can be written against it),
+# which is this package's part of the contract.
+# ---------------------------------------------------------------------------
+
+
+def _retry_primitive_offenders(source: str) -> list[str]:
+    """Return every ``sleep()`` call, retry-named identifier, ``for ... in range(...)``
+    loop, or self-recursive ``send_once`` call found in ``source`` (AST scan)."""
+    import ast
+
+    tree = ast.parse(source)
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else None
+            if isinstance(func, ast.Attribute):
+                name = func.attr
+            if name == "sleep":
+                offenders.append(f"line {node.lineno}: sleep() call")
+            if name == "send_once":
+                offenders.append(f"line {node.lineno}: send_once() call")
+        elif isinstance(node, ast.Name) and "retry" in node.id.lower():
+            offenders.append(f"line {node.lineno}: retry-named identifier {node.id!r}")
+        elif isinstance(node, ast.arg) and "retry" in node.arg.lower():
+            offenders.append(f"line {node.lineno}: retry-named argument {node.arg!r}")
+        elif (
+            isinstance(node, ast.For)
+            and isinstance(node.iter, ast.Call)
+            and isinstance(node.iter.func, ast.Name)
+            and node.iter.func.id == "range"
+        ):
+            offenders.append(f"line {node.lineno}: 'for ... in range(...)' loop")
+    return offenders
+
+
+def test_the_transport_implementation_source_has_no_retry_primitive() -> None:
+    """(negative-grep, slice plan §5-A task 7b) No ``sleep()``, no retry-named identifier,
+    no ``for _ in range`` resend loop, and no second (self-recursive) ``send_once`` call
+    anywhere in the synthetic paper transport's implementation source — the mechanical
+    evidence that Q-IDEMP-1 (three-attempt resend) cannot be reintroduced here."""
+    from pathlib import Path
+
+    import tos.brokeradapter.synthetic as synthetic
+
+    source = Path(synthetic.__file__).read_text(encoding="utf-8")
+    offenders = _retry_primitive_offenders(source)
+    assert (
+        offenders == []
+    ), f"retry/resend primitives found in synthetic.py: {offenders}"
+
+
+def test_retry_primitive_scan_detects_a_planted_violation() -> None:
+    """The negative-grep above is not vacuously green: a planted sleep/retry/range-loop/
+    self-recursive send_once source is actually flagged."""
+    planted = (
+        "import time\n"
+        "def send_once(self, attempt):\n"
+        "    retry_count = 0\n"
+        "    for _ in range(3):\n"
+        "        time.sleep(1)\n"
+        "        retry_count += 1\n"
+        "        result = self.send_once(attempt)\n"
+        "    return result\n"
+    )
+    offenders = _retry_primitive_offenders(planted)
+    joined = " ".join(offenders)
+    assert "sleep() call" in joined
+    assert "retry-named identifier" in joined
+    assert "'for ... in range(...)' loop" in joined
+    assert "send_once() call" in joined
