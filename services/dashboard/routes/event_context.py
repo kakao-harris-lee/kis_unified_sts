@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,6 +17,8 @@ from pydantic import BaseModel, Field
 from services.dashboard.domain.assets import normalize_asset_class
 from shared.decision.context import ScheduledEvent, load_scheduled_events
 from shared.decision.setups.event_reaction import SetupCConfig
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/event-context", tags=["event-context"])
 
@@ -636,17 +639,30 @@ class _SetupCConfigLoad:
 
 
 def _load_setup_c_config() -> _SetupCConfigLoad:
-    """Load the runtime Setup C config (strategy YAML ``strategy.entry.params``).
+    """Load the runtime Setup C config from the deployed strategy file.
 
-    ``SetupCConfig.from_yaml()`` with no arguments resolves the same file and
-    section the decision_engine daemon and the monolith adapter use, so this
-    endpoint reports the parameters the runtime actually applies. A read failure
-    degrades to the Pydantic defaults and is REPORTED, not hidden — those values
-    would otherwise look authoritative while differing from what runs.
+    The path is ``_SETUP_C_STRATEGY_CONFIG_PATH`` — the same file
+    ``SetupCConfig._default_config_file`` names, passed explicitly so the
+    documented env knob actually selects what is read instead of being a no-op
+    next to a no-arg ``from_yaml()``. The section falls through to the class's
+    ``strategy.entry.params``, i.e. exactly what the decision_engine daemon and
+    the monolith adapter load.
+
+    A read failure degrades to the Pydantic defaults and is REPORTED, not
+    hidden — those values would otherwise look authoritative while differing
+    from what the runtime applies.
     """
     try:
-        return _SetupCConfigLoad(config=SetupCConfig.from_yaml(), loaded_from_yaml=True)
+        config = SetupCConfig.from_yaml(
+            path=str(_resolve(_SETUP_C_STRATEGY_CONFIG_PATH))
+        )
+        return _SetupCConfigLoad(config=config, loaded_from_yaml=True)
     except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Setup C config load failed for %s; reporting Pydantic defaults",
+            _SETUP_C_STRATEGY_CONFIG_PATH,
+            exc_info=True,
+        )
         return _SetupCConfigLoad(
             config=SetupCConfig(),
             loaded_from_yaml=False,
