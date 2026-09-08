@@ -193,6 +193,7 @@ def compose_paper_runtime(
         currentness_assembler=risk.currentness_assembler,
         proof_issuer=risk.proof_issuer,
         pending_dimension_specs=risk.pending_dimension_specs,
+        egress_attestations=risk.egress_attestations,
         construction=construction,
         environment_label=environment_label,
         continuity_id=continuity_id,

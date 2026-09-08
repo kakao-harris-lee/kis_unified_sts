@@ -52,6 +52,7 @@ from tos_runtime.compose._currentness_wiring import (
     _build_risk_and_currentness,
     _RiskAndCurrentness,
 )
+from tos_runtime.compose._egress_attestations import EgressAttestations
 from tos_runtime.compose._pending_dimensions import PendingDimensionSpec
 from tos_runtime.compose._types import (
     ComposedRuntime,
@@ -130,6 +131,39 @@ def _time_permits_new_risk(time_service: TrustworthyTimeService) -> Callable[[],
         return state_permits_new_normal_risk(snapshot.health_state) is True
 
     return _check
+
+
+def _rcl_tip_generation_provider(
+    rcl_log: SqliteCommitLog, writer_epoch: int
+) -> Callable[[StageRequest], int]:
+    """A ``GenerationProvider`` (snapshot/decision/permit generation, step 6/9)
+    derived from the RCL log's own current linearizable tip sequence — never
+    a fabricated constant (team-lead follow-up guidance, 2026-09-08).
+
+    ``AggregateRiskService.decide``/``ActionFlowGovernor.build_permit`` need
+    these generation numbers to CREATE a snapshot/decision/permit's own
+    identity digest — they cannot be read back FROM the not-yet-created
+    artifact, so the only real, structurally-derived, monotonically
+    advancing number this composition can supply at that point is the log's
+    own tip at the moment of the call (the same real artifact ACTION_FLOW's
+    own currentness dimension reader already keys off,
+    :func:`_action_flow_dimension_reader_for`).
+
+    Returns ``0`` when the log has no committed tip yet or is transiently
+    unreachable — this provider itself never denies anything; a genuinely
+    broken log is instead caught and mapped to ``UNKNOWN`` by the calling
+    Stage's own fault contract (e.g.
+    ``AggregateRiskDecisionStage.__call__``'s ``try/except``).
+    """
+
+    def _provider(_request: StageRequest) -> int:
+        try:
+            view = rcl_log.read_linearizable(writer_epoch=writer_epoch)
+        except Exception:  # noqa: BLE001 - caller Stage maps broken log to UNKNOWN
+            return 0
+        return 0 if view.last_seq is None else view.last_seq
+
+    return _provider
 
 
 def _decision_provider(
@@ -323,7 +357,16 @@ def _build_rcl_and_authority(
         leader_identity=identity.process_nonce or "compose-root",
         transition_reason=AuthorityTransitionReason.EXPLICIT_ADMINISTRATIVE_REVOCATION,
     )
-    intent_registry = IntentRegistry(rcl_log, evidence_store, writer_epoch=writer_epoch)
+    # load_authority_config fail-closed-resolves this to a positive int
+    # (never None) — asserted here only to narrow the type for mypy.
+    policy_generation = authority_config.trading_approval_policy_generation
+    assert policy_generation is not None
+    intent_registry = IntentRegistry(
+        rcl_log,
+        evidence_store,
+        writer_epoch=writer_epoch,
+        trading_approval_policy_generation=policy_generation,
+    )
 
     return _RclAndAuthority(
         rcl_log=rcl_log,
@@ -492,36 +535,18 @@ def _build_step4_recorder(
             return False
         return None
 
-    def _decision_current_provider(
-        _request: StageRequest, _decision: IndependentApprovalDecision
-    ) -> bool | None:
-        """xfail: no producer (team-lead follow-up guidance, 2026-09-08).
-
-        No Phase 2 lane (P/Q/R/S) owns Independent-Approval decision
-        currency (expiry / revocation / supersession against a live
-        authority). ``tos.iap`` explicitly reads no clock (module docstring,
-        §3.4/§19), and :class:`~tos.iap.IndependentApprovalDecision` carries
-        no field comparable to
-        :meth:`~tos_runtime.authority.epoch.SafetyAuthorityEpochService.current_state`
-        — the two are different governed domains (Trading Approval
-        generation vs. Safety Authority epoch), so comparing them would be a
-        category error, not a real currency check. Honestly returns ``None``
-        (UNKNOWN, fail-closed) rather than a fabricated ``True`` — this
-        drives ``consumption_transition`` to ``REJECTED_INELIGIBLE`` =>
-        ``StageOutcome.DENY`` at step 4 for every attempt, since
-        ``decision_current`` can never be positively ``True`` in this
-        composition. See the compose end-to-end test module docstring for
-        which scenarios this makes honestly unreachable (xfail'd, not
-        faked)."""
-        return None
-
     return VerdictRecorder(
         IndependentApprovalStage(
             intent_registry,
             decision_provider=_decision_provider(custody_root, environment_label, uid),
             command_identity_provider=_consuming_command_identity,
             command_digest_provider=_consuming_command_digest,
-            decision_current_provider=_decision_current_provider,
+            # decision_current_provider omitted (team-lead follow-up guidance,
+            # 2026-09-08): IndependentApprovalStage's own default now calls
+            # registry.decision_current(decision) — lane P's real derivation
+            # (policy-generation equality + log-derived supersession, see
+            # tos_runtime.authority.iap's "Decision currency has no kernel
+            # predicate" section). Compose need not re-wrap it in a lambda.
             envelope_equivalent_provider=_envelope_equivalent_provider,
         )
     )
@@ -555,12 +580,13 @@ def _build_realized_stages(
         intent_registry, construction_stage, custody_root, environment_label, uid
     )
     time_gate = _time_permits_new_risk(infra.time_service)
+    generation_provider = _rcl_tip_generation_provider(rcl_log, writer_epoch)
 
     step6_stage = AggregateRiskDecisionStage(
         risk_service,
         inputs_provider=aggregate_risk_inputs_provider,
-        snapshot_generation_provider=lambda _request: 1,
-        decision_generation_provider=lambda _request: 1,
+        snapshot_generation_provider=generation_provider,
+        decision_generation_provider=generation_provider,
         time_permits_new_risk=time_gate,
     )
     step7_stage = ActionFlowDecisionStage(
@@ -573,7 +599,7 @@ def _build_realized_stages(
     )
     permit_provider = make_permit_provider(
         flow_governor,
-        permit_generation_provider=lambda _request: 1,
+        permit_generation_provider=generation_provider,
         command_identity_provider=lambda request: request.proposal.canonical_digest
         or "",
     )
@@ -667,6 +693,7 @@ def _build_context_resolver(
     currentness_assembler: CurrentnessAssembler,
     proof_issuer: EgressCurrentnessProofIssuer,
     pending_dimension_specs: tuple[PendingDimensionSpec, ...],
+    egress_attestations: EgressAttestations,
     construction: ConstructionConfig,
     environment_label: str,
     continuity_id: str,
@@ -685,6 +712,7 @@ def _build_context_resolver(
         currentness_assembler=currentness_assembler,
         proof_issuer=proof_issuer,
         pending_dimension_specs=pending_dimension_specs,
+        egress_attestations=egress_attestations,
         transport_nature=TransportNature(
             principal=f"synthetic-paper-{environment_label}",
             reaches_broker=False,

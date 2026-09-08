@@ -60,7 +60,18 @@ def config_dir(tmp_path: Path) -> Path:
             "safety_profile_version": "safety-compose-0",
         },
     )
-    _write_yaml(directory / "authority.yaml", {"containment_bound_ms": 60_000})
+    _write_yaml(
+        directory / "authority.yaml",
+        {
+            "containment_bound_ms": 60_000,
+            # Matches write_approval_file's own
+            # trading_approval_policy_generation=1 below, so
+            # IntentRegistry.decision_current's generation-equality check
+            # (tos_runtime.authority.iap, landed by lane P 2026-09-08) holds
+            # for every approval file this fixture module writes.
+            "trading_approval_policy_generation": 1,
+        },
+    )
     _write_yaml(
         directory / "risk.yaml",
         {
@@ -97,6 +108,16 @@ def config_dir(tmp_path: Path) -> Path:
                 "positively_established": True,
             }
             for key in PENDING_DIMENSION_KEYS
+        },
+    )
+    _write_yaml(
+        directory / "egress_attestations.yaml",
+        {
+            "account_instrument_action_allowed": {"attested": True},
+            "venue_session_account_facts_current": {"attested": True},
+            "broker_constraint_generation_current": {"attested": True},
+            "restrictive_latch_state": {"clear": True},
+            "worst_credible_capacity": {"value": 1},
         },
     )
     _write_yaml(
@@ -190,11 +211,29 @@ def custody_root(tmp_path: Path) -> Path:
 
 
 def write_approval_file(
-    custody_root: Path, *, proposal_digest: str, environment_label: str
+    custody_root: Path,
+    *,
+    proposal_digest: str,
+    environment_label: str,
+    approved_intent_envelope_digest: str,
 ) -> Path:
     """Write one operator-authored IAP decision file
     (``approvals/<proposal_digest>.yaml`` — see
-    ``tos_runtime.authority.iap.load_operator_approval_file``)."""
+    ``tos_runtime.authority.iap.load_operator_approval_file``).
+
+    ``approved_intent_envelope_digest`` MUST be the REAL
+    ``tos.ioc.ApprovedIntentContract.canonical_digest`` step 2
+    (``OrderConstructionStage``) built for this exact attempt (e.g.
+    ``runtime.construction_stage.construction.intent.canonical_digest``,
+    read AFTER the run that produced it) — never a placeholder string.
+    ``ComposeContextResolver``'s ``_envelope_equivalent_provider``
+    (``tos_runtime.compose._wiring``) structurally compares this field
+    against that live digest via ``tos.iap.exact_binding_holds``, so a
+    placeholder here would make step 4 (``INDEPENDENT_APPROVAL``) DENY
+    every time (a mismatch, not a permissive default) — matching this
+    fixture's own digest to a real one is required for the honest ADMIT
+    path, not for any weakened check.
+    """
     path = custody_root / "approvals" / f"{proposal_digest}.yaml"
     _write_yaml(
         path,
@@ -209,7 +248,7 @@ def write_approval_file(
             "result": "APPROVE",
             "reason_codes": ["compose-e2e"],
             "approved_intent_envelope_id": "compose-intent-envelope",
-            "approved_intent_envelope_digest": "compose-intent-envelope-digest",
+            "approved_intent_envelope_digest": approved_intent_envelope_digest,
             "max_decision_age_ms": None,
             "invalidation_generation": None,
             "supersedes_decision_id": None,

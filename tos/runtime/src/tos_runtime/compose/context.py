@@ -57,11 +57,17 @@ config as explicit, named, operator-attested revisions**
 judgement, and never fabricated silently: a still-null field refuses
 composition at startup) so the vector genuinely completes and ``is_complete``
 returns ``True`` — see the compose end-to-end test's
-``test_engine_steps_admit_for_real_and_reach_the_transport`` for the
-mechanical proof of a real synthetic-transport hand-off, and
-``tos_runtime.compose._pending_dimensions``'s own module docstring for why
-supplying these 17 this way (rather than fabricating them as kernel-derived)
-is the honest, fail-closed choice.
+``TestPendingDimensionAttestationGatesCompleteness`` for the mechanical
+proof that flipping one attestation to ``False`` makes the vector honestly
+incomplete again, and ``tos_runtime.compose._pending_dimensions``'s own
+module docstring for why supplying these 17 this way (rather than
+fabricating them as kernel-derived) is the honest, fail-closed choice.
+Reaching an actual transport hand-off ALSO requires step 4
+(``INDEPENDENT_APPROVAL``) to admit, which it currently cannot (see
+``_wiring.py``'s ``_decision_current_provider`` docstring and the compose
+end-to-end test's ``xfail`` reasons on ``TestSyntheticEventDrivesTheChain``)
+— that is a SEPARATE gap from this module's own item-16 wiring, which is
+itself honest and complete.
 
 Firewall (tools/tos_firewall_check.py R1, runtime scope): stdlib + ``tos.*``
 + ``tos_runtime.*`` only. No ``shared.*``.
@@ -85,9 +91,9 @@ from tos.egress import (
     EgressCoordinateSet,
     EgressRequestRecord,
     QuorumCommitCertificate,
-    RestrictiveLatchState,
 )
 from tos.egressgw import (
+    CandidateConstruction,
     ConformanceProofStage,
     OrderConstructionStage,
     SendBoundaryContext,
@@ -106,6 +112,7 @@ from tos.venue import (
     VenueConstraintSnapshot,
 )
 
+from tos_runtime.compose._egress_attestations import EgressAttestations
 from tos_runtime.compose._pending_dimensions import (
     PendingDimensionSpec,
     stamp_pending_dimensions,
@@ -288,6 +295,11 @@ class ComposeContextResolver:
     #: for why these exist and what they honestly are (an interim operator
     #: sign-off, never a fabricated kernel-derived verdict).
     pending_dimension_specs: tuple[PendingDimensionSpec, ...]
+    #: The 5 operator-attested egress-gate stand-ins for items 6/12/16
+    #: (team-lead follow-up guidance, 2026-09-08) — see
+    #: :mod:`tos_runtime.compose._egress_attestations`'s own module
+    #: docstring for why these exist and which Phase replaces each.
+    egress_attestations: EgressAttestations
     transport_nature: TransportNature
     environment_label: str
     principal: str
@@ -484,6 +496,36 @@ class ComposeContextResolver:
             ),
         )
 
+    def _egress_gate_stand_in_fields(
+        self, construction: CandidateConstruction | None
+    ) -> dict[str, Any]:
+        """Items 6/12/16's ``SendBoundaryContext`` stand-in fields (team-lead
+        follow-up guidance, 2026-09-08): four are explicit operator
+        attestations from composition config
+        (:mod:`tos_runtime.compose._egress_attestations` — see its own
+        module docstring for which Phase replaces each), never a bare
+        Python literal. ``max_quantity_within_allowance`` is the one
+        exception: it HAS a real Phase 2 producer (step 2's own
+        ``CandidateConstruction.no_silent_widening_ok``) and is derived
+        from that live value instead of an attestation."""
+        attestations = self.egress_attestations
+        return {
+            "account_instrument_action_allowed": (
+                attestations.account_instrument_action_allowed
+            ),
+            "max_quantity_within_allowance": (
+                None if construction is None else construction.no_silent_widening_ok
+            ),
+            "venue_session_account_facts_current": (
+                attestations.venue_session_account_facts_current
+            ),
+            "broker_constraint_generation_current": (
+                attestations.broker_constraint_generation_current
+            ),
+            "restrictive_latch_state": attestations.restrictive_latch_state,
+            "worst_credible_capacity": attestations.worst_credible_capacity,
+        }
+
     def __call__(self, attempt: AttemptRequest) -> SendBoundaryContext | None:
         """Resolve this attempt's send-boundary context from the live flow
         artifacts (design #35 §3.1). Returns ``None`` (an absent required
@@ -549,32 +591,17 @@ class ComposeContextResolver:
             required_capability_set=None,
             broker_profile_version_current=None,
             idempotency_proven=None,
-            # HIGH fix (team-lead follow-up guidance, 2026-09-08): no hardcoded
-            # True fed into a gateway predicate. account_instrument_action_allowed
-            # and venue_session_account_facts_current/broker_constraint_generation_current
-            # have NO Phase 2 producer — the kernel's own item-6/item-12 check
-            # reasons say so explicitly ("pending the P0-2 approved Profile
-            # INSTANCE" / "the versioned Profile is P0-2-blocked", see
-            # tos.egressgw.gateway._check_allowance/_check_venue_generations) —
-            # honestly None (UNKNOWN, fail-closed), never fabricated.
-            # max_quantity_within_allowance DOES have a real producer: step 2's
-            # own CandidateConstruction.no_silent_widening_ok — "True only when
-            # the transformation is an exact bounded result inside the envelope"
-            # (tos.egressgw.records.CandidateConstruction docstring) IS this
-            # field's real value, structurally derived, never invented.
-            account_instrument_action_allowed=None,
-            max_quantity_within_allowance=(
-                None if construction is None else construction.no_silent_widening_ok
-            ),
-            venue_session_account_facts_current=None,
-            broker_constraint_generation_current=None,
+            # Items 6/12/16 stand-ins: operator attestations from composition
+            # config (see tos_runtime.compose._egress_attestations's own
+            # module docstring for which Phase replaces each), except
+            # max_quantity_within_allowance which HAS a real Phase 2 producer
+            # (step 2's own CandidateConstruction.no_silent_widening_ok).
+            **self._egress_gate_stand_in_fields(construction),
             approval_consumed_for_this_intent=approval_consumed,
             action_flow_permit_identity=permit_identity,
             action_flow_commitment_current=commitment_current,
             egress_currentness_proof=egress_currentness_proof,
             egress_currentness_result=item16.egress_currentness_result,
-            restrictive_latch_state=RestrictiveLatchState.CLEAR,
-            worst_credible_capacity=1,
             authorized_coordinates=self.authorized_coordinates,
             capsule_egress_request_digest=self.capsule_egress_request_digest,
             outbound_side=self.outbound_side,

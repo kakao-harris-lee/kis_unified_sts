@@ -18,6 +18,10 @@ from tos.cur import MANDATED_DIMENSION_FLOOR, CurrentnessPolicy, DimensionKey
 from tos.engine.vocabulary import StageOutcome
 
 from tos_runtime.authority.epoch import SafetyAuthorityEpochService
+from tos_runtime.compose._egress_attestations import (
+    EgressAttestations,
+    load_egress_attestations,
+)
 from tos_runtime.compose._pending_dimensions import (
     PendingDimensionSpec,
     load_pending_currentness_dimensions,
@@ -55,6 +59,7 @@ _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 _RISK_CONFIG_NAME = "risk.yaml"
 _CURRENTNESS_CONFIG_NAME = "currentness.yaml"
 _CURRENTNESS_DIMENSIONS_CONFIG_NAME = "currentness_dimensions.yaml"
+_EGRESS_ATTESTATIONS_CONFIG_NAME = "egress_attestations.yaml"
 
 
 @dataclass
@@ -69,6 +74,10 @@ class _RiskAndCurrentness:
     #: follow-up guidance) — see
     #: :mod:`tos_runtime.compose._pending_dimensions`'s own module docstring.
     pending_dimension_specs: tuple[PendingDimensionSpec, ...]
+    #: The 5 operator-attested egress-gate stand-ins (items 6/12/16 — team-lead
+    #: follow-up guidance) — see
+    #: :mod:`tos_runtime.compose._egress_attestations`'s own module docstring.
+    egress_attestations: EgressAttestations
     #: The late-bound cell the ACTION_FLOW dimension reader closes over —
     #: filled in with step 9's ``VerdictRecorder`` once
     #: ``_build_realized_stages`` creates it (see
@@ -251,6 +260,9 @@ def _build_risk_and_currentness(
     pending_dimension_specs = load_pending_currentness_dimensions(
         config_dir / _CURRENTNESS_DIMENSIONS_CONFIG_NAME
     )
+    egress_attestations = load_egress_attestations(
+        config_dir / _EGRESS_ATTESTATIONS_CONFIG_NAME
+    )
 
     return _RiskAndCurrentness(
         projection=projection,
@@ -259,6 +271,7 @@ def _build_risk_and_currentness(
         required_scenario_kinds=required_scenario_kinds,
         currentness_assembler=currentness_assembler,
         pending_dimension_specs=pending_dimension_specs,
+        egress_attestations=egress_attestations,
         action_flow_dimension_state=action_flow_dimension_state,
         proof_issuer=proof_issuer,
     )

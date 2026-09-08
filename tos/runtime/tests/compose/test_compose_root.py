@@ -10,7 +10,12 @@ import contextlib
 from pathlib import Path
 
 import pytest
+import yaml
 from tos.engine.vocabulary import StageAuthorityClass
+from tos_runtime.compose._pending_dimensions import (
+    load_pending_currentness_dimensions,
+    stamp_pending_dimensions,
+)
 from tos_runtime.compose.root import (
     ReleaseAdmissionRefused,
     compose_paper_runtime,
@@ -206,12 +211,10 @@ class TestSyntheticEventDrivesTheChain:
         """Steps 1-3 (registry dispatch through venue construction) are
         driven by REAL runtime/kernel services — a proposal is genuinely
         evaluated and a commitment flow is genuinely attempted, reaching as
-        far as step 4 (``INDEPENDENT_APPROVAL``) before that step's own
-        honestly-``None`` ``decision_current`` (no Phase 2 producer — see
-        ``_wiring.py``'s ``_decision_current_provider`` docstring) halts it.
-        This is the honestly-reachable portion of scenario 1; see
-        ``test_engine_steps_admit_for_real_and_reach_the_transport`` (xfail)
-        for what is NOT reachable and why.
+        far as step 4 (``INDEPENDENT_APPROVAL``), which legitimately
+        UNKNOWNs with no approval file present yet (never an assumed
+        grant). See ``test_engine_steps_admit_for_real_and_reach_the_transport``
+        for the full picture once an approval file exists.
         """
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
@@ -227,11 +230,9 @@ class TestSyntheticEventDrivesTheChain:
         assert result.flow is not None
 
         verdict_by_step = {v.step.value: v for v in result.flow.verdicts}
-        # Step 4 is reached (a real StageVerdict exists for it) but never
-        # admits: with no approval file present it is UNKNOWN (no decision
-        # available); once one exists it is DENY (REJECTED_INELIGIBLE) —
-        # see test_engine_steps_admit_for_real_and_reach_the_transport's
-        # xfail reason for why it can never be ADMIT in this composition.
+        # Step 4 is reached (a real StageVerdict exists for it) but with no
+        # approval file present it is legitimately UNKNOWN (no decision
+        # available) -- never an assumed grant.
         assert "INDEPENDENT_APPROVAL" in verdict_by_step
         assert verdict_by_step["INDEPENDENT_APPROVAL"].outcome.value == "UNKNOWN"
         assert runtime.transport.requests == ()
@@ -239,34 +240,31 @@ class TestSyntheticEventDrivesTheChain:
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "team-lead follow-up guidance (2026-09-08): decision_current has "
-            "NO Phase 2 runtime producer (tos.iap reads no clock, and "
-            "IndependentApprovalDecision carries no field comparable to "
-            "SafetyAuthorityEpochService.current_state() — comparing them "
-            "would be a category error, not a real currency check; see "
-            "_wiring.py's _decision_current_provider docstring). Honestly "
-            "returning None (never a fabricated True) drives "
-            "consumption_transition to REJECTED_INELIGIBLE => "
-            "StageOutcome.DENY at step 4 for every attempt with an approval "
-            "file present (or UNKNOWN with none present) — step 4 can never "
-            "ADMIT, so the flow never reaches steps 6-14 or the transport."
-        ),
-    )
     def test_engine_steps_admit_for_real_and_reach_the_transport(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
         """The full picture behind scenario 1's acceptance criterion.
 
         Steps 1-14 (registry dispatch through the Transmission Capability)
-        would need to ALL admit for the flow to reach an
-        :class:`~tos.engine.records.AttemptRequest` and the gateway. Step 4
-        cannot admit (see the xfail reason above), so this is currently
-        unreachable — kept as a named, strict xfail rather than removed, so
-        a future Phase's real decision-currency producer landing turns this
-        green again without anyone having to rediscover the gap.
+        are driven by REAL runtime services — every step admits, and the
+        flow reaches an :class:`~tos.engine.records.AttemptRequest`. The
+        send is THEN admitted at the gateway boundary too, because the
+        Safety Currentness Vector is complete (4 structurally-owned
+        dimensions + 17 operator-attested pending dimensions, see
+        ``tos_runtime.compose._pending_dimensions``) and every one of item
+        6/12/16's egress-gate stand-ins is supplied as an explicit operator
+        attestation (``tos_runtime.compose._egress_attestations``).
+
+        Step 4 (``INDEPENDENT_APPROVAL``) genuinely admits: ``decision_current``
+        is derived by lane P's ``IntentRegistry.decision_current`` (policy-
+        generation equality + log-derived supersession check), and
+        ``approved_intent_envelope_equivalent`` is derived by comparing the
+        approval file's own digest against step 2's real
+        ``ApprovedIntentContract.canonical_digest`` via
+        ``tos.iap.exact_binding_holds`` (see ``_wiring.py``'s
+        ``_build_step4_recorder``) — the approval file this test writes
+        must therefore carry the REAL digest, not a placeholder (see
+        ``write_approval_file``'s own docstring).
         """
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
@@ -282,10 +280,13 @@ class TestSyntheticEventDrivesTheChain:
 
         proposal_digest = result.pipeline.proposal.canonical_digest
         assert proposal_digest is not None
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
         write_approval_file(
             custody_root,
             proposal_digest=proposal_digest,
             environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
 
         results2 = runtime.run_once((event,))
@@ -313,15 +314,6 @@ class TestSyntheticEventDrivesTheChain:
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "team-lead follow-up guidance (2026-09-08): same root cause as "
-            "test_engine_steps_admit_for_real_and_reach_the_transport — "
-            "decision_current has no Phase 2 producer, step 4 can never "
-            "ADMIT, so the flow can never reach the transport."
-        ),
-    )
     def test_one_synthetic_transport_handoff(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
@@ -336,10 +328,13 @@ class TestSyntheticEventDrivesTheChain:
         event = fx.crossing_event()
         results = runtime.run_once((event,))
         proposal_digest = results[0].pipeline.proposal.canonical_digest
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
         write_approval_file(
             custody_root,
             proposal_digest=proposal_digest,
             environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
         # Re-run the SAME event -- a differently-seq'd event carries a
         # different capsule and therefore a different proposal digest that
@@ -414,24 +409,51 @@ class TestRecomposeReplay:
         runtime2.evidence_store.close()
 
 
+class TestPendingDimensionAttestationGatesCompleteness:
+    """A pending currentness dimension's operator attestation is what makes
+    the Safety Currentness Vector complete — flipping one dimension's
+    ``positively_established`` to ``false`` (never removing/nulling a field,
+    which is a LOAD-time refusal per
+    ``_pending_dimensions.load_pending_currentness_dimensions``'s own
+    fail-closed contract) must make the assembled vector incomplete again,
+    never silently patched over by the other 16 attestations."""
+
+    def test_one_false_attestation_makes_the_vector_incomplete(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        dims_path = config_dir / "currentness_dimensions.yaml"
+        raw = yaml.safe_load(dims_path.read_text(encoding="utf-8"))
+        raw["RELEASE"]["positively_established"] = False
+        dims_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+
+        # Re-run the SAME two-pass assembly _issue_egress_currentness_proof
+        # performs (tos_runtime.compose.context), directly against the
+        # runtime's own live assembler -- this isolates the currentness-
+        # vector completeness property from the full engine flow (which
+        # would ALSO need an approval file + step 4 to admit, tested
+        # separately by TestSyntheticEventDrivesTheChain).
+        specs = load_pending_currentness_dimensions(dims_path)
+        base_vector = runtime.currentness_assembler.assemble()
+        assert base_vector is not None
+        assert base_vector.currentness_revision is not None
+        pending = stamp_pending_dimensions(
+            specs, at_revision=base_vector.currentness_revision
+        )
+        vector = runtime.currentness_assembler.assemble(extra_dimensions=pending)
+        assert vector is not None
+        assert runtime.currentness_assembler.is_complete(vector) is False
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+
 class TestNonTrustedTimeBlocksNewRisk:
     """Scenario 4: forcing the time snapshot non-TRUSTED => zero transport
     calls (steps 6/7/9's own injected time gate refuses)."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "team-lead follow-up guidance (2026-09-08): this scenario needs "
-            "step 4 (INDEPENDENT_APPROVAL) to ADMIT with an approval file "
-            "present so the flow can reach step 6 and demonstrate the time "
-            "gate specifically. decision_current has no Phase 2 producer "
-            "(see _wiring.py's _decision_current_provider docstring), so "
-            "step 4 now always DENYs (REJECTED_INELIGIBLE) once an approval "
-            "file exists — the flow halts at step 4 regardless of the time "
-            "service's health state, so step 6's own time gate is never "
-            "reached and this scenario's specific claim is unreachable."
-        ),
-    )
     def test_untrusted_time_yields_zero_transport_calls(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
@@ -448,10 +470,13 @@ class TestNonTrustedTimeBlocksNewRisk:
         event = fx.crossing_event()
         first = runtime.run_once((event,))[0]
         assert first.pipeline is not None and first.pipeline.proposal is not None
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
         write_approval_file(
             custody_root,
             proposal_digest=first.pipeline.proposal.canonical_digest,
             environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
 
         # Force a monotonic regression, then re-evaluate: tos.time.anchor_valid
@@ -517,22 +542,6 @@ class TestProjectionAuthorityMismatchHalts:
     compose/verify raises CommitLogCorruption and an alert evidence record
     is appended (via ``record_halt``)."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "team-lead follow-up guidance (2026-09-08): this scenario needs "
-            "a real reservation row committed by step 9 (ATOMIC_COMMIT) to "
-            "tamper with. decision_current has no Phase 2 producer (see "
-            "_wiring.py's _decision_current_provider docstring), so step 4 "
-            "now always DENYs once an approval file exists — the flow never "
-            "reaches step 9, so no reservation row is ever committed to "
-            "tamper with. The underlying corruption-detection mechanism "
-            "itself (SqliteCommitLog.verify_replay raising "
-            "CommitLogCorruption) is unaffected and remains covered by "
-            "lane O's own log-level tests; only this compose-e2e "
-            "demonstration via a full engine run is unreachable."
-        ),
-    )
     def test_tampered_reservations_row_raises_commit_log_corruption(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
@@ -543,10 +552,13 @@ class TestProjectionAuthorityMismatchHalts:
         event = fx.crossing_event()
         first = runtime.run_once((event,))[0]
         assert first.pipeline is not None and first.pipeline.proposal is not None
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
         write_approval_file(
             custody_root,
             proposal_digest=first.pipeline.proposal.canonical_digest,
             environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
         )
         second = runtime.run_once((event,))[0]
         assert second.flow is not None and second.flow.attempt is not None, (
