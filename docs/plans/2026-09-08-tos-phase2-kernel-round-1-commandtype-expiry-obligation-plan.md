@@ -97,4 +97,24 @@ enum 값·개수 핀(+4) · 분류 집합 불포함 · `decision_unexpired` 극�
 
 ## 7. 실행 결과·독립 리뷰 처분
 
-(착지 후 기입)
+### 7.1 착지 (2026-09-08 · 브랜치 `feat/tos-phase2-kernel-round-1` · 10커밋 `89202006..f51ceaf3`)
+
+| 레인 | 커밋 | 내용 |
+|---|---|---|
+| K | `89202006` `f46992a3` `1e06f0b8` `cba1972c` `286e82b5` | §1.1 enum +4(핀 27→31 · reducer 비-capacity 분기 실증) · §1.2 `decision_unexpired` · §1.3 `VerifyItemVerdict`/`GatewayEvidenceRecord` 타입 필드 + item 16 두 분지 + `_halt` 전달(gateway.py 1792→1806 · `__call__` 248→257 재등재) · §1.3 `cur.obligation_preserved` · §1.4 `\| None` |
+| A | `08bf6d74` `1b1df3ec` `f51ceaf3` | §2.1 4모듈 kind 전환 + prefix 일치·kind 불일치 ⇒ `CommitLogCorruption`(epoch·iap 읽기; flow/proof 는 write-only) · §2.3 · §2.2 `load_operator_approval_with_receipt`+`LoadedApproval`(기존 로더 시그니처 불변) · `IntentRegistry` `time`/`receipt` 주입 · 소비 증거 `expiry_verdict`/`age_bound_ms`/`receipt_anchor` · 신규 키 `MAX_clock_domain_conversion_uncertainty_ms`(VERIFICATION-PROFILE-002.yaml:1070 인용) |
+| B | `31649d22` `8a0b83e7` | §3 `GatewayEvidenceSinkAdapter.on_refusal`(durable append 후) · `tos_runtime.rcl.obligation.CapacityObligationRecorder`(주입 resolver · 단일 상품 root 는 `resv-{account}-{instrument}` 정확 일치) · compose 결선 · 뮤테이션 M-B1 red |
+
+**계획 편차(전부 보고·수용)**: ① `obligation_preserved(obligation, reservation_state: str \| None, capacity_consuming_states: frozenset[str])` — cur 임포트 폐쇄(§7.1 allowlist)가 `tos.rcl` 힌트조차 금지 · 계획 예시의 «POSITION_CONSUMED=해제» 는 커널 `_LIVE_COMMITTED_STATES`(RELEASED 만 비소비)와 모순이라 커널 집합 채택 ② `decision_unexpired` 는 `iap/predicates.py` 모듈 `__all__` 에 미등재 — 등재 시 EVIDENCE-SURFACE-MAP 행 핀(IAP-EV-003/004/007) 이탈로 completion `--check` RED 실측 · 패키지 재수출로만 공개 ③ `load_operator_approval_file` 무변경 + 신규 함수(호출처 ~15 보존) ④ `queue_bound=0`(Phase 2 time 설정은 transport+queue 결합 키 하나) ⑤ 레인 A 도크스트링 축약으로 크기 예외 신규 0.
+
+**보고된 갭 2건(이 라운드에서 고치지 않음 · 다음 결정 항목)**:
+- **G-1 만료 admit 경로 도달 불가**: `TrustworthyTimeService._issue_snapshot` 이 `TimeHealthSnapshot.wall_clock_observation` 을 채우지 않고 `LocalSystemClockReader` 는 값을 «도달성 프로브» 로만 쓰도록 슬라이스 #1 이 설계했다. 실 서비스에서는 `issuer_signed_age_ms=None` ⇒ `max_decision_age_ms` 설정 시 항상 fail-closed deny(정직 · 안전). admit 은 `FakeTimeService` 로만 실증. 해소 = 슬라이스 #1 time 설계의 «값 비노출» 결정 개정(운영자 결정).
+- **G-2 보존 의무 분기 런타임 도달 불가**: `EgressCurrentnessProofIssuer.issue()` 가 `proof_admissible`(CURRENT 필수) 자체검사 후에만 proof 를 내므로 비-CURRENT 벡터는 `None` ⇒ 게이트웨이가 item 16 의 «구조 불완전» 에서 먼저 멈춘다. 의무 분기는 커널 테스트가 덮고, 런타임 e2e 는 실제 결선된 sink 에 게이트웨이의 `SEND_REFUSED` 형상을 직접 주입해 관찰자·증거·예약 id 해석을 증명.
+
+**환경 결함 1건(코드 아님)**: 로컬 `.venv` 의 tos editable `.pth` 가 삭제된 워크트리(`../kis_unified_sts-tos-phase2/tos/src`)를 가리켜 `tos` 가 네임스페이스 패키지로 폴백 → `lint-imports` BROKEN(239행)·런타임 mypy 15건이 «기저 실패» 로 보였다. `pip install -e ./tos` 재설치 후 `lint-imports` 3 KEPT · 런타임 mypy clean. CI 는 매 실행 새로 설치하므로 무관.
+
+**독립 실측(최종 트리 `f51ceaf3` · 재설치 venv)**: runtime tests **462 passed** rc=0 · kernel tests **9078 passed** rc=0 · mypy 커널 253파일/런타임 53파일 clean · ruff 0 · black 924 unchanged · firewall PASS · lint-imports 3 KEPT · budget 0 위반(29 등재) · contract PASS · completion GREEN · spec PASS · 커널 diff(`286e82b5..HEAD -- tos/src/`) 0.
+
+### 7.2 독립 리뷰 처분
+
+(리뷰 후 기입)
