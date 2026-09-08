@@ -459,9 +459,16 @@ class VerifyItemVerdict(FrozenModel):
     native_verdict_value: str | None = None
     #: The worst-credible capacity obligation cur's ``unknown_preserves_capacity`` says must be
     #: preserved because this item's currentness outcome is not positively known (kernel round
-    #: #1 §1.3; CUR-INV-011:183 "missing-ACK ≠ non-acceptance"). ``None`` on every item but
-    #: item 16 (:attr:`~tos.egressgw.vocabulary.SendVerifyItem.CURRENTNESS`), and ``None`` on
-    #: item 16 itself when currentness is positively ``ADMIT`` (nothing to preserve).
+    #: #1 §1.3; CUR-INV-011:183 "missing-ACK ≠ non-acceptance"). ``None`` in every one of these
+    #: cases (independent review round #1 finding #9 — the prior docstring named only the first
+    #: two): (i) any item but item 16
+    #: (:attr:`~tos.egressgw.vocabulary.SendVerifyItem.CURRENTNESS`); (ii) item 16 SATISFIED
+    #: (currentness positively ``ADMIT`` — nothing to preserve); (iii) item 16 halting at the
+    #: earlier restrictive-latch or structurally-incomplete-proof gates
+    #: (:func:`~tos.egressgw.gateway._check_currentness`'s latch / structural-completeness
+    #: checks) — no obligation is computed there at all. A fourth case — item 16 non-admit with
+    #: the obligation's own magnitude unknown — is typed separately in kernel round #1 review #4;
+    #: until that lands it also reads ``None`` here, indistinguishable from cases (i)-(iii).
     preserved_worst_credible_capacity: int | None = None
     authority_effect: AllFalseGatewayAuthority = AllFalseGatewayAuthority()
 
@@ -537,7 +544,15 @@ class GatewayEvidenceRecord(FrozenModel):
     halt_reason: SendHaltReason | None = None
     detail: str | None = None
     #: Item 16's preserved worst-credible-capacity obligation, carried onto a ``SEND_REFUSED``
-    #: record when the halting item was CURRENTNESS (kernel round #1 §1.3). ``None`` otherwise.
+    #: record from item 16's own verdict **regardless of which item halted** (kernel round #1
+    #: §1.3; independent review round #1 finding #1 — transferring it only when item 16 itself
+    #: was ``halt_item`` silently dropped the obligation whenever an earlier verify item also
+    #: failed, since all 17 items are always evaluated). ``None`` in every one of these cases
+    #: (review round #1 finding #9): (i) item 16's own verdict authored no obligation at all
+    #: (any item but item 16 never authors one); (ii) item 16 SATISFIED; (iii) item 16 halting at
+    #: the earlier restrictive-latch or structurally-incomplete-proof gates, where no obligation
+    #: is computed. A fourth case — item 16 non-admit with unknown magnitude — is typed
+    #: separately in kernel round #1 review #4; until that lands it also reads ``None`` here.
     preserved_worst_credible_capacity: int | None = None
     authority_effect: AllFalseGatewayAuthority = AllFalseGatewayAuthority()
 

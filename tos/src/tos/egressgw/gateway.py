@@ -1129,6 +1129,13 @@ def _check_currentness(
     ⚠ The *facts* inside the Safety Currentness Vector are upstream owner submissions and are
     provisional / D-E2-dependent: this verifies the proof's **structure and coordinates**, and
     closes no CUR-EV (design #34 §4.3).
+
+    The returned verdict's ``preserved_worst_credible_capacity`` is ``None`` on every branch but
+    the final non-ADMIT one below (review round #1 finding #9): the latch and
+    structurally-incomplete-proof branches compute no obligation at all, and the SATISFIED
+    branch has nothing to preserve. On the non-ADMIT branch itself the field can also read
+    ``None`` when ``context.worst_credible_capacity`` was never observed — that "unknown
+    magnitude" sub-case is typed separately in kernel round #1 review #4.
     """
     del attempt, applicability
     item = SendVerifyItem.CURRENTNESS
@@ -1405,6 +1412,33 @@ def outbound_binding_mismatch(context: SendBoundaryContext) -> str | None:
     return None
 
 
+def _item16_obligation(verification: SendBoundaryVerification) -> int | None:
+    """Item 16's preserved-capacity obligation, independent of which item halted.
+
+    All 17 verify items are always evaluated (design #34 §4.1), and only afterwards does the
+    loop pick the **first** non-admitting one as ``halt_item``. Item 16's own verdict — and any
+    obligation it authored — therefore exists regardless of which item that is. Transferring the
+    obligation only when ``verification.halt_item is SendVerifyItem.CURRENTNESS`` was the
+    reviewed fail-silent hole (independent review round #1, finding #1): when an earlier item
+    (e.g. ``ORDER_CONSTRUCTION``) halted alongside a non-ADMIT item 16, item 16 still computed
+    and stored the obligation on its own verdict, but the ``SEND_REFUSED`` evidence recorded
+    ``None`` — and ``CapacityObligationRecorder`` no-ops on ``None``
+    (``tos_runtime/rcl/obligation.py``), so no evidence row, no kernel verdict, no halt was ever
+    produced for that obligation. This scans for item 16's own verdict unconditionally.
+
+    Args:
+        verification: The whole step-15 verify result.
+
+    Returns:
+        Item 16's own ``preserved_worst_credible_capacity``, or ``None`` if item 16 has no
+        verdict (should not occur — all 17 items are always evaluated) or authored no obligation.
+    """
+    for verdict in verification.verdicts:
+        if verdict.item is SendVerifyItem.CURRENTNESS:
+            return verdict.preserved_worst_credible_capacity
+    return None
+
+
 class BrokerEgressGateway:
     """The Broker Egress Gateway — D-E1's ``Transmit`` implementation (design #34 §4).
 
@@ -1574,20 +1608,12 @@ class BrokerEgressGateway:
                 )
             )
         if verification.admitted is not True:
-            preserved_worst_credible_capacity = None
-            if verification.halt_item is SendVerifyItem.CURRENTNESS:
-                for verdict in verification.verdicts:
-                    if verdict.item is SendVerifyItem.CURRENTNESS:
-                        preserved_worst_credible_capacity = (
-                            verdict.preserved_worst_credible_capacity
-                        )
-                        break
             return self._halt(
                 attempt_id=attempt_id,
                 reason=verification.halt_reason or SendHaltReason.VERIFY_ITEM_UNKNOWN,
                 detail=verification.detail,
                 item=verification.halt_item,
-                preserved_worst_credible_capacity=preserved_worst_credible_capacity,
+                preserved_worst_credible_capacity=_item16_obligation(verification),
             )
 
         # -- outbound binding: the seam scalars must be the constructed ones (MINOR-2) ----

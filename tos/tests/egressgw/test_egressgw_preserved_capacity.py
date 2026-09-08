@@ -2,8 +2,14 @@
 
 ``cur.unknown_preserves_capacity`` 의 반환값이 지금까지는 사유 문자열에만 접혀 있었다
 (design #40 §0 서베이: gateway.py:1165-1178). 이 아크는 그 값을 ``VerifyItemVerdict`` 와
-``GatewayEvidenceRecord`` 의 **필드**에 싣는다 — item 16(CURRENTNESS)이 non-ADMIT 일 때만, 그리고
-그 값이 halt 를 유발한 첫 항목일 때 ``SEND_REFUSED`` 증거까지 전달한다(CUR-INV-011:183).
+``GatewayEvidenceRecord`` 의 **필드**에 싣는다 — item 16(CURRENTNESS)이 non-ADMIT 일 때, item 16
+이 halt 를 유발했는지와 **무관하게** ``SEND_REFUSED`` 증거까지 전달한다(CUR-INV-011:183).
+
+독립 리뷰 라운드 #1 finding #1(HIGH): 이전 구현은 ``verification.halt_item is CURRENTNESS`` 일
+때만 값을 옮겼다 — item 16 이 non-ADMIT 이어도 더 이른 항목이 먼저 halt 를 유발하면 의무가 조용히
+사라졌다(``CapacityObligationRecorder`` 는 ``None`` 에 no-op — 완전한 fail-silent). 17개 항목은
+항상 전부 평가되므로(design #34 §4.1) item 16 자신의 verdict 는 어느 항목이 halt 를 유발했는지와
+무관하게 항상 존재한다 — 이 아크는 그 verdict 를 무조건 스캔해 전달한다.
 
 Regime tag: authoring evidence only; closes no EV (design #34 §1.1 / design #40 §1.3).
 """
@@ -112,10 +118,17 @@ def test_send_refused_evidence_carries_the_preserved_obligation(
     assert refusal.preserved_worst_credible_capacity == context.worst_credible_capacity
 
 
-def test_send_refused_evidence_carries_no_obligation_for_a_non_currentness_halt() -> (
+def test_send_refused_evidence_carries_no_obligation_when_item_16_is_satisfied() -> (
     None
 ):
-    """(§1.3, both ways) A halt on a different item records no preserved-capacity obligation."""
+    """(§1.3, both ways) A halt on a different item, with item 16 SATISFIED, carries no obligation.
+
+    The obligation is ``None`` here **only** because item 16's own outcome is SATISFIED
+    (currentness positively ``ADMIT`` — nothing to preserve), not because a different item
+    halted first. See ``test_send_refused_evidence_carries_the_obligation_from_a_non_halting_item_16``
+    for the co-occurring-failure case, where item 16 *does* author an obligation while a
+    different item halts, and the obligation IS carried (review round #1 finding #1).
+    """
     attempt, context = happy_context(construction=None)
     transport = full_fill_transport()
     gateway, sink = build_gateway(attempt=attempt, context=context, transport=transport)
@@ -124,7 +137,52 @@ def test_send_refused_evidence_carries_no_obligation_for_a_non_currentness_halt(
     refusal = sink.records[-1]
     assert refusal.kind == "SEND_REFUSED"
     assert refusal.item is SendVerifyItem.ORDER_CONSTRUCTION
+    currentness_verdicts = [
+        v
+        for verification in gateway.verifications
+        for v in verification.verdicts
+        if v.item is SendVerifyItem.CURRENTNESS
+    ]
+    assert len(currentness_verdicts) == 1
+    assert currentness_verdicts[0].outcome is VerifyOutcome.SATISFIED
     assert refusal.preserved_worst_credible_capacity is None
+
+
+def test_send_refused_evidence_carries_the_obligation_from_a_non_halting_item_16() -> (
+    None
+):
+    """(§1.3, review round #1 finding #1 — HIGH) Item 16's obligation survives a co-occurring halt.
+
+    All 17 verify items are always evaluated, and only then does the loop pick the first
+    non-admitting one as ``halt_item`` (``gateway.py:548-579``). Before this fix, ``_halt``
+    transferred the obligation only under ``if verification.halt_item is
+    SendVerifyItem.CURRENTNESS`` — so when ``ORDER_CONSTRUCTION`` fails alongside a non-ADMIT
+    item 16, item 16 still computed and stored the obligation on its own verdict, but the
+    ``SEND_REFUSED`` evidence recorded ``None``. Downstream, ``CapacityObligationRecorder``
+    no-ops on ``None`` (``tos_runtime/rcl/obligation.py``): no evidence row, no kernel verdict,
+    no halt — exactly the fail-silent class the lane exists to close.
+    """
+    attempt, context = happy_context(construction=None, egress_currentness_result=None)
+    transport = full_fill_transport()
+    gateway, sink = build_gateway(attempt=attempt, context=context, transport=transport)
+    handoff = gateway(attempt)
+    assert handoff.accepted_for_transmission is None
+    verification = gateway.verifications[-1]
+    assert verification.halt_item is SendVerifyItem.ORDER_CONSTRUCTION
+    currentness_verdicts = [
+        v for v in verification.verdicts if v.item is SendVerifyItem.CURRENTNESS
+    ]
+    assert len(currentness_verdicts) == 1
+    assert currentness_verdicts[0].outcome is VerifyOutcome.UNKNOWN
+    assert currentness_verdicts[0].preserved_worst_credible_capacity == 1
+    refusal = sink.records[-1]
+    assert refusal.kind == "SEND_REFUSED"
+    assert refusal.item is SendVerifyItem.ORDER_CONSTRUCTION
+    assert (
+        refusal.preserved_worst_credible_capacity
+        == context.worst_credible_capacity
+        == 1
+    )
 
 
 def test_gateway_evidence_record_rejects_the_field_only_via_the_model_default() -> None:
