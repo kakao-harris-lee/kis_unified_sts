@@ -147,7 +147,13 @@ def test_capacity_consuming_state_values_excludes_only_released() -> None:
 
 
 def test_no_obligation_appends_no_evidence_and_never_resolves(tmp_path: Path) -> None:
-    """``preserved_worst_credible_capacity is None`` => no-op (no evidence, no resolver call)."""
+    """``preserved_worst_credible_capacity is None`` AND
+    ``preserved_obligation_magnitude_unknown`` is ``False`` (the field's own
+    default — left implicit here) => no-op (no evidence, no resolver call).
+    kernel round #1 review #4: the no-op condition is now two-part; see
+    ``test_magnitude_unknown_obligation_is_not_a_no_op_appends_evidence_and_halts``
+    for the case where ``obligation is None`` but the flag is ``True`` and
+    the no-op must NOT fire."""
     store = _store(tmp_path)
     emergency_log = _emergency_log(tmp_path)
     log = _log(tmp_path, store)
@@ -174,6 +180,63 @@ def test_no_obligation_appends_no_evidence_and_never_resolves(tmp_path: Path) ->
 
     assert list(store.iter_entry_meta()) == []
     assert resolver_calls == []
+    store.close()
+    log.close()
+
+
+def test_magnitude_unknown_obligation_is_not_a_no_op_appends_evidence_and_halts(
+    tmp_path: Path,
+) -> None:
+    """(kernel round #1 review #4) ``preserved_worst_credible_capacity is
+    None`` but ``preserved_obligation_magnitude_unknown`` is ``True`` MUST
+    NOT no-op — this is the fifth, most dangerous case (a concrete halt
+    whose obligation size was never observed), not "no obligation was ever
+    asserted". The resolver IS called, the kernel predicate is asked (which
+    forces ``False`` unconditionally for ``magnitude_unknown`` regardless of
+    the reservation's actual state — CUR-INV-011:183), evidence is appended
+    with ``magnitude_unknown: true``, and the recorder ALWAYS halts, even
+    against a reservation that is still safely capacity-consuming."""
+    store = _store(tmp_path)
+    emergency_log = _emergency_log(tmp_path)
+    log = _log(tmp_path, store)
+    writer_epoch = log.acquire_epoch(_IDENTITY)
+    _commit_reservation(
+        log,
+        reservation_id="resv-acct-1-ES",
+        state=CapacityState.POTENTIALLY_LIVE,
+        writer_epoch=writer_epoch,
+    )
+    projection = SqliteReservationProjectionReader(log)
+    resolver_calls: list[str] = []
+
+    def resolver(attempt_id: str) -> str | None:
+        resolver_calls.append(attempt_id)
+        return "resv-acct-1-ES"
+
+    recorder = CapacityObligationRecorder(
+        store=store,
+        emergency_log=emergency_log,
+        projection=projection,
+        reservation_id_resolver=resolver,
+    )
+    recorder(
+        GatewayEvidenceRecord(
+            kind="SEND_REFUSED",
+            attempt_id="attempt-1",
+            preserved_worst_credible_capacity=None,
+            preserved_obligation_magnitude_unknown=True,
+        )
+    )
+
+    assert resolver_calls == ["attempt-1"]
+    metas = list(store.iter_entry_meta())
+    kinds = [m.kind for m in metas]
+    assert kinds.count("CAPACITY_OBLIGATION_PRESERVED") == 1
+    # ALWAYS halts, even though the reservation is still POTENTIALLY_LIVE
+    # (safely capacity-consuming) — magnitude_unknown overrides the state
+    # check entirely (CUR-INV-011:183).
+    assert kinds.count("CAPACITY_OBLIGATION_VIOLATION_ALERT") == 1
+    assert emergency_log.path.exists()
     store.close()
     log.close()
 

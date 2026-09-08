@@ -6,12 +6,50 @@ Kernel round #1 §1.3 (``1e06f0b8``/``cba1972c``) typed item 16's (CURRENTNESS)
 worst-credible-capacity obligation onto ``VerifyItemVerdict``/
 ``GatewayEvidenceRecord.preserved_worst_credible_capacity`` and added the
 kernel predicate ``tos.cur.obligation_preserved(obligation, reservation_state,
-*, capacity_consuming_states)``. Blocking a not-yet-provably-safe release was
+*, capacity_consuming_states, magnitude_unknown)`` (the ``magnitude_unknown``
+keyword-only, no-default parameter landed with independent review finding #4,
+commit ``5521ec7b`` — see below). Blocking a not-yet-provably-safe release was
 already structurally closed before this lane started (§0 survey: rcl's own
 ``commitlog.release_admissible`` admits only on a positive finality witness) —
 what was missing was **recording and verifying** whether the obligation an
 UNKNOWN/DENIED currentness outcome asserted is actually still honored by the
 bound reservation's live rcl capacity state. This module is that recorder.
+
+**Magnitude-unknown obligations (independent review finding #4, kernel round
+#1 §3 fix pass).** ``obligation is None`` used to conflate two different
+facts on both ``VerifyItemVerdict`` and ``GatewayEvidenceRecord``: "no
+obligation was ever asserted" (trivially safe) and "an obligation WAS
+asserted but its magnitude could not be observed" (the single most
+dangerous input this recorder can see, since it degraded to the quietest
+possible handling — a silent no-op). The kernel now types this explicitly:
+``GatewayEvidenceRecord.preserved_obligation_magnitude_unknown: bool``,
+mutually exclusive with a concrete ``preserved_worst_credible_capacity``
+(kernel validator-enforced). ``CapacityObligationRecorder.__call__``'s
+no-op condition is therefore two-part now, not one:
+``preserved_worst_credible_capacity is None AND NOT
+preserved_obligation_magnitude_unknown``. Independent review finding #9's
+own four legitimate cases for the first half of that condition (the halt
+frequently IS item 16 and still carries ``None`` — the prior docstring
+named only two):
+
+1. The halt item was not item 16 (an earlier verify item halted first) —
+   item 16's own computed obligation, if any, never reaches
+   ``SEND_REFUSED`` (gateway review finding #1).
+2. Item 16 itself is the halt item and its verdict is positively
+   ``ADMIT`` — nothing to preserve.
+3. Item 16 is the halt item but halts at an earlier latch or
+   structural-completeness gate before the currentness verdict is even
+   computed — no obligation is ever asserted.
+4. Item 16 is the halt item, its verdict is non-``ADMIT``, and the
+   worst-credible-capacity itself was UNKNOWN — this is where
+   ``preserved_obligation_magnitude_unknown`` is ``True`` instead, which
+   is why it does NOT reach the no-op: this fifth, previously-conflated
+   case is the MOST dangerous one (a concrete halt whose obligation size
+   is unknown), not the safest, so it takes the SAME
+   resolve/predicate/evidence/halt path a concrete obligation takes
+   (``magnitude_unknown=True`` forces the kernel predicate's answer to
+   ``False`` unconditionally — CUR-INV-011:183, "UNKNOWN is restrictive
+   and capacity-consuming" — so this case always halts).
 
 **Reservation-id resolution (reported seam — re-surveyed, independent review
 finding #5, kernel round #1 §3 lane B fix pass).** Neither
@@ -202,40 +240,19 @@ class CapacityObligationRecorder:
     def __call__(self, record: GatewayEvidenceRecord) -> None:
         """Verify + evidence one ``SEND_REFUSED`` record's preserved obligation.
 
-        A no-op when the record carries no obligation
-        (``preserved_worst_credible_capacity is None``). Independent review
-        finding #9 (kernel round #1 §3 fix pass): this is NOT only "the
-        halt was not item 16, or item 16 itself had nothing to preserve" —
-        in the current runtime the halt frequently IS item 16 and still
-        carries ``None``. All four cases that reach this branch:
-
-        1. The halt item was not item 16 (an earlier verify item halted
-           first) — item 16's own computed obligation, if any, never
-           reaches ``SEND_REFUSED`` (gateway finding #1; a lane-K/A concern,
-           not this recorder's — this recorder only ever sees what the
-           gateway actually put on the record).
-        2. Item 16 (CURRENTNESS) itself is the halt item and its verdict is
-           positively ``ADMIT`` — nothing to preserve.
-        3. Item 16 is the halt item but halts at an earlier latch or
-           structural-completeness gate before the currentness verdict is
-           even computed — no obligation is ever asserted.
-        4. Item 16 is the halt item, its verdict is non-``ADMIT``, AND the
-           worst-credible-capacity itself was UNKNOWN at that moment
-           (``unknown_preserves_capacity`` returns the context's own
-           ``int | None`` field unchanged) — a concrete halt with a
-           genuinely unknown obligation, currently indistinguishable here
-           from case 2/3's "no obligation was ever asserted" (independent
-           review finding #4). Resolving this needs an explicit
-           ``magnitude_unknown`` signal at the kernel obligation seam
-           (``GatewayEvidenceRecord``/``tos.cur.obligation_preserved``) —
-           out of this recorder's own write surface; tracked separately,
-           not yet landed as of this docstring.
-
-        Otherwise:
-        resolve the bound reservation's current state, ask the kernel
-        predicate whether the obligation still holds, durably evidence the
-        verdict, and — fail-closed polarity, ``is not True`` — HALT when it
-        does not.
+        No-op ONLY when ``preserved_worst_credible_capacity is None`` AND
+        ``preserved_obligation_magnitude_unknown`` is ``False`` — module
+        docstring's "Magnitude-unknown obligations" section enumerates the
+        four ``None``-and-no-magnitude-flag cases (review finding #9) that
+        legitimately reach this no-op, and the fifth case (review finding
+        #4) that must NOT: a magnitude-unknown obligation is the single most
+        dangerous input this recorder can see and must never collapse into
+        "nothing to verify". Both a concrete obligation and a
+        magnitude-unknown one share the SAME path below: resolve the bound
+        reservation, ask the kernel predicate (``magnitude_unknown=True``
+        forces its answer to ``False`` unconditionally — CUR-INV-011:183),
+        durably evidence the verdict, and — fail-closed polarity,
+        ``is not True`` — HALT when it does not hold.
 
         Raises:
             Exception: Whatever :meth:`SqliteEvidenceStore.append` or
@@ -245,7 +262,8 @@ class CapacityObligationRecorder:
                 this compose root).
         """
         obligation = record.preserved_worst_credible_capacity
-        if obligation is None:
+        magnitude_unknown = record.preserved_obligation_magnitude_unknown
+        if obligation is None and not magnitude_unknown:
             return
 
         reservation_id: str | None = None
@@ -261,6 +279,7 @@ class CapacityObligationRecorder:
             obligation,
             state_value,
             capacity_consuming_states=self._capacity_consuming_states,
+            magnitude_unknown=magnitude_unknown,
         )
 
         payload: Mapping[str, object] = {
@@ -269,6 +288,7 @@ class CapacityObligationRecorder:
             "obligation": obligation,
             "reservation_state": state_value,
             "verdict": verdict,
+            "magnitude_unknown": magnitude_unknown,
         }
         self._store.append(
             payload,
