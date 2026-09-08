@@ -417,7 +417,14 @@ def _build_rcl_and_authority(
         evidence_store,
         writer_epoch=writer_epoch,
         trading_approval_policy_generation=policy_generation,
-        # re-review finding #3: collapses G-1 to its one remaining blocker.
+        # re-review finding #3: removes two of G-1's three wiring blockers.
+        # Two REAL-service blockers remain, both in the time service's own
+        # snapshot issuance (time/service.py::_issue_snapshot): it populates
+        # neither ``wall_clock_observation`` nor
+        # ``suspension_status.suspension_ms`` (the latter became load-bearing
+        # once finding #2 made IAP read the OBSERVED suspension), so a
+        # configured ``max_decision_age_ms`` denies fail-closed until the
+        # slice-#1 time design revisits both (operator gate, not this round).
         time=time_service,
         time_config=time_config,
     )

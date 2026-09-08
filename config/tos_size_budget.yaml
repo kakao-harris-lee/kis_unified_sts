@@ -244,7 +244,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1038
+  measured: 1045
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -264,6 +264,8 @@ exceptions:
     _build_realized_stages 가 함수 100줄 문턱을 1줄 초과(101) — _build_step4_recorder
     가 time_service/time_config/evidence 개별 인자 대신 infra: _Infra 하나를
     받도록 리팩터해 함수 예외는 해소하고 모듈 실측은 1038 로 재등재.
+    2026-09-08 재심 R#1(문서) — IntentRegistry 결선 주석을 «G-1 잔여 블로커 둘»
+    로 정정하며 1038→1045(+7, 주석만 · 코드 불변 · 오케스트레이터 직접 편집).
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime
