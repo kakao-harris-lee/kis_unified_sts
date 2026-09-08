@@ -741,14 +741,9 @@ class IntentRegistry:
             receipt.receipt_anchor,
             consumer_continuity_now=continuity_now,
             consumer_anchor=receipt.receipt_continuity,
-            # OBSERVED consumer suspension off this process's own current
-            # snapshot (kernel round #1 §2.2 re-review finding #2, HIGH) —
-            # never a fabricated literal. `None` (never actually observed)
-            # is deliberately NOT coerced to "not suspended": it flows
-            # straight into `tos.time.predicates.anchor_valid`, which
-            # treats an unknown suspension as an invalid anchor
-            # (fail-closed), same as an unknown `max_suspension_ms` already
-            # does on the line below.
+            # OBSERVED (never fabricated) — re-review finding #2. `None`
+            # (unobserved) is NOT coerced to "not suspended"; anchor_valid
+            # treats it as invalid, fail-closed, like max_suspension_ms below.
             suspension_ms=snapshot.suspension_status.suspension_ms,
             max_suspension_ms=self._time_config.max_process_suspension_ms,
             issuer_signed_age=receipt.issuer_signed_age_ms,

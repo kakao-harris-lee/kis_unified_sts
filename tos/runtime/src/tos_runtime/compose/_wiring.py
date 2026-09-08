@@ -202,15 +202,10 @@ def _decision_provider(
     """Lazily loads the operator approval file bound to a proposal's own
     digest (``approvals/<proposal_digest>.yaml``) — never computed, never
     cached across a restart (module docstring; ``tos_runtime.authority.iap``
-    "zero auto-approval").
-
-    Uses :func:`~tos_runtime.authority.iap.load_operator_approval_with_receipt`
-    (kernel round #1 §2.2 re-review finding #3, MEDIUM) so the resolved
-    :class:`~tos_runtime.authority.iap.LoadedApproval` carries the receipt-
-    time facts ``IndependentApprovalStage`` threads into both
-    ``decision_current`` and ``consume`` — the ONLY compose-root call site
-    that resolves an approval file, so this is where G-1's "expiry path
-    unwired" gap closes."""
+    "zero auto-approval"). Uses ``load_operator_approval_with_receipt``
+    (re-review finding #3) so the resolved ``LoadedApproval`` carries the
+    receipt facts ``IndependentApprovalStage`` threads into expiry — this is
+    the ONE call site that closes G-1's "expiry path unwired" gap."""
     approvals_dir = custody_root / _APPROVALS_DIRNAME
 
     def _provider(request: StageRequest) -> LoadedApproval | None:
@@ -409,12 +404,7 @@ def _build_rcl_and_authority(
         evidence_store,
         writer_epoch=writer_epoch,
         trading_approval_policy_generation=policy_generation,
-        # Kernel round #1 §2.2 re-review finding #3 (MEDIUM): without these
-        # two, decision_current/consume always fall back to
-        # max_decision_age_ms's unconfigured branch — an approval file that
-        # SETS an expiry silently could never be enforced from this compose
-        # root. Wiring them here is what collapses G-1 to its one remaining,
-        # already-reported blocker (wall_clock_observation never populated).
+        # re-review finding #3: collapses G-1 to its one remaining blocker.
         time=time_service,
         time_config=time_config,
     )

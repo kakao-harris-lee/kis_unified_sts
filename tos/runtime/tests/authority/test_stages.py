@@ -19,7 +19,7 @@ from tos.iap import (
     ConsumptionStatus,
     IndependentApprovalDecision,
 )
-from tos_runtime.authority.iap import ConsumeResult, IntentRegistry
+from tos_runtime.authority.iap import ConsumeResult, IntentRegistry, LoadedApproval
 from tos_runtime.authority.stages import IndependentApprovalStage, item14_fields
 
 from .test_iap import _decision as build_decision
@@ -33,16 +33,31 @@ def _bare_request() -> StageRequest:
     )
 
 
+def _bare_loaded(decision: IndependentApprovalDecision) -> LoadedApproval:
+    """A :class:`LoadedApproval` with no receipt facts — these stage-level
+    tests exercise routing/outcome mapping, not expiry composition (kernel
+    round #1 §2.2's own ``IntentRegistry`` tests own that)."""
+    return LoadedApproval(
+        decision=decision,
+        issued_at_unix_ms=None,
+        receipt_continuity=None,
+        receipt_anchor=None,
+        issuer_signed_age_ms=None,
+        issuer_age_uncertainty_ms=None,
+    )
+
+
 def _stage(
     intent_registry: IntentRegistry,
     decision: IndependentApprovalDecision | None,
 ) -> IndependentApprovalStage:
+    loaded = None if decision is None else _bare_loaded(decision)
     return IndependentApprovalStage(
         intent_registry,
-        decision_provider=lambda _request: decision,
+        decision_provider=lambda _request: loaded,
         command_identity_provider=lambda _request, _decision: "cmd-1",
         command_digest_provider=lambda _request, _decision: "digest-1",
-        decision_current_provider=lambda _request, _decision: True,
+        decision_current_provider=lambda _request, _decision, _receipt: True,
         envelope_equivalent_provider=lambda _request, _decision: True,
     )
 

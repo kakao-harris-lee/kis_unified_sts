@@ -223,6 +223,31 @@ class TestComposeRootWiring:
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
+    def test_intent_registry_is_wired_with_the_runtime_time_service(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """Kernel round #1 §2.2 re-review finding #3 (MEDIUM): before this
+        fix, ``IntentRegistry(...)`` was constructed in ``_build_rcl_and_
+        authority`` with no ``time=``/``time_config=`` at all, so decision-
+        expiry composition (``_expiry_verdict``) could never even reach the
+        time service — ANY approval file setting ``max_decision_age_ms``
+        would fail closed with no receipt EVER consulted, not merely an
+        incomplete one.
+
+        Wiring proof via the registry's own injected collaborators (``_time``
+        / ``_time_config``), matching this test module's own established
+        pattern of reaching into a wired collaborator to prove composition
+        (e.g. ``runtime.gateway._sink`` elsewhere in this file) — never a
+        re-constructed duplicate, the SAME instances this runtime already
+        exposes publicly.
+        """
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        # noqa: SLF001 -- wiring proof, see this test's own docstring
+        assert runtime.intent_registry._time is runtime.time_service
+        assert runtime.intent_registry._time_config is runtime.time_service._config
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
     def test_operator_attested_inputs_record_lists_exactly_the_attested_set(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
@@ -374,6 +399,63 @@ class TestSyntheticEventDrivesTheChain:
             ), f"step {step_name}: {verdict_by_step[step_name].reason}"
 
         assert len(runtime.transport.requests) == 1
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+    def test_admitted_consumption_evidence_carries_a_real_receipt_anchor(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """Kernel round #1 §2.2 re-review finding #3 (MEDIUM): before this
+        fix, ``_decision_provider`` resolved a bare
+        ``IndependentApprovalDecision`` via ``load_operator_approval_file``,
+        and the stage's default ``decision_current_provider`` called
+        ``registry.decision_current(decision)`` with NO ``receipt`` at all —
+        so ``IntentRegistry.consume``'s own ``receipt`` parameter was also
+        never supplied, and the IAP_CONSUMPTION evidence's
+        ``receipt_anchor`` field was unconditionally ``None`` no matter how
+        the decision resolved.
+
+        After the fix, ``_decision_provider`` uses
+        ``load_operator_approval_with_receipt`` and the stage threads that
+        SAME ``LoadedApproval`` into both ``decision_current`` and
+        ``consume(..., receipt=...)`` — so even this ordinary
+        ``max_decision_age_ms=None`` admit path now carries a real
+        ``receipt_anchor`` (derived from the started ``TrustworthyTimeService``'s
+        own continuity, which is available regardless of G-1's separate
+        wall-clock-population gap — see ``load_operator_approval_with_
+        receipt``'s own "honest gap" docstring note)."""
+        import json
+
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+
+        event = fx.crossing_event()
+        results = runtime.run_once((event,))
+        proposal_digest = results[0].pipeline.proposal.canonical_digest
+        assert proposal_digest is not None
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
+        write_approval_file(
+            custody_root,
+            proposal_digest=proposal_digest,
+            environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
+        )
+
+        results2 = runtime.run_once((event,))
+        flow = results2[0].flow
+        assert flow is not None
+        verdict_by_step = {v.step.value: v for v in flow.verdicts}
+        assert verdict_by_step["INDEPENDENT_APPROVAL"].outcome.value == "ADMIT"
+
+        rows = runtime.evidence_store.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = 'IAP_CONSUMPTION'"
+        ).fetchall()
+        assert len(rows) == 1
+        payload = json.loads(rows[0][0])["payload"]
+        assert payload["expiry_verdict"] == "NOT_CONFIGURED"
+        assert payload["receipt_anchor"] is not None
 
         runtime.rcl_log.close()
         runtime.evidence_store.close()

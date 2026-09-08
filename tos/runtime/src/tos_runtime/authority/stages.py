@@ -34,7 +34,7 @@ from tos.engine.records import StageRequest, StageVerdict
 from tos.engine.vocabulary import CommitmentStep, StageAuthorityClass, StageOutcome
 from tos.iap import ConsumptionOutcome, IndependentApprovalDecision
 
-from tos_runtime.authority.iap import ConsumeResult, IntentRegistry
+from tos_runtime.authority.iap import ConsumeResult, IntentRegistry, LoadedApproval
 
 __all__ = ["IndependentApprovalStage", "item14_fields"]
 
@@ -43,9 +43,17 @@ _ADMISSIBLE_OUTCOMES: frozenset[ConsumptionOutcome] = frozenset(
     {ConsumptionOutcome.CONSUMED_NEW, ConsumptionOutcome.IDEMPOTENT_REPLAY}
 )
 
-DecisionProvider = Callable[[StageRequest], IndependentApprovalDecision | None]
+#: Kernel round #1 §2.2 re-review finding #3 (MEDIUM): the provider now
+#: resolves a :class:`~tos_runtime.authority.iap.LoadedApproval` (decision +
+#: receipt-time facts) rather than a bare decision, so this stage can thread
+#: the SAME receipt into both ``decision_current`` and ``consume`` — never
+#: re-derived, never dropped on the floor between the two calls.
+DecisionProvider = Callable[[StageRequest], LoadedApproval | None]
 CommandFieldProvider = Callable[[StageRequest, IndependentApprovalDecision], str]
 BoolFieldProvider = Callable[[StageRequest, IndependentApprovalDecision], bool | None]
+DecisionCurrentProvider = Callable[
+    [StageRequest, IndependentApprovalDecision, LoadedApproval | None], bool | None
+]
 
 
 class IndependentApprovalStage:
@@ -68,15 +76,20 @@ class IndependentApprovalStage:
         command_identity_provider: CommandFieldProvider,
         command_digest_provider: CommandFieldProvider,
         envelope_equivalent_provider: BoolFieldProvider,
-        decision_current_provider: BoolFieldProvider | None = None,
+        decision_current_provider: DecisionCurrentProvider | None = None,
     ) -> None:
         """Configure the stage.
 
         Args:
             registry: The real, RCL-backed Intent Registry.
-            decision_provider: Resolves the operator approval decision bound
-                to this request's proposal, or ``None`` when no decision is
-                available yet (restrictive ``UNKNOWN``, never a pass).
+            decision_provider: Resolves the :class:`~tos_runtime.authority.iap.LoadedApproval`
+                (decision + receipt-time facts) bound to this request's
+                proposal, or ``None`` when no decision is available yet
+                (restrictive ``UNKNOWN``, never a pass). The SAME
+                ``LoadedApproval`` is threaded as ``receipt`` into both
+                ``decision_current_provider`` and ``registry.consume`` below
+                (kernel round #1 §2.2 re-review finding #3) — this stage
+                never re-resolves or re-loads it.
             command_identity_provider: The consuming command's own identity,
                 given the request and its resolved decision.
             command_digest_provider: The consuming command's canonical digest.
@@ -84,9 +97,11 @@ class IndependentApprovalStage:
                 is byte-for-byte equivalent (``None``/``False`` => not
                 consumable).
             decision_current_provider: Whether the decision is current/
-                unexpired/unrevoked (``None``/``False`` => not consumable).
-                Defaults to ``registry.decision_current`` (2026-09-08 — the
-                composition root need not supply a lambda; see
+                unexpired/unrevoked (``None``/``False`` => not consumable),
+                given the request, the decision, and its resolved receipt (or
+                ``None``). Defaults to ``registry.decision_current(decision,
+                receipt=receipt)`` (2026-09-08 — the composition root need
+                not supply a lambda; see
                 :meth:`~tos_runtime.authority.iap.IntentRegistry.decision_current`'s
                 own docstring for exactly what it checks).
         """
@@ -97,14 +112,18 @@ class IndependentApprovalStage:
         self._decision_current_provider = (
             decision_current_provider
             if decision_current_provider is not None
-            else (lambda _request, decision: registry.decision_current(decision))
+            else (
+                lambda _request, decision, receipt: registry.decision_current(
+                    decision, receipt=receipt
+                )
+            )
         )
         self._envelope_equivalent_provider = envelope_equivalent_provider
 
     def __call__(self, request: StageRequest) -> StageVerdict:
         """Judge step 4 by consuming the resolved decision, once."""
-        decision = self._decision_provider(request)
-        if decision is None:
+        loaded = self._decision_provider(request)
+        if loaded is None:
             return StageVerdict(
                 step=CommitmentStep.INDEPENDENT_APPROVAL,
                 outcome=StageOutcome.UNKNOWN,
@@ -114,14 +133,16 @@ class IndependentApprovalStage:
                     "proposal — UNKNOWN is restrictive, never an assumed grant"
                 ),
             )
+        decision = loaded.decision
         result = self._registry.consume(
             decision,
             command_identity=self._command_identity_provider(request, decision),
             command_digest=self._command_digest_provider(request, decision),
-            decision_current=self._decision_current_provider(request, decision),
+            decision_current=self._decision_current_provider(request, decision, loaded),
             approved_intent_envelope_equivalent=self._envelope_equivalent_provider(
                 request, decision
             ),
+            receipt=loaded,
         )
         outcome, reason = _stage_outcome_for(result)
         return StageVerdict(
