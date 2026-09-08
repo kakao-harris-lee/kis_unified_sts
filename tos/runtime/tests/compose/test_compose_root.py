@@ -506,6 +506,63 @@ class TestNonTrustedTimeBlocksNewRisk:
         runtime.evidence_store.close()
 
 
+class TestStaleGenerationProviderYieldsUnknown:
+    """Re-review finding F2 (2026-09-08): step 6 (``AggregateRiskDecisionStage``)
+    over a stale RCL Writer Epoch must yield UNKNOWN, never a decision
+    silently computed at a fabricated ``generation=0`` (the previous bare
+    ``except Exception: return 0`` bug). Calls the real, composed Stage
+    directly (rather than through the full engine sequencer) so this test
+    isolates step 6's own fault contract from step 4's separate, unrelated
+    RCL read (``IntentRegistry.decision_current``, lane P's file, out of
+    this lane's scope)."""
+
+    def test_stale_writer_epoch_yields_unknown_not_a_decision_at_generation_zero(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        from tos.engine.records import InstrumentKey, StageRequest
+        from tos.engine.vocabulary import CommitmentStep
+        from tos_runtime.compose._wiring import _rcl_tip_generation_provider
+        from tos_runtime.rcl.log import SqliteCommitLog
+        from tos_runtime.risk.ledger_stages import AggregateRiskDecisionStage
+
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+        event = fx.crossing_event()
+        first = runtime.run_once((event,))[0]
+        assert first.pipeline is not None and first.pipeline.proposal is not None
+
+        # A second handle acquiring a NEW Writer Epoch on the SAME rcl.sqlite3
+        # file invalidates the composed runtime's own epoch.
+        second = SqliteCommitLog(
+            runtime.rcl_log.path, evidence_port=runtime.evidence_store
+        )
+        try:
+            second.acquire_epoch(runtime.identity)
+            stale_provider = _rcl_tip_generation_provider(
+                runtime.rcl_log, runtime.writer_epoch
+            )
+            stage = AggregateRiskDecisionStage(
+                runtime.risk_service,
+                inputs_provider=_aggregate_inputs,
+                snapshot_generation_provider=stale_provider,
+                decision_generation_provider=stale_provider,
+                time_permits_new_risk=lambda: True,
+            )
+            request = StageRequest(
+                step=CommitmentStep.AGGREGATE_RISK_DECISION,
+                instrument_key=InstrumentKey(
+                    account=fx.ACCOUNT, instrument=fx.INSTRUMENT
+                ),
+                proposal=first.pipeline.proposal,
+            )
+            verdict = stage(request)
+            assert verdict.outcome.value == "UNKNOWN"
+        finally:
+            second.close()
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+
 class TestRclLogUnavailableBlocksNewRisk:
     """Scenario 5: removing/locking the RCL log file => zero new risk
     (steps 8-10 UNKNOWN) and no hand-off."""

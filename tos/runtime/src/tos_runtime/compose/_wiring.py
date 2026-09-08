@@ -136,9 +136,10 @@ def _time_permits_new_risk(time_service: TrustworthyTimeService) -> Callable[[],
 def _rcl_tip_generation_provider(
     rcl_log: SqliteCommitLog, writer_epoch: int
 ) -> Callable[[StageRequest], int]:
-    """A ``GenerationProvider`` (snapshot/decision/permit generation, step 6/9)
-    derived from the RCL log's own current linearizable tip sequence — never
-    a fabricated constant (team-lead follow-up guidance, 2026-09-08).
+    """A ``GenerationProvider`` (snapshot/decision generation, step 6; also
+    used as ``permit_generation_provider``, step 9) derived from the RCL
+    log's own current linearizable tip sequence — never a fabricated
+    constant (team-lead follow-up guidance, 2026-09-08).
 
     ``AggregateRiskService.decide``/``ActionFlowGovernor.build_permit`` need
     these generation numbers to CREATE a snapshot/decision/permit's own
@@ -149,18 +150,24 @@ def _rcl_tip_generation_provider(
     own currentness dimension reader already keys off,
     :func:`_action_flow_dimension_reader_for`).
 
-    Returns ``0`` when the log has no committed tip yet or is transiently
-    unreachable — this provider itself never denies anything; a genuinely
-    broken log is instead caught and mapped to ``UNKNOWN`` by the calling
-    Stage's own fault contract (e.g.
-    ``AggregateRiskDecisionStage.__call__``'s ``try/except``).
+    Returns ``0`` only for a genuinely empty log with no committed tip yet
+    — never for a log-read failure. ``StaleEpochRead``/``sqlite3.Error``/
+    ``OSError`` propagate unchanged (re-review finding F2, 2026-09-08: a
+    swallowed failure here previously returned ``0`` for two DIFFERENT
+    decisions across a transient failure, breaking the forward-only
+    ``(decision_id, decision_generation, digest)`` monotonicity
+    ``tos.are.predicates`` assumes). ``AggregateRiskDecisionStage.__call__``
+    calls both generation providers INSIDE its own ``try/except`` (step 6),
+    so a propagated failure there maps to ``UNKNOWN`` correctly; the step-9
+    permit path has no such enclosing guard, so
+    :func:`~tos_runtime.compose.context.make_permit_provider` catches this
+    provider's propagated failure itself and reports "no permit" (also
+    ``UNKNOWN``, never a fabricated generation) — see that function's own
+    docstring.
     """
 
     def _provider(_request: StageRequest) -> int:
-        try:
-            view = rcl_log.read_linearizable(writer_epoch=writer_epoch)
-        except Exception:  # noqa: BLE001 - caller Stage maps broken log to UNKNOWN
-            return 0
+        view = rcl_log.read_linearizable(writer_epoch=writer_epoch)
         return 0 if view.last_seq is None else view.last_seq
 
     return _provider

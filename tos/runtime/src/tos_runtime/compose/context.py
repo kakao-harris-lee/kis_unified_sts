@@ -75,6 +75,7 @@ Firewall (tools/tos_firewall_check.py R1, runtime scope): stdlib + ``tos.*``
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -120,6 +121,7 @@ from tos_runtime.compose._pending_dimensions import (
 from tos_runtime.currentness.proof import EgressCurrentnessProofIssuer
 from tos_runtime.currentness.stages import TransmissionCapabilityStage
 from tos_runtime.currentness.vector import CurrentnessAssembler
+from tos_runtime.rcl.log import StaleEpochRead
 from tos_runtime.risk.aggregate import (
     AggregateRiskDecisionInputs,
     AggregateRiskService,
@@ -218,15 +220,28 @@ def make_permit_provider(
     :meth:`~tos_runtime.risk.flow.ActionFlowGovernor.build_permit` — never
     inventing a permit for a non-GRANT decision (restrictive, never a
     fall-through admit).
+
+    ``permit_generation_provider`` (``_rcl_tip_generation_provider``, an RCL
+    log read) can raise ``StaleEpochRead``/``sqlite3.Error`` — re-review
+    finding F2, 2026-09-08. Unlike step 6's ``AggregateRiskDecisionStage``,
+    :class:`~tos_runtime.risk.ledger_stages.AtomicCommitStage` calls this
+    ``permit_provider`` with NO enclosing ``try/except``, so a propagated
+    failure here is caught at this exact call site and reported as "no
+    permit available" (``None``) — the Stage already maps that to
+    ``UNKNOWN`` (fail-closed), never a fabricated ``generation=0``.
     """
 
     def _provider(request: StageRequest) -> ActionFlowPermit | None:
         decision = governor.last_decision
         if decision is None or decision.result is not ActionFlowResult.GRANT:
             return None
+        try:
+            generation = permit_generation_provider(request)
+        except (StaleEpochRead, sqlite3.Error, OSError):
+            return None
         permit = governor.build_permit(
             decision,
-            permit_generation=permit_generation_provider(request),
+            permit_generation=generation,
             command_identity=command_identity_provider(request),
         )
         governor.last_permit = permit
