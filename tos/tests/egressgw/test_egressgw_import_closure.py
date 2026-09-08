@@ -52,6 +52,7 @@ import tos.egressgw._base
 import tos.egressgw.construction
 import tos.egressgw.gateway
 import tos.egressgw.records
+import tos.egressgw.seal
 import tos.egressgw.vocabulary
 
 #: The §0.3 allowlist **as actually taken** — the only top-level ``tos.*`` packages the sources
@@ -202,6 +203,7 @@ _SUBMODULES = (
     "tos.egressgw.construction",
     "tos.egressgw.gateway",
     "tos.egressgw.records",
+    "tos.egressgw.seal",
     "tos.egressgw.vocabulary",
 )
 
@@ -211,6 +213,7 @@ _LOADED_SUBMODULES = {
     "tos.egressgw.construction": tos.egressgw.construction,
     "tos.egressgw.gateway": tos.egressgw.gateway,
     "tos.egressgw.records": tos.egressgw.records,
+    "tos.egressgw.seal": tos.egressgw.seal,
     "tos.egressgw.vocabulary": tos.egressgw.vocabulary,
 }
 
@@ -245,6 +248,7 @@ def _closure_child(queue: mp.Queue) -> None:
     import tos.egressgw.construction  # noqa: F401
     import tos.egressgw.gateway  # noqa: F401
     import tos.egressgw.records  # noqa: F401
+    import tos.egressgw.seal  # noqa: F401
     import tos.egressgw.vocabulary  # noqa: F401
 
     tos_tops = sorted(

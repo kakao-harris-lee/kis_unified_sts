@@ -118,6 +118,12 @@ from tos.egressgw.records import (
     positive_decimal,
     send_boundary_context,
 )
+from tos.egressgw.seal import (
+    SendSeal,
+    SendSealUnconstructable,
+    build_send_seal,
+    seal_matches_outbound,
+)
 from tos.egressgw.vocabulary import (
     ADMITTING_VERIFY_OUTCOMES,
     DEFERRED_ITEMS,
@@ -174,6 +180,11 @@ __all__ = [
     "VerifyItemVerdict",
     "positive_decimal",
     "send_boundary_context",
+    # seal (Phase 4 작업 6 — the pre-SEND_STARTED tuple)
+    "SendSeal",
+    "SendSealUnconstructable",
+    "build_send_seal",
+    "seal_matches_outbound",
     # construction (steps 2 / 3 / 5 / 11)
     "DERIVATION_CONTEXT",
     "DERIVATION_RULE",
