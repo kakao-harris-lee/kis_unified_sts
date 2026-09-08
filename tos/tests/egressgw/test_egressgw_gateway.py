@@ -27,8 +27,10 @@ from tos.egress import ClaimObservation, RestrictiveLatchState
 from tos.egressgw import (
     AllFalseGatewayAuthority,
     BrokerEgressGateway,
+    CandidateConstruction,
     RecordingGatewayEvidenceSink,
     SendAttemptLedger,
+    SendBoundaryContext,
     SendHaltReason,
     SendVerifyItem,
     VerifyOutcome,
@@ -37,6 +39,7 @@ from tos.egressgw import (
     send_boundary_context,
     verify_send_boundary,
 )
+from tos.egressgw.gateway import _check_construction
 from tos.engine import (
     AttemptRequest,
     EgressResultKind,
@@ -786,6 +789,59 @@ def test_a_none_ioc_verdict_cannot_reach_the_send_boundary_context(field: str) -
     malformed = _built_construction().model_copy(update={field: None})
     with pytest.raises(ValidationError, match="ioc verdict|missing"):
         happy_context(construction=malformed)
+
+
+def _model_construct_malformed_construction(**overrides: Any) -> CandidateConstruction:
+    """Bypass the ``records.py`` shape validator directly (repo idiom,
+    ``tos/tests/wdr/test_wdr_malformed_model.py:85-97``): ``model_construct`` skips every
+    validator, so this can build the exact ``command is not None`` + ``None`` ioc verdict shape
+    the constructor and ``model_copy``-into-``SendBoundaryContext`` both refuse to let reach the
+    send boundary (the two tests above)."""
+    base = _built_construction()
+    fields: dict[str, Any] = {
+        "derivation": base.derivation,
+        "intent": base.intent,
+        "envelope": base.envelope,
+        "policy": base.policy,
+        "command": base.command,
+        "conformance_result": base.conformance_result,
+        "numerical_result": base.numerical_result,
+        "no_silent_widening_ok": base.no_silent_widening_ok,
+        "denial_reason": base.denial_reason,
+        "authority_effect": base.authority_effect,
+    }
+    fields.update(overrides)
+    return CandidateConstruction.model_construct(**fields)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"conformance_result": None},
+        {"numerical_result": None, "conformance_result": ConformanceResult.CONFORMANT},
+    ],
+    ids=["conformance-none", "numerical-none"],
+)
+def test_check_construction_model_construct_bypass_none_verdict_is_unknown_not_a_crash(
+    overrides: dict[str, Any],
+) -> None:
+    """(M1, TOS-GAP-001) The exact ``None`` ioc-verdict shape the constructor and
+    ``model_copy``-into-context both make unreachable (the two tests above) is reverting either
+    guard's live target: this calls ``_check_construction`` (gateway.py ~:941 / ~:971) directly
+    against a ``model_construct``-bypassed bundle, so a reverted guard is caught here even though
+    the malformed shape can never arrive through the public construction path. Regression for the
+    independent reviewer's M1 finding on PR #655 — the prior suite proved the shape
+    *unreachable*, never proved the guard itself live.
+    """
+    malformed = _model_construct_malformed_construction(**overrides)
+    # ``SendBoundaryContext.model_construct`` likewise skips validation, so the malformed
+    # ``construction`` survives embedding unchanged — ``_check_construction`` only reads
+    # ``context.construction``; ``attempt``/``applicability`` are unused (``del``'d immediately).
+    context = SendBoundaryContext.model_construct(construction=malformed)
+    verdict = _check_construction(None, context, None)  # type: ignore[arg-type]
+    assert verdict.outcome is VerifyOutcome.UNKNOWN
+    assert verdict.native_verdict_value is None
+    assert (verdict.reason or "").strip(), "a restrictive stop must record its reason"
 
 
 # ---------------------------------------------------------------------------

@@ -300,6 +300,9 @@ def test_a_result_whose_attempt_id_is_unreadable_halts_as_result_unreadable() ->
     assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True  # I1
     assert sink.records[-1].kind == "SEND_REFUSED"  # I2
     assert sink.records[-1].halt_reason is SendHaltReason.RESULT_UNREADABLE
+    # the unreadable result is never registered — ``self.results`` only appends after the
+    # EGRESS_RESULT_RECORDED evidence is built (gateway.py — well past this halt).
+    assert gateway.results == ()
     assert gateway(attempt).accepted_for_transmission is None
     assert transport.calls == 1
 
@@ -320,6 +323,7 @@ def test_a_result_whose_kind_is_unreadable_halts_as_result_unreadable() -> None:
     assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True  # I1
     assert sink.records[-1].kind == "SEND_REFUSED"  # I2
     assert sink.records[-1].halt_reason is SendHaltReason.RESULT_UNREADABLE
+    assert gateway.results == ()  # the unreadable result is never registered
 
 
 def test_a_result_whose_filled_quantity_is_unreadable_halts_as_result_unreadable() -> (
@@ -340,6 +344,7 @@ def test_a_result_whose_filled_quantity_is_unreadable_halts_as_result_unreadable
     assert gateway.ledger.attempt_consumed(attempt.attempt_id) is True  # I1
     assert sink.records[-1].kind == "SEND_REFUSED"  # I2
     assert sink.records[-1].halt_reason is SendHaltReason.RESULT_UNREADABLE
+    assert gateway.results == ()  # the unreadable result is never registered
 
 
 def test_a_result_naming_another_attempt_is_refused_without_transitioning_this_one() -> (

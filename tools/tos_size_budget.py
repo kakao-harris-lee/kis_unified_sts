@@ -28,15 +28,22 @@ Failure classes enforced by ``--check`` (never silently pass):
         ``decomposition_order`` across entries
     (e) the config file itself is missing, unreadable, not valid YAML, or fails
         top-level schema validation
+    (f) an exception's registered ``measured`` no longer matches the target's actual
+        current line count (growth *or* shrinkage) — the register is a ratchet, not
+        a snapshot: a target that keeps growing under an unchanged ``measured`` value
+        would pass ``--check`` forever with no visible record that it grew.
+        Re-registering (fixing ``measured`` to the new actual count) is a deliberate
+        act, never automatic — the check only flags the drift, it never silently
+        accepts it.
 
-(a)-(d) are collected and each printed as one violation line; ``--check`` exits 1 if
-that list is non-empty. (e) is a distinct hard failure — the checker cannot even
-measure without a valid config, so it raises immediately rather than reporting "0
-violations" (see the "a checker that never fails is dead" fail-open discipline
-documented via ``--self-test`` in ``tools/tos_contract_check.py``: a size-budget
-checker with no live red path would be exactly that kind of dead check, which is
-why ``tests/tools/test_tos_size_budget.py`` proves each class (a)-(e) red on a
-synthetic fixture, not just green on the real tree).
+(a)-(d) and (f) are collected and each printed as one violation line; ``--check``
+exits 1 if that list is non-empty. (e) is a distinct hard failure — the checker
+cannot even measure without a valid config, so it raises immediately rather than
+reporting "0 violations" (see the "a checker that never fails is dead" fail-open
+discipline documented via ``--self-test`` in ``tools/tos_contract_check.py``: a
+size-budget checker with no live red path would be exactly that kind of dead check,
+which is why ``tests/tools/test_tos_size_budget.py`` proves each class (a)-(f) red
+on a synthetic fixture, not just green on the real tree).
 """
 
 from __future__ import annotations
@@ -271,16 +278,32 @@ def _iter_scope_files(root: Path, scope: Sequence[str]) -> Iterator[Path]:
 
 
 def _target_path(path: Path, root: Path) -> str:
-    return path.resolve().relative_to(root.resolve()).as_posix()
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(root.resolve()).as_posix()
+    except ValueError as exc:
+        # A symlink under a scope directory that resolves outside --root is a
+        # measurement that cannot be honestly reported as a scope-relative path — fail
+        # closed with the checker's own error class instead of letting a bare ValueError
+        # (from pathlib) propagate as an unhandled crash.
+        raise SizeBudgetConfigError(
+            f"{path}: resolves to {resolved} which is outside --root {root} "
+            "(a symlink escaping scope?)"
+        ) from exc
 
 
-def _iter_functions(tree: ast.Module) -> Iterator[tuple[str, int, int]]:
+def _iter_functions(tree: ast.Module, *, target: str) -> Iterator[tuple[str, int, int]]:
     """Yield ``(qualname, lineno, end_lineno)`` for every function, nested or a method.
 
     ``qualname`` is dotted through enclosing ``ClassDef``/``FunctionDef`` scopes (e.g.
     ``"Foo.bar"`` for method ``bar`` of class ``Foo``, ``"outer.inner"`` for a nested
     function) so two same-named functions in different scopes never collide as budget
     targets.
+
+    Args:
+        tree: The parsed module.
+        target: The module's scope-relative path, used only to name the source in a
+            :class:`SizeBudgetConfigError` if a function's span cannot be measured.
     """
 
     def walk(node: ast.AST, prefix: tuple[str, ...]) -> Iterator[tuple[str, int, int]]:
@@ -288,8 +311,17 @@ def _iter_functions(tree: ast.Module) -> Iterator[tuple[str, int, int]]:
             if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
                 qualname = ".".join((*prefix, child.name))
                 end_lineno = child.end_lineno
-                if end_lineno is not None:
-                    yield qualname, child.lineno, end_lineno
+                if end_lineno is None:
+                    # A measurement that cannot be taken is red, not silently skipped —
+                    # matching the sibling SyntaxError path in ``measure()`` below. This
+                    # should not happen for anything ``ast.parse`` itself produced (only a
+                    # hand-built/mutated AST node lacks ``end_lineno``), but a skip here
+                    # would silently under-count the module and hide a real function from
+                    # the budget entirely.
+                    raise SizeBudgetConfigError(
+                        f"{target}::{qualname}: cannot measure — end_lineno is None"
+                    )
+                yield qualname, child.lineno, end_lineno
                 yield from walk(child, (*prefix, child.name))
             elif isinstance(child, ast.ClassDef):
                 yield from walk(child, (*prefix, child.name))
@@ -314,7 +346,7 @@ def measure(root: Path, config: BudgetConfig) -> list[Measured]:
             raise SizeBudgetConfigError(
                 f"{target}: cannot parse for function measurement: {exc}"
             ) from exc
-        for qualname, lineno, end_lineno in _iter_functions(tree):
+        for qualname, lineno, end_lineno in _iter_functions(tree, target=target):
             results.append(
                 Measured(
                     target=f"{target}::{qualname}",
@@ -393,6 +425,17 @@ def run_check(
                 f"[stale-under-budget] {entry.target}: measured "
                 f"{measured_by_target[entry.target].lines} lines, at or under budget — "
                 "remove from exceptions"
+            )
+
+    # (f) measured drift — the registered `measured` is decorative unless it is
+    # checked against what the target actually measures today (a target still
+    # present and still over budget can grow silently forever otherwise).
+    for entry in config.exceptions:
+        current = measured_by_target.get(entry.target)
+        if current is not None and current.lines != entry.measured:
+            violations.append(
+                f"[measured-drift] {entry.target}: registered {entry.measured}, actual "
+                f"{current.lines} — re-register deliberately"
             )
 
     return violations
