@@ -108,10 +108,17 @@ def test_loader_never_opens_the_file_before_the_custody_gate(
 def test_loader_refuses_a_non_null_max_decision_age_ms(
     approvals_dir: Path, expected_owner_uid: int
 ) -> None:
+    """Kernel round #1 §2.2 relaxed this to a conditional check (issued_at
+    present => accept), but re-review finding #7 (LOW) restored the
+    unconditional refusal for THIS loader specifically — see
+    :func:`test_loader_refuses_a_non_null_max_decision_age_ms_even_with_issued_at`
+    for that once-relaxed case."""
     path = write_approval_file(
         approvals_dir / "p1.yaml", decision_id="d1", max_decision_age_ms=60_000
     )
-    with pytest.raises(OperatorApprovalFileError, match="expiry enforcement"):
+    with pytest.raises(
+        OperatorApprovalFileError, match="load_operator_approval_with_receipt"
+    ):
         load_operator_approval_file(
             path,
             expected_owner_uid=expected_owner_uid,
@@ -602,22 +609,31 @@ def test_decision_current_raises_on_a_legacy_kind_entry_under_the_supersession_p
 # ============================================================================
 
 
-def test_loader_accepts_a_non_null_max_decision_age_ms_with_issued_at(
+def test_loader_refuses_a_non_null_max_decision_age_ms_even_with_issued_at(
     approvals_dir: Path, expected_owner_uid: int
 ) -> None:
-    """The prior unconditional refusal (kernel round #1 §2.2) is replaced: a
-    non-null ``max_decision_age_ms`` is fine as long as ``issued_at_unix_ms``
-    is also set."""
+    """Kernel round #1 §2.2 re-review finding #7 (LOW): the receipt-less
+    ``load_operator_approval_file`` produces no receipt, so a non-null
+    ``max_decision_age_ms`` loaded through it could never be enforced —
+    only ever denied forever at consumption with the operator's expiry
+    intent invisible (module docstring's "decision expiry runtime path").
+    This loader refuses it OUTRIGHT again, regardless of whether
+    ``issued_at_unix_ms`` is also set — that combination is now
+    ``load_operator_approval_with_receipt``'s job exclusively."""
     path = write_approval_file(
         approvals_dir / "p1.yaml",
         decision_id="d1",
         max_decision_age_ms=60_000,
         issued_at_unix_ms=1_000_000,
     )
-    decision = load_operator_approval_file(
-        path, expected_owner_uid=expected_owner_uid, environment_label="non-live-test"
-    )
-    assert decision.max_decision_age_ms == 60_000
+    with pytest.raises(
+        OperatorApprovalFileError, match="load_operator_approval_with_receipt"
+    ):
+        load_operator_approval_file(
+            path,
+            expected_owner_uid=expected_owner_uid,
+            environment_label="non-live-test",
+        )
 
 
 def test_loader_still_refuses_max_decision_age_ms_without_issued_at(
@@ -626,7 +642,9 @@ def test_loader_still_refuses_max_decision_age_ms_without_issued_at(
     path = write_approval_file(
         approvals_dir / "p1.yaml", decision_id="d1", max_decision_age_ms=60_000
     )
-    with pytest.raises(OperatorApprovalFileError, match="issued_at_unix_ms"):
+    with pytest.raises(
+        OperatorApprovalFileError, match="load_operator_approval_with_receipt"
+    ):
         load_operator_approval_file(
             path,
             expected_owner_uid=expected_owner_uid,

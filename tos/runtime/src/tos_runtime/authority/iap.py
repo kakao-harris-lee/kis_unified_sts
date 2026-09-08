@@ -266,12 +266,35 @@ def _check_decision_age_requires_issued_at(raw: Mapping[str, Any], path: Path) -
         )
 
 
+def _refuse_max_decision_age_ms_without_a_receipt(
+    raw: Mapping[str, Any], path: Path
+) -> None:
+    """Unconditional refusal restored for the receipt-less loader (re-review
+    finding #7, LOW) — this loader produces no receipt, so a non-``null``
+    ``max_decision_age_ms`` set through it would only ever deny forever at
+    consumption, invisibly. ``None``/absent stays accepted."""
+    if raw.get("max_decision_age_ms") is not None:
+        raise OperatorApprovalFileError(
+            f"load_operator_approval_file: {path} sets 'max_decision_age_ms'="
+            f"{raw['max_decision_age_ms']!r}, but this loader produces no "
+            "receipt to enforce it against — use "
+            "load_operator_approval_with_receipt instead, or leave "
+            "'max_decision_age_ms' unset/null."
+        )
+
+
 def _build_decision_from_raw(
-    raw: Mapping[str, Any], path: Path, scheme: CanonicalizationScheme
+    raw: Mapping[str, Any],
+    path: Path,
+    scheme: CanonicalizationScheme,
+    *,
+    age_check: Callable[[Mapping[str, Any], Path], None],
 ) -> IndependentApprovalDecision:
     """Check 5 + construction: parse ``result`` verbatim and issue the decision
-    (split out of :func:`load_operator_approval_file` for the size budget)."""
-    _check_decision_age_requires_issued_at(raw, path)
+    (split out of :func:`load_operator_approval_file` for the size budget).
+    ``age_check`` differs per caller (finding #7) — unconditional refusal vs.
+    "requires issued_at_unix_ms"."""
+    age_check(raw, path)
     try:
         result = ApprovalResult(raw["result"])
     except (KeyError, ValueError) as exc:
@@ -348,7 +371,9 @@ def load_operator_approval_file(
     )
     _verify_environment_label(raw, path, environment_label)
     scheme = get_scheme(canonicalization_version)
-    return _build_decision_from_raw(raw, path, scheme)
+    return _build_decision_from_raw(
+        raw, path, scheme, age_check=_refuse_max_decision_age_ms_without_a_receipt
+    )
 
 
 @dataclass(frozen=True)
@@ -425,7 +450,9 @@ def load_operator_approval_with_receipt(
     )
     _verify_environment_label(raw, path, environment_label)
     scheme = get_scheme(canonicalization_version)
-    decision = _build_decision_from_raw(raw, path, scheme)
+    decision = _build_decision_from_raw(
+        raw, path, scheme, age_check=_check_decision_age_requires_issued_at
+    )
     issued_at = raw.get("issued_at_unix_ms")
 
     try:

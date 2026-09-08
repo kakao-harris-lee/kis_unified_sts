@@ -85,6 +85,7 @@ from tos_runtime.currentness.vector import CurrentnessAssembler
 from tos_runtime.custody.file_custody import FileCustody
 from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.evidence.emergency import EmergencyAppendLog
+from tos_runtime.evidence.ports import EvidenceAppendPort
 from tos_runtime.evidence.sinks import (
     EngineEvidenceSinkAdapter,
     GatewayEvidenceSinkAdapter,
@@ -198,6 +199,7 @@ def _decision_provider(
     uid: int,
     time_service: TrustworthyTimeService,
     time_config: TrustworthyTimeConfig,
+    evidence: EvidenceAppendPort,
 ) -> Callable[[StageRequest], LoadedApproval | None]:
     """Lazily loads the operator approval file bound to a proposal's own
     digest (``approvals/<proposal_digest>.yaml``) — never computed, never
@@ -205,7 +207,13 @@ def _decision_provider(
     "zero auto-approval"). Uses ``load_operator_approval_with_receipt``
     (re-review finding #3) so the resolved ``LoadedApproval`` carries the
     receipt facts ``IndependentApprovalStage`` threads into expiry — this is
-    the ONE call site that closes G-1's "expiry path unwired" gap."""
+    the ONE call site that closes G-1's "expiry path unwired" gap.
+
+    Re-review finding #7 (LOW): a refusal — a malformed/refused file, as
+    opposed to no file at all — is durably recorded as
+    ``IAP_APPROVAL_FILE_REFUSED`` before this swallows it to ``None``, so an
+    operator's expiry-or-custody-refused intent stays visible instead of
+    reading identically to "no decision authored yet"."""
     approvals_dir = custody_root / _APPROVALS_DIRNAME
 
     def _provider(request: StageRequest) -> LoadedApproval | None:
@@ -224,7 +232,12 @@ def _decision_provider(
                 expected_owner_uid=uid,
                 environment_label=environment_label,
             )
-        except OperatorApprovalFileError:
+        except OperatorApprovalFileError as exc:
+            evidence.append(
+                {"path": str(path), "error": str(exc)},
+                kind="IAP_APPROVAL_FILE_REFUSED",
+                record_class="IAP_APPROVAL_FILE_REFUSED",
+            )
             return None
 
     return _provider
@@ -533,8 +546,7 @@ def _build_step4_recorder(
     custody_root: Path,
     environment_label: str,
     uid: int,
-    time_service: TrustworthyTimeService,
-    time_config: TrustworthyTimeConfig,
+    infra: _Infra,
 ) -> VerdictRecorder:
     """Step 4 (``IndependentApprovalStage``), wrapped for verdict recording."""
 
@@ -582,7 +594,12 @@ def _build_step4_recorder(
         IndependentApprovalStage(
             intent_registry,
             decision_provider=_decision_provider(
-                custody_root, environment_label, uid, time_service, time_config
+                custody_root,
+                environment_label,
+                uid,
+                infra.time_service,
+                infra.time_config,
+                infra.evidence_store,
             ),
             command_identity_provider=_consuming_command_identity,
             command_digest_provider=_consuming_command_digest,
@@ -622,13 +639,7 @@ def _build_realized_stages(
     construction_stage = construction_stages.construction_stage
     proof_stage = construction_stages.proof_stage
     step4_recorder = _build_step4_recorder(
-        intent_registry,
-        construction_stage,
-        custody_root,
-        environment_label,
-        uid,
-        infra.time_service,
-        infra.time_config,
+        intent_registry, construction_stage, custody_root, environment_label, uid, infra
     )
     time_gate = _time_permits_new_risk(infra.time_service)
     generation_provider = _rcl_tip_generation_provider(rcl_log, writer_epoch)
