@@ -11,7 +11,8 @@ macro_overnight context, so ``SetupAGapReversion.check()`` always returns
    ``MacroSnapshot`` for each bar's trading day (LookaheadGuard-safe: uses
    data KNOWN at/before 06:30 KST, i.e. T-1 US close → T KR session).
 3. Runs ``MarketContextReplay`` + real ``SetupAGapReversion`` (config from
-   ``config/decision_engine.yaml``) on the full dataset.
+   ``config/strategies/futures/setup_a_gap_reversion.yaml``
+   ``strategy.entry.params`` — the deployed operating point) on the full dataset.
 4. Setup C (``SetupCEventReaction``) is exercised using the real macro-event
    calendar from ``config/scheduled_events.yaml``, loaded via
    ``load_scheduled_events()``.  Events are passed into ``MarketContextReplay``
@@ -776,7 +777,8 @@ def run_backtest(
     entries_a = collect_real_setup_a_entries(replay, setup_a_config, replay_df)
 
     logger.info("Collecting real Setup C entries ...")
-    setup_c_config = SetupCConfig()
+    # Same source as Setup A above (config/strategies/futures/*.yaml).
+    setup_c_config = SetupCConfig.from_yaml()
     entries_c = collect_real_setup_c_entries(replay, setup_c_config, replay_df)
 
     print(f"\n  Real Setup A entries: {len(entries_a)}")
@@ -1013,8 +1015,9 @@ def main() -> None:
         total_days,
     )
 
-    # Load Setup A config from YAML
-    setup_a_config = SetupAConfig()
+    # Deployed operating point, not the Pydantic defaults — a backtest run on
+    # defaults answers a question nobody deployed.
+    setup_a_config = SetupAConfig.from_yaml()
     logger.info(
         "Setup A config: min_sp500_gap=%.1f%%, min_kr_gap=%.1f%%, "
         "retrace=[%.2f,%.2f], time=[%d,%d]min",

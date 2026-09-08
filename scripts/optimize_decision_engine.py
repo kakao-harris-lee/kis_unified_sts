@@ -25,6 +25,7 @@ import argparse
 import json
 import logging
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 # Allow direct `python scripts/optimize_decision_engine.py` execution.
@@ -121,9 +122,13 @@ def _objective_c(
     engine_stats: dict,
 ) -> float:
     cfg = SetupCConfig(
-        # Keep the wide window_minutes (for KR-session overnight events —
-        # default YAML value is 720 but SetupCConfig Python default is 15).
-        window_minutes=720,
+        # window_minutes is NOT tuned here — it comes from the deployed strategy
+        # YAML (config/strategies/futures/setup_c_event_reaction.yaml) via
+        # _deployed_setup_c_window_minutes(), so this in-sample optimisation and
+        # the walk-forward out-of-sample run (scripts/walk_forward_phase3.py,
+        # same no-arg from_yaml) evaluate the same event window. Hardcoding a
+        # second value here made the two disagree silently.
+        window_minutes=_deployed_setup_c_window_minutes(),
         breakout_buffer_atr_mult=trial.suggest_float(
             "breakout_buffer_atr_mult", 0.2, 1.0
         ),
@@ -191,9 +196,59 @@ def _run_and_score(
         )
     total_trades = sum(s.trades for s in result.per_setup.values())
     if total_trades < 10:
-        return -1e6  # penalize param sets that barely trade
+        # Penalise param sets that barely trade. _assert_study_is_not_degenerate
+        # refuses to emit best_params if EVERY trial lands here.
+        return _DEGENERATE_TRIAL_SCORE
     total_ticks = sum(s.total_ticks for s in result.per_setup.values())
     return total_ticks / total_trades  # EV per trade in ticks
+
+
+@lru_cache(maxsize=1)
+def _deployed_setup_c_window_minutes() -> int:
+    """Setup C's deployed event window, read ONCE per process.
+
+    Cached because the objective runs per trial and the value cannot change
+    mid-study; re-reading YAML inside the trial loop would be pure I/O and
+    would let an edit halfway through a study silently split it in two.
+    """
+    return SetupCConfig.from_yaml().window_minutes
+
+
+#: Score returned by a trial that traded too little to be meaningful. A study
+#: in which EVERY completed trial scored this has measured nothing, so its
+#: ``best_params`` are just the first sampled point.
+_DEGENERATE_TRIAL_SCORE = -1e6
+
+
+def _assert_study_is_not_degenerate(study, setup: str) -> None:
+    """Refuse to emit best_params from a study where every trial hit the floor.
+
+    With Setup C's deployed 15-minute window the replay can produce fewer than
+    the required 10 trades for every parameter set, so all trials score the
+    penalty and Optuna still reports a "best" — an arbitrary sampled point that
+    would then be written out and later loaded as tuned parameters.
+    """
+    completed = [
+        t
+        for t in study.trials
+        if t.value is not None and t.state == optuna.trial.TrialState.COMPLETE
+    ]
+    if not completed:
+        raise SystemExit(f"setup {setup}: no trial completed — nothing to optimise.")
+    if all(t.value <= _DEGENERATE_TRIAL_SCORE for t in completed):
+        window_note = (
+            f" (Setup C window_minutes={_deployed_setup_c_window_minutes()} from "
+            "config/strategies/futures/setup_c_event_reaction.yaml)"
+            if setup == "c"
+            else ""
+        )
+        raise SystemExit(
+            f"setup {setup}: all {len(completed)} completed trials hit the "
+            f"min-trades penalty{window_note} — the search space produced fewer "
+            "than 10 trades everywhere, so best_params would be an arbitrary "
+            "sampled point. Widen the window/date range or lower the trade "
+            "floor before trusting an output."
+        )
 
 
 def main() -> int:
@@ -296,6 +351,7 @@ def main() -> int:
     )
 
     warn_parity_failures(logger, engine_stats["parity_failed_trials"], unit="trial")
+    _assert_study_is_not_degenerate(study, args.setup)
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(

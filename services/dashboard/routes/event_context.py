@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import yaml
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from services.dashboard.domain.assets import normalize_asset_class
 from shared.decision.context import ScheduledEvent, load_scheduled_events
 from shared.decision.setups.event_reaction import SetupCConfig
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/event-context", tags=["event-context"])
 
@@ -620,11 +623,51 @@ def _setup_eval_summary(redis: Any, now: datetime) -> SetupEvalSummary:
     )
 
 
-def _load_setup_c_config() -> SetupCConfig:
+@dataclass(frozen=True)
+class _SetupCConfigLoad:
+    """Outcome of loading the runtime Setup C config.
+
+    ``loaded_from_yaml`` is the load-integrity fact this endpoint reports:
+    ``False`` means the returned ``config`` is the Pydantic field defaults, not
+    the deployed operating point, and every parameter shown alongside it is
+    therefore not what the runtime applies.
+    """
+
+    config: SetupCConfig
+    loaded_from_yaml: bool
+    error: str | None = None
+
+
+def _load_setup_c_config() -> _SetupCConfigLoad:
+    """Load the runtime Setup C config from the deployed strategy file.
+
+    The path is ``_SETUP_C_STRATEGY_CONFIG_PATH`` — the same file
+    ``SetupCConfig._default_config_file`` names, passed explicitly so the
+    documented env knob actually selects what is read instead of being a no-op
+    next to a no-arg ``from_yaml()``. The section falls through to the class's
+    ``strategy.entry.params``, i.e. exactly what the decision_engine daemon and
+    the monolith adapter load.
+
+    A read failure degrades to the Pydantic defaults and is REPORTED, not
+    hidden — those values would otherwise look authoritative while differing
+    from what the runtime applies.
+    """
     try:
-        return SetupCConfig.from_yaml()
-    except Exception:  # noqa: BLE001
-        return SetupCConfig()
+        config = SetupCConfig.from_yaml(
+            path=str(_resolve(_SETUP_C_STRATEGY_CONFIG_PATH))
+        )
+        return _SetupCConfigLoad(config=config, loaded_from_yaml=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Setup C config load failed for %s; reporting Pydantic defaults",
+            _SETUP_C_STRATEGY_CONFIG_PATH,
+            exc_info=True,
+        )
+        return _SetupCConfigLoad(
+            config=SetupCConfig(),
+            loaded_from_yaml=False,
+            error=f"{type(exc).__name__}: {exc}",
+        )
 
 
 def _load_events() -> list[ScheduledEvent]:
@@ -635,41 +678,28 @@ def _load_events() -> list[ScheduledEvent]:
         return []
 
 
-def _load_strategy_setup_c_params() -> dict[str, Any]:
-    path = _resolve(_SETUP_C_STRATEGY_CONFIG_PATH)
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    strategy = data.get("strategy")
-    if not isinstance(strategy, dict):
-        return {}
-    entry = strategy.get("entry")
-    if not isinstance(entry, dict):
-        return {}
-    params = entry.get("params")
-    return params if isinstance(params, dict) else {}
+def _config_warnings(load: _SetupCConfigLoad) -> list[str]:
+    """Report whether the Setup C config actually came from the strategy YAML.
 
+    This used to diff two config files. Since the dead
+    ``config/decision_engine.yaml`` setup sections were deleted there is only
+    ONE source — ``config/strategies/futures/setup_c_event_reaction.yaml``
+    ``strategy.entry.params`` — so comparing the loaded config against that same
+    file's values can only ever be equal by construction, i.e. a check that
+    cannot fail.
 
-def _config_warnings(cfg: SetupCConfig, strategy_params: dict[str, Any]) -> list[str]:
-    warnings: list[str] = []
-    comparisons = {
-        "window_minutes": cfg.window_minutes,
-        "min_impact_tier": cfg.min_impact_tier,
-        "breakout_buffer_atr_mult": cfg.breakout_buffer_atr_mult,
-        "target_atr_mult": cfg.target_atr_mult,
-        "signal_ttl_minutes": cfg.signal_ttl_minutes,
-    }
-    for key, decision_value in comparisons.items():
-        strategy_value = strategy_params.get(key)
-        if strategy_value is not None and strategy_value != decision_value:
-            warnings.append(
-                "setup_c_config_mismatch:"
-                f"{key}=decision_engine:{decision_value},strategy_yaml:{strategy_value}"
-            )
-    return warnings
+    What CAN still go wrong is the load itself (missing file, renamed section, a
+    value that fails validation). That degrades silently to the Pydantic
+    defaults, and every parameter this endpoint prints would then differ from
+    what the runtime uses — so that is what is reported here.
+    """
+    if load.loaded_from_yaml:
+        return []
+    detail = load.error or "unknown error"
+    return [
+        "setup_c_config_not_loaded_from_yaml:"
+        f"{_SETUP_C_STRATEGY_CONFIG_PATH}::strategy.entry.params ({detail})"
+    ]
 
 
 def _event_row(
@@ -914,9 +944,9 @@ async def get_event_context_diagnostics(
     asset = normalize_asset_class(asset_class)
     now = datetime.now(UTC)
     redis = _get_redis_client()
-    cfg = _load_setup_c_config()
-    strategy_params = _load_strategy_setup_c_params()
-    config_warnings = _config_warnings(cfg, strategy_params)
+    setup_c_config_load = _load_setup_c_config()
+    cfg = setup_c_config_load.config
+    config_warnings = _config_warnings(setup_c_config_load)
 
     # Setup C / event context is futures-only. For stock, short-circuit the
     # event-score, setup-eval, and Setup-C-linked timeline rows to
@@ -981,7 +1011,10 @@ async def get_event_context_diagnostics(
         ]
         if config_warnings:
             notes.append(
-                "setup_c config mismatch detected between decision_engine.yaml and strategy YAML."
+                "setup_c config was NOT loaded from "
+                "config/strategies/futures/setup_c_event_reaction.yaml "
+                "(strategy.entry.params); the parameters shown are Pydantic "
+                "defaults and do not describe what the runtime applies."
             )
         if redis is None:
             notes.append("redis_unavailable: stream/key diagnostics are degraded.")

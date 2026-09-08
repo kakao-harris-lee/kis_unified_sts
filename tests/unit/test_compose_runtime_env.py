@@ -45,6 +45,10 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert paper["FUTURES_PIPELINE_MODE"] == "shadow"
     assert paper["FUTURES_ORDER_ROUTER_MODE"] == "paper"
     assert paper["FUTURES_STRATEGY_SYMBOL"] == ""
+    # Empty = every setup whose strategy.enabled is true; the knob exists so an
+    # operator can narrow the DECOUPLED roster without touching the switch
+    # trader-futures shares.
+    assert paper["FUTURES_DECISION_ENGINE_SETUPS"] == ""
     assert paper["FUTURES_EXECUTOR_TRADING_MODE"] == "PAPER"
     assert paper["OPENAI_API_KEY"] == ""
     assert paper["DART_API_KEY"] == ""
@@ -76,6 +80,7 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert live["FUTURES_PIPELINE_MODE"] == "shadow"
     assert live["FUTURES_ORDER_ROUTER_MODE"] == "paper"
     assert live["FUTURES_STRATEGY_SYMBOL"] == ""
+    assert live["FUTURES_DECISION_ENGINE_SETUPS"] == ""
     assert live["FUTURES_EXECUTOR_TRADING_MODE"] == "PAPER"
     assert live["OPENAI_API_KEY"] == ""
     assert live["DART_API_KEY"] == ""
@@ -284,6 +289,19 @@ def test_futures_pipeline_compose_services_are_profile_gated():
         assert service["command"] == command
         assert service["depends_on"]["redis"]["condition"] == "service_healthy"
         assert service_env[mode_env_key] == mode_value
+
+    # The decision_engine's roster/parameters come from
+    # config/strategies/futures/*.yaml (strategy.enabled + strategy.entry.params).
+    # This env is the optional DAEMON-ONLY subset: it narrows the decoupled
+    # roster without flipping the strategy.enabled switch that trader-futures
+    # shares. It must be plumbed in compose because `.env.paper` is
+    # interpolation-only, and it must default to empty (= every enabled setup).
+    assert (
+        services["futures-decision-engine"]["environment"][
+            "FUTURES_DECISION_ENGINE_SETUPS"
+        ]
+        == "${FUTURES_DECISION_ENGINE_SETUPS:-}"
+    )
 
     # order_router self-feeds a real KIS WS — needs futures creds.
     order_env = services["futures-order-router"]["environment"]

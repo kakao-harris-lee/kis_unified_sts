@@ -366,3 +366,55 @@ def test_event_score_without_tier_omits_histogram(monkeypatch, tmp_path):
 
     assert body["event_score"]["impact_tier"] is None
     assert body["event_score"]["by_impact_tier"] == {}
+
+
+def test_event_context_reports_a_failed_setup_c_config_load(monkeypatch, tmp_path):
+    """A config load that fell back to defaults must be reported, not hidden.
+
+    Both sides of the old "config mismatch" check now read ONE file, so
+    comparing their values can never fail. What can still fail is the load
+    itself — and then every Setup C parameter this endpoint prints is a Pydantic
+    default rather than what the runtime applies.
+    """
+    from shared.decision.setups.event_reaction import SetupCConfig
+
+    redis = _FakeRedis()
+    client, scheduled_path = _client(monkeypatch, tmp_path, redis)
+    _write_events(scheduled_path, datetime.now(UTC) - timedelta(minutes=5))
+
+    from services.dashboard.routes import event_context
+
+    def _boom(*_args, **_kwargs):
+        raise FileNotFoundError("config/strategies/futures/... missing")
+
+    monkeypatch.setattr(SetupCConfig, "from_yaml", classmethod(_boom))
+
+    payload = client.get("/api/event-context/diagnostics?asset_class=futures").json()
+
+    assert payload["status"] == "degraded"
+    warnings = payload["config_warnings"]
+    assert len(warnings) == 1
+    assert warnings[0].startswith("setup_c_config_not_loaded_from_yaml:")
+    assert "FileNotFoundError" in warnings[0]
+    assert any("was NOT loaded from" in note for note in payload["notes"])
+    # And the loader itself reports the fallback honestly.
+    load = event_context._load_setup_c_config()
+    assert load.loaded_from_yaml is False
+    assert (
+        load.config.window_minutes
+        == SetupCConfig.model_fields["window_minutes"].default
+    )
+
+
+def test_event_context_has_no_config_warnings_when_the_load_succeeds(
+    monkeypatch, tmp_path
+):
+    """The shipped config loads, so the integrity check is silent."""
+    redis = _FakeRedis()
+    client, scheduled_path = _client(monkeypatch, tmp_path, redis)
+    _write_events(scheduled_path, datetime.now(UTC) - timedelta(minutes=5))
+
+    payload = client.get("/api/event-context/diagnostics?asset_class=futures").json()
+
+    assert payload["config_warnings"] == []
+    assert not any("was NOT loaded from" in note for note in payload["notes"])

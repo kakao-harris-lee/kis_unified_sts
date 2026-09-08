@@ -196,9 +196,9 @@ def build_market_context(
     prev_close: float,
     today_open: float,
     atr_14: float,
+    vwap: float,
     last_15min_high: float,
     last_15min_low: float,
-    vwap: float | None = None,
     atr_90th_percentile: float | None = None,
     current_spread_ticks: float | None = None,
     macro_overnight: object | None = None,
@@ -210,22 +210,29 @@ def build_market_context(
     """Assemble a MarketContext with the canonical default policy (F-4).
 
     Setup A and Setup C read NONE of ``vwap`` / ``atr_90th_percentile`` /
-    ``current_spread_ticks`` (locked by the F-4 invariance test). They are
-    assembled here with shared defaults so the decoupled (decision_engine) and
-    orchestrator (setup_adapters) builders stay consistent: vwap→current_price,
+    ``current_spread_ticks`` (locked by the F-4 invariance test). The latter two
+    are assembled here with shared defaults so the decoupled (decision_engine)
+    and orchestrator (setup_adapters) builders stay consistent:
     atr_90th→atr_14*1.5, spread→1.0. ``current_spread_ticks`` is uncomputable
     from the OHLCV-only tick stream, so the decoupled path always defaults it.
 
-    ⚠ F-9 PRECONDITION — ``vwap`` is intentionally still optional (fallback
-    ``vwap := current_price``). Setup D (VWAP reversion) DOES read vwap; on the
-    decoupled ``FuturesContextProvider`` (which omits vwap) the fallback makes
-    Setup D's ``z = (price - vwap)/atr`` collapse to 0 → Setup D silently inert.
-    This is dormant today (futures trade the orchestrator path, which threads a
-    real vwap). Before the F-9 decoupled cutover, the provider must source a real
-    session VWAP (engine ``get_indicators()['vwap']``); only THEN make ``vwap``
-    required (drop this fallback) so a future omission is a loud TypeError, not a
-    silent #533/#537-class inert. Contract-pinned in
-    ``tests/unit/decision/test_market_context_parity.py``.
+    ``vwap`` is REQUIRED — it has no default. Setup D (VWAP reversion) reads it
+    as ``z = (price - vwap)/atr``, so the former ``vwap := current_price``
+    fallback did not degrade Setup D, it silenced it (z ≡ 0, never an extreme).
+    Making the parameter required means an omission is a loud ``TypeError``
+    rather than a silent #533/#537-class inert.
+
+    The two live producers still differ in what they do when their own source
+    has no vwap, and neither is "fail-closed" here:
+      * ``services/decision_engine/context_provider.py`` passes the streaming
+        engine's ``get_indicators()['vwap']`` through as-is (``0.0`` when the
+        engine has none) and the daemon skips only the setups that declare
+        ``REQUIRES_VWAP``; Setup A/C keep running.
+      * ``shared/strategy/entry/setup_context_builder.py`` still defaults a
+        missing ``vwap`` key to ``current_price`` (its own ``_get_float``
+        default). That is the orchestrator's pre-existing behaviour and is out
+        of scope here — it is on the monolith retirement track.
+    Contract-pinned in ``tests/unit/decision/test_market_context_parity.py``.
 
     ``market_open_hour`` / ``market_open_minute`` set the session open anchor
     used by ``minutes_since_open()``. When omitted they are read from
@@ -247,7 +254,7 @@ def build_market_context(
         current_price=current_price,
         prev_close=prev_close,
         today_open=today_open,
-        vwap=vwap if vwap is not None else current_price,
+        vwap=vwap,
         atr_14=atr_14,
         atr_90th_percentile=(
             atr_90th_percentile if atr_90th_percentile is not None else atr_14 * 1.5
