@@ -21,8 +21,12 @@
 #
 # See: docs/superpowers/specs/archive/2026-06-25-futures-mr-highvol-setup-d.md
 #      scripts/analysis/walkforward_setup_d_vwap_reversion.py
-# Rollback: this strategy is disabled by default; no rollback needed. To activate
-#   in paper, flip strategy.enabled: true (after paper-rollout validation).
+# Rollback: this strategy is ACTIVE in paper since 2026-06-26 (strategy.enabled:
+#   true below) — rollback IS required and is: flip strategy.enabled to false, or
+#   revert this file. futures_live.enabled stays false throughout, so no real-money
+#   path is involved either way. (2026-09-08: these two lines previously claimed the
+#   strategy was disabled by default and needed no rollback, which inverted the
+#   actual state and would mislead an operator during an incident.)
 
 strategy:
   name: setup_d_vwap_reversion
