@@ -1,11 +1,17 @@
-"""Decision-engine daemon — Setup A/C → signal.candidate.futures.
+"""Decision-engine daemon — futures Setups → signal.candidate.futures.
 
 Phase 4 Task 10. Polls a context provider on a fixed cadence (default
-~1 minute), runs each registered :class:`Setup` (A_gap_reversion,
-C_event_reaction) against the snapshot, and publishes any emitted
-:class:`Signal` to ``signal.candidate.futures`` (live) /
+~1 minute), runs each :class:`Setup` on its roster against the snapshot, and
+publishes any emitted :class:`Signal` to ``signal.candidate.futures`` (live) /
 ``signal.candidate.futures.shadow`` (shadow) for the risk_filter daemon
 (Task 11) to consume.
+
+The roster is CONFIG-DRIVEN, not hardcoded: :func:`_build_setups` reads
+``config/strategies/futures/<registry_name>.yaml`` for each of the three
+registered setups (``setup_a_gap_reversion``, ``setup_c_event_reaction``,
+``setup_d_vwap_reversion``) and instantiates the ones whose
+``strategy.enabled`` is true, with the parameters from
+``strategy.entry.params``.
 
 The ``context_provider`` is an injected async callable returning either a
 :class:`MarketContext` or None. The production wiring (live KIS feed +
@@ -15,8 +21,11 @@ will be supplied by the parent runtime: this module just runs the
 yields pre-built contexts.
 
 Error taxonomy:
-- Setup raises          → log + skip that setup (other setups still run)
-- context_provider None → tick produces no signal; sleep until next tick
+- Setup raises          → log + ``setup_exception`` eval + skip that setup
+                          (other setups still run)
+- context_provider None → ``no_market_context`` eval for every setup; sleep
+- ctx.vwap missing      → ``no_vwap`` eval for REQUIRES_VWAP setups only; the
+                          rest are evaluated normally
 - redis xadd failure    → propagated; the supervisor restarts the daemon
 """
 
@@ -30,7 +39,10 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from services.decision_engine.config import DecisionEngineMarketRiskGateWiring
+from services.decision_engine.config import (
+    DecisionEngineMarketRiskGateWiring,
+    DecisionEngineSetupEvalWiring,
+)
 from shared.config.loader import ConfigLoader
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.decision.context import MarketContext
@@ -40,7 +52,11 @@ from shared.risk.gate_decision_record import (
     GateDecisionRecord,
     deterministic_reject_signal_id,
 )
-from shared.risk.log_throttle import ReasonLogThrottle, gate_log_throttle_key
+from shared.risk.log_throttle import (
+    ReasonLogThrottle,
+    gate_log_throttle_key,
+    setup_eval_throttle_key,
+)
 from shared.risk.market_risk_gate import (
     MarketRiskGateConfig,
     MarketRiskGateDecision,
@@ -56,12 +72,37 @@ logger = logging.getLogger(__name__)
 
 _STREAM_TTL_SECONDS = 86400
 
-# Sink for setup-eval log lines the throttle has suppressed. Publishing still
-# happens (Redis is the durable record); only the INFO line is dropped, so a
-# reject reason that holds for a whole session cannot flood the log.
-_SILENCED_SETUP_EVAL_LOG = logging.getLogger(f"{__name__}.setup_eval.silenced")
-_SILENCED_SETUP_EVAL_LOG.addHandler(logging.NullHandler())
-_SILENCED_SETUP_EVAL_LOG.propagate = False
+
+class _ThrottledInfoLog:
+    """``logging.Logger``-shaped shim that gates INFO and forwards the rest.
+
+    ``publish_setup_eval`` uses ONE logger for two very different lines: its
+    per-state INFO ("no signal this cycle: ...", which repeats for as long as
+    the reason holds) and its own best-effort failure line. Handing it a null
+    logger would silence the failure too — an outage would go unreported — so
+    this suppresses only ``info`` and passes every other level straight
+    through to the daemon's real logger.
+    """
+
+    def __init__(self, log: logging.Logger, *, allow_info: bool) -> None:
+        self._log = log
+        self._allow_info = allow_info
+
+    def info(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        if self._allow_info:
+            self._log.info(msg, *args, **kwargs)
+
+    def debug(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        self._log.debug(msg, *args, **kwargs)
+
+    def warning(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        self._log.warning(msg, *args, **kwargs)
+
+    def error(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        self._log.error(msg, *args, **kwargs)
+
+    def exception(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        self._log.exception(msg, *args, **kwargs)
 
 
 class DecisionEngineDaemon:
@@ -77,6 +118,8 @@ class DecisionEngineDaemon:
         market_risk_gate_config: MarketRiskGateConfig | None = None,
         market_risk_redis: Any | None = None,
         shadow_gate_log_interval_seconds: float | None = None,
+        setup_eval_log_interval_seconds: float | None = None,
+        setup_eval_key_suffix: str = "",
         futures_context_redis: Any | None = None,
         futures_context_key: str = "futures:context:latest",
         volatility_publisher: Any | None = None,
@@ -120,13 +163,27 @@ class DecisionEngineDaemon:
         self._shadow_gate_log_throttle = ReasonLogThrottle(
             interval_seconds=shadow_gate_log_interval_seconds
         )
-        # Per-setup evaluation observability (plan §3-D). Same throttle class
-        # and the same configured interval as the shadow-gate log above: a
-        # reject reason repeats on every 60 s tick for as long as it holds, so
-        # it may log at most once per interval per (setup, outcome, reason).
+        # Per-setup evaluation observability (plan §3-D). Its OWN configured
+        # interval (config/decision_engine.yaml::setup_eval), not the
+        # market-risk gate's — the two logs answer different questions and
+        # retuning one must not silently retune the other. A reject reason
+        # repeats on every tick for as long as it holds, so the INFO line is
+        # throttled per (setup, outcome, reason-KIND); the Redis write is not.
+        if setup_eval_log_interval_seconds is None:
+            setup_eval_log_interval_seconds = (
+                DecisionEngineSetupEvalWiring().log_interval_seconds
+            )
         self._setup_eval_log_throttle = ReasonLogThrottle(
-            interval_seconds=shadow_gate_log_interval_seconds
+            interval_seconds=setup_eval_log_interval_seconds
         )
+        # Redis key namespace for the eval rows. "" = the orchestrator
+        # adapters' historical keys; ".shadow" in shadow mode so the daemon
+        # cannot overwrite the rows trader-futures is writing at the same time
+        # (mirrors _candidate_stream_for).
+        self.setup_eval_key_suffix = setup_eval_key_suffix
+        # Last publish-failure state per setup, so a persistent Redis outage
+        # warns once per change instead of once per tick.
+        self._setup_eval_failure_state: dict[str, str] = {}
         # Per-symbol volatility reference publisher (shared/risk/
         # volatility_reference.py). This daemon owns the only futures
         # StreamingIndicatorEngine, so it is the only place that can supply the
@@ -169,10 +226,24 @@ class DecisionEngineDaemon:
                 continue
 
             if ctx is None:
+                # The provider suppressed the tick (cold engine, no ATR, no
+                # price). Record it per setup with the SAME reason string the
+                # monolith adapters use, so "0 candidates" never has to be
+                # guessed at from the absence of rows.
+                for setup in self.setups:
+                    await self._publish_setup_eval(setup, "reject", "no_market_context")
                 await asyncio.sleep(self.tick_interval_seconds)
                 continue
 
+            has_vwap = getattr(ctx, "vwap", 0.0) > 0.0
             for setup in self.setups:
+                if not has_vwap and getattr(setup, "REQUIRES_VWAP", False):
+                    # Only the vwap-dependent setups are skipped. Evaluating
+                    # Setup D against vwap=0 would report a fabricated stretch;
+                    # suppressing the whole tick would darken Setup A/C, which
+                    # never read vwap.
+                    await self._publish_setup_eval(setup, "reject", "no_vwap")
+                    continue
                 try:
                     signal = setup.check(ctx)
                 except Exception:
@@ -180,20 +251,21 @@ class DecisionEngineDaemon:
                         "setup %s raised; skipping this tick",
                         setup.__class__.__name__,
                     )
+                    await self._publish_setup_eval(setup, "reject", "setup_exception")
                     continue
                 if signal is None:
                     # "0 candidates" must be distinguishable from "never
                     # evaluated": record WHY this setup declined, in the same
-                    # Redis hash/history the monolith adapters write, so
-                    # scripts/ops/setup_d_paper_observe.py and the evidence
-                    # bundles work unchanged against shadow data.
-                    self._publish_setup_eval(
+                    # hash/history format the monolith adapters write (under
+                    # this daemon's own key namespace — see
+                    # ``setup_eval_key_suffix``).
+                    await self._publish_setup_eval(
                         setup,
                         "reject",
                         getattr(setup, "last_reject_reason", None) or "setup_rejected",
                     )
                     continue
-                self._publish_setup_eval(setup, "fired", signal.direction)
+                await self._publish_setup_eval(setup, "fired", signal.direction)
 
                 # Market-risk ENTRY gate — new-entry candidates only; exit /
                 # stop / kill_switch paths never flow through this daemon
@@ -250,38 +322,59 @@ class DecisionEngineDaemon:
         """
         return self.market_risk_redis, None
 
-    def _publish_setup_eval(self, setup: Any, outcome: str, reason: str) -> None:
+    async def _publish_setup_eval(self, setup: Any, outcome: str, reason: str) -> None:
         """Record one setup evaluation (reject/fired). Never affects signals.
 
         Writes through the shared
         ``shared.strategy.entry.setup_eval_publisher.publish_setup_eval`` so the
-        Redis key, the per-KST-day history list and the TTLs are the monolith's,
-        not a second format. A setup with no ``REGISTRY_NAME`` (test doubles) is
-        skipped rather than written under a guessed key.
+        row shape, the per-KST-day history list and the TTLs are the monolith's,
+        under this daemon's own key namespace (``setup_eval_key_suffix``). A
+        setup with no ``REGISTRY_NAME`` (test doubles) is skipped rather than
+        written under a guessed key.
+
+        The write itself is a BLOCKING sync-Redis call, so it runs on a worker
+        thread — the decision loop's event loop must not stall on Redis (same
+        discipline as :meth:`_record_gate_reject`, #647).
         """
         name = getattr(setup, "REGISTRY_NAME", "")
         if not name:
             return
+        # Structural key: the measurements inside a reason (z=+0.42, 0.85<0.9)
+        # change every tick and would defeat the throttle while growing its
+        # cache without bound — see shared.risk.log_throttle.
         should_log = self._setup_eval_log_throttle.should_log(
-            f"{name}:{outcome}:{reason}", time.monotonic()
+            setup_eval_throttle_key(name, outcome, reason), time.monotonic()
         )
-        # Imported here, not at module scope: ``shared.strategy`` is an eager
-        # package init that builds the whole entry/exit registry (~1.4 s, pulls
-        # TA-Lib). This daemon exists to be decoupled from it, and in `off` mode
-        # it never evaluates a setup — so the cost is paid on the first real
-        # evaluation or not at all. Same pattern as _futures_context_trace.
-        from shared.strategy.entry.setup_eval_publisher import publish_setup_eval
-
         try:
-            publish_setup_eval(
+            # Imported here, not at module scope: ``shared.strategy`` is an
+            # eager package init that builds the whole entry/exit registry
+            # (~1.4 s, pulls TA-Lib). This daemon exists to be decoupled from
+            # it, and in `off` mode it never evaluates a setup — so the cost is
+            # paid on the first real evaluation or not at all. Same pattern as
+            # _futures_context_trace.
+            from shared.strategy.entry.setup_eval_publisher import publish_setup_eval
+
+            await asyncio.to_thread(
+                publish_setup_eval,
                 name,
                 outcome,
                 reason,
                 acquire_clients=self._setup_eval_clients,
-                log=logger if should_log else _SILENCED_SETUP_EVAL_LOG,
+                log=_ThrottledInfoLog(logger, allow_info=should_log),
+                key_suffix=self.setup_eval_key_suffix,
             )
-        except Exception:  # noqa: BLE001 — observability must never block a signal
-            logger.debug("setup eval publish failed for %s", name, exc_info=True)
+        except Exception as exc:  # noqa: BLE001 — never block a signal
+            failure = f"{type(exc).__name__}:{exc}"
+            if self._setup_eval_failure_state.get(name) != failure:
+                self._setup_eval_failure_state[name] = failure
+                logger.warning(
+                    "setup eval publish failed for %s; observability degraded "
+                    "(signals unaffected)",
+                    name,
+                    exc_info=True,
+                )
+        else:
+            self._setup_eval_failure_state.pop(name, None)
 
     def _evaluate_market_risk_gate(self, signal) -> MarketRiskGateDecision | None:
         """Evaluate the market-risk ENTRY gate for one fired candidate.
@@ -528,28 +621,49 @@ def _setup_registry() -> dict[str, tuple[type[Any], type[Setup]]]:
 
 
 def _resolve_setup_subset(subset_env: str) -> set[str] | None:
-    """Parse the daemon-only roster subset env var; ``None`` when unset/empty."""
+    """Parse the daemon-only roster subset env var; ``None`` when unset/empty.
+
+    A value that is present but parses to NOTHING (``","``, ``" , "``) is
+    almost certainly a mis-edited env file, not a request for an empty roster.
+    Returning an empty set there would silently start a daemon that evaluates
+    no setup at all, so it degrades to ``None`` (every enabled setup) and warns.
+    """
     import os
 
     raw = os.getenv(subset_env, "").strip()
     if not raw:
         return None
-    return {part.strip() for part in raw.split(",") if part.strip()}
+    names = {part.strip() for part in raw.split(",") if part.strip()}
+    if not names:
+        logger.warning(
+            "%s is set to %r but names no setup; ignoring it and running every "
+            "enabled setup",
+            subset_env,
+            raw,
+        )
+        return None
+    return names
 
 
 def _strategy_enabled(document: Any) -> bool:
     """Read ``strategy.enabled`` from a loaded strategy YAML document.
 
-    Absent/malformed => False. A roster switch that cannot be read is treated
-    as OFF rather than defaulted ON: an unreadable strategy file must not put
-    an unconfigured setup on the live candidate stream.
+    A MISSING ``enabled`` key means enabled, matching
+    ``ConfigLoader.load_all_strategies`` (``strategy_config.get("enabled",
+    True)``) and therefore the orchestrator's roster: one strategy file must
+    not mean "on" to the monolith and "off" to this daemon.
+
+    A malformed document (no mapping, no ``strategy`` mapping) is a different
+    case and stays OFF — there is no roster switch to read at all, and an
+    unparseable file must not put an unconfigured setup on the candidate
+    stream.
     """
     if not isinstance(document, dict):
         return False
     strategy = document.get("strategy")
     if not isinstance(strategy, dict):
         return False
-    return bool(strategy.get("enabled", False))
+    return bool(strategy.get("enabled", True))
 
 
 def _param_summary(config: Any) -> str:
@@ -866,6 +980,18 @@ def _build_volatility_publisher(redis_client: Any, atr_readings: Any) -> Any | N
 # ---------------------------------------------------------------------------
 
 
+def _setup_eval_key_suffix_for(mode: str) -> str:
+    """Redis key namespace for this daemon's setup-eval rows, per mode.
+
+    Mirrors :func:`_candidate_stream_for`: in shadow the daemon runs ALONGSIDE
+    trader-futures, whose Setup adapters are already writing the unsuffixed
+    ``trading:futures:setup_eval`` hash and history list. Sharing the key would
+    make each producer overwrite the other's row for the same setup name, and
+    a Gate 1 check against it could not tell whose row it was reading.
+    """
+    return ".shadow" if mode == "shadow" else ""
+
+
 def _build_daemon(
     *,
     redis_client: Any,
@@ -875,6 +1001,7 @@ def _build_daemon(
     market_risk_redis: Any,
     volatility_publisher: Any | None,
     runtime_ledger: Any | None = None,
+    setup_eval_key_suffix: str = "",
 ) -> DecisionEngineDaemon:
     """Construct the production ``DecisionEngineDaemon`` from resolved deps.
 
@@ -889,6 +1016,7 @@ def _build_daemon(
     """
     market_risk_gate_config = MarketRiskGateConfig.load_or_default()
     market_risk_gate_wiring = DecisionEngineMarketRiskGateWiring.load_or_default()
+    setup_eval_wiring = DecisionEngineSetupEvalWiring.load_or_default()
 
     return DecisionEngineDaemon(
         redis=redis_client,
@@ -903,6 +1031,8 @@ def _build_daemon(
         shadow_gate_log_interval_seconds=(
             market_risk_gate_wiring.would_block_log_interval_seconds
         ),
+        setup_eval_log_interval_seconds=setup_eval_wiring.log_interval_seconds,
+        setup_eval_key_suffix=setup_eval_key_suffix,
         # Phase C structured-context trace: reuse the sync client that reads
         # market:risk:latest — it reads futures:context:latest the same way.
         futures_context_redis=market_risk_redis,
@@ -962,6 +1092,7 @@ async def _build_and_run() -> int:
         market_risk_redis=market_risk_redis,
         volatility_publisher=volatility_publisher,
         runtime_ledger=runtime_ledger,
+        setup_eval_key_suffix=_setup_eval_key_suffix_for(mode),
     )
 
     loop = asyncio.get_running_loop()

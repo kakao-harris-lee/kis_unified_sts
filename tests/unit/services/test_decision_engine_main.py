@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+from collections.abc import Iterator
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -9,7 +11,12 @@ import fakeredis.aioredis
 import pytest
 import yaml
 
-from services.decision_engine.main import DecisionEngineDaemon, _build_setups
+from services.decision_engine.main import (
+    DecisionEngineDaemon,
+    _build_setups,
+    _candidate_stream_for,
+    _setup_eval_key_suffix_for,
+)
 from shared.config.loader import ConfigLoader
 from shared.decision.context import MarketContext
 from shared.decision.setup_base import Setup
@@ -548,23 +555,53 @@ def test_build_setups_warns_about_unknown_subset_names(
 # ---------------------------------------------------------------------------
 # Setup-level evaluation observability (plan §3-D)
 # ---------------------------------------------------------------------------
+# Real reject-reason shapes emitted by the Setup cores. Every one of them
+# embeds a live measurement, which is exactly why the throttle/dedup key must
+# be structural (shared.risk.log_throttle.setup_eval_throttle_key).
+_REAL_REJECT_REASONS = [
+    "not_extreme(z=+0.42,need±1.8)",
+    "vol_below_gate(0.85<0.9)",
+    "outside_time_window(297m∉[10,60])",
+]
 
 
 class _NamedNeverSetup(_NeverSetup):
     REGISTRY_NAME = "setup_d_vwap_reversion"
-    last_reject_reason = "vwap_stretch_below_extreme"
+    last_reject_reason = "not_extreme(z=+0.42,need±1.8)"
 
 
 class _NamedAlwaysSetup(_AlwaysSetup):
     REGISTRY_NAME = "setup_a_gap_reversion"
 
 
+class _VwapDependentSetup(_NeverSetup):
+    """Stands in for Setup D: declares the vwap dependency and records calls."""
+
+    REGISTRY_NAME = "setup_d_vwap_reversion"
+    REQUIRES_VWAP = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.checked = 0
+
+    def check(self, ctx: MarketContext) -> None:  # noqa: ARG002
+        self.checked += 1
+        return None
+
+
+class _VwapIndependentSetup(_AlwaysSetup):
+    """Stands in for Setup A/C: never reads vwap, must keep running."""
+
+    REGISTRY_NAME = "setup_a_gap_reversion"
+    REQUIRES_VWAP = False
+
+
 @pytest.fixture
-def eval_calls(monkeypatch):
+def eval_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
     """Capture publish_setup_eval calls made by the daemon loop."""
     calls: list[tuple] = []
 
-    def _record(name, outcome, reason, **kwargs):
+    def _record(name: str, outcome: str, reason: str, **kwargs: object) -> None:
         calls.append((name, outcome, reason, kwargs))
 
     monkeypatch.setattr(
@@ -573,66 +610,73 @@ def eval_calls(monkeypatch):
     return calls
 
 
+@pytest.fixture
+def clean_eval_state() -> Iterator[None]:
+    """Isolate the publisher's process-global state and RESTORE it afterwards."""
+    from shared.strategy.entry import setup_eval_publisher
+
+    saved_log = dict(setup_eval_publisher._last_eval_log)
+    saved_history = dict(setup_eval_publisher._history_state)
+    setup_eval_publisher._last_eval_log.clear()
+    setup_eval_publisher._history_state.clear()
+    try:
+        yield
+    finally:
+        setup_eval_publisher._last_eval_log.clear()
+        setup_eval_publisher._last_eval_log.update(saved_log)
+        setup_eval_publisher._history_state.clear()
+        setup_eval_publisher._history_state.update(saved_history)
+
+
+async def _run_briefly(daemon: DecisionEngineDaemon, seconds: float = 0.02) -> None:
+    async def _stop_after() -> None:
+        await asyncio.sleep(seconds)
+        await daemon.stop()
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+
 @pytest.mark.asyncio
 async def test_reject_publishes_the_setup_reject_reason(
-    redis, context_provider, eval_calls
-):
+    redis, context_provider, eval_calls: list[tuple]
+) -> None:
     """ "0 candidates" must be distinguishable from "never evaluated"."""
     daemon = _make_daemon(
         redis=redis, setups=[_NamedNeverSetup()], context_provider=context_provider
     )
-
-    async def _stop_after():
-        await asyncio.sleep(0.02)
-        await daemon.stop()
-
-    await asyncio.gather(daemon.run(), _stop_after())
+    await _run_briefly(daemon)
 
     assert eval_calls
     name, outcome, reason, kwargs = eval_calls[0]
     assert name == "setup_d_vwap_reversion"
     assert outcome == "reject"
-    assert reason == "vwap_stretch_below_extreme"
+    assert reason == "not_extreme(z=+0.42,need±1.8)"
     # The daemon's own sync Redis client is reused rather than a second one.
     assert kwargs["acquire_clients"]() == (None, None)
 
 
 @pytest.mark.asyncio
 async def test_reject_without_a_reason_falls_back_to_setup_rejected(
-    redis, context_provider, eval_calls
-):
+    redis, context_provider, eval_calls: list[tuple]
+) -> None:
     class _Silent(_NeverSetup):
         REGISTRY_NAME = "setup_c_event_reaction"
 
     daemon = _make_daemon(
         redis=redis, setups=[_Silent()], context_provider=context_provider
     )
-
-    async def _stop_after():
-        await asyncio.sleep(0.02)
-        await daemon.stop()
-
-    await asyncio.gather(daemon.run(), _stop_after())
-    assert eval_calls[0][:3] == (
-        "setup_c_event_reaction",
-        "reject",
-        "setup_rejected",
-    )
+    await _run_briefly(daemon)
+    assert eval_calls[0][:3] == ("setup_c_event_reaction", "reject", "setup_rejected")
 
 
 @pytest.mark.asyncio
 async def test_fired_publishes_the_signal_direction(
-    redis, context_provider, eval_calls
-):
+    redis, context_provider, eval_calls: list[tuple]
+) -> None:
     daemon = _make_daemon(
         redis=redis, setups=[_NamedAlwaysSetup()], context_provider=context_provider
     )
-
-    async def _stop_after():
-        await asyncio.sleep(0.02)
-        await daemon.stop()
-
-    await asyncio.gather(daemon.run(), _stop_after())
+    await _run_briefly(daemon)
 
     assert eval_calls[0][:3] == ("setup_a_gap_reversion", "fired", "long")
     # …and the candidate still reached the stream.
@@ -641,28 +685,23 @@ async def test_fired_publishes_the_signal_direction(
 
 @pytest.mark.asyncio
 async def test_setup_without_registry_name_publishes_nothing(
-    redis, context_provider, eval_calls
-):
+    redis, context_provider, eval_calls: list[tuple]
+) -> None:
     """Test doubles / future setups without a registry name are skipped, not guessed."""
     daemon = _make_daemon(
         redis=redis, setups=[_NeverSetup()], context_provider=context_provider
     )
-
-    async def _stop_after():
-        await asyncio.sleep(0.02)
-        await daemon.stop()
-
-    await asyncio.gather(daemon.run(), _stop_after())
+    await _run_briefly(daemon)
     assert eval_calls == []
 
 
 @pytest.mark.asyncio
 async def test_publish_failure_does_not_stop_the_candidate(
-    redis, context_provider, monkeypatch
-):
+    redis, context_provider, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Observability must never affect signal emission."""
 
-    def _boom(*_args, **_kwargs):
+    def _boom(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("redis down")
 
     monkeypatch.setattr(
@@ -671,39 +710,177 @@ async def test_publish_failure_does_not_stop_the_candidate(
     daemon = _make_daemon(
         redis=redis, setups=[_NamedAlwaysSetup()], context_provider=context_provider
     )
-
-    async def _stop_after():
-        await asyncio.sleep(0.02)
-        await daemon.stop()
-
-    await asyncio.gather(daemon.run(), _stop_after())
+    await _run_briefly(daemon)
     assert len(await redis.xrange(CANDIDATE_STREAM)) >= 1
 
 
 @pytest.mark.asyncio
-async def test_reject_reason_log_is_throttled_per_setup_and_reason(redis, caplog):
-    """A reason repeating every 60 s tick may log at most once per interval.
+async def test_publish_failure_warns_once_per_state_change(
+    redis, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """A persistent outage must be reported, but not once per tick."""
 
-    Reasons alternate A → B → A so the publisher's own state-change gate would
-    log all three; only the daemon's ReasonLogThrottle suppresses the repeat.
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(
+        "shared.strategy.entry.setup_eval_publisher.publish_setup_eval", _boom
+    )
+    contexts = [_ctx(), _ctx(), _ctx()]
+
+    async def _provider() -> MarketContext | None:
+        return contexts.pop(0) if contexts else None
+
+    daemon = _make_daemon(
+        redis=redis, setups=[_NamedNeverSetup()], context_provider=_provider
+    )
+    with caplog.at_level(logging.WARNING):
+        await _run_briefly(daemon, seconds=0.05)
+
+    warned = [
+        r for r in caplog.records if "setup eval publish failed" in r.getMessage()
+    ]
+    assert len(warned) == 1, [r.getMessage() for r in warned]
+    assert warned[0].levelno == logging.WARNING
+
+
+@pytest.mark.asyncio
+async def test_no_market_context_is_recorded_per_setup(
+    redis, eval_calls: list[tuple]
+) -> None:
+    """A suppressed tick is an EVALUATION outcome, not silence."""
+
+    async def _provider() -> MarketContext | None:
+        return None
+
+    daemon = _make_daemon(
+        redis=redis,
+        setups=[_NamedNeverSetup(), _NamedAlwaysSetup()],
+        context_provider=_provider,
+    )
+    await _run_briefly(daemon)
+
+    recorded = {(name, reason) for name, _outcome, reason, _kw in eval_calls}
+    assert ("setup_d_vwap_reversion", "no_market_context") in recorded
+    assert ("setup_a_gap_reversion", "no_market_context") in recorded
+
+
+@pytest.mark.asyncio
+async def test_setup_exception_is_recorded_as_an_evaluation(
+    redis, context_provider, eval_calls: list[tuple]
+) -> None:
+    class _Raising(Setup):
+        CONFIG_CLASS = type("_StubConfig", (), {})
+        REGISTRY_NAME = "setup_c_event_reaction"
+
+        def check(self, ctx: MarketContext) -> None:  # noqa: ARG002
+            raise RuntimeError("boom")
+
+    daemon = _make_daemon(
+        redis=redis, setups=[_Raising()], context_provider=context_provider
+    )
+    await _run_briefly(daemon)
+    assert eval_calls[0][:3] == ("setup_c_event_reaction", "reject", "setup_exception")
+
+
+# ---------------------------------------------------------------------------
+# VWAP availability gates only the setups that read it (review finding 3)
+# ---------------------------------------------------------------------------
+
+
+def _ctx_without_vwap() -> MarketContext:
+    ctx = _ctx()
+    return replace(ctx, vwap=0.0)
+
+
+@pytest.mark.asyncio
+async def test_missing_vwap_skips_only_the_vwap_dependent_setup(
+    redis, eval_calls: list[tuple]
+) -> None:
+    """Setup A/C must keep trading when the session VWAP is not available yet."""
+    contexts = [_ctx_without_vwap()]
+
+    async def _provider() -> MarketContext | None:
+        return contexts.pop(0) if contexts else None
+
+    dependent = _VwapDependentSetup()
+    daemon = _make_daemon(
+        redis=redis,
+        setups=[dependent, _VwapIndependentSetup()],
+        context_provider=_provider,
+    )
+    await _run_briefly(daemon)
+
+    assert dependent.checked == 0, "Setup D must not be evaluated against vwap=0"
+    assert ("setup_d_vwap_reversion", "reject", "no_vwap") in [
+        call[:3] for call in eval_calls
+    ]
+    # The vwap-independent setup ran and published its candidate.
+    assert ("setup_a_gap_reversion", "fired", "long") in [
+        call[:3] for call in eval_calls
+    ]
+    assert len(await redis.xrange(CANDIDATE_STREAM)) >= 1
+
+
+@pytest.mark.asyncio
+async def test_vwap_dependent_setup_runs_once_vwap_is_present(
+    redis, context_provider, eval_calls: list[tuple]
+) -> None:
+    dependent = _VwapDependentSetup()
+    daemon = _make_daemon(
+        redis=redis, setups=[dependent], context_provider=context_provider
+    )
+    await _run_briefly(daemon)
+
+    assert dependent.checked >= 1
+    assert "no_vwap" not in [call[2] for call in eval_calls]
+
+
+def test_setup_d_core_declares_the_vwap_dependency() -> None:
+    """The flag must live on the real Setup D, not only on the test double."""
+    from shared.decision.setups.event_reaction import SetupCEventReaction
+    from shared.decision.setups.gap_reversion import SetupAGapReversion
+    from shared.decision.setups.vwap_reversion import SetupDVWAPReversion
+
+    assert SetupDVWAPReversion.REQUIRES_VWAP is True
+    assert SetupAGapReversion.REQUIRES_VWAP is False
+    assert SetupCEventReaction.REQUIRES_VWAP is False
+
+
+# ---------------------------------------------------------------------------
+# Log throttling + Redis key isolation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reject_reason_log_is_throttled_across_changing_measurements(
+    redis, clean_eval_state, caplog
+) -> None:
+    """One cause = one log line, however much its embedded numbers move.
+
+    The daemon sees a NEW reason string on every tick because the reason carries
+    live measurements. Keying the throttle on the raw string would log every
+    tick (and grow the throttle cache without bound), so the key is structural.
     """
-    from shared.strategy.entry import setup_eval_publisher
-
-    setup_eval_publisher._last_eval_log.clear()
-    setup_eval_publisher._history_state.clear()
-
-    reasons = iter(["reason_a", "reason_b", "reason_a"])
+    reasons = iter(
+        [
+            "not_extreme(z=+0.42,need±1.8)",
+            "not_extreme(z=+0.91,need±1.8)",
+            "not_extreme(z=+1.55,need±1.8)",
+            "vol_below_gate(0.85<0.9)",
+        ]
+    )
 
     class _Cycling(_NeverSetup):
         REGISTRY_NAME = "setup_d_vwap_reversion"
 
-        def check(self, ctx):  # noqa: ARG002
-            self.last_reject_reason = next(reasons, "reason_a")
+        def check(self, ctx: MarketContext) -> None:  # noqa: ARG002
+            self.last_reject_reason = next(reasons, "vol_below_gate(0.85<0.9)")
             return None
 
-    contexts = [_ctx(), _ctx(), _ctx()]
+    contexts = [_ctx() for _ in range(4)]
 
-    async def _provider():
+    async def _provider() -> MarketContext | None:
         return contexts.pop(0) if contexts else None
 
     daemon = DecisionEngineDaemon(
@@ -713,21 +890,212 @@ async def test_reject_reason_log_is_throttled_per_setup_and_reason(redis, caplog
         candidate_stream=CANDIDATE_STREAM,
         candidate_maxlen=1000,
         tick_interval_seconds=0.001,
-        shadow_gate_log_interval_seconds=300.0,
+        setup_eval_log_interval_seconds=300.0,
     )
 
-    async def _stop_after():
-        await asyncio.sleep(0.05)
-        await daemon.stop()
-
     with caplog.at_level(logging.INFO):
-        await asyncio.gather(daemon.run(), _stop_after())
+        await _run_briefly(daemon, seconds=0.06)
 
+    # Ignore the trailing no_market_context line the drained provider produces.
     logged = [
-        record.getMessage()
-        for record in caplog.records
-        if "no signal this cycle" in record.getMessage()
+        r.getMessage()
+        for r in caplog.records
+        if "no signal this cycle" in r.getMessage()
+        and "no_market_context" not in r.getMessage()
     ]
+    # Two structural causes were seen (not_extreme, vol_below_gate) → two lines,
+    # not one per tick and not one per distinct z value.
+    kinds = {msg.split(": ", 1)[1].split("(", 1)[0] for msg in logged}
+    assert kinds == {"not_extreme", "vol_below_gate"}, logged
     assert len(logged) == 2, logged
-    assert any("reason_a" in line for line in logged)
-    assert any("reason_b" in line for line in logged)
+
+
+@pytest.mark.asyncio
+async def test_throttled_ticks_still_publish_to_redis(
+    redis, clean_eval_state, eval_calls: list[tuple]
+) -> None:
+    """Throttling silences the LOG only — Redis stays the durable record."""
+    contexts = [_ctx(), _ctx(), _ctx()]
+
+    async def _provider() -> MarketContext | None:
+        return contexts.pop(0) if contexts else None
+
+    daemon = _make_daemon(
+        redis=redis, setups=[_NamedNeverSetup()], context_provider=_provider
+    )
+    await _run_briefly(daemon, seconds=0.05)
+
+    same_reason = [c for c in eval_calls if c[2] == "not_extreme(z=+0.42,need±1.8)"]
+    assert len(same_reason) >= 3, "every tick must still be published"
+
+
+@pytest.mark.parametrize(
+    "mode, expected",
+    [("shadow", ".shadow"), ("live", ""), ("off", ""), ("", "")],
+)
+def test_setup_eval_key_suffix_mirrors_the_candidate_stream(
+    mode: str, expected: str
+) -> None:
+    """Shadow must not share the orchestrator's eval keys."""
+    assert _setup_eval_key_suffix_for(mode) == expected
+    # Same split the candidate stream makes.
+    assert (".shadow" in _candidate_stream_for(mode)) == bool(expected)
+
+
+@pytest.mark.asyncio
+async def test_daemon_passes_its_key_suffix_to_the_publisher(
+    redis, context_provider, eval_calls: list[tuple]
+) -> None:
+    daemon = DecisionEngineDaemon(
+        redis=redis,
+        setups=[_NamedNeverSetup()],
+        context_provider=context_provider,
+        candidate_stream=CANDIDATE_STREAM,
+        candidate_maxlen=1000,
+        tick_interval_seconds=0.001,
+        setup_eval_key_suffix=".shadow",
+    )
+    await _run_briefly(daemon)
+    assert eval_calls[0][3]["key_suffix"] == ".shadow"
+
+
+@pytest.mark.asyncio
+async def test_shadow_daemon_writes_only_the_shadow_keys(
+    redis, context_provider, clean_eval_state
+) -> None:
+    """End-to-end through the REAL publisher against a fake sync Redis."""
+    import fakeredis
+
+    fake_sync = fakeredis.FakeStrictRedis(decode_responses=True)
+    daemon = DecisionEngineDaemon(
+        redis=redis,
+        setups=[_NamedNeverSetup()],
+        context_provider=context_provider,
+        candidate_stream=CANDIDATE_STREAM,
+        candidate_maxlen=1000,
+        tick_interval_seconds=0.001,
+        market_risk_redis=fake_sync,
+        setup_eval_key_suffix=".shadow",
+    )
+    await _run_briefly(daemon)
+
+    assert fake_sync.hget(
+        "trading:futures:setup_eval.shadow", "setup_d_vwap_reversion"
+    ), fake_sync.keys("*")
+    # The orchestrator's key is untouched — that separation is what makes the
+    # Gate 1 check able to attribute a row to the daemon.
+    assert fake_sync.exists("trading:futures:setup_eval") == 0
+    history = [k for k in fake_sync.keys("*") if "history" in k]
+    assert history and all(".shadow:" in k for k in history), history
+
+
+def test_setup_eval_log_interval_comes_from_its_own_yaml_section() -> None:
+    """The interval is config-driven and NOT the market-risk gate's field."""
+    from services.decision_engine.config import (
+        DecisionEngineMarketRiskGateWiring,
+        DecisionEngineSetupEvalWiring,
+    )
+
+    shipped = DecisionEngineSetupEvalWiring.from_yaml(
+        str(REPO_ROOT / "config" / "decision_engine.yaml")
+    )
+    assert shipped.log_interval_seconds == 300.0
+    # Distinct classes/sections, so retuning one cannot retune the other.
+    assert DecisionEngineSetupEvalWiring._default_section == "setup_eval"
+    assert DecisionEngineMarketRiskGateWiring._default_section == "market_risk_gate"
+
+
+def test_build_daemon_wires_the_setup_eval_interval_and_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import fakeredis
+    import fakeredis.aioredis
+
+    from services.decision_engine.config import DecisionEngineSetupEvalWiring
+    from services.decision_engine.main import _build_daemon
+
+    monkeypatch.setattr(
+        DecisionEngineSetupEvalWiring,
+        "load_or_default",
+        classmethod(lambda cls: cls(log_interval_seconds=13.0)),
+    )
+
+    async def _provider() -> MarketContext | None:
+        return None
+
+    daemon = _build_daemon(
+        redis_client=fakeredis.aioredis.FakeRedis(db=1),
+        setups=[],
+        context_provider=_provider,
+        candidate_stream=CANDIDATE_STREAM,
+        market_risk_redis=fakeredis.FakeStrictRedis(decode_responses=True),
+        volatility_publisher=None,
+        setup_eval_key_suffix=".shadow",
+    )
+    assert daemon._setup_eval_log_throttle.interval_seconds == 13.0
+    assert daemon.setup_eval_key_suffix == ".shadow"
+
+
+# ---------------------------------------------------------------------------
+# Roster edge cases (review findings 10)
+# ---------------------------------------------------------------------------
+
+
+def test_missing_enabled_key_means_enabled(
+    strategies_config_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Matches ConfigLoader.load_all_strategies, and therefore the orchestrator.
+
+    One strategy file must not read as "on" to trader-futures and "off" here.
+    """
+    monkeypatch.delenv("FUTURES_DECISION_ENGINE_SETUPS", raising=False)
+    target = strategies_config_dir / "strategies" / "futures"
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "setup_d_vwap_reversion.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "strategy": {
+                    "name": "setup_d_vwap_reversion",
+                    "asset_class": "futures",
+                    # no `enabled` key at all
+                    "entry": {"type": "setup_d_vwap_reversion", "params": {}},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert [s.REGISTRY_NAME for s in _build_setups()] == ["setup_d_vwap_reversion"]
+
+
+def test_malformed_strategy_document_stays_disabled(
+    strategies_config_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No `strategy` mapping = no roster switch to read → stay off."""
+    monkeypatch.delenv("FUTURES_DECISION_ENGINE_SETUPS", raising=False)
+    target = strategies_config_dir / "strategies" / "futures"
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "setup_d_vwap_reversion.yaml").write_text(
+        "just: a scalar mapping with no strategy key\n", encoding="utf-8"
+    )
+
+    assert _build_setups() == []
+
+
+def test_subset_env_that_names_nothing_falls_back_to_every_enabled_setup(
+    strategies_config_dir: Path, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """`,` is a mis-edited env file, not a request for an empty roster."""
+    for name in (
+        "setup_a_gap_reversion",
+        "setup_c_event_reaction",
+        "setup_d_vwap_reversion",
+    ):
+        _write_strategy(strategies_config_dir, name, enabled=True)
+    monkeypatch.setenv("FUTURES_DECISION_ENGINE_SETUPS", " , , ")
+
+    with caplog.at_level(logging.WARNING):
+        setups = _build_setups()
+
+    assert len(setups) == 3
+    assert "names no setup" in caplog.text

@@ -343,10 +343,12 @@ services:
       FUTURES_STRATEGY_SYMBOL: "${FUTURES_STRATEGY_SYMBOL:-}"
       FUTURES_TICK_STREAM: "${FUTURES_TICK_STREAM:-raw_data}"
       # Optional daemon-only roster subset (comma-separated registry names, e.g.
-      # "setup_d_vwap_reversion"). Empty = every setup whose
-      # config/strategies/futures/<name>.yaml says strategy.enabled: true — a
-      # switch SHARED with trader-futures, so this narrows the decoupled roster
-      # without also stopping the orchestrator's paper trading.
+      # "setup_d_vwap_reversion"). The roster is the THREE setups registered in
+      # services/decision_engine/main.py::_setup_registry (setup_a_gap_reversion,
+      # setup_c_event_reaction, setup_d_vwap_reversion) — not every strategy file
+      # under config/strategies/futures/. Empty = all three whose
+      # strategy.enabled is true; that switch is SHARED with trader-futures, so
+      # this narrows the decoupled roster without stopping paper trading.
       FUTURES_DECISION_ENGINE_SETUPS: "${FUTURES_DECISION_ENGINE_SETUPS:-}"
 
   futures-risk-filter:

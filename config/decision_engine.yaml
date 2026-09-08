@@ -7,7 +7,10 @@
 # the monolithic orchestrator's Setup adapters read, so both runtimes trade one
 # operating point. The `setup_a_gap_reversion` / `setup_c_event_reaction` /
 # `setup_d_vwap_reversion` sections that used to live here were dead config: no
-# code loaded them and their values had drifted from the deployed strategy YAML.
+# the daemon never loaded them (it built each Setup with the Pydantic field
+# defaults), while two no-arg `SetupCConfig.from_yaml()` callers DID load them —
+# services/dashboard/routes/event_context.py and scripts/walk_forward_phase3.py.
+# Those callers now read the strategies file, so all three paths agree.
 # See docs/plans/2026-09-08-setup-d-decoupled-port.md §0-2 / §3-A.
 
 # services/decision_engine consumer-side wiring for the shared market-risk
@@ -23,3 +26,14 @@ market_risk_gate:
   # (shared.risk.log_throttle.ReasonLogThrottle, same pattern as the stock
   # side's would_block_log_interval_seconds).
   would_block_log_interval_seconds: 300.0
+
+# Per-setup evaluation observability (reject/fired rows on
+# trading:futures:setup_eval[.shadow], written by
+# shared/strategy/entry/setup_eval_publisher.publish_setup_eval).
+setup_eval:
+  # A reject reason repeats on every ~60s tick for as long as its cause holds,
+  # so the INFO line is throttled per (setup, outcome, reason-kind) — the
+  # measurements inside a reason (z=..., 0.85<0.9) are stripped from the key
+  # (shared.risk.log_throttle.setup_eval_throttle_key). Redis publishing is
+  # never throttled; only the log line is.
+  log_interval_seconds: 300.0
