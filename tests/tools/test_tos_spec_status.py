@@ -320,11 +320,13 @@ def test_current_corpus_is_consistent_and_axes_are_separate():
     assert snapshot.direct_traceability_total == 30
     assert snapshot.p2_carried_questions == 28
     assert snapshot.const003_result == "INCONCLUSIVE"
-    # 54, not 53: design #39 registers the new tos.staterestore package as
-    # TOS-staterestore. The TOS_PACKAGE census is derived from the directories
-    # under tos/src/tos, so a new package that is NOT registered fails the
-    # census -- this literal is the canary that keeps that a deliberate act.
-    assert snapshot.migration_rows == 54
+    # 55, not 54: 2026-09-08, design #40 D4 registers the new tos.workload
+    # package as TOS-workload (Phase 2 runtime-shell RuntimeIdentity record +
+    # consistency predicate). The TOS_PACKAGE census is derived from the
+    # directories under tos/src/tos, so a new package that is NOT registered
+    # fails the census -- this literal is the canary that keeps that a
+    # deliberate act.
+    assert snapshot.migration_rows == 55
     # The warning tier is advisory; the fail-closed tier already proved no
     # unregistered site is an invocable order-sending entrypoint.
     assert "shared/execution/executor.py" not in snapshot.unregistered_broker_sites
@@ -494,7 +496,9 @@ def test_migration_register_covers_code_packages_and_open_q6():
         _real_vocabulary(),
     )
 
-    assert rows == 54
+    # 55, not 54: 2026-09-08, design #40 D4 registers tos.workload as
+    # TOS-workload (see the migration_rows canary above for the same count).
+    assert rows == 55
     assert broker_sites == 9
     # The live corpus registers every construction site the scan can see, so the
     # warning tier is empty.  This is an assertion about the register, not about
@@ -669,7 +673,11 @@ def test_legacy_census_is_derived_from_the_csv_not_a_hardcoded_range(tmp_path):
         _REPO_ROOT, csv_path, markdown_path, _real_vocabulary()
     )
 
-    assert rows == 54
+    # 55, not 54: 2026-09-08, design #40 D4 registers tos.workload as
+    # TOS-workload -- `_migration_copy` copies the CURRENT real CSV verbatim
+    # (no `replace`), so this is the same live-corpus row count as the two
+    # canaries above, not a separate hardcoded range.
+    assert rows == 55
 
 
 def test_legacy_census_rejects_a_gap_in_the_route_numbering(tmp_path):
