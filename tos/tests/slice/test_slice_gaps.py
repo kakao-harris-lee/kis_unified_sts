@@ -89,7 +89,9 @@ def _crossing_value_view() -> ContextValueView:
 # ---------------------------------------------------------------------------
 
 
-def test_gap_1_a_shipped_port_re_injects_a_gateway_result_into_the_backtest_driver() -> None:
+def test_gap_1_a_shipped_port_re_injects_a_gateway_result_into_the_backtest_driver() -> (
+    None
+):
     """GAP-1 closed (owner: D-E3 ``tos.backtest``, consuming a D-E4 shape) — design #35 §7-1.
 
     ``BacktestDriver`` no longer names a concrete fill model in its constructor: it is typed
@@ -152,7 +154,9 @@ def test_gap_1_the_shipped_reinjector_adds_no_judgement_of_its_own() -> None:
 
     assert len(sliced.gateway.results) == 1
     (egress_entry,) = [
-        entry for entry in sliced.run.trace.entries if entry.event_kind.value == "EGRESS_RESULT"
+        entry
+        for entry in sliced.run.trace.entries
+        if entry.event_kind.value == "EGRESS_RESULT"
     ]
     assert egress_entry.attempt_id == sliced.gateway.results[0].attempt_id
     assert egress_entry.egress_result_kind is sliced.gateway.results[0].kind
@@ -164,7 +168,9 @@ def test_gap_1_the_shipped_reinjector_adds_no_judgement_of_its_own() -> None:
     assert sliced.run.unsettled_fill_records == ()
 
 
-def test_gap_1_the_local_retained_results_port_has_not_drifted_from_the_gateway() -> None:
+def test_gap_1_the_local_retained_results_port_has_not_drifted_from_the_gateway() -> (
+    None
+):
     """The Transport-precedent drift canary (design #35 §2.1 (3) / §9-2).
 
     ``tos.backtest`` may not name ``BrokerEgressGateway`` — the two packages exclude each other
@@ -172,11 +178,7 @@ def test_gap_1_the_local_retained_results_port_has_not_drifted_from_the_gateway(
     it consumes and the gateway satisfies it structurally. A declaration that drifted from the
     real surface would fail open silently, so the two are compared here, where both are importable.
     """
-    members = {
-        name
-        for name in vars(RetainedEgressResults)
-        if not name.startswith("_")
-    }
+    members = {name for name in vars(RetainedEgressResults) if not name.startswith("_")}
     assert members == {"results"}
 
     sliced = run_slice()
@@ -196,7 +198,9 @@ def test_gap_1_the_local_retained_results_port_has_not_drifted_from_the_gateway(
 # ---------------------------------------------------------------------------
 
 
-def test_gap_2_a_shipped_factory_binds_a_send_boundary_context_to_a_live_attempt() -> None:
+def test_gap_2_a_shipped_factory_binds_a_send_boundary_context_to_a_live_attempt() -> (
+    None
+):
     """GAP-2 closed (owner: D-E4 ``tos.egressgw``) — design #35 §7-3.
 
     ``attempt_id`` is content-addressed at step 12 from (proof digest, permit identity,
@@ -205,7 +209,9 @@ def test_gap_2_a_shipped_factory_binds_a_send_boundary_context_to_a_live_attempt
     **lazy resolver** beside the mapping, and ``send_boundary_context`` is the shipped factory
     that assembles the context from the attempt the sequencer just handed over.
     """
-    contexts_parameter = inspect.signature(BrokerEgressGateway.__init__).parameters["contexts"]
+    contexts_parameter = inspect.signature(BrokerEgressGateway.__init__).parameters[
+        "contexts"
+    ]
     annotation = str(contexts_parameter.annotation)
     # the mapping path is preserved — this is a union, not a replacement (design #35 §3.2).
     assert "Mapping" in annotation
@@ -225,9 +231,12 @@ def test_gap_2_a_shipped_factory_binds_a_send_boundary_context_to_a_live_attempt
     assert attempt.reference_coordinate_digest
     (bound,) = sliced.resolver.contexts
     assert bound.reservation_attempt_id == attempt.attempt_id
-    assert bound.reservation_conformance_proof_digest == attempt.conformance_proof_digest
     assert (
-        bound.reservation_action_flow_permit_identity == attempt.action_flow_permit_identity
+        bound.reservation_conformance_proof_digest == attempt.conformance_proof_digest
+    )
+    assert (
+        bound.reservation_action_flow_permit_identity
+        == attempt.action_flow_permit_identity
     )
     # …and the item-17 artifacts the factory derived are bound to *this* command's digest.
     assert bound.construction is not None and bound.construction.command is not None
@@ -329,7 +338,10 @@ def test_gap_3_a_value_the_view_does_not_carry_is_a_no_send() -> None:
     # the view *did* resolve, so the lineage it does have is recorded honestly…
     assert missing.snapshot_digest == view.snapshot_canonical_digest
     denied = derive_order_size(
-        quantity_basis="RISK", envelope=envelope, price=missing, venue_constraint=constraint
+        quantity_basis="RISK",
+        envelope=envelope,
+        price=missing,
+        venue_constraint=constraint,
     )
     assert denied.outcome is DerivationOutcome.DENIED
 
@@ -340,7 +352,10 @@ def test_gap_3_a_value_the_view_does_not_carry_is_a_no_send() -> None:
     assert nothing.snapshot_digest is None
     assert nothing.value is None
     empty_denied = derive_order_size(
-        quantity_basis="RISK", envelope=envelope, price=nothing, venue_constraint=constraint
+        quantity_basis="RISK",
+        envelope=envelope,
+        price=nothing,
+        venue_constraint=constraint,
     )
     assert empty_denied.outcome is DerivationOutcome.DENIED
     assert empty_denied.denial_reason != denied.denial_reason

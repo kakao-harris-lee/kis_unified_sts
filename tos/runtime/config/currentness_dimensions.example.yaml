@@ -1,0 +1,124 @@
+# Operator-attested "pending" Safety Currentness Vector dimensions
+# (tos_runtime.compose._pending_dimensions).
+#
+# tos.cur.predicates.vector_complete floors its mandated dimension set to
+# MANDATED_DIMENSION_FLOOR (every non-conditional tos.cur.DimensionKey
+# member). This composition's own live services structurally establish
+# exactly four of them (COMMIT_LOG, TRUSTWORTHY_TIME, SAFETY_AUTHORITY,
+# ACTION_FLOW). The 17 below have NO runtime owner in Phase 2 — no lane
+# P/Q/R/S service computes a real positively_established verdict for them.
+#
+# Every field below is a named-TBD `null` in this example — an operator
+# MUST fill in a concrete value for every field of every dimension before
+# compose_paper_runtime will start; a still-null field refuses composition
+# at startup (fail-closed, never a silent default).
+#
+# Each dimension's owner_identity is stamped
+# "operator-attestation-pending-phase-5" by compose itself (not configured
+# here) so a reader of the assembled vector can see, structurally, that
+# these coordinates are an interim operator sign-off standing in for a
+# real Phase 5 runtime owner's verdict — never presented as if a runtime
+# owner produced them.
+
+# owner note: Phase 5 (a real Aggregate Risk currentness owner) replaces this attestation
+AGGREGATE_RISK:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real Order Construction Policy constraint owner) replaces this attestation
+CONSTRAINT:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real Order Construction Policy owner) replaces this attestation
+CONSTRUCTION:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real decision-context owner) replaces this attestation
+CONTEXT:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real critical-input snapshot owner) replaces this attestation
+CRITICAL_INPUT:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real currentness-policy owner) replaces this attestation
+CURRENTNESS_POLICY:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real decision-proof-intent owner) replaces this attestation
+DECISION_PROOF_INTENT:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real deviation-tracking owner) replaces this attestation
+DEVIATION:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real egress-identity owner) replaces this attestation
+EGRESS_IDENTITY:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real environment-scope owner) replaces this attestation
+ENVIRONMENT_SCOPE:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real incident-management owner) replaces this attestation
+INCIDENT:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real monitoring owner) replaces this attestation
+MONITORING:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real post-trade owner) replaces this attestation
+POST_TRADE:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real recovery/Recovery-Barrier owner) replaces this attestation
+RECOVERY:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real release-admission currentness owner) replaces this attestation
+RELEASE:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real Safety Envelope Profile owner) replaces this attestation
+SAFETY_ENVELOPE_PROFILE:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null
+# owner note: Phase 5 (a real Trading Approval Policy owner) replaces this attestation
+TRADING_APPROVAL:
+  bound_generation: null
+  bound_digest: null
+  restrictive_floor: null
+  positively_established: null

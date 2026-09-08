@@ -383,8 +383,9 @@ def run_commitment_flow(
         # start an overlapping economic effect while one is unresolved for the scope — the
         # provisional mirror of SAFE-021 At-Most-One Exposure Effect closing the between-events
         # re-entrancy window (design #31 §2.1(iv)/§4.4).
-        if step is CommitmentStep.LEDGER_VERIFICATION and not ledger.admits_new_exposure(
-            instrument_key
+        if (
+            step is CommitmentStep.LEDGER_VERIFICATION
+            and not ledger.admits_new_exposure(instrument_key)
         ):
             outstanding = ledger.outstanding(instrument_key)
             return _halt(
@@ -429,11 +430,15 @@ def run_commitment_flow(
             # ★ a restrictive-only *read* of the engine's own projection (design #35 §5.2). The
             # observation is offered to every step and consumed only by the bases that need it;
             # nothing here creates headroom, releases a scope, or writes to the ledger.
-            held_position_magnitude=ledger.outstanding_consumed_magnitude(instrument_key),
+            held_position_magnitude=ledger.outstanding_consumed_magnitude(
+                instrument_key
+            ),
         )
         try:
             verdict = stage(request)
-        except Exception as exc:  # noqa: BLE001 - any stage failure is a restrictive stop
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - any stage failure is a restrictive stop
             return _halt(
                 sink,
                 key=instrument_key,
@@ -540,7 +545,9 @@ def run_commitment_flow(
     ledger.mark_potentially_live(instrument_key)
     try:
         handoff = transmit(attempt)
-    except Exception as exc:  # noqa: BLE001 - a failed hand-off is not proof of "not sent"
+    except (
+        Exception
+    ) as exc:  # noqa: BLE001 - a failed hand-off is not proof of "not sent"
         return _halt(
             sink,
             key=instrument_key,

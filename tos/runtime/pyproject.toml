@@ -1,0 +1,80 @@
+# tos-runtime — the composition-root/adapter shell for the tos kernel
+# (design #40 D1, "runtime shell 경계", ratified by the operator 2026-09-08).
+#
+# This is a SEPARATE distribution from BOTH the repo-root kis-unified-sts
+# package AND the `tos` kernel distribution (tos/pyproject.toml) — src-layout,
+# its own dependency set, its own test suite. `tos_runtime` may depend on
+# `tos` (the kernel); `tos` may NEVER depend on `tos_runtime` (enforced by
+# tools/tos_firewall_check.py rule (g) and the .importlinter
+# `tos-kernel-must-not-import-runtime` contract).
+#
+# Scope discipline (design #40 §0, upper plan §4.2): "경계 ADR이 승인되기
+# 전에는 네트워크 코드를 tos/ 커널 안에 임시로 넣지 않는다" — design #40 D1 is
+# ratified by the operator (2026-09-08), but this skeleton still contains NO
+# network/sqlite/I-O code, only the composition-root shape (package +
+# hermetic test fixture), pending the D2 (RCL)/D3 (Evidence Store)
+# implementation lanes that land the code (design #40 §5).
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tos-runtime"
+version = "0.0.1"
+description = "tos runtime shell — composition root and I/O adapters for the tos kernel (design #40 D1 ratified by the operator 2026-09-08; no I/O lands until the D2/D3 implementation lanes)"
+requires-python = ">=3.11"
+authors = [{ name = "Harris Lee" }]
+
+# `tos` (the kernel) is the one and only in-repo dependency, pinned to this
+# checkout via a local path (both distributions live in the same monorepo —
+# same pattern as `tos/pyproject.toml`'s own commons pinning rationale,
+# design #1 §5.1). No third-party dependency is added by this skeleton
+# (design #40 D1.3 item 2: "서드파티 추가는 0" for Phase 2's stdlib-only
+# scope) — D2/D3 close on stdlib (sqlite3, hashlib, hmac, secrets), not a new
+# pinned library.
+#
+# `{root:uri}` is Hatchling's own metadata-templating context variable (its
+# `root` context field, `:uri`-formatted to an absolute `file://` URI at
+# build/metadata time) — required because pip's own local-path URL resolver
+# rejects a literal relative `file://../` reference outright (verified
+# 2026-09-07: "ValueError: non-local file URIs are not supported on this
+# platform: 'file://../'"). `{root:uri}` resolves relative to THIS
+# pyproject.toml's directory (`tos/runtime/`), so `{root:uri}/../` is the
+# kernel distribution root `tos/` — portable across checkout locations,
+# unlike a hardcoded absolute path.
+dependencies = [
+    "tos @ {root:uri}/../",
+]
+
+[project.optional-dependencies]
+# Test-only third parties — same pinned versions as the kernel's own [test]
+# extra (tos/pyproject.toml), so a run manifest recording both distributions'
+# dependency sets stays consistent.
+test = [
+    "pytest==9.0.2",
+    "hypothesis==6.150.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tos_runtime"]
+
+# The `tos @ {root:uri}/../` local-path dependency above is a PEP 508 direct
+# reference; hatchling refuses to build metadata for one unless this is
+# explicitly opted in (verified 2026-09-07: `pip install -e ./tos/runtime`
+# fails hatchling's `validate_fields` with "Dependency #1 ... cannot be a
+# direct reference" without it). Scoped to this in-repo, same-monorepo
+# dependency only — not a general relaxation.
+[tool.hatch.metadata]
+allow-direct-references = true
+
+# Isolate `pytest tos/runtime/tests` from both the repo-root pytest config
+# AND the kernel's own tos/pyproject.toml config — this file carrying its own
+# [tool.pytest.ini_options] resolves pytest's rootdir to tos/runtime/ when
+# tos/runtime/tests is the target, so neither the repo-root
+# tests/conftest.py (loads .env, scrubs credentials) nor the kernel's
+# tos/tests/conftest.py (EV-L2 fault-schedule option) is an ancestor.
+# Mirrors tos/pyproject.toml's own isolation comment (design #1 §2.4).
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]

@@ -18,19 +18,40 @@
 #
 # SoT for the forbidden set: design §2.3 / §3.3-②. Changes to it require a PR
 # editing the design doc, with a §6.1 revision-log line.
+#
+# `tos_runtime` (design #40 D1.3 items 3-4, ratified by the operator
+# 2026-09-08) is added below as a second root
+# package and a second `source_modules` entry of the operational-firewall
+# contract, so the same TRANSITIVE defense the kernel gets also covers the
+# runtime shell: an approved runtime adapter pulling in an operational-only
+# package through its own closure fails here too. A SEPARATE contract,
+# `tos-kernel-must-not-import-runtime`, encodes the one-way D1.1 asymmetry
+# (`tos_runtime -> tos` allowed, `tos -> tos_runtime` forbidden) — the AST
+# gate's rule (g) (`tools/tos_firewall_check.py`) is the DIRECT-import layer
+# for that same asymmetry; this contract is its transitive-closure mirror.
+#
+# `tos-runtime-must-not-import-shared` (design #40 D1.1, corrected v1.2,
+# 2026-09-07 operator decision, ratified 2026-09-08) mirrors AST rule (h)/TOS-FW-H's
+# TRANSITIVE closure: even a `shared.*` commons package the KERNEL is itself
+# allowed to import (e.g. `shared.determinism`) must not be reachable from
+# `tos_runtime` through ANY closure, direct or indirect. The AST gate only
+# sees DIRECT imports (rule (h)); this contract is what actually proves no
+# approved runtime adapter smuggles in a `shared.*` dependency two hops deep.
 
 [importlinter]
 root_packages =
     tos
+    tos_runtime
     shared
     services
     cli
 
 [importlinter:contract:tos-operational-firewall]
-name = tos must not import operational-only packages (direct or transitive)
+name = tos/tos_runtime must not import operational-only packages (direct or transitive)
 type = forbidden
 source_modules =
     tos
+    tos_runtime
 forbidden_modules =
     shared.execution
     shared.kis
@@ -41,3 +62,19 @@ forbidden_modules =
     shared.config.secrets
     services
     cli
+
+[importlinter:contract:tos-kernel-must-not-import-runtime]
+name = tos kernel must not import the tos_runtime shell (design #40 D1.1 asymmetry)
+type = forbidden
+source_modules =
+    tos
+forbidden_modules =
+    tos_runtime
+
+[importlinter:contract:tos-runtime-must-not-import-shared]
+name = tos_runtime must not import shared.* — no new commons dependency (design #40 D1.1/D1.3 v1.2)
+type = forbidden
+source_modules =
+    tos_runtime
+forbidden_modules =
+    shared

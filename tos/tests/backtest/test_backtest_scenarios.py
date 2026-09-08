@@ -106,9 +106,13 @@ def test_row_a_ack_advances_knowledge_without_touching_capacity() -> None:
     assert reservation.capacity_state is CapacityState.POTENTIALLY_LIVE
 
     egress_entries = [
-        entry for entry in run.trace.entries if entry.event_kind is EventKind.EGRESS_RESULT
+        entry
+        for entry in run.trace.entries
+        if entry.event_kind is EventKind.EGRESS_RESULT
     ]
-    assert [entry.knowledge for entry in egress_entries] == [EgressKnowledge.ACKNOWLEDGED]
+    assert [entry.knowledge for entry in egress_entries] == [
+        EgressKnowledge.ACKNOWLEDGED
+    ]
 
 
 def test_ack_and_unknown_are_distinguishable_on_the_knowledge_axis() -> None:
@@ -119,7 +123,9 @@ def test_ack_and_unknown_are_distinguishable_on_the_knowledge_axis() -> None:
     ack = ack_core.ledger.outstanding(instrument_key())
     unknown = unknown_core.ledger.outstanding(instrument_key())
     assert ack is not None and unknown is not None
-    assert ack.capacity_state is unknown.capacity_state is CapacityState.POTENTIALLY_LIVE
+    assert (
+        ack.capacity_state is unknown.capacity_state is CapacityState.POTENTIALLY_LIVE
+    )
     assert ack.knowledge is EgressKnowledge.ACKNOWLEDGED
     assert unknown.knowledge is EgressKnowledge.UNKNOWN
     assert ack.knowledge is not unknown.knowledge
@@ -253,7 +259,9 @@ def test_row_6_one_realized_entry_plus_n_minus_one_exact_denials() -> None:
     assert len(fill_model.handoffs) == 1
 
     denials = [
-        halt for halt in run.halts if halt.halt_reason is HaltReason.AT_MOST_ONE_EXPOSURE_HELD
+        halt
+        for halt in run.halts
+        if halt.halt_reason is HaltReason.AT_MOST_ONE_EXPOSURE_HELD
     ]
     assert len(denials) == spec.bar_count - 1
     assert [halt.bar_index for halt in denials] == [1, 2]
@@ -271,7 +279,9 @@ def test_row_6_denials_are_recorded_with_their_reason() -> None:
     )
     for halt in run.halts:
         assert halt.detail is not None
-        assert "at-most-one" in halt.detail or "overlapping economic effect" in halt.detail
+        assert (
+            "at-most-one" in halt.detail or "overlapping economic effect" in halt.detail
+        )
 
 
 def test_row_6_the_denied_bars_still_advance_the_causal_gate() -> None:

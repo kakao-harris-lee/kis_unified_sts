@@ -8,6 +8,16 @@
 #   2. lint-imports                        — layer ② (transitive forbidden-pkg)
 #   3. pytest tos/tests                     — hermetic package tests (§2.4)
 #
+# tos/runtime/ (design #40 D1.3, ratified by the operator 2026-09-08): the
+# runtime-scope allowlist split lives INSIDE
+# tools/tos_firewall_check.py's single forward scan (rules a-d apply the R1
+# allowlist per-file via scope_for_tos_path) — layer ① above already covers
+# BOTH tos/ scopes in its one invocation, no extra firewall step is added
+# here. Only two things are new: installing the tos-runtime distribution
+# editable (so lint-imports's static analysis can resolve `tos_runtime` as a
+# root package for the transitive contracts in .importlinter, and so its own
+# hermetic test suite is importable) and running that suite as its own step.
+#
 # NOTE: marking this job a *required* check is a GitHub branch-protection
 # setting and is NOT configured here — see the handoff report.
 name: tos-firewall
@@ -62,6 +72,24 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e "./tos[test]"
+          # tos-runtime (design #40 D1.3 item 5, ratified by the operator 2026-09-08) — installed AFTER
+          # the kernel above, editable, with --no-deps. Reproduced 2026-09-08
+          # (independent review finding, MEDIUM) in a throwaway venv: WITHOUT
+          # --no-deps, `pip install -e "./tos/runtime[test]"` resolves
+          # tos/runtime/pyproject.toml's `tos @ {root:uri}/../` dependency
+          # itself, which pip treats as "(re)install this requirement" —
+          # SILENTLY REPLACING the kernel's editable install from the step
+          # above with a non-editable, built wheel (`pip list --editable`
+          # afterward showed `tos-runtime` only, `tos` gone). --no-deps skips
+          # that resolution entirely, so the kernel's prior editable install
+          # is left untouched (`pip list --editable` then shows BOTH `tos`
+          # and `tos-runtime`, verified in the same throwaway-venv
+          # reproduction). The `[test]` extra (pytest/hypothesis) is NOT
+          # requested here — it is not needed: both are already installed,
+          # pinned to the SAME versions, by the kernel's own `[test]` extra
+          # one line above (verified: `pytest tos/runtime/tests` imports and
+          # runs cleanly with no separate test-extra install).
+          pip install -e "./tos/runtime" --no-deps
           pip install import-linter
           pip install -e . --no-deps
           # Layer 4 의 RULE 축은 S-25 manifest(YAML)를 읽는다.  루트 프로젝트는
@@ -71,6 +99,9 @@ jobs:
           # (`tos` 패키지의 §3.2 서드파티 allowlist 와는 무관하다 — `tools/` 의
           #  저장소 도구가 쓰는 것이지 `tos` 패키지가 임포트하는 것이 아니다.)
           pip install "pyyaml>=6.0"
+          # Black/mypy — Phase 1 작업 7 (계획 §2 표 7행). 로컬 .venv 와 정확히
+          # 같은 버전으로 핀 — CI 만 다른 버전에서 다른 판정을 내는 것을 막는다.
+          pip install "black==26.5.1" "mypy==2.3.1"
 
       - name: Pin mikefarah yq v4.48.1 (WFCANON M-4 parser gate)
         # tools/wfcanon-v222.py [M-4] pins the judgment parser to
@@ -100,6 +131,69 @@ jobs:
 
       - name: tos hermetic package tests
         run: pytest tos/tests
+
+      # design #40 D1.3 item 5 (ratified by the operator 2026-09-08) — the runtime shell's own hermetic
+      # suite (D1.4: zero external network/ambient env/writes outside
+      # tmp_path — tos/runtime/tests/conftest.py's autouse socket guard).
+      # Isolated rootdir via tos/runtime/pyproject.toml's own
+      # [tool.pytest.ini_options], same pattern as the kernel step above.
+      - name: tos-runtime hermetic package tests
+        run: pytest tos/runtime/tests
+
+      # Phase 1 작업 7 (계획 §2 표 7행) — 같은 잡의 스텝으로 추가한다(필수 체크
+      # 이름을 늘리지 않는다는 위 헤더 규율). 두 스텝의 실행 위치가 다르다 —
+      # (독립 리뷰 Low-4, 2026-09-07: 이전 주석은 «둘 다 `cd tos`」로 실행한다고 잘못
+      # 적었으나 실제로는 mypy만 그렇다):
+      #   * Black 은 **저장소 루트**에서 실행하며, 루트 `pyproject.toml` 의
+      #     `[tool.black]` 설정을 읽는다(로컬 §1 기준선 측정 명령과 동일한 호출).
+      #     대상은 `tos/src tos/tests` 에 더해 **정확히** 이 잡이 소유하는 저장소
+      #     레벨 파일 둘 — `tools/tos_size_budget.py`·
+      #     `tests/tools/test_tos_size_budget.py` — 만 명시로 얹는다(독립 리뷰
+      #     Low-4 후속, 2026-09-07: 이 둘은 이전엔 이 스텝의 게이트 밖이었다).
+      #     `tools/`·`tests/tools/` 전체로 넓히지 않는다 — 그 아래 다른 파일들이
+      #     Black-clean 이라는 보장이 없다.
+      #   * mypy 는 `cd tos` 로 이동해 `src` 를 검사하며, `tos/pyproject.toml` 에
+      #     `[tool.mypy]` 섹션이 없어 상위로 올라가 루트 `pyproject.toml` 을 읽는다
+      #     (로컬 실행 시 "../pyproject.toml: note: unused section(s)" 로 실측 확인).
+      - name: Black (tos)
+        run: >-
+          black --check tos/src tos/tests tools/tos_size_budget.py
+          tests/tools/test_tos_size_budget.py
+
+      - name: mypy (tos kernel)
+        run: cd tos && mypy src --ignore-missing-imports
+
+      # tos/src/tos/py.typed (PEP 561 marker, added alongside this step) makes
+      # the kernel's own types visible to this check instead of resolving as
+      # `Any` — without it, every tos_runtime call into a kernel function/
+      # predicate/artifact silently typed as `Any`, masking real errors here.
+      - name: mypy (tos runtime)
+        run: mypy tos/runtime/src --ignore-missing-imports
+
+      - name: tos size budget
+        # config/tos_size_budget.yaml exceptions register — Phase 1 작업 6.
+        run: python tools/tos_size_budget.py --check
+
+      # tos-spec/book.toml is a byte-empty file (0 bytes) — mdbook defaults apply
+      # and the build was verified locally to succeed with them (homebrew mdbook
+      # v0.5.4, same tag as pinned below): rc=0, two "unclosed HTML tag" warnings
+      # + one "search index is very large" warning, none of which fail the build.
+      # rust-lang/mdbook publishes no separate .sha256 asset for this release, so
+      # the digest below is a locally-computed pin against the official GitHub
+      # release tarball (same pattern as the yq pin above — download once, verify
+      # forever), not an independently-published checksum.
+      - name: Pin mdBook v0.5.4 (tos-spec build)
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/mdbook.tar.gz \
+            https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz
+          echo "3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7  /tmp/mdbook.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/mdbook.tar.gz -C /tmp
+          sudo install -m 0755 /tmp/mdbook /usr/local/bin/mdbook
+          mdbook --version
+
+      - name: mdBook build (tos-spec)
+        run: mdbook build tos-spec --dest-dir /tmp/tos-spec-book
 
       # §12.2 (완료 계약 F-9): 코퍼스 무결성 검사기와 완료 계약 검사기를 CI 에
       # 편입한다 — Phase 1 로 미루면 Phase 0 산출물이 회귀 방어 없이 병합된다.

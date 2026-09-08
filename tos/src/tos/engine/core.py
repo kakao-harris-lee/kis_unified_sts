@@ -301,7 +301,9 @@ class EngineCore:
         self._last_reference = reference
 
         handler = self._handlers().get(kind)
-        if handler is None:  # pragma: no cover - admit_kind + this map are the same closure
+        if (
+            handler is None
+        ):  # pragma: no cover - admit_kind + this map are the same closure
             raise UnknownEventKindError(
                 f"no handler is registered for admissible event kind {kind!r} — an unhandled "
                 "vocabulary member is a fail-closed error (design #31 §2.2)"
@@ -325,7 +327,9 @@ class EngineCore:
         """Run the decision pipeline and, for a Proposal, the 19-step commitment flow."""
         payload = event.decision_tick
         if payload is None:  # pragma: no cover - guaranteed by EngineEvent validation
-            raise UnknownEventKindError("DECISION_TICK event carries no payload (fail-closed)")
+            raise UnknownEventKindError(
+                "DECISION_TICK event carries no payload (fail-closed)"
+            )
         key = payload.instrument_key
 
         dispatch = self._registry.resolve(key)
@@ -420,7 +424,9 @@ class EngineCore:
         """Transition the provisional projection on a re-injected send-boundary result."""
         payload: EgressResultPayload | None = event.egress_result
         if payload is None:  # pragma: no cover - guaranteed by EngineEvent validation
-            raise UnknownEventKindError("EGRESS_RESULT event carries no payload (fail-closed)")
+            raise UnknownEventKindError(
+                "EGRESS_RESULT event carries no payload (fail-closed)"
+            )
         key = payload.instrument_key
         try:
             reservation = self._ledger.apply_egress_result(payload)

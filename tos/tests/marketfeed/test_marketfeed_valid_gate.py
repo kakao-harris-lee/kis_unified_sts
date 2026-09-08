@@ -77,7 +77,10 @@ def test_an_unevaluated_field_is_unknown_not_vacuously_valid() -> None:
     """
     _, obs = _observation()
     assert value_field_state(obs, "close", ()) is FieldState.UNKNOWN
-    assert value_field_state(obs, "close", (evaluation("some_other_field"),)) is FieldState.UNKNOWN
+    assert (
+        value_field_state(obs, "close", (evaluation("some_other_field"),))
+        is FieldState.UNKNOWN
+    )
 
 
 @pytest.mark.parametrize("state", _NON_VALID_STATES)
@@ -117,7 +120,11 @@ def test_the_worst_of_several_matching_evaluations_wins() -> None:
     state = value_field_state(
         obs,
         "close",
-        (evaluation("close"), evaluation("close", FieldState.CONFLICTED), evaluation("close")),
+        (
+            evaluation("close"),
+            evaluation("close", FieldState.CONFLICTED),
+            evaluation("close"),
+        ),
     )
     assert state is FieldState.CONFLICTED
 
@@ -169,12 +176,17 @@ def test_a_field_evaluation_for_a_different_key_does_not_govern_this_one() -> No
     """(§2.4) The key↔``field_ref`` correspondence is exact, not "some evaluation exists"."""
     payload = preimage(close=CLOSE_BAR_ONE, session="REGULAR")
     obs = observation(raw_event_id="raw-1", payload=payload, as_of=BAR_ONE_AS_OF)
-    snapshot = issue_snapshot(observations=(obs,), field_evaluations=(evaluation("close"),))
+    snapshot = issue_snapshot(
+        observations=(obs,), field_evaluations=(evaluation("close"),)
+    )
     capsule = issue_capsule(snapshot)
     resolution = publish_context_value_view(
         capsule=capsule,
         snapshot=snapshot,
-        candidates=(candidate("close", "raw-1", payload), candidate("session", "raw-1", payload)),
+        candidates=(
+            candidate("close", "raw-1", payload),
+            candidate("session", "raw-1", payload),
+        ),
         scheme=SCHEME,
     )
     assert {value.field_key for value in resolution.values} == {"close"}

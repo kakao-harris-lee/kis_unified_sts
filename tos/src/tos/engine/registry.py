@@ -123,7 +123,9 @@ class StrategyRegistry:
                 f"strategy itself declares {self._key_tuple(derived)} — the key is derived from "
                 "the artifact, never self-reported (design #31 §3.3)"
             )
-        entry = RegisteredStrategy(strategy=strategy, config=config, instrument_key=derived)
+        entry = RegisteredStrategy(
+            strategy=strategy, config=config, instrument_key=derived
+        )
         self._entries.setdefault(self._key_tuple(derived), []).append(entry)
         return entry
 
@@ -143,7 +145,9 @@ class StrategyRegistry:
             return Dispatch(resolution=DispatchResolution.MISSING)
         if not entries:
             return Dispatch(resolution=DispatchResolution.EXPLICIT_EMPTY)
-        return Dispatch(resolution=DispatchResolution.DISPATCHED, entries=tuple(entries))
+        return Dispatch(
+            resolution=DispatchResolution.DISPATCHED, entries=tuple(entries)
+        )
 
     def declared_keys(self) -> tuple[InstrumentKey, ...]:
         """The keys currently declared, in insertion order (declared-empty keys included)."""

@@ -67,7 +67,11 @@ def test_every_verdict_enum_is_truthy_untestable(enum_type) -> None:
 @pytest.mark.parametrize("enum_type", list(_TRUTHY_UNTESTABLE))
 def test_the_seal_covers_the_denial_members_specifically(enum_type) -> None:
     """(§6) The seal is what protects the *denial* members — the pass member matters least."""
-    denials = [m for m in enum_type if m.name not in {"ADMIT", "ADMISSIBLE", "DISPATCHED", "ACK"}]
+    denials = [
+        m
+        for m in enum_type
+        if m.name not in {"ADMIT", "ADMISSIBLE", "DISPATCHED", "ACK"}
+    ]
     assert denials
     for member in denials:
         with pytest.raises(TypeError):
@@ -85,7 +89,9 @@ def test_no_engine_source_uses_a_negated_denial_gate() -> None:
     )
     offenders: list[str] = []
     for path in sorted(_ENGINE_SRC.rglob("*.py")):
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
             if forbidden.search(line):
                 offenders.append(f"{path.name}:{lineno} {line.strip()}")
     assert offenders == [], (
@@ -211,13 +217,21 @@ def test_the_economic_effect_adapter_is_empty_and_unknown_aware() -> None:
     from decimal import Decimal
 
     assert economic_effect_envelope_verdict(None).outcome is StageOutcome.UNKNOWN
-    assert economic_effect_envelope_verdict(CapacityVector()).outcome is StageOutcome.UNKNOWN
+    assert (
+        economic_effect_envelope_verdict(CapacityVector()).outcome
+        is StageOutcome.UNKNOWN
+    )
     unknown_magnitude = CapacityVector(
         components=(CapacityComponent(dimension_id="notional", magnitude=None),)
     )
-    assert economic_effect_envelope_verdict(unknown_magnitude).outcome is StageOutcome.UNKNOWN
+    assert (
+        economic_effect_envelope_verdict(unknown_magnitude).outcome
+        is StageOutcome.UNKNOWN
+    )
     complete = CapacityVector(
-        components=(CapacityComponent(dimension_id="notional", magnitude=Decimal("10")),)
+        components=(
+            CapacityComponent(dimension_id="notional", magnitude=Decimal("10")),
+        )
     )
     assert economic_effect_envelope_verdict(complete).outcome is StageOutcome.ADMIT
 

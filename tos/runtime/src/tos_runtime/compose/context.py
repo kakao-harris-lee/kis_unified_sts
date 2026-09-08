@@ -1,0 +1,625 @@
+"""``ComposeContextResolver`` — the composition root's own ``SendBoundaryContext``
+lazy resolver (design #40 §5 order 6 / slice plan §4 item 1).
+
+This module is **compose-only glue**. It never judges anything itself: every
+admissibility fact it hands the gateway is read either straight off a real
+kernel/runtime artifact (structurally, never a caller's claim — 구조 파생 >
+자기신고) or off a small number of **reported shims** documented below, each
+of which exists only because the corresponding lane (P/Q/R) intentionally
+does not retain the one extra bit compose needs and importing across lanes
+is forbidden (slice plan §5 "서로의 패키지를 임포트하지 않는다").
+
+**Reported shim 1 — :class:`VerdictRecorder`.** None of
+``tos_runtime.authority``/``tos_runtime.risk`` retains the last
+:class:`~tos.engine.records.StageVerdict` a Stage produced (each ``Stage`` is
+a pure ``(StageRequest) -> StageVerdict`` callable per design #31 §4.1, with
+no side-channel). Item 14 (``approval_consumed_for_this_intent`` /
+``approval_intent_binding_digest``) and item 15's
+``action_flow_commitment_current`` both need exactly that last verdict.
+Rather than edit ``tos_runtime.authority.stages`` /
+``tos_runtime.risk.ledger_stages`` (out of this lane's write surface, and it
+would blur "a Stage is just a callable"), compose wraps the already-built
+``Stage`` instances in a thin recording proxy that stores the verdict it
+already computed — the real Stage's own judgement is completely unchanged,
+compose only reads what it already decided.
+
+**Reported shim 2 — :class:`RecordingAggregateRiskService` /
+:class:`RecordingActionFlowGovernor`.** ``AggregateRiskDecisionStage`` /
+``ActionFlowDecisionStage`` call ``.decide(...)`` on the real service and
+wrap only the *digest*/*identity* of the returned decision into a
+:class:`~tos.engine.records.StageVerdict` (design #31 §5.2's own structural-
+binding-extraction discipline: the verdict never carries the native object).
+But :meth:`~tos_runtime.risk.flow.ActionFlowGovernor.build_permit` needs the
+**whole** :class:`~tos.afg.ActionFlowDecision`, not its digest. Compose
+subclasses the two services (same public API, same firewall — R1 allowlist
+unaffected) purely to retain the last decision it itself produced, so a
+later stage in the SAME synchronous flow (design #31 §2.1: "one event is
+processed to completion before the next") can read it back.
+
+**Item 16 (Realize, lane R item 2) — issued honestly, not optimistically.**
+:meth:`ComposeContextResolver._issue_egress_currentness_proof` issues one
+:class:`~tos.cur.EgressCurrentnessProof` per attempt via
+:class:`~tos_runtime.currentness.proof.EgressCurrentnessProofIssuer`. The
+``result`` it passes is derived from
+:meth:`~tos_runtime.currentness.vector.CurrentnessAssembler.is_complete`,
+never hardcoded to ``CURRENT``. :func:`tos.cur.predicates.vector_complete`
+requires the governing ``CurrentnessPolicy.required_dimensions`` to cover
+``MANDATED_DIMENSION_FLOOR`` — every non-conditional
+:class:`~tos.cur.DimensionKey` member — and then requires **every** one of
+those required dimensions to be positively established in the assembled
+vector. This compose root's own live services structurally establish
+exactly four of them (``COMMIT_LOG``/``TRUSTWORTHY_TIME``/
+``SAFETY_AUTHORITY``/``ACTION_FLOW``); no Phase 2 lane (P/Q/R/S) wires a
+real runtime owner for the remaining 17. Per team-lead's explicit follow-up
+guidance (2026-09-08), this composition supplies those 17 from **composition
+config as explicit, named, operator-attested revisions**
+(:mod:`tos_runtime.compose._pending_dimensions` — never a kernel-derived
+judgement, and never fabricated silently: a still-null field refuses
+composition at startup) so the vector genuinely completes and ``is_complete``
+returns ``True`` — see the compose end-to-end test's
+``TestPendingDimensionAttestationGatesCompleteness`` for the mechanical
+proof that flipping one attestation to ``False`` makes the vector honestly
+incomplete again, and ``tos_runtime.compose._pending_dimensions``'s own
+module docstring for why supplying these 17 this way (rather than
+fabricating them as kernel-derived) is the honest, fail-closed choice.
+Reaching an actual transport hand-off ALSO requires step 4
+(``INDEPENDENT_APPROVAL``) to admit, which it currently cannot (see
+``_wiring.py``'s ``_decision_current_provider`` docstring and the compose
+end-to-end test's ``xfail`` reasons on ``TestSyntheticEventDrivesTheChain``)
+— that is a SEPARATE gap from this module's own item-16 wiring, which is
+itself honest and complete.
+
+Firewall (tools/tos_firewall_check.py R1, runtime scope): stdlib + ``tos.*``
++ ``tos_runtime.*`` only. No ``shared.*``.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+from tos.afg import (
+    ActionFlowDecision,
+    ActionFlowPermit,
+    ActionFlowResult,
+)
+from tos.are import AggregateRiskDecision
+from tos.cur import EgressCurrentnessProof, EgressProofCoordinateSet
+from tos.egress import (
+    CredentialRouteInventoryEntry,
+    EgressCoordinateSet,
+    EgressRequestRecord,
+    QuorumCommitCertificate,
+)
+from tos.egressgw import (
+    CandidateConstruction,
+    ConformanceProofStage,
+    OrderConstructionStage,
+    SendBoundaryContext,
+    TransportNature,
+    VenueConstraintStage,
+    send_boundary_context,
+)
+from tos.engine import AttemptRequest, InstrumentKey, StageRequest, StageVerdict
+from tos.engine.vocabulary import StageOutcome
+from tos.ordering import OrderingEvent
+from tos.rcl import TransmissionCapability
+from tos.venue import (
+    ActionClass,
+    OrderAdmissibilityDecision,
+    VenueConstraintPolicy,
+    VenueConstraintSnapshot,
+)
+
+from tos_runtime.compose._egress_attestations import EgressAttestations
+from tos_runtime.compose._pending_dimensions import (
+    PendingDimensionSpec,
+    stamp_pending_dimensions,
+)
+from tos_runtime.currentness.proof import EgressCurrentnessProofIssuer
+from tos_runtime.currentness.stages import TransmissionCapabilityStage
+from tos_runtime.currentness.vector import CurrentnessAssembler
+from tos_runtime.rcl.log import StaleEpochRead
+from tos_runtime.risk.aggregate import (
+    AggregateRiskDecisionInputs,
+    AggregateRiskService,
+)
+from tos_runtime.risk.flow import (
+    ActionFlowDecisionInputs,
+    ActionFlowGovernor,
+)
+
+__all__ = [
+    "ComposeContextResolver",
+    "RecordingActionFlowGovernor",
+    "RecordingAggregateRiskService",
+    "VerdictRecorder",
+    "make_permit_provider",
+]
+
+
+class VerdictRecorder:
+    """Wraps one :class:`~tos.engine.sequencer.Stage`, remembering the last
+    :class:`~tos.engine.records.StageVerdict` it returned (module docstring,
+    "Reported shim 1"). Delegates every call unchanged — the wrapped Stage's
+    own judgement is not altered in any way, only observed afterward.
+    """
+
+    def __init__(self, inner: Callable[[StageRequest], StageVerdict]) -> None:
+        self._inner = inner
+        self.last_verdict: StageVerdict | None = None
+
+    def __call__(self, request: StageRequest) -> StageVerdict:
+        verdict = self._inner(request)
+        self.last_verdict = verdict
+        return verdict
+
+
+class RecordingAggregateRiskService(AggregateRiskService):
+    """:class:`~tos_runtime.risk.aggregate.AggregateRiskService`, additionally
+    retaining the last :class:`~tos.are.AggregateRiskDecision` it produced
+    (module docstring, "Reported shim 2"). No override of judgement — this
+    subclass calls the parent's own ``decide`` unchanged and only stores its
+    return value.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.last_decision: AggregateRiskDecision | None = None
+
+    def decide(
+        self,
+        key: Any,
+        inputs: AggregateRiskDecisionInputs,
+        *,
+        snapshot_generation: int,
+        decision_generation: int,
+    ) -> AggregateRiskDecision:
+        decision = super().decide(
+            key,
+            inputs,
+            snapshot_generation=snapshot_generation,
+            decision_generation=decision_generation,
+        )
+        self.last_decision = decision
+        return decision
+
+
+class RecordingActionFlowGovernor(ActionFlowGovernor):
+    """:class:`~tos_runtime.risk.flow.ActionFlowGovernor`, additionally
+    retaining the last :class:`~tos.afg.ActionFlowDecision` it produced and
+    the last :class:`~tos.afg.ActionFlowPermit` compose built from it (module
+    docstring, "Reported shim 2"). No override of judgement.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.last_decision: ActionFlowDecision | None = None
+        self.last_permit: ActionFlowPermit | None = None
+
+    def decide(self, inputs: ActionFlowDecisionInputs) -> ActionFlowDecision:
+        decision = super().decide(inputs)
+        self.last_decision = decision
+        return decision
+
+
+def make_permit_provider(
+    governor: RecordingActionFlowGovernor,
+    *,
+    permit_generation_provider: Callable[[StageRequest], int],
+    command_identity_provider: Callable[[StageRequest], str],
+) -> Callable[[StageRequest], ActionFlowPermit | None]:
+    """Build the ``permit_provider`` callable
+    :class:`~tos_runtime.risk.ledger_stages.AtomicCommitStage` (step 9) needs.
+
+    Reads back :attr:`RecordingActionFlowGovernor.last_decision` (step 7's
+    own output, this same synchronous flow) and, only when it is a positive
+    ``GRANT``, calls the governor's own
+    :meth:`~tos_runtime.risk.flow.ActionFlowGovernor.build_permit` — never
+    inventing a permit for a non-GRANT decision (restrictive, never a
+    fall-through admit).
+
+    ``permit_generation_provider`` (``_rcl_tip_generation_provider``, an RCL
+    log read) can raise ``StaleEpochRead``/``sqlite3.Error`` — re-review
+    finding F2, 2026-09-08. Unlike step 6's ``AggregateRiskDecisionStage``,
+    :class:`~tos_runtime.risk.ledger_stages.AtomicCommitStage` calls this
+    ``permit_provider`` with NO enclosing ``try/except``, so a propagated
+    failure here is caught at this exact call site and reported as "no
+    permit available" (``None``) — the Stage already maps that to
+    ``UNKNOWN`` (fail-closed), never a fabricated ``generation=0``.
+    """
+
+    def _provider(request: StageRequest) -> ActionFlowPermit | None:
+        decision = governor.last_decision
+        if decision is None or decision.result is not ActionFlowResult.GRANT:
+            return None
+        try:
+            generation = permit_generation_provider(request)
+        except (StaleEpochRead, sqlite3.Error, OSError):
+            return None
+        permit = governor.build_permit(
+            decision,
+            permit_generation=generation,
+            command_identity=command_identity_provider(request),
+        )
+        governor.last_permit = permit
+        return permit
+
+    return _provider
+
+
+def item14_fields_from_verdict(
+    verdict: StageVerdict | None,
+) -> tuple[bool | None, str | None]:
+    """``(approval_consumed_for_this_intent, approval_intent_binding_digest)``
+    derived structurally from step 4's recorded
+    :class:`~tos.engine.records.StageVerdict` — mirrors
+    ``tos_runtime.authority.stages.item14_fields``'s own field mapping
+    (``ConsumeResult`` -> the same two fields) without needing the
+    :class:`~tos_runtime.authority.iap.ConsumeResult` object itself, which
+    ``IndependentApprovalStage.__call__`` does not expose (module docstring,
+    "Reported shim 1").
+    """
+    if verdict is None:
+        return None, None
+    consumed = verdict.outcome is StageOutcome.ADMIT
+    return consumed, (verdict.bound_digest if consumed else None)
+
+
+def item15_fields_from(
+    permit: ActionFlowPermit | None, step9_verdict: StageVerdict | None
+) -> tuple[str | None, bool | None]:
+    """``(action_flow_permit_identity, action_flow_commitment_current)`` —
+    the identity comes from the live permit object (module docstring,
+    "Reported shim 2"); ``commitment_current`` is step 9's own recorded
+    ADMIT/DENY/UNKNOWN outcome (structurally, never a caller's claim)."""
+    identity = None if permit is None else permit.permit_id
+    commitment_current = (
+        None if step9_verdict is None else step9_verdict.outcome is StageOutcome.ADMIT
+    )
+    return identity, commitment_current
+
+
+@dataclass
+class ComposeContextResolver:
+    """The gateway's lazy ``contexts`` resolver (design #35 §3.1 (3)),
+    assembling one :class:`~tos.egressgw.SendBoundaryContext` per attempt
+    from the live P/Q/R + kernel construction artifacts.
+
+    Every field below is either an injected, environment-scoped constant
+    (transport nature, principal, credential-route inventory, authorized
+    coordinates — the same kind of facts ``tests/slice/_slice_fixtures.py``
+    injects for the kernel e2e test) or a live object read off one of the
+    composed services, never rebuilt as a look-alike.
+    """
+
+    construction_stage: OrderConstructionStage
+    proof_stage: ConformanceProofStage
+    venue_stage: VenueConstraintStage
+    step4_recorder: VerdictRecorder
+    step9_recorder: VerdictRecorder
+    step14_stage: TransmissionCapabilityStage
+    flow_governor: RecordingActionFlowGovernor
+    currentness_assembler: CurrentnessAssembler
+    proof_issuer: EgressCurrentnessProofIssuer
+    #: The 17 operator-attested pending currentness dimensions (team-lead
+    #: follow-up guidance, 2026-09-08) — see
+    #: :mod:`tos_runtime.compose._pending_dimensions`'s own module docstring
+    #: for why these exist and what they honestly are (an interim operator
+    #: sign-off, never a fabricated kernel-derived verdict).
+    pending_dimension_specs: tuple[PendingDimensionSpec, ...]
+    #: The 5 operator-attested egress-gate stand-ins for items 6/12/16
+    #: (team-lead follow-up guidance, 2026-09-08) — see
+    #: :mod:`tos_runtime.compose._egress_attestations`'s own module
+    #: docstring for why these exist and which Phase replaces each.
+    egress_attestations: EgressAttestations
+    transport_nature: TransportNature
+    environment_label: str
+    principal: str
+    credential_route_inventory: tuple[CredentialRouteInventoryEntry, ...]
+    authorized_coordinates: EgressCoordinateSet
+    capsule_egress_request_digest: str
+    outbound_side: str
+    action_class: ActionClass
+    observed_session_phase: str
+    continuity_id: str
+    instrument_key: InstrumentKey
+    #: The exact venue facts step 3 folded — passed straight through to item 11
+    #: rather than rebuilt, so item 11's re-fold cannot silently disagree with
+    #: the fold ``VenueConstraintStage`` (step 3) already performed.
+    venue_snapshot: VenueConstraintSnapshot | None = None
+    venue_policy: VenueConstraintPolicy | None = None
+    venue_decision: OrderAdmissibilityDecision | None = None
+
+    contexts: tuple[SendBoundaryContext, ...] = field(default_factory=tuple)
+    _yield_seq: int = 0
+
+    def _egress_request_for_command(
+        self, command_digest: str | None
+    ) -> EgressRequestRecord | None:
+        if command_digest is None:
+            return None
+        from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+
+        scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
+        coordinates = self.authorized_coordinates
+        issued = EgressRequestRecord.issue(
+            scheme=scheme,
+            request_id=f"ereq-{command_digest[:16]}",
+            request_bytes_digest=self.capsule_egress_request_digest,
+            canonical_command_digest=command_digest,
+            endpoint=coordinates.endpoint,
+            account=coordinates.account,
+            environment=coordinates.environment,
+            action=coordinates.action,
+            method=coordinates.method,
+            side=self.outbound_side,
+            route_identity=coordinates.route_identity,
+            credential_generation=coordinates.credential_generation,
+            broker_session_generation=coordinates.broker_session_generation,
+            egress_generation=coordinates.egress_generation,
+            active_principal=coordinates.active_principal,
+        )
+        assert isinstance(issued, EgressRequestRecord)
+        return issued
+
+    def _quorum_certificate_for_command(
+        self, command_digest: str | None
+    ) -> QuorumCommitCertificate | None:
+        # ⚠ provisional (item 17, R-RCL-F0): only the command-digest axis is
+        # consumed — this compose root claims no quorum-runtime replication.
+        if command_digest is None:
+            return None
+        from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+
+        scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
+        issued = QuorumCommitCertificate.issue(
+            scheme=scheme,
+            qcc_id=f"qcc-{command_digest[:16]}",
+            cluster_identity="single-node",
+            capacity_domain=self.environment_label,
+            membership_generation=1,
+            restore_generation=1,
+            writer_epoch=1,
+            committed_revision=1,
+            canonical_command_digest=command_digest,
+            resulting_state_digest=command_digest,
+            egress_generation=1,
+            active_egress_principal=self.principal,
+        )
+        assert isinstance(issued, QuorumCommitCertificate)
+        return issued
+
+    def _reconstruct_transmission_capability(
+        self, attempt: AttemptRequest
+    ) -> TransmissionCapability | None:
+        """Item 1's ``transmission_capability`` object (reported seam, never
+        edited into lane R's ``currentness/stages.py``): step 14's
+        ``TransmissionCapabilityStage`` builds + durably commits a real
+        :class:`~tos.rcl.TransmissionCapability` internally, but exposes
+        only its nonce (:meth:`~tos_runtime.currentness.stages.
+        TransmissionCapabilityStage.nonce_for`) — there is no public
+        accessor for the object itself.
+
+        This reconstructs a capability with the SAME identity formula step
+        14 uses (``f"cap-{attempt.attempt_id}"``) and the SAME already-
+        durably-committed nonce, epoch, and scope facts this resolver
+        already holds or can independently re-read from the log — never a
+        fabricated identity. It is safe for
+        ``tos.engine.adapters.transmission_capability_verdict`` (item 1's
+        only consumer of this object), which admits on ``capability_id``
+        presence alone and does not compare digests against a second
+        source; ``capability_and_permit_single_use`` (item 1's OTHER half)
+        checks the nonce independently, via ``context.capability_nonce``,
+        not through this object. Reaches into
+        ``TransmissionCapabilityStage``'s private ``_log``/``_writer_epoch``/
+        ``_scheme`` attributes — reported, not a public seam either lane
+        R or this module invented cleanly.
+
+        Returns:
+            The reconstructed capability, or ``None`` when step 14 issued
+            no nonce for this attempt (never fabricated).
+        """
+        nonce = self.step14_stage.nonce_for(attempt.attempt_id)
+        if nonce is None:
+            return None
+        log = self.step14_stage._log  # noqa: SLF001 - reported shim, see docstring
+        writer_epoch = self.step14_stage._writer_epoch  # noqa: SLF001
+        scheme = self.step14_stage._scheme  # noqa: SLF001
+        view = log.read_linearizable(writer_epoch=writer_epoch)
+        if not view.epoch:
+            return None
+        capability = TransmissionCapability.issue(
+            scheme=scheme,
+            capability_id=f"cap-{attempt.attempt_id}",
+            nonce=nonce,
+            single_use=True,
+            reservation_identity=(
+                f"resv-{self.instrument_key.account}-{self.instrument_key.instrument}"
+            ),
+            attempt_identity=attempt.attempt_id,
+            account_scope=self.instrument_key.account,
+            instrument_scope=self.instrument_key.instrument,
+            side_action_scope=self.outbound_side,
+            ledger_epoch=view.epoch,
+            bound_reservation_revision=view.last_seq,
+        )
+        assert isinstance(capability, TransmissionCapability)
+        return capability
+
+    def _issue_egress_currentness_proof(
+        self, attempt: AttemptRequest
+    ) -> EgressCurrentnessProof | None:
+        """Item 16 (Realize, lane R item 2): two-pass currentness vector
+        assembly + honest proof issuance.
+
+        HIGH-2 fix (independent review of 39dd3993): the issuer itself
+        derives ``result`` from its own injected ``is_complete`` (== this
+        assembler's ``is_complete``, wired at compose time — see
+        ``tos_runtime.compose.root``) — this resolver never computes
+        ``vector_complete``/``currentness_result`` itself, so it cannot
+        drift from what the issuer actually checks.
+
+        Two-pass assemble (team-lead follow-up guidance, 2026-09-08): the
+        first pass gets a REAL ``CurrentnessRevision`` this process's own
+        owned dimensions actually sit at (never re-derived from the RCL
+        log's own internal revision formula, which stays private to
+        ``CurrentnessAssembler.assemble``); the pending dimensions are then
+        stamped with that SAME revision (``single_revision_consistent``
+        requires every dimension to share exactly one) and the second pass
+        folds them in via the shipped ``extra_dimensions`` seam.
+
+        Returns ``None`` only when the base vector itself is not yet
+        assemblable (no owned dimension has produced a revision yet) —
+        never a fabricated proof.
+        """
+        base_vector = self.currentness_assembler.assemble()
+        if base_vector is None or base_vector.currentness_revision is None:
+            return None
+        pending_dimensions = stamp_pending_dimensions(
+            self.pending_dimension_specs,
+            at_revision=base_vector.currentness_revision,
+        )
+        vector = self.currentness_assembler.assemble(
+            extra_dimensions=pending_dimensions
+        )
+        if vector is None:
+            return None
+        # §12 line 307-313 (tos.cur.predicates.proof_structurally_complete):
+        # bound_generations must be non-empty -- structurally derived from
+        # the SAME assembled vector's own per-dimension bound generations
+        # (never invented), one entry per dimension that carries one.
+        bound_generations = tuple(
+            d.bound_generation
+            for d in vector.dimensions
+            if d.bound_generation is not None
+        )
+        restrictive_floors = tuple(
+            d.restrictive_floor
+            for d in vector.dimensions
+            if d.restrictive_floor is not None
+        )
+        return self.proof_issuer.issue(
+            attempt,
+            vector,
+            bound_generations=bound_generations,
+            restrictive_floors=restrictive_floors,
+            egress_coordinates=EgressProofCoordinateSet(
+                principal=self.principal, local_latch_clear=True
+            ),
+        )
+
+    def _egress_gate_stand_in_fields(
+        self, construction: CandidateConstruction | None
+    ) -> dict[str, Any]:
+        """Items 6/12/16's ``SendBoundaryContext`` stand-in fields (team-lead
+        follow-up guidance, 2026-09-08): four are explicit operator
+        attestations from composition config
+        (:mod:`tos_runtime.compose._egress_attestations` — see its own
+        module docstring for which Phase replaces each), never a bare
+        Python literal. ``max_quantity_within_allowance`` is the one
+        exception: it HAS a real Phase 2 producer (step 2's own
+        ``CandidateConstruction.no_silent_widening_ok``) and is derived
+        from that live value instead of an attestation."""
+        attestations = self.egress_attestations
+        return {
+            "account_instrument_action_allowed": (
+                attestations.account_instrument_action_allowed
+            ),
+            "max_quantity_within_allowance": (
+                None if construction is None else construction.no_silent_widening_ok
+            ),
+            "venue_session_account_facts_current": (
+                attestations.venue_session_account_facts_current
+            ),
+            "broker_constraint_generation_current": (
+                attestations.broker_constraint_generation_current
+            ),
+            "restrictive_latch_state": attestations.restrictive_latch_state,
+            "worst_credible_capacity": attestations.worst_credible_capacity,
+        }
+
+    def __call__(self, attempt: AttemptRequest) -> SendBoundaryContext | None:
+        """Resolve this attempt's send-boundary context from the live flow
+        artifacts (design #35 §3.1). Returns ``None`` (an absent required
+        fact, RFC-002 §10.8:761) when step 2/step 11 produced nothing yet."""
+        construction = self.construction_stage.construction
+        proof = self.proof_stage.proof
+        if construction is None:
+            return None
+
+        self._yield_seq += 1
+
+        item3 = self.currentness_assembler.item3_fields()
+
+        approval_consumed, approval_digest = item14_fields_from_verdict(
+            self.step4_recorder.last_verdict
+        )
+        permit_identity, commitment_current = item15_fields_from(
+            self.flow_governor.last_permit, self.step9_recorder.last_verdict
+        )
+
+        egress_currentness_proof = self._issue_egress_currentness_proof(attempt)
+        item16 = self.proof_issuer.item16_fields(attempt.attempt_id)
+
+        context = send_boundary_context(
+            attempt=attempt,
+            construction=construction,
+            conformance_proof=proof,
+            reference=OrderingEvent(
+                event_id=f"{self.continuity_id}-send-{self._yield_seq}",
+                source_continuity_id=self.continuity_id,
+                source_native_sequence=self._yield_seq,
+            ),
+            egress_request_for_command=self._egress_request_for_command,
+            quorum_certificate_for_command=self._quorum_certificate_for_command,
+            instrument_key=self.instrument_key,
+            transport_nature=self.transport_nature,
+            non_live_test_environment_token=self.environment_label,
+            scope_environment=self.environment_label,
+            evidence_environment=self.environment_label,
+            environment_inherited=False,
+            credential_route_inventory=self.credential_route_inventory,
+            transmission_capability=self._reconstruct_transmission_capability(attempt),
+            capability_nonce=self.step14_stage.nonce_for(attempt.attempt_id),
+            action_flow_permit_nonce=(
+                None
+                if self.flow_governor.last_permit is None
+                else self.flow_governor.last_permit.claim_nonce
+            ),
+            prior_claims=(),
+            principal=self.principal,
+            request_digest=attempt.attempt_id,
+            venue_snapshot=self.venue_snapshot,
+            venue_policy=self.venue_policy,
+            venue_decision=self.venue_decision,
+            observed_session_phase=self.observed_session_phase,
+            action_class=self.action_class,
+            order_shape=self.venue_stage.resolved_shape,
+            venue_shape_constraints=self.venue_stage.shape_constraints,
+            commitment_epoch_current=item3.commitment_epoch_current,
+            # ⚠ provisional (design #40 §5 order 6, items 6/12 — Phase 4 per the
+            # coordinator's own task brief; unchanged here).
+            broker_capability_profile=None,
+            required_capability_set=None,
+            broker_profile_version_current=None,
+            idempotency_proven=None,
+            # Items 6/12/16 stand-ins: operator attestations from composition
+            # config (see tos_runtime.compose._egress_attestations's own
+            # module docstring for which Phase replaces each), except
+            # max_quantity_within_allowance which HAS a real Phase 2 producer
+            # (step 2's own CandidateConstruction.no_silent_widening_ok).
+            **self._egress_gate_stand_in_fields(construction),
+            approval_consumed_for_this_intent=approval_consumed,
+            action_flow_permit_identity=permit_identity,
+            action_flow_commitment_current=commitment_current,
+            egress_currentness_proof=egress_currentness_proof,
+            egress_currentness_result=item16.egress_currentness_result,
+            authorized_coordinates=self.authorized_coordinates,
+            capsule_egress_request_digest=self.capsule_egress_request_digest,
+            outbound_side=self.outbound_side,
+        )
+        self.contexts += (context,)
+        return context

@@ -66,7 +66,9 @@ def _derived_bar(
     parent = observation(
         raw_event_id="raw-close", payload=close_payload, as_of=parent_as_of
     )
-    derived = observation(raw_event_id="raw-band", payload=band_payload, as_of=derived_as_of)
+    derived = observation(
+        raw_event_id="raw-band", payload=band_payload, as_of=derived_as_of
+    )
     snapshot = issue_snapshot(
         observations=(parent, derived),
         field_evaluations=(evaluation("close"), evaluation("lower_band")),
@@ -108,7 +110,9 @@ def test_a_reproducible_derived_value_publishes() -> None:
 
 def test_a_parent_strictly_before_its_child_is_sound_causality() -> None:
     """(§5.4) Parent as-of < derived as-of is the ordinary, admitted case."""
-    _, resolution = _derived_bar(parent_as_of=BAR_ONE_AS_OF, derived_as_of=BAR_TWO_AS_OF)
+    _, resolution = _derived_bar(
+        parent_as_of=BAR_ONE_AS_OF, derived_as_of=BAR_TWO_AS_OF
+    )
     assert [value.field_key for value in resolution.values] == ["lower_band"]
 
 
@@ -121,7 +125,9 @@ def test_a_direct_observation_needs_no_lineage_at_all() -> None:
     """
     payload = preimage(close=CLOSE_BAR_ONE)
     obs = observation(raw_event_id="raw-1", payload=payload, as_of=BAR_ONE_AS_OF)
-    snapshot = issue_snapshot(observations=(obs,), field_evaluations=(evaluation("close"),))
+    snapshot = issue_snapshot(
+        observations=(obs,), field_evaluations=(evaluation("close"),)
+    )
     observations, _ = index_observations(snapshot)
     state, reason = lineage_state_for_output("raw-1", BAR_ONE_AS_OF, (), observations)
     assert state is FieldState.VALID
@@ -175,7 +181,9 @@ def test_a_blocking_lineage_field_state_propagates() -> None:
 
 def test_a_parent_later_than_its_child_is_look_ahead() -> None:
     """(§5.4 ★) A band claiming a parent from the future is refused, named as look-ahead."""
-    _, resolution = _derived_bar(parent_as_of=BAR_TWO_AS_OF, derived_as_of=BAR_ONE_AS_OF)
+    _, resolution = _derived_bar(
+        parent_as_of=BAR_TWO_AS_OF, derived_as_of=BAR_ONE_AS_OF
+    )
     assert resolution.values == ()
     assert _reasons(resolution) == {ValueRejectionReason.LINEAGE_LOOKAHEAD}
 
@@ -220,11 +228,15 @@ def test_a_parent_with_no_as_of_blocks_the_value() -> None:
     parent = observation(
         raw_event_id="raw-close", payload=close_payload, as_of=BAR_ONE_AS_OF
     ).model_copy(update={"time": ObservationTime(source_event_time=None)})
-    derived = observation(raw_event_id="raw-band", payload=band_payload, as_of=BAR_ONE_AS_OF)
+    derived = observation(
+        raw_event_id="raw-band", payload=band_payload, as_of=BAR_ONE_AS_OF
+    )
     snapshot = issue_snapshot(
         observations=(parent, derived),
         field_evaluations=(evaluation("lower_band"),),
-        transformation_lineage=(lineage_node(output_id="raw-band", parents=("raw-close",)),),
+        transformation_lineage=(
+            lineage_node(output_id="raw-band", parents=("raw-close",)),
+        ),
     )
     capsule = issue_capsule(snapshot)
     resolution = publish_context_value_view(
@@ -254,18 +266,26 @@ def test_a_contested_parent_identity_is_unresolvable_not_arbitrarily_resolved() 
     band_payload = preimage(lower_band=_BAND)
     snapshot = issue_snapshot(
         observations=(
-            observation(raw_event_id="raw-close", payload=close_payload, as_of=BAR_ONE_AS_OF),
-            observation(raw_event_id="raw-close", payload=late_payload, as_of=BAR_TWO_AS_OF),
-            observation(raw_event_id="raw-band", payload=band_payload, as_of=BAR_ONE_AS_OF),
+            observation(
+                raw_event_id="raw-close", payload=close_payload, as_of=BAR_ONE_AS_OF
+            ),
+            observation(
+                raw_event_id="raw-close", payload=late_payload, as_of=BAR_TWO_AS_OF
+            ),
+            observation(
+                raw_event_id="raw-band", payload=band_payload, as_of=BAR_ONE_AS_OF
+            ),
         ),
         field_evaluations=(evaluation("lower_band"),),
-        transformation_lineage=(lineage_node(output_id="raw-band", parents=("raw-close",)),),
+        transformation_lineage=(
+            lineage_node(output_id="raw-band", parents=("raw-close",)),
+        ),
     )
     observations, ambiguous = index_observations(snapshot)
     assert ambiguous == frozenset({"raw-close"})
-    assert "raw-close" not in observations, (
-        "a contested identity must not survive in the index — the lineage path has no other seal"
-    )
+    assert (
+        "raw-close" not in observations
+    ), "a contested identity must not survive in the index — the lineage path has no other seal"
 
     capsule = issue_capsule(snapshot)
     resolution = publish_context_value_view(
@@ -280,5 +300,7 @@ def test_a_contested_parent_identity_is_unresolvable_not_arbitrarily_resolved() 
 
 def test_a_simultaneous_parent_is_admitted_not_over_rejected() -> None:
     """(§5.4, #26 WDR MAJOR-1) The boundary is ``<=``: an equal as-of is not look-ahead."""
-    _, resolution = _derived_bar(parent_as_of=BAR_ONE_AS_OF, derived_as_of=BAR_ONE_AS_OF)
+    _, resolution = _derived_bar(
+        parent_as_of=BAR_ONE_AS_OF, derived_as_of=BAR_ONE_AS_OF
+    )
     assert [value.field_key for value in resolution.values] == ["lower_band"]

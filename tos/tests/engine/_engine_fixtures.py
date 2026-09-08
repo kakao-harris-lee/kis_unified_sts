@@ -65,7 +65,9 @@ PROOF_DIGEST = "proof-digest-0"
 PERMIT_IDENTITY = "permit-0"
 
 
-def instrument_key(account: str = ACCOUNT, instrument: str = INSTRUMENT) -> InstrumentKey:
+def instrument_key(
+    account: str = ACCOUNT, instrument: str = INSTRUMENT
+) -> InstrumentKey:
     """The dispatch key used across the suite."""
     return InstrumentKey(account=account, instrument=instrument)
 
@@ -75,7 +77,9 @@ def issue_capsule(**overrides: Any) -> DecisionContextCapsule:
     base: dict[str, Any] = {
         "issuer_principal_id": "iss-1",
         "critical_input_policy": PolicyRef(policy_id="pol-1", canonical_digest="pd-1"),
-        "critical_input_snapshot": SnapshotRef(snapshot_id="cis-ref", canonical_digest="sd-1"),
+        "critical_input_snapshot": SnapshotRef(
+            snapshot_id="cis-ref", canonical_digest="sd-1"
+        ),
         "scope": CapsuleScope(
             environment="non-live-test",
             account=ACCOUNT,
@@ -194,7 +198,9 @@ def vector_policy() -> DecisionPolicy:
     return DecisionPolicy(rules=(rule,), default=hold)
 
 
-def issue_strategy(policy: DecisionPolicy | None = None, **overrides: Any) -> AuthoredStrategy:
+def issue_strategy(
+    policy: DecisionPolicy | None = None, **overrides: Any
+) -> AuthoredStrategy:
     """Issue a valid Authored Strategy carrying ``policy`` (a capsule-gated one by default)."""
     base: dict[str, Any] = {
         "dsl_version": "dsl-0",

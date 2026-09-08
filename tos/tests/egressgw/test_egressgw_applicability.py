@@ -71,10 +71,7 @@ def test_the_synthetic_baseline_is_positively_established_as_non_broker() -> Non
 
 def test_a_self_declaration_without_inventory_corroboration_is_unresolved() -> None:
     """(§4.2 구조 파생 > 자기신고) The transport's own say-so is not enough."""
-    assert (
-        _applicability(credential_route_inventory=())
-        is BrokerApplicability.UNKNOWN
-    )
+    assert _applicability(credential_route_inventory=()) is BrokerApplicability.UNKNOWN
 
 
 def test_an_unrepresented_transport_principal_is_unresolved() -> None:
@@ -87,10 +84,15 @@ def test_an_unrepresented_transport_principal_is_unresolved() -> None:
             inside_boundary=True,
         ),
     )
-    assert _applicability(credential_route_inventory=inventory) is BrokerApplicability.UNKNOWN
+    assert (
+        _applicability(credential_route_inventory=inventory)
+        is BrokerApplicability.UNKNOWN
+    )
 
 
-def test_a_transport_principal_holding_a_route_is_broker_reaching_whatever_it_declared() -> None:
+def test_a_transport_principal_holding_a_route_is_broker_reaching_whatever_it_declared() -> (
+    None
+):
     """(§4.2) Structure overrides the declaration: a route makes it broker-reaching."""
     inventory = (
         CredentialRouteInventoryEntry(
@@ -123,7 +125,9 @@ def test_an_unknown_credential_flag_is_conservatively_potentially_usable() -> No
     )
 
 
-def test_an_outside_boundary_principal_with_credential_and_route_breaks_disjointness() -> None:
+def test_an_outside_boundary_principal_with_credential_and_route_breaks_disjointness() -> (
+    None
+):
     """(EGRESS-INV-002:147-149 / Q-CRED-1) A bypass candidate anywhere denies the whole gate."""
     inventory = (
         *disjoint_inventory(),
@@ -134,7 +138,10 @@ def test_an_outside_boundary_principal_with_credential_and_route_breaks_disjoint
             inside_boundary=False,
         ),
     )
-    assert _applicability(credential_route_inventory=inventory) is BrokerApplicability.UNKNOWN
+    assert (
+        _applicability(credential_route_inventory=inventory)
+        is BrokerApplicability.UNKNOWN
+    )
 
 
 def test_an_empty_inventory_proves_no_disjointness() -> None:
@@ -151,7 +158,9 @@ def test_an_empty_inventory_proves_no_disjointness() -> None:
     "field",
     ["reaches_broker", "credential_bearing", "route_bearing", "risk_relevant_live"],
 )
-def test_an_unestablished_nature_flag_is_conservatively_broker_consuming(field: str) -> None:
+def test_an_unestablished_nature_flag_is_conservatively_broker_consuming(
+    field: str,
+) -> None:
     """(§4.2 negative polarity) ``None`` is not ``False`` — an unknown nature never passes."""
     nature = synthetic_nature(**{field: None})
     assert _applicability(transport_nature=nature) is BrokerApplicability.UNKNOWN
@@ -209,7 +218,10 @@ def test_mismatched_evidence_and_scope_environments_are_refused() -> None:
 
 def test_an_uninjected_environment_token_is_unresolved() -> None:
     """(§9 — no hardcoded scope) Without the injected token there is nothing to bind to."""
-    assert _applicability(non_live_test_environment_token=None) is BrokerApplicability.UNKNOWN
+    assert (
+        _applicability(non_live_test_environment_token=None)
+        is BrokerApplicability.UNKNOWN
+    )
 
 
 # ---------------------------------------------------------------------------

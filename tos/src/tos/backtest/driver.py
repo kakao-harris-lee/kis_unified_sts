@@ -239,7 +239,9 @@ def _stamped_egress(
     """
     return EngineEvent(
         kind=EventKind.EGRESS_RESULT,
-        egress_result=payload.model_copy(update={"reference": counter.next_reference()}),
+        egress_result=payload.model_copy(
+            update={"reference": counter.next_reference()}
+        ),
     )
 
 
@@ -281,7 +283,11 @@ def _trace_entry(
         attempt_id=(
             egress.attempt_id
             if egress is not None
-            else (None if flow is None or flow.attempt is None else flow.attempt.attempt_id)
+            else (
+                None
+                if flow is None or flow.attempt is None
+                else flow.attempt.attempt_id
+            )
         ),
         egress_result_kind=None if egress is None else egress.kind,
         capacity_state=None if reservation is None else reservation.capacity_state,
@@ -291,7 +297,9 @@ def _trace_entry(
             if result.pipeline is None or result.pipeline.proposal is None
             else result.pipeline.proposal.canonical_digest
         ),
-        outcome_digest=(None if result.pipeline is None else result.pipeline.outcome_digest),
+        outcome_digest=(
+            None if result.pipeline is None else result.pipeline.outcome_digest
+        ),
     )
 
 
@@ -315,7 +323,9 @@ def _assemble_trace(
     """
     entries: list[TraceEntry] = []
     halts: list[HaltRecord] = []
-    for offset, ((event, bar_index), result) in enumerate(zip(yielded, results), start=1):
+    for offset, ((event, bar_index), result) in enumerate(
+        zip(yielded, results), start=1
+    ):
         sequence = start + offset
         entry = _trace_entry(
             sequence=sequence, event=event, bar_index=bar_index, result=result
@@ -472,7 +482,9 @@ class BacktestDriver:
             bars_consumed=len(stream),
             events_yielded=len(yielded),
             event_results=results,
-            trace=WiringTrace(continuity_id=self._counter.continuity_id, entries=entries),
+            trace=WiringTrace(
+                continuity_id=self._counter.continuity_id, entries=entries
+            ),
             halts=halts,
             fill_records=self._fill_model.records,
             unsettled_fill_records=self._fill_model.unsettled_records(),
@@ -655,7 +667,9 @@ class MultiSymbolBacktestDriver:
         }
         for key, bar in merge_bar_streams(lanes):
             tick = next(ticks[key], None)
-            if tick is None or tick.bar is not bar:  # pragma: no cover - merge is lane-preserving
+            if (
+                tick is None or tick.bar is not bar
+            ):  # pragma: no cover - merge is lane-preserving
                 raise BacktestIntegrityError(
                     f"lane {(key.account, key.instrument)} produced no tick for merged bar "
                     f"{bar.bar_index} — the merge preserves each lane's own order and the "
@@ -733,7 +747,9 @@ class MultiSymbolBacktestDriver:
             bars_consumed=sum(len(stream) for _key, stream in lanes),
             events_yielded=len(yielded),
             event_results=results,
-            trace=WiringTrace(continuity_id=self._counter.continuity_id, entries=entries),
+            trace=WiringTrace(
+                continuity_id=self._counter.continuity_id, entries=entries
+            ),
             halts=halts,
             fill_records=tuple(self._fill_records),
             # No settlement moment orders these, so the order is declared rather than observed:

@@ -105,7 +105,9 @@ class AllFalseConstructionCoordinatorAuthority(FrozenModel):
     arms_live_scope: bool = False
 
     @model_validator(mode="after")
-    def _all_construction_authority_false(self) -> AllFalseConstructionCoordinatorAuthority:
+    def _all_construction_authority_false(
+        self,
+    ) -> AllFalseConstructionCoordinatorAuthority:
         """Reject construction if any RFC-002 §9.1:553 flag is ``True``."""
         for name in CONSTRUCTION_SHALL_NOT_FLAGS:
             if getattr(self, name) is True:

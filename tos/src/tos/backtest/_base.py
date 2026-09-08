@@ -96,7 +96,6 @@ PERFORMANCE_SURFACE_TOKENS: frozenset[str] = frozenset(
 #: performance intent is already covered by ``return`` / ``pnl`` / ``profit`` / ``gain``.
 
 
-
 def performance_surface_offenders(field_names: Iterable[str]) -> tuple[str, ...]:
     """Field names that would give a D-E3 structure a performance / admissibility surface.
 

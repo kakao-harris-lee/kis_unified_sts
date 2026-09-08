@@ -56,10 +56,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeVar
 
 from tos.orthostate import (
     BrokerOrderState,
     CompositeState,
+    IntentState,
     KnowledgeState,
     StateDimension,
     TransmissionAttemptState,
@@ -67,6 +69,43 @@ from tos.orthostate import (
 )
 from tos.rcl import CapacityState
 from tos.staterestore.store import DIMENSION_COMMIT_ORDER, CompositeStateStore
+
+_EnumMarker = TypeVar(
+    "_EnumMarker",
+    IntentState,
+    TransmissionAttemptState,
+    BrokerOrderState,
+    KnowledgeState,
+    CapacityState,
+)
+
+
+def _typed_marker(value: object, enum_type: type[_EnumMarker]) -> _EnumMarker:
+    """Narrow a dimension marker from ``object`` to its concrete dimension enum.
+
+    Pure mypy narrowing, not a behavioural change: :meth:`CompositeStateStore.read_markers`
+    already coerces every stored value through the dimension's own enum type
+    (``_DIMENSION_ENUM`` in :mod:`tos.staterestore.store`) before returning it, and every
+    :data:`ABSENT_DIMENSION_FILL` entry is itself built from that same enum — so at each
+    call site in :func:`reload_conservative` ``value`` is already guaranteed to be an
+    ``enum_type`` member. mypy cannot see that guarantee through the heterogeneous
+    ``dict[StateDimension, object]`` typing shared by ``markers`` and
+    ``ABSENT_DIMENSION_FILL`` (five differently-typed dimensions in one dict), so this
+    isinstance check makes the invariant executable — a real violation raises rather than
+    being papered over by a cast.
+
+    Raises:
+        TypeError: If ``value`` is not an ``enum_type`` member (would indicate a
+            ``staterestore.store`` / ``ABSENT_DIMENSION_FILL`` invariant violation, not a
+            reachable outcome of normal reload).
+    """
+    if not isinstance(value, enum_type):
+        raise TypeError(
+            f"expected a {enum_type.__name__} member, got {value!r} — "
+            "staterestore.store / ABSENT_DIMENSION_FILL invariant violated"
+        )
+    return value
+
 
 #: The S-2 conservative fill for an absent dimension (argued in the module docstring).
 #: ``StateDimension.INTENT`` is deliberately **absent from this table**: there is no
@@ -193,11 +232,17 @@ def reload_conservative(
 
     pre = CompositeState(
         intent_identity=intent_identity,
-        intent_state=markers[StateDimension.INTENT],
-        transmission_attempt_state=resolved[StateDimension.TRANSMISSION_ATTEMPT],
-        broker_order_state=resolved[StateDimension.BROKER_ORDER],
-        knowledge_state=resolved[StateDimension.KNOWLEDGE],
-        capacity_state=resolved[StateDimension.CAPACITY],
+        intent_state=_typed_marker(markers[StateDimension.INTENT], IntentState),
+        transmission_attempt_state=_typed_marker(
+            resolved[StateDimension.TRANSMISSION_ATTEMPT], TransmissionAttemptState
+        ),
+        broker_order_state=_typed_marker(
+            resolved[StateDimension.BROKER_ORDER], BrokerOrderState
+        ),
+        knowledge_state=_typed_marker(
+            resolved[StateDimension.KNOWLEDGE], KnowledgeState
+        ),
+        capacity_state=_typed_marker(resolved[StateDimension.CAPACITY], CapacityState),
         state_model_version=state_model_version,
     )
     return RestartReconstruction(

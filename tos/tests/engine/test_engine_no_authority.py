@@ -75,9 +75,9 @@ def test_the_authority_block_carries_the_eleven_shall_nots() -> None:
     assert len(COORDINATOR_SHALL_NOT_FLAGS) == 11
     assert len(set(COORDINATOR_SHALL_NOT_FLAGS)) == 11
     fields = set(AllFalseCoordinatorAuthority.model_fields)
-    assert fields == set(COORDINATOR_SHALL_NOT_FLAGS), (
-        "the model's fields and the named SHALL NOT list must not drift apart — they are one set"
-    )
+    assert fields == set(
+        COORDINATOR_SHALL_NOT_FLAGS
+    ), "the model's fields and the named SHALL NOT list must not drift apart — they are one set"
 
 
 def test_every_flag_defaults_to_false() -> None:
@@ -129,7 +129,9 @@ def _called_names(path: Path) -> set[str]:
     return names
 
 
-def test_no_engine_source_calls_a_mutation_construction_or_capability_function() -> None:
+def test_no_engine_source_calls_a_mutation_construction_or_capability_function() -> (
+    None
+):
     """(§7.2-6 AST canary) The sequencer requests; it never performs another actor's act."""
     offenders: list[str] = []
     for path in sorted(_ENGINE_SRC.rglob("*.py")):
@@ -174,7 +176,8 @@ def test_provisional_stand_ins_label_themselves_non_authoritative() -> None:
     admitted = [r for r in sink.records if r.kind is EvidenceKind.FLOW_STEP_ADMITTED]
     assert admitted
     assert all(
-        r.authority_class is StageAuthorityClass.NON_AUTHORITATIVE_PROVISIONAL for r in admitted
+        r.authority_class is StageAuthorityClass.NON_AUTHORITATIVE_PROVISIONAL
+        for r in admitted
     )
     assert all("NON-AUTHORITATIVE PROVISIONAL" in (r.detail or "") for r in admitted)
 

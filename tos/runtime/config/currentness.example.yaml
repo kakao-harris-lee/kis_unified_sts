@@ -1,0 +1,27 @@
+# tos_runtime.currentness example config (design #40 §5 order 6, lane R item 1)
+#
+# Loader: tos_runtime.currentness.config.load_currentness_config
+#
+# The one VER-002 profile key this lane consumes is named verbatim from
+# tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml
+# (line 301) — do not rename.
+#
+# This key already carries an APPROVED value_ms (500) in VER-002 itself, but
+# that entry is marked "RECHECK: APPROVE after the fenced egress journal and
+# broker transport are implemented" — Phase 2 implements neither (the
+# TransmissionCapabilityStage/EgressCurrentnessProofIssuer this config feeds
+# issue a durable RCL entry, but do not yet measure real broker-transport
+# latency). Matching tos_runtime.time.example.yaml's own discipline of
+# keeping a key null at ITS OWN consumption site even where an upstream
+# VER-002 entry already carries a number, this key stays null (named-TBD)
+# until an operator explicitly approves it for THIS consumption site. Any
+# key left null, or missing outright, is a fail-closed startup rejection
+# (tos_runtime.currentness.config.CurrentnessConfigError) — never a silent
+# default.
+
+# Maximum interval from durable single-use capability claim + SEND_STARTED
+# persistence to transmission of the first broker-directed byte (ADR-002-007
+# §§9.4-9.5). Fed to EgressCurrentnessProofIssuer.issue()'s
+# max_claim_to_send_bound_ms argument (tos.cur.EgressCurrentnessProof's own
+# field of the same name).
+B_capability_claim_to_send: null

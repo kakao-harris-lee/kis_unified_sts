@@ -93,7 +93,9 @@ def test_a_forged_value_no_longer_digests_to_the_attested_payload() -> None:
     """
     honest = preimage(close=CLOSE_BAR_ONE, session="REGULAR")
     obs = observation(raw_event_id="raw-1", payload=honest, as_of=BAR_ONE_AS_OF)
-    snapshot = issue_snapshot(observations=(obs,), field_evaluations=(evaluation("close"),))
+    snapshot = issue_snapshot(
+        observations=(obs,), field_evaluations=(evaluation("close"),)
+    )
     capsule = issue_capsule(snapshot)
 
     forged = preimage(close=CLOSE_BAR_ONE + 999_999, session="REGULAR")
@@ -108,7 +110,9 @@ def test_a_value_absent_from_the_attested_payload_is_refused() -> None:
     """(§2.3) A field_key the covered payload does not carry has no attributable value."""
     capsule, snapshot, _ = one_bar()
     payload = preimage(close=CLOSE_BAR_ONE, session="REGULAR")
-    resolution = _publish(capsule, snapshot, (candidate("lower_band", "raw-1", payload),))
+    resolution = _publish(
+        capsule, snapshot, (candidate("lower_band", "raw-1", payload),)
+    )
     assert _reasons(resolution) == {ValueRejectionReason.VALUE_NOT_IN_PAYLOAD}
 
 
@@ -116,17 +120,21 @@ def test_a_value_attributed_to_no_observation_is_refused() -> None:
     """(§2.3) An ``observation_ref`` naming nothing in the snapshot attributes nothing."""
     capsule, snapshot, _ = one_bar()
     payload = preimage(close=CLOSE_BAR_ONE, session="REGULAR")
-    resolution = _publish(capsule, snapshot, (candidate("close", "raw-absent", payload),))
+    resolution = _publish(
+        capsule, snapshot, (candidate("close", "raw-absent", payload),)
+    )
     assert _reasons(resolution) == {ValueRejectionReason.OBSERVATION_NOT_FOUND}
 
 
 def test_an_observation_without_a_payload_digest_publishes_nothing() -> None:
     """(§2.3/§4.2) No provenance pointer means no binding to verify — fail-closed."""
     payload = preimage(close=CLOSE_BAR_ONE)
-    obs = observation(raw_event_id="raw-1", payload=payload, as_of=BAR_ONE_AS_OF).model_copy(
-        update={"raw": RawRef(raw_event_id="raw-1", payload_digest=None)}
+    obs = observation(
+        raw_event_id="raw-1", payload=payload, as_of=BAR_ONE_AS_OF
+    ).model_copy(update={"raw": RawRef(raw_event_id="raw-1", payload_digest=None)})
+    snapshot = issue_snapshot(
+        observations=(obs,), field_evaluations=(evaluation("close"),)
     )
-    snapshot = issue_snapshot(observations=(obs,), field_evaluations=(evaluation("close"),))
     capsule = issue_capsule(snapshot)
     resolution = _publish(capsule, snapshot, (candidate("close", "raw-1", payload),))
     assert _reasons(resolution) == {ValueRejectionReason.PAYLOAD_DIGEST_ABSENT}
@@ -135,10 +143,12 @@ def test_an_observation_without_a_payload_digest_publishes_nothing() -> None:
 def test_an_observation_without_an_as_of_publishes_nothing() -> None:
     """(§4.2) A missing ``source_event_time`` removes the Validity-Window anchor — fail-closed."""
     payload = preimage(close=CLOSE_BAR_ONE)
-    obs = observation(raw_event_id="raw-1", payload=payload, as_of=BAR_ONE_AS_OF).model_copy(
-        update={"time": ObservationTime(source_event_time=None)}
+    obs = observation(
+        raw_event_id="raw-1", payload=payload, as_of=BAR_ONE_AS_OF
+    ).model_copy(update={"time": ObservationTime(source_event_time=None)})
+    snapshot = issue_snapshot(
+        observations=(obs,), field_evaluations=(evaluation("close"),)
     )
-    snapshot = issue_snapshot(observations=(obs,), field_evaluations=(evaluation("close"),))
     capsule = issue_capsule(snapshot)
     resolution = _publish(capsule, snapshot, (candidate("close", "raw-1", payload),))
     assert _reasons(resolution) == {ValueRejectionReason.AS_OF_ABSENT}
@@ -184,7 +194,9 @@ def test_two_admitted_observations_of_one_field_are_both_refused() -> None:
     )
     assert resolution.disposition is ValueViewDisposition.EXPLICIT_EMPTY
     assert _reasons(resolution) == {ValueRejectionReason.DUPLICATE_FIELD_KEY}
-    assert len(resolution.rejected) == 2, "both contenders are refused, not just the loser"
+    assert (
+        len(resolution.rejected) == 2
+    ), "both contenders are refused, not just the loser"
     assert resolution.values == ()
 
 
@@ -238,8 +250,12 @@ def test_a_correct_digest_does_not_rescue_a_non_admitted_observation(
         admission=admission,
         field_state=observed_state,
     )
-    snapshot = issue_snapshot(observations=(obs,), field_evaluations=(evaluation("close"),))
+    snapshot = issue_snapshot(
+        observations=(obs,), field_evaluations=(evaluation("close"),)
+    )
     capsule = issue_capsule(snapshot)
     resolution = _publish(capsule, snapshot, (candidate("close", "raw-1", payload),))
-    assert payload_digest_of(payload) == obs.raw.payload_digest, "the digest itself is honest"
+    assert (
+        payload_digest_of(payload) == obs.raw.payload_digest
+    ), "the digest itself is honest"
     assert _reasons(resolution) == {ValueRejectionReason.FIELD_STATE_NOT_VALID}

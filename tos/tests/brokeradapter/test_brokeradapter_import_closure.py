@@ -143,7 +143,11 @@ _RNG_MODULES = frozenset({"random", "secrets", "uuid"})
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "compile", "__import__"})
 _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
 
-_SUBMODULES = ("tos.brokeradapter", "tos.brokeradapter.protocol", "tos.brokeradapter.synthetic")
+_SUBMODULES = (
+    "tos.brokeradapter",
+    "tos.brokeradapter.protocol",
+    "tos.brokeradapter.synthetic",
+)
 
 _LOADED_SUBMODULES = {
     "tos.brokeradapter": tos.brokeradapter,
@@ -184,9 +188,15 @@ def _closure_child(queue: mp.Queue) -> None:
     queue.put(
         {
             "tos_tops": sorted(
-                {top for name in sys.modules if (top := _tos_top_level(name)) is not None}
+                {
+                    top
+                    for name in sys.modules
+                    if (top := _tos_top_level(name)) is not None
+                }
             ),
-            "forbidden": sorted(name for name in sys.modules if _is_forbidden_non_tos(name)),
+            "forbidden": sorted(
+                name for name in sys.modules if _is_forbidden_non_tos(name)
+            ),
         }
     )
 
@@ -200,7 +210,11 @@ def _engine_only_child(queue: mp.Queue) -> None:
     queue.put(
         {
             "tos_tops": sorted(
-                {top for name in sys.modules if (top := _tos_top_level(name)) is not None}
+                {
+                    top
+                    for name in sys.modules
+                    if (top := _tos_top_level(name)) is not None
+                }
             ),
             "forbidden": [],
         }
@@ -214,15 +228,27 @@ def _leak_canary_child(queue: mp.Queue) -> None:
 
     import tos.brokeradapter  # noqa: F401
 
-    for planted in ("shared.kis", "numpy", "tos.egressgw", "tos.egress", "tos.future_sibling"):
+    for planted in (
+        "shared.kis",
+        "numpy",
+        "tos.egressgw",
+        "tos.egress",
+        "tos.future_sibling",
+    ):
         sys.modules[planted] = types.ModuleType(planted)
 
     queue.put(
         {
             "tos_tops": sorted(
-                {top for name in sys.modules if (top := _tos_top_level(name)) is not None}
+                {
+                    top
+                    for name in sys.modules
+                    if (top := _tos_top_level(name)) is not None
+                }
             ),
-            "forbidden": sorted(name for name in sys.modules if _is_forbidden_non_tos(name)),
+            "forbidden": sorted(
+                name for name in sys.modules if _is_forbidden_non_tos(name)
+            ),
         }
     )
 
@@ -254,28 +280,42 @@ def _network_offenders(path: Path) -> list[str]:
             for alias in node.names:
                 root = alias.name.split(".")[0]
                 if root in _NETWORK_MODULES:
-                    offenders.append(f"{path.name}:{node.lineno} network import {alias.name}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} network import {alias.name}"
+                    )
                 if root in _CLOCK_MODULES:
-                    offenders.append(f"{path.name}:{node.lineno} clock import {alias.name}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} clock import {alias.name}"
+                    )
                 if root in _RNG_MODULES:
-                    offenders.append(f"{path.name}:{node.lineno} rng import {alias.name}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} rng import {alias.name}"
+                    )
                 if root == "importlib":
                     offenders.append(f"{path.name}:{node.lineno} import importlib")
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             root = module.split(".")[0]
             if root in _NETWORK_MODULES:
-                offenders.append(f"{path.name}:{node.lineno} network from {module} import ...")
+                offenders.append(
+                    f"{path.name}:{node.lineno} network from {module} import ..."
+                )
             if root in _CLOCK_MODULES:
-                offenders.append(f"{path.name}:{node.lineno} clock from {module} import ...")
+                offenders.append(
+                    f"{path.name}:{node.lineno} clock from {module} import ..."
+                )
             if root in _RNG_MODULES:
-                offenders.append(f"{path.name}:{node.lineno} rng from {module} import ...")
+                offenders.append(
+                    f"{path.name}:{node.lineno} rng from {module} import ..."
+                )
             if root == "importlib":
                 offenders.append(f"{path.name}:{node.lineno} from importlib import ...")
             if module == "os":
                 for alias in node.names:
                     if alias.name in _AMBIENT_ENV_ATTRS:
-                        offenders.append(f"{path.name}:{node.lineno} from os import {alias.name}")
+                        offenders.append(
+                            f"{path.name}:{node.lineno} from os import {alias.name}"
+                        )
         elif isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name) and func.id in _DYNAMIC_CALL_NAMES:
@@ -294,7 +334,9 @@ def _network_offenders(path: Path) -> list[str]:
             lowered = identifier.lower()
             for fragment in _CREDENTIAL_FRAGMENTS:
                 if fragment in lowered:
-                    offenders.append(f"{path.name}:{node.lineno} credential name {identifier}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} credential name {identifier}"
+                    )
     return offenders
 
 
@@ -384,15 +426,17 @@ def test_closure_excludes_the_gateway_and_the_egress_kernel() -> None:
     result = _run_child(_closure_child)
     tops = set(result["tos_tops"])
     for sibling in _FORBIDDEN_SIBLINGS:
-        assert sibling not in tops, f"{sibling} leaked into the tos.brokeradapter closure"
+        assert (
+            sibling not in tops
+        ), f"{sibling} leaked into the tos.brokeradapter closure"
 
 
 def test_closure_has_no_forbidden_operational_package() -> None:
     """(§0.3) Emphatically no ``shared.kis`` — the real broker band is outside ``tos/``."""
     result = _run_child(_closure_child)
-    assert result["forbidden"] == [], (
-        f"forbidden packages reached the closure: {result['forbidden']}"
-    )
+    assert (
+        result["forbidden"] == []
+    ), f"forbidden packages reached the closure: {result['forbidden']}"
 
 
 def test_leak_canary_is_detected() -> None:
@@ -409,7 +453,11 @@ def test_leak_canary_is_detected() -> None:
 
 def test_allowlist_classifier_canaries() -> None:
     """The classifier admits every allowlisted package and rejects every excluded one."""
-    for allowed in ("tos.brokeradapter", "tos.brokeradapter.synthetic", "tos.engine.records"):
+    for allowed in (
+        "tos.brokeradapter",
+        "tos.brokeradapter.synthetic",
+        "tos.engine.records",
+    ):
         assert _is_allowed_tos_module(allowed) is True
     for sibling in _FORBIDDEN_SIBLINGS | {"tos.not_yet_invented"}:
         assert _is_allowed_tos_module(sibling) is False
@@ -421,13 +469,19 @@ def test_allowlist_classifier_canaries() -> None:
 def test_every_submodule_is_covered_by_the_closure_child() -> None:
     """Anti-phantom: the child imports **every** shipped submodule, not a stale subset."""
     on_disk = {
-        f"tos.brokeradapter.{path.stem}" if path.stem != "__init__" else "tos.brokeradapter"
+        (
+            f"tos.brokeradapter.{path.stem}"
+            if path.stem != "__init__"
+            else "tos.brokeradapter"
+        )
         for path in _SRC.glob("*.py")
     }
     assert on_disk == set(_SUBMODULES) == set(_LOADED_SUBMODULES)
 
 
-def test_the_package_declares_that_the_real_path_is_designed_but_not_implemented() -> None:
+def test_the_package_declares_that_the_real_path_is_designed_but_not_implemented() -> (
+    None
+):
     """(§2.1 / §5.1) The stage separation is stated in the code, not only in the design doc."""
     doc = " ".join((tos.brokeradapter.__doc__ or "").split())
     for phrase in (
@@ -437,4 +491,6 @@ def test_the_package_declares_that_the_real_path_is_designed_but_not_implemented
         "closes no EV",
         "No blind resubmission",
     ):
-        assert phrase in doc, f"the package docstring lost its honest-scope phrase: {phrase!r}"
+        assert (
+            phrase in doc
+        ), f"the package docstring lost its honest-scope phrase: {phrase!r}"

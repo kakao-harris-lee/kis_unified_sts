@@ -101,7 +101,9 @@ def test_the_same_inputs_always_produce_the_same_command_and_digest() -> None:
     budget=st.integers(min_value=1, max_value=10_000),
     per_unit=st.integers(min_value=1, max_value=500),
 )
-def test_derivation_is_a_pure_function_of_its_inputs(budget: int, per_unit: int) -> None:
+def test_derivation_is_a_pure_function_of_its_inputs(
+    budget: int, per_unit: int
+) -> None:
     """(§3.1 determinism) Two evaluations over identical inputs agree, always."""
     bound = sizing_bound(
         risk_budget=Decimal(budget),
@@ -121,11 +123,14 @@ def test_a_derived_size_is_always_an_exact_lot_multiple_inside_the_envelope(
 ) -> None:
     """(§3.1 boundedness) Whatever the budget, a DERIVED size is lot-exact and in-envelope."""
     envelope = proposed_envelope(
-        sizing_bound=sizing_bound(risk_budget=Decimal(budget), max_quantity=Decimal("1000000"))
+        sizing_bound=sizing_bound(
+            risk_budget=Decimal(budget), max_quantity=Decimal("1000000")
+        )
     )
-    result = _derive(envelope=envelope, venue_constraint=venue_quantity_constraint(
-        max_quantity=Decimal("1000000")
-    ))
+    result = _derive(
+        envelope=envelope,
+        venue_constraint=venue_quantity_constraint(max_quantity=Decimal("1000000")),
+    )
     if result.outcome is DerivationOutcome.DERIVED:
         assert result.quantity is not None
         assert result.quantity % LOT_SIZE == 0
@@ -199,7 +204,9 @@ def test_a_size_below_the_envelope_floor_is_denied_never_raised() -> None:
 
 def test_a_venue_constraint_violation_is_denied_never_adjusted() -> None:
     """(§3.1 (iv) / ADR-002-019 §12:309) The venue bound denies; it never rounds."""
-    result = _derive(venue_constraint=venue_quantity_constraint(max_quantity=Decimal("4")))
+    result = _derive(
+        venue_constraint=venue_quantity_constraint(max_quantity=Decimal("4"))
+    )
     assert result.outcome is DerivationOutcome.DENIED
     assert "venue / broker quantity constraint" in (result.denial_reason or "")
 
@@ -213,7 +220,9 @@ def test_a_missing_venue_constraint_is_not_no_constraint() -> None:
 def test_a_unit_mismatch_between_envelope_and_venue_denies() -> None:
     """(ADR-002-020 §11:301) A unit mismatch is prohibited, never coerced."""
     result = _derive(
-        venue_constraint=venue_quantity_constraint(quantity_unit=QuantityUnitKind.SHARES)
+        venue_constraint=venue_quantity_constraint(
+            quantity_unit=QuantityUnitKind.SHARES
+        )
     )
     assert result.outcome is DerivationOutcome.DENIED
     assert "unit disagreement" in (result.denial_reason or "")
@@ -374,12 +383,18 @@ def test_the_derivation_ignores_a_hostile_ambient_decimal_context() -> None:
     )
     price = admitted_price()
     baseline = derive_order_size(
-        quantity_basis="RISK", envelope=envelope, price=price, venue_constraint=constraint
+        quantity_basis="RISK",
+        envelope=envelope,
+        price=price,
+        venue_constraint=constraint,
     )
     with localcontext() as ctx:
         ctx.prec = 1
         hostile = derive_order_size(
-            quantity_basis="RISK", envelope=envelope, price=price, venue_constraint=constraint
+            quantity_basis="RISK",
+            envelope=envelope,
+            price=price,
+            venue_constraint=constraint,
         )
     assert baseline.outcome is DerivationOutcome.DERIVED
     assert baseline.quantity == Decimal("11")
@@ -439,7 +454,10 @@ def test_the_envelope_cannot_pre_declare_a_derived_axis(axis: ConformanceAxis) -
     with pytest.raises(ValidationError, match="pre-declares the derived axis"):
         ProposedConstructionEnvelope(
             envelope_generation=1,
-            authorized_axis_bindings=(*non_derived_axes(), AxisBinding(axis=axis, value="9")),
+            authorized_axis_bindings=(
+                *non_derived_axes(),
+                AxisBinding(axis=axis, value="9"),
+            ),
             sizing_bound=sizing_bound(),
         )
 
@@ -481,7 +499,10 @@ def test_the_compiled_command_declares_the_derived_axes_exactly() -> None:
     assert built.command is not None
     assert built.conformance_result is ConformanceResult.CONFORMANT
     assert built.command.axis_value(ConformanceAxis.QUANTITY) == "2E+1"
-    assert built.command.axis_value(ConformanceAxis.UNIT) == QuantityUnitKind.CONTRACTS.value
+    assert (
+        built.command.axis_value(ConformanceAxis.UNIT)
+        == QuantityUnitKind.CONTRACTS.value
+    )
 
 
 def test_construction_records_carry_the_all_false_rfc002_authority_block() -> None:
@@ -558,7 +579,9 @@ def test_the_venue_fold_admits_only_when_both_predicates_admit() -> None:
 
 def test_a_non_admitting_phase_denies_the_fold() -> None:
     """(ADR-002-019 §10:273) A phase outside the admitting set is inadmissible."""
-    assert _fold(observed_session_phase="AUCTION") is OrderAdmissibilityResult.INADMISSIBLE
+    assert (
+        _fold(observed_session_phase="AUCTION") is OrderAdmissibilityResult.INADMISSIBLE
+    )
 
 
 def test_an_unknown_phase_is_restrictive() -> None:
@@ -709,7 +732,9 @@ def test_a_quantity_above_the_venue_ceiling_never_reaches_a_command() -> None:
     """(§3.1) The two bounds compose restrictively; neither is widened by the other."""
     result = _derive(
         envelope=proposed_envelope(
-            sizing_bound=sizing_bound(max_quantity=MAX_QUANTITY, risk_budget=Decimal("4000"))
+            sizing_bound=sizing_bound(
+                max_quantity=MAX_QUANTITY, risk_budget=Decimal("4000")
+            )
         ),
         venue_constraint=venue_quantity_constraint(max_quantity=Decimal("10")),
     )
@@ -856,7 +881,9 @@ def test_admitted_shape_price_from_view_refuses_a_bool_or_float(value: object) -
 
 @settings(max_examples=100, deadline=None)
 @given(value=_SCALAR_VALUES)
-def test_the_two_projections_admit_and_refuse_the_same_values(value: ScalarValue) -> None:
+def test_the_two_projections_admit_and_refuse_the_same_values(
+    value: ScalarValue,
+) -> None:
     """(design #36 §3.2) One shared core, so the two projections cannot drift in what they admit.
 
     The alternative the design rejected (P1) re-implemented the match + exact-int rule beside the

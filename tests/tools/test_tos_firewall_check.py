@@ -50,6 +50,20 @@ def _make_tos_src(repo: Path, filename: str, body: str) -> Path:
     return _write(repo / "tos" / "src" / "tos" / filename, body)
 
 
+def _make_tos_runtime_src(repo: Path, filename: str, body: str) -> Path:
+    """Create <repo>/tos/runtime/src/tos_runtime/<filename> with <body> and
+    return the path — the RUNTIME-scope mirror of ``_make_tos_src`` (design
+    #40 D1.3 scope split)."""
+    return _write(repo / "tos" / "runtime" / "src" / "tos_runtime" / filename, body)
+
+
+def _runtime_rel(filename: str) -> str:
+    """The repo-root-relative display path a real ``run_checks`` call would
+    hand to ``check_tos_file`` for a file created by ``_make_tos_runtime_src``
+    — i.e. what ``scope_for_tos_path`` must classify as ``"runtime"``."""
+    return f"tos/runtime/src/tos_runtime/{filename}"
+
+
 def _rules(violations) -> set[str]:
     return {v.rule for v in violations}
 
@@ -302,17 +316,13 @@ def test_rule_r_strategy_builder_ui_node_modules_pruned_but_rest_scanned(tmp_pat
     # vendor tree, 2995 subdirectories, measured 2026-09-04) — but only that
     # subtree, not `strategy-builder-ui/` itself.
     _make_tos_src(tmp_path, "__init__.py", '__version__ = "0.0.1"\n')
-    _write(
-        tmp_path / "strategy-builder-ui" / "node_modules" / "x.py", "import tos\n"
-    )
+    _write(tmp_path / "strategy-builder-ui" / "node_modules" / "x.py", "import tos\n")
     _write(tmp_path / "strategy-builder-ui" / "x.py", "import tos\n")
     violations = fw.check_reverse_imports(tmp_path, tmp_path / "tos")
     assert not any(
         v.path.endswith("strategy-builder-ui/node_modules/x.py") for v in violations
     )
-    assert any(
-        v.path == "strategy-builder-ui/x.py" for v in violations
-    )
+    assert any(v.path == "strategy-builder-ui/x.py" for v in violations)
 
 
 def test_rule_r_nested_venv_named_dir_is_scanned(tmp_path):
@@ -367,8 +377,16 @@ _GIT_AVAILABLE = shutil.which("git") is not None
 def _git_init(repo: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     subprocess.run(
-        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
-         "config", "user.name", "Test"],
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "config",
+            "user.name",
+            "Test",
+        ],
         cwd=repo,
         check=True,
     )
@@ -401,9 +419,7 @@ def test_rule_r_force_tracked_py_under_root_tos_not_yielded(tmp_path):
     _git_init(tmp_path)
     _make_tos_src(tmp_path, "__init__.py", '__version__ = "0.0.1"\n')
     _write(tmp_path / "tos" / "src" / "tos" / "z.py", "import tos\n")
-    subprocess.run(
-        ["git", "add", "-f", "tos/src/tos/z.py"], cwd=tmp_path, check=True
-    )
+    subprocess.run(["git", "add", "-f", "tos/src/tos/z.py"], cwd=tmp_path, check=True)
 
     walked = list(fw._walk_repo_py(tmp_path))
     assert not any("tos/src/tos/z.py" in str(p) for p in walked)
@@ -588,9 +604,7 @@ def test_rule_s_same_side_symlinks_not_reported(tmp_path):
 
     reverse_violations = fw.check_reverse_imports(tmp_path, tmp_path / "tos")
     assert "TOS-FW-S" not in _rules(reverse_violations)
-    forward_violations = fw._forward_scan_boundary_symlinks(
-        tmp_path, tmp_path / "tos"
-    )
+    forward_violations = fw._forward_scan_boundary_symlinks(tmp_path, tmp_path / "tos")
     assert "TOS-FW-S" not in _rules(forward_violations)
 
 
@@ -716,10 +730,10 @@ def test_real_tos_dir_not_flagged_as_symlink(tmp_path):
     # violation at all.
     _make_tos_src(tmp_path, "__init__.py", '__version__ = "0.0.1"\n')
     violations = fw.run_checks(tmp_path)
+    assert not any(v.path == "tos" and v.rule == "TOS-FW-S" for v in violations)
     assert not any(
-        v.path == "tos" and v.rule == "TOS-FW-S" for v in violations
+        "forward rules a-d cannot be evaluated" in v.message for v in violations
     )
-    assert not any("forward rules a-d cannot be evaluated" in v.message for v in violations)
 
 
 def test_missing_tos_dir_is_a_visible_failure_not_a_pass(tmp_path):
@@ -770,7 +784,9 @@ def test_git_toplevel_probe_skips_silently_on_not_a_repo(monkeypatch, tmp_path):
     class _FakeResult:
         returncode = 128
         stdout = b""
-        stderr = b"fatal: not a git repository (or any of the parent directories): .git\n"
+        stderr = (
+            b"fatal: not a git repository (or any of the parent directories): .git\n"
+        )
 
     def _fake_run(args, **kwargs):
         return _FakeResult()
@@ -921,9 +937,7 @@ def test_iter_py_files_prunes_venv(tmp_path):
 def test_run_checks_ignores_venv_but_still_catches_src_violations(tmp_path):
     # Positive control: a real src/ violation is still caught.
     _make_tos_src(tmp_path, "__init__.py", '__version__ = "0.0.1"\n')
-    _write(
-        tmp_path / "tos" / "src" / "tos" / "bad.py", "import shared.execution\n"
-    )
+    _write(tmp_path / "tos" / "src" / "tos" / "bad.py", "import shared.execution\n")
     # Negative control: the identical violating import sitting under a
     # `.venv` site-packages tree must NOT be reported.
     _write(
@@ -1034,3 +1048,214 @@ def test_iter_py_files_venv_without_dot_still_scanned(tmp_path):
 )
 def test_classify_module(dotted, allowed):
     assert fw.classify_module(dotted)[0] is allowed
+
+
+# --------------------------------------------------------------------------
+# design #40 D1.3 — tos/runtime/** scope split (PROPOSED, 2026-09-07)
+#
+# Two allowlists now apply inside tos/, decided by a single path-prefix
+# predicate (`scope_for_tos_path`): tos/runtime/** is RUNTIME scope
+# (allowlist R1 = kernel allowlist ∪ `tos_runtime.*` ∪ the stdlib egress
+# carve-out socket/ssl/http/urllib.request); every other path under tos/ —
+# including a hypothetical new sibling directory — stays KERNEL scope,
+# fail-closed toward the stricter allowlist. New rule (g): a KERNEL-scope
+# file may not import `tos_runtime`. Rule (e) is extended: a file OUTSIDE
+# tos/ entirely may not import `tos_runtime` either.
+# --------------------------------------------------------------------------
+
+
+def test_scope_for_tos_path_runtime_vs_kernel(tmp_path):
+    assert fw.scope_for_tos_path("tos/runtime/src/tos_runtime/x.py") == "runtime"
+    assert fw.scope_for_tos_path("tos/runtime/tests/test_x.py") == "runtime"
+    assert fw.scope_for_tos_path("tos/src/tos/x.py") == "kernel"
+    assert fw.scope_for_tos_path("m.py") == "kernel"
+
+
+def test_scope_for_tos_path_other_tos_sibling_dir_is_kernel_scope_fail_closed(tmp_path):
+    # A file at tos/<other>/x.py (a hypothetical new sibling of tos/runtime/,
+    # NOT under tos/src or tos/tests) must default to KERNEL scope — the
+    # stricter allowlist — for any path this predicate does not specifically
+    # recognize as runtime.
+    assert fw.scope_for_tos_path("tos/sandbox/x.py") == "kernel"
+    assert (
+        fw.scope_for_tos_path("tos/runtimeish/x.py") == "kernel"
+    )  # not literally "runtime"
+
+
+def test_runtime_scope_file_importing_socket_passes(tmp_path):
+    path = _make_tos_runtime_src(tmp_path, "adapter.py", "import socket\n")
+    violations = fw.check_tos_file(path, _runtime_rel("adapter.py"))
+    assert violations == [], f"unexpected violations: {violations}"
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["import ssl\n", "import http.client\n", "from urllib.request import urlopen\n"],
+)
+def test_runtime_scope_stdlib_carveout_passes(tmp_path, body):
+    path = _make_tos_runtime_src(tmp_path, "adapter.py", body)
+    violations = fw.check_tos_file(path, _runtime_rel("adapter.py"))
+    assert violations == [], f"unexpected violations: {violations}"
+
+
+def test_kernel_scope_file_importing_socket_still_fails(tmp_path):
+    # Control: the SAME import, at a KERNEL-scope path, is still denied — the
+    # carve-out is runtime-only, not global.
+    path = _make_tos_src(tmp_path, "m.py", "import socket\n")
+    violations = fw.check_tos_file(path, "tos/src/tos/m.py")
+    assert "TOS-FW-B" in _rules(violations)
+
+
+def test_kernel_file_importing_tos_runtime_fails_rule_g(tmp_path):
+    path = _make_tos_src(tmp_path, "m.py", "import tos_runtime\n")
+    violations = fw.check_tos_file(path, "tos/src/tos/m.py")
+    assert "TOS-FW-G" in _rules(violations)
+
+
+def test_kernel_file_importing_tos_runtime_from_form_fails_rule_g(tmp_path):
+    path = _make_tos_src(tmp_path, "m.py", "from tos_runtime import compose\n")
+    violations = fw.check_tos_file(path, "tos/src/tos/m.py")
+    assert "TOS-FW-G" in _rules(violations)
+
+
+def test_runtime_scope_file_importing_tos_kernel_passes(tmp_path):
+    # D1.1: tos_runtime -> tos is the one EXPECTED direction.
+    path = _make_tos_runtime_src(
+        tmp_path, "compose.py", "from tos.rcl import CommitLog\n"
+    )
+    violations = fw.check_tos_file(path, _runtime_rel("compose.py"))
+    assert violations == [], f"unexpected violations: {violations}"
+
+
+def test_runtime_scope_self_import_passes(tmp_path):
+    path = _make_tos_runtime_src(tmp_path, "m.py", "import tos_runtime\n")
+    violations = fw.check_tos_file(path, _runtime_rel("m.py"))
+    assert violations == [], f"unexpected violations: {violations}"
+
+
+# --------------------------------------------------------------------------
+# design #40 D1.1/D1.3 v1.2 correction (2026-09-07, operator decision) —
+# rule (h)/TOS-FW-H: runtime scope denies ALL of `shared.*`, even the six
+# commons packages the KERNEL is itself allowed to import (SHARED_ALLOWED).
+# An earlier draft of R1 unioned in the full kernel allowlist (including
+# `shared.*`); the operator resolved the contradiction with D1.1's own table
+# ("tos_runtime -> shared.* ✘") by excluding `shared.*` from R1 entirely.
+# --------------------------------------------------------------------------
+
+
+def test_runtime_scope_file_importing_shared_models_fails_rule_h(tmp_path):
+    path = _make_tos_runtime_src(tmp_path, "bad.py", "from shared import models\n")
+    violations = fw.check_tos_file(path, _runtime_rel("bad.py"))
+    assert "TOS-FW-H" in _rules(violations)
+
+
+def test_runtime_scope_file_importing_shared_models_submodule_fails_rule_h(tmp_path):
+    path = _make_tos_runtime_src(
+        tmp_path, "bad2.py", "from shared.indicators import rsi\n"
+    )
+    violations = fw.check_tos_file(path, _runtime_rel("bad2.py"))
+    assert "TOS-FW-H" in _rules(violations)
+
+
+def test_runtime_scope_file_importing_shared_determinism_fails_rule_h(tmp_path):
+    # Even `shared.determinism` — allowed for the KERNEL under §3.2's
+    # "커먼즈(신설 후)" row — is denied in runtime scope: R1 excludes ALL of
+    # `shared.*`, not just the kernel's already-denied subset.
+    path = _make_tos_runtime_src(
+        tmp_path, "bad3.py", "from shared.determinism import LookaheadGuard\n"
+    )
+    violations = fw.check_tos_file(path, _runtime_rel("bad3.py"))
+    assert "TOS-FW-H" in _rules(violations)
+
+
+def test_kernel_scope_file_importing_shared_models_still_passes(tmp_path):
+    # Control: the IDENTICAL import at KERNEL scope stays allowed — rule (h)
+    # is runtime-only, it does not narrow the kernel's own §3.2 allowlist.
+    path = _make_tos_src(tmp_path, "ok.py", "from shared import models\n")
+    violations = fw.check_tos_file(path, "tos/src/tos/ok.py")
+    assert violations == [], f"unexpected violations: {violations}"
+
+
+def test_file_outside_tos_importing_tos_runtime_fails_rule_e_extension(tmp_path):
+    _make_tos_src(tmp_path, "__init__.py", '__version__ = "0.0.1"\n')
+    _write(tmp_path / "services" / "foo.py", "import tos_runtime\n")
+    violations = fw.check_reverse_imports(tmp_path, tmp_path / "tos")
+    assert "TOS-FW-R" in _rules(violations)
+    assert any(v.path.endswith("foo.py") for v in violations)
+
+
+def test_file_outside_tos_importing_tos_runtime_from_form_fails(tmp_path):
+    _make_tos_src(tmp_path, "__init__.py", '__version__ = "0.0.1"\n')
+    _write(tmp_path / "cli" / "bar.py", "from tos_runtime.compose import wire\n")
+    violations = fw.check_reverse_imports(tmp_path, tmp_path / "tos")
+    assert "TOS-FW-R" in _rules(violations)
+
+
+def test_file_outside_tos_importing_tos_runtime_similar_name_not_flagged(tmp_path):
+    _make_tos_src(tmp_path, "__init__.py", '__version__ = "0.0.1"\n')
+    _write(
+        tmp_path / "pkg" / "baz.py", "import tos_runtime_extra\nimport tos_runtimeish\n"
+    )
+    violations = fw.check_reverse_imports(tmp_path, tmp_path / "tos")
+    assert "TOS-FW-R" not in _rules(violations)
+
+
+def test_runtime_scope_file_importing_subprocess_fails(tmp_path):
+    path = _make_tos_runtime_src(tmp_path, "bad.py", "import subprocess\n")
+    violations = fw.check_tos_file(path, _runtime_rel("bad.py"))
+    assert "TOS-FW-B" in _rules(violations)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "import os\n\n\ndef f():\n    return os.getenv('X')\n",
+        "import os\n\n\ndef f():\n    return os.environ['X']\n",
+    ],
+)
+def test_runtime_scope_file_using_os_environ_fails(tmp_path, body):
+    path = _make_tos_runtime_src(tmp_path, "bad.py", body)
+    violations = fw.check_tos_file(path, _runtime_rel("bad.py"))
+    assert "TOS-FW-C" in _rules(violations)
+
+
+def test_file_at_tos_other_sibling_dir_is_treated_as_kernel_scope(tmp_path):
+    # tos/sandbox/x.py — NOT under tos/src, tos/tests, or tos/runtime — must
+    # be scanned under the KERNEL allowlist (fail-closed default): `socket`
+    # is still denied there even though it would be allowed under
+    # tos/runtime/.
+    path = _write(tmp_path / "tos" / "sandbox" / "x.py", "import socket\n")
+    violations = fw.check_tos_file(path, "tos/sandbox/x.py")
+    assert "TOS-FW-B" in _rules(violations)
+
+
+def test_run_checks_scope_split_end_to_end(tmp_path):
+    # run_checks integration: a runtime-scope file using the stdlib
+    # carve-out is clean, while the identical import at kernel scope is a
+    # violation, and a kernel file reaching into tos_runtime is rule (g).
+    _make_tos_src(tmp_path, "__init__.py", '__version__ = "0.0.1"\n')
+    _make_tos_runtime_src(tmp_path, "__init__.py", '__version__ = "0.0.1"\n')
+    _make_tos_runtime_src(tmp_path, "adapter.py", "import socket\n")
+    _make_tos_src(tmp_path, "bad_kernel.py", "import socket\n")
+    _make_tos_src(tmp_path, "leak.py", "import tos_runtime\n")
+    violations = fw.run_checks(tmp_path)
+    assert not any(
+        v.path.endswith("tos/runtime/src/tos_runtime/adapter.py") for v in violations
+    )
+    assert any(
+        v.path.endswith("tos/src/tos/bad_kernel.py") and v.rule == "TOS-FW-B"
+        for v in violations
+    )
+    assert any(
+        v.path.endswith("tos/src/tos/leak.py") and v.rule == "TOS-FW-G"
+        for v in violations
+    )
+
+
+def test_control_group_real_repo_tree_passes():
+    # Control: the ACTUAL repository tree (including the newly-added
+    # tos/runtime/ skeleton) has zero firewall violations under the scope
+    # split — proves the split doesn't false-positive on real, already-
+    # compliant code.
+    violations = fw.run_checks(_REPO_ROOT)
+    assert violations == [], f"unexpected violations on real tree: {violations}"

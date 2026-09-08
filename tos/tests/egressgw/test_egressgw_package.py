@@ -35,7 +35,9 @@ _MODULES = {
 def test_every_exported_name_resolves() -> None:
     """``__all__`` is not padded with phantom names (anti-phantom: existence is grepped too)."""
     for name in tos.egressgw.__all__:
-        assert hasattr(tos.egressgw, name), f"tos.egressgw.__all__ names a missing {name!r}"
+        assert hasattr(
+            tos.egressgw, name
+        ), f"tos.egressgw.__all__ names a missing {name!r}"
 
 
 def test_the_package_declares_its_honest_scope_in_its_own_docstring() -> None:
@@ -48,7 +50,9 @@ def test_the_package_declares_its_honest_scope_in_its_own_docstring() -> None:
         "admits no live send",
         "no ADR acceptance, restricted-live, or production is authorized",
     ):
-        assert phrase in doc, f"the package docstring lost its honest-scope phrase: {phrase!r}"
+        assert (
+            phrase in doc
+        ), f"the package docstring lost its honest-scope phrase: {phrase!r}"
 
 
 def test_the_package_states_the_six_five_six_split() -> None:

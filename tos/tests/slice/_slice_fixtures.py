@@ -243,7 +243,9 @@ class BarContext:
 def _preimage(**tokens: Any) -> RawPayloadPreimage:
     """The raw payload preimage the observation's ``payload_digest`` addresses."""
     return RawPayloadPreimage(
-        entries=tuple(PreimageEntry(key=key, value=value) for key, value in tokens.items())
+        entries=tuple(
+            PreimageEntry(key=key, value=value) for key, value in tokens.items()
+        )
     )
 
 
@@ -280,7 +282,9 @@ def _bar_context(index: int, close: int) -> BarContext:
     snapshot = CriticalInputSnapshot.issue(
         scheme=SCHEME,
         issuer_principal_id="iss-slice",
-        critical_input_policy=PolicyRef(policy_id="pol-slice", canonical_digest="pd-slice"),
+        critical_input_policy=PolicyRef(
+            policy_id="pol-slice", canonical_digest="pd-slice"
+        ),
         scope=SnapshotScope(
             environment=ENVIRONMENT,
             accounts=(ACCOUNT,),
@@ -292,15 +296,21 @@ def _bar_context(index: int, close: int) -> BarContext:
         observations=(observation,),
         field_evaluations=(
             FieldEvaluation(field_ref="close", state=FieldState.VALID, blocking=True),
-            FieldEvaluation(field_ref="lower_band", state=FieldState.VALID, blocking=True),
-            FieldEvaluation(field_ref="upper_band", state=FieldState.VALID, blocking=True),
+            FieldEvaluation(
+                field_ref="lower_band", state=FieldState.VALID, blocking=True
+            ),
+            FieldEvaluation(
+                field_ref="upper_band", state=FieldState.VALID, blocking=True
+            ),
         ),
     )
     assert isinstance(snapshot, CriticalInputSnapshot)
     capsule = DecisionContextCapsule.issue(
         scheme=SCHEME,
         issuer_principal_id="iss-slice",
-        critical_input_policy=PolicyRef(policy_id="pol-slice", canonical_digest="pd-slice"),
+        critical_input_policy=PolicyRef(
+            policy_id="pol-slice", canonical_digest="pd-slice"
+        ),
         critical_input_snapshot=SnapshotRef(
             snapshot_id=snapshot.snapshot_id, canonical_digest=snapshot.canonical_digest
         ),
@@ -320,7 +330,9 @@ def _bar_context(index: int, close: int) -> BarContext:
     )
     assert isinstance(capsule, DecisionContextCapsule)
     candidates = tuple(
-        AdmittedValue(field_key=field_key, observation_ref=raw_event_id, preimage=payload)
+        AdmittedValue(
+            field_key=field_key, observation_ref=raw_event_id, preimage=payload
+        )
         for field_key in ("close", "lower_band", "upper_band")
     )
     return BarContext(
@@ -638,10 +650,16 @@ def proposed_envelope(**overrides: Any) -> ProposedConstructionEnvelope:
         "sizing_bound": sizing_bound(),
         "effect_dimensions": (
             EffectDimensionSpec(
-                dimension_id="notional", basis=EffectBasis.NOTIONAL, unit="KRW", scale="1"
+                dimension_id="notional",
+                basis=EffectBasis.NOTIONAL,
+                unit="KRW",
+                scale="1",
             ),
             EffectDimensionSpec(
-                dimension_id="units", basis=EffectBasis.QUANTITY, unit="contract", scale="1"
+                dimension_id="units",
+                basis=EffectBasis.QUANTITY,
+                unit="contract",
+                scale="1",
             ),
         ),
     }
@@ -1115,9 +1133,12 @@ class SliceRun:
         entries = [
             entry
             for entry in self.run.trace.entries
-            if entry.bar_index == bar_index and entry.event_kind.value == "DECISION_TICK"
+            if entry.bar_index == bar_index
+            and entry.event_kind.value == "DECISION_TICK"
         ]
-        assert len(entries) == 1, f"expected one tick for bar {bar_index}, got {len(entries)}"
+        assert (
+            len(entries) == 1
+        ), f"expected one tick for bar {bar_index}, got {len(entries)}"
         return self.run.event_results[entries[0].yield_sequence - 1]
 
 

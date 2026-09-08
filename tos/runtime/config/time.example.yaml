@@ -1,0 +1,73 @@
+# tos_runtime.time example config (slice plan §1 item 4; design #40 §5 order 1)
+#
+# Loader: tos_runtime.time.config.load_time_config
+# All VER-002 profile key NAMES are fixed (reused verbatim from
+# tos/src/tos/marketfeed/__init__.py's VER-002-KEYS line) — do not rename.
+#
+# Every value below is `null` (named-TBD): this is an EXAMPLE file, not an
+# approved profile. A real deployment copies this file, gets each bound
+# approved by the Bounds-Approver (the same governance step VER-002 keys go
+# through everywhere else in this repo — see CLAUDE.md "configuration-driven
+# only"), and fills in a concrete non-negative integer (milliseconds, or a
+# count for MIN_time_independent_reference_count). Any key left null, or
+# missing outright, is a fail-closed startup rejection
+# (tos_runtime.time.config.TimeConfigError) — never a silent default.
+
+# --- VER-002 bounds (int, milliseconds unless noted) ---------------------
+
+# Upper bound on this reference source's own read precision (a delay-bound
+# term in tos.time.freshness_verdict's delay_bounds).
+MAX_time_source_precision_ms: null
+
+# Upper bound on transport + queueing delay between a reference read and its
+# use (a delay-bound term in tos.time.freshness_verdict's delay_bounds).
+MAX_time_transport_and_queue_uncertainty_ms: null
+
+# The freshness threshold itself (tos.time.freshness_verdict's max_age_bound;
+# also bound 1:1 onto the issued snapshot's maximum_consumer_age_ms).
+MAX_time_conservative_freshness_age_ms: null
+
+# Tolerance for a future-dated source reading before it is CONFLICTED, not
+# FRESH (tos.time.freshness_verdict's future_tolerance).
+MAX_future_timestamp_tolerance_ms: null
+
+# Maximum observed process-suspension magnitude an anchor can still validate
+# across (tos.time.anchor_valid's max_suspension_ms; see
+# tos.time.elements.SuspensionStatus's own docstring naming this key).
+MAX_process_suspension_ms: null
+
+# Maximum tolerated inter-reference-source disagreement
+# (tos.time.source_disagreement_within_bound's tolerance_ms).
+MAX_time_source_disagreement_ms: null
+
+# --- VER-002 bound (int, count) -------------------------------------------
+
+# Minimum independent reference-source count required to reach TRUSTED
+# (compared against tos.time.independent_reference_count's return value).
+# Phase 2 implements exactly ONE reference source KIND (the local system
+# clock, tos_runtime.time.sources.LocalSystemClockReader) — the runtime
+# constructor does NOT itself enforce "at most one reader wired": a caller
+# may inject any number of readers (tos_runtime.time.service's own
+# docstring: "accepts a sequence so a later profile can add a second
+# independent source"). Two honesty guarantees hold regardless of how many
+# readers are wired: (a) every LocalSystemClockReader instance declares the
+# SAME common_mode_group, so N instances collapse to exactly 1 independent
+# contribution, never N (HIGH-2 fix, review of ba7d438f); (b) with MORE than
+# one reachable source, no pairwise disagreement comparison is performed
+# (Phase 2 has no comparator), so disagreement is reported UNKNOWN and
+# TRUSTED is refused, never silently asserted as "in bound". So a profile
+# that sets this above 1 will honestly never observe TRUSTED from this
+# package as currently implemented (ADR-002-008 :184 single-source residual;
+# not a bug to work around — a real second independent source kind is future
+# work, not a wiring trick).
+MIN_time_independent_reference_count: null
+
+# --- non-bound identity/version strings -----------------------------------
+# Required by tos.time.TimeHealthSnapshot's own _REQUIRED_COVERED fields —
+# an ISSUED snapshot cannot exist without these regardless, so this loader
+# surfaces the same fact earlier and louder, at startup.
+
+tz_db_version: null
+trading_calendar_version: null
+verification_profile_version: null
+safety_profile_version: null

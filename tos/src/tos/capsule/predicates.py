@@ -453,7 +453,7 @@ def transitive_dependents(
     stack = list(roots)
     while stack:
         node = stack.pop()
-        for dependent in edges.get(node, ()):  # type: ignore[call-overload]
+        for dependent in edges.get(node, ()):
             if dependent not in seen:
                 seen.add(dependent)
                 stack.append(dependent)

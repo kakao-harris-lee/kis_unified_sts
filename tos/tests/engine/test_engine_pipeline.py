@@ -72,9 +72,9 @@ def test_a_draft_capsule_forbids_a_decision() -> None:
     assert transmit.attempts == []
     withheld = [r for r in sink.records if r.kind is EvidenceKind.DECISION_WITHHELD]
     assert len(withheld) == 1
-    assert withheld[0].outcome_digest is None, (
-        "a withheld decision constructs no artifact bound to the Capsule it just rejected"
-    )
+    assert (
+        withheld[0].outcome_digest is None
+    ), "a withheld decision constructs no artifact bound to the Capsule it just rejected"
 
 
 def test_an_incomplete_capsule_forbids_a_decision() -> None:
@@ -180,7 +180,9 @@ def test_a_stale_snapshot_stops_the_tick() -> None:
     assert result.halt_reason is HaltReason.TIME_NOT_ADMITTED
     assert result.pipeline is not None and result.pipeline.outcome is None
     assert transmit.attempts == []
-    assert [r for r in sink.records if r.kind is EvidenceKind.DECISION_OUTCOME_EMITTED] == []
+    assert [
+        r for r in sink.records if r.kind is EvidenceKind.DECISION_OUTCOME_EMITTED
+    ] == []
 
 
 @settings(max_examples=50)
@@ -189,18 +191,26 @@ def test_a_stale_snapshot_stops_the_tick() -> None:
     max_age_bound=st.none(),
     health_state=st.sampled_from(list(HealthState)),
 )
-def test_an_unestablished_threshold_never_admits(source_age, max_age_bound, health_state) -> None:
+def test_an_unestablished_threshold_never_admits(
+    source_age, max_age_bound, health_state
+) -> None:
     """(§2.3 property) With no freshness threshold, no combination of coordinates admits."""
     admitted, _ = time_admits(
         admitting_time_inputs(
-            source_age=source_age, max_age_bound=max_age_bound, health_state=health_state
+            source_age=source_age,
+            max_age_bound=max_age_bound,
+            health_state=health_state,
         )
     )
     assert admitted is False
 
 
 @settings(max_examples=50)
-@given(health_state=st.sampled_from([s for s in HealthState if s is not HealthState.TRUSTED]))
+@given(
+    health_state=st.sampled_from(
+        [s for s in HealthState if s is not HealthState.TRUSTED]
+    )
+)
 def test_only_a_trusted_health_state_admits(health_state) -> None:
     """(§2.3 property) Only ``TRUSTED`` permits new normal risk (ADR-002-008 §6.1-6.3)."""
     admitted, _ = time_admits(admitting_time_inputs(health_state=health_state))
@@ -222,7 +232,8 @@ def test_an_empty_time_input_block_denies() -> None:
 def test_a_vector_outcome_is_fail_closed() -> None:
     """(§3.1 MINOR-1) A ``VECTOR`` outcome violates the per-instrument premise — no progress."""
     core, sink = build_core(
-        registry=registry_with(issue_strategy(vector_policy())), transmit=RecordingTransmit()
+        registry=registry_with(issue_strategy(vector_policy())),
+        transmit=RecordingTransmit(),
     )
     result = core.handle(decision_tick(sequence=1))
 
@@ -258,7 +269,9 @@ def test_a_firing_policy_emits_a_proposal_bound_to_the_exact_capsule() -> None:
     proposal = result.pipeline.proposal
     assert proposal is not None
     assert proposal.decision_context_capsule.capsule_id == capsule.capsule_id
-    assert proposal.decision_context_capsule.canonical_digest == capsule.canonical_digest
+    assert (
+        proposal.decision_context_capsule.canonical_digest == capsule.canonical_digest
+    )
     assert proposal.account == ACCOUNT
 
 

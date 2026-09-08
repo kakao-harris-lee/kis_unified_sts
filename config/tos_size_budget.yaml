@@ -1,0 +1,225 @@
+# config/tos_size_budget.yaml — tos kernel module/function size budget (Phase 1 작업 6)
+#
+# 검사기: tools/tos_size_budget.py · 테스트: tests/tools/test_tos_size_budget.py
+# 설계 근거: docs/plans/2026-09-07-tos-phase1-kernel-hard-gate-execution-plan.md §3
+#
+# 임계값은 설정값이다(CLAUDE.md 비협상: thresholds belong in config, not code).
+# exceptions 등재는 면허가 아니라 가시성이다 — 분해는 Phase 1 범위 밖, 등재만 강제한다.
+# expires_on 경과 = --check red (fail-closed). owner/decomposition_order/expires_on 은
+# 운영자 조정 가능한 값이다.
+#
+# measured 는 등재 시점의 실측 스냅샷이지, 장식이 아니다 — 검사기의 class-(f)
+# [measured-drift] 가 등재된 measured 를 대상의 현재 실측치와 대조해 어긋나면(증가든
+# 감소든) --check red 를 낸다. 대상이 계속 자라도 measured 를 갱신하지 않으면 영원히
+# green 인 구멍을 막는 래칫이다. measured 갱신은 항상 «의도적 재등재» —
+# `python tools/tos_size_budget.py` (요약 모드)로 재측정한 값을 여기 손으로 옮겨 적을 것
+# (독립 리뷰 M2, 2026-09-07 — 등재 당시 값이 이후 커밋들에서 실제로 드리프트했음을 실측).
+
+module_max_lines: 1000
+function_max_lines: 100
+
+scope:
+  - tos/src/tos
+  # design #40 D1.3 item 5 (PROPOSED 2026-09-07, same-PR-as-ratification per
+  # that document's §0) — the runtime shell's own source tree gets the same
+  # module/function size discipline as the kernel from day one. No longer a
+  # skeleton (120 tracked files under tos/runtime as of 2026-09-08's slice
+  # #3 landing) — it currently passes at 0 violations with 0 registered
+  # exceptions of its own (all 29 below are tos/src/tos); an exception entry
+  # is added here the same way the kernel's own were, if/when a runtime
+  # target genuinely needs one.
+  - tos/runtime/src
+
+# 2026-09-07 Phase 1 작업 6 등재 — 착수 시점 초과분 전건(모듈 11 · 함수 18 = 29건).
+# decomposition_order 는 measured 내림차순(동률 시 target 오름차순) — 순서가 바뀌면
+# (재측정으로 순위가 바뀌면) 아래 목록의 물리적 순서와 decomposition_order 값을 함께
+# 갱신해 이 규율이 항상 참이 되게 유지한다. 분해는 이 계획 범위 밖;
+# expires_on 경과 시 --check red(운영자 조정 가능한 값).
+exceptions:
+- target: tos/src/tos/egressgw/gateway.py
+  measured: 1792
+  owner: tos-kernel
+  decomposition_order: 1
+  expires_on: '2026-12-31'
+  note: >-
+    Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
+    2026-09-07 재등재(독립 리뷰 M2) — measured 1712→1792, 등재 이후 커밋들에서 실측이
+    드리프트되어 있었음(원인 미상; class-(f) measured-drift 검사기 신설로 앞으로는
+    자동 적발). 재등재는 tools/tos_size_budget.py 로 재측정한 값.
+- target: tos/src/tos/sir/predicates.py
+  measured: 1681
+  owner: tos-kernel
+  decomposition_order: 2
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/posttrade/predicates.py
+  measured: 1644
+  owner: tos-kernel
+  decomposition_order: 3
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/stm/predicates.py
+  measured: 1514
+  owner: tos-kernel
+  decomposition_order: 4
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/sci/records.py
+  measured: 1242
+  owner: tos-kernel
+  decomposition_order: 5
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/egressgw/construction.py
+  measured: 1215
+  owner: tos-kernel
+  decomposition_order: 6
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/afg/predicates.py
+  measured: 1186
+  owner: tos-kernel
+  decomposition_order: 7
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/spg/predicates.py
+  measured: 1145
+  owner: tos-kernel
+  decomposition_order: 8
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/hag/predicates.py
+  measured: 1060
+  owner: tos-kernel
+  decomposition_order: 9
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/wdr/predicates.py
+  measured: 1014
+  owner: tos-kernel
+  decomposition_order: 10
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/posttrade/vocabulary.py
+  measured: 1002
+  owner: tos-kernel
+  decomposition_order: 11
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/engine/sequencer.py::run_commitment_flow
+  measured: 304
+  owner: tos-kernel
+  decomposition_order: 12
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/egressgw/gateway.py::BrokerEgressGateway.__call__
+  measured: 248
+  owner: tos-kernel
+  decomposition_order: 13
+  expires_on: '2026-12-31'
+  note: >-
+    Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
+    2026-09-07 재등재(독립 리뷰 M2) — measured 181→248 · decomposition_order
+    16→13(measured 내림차순 재정렬, 동률 시 target 오름차순).
+- target: tos/src/tos/egressgw/construction.py::derive_order_size
+  measured: 246
+  owner: tos-kernel
+  decomposition_order: 14
+  expires_on: '2026-12-31'
+  note: >-
+    Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
+    2026-09-07 decomposition_order 13→14(measured 불변, __call__ 재정렬로 인한 이동).
+- target: tos/src/tos/egressgw/records.py::send_boundary_context
+  measured: 211
+  owner: tos-kernel
+  decomposition_order: 15
+  expires_on: '2026-12-31'
+  note: >-
+    Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
+    2026-09-07 decomposition_order 14→15(measured 불변, __call__ 재정렬로 인한 이동).
+- target: tos/src/tos/nontrade/predicates.py::nontrade_disposition
+  measured: 186
+  owner: tos-kernel
+  decomposition_order: 16
+  expires_on: '2026-12-31'
+  note: >-
+    Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
+    2026-09-07 decomposition_order 15→16(measured 불변, __call__ 재정렬로 인한 이동).
+- target: tos/src/tos/posttrade/predicates.py::post_trade_disposition
+  measured: 181
+  owner: tos-kernel
+  decomposition_order: 17
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/sci/predicates.py::admission_admits_only_positive
+  measured: 179
+  owner: tos-kernel
+  decomposition_order: 18
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/engine/pipeline.py::run_decision_pipeline
+  measured: 177
+  owner: tos-kernel
+  decomposition_order: 19
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/egressgw/construction.py::construct_candidate_command
+  measured: 136
+  owner: tos-kernel
+  decomposition_order: 20
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/spg/predicates.py::semantic_validation
+  measured: 134
+  owner: tos-kernel
+  decomposition_order: 21
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/marketfeed/value.py::publish_context_value_view
+  measured: 133
+  owner: tos-kernel
+  decomposition_order: 22
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/stm/predicates.py::critical_coverage_complete_or_gap
+  measured: 116
+  owner: tos-kernel
+  decomposition_order: 23
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/spg/predicates.py::profile_within_envelope
+  measured: 115
+  owner: tos-kernel
+  decomposition_order: 24
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/authority/predicates.py::degraded_lease_valid
+  measured: 110
+  owner: tos-kernel
+  decomposition_order: 25
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/orthostate/predicates.py::coupling_violations
+  measured: 110
+  owner: tos-kernel
+  decomposition_order: 26
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/egressgw/gateway.py::_check_construction
+  measured: 106
+  owner: tos-kernel
+  decomposition_order: 27
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/posttrade/predicates.py::obligation_commit_idempotent
+  measured: 103
+  owner: tos-kernel
+  decomposition_order: 28
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+- target: tos/src/tos/afg/predicates.py::action_flow_decision
+  measured: 102
+  owner: tos-kernel
+  decomposition_order: 29
+  expires_on: '2026-12-31'
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성

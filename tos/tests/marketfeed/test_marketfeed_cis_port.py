@@ -179,7 +179,9 @@ def test_each_port_protocol_is_call_only(protocol: type) -> None:
     list plus a ``__call__`` the Protocol really declares itself (design #34 §5.1 isomorph).
     """
     assert _public_names(protocol) == []
-    assert "__call__" in vars(protocol), f"{protocol.__name__} declares no __call__ of its own"
+    assert "__call__" in vars(
+        protocol
+    ), f"{protocol.__name__} declares no __call__ of its own"
 
 
 def test_the_call_only_sweep_would_see_a_named_side_method() -> None:
@@ -279,7 +281,9 @@ def test_exactly_two_constructor_injections_are_cis_product_surfaces() -> None:
     quietly become stale.
     """
     raw = MarketFeedContextResolver.__init__.__annotations__
-    assert isinstance(raw["snapshot_store"], str), "PEP-563 assumption stale (design #38 §12 ③)"
+    assert isinstance(
+        raw["snapshot_store"], str
+    ), "PEP-563 assumption stale (design #38 §12 ③)"
 
     hints = get_type_hints(MarketFeedContextResolver.__init__)
     port = sorted(
@@ -386,7 +390,9 @@ class _PortMovedOutOfInit:
 class _PortMadePositional:
     """(§4-P5 b) Keyword-only became positional — two call sites away from a silent swap."""
 
-    def __init__(self, snapshot_store: Any, candidate_source: Any, *, scheme: Any = None) -> None:
+    def __init__(
+        self, snapshot_store: Any, candidate_source: Any, *, scheme: Any = None
+    ) -> None:
         """Wire the port positionally."""
         self._snapshot_store = snapshot_store
         self._candidate_source = candidate_source
@@ -518,7 +524,9 @@ def _documented_surfaces() -> list[tuple[str, str]]:
                 continue
             if getattr(obj, "__module__", None) != module_name:
                 continue
-            surfaces.append((f"{module_name}.{attr_name}", _normalized(obj.__doc__ or "")))
+            surfaces.append(
+                (f"{module_name}.{attr_name}", _normalized(obj.__doc__ or ""))
+            )
     return surfaces
 
 
@@ -556,7 +564,9 @@ def test_the_package_still_declares_what_it_is_not() -> None:
         "detects rather than enforces",
         "none of them is claimed as closed",
     ):
-        assert phrase in doc, f"the package docstring lost its honesty phrase: {phrase!r}"
+        assert (
+            phrase in doc
+        ), f"the package docstring lost its honesty phrase: {phrase!r}"
 
 
 def test_the_publication_layer_still_names_the_limit_it_cannot_close() -> None:
@@ -571,7 +581,9 @@ def test_no_marketfeed_docstring_claims_enforcement_the_port_does_not_have() -> 
         for name, doc in _documented_surfaces()
         for sentence in _over_claim_offenders(doc)
     ]
-    assert offenders == [], f"unqualified enforcement claim in marketfeed prose: {offenders}"
+    assert (
+        offenders == []
+    ), f"unqualified enforcement claim in marketfeed prose: {offenders}"
 
 
 def test_the_over_claim_rule_is_co_occurrence_not_substring() -> None:
@@ -584,8 +596,13 @@ def test_the_over_claim_rule_is_co_occurrence_not_substring() -> None:
 
 def test_a_planted_over_claim_is_caught_where_it_would_actually_land() -> None:
     """(§4-P3.3 ★ mutation) The rule catches the claim inside real shipped prose."""
-    planted = _normalized(tos.marketfeed.__doc__ or "") + " This layer fully enforces distinctness."
-    assert _over_claim_offenders(planted) == ("This layer fully enforces distinctness.",)
+    planted = (
+        _normalized(tos.marketfeed.__doc__ or "")
+        + " This layer fully enforces distinctness."
+    )
+    assert _over_claim_offenders(planted) == (
+        "This layer fully enforces distinctness.",
+    )
 
 
 def test_the_sentence_split_keeps_a_dotted_source_reference_whole() -> None:
@@ -595,9 +612,9 @@ def test_the_sentence_split_keeps_a_dotted_source_reference_whole() -> None:
     assert _over_claim_offenders(qualified) == ()
 
     naive = [part for part in qualified.split(".") if part]
-    assert any("fully enforces" in part and "upstream" not in part for part in naive), (
-        "the naive split no longer demonstrates the over-rejection this protection prevents"
-    )
+    assert any(
+        "fully enforces" in part and "upstream" not in part for part in naive
+    ), "the naive split no longer demonstrates the over-rejection this protection prevents"
 
 
 def test_the_shipped_trust_seam_sentence_is_what_the_rule_admits() -> None:
@@ -613,7 +630,9 @@ def test_the_shipped_trust_seam_sentence_is_what_the_rule_admits() -> None:
         for sentence in _sentences(doc)
         if any(stem in sentence.lower() for stem in _OVER_CLAIM_STEMS)
     ]
-    assert stemmed, "value.py carries no over-claim stem any more — the rule is vacuous here"
+    assert (
+        stemmed
+    ), "value.py carries no over-claim stem any more — the rule is vacuous here"
     assert all("not" in sentence.lower() for sentence in stemmed), stemmed
     assert _over_claim_offenders(doc) == ()
 
@@ -641,7 +660,9 @@ def test_a_candidate_the_observation_does_not_attest_is_refused_at_the_port() ->
     """(§4-P4 b / G2 ★) A source that supplies a different number reaches a rejection record."""
     payload = preimage(close=CLOSE_BAR_ONE)
     obs = observation(raw_event_id="raw-1", payload=payload, as_of=BAR_ONE_AS_OF)
-    snapshot = issue_snapshot(observations=(obs,), field_evaluations=(evaluation("close"),))
+    snapshot = issue_snapshot(
+        observations=(obs,), field_evaluations=(evaluation("close"),)
+    )
     capsule = issue_capsule(snapshot)
     forged = candidate("close", "raw-1", preimage(close=CLOSE_BAR_TWO))
 
@@ -658,11 +679,17 @@ def test_a_derived_value_whose_parent_is_later_is_refused_at_the_port() -> None:
     band_payload = preimage(lower_band=_BAND)
     snapshot = issue_snapshot(
         observations=(
-            observation(raw_event_id="raw-close", payload=close_payload, as_of=BAR_TWO_AS_OF),
-            observation(raw_event_id="raw-band", payload=band_payload, as_of=BAR_ONE_AS_OF),
+            observation(
+                raw_event_id="raw-close", payload=close_payload, as_of=BAR_TWO_AS_OF
+            ),
+            observation(
+                raw_event_id="raw-band", payload=band_payload, as_of=BAR_ONE_AS_OF
+            ),
         ),
         field_evaluations=(evaluation("close"), evaluation("lower_band")),
-        transformation_lineage=(lineage_node(output_id="raw-band", parents=("raw-close",)),),
+        transformation_lineage=(
+            lineage_node(output_id="raw-band", parents=("raw-close",)),
+        ),
     )
     capsule = issue_capsule(snapshot)
 
@@ -684,7 +711,9 @@ def test_an_unevaluated_field_is_refused_at_the_port() -> None:
     capsule = issue_capsule(snapshot)
 
     resolved = _resolve(
-        capsule=capsule, snapshot=snapshot, candidates=(candidate("close", "raw-1", payload),)
+        capsule=capsule,
+        snapshot=snapshot,
+        candidates=(candidate("close", "raw-1", payload),),
     )
     assert _reasons(resolved) == {ValueRejectionReason.FIELD_STATE_NOT_VALID}
     assert resolved.payload.value_view is not None
@@ -828,14 +857,27 @@ def test_the_port_does_not_make_the_producer_honest_about_as_of() -> None:
     says at the port. Adding an as-of reuse rejection would be deferral ②(b) work and the invention
     design #38 §0.4 (f) forbids, so it is not done.
     """
-    capsule_one, snapshot_one, candidates_one = one_bar(as_of=BAR_ONE_AS_OF, close=CLOSE_BAR_ONE)
-    capsule_two, snapshot_two, candidates_two = one_bar(as_of=BAR_ONE_AS_OF, close=CLOSE_BAR_ONE)
+    capsule_one, snapshot_one, candidates_one = one_bar(
+        as_of=BAR_ONE_AS_OF, close=CLOSE_BAR_ONE
+    )
+    capsule_two, snapshot_two, candidates_two = one_bar(
+        as_of=BAR_ONE_AS_OF, close=CLOSE_BAR_ONE
+    )
 
-    first = _resolve(capsule=capsule_one, snapshot=snapshot_one, candidates=candidates_one)
-    second = _resolve(capsule=capsule_two, snapshot=snapshot_two, candidates=candidates_two)
+    first = _resolve(
+        capsule=capsule_one, snapshot=snapshot_one, candidates=candidates_one
+    )
+    second = _resolve(
+        capsule=capsule_two, snapshot=snapshot_two, candidates=candidates_two
+    )
 
     assert first.resolution.disposition is ValueViewDisposition.RESOLVED
     assert second.resolution.disposition is ValueViewDisposition.RESOLVED
-    assert first.payload.value_view is not None and second.payload.value_view is not None
-    assert first.payload.value_view.canonical_digest == second.payload.value_view.canonical_digest
+    assert (
+        first.payload.value_view is not None and second.payload.value_view is not None
+    )
+    assert (
+        first.payload.value_view.canonical_digest
+        == second.payload.value_view.canonical_digest
+    )
     assert snapshot_one.canonical_digest == snapshot_two.canonical_digest
