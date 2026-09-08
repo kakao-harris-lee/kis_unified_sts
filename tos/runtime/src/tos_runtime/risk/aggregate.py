@@ -230,6 +230,20 @@ class AggregateRiskDecisionInputs:
     ``tos_runtime.risk.ledger_stages.AggregateRiskDecisionStage`` inputs
     provider) supplies them; their absence is ``None`` — UNKNOWN, never
     assumed positive.
+
+    ``numerically_safe``/``valuation_ok`` are ``| None`` (kernel round #1
+    §1.4/§2.3 — ``tos.are.predicates._decide_result``/``risk_decision`` were
+    widened to accept ``None`` for both, "None = no opinion => UNKNOWN", with
+    no logic change: ``is not True`` / ``not valuation_ok`` already treated
+    ``None`` as restrictive). Widening the runtime type here only lets a
+    caller with genuinely no opinion pass ``None`` through instead of being
+    forced to fabricate a ``bool`` — the same "UNKNOWN, never assumed
+    positive" discipline every other Optional field on this dataclass
+    already has, and what lets
+    :func:`~tos_runtime.compose._risk_attestations._restrictive_merge`
+    defer to the operator attestation for these two fields as well (that
+    module's own docstring, updated the same round: "on the fields that
+    allow it" now means all six attested fields, not four).
     """
 
     cells: tuple[ProjectedCell, ...]
@@ -237,8 +251,8 @@ class AggregateRiskDecisionInputs:
     applicable_risk_scopes: tuple[str, ...]
     all_fields_attributed: bool | None
     required_scopes: frozenset[RiskScopeKind]
-    numerically_safe: RiskDecisionResult | bool
-    valuation_ok: bool
+    numerically_safe: RiskDecisionResult | bool | None
+    valuation_ok: bool | None
     injected_envelope_max: CapacityVector | None
     limit_source_is_injected_envelope: bool | None
     effective_limit: CapacityVector | None = None
