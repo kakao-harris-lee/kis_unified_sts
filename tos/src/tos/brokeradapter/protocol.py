@@ -74,6 +74,11 @@ class OutboundSendRequest(FrozenModel):
     price: CanonicalDecimal | None = None
     side: str | None = None
     reference: OrderingEvent = OrderingEvent()
+    #: The sealed ``tos.egressgw.seal.SendSeal.seal_digest`` the gateway built before the claim
+    #: (Phase 4 작업 6). Not a credential, session, or retry parameter — a plain digest an adapter
+    #: may echo back on its own evidence if it chooses; ``None`` keeps this signature-compatible
+    #: with a caller that has not adopted the seal yet.
+    seal_digest: str | None = None
 
     def coordinate(self, name: str) -> str | None:
         """Return one opaque coordinate value (``None`` when absent).
@@ -114,6 +119,7 @@ class Transport(Protocol):
         price: CanonicalDecimal | None = None,
         side: str | None = None,
         reference: OrderingEvent = OrderingEvent(),
+        seal_digest: str | None = None,
     ) -> EgressResultPayload:
         """Transmit the verified outbound exactly once and return the typed result.
 
@@ -125,6 +131,8 @@ class Transport(Protocol):
             price: The authorized order price.
             side: The authorized side token.
             reference: The event's causal-ordering coordinates.
+            seal_digest: The sealed ``SendSeal.seal_digest`` (Phase 4 작업 6) — not a credential,
+                session, or retry parameter.
 
         Returns:
             The :class:`~tos.engine.EgressResultPayload` for **this exact attempt**.

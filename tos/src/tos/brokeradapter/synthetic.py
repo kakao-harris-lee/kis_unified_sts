@@ -197,6 +197,7 @@ class SyntheticPaperTransport:
         price: CanonicalDecimal | None = None,
         side: str | None = None,
         reference: OrderingEvent = OrderingEvent(),
+        seal_digest: str | None = None,
     ) -> EgressResultPayload:
         """Produce the deterministic result for exactly one verified outbound.
 
@@ -211,6 +212,8 @@ class SyntheticPaperTransport:
             price: The authorized order price.
             side: The authorized side token.
             reference: The event's causal-ordering coordinates.
+            seal_digest: The sealed ``SendSeal.seal_digest`` (Phase 4 작업 6), stored on the
+                retained :class:`OutboundSendRequest` unchanged.
 
         Returns:
             The :class:`~tos.engine.EgressResultPayload` for this exact attempt.
@@ -223,6 +226,7 @@ class SyntheticPaperTransport:
             price=price,
             side=side,
             reference=reference,
+            seal_digest=seal_digest,
         )
         self.requests += (request,)
         if self._policy.declared_kind is not None:
