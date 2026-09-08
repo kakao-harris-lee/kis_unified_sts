@@ -621,6 +621,14 @@ def _setup_eval_summary(redis: Any, now: datetime) -> SetupEvalSummary:
 
 
 def _load_setup_c_config() -> SetupCConfig:
+    """Load the runtime Setup C config (strategy YAML ``strategy.entry.params``).
+
+    ``SetupCConfig.from_yaml()`` with no arguments resolves the same file and
+    section the decision_engine daemon and the monolith adapter use, so this
+    endpoint reports the parameters the runtime actually applies. A read
+    failure degrades to the Pydantic defaults, which
+    :func:`_config_warnings` then surfaces as a mismatch.
+    """
     try:
         return SetupCConfig.from_yaml()
     except Exception:  # noqa: BLE001
@@ -654,6 +662,16 @@ def _load_strategy_setup_c_params() -> dict[str, Any]:
 
 
 def _config_warnings(cfg: SetupCConfig, strategy_params: dict[str, Any]) -> list[str]:
+    """Compare the LOADED Setup C config against the strategy YAML on disk.
+
+    Both sides now come from ``config/strategies/futures/setup_c_event_reaction
+    .yaml`` (``strategy.entry.params``) — the single source of truth since the
+    dead ``config/decision_engine.yaml`` setup sections were deleted. So this is
+    no longer a two-file drift check; it is a LOAD-INTEGRITY check: a warning
+    here means ``SetupCConfig.from_yaml()`` did not actually pick up the shipped
+    file (read failure → Pydantic defaults, a moved section, or a renamed key),
+    which is exactly the silent-defaults failure the deletion removed.
+    """
     warnings: list[str] = []
     comparisons = {
         "window_minutes": cfg.window_minutes,
@@ -667,7 +685,7 @@ def _config_warnings(cfg: SetupCConfig, strategy_params: dict[str, Any]) -> list
         if strategy_value is not None and strategy_value != decision_value:
             warnings.append(
                 "setup_c_config_mismatch:"
-                f"{key}=decision_engine:{decision_value},strategy_yaml:{strategy_value}"
+                f"{key}=loaded:{decision_value},strategy_yaml:{strategy_value}"
             )
     return warnings
 
@@ -981,7 +999,9 @@ async def get_event_context_diagnostics(
         ]
         if config_warnings:
             notes.append(
-                "setup_c config mismatch detected between decision_engine.yaml and strategy YAML."
+                "setup_c config mismatch: the loaded runtime config does not match "
+                "config/strategies/futures/setup_c_event_reaction.yaml "
+                "(strategy.entry.params) — the config load fell back to defaults."
             )
         if redis is None:
             notes.append("redis_unavailable: stream/key diagnostics are degraded.")

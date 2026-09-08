@@ -194,8 +194,12 @@ def run(args: argparse.Namespace) -> int:
         SetupAGapReversion(config=setup_a_cfg) if setup_a_cfg else SetupAGapReversion()
     )
 
-    # Setup C: YAML default window_minutes=720 (overnight-event reach).
-    # Optuna JSON overrides the other params if provided.
+    # Setup C: parameters come from the deployed strategy file
+    # config/strategies/futures/setup_c_event_reaction.yaml
+    # (strategy.entry.params) — the same operating point the decision_engine
+    # daemon and the orchestrator adapter run, so a walk-forward reproduces the
+    # deployed config rather than a second, separately-drifting one. Optuna
+    # JSON overrides the other params if provided.
     setup_c_cfg = SetupCConfig.from_yaml()
     if args.setup_c_params:
         with open(args.setup_c_params) as f:

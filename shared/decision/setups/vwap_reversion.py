@@ -99,16 +99,24 @@ from shared.decision.signal import Signal
 class SetupDConfig(ServiceConfigBase):
     """Configuration for :class:`SetupDVWAPReversion`.
 
-    All numeric thresholds read from ``config/decision_engine.yaml`` under the
-    ``setup_d_vwap_reversion`` section. Defaults are chosen from the Dec2025–
-    Apr2026 research spike operating point (extreme≈1.8, vol-ratio≈0.7) where the
-    edge is distributed across months and balanced long/short — not the tighter
-    single-month-concentrated point. They let unit tests construct
-    ``SetupDConfig()`` without a YAML file.
+    Source of truth: ``config/strategies/futures/setup_d_vwap_reversion.yaml``
+    under ``strategy.entry.params`` — the SAME file and section the monolith
+    adapter config (SetupDEntryConfig) reads, so the
+    decoupled decision_engine and the orchestrator run one operating point.
+    ``ServiceConfigBase`` ignores the adapter-only keys in that section
+    (``llm_tuning``, ``regime_gate``, ``*_blocked_regimes``, ...). Defaults
+    below are the spec values and exist so unit tests can construct the config
+    without a YAML file — they are NOT the deployed operating point.
+
+    Defaults are the Dec2025–Apr2026 research spike operating point
+    (extreme≈1.8, vol-ratio≈0.7) where the edge is distributed across months and
+    balanced long/short — not the tighter single-month-concentrated point.
     """
 
-    _default_config_file: ClassVar[str] = "decision_engine.yaml"
-    _default_section: ClassVar[str] = "setup_d_vwap_reversion"
+    _default_config_file: ClassVar[str] = (
+        "strategies/futures/setup_d_vwap_reversion.yaml"
+    )
+    _default_section: ClassVar[str] = "strategy.entry.params"
 
     enabled: bool = Field(default=True, description="Enable/disable this setup")
     valid_minutes_min: int = Field(
@@ -313,6 +321,8 @@ class SetupDVWAPReversion(Setup):
     """
 
     CONFIG_CLASS = SetupDConfig
+    #: Strategy-registry / ops name (see SetupAGapReversion.REGISTRY_NAME).
+    REGISTRY_NAME: ClassVar[str] = "setup_d_vwap_reversion"
 
     def __init__(self, *, config: SetupDConfig | None = None) -> None:
         super().__init__(config=config)

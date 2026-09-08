@@ -16,20 +16,30 @@ class Setup(ABC):
     -----------------
     1. Declare a ``CONFIG_CLASS`` class-variable pointing to a
        ``ServiceConfigBase`` subclass that holds the setup's parameters.
-    2. Implement ``check(ctx) -> Signal | None`` with the entry logic.
-    3. Receive a ``config`` instance via the constructor (or let the
+    2. Declare a ``REGISTRY_NAME`` class-variable holding the strategy-registry
+       name (the ``config/strategies/futures/<name>.yaml`` stem, e.g.
+       ``"setup_a_gap_reversion"``). It is what the decoupled decision_engine
+       roster keys on and what the setup-eval observability rows are written
+       under, so the decoupled chain and the monolith share one identifier.
+    3. Implement ``check(ctx) -> Signal | None`` with the entry logic.
+    4. Receive a ``config`` instance via the constructor (or let the
        default constructor load it from the YAML default path).
 
     Example::
 
         class SetupAGapReversion(Setup):
             CONFIG_CLASS = SetupAConfig
+            REGISTRY_NAME = "setup_a_gap_reversion"
 
             def check(self, ctx: FuturesMarketView) -> Signal | None:
                 ...
     """
 
     CONFIG_CLASS: ClassVar[type[Any]]
+    # Annotation only (no value): a subclass that forgets it has no attribute,
+    # which the decision_engine's roster/observability treats as "unnamed" and
+    # skips rather than silently writing under a wrong key.
+    REGISTRY_NAME: ClassVar[str]
 
     def __init__(self, *, config: Any | None = None) -> None:
         """Initialise the setup with an optional pre-built config.

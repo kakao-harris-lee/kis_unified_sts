@@ -45,13 +45,20 @@ from shared.decision.signal import Signal
 class SetupAConfig(ServiceConfigBase):
     """Configuration for :class:`SetupAGapReversion`.
 
-    All numeric thresholds read from ``config/decision_engine.yaml`` under the
-    ``setup_a_gap_reversion`` section.  Defaults match spec §4.2 exactly so
-    that unit-tests can construct ``SetupAConfig()`` without a YAML file.
+    Source of truth: ``config/strategies/futures/setup_a_gap_reversion.yaml``
+    under ``strategy.entry.params`` — the SAME file and section the monolith
+    adapter config (SetupAEntryConfig) reads, so the
+    decoupled decision_engine and the orchestrator run one operating point.
+    ``ServiceConfigBase`` ignores the adapter-only keys in that section
+    (``llm_tuning``, ``regime_gate``, ``*_blocked_regimes``, ...). Defaults
+    below are the spec values and exist so unit tests can construct the config
+    without a YAML file — they are NOT the deployed operating point.
     """
 
-    _default_config_file: ClassVar[str] = "decision_engine.yaml"
-    _default_section: ClassVar[str] = "setup_a_gap_reversion"
+    _default_config_file: ClassVar[str] = (
+        "strategies/futures/setup_a_gap_reversion.yaml"
+    )
+    _default_section: ClassVar[str] = "strategy.entry.params"
 
     enabled: bool = Field(default=True, description="Enable/disable this setup")
     valid_minutes_min: int = Field(
@@ -100,6 +107,11 @@ class SetupAGapReversion(Setup):
     """
 
     CONFIG_CLASS = SetupAConfig
+    #: Strategy-registry / ops name — the SAME identifier the monolith adapter
+    #: (``shared/strategy/entry/setup_a_adapter.py``) and
+    #: ``config/strategies/futures/<name>.yaml`` use, so the decoupled daemon
+    #: roster, the setup-eval Redis rows and the evidence bundles share one key.
+    REGISTRY_NAME: ClassVar[str] = "setup_a_gap_reversion"
 
     # Why the last check() returned None (observability — answers "why no
     # Setup A trade today"). Set at every reject gate; None after a fired signal.

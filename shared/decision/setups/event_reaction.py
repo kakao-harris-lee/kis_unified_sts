@@ -48,13 +48,20 @@ from shared.decision.signal import Signal
 class SetupCConfig(ServiceConfigBase):
     """Configuration for :class:`SetupCEventReaction`.
 
-    All numeric thresholds are read from ``config/decision_engine.yaml`` under
-    the ``setup_c_event_reaction`` section.  Defaults match spec §5.2 exactly
-    so that unit tests can construct ``SetupCConfig()`` without a YAML file.
+    Source of truth: ``config/strategies/futures/setup_c_event_reaction.yaml``
+    under ``strategy.entry.params`` — the SAME file and section the monolith
+    adapter config (SetupCEntryConfig) reads, so the
+    decoupled decision_engine and the orchestrator run one operating point.
+    ``ServiceConfigBase`` ignores the adapter-only keys in that section
+    (``llm_tuning``, ``regime_gate``, ``*_blocked_regimes``, ...). Defaults
+    below are the spec values and exist so unit tests can construct the config
+    without a YAML file — they are NOT the deployed operating point.
     """
 
-    _default_config_file: ClassVar[str] = "decision_engine.yaml"
-    _default_section: ClassVar[str] = "setup_c_event_reaction"
+    _default_config_file: ClassVar[str] = (
+        "strategies/futures/setup_c_event_reaction.yaml"
+    )
+    _default_section: ClassVar[str] = "strategy.entry.params"
 
     enabled: bool = Field(default=True, description="Enable/disable this setup")
     window_minutes: int = Field(
@@ -158,6 +165,8 @@ class SetupCEventReaction(Setup):
     """
 
     CONFIG_CLASS = SetupCConfig
+    #: Strategy-registry / ops name (see SetupAGapReversion.REGISTRY_NAME).
+    REGISTRY_NAME: ClassVar[str] = "setup_c_event_reaction"
 
     def __init__(
         self,
