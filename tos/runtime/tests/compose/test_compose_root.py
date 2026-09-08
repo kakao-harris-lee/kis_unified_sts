@@ -725,6 +725,72 @@ class TestPermitPathStaleGenerationProviderYieldsUnknown:
         runtime.evidence_store.close()
 
 
+class TestActionFlowWrapperStaleGenerationProviderYieldsUnknown:
+    """Addendum A, step 7 half (2026-09-08): a stale/unreachable RCL log
+    inside ``_risk_attestations.wrap_action_flow_inputs_provider``'s own
+    ``except (StaleEpochRead, sqlite3.Error, OSError): return None`` must
+    yield ``UNKNOWN`` at ``ActionFlowDecisionStage`` — never a fabricated
+    ``generation_current``. Calls the real, composed Stage directly
+    (isolated from step 4's separate, unrelated RCL read)."""
+
+    def test_stale_writer_epoch_yields_unknown_at_step_7(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        from tos.engine.records import InstrumentKey, StageRequest
+        from tos.engine.vocabulary import CommitmentStep
+        from tos_runtime.compose._risk_attestations import (
+            RiskAttestations,
+            wrap_action_flow_inputs_provider,
+        )
+        from tos_runtime.compose._wiring import _rcl_tip_generation_provider
+        from tos_runtime.rcl.log import SqliteCommitLog
+        from tos_runtime.risk.ledger_stages import ActionFlowDecisionStage
+
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+        event = fx.crossing_event()
+        first = runtime.run_once((event,))[0]
+        assert first.pipeline is not None and first.pipeline.proposal is not None
+
+        second = SqliteCommitLog(
+            runtime.rcl_log.path, evidence_port=runtime.evidence_store
+        )
+        try:
+            second.acquire_epoch(runtime.identity)
+            stale_provider = _rcl_tip_generation_provider(
+                runtime.rcl_log, runtime.writer_epoch
+            )
+            attestations = RiskAttestations(
+                numerically_safe=True,
+                valuation_ok=True,
+                all_fields_attributed=True,
+                limit_source_is_injected_envelope=True,
+                economic_commitment_exclusive=True,
+                flow_commitment_exclusive=True,
+            )
+            wrapped_provider = wrap_action_flow_inputs_provider(
+                _action_flow_inputs, attestations, stale_provider
+            )
+            stage = ActionFlowDecisionStage(
+                runtime.flow_governor,
+                inputs_provider=wrapped_provider,
+                time_permits_new_risk=lambda: True,
+            )
+            request = StageRequest(
+                step=CommitmentStep.ACTION_FLOW_DECISION,
+                instrument_key=InstrumentKey(
+                    account=fx.ACCOUNT, instrument=fx.INSTRUMENT
+                ),
+                proposal=first.pipeline.proposal,
+            )
+            verdict = stage(request)
+            assert verdict.outcome.value == "UNKNOWN"
+        finally:
+            second.close()
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+
 class TestRclLogUnavailableBlocksNewRisk:
     """Scenario 5: removing/locking the RCL log file => zero new risk
     (steps 8-10 UNKNOWN) and no hand-off."""
