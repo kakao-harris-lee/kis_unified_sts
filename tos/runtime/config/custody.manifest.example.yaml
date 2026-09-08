@@ -1,0 +1,54 @@
+# tos_runtime custody manifest example (design #40 D4.1, slice plan §2 item 4).
+#
+# Loader: tos_runtime.custody.file_custody.CustodyManifest.load
+# (consumed by tos_runtime.custody.file_custody.FileCustody's constructor).
+#
+# `environment_label` MUST byte-exact match the runtime's own boot-argument
+# label (tos.workload.environment_label_consistent — case-sensitive, no
+# prefix/substring match, no environment-family grouping) or FileCustody
+# refuses to construct at all: a fail-closed BOOT refusal, not a per-load
+# refusal (ADR-002-013 :498, design #40 D4.1 line 113). This example leaves
+# it `null` (named-TBD) — a real deployment's copy MUST set a concrete label
+# ("non-live-test" / "paper" / "restricted-live" / "production") before this
+# file is usable, since `null` never equals any runtime label (the predicate
+# treats an absent/blank label on EITHER side as "not provably consistent",
+# never as a vacuous match).
+environment_label: null
+
+# Exactly the three scopes Phase 2 provisions
+# (tos_runtime.custody.file_custody.PROVISIONED_SCOPES). `order.*` is
+# deliberately absent and always will be for futures REAL (root CLAUDE.md
+# non-negotiable rule); stock order-scope custody is Phase 4 and gets its own
+# manifest row only when that phase lands — never add an `order.*` entry
+# here as a shortcut, `FileCustody.load` refuses it structurally regardless
+# of what a manifest declares.
+#
+# Each scope names:
+#   file            - path to the credential file, RELATIVE to this
+#                     manifest's own directory (never absolute).
+#   principal       - this scope's own, distinct principal string
+#                     (ADR-002-013 :267-269 - no two scopes may share one).
+#   expected_sha256 - the file's expected sha256 hex digest, or `null`
+#                     (named-TBD - digest pinning not yet approved for this
+#                     scope). `null` skips the digest check entirely and
+#                     FileCustody.load instead records a "digest 미고정"
+#                     note in the scope's evidence entry - never treated as
+#                     a vacuous match.
+#
+# Every scope file below must exist with mode exactly 0600, owned by the
+# uid FileCustody was constructed with as `expected_owner_uid` - anything
+# else (0644, wrong owner, missing file) is a load-time refusal
+# (CustodyLoadRefused), never a warning.
+scopes:
+  read.principal:
+    file: read.principal
+    principal: read-principal-v1
+    expected_sha256: null
+  evidence.key:
+    file: evidence.key
+    principal: evidence-key-v1
+    expected_sha256: null
+  replay.params:
+    file: replay.params
+    principal: replay-params-v1
+    expected_sha256: null

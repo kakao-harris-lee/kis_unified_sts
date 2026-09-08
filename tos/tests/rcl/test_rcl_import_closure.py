@@ -91,6 +91,7 @@ def _closure_child(queue: mp.Queue) -> None:
     import tos.rcl  # noqa: F401
     import tos.rcl._base  # noqa: F401
     import tos.rcl.authority  # noqa: F401
+    import tos.rcl.commitlog  # noqa: F401
     import tos.rcl.predicates  # noqa: F401
     import tos.rcl.records  # noqa: F401
     import tos.rcl.state  # noqa: F401

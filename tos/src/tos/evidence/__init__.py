@@ -26,11 +26,25 @@ Public surface groups by module:
 * :mod:`tos.evidence.ledger` — segment-commitment Protocol + provisional chain.
 * :mod:`tos.evidence.predicates` — conflict / ordering / gap / retention / replay /
   redaction / receipt-binding / authority-absence predicates.
+* :mod:`tos.evidence.chain` — production SHA-256/HMAC chain scheme + append
+  receipt (design #40 D3-a/D3-b, Phase 2 — ADDS beside the provisional chain
+  above, never replaces it).
+* :mod:`tos.evidence.retention` — deletability predicate + Tombstone record
+  (design #40 D3-c, Phase 2).
+* :mod:`tos.evidence.scrub` — deterministic secret-field scrubbing (design #40
+  D3-d, Phase 2).
 """
 
 from __future__ import annotations
 
 from tos.evidence._base import AllFalseFlags, EvidenceArtifact
+from tos.evidence.chain import (
+    EV_L2_SHA256_HMAC_CHAIN_VERSION,
+    ChainedEntry,
+    EvidenceAppendReceipt,
+    Sha256HmacChainScheme,
+    verify_chain,
+)
 from tos.evidence.elements import (
     CausalLink,
     DurabilityClass,
@@ -98,6 +112,8 @@ from tos.evidence.replay import (
     ReplayResultState,
     compute_replay_result,
 )
+from tos.evidence.retention import Tombstone, retention_deletable
+from tos.evidence.scrub import scrub_secret_fields
 
 __all__ = [
     # base
@@ -140,6 +156,17 @@ __all__ = [
     "IntegrityAnchor",
     "ProvisionalHashChainScheme",
     "SegmentCommitmentScheme",
+    # chain (Phase 2, design #40 D3-a/D3-b)
+    "EV_L2_SHA256_HMAC_CHAIN_VERSION",
+    "ChainedEntry",
+    "EvidenceAppendReceipt",
+    "Sha256HmacChainScheme",
+    "verify_chain",
+    # retention (Phase 2, design #40 D3-c)
+    "Tombstone",
+    "retention_deletable",
+    # scrub (Phase 2, design #40 D3-d)
+    "scrub_secret_fields",
     # predicates
     "Ordering",
     "OrderingEvent",

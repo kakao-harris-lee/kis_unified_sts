@@ -89,9 +89,19 @@ MOCK-001 records the site; it fences nothing and authorizes nothing.
 
 ## 3. TOS package conformance inventory
 
-There are 38 top-level packages under `tos/src/tos` (excluding `__pycache__`).
+There are 39 top-level packages under `tos/src/tos` (excluding `__pycache__`).
 No package row below is production authority. `READY` and `PASS` are exact
 register states at their recorded scope—not package acceptance or live readiness.
+
+**2026-09-08 addition:** `workload` was previously unregistered — new since
+design #40 D4 (kernel side, commit `1e9bf11c`) — the same F6 failure mode this
+register exists to prevent, applied to the package census rather than a broker
+route. Registering it changes nothing about the package's conformance: it is a
+pure record (`RuntimeIdentity`) plus a consistency predicate
+(`environment_label_consistent`), consumed by ADR-002-009's and ADR-002-029's
+own evidence families (already registered as `failuredomain` and `sci` above)
+rather than owning a family of its own — the same shape as `canonical` and
+`ordering`.
 
 | Package | Owning contract | Current implementation level | Registered evidence state | Principal trust seam |
 |---|---|---|---|---|
@@ -133,6 +143,7 @@ register states at their recorded scope—not package acceptance or live readine
 | `time` | ADR-002-008 | L1 pure predicate substrate | TIME: 10 NOT_IMPLEMENTED | no trusted clock/synchronization/uncertainty service |
 | `venue` | ADR-002-019 | L1 pure predicate substrate | VTG: 2 READY / 10 NOT_IMPLEMENTED | no Venue Authority/calendar/halt/capability runtime |
 | `wdr` | ADR-002-026 | L1 pure predicate substrate | WDR: 4 READY / 8 NOT_IMPLEMENTED | no deviation authority/conflict/activation/custody runtime |
+| `workload` | shared 009/029 substrate | shared identity substrate | no direct family | kernel record + predicate only (design #40 D4); runtime issuer and custody not yet landed, no authority |
 
 ## 4. Authority map
 

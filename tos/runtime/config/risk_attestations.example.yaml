@@ -1,0 +1,44 @@
+# Operator-attested step 6/7 admission witnesses (tos_runtime.compose._risk_attestations).
+#
+# Six AggregateRiskDecisionInputs/ActionFlowDecisionInputs fields (steps 6/7)
+# have NO Phase 2 runtime producer:
+#
+#   * numerically_safe / valuation_ok — real kernel predicates
+#     (tos.are.numerical_safety / valuation_conservative) exist, but both
+#     need their OWN injected classification witnesses (raw magnitudes,
+#     price-class distinctions, staleness flags, ...) that Phase 2 also has
+#     no producer for.
+#   * all_fields_attributed — a data-lineage/attribution witness; no Phase 2
+#     service tracks field-level data lineage.
+#   * limit_source_is_injected_envelope — a provenance claim about where a
+#     limit value came from; checked and rejected as derivable-by-equality
+#     (a legitimately scaled-down request is still "sourced from" the
+#     envelope without being numerically equal to it).
+#   * economic_commitment_exclusive / flow_commitment_exclusive — an
+#     exclusivity/non-double-booking claim; no durable RCL convention exists
+#     yet to query it structurally.
+#
+# Phase 4 (a real broker-capability-profile / valuation-data / RCL-exclusivity
+# producer) replaces these operator attestations.
+#
+# Every field below is a named-TBD `null` in this example — an operator MUST
+# fill in a concrete value for every field before compose_paper_runtime will
+# start; a still-null field refuses composition at startup (fail-closed,
+# never a silent default).
+#
+# generation_current (also a step 7 field) is NOT configured here: it has a
+# genuine Phase 2 producer (tos.afg.generation_fenced over the caller's own
+# decision_generation vs the RCL log's real current tip) and is always
+# derived from that instead.
+numerically_safe:
+  attested: null
+valuation_ok:
+  attested: null
+all_fields_attributed:
+  attested: null
+limit_source_is_injected_envelope:
+  attested: null
+economic_commitment_exclusive:
+  attested: null
+flow_commitment_exclusive:
+  attested: null

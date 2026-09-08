@@ -76,6 +76,7 @@ def _closure_child(queue: mp.Queue) -> None:
     import tos.canonical  # noqa: F401
     import tos.canonical.canonicalization  # noqa: F401
     import tos.evidence  # noqa: F401
+    import tos.evidence.chain  # noqa: F401
     import tos.evidence.elements  # noqa: F401
     import tos.evidence.envelope  # noqa: F401
     import tos.evidence.gap  # noqa: F401
@@ -84,6 +85,8 @@ def _closure_child(queue: mp.Queue) -> None:
     import tos.evidence.predicates  # noqa: F401
     import tos.evidence.receipt  # noqa: F401
     import tos.evidence.replay  # noqa: F401
+    import tos.evidence.retention  # noqa: F401
+    import tos.evidence.scrub  # noqa: F401
 
     leaked = sorted(name for name in sys.modules if _is_forbidden(name))
     queue.put(leaked)

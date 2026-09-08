@@ -1,0 +1,71 @@
+# tos_runtime.risk example config (slice plan §2 items 1-2; design #40 §5 order 5)
+#
+# Loaders:
+#   tos_runtime.risk.aggregate.load_adverse_scenario_set    (AdverseScenarioSet)
+#   tos_runtime.risk.aggregate.load_required_scenario_kinds (coverage floor)
+#   ActionAmplificationEnvelope is constructed directly by the composition root
+#   from the `action_flow_envelope` block below (tos.afg.ActionAmplificationEnvelope
+#   takes no config loader of its own in this slice — see
+#   tos_runtime.risk.flow.ActionFlowGovernor.__init__, which refuses to start if
+#   any axis below is still null).
+#
+# Every value below is `null` (named-TBD): this is an EXAMPLE file, not an
+# approved profile. A real deployment copies this file, gets each bound
+# approved by the Bounds-Approver (CLAUDE.md "configuration-driven only"), and
+# fills in a concrete value. Any key left null, or missing outright, is a
+# fail-closed startup rejection (AggregateRiskConfigError / ActionFlowConfigError)
+# — never a silent default.
+
+# --- Aggregate Risk Authority (ARA) — tos.are.AdverseScenarioSet ----------
+
+# Independent, service-assigned scenario-set identity (are §5.4/§3.1 — not
+# derived from the digest).
+scenario_set_id: null
+
+# Monotonic generation (tos.are.AdverseScenarioSet._REQUIRED_COVERED — an
+# ISSUED set cannot exist without this; a still-null value here makes
+# `AdverseScenarioSet.issue` itself raise, which the loader re-raises as
+# AggregateRiskConfigError).
+scenario_set_generation: null
+
+# The AggregateRiskPolicy this scenario set is bound to (are §5.4 line 128).
+policy_binding_id: null
+
+# The credible adverse-scenario kinds this set covers (list of
+# tos.are.vocabulary.AdverseScenarioKind member names, e.g.
+# ["MARKET_GAP", "LIQUIDITY_STRESS"]) — a min-coverage floor, never a
+# whitelist (are §11 line 301 "absence from the set is not proof a credible
+# adverse path can be ignored").
+covered_scenario_kinds: null
+
+# The injected min-coverage floor tos.are.adverse_increment checks
+# `covered_scenario_kinds` against (a subset of the AdverseScenarioKind
+# vocabulary this evaluation REQUIRES to be covered). An empty/null floor
+# always fails closed (are §11/§4.7), so this loader refuses to start on it.
+required_scenario_kinds: null
+
+# Optional evidence-package reference for the scenario set (are §5.4).
+evidence_package_ref: null
+
+# --- Action Flow Governor (AFG) — tos.afg.ActionAmplificationEnvelope ----
+# §5.8 line 141 verbatim: "unknown or unbounded amplification is denial" —
+# ActionFlowGovernor refuses to start unless every axis below is concrete
+# (tos.afg.ActionAmplificationEnvelope.declares_every_bound).
+
+max_fan_out: null
+max_depth: null
+max_attempts: null
+max_mutations: null
+max_queries: null
+max_queue_depth: null
+max_in_flight: null
+max_elapsed_monotonic: null
+max_duplicate_redelivery_expansion: null
+max_failover_reconnect_replay_expansion: null
+
+# The §11 per-cause amplification ceiling (VP-002 `MAX_action_amplification_per_cause`,
+# present-and-null in Phase 1 per the kernel's own design contract — a real
+# deployment still fills it in here, since ActionFlowGovernor's own start-up
+# check requires every axis concrete regardless of the kernel's ISSUED-reachability
+# allowance for a null Phase-1 value on the *decision artifacts*).
+max_amplification_per_cause: null

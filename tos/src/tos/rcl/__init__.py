@@ -36,6 +36,22 @@ from tos.rcl._base import (
     IndependentIdArtifact,
 )
 from tos.rcl.authority import GrantDecisionRef, RclAuthorityEffect
+from tos.rcl.commitlog import (
+    AppendReceipt,
+    AppendRefusal,
+    AppendRefusalReason,
+    CapacityReservationTransition,
+    CommitEntry,
+    CommitLog,
+    LogView,
+    ReservationScope,
+    WriterEpoch,
+    duplicate_command,
+    release_admissible,
+    replay_reproduces_state,
+    reservation_transition_structurally_legal,
+    stale_writer_epoch,
+)
 from tos.rcl.predicates import (
     apply_benefit,
     apply_committed,
@@ -121,6 +137,21 @@ __all__ = [
     # authority
     "GrantDecisionRef",
     "RclAuthorityEffect",
+    # commitlog (D2 port)
+    "AppendRefusal",
+    "AppendRefusalReason",
+    "AppendReceipt",
+    "CapacityReservationTransition",
+    "CommitEntry",
+    "CommitLog",
+    "LogView",
+    "ReservationScope",
+    "WriterEpoch",
+    "duplicate_command",
+    "release_admissible",
+    "replay_reproduces_state",
+    "reservation_transition_structurally_legal",
+    "stale_writer_epoch",
     # records
     "AuthoritativeSnapshot",
     "LedgerCommandRecord",
