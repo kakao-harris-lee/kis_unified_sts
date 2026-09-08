@@ -925,3 +925,162 @@ class TestReleaseAdmissionRefusalBlocksBoot:
         with pytest.raises(ReleaseAdmissionRefused) as excinfo:
             _compose(tmp_path, mismatched_release_config_dir, data_dir, custody_root)
         assert "expected_code_digest" in str(excinfo.value)
+
+
+class TestCapacityObligationRecording:
+    """Kernel round #1 §3 (lane B) — the compose root wires a REAL
+    ``CapacityObligationRecorder`` onto the REAL gateway sink, resolving the
+    SAME reservation id the real ``AtomicCommitStage`` just committed.
+
+    **Deviation from the plan (reported).** No pre-existing "denied-egress-
+    attestation" e2e scenario existed in this file to reuse (surveyed: no
+    ``SEND_REFUSED`` assertion anywhere in this module before this class).
+    Worse, the plan's assumed alternative — flip one pending currentness
+    dimension's ``positively_established`` to ``False``
+    (``TestPendingDimensionAttestationGatesCompleteness``'s own technique)
+    and drive the real engine to a genuine item-16 ``SEND_REFUSED`` carrying
+    a preserved-capacity obligation — is not reachable through this compose
+    root's CURRENT wiring at all: measured directly (a temporary print of
+    the resulting ``SEND_REFUSED`` payload), an incomplete Safety Currentness
+    Vector makes ``EgressCurrentnessProofIssuer.issue()`` (module docstring:
+    "returns ``None`` ... when the candidate fails its own
+    ``proof_admissible`` self-check") refuse to issue a proof at ALL, so
+    ``context.egress_currentness_proof`` is ``None`` and the gateway halts at
+    the EARLIER ``proof_structurally_complete(None)`` check
+    (``tos.egressgw.gateway._check_currentness``) — never reaching the LATER
+    ``egress_currentness_verdict(...)`` branch that calls
+    ``unknown_preserves_capacity`` and sets
+    ``preserved_worst_credible_capacity``. Because ``proof_admissible``
+    requires ``result is CURRENT`` and ``issue()`` self-checks that SAME
+    predicate on the SAME object before ever returning it, a structurally-
+    complete-but-non-ADMIT proof cannot currently reach the gateway through
+    this issuer at all — reaching the plan's assumed scenario for real would
+    need a currentness-proof-issuer change, which is out of lane B's scope
+    this round (no kernel or lane-R runtime edits authorized here).
+
+    So this class proves the WIRING is correct — real store, real
+    projection, real resolver referencing the real committed reservation —
+    by driving the real admitted engine flow
+    (``TestSyntheticEventDrivesTheChain.test_engine_steps_admit_for_real_and_reach_the_transport``'s
+    own approval-file dance, unmodified) up to a genuine committed
+    reservation and a genuine attempt id, then invoking the REAL wired sink
+    directly with a ``SEND_REFUSED``/item-16 record for that SAME attempt —
+    exactly the shape ``BrokerEgressGateway._halt`` itself would construct,
+    had the currentness issuer been able to produce one. The recorder's own
+    verdict/halt LOGIC for every reachable non-ADMIT combination is already
+    exhaustively covered by real components in
+    ``tos/runtime/tests/rcl/test_obligation.py`` — this class is the
+    wiring proof only, not a second copy of that behavioral coverage.
+    """
+
+    def test_wired_sink_records_the_obligation_against_the_real_committed_reservation(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+
+        event = fx.crossing_event()
+        results = runtime.run_once((event,))
+        proposal_digest = results[0].pipeline.proposal.canonical_digest
+        assert proposal_digest is not None
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
+        write_approval_file(
+            custody_root,
+            proposal_digest=proposal_digest,
+            environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
+        )
+
+        results2 = runtime.run_once((event,))
+        flow = results2[0].flow
+        assert flow is not None
+        verdict_by_step = {v.step.value: v for v in flow.verdicts}
+        assert verdict_by_step["ATOMIC_COMMIT"].outcome.value == "ADMIT"
+        # The real send genuinely admitted (fx's own acceptance criterion) --
+        # a real reservation is now COMMITTED_UNBOUND under this account/
+        # instrument (tos_runtime.compose._fixtures.ACCOUNT/INSTRUMENT).
+        assert len(runtime.transport.requests) == 1
+        contexts = runtime.context_resolver.contexts
+        assert contexts, "no SendBoundaryContext was ever resolved"
+        attempt_id = contexts[-1].reservation_attempt_id
+        assert attempt_id is not None
+
+        from tos.egressgw import SendVerifyItem
+        from tos.egressgw.records import GatewayEvidenceRecord
+
+        # The shape BrokerEgressGateway._halt itself constructs for an
+        # item-16 SEND_REFUSED (gateway.py __call__'s halt_item ==
+        # CURRENTNESS branch) -- injected directly at the wired sink
+        # because the real issuer cannot currently reach this combination
+        # (this class's own docstring).
+        refusal = GatewayEvidenceRecord(
+            kind="SEND_REFUSED",
+            attempt_id=attempt_id,
+            item=SendVerifyItem.CURRENTNESS,
+            preserved_worst_credible_capacity=7,
+        )
+        # noqa: SLF001 -- wiring proof, see this class's own docstring
+        runtime.gateway._sink.record(refusal)
+
+        kinds = [m.kind for m in runtime.evidence_store.iter_entry_meta()]
+        assert kinds.count("CAPACITY_OBLIGATION_PRESERVED") == 1
+        # No halt: the resolver mapped attempt_id -> the SAME
+        # f"resv-{account}-{instrument}" identity AtomicCommitStage just
+        # committed, and the projection genuinely reads it back as
+        # COMMITTED_UNBOUND (a live, capacity-consuming state).
+        assert "CAPACITY_OBLIGATION_VIOLATION_ALERT" not in kinds
+
+        row = next(
+            r
+            for r in runtime.evidence_store.connection.execute(
+                "SELECT payload_json FROM entries WHERE kind = 'CAPACITY_OBLIGATION_PRESERVED'"
+            )
+        )
+        import json
+
+        payload = json.loads(row[0])["payload"]
+        assert payload["reservation_id"] == "resv-acct-compose-ES"
+        assert payload["reservation_state"] == "COMMITTED_UNBOUND"
+        assert payload["verdict"] is True
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+    def test_removing_the_on_refusal_wiring_yields_no_obligation_evidence(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """Mutation M-B1: with ``_finalize``'s ``on_refusal`` wiring absent
+        (simulated here by swapping in a sink built the way ``_finalize``
+        used to before this round), the SAME injected item-16
+        ``SEND_REFUSED`` record produces NO ``CAPACITY_OBLIGATION_PRESERVED``
+        evidence — proving the recorder is genuinely load-bearing, not
+        vacuously always green."""
+        from tos.egressgw import SendVerifyItem
+        from tos.egressgw.records import GatewayEvidenceRecord
+        from tos_runtime.evidence.sinks import GatewayEvidenceSinkAdapter
+
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+
+        # Mutate: replace the wired sink with the pre-this-round shape --
+        # same store, same identity, NO on_refusal observer.
+        runtime.gateway._sink = GatewayEvidenceSinkAdapter(  # noqa: SLF001
+            runtime.evidence_store, runtime_identity=runtime.identity
+        )
+
+        runtime.gateway._sink.record(  # noqa: SLF001
+            GatewayEvidenceRecord(
+                kind="SEND_REFUSED",
+                attempt_id="attempt-mutation-probe",
+                item=SendVerifyItem.CURRENTNESS,
+                preserved_worst_credible_capacity=7,
+            )
+        )
+
+        kinds = [m.kind for m in runtime.evidence_store.iter_entry_meta()]
+        assert kinds.count("SEND_REFUSED") == 1
+        assert "CAPACITY_OBLIGATION_PRESERVED" not in kinds
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()

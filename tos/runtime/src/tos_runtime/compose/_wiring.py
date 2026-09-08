@@ -90,6 +90,7 @@ from tos_runtime.evidence.sinks import (
 )
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.obligation import CapacityObligationRecorder
 from tos_runtime.release.admission import ReleaseAdmissionService
 from tos_runtime.release.config import load_release_config
 from tos_runtime.risk.aggregate import (
@@ -837,8 +838,27 @@ def _finalize(
     :class:`~tos_runtime.compose._types.ComposedRuntime` assembly — the
     tail of :func:`~tos_runtime.compose.root.compose_paper_runtime`, split
     out purely for the size budget."""
+    # Kernel round #1 §3 (lane B): the reservation id bound to any attempt
+    # in THIS compose root is always this same formula — the SAME one
+    # _build_realized_stages' AtomicCommitStage reservation_id_provider and
+    # _build_currentness_stages' TransmissionCapabilityStage context_reader
+    # already use — because this compose root wires exactly one
+    # InstrumentKey (context_resolver.instrument_key) for its whole process
+    # lifetime (see tos_runtime.rcl.obligation's own module docstring,
+    # "Reservation-id resolution").
+    instrument_key = context_resolver.instrument_key
+    obligation_recorder = CapacityObligationRecorder(
+        store=infra.evidence_store,
+        emergency_log=infra.emergency_log,
+        projection=risk.projection,
+        reservation_id_resolver=lambda _attempt_id: (
+            f"resv-{instrument_key.account}-{instrument_key.instrument}"
+        ),
+    )
     gateway_sink = GatewayEvidenceSinkAdapter(
-        infra.evidence_store, runtime_identity=identity
+        infra.evidence_store,
+        runtime_identity=identity,
+        on_refusal=obligation_recorder,
     )
     transport = SyntheticPaperTransport(
         SyntheticFillPolicy(fill_numerator=1, fill_denominator=1, lot_size=Decimal("1"))
