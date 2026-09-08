@@ -1270,3 +1270,69 @@ def test_build_daemon_disables_eval_outside_producing_modes(
             setup_eval_enabled=_is_producing_mode(mode),
         )
         assert daemon.setup_eval_enabled is expected, mode
+
+
+@pytest.mark.asyncio
+async def test_structural_publish_failure_warns_once_not_per_tick(
+    redis, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """A failing lazy import / thread hop persists — warn once, not every tick.
+
+    This is the daemon's OWN warning (the publisher never sees the error), so
+    it needs its own latch. Without one a broken import warned on every 60 s
+    tick for the life of the process.
+    """
+
+    async def _boom_to_thread(*_args: object, **_kwargs: object) -> None:
+        raise ImportError("no module named shared.strategy.entry")
+
+    monkeypatch.setattr(asyncio, "to_thread", _boom_to_thread)
+
+    contexts = [_ctx() for _ in range(6)]
+
+    async def _provider() -> MarketContext | None:
+        return contexts.pop(0) if contexts else None
+
+    daemon = _make_daemon(
+        redis=redis, setups=[_NamedNeverSetup()], context_provider=_provider
+    )
+    with caplog.at_level(logging.WARNING):
+        await _run_briefly(daemon, seconds=0.12)
+
+    warned = [r for r in caplog.records if "publish raised" in r.getMessage()]
+    assert len(warned) == 1, [r.getMessage() for r in warned]
+    assert daemon._setup_eval_failure_state["setup_d_vwap_reversion"] is False
+
+
+@pytest.mark.asyncio
+async def test_structural_failure_latch_reopens_on_a_different_error(
+    redis, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """A DIFFERENT structural failure must still be reported."""
+    errors = iter(
+        [
+            ImportError("first"),
+            ImportError("first"),
+            RuntimeError("second"),
+            RuntimeError("second"),
+        ]
+    )
+
+    async def _boom_to_thread(*_args: object, **_kwargs: object) -> None:
+        raise next(errors, RuntimeError("second"))
+
+    monkeypatch.setattr(asyncio, "to_thread", _boom_to_thread)
+
+    contexts = [_ctx() for _ in range(4)]
+
+    async def _provider() -> MarketContext | None:
+        return contexts.pop(0) if contexts else None
+
+    daemon = _make_daemon(
+        redis=redis, setups=[_NamedNeverSetup()], context_provider=_provider
+    )
+    with caplog.at_level(logging.WARNING):
+        await _run_briefly(daemon, seconds=0.12)
+
+    warned = [r for r in caplog.records if "publish raised" in r.getMessage()]
+    assert len(warned) == 2, [r.getMessage() for r in warned]

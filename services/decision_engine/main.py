@@ -197,6 +197,10 @@ class DecisionEngineDaemon:
         # is the machine-readable half: a degraded daemon is inspectable
         # without log scraping.
         self._setup_eval_failure_state: dict[str, bool] = {}
+        # Last STRUCTURAL failure signature per setup (lazy import / thread hop).
+        # Separate from the bool above because it latches on the message, so a
+        # different failure still warns while the same one stays quiet.
+        self._setup_eval_raise_state: dict[str, str] = {}
         # Per-symbol volatility reference publisher (shared/risk/
         # volatility_reference.py). This daemon owns the only futures
         # StreamingIndicatorEngine, so it is the only place that can supply the
@@ -366,12 +370,14 @@ class DecisionEngineDaemon:
             setup_eval_throttle_key(name, outcome, reason), time.monotonic()
         )
         try:
-            # Imported here, not at module scope: ``shared.strategy`` is an
-            # eager package init that builds the whole entry/exit registry
-            # (~1.4 s, pulls TA-Lib). This daemon exists to be decoupled from
-            # it, and an inert daemon never reaches this line (``setup_eval_
-            # enabled`` is False there) — so the cost is paid on the first real
-            # evaluation of a producing daemon, or not at all. Same pattern as
+            # Imported here, not at module scope. Importing this module already
+            # pulls the ``shared.strategy`` PACKAGE (via shared.risk / the
+            # setups); what is deferred is the ``entry.setup_eval_publisher``
+            # submodule, whose own import chain builds the entry/exit registry
+            # and pulls TA-Lib — measured at ~1.3 s on the deploy host, on top
+            # of an already-imported ``shared.strategy``. An inert daemon never
+            # reaches this line (``setup_eval_enabled`` is False there), so a
+            # non-producing process pays none of it. Same pattern as
             # _futures_context_trace.
             from shared.strategy.entry.setup_eval_publisher import publish_setup_eval
 
@@ -384,16 +390,25 @@ class DecisionEngineDaemon:
                 log=_ThrottledInfoLog(logger, allow_info=should_log),
                 key_suffix=self.setup_eval_key_suffix,
             )
-        except Exception:  # noqa: BLE001 — never block a signal
+        except Exception as exc:  # noqa: BLE001 — never block a signal
             # The publisher swallows Redis errors by contract, so reaching here
-            # means something structural failed (the import, the thread hop).
+            # means something STRUCTURAL failed (the lazy import, the thread
+            # hop). Those conditions persist, so this is latched exactly like
+            # the publisher's own Redis warning: warn on the first occurrence
+            # and again only when the failure signature changes. Un-latched, a
+            # failing import warned on every 60 s tick forever.
             published = False
-            logger.warning(
-                "setup eval publish raised for %s; observability degraded "
-                "(signals unaffected)",
-                name,
-                exc_info=True,
-            )
+            signature = f"{type(exc).__name__}: {exc}"
+            if self._setup_eval_raise_state.get(name) != signature:
+                self._setup_eval_raise_state[name] = signature
+                logger.warning(
+                    "setup eval publish raised for %s; observability degraded "
+                    "(signals unaffected)",
+                    name,
+                    exc_info=True,
+                )
+        else:
+            self._setup_eval_raise_state.pop(name, None)
 
         # The FAILURE warning is the publisher's — it holds the exception detail
         # and its own latch, and a second WARNING for one event would be noise.
