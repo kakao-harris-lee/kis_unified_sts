@@ -121,9 +121,13 @@ def _objective_c(
     engine_stats: dict,
 ) -> float:
     cfg = SetupCConfig(
-        # Keep the wide window_minutes (for KR-session overnight events —
-        # default YAML value is 720 but SetupCConfig Python default is 15).
-        window_minutes=720,
+        # window_minutes is NOT tuned here — it is read from the deployed
+        # strategy YAML (config/strategies/futures/setup_c_event_reaction.yaml)
+        # so this IS optimisation and the walk-forward OOS run
+        # (scripts/walk_forward_phase3.py, same no-arg from_yaml) evaluate the
+        # same event window. Hardcoding a second value here made the two
+        # disagree silently.
+        window_minutes=SetupCConfig.from_yaml().window_minutes,
         breakout_buffer_atr_mult=trial.suggest_float(
             "breakout_buffer_atr_mult", 0.2, 1.0
         ),

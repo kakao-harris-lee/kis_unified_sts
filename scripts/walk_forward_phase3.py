@@ -179,20 +179,24 @@ def run(args: argparse.Namespace) -> int:
     registry = ContractSpecRegistry.from_yaml("config/execution.yaml")
     spec = registry.specs[args.contract]
 
-    # Setup A: defaults from YAML unless an Optuna JSON is supplied.
-    setup_a_cfg: SetupAConfig | None = None
+    # Setup A: the deployed operating point from
+    # config/strategies/futures/setup_a_gap_reversion.yaml (strategy.entry.params),
+    # matching the Setup C branch below. A bare SetupAConfig() would walk forward
+    # on the Pydantic defaults, which differ materially from what paper runs
+    # (stop_atr_mult 1.5 vs 3.5, valid_minutes_max 120 vs 60). An Optuna JSON
+    # still overrides, and only the keys it names.
+    setup_a_cfg = SetupAConfig.from_yaml()
     if args.setup_a_params:
         with open(args.setup_a_params) as f:
             optuna_result = json.load(f)
-        setup_a_cfg = SetupAConfig(**optuna_result["best_params"])
+        overrides = optuna_result["best_params"]
+        setup_a_cfg = SetupAConfig(**{**setup_a_cfg.model_dump(), **overrides})
         logger.info(
             "loaded Setup A params from %s: %s",
             args.setup_a_params,
-            optuna_result["best_params"],
+            overrides,
         )
-    setup_a = (
-        SetupAGapReversion(config=setup_a_cfg) if setup_a_cfg else SetupAGapReversion()
-    )
+    setup_a = SetupAGapReversion(config=setup_a_cfg)
 
     # Setup C: parameters come from the deployed strategy file
     # config/strategies/futures/setup_c_event_reaction.yaml

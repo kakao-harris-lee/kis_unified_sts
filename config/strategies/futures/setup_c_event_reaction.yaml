@@ -30,8 +30,23 @@ strategy:
     params:
       enabled: true  # inner setup flag; outer strategy.enabled guards activation
 
-      # Event look-back window
-      window_minutes: 15           # Events older than this are ignored
+      # Event look-back window: events older than this are ignored.
+      #
+      # HISTORY (preserved from config/decision_engine.yaml, deleted 2026-09-09
+      # when that file's dead setup sections were removed). Commit a31aaf1e
+      # measured window_minutes: 15 producing ZERO trades on the 296-day
+      # replay — a US release at 08:30 ET (~21:30 KST) or an FOMC at 14:00 ET
+      # (~03:00 KST) is hours old by the time the KR session opens — and set
+      # 720 (12 h) so the first KR-session breakout after either announcement
+      # still qualifies while BOK (09:00 KST) stays same-day.
+      #
+      # The DEPLOYED paper value is 15 and stays 15: operator decisions ①/③
+      # (2026-09-09) make this file the single source of truth for every
+      # consumer, and the decoupled daemon, the orchestrator adapter, the
+      # Optuna objective and the walk-forward all now read it. Raising it back
+      # to 720 is a live retune of Setup C, not a config-plumbing change, so it
+      # is left as an operator decision with the evidence above recorded here.
+      window_minutes: 15
 
       # Breakout confirmation
       breakout_buffer_atr_mult: 0.5  # Breakout within this many ATRs of 15-min range

@@ -42,9 +42,11 @@ strategy:
     params:
       enabled: true  # inner setup flag; outer strategy.enabled guards activation
 
-      # Session window (minutes since 09:00 KST open).
-      valid_minutes_min: 15                    # skip the open auction (09:15 KST)
-      no_entry_after_minutes_since_open: 345   # no entries after 14:45 KST (force-close avoidance)
+      # Session window (minutes since the 08:45 KST futures open — the anchor is
+      # MarketContext.minutes_since_open(), default 08:45 from
+      # config/market_schedule.yaml, NOT 09:00).
+      valid_minutes_min: 15                    # skip the open auction (08:45+15 = 09:00 KST)
+      no_entry_after_minutes_since_open: 345   # no entries after 08:45+345 = 14:30 KST (force-close avoidance)
 
       # High-vol regime gate: require atr_14 >= min_atr_ratio × vol_reference,
       # where vol_reference is a CAUSAL trailing ATR percentile the setup
