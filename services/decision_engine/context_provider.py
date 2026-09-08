@@ -43,6 +43,9 @@ class FuturesContextProvider:
         self._macro_reader = macro_reader
         self._events_provider = events_provider
         self._now_fn = now_fn
+        # State-change latch for the VWAP guard below: log the transition, not
+        # every 60 s tick (the guard holds for as long as the engine is cold).
+        self._vwap_unavailable = False
 
     async def __call__(self) -> MarketContext | None:
         symbol = self._symbol
@@ -53,14 +56,33 @@ class FuturesContextProvider:
         current_price = float(price) if price is not None else 0.0
         if current_price <= 0.0:
             return None
-        atr_14 = float(
-            (self._engine.get_indicators(symbol) or {}).get("atr", 0.0) or 0.0
-        )
+        indicators = self._engine.get_indicators(symbol) or {}
+        atr_14 = float(indicators.get("atr", 0.0) or 0.0)
         if atr_14 <= 0.0:
             # Engine is warm (enough candles) but indicators are absent or
             # stale (>180 s no tick).  Without a valid ATR, Setup A/C would
             # compute zero-width stops — suppress the context until ATR recovers.
             return None
+
+        # Session VWAP (shared/indicators/streaming/queries.py — VWAPCalculator,
+        # KST day reset, anchored on the 08:45 futures open tick). Setup D reads
+        # it as z = (price - vwap) / atr, so an absent VWAP is NOT a benign
+        # default: it collapses z to 0 and makes Setup D silently inert
+        # (#533/#537 class). Fail closed, exactly like the ATR guard above.
+        vwap = float(indicators.get("vwap", 0.0) or 0.0)
+        if vwap <= 0.0:
+            if not self._vwap_unavailable:
+                self._vwap_unavailable = True
+                logger.warning(
+                    "session VWAP unavailable for %s; suppressing MarketContext "
+                    "until it recovers (Setup D would otherwise fade a zero "
+                    "stretch)",
+                    symbol,
+                )
+            return None
+        if self._vwap_unavailable:
+            self._vwap_unavailable = False
+            logger.info("session VWAP recovered for %s; resuming context", symbol)
 
         now = self._now_fn()
         now_kst = now.astimezone(_KST) if now.tzinfo else now.replace(tzinfo=_KST)
@@ -90,6 +112,7 @@ class FuturesContextProvider:
             prev_close=prev_close,
             today_open=today_open,
             atr_14=atr_14,
+            vwap=vwap,
             last_15min_high=float(last_15min_high),
             last_15min_low=float(last_15min_low),
             macro_overnight=macro,

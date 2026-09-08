@@ -14,10 +14,18 @@ class _FakeEngine:
     """Fake engine whose contract matches the REAL StreamingIndicatorEngine:
     - get_indicators returns bb/rsi/atr/vwap/... (NO 'close' key)
     - get_last_price returns the price separately
+
+    ``vwap`` is a session VWAP the real engine computes (VWAPCalculator, KST day
+    reset — shared/indicators/streaming/queries.py). It is deliberately NOT
+    equal to ``price`` here so a regression that reintroduces the old
+    ``vwap := current_price`` fallback is visible in the assertions.
     """
 
-    def __init__(self, *, warm=True, atr=2.0, price=352.0, rng=(360.0, 340.0)):
+    def __init__(
+        self, *, warm=True, atr=2.0, price=352.0, vwap=349.5, rng=(360.0, 340.0)
+    ):
         self._warm, self._atr, self._price, self._rng = warm, atr, price, rng
+        self._vwap = vwap
 
     def is_warm(self, _symbol):
         return self._warm
@@ -27,7 +35,7 @@ class _FakeEngine:
 
     def get_indicators(self, _symbol):
         # Real engine returns bb/rsi/atr/vwap/etc — no 'close' key.
-        return {"atr": self._atr}
+        return {"atr": self._atr, "vwap": self._vwap}
 
     def get_recent_range(self, _symbol, _minutes=15):
         return self._rng
@@ -94,8 +102,12 @@ async def test_builds_market_context_when_warm():
     assert ctx.scheduled_events == ev
     # unused fields defaulted, not crashing
     assert ctx.current_spread_ticks == 1.0  # F-4 canonical default
-    assert ctx.vwap == ctx.current_price  # F-4: vwap defaults to current_price
     assert ctx.atr_90th_percentile == ctx.atr_14 * 1.5  # F-4 default
+    # vwap is LIVE-SUPPLIED (F-9): the engine's session VWAP is threaded through,
+    # NOT the retired ``vwap := current_price`` fallback. Setup D reads
+    # z = (price - vwap)/atr, so the fallback made it permanently inert.
+    assert ctx.vwap == 349.5
+    assert ctx.vwap != ctx.current_price
 
 
 @pytest.mark.asyncio
@@ -245,3 +257,63 @@ async def test_returns_none_when_atr_is_zero_or_absent():
     assert (
         result is None
     ), "Provider must return None when ATR is 0 / absent (stale engine)"
+
+
+# ---------------------------------------------------------------------------
+# F-9: vwap must be sourced, and its absence must fail CLOSED
+# ---------------------------------------------------------------------------
+
+
+class _FakeEngineNoVwap:
+    """Warm engine with an ATR but no session VWAP (cold VWAPCalculator)."""
+
+    def is_warm(self, _symbol):
+        return True
+
+    def get_last_price(self, _symbol):
+        return 352.0
+
+    def get_indicators(self, _symbol):
+        return {"atr": 2.0}
+
+    def get_recent_range(self, _symbol, _minutes=15):
+        return (360.0, 340.0)
+
+
+def _provider(engine):
+    return FuturesContextProvider(
+        engine=engine,
+        daily_ref=_FakeDailyRef(),
+        symbol="A05",
+        macro_reader=lambda: None,
+        events_provider=lambda: [],
+        now_fn=lambda: datetime(2026, 6, 5, 9, 10, tzinfo=UTC),
+    )
+
+
+@pytest.mark.asyncio
+async def test_returns_none_when_vwap_is_absent():
+    """No session VWAP must suppress the context, not default it.
+
+    Defaulting vwap to current_price collapses Setup D's fade trigger
+    z = (price - vwap)/atr to 0, so it could never fire — the #533/#537 silent
+    inert. Fail closed, same as the ATR guard.
+    """
+    assert await _provider(_FakeEngineNoVwap())() is None
+
+
+@pytest.mark.asyncio
+async def test_returns_none_when_vwap_is_zero_or_negative():
+    for bad_vwap in (0.0, -1.0):
+        assert await _provider(_FakeEngine(vwap=bad_vwap))() is None
+
+
+@pytest.mark.asyncio
+async def test_vwap_guard_logs_once_per_state_change(caplog):
+    """The guard holds for as long as the engine is cold — log the transition."""
+    provider = _provider(_FakeEngineNoVwap())
+    with caplog.at_level("WARNING"):
+        assert await provider() is None
+        assert await provider() is None
+    warnings = [r for r in caplog.records if "VWAP unavailable" in r.getMessage()]
+    assert len(warnings) == 1

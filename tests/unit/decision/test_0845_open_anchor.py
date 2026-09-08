@@ -329,6 +329,7 @@ def test_build_market_context_explicit_open_overrides_config(tmp_path):
         prev_close=348.0,
         today_open=349.0,
         atr_14=1.0,
+        vwap=349.5,  # required by the builder; irrelevant to the open anchor
         last_15min_high=350.0,
         last_15min_low=349.0,
         market_open_hour=9,

@@ -39,6 +39,9 @@ def _ctx(now: datetime, current_price: float):
         prev_close=_LOW,
         today_open=_LOW,
         atr_14=_ATR,
+        # vwap is required by the builder; Setup C never reads it (F-4
+        # invariance), so any session VWAP works here.
+        vwap=(_HIGH + _LOW) / 2,
         last_15min_high=_HIGH,
         last_15min_low=_LOW,
         scheduled_events=[_event(now)],
