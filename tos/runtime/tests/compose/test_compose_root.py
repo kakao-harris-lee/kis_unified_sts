@@ -627,6 +627,104 @@ class TestStaleGenerationProviderYieldsUnknown:
         runtime.evidence_store.close()
 
 
+class TestPermitPathStaleGenerationProviderYieldsUnknown:
+    """Addendum A to the re-review (2026-09-08): a stale/unreachable RCL log
+    on the step 9 PERMIT path (``context.make_permit_provider``'s own
+    ``except (StaleEpochRead, sqlite3.Error, OSError): return None``) must
+    yield ``UNKNOWN`` at ``AtomicCommitStage`` — permit ``None``, zero RCL
+    appends, never a permit built at a fabricated ``generation=0``. Calls
+    the real, composed ``AtomicCommitStage`` directly (isolating it from
+    step 4's separate, unrelated RCL read, same rationale as
+    ``TestStaleGenerationProviderYieldsUnknown`` above)."""
+
+    def test_stale_writer_epoch_on_permit_path_yields_unknown_zero_appends(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        import sqlite3
+
+        from tos.afg import ActionFlowResult
+        from tos.engine.records import InstrumentKey, StageRequest
+        from tos.engine.vocabulary import CommitmentStep
+        from tos_runtime.compose._wiring import _rcl_tip_generation_provider
+        from tos_runtime.compose.context import make_permit_provider
+        from tos_runtime.rcl.log import SqliteCommitLog
+        from tos_runtime.risk.ledger_stages import AtomicCommitStage
+
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+        event = fx.crossing_event()
+        first = runtime.run_once((event,))[0]
+        assert first.pipeline is not None and first.pipeline.proposal is not None
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
+        write_approval_file(
+            custody_root,
+            proposal_digest=first.pipeline.proposal.canonical_digest,
+            environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
+        )
+        # Re-run the SAME event so steps 1-7 admit for real, giving
+        # flow_governor a real GRANT last_decision to build a permit from.
+        runtime.run_once((event,))
+        assert runtime.flow_governor.last_decision is not None
+        assert runtime.flow_governor.last_decision.result is ActionFlowResult.GRANT
+
+        rows_before = (
+            sqlite3.connect(str(runtime.rcl_log.path))
+            .execute("SELECT COUNT(*) FROM entries")
+            .fetchone()[0]
+        )
+
+        # A second handle acquiring a NEW Writer Epoch on the SAME
+        # rcl.sqlite3 file invalidates the composed runtime's own epoch.
+        second = SqliteCommitLog(
+            runtime.rcl_log.path, evidence_port=runtime.evidence_store
+        )
+        try:
+            second.acquire_epoch(runtime.identity)
+            stale_provider = _rcl_tip_generation_provider(
+                runtime.rcl_log, runtime.writer_epoch
+            )
+            permit_provider = make_permit_provider(
+                runtime.flow_governor,
+                permit_generation_provider=stale_provider,
+                command_identity_provider=lambda request: (
+                    request.proposal.canonical_digest or ""
+                ),
+            )
+            stage = AtomicCommitStage(
+                runtime.rcl_log,
+                writer_epoch=runtime.writer_epoch,
+                permit_provider=permit_provider,
+                reservation_id_provider=lambda request: (
+                    f"resv-{request.instrument_key.account}-"
+                    f"{request.instrument_key.instrument}"
+                ),
+                time_permits_new_risk=lambda: True,
+            )
+            request = StageRequest(
+                step=CommitmentStep.ATOMIC_COMMIT,
+                instrument_key=InstrumentKey(
+                    account=fx.ACCOUNT, instrument=fx.INSTRUMENT
+                ),
+                proposal=first.pipeline.proposal,
+            )
+            verdict = stage(request)
+            assert verdict.outcome.value == "UNKNOWN"
+        finally:
+            second.close()
+
+        rows_after = (
+            sqlite3.connect(str(runtime.rcl_log.path))
+            .execute("SELECT COUNT(*) FROM entries")
+            .fetchone()[0]
+        )
+        assert rows_after == rows_before
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+
 class TestRclLogUnavailableBlocksNewRisk:
     """Scenario 5: removing/locking the RCL log file => zero new risk
     (steps 8-10 UNKNOWN) and no hand-off."""

@@ -104,7 +104,7 @@ from tos_runtime.risk.ledger_stages import (
 )
 from tos_runtime.time.config import load_time_config
 from tos_runtime.time.generation import seed_from
-from tos_runtime.time.service import TrustworthyTimeService
+from tos_runtime.time.service import TimeServiceNotStarted, TrustworthyTimeService
 from tos_runtime.time.sources import (
     LocalSystemClockReader,
     MonotonicSource,
@@ -129,10 +129,18 @@ _APPROVALS_DIRNAME = "approvals"
 
 
 def _time_permits_new_risk(time_service: TrustworthyTimeService) -> Callable[[], bool]:
+    """Re-review addendum B (2026-09-08): the catch below is narrowed to
+    ``TimeServiceNotStarted`` only — the ONE exception
+    ``TrustworthyTimeService.current_snapshot`` raises before ``start()``
+    or the first successful ``evaluate()`` (``tos_runtime/time/service.py``,
+    ``current_snapshot``'s own docstring + ``_require_started``, lines
+    187-201). A previous bare catch-all also hid programming errors as a
+    silent time refusal; everything else now propagates."""
+
     def _check() -> bool:
         try:
             snapshot = time_service.current_snapshot()
-        except Exception:  # noqa: BLE001 - not started / no evaluate() yet => False
+        except TimeServiceNotStarted:
             return False
         from tos.time import state_permits_new_normal_risk
 
