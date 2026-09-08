@@ -15,8 +15,10 @@ walk-forward evaluate the same event window. It must be read once per process,
 not once per trial.
 
 Hermetic: no study is run and no market data is touched. Optuna's in-memory
-study (already a project dependency) is used only as a container for
-hand-built trial values.
+study is used only as a container for hand-built trial values. ``optuna`` lives
+in the optional ``optimization`` extra and CI runners do not install it (see
+``tests/unit/backtest/test_gate_cli_paramspace.py``), so this module skips —
+rather than errors at collection — when it is absent.
 """
 
 from __future__ import annotations
@@ -24,10 +26,11 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
-import optuna
 import pytest
 
-from shared.decision.setups.event_reaction import SetupCConfig
+optuna = pytest.importorskip("optuna")
+
+from shared.decision.setups.event_reaction import SetupCConfig  # noqa: E402
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
