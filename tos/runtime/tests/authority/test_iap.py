@@ -88,6 +88,40 @@ def test_loader_never_opens_the_file_before_the_custody_gate(
 
 
 # ============================================================================
+# max_decision_age_ms — 2026-09-08 re-review MEDIUM: no kernel predicate
+# enforces decision expiry (tos.iap is clock-free; decision_current is an
+# injected fact), so a non-null value must be REFUSED at load, never
+# silently accepted-but-unenforced (ADR-002-023 §12 item 2 "unexpired").
+# ============================================================================
+
+
+def test_loader_refuses_a_non_null_max_decision_age_ms(
+    approvals_dir: Path, expected_owner_uid: int
+) -> None:
+    path = write_approval_file(
+        approvals_dir / "p1.yaml", decision_id="d1", max_decision_age_ms=60_000
+    )
+    with pytest.raises(OperatorApprovalFileError, match="expiry enforcement"):
+        load_operator_approval_file(
+            path,
+            expected_owner_uid=expected_owner_uid,
+            environment_label="non-live-test",
+        )
+
+
+def test_loader_accepts_a_null_max_decision_age_ms(
+    approvals_dir: Path, expected_owner_uid: int
+) -> None:
+    path = write_approval_file(
+        approvals_dir / "p1.yaml", decision_id="d1", max_decision_age_ms=None
+    )
+    decision = load_operator_approval_file(
+        path, expected_owner_uid=expected_owner_uid, environment_label="non-live-test"
+    )
+    assert decision.max_decision_age_ms is None
+
+
+# ============================================================================
 # consume() — single-use, log-enforced (IAP-INV-006)
 # ============================================================================
 

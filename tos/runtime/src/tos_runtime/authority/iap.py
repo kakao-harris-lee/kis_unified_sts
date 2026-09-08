@@ -42,6 +42,25 @@ registry's configured, currently-loaded value) plus one log-derived
 supersession check (a later-generation decision for the same proposal
 already consumed) — never anything more permissive than those two facts.
 
+**Decision expiry has no kernel predicate either (2026-09-08 re-review
+MEDIUM).** ADR-002-023 §12 item 2 requires a consumed decision be "current,
+**unexpired**" — but ``tos.iap`` is clock-free by design (``tos.iap.records``
+docstring "every age / bound is an injected opaque"; ``tos.iap.state``
+docstring "iap reads no clock"): no function anywhere under ``tos/src/tos/iap``
+takes ``max_decision_age_ms`` plus a time reading and produces an
+admissibility verdict. Rather than author that comparison itself (the kernel
+rule "the runtime never judges" — an age-vs-now check is exactly a
+currency judgement, the same category :meth:`IntentRegistry.decision_current`
+above is careful to bound), :func:`load_operator_approval_file` REFUSES to
+load any approval file whose ``max_decision_age_ms`` is non-``null``
+(:func:`_refuse_unenforceable_max_decision_age_ms`) — an operator's expiry
+intent is never silently accepted-but-unenforced. ``None`` stays accepted.
+**Kernel-predicate round pending**: a future ``tos.iap`` predicate taking
+``(max_decision_age_ms, decided_at, now)`` (or an equivalent injected-age
+shape matching the package's existing "no numeric bound, every age is
+injected opaque" convention) would let this refusal be replaced with a real
+enforcement call.
+
 **Reported ``CommandType`` gap (slice plan §5).** No member of the closed
 ``tos.rcl.vocabulary.CommandType`` vocabulary names "consume an Independent
 Approval decision, once". The closest structural analog is
@@ -179,11 +198,46 @@ def _verify_environment_label(
         )
 
 
+def _refuse_unenforceable_max_decision_age_ms(
+    raw: Mapping[str, Any], path: Path
+) -> None:
+    """Refuse a non-``null`` ``max_decision_age_ms`` (2026-09-08 re-review MEDIUM).
+
+    ADR-002-023 §12 item 2 requires a consumed decision to be "current,
+    unexpired" — but ``tos.iap`` is clock-free by design (module docstring;
+    ``tos/src/tos/iap/state.py`` "iap reads no clock", records.py:336
+    "injected opaque validity age"): no kernel predicate anywhere takes a
+    decision and a time reading and produces an expiry verdict
+    (``decision_current`` is an injected ``bool | None`` fact, never derived
+    from ``max_decision_age_ms`` by any ``tos.iap`` function — confirmed by
+    ``grep -rn "age\\|expir" tos/src/tos/iap/``). Accepting a non-``null``
+    value here would make the operator's expiry intent look enforced when it
+    is silently dropped everywhere downstream (:meth:`IntentRegistry.decision_current`
+    and :meth:`IntentRegistry.consume` never read it either). Per the kernel
+    rule "the runtime never judges itself", this module does NOT author the
+    age-vs-now comparison in its own right — it refuses to load until a
+    kernel predicate round provisions one. ``None`` (the field simply absent
+    or explicitly null) is unaffected and stays accepted.
+    """
+    if raw.get("max_decision_age_ms") is not None:
+        raise OperatorApprovalFileError(
+            f"load_operator_approval_file: {path} sets 'max_decision_age_ms'="
+            f"{raw['max_decision_age_ms']!r}, but decision expiry enforcement "
+            "is not provisioned in this slice (tos.iap is clock-free — no "
+            "kernel predicate takes a decision and a time reading; "
+            "IntentRegistry never reads this field) — refusing rather than "
+            "silently dropping the operator's expiry intent (ADR-002-023 §12 "
+            "item 2 'unexpired'; kernel-predicate round pending). Leave "
+            "'max_decision_age_ms' unset/null until that round lands."
+        )
+
+
 def _build_decision_from_raw(
     raw: Mapping[str, Any], path: Path, scheme: CanonicalizationScheme
 ) -> IndependentApprovalDecision:
     """Check 5 + construction: parse ``result`` verbatim and issue the decision
     (split out of :func:`load_operator_approval_file` for the size budget)."""
+    _refuse_unenforceable_max_decision_age_ms(raw, path)
     try:
         result = ApprovalResult(raw["result"])
     except (KeyError, ValueError) as exc:
