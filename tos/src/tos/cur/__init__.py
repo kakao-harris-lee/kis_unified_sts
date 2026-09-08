@@ -101,6 +101,7 @@ from tos.cur.predicates import (
     fence_advances_floor,
     multi_domain_no_union,
     no_forbidden_placeholder,
+    obligation_preserved,
     parent_child_floor_monotone,
     policy_covers_mandated_dimensions,
     proof_admissible,
@@ -189,4 +190,6 @@ __all__ = [
     # not-Phase-1 thin model §6b
     "race_order_admissible",
     "broker_reachable_not_authority",
+    # kernel round #1 §1.3 — worst-credible-capacity obligation preservation
+    "obligation_preserved",
 ]

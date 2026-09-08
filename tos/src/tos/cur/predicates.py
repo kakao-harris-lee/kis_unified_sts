@@ -99,6 +99,8 @@ __all__ = [
     # not-Phase-1 thin model §6b (CUR-EV-005/006 substrate — runtime residue)
     "race_order_admissible",
     "broker_reachable_not_authority",
+    # kernel round #1 §1.3 — worst-credible-capacity obligation preservation
+    "obligation_preserved",
 ]
 
 #: Forbidden placeholder sentinels a vector coordinate may never use (§9 line 266 / §5.4). A vector
@@ -721,3 +723,52 @@ def broker_reachable_not_authority(broker_reachable: bool | None = None) -> bool
     """
     del broker_reachable  # the rejection is unconditional (§15 line 358) — reachability ≠ authority
     return False
+
+
+# ===========================================================================
+# kernel round #1 §1.3 — worst-credible-capacity obligation preservation
+# ===========================================================================
+
+
+def obligation_preserved(
+    obligation: int | None,
+    reservation_state: str | None,
+    *,
+    capacity_consuming_states: frozenset[str],
+) -> bool:
+    """Whether an rcl reservation state still honors a preserved capacity obligation (§1.3).
+
+    :func:`unknown_preserves_capacity` reports the worst-credible capacity obligation an UNKNOWN
+    currentness must preserve (CUR-INV-011:183). This predicate judges whether that obligation
+    still holds against the bound reservation's **current** rcl capacity state: ``obligation is
+    None`` means no obligation was ever asserted (trivially preserved); a concrete obligation
+    against an UNKNOWN state (``reservation_state is None``) cannot be confirmed preserved
+    (fail-closed); otherwise it is preserved iff the state is still in the injected
+    capacity-consuming partition.
+
+    ⚠ **Sibling-edge-0 deviation from the kernel round #1 plan.** The plan's signature types
+    ``reservation_state`` as ``tos.rcl.CapacityState``, but cur's import closure (design #23
+    §0.3; ``tos/tests/cur/test_cur_import_closure.py`` §7.1 allowlist ``{tos, tos.canonical,
+    tos.ordering, tos.cur}``) forbids importing **any** sibling, including ``tos.rcl``, even for
+    a type hint. So the state is consumed as its plain string value (``CapacityState`` is a
+    ``StrEnum``, so an enum member still compares/hashes equal to its ``.value``) and the
+    "capacity-consuming" partition is **injected** by the caller rather than hardcoded here — cur
+    re-authors no rcl state machine (§0.4c). The caller imports ``tos.rcl.CapacityState`` and
+    passes the set of values that still consume capacity (rcl's own
+    ``_LIVE_COMMITTED_STATES`` — every state except ``RELEASED``).
+
+    Args:
+        obligation: The preserved worst-credible capacity obligation (``None`` => none asserted).
+        reservation_state: The rcl reservation's current capacity-state value (``None`` =>
+            UNKNOWN).
+        capacity_consuming_states: The injected set of state values that still consume capacity.
+
+    Returns:
+        ``True`` iff no obligation was asserted, or the asserted obligation's reservation state
+        is still in the injected capacity-consuming partition.
+    """
+    if obligation is None:
+        return True
+    if reservation_state is None:
+        return False
+    return reservation_state in capacity_consuming_states
