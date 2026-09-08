@@ -579,25 +579,38 @@ class TestProjectionAuthorityMismatchHalts:
         finally:
             conn.close()
         runtime.rcl_log.close()
+        runtime.evidence_store.close()
 
-        runtime2 = _compose(tmp_path, config_dir, data_dir, custody_root)
-        from tos_runtime.evidence.emergency import record_halt
-
+        # compose_paper_runtime itself must verify the RCL log's replay at
+        # boot and refuse to hand back a runtime over a corrupt log -- (c)
+        # no Stage/service is ever constructed: the function raises instead
+        # of returning a ComposedRuntime, so there is no `runtime2` at all.
         with pytest.raises(CommitLogCorruption):
-            try:
-                runtime2.rcl_log.verify_replay()
-            except CommitLogCorruption as exc:
-                record_halt(
-                    runtime2.evidence_store,
-                    runtime2.emergency_log,
-                    payload={"detail": str(exc)},
-                    kind="RCL_CORRUPTION_ALERT",
-                    record_class="RCL_CORRUPTION_ALERT",
-                    runtime_identity=runtime2.identity,
-                )
-                raise
-        runtime2.rcl_log.close()
-        runtime2.evidence_store.close()
+            _compose(tmp_path, config_dir, data_dir, custody_root)
+
+        # (b) the evidence store contains exactly one RCL_CORRUPTION_ALERT
+        # record (compose's own halt path, never this test's) -- reopened
+        # independently since compose raised before returning any handle.
+        import json
+        import os
+
+        from tos_runtime.custody.key_provider import FileKeyProvider
+        from tos_runtime.evidence.store import SqliteEvidenceStore
+
+        key_provider = FileKeyProvider(custody_root, expected_owner_uid=os.getuid())
+        evidence_store = SqliteEvidenceStore(
+            data_dir / "evidence.sqlite3", key_provider=key_provider
+        )
+        try:
+            rows = evidence_store.connection.execute(
+                "SELECT payload_json FROM entries WHERE kind = ?",
+                ("RCL_CORRUPTION_ALERT",),
+            ).fetchall()
+            assert len(rows) == 1, f"expected exactly one alert record, got {rows}"
+            stored = json.loads(rows[0][0])
+            assert "detail" in stored["payload"]
+        finally:
+            evidence_store.close()
 
 
 class TestReleaseAdmissionRefusalBlocksBoot:

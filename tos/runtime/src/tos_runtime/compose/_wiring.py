@@ -74,13 +74,13 @@ from tos_runtime.currentness.stages import (
 from tos_runtime.currentness.vector import CurrentnessAssembler
 from tos_runtime.custody.file_custody import FileCustody
 from tos_runtime.custody.key_provider import FileKeyProvider
-from tos_runtime.evidence.emergency import EmergencyAppendLog
+from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.sinks import (
     EngineEvidenceSinkAdapter,
     GatewayEvidenceSinkAdapter,
 )
 from tos_runtime.evidence.store import SqliteEvidenceStore
-from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog
 from tos_runtime.release.admission import ReleaseAdmissionService
 from tos_runtime.release.config import load_release_config
 from tos_runtime.risk.aggregate import (
@@ -374,6 +374,33 @@ def _build_rcl_and_authority(
         authority_epoch_service=authority_epoch_service,
         intent_registry=intent_registry,
     )
+
+
+def _verify_rcl_log_or_halt(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    identity: RuntimeIdentity,
+) -> None:
+    """Independently re-verify the RCL log's own replay at boot, before any
+    Stage is wired (re-review finding F1, 2026-09-08): compose must never
+    hand back a runtime over a corrupt log. On
+    :class:`~tos_runtime.rcl.log.CommitLogCorruption`, durably records one
+    ``RCL_CORRUPTION_ALERT`` (both evidence paths, via
+    :func:`~tos_runtime.evidence.emergency.record_halt`) before re-raising
+    — never a silent halt, never a swallowed exception."""
+    try:
+        rcl_log.verify_replay()
+    except CommitLogCorruption as exc:
+        record_halt(
+            evidence_store,
+            emergency_log,
+            payload={"detail": str(exc)},
+            kind="RCL_CORRUPTION_ALERT",
+            record_class="RCL_CORRUPTION_ALERT",
+            runtime_identity=identity,
+        )
+        raise
 
 
 def _stage_b_release_probe(
@@ -875,6 +902,9 @@ def _boot_services(
         infra.evidence_store,
         infra.time_service,
         authority_domain,
+    )
+    _verify_rcl_log_or_halt(
+        rcl.rcl_log, infra.evidence_store, infra.emergency_log, identity
     )
     risk = _build_risk_and_currentness(
         config_dir,
