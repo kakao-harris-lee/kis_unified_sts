@@ -37,7 +37,7 @@ scope:
 # expires_on 경과 시 --check red(운영자 조정 가능한 값).
 exceptions:
 - target: tos/src/tos/egressgw/gateway.py
-  measured: 1792
+  measured: 1806
   owner: tos-kernel
   decomposition_order: 1
   expires_on: '2026-12-31'
@@ -46,6 +46,9 @@ exceptions:
     2026-09-07 재등재(독립 리뷰 M2) — measured 1712→1792, 등재 이후 커밋들에서 실측이
     드리프트되어 있었음(원인 미상; class-(f) measured-drift 검사기 신설로 앞으로는
     자동 적발). 재등재는 tools/tos_size_budget.py 로 재측정한 값.
+    2026-09-08 kernel round #1 item 16 typed obligation (+14 lines) — measured
+    1792→1806 (``_verdict``/``_check_currentness``/``_halt``/``__call__``에
+    ``preserved_worst_credible_capacity`` 배선 추가).
 - target: tos/src/tos/sir/predicates.py
   measured: 1681
   owner: tos-kernel
@@ -113,7 +116,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/egressgw/gateway.py::BrokerEgressGateway.__call__
-  measured: 248
+  measured: 257
   owner: tos-kernel
   decomposition_order: 13
   expires_on: '2026-12-31'
@@ -121,6 +124,8 @@ exceptions:
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
     2026-09-07 재등재(독립 리뷰 M2) — measured 181→248 · decomposition_order
     16→13(measured 내림차순 재정렬, 동률 시 target 오름차순).
+    2026-09-08 kernel round #1 item 16 typed obligation (+9 lines) — measured
+    248→257 (halt item 16 verdict 순회로 preserved_worst_credible_capacity 추출).
 - target: tos/src/tos/egressgw/construction.py::derive_order_size
   measured: 246
   owner: tos-kernel

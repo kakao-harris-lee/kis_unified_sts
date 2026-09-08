@@ -463,6 +463,7 @@ def _verdict(
     reason: str | None = None,
     native: object | None = None,
     native_value: str | None = None,
+    preserved_worst_credible_capacity: int | None = None,
 ) -> VerifyItemVerdict:
     """Assemble one item verdict, deriving its disposition from the design §4.1 partition."""
     if item in REALIZED_ITEMS:
@@ -478,6 +479,7 @@ def _verdict(
         reason=reason,
         native_verdict_type=None if native is None else type(native).__name__,
         native_verdict_value=native_value,
+        preserved_worst_credible_capacity=preserved_worst_credible_capacity,
     )
 
 
@@ -1176,6 +1178,7 @@ def _check_currentness(
                 "is resubmitted (CUR-INV-011:183)"
             ),
             native_value=currentness.native_verdict_value,
+            preserved_worst_credible_capacity=preserved,
         )
     return _verdict(
         item,
@@ -1485,6 +1488,7 @@ class BrokerEgressGateway:
         reason: SendHaltReason,
         detail: str | None,
         item: SendVerifyItem | None = None,
+        preserved_worst_credible_capacity: int | None = None,
     ) -> SendHandoff:
         """Record a recorded-reason halt and refuse the hand-off (design #34 §4.2).
 
@@ -1507,6 +1511,7 @@ class BrokerEgressGateway:
                 item=item,
                 halt_reason=reason,
                 detail=detail,
+                preserved_worst_credible_capacity=preserved_worst_credible_capacity,
             )
         )
         return SendHandoff(accepted_for_transmission=None)
@@ -1569,11 +1574,20 @@ class BrokerEgressGateway:
                 )
             )
         if verification.admitted is not True:
+            preserved_worst_credible_capacity = None
+            if verification.halt_item is SendVerifyItem.CURRENTNESS:
+                for verdict in verification.verdicts:
+                    if verdict.item is SendVerifyItem.CURRENTNESS:
+                        preserved_worst_credible_capacity = (
+                            verdict.preserved_worst_credible_capacity
+                        )
+                        break
             return self._halt(
                 attempt_id=attempt_id,
                 reason=verification.halt_reason or SendHaltReason.VERIFY_ITEM_UNKNOWN,
                 detail=verification.detail,
                 item=verification.halt_item,
+                preserved_worst_credible_capacity=preserved_worst_credible_capacity,
             )
 
         # -- outbound binding: the seam scalars must be the constructed ones (MINOR-2) ----

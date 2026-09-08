@@ -457,6 +457,12 @@ class VerifyItemVerdict(FrozenModel):
     native_verdict_type: str | None = None
     #: The native verdict's own value (for the result enums), recorded as a plain string.
     native_verdict_value: str | None = None
+    #: The worst-credible capacity obligation cur's ``unknown_preserves_capacity`` says must be
+    #: preserved because this item's currentness outcome is not positively known (kernel round
+    #: #1 §1.3; CUR-INV-011:183 "missing-ACK ≠ non-acceptance"). ``None`` on every item but
+    #: item 16 (:attr:`~tos.egressgw.vocabulary.SendVerifyItem.CURRENTNESS`), and ``None`` on
+    #: item 16 itself when currentness is positively ``ADMIT`` (nothing to preserve).
+    preserved_worst_credible_capacity: int | None = None
     authority_effect: AllFalseGatewayAuthority = AllFalseGatewayAuthority()
 
     @model_validator(mode="after")
@@ -471,6 +477,24 @@ class VerifyItemVerdict(FrozenModel):
                 "recorded NOT_APPLICABLE — only the deferred safety-governance mesh may be "
                 "explicitly N/A, and only under a positively established non-broker synthetic "
                 "send (design #34 §4.2)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _preserved_capacity_only_for_currentness(self) -> VerifyItemVerdict:
+        """Reject a preserved-capacity obligation recorded on anything but item 16 (kernel round #1 §1.3).
+
+        Only item 16 (CURRENTNESS) may author cur's unknown-preservation obligation — no other
+        item's verify check can decide whether risk-relevant capacity must be preserved.
+        """
+        if (
+            self.preserved_worst_credible_capacity is not None
+            and self.item is not SendVerifyItem.CURRENTNESS
+        ):
+            raise ArtifactIntegrityError(
+                f"verify item {self.item.value} cannot record a preserved worst-credible "
+                "capacity obligation — only item 16 (CURRENTNESS) may author cur's "
+                "unknown-preservation obligation (CUR-INV-011:183; kernel round #1 §1.3)"
             )
         return self
 
@@ -512,6 +536,9 @@ class GatewayEvidenceRecord(FrozenModel):
     applicability: BrokerApplicability | None = None
     halt_reason: SendHaltReason | None = None
     detail: str | None = None
+    #: Item 16's preserved worst-credible-capacity obligation, carried onto a ``SEND_REFUSED``
+    #: record when the halting item was CURRENTNESS (kernel round #1 §1.3). ``None`` otherwise.
+    preserved_worst_credible_capacity: int | None = None
     authority_effect: AllFalseGatewayAuthority = AllFalseGatewayAuthority()
 
 
