@@ -66,3 +66,11 @@
 - steps 4·6~10·13~14 에서 `NON_AUTHORITATIVE_PROVISIONAL` 0(e2e 실측) · 재compose 후 replay digest 동일 · 비-TRUSTED/로그 불가 시 send 0 · 투영 불일치 경보 evidence
 - 런타임 테스트 green · 커널 불변(레인 O 외) · mypy/방화벽/lint-imports/budget/Black/Ruff 0 · 독립 리뷰 approve
 - 실 브로커 transport 0 · order 자격증명 0 · EV 상태 변경 0 · quorum 주장 0(R-RCL-F0 인용)
+
+## 7. 실행 결과·독립 리뷰 처분 (2026-09-08)
+
+- 착지: P `b81bec99` · O `2e7602a9`(커널 포트 (a)) · R `39dd3993` · Q `239f428e` · S `5a2b594e`·`d1f24837`.
+- 리뷰 1차 **needs-attention**(비협상 위반 0 · 첫줄 판정 «item 16 은 항상-deny 아님 · S 차단 없음»): HIGH-1 R proof 의 revision 실효 미실현 · HIGH-2 R CURRENT 가 호출자 주장 · MEDIUM Q step 9 원자성 무테스트 · MEDIUM R 어셈블러가 타 소유자 verdict 저작 · MEDIUM R `-1` 센티널 · MEDIUM P 격리 창이 호출 간격 측정·자기 리셋 · LOW R 비허용 proof 기록 · LOW R step 14 키 → 처분 `6ef527c5`·`574a4af6`·`ac913ce5`. 렌즈 4: CommandType 재사용 4건은 command_id 구분으로 Phase 2 는 허용 · `AUTHORIZE_TRANSMISSION_CAPABILITY` 가 3종 산출물을 실어 kind 필터 불가 — **kind 로 evidence 질의/replay 감사하기 전에 커널 멤버 라운드 필요**(후속 결정 항목).
+- S 1차 보고의 `decision_current`/`envelope_equivalent`/`generation` 상수 True/1 은 fail-open 으로 거부 → S 가 파생·None 으로 전환 → step 4 admit 불가로 e2e 4건 xfail(정직) → **P 가 `IntentRegistry.decision_current` 실 producer 착지(`3a299333` · 정책 세대 동일성 + 로그 supersession · 신규 필수 키)** → S 결선 + 픽스처 정정(승인 파일의 intent digest 가 step 2 실제 digest) → **e2e 12/12 · xfail 0 · 합성 hand-off 1회 실제 도달**(`d1f24837`).
+- item 6/12/16 stand-in 은 리터럴이 아니라 운영자 attestation 설정(`_egress_attestations.py` · Phase 4/5 대체 명시) · 17 currentness 차원도 attestation 설정(`_pending_dimensions.py`) — 리뷰 재심 대상.
+- 개발계획 Phase 2 종료 조건 대응(재심에서 «실증 vs 단언» 판정 요청): stand-in 0(테스트 4) · 재기동 보수 복구(재compose replay 동일 · 테스트 5) · currentness/로그 상실 시 거부(테스트 6·7) · 권위-투영 불일치 표면화(테스트 8 · record_halt).
