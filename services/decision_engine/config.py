@@ -72,7 +72,8 @@ class DecisionEngineMarketRiskGateWiring(ServiceConfigBase):
         except Exception:
             logger.warning(
                 "decision_engine.yaml market_risk_gate wiring load failed; "
-                "using defaults"
+                "using defaults",
+                exc_info=True,
             )
             return cls()
 
@@ -115,6 +116,7 @@ class DecisionEngineSetupEvalWiring(ServiceConfigBase):
             return cls.from_yaml(path)
         except Exception:
             logger.warning(
-                "decision_engine.yaml setup_eval wiring load failed; using defaults"
+                "decision_engine.yaml setup_eval wiring load failed; using defaults",
+                exc_info=True,
             )
             return cls()

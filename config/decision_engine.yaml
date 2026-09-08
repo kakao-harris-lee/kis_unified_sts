@@ -6,7 +6,7 @@
 # the roster, `strategy.entry.params` supplies the parameters) — the same files
 # the monolithic orchestrator's Setup adapters read, so both runtimes trade one
 # operating point. The `setup_a_gap_reversion` / `setup_c_event_reaction` /
-# `setup_d_vwap_reversion` sections that used to live here were dead config: no
+# `setup_d_vwap_reversion` sections that used to live here were dead config:
 # the daemon never loaded them (it built each Setup with the Pydantic field
 # defaults), while two no-arg `SetupCConfig.from_yaml()` callers DID load them —
 # services/dashboard/routes/event_context.py and scripts/walk_forward_phase3.py.

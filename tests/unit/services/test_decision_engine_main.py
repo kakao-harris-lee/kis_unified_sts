@@ -714,34 +714,101 @@ async def test_publish_failure_does_not_stop_the_candidate(
     assert len(await redis.xrange(CANDIDATE_STREAM)) >= 1
 
 
+class _FlakySyncRedis:
+    """Sync Redis whose writes fail while ``broken`` is set.
+
+    Injected instead of monkeypatching ``publish_setup_eval`` itself: the
+    publisher swallows Redis errors by contract, so patching the function away
+    tested a path the daemon can never take and left the real failure reporting
+    unexercised (it was silently DEBUG-only).
+    """
+
+    def __init__(self) -> None:
+        self.broken = True
+        self.hashes: dict[str, dict[str, str]] = {}
+
+    def hset(self, key: str, field: str, value: str) -> None:
+        if self.broken:
+            raise ConnectionError("redis down")
+        self.hashes.setdefault(key, {})[field] = value
+
+    def expire(self, *_args: object, **_kwargs: object) -> None:
+        if self.broken:
+            raise ConnectionError("redis down")
+
+    def rpush(self, *_args: object, **_kwargs: object) -> None:
+        if self.broken:
+            raise ConnectionError("redis down")
+
+
 @pytest.mark.asyncio
-async def test_publish_failure_warns_once_per_state_change(
-    redis, monkeypatch: pytest.MonkeyPatch, caplog
+async def test_redis_failure_warns_once_and_logs_one_recovery(
+    redis, clean_eval_state, caplog
 ) -> None:
-    """A persistent outage must be reported, but not once per tick."""
+    """A real Redis outage must be reported once, and its recovery once.
 
-    def _boom(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError("redis down")
-
-    monkeypatch.setattr(
-        "shared.strategy.entry.setup_eval_publisher.publish_setup_eval", _boom
-    )
-    contexts = [_ctx(), _ctx(), _ctx()]
+    Drives the actual publisher (no monkeypatch of it) so the reporting path
+    under test is the one production takes.
+    """
+    fake_sync = _FlakySyncRedis()
+    ticks = 6
+    contexts = [_ctx() for _ in range(ticks)]
+    seen = 0
 
     async def _provider() -> MarketContext | None:
+        nonlocal seen
+        seen += 1
+        # Heal midway so the recovery line is exercised too.
+        if seen == 4:
+            fake_sync.broken = False
         return contexts.pop(0) if contexts else None
 
-    daemon = _make_daemon(
-        redis=redis, setups=[_NamedNeverSetup()], context_provider=_provider
+    daemon = DecisionEngineDaemon(
+        redis=redis,
+        setups=[_NamedNeverSetup()],
+        context_provider=_provider,
+        candidate_stream=CANDIDATE_STREAM,
+        candidate_maxlen=1000,
+        tick_interval_seconds=0.001,
+        market_risk_redis=fake_sync,
+        setup_eval_key_suffix=":shadow",
     )
-    with caplog.at_level(logging.WARNING):
-        await _run_briefly(daemon, seconds=0.05)
+    with caplog.at_level(logging.INFO):
+        await _run_briefly(daemon, seconds=0.12)
 
     warned = [
-        r for r in caplog.records if "setup eval publish failed" in r.getMessage()
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "publish" in r.getMessage()
     ]
     assert len(warned) == 1, [r.getMessage() for r in warned]
-    assert warned[0].levelno == logging.WARNING
+
+    recovered = [r for r in caplog.records if "recover" in r.getMessage().lower()]
+    assert len(recovered) == 1, [r.getMessage() for r in recovered]
+
+    # …and the writes landed once Redis came back.
+    assert fake_sync.hashes["trading:futures:setup_eval:shadow"]
+    # The daemon also tracks it machine-readably (no log scraping needed).
+    assert daemon._setup_eval_failure_state["setup_d_vwap_reversion"] is True
+
+
+@pytest.mark.asyncio
+async def test_redis_failure_does_not_stop_the_loop(
+    redis, context_provider, clean_eval_state
+) -> None:
+    fake_sync = _FlakySyncRedis()
+    daemon = DecisionEngineDaemon(
+        redis=redis,
+        setups=[_NamedAlwaysSetup()],
+        context_provider=context_provider,
+        candidate_stream=CANDIDATE_STREAM,
+        candidate_maxlen=1000,
+        tick_interval_seconds=0.001,
+        market_risk_redis=fake_sync,
+        setup_eval_key_suffix=":shadow",
+    )
+    await _run_briefly(daemon)
+    assert len(await redis.xrange(CANDIDATE_STREAM)) >= 1
 
 
 @pytest.mark.asyncio
@@ -931,15 +998,26 @@ async def test_throttled_ticks_still_publish_to_redis(
 
 @pytest.mark.parametrize(
     "mode, expected",
-    [("shadow", ".shadow"), ("live", ""), ("off", ""), ("", "")],
+    [
+        ("live", ""),
+        ("shadow", ":shadow"),
+        # Inert modes are suffixed too: only a live daemon may own the
+        # orchestrator's keys, and off/unknown must never touch them.
+        ("off", ":shadow"),
+        ("", ":shadow"),
+        ("typo", ":shadow"),
+    ],
 )
-def test_setup_eval_key_suffix_mirrors_the_candidate_stream(
+def test_only_live_mode_writes_the_unsuffixed_eval_keys(
     mode: str, expected: str
 ) -> None:
-    """Shadow must not share the orchestrator's eval keys."""
     assert _setup_eval_key_suffix_for(mode) == expected
-    # Same split the candidate stream makes.
-    assert (".shadow" in _candidate_stream_for(mode)) == bool(expected)
+
+
+def test_eval_key_suffix_uses_the_redis_key_convention_not_the_stream_one() -> None:
+    """Redis KEYS take ``:shadow``; STREAMS take ``.shadow``. Different rules."""
+    assert _setup_eval_key_suffix_for("shadow") == ":shadow"
+    assert _candidate_stream_for("shadow").endswith(".shadow")
 
 
 @pytest.mark.asyncio
@@ -953,10 +1031,10 @@ async def test_daemon_passes_its_key_suffix_to_the_publisher(
         candidate_stream=CANDIDATE_STREAM,
         candidate_maxlen=1000,
         tick_interval_seconds=0.001,
-        setup_eval_key_suffix=".shadow",
+        setup_eval_key_suffix=":shadow",
     )
     await _run_briefly(daemon)
-    assert eval_calls[0][3]["key_suffix"] == ".shadow"
+    assert eval_calls[0][3]["key_suffix"] == ":shadow"
 
 
 @pytest.mark.asyncio
@@ -975,18 +1053,18 @@ async def test_shadow_daemon_writes_only_the_shadow_keys(
         candidate_maxlen=1000,
         tick_interval_seconds=0.001,
         market_risk_redis=fake_sync,
-        setup_eval_key_suffix=".shadow",
+        setup_eval_key_suffix=":shadow",
     )
     await _run_briefly(daemon)
 
     assert fake_sync.hget(
-        "trading:futures:setup_eval.shadow", "setup_d_vwap_reversion"
+        "trading:futures:setup_eval:shadow", "setup_d_vwap_reversion"
     ), fake_sync.keys("*")
     # The orchestrator's key is untouched — that separation is what makes the
     # Gate 1 check able to attribute a row to the daemon.
     assert fake_sync.exists("trading:futures:setup_eval") == 0
     history = [k for k in fake_sync.keys("*") if "history" in k]
-    assert history and all(".shadow:" in k for k in history), history
+    assert history and all(":shadow:" in k for k in history), history
 
 
 def test_setup_eval_log_interval_comes_from_its_own_yaml_section() -> None:
@@ -1030,10 +1108,10 @@ def test_build_daemon_wires_the_setup_eval_interval_and_suffix(
         candidate_stream=CANDIDATE_STREAM,
         market_risk_redis=fakeredis.FakeStrictRedis(decode_responses=True),
         volatility_publisher=None,
-        setup_eval_key_suffix=".shadow",
+        setup_eval_key_suffix=":shadow",
     )
     assert daemon._setup_eval_log_throttle.interval_seconds == 13.0
-    assert daemon.setup_eval_key_suffix == ".shadow"
+    assert daemon.setup_eval_key_suffix == ":shadow"
 
 
 # ---------------------------------------------------------------------------
@@ -1099,3 +1177,96 @@ def test_subset_env_that_names_nothing_falls_back_to_every_enabled_setup(
 
     assert len(setups) == 3
     assert "names no setup" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Inert modes must not touch the orchestrator's keys (review finding 3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_off_mode_publishes_no_evaluations(
+    redis, eval_calls: list[tuple]
+) -> None:
+    """An inert daemon emits no candidates, so it must record no evaluations.
+
+    It also must not WRITE: with only live unsuffixed, an inert daemon that
+    published would be reaching for keys the orchestrator owns.
+    """
+
+    async def _provider() -> MarketContext | None:
+        return None  # the inert stub's behaviour
+
+    daemon = DecisionEngineDaemon(
+        redis=redis,
+        setups=[_NamedNeverSetup(), _NamedAlwaysSetup()],
+        context_provider=_provider,
+        candidate_stream=CANDIDATE_STREAM,
+        candidate_maxlen=1000,
+        tick_interval_seconds=0.001,
+        setup_eval_enabled=False,
+    )
+    await _run_briefly(daemon, seconds=0.05)
+    assert eval_calls == []
+
+
+@pytest.mark.asyncio
+async def test_disabled_eval_never_imports_the_publisher(redis) -> None:
+    """The lazy import must not happen in an inert daemon.
+
+    ``shared.strategy`` is a ~1.4 s eager package init; the whole point of the
+    lazy import is that a daemon which never evaluates never pays for it.
+    """
+    import sys
+
+    sentinel = object()
+    module = sys.modules.pop("shared.strategy.entry.setup_eval_publisher", sentinel)
+
+    async def _provider() -> MarketContext | None:
+        return None
+
+    daemon = DecisionEngineDaemon(
+        redis=redis,
+        setups=[_NamedNeverSetup()],
+        context_provider=_provider,
+        candidate_stream=CANDIDATE_STREAM,
+        candidate_maxlen=1000,
+        tick_interval_seconds=0.001,
+        setup_eval_enabled=False,
+    )
+    try:
+        await _run_briefly(daemon, seconds=0.03)
+        assert "shared.strategy.entry.setup_eval_publisher" not in sys.modules
+    finally:
+        if module is not sentinel:
+            sys.modules["shared.strategy.entry.setup_eval_publisher"] = module
+
+
+def test_build_daemon_disables_eval_outside_producing_modes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wiring, not just the flag: off/unknown → disabled, shadow/live → on."""
+    import fakeredis
+    import fakeredis.aioredis
+
+    from services.decision_engine.main import _build_daemon, _is_producing_mode
+
+    async def _provider() -> MarketContext | None:
+        return None
+
+    for mode, expected in (
+        ("off", False),
+        ("typo", False),
+        ("shadow", True),
+        ("live", True),
+    ):
+        daemon = _build_daemon(
+            redis_client=fakeredis.aioredis.FakeRedis(db=1),
+            setups=[],
+            context_provider=_provider,
+            candidate_stream=CANDIDATE_STREAM,
+            market_risk_redis=fakeredis.FakeStrictRedis(decode_responses=True),
+            volatility_publisher=None,
+            setup_eval_enabled=_is_producing_mode(mode),
+        )
+        assert daemon.setup_eval_enabled is expected, mode
