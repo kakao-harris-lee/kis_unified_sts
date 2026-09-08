@@ -930,3 +930,89 @@ def test_consume_records_unexpired_expiry_evidence_when_admitted(
     assert payload["expiry_verdict"] == "UNEXPIRED"
     assert payload["age_bound_ms"] == 210
     assert payload["receipt_anchor"] is not None
+
+
+def test_decision_current_denies_when_suspension_is_unobserved(
+    expiry_intent_registry: IntentRegistry,
+    expiry_time_service: FakeTimeService,
+    expiry_time_config: TrustworthyTimeConfig,
+    approvals_dir: Path,
+    expected_owner_uid: int,
+) -> None:
+    """Kernel round #1 §2.2 re-review finding #2 (HIGH): production must read
+    the consumer's OBSERVED suspension off the snapshot
+    (``snapshot.suspension_status.suspension_ms``), never fabricate a ``0``.
+    A snapshot that has never actually observed suspension is ``None``
+    there — ``tos.time.predicates.anchor_valid`` treats ``None`` as an
+    invalid anchor (unknown => fail-closed), so the composed age bound
+    collapses to ``None`` and :func:`tos.iap.decision_unexpired` must deny."""
+    loaded = _load_expiry_decision(
+        approvals_dir,
+        expected_owner_uid,
+        expiry_time_service,
+        expiry_time_config,
+        max_decision_age_ms=300,
+        issued_at_unix_ms=999_900,
+    )
+    expiry_time_service.set_snapshot(expiry_snapshot(suspension_ms=None))
+    assert (
+        expiry_intent_registry.decision_current(loaded.decision, receipt=loaded)
+        is False
+    )
+
+
+def test_consume_rejects_when_suspension_is_unobserved(
+    expiry_intent_registry: IntentRegistry,
+    expiry_time_service: FakeTimeService,
+    expiry_time_config: TrustworthyTimeConfig,
+    approvals_dir: Path,
+    expected_owner_uid: int,
+) -> None:
+    """Same unobserved-suspension case as
+    :func:`test_decision_current_denies_when_suspension_is_unobserved`, but
+    proving the effect reaches :meth:`~tos_runtime.authority.iap.IntentRegistry.consume`:
+    a non-current decision must be rejected as ineligible, never consumed."""
+    loaded = _load_expiry_decision(
+        approvals_dir,
+        expected_owner_uid,
+        expiry_time_service,
+        expiry_time_config,
+        max_decision_age_ms=300,
+        issued_at_unix_ms=999_900,
+    )
+    expiry_time_service.set_snapshot(expiry_snapshot(suspension_ms=None))
+    dc = expiry_intent_registry.decision_current(loaded.decision, receipt=loaded)
+    result = expiry_intent_registry.consume(
+        loaded.decision,
+        command_identity="cmd-1",
+        command_digest="digest-1",
+        decision_current=dc,
+        approved_intent_envelope_equivalent=True,
+        receipt=loaded,
+    )
+    assert result.outcome is ConsumptionOutcome.REJECTED_INELIGIBLE
+
+
+def test_decision_current_denies_when_suspension_exceeds_the_configured_bound(
+    expiry_intent_registry: IntentRegistry,
+    expiry_time_service: FakeTimeService,
+    expiry_time_config: TrustworthyTimeConfig,
+    approvals_dir: Path,
+    expected_owner_uid: int,
+) -> None:
+    """``max_process_suspension_ms`` is ``0`` in the test config (conftest
+    ``_time_config``), so ANY observed positive suspension — not merely an
+    unobserved (``None``) reading — must invalidate the anchor and deny."""
+    loaded = _load_expiry_decision(
+        approvals_dir,
+        expected_owner_uid,
+        expiry_time_service,
+        expiry_time_config,
+        max_decision_age_ms=300,
+        issued_at_unix_ms=999_900,
+    )
+    expiry_time_service.set_snapshot(expiry_snapshot(suspension_ms=1))
+    assert (
+        expiry_intent_registry.decision_current(loaded.decision, receipt=loaded)
+        is False
+    )

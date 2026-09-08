@@ -14,6 +14,7 @@ from tos.evidence import EvidenceAppendReceipt
 from tos.time import (
     EvaluatedMonotonicAnchor,
     HealthState,
+    SuspensionStatus,
     TimeContinuityIdentity,
     TimeHealthSnapshot,
 )
@@ -276,11 +277,21 @@ def expiry_snapshot(
     monotonic_anchor_value: int = 1_000,
     wall_clock_observation: int | None = 1_000_000,
     generation: int = 1,
+    suspension_ms: int | None = 0,
 ) -> TimeHealthSnapshot:
     """A digest-verified, minimally-complete :class:`~tos.time.TimeHealthSnapshot`
     with a settable monotonic continuity/value and wall-clock observation —
     the two coordinates :func:`~tos_runtime.authority.iap.load_operator_approval_with_receipt`
-    / :meth:`~tos_runtime.authority.iap.IntentRegistry._expiry_verdict` read."""
+    / :meth:`~tos_runtime.authority.iap.IntentRegistry._expiry_verdict` read.
+
+    ``suspension_ms`` defaults to ``0`` — an explicit OBSERVED "not suspended"
+    fact for the admit-path tests (kernel round #1 §2.2 re-review finding #2:
+    :meth:`~tos_runtime.authority.iap.IntentRegistry._expiry_verdict` now reads
+    ``snapshot.suspension_status.suspension_ms`` rather than fabricating a
+    literal, so a caller that wants an admit must supply the observation
+    itself). Pass ``None`` for the "never actually observed" case, which the
+    kernel's own ``tos.time.predicates.anchor_valid`` treats as an invalid
+    anchor (fail-closed)."""
     anchor = TimeContinuityIdentity(
         host_or_runtime_id="cell-1",
         boot_id="boot-1",
@@ -300,6 +311,10 @@ def expiry_snapshot(
             monotonic_anchor_value=monotonic_anchor_value,
         ),
         wall_clock_observation=wall_clock_observation,
+        suspension_status=SuspensionStatus(
+            suspended=suspension_ms is not None and suspension_ms > 0,
+            suspension_ms=suspension_ms,
+        ),
         issuer_continuity_id=monotonic_continuity_id,
         issue_monotonic_value=monotonic_anchor_value,
         tz_db_version="v1",
