@@ -1,6 +1,6 @@
 # Futures Conviction-Hold Strategy (THESIS C) — Research, Design, Validation
 
-Status: **[NEEDS-VALIDATION]** — prototype gate + counterfactual evidence pending review.
+Status: **[NO-SHIP]** — conviction conjunction gate is anti-predictive (arms into reversals; OOS 0% TP / −7.51%) — NO-SHIP (PR #534, merged 2026-06-26; 문서 본문의 Status 가 머지 판정과 어긋나 2026-09-08 정정)
 Author: regime-gate-analyst
 Date: 2026-06-25
 Branch: `feat/futures-conviction-hold`
