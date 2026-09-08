@@ -49,10 +49,25 @@ mirroring :mod:`tos_runtime.compose._egress_attestations`'s own mechanism
 exactly. ``compose_paper_runtime``'s own ``aggregate_risk_inputs_provider``/
 ``action_flow_inputs_provider`` callables stay in its signature (the
 genuinely scenario-specific fields — cells, cause, snapshot, applicable
-scopes, ...) still need a caller — but this module's
-``wrap_aggregate_risk_inputs_provider``/``wrap_action_flow_inputs_provider``
-ALWAYS override these six fields on whatever the caller's own function
-returns, so a caller literal for them is never actually consulted.
+scopes, ...) still need a caller.
+
+**Restrictive merge, not unconditional override (fixed 2026-09-08 — an
+unconditional override was itself a fail-open a caller's own restrictive
+claim could never survive: if a caller's provider ever returned a definite
+non-``True`` value for one of these six — a genuine ``False``, or
+``RiskDecisionResult.UNKNOWN`` for ``numerically_safe`` — an operator
+attestation of ``True`` would silently flip it back to admitting, exactly
+backwards from "판정은 커널 술어만 한다" / positive-admit-only discipline).
+:func:`_restrictive_merge` instead takes the MORE RESTRICTIVE of the two:
+a caller's own definite non-``True`` claim is NEVER overridden upward: only
+when the caller has genuinely no opinion (``None``, on the fields that
+allow it) or itself claims ``True`` does the attestation govern — and an
+attestation of ``False`` still authoritatively downgrades a caller's naive
+``True`` (the attestation is the one real, config-sourced fact here; a
+caller's bare ``True`` literal is never treated as a stronger claim than
+it). ``wrap_aggregate_risk_inputs_provider``/``wrap_action_flow_inputs_provider``
+apply this merge to all six fields — never a raw override, and never a
+caller literal silently trusted as if it were the real answer either.
 
 **One of the seven fields IS genuinely derivable and is NOT here:**
 ``generation_current`` (``ActionFlowDecisionInputs`` only). Unlike the six
@@ -173,13 +188,30 @@ def load_risk_attestations(path: Path) -> RiskAttestations:
     return RiskAttestations(**values)
 
 
+def _restrictive_merge(caller_value: Any, attested_value: bool) -> Any:
+    """The more restrictive of a caller's own claim and the operator
+    attestation (module docstring) — never an unconditional override.
+
+    * ``caller_value is None`` (no opinion): the attestation governs.
+    * ``caller_value is True`` (a permissive claim, not a stronger fact
+      than the operator's own attestation): the attestation STILL governs
+      — an attestation of ``False`` authoritatively downgrades it.
+    * anything else (``False``, ``RiskDecisionResult.UNKNOWN``, or any
+      other concrete non-``True`` value): the caller's own claim is a
+      definite restrictive finding and is NEVER overridden upward.
+    """
+    if caller_value is None or caller_value is True:
+        return attested_value
+    return caller_value
+
+
 def wrap_aggregate_risk_inputs_provider(
     provider: Callable[[StageRequest], AggregateRiskDecisionInputs | None],
     attestations: RiskAttestations,
 ) -> Callable[[StageRequest], AggregateRiskDecisionInputs | None]:
-    """Wrap a caller-supplied step 6 inputs provider so the four attested
-    fields it might return are ALWAYS overridden by ``attestations`` — a
-    caller's own literal for them is never actually consulted (module
+    """Wrap a caller-supplied step 6 inputs provider: the four attested
+    fields it might return are merged with ``attestations`` via
+    :func:`_restrictive_merge` — never an unconditional override (module
     docstring)."""
 
     def _wrapped(request: StageRequest) -> AggregateRiskDecisionInputs | None:
@@ -188,11 +220,18 @@ def wrap_aggregate_risk_inputs_provider(
             return None
         return replace(
             inputs,
-            numerically_safe=attestations.numerically_safe,
-            valuation_ok=attestations.valuation_ok,
-            all_fields_attributed=attestations.all_fields_attributed,
-            limit_source_is_injected_envelope=(
-                attestations.limit_source_is_injected_envelope
+            numerically_safe=_restrictive_merge(
+                inputs.numerically_safe, attestations.numerically_safe
+            ),
+            valuation_ok=_restrictive_merge(
+                inputs.valuation_ok, attestations.valuation_ok
+            ),
+            all_fields_attributed=_restrictive_merge(
+                inputs.all_fields_attributed, attestations.all_fields_attributed
+            ),
+            limit_source_is_injected_envelope=_restrictive_merge(
+                inputs.limit_source_is_injected_envelope,
+                attestations.limit_source_is_injected_envelope,
             ),
         )
 
@@ -205,9 +244,10 @@ def wrap_action_flow_inputs_provider(
     current_generation_provider: Callable[[StageRequest], int],
 ) -> Callable[[StageRequest], ActionFlowDecisionInputs | None]:
     """Wrap a caller-supplied step 7 inputs provider: three fields are
-    ALWAYS overridden by ``attestations`` (module docstring), and
-    ``generation_current`` is ALWAYS derived (never attested, never a
-    caller literal) via ``tos.afg.generation_fenced`` over the caller's own
+    merged with ``attestations`` via :func:`_restrictive_merge` (module
+    docstring), and ``generation_current`` is ALWAYS derived (never
+    attested, never a caller literal, never merged) via
+    ``tos.afg.generation_fenced`` over the caller's own
     ``decision_generation`` claim and ``current_generation_provider``'s
     real RCL-log-tip value (the SAME provider steps 6/9 use).
 
@@ -230,11 +270,18 @@ def wrap_action_flow_inputs_provider(
             return None
         return replace(
             inputs,
-            limit_source_is_injected_envelope=(
-                attestations.limit_source_is_injected_envelope
+            limit_source_is_injected_envelope=_restrictive_merge(
+                inputs.limit_source_is_injected_envelope,
+                attestations.limit_source_is_injected_envelope,
             ),
-            economic_commitment_exclusive=attestations.economic_commitment_exclusive,
-            flow_commitment_exclusive=attestations.flow_commitment_exclusive,
+            economic_commitment_exclusive=_restrictive_merge(
+                inputs.economic_commitment_exclusive,
+                attestations.economic_commitment_exclusive,
+            ),
+            flow_commitment_exclusive=_restrictive_merge(
+                inputs.flow_commitment_exclusive,
+                attestations.flow_commitment_exclusive,
+            ),
             generation_current=generation_fenced(
                 inputs.decision_generation, current_generation
             ),

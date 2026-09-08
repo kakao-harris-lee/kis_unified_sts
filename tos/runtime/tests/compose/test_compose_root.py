@@ -55,24 +55,29 @@ class FakeMonotonicSource:
 def _aggregate_inputs(request) -> AggregateRiskDecisionInputs | None:
     from tos.are import RiskScopeKind
 
-    # all_fields_attributed / numerically_safe / limit_source_is_injected_envelope
-    # are deliberately set to the WRONG (refusing) polarity here: compose's own
+    # all_fields_attributed / limit_source_is_injected_envelope are
+    # deliberately None (no caller opinion) here: compose's own
     # wrap_aggregate_risk_inputs_provider (tos_runtime.compose._risk_attestations,
-    # re-review finding F4) ALWAYS overrides them from risk_attestations.yaml's
-    # operator attestation, never this test-only literal -- the e2e hand-off
-    # still ADMITting proves the override is what actually governs the outcome.
+    # re-review finding F4) restrictive-merges them with
+    # risk_attestations.yaml's operator attestation -- the e2e hand-off still
+    # ADMITting proves the attestation genuinely governs when this test has
+    # no opinion. numerically_safe/valuation_ok have no None variant on this
+    # kernel dataclass, so they stay True here (a caller's own True claim is
+    # NEVER a stronger fact than the attestation -- see
+    # test_risk_attestations.py's dedicated restrictive-merge tests, incl. a
+    # caller's own False/UNKNOWN claim that must NOT be overridden upward).
     return AggregateRiskDecisionInputs(
         cells=fx.adverse_scenario_cells(),
         required_scenario_kinds=frozenset(
             {"ADVERSE_PRICE_SLIPPAGE_GAP_VOL_LIQ"}  # type: ignore[arg-type]
         ),
         applicable_risk_scopes=("ACCOUNT",),
-        all_fields_attributed=False,
+        all_fields_attributed=None,
         required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
-        numerically_safe=False,
-        valuation_ok=False,
+        numerically_safe=True,
+        valuation_ok=True,
         injected_envelope_max=fx.aggregate_risk_effective_limit(),
-        limit_source_is_injected_envelope=False,
+        limit_source_is_injected_envelope=None,
         effective_limit=fx.aggregate_risk_effective_limit(),
     )
 
@@ -132,15 +137,16 @@ def _action_flow_inputs(request) -> ActionFlowDecisionInputs | None:
         concurrent_consumers_share_one_envelope=True,
     )
     # limit_source_is_injected_envelope / economic_commitment_exclusive /
-    # flow_commitment_exclusive / generation_current are deliberately set to
-    # the WRONG (refusing) polarity here: compose's own
-    # wrap_action_flow_inputs_provider (tos_runtime.compose._risk_attestations,
-    # re-review finding F4) ALWAYS overrides the first three from
-    # risk_attestations.yaml's operator attestation and ALWAYS derives
-    # generation_current for real (tos.afg.generation_fenced against the RCL
-    # log's own current tip) -- never this test-only literal. The e2e
-    # hand-off still ADMITting proves the override/derivation is what
-    # actually governs the outcome, not this placeholder.
+    # flow_commitment_exclusive are deliberately None (no caller opinion)
+    # here: compose's own wrap_action_flow_inputs_provider
+    # (tos_runtime.compose._risk_attestations, re-review finding F4)
+    # restrictive-merges them with risk_attestations.yaml's operator
+    # attestation -- never an unconditional override (a caller's own
+    # restrictive False/UNKNOWN claim would otherwise survive; see
+    # test_risk_attestations.py's dedicated tests for that case).
+    # generation_current is deliberately the WRONG value: it is always
+    # DERIVED (tos.afg.generation_fenced against the RCL log's own current
+    # tip), never attested, never a caller literal at all.
     return ActionFlowDecisionInputs(
         cause=cause,
         snapshot=snapshot,
@@ -149,14 +155,14 @@ def _action_flow_inputs(request) -> ActionFlowDecisionInputs | None:
         observed_amplification=observed,
         requested_limit=fx.action_flow_requested_limit(),
         injected_envelope_max=fx.action_flow_envelope_max(),
-        limit_source_is_injected_envelope=False,
+        limit_source_is_injected_envelope=None,
         economic_ref="economic-ref-compose-1",
         flow_vector=fx.action_flow_requested_limit(),
         committed_flow_vectors=(),
         hard_limit=fx.action_flow_envelope_max(),
         runtime_limit=fx.action_flow_envelope_max(),
-        economic_commitment_exclusive=False,
-        flow_commitment_exclusive=False,
+        economic_commitment_exclusive=None,
+        flow_commitment_exclusive=None,
         generation_current=False,
         applicable_action_flow_scopes=("ACCOUNT",),
         decision_generation=1,
