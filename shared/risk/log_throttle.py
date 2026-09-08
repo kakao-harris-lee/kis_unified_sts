@@ -104,7 +104,8 @@ def setup_eval_reason_kind(reason: str) -> str:
     Setup reject reasons are built as ``kind(measurements)`` — e.g.
     ``not_extreme(z=+0.42,need±1.8)``, ``vol_below_gate(0.85<0.9)``,
     ``outside_time_window(297m∉[10,60])``, ``low_confidence(0.55<0.6)`` — while
-    others carry no measurement at all (``no_atr``, ``no_event_in_window``).
+    others carry no measurement at all (``no_atr``, ``no_vwap``,
+    ``no_market_context``).
     The parenthesised part changes on essentially every 60 s tick, so it must
     not participate in any identity used for throttling or deduplication:
 
@@ -115,9 +116,16 @@ def setup_eval_reason_kind(reason: str) -> str:
 
     Only the leading kind is returned; the full reason (numbers included) is
     still what gets logged and stored, so no diagnostic detail is lost.
+
+    Non-``str`` input is coerced rather than rejected: this sits on the
+    best-effort observability path (a caller may hand it a signal attribute
+    that is not yet a string), and the previous key construction was an f-string
+    that accepted anything. Raising here would turn a logging concern into a
+    trading-path exception.
     """
-    head, _, _ = reason.partition("(")
-    return head.strip() or reason
+    text = reason if isinstance(reason, str) else str(reason)
+    head, _, _ = text.partition("(")
+    return head.strip() or text
 
 
 def setup_eval_throttle_key(name: str, outcome: str, reason: str) -> str:

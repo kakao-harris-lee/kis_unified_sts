@@ -5,9 +5,18 @@ adapters (``shared/strategy/entry/setup_*_adapter.py``) and the decoupled
 ``services/decision_engine`` daemon. They must NOT share a key while the
 decoupled chain runs in shadow alongside the orchestrator — a shadow row that
 overwrote the orchestrator's would make both unreadable — so every key is
-suffixable via ``key_suffix``. The daemon passes ``".shadow"`` in shadow mode,
-mirroring the ``signal.candidate.futures.shadow`` stream convention; the default
-``""`` reproduces the orchestrator's historical keys byte-for-byte.
+suffixable via ``key_suffix``. The daemon passes ``":shadow"`` outside live mode,
+following this repo's REDIS KEY convention (colon-delimited:
+``risk:state:futures:shadow``, ``shared/streaming/trading_state.py::_key``) —
+note that STREAMS use a dotted ``.shadow`` suffix instead
+(``signal.candidate.futures.shadow``); the two namespaces do not share a rule.
+The default ``""`` reproduces the orchestrator's historical keys byte-for-byte.
+
+Publishing is best-effort and NEVER raises, but it is not silent: a swallowed
+Redis error is logged at WARNING once per producer state change (latched, reset
+on the next success) and reported to the caller through the ``bool`` return, so
+a supervising daemon can surface a degraded-observability condition instead of
+believing every write landed.
 """
 
 from __future__ import annotations
@@ -17,7 +26,7 @@ import logging
 import os
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from shared.risk.log_throttle import setup_eval_throttle_key
 from shared.strategy.gates.adapter_helper import acquire_infra_clients
@@ -29,6 +38,11 @@ logger = logging.getLogger(__name__)
 # "why didn't futures trade today?" is answerable at a glance. Best-effort only.
 # Producers append a ``key_suffix`` to this base (see the module docstring).
 SETUP_EVAL_KEY = "trading:futures:setup_eval"
+
+# TTL for the latest-state hash (repo default operational TTL, 24h). The
+# per-day history list below keeps a longer window on purpose — it is the
+# restart-surviving record of a day's terminal reason.
+SETUP_EVAL_TTL_SECONDS = 24 * 60 * 60
 
 # Last (outcome, reason) logged per setup, so INFO fires only on state changes.
 _last_eval_log: dict[str, str] = {}
@@ -65,6 +79,29 @@ AcquireClients = Callable[[], tuple[Any, Any]]
 NowFn = Callable[[], datetime]
 
 
+class EvalLog(Protocol):
+    """The logger surface this module actually uses.
+
+    Typed as a Protocol rather than ``logging.Logger`` so a caller can pass a
+    shim that changes ONE level's behaviour (e.g. the decision_engine's
+    ``_ThrottledInfoLog``, which gates ``info`` and forwards the rest) without
+    subclassing ``Logger`` or being lied to by the annotation.
+    """
+
+    def info(self, msg: str, *args: Any, **kwargs: Any) -> None: ...
+
+    def debug(self, msg: str, *args: Any, **kwargs: Any) -> None: ...
+
+    def warning(self, msg: str, *args: Any, **kwargs: Any) -> None: ...
+
+
+# Last publish-failure state per producer (name+key_suffix). A Redis outage
+# holds for many cycles, so the swallowed error is reported once per state
+# change rather than once per tick; a successful write clears the latch so the
+# NEXT outage warns again.
+_last_publish_failure: dict[str, str] = {}
+
+
 def is_in_window_eval(outcome: str, reason: str) -> bool:
     """Return True when an eval reflects an actionable in-window outcome."""
     if outcome != "reject":
@@ -80,20 +117,21 @@ def append_setup_eval_history(
     ts_kst: datetime,
     *,
     key_suffix: str = "",
-) -> None:
+) -> bool:
     """Append an in-window eval to the per-day history list, deduped by state.
 
     ``key_suffix`` isolates a producer's history list from the orchestrator's
     (``""`` = the orchestrator's historical key). The list key is
     ``<prefix><suffix>:<date_kst>``, so the date stays the last segment.
 
-    This helper is intentionally best-effort and is normally called from inside
-    ``publish_setup_eval``'s broad observability guard.
+    Returns True when there is nothing left to do — the append happened, was
+    deduped, or is disabled — and lets any Redis exception propagate to
+    ``publish_setup_eval``'s guard, which is what turns it into a False result.
     """
     if not SETUP_EVAL_HISTORY_ENABLED or redis is None:
-        return
+        return True
     if not is_in_window_eval(outcome, reason):
-        return
+        return True
 
     date_kst = ts_kst.date().isoformat()
     # Structural state (measurements stripped) — a reason whose only change is
@@ -101,7 +139,7 @@ def append_setup_eval_history(
     state = setup_eval_throttle_key(name, outcome, reason)
     dedup_key = (date_kst, f"{name}{key_suffix}")
     if _history_state.get(dedup_key) == state:
-        return
+        return True
     _history_state[dedup_key] = state
 
     key = f"{SETUP_EVAL_HISTORY_KEY_PREFIX}{key_suffix}:{date_kst}"
@@ -118,6 +156,7 @@ def append_setup_eval_history(
         ),
     )
     redis.expire(key, SETUP_EVAL_HISTORY_TTL_SECONDS)
+    return True
 
 
 def publish_setup_eval(
@@ -127,24 +166,35 @@ def publish_setup_eval(
     *,
     acquire_clients: AcquireClients | None = None,
     now_fn: NowFn | None = None,
-    log: logging.Logger | None = None,
+    log: EvalLog | None = None,
     key_suffix: str = "",
-) -> None:
+) -> bool:
     """Log on state change and publish latest setup evaluation to Redis.
 
     ``key_suffix`` namespaces BOTH Redis keys (hash and per-day history list)
     so two producers can write concurrently without overwriting each other; the
     default ``""`` is the orchestrator adapters' historical key set.
 
-    Observability failures are swallowed so setup evaluation publishing never
-    affects entry or exit decisions. ``acquire_clients`` and ``now_fn`` are
-    injectable so compatibility wrappers can preserve existing monkeypatch
-    points while this module remains the single owner of eval state.
+    Returns True when the write landed (or there was no client to write to,
+    which is the deliberately-unwired case), False when a Redis error was
+    swallowed. The exception is never re-raised — setup-eval publishing must
+    not affect entry or exit decisions — but it IS reported: at WARNING once
+    per producer state change, and to the caller through this return value.
+    Reporting it only at DEBUG made an outage indistinguishable from a healthy
+    write, which is the defect this signature exists to prevent.
+
+    ``acquire_clients`` and ``now_fn`` are injectable so compatibility wrappers
+    can preserve existing monkeypatch points while this module remains the
+    single owner of eval state.
     """
     target_log = log if log is not None else logger
-    state = f"{outcome}:{reason}"
-    if _last_eval_log.get(f"{name}{key_suffix}") != state:
-        _last_eval_log[f"{name}{key_suffix}"] = state
+    producer_key = f"{name}{key_suffix}"
+    # Structural state (measurements stripped): a reason whose only change is
+    # its embedded numbers is the SAME state, so the orchestrator path stops
+    # re-logging one INFO line per measurement.
+    state = setup_eval_throttle_key(name, outcome, reason)
+    if _last_eval_log.get(producer_key) != state:
+        _last_eval_log[producer_key] = state
         if outcome == "reject":
             target_log.info("[%s] no signal this cycle: %s", name, reason)
         else:
@@ -168,12 +218,30 @@ def publish_setup_eval(
                     }
                 ),
             )
-            redis.expire(eval_key, 86_400)
+            redis.expire(eval_key, SETUP_EVAL_TTL_SECONDS)
             append_setup_eval_history(
                 redis, name, outcome, reason, now, key_suffix=key_suffix
             )
-    except Exception:  # noqa: BLE001 - observability must never break entries
-        target_log.debug("[%s] setup-eval publish failed", name, exc_info=True)
+    except Exception as exc:  # noqa: BLE001 - observability must never break entries
+        failure = f"{type(exc).__name__}: {exc}"
+        if _last_publish_failure.get(producer_key) != failure:
+            _last_publish_failure[producer_key] = failure
+            target_log.warning(
+                "[%s] setup-eval publish failed; observability degraded "
+                "(entries unaffected): %s",
+                producer_key,
+                failure,
+                exc_info=True,
+            )
+        return False
+
+    # Clear the latch so the NEXT outage warns again. Recovery is NOT logged
+    # here: ``target_log.info`` is the caller's throttled eval-line channel
+    # (see the decision_engine's _ThrottledInfoLog), which would swallow the
+    # notice on exactly the ticks it matters. Callers that care learn about
+    # recovery from the ``True`` return.
+    _last_publish_failure.pop(producer_key, None)
+    return True
 
 
 _is_in_window_eval = is_in_window_eval
@@ -182,6 +250,9 @@ _publish_setup_eval = publish_setup_eval
 
 __all__ = [
     "SETUP_EVAL_HISTORY_ENABLED",
+    "SETUP_EVAL_TTL_SECONDS",
+    "EvalLog",
+    "_last_publish_failure",
     "SETUP_EVAL_HISTORY_KEY_PREFIX",
     "SETUP_EVAL_HISTORY_TTL_SECONDS",
     "SETUP_EVAL_KEY",

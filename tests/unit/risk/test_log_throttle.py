@@ -215,3 +215,19 @@ class TestSetupEvalThrottleKey:
             for now, z in enumerate(("+0.10", "+0.42", "+0.91", "+1.55"))
         ]
         assert allowed == [True, False, False, False]
+
+    def test_non_string_reason_is_coerced_not_raised(self) -> None:
+        """Observability must not raise on the trading path.
+
+        An adapter can pass a not-yet-stringified signal attribute; the old
+        f-string key accepted anything, so this one must too.
+        """
+
+        class _NotAString:
+            def __str__(self) -> str:
+                return "direction_blocked(long:BULL_STRONG)"
+
+        assert setup_eval_reason_kind(_NotAString()) == "direction_blocked"
+        assert setup_eval_throttle_key("s", "reject", _NotAString()).endswith(
+            "direction_blocked"
+        )

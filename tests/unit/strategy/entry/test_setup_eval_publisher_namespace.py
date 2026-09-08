@@ -71,11 +71,11 @@ def test_suffix_moves_both_the_hash_and_the_history_list(
 ) -> None:
     fake = redis_and_publisher
     sep.publish_setup_eval(
-        "setup_d_vwap_reversion", "reject", "no_atr", key_suffix=".shadow"
+        "setup_d_vwap_reversion", "reject", "no_atr", key_suffix=":shadow"
     )
 
-    assert fake.hget("trading:futures:setup_eval.shadow", "setup_d_vwap_reversion")
-    assert fake.exists(f"trading:futures:setup_eval:history.shadow:{_DATE}")
+    assert fake.hget("trading:futures:setup_eval:shadow", "setup_d_vwap_reversion")
+    assert fake.exists(f"trading:futures:setup_eval:history:shadow:{_DATE}")
     # The unsuffixed keys are untouched.
     assert fake.exists("trading:futures:setup_eval") == 0
     assert fake.exists(f"trading:futures:setup_eval:history:{_DATE}") == 0
@@ -88,14 +88,14 @@ def test_two_producers_do_not_overwrite_each_other(
     fake = redis_and_publisher
     sep.publish_setup_eval("setup_d_vwap_reversion", "fired", "short")
     sep.publish_setup_eval(
-        "setup_d_vwap_reversion", "reject", "no_vwap", key_suffix=".shadow"
+        "setup_d_vwap_reversion", "reject", "no_vwap", key_suffix=":shadow"
     )
 
     monolith = json.loads(
         fake.hget("trading:futures:setup_eval", "setup_d_vwap_reversion")
     )
     shadow = json.loads(
-        fake.hget("trading:futures:setup_eval.shadow", "setup_d_vwap_reversion")
+        fake.hget("trading:futures:setup_eval:shadow", "setup_d_vwap_reversion")
     )
     assert monolith["outcome"] == "fired"
     assert shadow["reason"] == "no_vwap"
@@ -149,11 +149,152 @@ def test_history_dedup_is_per_key_namespace(
     fake = redis_and_publisher
     sep.publish_setup_eval("setup_d_vwap_reversion", "reject", "no_atr")
     sep.publish_setup_eval(
-        "setup_d_vwap_reversion", "reject", "no_atr", key_suffix=".shadow"
+        "setup_d_vwap_reversion", "reject", "no_atr", key_suffix=":shadow"
     )
 
     assert len(_history_rows(fake, f"trading:futures:setup_eval:history:{_DATE}")) == 1
     assert (
-        len(_history_rows(fake, f"trading:futures:setup_eval:history.shadow:{_DATE}"))
+        len(_history_rows(fake, f"trading:futures:setup_eval:history:shadow:{_DATE}"))
         == 1
     )
+
+
+# ---------------------------------------------------------------------------
+# Failure reporting — the return value and the latched WARNING
+# ---------------------------------------------------------------------------
+
+
+class _BrokenRedis:
+    """Every write fails, the way a Redis outage presents to this module."""
+
+    def __init__(self, message: str = "redis down") -> None:
+        self.message = message
+
+    def hset(self, *_args: object, **_kwargs: object) -> None:
+        raise ConnectionError(self.message)
+
+    def expire(self, *_args: object, **_kwargs: object) -> None:
+        raise ConnectionError(self.message)
+
+    def rpush(self, *_args: object, **_kwargs: object) -> None:
+        raise ConnectionError(self.message)
+
+
+@pytest.fixture
+def clean_failure_latch() -> Iterator[None]:
+    saved = dict(sep._last_publish_failure)
+    sep._last_publish_failure.clear()
+    sep._last_eval_log.clear()
+    try:
+        yield
+    finally:
+        sep._last_publish_failure.clear()
+        sep._last_publish_failure.update(saved)
+
+
+def test_publish_returns_true_on_success(
+    redis_and_publisher: fakeredis.FakeStrictRedis, clean_failure_latch: None
+) -> None:
+    assert sep.publish_setup_eval("setup_a_gap_reversion", "reject", "no_atr") is True
+
+
+def test_publish_returns_true_when_no_client_is_wired(
+    monkeypatch: pytest.MonkeyPatch, clean_failure_latch: None
+) -> None:
+    """Unwired is a deliberate configuration, not a failure."""
+    monkeypatch.setattr(sep, "acquire_infra_clients", lambda: (None, None))
+    assert sep.publish_setup_eval("setup_a_gap_reversion", "reject", "no_atr") is True
+
+
+def test_publish_returns_false_and_warns_once_per_state_change(
+    monkeypatch: pytest.MonkeyPatch, clean_failure_latch: None, caplog
+) -> None:
+    """A swallowed Redis error must be visible: WARNING once, plus a False return.
+
+    Reporting it only at DEBUG made an outage indistinguishable from a healthy
+    write and left the consuming daemon's degraded-state path unreachable.
+    """
+    monkeypatch.setattr(sep, "acquire_infra_clients", lambda: (_BrokenRedis(), None))
+    monkeypatch.setattr(sep, "now_kst", lambda: _FIXED)
+
+    with caplog.at_level("WARNING"):
+        results = [
+            sep.publish_setup_eval(
+                "setup_d_vwap_reversion", "reject", f"not_extreme(z=+{i}.0,need±1.8)"
+            )
+            for i in range(5)
+        ]
+
+    assert results == [False] * 5, "every failed write must report False"
+    warned = [r for r in caplog.records if "publish failed" in r.getMessage()]
+    assert len(warned) == 1, [r.getMessage() for r in warned]
+    assert "ConnectionError" in warned[0].getMessage()
+
+
+def test_failure_latch_resets_after_a_success(
+    monkeypatch: pytest.MonkeyPatch, clean_failure_latch: None, caplog
+) -> None:
+    """A second outage after a recovery must warn again."""
+    broken = _BrokenRedis()
+    healthy = fakeredis.FakeStrictRedis(decode_responses=True)
+    client: list[object] = [broken]
+    monkeypatch.setattr(sep, "acquire_infra_clients", lambda: (client[0], None))
+    monkeypatch.setattr(sep, "now_kst", lambda: _FIXED)
+
+    with caplog.at_level("WARNING"):
+        assert (
+            sep.publish_setup_eval("setup_a_gap_reversion", "reject", "no_atr") is False
+        )
+        client[0] = healthy
+        assert (
+            sep.publish_setup_eval("setup_a_gap_reversion", "reject", "no_atr") is True
+        )
+        client[0] = broken
+        assert (
+            sep.publish_setup_eval("setup_a_gap_reversion", "reject", "no_atr") is False
+        )
+
+    warned = [r for r in caplog.records if "publish failed" in r.getMessage()]
+    assert len(warned) == 2, [r.getMessage() for r in warned]
+
+
+def test_failure_latch_is_per_producer(
+    monkeypatch: pytest.MonkeyPatch, clean_failure_latch: None, caplog
+) -> None:
+    """The shadow producer's outage must not silence the orchestrator's."""
+    monkeypatch.setattr(sep, "acquire_infra_clients", lambda: (_BrokenRedis(), None))
+    monkeypatch.setattr(sep, "now_kst", lambda: _FIXED)
+
+    with caplog.at_level("WARNING"):
+        sep.publish_setup_eval("setup_d_vwap_reversion", "reject", "no_atr")
+        sep.publish_setup_eval(
+            "setup_d_vwap_reversion", "reject", "no_atr", key_suffix=":shadow"
+        )
+
+    warned = [r for r in caplog.records if "publish failed" in r.getMessage()]
+    assert len(warned) == 2, [r.getMessage() for r in warned]
+
+
+def test_info_state_line_is_structural(
+    redis_and_publisher: fakeredis.FakeStrictRedis, clean_failure_latch: None, caplog
+) -> None:
+    """A reason whose only change is its numbers is the SAME state — log once.
+
+    This is the orchestrator path too: it previously logged one INFO per
+    measurement for a cause that had not actually changed.
+    """
+    with caplog.at_level("INFO"):
+        for z in ("+0.42", "+0.91", "+1.55"):
+            sep.publish_setup_eval(
+                "setup_d_vwap_reversion", "reject", f"not_extreme(z={z},need±1.8)"
+            )
+        sep.publish_setup_eval(
+            "setup_d_vwap_reversion", "reject", "vol_below_gate(0.85<0.9)"
+        )
+
+    lines = [
+        r.getMessage()
+        for r in caplog.records
+        if "no signal this cycle" in r.getMessage()
+    ]
+    assert len(lines) == 2, lines
