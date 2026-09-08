@@ -602,7 +602,7 @@ def test_spread_default_policy_is_shared_constant() -> None:
 # do not, and the difference is structural, not a rounding artefact:
 #   * PRICE TERM — the replay weights the TYPICAL price ``(H+L+C)/3``
 #     (``market_context_replay`` ~:278), the live streaming engine weights the
-#     candle CLOSE (``StreamingIndicatorEngine._on_tick`` feeds
+#     candle CLOSE (``StreamingIndicatorEngine.on_tick`` feeds
 #     ``candle.close`` into ``VWAPCalculator``).
 #   * SESSION ANCHOR — the replay resets on the KST session date, the live
 #     accumulator is keyed on the UTC calendar date

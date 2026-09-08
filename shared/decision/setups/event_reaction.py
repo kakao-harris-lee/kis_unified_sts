@@ -156,7 +156,7 @@ class SetupCEventReaction(Setup):
 
     Usage::
 
-        setup = SetupCEventReaction()                        # uses YAML defaults
+        setup = SetupCEventReaction()                        # Pydantic defaults
         setup = SetupCEventReaction(config=my_cfg)           # inject config
         setup = SetupCEventReaction(config=my_cfg,
                                      tracker=my_tracker)    # inject both

@@ -323,9 +323,12 @@ class SetupDVWAPReversion(Setup):
     CONFIG_CLASS = SetupDConfig
     #: Strategy-registry / ops name (see SetupAGapReversion.REGISTRY_NAME).
     REGISTRY_NAME: ClassVar[str] = "setup_d_vwap_reversion"
-    #: ``check`` reads ``ctx.vwap`` (``z = (price - vwap) / atr_14``). Without a
-    #: real session VWAP that stretch is identically 0 and the setup can never
-    #: fire, so a runner must skip it rather than evaluate it blind.
+    #: ``check`` reads ``ctx.vwap`` (``z = (price - vwap) / atr_14``). A missing
+    #: vwap is NOT a benign zero: at ``vwap == 0`` the stretch becomes
+    #: ``z = price / atr_14`` — a huge FABRICATED extreme that clears
+    #: ``extreme_atr_mult`` and makes the setup fire on nothing. A runner must
+    #: therefore skip this setup while no session VWAP exists rather than
+    #: evaluate it blind (see ``services/decision_engine/main.py``).
     REQUIRES_VWAP: ClassVar[bool] = True
 
     def __init__(self, *, config: SetupDConfig | None = None) -> None:

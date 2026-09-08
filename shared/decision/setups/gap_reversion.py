@@ -100,7 +100,7 @@ class SetupAGapReversion(Setup):
 
     Usage::
 
-        setup = SetupAGapReversion()                # uses YAML defaults
+        setup = SetupAGapReversion()                # Pydantic field defaults
         setup = SetupAGapReversion(config=my_cfg)   # inject pre-built config
 
         signal = setup.check(ctx)   # returns Signal | None

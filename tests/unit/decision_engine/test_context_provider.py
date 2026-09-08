@@ -265,11 +265,15 @@ async def test_returns_none_when_atr_is_zero_or_absent():
 
 
 class _FakeEngineNoVwap:
-    """Warm engine with an ATR but no session VWAP.
+    """Warm engine with an ATR but no session VWAP — the COLD-START case.
 
-    Two real windows produce this: the VWAP accumulator is keyed on the UTC
-    calendar date, so it resets at 09:00 KST mid-session, and parquet cold-start
-    warm-up never seeds it (``seed_candles`` does not feed ``_vwap_calc``).
+    ``VWAPCalculator.calculate`` returns 0.0 only when the symbol has no entry
+    or no accumulated volume, i.e. before the first candle completes; parquet
+    warm-up does not seed it (``seed_candles`` never feeds ``_vwap_calc``).
+    The UTC-date rollover is a DIFFERENT and invisible case: ``add_tick``
+    resets and accumulates in the same call, so vwap comes back non-zero but
+    degenerate (≈ that candle's close), which reads as an ordinary
+    ``not_extreme`` reject rather than the guard below.
     """
 
     def is_warm(self, _symbol: str) -> bool:

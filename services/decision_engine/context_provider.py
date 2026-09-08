@@ -72,21 +72,30 @@ class FuturesContextProvider:
         # declare REQUIRES_VWAP; suppressing the whole context here would also
         # darken Setup A/C, which never read vwap.
         #
-        # Two known windows where it is 0.0 (engine behaviour, not fixed here):
-        #   * the accumulator is keyed on the UTC calendar date
-        #     (``ts.strftime("%Y%m%d")`` over a UTC timestamp,
-        #     shared/indicators/streaming/engine.py ~:225), so it RESETS at
-        #     09:00 KST — mid-session, not at the 08:45 open; and
-        #   * parquet cold-start warm-up does not seed it (``seed_candles``
-        #     never feeds ``_vwap_calc``), so it stays empty after a restart
-        #     until the first live candle completes.
+        # Engine behaviour worth knowing (not fixed here — the engine is out of
+        # scope). ``VWAPCalculator`` is keyed on the UTC calendar date
+        # (``ts.strftime("%Y%m%d")``, shared/indicators/streaming/engine.py),
+        # so the session it accumulates is NOT the KRX session:
+        #   * 0.0 happens on a COLD START only — the symbol has no entry and no
+        #     volume yet, because parquet warm-up does not seed the calculator
+        #     (``seed_candles`` never feeds ``_vwap_calc``). That is the case
+        #     this guard reports, and the daemon turns it into a `no_vwap`
+        #     evaluation for the vwap-dependent setups.
+        #   * At the 00:00 UTC / 09:00 KST boundary ``add_tick`` resets the
+        #     accumulator and adds the new tick in the SAME call, so vwap is
+        #     immediately non-zero but degenerate: it equals that one candle's
+        #     close, i.e. z ≈ 0 for the first candles of the new bucket. That
+        #     reads as an ordinary `not_extreme` reject, NOT as `no_vwap` —
+        #     it is silent, and no guard here can see it.
+        #   * Between 08:45 and 09:00 KST the UTC date is still yesterday's, so
+        #     the value carries over the PREVIOUS bucket's accumulation.
         vwap = float(indicators.get("vwap", 0.0) or 0.0)
         if vwap <= 0.0 and not self._vwap_unavailable:
             self._vwap_unavailable = True
             logger.warning(
-                "session VWAP unavailable for %s; vwap-dependent setups are "
-                "skipped until the first candle rebuilds it (Setup A/C keep "
-                "running)",
+                "session VWAP unavailable for %s (cold accumulator); "
+                "vwap-dependent setups are skipped until the first candle "
+                "completes (Setup A/C keep running)",
                 symbol,
             )
         elif vwap > 0.0 and self._vwap_unavailable:
