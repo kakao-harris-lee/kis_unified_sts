@@ -477,12 +477,16 @@ class DeterministicFillModel:
             injected policy says ``NEXT_BAR`` would silently change the execution model.
         """
         due = [
-            staged for staged in self._pending if staged.settlement_bar_index == bar.bar_index
+            staged
+            for staged in self._pending
+            if staged.settlement_bar_index == bar.bar_index
         ]
         if not due:
             return ()
         self._pending = [
-            staged for staged in self._pending if staged.settlement_bar_index != bar.bar_index
+            staged
+            for staged in self._pending
+            if staged.settlement_bar_index != bar.bar_index
         ]
         settled = tuple(self._settle_one(staged, bar) for staged in due)
         self._records.extend(item.record for item in settled)
@@ -596,7 +600,9 @@ class DeterministicFillModel:
         # ``EgressResultPayload._fill_shape_consistent`` re-derives the same thing independently
         # (records.py:221-229), so a defect here fails closed at construction.
         kind = (
-            EgressResultKind.PARTIAL_FILL if remaining > 0 else EgressResultKind.FULL_FILL
+            EgressResultKind.PARTIAL_FILL
+            if remaining > 0
+            else EgressResultKind.FULL_FILL
         )
         self._assert_kind_allowed(staged, kind)
 

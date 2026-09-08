@@ -75,14 +75,22 @@ PROJECTION_RANK: dict[CapacityState, int] = {
 #: The capacity projection is the *conservative* axis: only a definite settlement advances it, and
 #: ``UNKNOWN`` / ``TIMEOUT`` leave it exactly where it was — ``POTENTIALLY_LIVE`` (design #31
 #: §4.2 rule 3; ADR-002-002 INV-005:168 / INV-006:174).
-_RESULT_TRANSITIONS: dict[EgressResultKind, tuple[EgressKnowledge, CapacityState | None]] = {
+_RESULT_TRANSITIONS: dict[
+    EgressResultKind, tuple[EgressKnowledge, CapacityState | None]
+] = {
     EgressResultKind.ACK: (EgressKnowledge.ACKNOWLEDGED, None),
-    EgressResultKind.FULL_FILL: (EgressKnowledge.FILLED, CapacityState.POSITION_CONSUMED),
+    EgressResultKind.FULL_FILL: (
+        EgressKnowledge.FILLED,
+        CapacityState.POSITION_CONSUMED,
+    ),
     EgressResultKind.PARTIAL_FILL: (
         EgressKnowledge.PARTIALLY_FILLED,
         CapacityState.PARTIALLY_CONSUMED,
     ),
-    EgressResultKind.REJECT: (EgressKnowledge.REJECTED, CapacityState.RELEASE_PENDING_PROOF),
+    EgressResultKind.REJECT: (
+        EgressKnowledge.REJECTED,
+        CapacityState.RELEASE_PENDING_PROOF,
+    ),
     EgressResultKind.UNKNOWN: (EgressKnowledge.UNKNOWN, None),
     EgressResultKind.TIMEOUT: (EgressKnowledge.UNKNOWN, None),
 }
@@ -260,7 +268,9 @@ class ProvisionalReservationLedger:
             )
         )
 
-    def bind_attempt(self, key: InstrumentKey, *, attempt_id: str) -> ProvisionalReservation:
+    def bind_attempt(
+        self, key: InstrumentKey, *, attempt_id: str
+    ) -> ProvisionalReservation:
         """Project ADR-002-002 §11 step 14 as ``ATTEMPT_BOUND`` (issuing no capability).
 
         Args:

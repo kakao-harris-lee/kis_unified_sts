@@ -82,7 +82,9 @@ def test_an_asserted_key_that_disagrees_with_the_declaration_is_refused() -> Non
 )
 def test_a_wildcard_none_scope_is_refused_at_registration(account, instrument) -> None:
     """(§3.3 MINOR-1) A ``None`` scope cannot be keyed — the RFC-003 §9:279-283 dispatch mirror."""
-    strategy = issue_strategy(capsule_gated_policy(account=account, instrument=instrument))
+    strategy = issue_strategy(
+        capsule_gated_policy(account=account, instrument=instrument)
+    )
     result = strategy_admissible(strategy)
     assert result.verdict is AdmissionVerdict.INADMISSIBLE
     assert any("wildcard" in reason for reason in result.reasons)
@@ -144,7 +146,9 @@ def test_a_missing_key_and_an_explicitly_empty_key_are_distinguished() -> None:
     assert dispatch.entries == ()
 
     registry.register(issue_strategy(), authored_config())
-    assert registry.resolve(instrument_key()).resolution is DispatchResolution.DISPATCHED
+    assert (
+        registry.resolve(instrument_key()).resolution is DispatchResolution.DISPATCHED
+    )
 
 
 def test_an_explicitly_empty_key_records_its_own_halt_reason() -> None:
@@ -155,7 +159,9 @@ def test_an_explicitly_empty_key_records_its_own_halt_reason() -> None:
     result = core.handle(decision_tick(sequence=1))
     assert result.halt_reason is HaltReason.REGISTRY_EXPLICIT_EMPTY
 
-    missing_core, _ = build_core(registry=StrategyRegistry(), transmit=RecordingTransmit())
+    missing_core, _ = build_core(
+        registry=StrategyRegistry(), transmit=RecordingTransmit()
+    )
     missing_result = missing_core.handle(decision_tick(sequence=1))
     assert missing_result.halt_reason is HaltReason.REGISTRY_MISSING
     assert HaltReason.REGISTRY_EXPLICIT_EMPTY is not HaltReason.REGISTRY_MISSING

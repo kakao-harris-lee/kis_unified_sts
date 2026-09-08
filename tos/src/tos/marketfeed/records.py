@@ -91,7 +91,9 @@ class PreimageEntry(FrozenModel):
     def _key_concrete(self) -> PreimageEntry:
         """Reject a blank preimage key (a nameless payload field addresses nothing)."""
         if not self.key.strip():
-            raise MarketFeedIntegrityError("PreimageEntry.key must be a concrete, non-empty name")
+            raise MarketFeedIntegrityError(
+                "PreimageEntry.key must be a concrete, non-empty name"
+            )
         return self
 
 
@@ -226,7 +228,10 @@ class ValueResolution(FrozenModel):
                     "as EXPLICIT_EMPTY — a defined no-value context is materially different from a "
                     "resolved one (design #32 §6 ∅ 양방향)"
                 )
-        if self.disposition is ValueViewDisposition.EXPLICIT_EMPTY and self.view is not None:
+        if (
+            self.disposition is ValueViewDisposition.EXPLICIT_EMPTY
+            and self.view is not None
+        ):
             if self.view.values:
                 raise MarketFeedIntegrityError(
                     "ValueResolution disposition=EXPLICIT_EMPTY must carry a value-free view "

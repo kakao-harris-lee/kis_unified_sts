@@ -81,7 +81,9 @@ def _settle(**overrides: object) -> FillParameters:
     return FillParameters(**base)  # type: ignore[arg-type]
 
 
-def _stage_and_settle(parameters: FillParameters) -> tuple[EgressResultPayload, LocalFillRecord]:
+def _stage_and_settle(
+    parameters: FillParameters,
+) -> tuple[EgressResultPayload, LocalFillRecord]:
     """Stage one attempt against bar 0 and settle it there, returning both artifacts."""
     bar = reference_bars(1)[0]
     model = build_fill_model(parameters)
@@ -176,9 +178,9 @@ def test_every_egress_result_kind_is_reachable_from_some_mode() -> None:
     produced: set[EgressResultKind] = set()
     for mode in FillMode:
         produced |= settleable_result_kinds(mode)
-    assert produced == set(EgressResultKind), (
-        f"uncovered EgressResultKind members: {sorted(set(EgressResultKind) - produced)}"
-    )
+    assert produced == set(
+        EgressResultKind
+    ), f"uncovered EgressResultKind members: {sorted(set(EgressResultKind) - produced)}"
 
 
 def test_a_mode_may_not_produce_a_kind_outside_its_closed_set() -> None:
@@ -296,7 +298,9 @@ def test_a_negative_slippage_or_cost_is_refused() -> None:
 
 def test_a_settle_mode_missing_any_injected_parameter_is_refused() -> None:
     """(§10) Absence is never a default — defaulting a bound here would be a hardcoded number."""
-    with pytest.raises(INTEGRITY_ERRORS, match="requires every injected settlement parameter"):
+    with pytest.raises(
+        INTEGRITY_ERRORS, match="requires every injected settlement parameter"
+    ):
         FillParameters(mode=FillMode.SETTLE, side=FillSide.BUY)
 
 
@@ -331,7 +335,9 @@ def test_next_bar_settlement_does_not_settle_early() -> None:
     assert settled[0].record.settlement_bar_close == bars[1].close_price
 
 
-def test_a_fill_left_pending_at_stream_end_is_recorded_unsettled_never_invented() -> None:
+def test_a_fill_left_pending_at_stream_end_is_recorded_unsettled_never_invented() -> (
+    None
+):
     """(§4.1) No settlement bar ⇒ no result kind and no magnitude — the run records what it had."""
     bars = reference_bars(1)
     model = build_fill_model(_settle(settlement=SettlementPolicy.NEXT_BAR))
@@ -382,7 +388,9 @@ def test_the_same_inputs_always_produce_the_same_fill() -> None:
     parameters = _settle(scenario_quantity=Decimal(800))
     first_payload, first_record = _stage_and_settle(parameters)
     second_payload, second_record = _stage_and_settle(parameters)
-    assert first_payload.model_dump(mode="json") == second_payload.model_dump(mode="json")
+    assert first_payload.model_dump(mode="json") == second_payload.model_dump(
+        mode="json"
+    )
     assert first_record.model_dump(mode="json") == second_record.model_dump(mode="json")
 
 

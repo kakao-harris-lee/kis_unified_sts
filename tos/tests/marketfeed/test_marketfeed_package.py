@@ -64,7 +64,9 @@ from ._marketfeed_fixtures import INTEGRITY_ERRORS, SCHEME, one_bar, preimage
 def test_a_transport_or_credential_field_name_is_an_offender(name: str) -> None:
     """(§0.3 ★) The token check catches transport and credential surfaces token-wise."""
     assert fetch_surface_offenders([name]) == (name,)
-    with pytest.raises(marketfeed.MarketFeedIntegrityError, match="transport or credential"):
+    with pytest.raises(
+        marketfeed.MarketFeedIntegrityError, match="transport or credential"
+    ):
         seal_fetch_surface("Probe", [name])
 
 
@@ -90,7 +92,13 @@ def test_the_seal_does_not_over_reject_a_legitimate_field_name(name: str) -> Non
 
 def test_the_shipped_records_carry_no_fetch_surface() -> None:
     """(§0.3) Every marketfeed model is clean under its own seal."""
-    for model in (AdmittedValue, PreimageEntry, RawPayloadPreimage, RejectedValue, ValueResolution):
+    for model in (
+        AdmittedValue,
+        PreimageEntry,
+        RawPayloadPreimage,
+        RejectedValue,
+        ValueResolution,
+    ):
         assert fetch_surface_offenders(model.model_fields) == (), model.__name__
 
 
@@ -141,7 +149,9 @@ def test_a_blank_binding_is_unconstructable() -> None:
 def test_a_wildcard_field_key_is_unconstructable(wildcard: str) -> None:
     """(§2.4, RFC-008 §7:239-240) A wildcard field reference cannot enter from the value side."""
     with pytest.raises(INTEGRITY_ERRORS, match="wildcard"):
-        AdmittedValue(field_key=wildcard, observation_ref="raw-1", preimage=preimage(close=1))
+        AdmittedValue(
+            field_key=wildcard, observation_ref="raw-1", preimage=preimage(close=1)
+        )
 
 
 def test_a_duplicated_preimage_key_is_unconstructable() -> None:
@@ -168,7 +178,9 @@ def test_a_duplicated_preimage_key_is_unconstructable() -> None:
         ValueViewDisposition.NAMESPACE_COLLISION,
     ],
 )
-def test_a_refused_disposition_may_not_carry_a_view(disposition: ValueViewDisposition) -> None:
+def test_a_refused_disposition_may_not_carry_a_view(
+    disposition: ValueViewDisposition,
+) -> None:
     """(§6 ★) A refused binding never yields consumable values, structurally."""
     capsule, snapshot, candidates = one_bar()
     published = marketfeed.publish_context_value_view(
@@ -181,7 +193,9 @@ def test_a_refused_disposition_may_not_carry_a_view(disposition: ValueViewDispos
 @pytest.mark.parametrize(
     "disposition", [ValueViewDisposition.RESOLVED, ValueViewDisposition.EXPLICIT_EMPTY]
 )
-def test_an_admitting_disposition_requires_a_view(disposition: ValueViewDisposition) -> None:
+def test_an_admitting_disposition_requires_a_view(
+    disposition: ValueViewDisposition,
+) -> None:
     """(§6 ★) "resolved, but no view" would make the ∅ distinction unreadable."""
     with pytest.raises(INTEGRITY_ERRORS, match="requires a published view"):
         ValueResolution(disposition=disposition, view=None)
@@ -199,7 +213,9 @@ def test_resolved_and_explicit_empty_may_not_be_swapped() -> None:
     with pytest.raises(INTEGRITY_ERRORS, match="EXPLICIT_EMPTY"):
         ValueResolution(disposition=ValueViewDisposition.RESOLVED, view=empty.view)
     with pytest.raises(INTEGRITY_ERRORS, match="value-free view"):
-        ValueResolution(disposition=ValueViewDisposition.EXPLICIT_EMPTY, view=resolved.view)
+        ValueResolution(
+            disposition=ValueViewDisposition.EXPLICIT_EMPTY, view=resolved.view
+        )
 
 
 def test_the_admitting_disposition_set_is_positive_membership() -> None:
@@ -236,7 +252,9 @@ def test_the_package_docstring_declares_the_provisional_scope() -> None:
     assert "Provisional" in doc
 
 
-def test_the_published_view_records_the_non_production_canonicalization_version() -> None:
+def test_the_published_view_records_the_non_production_canonicalization_version() -> (
+    None
+):
     """(§1.1/§8) The digest rides ``ev-l1-provisional-0``, and the artifact says which scheme."""
     capsule, snapshot, candidates = one_bar()
     resolution = marketfeed.publish_context_value_view(
@@ -249,5 +267,9 @@ def test_the_published_view_records_the_non_production_canonicalization_version(
 def test_the_public_surface_matches_the_declared_all() -> None:
     """(anti-phantom §0.5) Every exported name exists; every declared name is exported."""
     for name in marketfeed.__all__:
-        assert hasattr(marketfeed, name), f"__all__ declares {name!r} but the package lacks it"
-    assert len(set(marketfeed.__all__)) == len(marketfeed.__all__), "duplicate __all__ entry"
+        assert hasattr(
+            marketfeed, name
+        ), f"__all__ declares {name!r} but the package lacks it"
+    assert len(set(marketfeed.__all__)) == len(
+        marketfeed.__all__
+    ), "duplicate __all__ entry"

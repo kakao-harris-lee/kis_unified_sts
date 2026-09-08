@@ -56,7 +56,9 @@ from ._engine_fixtures import (
 )
 
 
-def test_a_second_tick_between_send_and_result_is_denied_at_the_capacity_stage() -> None:
+def test_a_second_tick_between_send_and_result_is_denied_at_the_capacity_stage() -> (
+    None
+):
     """(§7.2-9) The re-entrancy window is closed: no overlapping exposure can be created."""
     transmit = RecordingTransmit()
     core, sink = build_core(transmit=transmit)
@@ -73,7 +75,9 @@ def test_a_second_tick_between_send_and_result_is_denied_at_the_capacity_stage()
     assert second.halt_reason is HaltReason.AT_MOST_ONE_EXPOSURE_HELD
     assert len(transmit.attempts) == 1, "a second attempt must never leave the core"
 
-    halts = [r for r in sink.records if r.halt_reason is HaltReason.AT_MOST_ONE_EXPOSURE_HELD]
+    halts = [
+        r for r in sink.records if r.halt_reason is HaltReason.AT_MOST_ONE_EXPOSURE_HELD
+    ]
     assert len(halts) == 1
     assert halts[0].detail is not None
     assert "POTENTIALLY_LIVE" in halts[0].detail
@@ -178,7 +182,9 @@ def test_the_projection_reaches_potentially_live_before_the_hand_off() -> None:
     )
     transmit = _ObservingTransmit(ledger)
     core, _ = build_core(transmit=transmit)
-    core._ledger = ledger  # noqa: SLF001 - the observing transmit needs the same projection
+    core._ledger = (
+        ledger  # noqa: SLF001 - the observing transmit needs the same projection
+    )
     core.handle(decision_tick(sequence=1))
 
     assert observed == [CapacityState.POTENTIALLY_LIVE], (
@@ -212,9 +218,9 @@ def test_the_retention_survives_every_terminal_result_kind() -> None:
             )
         )
         second = core.handle(decision_tick(sequence=3, capsule=issue_capsule()))
-        assert second.halt_reason is HaltReason.AT_MOST_ONE_EXPOSURE_HELD, (
-            f"a {kind.value} result must not free the scope — release is the RCL's act"
-        )
+        assert (
+            second.halt_reason is HaltReason.AT_MOST_ONE_EXPOSURE_HELD
+        ), f"a {kind.value} result must not free the scope — release is the RCL's act"
         assert len(transmit.attempts) == 1
 
 
@@ -223,7 +229,9 @@ def test_the_retention_survives_every_terminal_result_kind() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_consumed_magnitude_accessor_reads_the_projection_and_changes_nothing() -> None:
+def test_the_consumed_magnitude_accessor_reads_the_projection_and_changes_nothing() -> (
+    None
+):
     """(design #35 §5.2/§5.3) The observation is a read; the RCL boundary is untouched.
 
     ``outstanding_consumed_magnitude`` exists so a position-closing derivation can be sized from
@@ -276,7 +284,9 @@ def test_the_consumed_magnitude_accessor_reads_the_projection_and_changes_nothin
     assert core.ledger.admits_new_exposure(key) is False
 
 
-def test_the_accessor_is_not_a_release_path_under_any_of_the_four_forbidden_names() -> None:
+def test_the_accessor_is_not_a_release_path_under_any_of_the_four_forbidden_names() -> (
+    None
+):
     """(design #35 §5.3) A read accessor was added; no release path was.
 
     The projection deliberately has no ``release`` / ``free`` / ``clear`` / ``reset`` — releasing

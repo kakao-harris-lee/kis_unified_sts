@@ -40,7 +40,9 @@ from ._marketfeed_fixtures import (
 KEY = InstrumentKey(account=ACCOUNT, instrument=INSTRUMENT)
 
 
-def _resolver(*, snapshot, candidates, time_projection=None) -> MarketFeedContextResolver:
+def _resolver(
+    *, snapshot, candidates, time_projection=None
+) -> MarketFeedContextResolver:
     """A resolver over fixed injected surfaces."""
 
     def store(*, snapshot_id: str | None, canonical_digest: str | None):
@@ -78,9 +80,14 @@ def test_the_resolver_satisfies_the_shipped_engine_protocol() -> None:
 def test_the_resolved_payload_carries_the_value_surface_d_e1_deferred() -> None:
     """(§3.2 (3)) The payload field D-E1 left for D-E2 is now populated by D-E2."""
     capsule, snapshot, candidates = one_bar()
-    payload = _resolver(snapshot=snapshot, candidates=candidates)(capsule, instrument_key=KEY)
+    payload = _resolver(snapshot=snapshot, candidates=candidates)(
+        capsule, instrument_key=KEY
+    )
     assert payload.value_view is not None
-    assert {value.field_key for value in payload.value_view.values} == {"close", "session"}
+    assert {value.field_key for value in payload.value_view.values} == {
+        "close",
+        "session",
+    }
     assert payload.value_view.snapshot_id == snapshot.snapshot_id
     assert payload.value_view.snapshot_canonical_digest == snapshot.canonical_digest
 
@@ -128,7 +135,9 @@ def test_two_pre_issuance_artifacts_do_not_match_by_both_being_empty() -> None:
     assert resolved.payload.value_view is None
 
 
-def test_a_pre_issuance_snapshot_against_a_concrete_reference_also_fails_closed() -> None:
+def test_a_pre_issuance_snapshot_against_a_concrete_reference_also_fails_closed() -> (
+    None
+):
     """(§3.3, review MINOR-2 N4) The asymmetric half — and why its guard is an *equivalent* mutant.
 
     Deleting the snapshot-side concreteness guard is provably behaviour-preserving: control reaches
@@ -148,7 +157,9 @@ def test_a_pre_issuance_snapshot_against_a_concrete_reference_also_fails_closed(
 def test_an_unresolvable_snapshot_reference_is_fail_closed() -> None:
     """(§3.3/§6) A store with no such snapshot yields no view — no fallback, no last-known-good."""
     capsule, _, candidates = one_bar()
-    resolved = _resolver(snapshot=None, candidates=candidates).resolve(capsule, instrument_key=KEY)
+    resolved = _resolver(snapshot=None, candidates=candidates).resolve(
+        capsule, instrument_key=KEY
+    )
     assert resolved.resolution.disposition is ValueViewDisposition.SNAPSHOT_UNRESOLVED
     assert resolved.payload.value_view is None
 
@@ -156,7 +167,9 @@ def test_an_unresolvable_snapshot_reference_is_fail_closed() -> None:
 def test_the_two_no_view_dispositions_stay_distinguishable() -> None:
     """(§6 ∅ 양방향) "no such snapshot" and "wrong snapshot" are different facts, both restrictive."""
     capsule, _, candidates = one_bar()
-    missing = _resolver(snapshot=None, candidates=candidates).resolve(capsule, instrument_key=KEY)
+    missing = _resolver(snapshot=None, candidates=candidates).resolve(
+        capsule, instrument_key=KEY
+    )
     mismatched = _resolver(
         snapshot=issue_snapshot(intended_use="something-else"), candidates=candidates
     ).resolve(capsule, instrument_key=KEY)
@@ -167,7 +180,9 @@ def test_the_two_no_view_dispositions_stay_distinguishable() -> None:
 def test_an_explicit_empty_view_is_published_and_distinguishable_from_no_view() -> None:
     """(§6 ∅ 양방향 ★) Bound-with-nothing is a published artifact; unbound is not."""
     capsule, snapshot, _ = one_bar()
-    empty = _resolver(snapshot=snapshot, candidates=()).resolve(capsule, instrument_key=KEY)
+    empty = _resolver(snapshot=snapshot, candidates=()).resolve(
+        capsule, instrument_key=KEY
+    )
     assert empty.resolution.disposition is ValueViewDisposition.EXPLICIT_EMPTY
     assert empty.payload.value_view is not None
     assert empty.payload.value_view.values == ()
@@ -184,7 +199,9 @@ def test_an_explicit_empty_view_is_published_and_distinguishable_from_no_view() 
 def test_without_an_injected_projection_the_time_coordinates_deny() -> None:
     """(§3.3) Absence is restrictive: an unprojected tick does not pass the engine's time gate."""
     capsule, snapshot, candidates = one_bar()
-    payload = _resolver(snapshot=snapshot, candidates=candidates)(capsule, instrument_key=KEY)
+    payload = _resolver(snapshot=snapshot, candidates=candidates)(
+        capsule, instrument_key=KEY
+    )
     admitted, reason = time_admits(payload.time)
     assert admitted is False
     assert reason is not None
@@ -274,7 +291,9 @@ def test_the_resolver_claims_no_causal_ordering_coordinate() -> None:
     from tos.ordering import OrderingEvent
 
     capsule, snapshot, candidates = one_bar()
-    payload = _resolver(snapshot=snapshot, candidates=candidates)(capsule, instrument_key=KEY)
+    payload = _resolver(snapshot=snapshot, candidates=candidates)(
+        capsule, instrument_key=KEY
+    )
     assert payload.reference == OrderingEvent()
 
 

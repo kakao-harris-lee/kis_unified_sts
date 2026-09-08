@@ -53,7 +53,9 @@ def _bar(*, as_of: int, close: int):
     """One bar's (capsule, snapshot, resolution) triple."""
     payload = preimage(close=close)
     obs = observation(raw_event_id="raw-1", payload=payload, as_of=as_of)
-    snapshot = issue_snapshot(observations=(obs,), field_evaluations=(evaluation("close"),))
+    snapshot = issue_snapshot(
+        observations=(obs,), field_evaluations=(evaluation("close"),)
+    )
     capsule = issue_capsule(snapshot)
     resolution = publish_context_value_view(
         capsule=capsule,
@@ -102,7 +104,9 @@ def test_the_as_of_alone_separates_two_bars_carrying_the_same_value() -> None:
     assert resolution_one.view.canonical_digest != resolution_two.view.canonical_digest
 
 
-def test_the_capsule_digest_separates_because_the_snapshot_reference_is_covered() -> None:
+def test_the_capsule_digest_separates_because_the_snapshot_reference_is_covered() -> (
+    None
+):
     """(§4.1 link 3) The Capsule binds the snapshot's digest, so it moves when the snapshot moves."""
     capsule_one, _, _ = _bar(as_of=BAR_ONE_AS_OF, close=CLOSE_BAR_ONE)
     capsule_two, _, _ = _bar(as_of=BAR_TWO_AS_OF, close=CLOSE_BAR_ONE)
@@ -131,7 +135,10 @@ def test_the_view_digest_does_not_depend_on_candidate_order() -> None:
         capsule=capsule, snapshot=snapshot, candidates=candidates, scheme=SCHEME
     )
     reversed_ = publish_context_value_view(
-        capsule=capsule, snapshot=snapshot, candidates=tuple(reversed(candidates)), scheme=SCHEME
+        capsule=capsule,
+        snapshot=snapshot,
+        candidates=tuple(reversed(candidates)),
+        scheme=SCHEME,
     )
     assert forward.view is not None and reversed_.view is not None
     assert forward.view.canonical_digest == reversed_.view.canonical_digest
@@ -189,10 +196,12 @@ def test_the_view_digest_is_sensitive_to_every_value_field_under_one_binding() -
             f"the view digest ignores ContextValue.{field} — a values-blind digest would let two "
             "different value sets sign identically (design #32 §3.2 (3b))"
         )
-    assert digest_of() != baseline, "an empty value set must not digest like a populated one"
-    assert digest_of(base, perturbations["field_key"]) != baseline, (
-        "adding a second value must move the digest"
-    )
+    assert (
+        digest_of() != baseline
+    ), "an empty value set must not digest like a populated one"
+    assert (
+        digest_of(base, perturbations["field_key"]) != baseline
+    ), "adding a second value must move the digest"
     assert digest_of(base) == baseline, "the digest is a pure function of its inputs"
 
 
@@ -219,10 +228,12 @@ def test_an_absent_as_of_is_refused_so_the_chain_cannot_start_unanchored() -> No
     from tos.capsule.observation import ObservationTime
 
     payload = preimage(close=CLOSE_BAR_ONE)
-    obs = observation(raw_event_id="raw-1", payload=payload, as_of=BAR_ONE_AS_OF).model_copy(
-        update={"time": ObservationTime(source_event_time=None)}
+    obs = observation(
+        raw_event_id="raw-1", payload=payload, as_of=BAR_ONE_AS_OF
+    ).model_copy(update={"time": ObservationTime(source_event_time=None)})
+    snapshot = issue_snapshot(
+        observations=(obs,), field_evaluations=(evaluation("close"),)
     )
-    snapshot = issue_snapshot(observations=(obs,), field_evaluations=(evaluation("close"),))
     capsule = issue_capsule(snapshot)
     resolution = publish_context_value_view(
         capsule=capsule,
@@ -230,10 +241,14 @@ def test_an_absent_as_of_is_refused_so_the_chain_cannot_start_unanchored() -> No
         candidates=(candidate("close", "raw-1", payload),),
         scheme=SCHEME,
     )
-    assert {entry.reason for entry in resolution.rejected} == {ValueRejectionReason.AS_OF_ABSENT}
+    assert {entry.reason for entry in resolution.rejected} == {
+        ValueRejectionReason.AS_OF_ABSENT
+    }
 
 
-def test_the_honest_boundary_is_recorded_a_stale_producer_still_collapses_the_chain() -> None:
+def test_the_honest_boundary_is_recorded_a_stale_producer_still_collapses_the_chain() -> (
+    None
+):
     """(§4.3 ⚠ over-claim seal) Same as-of on two bars ⇒ same digests. Stated, not hidden.
 
     This test asserts the *limit*, not a guarantee: the publication gate cannot tell that a producer

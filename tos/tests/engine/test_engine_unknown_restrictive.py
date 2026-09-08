@@ -57,7 +57,9 @@ def _sent_core():
     return core, sink, transmit, result.flow.attempt.attempt_id
 
 
-def _egress_event(kind: EgressResultKind, attempt_id: str, *, sequence: int = 2, **fills):
+def _egress_event(
+    kind: EgressResultKind, attempt_id: str, *, sequence: int = 2, **fills
+):
     """Build an ``EGRESS_RESULT`` event for the projected attempt."""
     return EngineEvent(
         kind=EventKind.EGRESS_RESULT,
@@ -95,7 +97,9 @@ def test_unknown_causes_no_blind_resubmission() -> None:
     core, _, transmit, attempt_id = _sent_core()
     assert len(transmit.attempts) == 1
     core.handle(_egress_event(EgressResultKind.UNKNOWN, attempt_id))
-    assert len(transmit.attempts) == 1, "an UNKNOWN result must not trigger a resubmission"
+    assert (
+        len(transmit.attempts) == 1
+    ), "an UNKNOWN result must not trigger a resubmission"
 
 
 def test_a_second_tick_after_unknown_is_still_denied_at_the_capacity_stage() -> None:
@@ -137,7 +141,14 @@ def test_the_projection_has_no_release_method_at_all() -> None:
     ledger = ProvisionalReservationLedger(
         max_unresolved_send_per_scope=PROVISIONAL_MAX_UNRESOLVED_SEND_PER_SCOPE
     )
-    for forbidden in ("release", "free", "clear", "reset", "remove", "release_reservation"):
+    for forbidden in (
+        "release",
+        "free",
+        "clear",
+        "reset",
+        "remove",
+        "release_reservation",
+    ):
         assert not hasattr(ledger, forbidden), (
             f"ProvisionalReservationLedger.{forbidden} must not exist — releasing capacity is the "
             "Risk Capacity Ledger's act and a producer-local counter creates no headroom "
@@ -149,9 +160,14 @@ def test_a_result_for_an_unknown_attempt_is_refused() -> None:
     """(§2.1(ii)) A result naming another attempt transitions nothing (positive identity)."""
     core, _, _, _ = _sent_core()
     before = core.ledger.outstanding(instrument_key())
-    result = core.handle(_egress_event(EgressResultKind.FULL_FILL, "attempt-someone-else",
-                                       filled_quantity=Decimal("2"),
-                                       remaining_quantity=Decimal("0")))
+    result = core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            "attempt-someone-else",
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+        )
+    )
     assert result.halt_reason is HaltReason.ATTEMPT_IDENTITY_MISMATCH
     assert core.ledger.outstanding(instrument_key()) == before
 
@@ -159,7 +175,9 @@ def test_a_result_for_an_unknown_attempt_is_refused() -> None:
 def test_a_result_with_no_projected_reservation_is_refused() -> None:
     """(§2.2) An egress result is not a licence to create a reservation out of nothing."""
     core, _ = build_core(transmit=RecordingTransmit())
-    result = core.handle(_egress_event(EgressResultKind.ACK, "attempt-unknown", sequence=1))
+    result = core.handle(
+        _egress_event(EgressResultKind.ACK, "attempt-unknown", sequence=1)
+    )
     assert result.halt_reason is HaltReason.RESERVATION_ABSENT_FOR_RESULT
     assert core.ledger.outstanding(instrument_key()) is None
 

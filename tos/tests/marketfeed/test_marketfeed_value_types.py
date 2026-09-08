@@ -59,7 +59,9 @@ def _publish_one(field_key: str, token: object):
     """Publish a single-value bar carrying ``token`` under ``field_key``."""
     payload = preimage(**{field_key: token})
     obs = observation(raw_event_id="raw-1", payload=payload, as_of=BAR_ONE_AS_OF)
-    snapshot = issue_snapshot(observations=(obs,), field_evaluations=(evaluation(field_key),))
+    snapshot = issue_snapshot(
+        observations=(obs,), field_evaluations=(evaluation(field_key),)
+    )
     capsule = issue_capsule(snapshot)
     resolution = publish_context_value_view(
         capsule=capsule,
@@ -173,6 +175,13 @@ def test_a_bool_value_publishes_but_never_orders() -> None:
     assert [value.value for value in resolution.values] == [False]
     env = build_environment(capsule, _CONFIG, resolved_context=resolution.view)
     ref = Operand(ref=("capsule", VALUE_NAMESPACE, "halted"))
-    assert eval_compare(Compare(left=ref, op=CompareOp.EQ, right=Operand(const=False)), env) is True
+    assert (
+        eval_compare(
+            Compare(left=ref, op=CompareOp.EQ, right=Operand(const=False)), env
+        )
+        is True
+    )
     for op in (CompareOp.LT, CompareOp.LE, CompareOp.GT, CompareOp.GE):
-        assert eval_compare(Compare(left=ref, op=op, right=Operand(const=1)), env) is False
+        assert (
+            eval_compare(Compare(left=ref, op=op, right=Operand(const=1)), env) is False
+        )

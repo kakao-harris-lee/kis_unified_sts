@@ -118,7 +118,9 @@ def test_the_converter_leaves_the_causal_coordinate_to_the_driver() -> None:
     assert all(tick.payload.reference == OrderingEvent() for tick in ticks)
 
 
-def test_the_provisional_resolver_satisfies_the_engine_slot_and_resolves_no_value() -> None:
+def test_the_provisional_resolver_satisfies_the_engine_slot_and_resolves_no_value() -> (
+    None
+):
     """(§3.5) The D-E2 plug is honoured structurally, and slice #1 binds the SnapshotRef only.
 
     Anti-phantom (design #33 §0.5): the absence claim is read off the shipped structure rather than
@@ -153,7 +155,9 @@ def test_the_resolver_slot_is_really_injected_not_hardcoded() -> None:
 def test_a_missing_capsule_is_a_stop_never_an_implied_empty_context() -> None:
     """(RFC-003 §7:201-204) A missing Decision Context forbids a decision — fail-closed."""
     converter = build_converter()
-    converter._capsule_source = lambda _bar: None  # noqa: SLF001 - the absent-context injection
+    converter._capsule_source = (
+        lambda _bar: None
+    )  # noqa: SLF001 - the absent-context injection
     with pytest.raises(BacktestIntegrityError, match="no Decision Context"):
         list(converter.stream(reference_bars(1)))
 

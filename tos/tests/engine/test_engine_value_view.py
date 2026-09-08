@@ -106,7 +106,9 @@ def _value_gated_policy(*, threshold: int) -> DecisionPolicy:
                 decision=action,
             ),
         ),
-        default=Decision(kind=DecisionKind.NO_ACTION, rationale="the guard did not fire — hold"),
+        default=Decision(
+            kind=DecisionKind.NO_ACTION, rationale="the guard did not fire — hold"
+        ),
     )
 
 
@@ -154,7 +156,9 @@ def test_the_field_is_additive_and_defaults_to_none() -> None:
         "reference",
         "value_view",
     }
-    payload = DecisionTickPayload(instrument_key=instrument_key(), capsule=issue_capsule())
+    payload = DecisionTickPayload(
+        instrument_key=instrument_key(), capsule=issue_capsule()
+    )
     assert payload.value_view is None
 
 
@@ -239,11 +243,16 @@ def test_two_ticks_over_one_capsule_are_distinguishable_by_their_values() -> Non
     the value surface did not exist. With the values in the signature, two runs that differ only in
     what the market did are now separable on replay.
     """
-    high = _run(threshold=_CLOSE - 1, view=_value_view(close=_CLOSE, digest="view-high"))
-    low = _run(threshold=_CLOSE - 1, view=_value_view(close=_CLOSE - 100, digest="view-low"))
+    high = _run(
+        threshold=_CLOSE - 1, view=_value_view(close=_CLOSE, digest="view-high")
+    )
+    low = _run(
+        threshold=_CLOSE - 1, view=_value_view(close=_CLOSE - 100, digest="view-low")
+    )
     assert high.signature is not None and low.signature is not None
     assert (
-        high.signature.capsule_canonical_digest == low.signature.capsule_canonical_digest
+        high.signature.capsule_canonical_digest
+        == low.signature.capsule_canonical_digest
     ), "the Capsule is identical — only the values differ"
     assert (
         high.signature.captured_external_value_refs
@@ -262,7 +271,9 @@ def test_the_same_tick_reproduces_the_same_signature_and_outcome() -> None:
 
 
 @pytest.mark.parametrize("threshold", [_CLOSE - 1, _CLOSE + 1])
-def test_the_capsule_admission_path_is_untouched_by_the_value_surface(threshold: int) -> None:
+def test_the_capsule_admission_path_is_untouched_by_the_value_surface(
+    threshold: int,
+) -> None:
     """(§0.2) The value surface changes what a policy *reads*, not whether the Capsule admits."""
     from tos.engine.pipeline import capsule_admitted
 
@@ -273,4 +284,6 @@ def test_the_capsule_admission_path_is_untouched_by_the_value_surface(threshold:
         value_view=_value_view(),
     )
     assert capsule_admitted(payload) == (None, None)
-    assert _run(threshold=threshold, view=None).halt_reason is HaltReason.NO_ACTION_OUTCOME
+    assert (
+        _run(threshold=threshold, view=None).halt_reason is HaltReason.NO_ACTION_OUTCOME
+    )

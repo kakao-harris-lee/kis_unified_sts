@@ -343,7 +343,9 @@ class SendAttemptLedger:
         self._consumed_attempts.add(attempt_id)
         self._claims.append(
             ClaimObservation(
-                nonce=capability_nonce, principal=principal, request_digest=request_digest
+                nonce=capability_nonce,
+                principal=principal,
+                request_digest=request_digest,
             )
         )
         self._claims.append(
@@ -576,7 +578,9 @@ def verify_send_boundary(
                 ),
                 detail=verdict.reason,
             )
-    if applicability is BrokerApplicability.UNKNOWN:  # pragma: no cover - defence in depth
+    if (
+        applicability is BrokerApplicability.UNKNOWN
+    ):  # pragma: no cover - defence in depth
         return SendBoundaryVerification(
             attempt_id=attempt.attempt_id,
             applicability=applicability,
@@ -603,7 +607,9 @@ def _check_capability(
     """Item 1 — a valid and **unused** Transmission Capability (Realize; §10.8:743)."""
     del applicability
     item = SendVerifyItem.VALID_UNUSED_TRANSMISSION_CAPABILITY
-    capability_verdict = transmission_capability_verdict(context.transmission_capability)
+    capability_verdict = transmission_capability_verdict(
+        context.transmission_capability
+    )
     if capability_verdict.outcome is not StageOutcome.ADMIT:
         return _verdict(
             item,
@@ -747,9 +753,11 @@ def _check_allowance(
         if admissibility is not Admissibility.ADMISSIBLE:
             return _verdict(
                 item,
-                VerifyOutcome.UNKNOWN
-                if admissibility is Admissibility.REDUCED
-                else VerifyOutcome.DENIED,
+                (
+                    VerifyOutcome.UNKNOWN
+                    if admissibility is Admissibility.REDUCED
+                    else VerifyOutcome.DENIED
+                ),
                 reason=(
                     f"brokercap capability_admissible is {admissibility.value} for this "
                     "broker-resource-consuming send — a profile with no VERIFIED dimension "
@@ -922,13 +930,32 @@ def _check_construction(
             VerifyOutcome.UNKNOWN,
             reason="no candidate Canonical Broker Command is bound to this send",
         )
-    if construction.conformance_result is ConformanceResult.UNKNOWN:
+    # ★ TOS-GAP-001: ``conformance_result`` is ``ConformanceResult | None`` — the
+    # CandidateConstruction shape validator (records.py) now denies a *constructed* bundle from
+    # carrying ``command is not None`` alongside a ``None`` verdict, but this verify item stays
+    # defense-in-depth against any bundle that reaches the gateway some other way. An
+    # unestablished (``None``) result is treated exactly like the native ``UNKNOWN`` value —
+    # never a pass, never an ``AttributeError`` from a bare ``.value`` on ``None`` — so both
+    # collapse to the same restrictive ``UNKNOWN`` outcome the design already assigns to a
+    # native ``UNKNOWN`` (ADR-002-020 §14:374).
+    if construction.conformance_result is None or (
+        construction.conformance_result is ConformanceResult.UNKNOWN
+    ):
         return _verdict(
             item,
             VerifyOutcome.UNKNOWN,
-            reason="order conformance is UNKNOWN — denial (ADR-002-020 §14:374)",
+            reason=(
+                "order conformance is UNKNOWN — denial (ADR-002-020 §14:374)"
+                if construction.conformance_result is not None
+                else "order conformance was never established — an absent result is UNKNOWN, "
+                "never a pass (TOS-GAP-001)"
+            ),
             native=construction.conformance_result,
-            native_value=str(construction.conformance_result.value),
+            native_value=(
+                None
+                if construction.conformance_result is None
+                else str(construction.conformance_result.value)
+            ),
         )
     if construction.conformance_result is not ConformanceResult.CONFORMANT:
         return _verdict(
@@ -938,11 +965,35 @@ def _check_construction(
             native=construction.conformance_result,
             native_value=str(construction.conformance_result.value),
         )
+    # Same None/UNKNOWN-collapses-to-UNKNOWN discipline for the numerical-safety verdict — the
+    # positive-admit polarity is "only CONFORMANT passes; UNKNOWN (native or absent) is UNKNOWN;
+    # anything else (NON_CONFORMANT) is DENIED", matching the conformance_result branch above.
+    if construction.numerical_result is None or (
+        construction.numerical_result is ConformanceResult.UNKNOWN
+    ):
+        return _verdict(
+            item,
+            VerifyOutcome.UNKNOWN,
+            reason=(
+                "numerical safety is UNKNOWN — denial (ADR-002-020 §14:423)"
+                if construction.numerical_result is not None
+                else "numerical safety was never established — an absent result is UNKNOWN, "
+                "never a pass (TOS-GAP-001)"
+            ),
+            native=construction.numerical_result,
+            native_value=(
+                None
+                if construction.numerical_result is None
+                else str(construction.numerical_result.value)
+            ),
+        )
     if construction.numerical_result is not ConformanceResult.CONFORMANT:
         return _verdict(
             item,
             VerifyOutcome.DENIED,
             reason="numerical safety is not CONFORMANT (ADR-002-020 §14:423)",
+            native=construction.numerical_result,
+            native_value=str(construction.numerical_result.value),
         )
     if construction.no_silent_widening_ok is not True:
         return _verdict(
@@ -1114,9 +1165,11 @@ def _check_currentness(
         preserved = unknown_preserves_capacity(False, context.worst_credible_capacity)
         return _verdict(
             item,
-            VerifyOutcome.UNKNOWN
-            if currentness.outcome is StageOutcome.UNKNOWN
-            else VerifyOutcome.DENIED,
+            (
+                VerifyOutcome.UNKNOWN
+                if currentness.outcome is StageOutcome.UNKNOWN
+                else VerifyOutcome.DENIED
+            ),
             reason=(
                 f"{currentness.reason or 'egress currentness did not admit'} — the "
                 f"worst-credible capacity obligation {preserved!r} stays preserved and nothing "
@@ -1237,7 +1290,9 @@ _check_dispatch_anchor()
 # ===========================================================================
 
 
-def outbound_coordinates(context: SendBoundaryContext) -> tuple[tuple[str, str | None], ...]:
+def outbound_coordinates(
+    context: SendBoundaryContext,
+) -> tuple[tuple[str, str | None], ...]:
     """The authorized egress coordinates as opaque ordered scalars for the transport (§5.1).
 
     The transport receives **opaque** coordinates in the fixed
@@ -1329,7 +1384,11 @@ def outbound_binding_mismatch(context: SendBoundaryContext) -> str | None:
         )
     request = context.egress_request
     command_digest = construction.command.canonical_digest
-    if request is None or request.canonical_command_digest is None or command_digest is None:
+    if (
+        request is None
+        or request.canonical_command_digest is None
+        or command_digest is None
+    ):
         return (
             "the outbound egress request carries no command digest to compare against the "
             "compiled command (EGRESS-INV-004:155-157)"
@@ -1360,8 +1419,10 @@ class BrokerEgressGateway:
     def __init__(
         self,
         *,
-        contexts: Mapping[str, SendBoundaryContext]
-        | Callable[[AttemptRequest], SendBoundaryContext | None],
+        contexts: (
+            Mapping[str, SendBoundaryContext]
+            | Callable[[AttemptRequest], SendBoundaryContext | None]
+        ),
         transport: SendTransport | None,
         sink: GatewayEvidenceSink,
         ledger: SendAttemptLedger | None = None,
@@ -1425,7 +1486,20 @@ class BrokerEgressGateway:
         detail: str | None,
         item: SendVerifyItem | None = None,
     ) -> SendHandoff:
-        """Record a recorded-reason halt and refuse the hand-off (design #34 §4.2)."""
+        """Record a recorded-reason halt and refuse the hand-off (design #34 §4.2).
+
+        ⚠ **If the evidence sink itself raises while recording this halt, that exception is not
+        caught here — it propagates.** A "halt" this method could not actually record would be
+        exactly the silent stop the ``SendHaltReason`` vocabulary rules out ("a restrictive
+        termination without a recorded reason is a silent stop, not a fail-closed one"). No
+        retry is attempted (design #34 §5.4 — no retries anywhere): this call *is* the one
+        recorded attempt. Any claim already made on the attempt is untouched — the ledger never
+        releases a claim on a halt — and once the ``POTENTIALLY_LIVE_OBSERVED`` record has been
+        written, the reservation projection stays possibly-live regardless of what this method
+        does next, so a caller-visible crash from here on is the design's expected outcome, not
+        an unhandled bug (design #34 §4.6: "a crash from here on is deliberately treated as
+        possibly-live").
+        """
         self._sink.record(
             GatewayEvidenceRecord(
                 kind="SEND_REFUSED",
@@ -1569,16 +1643,33 @@ class BrokerEgressGateway:
                 ),
             )
         try:
+            coordinates = outbound_coordinates(context)
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - a derivation fault precedes the send entirely
+            return self._halt(
+                attempt_id=attempt_id,
+                reason=SendHaltReason.OUTBOUND_COORDINATE_DERIVATION_RAISED,
+                detail=(
+                    f"deriving the outbound coordinates raised {type(exc).__name__}: {exc} — "
+                    "this happens before the transport is ever called, so it is recorded under "
+                    "its true cause instead of being folded into TRANSPORT_RAISED (design #34 "
+                    "§4.2 recorded-reason discipline)"
+                ),
+            )
+        try:
             result = self._transport.send_once(
                 attempt,
                 instrument_key=context.instrument_key,
-                coordinates=outbound_coordinates(context),
+                coordinates=coordinates,
                 quantity=context.outbound_quantity,
                 price=context.outbound_price,
                 side=context.outbound_side,
                 reference=context.reference,
             )
-        except Exception as exc:  # noqa: BLE001 - a failed call is not proof of "not sent"
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - a failed call is not proof of "not sent"
             return self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.TRANSPORT_RAISED,
@@ -1591,7 +1682,27 @@ class BrokerEgressGateway:
             )
 
         # -- step 19: evidence ------------------------------------------------------------
-        if result.attempt_id != attempt_id:
+        # send_once above is now the *only* transport call this attempt will ever make
+        # (single-shot by construction, §5.4) — everything below only reads and records what
+        # already happened. A fault reading the result is UNKNOWN-restrictive (§4.2 "unknown
+        # preserves capacity, deny"), so it halts under its own recorded reason rather than
+        # being misread as a transport failure.
+        try:
+            attempt_identity_mismatch = result.attempt_id != attempt_id
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - an unreadable result is UNKNOWN, not "not sent"
+            return self._halt(
+                attempt_id=attempt_id,
+                reason=SendHaltReason.RESULT_UNREADABLE,
+                detail=(
+                    f"reading the transport result's identity raised {type(exc).__name__}: "
+                    f"{exc} — the send already happened (single send_once call, never "
+                    "repeated) and the reservation stays POTENTIALLY_LIVE; this is its own "
+                    "recorded cause rather than a transport failure"
+                ),
+            )
+        if attempt_identity_mismatch:
             return self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.RESULT_ATTEMPT_IDENTITY_MISMATCH,
@@ -1601,9 +1712,9 @@ class BrokerEgressGateway:
                     "can never transition another reservation (design #31 §2.1(ii))"
                 ),
             )
-        self.results += (result,)
-        self._sink.record(
-            GatewayEvidenceRecord(
+
+        try:
+            result_record = GatewayEvidenceRecord(
                 kind="EGRESS_RESULT_RECORDED",
                 attempt_id=attempt_id,
                 detail=(
@@ -1612,12 +1723,42 @@ class BrokerEgressGateway:
                     "fill and the filled part is never re-requested (RFC-005 §11:338-339)"
                 ),
             )
-        )
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - unreadable result fields, same conservative halt
+            return self._halt(
+                attempt_id=attempt_id,
+                reason=SendHaltReason.RESULT_UNREADABLE,
+                detail=(
+                    f"reading the transport result's fields raised {type(exc).__name__}: {exc} "
+                    "while building the EGRESS_RESULT_RECORDED evidence — the send already "
+                    "happened, is never repeated, and the reservation stays POTENTIALLY_LIVE"
+                ),
+            )
+
+        self.results += (result,)
+        # ⚠ The write below is the one recorded attempt at the terminal, disposition-bearing
+        # evidence for a completed send (result.attempt_id already matched and every field
+        # above was readable — the send genuinely happened). If the sink itself raises here,
+        # recording a SEND_REFUSED in its place would fabricate a refusal for something that
+        # was, in fact, accepted and sent — the recorded-reason discipline forbids that
+        # fabrication as firmly as it forbids a silent skip. Retrying the same write is not an
+        # option either (no retries anywhere, design #34 §5.4). So the exception propagates
+        # uncaught: the caller sees a crash, which design #34 §4.6 treats as the deliberate,
+        # expected outcome from this point on ("a crash from here on is deliberately treated as
+        # possibly-live") — the same "a missing acknowledgement is NOT a non-acceptance"
+        # principle RFC-005 §11:322-323 states for a raised transport, applied here to a raised
+        # evidence write instead of a raised send.
+        self._sink.record(result_record)
+
         if result.kind in UNCERTAIN_RESULT_KINDS:
+            # Same reasoning: EGRESS_RESULT_RECORDED has already been written, so the
+            # disposition is already on record. A failure recording the supplementary
+            # uncertain-send ladder is not silently dropped (that would misreport the ladder as
+            # recorded when it was not) and is not repainted as a refusal (the send already
+            # went out) — it propagates uncaught, same as the write above.
             self._record_uncertain(attempt_id, context)
-        return SendHandoff(
-            accepted_for_transmission=True, handoff_reference=attempt_id
-        )
+        return SendHandoff(accepted_for_transmission=True, handoff_reference=attempt_id)
 
     def _record_uncertain(self, attempt_id: str, context: SendBoundaryContext) -> None:
         """Record brokercap's all-restrictive uncertain-send ladder (design #34 §5.4).

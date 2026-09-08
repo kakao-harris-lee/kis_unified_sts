@@ -170,7 +170,17 @@ _CLOCK_MODULES = frozenset({"time", "datetime"})
 _RNG_MODULES = frozenset({"random", "secrets", "uuid"})
 #: Network / process stdlib.
 _NETWORK_MODULES = frozenset(
-    {"socket", "ssl", "http", "urllib", "ftplib", "smtplib", "asyncio", "subprocess", "ctypes"}
+    {
+        "socket",
+        "ssl",
+        "http",
+        "urllib",
+        "ftplib",
+        "smtplib",
+        "asyncio",
+        "subprocess",
+        "ctypes",
+    }
 )
 #: Wall-clock / RNG call names that would be nondeterministic even without a module import.
 _NONDETERMINISTIC_CALLS = frozenset(
@@ -277,7 +287,9 @@ def _closure_child(queue: mp.Queue) -> None:
     queue.put(
         {
             "tos_tops": tos_tops,
-            "forbidden": sorted(name for name in sys.modules if _is_forbidden_non_tos(name)),
+            "forbidden": sorted(
+                name for name in sys.modules if _is_forbidden_non_tos(name)
+            ),
         }
     )
 
@@ -308,7 +320,9 @@ def _leak_canary_child(queue: mp.Queue) -> None:
     queue.put(
         {
             "tos_tops": tos_tops,
-            "forbidden": sorted(name for name in sys.modules if _is_forbidden_non_tos(name)),
+            "forbidden": sorted(
+                name for name in sys.modules if _is_forbidden_non_tos(name)
+            ),
         }
     )
 
@@ -329,9 +343,9 @@ def test_backtest_closure_is_a_subset_of_the_engine_closure_plus_itself() -> Non
     """(§0.3) The relation the design states: ⊆ ``tos.engine`` closure ∪ {``tos.backtest``}."""
     result = _run_child(_closure_child)
     extra = sorted(set(result["tos_tops"]) - _ALLOWED_TOS_PACKAGES)
-    assert extra == [], (
-        f"tos.backtest closure escaped the §0.3 relation {sorted(_ALLOWED_TOS_PACKAGES)}: {extra}"
-    )
+    assert (
+        extra == []
+    ), f"tos.backtest closure escaped the §0.3 relation {sorted(_ALLOWED_TOS_PACKAGES)}: {extra}"
 
 
 def test_the_harness_really_takes_its_own_declared_edges() -> None:
@@ -364,31 +378,54 @@ def test_backtest_closure_has_no_operational_package_or_dataframe_library() -> N
     tree, by a comparator that imports neither — and it is never imported here (design #33 §6.1).
     """
     result = _run_child(_closure_child)
-    assert result["forbidden"] == [], (
-        f"forbidden packages reached the closure: {result['forbidden']}"
-    )
+    assert (
+        result["forbidden"] == []
+    ), f"forbidden packages reached the closure: {result['forbidden']}"
 
 
 def test_leak_canary_is_detected() -> None:
     """(both ways) Planted egress / brokercap / shared.backtest / pandas leaks are all caught."""
     result = _run_child(_leak_canary_child)
     extra = set(result["tos_tops"]) - _ALLOWED_TOS_PACKAGES
-    for expected in ("tos.egress", "tos.brokercap", "tos.egressgw", "tos.future_sibling"):
+    for expected in (
+        "tos.egress",
+        "tos.brokercap",
+        "tos.egressgw",
+        "tos.future_sibling",
+    ):
         assert expected in extra, f"planted {expected} leak was NOT detected"
-    for expected in ("shared.backtest", "shared.execution", "numpy", "pandas", "vectorbt"):
+    for expected in (
+        "shared.backtest",
+        "shared.execution",
+        "numpy",
+        "pandas",
+        "vectorbt",
+    ):
         assert expected in result["forbidden"], f"planted {expected} was NOT detected"
 
 
 def test_allowlist_classifier_canaries() -> None:
     """The classifiers admit every allowlisted package and reject every excluded one."""
-    for allowed in ("tos.backtest", "tos.backtest.driver", "tos.engine.sequencer", "tos.canonical"):
+    for allowed in (
+        "tos.backtest",
+        "tos.backtest.driver",
+        "tos.engine.sequencer",
+        "tos.canonical",
+    ):
         assert _is_allowed_tos_module(allowed) is True
         assert _is_allowed_direct_import(allowed) is True
     for sibling in _FORBIDDEN_SIBLINGS | {"tos.not_yet_invented"}:
         assert _is_allowed_tos_module(sibling) is False
         assert _is_allowed_direct_import(sibling) is False
     # In the closure but NOT directly nameable by a harness source (reached via the engine).
-    for indirect in ("tos.are", "tos.afg", "tos.ioc", "tos.venue", "tos.cur", "tos.evidence"):
+    for indirect in (
+        "tos.are",
+        "tos.afg",
+        "tos.ioc",
+        "tos.venue",
+        "tos.cur",
+        "tos.evidence",
+    ):
         assert _is_allowed_tos_module(indirect) is True
         assert _is_allowed_direct_import(indirect) is False
     assert _is_forbidden_non_tos("shared.backtest") is True
@@ -411,42 +448,64 @@ def _ast_offenders(path: Path) -> list[str]:
                 if root == "importlib":
                     offenders.append(f"{path.name}:{node.lineno} import {alias.name}")
                 if root in _CLOCK_MODULES:
-                    offenders.append(f"{path.name}:{node.lineno} clock import {alias.name}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} clock import {alias.name}"
+                    )
                 if root in _RNG_MODULES:
-                    offenders.append(f"{path.name}:{node.lineno} rng import {alias.name}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} rng import {alias.name}"
+                    )
                 if root in _NETWORK_MODULES:
-                    offenders.append(f"{path.name}:{node.lineno} network import {alias.name}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} network import {alias.name}"
+                    )
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             root = module.split(".")[0]
             if root == "importlib":
                 offenders.append(f"{path.name}:{node.lineno} from importlib import ...")
             if root in _CLOCK_MODULES:
-                offenders.append(f"{path.name}:{node.lineno} clock from {module} import ...")
+                offenders.append(
+                    f"{path.name}:{node.lineno} clock from {module} import ..."
+                )
             if root in _RNG_MODULES:
-                offenders.append(f"{path.name}:{node.lineno} rng from {module} import ...")
+                offenders.append(
+                    f"{path.name}:{node.lineno} rng from {module} import ..."
+                )
             if root in _NETWORK_MODULES:
-                offenders.append(f"{path.name}:{node.lineno} network from {module} import ...")
+                offenders.append(
+                    f"{path.name}:{node.lineno} network from {module} import ..."
+                )
             if module == "os":
                 for alias in node.names:
                     if alias.name in _AMBIENT_ENV_ATTRS:
-                        offenders.append(f"{path.name}:{node.lineno} from os import {alias.name}")
+                        offenders.append(
+                            f"{path.name}:{node.lineno} from os import {alias.name}"
+                        )
         elif isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name):
                 if func.id in _DYNAMIC_CALL_NAMES:
                     offenders.append(f"{path.name}:{node.lineno} call {func.id}()")
                 if func.id in _FORBIDDEN_BUILTIN_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic {func.id}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic {func.id}()"
+                    )
                 if func.id in _NONDETERMINISTIC_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic {func.id}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic {func.id}()"
+                    )
             elif isinstance(func, ast.Attribute):
                 if func.attr == "import_module":
                     offenders.append(f"{path.name}:{node.lineno} call import_module()")
                 if func.attr in _NONDETERMINISTIC_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic .{func.attr}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic .{func.attr}()"
+                    )
                 if func.attr in _FORBIDDEN_BUILTIN_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic .{func.attr}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic .{func.attr}()"
+                    )
         elif isinstance(node, ast.Attribute):
             if (
                 node.attr in _AMBIENT_ENV_ATTRS
@@ -468,7 +527,9 @@ def test_source_has_no_escape_env_clock_rng_or_network() -> None:
     offenders: list[str] = []
     for path in sources:
         offenders.extend(_ast_offenders(path))
-    assert offenders == [], f"forbidden construct found in tos.backtest sources: {offenders}"
+    assert (
+        offenders == []
+    ), f"forbidden construct found in tos.backtest sources: {offenders}"
 
 
 def test_the_test_suite_is_clock_and_rng_free_too() -> None:
@@ -487,7 +548,9 @@ def test_the_test_suite_is_clock_and_rng_free_too() -> None:
             # suite derives none. Everything else applies verbatim.
             if True
         )
-    assert offenders == [], f"forbidden construct found in the backtest suite: {offenders}"
+    assert (
+        offenders == []
+    ), f"forbidden construct found in the backtest suite: {offenders}"
 
 
 def test_ast_scan_detects_planted_escapes(tmp_path: Path) -> None:
@@ -618,7 +681,9 @@ def test_the_core_type_is_referenced_for_typing_only_and_never_re_exported() -> 
         "it is forbidden to re-instantiate (design #33 §2.4)"
     )
     carriers = sorted(
-        name for name, module in _LOADED_SUBMODULES.items() if "EngineCore" in vars(module)
+        name
+        for name, module in _LOADED_SUBMODULES.items()
+        if "EngineCore" in vars(module)
     )
     assert carriers == ["tos.backtest.driver"], (
         f"EngineCore is named by {carriers} — slice #1 needs it in exactly one place, the driver's "

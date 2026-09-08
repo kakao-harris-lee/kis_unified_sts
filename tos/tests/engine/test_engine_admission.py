@@ -116,7 +116,10 @@ def test_the_capsule_operand_predicate_is_exhaustive_over_operand_shapes(
     left, right, expected
 ) -> None:
     """(§7.2-8) ≥1 capsule-sourced ``ref`` operand — every operand pairing is enumerated."""
-    assert compare_has_capsule_operand(Compare(left=left, op=CompareOp.EQ, right=right)) is expected
+    assert (
+        compare_has_capsule_operand(Compare(left=left, op=CompareOp.EQ, right=right))
+        is expected
+    )
 
 
 def test_a_ref_naming_an_inadmissible_source_is_not_a_capsule_read() -> None:
@@ -124,7 +127,9 @@ def test_a_ref_naming_an_inadmissible_source_is_not_a_capsule_read() -> None:
     rogue = Operand(ref=("market", "last_price"))
     assert operand_source(rogue) == "market"
     assert (
-        compare_has_capsule_operand(Compare(left=rogue, op=CompareOp.GT, right=_CONST_OPERAND))
+        compare_has_capsule_operand(
+            Compare(left=rogue, op=CompareOp.GT, right=_CONST_OPERAND)
+        )
         is False
     )
 
@@ -135,13 +140,17 @@ def test_a_config_only_gated_strategy_is_inadmissible() -> None:
     assert result.verdict is AdmissionVerdict.INADMISSIBLE
     assert any("no capsule-sourced operand" in reason for reason in result.reasons)
     with pytest.raises(RegistrationRefused, match="INADMISSIBLE"):
-        StrategyRegistry().register(issue_strategy(config_gated_policy()), authored_config())
+        StrategyRegistry().register(
+            issue_strategy(config_gated_policy()), authored_config()
+        )
 
 
 def test_a_literal_only_gate_is_inadmissible() -> None:
     """(§7.2-8) Two literals gate nothing about the market — inadmissible."""
     strategy = issue_strategy(
-        _policy_with(Compare(left=_CONST_OPERAND, op=CompareOp.EQ, right=Operand(const="x")))
+        _policy_with(
+            Compare(left=_CONST_OPERAND, op=CompareOp.EQ, right=Operand(const="x"))
+        )
     )
     assert strategy_admissible(strategy).verdict is AdmissionVerdict.INADMISSIBLE
 
@@ -213,7 +222,10 @@ def test_a_rules_free_policy_has_no_gating_compare_and_is_not_over_rejected() ->
         ),
     )
     assert list(iter_outcome_gating_compares(policy)) == []
-    assert strategy_admissible(issue_strategy(policy)).verdict is AdmissionVerdict.ADMISSIBLE
+    assert (
+        strategy_admissible(issue_strategy(policy)).verdict
+        is AdmissionVerdict.ADMISSIBLE
+    )
 
 
 def test_the_seal_is_partial_and_says_so() -> None:
@@ -260,9 +272,7 @@ def test_the_escape_checker_seam_is_not_exercised_by_this_slice() -> None:
                 name = (
                     func.id
                     if isinstance(func, ast.Name)
-                    else func.attr
-                    if isinstance(func, ast.Attribute)
-                    else None
+                    else func.attr if isinstance(func, ast.Attribute) else None
                 )
                 if name in {"analyze", "is_admissible", "analyze_candidate"}:
                     called.append(f"{path.name}:{node.lineno} {name}()")

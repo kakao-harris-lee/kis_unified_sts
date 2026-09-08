@@ -359,7 +359,12 @@ def test_attempt_identity_changes_with_every_binding(proof, permit, sequence) ->
 
 @pytest.mark.parametrize(
     ("proof", "permit"),
-    [(None, PERMIT_IDENTITY), (PROOF_DIGEST, None), ("", PERMIT_IDENTITY), (PROOF_DIGEST, "")],
+    [
+        (None, PERMIT_IDENTITY),
+        (PROOF_DIGEST, None),
+        ("", PERMIT_IDENTITY),
+        (PROOF_DIGEST, ""),
+    ],
 )
 def test_an_unbound_attempt_is_unconstructable(proof, permit) -> None:
     """(§4.3) A missing proof digest or permit identity makes the attempt unconstructable."""

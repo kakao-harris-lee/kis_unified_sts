@@ -216,9 +216,9 @@ COMMITMENT_FLOW_ORDER: tuple[CommitmentStep, ...] = (
 #: them, so D-E1 makes no claim about final-egress currentness / QCC / single-use capability
 #: (design #31 §4.5 item-7 / §10.2-3).
 SEND_BOUNDARY_STEPS: frozenset[CommitmentStep] = frozenset(
-    COMMITMENT_FLOW_ORDER[COMMITMENT_FLOW_ORDER.index(
-        CommitmentStep.SEND_BOUNDARY_VERIFICATION
-    ):]
+    COMMITMENT_FLOW_ORDER[
+        COMMITMENT_FLOW_ORDER.index(CommitmentStep.SEND_BOUNDARY_VERIFICATION) :
+    ]
 )
 
 #: Steps 1-14 — the range the sequencer runs **and** the honest range of its fail-closed guarantee

@@ -76,7 +76,9 @@ def _capsule() -> DecisionContextCapsule:
         scheme=SCHEME,
         issuer_principal_id="iss-1",
         critical_input_policy=PolicyRef(policy_id="pol-1", canonical_digest="pd-1"),
-        critical_input_snapshot=SnapshotRef(snapshot_id="cis-1", canonical_digest="sd-1"),
+        critical_input_snapshot=SnapshotRef(
+            snapshot_id="cis-1", canonical_digest="sd-1"
+        ),
         scope=CapsuleScope(
             environment="non-live-test",
             account="acct-1",
@@ -93,7 +95,9 @@ def _capsule() -> DecisionContextCapsule:
     )
 
 
-def _view(*, close: int = _CLOSE, as_of: int = 1_700_000_060_000, digest: str = "view-0") -> ContextValueView:
+def _view(
+    *, close: int = _CLOSE, as_of: int = 1_700_000_060_000, digest: str = "view-0"
+) -> ContextValueView:
     """A value view carrying one admitted ``close``."""
     return ContextValueView(
         snapshot_id="cis-1",
@@ -141,7 +145,9 @@ def _strategy(*, threshold: int) -> AuthoredStrategy:
                 decision=action,
             ),
         ),
-        default=Decision(kind=DecisionKind.NO_ACTION, rationale="the guard did not fire — hold"),
+        default=Decision(
+            kind=DecisionKind.NO_ACTION, rationale="the guard did not fire — hold"
+        ),
     )
     return AuthoredStrategy.issue(  # type: ignore[return-value]
         scheme=SCHEME,
@@ -161,7 +167,9 @@ _CONFIG = EvaluationConfig(config_version="cfg-1", bindings={})
 
 def test_the_carrier_fields_are_primitives_only() -> None:
     """(§2.2) A lean container — no ``tos.capsule`` type, and no re-declared field state."""
-    annotations = {name: field.annotation for name, field in ContextValue.model_fields.items()}
+    annotations = {
+        name: field.annotation for name, field in ContextValue.model_fields.items()
+    }
     assert set(annotations) == {
         "field_key",
         "value",
@@ -195,11 +203,19 @@ def test_an_absent_as_of_or_provenance_pointer_is_unconstructable() -> None:
     """(§4.2) The publication gate is expressed as a type, not as a check a producer could skip."""
     with pytest.raises(ValidationError):
         ContextValue(
-            field_key="close", value=1, as_of=None, payload_digest="p", observation_ref="r"
+            field_key="close",
+            value=1,
+            as_of=None,
+            payload_digest="p",
+            observation_ref="r",
         )
     with pytest.raises(ValidationError, match="concrete"):
         ContextValue(
-            field_key="close", value=1, as_of=1, payload_digest="   ", observation_ref="r"
+            field_key="close",
+            value=1,
+            as_of=1,
+            payload_digest="   ",
+            observation_ref="r",
         )
 
 
@@ -209,7 +225,11 @@ def test_a_wildcard_field_key_is_unconstructable(wildcard: str) -> None:
     assert is_wildcard_field_key(wildcard) is True
     with pytest.raises(ValidationError, match="wildcard"):
         ContextValue(
-            field_key=wildcard, value=1, as_of=1, payload_digest="p", observation_ref="r"
+            field_key=wildcard,
+            value=1,
+            as_of=1,
+            payload_digest="p",
+            observation_ref="r",
         )
 
 
@@ -255,7 +275,10 @@ def test_an_explicit_empty_view_is_constructable() -> None:
 def test_build_environment_without_a_view_is_unchanged() -> None:
     """(§7.2-9 ★ backward compatibility) The pre-D-E2 return value, byte for byte."""
     capsule = _capsule()
-    legacy = {"capsule": capsule.model_dump(mode="json"), "config": dict(_CONFIG.bindings)}
+    legacy = {
+        "capsule": capsule.model_dump(mode="json"),
+        "config": dict(_CONFIG.bindings),
+    }
     assert build_environment(capsule, _CONFIG) == legacy
     assert build_environment(capsule, _CONFIG, resolved_context=None) == legacy
 
@@ -278,15 +301,23 @@ def test_the_merge_lands_under_the_capsule_source() -> None:
 def test_a_merged_value_resolves_as_a_scalar_leaf() -> None:
     """(§3.2 (2)) The flat mapping is what ``resolve_operand``'s dict-walk can actually reach."""
     env = build_environment(_capsule(), _CONFIG, resolved_context=_view())
-    assert resolve_operand(Operand(ref=("capsule", VALUE_NAMESPACE, "close")), env) == _CLOSE
-    assert resolve_operand(Operand(ref=("capsule", VALUE_NAMESPACE, "absent")), env) is UNKNOWN
+    assert (
+        resolve_operand(Operand(ref=("capsule", VALUE_NAMESPACE, "close")), env)
+        == _CLOSE
+    )
+    assert (
+        resolve_operand(Operand(ref=("capsule", VALUE_NAMESPACE, "absent")), env)
+        is UNKNOWN
+    )
 
 
 def test_the_merge_adds_exactly_one_key_and_changes_none() -> None:
     """(§3.2 (1)) Covered Capsule content is untouched by the merge."""
     capsule = _capsule()
     baseline = capsule.model_dump(mode="json")
-    merged = dict(build_environment(capsule, _CONFIG, resolved_context=_view())["capsule"])
+    merged = dict(
+        build_environment(capsule, _CONFIG, resolved_context=_view())["capsule"]
+    )
     assert set(merged) - set(baseline) == {VALUE_NAMESPACE}
     merged.pop(VALUE_NAMESPACE)
     assert merged == baseline

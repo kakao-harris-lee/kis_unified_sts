@@ -60,11 +60,13 @@ def test_unknown_and_timeout_retain_potentially_live_and_resubmit_nothing(
     assert reservation is not None
     assert reservation.capacity_state is CapacityState.POTENTIALLY_LIVE
     assert reservation.knowledge is EgressKnowledge.UNKNOWN
-    assert reservation.knowledge is not EgressKnowledge.REJECTED, (
-        "UNKNOWN is not a rejection (RFC-005 §11:325-327)"
-    )
+    assert (
+        reservation.knowledge is not EgressKnowledge.REJECTED
+    ), "UNKNOWN is not a rejection (RFC-005 §11:325-327)"
     assert run.handoff_count == 1
-    assert len(fill_model.handoffs) == 1, "an UNKNOWN result must not trigger a blind resubmit"
+    assert (
+        len(fill_model.handoffs) == 1
+    ), "an UNKNOWN result must not trigger a blind resubmit"
     assert core.ledger.admits_new_exposure(instrument_key()) is False
 
 
@@ -115,9 +117,9 @@ def test_a_stage_that_produces_no_decision_halts_as_stage_unknown() -> None:
     assert halt.halt_reason is HaltReason.STAGE_UNKNOWN
     assert halt.halt_step is CommitmentStep.INDEPENDENT_APPROVAL
     assert run.handoff_count == 0
-    assert halt.halt_reason is not HaltReason.STAGE_DENIED, (
-        "UNKNOWN and DENY stay distinguishable in the recorded reason (sequencer.py:463-476)"
-    )
+    assert (
+        halt.halt_reason is not HaltReason.STAGE_DENIED
+    ), "UNKNOWN and DENY stay distinguishable in the recorded reason (sequencer.py:463-476)"
 
 
 def test_a_missing_stage_is_a_stop_never_a_skip() -> None:
@@ -192,7 +194,9 @@ def test_a_denying_scenario_must_record_its_reason() -> None:
             intent="deny with no recorded reason",
             bar_count=1,
             target_kind=scenario_for(ScenarioId.FAIL_CLOSED_HALT).target_kind,
-            fill_parameters=FillParameters(mode=FillMode.ACKNOWLEDGE, side=FillSide.BUY),
+            fill_parameters=FillParameters(
+                mode=FillMode.ACKNOWLEDGE, side=FillSide.BUY
+            ),
             denied_steps=(CommitmentStep.VENUE_ADMISSIBILITY_DECISION,),
         )
 
@@ -209,7 +213,9 @@ def test_deny_and_unknown_may_not_be_declared_for_the_same_step() -> None:
             intent="contradictory stage declaration",
             bar_count=1,
             target_kind=scenario_for(ScenarioId.FAIL_CLOSED_HALT).target_kind,
-            fill_parameters=FillParameters(mode=FillMode.ACKNOWLEDGE, side=FillSide.BUY),
+            fill_parameters=FillParameters(
+                mode=FillMode.ACKNOWLEDGE, side=FillSide.BUY
+            ),
             denied_steps=(CommitmentStep.VENUE_ADMISSIBILITY_DECISION,),
             unknown_steps=(CommitmentStep.VENUE_ADMISSIBILITY_DECISION,),
             denial_reason="both at once",

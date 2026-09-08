@@ -141,7 +141,9 @@ def test_every_sealed_model_is_actually_covered_by_this_test() -> None:
     exported_models = {
         value
         for value in vars(package).values()
-        if isinstance(value, type) and issubclass(value, FrozenModel) and value is not FrozenModel
+        if isinstance(value, type)
+        and issubclass(value, FrozenModel)
+        and value is not FrozenModel
     }
     assert exported_models == set(_SEALED_MODELS), (
         "the shipped record types and this suite's sealed list have drifted: "
@@ -276,10 +278,14 @@ def test_a_smuggled_performance_field_makes_the_model_unconstructable() -> None:
 
 def test_the_oracle_artifact_declares_its_narrow_scope() -> None:
     """(§6.2 ①/②) Structural wiring agreement only; the numeric layer is D-E2-gated and says so."""
-    run, _core, _fill_model, _sink = run_scenario(scenario_for(ScenarioId.ENTRY_FULL_FILL))
+    run, _core, _fill_model, _sink = run_scenario(
+        scenario_for(ScenarioId.ENTRY_FULL_FILL)
+    )
     document = trace_document(run)
     assert document["oracle_scope"] == "STRUCTURAL_WIRING_AGREEMENT_ONLY"
-    assert document["numeric_decision_agreement"] == "DEFERRED_PENDING_D_E2_VALUE_SURFACE"
+    assert (
+        document["numeric_decision_agreement"] == "DEFERRED_PENDING_D_E2_VALUE_SURFACE"
+    )
 
 
 def test_the_oracle_artifact_carries_no_price_or_magnitude() -> None:
@@ -287,10 +293,17 @@ def test_the_oracle_artifact_carries_no_price_or_magnitude() -> None:
     run, _core, _fill_model, _sink = run_scenario(
         scenario_for(ScenarioId.ENTRY_PARTIAL_FILL)
     )
-    assert run.fill_records[0].execution_price is not None, "the run really did price a fill"
+    assert (
+        run.fill_records[0].execution_price is not None
+    ), "the run really did price a fill"
 
     serialized = repr(trace_document(run))
-    for forbidden in ("execution_price", "filled_quantity", "slippage", "cost_component"):
+    for forbidden in (
+        "execution_price",
+        "filled_quantity",
+        "slippage",
+        "cost_component",
+    ):
         assert forbidden not in serialized, (
             f"the oracle artifact leaked {forbidden!r} — the slice-1 oracle compares structural "
             "wiring, and shipping magnitudes invites the performance-comparison misreading "

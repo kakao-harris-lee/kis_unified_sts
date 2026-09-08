@@ -90,14 +90,18 @@ def _multi_symbol_run():  # noqa: ANN202 - a local runner
         ]
     )
     core, _sink = build_core(
-        registry=registry_with_all(lane_strategy(INSTRUMENT), lane_strategy(INSTRUMENT_B)),
+        registry=registry_with_all(
+            lane_strategy(INSTRUMENT), lane_strategy(INSTRUMENT_B)
+        ),
         transmit=driver,
     )
     return driver.run(
         core,
         {
             instrument_key(instrument=INSTRUMENT): offset_bars(2, coordinate_offset=0),
-            instrument_key(instrument=INSTRUMENT_B): offset_bars(2, coordinate_offset=30),
+            instrument_key(instrument=INSTRUMENT_B): offset_bars(
+                2, coordinate_offset=30
+            ),
         },
     )
 
@@ -121,7 +125,9 @@ def test_two_multi_symbol_runs_produce_an_identical_trace_and_fill_records() -> 
     assert [record.model_dump(mode="json") for record in first.fill_records] == [
         record.model_dump(mode="json") for record in second.fill_records
     ]
-    assert len(first.fill_records) == 2, "both lanes really settled — the claim is not vacuous"
+    assert (
+        len(first.fill_records) == 2
+    ), "both lanes really settled — the claim is not vacuous"
 
 
 def test_the_multi_symbol_digest_is_not_a_constant() -> None:
@@ -143,11 +149,12 @@ def test_the_multi_symbol_digest_is_not_a_constant() -> None:
         registry=registry_with_all(lane_strategy(INSTRUMENT)), transmit=driver
     )
     single_lane = driver.run(
-        core, {instrument_key(instrument=INSTRUMENT): offset_bars(2, coordinate_offset=0)}
+        core,
+        {instrument_key(instrument=INSTRUMENT): offset_bars(2, coordinate_offset=0)},
     )
-    assert multi_symbol_trace_digest(single_lane, scheme=SCHEME) != multi_symbol_trace_digest(
-        _multi_symbol_run(), scheme=SCHEME
-    )
+    assert multi_symbol_trace_digest(
+        single_lane, scheme=SCHEME
+    ) != multi_symbol_trace_digest(_multi_symbol_run(), scheme=SCHEME)
 
 
 def test_the_multi_symbol_trace_document_is_json_native_too() -> None:
@@ -167,7 +174,9 @@ def test_a_different_bar_stream_changes_the_trace() -> None:
     spec = scenario_for(ScenarioId.AT_MOST_ONE_FIRING)
 
     def _run(bar_count: int):  # noqa: ANN202 - a local runner
-        fill_model = build_fill_model(spec.fill_parameters, scenario_id=spec.scenario_id)
+        fill_model = build_fill_model(
+            spec.fill_parameters, scenario_id=spec.scenario_id
+        )
         driver = build_driver(fill_model, scenario_id=spec.scenario_id)
         core, _sink = build_core(transmit=fill_model)
         return driver.run(core, reference_bars(bar_count))
@@ -192,7 +201,9 @@ def test_the_replay_judgement_is_a_match_for_an_identical_run() -> None:
 
 def test_a_diverging_run_is_not_reported_as_a_match() -> None:
     """(§5.2) The predicate really discriminates — "green" is not a foregone conclusion."""
-    full, _core_a, _fill_a, _sink_a = run_scenario(scenario_for(ScenarioId.ENTRY_FULL_FILL))
+    full, _core_a, _fill_a, _sink_a = run_scenario(
+        scenario_for(ScenarioId.ENTRY_FULL_FILL)
+    )
     partial, _core_b, _fill_b, _sink_b = run_scenario(
         scenario_for(ScenarioId.ENTRY_PARTIAL_FILL)
     )

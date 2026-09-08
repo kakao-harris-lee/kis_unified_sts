@@ -146,7 +146,13 @@ _FORBIDDEN_PREFIXES = (
 _MARKETFEED_SRC = Path(__file__).resolve().parents[2] / "src" / "tos" / "marketfeed"
 
 #: The pure layer (design #32 §3.4) — every module except the resolver adapter.
-_PURE_MODULE_FILES = ("__init__.py", "_base.py", "vocabulary.py", "records.py", "value.py")
+_PURE_MODULE_FILES = (
+    "__init__.py",
+    "_base.py",
+    "vocabulary.py",
+    "records.py",
+    "value.py",
+)
 _ADAPTER_MODULE_FILE = "resolver.py"
 
 _DYNAMIC_CALL_NAMES = frozenset({"exec", "eval", "compile", "__import__"})
@@ -154,7 +160,17 @@ _AMBIENT_ENV_ATTRS = frozenset({"environ", "getenv"})
 _CLOCK_MODULES = frozenset({"time", "datetime"})
 _RNG_MODULES = frozenset({"random", "secrets", "uuid"})
 _NETWORK_MODULES = frozenset(
-    {"socket", "ssl", "http", "urllib", "ftplib", "smtplib", "asyncio", "subprocess", "ctypes"}
+    {
+        "socket",
+        "ssl",
+        "http",
+        "urllib",
+        "ftplib",
+        "smtplib",
+        "asyncio",
+        "subprocess",
+        "ctypes",
+    }
 )
 _NONDETERMINISTIC_CALLS = frozenset(
     {
@@ -237,7 +253,9 @@ def _closure_child(queue: mp.Queue) -> None:
     queue.put(
         {
             "tos_tops": tos_tops,
-            "forbidden": sorted(name for name in sys.modules if _is_forbidden_non_tos(name)),
+            "forbidden": sorted(
+                name for name in sys.modules if _is_forbidden_non_tos(name)
+            ),
         }
     )
 
@@ -266,7 +284,9 @@ def _leak_canary_child(queue: mp.Queue) -> None:
     queue.put(
         {
             "tos_tops": tos_tops,
-            "forbidden": sorted(name for name in sys.modules if _is_forbidden_non_tos(name)),
+            "forbidden": sorted(
+                name for name in sys.modules if _is_forbidden_non_tos(name)
+            ),
         }
     )
 
@@ -292,9 +312,9 @@ def test_marketfeed_tos_closure_is_within_the_allowlist() -> None:
     """(§0.3) The tos closure ⊆ the declared packages."""
     result = _run_child(_closure_child)
     extra = sorted(set(result["tos_tops"]) - _ALLOWED_TOS_PACKAGES)
-    assert extra == [], (
-        f"tos.marketfeed closure escaped the allowlist {sorted(_ALLOWED_TOS_PACKAGES)}: {extra}"
-    )
+    assert (
+        extra == []
+    ), f"tos.marketfeed closure escaped the allowlist {sorted(_ALLOWED_TOS_PACKAGES)}: {extra}"
 
 
 def test_marketfeed_closure_contains_every_declared_edge() -> None:
@@ -308,7 +328,9 @@ def test_marketfeed_closure_contains_every_declared_edge() -> None:
         )
 
 
-def test_marketfeed_closure_excludes_the_downstream_and_send_boundary_siblings() -> None:
+def test_marketfeed_closure_excludes_the_downstream_and_send_boundary_siblings() -> (
+    None
+):
     """(§0.3/§3.4) Consumers and the QCC kernel stay outside — the layering is not inverted."""
     result = _run_child(_closure_child)
     tops = set(result["tos_tops"])
@@ -319,16 +341,21 @@ def test_marketfeed_closure_excludes_the_downstream_and_send_boundary_siblings()
 def test_marketfeed_closure_has_no_forbidden_operational_package() -> None:
     """(§0.3) No ``shared.*`` operational package, no services/cli, no numpy/pandas/yaml."""
     result = _run_child(_closure_child)
-    assert result["forbidden"] == [], (
-        f"forbidden packages reached the closure: {result['forbidden']}"
-    )
+    assert (
+        result["forbidden"] == []
+    ), f"forbidden packages reached the closure: {result['forbidden']}"
 
 
 def test_leak_canary_is_detected() -> None:
     """(both-ways) Planted egress / brokercap / backtest / future-sibling leaks are all caught."""
     result = _run_child(_leak_canary_child)
     extra = set(result["tos_tops"]) - _ALLOWED_TOS_PACKAGES
-    for expected in ("tos.egress", "tos.brokercap", "tos.backtest", "tos.future_sibling"):
+    for expected in (
+        "tos.egress",
+        "tos.brokercap",
+        "tos.backtest",
+        "tos.future_sibling",
+    ):
         assert expected in extra, f"planted {expected} leak was NOT detected"
     for expected in ("shared.config", "shared.execution", "numpy"):
         assert expected in result["forbidden"], f"planted {expected} was NOT detected"
@@ -336,7 +363,12 @@ def test_leak_canary_is_detected() -> None:
 
 def test_allowlist_classifier_canaries() -> None:
     """The classifier admits every allowlisted package and rejects every excluded one."""
-    for allowed in ("tos.marketfeed", "tos.marketfeed.value", "tos.dsl.determinism", "tos.canonical"):
+    for allowed in (
+        "tos.marketfeed",
+        "tos.marketfeed.value",
+        "tos.dsl.determinism",
+        "tos.canonical",
+    ):
         assert _is_allowed_tos_module(allowed) is True
     for sibling in _FORBIDDEN_SIBLINGS | {"tos.not_yet_invented"}:
         assert _is_allowed_tos_module(sibling) is False
@@ -400,7 +432,9 @@ def test_the_cycle_children_module_imports_nothing_at_module_scope() -> None:
         if isinstance(node, (ast.Import, ast.ImportFrom))
         and not (isinstance(node, ast.ImportFrom) and node.module == "__future__")
     ]
-    assert module_level == [], "the cycle-child module must import nothing at module scope"
+    assert (
+        module_level == []
+    ), "the cycle-child module must import nothing at module scope"
 
 
 def test_no_dsl_or_engine_source_statically_imports_marketfeed() -> None:
@@ -418,8 +452,12 @@ def test_no_dsl_or_engine_source_statically_imports_marketfeed() -> None:
                     names = [node.module]
                 for name in names:
                     if name == "tos.marketfeed" or name.startswith("tos.marketfeed."):
-                        offenders.append(f"{package}/{path.name}:{node.lineno} import {name}")
-    assert offenders == [], f"a dsl/engine source imports marketfeed — cycle risk: {offenders}"
+                        offenders.append(
+                            f"{package}/{path.name}:{node.lineno} import {name}"
+                        )
+    assert (
+        offenders == []
+    ), f"a dsl/engine source imports marketfeed — cycle risk: {offenders}"
 
 
 def test_the_engine_allowlist_still_omits_marketfeed() -> None:
@@ -433,7 +471,9 @@ def test_the_engine_allowlist_still_omits_marketfeed() -> None:
     engine_canary = (
         Path(__file__).resolve().parents[1] / "engine" / "test_engine_import_closure.py"
     )
-    tree = ast.parse(engine_canary.read_text(encoding="utf-8"), filename=str(engine_canary))
+    tree = ast.parse(
+        engine_canary.read_text(encoding="utf-8"), filename=str(engine_canary)
+    )
     declared: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and any(
@@ -443,7 +483,9 @@ def test_the_engine_allowlist_still_omits_marketfeed() -> None:
             for literal in ast.walk(node.value):
                 if isinstance(literal, ast.Constant) and isinstance(literal.value, str):
                     declared.append(literal.value)
-    assert declared, "could not read the engine canary's allowlist — the anti-phantom read failed"
+    assert (
+        declared
+    ), "could not read the engine canary's allowlist — the anti-phantom read failed"
     assert "tos.marketfeed" not in declared
     assert len(declared) == 14
 
@@ -506,42 +548,64 @@ def _ast_offenders(path: Path) -> list[str]:
                 if root == "importlib":
                     offenders.append(f"{path.name}:{node.lineno} import {alias.name}")
                 if root in _CLOCK_MODULES:
-                    offenders.append(f"{path.name}:{node.lineno} clock import {alias.name}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} clock import {alias.name}"
+                    )
                 if root in _RNG_MODULES:
-                    offenders.append(f"{path.name}:{node.lineno} rng import {alias.name}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} rng import {alias.name}"
+                    )
                 if root in _NETWORK_MODULES:
-                    offenders.append(f"{path.name}:{node.lineno} network import {alias.name}")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} network import {alias.name}"
+                    )
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             root = module.split(".")[0]
             if root == "importlib":
                 offenders.append(f"{path.name}:{node.lineno} from importlib import ...")
             if root in _CLOCK_MODULES:
-                offenders.append(f"{path.name}:{node.lineno} clock from {module} import ...")
+                offenders.append(
+                    f"{path.name}:{node.lineno} clock from {module} import ..."
+                )
             if root in _RNG_MODULES:
-                offenders.append(f"{path.name}:{node.lineno} rng from {module} import ...")
+                offenders.append(
+                    f"{path.name}:{node.lineno} rng from {module} import ..."
+                )
             if root in _NETWORK_MODULES:
-                offenders.append(f"{path.name}:{node.lineno} network from {module} import ...")
+                offenders.append(
+                    f"{path.name}:{node.lineno} network from {module} import ..."
+                )
             if module == "os":
                 for alias in node.names:
                     if alias.name in _AMBIENT_ENV_ATTRS:
-                        offenders.append(f"{path.name}:{node.lineno} from os import {alias.name}")
+                        offenders.append(
+                            f"{path.name}:{node.lineno} from os import {alias.name}"
+                        )
         elif isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name):
                 if func.id in _DYNAMIC_CALL_NAMES:
                     offenders.append(f"{path.name}:{node.lineno} call {func.id}()")
                 if func.id in _FORBIDDEN_BUILTIN_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic {func.id}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic {func.id}()"
+                    )
                 if func.id in _NONDETERMINISTIC_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic {func.id}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic {func.id}()"
+                    )
             elif isinstance(func, ast.Attribute):
                 if func.attr == "import_module":
                     offenders.append(f"{path.name}:{node.lineno} call import_module()")
                 if func.attr in _NONDETERMINISTIC_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic .{func.attr}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic .{func.attr}()"
+                    )
                 if func.attr in _FORBIDDEN_BUILTIN_CALLS:
-                    offenders.append(f"{path.name}:{node.lineno} nondeterministic .{func.attr}()")
+                    offenders.append(
+                        f"{path.name}:{node.lineno} nondeterministic .{func.attr}()"
+                    )
         elif isinstance(node, ast.Attribute):
             if (
                 node.attr in _AMBIENT_ENV_ATTRS
@@ -559,7 +623,9 @@ def test_source_has_no_escape_env_clock_rng_or_network() -> None:
     offenders: list[str] = []
     for path in sources:
         offenders.extend(_ast_offenders(path))
-    assert offenders == [], f"forbidden construct found in tos.marketfeed sources: {offenders}"
+    assert (
+        offenders == []
+    ), f"forbidden construct found in tos.marketfeed sources: {offenders}"
 
 
 def test_ast_scan_detects_planted_escapes(tmp_path: Path) -> None:

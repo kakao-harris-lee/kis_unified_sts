@@ -95,7 +95,9 @@ def _settle(settlement: SettlementPolicy = SettlementPolicy.SAME_BAR) -> FillPar
     )
 
 
-def _interleaved_run(*, bar_count: int = 2, settle: bool = False):  # noqa: ANN202 - local runner
+def _interleaved_run(
+    *, bar_count: int = 2, settle: bool = False
+):  # noqa: ANN202 - local runner
     """Two lanes whose **settlements interleave** — the shape T5 / T10 need.
 
     Lane ``ES`` settles on the *next* bar, lane ``NQ`` on the *same* bar, and ``NQ``'s coordinates
@@ -113,7 +115,9 @@ def _interleaved_run(*, bar_count: int = 2, settle: bool = False):  # noqa: ANN2
         ]
     )
     core, sink = build_core(
-        registry=registry_with_all(lane_strategy(INSTRUMENT), lane_strategy(INSTRUMENT_B)),
+        registry=registry_with_all(
+            lane_strategy(INSTRUMENT), lane_strategy(INSTRUMENT_B)
+        ),
         transmit=driver,
     )
     run = driver.run(
@@ -137,7 +141,9 @@ def _sequential_run():  # noqa: ANN202 - a local runner
         [(INSTRUMENT, _ack()), (INSTRUMENT_B, _ack())]
     )
     core, sink = build_core(
-        registry=registry_with_all(lane_strategy(INSTRUMENT), lane_strategy(INSTRUMENT_B)),
+        registry=registry_with_all(
+            lane_strategy(INSTRUMENT), lane_strategy(INSTRUMENT_B)
+        ),
         transmit=driver,
     )
     run = driver.run(
@@ -273,10 +279,15 @@ def test_a_tick_evaluates_only_its_own_lanes_strategy() -> None:
         entry.halt_reason is not HaltReason.EVENT_STRATEGY_KEY_MISMATCH
         for entry in run.trace.entries
     )
-    handed_off = [entry.instrument_key.instrument for entry in run.trace.entries if entry.handed_off]
-    assert handed_off == [INSTRUMENT, INSTRUMENT_B], (
-        "each lane hands off exactly once, under its own key"
-    )
+    handed_off = [
+        entry.instrument_key.instrument
+        for entry in run.trace.entries
+        if entry.handed_off
+    ]
+    assert handed_off == [
+        INSTRUMENT,
+        INSTRUMENT_B,
+    ], "each lane hands off exactly once, under its own key"
 
 
 def test_one_lanes_halt_does_not_kill_the_following_lane() -> None:
@@ -316,7 +327,9 @@ def test_the_multi_symbol_trace_is_one_total_order() -> None:
 
     yields = [entry.yield_sequence for entry in run.trace.entries]
     assert yields == sorted(yields)
-    assert len(set(yields)) == len(yields), "the coordinate is globally unique across lanes"
+    assert len(set(yields)) == len(
+        yields
+    ), "the coordinate is globally unique across lanes"
     for entry in run.trace.entries:
         assert entry.reference.source_native_sequence == entry.yield_sequence
 
@@ -339,9 +352,9 @@ def test_fill_records_follow_the_global_settlement_order() -> None:
         entry for entry in run.trace.entries if entry.egress_result_kind is not None
     ]
     coordinates = {entry.attempt_id: entry.yield_sequence for entry in settled_entries}
-    assert len(coordinates) == len(settled_entries) >= 2, (
-        "the join needs at least two distinctly-identified settlements, from different lanes"
-    )
+    assert (
+        len(coordinates) == len(settled_entries) >= 2
+    ), "the join needs at least two distinctly-identified settlements, from different lanes"
     assert run.unsettled_fill_records == ()
 
     observed = [coordinates[record.attempt_id] for record in run.fill_records]
@@ -373,12 +386,15 @@ def test_the_oracle_identity_does_not_depend_on_lane_declaration_order() -> None
     The run object itself deliberately keeps declaration order; that is asserted here too, so the
     fix cannot be "sort everywhere" (which would erase how the run was wired).
     """
+
     def _run(order: tuple[str, str]):  # noqa: ANN202 - a local runner
         driver, _converters, _models = build_multi_symbol_driver(
             [(order[0], _ack()), (order[1], _ack())]
         )
         core, _sink = build_core(
-            registry=registry_with_all(lane_strategy(INSTRUMENT), lane_strategy(INSTRUMENT_B)),
+            registry=registry_with_all(
+                lane_strategy(INSTRUMENT), lane_strategy(INSTRUMENT_B)
+            ),
             transmit=driver,
         )
         return driver.run(
@@ -393,19 +409,22 @@ def test_the_oracle_identity_does_not_depend_on_lane_declaration_order() -> None
     declared_backwards = _run((INSTRUMENT_B, INSTRUMENT))
 
     assert declared_forwards.instrument_keys == (KEY_A, KEY_B)
-    assert declared_backwards.instrument_keys == (KEY_B, KEY_A), (
-        "the run records how it was wired — declaration order is not sorted away"
-    )
-    assert multi_symbol_trace_document(declared_forwards) == multi_symbol_trace_document(
-        declared_backwards
-    ), (
+    assert declared_backwards.instrument_keys == (
+        KEY_B,
+        KEY_A,
+    ), "the run records how it was wired — declaration order is not sorted away"
+    assert multi_symbol_trace_document(
+        declared_forwards
+    ) == multi_symbol_trace_document(declared_backwards), (
         "two runs identical in behaviour produced different oracle artifacts — a caller's lane "
         "declaration order leaked into the hashed document (design #37 §1.6)"
     )
     assert [
-        (record.instrument_key, record.attempt_id) for record in declared_forwards.fill_records
+        (record.instrument_key, record.attempt_id)
+        for record in declared_forwards.fill_records
     ] == [
-        (record.instrument_key, record.attempt_id) for record in declared_backwards.fill_records
+        (record.instrument_key, record.attempt_id)
+        for record in declared_backwards.fill_records
     ]
 
 
@@ -422,7 +441,9 @@ def test_the_unsettled_records_are_ordered_by_lane_key() -> None:
         ]
     )
     core, _sink = build_core(
-        registry=registry_with_all(lane_strategy(INSTRUMENT), lane_strategy(INSTRUMENT_B)),
+        registry=registry_with_all(
+            lane_strategy(INSTRUMENT), lane_strategy(INSTRUMENT_B)
+        ),
         transmit=driver,
     )
     run = driver.run(
@@ -462,16 +483,25 @@ def test_the_oracle_artifact_names_every_lane_and_keeps_its_narrow_scope() -> No
     }
     assert document["artifact_type"] == "tos.backtest.multi_symbol_wiring_trace"
     assert document["oracle_scope"] == "STRUCTURAL_WIRING_AGREEMENT_ONLY"
-    assert document["numeric_decision_agreement"] == "DEFERRED_PENDING_D_E2_VALUE_SURFACE"
+    assert (
+        document["numeric_decision_agreement"] == "DEFERRED_PENDING_D_E2_VALUE_SURFACE"
+    )
     assert document["instrument_keys"] == [
         {"account": key.account, "instrument": key.instrument}
         for key in sorted(
             run.instrument_keys, key=lambda item: (item.account, item.instrument)
         )
     ]
-    assert run.fill_records[0].execution_price is not None, "the run really did price a fill"
+    assert (
+        run.fill_records[0].execution_price is not None
+    ), "the run really did price a fill"
     serialized = repr(document)
-    for forbidden in ("execution_price", "filled_quantity", "slippage", "cost_component"):
+    for forbidden in (
+        "execution_price",
+        "filled_quantity",
+        "slippage",
+        "cost_component",
+    ):
         assert forbidden not in serialized, (
             f"the N-lane oracle artifact leaked {forbidden!r} — its scope is the single-symbol "
             "artifact's, and widening it to N lanes widens nothing else (design #33 §6.2)"
@@ -610,7 +640,9 @@ def test_a_vector_outcome_is_still_refused_under_multi_symbol_wiring() -> None:
     assert [halt.halt_reason for halt in vector_halts] == [
         HaltReason.VECTOR_OUTCOME_UNSUPPORTED
     ]
-    assert run.handoff_count == 1, "the vector lane hands off nothing; the scalar lane still does"
+    assert (
+        run.handoff_count == 1
+    ), "the vector lane hands off nothing; the scalar lane still does"
 
 
 # ---------------------------------------------------------------------------
@@ -639,7 +671,9 @@ def test_every_fill_is_stamped_with_its_own_lanes_key() -> None:
                 for record in run.fill_records
                 if record.attempt_id == entry.attempt_id
             ]
-            assert [record.instrument_key for record in matching] == [entry.instrument_key], (
+            assert [record.instrument_key for record in matching] == [
+                entry.instrument_key
+            ], (
                 "the re-injected result and the D-E3-local record must name the same lane — a "
                 "shared fill band would give them one key between them"
             )
