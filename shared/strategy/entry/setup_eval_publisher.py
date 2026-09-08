@@ -117,21 +117,22 @@ def append_setup_eval_history(
     ts_kst: datetime,
     *,
     key_suffix: str = "",
-) -> bool:
+) -> None:
     """Append an in-window eval to the per-day history list, deduped by state.
 
     ``key_suffix`` isolates a producer's history list from the orchestrator's
     (``""`` = the orchestrator's historical key). The list key is
     ``<prefix><suffix>:<date_kst>``, so the date stays the last segment.
 
-    Returns True when there is nothing left to do — the append happened, was
-    deduped, or is disabled — and lets any Redis exception propagate to
-    ``publish_setup_eval``'s guard, which is what turns it into a False result.
+    Deliberately returns nothing and does NOT catch: a Redis error propagates to
+    ``publish_setup_eval``'s guard, which owns the swallow, the latched warning
+    and the ``False`` result. A status flag here would either duplicate that
+    ownership or, worse, be decorative.
     """
     if not SETUP_EVAL_HISTORY_ENABLED or redis is None:
-        return True
+        return
     if not is_in_window_eval(outcome, reason):
-        return True
+        return
 
     date_kst = ts_kst.date().isoformat()
     # Structural state (measurements stripped) — a reason whose only change is
@@ -139,7 +140,7 @@ def append_setup_eval_history(
     state = setup_eval_throttle_key(name, outcome, reason)
     dedup_key = (date_kst, f"{name}{key_suffix}")
     if _history_state.get(dedup_key) == state:
-        return True
+        return
     _history_state[dedup_key] = state
 
     key = f"{SETUP_EVAL_HISTORY_KEY_PREFIX}{key_suffix}:{date_kst}"
@@ -156,7 +157,6 @@ def append_setup_eval_history(
         ),
     )
     redis.expire(key, SETUP_EVAL_HISTORY_TTL_SECONDS)
-    return True
 
 
 def publish_setup_eval(
