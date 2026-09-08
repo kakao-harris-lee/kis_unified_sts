@@ -130,38 +130,58 @@ Each trading day, verify:
   (`A_gap_reversion` / `C_event_reaction` for the others), while the registry,
   the strategy file and the eval rows below use `setup_d_vwap_reversion`.
 - Per-setup evaluations accumulate, so "0 candidates" is distinguishable from
-  "never evaluated". In shadow the daemon writes to its OWN `.shadow` keys —
-  `trader-futures`' Setup adapters are writing the unsuffixed keys at the same
-  time, and sharing them would let each producer overwrite the other's row:
+  "never evaluated". Outside live mode the daemon writes to its OWN `:shadow`
+  keys — `trader-futures`' Setup adapters are writing the unsuffixed keys at the
+  same time, and sharing them would let each producer overwrite the other's row:
 
   ```bash
-  # the decoupled daemon's rows (shadow mode only writes here)
-  redis-cli -p 6379 -n 1 hgetall trading:futures:setup_eval.shadow
+  # the decoupled daemon's rows (only a live-mode daemon writes the unsuffixed keys)
+  redis-cli -p 6379 -n 1 hgetall trading:futures:setup_eval:shadow
   redis-cli -p 6379 -n 1 lrange \
-    trading:futures:setup_eval:history.shadow:$(TZ=Asia/Seoul date +%F) 0 -1
+    trading:futures:setup_eval:history:shadow:$(TZ=Asia/Seoul date +%F) 0 -1
   ```
 
+  (Redis KEYS take a colon `:shadow` suffix in this repo, like
+  `risk:state:futures:shadow`; STREAMS take a dotted `.shadow`, like
+  `signal.candidate.futures.shadow`. The two are not the same convention.)
+
   The check is only meaningful because the two producers are separated: the
-  orchestrator never writes the `.shadow` keys, so a `setup_d_vwap_reversion`
+  orchestrator never writes the `:shadow` keys, so a `setup_d_vwap_reversion`
   row **there** is proof the daemon evaluated Setup D. Compare against the
   orchestrator's own rows (`trading:futures:setup_eval`, unsuffixed) to see the
   two runtimes' reasons side by side. After a live cutover the daemon writes the
   unsuffixed keys (`FUTURES_PIPELINE_MODE=live`), by which point
   `trader-futures` is stopped.
 
+  **Read the hash DURING the session.** It holds the latest state, not a log, so
+  an off-session `HGETALL` shows either the last in-session evaluation or the
+  `no_market_context` rows the daemon keeps writing while the feed is quiet. The
+  per-day history list is the record to read afterwards.
+
   If the shadow hash has no Setup D row at all, the daemon is not evaluating it:
-  check the startup roster line (`decision_engine setups: [...]`). If the row
-  exists but reads `no_vwap`, the streaming engine has no session VWAP yet — see
-  the known limitation below.
-- **Known limitation — Setup D is blind for a short window each session.** The
+  check the startup roster line (`decision_engine setups: [...]`).
+- **Known limitation — the engine's VWAP is not a KRX-session VWAP.** The
   streaming engine's VWAP accumulator is keyed on the UTC calendar date
-  (`shared/indicators/streaming/engine.py`), so it resets at **09:00 KST**,
-  mid-session, and parquet cold-start warm-up does not seed it (`seed_candles`
-  never feeds the VWAP calculator). Until the first live candle completes after
-  that reset — and equally after any daemon restart — `ctx.vwap` is 0 and the
-  daemon records `reject: no_vwap` for Setup D while Setup A/C keep running
-  normally. Expect roughly one such tick after 09:00 KST daily. Do not read those
-  rows as a Setup D defect, and do not count them as evaluated bars.
+  (`shared/indicators/streaming/engine.py`), so its buckets do not line up with
+  the 08:45–15:45 KST session. Three consequences, only the first of which is
+  visible in the eval rows:
+  - **Cold start** (a daemon restart before the first candle completes):
+    `ctx.vwap` is 0, and the daemon records `reject: no_vwap` for Setup D while
+    Setup A/C keep running. Parquet warm-up does not seed the calculator
+    (`seed_candles` never feeds it). These rows are not a Setup D defect and do
+    not count as evaluated bars.
+  - **00:00 UTC = 09:00 KST boundary, mid-session**: `add_tick` resets the
+    accumulator and adds the new tick in the same call, so vwap is immediately
+    non-zero but degenerate — it equals that one candle's close, giving z ≈ 0.
+    Setup D then rejects with an ordinary `not_extreme(...)`, NOT `no_vwap`.
+    This is silent: nothing in the chain flags it. Treat Setup D evaluations in
+    the first few minutes after 09:00 KST as low-information.
+  - **08:45–09:00 KST**: the UTC date is still yesterday's, so vwap carries over
+    the previous bucket's accumulation rather than starting fresh at the open.
+
+  Fixing this means changing the engine's session anchor, which is deliberately
+  out of scope for the F-9 port; record it here so a Gate 1 reader does not read
+  these rows as Setup D behaviour.
 
 When running `scripts/ops/futures_cutover_verify.py --strict`, pass one or more
 actual shadow-validation notes/logs with `--gate1-evidence`. The verifier only
@@ -237,17 +257,23 @@ inventory"). Line numbers here are as of `26fc52b0` and will drift.
 | Daily trade ceiling | none on this path | `DailyTradeCountFilter` (`layer.py:251`, compare `daily_trade_count.py:68`), `max_daily_trades: 3` (`risk.yaml:6`) | **present** — see caveat below |
 | Exit semantics (holding period / EOD flatten) | `setup_target_exit` honours the signal's stop/target and adds an EOD close at 15:15 KST (`config/strategies/futures/setup_*.yaml` `exit.params.eod_close_*`); no TTL-driven close | PseudoOCO force-closes the position at `signal.valid_until` (`shared/execution/pseudo_oco.py::check_expiry`, called from `order_router/main.py`), i.e. `signal_ttl_minutes` becomes a HOLDING cap — 10 min for Setup A/D, 30 for C. No EOD flatten exists anywhere in the decoupled chain | **intentional deviation candidate** — operator disposition required |
 | Post-exit re-entry cooldown | `services/trading/reentry_guard.py`, per-strategy cooldown after an exit (orchestrator-only) | none — no per-strategy cooldown in the decoupled chain (`ConsecutiveLossFilter` is a different control: it counts losses, it does not space re-entries) | **intentional deviation candidate** — operator disposition required |
-| Adapter-layer Setup entry gates (Setup D) | `shared/strategy/entry/setup_d_adapter.py`: `short_blocked_regimes: ["BULL_STRONG"]` direction block (PR #559, the only one active today), plus the opt-in `regime_gate`, LLM veto/tuning and `daily_bias_filter` scaffolding in `config/strategies/futures/setup_d_vwap_reversion.yaml` | none — the daemon calls the Setup CORE (`shared/decision/setups/vwap_reversion.py`) directly; the adapter layer does not travel with the cutover. Setup A/C are in the same position (their adapters carry `llm_tuning`, `regime_gate` and Setup A's `regime_gate.enabled: true`) | **ACCEPTED** — operator decision ② 2026-09-09: not ported; observed via setup_eval |
+| Setup D adapter-layer entry gates | `shared/strategy/entry/setup_d_adapter.py`: the `short_blocked_regimes: ["BULL_STRONG"]` direction block (PR #559, `setup_d_vwap_reversion.yaml`) — the only one in force. The file's `regime_gate` block is `enabled: false`, and Setup D's adapter carries no LLM tuning/veto and no daily-bias filter | none — the daemon calls the Setup CORE (`shared/decision/setups/vwap_reversion.py`) directly, so the adapter layer does not travel with the cutover | **intentional deviation** — operator decision ② 2026-09-09: not ported; observed via setup_eval |
+| Setup A `regime_gate` | `shared/strategy/gates/regime_gate.py` via the Setup A adapter; `regime_gate.enabled: true` in `config/strategies/futures/setup_a_gap_reversion.yaml` (activated 2026-05-23, PR #330 follow-up). Blocks entries on the live HAR-RV / event-impact regime | none — same reason as the Setup D row above | **OPEN** — needs operator disposition (decision ② covered Setup D only) |
 
-Rationale for the ACCEPTED row: the decoupled chain deliberately has ONE entry
-gate (`market_risk_gate`), and re-implementing the adapter gates in the daemon
-would duplicate a control layer rather than move it. The exposure is bounded by
-observation instead: every Setup D fire is recorded on
-`trading:futures:setup_eval.shadow` with its direction, so a shadow session shows
-how many SHORT fades the monolith's `BULL_STRONG` block would have suppressed.
-If that count is material, the right home for the control is the
-`market_risk_gate` reaction matrix (which already answers per-side), not a second
-copy of the adapter.
+Note on the two rows above: decision ② was taken about Setup D's direction
+block. Setup A's `regime_gate` is a DIFFERENT control, it is switched on in
+production today, and no decision has been recorded for it — it is listed
+separately so Gate 2 cannot read the Setup D disposition as covering it.
+
+Rationale for the Setup D disposition: the decoupled chain deliberately has ONE
+entry gate (`market_risk_gate`), and re-implementing the adapter gates in the
+daemon would duplicate a control layer rather than move it. The exposure is
+bounded by observation instead: every Setup D fire is recorded on
+`trading:futures:setup_eval:shadow` with its direction, so a shadow session shows
+whether the monolith's `BULL_STRONG` block would have suppressed any SHORT fades
+at all. If it would, the right home for the control is the `market_risk_gate`
+reaction matrix (which already answers per-side), not a second copy of the
+adapter.
 
 The five order-book rows (spread, depth, volatility, stale signal, blackout
 windows) all reach the monolith through one call site: `_submit_entry_order`
@@ -372,8 +398,10 @@ Stale signal:                        CLOSED @ ______  | ACCEPTED by ______ becau
 Intraday blackout windows:           CLOSED @ ______  | ACCEPTED by ______ because ______
 Exit semantics (TTL force-close, no EOD flatten):  CLOSED @ ______  | ACCEPTED by ______ because ______
 Post-exit re-entry cooldown absent:  CLOSED @ ______  | ACCEPTED by ______ because ______
-Adapter-layer Setup entry gates not ported (Setup D BULL_STRONG short block, regime_gate, LLM veto, daily bias):
-                                     ACCEPTED by operator (decision (2), 2026-09-09) — observed via setup_eval
+Setup D adapter direction block (BULL_STRONG short) not ported:
+                                     CLOSED @ ______  | ACCEPTED by ______ because ______
+Setup A regime_gate (enabled in monolith) not ported:
+                                     CLOSED @ ______  | ACCEPTED by ______ because ______
 Paper vs live spread threshold understood (1 tick live / 6 paper):  yes / no
 Live-only nature of the order_router caps understood:               yes / no
 ```
