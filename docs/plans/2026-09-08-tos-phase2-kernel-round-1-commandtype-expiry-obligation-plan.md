@@ -108,13 +108,33 @@ enum 값·개수 핀(+4) · 분류 집합 불포함 · `decision_unexpired` 극�
 **계획 편차(전부 보고·수용)**: ① `obligation_preserved(obligation, reservation_state: str \| None, capacity_consuming_states: frozenset[str])` — cur 임포트 폐쇄(§7.1 allowlist)가 `tos.rcl` 힌트조차 금지 · 계획 예시의 «POSITION_CONSUMED=해제» 는 커널 `_LIVE_COMMITTED_STATES`(RELEASED 만 비소비)와 모순이라 커널 집합 채택 ② `decision_unexpired` 는 `iap/predicates.py` 모듈 `__all__` 에 미등재 — 등재 시 EVIDENCE-SURFACE-MAP 행 핀(IAP-EV-003/004/007) 이탈로 completion `--check` RED 실측 · 패키지 재수출로만 공개 ③ `load_operator_approval_file` 무변경 + 신규 함수(호출처 ~15 보존) ④ `queue_bound=0`(Phase 2 time 설정은 transport+queue 결합 키 하나) ⑤ 레인 A 도크스트링 축약으로 크기 예외 신규 0.
 
 **보고된 갭 2건(이 라운드에서 고치지 않음 · 다음 결정 항목)**:
-- **G-1 만료 admit 경로 도달 불가**: `TrustworthyTimeService._issue_snapshot` 이 `TimeHealthSnapshot.wall_clock_observation` 을 채우지 않고 `LocalSystemClockReader` 는 값을 «도달성 프로브» 로만 쓰도록 슬라이스 #1 이 설계했다. 실 서비스에서는 `issuer_signed_age_ms=None` ⇒ `max_decision_age_ms` 설정 시 항상 fail-closed deny(정직 · 안전). admit 은 `FakeTimeService` 로만 실증. 해소 = 슬라이스 #1 time 설계의 «값 비노출» 결정 개정(운영자 결정).
-- **G-2 보존 의무 분기 런타임 도달 불가**: `EgressCurrentnessProofIssuer.issue()` 가 `proof_admissible`(CURRENT 필수) 자체검사 후에만 proof 를 내므로 비-CURRENT 벡터는 `None` ⇒ 게이트웨이가 item 16 의 «구조 불완전» 에서 먼저 멈춘다. 의무 분기는 커널 테스트가 덮고, 런타임 e2e 는 실제 결선된 sink 에 게이트웨이의 `SEND_REFUSED` 형상을 직접 주입해 관찰자·증거·예약 id 해석을 증명.
+- **G-1 만료 admit 경로 도달 불가(리뷰 #3 로 정정)**: 착지 시점 블로커는 셋이었다 — ① `TrustworthyTimeService._issue_snapshot` 이 `wall_clock_observation` 을 채우지 않음(`LocalSystemClockReader` 는 값을 «도달성 프로브» 로만 씀 · 슬라이스 #1 설계) ② compose 가 `load_operator_approval_file` 만 호출해 receipt 가 생성되지 않음 ③ `IntentRegistry` 가 `time`/`time_config` 없이 구성됨. ②③은 처분 A2-#3 에서 결선하여 **G-1 은 ① 하나로 수렴**: 실 서비스에서는 `issuer_signed_age_ms=None` ⇒ `max_decision_age_ms` 설정 시 항상 fail-closed deny(정직 · 안전). admit 은 `FakeTimeService` 로만 실증. 해소 = 슬라이스 #1 time 설계의 «값 비노출» 결정 개정(운영자 결정 · 다음 라운드 게이트).
+- **G-2 보존 의무 기능의 프로덕션 도달성 0(리뷰 #6 로 문언 정정)**: `EgressCurrentnessProofIssuer.issue()` 는 `proof_admissible`(CURRENT 필수) 자체검사 후에만 proof 를 내고, 런타임은 `egress_currentness_result = proof.result` 로 결속하므로 admissible 한 proof 가 non-ADMIT verdict 를 낼 수 없다(두 겹 잠금 · 리뷰어 독립 검증). 따라서 `CapacityObligationRecorder` 는 현재 런타임에서 **도달 불가 코드로 착지**했다 — 분기는 커널 테스트가 덮고, 런타임 e2e 는 실제 결선된 sink 에 `SEND_REFUSED` 형상을 직접 주입해 관찰자·증거·예약 id 해석(«결선»)을 증명한다. 트리거를 살리는 발행자 변경은 다음 라운드의 게이트 항목(운영자 결정).
 
 **환경 결함 1건(코드 아님)**: 로컬 `.venv` 의 tos editable `.pth` 가 삭제된 워크트리(`../kis_unified_sts-tos-phase2/tos/src`)를 가리켜 `tos` 가 네임스페이스 패키지로 폴백 → `lint-imports` BROKEN(239행)·런타임 mypy 15건이 «기저 실패» 로 보였다. `pip install -e ./tos` 재설치 후 `lint-imports` 3 KEPT · 런타임 mypy clean. CI 는 매 실행 새로 설치하므로 무관.
 
 **독립 실측(최종 트리 `f51ceaf3` · 재설치 venv)**: runtime tests **462 passed** rc=0 · kernel tests **9078 passed** rc=0 · mypy 커널 253파일/런타임 53파일 clean · ruff 0 · black 924 unchanged · firewall PASS · lint-imports 3 KEPT · budget 0 위반(29 등재) · contract PASS · completion GREEN · spec PASS · 커널 diff(`286e82b5..HEAD -- tos/src/`) 0.
 
-### 7.2 독립 리뷰 처분
+### 7.2 독립 리뷰 처분 (Claude 측 `code-reviewer` 레인 · 저작자와 분리 · 2026-09-08)
 
-(리뷰 후 기입)
+1차 verdict **needs-attention** · 비협상 위반 0 · 뮤테이션 M1~M6 전부 red + 리뷰어 추가 M7(`suspension_ms=0`→`None`) red(= #2 의 증거) · 스펙 정합(ADR-002-012 §10 «at minimum … semantics equivalent» · 편차 ① 커널 집합 채택 정당) 수용 · 레거시 kind 읽기 3곳 전수(epoch:344 · iap:603/677) 전부 raise 확인 · fail-open 프로브 9종 clean.
+
+| # | 심각도 | 지적 | 처분 |
+|---|---|---|---|
+| 1 | HIGH | item 16 의무가 «첫 halt 항목이 16일 때» 만 `SEND_REFUSED` 로 전달 — 앞 항목이 같이 실패하면 의무 유실(실측: construction=None+currentness None ⇒ oblig None) · 기존 테스트는 item 16 SATISFIED 픽스처라 거짓 안심 | 수용 — K2-#1: halt item 무관하게 item 16 verdict 의 의무 전달 · 동시 실패 테스트 · 거짓 안심 테스트 재명명 |
+| 2 | HIGH | `iap.py:744` `suspension_ms=0` 리터럴 — 관측 없이 0 을 단언해 `anchor_valid` 의 suspension 가드가 영구 통과 · M7 이 admit 테스트 2건을 red 로 | 수용 — A2-#2: `snapshot.suspension_status.suspension_ms`(None ⇒ fail-closed) 로 교체 · None/초과 deny 테스트. 형제 `time/service.py:258` 의 동일 리터럴은 슬라이스 #1 기존 코드 — time 슬라이스 결정 항목으로 기록 |
+| 3 | MEDIUM | G-1 이 블로커를 하나로 축소 서술 — compose 미결선(receipt 로더·time 포트) 2건 추가 | 수용 — A2-#3: compose 결선 + `stages.py` receipt 전달 · G-1 문언 정정(위) |
+| 4 | MEDIUM | «의무 없음» 과 «의무 크기 UNKNOWN» 을 구별 못 함 — 가장 위험한 입력이 가장 조용한 처리로 강등(attestation null 거부로 잠재) | 수용 — K2-#4: `preserved_obligation_magnitude_unknown` 타입 필드 + `obligation_preserved(magnitude_unknown)` 필수 kwarg(True ⇒ False) · B2-#4: 레코더 제3 분기(증거+halt) |
+| 5 | MEDIUM | resolver 가 attempt 를 버리고 (account, instrument) 고정 id 를 냄 — «EXACT» 과대 문언 · 같은 id 아래 새 예약이 오면 옛 의무를 새 상태로 검증 | 수용 — B2-#5: attempt→예약 결속이 로그/스테이지에 있으면 그것으로 해석, 없으면 문언 정정 + 한계 테스트(선택 근거 보고) |
+| 6 | MEDIUM | 레인 B e2e 는 결선만 증명 · G-2 는 «분기 도달 불가» 가 아니라 «기능의 프로덕션 도달성 0» | 수용 — G-2 문언 정정(위) · 발행자 변경은 다음 라운드 게이트 · e2e 도크스트링 1문장 |
+| 7 | LOW | receipt 없는 로더가 non-null `max_decision_age_ms` 거부를 잃음(소비에서 영구 deny 로 밀림 · `_decision_provider` 가 로더 오류를 None 으로 삼킴) | 수용 — A2-#7: receipt-less 로더 거부 복원 · 로더 거부를 `IAP_APPROVAL_FILE_REFUSED` 증거로 가시화 |
+| 8 | LOW | 관찰자 결선으로 거부 경로가 예외를 낼 수 있음(계약 변경) | 수용(fail-closed) — B2-#8: 계약 변경 문서화 |
+| 9 | LOW | `None` 경우 열거 누락(래치/구조 게이트 halt · 크기 UNKNOWN) · «halt 가 16이 아니거나» 오기 | 수용 — K2-#9 / B2-#9 도크스트링 4경우 전수 |
+
+**처분 착지(7커밋 `b7f497e3..d38fb5f1`)**: A2-#2 `b7f497e3` · B2-#5/#8/#9 `9c0771ab` · K2-#1/#9 `3522a608` · K2-#4 `5521ec7b` · A2-#3 `a8aab25c` · B2-#4 `5a77d366` · A2-#7 `d38fb5f1`. 처분 중 확인된 사실: #5 는 attempt→예약 결속이 로그·스테이지 어디에도 없어(전이 행에 attempt 없음 · step 9 캐시 없음 · step 14 는 nonce 만 보존) (b) 문언 정정 + 비-attempt-scoping 실증 테스트 채택, «RELEASED 후 재사용» 경쟁은 `check_reservation_from_state` 게이트가 이미 차단(프로브 실측) · #4 런타임 측은 별 분기가 아니라 기존 resolve→술어→증거→halt 경로 공유(커널 술어가 `magnitude_unknown=True` 를 무조건 False 로) · #3 결선 후 **G-1 은 `wall_clock_observation` 미충전 하나로 수렴**(A2 실측). 크기 예외 +2(`_wiring.py`·`iap.py` · tos-runtime 소유 · 정렬 위치는 후속 정리). 공유 트리 경합 재발: K2 `5521ec7b`·B2 `9c0771ab` 커밋이 A2 의 미커밋 `_wiring.py`/budget 헝크를 함께 실음(내용 손실 0 · `[A2-#3]` 본문에 경위 기록).
+
+**독립 실측(최종 트리 `d38fb5f1`)**: runtime **471 passed** rc=0 · kernel **9099 passed** rc=0 · mypy 253/53 clean · ruff 0 · black 925 unchanged · firewall PASS · lint-imports 3 KEPT · budget 0 위반(31 등재) · completion GREEN · spec PASS · contract PASS · 커널 diff(`5521ec7b..HEAD -- tos/src/`) 0 · tos-spec/계약 문서 무편집.
+
+### 7.3 재심
+
+(기입 예정)
