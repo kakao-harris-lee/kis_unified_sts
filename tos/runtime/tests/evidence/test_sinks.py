@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from tos.egressgw.gateway import GatewayEvidenceSink
 from tos.egressgw.records import GatewayEvidenceRecord
 from tos.engine.records import EngineEvidenceRecord
@@ -89,3 +90,68 @@ def test_adapters_bind_runtime_identity_onto_every_record(
     ).fetchone()
     assert row[0] is not None
     assert "cell-1" in row[0]
+
+
+# ---------------------------------------------------------------------------
+# kernel round #1 §3 (lane B) — ``on_refusal`` observer
+# ---------------------------------------------------------------------------
+
+
+def test_on_refusal_is_called_for_send_refused(store: SqliteEvidenceStore) -> None:
+    observed: list[GatewayEvidenceRecord] = []
+    adapter = GatewayEvidenceSinkAdapter(store, on_refusal=observed.append)
+    record = GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="a1")
+    adapter.record(record)
+    assert observed == [record]
+
+
+def test_on_refusal_is_not_called_for_other_kinds(store: SqliteEvidenceStore) -> None:
+    observed: list[GatewayEvidenceRecord] = []
+    adapter = GatewayEvidenceSinkAdapter(store, on_refusal=observed.append)
+    adapter.record(GatewayEvidenceRecord(kind="SEND_STARTED", attempt_id="a1"))
+    adapter.record(
+        GatewayEvidenceRecord(kind="POTENTIALLY_LIVE_OBSERVED", attempt_id="a1")
+    )
+    assert observed == []
+
+
+def test_on_refusal_runs_only_after_the_durable_append_commits(
+    store: SqliteEvidenceStore,
+) -> None:
+    """The observer sees the record only AFTER ``store.append`` has already
+    committed — evidence first, verification second (module docstring)."""
+    seen_seq_at_call_time: list[int | None] = []
+
+    def observer(_record: GatewayEvidenceRecord) -> None:
+        last_seq, _, _ = store.last_committed()
+        seen_seq_at_call_time.append(last_seq)
+
+    adapter = GatewayEvidenceSinkAdapter(store, on_refusal=observer)
+    adapter.record(GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="a1"))
+    # seq 0 is already committed by the time the observer ran.
+    assert seen_seq_at_call_time == [0]
+
+
+def test_on_refusal_exception_propagates(store: SqliteEvidenceStore) -> None:
+    """An observer failure is never swallowed — the append itself already
+    durably committed, but the caller must still see the failure."""
+
+    def failing_observer(_record: GatewayEvidenceRecord) -> None:
+        raise RuntimeError("obligation verification failed")
+
+    adapter = GatewayEvidenceSinkAdapter(store, on_refusal=failing_observer)
+    with pytest.raises(RuntimeError, match="obligation verification failed"):
+        adapter.record(GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="a1"))
+    # the append itself still committed before the observer raised.
+    last_seq, _, _ = store.last_committed()
+    assert last_seq == 0
+
+
+def test_no_on_refusal_configured_is_a_safe_default(
+    store: SqliteEvidenceStore,
+) -> None:
+    """The default (``on_refusal=None``) sink behaves exactly as before this change."""
+    adapter = GatewayEvidenceSinkAdapter(store)
+    adapter.record(GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="a1"))
+    last_seq, _, _ = store.last_committed()
+    assert last_seq == 0
