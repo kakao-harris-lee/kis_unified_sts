@@ -37,7 +37,7 @@ scope:
 # expires_on 경과 시 --check red(운영자 조정 가능한 값).
 exceptions:
 - target: tos/src/tos/egressgw/gateway.py
-  measured: 1832
+  measured: 1850
   owner: tos-kernel
   decomposition_order: 1
   expires_on: '2026-12-31'
@@ -53,7 +53,12 @@ exceptions:
     (독립 리뷰 finding #1: 신규 헬퍼 ``_item16_obligation`` 이 item 16 의 verdict 를
     ``halt_item`` 과 무관하게 무조건 스캔해 ``SEND_REFUSED`` 로 전달 · finding #9:
     ``preserved_worst_credible_capacity`` 의 ``None`` 사례 4가지 전부를 도크스트링에
-    열거). 뒤이은 review #4 커밋에서 1832→1850 으로 추가 증가 예정(타입 필드 배선).
+    열거).
+    2026-09-09 kernel round #1 review #4 (+18 lines) — measured 1832→1850
+    (``VerifyItemVerdict``/``GatewayEvidenceRecord`` 에
+    ``preserved_obligation_magnitude_unknown`` 필드 + validator 추가,
+    ``_verdict``/``_check_currentness``/``_halt``/``__call__``/``_item16_obligation``
+    전부 배선).
 - target: tos/src/tos/sir/predicates.py
   measured: 1681
   owner: tos-kernel
@@ -121,7 +126,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/egressgw/gateway.py::BrokerEgressGateway.__call__
-  measured: 249
+  measured: 254
   owner: tos-kernel
   decomposition_order: 13
   expires_on: '2026-12-31'
@@ -133,8 +138,9 @@ exceptions:
     248→257 (halt item 16 verdict 순회로 preserved_worst_credible_capacity 추출).
     2026-09-09 kernel round #1 review #1/#9 (-8 lines) — measured 257→249
     (obligation 전달 로직을 신규 모듈 헬퍼 ``_item16_obligation`` 으로 인수해 ``__call__``
-    본체는 오히려 축소; 헬퍼 자체는 모듈 전체 measured 증가에 반영됨). 뒤이은 review #4
-    커밋에서 249→254 로 재증가 예정(``preserved_obligation_magnitude_unknown`` 배선).
+    본체는 오히려 축소; 헬퍼 자체는 모듈 전체 measured 증가에 반영됨).
+    2026-09-09 kernel round #1 review #4 (+5 lines) — measured 249→254
+    (``preserved_obligation_magnitude_unknown`` 을 튜플로 함께 배선).
 - target: tos/src/tos/egressgw/construction.py::derive_order_size
   measured: 246
   owner: tos-kernel

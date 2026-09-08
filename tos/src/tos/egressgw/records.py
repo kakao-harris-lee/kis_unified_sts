@@ -466,10 +466,22 @@ class VerifyItemVerdict(FrozenModel):
     #: (currentness positively ``ADMIT`` — nothing to preserve); (iii) item 16 halting at the
     #: earlier restrictive-latch or structurally-incomplete-proof gates
     #: (:func:`~tos.egressgw.gateway._check_currentness`'s latch / structural-completeness
-    #: checks) — no obligation is computed there at all. A fourth case — item 16 non-admit with
-    #: the obligation's own magnitude unknown — is typed separately in kernel round #1 review #4;
-    #: until that lands it also reads ``None`` here, indistinguishable from cases (i)-(iii).
+    #: checks) — no obligation is computed there at all; (iv) item 16 non-admit but the
+    #: obligation's own **magnitude** is unknown (``context.worst_credible_capacity is None``) —
+    #: see :attr:`preserved_obligation_magnitude_unknown`, which is ``True`` in that case instead
+    #: of this field carrying a concrete number.
     preserved_worst_credible_capacity: int | None = None
+    #: Whether item 16 asserted an obligation but its **magnitude** is unknown — the reservation's
+    #: worst-credible capacity was itself never observed
+    #: (``context.worst_credible_capacity is None``) when currentness did not positively admit
+    #: (kernel round #1 review #4; CUR-INV-011:183 "UNKNOWN is restrictive and
+    #: capacity-consuming"). Distinct from ``preserved_worst_credible_capacity is None``, which
+    #: can *also* mean "no obligation was ever asserted" — this flag disambiguates the two so a
+    #: consumer does not treat an unknown-magnitude obligation as trivially preserved. ``False``
+    #: on every item but item 16, and ``False`` on item 16 whenever a concrete
+    #: ``preserved_worst_credible_capacity`` is recorded (the two are mutually exclusive — a
+    #: concrete number already states the magnitude).
+    preserved_obligation_magnitude_unknown: bool = False
     authority_effect: AllFalseGatewayAuthority = AllFalseGatewayAuthority()
 
     @model_validator(mode="after")
@@ -502,6 +514,28 @@ class VerifyItemVerdict(FrozenModel):
                 f"verify item {self.item.value} cannot record a preserved worst-credible "
                 "capacity obligation — only item 16 (CURRENTNESS) may author cur's "
                 "unknown-preservation obligation (CUR-INV-011:183; kernel round #1 §1.3)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _magnitude_unknown_only_for_currentness_with_no_concrete_obligation(
+        self,
+    ) -> VerifyItemVerdict:
+        """Reject a magnitude-unknown flag on anything but item 16, or beside a concrete obligation.
+
+        (Kernel round #1 review #4.) The flag asserts "an obligation exists but its size is
+        unknown" — a concrete :attr:`preserved_worst_credible_capacity` already states the size,
+        so the two are mutually exclusive, and only item 16 (CURRENTNESS) may author either.
+        """
+        if self.preserved_obligation_magnitude_unknown and (
+            self.item is not SendVerifyItem.CURRENTNESS
+            or self.preserved_worst_credible_capacity is not None
+        ):
+            raise ArtifactIntegrityError(
+                f"verify item {self.item.value} cannot record a magnitude-unknown preserved "
+                "obligation — only item 16 (CURRENTNESS) may author it, and only when no "
+                "concrete worst-credible capacity is recorded (CUR-INV-011:183; kernel round #1 "
+                "review #4)"
             )
         return self
 
@@ -551,9 +585,13 @@ class GatewayEvidenceRecord(FrozenModel):
     #: (review round #1 finding #9): (i) item 16's own verdict authored no obligation at all
     #: (any item but item 16 never authors one); (ii) item 16 SATISFIED; (iii) item 16 halting at
     #: the earlier restrictive-latch or structurally-incomplete-proof gates, where no obligation
-    #: is computed. A fourth case — item 16 non-admit with unknown magnitude — is typed
-    #: separately in kernel round #1 review #4; until that lands it also reads ``None`` here.
+    #: is computed; (iv) item 16 non-admit with the obligation's magnitude unknown — see
+    #: :attr:`preserved_obligation_magnitude_unknown`.
     preserved_worst_credible_capacity: int | None = None
+    #: Mirrors :attr:`VerifyItemVerdict.preserved_obligation_magnitude_unknown`, transferred onto
+    #: ``SEND_REFUSED`` the same unconditional way as :attr:`preserved_worst_credible_capacity`
+    #: (kernel round #1 review #4). ``False`` unless item 16's own verdict flagged it.
+    preserved_obligation_magnitude_unknown: bool = False
     authority_effect: AllFalseGatewayAuthority = AllFalseGatewayAuthority()
 
 

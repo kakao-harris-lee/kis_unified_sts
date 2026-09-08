@@ -464,6 +464,7 @@ def _verdict(
     native: object | None = None,
     native_value: str | None = None,
     preserved_worst_credible_capacity: int | None = None,
+    preserved_obligation_magnitude_unknown: bool = False,
 ) -> VerifyItemVerdict:
     """Assemble one item verdict, deriving its disposition from the design §4.1 partition."""
     if item in REALIZED_ITEMS:
@@ -480,6 +481,7 @@ def _verdict(
         native_verdict_type=None if native is None else type(native).__name__,
         native_verdict_value=native_value,
         preserved_worst_credible_capacity=preserved_worst_credible_capacity,
+        preserved_obligation_magnitude_unknown=preserved_obligation_magnitude_unknown,
     )
 
 
@@ -1133,9 +1135,10 @@ def _check_currentness(
     The returned verdict's ``preserved_worst_credible_capacity`` is ``None`` on every branch but
     the final non-ADMIT one below (review round #1 finding #9): the latch and
     structurally-incomplete-proof branches compute no obligation at all, and the SATISFIED
-    branch has nothing to preserve. On the non-ADMIT branch itself the field can also read
-    ``None`` when ``context.worst_credible_capacity`` was never observed — that "unknown
-    magnitude" sub-case is typed separately in kernel round #1 review #4.
+    branch has nothing to preserve. On the non-ADMIT branch itself, the field carries a concrete
+    number only when ``context.worst_credible_capacity`` was actually observed; otherwise
+    ``preserved_obligation_magnitude_unknown`` is set instead (kernel round #1 review #4 —
+    UNKNOWN is restrictive, CUR-INV-011:183).
     """
     del attempt, applicability
     item = SendVerifyItem.CURRENTNESS
@@ -1172,6 +1175,7 @@ def _check_currentness(
     currentness = egress_currentness_verdict(context.egress_currentness_result, proof)
     if currentness.outcome is not StageOutcome.ADMIT:
         preserved = unknown_preserves_capacity(False, context.worst_credible_capacity)
+        magnitude_unknown = context.worst_credible_capacity is None
         return _verdict(
             item,
             (
@@ -1186,6 +1190,7 @@ def _check_currentness(
             ),
             native_value=currentness.native_verdict_value,
             preserved_worst_credible_capacity=preserved,
+            preserved_obligation_magnitude_unknown=magnitude_unknown,
         )
     return _verdict(
         item,
@@ -1412,7 +1417,9 @@ def outbound_binding_mismatch(context: SendBoundaryContext) -> str | None:
     return None
 
 
-def _item16_obligation(verification: SendBoundaryVerification) -> int | None:
+def _item16_obligation(
+    verification: SendBoundaryVerification,
+) -> tuple[int | None, bool]:
     """Item 16's preserved-capacity obligation, independent of which item halted.
 
     All 17 verify items are always evaluated (design #34 §4.1), and only afterwards does the
@@ -1430,13 +1437,17 @@ def _item16_obligation(verification: SendBoundaryVerification) -> int | None:
         verification: The whole step-15 verify result.
 
     Returns:
-        Item 16's own ``preserved_worst_credible_capacity``, or ``None`` if item 16 has no
-        verdict (should not occur — all 17 items are always evaluated) or authored no obligation.
+        The ``(preserved_worst_credible_capacity, preserved_obligation_magnitude_unknown)`` pair
+        from item 16's own verdict (kernel round #1 review #4), or ``(None, False)`` if item 16
+        has no verdict (should not occur — all 17 items are always evaluated).
     """
     for verdict in verification.verdicts:
         if verdict.item is SendVerifyItem.CURRENTNESS:
-            return verdict.preserved_worst_credible_capacity
-    return None
+            return (
+                verdict.preserved_worst_credible_capacity,
+                verdict.preserved_obligation_magnitude_unknown,
+            )
+    return None, False
 
 
 class BrokerEgressGateway:
@@ -1523,6 +1534,7 @@ class BrokerEgressGateway:
         detail: str | None,
         item: SendVerifyItem | None = None,
         preserved_worst_credible_capacity: int | None = None,
+        preserved_obligation_magnitude_unknown: bool = False,
     ) -> SendHandoff:
         """Record a recorded-reason halt and refuse the hand-off (design #34 §4.2).
 
@@ -1546,6 +1558,7 @@ class BrokerEgressGateway:
                 halt_reason=reason,
                 detail=detail,
                 preserved_worst_credible_capacity=preserved_worst_credible_capacity,
+                preserved_obligation_magnitude_unknown=preserved_obligation_magnitude_unknown,
             )
         )
         return SendHandoff(accepted_for_transmission=None)
@@ -1608,12 +1621,17 @@ class BrokerEgressGateway:
                 )
             )
         if verification.admitted is not True:
+            (
+                preserved_worst_credible_capacity,
+                preserved_obligation_magnitude_unknown,
+            ) = _item16_obligation(verification)
             return self._halt(
                 attempt_id=attempt_id,
                 reason=verification.halt_reason or SendHaltReason.VERIFY_ITEM_UNKNOWN,
                 detail=verification.detail,
                 item=verification.halt_item,
-                preserved_worst_credible_capacity=_item16_obligation(verification),
+                preserved_worst_credible_capacity=preserved_worst_credible_capacity,
+                preserved_obligation_magnitude_unknown=preserved_obligation_magnitude_unknown,
             )
 
         # -- outbound binding: the seam scalars must be the constructed ones (MINOR-2) ----
