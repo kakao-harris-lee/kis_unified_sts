@@ -61,15 +61,27 @@ shape matching the package's existing "no numeric bound, every age is
 injected opaque" convention) would let this refusal be replaced with a real
 enforcement call.
 
-**Reported ``CommandType`` gap (slice plan §5).** No member of the closed
-``tos.rcl.vocabulary.CommandType`` vocabulary names "consume an Independent
-Approval decision, once". The closest structural analog is
-:data:`~tos.rcl.vocabulary.CommandType.CONSUME_TRANSMISSION_CAPABILITY` — also
-a single-use, once-only consumption of an authorization token, durably
-committed — even though its named referent (the RCL Transmission Capability
-nonce, ADR-002-002 §27) is a different governed artifact from an Independent
-Approval decision (ADR-002-023). Reported, not resolved by a kernel edit: this
-module never touches ``tos.rcl.vocabulary``.
+**Reported ``CommandType`` gap — resolved by kernel round #1 (plan §1.1).**
+No member of the ADR-002-012 §10 / ADR-002-002 §27 closed
+``tos.rcl.vocabulary.CommandType`` vocabulary named "consume an Independent
+Approval decision, once" — this module previously reused the structurally
+closest analog, :data:`~tos.rcl.vocabulary.CommandType.CONSUME_TRANSMISSION_CAPABILITY`
+(a different governed artifact, the RCL Transmission Capability nonce,
+ADR-002-002 §27). Kernel round #1 §1.1 (`docs/plans/2026-09-08-tos-phase2-
+kernel-round-1-commandtype-expiry-obligation-plan.md`) ratified a dedicated
+member, :data:`~tos.rcl.vocabulary.CommandType.CONSUME_APPROVAL_DECISION`,
+under the new "Runtime-realized authority/currentness commands" vocabulary
+block — this module now writes and reads exclusively under that member; the
+``CONSUME_TRANSMISSION_CAPABILITY`` reuse is retired here (kernel round #1
+§2.1). Both :meth:`IntentRegistry._current_consumption` (exact
+``command_id`` match) and the supersession scan in
+:meth:`IntentRegistry.decision_current` (prefix match) now raise
+:class:`~tos_runtime.rcl.log.CommitLogCorruption` on a matching log entry
+whose ``kind`` is NOT :data:`CommandType.CONSUME_APPROVAL_DECISION` — a
+legacy-kind (or foreign-writer) entry at a consumption's own identity/prefix
+must never be silently read as "not yet consumed" / "no supersession",
+either of which would be a fail-open (a second consumption or a hidden
+supersession slipping through undetected).
 """
 
 from __future__ import annotations
@@ -99,7 +111,7 @@ from tos.iap import (
 from tos.rcl import AppendReceipt, AppendRefusal, CommandType, CommitEntry
 
 from tos_runtime.custody.file_custody import verify_file_mode_and_owner
-from tos_runtime.rcl.log import SqliteCommitLog, StaleEpochRead
+from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog, StaleEpochRead
 
 __all__ = [
     "ConsumeResult",
@@ -112,8 +124,9 @@ __all__ = [
 #: docstring's "single-use consumption is log-enforced" section.
 _CONSUMPTION_PREFIX = "iap-consumption"
 
-#: The reported-gap ``CommandType`` choice (module docstring).
-_CONSUMPTION_KIND = CommandType.CONSUME_TRANSMISSION_CAPABILITY
+#: The dedicated ``CommandType`` member for a single IAP consumption (kernel
+#: round #1 §1.1/§2.1 — module docstring).
+_CONSUMPTION_KIND = CommandType.CONSUME_APPROVAL_DECISION
 
 _EVIDENCE_KIND_PROPOSAL = "IAP_PROPOSAL"
 _EVIDENCE_KIND_DECISION = "IAP_DECISION_REGISTERED"
@@ -413,12 +426,27 @@ class IntentRegistry:
         entry_command_id = _consumption_command_id(decision)
         view = self._log.read_linearizable(writer_epoch=self._writer_epoch)
         for entry in view.entries:
-            if entry.kind is _CONSUMPTION_KIND and entry.command_id == entry_command_id:
-                return (
-                    ConsumptionStatus.CONSUMED,
-                    entry.command_id,
-                    entry.command_digest,
+            if entry.command_id != entry_command_id:
+                continue
+            if entry.kind is not _CONSUMPTION_KIND:
+                # An entry already sits at this decision's own consumption
+                # identity under a DIFFERENT kind (e.g. the now-retired
+                # CONSUME_TRANSMISSION_CAPABILITY reuse, or a foreign
+                # writer) — never silently read as "not yet consumed": that
+                # would let a second, differently-kinded consumption slip
+                # through undetected (fail-open). Kernel round #1 §2.1.
+                raise CommitLogCorruption(
+                    "IntentRegistry._current_consumption: entry "
+                    f"{entry.command_id!r} matches this decision's own "
+                    f"consumption command-id but kind={entry.kind!r} is not "
+                    f"{_CONSUMPTION_KIND!r} — refusing to silently treat it as "
+                    "unconsumed (fail-closed; kernel round #1 §2.1)"
                 )
+            return (
+                ConsumptionStatus.CONSUMED,
+                entry.command_id,
+                entry.command_digest,
+            )
         return ConsumptionStatus.ELIGIBLE, None, None
 
     def decision_current(self, decision: IndependentApprovalDecision) -> bool | None:
@@ -469,10 +497,21 @@ class IntentRegistry:
             return None
         prefix = f"{_CONSUMPTION_PREFIX}:{decision.request_id}:"
         for entry in view.entries:
-            if entry.kind is not _CONSUMPTION_KIND or entry.command_id is None:
+            if entry.command_id is None or not entry.command_id.startswith(prefix):
                 continue
-            if not entry.command_id.startswith(prefix):
-                continue
+            if entry.kind is not _CONSUMPTION_KIND:
+                # A prefix-matching entry under any OTHER kind (e.g. the
+                # now-retired CONSUME_TRANSMISSION_CAPABILITY reuse, or a
+                # foreign writer) is never silently skipped — that would hide
+                # a real supersession (fail-open). Kernel round #1 §2.1.
+                raise CommitLogCorruption(
+                    "IntentRegistry.decision_current: entry "
+                    f"{entry.command_id!r} matches the consumption prefix for "
+                    f"request_id={decision.request_id!r} but kind="
+                    f"{entry.kind!r} is not {_CONSUMPTION_KIND!r} — refusing to "
+                    "silently skip a legacy/foreign-kind entry under this "
+                    "prefix (fail-closed; kernel round #1 §2.1)"
+                )
             generation_str, _, _decision_id = entry.command_id[len(prefix) :].partition(
                 ":"
             )

@@ -51,17 +51,23 @@ itself lives in the entry": it does not; its *commitment coordinate* does.
 Single-node "quorum" = self + writer epoch only (``RESIDUAL-RISK-REGISTER-002``
 R-RCL-F0) — no quorum certificate is claimed anywhere in this module.
 
-**Reported ``CommandType`` gap (slice plan §5).** No member of the closed
-``tos.rcl.vocabulary.CommandType`` vocabulary names "issue a single-use Action
-Flow Permit" as a standalone act (distinct from a reservation commit). The
-closest structural analog :meth:`issue_permit`'s STANDALONE path uses is
-:data:`~tos.rcl.CommandType.AUTHORIZE_TRANSMISSION_CAPABILITY` — also a
-single-use, once-only authorization token, durably committed — even though its
-named referent (the RCL Transmission Capability, ADR-002-002 §12) is a
-DIFFERENT governed artifact from an Action Flow Permit (afg §5.5 line 129: a
-permit is explicitly "not a Transmission Capability"). Reported, not resolved
-by a kernel edit: this module never touches ``tos.rcl.vocabulary``.
-``ledger_stages.AtomicCommitStage``'s combined commit uses
+**Reported ``CommandType`` gap — resolved by kernel round #1 (plan §1.1).**
+No member of the ADR-002-012 §10 / ADR-002-002 §27 closed
+``tos.rcl.vocabulary.CommandType`` vocabulary named "issue a single-use Action
+Flow Permit" as a standalone act (distinct from a reservation commit) — this
+module's STANDALONE :meth:`issue_permit` path previously reused the
+structurally closest analog, :data:`~tos.rcl.CommandType.AUTHORIZE_TRANSMISSION_CAPABILITY`
+(a DIFFERENT governed artifact, the RCL Transmission Capability, ADR-002-002
+§12 — afg §5.5 line 129: a permit is explicitly "not a Transmission
+Capability"). Kernel round #1 §1.1 (`docs/plans/2026-09-08-tos-phase2-kernel-
+round-1-commandtype-expiry-obligation-plan.md`) ratified a dedicated member,
+:data:`~tos.rcl.CommandType.ISSUE_ACTION_FLOW_PERMIT`, under the new
+"Runtime-realized authority/currentness commands" vocabulary block — this
+module's STANDALONE path now commits exclusively under that member; the
+``AUTHORIZE_TRANSMISSION_CAPABILITY`` reuse is retired here (kernel round #1
+§2.1). This module has no reader that filters log entries by ``kind`` (the
+STANDALONE path only ever writes), so there is no legacy-kind reader gate to
+add here. ``ledger_stages.AtomicCommitStage``'s combined commit uses
 :data:`~tos.rcl.CommandType.COMMIT_RESERVATION` instead (an exact match — see
 that module's own docstring).
 
@@ -118,9 +124,10 @@ __all__ = [
     "permit_reservation_binding",
 ]
 
-#: Reported CommandType gap (module docstring) — the STANDALONE
+#: The dedicated ``CommandType`` member for a standalone Action Flow Permit
+#: issuance (kernel round #1 §1.1/§2.1 — module docstring) — the STANDALONE
 #: :meth:`ActionFlowGovernor.issue_permit` path only.
-_STANDALONE_PERMIT_KIND = CommandType.AUTHORIZE_TRANSMISSION_CAPABILITY
+_STANDALONE_PERMIT_KIND = CommandType.ISSUE_ACTION_FLOW_PERMIT
 
 _EVIDENCE_KIND_DECISION = "AFG_DECISION"
 _EVIDENCE_KIND_PERMIT = "AFG_PERMIT"

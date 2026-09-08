@@ -7,12 +7,14 @@ from pathlib import Path
 
 import pytest
 from tos.iap import ApprovalResult, ConsumptionOutcome, ConsumptionStatus
+from tos.rcl import AppendReceipt, CommandType, CommitEntry
 from tos_runtime.authority.iap import (
     IntentRegistry,
     OperatorApprovalFileError,
+    _consumption_command_id,
     load_operator_approval_file,
 )
-from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog
 
 from .conftest import FakeEvidenceAppendPort, write_approval_file
 
@@ -482,3 +484,106 @@ def test_decision_current_true_when_not_yet_superseded_by_anything_consumed(
         approved_intent_envelope_equivalent=True,
     )
     assert intent_registry.decision_current(decision) is True
+
+
+# ============================================================================
+# kernel round #1 §2.1 — CommandType switch + legacy-kind fail-closed refusal
+# ============================================================================
+
+
+def test_consume_uses_the_new_consume_approval_decision_command_type(
+    intent_registry: IntentRegistry,
+    log: SqliteCommitLog,
+    writer_epoch: int,
+    approvals_dir: Path,
+    expected_owner_uid: int,
+) -> None:
+    """A newly-committed consumption is written under the new, dedicated
+    ``CONSUME_APPROVAL_DECISION`` member (kernel round #1 §1.1/§2.1) — the
+    reported-gap ``CONSUME_TRANSMISSION_CAPABILITY`` reuse is resolved."""
+    path = write_approval_file(approvals_dir / "p1.yaml", decision_id="d1")
+    decision = load_operator_approval_file(
+        path, expected_owner_uid=expected_owner_uid, environment_label="non-live-test"
+    )
+    intent_registry.consume(
+        decision,
+        command_identity="cmd-1",
+        command_digest="digest-1",
+        decision_current=True,
+        approved_intent_envelope_equivalent=True,
+    )
+    view = log.read_linearizable(writer_epoch=writer_epoch)
+    kinds = {entry.kind for entry in view.entries if entry.command_id is not None}
+    assert CommandType.CONSUME_APPROVAL_DECISION in kinds
+    assert CommandType.CONSUME_TRANSMISSION_CAPABILITY not in kinds
+
+
+def test_consume_raises_on_a_legacy_kind_entry_at_the_same_command_id(
+    intent_registry: IntentRegistry,
+    log: SqliteCommitLog,
+    writer_epoch: int,
+    approvals_dir: Path,
+    expected_owner_uid: int,
+) -> None:
+    """A pre-existing entry at this decision's own consumption command-id,
+    committed under the OLD legacy ``CONSUME_TRANSMISSION_CAPABILITY`` kind,
+    must never be silently treated as "not yet consumed" by
+    :meth:`IntentRegistry._current_consumption` — that would let a second,
+    differently-kinded consumption slip through undetected (fail-open). It
+    must instead raise :class:`CommitLogCorruption` (kernel round #1 §2.1)."""
+    path = write_approval_file(approvals_dir / "p1.yaml", decision_id="d1")
+    decision = load_operator_approval_file(
+        path, expected_owner_uid=expected_owner_uid, environment_label="non-live-test"
+    )
+    legacy_entry = CommitEntry(
+        command_id=_consumption_command_id(decision),
+        command_digest="legacy-digest",
+        kind=CommandType.CONSUME_TRANSMISSION_CAPABILITY,
+    )
+    receipt = log.append_cas(legacy_entry, expected_seq=-1, writer_epoch=writer_epoch)
+    assert isinstance(receipt, AppendReceipt)
+
+    with pytest.raises(CommitLogCorruption):
+        intent_registry.consume(
+            decision,
+            command_identity="cmd-1",
+            command_digest="digest-1",
+            decision_current=True,
+            approved_intent_envelope_equivalent=True,
+        )
+
+
+def test_decision_current_raises_on_a_legacy_kind_entry_under_the_supersession_prefix(
+    intent_registry: IntentRegistry,
+    log: SqliteCommitLog,
+    writer_epoch: int,
+    approvals_dir: Path,
+    expected_owner_uid: int,
+    trading_approval_policy_generation: int,
+) -> None:
+    """A later-generation entry under this proposal's own consumption prefix,
+    committed under the OLD legacy ``CONSUME_TRANSMISSION_CAPABILITY`` kind,
+    must never be silently skipped by the supersession scan in
+    :meth:`IntentRegistry.decision_current` — skipping it would hide a real
+    supersession (fail-open). It must instead raise
+    :class:`CommitLogCorruption` (kernel round #1 §2.1)."""
+    path = write_approval_file(
+        approvals_dir / "p1.yaml",
+        decision_id="d1",
+        request_id="proposal-1",
+        decision_generation=1,
+        trading_approval_policy_generation=trading_approval_policy_generation,
+    )
+    decision = load_operator_approval_file(
+        path, expected_owner_uid=expected_owner_uid, environment_label="non-live-test"
+    )
+    legacy_entry = CommitEntry(
+        command_id="iap-consumption:proposal-1:2:d-newer-legacy",
+        command_digest="legacy-digest",
+        kind=CommandType.CONSUME_TRANSMISSION_CAPABILITY,
+    )
+    receipt = log.append_cas(legacy_entry, expected_seq=-1, writer_epoch=writer_epoch)
+    assert isinstance(receipt, AppendReceipt)
+
+    with pytest.raises(CommitLogCorruption):
+        intent_registry.decision_current(decision)

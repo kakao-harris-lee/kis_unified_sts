@@ -137,6 +137,32 @@ def test_issue_produces_current_result_and_admits_when_vector_is_complete(
     assert proof_admissible(proof) is True
 
 
+def test_issue_uses_the_new_issue_egress_currentness_proof_command_type(
+    log: SqliteCommitLog, writer_epoch: int, complete_policy
+) -> None:
+    """Kernel round #1 §1.1/§2.1: proof issuance writes under the dedicated
+    ``ISSUE_EGRESS_CURRENTNESS_PROOF`` member, not the now-retired
+    ``AUTHORIZE_TRANSMISSION_CAPABILITY`` reuse (``currentness/stages.py``'s
+    own, unrelated real ``TransmissionCapability`` use of that member is a
+    different site and is unaffected)."""
+    from tos.rcl import CommandType
+
+    vector = _partial_vector(log, writer_epoch, complete_policy)
+    issuer = EgressCurrentnessProofIssuer(
+        log, writer_epoch=writer_epoch, is_complete=lambda _v: True
+    )
+    proof = issuer.issue(
+        _attempt(),
+        vector,
+        bound_generations=(1,),
+        egress_coordinates=_clear_coordinates(),
+    )
+    assert proof is not None
+    view = log.read_linearizable(writer_epoch=writer_epoch)
+    kinds = {entry.kind for entry in view.entries if entry.command_id is not None}
+    assert CommandType.ISSUE_EGRESS_CURRENTNESS_PROOF in kinds
+
+
 def test_issue_produces_unknown_result_and_refuses_when_vector_is_incomplete(
     log: SqliteCommitLog, writer_epoch: int, complete_policy
 ) -> None:

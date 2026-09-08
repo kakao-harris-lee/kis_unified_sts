@@ -25,21 +25,32 @@ capability was issued under* — ``tos.rcl.commitlog``'s own module docstring
 makes exactly this distinction for ``AuthorityEpochTransitionRecord`` (see its
 "anti-phantom greps recorded" section).
 
-**Reported ``CommandType`` gap (slice plan §5: "새 CommandType 이 필요하면 커널
-편집 대신 보고").** No member of the closed ``tos.rcl.vocabulary.CommandType``
-vocabulary names "Safety Authority epoch transition" — the 16 ADR-002-012 §10
-persistence commands and the 11 ADR-002-002 §27 conceptual commands are all
-RCL capacity/order-lifecycle verbs (``CommitReservation``, ``BindAttempt``,
-``RecordFill``, ...). The closest *structural* analog is
-:data:`~tos.rcl.vocabulary.CommandType.ADVANCE_RESTORE_GENERATION` — also a
-durably-committed, strictly-monotonic generation-like counter advance — even
-though its named referent (ADR-002-017 Recovery Generation) is a different
-governed axis from the Safety Authority epoch (ADR-002-003 §5). This is a
-**reported gap, not resolved by adding a kernel member**: this module never
-edits ``tos.rcl.vocabulary``; it reuses ``ADVANCE_RESTORE_GENERATION`` as the
-closest available ``kind`` and disambiguates the actual epoch domain/value
-entirely through the log-visible ``command_id`` (see
-:func:`_epoch_transition_command_id`), never through ``kind`` alone.
+**Reported ``CommandType`` gap — resolved by kernel round #1 (plan §1.1).**
+No member of the ADR-002-012 §10 / ADR-002-002 §27 closed
+``tos.rcl.vocabulary.CommandType`` vocabulary named "Safety Authority epoch
+transition" — the 16 persistence commands and the 11 conceptual commands are
+all RCL capacity/order-lifecycle verbs (``CommitReservation``, ``BindAttempt``,
+``RecordFill``, ...), and this module previously reused the structurally
+closest analog, :data:`~tos.rcl.vocabulary.CommandType.ADVANCE_RESTORE_GENERATION`
+(a different governed axis, ADR-002-017 Recovery Generation). Kernel round #1
+§1.1 (`docs/plans/2026-09-08-tos-phase2-kernel-round-1-commandtype-expiry-
+obligation-plan.md`) ratified a dedicated fourth member,
+:data:`~tos.rcl.vocabulary.CommandType.ADVANCE_AUTHORITY_EPOCH`, under the new
+"Runtime-realized authority/currentness commands" vocabulary block — this
+module now writes and reads exclusively under that member; the
+``ADVANCE_RESTORE_GENERATION`` reuse is retired here (kernel round #1 §2.1;
+``currentness/stages.py``'s own, unrelated ``TransmissionCapability`` use of a
+different member is untouched by this round). The epoch domain/value is still
+disambiguated entirely through the log-visible ``command_id`` (see
+:func:`_epoch_transition_command_id`), never through ``kind`` alone —
+:meth:`SafetyAuthorityEpochService.current_state` additionally now raises
+:class:`~tos_runtime.rcl.log.CommitLogCorruption` on any log entry whose
+``command_id`` matches this module's own epoch-transition prefix but whose
+``kind`` is NOT :data:`CommandType.ADVANCE_AUTHORITY_EPOCH` (kernel round #1
+§2.1) — silently skipping such an entry (e.g. one written under the
+now-retired legacy kind, or by any other unrelated writer) would let the
+derived epoch floor regress toward its ``None`` (unfenced) starting point,
+a fail-open this service must never allow.
 
 **Deriving state from the log without a payload-read API.** The kernel
 ``CommitLog.append_cas``/``read_linearizable``/``replay`` Protocol exposes only
@@ -77,7 +88,7 @@ from tos.canonical import EV_L1_PROVISIONAL_VERSION, CanonicalizationScheme, get
 from tos.rcl import AppendReceipt, AppendRefusal, CommandType, CommitEntry
 from tos.time import HealthState
 
-from tos_runtime.rcl.log import SqliteCommitLog, StaleEpochRead
+from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog, StaleEpochRead
 from tos_runtime.time.service import TimeServiceNotStarted, TrustworthyTimeService
 
 __all__ = [
@@ -92,11 +103,12 @@ __all__ = [
 #: state from the log" section).
 _EPOCH_TRANSITION_PREFIX = "authority-epoch-transition"
 
-#: The reported-gap ``CommandType`` choice (module docstring). Fixed here so
+#: The dedicated ``CommandType`` member for a Safety Authority epoch
+#: transition (kernel round #1 §1.1/§2.1 — module docstring). Fixed here so
 #: both the writer (:meth:`SafetyAuthorityEpochService.transition`) and the
 #: reader (:meth:`SafetyAuthorityEpochService.current_state`) agree on exactly
 #: one value.
-_EPOCH_TRANSITION_KIND = CommandType.ADVANCE_RESTORE_GENERATION
+_EPOCH_TRANSITION_KIND = CommandType.ADVANCE_AUTHORITY_EPOCH
 
 _EVIDENCE_KIND = "AUTHORITY_EPOCH_TRANSITION"
 _EVIDENCE_RECORD_CLASS = "AUTHORITY_EPOCH_TRANSITION"
@@ -327,10 +339,22 @@ class SafetyAuthorityEpochService:
         prefix = f"{_EPOCH_TRANSITION_PREFIX}:{self._authority_domain}:"
         max_epoch: int | None = None
         for entry in view.entries:
-            if entry.kind is not _EPOCH_TRANSITION_KIND:
-                continue
             if entry.command_id is None or not entry.command_id.startswith(prefix):
                 continue
+            if entry.kind is not _EPOCH_TRANSITION_KIND:
+                # A prefix-matching entry under any OTHER kind (e.g. the
+                # now-retired ADVANCE_RESTORE_GENERATION reuse, or any
+                # unrelated writer) is never silently skipped — that would
+                # let the derived epoch floor regress toward its unfenced
+                # None starting point (fail-open). Kernel round #1 §2.1.
+                raise CommitLogCorruption(
+                    "SafetyAuthorityEpochService.current_state: entry "
+                    f"{entry.command_id!r} matches the epoch-transition prefix "
+                    f"for domain {self._authority_domain!r} but kind="
+                    f"{entry.kind!r} is not {_EPOCH_TRANSITION_KIND!r} — refusing "
+                    "to silently skip a legacy/foreign-kind entry under this "
+                    "prefix (fail-closed; kernel round #1 §2.1)"
+                )
             suffix = entry.command_id[len(prefix) :]
             try:
                 candidate = int(suffix)
