@@ -34,11 +34,16 @@ strategy:
       #
       # HISTORY (preserved from config/decision_engine.yaml, deleted 2026-09-09
       # when that file's dead setup sections were removed). Commit a31aaf1e
-      # measured window_minutes: 15 producing ZERO trades on the 296-day
-      # replay — a US release at 08:30 ET (~21:30 KST) or an FOMC at 14:00 ET
-      # (~03:00 KST) is hours old by the time the KR session opens — and set
-      # 720 (12 h) so the first KR-session breakout after either announcement
-      # still qualifies while BOK (09:00 KST) stays same-day.
+      # observed ZERO Setup C trades on the 296-day replay and attributed it to
+      # TWO defects at once: the 15-minute window (a US release at 08:30 ET
+      # ≈ 21:30 KST, or an FOMC at 14:00 ET ≈ 03:00 KST, is hours old by the
+      # time the KR session opens) AND a `last_15min_high/low` slice that
+      # included the current bar, which made the breakout condition
+      # `current_price > last_15min_high` unreachable. It set 720 (12 h)
+      # ALONGSIDE the slice fix, so 720 was never measured against 15 with the
+      # slice bug already fixed — the zero-trade result does not, on its own,
+      # establish that 15 is too short. That same commit deliberately left the
+      # Python field default at 15.
       #
       # The DEPLOYED paper value is 15 and stays 15: operator decisions ①/③
       # (2026-09-09) make this file the single source of truth for every

@@ -46,7 +46,19 @@ strategy:
       # MarketContext.minutes_since_open(), default 08:45 from
       # config/market_schedule.yaml, NOT 09:00).
       valid_minutes_min: 15                    # skip the open auction (08:45+15 = 09:00 KST)
-      no_entry_after_minutes_since_open: 345   # no entries after 08:45+345 = 14:30 KST (force-close avoidance)
+      # No entries after 08:45+345 = 14:30 KST (force-close avoidance).
+      #
+      # HISTORY / OPEN QUESTION (2026-09-09). Commit 4e5a350c (PR #552,
+      # 2026-06-28) decided this cutoff should be 360 (= 14:45 KST after the
+      # 08:45 anchor) but applied it ONLY in config/decision_engine.yaml — the
+      # file nothing loaded, now deleted. This strategies file is what paper has
+      # actually run since then, and it stayed 345. So the deployed behaviour
+      # (14:30) has never matched the #552 decision (14:45).
+      #
+      # 345 is kept here deliberately: changing it is a live retune of Setup D,
+      # not config plumbing, and this PR does not change trading values.
+      # Resolving 345 vs 360 is a pending operator decision.
+      no_entry_after_minutes_since_open: 345
 
       # High-vol regime gate: require atr_14 >= min_atr_ratio × vol_reference,
       # where vol_reference is a CAUSAL trailing ATR percentile the setup
