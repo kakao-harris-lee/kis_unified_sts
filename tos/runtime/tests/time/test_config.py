@@ -20,6 +20,7 @@ _FULLY_VALUED: dict[str, object] = {
     "MAX_process_suspension_ms": 0,
     "MAX_time_source_disagreement_ms": 100,
     "MIN_time_independent_reference_count": 1,
+    "MAX_clock_domain_conversion_uncertainty_ms": 50,
     "tz_db_version": "2026a",
     "trading_calendar_version": "cal-1",
     "verification_profile_version": "vp-0",

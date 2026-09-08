@@ -9,8 +9,14 @@ from pathlib import Path
 
 import pytest
 import yaml
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.evidence import EvidenceAppendReceipt
-from tos.time import HealthState
+from tos.time import (
+    EvaluatedMonotonicAnchor,
+    HealthState,
+    TimeContinuityIdentity,
+    TimeHealthSnapshot,
+)
 from tos.workload import RuntimeIdentity
 from tos_runtime.authority.epoch import (
     AuthorityRuntimeConfig,
@@ -19,8 +25,10 @@ from tos_runtime.authority.epoch import (
 from tos_runtime.authority.iap import IntentRegistry
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.time.config import TrustworthyTimeConfig
-from tos_runtime.time.service import TrustworthyTimeService
+from tos_runtime.time.service import TimeServiceNotStarted, TrustworthyTimeService
 from tos_runtime.time.sources import ReferenceObservation
+
+_SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 
 class FakeEvidenceAppendPort:
@@ -103,6 +111,7 @@ def _time_config(**overrides: object) -> TrustworthyTimeConfig:
         "max_process_suspension_ms": 0,
         "max_time_source_disagreement_ms": 50,
         "min_time_independent_reference_count": 1,
+        "max_clock_domain_conversion_uncertainty_ms": 50,
         "tz_db_version": "2026a",
         "trading_calendar_version": "cal-1",
         "verification_profile_version": "vp-0",
@@ -228,3 +237,104 @@ def write_approval_file(
 @pytest.fixture
 def expected_owner_uid() -> int:
     return os.getuid()
+
+
+# ============================================================================
+# kernel round #1 §2.2 — decision-expiry test doubles
+# ============================================================================
+
+
+class FakeTimeService:
+    """A ``TrustworthyTimeService``-shaped double for decision-expiry tests
+    (mirrors ``tos_runtime.tests.currentness.conftest.FakeTimeService``
+    exactly): returns a fixed, injected :class:`~tos.time.TimeHealthSnapshot`
+    (or raises ``TimeServiceNotStarted`` when none is set) — the real FSM is
+    lane K's own test scope, not this lane's. Using a duck-typed double
+    (rather than driving the real FSM to a chosen wall-clock reading, which
+    :class:`TrustworthyTimeService` cannot do — see
+    :func:`load_operator_approval_with_receipt`'s own "honest gap" docstring
+    note: ``wall_clock_observation`` is never populated by the real service
+    in the current build) keeps this test hermetic and lets it exercise the
+    expiry composition logic directly."""
+
+    def __init__(self, snapshot: TimeHealthSnapshot | None = None) -> None:
+        self._snapshot = snapshot
+
+    def set_snapshot(self, snapshot: TimeHealthSnapshot | None) -> None:
+        self._snapshot = snapshot
+
+    def current_snapshot(self) -> TimeHealthSnapshot:
+        if self._snapshot is None:
+            raise TimeServiceNotStarted("no snapshot set on FakeTimeService")
+        return self._snapshot
+
+
+def expiry_snapshot(
+    *,
+    health_state: HealthState = HealthState.TRUSTED,
+    monotonic_continuity_id: str = "mono-1",
+    monotonic_anchor_value: int = 1_000,
+    wall_clock_observation: int | None = 1_000_000,
+    generation: int = 1,
+) -> TimeHealthSnapshot:
+    """A digest-verified, minimally-complete :class:`~tos.time.TimeHealthSnapshot`
+    with a settable monotonic continuity/value and wall-clock observation —
+    the two coordinates :func:`~tos_runtime.authority.iap.load_operator_approval_with_receipt`
+    / :meth:`~tos_runtime.authority.iap.IntentRegistry._expiry_verdict` read."""
+    anchor = TimeContinuityIdentity(
+        host_or_runtime_id="cell-1",
+        boot_id="boot-1",
+        process_id="proc-1",
+        monotonic_anchor_id=monotonic_continuity_id,
+        monotonic_anchor_value=monotonic_anchor_value,
+        tts_generation=generation,
+    )
+    issued = TimeHealthSnapshot.issue(
+        scheme=_SCHEME,
+        snapshot_id=f"ths-expiry-{generation}-{monotonic_anchor_value}",
+        generation=generation,
+        health_state=health_state,
+        time_continuity_identity=anchor,
+        evaluated_monotonic_anchor=EvaluatedMonotonicAnchor(
+            monotonic_anchor_id=monotonic_continuity_id,
+            monotonic_anchor_value=monotonic_anchor_value,
+        ),
+        wall_clock_observation=wall_clock_observation,
+        issuer_continuity_id=monotonic_continuity_id,
+        issue_monotonic_value=monotonic_anchor_value,
+        tz_db_version="v1",
+        trading_calendar_version="v1",
+        verification_profile_version="v1",
+        safety_profile_version="v1",
+    )
+    assert isinstance(issued, TimeHealthSnapshot)
+    return issued
+
+
+@pytest.fixture
+def expiry_time_service() -> FakeTimeService:
+    return FakeTimeService(snapshot=expiry_snapshot())
+
+
+@pytest.fixture
+def expiry_time_config() -> TrustworthyTimeConfig:
+    return _time_config()
+
+
+@pytest.fixture
+def expiry_intent_registry(
+    log: SqliteCommitLog,
+    evidence_port: FakeEvidenceAppendPort,
+    writer_epoch: int,
+    trading_approval_policy_generation: int,
+    expiry_time_service: FakeTimeService,
+    expiry_time_config: TrustworthyTimeConfig,
+) -> IntentRegistry:
+    return IntentRegistry(
+        log,
+        evidence_port,
+        writer_epoch=writer_epoch,
+        trading_approval_policy_generation=trading_approval_policy_generation,
+        time=expiry_time_service,
+        time_config=expiry_time_config,
+    )

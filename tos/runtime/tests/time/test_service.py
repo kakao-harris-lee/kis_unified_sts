@@ -128,6 +128,7 @@ def _config(**overrides: object) -> TrustworthyTimeConfig:
         "max_process_suspension_ms": 0,
         "max_time_source_disagreement_ms": 50,
         "min_time_independent_reference_count": 1,
+        "max_clock_domain_conversion_uncertainty_ms": 50,
         "tz_db_version": "2026a",
         "trading_calendar_version": "cal-1",
         "verification_profile_version": "vp-0",
