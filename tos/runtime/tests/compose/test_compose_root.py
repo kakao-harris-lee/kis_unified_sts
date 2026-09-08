@@ -279,11 +279,21 @@ class TestComposeRootWiring:
             "limit_source_is_injected_envelope",
             "economic_commitment_exclusive",
             "flow_commitment_exclusive",
+            # egress_coordinates.yaml (8, TOS Phase 4 작업 6 §2.1)
+            "action",
+            "method",
+            "route_identity",
+            "credential_generation",
+            "broker_session_generation",
+            "egress_generation",
+            "active_principal",
+            "capsule_terminus_fields",
         }
         for coordinate in stored["payload"]["attested_coordinates"]:
             assert coordinate["source_file"] in (
                 "egress_attestations.yaml",
                 "risk_attestations.yaml",
+                "egress_coordinates.yaml",
             )
             assert len(coordinate["source_file_digest"]) == 64  # sha256 hex
 

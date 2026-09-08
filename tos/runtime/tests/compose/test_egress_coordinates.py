@@ -1,0 +1,221 @@
+"""``tos_runtime.compose._egress_coordinates`` tests (TOS Phase 4 작업 6 §2.1,
+plan doc ``docs/plans/2026-09-08-tos-phase4-send-seal-plan.md``). Hermetic —
+real config files under ``tmp_path`` / ``config_dir``, a real composed
+runtime for the "single source of truth" assertions (never a mock of the
+gateway's own coordinate set).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import yaml
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.egress import EgressCoordinateSet
+from tos_runtime.compose._egress_coordinates import (
+    EgressCoordinateConfigError,
+    load_egress_coordinates,
+)
+
+from .test_compose_root import _compose
+
+_SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
+
+pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
+
+
+def _valid_egress_coordinates() -> dict:
+    return {
+        "action": {"value": "NEW_ORDER"},
+        "method": {"value": "SUBMIT"},
+        "route_identity": {"value": "synthetic-route"},
+        "credential_generation": {"value": 0},
+        "broker_session_generation": {"value": 0},
+        "egress_generation": {"value": 1},
+        "active_principal": {"value": "egressgw-{environment_label}"},
+        "capsule_terminus_fields": {"value": ["account", "instrument"]},
+    }
+
+
+def _write(path: Path, content: dict) -> None:
+    path.write_text(yaml.safe_dump(content, sort_keys=False), encoding="utf-8")
+
+
+# ============================================================================
+# Loader happy path
+# ============================================================================
+
+
+def test_loader_happy_path_and_environment_label_substitution(tmp_path: Path) -> None:
+    path = tmp_path / "egress_coordinates.yaml"
+    _write(path, _valid_egress_coordinates())
+
+    loaded = load_egress_coordinates(path, environment_label="paper-env-7")
+
+    assert loaded.action == "NEW_ORDER"
+    assert loaded.method == "SUBMIT"
+    assert loaded.route_identity == "synthetic-route"
+    assert loaded.credential_generation == 0
+    assert loaded.broker_session_generation == 0
+    assert loaded.egress_generation == 1
+    # {environment_label} substitution is the ONLY templating the loader
+    # performs.
+    assert loaded.active_principal == "egressgw-paper-env-7"
+    assert loaded.capsule_terminus_fields == ("account", "instrument")
+
+
+def test_active_principal_without_the_token_passes_through_unchanged(
+    tmp_path: Path,
+) -> None:
+    raw = _valid_egress_coordinates()
+    raw["active_principal"] = {"value": "fixed-principal-no-templating"}
+    path = tmp_path / "egress_coordinates.yaml"
+    _write(path, raw)
+
+    loaded = load_egress_coordinates(path, environment_label="paper-env-7")
+
+    assert loaded.active_principal == "fixed-principal-no-templating"
+
+
+# ============================================================================
+# Each key null (named-TBD) refuses to load, naming the key
+# ============================================================================
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "action",
+        "method",
+        "route_identity",
+        "credential_generation",
+        "broker_session_generation",
+        "egress_generation",
+        "active_principal",
+        "capsule_terminus_fields",
+    ],
+)
+def test_a_still_null_field_refuses_to_load(tmp_path: Path, field: str) -> None:
+    raw = _valid_egress_coordinates()
+    raw[field] = {"value": None}
+    path = tmp_path / "egress_coordinates.yaml"
+    _write(path, raw)
+
+    with pytest.raises(EgressCoordinateConfigError, match=field):
+        load_egress_coordinates(path, environment_label="paper-env-7")
+
+
+def test_missing_file_refuses_to_load(tmp_path: Path) -> None:
+    with pytest.raises(EgressCoordinateConfigError):
+        load_egress_coordinates(
+            tmp_path / "does-not-exist.yaml", environment_label="paper-env-7"
+        )
+
+
+def test_not_a_mapping_refuses_to_load(tmp_path: Path) -> None:
+    path = tmp_path / "egress_coordinates.yaml"
+    path.write_text(yaml.safe_dump(["not", "a", "mapping"]), encoding="utf-8")
+    with pytest.raises(EgressCoordinateConfigError):
+        load_egress_coordinates(path, environment_label="paper-env-7")
+
+
+# ============================================================================
+# capsule_terminus_fields validation
+# ============================================================================
+
+
+def test_unknown_capsule_terminus_field_refuses_to_load(tmp_path: Path) -> None:
+    raw = _valid_egress_coordinates()
+    raw["capsule_terminus_fields"] = {"value": ["account", "not_a_real_field"]}
+    path = tmp_path / "egress_coordinates.yaml"
+    _write(path, raw)
+
+    with pytest.raises(EgressCoordinateConfigError, match="not_a_real_field"):
+        load_egress_coordinates(path, environment_label="paper-env-7")
+
+
+def test_empty_capsule_terminus_fields_refuses_to_load(tmp_path: Path) -> None:
+    raw = _valid_egress_coordinates()
+    raw["capsule_terminus_fields"] = {"value": []}
+    path = tmp_path / "egress_coordinates.yaml"
+    _write(path, raw)
+
+    with pytest.raises(EgressCoordinateConfigError):
+        load_egress_coordinates(path, environment_label="paper-env-7")
+
+
+def test_non_list_capsule_terminus_fields_refuses_to_load(tmp_path: Path) -> None:
+    raw = _valid_egress_coordinates()
+    raw["capsule_terminus_fields"] = {"value": "account"}
+    path = tmp_path / "egress_coordinates.yaml"
+    _write(path, raw)
+
+    with pytest.raises(EgressCoordinateConfigError):
+        load_egress_coordinates(path, environment_label="paper-env-7")
+
+
+# ============================================================================
+# Single source of truth — the wired EgressCoordinateSet/digest equal the
+# loader output built from THIS SAME config file (mutation M-R1 catcher):
+# if a caller ever reverts to a hardcoded literal that diverges from a
+# custom config value, this test goes red.
+# ============================================================================
+
+
+def test_wired_coordinates_equal_the_configured_non_default_values(
+    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+) -> None:
+    custom = {
+        "action": {"value": "CUSTOM_ACTION"},
+        "method": {"value": "CUSTOM_METHOD"},
+        "route_identity": {"value": "custom-route"},
+        "credential_generation": {"value": 7},
+        "broker_session_generation": {"value": 3},
+        "egress_generation": {"value": 9},
+        "active_principal": {"value": "custom-{environment_label}"},
+        "capsule_terminus_fields": {"value": ["account", "instrument"]},
+    }
+    _write(config_dir / "egress_coordinates.yaml", custom)
+
+    runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+    resolved = runtime.context_resolver
+
+    assert resolved.authorized_coordinates == EgressCoordinateSet(
+        endpoint="synthetic://paper/order",
+        account=runtime.context_resolver.instrument_key.account,
+        environment="non-live-test",
+        action="CUSTOM_ACTION",
+        method="CUSTOM_METHOD",
+        route_identity="custom-route",
+        credential_generation=7,
+        broker_session_generation=3,
+        egress_generation=9,
+        active_principal="custom-non-live-test",
+    )
+    assert resolved.capsule_egress_request_digest == _SCHEME.compute_digest(
+        {
+            "account": runtime.context_resolver.instrument_key.account,
+            "instrument": runtime.context_resolver.instrument_key.instrument,
+        }
+    )
+
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+
+
+def test_no_authorized_coordinate_literal_remains_in_wiring_source() -> None:
+    """ "No literal" grep test (Part 1 test list) — the seven authorized-
+    coordinate values must come from config only, never a bare literal in
+    ``_wiring.py``."""
+    import tos_runtime.compose._wiring as wiring_module
+
+    source = Path(wiring_module.__file__).read_text(encoding="utf-8")
+    for literal in (
+        '"synthetic-route"',
+        "NEW_ORDER",
+        "SUBMIT",
+        "credential_generation=0",
+        "egress_generation=1",
+    ):
+        assert literal not in source, f"literal {literal!r} still present in _wiring.py"

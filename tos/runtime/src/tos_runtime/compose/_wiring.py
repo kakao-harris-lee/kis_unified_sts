@@ -58,6 +58,10 @@ from tos_runtime.compose._currentness_wiring import (
     _RiskAndCurrentness,
 )
 from tos_runtime.compose._egress_attestations import EgressAttestations
+from tos_runtime.compose._egress_coordinates import (
+    EgressCoordinatesConfig,
+    load_egress_coordinates,
+)
 from tos_runtime.compose._engine_config import load_engine_config
 from tos_runtime.compose._pending_dimensions import PendingDimensionSpec
 from tos_runtime.compose._risk_attestations import (
@@ -125,6 +129,7 @@ _RISK_CONFIG_NAME = "risk.yaml"
 _CURRENTNESS_CONFIG_NAME = "currentness.yaml"
 _CURRENTNESS_DIMENSIONS_CONFIG_NAME = "currentness_dimensions.yaml"
 _RELEASE_CONFIG_NAME = "release.yaml"
+_EGRESS_COORDINATES_CONFIG_NAME = "egress_coordinates.yaml"
 
 #: Where operator-authored Independent Approval decisions live, keyed by
 #: proposal digest (``tos_runtime.authority.iap`` module docstring:
@@ -775,6 +780,7 @@ def _build_context_resolver(
     proof_issuer: EgressCurrentnessProofIssuer,
     pending_dimension_specs: tuple[PendingDimensionSpec, ...],
     egress_attestations: EgressAttestations,
+    egress_coordinates: EgressCoordinatesConfig,
     construction: ConstructionConfig,
     environment_label: str,
     continuity_id: str,
@@ -821,16 +827,26 @@ def _build_context_resolver(
             endpoint="synthetic://paper/order",
             account=construction.account,
             environment=environment_label,
-            action="NEW_ORDER",
-            method="SUBMIT",
-            route_identity="synthetic-route",
-            credential_generation=0,
-            broker_session_generation=0,
-            egress_generation=1,
-            active_principal=f"egressgw-{environment_label}",
+            action=egress_coordinates.action,
+            method=egress_coordinates.method,
+            route_identity=egress_coordinates.route_identity,
+            credential_generation=egress_coordinates.credential_generation,
+            broker_session_generation=egress_coordinates.broker_session_generation,
+            egress_generation=egress_coordinates.egress_generation,
+            active_principal=egress_coordinates.active_principal,
         ),
+        # capsule_egress_request_digest is a STAND-IN for the eventual
+        # capsule-chain terminus (design #34 / EGRESS-EV-003 "+Security",
+        # not landed in this Phase) — see
+        # tos_runtime.compose._egress_coordinates's own module docstring.
+        # capsule_terminus_fields only selects WHICH ConstructionConfig
+        # fields feed the digest (config); the digest itself stays a
+        # genuine per-attempt derivation, never a literal.
         capsule_egress_request_digest=_SCHEME.compute_digest(
-            {"account": construction.account, "instrument": construction.instrument}
+            {
+                name: getattr(construction, name)
+                for name in egress_coordinates.capsule_terminus_fields
+            }
         ),
         outbound_side=construction.outbound_side,
         action_class=construction.action_class,
@@ -970,7 +986,14 @@ def _boot_services(
     uid: int,
     authority_domain: str,
     monotonic_source: MonotonicSource | None,
-) -> tuple[RuntimeIdentity, _Infra, _RclAndAuthority, _RiskAndCurrentness, bool]:
+) -> tuple[
+    RuntimeIdentity,
+    _Infra,
+    _RclAndAuthority,
+    _RiskAndCurrentness,
+    bool,
+    EgressCoordinatesConfig,
+]:
     """Identity + STAGE A release probe + custody/evidence/time + RCL/
     authority + risk/currentness + STAGE B release probe — split out of
     :func:`~tos_runtime.compose.root.compose_paper_runtime` purely for the
@@ -1011,17 +1034,22 @@ def _boot_services(
         infra.time_service,
         rcl.authority_epoch_service,
     )
+    egress_coordinates = load_egress_coordinates(
+        config_dir / _EGRESS_COORDINATES_CONFIG_NAME,
+        environment_label=environment_label,
+    )
     record_operator_attested_inputs(
         config_dir,
         infra.evidence_store,
         identity,
         risk.egress_attestations,
         risk.risk_attestations,
+        egress_coordinates,
     )
     release_admitted = _stage_b_release_probe(
         release_service, identity, infra.time_service, rcl.rcl_log
     )
-    return identity, infra, rcl, risk, release_admitted
+    return identity, infra, rcl, risk, release_admitted, egress_coordinates
 
 
 def _build_stage_map(

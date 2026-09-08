@@ -154,7 +154,7 @@ def compose_paper_runtime(
         Various ``*ConfigError``/custody exceptions: fail-closed config or custody/manifest violations, before any engine wiring.
     """
     uid = os.getuid()
-    identity, infra, rcl, risk, release_admitted = _boot_services(
+    identity, infra, rcl, risk, release_admitted, egress_coordinates = _boot_services(
         config_dir,
         data_dir,
         custody_root,
@@ -190,6 +190,7 @@ def compose_paper_runtime(
         proof_issuer=risk.proof_issuer,
         pending_dimension_specs=risk.pending_dimension_specs,
         egress_attestations=risk.egress_attestations,
+        egress_coordinates=egress_coordinates,
         construction=construction,
         environment_label=environment_label,
         continuity_id=continuity_id,

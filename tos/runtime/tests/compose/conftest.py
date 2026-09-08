@@ -122,6 +122,22 @@ def config_dir(tmp_path: Path) -> Path:
         },
     )
     _write_yaml(
+        directory / "egress_coordinates.yaml",
+        {
+            # Mirrors the literals _wiring.py's _build_context_resolver used
+            # to hardcode (kernel round #1 §7.2 survey) — see
+            # tos_runtime.compose._egress_coordinates's own module docstring.
+            "action": {"value": "NEW_ORDER"},
+            "method": {"value": "SUBMIT"},
+            "route_identity": {"value": "synthetic-route"},
+            "credential_generation": {"value": 0},
+            "broker_session_generation": {"value": 0},
+            "egress_generation": {"value": 1},
+            "active_principal": {"value": "egressgw-{environment_label}"},
+            "capsule_terminus_fields": {"value": ["account", "instrument"]},
+        },
+    )
+    _write_yaml(
         directory / "risk_attestations.yaml",
         {
             "numerically_safe": {"attested": True},

@@ -14,6 +14,7 @@ from pathlib import Path
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.compose._egress_attestations import EgressAttestations
+from tos_runtime.compose._egress_coordinates import EgressCoordinatesConfig
 from tos_runtime.compose._risk_attestations import RiskAttestations
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
@@ -22,12 +23,16 @@ from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog
 __all__ = [
     "EGRESS_ATTESTATIONS_CONFIG_NAME",
     "RISK_ATTESTATIONS_CONFIG_NAME",
+    "EGRESS_COORDINATES_CONFIG_NAME",
     "verify_rcl_log_or_halt",
     "record_operator_attested_inputs",
 ]
 
 EGRESS_ATTESTATIONS_CONFIG_NAME = "egress_attestations.yaml"
 RISK_ATTESTATIONS_CONFIG_NAME = "risk_attestations.yaml"
+#: Same config file name ``_wiring.py``/``_egress_coordinates.py`` use for
+#: the egress-coordinates config (TOS Phase 4 작업 6 §2.1).
+EGRESS_COORDINATES_CONFIG_NAME = "egress_coordinates.yaml"
 
 #: The evidence kind/record class for the operator-attested-inputs
 #: provenance record (re-review finding F4, 2026-09-08).
@@ -67,20 +72,22 @@ def record_operator_attested_inputs(
     identity: RuntimeIdentity,
     egress_attestations: EgressAttestations,
     risk_attestations: RiskAttestations,
+    egress_coordinates: EgressCoordinatesConfig,
 ) -> None:
     """Durably record ONE evidence entry enumerating every config-attested
-    coordinate name (items 6/12/16 + the step 6/7 admission witnesses) and
-    its source config file's own digest — re-review reviewer Q3, F4
-    (2026-09-08): "the five egress attestations enter SendBoundaryContext as
-    bare kernel-typed fields, identical in shape to derived verdicts". This
-    record is what lets an auditor tell attested from derived downstream —
-    the field VALUES themselves carry no marker of their own origin, so the
-    origin is instead evidenced once, here, at boot.
+    coordinate name (items 6/12/16 + the step 6/7 admission witnesses + the
+    egress-coordinate/capsule-terminus-stand-in inputs, TOS Phase 4 작업 6
+    §2.1) and its source config file's own digest — re-review reviewer Q3,
+    F4 (2026-09-08): "the five egress attestations enter SendBoundaryContext
+    as bare kernel-typed fields, identical in shape to derived verdicts".
+    This record is what lets an auditor tell attested from derived
+    downstream — the field VALUES themselves carry no marker of their own
+    origin, so the origin is instead evidenced once, here, at boot.
 
     Never re-derives ``config_dir``'s file names independently elsewhere —
-    this is the ONE place that reads both attestation config files' raw
-    bytes for digesting, kept next to where the rest of boot already reads
-    them (``_wiring._boot_services``).
+    this is the ONE place that reads all three attestation/coordinate config
+    files' raw bytes for digesting, kept next to where the rest of boot
+    already reads them (``_wiring._boot_services``).
     """
     coordinates: list[dict[str, str]] = []
     for path, prefix, dataclass_type in (
@@ -93,6 +100,11 @@ def record_operator_attested_inputs(
             config_dir / RISK_ATTESTATIONS_CONFIG_NAME,
             RISK_ATTESTATIONS_CONFIG_NAME,
             type(risk_attestations),
+        ),
+        (
+            config_dir / EGRESS_COORDINATES_CONFIG_NAME,
+            EGRESS_COORDINATES_CONFIG_NAME,
+            type(egress_coordinates),
         ),
     ):
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
