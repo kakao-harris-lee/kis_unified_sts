@@ -26,6 +26,10 @@ from tos_runtime.compose._pending_dimensions import (
     PendingDimensionSpec,
     load_pending_currentness_dimensions,
 )
+from tos_runtime.compose._risk_attestations import (
+    RiskAttestations,
+    load_risk_attestations,
+)
 from tos_runtime.compose.context import (
     RecordingActionFlowGovernor,
     RecordingAggregateRiskService,
@@ -60,6 +64,7 @@ _RISK_CONFIG_NAME = "risk.yaml"
 _CURRENTNESS_CONFIG_NAME = "currentness.yaml"
 _CURRENTNESS_DIMENSIONS_CONFIG_NAME = "currentness_dimensions.yaml"
 _EGRESS_ATTESTATIONS_CONFIG_NAME = "egress_attestations.yaml"
+_RISK_ATTESTATIONS_CONFIG_NAME = "risk_attestations.yaml"
 
 
 @dataclass
@@ -78,6 +83,10 @@ class _RiskAndCurrentness:
     #: follow-up guidance) — see
     #: :mod:`tos_runtime.compose._egress_attestations`'s own module docstring.
     egress_attestations: EgressAttestations
+    #: The 6 operator-attested step 6/7 admission witnesses (re-review
+    #: finding F4) — see
+    #: :mod:`tos_runtime.compose._risk_attestations`'s own module docstring.
+    risk_attestations: RiskAttestations
     #: The late-bound cell the ACTION_FLOW dimension reader closes over —
     #: filled in with step 9's ``VerdictRecorder`` once
     #: ``_build_realized_stages`` creates it (see
@@ -263,6 +272,9 @@ def _build_risk_and_currentness(
     egress_attestations = load_egress_attestations(
         config_dir / _EGRESS_ATTESTATIONS_CONFIG_NAME
     )
+    risk_attestations = load_risk_attestations(
+        config_dir / _RISK_ATTESTATIONS_CONFIG_NAME
+    )
 
     return _RiskAndCurrentness(
         projection=projection,
@@ -272,6 +284,7 @@ def _build_risk_and_currentness(
         currentness_assembler=currentness_assembler,
         pending_dimension_specs=pending_dimension_specs,
         egress_attestations=egress_attestations,
+        risk_attestations=risk_attestations,
         action_flow_dimension_state=action_flow_dimension_state,
         proof_issuer=proof_issuer,
     )

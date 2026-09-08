@@ -55,18 +55,24 @@ class FakeMonotonicSource:
 def _aggregate_inputs(request) -> AggregateRiskDecisionInputs | None:
     from tos.are import RiskScopeKind
 
+    # all_fields_attributed / numerically_safe / limit_source_is_injected_envelope
+    # are deliberately set to the WRONG (refusing) polarity here: compose's own
+    # wrap_aggregate_risk_inputs_provider (tos_runtime.compose._risk_attestations,
+    # re-review finding F4) ALWAYS overrides them from risk_attestations.yaml's
+    # operator attestation, never this test-only literal -- the e2e hand-off
+    # still ADMITting proves the override is what actually governs the outcome.
     return AggregateRiskDecisionInputs(
         cells=fx.adverse_scenario_cells(),
         required_scenario_kinds=frozenset(
             {"ADVERSE_PRICE_SLIPPAGE_GAP_VOL_LIQ"}  # type: ignore[arg-type]
         ),
         applicable_risk_scopes=("ACCOUNT",),
-        all_fields_attributed=True,
+        all_fields_attributed=False,
         required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
-        numerically_safe=True,
-        valuation_ok=True,
+        numerically_safe=False,
+        valuation_ok=False,
         injected_envelope_max=fx.aggregate_risk_effective_limit(),
-        limit_source_is_injected_envelope=True,
+        limit_source_is_injected_envelope=False,
         effective_limit=fx.aggregate_risk_effective_limit(),
     )
 
@@ -125,6 +131,16 @@ def _action_flow_inputs(request) -> ActionFlowDecisionInputs | None:
         envelope_reset_on_duplicate=False,
         concurrent_consumers_share_one_envelope=True,
     )
+    # limit_source_is_injected_envelope / economic_commitment_exclusive /
+    # flow_commitment_exclusive / generation_current are deliberately set to
+    # the WRONG (refusing) polarity here: compose's own
+    # wrap_action_flow_inputs_provider (tos_runtime.compose._risk_attestations,
+    # re-review finding F4) ALWAYS overrides the first three from
+    # risk_attestations.yaml's operator attestation and ALWAYS derives
+    # generation_current for real (tos.afg.generation_fenced against the RCL
+    # log's own current tip) -- never this test-only literal. The e2e
+    # hand-off still ADMITting proves the override/derivation is what
+    # actually governs the outcome, not this placeholder.
     return ActionFlowDecisionInputs(
         cause=cause,
         snapshot=snapshot,
@@ -133,15 +149,15 @@ def _action_flow_inputs(request) -> ActionFlowDecisionInputs | None:
         observed_amplification=observed,
         requested_limit=fx.action_flow_requested_limit(),
         injected_envelope_max=fx.action_flow_envelope_max(),
-        limit_source_is_injected_envelope=True,
+        limit_source_is_injected_envelope=False,
         economic_ref="economic-ref-compose-1",
         flow_vector=fx.action_flow_requested_limit(),
         committed_flow_vectors=(),
         hard_limit=fx.action_flow_envelope_max(),
         runtime_limit=fx.action_flow_envelope_max(),
-        economic_commitment_exclusive=True,
-        flow_commitment_exclusive=True,
-        generation_current=True,
+        economic_commitment_exclusive=False,
+        flow_commitment_exclusive=False,
+        generation_current=False,
         applicable_action_flow_scopes=("ACCOUNT",),
         decision_generation=1,
         action_class=ActionClassKind.NORMAL_NEW_RISK,
@@ -198,6 +214,48 @@ class TestComposeRootWiring:
         assert runtime.writer_epoch >= 1
         assert runtime.rcl_log.current_epoch() == runtime.writer_epoch
         assert runtime.evidence_store.key_generation == 1
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+    def test_operator_attested_inputs_record_lists_exactly_the_attested_set(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """Re-review reviewer Q3 / finding F4 (2026-09-08): compose must
+        durably evidence, once at boot, every config-attested coordinate
+        name so an auditor can separate attested from derived downstream —
+        the field values themselves carry no marker of their own origin."""
+        import json
+
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        rows = runtime.evidence_store.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = ?",
+            ("OPERATOR_ATTESTED_INPUTS",),
+        ).fetchall()
+        assert len(rows) == 1
+        stored = json.loads(rows[0][0])
+        names = {c["name"] for c in stored["payload"]["attested_coordinates"]}
+        assert names == {
+            # egress_attestations.yaml (5)
+            "account_instrument_action_allowed",
+            "venue_session_account_facts_current",
+            "broker_constraint_generation_current",
+            "restrictive_latch_state",
+            "worst_credible_capacity",
+            # risk_attestations.yaml (6)
+            "numerically_safe",
+            "valuation_ok",
+            "all_fields_attributed",
+            "limit_source_is_injected_envelope",
+            "economic_commitment_exclusive",
+            "flow_commitment_exclusive",
+        }
+        for coordinate in stored["payload"]["attested_coordinates"]:
+            assert coordinate["source_file"] in (
+                "egress_attestations.yaml",
+                "risk_attestations.yaml",
+            )
+            assert len(coordinate["source_file_digest"]) == 64  # sha256 hex
+
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 

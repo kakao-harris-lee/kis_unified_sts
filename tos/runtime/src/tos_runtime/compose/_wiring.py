@@ -48,12 +48,20 @@ from tos_runtime.authority.iap import (
     load_operator_approval_file,
 )
 from tos_runtime.authority.stages import IndependentApprovalStage
+from tos_runtime.compose._boot_integrity import (
+    record_operator_attested_inputs,
+    verify_rcl_log_or_halt,
+)
 from tos_runtime.compose._currentness_wiring import (
     _build_risk_and_currentness,
     _RiskAndCurrentness,
 )
 from tos_runtime.compose._egress_attestations import EgressAttestations
 from tos_runtime.compose._pending_dimensions import PendingDimensionSpec
+from tos_runtime.compose._risk_attestations import (
+    wrap_action_flow_inputs_provider,
+    wrap_aggregate_risk_inputs_provider,
+)
 from tos_runtime.compose._types import (
     ComposedRuntime,
     ConstructionConfig,
@@ -74,13 +82,13 @@ from tos_runtime.currentness.stages import (
 from tos_runtime.currentness.vector import CurrentnessAssembler
 from tos_runtime.custody.file_custody import FileCustody
 from tos_runtime.custody.key_provider import FileKeyProvider
-from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
+from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.sinks import (
     EngineEvidenceSinkAdapter,
     GatewayEvidenceSinkAdapter,
 )
 from tos_runtime.evidence.store import SqliteEvidenceStore
-from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog
+from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.release.admission import ReleaseAdmissionService
 from tos_runtime.release.config import load_release_config
 from tos_runtime.risk.aggregate import (
@@ -383,33 +391,6 @@ def _build_rcl_and_authority(
     )
 
 
-def _verify_rcl_log_or_halt(
-    rcl_log: SqliteCommitLog,
-    evidence_store: SqliteEvidenceStore,
-    emergency_log: EmergencyAppendLog,
-    identity: RuntimeIdentity,
-) -> None:
-    """Independently re-verify the RCL log's own replay at boot, before any
-    Stage is wired (re-review finding F1, 2026-09-08): compose must never
-    hand back a runtime over a corrupt log. On
-    :class:`~tos_runtime.rcl.log.CommitLogCorruption`, durably records one
-    ``RCL_CORRUPTION_ALERT`` (both evidence paths, via
-    :func:`~tos_runtime.evidence.emergency.record_halt`) before re-raising
-    — never a silent halt, never a swallowed exception."""
-    try:
-        rcl_log.verify_replay()
-    except CommitLogCorruption as exc:
-        record_halt(
-            evidence_store,
-            emergency_log,
-            payload={"detail": str(exc)},
-            kind="RCL_CORRUPTION_ALERT",
-            record_class="RCL_CORRUPTION_ALERT",
-            runtime_identity=identity,
-        )
-        raise
-
-
 def _stage_b_release_probe(
     release_service: ReleaseAdmissionService,
     identity: RuntimeIdentity,
@@ -616,16 +597,28 @@ def _build_realized_stages(
     time_gate = _time_permits_new_risk(infra.time_service)
     generation_provider = _rcl_tip_generation_provider(rcl_log, writer_epoch)
 
+    # Re-review finding F4 (2026-09-08): the caller-supplied inputs
+    # providers stay scenario-specific (cells/cause/snapshot/...), but the
+    # six step 6/7 admission witnesses with no Phase 2 producer are ALWAYS
+    # overridden here from operator-attested config — never a caller
+    # literal — and generation_current is ALWAYS derived, never attested
+    # (see tos_runtime.compose._risk_attestations's own module docstring).
     step6_stage = AggregateRiskDecisionStage(
         risk_service,
-        inputs_provider=aggregate_risk_inputs_provider,
+        inputs_provider=wrap_aggregate_risk_inputs_provider(
+            aggregate_risk_inputs_provider, risk.risk_attestations
+        ),
         snapshot_generation_provider=generation_provider,
         decision_generation_provider=generation_provider,
         time_permits_new_risk=time_gate,
     )
     step7_stage = ActionFlowDecisionStage(
         flow_governor,
-        inputs_provider=action_flow_inputs_provider,
+        inputs_provider=wrap_action_flow_inputs_provider(
+            action_flow_inputs_provider,
+            risk.risk_attestations,
+            generation_provider,
+        ),
         time_permits_new_risk=time_gate,
     )
     step8_stage = LedgerVerificationStage(
@@ -910,7 +903,7 @@ def _boot_services(
         infra.time_service,
         authority_domain,
     )
-    _verify_rcl_log_or_halt(
+    verify_rcl_log_or_halt(
         rcl.rcl_log, infra.evidence_store, infra.emergency_log, identity
     )
     risk = _build_risk_and_currentness(
@@ -920,6 +913,13 @@ def _boot_services(
         infra.evidence_store,
         infra.time_service,
         rcl.authority_epoch_service,
+    )
+    record_operator_attested_inputs(
+        config_dir,
+        infra.evidence_store,
+        identity,
+        risk.egress_attestations,
+        risk.risk_attestations,
     )
     release_admitted = _stage_b_release_probe(
         release_service, identity, infra.time_service, rcl.rcl_log

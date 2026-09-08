@@ -121,6 +121,17 @@ def config_dir(tmp_path: Path) -> Path:
         },
     )
     _write_yaml(
+        directory / "risk_attestations.yaml",
+        {
+            "numerically_safe": {"attested": True},
+            "valuation_ok": {"attested": True},
+            "all_fields_attributed": {"attested": True},
+            "limit_source_is_injected_envelope": {"attested": True},
+            "economic_commitment_exclusive": {"attested": True},
+            "flow_commitment_exclusive": {"attested": True},
+        },
+    )
+    _write_yaml(
         directory / "release.yaml",
         {
             "expected_code_digest": EXPECTED_CODE_DIGEST,
