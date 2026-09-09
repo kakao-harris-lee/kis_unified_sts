@@ -79,8 +79,10 @@ runtime-wide latch (never per-attempt: an invariant violation is a fact about TH
 internal consistency, not scoped to one attempt) that :class:`~tos_runtime.engine.driver
 .EngineDriver` checks before handling any NEW ``DECISION_TICK`` (never an ``EGRESS_RESULT`` —
 results are still consumed; knowledge may improve even while new risk is blocked). Clearing the
-latch is explicitly NOT provided in this wave — see the inbox module's own docstring; a Phase 5
-operator re-arm is the disclosed follow-on.
+latch is an explicit operator action, available now (re-review finding R3, 2026-09-09) — see
+:meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt` and
+:meth:`~tos_runtime.compose._types.ComposedRuntime.clear_new_risk_halt` — never automatic; nothing
+in this module or the driver clears it on its own.
 
 **Cancel-crossing fill correction (independent review finding #8, 2026-09-09).** ADR-002-005 §7:
 "A later valid fill SHALL be accepted even after a locally observed CANCELLED/REJECTED; the
