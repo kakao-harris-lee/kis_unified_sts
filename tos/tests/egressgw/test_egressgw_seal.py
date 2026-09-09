@@ -29,43 +29,100 @@ from ._egressgw_fixtures import SCHEME, authorized_coordinates, happy_context, o
 # build_send_seal — every required fact rejects None (design §1.4)
 # ---------------------------------------------------------------------------
 
-_MISSING_FIELD_CASES: list[tuple[str, dict[str, Any]]] = [
-    ("instrument_key", {"instrument_key": None}),
-    ("request identity (egress_request absent)", {"egress_request": None}),
-    ("capsule_egress_request_digest", {"capsule_egress_request_digest": None}),
-    ("claim_principal (context.principal)", {"principal": None}),
-    ("authorized coordinates absent", {"authorized_coordinates": None}),
-    ("endpoint", {"authorized_coordinates": authorized_coordinates(endpoint=None)}),
+#: Each case's third element is the exact set of field names ``build_send_seal``'s missing-fact
+#: check must name in its raised reason (independent review finding #6 — previously the
+#: parametrization asserted only ``pytest.raises(SendSealUnconstructable)`` with no ``match``, so
+#: any of the three rejection paths (missing fact / coordinate mismatch / principal mismatch)
+#: satisfied every case; ``match="missing required fact"`` on its own already proves the case is
+#: **not** satisfied by one of the other two paths, and the per-field check below proves the
+#: *right* fact was named).
+_MISSING_FIELD_CASES: list[tuple[str, dict[str, Any], tuple[str, ...]]] = [
+    ("instrument_key", {"instrument_key": None}, ("instrument_key",)),
+    (
+        "request identity (egress_request absent)",
+        {"egress_request": None},
+        ("canonical_command_digest", "request_bytes_digest"),
+    ),
+    (
+        "capsule_egress_request_digest",
+        {"capsule_egress_request_digest": None},
+        ("capsule_egress_request_digest",),
+    ),
+    (
+        "claim_request_digest (context.request_digest)",
+        {"request_digest": None},
+        ("claim_request_digest",),
+    ),
+    ("claim_principal (context.principal)", {"principal": None}, ("claim_principal",)),
+    (
+        "authorized coordinates absent",
+        {"authorized_coordinates": None},
+        (
+            "account",
+            "action",
+            "active_principal",
+            "broker_session_generation",
+            "credential_generation",
+            "egress_generation",
+            "endpoint",
+            "environment",
+            "method",
+            "route_identity",
+        ),
+    ),
+    (
+        "endpoint",
+        {"authorized_coordinates": authorized_coordinates(endpoint=None)},
+        ("endpoint",),
+    ),
     (
         "route_identity",
         {"authorized_coordinates": authorized_coordinates(route_identity=None)},
+        ("route_identity",),
     ),
-    ("capability_nonce", {"capability_nonce": None}),
-    ("action_flow_permit_nonce", {"action_flow_permit_nonce": None}),
-    ("outbound_quantity", {"outbound_quantity": None}),
-    ("outbound_price", {"outbound_price": None}),
-    ("outbound_side", {"outbound_side": None}),
+    ("capability_nonce", {"capability_nonce": None}, ("capability_nonce",)),
+    (
+        "action_flow_permit_nonce",
+        {"action_flow_permit_nonce": None},
+        ("action_flow_permit_nonce",),
+    ),
+    ("outbound_quantity", {"outbound_quantity": None}, ("outbound_quantity",)),
+    ("outbound_price", {"outbound_price": None}, ("outbound_price",)),
+    ("outbound_side", {"outbound_side": None}, ("outbound_side",)),
 ]
 
 
 @pytest.mark.parametrize(
-    ("label", "override"),
+    ("label", "override", "expected_missing"),
     _MISSING_FIELD_CASES,
-    ids=[label for label, _ in _MISSING_FIELD_CASES],
+    ids=[label for label, _, _ in _MISSING_FIELD_CASES],
 )
 def test_build_send_seal_rejects_each_missing_required_fact(
-    label: str, override: dict[str, Any]
+    label: str, override: dict[str, Any], expected_missing: tuple[str, ...]
 ) -> None:
-    """(design §1.1 "None 불허 · 생성 자체가 거부") Any one absent fact makes the seal unconstructable."""
+    """(design §1.1 "None 불허 · 생성 자체가 거부") Any one absent fact makes the seal unconstructable.
+
+    ``match="missing required fact"`` proves this is the missing-fact rejection path specifically
+    — not the coordinate/field validator or the principal-equality validator, both of which also
+    raise :class:`SendSealUnconstructable` but with a different reason text (independent review
+    finding #6). The per-field membership check then proves the *named* fact is the one this case
+    is actually about.
+    """
     attempt, context = happy_context(**override)
-    with pytest.raises(SendSealUnconstructable):
+    with pytest.raises(
+        SendSealUnconstructable, match="missing required fact"
+    ) as exc_info:
         build_send_seal(
             context=context,
             attempt=attempt,
             coordinates=outbound_coordinates(context),
             scheme=SCHEME,
         )
-    del label
+    reason = str(exc_info.value)
+    for name in expected_missing:
+        assert (
+            name in reason
+        ), f"{label}: expected {name!r} in missing-fact reason {reason!r}"
 
 
 def test_build_send_seal_succeeds_on_the_unmodified_happy_context() -> None:

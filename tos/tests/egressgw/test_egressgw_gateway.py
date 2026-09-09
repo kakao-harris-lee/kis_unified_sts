@@ -669,21 +669,55 @@ def test_mk2_a_resolver_asked_twice_never_leaks_its_second_answer_into_the_trans
 
 
 def test_mk1_send_once_reads_only_seal_attributes_never_context_again() -> None:
-    """(mutation M-K1, structural pin) ``send_once``'s keyword arguments never read ANY
-    ``context.*`` attribute — zero exceptions (design §0 "봉인이 유일 입력 원천이어야 한다").
+    """(mutation M-K1, structural pin) ``send_once``'s arguments never read ANY ``context.*``
+    value, directly or indirectly — zero exceptions (design §0 "봉인이 유일 입력 원천이어야 한다").
 
-    An AST scan of ``BrokerEgressGateway.__call__``'s own source: if a future edit changed
-    ``quantity=seal.outbound_quantity`` back to ``quantity=context.outbound_quantity`` (the
-    pre-Phase-4-작업-6 shape) — or reintroduced ``reference=context.reference`` — this test fails
-    loudly instead of silently reverting the seal's "sole input source" guarantee. Deliberately
-    not a fixed forbidden-name list: *any* ``context.<anything>`` keyword value is disallowed, so
-    a newly added transport argument cannot quietly reopen this gap either.
+    Independent review finding #4: the original pin matched only ``ast.Attribute`` values whose
+    ``.value`` was ``ast.Name("context")``, over ``call_node.keywords`` only. Three shapes
+    defeated it (all now proven RED below the pin itself, not by a downstream assertion
+    behaviour test):
+
+    * **M1b** — ``ctx = context`` before the call, then ``quantity=ctx.outbound_quantity``
+      (an alias). Caught by the alias ban: *any* assignment binding a name to the bare name
+      ``context`` anywhere in ``__call__`` or ``_seal_and_claim`` is itself rejected, independent
+      of whether the alias is ever read at the call site.
+    * **M1c** — ``quantity=getattr(context, "outbound_quantity")``. Caught by walking the whole
+      call subtree for a ``getattr(...)`` call whose first argument is the bare name ``context``.
+    * **M1d** — ``side=context.authorized_coordinates.action`` (context two attributes deep).
+      Caught because the subtree walk finds the bare ``ast.Name("context")`` at the bottom of the
+      attribute chain, regardless of nesting depth.
+
+    Positional arguments are scanned too (``call_node.args``, not just ``call_node.keywords``).
     """
     import ast
     import textwrap
 
-    source = textwrap.dedent(inspect.getsource(BrokerEgressGateway.__call__))
-    tree = ast.parse(source)
+    call_source = textwrap.dedent(inspect.getsource(BrokerEgressGateway.__call__))
+    seal_and_claim_source = textwrap.dedent(
+        inspect.getsource(BrokerEgressGateway._seal_and_claim)
+    )
+
+    # -- alias ban (mutation M1b): no assignment anywhere in either method may bind a name to
+    # the bare name ``context`` — checked independently of the call site, so an alias is rejected
+    # even before it is ever read.
+    for source, label in (
+        (call_source, "__call__"),
+        (seal_and_claim_source, "_seal_and_claim"),
+    ):
+        alias_offenders = [
+            ast.dump(node)
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "context"
+        ]
+        assert alias_offenders == [], (
+            f"{label} aliases the bare name 'context' via assignment ({alias_offenders}) — an "
+            "alias is exactly the substitution surface a direct-attribute-only scan misses "
+            "(mutation M1b, independent review finding #4)"
+        )
+
+    tree = ast.parse(call_source)
     send_once_calls = [
         node
         for node in ast.walk(tree)
@@ -693,16 +727,39 @@ def test_mk1_send_once_reads_only_seal_attributes_never_context_again() -> None:
     ]
     assert len(send_once_calls) == 1, "expected exactly one send_once call in __call__"
     (call_node,) = send_once_calls
-    offenders = [
-        f"{kw.arg}=context.{kw.value.attr}"
-        for kw in call_node.keywords
-        if isinstance(kw.value, ast.Attribute)
-        and isinstance(kw.value.value, ast.Name)
-        and kw.value.value.id == "context"
+
+    subtree_nodes: list[ast.AST] = []
+    for arg in call_node.args:
+        subtree_nodes.extend(ast.walk(arg))
+    for kw in call_node.keywords:
+        subtree_nodes.extend(ast.walk(kw.value))
+
+    name_offenders = [
+        ast.dump(node)
+        for node in subtree_nodes
+        if isinstance(node, ast.Name) and node.id == "context"
     ]
-    assert offenders == [], (
-        f"send_once reads {offenders} from context — step 18 must source only from the seal, "
-        "with zero exceptions (design #34 phase 4 작업 6 §0/§1.2, mutation M-K1)"
+    assert name_offenders == [], (
+        f"send_once's call subtree still reads the bare name 'context' ({name_offenders}) — "
+        "step 18 must source only from the seal, with zero exceptions, positional or keyword, "
+        "at any nesting depth (design #34 phase 4 작업 6 §0/§1.2, mutation M1/M1d, independent "
+        "review finding #4)"
+    )
+
+    getattr_offenders = [
+        ast.dump(node)
+        for node in subtree_nodes
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "context"
+    ]
+    assert getattr_offenders == [], (
+        f"send_once's call subtree reads context via getattr() ({getattr_offenders}) — "
+        "getattr(context, ...) is exactly the substitution surface direct-attribute scanning "
+        "misses (mutation M1c, independent review finding #4)"
     )
 
 
