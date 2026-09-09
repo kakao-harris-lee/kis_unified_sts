@@ -1,12 +1,19 @@
-"""Typed strategy admission — the D1↔D4 coupling (design #31 §3.2 (3) / §3.5).
+"""Typed strategy admission — the D1↔D4 coupling (design #31 §3.2 (3) / §3.5 / §9-4).
 
-Slice #1 accepts **in-process typed** :class:`~tos.dsl.AuthoredStrategy` objects only. The typed
+**Seam closed (design #31 §9-4).** Design #31 §3.5 originally deferred the escape-checker seam:
+Slice #1 accepted only **in-process typed** :class:`~tos.dsl.AuthoredStrategy` objects, whose typed
 algebra of :mod:`tos.dsl.vocabulary` is admissible *by construction* (there is no node type for an
-import / clock / network / reflection effect), so the escape-checker — which exists for candidates
-arriving from **outside** the type system — is deliberately **not** called here, and this slice
-therefore makes **no** claim about the escape-safety of a serialized authoring path (design #31
-§3.5 "정직 한계"; the serialization lowering + checking + strategy↔verdict binding seam is reserved
-for a later cycle, design #31 §9-4).
+import / clock / network / reflection effect), so the escape-checker was deliberately not called.
+With :func:`tos.dsl.lowering.lower_strategy` now bridging the typed algebra into the candidate-AST
+domain the checker consumes, :func:`strategy_admissible` runs **both** gates on every strategy: the
+structural D1↔D4 capsule-operand walk below, and the escape-checker (:func:`tos.dsl.admissibility.
+analyze`) over the strategy's lowered program. Because the typed algebra cannot express an escape,
+every currently-constructible :class:`~tos.dsl.AuthoredStrategy` still passes the escape-checker
+trivially — this gate closes the *seam* (design #31 §9-4's honest requirement was that the checker
+actually run, not that it find anything new to reject on today's typed inputs) and is the identical
+gate a :func:`tos.dsl.serialization.parse_strategy`-issued strategy goes through, since both produce
+an :class:`~tos.dsl.AuthoredStrategy` and this function does not distinguish how one was built
+(design #31 §1.2 "두 경로 동형").
 
 What admission *does* own is the engine's share of the D1 env-configuration contract
 (design #31 §3.2 (3), v1.1 MAJOR-2 redefinition):
@@ -37,20 +44,26 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from tos.canonical import get_scheme
 from tos.dsl import (
     ADMISSIBLE_CONTEXT_SOURCES,
+    AdmissibilityResult,
+    AdmissibilityVerdict,
     AuthoredStrategy,
     Compare,
     Decision,
     DecisionPolicy,
     Operand,
     TargetSpec,
+    analyze,
 )
+from tos.dsl.lowering import lower_strategy
 from tos.engine._base import ArtifactStatus
 from tos.engine.records import InstrumentKey
 from tos.engine.vocabulary import CAPSULE_CONTEXT_SOURCE, AdmissionVerdict
 
 __all__ = [
+    "ESCAPE_CHECKER_ENFORCEMENT_VERSION",
     "AdmissionResult",
     "compare_has_capsule_operand",
     "declared_target_scopes",
@@ -61,19 +74,30 @@ __all__ = [
     "strategy_admissible",
 ]
 
+#: The escape-checker mechanism version this gate records (DCE-INV-005 version facet, design #31
+#: §3.5/§9-4) — an injected named constant, never left implicit. Bumping it is the seam for a future
+#: checker revision. Like the sibling ``dsl_evaluation_budget_steps`` note (``tos.engine.__init__``
+#: docstring), this is **not** a VERIFICATION-PROFILE-002 key; it identifies *this* module's call
+#: site of the checker, not a profile-approved bound.
+ESCAPE_CHECKER_ENFORCEMENT_VERSION = "esc-checker-engine-admission-0"
+
 
 @dataclass(frozen=True)
 class AdmissionResult:
-    """The typed-admission judgement plus its reasons (design #31 §3.5).
+    """The typed-admission judgement plus its reasons (design #31 §3.5/§9-4).
 
     ``verdict`` is the positive-identity gate (``verdict is AdmissionVerdict.ADMISSIBLE``);
     ``reasons`` records *every* failing observation so a refusal is never silent.
     ``instrument_key`` is populated only when key derivation succeeded.
+    ``admissibility_result`` binds the escape-checker's own evidence record (G12: it names the exact
+    ``strategy_id``/``strategy_digest`` this verdict is attributable to) whenever the checker ran —
+    i.e. whenever the strategy carried a policy and was ISSUED (design #31 §9-4).
     """
 
     verdict: AdmissionVerdict
     reasons: tuple[str, ...] = ()
     instrument_key: InstrumentKey | None = None
+    admissibility_result: AdmissibilityResult | None = None
 
 
 def operand_source(operand: Operand) -> str | None:
@@ -249,8 +273,57 @@ def policy_work_steps(policy: DecisionPolicy) -> int:
     return len(rules) + len(compares) + len(operands)
 
 
+def _admissibility_result_id(strategy: AuthoredStrategy) -> str:
+    """The independent id an escape-checker record for ``strategy`` uses (design #31 §9-4).
+
+    Deterministically derived from the strategy's own content-addressed identity, so re-checking
+    the same strategy twice yields the same record identity — never a fresh id per call, which
+    would make replay/audit unable to recognize "the same check, run again" as the same record.
+
+    Args:
+        strategy: The (ISSUED) Authored Strategy.
+
+    Returns:
+        The independent ``AdmissibilityResult.result_id`` to issue under.
+    """
+    return f"admres-{strategy.strategy_id}"
+
+
+def _escape_checker_result(strategy: AuthoredStrategy) -> AdmissibilityResult:
+    """Run the escape-checker over ``strategy``'s lowered candidate program (design #31 §9-4).
+
+    ``lower_strategy`` -> ``analyze`` -> the bound :class:`~tos.dsl.evidence.AdmissibilityResult` —
+    both the in-process typed path and a ``tos.dsl.serialization.parse_strategy``-issued strategy
+    converge on this one call, since both produce an :class:`~tos.dsl.AuthoredStrategy` and this
+    function does not distinguish how one was built (design #31 §1.2 "두 경로 동형"). The record
+    reuses ``strategy.canonicalization_version`` (the scheme the strategy itself was issued under)
+    rather than a second hard-coded version, and binds ``strategy.strategy_id`` /
+    ``strategy.canonical_digest`` (G12).
+
+    Args:
+        strategy: The **ISSUED** Authored Strategy (callers verify this first — an unissued
+            strategy has no ``canonicalization_version``/``canonical_digest`` to key on).
+
+    Returns:
+        The issued :class:`~tos.dsl.evidence.AdmissibilityResult`.
+    """
+    program = lower_strategy(strategy)
+    analysis = analyze(program)
+    return AdmissibilityResult.issue(  # type: ignore[return-value]
+        scheme=get_scheme(strategy.canonicalization_version),
+        result_id=_admissibility_result_id(strategy),
+        candidate=program,
+        verdict=analysis.verdict,
+        reasons=analysis.reasons,
+        enforcement_mechanism_version=ESCAPE_CHECKER_ENFORCEMENT_VERSION,
+        dsl_version=strategy.dsl_version,
+        strategy_id=strategy.strategy_id,
+        strategy_digest=strategy.canonical_digest,
+    )
+
+
 def strategy_admissible(strategy: AuthoredStrategy) -> AdmissionResult:
-    """The typed in-process admission gate (design #31 §3.5).
+    """The typed admission gate (design #31 §3.5/§9-4).
 
     Positive checks, all of which must hold:
 
@@ -258,11 +331,19 @@ def strategy_admissible(strategy: AuthoredStrategy) -> AdmissionResult:
        policy-less artifact is not an admissible authoring input);
     2. every outcome-gating comparison has at least one capsule-sourced operand — the D1↔D4
        partial seal (design #31 §3.2 (3));
-    3. a single wildcard-free dispatch key derives structurally from the declared scope
+    3. the strategy's lowered candidate program is ADMISSIBLE under the escape-checker
+       (:func:`tos.dsl.admissibility.analyze`) — the seam design #31 §3.5 deferred, now closed
+       (design #31 §9-4). Every currently-constructible typed strategy passes this trivially (the
+       typed algebra cannot express an escape); the gate is real regardless, and it is the
+       identical gate a serialized (``tos.dsl.serialization.parse_strategy``) strategy goes through;
+    4. a single wildcard-free dispatch key derives structurally from the declared scope
        (design #31 §3.3).
 
+    Both the in-process typed path and the parsed path reach this function as an
+    :class:`~tos.dsl.AuthoredStrategy`, so they are gated identically (design #31 §1.2).
+
     Args:
-        strategy: The in-process typed Authored Strategy.
+        strategy: The Authored Strategy (in-process typed or parsed).
 
     Returns:
         The :class:`AdmissionResult` — ``ADMISSIBLE`` only when every check passes positively.
@@ -289,11 +370,30 @@ def strategy_admissible(strategy: AuthoredStrategy) -> AdmissionResult:
                 "§8:236-237; design #31 §3.2 (3))"
             )
 
+    admissibility_result: AdmissibilityResult | None = None
+    if strategy.status is ArtifactStatus.ISSUED:
+        # Only an ISSUED strategy has a real canonicalization_version/canonical_digest to key an
+        # escape-checker record on; a non-ISSUED strategy is refused above regardless (the status
+        # reason already forces INADMISSIBLE), so skipping the checker here avoids a
+        # get_scheme(None) crash on an input that is already going to be inadmissible — fail-closed
+        # via the recorded reason, never via an uncaught raise.
+        admissibility_result = _escape_checker_result(strategy)
+        if admissibility_result.verdict is AdmissibilityVerdict.INADMISSIBLE:
+            reasons.extend(
+                f"escape-checker: {reason}" for reason in admissibility_result.reasons
+            )
+
     key, key_reasons = derive_instrument_key(strategy)
     reasons.extend(key_reasons)
 
     if reasons:
         return AdmissionResult(
-            verdict=AdmissionVerdict.INADMISSIBLE, reasons=tuple(reasons)
+            verdict=AdmissionVerdict.INADMISSIBLE,
+            reasons=tuple(reasons),
+            admissibility_result=admissibility_result,
         )
-    return AdmissionResult(verdict=AdmissionVerdict.ADMISSIBLE, instrument_key=key)
+    return AdmissionResult(
+        verdict=AdmissionVerdict.ADMISSIBLE,
+        instrument_key=key,
+        admissibility_result=admissibility_result,
+    )

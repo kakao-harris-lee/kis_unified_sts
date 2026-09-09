@@ -19,8 +19,11 @@ or 'override' to avoid Critical Input governance").
   predicate to reject. Rejecting it would be the #26 WDR MAJOR-1 over-rejection defect (check the
   applicable side before rejecting an empty).
 
-Also covered: slice #1 admits only in-process typed artifacts and therefore **does not exercise**
-the escape-checker seam — asserted as a negative, so the absence of that claim is on record.
+Also covered: the escape-checker seam design #31 §3.5 deferred is now closed (design #31 §9-4,
+lane D-K-3) — ``strategy_admissible`` calls ``tos.dsl.admissibility.analyze`` over every strategy's
+``tos.dsl.lowering.lower_strategy``-lowered program; the dedicated escape-checker-gate test suite
+lives in ``test_engine_admission_escape_checker.py``, and the AST call-site canary here is kept
+(repurposed from its old negative form) to catch a future silent regression.
 
 Regime tag: orchestration authoring evidence only; closes no EV.
 """
@@ -252,12 +255,16 @@ def test_a_draft_or_policy_less_strategy_is_inadmissible() -> None:
     assert any("no embedded DecisionPolicy" in reason for reason in result.reasons)
 
 
-def test_the_escape_checker_seam_is_not_exercised_by_this_slice() -> None:
-    """(§3.5 honest limit) Slice #1 never calls the DSL escape-checker, and claims nothing about it.
+def test_the_escape_checker_seam_is_now_exercised_by_admission() -> None:
+    """(§9-4 seam closure) admission.py DOES call the DSL escape-checker — no longer a non-claim.
 
-    In-process typed construction *is* the enforcement (the algebra cannot express an escape), so
-    the serialized-authoring path's escape-safety is explicitly **not** demonstrated here
-    (design #31 §3.5 / §9-4). Asserted as an absence so the non-claim is on record.
+    This test used to assert the opposite (``called == []``): design #31 §3.5 deferred the
+    escape-checker seam because there was no ``lower_strategy`` function bridging the typed
+    authoring algebra into the candidate-AST domain the checker consumes. ``tos.dsl.lowering.
+    lower_strategy`` (design #31 §9-4) closes that gap, and ``strategy_admissible`` now calls
+    ``analyze`` over every strategy's lowered program (:func:`tos.engine.admission._escape_checker_
+    result`). The AST scan is kept (not deleted) precisely so a future regression that silently
+    drops the call is caught here, the same way the old assertion caught a premature claim.
     """
     import ast
     from pathlib import Path
@@ -276,7 +283,10 @@ def test_the_escape_checker_seam_is_not_exercised_by_this_slice() -> None:
                 )
                 if name in {"analyze", "is_admissible", "analyze_candidate"}:
                     called.append(f"{path.name}:{node.lineno} {name}()")
-    assert called == [], (
-        "the slice must not call the DSL escape-checker — its input domain is the candidate AST, "
-        f"not the typed authoring algebra (design #31 §3.5); found: {called}"
+    assert len(called) == 1, (
+        "expected exactly one escape-checker call site in admission.py's own _escape_checker_"
+        f"result helper (design #31 §9-4); found: {called}"
     )
+    assert called[0].startswith("admission.py:") and called[0].endswith(
+        "analyze()"
+    ), called[0]
