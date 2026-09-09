@@ -52,6 +52,36 @@ def _first_float(fields: Mapping[str, Any], keys: tuple[str, ...]) -> float | No
     return None
 
 
+#: Best-bid/best-ask fields an orderbook-bearing tick carries.
+#:
+#: Same set (minus ``code``/``timestamp``, which every tick already has) as the
+#: payload ``KISFuturesPriceFeed`` caches per orderbook tick and merges into its
+#: price snapshot — so a consumer can rebuild an orderbook snapshot from a
+#: stream entry without a second data path.
+ORDERBOOK_FIELDS: tuple[str, ...] = (
+    "bid_price_1",
+    "bid_qty_1",
+    "ask_price_1",
+    "ask_qty_1",
+    "spread",
+)
+
+
+def _parse_non_negative_float(value: Any) -> float | None:
+    """Parse a float and discard negatives instead of raising.
+
+    The orderbook fields are declared ``ge=0``. A garbled/crossed quote must
+    drop the offending field, not the tick: ``TickStreamPublisher._build_fields``
+    treats a ``ValueError`` (pydantic's ``ValidationError`` is one) as "this
+    tick is unpublishable", so raising here would silently delete a perfectly
+    good trade tick from the stream.
+    """
+    parsed = _parse_float(value)
+    if parsed is None or parsed < 0:
+        return None
+    return parsed
+
+
 def _parse_bool(value: Any) -> bool | None:
     if isinstance(value, bool):
         return value
@@ -101,6 +131,16 @@ class MarketTickMessage(StreamMessage):
     cumulative_volume: float | None = Field(default=None, ge=0)
     tick_volume: float | None = Field(default=None, ge=0)
     volume_is_cumulative: bool | None = None
+    # Best bid/ask of the same instrument at tick time. Optional and additive:
+    # producers that publish trade-only ticks omit them, and pre-existing
+    # entries decode unchanged (no schema_version bump). Present so a stream
+    # consumer can serve `get_orderbook_snapshot` with the same contract as
+    # the KIS WS feed — see shared/streaming/consumer_feed.py.
+    bid_price_1: float | None = Field(default=None, ge=0)
+    bid_qty_1: float | None = Field(default=None, ge=0)
+    ask_price_1: float | None = Field(default=None, ge=0)
+    ask_qty_1: float | None = Field(default=None, ge=0)
+    spread: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="before")
     @classmethod
@@ -171,6 +211,11 @@ class MarketTickMessage(StreamMessage):
             cumulative_volume=_parse_float(payload.get("cumulative_volume")),
             tick_volume=_parse_float(payload.get("tick_volume")),
             volume_is_cumulative=_parse_bool(payload.get("volume_is_cumulative")),
+            bid_price_1=_parse_non_negative_float(payload.get("bid_price_1")),
+            bid_qty_1=_parse_non_negative_float(payload.get("bid_qty_1")),
+            ask_price_1=_parse_non_negative_float(payload.get("ask_price_1")),
+            ask_qty_1=_parse_non_negative_float(payload.get("ask_qty_1")),
+            spread=_parse_non_negative_float(payload.get("spread")),
         )
 
     @classmethod
@@ -222,6 +267,11 @@ class MarketTickMessage(StreamMessage):
             cumulative_volume=_parse_float(fields.get("cumulative_volume")),
             tick_volume=_parse_float(fields.get("tick_volume")),
             volume_is_cumulative=_parse_bool(fields.get("volume_is_cumulative")),
+            bid_price_1=_parse_non_negative_float(fields.get("bid_price_1")),
+            bid_qty_1=_parse_non_negative_float(fields.get("bid_qty_1")),
+            ask_price_1=_parse_non_negative_float(fields.get("ask_price_1")),
+            ask_qty_1=_parse_non_negative_float(fields.get("ask_qty_1")),
+            spread=_parse_non_negative_float(fields.get("spread")),
         )
 
     def to_price_dict(self) -> dict[str, Any]:
@@ -236,4 +286,8 @@ class MarketTickMessage(StreamMessage):
             value = getattr(self, key)
             if value is not None:
                 data[key] = int(value) if key == "volume" else value
+        for key in ORDERBOOK_FIELDS:
+            value = getattr(self, key)
+            if value is not None:
+                data[key] = value
         return data

@@ -121,3 +121,110 @@ def test_decode_json_field_mapping_rejects_malformed_json() -> None:
 
     with pytest.raises(StreamDecodeError, match="payload_json"):
         decode(_ComplexMessage, fields, json_fields={"payload": "payload_json"})
+
+
+# ---------------------------------------------------------------------------
+# Optional orderbook fields (additive, no schema_version bump)
+# ---------------------------------------------------------------------------
+
+
+def test_market_tick_orderbook_fields_round_trip() -> None:
+    msg = MarketTickMessage(
+        asset="futures",
+        symbol="A05603",
+        price=331.20,
+        timestamp=1771982309.0,
+        bid_price_1=331.18,
+        bid_qty_1=12.0,
+        ask_price_1=331.22,
+        ask_qty_1=9.0,
+        spread=0.04,
+    )
+
+    fields = encode(msg)
+
+    assert fields["bid_price_1"] == "331.18"
+    assert fields["ask_qty_1"] == "9.0"
+    assert fields["spread"] == "0.04"
+    assert decode(MarketTickMessage, fields) == msg
+    assert msg.to_price_dict()["bid_price_1"] == 331.18
+    assert msg.to_price_dict()["spread"] == 0.04
+
+
+def test_market_tick_without_orderbook_stays_wire_identical() -> None:
+    """Back-compat: entries written before the fields existed still decode, and
+    a trade-only tick still encodes exactly the fields it used to."""
+    legacy_fields = {
+        "schema_version": "1",
+        "asset": "futures",
+        "symbol": "A05603",
+        "price": "331.20",
+        "timestamp": "1771982309.0",
+    }
+
+    msg = decode(MarketTickMessage, legacy_fields)
+
+    assert msg.bid_price_1 is None and msg.spread is None
+    assert set(encode(msg)) == set(legacy_fields)
+    assert "bid_price_1" not in msg.to_price_dict()
+
+
+def test_market_tick_source_payload_carries_orderbook_when_present() -> None:
+    """The publisher path: the merged feed snapshot the orchestrator emits."""
+    msg = MarketTickMessage.from_source_payload(
+        asset="futures",
+        symbol="A05603",
+        payload={
+            "close": 331.20,
+            "timestamp": 1771982309.0,
+            "bid_price_1": 331.18,
+            "bid_qty_1": 12,
+            "ask_price_1": 331.22,
+            "ask_qty_1": 9,
+            "spread": 0.04,
+        },
+        now=1771982310.0,
+    )
+
+    assert msg.bid_price_1 == 331.18 and msg.ask_qty_1 == 9.0
+    assert msg.spread == 0.04
+
+
+def test_market_tick_drops_negative_orderbook_values_without_losing_the_tick() -> None:
+    """A crossed/garbled quote must cost the quote, not the trade tick.
+
+    ``TickStreamPublisher._build_fields`` treats a ``ValueError`` from this
+    constructor as "unpublishable", and pydantic's ``ValidationError`` is one —
+    so a ``ge=0`` violation raised here would delete the whole tick from the
+    stream instead of one field.
+    """
+    msg = MarketTickMessage.from_source_payload(
+        asset="futures",
+        symbol="A05603",
+        payload={
+            "close": 331.20,
+            "bid_price_1": 331.18,
+            "ask_price_1": 331.22,
+            "spread": -0.04,
+        },
+        now=1771982310.0,
+    )
+
+    assert msg.price == 331.20
+    assert msg.spread is None
+    assert msg.bid_price_1 == 331.18
+
+
+def test_market_tick_legacy_fields_carry_orderbook() -> None:
+    msg = decode(
+        MarketTickMessage,
+        {
+            b"code": b"A05603",
+            b"current_price": b"331.20",
+            b"bid_price_1": b"331.18",
+            b"ask_price_1": b"331.22",
+        },
+        legacy_adapter=MarketTickMessage.from_legacy_fields,
+    )
+
+    assert msg.bid_price_1 == 331.18 and msg.ask_price_1 == 331.22

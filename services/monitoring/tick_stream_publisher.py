@@ -283,6 +283,12 @@ class TickStreamPublisher:
         except ValueError:
             return None
 
+        # `encode` drops None fields, so the optional orderbook fields
+        # (bid/ask price+qty, spread — shared.models.stream_models.
+        # ORDERBOOK_FIELDS) ride along only when the producer's payload
+        # carried them. Trade-only producers publish exactly what they did
+        # before; the orchestrator's merged feed snapshot now also carries
+        # the top of book.
         fields = encode(msg)
         # Compatibility aliases for the rollout window. New consumers should
         # decode the canonical v1 schema; old consumers still see the legacy
