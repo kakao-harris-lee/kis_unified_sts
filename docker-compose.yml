@@ -370,6 +370,17 @@ services:
       <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env]
       TZ: "Asia/Seoul"
       FUTURES_ORDER_ROUTER: "${FUTURES_ORDER_ROUTER_MODE:-paper}"
+      # Price-feed source. `stream` (default) consumes the futures ticks another
+      # process already publishes to FUTURES_TICK_STREAM — trader-futures today,
+      # futures-market-ingest after cutover — and opens NO KIS WebSocket of its
+      # own. KIS allows a single futures WS per account, so a self-fed router
+      # evicts whichever process connected first (measured 2026-09-07/08).
+      # `ws` restores the self-fed path and is opt-in: use it only when nothing
+      # else owns the account's futures WS. The *kis-runtime-env credentials
+      # stay on this service either way — the REST order path needs them; only
+      # `ws` needs them for market data.
+      FUTURES_ORDER_ROUTER_FEED: "${FUTURES_ORDER_ROUTER_FEED:-stream}"
+      FUTURES_TICK_STREAM: "${FUTURES_TICK_STREAM:-raw_data}"
       # See futures-market-ingest: must match trader-futures' contract.
       FUTURES_TRADING_PRODUCT: "${FUTURES_TRADING_PRODUCT:-mini}"
       FUTURES_STRATEGY_SYMBOL: "${FUTURES_STRATEGY_SYMBOL:-}"

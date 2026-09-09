@@ -708,6 +708,113 @@ def _resolve_mode() -> str:
     return mode if mode in ("paper", "live") else "off"
 
 
+_FEED_MODE_ENV = "FUTURES_ORDER_ROUTER_FEED"
+_FEED_MODE_STREAM = "stream"
+_FEED_MODE_WS = "ws"
+_FEED_MODES = (_FEED_MODE_STREAM, _FEED_MODE_WS)
+
+
+def _resolve_feed_mode() -> str:
+    """Price-feed source for this router: ``stream`` (default) | ``ws``.
+
+    ``stream`` consumes the futures tick stream another process already
+    publishes (the monolithic orchestrator today, ``futures-market-ingest``
+    after cutover) and opens no KIS connection of its own. ``ws`` is the legacy
+    self-fed path and is an explicit opt-in: KIS allows only one futures
+    WebSocket per account, so a router in ``ws`` mode running beside
+    ``trader-futures`` knocks one of the two off the feed (measured
+    2026-09-07/08).
+
+    Fail-closed on an unrecognised value: silently defaulting would hide a
+    typo that costs the orchestrator its market data.
+    """
+    raw = os.getenv(_FEED_MODE_ENV, _FEED_MODE_STREAM).strip().lower()
+    mode = raw or _FEED_MODE_STREAM
+    if mode not in _FEED_MODES:
+        raise ValueError(
+            f"{_FEED_MODE_ENV}={raw!r} is not one of {'/'.join(_FEED_MODES)}"
+        )
+    return mode
+
+
+def _futures_kis_auth() -> Any:
+    """KIS futures credentials from env (real host for both paper and live).
+
+    One construction site for the two consumers: the ``ws`` feed branch (market
+    data) and the live REST order executor. ``is_real=True`` because KIS
+    모의투자 serves no futures realtime feed and no futures order path; paper
+    safety comes from simulating execution, not from aiming at the mock host.
+    """
+    from shared.kis.auth import KISAuthConfig
+
+    return KISAuthConfig(
+        app_key=os.environ.get("KIS_FUTURES_APP_KEY", ""),
+        app_secret=os.environ.get("KIS_FUTURES_APP_SECRET", ""),
+        is_real=True,
+    )
+
+
+def _build_price_feed(
+    *,
+    feed_mode: str,
+    redis: Any,
+    symbol: str,
+    auxiliary_symbols: list[str] | None = None,
+    cross_asset_enabled: bool = False,
+) -> Any:
+    """Build the router's price feed and subscribe it to ``symbol``.
+
+    Returns a duck-typed feed exposing ``get_current_price`` /
+    ``get_orderbook_snapshot`` / ``set_tick_callback`` / ``start`` / ``stop``:
+    :class:`StreamConsumerFeed` in ``stream`` mode,
+    :class:`KISFuturesPriceFeed` in ``ws`` mode. The caller still owns
+    ``set_tick_callback`` and ``start()``.
+
+    Extracted from ``_build_and_run`` so the selection is reachable by a test
+    without Redis, a KIS account or the daemon.
+    """
+    if feed_mode == _FEED_MODE_WS:
+        from shared.kis.futures_feed import KISFuturesPriceFeed
+
+        # This is the only branch that needs the KIS_FUTURES_* credentials for
+        # *market data* — the REST order path uses them in either mode.
+        feed: Any = KISFuturesPriceFeed(config=_futures_kis_auth())
+        feed.update_symbols([symbol], auxiliary_symbols=auxiliary_symbols)
+        logger.info(
+            "order_router feed=ws (own KIS futures WebSocket) — MUST NOT run "
+            "concurrently with trader-futures on the same KIS account"
+        )
+        return feed
+
+    from shared.streaming.consumer_feed import StreamConsumerFeed
+
+    stream = os.environ.get("FUTURES_TICK_STREAM", "raw_data")
+    feed = StreamConsumerFeed(redis=redis, stream=stream)
+    feed.update_symbols([symbol], auxiliary_symbols=auxiliary_symbols)
+    logger.info(
+        "order_router feed=stream stream=%s (no KIS WS opened)",
+        stream,
+    )
+    if cross_asset_enabled:
+        # The gate is fail-closed on a missing cross quote: an empty payload
+        # makes parse_orderbook_snapshot return None and evaluate_entry blocks
+        # with `cross_asset_unavailable:<symbol>`
+        # (shared/execution/slippage_control.py). Stream mode carries only the
+        # symbols the producer publishes, so with cross-asset on, EVERY entry
+        # is blocked until the producer subscribes the reference symbol too.
+        # Paper is unaffected (paper_override sets cross_asset.enabled: false).
+        logger.warning(
+            "order_router feed=stream with cross_asset enabled (%s): the stream "
+            "carries only producer-published symbols, so the cross-asset check "
+            "will block every entry with cross_asset_unavailable. Publish the "
+            "reference symbol from the producer, or disable cross_asset, or run "
+            "%s=ws.",
+            auxiliary_symbols or [],
+            _FEED_MODE_ENV,
+        )
+    return feed
+
+
 def _final_stream_for(mode: str) -> str:
     """Final-signal stream the order_router consumes (F-1).
 
@@ -841,11 +948,13 @@ async def _build_and_run() -> int:
         FuturesSlippageController,
         load_futures_slippage_config,
     )
-    from shared.kis.auth import KISAuthConfig
-    from shared.kis.futures_feed import KISFuturesPriceFeed
     from shared.risk.runtime_state import RuntimeRiskState
     from shared.storage import SQLiteRuntimeLedger
     from shared.storage.config import StorageConfig
+
+    # Resolved before anything is opened: an unrecognised value is fatal
+    # (fail-closed), and the failure should not leak a Redis connection.
+    feed_mode = _resolve_feed_mode()
 
     redis_url = redis_url_from_env()
     redis_client = aioredis.from_url(redis_url)
@@ -907,16 +1016,6 @@ async def _build_and_run() -> int:
         asset_class="futures",
     )
 
-    # Feed is ALWAYS real (both paper AND live): KIS 모의투자 serves no futures
-    # realtime feed, so the real WS is the only orderbook source. This drops the
-    # old KIS_FUTURES_MARKET gating on the feed — paper mode simulates execution,
-    # not data; live order placement remains gated by OrderExecutor.config.trading_mode.
-    kis_auth = KISAuthConfig(
-        app_key=os.environ.get("KIS_FUTURES_APP_KEY", ""),
-        app_secret=os.environ.get("KIS_FUTURES_APP_SECRET", ""),
-        is_real=True,
-    )
-    futures_feed = KISFuturesPriceFeed(config=kis_auth)
     aux_symbols = None
     if (
         slippage_controller is not None
@@ -925,7 +1024,16 @@ async def _build_and_run() -> int:
         and slippage_cfg.cross_asset_symbol != symbol
     ):
         aux_symbols = [slippage_cfg.cross_asset_symbol]
-    futures_feed.update_symbols([symbol], auxiliary_symbols=aux_symbols)
+    # Default `stream`: consume the futures ticks another process already
+    # publishes rather than opening a second KIS futures WebSocket on the same
+    # account (which evicts trader-futures). `ws` restores the self-fed path.
+    futures_feed = _build_price_feed(
+        feed_mode=feed_mode,
+        redis=redis_client,
+        symbol=symbol,
+        auxiliary_symbols=aux_symbols,
+        cross_asset_enabled=aux_symbols is not None,
+    )
     if slippage_controller is not None:
 
         def _register_slippage_tick(
@@ -970,7 +1078,7 @@ async def _build_and_run() -> int:
         order_executor = build_live_order_executor(
             execution_section,
             redis_url=redis_url,
-            kis_auth=kis_auth,
+            kis_auth=_futures_kis_auth(),
         )
         await order_executor.initialize()
         kis_adapter = KISFuturesAdapter(

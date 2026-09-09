@@ -44,6 +44,10 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert paper["TELEGRAM_FUTURES_CHAT_ID"] == "CHANGE_ME_PAPER_TELEGRAM_CHAT_ID"
     assert paper["FUTURES_PIPELINE_MODE"] == "shadow"
     assert paper["FUTURES_ORDER_ROUTER_MODE"] == "paper"
+    # order_router consumes the tick stream by default and opens no KIS WS —
+    # `ws` is the opt-in self-fed path (one futures WS per KIS account).
+    assert paper["FUTURES_ORDER_ROUTER_FEED"] == "stream"
+    assert paper["FUTURES_TICK_STREAM"] == "raw_data"
     assert paper["FUTURES_STRATEGY_SYMBOL"] == ""
     # Empty = every setup whose strategy.enabled is true; the knob exists so an
     # operator can narrow the DECOUPLED roster without touching the switch
@@ -79,6 +83,8 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert live["TELEGRAM_FUTURES_CHAT_ID"] == "CHANGE_ME_LIVE_TELEGRAM_CHAT_ID"
     assert live["FUTURES_PIPELINE_MODE"] == "shadow"
     assert live["FUTURES_ORDER_ROUTER_MODE"] == "paper"
+    assert live["FUTURES_ORDER_ROUTER_FEED"] == "stream"
+    assert live["FUTURES_TICK_STREAM"] == "raw_data"
     assert live["FUTURES_STRATEGY_SYMBOL"] == ""
     assert live["FUTURES_DECISION_ENGINE_SETUPS"] == ""
     assert live["FUTURES_EXECUTOR_TRADING_MODE"] == "PAPER"
@@ -303,10 +309,22 @@ def test_futures_pipeline_compose_services_are_profile_gated():
         == "${FUTURES_DECISION_ENGINE_SETUPS:-}"
     )
 
-    # order_router self-feeds a real KIS WS — needs futures creds.
+    # order_router keeps the futures creds in both feed modes: the REST order
+    # path needs them, and `ws` additionally needs them for market data.
     order_env = services["futures-order-router"]["environment"]
     assert "KIS_FUTURES_APP_KEY" in order_env
     assert "KIS_FUTURES_APP_SECRET" in order_env
+    # Feed source defaults to the tick stream (no second KIS futures WS beside
+    # trader-futures); the stream name must match what futures-monitor and the
+    # producer use, or the router reads an empty stream and never quotes.
+    assert (
+        order_env["FUTURES_ORDER_ROUTER_FEED"] == "${FUTURES_ORDER_ROUTER_FEED:-stream}"
+    )
+    assert order_env["FUTURES_TICK_STREAM"] == "${FUTURES_TICK_STREAM:-raw_data}"
+    assert (
+        order_env["FUTURES_TICK_STREAM"]
+        == services["futures-monitor"]["environment"]["FUTURES_TICK_STREAM"]
+    )
     # Executor real/paper gate (dedicated knob, safe PAPER default).
     assert order_env["TRADING_MODE"] == "${FUTURES_EXECUTOR_TRADING_MODE:-PAPER}"
 
