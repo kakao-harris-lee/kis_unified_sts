@@ -153,11 +153,13 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/engine/sequencer.py::run_commitment_flow
-  measured: 304
+  measured: 298
   owner: tos-kernel
   decomposition_order: 12
   expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
+    2026-09-09 Phase 3 웨이브 3 [KW3-EV] — event_id·bound 값 스탬프 추가에도 11개
+    `_halt` 호출부를 `_stop` 클로저로 추출해 304→298(감소 · 래칫 재등록).
 - target: tos/src/tos/egressgw/gateway.py::BrokerEgressGateway.__call__
   measured: 283
   owner: tos-kernel
