@@ -41,6 +41,8 @@ Public surface groups by module:
 * :mod:`tos.dsl.evidence` — the enforcement-evidence records.
 * :mod:`tos.dsl.lowering` — the typed-algebra -> candidate-AST lowering (design #31
   §3.5 D4 / §9-4 seam closure).
+* :mod:`tos.dsl.serialization` — serialized-strategy parsing (pydantic validation
+  only; no YAML import in the kernel, design #31 §9-4).
 """
 
 from __future__ import annotations
@@ -109,6 +111,7 @@ from tos.dsl.proposal import (
     build_flat,
     build_proposal,
 )
+from tos.dsl.serialization import StrategyParseError, parse_strategy
 from tos.dsl.strategy import AuthoredStrategy
 from tos.dsl.vocabulary import (
     ADMISSIBLE_CONTEXT_SOURCES,
@@ -186,6 +189,9 @@ __all__ = [
     "AuthoredStrategy",
     # lowering (typed algebra -> candidate AST, design #31 §9-4)
     "lower_strategy",
+    # serialization (design #31 §9-4)
+    "StrategyParseError",
+    "parse_strategy",
     # context value carrier (design #32 §2.2 — shape is dsl-owned, production is marketfeed's)
     "VALUE_NAMESPACE",
     "ContextValue",

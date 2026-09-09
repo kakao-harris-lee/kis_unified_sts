@@ -317,3 +317,131 @@ def test_honest_admissibility_result_round_trips() -> None:
     )
     assert rec.verdict is AdmissibilityVerdict.ADMISSIBLE
     assert rec.reasons == ()
+
+
+# ---------------------------------------------------------------------------
+# G12 binding — strategy_id/strategy_digest are covered (digest-sensitive)
+# ---------------------------------------------------------------------------
+#
+# design #31 §3.5/§9-4; DSL spike memo G12 ("a degenerate 1-node mirror of any
+# policy also reads ADMISSIBLE — the verdict cannot be traced to a real artifact").
+# ``strategy_id``/``strategy_digest`` are now covered fields on
+# ``AdmissibilityResult`` (evidence.py), so a record's own digest is sensitive to
+# *which* strategy it is attributed to, not only to the candidate shape.
+
+
+def test_analyze_candidate_without_a_strategy_identity_defaults_both_fields_null() -> (
+    None
+):
+    """Backward-compatible default: a bare-candidate analysis names no strategy (★ no forced identity)."""
+    rec = analyze_candidate(
+        admissible_program(),
+        scheme=SCHEME,
+        enforcement_mechanism_version=ENFORCEMENT_VERSION,
+        dsl_version="dsl-0",
+        result_id="no-strategy",
+    )
+    assert rec.strategy_id is None
+    assert rec.strategy_digest is None
+
+
+def test_binding_a_strategy_identity_is_recorded_verbatim() -> None:
+    """``strategy_id``/``strategy_digest`` round-trip verbatim onto the issued record."""
+    rec = analyze_candidate(
+        admissible_program(),
+        scheme=SCHEME,
+        enforcement_mechanism_version=ENFORCEMENT_VERSION,
+        dsl_version="dsl-0",
+        result_id="with-strategy",
+        strategy_id="astrat-abc",
+        strategy_digest="digest-abc",
+    )
+    assert rec.strategy_id == "astrat-abc"
+    assert rec.strategy_digest == "digest-abc"
+
+
+def test_same_strategy_identity_twice_yields_the_same_digest() -> None:
+    """Re-checking the same (candidate, strategy) pair is idempotent at the digest level."""
+    kwargs = {
+        "candidate": admissible_program(),
+        "scheme": SCHEME,
+        "enforcement_mechanism_version": ENFORCEMENT_VERSION,
+        "dsl_version": "dsl-0",
+        "strategy_id": "astrat-same",
+        "strategy_digest": "digest-same",
+    }
+    first = analyze_candidate(result_id="r1", **kwargs)
+    second = analyze_candidate(result_id="r2", **kwargs)
+    assert first.canonical_digest == second.canonical_digest
+    # result_id (independent identity) is NOT covered — it may legitimately differ.
+    assert first.result_id != second.result_id
+
+
+def test_a_different_strategy_identity_over_the_same_candidate_changes_the_digest() -> (
+    None
+):
+    """The G12 fix: an identical lowered candidate attributed to two strategies does not collide.
+
+    Before this binding, a degenerate/coincidental candidate shape shared by two
+    different strategies would produce byte-identical ``AdmissibilityResult``
+    records — the exact G12 defect (spike memo). With ``strategy_id``/
+    ``strategy_digest`` covered, they now diverge.
+    """
+    same_candidate = admissible_program()
+    rec_a = analyze_candidate(
+        same_candidate,
+        scheme=SCHEME,
+        enforcement_mechanism_version=ENFORCEMENT_VERSION,
+        dsl_version="dsl-0",
+        result_id="strategy-a",
+        strategy_id="astrat-a",
+        strategy_digest="digest-a",
+    )
+    rec_b = analyze_candidate(
+        same_candidate,
+        scheme=SCHEME,
+        enforcement_mechanism_version=ENFORCEMENT_VERSION,
+        dsl_version="dsl-0",
+        result_id="strategy-b",
+        strategy_id="astrat-b",
+        strategy_digest="digest-b",
+    )
+    assert rec_a.canonical_digest != rec_b.canonical_digest
+
+
+def test_a_changed_strategy_digest_over_the_same_lowered_program_changes_the_admissibility_digest() -> (
+    None
+):
+    """A strategy rule change (different digest, same lowered candidate shape) is now distinguishable.
+
+    Uses two genuinely different fixture strategies (``simple_policy`` vs
+    ``flat_policy``) run through the real ``lower_strategy`` -> ``analyze_candidate``
+    pipeline end-to-end, not synthetic strategy-id strings.
+    """
+    from tos.dsl.lowering import lower_strategy
+
+    from ._dsl_strategies import flat_policy, issue_strategy, simple_policy
+
+    strategy_a = issue_strategy(policy=simple_policy())
+    strategy_b = issue_strategy(policy=flat_policy())
+    assert strategy_a.canonical_digest != strategy_b.canonical_digest
+
+    rec_a = analyze_candidate(
+        lower_strategy(strategy_a),
+        scheme=SCHEME,
+        enforcement_mechanism_version=ENFORCEMENT_VERSION,
+        dsl_version="dsl-0",
+        result_id=f"admres-{strategy_a.strategy_id}",
+        strategy_id=strategy_a.strategy_id,
+        strategy_digest=strategy_a.canonical_digest,
+    )
+    rec_b = analyze_candidate(
+        lower_strategy(strategy_b),
+        scheme=SCHEME,
+        enforcement_mechanism_version=ENFORCEMENT_VERSION,
+        dsl_version="dsl-0",
+        result_id=f"admres-{strategy_b.strategy_id}",
+        strategy_id=strategy_b.strategy_id,
+        strategy_digest=strategy_b.canonical_digest,
+    )
+    assert rec_a.canonical_digest != rec_b.canonical_digest
