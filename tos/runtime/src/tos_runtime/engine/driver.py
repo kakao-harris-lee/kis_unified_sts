@@ -32,9 +32,10 @@ Four responsibilities, each load-bearing:
    document) went undetected on restart and the event was silently re-handled — re-invoking every
    side effect the flow had, including re-sending an attempt already handed off (a blind
    resubmit). Case (b) now marks the event durably interrupted (``HANDLING_INTERRUPTED_
-   POSSIBLY_LIVE``) instead, never calling ``core.handle`` again — see
-   ``_handle_interrupted_event`` for the residual this does NOT solve (no ledger rebuild; Phase 5
-   / J3).
+   NO_SEND_EVIDENCE`` or, when the flow's own evidence proves it reached the send boundary first,
+   ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND`` — split by re-review finding N1, 2026-09-09)
+   instead, never calling ``core.handle`` again — see ``_handle_interrupted_event`` for the split
+   and for the residual this does NOT solve (no ledger rebuild; Phase 5 / J3).
 3. **Egress-result re-injection.** After a ``DECISION_TICK`` is handled, the driver drains any NEW
    results the wired :class:`~tos.egressgw.BrokerEgressGateway` retained (``gateway.results``) and
    ENQUEUES each as a stamped ``EGRESS_RESULT`` event — it never calls ``core.handle`` on a
@@ -106,17 +107,34 @@ _EVENT_CONSUMED_RECORD_CLASS = "EVENT_CONSUMED"
 _EVENT_HANDLING_STARTED_KIND = "EVENT_HANDLING_STARTED"
 _EVENT_HANDLING_STARTED_RECORD_CLASS = "EVENT_HANDLING_STARTED"
 
-#: The halt reason (runtime-local vocabulary, not a kernel ``HaltReason`` member — this state is
-#: never reachable from inside the kernel) recorded on the durable ``EVENT_CONSUMED`` receipt an
-#: interrupted event is closed out with (finding #3).
-_HANDLING_INTERRUPTED_HALT_REASON = "HANDLING_INTERRUPTED_POSSIBLY_LIVE"
+#: The halt reason recorded on the durable ``EVENT_CONSUMED`` receipt when an interrupted
+#: event's OWN durable evidence proves the flow never reached (or could not be proven to have
+#: reached) the send boundary before the crash (re-review finding N1, 2026-09-09). Before N1,
+#: this branch shared the ambiguous, mis-scoped ``HANDLING_INTERRUPTED_POSSIBLY_LIVE`` name with
+#: the genuinely-possibly-live case below — a name that overclaimed risk for the strictly SAFER
+#: of the two windows (marker recorded, then a crash before ``core.handle`` ever ran, so the
+#: DECISION_TICK that was interrupted is simply never evaluated) while giving no durable,
+#: non-scanning signal that a tick was silently dropped. Never reachable from inside the kernel
+#: — this is runtime-local vocabulary, not a ``tos.engine.vocabulary.HaltReason`` member.
+_HANDLING_INTERRUPTED_NO_SEND_EVIDENCE_REASON = "HANDLING_INTERRUPTED_NO_SEND_EVIDENCE"
 
-#: The additional, dual-path (sqlite + emergency-log) HALT kind recorded when the flow that was
-#: interrupted had ALREADY reached the send boundary (finding #3's "possibly live" case) — an
-#: attempt whose broker-side fate is genuinely unknown, not merely an interrupted no-op.
+#: The additional, dual-path (sqlite + emergency-log) HALT kind — and, since N1, the durable
+#: ``EVENT_CONSUMED`` receipt's own ``halt_reason`` too — recorded when the flow that was
+#: interrupted had ALREADY reached the send boundary (the genuinely dangerous case): an attempt
+#: whose broker-side fate is genuinely unknown, not merely an interrupted no-op.
 _HANDLING_INTERRUPTED_SEND_POSSIBLY_LIVE_KIND = (
     "HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND"
 )
+
+#: Re-review finding N1 (2026-09-09): a non-halt, durably-queryable evidence row appended
+#: alongside the ``HANDLING_INTERRUPTED_NO_SEND_EVIDENCE`` receipt above, so "a DECISION_TICK
+#: was interrupted before evaluation and will never be evaluated" is visible directly (by
+#: ``kind``) rather than requiring an operator to scan for the specific halt-reason STRING
+#: buried inside an ``EVENT_CONSUMED`` receipt's payload. This is evidence about a fact, not a
+#: halt: the driver's own crash-window contract (module docstring item 2) already treats this
+#: window as conservatively closed out (never re-handled), so nothing further blocks progress —
+#: the row exists purely for operator visibility of the silent loss.
+_DECISION_TICK_DROPPED_ON_RECOVERY_KIND = "DECISION_TICK_DROPPED_ON_RECOVERY"
 
 #: Evidence kinds that prove the interrupted flow reached (or passed) the send boundary before
 #: the crash: the gateway's own pre-``SEND_STARTED`` write (``tos.egressgw.gateway`` — a raw
@@ -296,6 +314,15 @@ class EngineDriver:
         self._gateway: object | None = None
         #: How many of the gateway's retained results this driver has already drained.
         self._drained_results = 0
+        #: Re-entrancy guard (re-review finding N3, 2026-09-09): ``True`` for the entire duration
+        #: of one :meth:`_process_next` call. ``_send_evidence_exists_after``'s soundness (see its
+        #: own docstring) depends on this driver never pulling a second event while the first
+        #: one's bookkeeping is still in flight — a re-entrant call (e.g. something reachable from
+        #: ``core.handle`` itself calling back into ``run_once``/``run_until_idle``/
+        #: ``enqueue_and_run``) would let a second event's own send evidence be misattributed to
+        #: the first. Structurally unreachable, not merely undocumented: the guard raises rather
+        #: than silently nesting.
+        self._draining = False
 
     def bind_gateway(self, gateway: object) -> None:
         """Attach the send boundary whose retained ``.results`` this driver drains.
@@ -361,6 +388,19 @@ class EngineDriver:
         """Whether any ``SEND_STARTED``/``SEND_HANDED_OFF`` evidence was durably recorded after
         ``marker_seq`` (the interrupted event's own ``EVENT_HANDLING_STARTED`` receipt) — proof
         that the interrupted flow reached the send boundary before the crash (finding #3).
+
+        **Soundness invariant (re-review finding N3, 2026-09-09).** This is a ``seq >
+        marker_seq`` scan, not a query keyed to the specific event/attempt that owns
+        ``marker_seq`` — it is sound ONLY because :class:`EngineDriver` is single-threaded and
+        completes one event's full bookkeeping (``core.handle`` through the ``EVENT_CONSUMED``
+        append) before ever pulling the next row (module docstring item 2; :meth:`_process_next`
+        is the sole drain entry point, guarded non-reentrant by :attr:`_draining` below). Under
+        that invariant, any send evidence appended after this marker's own seq can only belong to
+        the SAME in-flight event this marker was written for — nothing else could have run
+        concurrently to append unrelated send evidence in between. A concurrent or re-entrant
+        driver would break this reasoning (a second event's own send evidence could be
+        misattributed to this one), which is exactly what :attr:`_draining` exists to make
+        structurally unreachable rather than merely undocumented.
         """
         placeholders = ",".join("?" for _ in _SEND_EVIDENCE_KINDS)
         cur = self._evidence_store.connection.execute(
@@ -378,10 +418,23 @@ class EngineDriver:
         before the crash).
 
         Never re-handles the event (that would be a blind resubmit of a possibly-already-sent
-        attempt). Instead marks it durably interrupted with a conservative halt, and — if the
-        evidence shows the flow reached the send boundary before the crash — ALSO durably records
-        a dual-path ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND`` HALT naming the possibly-live
-        attempt for operator attention.
+        attempt). Splits into two durably-distinguished outcomes (re-review finding N1,
+        2026-09-09 — before N1 both shared one ambiguous ``HANDLING_INTERRUPTED_POSSIBLY_LIVE``
+        name):
+
+        * **No send evidence found** (:meth:`_send_evidence_exists_after` is ``False`` — the
+          marker was written but the flow never reached, or cannot be proven to have reached, the
+          send boundary before the crash; this is also the ordinary "crashed before
+          ``core.handle`` even ran" case): the receipt's ``halt_reason`` becomes
+          ``HANDLING_INTERRUPTED_NO_SEND_EVIDENCE`` and an ADDITIONAL, non-halt
+          ``DECISION_TICK_DROPPED_ON_RECOVERY`` evidence row is appended so the silent loss of
+          this tick is durably visible by ``kind`` alone, without an operator having to scan
+          ``EVENT_CONSUMED`` payloads for a halt-reason string.
+        * **Send evidence found** (the flow provably reached the send boundary): the receipt's
+          ``halt_reason`` becomes ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND`` and — unchanged from
+          before N1 — an ADDITIONAL dual-path (sqlite + emergency-log)
+          ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND`` HALT is durably recorded naming the
+          possibly-live attempt for operator attention.
 
         ⚠ **Residual, disclosed (design #31 §2.1(iii) J3 crash-recovery — provisional, §9
         deferred).** This method does NOT rebuild the in-memory reservation ledger's state for
@@ -402,12 +455,20 @@ class EngineDriver:
                 kind=_HANDLING_INTERRUPTED_SEND_POSSIBLY_LIVE_KIND,
                 record_class=_HANDLING_INTERRUPTED_SEND_POSSIBLY_LIVE_KIND,
             )
+            halt_reason = _HANDLING_INTERRUPTED_SEND_POSSIBLY_LIVE_KIND
+        else:
+            self._evidence_store.append(
+                {"event_id": event_id, "handling_started_evidence_seq": marker_seq},
+                kind=_DECISION_TICK_DROPPED_ON_RECOVERY_KIND,
+                record_class=_DECISION_TICK_DROPPED_ON_RECOVERY_KIND,
+            )
+            halt_reason = _HANDLING_INTERRUPTED_NO_SEND_EVIDENCE_REASON
         payload_digest = self._scheme.compute_digest(event.model_dump(mode="json"))
         evidence_seq, generation = self._record_consumed(
             event_id=event_id,
             payload_digest=payload_digest,
             outcome_digest=None,
-            halt_reason=_HANDLING_INTERRUPTED_HALT_REASON,
+            halt_reason=halt_reason,
         )
         self._inbox.mark_consumed(seq, evidence_seq=evidence_seq, generation=generation)
 
@@ -463,62 +524,83 @@ class EngineDriver:
             ``(seq, EventResult)`` for the newly handled event, or ``None`` once the inbox has
             nothing left — every already-consumed / crash-window row was already skipped
             internally by this call, so ``None`` always means "genuinely idle".
-        """
-        self._inject_due_timeouts()
-        while True:
-            pulled = self._inbox.next_unconsumed()
-            if pulled is None:
-                return None
-            seq, event = pulled
-            event_id = event_identity(event, scheme=self._scheme)
 
-            existing = self._find_consumed_receipt(event_id)
-            if existing is not None:
-                evidence_seq, generation = existing
+        Raises:
+            ArtifactIntegrityError: If this driver is called re-entrantly (re-review finding N3 —
+                see :attr:`_draining` and ``_send_evidence_exists_after``'s own docstring for why
+                single-threaded, non-overlapping drains are a soundness invariant, not merely a
+                convention).
+        """
+        if self._draining:
+            raise ArtifactIntegrityError(
+                "EngineDriver._process_next called re-entrantly — this driver is single-threaded "
+                "and must complete one event's full bookkeeping (core.handle through the "
+                "EVENT_CONSUMED append) before pulling the next; a re-entrant call would break "
+                "the soundness invariant _send_evidence_exists_after depends on"
+            )
+        self._draining = True
+        try:
+            self._inject_due_timeouts()
+            while True:
+                pulled = self._inbox.next_unconsumed()
+                if pulled is None:
+                    return None
+                seq, event = pulled
+                event_id = event_identity(event, scheme=self._scheme)
+
+                existing = self._find_consumed_receipt(event_id)
+                if existing is not None:
+                    evidence_seq, generation = existing
+                    self._inbox.mark_consumed(
+                        seq, evidence_seq=evidence_seq, generation=generation
+                    )
+                    continue  # crash-window recovery — keep draining, nothing new happened
+
+                interrupted = self._inbox.handling_started_receipt(seq)
+                if interrupted is not None:
+                    marker_seq, _marker_generation = interrupted
+                    self._handle_interrupted_event(
+                        seq=seq, event_id=event_id, event=event, marker_seq=marker_seq
+                    )
+                    continue  # crash-window recovery — keep draining, nothing NEW happened
+
+                marker_receipt = self._evidence_store.append(
+                    {"event_id": event_id},
+                    kind=_EVENT_HANDLING_STARTED_KIND,
+                    record_class=_EVENT_HANDLING_STARTED_RECORD_CLASS,
+                )
+                assert marker_receipt.seq is not None
+                assert marker_receipt.key_generation is not None
+                self._inbox.mark_handling_started(
+                    seq,
+                    evidence_seq=marker_receipt.seq,
+                    generation=marker_receipt.key_generation,
+                )
+
+                result = self._core.handle(event)
+                payload_digest = self._scheme.compute_digest(
+                    event.model_dump(mode="json")
+                )
+                evidence_seq, generation = self._record_consumed(
+                    event_id=event_id,
+                    payload_digest=payload_digest,
+                    outcome_digest=result.outcome_digest,
+                    halt_reason=(
+                        result.halt_reason.value
+                        if result.halt_reason is not None
+                        else None
+                    ),
+                )
                 self._inbox.mark_consumed(
                     seq, evidence_seq=evidence_seq, generation=generation
                 )
-                continue  # crash-window recovery — keep draining, nothing new happened
 
-            interrupted = self._inbox.handling_started_receipt(seq)
-            if interrupted is not None:
-                marker_seq, _marker_generation = interrupted
-                self._handle_interrupted_event(
-                    seq=seq, event_id=event_id, event=event, marker_seq=marker_seq
-                )
-                continue  # crash-window recovery — keep draining, nothing NEW happened
-
-            marker_receipt = self._evidence_store.append(
-                {"event_id": event_id},
-                kind=_EVENT_HANDLING_STARTED_KIND,
-                record_class=_EVENT_HANDLING_STARTED_RECORD_CLASS,
-            )
-            assert marker_receipt.seq is not None
-            assert marker_receipt.key_generation is not None
-            self._inbox.mark_handling_started(
-                seq,
-                evidence_seq=marker_receipt.seq,
-                generation=marker_receipt.key_generation,
-            )
-
-            result = self._core.handle(event)
-            payload_digest = self._scheme.compute_digest(event.model_dump(mode="json"))
-            evidence_seq, generation = self._record_consumed(
-                event_id=event_id,
-                payload_digest=payload_digest,
-                outcome_digest=result.outcome_digest,
-                halt_reason=(
-                    result.halt_reason.value if result.halt_reason is not None else None
-                ),
-            )
-            self._inbox.mark_consumed(
-                seq, evidence_seq=evidence_seq, generation=generation
-            )
-
-            self._track_timeouts(event, result)
-            if event.kind is EventKind.DECISION_TICK:
-                self._drain_gateway_results()
-            return seq, result
+                self._track_timeouts(event, result)
+                if event.kind is EventKind.DECISION_TICK:
+                    self._drain_gateway_results()
+                return seq, result
+        finally:
+            self._draining = False
 
     def run_once(self) -> EventResult | None:
         """Process exactly one pending event to completion, or recover a crash-window row.

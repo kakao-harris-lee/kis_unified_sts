@@ -14,7 +14,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, ArtifactIntegrityError, get_scheme
 from tos.engine.records import EgressResultPayload, EngineEvent, event_identity
 from tos.engine.vocabulary import (
     EgressResultKind,
@@ -129,7 +129,12 @@ def test_restart_before_evidence_commit_reprocesses_once(
     ``EVENT_HANDLING_STARTED`` marker (durably recorded BEFORE ``core.handle``, independent of the
     ``EVENT_CONSUMED`` receipt) now lets restart recognise this window and refuse to re-handle:
     the transport call count must stay at 1, and the event is marked consumed with a
-    ``HANDLING_INTERRUPTED_POSSIBLY_LIVE`` halt instead.
+    ``HANDLING_INTERRUPTED_NO_SEND_EVIDENCE`` halt instead (re-review finding N1, 2026-09-09:
+    this test's fake ``counting_transmit`` never writes real ``SEND_STARTED``/``SEND_HANDED_OFF``
+    evidence the way the real gateway/sequencer would, so from the driver's own evidence-based
+    view no send evidence exists after the marker — the conservative, correctly-scoped
+    classification for what this durable evidence actually shows, even though the fake transport
+    incremented ``call_count`` in memory).
     """
     inbox_path = tmp_path / "inbox.sqlite3"
     evidence_path = tmp_path / "evidence.sqlite3"
@@ -205,10 +210,96 @@ def test_restart_before_evidence_commit_reprocesses_once(
         len(consumed_rows) == 1
     )  # exactly one receipt, never a re-handling's second one
     payload = json.loads(consumed_rows[0][0])["payload"]
-    assert payload["halt_reason"] == "HANDLING_INTERRUPTED_POSSIBLY_LIVE"
+    assert payload["halt_reason"] == "HANDLING_INTERRUPTED_NO_SEND_EVIDENCE"
     assert (
         payload["outcome_digest"] is None
     )  # never fabricated — this event was never replayed
+
+    # N1: the silent loss is ALSO durably visible as a non-halt evidence row, by kind alone.
+    dropped_rows = store2.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = 'DECISION_TICK_DROPPED_ON_RECOVERY'"
+    ).fetchall()
+    assert len(dropped_rows) == 1
+    dropped_payload = json.loads(dropped_rows[0][0])["payload"]
+    assert dropped_payload["event_id"] == event_id
+    store2.close()
+    inbox2.close()
+
+
+def test_marker_before_handle_crash_is_no_send_evidence_with_visibility_row(
+    tmp_path: Path, key_provider: KeyProvider
+) -> None:
+    """Re-review finding N1 probe (2026-09-09): the marker is durably written and the process
+    crashes BEFORE ``core.handle`` is ever called — the ordinary, safe half of finding #3's
+    crash window, not the "already sent" half. Before N1 this was misreported with the same
+    scary ``HANDLING_INTERRUPTED_POSSIBLY_LIVE`` name as a genuinely-possibly-live send; it is
+    also silent (a DECISION_TICK dropped and never evaluated, discoverable only by scanning
+    ``EVENT_CONSUMED`` payloads for a halt-reason string). N1 fixes both: the halt reason is
+    ``HANDLING_INTERRUPTED_NO_SEND_EVIDENCE`` and a ``DECISION_TICK_DROPPED_ON_RECOVERY``
+    evidence row makes the loss visible by ``kind`` alone."""
+    inbox_path = tmp_path / "inbox.sqlite3"
+    evidence_path = tmp_path / "evidence.sqlite3"
+    emergency_log = EmergencyAppendLog(tmp_path / "emergency.jsonl")
+    inbox = SqliteEventInbox(inbox_path, scheme=SCHEME)
+    store = SqliteEvidenceStore(evidence_path, key_provider=key_provider)
+    monotonic = FakeMonotonicSource()
+
+    driver, _core = _make_driver(
+        inbox=inbox,
+        evidence_store=store,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic,
+    )
+    stamped = driver._stamp(fx.decision_tick_event(seq=1))
+    receipt = inbox.enqueue(stamped)
+
+    # Write ONLY the write-ahead marker — core.handle is never called at all, simulating a crash
+    # strictly between the marker append and the handle call (the narrowest possible window).
+    event_id = event_identity(stamped, scheme=SCHEME)
+    marker_receipt = store.append(
+        {"event_id": event_id},
+        kind="EVENT_HANDLING_STARTED",
+        record_class="EVENT_HANDLING_STARTED",
+    )
+    assert marker_receipt.seq is not None
+    assert marker_receipt.key_generation is not None
+    inbox.mark_handling_started(
+        receipt.seq,
+        evidence_seq=marker_receipt.seq,
+        generation=marker_receipt.key_generation,
+    )
+    store.close()
+    inbox.close()
+
+    inbox2 = SqliteEventInbox(inbox_path, scheme=SCHEME)
+    store2 = SqliteEvidenceStore(evidence_path, key_provider=key_provider)
+    driver2, _core2 = _make_driver(
+        inbox=inbox2,
+        evidence_store=store2,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic,
+    )
+    assert driver2.run_once() is None
+    assert inbox2.is_consumed(receipt.seq) is True
+
+    consumed_rows = store2.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = 'EVENT_CONSUMED'"
+    ).fetchall()
+    assert len(consumed_rows) == 1
+    payload = json.loads(consumed_rows[0][0])["payload"]
+    assert payload["halt_reason"] == "HANDLING_INTERRUPTED_NO_SEND_EVIDENCE"
+
+    dropped_rows = store2.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = 'DECISION_TICK_DROPPED_ON_RECOVERY'"
+    ).fetchall()
+    assert len(dropped_rows) == 1
+    assert json.loads(dropped_rows[0][0])["payload"]["event_id"] == event_id
+
+    # This window never reaches HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND — nothing was sent.
+    possibly_live_rows = store2.connection.execute(
+        "SELECT COUNT(*) FROM entries WHERE kind = 'HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND'"
+    ).fetchone()[0]
+    assert possibly_live_rows == 0
     store2.close()
     inbox2.close()
 
@@ -277,6 +368,20 @@ def test_restart_with_send_evidence_after_marker_records_additional_possibly_liv
         "SELECT COUNT(*) FROM entries WHERE kind = 'HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND'"
     ).fetchone()[0]
     assert possibly_live_rows == 1
+
+    # N1: this branch's own EVENT_CONSUMED receipt carries the SEND-specific reason, never the
+    # NO_SEND_EVIDENCE one, and no visibility row is appended (nothing was silently dropped —
+    # the possibly-live HALT above already makes this attempt operator-visible).
+    consumed_rows = store2.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = 'EVENT_CONSUMED'"
+    ).fetchall()
+    assert len(consumed_rows) == 1
+    payload = json.loads(consumed_rows[0][0])["payload"]
+    assert payload["halt_reason"] == "HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND"
+    dropped_rows = store2.connection.execute(
+        "SELECT COUNT(*) FROM entries WHERE kind = 'DECISION_TICK_DROPPED_ON_RECOVERY'"
+    ).fetchone()[0]
+    assert dropped_rows == 0
     store2.close()
     inbox2.close()
 
@@ -627,3 +732,55 @@ def test_mismatched_attempt_result_yields_result_unmatched_and_leaves_reservatio
     assert mismatched_result.halt_reason is HaltReason.RESULT_UNMATCHED
     after = _core.ledger.outstanding(fx.instrument_key())
     assert after == before  # never relaxed, never advanced — byte-identical projection
+
+
+# -- re-entrancy guard (finding N3) ------------------------------------------
+
+
+def test_process_next_is_not_reentrant(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    monotonic_source,
+) -> None:
+    """Re-review finding N3 pin (2026-09-09): ``_send_evidence_exists_after``'s soundness
+    (see its own docstring) depends on the driver never draining two events concurrently or
+    re-entrantly. This proves the guard is real, not merely documented: something reachable
+    from ``core.handle`` (here, the injected ``transmit`` callable) that calls back into the
+    SAME driver's ``run_once`` while a drain is already in flight gets a hard
+    ``ArtifactIntegrityError``.
+
+    The kernel's own send boundary (``tos.engine.sequencer``) deliberately catches ANY exception
+    ``transmit`` raises and converts it to a ``TRANSMIT_RAISED`` halt (``# noqa: BLE001`` —
+    "a failed hand-off is not proof of not sent") rather than propagating it, so this test
+    catches the re-entrant ``ArtifactIntegrityError`` INSIDE ``transmit`` itself (where the guard
+    actually fires) instead of expecting it to surface at ``enqueue_and_run``'s own call
+    boundary — never re-raising, since the kernel would swallow that anyway."""
+    holder: dict[str, EngineDriver] = {}
+    reentrant_raised = {"value": False}
+
+    def reentrant_transmit(attempt: object) -> object:
+        from tos.engine import SendHandoff
+
+        try:
+            holder["driver"].run_once()
+        except ArtifactIntegrityError:
+            reentrant_raised["value"] = True
+        return SendHandoff(accepted_for_transmission=True, handoff_reference="x")
+
+    driver, _core = _make_driver(
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic_source,
+        transmit=reentrant_transmit,
+    )
+    holder["driver"] = driver
+
+    driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+    assert reentrant_raised["value"] is True
+    # The guard resets on the way out (``finally``) — the driver is usable afterward, on a
+    # FRESH event.
+    assert driver._draining is False
+    second = driver.enqueue_and_run(fx.decision_tick_event(seq=2))
+    assert second.instrument_key == fx.instrument_key()
