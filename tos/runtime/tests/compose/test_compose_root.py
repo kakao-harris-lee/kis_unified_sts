@@ -778,15 +778,24 @@ class TestRecomposeReplay:
         real proposal digest — reaching a real hand-off and a real synthetic ``FULL_FILL``
         ``EGRESS_RESULT`` reinjected through the SAME ``enqueue_and_run`` call (mirroring
         ``test_one_synthetic_transport_handoff``). The inbox now holds
-        ``[DECISION_TICK, DECISION_TICK, EGRESS_RESULT(FULL_FILL)]`` with recorded outcome
-        digests ``[True, True, False]`` — exactly the reviewer's own measurement.
+        ``[DECISION_TICK, DECISION_TICK, EGRESS_RESULT(FULL_FILL)]`` — at the time of the ORIGINAL
+        finding, recorded outcome digests ``[True, True, False]`` (i.e. the ``EGRESS_RESULT``'s
+        own digest was honestly ``None``), exactly the reviewer's own measurement THEN.
 
-        Before the fix, boot-time replay treated the ``EGRESS_RESULT``'s honestly-``None``
-        outcome digest as a divergence, so :func:`~tos_runtime.compose.root.compose_paper_runtime`
-        raised ``EngineReplayDiverged`` on every subsequent boot over this ``data_dir`` — the
-        runtime became PERMANENTLY un-bootable after the first real send. Both a second AND a
-        third recompose must now succeed (not merely "the second boot is special" — a boot-time
-        check that runs once and is never exercised again would not prove the fix).
+        Before the fix, boot-time replay treated that honestly-``None`` outcome digest as a
+        divergence, so :func:`~tos_runtime.compose.root.compose_paper_runtime` raised
+        ``EngineReplayDiverged`` on every subsequent boot over this ``data_dir`` — the runtime
+        became PERMANENTLY un-bootable after the first real send. Both a second AND a third
+        recompose must now succeed (not merely "the second boot is special" — a boot-time check
+        that runs once and is never exercised again would not prove the fix).
+
+        **Wave-3 review finding #2 (2026-09-09), tense update.** Kernel lane KW3-RD
+        (``783fadf0``) landed AFTER this test was first written and gave ``EGRESS_RESULT``
+        events a real, non-``None`` ``outcome_digest`` — the third recorded digest above is no
+        longer honestly ``None`` today; it is a real digest that must (and does) match on replay.
+        This test's own assertions never depended on which of the two shapes was true, so it
+        needed no logic change — only this docstring's claim about the THEN-current digest shape
+        was stale.
         """
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
