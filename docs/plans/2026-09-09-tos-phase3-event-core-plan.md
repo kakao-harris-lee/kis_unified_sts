@@ -249,3 +249,21 @@ verdict **approve** — 17건 중 15 완전 종결 · #13/#17 부분(정직 공�
 **마감 착지**: KW3-EV `b9447c9d`(`EngineEvidenceRecord` += `event_id`·`bound_identity`·`bound_digest` — covered 집합 없음(plain FrozenModel) · `run_commitment_flow(event_id=)` 가 ATTEMPT_REQUEST_CREATED/FLOW_STEP_ADMITTED/FLOW_HALTED/SEND_HANDED_OFF 전부에 스탬프 · `_bindings_from` 소비 필드 = 정확히 step 11 `bound_digest`·step 9 `bound_identity` · 뮤테이션 2종 red · `_halt` 11개 호출부를 `_stop` 클로저로 추출해 304→298(예산 재등록 `471fc336`)) · CR5-5/6 `48191e9e`·`e3c00a0c`(`RecordedStage` 가 `event_id` 상관 · encounter-order 폴백 삭제(KW3-EV 이전 행 = fail-closed) · step 9/11 bound 값 그대로 재구성 → step 12 가 라이브 attempt_id 도출 · `EventCorrelatingCore` 래퍼(`replay.py` 무수정 · `_engine_wiring` 경계 `cast`) · xfail 3 → XPASS(strict) 확인 후 마커 제거 · 창 절단(`window_events=1`) 정렬 · **변조 bound_identity ⇒ 후속 EGRESS_RESULT divergence** end-to-end 뮤테이션 착지 · `RecordedTransmit` 은 attempt_id 키 그대로 정확).
 
 **최종 실측(워크트리 `e3c00a0c` 격리)**: 커널 `9405 passed` · 런타임 `699 passed`(xfail 0) · mypy 258/74 clean · ruff/black clean · firewall PASS · lint-imports 3/0 · 예산 PASS(37) · completion GREEN · spec PASS · contract PASS · `tos/src` 변경은 K 커밋 6개에만(`3a8421ef`·`7ecae367`·`783fadf0`·`9de02dcc`·`b9447c9d` + 테스트만인 `1fd45668`) · spec/계약 diff 0. 독립 리뷰 `review-p3w3`(전용 워크트리) 진행 중 — 결과는 §7.10.
+
+### 7.10 웨이브 3 독립 리뷰 처분 (Claude 측 `code-reviewer` `review-p3w3` · 전용 워크트리 · 2026-09-09)
+
+1차 verdict **needs-attention**(차단 아님 · 코드 되돌림 0 · MEDIUM 3 · LOW 4). 게이트 12행 전부 rc=0 재현 · 뮤테이션 M1~M8 생존 0(M1: `sequencer.SEQUENCED_STEPS` 패치 제거 시 29변형 누출 · M2: 검출기 3 무력화 시 12변형 누출 · M3: step 15 다중도 2→1 즉시 red · M7b: 엔진 측 수량 2배 ⇒ 패리티 red) · 증거 조작 프로브 P1~P4(SEND_HANDED_OFF 삭제·step 9 행 삭제·12행 전량 삭제·event_id 변조) 전부 `ok=False diverged=1` · P7 무변조 tick-only 재생이 라이브와 동일 attempt_id 재구성. §5 대조: ① 충족 ② 범위 한정 충족 ③ 충족 ④ 충족 · 커널 diff K 커밋만 · 신규 수치 리터럴 0 · YAML 4키 null · 예산 실측=등재.
+
+| # | 심각도 | 지적 | 처분 |
+|---|---|---|---|
+| 1 | MEDIUM | tick 의 비교 표면이 플로우 시작 전 확정되는 Proposal digest 뿐 — tick-only inbox 에서 step 증거 12행 전량 삭제(P5)·SEND_HANDED_OFF 삭제(P6) 해도 `ok=True` | **구현(공개 아님)** — CR6-#1 `60e8823b`: `engine/flow_fingerprint.py` — `EVENT_CONSUMED` 영수증에 typed 지문(`handed_off`·`halt_step`·`halt_reason`·`attempt_id` — 커널 `FlowResult`/`EventResult` 가 이미 노출 · 매트릭스 `_fingerprint` 와 같은 모양) · `replay_engine` 이 digest 와 함께 대조하고 어긋난 필드를 명명 · 지문 없는 옛 영수증 ⇒ `uncompared` + `RECEIPT_FINGERPRINT_MISSING` · P5/P6 재현 ⇒ divergence(필드 `handed_off`) · P7 유지 · CR5-5 변조 테스트가 이제 2이벤트 divergence(더 민감) · `replay_engine` 120→82(`_compare_one_event` 추출 · 예산 예외 **제거**) · `_process_next` 139→140 재등록 |
+| 2 | MEDIUM | `replay.py` 도크스트링·None/None 스킵 주석·compose 테스트 도크스트링이 KW3-RD 가 없앤 «결과 digest 는 항상 None» 을 여전히 단언 | 수용 — CR6-#2 `43a9aa21` + `60e8823b`: 시제 갱신 · 스킵 분기 정당화를 «게이트 거부로 파이프라인 미실행» 으로 축소 · EGRESS_RESULT 영수증은 그 분기를 타지 않는다는 단언 |
+| 3 | MEDIUM | calibration 예시 YAML 의 `max_fill_ratio_shortfall` 주석이 E-R-3 이전 «몫» 의미 — 0.9 입력 시 90% 미달이 WITHIN | 수용 — E-R-4 `afe3a9ba`: shortfall 프레이밍(0=일치 · abs 대칭 · `_fill_ratio` 좌표 인용) · 드리프트 핀(«shortfall» 포함·«quotient» 불포함 — 저작자 첫 초안이 부정문의 «quotient» 로 걸림) |
+| 4 | LOW | 매트릭스 «생존 0» 단언이 구조적으로 실패 불가(검출기 1 은 모든 변형에 red) — 실질 게이트는 `_EXPECTED_ORDER_PIN_ONLY` 비교 | 수용 — F-K-4 `faf8b612`: `survivors` 를 실행 검출기 2·3 기준으로 재정의 · 검출기 1 은 `anchor_sanity_failures` 로 분리 · 양방향 재실증(29 / 12 명명) |
+| 5 | LOW | 출하 모듈 `replay_stage.py` 가 테스트용 per-line 면제 마커 사용 · `EventCorrelatingCore` + `cast` 가 핀 사각 확대 | 수용 — CR6-#5 `35f1bcf9`: `ReplayableCore` Protocol 로 `cast` 대체 · 마커 제거 · `_ALLOWED_FILES` 에 사유와 함께 등재 |
+| 6 | LOW | 패리티 도크스트링이 «실 paper 경로» 를 실제보다 넓게 서술(게이트웨이/봉인 15~19 는 양측 부재) | 수용 — F-R-4 `cf13a726`: «같은 transport·같은 수량 · 송신 경계는 범위 밖» 으로 축소 |
+| 7 | LOW·정보 | `GatewayEvidenceRecord.step` 은 모델 층에서 선택 필드(주어졌을 때만 kind 대조) · 출하 호출부는 전부 스탬프(0건 누락) | 기록 — 후속에서 `FIXED_KIND_STEPS` kind 에 step 필수화 검토 |
+
+리뷰어 잔여(기록): RR1 커밋 단독 임포트 불가를 리뷰어가 실측 확인(bisect 시 건너뛸 것) · `4b4aebdf` 오라벨 공개 정확 · M8(digest 함수 퇴화)은 자기대조의 구조적 성질(커널 단위 테스트가 메움) · `event_id` 선택 필드 — 미래에 None 으로 도는 출하 경로가 생기면 재생 무력화(현재 전 경로 스탬프).
+
+**최종 실측(워크트리 `60e8823b` 격리)**: 커널 `9405 passed` · 런타임 `703 passed` · mypy 258/75 clean · ruff/black clean · firewall PASS · lint-imports 3/0 · 예산 PASS(36 · `replay_engine` 예외 제거) · completion GREEN · spec PASS · contract PASS · 처분 6커밋 `tos/src` 변경 0 · spec/계약 diff 0. 재심 진행 중(P5/P6/P7 + P8 재프로브 · 지문 비교 제거 뮤테이션 · `_ALLOWED_FILES` 제거 시 핀 발화 요구) — 결과는 §7.11.
