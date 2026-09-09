@@ -106,6 +106,27 @@ CREATE TABLE IF NOT EXISTS attempt_finality_witness (
 )
 """
 
+#: TOS Phase 3 wave 2 independent review finding #3 (2026-09-09, lane C-R2): a durable,
+#: RUNTIME-WIDE (never per-attempt) new-risk halt latch, in this SAME inbox file (same D3
+#: rationale as the two side tables above). ADR-002-005 §10 "an invariant violation is a
+#: Critical incident and an immediate new-risk halt condition" — before this table existed, a
+#: recorded ``COUPLING_VIOLATION``/``ORTHOSTATE_OWNERSHIP_VIOLATION`` durably logged the
+#: violation but blocked nothing (:mod:`tos_runtime.engine.orthostate_projection`'s own module
+#: docstring). The ``CHECK (id = 1)`` + ``PRIMARY KEY`` makes this a genuine SINGLETON row: the
+#: FIRST halt recorded here sticks (an ``INSERT OR IGNORE`` — see :meth:`SqliteEventInbox
+#: .record_new_risk_halt` — silently no-ops on a second write, a primary-key conflict, never an
+#: overwrite), preserving the original cause. Clearing this latch is NOT provided in this wave
+#: (Phase 5 operator re-arm, per the disposition) — there is deliberately no ``DELETE``/``UPDATE``
+#: method here.
+_CREATE_NEW_RISK_HALT_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS new_risk_halt (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    reason TEXT NOT NULL,
+    event_id TEXT,
+    evidence_seq INTEGER
+)
+"""
+
 
 @dataclass(frozen=True)
 class InboxReceipt:
@@ -156,6 +177,7 @@ class SqliteEventInbox:
         self._conn.execute(_CREATE_UNCONSUMED_INDEX_SQL)
         self._conn.execute(_CREATE_ATTEMPT_COMPOSITES_TABLE_SQL)
         self._conn.execute(_CREATE_ATTEMPT_FINALITY_WITNESS_TABLE_SQL)
+        self._conn.execute(_CREATE_NEW_RISK_HALT_TABLE_SQL)
         existing_columns = {
             row[1] for row in self._conn.execute("PRAGMA table_info(events)")
         }
@@ -420,3 +442,52 @@ class SqliteEventInbox:
         if row is None or row[0] is None:
             return None
         return bool(row[0])
+
+    # -- runtime-wide new-risk halt latch (Phase 3 wave 2 review finding #3) ---------
+
+    def record_new_risk_halt(
+        self, *, reason: str, event_id: str | None, evidence_seq: int | None
+    ) -> None:
+        """Durably latch a runtime-wide new-risk halt — a no-op if one is ALREADY latched.
+
+        Args:
+            reason: The caller's own halt-reason vocabulary (e.g.
+                ``NEW_RISK_HALTED_BY_COUPLING_VIOLATION`` —
+                :mod:`tos_runtime.engine.orthostate_projection`'s own constant).
+            event_id: An identifier for the record that caused this halt (e.g. an
+                ``attempt_id``-derived key), for operator traceability.
+            evidence_seq: The durable evidence entry's own ``seq`` that recorded the underlying
+                violation, so an operator can cross-reference the two.
+
+        This is a SINGLETON latch (module docstring): the FIRST call wins — a second call, for a
+        different (or the same) reason, is silently ignored (``INSERT OR IGNORE`` against the
+        ``id = 1`` primary key), preserving the original cause rather than overwriting it.
+        Clearing the latch is NOT provided in this wave (Phase 5 operator re-arm).
+        """
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO new_risk_halt (id, reason, event_id, evidence_seq) "
+                "VALUES (1, ?, ?, ?)",
+                (reason, event_id, evidence_seq),
+            )
+            self._conn.execute("COMMIT")
+        except BaseException:
+            self._conn.execute("ROLLBACK")
+            raise
+
+    def new_risk_halt(self) -> dict[str, object] | None:
+        """The currently-latched new-risk halt, or ``None`` if none has ever been recorded.
+
+        Returns:
+            ``{"reason": str, "event_id": str | None, "evidence_seq": int | None}`` for the
+            FIRST halt ever latched (module docstring — never a later one), or ``None`` if the
+            latch has never been set.
+        """
+        row = self._conn.execute(
+            "SELECT reason, event_id, evidence_seq FROM new_risk_halt WHERE id = 1"
+        ).fetchone()
+        if row is None:
+            return None
+        reason, event_id, evidence_seq = row
+        return {"reason": reason, "event_id": event_id, "evidence_seq": evidence_seq}
