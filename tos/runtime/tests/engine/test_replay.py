@@ -23,18 +23,26 @@ SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
+#: Independent review finding #14: ``max_send_result_wait_ms`` is a concrete positive int now,
+#: never ``None`` — a caller that wants "timeout injection never fires within this test" passes a
+#: bound far larger than anything the test advances its ``FakeMonotonicSource`` by.
+_NO_TIMEOUT_WITHIN_TEST = 10**12
+
 
 def _driver(
-    inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
 ) -> EngineDriver:
     return EngineDriver(
         core=fx.build_core(transmit=None),
         inbox=inbox,
         evidence_store=evidence_store,
+        emergency_log=emergency_log,
         scheme=SCHEME,
         continuity_id="replay-tests",
         monotonic_source=FakeMonotonicSource(),
-        max_send_result_wait_ms=None,
+        max_send_result_wait_ms=_NO_TIMEOUT_WITHIN_TEST,
     )
 
 
@@ -43,7 +51,7 @@ def test_identical_replay_matches_for_every_event(
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
 ) -> None:
-    driver = _driver(inbox, evidence_store)
+    driver = _driver(inbox, evidence_store, emergency_log)
     driver.enqueue_and_run(fx.decision_tick_event(seq=1))
     driver.enqueue_and_run(fx.decision_tick_event(seq=2))
     driver.enqueue_and_run(fx.decision_tick_event(seq=3))
@@ -77,10 +85,11 @@ def test_window_events_limits_the_replay_to_the_most_recent_n(
         core=fx.build_core(registry=registry, transmit=None),
         inbox=inbox,
         evidence_store=evidence_store,
+        emergency_log=emergency_log,
         scheme=SCHEME,
         continuity_id="replay-tests",
         monotonic_source=FakeMonotonicSource(),
-        max_send_result_wait_ms=None,
+        max_send_result_wait_ms=_NO_TIMEOUT_WITHIN_TEST,
     )
     driver.enqueue_and_run(fx.decision_tick_event(seq=1))
     driver.enqueue_and_run(fx.decision_tick_event(seq=2))
@@ -122,7 +131,7 @@ def test_mutated_recorded_outcome_digest_is_detected_as_a_divergence(
     """Mutation test (plan §1.1 "재생 비교 제거 red" companion): tamper with the recorded
     ``outcome_digest`` a real ``EVENT_CONSUMED`` receipt carries — replay must catch it, not
     silently agree."""
-    driver = _driver(inbox, evidence_store)
+    driver = _driver(inbox, evidence_store, emergency_log)
     driver.enqueue_and_run(fx.decision_tick_event(seq=1))
 
     # Test-only tamper of the durably recorded digest (never how production code writes evidence
@@ -171,3 +180,52 @@ def test_events_outside_the_recorded_baseline_are_skipped_not_diverged(
     )
     assert verdict.ok
     assert verdict.total_compared == 0
+
+
+def test_egress_result_none_outcome_digest_is_uncompared_not_diverged(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """Independent review finding #1 (2026-09-09), RED before the fix.
+
+    ``EventResult.outcome_digest`` is honestly ``None`` for every ``EGRESS_RESULT`` event
+    (``tos/src/tos/engine/core.py``'s own docstring) — the recorded baseline AND the replayed
+    digest are therefore BOTH ``None`` for this event, in EVERY run, always. Before the fix,
+    ``replay_result_for(None, None, ...)`` returns ``INCONCLUSIVE`` (measured directly against
+    ``tos.evidence.compute_replay_result`` — see the review's own truth table), which this module
+    treated as a divergence: `EngineReplayDiverged` on every single boot after the first real send
+    hand-off, forever. After the fix, the ``DECISION_TICK`` (which DOES carry a real, non-``None``
+    digest on both sides) is the only genuinely compared event; the ``EGRESS_RESULT`` is
+    ``uncompared``, not diverged.
+    """
+    gateway = fx.FakeGateway()
+    driver = EngineDriver(
+        core=fx.build_core(transmit=gateway),
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        scheme=SCHEME,
+        continuity_id="replay-tests",
+        monotonic_source=FakeMonotonicSource(),
+        max_send_result_wait_ms=_NO_TIMEOUT_WITHIN_TEST,
+    )
+    driver.bind_gateway(gateway)
+    tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+    assert tick_result.flow is not None and tick_result.flow.handed_off is True
+    assert inbox.count == 2  # the tick + the re-injected ACK result
+
+    verdict = replay_engine(
+        inbox,
+        evidence_store,
+        emergency_log,
+        lambda: fx.build_core(transmit=None),
+        scheme=SCHEME,
+        window_events=None,
+    )
+    assert verdict.ok
+    assert verdict.diverged == ()
+    assert (
+        verdict.total_compared == 1
+    )  # only the DECISION_TICK has a real outcome digest
+    assert verdict.uncompared == 1  # the EGRESS_RESULT: None recorded, None replayed

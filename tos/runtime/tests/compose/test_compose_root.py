@@ -647,6 +647,56 @@ class TestRecomposeReplay:
         runtime2.rcl_log.close()
         runtime2.evidence_store.close()
 
+    def test_recompose_after_a_real_hand_off_does_not_diverge(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """Independent review finding #1 (2026-09-09), RED before the fix.
+
+        Reproduces the reviewer's exact compose probe: one crossing tick that halts at step 4
+        (no approval yet), then a SECOND run of the same event once the approval file names the
+        real proposal digest — reaching a real hand-off and a real synthetic ``FULL_FILL``
+        ``EGRESS_RESULT`` reinjected through the SAME ``enqueue_and_run`` call (mirroring
+        ``test_one_synthetic_transport_handoff``). The inbox now holds
+        ``[DECISION_TICK, DECISION_TICK, EGRESS_RESULT(FULL_FILL)]`` with recorded outcome
+        digests ``[True, True, False]`` — exactly the reviewer's own measurement.
+
+        Before the fix, boot-time replay treated the ``EGRESS_RESULT``'s honestly-``None``
+        outcome digest as a divergence, so :func:`~tos_runtime.compose.root.compose_paper_runtime`
+        raised ``EngineReplayDiverged`` on every subsequent boot over this ``data_dir`` — the
+        runtime became PERMANENTLY un-bootable after the first real send. Both a second AND a
+        third recompose must now succeed (not merely "the second boot is special" — a boot-time
+        check that runs once and is never exercised again would not prove the fix).
+        """
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+        event = fx.crossing_event()
+        results = runtime.run_once((event,))
+        proposal_digest = results[0].pipeline.proposal.canonical_digest
+        assert proposal_digest is not None
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
+        write_approval_file(
+            custody_root,
+            proposal_digest=proposal_digest,
+            environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
+        )
+        results2 = runtime.run_once((event,))
+        assert results2[0].flow is not None and results2[0].flow.handed_off is True
+        assert len(runtime.transport.requests) == 1
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+        # Second boot over the SAME data_dir: must NOT raise EngineReplayDiverged.
+        runtime2 = _compose(tmp_path, config_dir, data_dir, custody_root)
+        runtime2.rcl_log.close()
+        runtime2.evidence_store.close()
+
+        # Third boot: must ALSO succeed — not just "the second time happens to work".
+        runtime3 = _compose(tmp_path, config_dir, data_dir, custody_root)
+        runtime3.rcl_log.close()
+        runtime3.evidence_store.close()
+
 
 class TestPendingDimensionAttestationGatesCompleteness:
     """A pending currentness dimension's operator attestation is what makes

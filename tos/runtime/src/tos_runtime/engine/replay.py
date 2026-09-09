@@ -8,24 +8,62 @@ durably recorded for it (:mod:`tos_runtime.engine.driver`'s ``EVENT_CONSUMED`` r
 :func:`tos.engine.sink.replay_result_for` — the exact RFC-003 §10:345-348 reproducibility
 question that function is built to answer. ``outcome_digest`` is honestly ``None`` for every
 ``EGRESS_RESULT`` event (a mutable, non-authoritative reservation-projection transition has no
-outcome identity of its own), so a stream of only such events trivially compares ``None`` to
-``None`` — the kernel's own scope choice, not a gap this module papers over.
+outcome identity of its own) — the kernel's own scope choice, not a gap this module papers over.
+
+**Independent review finding #1/#11 (2026-09-09), corrected here.** A prior revision of this
+docstring claimed a stream of only ``EGRESS_RESULT`` events "trivially compares ``None`` to
+``None``" — the opposite is true: feeding ``None``/``None`` into
+:func:`~tos.evidence.compute_replay_result` (via :func:`~tos.engine.sink.replay_result_for`)
+returns ``ReplayResultState.INCONCLUSIVE``, not ``MATCH`` (that function's own "expected/actual
+digest is present and equal" rule for ``MATCH``), and this module used to treat any non-``MATCH``
+state as a divergence — reporting a permanent, un-recoverable boot-time
+:class:`~tos_runtime.compose._boot_integrity.EngineReplayDiverged` for every event whose recorded
+baseline digest is ``None``, i.e. every event AFTER the first real send hand-off, forever. This
+function now SKIPS the comparison (never calls :func:`~tos.engine.sink.replay_result_for` at
+all) ONLY in the one honest case — recorded digest ``None`` AND replayed digest ``None``, "no
+outcome identity to compare" — counting it in :attr:`ReplayVerdict.uncompared` rather than
+:attr:`ReplayVerdict.total_compared`. Every OTHER combination still goes through the normal
+comparison and is treated as a divergence exactly as before: a ``None``-recorded /
+non-``None``-replayed pair (or the reverse) still reaches
+:func:`~tos.evidence.compute_replay_result` and comes back ``INCONCLUSIVE`` (non-``MATCH``), and
+two present-but-different digests still come back ``DIVERGED`` — this fix narrows the skip to
+exactly the ``None``/``None`` pair; it does not widen it.
 
 **Side-effect scope, reported precisely (plan §1.1's own escape hatch: "if a fully
 side-effect-free rebuild is impossible without kernel changes, report precisely").** This module
 performs no I/O of its own beyond reading the ``inbox``/``evidence_store`` it is handed, and it
 never mutates either. It does NOT, however, make the ``build_core`` factory's own core
-side-effect-free — that responsibility belongs to the CALLER's factory. A ``core`` wired with
-``transmit=None`` re-derives every event's decision/flow outcome up to (and halting at) step 14
-with zero external I/O — this is what :func:`compose_replay_core_from_wiring` (this repo's own
-compose wiring) and this module's own hermetic tests use, and it is a genuine, useful replay check:
-it re-proves that the SAME strategy, config, and Capsule stream deterministically reach the SAME
-decision every time, independent of anything the send boundary did. Re-deriving all the way through
-a REAL send boundary's own idempotent replay (so that a fresh core wired with a working transmit
-reproduces byte-identical ``POTENTIALLY_LIVE``/fill outcomes without re-sending) needs the send
-boundary to expose a recording/replaying transport of its own — the design plan's own §4 rejected
-"an async replay loop" but did not yet ratify a synchronous replay transport for the gateway, so
-that half is out of this module's scope and is reported here rather than silently assumed away.
+side-effect-free — that responsibility belongs to the CALLER's factory; this module only compares
+whatever ``EventResult.outcome_digest`` that factory's core produces. **Independent review
+finding #2 (2026-09-09), corrected here**: this repo's own compose wiring
+(:func:`tos_runtime.compose._engine_wiring.verify_replay_or_halt`) now builds its replay core
+with ``transmit=None`` AND a genuinely side-effect-free stand-in
+(:class:`tos_runtime.compose._engine_wiring._ReplayStage`) for every injected commitment-flow
+stage — not the real stages, which each carry their OWN evidence sink bound to the real durable
+store, independent of whatever sink the replay ``EngineCore`` itself is given. Since
+``EventResult.outcome_digest`` is always the DECISION PIPELINE's own digest, computed strictly
+BEFORE the 19-step commitment flow starts (``tos/src/tos/engine/core.py``'s
+``EngineCore._run_entries``), a stand-in that halts the flow at the very first injected step
+cannot affect the comparison this module performs — see :class:`_ReplayStage`'s own docstring for
+the full measurement. Re-deriving all the way through a REAL send boundary's own idempotent
+replay (so that a fresh core wired with a WORKING transmit reproduces byte-identical
+``POTENTIALLY_LIVE``/fill outcomes without re-sending) needs the send boundary to expose a
+recording/replaying transport of its own — the design plan's own §4 rejected "an async replay
+loop" but did not yet ratify a synchronous replay transport for the gateway, so that half is out
+of this module's scope and is reported here rather than silently assumed away.
+
+**``window_events`` path-dependency caveat, measured directly (2026-09-09).** A fresh core's
+``ProvisionalReservationLedger`` starts EMPTY. When an earlier, windowed-out event left a
+reservation outstanding (e.g. ``COMMITTED_UNBOUND``/``ATTEMPT_BOUND`` under
+``max_unresolved_send_per_scope``'s at-most-one retention, design #31 §4.4), a later event's
+ORIGINAL outcome depended on that outstanding state — replaying only the later event in isolation
+reaches a genuinely DIFFERENT outcome (e.g. ``AT_MOST_ONE_EXPOSURE_HELD`` originally vs. an
+unconstrained admit on replay), which :func:`replay_engine` reports as a divergence even though
+nothing is actually wrong. A windowed replay is therefore sound ONLY when the windowed-out prefix
+carries no ledger state into the window (e.g. every tick outside it was a defined no-action, or
+resolved its reservation before the window starts) — ``window_events=None`` (replay the whole
+inbox, rebuilding the ledger from scratch) is the only generally correct choice for a
+ledger-carrying stream.
 """
 
 from __future__ import annotations
@@ -59,10 +97,19 @@ class ReplayVerdict:
     :attr:`~tos.evidence.ReplayResultState.MATCH`. ``diverged`` names the event ids that were not
     — each already durably recorded as a ``REPLAY_DIVERGED`` halt (via
     :func:`~tos_runtime.evidence.emergency.record_halt`) by the time this is returned.
+
+    ``uncompared`` (independent review finding #1, 2026-09-09) counts events for which the
+    RECORDED baseline digest AND the REPLAYED digest were both ``None`` — "no outcome identity to
+    compare" (every ``EGRESS_RESULT`` event is honestly like this; see the module docstring). This
+    is deliberately NOT part of ``total_compared``: it was never a comparison at all, and it is
+    NOT a divergence either — ``ok`` does not consult it. An asymmetric ``None``/non-``None`` pair
+    is a genuine divergence and is counted in ``total_compared``/``diverged`` as before, never
+    here.
     """
 
     total_compared: int
     diverged: tuple[str, ...]
+    uncompared: int = 0
 
     @property
     def ok(self) -> bool:
@@ -113,21 +160,9 @@ def replay_engine(
         window_events: Replay only the LAST ``window_events`` admitted events (boot-time cost
             bound); ``None`` replays the whole inbox. Refused if negative or zero — a window that
             replays nothing is not a window, it is disabled, and disabling replay is a decision an
-            explicit ``None`` should make, not a ``0``.
-
-            ⚠ **Path-dependency caveat, measured directly (2026-09-09).** A fresh core's
-            ``ProvisionalReservationLedger`` starts EMPTY. When an earlier, windowed-out event
-            left a reservation outstanding (e.g. ``COMMITTED_UNBOUND``/``ATTEMPT_BOUND`` under
-            ``max_unresolved_send_per_scope``'s at-most-one retention, design #31 §4.4), a later
-            event's ORIGINAL outcome depended on that outstanding state — replaying only the
-            later event in isolation reaches a genuinely DIFFERENT outcome (e.g.
-            ``AT_MOST_ONE_EXPOSURE_HELD`` originally vs. an unconstrained admit on replay), which
-            this function reports as a divergence even though nothing is actually wrong. A
-            windowed replay is therefore sound ONLY when the windowed-out prefix carries no
-            ledger state into the window (e.g. every tick outside it was a defined no-action, or
-            resolved its reservation before the window starts) — ``window_events=None`` (replay
-            the whole inbox, rebuilding the ledger from scratch) is the only generally correct
-            choice for a ledger-carrying stream.
+            explicit ``None`` should make, not a ``0``. ⚠ See the module docstring's own
+            "``window_events`` path-dependency caveat" for why ``None`` is the only generally
+            correct choice for a ledger-carrying stream.
 
     Returns:
         The :class:`ReplayVerdict`.
@@ -149,16 +184,27 @@ def replay_engine(
     core = build_core()
     diverged: list[str] = []
     compared = 0
+    uncompared = 0
     for _seq, event in admitted:
         event_id = event_identity(event, scheme=scheme)
         if event_id not in recorded:
             # Nothing to compare against (e.g. outside the replay window's own history, or a row
             # admitted but not yet consumed) — not a divergence, just not yet a baseline.
             continue
+        expected_digest = recorded[event_id]
+        # Always re-derive the event's outcome (this advances the SAME core's ledger state for
+        # every subsequent event in the stream) even when the comparison below is skipped.
         result = core.handle(event)
         actual_digest = result.outcome_digest
+        if expected_digest is None and actual_digest is None:
+            # Independent review finding #1: neither side has an outcome identity to compare
+            # (e.g. an EGRESS_RESULT event — tos.engine.core.EventResult.outcome_digest is
+            # honestly None for every one of them). This is "no outcome identity", not a
+            # divergence — see the module docstring and ReplayVerdict.uncompared.
+            uncompared += 1
+            continue
         state = replay_result_for(
-            expected_outcome_digest=recorded[event_id],
+            expected_outcome_digest=expected_digest,
             actual_outcome_digest=actual_digest,
             baseline_supported=True,
             input_complete=True,
@@ -171,11 +217,13 @@ def replay_engine(
                 emergency_log,
                 payload={
                     "event_id": event_id,
-                    "expected_outcome_digest": recorded[event_id],
+                    "expected_outcome_digest": expected_digest,
                     "actual_outcome_digest": actual_digest,
                     "replay_result_state": state.value,
                 },
                 kind=_REPLAY_DIVERGED_KIND,
                 record_class=_REPLAY_DIVERGED_RECORD_CLASS,
             )
-    return ReplayVerdict(total_compared=compared, diverged=tuple(diverged))
+    return ReplayVerdict(
+        total_compared=compared, diverged=tuple(diverged), uncompared=uncompared
+    )
