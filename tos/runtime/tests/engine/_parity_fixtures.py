@@ -42,6 +42,7 @@ from tos.backtest import (
     SyntheticNonLivePreconditions,
     reference_bars,
 )
+from tos.brokeradapter.synthetic import SyntheticFillPolicy, SyntheticPaperTransport
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.capsule.capsule import (
     CapsuleScope,
@@ -61,8 +62,14 @@ from tos.dsl import (
     TargetKind,
     TargetSpec,
 )
-from tos.engine import EngineCore, InstrumentKey, NullEvidenceSink, StrategyRegistry
-from tos.engine.records import DecisionTickPayload
+from tos.engine import (
+    EngineCore,
+    InstrumentKey,
+    NullEvidenceSink,
+    SendHandoff,
+    StrategyRegistry,
+)
+from tos.engine.records import DecisionTickPayload, EgressResultPayload
 from tos.ordering import OrderingEvent
 from tos.time import HealthState, SessionContext
 from tos_runtime.engine.driver import EngineDriver
@@ -79,6 +86,77 @@ SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 #: enough that this suite's own ``FakeMonotonicSource``/``monotonic_source`` fixture never crosses
 #: it within a single test, for a caller that wants "timeout injection never fires here".
 NO_TIMEOUT_WITHIN_TEST = 10**12
+
+#: The single authorized quantity injected into BOTH sides of the parity harness (team-lead
+#: dispatch, 2026-09-09, "F-R-3"): `~tos.brokeradapter.synthetic.SyntheticPaperTransport` on the
+#: engine-driver side and `~tos.backtest.fills.DeterministicFillModel` (`scenario_quantity`) on
+#: the backtest side both consume this SAME literal, so both settle a genuinely FULL fill of the
+#: SAME magnitude rather than two independently-chosen quantities that merely happen to look
+#: alike.
+PARITY_QUANTITY = Decimal(1)
+
+
+class SyntheticBrokerGateway:
+    """A ``Transmit``-protocol adapter over the kernel's own, already-shipped
+    :class:`~tos.brokeradapter.synthetic.SyntheticPaperTransport` (design #34 §5.2) — REUSED here,
+    never reimplemented (team-lead dispatch, 2026-09-09, "F-R-3": "reuse via import").
+
+    **Why this exists.** Kernel commit ``[KW3-RD]`` gave ``EGRESS_RESULT`` events a real
+    ``outcome_digest`` covering ``(disposition, capacity_state, knowledge, filled_quantity,
+    remaining_quantity, pre_quarantine_capacity)`` (``tos.engine.records.EgressResultOutcome``).
+    Before that, ``fx.FakeGateway``'s synchronous auto-``ACK`` and the backtest side's
+    ``DeterministicFillModel`` FULL_FILL were "harmless" different Transmit-local choices, because
+    an ``EGRESS_RESULT``'s ``outcome_digest`` was unconditionally ``None`` either way. Now that it
+    is a REAL digest, an ``ACK`` (``capacity_state=POTENTIALLY_LIVE``, ``knowledge=ACKNOWLEDGED``)
+    and a ``FULL_FILL`` (``capacity_state=POSITION_CONSUMED``, ``knowledge=FILLED``) legitimately
+    hash to different values — the plan's own parity premise ("차이는 EventSource/Transmit 주입뿐")
+    requires the SAME Transmit *semantics* on both sides, not merely "a Transmit of some kind".
+
+    This adapter drives the exact same deterministic synthetic-broker path
+    ``tos_runtime.compose._wiring`` wires for the real paper core
+    (``SyntheticPaperTransport`` + an injected ``SyntheticFillPolicy``) — through the SAME
+    ``send_once(attempt, *, instrument_key, coordinates, quantity, ...)`` call, with the SAME
+    injected :data:`PARITY_QUANTITY` the backtest side's ``FillParameters.scenario_quantity``
+    also carries — so both sides settle a FULL_FILL of the same magnitude via the same kernel
+    fill-band arithmetic (:meth:`~tos.brokeradapter.synthetic.SyntheticPaperTransport
+    ._filled_quantity`), not two independently-invented test doubles that happen to agree.
+
+    Retains results SYNCHRONOUSLY inside ``__call__`` (mirroring both ``fx.FakeGateway``'s own
+    auto-ack and the real ``BrokerEgressGateway``'s step-18/19 ordering), so
+    :class:`~tos_runtime.engine.driver.EngineDriver`'s normal drain-and-reinject path applies
+    unchanged.
+    """
+
+    def __init__(self, *, quantity: Decimal = PARITY_QUANTITY) -> None:
+        """Wire a full-fill synthetic broker: ``fill_numerator/fill_denominator = 1/1`` over a
+        1-unit lot — the injected quantity is always filled in full, never partially, so the
+        derived kind (design #34 §5.2 "구조 파생 > 자기신고") is always ``FULL_FILL``."""
+        self._quantity = quantity
+        self._transport = SyntheticPaperTransport(
+            SyntheticFillPolicy(
+                fill_numerator=1, fill_denominator=1, lot_size=Decimal(1)
+            )
+        )
+        self.results: tuple[EgressResultPayload, ...] = ()
+
+    @property
+    def attempts(self) -> tuple[Any, ...]:
+        """Every attempt request handed to the underlying transport, in order — mirrors
+        ``fx.FakeGateway.attempts`` for this suite's own "exactly one transport call" counting
+        assertions."""
+        return tuple(request.attempt for request in self._transport.requests)
+
+    def __call__(self, attempt: Any) -> SendHandoff:
+        payload = self._transport.send_once(
+            attempt,
+            instrument_key=fx.instrument_key(),
+            coordinates=(),
+            quantity=self._quantity,
+        )
+        self.results = self.results + (payload,)
+        return SendHandoff(
+            accepted_for_transmission=True, handoff_reference=attempt.attempt_id
+        )
 
 
 class AlwaysPermissivePreconditions:
@@ -367,7 +445,7 @@ def backtest_fill_parameters() -> FillParameters:
         side=FillSide.BUY,
         settlement=SettlementPolicy.SAME_BAR,
         price_basis=ExecutionPriceBasis.CLOSE,
-        scenario_quantity=Decimal(1),
+        scenario_quantity=PARITY_QUANTITY,
         participation_cap_fraction=Decimal("1"),
         slippage_bps=Decimal(0),
         cost_per_unit=Decimal(0),

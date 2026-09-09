@@ -1,9 +1,10 @@
 """Backtest=paper parity + blind resubmit 0 (TOS Phase 3 Wave 3 Lane F-R; plan §3.2 bullets 2-3,
 §5 — 종료 조건: "백테스트와 paper 가 같은 코어·시퀀서" / "유실·지연·역전 ⇒ blind resubmit 0").
 
-**Parity adapter statement (deliverable 1's own required disclosure).** The two paths cannot be
-fed literally byte-identical ``EngineEvent`` objects, and the difference is exactly the injected
-seam the plan says parity must tolerate (design #31 §12 "차이는 EventSource/Transmit 주입뿐"):
+**Parity adapter statement (deliverable 1's own required disclosure; revised for ``[KW3-RD]``,
+2026-09-09 — see "F-R-3" below).** The two paths cannot be fed literally byte-identical
+``EngineEvent`` objects, and the surviving difference is exactly the injected seam the plan says
+parity must tolerate (design #31 §12 "차이는 EventSource/Transmit 주입뿐"):
 
 * ``reference`` (the ``OrderingEvent`` coordinate) always differs — each driver owns its own
   monotone yield-order counter on its own continuity
@@ -17,28 +18,55 @@ seam the plan says parity must tolerate (design #31 §12 "차이는 EventSource/
   literals — because each side must independently satisfy the SAME structural requirement
   ("admit, do not withhold on freshness") through its own injected bound set, not because the
   runs disagree about anything.
-* the re-injected ``EGRESS_RESULT`` KIND differs (``FULL_FILL`` from
-  :class:`~tos.backtest.fills.DeterministicFillModel` vs ``ACK`` from
-  ``fx.FakeGateway``'s auto-ack) — a Transmit-local choice, not a business fact either.
 
-**Why none of this breaks the parity claim.** ``EventResult.outcome_digest`` is
-``EventResult.pipeline.outcome_digest`` — populated ONLY for a ``DECISION_TICK`` that reaches
-:mod:`tos.engine.pipeline` (``core.py``'s own ``EventResult.outcome_digest`` property) — and for a
-``DECISION_TICK`` that digest is the emitted :class:`tos.dsl.Proposal`'s own ``canonical_digest``,
-whose covered field set (``Proposal._COVERED_FIELDS`` — ``proposer``, ``target_kind``, ``account``,
-``instrument``, ``direction``, ``position_effect``, ``quantity_basis``, ``edge_or_confidence``,
-``timing_and_execution_constraints``, ``rationale``, ``decision_context_capsule``, ``dsl_version``,
-``config_version``, ``authority``) includes NEITHER ``reference`` NOR ``time`` — so as long as both
-sides register the byte-identical :class:`~tos.dsl.AuthoredStrategy` (same policy content, same
+Neither of these is covered by ``Proposal.canonical_digest`` (see below), so neither affects the
+``DECISION_TICK`` half of the comparison.
+
+**F-R-3 (2026-09-09): the ``EGRESS_RESULT`` KIND must now be the SAME on both sides too.** Kernel
+commit ``[KW3-RD]`` gave ``EGRESS_RESULT`` events a real ``outcome_digest``
+(``tos.engine.records.EgressResultOutcome`` — covers ``disposition``, ``capacity_state``,
+``knowledge``, ``filled_quantity``, ``remaining_quantity``, ``pre_quarantine_capacity``). Before
+that landed, this test's engine-driver side used ``fx.FakeGateway``'s synchronous auto-``ACK``
+while the backtest side settled a ``FULL_FILL`` — "harmless" only because an ``EGRESS_RESULT``'s
+``outcome_digest`` used to be unconditionally ``None`` either way, which made the comparison
+*vacuous* for the result event (``None == None`` reads as "uncompared", not "verified identical" —
+exactly the gap ``[KW3-RD]`` closed). An ``ACK`` and a ``FULL_FILL`` legitimately hash to different
+values now (different ``capacity_state``/``knowledge``), so "차이는 EventSource/Transmit 주입뿐"
+requires the SAME Transmit *semantics*, not merely "a Transmit of some kind". The engine-driver
+side now drives :class:`~tos_runtime.tests.engine._parity_fixtures.SyntheticBrokerGateway` — a
+thin ``Transmit``-protocol adapter REUSING (never reimplementing) the kernel's own, already-shipped
+:class:`~tos.brokeradapter.synthetic.SyntheticPaperTransport` (design #34 §5.2), the same
+deterministic synthetic-broker path ``tos_runtime.compose._wiring`` wires for the real paper core.
+**Injected, shared magnitude:** :data:`~tos_runtime.tests.engine._parity_fixtures.PARITY_QUANTITY`
+(``Decimal(1)``) is the SAME literal fed to the backtest side's ``FillParameters.scenario_quantity``
+and to the synthetic broker's ``send_once(..., quantity=PARITY_QUANTITY)`` call — both fill it in
+full via their own kernel fill-band arithmetic and land on identical ``filled_quantity=Decimal(1)``
+/ ``remaining_quantity=Decimal(0)`` / ``kind=FULL_FILL``. ``broker_execution_id`` still differs
+(the synthetic broker stamps one, the backtest fill model never does) — irrelevant, because
+``EgressResultOutcome`` does not cover it.
+
+**Why the rest doesn't break the parity claim.** ``EventResult.outcome_digest`` is
+``EventResult.pipeline.outcome_digest`` when ``pipeline`` is set (a ``DECISION_TICK`` that reached
+:mod:`tos.engine.pipeline` — ``core.py``'s own ``EventResult.outcome_digest`` property), else
+``EventResult.result_outcome_digest`` (an ``EGRESS_RESULT``'s applied-outcome digest, ``[KW3-RD]``).
+For a ``DECISION_TICK`` that digest is the emitted :class:`tos.dsl.Proposal`'s own
+``canonical_digest``, whose covered field set (``Proposal._COVERED_FIELDS`` — ``proposer``,
+``target_kind``, ``account``, ``instrument``, ``direction``, ``position_effect``,
+``quantity_basis``, ``edge_or_confidence``, ``timing_and_execution_constraints``, ``rationale``,
+``decision_context_capsule``, ``dsl_version``, ``config_version``, ``authority``) includes NEITHER
+``reference`` NOR ``time`` — so as long as both sides register the byte-identical
+:class:`~tos.dsl.AuthoredStrategy` (same policy content, same
 ``dsl_version``/``config_binding_version`` — both sides call ``fx.registry_with()``, which issues
 the strategy fresh each time but from IDENTICAL literal content, and ``AuthoredStrategy.issue`` is
 content-addressed with no RNG) against the byte-identical
 :class:`~tos.capsule.DecisionContextCapsule` (both sides use ``fx.issue_capsule(seq=1)``), the
-emitted Proposal's digest is provably reference/time-independent and must match exactly.
-:class:`~tos.engine.core.EventResult` for an ``EGRESS_RESULT`` never sets ``pipeline`` at all
-(``core.py::_handle_egress_result`` — every returned branch omits it), so its ``outcome_digest`` is
-honestly ``None`` on BOTH sides regardless of the differing result kind above — the sequence being
-compared is ``(proposal_digest, None)`` on both paths.
+emitted Proposal's digest is provably reference/time-independent and must match exactly. For the
+``EGRESS_RESULT`` half, both sides now apply the SAME ``FULL_FILL`` payload (same
+``filled_quantity``/``remaining_quantity``) against a fresh reservation through the SAME kernel
+ledger logic (``ProvisionalReservationLedger.apply_egress_result``), so the resulting
+``EgressResultOutcome`` — and therefore ``result_outcome_digest`` — is provably identical too; the
+compared sequence is now ``(proposal_digest, result_outcome_digest)`` on both paths, with BOTH
+entries genuinely non-``None`` (asserted explicitly below — the whole point of ``[KW3-RD]``).
 
 **Blind resubmit 0 (deliverable 2).** Three scenarios drive the SAME real, wired
 :class:`~tos_runtime.engine.driver.EngineDriver` (durable :class:`~tos_runtime.engine.inbox
@@ -93,12 +121,9 @@ def test_backtest_and_engine_driver_outcome_digests_match_for_the_same_strategy(
     backtest_run = backtest_driver.run(backtest_core, pfx.one_bar())
     backtest_digests = tuple(r.outcome_digest for r in backtest_run.event_results)
 
-    # -- (b) the compose-shaped EngineDriver over a durable SqliteEventInbox ------------------
-    gateway = (
-        fx.FakeGateway()
-    )  # auto_ack=True — synchronous ACK, mirroring BacktestDriver's
-    # own same-bar settlement timing (module docstring: the KIND differs, ACK vs FULL_FILL, but
-    # both are honestly outcome_digest=None).
+    # -- (b) the compose-shaped EngineDriver over a durable SqliteEventInbox, settling through
+    # -- the SAME kernel synthetic-broker path (F-R-3) with the SAME injected quantity -----------
+    gateway = pfx.SyntheticBrokerGateway(quantity=pfx.PARITY_QUANTITY)
     engine_driver, _core = pfx.build_engine_driver(
         inbox=inbox,
         evidence_store=evidence_store,
@@ -113,14 +138,18 @@ def test_backtest_and_engine_driver_outcome_digests_match_for_the_same_strategy(
     # -- both sides actually reached a real ACTION proposal + a hand-off, not a vacuous WITHHELD --
     assert tick_result.flow is not None and tick_result.flow.handed_off is True
     assert backtest_run.handoff_count == 1
-    assert backtest_digests[0] is not None
     assert tick_result.outcome_digest is not None
 
     # -- exactly one tick + one re-injected egress result on each side ------------------------
     assert len(backtest_digests) == 2
     assert len(engine_digests) == 2
 
-    # -- the parity claim itself: byte-identical outcome_digest sequences ---------------------
+    # -- F-R-3: the result event's own digest is now genuinely non-None on BOTH sides — this is
+    # -- the whole point of [KW3-RD] (before it, both were None and the comparison was vacuous) --
+    assert backtest_digests[0] is not None and backtest_digests[1] is not None
+    assert engine_digests[0] is not None and engine_digests[1] is not None
+
+    # -- the parity claim itself: byte-identical outcome_digest sequences, tick AND result -------
     assert tick_result.outcome_digest == backtest_digests[0]
     assert backtest_digests == engine_digests
 
