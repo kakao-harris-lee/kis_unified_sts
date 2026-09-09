@@ -69,6 +69,19 @@ not apply); if one is present anyway, rules 2-4 still apply verbatim — rule
 is "unused" when nothing references any key), so no separate special case
 is needed.
 
+**Two more refusals close the surface (2026-09-09 independent-review
+findings #3/#4).** Two admitted strategy files sharing the same
+:attr:`~pathlib.Path.stem` (e.g. ``band.strategy.yaml`` and
+``band.strategy.yml`` — :mod:`~tos_runtime.strategy.loader` admits both
+suffixes) would otherwise silently share one bindings entry; this module
+refuses the collision before resolving any rule (finding #3). A PRESENT
+``strategy_bindings.yaml`` on either non-file-source path — an injected
+``StrategyRegistry``, or ``allow_no_strategies=True`` with neither source
+— is ALSO refused: with no admitted strategy files, every entry the
+bindings file could declare is an orphan (rule 5's own concern), and
+silently ignoring the file would let it survive a boot unnoticed (finding
+#4). An ABSENT bindings file is unaffected on those two paths.
+
 **Evidence before halt.** Any REFUSAL here is durably recorded as one
 ``STRATEGY_REFUSED`` evidence entry (both the sqlite evidence store and the
 sqlite-independent emergency log, via
@@ -244,12 +257,40 @@ def _ref_resolves_in_bindings(
     return isinstance(value, bool | int | float | str)
 
 
+def _refuse_stem_collisions(loaded: LoadedStrategies) -> None:
+    """Refuse when two admitted strategy files share the same
+    :attr:`~pathlib.Path.stem` (2026-09-09 independent-review finding #3):
+    :func:`~tos_runtime.strategy.loader.load_strategies` deliberately admits
+    both ``*.yaml`` and ``*.yml`` (that loader's own finding #12), so
+    ``band.strategy.yaml`` and ``band.strategy.yml`` are two distinct
+    admitted strategies sharing one stem — but the bindings namespace below
+    is keyed by stem, so they cannot be given different bindings. Run
+    BEFORE any per-strategy bindings resolution so a collision is refused
+    on its own terms, not masked by whichever rule happens to fire first.
+
+    Raises:
+        StrategyLoadError: Naming BOTH colliding files and their shared stem.
+    """
+    seen: dict[str, Path] = {}
+    for entry in loaded.strategies:
+        stem = entry.path.stem
+        prior = seen.get(stem)
+        if prior is not None:
+            raise StrategyLoadError(
+                f"{prior} and {entry.path} share the same stem {stem!r} — "
+                "bindings are keyed by stem, so these two files cannot be "
+                "given different bindings; refusing the collision"
+            )
+        seen[stem] = entry.path
+
+
 def _resolve_bindings_or_refuse(
     loaded: LoadedStrategies, loaded_bindings: LoadedStrategyBindings
 ) -> None:
     """Positive resolution of every admitted strategy's ``config``-sourced
     refs against ``loaded_bindings`` — the five rules this module's own
-    docstring numbers (finding #9 disposition, ``[D-R-3]``).
+    docstring numbers (finding #9 disposition, ``[D-R-3]``), preceded by
+    the stem-collision guard (finding #3).
 
     Args:
         loaded: The admitted strategy set (module invariant: never empty —
@@ -260,9 +301,11 @@ def _resolve_bindings_or_refuse(
             either way) loaded bindings file.
 
     Raises:
-        StrategyLoadError: The first (sorted-strategy-path order) violation
-            of any of the five rules, naming the file/stem/path/key.
+        StrategyLoadError: A stem collision (:func:`_refuse_stem_collisions`),
+            or the first (sorted-strategy-path order) violation of any of
+            the five rules, naming the file/stem/path/key.
     """
+    _refuse_stem_collisions(loaded)
     entries_by_stem = loaded_bindings.strategies
     for entry in loaded.strategies:
         stem = entry.path.stem
@@ -352,9 +395,38 @@ def _register_all(
     return registry
 
 
+def _resolve_injected_registry(
+    injected_registry: StrategyRegistry,
+    *,
+    bindings_path: Path,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    identity: RuntimeIdentity,
+) -> ResolvedStrategyRegistry:
+    """The injected-registry (test-compatibility) path — no strategies
+    directory, a caller-supplied registry — split out of
+    :func:`resolve_strategy_registry` purely for the size budget.
+
+    ``bindings_path`` (2026-09-09 independent-review finding #4): a
+    PRESENT ``strategy_bindings.yaml`` here is refused — bindings apply
+    only to the file strategy source, mirroring the file-vs-injected-
+    registry rule one layer up. An ABSENT file is unaffected."""
+    if bindings_path.is_file():
+        reason = (
+            f"{bindings_path}: a strategy bindings file is present but "
+            "strategies come from an injected StrategyRegistry — bindings "
+            "apply only to the file strategy source; exactly one strategy "
+            "source is admissible"
+        )
+        _refuse(evidence_store, emergency_log, identity, reason)
+        raise StrategyRegistryResolutionRefused(reason)
+    return ResolvedStrategyRegistry(registry=injected_registry, loaded=None)
+
+
 def _resolve_neither_present(
     strategies_dir: Path,
     *,
+    bindings_path: Path,
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
     identity: RuntimeIdentity,
@@ -362,7 +434,15 @@ def _resolve_neither_present(
 ) -> ResolvedStrategyRegistry:
     """Neither a strategies directory nor an injected registry — the
     "neither present" branch (module docstring finding #8), split out of
-    :func:`resolve_strategy_registry` purely for the size budget."""
+    :func:`resolve_strategy_registry` purely for the size budget.
+
+    ``bindings_path`` (2026-09-09 independent-review finding #4): when
+    ``allow_no_strategies=True`` would otherwise succeed, a PRESENT
+    ``strategy_bindings.yaml`` is refused instead — with zero admitted
+    strategies, every entry it could declare is an orphan (rule 5), and
+    silently ignoring it would let a stale bindings file survive a boot
+    unnoticed, the exact drift the five rules exist to close. An ABSENT
+    file is unaffected (nothing to refuse)."""
     if not allow_no_strategies:
         reason = (
             f"{strategies_dir}: no strategies directory and no injected "
@@ -371,6 +451,15 @@ def _resolve_neither_present(
             "tos_runtime.strategy.loader.load_strategies's own "
             "zero-strategies refusal one layer down); pass "
             "allow_no_strategies=True to state this choice explicitly"
+        )
+        _refuse(evidence_store, emergency_log, identity, reason)
+        raise StrategyRegistryResolutionRefused(reason)
+    if bindings_path.is_file():
+        reason = (
+            f"{bindings_path}: a strategy bindings file is present but "
+            "allow_no_strategies=True admits zero strategies — every "
+            "bindings entry would be an orphan (rule 5); refusing rather "
+            "than silently ignoring a stale bindings file"
         )
         _refuse(evidence_store, emergency_log, identity, reason)
         raise StrategyRegistryResolutionRefused(reason)
@@ -436,6 +525,7 @@ def resolve_strategy_registry(
             the ``STRATEGY_REFUSED`` evidence entry is recorded.
     """
     strategies_dir = config_dir / STRATEGIES_DIRNAME
+    bindings_path = config_dir / STRATEGY_BINDINGS_FILE_NAME
     dir_present = strategies_dir.is_dir()
 
     if dir_present and injected_registry is not None:
@@ -449,16 +539,22 @@ def resolve_strategy_registry(
 
     if not dir_present:
         if injected_registry is not None:
-            return ResolvedStrategyRegistry(registry=injected_registry, loaded=None)
+            return _resolve_injected_registry(
+                injected_registry,
+                bindings_path=bindings_path,
+                evidence_store=evidence_store,
+                emergency_log=emergency_log,
+                identity=identity,
+            )
         return _resolve_neither_present(
             strategies_dir,
+            bindings_path=bindings_path,
             evidence_store=evidence_store,
             emergency_log=emergency_log,
             identity=identity,
             allow_no_strategies=allow_no_strategies,
         )
 
-    bindings_path = config_dir / STRATEGY_BINDINGS_FILE_NAME
     try:
         loaded = load_strategies(
             strategies_dir, parse=parse_strategy, admit=strategy_admissible

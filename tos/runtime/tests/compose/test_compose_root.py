@@ -24,6 +24,7 @@ from tos_runtime.compose.root import (
 from tos_runtime.rcl.log import CommitLogCorruption
 from tos_runtime.risk.aggregate import AggregateRiskDecisionInputs
 from tos_runtime.risk.flow import ActionFlowDecisionInputs
+from tos_runtime.strategy.bindings import STRATEGY_BINDINGS_FILE_NAME
 from tos_runtime.strategy.resolve import StrategyRegistryResolutionRefused
 
 from . import _fixtures as fx
@@ -460,7 +461,7 @@ class TestComposeRootWiring:
         import json
 
         fx.write_band_strategy_file(config_dir)
-        bindings_path = config_dir / "strategy_bindings.yaml"
+        bindings_path = config_dir / STRATEGY_BINDINGS_FILE_NAME
         bindings_path.write_text(
             yaml.safe_dump(
                 {
@@ -491,7 +492,7 @@ class TestComposeRootWiring:
         stored = json.loads(rows[0][0])
         coordinates = stored["payload"]["attested_coordinates"]
         bindings_rows = [
-            c for c in coordinates if c["source_file"] == "strategy_bindings.yaml"
+            c for c in coordinates if c["source_file"] == STRATEGY_BINDINGS_FILE_NAME
         ]
         assert len(bindings_rows) == 1
         assert len(bindings_rows[0]["source_file_digest"]) == 64  # sha256 hex

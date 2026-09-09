@@ -39,8 +39,9 @@ the kernel already accepts (design #31 §0.3 "커널 재정의 금지" applied o
 layer up, to the runtime's own config surface).
 
 **Named-TBD ``null`` leaves (fail-closed) — same walker as strategy files.**
-Reuses :func:`tos_runtime.strategy.loader._first_null_leaf` (same package,
-kept private/shared rather than duplicated) so a still-``null`` value
+Reuses :func:`tos_runtime.strategy.loader.first_null_leaf` (an intra-package
+helper, deliberately not underscore-prefixed since two modules share it —
+2026-09-09 independent-review finding #7) so a still-``null`` value
 anywhere in this file, including a nested ``bindings`` leaf, refuses before
 pydantic ever sees it — identical discipline to every strategy file's own
 null-leaf gate.
@@ -62,7 +63,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from tos.canonical import ArtifactIntegrityError
 from tos.dsl.vocabulary import ScalarValue
 
-from tos_runtime.strategy.loader import _first_null_leaf
+from tos_runtime.strategy.loader import first_null_leaf
 
 __all__ = [
     "STRATEGY_BINDINGS_FILE_NAME",
@@ -169,7 +170,7 @@ def load_strategy_bindings(path: Path) -> LoadedStrategyBindings:
             "refusing to load"
         )
 
-    null_leaf = _first_null_leaf(raw, "")
+    null_leaf = first_null_leaf(raw, "")
     if null_leaf is not None:
         raise StrategyBindingsLoadError(
             f"{path}: field {null_leaf!r} is still null (named-TBD) — "

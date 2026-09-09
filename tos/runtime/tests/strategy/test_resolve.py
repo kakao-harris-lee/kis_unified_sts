@@ -359,7 +359,11 @@ def test_unresolvable_ref_path_refuses_naming_the_path(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
     """Rule 3: a config-sourced ref longer than ``("config", <key>)`` can
-    never resolve against the flat ``bindings`` mapping."""
+    never resolve against the flat ``bindings`` mapping. Also pins the
+    BARE ``("config",)`` ref case (2026-09-09 independent-review finding
+    #6) — a length-1 ref never enters the ``ref[1:]`` walk loop at all, so
+    its refusal depends entirely on the leaf-type check rejecting the
+    ``bindings`` dict itself; untested before this."""
     config_dir = tmp_path / "config"
     strategies_dir = config_dir / "strategies"
     strategies_dir.mkdir(parents=True)
@@ -389,6 +393,35 @@ def test_unresolvable_ref_path_refuses_naming_the_path(
         )
     assert "config.lower_band_threshold.nested" in str(excinfo.value)
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
+
+    # Finding #6: a BARE ("config",) ref is refused the same way, never
+    # silently UNKNOWN.
+    bare_config_dir = tmp_path / "config-bare"
+    bare_strategies_dir = bare_config_dir / "strategies"
+    bare_strategies_dir.mkdir(parents=True)
+    bare_mapping = admissible_strategy_mapping()
+    bare_mapping["policy"]["rules"][0]["all_of"][0]["right"] = {"ref": ["config"]}
+    write_strategy_yaml(bare_strategies_dir, "band.strategy.yaml", bare_mapping)
+    _write_bindings_yaml(
+        bare_config_dir,
+        {
+            "strategies": {
+                "band.strategy": {
+                    "config_binding_version": bare_mapping["config_binding_version"],
+                    "bindings": {},
+                }
+            }
+        },
+    )
+    with pytest.raises(StrategyRegistryResolutionRefused) as bare_excinfo:
+        resolve_strategy_registry(
+            bare_config_dir,
+            injected_registry=None,
+            evidence_store=evidence_store,
+            emergency_log=emergency_log,
+            identity=identity,
+        )
+    assert "config" in str(bare_excinfo.value)
 
 
 def test_unused_bindings_key_refuses_naming_the_key(
@@ -578,7 +611,7 @@ def test_no_bindings_file_and_zero_config_refs_is_fine(
 
 
 # ============================================================================
-# [D-R-3d] re-review disposition #1 — see review-dr3.md.
+# [D-R-3d] re-review dispositions #1, #3, #4 — see review-dr3.md.
 # ============================================================================
 
 
@@ -615,3 +648,113 @@ def test_malformed_bindings_file_refuses_with_evidence(
         )
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
     assert emergency_log.path.read_text().strip() != ""
+
+
+def test_duplicate_stem_across_yaml_and_yml_refuses(
+    tmp_path: Path, evidence_store, emergency_log, identity
+):
+    """Finding #3 (LOW): ``band.strategy.yaml`` and ``band.strategy.yml``
+    are two distinct admitted strategies (the loader admits both suffixes)
+    sharing one bindings stem — refused before any bindings rule runs,
+    naming both files."""
+    config_dir = tmp_path / "config"
+    strategies_dir = config_dir / "strategies"
+    strategies_dir.mkdir(parents=True)
+    write_strategy_yaml(
+        strategies_dir, "band.strategy.yaml", admissible_strategy_mapping()
+    )
+    write_strategy_yaml(
+        strategies_dir, "band.strategy.yml", admissible_strategy_mapping()
+    )
+    with pytest.raises(StrategyRegistryResolutionRefused) as excinfo:
+        resolve_strategy_registry(
+            config_dir,
+            injected_registry=None,
+            evidence_store=evidence_store,
+            emergency_log=emergency_log,
+            identity=identity,
+        )
+    message = str(excinfo.value)
+    assert "band.strategy.yaml" in message
+    assert "band.strategy.yml" in message
+    assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
+
+
+def test_bindings_file_present_with_injected_registry_refuses(
+    tmp_path: Path, evidence_store, emergency_log, identity
+):
+    """Finding #4 (LOW), injected-registry path: bindings apply only to
+    the file strategy source — a present ``strategy_bindings.yaml`` next
+    to an injected registry is refused rather than silently ignored."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    _write_bindings_yaml(
+        config_dir,
+        {"strategies": {"whatever": {"config_binding_version": "v1", "bindings": {}}}},
+    )
+    injected = StrategyRegistry()
+    with pytest.raises(StrategyRegistryResolutionRefused, match="injected"):
+        resolve_strategy_registry(
+            config_dir,
+            injected_registry=injected,
+            evidence_store=evidence_store,
+            emergency_log=emergency_log,
+            identity=identity,
+        )
+    assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
+
+
+def test_bindings_file_present_with_allow_no_strategies_refuses(
+    tmp_path: Path, evidence_store, emergency_log, identity
+):
+    """Finding #4 (LOW), ``allow_no_strategies=True`` path: with zero
+    admitted strategies, every bindings entry would be an orphan (rule 5)
+    — refused rather than silently ignored."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    _write_bindings_yaml(
+        config_dir,
+        {"strategies": {"whatever": {"config_binding_version": "v1", "bindings": {}}}},
+    )
+    with pytest.raises(StrategyRegistryResolutionRefused, match="orphan"):
+        resolve_strategy_registry(
+            config_dir,
+            injected_registry=None,
+            evidence_store=evidence_store,
+            emergency_log=emergency_log,
+            identity=identity,
+            allow_no_strategies=True,
+        )
+    assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
+
+
+def test_absent_bindings_file_is_fine_on_injected_and_allow_no_strategies_paths(
+    tmp_path: Path, evidence_store, emergency_log, identity
+):
+    """Finding #4 control: an ABSENT bindings file is unaffected on both
+    non-file-source paths — nothing to refuse."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    injected = StrategyRegistry()
+    resolved = resolve_strategy_registry(
+        config_dir,
+        injected_registry=injected,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        identity=identity,
+    )
+    assert resolved.registry is injected
+    assert _refusal_evidence_kinds(evidence_store) == []
+
+    resolved2 = resolve_strategy_registry(
+        config_dir,
+        injected_registry=None,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        identity=identity,
+        allow_no_strategies=True,
+    )
+    assert resolved2.registry.declared_keys() == ()
+    assert _refusal_evidence_kinds(evidence_store) == [
+        STRATEGY_SOURCE_ABSENT_EVIDENCE_KIND
+    ]

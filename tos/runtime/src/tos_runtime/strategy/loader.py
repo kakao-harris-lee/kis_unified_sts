@@ -107,10 +107,17 @@ class LoadedStrategies:
     strategies: tuple[LoadedStrategy, ...]
 
 
-def _first_null_leaf(value: Any, path: str) -> str | None:
+def first_null_leaf(value: Any, path: str) -> str | None:
     """Return the dotted/indexed path of the first ``null`` leaf found by a
     depth-first walk of ``value`` (dict values and list elements only —
     scalars ARE the leaves), or ``None`` if there is none.
+
+    Package-internal (no leading underscore, deliberately — 2026-09-09
+    independent-review finding #7): shared verbatim with
+    :func:`tos_runtime.strategy.bindings.load_strategy_bindings`, which
+    needs the identical null-leaf discipline for its own config file. Not
+    part of this module's ``__all__`` — it is an intra-``tos_runtime.
+    strategy`` helper, not this package's own public surface.
 
     Args:
         value: The (sub)value to inspect.
@@ -123,13 +130,13 @@ def _first_null_leaf(value: Any, path: str) -> str | None:
         return path or "<root>"
     if isinstance(value, dict):
         for key, sub in value.items():
-            found = _first_null_leaf(sub, f"{path}.{key}" if path else str(key))
+            found = first_null_leaf(sub, f"{path}.{key}" if path else str(key))
             if found is not None:
                 return found
         return None
     if isinstance(value, list):
         for index, sub in enumerate(value):
-            found = _first_null_leaf(sub, f"{path}[{index}]")
+            found = first_null_leaf(sub, f"{path}[{index}]")
             if found is not None:
                 return found
         return None
@@ -196,7 +203,7 @@ def _load_one(path: Path, *, parse: ParseFn, admit: AdmitFn) -> LoadedStrategy:
             f"{path}: strategy file must be a top-level mapping — refusing to load"
         )
 
-    null_leaf = _first_null_leaf(raw, "")
+    null_leaf = first_null_leaf(raw, "")
     if null_leaf is not None:
         raise StrategyLoadError(
             f"{path}: field {null_leaf!r} is still null (named-TBD) — refusing to "
