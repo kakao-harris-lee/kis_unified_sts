@@ -138,4 +138,10 @@
 
 **§8 종료 조건 판정**: 스위트·린트·예산·firewall 충족 · EC-1~EC-4 green + 뮤테이션(M-A·M-B·M-C·M5·M6·M7·M-deg) red 실증 · EC-5 미충족 등재(§4) · `_egress_attestations` 잔존 3필드 Phase 5 명시 · 커널 diff 0 — **이 계획 종결**. Phase 4 자체는 §1 정직 귀결대로 미완(작업 4 운영자 레인 · deferred 4·5 웨이브 3 조건부 · 7~10 Phase 5 · KIS MOCK transport 별도 계획). push/PR 은 운영자 수동(Phase 3 브랜치 위 스택).
 
-**운영자 확인 대기(§7 + §9.2)**: ① Phase 4/5 의존 역전 처분(권고 (a)+(c)) ② 커널 reason 문언 «⚠ provisional stand-in»(item 6·12) 갱신은 커널 라운드 ③ `REAL_ORDER` 스코프 등재 유지 여부 ④ REAL_PROD INSTANCE `_model_view` annotation 보강(인스턴스 저작) ⑤ 웨이브 3(deferred 4·5 실체화) 착수 여부.
+**운영자 처분 (2026-09-10)**: ① Phase 4/5 의존 역전 → **(a)+(c)** — 종료 조건 5 는 «Phase 5 착지 후 재판정»(**이 문서가 기록 원천**). 개발계획 §6 에 같은 주석을 넣은 커밋 `c7aa10b8` 은 PR #663 CI `tos-gate`/`tos-firewall` 에서 `bound_set_digest 불일치 → REBINDING_REQUIRED` 로 적발돼 되돌렸다: 개발계획은 계약 문서와 함께 U-12 **bound set**(`tools/tos_completion_status.py::U12_BOUND_PATHS`)에 digest 결속돼 있어 byte 변경은 재결속 에피소드(OQ-11 아티팩트 갱신)를 요구하는 거버넌스 행위다 — 부수 편집 금지 · 주석은 재결속 에피소드가 열릴 때 그 안에서 · KIS MOCK transport 는 Phase 4 후속 슬라이스로 **별도 계획(미저작 · 다음 착수 후보)** ② 커널 reason 문언 «⚠ provisional stand-in»(item 6·12)은 커널 라운드 이월 ③ `REAL_ORDER` 스코프 **등재 유지** ④ REAL_PROD INSTANCE `_model_view` → **인스턴스 저작으로 보강**(§9.6) ⑤ 웨이브 3(deferred 4·5)은 착수하지 않음 — **이 지점에서 정지 · push/PR 운영자 수동**.
+
+### 9.6 REAL_PROD INSTANCE annotation 보강 (운영자 처분 ④ · 인스턴스 저작 행위 · `cc1a90e9`)
+
+`docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml` REAL_PROD 문서에 `profile_identity._model_view`·`live_scope._model_view` 병기(+34/-0 · 새 값 0 — 문서 자신의 템플릿 값을 모델 철자로 옮김 · `order_type` 은 `order_types: []` 라 null 유지 · live_scope 는 MOCK_VTS 와 동형). sha256 `b98ab193…` → `24f19087…`. 로더 결과: 17 선언 · VERIFIED 0 · DRAFT · approvers () · unmapped `CONTROLLED_PRODUCTION_PROBE`. 테스트: 예상 실패 핀 → 양성 5건 · REAL_READ item 12 는 «instance=present → DRAFT/미승인 → False» 사유로 유지. 런타임 **814** · 커널 diff 0. `tos_spec_status` 의 §1 baseline 163/164 경고는 이 변경 이전부터 있던 비차단 항목(baseline 표는 2026-08-11 스냅샷이라 편집하지 않음).
+
+**최종 tip**: 코드 `cc1a90e9` · 런타임 814 · 커널 9405. push/PR 운영자 수동.
