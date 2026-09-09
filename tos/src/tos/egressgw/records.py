@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from decimal import Decimal
+from typing import ClassVar
 
 from pydantic import model_validator
 
@@ -594,15 +595,50 @@ class GatewayEvidenceRecord(FrozenModel):
     #: (kernel round #1 review #4). ``False`` unless item 16's own verdict flagged it.
     preserved_obligation_magnitude_unknown: bool = False
     #: The whole pre-``SEND_STARTED`` :class:`~tos.egressgw.seal.SendSeal`, carried on the
-    #: ``SEND_SEALED`` record only (Phase 4 작업 6, design §1.2). ``None`` on every other kind —
-    #: the full seal is written exactly once, before the claim.
+    #: ``SEND_SEALED`` record only (Phase 4 작업 6, design §1.2) — enforced below by
+    #: :meth:`_seal_fields_match_their_kind`, not merely documented (independent review
+    #: finding #9): a non-``None`` value on any other kind is rejected at construction.
     send_seal: SendSeal | None = None
     #: The sealed :attr:`~tos.egressgw.seal.SendSeal.seal_digest`, carried on ``SEND_STARTED`` and
     #: the terminal ``EGRESS_RESULT_RECORDED`` record (Phase 4 작업 6, design §1.2) — the compact
     #: reference a durable Evidence Store row would use to point back at the full seal without
-    #: repeating it.
+    #: repeating it. Also enforced below by :meth:`_seal_fields_match_their_kind`: a non-``None``
+    #: value on any other kind is rejected at construction (independent review finding #9).
     send_seal_digest: str | None = None
     authority_effect: AllFalseGatewayAuthority = AllFalseGatewayAuthority()
+
+    #: The kinds ``gateway.py`` itself stamps :attr:`send_seal_digest` onto (its own
+    #: ``send_seal_digest=`` call sites) — the source of truth for the validator below, not a
+    #: separately maintained list (independent review finding #9).
+    SEND_SEAL_DIGEST_KINDS: ClassVar[frozenset[str]] = frozenset(
+        {"SEND_STARTED", "EGRESS_RESULT_RECORDED"}
+    )
+
+    @model_validator(mode="after")
+    def _seal_fields_match_their_kind(self) -> GatewayEvidenceRecord:
+        """Reject ``send_seal`` / ``send_seal_digest`` on a kind that never legitimately carries it.
+
+        Before this validator, ``kind`` was a free-form ``str`` and nothing enforced the pairing
+        the two field comments merely asserted (independent review finding #9 — a probe
+        ``GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="a",
+        send_seal_digest="deadbeef")`` constructed without error).
+        """
+        if self.send_seal is not None and self.kind != "SEND_SEALED":
+            raise ArtifactIntegrityError(
+                f"GatewayEvidenceRecord(kind={self.kind!r}) carries a non-None send_seal — the "
+                "full seal is written exactly once, on the SEND_SEALED record only (Phase 4 작업 "
+                "6 §1.2; independent review finding #9)"
+            )
+        if (
+            self.send_seal_digest is not None
+            and self.kind not in self.SEND_SEAL_DIGEST_KINDS
+        ):
+            raise ArtifactIntegrityError(
+                f"GatewayEvidenceRecord(kind={self.kind!r}) carries a non-None "
+                f"send_seal_digest — only {sorted(self.SEND_SEAL_DIGEST_KINDS)} legitimately "
+                "carry it (Phase 4 작업 6 §1.2; independent review finding #9)"
+            )
+        return self
 
 
 class SendBoundaryContext(FrozenModel):

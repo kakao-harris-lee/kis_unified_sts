@@ -44,7 +44,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pydantic import ValidationError, model_validator
+from pydantic import Field, ValidationError, model_validator
 
 from tos.egressgw._base import (
     ArtifactIntegrityError,
@@ -171,37 +171,43 @@ class SendSeal(FrozenModel):
     of "exact outbound bytes" for the synthetic transport (the ``OutboundSendRequest`` canonical
     form is the synthetic stand-in for wire bytes, design §5 A1). :attr:`seal_digest` covers every
     field above, :attr:`outbound_request_digest` included.
+
+    Every identity / route string field below carries ``min_length=1`` (independent review
+    finding #10): ``None`` is already refused by the required-field mechanism, but an empty
+    string is a distinct, equally illegitimate value an unconstrained ``str`` would silently
+    admit — two matching empty strings would otherwise pass the item-17 exact-binding equality
+    check for free.
     """
 
     # -- identity ------------------------------------------------------------------------
-    attempt_id: str
+    attempt_id: str = Field(min_length=1)
     instrument_key: InstrumentKey
 
     # -- request ---------------------------------------------------------------------------
-    request_bytes_digest: str
-    canonical_command_digest: str
-    capsule_egress_request_digest: str
+    request_bytes_digest: str = Field(min_length=1)
+    canonical_command_digest: str = Field(min_length=1)
+    capsule_egress_request_digest: str = Field(min_length=1)
     #: The item-1 single-use identity (= ``context.request_digest``) the step-16 ledger claim
     #: binds — deliberately distinct from :attr:`request_bytes_digest` (independent review
     #: finding #3; see the class docstring's **request** bullet for which item binds which).
-    claim_request_digest: str
+    claim_request_digest: str = Field(min_length=1)
 
     # -- principal / route (ADR-002-013 §8/§10 coordinates) -------------------------------
-    claim_principal: str
-    active_principal: str
-    endpoint: str
-    account: str
-    environment: str
-    route_identity: str
+    claim_principal: str = Field(min_length=1)
+    active_principal: str = Field(min_length=1)
+    endpoint: str = Field(min_length=1)
+    account: str = Field(min_length=1)
+    environment: str = Field(min_length=1)
+    route_identity: str = Field(min_length=1)
     credential_generation: int
     broker_session_generation: int
     egress_generation: int
-    action: str
-    method: str
+    action: str = Field(min_length=1)
+    method: str = Field(min_length=1)
 
     # -- single-use --------------------------------------------------------------------------
-    capability_nonce: str
-    action_flow_permit_nonce: str
+    capability_nonce: str = Field(min_length=1)
+    action_flow_permit_nonce: str = Field(min_length=1)
 
     # -- the exact outbound (step 18's sole input source) ---------------------------------
     outbound_coordinates: tuple[tuple[str, str | None], ...]
@@ -223,6 +229,13 @@ class SendSeal(FrozenModel):
         every name present exactly once — not merely "no mismatch among the names that happen to
         be there": a coordinate this seal has no matching field for is exactly the substitution
         surface the seal exists to close.
+
+        Tautological at today's one call site (:func:`build_send_seal` derives ``coordinates``
+        from the same ``context.authorized_coordinates`` :func:`_gather_seal_fields` reads for
+        the named fields, so the two sides can never disagree yet) — this validator defends a
+        future second caller that assembles a ``SendSeal`` from a different coordinate source,
+        not a live substitution this kernel can currently exercise (independent review
+        finding #11).
         """
         named: dict[str, str] = {
             "endpoint": self.endpoint,
