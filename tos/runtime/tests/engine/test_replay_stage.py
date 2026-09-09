@@ -18,6 +18,7 @@ still independently demonstrates this class trusts durable evidence verbatim.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 import pytest
@@ -280,6 +281,11 @@ def test_a_tampered_bound_identity_orphans_the_downstream_egress_result_a_real_e
     replay derive a DIFFERENT ``attempt_id`` than the live run's real one, so the later
     ``EGRESS_RESULT`` (naming the REAL attempt_id) reads as orphaned against replay's ledger —
     a genuine ``replay_engine`` digest divergence. RED quoted in the CR5-5 commit message.
+
+    CR6 finding #1(b) sharpens this further: the TICK event now ALSO diverges on its own (via its
+    ``FlowFingerprint``'s ``attempt_id`` field, not just its Proposal digest), since replay's
+    reconstructed attempt is bound to the tampered identity while the live receipt recorded the
+    real one — TWO events diverge now, not one; both are asserted below.
     """
     gateway = fx.FakeGateway()
     driver = _driver(
@@ -319,7 +325,9 @@ def test_a_tampered_bound_identity_orphans_the_downstream_egress_result_a_real_e
         window_events=None,
     )
     assert not verdict.ok
-    assert len(verdict.diverged) == 1
+    assert (
+        len(verdict.diverged) == 2
+    )  # the tick's own fingerprint AND the downstream result
 
 
 def test_mutated_stage_evidence_changes_the_reconstructed_verdict(
@@ -413,3 +421,133 @@ def test_pre_kw3_ev_evidence_without_event_id_fails_closed(
     verdict = _call_for_event(stage, admitted_event, recorder_step2.captured[0])
     assert verdict.outcome is StageOutcome.UNKNOWN
     assert "REPLAY_STAGE_EVIDENCE_MISSING" in (verdict.reason or "")
+
+
+def test_p5_deleting_all_flow_step_admitted_rows_on_a_tick_only_inbox_now_diverges(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """Wave-3 review probe P5, reproduced exactly (CR6 finding #1). Before this fix, a
+    TICK-ONLY inbox (no ``EGRESS_RESULT`` re-injected afterward) whose durable
+    ``FLOW_STEP_ADMITTED`` evidence was deleted entirely still replayed ``ok=True`` — the
+    Proposal digest, the only thing compared, is fixed before the commitment flow runs, so it
+    cannot see a flow that halted ``STAGE_UNKNOWN`` at step 2 instead of handing off. The flow
+    fingerprint now catches this directly on the TICK's own receipt: ``diverged`` names the tick,
+    and the recorded ``REPLAY_DIVERGED`` detail's ``fingerprint_mismatch_field`` is
+    ``"handed_off"`` (the first field in reporting order that differs — live ``True``, replay
+    ``False``, since ``RecordedStage`` refuses to guess with no evidence to reconstruct from).
+    """
+    gateway = fx.FakeGateway()
+    driver = _driver(
+        inbox,
+        evidence_store,
+        emergency_log,
+        stages=fx.admitting_stages(),
+        transmit=gateway,
+    )
+    driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+
+    evidence_store.connection.execute("DROP TRIGGER IF EXISTS entries_no_delete")
+    deleted = evidence_store.connection.execute(
+        "DELETE FROM entries WHERE kind = 'FLOW_STEP_ADMITTED'"
+    )
+    assert (
+        deleted.rowcount == 12
+    )  # the reviewer's own measured count (INJECTED_STAGE_STEPS)
+
+    verdict = replay_engine(
+        inbox,
+        evidence_store,
+        emergency_log,
+        _replay_build_core(evidence_store),
+        scheme=SCHEME,
+        window_events=None,
+    )
+    assert not verdict.ok
+    assert len(verdict.diverged) == 1
+
+    (row,) = evidence_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = 'REPLAY_DIVERGED'"
+    ).fetchall()
+    detail = json.loads(row[0])["payload"]
+    assert detail["fingerprint_mismatch_field"] == "handed_off"
+
+
+def test_p6_deleting_send_handed_off_on_a_tick_only_inbox_now_diverges(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """Wave-3 review probe P6, reproduced exactly (CR6 finding #1). Deleting ONLY the
+    ``SEND_HANDED_OFF`` row (every ``FLOW_STEP_ADMITTED`` row stays intact) used to replay
+    ``ok=True`` too — ``any_recorded_hand_off`` sees no hand-off evidence at all, so replay
+    installs ``transmit=None`` and the flow halts ``TRANSMIT_UNAVAILABLE`` at the send boundary,
+    never touching the Proposal digest. The fingerprint catches this the same way P5 does.
+    """
+    gateway = fx.FakeGateway()
+    driver = _driver(
+        inbox,
+        evidence_store,
+        emergency_log,
+        stages=fx.admitting_stages(),
+        transmit=gateway,
+    )
+    driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+
+    evidence_store.connection.execute("DROP TRIGGER IF EXISTS entries_no_delete")
+    deleted = evidence_store.connection.execute(
+        "DELETE FROM entries WHERE kind = 'SEND_HANDED_OFF'"
+    )
+    assert deleted.rowcount == 1
+
+    verdict = replay_engine(
+        inbox,
+        evidence_store,
+        emergency_log,
+        _replay_build_core(evidence_store),
+        scheme=SCHEME,
+        window_events=None,
+    )
+    assert not verdict.ok
+    assert len(verdict.diverged) == 1
+
+    (row,) = evidence_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = 'REPLAY_DIVERGED'"
+    ).fetchall()
+    detail = json.loads(row[0])["payload"]
+    assert detail["fingerprint_mismatch_field"] == "handed_off"
+
+
+def test_p7_untampered_tick_only_inbox_stays_ok_and_the_tick_is_genuinely_compared(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """Wave-3 review probe P7 (sanity control), reproduced exactly. An UNTAMPERED tick-only
+    inbox must still replay ``ok=True`` — and, post-CR6, the tick is now genuinely COMPARED
+    (``total_compared == 1``, not silently skipped), proving the new fingerprint check does not
+    itself introduce a false divergence on the honest path."""
+    gateway = fx.FakeGateway()
+    driver = _driver(
+        inbox,
+        evidence_store,
+        emergency_log,
+        stages=fx.admitting_stages(),
+        transmit=gateway,
+    )
+    tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+    assert tick_result.flow is not None and tick_result.flow.handed_off is True
+
+    verdict = replay_engine(
+        inbox,
+        evidence_store,
+        emergency_log,
+        _replay_build_core(evidence_store),
+        scheme=SCHEME,
+        window_events=None,
+    )
+    assert verdict.ok
+    assert verdict.diverged == ()
+    assert verdict.total_compared == 1
+    assert verdict.uncompared == 0

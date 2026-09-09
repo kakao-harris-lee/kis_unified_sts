@@ -91,6 +91,7 @@ from tos.engine.vocabulary import (
 )
 from tos.ordering import OrderingEvent
 
+from tos_runtime.engine.flow_fingerprint import FlowFingerprint, flow_fingerprint_for
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.orthostate_projection import (
     NEW_RISK_HALTED_BY_COUPLING_VIOLATION,
@@ -500,6 +501,7 @@ class EngineDriver:
             payload_digest=payload_digest,
             outcome_digest=None,
             halt_reason=halt_reason,
+            flow_fingerprint=None,
         )
         self._inbox.mark_consumed(seq, evidence_seq=evidence_seq, generation=generation)
 
@@ -510,8 +512,15 @@ class EngineDriver:
         payload_digest: str,
         outcome_digest: str | None,
         halt_reason: str | None,
+        flow_fingerprint: FlowFingerprint | None,
     ) -> tuple[int, int]:
         """Durably append this driver's own ``EVENT_CONSUMED`` receipt.
+
+        Args:
+            flow_fingerprint: The ``DECISION_TICK`` commitment-flow fingerprint (wave-3 review
+                finding #1(b)) — ``None`` for an ``EGRESS_RESULT`` (no ``.flow`` to fingerprint)
+                and for the two crash-window recovery paths above (no fresh ``EventResult`` ever
+                existed for them either — mirrors ``outcome_digest=None``'s own convention there).
 
         Returns:
             ``(evidence_seq, key_generation)`` for :meth:`SqliteEventInbox.mark_consumed`.
@@ -522,6 +531,11 @@ class EngineDriver:
                 "payload_digest": payload_digest,
                 "outcome_digest": outcome_digest,
                 "halt_reason": halt_reason,
+                "flow_fingerprint": (
+                    None
+                    if flow_fingerprint is None
+                    else flow_fingerprint.model_dump(mode="json")
+                ),
             },
             kind=_EVENT_CONSUMED_KIND,
             record_class=_EVENT_CONSUMED_RECORD_CLASS,
@@ -683,6 +697,7 @@ class EngineDriver:
                             payload_digest=payload_digest,
                             outcome_digest=None,
                             halt_reason=NEW_RISK_HALTED_BY_COUPLING_VIOLATION,
+                            flow_fingerprint=flow_fingerprint_for(result),
                         )
                         self._inbox.mark_consumed(
                             seq, evidence_seq=evidence_seq, generation=generation
@@ -690,15 +705,15 @@ class EngineDriver:
                         return seq, result
 
                 result = self._core.handle(event)
+                halt_reason_str = (
+                    None if result.halt_reason is None else result.halt_reason.value
+                )
                 evidence_seq, generation = self._record_consumed(
                     event_id=event_id,
                     payload_digest=payload_digest,
                     outcome_digest=result.outcome_digest,
-                    halt_reason=(
-                        result.halt_reason.value
-                        if result.halt_reason is not None
-                        else None
-                    ),
+                    halt_reason=halt_reason_str,
+                    flow_fingerprint=flow_fingerprint_for(result),
                 )
                 self._inbox.mark_consumed(
                     seq, evidence_seq=evidence_seq, generation=generation

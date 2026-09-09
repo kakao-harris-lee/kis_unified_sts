@@ -23,6 +23,7 @@ from tos.engine.vocabulary import (
     ResultDisposition,
 )
 from tos_runtime.engine.driver import EngineDriver
+from tos_runtime.engine.flow_fingerprint import flow_fingerprint_for
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import KeyProvider, SqliteEvidenceStore
@@ -435,6 +436,7 @@ def test_restart_after_evidence_before_mark_recovers_without_reprocessing(
         halt_reason=(
             result.halt_reason.value if result.halt_reason is not None else None
         ),
+        flow_fingerprint=flow_fingerprint_for(result),
     )
     assert call_count["n"] == 1
     assert inbox.is_consumed(receipt.seq) is False  # the crash window: not yet marked

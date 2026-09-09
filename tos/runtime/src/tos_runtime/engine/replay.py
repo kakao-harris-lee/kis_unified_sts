@@ -1,14 +1,27 @@
 """``replay_engine`` — independent re-derivation over a durable event inbox (TOS Phase 3 Wave 1
 Lane A-R; plan §1.1 "재생 판정 replay digest 동일").
 
-Rebuilds a FRESH :class:`~tos.engine.EngineCore` (via the injected ``build_core`` factory — never
-constructed here) and re-consumes the inbox's own admitted events, in ``seq`` order, comparing each
-one's ``EventResult.outcome_digest`` (Phase 3 A-K-3) against the digest this runtime already
-durably recorded for it (:mod:`tos_runtime.engine.driver`'s ``EVENT_CONSUMED`` receipts) via
-:func:`tos.engine.sink.replay_result_for` — the exact RFC-003 §10:345-348 reproducibility
-question that function is built to answer. ``outcome_digest`` is honestly ``None`` for every
-``EGRESS_RESULT`` event (a mutable, non-authoritative reservation-projection transition has no
-outcome identity of its own) — the kernel's own scope choice, not a gap this module papers over.
+Rebuilds a FRESH core (via the injected ``build_core`` factory — never constructed here; typed
+:class:`ReplayableCore`, not :class:`~tos.engine.EngineCore`, since the factory may hand back a
+wrapper — see that Protocol's own docstring) and re-consumes the inbox's own admitted events, in
+``seq`` order.
+
+**The comparison surface, precisely (wave-3 review finding #1, 2026-09-09 — this paragraph
+replaces an earlier, narrower claim; see findings #1 and #2 below for the full history).** Two
+DIFFERENT things are compared, one per event kind:
+
+- **``EGRESS_RESULT``**: ``EventResult.outcome_digest`` alone —
+  :func:`~tos.engine.records.egress_result_outcome_digest` (kernel lane KW3-RD, ``783fadf0``),
+  which since that commit is a REAL digest over the applied disposition/capacity/knowledge/
+  quantities, never honestly ``None`` for an event that reached the pipeline (see finding #2).
+- **``DECISION_TICK``**: ``EventResult.outcome_digest`` (the decision pipeline's own Proposal
+  digest, fixed strictly BEFORE the 19-step commitment flow starts) TOGETHER WITH a
+  :class:`~tos_runtime.engine.flow_fingerprint.FlowFingerprint` (finding #1(b), 2026-09-09) —
+  ``handed_off``/``halt_step``/``halt_reason``/``attempt_id`` off the flow's own
+  :class:`~tos.engine.sequencer.FlowResult`. The Proposal digest alone is STRUCTURALLY blind to
+  everything the commitment flow does (see finding #1's own probes P5/P6): it cannot detect a
+  flow that halted early, never handed off, or bound the wrong attempt, because none of that
+  feeds the digest at all. The fingerprint is the SEPARATE, independent thing that does.
 
 **Independent review finding #1/#11 (2026-09-09), corrected here.** A prior revision of this
 docstring claimed a stream of only ``EGRESS_RESULT`` events "trivially compares ``None`` to
@@ -30,6 +43,35 @@ two present-but-different digests still come back ``DIVERGED`` — this fix narr
 exactly the ``None``/``None`` pair; it does not widen it. (Wave 2's own finding #1 below widens
 the skip once more, to a DIFFERENT, narrowly-identified case — a recorded halt — never to a bare
 ``None``/non-``None`` asymmetry with no halt reason attached.)
+
+**Wave-3 review finding #2 (2026-09-09) — the paragraph above describes wave-1 history, not
+today's invariant.** Kernel lane KW3-RD (``783fadf0``) gave ``EGRESS_RESULT`` events a real,
+non-``None`` ``outcome_digest`` (:func:`~tos.engine.records.egress_result_outcome_digest`, over
+the applied disposition/capacity/knowledge/quantities). The "honest ``None``/``None``" case this
+paragraph describes is therefore, since that commit, reachable ONLY by a ``DECISION_TICK``
+refused before the pipeline ever ran with NO recorded ``halt_reason`` at all — a shape that should
+not occur in practice (every such refusal this runtime knows about DOES record a ``halt_reason``;
+see wave-2 finding #1 and re-review finding R1 below) — never by an ``EGRESS_RESULT`` receipt.
+:func:`replay_engine` asserts this narrowed invariant directly at the branch itself, rather than
+leaving it as prose a future edit could silently invalidate by widening the skip.
+
+**Wave-3 review finding #1(b) (2026-09-09) — the FLOW FINGERPRINT.** The digest comparison above,
+even corrected for KW3-RD, answers only "does this event's own outcome identity match" — for a
+``DECISION_TICK`` that identity is the Proposal digest, fixed BEFORE the commitment flow runs, so
+it is STRUCTURALLY blind to everything steps 2-19 do. Measured directly (review probes P5/P6): an
+inbox holding only a ``DECISION_TICK`` (no ``EGRESS_RESULT`` re-injected afterward) whose durable
+``FLOW_STEP_ADMITTED`` rows (or ``SEND_HANDED_OFF``) are deleted still replays ``ok=True`` — a
+flow that diverged from ``STAGE_UNKNOWN``-halted-at-step-2 (or ``TRANSMIT_UNAVAILABLE``) all the
+way to "handed off" produces the IDENTICAL Proposal digest either way. :func:`replay_engine` now
+ALSO compares a :class:`~tos_runtime.engine.flow_fingerprint.FlowFingerprint` for every
+``DECISION_TICK`` — ``handed_off``/``halt_step``/``halt_reason``/``attempt_id``, the exact fields
+:mod:`tos.tests.engine.test_sequencer_mutation_matrix`'s own ``_fingerprint`` already established
+as load-bearing for this class of check. A mismatch is a divergence, naming the FIRST field that
+differs (:func:`~tos_runtime.engine.flow_fingerprint.first_mismatched_field`) in the durably
+recorded ``REPLAY_DIVERGED`` detail. A receipt with NO recorded fingerprint at all (a pre-this-fix
+row) is never silently treated as a pass: it is counted in :attr:`ReplayVerdict.uncompared` with
+reason ``"RECEIPT_FINGERPRINT_MISSING"`` — fail-closed disclosure that this tick's flow was never
+actually verified, rather than a quiet, structurally-blind "ok".
 
 **Independent review finding #1, wave 2 (2026-09-09), corrected here — a SEPARATE half of
 finding #1 from the EGRESS_RESULT case above.** A ``DECISION_TICK`` refused by the kernel's own
@@ -125,14 +167,20 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from tos.canonical import CanonicalizationScheme
-from tos.engine import EngineCore
+from tos.engine import EngineEvent, EventKind, EventResult
 from tos.engine.records import event_identity
 from tos.engine.sink import replay_result_for
 from tos.engine.vocabulary import HaltReason
 from tos.evidence import ReplayResultState
 
+from tos_runtime.engine.flow_fingerprint import (
+    FlowFingerprint,
+    first_mismatched_field,
+    flow_fingerprint_for,
+)
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.orthostate_projection import (
     NEW_RISK_HALTED_BY_COUPLING_VIOLATION,
@@ -140,7 +188,25 @@ from tos_runtime.engine.orthostate_projection import (
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
 
-__all__ = ["ReplayVerdict", "replay_engine"]
+__all__ = ["ReplayableCore", "ReplayVerdict", "replay_engine"]
+
+
+class ReplayableCore(Protocol):
+    """The exact surface :func:`replay_engine` uses on whatever its ``build_core`` factory
+    returns — ``.handle(event) -> EventResult``, nothing else (verified directly against this
+    module's own source: ``build_core()`` and ``core.handle(event)`` are the ONLY two calls made
+    on it). Wave-3 review finding #5 (2026-09-09): declaring this Protocol, rather than typing
+    the parameter as the concrete :class:`~tos.engine.EngineCore`, lets a wrapper like
+    :class:`~tos_runtime.engine.replay_stage.EventCorrelatingCore` satisfy the type checker
+    STRUCTURALLY — no ``cast`` needed at the boundary, and the type hint states precisely what
+    this module actually depends on, so mypy would catch a future call to any OTHER
+    ``EngineCore`` method here as the widening it would be.
+    """
+
+    def handle(self, event: EngineEvent) -> EventResult:
+        """Handle one event and return its result — the sequencer's own per-event contract."""
+        ...
+
 
 _EVENT_CONSUMED_KIND = "EVENT_CONSUMED"
 _REPLAY_DIVERGED_KIND = "REPLAY_DIVERGED"
@@ -224,20 +290,28 @@ class ReplayVerdict:
 
 @dataclass(frozen=True)
 class _RecordedReceipt:
-    """One durable ``EVENT_CONSUMED`` receipt's comparison-relevant fields."""
+    """One durable ``EVENT_CONSUMED`` receipt's comparison-relevant fields.
+
+    ``flow_fingerprint`` (wave-3 review finding #1(b), 2026-09-09) is ``None`` for an
+    ``EGRESS_RESULT`` receipt (not applicable — see :mod:`tos_runtime.engine.flow_fingerprint`'s
+    own docstring) AND for a pre-this-fix ``DECISION_TICK`` receipt that never recorded one —
+    :func:`replay_engine` tells the two apart by the ADMITTED EVENT's own kind, never by this
+    field alone.
+    """
 
     outcome_digest: str | None
     halt_reason: str | None
+    flow_fingerprint: FlowFingerprint | None
 
 
 def _recorded_receipts(
     evidence_store: SqliteEvidenceStore,
 ) -> dict[str, _RecordedReceipt]:
-    """Read every ``EVENT_CONSUMED`` receipt's recorded ``outcome_digest``/``halt_reason``, keyed
-    by event id (independent review finding #1, wave 2, 2026-09-09: ``halt_reason`` is now read
-    too, alongside ``outcome_digest``, so :func:`replay_engine` can tell a genuinely-halted
-    receipt apart from an honest EGRESS_RESULT ``None`` — see :class:`ReplayVerdict`'s own
-    ``uncompared_halt_reasons`` docstring)."""
+    """Read every ``EVENT_CONSUMED`` receipt's recorded comparison-relevant fields, keyed by
+    event id (independent review finding #1, wave 2, 2026-09-09: ``halt_reason`` is read
+    alongside ``outcome_digest``, so :func:`replay_engine` can tell a genuinely-halted receipt
+    apart from the narrow None/None case wave-3 finding #2 describes; wave-3 finding #1(b) adds
+    ``flow_fingerprint``)."""
     recorded: dict[str, _RecordedReceipt] = {}
     cur = evidence_store.connection.execute(
         "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
@@ -247,18 +321,119 @@ def _recorded_receipts(
         payload = json.loads(payload_json).get("payload", {})
         event_id = payload.get("event_id")
         if event_id is not None:
+            fingerprint_payload = payload.get("flow_fingerprint")
             recorded[event_id] = _RecordedReceipt(
                 outcome_digest=payload.get("outcome_digest"),
                 halt_reason=payload.get("halt_reason"),
+                flow_fingerprint=(
+                    None
+                    if fingerprint_payload is None
+                    else FlowFingerprint.model_validate(fingerprint_payload)
+                ),
             )
     return recorded
+
+
+@dataclass(frozen=True)
+class _EventOutcome:
+    """One admitted event's contribution to a :class:`ReplayVerdict` — extracted so
+    :func:`replay_engine`'s own loop stays a thin counter-update, not the comparison logic
+    itself (tos size budget's own "extract" discipline)."""
+
+    uncompared: bool
+    diverged: bool
+    uncompared_reason: str | None = None
+
+
+def _compare_one_event(
+    event: EngineEvent,
+    receipt: _RecordedReceipt,
+    core: ReplayableCore,
+    *,
+    event_id: str,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> _EventOutcome:
+    """Re-derive and compare ONE admitted event against its recorded receipt (module docstring's
+    own "comparison surface, precisely" section covers what is compared and why); durably records
+    a ``REPLAY_DIVERGED`` halt itself on a divergence, mirroring :func:`replay_engine`'s own
+    former inline behavior exactly."""
+    expected_digest = receipt.outcome_digest
+    if (
+        expected_digest is None
+        and receipt.halt_reason in _PIPELINE_NEVER_RAN_HALT_REASONS
+    ):
+        # Wave-2 finding #1 / re-review R1 (see module docstring): the LIVE run's own receipt is
+        # itself a halt reached before the pipeline ever ran (kernel- or runtime-sourced, closed
+        # set). Never call core.handle for this event: the live run's own HaltReason accounting
+        # already establishes "nothing is consumed" — skipping reproduces that ledger state
+        # exactly, rather than manufacturing a digest with nothing honest to compare it against.
+        return _EventOutcome(
+            uncompared=True, diverged=False, uncompared_reason=receipt.halt_reason
+        )
+
+    # Always re-derive the event's outcome (advances the SAME core's ledger state for every
+    # subsequent event in the stream) even when the comparison below is skipped.
+    result = core.handle(event)
+    actual_digest = result.outcome_digest
+    if expected_digest is None and actual_digest is None:
+        # Wave-3 review finding #2: since kernel lane KW3-RD, reachable ONLY by a Coordinator-
+        # gate refusal (or equivalent) with no recorded halt_reason at all — never an
+        # EGRESS_RESULT (module docstring's "comparison surface" section).
+        assert event.kind is not EventKind.EGRESS_RESULT, (
+            "an EGRESS_RESULT reached the None/None skip branch — outcome_digest must be real "
+            "for every EGRESS_RESULT since kernel lane KW3-RD (783fadf0); this would silently "
+            "reopen the exact comparison gap that commit closed"
+        )
+        return _EventOutcome(uncompared=True, diverged=False)
+
+    fingerprint_mismatch: str | None = None
+    if event.kind is EventKind.DECISION_TICK:
+        if receipt.flow_fingerprint is None:
+            # Wave-3 finding #1(b): a pre-this-fix receipt never recorded a fingerprint — never
+            # silently treat that as "ok" (fail-closed disclosure).
+            return _EventOutcome(
+                uncompared=True,
+                diverged=False,
+                uncompared_reason="RECEIPT_FINGERPRINT_MISSING",
+            )
+        actual_fingerprint = flow_fingerprint_for(result)
+        assert (
+            actual_fingerprint is not None
+        )  # DECISION_TICK guarantees this structurally
+        fingerprint_mismatch = first_mismatched_field(
+            receipt.flow_fingerprint, actual_fingerprint
+        )
+
+    state = replay_result_for(
+        expected_outcome_digest=expected_digest,
+        actual_outcome_digest=actual_digest,
+        baseline_supported=True,
+        input_complete=True,
+    )
+    diverged = state is not ReplayResultState.MATCH or fingerprint_mismatch is not None
+    if diverged:
+        record_halt(
+            evidence_store,
+            emergency_log,
+            payload={
+                "event_id": event_id,
+                "expected_outcome_digest": expected_digest,
+                "actual_outcome_digest": actual_digest,
+                "replay_result_state": state.value,
+                "fingerprint_mismatch_field": fingerprint_mismatch,
+            },
+            kind=_REPLAY_DIVERGED_KIND,
+            record_class=_REPLAY_DIVERGED_RECORD_CLASS,
+        )
+    return _EventOutcome(uncompared=False, diverged=diverged)
 
 
 def replay_engine(
     inbox: SqliteEventInbox,
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
-    build_core: Callable[[], EngineCore],
+    build_core: Callable[[], ReplayableCore],
     *,
     scheme: CanonicalizationScheme,
     window_events: int | None,
@@ -272,9 +447,11 @@ def replay_engine(
             ``EVENT_CONSUMED`` receipts into — the comparison baseline.
         emergency_log: Passed straight through to :func:`~tos_runtime.evidence.emergency.record_halt`
             on a divergence — the same dual-path durability every other boot-time halt uses.
-        build_core: A zero-argument factory returning a FRESH :class:`~tos.engine.EngineCore` —
-            never constructed here (see module docstring for what "fresh" does and does not
-            guarantee about side effects).
+        build_core: A zero-argument factory returning a FRESH :class:`ReplayableCore` (typically
+            an :class:`~tos.engine.EngineCore`, or a wrapper like
+            :class:`~tos_runtime.engine.replay_stage.EventCorrelatingCore`) — never constructed
+            here (see module docstring for what "fresh" does and does not guarantee about side
+            effects).
         scheme: The canonicalization scheme for the outcome-digest comparison (must be the SAME
             scheme the original run used, or every comparison is vacuously a divergence).
         window_events: Replay only the LAST ``window_events`` admitted events (boot-time cost
@@ -312,62 +489,22 @@ def replay_engine(
             # Nothing to compare against (e.g. outside the replay window's own history, or a row
             # admitted but not yet consumed) — not a divergence, just not yet a baseline.
             continue
-        receipt = recorded[event_id]
-        expected_digest = receipt.outcome_digest
-        if (
-            expected_digest is None
-            and receipt.halt_reason in _PIPELINE_NEVER_RAN_HALT_REASONS
-        ):
-            # Independent review finding #1, wave 2 (2026-09-09): the LIVE run's own receipt is
-            # itself a halt (e.g. a Coordinator-gate refusal — AUTHORITY_NOT_CURRENT /
-            # LIVE_SCOPE_NOT_AUTHORIZED — or any other halt reached before the decision
-            # pipeline ran; tos.engine.core.EventResult.outcome_digest is None whenever no
-            # pipeline ran). The boot-time replay core's own CoordinatorPreconditions stand-in
-            # (tos_runtime.compose._preconditions._ReplayPreconditions) is unconditionally
-            # True/True — it cannot reproduce a HISTORICAL refusal — so re-deriving this event
-            # here would run the pipeline for real and manufacture a digest with nothing honest
-            # to compare it against (an asymmetric None-recorded/non-None-replayed pair the old
-            # code treated as a divergence — a single gate refusal permanently bricked every
-            # later boot). Never call core.handle for this event at all: the live run's own
-            # HaltReason accounting ("nothing is consumed") means skipping it here reproduces
-            # the live run's ledger state exactly, not merely avoids a false comparison.
-            uncompared += 1
-            uncompared_halt_reasons.append((event_id, receipt.halt_reason))
-            continue
-        # Always re-derive the event's outcome (this advances the SAME core's ledger state for
-        # every subsequent event in the stream) even when the comparison below is skipped.
-        result = core.handle(event)
-        actual_digest = result.outcome_digest
-        if expected_digest is None and actual_digest is None:
-            # Independent review finding #1 (wave 1): neither side has an outcome identity to
-            # compare (e.g. an EGRESS_RESULT event — tos.engine.core.EventResult.outcome_digest
-            # is honestly None for every one of them, with no halt_reason at all). This is "no
-            # outcome identity", not a divergence — see the module docstring and
-            # ReplayVerdict.uncompared. Distinguished from the halt-reason case above: this one
-            # carries no reason to report (uncompared_halt_reasons stays empty for it).
-            uncompared += 1
-            continue
-        state = replay_result_for(
-            expected_outcome_digest=expected_digest,
-            actual_outcome_digest=actual_digest,
-            baseline_supported=True,
-            input_complete=True,
+        outcome = _compare_one_event(
+            event,
+            recorded[event_id],
+            core,
+            event_id=event_id,
+            evidence_store=evidence_store,
+            emergency_log=emergency_log,
         )
+        if outcome.uncompared:
+            uncompared += 1
+            if outcome.uncompared_reason is not None:
+                uncompared_halt_reasons.append((event_id, outcome.uncompared_reason))
+            continue
         compared += 1
-        if state is not ReplayResultState.MATCH:
+        if outcome.diverged:
             diverged.append(event_id)
-            record_halt(
-                evidence_store,
-                emergency_log,
-                payload={
-                    "event_id": event_id,
-                    "expected_outcome_digest": expected_digest,
-                    "actual_outcome_digest": actual_digest,
-                    "replay_result_state": state.value,
-                },
-                kind=_REPLAY_DIVERGED_KIND,
-                record_class=_REPLAY_DIVERGED_RECORD_CLASS,
-            )
     return ReplayVerdict(
         total_compared=compared,
         diverged=tuple(diverged),
