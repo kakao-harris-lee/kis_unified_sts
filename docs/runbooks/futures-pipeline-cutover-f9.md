@@ -148,13 +148,23 @@ Each trading day, verify:
 
   ```bash
   redis-cli -p 6379 -n 1 xrevrange raw_data + - COUNT 1 \
-    | grep -E "bid_price_1|ask_price_1|quote_ts"
+    | grep -E "^(bid_price_1|ask_price_1|quote_ts)$"
   ```
 
-  `quote_ts` is the book's own event time. A `raw_data` tail where `timestamp`
-  keeps advancing while `quote_ts` does not is a frozen orderbook feed, and the
-  router will be rejecting entries with `quote_stale` — that is the gate working,
-  not a market condition.
+  Then compare the two clocks across several entries. `redis-cli` prints each
+  field name on its own line followed by its value, so:
+
+  ```bash
+  redis-cli -p 6379 -n 1 xrevrange raw_data + - COUNT 5 \
+    | grep -A1 -E "^(timestamp|quote_ts)$"
+  ```
+
+  `timestamp` is the trade print, `quote_ts` the book that trade carried.
+  `timestamp` advancing across the five entries while `quote_ts` stays constant
+  is a frozen orderbook feed: the router will be rejecting entries with
+  `quote_stale`, and that is the gate working, not a market condition. Both
+  advancing together is healthy. No `quote_ts` at all means the producer
+  predates this field — redeploy it.
 
 - `trader-futures` kept its WS through the shadow day: no reconnect storm and no
   `raw_data` gap while the router was up.
@@ -312,10 +322,14 @@ On restart the router seeds its cache from the tail of the stream
 (`XREVRANGE`, `FUTURES_ORDER_ROUTER_SEED_COUNT`, default 50) so the first signal
 after a restart is not blocked on `orderbook_unavailable`. The count bounds how
 deep to look for this symbol, not the seeded book's age: entries apply
-oldest-first, so the newest always wins. Age is bounded separately — seeding
-skips anything older than the quote-age knob, so a restart during a halt or on a
-day-old stream seeds nothing rather than relying on the gate to reject it
-afterwards.
+oldest-first, so the newest always wins. Age is bounded separately, and the two clocks are
+judged apart: the price seeds when the trade print is inside the quote-age
+bound, the book only when `quote_ts` is. So a restart under a frozen book comes
+up with a current price and no book — the router serves PseudoOCO stops and
+paper fills immediately, and blocks entries on `orderbook_unavailable` only
+until the first live two-sided tick. A restart on a day-old stream seeds
+nothing at all. Either way seeding does not lean on the gate to reject what it
+handed over.
 
 ## Gate 1b — Control Parity (blocks Gate 2 approval)
 
