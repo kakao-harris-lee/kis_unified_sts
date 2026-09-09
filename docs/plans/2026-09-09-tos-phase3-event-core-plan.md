@@ -142,4 +142,12 @@
 | 16 | LOW | 두 bound 의 0 처리 불일치 | 수용 — R2A-#16: 양의 정수 규칙 통일 |
 | 17 | LOW | 런타임 스위트가 커널 뮤테이션 4종에 눈멂 | 수용 — R2A-#17A(불일치 결과 e2e) · R2D-#17D(escape ref·미지 키·규칙 삭제 digest) |
 
-(처분 커밋 SHA·재심은 착지 후 기입)
+**처분 착지(11커밋 `c923d15e..b59e7e4e`)**: K2-#4/#5 `c923d15e`(`NON_MONOTONIC_PROJECTION`·`QUANTITY_REGRESSION` — `_store` 전에 판정 · core 무변경) · K2-#6 `29774d88`(`EgressResultPayload.broker_execution_id` · 서명에서 reference 제외 · backtest anti-phantom 필드 집합 테스트 갱신) · K2-#10 `438b5def`(`Operand` 가 `ref[0]∈ADMISSIBLE_CONTEXT_SOURCES` 양성 검증 · pydantic 중첩 재검증으로 `model_construct` 우회 자체가 불가 → 2층 증명은 lowering monkeypatch) · K2-#6b `393f708f`(합성 transport 가 `syn-exec:{attempt}:{kind}` 결정론 id — 합성 정체성임을 명시 · §15.3) · R2D-#8/#12 `c3279fbc`(부재 ⇒ 거부 · `allow_no_strategies` 옵트아웃 + `STRATEGY_SOURCE_ABSENT_BY_OPERATOR_CHOICE` 증거 · `.yml` + stray 거부 · 폴백 의존 호출처 0) · R2D-#9/#17D `396b8972`(`config` ref + 빈 bindings ⇒ 로드 거부 · D-lane 런타임 단언 3) · R2A-#3 `9dd30561`(write-ahead `EVENT_HANDLING_STARTED` · 마커 有/CONSUMED 無 ⇒ 재처리 금지 + `HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND` halt · inbox 열로 O(1)) · R2A-#1/#11 `50ba0e7e`(None/None = uncompared) · R2A-#2 `f497104d`(`_ReplayStage` 부작용 0 · pipeline digest 가 flow 이전 산출임을 소스+테스트로 실증 · #1 만으로는 #2 미해결 실증) · R2A-#7/#14/#16 `fa21c3bd` · R2A-#13/#15/#17A `b59e7e4e`(`EVENT_CONSUMED` 선형 스캔은 evidence 테이블 열 필요 — 파일 소유 밖 · 공개 잔여).
+
+**잔여(공개)**: ① 재기동 후 possibly-live attempt 의 인메모리 원장 보수 재구성 = 설계 #31 §9-7 / Phase 5 ② `EVENT_CONSUMED` 조회 인덱스는 evidence store 열 추가 필요(다음 웨이브) ③ 드라이버 커밋 분할이 `driver.py`/`inbox.py`/`test_driver.py` 를 #3 커밋에 함께 실음(시그니처 공유 · 메시지에 명시).
+
+**독립 실측(최종 트리 `b59e7e4e`)**: runtime **556 passed** rc=0 · kernel **9266 passed** rc=0 · mypy 256/62 clean · ruff 0 · black 957 unchanged · firewall PASS · lint-imports 3 KEPT · budget 0 위반(31 등재) · completion GREEN · spec PASS · contract PASS · tos-spec/계약 문서 무편집 · 커널 편집 커밋 = K2 4건뿐(`git log -- tos/src/`).
+
+### 7.3 웨이브 1 재심
+
+(기입 예정)
