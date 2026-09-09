@@ -1769,17 +1769,19 @@ class TestNewRiskHaltOperatorReArm:
     def test_clear_with_the_right_seq_lets_the_next_decision_tick_proceed(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
+        from tos_runtime.engine.inbox import NewRiskHaltClearOutcome
+
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
         evidence_seq = _reach_new_risk_halt_via_cancel_crossing_fill(
             runtime, custody_root
         )
 
-        cleared = runtime.clear_new_risk_halt(
+        outcome = runtime.clear_new_risk_halt(
             latched_evidence_seq=evidence_seq,
             operator_attestation="reviewed the cancel-crossing fill, fill is genuine, clearing",
         )
-        assert cleared is True
+        assert outcome is NewRiskHaltClearOutcome.CLEARED
         assert runtime.inbox.new_risk_halt() is None
 
         rows = runtime.evidence_store.connection.execute(
@@ -1796,6 +1798,12 @@ class TestNewRiskHaltOperatorReArm:
             len(payload["operator_attestation_sha256"]) == 64
         )  # sha256 hex digest length
 
+        # The success path writes no refusal evidence (re-review finding RR3).
+        refused_rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind = 'NEW_RISK_HALT_CLEAR_REFUSED'"
+        ).fetchone()[0]
+        assert refused_rows == 0
+
         # The next DECISION_TICK now proceeds through the REAL kernel — never the synthetic
         # latch-refusal result.
         next_tick = runtime.driver.enqueue_and_run(fx.crossing_event(seq=99))
@@ -1808,24 +1816,40 @@ class TestNewRiskHaltOperatorReArm:
     def test_stale_seq_is_refused_and_latch_stays_intact(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
+        import json
+
+        from tos_runtime.engine.inbox import NewRiskHaltClearOutcome
+
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
         evidence_seq = _reach_new_risk_halt_via_cancel_crossing_fill(
             runtime, custody_root
         )
 
-        cleared = runtime.clear_new_risk_halt(
+        outcome = runtime.clear_new_risk_halt(
             latched_evidence_seq=evidence_seq - 1,  # a stale/wrong seq
             operator_attestation="reviewed, clearing",
         )
-        assert cleared is False
+        assert outcome is NewRiskHaltClearOutcome.SEQ_MISMATCH
         assert runtime.inbox.new_risk_halt() is not None
         assert runtime.inbox.new_risk_halt()["evidence_seq"] == evidence_seq
 
-        rows = runtime.evidence_store.connection.execute(
+        cleared_rows = runtime.evidence_store.connection.execute(
             "SELECT COUNT(*) FROM entries WHERE kind = 'NEW_RISK_HALT_CLEARED_BY_OPERATOR'"
         ).fetchone()[0]
-        assert rows == 0  # a refused clear appends no evidence — nothing to attest to
+        assert cleared_rows == 0  # a refused clear never appends the SUCCESS evidence
+
+        # re-review finding RR3: a refused clear must now leave a durable trace of its own —
+        # exactly the "operator is looking at a stale violation" case this control exists for.
+        refused_rows = runtime.evidence_store.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = 'NEW_RISK_HALT_CLEAR_REFUSED'"
+        ).fetchall()
+        assert len(refused_rows) == 1
+        payload = json.loads(refused_rows[0][0])["payload"]
+        assert payload["outcome"] == "SEQ_MISMATCH"
+        assert payload["requested_evidence_seq"] == evidence_seq - 1
+        assert payload["current_latched_evidence_seq"] == evidence_seq
+        assert len(payload["operator_attestation_sha256"]) == 64
 
         next_tick = runtime.driver.enqueue_and_run(fx.crossing_event(seq=99))
         assert "NEW_RISK_HALTED_BY_COUPLING_VIOLATION" in (next_tick.detail or "")
@@ -1836,6 +1860,8 @@ class TestNewRiskHaltOperatorReArm:
     def test_empty_attestation_is_refused_and_latch_stays_intact(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
+        from tos_runtime.engine.inbox import NewRiskHaltClearOutcome
+
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
         evidence_seq = _reach_new_risk_halt_via_cancel_crossing_fill(
@@ -1843,16 +1869,22 @@ class TestNewRiskHaltOperatorReArm:
         )
 
         for empty in ("", "   ", "\n\t"):
-            cleared = runtime.clear_new_risk_halt(
+            outcome = runtime.clear_new_risk_halt(
                 latched_evidence_seq=evidence_seq, operator_attestation=empty
             )
-            assert cleared is False
+            assert outcome is NewRiskHaltClearOutcome.EMPTY_ATTESTATION
         assert runtime.inbox.new_risk_halt() is not None
 
-        rows = runtime.evidence_store.connection.execute(
+        cleared_rows = runtime.evidence_store.connection.execute(
             "SELECT COUNT(*) FROM entries WHERE kind = 'NEW_RISK_HALT_CLEARED_BY_OPERATOR'"
         ).fetchone()[0]
-        assert rows == 0
+        assert cleared_rows == 0
+
+        # One NEW_RISK_HALT_CLEAR_REFUSED row per refused attempt (re-review finding RR3).
+        refused_rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind = 'NEW_RISK_HALT_CLEAR_REFUSED'"
+        ).fetchone()[0]
+        assert refused_rows == 3
 
         runtime.rcl_log.close()
         runtime.evidence_store.close()
@@ -1876,15 +1908,19 @@ class TestNewRiskHaltOperatorReArm:
 
         from tos.engine.records import EgressResultPayload, EngineEvent
         from tos.engine.vocabulary import EgressResultKind, EventKind
+        from tos_runtime.engine.inbox import NewRiskHaltClearOutcome
 
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
         first_evidence_seq = _reach_new_risk_halt_via_cancel_crossing_fill(
             runtime, custody_root
         )
-        assert runtime.clear_new_risk_halt(
-            latched_evidence_seq=first_evidence_seq,
-            operator_attestation="first violation reviewed, clearing",
+        assert (
+            runtime.clear_new_risk_halt(
+                latched_evidence_seq=first_evidence_seq,
+                operator_attestation="first violation reviewed, clearing",
+            )
+            is NewRiskHaltClearOutcome.CLEARED
         )
         assert runtime.inbox.new_risk_halt() is None
 
@@ -1923,7 +1959,7 @@ class TestNewRiskHaltOperatorReArm:
                 latched_evidence_seq=first_evidence_seq,
                 operator_attestation="stale clear attempt",
             )
-            is False
+            is NewRiskHaltClearOutcome.SEQ_MISMATCH
         )
         assert runtime.inbox.new_risk_halt() is not None
         assert runtime.inbox.new_risk_halt()["evidence_seq"] == second_evidence_seq

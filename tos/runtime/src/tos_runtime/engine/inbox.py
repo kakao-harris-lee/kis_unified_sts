@@ -31,12 +31,13 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 from tos.canonical import CanonicalizationScheme
 from tos.engine.records import EngineEvent, event_identity
 
-__all__ = ["InboxReceipt", "SqliteEventInbox"]
+__all__ = ["InboxReceipt", "NewRiskHaltClearOutcome", "SqliteEventInbox"]
 
 _CREATE_EVENTS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS events (
@@ -129,9 +130,20 @@ CREATE TABLE IF NOT EXISTS attempt_finality_witness (
 #: it names the EXACT ``evidence_seq`` the operator is attesting they reviewed — a stale clear
 #: (naming an OLDER seq than the currently-latched one) cannot silently wipe a NEWER violation
 #: the operator never saw; (2) it requires a non-empty ``operator_attestation`` string — there is
-#: no config literal or automatic path that supplies one. See
-#: :meth:`~tos_runtime.compose._types.ComposedRuntime.clear_new_risk_halt` for the evidence-first
-#: wrapper a caller actually uses (this method is the storage-layer guard it delegates to).
+#: no config literal or automatic path that supplies one.
+#:
+#: **:meth:`SqliteEventInbox.clear_new_risk_halt` is NOT the operator door (re-review finding
+#: RR2, 2026-09-09).** It is the storage-layer GUARD :meth:`~tos_runtime.compose._types
+#: .ComposedRuntime.clear_new_risk_halt` delegates to — that wrapper method is the only
+#: sanctioned caller, because it is the one that durably records the
+#: ``NEW_RISK_HALT_CLEARED_BY_OPERATOR`` / ``NEW_RISK_HALT_CLEAR_REFUSED`` evidence rows (evidence
+#: BEFORE state change, this runtime's own discipline for every halt path). A direct call on
+#: THIS method clears (or refuses) the latch with the exact same seq/attestation checks but
+#: writes NO evidence at all — a caller-visible gap the review measured directly (a bare direct
+#: call on this method clears the latch with zero evidence rows). Nothing
+#: under ``tos/runtime/src`` outside ``compose/_types.py`` may call this method — enforced
+#: mechanically by ``tos/runtime/tests/engine/test_no_direct_latch_clear.py`` (the same grep-pin
+#: idiom ``test_no_direct_core_calls.py`` uses for ``core.handle``/``run``).
 _CREATE_NEW_RISK_HALT_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS new_risk_halt (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -140,6 +152,33 @@ CREATE TABLE IF NOT EXISTS new_risk_halt (
     evidence_seq INTEGER
 )
 """
+
+
+class NewRiskHaltClearOutcome(StrEnum):
+    """The typed outcome of a new-risk-halt clear attempt (re-review finding RR3, 2026-09-09).
+
+    Replaces a bare ``bool`` return, which conflated four distinct refusal reasons into a single
+    ``False`` — a caller (and, worse, an evidence record) could not tell "there was no latch to
+    clear" from "you named a stale/wrong seq" from "the attestation was empty". Shared between
+    this module's own storage-layer :meth:`SqliteEventInbox.clear_new_risk_halt` and
+    :meth:`~tos_runtime.compose._types.ComposedRuntime.clear_new_risk_halt` — the wrapper adds
+    :attr:`STORAGE_REFUSED` for the one case only IT can observe (its own pre-check passed, but
+    the underlying storage call still refused — the disclosed TOCTOU window).
+    """
+
+    #: The latch was cleared.
+    CLEARED = "CLEARED"
+    #: There was no latch to clear at all.
+    NO_LATCH = "NO_LATCH"
+    #: ``operator_attestation`` was empty or all-whitespace.
+    EMPTY_ATTESTATION = "EMPTY_ATTESTATION"
+    #: ``latched_evidence_seq`` did not match the currently-latched row's own seq (stale or
+    #: simply wrong) — "the operator is looking at a violation that is not the current one".
+    SEQ_MISMATCH = "SEQ_MISMATCH"
+    #: Wrapper-only: the pre-check (latch present, seq matched, attestation non-empty) passed,
+    #: but the storage-layer clear itself still refused — a concurrent relatch changed the seq
+    #: between the two (never reachable through this single-threaded runtime today).
+    STORAGE_REFUSED = "STORAGE_REFUSED"
 
 
 @dataclass(frozen=True)
@@ -492,8 +531,19 @@ class SqliteEventInbox:
 
     def clear_new_risk_halt(
         self, *, latched_evidence_seq: int, operator_attestation: str
-    ) -> bool:
+    ) -> NewRiskHaltClearOutcome:
         """Clear the latch — ONLY if it is still the exact violation named (re-review finding R3).
+
+        **NOT the operator door (re-review finding RR2, 2026-09-09) — see this module's own
+        docstring "Operator re-arm" section.** This is the storage-layer GUARD
+        :meth:`~tos_runtime.compose._types.ComposedRuntime.clear_new_risk_halt` delegates to; it
+        performs the exact same seq/attestation checks that wrapper does, but writes NO evidence
+        of its own — a direct call here clears (or refuses) the latch with zero durable trace.
+        Calling this directly, from anywhere outside that one wrapper, is refused by
+        ``tos/runtime/tests/engine/test_no_direct_latch_clear.py``'s mechanical pin. Kept public
+        (not name-mangled) only because the wrapper needs to call it and because these hermetic
+        unit tests exercise the storage-layer guard directly, on its own terms, independent of
+        the compose fixture the wrapper needs (re-review finding RR1).
 
         Args:
             latched_evidence_seq: The ``evidence_seq`` of the violation the operator reviewed and
@@ -508,24 +558,37 @@ class SqliteEventInbox:
                 other halt path in this runtime) — this is only the storage-layer guard.
 
         Returns:
-            ``True`` if the latch was cleared; ``False`` if there was no latch, the named seq did
-            not match the currently-latched one, or the attestation was empty — in every refusal
-            case the latch (if any) is left completely untouched.
+            :class:`NewRiskHaltClearOutcome` — :attr:`~NewRiskHaltClearOutcome.CLEARED` if the
+            latch was cleared; :attr:`~NewRiskHaltClearOutcome.NO_LATCH`,
+            :attr:`~NewRiskHaltClearOutcome.EMPTY_ATTESTATION`, or
+            :attr:`~NewRiskHaltClearOutcome.SEQ_MISMATCH` naming the specific refusal reason —
+            in every refusal case the latch (if any) is left completely untouched. Never returns
+            :attr:`~NewRiskHaltClearOutcome.STORAGE_REFUSED` — that outcome exists only for the
+            wrapper's own TOCTOU disclosure.
         """
         if not operator_attestation.strip():
-            return False
+            return NewRiskHaltClearOutcome.EMPTY_ATTESTATION
         self._conn.execute("BEGIN IMMEDIATE")
         try:
-            cur = self._conn.execute(
+            row = self._conn.execute(
+                "SELECT evidence_seq FROM new_risk_halt WHERE id = 1"
+            ).fetchone()
+            if row is None:
+                self._conn.execute("COMMIT")
+                return NewRiskHaltClearOutcome.NO_LATCH
+            (current_evidence_seq,) = row
+            if current_evidence_seq != latched_evidence_seq:
+                self._conn.execute("COMMIT")
+                return NewRiskHaltClearOutcome.SEQ_MISMATCH
+            self._conn.execute(
                 "DELETE FROM new_risk_halt WHERE id = 1 AND evidence_seq = ?",
                 (latched_evidence_seq,),
             )
-            cleared = cur.rowcount > 0
             self._conn.execute("COMMIT")
         except BaseException:
             self._conn.execute("ROLLBACK")
             raise
-        return cleared
+        return NewRiskHaltClearOutcome.CLEARED
 
     def new_risk_halt(self) -> dict[str, object] | None:
         """The currently-latched new-risk halt, or ``None`` if none has ever been recorded.

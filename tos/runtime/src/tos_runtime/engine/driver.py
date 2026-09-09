@@ -546,9 +546,13 @@ class EngineDriver:
 
         Re-review finding R3 (2026-09-09): the ``detail`` text used to say clearing this latch
         was deferred to "Phase 5" — no longer true. The re-arm path is
-        :meth:`~tos_runtime.compose._types.ComposedRuntime.clear_new_risk_halt` (or, at the
-        storage layer, :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`),
-        available now; the ``detail`` text below names it.
+        :meth:`~tos_runtime.compose._types.ComposedRuntime.clear_new_risk_halt`, available now;
+        the ``detail`` text below names it. **Re-review finding RR2 (2026-09-09):** that wrapper
+        is the ONLY sanctioned door — the storage-layer
+        :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt` it delegates to is
+        deliberately NOT named here (or anywhere operator-facing): a direct call on it clears the
+        latch with zero durable evidence, and is refused outside ``compose/_types.py`` by
+        ``tos/runtime/tests/engine/test_no_direct_latch_clear.py``'s mechanical pin.
         """
         payload = event.decision_tick
         key = payload.instrument_key if payload is not None else event.instrument_key()

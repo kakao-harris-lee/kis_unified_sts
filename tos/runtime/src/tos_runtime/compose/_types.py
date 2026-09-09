@@ -56,7 +56,7 @@ from tos_runtime.currentness.vector import CurrentnessAssembler
 from tos_runtime.custody.file_custody import FileCustody
 from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.engine.driver import EngineDriver
-from tos_runtime.engine.inbox import SqliteEventInbox
+from tos_runtime.engine.inbox import NewRiskHaltClearOutcome, SqliteEventInbox
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
@@ -178,17 +178,24 @@ class ComposedRuntime:
         """
         return tuple(self.driver.enqueue_and_run(event) for event in events)
 
-    #: The evidence kind recorded by :meth:`clear_new_risk_halt` — a runtime-level record, not a
-    #: kernel ``EvidenceKind`` member (re-review finding R3, 2026-09-09).
+    #: The evidence kind recorded by :meth:`clear_new_risk_halt` on success — a runtime-level
+    #: record, not a kernel ``EvidenceKind`` member (re-review finding R3, 2026-09-09).
     _NEW_RISK_HALT_CLEARED_KIND = "NEW_RISK_HALT_CLEARED_BY_OPERATOR"
+    #: The evidence kind recorded by :meth:`clear_new_risk_halt` on EVERY refusal (re-review
+    #: finding RR3, 2026-09-09) — a refused clear (most of all a stale/wrong ``evidence_seq``,
+    #: "the operator is looking at a violation that is not the current one") must leave a trace
+    #: too, not just a silently-returned enum member a careless caller can ignore.
+    _NEW_RISK_HALT_CLEAR_REFUSED_KIND = "NEW_RISK_HALT_CLEAR_REFUSED"
 
     def clear_new_risk_halt(
         self, *, latched_evidence_seq: int, operator_attestation: str
-    ) -> bool:
+    ) -> NewRiskHaltClearOutcome:
         """Operator re-arm for the independent-review finding #3 new-risk halt latch
         (re-review finding R3, 2026-09-09 — see :mod:`tos_runtime.engine.inbox`'s own module
         docstring "Operator re-arm" section for why this exists now rather than in a later
-        phase).
+        phase). THE sanctioned door — see that module's own updated docstring and
+        :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`'s for why a direct
+        call on the storage layer is refused by a mechanical pin (re-review finding RR2).
 
         Evidence BEFORE state change, exactly like every other halt path in this runtime
         (:func:`~tos_runtime.evidence.emergency.record_halt`'s own discipline, though this is a
@@ -203,40 +210,72 @@ class ComposedRuntime:
         clear itself refuses (a concurrent relatch changed the seq between the check above and
         the clear — a narrow, honestly-disclosed TOCTOU this single-threaded runtime does not
         currently reach, since :class:`~tos_runtime.engine.driver.EngineDriver` is itself
-        single-threaded), the evidence row still exists, recording that a clear was ATTEMPTED
-        against that seq even though it did not take effect — never a silently-dropped attempt.
+        single-threaded), the ``CLEARED`` evidence row still exists, recording that a clear was
+        ATTEMPTED against that seq even though it did not take effect — never a silently-dropped
+        attempt — and this method ALSO appends a ``NEW_RISK_HALT_CLEAR_REFUSED`` row for it
+        (re-review finding RR3).
+
+        **Every refusal is now durably recorded (re-review finding RR3, 2026-09-09).** Before this
+        fix, a refused clear returned a bare ``False`` with zero evidence — a caller that ignored
+        the return value, or a stale-seq clear attempt (exactly "the operator reviewed an old
+        violation, not the current one"), left no trace anywhere. Every refusal path — no latch,
+        empty attestation, seq mismatch, or the storage-layer TOCTOU refusal above — now appends
+        one ``NEW_RISK_HALT_CLEAR_REFUSED`` entry (the typed outcome, the requested seq, the
+        CURRENTLY-latched seq if any, and the attestation's sha256) before returning.
 
         Args:
             latched_evidence_seq: The ``evidence_seq`` of the violation the operator reviewed.
-                Must equal the CURRENTLY-latched row's own seq — a stale value is refused, and no
-                evidence is appended for a refusal (nothing to attest to).
+                Must equal the CURRENTLY-latched row's own seq — a stale value is refused (with a
+                ``NEW_RISK_HALT_CLEAR_REFUSED`` evidence row, per RR3).
             operator_attestation: Non-empty free-text operator attestation.
 
         Returns:
-            ``True`` if the latch was cleared (and the evidence row appended); ``False`` if there
-            was no latch, the named seq did not match, or the attestation was empty — the latch
-            (if any) is left untouched in every refusal case, and no evidence row is appended.
+            :class:`~tos_runtime.engine.inbox.NewRiskHaltClearOutcome` — :attr:`~tos_runtime
+            .engine.inbox.NewRiskHaltClearOutcome.CLEARED` on success; ``NO_LATCH`` /
+            ``EMPTY_ATTESTATION`` / ``SEQ_MISMATCH`` / ``STORAGE_REFUSED`` on refusal (the latch,
+            if any, is left completely untouched in every refusal case).
         """
         current = self.inbox.new_risk_halt()
+        attestation_sha256 = hashlib.sha256(
+            operator_attestation.encode("utf-8")
+        ).hexdigest()
+
+        def _refuse(outcome: NewRiskHaltClearOutcome) -> NewRiskHaltClearOutcome:
+            self.evidence_store.append(
+                {
+                    "outcome": outcome.value,
+                    "requested_evidence_seq": latched_evidence_seq,
+                    "current_latched_evidence_seq": (
+                        current.get("evidence_seq") if current is not None else None
+                    ),
+                    "operator_attestation_sha256": attestation_sha256,
+                },
+                kind=self._NEW_RISK_HALT_CLEAR_REFUSED_KIND,
+                record_class=self._NEW_RISK_HALT_CLEAR_REFUSED_KIND,
+            )
+            return outcome
+
         if current is None:
-            return False
+            return _refuse(NewRiskHaltClearOutcome.NO_LATCH)
         if not operator_attestation.strip():
-            return False
+            return _refuse(NewRiskHaltClearOutcome.EMPTY_ATTESTATION)
         if current.get("evidence_seq") != latched_evidence_seq:
-            return False
+            return _refuse(NewRiskHaltClearOutcome.SEQ_MISMATCH)
+
         self.evidence_store.append(
             {
                 "latched_evidence_seq": latched_evidence_seq,
                 "latched_reason": current.get("reason"),
                 "latched_event_id": current.get("event_id"),
-                "operator_attestation_sha256": hashlib.sha256(
-                    operator_attestation.encode("utf-8")
-                ).hexdigest(),
+                "operator_attestation_sha256": attestation_sha256,
             },
             kind=self._NEW_RISK_HALT_CLEARED_KIND,
             record_class=self._NEW_RISK_HALT_CLEARED_KIND,
         )
-        return self.inbox.clear_new_risk_halt(
+        outcome = self.inbox.clear_new_risk_halt(
             latched_evidence_seq=latched_evidence_seq,
             operator_attestation=operator_attestation,
         )
+        if outcome is not NewRiskHaltClearOutcome.CLEARED:
+            return _refuse(NewRiskHaltClearOutcome.STORAGE_REFUSED)
+        return outcome
