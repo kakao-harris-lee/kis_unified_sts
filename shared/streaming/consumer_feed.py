@@ -216,13 +216,20 @@ class StreamConsumerFeed:
             self._last_tick_ts = now
         if book_ok:
             book = self._orderbook_from_price(symbol, price)
-            if book:
-                self._orderbooks[symbol] = book
-                quote_ts = book.get("timestamp")
-                if quote_ts is not None:
-                    previous = self._last_orderbook_ts.get(symbol)
-                    if previous is None or quote_ts > previous:
-                        self._last_orderbook_ts[symbol] = float(quote_ts)
+            quote_ts = book.get("timestamp") if book else None
+            if quote_ts is not None:
+                # The cached book and its clock advance together, under one
+                # condition, so `_orderbooks[symbol]` and
+                # `_last_orderbook_ts[symbol]` are the same field by
+                # construction. Overwriting the book unconditionally while the
+                # clock only advanced would let an OLDER book in — two
+                # producers overlapping at cutover, or one restarting and
+                # republishing its cached book — and the gate would then read a
+                # 600s quote while health reported 0s.
+                previous = self._last_orderbook_ts.get(symbol)
+                if previous is None or quote_ts > previous:
+                    self._orderbooks[symbol] = book
+                    self._last_orderbook_ts[symbol] = float(quote_ts)
         if seeded:
             # Cache prime, not a live tick: replaying old prints into the
             # volatility baseline or the indicator engine would fabricate
@@ -298,7 +305,13 @@ class StreamConsumerFeed:
         }
 
     def _oldest_orderbook_age(self, now: float) -> float | None:
-        """Age of the stalest book among subscribed symbols, or None."""
+        """Age of the stalest book among subscribed symbols, or None.
+
+        Before ``update_symbols`` has been called there is no subscription to
+        filter by, so every cached symbol counts — which is the conservative
+        reading and matches what such a feed is: one that takes whatever the
+        stream carries.
+        """
         symbols = self._subscribed | self._auxiliary
         stamps = [
             ts
@@ -368,10 +381,13 @@ class StreamConsumerFeed:
                 skipped_stale += 1
                 continue
             book_ok = cutoff is None or quote_ts >= cutoff
-            if not book_ok:
-                books_skipped_stale += 1
             if self._apply_entry(fields, seeded=True, book_ok=book_ok):
                 applied += 1
+                # Counted only for entries that reached the cache: an entry the
+                # symbol filter dropped had no book to skip, and counting it
+                # would read as this symbol's book being stale.
+                if not book_ok:
+                    books_skipped_stale += 1
         logger.info(
             format_audit_kv(
                 event="tick_stream_seeded",

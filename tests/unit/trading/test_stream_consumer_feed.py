@@ -575,11 +575,30 @@ def test_a_quoteless_entry_does_not_erase_the_last_known_book():
     assert feed._prices["A05603"]["close"] == 331.90
 
 
-def test_orderbook_age_ignores_an_older_book_arriving_late():
+def test_an_older_book_arriving_late_is_ignored_entirely():
+    """The cache and its clock advance under one condition, so they cannot
+    disagree. Two producers overlapping at cutover, or one restarting and
+    republishing its cached book, would otherwise install an older book while
+    the clock kept the newer time — the gate would read 600s and health 0s."""
     feed = _feed()
-    feed._apply_entry(_orderbook_entry(quote_ts=5000.0))
-    feed._apply_entry(_orderbook_entry(quote_ts=1000.0))
+    feed._apply_entry(_orderbook_entry(quote_ts=5000.0, price="331.50"))
+    feed._apply_entry(_orderbook_entry(quote_ts=1000.0, price="331.10"))
+
     assert feed._last_orderbook_ts == {"A05603": 5000.0}
+    snapshot = feed.get_orderbook_snapshot("A05603")
+    assert snapshot["timestamp"] == 5000.0
+    # The price is a separate field and does track the latest entry.
+    assert feed._prices["A05603"]["close"] == 331.10
+
+
+def test_a_newer_book_replaces_the_cached_one():
+    feed = _feed()
+    feed._apply_entry(_orderbook_entry(quote_ts=1000.0))
+    feed._apply_entry(_orderbook_entry(quote_ts=5000.0, bid_price_1="331.30"))
+
+    snapshot = feed.get_orderbook_snapshot("A05603")
+    assert snapshot["timestamp"] == 5000.0
+    assert snapshot["bid_price_1"] == 331.30
 
 
 def test_orderbook_age_reports_the_stalest_subscribed_symbol():
@@ -783,6 +802,35 @@ async def test_a_live_book_replaces_a_seed_that_carried_none():
         assert feed.get_orderbook_snapshot("A05603") == {}
         feed._apply_entry(_orderbook_entry(timestamp=now, quote_ts=now))
         assert feed.get_orderbook_snapshot("A05603")["bid_price_1"] == 331.18
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_symbol_filtered_entry_does_not_count_as_a_skipped_book(caplog):
+    """An entry the symbol filter dropped had no book to skip; counting it
+    would read as this feed's symbol having a stale book."""
+    now = time.time()
+    redis = _SeedRedis(
+        _seed_entries(
+            _orderbook_entry(symbol="A99999", timestamp=now, quote_ts=now - 86_400)
+        )
+    )
+    feed = StreamConsumerFeed(
+        redis=redis, stream="raw_data", seed_latest=True, seed_max_age_seconds=10.0
+    )
+    feed.update_symbols(["A05603"])
+
+    with caplog.at_level(logging.INFO, logger="shared.streaming.consumer_feed"):
+        await feed.start()
+    try:
+        seeded = [
+            r.getMessage()
+            for r in caplog.records
+            if "tick_stream_seeded" in r.getMessage()
+        ]
+        assert seeded and "books_skipped_stale=0" in seeded[0]
+        assert "entries_applied=0" in seeded[0]
     finally:
         await feed.stop()
 
