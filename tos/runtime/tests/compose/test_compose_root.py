@@ -910,6 +910,115 @@ class TestRecomposeReplay:
         runtime3.rcl_log.close()
         runtime3.evidence_store.close()
 
+    def test_recompose_after_a_new_risk_latch_does_not_diverge(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """Re-review finding R1 (2026-09-09), RED before the fix.
+
+        The independent-review finding #3 new-risk latch's own reason
+        (``NEW_RISK_HALTED_BY_COUPLING_VIOLATION``) is a RUNTIME halt reason, not a kernel
+        ``HaltReason`` member, and was absent from the replay module's closed pre-pipeline set —
+        re-opening finding #1 verbatim, reachable through finding #8's own cancel-crossing-fill
+        correction (a scenario ADR-002-005 §7 / ADR-002-002 §15.2 call routine, not an edge case).
+
+        Reproduces the reviewer's exact compose probe: a real hand-off (the default synthetic
+        fill policy auto-fills 100%, so the attempt is already ``FULL_FILL``-applied by the time
+        the hand-off tick returns — ``test_recompose_after_a_real_hand_off_does_not_diverge``
+        above), then a manually-injected ``CANCEL_ACK`` for the SAME attempt (capacity moves
+        FORWARD from ``POSITION_CONSUMED`` to ``RELEASE_PENDING_PROOF`` — an increase in
+        conservatism, so ``APPLIED``), then a manually-injected LATE ``FULL_FILL`` for the SAME
+        attempt (capacity would move BACKWARD to ``POSITION_CONSUMED`` — a regression, so
+        ``NON_MONOTONIC_PROJECTION``, which finding #8's own correction path picks up and, per
+        its own measurement, correctly trips CPL-3/CPL-5 and latches new risk).
+
+        Before this fix, the latch-refused ``DECISION_TICK`` that follows records an
+        ``EVENT_CONSUMED`` receipt with ``outcome_digest=None`` and a halt reason replay's closed
+        set did not recognise, so replay ran the FULL pipeline for it, manufactured a real digest,
+        and reached the exact ``None``-recorded / non-``None``-replayed asymmetry finding #1 was
+        fixed to eliminate — permanently un-bootable, on a scenario the spec calls routine. Both a
+        second AND a third recompose must now succeed.
+        """
+        from decimal import Decimal
+
+        from tos.engine.records import EgressResultPayload, EngineEvent
+        from tos.engine.vocabulary import EgressResultKind, EventKind, ResultDisposition
+        from tos_runtime.engine.orthostate_projection import (
+            NEW_RISK_HALTED_BY_COUPLING_VIOLATION,
+        )
+
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+        event = fx.crossing_event()
+        results = runtime.run_once((event,))
+        proposal_digest = results[0].pipeline.proposal.canonical_digest
+        assert proposal_digest is not None
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
+        write_approval_file(
+            custody_root,
+            proposal_digest=proposal_digest,
+            environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
+        )
+        results2 = runtime.run_once((event,))
+        assert results2[0].flow is not None and results2[0].flow.handed_off is True
+        attempt_id = results2[0].flow.attempt.attempt_id  # type: ignore[union-attr]
+
+        def _egress_result(
+            kind: EgressResultKind, **magnitudes: Decimal
+        ) -> EngineEvent:
+            return EngineEvent(
+                kind=EventKind.EGRESS_RESULT,
+                egress_result=EgressResultPayload(
+                    instrument_key=fx.instrument_key(),
+                    attempt_id=attempt_id,
+                    kind=kind,
+                    **magnitudes,
+                ),
+            )
+
+        cancel_result = runtime.driver.enqueue_and_run(
+            _egress_result(EgressResultKind.CANCEL_ACK)
+        )
+        assert cancel_result.result_disposition is ResultDisposition.APPLIED
+
+        late_fill_result = runtime.driver.enqueue_and_run(
+            _egress_result(
+                EgressResultKind.FULL_FILL,
+                filled_quantity=Decimal("1"),
+                remaining_quantity=Decimal("0"),
+            )
+        )
+        assert (
+            late_fill_result.result_disposition
+            is ResultDisposition.NON_MONOTONIC_PROJECTION
+        )
+
+        halt = runtime.inbox.new_risk_halt()
+        assert halt is not None
+        assert halt["reason"] == NEW_RISK_HALTED_BY_COUPLING_VIOLATION
+        coupling_violation_rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind = 'COUPLING_VIOLATION'"
+        ).fetchone()[0]
+        assert coupling_violation_rows == 1
+
+        refused_tick = runtime.driver.enqueue_and_run(fx.crossing_event(seq=99))
+        assert NEW_RISK_HALTED_BY_COUPLING_VIOLATION in (refused_tick.detail or "")
+        assert refused_tick.outcome_digest is None
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+        # Second boot over the SAME data_dir: must NOT raise EngineReplayDiverged.
+        runtime2 = _compose(tmp_path, config_dir, data_dir, custody_root)
+        runtime2.rcl_log.close()
+        runtime2.evidence_store.close()
+
+        # Third boot: must ALSO succeed — not just "the second time happens to work".
+        runtime3 = _compose(tmp_path, config_dir, data_dir, custody_root)
+        runtime3.rcl_log.close()
+        runtime3.evidence_store.close()
+
 
 class TestPendingDimensionAttestationGatesCompleteness:
     """A pending currentness dimension's operator attestation is what makes

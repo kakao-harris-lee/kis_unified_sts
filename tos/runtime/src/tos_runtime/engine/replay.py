@@ -50,7 +50,7 @@ divergence — a single Coordinator-gate refusal (reachable via nothing more tha
 :func:`_recorded_receipts` now reads ``halt_reason`` alongside ``outcome_digest``, and
 :func:`replay_engine` counts a receipt as :attr:`ReplayVerdict.uncompared` (the reason preserved
 in :attr:`ReplayVerdict.uncompared_halt_reasons`) when ``outcome_digest`` is ``None`` AND
-``halt_reason`` is one of :data:`_PRE_PIPELINE_HALT_REASONS` — the CLOSED set of halt reasons
+``halt_reason`` is one of :data:`_PIPELINE_NEVER_RAN_HALT_REASONS` — the CLOSED set of halt reasons
 that are STRUCTURALLY reached before ``EventResult.pipeline`` is ever populated (see that
 constant's own docstring for why this must be a closed set, not "any halt_reason": several other
 halt reasons, e.g. ``TRANSMIT_UNAVAILABLE``, are reached AFTER a real proposal already gave the
@@ -63,6 +63,25 @@ already establishes "nothing is consumed", so skipping the call reproduces the l
 state exactly, rather than manufacturing a divergent one). A ``None``/non-``None`` asymmetry with
 no recorded ``halt_reason``, or with a halt reason outside the closed set, still reaches the
 normal comparison and is still reported as a divergence; this fix does not touch that path.
+
+**Re-review finding R1 (2026-09-09), corrected here — the wave-2 fix above re-opened itself.**
+:data:`_PIPELINE_NEVER_RAN_HALT_REASONS` (renamed from ``_PRE_PIPELINE_HALT_REASONS`` — see that
+constant's own docstring) held only the five kernel ``HaltReason`` members reachable before
+``_handle_decision_tick`` runs the pipeline. It did NOT hold
+:data:`~tos_runtime.engine.orthostate_projection.NEW_RISK_HALTED_BY_COUPLING_VIOLATION` — the
+independent review finding #3 new-risk latch's own reason string, which :meth:`~tos_runtime.engine
+.driver.EngineDriver._new_risk_halted_result` records on a refused ``DECISION_TICK`` WITHOUT ever
+calling ``core.handle`` (``tos_runtime.engine.driver`` module, the latch-check branch) — exactly
+the same "``outcome_digest`` is ``None`` because the pipeline never ran" shape the kernel reasons
+already cover, just from a RUNTIME-level refusal instead of a kernel one. Before this fix, a
+latched tick's receipt reached the normal comparison, replay ran the pipeline for it (the latch
+is a runtime concept the replay core's own ``EngineCore`` has no knowledge of), and the resulting
+``None``-recorded / non-``None``-replayed asymmetry reproduced finding #1's exact boot-brick —
+reachable through finding #8's own cancel-crossing-fill correction, which is DESIGNED to trip
+this latch on a scenario ADR-002-005 §7 calls routine. The fix is one addition to the closed set;
+see that constant's own updated docstring for why the set's THEME changed from "kernel
+``HaltReason`` members" to "reasons for which the pipeline provably never ran" (kernel- or
+runtime-sourced, closed either way — never a wildcard).
 
 **Side-effect scope, reported precisely (plan §1.1's own escape hatch: "if a fully
 side-effect-free rebuild is impossible without kernel changes, report precisely").** This module
@@ -115,6 +134,9 @@ from tos.engine.vocabulary import HaltReason
 from tos.evidence import ReplayResultState
 
 from tos_runtime.engine.inbox import SqliteEventInbox
+from tos_runtime.engine.orthostate_projection import (
+    NEW_RISK_HALTED_BY_COUPLING_VIOLATION,
+)
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
 
@@ -124,29 +146,42 @@ _EVENT_CONSUMED_KIND = "EVENT_CONSUMED"
 _REPLAY_DIVERGED_KIND = "REPLAY_DIVERGED"
 _REPLAY_DIVERGED_RECORD_CLASS = "REPLAY_DIVERGED"
 
-#: ``HaltReason`` members that are STRUCTURALLY reached BEFORE any decision pipeline runs
-#: (``tos.engine.core.EngineCore.handle`` / ``_handle_decision_tick`` /
-#: ``_coordinator_precondition_refusal``) — for every one of these, ``EventResult.pipeline`` is
-#: unconditionally ``None`` (never populated: each is returned directly, with no ``pipeline=``
-#: argument), so ``outcome_digest`` is unconditionally ``None`` too, in EVERY run, structurally —
-#: not merely as an artifact of what happened to occur this particular time. This is the ONLY
-#: set of halt reasons :func:`replay_engine` treats as "never ran the pipeline" (independent
-#: review finding #1, wave 2, 2026-09-09). Every OTHER halt reason (e.g. ``TRANSMIT_UNAVAILABLE``,
-#: ``STAGE_DENIED``, ``NO_ACTION_OUTCOME`` when reached WITH a proposal already produced, ...) is
-#: reached from inside ``_run_entries`` AFTER a real proposal already gave ``EventResult.pipeline``
-#: a real, non-``None`` ``outcome_digest`` — a receipt carrying one of THOSE halt reasons must
-#: still go through the normal digest comparison; treating ANY ``halt_reason`` as "uncompared"
-#: would silently swallow a genuine divergence for one of those (measured directly against this
-#: module's own test suite: ``test_mutated_recorded_outcome_digest_is_detected_as_a_divergence``
-#: halts at ``TRANSMIT_UNAVAILABLE`` with a REAL recorded digest and must still be compared and
-#: caught as a divergence when that digest is tampered with).
-_PRE_PIPELINE_HALT_REASONS: frozenset[str] = frozenset(
+#: Halt reasons for which ``EventResult.pipeline`` is STRUCTURALLY ``None`` in EVERY run — never
+#: merely an artifact of what happened to occur this particular time — so ``outcome_digest`` is
+#: unconditionally ``None`` too. This is the ONLY set of halt reasons :func:`replay_engine` treats
+#: as "the pipeline never ran" (independent review finding #1, wave 2, 2026-09-09; widened by
+#: re-review finding R1, same date — see the module docstring's own R1 paragraph).
+#:
+#: **Re-review finding R1 renamed this set (was ``_PRE_PIPELINE_HALT_REASONS``).** The old name
+#: and its docstring described only "``HaltReason`` members reached before the kernel's decision
+#: pipeline runs" — true for the first five entries, but the set is no longer kernel-only: the
+#: sixth entry, :data:`~tos_runtime.engine.orthostate_projection
+#: .NEW_RISK_HALTED_BY_COUPLING_VIOLATION`, is a RUNTIME-level halt reason
+#: (:mod:`tos_runtime.engine.driver`'s new-risk latch check, independent review finding #3) that
+#: is not a ``tos.engine.vocabulary.HaltReason`` member at all. What every member of this set
+#: actually shares — the ONLY property that licenses membership — is that ``core.handle`` (or,
+#: for the latch, the runtime's own would-be call to it) is PROVABLY never invoked for the event,
+#: kernel-sourced or runtime-sourced. This must stay a closed, explicitly-enumerated set, never a
+#: wildcard or a "any halt_reason" catch-all: several OTHER halt reasons (e.g.
+#: ``TRANSMIT_UNAVAILABLE``, ``STAGE_DENIED``, ``NO_ACTION_OUTCOME`` when reached WITH a proposal
+#: already produced, ...) are reached from inside ``_run_entries`` AFTER a real proposal already
+#: gave ``EventResult.pipeline`` a real, non-``None`` ``outcome_digest`` — a receipt carrying one
+#: of THOSE halt reasons must still go through the normal digest comparison; treating ANY
+#: ``halt_reason`` as "uncompared" would silently swallow a genuine divergence for one of those
+#: (measured directly against this module's own test suite:
+#: ``test_mutated_recorded_outcome_digest_is_detected_as_a_divergence`` halts at
+#: ``TRANSMIT_UNAVAILABLE`` with a REAL recorded digest and must still be compared and caught as a
+#: divergence when that digest is tampered with).
+_PIPELINE_NEVER_RAN_HALT_REASONS: frozenset[str] = frozenset(
     {
         HaltReason.AUTHORITY_NOT_CURRENT.value,
         HaltReason.LIVE_SCOPE_NOT_AUTHORIZED.value,
         HaltReason.EVENT_ORDER_REVERSED.value,
         HaltReason.REGISTRY_MISSING.value,
         HaltReason.REGISTRY_EXPLICIT_EMPTY.value,
+        # Re-review finding R1 (2026-09-09): a RUNTIME-level halt reason, not a kernel
+        # HaltReason member — see this constant's own docstring for why it belongs here anyway.
+        NEW_RISK_HALTED_BY_COUPLING_VIOLATION,
     }
 )
 
@@ -281,7 +316,7 @@ def replay_engine(
         expected_digest = receipt.outcome_digest
         if (
             expected_digest is None
-            and receipt.halt_reason in _PRE_PIPELINE_HALT_REASONS
+            and receipt.halt_reason in _PIPELINE_NEVER_RAN_HALT_REASONS
         ):
             # Independent review finding #1, wave 2 (2026-09-09): the LIVE run's own receipt is
             # itself a halt (e.g. a Coordinator-gate refusal — AUTHORITY_NOT_CURRENT /

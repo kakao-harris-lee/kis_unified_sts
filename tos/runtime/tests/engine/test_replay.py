@@ -12,6 +12,9 @@ import pytest
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import SqliteEventInbox
+from tos_runtime.engine.orthostate_projection import (
+    NEW_RISK_HALTED_BY_COUPLING_VIOLATION,
+)
 from tos_runtime.engine.replay import replay_engine
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import SqliteEvidenceStore
@@ -306,3 +309,59 @@ def test_coordinator_gate_refusal_receipt_is_uncompared_not_diverged(
     assert len(verdict.uncompared_halt_reasons) == 1
     event_id, halt_reason = verdict.uncompared_halt_reasons[0]
     assert halt_reason == "AUTHORITY_NOT_CURRENT"
+
+
+def test_new_risk_halt_latch_receipt_is_uncompared_not_diverged(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """Re-review finding R1 (2026-09-09), RED before the fix.
+
+    The independent-review finding #3 new-risk latch's own reason
+    (``NEW_RISK_HALTED_BY_COUPLING_VIOLATION``) is a RUNTIME halt reason, not a kernel
+    ``HaltReason`` member — it was absent from the closed pre-pipeline set, so a
+    latch-refused ``DECISION_TICK``'s receipt (``outcome_digest=None``, ``core.handle`` never
+    called) reached the normal comparison. Replay has no knowledge of the runtime-level latch, so
+    it ran the FULL pipeline for the tick and manufactured a real digest — the exact
+    ``None``-recorded / non-``None``-replayed asymmetry finding #1 was fixed to eliminate,
+    reopened verbatim by the latch reason's own absence from the closed set.
+    """
+    driver = EngineDriver(
+        core=fx.build_core(transmit=None),
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        scheme=SCHEME,
+        continuity_id="replay-tests",
+        monotonic_source=FakeMonotonicSource(),
+        max_send_result_wait_ms=_NO_TIMEOUT_WITHIN_TEST,
+        orthostate_projector=fx.orthostate_projector(
+            inbox, evidence_store, emergency_log
+        ),
+        finality_producer=fx.finality_producer(),
+    )
+    inbox.record_new_risk_halt(
+        reason=NEW_RISK_HALTED_BY_COUPLING_VIOLATION,
+        event_id="attempt:test-r1",
+        evidence_seq=None,
+    )
+    tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+    assert tick_result.pipeline is None
+    assert tick_result.outcome_digest is None
+
+    verdict = replay_engine(
+        inbox,
+        evidence_store,
+        emergency_log,
+        lambda: fx.build_core(transmit=None),
+        scheme=SCHEME,
+        window_events=None,
+    )
+    assert verdict.ok
+    assert verdict.diverged == ()
+    assert verdict.total_compared == 0
+    assert verdict.uncompared == 1
+    assert len(verdict.uncompared_halt_reasons) == 1
+    event_id, halt_reason = verdict.uncompared_halt_reasons[0]
+    assert halt_reason == NEW_RISK_HALTED_BY_COUPLING_VIOLATION
