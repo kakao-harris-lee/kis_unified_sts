@@ -558,3 +558,211 @@ def test_freshness_snapshot_matches_subscribed_universe():
     snap = daemon._freshness.build_snapshot(daemon._symbols)
     assert snap["symbol_count"] == 2
     assert snap["fresh_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Futures orderbook merge (order-router stream feed)
+# ---------------------------------------------------------------------------
+
+
+class OrderbookFeed(FakeFeed):
+    """Feed whose orderbook cache is separate from the trade callback payload,
+    exactly like ``KISFuturesPriceFeed`` (H0IFASP0 never reaches the callback)."""
+
+    def __init__(self, snapshot: dict | None = None, raises: bool = False):
+        super().__init__()
+        self.snapshot = snapshot
+        self.raises = raises
+        self.calls: list[str] = []
+
+    def get_orderbook_snapshot(self, symbol: str) -> dict:
+        self.calls.append(symbol)
+        if self.raises:
+            raise RuntimeError("boom")
+        return dict(self.snapshot or {})
+
+
+_QUOTE = {
+    "code": "A05603",
+    "bid_price_1": 331.18,
+    "bid_qty_1": 12.0,
+    "ask_price_1": 331.22,
+    "ask_qty_1": 9.0,
+    "spread": 0.04,
+    "timestamp": 1_700_000_000.0,
+}
+
+
+def _futures_daemon(feed, publisher):
+    return _daemon(feed, publisher, _provider([["A05603"]]), asset="futures")
+
+
+def test_futures_tick_republishes_with_top_of_book():
+    """Without this merge the stream carries trade ticks only, and a consumer
+    (order-router slippage gate / paper fills) has no quote source but its own
+    second KIS WebSocket on the same account."""
+    feed = OrderbookFeed(_QUOTE)
+    publisher = FakePublisher()
+    daemon = _futures_daemon(feed, publisher)
+
+    daemon._on_tick("A05603", {"close": 331.20, "timestamp": 1.0}, datetime.now(UTC))
+
+    _, _, payload = publisher.published[0]
+    assert payload["bid_price_1"] == 331.18
+    assert payload["ask_qty_1"] == 9.0
+    assert payload["spread"] == 0.04
+    # The trade tick's own clock wins — matching the merged snapshot the
+    # monolithic orchestrator publishes.
+    assert payload["timestamp"] == 1.0
+    assert payload["close"] == 331.20
+
+
+def test_futures_tick_unchanged_when_book_is_empty_or_one_sided():
+    for snapshot in ({}, {"bid_price_1": 331.18, "ask_price_1": 0.0}):
+        publisher = FakePublisher()
+        daemon = _futures_daemon(OrderbookFeed(snapshot), publisher)
+        daemon._on_tick("A05603", {"close": 331.20}, datetime.now(UTC))
+        assert publisher.published[0][2] == {"close": 331.20}
+
+
+def test_futures_tick_survives_a_failing_orderbook_lookup():
+    publisher = FakePublisher()
+    daemon = _futures_daemon(OrderbookFeed(raises=True), publisher)
+    daemon._on_tick("A05603", {"close": 331.20}, datetime.now(UTC))
+    assert publisher.published[0][2] == {"close": 331.20}
+
+
+def test_stock_tick_never_consults_the_orderbook_cache():
+    feed = OrderbookFeed(_QUOTE)
+    publisher = FakePublisher()
+    daemon = _daemon(feed, publisher, _provider([["005930"]]), asset="stock")
+
+    daemon._on_tick("005930", {"close": 71500.0}, datetime.now(UTC))
+
+    assert feed.calls == []
+    assert publisher.published[0][2] == {"close": 71500.0}
+
+
+def test_missing_accessor_warns_exactly_once_on_a_futures_feed(caplog):
+    """A silent revert to trade-only ticks has no local symptom: it surfaces as
+    the order-router blocking every signal on `orderbook_unavailable`, which
+    reads as a market condition rather than a data gap."""
+    import logging
+
+    class _NoAccessorFeed(FakeFeed):
+        pass
+
+    publisher = FakePublisher()
+    daemon = _futures_daemon(_NoAccessorFeed(), publisher)
+
+    with caplog.at_level(logging.WARNING, logger="services.market_ingest.main"):
+        daemon._on_tick("A05603", {"close": 331.20}, datetime.now(UTC))
+        daemon._on_tick("A05603", {"close": 331.21}, datetime.now(UTC))
+
+    warnings = [
+        r for r in caplog.records if "orderbook merge unavailable" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "has no get_orderbook_snapshot" in warnings[0].getMessage()
+    assert len(publisher.published) == 2  # ticks still flow
+
+
+def test_raising_accessor_warns_once_then_logs_recovery(caplog):
+    import logging
+
+    feed = OrderbookFeed(_QUOTE, raises=True)
+    publisher = FakePublisher()
+    daemon = _futures_daemon(feed, publisher)
+
+    with caplog.at_level(logging.INFO, logger="services.market_ingest.main"):
+        daemon._on_tick("A05603", {"close": 331.20}, datetime.now(UTC))
+        daemon._on_tick("A05603", {"close": 331.21}, datetime.now(UTC))
+        feed.raises = False
+        daemon._on_tick("A05603", {"close": 331.22}, datetime.now(UTC))
+        daemon._on_tick("A05603", {"close": 331.23}, datetime.now(UTC))
+
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "orderbook merge" in r.getMessage()
+    ]
+    recoveries = [r for r in caplog.records if "merge recovered" in r.getMessage()]
+    assert len(warnings) == 1
+    assert len(recoveries) == 1
+    assert publisher.published[-1][2]["bid_price_1"] == 331.18
+
+
+def test_an_empty_book_is_not_treated_as_a_merge_failure(caplog):
+    import logging
+
+    publisher = FakePublisher()
+    daemon = _futures_daemon(OrderbookFeed({}), publisher)
+
+    with caplog.at_level(logging.WARNING, logger="services.market_ingest.main"):
+        daemon._on_tick("A05603", {"close": 331.20}, datetime.now(UTC))
+
+    assert [r for r in caplog.records if "orderbook merge" in r.getMessage()] == []
+
+
+def test_stock_feed_without_the_accessor_never_warns(caplog):
+    """Only futures ticks take the merge path; a stock feed has no book."""
+    import logging
+
+    daemon = _daemon(
+        FakeFeed(), FakePublisher(), _provider([["005930"]]), asset="stock"
+    )
+
+    with caplog.at_level(logging.WARNING, logger="services.market_ingest.main"):
+        daemon._on_tick("005930", {"close": 71500.0}, datetime.now(UTC))
+
+    assert [r for r in caplog.records if "orderbook merge" in r.getMessage()] == []
+
+
+def test_an_empty_book_does_not_clear_the_failure_latch(caplog):
+    """Recovery is keyed on a merge that actually produced a book. Treating a
+    bare successful call as recovery would report "recovered" while every
+    republished tick still carries no quote — and the latch would then be free
+    to warn again on the next failure, turning a one-shot line into a flapping
+    one."""
+    import logging
+
+    feed = OrderbookFeed(_QUOTE, raises=True)
+    daemon = _futures_daemon(feed, FakePublisher())
+
+    with caplog.at_level(logging.INFO, logger="services.market_ingest.main"):
+        daemon._on_tick("A05603", {"close": 331.20}, datetime.now(UTC))  # WARNING
+        feed.raises = False
+        feed.snapshot = {}  # accessor works, book is empty
+        daemon._on_tick("A05603", {"close": 331.21}, datetime.now(UTC))
+
+        assert daemon._orderbook_merge_log.warned is True
+        assert [r for r in caplog.records if "merge recovered" in r.getMessage()] == []
+
+        feed.snapshot = _QUOTE  # a real two-sided book
+        daemon._on_tick("A05603", {"close": 331.22}, datetime.now(UTC))
+        daemon._on_tick("A05603", {"close": 331.23}, datetime.now(UTC))
+
+    assert daemon._orderbook_merge_log.warned is False
+    assert len([r for r in caplog.records if "merge recovered" in r.getMessage()]) == 1
+
+
+def test_an_undatable_two_sided_book_warns_instead_of_publishing_silently(caplog):
+    """A book we cannot date is a fault, not a pre-open empty book. Returning
+    it silently would look identical to the normal empty case and the latch
+    would never fire."""
+    import logging
+
+    undatable = {**_QUOTE, "timestamp": None}
+    publisher = FakePublisher()
+    daemon = _futures_daemon(OrderbookFeed(undatable), publisher)
+
+    with caplog.at_level(logging.WARNING, logger="services.market_ingest.main"):
+        daemon._on_tick("A05603", {"close": 331.20}, datetime.now(UTC))
+
+    warnings = [
+        r for r in caplog.records if "orderbook merge unavailable" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "no usable timestamp" in warnings[0].getMessage()
+    # The trade tick still publishes, without a book.
+    assert publisher.published[0][2] == {"close": 331.20}

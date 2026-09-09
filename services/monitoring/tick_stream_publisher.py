@@ -12,6 +12,7 @@ import os
 import threading
 import time
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,11 +21,72 @@ from pydantic import ConfigDict, Field
 
 from shared.config.base import ServiceConfigBase
 from shared.exceptions import InfrastructureError
-from shared.models.stream_models import MarketTickMessage
+from shared.models.stream_models import (
+    DEFAULT_FUTURES_TICK_STREAM,
+    ORDERBOOK_FIELDS,
+    MarketTickMessage,
+)
 from shared.streaming.client import RedisClient
 from shared.streaming.codec import encode
 
 logger = logging.getLogger(__name__)
+
+
+def orderbook_publish_fields(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Top-of-book fields to merge into a futures tick before publishing.
+
+    The KIS futures feed delivers orderbook (H0IFASP0) and trade (H0IFCNT0)
+    ticks separately and only the trade tick reaches a tick callback, so every
+    producer of the futures tick stream would otherwise publish quote-less
+    ticks. A consumer that needs a quote — the decoupled order-router's
+    send-time slippage gate, its paper fill simulator — would then have no
+    source but a second KIS WebSocket on the same account, which is exactly
+    the collision this avoids. Both producers (``services/market_ingest`` and
+    the monolithic orchestrator) call this so the merge rule lives once.
+
+    Returns ``{}`` unless both sides of the book are positive. Raises
+    ``ValueError`` for a two-sided book with no usable timestamp — that is a
+    fault, and the callers turn it into a one-shot WARNING rather than letting
+    it read as a normal empty book.
+    ``code`` is excluded and the snapshot's ``timestamp`` is re-keyed to
+    ``quote_ts``: the published entry's ``timestamp`` belongs to the trade tick,
+    and a stale quote must not backdate a fresh trade. Keeping the orderbook
+    tick's own time as a separate field is what lets a consumer bound the age of
+    the BOOK rather than of the last print — the two diverge exactly when it
+    matters, because the feed keeps merging a frozen book onto fresh trades
+    (``KISFuturesPriceFeed._log_orderbook_staleness`` models that condition).
+    """
+    if not snapshot:
+        return {}
+    try:
+        bid = float(snapshot.get("bid_price_1") or 0.0)
+        ask = float(snapshot.get("ask_price_1") or 0.0)
+    except (TypeError, ValueError):
+        return {}
+    if bid <= 0 or ask <= 0:
+        return {}
+    fields = {key: snapshot[key] for key in ORDERBOOK_FIELDS if key in snapshot}
+    if "quote_ts" not in fields:
+        # An explicit `quote_ts` from the caller wins; otherwise the snapshot's
+        # `timestamp` becomes it, which is the book tick's own time in both
+        # feeds (`KISFuturesPriceFeed._orderbooks` and
+        # `StreamConsumerFeed.get_orderbook_snapshot`).
+        try:
+            quote_ts = float(snapshot.get("timestamp"))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            quote_ts = 0.0
+        if quote_ts <= 0:
+            # A two-sided book we cannot date is a fault, not an empty book:
+            # published without `quote_ts` a consumer would fall back to the
+            # trade tick's time and read a stale quote as fresh. Returning {}
+            # would look identical to the normal pre-open empty book and
+            # `OrderbookMergeLog` — which exists to catch exactly this silent
+            # revert — would stay quiet. Raise instead; both producers wrap the
+            # call and route it to a one-shot WARNING, so the tick path itself
+            # still never raises. (0 is undatable too: 1970 is not a quote.)
+            raise ValueError("orderbook snapshot has no usable timestamp")
+        fields["quote_ts"] = quote_ts
+    return fields
 
 
 class TickStreamPublisherConfig(ServiceConfigBase):
@@ -53,7 +115,8 @@ class TickStreamPublisherConfig(ServiceConfigBase):
         default="market:ticks", description="Redis stream for stock ticks"
     )
     futures_stream: str = Field(
-        default="raw_data", description="Redis stream for futures ticks"
+        default=DEFAULT_FUTURES_TICK_STREAM,
+        description="Redis stream for futures ticks",
     )
     stream_maxlen: int = Field(default=10000, description="Maximum stream length")
     stock_min_interval_seconds: float = Field(
@@ -104,7 +167,10 @@ class TickStreamPublisherConfig(ServiceConfigBase):
         env_data["stock_stream"] = stock_stream
 
         futures_stream = (
-            os.getenv("MONITOR_FUTURES_TICK_STREAM", "raw_data").strip() or "raw_data"
+            os.getenv(
+                "MONITOR_FUTURES_TICK_STREAM", DEFAULT_FUTURES_TICK_STREAM
+            ).strip()
+            or DEFAULT_FUTURES_TICK_STREAM
         )
         env_data["futures_stream"] = futures_stream
 
@@ -148,6 +214,60 @@ class TickStreamPublisherConfig(ServiceConfigBase):
         env_data.update(overrides)
 
         return cls(**env_data)
+
+
+class OrderbookMergeLog:
+    """One-shot WARNING / recovery-INFO latch for the futures orderbook merge.
+
+    Both producers merge the same way and fail the same way, and a silent
+    revert to trade-only ticks has no local symptom at all. Downstream it shows
+    up as one of two things, neither of which names the cause: a consumer that
+    still holds a cached book blocks on ``quote_stale`` once
+    ``order_router_max_quote_age_seconds`` elapses, and a consumer that never
+    saw one blocks on ``orderbook_unavailable``. Both read as market
+    conditions. Prior reviews (#621 F5, #623 F2) asked for exactly this shape.
+
+    First failure logs WARNING, the first NON-EMPTY merge after that logs INFO,
+    and the steady state on either side is silent — the merge sits on a
+    per-tick hot path, so a per-occurrence log is not an option. Recovery is
+    keyed on a non-empty merge rather than on the accessor merely returning:
+    an empty or one-sided book is a normal pre-open state, and treating it as
+    recovery would clear the latch while ticks are still publishing no quote.
+    """
+
+    def __init__(self, log: logging.Logger, producer: str) -> None:
+        self._log = log
+        self._producer = producer
+        self._warned = False
+
+    @property
+    def warned(self) -> bool:
+        return self._warned
+
+    def failed(self, reason: str) -> None:
+        if self._warned:
+            return
+        self._warned = True
+        self._log.warning(
+            "%s: futures orderbook merge unavailable (%s) — republished ticks "
+            "carry no quote, so a stream consumer's entry gate will block on "
+            "quote_stale once its cached book ages out, or on "
+            "orderbook_unavailable if it never had one. Logged once until it "
+            "recovers.",
+            self._producer,
+            reason,
+        )
+
+    def merged(self) -> None:
+        """Record a merge that actually produced a book."""
+        if not self._warned:
+            return
+        self._warned = False
+        self._log.info(
+            "%s: futures orderbook merge recovered — republished ticks carry a "
+            "quote again",
+            self._producer,
+        )
 
 
 @dataclass(frozen=True)
@@ -283,6 +403,12 @@ class TickStreamPublisher:
         except ValueError:
             return None
 
+        # `encode` drops None fields, so the optional orderbook fields
+        # (bid/ask price+qty, spread — shared.models.stream_models.
+        # ORDERBOOK_FIELDS) ride along only when the producer's payload
+        # carried them. Trade-only producers publish exactly what they did
+        # before; the orchestrator's merged feed snapshot now also carries
+        # the top of book.
         fields = encode(msg)
         # Compatibility aliases for the rollout window. New consumers should
         # decode the canonical v1 schema; old consumers still see the legacy

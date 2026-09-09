@@ -121,3 +121,234 @@ def test_decode_json_field_mapping_rejects_malformed_json() -> None:
 
     with pytest.raises(StreamDecodeError, match="payload_json"):
         decode(_ComplexMessage, fields, json_fields={"payload": "payload_json"})
+
+
+# ---------------------------------------------------------------------------
+# Optional orderbook fields (additive, no schema_version bump)
+# ---------------------------------------------------------------------------
+
+
+def test_market_tick_orderbook_fields_round_trip() -> None:
+    msg = MarketTickMessage(
+        asset="futures",
+        symbol="A05603",
+        price=331.20,
+        timestamp=1771982309.0,
+        bid_price_1=331.18,
+        bid_qty_1=12.0,
+        ask_price_1=331.22,
+        ask_qty_1=9.0,
+        spread=0.04,
+        quote_ts=1771982304.0,
+    )
+
+    fields = encode(msg)
+
+    assert fields["bid_price_1"] == "331.18"
+    assert fields["ask_qty_1"] == "9.0"
+    assert fields["spread"] == "0.04"
+    assert fields["quote_ts"] == "1771982304.0"
+    assert decode(MarketTickMessage, fields) == msg
+    assert msg.to_price_dict()["bid_price_1"] == 331.18
+    assert msg.to_price_dict()["spread"] == 0.04
+
+
+def test_market_tick_without_orderbook_stays_wire_identical() -> None:
+    """Back-compat: entries written before the fields existed still decode, and
+    a trade-only tick still encodes exactly the fields it used to."""
+    legacy_fields = {
+        "schema_version": "1",
+        "asset": "futures",
+        "symbol": "A05603",
+        "price": "331.20",
+        "timestamp": "1771982309.0",
+    }
+
+    msg = decode(MarketTickMessage, legacy_fields)
+
+    assert msg.bid_price_1 is None and msg.spread is None
+    assert set(encode(msg)) == set(legacy_fields)
+    assert "bid_price_1" not in msg.to_price_dict()
+
+
+def test_market_tick_source_payload_carries_orderbook_when_present() -> None:
+    """The publisher path: the merged feed snapshot the orchestrator emits."""
+    msg = MarketTickMessage.from_source_payload(
+        asset="futures",
+        symbol="A05603",
+        payload={
+            "close": 331.20,
+            "timestamp": 1771982309.0,
+            "bid_price_1": 331.18,
+            "bid_qty_1": 12,
+            "ask_price_1": 331.22,
+            "ask_qty_1": 9,
+            "spread": 0.04,
+            "quote_ts": 1771982304.0,
+        },
+        now=1771982310.0,
+    )
+
+    assert msg.bid_price_1 == 331.18 and msg.ask_qty_1 == 9.0
+    assert msg.spread == 0.04
+    assert msg.quote_ts == 1771982304.0
+
+
+def test_market_tick_drops_negative_orderbook_values_without_losing_the_tick() -> None:
+    """A crossed/garbled quote must cost the quote, not the trade tick.
+
+    ``TickStreamPublisher._build_fields`` treats a ``ValueError`` from this
+    constructor as "unpublishable", and pydantic's ``ValidationError`` is one —
+    so a ``ge=0`` violation raised here would delete the whole tick from the
+    stream instead of one field.
+    """
+    msg = MarketTickMessage.from_source_payload(
+        asset="futures",
+        symbol="A05603",
+        payload={
+            "close": 331.20,
+            "bid_price_1": 331.18,
+            "ask_price_1": 331.22,
+            "spread": -0.04,
+        },
+        now=1771982310.0,
+    )
+
+    assert msg.price == 331.20
+    assert msg.spread is None
+    assert msg.bid_price_1 == 331.18
+
+
+def test_market_tick_legacy_fields_carry_orderbook() -> None:
+    msg = decode(
+        MarketTickMessage,
+        {
+            b"code": b"A05603",
+            b"current_price": b"331.20",
+            b"bid_price_1": b"331.18",
+            b"ask_price_1": b"331.22",
+        },
+        legacy_adapter=MarketTickMessage.from_legacy_fields,
+    )
+
+    assert msg.bid_price_1 == 331.18 and msg.ask_price_1 == 331.22
+
+
+# ---------------------------------------------------------------------------
+# orderbook_publish_fields — the merge rule both producers share
+# ---------------------------------------------------------------------------
+
+
+def test_orderbook_publish_fields_carries_the_quote_time_as_quote_ts() -> None:
+    from services.monitoring.tick_stream_publisher import orderbook_publish_fields
+
+    fields = orderbook_publish_fields(
+        {
+            "code": "A05603",
+            "timestamp": 1771982309.0,
+            "bid_price_1": 331.18,
+            "bid_qty_1": 12.0,
+            "ask_price_1": 331.22,
+            "ask_qty_1": 9.0,
+            "spread": 0.04,
+        }
+    )
+
+    # `code` is excluded and the snapshot's `timestamp` is re-keyed: the
+    # published entry's `timestamp` belongs to the trade tick, so the book's
+    # own time has to travel separately or a freshness check bounds the wrong
+    # thing.
+    assert set(fields) == {
+        "bid_price_1",
+        "bid_qty_1",
+        "ask_price_1",
+        "ask_qty_1",
+        "spread",
+        "quote_ts",
+    }
+    assert fields["spread"] == 0.04
+    assert fields["quote_ts"] == 1771982309.0
+
+
+def test_orderbook_publish_fields_prefers_an_explicit_quote_ts() -> None:
+    """No feed emits this shape today, but the rule is worth pinning: an
+    explicit `quote_ts` wins, and only in its absence does the snapshot's
+    `timestamp` become it. Re-keying over a caller's value would launder a
+    stale book into a fresh one."""
+    from services.monitoring.tick_stream_publisher import orderbook_publish_fields
+
+    fields = orderbook_publish_fields(
+        {
+            "bid_price_1": 331.18,
+            "ask_price_1": 331.22,
+            "quote_ts": 100.0,
+            "timestamp": 900.0,
+        }
+    )
+
+    assert fields["quote_ts"] == 100.0
+
+
+@pytest.mark.parametrize(
+    "stamp", ["nope", None, -1.0, 0], ids=["text", "none", "neg", "zero"]
+)
+def test_orderbook_publish_fields_raises_for_a_book_it_cannot_date(stamp) -> None:
+    """A two-sided book with no usable time is a fault, not an empty book.
+
+    Published without `quote_ts` a consumer falls back to the trade tick's time
+    and reads a stale quote as fresh. Returning `{}` would be indistinguishable
+    from the normal pre-open empty book, so `OrderbookMergeLog` would stay
+    quiet about exactly the silent revert it exists to catch. The producers
+    wrap the call, so the tick path still does not raise.
+    """
+    from services.monitoring.tick_stream_publisher import orderbook_publish_fields
+
+    with pytest.raises(ValueError, match="no usable timestamp"):
+        orderbook_publish_fields(
+            {"bid_price_1": 331.18, "ask_price_1": 331.22, "timestamp": stamp}
+        )
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        None,
+        {},
+        {"bid_price_1": 331.18},
+        {"bid_price_1": 331.18, "ask_price_1": 0.0},
+        {"bid_price_1": 0.0, "ask_price_1": 331.22},
+        {"bid_price_1": "nope", "ask_price_1": "nope"},
+    ],
+    ids=["none", "empty", "bid-only", "zero-ask", "zero-bid", "garbage"],
+)
+def test_orderbook_publish_fields_rejects_anything_but_a_two_sided_book(
+    snapshot,
+) -> None:
+    from services.monitoring.tick_stream_publisher import orderbook_publish_fields
+
+    assert orderbook_publish_fields(snapshot) == {}
+
+
+def test_market_tick_still_ignores_unknown_keys() -> None:
+    """`extra="ignore"` is the existing contract — the publisher's rollout
+    aliases (`code`/`close`/`current_price`) ride in the same field map. Adding
+    the orderbook fields must not turn that into a rejection."""
+    msg = decode(
+        MarketTickMessage,
+        {
+            "schema_version": "1",
+            "asset": "futures",
+            "symbol": "A05603",
+            "price": "331.20",
+            "timestamp": "1771982309.0",
+            "bid_price_1": "331.18",
+            "ask_price_1": "331.22",
+            "code": "A05603",
+            "close": "331.20",
+            "current_price": "331.20",
+            "totally_unknown": "whatever",
+        },
+    )
+
+    assert msg.bid_price_1 == 331.18
+    assert not hasattr(msg, "totally_unknown")

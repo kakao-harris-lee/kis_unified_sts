@@ -152,6 +152,11 @@ class SlippageControlConfig:
     # control-parity closure) — the monolithic orchestrator does not read
     # this key at all, so it has no effect on the legacy runtime.
     order_router_gate: bool = True
+    # Maximum age of the quote the order_router gate evaluates, in seconds
+    # (0 disables). Also router-only: `evaluate_entry` filters on the SIGNAL's
+    # age and never looks at the quote's timestamp, so without this a feed that
+    # has stopped ticking keeps serving its last, still-parseable book.
+    order_router_max_quote_age_seconds: float = 10.0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SlippageControlConfig:
@@ -201,6 +206,9 @@ class SlippageControlConfig:
             event_time_windows=events,
             order_router_gate=_to_bool(
                 data.get("order_router_gate", True), default=True
+            ),
+            order_router_max_quote_age_seconds=float(
+                data.get("order_router_max_quote_age_seconds", 10.0)
             ),
         )
 
@@ -320,6 +328,28 @@ def parse_orderbook_snapshot(
         last_price=close,
         timestamp=timestamp,
     )
+
+
+def quote_age_seconds(
+    payload: Mapping[str, Any] | None, *, now: datetime | None = None
+) -> float | None:
+    """Age of a quote payload's ``timestamp`` in seconds, ``None`` if unreadable.
+
+    Shares :func:`_parse_timestamp` with :func:`parse_orderbook_snapshot`, so a
+    caller gating on freshness measures exactly the field the snapshot parser
+    reads. ``None`` means "no usable timestamp" and callers should treat it as
+    a failure, not as fresh: the snapshot parser substitutes ``now`` for a
+    missing timestamp, which would otherwise make an ageless quote look new.
+    Negative ages (producer clock ahead) are returned as-is.
+    """
+    if not isinstance(payload, Mapping):
+        return None
+    ts = _parse_timestamp(payload.get("timestamp"))
+    if ts is None:
+        return None
+    ref = now or datetime.now(UTC)
+    ref = ref.replace(tzinfo=UTC) if ref.tzinfo is None else ref.astimezone(UTC)
+    return (ref - ts).total_seconds()
 
 
 def compute_adverse_slippage_ticks(
@@ -675,6 +705,27 @@ def _parse_windows(raw: Any) -> list[TimeWindow]:
     return windows
 
 
+#: Bounds on a value accepted as epoch SECONDS: 2001-09 .. 5138. Outside this
+#: range a number is not a second-resolution timestamp, and guessing costs more
+#: than refusing — a value in [1e11, 2.5e11) parses to a far-future date, which
+#: yields a NEGATIVE age and passes every freshness bound. (A millisecond epoch
+#: is further out still and already raised inside ``fromtimestamp``; the open
+#: hole was the range just above the upper bound, up to the parseable edge at
+#: 253402300800.)
+_MIN_EPOCH_SECONDS = 1e9
+_MAX_EPOCH_SECONDS = 1e11
+
+
+def _epoch_seconds_to_datetime(epoch: float) -> datetime | None:
+    """Convert plausible epoch seconds to UTC, else ``None`` (fail-closed)."""
+    if not (_MIN_EPOCH_SECONDS <= epoch < _MAX_EPOCH_SECONDS):
+        return None
+    try:
+        return datetime.fromtimestamp(epoch, tz=UTC)
+    except (OSError, ValueError, OverflowError):
+        return None
+
+
 def _parse_timestamp(value: Any) -> datetime | None:
     if value is None:
         return None
@@ -685,10 +736,7 @@ def _parse_timestamp(value: Any) -> datetime | None:
         return value.astimezone(UTC)
 
     if isinstance(value, (int, float)):
-        try:
-            return datetime.fromtimestamp(float(value), tz=UTC)
-        except (TypeError, OSError, ValueError):
-            return None
+        return _epoch_seconds_to_datetime(float(value))
 
     if isinstance(value, str):
         try:
@@ -696,6 +744,13 @@ def _parse_timestamp(value: Any) -> datetime | None:
             dt = dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
             return dt
         except ValueError:
+            pass
+        # Defensive: the tick-stream path decodes `timestamp` to a float
+        # before it reaches here (MarketTickMessage -> to_price_dict), so this
+        # branch only catches a producer that hands over a raw Redis field.
+        try:
+            return _epoch_seconds_to_datetime(float(value))
+        except (TypeError, ValueError):
             return None
 
     return None

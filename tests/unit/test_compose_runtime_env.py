@@ -44,6 +44,13 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert paper["TELEGRAM_FUTURES_CHAT_ID"] == "CHANGE_ME_PAPER_TELEGRAM_CHAT_ID"
     assert paper["FUTURES_PIPELINE_MODE"] == "shadow"
     assert paper["FUTURES_ORDER_ROUTER_MODE"] == "paper"
+    # order_router consumes the tick stream by default and opens no KIS WS —
+    # `ws` is the opt-in self-fed path (one futures WS per KIS account).
+    assert paper["FUTURES_ORDER_ROUTER_FEED"] == "stream"
+    assert paper["FUTURES_TICK_STREAM"] == "raw_data"
+    assert paper["FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS"] == "10"
+    assert paper["FUTURES_ROUTER_SLIPPAGE_GATE"] == "true"
+    assert paper["FUTURES_ORDER_ROUTER_SEED_COUNT"] == "50"
     assert paper["FUTURES_STRATEGY_SYMBOL"] == ""
     # Empty = every setup whose strategy.enabled is true; the knob exists so an
     # operator can narrow the DECOUPLED roster without touching the switch
@@ -79,6 +86,11 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert live["TELEGRAM_FUTURES_CHAT_ID"] == "CHANGE_ME_LIVE_TELEGRAM_CHAT_ID"
     assert live["FUTURES_PIPELINE_MODE"] == "shadow"
     assert live["FUTURES_ORDER_ROUTER_MODE"] == "paper"
+    assert live["FUTURES_ORDER_ROUTER_FEED"] == "stream"
+    assert live["FUTURES_TICK_STREAM"] == "raw_data"
+    assert live["FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS"] == "10"
+    assert live["FUTURES_ROUTER_SLIPPAGE_GATE"] == "true"
+    assert live["FUTURES_ORDER_ROUTER_SEED_COUNT"] == "50"
     assert live["FUTURES_STRATEGY_SYMBOL"] == ""
     assert live["FUTURES_DECISION_ENGINE_SETUPS"] == ""
     assert live["FUTURES_EXECUTOR_TRADING_MODE"] == "PAPER"
@@ -303,10 +315,22 @@ def test_futures_pipeline_compose_services_are_profile_gated():
         == "${FUTURES_DECISION_ENGINE_SETUPS:-}"
     )
 
-    # order_router self-feeds a real KIS WS — needs futures creds.
+    # order_router keeps the futures creds in both feed modes: the REST order
+    # path needs them, and `ws` additionally needs them for market data.
     order_env = services["futures-order-router"]["environment"]
     assert "KIS_FUTURES_APP_KEY" in order_env
     assert "KIS_FUTURES_APP_SECRET" in order_env
+    # Feed source defaults to the tick stream (no second KIS futures WS beside
+    # trader-futures); the stream name must match what futures-monitor and the
+    # producer use, or the router reads an empty stream and never quotes.
+    assert (
+        order_env["FUTURES_ORDER_ROUTER_FEED"] == "${FUTURES_ORDER_ROUTER_FEED:-stream}"
+    )
+    assert order_env["FUTURES_TICK_STREAM"] == "${FUTURES_TICK_STREAM:-raw_data}"
+    assert (
+        order_env["FUTURES_TICK_STREAM"]
+        == services["futures-monitor"]["environment"]["FUTURES_TICK_STREAM"]
+    )
     # Executor real/paper gate (dedicated knob, safe PAPER default).
     assert order_env["TRADING_MODE"] == "${FUTURES_EXECUTOR_TRADING_MODE:-PAPER}"
 
@@ -363,6 +387,23 @@ def test_futures_daemons_share_contract_resolution_env_with_orchestrator():
     router_env = services["futures-order-router"]["environment"]
     for knob in ("FUTURES_SLIPPAGE_TICK_SIZE", "FUTURES_PAPER_MAX_SPREAD_TICKS"):
         assert router_env[knob] == orchestrator_env[knob], knob
+    # Router-only quote-freshness reject: the monolith ignores the YAML key, so
+    # unlike the two above it is plumbed here and NOT to trader-futures. Without
+    # it the container is stuck on the YAML default (`.env.*` is
+    # interpolation-only) and the knob cannot be tuned per deployment.
+    assert (
+        router_env["FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS"]
+        == "${FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS:-10}"
+    )
+    # The gate's own rollback switch, same router-only shape.
+    assert (
+        router_env["FUTURES_ROUTER_SLIPPAGE_GATE"]
+        == "${FUTURES_ROUTER_SLIPPAGE_GATE:-true}"
+    )
+    assert (
+        router_env["FUTURES_ORDER_ROUTER_SEED_COUNT"]
+        == "${FUTURES_ORDER_ROUTER_SEED_COUNT:-50}"
+    )
     assert (
         router_env["FUTURES_SLIPPAGE_TICK_SIZE"]
         == "${FUTURES_SLIPPAGE_TICK_SIZE:-0.02}"
@@ -489,3 +530,45 @@ def test_runtime_mount_helper_agrees_with_the_actual_compose_volume():
         f"{expected_host_dir} on the host — the two halves of the runtime "
         "mount mapping have drifted apart."
     )
+
+
+def test_producer_and_consumer_futures_tick_stream_defaults_agree():
+    """The producers publish to MONITOR_FUTURES_TICK_STREAM and the consumers
+    read FUTURES_TICK_STREAM. Two names, one stream: if they ever drift apart
+    the consumers read an empty stream and block every signal, with no error
+    anywhere. Pinned per the #622 F2 pattern.
+
+    Reads the pydantic default rather than ``from_env()`` so the test does not
+    depend on the ambient environment.
+    """
+    from services.monitoring.tick_stream_publisher import TickStreamPublisherConfig
+    from shared.models.stream_models import DEFAULT_FUTURES_TICK_STREAM
+
+    producer_default = TickStreamPublisherConfig().futures_stream
+    assert producer_default == DEFAULT_FUTURES_TICK_STREAM
+
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    services = compose["services"]
+    expression = "${FUTURES_TICK_STREAM:-" + producer_default + "}"
+
+    # `forecasting` is a CONSUMER that reads the producer-side env name, so it
+    # sits in the first group despite consuming — the point is that every
+    # service on this stream is named from one knob.
+    producer_side_env = (
+        "trader-futures",
+        "futures-market-ingest",
+        "forecasting",
+    )
+    for name in producer_side_env:
+        assert services[name]["environment"]["MONITOR_FUTURES_TICK_STREAM"] == (
+            expression
+        ), name
+
+    consumers = ("futures-order-router", "futures-monitor", "futures-decision-engine")
+    for name in consumers:
+        assert services[name]["environment"]["FUTURES_TICK_STREAM"] == expression, name
+
+    for name in (".env.paper.example", ".env.live.example"):
+        assert _read_env_template(name)["FUTURES_TICK_STREAM"] == producer_default

@@ -36,6 +36,10 @@ import pandas as pd
 import yaml
 
 from services.monitoring.metrics import get_metrics_collector
+from services.monitoring.tick_stream_publisher import (
+    OrderbookMergeLog,
+    orderbook_publish_fields,
+)
 from services.trading import market_data_bootstrap as _market_data_bootstrap
 from services.trading import runtime_config as _runtime_config
 from services.trading import session_calendar as _session_calendar
@@ -453,6 +457,7 @@ class TradingOrchestrator:
             {}
         )  # pure daily indicators
         self._prev_day_volume_warned: bool = False
+        self._orderbook_merge_log = OrderbookMergeLog(logger, "trader-futures")
 
         # Redis keys namespaced by asset class to prevent collision
         # Stock uses legacy keys (system:...) for compatibility with Screener
@@ -1151,6 +1156,38 @@ class TradingOrchestrator:
                         fallback_name = self._symbol_names.get(symbol, "")
                         if fallback_name:
                             monitor_data["name"] = fallback_name
+                    # `data` is the TRADE tick payload — the futures feed
+                    # delivers orderbook (H0IFASP0) ticks on a separate channel
+                    # that never reaches this callback. Merge the feed's cached
+                    # top of book so a stream consumer (the decoupled
+                    # order-router's send-time gate) does not have to open a
+                    # second KIS futures WebSocket on this same account, which
+                    # would evict one of the two connections. Same merge rule as
+                    # services/market_ingest. Never raises on the tick path, but
+                    # a failure is logged once: reverting to trade-only ticks is
+                    # invisible here and surfaces downstream as the router
+                    # blocking every signal on orderbook_unavailable.
+                    snapshot_getter = getattr(
+                        self._futures_price_feed, "get_orderbook_snapshot", None
+                    )
+                    if not callable(snapshot_getter):
+                        self._orderbook_merge_log.failed(
+                            f"{type(self._futures_price_feed).__name__} has no "
+                            "get_orderbook_snapshot"
+                        )
+                    else:
+                        try:
+                            book_fields = orderbook_publish_fields(
+                                snapshot_getter(symbol)
+                            )
+                        except Exception as exc:  # noqa: BLE001 - never break ticks
+                            self._orderbook_merge_log.failed(f"lookup raised {exc!r}")
+                        else:
+                            # An empty or one-sided book is a normal pre-open
+                            # state, not a recovery — see OrderbookMergeLog.
+                            if book_fields:
+                                monitor_data.update(book_fields)
+                                self._orderbook_merge_log.merged()
                     self._tick_stream_publisher.publish("futures", symbol, monitor_data)
 
             self._futures_price_feed.set_tick_callback(_on_futures_tick)
