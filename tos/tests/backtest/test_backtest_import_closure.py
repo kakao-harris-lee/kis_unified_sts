@@ -46,6 +46,7 @@ from pathlib import Path
 import tos.backtest
 import tos.backtest._base
 import tos.backtest.bars
+import tos.backtest.calibration
 import tos.backtest.converter
 import tos.backtest.driver
 import tos.backtest.fills
@@ -214,6 +215,7 @@ _BACKTEST_SUBMODULES = (
     "tos.backtest",
     "tos.backtest._base",
     "tos.backtest.bars",
+    "tos.backtest.calibration",
     "tos.backtest.converter",
     "tos.backtest.driver",
     "tos.backtest.fills",
@@ -229,6 +231,7 @@ _LOADED_SUBMODULES = {
     "tos.backtest": tos.backtest,
     "tos.backtest._base": tos.backtest._base,
     "tos.backtest.bars": tos.backtest.bars,
+    "tos.backtest.calibration": tos.backtest.calibration,
     "tos.backtest.converter": tos.backtest.converter,
     "tos.backtest.driver": tos.backtest.driver,
     "tos.backtest.fills": tos.backtest.fills,
