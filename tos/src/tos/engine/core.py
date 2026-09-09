@@ -48,6 +48,7 @@ from tos.engine.records import (
     InstrumentKey,
     ProvisionalReservation,
     RegisteredStrategy,
+    egress_result_outcome_digest,
 )
 from tos.engine.registry import StrategyRegistry
 from tos.engine.sequencer import (
@@ -274,25 +275,48 @@ class EventResult:
     #: The disposition of a re-injected ``EGRESS_RESULT`` (Phase 3 A-K-2); ``None`` for a
     #: ``DECISION_TICK`` event, which never carries one.
     result_disposition: ResultDisposition | None = None
+    #: The content-addressed digest of an ``EGRESS_RESULT``'s *applied outcome* (Phase 3 wave 3
+    #: KW3-RD; :func:`~tos.engine.records.egress_result_outcome_digest`) — ``None`` for a
+    #: ``DECISION_TICK``, which reports through :attr:`pipeline` instead (see
+    #: :attr:`outcome_digest`'s own docstring for why the two never both apply and how the public
+    #: property picks between them). Set by :meth:`EngineCore._handle_egress_result` for **every**
+    #: terminal disposition, including the non-``APPLIED`` ones — a ``DUPLICATE`` of a byte-
+    #: identical ``EGRESS_RESULT`` reproduces the same digest as the first ``APPLIED`` application
+    #: would have (RFC-003 §10:345-348 reproducibility), while a *different* disposition for the
+    #: same payload (e.g. ``APPLIED`` the first time, ``DUPLICATE`` the second, or a
+    #: ``NON_MONOTONIC_PROJECTION`` refusal) changes it, because the disposition is itself part of
+    #: what :class:`~tos.engine.records.EgressResultOutcome` covers.
+    result_outcome_digest: str | None = None
     detail: str | None = None
 
     @property
     def outcome_digest(self) -> str | None:
         """The outcome digest this event established, for ``EVENT_CONSUMED`` replay evidence.
 
-        (Phase 3 A-K-3; design #31 §7.1.) Derived from whichever stage the event actually
-        reached — **never a new hash of mutable state**: a ``DECISION_TICK`` that emitted an
-        outcome exposes its already-computed
+        (Phase 3 A-K-3 / wave 3 KW3-RD; design #31 §7.1.) Derived from whichever stage the event
+        actually reached — **never a new hash of mutable state**: a ``DECISION_TICK`` that emitted
+        an outcome exposes its already-computed
         :attr:`~tos.engine.pipeline.PipelineResult.outcome_digest` (the emitted Decision/Proposal's
-        own canonical digest); every other terminal shape — including every ``EGRESS_RESULT``
-        event, which only transitions the mutable, non-authoritative reservation projection
-        (:mod:`tos.engine.state`) — has no outcome digest of its own and returns ``None`` rather
-        than hashing state that changes underneath it.
+        own canonical digest); an ``EGRESS_RESULT`` exposes :attr:`result_outcome_digest` — the
+        digest of its *applied outcome* (disposition + resulting capacity/knowledge/quantities),
+        never a hash of the live, still-mutable :mod:`tos.engine.state` projection itself. The two
+        are mutually exclusive by construction (:attr:`pipeline` is only ever set for a
+        ``DECISION_TICK``, :attr:`result_outcome_digest` only ever for an ``EGRESS_RESULT``), so
+        checking ``pipeline`` first and falling back is unambiguous rather than a priority choice.
+
+        Before Phase 3 wave 3 KW3-RD this was unconditionally ``None`` for every ``EGRESS_RESULT``
+        (wave 3 lane F-R survey finding), which made both the backtest=paper parity comparison and
+        the runtime replay comparison vacuous for result events — ``None == None`` reads as
+        "uncompared" (:data:`~tos.evidence.ReplayResultState.INCONCLUSIVE`), not "verified
+        identical". A Coordinator-gate refusal (before step 1, before any handler runs) still sets
+        neither field and correctly stays ``None`` — the core genuinely produced no outcome there.
 
         Returns:
-            The pipeline's recorded outcome digest, or ``None``.
+            The recorded outcome digest, or ``None`` when the event produced none at all.
         """
-        return None if self.pipeline is None else self.pipeline.outcome_digest
+        if self.pipeline is not None:
+            return self.pipeline.outcome_digest
+        return self.result_outcome_digest
 
 
 class EngineCore:
@@ -631,7 +655,9 @@ class EngineCore:
         (:meth:`~tos.engine.state.ProvisionalReservationLedger.apply_egress_result`) now returns a
         :class:`~tos.engine.state.ResultApplication` naming the disposition instead of raising, and
         this handler records every non-``APPLIED`` disposition as ``EvidenceKind.RESULT_UNMATCHED`` /
-        ``HaltReason.RESULT_UNMATCHED`` — never relaxing capacity or knowledge on it.
+        ``HaltReason.RESULT_UNMATCHED`` — never relaxing capacity or knowledge on it. Every terminal
+        disposition also gets a real :attr:`EventResult.result_outcome_digest` (Phase 3 wave 3
+        KW3-RD) so a replay comparison over this event is a genuine equality check.
         """
         payload: EgressResultPayload | None = event.egress_result
         if payload is None:  # pragma: no cover - guaranteed by EngineEvent validation
@@ -640,6 +666,13 @@ class EngineCore:
             )
         key = payload.instrument_key
         application: ResultApplication = self._ledger.apply_egress_result(payload)
+        # ★ [KW3-RD] Every terminal disposition gets a real outcome digest — including the five
+        # non-APPLIED ones — so a replay comparison over an EGRESS_RESULT is a genuine equality
+        # check, not a vacuous None == None (design #31 §7.1; Phase 3 wave 3 lane F-R survey
+        # finding). See EgressResultOutcome's own docstring for exactly what is covered.
+        result_outcome_digest = egress_result_outcome_digest(
+            application.disposition, application.projection, scheme=self._scheme
+        )
         if not application.applied:
             detail = (
                 f"egress result disposition={application.disposition} — not applied to the "
@@ -670,6 +703,7 @@ class EngineCore:
                 halt_reason=HaltReason.RESULT_UNMATCHED,
                 reservation=application.projection,
                 result_disposition=application.disposition,
+                result_outcome_digest=result_outcome_digest,
                 detail=detail,
             )
         reservation = application.projection
@@ -701,4 +735,5 @@ class EngineCore:
             ordering=admission,
             reservation=reservation,
             result_disposition=application.disposition,
+            result_outcome_digest=result_outcome_digest,
         )

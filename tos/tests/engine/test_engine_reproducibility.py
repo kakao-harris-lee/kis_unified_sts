@@ -171,12 +171,26 @@ def test_event_result_outcome_digest_is_identical_across_fresh_cores() -> None:
     assert first.outcome_digest == first.pipeline.outcome_digest
 
 
-def test_event_result_outcome_digest_is_none_for_an_egress_result_event() -> None:
-    """(Phase 3 A-K-3) An ``EGRESS_RESULT`` event carries no outcome digest of its own.
+def test_event_result_outcome_digest_now_covers_an_egress_result_event_too() -> None:
+    """(Phase 3 A-K-3; **superseded by wave 3 KW3-RD**) An ``EGRESS_RESULT`` event now carries a
+    real outcome digest of its own, not ``None``.
 
-    It only transitions the mutable, non-authoritative reservation projection
-    (:mod:`tos.engine.state`) — hashing that would be exactly the "new hash of mutable state" the
-    design forbids, so the honest answer is ``None``, not a fabricated digest.
+    **Changed pin, reported honestly.** This test used to assert ``egress.outcome_digest is
+    None``, on the reasoning that hashing the mutable, non-authoritative reservation projection
+    (:mod:`tos.engine.state`) directly would be exactly the "new hash of mutable state" the design
+    forbids. Wave 3 lane F-R's survey found the actual cost of that stance: it made both the
+    backtest=paper parity comparison and the runtime replay comparison **vacuous** for every
+    ``EGRESS_RESULT`` — ``None == None`` reports
+    :attr:`~tos.evidence.ReplayResultState.INCONCLUSIVE` ("uncompared"), not a verified match, so
+    design #31 §7.1's replay-identity property was only ever measured for ``DECISION_TICK``.
+
+    The resolution is not to hash the live projection — it is to digest the **result's own
+    applied outcome** (:class:`~tos.engine.records.EgressResultOutcome`: disposition + the
+    resulting capacity/knowledge/quantities/quarantine-floor), a value computed once per event
+    and never touched again, exactly parallel to how a ``DECISION_TICK`` digests its own already-
+    computed :attr:`~tos.engine.pipeline.PipelineResult.outcome_digest` rather than hashing
+    anything still-mutable. See ``test_engine_result_outcome_digest.py`` for the full property
+    suite (reproducibility, disposition-sensitivity, gate-refusal ``None``).
     """
     from tos.engine import EgressResultKind, EgressResultPayload, EngineEvent, EventKind
 
@@ -195,7 +209,8 @@ def test_event_result_outcome_digest_is_none_for_an_egress_result_event() -> Non
         )
     )
     assert egress.pipeline is None
-    assert egress.outcome_digest is None
+    assert egress.outcome_digest is not None
+    assert egress.outcome_digest == egress.result_outcome_digest
 
 
 def test_distinctness_is_not_claimed_only_reproducibility() -> None:

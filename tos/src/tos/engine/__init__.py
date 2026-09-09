@@ -155,6 +155,7 @@ from tos.engine.records import (
     EVENT_ID_PREFIX,
     AttemptRequest,
     DecisionTickPayload,
+    EgressResultOutcome,
     EgressResultPayload,
     EngineConfiguration,
     EngineEvent,
@@ -166,6 +167,7 @@ from tos.engine.records import (
     StageRequest,
     StageVerdict,
     TimeAdmissionInputs,
+    egress_result_outcome_digest,
     event_identity,
 )
 from tos.engine.registry import Dispatch, RegistrationRefused, StrategyRegistry
@@ -253,6 +255,7 @@ __all__ = [
     "EVENT_ID_PREFIX",
     "AttemptRequest",
     "DecisionTickPayload",
+    "EgressResultOutcome",
     "EgressResultPayload",
     "EngineConfiguration",
     "EngineEvent",
@@ -264,6 +267,7 @@ __all__ = [
     "StageRequest",
     "StageVerdict",
     "TimeAdmissionInputs",
+    "egress_result_outcome_digest",
     "event_identity",
     # admission (D1 ↔ D4)
     "AdmissionResult",

@@ -61,6 +61,7 @@ __all__ = [
     "EVENT_ID_PREFIX",
     "AttemptRequest",
     "DecisionTickPayload",
+    "EgressResultOutcome",
     "EgressResultPayload",
     "EngineConfiguration",
     "EngineEvent",
@@ -72,6 +73,7 @@ __all__ = [
     "StageRequest",
     "StageVerdict",
     "TimeAdmissionInputs",
+    "egress_result_outcome_digest",
     "event_identity",
 ]
 
@@ -490,6 +492,82 @@ class ProvisionalReservation(FrozenModel):
     #: unwinding a settlement that was already proven before the quarantine began.
     pre_quarantine_capacity: CapacityState | None = None
     authority: AllFalseCoordinatorAuthority = AllFalseCoordinatorAuthority()
+
+
+class EgressResultOutcome(FrozenModel):
+    """The covered content of one applied ``EGRESS_RESULT`` outcome (Phase 3 wave 3 KW3-RD).
+
+    **Not** a stored/evidence artifact and not digest-bound in the
+    :class:`~tos.canonical.DigestBoundArtifact` sense — no DRAFT/ISSUED lifecycle, no derived id.
+    A transient, purely computed record whose only job is handing tos.canonical's existing
+    canonicalize+hash machinery (:func:`egress_result_outcome_digest`) exactly the facts a replay
+    must reproduce for one re-injected result: the recorded
+    :class:`~tos.engine.vocabulary.ResultDisposition`, the reservation's capacity/knowledge axes
+    *after* the result was applied (or left exactly where they were on a non-``APPLIED``
+    disposition), the fill magnitudes, and the quarantine floor if one is held.
+
+    Before Phase 3 wave 3 KW3-RD, ``EventResult.outcome_digest`` was unconditionally ``None`` for
+    every ``EGRESS_RESULT`` (design #31 §7.1's replay-identity property was only measured for
+    ``DECISION_TICK``), which made both the backtest=paper parity comparison and the runtime
+    replay comparison vacuous for result events (``None == None`` reads as "uncompared", not
+    "verified identical"). All fields here are ``None`` for a disposition that produced no
+    reservation at all (``ORPHAN_NO_RESERVATION``) — an absent observation, not a hashed zero
+    standing in for one — which still yields a deterministic digest: the same orphaned payload
+    against the same (empty) scope always redigests to the same value.
+    """
+
+    disposition: ResultDisposition
+    capacity_state: CapacityState | None = None
+    knowledge: EgressKnowledge | None = None
+    filled_quantity: CanonicalDecimal | None = None
+    remaining_quantity: CanonicalDecimal | None = None
+    pre_quarantine_capacity: CapacityState | None = None
+
+
+def egress_result_outcome_digest(
+    disposition: ResultDisposition,
+    projection: ProvisionalReservation | None,
+    *,
+    scheme: CanonicalizationScheme,
+) -> str:
+    """The content-addressed digest of one applied ``EGRESS_RESULT`` outcome (Phase 3 KW3-RD).
+
+    The same seam :func:`event_identity` and
+    :func:`~tos.engine.sequencer.reference_coordinate_digest` already use: canonicalize + hash
+    under the injected scheme — no new hashing primitive, no re-derivation of the covered facts
+    from anything but the caller's own already-computed :class:`~tos.engine.state.
+    ResultApplication` (``disposition`` + ``projection``). The same outcome (same disposition,
+    same resulting — or unchanged — projection state) always reproduces the same digest; a
+    different disposition for the byte-identical payload (e.g. ``APPLIED`` the first time,
+    ``DUPLICATE`` the second) or a different resulting capacity/knowledge/quantity changes the
+    digest, because it changes what :class:`EgressResultOutcome` covers.
+
+    Deliberately **not** a stored field on ``ResultApplication`` / ``ProvisionalReservation`` —
+    it is derived on demand from whichever of the two the caller already holds, so nothing
+    upstream is re-hashed and no additional mutable state is introduced.
+
+    Args:
+        disposition: The recorded :class:`~tos.engine.vocabulary.ResultDisposition`.
+        projection: The resulting (or unchanged) reservation projection, or ``None`` when the
+            disposition is ``ORPHAN_NO_RESERVATION`` (no reservation exists to report).
+        scheme: The injected canonicalization scheme.
+
+    Returns:
+        The hex digest of the canonicalized outcome.
+    """
+    outcome = EgressResultOutcome(
+        disposition=disposition,
+        capacity_state=None if projection is None else projection.capacity_state,
+        knowledge=None if projection is None else projection.knowledge,
+        filled_quantity=None if projection is None else projection.filled_quantity,
+        remaining_quantity=(
+            None if projection is None else projection.remaining_quantity
+        ),
+        pre_quarantine_capacity=(
+            None if projection is None else projection.pre_quarantine_capacity
+        ),
+    )
+    return scheme.compute_digest(outcome.model_dump(mode="json"))
 
 
 class RegisteredStrategy(FrozenModel):
