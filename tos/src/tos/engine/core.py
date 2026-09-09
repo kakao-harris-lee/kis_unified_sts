@@ -202,6 +202,24 @@ class EventResult:
     result_disposition: ResultDisposition | None = None
     detail: str | None = None
 
+    @property
+    def outcome_digest(self) -> str | None:
+        """The outcome digest this event established, for ``EVENT_CONSUMED`` replay evidence.
+
+        (Phase 3 A-K-3; design #31 §7.1.) Derived from whichever stage the event actually
+        reached — **never a new hash of mutable state**: a ``DECISION_TICK`` that emitted an
+        outcome exposes its already-computed
+        :attr:`~tos.engine.pipeline.PipelineResult.outcome_digest` (the emitted Decision/Proposal's
+        own canonical digest); every other terminal shape — including every ``EGRESS_RESULT``
+        event, which only transitions the mutable, non-authoritative reservation projection
+        (:mod:`tos.engine.state`) — has no outcome digest of its own and returns ``None`` rather
+        than hashing state that changes underneath it.
+
+        Returns:
+            The pipeline's recorded outcome digest, or ``None``.
+        """
+        return None if self.pipeline is None else self.pipeline.outcome_digest
+
 
 class EngineCore:
     """The synchronous, deterministic single event core (design #31 §2).
