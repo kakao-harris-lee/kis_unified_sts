@@ -37,7 +37,7 @@ scope:
 # expires_on 경과 시 --check red(운영자 조정 가능한 값).
 exceptions:
 - target: tos/src/tos/egressgw/gateway.py
-  measured: 1931
+  measured: 2007
   owner: tos-kernel
   decomposition_order: 1
   expires_on: '2026-12-31'
@@ -76,6 +76,22 @@ exceptions:
     별개) — 코드 로직은 ``request_digest=seal.request_bytes_digest`` →
     ``request_digest=seal.claim_request_digest`` 한 줄 교체뿐(실측 불변), 순증은
     전부 도크스트링.
+    2026-09-09 TOS Phase 3 wave 3 KW3-GW — measured 1931→2007(+76). 뮤테이션
+    매트릭스 레인 발견(F-K, ``ffaafcb4``): ``GatewayEvidenceRecord.kind`` 가
+    자유 문자열이라 step 15-19 순서가 증거로 감사되지 않았다.
+    ``tos.engine.CommitmentStep`` 을 임포트해 게이트웨이가 방출하는 모든
+    레코드에 ``step`` 을 낙인(VERIFY_ITEM/SEND_SEALED→
+    SEND_BOUNDARY_VERIFICATION(15, 봉인은 "step 15½" 이 아니라 15 자신의
+    산출물) · SEND_STARTED→SEND_STARTED_DURABLE(16) ·
+    POTENTIALLY_LIVE_OBSERVED→POTENTIALLY_LIVE_TRANSITION(17) · 신규
+    NETWORK_CALL_ENTERED(step 18 진입 직전 write-ahead 마크, send_once 직전
+    기록)→NETWORK_CALL(18) · EGRESS_RESULT_RECORDED/UNCERTAIN_SEND→
+    EVIDENCE_RECORD(19)); SEND_REFUSED 는 halt 사이트마다 실제로 실패한
+    step 을 개별 전달(_halt 의 step 이 이제 필수 키워드 인자). 신규
+    de-duplicating 헬퍼 ``_record`` 도 이 모듈에 추가되어 ``__call__`` 의
+    반복되는 ``self._sink.record(GatewayEvidenceRecord(...))`` 5곳을
+    축약(아래 ``__call__`` 항목 참고 — 순감소 방향이나 신규 step 배선이
+    net 증가로 남음).
 - target: tos/src/tos/sir/predicates.py
   measured: 1681
   owner: tos-kernel
@@ -143,7 +159,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/egressgw/gateway.py::BrokerEgressGateway.__call__
-  measured: 256
+  measured: 283
   owner: tos-kernel
   decomposition_order: 13
   expires_on: '2026-12-31'
@@ -162,6 +178,15 @@ exceptions:
     16-18 이 ``_seal_and_claim`` 호출 + ``SEND_SEALED`` 기록으로 재배선되며 본체는
     순증 2줄(seal/claim 로직 대부분은 신규 헬퍼 ``_seal_and_claim`` 자체에 있고, 그
     헬퍼의 실측은 모듈 전체 measured 증가에 반영됨 — 위 항목 참고).
+    2026-09-09 TOS Phase 3 wave 3 KW3-GW — measured 256→283(+27). 모든
+    ``_halt``/레코드 방출 호출에 ``step=CommitmentStep.*`` 추가(9개 halt
+    사이트 + 5개 레코드 방출), step-18 진입 직전 신규 ``NETWORK_CALL_ENTERED``
+    write-ahead 레코드 추가. 신규 헬퍼 ``_record`` 로 5개 방출 호출을
+    ``self._sink.record(GatewayEvidenceRecord(...))`` 중첩에서
+    ``self._record(kind=..., step=..., ...)`` 한 줄 호출로 축약(팀리드 지시
+    "extract, don't register" — 완전 상쇄는 못 했으나 순증을 줄임: 헬퍼가
+    없었다면 이보다 더 컸을 것). ``EGRESS_RESULT_RECORDED`` 는 지연-기록
+    설계(자체 도크스트링 참고)상 헬퍼를 쓰지 않고 직접 구성.
 - target: tos/src/tos/egressgw/construction.py::derive_order_size
   measured: 246
   owner: tos-kernel
@@ -467,3 +492,21 @@ exceptions:
     잔여로 명시(단일 InstrumentKey·max_unresolved_send_per_scope=1 하에서는
     도달 불가)하며 121→139(+18, 전부 도크스트링 — 로직 무변경, measured-drift
     가드 재실측 갱신).
+- target: tos/src/tos/egressgw/records.py
+  measured: 1027
+  owner: tos-kernel
+  decomposition_order: 37
+  expires_on: '2026-12-31'
+  note: >-
+    신규 등재(TOS Phase 3 wave 3 KW3-GW, 2026-09-09) — 뮤테이션 매트릭스 레인
+    발견(F-K, ``ffaafcb4``): step 15-19 순서가 증거로 감사되지 않았다.
+    ``GatewayEvidenceRecord`` 에 ``step: CommitmentStep | None = None`` 필드,
+    ``FIXED_KIND_STEPS``(비-SEND_REFUSED 킨드별 고정 step 맵) ClassVar, 검증자
+    ``_step_matches_fixed_kind_when_given``(step 이 주어졌을 때만 검사 —
+    하위호환: step 없이 만들어진 기존 호출부는 그대로 통과) 추가하며
+    1000→1027 초과. ``decomposition_order`` 는 measured 내림차순 관례상
+    order=11 자리(wdr/predicates.py 1014 와 posttrade/vocabulary.py 1002
+    사이)이나, 공유 워크트리에서 다른 레인들이 이 파일 뒷부분(런타임 항목)을
+    동시 append 중이라 중간 삽입/재정렬로 인한 편집 충돌을 피하기 위해
+    목록 끝에 append(gateway.py 항목의 2026-09-07 재등재 주석과 동일 관례) —
+    후속 하우스키핑에서 물리적 재정렬 가능.

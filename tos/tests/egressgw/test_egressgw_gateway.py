@@ -28,6 +28,7 @@ from tos.egressgw import (
     AllFalseGatewayAuthority,
     BrokerEgressGateway,
     CandidateConstruction,
+    GatewayEvidenceRecord,
     RecordingGatewayEvidenceSink,
     SendAttemptLedger,
     SendBoundaryContext,
@@ -43,6 +44,7 @@ from tos.egressgw import (
 from tos.egressgw.gateway import _check_construction
 from tos.engine import (
     AttemptRequest,
+    CommitmentStep,
     EgressResultKind,
     EgressResultPayload,
     InstrumentKey,
@@ -150,9 +152,274 @@ def test_the_baseline_send_is_accepted_and_records_every_step_in_order() -> None
         "SEND_SEALED",
         "SEND_STARTED",
         "POTENTIALLY_LIVE_OBSERVED",
+        "NETWORK_CALL_ENTERED",
         "EGRESS_RESULT_RECORDED",
     )
     assert sink.kinds[:17] == ("VERIFY_ITEM",) * 17
+
+
+def test_the_baseline_send_records_the_commitment_step_sequence_exactly() -> None:
+    """(Phase 3 wave 3 KW3-GW) The stamped CommitmentStep sequence is exactly [15,15,16,17,18,19].
+
+    Every ``VERIFY_ITEM`` record collapses to one representative step-15 entry (there are 17 of
+    them, all the same step); ``SEND_SEALED`` is its own separate step-15 entry — the seal is
+    step 15's own output (design §1.2), not a "step 15½" the closed 19-step enum has no member
+    for; then 16 (the claim), 17 (potentially live), 18 (the network-call write-ahead mark), 19
+    (the terminal result) — exactly once each. No new numeric literal anywhere in this
+    assertion: every expected value is a named ``CommitmentStep`` member.
+    """
+    attempt, context = happy_context()
+    gateway, sink = build_gateway(attempt=attempt, context=context)
+    assert gateway(attempt).accepted_for_transmission is True
+
+    collapsed: list[CommitmentStep] = []
+    previous_kind: str | None = None
+    for record in sink.records:
+        assert record.step is not None, f"{record.kind} was never stamped with a step"
+        if record.kind == "VERIFY_ITEM" and previous_kind == "VERIFY_ITEM":
+            previous_kind = record.kind
+            continue
+        collapsed.append(record.step)
+        previous_kind = record.kind
+
+    assert collapsed == [
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,  # VERIFY_ITEM x17, collapsed to one entry
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,  # SEND_SEALED
+        CommitmentStep.SEND_STARTED_DURABLE,  # SEND_STARTED
+        CommitmentStep.POTENTIALLY_LIVE_TRANSITION,  # POTENTIALLY_LIVE_OBSERVED
+        CommitmentStep.NETWORK_CALL,  # NETWORK_CALL_ENTERED
+        CommitmentStep.EVIDENCE_RECORD,  # EGRESS_RESULT_RECORDED
+    ]
+
+
+def test_mutation_swapping_two_record_kinds_makes_the_step_sequence_assertion_red() -> (
+    None
+):
+    """(Phase 3 wave 3 KW3-GW mutation) Swapping two records' emission order goes red.
+
+    A sink wrapper that swaps ``POTENTIALLY_LIVE_OBSERVED`` and ``NETWORK_CALL_ENTERED`` as they
+    arrive (buffering one, releasing it only once the other lands) — the same collapse-and-
+    compare the step-sequence test above uses now sees ``[..., 18, 17, ...]`` where it expects
+    ``[..., 17, 18, ...]``, and fails.
+    """
+
+    class _SwappingSink:
+        def __init__(self) -> None:
+            self._delegate = RecordingGatewayEvidenceSink()
+            self._held: GatewayEvidenceRecord | None = None
+
+        def record(self, record: GatewayEvidenceRecord) -> None:
+            if record.kind == "POTENTIALLY_LIVE_OBSERVED":
+                self._held = record
+                return
+            if record.kind == "NETWORK_CALL_ENTERED" and self._held is not None:
+                self._delegate.record(record)
+                self._delegate.record(self._held)
+                self._held = None
+                return
+            self._delegate.record(record)
+
+        @property
+        def records(self) -> tuple[GatewayEvidenceRecord, ...]:
+            return self._delegate.records
+
+    attempt, context = happy_context()
+    sink = _SwappingSink()
+    gateway = BrokerEgressGateway(
+        contexts={attempt.attempt_id: context},
+        transport=full_fill_transport(),
+        sink=sink,
+    )
+    assert gateway(attempt).accepted_for_transmission is True
+
+    collapsed: list[CommitmentStep] = []
+    previous_kind: str | None = None
+    for record in sink.records:
+        if record.kind == "VERIFY_ITEM" and previous_kind == "VERIFY_ITEM":
+            previous_kind = record.kind
+            continue
+        assert record.step is not None
+        collapsed.append(record.step)
+        previous_kind = record.kind
+
+    expected = [
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        CommitmentStep.SEND_STARTED_DURABLE,
+        CommitmentStep.POTENTIALLY_LIVE_TRANSITION,
+        CommitmentStep.NETWORK_CALL,
+        CommitmentStep.EVIDENCE_RECORD,
+    ]
+    assert collapsed != expected, "the swap must be observable — this is the RED proof"
+    assert collapsed == [
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        CommitmentStep.SEND_STARTED_DURABLE,
+        CommitmentStep.NETWORK_CALL,
+        CommitmentStep.POTENTIALLY_LIVE_TRANSITION,
+        CommitmentStep.EVIDENCE_RECORD,
+    ]
+
+
+def test_mutation_dropping_the_step_18_record_makes_the_step_sequence_assertion_red() -> (
+    None
+):
+    """(Phase 3 wave 3 KW3-GW mutation) A sink that silently drops ``NETWORK_CALL_ENTERED``
+    is caught: the collapsed step sequence is one entry short of the expected six."""
+
+    class _DroppingSink:
+        def __init__(self) -> None:
+            self._delegate = RecordingGatewayEvidenceSink()
+
+        def record(self, record: GatewayEvidenceRecord) -> None:
+            if record.kind == "NETWORK_CALL_ENTERED":
+                return
+            self._delegate.record(record)
+
+        @property
+        def records(self) -> tuple[GatewayEvidenceRecord, ...]:
+            return self._delegate.records
+
+    attempt, context = happy_context()
+    sink = _DroppingSink()
+    gateway = BrokerEgressGateway(
+        contexts={attempt.attempt_id: context},
+        transport=full_fill_transport(),
+        sink=sink,
+    )
+    assert gateway(attempt).accepted_for_transmission is True
+
+    collapsed: list[CommitmentStep] = []
+    previous_kind: str | None = None
+    for record in sink.records:
+        if record.kind == "VERIFY_ITEM" and previous_kind == "VERIFY_ITEM":
+            previous_kind = record.kind
+            continue
+        assert record.step is not None
+        collapsed.append(record.step)
+        previous_kind = record.kind
+
+    full_expected = [
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        CommitmentStep.SEND_STARTED_DURABLE,
+        CommitmentStep.POTENTIALLY_LIVE_TRANSITION,
+        CommitmentStep.NETWORK_CALL,
+        CommitmentStep.EVIDENCE_RECORD,
+    ]
+    assert (
+        collapsed != full_expected
+    ), "the drop must be observable — this is the RED proof"
+    assert len(collapsed) == len(full_expected) - 1
+    assert CommitmentStep.NETWORK_CALL not in collapsed
+
+
+def test_each_failure_path_stamps_the_step_where_it_actually_failed() -> None:
+    """(Phase 3 wave 3 KW3-GW) Every ``SEND_REFUSED`` record's step matches its own halt site —
+    never a fixed default regardless of which check actually failed."""
+    # CONTEXT_MISSING (no bound context at all)
+    attempt_a, _ = happy_context()
+    sink_a = RecordingGatewayEvidenceSink()
+    gateway_a = BrokerEgressGateway(
+        contexts={}, transport=full_fill_transport(), sink=sink_a
+    )
+    gateway_a(attempt_a)
+    assert sink_a.records[-1].halt_reason is SendHaltReason.CONTEXT_MISSING
+    assert sink_a.records[-1].step is CommitmentStep.SEND_BOUNDARY_VERIFICATION
+
+    # ATTEMPT_ALREADY_CONSUMED (a repeat of the same content-addressed attempt)
+    attempt_b, context_b = happy_context()
+    gateway_b, sink_b = build_gateway(
+        attempt=attempt_b, context=context_b, transport=full_fill_transport()
+    )
+    assert gateway_b(attempt_b).accepted_for_transmission is True
+    gateway_b(attempt_b)
+    assert sink_b.records[-1].halt_reason is SendHaltReason.ATTEMPT_ALREADY_CONSUMED
+    assert sink_b.records[-1].step is CommitmentStep.SEND_STARTED_DURABLE
+
+    # VERIFY_ITEM_UNKNOWN (item 1 — no Transmission Capability)
+    attempt_c, context_c = happy_context(transmission_capability=None)
+    gateway_c, sink_c = build_gateway(attempt=attempt_c, context=context_c)
+    gateway_c(attempt_c)
+    assert sink_c.records[-1].halt_reason is SendHaltReason.VERIFY_ITEM_UNKNOWN
+    assert sink_c.records[-1].step is CommitmentStep.SEND_BOUNDARY_VERIFICATION
+
+    # OUTBOUND_NOT_BOUND_TO_CONSTRUCTION (forged outbound quantity)
+    attempt_d, context_d = happy_context(outbound_quantity=Decimal("999"))
+    gateway_d, sink_d = build_gateway(
+        attempt=attempt_d, context=context_d, transport=full_fill_transport()
+    )
+    gateway_d(attempt_d)
+    assert (
+        sink_d.records[-1].halt_reason
+        is SendHaltReason.OUTBOUND_NOT_BOUND_TO_CONSTRUCTION
+    )
+    assert sink_d.records[-1].step is CommitmentStep.SEND_BOUNDARY_VERIFICATION
+
+    # SEND_SEAL_UNCONSTRUCTABLE (claim principal diverges from the sealed active principal)
+    attempt_e, context_e = happy_context(principal="someone-else")
+    gateway_e, sink_e = build_gateway(attempt=attempt_e, context=context_e)
+    gateway_e(attempt_e)
+    assert sink_e.records[-1].halt_reason is SendHaltReason.SEND_SEAL_UNCONSTRUCTABLE
+    assert sink_e.records[-1].step is CommitmentStep.SEND_BOUNDARY_VERIFICATION
+
+    # SINGLE_USE_CLAIM_REFUSED (the seal's own nonces already claimed under another attempt)
+    attempt_f, context_f = happy_context()
+    ledger_f = SendAttemptLedger()
+    assert ledger_f.claim(
+        attempt_id="other-attempt",
+        capability_nonce=context_f.capability_nonce,
+        action_flow_permit_nonce=context_f.action_flow_permit_nonce,
+        principal=context_f.principal,
+        request_digest=context_f.request_digest,
+    )
+    sink_f = RecordingGatewayEvidenceSink()
+    gateway_f = BrokerEgressGateway(
+        contexts={attempt_f.attempt_id: context_f},
+        transport=full_fill_transport(),
+        sink=sink_f,
+        ledger=ledger_f,
+    )
+    gateway_f(attempt_f)
+    assert sink_f.records[-1].halt_reason is SendHaltReason.SINGLE_USE_CLAIM_REFUSED
+    assert sink_f.records[-1].step is CommitmentStep.SEND_STARTED_DURABLE
+
+    # TRANSPORT_UNAVAILABLE (no transport injected)
+    attempt_g, context_g = happy_context()
+    sink_g = RecordingGatewayEvidenceSink()
+    gateway_g = BrokerEgressGateway(
+        contexts={attempt_g.attempt_id: context_g}, transport=None, sink=sink_g
+    )
+    gateway_g(attempt_g)
+    assert sink_g.records[-1].halt_reason is SendHaltReason.TRANSPORT_UNAVAILABLE
+    assert sink_g.records[-1].step is CommitmentStep.NETWORK_CALL
+
+    # TRANSPORT_RAISED
+    attempt_h, context_h = happy_context()
+    sink_h = RecordingGatewayEvidenceSink()
+    gateway_h = BrokerEgressGateway(
+        contexts={attempt_h.attempt_id: context_h},
+        transport=_RecordingRaisingTransport(),
+        sink=sink_h,
+    )
+    gateway_h(attempt_h)
+    assert sink_h.records[-1].halt_reason is SendHaltReason.TRANSPORT_RAISED
+    assert sink_h.records[-1].step is CommitmentStep.NETWORK_CALL
+
+    # RESULT_ATTEMPT_IDENTITY_MISMATCH
+    attempt_i, context_i = happy_context()
+    sink_i = RecordingGatewayEvidenceSink()
+    gateway_i = BrokerEgressGateway(
+        contexts={attempt_i.attempt_id: context_i},
+        transport=_WrongAttemptTransport(),
+        sink=sink_i,
+    )
+    gateway_i(attempt_i)
+    assert (
+        sink_i.records[-1].halt_reason
+        is SendHaltReason.RESULT_ATTEMPT_IDENTITY_MISMATCH
+    )
+    assert sink_i.records[-1].step is CommitmentStep.EVIDENCE_RECORD
 
 
 def test_send_started_is_written_before_the_first_byte() -> None:
@@ -1199,6 +1466,7 @@ def test_the_mapping_and_the_resolver_paths_produce_the_identical_verification()
         "SEND_SEALED",
         "SEND_STARTED",
         "POTENTIALLY_LIVE_OBSERVED",
+        "NETWORK_CALL_ENTERED",
         "EGRESS_RESULT_RECORDED",
     )
 

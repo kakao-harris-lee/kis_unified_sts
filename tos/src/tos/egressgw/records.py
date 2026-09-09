@@ -68,7 +68,7 @@ from tos.egressgw.vocabulary import (
     VerifyDisposition,
     VerifyOutcome,
 )
-from tos.engine import AttemptRequest, InstrumentKey
+from tos.engine import AttemptRequest, CommitmentStep, InstrumentKey
 from tos.ioc import (
     ApprovedIntentContract,
     AuthorizedConstructionEnvelope,
@@ -605,14 +605,39 @@ class GatewayEvidenceRecord(FrozenModel):
     #: repeating it. Also enforced below by :meth:`_seal_fields_match_their_kind`: a non-``None``
     #: value on any other kind is rejected at construction (independent review finding #9).
     send_seal_digest: str | None = None
+    #: Which of the closed 19 ADR-002-002 §11 :class:`~tos.engine.CommitmentStep` this record
+    #: belongs to (Phase 3 wave 3 KW3-GW — mutation-matrix finding: the executable Send Boundary
+    #: order was not auditable from evidence because ``kind`` alone did not carry step identity).
+    #: ``gateway.py`` stamps this on every record it emits. Most kinds have exactly one fixed
+    #: step (enforced below, when stated, by :meth:`_step_matches_fixed_kind_when_given`);
+    #: ``SEND_REFUSED`` is the one exception — it is emitted from many different steps depending
+    #: on which check failed, so its step is supplied per halt site, never derived from the kind.
+    #: ``None`` stays backward compatible with every call site predating this field.
+    step: CommitmentStep | None = None
     authority_effect: AllFalseGatewayAuthority = AllFalseGatewayAuthority()
 
     #: The kinds ``gateway.py`` itself stamps :attr:`send_seal_digest` onto (its own
     #: ``send_seal_digest=`` call sites) — the source of truth for the validator below, not a
-    #: separately maintained list (independent review finding #9).
+    #: separately maintained list (independent review finding #9). ``NETWORK_CALL_ENTERED``
+    #: (Phase 3 wave 3 KW3-GW, the step-18 write-ahead mark) carries the digest like its
+    #: ``SEND_STARTED`` / ``EGRESS_RESULT_RECORDED`` neighbours.
     SEND_SEAL_DIGEST_KINDS: ClassVar[frozenset[str]] = frozenset(
-        {"SEND_STARTED", "EGRESS_RESULT_RECORDED"}
+        {"SEND_STARTED", "NETWORK_CALL_ENTERED", "EGRESS_RESULT_RECORDED"}
     )
+
+    #: The single fixed :class:`~tos.engine.CommitmentStep` each non-``SEND_REFUSED`` kind
+    #: belongs to (Phase 3 wave 3 KW3-GW) — the source of truth for the validator below.
+    #: ``SEND_REFUSED`` is deliberately absent: it is the one kind emitted from more than one
+    #: step (whichever check actually failed), so it has no single fixed mapping here.
+    FIXED_KIND_STEPS: ClassVar[dict[str, CommitmentStep]] = {
+        "VERIFY_ITEM": CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        "SEND_SEALED": CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        "SEND_STARTED": CommitmentStep.SEND_STARTED_DURABLE,
+        "POTENTIALLY_LIVE_OBSERVED": CommitmentStep.POTENTIALLY_LIVE_TRANSITION,
+        "NETWORK_CALL_ENTERED": CommitmentStep.NETWORK_CALL,
+        "EGRESS_RESULT_RECORDED": CommitmentStep.EVIDENCE_RECORD,
+        "UNCERTAIN_SEND": CommitmentStep.EVIDENCE_RECORD,
+    }
 
     @model_validator(mode="after")
     def _seal_fields_match_their_kind(self) -> GatewayEvidenceRecord:
@@ -637,6 +662,27 @@ class GatewayEvidenceRecord(FrozenModel):
                 f"GatewayEvidenceRecord(kind={self.kind!r}) carries a non-None "
                 f"send_seal_digest — only {sorted(self.SEND_SEAL_DIGEST_KINDS)} legitimately "
                 "carry it (Phase 4 작업 6 §1.2; independent review finding #9)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _step_matches_fixed_kind_when_given(self) -> GatewayEvidenceRecord:
+        """When both ``kind`` and ``step`` are given, ``step`` must be the kind's fixed one.
+
+        Backward compatible by construction: a record built without ``step`` (every call site
+        predating Phase 3 wave 3 KW3-GW) is untouched — a ``None`` step is never rejected here.
+        This only catches a *stated* step that disagrees with a kind that has exactly one
+        legitimate step. ``SEND_REFUSED`` has no entry in :attr:`FIXED_KIND_STEPS` and is
+        therefore exempt (its step varies by which check actually failed).
+        """
+        if self.step is None:
+            return self
+        expected = self.FIXED_KIND_STEPS.get(self.kind)
+        if expected is not None and self.step is not expected:
+            raise ArtifactIntegrityError(
+                f"GatewayEvidenceRecord(kind={self.kind!r}) was stamped step={self.step!r}, "
+                f"but this kind is always {expected!r} (Phase 3 wave 3 KW3-GW — the mutation-"
+                "matrix finding this field closes: kind alone did not carry step identity)"
             )
         return self
 

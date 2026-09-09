@@ -539,7 +539,7 @@ def run_commitment_flow(
             ),
         )
 
-    # ADR-002-002 §11.4 step 16: the projection advances to POTENTIALLY_LIVE **before** the
+    # ADR-002-002 §11.4 step 17: the projection advances to POTENTIALLY_LIVE **before** the
     # external call, and stays there even if the hand-off fails (INV-005:168; RFC-002 §10.7:722 —
     # a missing acknowledgement is never read as a rejection).
     ledger.mark_potentially_live(instrument_key)

@@ -3,22 +3,33 @@
 This is the object D-E1's ``Transmit`` slot (``engine/sequencer.py:104-116``) was left open for.
 It satisfies ``(AttemptRequest) -> SendHandoff`` and runs, in the ADR's own order:
 
-* **step 15** (:func:`verify_send_boundary`) — the RFC-002 §10.8:741-759 17-item verify list;
-* **step 15½** (Phase 4 작업 6, :func:`~tos.egressgw.seal.build_send_seal`) — the outbound
-  binding check, then the one immutable pre-``SEND_STARTED``
-  :class:`~tos.egressgw.seal.SendSeal` is built. A seal-construction failure halts under
-  ``SEND_SEAL_UNCONSTRUCTABLE`` **before** anything is claimed;
-* **step 16** — the single-use capability / permit claim (sourced from the seal alone) and the
-  ``SEND_SEALED`` / ``SEND_STARTED`` records, written **before** the transport is called
-  (RFC-005 §12:360 claim / ``SEND_STARTED`` / first-byte ordering);
-* **step 17** — the ``POTENTIALLY_LIVE`` projection is *observed*, not performed: D-E1's
-  sequencer already advanced it before calling this interface (``sequencer.py:531``), and the
-  authoritative transition is RCL's (deferred);
-* **step 18** — delegation to the **injected** transport (:class:`SendTransport`), with every
-  argument read from the seal alone (Phase 4 작업 6 — the seal is step 18's sole input source,
-  never a second, independent read of ``context``);
-* **step 19** — the result recorded as provisional evidence and retained for ``EGRESS_RESULT``
-  re-injection.
+* **step 15** (:class:`~tos.engine.CommitmentStep.SEND_BOUNDARY_VERIFICATION`,
+  :func:`verify_send_boundary`) — the RFC-002 §10.8:741-759 17-item verify list, then (still
+  step 15's own output, Phase 3 wave 3 KW3-GW — the closed 19-step
+  :class:`~tos.engine.CommitmentStep` enum gains no "step 15½" member for this)
+  :func:`~tos.egressgw.seal.build_send_seal` builds the one immutable pre-``SEND_STARTED``
+  :class:`~tos.egressgw.seal.SendSeal`. A seal-construction failure halts under
+  ``SEND_SEAL_UNCONSTRUCTABLE``, stamped step 15, **before** anything is claimed;
+* **step 16** (``SEND_STARTED_DURABLE``) — the single-use capability / permit claim (sourced
+  from the seal alone) and the ``SEND_STARTED`` record, written **before** the transport is
+  called (RFC-005 §12:360 claim / ``SEND_STARTED`` / first-byte ordering); the ``SEND_SEALED``
+  record itself is stamped step 15, not 16, since it is step 15's own artifact;
+* **step 17** (``POTENTIALLY_LIVE_TRANSITION``) — the ``POTENTIALLY_LIVE`` projection is
+  *observed*, not performed: D-E1's sequencer already advanced it before calling this interface
+  (``sequencer.py:531``), and the authoritative transition is RCL's (deferred);
+* **step 18** (``NETWORK_CALL``) — a ``NETWORK_CALL_ENTERED`` write-ahead record immediately
+  before delegation to the **injected** transport (:class:`SendTransport`), with every argument
+  read from the seal alone (Phase 4 작업 6 — the seal is step 18's sole input source, never a
+  second, independent read of ``context``);
+* **step 19** (``EVIDENCE_RECORD``) — the result recorded as provisional evidence and retained
+  for ``EGRESS_RESULT`` re-injection.
+
+Every :class:`~tos.egressgw.records.GatewayEvidenceRecord` this gateway emits is stamped with
+the :class:`~tos.engine.CommitmentStep` it belongs to (Phase 3 wave 3 KW3-GW — a mutation-matrix
+finding that the executable Send Boundary order was not auditable from evidence because ``kind``
+alone carried no step identity). ``SEND_REFUSED`` is the one kind with no single fixed step: it
+is emitted from whichever step's own check actually failed, so every ``_halt`` call site states
+its own step explicitly.
 
 Four structural seals carry the design's weight:
 
@@ -73,7 +84,7 @@ reaches this gateway through its own ``Transmit`` port.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from tos.brokercap import (
     Admissibility,
@@ -133,6 +144,7 @@ from tos.egressgw.vocabulary import (
 )
 from tos.engine import (
     AttemptRequest,
+    CommitmentStep,
     EgressResultKind,
     EgressResultPayload,
     InstrumentKey,
@@ -1538,6 +1550,7 @@ class BrokerEgressGateway:
         attempt_id: str,
         reason: SendHaltReason,
         detail: str | None,
+        step: CommitmentStep,
         item: SendVerifyItem | None = None,
         preserved_worst_credible_capacity: int | None = None,
         preserved_obligation_magnitude_unknown: bool = False,
@@ -1555,6 +1568,12 @@ class BrokerEgressGateway:
         does next, so a caller-visible crash from here on is the design's expected outcome, not
         an unhandled bug (design #34 §4.6: "a crash from here on is deliberately treated as
         possibly-live").
+
+        ``step`` is **required**, never defaulted (Phase 3 wave 3 KW3-GW): ``SEND_REFUSED`` is
+        emitted from many different points in the flow, so every call site must state which
+        :class:`~tos.engine.CommitmentStep` it actually failed at — there is no single fixed
+        mapping ``GatewayEvidenceRecord`` could derive from the kind alone (contrast the other
+        kinds' fixed mapping, ``GatewayEvidenceRecord.FIXED_KIND_STEPS``).
         """
         self._sink.record(
             GatewayEvidenceRecord(
@@ -1563,6 +1582,7 @@ class BrokerEgressGateway:
                 item=item,
                 halt_reason=reason,
                 detail=detail,
+                step=step,
                 preserved_worst_credible_capacity=preserved_worst_credible_capacity,
                 preserved_obligation_magnitude_unknown=preserved_obligation_magnitude_unknown,
             )
@@ -1618,6 +1638,10 @@ class BrokerEgressGateway:
             return None, self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.SEND_SEAL_UNCONSTRUCTABLE,
+                # The seal is step 15's output (design §1.2 survey note) — a construction
+                # failure is a Send Boundary Verification failure, not a step of its own
+                # (the 19-step CommitmentStep enum stays closed; there is no "step 15½").
+                step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
                 detail=(
                     f"cannot build the pre-SEND_STARTED send seal: {type(exc).__name__}: "
                     f"{exc} — this happens before the step-16 claim, so nothing is consumed "
@@ -1635,12 +1659,36 @@ class BrokerEgressGateway:
             return None, self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.SINGLE_USE_CLAIM_REFUSED,
+                step=CommitmentStep.SEND_STARTED_DURABLE,
                 detail=(
                     "the capability / permit claim was refused — a nonce is claimed exactly "
                     "once for this principal and request (ADR-002-013 §11.2 step 17)"
                 ),
             )
         return seal, None
+
+    def _record(
+        self, *, kind: str, attempt_id: str, step: CommitmentStep, **fields: Any
+    ) -> None:
+        """Emit one evidence record, stamped with its :class:`~tos.engine.CommitmentStep`.
+
+        A thin de-duplicating wrapper (Phase 3 wave 3 KW3-GW — extracted rather than letting
+        ``__call__``'s already-registered size-budget exception grow further): every one of
+        ``__call__``'s straight-line, fire-and-forget emissions goes through here instead of
+        repeating ``self._sink.record(GatewayEvidenceRecord(...))`` at each site. The one
+        exception is the step-19 ``EGRESS_RESULT_RECORDED`` write, which is deliberately
+        deferred past this point (see the comment at its own call site) and so still builds and
+        records its own :class:`~tos.egressgw.records.GatewayEvidenceRecord` directly.
+
+        Args:
+            kind: The evidence record kind.
+            attempt_id: The attempt identity.
+            step: The :class:`~tos.engine.CommitmentStep` this record belongs to.
+            **fields: Any other :class:`~tos.egressgw.records.GatewayEvidenceRecord` field.
+        """
+        self._sink.record(
+            GatewayEvidenceRecord(kind=kind, attempt_id=attempt_id, step=step, **fields)
+        )
 
     def __call__(self, attempt: AttemptRequest) -> SendHandoff:
         """Run send-boundary steps 15-19 for one bound attempt.
@@ -1657,6 +1705,7 @@ class BrokerEgressGateway:
             return self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.CONTEXT_MISSING,
+                step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
                 detail=(
                     "no send-boundary context is bound to this attempt — the verify list's "
                     "facts are missing, and a missing required fact is a rejection "
@@ -1667,6 +1716,7 @@ class BrokerEgressGateway:
             return self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.CONTEXT_MISSING,
+                step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
                 detail=(
                     "the send-boundary context carries no instrument key — the send's scope is "
                     "a required fact, and a missing required fact is a rejection "
@@ -1677,6 +1727,9 @@ class BrokerEgressGateway:
             return self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.ATTEMPT_ALREADY_CONSUMED,
+                # Already-consumed is fundamentally a single-use-claim fact (step 16's own
+                # concern), checked defensively up front before doing any other work.
+                step=CommitmentStep.SEND_STARTED_DURABLE,
                 detail=(
                     "this attempt identity was already consumed — the same (proof, permit, "
                     "coordinate) triple content-addresses to the same attempt, so a repeat is a "
@@ -1689,15 +1742,14 @@ class BrokerEgressGateway:
         verification = verify_send_boundary(attempt=attempt, context=context)
         self.verifications += (verification,)
         for verdict in verification.verdicts:
-            self._sink.record(
-                GatewayEvidenceRecord(
-                    kind="VERIFY_ITEM",
-                    attempt_id=attempt_id,
-                    item=verdict.item,
-                    outcome=verdict.outcome,
-                    applicability=verification.applicability,
-                    detail=verdict.reason,
-                )
+            self._record(
+                kind="VERIFY_ITEM",
+                attempt_id=attempt_id,
+                step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+                item=verdict.item,
+                outcome=verdict.outcome,
+                applicability=verification.applicability,
+                detail=verdict.reason,
             )
         if verification.admitted is not True:
             (
@@ -1707,6 +1759,7 @@ class BrokerEgressGateway:
             return self._halt(
                 attempt_id=attempt_id,
                 reason=verification.halt_reason or SendHaltReason.VERIFY_ITEM_UNKNOWN,
+                step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
                 detail=verification.detail,
                 item=verification.halt_item,
                 preserved_worst_credible_capacity=preserved_worst_credible_capacity,
@@ -1716,16 +1769,18 @@ class BrokerEgressGateway:
         # -- outbound binding: the seam scalars must be the constructed ones (MINOR-2) ----
         # Checked here — after the verify list, **before** the claim — so a mis-wired context
         # cannot burn a single-use capability / permit on a send that was never going to be
-        # admissible. It is still, and load-bearingly, before the transport call.
+        # admissible. It is still, and load-bearingly, before the transport call. Still step
+        # 15's own territory (the binding a conformant construction must satisfy).
         mismatch = outbound_binding_mismatch(context)
         if mismatch is not None:
             return self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.OUTBOUND_NOT_BOUND_TO_CONSTRUCTION,
+                step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
                 detail=mismatch,
             )
 
-        # -- step 15½: build the pre-SEND_STARTED seal, then the step-16 claim -----------
+        # -- build the pre-SEND_STARTED seal (step 15's own output), then the step-16 claim --
         # (Phase 4 작업 6.) A seal-construction failure — including a coordinate-derivation
         # fault, which used to surface from inside step 18 as OUTBOUND_COORDINATE_DERIVATION_
         # RAISED — halts here, before the claim, so nothing is consumed.
@@ -1736,46 +1791,46 @@ class BrokerEgressGateway:
             return halted
         assert seal is not None  # narrowed by _seal_and_claim's own contract
 
-        self._sink.record(
-            GatewayEvidenceRecord(
-                kind="SEND_SEALED",
-                attempt_id=attempt_id,
-                applicability=verification.applicability,
-                send_seal=seal,
-                detail=(
-                    "the pre-SEND_STARTED SendSeal — step 18's sole input source (Phase 4 작업 "
-                    "6, design §1.2); recorded BEFORE SEND_STARTED and before the transport is "
-                    "ever called"
-                ),
-            )
+        # The seal is step 15's own artifact (design §1.2 survey note) — not a "step 15½"; the
+        # closed 19-step CommitmentStep enum gains no member for it.
+        self._record(
+            kind="SEND_SEALED",
+            attempt_id=attempt_id,
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+            applicability=verification.applicability,
+            send_seal=seal,
+            detail=(
+                "the pre-SEND_STARTED SendSeal — step 18's sole input source (Phase 4 작업 "
+                "6, design §1.2); recorded BEFORE SEND_STARTED and before the transport is "
+                "ever called"
+            ),
         )
-        self._sink.record(
-            GatewayEvidenceRecord(
-                kind="SEND_STARTED",
-                attempt_id=attempt_id,
-                applicability=verification.applicability,
-                send_seal_digest=seal.seal_digest,
-                detail=(
-                    "⚠ provisional: recorded BEFORE the external call, preserving the claim / "
-                    "SEND_STARTED / first-byte order (RFC-005 §12:360; ADR-002-002 §11.4:606). "
-                    "Durability is NOT claimed — the Evidence Store runtime (ADR-002-016) is "
-                    "deferred (design #34 §4.6)"
-                ),
-            )
+        self._record(
+            kind="SEND_STARTED",
+            attempt_id=attempt_id,
+            step=CommitmentStep.SEND_STARTED_DURABLE,
+            applicability=verification.applicability,
+            send_seal_digest=seal.seal_digest,
+            detail=(
+                "⚠ provisional: recorded BEFORE the external call, preserving the claim / "
+                "SEND_STARTED / first-byte order (RFC-005 §12:360; ADR-002-002 §11.4:606). "
+                "Durability is NOT claimed — the Evidence Store runtime (ADR-002-016) is "
+                "deferred (design #34 §4.6)"
+            ),
         )
 
         # -- step 17: the POTENTIALLY_LIVE projection is observed, never performed --------
-        self._sink.record(
-            GatewayEvidenceRecord(
-                kind="POTENTIALLY_LIVE_OBSERVED",
-                attempt_id=attempt_id,
-                detail=(
-                    "the reservation projection was advanced to POTENTIALLY_LIVE by D-E1 "
-                    "*before* this interface was called (engine sequencer, ADR-002-002 §11.4 "
-                    "step 16); the authoritative transition is RCL-owned and deferred. A crash "
-                    "from here on is deliberately treated as possibly-live (§11.4:611)"
-                ),
-            )
+        self._record(
+            kind="POTENTIALLY_LIVE_OBSERVED",
+            attempt_id=attempt_id,
+            step=CommitmentStep.POTENTIALLY_LIVE_TRANSITION,
+            detail=(
+                "the reservation projection was advanced to POTENTIALLY_LIVE by D-E1 "
+                "*before* this interface was called (engine sequencer, ADR-002-002 §11.4 "
+                "step 17 / CommitmentStep.POTENTIALLY_LIVE_TRANSITION); the authoritative "
+                "transition is RCL-owned and deferred. A crash from here on is "
+                "deliberately treated as possibly-live (§11.4:611)"
+            ),
         )
 
         # -- step 18: exactly one delegation to the injected transport --------------------
@@ -1789,11 +1844,26 @@ class BrokerEgressGateway:
             return self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.TRANSPORT_UNAVAILABLE,
+                step=CommitmentStep.NETWORK_CALL,
                 detail=(
                     "no transport is injected — an absent transport is a stop, never a skip, "
                     "and the attempt stays consumed so nothing is resent"
                 ),
             )
+        # Write-ahead mark (Phase 3 wave 3 KW3-GW): recorded immediately BEFORE send_once, so
+        # "was the network call entered" is auditable from evidence even if send_once itself
+        # never returns (RFC-002 §10.8 send boundary). Carries the seal digest / attempt id
+        # like its SEND_STARTED / EGRESS_RESULT_RECORDED neighbours.
+        self._record(
+            kind="NETWORK_CALL_ENTERED",
+            attempt_id=attempt_id,
+            step=CommitmentStep.NETWORK_CALL,
+            send_seal_digest=seal.seal_digest,
+            detail=(
+                "the network call is about to be entered — recorded before send_once, not "
+                "after, so a call that never returns is still auditable as 'entered'"
+            ),
+        )
         try:
             result = self._transport.send_once(
                 attempt,
@@ -1811,6 +1881,7 @@ class BrokerEgressGateway:
             return self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.TRANSPORT_RAISED,
+                step=CommitmentStep.NETWORK_CALL,
                 detail=(
                     f"the transport raised {type(exc).__name__}: {exc} — a missing "
                     "acknowledgement is NOT a non-acceptance (RFC-005 §11:322-323). The "
@@ -1833,6 +1904,7 @@ class BrokerEgressGateway:
             return self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.RESULT_UNREADABLE,
+                step=CommitmentStep.EVIDENCE_RECORD,
                 detail=(
                     f"reading the transport result's identity raised {type(exc).__name__}: "
                     f"{exc} — the send already happened (single send_once call, never "
@@ -1844,6 +1916,7 @@ class BrokerEgressGateway:
             return self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.RESULT_ATTEMPT_IDENTITY_MISMATCH,
+                step=CommitmentStep.EVIDENCE_RECORD,
                 detail=(
                     f"the transport returned a result for {result.attempt_id!r} — a result is "
                     "applied only to the exact attempt it names, so a late or reordered result "
@@ -1856,6 +1929,7 @@ class BrokerEgressGateway:
                 kind="EGRESS_RESULT_RECORDED",
                 attempt_id=attempt_id,
                 send_seal_digest=seal.seal_digest,
+                step=CommitmentStep.EVIDENCE_RECORD,
                 detail=(
                     f"kind={result.kind.value} filled={result.filled_quantity!r} "
                     f"remaining={result.remaining_quantity!r} — a partial fill stays a partial "
@@ -1868,6 +1942,7 @@ class BrokerEgressGateway:
             return self._halt(
                 attempt_id=attempt_id,
                 reason=SendHaltReason.RESULT_UNREADABLE,
+                step=CommitmentStep.EVIDENCE_RECORD,
                 detail=(
                     f"reading the transport result's fields raised {type(exc).__name__}: {exc} "
                     "while building the EGRESS_RESULT_RECORDED evidence — the send already "
@@ -1917,6 +1992,7 @@ class BrokerEgressGateway:
             GatewayEvidenceRecord(
                 kind="UNCERTAIN_SEND",
                 attempt_id=attempt_id,
+                step=CommitmentStep.EVIDENCE_RECORD,
                 detail=(
                     f"no_retry={ladder.no_retry} "
                     f"no_capacity_release={ladder.no_capacity_release} "
