@@ -579,9 +579,14 @@ def test_send_sealed_carries_the_full_seal_and_send_started_carries_only_its_dig
     assert result_record.send_seal_digest == seal.seal_digest
 
 
-def test_the_claim_is_sourced_from_the_seal_not_context_request_digest() -> None:
-    """(design §1.2) The step-16 claim binds ``seal.request_bytes_digest``, not
-    ``context.request_digest`` — the two are deliberately different fixture values."""
+def test_the_claim_is_sourced_from_the_seal_via_claim_request_digest() -> None:
+    """(design §1.2; independent review finding #3) The step-16 claim binds
+    ``seal.claim_request_digest`` (= ``context.request_digest``, the item-1 single-use identity)
+    — sourced from the seal, not a second independent read of ``context``, but restoring the
+    prior ledger semantics of binding the per-attempt request identity rather than
+    ``seal.request_bytes_digest`` (the item-17 Capsule/exact-binding identity, deliberately a
+    different fixture value — ``REQUEST_DIGEST`` vs ``CAPSULE_EGRESS_REQUEST_DIGEST``).
+    """
     attempt, context = happy_context()
     assert context.request_digest == REQUEST_DIGEST
     gateway, sink = build_gateway(attempt=attempt, context=context)
@@ -591,10 +596,13 @@ def test_the_claim_is_sourced_from_the_seal_not_context_request_digest() -> None
     (sealed_record,) = [r for r in sink.records if r.kind == "SEND_SEALED"]
     seal = sealed_record.send_seal
     assert seal is not None
+    assert seal.claim_request_digest == REQUEST_DIGEST
     capability_claim, permit_claim = gateway.ledger.claims
-    assert capability_claim.request_digest == seal.request_bytes_digest
-    assert permit_claim.request_digest == seal.request_bytes_digest
-    assert seal.request_bytes_digest != REQUEST_DIGEST
+    assert capability_claim.request_digest == seal.claim_request_digest
+    assert permit_claim.request_digest == seal.claim_request_digest
+    assert capability_claim.request_digest == context.request_digest
+    # The two identities remain deliberately distinct — the claim binds one, item 17 the other.
+    assert seal.request_bytes_digest != seal.claim_request_digest
 
 
 def test_transport_arguments_equal_the_seal_via_seal_matches_outbound() -> None:
@@ -609,6 +617,9 @@ def test_transport_arguments_equal_the_seal_via_seal_matches_outbound() -> None:
     (sealed_record,) = [r for r in sink.records if r.kind == "SEND_SEALED"]
     seal = sealed_record.send_seal
     assert seal is not None
+    # (independent review finding #7) The transport actually received the seal digest — not
+    # merely a value ``seal_matches_outbound`` was never asked to compare.
+    assert transport.requests[-1].seal_digest == seal.seal_digest
     assert (
         seal_matches_outbound(
             seal,
@@ -618,6 +629,7 @@ def test_transport_arguments_equal_the_seal_via_seal_matches_outbound() -> None:
             side=request.side,
             instrument_key=request.instrument_key,
             attempt_id=request.attempt.attempt_id,
+            seal_digest=request.seal_digest,
         )
         is True
     )

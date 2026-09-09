@@ -248,6 +248,7 @@ def test_seal_matches_outbound_is_true_for_the_seals_own_values() -> None:
             side=context.outbound_side,
             instrument_key=context.instrument_key,
             attempt_id=attempt.attempt_id,
+            seal_digest=seal.seal_digest,
         )
         is True
     )
@@ -255,7 +256,15 @@ def test_seal_matches_outbound_is_true_for_the_seals_own_values() -> None:
 
 @pytest.mark.parametrize(
     "field",
-    ["coordinates", "quantity", "price", "side", "instrument_key", "attempt_id"],
+    [
+        "coordinates",
+        "quantity",
+        "price",
+        "side",
+        "instrument_key",
+        "attempt_id",
+        "seal_digest",
+    ],
 )
 def test_seal_matches_outbound_is_false_when_any_single_value_diverges(
     field: str,
@@ -272,6 +281,7 @@ def test_seal_matches_outbound_is_false_when_any_single_value_diverges(
         "side": context.outbound_side,
         "instrument_key": context.instrument_key,
         "attempt_id": attempt.attempt_id,
+        "seal_digest": seal.seal_digest,
     }
     divergent = {
         "coordinates": (("endpoint", "tampered"),),
@@ -280,6 +290,7 @@ def test_seal_matches_outbound_is_false_when_any_single_value_diverges(
         "side": "SELL",
         "instrument_key": None,
         "attempt_id": "attempt-somebody-else",
+        "seal_digest": "tampered-seal-digest",
     }
     kwargs[field] = divergent[field]
     assert seal_matches_outbound(seal, **kwargs) is False

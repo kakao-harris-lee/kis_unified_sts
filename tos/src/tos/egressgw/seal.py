@@ -143,7 +143,15 @@ class SendSeal(FrozenModel):
 
     * **identity** — :attr:`attempt_id`, :attr:`instrument_key`;
     * **request** — :attr:`request_bytes_digest` (= the exact outbound egress request's own
-      digest), :attr:`canonical_command_digest`, :attr:`capsule_egress_request_digest`;
+      digest — the item-17 Capsule/exact-binding identity), :attr:`canonical_command_digest`,
+      :attr:`capsule_egress_request_digest`, :attr:`claim_request_digest` (= ``context.
+      request_digest`` — the item-1 single-use identity the step-16 ledger claim binds).
+      **These are two deliberately different identities** (independent review finding #3): in
+      the composed runtime, :attr:`claim_request_digest` is per-attempt (content-addressed to
+      the attempt itself) while :attr:`request_bytes_digest` is per account+instrument (identical
+      across every attempt on the same egress request) — the seal carries both rather than
+      collapsing them into one, so a caller cannot accidentally bind the ledger's single-use
+      claim to the wrong identity;
     * **principal / route (ADR-002-013 §8/§10 coordinates)** — :attr:`claim_principal` (=
       ``context.principal``), :attr:`active_principal`, :attr:`endpoint`, :attr:`account`,
       :attr:`environment`, :attr:`route_identity`, :attr:`credential_generation`,
@@ -173,6 +181,10 @@ class SendSeal(FrozenModel):
     request_bytes_digest: str
     canonical_command_digest: str
     capsule_egress_request_digest: str
+    #: The item-1 single-use identity (= ``context.request_digest``) the step-16 ledger claim
+    #: binds — deliberately distinct from :attr:`request_bytes_digest` (independent review
+    #: finding #3; see the class docstring's **request** bullet for which item binds which).
+    claim_request_digest: str
 
     # -- principal / route (ADR-002-013 §8/§10 coordinates) -------------------------------
     claim_principal: str
@@ -282,6 +294,7 @@ def _gather_seal_fields(context: SendBoundaryContext) -> dict[str, Any]:
             None if egress_request is None else egress_request.canonical_command_digest
         ),
         "capsule_egress_request_digest": context.capsule_egress_request_digest,
+        "claim_request_digest": context.request_digest,
         "claim_principal": context.principal,
         "active_principal": None if authorized is None else authorized.active_principal,
         "endpoint": None if authorized is None else authorized.endpoint,
@@ -420,12 +433,16 @@ def seal_matches_outbound(
     side: str | None,
     instrument_key: InstrumentKey | None,
     attempt_id: str | None,
+    seal_digest: str | None,
 ) -> bool:
     """Whether every value about to cross the transport seam is this seal's own (design §1.1).
 
-    A call-site self-check for step 18: everything ``send_once`` is about to receive must equal
-    what ``seal`` already carries. Used defensively and by the test suite's mutation checks
-    (M-K1/M-K2) to prove the seal is the sole source, not merely a record alongside a second read.
+    A pure predicate for callers and tests: the gateway derives its ``send_once`` arguments from
+    the seal by construction (the M-K1 AST pin proves it does so with zero exceptions) rather
+    than calling this function at the call site — a call there would be tautological given that
+    construction (independent review finding #8). This function exists for the test suite's
+    mutation checks (M-K1/M-K2) and for any future caller that assembles its own transport-bound
+    arguments and wants to verify them against a seal.
 
     Args:
         seal: The sealed tuple built before the step-16 claim.
@@ -435,9 +452,12 @@ def seal_matches_outbound(
         side: The side about to be handed to the transport.
         instrument_key: The instrument key about to be handed to the transport.
         attempt_id: The attempt identity about to be handed to the transport.
+        seal_digest: The seal digest about to be handed to the transport (independent review
+            finding #7 — previously omitted, so this self-check ignored the one argument the
+            seal itself added to the transport call).
 
     Returns:
-        ``True`` iff every one of the six values equals the seal's own.
+        ``True`` iff every one of the seven values equals the seal's own.
     """
     return (
         seal.outbound_coordinates == coordinates
@@ -446,4 +466,5 @@ def seal_matches_outbound(
         and seal.outbound_side == side
         and seal.instrument_key == instrument_key
         and seal.attempt_id == attempt_id
+        and seal.seal_digest == seal_digest
     )

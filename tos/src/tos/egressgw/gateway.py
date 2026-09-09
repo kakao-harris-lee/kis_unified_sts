@@ -1585,6 +1585,16 @@ class BrokerEgressGateway:
         ``outbound_coordinates`` name, exactly where it ran before this change — only its
         position in ``__call__``'s step order moved.
 
+        **Which "request" identity the step-16 claim binds (independent review finding #3).**
+        The ledger claims ``request_digest=seal.claim_request_digest`` — the item-1 single-use
+        identity (``context.request_digest``), the same one item 1's own
+        ``capability_and_permit_single_use`` check verifies against. This is **not**
+        ``seal.request_bytes_digest`` — the item-17 Capsule/exact-binding identity — which is a
+        different value by design: in the composed runtime the claim identity is per-attempt
+        while the exact-binding identity is per account+instrument (identical across every
+        attempt on the same egress request). Binding the ledger claim to the wrong one of the
+        two would record an admission decision the verify list never actually made.
+
         Args:
             attempt_id: The attempt identity (for the halt record).
             attempt: The Coordinator's step-12 attempt request.
@@ -1620,7 +1630,7 @@ class BrokerEgressGateway:
             capability_nonce=seal.capability_nonce,
             action_flow_permit_nonce=seal.action_flow_permit_nonce,
             principal=seal.claim_principal,
-            request_digest=seal.request_bytes_digest,
+            request_digest=seal.claim_request_digest,
         ):
             return None, self._halt(
                 attempt_id=attempt_id,
