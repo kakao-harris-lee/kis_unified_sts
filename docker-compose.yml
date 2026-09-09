@@ -380,7 +380,17 @@ services:
       # stay on this service either way — the REST order path needs them; only
       # `ws` needs them for market data.
       FUTURES_ORDER_ROUTER_FEED: "${FUTURES_ORDER_ROUTER_FEED:-stream}"
+      # CONSUMER-side stream name. The producers publish to
+      # MONITOR_FUTURES_TICK_STREAM (TickStreamPublisherConfig.from_env, same
+      # `raw_data` default); these two must name the same stream or the router
+      # reads an empty one and blocks every signal. A unit test pins the two
+      # defaults together.
       FUTURES_TICK_STREAM: "${FUTURES_TICK_STREAM:-raw_data}"
+      # How deep into the stream tail to look at startup for this symbol's last
+      # tick. Bounds the SEARCH, not the seeded book's age — entries apply
+      # oldest-first so the newest always wins, and age is bounded by the
+      # quote-age knob below.
+      FUTURES_ORDER_ROUTER_SEED_COUNT: "${FUTURES_ORDER_ROUTER_SEED_COUNT:-50}"
       # See futures-market-ingest: must match trader-futures' contract.
       FUTURES_TRADING_PRODUCT: "${FUTURES_TRADING_PRODUCT:-mini}"
       FUTURES_STRATEGY_SYMBOL: "${FUTURES_STRATEGY_SYMBOL:-}"
@@ -398,6 +408,9 @@ services:
       # aging in place — this is what stops an entry being sized against it.
       # Same interpolation-only reason as the two knobs above.
       FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS: "${FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS:-10}"
+      # The gate's own rollback switch (router-only; the monolith ignores the
+      # YAML key). Set false to run the router with the send-time gate off.
+      FUTURES_ROUTER_SLIPPAGE_GATE: "${FUTURES_ROUTER_SLIPPAGE_GATE:-true}"
       # Publishes the kill-switch api_error_rate metric for the decoupled futures
       # pipeline under its own source key (…:order_router), fed by OrderExecutor
       # REST outcomes. Opt out via ORDER_ROUTER_PUBLISH_KIS_ERROR_RATE=false.

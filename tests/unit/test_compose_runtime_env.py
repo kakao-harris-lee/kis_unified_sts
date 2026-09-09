@@ -49,6 +49,8 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert paper["FUTURES_ORDER_ROUTER_FEED"] == "stream"
     assert paper["FUTURES_TICK_STREAM"] == "raw_data"
     assert paper["FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS"] == "10"
+    assert paper["FUTURES_ROUTER_SLIPPAGE_GATE"] == "true"
+    assert paper["FUTURES_ORDER_ROUTER_SEED_COUNT"] == "50"
     assert paper["FUTURES_STRATEGY_SYMBOL"] == ""
     # Empty = every setup whose strategy.enabled is true; the knob exists so an
     # operator can narrow the DECOUPLED roster without touching the switch
@@ -87,6 +89,8 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert live["FUTURES_ORDER_ROUTER_FEED"] == "stream"
     assert live["FUTURES_TICK_STREAM"] == "raw_data"
     assert live["FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS"] == "10"
+    assert live["FUTURES_ROUTER_SLIPPAGE_GATE"] == "true"
+    assert live["FUTURES_ORDER_ROUTER_SEED_COUNT"] == "50"
     assert live["FUTURES_STRATEGY_SYMBOL"] == ""
     assert live["FUTURES_DECISION_ENGINE_SETUPS"] == ""
     assert live["FUTURES_EXECUTOR_TRADING_MODE"] == "PAPER"
@@ -391,6 +395,15 @@ def test_futures_daemons_share_contract_resolution_env_with_orchestrator():
         router_env["FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS"]
         == "${FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS:-10}"
     )
+    # The gate's own rollback switch, same router-only shape.
+    assert (
+        router_env["FUTURES_ROUTER_SLIPPAGE_GATE"]
+        == "${FUTURES_ROUTER_SLIPPAGE_GATE:-true}"
+    )
+    assert (
+        router_env["FUTURES_ORDER_ROUTER_SEED_COUNT"]
+        == "${FUTURES_ORDER_ROUTER_SEED_COUNT:-50}"
+    )
     assert (
         router_env["FUTURES_SLIPPAGE_TICK_SIZE"]
         == "${FUTURES_SLIPPAGE_TICK_SIZE:-0.02}"
@@ -516,4 +529,31 @@ def test_runtime_mount_helper_agrees_with_the_actual_compose_volume():
         f"but docker-compose.yml volume {entry!r} actually mounts "
         f"{expected_host_dir} on the host — the two halves of the runtime "
         "mount mapping have drifted apart."
+    )
+
+
+def test_producer_and_consumer_futures_tick_stream_defaults_agree():
+    """The producers publish to MONITOR_FUTURES_TICK_STREAM and the consumers
+    read FUTURES_TICK_STREAM. Two names, one stream: if the defaults ever drift
+    apart the router reads an empty stream and blocks every signal with no
+    error anywhere. Pinned per the #622 F2 pattern."""
+    from services.monitoring.tick_stream_publisher import TickStreamPublisherConfig
+
+    producer_default = TickStreamPublisherConfig.from_env().futures_stream
+
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    services = compose["services"]
+    consumers = ("futures-order-router", "futures-monitor")
+    for name in consumers:
+        assert services[name]["environment"]["FUTURES_TICK_STREAM"] == (
+            "${FUTURES_TICK_STREAM:-" + producer_default + "}"
+        ), name
+
+    assert _read_env_template(".env.paper.example")["FUTURES_TICK_STREAM"] == (
+        producer_default
+    )
+    assert _read_env_template(".env.live.example")["FUTURES_TICK_STREAM"] == (
+        producer_default
     )

@@ -727,12 +727,21 @@ def _parse_timestamp(value: Any) -> datetime | None:
             return dt
         except ValueError:
             pass
-        # Redis Stream fields are strings, so an epoch arrives as "1700000000.0".
-        # Returning None for those made a freshness check fall back to "now",
-        # i.e. it read a stale quote as fresh — parse it instead.
+        # Defensive: the tick-stream path decodes `timestamp` to a float before
+        # it reaches here (MarketTickMessage -> to_price_dict), so this branch
+        # only catches a producer that hands over a raw Redis field. Bounded to
+        # plausible epoch SECONDS (2001-09 .. 5138) so a non-epoch numeric — a
+        # millisecond epoch, an index, a price — returns None and fails closed
+        # rather than parsing to 1970 and reading as infinitely stale.
         try:
-            return datetime.fromtimestamp(float(value), tz=UTC)
-        except (TypeError, OSError, ValueError, OverflowError):
+            epoch = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not (1e9 <= epoch < 1e11):
+            return None
+        try:
+            return datetime.fromtimestamp(epoch, tz=UTC)
+        except (OSError, ValueError, OverflowError):
             return None
 
     return None

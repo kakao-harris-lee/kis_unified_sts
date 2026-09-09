@@ -561,11 +561,15 @@ class OrderRouterDaemon(StreamStage):
             # quote's timestamp, and `parse_orderbook_snapshot` substitutes
             # `now` when the timestamp is missing — so a feed that stopped
             # ticking keeps serving its last, still-parseable book and the gate
-            # would happily size an entry against it. Both producers of the
-            # tick stream publish on trade ticks, so a quiet book is exactly
-            # when this happens. Fail-closed, and applied in `ws` mode too:
-            # this is a property of the gate, not of the feed. An empty payload
-            # is left to the controller's own `orderbook_unavailable`.
+            # would happily size an entry against it.
+            #
+            # Both feeds report the ORDERBOOK tick's own event time here (the
+            # WS feed from its `_orderbooks` cache, the stream feed from
+            # `quote_ts`), so this bounds the age of the BOOK in either mode —
+            # which is the condition that matters, since trades keep printing
+            # over a frozen book and would otherwise refresh its apparent age
+            # every ~0.2s. An empty payload is left to the controller's own
+            # `orderbook_unavailable`.
             max_quote_age = (
                 self.slippage_controller.config.order_router_max_quote_age_seconds
             )
@@ -738,17 +742,32 @@ def _resolve_mode() -> str:
 
 
 _FEED_MODE_ENV = "FUTURES_ORDER_ROUTER_FEED"
-# Entries replayed from the tail of the tick stream at startup so the
-# send-time gate has a quote for the first signal after a restart instead of
-# blocking it on `orderbook_unavailable`. One trading symbol at ~1.5 ticks/s
-# means 50 entries is well under a minute of history — enough to be current,
-# short enough that a restart during a halt does not seed a stale book past
-# the quote-age gate.
-_FEED_SEED_COUNT = 50
+_FEED_SEED_COUNT_ENV = "FUTURES_ORDER_ROUTER_SEED_COUNT"
+_DEFAULT_FEED_SEED_COUNT = 50
 
 _FEED_MODE_STREAM = "stream"
 _FEED_MODE_WS = "ws"
 _FEED_MODES = (_FEED_MODE_STREAM, _FEED_MODE_WS)
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Read a positive int from env, falling back on absent/blank/invalid.
+
+    A bad value logs and uses the default rather than aborting: unlike the feed
+    mode, a wrong seed depth cannot cost another process its market data.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not an integer; using %d", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("%s=%d must be positive; using %d", name, value, default)
+        return default
+    return value
 
 
 def _resolve_feed_mode() -> str:
@@ -798,6 +817,7 @@ def _build_price_feed(
     symbol: str,
     auxiliary_symbols: list[str] | None = None,
     cross_asset_enabled: bool = False,
+    seed_max_age_seconds: float | None = None,
 ) -> Any:
     """Build the router's price feed and subscribe it to ``symbol``.
 
@@ -826,31 +846,47 @@ def _build_price_feed(
     from shared.streaming.consumer_feed import StreamConsumerFeed
 
     stream = os.environ.get("FUTURES_TICK_STREAM", "raw_data")
+    # Replay the tail of the stream at startup so the send-time gate has a
+    # quote for the first signal after a restart instead of blocking it on
+    # `orderbook_unavailable`. The count bounds how deep to look for THIS
+    # symbol in a tail that may interleave several — it does not bound the
+    # seeded book's age (entries apply oldest-first, so the newest always
+    # wins); `seed_max_age_seconds` does that.
+    seed_count = _positive_int_env(_FEED_SEED_COUNT_ENV, _DEFAULT_FEED_SEED_COUNT)
     feed = StreamConsumerFeed(
         redis=redis,
         stream=stream,
         seed_latest=True,
-        seed_count=_FEED_SEED_COUNT,
+        seed_count=seed_count,
+        seed_max_age_seconds=seed_max_age_seconds,
     )
     feed.update_symbols([symbol], auxiliary_symbols=auxiliary_symbols)
     logger.info(
-        "order_router feed=stream stream=%s (no KIS WS opened)",
+        "order_router feed=stream stream=%s seed_count=%d seed_max_age=%s "
+        "(no KIS WS opened)",
         stream,
+        seed_count,
+        seed_max_age_seconds,
     )
     if cross_asset_enabled:
         # The gate is fail-closed on a missing cross quote: an empty payload
         # makes parse_orderbook_snapshot return None and evaluate_entry blocks
         # with `cross_asset_unavailable:<symbol>`
-        # (shared/execution/slippage_control.py). Stream mode carries only the
-        # symbols the producer publishes, so with cross-asset on, EVERY entry
-        # is blocked until the producer subscribes the reference symbol too.
-        # Paper is unaffected (paper_override sets cross_asset.enabled: false).
+        # (shared/execution/slippage_control.py). Whether the reference symbol
+        # is on the stream depends on the PRODUCER, so this is a check-this
+        # warning, not a verdict: `trader-futures` passes its cross-asset symbol
+        # to the WS feed as an auxiliary subscription and republishes every tick
+        # it receives, so pre-cutover the symbol IS on the stream;
+        # `futures-market-ingest` subscribes only its trading symbol, so after
+        # the cutover it is not. Paper is unaffected either way
+        # (paper_override sets cross_asset.enabled: false).
         logger.warning(
-            "order_router feed=stream with cross_asset enabled (%s): the stream "
-            "carries only producer-published symbols, so the cross-asset check "
-            "will block every entry with cross_asset_unavailable. Publish the "
-            "reference symbol from the producer, or disable cross_asset, or run "
-            "%s=ws.",
+            "order_router feed=stream with cross_asset enabled (%s): whether the "
+            "reference symbol is on the stream depends on the producer — "
+            "trader-futures republishes it (pre-cutover), futures-market-ingest "
+            "does not. If it is absent the gate blocks every entry with "
+            "cross_asset_unavailable. Verify it is on the stream, disable "
+            "cross_asset, or run %s=ws.",
             auxiliary_symbols or [],
             _FEED_MODE_ENV,
         )
@@ -1075,6 +1111,15 @@ async def _build_and_run() -> int:
         symbol=symbol,
         auxiliary_symbols=aux_symbols,
         cross_asset_enabled=aux_symbols is not None,
+        # Read from config even when the gate itself was not built
+        # (`order_router_gate: false`, or slippage control disabled): seeding
+        # must be fail-closed on its own, not conditional on someone else's
+        # rollback switch staying on.
+        seed_max_age_seconds=(
+            slippage_cfg.order_router_max_quote_age_seconds
+            if slippage_cfg.order_router_max_quote_age_seconds > 0
+            else None
+        ),
     )
     if slippage_controller is not None:
 

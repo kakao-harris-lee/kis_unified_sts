@@ -227,7 +227,8 @@ async def _stream_feed_with_quote(
     last: float | None = None,
     bid_qty: float = 10.0,
     ask_qty: float = 10.0,
-    quote_ts: float | None = None,
+    trade_ts: float | None = None,
+    book_ts: float | None = None,
 ):
     """Publish one orchestrator-shaped merged snapshot and consume it.
 
@@ -247,20 +248,22 @@ async def _stream_feed_with_quote(
         ),
         client=fakeredis.FakeStrictRedis(server=server, db=1),
     )
+    trade_at = datetime.now(UTC).timestamp() if trade_ts is None else trade_ts
     publisher.publish(
         "futures",
         SYMBOL,
         {
             "code": SYMBOL,
             "close": bid if last is None else last,
-            "timestamp": (
-                datetime.now(UTC).timestamp() if quote_ts is None else quote_ts
-            ),
+            # The trade print's own time...
+            "timestamp": trade_at,
             "bid_price_1": bid,
             "bid_qty_1": bid_qty,
             "ask_price_1": ask,
             "ask_qty_1": ask_qty,
             "spread": ask - bid,
+            # ...and the book's own, which is what the gate must bound.
+            "quote_ts": trade_at if book_ts is None else book_ts,
         },
     )
 
@@ -393,8 +396,10 @@ async def test_stale_quote_is_blocked_before_the_controller_sees_it(caplog):
     quiet book is exactly when it happens."""
     controller = _paper_controller()
     assert controller.config.order_router_max_quote_age_seconds == 10.0
+    # The sharp case the review named: the trade print is brand new and only
+    # the BOOK is old, which is what a frozen H0IFASP0 looks like on the wire.
     stale = datetime.now(UTC).timestamp() - 120.0
-    redis, feed = await _stream_feed_with_quote(bid=331.20, ask=331.22, quote_ts=stale)
+    redis, feed = await _stream_feed_with_quote(bid=331.20, ask=331.22, book_ts=stale)
 
     with caplog.at_level(logging.WARNING, logger=ROUTER_LOGGER):
         daemon, kis = await _route_one(redis, feed, controller, _signal(331.20))
@@ -411,7 +416,7 @@ async def test_quote_without_a_readable_timestamp_is_blocked(caplog):
     """Fail-closed: `parse_orderbook_snapshot` substitutes `now` for a missing
     timestamp, so an ageless quote would otherwise read as brand new."""
     redis, feed = await _stream_feed_with_quote(bid=331.20, ask=331.22)
-    feed._prices["A05603"].pop("timestamp")
+    feed._orderbooks[SYMBOL]["timestamp"] = None
 
     with caplog.at_level(logging.WARNING, logger=ROUTER_LOGGER):
         daemon, kis = await _route_one(
@@ -431,7 +436,7 @@ async def test_quote_age_zero_disables_the_freshness_gate():
     controller = _paper_controller()
     controller.config.order_router_max_quote_age_seconds = 0.0
     stale = datetime.now(UTC).timestamp() - 3600.0
-    redis, feed = await _stream_feed_with_quote(bid=331.20, ask=331.22, quote_ts=stale)
+    redis, feed = await _stream_feed_with_quote(bid=331.20, ask=331.22, book_ts=stale)
 
     daemon, kis = await _route_one(redis, feed, controller, _signal(331.20))
 
@@ -444,7 +449,7 @@ async def test_empty_book_still_reports_orderbook_unavailable(caplog):
     """The freshness gate must not steal the controller's own reason for the
     case where there is no book at all."""
     redis, feed = await _stream_feed_with_quote(bid=331.20, ask=331.22)
-    feed._prices.clear()
+    feed._orderbooks.clear()
     assert feed.get_orderbook_snapshot(SYMBOL) == {}
 
     with caplog.at_level(logging.WARNING, logger=ROUTER_LOGGER):
@@ -457,3 +462,75 @@ async def test_empty_book_still_reports_orderbook_unavailable(caplog):
         "reason=orderbook_unavailable" in r.getMessage() for r in caplog.records
     ), [r.getMessage() for r in caplog.records]
     kis.place_futures_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_trade_over_a_frozen_book_is_still_blocked(caplog):
+    """Explicit form of the review's finding: the entry the gate reads carries
+    a brand-new trade timestamp, and only `quote_ts` reveals the dead book."""
+    now = datetime.now(UTC).timestamp()
+    redis, feed = await _stream_feed_with_quote(
+        bid=331.20, ask=331.22, trade_ts=now, book_ts=now - 300.0
+    )
+
+    price = await feed.get_current_price(SYMBOL)
+    assert price["timestamp"] == pytest.approx(now)  # the print looks fresh
+    assert feed.get_orderbook_snapshot(SYMBOL)["timestamp"] == pytest.approx(
+        now - 300.0
+    )  # the book does not
+
+    with caplog.at_level(logging.WARNING, logger=ROUTER_LOGGER):
+        daemon, kis = await _route_one(
+            redis, feed, _paper_controller(), _signal(331.20)
+        )
+
+    assert daemon.slippage_blocked_count == 1
+    assert any("reason=quote_stale" in r.getMessage() for r in caplog.records)
+    kis.place_futures_order.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Seed depth / seed age are config, not constants
+# ---------------------------------------------------------------------------
+
+
+def test_seed_count_defaults_and_reads_env(monkeypatch):
+    _forbid_ws(monkeypatch)
+
+    monkeypatch.delenv("FUTURES_ORDER_ROUTER_SEED_COUNT", raising=False)
+    assert (
+        _build_price_feed(feed_mode="stream", redis=object(), symbol=SYMBOL).seed_count
+        == 50
+    )
+
+    monkeypatch.setenv("FUTURES_ORDER_ROUTER_SEED_COUNT", "200")
+    assert (
+        _build_price_feed(feed_mode="stream", redis=object(), symbol=SYMBOL).seed_count
+        == 200
+    )
+
+
+@pytest.mark.parametrize("bad", ["0", "-5", "many", ""])
+def test_bad_seed_count_falls_back_to_the_default(monkeypatch, bad):
+    """Unlike the feed mode, a wrong seed depth cannot cost another process its
+    market data, so it warns and continues rather than aborting startup."""
+    _forbid_ws(monkeypatch)
+    monkeypatch.setenv("FUTURES_ORDER_ROUTER_SEED_COUNT", bad)
+
+    feed = _build_price_feed(feed_mode="stream", redis=object(), symbol=SYMBOL)
+
+    assert feed.seed_count == 50
+
+
+def test_seed_age_bound_is_passed_through(monkeypatch):
+    _forbid_ws(monkeypatch)
+
+    feed = _build_price_feed(
+        feed_mode="stream",
+        redis=object(),
+        symbol=SYMBOL,
+        seed_max_age_seconds=7.5,
+    )
+
+    assert feed.seed_max_age_seconds == 7.5
+    assert feed.seed_latest is True

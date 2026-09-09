@@ -515,3 +515,16 @@ def test_numeric_string_timestamp_no_longer_silently_reads_as_now():
 
     assert snapshot is not None
     assert snapshot.timestamp == datetime.fromtimestamp(1700000000.0, tz=UTC)
+
+
+def test_non_epoch_numeric_string_fails_closed():
+    """A millisecond epoch, an index or a price must not parse to a valid time:
+    1970 would read as infinitely stale (harmless) but a ms epoch reads as the
+    year 55000 (negative age) and would pass any freshness bound."""
+    from shared.execution.slippage_control import quote_age_seconds
+
+    quote = _quote(bid=331.20, ask=331.22)
+    for bogus in ("0", "1.5", "1700000000000.0", "-1700000000"):
+        quote["timestamp"] = bogus
+        assert parse_orderbook_snapshot("A05603", quote) is not None
+        assert quote_age_seconds(quote) is None, bogus
