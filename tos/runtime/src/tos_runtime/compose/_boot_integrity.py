@@ -114,13 +114,19 @@ def verify_engine_replay_or_halt(
     Each individual divergence is already durably recorded (both evidence paths) by
     :func:`~tos_runtime.engine.replay.replay_engine` itself before this function ever raises.
 
-    Re-review finding R1 (2026-09-09): when the boot proceeds (no divergence) but at least one
-    ``DECISION_TICK`` receipt carried no flow fingerprint to verify (a pre-CR6 receipt —
+    Re-review finding R1 (2026-09-09): when at least one ``DECISION_TICK`` receipt carried no
+    flow fingerprint to verify (a pre-CR6 receipt —
     :attr:`~tos_runtime.engine.replay.ReplayVerdict.has_unverifiable_receipts`), this durably
     records a NON-halt ``REPLAY_RECEIPTS_UNVERIFIABLE`` evidence row naming the count and event
     ids — a legacy receipt is not evidence of divergence (the digest half WAS compared for it),
     so it never blocks the boot, and this runtime never auto-upgrades old receipts; the fact is
     simply made durable and visible rather than silently discarded.
+
+    Re-review #2 finding S2 (2026-09-09): this row is appended BEFORE the divergence check below,
+    never after — a boot that has BOTH a genuine divergence and an unverifiable legacy receipt
+    must not lose the second fact just because the first one raises. The diagnostic case that
+    most needs every available fact is exactly the one an append-after-raise would have silently
+    dropped it for.
 
     Raises:
         EngineReplayDiverged: If at least one compared event's replay state was not ``MATCH``.
@@ -133,11 +139,6 @@ def verify_engine_replay_or_halt(
         scheme=scheme,
         window_events=window_events,
     )
-    if not verdict.ok:
-        raise EngineReplayDiverged(
-            f"engine replay diverged for {len(verdict.diverged)} of "
-            f"{verdict.total_compared} compared events: {verdict.diverged!r}"
-        )
     if verdict.has_unverifiable_receipts:
         unverifiable_event_ids = [
             event_id
@@ -148,6 +149,11 @@ def verify_engine_replay_or_halt(
             {"count": len(unverifiable_event_ids), "event_ids": unverifiable_event_ids},
             kind=_REPLAY_RECEIPTS_UNVERIFIABLE_KIND,
             record_class=_REPLAY_RECEIPTS_UNVERIFIABLE_KIND,
+        )
+    if not verdict.ok:
+        raise EngineReplayDiverged(
+            f"engine replay diverged for {len(verdict.diverged)} of "
+            f"{verdict.total_compared} compared events: {verdict.diverged!r}"
         )
     return verdict
 
