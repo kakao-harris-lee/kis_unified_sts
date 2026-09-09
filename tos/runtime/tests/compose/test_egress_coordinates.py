@@ -283,6 +283,35 @@ def test_wired_coordinates_equal_the_configured_non_default_values(
     runtime.evidence_store.close()
 
 
+def test_active_principal_matching_the_transport_identity_refuses_to_compose(
+    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+) -> None:
+    """(re-review residual R2, 2026-09-09) Finding #1's fix made the gateway
+    principal (``context.principal`` / ``authorized_coordinates.
+    active_principal``) config-driven, which opened a new degenerate-config
+    surface with no guard: an operator can set ``active_principal`` to the
+    exact string the transport's OWN identity is templated to
+    (``TransportNature.principal``, currently the literal
+    ``f"synthetic-paper-{environment_label}"`` in ``_wiring.py`` — tracked
+    separately as config-gap G-4, not moved by this fix). Before finding #1's
+    fix this collision was unreachable (the gateway principal was a
+    different hardcoded literal); now it is one config edit away.
+
+    Conflating the gateway's workload identity with the transport's own
+    identity is exactly what ADR-002-013 §8's "non-transferable workload
+    identity" exists to forbid, so composition refuses fail-closed rather
+    than silently letting the two collide.
+    """
+    degenerate = _valid_egress_coordinates()
+    degenerate["active_principal"] = {"value": "synthetic-paper-{environment_label}"}
+    _write(config_dir / "egress_coordinates.yaml", degenerate)
+
+    with pytest.raises(
+        EgressCoordinateConfigError, match="synthetic-paper-non-live-test"
+    ):
+        _compose(tmp_path, config_dir, data_dir, custody_root)
+
+
 def test_no_authorized_coordinate_literal_remains_in_wiring_source() -> None:
     """ "No literal" grep test (Part 1 test list) — the eight authorized-
     coordinate values (review finding #2, 2026-09-09: ``endpoint`` joined

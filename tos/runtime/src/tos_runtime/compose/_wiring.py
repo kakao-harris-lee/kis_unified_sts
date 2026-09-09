@@ -59,6 +59,7 @@ from tos_runtime.compose._currentness_wiring import (
 )
 from tos_runtime.compose._egress_attestations import EgressAttestations
 from tos_runtime.compose._egress_coordinates import (
+    EgressCoordinateConfigError,
     EgressCoordinatesConfig,
     load_egress_coordinates,
 )
@@ -771,6 +772,37 @@ def _build_currentness_stages(
     return step13_stage, step14_stage
 
 
+def _refuse_active_principal_matching_transport_identity(
+    *, active_principal: str, environment_label: str
+) -> None:
+    """Fail-closed boot refusal (re-review residual R2, 2026-09-09).
+
+    Finding #1 made the gateway principal (``active_principal``)
+    config-driven, which opened a new degenerate-config surface with no
+    guard: an operator can set it to the transport's OWN identity
+    (``TransportNature.principal``, currently the literal
+    ``f"synthetic-paper-{environment_label}"`` in ``_build_context_resolver``
+    — tracked separately as config-gap G-4, not moved by this check).
+    Conflating the gateway's workload identity with the transport's own
+    identity is exactly what ADR-002-013 §8's non-transferable workload
+    identity forbids.
+
+    Raises:
+        EgressCoordinateConfigError: ``active_principal`` equals the
+            transport's own identity.
+    """
+    transport_principal = f"synthetic-paper-{environment_label}"
+    if active_principal == transport_principal:
+        raise EgressCoordinateConfigError(
+            "egress-coordinates config: active_principal "
+            f"{active_principal!r} equals the transport's own identity "
+            f"{transport_principal!r} — a workload cannot assume the "
+            "transport's identity as its own configured gateway principal "
+            "(ADR-002-013 §8 non-transferable workload identity); refusing "
+            "to compose"
+        )
+
+
 def _build_context_resolver(
     *,
     construction_stages: _ConstructionStages,
@@ -787,7 +819,17 @@ def _build_context_resolver(
 ) -> ComposeContextResolver:
     """The gateway's lazy ``SendBoundaryContext`` resolver (design #35 §3.1
     (3)), wired with this environment's transport nature / credential-route
-    inventory / authorized coordinates."""
+    inventory / authorized coordinates.
+
+    Raises:
+        EgressCoordinateConfigError: See
+            :func:`_refuse_active_principal_matching_transport_identity`
+            (re-review residual R2).
+    """
+    _refuse_active_principal_matching_transport_identity(
+        active_principal=egress_coordinates.active_principal,
+        environment_label=environment_label,
+    )
     return ComposeContextResolver(
         construction_stage=construction_stages.construction_stage,
         proof_stage=construction_stages.proof_stage,
@@ -800,8 +842,7 @@ def _build_context_resolver(
         proof_issuer=proof_issuer,
         pending_dimension_specs=pending_dimension_specs,
         egress_attestations=egress_attestations,
-        # Transport's OWN identity (slice #3, pre-existing) — not the
-        # gateway principal below; literal kept, tracked as a config-gap item.
+        # Transport's OWN identity (slice #3) — not the principal below; literal kept (config-gap G-4).
         transport_nature=TransportNature(
             principal=f"synthetic-paper-{environment_label}",
             reaches_broker=False,
@@ -810,10 +851,8 @@ def _build_context_resolver(
             risk_relevant_live=False,
         ),
         environment_label=environment_label,
-        # ONE source (finding #1): must equal authorized_coordinates.
-        # active_principal below (seal.py's _claim_principal_matches_
-        # active_principal) — a second literal here silently refused
-        # every send once an operator configured a non-default value.
+        # ONE source (finding #1): same value as authorized_coordinates below,
+        # required by the kernel's claim-principal-matches-active-principal check.
         principal=egress_coordinates.active_principal,
         credential_route_inventory=(
             CredentialRouteInventoryEntry(
@@ -823,8 +862,7 @@ def _build_context_resolver(
                 inside_boundary=True,
             ),
             CredentialRouteInventoryEntry(
-                # ONE source (finding #1b): same identity as ``principal=``
-                # above — a second literal here used to silently diverge.
+                # ONE source (finding #1b): same identity as ``principal=`` above.
                 principal=egress_coordinates.active_principal,
                 usable_credential=False,
                 broker_route=False,
@@ -843,13 +881,10 @@ def _build_context_resolver(
             egress_generation=egress_coordinates.egress_generation,
             active_principal=egress_coordinates.active_principal,
         ),
-        # capsule_egress_request_digest is a STAND-IN for the eventual
-        # capsule-chain terminus (design #34 / EGRESS-EV-003 "+Security",
-        # not landed in this Phase) — see
-        # tos_runtime.compose._egress_coordinates's own module docstring.
-        # capsule_terminus_fields only selects WHICH ConstructionConfig
-        # fields feed the digest (config); the digest itself stays a
-        # genuine per-attempt derivation, never a literal.
+        # capsule_egress_request_digest is a STAND-IN for the eventual capsule-chain
+        # terminus (design #34 / EGRESS-EV-003 "+Security", not landed in this Phase;
+        # see _egress_coordinates's module docstring) — capsule_terminus_fields only
+        # selects WHICH ConstructionConfig fields feed it (config), never the digest.
         capsule_egress_request_digest=_SCHEME.compute_digest(
             {
                 name: getattr(construction, name)

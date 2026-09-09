@@ -688,6 +688,23 @@ def test_mk1_send_once_reads_only_seal_attributes_never_context_again() -> None:
       attribute chain, regardless of nesting depth.
 
     Positional arguments are scanned too (``call_node.args``, not just ``call_node.keywords``).
+
+    **Re-review residual R1 — two more alias shapes, plus a call-site allowlist.** The alias ban
+    above originally matched only ``ast.Assign`` whose value was a bare ``ast.Name("context")``.
+    Two one-token variants slipped past it, both now RED by the widened ban itself:
+
+    * **M1e** — ``ctx: SendBoundaryContext = context`` (an ``ast.AnnAssign``).
+    * **M1f** — ``if (ctx := context) is None: ...`` (an ``ast.NamedExpr``, i.e. a walrus alias).
+
+    The ban is also widened to catch tuple-unpacking, e.g. ``_, ctx = flag, context`` — the
+    assignment's value is a ``Tuple``/``List`` literal with ``context`` as one of its elements,
+    not the value itself.
+
+    Separately, R1 adds a call-site allowlist: **any** call anywhere in either method that
+    receives the bare name ``context`` as a whole argument (not just an attribute read off it)
+    must be one of the sanctioned sites surveyed from the current source below. A brand new
+    consumer of the raw context object — one the alias ban and the send_once-subtree scan do not
+    happen to cover — trips this check instead of passing silently.
     """
     import ast
     import textwrap
@@ -697,9 +714,22 @@ def test_mk1_send_once_reads_only_seal_attributes_never_context_again() -> None:
         inspect.getsource(BrokerEgressGateway._seal_and_claim)
     )
 
-    # -- alias ban (mutation M1b): no assignment anywhere in either method may bind a name to
-    # the bare name ``context`` — checked independently of the call site, so an alias is rejected
-    # even before it is ever read.
+    def _bound_names(value: ast.expr | None) -> list[str]:
+        """Bare names a binding target would receive: the value itself if it's a bare
+        ``Name``, or its top-level elements if it's a ``Tuple``/``List`` literal (the
+        RHS of a tuple-unpacking assignment)."""
+        if value is None:
+            return []
+        if isinstance(value, ast.Name):
+            return [value.id]
+        if isinstance(value, (ast.Tuple, ast.List)):
+            return [elt.id for elt in value.elts if isinstance(elt, ast.Name)]
+        return []
+
+    # -- alias ban (mutation M1b, widened per re-review residual R1): no assignment, annotated
+    # assignment, or walrus expression anywhere in either method may bind a name to the bare name
+    # ``context`` (directly or via tuple-unpacking) — checked independently of the call site, so
+    # an alias is rejected even before it is ever read.
     for source, label in (
         (call_source, "__call__"),
         (seal_and_claim_source, "_seal_and_claim"),
@@ -707,15 +737,71 @@ def test_mk1_send_once_reads_only_seal_attributes_never_context_again() -> None:
         alias_offenders = [
             ast.dump(node)
             for node in ast.walk(ast.parse(source))
-            if isinstance(node, ast.Assign)
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "context"
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
+            and "context" in _bound_names(node.value)
         ]
         assert alias_offenders == [], (
-            f"{label} aliases the bare name 'context' via assignment ({alias_offenders}) — an "
-            "alias is exactly the substitution surface a direct-attribute-only scan misses "
-            "(mutation M1b, independent review finding #4)"
+            f"{label} aliases the bare name 'context' via assignment, annotated assignment, "
+            f"walrus, or tuple-unpacking ({alias_offenders}) — an alias is exactly the "
+            "substitution surface a direct-attribute-only scan misses (mutation M1b/M1e/M1f, "
+            "independent review finding #4 and its re-review residual R1)"
         )
+
+    # -- call-site allowlist (re-review residual R1): the bare name ``context`` may be handed
+    # whole into a call ONLY at the sites named here. Surveyed from the current source of both
+    # methods — every existing call that passes bare ``context`` as an argument:
+    #   * ``verify_send_boundary(attempt=attempt, context=context)``      (step 15, __call__)
+    #   * ``outbound_binding_mismatch(context)``                          (outbound binding, __call__)
+    #   * ``self._seal_and_claim(..., context=context)``                  (__call__)
+    #   * ``outbound_coordinates(context)``                               (_seal_and_claim)
+    #   * ``build_send_seal(context=context, ...)``                       (_seal_and_claim)
+    #   * ``self._record_uncertain(attempt_id, context)``                 (step 19, __call__)
+    # A new consumer must be added here deliberately, not slip through unpinned.
+    sanctioned_context_call_signatures = frozenset(
+        {
+            "verify_send_boundary",
+            "outbound_binding_mismatch",
+            "outbound_coordinates",
+            "build_send_seal",
+            "self._seal_and_claim",
+            "self._record_uncertain",
+        }
+    )
+
+    def _call_signature(func: ast.expr) -> str | None:
+        if isinstance(func, ast.Name):
+            return func.id
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "self"
+        ):
+            return f"self.{func.attr}"
+        return None
+
+    for source, label in (
+        (call_source, "__call__"),
+        (seal_and_claim_source, "_seal_and_claim"),
+    ):
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.Call):
+                continue
+            receives_bare_context = any(
+                isinstance(arg, ast.Name) and arg.id == "context" for arg in node.args
+            ) or any(
+                isinstance(kw.value, ast.Name) and kw.value.id == "context"
+                for kw in node.keywords
+            )
+            if not receives_bare_context:
+                continue
+            signature = _call_signature(node.func)
+            assert signature in sanctioned_context_call_signatures, (
+                f"{label} passes the bare name 'context' into {signature!r} "
+                f"({ast.dump(node)}) — this is not one of the sanctioned call sites "
+                f"{sorted(sanctioned_context_call_signatures)}. A new consumer of the raw "
+                "context object must be added to this allowlist deliberately, not slip "
+                "through silently (independent review finding #4, re-review residual R1)"
+            )
 
     tree = ast.parse(call_source)
     send_once_calls = [
