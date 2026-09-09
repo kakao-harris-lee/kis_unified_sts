@@ -98,10 +98,10 @@
 
 ## 6. 운영자 확인 항목
 
-1. `EgressResultKind` 에 `CANCEL_ACK`·`EXPIRED` 추가(커널 어휘 확장 · ADR-002-005 §7 정합) — 승인 여부.
-2. 이벤트 inbox 를 evidence 와 **별 sqlite 파일**로 두는 것(D3 실패 도메인 분리 준용) — 승인 여부.
-3. 작업 4 를 «가격 계보 digest 봉인(커널)» 으로 축소하고 실 값 표면 어댑터는 Phase 4/7 로 — 승인 여부.
-4. 신규 설정 키 5종(`max_send_result_wait_ms`·`replay_window_events`·`strategies/` 디렉터리·`backtest_calibration` 예산·`finality` 합성 정책) 의 named-TBD 값 결정은 착지 후.
+1. `EgressResultKind` 에 `CANCEL_ACK`·`EXPIRED` 추가(커널 어휘 확장 · ADR-002-005 §7 정합) — **승인 (2026-09-09)**.
+2. 이벤트 inbox 를 evidence 와 **별 sqlite 파일**로 두는 것(D3 실패 도메인 분리 준용) — **승인 (2026-09-09)**.
+3. 작업 4 를 «가격 계보 digest 봉인(커널)» 으로 축소하고 실 값 표면 어댑터는 Phase 4/7 로 — **승인 (2026-09-09)**.
+4. 신규 설정 키 5종(`max_send_result_wait_ms`·`replay_window_events`·`strategies/` 디렉터리·`backtest_calibration` 예산·`finality` 합성 정책) 의 named-TBD 값 결정은 착지 후. — **승인 (2026-09-09 · «1,2,3,4 모두 비준»)**.
 
 ## 7. 실행 결과·독립 리뷰 처분
 
