@@ -1,0 +1,52 @@
+# tos_runtime.strategy.bindings example config (TOS Phase 3 슬라이스 D-R
+# [D-R-3], docs/plans/2026-09-09-tos-phase3-event-core-plan.md §1.2 finding
+# #9 disposition).
+#
+# Loader: tos_runtime.strategy.bindings.load_strategy_bindings
+#
+# This file is a SIBLING of config_dir/strategies/ — it belongs directly
+# under config_dir (config_dir/strategy_bindings.yaml), NEVER inside the
+# strategies/ directory itself, whose own stray-file rule
+# (tos_runtime.strategy.loader finding #12) would otherwise try to parse it
+# as a strategy file and refuse the whole directory.
+#
+# The file itself is OPTIONAL: a compose root with no strategy that reads a
+# config-sourced context_ref never needs it at all — a MISSING file is a
+# normal, typed "absent" result, not an error. A strategy that DOES read
+# config.<key> and has no matching entry here is refused by
+# tos_runtime.strategy.resolve (finding #9's positive-resolution rules,
+# below), not by this loader.
+#
+# Every value below is `null` (named-TBD) — this is an EXAMPLE file, not an
+# approved profile. A real deployment copies it, fills in every value, and
+# is subject to five refusal rules once loaded (tos_runtime.strategy.resolve
+# — refusal reasons cite this file):
+#   1. A strategy with >=1 config-sourced ref and NO entry here for its stem
+#      -> refused.
+#   2. An entry's config_binding_version not matching that strategy file's
+#      OWN config_binding_version -> refused (names both values).
+#   3. A config-sourced ref path that does not resolve to a scalar leaf in
+#      this entry's `bindings` -> refused (names the unresolvable path).
+#   4. A `bindings` key this strategy never actually references -> refused
+#      (drift; an unused knob is misconfiguration under "configuration-
+#      driven only").
+#   5. An entry here for a stem with no matching strategy file -> refused
+#      (orphan entry).
+#
+# `bindings` is FLAT scalar leaves only (bool/int/float/str) — this mirrors
+# tos.dsl.EvaluationConfig.bindings (`dict[str, ScalarValue]`) exactly, since
+# tos.dsl.vocabulary.resolve_operand only ever walks a `config`-sourced ref
+# as `("config", <key>)`; there is no nested `config` shape to walk into, so
+# a nested mapping under `bindings` is refused (a shape/type error), never
+# silently flattened.
+strategies:
+  # Key = the strategy file's STEM (e.g. "example.strategy" for
+  # config_dir/strategies/example.strategy.yaml — the ".yaml"/".yml"
+  # extension is not part of the stem).
+  example.strategy:
+    # MUST equal example.strategy.yaml's own config_binding_version exactly.
+    config_binding_version: null
+    bindings:
+      # One example flat scalar binding a policy could read via a
+      # `context_ref` naming `["config", "lower_band_threshold"]`.
+      lower_band_threshold: null
