@@ -81,4 +81,23 @@ compose e2e 에서: `SEND_SEALED` 가 `SEND_STARTED` 앞에 durable 로 기록 �
 
 ## 6. 실행 결과·독립 리뷰 처분
 
-(착지 후 기입)
+### 6.1 착지 (2026-09-08/09 · 브랜치 `feat/tos-phase4-send-seal` · 7커밋 `e19c6529..564d73da`)
+
+| 레인 | 커밋 | 내용 |
+|---|---|---|
+| R §2.1 | `e19c6529` | `_egress_coordinates.py` + `egress_coordinates.example.yaml`(7좌표 + `capsule_terminus_fields` · named-TBD null · `{environment_label}` 치환만) · `_wiring.py` 리터럴 0 · `OPERATOR_ATTESTED_INPUTS` +8 · M-R1 catcher(결선된 좌표 == 로더 출력) · `root.py` 2줄 pass-through(보고된 범위 밖 편집) · `capsule_terminus_fields` 검증 대상은 `ConstructionConfig`(계획의 `CandidateConstruction` 표기 정정) |
+| K §1.1 | `08008039` | `egressgw/seal.py` `SendSeal`(필수 필드 전부 · 좌표-필드 일치 validator · **`claim_principal == active_principal` 강제** — A2 실측: 픽스처 전부 동일 · 기존 17항목 어디도 이 둘을 비교하지 않았음 → 봉인이 처음 잡음) · `build_send_seal` · `SendSealUnconstructable` · `seal_matches_outbound` · 임포트 폐쇄: `tos.canonical` 은 egressgw allowlist 안(`_base` 경유) · `records↔seal` 순환은 `TYPE_CHECKING` |
+| K §1.2 | `a0674dba` `c8b0da7c` | `GatewayEvidenceRecord.send_seal/send_seal_digest` · `SEND_SEAL_UNCONSTRUCTABLE` · `__call__` 재배선(`_seal_and_claim` 헬퍼 · verify → **seal** → claim(봉인 값) → `SEND_SEALED` → `SEND_STARTED` → step 18 봉인 유일 원천) · M-K1 AST 핀(step 18 `send_once` 에 `context.` 읽기 0) · M-K2 리졸버 2회 호출 적발 |
+| K §1.3 | `d90f37ec` | `SendTransport`/`Transport`/`SyntheticPaperTransport.send_once(seal_digest=)` · `OutboundSendRequest.seal_digest` · 드리프트 canary 통과 |
+| R §2.2 | `48a3919b` | compose e2e 4건: durable `SEND_SEALED` < `SEND_STARTED`(seq) · digest 삼중 일치 · `EGRESS_RESULT_RECORDED` 에 digest · sqlite 재판독으로 `send_seal` 26필드 전부 보존(`model_dump(mode="json")` 재귀 · 어댑터 수정 불요) |
+| K 후속 | `564d73da` | 오케스트레이터 결정 2건: 정확 집합 핀에 `seal_digest` 편입(금지 이름 단언 불변) · 봉인에 `reference: OrderingEvent` 탑재 → step 18 `context.reference` 읽기 제거 · M-K1 핀을 «어떤 `context.` 도 금지» 로 일반화 |
+
+**커밋 순서 편차**: K 는 계획 항목 4(transport 서명)를 항목 3(게이트웨이 재배선) 앞에 커밋 — 각 커밋 트리를 green 으로 유지하기 위함(보고·수용).
+
+**보고 갭 G-3(이 슬라이스 밖 · 리뷰 판정 요청)**: `compose/context.py:378-391` QCC 스탠드인(슬라이스 #3 item 3 provisional)이 `egress_generation=1`·`writer_epoch=1`·`committed_revision=1` 등 리터럴을 유지 — 봉인이 config 의 `egress_generation` 을 싣게 되어 QCC 의 값과 드리프트할 수 있다(현재 픽스처는 둘 다 1). 처분 후보: 최소 `egress_generation` 을 좌표 설정에서 읽기 · 나머지 QCC 세대 리터럴은 Phase 5 실 QCC 로 대체.
+
+**독립 실측(최종 트리 `564d73da` · 재설치 venv)**: runtime **492 passed** rc=0 · kernel **9134 passed** rc=0 · mypy 254/54 clean · ruff 0 · black 930 unchanged · firewall PASS · lint-imports 3 KEPT · budget 0 위반(31 등재 · gateway.py 1850→1921 · `_wiring.py` 1045→1073) · completion GREEN · spec PASS · contract PASS · tos-spec/계약 문서 무편집 · `_wiring.py` egress 좌표 리터럴 grep 0(잔여 hit 는 `_egress_coordinates.py` 도크스트링의 이관 전 값 인용 + 위 G-3).
+
+### 6.2 독립 리뷰 처분
+
+(리뷰 후 기입)
