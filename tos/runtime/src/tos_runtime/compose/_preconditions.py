@@ -151,6 +151,22 @@ class RuntimeCoordinatorPreconditions:
     e.g. a failover) then genuinely outdates the bound claim on the very next
     tick, which is what CPL-6 ("a stale epoch SHALL fail closed", ADR-002-005
     §10) requires.
+
+    **New liveness dependency on composition order (re-review finding R4, 2026-09-09).**
+    Binding the claim ONCE at construction (rather than re-deriving it, per the fix above) means
+    :attr:`_bound_epoch` is ``None`` for this instance's entire lifetime if
+    ``epoch_service.current_epoch()`` reads ``None`` at THAT moment — which happens whenever this
+    class is constructed BEFORE the epoch service's own first transition ever lands. Every tick
+    would then read ``authority_epoch_current() -> False`` forever, refusing every
+    ``DECISION_TICK`` for the whole process life (never a boot-time crash — the wave-2 finding #1
+    fix already makes a Coordinator-gate refusal receipt ``uncompared`` on replay, so this is a
+    LIVENESS regression on the live path, not a boot-availability one). Not reachable TODAY:
+    ``tos_runtime.compose._wiring._boot_services`` calls ``authority_epoch_service.transition(...)``
+    while acquiring the RCL/authority services, strictly BEFORE ``_finalize`` calls
+    ``wire_engine_and_driver`` (which is what constructs this class) — so the bound epoch is never
+    ``None`` on the nominal boot path. This is a fact about wiring ORDER, not about this class's
+    own logic, so it is recorded here rather than guarded in code: a future reordering of
+    ``_boot_services`` relative to ``_finalize`` would silently reintroduce it.
     """
 
     def __init__(

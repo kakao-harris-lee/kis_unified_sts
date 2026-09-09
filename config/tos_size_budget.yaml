@@ -445,7 +445,7 @@ exceptions:
     방어선이므로 유지(모듈 도크스트링 상세). 신규 전제 4줄 + 확장된
     Returns 도크스트링 순증분 — 압축 대신 등재.
 - target: tos/runtime/src/tos_runtime/engine/driver.py::EngineDriver._process_next
-  measured: 121
+  measured: 139
   owner: tos-runtime
   decomposition_order: 36
   expires_on: '2026-12-31'
@@ -461,3 +461,9 @@ exceptions:
     자리(_process_next 의 드레인 루프 본문)에 있어야 write-ahead 마커·
     EVENT_CONSUMED 영수증의 원자성이 유지되므로 별도 헬퍼로의 분리는
     _process_next 자신의 트랜잭션 경계를 쪼개는 것이라 보류(압축 대신 등재).
+    2026-09-09 재심 finding R4 처분(레인 C-R2) — 새 위험 래치의 순서 창(latch
+    가 이후 EGRESS_RESULT 소비에서만 걸리므로, 그보다 낮은 seq 의 이미-admit
+    된 DECISION_TICK 은 래치 이전에 처리될 수 있음)을 도크스트링에 유계
+    잔여로 명시(단일 InstrumentKey·max_unresolved_send_per_scope=1 하에서는
+    도달 불가)하며 121→139(+18, 전부 도크스트링 — 로직 무변경, measured-drift
+    가드 재실측 갱신).

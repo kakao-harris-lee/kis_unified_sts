@@ -583,6 +583,22 @@ class EngineDriver:
            run the real flow, including a real send, before the crash. Re-handling would be a
            blind resubmit of a possibly-already-sent attempt — see ``_handle_interrupted_event``.
 
+        **Bounded residual: new-risk-latch ordering window (re-review finding R4, 2026-09-09).**
+        This loop pulls the LOWEST unconsumed ``seq`` and checks the new-risk halt latch
+        (:meth:`SqliteEventInbox.new_risk_halt`) before handling it — but the latch itself is
+        only SET later, from inside :meth:`_project_orthostate_and_finality`, when a violating
+        ``EGRESS_RESULT`` is processed. That ``EGRESS_RESULT`` is, in turn, only enqueued at the
+        END of the very same drain call that produced it (:meth:`_drain_gateway_results`). So a
+        ``DECISION_TICK`` already sitting at a LOWER ``seq`` than the violating result — admitted
+        before the violation existed, but not yet pulled by this loop — is processed BEFORE the
+        latch exists, and is never itself refused by it. This is not reachable in the CURRENT
+        composition: :func:`~tos_runtime.compose.root.compose_paper_runtime` wires exactly one
+        ``InstrumentKey`` and ``max_unresolved_send_per_scope`` retains at most one outstanding
+        exposure per scope, so no second ``DECISION_TICK`` can be admitted, pending, at a lower
+        ``seq`` than an outstanding attempt's own eventual result while that attempt is still
+        unresolved. It becomes reachable once a second instrument or a relaxed retention bound
+        lands — noted here rather than fixed now, per the disposition.
+
         Returns:
             ``(seq, EventResult)`` for the newly handled event, or ``None`` once the inbox has
             nothing left — every already-consumed / crash-window row was already skipped
