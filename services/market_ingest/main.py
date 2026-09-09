@@ -20,6 +20,7 @@ from typing import Any
 
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.exceptions import APIError, NetworkError, WebSocketDisconnectError
+from shared.models.stream_models import ORDERBOOK_FIELDS
 from shared.stock_universe import (
     build_effective_universe_snapshot,
     parse_effective_universe_codes,
@@ -198,11 +199,46 @@ class MarketIngestDaemon:
         # backoff instead of leaving the feed dark until the next refresh.
         self._start_task: asyncio.Task[None] | None = None
 
+    def _with_orderbook(self, symbol: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Merge the feed's cached top of book into a futures trade tick.
+
+        The futures WS delivers orderbook (H0IFASP0) and trade (H0IFCNT0) ticks
+        separately and only the trade tick reaches this callback, so a
+        republished tick would otherwise carry no quote at all. Consumers that
+        need one — the order-router's send-time slippage gate and its paper
+        fill simulator — then have no source but their own second WS on the
+        same KIS account, which is exactly the collision this merge removes.
+
+        Best-effort: a feed without the accessor (test doubles), an empty
+        cache, or a one-sided book leaves ``data`` untouched. ``timestamp`` is
+        deliberately not merged — the trade tick's own time wins, matching the
+        merged snapshot the monolithic orchestrator publishes.
+        """
+        getter = getattr(self.feed, "get_orderbook_snapshot", None)
+        if not callable(getter):
+            return data
+        try:
+            snapshot = getter(symbol) or {}
+        except Exception:  # noqa: BLE001 - never break the republish hot path
+            logger.debug("orderbook snapshot lookup failed symbol=%s", symbol)
+            return data
+        bid = snapshot.get("bid_price_1")
+        ask = snapshot.get("ask_price_1")
+        if not bid or not ask:
+            return data
+        merged = dict(data)
+        merged.update(
+            {key: snapshot[key] for key in ORDERBOOK_FIELDS if key in snapshot}
+        )
+        return merged
+
     def _on_tick(
         self, symbol: str, data: dict[str, Any], ts: datetime  # noqa: ARG002
     ) -> None:
         # Hot path: republish only. (ts is part of the feed callback contract
         # but the tick stream carries its own timestamp in `data`.)
+        if self.asset == "futures":
+            data = self._with_orderbook(symbol, data)
         self.publisher.publish(self.asset, symbol, data)
         # Cheap in-memory record (no Redis I/O here); the periodic freshness loop
         # does the actual write.

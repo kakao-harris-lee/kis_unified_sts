@@ -558,3 +558,86 @@ def test_freshness_snapshot_matches_subscribed_universe():
     snap = daemon._freshness.build_snapshot(daemon._symbols)
     assert snap["symbol_count"] == 2
     assert snap["fresh_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Futures orderbook merge (order-router stream feed)
+# ---------------------------------------------------------------------------
+
+
+class OrderbookFeed(FakeFeed):
+    """Feed whose orderbook cache is separate from the trade callback payload,
+    exactly like ``KISFuturesPriceFeed`` (H0IFASP0 never reaches the callback)."""
+
+    def __init__(self, snapshot: dict | None = None, raises: bool = False):
+        super().__init__()
+        self.snapshot = snapshot
+        self.raises = raises
+        self.calls: list[str] = []
+
+    def get_orderbook_snapshot(self, symbol: str) -> dict:
+        self.calls.append(symbol)
+        if self.raises:
+            raise RuntimeError("boom")
+        return dict(self.snapshot or {})
+
+
+_QUOTE = {
+    "code": "A05603",
+    "bid_price_1": 331.18,
+    "bid_qty_1": 12.0,
+    "ask_price_1": 331.22,
+    "ask_qty_1": 9.0,
+    "spread": 0.04,
+    "timestamp": 1_700_000_000.0,
+}
+
+
+def _futures_daemon(feed, publisher):
+    return _daemon(feed, publisher, _provider([["A05603"]]), asset="futures")
+
+
+def test_futures_tick_republishes_with_top_of_book():
+    """Without this merge the stream carries trade ticks only, and a consumer
+    (order-router slippage gate / paper fills) has no quote source but its own
+    second KIS WebSocket on the same account."""
+    feed = OrderbookFeed(_QUOTE)
+    publisher = FakePublisher()
+    daemon = _futures_daemon(feed, publisher)
+
+    daemon._on_tick("A05603", {"close": 331.20, "timestamp": 1.0}, datetime.now(UTC))
+
+    _, _, payload = publisher.published[0]
+    assert payload["bid_price_1"] == 331.18
+    assert payload["ask_qty_1"] == 9.0
+    assert payload["spread"] == 0.04
+    # The trade tick's own clock wins — matching the merged snapshot the
+    # monolithic orchestrator publishes.
+    assert payload["timestamp"] == 1.0
+    assert payload["close"] == 331.20
+
+
+def test_futures_tick_unchanged_when_book_is_empty_or_one_sided():
+    for snapshot in ({}, {"bid_price_1": 331.18, "ask_price_1": 0.0}):
+        publisher = FakePublisher()
+        daemon = _futures_daemon(OrderbookFeed(snapshot), publisher)
+        daemon._on_tick("A05603", {"close": 331.20}, datetime.now(UTC))
+        assert publisher.published[0][2] == {"close": 331.20}
+
+
+def test_futures_tick_survives_a_failing_orderbook_lookup():
+    publisher = FakePublisher()
+    daemon = _futures_daemon(OrderbookFeed(raises=True), publisher)
+    daemon._on_tick("A05603", {"close": 331.20}, datetime.now(UTC))
+    assert publisher.published[0][2] == {"close": 331.20}
+
+
+def test_stock_tick_never_consults_the_orderbook_cache():
+    feed = OrderbookFeed(_QUOTE)
+    publisher = FakePublisher()
+    daemon = _daemon(feed, publisher, _provider([["005930"]]), asset="stock")
+
+    daemon._on_tick("005930", {"close": 71500.0}, datetime.now(UTC))
+
+    assert feed.calls == []
+    assert publisher.published[0][2] == {"close": 71500.0}
