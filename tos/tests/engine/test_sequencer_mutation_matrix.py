@@ -497,21 +497,17 @@ def test_the_matrix_has_exactly_fifty_six_variants() -> None:
     ), "variant names must be unique"
 
 
-#: The 4 variants where NEITHER detector 2 (``run_commitment_flow`` e2e) NOR detector 3 (the
-#: gateway's real execution order) can tell the mutation apart from the control — only detector 1
-#: (the ADR anchor) catches these. All four are confined to step 18 (``NETWORK_CALL``): detector 2
-#: is blind to the whole Send-Boundary tail (the sequencer never runs it at all), and detector 3 is
-#: blind to step 18 specifically because the gateway records no evidence kind for the network-call
-#: moment itself (see ``_GATEWAY_OBSERVABLE_STEPS``). This is markedly narrower than detector 2's
-#: own 12-variant blind spot (see the module docstring) — adding detector 3 shrinks the residual
-#: from 12 to these 4, all attributable to the one genuinely un-instrumented step.
-#: Empty. KW3-GW (commit 9de02dcc) stamped ``CommitmentStep`` on every gateway record and closed
-#: the step-18 gap this lane's ffaafcb4 finding raised, so detector 3 — with the expansion-aware
-#: :func:`_gateway_projection` above — now catches every one of detector 2's 12-variant blind spot
-#: (verified empirically: this test was run once with this set at ``frozenset()`` before writing
-#: it in, and passed). Kept as a named constant, rather than inlined as a bare ``[]`` in the
-#: assertion below, so a future regression that reopens any gap reads as "the expected empty set
-#: drifted" rather than a bare, unexplained list literal.
+#: The variants where NEITHER executable detector (2, ``run_commitment_flow`` e2e; 3, the
+#: gateway's real execution order) can tell the mutation apart from the control — i.e. the actual
+#: "생존" (survivor) set the plan's exit condition names. Empty: KW3-GW (commit 9de02dcc) stamped
+#: ``CommitmentStep`` on every gateway record and closed the step-18 gap this lane's ffaafcb4
+#: finding raised, so detector 3 — with the expansion-aware :func:`_gateway_projection` above —
+#: now catches every one of detector 2's 12-variant blind spot (verified empirically both
+#: directions: see :func:`test_order_mutation_matrix_has_zero_survivors`'s docstring and this
+#: lane's commit messages for the exact 12/29-name reproductions). Kept as a named constant,
+#: rather than inlined as a bare ``[]`` in the assertion below, so a future regression that
+#: reopens any gap reads as "the expected empty survivor set drifted" rather than a bare,
+#: unexplained list literal.
 _EXPECTED_ORDER_PIN_ONLY: frozenset[str] = frozenset()
 
 #: The one variant :func:`_derive` cannot even compute (see the module docstring FINDING).
@@ -543,12 +539,8 @@ def _classify(
 def test_order_mutation_matrix_has_zero_survivors() -> None:
     """(plan §3.2/§5 «순서 뮤테이션 매트릭스 생존 0») The load-bearing assertion.
 
-    Runs the control (identity order) and all 56 variants through three detectors and requires, for
-    every variant, at least one to be red:
+    A "생존" (survivor) is a variant neither **executable** detector notices:
 
-    1. the independently-transcribed ADR order-pin (:data:`_ADR_002_002_SECTION_11_ORDER`) —
-       always red for a genuine mutation, but by itself proves only that the *vocabulary tuple*
-       drifted, not that any executable code path noticed;
     2. ``run_commitment_flow``'s own execution differing from the control (a raised exception, an
        unreachable derivation, or a differing :func:`_fingerprint`) — reaches steps 1-14 fully, but
        is structurally blind to internal reordering/duplication within the Send-Boundary tail
@@ -560,14 +552,25 @@ def test_order_mutation_matrix_has_zero_survivors() -> None:
        fully closes detector 2's 12-variant Send-Boundary blind spot; see the module docstring
        FINDING.
 
-    ``validate_stage_map`` ("detector 0") is not counted here: it takes no order argument at all
-    and rejects a stage map only for *which* steps it hosts, never *in what sequence* — see the
-    module docstring FINDING. It passes trivially for every variant in this matrix.
+    ``survivors`` (the plan's exit-condition name) is defined over *exactly* these two — **not**
+    over detector 1 (the ADR order-pin) as well. Detector 1 is red for every one of the 56
+    variants by construction (each is a genuine tuple mutation, so it can never equal
+    :data:`_ADR_002_002_SECTION_11_ORDER`), so folding it into the same OR-of-three-booleans the
+    original F-K-1/2 draft used made ``survivors`` structurally empty regardless of what detectors
+    2 and 3 actually caught — the assertion could never fail, which is exactly what wave-3 review
+    finding 4 (LOW) flagged: the line carrying the plan's «생존 0» name was not load-bearing; the
+    real gate was the separate ``order_pin_only`` comparison below it. Detector 1 is still run and
+    still asserted — as ``anchor_sanity``, a *sanity check on the variant generator itself* (every
+    variant must actually BE a mutation) — but it is not allowed to make the "생존 0" line vacuous.
 
-    The test pins the order-pin-only residual at **empty** (:data:`_EXPECTED_ORDER_PIN_ONLY`) and
-    the 1 unreachable variant against hand-derived expectations, so a future change that reopens
-    either execution detector's blind spot shows up as a failing assertion here rather than
-    silently.
+    ``validate_stage_map`` ("detector 0") is not counted at all: it takes no order argument and
+    rejects a stage map only for *which* steps it hosts, never *in what sequence* — see the module
+    docstring FINDING. It passes trivially for every variant in this matrix.
+
+    The test pins the survivor set at **empty** (:data:`_EXPECTED_ORDER_PIN_ONLY`) and the 1
+    unreachable variant against hand-derived expectations, so a future change that reopens either
+    execution detector's blind spot shows up as a failing ``assert not survivors`` naming the
+    reopened variants, not merely a set-equality diff further down.
     """
     control = _run_variant(COMMITMENT_FLOW_ORDER)
     assert control[0] == "FLOW" and control[1] is True, (
@@ -585,7 +588,7 @@ def test_order_mutation_matrix_has_zero_survivors() -> None:
     )
 
     survivors: list[str] = []
-    order_pin_only: list[str] = []
+    anchor_sanity_failures: list[str] = []
     unreachable: list[str] = []
     for name, order in _ALL_VARIANTS:
         order_pin_red, e2e_red, gateway_red, is_unreachable = _classify(
@@ -593,20 +596,24 @@ def test_order_mutation_matrix_has_zero_survivors() -> None:
         )
         if is_unreachable:
             unreachable.append(name)
-        elif not e2e_red and not gateway_red:
-            order_pin_only.append(name)
-        if not order_pin_red and not e2e_red and not gateway_red:
+        if not order_pin_red:
+            anchor_sanity_failures.append(name)
+        if not e2e_red and not gateway_red:
             survivors.append(name)
 
-    assert not survivors, (
-        f"{len(survivors)}/{len(_ALL_VARIANTS)} order-mutation variants survived ALL THREE "
-        f"detectors (ADR order-pin, run_commitment_flow e2e, gateway execution order) — plan "
-        f"§3.2/§5 requires 0 survivors: {survivors}"
+    assert not anchor_sanity_failures, (
+        f"{len(anchor_sanity_failures)} variant(s) did not even differ from the independently-"
+        "transcribed ADR anchor — the variant generator produced a non-mutation (a bug in "
+        f"_adjacent_swaps/_omissions/_duplications, not a caught mutation): {anchor_sanity_failures}"
     )
-    assert set(order_pin_only) == _EXPECTED_ORDER_PIN_ONLY, (
-        "the set of variants only the ADR order-pin catches (both execution detectors identical "
-        f"to their controls) drifted from the expected set — actual={sorted(order_pin_only)} "
-        f"expected={sorted(_EXPECTED_ORDER_PIN_ONLY)}"
+    assert not survivors, (
+        f"{len(survivors)}/{len(_ALL_VARIANTS)} order-mutation variants survived BOTH executable "
+        f"detectors (run_commitment_flow e2e AND gateway execution order) — plan §3.2/§5 «생존 0» "
+        f"requires 0: {survivors}"
+    )
+    assert set(survivors) == _EXPECTED_ORDER_PIN_ONLY, (
+        "the survivor set (caught by neither executable detector) drifted from the expected set "
+        f"— actual={sorted(survivors)} expected={sorted(_EXPECTED_ORDER_PIN_ONLY)}"
     )
     assert set(unreachable) == _EXPECTED_UNREACHABLE, (
         f"the set of variants whose derivation formula itself raises drifted — "
