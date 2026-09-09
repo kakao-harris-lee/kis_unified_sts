@@ -88,8 +88,10 @@ from pydantic import ValidationError
 from tos.brokercap import (
     Admissibility,
     AssetScope,
+    AssuranceLevel,
     AuthorizationClass,
     BrokerEnvironment,
+    CapabilityDimension,
     CapabilityProvenance,
     CapabilityTuple,
     EconomicEffect,
@@ -97,6 +99,7 @@ from tos.brokercap import (
     ProbeManifest,
     ProfileKey,
     ProvenanceClass,
+    RequiredCapabilitySet,
     credential_principal_separation_ok,
     routing_admissibility,
 )
@@ -110,7 +113,9 @@ __all__ = [
     "BrokerScopesConfig",
     "EndpointClass",
     "PrincipalClass",
+    "RequiredCapabilitySet",
     "ScopeDisposition",
+    "ScopeInstanceBinding",
     "ScopeResolution",
     "credential_route_inventory",
     "load_broker_scopes",
@@ -168,11 +173,29 @@ class ScopeDisposition(StrEnum):
 
 
 @dataclass(frozen=True)
+class ScopeInstanceBinding:
+    """A scope's optional binding to one Broker Capability Profile INSTANCE
+    document (plan §2 decision 4, 작업 5 items 6/12). ``environment`` is the
+    INSTANCE document's own ``profile_identity.environment`` scalar this
+    scope binds to — the loader refuses when it disagrees with
+    ``environment_binding[tuple.environment]`` for any of the scope's own
+    capability tuples (one source of truth, never two independently-typed
+    environment facts)."""
+
+    environment: str
+
+
+@dataclass(frozen=True)
 class BrokerScope:
     """One named, runtime-configured Broker Capability scope (plan §2
     decision 1). ``admissibility`` is the loader-stamped, most-restrictive
     :func:`~tos.brokercap.routing.routing_admissibility` verdict across
-    every one of ``capability_tuples`` — never re-derived by a caller."""
+    every one of ``capability_tuples`` — never re-derived by a caller.
+
+    ``instance``/``required_capability_set`` (plan §2 decision 4, 작업 5
+    items 6/12) are both optional — ``None`` when this scope declares
+    neither block (e.g. the SYNTHETIC default scope, which needs no broker
+    INSTANCE binding at all)."""
 
     name: str
     capability_tuples: tuple[CapabilityTuple, ...]
@@ -184,6 +207,10 @@ class BrokerScope:
     allowed_methods: tuple[str, ...]
     admissibility: Admissibility
     provenance: tuple[CapabilityProvenance, ...]
+    #: The INSTANCE document environment this scope binds to, or ``None``.
+    instance: ScopeInstanceBinding | None = None
+    #: The kernel required-capability set for this scope's action, or ``None``.
+    required_capability_set: RequiredCapabilitySet | None = None
 
 
 @dataclass(frozen=True)
@@ -196,6 +223,11 @@ class BrokerScopesConfig:
     #: :func:`~tos.brokercap.routing.endpoint_binding_from_profile_ok`.
     environment_binding: Mapping[BrokerEnvironment, str]
     asset_binding: Mapping[AssetScope, str]
+    #: The Broker Capability Profile INSTANCE file path (plan §2 decision 4)
+    #: — resolved relative to the config file's own directory when given as
+    #: a relative path in YAML. ``None`` only when no scope declares an
+    #: ``instance`` block (nothing would ever read this path).
+    instance_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -312,6 +344,63 @@ def _most_restrictive(admissibilities: list[Admissibility]) -> Admissibility:
     return max(admissibilities, key=lambda a: _RESTRICTIVENESS_RANK[a])
 
 
+def _build_scope_instance(
+    raw: Mapping[str, Any] | None, context: str
+) -> ScopeInstanceBinding | None:
+    """Parse the optional ``instance`` block (plan §2 decision 4) — absent
+    ⇒ ``None``; present but malformed ⇒ :class:`BrokerScopeConfigError`
+    (named-TBD discipline applied to ``instance.environment`` once the
+    block itself is present at all)."""
+    if raw is None:
+        return None
+    environment = raw.get("environment") if isinstance(raw, Mapping) else None
+    if not isinstance(environment, str) or not environment:
+        raise BrokerScopeConfigError(
+            f"{context}: 'instance.environment' is still null (named-TBD) or "
+            "not a string — refusing to load"
+        )
+    return ScopeInstanceBinding(environment=environment)
+
+
+def _build_required_capability_set(
+    raw: Mapping[str, Any] | None, scope_name: str
+) -> RequiredCapabilitySet | None:
+    """Parse the optional ``required_capability_set`` block (plan §2
+    decision 4) via **validated** kernel construction only — absent ⇒
+    ``None``. ``minimum_live_gate_satisfied`` is passed straight through
+    (``null`` is a legitimate, permanent value the kernel already treats as
+    non-``True`` ⇒ ``PROHIBITED``, the same discipline ``profile_evidence_ok``
+    already applies)."""
+    if raw is None:
+        return None
+    try:
+        required_dimensions = frozenset(
+            CapabilityDimension(_as_str(d))
+            for d in (raw.get("required_dimensions") or [])
+        )
+        required_level_raw = raw.get("required_level")
+        required_level = (
+            None
+            if required_level_raw is None
+            else AssuranceLevel(_as_str(required_level_raw))
+        )
+        approved_fallback_dimensions = frozenset(
+            CapabilityDimension(_as_str(d))
+            for d in (raw.get("approved_fallback_dimensions") or [])
+        )
+        return RequiredCapabilitySet(
+            required_dimensions=required_dimensions,
+            required_level=required_level,
+            minimum_live_gate_satisfied=raw.get("minimum_live_gate_satisfied"),
+            approved_fallback_dimensions=approved_fallback_dimensions,
+        )
+    except (ValueError, ValidationError) as exc:
+        raise BrokerScopeConfigError(
+            f"scope {scope_name!r}: required_capability_set rejected by the "
+            f"kernel — {exc}"
+        ) from exc
+
+
 def _build_scope(raw: Mapping[str, Any], *, environment_label: str) -> BrokerScope:
     name = _require(raw.get("name"), "name", "scope")
     context = f"scope {name!r}"
@@ -373,6 +462,10 @@ def _build_scope(raw: Mapping[str, Any], *, environment_label: str) -> BrokerSco
         _build_provenance(p, name) for p in (raw.get("provenance") or [])
     )
     profile_key = _build_profile_key(raw.get("profile_key"))
+    instance = _build_scope_instance(raw.get("instance"), context)
+    required_capability_set = _build_required_capability_set(
+        raw.get("required_capability_set"), name
+    )
 
     return BrokerScope(
         name=name,
@@ -384,7 +477,57 @@ def _build_scope(raw: Mapping[str, Any], *, environment_label: str) -> BrokerSco
         allowed_methods=allowed_methods,
         admissibility=admissibility,
         provenance=provenance,
+        instance=instance,
+        required_capability_set=required_capability_set,
     )
+
+
+def _check_instance_bindings(
+    scopes: tuple[BrokerScope, ...],
+    environment_binding: Mapping[BrokerEnvironment, str],
+    path: Path,
+) -> None:
+    """One source of truth (plan §2 decision 4): a scope's ``instance.
+    environment`` must equal ``environment_binding[tuple.environment]`` for
+    EVERY one of its own capability tuples — never a second, independently
+    -typed environment fact that could silently disagree."""
+    for scope in scopes:
+        if scope.instance is None:
+            continue
+        for capability_tuple in scope.capability_tuples:
+            expected = environment_binding.get(capability_tuple.environment)
+            if expected != scope.instance.environment:
+                raise BrokerScopeConfigError(
+                    f"{path}: scope {scope.name!r} declares instance.environment "
+                    f"{scope.instance.environment!r} but its capability tuple "
+                    f"environment {capability_tuple.environment.value!r} binds "
+                    f"(via environment_binding) to {expected!r} — one source of "
+                    "truth, refusing to load"
+                )
+
+
+def _resolve_instance_path(
+    raw_value: Any, *, config_path: Path, scopes: tuple[BrokerScope, ...]
+) -> Path | None:
+    """Resolve the top-level ``instance_path`` (plan §2 decision 4) —
+    relative to ``config_path``'s own directory when given as a relative
+    string, absolute paths pass through unchanged. ``None`` is legitimate
+    ONLY when no scope declares an ``instance`` block; a scope needing
+    INSTANCE data with no path configured fails closed."""
+    any_scope_declares_instance = any(scope.instance is not None for scope in scopes)
+    if raw_value is None:
+        if any_scope_declares_instance:
+            raise BrokerScopeConfigError(
+                f"{config_path}: a scope declares an 'instance' block but the "
+                "top-level 'instance_path' is still null — refusing to load"
+            )
+        return None
+    if not isinstance(raw_value, str) or not raw_value:
+        raise BrokerScopeConfigError(
+            f"{config_path}: 'instance_path' must be a non-empty string"
+        )
+    candidate = Path(raw_value)
+    return candidate if candidate.is_absolute() else config_path.parent / candidate
 
 
 def _check_principal_separation(scopes: tuple[BrokerScope, ...], path: Path) -> None:
@@ -505,12 +648,17 @@ def load_broker_scopes(path: Path, *, environment_label: str) -> BrokerScopesCon
     asset_binding = _load_binding(
         raw.get("asset_binding"), "asset_binding", AssetScope, path
     )
+    _check_instance_bindings(scopes, environment_binding, path)
+    instance_path = _resolve_instance_path(
+        raw.get("instance_path"), config_path=path, scopes=scopes
+    )
 
     return BrokerScopesConfig(
         scopes=scopes,
         active_scope=active_scope,
         environment_binding=environment_binding,
         asset_binding=asset_binding,
+        instance_path=instance_path,
     )
 
 

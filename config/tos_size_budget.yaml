@@ -292,7 +292,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1189
+  measured: 1197
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'

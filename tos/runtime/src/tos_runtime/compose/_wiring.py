@@ -47,6 +47,7 @@ from tos_runtime.authority.stages import IndependentApprovalStage
 from tos_runtime.brokercap import (
     BrokerScopesConfig,
     credential_route_inventory,
+    load_active_instance_document,
     load_broker_scopes,
     refuse_principal_collision,
     transport_nature,
@@ -829,12 +830,15 @@ def _build_context_resolver(
     literal.
 
     Raises:
-        BrokerScopeConfigError: ``egress_coordinates.active_principal``
-            collides with some scope's own principal (generalized R2).
+        BrokerScopeConfigError: ``active_principal`` collides with a scope's
+            own principal (generalized R2), or a config/kernel mismatch.
+        BrokerInstanceConfigError: the active scope's INSTANCE fails to load
+            (plan §2 decision 4 boot refusal, never swallowed).
     """
     refuse_principal_collision(
         broker_scopes, active_principal=egress_coordinates.active_principal
     )
+    instance_document = load_active_instance_document(broker_scopes)
     return ComposeContextResolver(
         construction_stage=construction_stages.construction_stage,
         proof_stage=construction_stages.proof_stage,
@@ -847,6 +851,8 @@ def _build_context_resolver(
         proof_issuer=proof_issuer,
         pending_dimension_specs=pending_dimension_specs,
         egress_attestations=egress_attestations,
+        broker_scopes=broker_scopes,
+        instance_document=instance_document,
         # Transport's OWN identity (slice #3) — derived from the active scope, G-4 closed.
         transport_nature=transport_nature(broker_scopes.active_scope),
         environment_label=environment_label,
@@ -1066,6 +1072,8 @@ def _resolve_strategies_and_attested_inputs(
         egress_coordinates,
         resolved_strategies.loaded,
         resolved_strategies.loaded_bindings,
+        broker_scopes=broker_scopes,
+        instance_document=load_active_instance_document(broker_scopes),
     )
     return egress_coordinates, broker_scopes, resolved_strategies
 

@@ -406,12 +406,14 @@ class TestComposeRootWiring:
         stored = json.loads(rows[0][0])
         names = {c["name"] for c in stored["payload"]["attested_coordinates"]}
         assert names == {
-            # egress_attestations.yaml (5)
-            "account_instrument_action_allowed",
+            # egress_attestations.yaml (3, TOS Phase 4 plan §2 decision 4 —
+            # account_instrument_action_allowed/broker_constraint_generation_current
+            # are derived now, not attested)
             "venue_session_account_facts_current",
-            "broker_constraint_generation_current",
             "restrictive_latch_state",
             "worst_credible_capacity",
+            # broker_scopes.yaml (1) — the active scope's own name
+            "SYNTHETIC_FUTURES_ORDER",
             # risk_attestations.yaml (6)
             "numerically_safe",
             "valuation_ok",
@@ -440,6 +442,7 @@ class TestComposeRootWiring:
                 "egress_attestations.yaml",
                 "risk_attestations.yaml",
                 "egress_coordinates.yaml",
+                "broker_scopes.yaml",
                 fx.BAND_STRATEGY_FILE_NAME,
             )
             assert len(coordinate["source_file_digest"]) == 64  # sha256 hex

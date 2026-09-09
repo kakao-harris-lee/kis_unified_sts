@@ -80,6 +80,7 @@ __all__ = [
     "BrokerInstanceConfigError",
     "InstanceDocument",
     "instance_version_current",
+    "load_instance_document",
     "load_instance_documents",
     "select_document",
 ]
@@ -536,6 +537,66 @@ def load_instance_documents(path: Path) -> tuple[InstanceDocument, ...]:
             )
         documents.append(_build_instance_document(raw, path=path, index=index))
     return tuple(documents)
+
+
+def load_instance_document(path: Path, *, environment: str) -> InstanceDocument:
+    """Load and build ONLY the single document in ``path`` whose own
+    ``profile_identity.environment`` scalar equals ``environment`` (plan §2
+    decision 4, item 6/12 realization).
+
+    Selection reads each raw YAML document's ``profile_identity.environment``
+    scalar directly (before any ``_model_view``/kernel construction) so a
+    NON-matching document's own defects (e.g. a missing ``_model_view``
+    block) never block loading the one document actually being asked for —
+    :func:`load_instance_documents` stays the strict, "every document must be
+    valid" loader; this is the single-document, environment-scoped sibling
+    plan §2 decision 4 needs to bind one active scope to one INSTANCE
+    document without paying for every other document's validity.
+
+    Args:
+        path: The instance YAML file (e.g.
+            ``docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml``).
+        environment: The exact ``profile_identity.environment`` value to select.
+
+    Returns:
+        The single matching document, fully built (module docstring discipline).
+
+    Raises:
+        BrokerInstanceConfigError: The file is missing/unreadable/not valid
+            YAML, zero or more than one raw document names ``environment``,
+            or the ONE matching document fails the ``_model_view`` discipline.
+    """
+    if not path.is_file():
+        raise BrokerInstanceConfigError(
+            f"broker profile instance file not found: {path}"
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise BrokerInstanceConfigError(
+            f"broker profile instance file could not be read: {path}"
+        ) from exc
+    try:
+        raw_docs = list(yaml.safe_load_all(text))
+    except yaml.YAMLError as exc:
+        raise BrokerInstanceConfigError(
+            f"broker profile instance file is not valid YAML: {path}"
+        ) from exc
+
+    matches = [
+        (index, raw)
+        for index, raw in enumerate(raw_docs)
+        if isinstance(raw, dict)
+        and isinstance(raw.get("profile_identity"), dict)
+        and raw["profile_identity"].get("environment") == environment
+    ]
+    if len(matches) != 1:
+        raise BrokerInstanceConfigError(
+            f"{path}: expected exactly one raw document with "
+            f"profile_identity.environment={environment!r}, found {len(matches)}"
+        )
+    index, raw = matches[0]
+    return _build_instance_document(raw, path=path, index=index)
 
 
 def select_document(

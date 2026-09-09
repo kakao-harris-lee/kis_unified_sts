@@ -1,23 +1,30 @@
 """Operator-attested egress-gate stand-ins (design #40 §5 order 6 items 6/12/16;
 team-lead follow-up guidance on the slice #3 review, 2026-09-08).
 
-Five ``SendBoundaryContext`` fields the gateway's own item-6/item-12/item-16
-checks consume have **no Phase 2 runtime producer**, exactly like the 17
-pending currentness dimensions (:mod:`tos_runtime.compose._pending_dimensions`):
+**Landed (TOS Phase 4 plan §2 decision 4,
+docs/plans/2026-09-09-tos-phase4-scopes-and-verify-realization-plan.md):**
+``account_instrument_action_allowed`` / ``broker_constraint_generation_current``
+(items 6/12) are **no longer attestations** — they are now STRUCTURALLY
+DERIVED from the active Broker Scope + (for a broker-reaching scope) the
+bound Broker Capability Profile INSTANCE document, via
+:func:`~tos_runtime.brokercap.derive.derive_item6_item12` and wired in
+:mod:`tos_runtime.compose.context`. This module refuses to load a config that
+still carries either key (below) — a stale operator config must never
+silently pretend to attest a value this runtime now derives on its own.
 
-* **Items 6/12** — ``account_instrument_action_allowed`` /
-  ``venue_session_account_facts_current`` / ``broker_constraint_generation_current``.
-  The kernel's own check-reason strings say why no producer exists yet:
-  ``tos.egressgw.gateway._check_allowance`` names "the P0-2 approved Profile
-  INSTANCE" and ``_check_venue_generations`` names "the versioned Profile is
-  P0-2-blocked" (``tos/src/tos/egressgw/gateway.py:783-899``). **Phase 4 (the
-  P0-2 approved Profile INSTANCE) replaces these operator attestations.**
-* **Item 16** — ``restrictive_latch_state`` / ``worst_credible_capacity``.
-  No Phase 2 lane owns a real local-restrictive-latch service or a real
-  worst-credible-capacity computation. **Phase 5 (a real latch/capacity-owning
-  runtime service) replaces these operator attestations.**
+Three ``SendBoundaryContext`` fields remain genuine operator attestations —
+each still has **no Phase 2 (or Phase 4) runtime producer**, exactly like the
+17 pending currentness dimensions (:mod:`tos_runtime.compose._pending_dimensions`):
 
-Per team-lead's explicit instruction, this module supplies all five from
+* ``venue_session_account_facts_current`` (item 12) — no runtime owns a real
+  venue/session/account-facts-currency service yet. **Phase 5** replaces this
+  operator attestation.
+* ``restrictive_latch_state`` / ``worst_credible_capacity`` (item 16) — no
+  runtime owns a real local-restrictive-latch service or a real
+  worst-credible-capacity computation. **Phase 5** (a real latch/capacity
+  -owning runtime service) replaces these operator attestations.
+
+Per team-lead's explicit instruction, this module supplies these three from
 **composition config as explicit, named operator attestations** — never a
 kernel-derived judgement and never a bare Python literal standing in for one.
 Every field is a named-TBD ``null`` in the example config, and a still-null
@@ -26,12 +33,12 @@ field refuses composition at startup (the same fail-closed discipline
 ``tos_runtime.*.config`` loader in this codebase applies).
 
 This mirrors, deliberately, how ``tos/tests/slice/_slice_fixtures.py`` — the
-KERNEL's own end-to-end test — supplies these same five fields as literal
+KERNEL's own end-to-end test — supplies these same fields as literal
 ``True``/``CLEAR``/``1`` constants: that is a legitimate, hand-authored TEST
 fixture describing "what a fully-current attempt looks like", never claiming
 to be a real runtime derivation. This compose root's PRODUCTION wiring must
 not silently reuse a test fixture's literal — an explicit, config-sourced,
-named operator attestation makes the same "no Phase 2 producer" gap visible
+named operator attestation makes the same "no runtime producer" gap visible
 and inspectable at deploy time instead of buried in source code.
 
 ``max_quantity_within_allowance`` (also an item-6 field) is NOT part of this
@@ -58,24 +65,34 @@ __all__ = [
 
 
 class EgressAttestationConfigError(Exception):
-    """Raised when the egress-attestations config is missing, malformed, or
-    carries an unfilled (named-TBD) field — fail-closed at load, never a
-    silent default."""
+    """Raised when the egress-attestations config is missing, malformed,
+    carries an unfilled (named-TBD) field, or still carries a key that is no
+    longer an attestation (module docstring, items 6/12) — fail-closed at
+    load, never a silent default."""
+
+
+#: Item 6/12 keys retired by TOS Phase 4 plan §2 decision 4 — now derived by
+#: :func:`~tos_runtime.brokercap.derive.derive_item6_item12`, never attested.
+#: A config that still carries either is refused (module docstring): it
+#: could otherwise silently pretend to attest a value this runtime derives.
+_RETIRED_DERIVED_KEYS = (
+    "account_instrument_action_allowed",
+    "broker_constraint_generation_current",
+)
 
 
 @dataclass(frozen=True)
 class EgressAttestations:
-    """The five operator-attested egress-gate stand-ins (module docstring)."""
+    """The three remaining operator-attested egress-gate stand-ins (module
+    docstring) — items 6/12's other two fields are derived, not attested,
+    since TOS Phase 4 plan §2 decision 4."""
 
-    #: Item 6 — "pending the P0-2 approved Profile INSTANCE" (gateway's own reason).
-    account_instrument_action_allowed: bool
-    #: Item 12 — "the versioned Profile is P0-2-blocked" (gateway's own reason).
+    #: Item 12 — no runtime owns venue/session/account-facts currency yet (Phase 5).
     venue_session_account_facts_current: bool
-    #: Item 12 — same P0-2-blocked Profile.
-    broker_constraint_generation_current: bool
-    #: Item 16 — the local restrictive deny-latch (``tos.egress.RestrictiveLatchState``).
+    #: Item 16 — the local restrictive deny-latch (``tos.egress.RestrictiveLatchState``,
+    #: Phase 5).
     restrictive_latch_state: RestrictiveLatchState
-    #: Item 16 — the worst-credible-capacity bound.
+    #: Item 16 — the worst-credible-capacity bound (Phase 5).
     worst_credible_capacity: int
 
 
@@ -126,15 +143,18 @@ def load_egress_attestations(path: Path) -> EgressAttestations:
         raise EgressAttestationConfigError(
             f"egress-attestations config file must be a top-level mapping: {path}"
         )
+    stale = [key for key in _RETIRED_DERIVED_KEYS if key in raw]
+    if stale:
+        raise EgressAttestationConfigError(
+            f"{path}: {stale!r} are no longer attestations — items 6/12 are "
+            "structurally derived from the active Broker Scope + INSTANCE "
+            "document since TOS Phase 4 plan §2 decision 4 "
+            "(tos_runtime.brokercap.derive.derive_item6_item12); remove them "
+            "from this config"
+        )
 
-    account_instrument_action_allowed = _require_bool(
-        raw, "account_instrument_action_allowed", path
-    )
     venue_session_account_facts_current = _require_bool(
         raw, "venue_session_account_facts_current", path
-    )
-    broker_constraint_generation_current = _require_bool(
-        raw, "broker_constraint_generation_current", path
     )
 
     latch_block = raw.get("restrictive_latch_state")
@@ -162,9 +182,7 @@ def load_egress_attestations(path: Path) -> EgressAttestations:
         )
 
     return EgressAttestations(
-        account_instrument_action_allowed=account_instrument_action_allowed,
         venue_session_account_facts_current=venue_session_account_facts_current,
-        broker_constraint_generation_current=broker_constraint_generation_current,
         restrictive_latch_state=restrictive_latch_state,
         worst_credible_capacity=capacity_value,
     )

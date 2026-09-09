@@ -17,6 +17,15 @@
 # field (in a deployment that removed one) refuses to load (fail-closed,
 # never a silent default), naming the offending scope/field.
 #
+# `instance_path` (TOS Phase 4 plan §2 decision 4, 작업 5 items 6/12) names
+# the Broker Capability Profile INSTANCE file every scope below that
+# declares an `instance` block binds to — the KIS draft's own non-normative,
+# byte-immutable location (docs/broker-profiles/, never copied or moved),
+# resolved relative to THIS config file's own directory. A scope declaring
+# `instance` with this path still null refuses to load (one source of truth
+# — tos_runtime.brokercap.scopes._resolve_instance_path).
+instance_path: ../../../docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml
+#
 # `principal` values contain the literal token `{environment_label}`,
 # substituted by the loader with the runtime's own environment label — the
 # ONLY templating this loader performs (same rule as
@@ -74,7 +83,11 @@ scopes:
       environment: SYNTHETIC
       account_type: null
       market: null
-      instrument_class: null
+      # Filled (not null) so item 6's endpoint_binding_from_profile_ok check
+      # (plan §2 decision 4) can structurally bind this scope's own FUTURES
+      # tuples against asset_binding.FUTURES below — a synthetic scope still
+      # has a coordinate to bind, it simply names no real broker endpoint.
+      instrument_class: DOMESTIC_STOCK_AND_INDEX_FUTURES
       order_type: null
       session_type: null
       credential_scope: null
@@ -103,6 +116,10 @@ scopes:
     endpoint_class: BROKER_GET
     allowed_methods: ["GET"]
     profile_evidence_ok: null
+    # Binds to the REAL_PROD INSTANCE document (plan §2 decision 4) — one
+    # source of truth with environment_binding.BROKER_PRODUCTION below.
+    instance:
+      environment: REAL_PROD
     profile_key:
       broker_id: KIS_KOREA_INVESTMENT_SECURITIES
       api_product: KIS_OPEN_TRADING_API_REST_AND_WEBSOCKET
@@ -180,6 +197,25 @@ scopes:
     endpoint_class: BROKER_ORDER
     allowed_methods: ["SUBMIT", "CANCEL_REPLACE"]
     profile_evidence_ok: null
+    # Binds to the MOCK_VTS INSTANCE document (plan §2 decision 4) — one
+    # source of truth with environment_binding.BROKER_SIMULATION below.
+    instance:
+      environment: MOCK_VTS
+    # A minimal order-send capability set (plan §2 decision 4 — real
+    # CapabilityDimension/AssuranceLevel member names; CANCELLATION stands
+    # in for the illustrative "cancellation finality" — there is no
+    # CANCELLATION_FINALITY member). minimum_live_gate_satisfied stays null
+    # (honest — no §11 gate evidence exists yet, task 4/operator lane) and
+    # the kernel treats non-True as PROHIBITED, never a silent pass.
+    required_capability_set:
+      required_dimensions:
+        - ORDER_IDENTITY
+        - SUBMISSION_IDEMPOTENCY
+        - ACKNOWLEDGEMENT_SEMANTICS
+        - CANCELLATION
+      required_level: LEVEL_2_CONTROLLED_TEST_VERIFIED
+      minimum_live_gate_satisfied: null
+      approved_fallback_dimensions: []
     profile_key:
       broker_id: KIS_KOREA_INVESTMENT_SECURITIES
       api_product: KIS_OPEN_TRADING_API_REST_AND_WEBSOCKET
@@ -226,6 +262,19 @@ scopes:
     endpoint_class: BROKER_ORDER
     allowed_methods: ["SUBMIT"]
     profile_evidence_ok: null
+    # Binds to the REAL_PROD INSTANCE document — visibility only (module
+    # docstring above: this scope is ALWAYS PROHIBITED and never active).
+    instance:
+      environment: REAL_PROD
+    required_capability_set:
+      required_dimensions:
+        - ORDER_IDENTITY
+        - SUBMISSION_IDEMPOTENCY
+        - ACKNOWLEDGEMENT_SEMANTICS
+        - CANCELLATION
+      required_level: LEVEL_2_CONTROLLED_TEST_VERIFIED
+      minimum_live_gate_satisfied: null
+      approved_fallback_dimensions: []
     profile_key:
       broker_id: KIS_KOREA_INVESTMENT_SECURITIES
       api_product: KIS_OPEN_TRADING_API_REST_AND_WEBSOCKET

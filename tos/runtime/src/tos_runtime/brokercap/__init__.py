@@ -9,10 +9,16 @@ Profile INSTANCE loader, lane C — plan §2 decision 3).
 
 from __future__ import annotations
 
+from tos_runtime.brokercap.derive import (
+    Item6Item12Fields,
+    derive_item6_item12,
+    load_active_instance_document,
+)
 from tos_runtime.brokercap.instance import (
     BrokerInstanceConfigError,
     InstanceDocument,
     instance_version_current,
+    load_instance_document,
     load_instance_documents,
     select_document,
 )
@@ -22,7 +28,9 @@ from tos_runtime.brokercap.scopes import (
     BrokerScopesConfig,
     EndpointClass,
     PrincipalClass,
+    RequiredCapabilitySet,
     ScopeDisposition,
+    ScopeInstanceBinding,
     ScopeResolution,
     credential_route_inventory,
     load_broker_scopes,
@@ -38,12 +46,18 @@ __all__ = [
     "BrokerScopesConfig",
     "EndpointClass",
     "InstanceDocument",
+    "Item6Item12Fields",
     "PrincipalClass",
+    "RequiredCapabilitySet",
     "ScopeDisposition",
+    "ScopeInstanceBinding",
     "ScopeResolution",
     "credential_route_inventory",
+    "derive_item6_item12",
     "instance_version_current",
+    "load_active_instance_document",
     "load_broker_scopes",
+    "load_instance_document",
     "load_instance_documents",
     "refuse_principal_collision",
     "resolve_scope",

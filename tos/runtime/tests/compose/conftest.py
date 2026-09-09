@@ -123,9 +123,7 @@ def config_dir(tmp_path: Path) -> Path:
     _write_yaml(
         directory / "egress_attestations.yaml",
         {
-            "account_instrument_action_allowed": {"attested": True},
             "venue_session_account_facts_current": {"attested": True},
-            "broker_constraint_generation_current": {"attested": True},
             "restrictive_latch_state": {"clear": True},
             "worst_credible_capacity": {"value": 1},
         },

@@ -15,6 +15,7 @@ from pathlib import Path
 from tos.canonical import CanonicalizationScheme
 from tos.workload import RuntimeIdentity
 
+from tos_runtime.brokercap import BrokerScopesConfig, InstanceDocument
 from tos_runtime.compose._egress_attestations import EgressAttestations
 from tos_runtime.compose._egress_coordinates import EgressCoordinatesConfig
 from tos_runtime.compose._risk_attestations import RiskAttestations
@@ -30,6 +31,7 @@ __all__ = [
     "EGRESS_ATTESTATIONS_CONFIG_NAME",
     "RISK_ATTESTATIONS_CONFIG_NAME",
     "EGRESS_COORDINATES_CONFIG_NAME",
+    "BROKER_SCOPES_CONFIG_NAME",
     "EngineReplayDiverged",
     "verify_rcl_log_or_halt",
     "verify_engine_replay_or_halt",
@@ -54,6 +56,9 @@ RISK_ATTESTATIONS_CONFIG_NAME = "risk_attestations.yaml"
 #: Same config file name ``_wiring.py``/``_egress_coordinates.py`` use for
 #: the egress-coordinates config (TOS Phase 4 작업 6 §2.1).
 EGRESS_COORDINATES_CONFIG_NAME = "egress_coordinates.yaml"
+#: Same config file name ``_wiring.py``/``tos_runtime.brokercap.scopes`` use
+#: for the broker-scopes config (TOS Phase 4 plan §2 decisions 1-2/4).
+BROKER_SCOPES_CONFIG_NAME = "broker_scopes.yaml"
 
 #: The evidence kind/record class for the operator-attested-inputs
 #: provenance record (re-review finding F4, 2026-09-08).
@@ -158,6 +163,42 @@ def verify_engine_replay_or_halt(
     return verdict
 
 
+def _broker_scopes_coordinates(
+    config_dir: Path,
+    broker_scopes: BrokerScopesConfig | None,
+    instance_document: InstanceDocument | None,
+) -> list[dict[str, str]]:
+    """One row for ``broker_scopes.yaml``'s active-scope name + digest, plus
+    one more for the bound INSTANCE document's own file digest when loaded
+    (TOS Phase 4 plan §2 decision 4) — split out of
+    :func:`record_operator_attested_inputs` purely for the size budget."""
+    if broker_scopes is None:
+        return []
+    rows = [
+        {
+            "name": broker_scopes.active_scope.name,
+            "source_file": BROKER_SCOPES_CONFIG_NAME,
+            "source_file_digest": hashlib.sha256(
+                (config_dir / BROKER_SCOPES_CONFIG_NAME).read_bytes()
+            ).hexdigest(),
+        }
+    ]
+    if instance_document is not None and broker_scopes.instance_path is not None:
+        rows.append(
+            {
+                "name": (
+                    f"{instance_document.environment}:"
+                    f"{instance_document.artifact_id}"
+                ),
+                "source_file": broker_scopes.instance_path.name,
+                "source_file_digest": hashlib.sha256(
+                    broker_scopes.instance_path.read_bytes()
+                ).hexdigest(),
+            }
+        )
+    return rows
+
+
 def record_operator_attested_inputs(
     config_dir: Path,
     evidence_store: SqliteEvidenceStore,
@@ -167,16 +208,21 @@ def record_operator_attested_inputs(
     egress_coordinates: EgressCoordinatesConfig,
     loaded_strategies: LoadedStrategies | None = None,
     loaded_bindings: LoadedStrategyBindings | None = None,
+    *,
+    broker_scopes: BrokerScopesConfig | None = None,
+    instance_document: InstanceDocument | None = None,
 ) -> None:
     """Durably record ONE evidence entry enumerating every config-attested
     coordinate name (items 6/12/16 + the step 6/7 admission witnesses + the
     egress-coordinate/capsule-terminus-stand-in inputs, TOS Phase 4 작업 6
     §2.1) and its source config file's own digest — re-review reviewer Q3,
-    F4 (2026-09-08): "the five egress attestations enter SendBoundaryContext
-    as bare kernel-typed fields, identical in shape to derived verdicts".
-    This record is what lets an auditor tell attested from derived
-    downstream — the field VALUES themselves carry no marker of their own
-    origin, so the origin is instead evidenced once, here, at boot.
+    F4 (2026-09-08): "the attestations enter SendBoundaryContext as bare
+    kernel-typed fields, identical in shape to derived verdicts". This
+    record is what lets an auditor tell attested from derived downstream.
+
+    ``broker_scopes``/``instance_document`` (TOS Phase 4 plan §2 decision 4)
+    add the active-scope + bound-INSTANCE rows via
+    :func:`_broker_scopes_coordinates` — both ``None`` are legitimate.
 
     ``loaded_strategies`` (TOS Phase 3 슬라이스 D-R ``[D-R-2]``, plan §1.2
     item 3) adds one row per admitted strategy file — ``name``/
@@ -243,6 +289,9 @@ def record_operator_attested_inputs(
                 "source_file_digest": loaded_bindings.sha256_digest,
             }
         )
+    coordinates.extend(
+        _broker_scopes_coordinates(config_dir, broker_scopes, instance_document)
+    )
     evidence_store.append(
         {"attested_coordinates": coordinates},
         kind=_ATTESTED_INPUTS_EVIDENCE_KIND,
