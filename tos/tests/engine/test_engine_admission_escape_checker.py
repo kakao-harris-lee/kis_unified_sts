@@ -25,6 +25,7 @@ from __future__ import annotations
 import pytest
 from tos.dsl import AdmissibilityResult, CandidateNode, CandidateProgram
 from tos.dsl.serialization import parse_strategy
+from tos.dsl.vocabulary import KIND_CONTEXT_REF
 from tos.engine import admission as admission_module
 from tos.engine.admission import strategy_admissible
 from tos.engine.vocabulary import AdmissionVerdict
@@ -82,6 +83,42 @@ def test_a_lowered_program_carrying_an_escape_is_refused_with_the_checkers_reaso
     from tos.dsl import AdmissibilityVerdict
 
     assert result.admissibility_result.verdict is AdmissibilityVerdict.INADMISSIBLE
+
+
+def test_an_ambient_sourced_context_ref_in_the_lowered_program_is_still_caught(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """([K2-p3-#10] finding #10) The escape-checker independently catches an ambient ``context_ref``.
+
+    Before this lane, ``Operand._exactly_one`` (``tos/src/tos/dsl/vocabulary.py``) validated only
+    "exactly one of const/ref, and ref non-empty" — it never checked ``ref[0]`` against
+    ``ADMISSIBLE_CONTEXT_SOURCES``, despite the field's own docstring claiming "there is no way to
+    name an ambient source here (DCE-INV-003)". ``tos/tests/dsl/test_dsl_operand_ref_source.py``
+    now proves the constructor itself refuses ``Operand(ref=("ambient", "now"))`` directly — which
+    also means an *end-to-end* probe through the real lowering path can no longer even construct
+    the adversarial input (pydantic v2 revalidates a nested ``model_construct``-bypassed instance
+    the moment it is embedded in a normally-constructed parent, so the bypass does not survive
+    assembly into a ``Compare``/``Rule``/``DecisionPolicy`` at all).
+
+    This test is therefore the **second, independent** gate on its own terms, exercised the same
+    way ``test_a_lowered_program_carrying_an_escape_is_refused_with_the_checkers_reason`` above
+    exercises it: ``lower_strategy`` is monkeypatched to hand back exactly the
+    ``CandidateNode(kind=KIND_CONTEXT_REF, source="ambient")`` shape a genuinely-bypassed
+    ``Operand(ref=("ambient", "now"))`` would lower to (``lowering.py:90``), proving
+    ``strategy_admissible`` refuses it on the escape-checker's own ``ambient_source:`` reason
+    regardless of how a lowered program came to carry that shape.
+    """
+    strategy = issue_strategy(capsule_gated_policy())
+
+    def _adversarial_lowering(_: object) -> CandidateProgram:
+        return CandidateProgram(
+            nodes=(CandidateNode(kind=KIND_CONTEXT_REF, source="ambient"),)
+        )
+
+    monkeypatch.setattr(admission_module, "lower_strategy", _adversarial_lowering)
+    result = strategy_admissible(strategy)
+    assert result.verdict is AdmissionVerdict.INADMISSIBLE
+    assert any("ambient_source:ambient" in reason for reason in result.reasons)
 
 
 def test_removing_the_escape_checker_call_would_make_this_test_fail(

@@ -162,6 +162,14 @@ class Operand(FrozenModel):
     :data:`ADMISSIBLE_CONTEXT_SOURCES` member — there is no way to name an ambient
     source here (DCE-INV-003). ``const`` carries an injected literal (thresholds
     are configuration, never hard-coded — design §7).
+
+    ``ref[0]`` is **positively** validated against :data:`ADMISSIBLE_CONTEXT_SOURCES` at
+    construction (Phase 3 K2-p3-#10) — this is the load-bearing gate for that claim. Before this,
+    only the escape-checker (:func:`tos.dsl.admissibility.analyze`, run over the *lowered*
+    program) enforced it; the typed algebra's own construction admitted any source string,
+    including an ambient one (``Operand(ref=("ambient", "now"))`` was constructible). The
+    escape-checker remains a second, independent gate — a ``model_construct``-bypassed instance is
+    still caught there — but the two now agree by construction, not only in effect.
     """
 
     const: ScalarValue | None = None
@@ -169,7 +177,7 @@ class Operand(FrozenModel):
 
     @model_validator(mode="after")
     def _exactly_one(self) -> Operand:
-        """Exactly one of ``const`` / ``ref`` is set, and ``ref`` is non-empty."""
+        """Exactly one of ``const`` / ``ref`` is set, ``ref`` is non-empty, and its source admissible."""
         has_const = self.const is not None
         has_ref = self.ref is not None
         if has_const == has_ref:
@@ -179,6 +187,12 @@ class Operand(FrozenModel):
             )
         if has_ref and not self.ref:
             raise ArtifactIntegrityError("Operand.ref must be a non-empty path")
+        if self.ref and self.ref[0] not in ADMISSIBLE_CONTEXT_SOURCES:
+            raise ArtifactIntegrityError(
+                f"Operand.ref names a source outside ADMISSIBLE_CONTEXT_SOURCES "
+                f"(source={self.ref[0]!r}, admissible={sorted(ADMISSIBLE_CONTEXT_SOURCES)}) — "
+                "there is no way to name an ambient source here (DCE-INV-003)"
+            )
         return self
 
 

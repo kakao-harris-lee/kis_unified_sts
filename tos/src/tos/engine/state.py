@@ -372,44 +372,17 @@ class ProvisionalReservationLedger:
     def apply_egress_result(self, payload: EgressResultPayload) -> ResultApplication:
         """Apply — or conservatively record — a re-injected egress result (Phase 3 A-K-2).
 
-        A late, orphaned, duplicated, attempt-mismatched, rank-regressing, or
-        quantity-regressing result is **not** raised as a crash (the former behaviour, and — for
-        the two regressing cases — the defect Phase 3 review finding #4 named: letting
-        :meth:`_store`'s non-revival guard raise straight out of this method): it is returned as a
-        :class:`ResultApplication` naming the exact
-        :class:`~tos.engine.vocabulary.ResultDisposition` and leaving the projection untouched.
-        Only ``APPLIED`` transitions the reservation (design #31 §2.2/§4.2 rule 3):
-
-        * **ORPHAN_NO_RESERVATION** — no reservation is projected for the scope at all; an egress
-          result is not a licence to create one (design #31 §2.2).
-        * **MISMATCHED_ATTEMPT** — a reservation exists, but the result names a different attempt
-          (positive identity fails; design #31 §2.1(ii)). A late result *for the same attempt* is
-          never mismatched, including one that arrives after a ``TIMEOUT``/``UNKNOWN`` on that same
-          attempt (ADR-002-002 §15.2 "later valid fill accepted").
-        * **DUPLICATE** — the exact
-          ``(attempt_id, kind, filled_quantity, remaining_quantity, broker_execution_id)`` tuple
-          was already applied to this reservation; a resend/replay of an already-recorded fact,
-          not a new one. Keyed on the broker-side identity (ADR-002-002 §15.3:725), never the
-          driver's own ``reference`` coordinate (K2-p3-#6) — with ``broker_execution_id is None``
-          this degrades to a runtime-local replay guard against a byte-identical resend, not §15.3
-          broker idempotency.
-        * **NON_MONOTONIC_PROJECTION** — the result names the exact outstanding attempt and is not
-          a duplicate, but its target capacity state ranks *below* the currently-stored one (e.g. a
-          late ``FULL_FILL`` after a ``REJECT``, or a late ``PARTIAL_FILL`` after a ``FULL_FILL``).
-          ADR-002-002 §15.2 requires a valid later fill to be **accepted as knowledge**, not
-          discarded — so this is recorded (surfacing as ``RESULT_UNMATCHED`` evidence with the
-          payload preserved) rather than silently dropped or raised; the projection's own
-          conservatism rank (design #31 §2.4) simply cannot move backward, and reconciling the
-          preserved fact against the rank is deferred to reconciliation (Phase 5).
-        * **QUANTITY_REGRESSION** — the result is a ``FULL_FILL``/``PARTIAL_FILL`` for the exact
-          outstanding attempt, ranks at or above the current capacity state, and is not a
-          duplicate, but its ``filled_quantity`` is strictly below the already-recorded value
-          (ADR-002-002 §15.1:710 "reduced by no more than the amount proven filled"). The larger,
-          already-recorded magnitude is retained.
-        * **APPLIED** — none of the above; the projection advances. ``UNKNOWN`` / ``TIMEOUT``
-          update only the knowledge axis and leave the capacity projection at
-          ``POTENTIALLY_LIVE``: not a rejection, not safe-to-retry, capacity never released
-          (RFC-005 §11:325-327; ADR-002-002 INV-005:168 / INV-006:174).
+        A late, orphaned, duplicated, attempt-mismatched, rank-regressing, or quantity-regressing
+        result is **not** raised as a crash: it is returned as a :class:`ResultApplication` naming
+        the exact :class:`~tos.engine.vocabulary.ResultDisposition`, leaving the projection
+        untouched on every non-``APPLIED`` outcome. See :class:`~tos.engine.vocabulary.
+        ResultDisposition` for what each of the six members means and the spec citation behind it
+        — this method is the single place all six are decided, in the order the class's own
+        docstring lists them, so that is the canonical reference rather than a second copy here.
+        Only ``APPLIED`` transitions the reservation (design #31 §2.2/§4.2 rule 3). The two
+        regressing dispositions (``NON_MONOTONIC_PROJECTION``, ``QUANTITY_REGRESSION``) exist
+        because letting :meth:`_store`'s non-revival guard raise straight out of this method was
+        itself the crash Phase 3 review finding #4 named — this method must never let it fire.
 
         Args:
             payload: The egress result payload.

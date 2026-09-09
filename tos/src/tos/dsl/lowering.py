@@ -21,9 +21,17 @@ authoring output.
 Rule`, :class:`~tos.dsl.vocabulary.Compare`, :class:`~tos.dsl.vocabulary.Operand`, and
 :class:`~tos.dsl.vocabulary.TargetSpec` the typed algebra can construct has exactly one
 lowering, and every lowered :class:`~tos.dsl.candidate.CandidateNode` carries a
-``kind`` drawn from :data:`tos.dsl.vocabulary.ADMISSIBLE_KINDS` — the typed algebra
-cannot express an escape, so nothing it can construct lowers to an escape/ambient/
-wildcard/unknown node (design §3.5 "구성상 admissible"). A policy-less
+``kind`` drawn from :data:`tos.dsl.vocabulary.ADMISSIBLE_KINDS` — the typed algebra's
+*node* shapes cannot express an escape by construction, so nothing they can construct
+lowers to an escape/wildcard/unknown node (design §3.5 "구성상 admissible"). The
+*ambient-source* case is separate and, until Phase 3 K2-p3-#10, was **not** actually
+closed here: :class:`~tos.dsl.vocabulary.Operand`'s constructor did not check ``ref[0]``
+against :data:`~tos.dsl.vocabulary.ADMISSIBLE_CONTEXT_SOURCES`, so an
+``Operand(ref=("ambient", "now"))`` was constructible and lowered straight to an
+ambient ``context_ref`` node. That constructor gate now makes the claim true again by
+construction — but the escape-checker (:func:`tos.dsl.admissibility.analyze`) is the
+load-bearing, independent check for the `ref`-source case regardless, not a formality
+run over an already-closed seam. A policy-less
 :class:`~tos.dsl.strategy.AuthoredStrategy` (``policy is None``) is not itself an
 authoring input with any content to walk; it lowers to the same single ``NO_ACTION``
 shape the typed evaluator's own totality discipline uses for "nothing to decide"

@@ -7,13 +7,20 @@ import / clock / network / reflection effect), so the escape-checker was deliber
 With :func:`tos.dsl.lowering.lower_strategy` now bridging the typed algebra into the candidate-AST
 domain the checker consumes, :func:`strategy_admissible` runs **both** gates on every strategy: the
 structural D1↔D4 capsule-operand walk below, and the escape-checker (:func:`tos.dsl.admissibility.
-analyze`) over the strategy's lowered program. Because the typed algebra cannot express an escape,
-every currently-constructible :class:`~tos.dsl.AuthoredStrategy` still passes the escape-checker
-trivially — this gate closes the *seam* (design #31 §9-4's honest requirement was that the checker
-actually run, not that it find anything new to reject on today's typed inputs) and is the identical
-gate a :func:`tos.dsl.serialization.parse_strategy`-issued strategy goes through, since both produce
-an :class:`~tos.dsl.AuthoredStrategy` and this function does not distinguish how one was built
-(design #31 §1.2 "두 경로 동형").
+analyze`) over the strategy's lowered program. The typed algebra's own *node* vocabulary cannot
+express an escape (no node type for an import / clock / network / reflection effect); its ``ref``
+*source* vocabulary is a separate matter — :class:`~tos.dsl.vocabulary.Operand`'s constructor now
+positively validates ``ref[0]`` against :data:`~tos.dsl.vocabulary.ADMISSIBLE_CONTEXT_SOURCES`
+(Phase 3 K2-p3-#10; before that fix ``Operand(ref=("ambient", "now"))`` constructed without
+complaint, so this docstring's earlier "the typed algebra cannot express an escape" framing was
+correct for the node vocabulary but overstated for `ref` sources). The escape-checker is
+**load-bearing** for the `ref`-source case, not merely a seam-closure formality: it is the gate
+that would have caught an ambient-sourced comparison before the constructor was tightened, and it
+remains a genuine second, independent layer now that both gates agree by construction. This gate
+closes the *seam* (design #31 §9-4's honest requirement was that the checker actually run) and is
+the identical gate a :func:`tos.dsl.serialization.parse_strategy`-issued strategy goes through,
+since both produce an :class:`~tos.dsl.AuthoredStrategy` and this function does not distinguish how
+one was built (design #31 §1.2 "두 경로 동형").
 
 What admission *does* own is the engine's share of the D1 env-configuration contract
 (design #31 §3.2 (3), v1.1 MAJOR-2 redefinition):
@@ -333,8 +340,10 @@ def strategy_admissible(strategy: AuthoredStrategy) -> AdmissionResult:
        partial seal (design #31 §3.2 (3));
     3. the strategy's lowered candidate program is ADMISSIBLE under the escape-checker
        (:func:`tos.dsl.admissibility.analyze`) — the seam design #31 §3.5 deferred, now closed
-       (design #31 §9-4). Every currently-constructible typed strategy passes this trivially (the
-       typed algebra cannot express an escape); the gate is real regardless, and it is the
+       (design #31 §9-4). The typed algebra's *node* vocabulary cannot express an escape, but its
+       ``ref`` *source* vocabulary could, until :class:`~tos.dsl.vocabulary.Operand`'s constructor
+       was tightened to validate ``ref[0]`` positively (Phase 3 K2-p3-#10) — this gate is
+       **load-bearing** for that case, not a formality over an already-closed seam, and it is the
        identical gate a serialized (``tos.dsl.serialization.parse_strategy``) strategy goes through;
     4. a single wildcard-free dispatch key derives structurally from the declared scope
        (design #31 §3.3).
