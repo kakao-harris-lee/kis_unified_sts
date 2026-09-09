@@ -488,14 +488,32 @@ def test_config_missing_file_refuses(tmp_path: Path) -> None:
         load_backtest_calibration_config(tmp_path / "does-not-exist.yaml")
 
 
-def test_example_config_file_is_all_named_tbd_null() -> None:
-    example_path = (
-        Path(__file__).resolve().parents[3]
-        / "runtime"
-        / "config"
-        / "backtest_calibration.example.yaml"
+_EXAMPLE_CONFIG_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "runtime"
+    / "config"
+    / "backtest_calibration.example.yaml"
+)
+
+
+def _example_config_comment_block(key: str) -> str:
+    """The blank-line-delimited comment block documenting ``key`` in the example config.
+
+    The file is authored as one blank-line-separated block per key (header block first) — this
+    walks those blocks rather than parsing YAML, since the value under test is the COMMENT text,
+    which ``yaml.safe_load`` discards entirely.
+    """
+    text = _EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
+    for block in text.split("\n\n"):
+        if f"{key}:" in block:
+            return block
+    raise AssertionError(
+        f"no comment block found for key {key!r} in {_EXAMPLE_CONFIG_PATH}"
     )
-    raw = yaml.safe_load(example_path.read_text(encoding="utf-8"))
+
+
+def test_example_config_file_is_all_named_tbd_null() -> None:
+    raw = yaml.safe_load(_EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8"))
     assert raw == {
         "max_price_bps": None,
         "max_fill_ratio_shortfall": None,
@@ -503,4 +521,20 @@ def test_example_config_file_is_all_named_tbd_null() -> None:
         "min_observations": None,
     }
     with pytest.raises(BacktestCalibrationConfigError):
-        load_backtest_calibration_config(example_path)
+        load_backtest_calibration_config(_EXAMPLE_CONFIG_PATH)
+
+
+def test_example_config_comment_for_max_fill_ratio_shortfall_describes_a_shortfall() -> (
+    None
+):
+    """[E-R-4] Wave 3 review finding 3 (MEDIUM) — doc-drift pin. The comment above
+    ``max_fill_ratio_shortfall`` used to describe the pre-E-R-3 quotient formula
+    (``paper.filled_quantity / backtest.filled_quantity``, ~1.0 for a match), contradicting the
+    shipped ``_fill_ratio`` (``abs(backtest - paper) / backtest``, 0 for a match) — an operator
+    reading only the comment could enter e.g. ``0.9`` and pass a 90% underfill as WITHIN. This
+    pins that the comment describes a shortfall (0 = exact match, larger = more deviation) and
+    never the old quotient wording.
+    """
+    block = _example_config_comment_block("max_fill_ratio_shortfall").lower()
+    assert "shortfall" in block
+    assert "quotient" not in block

@@ -18,11 +18,14 @@
 # Phase 7). Filling this in does not change that outcome by itself.
 max_price_bps: null
 
-# DeviationBudget.max_fill_ratio_shortfall — bounds the paper/backtest filled-quantity ratio
-# tos_runtime.backtest.calibration_report produces (paper.filled_quantity /
-# backtest.filled_quantity — a quotient near 1.0 for a match, NOT a from-zero shortfall
-# magnitude; see that module's docstring for why this differs from the kernel field's own
-# "shortfall" framing).
+# DeviationBudget.max_fill_ratio_shortfall — bounds the fill-ratio SHORTFALL MAGNITUDE
+# tos_runtime.backtest.calibration_report produces: abs(backtest.filled_quantity -
+# paper.filled_quantity) / backtest.filled_quantity (calibration_report.py's _fill_ratio,
+# lines 208-234). ZERO means an exact match between paper and backtest; a LARGER value means
+# MORE deviation, counted up from zero regardless of direction. The abs() makes it symmetric —
+# paper under-filling or over-filling relative to backtest produces the same magnitude,
+# matching FillDeviation.fill_ratio's own "shortfall magnitude, not a signed ratio" contract
+# (tos.backtest.calibration — FillDeviation refuses to construct with a negative value at all).
 max_fill_ratio_shortfall: null
 
 # DeviationBudget.max_latency_bars — bounds a settlement-bar-count deviation. NOTE: this
