@@ -28,8 +28,8 @@ Owns three things:
    ``_finalize``, the same pattern ``engine_driver.yaml`` already follows), and
    a side-effect-free
    :class:`~tos_runtime.compose._preconditions._ReplayPreconditions` for the
-   boot-time replay core (see :class:`_ReplayStage`'s own docstring for why
-   the replay core needs its OWN stand-ins throughout, not the real ones).
+   boot-time replay core (see :class:`~tos_runtime.engine.replay_stage.RecordedStage`'s own
+   docstring for why the replay core needs its OWN stand-ins throughout, not the real ones).
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib
 (``pathlib``, ``yaml``) + ``tos.canonical``/``tos.egressgw``/``tos.engine``/
@@ -57,8 +57,6 @@ from tos.engine import (
     Stage,
     StrategyRegistry,
 )
-from tos.engine.records import StageRequest, StageVerdict
-from tos.engine.vocabulary import StageAuthorityClass, StageOutcome
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.authority.epoch import SafetyAuthorityEpochService
@@ -72,6 +70,8 @@ from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.orthostate_projection import OrthostateProjector
 from tos_runtime.engine.replay import ReplayVerdict
+from tos_runtime.engine.replay_stage import RecordedStage
+from tos_runtime.engine.replay_transmit import RecordedTransmit, any_recorded_hand_off
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.sinks import (
     EngineEvidenceSinkAdapter,
@@ -254,57 +254,6 @@ def build_engine_driver(
     return inbox, driver
 
 
-class _ReplayStage:
-    """A genuinely side-effect-free stand-in for a REAL commitment-flow ``Stage``, used ONLY by
-    the boot-time replay core (independent review finding #2, 2026-09-09).
-
-    **The bug this fixes.** The replay core factory used to receive the SAME ``stages`` dict the
-    live core uses. ``sink=NullEvidenceSink()`` on the replay ``EngineCore`` only silences the
-    engine's OWN evidence sink — every REAL stage (the step-4 approval stage, the step-9 RCL
-    commit, etc.) carries its OWN sink bound to the real durable
-    :class:`~tos_runtime.evidence.store.SqliteEvidenceStore`, independent of what the engine's own
-    sink is. Replaying with the real stages therefore RE-RAN every real stage's side effects on
-    every boot: a single-use Independent Approval got re-consumed, risk decisions got re-written,
-    evidence kinds like ``IAP_CONSUMPTION``/``ARE_DECISION``/``AFG_DECISION``/``ARE_SNAPSHOT``/
-    ``RCL_APPEND`` all doubled per replayed tick (measured directly: two replayed ``DECISION_TICK``
-    events produced a ``+2`` delta on each of those five kinds).
-
-    **Why this is safe for the outcome-digest comparison replay exists to make.**
-    ``EventResult.outcome_digest`` (``tos/src/tos/engine/core.py``) is ALWAYS the DECISION
-    PIPELINE's own :attr:`~tos.engine.pipeline.PipelineResult.outcome_digest`
-    (``EventResult.pipeline``), computed by ``run_decision_pipeline`` INSIDE
-    ``EngineCore._run_entries`` — strictly BEFORE ``run_commitment_flow`` (the 19-step
-    stage-by-stage flow this class stands in for) is even called. Swapping every injected stage
-    for one that returns a restrictive ``UNKNOWN`` verdict therefore cannot change the digest
-    replay compares: the pipeline result the digest is read off is already fixed by the time the
-    first stage would run. It only changes what happens AFTER that point — and
-    ``StageOutcome.UNKNOWN`` is a positive-admit-gate stop (``run_commitment_flow``'s own rule 2:
-    "deny / UNKNOWN / missing / absent / raised ⇒ immediate stop"), so the flow halts at the very
-    FIRST injected step (right after step 1, the already-emitted proposal) — no real stage's
-    ``__call__`` ever runs during replay, so none of their bound sinks ever fire, and no ledger
-    mutation (``ledger.bind_attempt``/``commit_unbound`` — both gated behind an ``ADMIT`` verdict
-    this stand-in never returns) happens either. Runtime tests (``test_compose_root.py``) verify
-    this claim directly: the five evidence-kind counts above stay byte-identical across a reboot
-    that reaches a real hand-off.
-
-    ``authority_class=NON_AUTHORITATIVE_PROVISIONAL`` is honest — this stand-in never held real
-    authority in the first place, whichever real stage's slot it fills in for.
-    """
-
-    def __call__(self, request: StageRequest) -> StageVerdict:
-        """Return a restrictive ``UNKNOWN`` verdict for ``request.step`` — no I/O, no mutation."""
-        return StageVerdict(
-            step=request.step,
-            outcome=StageOutcome.UNKNOWN,
-            authority_class=StageAuthorityClass.NON_AUTHORITATIVE_PROVISIONAL,
-            reason=(
-                "tos_runtime boot-time replay stand-in (independent review finding #2) — no "
-                "I/O, no mutation; halts the flow at the first injected step so no real stage's "
-                "bound evidence sink or ledger mutation ever fires during replay"
-            ),
-        )
-
-
 def verify_replay_or_halt(
     *,
     inbox: SqliteEventInbox,
@@ -320,18 +269,25 @@ def verify_replay_or_halt(
 
     Split out of ``_wiring.py``'s ``_finalize`` purely for the size budget (its own function-size
     limit) — the replay core factory closes over ``registry``/``configuration`` the SAME way
-    ``_finalize`` builds its real ``core``, but with ``transmit=None``, a discarding sink, AND
-    (independent review finding #2) a genuinely side-effect-free :class:`_ReplayStage` standing in
-    for every real injected stage — NEVER the real ``stages`` dict, which would re-run every real
-    stage's own bound evidence sink and ledger mutation on every boot (see :class:`_ReplayStage`'s
-    own docstring for the full measurement and why the outcome-digest comparison is unaffected).
+    ``_finalize`` builds its real ``core``, but with a genuinely side-effect-free
+    :class:`~tos_runtime.engine.replay_stage.RecordedStage` standing in for every real injected
+    stage (dispatch CR5-3, 2026-09-09 — replacing the unconditional-``UNKNOWN`` ``_ReplayStage``
+    this module used to define; see :class:`~tos_runtime.engine.replay_stage.RecordedStage`'s own
+    module docstring for why re-running the deterministic core against RECORDED stage verdicts,
+    rather than a stand-in that halts unconditionally, is what design #31 §9 record/replay
+    actually calls for), and a
+    :class:`~tos_runtime.engine.replay_transmit.RecordedTransmit` for the send boundary IFF the
+    live run ever recorded a hand-off at all (``any_recorded_hand_off`` — CR5, 2026-09-09; see
+    that module's own docstring for why installing it unconditionally would itself be a
+    divergence source). Never the real ``stages``/``transmit``, which would re-run every real
+    stage's own bound evidence sink, ledger mutation, and transport call on every boot.
     """
 
     def _replay_core_factory() -> EngineCore:
-        replay_stage = _ReplayStage()
+        recorded_stage = RecordedStage(evidence_store)
         return EngineCore(
             registry=registry,
-            stages=dict.fromkeys(stages, replay_stage),
+            stages=dict.fromkeys(stages, recorded_stage),
             configuration=configuration,
             # TOS Phase 3 Wave 2 Lane B-R: the replay core gets its OWN
             # side-effect-free preconditions stand-in — never the real
@@ -341,7 +297,11 @@ def verify_replay_or_halt(
             # docstring). transport_nature is omitted (None) — the stand-in
             # ignores it unconditionally.
             preconditions=_ReplayPreconditions(),
-            transmit=None,
+            transmit=(
+                RecordedTransmit(evidence_store)
+                if any_recorded_hand_off(evidence_store)
+                else None
+            ),
             sink=NullEvidenceSink(),
             scheme=scheme,
         )
