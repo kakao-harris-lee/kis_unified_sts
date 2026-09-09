@@ -1,15 +1,21 @@
 """§7.2-2 — UNKNOWN at the send boundary is restrictive and releases nothing (design #31 §4.2 rule 3).
 
-The design's target: *"send 경계 UNKNOWN/timeout → POTENTIALLY_LIVE 보수 유지·no blind resubmit·
+The design's target: *"send 경계 UNKNOWN/timeout → quarantine 보수 유지·no blind resubmit·
 capacity 미해제"*, anchored to RFC-005 §11:325-327 (UNKNOWN is neither a rejection nor
-safe-to-retry) and ADR-002-002 INV-005:168 / INV-006:174.
+safe-to-retry), ADR-002-002 INV-005:168 / INV-006:174, and ADR-002-005 §7/§10 CPL-5 (Phase 3 wave
+2 review finding #2 / kernel disposition KW2b-#2).
 
-Three properties, each of which a naive implementation gets wrong in a different way:
+Four properties, each of which a naive implementation gets wrong in a different way:
 
 * an ``UNKNOWN`` / ``TIMEOUT`` result must **not** be folded into ``REJECTED`` knowledge — the two
   are different epistemic states and only one of them is a proof of non-liveness;
-* the capacity projection must stay exactly where it was — ``POTENTIALLY_LIVE`` — because a crash
-  or a silence after ``SEND_STARTED`` is intentionally treated as potentially live;
+* the capacity projection must move into quarantine — ``QUARANTINED_UNKNOWN`` — because ADR-002-005
+  §7 requires exactly that "until resolved", and CPL-5 requires the exact value whenever Broker
+  Order is ``UNKNOWN`` (before KW2b-#2 the projection instead left capacity at whatever it last
+  was, which under-claimed the fact and produced a false CPL-5 halt downstream);
+* escaping the quarantine happens only through positive broker evidence for the *same* attempt
+  (:data:`~tos.engine.state.QUARANTINE_RESOLUTION_EDGES`) — never a bare repeated ``UNKNOWN`` /
+  ``TIMEOUT`` (ADR-002-002 §18.6 "escaping quarantine requires evidence, never assertion");
 * **no** result kind may release the scope. The projection has no release path at all: releasing is
   the RCL's act and a producer-local counter creates no headroom (RFC-002 §9.1:557-558). This is
   asserted over the *whole* result vocabulary, not just the UNKNOWN case, so a future "an ACK frees
@@ -25,7 +31,9 @@ from decimal import Decimal
 import pytest
 from tos.canonical import ArtifactIntegrityError
 from tos.engine import (
+    PROJECTION_ORDER,
     PROJECTION_RANK,
+    QUARANTINE_RESOLUTION_EDGES,
     EgressKnowledge,
     EgressResultKind,
     EgressResultPayload,
@@ -75,14 +83,20 @@ def _egress_event(
 
 
 @pytest.mark.parametrize("kind", [EgressResultKind.UNKNOWN, EgressResultKind.TIMEOUT])
-def test_unknown_and_timeout_keep_the_reservation_potentially_live(kind) -> None:
-    """(§7.2-2) UNKNOWN / timeout hold the capacity projection at POTENTIALLY_LIVE."""
+def test_unknown_and_timeout_quarantine_the_reservation(kind) -> None:
+    """([KW2b-#2]) UNKNOWN / timeout force the capacity projection into QUARANTINED_UNKNOWN.
+
+    ADR-002-005 §7 "UNKNOWN here forces QUARANTINED_UNKNOWN in the Capacity dimension until
+    resolved"; before this fix the projection instead left capacity at POTENTIALLY_LIVE, which
+    under-claimed the fact and produced a false CPL-5 coupling violation downstream (Phase 3
+    wave 2 review finding #2).
+    """
     core, _, _, attempt_id = _sent_core()
     result = core.handle(_egress_event(kind, attempt_id))
 
     assert result.halt_reason is None
     assert result.reservation is not None
-    assert result.reservation.capacity_state is CapacityState.POTENTIALLY_LIVE
+    assert result.reservation.capacity_state is CapacityState.QUARANTINED_UNKNOWN
     assert result.reservation.knowledge is EgressKnowledge.UNKNOWN
 
 
@@ -323,11 +337,14 @@ def test_timeouts_with_no_broker_id_dedup_as_a_runtime_local_replay_guard() -> N
 
 
 def test_a_late_fill_after_timeout_on_the_same_attempt_is_applied() -> None:
-    """(Phase 3 A-K-2; ADR-002-002 §15.2 'later valid fill accepted') TIMEOUT then FULL_FILL applies.
+    """(Phase 3 A-K-2; ADR-002-002 §15.2 'later valid fill accepted'; [KW2b-#2]) TIMEOUT then
+    FULL_FILL applies — and resolves the quarantine TIMEOUT forced.
 
     A TIMEOUT is not a rejection and does not close the door on the *same* attempt: a later
-    FULL_FILL for that exact attempt is APPLIED — knowledge and capacity advance, and the scope is
-    never released (capacity release is the RCL's alone).
+    FULL_FILL for that exact attempt is APPLIED, resolving ``QUARANTINED_UNKNOWN`` down to
+    ``POSITION_CONSUMED`` via the closed ``QUARANTINE_RESOLUTION_EDGES`` table — positive broker
+    evidence for the same attempt is the one licit way out of quarantine (ADR-002-002 §18.6). The
+    scope is never released either way (capacity release is the RCL's alone).
     """
     core, _, _, attempt_id = _sent_core()
     timeout_result = core.handle(
@@ -336,7 +353,7 @@ def test_a_late_fill_after_timeout_on_the_same_attempt_is_applied() -> None:
     assert timeout_result.halt_reason is None
     assert timeout_result.result_disposition is ResultDisposition.APPLIED
     assert core.ledger.outstanding(instrument_key()).capacity_state is (
-        CapacityState.POTENTIALLY_LIVE
+        CapacityState.QUARANTINED_UNKNOWN
     )
 
     fill_result = core.handle(
@@ -688,11 +705,47 @@ def test_the_projection_never_revives_to_a_less_consumed_state() -> None:
     assert core.ledger.outstanding(instrument_key()).capacity_state is (
         CapacityState.POSITION_CONSUMED
     )
-    # An ACK arriving late leaves the capacity axis alone (its mapping has no capacity target),
-    # and an UNKNOWN likewise: neither can walk the projection back to POTENTIALLY_LIVE.
-    core.handle(_egress_event(EgressResultKind.UNKNOWN, attempt_id, sequence=3))
+    # An ACK arriving late leaves the capacity axis alone (its ordinary mapping has no capacity
+    # target, and this is not a quarantine-resolution case since the projection is not quarantined
+    # — QUARANTINE_RESOLUTION_EDGES is only consulted from QUARANTINED_UNKNOWN).
+    core.handle(_egress_event(EgressResultKind.ACK, attempt_id, sequence=3))
     assert core.ledger.outstanding(instrument_key()).capacity_state is (
         CapacityState.POSITION_CONSUMED
+    )
+
+
+def test_an_unknown_after_settlement_quarantines_forward_not_backward() -> None:
+    """([KW2b-#2]) UNKNOWN after a definite settlement is a forward move into quarantine.
+
+    Unlike ACK (whose ordinary mapping has no explicit capacity target and so cannot move the
+    projection at all), UNKNOWN's capacity target is now the unconditional, explicit
+    ``QUARANTINED_UNKNOWN`` (ADR-002-005 §7 "until resolved") — and ``QUARANTINED_UNKNOWN`` is
+    the single most-conservative rank in ``PROJECTION_ORDER``, strictly above
+    ``POSITION_CONSUMED``. So a later UNKNOWN for the same attempt is APPLIED even after a full
+    fill: this is *not* the non-revival guard's business (rank increases, it does not decrease) —
+    it is the intended, blanket "any UNKNOWN quarantines" rule, not an exception to it.
+    """
+    core, _, _, attempt_id = _sent_core()
+    core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+        )
+    )
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.POSITION_CONSUMED
+    )
+
+    result = core.handle(
+        _egress_event(EgressResultKind.UNKNOWN, attempt_id, sequence=3)
+    )
+    assert result.halt_reason is None
+    assert result.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.QUARANTINED_UNKNOWN
     )
 
 
@@ -748,3 +801,94 @@ def test_the_projection_rank_orders_the_states_conservatively() -> None:
     assert PROJECTION_RANK[CapacityState.POSITION_CONSUMED] < (
         PROJECTION_RANK[CapacityState.RELEASE_PENDING_PROOF]
     )
+    assert PROJECTION_RANK[CapacityState.RELEASE_PENDING_PROOF] < (
+        PROJECTION_RANK[CapacityState.QUARANTINED_UNKNOWN]
+    ), (
+        "QUARANTINED_UNKNOWN must outrank every settled state ([KW2b-#2]; mirrors "
+        "tos.rcl.predicates._CONSERVATISM_RANK, where it is the single highest member)"
+    )
+
+
+def test_quarantined_unknown_is_the_last_projection_order_member() -> None:
+    """([KW2b-#2]) QUARANTINED_UNKNOWN sits after RELEASE_PENDING_PROOF, not before it."""
+    assert PROJECTION_ORDER[-1] is CapacityState.QUARANTINED_UNKNOWN
+    assert PROJECTION_ORDER[-2] is CapacityState.RELEASE_PENDING_PROOF
+
+
+# ---------------------------------------------------------------------------
+# [KW2b-#2] quarantine resolution — QUARANTINE_RESOLUTION_EDGES
+# ---------------------------------------------------------------------------
+
+
+def _quarantined_core(kind: EgressResultKind = EgressResultKind.TIMEOUT):
+    """A core whose reservation has already been forced into QUARANTINED_UNKNOWN by ``kind``."""
+    core, sink, transmit, attempt_id = _sent_core()
+    quarantine = core.handle(_egress_event(kind, attempt_id))
+    assert quarantine.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.QUARANTINED_UNKNOWN
+    )
+    return core, sink, transmit, attempt_id
+
+
+@pytest.mark.parametrize(
+    ("kind", "fills"),
+    [
+        (EgressResultKind.ACK, {}),
+        (
+            EgressResultKind.PARTIAL_FILL,
+            {"filled_quantity": Decimal("1"), "remaining_quantity": Decimal("1")},
+        ),
+        (
+            EgressResultKind.FULL_FILL,
+            {"filled_quantity": Decimal("2"), "remaining_quantity": Decimal("0")},
+        ),
+        (EgressResultKind.REJECT, {}),
+        (EgressResultKind.CANCEL_ACK, {}),
+        (EgressResultKind.EXPIRED, {}),
+    ],
+)
+def test_positive_evidence_resolves_the_quarantine(kind, fills) -> None:
+    """([KW2b-#2]; ADR-002-002 §18.6/§15.2) Every ``QUARANTINE_RESOLUTION_EDGES`` member actually
+    resolves the quarantine, even though every one of its targets ranks *below*
+    ``QUARANTINED_UNKNOWN`` in ``PROJECTION_ORDER`` — positive broker evidence for the same
+    attempt is the one licit rank decrease ("escaping quarantine requires evidence, never
+    assertion").
+    """
+    core, _, _, attempt_id = _quarantined_core()
+    result = core.handle(_egress_event(kind, attempt_id, sequence=3, **fills))
+
+    assert result.halt_reason is None
+    assert result.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        QUARANTINE_RESOLUTION_EDGES[kind]
+    )
+
+
+@pytest.mark.parametrize("kind", [EgressResultKind.UNKNOWN, EgressResultKind.TIMEOUT])
+def test_a_repeated_unknown_or_timeout_stays_quarantined(kind) -> None:
+    """([KW2b-#2]) Neither UNKNOWN nor TIMEOUT is positive evidence, so repeating either while
+    quarantined never resolves it (ADR-002-002 §18.6). Both carry no attempt-distinguishing
+    magnitude and no broker execution id, so the repeat collides on the DUPLICATE signature
+    exactly as an ordinary byte-identical re-send does.
+    """
+    core, _, _, attempt_id = _quarantined_core(kind)
+    repeat = core.handle(_egress_event(kind, attempt_id, sequence=3))
+
+    assert repeat.halt_reason is HaltReason.RESULT_UNMATCHED
+    assert repeat.result_disposition is ResultDisposition.DUPLICATE
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.QUARANTINED_UNKNOWN
+    )
+
+
+def test_quarantine_resolution_edges_excludes_unknown_and_timeout() -> None:
+    """([KW2b-#2]) The closed resolution table never lists UNKNOWN/TIMEOUT as an escape route —
+    every *other* member of the closed EgressResultKind vocabulary is, and is, listed.
+    """
+    assert EgressResultKind.UNKNOWN not in QUARANTINE_RESOLUTION_EDGES
+    assert EgressResultKind.TIMEOUT not in QUARANTINE_RESOLUTION_EDGES
+    assert set(QUARANTINE_RESOLUTION_EDGES) == set(EgressResultKind) - {
+        EgressResultKind.UNKNOWN,
+        EgressResultKind.TIMEOUT,
+    }

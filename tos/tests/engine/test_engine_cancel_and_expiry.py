@@ -250,8 +250,18 @@ def test_mutation_cancel_ack_treated_as_released_is_a_cpl4_violation() -> None:
             CapacityState.RELEASE_PENDING_PROOF,
             EgressKnowledge.REJECTED,
         ),
-        (EgressResultKind.UNKNOWN, {}, None, EgressKnowledge.UNKNOWN),
-        (EgressResultKind.TIMEOUT, {}, None, EgressKnowledge.UNKNOWN),
+        (
+            EgressResultKind.UNKNOWN,
+            {},
+            CapacityState.QUARANTINED_UNKNOWN,
+            EgressKnowledge.UNKNOWN,
+        ),
+        (
+            EgressResultKind.TIMEOUT,
+            {},
+            CapacityState.QUARANTINED_UNKNOWN,
+            EgressKnowledge.UNKNOWN,
+        ),
         (
             EgressResultKind.CANCEL_ACK,
             {},
@@ -269,8 +279,13 @@ def test_mutation_cancel_ack_treated_as_released_is_a_cpl4_violation() -> None:
 def test_the_full_eight_member_transition_table(
     kind, fills, expected_capacity, expected_knowledge
 ) -> None:
-    """(§2.2, full 전수) Every one of the eight ``EgressResultKind`` members transitions exactly
-    as declared — capacity ``None`` means "unchanged, still POTENTIALLY_LIVE"."""
+    """(§2.2, full 전수; [KW2b-#2]) Every one of the eight ``EgressResultKind`` members transitions
+    exactly as declared. Capacity ``None`` (``ACK`` only) means "no explicit target, unchanged,
+    still ``POTENTIALLY_LIVE``" — distinct from ``UNKNOWN`` / ``TIMEOUT``, whose target is now the
+    unconditional, explicit ``QUARANTINED_UNKNOWN`` (ADR-002-005 §7 "until resolved"; before this
+    fix both were also ``None``, which under-claimed the fact and produced a false CPL-5 coupling
+    violation downstream — Phase 3 wave 2 review finding #2).
+    """
     core, _, _, attempt_id = _sent_core()
     result = core.handle(_egress_event(kind, attempt_id, **fills))
 

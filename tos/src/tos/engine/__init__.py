@@ -189,6 +189,7 @@ from tos.engine.standins import ProvisionalStandIn, provisional_stage_map
 from tos.engine.state import (
     PROJECTION_ORDER,
     PROJECTION_RANK,
+    QUARANTINE_RESOLUTION_EDGES,
     ProvisionalReservationLedger,
     ResultApplication,
     knowledge_for_result,
@@ -280,6 +281,7 @@ __all__ = [
     # provisional core state (§2.4 / §4.4)
     "PROJECTION_ORDER",
     "PROJECTION_RANK",
+    "QUARANTINE_RESOLUTION_EDGES",
     "ProvisionalReservationLedger",
     "ResultApplication",
     "knowledge_for_result",

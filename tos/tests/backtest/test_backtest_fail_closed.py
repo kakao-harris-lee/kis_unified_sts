@@ -5,10 +5,12 @@ first-class. The wiring's *only* safety value is that it stops, with its reason 
 required fact is missing, denied, unknown, or unverifiable (RFC-002 §10.8:761).
 
 The UNKNOWN half is the subtler one. ``UNKNOWN`` and ``TIMEOUT`` are neither a rejection nor
-safe-to-retry (RFC-005 §11:325-327): the capacity projection **stays** at ``POTENTIALLY_LIVE``,
-nothing is released, and nothing is resubmitted (ADR-002-002 INV-005:168 / INV-006:174). A harness
-that quietly retried, or that read a timeout as "not sent", would be manufacturing the double-send
-the whole design exists to prevent — so every one of those readings is asserted absent here.
+safe-to-retry (RFC-005 §11:325-327): the capacity projection is forced into quarantine —
+``QUARANTINED_UNKNOWN`` (Phase 3 wave 2 review finding #2 / kernel disposition KW2b-#2;
+ADR-002-005 §7 "until resolved") — nothing is released, and nothing is resubmitted (ADR-002-002
+INV-005:168 / INV-006:174). A harness that quietly retried, or that read a timeout as "not sent",
+would be manufacturing the double-send the whole design exists to prevent — so every one of those
+readings is asserted absent here.
 
 Regime tag: orchestration authoring evidence only; closes no EV (design #33 §1.1).
 """
@@ -50,15 +52,15 @@ from ._backtest_fixtures import (
 @pytest.mark.parametrize(
     "scenario_id", [ScenarioId.ENTRY_UNKNOWN, ScenarioId.ENTRY_TIMEOUT]
 )
-def test_unknown_and_timeout_retain_potentially_live_and_resubmit_nothing(
+def test_unknown_and_timeout_quarantine_and_resubmit_nothing(
     scenario_id: ScenarioId,
 ) -> None:
-    """(§8-3) Capacity is retained, knowledge is explicitly UNKNOWN, and nothing is re-sent."""
+    """(§8-3; [KW2b-#2]) Capacity is quarantined, knowledge is explicitly UNKNOWN, nothing re-sent."""
     run, core, fill_model, _sink = run_scenario(scenario_for(scenario_id))
 
     reservation = core.ledger.outstanding(instrument_key())
     assert reservation is not None
-    assert reservation.capacity_state is CapacityState.POTENTIALLY_LIVE
+    assert reservation.capacity_state is CapacityState.QUARANTINED_UNKNOWN
     assert reservation.knowledge is EgressKnowledge.UNKNOWN
     assert (
         reservation.knowledge is not EgressKnowledge.REJECTED

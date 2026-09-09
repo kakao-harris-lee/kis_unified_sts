@@ -24,8 +24,10 @@ import pytest
 from tos.engine import (
     EgressKnowledge,
     EgressResultKind,
+    EgressResultPayload,
     InstrumentKey,
     ProvisionalReservation,
+    ProvisionalReservationLedger,
     composite_state_for,
     result_transition_for,
 )
@@ -38,6 +40,8 @@ from tos.orthostate import (
     coupling_violations,
 )
 from tos.rcl import CapacityState
+
+from ._engine_fixtures import PROVISIONAL_MAX_UNRESOLVED_SEND_PER_SCOPE
 
 
 def _key() -> InstrumentKey:
@@ -223,25 +227,65 @@ def test_a_full_fill_mapped_composite_has_no_coupling_violation() -> None:
     )
 
 
-def test_a_sent_unconfirmed_composite_at_potentially_live_has_no_violation() -> None:
-    """(CPL-1 satisfied) SENT_UNCONFIRMED + POTENTIALLY_LIVE is exactly what CPL-1 requires."""
-    projection = ProvisionalReservation(
-        instrument_key=_key(),
-        capacity_state=CapacityState.POTENTIALLY_LIVE,
-        knowledge=EgressKnowledge.SENT_UNCONFIRMED,
-        proposal_id="prop-4",
+@pytest.mark.parametrize("kind", list(EgressResultKind))
+def test_every_result_kind_produces_a_composite_with_no_coupling_violation(
+    kind,
+) -> None:
+    """(Phase 3 wave 2 review finding #2 / kernel disposition KW2b-#2)
+
+    Every member of the closed ``EgressResultKind`` vocabulary, once actually run through the
+    engine's own :class:`~tos.engine.ProvisionalReservationLedger` and re-projected via
+    :func:`composite_state_for`, must produce a composite with **zero** CPL coupling violations
+    under a current authority epoch. This replaces
+    ``test_a_sent_unconfirmed_composite_at_potentially_live_has_no_violation``, which hand-built
+    a composite (``SENT_UNCONFIRMED`` + ``POTENTIALLY_LIVE``) that no real ``EgressResultKind``
+    ever produces — the mapping only ever reaches that Attempt state paired with Broker Order
+    ``NONE_OBSERVED`` / ``UNKNOWN``, never a settled Broker Order (the reviewer's P2 finding).
+
+    Before the KW2b-#2 fix, ``UNKNOWN`` and ``TIMEOUT`` left capacity at ``POTENTIALLY_LIVE``
+    while this adapter mapped Broker Order to ``UNKNOWN`` — CPL-5 ("Broker=UNKNOWN =>
+    Capacity=QUARANTINED_UNKNOWN exactly") then fired on both, a false critical halt on the one
+    result kind RFC-005 §11 calls normal. Reproduces the reviewer's P2 8-kind sweep as a
+    regression guard: removing ``CapacityState.QUARANTINED_UNKNOWN`` from ``PROJECTION_ORDER``,
+    or mapping ``TIMEOUT``'s capacity target back to ``POTENTIALLY_LIVE``, must turn this red.
+    """
+    ledger = ProvisionalReservationLedger(
+        max_unresolved_send_per_scope=PROVISIONAL_MAX_UNRESOLVED_SEND_PER_SCOPE
     )
-    composite = composite_state_for(
-        projection,
-        intent_state=IntentState.ACTIVE,
-        attempt_state=TransmissionAttemptState.SENT_UNCONFIRMED,
-    )
-    assert (
-        coupling_violations(
-            composite, CouplingSideConditions(authority_epoch_current=True)
+    key = _key()
+    ledger.commit_unbound(key, proposal_id="prop-sweep")
+    ledger.bind_attempt(key, attempt_id="attempt-sweep")
+    ledger.mark_potentially_live(key)
+
+    fills: dict[str, object] = {}
+    if kind is EgressResultKind.FULL_FILL:
+        fills = {"filled_quantity": Decimal("2"), "remaining_quantity": Decimal("0")}
+    elif kind is EgressResultKind.PARTIAL_FILL:
+        fills = {"filled_quantity": Decimal("1"), "remaining_quantity": Decimal("1")}
+
+    application = ledger.apply_egress_result(
+        EgressResultPayload(
+            instrument_key=key,
+            attempt_id="attempt-sweep",
+            kind=kind,
+            **fills,
         )
-        == frozenset()
     )
+    assert application.applied, f"{kind} was not applied: {application.disposition}"
+    assert application.projection is not None
+
+    attempt, broker, knowledge = result_transition_for(kind)
+    composite = composite_state_for(
+        application.projection,
+        intent_state=IntentState.ACTIVE,
+        attempt_state=attempt,
+    )
+    assert composite.broker_order_state is broker
+    assert composite.knowledge_state is knowledge
+    violations = coupling_violations(
+        composite, CouplingSideConditions(authority_epoch_current=True)
+    )
+    assert violations == frozenset(), f"{kind}: {sorted(violations)}"
 
 
 def test_cpl1_violation_sent_unconfirmed_but_capacity_committed_unbound() -> None:

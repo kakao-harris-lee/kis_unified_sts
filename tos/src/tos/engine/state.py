@@ -23,11 +23,15 @@ Two structural properties carry the design's weight:
   Releasing capacity is an RCL act (ADR-002-002 §10.1 / RFC-002 §9.1:557), and a producer-local
   counter "SHALL NOT create headroom" (RFC-002 §9.1:558). So no egress result — not an
   acknowledgement, not a full fill, not a rejection — ever frees a scope here. The projection only
-  advances forward along a conservatism-ordered rank; an ``UNKNOWN`` / timeout keeps the capacity
-  projection at ``POTENTIALLY_LIVE`` and re-submits nothing (design #31 §4.2 rule 3; ADR-002-002
-  INV-005:168 — a crash after ``SEND_STARTED`` must not release capacity). The honest consequence
-  is that a slice-1 scope stays occupied for the lifetime of the projection; real release is
-  deferred with the RCL runtime (design #31 §9-2).
+  advances forward along a conservatism-ordered rank; an ``UNKNOWN`` / timeout forces the capacity
+  projection into ``QUARANTINED_UNKNOWN`` (Phase 3 wave 2 KW2b-#2; ADR-002-005 §7 "``UNKNOWN`` here
+  forces ``QUARANTINED_UNKNOWN`` in the Capacity dimension until resolved") and re-submits nothing
+  (design #31 §4.2 rule 3; ADR-002-002 INV-005:168 — a crash after ``SEND_STARTED`` must not
+  release capacity). Escaping the quarantine happens only through the closed
+  :data:`QUARANTINE_RESOLUTION_EDGES` table — positive broker evidence for the exact attempt, never
+  a bare repeated ``UNKNOWN`` / ``TIMEOUT`` (ADR-002-002 §18.6 "escaping quarantine requires
+  evidence, never assertion"). The honest consequence is that a slice-1 scope stays occupied for
+  the lifetime of the projection; real release is deferred with the RCL runtime (design #31 §9-2).
 
 Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #31 §0.3). No clock, no RNG.
 """
@@ -49,6 +53,7 @@ from tos.rcl import CapacityState
 __all__ = [
     "PROJECTION_ORDER",
     "PROJECTION_RANK",
+    "QUARANTINE_RESOLUTION_EDGES",
     "ProvisionalReservationLedger",
     "ResultApplication",
     "knowledge_for_result",
@@ -57,8 +62,15 @@ __all__ = [
 
 #: The conservatism-forward order of the capacity states this projection uses (design #31 §2.4),
 #: least-settled first. A transition may only move to an equal-or-later position — non-revival, the
-#: series discipline. ``RELEASE_PENDING_PROOF`` sits last because a proven rejection still awaits
-#: the RCL-owned release proof; ``RELEASED`` is **absent**, because this projection cannot release.
+#: series discipline. ``RELEASE_PENDING_PROOF`` sits before ``QUARANTINED_UNKNOWN`` because a
+#: proven rejection still awaits the RCL-owned release proof, which is a *lesser* claim than "the
+#: broker state cannot currently be determined at all"; ``QUARANTINED_UNKNOWN`` sits last —
+#: strictly the most conservative member this projection ever reaches (Phase 3 wave 2 KW2b-#2) —
+#: mirroring its position as the single highest entry of ``tos.rcl.predicates._CONSERVATISM_RANK``
+#: (rank 8 of 9, RELEASED lowest at 0; report to the reviewer: this projection's own local rank has
+#: no ``TRAPPED_CONSUMED`` member to sit below, so relative to every member it does carry,
+#: ``QUARANTINED_UNKNOWN`` is placed strictly above ``RELEASE_PENDING_PROOF`` exactly as the RCL's
+#: full order has it). ``RELEASED`` is **absent**, because this projection cannot release.
 PROJECTION_ORDER: tuple[CapacityState, ...] = (
     CapacityState.COMMITTED_UNBOUND,
     CapacityState.ATTEMPT_BOUND,
@@ -66,6 +78,7 @@ PROJECTION_ORDER: tuple[CapacityState, ...] = (
     CapacityState.PARTIALLY_CONSUMED,
     CapacityState.POSITION_CONSUMED,
     CapacityState.RELEASE_PENDING_PROOF,
+    CapacityState.QUARANTINED_UNKNOWN,
 )
 
 #: The rank, derived structurally from :data:`PROJECTION_ORDER` so the two can never drift.
@@ -74,9 +87,13 @@ PROJECTION_RANK: dict[CapacityState, int] = {
 }
 
 #: How an egress result maps onto the two orthogonal axes (RFC-002 §12 Orthogonal Trading State).
-#: The capacity projection is the *conservative* axis: only a definite settlement advances it, and
-#: ``UNKNOWN`` / ``TIMEOUT`` leave it exactly where it was — ``POTENTIALLY_LIVE`` (design #31
-#: §4.2 rule 3; ADR-002-002 INV-005:168 / INV-006:174).
+#: The capacity projection is the *conservative* axis: only a definite settlement advances it in
+#: the ordinary case, and ``UNKNOWN`` / ``TIMEOUT`` force it into quarantine — ``QUARANTINED_UNKNOWN``
+#: — rather than leaving it at the last-observed rank (Phase 3 wave 2 KW2b-#2; design #31 §4.2
+#: rule 3; ADR-002-002 INV-005:168 / INV-006:174; ADR-002-005 §7/§9). Before this fix both mapped
+#: to ``None`` ("leave capacity untouched"), which under-claimed: a broker state that "cannot
+#: currently be determined" (§7) is a materially different, *more* conservative fact than "still
+#: whatever it last was", and CPL-5 (ADR-002-005 §10) requires the exact value.
 _RESULT_TRANSITIONS: dict[
     EgressResultKind, tuple[EgressKnowledge, CapacityState | None]
 ] = {
@@ -93,8 +110,14 @@ _RESULT_TRANSITIONS: dict[
         EgressKnowledge.REJECTED,
         CapacityState.RELEASE_PENDING_PROOF,
     ),
-    EgressResultKind.UNKNOWN: (EgressKnowledge.UNKNOWN, None),
-    EgressResultKind.TIMEOUT: (EgressKnowledge.UNKNOWN, None),
+    EgressResultKind.UNKNOWN: (
+        EgressKnowledge.UNKNOWN,
+        CapacityState.QUARANTINED_UNKNOWN,
+    ),
+    EgressResultKind.TIMEOUT: (
+        EgressKnowledge.UNKNOWN,
+        CapacityState.QUARANTINED_UNKNOWN,
+    ),
     # ★ [KW2-C1] CANCEL_ACK / EXPIRED (Phase 3 wave 2 §2.2): both are broker-observed, but
     # neither is a release. ADR-002-002 §16.2 "Cancel Acknowledgement moves the reservation to
     # RELEASE_PENDING_PROOF unless the broker capability profile proves ... Final Quantity
@@ -112,6 +135,42 @@ _RESULT_TRANSITIONS: dict[
         EgressKnowledge.EXPIRED,
         CapacityState.RELEASE_PENDING_PROOF,
     ),
+}
+
+#: The closed, frozen set of egress results whose positive broker evidence may pull the
+#: projection back **out** of ``QUARANTINED_UNKNOWN`` (Phase 3 wave 2 KW2b-#2). Consulted in
+#: :meth:`ProvisionalReservationLedger.apply_egress_result` *before* the generic rank-regression
+#: guard — resolution is deliberately the one exception to "a transition may only move to an
+#: equal-or-later position", because ``QUARANTINED_UNKNOWN`` is the single most-conservative
+#: member of :data:`PROJECTION_ORDER`: left to the generic guard alone, quarantine would be
+#: terminal and nothing could ever exit it.
+#:
+#: ADR-002-002 §18.6 "escaping quarantine requires evidence, never assertion" is why ``UNKNOWN``
+#: and ``TIMEOUT`` are deliberately **absent** here: neither carries positive evidence about the
+#: attempt, so a repeat of either while already quarantined is handled by the ordinary rank check
+#: below (equal rank, ``QUARANTINED_UNKNOWN`` -> ``QUARANTINED_UNKNOWN``) and the duplicate-
+#: signature machinery — never this table. Every other member of the closed
+#: :class:`~tos.engine.vocabulary.EgressResultKind` vocabulary *is* positive evidence about this
+#: exact attempt (a broker acknowledgement, a fill, a proven rejection, a cancel/expiry
+#: acknowledgement) and each maps to exactly the capacity target :data:`_RESULT_TRANSITIONS`
+#: already assigns it in the non-quarantined case — except ``ACK``, whose ordinary mapping is
+#: ``None`` ("leave capacity where it is") because it never needs to *move* capacity when nothing
+#: was quarantined; resolving out of quarantine does need an explicit target, hence the separate
+#: table rather than reusing ``_RESULT_TRANSITIONS`` directly.
+#:
+#: ⚠ Still the provisional, non-authoritative projection (module docstring). The real resolution
+#: of a Risk Capacity Ledger quarantine is an RCL act gated on Final Quantity Proof (ADR-002-002
+#: §15.2 / §18.6) — a runtime capability this slice does not have (deferred to Phase 5). This
+#: table only stops the **local mirror** from over-reporting a definite settlement as an
+#: unresolved unknown once positive evidence for that exact attempt actually arrives; it asserts
+#: no RCL-authoritative release and creates no headroom (RFC-002 §9.1:558).
+QUARANTINE_RESOLUTION_EDGES: dict[EgressResultKind, CapacityState] = {
+    EgressResultKind.ACK: CapacityState.POTENTIALLY_LIVE,
+    EgressResultKind.PARTIAL_FILL: CapacityState.PARTIALLY_CONSUMED,
+    EgressResultKind.FULL_FILL: CapacityState.POSITION_CONSUMED,
+    EgressResultKind.REJECT: CapacityState.RELEASE_PENDING_PROOF,
+    EgressResultKind.CANCEL_ACK: CapacityState.RELEASE_PENDING_PROOF,
+    EgressResultKind.EXPIRED: CapacityState.RELEASE_PENDING_PROOF,
 }
 
 
@@ -275,14 +334,35 @@ class ProvisionalReservationLedger:
 
     # -- projection advance (no release path exists) -------------------------
 
-    def _store(self, reservation: ProvisionalReservation) -> ProvisionalReservation:
-        """Store a reservation projection, enforcing forward-only (non-revival) advance."""
+    def _store(
+        self,
+        reservation: ProvisionalReservation,
+        *,
+        allow_quarantine_resolution: bool = False,
+    ) -> ProvisionalReservation:
+        """Store a reservation projection, enforcing forward-only (non-revival) advance.
+
+        Args:
+            reservation: The reservation to store.
+            allow_quarantine_resolution: ``True`` only when the caller
+                (:meth:`apply_egress_result`) has already independently verified this exact rank
+                decrease is a licensed :data:`QUARANTINE_RESOLUTION_EDGES` exit from
+                ``QUARANTINED_UNKNOWN`` (Phase 3 wave 2 KW2b-#2; ADR-002-002 §18.6). Every other
+                call site (``commit_unbound`` / ``bind_attempt`` / ``mark_potentially_live``) never
+                passes this, so the non-revival guard stays absolute for them — none of the three
+                is ever legitimately reachable while quarantined in the first place (the at-most-
+                one exposure retention denies a new attempt for an occupied, quarantined scope).
+        """
         key_tuple = self._key_tuple(reservation.instrument_key)
         current = self._reservations.get(key_tuple)
         if current is not None:
             current_rank = PROJECTION_RANK[current.capacity_state]
             next_rank = PROJECTION_RANK[reservation.capacity_state]
-            if next_rank < current_rank:
+            resolving_quarantine = (
+                allow_quarantine_resolution
+                and current.capacity_state is CapacityState.QUARANTINED_UNKNOWN
+            )
+            if next_rank < current_rank and not resolving_quarantine:
                 raise ArtifactIntegrityError(
                     "provisional capacity projection may not revive to a less-consumed state "
                     f"({current.capacity_state} -> {reservation.capacity_state}) — non-revival "
@@ -490,12 +570,28 @@ class ProvisionalReservationLedger:
                 projection=current,
             )
         knowledge, capacity_state = _RESULT_TRANSITIONS[payload.kind]
+        # ★ [KW2b-#2] Quarantine resolution is checked *first*, and is the one deliberate
+        # exception to the rank-regression guard immediately below: positive broker evidence for
+        # this exact attempt (never a bare repeated UNKNOWN/TIMEOUT — see
+        # :data:`QUARANTINE_RESOLUTION_EDGES`'s own docstring) may pull the projection back out of
+        # ``QUARANTINED_UNKNOWN`` even though that is a rank *decrease*, because ADR-002-002 §18.6
+        # / §15.2 make positive evidence the one licit way out of quarantine. Left to the generic
+        # guard alone, quarantine would be terminal — ``QUARANTINED_UNKNOWN`` is the single
+        # highest rank in :data:`PROJECTION_ORDER`, so nothing could ever rank above it to exit.
+        resolving_quarantine = (
+            current.capacity_state is CapacityState.QUARANTINED_UNKNOWN
+            and payload.kind in QUARANTINE_RESOLUTION_EDGES
+        )
+        if resolving_quarantine:
+            capacity_state = QUARANTINE_RESOLUTION_EDGES[payload.kind]
         # ★ [K2-p3-#4] Refuse a rank-regressing target *before* touching ``_store`` at all: the
         # non-revival guard there must never be reached (and must never raise) on this path — a
         # late/reordered result is a recorded conservative outcome, not a crash (design plan
         # 2026-09-09 §1.1). ADR-002-002 §15.2 still wants the fact preserved, which is exactly what
-        # the caller's ``RESULT_UNMATCHED`` evidence record does with this disposition.
-        if capacity_state is not None:
+        # the caller's ``RESULT_UNMATCHED`` evidence record does with this disposition. Skipped
+        # when the quarantine-resolution branch above already picked the target explicitly — that
+        # branch is the one place a rank decrease is licit.
+        elif capacity_state is not None:
             current_rank = PROJECTION_RANK[current.capacity_state]
             next_rank = PROJECTION_RANK[capacity_state]
             if next_rank < current_rank:
@@ -521,7 +617,10 @@ class ProvisionalReservationLedger:
         if payload.kind in (EgressResultKind.FULL_FILL, EgressResultKind.PARTIAL_FILL):
             update["filled_quantity"] = payload.filled_quantity
             update["remaining_quantity"] = payload.remaining_quantity
-        stored = self._store(current.model_copy(update=update))
+        stored = self._store(
+            current.model_copy(update=update),
+            allow_quarantine_resolution=resolving_quarantine,
+        )
         self._applied_result_signatures[key_tuple] = applied_signatures + (signature,)
         return ResultApplication(
             applied=True, disposition=ResultDisposition.APPLIED, projection=stored
