@@ -118,6 +118,28 @@
 
 **독립 실측(최종 트리 `1d58b02c`)**: runtime **539 passed** rc=0 · kernel **9236 passed** rc=0 · mypy 256/62 clean · ruff 0 · black 956 unchanged · firewall PASS · lint-imports 3 KEPT · budget 0 위반(31 등재 · `_wiring.py` 1116→1172) · completion GREEN · spec PASS · contract PASS · tos-spec/계약 문서 무편집 · 커널 diff 는 A-K/D-K 커밋에만.
 
-### 7.2 웨이브 1 독립 리뷰 처분
+### 7.2 웨이브 1 독립 리뷰 처분 (Claude 측 `code-reviewer` 레인 · 저작자와 분리 · 2026-09-09)
 
-(리뷰 후 기입)
+1차 verdict **needs-attention**(HIGH 4 · MEDIUM 6 · LOW 7) · 게이트 전부 재현 · 뮤테이션 M1~M10 생존 0(단 M1/M5/M6/M7 은 런타임 스위트가 못 봄 — #17) · 커널 diff 귀속 clean.
+
+| # | 심각도 | 지적 | 처분 |
+|---|---|---|---|
+| 1 | HIGH | 재생이 `outcome_digest` None↔None(모든 EGRESS_RESULT)을 `INCONCLUSIVE`=divergence 로 판정 → 첫 send 후 재부팅 영구 실패(compose 프로브 실증) | 수용 — R2A-#1: None/None 은 «식별자 없음»(uncompared) · 비대칭·DIVERGED 만 divergence · EGRESS_RESULT 포함 재생 테스트 |
+| 2 | HIGH | 재생 코어가 실 stage 를 받아 IAP 소비·ARE/AFG 결정·RCL append 를 재실행(증거 카운트 +2 실측) | 수용 — R2A-#2: 재생 코어는 부작용 0 stand-in stage(전 step UNKNOWN) · pipeline digest 는 flow 이전 산출임을 테스트로 실증 · 도크스트링 정정 |
+| 3 | HIGH | `core.handle`~`EVENT_CONSUMED` 사이 크래시 → 재기동 시 같은 attempt 재전송(프로브: transport 2회) · 해당 테스트는 handle 을 호출조차 안 함 | 수용 — R2A-#3: write-ahead `EVENT_HANDLING_STARTED` 마커 · 마커 있고 CONSUMED 없으면 재처리 금지 + `HANDLING_INTERRUPTED_POSSIBLY_LIVE` · send 경계 증거가 있으면 `record_halt`. 잔여: 빈 인메모리 원장의 보수 재구성은 설계 #31 §9-7(Phase 5) |
+| 4 | HIGH | REJECT→늦은 FULL_FILL · FULL_FILL→늦은 PARTIAL 이 `_store` 비회생 가드에서 raise(§15.2 «valid later fill accepted» 위반 · A-K-2 가 catch 제거) | 수용 — K2-#4: `ResultDisposition.NON_MONOTONIC_PROJECTION`(투영 불변 · 사실은 증거에 보존 · 해소는 recon/Phase 5) · raise 경로 0 |
+| 5 | MEDIUM | `filled_quantity` 하향 역행이 APPLIED(4→1) | 수용 — K2-#5: `QUANTITY_REGRESSION` 비적용 처분 |
+| 6 | MEDIUM | DUPLICATE 가 드라이버가 매번 새로 찍는 reference 를 포함해 실제 브로커 재전송을 못 잡음(§15.3 정체 아님) | 수용 — K2-#6: `broker_execution_id` 추가 · 서명에서 reference 제외 · 합성 transport 의 결정론 execution id 는 K2 보고 후 라우팅 |
+| 7 | MEDIUM | 다른 attempt 의 결과가 타임아웃 감시를 지움(프로브: TIMEOUT 미주입) | 수용 — R2A-#7: APPLIED 이고 tracked attempt 일 때만 해제 |
+| 8 | MEDIUM | 편차 ⑤ = fail-open: 소스 부재 시 빈 레지스트리 부팅(로더의 «전략 0 = 시작 안 함» 과 모순) | 수용 — R2D-#8: 부재 ⇒ 거부 · `allow_no_strategies=True` 명시 옵트아웃 + 증거 |
+| 9 | MEDIUM | 편차 ④: `config` 소스 ref 가 빈 bindings 로 조용히 무력(UNKNOWN→False) — 권장 저작 형태가 정확히 no-op | 수용 — R2D-#9: lowering 으로 `config` ref 검출 시 로드 거부 · bindings 표면은 후속 웨이브 |
+| 10 | MEDIUM | «typed algebra 는 escape 를 표현 못 한다» 거짓 — `Operand(ref=("ambient","now"))` 구성 가능 · 새 게이트가 실제로 잡음(웨이브 전 in-process 경로가 불안전했음) | 수용 — K2-#10: `Operand` 가 `ref[0]` 을 양성 검증 · 도크스트링 3곳 정정 · 두 게이트 구조 일치 |
+| 11 | LOW | replay 도크스트링 None/None «trivially MATCH» 오기 | 수용 — R2A-#1 과 함께 |
+| 12 | LOW | 로더 `*.yaml` 만 · `.yml` 조용히 무시 | 수용 — R2D-#12: `.yml` 포함 · 그 외 파일 존재 시 거부 |
+| 13 | LOW | `_find_consumed_receipt` 선형 스캔 | 수용 — R2A-#13: event_id 인덱스 |
+| 14 | LOW | `max_send_result_wait_ms=None` «fail-closed» 오기(실은 fail-silent) | 수용 — R2A-#14: 비옵션 + 문언 |
+| 15 | LOW | 편차 ⑥: 직접 호출 허용이 파일 전체 | 수용 — R2A-#15: 마커 주석 1줄로 축소 |
+| 16 | LOW | 두 bound 의 0 처리 불일치 | 수용 — R2A-#16: 양의 정수 규칙 통일 |
+| 17 | LOW | 런타임 스위트가 커널 뮤테이션 4종에 눈멂 | 수용 — R2A-#17A(불일치 결과 e2e) · R2D-#17D(escape ref·미지 키·규칙 삭제 digest) |
+
+(처분 커밋 SHA·재심은 착지 후 기입)
