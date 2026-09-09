@@ -393,12 +393,21 @@ class ResultDisposition(_NonTruthyStrEnum):
     NON_MONOTONIC_PROJECTION = "NON_MONOTONIC_PROJECTION"
     #: A ``FULL_FILL`` / ``PARTIAL_FILL`` regresses the quantity axis for the same attempt — the
     #: quantity axis's own non-revival rule (ADR-002-002 §15.1:710 "reduced by no more than the
-    #: amount proven filled"; Phase 3 K2-p3-#5 / wave 2 N2). Three independent shapes are folded
-    #: into this one disposition: (i) ``filled_quantity`` strictly below the already-recorded
-    #: value; (ii) ``remaining_quantity`` growing at all versus the already-recorded value; (iii)
-    #: ``remaining_quantity`` shrinking by more than ``filled_quantity`` grew (quantity vanishing
-    #: unaccounted). The already-recorded, more-conservative magnitudes are retained in every
-    #: case.
+    #: amount proven filled"; Phase 3 K2-p3-#5 / wave 2 N2; wave 2 review finding #10 / kernel
+    #: disposition KW2b-#10). Four independent shapes are folded into this one disposition: (i)
+    #: ``filled_quantity`` strictly below the already-recorded value; (ii) ``remaining_quantity``
+    #: growing at all versus the already-recorded value; (iii) ``remaining_quantity`` shrinking by
+    #: more than ``filled_quantity`` grew (quantity vanishing unaccounted); (iv) — [KW2b-#10] —
+    #: ``filled_quantity`` growing by *more* than ``remaining_quantity`` shrank, inflating the
+    #: attempt's authorized total (``filled + remaining``) rather than shrinking it (e.g.
+    #: ``4/6`` -> ``6/5``, total ``10`` -> ``11``); the first fill-bearing result for an attempt
+    #: fixes that total and every later one must keep it exactly, not merely non-increasing. (iv)
+    #: is folded into the same disposition as (i)-(iii) rather than a separate
+    #: ``QUANTITY_INCONSISTENT`` member: all four are the identical fact from the caller's point
+    #: of view — a fill-bearing result was not applied because its magnitudes are inconsistent
+    #: with the already-recorded ones — and a second disposition would only duplicate the
+    #: ``RESULT_UNMATCHED`` handling path for no distinguishable caller action. The already-
+    #: recorded, more-conservative magnitudes are retained in every case.
     QUANTITY_REGRESSION = "QUANTITY_REGRESSION"
 
 

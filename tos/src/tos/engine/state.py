@@ -472,51 +472,97 @@ class ProvisionalReservationLedger:
     def _quantity_regressed(
         current: ProvisionalReservation, payload: EgressResultPayload
     ) -> bool:
-        """Whether ``payload`` would regress the quantity axis of ``current`` (§35 K2-p3-#5 / N2).
+        """Whether ``payload`` would regress the quantity axis of ``current`` (§35 K2-p3-#5 / N2;
+        Phase 3 wave 2 review finding #10 / kernel disposition KW2b-#10).
 
-        Factored out of :meth:`apply_egress_result` (size-budget discipline) — see that
-        method's own inline comments for the full citation and rationale of each of the three
-        independent, non-revival directions checked here:
+        Factored out of :meth:`apply_egress_result` (size-budget discipline). Four independent,
+        non-revival directions are checked, all folded into the same
+        :class:`~tos.engine.vocabulary.ResultDisposition.QUANTITY_REGRESSION` disposition (see
+        that member's own docstring for why a fourth is not a separate disposition):
 
         1. ``filled_quantity`` strictly below the already-recorded value (ADR-002-002
            §15.1:710 "reduced by no more than the amount proven filled");
         2. ``remaining_quantity`` growing at all versus the already-recorded value (implies the
            authorized quantity itself grew — unrepresentable for one attempt);
         3. ``remaining_quantity`` shrinking by more than ``filled_quantity`` grew (quantity
-           vanishing unaccounted — CPL-2/CPL-4 forbid an evidence-free implicit release).
+           vanishing unaccounted — CPL-2/CPL-4 forbid an evidence-free implicit release);
+        4. [KW2b-#10] the *mirror* of (3): ``filled_quantity`` growing by more than
+           ``remaining_quantity`` shrank, which inflates rather than shrinks the attempt's
+           authorized total (``filled_quantity + remaining_quantity``) — e.g. ``4/6`` ->
+           ``6/5`` (total ``10`` -> ``11``). Directions 1-3 alone did not catch this: they admit
+           any ``filled`` growth and only refuse a ``remaining`` shrink that *exceeds* it, never
+           one that falls short of it. The first fill-bearing result for an attempt fixes
+           ``authorized_total``; every later one must keep that exact sum, not merely avoid
+           exceeding it — an attempt's authorized quantity can no more grow after the fact than
+           it can shrink without proof.
 
         Only ``FULL_FILL`` / ``PARTIAL_FILL`` carry magnitudes at all; every other kind returns
-        ``False`` immediately (nothing to regress).
+        ``False`` immediately (nothing to regress). ``EgressResultPayload``'s own shape validator
+        guarantees both magnitudes are present (non-``None``) for those two kinds, so once
+        ``current`` also carries an established baseline, every comparison below is over concrete
+        values — never a silent ``None`` short-circuit.
 
         Args:
             current: The outstanding projection before this result.
             payload: The re-injected egress result payload.
 
         Returns:
-            ``True`` iff any of the three directions above regressed.
+            ``True`` iff any of the four directions above regressed.
         """
         if payload.kind not in (
             EgressResultKind.FULL_FILL,
             EgressResultKind.PARTIAL_FILL,
         ):
             return False
-        if (
-            current.filled_quantity is not None
-            and payload.filled_quantity is not None
-            and payload.filled_quantity < current.filled_quantity
-        ):
+        if current.filled_quantity is None or current.remaining_quantity is None:
+            # No fill-bearing result has landed for this attempt yet — there is no established
+            # authorized-total baseline to regress against. The first one sets it.
+            return False
+        assert (
+            payload.filled_quantity is not None
+        )  # validator-guaranteed for fill kinds
+        assert payload.remaining_quantity is not None
+        if payload.filled_quantity < current.filled_quantity:
             return True
-        if (
-            current.remaining_quantity is not None
-            and payload.remaining_quantity is not None
-        ):
-            remaining_delta = payload.remaining_quantity - current.remaining_quantity
-            filled_delta = (payload.filled_quantity or Decimal(0)) - (
-                current.filled_quantity or Decimal(0)
-            )
-            if remaining_delta > 0 or (-remaining_delta) > filled_delta:
-                return True
-        return False
+        if payload.remaining_quantity > current.remaining_quantity:
+            return True
+        authorized_total = current.filled_quantity + current.remaining_quantity
+        return payload.filled_quantity + payload.remaining_quantity != authorized_total
+
+    @staticmethod
+    def _resolve_capacity_target(
+        current: ProvisionalReservation, payload: EgressResultPayload
+    ) -> tuple[CapacityState | None, bool] | ResultDisposition:
+        """The capacity target for ``payload`` against ``current``, or the rank-guard refusal.
+
+        Factored out of :meth:`apply_egress_result` (size-budget discipline). Returns either:
+
+        * ``(capacity_state, resolving_quarantine)`` — the target to store (``None`` means "no
+          explicit target, leave unchanged") and whether this is a licensed
+          :data:`QUARANTINE_RESOLUTION_EDGES` exit from ``QUARANTINED_UNKNOWN`` (Phase 3 wave 2
+          KW2b-#2; ADR-002-002 §18.6 "escaping quarantine requires evidence, never assertion" —
+          the one deliberate exception to the rank-regression guard, checked first: left to that
+          guard alone, quarantine would be terminal, since ``QUARANTINED_UNKNOWN`` is the single
+          highest rank in :data:`PROJECTION_ORDER` and nothing could ever rank above it to exit);
+        * ``ResultDisposition.NON_MONOTONIC_PROJECTION`` when the target would otherwise regress
+          the rank and is *not* a licensed resolution (Phase 3 K2-p3-#4) — refused before
+          :meth:`_store` is ever reached, so its own non-revival guard never has to fire on this
+          path; a late/reordered result is a recorded conservative outcome, not a crash (design
+          plan 2026-09-09 §1.1).
+        """
+        _, capacity_state = _RESULT_TRANSITIONS[payload.kind]
+        resolving_quarantine = (
+            current.capacity_state is CapacityState.QUARANTINED_UNKNOWN
+            and payload.kind in QUARANTINE_RESOLUTION_EDGES
+        )
+        if resolving_quarantine:
+            return QUARANTINE_RESOLUTION_EDGES[payload.kind], True
+        if capacity_state is not None:
+            current_rank = PROJECTION_RANK[current.capacity_state]
+            next_rank = PROJECTION_RANK[capacity_state]
+            if next_rank < current_rank:
+                return ResultDisposition.NON_MONOTONIC_PROJECTION
+        return capacity_state, False
 
     def apply_egress_result(self, payload: EgressResultPayload) -> ResultApplication:
         """Apply — or conservatively record — a re-injected egress result (Phase 3 A-K-2).
@@ -569,37 +615,15 @@ class ProvisionalReservationLedger:
                 disposition=ResultDisposition.DUPLICATE,
                 projection=current,
             )
-        knowledge, capacity_state = _RESULT_TRANSITIONS[payload.kind]
-        # ★ [KW2b-#2] Quarantine resolution is checked *first*, and is the one deliberate
-        # exception to the rank-regression guard immediately below: positive broker evidence for
-        # this exact attempt (never a bare repeated UNKNOWN/TIMEOUT — see
-        # :data:`QUARANTINE_RESOLUTION_EDGES`'s own docstring) may pull the projection back out of
-        # ``QUARANTINED_UNKNOWN`` even though that is a rank *decrease*, because ADR-002-002 §18.6
-        # / §15.2 make positive evidence the one licit way out of quarantine. Left to the generic
-        # guard alone, quarantine would be terminal — ``QUARANTINED_UNKNOWN`` is the single
-        # highest rank in :data:`PROJECTION_ORDER`, so nothing could ever rank above it to exit.
-        resolving_quarantine = (
-            current.capacity_state is CapacityState.QUARANTINED_UNKNOWN
-            and payload.kind in QUARANTINE_RESOLUTION_EDGES
-        )
-        if resolving_quarantine:
-            capacity_state = QUARANTINE_RESOLUTION_EDGES[payload.kind]
-        # ★ [K2-p3-#4] Refuse a rank-regressing target *before* touching ``_store`` at all: the
-        # non-revival guard there must never be reached (and must never raise) on this path — a
-        # late/reordered result is a recorded conservative outcome, not a crash (design plan
-        # 2026-09-09 §1.1). ADR-002-002 §15.2 still wants the fact preserved, which is exactly what
-        # the caller's ``RESULT_UNMATCHED`` evidence record does with this disposition. Skipped
-        # when the quarantine-resolution branch above already picked the target explicitly — that
-        # branch is the one place a rank decrease is licit.
-        elif capacity_state is not None:
-            current_rank = PROJECTION_RANK[current.capacity_state]
-            next_rank = PROJECTION_RANK[capacity_state]
-            if next_rank < current_rank:
-                return ResultApplication(
-                    applied=False,
-                    disposition=ResultDisposition.NON_MONOTONIC_PROJECTION,
-                    projection=current,
-                )
+        knowledge, _ = _RESULT_TRANSITIONS[payload.kind]
+        target = self._resolve_capacity_target(current, payload)
+        if isinstance(target, ResultDisposition):
+            return ResultApplication(
+                applied=False,
+                disposition=target,
+                projection=current,
+            )
+        capacity_state, resolving_quarantine = target
         # ★ [K2-p3-#5 / Phase 3 wave 2 N2] The quantity axis has its own, independent
         # non-revival rule (ADR-002-002 §15.1:710), covering both ``filled_quantity`` shrinking
         # and ``remaining_quantity`` growing or shrinking unmatched by a filled increase (wave 1

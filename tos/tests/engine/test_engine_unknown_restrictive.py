@@ -597,6 +597,44 @@ def test_a_remaining_quantity_shrink_fully_matched_by_filled_growth_is_applied()
     assert core.ledger.outstanding(instrument_key()).filled_quantity == Decimal("6")
 
 
+def test_an_inflating_authorized_total_is_refused_not_applied() -> None:
+    """([KW2b-#10]; Phase 3 wave 2 review finding #10; ADR-002-002 §15.1:710) ``filled`` may not
+    outrun ``remaining``'s shrink either — the mirror of the vanishing-quantity direction.
+
+    Reviewer's P4 probe: ``4/6`` -> ``6/5`` (``filled`` grows by 2, ``remaining`` shrinks by only
+    1) inflates the attempt's authorized total from ``10`` to ``11``. The pre-fix check only
+    refused a ``remaining`` shrink that *exceeded* the ``filled`` growth, never one that fell
+    short of it, so this direction was silently ``APPLIED`` even though it is exactly as
+    unrepresentable for one attempt as the direction the pre-existing check already caught.
+    """
+    core, _, _, attempt_id = _sent_core()
+    first = core.handle(
+        _egress_event(
+            EgressResultKind.PARTIAL_FILL,
+            attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("4"),
+            remaining_quantity=Decimal("6"),
+        )
+    )
+    assert first.result_disposition is ResultDisposition.APPLIED
+
+    second = core.handle(
+        _egress_event(
+            EgressResultKind.PARTIAL_FILL,
+            attempt_id,
+            sequence=3,
+            filled_quantity=Decimal("6"),
+            remaining_quantity=Decimal("5"),
+        )
+    )
+    assert second.halt_reason is HaltReason.RESULT_UNMATCHED
+    assert second.result_disposition is ResultDisposition.QUANTITY_REGRESSION
+    # the established, non-inflated authorized total (10) is retained — not silently grown to 11
+    assert core.ledger.outstanding(instrument_key()).filled_quantity == Decimal("4")
+    assert core.ledger.outstanding(instrument_key()).remaining_quantity == Decimal("6")
+
+
 def test_apply_egress_result_never_raises_artifact_integrity_error() -> None:
     """([K2-p3-#4] finding #4) The egress-result path never raises — only records a disposition.
 

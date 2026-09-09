@@ -490,7 +490,13 @@ class EngineCore:
         cached — and the gate is positive-admit (design #31 §4.2 rule 1): only a literal
         ``True`` passes, so a ``False`` *or* an unestablished ``None`` both refuse. On refusal
         nothing further runs for this tick: no registry dispatch, no decision pipeline, no
-        ``DECISION_PROPOSAL`` (step 1) evidence, and no ledger mutation.
+        ``DECISION_PROPOSAL`` (step 1) evidence, and no ledger mutation. The one exception,
+        precisely: the causal-order coordinate (``handle``'s ``self._last_reference``) *is*
+        still advanced — it is stamped before this gate ever runs, not by it — so a refused
+        tick still moves the core's ordering watermark forward (Phase 3 wave 2 review finding
+        #9). Benign on the nominal path because the driver stamps monotone coordinates itself,
+        but it means "nothing is consumed" understates this one coordinate; see
+        :meth:`_coordinator_precondition_refused`'s detail strings for the exact wording.
 
         Args:
             key: The tick's dispatch scope (for the recorded evidence and result).
@@ -519,7 +525,9 @@ class EngineCore:
                 detail=(
                     "live-scope authorization is not verifiably granted for this core's wired "
                     "transport (RFC-002 §10.7 'verify live authorization') — the tick is "
-                    "refused before step 1; nothing is consumed (design #31 §9-10)"
+                    "refused before step 1: no registry dispatch, no pipeline, no step-1 "
+                    "evidence, no ledger mutation; the causal-order coordinate is still "
+                    "advanced (design #31 §9-10; Phase 3 wave 2 review finding #9)"
                 ),
             )
         return self._coordinator_precondition_refused(
@@ -528,8 +536,10 @@ class EngineCore:
             halt_reason=HaltReason.AUTHORITY_NOT_CURRENT,
             detail=(
                 "the current Safety Authority epoch is not verifiably current (RFC-002 §10.7 "
-                "'verify current Safety Authority') — the tick is refused before step 1; "
-                "nothing is consumed (design #31 §9-10)"
+                "'verify current Safety Authority') — the tick is refused before step 1: no "
+                "registry dispatch, no pipeline, no step-1 evidence, no ledger mutation; the "
+                "causal-order coordinate is still advanced (design #31 §9-10; Phase 3 wave 2 "
+                "review finding #9)"
             ),
         )
 
