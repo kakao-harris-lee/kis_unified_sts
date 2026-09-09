@@ -117,4 +117,12 @@ compose e2e 에서: `SEND_SEALED` 가 `SEND_STARTED` 앞에 durable 로 기록 �
 | 11 | LOW | 좌표-필드 validator 는 단일 호출처에서 동어반복 | 수용 — 도크스트링에 «미래 호출자 방어» 명시 |
 | 12 | LOW(정보) | 봉인 실패 시 attempt 미소비 → 같은 attempt_id 재제출 가능(이전엔 파생 실패가 클레임 뒤라 영구 소비) | 수용·기록 — 의도적: 아무것도 보내지 않았으므로 capability 를 태우지 않는다 · `ATTEMPT_ALREADY_CONSUMED` 백스톱은 이 실패 부류에 더 이상 적용되지 않음 |
 
-(처분 커밋 SHA·재심은 착지 후 기입)
+**처분 착지(7커밋 `24745032..68b94587`)**: R2-#1 `24745032`(principal 을 로더 resolved `active_principal` 에서 · catcher 를 send 경계까지) · R2-#2 `719779c3`(`endpoint` 8번째 좌표 키) · R2-#5 `dff34ee5`(QCC 스탠드인 `egress_generation` 단일 원천 · 나머지 QCC 세대 리터럴은 Phase 5 실 QCC 항목으로 도크스트링 명시) · K2-#3/#7/#8 `86ecc490`(`claim_request_digest` 분리 · `seal_matches_outbound(seal_digest)` + 전파 단언 · 문언) · K2-#4/#6 `db7a2d98`(M-K1 핀: 별칭 할당·`getattr`·서브트리 전체 — M1b/M1c/M1d 세 뮤턴트 red · `match="missing required fact"` — M4 red) · K2-#9/#10/#11 `8b1682dc`(kind 결속 validator · `min_length=1` 15필드 · 문언) · R2-#1b `68b94587`(오케스트레이터 적발: `credential_route_inventory` 의 게이트웨이 principal 도 리터럴 → 같은 원천 · `synthetic-paper-{env}` transport 정체성 리터럴 2건은 슬라이스 #3 기존 항목 — **잔여 설정 갭 G-4** 로 등재).
+
+**공유 트리 경합(새 형태)**: `24745032` 가 K2 의 미스테이징 budget 헝크(gateway.py 1921→1931)를 흡수 — `git commit -- <path>` 는 인덱스가 아니라 워킹트리 내용을 커밋하므로 `add -p` 헝크 격리가 무효. 내용 손실 0 · 이후 R2 는 `git apply --cached` + pathspec 없는 커밋으로 전환.
+
+**독립 실측(최종 트리 `68b94587`)**: runtime **493 passed** rc=0 · kernel **9142 passed**(`8b1682dc` 기준 · `68b94587` 은 런타임만 변경 · egressgw/brokeradapter/slice 서브셋 378 passed 재확인) · mypy 254/54 clean · ruff 0 · black clean · firewall PASS · lint-imports 3 KEPT · budget 0 위반(31 등재 · `_wiring.py` 1084→1081) · completion GREEN · spec PASS · contract PASS · `_wiring.py` 잔여 리터럴 = G-4 의 `synthetic-paper-{env}` 2건뿐.
+
+### 6.3 재심
+
+(기입 예정)
