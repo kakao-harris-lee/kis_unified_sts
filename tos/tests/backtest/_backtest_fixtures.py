@@ -26,8 +26,10 @@ from tos.backtest import (
     DeterministicFillModel,
     FillParameters,
     MultiSymbolBacktestDriver,
+    NonBrokerTransportNature,
     ProvisionalContextResolver,
     ScenarioSpec,
+    SyntheticNonLivePreconditions,
     reference_bars,
     validate_bar_stream,
 )
@@ -349,6 +351,7 @@ def build_core(
     transmit: Any = None,
     configuration: EngineConfiguration | None = None,
     registry: StrategyRegistry | None = None,
+    preconditions: Any = None,
 ) -> tuple[EngineCore, RecordingEvidenceSink]:
     """Wire a core with the suite's defaults and return it with its recording sink.
 
@@ -359,13 +362,23 @@ def build_core(
             itself when it is demultiplexing the slot (design #37 §3.2).
         configuration: The injected engine configuration.
         registry: A ready registry, for the N-entry multi-symbol universe.
+        preconditions: The RFC-002 §10.7 Coordinator gates; defaults to
+            ``SyntheticNonLivePreconditions(authority_epoch_current=True)`` — every backtest
+            core is non-live by construction (design #33 §2 — no real transport ever reaches
+            this suite), so the default states that explicitly rather than assuming it.
     """
     sink = RecordingEvidenceSink()
     core = EngineCore(
         registry=registry if registry is not None else registry_with(strategy),
         stages=dict(stages) if stages is not None else admitting_stages(),
         configuration=configuration or engine_configuration(),
+        preconditions=(
+            preconditions
+            if preconditions is not None
+            else SyntheticNonLivePreconditions(authority_epoch_current=True)
+        ),
         transmit=transmit,
+        transport_nature=NonBrokerTransportNature(),
         sink=sink,
     )
     return core, sink

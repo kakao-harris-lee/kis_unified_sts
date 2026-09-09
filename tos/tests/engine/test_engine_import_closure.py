@@ -7,7 +7,12 @@ its closure is a *superset* of theirs. That is the nature of an integrator, not 
 loudly as it does everywhere else::
 
     {tos, tos.canonical, tos.ordering, tos.dsl, tos.capsule, tos.time, tos.evidence,
-     tos.ioc, tos.venue, tos.rcl, tos.are, tos.afg, tos.cur, tos.engine}
+     tos.ioc, tos.venue, tos.rcl, tos.are, tos.afg, tos.cur, tos.engine, tos.orthostate}
+
+``tos.orthostate`` was added 2026-09-09 (Phase 3 wave 2 KW2-C2, plan §2.2 — the
+``engine/orthostate_projection.py`` adapter). It is safe in the direction that matters:
+``tos.orthostate`` does not, and structurally cannot without breaking its own ratified
+closure, import ``tos.engine`` back.
 
 The two packages the design puts **outside** the closure carry the most weight: ``tos.brokercap``
 and ``tos.egress`` live beyond the D-E4 send-boundary injection point, and ``tos.egress`` (the QCC
@@ -46,6 +51,7 @@ import tos.engine._base
 import tos.engine.adapters
 import tos.engine.admission
 import tos.engine.core
+import tos.engine.orthostate_projection
 import tos.engine.pipeline
 import tos.engine.records
 import tos.engine.registry
@@ -56,6 +62,10 @@ import tos.engine.state
 import tos.engine.vocabulary
 
 #: The §0.3 allowlist — the only top-level ``tos.*`` packages the closure may contain.
+#: ``tos.orthostate`` was added 2026-09-09 (Phase 3 wave 2 KW2-C2, plan §2.2) — see
+#: ``tos/src/tos/engine/__init__.py``'s "Closure widened" docstring note and
+#: ``tos/src/tos/engine/orthostate_projection.py`` for the one-way-safety argument (it does
+#: not, and structurally cannot, import ``tos.engine`` back).
 _ALLOWED_TOS_PACKAGES = frozenset(
     {
         "tos",
@@ -72,6 +82,7 @@ _ALLOWED_TOS_PACKAGES = frozenset(
         "tos.afg",
         "tos.cur",
         "tos.engine",
+        "tos.orthostate",
     }
 )
 
@@ -86,7 +97,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.iap",
         "tos.liveauth",
         "tos.nontrade",
-        "tos.orthostate",  # forward seam only — the core state projection is engine-local (§2.4)
         "tos.posttrade",
         "tos.protective",
         "tos.recon",
@@ -195,6 +205,7 @@ _ENGINE_SUBMODULES = (
     "tos.engine.adapters",
     "tos.engine.admission",
     "tos.engine.core",
+    "tos.engine.orthostate_projection",
     "tos.engine.pipeline",
     "tos.engine.records",
     "tos.engine.registry",
@@ -214,6 +225,7 @@ _LOADED_SUBMODULES = {
     "tos.engine.adapters": tos.engine.adapters,
     "tos.engine.admission": tos.engine.admission,
     "tos.engine.core": tos.engine.core,
+    "tos.engine.orthostate_projection": tos.engine.orthostate_projection,
     "tos.engine.pipeline": tos.engine.pipeline,
     "tos.engine.records": tos.engine.records,
     "tos.engine.registry": tos.engine.registry,
@@ -255,6 +267,7 @@ def _closure_child(queue: mp.Queue) -> None:
     import tos.engine.adapters  # noqa: F401
     import tos.engine.admission  # noqa: F401
     import tos.engine.core  # noqa: F401
+    import tos.engine.orthostate_projection  # noqa: F401
     import tos.engine.pipeline  # noqa: F401
     import tos.engine.records  # noqa: F401
     import tos.engine.registry  # noqa: F401
@@ -290,7 +303,7 @@ def _leak_canary_child(queue: mp.Queue) -> None:
         "numpy",
         "tos.egress",
         "tos.brokercap",
-        "tos.orthostate",
+        "tos.posttrade",
         "tos.brokeradapter",
         "tos.future_sibling",
     ):
@@ -362,13 +375,13 @@ def test_engine_closure_has_no_forbidden_operational_package() -> None:
 
 
 def test_leak_canary_is_detected() -> None:
-    """(both-ways) Planted egress / brokercap / orthostate / future-sibling leaks are all caught."""
+    """(both-ways) Planted egress / brokercap / posttrade / future-sibling leaks are all caught."""
     result = _run_child(_leak_canary_child)
     extra = set(result["tos_tops"]) - _ALLOWED_TOS_PACKAGES
     for expected in (
         "tos.egress",
         "tos.brokercap",
-        "tos.orthostate",
+        "tos.posttrade",
         "tos.brokeradapter",
         "tos.future_sibling",
     ):

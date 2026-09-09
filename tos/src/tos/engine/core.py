@@ -72,11 +72,13 @@ from tos.engine.vocabulary import (
 from tos.ordering import Ordering, OrderingEvent, compare_order
 
 __all__ = [
+    "CoordinatorPreconditions",
     "DecisionContextResolver",
     "EngineCore",
     "EventBatch",
     "EventResult",
     "EventSource",
+    "TransportNatureLike",
     "UnknownEventKindError",
     "admit_kind",
     "ordering_admission",
@@ -103,6 +105,78 @@ class DecisionContextResolver(Protocol):
         self, capsule: DecisionContextCapsule, *, instrument_key: InstrumentKey
     ) -> DecisionTickPayload:
         """Resolve one Decision Context into a tick payload."""
+        ...
+
+
+@runtime_checkable
+class TransportNatureLike(Protocol):
+    """Structural stand-in for ``tos.egressgw.records.TransportNature`` (Phase 3 KW2-B).
+
+    ``tos.engine`` cannot import the concrete type: ``tos.egressgw`` imports **from**
+    ``tos.engine`` at module level (``construction.py`` / ``gateway.py`` / ``seal.py`` /
+    ``records.py`` all do ``from tos.engine import ...``), so a module-level
+    ``from tos.egressgw.records import TransportNature`` here would be a genuine circular
+    import (``ImportError: cannot import name ... from partially initialized module``), not
+    merely a firewall-discipline choice. ``tos.backtest``'s own import-closure test
+    (``tos/tests/backtest/test_backtest_import_closure.py``) independently forbids
+    ``tos.egressgw`` / ``tos.authority`` / ``tos.liveauth`` as siblings, so the concrete type
+    is unreachable from the backtest side too.
+
+    This ``Protocol`` names only the single field the Coordinator gate reads
+    (``reaches_broker``), so any object with that attribute — including the real
+    ``tos.egressgw.records.TransportNature`` — satisfies it structurally, with no import edge
+    at all (design #31 §0.3 closure discipline extended to a typing-only seam).
+    """
+
+    reaches_broker: bool | None
+
+
+@runtime_checkable
+class CoordinatorPreconditions(Protocol):
+    """The RFC-002 §10.7 Execution Coordinator positive gates (design #31 §9-10; plan §2.1).
+
+    RFC-002 §10.7 lists, among the Coordinator's responsibilities, "verify current Safety
+    Authority" and "verify live authorization" — both **before** anything from the 19-step
+    Normal Commitment Flow runs. Slice #1 had no hosting point for either (D-E1 is
+    authority-free by design, module docstring). This Protocol is that hosting point: two
+    positive-admit predicates, read fresh on every ``DECISION_TICK`` rather than cached, so a
+    later-revoked authority or a later-suspended live scope is caught on the very next tick.
+
+    Both members return ``bool | None`` and the gate is **positive-admit**
+    (design #31 §4.2 rule 1): only a literal ``True`` passes; ``False`` *and* ``None``
+    (unestablished) both refuse. There is deliberately no default implementation and no
+    optional member — :class:`EngineCore` requires a concrete ``preconditions`` object at
+    construction (no default), so an authority-free core cannot be wired to run ticks that
+    quietly assume both gates hold. A backtest supplies an explicit non-live stand-in (never
+    a hardcoded ``True`` — see ``tos.backtest.driver.SyntheticNonLivePreconditions``); a real
+    runtime supplies ``tos.authority.authority_epoch_current`` / a ``tos.liveauth`` predicate
+    composed against its own current state, over the injection seam this Protocol is.
+    """
+
+    def authority_epoch_current(self) -> bool | None:
+        """Whether the current Safety Authority epoch is verifiably current right now.
+
+        Returns:
+            ``True`` iff verifiably current; ``False`` or ``None`` (unestablished) refuse the
+            gate — never treated as a pass.
+        """
+        ...
+
+    def live_scope_authorized(
+        self, transport_nature: TransportNatureLike | None
+    ) -> bool | None:
+        """Whether live-scope authorization covers a send over ``transport_nature``.
+
+        Args:
+            transport_nature: The wired core's declared transport nature (``None`` when the
+                core was never given one — e.g. a unit test that never reaches a send
+                boundary). ``None`` is conservatively **not** a pass; a concrete
+                implementation decides its own fail-closed treatment of it.
+
+        Returns:
+            ``True`` iff verifiably authorized for this transport; ``False`` or ``None``
+            refuse the gate.
+        """
         ...
 
 
@@ -234,8 +308,10 @@ class EngineCore:
         registry: StrategyRegistry,
         stages: Mapping[CommitmentStep, Stage],
         configuration: EngineConfiguration,
+        preconditions: CoordinatorPreconditions,
         ledger: ProvisionalReservationLedger | None = None,
         transmit: Transmit | None = None,
+        transport_nature: TransportNatureLike | None = None,
         sink: EvidenceSink | None = None,
         scheme: CanonicalizationScheme | None = None,
     ) -> None:
@@ -245,9 +321,21 @@ class EngineCore:
             registry: The instrument-keyed strategy registry.
             stages: The injected step → stage mapping for steps 2-11, 13, 14.
             configuration: The injected engine configuration (every bound arrives here).
+            preconditions: The RFC-002 §10.7 Coordinator positive gates (design #31 §9-10;
+                plan §2.1) — **required, no default**, so a core cannot be wired without an
+                explicit authority/live-scope stance. Checked fresh at the top of every
+                ``DECISION_TICK``, before step 1.
             ledger: The provisional reservation projection; built from the configured
                 ``max_unresolved_send_per_scope`` when omitted.
             transmit: The injected send-boundary hand-off; ``None`` stops every flow after step 14.
+            transport_nature: This core's wired transport's declared nature (survey finding,
+                Phase 3 KW2-B: the core cannot import the concrete
+                ``tos.egressgw.records.TransportNature`` type — see
+                :class:`TransportNatureLike` — so it holds this **structurally typed**,
+                fixed-at-construction value and passes it, unchanged, to
+                :meth:`CoordinatorPreconditions.live_scope_authorized` on every tick. ``None``
+                when this core is never wired to a transport with a declared nature (e.g. a
+                unit test that never reaches the send boundary).
             sink: The provisional evidence sink (a discarding sink when omitted).
             scheme: The canonicalization scheme; resolved from the configured version when omitted.
 
@@ -259,10 +347,12 @@ class EngineCore:
         self._registry = registry
         self._stages = dict(stages)
         self._configuration = configuration
+        self._preconditions = preconditions
         self._ledger = ledger or ProvisionalReservationLedger(
             max_unresolved_send_per_scope=configuration.max_unresolved_send_per_scope
         )
         self._transmit = transmit
+        self._transport_nature = transport_nature
         self._sink: EvidenceSink = sink or NullEvidenceSink()
         self._scheme = scheme or get_scheme(configuration.canonicalization_version)
         self._last_reference: OrderingEvent | None = None
@@ -354,6 +444,10 @@ class EngineCore:
             )
         key = payload.instrument_key
 
+        refusal = self._coordinator_precondition_refusal(key, admission)
+        if refusal is not None:
+            return refusal
+
         dispatch = self._registry.resolve(key)
         if dispatch.resolution is not DispatchResolution.DISPATCHED:
             halt = (
@@ -385,6 +479,84 @@ class EngineCore:
             )
 
         return self._run_entries(payload, dispatch.entries, admission)
+
+    def _coordinator_precondition_refusal(
+        self, key: InstrumentKey, admission: OrderingAdmission
+    ) -> EventResult | None:
+        """Run the RFC-002 §10.7 Coordinator positive gates before step 1 (design #31 §9-10).
+
+        Both :meth:`CoordinatorPreconditions.authority_epoch_current` and
+        :meth:`CoordinatorPreconditions.live_scope_authorized` are checked fresh — never
+        cached — and the gate is positive-admit (design #31 §4.2 rule 1): only a literal
+        ``True`` passes, so a ``False`` *or* an unestablished ``None`` both refuse. On refusal
+        nothing further runs for this tick: no registry dispatch, no decision pipeline, no
+        ``DECISION_PROPOSAL`` (step 1) evidence, and no ledger mutation.
+
+        Args:
+            key: The tick's dispatch scope (for the recorded evidence and result).
+            admission: This tick's already-computed causal-order admission.
+
+        Returns:
+            An :class:`EventResult` naming the halt when either precondition does not read
+            exactly ``True``; ``None`` when both hold, in which case the caller proceeds
+            exactly as before.
+        """
+        # ★ Positive-identity gate only (design #31 §4.2 rule 1 / §6; test_engine_polarity.py
+        # forbids ``is not True`` outright, series-wide — the #18/#22/#23/#25 MAJOR-2 lesson).
+        # Each check reads "does this equal True", never "does this differ from True", so the
+        # branch structure — not a negated comparison — is what makes ``False`` *and* ``None``
+        # both refuse.
+        if self._preconditions.authority_epoch_current() is True:
+            if (
+                self._preconditions.live_scope_authorized(self._transport_nature)
+                is True
+            ):
+                return None
+            return self._coordinator_precondition_refused(
+                key,
+                admission,
+                halt_reason=HaltReason.LIVE_SCOPE_NOT_AUTHORIZED,
+                detail=(
+                    "live-scope authorization is not verifiably granted for this core's wired "
+                    "transport (RFC-002 §10.7 'verify live authorization') — the tick is "
+                    "refused before step 1; nothing is consumed (design #31 §9-10)"
+                ),
+            )
+        return self._coordinator_precondition_refused(
+            key,
+            admission,
+            halt_reason=HaltReason.AUTHORITY_NOT_CURRENT,
+            detail=(
+                "the current Safety Authority epoch is not verifiably current (RFC-002 §10.7 "
+                "'verify current Safety Authority') — the tick is refused before step 1; "
+                "nothing is consumed (design #31 §9-10)"
+            ),
+        )
+
+    def _coordinator_precondition_refused(
+        self,
+        key: InstrumentKey,
+        admission: OrderingAdmission,
+        *,
+        halt_reason: HaltReason,
+        detail: str,
+    ) -> EventResult:
+        """Record and return one Coordinator-precondition refusal (shared by both gates)."""
+        self._sink.record(
+            EngineEvidenceRecord(
+                kind=EvidenceKind.COORDINATOR_PRECONDITION_REFUSED,
+                instrument_key=key,
+                halt_reason=halt_reason,
+                detail=detail,
+            )
+        )
+        return EventResult(
+            kind=EventKind.DECISION_TICK,
+            instrument_key=key,
+            ordering=admission,
+            halt_reason=halt_reason,
+            detail=detail,
+        )
 
     def _run_entries(
         self,

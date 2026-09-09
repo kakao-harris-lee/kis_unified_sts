@@ -125,6 +125,8 @@ from tos.backtest.driver import (
     BacktestDriver,
     CoreReinstantiationError,
     MultiSymbolBacktestDriver,
+    NonBrokerTransportNature,
+    SyntheticNonLivePreconditions,
     YieldOrderCounter,
 )
 from tos.backtest.fills import (
@@ -225,6 +227,8 @@ __all__ = [
     "BacktestDriver",
     "CoreReinstantiationError",
     "MultiSymbolBacktestDriver",
+    "NonBrokerTransportNature",
+    "SyntheticNonLivePreconditions",
     "YieldOrderCounter",
     # the run result + the out-of-tree oracle artifact (§1.2/§6.1) + its N-lane form (#37 §3.5)
     "BacktestRun",

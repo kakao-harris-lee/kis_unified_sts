@@ -48,6 +48,7 @@ from tos.backtest import (
     BarTimeProjection,
     CausalBarConverter,
     GatewayResultReinjector,
+    SyntheticNonLivePreconditions,
     validate_bar_stream,
 )
 from tos.brokeradapter import SyntheticFillPolicy, SyntheticPaperTransport
@@ -1182,7 +1183,9 @@ def run_slice(
         registry=registry,
         stages=stages,
         configuration=engine_configuration(),
+        preconditions=SyntheticNonLivePreconditions(authority_epoch_current=True),
         transmit=gateway,
+        transport_nature=TransportNature(reaches_broker=False),
         sink=engine_sink,
     )
     driver = BacktestDriver(
