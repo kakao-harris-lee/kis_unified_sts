@@ -168,6 +168,24 @@ verdict **approve** — 17건 중 15 완전 종결 · #13/#17 부분(정직 공�
 
 **독립 실측(최종 트리 `0c909e34`)**: runtime **614 passed** rc=0 · kernel **9327 passed** rc=0 · mypy 257/68 clean · ruff 0 · black 972 unchanged · firewall PASS · lint-imports 3 KEPT · budget 0 위반(33 등재) · completion GREEN · spec PASS · contract PASS · tos-spec/계약 문서 무편집 · 커널 편집 커밋 = K-W2 3건뿐.
 
-### 7.5 웨이브 2 독립 리뷰 처분
+### 7.5 웨이브 2 독립 리뷰 처분 (Claude 측 `code-reviewer` 레인 · 저작자와 분리 · 2026-09-09)
 
-(리뷰 후 기입)
+1차 verdict **needs-attention**(HIGH 2 · MEDIUM 6 · LOW 5) · 게이트 전부 재현 · 요청 뮤테이션 M1~M10 전부 red · 리뷰어 추가 M11(`reconstruct_conservative` 제거)·M12(소유권 검사 제거) **green** = #4/#5 근거 · 커널 귀속 clean · 무결함 렌즈: 게이트는 send 경계까지 실증 · `reaches_broker=None` 거부 · 결선 중 저작자 발견 버그 2건 공개 · finality 정직성 · 폐쇄 확장 5캐너리 문서화 · 8종 사상 결정 전부 스펙 문언 인용.
+
+| # | 심각도 | 지적 | 처분 |
+|---|---|---|---|
+| 1 | HIGH | 게이트가 거부한 tick(receipt `outcome_digest=None`+halt) 을 재생이 True/True 전제조건으로 실행해 비대칭 divergence → 다음 부팅 영구 실패(compose 프로브 실증 · epoch 로그 sqlite 오류만으로도 도달) | 수용 — CR2-#1: halt 사유 있는 receipt 는 `uncompared`(사유 기록) · 사유 없는 비대칭은 여전히 divergence |
+| 2 | HIGH | 적용된 UNKNOWN/TIMEOUT 마다 CPL-5 허위 critical halt — 엔진 투영이 `QUARANTINED_UNKNOWN` 을 표현 못 함(ADR-002-005 §7 «UNKNOWN forces QUARANTINED_UNKNOWN») · 기존 커널 테스트는 어떤 결과도 만들 수 없는 composite 를 손으로 저작 | **결정: 스펙 측이 옳다** — KW2b-#2: 투영에 `QUARANTINED_UNKNOWN`(POTENTIALLY_LIVE 보다 보수) + 닫힌 «격리 해소 edge»(양성 브로커 증거만 · §18.6/§15.2 · 해소≠회생) · 8종 sweep 테스트로 대체 |
+| 3 | MEDIUM | 결합/소유권 «halt» 가 아무것도 막지 않음(소비자 0 · ADR-002-005 §10 «immediate new-risk halt») | 수용 — CR2-#3: durable new-risk 래치 · 이후 DECISION_TICK 거부(`NEW_RISK_HALTED_BY_COUPLING_VIOLATION`) · 결과는 계속 소비 · 해제는 Phase 5 |
+| 4 | MEDIUM | `_check_ownership` 사문(고정 actor 로 2차원 무조건 True · attempt 는 prep 영역만 거부 가능) — M12 green | 수용 — CR2-#4: 동어반복 2건 제거 · attempt 영역 검사 유지 + 실패 가능한 테스트 |
+| 5 | MEDIUM | `reconstruct_conservative` 무효과(기록 composite 는 매번 신규 파생) — M11 green · 도크스트링 «보수 재개» 과대 | 수용 — CR2-#5: 재개 composite 가 보수 prior 를 상속(불가하면 STOP·보고) |
+| 6 | MEDIUM | FULL_FILL 한정이 생산자 분기뿐 · 커널 술어 3종은 PARTIAL 증거도 통과(M6) | 수용 — CR2-#6: `remaining_quantity == 0` 양성 전제 |
+| 7 | MEDIUM | `authority_epoch_current` 가 floor 를 claim 으로 되먹여 `floor >= floor` 동어반복 — stale 감지 불가 · CPL-6 에 그대로 공급 · 읽기 2회 TOCTOU | 수용 — BR2-#7: compose 시 결속 epoch 를 claim 으로 · 단일 읽기 · 결선 도크스트링 정직화 |
+| 8 | MEDIUM | cancel-crossing fill 에서 Broker Order 차원 미정정(§7 «corrected») | 수용 — CR2-#8: NON_MONOTONIC + FILL kind ⇒ broker 정정 · knowledge CONFLICTED · capacity 불변 |
+| 9 | LOW | «nothing is consumed» 부정확(causal 좌표는 전진) | 수용 — KW2b-#9 문언 |
+| 10 | LOW | `_quantity_regressed` 비대칭(4/6→6/5 총량 팽창 APPLIED) | 수용 — KW2b-#10: 첫 결과가 authorized_total 고정 · 이후 합 불변 |
+| 11 | LOW | `CouplingSideConditions` 4필드 중 1개만 공급 — CPL-7 구조적 미평가 | 수용 — CR2-#11 도크스트링 |
+| 12 | LOW | 작업트리 상태 서술 블록이 프로덕션 소스에 | 수용 — BR2-#12 삭제 |
+| 13 | LOW | `RESULT_UNMATCHED` 증거에 수량 없음 | 수용 — KW2b-#13 |
+
+(처분 커밋 SHA·재심은 착지 후 기입)
