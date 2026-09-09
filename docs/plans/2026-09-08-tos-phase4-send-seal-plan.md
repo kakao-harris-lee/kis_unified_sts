@@ -72,7 +72,7 @@ compose e2e 에서: `SEND_SEALED` 가 `SEND_STARTED` 앞에 durable 로 기록 �
 
 - `tos/tests`·`tos/runtime/tests` green(독립 실측 rc + «N passed») · mypy/ruff/black/firewall/lint-imports/budget/completion/spec/contract 통과 · 커널 diff 는 레인 K 커밋에만.
 - 뮤테이션 M-K1·M-K2·M-R1 red · 봉인 실패 경로에서 claims 0·SEND_STARTED 0.
-- `_wiring.py` 에 egress 좌표 리터럴 0(grep) · EV 상태 변경 0 · 독립 리뷰 approve.
+- `_wiring.py` 에 egress 좌표 리터럴 0(grep — 리뷰 #2 로 `endpoint` 누락 적발 · 처분 R2-#2 로 8좌표 전부 로더) · EV 상태 변경 0 · 독립 리뷰 approve.
 
 ## 5. 가정
 
@@ -96,8 +96,25 @@ compose e2e 에서: `SEND_SEALED` 가 `SEND_STARTED` 앞에 durable 로 기록 �
 
 **보고 갭 G-3(이 슬라이스 밖 · 리뷰 판정 요청)**: `compose/context.py:378-391` QCC 스탠드인(슬라이스 #3 item 3 provisional)이 `egress_generation=1`·`writer_epoch=1`·`committed_revision=1` 등 리터럴을 유지 — 봉인이 config 의 `egress_generation` 을 싣게 되어 QCC 의 값과 드리프트할 수 있다(현재 픽스처는 둘 다 1). 처분 후보: 최소 `egress_generation` 을 좌표 설정에서 읽기 · 나머지 QCC 세대 리터럴은 Phase 5 실 QCC 로 대체.
 
-**독립 실측(최종 트리 `564d73da` · 재설치 venv)**: runtime **492 passed** rc=0 · kernel **9134 passed** rc=0 · mypy 254/54 clean · ruff 0 · black 930 unchanged · firewall PASS · lint-imports 3 KEPT · budget 0 위반(31 등재 · gateway.py 1850→1921 · `_wiring.py` 1045→1073) · completion GREEN · spec PASS · contract PASS · tos-spec/계약 문서 무편집 · `_wiring.py` egress 좌표 리터럴 grep 0(잔여 hit 는 `_egress_coordinates.py` 도크스트링의 이관 전 값 인용 + 위 G-3).
+**독립 실측(최종 트리 `564d73da` · 재설치 venv)**: runtime **492 passed** rc=0 · kernel **9134 passed** rc=0 · mypy 254/54 clean · ruff 0 · black 930 unchanged · firewall PASS · lint-imports 3 KEPT · budget 0 위반(31 등재 · gateway.py 1850→1921 · `_wiring.py` 1045→1073) · completion GREEN · spec PASS · contract PASS · tos-spec/계약 문서 무편집 · `_wiring.py` egress 좌표 리터럴 — 착지 시점 7/10 좌표만 이관(`endpoint="synthetic://paper/order"` 잔존 · 리뷰 #2 적발 → R2-#2) · grep 잔여 hit 는 `_egress_coordinates.py` 도크스트링 인용 + G-3.
 
-### 6.2 독립 리뷰 처분
+### 6.2 독립 리뷰 처분 (Claude 측 `code-reviewer` 레인 · 저작자와 분리 · 2026-09-09)
 
-(리뷰 후 기입)
+1차 verdict **needs-attention**(HIGH 1 · MEDIUM 6 · LOW 5) · 게이트 전부 green 재현 · 뮤테이션 M1/M2/M3/M5/M7/M8 red · **green 뮤테이션 4(M1b·M1c·M4·M6-kernel)** = 핀 강도 결함 · A2 principal 동일성은 ADR-002-013 §8:227/§12:373 정합(픽스처 우연 아님) · 레인 R e2e 는 실 게이트웨이 구동 · 커밋 귀속 clean(경합 0).
+
+| # | 심각도 | 지적 | 처분 |
+|---|---|---|---|
+| 1 | HIGH | `_wiring.py:813` `principal=f"egressgw-{env}"` 리터럴 vs config `active_principal` — 봉인이 동일성을 강제하므로 비기본 config 는 모든 send 를 `SEND_SEAL_UNCONSTRUCTABLE` 로 거부(프로브 실측) · M-R1 catcher 가 compose 에서 멈춰 미적발 | 수용 — R2-#1: principal 을 로더의 resolved `active_principal` 에서 파생(단일 원천) · catcher 를 send 경계까지 확장 |
+| 2 | MEDIUM | `endpoint="synthetic://paper/order"`(`_wiring.py:827`) 리터럴 잔존 — 계획 §4/§6.1 «리터럴 0» 문언 거짓 | 수용 — R2-#2: 8번째 좌표 키로 이관 · 문언 정정(위) |
+| 3 | MEDIUM | step 16 클레임 키가 `context.request_digest`(런타임: attempt_id · attempt 단위) → `seal.request_bytes_digest`(capsule digest · account+instrument 단위)로 미공개 변경 · 둘을 묶는 검사 없음 | 수용 — K2-#3: 봉인에 `claim_request_digest`(= context.request_digest) 추가, 클레임은 그 값으로(이전 원장 의미 복원) · 두 정체가 설계상 다름을 도크스트링에 명시 · 본 §6.2 에 공개 |
+| 4 | MEDIUM | M-K1 AST 핀이 `context.x` 키워드만 검사 — 별칭(`ctx = context`)·`getattr`·위치 인자 우회(M1b/M1c green) | 수용 — K2-#4: 호출 서브트리 전체 + 별칭 할당 거부 · 세 뮤턴트 red 실증 |
+| 5 | MEDIUM | G-3 실재: QCC 스탠드인 `egress_generation=1` 과 config 값을 비교하는 곳 없음(`exact_binding_holds` 는 QCC command digest 만) | 수용 — R2-#5: QCC 스탠드인 `egress_generation` 을 같은 config 에서(단일 원천) · 나머지 QCC 세대 리터럴은 Phase 5 실 QCC 대체 항목으로 명시 |
+| 6 | MEDIUM | 필수 필드 None 테스트가 reason-blind(`match=` 없음) — M4(빈 좌표 대체) green | 수용 — K2-#6: missing-fact 토큰 `match=` · M4 red |
+| 7 | MEDIUM | 커널 테스트에 `seal_digest` 전달 단언 없음(M6 커널 green · 런타임만 red) · `seal_matches_outbound` 가 `seal_digest` 미검 | 수용 — K2-#7: 술어에 `seal_digest` 포함 + 전달 단언 |
+| 8 | LOW | `seal_matches_outbound` «defensively» 문언 — 게이트웨이 호출 0 | 수용 — 문언 정정(동어반복 호출은 넣지 않음) |
+| 9 | LOW | `send_seal`/`send_seal_digest` «다른 kind 에선 None» 주석만 있고 validator 없음 | 수용 — K2-#9: kind 결속 validator |
+| 10 | LOW | 문자열 필드 빈 문자열 허용 | 수용 — K2-#10: `min_length=1` |
+| 11 | LOW | 좌표-필드 validator 는 단일 호출처에서 동어반복 | 수용 — 도크스트링에 «미래 호출자 방어» 명시 |
+| 12 | LOW(정보) | 봉인 실패 시 attempt 미소비 → 같은 attempt_id 재제출 가능(이전엔 파생 실패가 클레임 뒤라 영구 소비) | 수용·기록 — 의도적: 아무것도 보내지 않았으므로 capability 를 태우지 않는다 · `ATTEMPT_ALREADY_CONSUMED` 백스톱은 이 실패 부류에 더 이상 적용되지 않음 |
+
+(처분 커밋 SHA·재심은 착지 후 기입)
