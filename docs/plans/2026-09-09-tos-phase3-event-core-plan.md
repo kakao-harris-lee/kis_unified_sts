@@ -267,3 +267,28 @@ verdict **approve** — 17건 중 15 완전 종결 · #13/#17 부분(정직 공�
 리뷰어 잔여(기록): RR1 커밋 단독 임포트 불가를 리뷰어가 실측 확인(bisect 시 건너뛸 것) · `4b4aebdf` 오라벨 공개 정확 · M8(digest 함수 퇴화)은 자기대조의 구조적 성질(커널 단위 테스트가 메움) · `event_id` 선택 필드 — 미래에 None 으로 도는 출하 경로가 생기면 재생 무력화(현재 전 경로 스탬프).
 
 **최종 실측(워크트리 `60e8823b` 격리)**: 커널 `9405 passed` · 런타임 `703 passed` · mypy 258/75 clean · ruff/black clean · firewall PASS · lint-imports 3/0 · 예산 PASS(36 · `replay_engine` 예외 제거) · completion GREEN · spec PASS · contract PASS · 처분 6커밋 `tos/src` 변경 0 · spec/계약 diff 0. 재심 진행 중(P5/P6/P7 + P8 재프로브 · 지문 비교 제거 뮤테이션 · `_ALLOWED_FILES` 제거 시 핀 발화 요구) — 결과는 §7.11.
+
+### 7.11 웨이브 3 재심 #1·#2 → **approve** · Phase 3 종료 조건 판정 (2026-09-09)
+
+**재심 #1(`review-p3w3` · `90d2f373..60e8823b`)**: needs-attention — 발견 1~6 전부 실측 종결(P5/P6 뒤집힘 · P7 오탐 0 · P8 `FLOW_HALTED` 삭제/변조 탐지 · N1/N2/N3 red · M1/M2 가 이제 `assert not survivors` 에서 29/12 직접 호명 · 예산 예외 제거는 `stale-under-budget` 강제). 신규 R1(MEDIUM·차단): 지문 없는 영수증 분기가 `replay_result_for` 앞에서 return → digest 비교까지 소실(P9 `compared=0` · P9b 원래 P5 재무음) — `60e8823b` 이전에 쓰인 모든 tick 영수증이 업그레이드 첫 부팅에서 미비교(처분 전보다 후퇴). R2 `ReplayVerdict` 도크스트링 모순 · R3 «two files» · R4 bare assert(정보).
+
+**처분(CR7 `c1929d01`·`7a9a82f4`)**: digest 비교 항상 실행 · 지문 반쪽만 `RECEIPT_FINGERPRINT_MISSING` 으로 미비교(이벤트는 `total_compared` 계상) · `ReplayVerdict.has_unverifiable_receipts` · 부팅 게이트가 **비-halt** 증거 `REPLAY_RECEIPTS_UNVERIFIABLE`(count·event ids) 기록 후 진행(정책 결정: legacy 영수증은 발산의 증거가 아님 · digest 반쪽은 비교됨 · halt 하면 `c1929d01` 이전 스토어가 영구 부팅 불가 = 웨이브 2 #1 의 실패 형태) · P8/P8b 명명 테스트 · 도크스트링 3사유 열거.
+
+**재심 #2(`088116af..7a9a82f4`)**: **approve**. P9 `compared=1 unverifiable=True` · P9b `ok=True`(지문 부재 시 Proposal digest 는 구조상 플로우 삭제 불가시 — 은폐 아닌 공개 잔여) · P5~P8 유지 · P10 혼합 스토어에서 제거된 id 만 호명 · P11 증거 행 `count==len(ids)` · P12 게이트 거부 공존 시 정확 제외 · MR1 조기 반환 복원 RED 3 · MR2 플래그 상수화 RED 3 · MR3 `_boot_integrity` 사유 필터 제거 **생존**(→ S1) · N1a/N1b/N2/N3/M1/M2 red · 커널 production diff 0. **halt 정책 도전 요청에 리뷰어 판정: 지지** — 단 **Phase 5 전제조건**: 실주문 권한 승격 시점에 재생 창에 legacy(지문 없는) 영수증이 남아 있으면 부팅 게이트를 조일 것. 잔여 LOW 3(S1 공존 케이스 출하 테스트 · S2 미검증 행 append 를 raise 앞으로 · S3 `_replay_build_core` 3중 복제) → CR8 하우스키핑(비차단).
+
+**§5 종료 조건 판정(리뷰어 표 인용 · 저작자 동의)**:
+
+| 조건 | 판정 | 근거 |
+|---|---|---|
+| ① 순서 뮤테이션 매트릭스 생존 0 | **충족** | 56변형(교환 18·누락 19·중복 19) · 실행 검출기 2(시퀀서 지문)·3(게이트웨이 `record.step` 순서) 기준 `assert not survivors` 가 실질 게이트 · `omit_15` UNREACHABLE 정직 분류 |
+| ② 같은 Capsule/정책/seed ⇒ replay digest 동일 | **충족(범위 공개)** | DECISION_TICK = Proposal digest + 4필드 flow fingerprint · EGRESS_RESULT = result-outcome digest(KW3-RD) · 기록 verdict/hand-off 로 재생(RecordedStage/RecordedTransmit · KW3-EV) · 증거 삭제·변조 전부 divergence · 잔여 = `c1929d01` 이전 영수증의 지문 반쪽(항상 digest 비교 · 플래그 · 증거 행) |
+| ③ 백테스트 = paper 같은 코어·시퀀서 | **충족** | `BacktestDriver` 가 `EngineCore` 소비 · 같은 합성 transport·수량으로 결과 digest 까지 일치 · 수량 2배 ⇒ red · 송신 경계(15~19)는 범위 밖 명시 |
+| ④ 유실/지연/역전 ⇒ blind resubmit 0 | **충족** | TIMEOUT/늦은 FULL_FILL/역전 3 시나리오 transport 호출 1 · 새 attempt 는 새 permit+proof 증거 · RELEASED 부재로 둘째 InstrumentKey 로 실증 |
+| 스위트 green + 게이트 전량 | **충족** | 커널 9405 · 런타임 709 · mypy/ruff/black/firewall/lint-imports/예산(36)/completion/spec/contract |
+| 커널 diff = K 레인 커밋만 | **충족** | 웨이브 3 K 커밋 6(`3a8421ef` `7ecae367` `783fadf0` `9de02dcc` `b9447c9d` + 테스트만 `1fd45668`) |
+| 신규 수치 리터럴 0 | **충족** | 신규 출하 모듈 AST 스캔 0건 |
+| 독립 리뷰 approve | **충족** | 웨이브 1·2·3 각각 처분→재심 approve |
+
+**Phase 3 = 완료(2026-09-09)**. 브랜치 `feat/tos-phase3-event-core`(`feat/tos-phase4-send-seal` ← `feat/tos-phase2-kernel-round-1` ← main `aa348ce1` 스택). PR 생성은 운영자 수동.
+
+**이월(공개 · Phase 5 이후 / 운영자)**: ⓐ 운영자 확인 항목 ⑤ — 전역 new-risk 래치 + 명시 재무장(seq 결속·attestation·증거 선기록) 정책 승인 또는 대안(instrument 단위 / 기록만) ⓑ Phase 5 전제조건: legacy(지문 없는) 영수증이 재생 창에 남은 채 실주문 권한 승격 금지 — 부팅 게이트 조이기 ⓒ Phase 5 release-trigger: `PROJECTION_ORDER` 에 RELEASED 부재 → 체결 attempt 가 scope 슬롯 영구 점유(F-R 발견) · finality witness 소비자 ⓓ 가격 표면 부재(합성 paper transport 무가격) → calibration 은 무조건 INSUFFICIENT · expectancy 는 어디서도 주장되지 않음 — Phase 4 작업 2 / Phase 7 ⓔ `GatewayEvidenceRecord.step` 을 `FIXED_KIND_STEPS` kind 에 필수화(발견 7) ⓕ `EngineEvidenceRecord.event_id` 선택 필드 — None 으로 도는 출하 경로가 생기면 재생 무력화(현재 전 경로 스탬프) ⓖ 반복 TIMEOUT 은 해소 후 DUPLICATE(RR4 · 서명에 해소 세대 반영은 후속) ⓗ 웨이브 1 이월: 크래시 후 possibly-live attempt 의 인메모리 원장 보수 재구성(설계 #31 §9-7) · `EVENT_CONSUMED` 조회 인덱스 열 ⓘ 신규 설정 키 값 결정(§6-4: `max_send_result_wait_ms` · `replay_window_events` · `strategies/`·`strategy_bindings.yaml` · `backtest_calibration` 예산 · `finality` 정책) ⓙ 시간 스냅샷 G-1 · proof 발행 G-2 · transport 정체성 G-4(Phase 2 이월).
