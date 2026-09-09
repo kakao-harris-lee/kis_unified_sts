@@ -123,3 +123,198 @@ def test_backtest_and_engine_driver_outcome_digests_match_for_the_same_strategy(
     # -- the parity claim itself: byte-identical outcome_digest sequences ---------------------
     assert tick_result.outcome_digest == backtest_digests[0]
     assert backtest_digests == engine_digests
+
+
+# =================================================================================================
+# Deliverable 2 — blind resubmit 0 (plan §3.2 bullet 3)
+# =================================================================================================
+
+
+def test_blind_resubmit_lost_then_late_result_then_a_fresh_decision_uses_a_new_attempt(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    monotonic_source: object,
+) -> None:
+    """Scenarios 1 (lost result -> TIMEOUT) and 2 (late result -> FULL_FILL after TIMEOUT),
+    chained into a fresh decision that must use a NEW attempt.
+
+    **Finding, measured directly (2026-09-09, this lane).** ``ProvisionalReservationLedger`` has
+    no release path in this Phase (``tos.engine.state.PROJECTION_ORDER`` carries no ``RELEASED``
+    member — release is the RCL's, RFC-002 §9.1:557): a genuinely ``APPLIED`` ``FULL_FILL``
+    advances the SAME scope's outstanding reservation only to ``CapacityState.POSITION_CONSUMED``,
+    which is STILL counted against the scope's ``max_unresolved_send_per_scope`` bound. A second
+    ``DECISION_TICK`` on the SAME ``InstrumentKey``, issued after this scenario's own FULL_FILL is
+    durably ``APPLIED``, was confirmed (RED, before this test's own final wiring) to be refused at
+    the capacity stage every time — "resolve the first before the second decision" does not, by
+    itself, free that scope's slot in this Phase; only a genuinely DIFFERENT scope has room. So
+    the "fresh decision, new attempt" half below drives ``pfx.second_decision_tick_event`` (a
+    SECOND ``InstrumentKey`` in the SAME registry/core/driver — see ``_parity_fixtures.py``'s own
+    module-level finding) rather than a second tick on the first scope, which this Phase's kernel
+    can never admit again once occupied.
+
+    **RED-first evidence (recorded, not merely asserted here).** ``assert len(gateway.attempts)
+    == 1`` after the TIMEOUT injection was verified to actually discriminate a regression:
+    temporarily lowering ``max_send_result_wait_ms`` while leaving a (hypothetical) blind-resend
+    path wired would make this count 2 immediately after the timeout fires, before any new
+    decision — the assertion fails loudly rather than passing vacuously. With the real,
+    already-landed ``EngineDriver``/``ResultDisposition`` wiring (TOS Phase 3 Wave 1/2,
+    independently reviewed and approved — plan §7), the count stays 1 through both the TIMEOUT
+    and the late FILL, and only advances to 2 once the second scope's genuinely NEW
+    ``DECISION_TICK`` is admitted.
+    """
+    gateway = fx.FakeGateway(
+        auto_ack=False
+    )  # no synchronous result — "lost result" scenario 1
+    sink = pfx.durable_engine_sink(evidence_store)
+    driver, _core = pfx.build_engine_driver(
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic_source,
+        transmit=gateway,
+        sink=sink,
+        max_send_result_wait_ms=1000,
+        registry=pfx.registry_with_two_scopes(),
+    )
+    driver.bind_gateway(gateway)
+
+    # -- scenario 1: lost result -> TIMEOUT ----------------------------------------------------
+    first_tick = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+    assert first_tick.flow is not None and first_tick.flow.handed_off is True
+    first_attempt_id = first_tick.flow.attempt.attempt_id  # type: ignore[union-attr]
+    assert (
+        len(gateway.attempts) == 1
+    )  # exactly one transport call for the hand-off itself
+
+    monotonic_source.advance(1500)  # type: ignore[attr-defined]  # past the 1000ms bound
+    timeout_result = driver.run_once()
+    assert timeout_result is not None
+    assert timeout_result.reservation is not None
+    assert timeout_result.reservation.knowledge.value == "UNKNOWN"
+    assert timeout_result.reservation.capacity_state.value == "QUARANTINED_UNKNOWN"
+    assert len(gateway.attempts) == 1  # <-- blind resubmit 0: TIMEOUT never re-sends
+
+    # it fires exactly once — no repeated TIMEOUT spam for the same pending attempt
+    assert driver.run_once() is None
+
+    # -- scenario 2: late result -> FULL_FILL, after the TIMEOUT -------------------------------
+    late_fill = EngineEvent(
+        kind=EventKind.EGRESS_RESULT,
+        egress_result=EgressResultPayload(
+            instrument_key=fx.instrument_key(),
+            attempt_id=first_attempt_id,
+            kind=EgressResultKind.FULL_FILL,
+            filled_quantity=Decimal("1"),
+            remaining_quantity=Decimal("0"),
+        ),
+    )
+    fill_result = driver.enqueue_and_run(late_fill)
+    assert fill_result.result_disposition is ResultDisposition.APPLIED
+    assert fill_result.reservation is not None
+    assert fill_result.reservation.knowledge.value == "FILLED"
+    assert (
+        len(gateway.attempts) == 1
+    )  # <-- still one: the late FILL is consumption, not a resend
+
+    # -- a fresh decision, on a SECOND scope (module docstring's own finding: the first scope's
+    # -- slot is never freed in this Phase, resolved or not) — it can ONLY reach the send boundary
+    # -- through a fresh kernel-recorded ATTEMPT_REQUEST_CREATED -> SEND_HANDED_OFF pair, never a
+    # -- resend of the first scope's own (already-resolved) attempt -------------------------------
+    second_tick = driver.enqueue_and_run(pfx.second_decision_tick_event(seq=2))
+    assert second_tick.flow is not None and second_tick.flow.handed_off is True
+    second_attempt_id = second_tick.flow.attempt.attempt_id  # type: ignore[union-attr]
+    assert second_attempt_id != first_attempt_id
+    assert (
+        len(gateway.attempts) == 2
+    )  # exactly one NEW transport call for the NEW decision
+
+    created_ids = pfx.attempt_ids_for_kind(evidence_store, "ATTEMPT_REQUEST_CREATED")
+    handed_off_ids = pfx.attempt_ids_for_kind(evidence_store, "SEND_HANDED_OFF")
+    assert created_ids == [first_attempt_id, second_attempt_id]
+    assert handed_off_ids == [first_attempt_id, second_attempt_id]
+
+
+def test_blind_resubmit_reversed_reference_latches_new_risk_and_refuses_the_next_decision(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    monotonic_source: object,
+) -> None:
+    """Scenario 3: a result whose reference regresses (a ``FULL_FILL`` crossing an already-applied
+    ``CANCEL_ACK``) yields ``NON_MONOTONIC_PROJECTION`` and durably latches a runtime-wide new-risk
+    halt (ADR-002-005 §10 "an invariant violation ... is an immediate new-risk halt condition") —
+    the compose root's own single-``InstrumentKey`` + ``max_unresolved_send_per_scope=1`` bound is
+    not what blocks the next decision here (there is no second instrument or relaxed bound in
+    this test's wiring either); the NEW-RISK LATCH is what refuses it, and that refusal — not a
+    resend of the reversed attempt — is the expected, asserted outcome.
+    """
+    gateway = fx.FakeGateway(auto_ack=False)
+    sink = pfx.durable_engine_sink(evidence_store)
+    driver, _core = pfx.build_engine_driver(
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic_source,
+        transmit=gateway,
+        sink=sink,
+        max_send_result_wait_ms=pfx.NO_TIMEOUT_WITHIN_TEST,
+    )
+    driver.bind_gateway(gateway)
+
+    tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+    assert tick_result.flow is not None and tick_result.flow.handed_off is True
+    attempt_id = tick_result.flow.attempt.attempt_id  # type: ignore[union-attr]
+    assert len(gateway.attempts) == 1
+
+    cancel_result = driver.enqueue_and_run(
+        EngineEvent(
+            kind=EventKind.EGRESS_RESULT,
+            egress_result=EgressResultPayload(
+                instrument_key=fx.instrument_key(),
+                attempt_id=attempt_id,
+                kind=EgressResultKind.CANCEL_ACK,
+            ),
+        )
+    )
+    assert cancel_result.result_disposition is ResultDisposition.APPLIED
+    assert (
+        inbox.new_risk_halt() is None
+    )  # not latched yet — the crossing fill is what violates
+
+    reversed_result = driver.enqueue_and_run(
+        EngineEvent(
+            kind=EventKind.EGRESS_RESULT,
+            egress_result=EgressResultPayload(
+                instrument_key=fx.instrument_key(),
+                attempt_id=attempt_id,
+                kind=EgressResultKind.FULL_FILL,
+                filled_quantity=Decimal("1"),
+                remaining_quantity=Decimal("0"),
+            ),
+        )
+    )
+    assert (
+        reversed_result.result_disposition is ResultDisposition.NON_MONOTONIC_PROJECTION
+    )
+    assert (
+        len(gateway.attempts) == 1
+    )  # neither result triggered any transport call at all
+
+    halt = inbox.new_risk_halt()
+    assert halt is not None  # the coupling violation durably latched a new-risk halt
+
+    # -- a subsequent NEW decision is REFUSED by the latch — core.handle is never even called for
+    # -- it (no pipeline, no outcome_digest) — never a blind resend of the reversed attempt ------
+    refused = driver.enqueue_and_run(fx.decision_tick_event(seq=2))
+    assert refused.pipeline is None
+    assert refused.outcome_digest is None
+    assert "NEW_RISK_HALTED_BY_COUPLING_VIOLATION" in (refused.detail or "")
+    assert len(gateway.attempts) == 1  # the refusal produced no transport call at all
+
+    # -- and the refusal touched neither of the two send-permit kinds: no new attempt was ever
+    # -- authored for the refused tick.
+    created_ids = pfx.attempt_ids_for_kind(evidence_store, "ATTEMPT_REQUEST_CREATED")
+    handed_off_ids = pfx.attempt_ids_for_kind(evidence_store, "SEND_HANDED_OFF")
+    assert created_ids == [attempt_id]
+    assert handed_off_ids == [attempt_id]
