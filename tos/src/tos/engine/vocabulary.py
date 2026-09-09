@@ -336,13 +336,19 @@ class AdmissionVerdict(_NonTruthyStrEnum):
 class ResultDisposition(_NonTruthyStrEnum):
     """The conservative, recorded disposition of a re-injected ``EGRESS_RESULT`` (Phase 3 A-K-2).
 
-    A late, orphaned, duplicated, or attempt-mismatched result is not a crash — it is a **recorded
-    conservative outcome** (design plan 2026-09-09 §1.1 "크래시는 이벤트가 아니다"). Only
-    ``APPLIED`` transitions the reservation projection; the other three members leave it exactly
-    where it was and are recorded as ``EvidenceKind.RESULT_UNMATCHED`` /
-    ``HaltReason.RESULT_UNMATCHED`` — never silently dropped, never coerced into an
-    :class:`~tos.canonical.ArtifactIntegrityError` crash (ADR-002-002 §15.2 "later valid fill
-    accepted"; ADR-002-005 §7 "absence is not proof").
+    A late, orphaned, duplicated, attempt-mismatched, rank-regressing, or quantity-regressing
+    result is not a crash — it is a **recorded conservative outcome** (design plan 2026-09-09
+    §1.1 "크래시는 이벤트가 아니다"). Only ``APPLIED`` transitions the reservation projection; the
+    other five members leave it exactly where it was and are recorded as
+    ``EvidenceKind.RESULT_UNMATCHED`` / ``HaltReason.RESULT_UNMATCHED`` — never silently dropped,
+    never coerced into an :class:`~tos.canonical.ArtifactIntegrityError` crash (ADR-002-002 §15.2
+    "later valid fill accepted"; ADR-002-005 §7 "absence is not proof").
+
+    ``NON_MONOTONIC_PROJECTION`` and ``QUANTITY_REGRESSION`` exist because §15.2 requires a valid
+    *later* fill to be accepted as **knowledge**, not discarded, even when the *projection's own
+    conservatism rank* cannot move backward (design #31 §2.4 non-revival) — recording the
+    disposition (and the ``RESULT_UNMATCHED`` evidence it carries) preserves the fact for
+    reconciliation (Phase 5) without ever silently reviving or shrinking a settled projection.
     """
 
     #: The result named the exact outstanding attempt and was not previously applied — the
@@ -357,6 +363,18 @@ class ResultDisposition(_NonTruthyStrEnum):
     #: The exact ``(attempt_id, kind, filled_quantity, remaining_quantity, reference)`` tuple was
     #: already applied to this reservation — a resend/replay of the same result, not a new fact.
     DUPLICATE = "DUPLICATE"
+    #: The result would move the capacity projection to a rank *below* its current one (e.g. a
+    #: late ``FULL_FILL`` after a ``REJECT``, or a late ``PARTIAL_FILL`` after a ``FULL_FILL``).
+    #: The projection's own non-revival discipline (design #31 §2.4) forbids the rank move, so it
+    #: is refused rather than applied — but the underlying fact is not lost: it is recorded as
+    #: ``RESULT_UNMATCHED`` evidence for reconciliation (ADR-002-002 §15.2), never raised as a
+    #: crash (Phase 3 K2-p3-#4).
+    NON_MONOTONIC_PROJECTION = "NON_MONOTONIC_PROJECTION"
+    #: A ``FULL_FILL`` / ``PARTIAL_FILL`` reports a ``filled_quantity`` strictly below the
+    #: already-recorded value for the same attempt — the quantity axis's own non-revival rule
+    #: (ADR-002-002 §15.1:710 "reduced by no more than the amount proven filled"; Phase 3
+    #: K2-p3-#5). The already-recorded, larger magnitude is retained.
+    QUANTITY_REGRESSION = "QUANTITY_REGRESSION"
 
 
 class OrderingAdmission(_NonTruthyStrEnum):

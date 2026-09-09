@@ -367,8 +367,11 @@ class ProvisionalReservationLedger:
     def apply_egress_result(self, payload: EgressResultPayload) -> ResultApplication:
         """Apply — or conservatively record — a re-injected egress result (Phase 3 A-K-2).
 
-        A late, orphaned, duplicated, or attempt-mismatched result is **not** raised as a crash
-        (the former behaviour): it is returned as a :class:`ResultApplication` naming the exact
+        A late, orphaned, duplicated, attempt-mismatched, rank-regressing, or
+        quantity-regressing result is **not** raised as a crash (the former behaviour, and — for
+        the two regressing cases — the defect Phase 3 review finding #4 named: letting
+        :meth:`_store`'s non-revival guard raise straight out of this method): it is returned as a
+        :class:`ResultApplication` naming the exact
         :class:`~tos.engine.vocabulary.ResultDisposition` and leaving the projection untouched.
         Only ``APPLIED`` transitions the reservation (design #31 §2.2/§4.2 rule 3):
 
@@ -381,6 +384,19 @@ class ProvisionalReservationLedger:
         * **DUPLICATE** — the exact
           ``(attempt_id, kind, filled_quantity, remaining_quantity, reference)`` tuple was already
           applied to this reservation; a resend/replay of an already-recorded fact, not a new one.
+        * **NON_MONOTONIC_PROJECTION** — the result names the exact outstanding attempt and is not
+          a duplicate, but its target capacity state ranks *below* the currently-stored one (e.g. a
+          late ``FULL_FILL`` after a ``REJECT``, or a late ``PARTIAL_FILL`` after a ``FULL_FILL``).
+          ADR-002-002 §15.2 requires a valid later fill to be **accepted as knowledge**, not
+          discarded — so this is recorded (surfacing as ``RESULT_UNMATCHED`` evidence with the
+          payload preserved) rather than silently dropped or raised; the projection's own
+          conservatism rank (design #31 §2.4) simply cannot move backward, and reconciling the
+          preserved fact against the rank is deferred to reconciliation (Phase 5).
+        * **QUANTITY_REGRESSION** — the result is a ``FULL_FILL``/``PARTIAL_FILL`` for the exact
+          outstanding attempt, ranks at or above the current capacity state, and is not a
+          duplicate, but its ``filled_quantity`` is strictly below the already-recorded value
+          (ADR-002-002 §15.1:710 "reduced by no more than the amount proven filled"). The larger,
+          already-recorded magnitude is retained.
         * **APPLIED** — none of the above; the projection advances. ``UNKNOWN`` / ``TIMEOUT``
           update only the knowledge axis and leave the capacity projection at
           ``POTENTIALLY_LIVE``: not a rejection, not safe-to-retry, capacity never released
@@ -423,6 +439,34 @@ class ProvisionalReservationLedger:
                 projection=current,
             )
         knowledge, capacity_state = _RESULT_TRANSITIONS[payload.kind]
+        # ★ [K2-p3-#4] Refuse a rank-regressing target *before* touching ``_store`` at all: the
+        # non-revival guard there must never be reached (and must never raise) on this path — a
+        # late/reordered result is a recorded conservative outcome, not a crash (design plan
+        # 2026-09-09 §1.1). ADR-002-002 §15.2 still wants the fact preserved, which is exactly what
+        # the caller's ``RESULT_UNMATCHED`` evidence record does with this disposition.
+        if capacity_state is not None:
+            current_rank = PROJECTION_RANK[current.capacity_state]
+            next_rank = PROJECTION_RANK[capacity_state]
+            if next_rank < current_rank:
+                return ResultApplication(
+                    applied=False,
+                    disposition=ResultDisposition.NON_MONOTONIC_PROJECTION,
+                    projection=current,
+                )
+        # ★ [K2-p3-#5] The quantity axis has its own, independent non-revival rule (ADR-002-002
+        # §15.1:710): a fill result may never *shrink* the already-recorded filled magnitude, even
+        # when the capacity rank above did not regress (e.g. two PARTIAL_FILLs on the same attempt).
+        if (
+            payload.kind in (EgressResultKind.FULL_FILL, EgressResultKind.PARTIAL_FILL)
+            and current.filled_quantity is not None
+            and payload.filled_quantity is not None
+            and payload.filled_quantity < current.filled_quantity
+        ):
+            return ResultApplication(
+                applied=False,
+                disposition=ResultDisposition.QUANTITY_REGRESSION,
+                projection=current,
+            )
         update: dict[str, object] = {"knowledge": knowledge}
         if capacity_state is not None:
             update["capacity_state"] = capacity_state

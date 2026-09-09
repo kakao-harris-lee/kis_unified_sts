@@ -266,8 +266,148 @@ def test_a_late_fill_after_timeout_on_the_same_attempt_is_applied() -> None:
     assert core.ledger.admits_new_exposure(instrument_key()) is False
 
 
-def test_the_four_dispositions_are_exhaustive_and_distinguishable() -> None:
-    """(Phase 3 A-K-2) Each of the four :class:`ResultDisposition` members is independently reachable."""
+def test_a_late_fill_after_reject_does_not_crash_and_is_recorded_non_monotonic() -> (
+    None
+):
+    """([K2-p3-#4] finding #4; ADR-002-002 §15.2) REJECT -> late FULL_FILL is not a crash.
+
+    ``RELEASE_PENDING_PROOF`` outranks ``POSITION_CONSUMED`` in the projection's conservatism
+    order (design #31 §2.4), so a late ``FULL_FILL`` arriving after a ``REJECT`` would revive the
+    projection backwards. The pre-fix behaviour let :meth:`ProvisionalReservationLedger._store`
+    raise :class:`~tos.canonical.ArtifactIntegrityError` straight out of ``core.handle`` — a crash,
+    not an event (design plan 2026-09-09 §1.1 "크래시는 이벤트가 아니다"). The fix records
+    ``NON_MONOTONIC_PROJECTION`` and leaves the projection exactly at ``RELEASE_PENDING_PROOF``:
+    the fact is not silently lost — it surfaces as ``RESULT_UNMATCHED`` evidence — but the
+    projection's own rank cannot move backward; reconciling the two is Phase 5's job.
+    """
+    core, _, _, attempt_id = _sent_core()
+    rejected = core.handle(
+        _egress_event(EgressResultKind.REJECT, attempt_id, sequence=2)
+    )
+    assert rejected.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.RELEASE_PENDING_PROOF
+    )
+
+    late_fill = core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            attempt_id,
+            sequence=3,
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+        )
+    )
+    assert late_fill.halt_reason is HaltReason.RESULT_UNMATCHED
+    assert late_fill.result_disposition is ResultDisposition.NON_MONOTONIC_PROJECTION
+    # projection unchanged — still RELEASE_PENDING_PROOF, never revived to POSITION_CONSUMED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.RELEASE_PENDING_PROOF
+    )
+
+
+def test_a_late_partial_fill_after_full_fill_does_not_crash_and_is_recorded_non_monotonic() -> (
+    None
+):
+    """([K2-p3-#4] finding #4) FULL_FILL -> late PARTIAL_FILL is not a crash either.
+
+    ``POSITION_CONSUMED`` outranks ``PARTIALLY_CONSUMED``, so a reordered ``PARTIAL_FILL`` after a
+    ``FULL_FILL`` hits the same non-revival guard from the other rank-regressing direction.
+    """
+    core, _, _, attempt_id = _sent_core()
+    full = core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+        )
+    )
+    assert full.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.POSITION_CONSUMED
+    )
+
+    late_partial = core.handle(
+        _egress_event(
+            EgressResultKind.PARTIAL_FILL,
+            attempt_id,
+            sequence=3,
+            filled_quantity=Decimal("1"),
+            remaining_quantity=Decimal("1"),
+        )
+    )
+    assert late_partial.halt_reason is HaltReason.RESULT_UNMATCHED
+    assert late_partial.result_disposition is ResultDisposition.NON_MONOTONIC_PROJECTION
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.POSITION_CONSUMED
+    )
+
+
+def test_a_regressing_filled_quantity_is_refused_not_applied() -> None:
+    """([K2-p3-#5] finding #5; ADR-002-002 §15.1:710) Filled quantity may never go down.
+
+    Two ``PARTIAL_FILL``s on the same attempt where the second reports a *smaller* filled
+    magnitude than the first must not silently overwrite the larger, already-recorded figure —
+    that reader (``outstanding_consumed_magnitude``) is documented as the input to a
+    position-closing derivation sized "from the position that actually exists" and ADR-002-002
+    §15.1:710 requires reservation usage be reduced by no more than the amount proven filled.
+    """
+    core, _, _, attempt_id = _sent_core()
+    first = core.handle(
+        _egress_event(
+            EgressResultKind.PARTIAL_FILL,
+            attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("4"),
+            remaining_quantity=Decimal("6"),
+        )
+    )
+    assert first.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding_consumed_magnitude(instrument_key()) == Decimal("4")
+
+    second = core.handle(
+        _egress_event(
+            EgressResultKind.PARTIAL_FILL,
+            attempt_id,
+            sequence=3,
+            filled_quantity=Decimal("1"),
+            remaining_quantity=Decimal("9"),
+        )
+    )
+    assert second.halt_reason is HaltReason.RESULT_UNMATCHED
+    assert second.result_disposition is ResultDisposition.QUANTITY_REGRESSION
+    # the already-recorded, larger magnitude is retained — not overwritten downward
+    assert core.ledger.outstanding_consumed_magnitude(instrument_key()) == Decimal("4")
+
+
+def test_apply_egress_result_never_raises_artifact_integrity_error() -> None:
+    """([K2-p3-#4] finding #4) The egress-result path never raises — only records a disposition.
+
+    This is the structural guard the finding named: ``core.handle`` and
+    ``ProvisionalReservationLedger.apply_egress_result`` must never let
+    :class:`~tos.canonical.ArtifactIntegrityError` escape on this path, for *any* reachable
+    disposition. A regression that reintroduces the raise (letting ``_store`` raise again) fails
+    this test with an uncaught ``ArtifactIntegrityError`` instead of a clean assertion failure.
+    """
+    core, _, _, attempt_id = _sent_core()
+    core.handle(_egress_event(EgressResultKind.REJECT, attempt_id, sequence=2))
+    # must not raise:
+    result = core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            attempt_id,
+            sequence=3,
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+        )
+    )
+    assert result.result_disposition is ResultDisposition.NON_MONOTONIC_PROJECTION
+
+
+def test_the_six_dispositions_are_exhaustive_and_distinguishable() -> None:
+    """(Phase 3 A-K-2, extended [K2-p3-#4/#5]) All six :class:`ResultDisposition` members reach."""
     core, _, _, attempt_id = _sent_core()
 
     orphan_core, _ = build_core(transmit=RecordingTransmit())
@@ -287,11 +427,51 @@ def test_the_four_dispositions_are_exhaustive_and_distinguishable() -> None:
     duplicate = core.handle(_egress_event(EgressResultKind.ACK, attempt_id, sequence=3))
     assert duplicate.result_disposition is ResultDisposition.DUPLICATE
 
+    non_monotonic_core, _, _, non_monotonic_attempt_id = _sent_core()
+    non_monotonic_core.handle(
+        _egress_event(EgressResultKind.REJECT, non_monotonic_attempt_id, sequence=2)
+    )
+    non_monotonic = non_monotonic_core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            non_monotonic_attempt_id,
+            sequence=3,
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+        )
+    )
+    assert (
+        non_monotonic.result_disposition is ResultDisposition.NON_MONOTONIC_PROJECTION
+    )
+
+    regression_core, _, _, regression_attempt_id = _sent_core()
+    regression_core.handle(
+        _egress_event(
+            EgressResultKind.PARTIAL_FILL,
+            regression_attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("4"),
+            remaining_quantity=Decimal("6"),
+        )
+    )
+    regression = regression_core.handle(
+        _egress_event(
+            EgressResultKind.PARTIAL_FILL,
+            regression_attempt_id,
+            sequence=3,
+            filled_quantity=Decimal("1"),
+            remaining_quantity=Decimal("9"),
+        )
+    )
+    assert regression.result_disposition is ResultDisposition.QUANTITY_REGRESSION
+
     assert {
         orphan.result_disposition,
         mismatched.result_disposition,
         applied.result_disposition,
         duplicate.result_disposition,
+        non_monotonic.result_disposition,
+        regression.result_disposition,
     } == set(ResultDisposition)
 
 
