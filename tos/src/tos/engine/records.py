@@ -36,7 +36,9 @@ from tos.engine._base import (
     AllFalseCoordinatorAuthority,
     ArtifactIntegrityError,
     CanonicalDecimal,
+    CanonicalizationScheme,
     FrozenModel,
+    derive_id,
 )
 from tos.engine.vocabulary import (
     FILL_RESULT_KINDS,
@@ -54,6 +56,8 @@ from tos.rcl import CapacityState
 from tos.time import HealthState, SessionContext, UncertaintyInterval
 
 __all__ = [
+    "ATTEMPT_ID_PREFIX",
+    "EVENT_ID_PREFIX",
     "AttemptRequest",
     "DecisionTickPayload",
     "EgressResultPayload",
@@ -67,11 +71,16 @@ __all__ = [
     "StageRequest",
     "StageVerdict",
     "TimeAdmissionInputs",
+    "event_identity",
 ]
 
 #: The content-addressed attempt-request id prefix (a design/config prefix, not a safety token —
 #: the ``tos.dsl`` ``prop`` / ``astrat`` precedent).
 ATTEMPT_ID_PREFIX = "attempt"
+
+#: The content-addressed event-identity prefix (Phase 3 A-K-1), the same
+#: ``derive_id(prefix, digest)`` binding as :data:`ATTEMPT_ID_PREFIX`.
+EVENT_ID_PREFIX = "event"
 
 
 def _is_wildcard_scope(value: str) -> bool:
@@ -300,6 +309,32 @@ class EngineEvent(FrozenModel):
     def instrument_key(self) -> InstrumentKey:
         """Return the event's bound instrument key."""
         return self.payload().instrument_key
+
+
+def event_identity(event: EngineEvent, *, scheme: CanonicalizationScheme) -> str:
+    """The content-addressed identity of one engine event (Phase 3 A-K-1; design #31 §2.1(ii)).
+
+    Measured first (2026-09-09 survey): no ``event_id`` exists anywhere in :mod:`tos.engine` —
+    :class:`EngineEvent` carries no id field and no scheme. Adding one *as a field* would need the
+    canonicalization scheme at construction time, which :class:`EngineEvent` — a plain
+    :class:`~tos.canonical.FrozenModel`, not an :class:`~tos.canonical.IdDerivedArtifact` — does
+    not hold. So the identity is instead a **pure helper function** computed by the caller that
+    *does* hold a scheme, exactly the seam :func:`~tos.engine.sequencer.reference_coordinate_digest`
+    already uses for the attempt identity's reference-coordinate component.
+
+    ``derive_id("event", digest)`` mirrors :data:`ATTEMPT_ID_PREFIX`'s binding
+    (:func:`~tos.engine.sequencer.build_attempt_request`): no ``uuid4``, no timestamp, no RNG — the
+    same event bytes always reproduce the same identity, and a single differing field (kind, payload,
+    or reference) changes the whole digest.
+
+    Args:
+        event: The engine event.
+        scheme: The injected canonicalization scheme.
+
+    Returns:
+        The derived, content-addressed event identity.
+    """
+    return derive_id(EVENT_ID_PREFIX, scheme.compute_digest(event.model_dump(mode="json")))
 
 
 class StageVerdict(FrozenModel):

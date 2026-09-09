@@ -132,6 +132,7 @@ from tos.engine.pipeline import (
 )
 from tos.engine.records import (
     ATTEMPT_ID_PREFIX,
+    EVENT_ID_PREFIX,
     AttemptRequest,
     DecisionTickPayload,
     EgressResultPayload,
@@ -145,6 +146,7 @@ from tos.engine.records import (
     StageRequest,
     StageVerdict,
     TimeAdmissionInputs,
+    event_identity,
 )
 from tos.engine.registry import Dispatch, RegistrationRefused, StrategyRegistry
 from tos.engine.sequencer import (
@@ -224,6 +226,7 @@ __all__ = [
     "step_number",
     # records
     "ATTEMPT_ID_PREFIX",
+    "EVENT_ID_PREFIX",
     "AttemptRequest",
     "DecisionTickPayload",
     "EgressResultPayload",
@@ -237,6 +240,7 @@ __all__ = [
     "StageRequest",
     "StageVerdict",
     "TimeAdmissionInputs",
+    "event_identity",
     # admission (D1 ↔ D4)
     "AdmissionResult",
     "compare_has_capsule_operand",
