@@ -1,0 +1,26 @@
+# tos_runtime.compose._preconditions example config (TOS Phase 3 Wave 2 Lane
+# B-R; docs/plans/2026-09-09-tos-phase3-event-core-plan.md §2.1 "Coordinator
+# 양성 게이트").
+#
+# Loader: tos_runtime.compose._preconditions.load_coordinator_preconditions_config
+#
+# live_authorization_state: the governance-recorded Restricted-Live
+# Authorization axis for THIS runtime deployment (ADR-002-025 "Restricted-Live
+# Verification, Progressive Scope Promotion, and Production Authorization
+# Governance" §29 gate table; tos-spec/src/AUTHORITY-STATUS.csv row
+# "restricted_live,NOT_AUTHORIZED,...,No restricted-live grant is recorded;
+# documents tests dashboards and evidence rows are not authority"). This is a
+# GOVERNANCE fact the runtime reads, never one it computes or self-issues
+# (CLAUDE.md non-negotiable: the real futures account is never funded with
+# margin; real-money futures order paths are permanently policy-blocked).
+#
+# "NOT_AUTHORIZED" is the ONLY value this loader accepts today — it is also
+# the only value tos-spec's own AUTHORITY-STATUS.csv currently records for
+# this axis, and there is no runtime wiring yet for a positively-authorized
+# posture (that is Phase 5+ territory, gated on a fresh ADR-002-007/015 Live
+# Authorization the spec explicitly requires before any restricted-live trial
+# may start — ADR-002-025 line 743). Any other value is refused at load
+# (fail-closed — "no wiring yet", never a silently-trusted claim). A null
+# value here is the same named-TBD refusal every other tos_runtime.*.config
+# loader in this codebase uses.
+live_authorization_state: null
