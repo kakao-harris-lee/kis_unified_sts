@@ -60,12 +60,16 @@ attestation of ``True`` would silently flip it back to admitting, exactly
 backwards from "판정은 커널 술어만 한다" / positive-admit-only discipline).
 :func:`_restrictive_merge` instead takes the MORE RESTRICTIVE of the two:
 a caller's own definite non-``True`` claim is NEVER overridden upward: only
-when the caller has genuinely no opinion (``None``, on the fields that
-allow it) or itself claims ``True`` does the attestation govern — and an
-attestation of ``False`` still authoritatively downgrades a caller's naive
-``True`` (the attestation is the one real, config-sourced fact here; a
-caller's bare ``True`` literal is never treated as a stronger claim than
-it). ``wrap_aggregate_risk_inputs_provider``/``wrap_action_flow_inputs_provider``
+when the caller has genuinely no opinion (``None``) or itself claims
+``True`` does the attestation govern — and an attestation of ``False``
+still authoritatively downgrades a caller's naive ``True`` (the attestation
+is the one real, config-sourced fact here; a caller's bare ``True`` literal
+is never treated as a stronger claim than it). ``None`` is possible on all
+six fields (kernel round #1 §2.3 widened ``AggregateRiskDecisionInputs.
+numerically_safe``/``valuation_ok`` to ``| None``, matching the other four,
+which were already ``| None``) — so "the fields that allow it" is every
+field this module attests, not a subset.
+``wrap_aggregate_risk_inputs_provider``/``wrap_action_flow_inputs_provider``
 apply this merge to all six fields — never a raw override, and never a
 caller literal silently trusted as if it were the real answer either.
 

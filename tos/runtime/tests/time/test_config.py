@@ -20,6 +20,8 @@ _FULLY_VALUED: dict[str, object] = {
     "MAX_process_suspension_ms": 0,
     "MAX_time_source_disagreement_ms": 100,
     "MIN_time_independent_reference_count": 1,
+    "MAX_clock_domain_conversion_uncertainty_ms": 50,
+    "MAX_send_result_wait_ms": 5000,
     "tz_db_version": "2026a",
     "trading_calendar_version": "cal-1",
     "verification_profile_version": "vp-0",
@@ -80,6 +82,29 @@ def test_negative_bound_is_rejected(tmp_path: Path) -> None:
     content["MAX_process_suspension_ms"] = -1
     path = _write_yaml(tmp_path / "time.yaml", content)
     with pytest.raises(TimeConfigError, match="non-negative"):
+        load_time_config(path)
+
+
+def test_zero_send_result_wait_bound_is_rejected(tmp_path: Path) -> None:
+    """Independent review finding #16 (2026-09-09): every OTHER bound key accepts ``0``
+    (``MAX_process_suspension_ms`` above does), but ``MAX_send_result_wait_ms`` is the wait
+    ``EngineDriver``'s ``_TimeoutTracker`` uses before injecting a synthetic ``TIMEOUT`` — a
+    ``0`` value would time out every hand-off on the very next drain, mirroring
+    ``replay_window_events``'s own positive-int rule. Mutation companion: removing the
+    ``_STRICTLY_POSITIVE_KEYS`` branch (config.py) makes this pass with ``TimeConfigError``
+    never raised — red."""
+    content = dict(_FULLY_VALUED)
+    content["MAX_send_result_wait_ms"] = 0
+    path = _write_yaml(tmp_path / "time.yaml", content)
+    with pytest.raises(TimeConfigError, match="positive int"):
+        load_time_config(path)
+
+
+def test_negative_send_result_wait_bound_is_also_rejected(tmp_path: Path) -> None:
+    content = dict(_FULLY_VALUED)
+    content["MAX_send_result_wait_ms"] = -1
+    path = _write_yaml(tmp_path / "time.yaml", content)
+    with pytest.raises(TimeConfigError, match="positive int"):
         load_time_config(path)
 
 

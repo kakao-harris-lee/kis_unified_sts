@@ -88,6 +88,13 @@ def test_the_send_signature_admits_no_retry_or_idempotency_parameter() -> None:
         "price",
         "side",
         "reference",
+        # Phase 4 작업 6 (design #34 phase 4 작업 6 §1.3) — the one deliberate addition
+        # to this signature since the set below was pinned: the sealed
+        # ``SendSeal.seal_digest`` an adapter may echo on its own evidence. It is
+        # explicitly NOT a retry/idempotency parameter (this test) and NOT a
+        # credential/session parameter (the sibling test below) — both forbidden-name
+        # lists are unchanged; only this exact-set membership widened to admit it.
+        "seal_digest",
     }
     for forbidden in (
         "retry",
@@ -298,6 +305,132 @@ def test_an_absent_quantity_is_unknown_never_a_rejection() -> None:
 
 
 # ---------------------------------------------------------------------------
+# synthetic broker execution identity ([K2-p3-#6b]; ADR-002-002 §15.3:725, paper-only)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("policy", "quantity"),
+    [
+        (SyntheticFillPolicy(declared_kind=EgressResultKind.ACK), Decimal("20")),
+        (SyntheticFillPolicy(declared_kind=EgressResultKind.REJECT), Decimal("20")),
+        (SyntheticFillPolicy(declared_kind=EgressResultKind.UNKNOWN), Decimal("20")),
+        (SyntheticFillPolicy(declared_kind=EgressResultKind.TIMEOUT), Decimal("20")),
+        (SyntheticFillPolicy(fill_numerator=1, fill_denominator=1, lot_size=LOT), None),
+        (
+            SyntheticFillPolicy(fill_numerator=0, fill_denominator=1, lot_size=LOT),
+            Decimal("20"),
+        ),
+        (
+            SyntheticFillPolicy(fill_numerator=1, fill_denominator=2, lot_size=LOT),
+            Decimal("20"),
+        ),
+        (
+            SyntheticFillPolicy(fill_numerator=1, fill_denominator=1, lot_size=LOT),
+            Decimal("20"),
+        ),
+    ],
+    ids=[
+        "declared-ack",
+        "declared-reject",
+        "declared-unknown",
+        "declared-timeout",
+        "absent-quantity-unknown",
+        "zero-band-ack",
+        "half-band-partial-fill",
+        "full-band-full-fill",
+    ],
+)
+def test_every_result_carries_a_non_none_synthetic_execution_id(
+    policy: SyntheticFillPolicy, quantity: Decimal | None
+) -> None:
+    """([K2-p3-#6b]) Every one of ``send_once``'s four ``EgressResultPayload`` construction sites
+    (declared-kind, absent-quantity UNKNOWN, zero-fill ACK, and the derived FULL_FILL/PARTIAL_FILL
+    path) stamps a non-``None`` ``broker_execution_id`` — the K2-p3-#6 DUPLICATE signature is keyed
+    on this field, and with it always ``None`` (the pre-#6b state) two paper resends of the same
+    attempt with different reference coordinates never dedup.
+    """
+    result = _send(SyntheticPaperTransport(policy), quantity)
+    assert result.broker_execution_id is not None
+
+
+def test_the_synthetic_execution_id_is_deterministic_across_transport_instances() -> (
+    None
+):
+    """([K2-p3-#6b]; design #34 §5.2 "deterministic by construction") No clock, no RNG: the same
+    attempt and the same resulting kind produce the *same* id from two independent transports.
+    """
+    policy = SyntheticFillPolicy(fill_numerator=1, fill_denominator=1, lot_size=LOT)
+    attempt = _attempt(11)
+    first = SyntheticPaperTransport(policy).send_once(
+        attempt,
+        instrument_key=_key(),
+        coordinates=(),
+        quantity=Decimal("20"),
+        price=Decimal("4200"),
+        side="BUY",
+    )
+    second = SyntheticPaperTransport(policy).send_once(
+        attempt,
+        instrument_key=_key(),
+        coordinates=(),
+        quantity=Decimal("20"),
+        price=Decimal("4200"),
+        side="BUY",
+    )
+    assert first.broker_execution_id == second.broker_execution_id
+
+
+def test_the_synthetic_execution_id_differs_by_kind_for_the_same_attempt() -> None:
+    """([K2-p3-#6b]) The id is derived from (attempt, kind) — a different kind, same attempt,
+    is a different fact and must not collide onto the same id.
+    """
+    attempt = _attempt(12)
+    ack = SyntheticPaperTransport(
+        SyntheticFillPolicy(declared_kind=EgressResultKind.ACK)
+    ).send_once(
+        attempt, instrument_key=_key(), coordinates=(), quantity=None, price=None
+    )
+    reject = SyntheticPaperTransport(
+        SyntheticFillPolicy(declared_kind=EgressResultKind.REJECT)
+    ).send_once(
+        attempt, instrument_key=_key(), coordinates=(), quantity=None, price=None
+    )
+    assert ack.broker_execution_id != reject.broker_execution_id
+
+
+def test_the_synthetic_execution_id_differs_by_attempt_for_the_same_kind() -> None:
+    """([K2-p3-#6b]) The id is also attempt-scoped — two different attempts with the identical
+    declared outcome must not collide onto the same id either.
+    """
+    policy = SyntheticFillPolicy(declared_kind=EgressResultKind.ACK)
+    first = SyntheticPaperTransport(policy).send_once(
+        _attempt(13), instrument_key=_key(), coordinates=(), quantity=None, price=None
+    )
+    second = SyntheticPaperTransport(policy).send_once(
+        _attempt(14), instrument_key=_key(), coordinates=(), quantity=None, price=None
+    )
+    assert first.broker_execution_id != second.broker_execution_id
+
+
+def test_the_synthetic_execution_id_is_declared_synthetic_not_a_broker_identity() -> (
+    None
+):
+    """([K2-p3-#6b]) The module's own docstring must say this id is a SYNTHETIC identity, not a
+    real broker one — ADR-002-002 §15.3 identity is for paper-transport idempotency only, never
+    evidence that a real broker was ever contacted (mirrors the module's existing
+    ``NON-AUTHORITATIVE`` disclosure).
+    """
+    from pathlib import Path
+
+    import tos.brokeradapter.synthetic as synthetic
+
+    source = Path(synthetic.__file__).read_text(encoding="utf-8")
+    assert "SYNTHETIC" in source
+    assert "§15.3" in source
+
+
+# ---------------------------------------------------------------------------
 # attempt identity (design #31 §2.1(ii))
 # ---------------------------------------------------------------------------
 
@@ -421,3 +554,40 @@ def test_retry_primitive_scan_detects_a_planted_violation() -> None:
     assert "retry-named identifier" in joined
     assert "'for ... in range(...)' loop" in joined
     assert "send_once() call" in joined
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 wave 2 KW2-C1 — CANCEL_ACK / EXPIRED (new kinds; transport never emits them)
+# ---------------------------------------------------------------------------
+
+
+def test_synthetic_execution_id_accepts_the_two_new_kinds_without_crashing() -> None:
+    """(plan §2.2 "`_synthetic_execution_id` 는 새 kind 를 수용해야 함") No behaviour change:
+    the helper is a pure function of ``(attempt_id, kind)`` and already reads only
+    ``kind.value``, so it never needed a per-kind branch to begin with — this pins that fact
+    for the two kinds this wave adds to the vocabulary."""
+    import tos.brokeradapter.synthetic as synthetic
+
+    for kind in (EgressResultKind.CANCEL_ACK, EgressResultKind.EXPIRED):
+        stamped = synthetic._synthetic_execution_id("attempt-cancel-expiry", kind)
+        assert kind.value in stamped
+        assert "attempt-cancel-expiry" in stamped
+
+
+def test_neither_cancel_ack_nor_expired_is_declarable_by_this_transport() -> None:
+    """(module NON_FILL_DECLARABLE_KINDS docstring) This single-shot transport has no
+    cancel-request or expiry-observation entry point, so declaring either is refused —
+    distinctly from the "is a fill kind" refusal FULL_FILL/PARTIAL_FILL get."""
+    for kind in (EgressResultKind.CANCEL_ACK, EgressResultKind.EXPIRED):
+        assert kind not in NON_FILL_DECLARABLE_KINDS
+        with pytest.raises(
+            ValidationError, match="no cancel-request or expiry-observation"
+        ):
+            SyntheticFillPolicy(declared_kind=kind)
+
+
+def test_declaring_a_fill_kind_still_gets_the_original_fill_kind_message() -> None:
+    """(regression control) The pre-existing FULL_FILL/PARTIAL_FILL refusal message is
+    unchanged by the new branch added for CANCEL_ACK/EXPIRED."""
+    with pytest.raises(ValidationError, match="is a fill kind"):
+        SyntheticFillPolicy(declared_kind=EgressResultKind.FULL_FILL)

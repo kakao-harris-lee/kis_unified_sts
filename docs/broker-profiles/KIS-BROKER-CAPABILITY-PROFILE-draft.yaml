@@ -3553,6 +3553,27 @@ profile_identity:
   evidence_package_version: TBD      # §7.2:266
   superseded_version_link: null      # §7.2:269 — 최초 버전이므로 승계 링크 없음
   change_reason: TBD                 # §7.2:270
+
+  # 2026-09-10 인스턴스 저작(운영자 처분 · Phase 4 잔여 계획 §9.6): REAL_PROD 문서에
+  # 누락됐던 _model_view 병기 — 값은 이 문서의 기존 템플릿 값을 모델 철자로 옮긴
+  # 것뿐, 새 값 0.
+  _model_view:                           # records.py ProfileKey (10좌표) 대응
+    _note: >-
+      ProfileKey(records.py:59-68) 은 order_type 을 **단수** 스칼라로 가지는데
+      템플릿 profile_identity 는 order_types 를 **리스트**로 가진다(메모 §6-1).
+      REAL_PROD 문서는 order_types: [] (빈 리스트)이므로 좁힐 값이 없다 —
+      order_type 은 null 로 유지한다(허구 생성 금지).
+    broker_id: KIS_KOREA_INVESTMENT_SECURITIES
+    api_product: KIS_OPEN_TRADING_API_REST_AND_WEBSOCKET
+    api_version: UNKNOWN
+    environment: REAL_PROD
+    account_type: 실전_위탁
+    market: KRX_DOMESTIC
+    instrument_class: DOMESTIC_STOCK_AND_INDEX_FUTURES
+    order_type: null                     # order_types: [] 값 없음 — 허구 생성 금지
+    session_type: UNKNOWN
+    credential_scope: APP_KEY_APP_SECRET_PER_ENVIRONMENT
+
   _kis:
     endpoints:
       rest_base: "https://openapi.koreainvestment.com:9443"
@@ -3637,6 +3658,19 @@ live_scope:
   # ADR §13.15:796 (Patch-0056 신설 슬롯). false = 축소되지 않음 ⇒ fail-closed;
   # records.py LiveScope:132 의 None 과 동일한 보수 판정이다.
   reduced_off_unattended_partition_protection: false
+
+  # 2026-09-10 인스턴스 저작(운영자 처분 · Phase 4 잔여 계획 §9.6): REAL_PROD 문서에
+  # 누락됐던 _model_view 병기 — 값은 이 문서의 기존 템플릿 값을 모델 철자로 옮긴
+  # 것뿐, 새 값 0.
+  _model_view:                           # records.py LiveScope:125-132
+    account_scope: null
+    instrument_scope: null
+    order_type_scope: null
+    quantity_risk_limit: null
+    session_scope: null
+    action_classes: []
+    mode: NON_LIVE
+    reduced_off_unattended_partition_protection: null   # None ⇒ fail-closed
 
 capabilities:
   # 17 CapabilityDimension 전 멤버 + 템플릿 전용 2키 = 19키 전수.

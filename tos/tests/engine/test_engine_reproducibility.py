@@ -150,6 +150,69 @@ def test_the_whole_event_path_is_reproducible_including_the_attempt_identity() -
     assert first.flow.attempt == second.flow.attempt
 
 
+def test_event_result_outcome_digest_is_identical_across_fresh_cores() -> None:
+    """(Phase 3 A-K-3; §7.1) ``EventResult.outcome_digest`` reproduces across independently wired cores.
+
+    The replay surface the runtime needs for ``EVENT_CONSUMED`` evidence: two freshly built cores
+    processing the same ``DECISION_TICK`` must expose the same outcome digest directly off the
+    :class:`~tos.engine.EventResult` — the same canary as
+    ``test_the_whole_event_path_is_reproducible_including_the_attempt_identity``, but for the
+    digest the runtime consumes rather than the full pipeline object.
+    """
+    capsule = issue_capsule()
+
+    first_core, _ = build_core(transmit=RecordingTransmit())
+    first = first_core.handle(decision_tick(sequence=1, capsule=capsule))
+    second_core, _ = build_core(transmit=RecordingTransmit())
+    second = second_core.handle(decision_tick(sequence=1, capsule=capsule))
+
+    assert first.outcome_digest is not None
+    assert first.outcome_digest == second.outcome_digest
+    assert first.outcome_digest == first.pipeline.outcome_digest
+
+
+def test_event_result_outcome_digest_now_covers_an_egress_result_event_too() -> None:
+    """(Phase 3 A-K-3; **superseded by wave 3 KW3-RD**) An ``EGRESS_RESULT`` event now carries a
+    real outcome digest of its own, not ``None``.
+
+    **Changed pin, reported honestly.** This test used to assert ``egress.outcome_digest is
+    None``, on the reasoning that hashing the mutable, non-authoritative reservation projection
+    (:mod:`tos.engine.state`) directly would be exactly the "new hash of mutable state" the design
+    forbids. Wave 3 lane F-R's survey found the actual cost of that stance: it made both the
+    backtest=paper parity comparison and the runtime replay comparison **vacuous** for every
+    ``EGRESS_RESULT`` — ``None == None`` reports
+    :attr:`~tos.evidence.ReplayResultState.INCONCLUSIVE` ("uncompared"), not a verified match, so
+    design #31 §7.1's replay-identity property was only ever measured for ``DECISION_TICK``.
+
+    The resolution is not to hash the live projection — it is to digest the **result's own
+    applied outcome** (:class:`~tos.engine.records.EgressResultOutcome`: disposition + the
+    resulting capacity/knowledge/quantities/quarantine-floor), a value computed once per event
+    and never touched again, exactly parallel to how a ``DECISION_TICK`` digests its own already-
+    computed :attr:`~tos.engine.pipeline.PipelineResult.outcome_digest` rather than hashing
+    anything still-mutable. See ``test_engine_result_outcome_digest.py`` for the full property
+    suite (reproducibility, disposition-sensitivity, gate-refusal ``None``).
+    """
+    from tos.engine import EgressResultKind, EgressResultPayload, EngineEvent, EventKind
+
+    core, _ = build_core(transmit=RecordingTransmit())
+    tick = core.handle(decision_tick(sequence=1))
+    assert tick.flow is not None and tick.flow.attempt is not None
+    egress = core.handle(
+        EngineEvent(
+            kind=EventKind.EGRESS_RESULT,
+            egress_result=EgressResultPayload(
+                instrument_key=instrument_key(),
+                attempt_id=tick.flow.attempt.attempt_id,
+                kind=EgressResultKind.ACK,
+                reference=ordering(2),
+            ),
+        )
+    )
+    assert egress.pipeline is None
+    assert egress.outcome_digest is not None
+    assert egress.outcome_digest == egress.result_outcome_digest
+
+
 def test_distinctness_is_not_claimed_only_reproducibility() -> None:
     """(§6 Gap-1 / §9-9) The honest limit: two capsule-identical bars share one proposal identity.
 

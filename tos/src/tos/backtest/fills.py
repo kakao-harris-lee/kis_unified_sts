@@ -526,6 +526,10 @@ class DeterministicFillModel:
             return self._non_magnitude_fill(staged, bar, EgressResultKind.UNKNOWN)
         if parameters.mode is FillMode.REPORT_TIMEOUT:
             return self._non_magnitude_fill(staged, bar, EgressResultKind.TIMEOUT)
+        if parameters.mode is FillMode.REPORT_CANCEL_ACK:
+            return self._non_magnitude_fill(staged, bar, EgressResultKind.CANCEL_ACK)
+        if parameters.mode is FillMode.REPORT_EXPIRED:
+            return self._non_magnitude_fill(staged, bar, EgressResultKind.EXPIRED)
         return self._settled_fill(staged, bar)
 
     def _non_magnitude_fill(

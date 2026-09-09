@@ -42,34 +42,55 @@ registry's configured, currently-loaded value) plus one log-derived
 supersession check (a later-generation decision for the same proposal
 already consumed) — never anything more permissive than those two facts.
 
-**Decision expiry has no kernel predicate either (2026-09-08 re-review
-MEDIUM).** ADR-002-023 §12 item 2 requires a consumed decision be "current,
-**unexpired**" — but ``tos.iap`` is clock-free by design (``tos.iap.records``
-docstring "every age / bound is an injected opaque"; ``tos.iap.state``
-docstring "iap reads no clock"): no function anywhere under ``tos/src/tos/iap``
-takes ``max_decision_age_ms`` plus a time reading and produces an
-admissibility verdict. Rather than author that comparison itself (the kernel
-rule "the runtime never judges" — an age-vs-now check is exactly a
-currency judgement, the same category :meth:`IntentRegistry.decision_current`
-above is careful to bound), :func:`load_operator_approval_file` REFUSES to
-load any approval file whose ``max_decision_age_ms`` is non-``null``
-(:func:`_refuse_unenforceable_max_decision_age_ms`) — an operator's expiry
-intent is never silently accepted-but-unenforced. ``None`` stays accepted.
-**Kernel-predicate round pending**: a future ``tos.iap`` predicate taking
-``(max_decision_age_ms, decided_at, now)`` (or an equivalent injected-age
-shape matching the package's existing "no numeric bound, every age is
-injected opaque" convention) would let this refusal be replaced with a real
-enforcement call.
+**Decision expiry runtime path (kernel round #1 §1.2/§2.2, resolving the
+2026-09-08 re-review MEDIUM).** ADR-002-023 §12 item 2 requires a consumed
+decision be "current, **unexpired**". ``tos.iap`` stays clock-free; kernel
+round #1 §1.2 added :func:`tos.iap.decision_unexpired` — a pure, fail-closed
+predicate over an already-composed ``(max_decision_age_ms,
+decision_age_bound_ms)`` pair, isomorphic to
+:func:`tos.time.snapshot_age_admissible`. This module composes that bound,
+ONLY via kernel ``tos.time`` predicates, in three steps:
 
-**Reported ``CommandType`` gap (slice plan §5).** No member of the closed
-``tos.rcl.vocabulary.CommandType`` vocabulary names "consume an Independent
-Approval decision, once". The closest structural analog is
-:data:`~tos.rcl.vocabulary.CommandType.CONSUME_TRANSMISSION_CAPABILITY` — also
-a single-use, once-only consumption of an authorization token, durably
-committed — even though its named referent (the RCL Transmission Capability
-nonce, ADR-002-002 §27) is a different governed artifact from an Independent
-Approval decision (ADR-002-023). Reported, not resolved by a kernel edit: this
-module never touches ``tos.rcl.vocabulary``.
+1. **Load**: a non-``null`` ``max_decision_age_ms`` now REQUIRES the file's
+   new optional ``issued_at_unix_ms`` field
+   (:func:`_check_decision_age_requires_issued_at`, replacing the prior
+   unconditional refusal); absence still refuses. ``None`` is unaffected.
+2. **Receipt** (:func:`load_operator_approval_with_receipt`, a NEW, ADDITIONAL
+   loader — :func:`load_operator_approval_file` keeps its exact prior
+   signature/return type): captures this process's own continuity + a
+   :class:`~tos.time.ConsumerReceiptAnchor` from the injected
+   :class:`~tos_runtime.time.service.TrustworthyTimeService`, refuses a
+   future-dated ``issued_at_unix_ms``, and returns a :class:`LoadedApproval`
+   wrapping the kernel decision plus these receipt-time facts — the kernel
+   :class:`~tos.iap.IndependentApprovalDecision` itself is NOT edited.
+3. **Consumption** (:meth:`IntentRegistry.decision_current` /
+   :meth:`IntentRegistry.consume`, both gaining an optional ``receipt:
+   LoadedApproval | None``): ``max_decision_age_ms is None`` keeps prior
+   behaviour (evidence records ``NOT_CONFIGURED``); non-``None`` composes an
+   age bound via kernel
+   :func:`tos.time.effective_snapshot_age_bound_from_continuity` from the
+   current vs. receipt-time continuity and the injected ``time_config``
+   bounds, then calls :func:`~tos.iap.decision_unexpired`. A ``None`` bound
+   (time not ``TRUSTED``, not started, or incomplete ``receipt``/``time``/
+   ``time_config``) is fail-closed ``False``. Evidence carries the receipt
+   anchor, age bound, and expiry verdict.
+
+Every existing caller (``time``/``time_config`` omitted) keeps working
+unchanged as long as its files keep ``max_decision_age_ms`` ``null``.
+
+**Reported ``CommandType`` gap — resolved by kernel round #1 (plan §1.1).**
+This module previously reused :data:`~tos.rcl.vocabulary.CommandType.CONSUME_TRANSMISSION_CAPABILITY`
+(a different governed artifact, the RCL Transmission Capability nonce) as the
+closest structural analog for "consume an Independent Approval decision,
+once" — no closed ``CommandType`` member named that act. Kernel round #1
+§1.1 ratified a dedicated member,
+:data:`~tos.rcl.vocabulary.CommandType.CONSUME_APPROVAL_DECISION`; this
+module now writes/reads exclusively under it (the old reuse retired, §2.1).
+Both :meth:`IntentRegistry._current_consumption` (exact match) and the
+supersession scan in :meth:`IntentRegistry.decision_current` (prefix match)
+raise :class:`~tos_runtime.rcl.log.CommitLogCorruption` on a matching entry
+whose ``kind`` is NOT that member — never silently read as "not yet
+consumed" / "no supersession" (either would be a fail-open).
 """
 
 from __future__ import annotations
@@ -93,27 +114,41 @@ from tos.iap import (
     ProposalApprovalRequest,
     TradingApprovalPolicy,
     consumption_transition,
+    decision_unexpired,
     exact_binding_holds,
     request_is_complete,
 )
 from tos.rcl import AppendReceipt, AppendRefusal, CommandType, CommitEntry
+from tos.time import (
+    ConsumerReceiptAnchor,
+    HealthState,
+    MonotonicReading,
+    TimeContinuityIdentity,
+    effective_snapshot_age_bound_from_continuity,
+    elapsed_within_continuity,
+)
 
 from tos_runtime.custody.file_custody import verify_file_mode_and_owner
-from tos_runtime.rcl.log import SqliteCommitLog, StaleEpochRead
+from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog, StaleEpochRead
+from tos_runtime.time.config import TrustworthyTimeConfig
+from tos_runtime.time.service import TimeServiceNotStarted, TrustworthyTimeService
 
 __all__ = [
     "ConsumeResult",
     "IntentRegistry",
+    "LoadedApproval",
     "OperatorApprovalFileError",
     "load_operator_approval_file",
+    "load_operator_approval_with_receipt",
 ]
 
 #: Command-id prefix for every IAP consumption entry — see the module
 #: docstring's "single-use consumption is log-enforced" section.
 _CONSUMPTION_PREFIX = "iap-consumption"
 
-#: The reported-gap ``CommandType`` choice (module docstring).
-_CONSUMPTION_KIND = CommandType.CONSUME_TRANSMISSION_CAPABILITY
+#: The dedicated ``CommandType`` member for a single IAP consumption (kernel
+#: round #1 §1.1/§2.1 — module docstring).
+_CONSUMPTION_KIND = CommandType.CONSUME_APPROVAL_DECISION
 
 _EVIDENCE_KIND_PROPOSAL = "IAP_PROPOSAL"
 _EVIDENCE_KIND_DECISION = "IAP_DECISION_REGISTERED"
@@ -198,46 +233,68 @@ def _verify_environment_label(
         )
 
 
-def _refuse_unenforceable_max_decision_age_ms(
+def _check_decision_age_requires_issued_at(raw: Mapping[str, Any], path: Path) -> None:
+    """Require ``issued_at_unix_ms`` whenever ``max_decision_age_ms`` is set
+    (kernel round #1 §2.2 — replaces the prior unconditional refusal, 2026-09-08
+    re-review MEDIUM).
+
+    Kernel round #1 §1.2 provisioned :func:`tos.iap.decision_unexpired`, so a
+    non-``null`` ``max_decision_age_ms`` is no longer refused outright — but
+    it is only enforceable once the operator records WHEN the decision was
+    issued, so :func:`load_operator_approval_with_receipt` can compose a real
+    age bound (module docstring). Absent ``issued_at_unix_ms``, this function
+    refuses exactly as its predecessor did. ``None``/absent
+    ``max_decision_age_ms`` stays accepted regardless.
+    """
+    if raw.get("max_decision_age_ms") is None:
+        return
+    issued_at = raw.get("issued_at_unix_ms")
+    if issued_at is None:
+        raise OperatorApprovalFileError(
+            f"load_operator_approval_file: {path} sets 'max_decision_age_ms'="
+            f"{raw['max_decision_age_ms']!r} but no 'issued_at_unix_ms' — decision "
+            "expiry enforcement needs an issuance timestamp to compose an age "
+            "bound from (kernel round #1 §1.2/§2.2; ADR-002-023 §12 item 2 "
+            "'unexpired') — refusing rather than silently dropping the "
+            "operator's expiry intent. Set 'issued_at_unix_ms', or leave "
+            "'max_decision_age_ms' unset/null."
+        )
+    if isinstance(issued_at, bool) or not isinstance(issued_at, int):
+        raise OperatorApprovalFileError(
+            f"load_operator_approval_file: {path} 'issued_at_unix_ms'="
+            f"{issued_at!r} must be an integer (unix epoch milliseconds)"
+        )
+
+
+def _refuse_max_decision_age_ms_without_a_receipt(
     raw: Mapping[str, Any], path: Path
 ) -> None:
-    """Refuse a non-``null`` ``max_decision_age_ms`` (2026-09-08 re-review MEDIUM).
-
-    ADR-002-023 §12 item 2 requires a consumed decision to be "current,
-    unexpired" — but ``tos.iap`` is clock-free by design (module docstring;
-    ``tos/src/tos/iap/state.py`` "iap reads no clock", records.py:336
-    "injected opaque validity age"): no kernel predicate anywhere takes a
-    decision and a time reading and produces an expiry verdict
-    (``decision_current`` is an injected ``bool | None`` fact, never derived
-    from ``max_decision_age_ms`` by any ``tos.iap`` function — confirmed by
-    ``grep -rn "age\\|expir" tos/src/tos/iap/``). Accepting a non-``null``
-    value here would make the operator's expiry intent look enforced when it
-    is silently dropped everywhere downstream (:meth:`IntentRegistry.decision_current`
-    and :meth:`IntentRegistry.consume` never read it either). Per the kernel
-    rule "the runtime never judges itself", this module does NOT author the
-    age-vs-now comparison in its own right — it refuses to load until a
-    kernel predicate round provisions one. ``None`` (the field simply absent
-    or explicitly null) is unaffected and stays accepted.
-    """
+    """Unconditional refusal restored for the receipt-less loader (re-review
+    finding #7, LOW) — this loader produces no receipt, so a non-``null``
+    ``max_decision_age_ms`` set through it would only ever deny forever at
+    consumption, invisibly. ``None``/absent stays accepted."""
     if raw.get("max_decision_age_ms") is not None:
         raise OperatorApprovalFileError(
             f"load_operator_approval_file: {path} sets 'max_decision_age_ms'="
-            f"{raw['max_decision_age_ms']!r}, but decision expiry enforcement "
-            "is not provisioned in this slice (tos.iap is clock-free — no "
-            "kernel predicate takes a decision and a time reading; "
-            "IntentRegistry never reads this field) — refusing rather than "
-            "silently dropping the operator's expiry intent (ADR-002-023 §12 "
-            "item 2 'unexpired'; kernel-predicate round pending). Leave "
-            "'max_decision_age_ms' unset/null until that round lands."
+            f"{raw['max_decision_age_ms']!r}, but this loader produces no "
+            "receipt to enforce it against — use "
+            "load_operator_approval_with_receipt instead, or leave "
+            "'max_decision_age_ms' unset/null."
         )
 
 
 def _build_decision_from_raw(
-    raw: Mapping[str, Any], path: Path, scheme: CanonicalizationScheme
+    raw: Mapping[str, Any],
+    path: Path,
+    scheme: CanonicalizationScheme,
+    *,
+    age_check: Callable[[Mapping[str, Any], Path], None],
 ) -> IndependentApprovalDecision:
     """Check 5 + construction: parse ``result`` verbatim and issue the decision
-    (split out of :func:`load_operator_approval_file` for the size budget)."""
-    _refuse_unenforceable_max_decision_age_ms(raw, path)
+    (split out of :func:`load_operator_approval_file` for the size budget).
+    ``age_check`` differs per caller (finding #7) — unconditional refusal vs.
+    "requires issued_at_unix_ms"."""
+    age_check(raw, path)
     try:
         result = ApprovalResult(raw["result"])
     except (KeyError, ValueError) as exc:
@@ -314,7 +371,147 @@ def load_operator_approval_file(
     )
     _verify_environment_label(raw, path, environment_label)
     scheme = get_scheme(canonicalization_version)
-    return _build_decision_from_raw(raw, path, scheme)
+    return _build_decision_from_raw(
+        raw, path, scheme, age_check=_refuse_max_decision_age_ms_without_a_receipt
+    )
+
+
+@dataclass(frozen=True)
+class LoadedApproval:
+    """A decision plus the receipt-time facts needed to evaluate its expiry
+    (kernel round #1 §2.2 — module docstring). The kernel
+    :class:`~tos.iap.IndependentApprovalDecision` itself is NOT edited; these
+    are runtime-side facts :func:`load_operator_approval_with_receipt`
+    collects once, at load.
+
+    ``receipt_continuity``/``receipt_anchor``/``issuer_signed_age_ms`` are
+    ``None`` when they could not be established (time service not started,
+    or no ``issued_at_unix_ms``) — a decision with a non-``None``
+    ``max_decision_age_ms`` but an incomplete ``receipt`` fails closed at
+    consumption, never admitted on a partial receipt.
+    """
+
+    decision: IndependentApprovalDecision
+    issued_at_unix_ms: int | None
+    receipt_continuity: TimeContinuityIdentity | None
+    receipt_anchor: ConsumerReceiptAnchor | None
+    issuer_signed_age_ms: int | None
+    issuer_age_uncertainty_ms: int | None
+
+
+def load_operator_approval_with_receipt(
+    path: Path,
+    *,
+    time: TrustworthyTimeService,
+    time_config: TrustworthyTimeConfig,
+    expected_owner_uid: int,
+    environment_label: str | None,
+    canonicalization_version: str = EV_L1_PROVISIONAL_VERSION,
+    getuid: Callable[[], int] = os.getuid,
+) -> LoadedApproval:
+    """Load one approval file AND capture the receipt-time facts its
+    decision-expiry evaluation needs (kernel round #1 §2.2).
+
+    An ADDITIONAL loader — :func:`load_operator_approval_file` keeps its
+    exact prior signature/return type, so every existing caller is
+    unaffected. Use this loader when the file may set a non-``null``
+    ``max_decision_age_ms`` enforced at consumption via
+    :meth:`IntentRegistry.decision_current`/:meth:`~IntentRegistry.consume`'s
+    ``receipt`` parameter.
+
+    **Honest gap**: ``time``'s ``current_snapshot()`` is meant to supply the
+    receipt wall-clock reading (``TimeHealthSnapshot.wall_clock_observation``),
+    but in the current build :class:`TrustworthyTimeService`'s FSM never
+    populates that field (audit-only; no Phase 2 wiring reads a real wall
+    clock into it yet). This function still faithfully composes whatever the
+    snapshot reports — ``issuer_signed_age_ms`` stays ``None`` and expiry
+    fails closed at consumption until a future round wires a real reading.
+    Reported, not silently worked around.
+
+    Args:
+        path: The ``approvals/<proposal_digest>.yaml`` file.
+        time: The injected :class:`~tos_runtime.time.service.TrustworthyTimeService`.
+        time_config: The fully-valued time runtime config (future-timestamp
+            tolerance + clock-domain-conversion-uncertainty bounds).
+        expected_owner_uid: See :func:`load_operator_approval_file`.
+        environment_label: See :func:`load_operator_approval_file`.
+        canonicalization_version: See :func:`load_operator_approval_file`.
+        getuid: See :func:`load_operator_approval_file`.
+
+    Returns:
+        The :class:`LoadedApproval`.
+
+    Raises:
+        OperatorApprovalFileError: Everything :func:`load_operator_approval_file`
+            raises, plus a future-dated ``issued_at_unix_ms``.
+    """
+    raw = _load_raw_approval_mapping(
+        path, expected_owner_uid=expected_owner_uid, getuid=getuid
+    )
+    _verify_environment_label(raw, path, environment_label)
+    scheme = get_scheme(canonicalization_version)
+    decision = _build_decision_from_raw(
+        raw, path, scheme, age_check=_check_decision_age_requires_issued_at
+    )
+    issued_at = raw.get("issued_at_unix_ms")
+
+    try:
+        snapshot = time.current_snapshot()
+    except TimeServiceNotStarted:
+        snapshot = None
+
+    receipt_continuity: TimeContinuityIdentity | None = None
+    receipt_anchor: ConsumerReceiptAnchor | None = None
+    issuer_signed_age_ms: int | None = None
+    wall_now: int | None = None
+    if snapshot is not None:
+        receipt_continuity = snapshot.time_continuity_identity
+        receipt_anchor = ConsumerReceiptAnchor(
+            consumer_monotonic_continuity_id=receipt_continuity.monotonic_anchor_id,
+            consumer_local_monotonic_value_at_receipt=(
+                receipt_continuity.monotonic_anchor_value
+            ),
+        )
+        wall_now = snapshot.wall_clock_observation
+
+    if issued_at is not None and wall_now is not None:
+        tolerance = time_config.max_future_timestamp_tolerance_ms
+        if issued_at > wall_now + tolerance:
+            raise OperatorApprovalFileError(
+                f"load_operator_approval_with_receipt: {path} "
+                f"'issued_at_unix_ms'={issued_at!r} is more than {tolerance}ms "
+                f"ahead of the receipt wall-clock ({wall_now!r}) — refusing a "
+                "future-dated approval (MAX_future_timestamp_tolerance_ms)"
+            )
+        issuer_signed_age_ms = wall_now - issued_at
+
+    return LoadedApproval(
+        decision=decision,
+        issued_at_unix_ms=issued_at,
+        receipt_continuity=receipt_continuity,
+        receipt_anchor=receipt_anchor,
+        issuer_signed_age_ms=issuer_signed_age_ms,
+        issuer_age_uncertainty_ms=time_config.max_clock_domain_conversion_uncertainty_ms,
+    )
+
+
+def _consumer_elapsed_since_receipt(
+    receipt_continuity: TimeContinuityIdentity, continuity_now: TimeContinuityIdentity
+) -> int | None:
+    """Kernel ``elapsed_within_continuity`` over the two continuities' own
+    monotonic anchor coordinates (kernel round #1 §2.2) — never a runtime-
+    authored subtraction; ``None`` (UNKNOWN) whenever the two do not share a
+    concrete continuity (kernel predicate's own non-subtraction rule)."""
+    return elapsed_within_continuity(
+        MonotonicReading(
+            monotonic_continuity_id=receipt_continuity.monotonic_anchor_id,
+            local_monotonic_value=receipt_continuity.monotonic_anchor_value,
+        ),
+        MonotonicReading(
+            monotonic_continuity_id=continuity_now.monotonic_anchor_id,
+            local_monotonic_value=continuity_now.monotonic_anchor_value,
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -344,6 +541,8 @@ class IntentRegistry:
         writer_epoch: int,
         trading_approval_policy_generation: int,
         canonicalization_version: str = EV_L1_PROVISIONAL_VERSION,
+        time: TrustworthyTimeService | None = None,
+        time_config: TrustworthyTimeConfig | None = None,
     ) -> None:
         """Compose the registry over its injected ports.
 
@@ -364,12 +563,25 @@ class IntentRegistry:
             canonicalization_version: The registered ``tos.canonical`` scheme
                 version used to digest every issued
                 :class:`~tos.iap.ApprovalConsumptionRecord`.
+            time: The injected :class:`~tos_runtime.time.service.TrustworthyTimeService`
+                (kernel round #1 §2.2 — module docstring's "decision expiry
+                runtime path" section). Optional and defaulted to ``None``
+                for every existing caller that never consumes a decision
+                whose ``max_decision_age_ms`` is non-``None`` — such a
+                decision fails closed (denied) if ``time``/``time_config`` is
+                left ``None``.
+            time_config: The fully-valued time runtime config (transport/
+                queue/clock-domain-conversion bounds :meth:`decision_current`
+                / :meth:`consume` compose an age bound from). Same optionality
+                as ``time``.
         """
         self._log = log
         self._evidence = evidence
         self._writer_epoch = writer_epoch
         self._trading_approval_policy_generation = trading_approval_policy_generation
         self._scheme: CanonicalizationScheme = get_scheme(canonicalization_version)
+        self._time = time
+        self._time_config = time_config
 
     def propose(
         self,
@@ -413,43 +625,61 @@ class IntentRegistry:
         entry_command_id = _consumption_command_id(decision)
         view = self._log.read_linearizable(writer_epoch=self._writer_epoch)
         for entry in view.entries:
-            if entry.kind is _CONSUMPTION_KIND and entry.command_id == entry_command_id:
-                return (
-                    ConsumptionStatus.CONSUMED,
-                    entry.command_id,
-                    entry.command_digest,
+            if entry.command_id != entry_command_id:
+                continue
+            if entry.kind is not _CONSUMPTION_KIND:
+                # An entry already sits at this decision's own consumption
+                # identity under a DIFFERENT kind (e.g. the now-retired
+                # CONSUME_TRANSMISSION_CAPABILITY reuse, or a foreign
+                # writer) — never silently read as "not yet consumed": that
+                # would let a second, differently-kinded consumption slip
+                # through undetected (fail-open). Kernel round #1 §2.1.
+                raise CommitLogCorruption(
+                    "IntentRegistry._current_consumption: entry "
+                    f"{entry.command_id!r} matches this decision's own "
+                    f"consumption command-id but kind={entry.kind!r} is not "
+                    f"{_CONSUMPTION_KIND!r} — refusing to silently treat it as "
+                    "unconsumed (fail-closed; kernel round #1 §2.1)"
                 )
+            return (
+                ConsumptionStatus.CONSUMED,
+                entry.command_id,
+                entry.command_digest,
+            )
         return ConsumptionStatus.ELIGIBLE, None, None
 
-    def decision_current(self, decision: IndependentApprovalDecision) -> bool | None:
-        """Whether ``decision`` is current (module docstring's "decision
-        currency has no kernel predicate" section; ADR-002-023 §12 item 2).
+    def decision_current(
+        self,
+        decision: IndependentApprovalDecision,
+        *,
+        receipt: LoadedApproval | None = None,
+    ) -> bool | None:
+        """Whether ``decision`` is current (module docstring "decision
+        currency" + "decision expiry runtime path"; ADR-002-023 §12 item 2).
 
-        The runtime's own input collection — exactly two checks, no more:
-
-        1. **Equality of generation identifiers** (the only comparison
-           authored here): ``decision.trading_approval_policy_generation``
-           must equal this registry's configured, currently-loaded
-           :class:`~tos.iap.TradingApprovalPolicy` generation.
-        2. **Log-derived proposal-scoped supersession**: no later-generation
-           decision for the SAME ``request_id`` has already been consumed
-           (a durable, restart-surviving check — supersession is detected
-           only once a newer decision has itself been consumed, since a mere
-           :meth:`approve` registration is evidence-only, not RCL-committed;
-           this is a real, documented limitation, not hidden).
+        Three checks: (1) equality of ``trading_approval_policy_generation``
+        against this registry's configured value; (2) log-derived proposal-
+        scoped supersession (no later-generation decision for the SAME
+        ``request_id`` already consumed — detected only once consumed, a
+        real documented limitation); (3) kernel-predicate expiry (kernel
+        round #1 §2.2) — ``max_decision_age_ms is None`` skips this
+        unaffected; non-``None`` composes an age bound via
+        :func:`tos.time.effective_snapshot_age_bound_from_continuity` from
+        ``receipt`` + this registry's ``time``/``time_config`` and calls
+        :func:`tos.iap.decision_unexpired` (see :meth:`_expiry_verdict`).
 
         Args:
             decision: The decision to check.
+            receipt: The :class:`LoadedApproval` from
+                :func:`load_operator_approval_with_receipt` (``None`` is fine
+                as long as ``decision.max_decision_age_ms`` is also ``None``).
 
         Returns:
-            ``True`` only when both checks pass. ``False`` when the policy
-            generation mismatches, or a later decision for the same proposal
-            was already consumed. ``None`` when the decision carries no
-            ``trading_approval_policy_generation`` at all, when it carries no
-            ``request_id``/``decision_generation`` (proposal-scoped
-            supersession is then undeterminable — never assumed clear), or
-            when the log itself could not be read (stale epoch / unreachable
-            — genuinely unknown, never coerced to ``True`` or ``False``).
+            ``True`` only when every check passes. ``False`` on a generation
+            mismatch, a later consumed decision for the same proposal, or an
+            unproven expiry. ``None`` when currency is genuinely
+            undeterminable (no generation/request_id, or the log could not be
+            read) — never coerced to ``True``/``False``.
         """
         if decision.trading_approval_policy_generation is None:
             return None
@@ -469,10 +699,21 @@ class IntentRegistry:
             return None
         prefix = f"{_CONSUMPTION_PREFIX}:{decision.request_id}:"
         for entry in view.entries:
-            if entry.kind is not _CONSUMPTION_KIND or entry.command_id is None:
+            if entry.command_id is None or not entry.command_id.startswith(prefix):
                 continue
-            if not entry.command_id.startswith(prefix):
-                continue
+            if entry.kind is not _CONSUMPTION_KIND:
+                # A prefix-matching entry under any OTHER kind (e.g. the
+                # now-retired CONSUME_TRANSMISSION_CAPABILITY reuse, or a
+                # foreign writer) is never silently skipped — that would hide
+                # a real supersession (fail-open). Kernel round #1 §2.1.
+                raise CommitLogCorruption(
+                    "IntentRegistry.decision_current: entry "
+                    f"{entry.command_id!r} matches the consumption prefix for "
+                    f"request_id={decision.request_id!r} but kind="
+                    f"{entry.kind!r} is not {_CONSUMPTION_KIND!r} — refusing to "
+                    "silently skip a legacy/foreign-kind entry under this "
+                    "prefix (fail-closed; kernel round #1 §2.1)"
+                )
             generation_str, _, _decision_id = entry.command_id[len(prefix) :].partition(
                 ":"
             )
@@ -482,7 +723,104 @@ class IntentRegistry:
                 continue  # malformed id from an unrelated caller — never trusted
             if other_generation > decision.decision_generation:
                 return False
-        return True
+        expiry_ok, _age_bound_ms = self._expiry_verdict(decision, receipt)
+        return expiry_ok is not False
+
+    def _expiry_verdict(
+        self,
+        decision: IndependentApprovalDecision,
+        receipt: LoadedApproval | None,
+    ) -> tuple[bool | None, int | None]:
+        """Kernel-predicate-driven decision-expiry verdict (kernel round #1
+        §2.2; ADR-002-023 §12 item 2 "unexpired" / §18). Shared by
+        :meth:`decision_current` and :meth:`consume` so both compute it
+        identically — the runtime only composes the coordinates
+        :func:`tos.time.effective_snapshot_age_bound_from_continuity` and
+        :func:`tos.iap.decision_unexpired` need and calls them.
+
+        Returns ``(expiry_ok, age_bound_ms)``: ``(None, None)`` when
+        ``max_decision_age_ms is None`` (unconfigured); ``(False, None)``
+        when ``receipt``/``time``/``time_config`` are missing/incomplete,
+        time is not ``TRUSTED``, or not started; else the kernel-composed
+        ``(decision_unexpired result, age_bound_ms)`` pair.
+        """
+        if decision.max_decision_age_ms is None:
+            return None, None
+        if (
+            receipt is None
+            or self._time is None
+            or self._time_config is None
+            or receipt.receipt_continuity is None
+            or receipt.receipt_anchor is None
+            or receipt.issuer_signed_age_ms is None
+            or receipt.issuer_age_uncertainty_ms is None
+        ):
+            return False, None
+        try:
+            snapshot = self._time.current_snapshot()
+        except TimeServiceNotStarted:
+            return False, None
+        if snapshot.health_state is not HealthState.TRUSTED:
+            return False, None
+        continuity_now = snapshot.time_continuity_identity
+        age_bound = effective_snapshot_age_bound_from_continuity(
+            snapshot,
+            receipt.receipt_anchor,
+            consumer_continuity_now=continuity_now,
+            consumer_anchor=receipt.receipt_continuity,
+            # OBSERVED (never fabricated) — re-review finding #2. `None`
+            # (unobserved) is NOT coerced to "not suspended"; anchor_valid
+            # treats it as invalid, fail-closed, like max_suspension_ms below.
+            suspension_ms=snapshot.suspension_status.suspension_ms,
+            max_suspension_ms=self._time_config.max_process_suspension_ms,
+            issuer_signed_age=receipt.issuer_signed_age_ms,
+            issuer_age_uncertainty=receipt.issuer_age_uncertainty_ms,
+            transport_bound=self._time_config.max_time_transport_and_queue_uncertainty_ms,
+            # Phase 2's time config folds transport + queue delay into ONE
+            # combined bound (MAX_time_transport_and_queue_uncertainty_ms) —
+            # there is no separately-tracked queue-only key, so 0 here is a
+            # concrete "already folded into transport_bound", never an
+            # unbounded/None term (which would fail this closed instead).
+            queue_bound=0,
+            conversion_bound=self._time_config.max_clock_domain_conversion_uncertainty_ms,
+            consumer_elapsed_since_receipt=_consumer_elapsed_since_receipt(
+                receipt.receipt_continuity, continuity_now
+            ),
+        )
+        return (
+            decision_unexpired(
+                max_decision_age_ms=decision.max_decision_age_ms,
+                decision_age_bound_ms=age_bound,
+            ),
+            age_bound,
+        )
+
+    def _expiry_evidence_fields(
+        self,
+        decision: IndependentApprovalDecision,
+        receipt: LoadedApproval | None,
+    ) -> dict[str, Any]:
+        """Consumption-evidence fields for the decision-expiry verdict
+        (kernel round #1 §2.2 — "소비 증거에 receipt_anchor·age_bound_ms·
+        expiry_verdict 결속"). Never used to re-decide consumability — see
+        :meth:`consume`'s ``receipt`` parameter docstring."""
+        expiry_ok, age_bound_ms = self._expiry_verdict(decision, receipt)
+        if expiry_ok is None:
+            expiry_verdict = "NOT_CONFIGURED"
+        elif expiry_ok is True:
+            expiry_verdict = "UNEXPIRED"
+        else:
+            expiry_verdict = "EXPIRED_OR_UNVERIFIABLE"
+        receipt_anchor = (
+            None
+            if receipt is None or receipt.receipt_anchor is None
+            else receipt.receipt_anchor.model_dump(mode="json")
+        )
+        return {
+            "expiry_verdict": expiry_verdict,
+            "age_bound_ms": age_bound_ms,
+            "receipt_anchor": receipt_anchor,
+        }
 
     def consume(
         self,
@@ -495,6 +833,7 @@ class IntentRegistry:
         intent_identity: str | None = None,
         bound_chain: Mapping[str, str | None] | None = None,
         actual_chain: Mapping[str, str | None] | None = None,
+        receipt: LoadedApproval | None = None,
     ) -> ConsumeResult:
         """Attempt the single-use consumption of ``decision`` (§12; IAP-INV-006).
 
@@ -509,7 +848,9 @@ class IntentRegistry:
                 idempotent replay; a different digest against an
                 already-consumed decision => conflict).
             decision_current: Injected currentness fact for the decision
-                (``None``/``False`` => not consumable, fail-closed).
+                (``None``/``False`` => not consumable, fail-closed) — the
+                caller's own :meth:`decision_current` result (already folds
+                in expiry when ``receipt`` was passed to that call too).
             approved_intent_envelope_equivalent: Injected envelope-equivalence
                 fact (``None``/``False`` => not consumable).
             intent_identity: The orthostate Intent identity this consumption
@@ -519,6 +860,10 @@ class IntentRegistry:
                 log.
             actual_chain: The actual artifacts' chain, paired with
                 ``bound_chain``.
+            receipt: The same :class:`LoadedApproval` (if any) passed to
+                :meth:`decision_current` (kernel round #1 §2.2) — only
+                enriches consumption evidence (receipt anchor/age bound/
+                expiry verdict); never re-decides consumability here.
 
         Returns:
             The :class:`ConsumeResult`.
@@ -561,6 +906,7 @@ class IntentRegistry:
                 "decision_id": decision.decision_id,
                 "command_identity": command_identity,
                 "outcome": None if final_outcome is None else final_outcome.value,
+                **self._expiry_evidence_fields(decision, receipt),
             },
             kind=_EVIDENCE_KIND_CONSUMPTION,
             record_class=_EVIDENCE_KIND_CONSUMPTION,

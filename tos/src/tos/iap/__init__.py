@@ -89,6 +89,7 @@ from tos.iap.predicates import (
     approval_decision,
     approval_grants_no_authority,
     conflicting_evaluators_unknown,
+    decision_unexpired,
     exact_binding_holds,
     independent_validation_declared,
     invalidation_closure,
@@ -164,4 +165,6 @@ __all__ = [
     "economic_effect_outlives",
     "stale_generation_fenced",
     "recovery_revives_nothing",
+    # kernel round #1 §1.2 — decision expiry (ADR-002-023 §12 item 2 / §18)
+    "decision_unexpired",
 ]

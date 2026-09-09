@@ -42,6 +42,13 @@ _ALLOWED_TOS_PACKAGES = frozenset(
     }
 )
 
+#: ``tos.orthostate`` is deliberately absent from this list (2026-09-09, Phase 3 wave 2
+#: KW2-C2): ``tos.engine`` itself now directly realizes ``tos.orthostate``
+#: (``engine/orthostate_projection.py``; see ``tos/tests/engine/test_engine_import_closure.py``),
+#: so it reaches every ``tos.engine`` consumer, this package included, through the already
+#: ratified ``tos.engine`` edge — ``test_runtime_closure_is_bounded_by_the_declared_set_plus_
+#: the_engine_edge`` below is exactly the test that accounts for it (its bound already
+#: includes the measured ``tos.engine`` closure, so it stays green unedited).
 _FORBIDDEN_SIBLINGS = frozenset(
     {
         "tos.egressgw",
@@ -53,7 +60,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.iap",
         "tos.liveauth",
         "tos.nontrade",
-        "tos.orthostate",
         "tos.posttrade",
         "tos.protective",
         "tos.recon",

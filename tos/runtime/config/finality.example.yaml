@@ -1,0 +1,29 @@
+# tos_runtime.posttrade example config (TOS Phase 3 Wave 2 Lane C-R; plan §2.2)
+#
+# Loader: tos_runtime.posttrade.config.load_finality_config
+#
+# SyntheticFinalityProducer issues an ORDER_FQP-only PostTradeFinalityProof for a
+# SYNTHETIC-transport FULL_FILL (never a real broker fill — Phase 5 reconciliation
+# is the real-broker-evidence path). The four values below are the ObligationLegScope
+# components this runtime cannot honestly derive from an EgressResultPayload alone
+# (no price, no side, no settlement calendar reaches this driver) plus the approved
+# proof-recipe identity (ADR-002-030 §29 Q3). Every value is an OPERATOR-APPROVED
+# STATIC snapshot, never computed here ("null=named-TBD ⇒ refuse to start", mirroring
+# tos_runtime.release.config's own discipline).
+
+# The exact settlement currency this SYNTHETIC transport's obligations are
+# denominated in (ObligationLegScope.currency, ADR §11 line 328).
+currency: null
+
+# The exact value-date token this transport's obligations bind
+# (ObligationLegScope.value_date — an opaque injected token; this package is
+# clock-free and reads no time source).
+value_date: null
+
+# The exact source revision the finality proof is taken against
+# (ObligationLegScope.source_revision / PostTradeFinalityProof.source_revision).
+source_revision: null
+
+# The Phase-0-approved proof recipe identity (ADR §29 Q3) this SYNTHETIC producer
+# issues every proof under.
+proof_recipe_id: null

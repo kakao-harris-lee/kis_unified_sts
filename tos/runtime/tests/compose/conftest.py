@@ -19,6 +19,14 @@ from tos_runtime.compose._pending_dimensions import PENDING_DIMENSION_KEYS
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
+#: The shipped example (TOS Phase 4 plan §2 decisions 1-2, G-4) — this
+#: fixture only fills the one named-TBD field (``active_scope``), never
+#: hand-retypes the scope table, so the compose e2e suite exercises the SAME
+#: config a real deployment would start from.
+_BROKER_SCOPES_EXAMPLE_PATH = (
+    Path(__file__).resolve().parents[2] / "config" / "broker_scopes.example.yaml"
+)
+
 #: The digest compose_paper_runtime computes for its own RuntimeIdentity.code_digest
 #: (tos_runtime.compose.root: ``_SCHEME.compute_digest({"component": "tos_runtime.compose"})``).
 #: Reproduced here (pure function, same scheme) so release.yaml can match it exactly.
@@ -54,6 +62,8 @@ def config_dir(tmp_path: Path) -> Path:
             "MAX_process_suspension_ms": 5000,
             "MAX_time_source_disagreement_ms": 50,
             "MIN_time_independent_reference_count": 1,
+            "MAX_clock_domain_conversion_uncertainty_ms": 50,
+            "MAX_send_result_wait_ms": 5000,
             "tz_db_version": "tzdb-compose-0",
             "trading_calendar_version": "cal-compose-0",
             "verification_profile_version": "ver-compose-0",
@@ -113,13 +123,37 @@ def config_dir(tmp_path: Path) -> Path:
     _write_yaml(
         directory / "egress_attestations.yaml",
         {
-            "account_instrument_action_allowed": {"attested": True},
             "venue_session_account_facts_current": {"attested": True},
-            "broker_constraint_generation_current": {"attested": True},
             "restrictive_latch_state": {"clear": True},
             "worst_credible_capacity": {"value": 1},
         },
     )
+    _write_yaml(
+        directory / "egress_coordinates.yaml",
+        {
+            # Mirrors the literals _wiring.py's _build_context_resolver used
+            # to hardcode (kernel round #1 §7.2 survey) — see
+            # tos_runtime.compose._egress_coordinates's own module docstring.
+            "endpoint": {"value": "synthetic://paper/order"},
+            "action": {"value": "NEW_ORDER"},
+            "method": {"value": "SUBMIT"},
+            "route_identity": {"value": "synthetic-route"},
+            "credential_generation": {"value": 0},
+            "broker_session_generation": {"value": 0},
+            "egress_generation": {"value": 1},
+            "active_principal": {"value": "egressgw-{environment_label}"},
+            "capsule_terminus_fields": {"value": ["account", "instrument"]},
+        },
+    )
+    broker_scopes_raw = yaml.safe_load(
+        _BROKER_SCOPES_EXAMPLE_PATH.read_text(encoding="utf-8")
+    )
+    # The example's ONE named-TBD field (module docstring) — this compose
+    # e2e suite activates the same SYNTHETIC scope _wiring.py's old
+    # hardcoded transport literal represented (G-4, now structurally
+    # derived instead — tos_runtime.brokercap.scopes).
+    broker_scopes_raw["active_scope"] = "SYNTHETIC_FUTURES_ORDER"
+    _write_yaml(directory / "broker_scopes.yaml", broker_scopes_raw)
     _write_yaml(
         directory / "risk_attestations.yaml",
         {
@@ -136,6 +170,40 @@ def config_dir(tmp_path: Path) -> Path:
         {
             "dsl_evaluation_budget_steps": 64,
             "max_unresolved_send_per_scope": 1,
+        },
+    )
+    _write_yaml(
+        directory / "engine_driver.yaml",
+        {
+            # TOS Phase 3 Wave 1 Lane A-R — a boot-time cost bound, not a
+            # safety threshold (tos_runtime.compose._engine_wiring's own
+            # module docstring); large enough to cover every event this
+            # suite's compose end-to-end tests ever admit in one process.
+            "replay_window_events": 1000,
+        },
+    )
+    _write_yaml(
+        directory / "coordinator_preconditions.yaml",
+        {
+            # TOS Phase 3 Wave 2 Lane B-R (design #31 §9-10; plan §2.1) — the
+            # ONLY governance posture tos_runtime.compose._preconditions has
+            # wiring for today (ADR-002-025; tos-spec's own
+            # AUTHORITY-STATUS.csv "restricted_live,NOT_AUTHORIZED" row).
+            # This compose e2e suite's synthetic (reaches_broker=False)
+            # transport is exactly the case this posture admits.
+            "live_authorization_state": "NOT_AUTHORIZED",
+        },
+    )
+    _write_yaml(
+        directory / "finality.yaml",
+        {
+            # TOS Phase 3 Wave 2 Lane C-R follow-up (team-lead CR-4 dispatch,
+            # plan §2.2) — the SYNTHETIC post-trade finality policy every
+            # SyntheticFinalityProducer this compose root wires needs.
+            "currency": "KRW",
+            "value_date": "2026-09-09",
+            "source_revision": "compose-e2e-rev-1",
+            "proof_recipe_id": "compose-e2e-recipe-1",
         },
     )
     _write_yaml(

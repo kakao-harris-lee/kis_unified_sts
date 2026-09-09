@@ -26,9 +26,7 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 def _valid_egress_attestations() -> dict:
     return {
-        "account_instrument_action_allowed": {"attested": True},
         "venue_session_account_facts_current": {"attested": True},
-        "broker_constraint_generation_current": {"attested": True},
         "restrictive_latch_state": {"clear": True},
         "worst_credible_capacity": {"value": 1},
     }
@@ -46,22 +44,14 @@ def _write(path: Path, content: dict) -> None:
 @pytest.mark.parametrize(
     "mutate",
     [
-        lambda raw: raw["account_instrument_action_allowed"].__setitem__(
-            "attested", None
-        ),
         lambda raw: raw["venue_session_account_facts_current"].__setitem__(
-            "attested", None
-        ),
-        lambda raw: raw["broker_constraint_generation_current"].__setitem__(
             "attested", None
         ),
         lambda raw: raw["restrictive_latch_state"].__setitem__("clear", None),
         lambda raw: raw["worst_credible_capacity"].__setitem__("value", None),
     ],
     ids=[
-        "account_instrument_action_allowed",
         "venue_session_account_facts_current",
-        "broker_constraint_generation_current",
         "restrictive_latch_state.clear",
         "worst_credible_capacity.value",
     ],
@@ -78,6 +68,27 @@ def test_a_still_null_field_refuses_to_load(tmp_path: Path, mutate) -> None:
 def test_missing_file_refuses_to_load(tmp_path: Path) -> None:
     with pytest.raises(EgressAttestationConfigError):
         load_egress_attestations(tmp_path / "does-not-exist.yaml")
+
+
+# ============================================================================
+# Retired items 6/12 keys — a config still carrying either refuses to load
+# (TOS Phase 4 plan §2 decision 4: these are derived now, never attested)
+# ============================================================================
+
+
+@pytest.mark.parametrize(
+    "stale_key",
+    ["account_instrument_action_allowed", "broker_constraint_generation_current"],
+)
+def test_a_retired_derived_key_still_present_refuses_to_load(
+    tmp_path: Path, stale_key: str
+) -> None:
+    raw = _valid_egress_attestations()
+    raw[stale_key] = {"attested": True}
+    path = tmp_path / "egress_attestations.yaml"
+    _write(path, raw)
+    with pytest.raises(EgressAttestationConfigError, match="no longer attestations"):
+        load_egress_attestations(path)
 
 
 # ============================================================================
@@ -139,15 +150,7 @@ def test_refusing_latch_yields_zero_transport_calls_attributed_to_item_16(
     "field,item",
     [
         (
-            "account_instrument_action_allowed",
-            SendVerifyItem.ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY,
-        ),
-        (
             "venue_session_account_facts_current",
-            SendVerifyItem.VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION,
-        ),
-        (
-            "broker_constraint_generation_current",
             SendVerifyItem.VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION,
         ),
     ],

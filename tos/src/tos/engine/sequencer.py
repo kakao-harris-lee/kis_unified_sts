@@ -239,8 +239,25 @@ def _halt(
     step: CommitmentStep,
     reason: HaltReason,
     detail: str | None,
+    event_id: str | None = None,
 ) -> FlowResult:
-    """Record a halt and return the restrictive :class:`FlowResult` (design #31 §4.2 rule 2)."""
+    """Record a halt and return the restrictive :class:`FlowResult` (design #31 §4.2 rule 2).
+
+    Args:
+        sink: The provisional evidence sink.
+        key: The dispatch scope.
+        verdicts: Every verdict admitted before the halt.
+        step: The step the flow halted at.
+        reason: The halt reason.
+        detail: The halt detail.
+        event_id: The content-addressed identity of the ``DECISION_TICK`` event whose handling
+            produced this halt (Phase 3 wave 3 KW3-EV; :func:`~tos.engine.records.event_identity`)
+            — ``None`` only when the caller genuinely has none to offer (e.g. a unit test that
+            exercises the sequencer directly, never through :class:`~tos.engine.core.EngineCore`).
+            Threaded through so a replay can correlate every ``FLOW_HALTED`` record with the exact
+            event that produced it, instead of relying on encounter order (fragile under a
+            truncated replay window).
+    """
     sink.record(
         EngineEvidenceRecord(
             kind=EvidenceKind.FLOW_HALTED,
@@ -248,6 +265,7 @@ def _halt(
             step=step,
             halt_reason=reason,
             detail=detail,
+            event_id=event_id,
         )
     )
     return FlowResult(
@@ -287,6 +305,7 @@ def run_commitment_flow(
     sink: EvidenceSink,
     scheme: CanonicalizationScheme,
     value_view: ContextValueView | None = None,
+    event_id: str | None = None,
 ) -> FlowResult:
     """Walk ADR-002-002 §11 steps 1-14 fail-closed, then hand off to the injected transmit.
 
@@ -304,6 +323,11 @@ def run_commitment_flow(
         value_view: The tick's resolved Critical Input value surface, carried onto every
             :class:`StageRequest` so a stage can consume the values the decision was made on
             (design #35 §4.2). ``None`` when the tick published none.
+        event_id: The ``DECISION_TICK`` event's content-addressed identity (Phase 3 KW3-EV;
+            :func:`~tos.engine.records.event_identity`), stamped onto every per-step record this
+            function emits so a replay can correlate a flow by its event, not encounter order —
+            see :attr:`~tos.engine.records.EngineEvidenceRecord.event_id`. ``None`` only for a
+            caller with no event to offer (e.g. a direct sequencer unit test).
 
     Returns:
         The :class:`FlowResult`.
@@ -315,6 +339,24 @@ def run_commitment_flow(
 
     verdicts: tuple[StageVerdict, ...] = ()
     attempt: AttemptRequest | None = None
+
+    def _stop(
+        *, step: CommitmentStep, reason: HaltReason, detail: str | None
+    ) -> FlowResult:
+        """Record a halt for this flow — binds ``sink``/``verdicts``/``event_id`` from the
+        enclosing scope so every one of this function's many halt sites (design #31 §4.2 rule 2:
+        every stop is a distinct, explicit branch, never a shared catch-all) states only what
+        differs: the step, the reason, and the detail (Phase 3 wave 3 KW3-EV size-budget
+        discipline — extracted rather than re-registering a larger exception)."""
+        return _halt(
+            sink,
+            key=instrument_key,
+            verdicts=verdicts,
+            step=step,
+            reason=reason,
+            detail=detail,
+            event_id=event_id,
+        )
 
     for step in SEQUENCED_STEPS:
         # -- step 1: the Decision Service proposal, already realized by the pipeline ----------
@@ -343,10 +385,7 @@ def run_commitment_flow(
                     scheme=scheme,
                 )
             except ArtifactIntegrityError as exc:
-                return _halt(
-                    sink,
-                    key=instrument_key,
-                    verdicts=verdicts,
+                return _stop(
                     step=step,
                     reason=HaltReason.ATTEMPT_BINDING_INCOMPLETE,
                     detail=str(exc),
@@ -358,6 +397,7 @@ def run_commitment_flow(
                     instrument_key=instrument_key,
                     step=step,
                     attempt_id=attempt.attempt_id,
+                    event_id=event_id,
                     detail=(
                         "content-addressed from (proof digest, permit identity, reference "
                         "coordinate) — no RNG, no timestamp nonce (RFC-003 §10:360-363)"
@@ -388,10 +428,7 @@ def run_commitment_flow(
             and not ledger.admits_new_exposure(instrument_key)
         ):
             outstanding = ledger.outstanding(instrument_key)
-            return _halt(
-                sink,
-                key=instrument_key,
-                verdicts=verdicts,
+            return _stop(
                 step=step,
                 reason=HaltReason.AT_MOST_ONE_EXPOSURE_HELD,
                 detail=(
@@ -408,10 +445,7 @@ def run_commitment_flow(
         # -- steps 2-11, 13, 14: injected stages ----------------------------------------------
         stage = stages.get(step)
         if stage is None:
-            return _halt(
-                sink,
-                key=instrument_key,
-                verdicts=verdicts,
+            return _stop(
                 step=step,
                 reason=HaltReason.STAGE_MISSING,
                 detail=(
@@ -439,19 +473,13 @@ def run_commitment_flow(
         except (
             Exception
         ) as exc:  # noqa: BLE001 - any stage failure is a restrictive stop
-            return _halt(
-                sink,
-                key=instrument_key,
-                verdicts=verdicts,
+            return _stop(
                 step=step,
                 reason=HaltReason.STAGE_RAISED,
                 detail=f"stage for step {step_number(step)} raised {type(exc).__name__}: {exc}",
             )
         if verdict is None:
-            return _halt(
-                sink,
-                key=instrument_key,
-                verdicts=verdicts,
+            return _stop(
                 step=step,
                 reason=HaltReason.STAGE_VERDICT_ABSENT,
                 detail=(
@@ -460,10 +488,7 @@ def run_commitment_flow(
                 ),
             )
         if verdict.step is not step:
-            return _halt(
-                sink,
-                key=instrument_key,
-                verdicts=verdicts,
+            return _stop(
                 step=step,
                 reason=HaltReason.STAGE_VERDICT_STEP_MISMATCH,
                 detail=(
@@ -480,14 +505,7 @@ def run_commitment_flow(
                 if verdict.outcome is StageOutcome.UNKNOWN
                 else HaltReason.STAGE_DENIED
             )
-            return _halt(
-                sink,
-                key=instrument_key,
-                verdicts=verdicts,
-                step=step,
-                reason=reason,
-                detail=verdict.reason,
-            )
+            return _stop(step=step, reason=reason, detail=verdict.reason)
 
         sink.record(
             EngineEvidenceRecord(
@@ -496,6 +514,11 @@ def run_commitment_flow(
                 step=step,
                 stage_outcome=verdict.outcome,
                 authority_class=verdict.authority_class,
+                event_id=event_id,
+                # [KW3-EV] verbatim from the verdict, every step uniformly (only steps 9/11 are
+                # ever non-None — see EngineEvidenceRecord.bound_identity/bound_digest docs).
+                bound_identity=verdict.bound_identity,
+                bound_digest=verdict.bound_digest,
                 detail=verdict.reason,
             )
         )
@@ -507,10 +530,7 @@ def run_commitment_flow(
             try:
                 ledger.commit_unbound(instrument_key, proposal_id=proposal_id)
             except ArtifactIntegrityError as exc:
-                return _halt(
-                    sink,
-                    key=instrument_key,
-                    verdicts=verdicts,
+                return _stop(
                     step=step,
                     reason=HaltReason.AT_MOST_ONE_EXPOSURE_HELD,
                     detail=str(exc),
@@ -518,19 +538,13 @@ def run_commitment_flow(
 
     # -- send-boundary hand-off (steps 15-19 are D-E4; design #31 §4.5) -----------------------
     if attempt is None:  # pragma: no cover - step 12 always runs or halts
-        return _halt(
-            sink,
-            key=instrument_key,
-            verdicts=verdicts,
+        return _stop(
             step=CommitmentStep.ATTEMPT_REQUEST,
             reason=HaltReason.ATTEMPT_BINDING_INCOMPLETE,
             detail="no attempt request was created",
         )
     if transmit is None:
-        return _halt(
-            sink,
-            key=instrument_key,
-            verdicts=verdicts,
+        return _stop(
             step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             reason=HaltReason.TRANSMIT_UNAVAILABLE,
             detail=(
@@ -539,7 +553,7 @@ def run_commitment_flow(
             ),
         )
 
-    # ADR-002-002 §11.4 step 16: the projection advances to POTENTIALLY_LIVE **before** the
+    # ADR-002-002 §11.4 step 17: the projection advances to POTENTIALLY_LIVE **before** the
     # external call, and stays there even if the hand-off fails (INV-005:168; RFC-002 §10.7:722 —
     # a missing acknowledgement is never read as a rejection).
     ledger.mark_potentially_live(instrument_key)
@@ -548,10 +562,7 @@ def run_commitment_flow(
     except (
         Exception
     ) as exc:  # noqa: BLE001 - a failed hand-off is not proof of "not sent"
-        return _halt(
-            sink,
-            key=instrument_key,
-            verdicts=verdicts,
+        return _stop(
             step=CommitmentStep.NETWORK_CALL,
             reason=HaltReason.TRANSMIT_RAISED,
             detail=(
@@ -565,6 +576,7 @@ def run_commitment_flow(
             instrument_key=instrument_key,
             step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             attempt_id=attempt.attempt_id,
+            event_id=event_id,
             detail=(
                 "attempt handed to the injected send boundary; steps 15-19 (final-egress "
                 "currentness, QCC, single-use capability, actual-outbound comparison) are D-E4's "

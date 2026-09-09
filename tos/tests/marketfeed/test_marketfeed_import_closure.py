@@ -71,6 +71,7 @@ _ALLOWED_TOS_PACKAGES = frozenset(
         "tos.afg",
         "tos.cur",
         "tos.engine",
+        "tos.orthostate",
         "tos.marketfeed",
     }
 )
@@ -92,7 +93,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.iap",
         "tos.liveauth",
         "tos.nontrade",
-        "tos.orthostate",
         "tos.posttrade",
         "tos.protective",
         "tos.recon",
@@ -467,6 +467,12 @@ def test_the_engine_allowlist_still_omits_marketfeed() -> None:
     test", the shipped constant is parsed out of the engine canary's source. It is read from disk
     rather than imported because the firewall's allowlist has no cross-suite ``tests.*`` entry —
     reading the file is both compliant and a stricter check, since it sees the committed text.
+
+    The count pin moved from 14 to 15 on 2026-09-09 (Phase 3 wave 2 KW2-C2, plan §2.2):
+    ``tos.orthostate`` was added as a directly realized engine edge for
+    ``engine/orthostate_projection.py`` — see ``tos/tests/engine/test_engine_import_closure.py``'s
+    own "Closure widened" note. ``tos.marketfeed`` staying absent is the claim this test actually
+    protects, and that claim is unaffected by the unrelated widening.
     """
     engine_canary = (
         Path(__file__).resolve().parents[1] / "engine" / "test_engine_import_closure.py"
@@ -487,7 +493,7 @@ def test_the_engine_allowlist_still_omits_marketfeed() -> None:
         declared
     ), "could not read the engine canary's allowlist — the anti-phantom read failed"
     assert "tos.marketfeed" not in declared
-    assert len(declared) == 14
+    assert len(declared) == 15
 
 
 # ---------------------------------------------------------------------------

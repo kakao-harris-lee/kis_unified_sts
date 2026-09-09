@@ -99,6 +99,8 @@ __all__ = [
     # not-Phase-1 thin model §6b (CUR-EV-005/006 substrate — runtime residue)
     "race_order_admissible",
     "broker_reachable_not_authority",
+    # kernel round #1 §1.3 — worst-credible-capacity obligation preservation
+    "obligation_preserved",
 ]
 
 #: Forbidden placeholder sentinels a vector coordinate may never use (§9 line 266 / §5.4). A vector
@@ -721,3 +723,70 @@ def broker_reachable_not_authority(broker_reachable: bool | None = None) -> bool
     """
     del broker_reachable  # the rejection is unconditional (§15 line 358) — reachability ≠ authority
     return False
+
+
+# ===========================================================================
+# kernel round #1 §1.3 — worst-credible-capacity obligation preservation
+# ===========================================================================
+
+
+def obligation_preserved(
+    obligation: int | None,
+    reservation_state: str | None,
+    *,
+    capacity_consuming_states: frozenset[str],
+    magnitude_unknown: bool,
+) -> bool:
+    """Whether an rcl reservation state still honors a preserved capacity obligation (§1.3).
+
+    :func:`unknown_preserves_capacity` reports the worst-credible capacity obligation an UNKNOWN
+    currentness must preserve (CUR-INV-011:183). This predicate judges whether that obligation
+    still holds against the bound reservation's **current** rcl capacity state: when
+    ``magnitude_unknown`` is ``True`` the obligation's own size was never observed, and UNKNOWN is
+    restrictive and capacity-consuming (CUR-INV-011:183) — this returns ``False`` regardless of
+    ``obligation`` or ``reservation_state`` (kernel round #1 review #4). Otherwise: ``obligation
+    is None`` means no obligation was ever asserted (trivially preserved); a concrete obligation
+    against an UNKNOWN state (``reservation_state is None``) cannot be confirmed preserved
+    (fail-closed); otherwise it is preserved iff the state is still in the injected
+    capacity-consuming partition.
+
+    ⚠ **Why ``magnitude_unknown`` is keyword-only with no default.** ``obligation is None``
+    otherwise conflates two different facts: "no obligation was ever asserted" and "an obligation
+    was asserted but its magnitude could not be observed" (review round #1 finding #4 — the field
+    seam that produces ``obligation`` collapses both to ``None``). Forcing every caller to state
+    which one applies, with no default to fall back on, prevents a new call site from silently
+    reintroducing that ambiguity.
+
+    ⚠ **Sibling-edge-0 deviation from the kernel round #1 plan.** The plan's signature types
+    ``reservation_state`` as ``tos.rcl.CapacityState``, but cur's import closure (design #23
+    §0.3; ``tos/tests/cur/test_cur_import_closure.py`` §7.1 allowlist ``{tos, tos.canonical,
+    tos.ordering, tos.cur}``) forbids importing **any** sibling, including ``tos.rcl``, even for
+    a type hint. So the state is consumed as its plain string value (``CapacityState`` is a
+    ``StrEnum``, so an enum member still compares/hashes equal to its ``.value``) and the
+    "capacity-consuming" partition is **injected** by the caller rather than hardcoded here — cur
+    re-authors no rcl state machine (§0.4c). The caller imports ``tos.rcl.CapacityState`` and
+    passes the set of values that still consume capacity (rcl's own
+    ``_LIVE_COMMITTED_STATES`` — every state except ``RELEASED``).
+
+    Args:
+        obligation: The preserved worst-credible capacity obligation (``None`` => none asserted,
+            unless ``magnitude_unknown`` is ``True``, in which case an obligation exists but its
+            size could not be observed).
+        reservation_state: The rcl reservation's current capacity-state value (``None`` =>
+            UNKNOWN).
+        capacity_consuming_states: The injected set of state values that still consume capacity.
+        magnitude_unknown: Whether an obligation was asserted but its magnitude is unknown —
+            forces ``False`` unconditionally (CUR-INV-011:183).
+
+    Returns:
+        ``False`` if ``magnitude_unknown``; else ``True`` iff no obligation was asserted, or the
+        asserted obligation's reservation state is still in the injected capacity-consuming
+        partition.
+    """
+    if magnitude_unknown:
+        return False
+    if obligation is None:
+        return True
+    if reservation_state is None:
+        return False
+    return reservation_state in capacity_consuming_states

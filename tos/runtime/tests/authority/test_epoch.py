@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 from tos.authority import AuthorityEpochState, AuthorityTransitionReason
+from tos.rcl import CommandType, CommitEntry
 from tos.workload import RuntimeIdentity
 from tos_runtime.authority.epoch import (
     AuthorityConfigError,
@@ -16,7 +17,7 @@ from tos_runtime.authority.epoch import (
     SafetyAuthorityEpochService,
     load_authority_config,
 )
-from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.service import TrustworthyTimeService
 from tos_runtime.time.sources import ReferenceObservation
@@ -205,6 +206,8 @@ def test_witness_present_false_before_time_service_started(
             max_process_suspension_ms=0,
             max_time_source_disagreement_ms=50,
             min_time_independent_reference_count=1,
+            max_clock_domain_conversion_uncertainty_ms=50,
+            max_send_result_wait_ms=5000,
             tz_db_version="2026a",
             trading_calendar_version="cal-1",
             verification_profile_version="vp-0",
@@ -473,3 +476,61 @@ def test_example_config_ships_with_a_null_named_tbd_bound() -> None:
     example = Path(__file__).resolve().parents[2] / "config" / "authority.example.yaml"
     with pytest.raises(AuthorityConfigError):
         load_authority_config(example)
+
+
+# ============================================================================
+# kernel round #1 §2.1 — CommandType switch + legacy-kind fail-closed refusal
+# ============================================================================
+
+
+def test_current_state_uses_the_new_advance_authority_epoch_command_type(
+    epoch_service: SafetyAuthorityEpochService,
+) -> None:
+    """A freshly-committed transition is written under the new, dedicated
+    ``ADVANCE_AUTHORITY_EPOCH`` member (kernel round #1 §1.1/§2.1) — the
+    reported-gap ``ADVANCE_RESTORE_GENERATION`` reuse is resolved, not merely
+    relabeled in a docstring."""
+    epoch_service.transition(
+        leader_identity="leader-1",
+        transition_reason=AuthorityTransitionReason.SAFETY_AUTHORITY_FAILOVER,
+    )
+    view = epoch_service._log.read_linearizable(  # noqa: SLF001 - test-internal check
+        writer_epoch=epoch_service._writer_epoch  # noqa: SLF001
+    )
+    kinds = {entry.kind for entry in view.entries if entry.command_id is not None}
+    assert CommandType.ADVANCE_AUTHORITY_EPOCH in kinds
+    assert CommandType.ADVANCE_RESTORE_GENERATION not in kinds
+
+
+def test_current_state_raises_on_a_legacy_kind_entry_under_the_epoch_prefix(
+    log: SqliteCommitLog,
+    time_service: TrustworthyTimeService,
+    evidence_port: FakeEvidenceAppendPort,
+    writer_epoch: int,
+    authority_config: AuthorityRuntimeConfig,
+) -> None:
+    """A prefix-matching entry committed under the OLD, legacy
+    ``ADVANCE_RESTORE_GENERATION`` kind must never be silently skipped by
+    :meth:`SafetyAuthorityEpochService.current_state` — skipping it would let
+    the epoch floor regress toward 0 (fail-open). It must instead raise
+    :class:`CommitLogCorruption` (kernel round #1 §2.1)."""
+    legacy_entry = CommitEntry(
+        command_id="authority-epoch-transition:acct-main:1",
+        command_digest="legacy-digest",
+        kind=CommandType.ADVANCE_RESTORE_GENERATION,
+    )
+    receipt = log.append_cas(legacy_entry, expected_seq=-1, writer_epoch=writer_epoch)
+    from tos.rcl import AppendReceipt
+
+    assert isinstance(receipt, AppendReceipt)
+
+    service = SafetyAuthorityEpochService(
+        log,
+        time_service,
+        evidence_port,
+        authority_domain="acct-main",
+        writer_epoch=writer_epoch,
+        config=authority_config,
+    )
+    with pytest.raises(CommitLogCorruption):
+        service.current_state()

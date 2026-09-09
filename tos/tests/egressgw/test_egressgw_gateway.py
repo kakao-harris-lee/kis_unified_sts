@@ -28,6 +28,7 @@ from tos.egressgw import (
     AllFalseGatewayAuthority,
     BrokerEgressGateway,
     CandidateConstruction,
+    GatewayEvidenceRecord,
     RecordingGatewayEvidenceSink,
     SendAttemptLedger,
     SendBoundaryContext,
@@ -36,12 +37,14 @@ from tos.egressgw import (
     VerifyOutcome,
     build_order_conformance_proof,
     outbound_binding_mismatch,
+    seal_matches_outbound,
     send_boundary_context,
     verify_send_boundary,
 )
 from tos.egressgw.gateway import _check_construction
 from tos.engine import (
     AttemptRequest,
+    CommitmentStep,
     EgressResultKind,
     EgressResultPayload,
     InstrumentKey,
@@ -138,7 +141,7 @@ def _declared(kind: EgressResultKind) -> SyntheticPaperTransport:
 
 
 def test_the_baseline_send_is_accepted_and_records_every_step_in_order() -> None:
-    """(§1.3 / §4.6) verify → SEND_STARTED → POTENTIALLY_LIVE → transport → evidence."""
+    """(§1.3 / §4.6) verify → SEND_SEALED → SEND_STARTED → POTENTIALLY_LIVE → transport → evidence."""
     attempt, context = happy_context()
     gateway, sink = build_gateway(attempt=attempt, context=context)
     handoff = gateway(attempt)
@@ -146,11 +149,277 @@ def test_the_baseline_send_is_accepted_and_records_every_step_in_order() -> None
     assert handoff.handoff_reference == attempt.attempt_id
     non_item_kinds = tuple(kind for kind in sink.kinds if kind != "VERIFY_ITEM")
     assert non_item_kinds == (
+        "SEND_SEALED",
         "SEND_STARTED",
         "POTENTIALLY_LIVE_OBSERVED",
+        "NETWORK_CALL_ENTERED",
         "EGRESS_RESULT_RECORDED",
     )
     assert sink.kinds[:17] == ("VERIFY_ITEM",) * 17
+
+
+def test_the_baseline_send_records_the_commitment_step_sequence_exactly() -> None:
+    """(Phase 3 wave 3 KW3-GW) The stamped CommitmentStep sequence is exactly [15,15,16,17,18,19].
+
+    Every ``VERIFY_ITEM`` record collapses to one representative step-15 entry (there are 17 of
+    them, all the same step); ``SEND_SEALED`` is its own separate step-15 entry — the seal is
+    step 15's own output (design §1.2), not a "step 15½" the closed 19-step enum has no member
+    for; then 16 (the claim), 17 (potentially live), 18 (the network-call write-ahead mark), 19
+    (the terminal result) — exactly once each. No new numeric literal anywhere in this
+    assertion: every expected value is a named ``CommitmentStep`` member.
+    """
+    attempt, context = happy_context()
+    gateway, sink = build_gateway(attempt=attempt, context=context)
+    assert gateway(attempt).accepted_for_transmission is True
+
+    collapsed: list[CommitmentStep] = []
+    previous_kind: str | None = None
+    for record in sink.records:
+        assert record.step is not None, f"{record.kind} was never stamped with a step"
+        if record.kind == "VERIFY_ITEM" and previous_kind == "VERIFY_ITEM":
+            previous_kind = record.kind
+            continue
+        collapsed.append(record.step)
+        previous_kind = record.kind
+
+    assert collapsed == [
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,  # VERIFY_ITEM x17, collapsed to one entry
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,  # SEND_SEALED
+        CommitmentStep.SEND_STARTED_DURABLE,  # SEND_STARTED
+        CommitmentStep.POTENTIALLY_LIVE_TRANSITION,  # POTENTIALLY_LIVE_OBSERVED
+        CommitmentStep.NETWORK_CALL,  # NETWORK_CALL_ENTERED
+        CommitmentStep.EVIDENCE_RECORD,  # EGRESS_RESULT_RECORDED
+    ]
+
+
+def test_mutation_swapping_two_record_kinds_makes_the_step_sequence_assertion_red() -> (
+    None
+):
+    """(Phase 3 wave 3 KW3-GW mutation) Swapping two records' emission order goes red.
+
+    A sink wrapper that swaps ``POTENTIALLY_LIVE_OBSERVED`` and ``NETWORK_CALL_ENTERED`` as they
+    arrive (buffering one, releasing it only once the other lands) — the same collapse-and-
+    compare the step-sequence test above uses now sees ``[..., 18, 17, ...]`` where it expects
+    ``[..., 17, 18, ...]``, and fails.
+    """
+
+    class _SwappingSink:
+        def __init__(self) -> None:
+            self._delegate = RecordingGatewayEvidenceSink()
+            self._held: GatewayEvidenceRecord | None = None
+
+        def record(self, record: GatewayEvidenceRecord) -> None:
+            if record.kind == "POTENTIALLY_LIVE_OBSERVED":
+                self._held = record
+                return
+            if record.kind == "NETWORK_CALL_ENTERED" and self._held is not None:
+                self._delegate.record(record)
+                self._delegate.record(self._held)
+                self._held = None
+                return
+            self._delegate.record(record)
+
+        @property
+        def records(self) -> tuple[GatewayEvidenceRecord, ...]:
+            return self._delegate.records
+
+    attempt, context = happy_context()
+    sink = _SwappingSink()
+    gateway = BrokerEgressGateway(
+        contexts={attempt.attempt_id: context},
+        transport=full_fill_transport(),
+        sink=sink,
+    )
+    assert gateway(attempt).accepted_for_transmission is True
+
+    collapsed: list[CommitmentStep] = []
+    previous_kind: str | None = None
+    for record in sink.records:
+        if record.kind == "VERIFY_ITEM" and previous_kind == "VERIFY_ITEM":
+            previous_kind = record.kind
+            continue
+        assert record.step is not None
+        collapsed.append(record.step)
+        previous_kind = record.kind
+
+    expected = [
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        CommitmentStep.SEND_STARTED_DURABLE,
+        CommitmentStep.POTENTIALLY_LIVE_TRANSITION,
+        CommitmentStep.NETWORK_CALL,
+        CommitmentStep.EVIDENCE_RECORD,
+    ]
+    assert collapsed != expected, "the swap must be observable — this is the RED proof"
+    assert collapsed == [
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        CommitmentStep.SEND_STARTED_DURABLE,
+        CommitmentStep.NETWORK_CALL,
+        CommitmentStep.POTENTIALLY_LIVE_TRANSITION,
+        CommitmentStep.EVIDENCE_RECORD,
+    ]
+
+
+def test_mutation_dropping_the_step_18_record_makes_the_step_sequence_assertion_red() -> (
+    None
+):
+    """(Phase 3 wave 3 KW3-GW mutation) A sink that silently drops ``NETWORK_CALL_ENTERED``
+    is caught: the collapsed step sequence is one entry short of the expected six."""
+
+    class _DroppingSink:
+        def __init__(self) -> None:
+            self._delegate = RecordingGatewayEvidenceSink()
+
+        def record(self, record: GatewayEvidenceRecord) -> None:
+            if record.kind == "NETWORK_CALL_ENTERED":
+                return
+            self._delegate.record(record)
+
+        @property
+        def records(self) -> tuple[GatewayEvidenceRecord, ...]:
+            return self._delegate.records
+
+    attempt, context = happy_context()
+    sink = _DroppingSink()
+    gateway = BrokerEgressGateway(
+        contexts={attempt.attempt_id: context},
+        transport=full_fill_transport(),
+        sink=sink,
+    )
+    assert gateway(attempt).accepted_for_transmission is True
+
+    collapsed: list[CommitmentStep] = []
+    previous_kind: str | None = None
+    for record in sink.records:
+        if record.kind == "VERIFY_ITEM" and previous_kind == "VERIFY_ITEM":
+            previous_kind = record.kind
+            continue
+        assert record.step is not None
+        collapsed.append(record.step)
+        previous_kind = record.kind
+
+    full_expected = [
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        CommitmentStep.SEND_STARTED_DURABLE,
+        CommitmentStep.POTENTIALLY_LIVE_TRANSITION,
+        CommitmentStep.NETWORK_CALL,
+        CommitmentStep.EVIDENCE_RECORD,
+    ]
+    assert (
+        collapsed != full_expected
+    ), "the drop must be observable — this is the RED proof"
+    assert len(collapsed) == len(full_expected) - 1
+    assert CommitmentStep.NETWORK_CALL not in collapsed
+
+
+def test_each_failure_path_stamps_the_step_where_it_actually_failed() -> None:
+    """(Phase 3 wave 3 KW3-GW) Every ``SEND_REFUSED`` record's step matches its own halt site —
+    never a fixed default regardless of which check actually failed."""
+    # CONTEXT_MISSING (no bound context at all)
+    attempt_a, _ = happy_context()
+    sink_a = RecordingGatewayEvidenceSink()
+    gateway_a = BrokerEgressGateway(
+        contexts={}, transport=full_fill_transport(), sink=sink_a
+    )
+    gateway_a(attempt_a)
+    assert sink_a.records[-1].halt_reason is SendHaltReason.CONTEXT_MISSING
+    assert sink_a.records[-1].step is CommitmentStep.SEND_BOUNDARY_VERIFICATION
+
+    # ATTEMPT_ALREADY_CONSUMED (a repeat of the same content-addressed attempt)
+    attempt_b, context_b = happy_context()
+    gateway_b, sink_b = build_gateway(
+        attempt=attempt_b, context=context_b, transport=full_fill_transport()
+    )
+    assert gateway_b(attempt_b).accepted_for_transmission is True
+    gateway_b(attempt_b)
+    assert sink_b.records[-1].halt_reason is SendHaltReason.ATTEMPT_ALREADY_CONSUMED
+    assert sink_b.records[-1].step is CommitmentStep.SEND_STARTED_DURABLE
+
+    # VERIFY_ITEM_UNKNOWN (item 1 — no Transmission Capability)
+    attempt_c, context_c = happy_context(transmission_capability=None)
+    gateway_c, sink_c = build_gateway(attempt=attempt_c, context=context_c)
+    gateway_c(attempt_c)
+    assert sink_c.records[-1].halt_reason is SendHaltReason.VERIFY_ITEM_UNKNOWN
+    assert sink_c.records[-1].step is CommitmentStep.SEND_BOUNDARY_VERIFICATION
+
+    # OUTBOUND_NOT_BOUND_TO_CONSTRUCTION (forged outbound quantity)
+    attempt_d, context_d = happy_context(outbound_quantity=Decimal("999"))
+    gateway_d, sink_d = build_gateway(
+        attempt=attempt_d, context=context_d, transport=full_fill_transport()
+    )
+    gateway_d(attempt_d)
+    assert (
+        sink_d.records[-1].halt_reason
+        is SendHaltReason.OUTBOUND_NOT_BOUND_TO_CONSTRUCTION
+    )
+    assert sink_d.records[-1].step is CommitmentStep.SEND_BOUNDARY_VERIFICATION
+
+    # SEND_SEAL_UNCONSTRUCTABLE (claim principal diverges from the sealed active principal)
+    attempt_e, context_e = happy_context(principal="someone-else")
+    gateway_e, sink_e = build_gateway(attempt=attempt_e, context=context_e)
+    gateway_e(attempt_e)
+    assert sink_e.records[-1].halt_reason is SendHaltReason.SEND_SEAL_UNCONSTRUCTABLE
+    assert sink_e.records[-1].step is CommitmentStep.SEND_BOUNDARY_VERIFICATION
+
+    # SINGLE_USE_CLAIM_REFUSED (the seal's own nonces already claimed under another attempt)
+    attempt_f, context_f = happy_context()
+    ledger_f = SendAttemptLedger()
+    assert ledger_f.claim(
+        attempt_id="other-attempt",
+        capability_nonce=context_f.capability_nonce,
+        action_flow_permit_nonce=context_f.action_flow_permit_nonce,
+        principal=context_f.principal,
+        request_digest=context_f.request_digest,
+    )
+    sink_f = RecordingGatewayEvidenceSink()
+    gateway_f = BrokerEgressGateway(
+        contexts={attempt_f.attempt_id: context_f},
+        transport=full_fill_transport(),
+        sink=sink_f,
+        ledger=ledger_f,
+    )
+    gateway_f(attempt_f)
+    assert sink_f.records[-1].halt_reason is SendHaltReason.SINGLE_USE_CLAIM_REFUSED
+    assert sink_f.records[-1].step is CommitmentStep.SEND_STARTED_DURABLE
+
+    # TRANSPORT_UNAVAILABLE (no transport injected)
+    attempt_g, context_g = happy_context()
+    sink_g = RecordingGatewayEvidenceSink()
+    gateway_g = BrokerEgressGateway(
+        contexts={attempt_g.attempt_id: context_g}, transport=None, sink=sink_g
+    )
+    gateway_g(attempt_g)
+    assert sink_g.records[-1].halt_reason is SendHaltReason.TRANSPORT_UNAVAILABLE
+    assert sink_g.records[-1].step is CommitmentStep.NETWORK_CALL
+
+    # TRANSPORT_RAISED
+    attempt_h, context_h = happy_context()
+    sink_h = RecordingGatewayEvidenceSink()
+    gateway_h = BrokerEgressGateway(
+        contexts={attempt_h.attempt_id: context_h},
+        transport=_RecordingRaisingTransport(),
+        sink=sink_h,
+    )
+    gateway_h(attempt_h)
+    assert sink_h.records[-1].halt_reason is SendHaltReason.TRANSPORT_RAISED
+    assert sink_h.records[-1].step is CommitmentStep.NETWORK_CALL
+
+    # RESULT_ATTEMPT_IDENTITY_MISMATCH
+    attempt_i, context_i = happy_context()
+    sink_i = RecordingGatewayEvidenceSink()
+    gateway_i = BrokerEgressGateway(
+        contexts={attempt_i.attempt_id: context_i},
+        transport=_WrongAttemptTransport(),
+        sink=sink_i,
+    )
+    gateway_i(attempt_i)
+    assert (
+        sink_i.records[-1].halt_reason
+        is SendHaltReason.RESULT_ATTEMPT_IDENTITY_MISMATCH
+    )
+    assert sink_i.records[-1].step is CommitmentStep.EVIDENCE_RECORD
 
 
 def test_send_started_is_written_before_the_first_byte() -> None:
@@ -163,6 +432,7 @@ def test_send_started_is_written_before_the_first_byte() -> None:
     )
     assert gateway(attempt).accepted_for_transmission is True
     assert transport.calls == 1
+    assert "SEND_SEALED" in transport.kinds_at_call
     assert "SEND_STARTED" in transport.kinds_at_call
     assert "EGRESS_RESULT_RECORDED" not in transport.kinds_at_call
 
@@ -531,6 +801,322 @@ def test_the_binding_predicate_accepts_the_consistent_baseline() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 4 작업 6 — SendSeal: sole source, seal failure, mutation pins (design §1.4)
+# ---------------------------------------------------------------------------
+
+
+def test_a_diverging_claim_and_active_principal_halts_as_seal_unconstructable() -> None:
+    """(design §1.1 A2) A gap none of the 17 items or the binding check close — the seal does.
+
+    ``context.principal`` (item 1's claim principal) and ``authorized_coordinates.
+    active_principal`` (item 17's coordinate) are never compared to each other anywhere in the
+    verify list or in ``outbound_binding_mismatch`` — only the seal's own validator does.
+    """
+    attempt, context = happy_context(principal="someone-else")
+    gateway, sink = build_gateway(attempt=attempt, context=context)
+
+    handoff = gateway(attempt)
+
+    assert handoff.accepted_for_transmission is None
+    assert gateway.ledger.claims == ()
+    assert gateway.ledger.attempt_consumed(attempt.attempt_id) is False
+    assert "SEND_SEALED" not in sink.kinds
+    assert "SEND_STARTED" not in sink.kinds
+    assert sink.records[-1].halt_reason is SendHaltReason.SEND_SEAL_UNCONSTRUCTABLE
+
+
+def test_send_sealed_carries_the_full_seal_and_send_started_carries_only_its_digest() -> (
+    None
+):
+    """(design §1.2) ``SEND_SEALED`` carries the whole seal; ``SEND_STARTED`` only its digest."""
+    attempt, context = happy_context()
+    gateway, sink = build_gateway(attempt=attempt, context=context)
+
+    assert gateway(attempt).accepted_for_transmission is True
+
+    (sealed_record,) = [r for r in sink.records if r.kind == "SEND_SEALED"]
+    (started_record,) = [r for r in sink.records if r.kind == "SEND_STARTED"]
+    (result_record,) = [r for r in sink.records if r.kind == "EGRESS_RESULT_RECORDED"]
+
+    assert sealed_record.send_seal is not None
+    seal = sealed_record.send_seal
+    assert sealed_record.send_seal_digest is None
+    assert started_record.send_seal is None
+    assert started_record.send_seal_digest == seal.seal_digest
+    assert result_record.send_seal_digest == seal.seal_digest
+
+
+def test_the_claim_is_sourced_from_the_seal_via_claim_request_digest() -> None:
+    """(design §1.2; independent review finding #3) The step-16 claim binds
+    ``seal.claim_request_digest`` (= ``context.request_digest``, the item-1 single-use identity)
+    — sourced from the seal, not a second independent read of ``context``, but restoring the
+    prior ledger semantics of binding the per-attempt request identity rather than
+    ``seal.request_bytes_digest`` (the item-17 Capsule/exact-binding identity, deliberately a
+    different fixture value — ``REQUEST_DIGEST`` vs ``CAPSULE_EGRESS_REQUEST_DIGEST``).
+    """
+    attempt, context = happy_context()
+    assert context.request_digest == REQUEST_DIGEST
+    gateway, sink = build_gateway(attempt=attempt, context=context)
+
+    assert gateway(attempt).accepted_for_transmission is True
+
+    (sealed_record,) = [r for r in sink.records if r.kind == "SEND_SEALED"]
+    seal = sealed_record.send_seal
+    assert seal is not None
+    assert seal.claim_request_digest == REQUEST_DIGEST
+    capability_claim, permit_claim = gateway.ledger.claims
+    assert capability_claim.request_digest == seal.claim_request_digest
+    assert permit_claim.request_digest == seal.claim_request_digest
+    assert capability_claim.request_digest == context.request_digest
+    # The two identities remain deliberately distinct — the claim binds one, item 17 the other.
+    assert seal.request_bytes_digest != seal.claim_request_digest
+
+
+def test_transport_arguments_equal_the_seal_via_seal_matches_outbound() -> None:
+    """(design §1.4 "유일 원천") The exact values ``send_once`` received are the seal's own."""
+    attempt, context = happy_context()
+    transport = full_fill_transport()
+    gateway, sink = build_gateway(attempt=attempt, context=context, transport=transport)
+
+    assert gateway(attempt).accepted_for_transmission is True
+
+    (request,) = transport.requests
+    (sealed_record,) = [r for r in sink.records if r.kind == "SEND_SEALED"]
+    seal = sealed_record.send_seal
+    assert seal is not None
+    # (independent review finding #7) The transport actually received the seal digest — not
+    # merely a value ``seal_matches_outbound`` was never asked to compare.
+    assert transport.requests[-1].seal_digest == seal.seal_digest
+    assert (
+        seal_matches_outbound(
+            seal,
+            coordinates=request.coordinates,
+            quantity=request.quantity,
+            price=request.price,
+            side=request.side,
+            instrument_key=request.instrument_key,
+            attempt_id=request.attempt.attempt_id,
+            seal_digest=request.seal_digest,
+        )
+        is True
+    )
+
+
+def test_mk2_a_resolver_asked_twice_never_leaks_its_second_answer_into_the_transport_call() -> (
+    None
+):
+    """(mutation M-K2) The seal is built once, from one resolution; a later, differently-valued
+    resolution can never leak into the transport call because step 18 never re-reads context.
+
+    The resolver below would hand back a *different* outbound quantity on a second call — if the
+    gateway ever re-resolved context (instead of reading the already-built seal) between the seal
+    and the transport call, that different value would reach the transport. It never does.
+    """
+    attempt, context = happy_context()
+    calls = {"n": 0}
+
+    def _resolver(_: AttemptRequest) -> SendBoundaryContext:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return context
+        _, fresh = happy_context(outbound_quantity=Decimal("40"))
+        return fresh
+
+    transport = full_fill_transport()
+    sink = RecordingGatewayEvidenceSink()
+    gateway = BrokerEgressGateway(contexts=_resolver, transport=transport, sink=sink)
+
+    handoff = gateway(attempt)
+
+    assert handoff.accepted_for_transmission is True
+    assert calls["n"] == 1
+    (request,) = transport.requests
+    assert request.quantity == context.outbound_quantity
+    assert request.quantity != Decimal("40")
+
+
+def test_mk1_send_once_reads_only_seal_attributes_never_context_again() -> None:
+    """(mutation M-K1, structural pin) ``send_once``'s arguments never read ANY ``context.*``
+    value, directly or indirectly — zero exceptions (design §0 "봉인이 유일 입력 원천이어야 한다").
+
+    Independent review finding #4: the original pin matched only ``ast.Attribute`` values whose
+    ``.value`` was ``ast.Name("context")``, over ``call_node.keywords`` only. Three shapes
+    defeated it (all now proven RED below the pin itself, not by a downstream assertion
+    behaviour test):
+
+    * **M1b** — ``ctx = context`` before the call, then ``quantity=ctx.outbound_quantity``
+      (an alias). Caught by the alias ban: *any* assignment binding a name to the bare name
+      ``context`` anywhere in ``__call__`` or ``_seal_and_claim`` is itself rejected, independent
+      of whether the alias is ever read at the call site.
+    * **M1c** — ``quantity=getattr(context, "outbound_quantity")``. Caught by walking the whole
+      call subtree for a ``getattr(...)`` call whose first argument is the bare name ``context``.
+    * **M1d** — ``side=context.authorized_coordinates.action`` (context two attributes deep).
+      Caught because the subtree walk finds the bare ``ast.Name("context")`` at the bottom of the
+      attribute chain, regardless of nesting depth.
+
+    Positional arguments are scanned too (``call_node.args``, not just ``call_node.keywords``).
+
+    **Re-review residual R1 — two more alias shapes, plus a call-site allowlist.** The alias ban
+    above originally matched only ``ast.Assign`` whose value was a bare ``ast.Name("context")``.
+    Two one-token variants slipped past it, both now RED by the widened ban itself:
+
+    * **M1e** — ``ctx: SendBoundaryContext = context`` (an ``ast.AnnAssign``).
+    * **M1f** — ``if (ctx := context) is None: ...`` (an ``ast.NamedExpr``, i.e. a walrus alias).
+
+    The ban is also widened to catch tuple-unpacking, e.g. ``_, ctx = flag, context`` — the
+    assignment's value is a ``Tuple``/``List`` literal with ``context`` as one of its elements,
+    not the value itself.
+
+    Separately, R1 adds a call-site allowlist: **any** call anywhere in either method that
+    receives the bare name ``context`` as a whole argument (not just an attribute read off it)
+    must be one of the sanctioned sites surveyed from the current source below. A brand new
+    consumer of the raw context object — one the alias ban and the send_once-subtree scan do not
+    happen to cover — trips this check instead of passing silently.
+    """
+    import ast
+    import textwrap
+
+    call_source = textwrap.dedent(inspect.getsource(BrokerEgressGateway.__call__))
+    seal_and_claim_source = textwrap.dedent(
+        inspect.getsource(BrokerEgressGateway._seal_and_claim)
+    )
+
+    def _bound_names(value: ast.expr | None) -> list[str]:
+        """Bare names a binding target would receive: the value itself if it's a bare
+        ``Name``, or its top-level elements if it's a ``Tuple``/``List`` literal (the
+        RHS of a tuple-unpacking assignment)."""
+        if value is None:
+            return []
+        if isinstance(value, ast.Name):
+            return [value.id]
+        if isinstance(value, (ast.Tuple, ast.List)):
+            return [elt.id for elt in value.elts if isinstance(elt, ast.Name)]
+        return []
+
+    # -- alias ban (mutation M1b, widened per re-review residual R1): no assignment, annotated
+    # assignment, or walrus expression anywhere in either method may bind a name to the bare name
+    # ``context`` (directly or via tuple-unpacking) — checked independently of the call site, so
+    # an alias is rejected even before it is ever read.
+    for source, label in (
+        (call_source, "__call__"),
+        (seal_and_claim_source, "_seal_and_claim"),
+    ):
+        alias_offenders = [
+            ast.dump(node)
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
+            and "context" in _bound_names(node.value)
+        ]
+        assert alias_offenders == [], (
+            f"{label} aliases the bare name 'context' via assignment, annotated assignment, "
+            f"walrus, or tuple-unpacking ({alias_offenders}) — an alias is exactly the "
+            "substitution surface a direct-attribute-only scan misses (mutation M1b/M1e/M1f, "
+            "independent review finding #4 and its re-review residual R1)"
+        )
+
+    # -- call-site allowlist (re-review residual R1): the bare name ``context`` may be handed
+    # whole into a call ONLY at the sites named here. Surveyed from the current source of both
+    # methods — every existing call that passes bare ``context`` as an argument:
+    #   * ``verify_send_boundary(attempt=attempt, context=context)``      (step 15, __call__)
+    #   * ``outbound_binding_mismatch(context)``                          (outbound binding, __call__)
+    #   * ``self._seal_and_claim(..., context=context)``                  (__call__)
+    #   * ``outbound_coordinates(context)``                               (_seal_and_claim)
+    #   * ``build_send_seal(context=context, ...)``                       (_seal_and_claim)
+    #   * ``self._record_uncertain(attempt_id, context)``                 (step 19, __call__)
+    # A new consumer must be added here deliberately, not slip through unpinned.
+    sanctioned_context_call_signatures = frozenset(
+        {
+            "verify_send_boundary",
+            "outbound_binding_mismatch",
+            "outbound_coordinates",
+            "build_send_seal",
+            "self._seal_and_claim",
+            "self._record_uncertain",
+        }
+    )
+
+    def _call_signature(func: ast.expr) -> str | None:
+        if isinstance(func, ast.Name):
+            return func.id
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "self"
+        ):
+            return f"self.{func.attr}"
+        return None
+
+    for source, label in (
+        (call_source, "__call__"),
+        (seal_and_claim_source, "_seal_and_claim"),
+    ):
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.Call):
+                continue
+            receives_bare_context = any(
+                isinstance(arg, ast.Name) and arg.id == "context" for arg in node.args
+            ) or any(
+                isinstance(kw.value, ast.Name) and kw.value.id == "context"
+                for kw in node.keywords
+            )
+            if not receives_bare_context:
+                continue
+            signature = _call_signature(node.func)
+            assert signature in sanctioned_context_call_signatures, (
+                f"{label} passes the bare name 'context' into {signature!r} "
+                f"({ast.dump(node)}) — this is not one of the sanctioned call sites "
+                f"{sorted(sanctioned_context_call_signatures)}. A new consumer of the raw "
+                "context object must be added to this allowlist deliberately, not slip "
+                "through silently (independent review finding #4, re-review residual R1)"
+            )
+
+    tree = ast.parse(call_source)
+    send_once_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "send_once"
+    ]
+    assert len(send_once_calls) == 1, "expected exactly one send_once call in __call__"
+    (call_node,) = send_once_calls
+
+    subtree_nodes: list[ast.AST] = []
+    for arg in call_node.args:
+        subtree_nodes.extend(ast.walk(arg))
+    for kw in call_node.keywords:
+        subtree_nodes.extend(ast.walk(kw.value))
+
+    name_offenders = [
+        ast.dump(node)
+        for node in subtree_nodes
+        if isinstance(node, ast.Name) and node.id == "context"
+    ]
+    assert name_offenders == [], (
+        f"send_once's call subtree still reads the bare name 'context' ({name_offenders}) — "
+        "step 18 must source only from the seal, with zero exceptions, positional or keyword, "
+        "at any nesting depth (design #34 phase 4 작업 6 §0/§1.2, mutation M1/M1d, independent "
+        "review finding #4)"
+    )
+
+    getattr_offenders = [
+        ast.dump(node)
+        for node in subtree_nodes
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "context"
+    ]
+    assert getattr_offenders == [], (
+        f"send_once's call subtree reads context via getattr() ({getattr_offenders}) — "
+        "getattr(context, ...) is exactly the substitution surface direct-attribute scanning "
+        "misses (mutation M1c, independent review finding #4)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # at-most-one: single-use consumption + no blind resubmit (§5.4 / §6)
 # ---------------------------------------------------------------------------
 
@@ -877,8 +1463,10 @@ def test_the_mapping_and_the_resolver_paths_produce_the_identical_verification()
     assert resolved_verification == mapped_verification
     assert resolved_gateway.results == mapped_gateway.results
     assert mapped_sink.kinds == ("VERIFY_ITEM",) * 17 + (
+        "SEND_SEALED",
         "SEND_STARTED",
         "POTENTIALLY_LIVE_OBSERVED",
+        "NETWORK_CALL_ENTERED",
         "EGRESS_RESULT_RECORDED",
     )
 

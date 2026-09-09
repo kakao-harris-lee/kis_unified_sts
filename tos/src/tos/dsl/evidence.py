@@ -82,6 +82,8 @@ class AdmissibilityResult(IndependentIdArtifact):
             "reasons",
             "enforcement_mechanism_version",
             "dsl_version",
+            "strategy_id",
+            "strategy_digest",
         }
     )
 
@@ -97,6 +99,36 @@ class AdmissibilityResult(IndependentIdArtifact):
     reasons: tuple[str, ...] = ()
     enforcement_mechanism_version: str | None = None
     dsl_version: str | None = None
+    #: G12 binding (design #31 §3.5/§9-4; DSL spike memo G12): the exact Authored
+    #: Strategy this verdict is attributable to. Without this a degenerate
+    #: candidate mirror of any policy reads ADMISSIBLE with no way to trace the
+    #: judgement back to a real artifact (spike finding G12). Both fields are
+    #: **covered** (included in the digest preimage below) so re-checking a
+    #: strategy whose policy changed yields a different record digest even if the
+    #: lowered candidate shape happens to coincide — and both are left optional
+    #: (not in ``_REQUIRED_COVERED``) because a bare-candidate analysis that names
+    #: no strategy (e.g. the property tests over arbitrary
+    #: :class:`~tos.dsl.candidate.CandidateProgram` values in
+    #: ``test_dsl_admissibility.py``) is still a legitimate, strategy-less use of
+    #: this record and must not be forced to fabricate an identity.
+    #:
+    #: **Blast-radius note (measured, not merely asserted):** adding these two
+    #: names to ``_COVERED_FIELDS`` changes ``covered_content()`` — and therefore
+    #: ``canonical_digest`` — for *every* :class:`AdmissibilityResult`, including
+    #: one that never sets either field (its ``covered_content()`` dict gains two
+    #: new ``None`` entries, which changes the canonicalizer's byte output). No
+    #: existing test asserts a hard-coded digest string (every test re-derives the
+    #: expected verdict/digest from the pure predicate / a fresh ``issue()`` call),
+    #: so no assertion in this package's suite regresses; the effect is scoped to
+    #: any *external* record that persisted a pre-change digest value, of which
+    #: there are none inside this Phase (Phase 1 has no runtime that persists
+    #: records — design §0). Landed directly on this class rather than in a new
+    #: ``BoundAdmissibilityResult`` subclass because no ``EVIDENCE-SURFACE-MAP.csv``
+    #: row pins any ``tos/src/tos/dsl`` line (measured:
+    #: ``grep -c tos/src/tos/dsl EVIDENCE-SURFACE-MAP.csv`` = 0), so there is no
+    #: pinned-line-shift risk this field addition could trigger.
+    strategy_id: str | None = None
+    strategy_digest: str | None = None
 
     @model_validator(mode="after")
     def _verdict_matches_predicate(self) -> AdmissibilityResult:
@@ -132,6 +164,8 @@ def analyze_candidate(
     enforcement_mechanism_version: str,
     dsl_version: str,
     result_id: str,
+    strategy_id: str | None = None,
+    strategy_digest: str | None = None,
 ) -> AdmissibilityResult:
     """Analyze a candidate and issue a faithful :class:`AdmissibilityResult` (design §2.4).
 
@@ -145,6 +179,11 @@ def analyze_candidate(
             (DCE-INV-005 version facet; injected, not hard-coded).
         dsl_version: The DSL version.
         result_id: The independent record id.
+        strategy_id: The G12 binding — the Authored Strategy this candidate was
+            lowered from, if any (``None`` for a bare-candidate analysis that names
+            no strategy).
+        strategy_digest: The G12 binding — that strategy's own ``canonical_digest``,
+            if any.
 
     Returns:
         The issued :class:`AdmissibilityResult`.
@@ -158,6 +197,8 @@ def analyze_candidate(
         reasons=computed.reasons,
         enforcement_mechanism_version=enforcement_mechanism_version,
         dsl_version=dsl_version,
+        strategy_id=strategy_id,
+        strategy_digest=strategy_digest,
     )
 
 

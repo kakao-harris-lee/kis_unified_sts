@@ -314,6 +314,35 @@ class RecordingTransmit:
         )
 
 
+class AllTruePreconditions:
+    """A :class:`~tos.engine.CoordinatorPreconditions` test double that always admits.
+
+    Both gates report the injected values (default ``True``/``True``) so the pre-existing
+    suite — authored before the Phase 3 wave 2 KW2-B Coordinator gate existed — keeps
+    exercising exactly the behaviour it always exercised. A test that wants to exercise the
+    gate itself constructs one with an explicit ``False`` / ``None``.
+    """
+
+    def __init__(
+        self,
+        *,
+        authority: bool | None = True,
+        live_scope: bool | None = True,
+    ) -> None:
+        """Configure the stand-in's two verdicts."""
+        self._authority = authority
+        self._live_scope = live_scope
+
+    def authority_epoch_current(self) -> bool | None:
+        """Return the injected authority verdict."""
+        return self._authority
+
+    def live_scope_authorized(self, transport_nature: Any) -> bool | None:
+        """Return the injected live-scope verdict, ignoring ``transport_nature``."""
+        del transport_nature
+        return self._live_scope
+
+
 def build_core(
     *,
     registry: StrategyRegistry | None = None,
@@ -321,6 +350,8 @@ def build_core(
     transmit: Any = None,
     sink: RecordingEvidenceSink | None = None,
     configuration: EngineConfiguration | None = None,
+    preconditions: Any = None,
+    transport_nature: Any = None,
 ) -> tuple[EngineCore, RecordingEvidenceSink]:
     """Wire a core with the suite's defaults and return it with its recording sink."""
     recording_sink = sink or RecordingEvidenceSink()
@@ -328,7 +359,11 @@ def build_core(
         registry=registry or registry_with(),
         stages=stages if stages is not None else admitting_stages(),
         configuration=configuration or engine_configuration(),
+        preconditions=(
+            preconditions if preconditions is not None else AllTruePreconditions()
+        ),
         transmit=transmit if transmit is not None else RecordingTransmit(),
+        transport_nature=transport_nature,
         sink=recording_sink,
     )
     return core, recording_sink

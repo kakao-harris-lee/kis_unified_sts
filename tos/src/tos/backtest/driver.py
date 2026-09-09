@@ -87,6 +87,7 @@ Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #33 §0.3). No clock, n
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 
 from tos.backtest._base import BacktestIntegrityError
 from tos.backtest.bars import (
@@ -110,6 +111,7 @@ from tos.engine import (
     EventResult,
     InstrumentKey,
     SendHandoff,
+    TransportNatureLike,
 )
 from tos.ordering import OrderingEvent
 
@@ -117,6 +119,8 @@ __all__ = [
     "BacktestDriver",
     "CoreReinstantiationError",
     "MultiSymbolBacktestDriver",
+    "NonBrokerTransportNature",
+    "SyntheticNonLivePreconditions",
     "YieldOrderCounter",
 ]
 
@@ -128,6 +132,85 @@ class CoreReinstantiationError(BacktestIntegrityError):
     capacity headroom the real system does not have and destroying single-core backtest/paper
     parity (design #33 §2.4; RFC-002 §9.1:558).
     """
+
+
+class SyntheticNonLivePreconditions:
+    """Backtest's :class:`~tos.engine.CoordinatorPreconditions` (Phase 3 wave 2 KW2-B; plan §2.1).
+
+    ``EngineCore`` now requires an explicit ``preconditions`` object (no default), so a backtest
+    core needs one too — and hardcoding ``authority_epoch_current`` to a literal ``True`` here
+    would be exactly the "assume-admit" shortcut design #31 §4.2 rule 1 forbids: the plan text is
+    explicit that "authority always True is NOT acceptable". Instead this stand-in takes the
+    authority verdict as an **explicit constructor argument** (no default), so every backtest
+    scenario states its own stance rather than inheriting an assumed one.
+
+    Live-scope authorization is derived **structurally**, never assumed: it reads only the one
+    field :class:`~tos.engine.core.TransportNatureLike` declares
+    (``transport_nature.reaches_broker``) and is ``True`` **only** when that field is the
+    concrete ``False`` — an unestablished (``None``) or broker-reaching (``True``) nature both
+    fail closed, the same non-broker declaration discipline the sibling synthetic-transport
+    package's own nature-fields helper uses. ``tos.backtest``'s own import-closure test
+    (``tos/tests/backtest/test_backtest_import_closure.py``) forbids the D-E4 send-boundary
+    gateway package / ``tos.authority`` / ``tos.liveauth`` as siblings (and this module's own
+    GAP-1 anti-phantom canary in ``tos/tests/slice/test_slice_gaps.py`` forbids naming that
+    synthetic-transport sibling package by name here at all), so ``transport_nature`` is typed
+    against the structural :class:`~tos.engine.core.TransportNatureLike` Protocol — never any
+    concrete transport-nature record type — exactly as
+    :class:`~tos.engine.core.CoordinatorPreconditions` itself is typed.
+    """
+
+    def __init__(self, *, authority_epoch_current: bool | None) -> None:
+        """Configure the stand-in's explicitly injected authority verdict.
+
+        Args:
+            authority_epoch_current: The backtest scenario's explicit authority stance — no
+                default, so a scenario can never silently inherit an assumed ``True``.
+        """
+        self._authority_epoch_current = authority_epoch_current
+
+    def authority_epoch_current(self) -> bool | None:
+        """Return the explicitly injected authority verdict, unchanged."""
+        return self._authority_epoch_current
+
+    def live_scope_authorized(
+        self, transport_nature: TransportNatureLike | None
+    ) -> bool | None:
+        """Whether the wired transport is structurally non-broker-reaching.
+
+        Args:
+            transport_nature: The core's wired transport's declared nature. ``None``
+                (unestablished) fails closed, matching the D-E4 gateway's own "unknown
+                transport nature is conservatively broker-consuming" rule (see
+                :class:`~tos.engine.core.TransportNatureLike` for why this stand-in cannot
+                name that concrete type directly). A backtest core with no broker-capable
+                send boundary at all supplies :class:`NonBrokerTransportNature` explicitly
+                rather than leaving this ``None`` (module docstring, ``build_core`` default).
+
+        Returns:
+            ``True`` iff ``transport_nature.reaches_broker is False``; ``False`` otherwise
+            (including ``None`` reaches_broker or a ``None`` transport_nature).
+        """
+        if transport_nature is None:
+            return False
+        return transport_nature.reaches_broker is False
+
+
+@dataclass(frozen=True)
+class NonBrokerTransportNature:
+    """A structurally honest, non-broker :class:`~tos.engine.core.TransportNatureLike`.
+
+    Phase 3 wave 2 KW2-B (plan §2.1). Every D-E3 backtest send boundary — the deterministic
+    fill band, the gateway re-injector — is, by this package's own foundational premise, not
+    a broker: no network stdlib is even importable inside ``tos/`` (design #33 §0.3), so a
+    plain backtest core can never reach one. This is the honest, structural declaration of
+    that fact, not an assumption dressed up as one. The alternative — leaving a core's
+    ``transport_nature`` unset (``None``) — would read as *unestablished* under
+    :meth:`SyntheticNonLivePreconditions.live_scope_authorized` and fail the Coordinator gate
+    closed, which is the correct conservative default for a genuinely unknown transport but
+    dishonest for one that is definitionally not a broker at all.
+    """
+
+    reaches_broker: bool | None = False
 
 
 class YieldOrderCounter:

@@ -139,8 +139,8 @@ def _all_false_risk_attestations() -> RiskAttestations:
 
 
 def test_aggregate_wrapper_defers_to_attestation_when_caller_has_no_opinion() -> None:
-    """Caller ``None`` (only possible for the two Optional fields) or a
-    caller ``True`` claim: the attestation governs."""
+    """Caller ``None`` (possible on every field as of kernel round #1 §2.3)
+    or a caller ``True`` claim: the attestation governs."""
     wrapped = wrap_aggregate_risk_inputs_provider(
         lambda _request: _aggregate_inputs_with(
             all_fields_attributed=None,
@@ -156,6 +156,47 @@ def test_aggregate_wrapper_defers_to_attestation_when_caller_has_no_opinion() ->
     assert result.numerically_safe is True
     assert result.valuation_ok is True
     assert result.limit_source_is_injected_envelope is True
+
+
+def test_aggregate_wrapper_defers_to_attestation_when_numerically_safe_is_none() -> (
+    None
+):
+    """Kernel round #1 §2.3: ``numerically_safe``/``valuation_ok`` are now
+    ``| None`` on ``AggregateRiskDecisionInputs`` — a caller with genuinely
+    no opinion on either can pass ``None`` and the attestation governs,
+    exactly like the other four fields already did."""
+    wrapped = wrap_aggregate_risk_inputs_provider(
+        lambda _request: _aggregate_inputs_with(
+            all_fields_attributed=True,
+            numerically_safe=None,
+            valuation_ok=None,
+            limit_source_is_injected_envelope=True,
+        ),
+        _all_true_risk_attestations(),
+    )
+    result = wrapped(None)
+    assert result is not None
+    assert result.numerically_safe is True
+    assert result.valuation_ok is True
+
+
+def test_aggregate_wrapper_none_never_masks_an_attested_restrictive_false() -> None:
+    """The other half of the same fix: ``None`` from the caller must not
+    accidentally read as more permissive than an operator attestation of
+    ``False`` — the attestation (a real restrictive fact) still governs."""
+    wrapped = wrap_aggregate_risk_inputs_provider(
+        lambda _request: _aggregate_inputs_with(
+            all_fields_attributed=True,
+            numerically_safe=None,
+            valuation_ok=None,
+            limit_source_is_injected_envelope=True,
+        ),
+        _all_false_risk_attestations(),
+    )
+    result = wrapped(None)
+    assert result is not None
+    assert result.numerically_safe is False
+    assert result.valuation_ok is False
 
 
 def test_aggregate_wrapper_never_overrides_the_callers_own_restrictive_claim() -> None:

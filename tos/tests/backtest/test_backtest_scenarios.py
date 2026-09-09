@@ -116,16 +116,18 @@ def test_row_a_ack_advances_knowledge_without_touching_capacity() -> None:
 
 
 def test_ack_and_unknown_are_distinguishable_on_the_knowledge_axis() -> None:
-    """(§5.1 MINOR-2) The two share a capacity state but never a knowledge state."""
+    """(§5.1 MINOR-2; [KW2b-#2]) The two never share a knowledge state — nor, since KW2b-#2, a
+    capacity state either: ACK's ordinary mapping has no explicit capacity target (stays
+    POTENTIALLY_LIVE), while UNKNOWN's is now the unconditional, explicit QUARANTINED_UNKNOWN
+    (ADR-002-005 §7 "until resolved")."""
     _, ack_core, _, _ = run_scenario(scenario_for(ScenarioId.ENTRY_ACK))
     _, unknown_core, _, _ = run_scenario(scenario_for(ScenarioId.ENTRY_UNKNOWN))
 
     ack = ack_core.ledger.outstanding(instrument_key())
     unknown = unknown_core.ledger.outstanding(instrument_key())
     assert ack is not None and unknown is not None
-    assert (
-        ack.capacity_state is unknown.capacity_state is CapacityState.POTENTIALLY_LIVE
-    )
+    assert ack.capacity_state is CapacityState.POTENTIALLY_LIVE
+    assert unknown.capacity_state is CapacityState.QUARANTINED_UNKNOWN
     assert ack.knowledge is EgressKnowledge.ACKNOWLEDGED
     assert unknown.knowledge is EgressKnowledge.UNKNOWN
     assert ack.knowledge is not unknown.knowledge
@@ -160,13 +162,13 @@ def test_ack_and_unknown_are_distinguishable_on_the_knowledge_axis() -> None:
         (
             ScenarioId.ENTRY_UNKNOWN,
             EgressResultKind.UNKNOWN,
-            CapacityState.POTENTIALLY_LIVE,
+            CapacityState.QUARANTINED_UNKNOWN,
             EgressKnowledge.UNKNOWN,
         ),
         (
             ScenarioId.ENTRY_TIMEOUT,
             EgressResultKind.TIMEOUT,
-            CapacityState.POTENTIALLY_LIVE,
+            CapacityState.QUARANTINED_UNKNOWN,
             EgressKnowledge.UNKNOWN,
         ),
     ],
@@ -205,8 +207,10 @@ def test_row_2_partial_carries_the_remaining_magnitude_into_the_projection() -> 
 def test_row_3_reject_leaves_the_scope_occupied() -> None:
     """(§5.1 row 3 / §2.1) Even a proven rejection frees nothing — release is the RCL's act.
 
-    ``RELEASE_PENDING_PROOF`` is the *most* consumed rank in the projection order (``state.py:64``),
-    not a release: ``RELEASED`` is absent from the vocabulary entirely (``state.py:57``).
+    ``RELEASE_PENDING_PROOF`` sits among the most consumed ranks in the projection order
+    (``state.py:64`` — only ``QUARANTINED_UNKNOWN`` ranks above it, for genuinely unresolved
+    evidence, per Phase 3 wave 2 KW2b-#2), not a release: ``RELEASED`` is absent from the
+    vocabulary entirely (``state.py:57``).
     """
     _run, core, _fill_model, _sink = run_scenario(scenario_for(ScenarioId.ENTRY_REJECT))
     assert core.ledger.admits_new_exposure(instrument_key()) is False

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from decimal import Decimal
+from typing import ClassVar
 
 from pydantic import model_validator
 
@@ -56,6 +57,7 @@ from tos.egressgw._base import (
     CanonicalDecimal,
     FrozenModel,
 )
+from tos.egressgw.seal import SendSeal
 from tos.egressgw.vocabulary import (
     BrokerApplicability,
     DerivationOutcome,
@@ -66,7 +68,7 @@ from tos.egressgw.vocabulary import (
     VerifyDisposition,
     VerifyOutcome,
 )
-from tos.engine import AttemptRequest, InstrumentKey
+from tos.engine import AttemptRequest, CommitmentStep, InstrumentKey
 from tos.ioc import (
     ApprovedIntentContract,
     AuthorizedConstructionEnvelope,
@@ -457,6 +459,31 @@ class VerifyItemVerdict(FrozenModel):
     native_verdict_type: str | None = None
     #: The native verdict's own value (for the result enums), recorded as a plain string.
     native_verdict_value: str | None = None
+    #: The worst-credible capacity obligation cur's ``unknown_preserves_capacity`` says must be
+    #: preserved because this item's currentness outcome is not positively known (kernel round
+    #: #1 §1.3; CUR-INV-011:183 "missing-ACK ≠ non-acceptance"). ``None`` in every one of these
+    #: cases (independent review round #1 finding #9 — the prior docstring named only the first
+    #: two): (i) any item but item 16
+    #: (:attr:`~tos.egressgw.vocabulary.SendVerifyItem.CURRENTNESS`); (ii) item 16 SATISFIED
+    #: (currentness positively ``ADMIT`` — nothing to preserve); (iii) item 16 halting at the
+    #: earlier restrictive-latch or structurally-incomplete-proof gates
+    #: (:func:`~tos.egressgw.gateway._check_currentness`'s latch / structural-completeness
+    #: checks) — no obligation is computed there at all; (iv) item 16 non-admit but the
+    #: obligation's own **magnitude** is unknown (``context.worst_credible_capacity is None``) —
+    #: see :attr:`preserved_obligation_magnitude_unknown`, which is ``True`` in that case instead
+    #: of this field carrying a concrete number.
+    preserved_worst_credible_capacity: int | None = None
+    #: Whether item 16 asserted an obligation but its **magnitude** is unknown — the reservation's
+    #: worst-credible capacity was itself never observed
+    #: (``context.worst_credible_capacity is None``) when currentness did not positively admit
+    #: (kernel round #1 review #4; CUR-INV-011:183 "UNKNOWN is restrictive and
+    #: capacity-consuming"). Distinct from ``preserved_worst_credible_capacity is None``, which
+    #: can *also* mean "no obligation was ever asserted" — this flag disambiguates the two so a
+    #: consumer does not treat an unknown-magnitude obligation as trivially preserved. ``False``
+    #: on every item but item 16, and ``False`` on item 16 whenever a concrete
+    #: ``preserved_worst_credible_capacity`` is recorded (the two are mutually exclusive — a
+    #: concrete number already states the magnitude).
+    preserved_obligation_magnitude_unknown: bool = False
     authority_effect: AllFalseGatewayAuthority = AllFalseGatewayAuthority()
 
     @model_validator(mode="after")
@@ -471,6 +498,46 @@ class VerifyItemVerdict(FrozenModel):
                 "recorded NOT_APPLICABLE — only the deferred safety-governance mesh may be "
                 "explicitly N/A, and only under a positively established non-broker synthetic "
                 "send (design #34 §4.2)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _preserved_capacity_only_for_currentness(self) -> VerifyItemVerdict:
+        """Reject a preserved-capacity obligation recorded on anything but item 16 (kernel round #1 §1.3).
+
+        Only item 16 (CURRENTNESS) may author cur's unknown-preservation obligation — no other
+        item's verify check can decide whether risk-relevant capacity must be preserved.
+        """
+        if (
+            self.preserved_worst_credible_capacity is not None
+            and self.item is not SendVerifyItem.CURRENTNESS
+        ):
+            raise ArtifactIntegrityError(
+                f"verify item {self.item.value} cannot record a preserved worst-credible "
+                "capacity obligation — only item 16 (CURRENTNESS) may author cur's "
+                "unknown-preservation obligation (CUR-INV-011:183; kernel round #1 §1.3)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _magnitude_unknown_only_for_currentness_with_no_concrete_obligation(
+        self,
+    ) -> VerifyItemVerdict:
+        """Reject a magnitude-unknown flag on anything but item 16, or beside a concrete obligation.
+
+        (Kernel round #1 review #4.) The flag asserts "an obligation exists but its size is
+        unknown" — a concrete :attr:`preserved_worst_credible_capacity` already states the size,
+        so the two are mutually exclusive, and only item 16 (CURRENTNESS) may author either.
+        """
+        if self.preserved_obligation_magnitude_unknown and (
+            self.item is not SendVerifyItem.CURRENTNESS
+            or self.preserved_worst_credible_capacity is not None
+        ):
+            raise ArtifactIntegrityError(
+                f"verify item {self.item.value} cannot record a magnitude-unknown preserved "
+                "obligation — only item 16 (CURRENTNESS) may author it, and only when no "
+                "concrete worst-credible capacity is recorded (CUR-INV-011:183; kernel round #1 "
+                "review #4)"
             )
         return self
 
@@ -512,7 +579,112 @@ class GatewayEvidenceRecord(FrozenModel):
     applicability: BrokerApplicability | None = None
     halt_reason: SendHaltReason | None = None
     detail: str | None = None
+    #: Item 16's preserved worst-credible-capacity obligation, carried onto a ``SEND_REFUSED``
+    #: record from item 16's own verdict **regardless of which item halted** (kernel round #1
+    #: §1.3; independent review round #1 finding #1 — transferring it only when item 16 itself
+    #: was ``halt_item`` silently dropped the obligation whenever an earlier verify item also
+    #: failed, since all 17 items are always evaluated). ``None`` in every one of these cases
+    #: (review round #1 finding #9): (i) item 16's own verdict authored no obligation at all
+    #: (any item but item 16 never authors one); (ii) item 16 SATISFIED; (iii) item 16 halting at
+    #: the earlier restrictive-latch or structurally-incomplete-proof gates, where no obligation
+    #: is computed; (iv) item 16 non-admit with the obligation's magnitude unknown — see
+    #: :attr:`preserved_obligation_magnitude_unknown`.
+    preserved_worst_credible_capacity: int | None = None
+    #: Mirrors :attr:`VerifyItemVerdict.preserved_obligation_magnitude_unknown`, transferred onto
+    #: ``SEND_REFUSED`` the same unconditional way as :attr:`preserved_worst_credible_capacity`
+    #: (kernel round #1 review #4). ``False`` unless item 16's own verdict flagged it.
+    preserved_obligation_magnitude_unknown: bool = False
+    #: The whole pre-``SEND_STARTED`` :class:`~tos.egressgw.seal.SendSeal`, carried on the
+    #: ``SEND_SEALED`` record only (Phase 4 작업 6, design §1.2) — enforced below by
+    #: :meth:`_seal_fields_match_their_kind`, not merely documented (independent review
+    #: finding #9): a non-``None`` value on any other kind is rejected at construction.
+    send_seal: SendSeal | None = None
+    #: The sealed :attr:`~tos.egressgw.seal.SendSeal.seal_digest`, carried on ``SEND_STARTED`` and
+    #: the terminal ``EGRESS_RESULT_RECORDED`` record (Phase 4 작업 6, design §1.2) — the compact
+    #: reference a durable Evidence Store row would use to point back at the full seal without
+    #: repeating it. Also enforced below by :meth:`_seal_fields_match_their_kind`: a non-``None``
+    #: value on any other kind is rejected at construction (independent review finding #9).
+    send_seal_digest: str | None = None
+    #: Which of the closed 19 ADR-002-002 §11 :class:`~tos.engine.CommitmentStep` this record
+    #: belongs to (Phase 3 wave 3 KW3-GW — mutation-matrix finding: the executable Send Boundary
+    #: order was not auditable from evidence because ``kind`` alone did not carry step identity).
+    #: ``gateway.py`` stamps this on every record it emits. Most kinds have exactly one fixed
+    #: step (enforced below, when stated, by :meth:`_step_matches_fixed_kind_when_given`);
+    #: ``SEND_REFUSED`` is the one exception — it is emitted from many different steps depending
+    #: on which check failed, so its step is supplied per halt site, never derived from the kind.
+    #: ``None`` stays backward compatible with every call site predating this field.
+    step: CommitmentStep | None = None
     authority_effect: AllFalseGatewayAuthority = AllFalseGatewayAuthority()
+
+    #: The kinds ``gateway.py`` itself stamps :attr:`send_seal_digest` onto (its own
+    #: ``send_seal_digest=`` call sites) — the source of truth for the validator below, not a
+    #: separately maintained list (independent review finding #9). ``NETWORK_CALL_ENTERED``
+    #: (Phase 3 wave 3 KW3-GW, the step-18 write-ahead mark) carries the digest like its
+    #: ``SEND_STARTED`` / ``EGRESS_RESULT_RECORDED`` neighbours.
+    SEND_SEAL_DIGEST_KINDS: ClassVar[frozenset[str]] = frozenset(
+        {"SEND_STARTED", "NETWORK_CALL_ENTERED", "EGRESS_RESULT_RECORDED"}
+    )
+
+    #: The single fixed :class:`~tos.engine.CommitmentStep` each non-``SEND_REFUSED`` kind
+    #: belongs to (Phase 3 wave 3 KW3-GW) — the source of truth for the validator below.
+    #: ``SEND_REFUSED`` is deliberately absent: it is the one kind emitted from more than one
+    #: step (whichever check actually failed), so it has no single fixed mapping here.
+    FIXED_KIND_STEPS: ClassVar[dict[str, CommitmentStep]] = {
+        "VERIFY_ITEM": CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        "SEND_SEALED": CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+        "SEND_STARTED": CommitmentStep.SEND_STARTED_DURABLE,
+        "POTENTIALLY_LIVE_OBSERVED": CommitmentStep.POTENTIALLY_LIVE_TRANSITION,
+        "NETWORK_CALL_ENTERED": CommitmentStep.NETWORK_CALL,
+        "EGRESS_RESULT_RECORDED": CommitmentStep.EVIDENCE_RECORD,
+        "UNCERTAIN_SEND": CommitmentStep.EVIDENCE_RECORD,
+    }
+
+    @model_validator(mode="after")
+    def _seal_fields_match_their_kind(self) -> GatewayEvidenceRecord:
+        """Reject ``send_seal`` / ``send_seal_digest`` on a kind that never legitimately carries it.
+
+        Before this validator, ``kind`` was a free-form ``str`` and nothing enforced the pairing
+        the two field comments merely asserted (independent review finding #9 — a probe
+        ``GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="a",
+        send_seal_digest="deadbeef")`` constructed without error).
+        """
+        if self.send_seal is not None and self.kind != "SEND_SEALED":
+            raise ArtifactIntegrityError(
+                f"GatewayEvidenceRecord(kind={self.kind!r}) carries a non-None send_seal — the "
+                "full seal is written exactly once, on the SEND_SEALED record only (Phase 4 작업 "
+                "6 §1.2; independent review finding #9)"
+            )
+        if (
+            self.send_seal_digest is not None
+            and self.kind not in self.SEND_SEAL_DIGEST_KINDS
+        ):
+            raise ArtifactIntegrityError(
+                f"GatewayEvidenceRecord(kind={self.kind!r}) carries a non-None "
+                f"send_seal_digest — only {sorted(self.SEND_SEAL_DIGEST_KINDS)} legitimately "
+                "carry it (Phase 4 작업 6 §1.2; independent review finding #9)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _step_matches_fixed_kind_when_given(self) -> GatewayEvidenceRecord:
+        """When both ``kind`` and ``step`` are given, ``step`` must be the kind's fixed one.
+
+        Backward compatible by construction: a record built without ``step`` (every call site
+        predating Phase 3 wave 3 KW3-GW) is untouched — a ``None`` step is never rejected here.
+        This only catches a *stated* step that disagrees with a kind that has exactly one
+        legitimate step. ``SEND_REFUSED`` has no entry in :attr:`FIXED_KIND_STEPS` and is
+        therefore exempt (its step varies by which check actually failed).
+        """
+        if self.step is None:
+            return self
+        expected = self.FIXED_KIND_STEPS.get(self.kind)
+        if expected is not None and self.step is not expected:
+            raise ArtifactIntegrityError(
+                f"GatewayEvidenceRecord(kind={self.kind!r}) was stamped step={self.step!r}, "
+                f"but this kind is always {expected!r} (Phase 3 wave 3 KW3-GW — the mutation-"
+                "matrix finding this field closes: kind alone did not carry step identity)"
+            )
+        return self
 
 
 class SendBoundaryContext(FrozenModel):

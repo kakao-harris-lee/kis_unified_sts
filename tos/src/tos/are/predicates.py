@@ -612,8 +612,8 @@ def _decide_result(
     snapshot: AggregateRiskStateSnapshot | None,
     applicable_risk_scopes: tuple[str, ...],
     snapshot_complete: bool,
-    numerically_safe: RiskDecisionResult | bool,
-    valuation_ok: bool,
+    numerically_safe: RiskDecisionResult | bool | None,
+    valuation_ok: bool | None,
     envelope_not_enlarged: bool,
 ) -> RiskDecisionResult:
     """The pure GRANT/DENY/UNKNOWN verdict (§5.6 / ARE-INV-006); restrictive-by-default.
@@ -622,8 +622,11 @@ def _decide_result(
     :func:`numerical_safety` return is ``RiskDecisionResult.UNKNOWN`` on any defect, and that
     StrEnum is *truthy* — an ``if not numerically_safe`` check would let an UNKNOWN slip through
     toward GRANT. The ``is not True`` gate treats every non-``True`` value (``False`` **or**
-    ``RiskDecisionResult.UNKNOWN``) as restrictive, so a raw wiring of ``numerical_safety`` is
-    safe (MAJOR-1 truthy-trap seal).
+    ``RiskDecisionResult.UNKNOWN`` **or** ``None``) as restrictive, so a raw wiring of
+    ``numerical_safety`` is safe (MAJOR-1 truthy-trap seal). Kernel round #1 §1.4 (OBS-1) widens
+    both fields to ``| None`` — ``None`` = no opinion => UNKNOWN; the polarity gates
+    (``is not True`` / ``not valuation_ok``) already treated ``None`` as restrictive, so this is a
+    type-only change, no logic change.
     """
     if projection.result is RiskDecisionResult.UNKNOWN:
         return RiskDecisionResult.UNKNOWN
@@ -647,8 +650,8 @@ def risk_decision(
     snapshot: AggregateRiskStateSnapshot | None,
     applicable_risk_scopes: tuple[str, ...],
     snapshot_complete: bool,
-    numerically_safe: RiskDecisionResult | bool,
-    valuation_ok: bool,
+    numerically_safe: RiskDecisionResult | bool | None,
+    valuation_ok: bool | None,
     envelope_not_enlarged: bool,
     decision_id: str,
     decision_generation: int,
@@ -679,7 +682,9 @@ def risk_decision(
         numerically_safe: The :func:`numerical_safety` result (``True`` **or** the raw
             ``RiskDecisionResult.UNKNOWN`` sentinel — anything not ``True`` => UNKNOWN; the
             ``is not True`` gate seals the truthy-UNKNOWN trap so a raw wiring is safe).
+            ``None`` = no opinion => UNKNOWN (kernel round #1 §1.4, OBS-1).
         valuation_ok: Whether :func:`valuation_conservative` held (``False`` => UNKNOWN).
+            ``None`` = no opinion => UNKNOWN (kernel round #1 §1.4, OBS-1).
         envelope_not_enlarged: Whether :func:`envelope_bound_not_enlarged` held (``False`` => DENY).
         decision_id: The evaluation-assigned independent decision identity (id ⊥ digest, §3.1).
         decision_generation: The monotonic decision generation (required covered).

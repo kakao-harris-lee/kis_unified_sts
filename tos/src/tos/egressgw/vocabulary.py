@@ -255,13 +255,20 @@ class SendHaltReason(StrEnum):
     SINGLE_USE_CLAIM_REFUSED = "SINGLE_USE_CLAIM_REFUSED"
     TRANSPORT_UNAVAILABLE = "TRANSPORT_UNAVAILABLE"
     TRANSPORT_RAISED = "TRANSPORT_RAISED"
-    #: Deriving the outbound coordinates (:func:`~tos.egressgw.gateway.outbound_coordinates`)
-    #: raised, *before* the transport was ever called. Kept distinct from ``TRANSPORT_RAISED`` —
-    #: folding it in there would misattribute a pre-send derivation fault to the transport call
-    #: itself, which is exactly the silent-misattribution the recorded-reason discipline forbids
-    #: (design #34 §4.2 "a restrictive termination without a recorded reason is a silent stop,
-    #: not a fail-closed one").
+    #: ⚠ **Unreachable since Phase 4 작업 6 (SendSeal).** Deriving the outbound coordinates
+    #: (:func:`~tos.egressgw.seal.outbound_coordinates`) used to raise from inside step 18, after
+    #: the claim and ``SEND_STARTED``; that call site now runs at seal-build time (step 15½,
+    #: *before* the claim), and any coordinate-derivation fault there is folded into
+    #: :attr:`SEND_SEAL_UNCONSTRUCTABLE` instead (design #34 phase 4 작업 6 §1.2 — "이 자리로
+    #: 흡수"). The member is kept, never reused for a new site, so a historical evidence record
+    #: still decodes; a *new* halt is never tagged with it.
     OUTBOUND_COORDINATE_DERIVATION_RAISED = "OUTBOUND_COORDINATE_DERIVATION_RAISED"
+    #: The pre-``SEND_STARTED`` :class:`~tos.egressgw.seal.SendSeal` could not be built — a
+    #: required fact was absent from the send-boundary context, or the assembled seal failed its
+    #: own construction-time validation (coordinate mismatch, diverging claim/active principal).
+    #: Recorded **before** the step-16 claim, so nothing is consumed (design #34 phase 4 작업 6
+    #: §1.2). Absorbs the former :attr:`OUTBOUND_COORDINATE_DERIVATION_RAISED` site.
+    SEND_SEAL_UNCONSTRUCTABLE = "SEND_SEAL_UNCONSTRUCTABLE"
     #: The transport call itself succeeded (``send_once`` returned), but the result object it
     #: returned could not be read — an attribute access on ``result`` (identity, kind, fill
     #: magnitudes) raised. Handled the same way ``TRANSPORT_RAISED`` is: the send already

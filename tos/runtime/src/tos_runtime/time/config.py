@@ -40,6 +40,27 @@ _BOUND_KEYS: tuple[str, ...] = (
     "MAX_process_suspension_ms",
     "MAX_time_source_disagreement_ms",
     "MIN_time_independent_reference_count",
+    # Kernel round #1 §2.2 (docs/plans/2026-09-08-tos-phase2-kernel-round-1-
+    # commandtype-expiry-obligation-plan.md): the decision-expiry runtime
+    # path needs a cross-continuity clock-domain-conversion bound for
+    # tos.time.effective_snapshot_age_bound_from_continuity's
+    # conversion_bound term. Named + coordinate-grounded, not invented here:
+    # VERIFICATION-PROFILE-002.yaml:1070 already carries this exact key name
+    # ("APPROVE per continuity-identity pair; a consumer not sharing the
+    # issuer's continuity identity adds this bound instead of subtracting
+    # clocks", APPROVED value 50) — reused verbatim, same VER-002-KEYS
+    # convention tos.marketfeed/tos.backtest.resolver already document.
+    "MAX_clock_domain_conversion_uncertainty_ms",
+    # TOS Phase 3 Wave 1 Lane A-R (docs/plans/2026-09-09-tos-phase3-event-
+    # core-plan.md §1.1): the wait bound tos_runtime.engine.driver.EngineDriver's
+    # TimeoutInjector uses before treating a SENT_UNCONFIRMED hand-off with no
+    # egress result as TIMEOUT (RFC-005 §11 "timeout = UNKNOWN, never
+    # rejection"). No existing VERIFICATION-PROFILE-002 coordinate names this
+    # exact bound (grepped 2026-09-09: no "result_wait"/"claim_to_send" key) —
+    # unlike MAX_clock_domain_conversion_uncertainty_ms above, this is a new
+    # named-TBD with no prior approved value to cite; a Bounds-Approver
+    # decision fills it in before any deployment relies on timeout injection.
+    "MAX_send_result_wait_ms",
 )
 
 #: Non-bound identity/version strings the service needs to issue a
@@ -58,6 +79,16 @@ _VERSION_KEYS: tuple[str, ...] = (
     "safety_profile_version",
 )
 
+#: Bound keys that must be strictly positive rather than merely non-negative (independent review
+#: finding #16, 2026-09-09): ``MAX_send_result_wait_ms`` is the wait bound
+#: :class:`~tos_runtime.engine.driver.EngineDriver`'s ``_TimeoutTracker`` uses before injecting a
+#: synthetic ``TIMEOUT`` — a ``0`` value would time out every hand-off on the very next drain,
+#: which is not a smaller wait, it is a silently-disabled send boundary, mirroring
+#: ``replay_window_events``'s own "a zero/negative window is a disabled one" rule
+#: (``tos_runtime.compose._engine_wiring._require_positive_int``). Every other bound key keeps
+#: the plain non-negative rule below (deliberately not widened without a fresh review).
+_STRICTLY_POSITIVE_KEYS: frozenset[str] = frozenset({"MAX_send_result_wait_ms"})
+
 #: VER-002 key name -> :class:`TrustworthyTimeConfig` field name.
 _BOUND_FIELD_BY_KEY: dict[str, str] = {
     "MAX_time_source_precision_ms": "max_time_source_precision_ms",
@@ -69,6 +100,10 @@ _BOUND_FIELD_BY_KEY: dict[str, str] = {
     "MAX_process_suspension_ms": "max_process_suspension_ms",
     "MAX_time_source_disagreement_ms": "max_time_source_disagreement_ms",
     "MIN_time_independent_reference_count": "min_time_independent_reference_count",
+    "MAX_clock_domain_conversion_uncertainty_ms": (
+        "max_clock_domain_conversion_uncertainty_ms"
+    ),
+    "MAX_send_result_wait_ms": "max_send_result_wait_ms",
 }
 
 
@@ -88,6 +123,8 @@ class TrustworthyTimeConfig:
     max_process_suspension_ms: int
     max_time_source_disagreement_ms: int
     min_time_independent_reference_count: int
+    max_clock_domain_conversion_uncertainty_ms: int
+    max_send_result_wait_ms: int
     tz_db_version: str
     trading_calendar_version: str
     verification_profile_version: str
@@ -129,7 +166,14 @@ def _resolve_bounds(raw: dict[str, Any]) -> dict[str, Any]:
             raise TimeConfigError(
                 f"time config key {key!r} must be a non-negative int (got {value!r})"
             )
-        if value < 0:
+        if key in _STRICTLY_POSITIVE_KEYS:
+            if value <= 0:
+                raise TimeConfigError(
+                    f"time config key {key!r} must be a positive int (got {value!r}) — a "
+                    "zero wait bound is not a shorter wait, it is a silently-disabled send "
+                    "boundary (independent review finding #16)"
+                )
+        elif value < 0:
             raise TimeConfigError(
                 f"time config key {key!r} must be non-negative (got {value!r})"
             )

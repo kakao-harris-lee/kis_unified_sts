@@ -10,25 +10,20 @@ from __future__ import annotations
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
-from decimal import Decimal
 from pathlib import Path
 
 from tos.authority import AuthorityTransitionReason
-from tos.brokeradapter import SyntheticFillPolicy, SyntheticPaperTransport
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos.egress import CredentialRouteInventoryEntry, EgressCoordinateSet
+from tos.egress import EgressCoordinateSet
 from tos.egressgw import (
-    BrokerEgressGateway,
     ConformanceProofStage,
     EconomicEffectStage,
     OrderConstructionStage,
-    TransportNature,
     VenueConstraintStage,
 )
 from tos.engine import (
     CommitmentStep,
     EngineConfiguration,
-    EngineCore,
     StageRequest,
     StrategyRegistry,
 )
@@ -44,10 +39,20 @@ from tos_runtime.authority.epoch import (
 )
 from tos_runtime.authority.iap import (
     IntentRegistry,
+    LoadedApproval,
     OperatorApprovalFileError,
-    load_operator_approval_file,
+    load_operator_approval_with_receipt,
 )
 from tos_runtime.authority.stages import IndependentApprovalStage
+from tos_runtime.brokercap import (
+    BrokerScopesConfig,
+    InstanceDocument,
+    credential_route_inventory,
+    load_active_instance_document,
+    load_broker_scopes,
+    refuse_principal_collision,
+    transport_nature,
+)
 from tos_runtime.compose._boot_integrity import (
     record_operator_attested_inputs,
     verify_rcl_log_or_halt,
@@ -57,8 +62,22 @@ from tos_runtime.compose._currentness_wiring import (
     _RiskAndCurrentness,
 )
 from tos_runtime.compose._egress_attestations import EgressAttestations
+from tos_runtime.compose._egress_coordinates import (
+    EgressCoordinatesConfig,
+    load_egress_coordinates,
+)
 from tos_runtime.compose._engine_config import load_engine_config
+from tos_runtime.compose._engine_wiring import (
+    ENGINE_DRIVER_CONFIG_NAME,
+    load_engine_driver_config,
+    verify_replay_or_halt,
+    wire_engine_and_driver,
+)
 from tos_runtime.compose._pending_dimensions import PendingDimensionSpec
+from tos_runtime.compose._preconditions import (
+    COORDINATOR_PRECONDITIONS_CONFIG_NAME,
+    load_coordinator_preconditions_config,
+)
 from tos_runtime.compose._risk_attestations import (
     wrap_action_flow_inputs_provider,
     wrap_aggregate_risk_inputs_provider,
@@ -84,11 +103,9 @@ from tos_runtime.currentness.vector import CurrentnessAssembler
 from tos_runtime.custody.file_custody import FileCustody
 from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.evidence.emergency import EmergencyAppendLog
-from tos_runtime.evidence.sinks import (
-    EngineEvidenceSinkAdapter,
-    GatewayEvidenceSinkAdapter,
-)
+from tos_runtime.evidence.ports import EvidenceAppendPort
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.config import load_finality_config
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.release.admission import ReleaseAdmissionService
 from tos_runtime.release.config import load_release_config
@@ -103,7 +120,11 @@ from tos_runtime.risk.ledger_stages import (
     CommitmentUnavailabilityStage,
     LedgerVerificationStage,
 )
-from tos_runtime.time.config import load_time_config
+from tos_runtime.strategy.resolve import (
+    ResolvedStrategyRegistry,
+    resolve_strategy_registry,
+)
+from tos_runtime.time.config import TrustworthyTimeConfig, load_time_config
 from tos_runtime.time.generation import seed_from
 from tos_runtime.time.service import TimeServiceNotStarted, TrustworthyTimeService
 from tos_runtime.time.sources import (
@@ -122,6 +143,13 @@ _RISK_CONFIG_NAME = "risk.yaml"
 _CURRENTNESS_CONFIG_NAME = "currentness.yaml"
 _CURRENTNESS_DIMENSIONS_CONFIG_NAME = "currentness_dimensions.yaml"
 _RELEASE_CONFIG_NAME = "release.yaml"
+_EGRESS_COORDINATES_CONFIG_NAME = "egress_coordinates.yaml"
+#: TOS Phase 4 plan §2 decisions 1-2 (G-4) — the runtime-configured Broker
+#: Scope table :mod:`tos_runtime.brokercap.scopes` loads.
+_BROKER_SCOPES_CONFIG_NAME = "broker_scopes.yaml"
+#: TOS Phase 3 Wave 2 Lane C-R follow-up (team-lead CR-4 dispatch, plan §2.2) — the SYNTHETIC
+#: post-trade finality policy (:mod:`tos_runtime.posttrade.config`).
+_FINALITY_CONFIG_NAME = "finality.yaml"
 
 #: Where operator-authored Independent Approval decisions live, keyed by
 #: proposal digest (``tos_runtime.authority.iap`` module docstring:
@@ -191,15 +219,29 @@ def _rcl_tip_generation_provider(
 
 
 def _decision_provider(
-    custody_root: Path, environment_label: str, uid: int
-) -> Callable[[StageRequest], IndependentApprovalDecision | None]:
+    custody_root: Path,
+    environment_label: str,
+    uid: int,
+    time_service: TrustworthyTimeService,
+    time_config: TrustworthyTimeConfig,
+    evidence: EvidenceAppendPort,
+) -> Callable[[StageRequest], LoadedApproval | None]:
     """Lazily loads the operator approval file bound to a proposal's own
     digest (``approvals/<proposal_digest>.yaml``) — never computed, never
     cached across a restart (module docstring; ``tos_runtime.authority.iap``
-    "zero auto-approval")."""
+    "zero auto-approval"). Uses ``load_operator_approval_with_receipt``
+    (re-review finding #3) so the resolved ``LoadedApproval`` carries the
+    receipt facts ``IndependentApprovalStage`` threads into expiry — this is
+    the ONE call site that closes G-1's "expiry path unwired" gap.
+
+    Re-review finding #7 (LOW): a refusal — a malformed/refused file, as
+    opposed to no file at all — is durably recorded as
+    ``IAP_APPROVAL_FILE_REFUSED`` before this swallows it to ``None``, so an
+    operator's expiry-or-custody-refused intent stays visible instead of
+    reading identically to "no decision authored yet"."""
     approvals_dir = custody_root / _APPROVALS_DIRNAME
 
-    def _provider(request: StageRequest) -> IndependentApprovalDecision | None:
+    def _provider(request: StageRequest) -> LoadedApproval | None:
         proposal = request.proposal
         digest = getattr(proposal, "canonical_digest", None)
         if digest is None:
@@ -208,12 +250,19 @@ def _decision_provider(
         if not path.is_file():
             return None
         try:
-            return load_operator_approval_file(
+            return load_operator_approval_with_receipt(
                 path,
+                time=time_service,
+                time_config=time_config,
                 expected_owner_uid=uid,
                 environment_label=environment_label,
             )
-        except OperatorApprovalFileError:
+        except OperatorApprovalFileError as exc:
+            evidence.append(
+                {"path": str(path), "error": str(exc)},
+                kind="IAP_APPROVAL_FILE_REFUSED",
+                record_class="IAP_APPROVAL_FILE_REFUSED",
+            )
             return None
 
     return _provider
@@ -284,6 +333,12 @@ class _Infra:
     evidence_store: SqliteEvidenceStore
     emergency_log: EmergencyAppendLog
     time_service: TrustworthyTimeService
+    time_config: TrustworthyTimeConfig
+    #: The RESOLVED monotonic source (never ``None`` here, unlike the caller-facing optional
+    #: parameter) — TOS Phase 3 Wave 1 Lane A-R's ``EngineDriver`` timeout injection reuses the
+    #: SAME source ``TrustworthyTimeService`` was built with, rather than reading a second,
+    #: independent ``time.monotonic()`` (design #40 D1.1 "never an ambient clock read").
+    monotonic_source: MonotonicSource
 
 
 def _build_custody_evidence_time(
@@ -298,6 +353,9 @@ def _build_custody_evidence_time(
     """custody / evidence store (``FileKeyProvider``) / emergency log /
     Trustworthy Time (``start()`` + two boot-time ``evaluate()`` cycles) —
     design #40 §5 order 1, D3/D4."""
+    resolved_monotonic_source = (
+        monotonic_source if monotonic_source is not None else ProcessMonotonicSource()
+    )
     key_provider = FileKeyProvider(custody_root, expected_owner_uid=uid)
     evidence_store = SqliteEvidenceStore(
         data_dir / "evidence.sqlite3", key_provider=key_provider
@@ -312,11 +370,7 @@ def _build_custody_evidence_time(
 
     time_config = load_time_config(config_dir / _TIME_CONFIG_NAME)
     time_service = TrustworthyTimeService(
-        monotonic=(
-            monotonic_source
-            if monotonic_source is not None
-            else ProcessMonotonicSource()
-        ),
+        monotonic=resolved_monotonic_source,
         references=(LocalSystemClockReader(),),
         config=time_config,
         identity=identity,
@@ -339,6 +393,8 @@ def _build_custody_evidence_time(
         evidence_store=evidence_store,
         emergency_log=emergency_log,
         time_service=time_service,
+        time_config=time_config,
+        monotonic_source=resolved_monotonic_source,
     )
 
 
@@ -356,6 +412,7 @@ def _build_rcl_and_authority(
     identity: RuntimeIdentity,
     evidence_store: SqliteEvidenceStore,
     time_service: TrustworthyTimeService,
+    time_config: TrustworthyTimeConfig,
     authority_domain: str,
 ) -> _RclAndAuthority:
     """RCL log (``acquire_epoch`` + generation seed) + Safety Authority epoch
@@ -390,6 +447,16 @@ def _build_rcl_and_authority(
         evidence_store,
         writer_epoch=writer_epoch,
         trading_approval_policy_generation=policy_generation,
+        # re-review finding #3: removes two of G-1's three wiring blockers.
+        # Two REAL-service blockers remain, both in the time service's own
+        # snapshot issuance (time/service.py::_issue_snapshot): it populates
+        # neither ``wall_clock_observation`` nor
+        # ``suspension_status.suspension_ms`` (the latter became load-bearing
+        # once finding #2 made IAP read the OBSERVED suspension), so a
+        # configured ``max_decision_age_ms`` denies fail-closed until the
+        # slice-#1 time design revisits both (operator gate, not this round).
+        time=time_service,
+        time_config=time_config,
     )
 
     return _RclAndAuthority(
@@ -516,6 +583,7 @@ def _build_step4_recorder(
     custody_root: Path,
     environment_label: str,
     uid: int,
+    infra: _Infra,
 ) -> VerdictRecorder:
     """Step 4 (``IndependentApprovalStage``), wrapped for verdict recording."""
 
@@ -562,7 +630,14 @@ def _build_step4_recorder(
     return VerdictRecorder(
         IndependentApprovalStage(
             intent_registry,
-            decision_provider=_decision_provider(custody_root, environment_label, uid),
+            decision_provider=_decision_provider(
+                custody_root,
+                environment_label,
+                uid,
+                infra.time_service,
+                infra.time_config,
+                infra.evidence_store,
+            ),
             command_identity_provider=_consuming_command_identity,
             command_digest_provider=_consuming_command_digest,
             # decision_current_provider omitted (team-lead follow-up guidance,
@@ -601,7 +676,7 @@ def _build_realized_stages(
     construction_stage = construction_stages.construction_stage
     proof_stage = construction_stages.proof_stage
     step4_recorder = _build_step4_recorder(
-        intent_registry, construction_stage, custody_root, environment_label, uid
+        intent_registry, construction_stage, custody_root, environment_label, uid, infra
     )
     time_gate = _time_permits_new_risk(infra.time_service)
     generation_provider = _rcl_tip_generation_provider(rcl_log, writer_epoch)
@@ -730,13 +805,37 @@ def _build_context_resolver(
     proof_issuer: EgressCurrentnessProofIssuer,
     pending_dimension_specs: tuple[PendingDimensionSpec, ...],
     egress_attestations: EgressAttestations,
+    egress_coordinates: EgressCoordinatesConfig,
+    broker_scopes: BrokerScopesConfig,
+    instance_document: InstanceDocument | None,
     construction: ConstructionConfig,
     environment_label: str,
     continuity_id: str,
 ) -> ComposeContextResolver:
     """The gateway's lazy ``SendBoundaryContext`` resolver (design #35 §3.1
     (3)), wired with this environment's transport nature / credential-route
-    inventory / authorized coordinates."""
+    inventory / authorized coordinates.
+
+    G-4 CLOSED (plan §2 decision 2): transport nature / credential-route
+    inventory are STRUCTURALLY DERIVED from ``broker_scopes.active_scope``
+    (:func:`~tos_runtime.brokercap.transport_nature` /
+    :func:`~tos_runtime.brokercap.credential_route_inventory`), never the
+    three old ``f"synthetic-paper-{environment_label}"`` literals; the old
+    R2 literal-comparison boot refusal is likewise generalized to
+    :func:`~tos_runtime.brokercap.refuse_principal_collision` over EVERY
+    configured scope's principal.
+
+    ``instance_document`` is loaded EXACTLY ONCE per boot, by
+    :func:`_resolve_strategies_and_attested_inputs`, and threaded through
+    :class:`_BootResult` (finding F9 — no second re-load here).
+
+    Raises:
+        BrokerScopeConfigError: ``active_principal`` collides with a scope's
+            own principal (generalized R2), or a config/kernel mismatch.
+    """
+    refuse_principal_collision(
+        broker_scopes, active_principal=egress_coordinates.active_principal
+    )
     return ComposeContextResolver(
         construction_stage=construction_stages.construction_stage,
         proof_stage=construction_stages.proof_stage,
@@ -749,43 +848,38 @@ def _build_context_resolver(
         proof_issuer=proof_issuer,
         pending_dimension_specs=pending_dimension_specs,
         egress_attestations=egress_attestations,
-        transport_nature=TransportNature(
-            principal=f"synthetic-paper-{environment_label}",
-            reaches_broker=False,
-            credential_bearing=False,
-            route_bearing=False,
-            risk_relevant_live=False,
-        ),
+        broker_scopes=broker_scopes,
+        instance_document=instance_document,
+        # Transport's OWN identity (slice #3) — derived from the active scope, G-4 closed.
+        transport_nature=transport_nature(broker_scopes.active_scope),
         environment_label=environment_label,
-        principal=f"egressgw-{environment_label}",
-        credential_route_inventory=(
-            CredentialRouteInventoryEntry(
-                principal=f"synthetic-paper-{environment_label}",
-                usable_credential=False,
-                broker_route=False,
-                inside_boundary=True,
-            ),
-            CredentialRouteInventoryEntry(
-                principal=f"egressgw-{environment_label}",
-                usable_credential=False,
-                broker_route=False,
-                inside_boundary=True,
-            ),
+        # ONE source (finding #1): same value as authorized_coordinates below,
+        # required by the kernel's claim-principal-matches-active-principal check.
+        principal=egress_coordinates.active_principal,
+        credential_route_inventory=credential_route_inventory(
+            broker_scopes, active_principal=egress_coordinates.active_principal
         ),
         authorized_coordinates=EgressCoordinateSet(
-            endpoint="synthetic://paper/order",
+            endpoint=egress_coordinates.endpoint,
             account=construction.account,
             environment=environment_label,
-            action="NEW_ORDER",
-            method="SUBMIT",
-            route_identity="synthetic-route",
-            credential_generation=0,
-            broker_session_generation=0,
-            egress_generation=1,
-            active_principal=f"egressgw-{environment_label}",
+            action=egress_coordinates.action,
+            method=egress_coordinates.method,
+            route_identity=egress_coordinates.route_identity,
+            credential_generation=egress_coordinates.credential_generation,
+            broker_session_generation=egress_coordinates.broker_session_generation,
+            egress_generation=egress_coordinates.egress_generation,
+            active_principal=egress_coordinates.active_principal,
         ),
+        # capsule_egress_request_digest is a STAND-IN for the eventual capsule-chain
+        # terminus (design #34 / EGRESS-EV-003 "+Security", not landed in this Phase;
+        # see _egress_coordinates's module docstring) — capsule_terminus_fields only
+        # selects WHICH ConstructionConfig fields feed it (config), never the digest.
         capsule_egress_request_digest=_SCHEME.compute_digest(
-            {"account": construction.account, "instrument": construction.instrument}
+            {
+                name: getattr(construction, name)
+                for name in egress_coordinates.capsule_terminus_fields
+            }
         ),
         outbound_side=construction.outbound_side,
         action_class=construction.action_class,
@@ -822,6 +916,7 @@ def _build_engine_configuration(config_dir: Path) -> EngineConfiguration:
 def _finalize(
     *,
     config_dir: Path,
+    data_dir: Path,
     infra: _Infra,
     rcl: _RclAndAuthority,
     risk: _RiskAndCurrentness,
@@ -832,31 +927,61 @@ def _finalize(
     identity: RuntimeIdentity,
     registry: StrategyRegistry | None,
     release_admitted: bool,
+    continuity_id: str,
+    broker_scopes: BrokerScopesConfig,
 ) -> ComposedRuntime:
-    """The gateway + ``EngineCore`` wiring + the final
-    :class:`~tos_runtime.compose._types.ComposedRuntime` assembly — the
-    tail of :func:`~tos_runtime.compose.root.compose_paper_runtime`, split
-    out purely for the size budget."""
-    gateway_sink = GatewayEvidenceSinkAdapter(
-        infra.evidence_store, runtime_identity=identity
+    """The gateway + ``EngineCore`` + durable inbox/driver wiring (delegated to
+    :func:`~tos_runtime.compose._engine_wiring.wire_engine_and_driver`) + the boot-time replay
+    check + the final :class:`~tos_runtime.compose._types.ComposedRuntime` assembly — the tail of
+    :func:`~tos_runtime.compose.root.compose_paper_runtime`, split out purely for the size
+    budget."""
+    engine_configuration = _build_engine_configuration(config_dir)
+    # Coordinator-preconditions governance posture (design #31 §9-10; plan §2.1) — fail-closed,
+    # from its own example-shaped file, same as every other tos_runtime.*.config value.
+    coordinator_preconditions_config = load_coordinator_preconditions_config(
+        config_dir / COORDINATOR_PRECONDITIONS_CONFIG_NAME
     )
-    transport = SyntheticPaperTransport(
-        SyntheticFillPolicy(fill_numerator=1, fill_denominator=1, lot_size=Decimal("1"))
-    )
-    gateway = BrokerEgressGateway(
-        contexts=context_resolver, transport=transport, sink=gateway_sink
+    # SYNTHETIC post-trade finality policy (CR-4, plan §2.2) — fail-closed, from its own file.
+    finality_config = load_finality_config(config_dir / _FINALITY_CONFIG_NAME)
+    wired = wire_engine_and_driver(
+        data_dir=data_dir,
+        context_resolver=context_resolver,
+        identity=identity,
+        evidence_store=infra.evidence_store,
+        emergency_log=infra.emergency_log,
+        projection=risk.projection,
+        stages=stages,
+        configuration=engine_configuration,
+        registry=registry,
+        scheme=_SCHEME,
+        continuity_id=continuity_id,
+        monotonic_source=infra.monotonic_source,
+        max_send_result_wait_ms=infra.time_config.max_send_result_wait_ms,
+        authority_epoch_service=rcl.authority_epoch_service,
+        live_authorization_state=coordinator_preconditions_config.live_authorization_state,
+        finality_config=finality_config,
     )
 
-    resolved_registry = registry if registry is not None else StrategyRegistry()
-    engine_sink = EngineEvidenceSinkAdapter(
-        infra.evidence_store, runtime_identity=identity
+    # Independent boot-time re-derivation over whatever this inbox has already durably admitted
+    # (design plan §1.1 "부팅 시 verify_rcl_log_or_halt 뒤에 실행"). Reported deviation from the
+    # plan's literal adjacency: verify_rcl_log_or_halt itself runs earlier, inside _boot_services,
+    # before the engine core/gateway/inbox exist to replay at all — this is the earliest point in
+    # compose an engine replay check is constructible, and it still runs strictly after the RCL
+    # log's own integrity is re-verified (the substantive ordering requirement). See
+    # tos_runtime.engine.replay's own module docstring for what "side-effect-free" does and does
+    # not cover for a core that DID have a working transmit in its original run.
+    engine_driver_config = load_engine_driver_config(
+        config_dir / ENGINE_DRIVER_CONFIG_NAME
     )
-    core = EngineCore(
-        registry=resolved_registry,
+    verify_replay_or_halt(
+        inbox=wired.inbox,
+        evidence_store=infra.evidence_store,
+        emergency_log=infra.emergency_log,
+        registry=wired.resolved_registry,
         stages=stages,
-        configuration=_build_engine_configuration(config_dir),
-        transmit=gateway,
-        sink=engine_sink,
+        configuration=engine_configuration,
+        scheme=_SCHEME,
+        window_events=engine_driver_config.replay_window_events,
     )
 
     return ComposedRuntime(
@@ -881,13 +1006,94 @@ def _finalize(
         venue_stage=construction_stages.venue_stage,
         proof_stage=construction_stages.proof_stage,
         context_resolver=context_resolver,
-        core=core,
-        gateway=gateway,
-        transport=transport,
-        registry=resolved_registry,
+        core=wired.core,
+        gateway=wired.gateway,
+        transport=wired.transport,
+        registry=wired.resolved_registry,
         release_admitted=release_admitted,
         required_scenario_kinds=risk.required_scenario_kinds,
+        inbox=wired.inbox,
+        driver=wired.driver,
+        scopes=broker_scopes,
     )
+
+
+def _resolve_strategies_and_attested_inputs(
+    config_dir: Path,
+    environment_label: str,
+    identity: RuntimeIdentity,
+    infra: _Infra,
+    risk: _RiskAndCurrentness,
+    registry: StrategyRegistry | None,
+    allow_no_strategies: bool,
+) -> tuple[
+    EgressCoordinatesConfig,
+    BrokerScopesConfig,
+    ResolvedStrategyRegistry,
+    InstanceDocument | None,
+]:
+    """Load ``egress_coordinates.yaml`` + ``broker_scopes.yaml`` (TOS Phase 4
+    plan §2 decisions 1-2, G-4), resolve the ONE strategy source (TOS Phase
+    3 슬라이스 D-R ``[D-R-2]``), load the active scope's INSTANCE document
+    EXACTLY ONCE (finding F9 — threaded through :class:`_BootResult`, no
+    second re-load), and records ``OPERATOR_ATTESTED_INPUTS`` — split out
+    of :func:`_boot_services` for the size budget.
+
+    ``allow_no_strategies`` (finding #8): ``False`` (the default) REFUSES
+    when neither a strategies directory nor an injected registry is
+    supplied — see :func:`~tos_runtime.strategy.resolve.
+    resolve_strategy_registry`'s own docstring."""
+    egress_coordinates = load_egress_coordinates(
+        config_dir / _EGRESS_COORDINATES_CONFIG_NAME,
+        environment_label=environment_label,
+    )
+    broker_scopes = load_broker_scopes(
+        config_dir / _BROKER_SCOPES_CONFIG_NAME,
+        environment_label=environment_label,
+    )
+    instance_document = load_active_instance_document(broker_scopes)
+    resolved_strategies = resolve_strategy_registry(
+        config_dir,
+        injected_registry=registry,
+        evidence_store=infra.evidence_store,
+        emergency_log=infra.emergency_log,
+        identity=identity,
+        allow_no_strategies=allow_no_strategies,
+    )
+    record_operator_attested_inputs(
+        config_dir,
+        infra.evidence_store,
+        identity,
+        risk.egress_attestations,
+        risk.risk_attestations,
+        egress_coordinates,
+        resolved_strategies.loaded,
+        resolved_strategies.loaded_bindings,
+        broker_scopes=broker_scopes,
+        instance_document=instance_document,
+    )
+    return egress_coordinates, broker_scopes, resolved_strategies, instance_document
+
+
+@dataclass
+class _BootResult:
+    """:func:`_boot_services`'s return value — named fields instead of a
+    growing tuple purely so callers never destructure it (size-budget win: a
+    named-attribute return avoids the multi-line unpacking assignment a
+    growing tuple forces). ``registry`` is the RESOLVED
+    :class:`~tos.engine.StrategyRegistry` (TOS Phase 3 슬라이스 D-R
+    ``[D-R-2]``) — never the caller's raw injected one."""
+
+    identity: RuntimeIdentity
+    infra: _Infra
+    rcl: _RclAndAuthority
+    risk: _RiskAndCurrentness
+    release_admitted: bool
+    egress_coordinates: EgressCoordinatesConfig
+    broker_scopes: BrokerScopesConfig
+    #: Loaded EXACTLY ONCE (finding F9) — never re-loaded downstream.
+    instance_document: InstanceDocument | None
+    registry: StrategyRegistry
 
 
 def _boot_services(
@@ -898,9 +1104,13 @@ def _boot_services(
     uid: int,
     authority_domain: str,
     monotonic_source: MonotonicSource | None,
-) -> tuple[RuntimeIdentity, _Infra, _RclAndAuthority, _RiskAndCurrentness, bool]:
+    registry: StrategyRegistry | None,
+    allow_no_strategies: bool,
+) -> _BootResult:
     """Identity + STAGE A release probe + custody/evidence/time + RCL/
-    authority + risk/currentness + STAGE B release probe — split out of
+    authority + risk/currentness + strategy-source resolution
+    (:func:`_resolve_strategies_and_attested_inputs` — TOS Phase 3 슬라이스
+    D-R ``[D-R-2]``) + STAGE B release probe — split out of
     :func:`~tos_runtime.compose.root.compose_paper_runtime` purely for the
     size budget; the actual STAGE A/B split and its rationale live on
     :func:`_stage_a_release_probe`/:func:`_stage_b_release_probe`
@@ -925,6 +1135,7 @@ def _boot_services(
         identity,
         infra.evidence_store,
         infra.time_service,
+        infra.time_config,
         authority_domain,
     )
     verify_rcl_log_or_halt(
@@ -938,17 +1149,31 @@ def _boot_services(
         infra.time_service,
         rcl.authority_epoch_service,
     )
-    record_operator_attested_inputs(
-        config_dir,
-        infra.evidence_store,
-        identity,
-        risk.egress_attestations,
-        risk.risk_attestations,
+    egress_coordinates, broker_scopes, resolved_strategies, instance_document = (
+        _resolve_strategies_and_attested_inputs(
+            config_dir,
+            environment_label,
+            identity,
+            infra,
+            risk,
+            registry,
+            allow_no_strategies,
+        )
     )
     release_admitted = _stage_b_release_probe(
         release_service, identity, infra.time_service, rcl.rcl_log
     )
-    return identity, infra, rcl, risk, release_admitted
+    return _BootResult(
+        identity=identity,
+        infra=infra,
+        rcl=rcl,
+        risk=risk,
+        release_admitted=release_admitted,
+        egress_coordinates=egress_coordinates,
+        broker_scopes=broker_scopes,
+        instance_document=instance_document,
+        registry=resolved_strategies.registry,
+    )
 
 
 def _build_stage_map(

@@ -75,6 +75,16 @@ class CommandType(StrEnum):
     MARK_TRAPPED_EXPOSURE = "MarkTrappedExposure"
     CONSUME_PROTECTIVE_LEASE = "ConsumeProtectiveLease"
 
+    # Runtime-realized authority/currentness commands (design #40 Phase 2 · slice #3 §7
+    # reported gaps) — semantic-equivalence names for command types the Phase 2 runtime
+    # already reuses a capacity-domain member for, absent a dedicated vocabulary entry.
+    # None of the four mutates capacity (ADR-002-012 §10 confines that to
+    # ``CommitReservation`` alone; see ``rcl/predicates.py``'s reducer).
+    ADVANCE_AUTHORITY_EPOCH = "AdvanceAuthorityEpoch"
+    CONSUME_APPROVAL_DECISION = "ConsumeApprovalDecision"
+    ISSUE_ACTION_FLOW_PERMIT = "IssueActionFlowPermit"
+    ISSUE_EGRESS_CURRENTNESS_PROOF = "IssueEgressCurrentnessProof"
+
 
 class TransitionCause(StrEnum):
     """Cause of a capacity-state transition (ADR-002-002 §10.2 line 566-574).

@@ -4,9 +4,11 @@
 relation rather than a fresh list: it must be a subset of ``tos.engine``'s closure **plus itself**.
 Two assertions therefore carry different weight:
 
-* **the runtime closure** (this file's ``_ALLOWED_TOS_PACKAGES``) is the engine's fourteen plus
-  ``tos.backtest`` — importing the integrator legitimately pulls in what the integrator assembles,
-  and adding a *new* top-level package beyond that would be a real breach;
+* **the runtime closure** (this file's ``_ALLOWED_TOS_PACKAGES``) is the engine's closure (now
+  fifteen — ``tos.orthostate`` was added 2026-09-09, Phase 3 wave 2 KW2-C2; see
+  ``tos/tests/engine/test_engine_import_closure.py``) plus ``tos.backtest`` — importing the
+  integrator legitimately pulls in what the integrator assembles, and adding a *new* top-level
+  package beyond that would be a real breach;
 * **the direct-import surface** is the narrower §0.3 list —
   ``{tos, tos.canonical, tos.ordering, tos.time, tos.dsl, tos.capsule, tos.rcl, tos.engine,
   tos.backtest}`` — because that is what the harness itself may name. ``are`` / ``afg`` / ``ioc`` /
@@ -44,6 +46,7 @@ from pathlib import Path
 import tos.backtest
 import tos.backtest._base
 import tos.backtest.bars
+import tos.backtest.calibration
 import tos.backtest.converter
 import tos.backtest.driver
 import tos.backtest.fills
@@ -71,6 +74,7 @@ _ALLOWED_TOS_PACKAGES = frozenset(
         "tos.afg",
         "tos.cur",
         "tos.engine",
+        "tos.orthostate",
         "tos.backtest",
     }
 )
@@ -103,7 +107,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.iap",
         "tos.liveauth",
         "tos.nontrade",
-        "tos.orthostate",
         "tos.posttrade",
         "tos.protective",
         "tos.recon",
@@ -212,6 +215,7 @@ _BACKTEST_SUBMODULES = (
     "tos.backtest",
     "tos.backtest._base",
     "tos.backtest.bars",
+    "tos.backtest.calibration",
     "tos.backtest.converter",
     "tos.backtest.driver",
     "tos.backtest.fills",
@@ -227,6 +231,7 @@ _LOADED_SUBMODULES = {
     "tos.backtest": tos.backtest,
     "tos.backtest._base": tos.backtest._base,
     "tos.backtest.bars": tos.backtest.bars,
+    "tos.backtest.calibration": tos.backtest.calibration,
     "tos.backtest.converter": tos.backtest.converter,
     "tos.backtest.driver": tos.backtest.driver,
     "tos.backtest.fills": tos.backtest.fills,

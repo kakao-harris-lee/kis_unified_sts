@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 from tos.afg import ActionAmplificationEnvelope, ActionFlowResult
-from tos.rcl import AppendReceipt, AppendRefusal, AppendRefusalReason
+from tos.rcl import AppendReceipt, AppendRefusal, AppendRefusalReason, CommandType
 from tos_runtime.risk.flow import (
     ActionFlowConfigError,
     ActionFlowGovernor,
@@ -153,6 +153,23 @@ def test_issue_permit_commits_once_and_returns_the_entrys_seq(
     result = afg_governor.issue_permit(permit, expected_seq=-1)
     assert isinstance(result.log_result, AppendReceipt)
     assert result.rcl_commitment_ref == result.log_result.seq
+
+
+def test_issue_permit_uses_the_new_issue_action_flow_permit_command_type(
+    afg_governor: ActionFlowGovernor, log, writer_epoch: int
+) -> None:
+    """Kernel round #1 §1.1/§2.1: the STANDALONE permit-issuance path writes
+    under the dedicated ``ISSUE_ACTION_FLOW_PERMIT`` member, not the
+    now-retired ``AUTHORIZE_TRANSMISSION_CAPABILITY`` reuse."""
+    decision = afg_governor.decide(grant_shaped_afg_inputs())
+    permit = afg_governor.build_permit(
+        decision, permit_generation=1, command_identity="cmd-1"
+    )
+    afg_governor.issue_permit(permit, expected_seq=-1)
+    view = log.read_linearizable(writer_epoch=writer_epoch)
+    kinds = {entry.kind for entry in view.entries if entry.command_id is not None}
+    assert CommandType.ISSUE_ACTION_FLOW_PERMIT in kinds
+    assert CommandType.AUTHORIZE_TRANSMISSION_CAPABILITY not in kinds
 
 
 def test_issue_permit_refuses_a_second_claim_of_the_same_nonce(

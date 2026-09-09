@@ -650,3 +650,45 @@ def conflicting_evaluators_unknown(
             ApprovalResult.UNKNOWN
         )  # conflict retained; no majority / newest selection
     return next(iter(distinct))
+
+
+# ===========================================================================
+# kernel round #1 §1.2 — decision expiry (ADR-002-023 §12 item 2 / §18)
+# ===========================================================================
+
+
+def decision_unexpired(
+    *, max_decision_age_ms: int | None, decision_age_bound_ms: int | None
+) -> bool:
+    """Whether an approval decision is unexpired (ADR-002-023 §12 item 2 / §18).
+
+    Isomorphic to ``tos.time.snapshot_age_admissible`` (fail-closed, design #40 §1.2): an
+    unestablished maximum (``max_decision_age_ms is None``) or an UNKNOWN age bound
+    (``decision_age_bound_ms is None``) is inadmissible; a negative bound is a defect, not proof
+    of freshness, and is also inadmissible; otherwise unexpired iff the bound does not exceed the
+    injected maximum. §12 item 2 "unexpired" is one of the two positive facts Consumption
+    Fencing must establish before a decision may be consumed; §18 "expiry prevents future
+    consumption or send, releases nothing" — an expired decision blocks consumption, it releases
+    no capacity (that is rcl's concern, not iap's). ``tos.iap`` stays clock-free (§0.2/§3.4):
+    ``decision_age_bound_ms`` is an age bound the caller composes from ``tos.time`` (e.g.
+    :func:`~tos.time.predicates.effective_snapshot_age_bound`), never a wall-clock read here.
+
+    ⚠ Deliberately absent from this module's ``__all__`` (though still re-exported from
+    :mod:`tos.iap`): adding an entry there shifts every later line in this file and desyncs the
+    frozen, line-pinned ``tos-spec/src/verification/EVIDENCE-SURFACE-MAP.csv``
+    ``MAP.binding_basis`` rows for IAP-EV-003/004/007 (``tos-spec/`` is out of scope for the
+    kernel round #1 arc).
+
+    Args:
+        max_decision_age_ms: The policy's injected maximum decision age (``None`` => reject).
+        decision_age_bound_ms: The effective decision age bound (``None`` => UNKNOWN => reject).
+
+    Returns:
+        ``True`` iff both are concrete, the bound is non-negative, and it does not exceed the
+        injected maximum.
+    """
+    if max_decision_age_ms is None or decision_age_bound_ms is None:
+        return False
+    if decision_age_bound_ms < 0:
+        return False
+    return decision_age_bound_ms <= max_decision_age_ms

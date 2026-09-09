@@ -10,19 +10,28 @@ see :meth:`EgressCurrentnessProofIssuer.item16_fields`), and the issuer never
 returns a *freshly issued* proof it has not first self-checked with
 ``proof_admissible``.
 
-**Reported gap, not a silent invention (slice plan §5 "새 CommandType 이
-필요하면 커널 편집 대신 보고").** No ``tos.rcl.CommandType`` member names
-"issue an Egress Currentness Proof" — ``tos.cur`` (ADR-002-024) is not among
-the 16 ADR-002-012 §10 / ADR-002-002 §27 commands the closed enum
-enumerates, and the register's own module docstring frames the enum as a
-"semantic-equivalence" vocabulary, not a closed literal one (ADR-012 §10 line
-292). ``AUTHORIZE_TRANSMISSION_CAPABILITY`` is reused here as the nearest
-existing label: both this proof and the real ``TransmissionCapability``
-record (:mod:`tos_runtime.currentness.stages`) are per-attempt send-boundary
-authorization facts that gate the same ``SendBoundaryContext``. The two
-remain distinguishable by ``command_id``/``payload_digest`` — never by
-``kind`` alone. A dedicated ``CommandType`` member is the more precise fix;
-this module does not add one (kernel edit is out of this lane's scope).
+**Reported gap — resolved by kernel round #1 (plan §1.1).** No
+``tos.rcl.CommandType`` member previously named "issue an Egress Currentness
+Proof" — ``tos.cur`` (ADR-002-024) is not among the 16 ADR-002-012 §10 /
+ADR-002-002 §27 commands the enum enumerates, and the register's own module
+docstring frames the enum as a "semantic-equivalence" vocabulary, not a
+closed literal one (ADR-012 §10 line 292). This module previously reused
+``AUTHORIZE_TRANSMISSION_CAPABILITY`` as the nearest existing label — both
+this proof and the real ``TransmissionCapability`` record
+(:mod:`tos_runtime.currentness.stages`) are per-attempt send-boundary
+authorization facts that gate the same ``SendBoundaryContext``, but they are
+DIFFERENT governed artifacts. Kernel round #1 §1.1 (`docs/plans/2026-09-08-
+tos-phase2-kernel-round-1-commandtype-expiry-obligation-plan.md`) ratified a
+dedicated member, :data:`~tos.rcl.CommandType.ISSUE_EGRESS_CURRENTNESS_PROOF`,
+under the new "Runtime-realized authority/currentness commands" vocabulary
+block — this module now commits exclusively under that member; the
+``AUTHORIZE_TRANSMISSION_CAPABILITY`` reuse is retired here (kernel round #1
+§2.1). ``currentness/stages.py``'s own, unrelated ``TransmissionCapability``
+use of ``AUTHORIZE_TRANSMISSION_CAPABILITY`` is legitimate and untouched by
+this round — it is the real artifact that member names. This module has no
+reader that filters log entries by ``kind`` (:meth:`item16_fields` only
+re-reads ``last_seq``, never scans by kind/prefix), so there is no
+legacy-kind reader gate to add here.
 
 **Review fix (independent review of 39dd3993, HIGH-1/HIGH-2).**
 
@@ -95,8 +104,9 @@ __all__ = ["EgressCurrentnessProofIssuer", "Item16Fields"]
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
-#: See the module docstring's "Reported gap" note.
-_PROOF_ISSUANCE_KIND = CommandType.AUTHORIZE_TRANSMISSION_CAPABILITY
+#: The dedicated CommandType member for an Egress Currentness Proof issuance
+#: (kernel round #1 §1.1/§2.1 — module docstring's "Reported gap" note).
+_PROOF_ISSUANCE_KIND = CommandType.ISSUE_EGRESS_CURRENTNESS_PROOF
 
 
 @dataclass(frozen=True)

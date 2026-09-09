@@ -12,7 +12,7 @@ them, so its closure is deliberately a **superset** of theirs (design #31 §0.3/
 allowlist is still a strict subset::
 
     {tos, tos.canonical, tos.ordering, tos.dsl, tos.capsule, tos.time, tos.evidence,
-     tos.ioc, tos.venue, tos.rcl, tos.are, tos.afg, tos.cur, tos.engine}
+     tos.ioc, tos.venue, tos.rcl, tos.are, tos.afg, tos.cur, tos.engine, tos.orthostate}
 
 Six of those are *directly realized* edges (canonical / ordering / dsl / capsule / time / evidence —
 the decision pipeline, the core state, and the provisional sink); the rest are **contract-typing**
@@ -20,6 +20,18 @@ edges: the sequencer references the sibling verdict *types* while every stage's 
 injected (design #31 §0.3/§5.2). ``tos.brokercap`` and ``tos.egress`` are deliberately **outside**
 the closure — they live beyond the D-E4 send-boundary injection point, and ``tos.egress`` (the QCC
 kernel) is never encroached upon (design #31 §5.4/§4.5).
+
+**Closure widened 2026-09-09 (Phase 3 wave 2 KW2-C2, plan §2.2).** ``tos.orthostate`` is now a
+*seventh* directly realized edge: :mod:`tos.engine.orthostate_projection` is a pure adapter that
+maps the engine's own reservation projection (:mod:`tos.engine.state`) and its
+:class:`~tos.engine.vocabulary.EgressResultKind` vocabulary onto ADR-002-005 §6-§8
+``CompositeState`` coordinates, so a runtime can call ``tos.orthostate.may_transition`` /
+``coupling_violations`` without re-authoring the mapping. This is a one-way edge only —
+``tos.orthostate`` still does not, and structurally cannot, import ``tos.engine`` back (no
+circular import risk, unlike ``tos.egressgw``/``tos.authority``/``tos.liveauth``, which all
+import **from** ``tos.engine`` and therefore stay excluded — see
+:class:`~tos.engine.core.TransportNatureLike` for why the Coordinator-precondition gate cannot
+take the same shortcut with those three).
 
 ⚠ **Provisional; closes no EV** (design #31 §1.1 — the document's top-level honesty declaration).
 Three independent reasons converge:
@@ -86,6 +98,8 @@ Public surface groups by module:
 * :mod:`tos.engine.standins` — the non-authoritative provisional authority stand-ins.
 * :mod:`tos.engine.sink` — the provisional evidence sink + the replay-result adapter.
 * :mod:`tos.engine.core` — the synchronous, deterministic single event core.
+* :mod:`tos.engine.orthostate_projection` — the pure ``EgressResultKind`` / reservation
+  projection → ADR-002-005 ``CompositeState`` adapter (Phase 3 KW2-C2).
 """
 
 from __future__ import annotations
@@ -115,14 +129,20 @@ from tos.engine.admission import (
     strategy_admissible,
 )
 from tos.engine.core import (
+    CoordinatorPreconditions,
     DecisionContextResolver,
     EngineCore,
     EventBatch,
     EventResult,
     EventSource,
+    TransportNatureLike,
     UnknownEventKindError,
     admit_kind,
     ordering_admission,
+)
+from tos.engine.orthostate_projection import (
+    composite_state_for,
+    result_transition_for,
 )
 from tos.engine.pipeline import (
     PipelineResult,
@@ -132,8 +152,10 @@ from tos.engine.pipeline import (
 )
 from tos.engine.records import (
     ATTEMPT_ID_PREFIX,
+    EVENT_ID_PREFIX,
     AttemptRequest,
     DecisionTickPayload,
+    EgressResultOutcome,
     EgressResultPayload,
     EngineConfiguration,
     EngineEvent,
@@ -145,6 +167,8 @@ from tos.engine.records import (
     StageRequest,
     StageVerdict,
     TimeAdmissionInputs,
+    egress_result_outcome_digest,
+    event_identity,
 )
 from tos.engine.registry import Dispatch, RegistrationRefused, StrategyRegistry
 from tos.engine.sequencer import (
@@ -167,7 +191,9 @@ from tos.engine.standins import ProvisionalStandIn, provisional_stage_map
 from tos.engine.state import (
     PROJECTION_ORDER,
     PROJECTION_RANK,
+    QUARANTINE_RESOLUTION_EDGES,
     ProvisionalReservationLedger,
+    ResultApplication,
     knowledge_for_result,
 )
 from tos.engine.vocabulary import (
@@ -190,6 +216,7 @@ from tos.engine.vocabulary import (
     EvidenceKind,
     HaltReason,
     OrderingAdmission,
+    ResultDisposition,
     StageAuthorityClass,
     StageOutcome,
     step_number,
@@ -219,13 +246,16 @@ __all__ = [
     "EvidenceKind",
     "HaltReason",
     "OrderingAdmission",
+    "ResultDisposition",
     "StageAuthorityClass",
     "StageOutcome",
     "step_number",
     # records
     "ATTEMPT_ID_PREFIX",
+    "EVENT_ID_PREFIX",
     "AttemptRequest",
     "DecisionTickPayload",
+    "EgressResultOutcome",
     "EgressResultPayload",
     "EngineConfiguration",
     "EngineEvent",
@@ -237,6 +267,8 @@ __all__ = [
     "StageRequest",
     "StageVerdict",
     "TimeAdmissionInputs",
+    "egress_result_outcome_digest",
+    "event_identity",
     # admission (D1 ↔ D4)
     "AdmissionResult",
     "compare_has_capsule_operand",
@@ -253,7 +285,9 @@ __all__ = [
     # provisional core state (§2.4 / §4.4)
     "PROJECTION_ORDER",
     "PROJECTION_RANK",
+    "QUARANTINE_RESOLUTION_EDGES",
     "ProvisionalReservationLedger",
+    "ResultApplication",
     "knowledge_for_result",
     # sibling verdict adapters (§5.2 contract-typing edges)
     "action_flow_decision_verdict",
@@ -287,12 +321,17 @@ __all__ = [
     "RecordingEvidenceSink",
     "replay_result_for",
     # event core (§2) + the D-E2/D-E3 plug slots (§12-1 / §12-4)
+    "CoordinatorPreconditions",
     "DecisionContextResolver",
     "EngineCore",
     "EventBatch",
     "EventResult",
     "EventSource",
+    "TransportNatureLike",
     "UnknownEventKindError",
     "admit_kind",
     "ordering_admission",
+    # orthostate projection adapter (Phase 3 KW2-C2)
+    "composite_state_for",
+    "result_transition_for",
 ]

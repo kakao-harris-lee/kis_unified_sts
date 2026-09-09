@@ -113,6 +113,12 @@ from tos.venue import (
     VenueConstraintSnapshot,
 )
 
+from tos_runtime.brokercap import (
+    BrokerScopesConfig,
+    InstanceDocument,
+    Item6Item12Fields,
+    derive_item6_item12,
+)
 from tos_runtime.compose._egress_attestations import EgressAttestations
 from tos_runtime.compose._pending_dimensions import (
     PendingDimensionSpec,
@@ -310,11 +316,22 @@ class ComposeContextResolver:
     #: for why these exist and what they honestly are (an interim operator
     #: sign-off, never a fabricated kernel-derived verdict).
     pending_dimension_specs: tuple[PendingDimensionSpec, ...]
-    #: The 5 operator-attested egress-gate stand-ins for items 6/12/16
-    #: (team-lead follow-up guidance, 2026-09-08) — see
+    #: The 3 remaining operator-attested egress-gate stand-ins for items
+    #: 12/16 (team-lead follow-up guidance, 2026-09-08) — see
     #: :mod:`tos_runtime.compose._egress_attestations`'s own module
-    #: docstring for why these exist and which Phase replaces each.
+    #: docstring for why these exist and which Phase replaces each. Items
+    #: 6/12's OTHER two fields are derived, not attested — see
+    #: ``broker_scopes``/``instance_document`` below.
     egress_attestations: EgressAttestations
+    #: The runtime-configured Broker Scope table (TOS Phase 4 plan §2
+    #: decision 4) — feeds :func:`~tos_runtime.brokercap.derive_item6_item12`
+    #: for items 6/12, replacing two of the former egress attestations.
+    broker_scopes: BrokerScopesConfig
+    #: The Broker Capability Profile INSTANCE document bound to
+    #: ``broker_scopes.active_scope`` (``None`` for a scope with no
+    #: ``instance`` block, e.g. the SYNTHETIC default scope) — see
+    #: :func:`~tos_runtime.brokercap.load_active_instance_document`.
+    instance_document: InstanceDocument | None
     transport_nature: TransportNature
     environment_label: str
     principal: str
@@ -370,6 +387,28 @@ class ComposeContextResolver:
     ) -> QuorumCommitCertificate | None:
         # ⚠ provisional (item 17, R-RCL-F0): only the command-digest axis is
         # consumed — this compose root claims no quorum-runtime replication.
+        #
+        # ``membership_generation``, ``restore_generation``, ``writer_epoch``,
+        # ``committed_revision``, and ``cluster_identity`` below are slice-#3
+        # PROVISIONAL STAND-INS (review finding #5, 2026-09-09) — this
+        # compose root has no real quorum-runtime replication yet, so there
+        # is no live source to read them from. They are replaced by a
+        # genuine issued QCC in Phase 5. None of the kernel's 17 items
+        # compares them: ``exact_binding_holds``
+        # (``tos/src/tos/egress/predicates.py``) checks only the QCC's
+        # *command* digest against the request record, never these fields —
+        # so, unlike ``egress_generation`` below, leaving them as fixed
+        # stand-ins is not currently load-bearing.
+        #
+        # ``egress_generation`` is DIFFERENT: it is one of the
+        # ``EgressCoordinateSet`` authorized-coordinate values the seal now
+        # makes load-bearing (``SendSeal.egress_generation``,
+        # ``outbound_coordinates``, ``seal_digest``), and
+        # ``authorized_coordinates.egress_generation`` is operator-configured
+        # (``tos_runtime.compose._egress_coordinates``). A second hardcoded
+        # ``1`` here used to silently drift from a non-default configured
+        # value with nothing to catch it. Read it from the SAME config value
+        # instead of a second literal.
         if command_digest is None:
             return None
         from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
@@ -386,7 +425,7 @@ class ComposeContextResolver:
             committed_revision=1,
             canonical_command_digest=command_digest,
             resulting_state_digest=command_digest,
-            egress_generation=1,
+            egress_generation=self.authorized_coordinates.egress_generation,
             active_egress_principal=self.principal,
         )
         assert isinstance(issued, QuorumCommitCertificate)
@@ -512,21 +551,28 @@ class ComposeContextResolver:
         )
 
     def _egress_gate_stand_in_fields(
-        self, construction: CandidateConstruction | None
+        self,
+        construction: CandidateConstruction | None,
+        derived: Item6Item12Fields,
     ) -> dict[str, Any]:
-        """Items 6/12/16's ``SendBoundaryContext`` stand-in fields (team-lead
-        follow-up guidance, 2026-09-08): four are explicit operator
-        attestations from composition config
-        (:mod:`tos_runtime.compose._egress_attestations` — see its own
-        module docstring for which Phase replaces each), never a bare
-        Python literal. ``max_quantity_within_allowance`` is the one
+        """Items 6/12/16's ``SendBoundaryContext`` stand-in fields.
+
+        ``account_instrument_action_allowed`` / ``broker_constraint_generation_current``
+        (items 6/12) are STRUCTURALLY DERIVED (TOS Phase 4 plan §2 decision
+        4) via :func:`~tos_runtime.brokercap.derive_item6_item12`, never an
+        attestation any more — see :meth:`_item6_item12_fields`.
+        ``venue_session_account_facts_current`` / ``restrictive_latch_state``
+        / ``worst_credible_capacity`` remain explicit operator attestations
+        from composition config (:mod:`tos_runtime.compose._egress_attestations`
+        — see its own module docstring for which Phase replaces each), never
+        a bare Python literal. ``max_quantity_within_allowance`` is the one
         exception: it HAS a real Phase 2 producer (step 2's own
         ``CandidateConstruction.no_silent_widening_ok``) and is derived
-        from that live value instead of an attestation."""
+        from that live value instead of an attestation or a derivation."""
         attestations = self.egress_attestations
         return {
             "account_instrument_action_allowed": (
-                attestations.account_instrument_action_allowed
+                derived.account_instrument_action_allowed
             ),
             "max_quantity_within_allowance": (
                 None if construction is None else construction.no_silent_widening_ok
@@ -535,11 +581,20 @@ class ComposeContextResolver:
                 attestations.venue_session_account_facts_current
             ),
             "broker_constraint_generation_current": (
-                attestations.broker_constraint_generation_current
+                derived.broker_constraint_generation_current
             ),
             "restrictive_latch_state": attestations.restrictive_latch_state,
             "worst_credible_capacity": attestations.worst_credible_capacity,
         }
+
+    def _item6_item12_fields(self) -> Item6Item12Fields:
+        """Items 6/12's derived fields (TOS Phase 4 plan §2 decision 4) —
+        the ONE call site :meth:`_egress_gate_stand_in_fields` and
+        :meth:`__call__` both read from, so the two consumers can never
+        drift from each other's view of the same active scope."""
+        return derive_item6_item12(
+            self.broker_scopes.active_scope, self.broker_scopes, self.instance_document
+        )
 
     def __call__(self, attempt: AttemptRequest) -> SendBoundaryContext | None:
         """Resolve this attempt's send-boundary context from the live flow
@@ -563,6 +618,7 @@ class ComposeContextResolver:
 
         egress_currentness_proof = self._issue_egress_currentness_proof(attempt)
         item16 = self.proof_issuer.item16_fields(attempt.attempt_id)
+        item6item12 = self._item6_item12_fields()
 
         context = send_boundary_context(
             attempt=attempt,
@@ -600,18 +656,21 @@ class ComposeContextResolver:
             order_shape=self.venue_stage.resolved_shape,
             venue_shape_constraints=self.venue_stage.shape_constraints,
             commitment_epoch_current=item3.commitment_epoch_current,
-            # ⚠ provisional (design #40 §5 order 6, items 6/12 — Phase 4 per the
-            # coordinator's own task brief; unchanged here).
-            broker_capability_profile=None,
-            required_capability_set=None,
-            broker_profile_version_current=None,
+            # Items 6/12 (TOS Phase 4 plan §2 decision 4): the three
+            # broker-reaching-admissibility fields the kernel gateway's own
+            # capability_admissible(...) call consumes — derived from the
+            # SAME active-scope/INSTANCE judgement as the two stand-in
+            # fields below (_item6_item12_fields, one call site).
+            broker_capability_profile=item6item12.broker_capability_profile,
+            required_capability_set=item6item12.required_capability_set,
+            broker_profile_version_current=(item6item12.broker_profile_version_current),
             idempotency_proven=None,
             # Items 6/12/16 stand-ins: operator attestations from composition
             # config (see tos_runtime.compose._egress_attestations's own
             # module docstring for which Phase replaces each), except
             # max_quantity_within_allowance which HAS a real Phase 2 producer
             # (step 2's own CandidateConstruction.no_silent_widening_ok).
-            **self._egress_gate_stand_in_fields(construction),
+            **self._egress_gate_stand_in_fields(construction, item6item12),
             approval_consumed_for_this_intent=approval_consumed,
             action_flow_permit_identity=permit_identity,
             action_flow_commitment_current=commitment_current,

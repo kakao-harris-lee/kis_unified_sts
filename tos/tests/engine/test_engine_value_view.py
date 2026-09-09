@@ -1,8 +1,15 @@
 """The engine-side D-E2 extension: ``DecisionTickPayload.value_view`` + pipeline threading (#32 §3.2).
 
-A *new* file on purpose: every shipped ``tos/tests/engine`` test — the fourteen-package import
-closure canary above all — stays byte-for-byte unedited and green, which is the sanction premise
-design #32 §15.2 ③ states ("committed 테스트 파괴 0") demonstrated rather than asserted.
+A *new* file on purpose: every shipped ``tos/tests/engine`` test — the import closure canary above
+all — stayed byte-for-byte unedited and green through design #32, which is the sanction premise
+§15.2 ③ states ("committed 테스트 파괴 0") demonstrated rather than asserted.
+
+⚠ **One later, separately sanctioned exception (2026-09-09, Phase 3 wave 2 KW2-C2, plan §2.2):**
+the closure canary's own allowlist constant *was* edited, to add ``tos.orthostate`` as a fifteenth
+directly realized edge for the new ``engine/orthostate_projection.py`` adapter. That is a distinct
+authorized change from a different task, not a quiet reopening of the design #32 premise above —
+:func:`test_the_engine_import_closure_allowlist_is_unchanged` below now pins fifteen, not fourteen,
+and documents why.
 
 Three claims:
 
@@ -163,15 +170,20 @@ def test_the_field_is_additive_and_defaults_to_none() -> None:
 
 
 def test_the_engine_import_closure_allowlist_is_unchanged() -> None:
-    """(§15.2 ③ ★) The committed canary's own constant is read — fourteen packages, no marketfeed.
+    """(§15.2 ③ ★) The committed canary's own constant is read — fifteen packages, no marketfeed.
 
     Anti-phantom in its existence form: rather than asserting "we did not have to edit the engine
-    canary", the shipped constant is imported and inspected.
+    canary" (true through design #32; no longer true as of Phase 3 wave 2 KW2-C2 — see this file's
+    module docstring), the shipped constant is imported and inspected. ``tos.orthostate`` is the
+    one later, separately sanctioned addition (2026-09-09); ``tos.marketfeed`` was, and remains,
+    never added — the D-E2 value surface rides the pre-existing ``engine -> dsl`` edge instead
+    (module docstring claim 1).
     """
     from .test_engine_import_closure import _ALLOWED_TOS_PACKAGES
 
-    assert len(_ALLOWED_TOS_PACKAGES) == 14
+    assert len(_ALLOWED_TOS_PACKAGES) == 15
     assert "tos.marketfeed" not in _ALLOWED_TOS_PACKAGES
+    assert "tos.orthostate" in _ALLOWED_TOS_PACKAGES
 
 
 # ---------------------------------------------------------------------------

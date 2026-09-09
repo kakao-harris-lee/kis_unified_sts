@@ -52,6 +52,7 @@ import tos.egressgw._base
 import tos.egressgw.construction
 import tos.egressgw.gateway
 import tos.egressgw.records
+import tos.egressgw.seal
 import tos.egressgw.vocabulary
 
 #: The §0.3 allowlist **as actually taken** — the only top-level ``tos.*`` packages the sources
@@ -91,6 +92,11 @@ _DECLARED_BUT_NOT_TAKEN = frozenset({"tos.capsule", "tos.evidence"})
 
 #: Siblings that must stay outside the closure entirely — including the D-E4 twin, which is
 #: reached only through the injected structural transport port (design #34 §0.3/§5.1).
+#: ``tos.orthostate`` is deliberately absent (2026-09-09, Phase 3 wave 2 KW2-C2): ``tos.engine``
+#: now directly realizes it (``engine/orthostate_projection.py``), so it reaches every
+#: ``tos.engine`` consumer, this package included, through the already ratified ``tos.engine``
+#: edge — the ``bound = _ALLOWED_TOS_PACKAGES | set(engine["tos_tops"])`` subset tests below
+#: already account for it and stay green unedited.
 _FORBIDDEN_SIBLINGS = frozenset(
     {
         "tos.brokeradapter",
@@ -101,7 +107,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.iap",
         "tos.liveauth",
         "tos.nontrade",
-        "tos.orthostate",
         "tos.posttrade",
         "tos.protective",
         "tos.recon",
@@ -202,6 +207,7 @@ _SUBMODULES = (
     "tos.egressgw.construction",
     "tos.egressgw.gateway",
     "tos.egressgw.records",
+    "tos.egressgw.seal",
     "tos.egressgw.vocabulary",
 )
 
@@ -211,6 +217,7 @@ _LOADED_SUBMODULES = {
     "tos.egressgw.construction": tos.egressgw.construction,
     "tos.egressgw.gateway": tos.egressgw.gateway,
     "tos.egressgw.records": tos.egressgw.records,
+    "tos.egressgw.seal": tos.egressgw.seal,
     "tos.egressgw.vocabulary": tos.egressgw.vocabulary,
 }
 
@@ -245,6 +252,7 @@ def _closure_child(queue: mp.Queue) -> None:
     import tos.egressgw.construction  # noqa: F401
     import tos.egressgw.gateway  # noqa: F401
     import tos.egressgw.records  # noqa: F401
+    import tos.egressgw.seal  # noqa: F401
     import tos.egressgw.vocabulary  # noqa: F401
 
     tos_tops = sorted(

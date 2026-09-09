@@ -213,6 +213,139 @@ def simple_policy() -> DecisionPolicy:
     return DecisionPolicy(rules=(rule,), default=hold)
 
 
+def flat_policy() -> DecisionPolicy:
+    """A policy that proposes an explicit FLAT iff ``config.exit_signal`` is True (lowering fixture)."""
+    flat = Decision(
+        kind=DecisionKind.FLAT,
+        rationale="exit signalled — flatten",
+        target=TargetSpec(
+            kind=TargetKind.FLAT, account="acct-1", instrument="ES", rationale="flatten"
+        ),
+    )
+    hold = Decision(kind=DecisionKind.NO_ACTION, rationale="no exit — hold")
+    rule = Rule(
+        all_of=(
+            Compare(
+                left=Operand(ref=("config", "exit_signal")),
+                op=CompareOp.EQ,
+                right=Operand(const=True),
+            ),
+        ),
+        decision=flat,
+    )
+    return DecisionPolicy(rules=(rule,), default=hold)
+
+
+def vector_policy() -> DecisionPolicy:
+    """A policy whose firing rule selects a multi-instrument VECTOR outcome (lowering fixture)."""
+    vector = Decision(
+        kind=DecisionKind.VECTOR,
+        rationale="portfolio vector",
+        vector=(
+            TargetSpec(
+                kind=TargetKind.ACTION,
+                account="acct-1",
+                instrument="ES",
+                direction="LONG",
+                position_effect="OPEN",
+                quantity_basis="RISK",
+                rationale="leg 1",
+            ),
+            TargetSpec(
+                kind=TargetKind.ACTION,
+                account="acct-1",
+                instrument="NQ",
+                direction="LONG",
+                position_effect="OPEN",
+                quantity_basis="RISK",
+                rationale="leg 2",
+            ),
+        ),
+        interdependence=VectorInterdependence.ATOMIC,
+    )
+    hold = Decision(kind=DecisionKind.NO_ACTION, rationale="no edge — hold")
+    rule = Rule(
+        all_of=(
+            Compare(
+                left=Operand(ref=("config", "enabled")),
+                op=CompareOp.EQ,
+                right=Operand(const=True),
+            ),
+        ),
+        decision=vector,
+    )
+    return DecisionPolicy(rules=(rule,), default=hold)
+
+
+def multi_rule_policy() -> DecisionPolicy:
+    """A policy with two ordered rules plus the mandatory default (lowering fixture).
+
+    Exercises multi-``Rule`` lowering: :func:`tos.dsl.lowering.lower_strategy` must
+    emit one ``rule`` candidate node per authored ``Rule``, in authored order.
+    """
+    action = Decision(
+        kind=DecisionKind.ACTION,
+        rationale="entry edge present",
+        target=TargetSpec(
+            kind=TargetKind.ACTION,
+            account="acct-1",
+            instrument="ES",
+            direction="LONG",
+            position_effect="OPEN",
+            quantity_basis="RISK",
+            rationale="entry edge present",
+        ),
+    )
+    flat = Decision(
+        kind=DecisionKind.FLAT,
+        rationale="exit edge present",
+        target=TargetSpec(
+            kind=TargetKind.FLAT, account="acct-1", instrument="ES", rationale="flatten"
+        ),
+    )
+    hold = Decision(kind=DecisionKind.NO_ACTION, rationale="no edge — hold")
+    rule_entry = Rule(
+        all_of=(
+            Compare(
+                left=Operand(ref=("config", "entry_signal")),
+                op=CompareOp.EQ,
+                right=Operand(const=True),
+            ),
+        ),
+        decision=action,
+    )
+    rule_exit = Rule(
+        all_of=(
+            Compare(
+                left=Operand(ref=("config", "exit_signal")),
+                op=CompareOp.EQ,
+                right=Operand(const=True),
+            ),
+        ),
+        decision=flat,
+    )
+    return DecisionPolicy(rules=(rule_entry, rule_exit), default=hold)
+
+
+def default_only_policy() -> DecisionPolicy:
+    """A rules-free policy — only its mandatory default (the ∅-rules edge case, lowering fixture)."""
+    return DecisionPolicy(
+        rules=(), default=Decision(kind=DecisionKind.NO_ACTION, rationale="always hold")
+    )
+
+
+#: Every distinct fixture-policy *shape* (NO_ACTION-only default, ACTION, FLAT,
+#: VECTOR, multi-rule), for parametrized "every fixture strategy lowers" coverage
+#: (design #31 §9-4 D-K-1).
+FIXTURE_POLICY_BUILDERS: tuple[Any, ...] = (
+    simple_policy,
+    flat_policy,
+    vector_policy,
+    multi_rule_policy,
+    default_only_policy,
+)
+
+
 def strategy_required_kwargs(**overrides: Any) -> dict[str, Any]:
     """Authored-strategy issuance kwargs with every required covered field concrete."""
     base: dict[str, Any] = {

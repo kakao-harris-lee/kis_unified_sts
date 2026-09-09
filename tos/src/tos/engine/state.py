@@ -23,17 +23,22 @@ Two structural properties carry the design's weight:
   Releasing capacity is an RCL act (ADR-002-002 §10.1 / RFC-002 §9.1:557), and a producer-local
   counter "SHALL NOT create headroom" (RFC-002 §9.1:558). So no egress result — not an
   acknowledgement, not a full fill, not a rejection — ever frees a scope here. The projection only
-  advances forward along a conservatism-ordered rank; an ``UNKNOWN`` / timeout keeps the capacity
-  projection at ``POTENTIALLY_LIVE`` and re-submits nothing (design #31 §4.2 rule 3; ADR-002-002
-  INV-005:168 — a crash after ``SEND_STARTED`` must not release capacity). The honest consequence
-  is that a slice-1 scope stays occupied for the lifetime of the projection; real release is
-  deferred with the RCL runtime (design #31 §9-2).
+  advances forward along a conservatism-ordered rank; an ``UNKNOWN`` / timeout forces the capacity
+  projection into ``QUARANTINED_UNKNOWN`` (Phase 3 wave 2 KW2b-#2; ADR-002-005 §7 "``UNKNOWN`` here
+  forces ``QUARANTINED_UNKNOWN`` in the Capacity dimension until resolved") and re-submits nothing
+  (design #31 §4.2 rule 3; ADR-002-002 INV-005:168 — a crash after ``SEND_STARTED`` must not
+  release capacity). Escaping the quarantine happens only through the closed
+  :data:`QUARANTINE_RESOLUTION_EDGES` table — positive broker evidence for the exact attempt, never
+  a bare repeated ``UNKNOWN`` / ``TIMEOUT`` (ADR-002-002 §18.6 "escaping quarantine requires
+  evidence, never assertion"). The honest consequence is that a slice-1 scope stays occupied for
+  the lifetime of the projection; real release is deferred with the RCL runtime (design #31 §9-2).
 
 Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #31 §0.3). No clock, no RNG.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from decimal import Decimal
 
 from tos.engine._base import ArtifactIntegrityError
@@ -42,21 +47,30 @@ from tos.engine.records import (
     InstrumentKey,
     ProvisionalReservation,
 )
-from tos.engine.vocabulary import EgressKnowledge, EgressResultKind
+from tos.engine.vocabulary import EgressKnowledge, EgressResultKind, ResultDisposition
 from tos.rcl import CapacityState
 
 __all__ = [
     "PROJECTION_ORDER",
     "PROJECTION_RANK",
+    "QUARANTINE_RESOLUTION_EDGES",
     "ProvisionalReservationLedger",
+    "ResultApplication",
     "knowledge_for_result",
 ]
 
 
 #: The conservatism-forward order of the capacity states this projection uses (design #31 §2.4),
 #: least-settled first. A transition may only move to an equal-or-later position — non-revival, the
-#: series discipline. ``RELEASE_PENDING_PROOF`` sits last because a proven rejection still awaits
-#: the RCL-owned release proof; ``RELEASED`` is **absent**, because this projection cannot release.
+#: series discipline. ``RELEASE_PENDING_PROOF`` sits before ``QUARANTINED_UNKNOWN`` because a
+#: proven rejection still awaits the RCL-owned release proof, which is a *lesser* claim than "the
+#: broker state cannot currently be determined at all"; ``QUARANTINED_UNKNOWN`` sits last —
+#: strictly the most conservative member this projection ever reaches (Phase 3 wave 2 KW2b-#2) —
+#: mirroring its position as the single highest entry of ``tos.rcl.predicates._CONSERVATISM_RANK``
+#: (rank 8 of 9, RELEASED lowest at 0; report to the reviewer: this projection's own local rank has
+#: no ``TRAPPED_CONSUMED`` member to sit below, so relative to every member it does carry,
+#: ``QUARANTINED_UNKNOWN`` is placed strictly above ``RELEASE_PENDING_PROOF`` exactly as the RCL's
+#: full order has it). ``RELEASED`` is **absent**, because this projection cannot release.
 PROJECTION_ORDER: tuple[CapacityState, ...] = (
     CapacityState.COMMITTED_UNBOUND,
     CapacityState.ATTEMPT_BOUND,
@@ -64,6 +78,7 @@ PROJECTION_ORDER: tuple[CapacityState, ...] = (
     CapacityState.PARTIALLY_CONSUMED,
     CapacityState.POSITION_CONSUMED,
     CapacityState.RELEASE_PENDING_PROOF,
+    CapacityState.QUARANTINED_UNKNOWN,
 )
 
 #: The rank, derived structurally from :data:`PROJECTION_ORDER` so the two can never drift.
@@ -72,9 +87,13 @@ PROJECTION_RANK: dict[CapacityState, int] = {
 }
 
 #: How an egress result maps onto the two orthogonal axes (RFC-002 §12 Orthogonal Trading State).
-#: The capacity projection is the *conservative* axis: only a definite settlement advances it, and
-#: ``UNKNOWN`` / ``TIMEOUT`` leave it exactly where it was — ``POTENTIALLY_LIVE`` (design #31
-#: §4.2 rule 3; ADR-002-002 INV-005:168 / INV-006:174).
+#: The capacity projection is the *conservative* axis: only a definite settlement advances it in
+#: the ordinary case, and ``UNKNOWN`` / ``TIMEOUT`` force it into quarantine — ``QUARANTINED_UNKNOWN``
+#: — rather than leaving it at the last-observed rank (Phase 3 wave 2 KW2b-#2; design #31 §4.2
+#: rule 3; ADR-002-002 INV-005:168 / INV-006:174; ADR-002-005 §7/§9). Before this fix both mapped
+#: to ``None`` ("leave capacity untouched"), which under-claimed: a broker state that "cannot
+#: currently be determined" (§7) is a materially different, *more* conservative fact than "still
+#: whatever it last was", and CPL-5 (ADR-002-005 §10) requires the exact value.
 _RESULT_TRANSITIONS: dict[
     EgressResultKind, tuple[EgressKnowledge, CapacityState | None]
 ] = {
@@ -91,8 +110,75 @@ _RESULT_TRANSITIONS: dict[
         EgressKnowledge.REJECTED,
         CapacityState.RELEASE_PENDING_PROOF,
     ),
-    EgressResultKind.UNKNOWN: (EgressKnowledge.UNKNOWN, None),
-    EgressResultKind.TIMEOUT: (EgressKnowledge.UNKNOWN, None),
+    EgressResultKind.UNKNOWN: (
+        EgressKnowledge.UNKNOWN,
+        CapacityState.QUARANTINED_UNKNOWN,
+    ),
+    EgressResultKind.TIMEOUT: (
+        EgressKnowledge.UNKNOWN,
+        CapacityState.QUARANTINED_UNKNOWN,
+    ),
+    # ★ [KW2-C1] CANCEL_ACK / EXPIRED (Phase 3 wave 2 §2.2): both are broker-observed, but
+    # neither is a release. ADR-002-002 §16.2 "Cancel Acknowledgement moves the reservation to
+    # RELEASE_PENDING_PROOF unless the broker capability profile proves ... Final Quantity
+    # Proof" and CPL-4 "cancel is not release" (ADR-002-005 §10) apply identically to EXPIRED
+    # per the plan's explicit instruction — the projection may advance only as far as
+    # ``RELEASE_PENDING_PROOF``, never to a released state (which this projection cannot reach
+    # at all — see the module docstring "no release path"). A late/duplicate/reordered
+    # cancel-or-expiry is handled by the same rank/quantity non-revival machinery below as
+    # every other result kind — no special-casing required here.
+    EgressResultKind.CANCEL_ACK: (
+        EgressKnowledge.CANCEL_ACKNOWLEDGED,
+        CapacityState.RELEASE_PENDING_PROOF,
+    ),
+    EgressResultKind.EXPIRED: (
+        EgressKnowledge.EXPIRED,
+        CapacityState.RELEASE_PENDING_PROOF,
+    ),
+}
+
+#: The closed, frozen set of egress results whose positive broker evidence may pull the
+#: projection back **out** of ``QUARANTINED_UNKNOWN`` (Phase 3 wave 2 KW2b-#2). Consulted in
+#: :meth:`ProvisionalReservationLedger.apply_egress_result` *before* the generic rank-regression
+#: guard — resolution is deliberately the one exception to "a transition may only move to an
+#: equal-or-later position", because ``QUARANTINED_UNKNOWN`` is the single most-conservative
+#: member of :data:`PROJECTION_ORDER`: left to the generic guard alone, quarantine would be
+#: terminal and nothing could ever exit it.
+#:
+#: ADR-002-002 §18.6 "escaping quarantine requires evidence, never assertion" is why ``UNKNOWN``
+#: and ``TIMEOUT`` are deliberately **absent** here: neither carries positive evidence about the
+#: attempt, so a repeat of either while already quarantined is handled by the ordinary rank check
+#: below (equal rank, ``QUARANTINED_UNKNOWN`` -> ``QUARANTINED_UNKNOWN``) and the duplicate-
+#: signature machinery — never this table. Every other member of the closed
+#: :class:`~tos.engine.vocabulary.EgressResultKind` vocabulary *is* positive evidence about this
+#: exact attempt (a broker acknowledgement, a fill, a proven rejection, a cancel/expiry
+#: acknowledgement).
+#:
+#: ⚠ [KW2c-R2] Every value here is a **minimum**, not a destination. ``_resolve_capacity_target``
+#: floors the actual resolution target at ``current.pre_quarantine_capacity`` (the rank held
+#: immediately before quarantine), because "escaping quarantine requires evidence" licenses
+#: *leaving* ``QUARANTINED_UNKNOWN``, never unwinding a settlement the projection had already
+#: proven before it entered quarantine. ``ACK``'s entry is the one that matters most here: its
+#: ordinary (non-quarantined) mapping in :data:`_RESULT_TRANSITIONS` is ``None`` ("leave capacity
+#: where it is") precisely because a bare acknowledgement proves nothing about settlement — that
+#: same weakness means it must never be read as a *destination* once a stronger settlement
+#: (``POSITION_CONSUMED``, ``PARTIALLY_CONSUMED``, ``RELEASE_PENDING_PROOF``) already existed
+#: before the quarantine (Phase 3 wave 2 re-review finding R2: a bare ``ACK`` was silently
+#: reverting a proven ``FULL_FILL`` back to ``POTENTIALLY_LIVE``).
+#:
+#: ⚠ Still the provisional, non-authoritative projection (module docstring). The real resolution
+#: of a Risk Capacity Ledger quarantine is an RCL act gated on Final Quantity Proof (ADR-002-002
+#: §15.2 / §18.6) — a runtime capability this slice does not have (deferred to Phase 5). This
+#: table only stops the **local mirror** from over-reporting a definite settlement as an
+#: unresolved unknown once positive evidence for that exact attempt actually arrives; it asserts
+#: no RCL-authoritative release and creates no headroom (RFC-002 §9.1:558).
+QUARANTINE_RESOLUTION_EDGES: dict[EgressResultKind, CapacityState] = {
+    EgressResultKind.ACK: CapacityState.POTENTIALLY_LIVE,
+    EgressResultKind.PARTIAL_FILL: CapacityState.PARTIALLY_CONSUMED,
+    EgressResultKind.FULL_FILL: CapacityState.POSITION_CONSUMED,
+    EgressResultKind.REJECT: CapacityState.RELEASE_PENDING_PROOF,
+    EgressResultKind.CANCEL_ACK: CapacityState.RELEASE_PENDING_PROOF,
+    EgressResultKind.EXPIRED: CapacityState.RELEASE_PENDING_PROOF,
 }
 
 
@@ -105,7 +191,9 @@ def knowledge_for_result(kind: EgressResultKind) -> EgressKnowledge:
     Returns:
         The :class:`~tos.engine.vocabulary.EgressKnowledge` member. ``UNKNOWN`` and ``TIMEOUT``
         both map to the explicit ``UNKNOWN`` member — never to a missing value, and never to
-        ``REJECTED`` (RFC-005 §11:325-327 "UNKNOWN is not a rejection").
+        ``REJECTED`` (RFC-005 §11:325-327 "UNKNOWN is not a rejection"). ``CANCEL_ACK`` /
+        ``EXPIRED`` each map to their own dedicated member (Phase 3 KW2-C1) — neither collapses
+        into ``REJECTED``, which would misrepresent a cancel/expiry as a broker rejection.
 
     Raises:
         ArtifactIntegrityError: If the kind is outside the closed mapping (fail-closed).
@@ -116,6 +204,30 @@ def knowledge_for_result(kind: EgressResultKind) -> EgressKnowledge:
             f"no closed transition is declared for egress result kind {kind!r} (fail-closed)"
         )
     return mapped[0]
+
+
+@dataclass(frozen=True)
+class ResultApplication:
+    """The recorded, conservative outcome of one ``apply_egress_result`` call (Phase 3 A-K-2).
+
+    A late, orphaned, duplicated, or attempt-mismatched egress result is not a crash: the design
+    plan (2026-09-09 §1.1 "크래시는 이벤트가 아니다") requires the engine to hand the caller a
+    **recorded conservative outcome** instead of raising. ``applied`` is ``True`` **iff**
+    ``disposition is ResultDisposition.APPLIED``; the two are kept as separate fields (rather than
+    deriving one from the other at every call site) so a caller can gate on the boolean without
+    importing the enum, while the enum still carries which of the three non-APPLIED reasons held.
+
+    ``projection`` is:
+
+    * the *newly stored* projection when ``disposition is APPLIED``;
+    * the *unchanged* outstanding projection when ``disposition`` is ``MISMATCHED_ATTEMPT`` or
+      ``DUPLICATE`` (a reservation exists, but this result did not move it);
+    * ``None`` when ``disposition is ORPHAN_NO_RESERVATION`` (no reservation exists to report).
+    """
+
+    applied: bool
+    disposition: ResultDisposition
+    projection: ProvisionalReservation | None
 
 
 class ProvisionalReservationLedger:
@@ -143,6 +255,18 @@ class ProvisionalReservationLedger:
             )
         self._max_unresolved = max_unresolved_send_per_scope
         self._reservations: dict[tuple[str, str], ProvisionalReservation] = {}
+        #: Per-scope signatures of every egress result already applied (Phase 3 A-K-2 DUPLICATE
+        #: detection, keying tightened in K2-p3-#6): ``(attempt_id, kind, filled_quantity,
+        #: remaining_quantity, broker_execution_id)`` — **not** ``reference``, which the driver
+        #: re-stamps on every re-enqueue and so can never identify a genuine broker resend
+        #: (ADR-002-002 §15.3:725). With ``broker_execution_id is None`` (a result that never
+        #: reached a broker, e.g. a synthetic ``TIMEOUT``) this is a runtime-local replay guard
+        #: against re-processing a byte-identical resend, not §15.3 broker idempotency. A
+        #: scope goes through at most one reservation lifecycle here (no release path exists — see
+        #: the module docstring), so this never needs resetting across attempts within a scope.
+        self._applied_result_signatures: dict[
+            tuple[str, str], tuple[tuple[object, ...], ...]
+        ] = {}
 
     @staticmethod
     def _key_tuple(key: InstrumentKey) -> tuple[str, str]:
@@ -218,14 +342,35 @@ class ProvisionalReservationLedger:
 
     # -- projection advance (no release path exists) -------------------------
 
-    def _store(self, reservation: ProvisionalReservation) -> ProvisionalReservation:
-        """Store a reservation projection, enforcing forward-only (non-revival) advance."""
+    def _store(
+        self,
+        reservation: ProvisionalReservation,
+        *,
+        allow_quarantine_resolution: bool = False,
+    ) -> ProvisionalReservation:
+        """Store a reservation projection, enforcing forward-only (non-revival) advance.
+
+        Args:
+            reservation: The reservation to store.
+            allow_quarantine_resolution: ``True`` only when the caller
+                (:meth:`apply_egress_result`) has already independently verified this exact rank
+                decrease is a licensed :data:`QUARANTINE_RESOLUTION_EDGES` exit from
+                ``QUARANTINED_UNKNOWN`` (Phase 3 wave 2 KW2b-#2; ADR-002-002 §18.6). Every other
+                call site (``commit_unbound`` / ``bind_attempt`` / ``mark_potentially_live``) never
+                passes this, so the non-revival guard stays absolute for them — none of the three
+                is ever legitimately reachable while quarantined in the first place (the at-most-
+                one exposure retention denies a new attempt for an occupied, quarantined scope).
+        """
         key_tuple = self._key_tuple(reservation.instrument_key)
         current = self._reservations.get(key_tuple)
         if current is not None:
             current_rank = PROJECTION_RANK[current.capacity_state]
             next_rank = PROJECTION_RANK[reservation.capacity_state]
-            if next_rank < current_rank:
+            resolving_quarantine = (
+                allow_quarantine_resolution
+                and current.capacity_state is CapacityState.QUARANTINED_UNKNOWN
+            )
+            if next_rank < current_rank and not resolving_quarantine:
                 raise ArtifactIntegrityError(
                     "provisional capacity projection may not revive to a less-consumed state "
                     f"({current.capacity_state} -> {reservation.capacity_state}) — non-revival "
@@ -331,45 +476,229 @@ class ProvisionalReservationLedger:
             )
         )
 
-    def apply_egress_result(
-        self, payload: EgressResultPayload
-    ) -> ProvisionalReservation:
-        """Transition the projection on a re-injected egress result (design #31 §2.2/§4.2 rule 3).
+    @staticmethod
+    def _quantity_regressed(
+        current: ProvisionalReservation, payload: EgressResultPayload
+    ) -> bool:
+        """Whether ``payload`` would regress the quantity axis of ``current`` (§35 K2-p3-#5 / N2;
+        Phase 3 wave 2 review finding #10 / kernel disposition KW2b-#10).
 
-        The result is applied **only** to the exact attempt it names (positive identity), so a
-        late, duplicated, or reordered result can never transition another attempt's reservation.
-        ``UNKNOWN`` / ``TIMEOUT`` update only the knowledge axis and leave the capacity projection
-        at ``POTENTIALLY_LIVE``: not a rejection, not safe-to-retry, capacity not released
-        (RFC-005 §11:325-327; ADR-002-002 INV-005:168 / INV-006:174).
+        Factored out of :meth:`apply_egress_result` (size-budget discipline). Four independent,
+        non-revival directions are checked, all folded into the same
+        :class:`~tos.engine.vocabulary.ResultDisposition.QUANTITY_REGRESSION` disposition (see
+        that member's own docstring for why a fourth is not a separate disposition):
+
+        1. ``filled_quantity`` strictly below the already-recorded value (ADR-002-002
+           §15.1:710 "reduced by no more than the amount proven filled");
+        2. ``remaining_quantity`` growing at all versus the already-recorded value (implies the
+           authorized quantity itself grew — unrepresentable for one attempt);
+        3. ``remaining_quantity`` shrinking by more than ``filled_quantity`` grew (quantity
+           vanishing unaccounted — CPL-2/CPL-4 forbid an evidence-free implicit release);
+        4. [KW2b-#10] the *mirror* of (3): ``filled_quantity`` growing by more than
+           ``remaining_quantity`` shrank, which inflates rather than shrinks the attempt's
+           authorized total (``filled_quantity + remaining_quantity``) — e.g. ``4/6`` ->
+           ``6/5`` (total ``10`` -> ``11``). Directions 1-3 alone did not catch this: they admit
+           any ``filled`` growth and only refuse a ``remaining`` shrink that *exceeds* it, never
+           one that falls short of it. The first fill-bearing result for an attempt fixes
+           ``authorized_total``; every later one must keep that exact sum, not merely avoid
+           exceeding it — an attempt's authorized quantity can no more grow after the fact than
+           it can shrink without proof.
+
+        Only ``FULL_FILL`` / ``PARTIAL_FILL`` carry magnitudes at all; every other kind returns
+        ``False`` immediately (nothing to regress). ``EgressResultPayload``'s own shape validator
+        guarantees both magnitudes are present (non-``None``) for those two kinds, so once
+        ``current`` also carries an established baseline, every comparison below is over concrete
+        values — never a silent ``None`` short-circuit.
+
+        Args:
+            current: The outstanding projection before this result.
+            payload: The re-injected egress result payload.
+
+        Returns:
+            ``True`` iff any of the four directions above regressed.
+        """
+        if payload.kind not in (
+            EgressResultKind.FULL_FILL,
+            EgressResultKind.PARTIAL_FILL,
+        ):
+            return False
+        if current.filled_quantity is None or current.remaining_quantity is None:
+            # No fill-bearing result has landed for this attempt yet — there is no established
+            # authorized-total baseline to regress against. The first one sets it.
+            return False
+        assert (
+            payload.filled_quantity is not None
+        )  # validator-guaranteed for fill kinds
+        assert payload.remaining_quantity is not None
+        if payload.filled_quantity < current.filled_quantity:
+            return True
+        if payload.remaining_quantity > current.remaining_quantity:
+            return True
+        authorized_total = current.filled_quantity + current.remaining_quantity
+        return payload.filled_quantity + payload.remaining_quantity != authorized_total
+
+    @staticmethod
+    def _resolve_capacity_target(
+        current: ProvisionalReservation, payload: EgressResultPayload
+    ) -> tuple[CapacityState | None, bool] | ResultDisposition:
+        """The capacity target for ``payload`` against ``current``, or the rank-guard refusal.
+
+        Factored out of :meth:`apply_egress_result` (size-budget discipline). Returns either:
+
+        * ``(capacity_state, resolving_quarantine)`` — the target to store (``None`` means "no
+          explicit target, leave unchanged") and whether this is a licensed
+          :data:`QUARANTINE_RESOLUTION_EDGES` exit from ``QUARANTINED_UNKNOWN`` (Phase 3 wave 2
+          KW2b-#2; ADR-002-002 §18.6 "escaping quarantine requires evidence, never assertion" —
+          the one deliberate exception to the rank-regression guard, checked first: left to that
+          guard alone, quarantine would be terminal, since ``QUARANTINED_UNKNOWN`` is the single
+          highest rank in :data:`PROJECTION_ORDER` and nothing could ever rank above it to exit).
+          [KW2c-R2] The resolution target is **floored** at ``current.pre_quarantine_capacity``
+          (the rank held immediately before quarantine, if any) — the table's own value is a
+          minimum, never a destination (see :data:`QUARANTINE_RESOLUTION_EDGES`'s docstring for
+          why: re-review finding R2, a bare ``ACK`` was silently reverting a proven settlement
+          such as ``POSITION_CONSUMED`` back to ``POTENTIALLY_LIVE`` with no signal anywhere);
+        * ``ResultDisposition.NON_MONOTONIC_PROJECTION`` when the target would otherwise regress
+          the rank and is *not* a licensed resolution (Phase 3 K2-p3-#4) — refused before
+          :meth:`_store` is ever reached, so its own non-revival guard never has to fire on this
+          path; a late/reordered result is a recorded conservative outcome, not a crash (design
+          plan 2026-09-09 §1.1).
+        """
+        _, capacity_state = _RESULT_TRANSITIONS[payload.kind]
+        resolving_quarantine = (
+            current.capacity_state is CapacityState.QUARANTINED_UNKNOWN
+            and payload.kind in QUARANTINE_RESOLUTION_EDGES
+        )
+        if resolving_quarantine:
+            table_target = QUARANTINE_RESOLUTION_EDGES[payload.kind]
+            floor = current.pre_quarantine_capacity
+            if (
+                floor is not None
+                and PROJECTION_RANK[floor] > PROJECTION_RANK[table_target]
+            ):
+                return floor, True
+            return table_target, True
+        if capacity_state is not None:
+            current_rank = PROJECTION_RANK[current.capacity_state]
+            next_rank = PROJECTION_RANK[capacity_state]
+            if next_rank < current_rank:
+                return ResultDisposition.NON_MONOTONIC_PROJECTION
+        return capacity_state, False
+
+    @staticmethod
+    def _pre_quarantine_floor_update(
+        current: ProvisionalReservation,
+        capacity_state: CapacityState,
+        resolving_quarantine: bool,
+    ) -> CapacityState | None:
+        """The next ``pre_quarantine_capacity`` value to store (Phase 3 wave 2 KW2c-R2).
+
+        Maintains the invariant declared on the field itself — non-``None`` **iff**
+        ``capacity_state is CapacityState.QUARANTINED_UNKNOWN``:
+
+        * entering quarantine for the first time (target is ``QUARANTINED_UNKNOWN`` and
+          ``current`` was not already quarantined) records ``current.capacity_state`` as the new
+          floor;
+        * a repeated ``UNKNOWN`` / ``TIMEOUT`` while already quarantined leaves the existing
+          floor untouched — it must never be re-derived from ``QUARANTINED_UNKNOWN`` itself,
+          which would erase the very floor it exists to remember;
+        * resolving out of quarantine (``resolving_quarantine`` is ``True``) clears the floor back
+          to ``None`` — it no longer applies once the projection has left ``QUARANTINED_UNKNOWN``;
+        * every other transition (never quarantined at all) leaves the field at its current value
+          (``None``, since it is never non-``None`` outside quarantine).
+        """
+        if capacity_state is CapacityState.QUARANTINED_UNKNOWN:
+            if current.capacity_state is CapacityState.QUARANTINED_UNKNOWN:
+                return current.pre_quarantine_capacity
+            return current.capacity_state
+        if resolving_quarantine:
+            return None
+        return current.pre_quarantine_capacity
+
+    def apply_egress_result(self, payload: EgressResultPayload) -> ResultApplication:
+        """Apply — or conservatively record — a re-injected egress result (Phase 3 A-K-2).
+
+        A late, orphaned, duplicated, attempt-mismatched, rank-regressing, or quantity-regressing
+        result is **not** raised as a crash: it is returned as a :class:`ResultApplication` naming
+        the exact :class:`~tos.engine.vocabulary.ResultDisposition`, leaving the projection
+        untouched on every non-``APPLIED`` outcome. See :class:`~tos.engine.vocabulary.
+        ResultDisposition` for what each of the six members means and the spec citation behind it
+        — this method is the single place all six are decided, in the order the class's own
+        docstring lists them, so that is the canonical reference rather than a second copy here.
+        Only ``APPLIED`` transitions the reservation (design #31 §2.2/§4.2 rule 3). The two
+        regressing dispositions (``NON_MONOTONIC_PROJECTION``, ``QUANTITY_REGRESSION``) exist
+        because letting :meth:`_store`'s non-revival guard raise straight out of this method was
+        itself the crash Phase 3 review finding #4 named — this method must never let it fire.
 
         Args:
             payload: The egress result payload.
 
         Returns:
-            The stored projection.
-
-        Raises:
-            ArtifactIntegrityError: If no reservation is projected for the scope, or if the
-                payload's ``attempt_id`` does not match the projected attempt identity.
+            The :class:`ResultApplication` naming the disposition and the resulting (or unchanged)
+            projection.
         """
         key = payload.instrument_key
+        key_tuple = self._key_tuple(key)
         current = self.outstanding(key)
         if current is None:
-            raise ArtifactIntegrityError(
-                f"no projected reservation for scope {self._key_tuple(key)} — an egress result is "
-                "not a licence to create one (fail-closed; design #31 §2.2)"
+            return ResultApplication(
+                applied=False,
+                disposition=ResultDisposition.ORPHAN_NO_RESERVATION,
+                projection=None,
             )
         if current.attempt_id is None or current.attempt_id != payload.attempt_id:
-            raise ArtifactIntegrityError(
-                f"egress result names attempt {payload.attempt_id!r} but the projected reservation "
-                f"is bound to {current.attempt_id!r} — a result applies only to its exact attempt "
-                "(positive identity; design #31 §2.1(ii))"
+            return ResultApplication(
+                applied=False,
+                disposition=ResultDisposition.MISMATCHED_ATTEMPT,
+                projection=current,
             )
-        knowledge, capacity_state = _RESULT_TRANSITIONS[payload.kind]
+        signature = (
+            payload.attempt_id,
+            payload.kind,
+            payload.filled_quantity,
+            payload.remaining_quantity,
+            payload.broker_execution_id,
+        )
+        applied_signatures = self._applied_result_signatures.get(key_tuple, ())
+        if signature in applied_signatures:
+            return ResultApplication(
+                applied=False,
+                disposition=ResultDisposition.DUPLICATE,
+                projection=current,
+            )
+        knowledge, _ = _RESULT_TRANSITIONS[payload.kind]
+        target = self._resolve_capacity_target(current, payload)
+        if isinstance(target, ResultDisposition):
+            return ResultApplication(
+                applied=False,
+                disposition=target,
+                projection=current,
+            )
+        capacity_state, resolving_quarantine = target
+        # ★ [K2-p3-#5 / Phase 3 wave 2 N2] The quantity axis has its own, independent
+        # non-revival rule (ADR-002-002 §15.1:710), covering both ``filled_quantity`` shrinking
+        # and ``remaining_quantity`` growing or shrinking unmatched by a filled increase (wave 1
+        # review finding N2). See :meth:`_quantity_regressed` for the full citation of each of
+        # the three directions checked.
+        if self._quantity_regressed(current, payload):
+            return ResultApplication(
+                applied=False,
+                disposition=ResultDisposition.QUANTITY_REGRESSION,
+                projection=current,
+            )
         update: dict[str, object] = {"knowledge": knowledge}
         if capacity_state is not None:
             update["capacity_state"] = capacity_state
+            update["pre_quarantine_capacity"] = self._pre_quarantine_floor_update(
+                current, capacity_state, resolving_quarantine
+            )
         if payload.kind in (EgressResultKind.FULL_FILL, EgressResultKind.PARTIAL_FILL):
             update["filled_quantity"] = payload.filled_quantity
             update["remaining_quantity"] = payload.remaining_quantity
-        return self._store(current.model_copy(update=update))
+        stored = self._store(
+            current.model_copy(update=update),
+            allow_quarantine_resolution=resolving_quarantine,
+        )
+        self._applied_result_signatures[key_tuple] = applied_signatures + (signature,)
+        return ResultApplication(
+            applied=True, disposition=ResultDisposition.APPLIED, projection=stored
+        )

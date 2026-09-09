@@ -1,0 +1,62 @@
+# tos_runtime.strategy example Authored Strategy (TOS Phase 3 슬라이스 D-R,
+# docs/plans/2026-09-09-tos-phase3-event-core-plan.md §1.2).
+#
+# This is an EXAMPLE, not a real strategy: every value below is a named-TBD
+# `null` (the same convention as every other config example in this tree,
+# e.g. tos/runtime/config/risk.example.yaml). tos_runtime.strategy.loader.
+# load_strategies refuses (fail-closed) a still-null leaf ANYWHERE in this
+# mapping — a real deployment copies this file into config_dir/strategies/
+# and fills in every value before an operator's `parse` callable is even
+# invoked on it.
+#
+# Shape mirrors tos.dsl.vocabulary.DecisionPolicy / tos.dsl.strategy.
+# AuthoredStrategy exactly, so the eventual tos.dsl.serialization.
+# parse_strategy (kernel lane D-K, not yet landed as of 2026-09-09) can
+# validate this mapping directly once it exists — until then the
+# composition root injects a local shim that builds an AuthoredStrategy from
+# this same shape via pydantic construction (see loader.py's own docstring).
+#
+# dsl_version / config_binding_version: recorded on every evaluation's
+# signature (tos.dsl.determinism.RecordedInputSignature) — an operator-
+# assigned version string, not derived.
+dsl_version: null
+config_binding_version: null
+
+# policy: tos.dsl.vocabulary.DecisionPolicy — an ordered rule list plus a
+# mandatory default Decision (evaluation is total: RFC-008 §9).
+policy:
+  rules:
+    # One example rule: "close below the lower band" -> a LONG/OPEN action.
+    # The outcome-gating Compare below reads BOTH operands from the capsule
+    # (tos.engine.admission.compare_has_capsule_operand requires at least
+    # one capsule-sourced operand — a market-dependent decision may not be
+    # routed entirely through config/literals).
+    - all_of:
+        - left:
+            ref: [capsule, resolved_values, close]
+          op: LT
+          right:
+            ref: [capsule, resolved_values, lower_band]
+      decision:
+        kind: ACTION
+        # Decision.rationale is mandatory (RFC-008 §7) — an operator MUST
+        # author why this outcome follows from the context.
+        rationale: null
+        target:
+          kind: ACTION
+          # TargetSpec.account/instrument together derive the strategy's
+          # dispatch key (tos.engine.admission.derive_instrument_key) — a
+          # wildcard (still-null) scope is refused at registration, and this
+          # loader refuses it even earlier, at the null-leaf check.
+          account: null
+          instrument: null
+          direction: null
+          position_effect: null
+          quantity_basis: null
+          edge_or_confidence: null
+  # DecisionPolicy.default: the mandatory always-reachable outcome when no
+  # rule's guard fires — REQUIRED even though this example has no config
+  # value to leave null on it beyond the rationale.
+  default:
+    kind: NO_ACTION
+    rationale: null
