@@ -223,3 +223,68 @@ def test_load_strategies_error_is_the_underlying_cause(
             identity=identity,
         )
     assert isinstance(excinfo.value.__cause__, StrategyLoadError)
+
+
+def test_config_sourced_ref_without_bindings_refuses_naming_the_ref(
+    tmp_path: Path, evidence_store, emergency_log, identity
+):
+    """2026-09-09 independent-review finding #9: reproduces the reviewer's
+    own probe — a compare of ``capsule.resolved_values.close LT
+    config.lower_band_threshold`` parses and is ADMISSIBLE (``config`` is an
+    ``ADMISSIBLE_CONTEXT_SOURCES`` member and only ONE operand needs to be
+    capsule-sourced), but with Wave 1's hard-coded empty ``bindings`` the
+    rule can never resolve the ``config`` operand and silently never fires.
+    This module now refuses it at load, naming both the file and the ref."""
+    config_dir = tmp_path / "config"
+    strategies_dir = config_dir / "strategies"
+    strategies_dir.mkdir(parents=True)
+    mapping = admissible_strategy_mapping()
+    mapping["policy"]["rules"][0]["all_of"][0]["right"] = {
+        "ref": ["config", "lower_band_threshold"]
+    }
+    path = write_strategy_yaml(strategies_dir, "config-ref.strategy.yaml", mapping)
+    with pytest.raises(StrategyRegistryResolutionRefused) as excinfo:
+        resolve_strategy_registry(
+            config_dir,
+            injected_registry=None,
+            evidence_store=evidence_store,
+            emergency_log=emergency_log,
+            identity=identity,
+        )
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "config.lower_band_threshold" in message
+    assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
+
+
+def test_escape_ref_source_is_refused_at_load(
+    tmp_path: Path, evidence_store, emergency_log, identity
+):
+    """2026-09-09 independent-review finding #17 (D-lane assertion (a)):
+    a YAML strategy carrying an escape ``ref`` source
+    (``("ambient", "now")`` — outside :data:`~tos.dsl.vocabulary.
+    ADMISSIBLE_CONTEXT_SOURCES`) is refused at load. As of this writing
+    ``Operand`` constructs an ambient ``ref`` without complaint (only the
+    escape-checker, run inside ``strategy_admissible``, catches it) — if a
+    concurrent kernel change tightens ``Operand._exactly_one`` to validate
+    ``ref[0]`` positively, this same YAML would instead fail to PARSE, and
+    ``load_strategies``'s own parse-refusal branch (a ``ValidationError`` /
+    ``ArtifactIntegrityError`` caught in ``_load_one``) covers that outcome
+    identically — either way ``StrategyRegistryResolutionRefused`` is what
+    this module raises, so no branch here needs to change to track that."""
+    config_dir = tmp_path / "config"
+    strategies_dir = config_dir / "strategies"
+    strategies_dir.mkdir(parents=True)
+    mapping = admissible_strategy_mapping()
+    mapping["policy"]["rules"][0]["all_of"][0]["right"] = {"ref": ["ambient", "now"]}
+    path = write_strategy_yaml(strategies_dir, "escape-ref.strategy.yaml", mapping)
+    with pytest.raises(StrategyRegistryResolutionRefused) as excinfo:
+        resolve_strategy_registry(
+            config_dir,
+            injected_registry=None,
+            evidence_store=evidence_store,
+            emergency_log=emergency_log,
+            identity=identity,
+        )
+    assert str(path) in str(excinfo.value)
+    assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]

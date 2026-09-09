@@ -243,3 +243,62 @@ def test_stray_non_strategy_file_refuses_naming_it(strategies_dir, parse, admit)
     with pytest.raises(StrategyLoadError) as excinfo:
         load_strategies(strategies_dir, parse=parse, admit=admit)
     assert str(stray) in str(excinfo.value)
+
+
+def test_unknown_top_level_key_refuses_naming_the_path(strategies_dir, parse, admit):
+    """Runtime-level coverage for 2026-09-09 independent-review finding #17
+    mutation M7: ``_StrategyAuthoringContent`` (the kernel's top-level
+    parsing model, ``tos.dsl.serialization``) is ``extra='forbid'`` — this
+    was kernel-red but runtime-green (the only existing nested-unknown-key
+    test exercises a DIFFERENT, nested pydantic model, ``TargetSpec``, not
+    the top-level authoring content). An unknown key directly alongside
+    ``dsl_version``/``config_binding_version``/``policy`` must refuse here
+    too, through the REAL injected ``parse`` (``tos.dsl.serialization.
+    parse_strategy``), not just in the kernel's own unit test."""
+    mapping = admissible_strategy_mapping()
+    mapping["not_a_real_top_level_field"] = "x"
+    path = write_strategy_yaml(strategies_dir, "bad-top-level.strategy.yaml", mapping)
+    with pytest.raises(StrategyLoadError) as excinfo:
+        load_strategies(strategies_dir, parse=parse, admit=admit)
+    assert str(path) in str(excinfo.value)
+
+
+def test_dropping_a_rule_changes_the_loaded_strategy_digest(
+    strategies_dir, parse, admit
+):
+    """Runtime-level coverage for 2026-09-09 independent-review finding #17
+    mutation M5 (``lower_strategy`` silently drops the first authored rule —
+    kernel-red, runtime-green): the runtime suite had no assertion that a
+    strategy's own identity (``canonical_digest``) is sensitive to its rule
+    count at all. Two strategy files differing ONLY by one extra rule must
+    load to two DIFFERENT digests — if a rule were silently dropped
+    somewhere on this path, the two artifacts could otherwise collide."""
+    one_rule = admissible_strategy_mapping()
+    two_rules = admissible_strategy_mapping()
+    two_rules["policy"]["rules"] = list(two_rules["policy"]["rules"]) + [
+        {
+            "all_of": [
+                {
+                    "left": {"ref": ["capsule", "resolved_values", "close"]},
+                    "op": "GT",
+                    "right": {"ref": ["capsule", "resolved_values", "upper_band"]},
+                }
+            ],
+            "decision": {
+                "kind": "NO_ACTION",
+                "rationale": "second rule — exists only to change the digest",
+            },
+        }
+    ]
+    write_strategy_yaml(strategies_dir, "one-rule.strategy.yaml", one_rule)
+    loaded_one = load_strategies(strategies_dir, parse=parse, admit=admit)
+
+    two_rules_dir = strategies_dir.parent / "strategies-two-rules"
+    two_rules_dir.mkdir()
+    write_strategy_yaml(two_rules_dir, "two-rule.strategy.yaml", two_rules)
+    loaded_two = load_strategies(two_rules_dir, parse=parse, admit=admit)
+
+    assert (
+        loaded_one.strategies[0].strategy.canonical_digest
+        != loaded_two.strategies[0].strategy.canonical_digest
+    )
