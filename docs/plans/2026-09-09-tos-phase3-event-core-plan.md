@@ -105,4 +105,19 @@
 
 ## 7. 실행 결과·독립 리뷰 처분
 
-(웨이브별 기입)
+### 7.1 웨이브 1 착지 (2026-09-09 · 13커밋 `5768c6f2..1d58b02c` · 레인 4 병렬)
+
+| 레인 | 커밋 | 내용 |
+|---|---|---|
+| A-K | `5768c6f2` `f299191a` `c4e52144` (+black `e9eb98be`) | `event_identity(event, *, scheme)`(필드 아님 — `EngineEvent` 는 scheme 없는 FrozenModel · 보고된 폴백) · `apply_egress_result -> ResultApplication{applied, disposition∈{APPLIED, ORPHAN_NO_RESERVATION, MISMATCHED_ATTEMPT, DUPLICATE}, projection}`(raise 제거 · non-APPLIED 는 `EvidenceKind/HaltReason.RESULT_UNMATCHED` · capacity/knowledge 불완화 · DUPLICATE 는 5튜플 구조 동일성) · 도달 불가 `HaltReason` 2종 제거(anti-phantom) · `EventResult.outcome_digest`(pipeline digest 재사용 · EGRESS_RESULT 는 None) · 결정론 카나리 |
+| A-R | `d29492b2` `d11cbbd9` `911c4a0d` `52d4e971` | `tos_runtime.engine.inbox.SqliteEventInbox`(별 sqlite · event_id UNIQUE · 중복은 typed receipt) · `driver.EngineDriver`(런타임 유일 `core.handle` 호출점 · 크래시 창 3분기 멱등 · egress 결과 재주입 · `MAX_send_result_wait_ms` TIMEOUT 주입) · `replay.replay_engine`(커널 `replay_result_for` 재사용) · `compose/_engine_wiring.py` 분리 · `ComposedRuntime.inbox/driver` · 기존 compose e2e 무수정(`run_once` 가 드라이버 위임) · 핀 테스트 `test_no_direct_core_calls.py` |
+| D-K | `a8418b0b` `9ab3f650` `49129e64` | `dsl.lowering.lower_strategy`(총함수 · 65 테스트) · `dsl.serialization.parse_strategy`(pydantic · `StrategyParseError` 경로) · `AdmissibilityResult.strategy_id/strategy_digest`(covered · 하드코딩 digest 단언 0 · dsl 파일 EVIDENCE-SURFACE-MAP 핀 0 실측 → 기존 클래스에 직접) · `strategy_admissible` 에 escape-checker 게이트(`AdmissionResult.admissibility_result`) · 설계 #31 §3.5 이연 해소 |
+| D-R | `d338c59e` `1d58b02c` | `tos_runtime.strategy.loader.load_strategies`(파일 하나라도 불량이면 전체 거부 · null leaf 거부 · 빈 디렉터리 거부 · sha256) · `resolve.resolve_strategy_registry`(파일 소스 xor 주입 레지스트리 · 둘 다 ⇒ 거부 · `STRATEGY_REFUSED` 증거) · `OPERATOR_ATTESTED_INPUTS` 에 전략 파일 digest · compose 픽스처 파일 소스 전환 · YAML↔in-process 동형 교차 테스트 |
+
+**보고된 편차·한계(전부 공개)**: ① replay 의 side-effect-free 재조립은 step 14 까지(`transmit=None`) — send 경계 포함 재생은 기록/재생 transport 부재(A-R 도크스트링) ② 부분 창(`window_events`) 재생은 창 밖 이벤트가 남긴 예약 때문에 false divergence 가능 — 전체 재생(None)이 안전(문서화) ③ 재생 검증은 `verify_rcl_log_or_halt` «직후» 가 아니라 엔진·게이트웨이·inbox 결선 후(순서 요건 «RCL 검증 뒤» 는 충족) ④ `EvaluationConfig.bindings` 는 모든 로드 전략에서 빈 값(bindings 설정 표면 부재 · 후속 웨이브) ⑤ 파일도 주입도 없으면 기존 빈 레지스트리 폴백 유지(compose 기본값 호환 — 리뷰 판정 요청: «전략 0 = 런타임 없음» 규칙과 충돌하는지) ⑥ `test_driver.py:171` 이 결정론 대조를 위해 `core.handle` 을 직접 1회 호출(핀 허용 범위 밖 · 리뷰 판정 요청).
+
+**독립 실측(최종 트리 `1d58b02c`)**: runtime **539 passed** rc=0 · kernel **9236 passed** rc=0 · mypy 256/62 clean · ruff 0 · black 956 unchanged · firewall PASS · lint-imports 3 KEPT · budget 0 위반(31 등재 · `_wiring.py` 1116→1172) · completion GREEN · spec PASS · contract PASS · tos-spec/계약 문서 무편집 · 커널 diff 는 A-K/D-K 커밋에만.
+
+### 7.2 웨이브 1 독립 리뷰 처분
+
+(리뷰 후 기입)
