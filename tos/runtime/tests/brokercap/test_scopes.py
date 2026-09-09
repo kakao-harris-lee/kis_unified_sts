@@ -73,6 +73,7 @@ def _minimal_scope(
     endpoint_class: str = "SYNTHETIC",
     allowed_methods: list | None = None,
     profile_evidence_ok: bool | None = None,
+    inside_boundary: bool | None = True,
 ) -> dict:
     return {
         "name": name,
@@ -83,6 +84,7 @@ def _minimal_scope(
             allowed_methods if allowed_methods is not None else ["SUBMIT"]
         ),
         "profile_evidence_ok": profile_evidence_ok,
+        "inside_boundary": inside_boundary,
         "profile_key": {},
         "capability_tuples": [
             {
@@ -186,7 +188,14 @@ def test_principal_without_the_token_passes_through_unchanged(tmp_path: Path) ->
 
 @pytest.mark.parametrize(
     "field",
-    ["name", "principal_class", "principal", "endpoint_class", "allowed_methods"],
+    [
+        "name",
+        "principal_class",
+        "principal",
+        "endpoint_class",
+        "allowed_methods",
+        "inside_boundary",
+    ],
 )
 def test_a_still_null_scope_field_refuses_to_load(tmp_path: Path, field: str) -> None:
     scope = _minimal_scope()
@@ -198,6 +207,16 @@ def test_a_still_null_scope_field_refuses_to_load(tmp_path: Path, field: str) ->
     _write(path, raw)
 
     with pytest.raises(BrokerScopeConfigError, match="named-TBD"):
+        load_broker_scopes(path, environment_label="paper-env-7")
+
+
+def test_non_boolean_inside_boundary_refuses_to_load(tmp_path: Path) -> None:
+    scope = _minimal_scope(inside_boundary="yes")  # type: ignore[arg-type]
+    raw = _minimal_config([scope], active_scope="SOME_SCOPE")
+    path = tmp_path / "broker_scopes.yaml"
+    _write(path, raw)
+
+    with pytest.raises(BrokerScopeConfigError, match="inside_boundary"):
         load_broker_scopes(path, environment_label="paper-env-7")
 
 
@@ -356,13 +375,40 @@ def test_synthetic_and_read_scopes_sharing_a_principal_refuses_to_load(
         load_broker_scopes(path, environment_label="paper-env-7")
 
 
-def test_same_class_scopes_sharing_a_principal_does_not_refuse(tmp_path: Path) -> None:
+def test_same_class_scopes_sharing_a_principal_refuses_to_load(tmp_path: Path) -> None:
+    """Independent-review finding F2: principal separation used to be
+    enforced only ACROSS ``principal_class`` values — two scopes of the
+    SAME class (e.g. two ``ORDER`` scopes) sharing a principal loaded
+    without complaint. The generalized rule refuses ANY two distinct
+    scopes sharing a principal, naming both."""
     scope_a = _minimal_scope(
         name="ORDER_A", principal_class="ORDER", principal="same-order"
     )
     scope_b = _minimal_scope(
         name="ORDER_B", principal_class="ORDER", principal="same-order"
     )
+    scope_b["capability_tuples"][0]["operation_class"] = "CANCEL_REPLACE"
+    raw = _minimal_config([scope_a, scope_b], active_scope="ORDER_A")
+    path = tmp_path / "broker_scopes.yaml"
+    _write(path, raw)
+
+    with pytest.raises(BrokerScopeConfigError, match="ORDER_A") as exc_info:
+        load_broker_scopes(path, environment_label="paper-env-7")
+    assert "ORDER_B" in str(exc_info.value)
+
+
+def test_different_class_scopes_with_distinct_principals_still_load(
+    tmp_path: Path,
+) -> None:
+    """Sanity companion to the F2 refusal above — two scopes with genuinely
+    DISTINCT principals still load cleanly."""
+    scope_a = _minimal_scope(
+        name="ORDER_A", principal_class="ORDER", principal="order-a-principal"
+    )
+    scope_b = _minimal_scope(
+        name="ORDER_B", principal_class="ORDER", principal="order-b-principal"
+    )
+    scope_b["capability_tuples"][0]["operation_class"] = "CANCEL_REPLACE"
     raw = _minimal_config([scope_a, scope_b], active_scope="ORDER_A")
     path = tmp_path / "broker_scopes.yaml"
     _write(path, raw)
@@ -370,6 +416,71 @@ def test_same_class_scopes_sharing_a_principal_does_not_refuse(tmp_path: Path) -
     config = load_broker_scopes(path, environment_label="paper-env-7")
 
     assert config.active_scope.name == "ORDER_A"
+
+
+# ============================================================================
+# Duplicate tuples across scopes — independent-review finding F3
+# ============================================================================
+
+
+def test_duplicate_capability_tuple_across_two_scopes_refuses_to_load(
+    tmp_path: Path,
+) -> None:
+    """The SAME capability tuple listed in two different scopes must refuse
+    at load — without this, ``resolve_scope`` would silently pick whichever
+    scope appears FIRST in the YAML list, letting an earlier (more
+    permissive) scope shadow a later (more restrictive) one for the exact
+    same request."""
+    scope_a = _minimal_scope(name="DUP_A", principal="dup-a-principal")
+    scope_b = _minimal_scope(name="DUP_B", principal="dup-b-principal")
+    # Both scopes carry the IDENTICAL default capability tuple.
+    raw = _minimal_config([scope_a, scope_b], active_scope="DUP_A")
+    path = tmp_path / "broker_scopes.yaml"
+    _write(path, raw)
+
+    with pytest.raises(BrokerScopeConfigError, match="DUP_A") as exc_info:
+        load_broker_scopes(path, environment_label="paper-env-7")
+    assert "DUP_B" in str(exc_info.value)
+
+
+def test_non_duplicate_tuples_across_scopes_load_cleanly(tmp_path: Path) -> None:
+    scope_a = _minimal_scope(name="NODUP_A", principal="nodup-a-principal")
+    scope_b = _minimal_scope(name="NODUP_B", principal="nodup-b-principal")
+    scope_b["capability_tuples"][0]["operation_class"] = "CANCEL_REPLACE"
+    raw = _minimal_config([scope_a, scope_b], active_scope="NODUP_A")
+    path = tmp_path / "broker_scopes.yaml"
+    _write(path, raw)
+
+    config = load_broker_scopes(path, environment_label="paper-env-7")
+    assert {s.name for s in config.scopes} == {"NODUP_A", "NODUP_B"}
+
+
+# ============================================================================
+# Non-string values — independent-review finding F6
+# ============================================================================
+
+
+def test_non_string_principal_refuses_to_load_never_attributeerror(
+    tmp_path: Path,
+) -> None:
+    scope = _minimal_scope()
+    scope["principal"] = 12345
+    raw = _minimal_config([scope], active_scope="SOME_SCOPE")
+    path = tmp_path / "broker_scopes.yaml"
+    _write(path, raw)
+
+    with pytest.raises(BrokerScopeConfigError, match="principal"):
+        load_broker_scopes(path, environment_label="paper-env-7")
+
+
+def test_non_string_binding_value_refuses_to_load(tmp_path: Path) -> None:
+    raw = _minimal_config([_minimal_scope()], active_scope="SOME_SCOPE")
+    raw["environment_binding"]["SYNTHETIC"] = 123
+    path = tmp_path / "broker_scopes.yaml"
+    _write(path, raw)
+
+    with pytest.raises(BrokerScopeConfigError, match="environment_binding"):
+        load_broker_scopes(path, environment_label="paper-env-7")
 
 
 # ============================================================================
@@ -483,6 +594,7 @@ def _scope(
     *,
     principal: str = "p",
     authorization_class: AuthorizationClass = AuthorizationClass.SYNTHETIC_ORDER,
+    inside_boundary: bool = True,
 ) -> BrokerScope:
     tup_kwargs = {
         "environment": BrokerEnvironment.SYNTHETIC,
@@ -513,6 +625,9 @@ def _scope(
         allowed_methods=("SUBMIT",),
         admissibility=Admissibility.ADMISSIBLE,
         provenance=(),
+        inside_boundary=inside_boundary,
+        environment_binding={BrokerEnvironment.SYNTHETIC: "SYNTHETIC"},
+        asset_binding={AssetScope.FUTURES: "SYNTHETIC_FUTURES"},
     )
 
 
@@ -592,6 +707,52 @@ def test_credential_route_inventory_shape(loaded_config: BrokerScopesConfig) -> 
 
     for entry in inventory:
         assert entry.inside_boundary is True
+
+
+def test_credential_route_inventory_inside_boundary_is_scope_derived_not_hardcoded(
+    tmp_path: Path,
+) -> None:
+    """Independent-review finding F1: a scope declared ``inside_boundary:
+    false`` must produce an inventory entry with ``inside_boundary=False`` —
+    never the old hardcoded ``True`` literal — and that flag must be
+    LOAD-BEARING against the kernel's own boundary-disjointness predicate
+    (``tos.egress.predicates.credential_route_authority_disjoint``): a
+    broker-reaching (``usable_credential=True``, ``broker_route=True``)
+    scope OUTSIDE the boundary is exactly the bypass condition
+    EGRESS-INV-002 forbids."""
+    from tos.egress.predicates import credential_route_authority_disjoint
+
+    raw = _load_example_dict()
+    _scope_by_name(raw, "REAL_READ")["inside_boundary"] = False
+    path = tmp_path / "broker_scopes.yaml"
+    _write(path, raw)
+    config = load_broker_scopes(path, environment_label="paper-env-7")
+
+    inventory = credential_route_inventory(
+        config, active_principal="egressgw-paper-env-7"
+    )
+    by_principal = {entry.principal: entry for entry in inventory}
+    real_read_entry = by_principal["kis-read-paper-env-7"]
+    assert real_read_entry.inside_boundary is False
+    assert real_read_entry.usable_credential is True
+    assert real_read_entry.broker_route is True
+
+    # Load-bearing: an outside-boundary principal with a usable credential
+    # AND a broker route is exactly the bypass condition the kernel
+    # predicate must catch — it does, honestly, once derived from config.
+    assert credential_route_authority_disjoint(inventory) is False
+
+    # Contrast: the SAME inventory shape but with every entry honestly
+    # inside the boundary (the shipped example, unmodified) passes —
+    # proving the flag (not something else) is what flips the verdict.
+    baseline_raw = _load_example_dict()
+    baseline_path = tmp_path / "broker_scopes_baseline.yaml"
+    _write(baseline_path, baseline_raw)
+    baseline_config = load_broker_scopes(baseline_path, environment_label="paper-env-7")
+    baseline_inventory = credential_route_inventory(
+        baseline_config, active_principal="egressgw-paper-env-7"
+    )
+    assert credential_route_authority_disjoint(baseline_inventory) is True
 
 
 # ============================================================================

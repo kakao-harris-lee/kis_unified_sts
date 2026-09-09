@@ -144,8 +144,7 @@ def compose_paper_runtime(
         registry: An injected strategy registry — mutually exclusive with a populated strategies directory.
         authority_domain: The Safety Authority epoch's governed domain name.
         continuity_id: The ordering-event continuity id.
-        allow_no_strategies: ``False`` refuses when neither ``registry`` nor a
-            strategies directory is given (finding #8); ``True`` states that choice.
+        allow_no_strategies: ``False`` refuses with neither source (finding #8).
 
     Returns:
         The fully wired :class:`ComposedRuntime`.
@@ -192,6 +191,7 @@ def compose_paper_runtime(
         egress_attestations=boot.risk.egress_attestations,
         egress_coordinates=boot.egress_coordinates,
         broker_scopes=boot.broker_scopes,
+        instance_document=boot.instance_document,
         construction=construction,
         environment_label=environment_label,
         continuity_id=continuity_id,

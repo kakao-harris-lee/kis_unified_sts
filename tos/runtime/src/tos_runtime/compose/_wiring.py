@@ -46,6 +46,7 @@ from tos_runtime.authority.iap import (
 from tos_runtime.authority.stages import IndependentApprovalStage
 from tos_runtime.brokercap import (
     BrokerScopesConfig,
+    InstanceDocument,
     credential_route_inventory,
     load_active_instance_document,
     load_broker_scopes,
@@ -806,6 +807,7 @@ def _build_context_resolver(
     egress_attestations: EgressAttestations,
     egress_coordinates: EgressCoordinatesConfig,
     broker_scopes: BrokerScopesConfig,
+    instance_document: InstanceDocument | None,
     construction: ConstructionConfig,
     environment_label: str,
     continuity_id: str,
@@ -814,31 +816,26 @@ def _build_context_resolver(
     (3)), wired with this environment's transport nature / credential-route
     inventory / authorized coordinates.
 
-    G-4 CLOSED (TOS Phase 4 plan §2 decision 2,
-    ``docs/plans/2026-09-09-tos-phase4-scopes-and-verify-realization-plan.md``):
-    the transport's declared nature and the credential-route inventory used
-    to carry three ``f"synthetic-paper-{environment_label}"`` literals
-    (kernel round #1 §7.2 survey) — they are now STRUCTURALLY DERIVED from
-    ``broker_scopes.active_scope`` via
-    :func:`~tos_runtime.brokercap.transport_nature` /
-    :func:`~tos_runtime.brokercap.credential_route_inventory`, so the
-    transport's identity can never drift from the configured scope table.
-    The old R2 boot refusal (a literal comparison,
-    ``_refuse_active_principal_matching_transport_identity``) is likewise
-    generalized to :func:`~tos_runtime.brokercap.refuse_principal_collision`
-    — ANY configured scope's principal, not just one hardcoded transport
-    literal.
+    G-4 CLOSED (plan §2 decision 2): transport nature / credential-route
+    inventory are STRUCTURALLY DERIVED from ``broker_scopes.active_scope``
+    (:func:`~tos_runtime.brokercap.transport_nature` /
+    :func:`~tos_runtime.brokercap.credential_route_inventory`), never the
+    three old ``f"synthetic-paper-{environment_label}"`` literals; the old
+    R2 literal-comparison boot refusal is likewise generalized to
+    :func:`~tos_runtime.brokercap.refuse_principal_collision` over EVERY
+    configured scope's principal.
+
+    ``instance_document`` is loaded EXACTLY ONCE per boot, by
+    :func:`_resolve_strategies_and_attested_inputs`, and threaded through
+    :class:`_BootResult` (finding F9 — no second re-load here).
 
     Raises:
         BrokerScopeConfigError: ``active_principal`` collides with a scope's
             own principal (generalized R2), or a config/kernel mismatch.
-        BrokerInstanceConfigError: the active scope's INSTANCE fails to load
-            (plan §2 decision 4 boot refusal, never swallowed).
     """
     refuse_principal_collision(
         broker_scopes, active_principal=egress_coordinates.active_principal
     )
-    instance_document = load_active_instance_document(broker_scopes)
     return ComposeContextResolver(
         construction_stage=construction_stages.construction_stage,
         proof_stage=construction_stages.proof_stage,
@@ -1029,24 +1026,23 @@ def _resolve_strategies_and_attested_inputs(
     risk: _RiskAndCurrentness,
     registry: StrategyRegistry | None,
     allow_no_strategies: bool,
-) -> tuple[EgressCoordinatesConfig, BrokerScopesConfig, ResolvedStrategyRegistry]:
+) -> tuple[
+    EgressCoordinatesConfig,
+    BrokerScopesConfig,
+    ResolvedStrategyRegistry,
+    InstanceDocument | None,
+]:
     """Load ``egress_coordinates.yaml`` + ``broker_scopes.yaml`` (TOS Phase 4
-    plan §2 decisions 1-2, G-4), resolve the ONE strategy source
-    (TOS Phase 3 슬라이스 D-R ``[D-R-2]``, plan §1.2 —
-    :func:`~tos_runtime.strategy.resolve.resolve_strategy_registry`), and
-    record ``OPERATOR_ATTESTED_INPUTS`` (folding the resolved strategy file
-    digests AND the ``strategy_bindings.yaml`` digest, if any, into the
-    SAME record as the other attested coordinates — ``[D-R-3c]``) — split
-    out of :func:`_boot_services` purely for the size budget; no
-    behavioural difference from having this inline there.
+    plan §2 decisions 1-2, G-4), resolve the ONE strategy source (TOS Phase
+    3 슬라이스 D-R ``[D-R-2]``), load the active scope's INSTANCE document
+    EXACTLY ONCE (finding F9 — threaded through :class:`_BootResult`, no
+    second re-load), and records ``OPERATOR_ATTESTED_INPUTS`` — split out
+    of :func:`_boot_services` for the size budget.
 
-    ``allow_no_strategies`` is threaded straight through from
-    :func:`~tos_runtime.compose.root.compose_paper_runtime` — see
-    :func:`~tos_runtime.strategy.resolve.resolve_strategy_registry`'s own
-    docstring (2026-09-09 independent-review finding #8): ``False`` (the
-    default) now REFUSES when neither a strategies directory nor an
-    injected registry is supplied, where an earlier revision silently
-    fell back to an empty registry."""
+    ``allow_no_strategies`` (finding #8): ``False`` (the default) REFUSES
+    when neither a strategies directory nor an injected registry is
+    supplied — see :func:`~tos_runtime.strategy.resolve.
+    resolve_strategy_registry`'s own docstring."""
     egress_coordinates = load_egress_coordinates(
         config_dir / _EGRESS_COORDINATES_CONFIG_NAME,
         environment_label=environment_label,
@@ -1055,6 +1051,7 @@ def _resolve_strategies_and_attested_inputs(
         config_dir / _BROKER_SCOPES_CONFIG_NAME,
         environment_label=environment_label,
     )
+    instance_document = load_active_instance_document(broker_scopes)
     resolved_strategies = resolve_strategy_registry(
         config_dir,
         injected_registry=registry,
@@ -1073,9 +1070,9 @@ def _resolve_strategies_and_attested_inputs(
         resolved_strategies.loaded,
         resolved_strategies.loaded_bindings,
         broker_scopes=broker_scopes,
-        instance_document=load_active_instance_document(broker_scopes),
+        instance_document=instance_document,
     )
-    return egress_coordinates, broker_scopes, resolved_strategies
+    return egress_coordinates, broker_scopes, resolved_strategies, instance_document
 
 
 @dataclass
@@ -1094,6 +1091,8 @@ class _BootResult:
     release_admitted: bool
     egress_coordinates: EgressCoordinatesConfig
     broker_scopes: BrokerScopesConfig
+    #: Loaded EXACTLY ONCE (finding F9) — never re-loaded downstream.
+    instance_document: InstanceDocument | None
     registry: StrategyRegistry
 
 
@@ -1150,7 +1149,7 @@ def _boot_services(
         infra.time_service,
         rcl.authority_epoch_service,
     )
-    egress_coordinates, broker_scopes, resolved_strategies = (
+    egress_coordinates, broker_scopes, resolved_strategies, instance_document = (
         _resolve_strategies_and_attested_inputs(
             config_dir,
             environment_label,
@@ -1172,6 +1171,7 @@ def _boot_services(
         release_admitted=release_admitted,
         egress_coordinates=egress_coordinates,
         broker_scopes=broker_scopes,
+        instance_document=instance_document,
         registry=resolved_strategies.registry,
     )
 

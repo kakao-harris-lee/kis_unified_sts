@@ -229,7 +229,9 @@ def test_mock_vts_capability_admissible_prohibited_regardless_of_version_current
         mock_vts_document.profile,
         "ORDER_SEND",
         required,
-        version_current=instance_version_current(mock_vts_document),
+        version_current=instance_version_current(
+            mock_vts_document, degraded_since_authorization=None
+        ),
     )
     assert verdict_natural is Admissibility.PROHIBITED
 
@@ -244,8 +246,55 @@ def test_mock_vts_capability_admissible_prohibited_regardless_of_version_current
 def test_mock_vts_instance_version_current_is_false(
     mock_vts_document: InstanceDocument,
 ) -> None:
-    """DRAFT + approvers=[] => no approved active version => not current."""
-    assert instance_version_current(mock_vts_document) is False
+    """DRAFT + approvers=[] => no approved active version => not current,
+    regardless of ``degraded_since_authorization`` (independent-review
+    finding F5): with no approved version at all, the predicate's
+    ``active_version is None`` branch already denies before the
+    degradation gate is even reached."""
+    assert (
+        instance_version_current(mock_vts_document, degraded_since_authorization=None)
+        is False
+    )
+    assert (
+        instance_version_current(mock_vts_document, degraded_since_authorization=False)
+        is False
+    )
+
+
+def test_instance_version_current_degraded_flag_is_load_bearing(
+    tmp_path: Path,
+) -> None:
+    """Independent-review finding F5 mutation M6: before this fix,
+    ``degraded_since_authorization`` was hardcoded ``None`` inside
+    ``instance_version_current``, making the kernel predicate's
+    degradation gate unconditionally deny — the approvers gate was
+    therefore dead code (M6: 0 tests ever went red for it). With a
+    document that DOES carry an approved version (non-empty ``approvers``,
+    so ``active_version == presented_version``), the degraded flag is now
+    the ONLY thing separating ``True`` from ``False`` — proving it is
+    genuinely consumed, not a decorative parameter."""
+    text = _minimal_document_yaml(environment="ENV_APPROVED", artifact_id="APPROVED-1")
+    text = text.replace(
+        "approvers: []\n  profile_version: 0.0.1",
+        "approvers: [ops-approver-1]\n  profile_version: 0.0.1",
+    )
+    path = tmp_path / "approved.yaml"
+    path.write_text(text, encoding="utf-8")
+    documents = load_instance_documents(path)
+    assert len(documents) == 1
+    document = documents[0]
+    assert document.approvers == ("ops-approver-1",)
+    assert document.status != "EXPIRED"
+
+    assert (
+        instance_version_current(document, degraded_since_authorization=False) is True
+    )
+    assert (
+        instance_version_current(document, degraded_since_authorization=None) is False
+    )
+    assert (
+        instance_version_current(document, degraded_since_authorization=True) is False
+    )
 
 
 def test_mock_vts_select_document_by_environment(

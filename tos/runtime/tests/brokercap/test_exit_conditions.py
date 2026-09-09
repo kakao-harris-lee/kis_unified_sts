@@ -568,3 +568,46 @@ class TestMutationEvidenceMC:
 
         with pytest.raises(AssertionError):
             assert mutated.account_instrument_action_allowed is False
+
+
+# ===========================================================================
+# F9 — the INSTANCE file is parsed AT MOST ONCE per boot
+# ===========================================================================
+
+
+class TestF9SingleInstanceLoadPerBoot:
+    """Independent-review finding F9: ``_wiring.py`` used to load the active
+    scope's INSTANCE document TWICE per boot — once in
+    ``_resolve_strategies_and_attested_inputs`` (for the boot-integrity
+    record) and again in ``_build_context_resolver`` (for the gateway
+    context) — re-parsing the same 4,789-line file for no reason. The fix
+    loads it exactly once and threads the SAME ``InstanceDocument`` through
+    ``_BootResult`` to both consumers."""
+
+    def test_load_instance_document_called_at_most_once_per_boot(
+        self,
+        config_dir: Path,
+        data_dir: Path,
+        custody_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Activates MOCK_STOCK_ORDER, the one scope whose `instance` block
+        # actually causes the real INSTANCE file to be parsed at all (the
+        # default fixture's SYNTHETIC_FUTURES_ORDER scope has no `instance`
+        # block, so it would never exercise either call site).
+        _ec5_config_dir(config_dir)
+        calls: list[int] = []
+        original = derive_module.load_instance_document
+
+        def _counting(*args: object, **kwargs: object) -> object:
+            calls.append(1)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(derive_module, "load_instance_document", _counting)
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+
+        assert len(calls) == 1
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()

@@ -506,6 +506,7 @@ exceptions:
     broker_scopes.yaml 을 부팅 결선에 넣으며 ``_build_context_resolver`` 와
     ``_finalize`` 호출부에 ``broker_scopes=boot.broker_scopes,`` 각 1줄 추가로
     100→102. 같은 착지로 ``_wiring.py`` 는 1205→1189(리터럴 3곳 + R2 헬퍼
-    제거 · 감소 재등재) · ``_finalize`` 101→103(scopes 매개변수 + ComposedRuntime
+    제거 · 감소 재등재; 웨이브 2 레인 D 의 INSTANCE 로드 결선으로 1197 재등재 —
+    독립 리뷰 F7 정정) · ``_finalize`` 101→103(scopes 매개변수 + ComposedRuntime
     인자 1줄). root.py 는 정본 결선 순서 문서라 호출 시퀀스 재구성은 하지 않음.
     목록 끝에 append(공유 워크트리 관례).

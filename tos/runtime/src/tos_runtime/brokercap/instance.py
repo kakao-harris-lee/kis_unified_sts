@@ -626,13 +626,20 @@ def select_document(
     return matches[0]
 
 
-def instance_version_current(document: InstanceDocument) -> bool:
+def instance_version_current(
+    document: InstanceDocument, *, degraded_since_authorization: bool | None
+) -> bool:
     """Whether ``document``'s profile version is current (plan §2 decision 3).
 
     The loader supplies genuine document data as the kernel
     :func:`~tos.brokercap.predicates.profile_version_current` predicate's
     inputs; the predicate is what judges "current" — this function makes no
-    independent approval judgment of its own:
+    independent approval judgment of its own. The predicate's four kernel
+    inputs, and which value/field feeds each (independent-review finding
+    F5 — ``degraded_since_authorization`` used to be hardcoded ``None``,
+    making the predicate's degradation gate unconditionally deny regardless
+    of caller input; it is now a genuine, caller-supplied fact so the gate
+    is load-bearing):
 
     * ``active_version`` — the *approved* active version. An approval act is
       what makes a version "active" (ADR-002-004 §7.2), so with an empty
@@ -645,12 +652,20 @@ def instance_version_current(document: InstanceDocument) -> bool:
       profile_version`` string.
     * ``not_expired`` — ``document.status != "EXPIRED"``, the only expiry
       signal this instance layer carries.
-    * ``degraded_since_authorization`` — ``None`` (no drift-observation data
-      is carried by this instance layer; unknown fails closed at the
-      predicate).
+    * ``degraded_since_authorization`` — the CALLER-SUPPLIED
+      ``degraded_since_authorization`` argument, passed straight through.
+      The caller (:func:`~tos_runtime.brokercap.derive.derive_item6_item12`)
+      feeds this from the active scope's own
+      :attr:`~tos_runtime.brokercap.scopes.ScopeInstanceBinding.
+      degraded_since_authorization` config field — an operator attestation,
+      not a value this function invents. ``None`` (unknown) fails closed at
+      the predicate, exactly like every other unknown here.
 
     Args:
         document: The instance document under test.
+        degraded_since_authorization: Whether the capability has degraded
+            since its authorization act (``None`` => unknown => the
+            predicate denies).
 
     Returns:
         ``True`` iff the kernel predicate judges the version current.
@@ -666,5 +681,5 @@ def instance_version_current(document: InstanceDocument) -> bool:
         active_version=active,
         presented_version=presented,
         not_expired=not_expired,
-        degraded_since_authorization=None,
+        degraded_since_authorization=degraded_since_authorization,
     )

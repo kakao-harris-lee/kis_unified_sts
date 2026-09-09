@@ -121,8 +121,13 @@ def derive_item6_item12(
 
     Args:
         scope: The scope under judgement (typically ``config.active_scope``).
-        config: The owning scope table, for its injected ``environment_binding``/
-            ``asset_binding`` maps.
+        config: The owning scope table — kept for call-site/API stability
+            (every caller in this codebase passes it); item 6's binding
+            check now reads the SCOPE's own resolved ``environment_binding``/
+            ``asset_binding`` (independent-review finding F4 — a scope with
+            its own override block, e.g. the SYNTHETIC scope, gets a map
+            that can actually discriminate its own axes instead of the
+            config-wide default every other scope also shares).
         instance: The bound INSTANCE document (``None`` for a scope with no
             ``instance`` block, or one whose document could not be loaded
             upstream — either way, fails item 12 closed for a broker-reaching
@@ -135,8 +140,8 @@ def derive_item6_item12(
         endpoint_binding_from_profile_ok(
             t,
             scope.profile_key,
-            environment_binding=config.environment_binding,
-            asset_binding=config.asset_binding,
+            environment_binding=scope.environment_binding,
+            asset_binding=scope.asset_binding,
         )
         for t in scope.capability_tuples
     )
@@ -152,8 +157,17 @@ def derive_item6_item12(
             "generation exists to be stale)"
         )
     else:
+        degraded_since_authorization = (
+            scope.instance.degraded_since_authorization
+            if scope.instance is not None
+            else None
+        )
         version_current = (
-            False if instance is None else instance_version_current(instance)
+            False
+            if instance is None
+            else instance_version_current(
+                instance, degraded_since_authorization=degraded_since_authorization
+            )
         )
         item12_current = version_current is True
         reason = (

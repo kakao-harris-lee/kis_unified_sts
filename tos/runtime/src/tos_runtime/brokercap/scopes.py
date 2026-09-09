@@ -183,6 +183,15 @@ class ScopeInstanceBinding:
     environment facts)."""
 
     environment: str
+    #: Operator-attested drift signal (independent-review finding F5) — the
+    #: SAME discipline ``profile_evidence_ok`` already applies: ``None`` is a
+    #: legitimate, permanent "unknown until an authorization act exists"
+    #: value, threaded straight into the kernel
+    #: :func:`~tos.brokercap.predicates.profile_version_current` predicate's
+    #: ``degraded_since_authorization`` argument, which denies on anything
+    #: but ``False`` — never invented, never defaulted to a value that would
+    #: make the predicate's degradation gate unconditionally pass or fail.
+    degraded_since_authorization: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -207,6 +216,27 @@ class BrokerScope:
     allowed_methods: tuple[str, ...]
     admissibility: Admissibility
     provenance: tuple[CapabilityProvenance, ...]
+    #: Independent-review finding F1 — whether this scope's own principal is
+    #: inside the current workload's egress boundary (ADR-002-013 §8
+    #: "non-transferable workload identity" / "no authority outside the
+    #: committed set"). Required, never a hardcoded literal — feeds
+    #: :func:`credential_route_inventory`'s per-entry
+    #: ``CredentialRouteInventoryEntry.inside_boundary``, which the kernel's
+    #: :func:`~tos.egress.predicates.credential_route_authority_disjoint`
+    #: treats as the ONLY thing separating "this principal's usable
+    #: credential and broker route are fine" from "an outside/unknown
+    #: principal holds both" (a bypass candidate).
+    inside_boundary: bool
+    #: Independent-review finding F4 — this scope's OWN resolved
+    #: (never-``None``) environment-axis binding table, used by
+    #: :func:`~tos_runtime.brokercap.derive.derive_item6_item12` instead of
+    #: the config-wide default when the scope's YAML declares its own
+    #: ``environment_binding`` override block; otherwise the config-wide
+    #: default, copied through unchanged.
+    environment_binding: Mapping[BrokerEnvironment, str]
+    #: Independent-review finding F4 — the asset-axis sibling of
+    #: ``environment_binding`` (same override-or-default resolution).
+    asset_binding: Mapping[AssetScope, str]
     #: The INSTANCE document environment this scope binds to, or ``None``.
     instance: ScopeInstanceBinding | None = None
     #: The kernel required-capability set for this scope's action, or ``None``.
@@ -359,7 +389,23 @@ def _build_scope_instance(
             f"{context}: 'instance.environment' is still null (named-TBD) or "
             "not a string — refusing to load"
         )
-    return ScopeInstanceBinding(environment=environment)
+    # degraded_since_authorization is the ONE deliberate exception to
+    # named-TBD for this block (finding F5, mirrors profile_evidence_ok):
+    # `null` is a legitimate, permanent "no authorization act exists yet"
+    # value, passed straight through — never invented, never silently
+    # coerced to a value that would make the kernel's degradation gate
+    # unconditionally pass.
+    degraded_raw = (
+        raw.get("degraded_since_authorization") if isinstance(raw, Mapping) else None
+    )
+    if degraded_raw is not None and not isinstance(degraded_raw, bool):
+        raise BrokerScopeConfigError(
+            f"{context}: 'instance.degraded_since_authorization' must be a "
+            f"boolean or null, got {degraded_raw!r}"
+        )
+    return ScopeInstanceBinding(
+        environment=environment, degraded_since_authorization=degraded_raw
+    )
 
 
 def _build_required_capability_set(
@@ -401,10 +447,52 @@ def _build_required_capability_set(
         ) from exc
 
 
-def _build_scope(raw: Mapping[str, Any], *, environment_label: str) -> BrokerScope:
-    name = _require(raw.get("name"), "name", "scope")
-    context = f"scope {name!r}"
+def _resolve_scope_binding(
+    raw: Mapping[str, Any],
+    field: str,
+    member_type: type,
+    default: Mapping[Any, str],
+    *,
+    scope_name: str,
+    path: Path,
+) -> Mapping[Any, str]:
+    """Resolve one of a scope's OPTIONAL ``environment_binding``/
+    ``asset_binding`` override blocks (independent-review finding F4) — the
+    scope's own block when present (validated the SAME way as the
+    config-wide table), else ``default`` unchanged. This is how
+    :func:`~tos_runtime.brokercap.derive.derive_item6_item12` gets a map
+    that can actually discriminate a scope whose asset/environment axis
+    would otherwise collide with every other scope's under the shared
+    config-wide table (e.g. a SYNTHETIC scope sharing the KIS INSTANCE's
+    single stock+futures instrument-class string)."""
+    override_raw = raw.get(field)
+    if override_raw is None:
+        return default
+    return _load_binding(
+        override_raw, f"scope {scope_name!r}.{field}", member_type, path
+    )
 
+
+@dataclass(frozen=True)
+class _ScopeIdentity:
+    """The identity-bearing fields :func:`_build_scope_identity` parses —
+    split out of :func:`_build_scope` purely for the function size budget
+    (independent-review findings F1/F6 pushed ``_build_scope`` over the
+    100-line function cap); no behavioural difference from having this
+    inline."""
+
+    principal_class: PrincipalClass
+    principal: str
+    inside_boundary: bool
+    endpoint_class: EndpointClass
+
+
+def _build_scope_identity(
+    raw: Mapping[str, Any], *, environment_label: str, context: str
+) -> _ScopeIdentity:
+    """Parse ``principal_class``/``principal``/``inside_boundary``/
+    ``endpoint_class`` — split out of :func:`_build_scope` purely for the
+    function size budget."""
     principal_class_raw = _require(
         raw.get("principal_class"), "principal_class", context
     )
@@ -416,10 +504,20 @@ def _build_scope(raw: Mapping[str, Any], *, environment_label: str) -> BrokerSco
         ) from exc
 
     principal_raw = _require(raw.get("principal"), "principal", context)
+    if not isinstance(principal_raw, str):
+        raise BrokerScopeConfigError(
+            f"{context}: 'principal' must be a string, got {principal_raw!r}"
+        )
     principal = principal_raw.replace(_ENVIRONMENT_LABEL_TOKEN, environment_label)
     if not principal:
         raise BrokerScopeConfigError(
             f"{context}: principal resolves to an empty string"
+        )
+
+    inside_boundary = _require(raw.get("inside_boundary"), "inside_boundary", context)
+    if not isinstance(inside_boundary, bool):
+        raise BrokerScopeConfigError(
+            f"{context}: 'inside_boundary' must be a boolean, got {inside_boundary!r}"
         )
 
     endpoint_class_raw = _require(raw.get("endpoint_class"), "endpoint_class", context)
@@ -429,6 +527,29 @@ def _build_scope(raw: Mapping[str, Any], *, environment_label: str) -> BrokerSco
         raise BrokerScopeConfigError(
             f"{context}: unknown endpoint_class {endpoint_class_raw!r}"
         ) from exc
+
+    return _ScopeIdentity(
+        principal_class=principal_class,
+        principal=principal,
+        inside_boundary=inside_boundary,
+        endpoint_class=endpoint_class,
+    )
+
+
+def _build_scope(
+    raw: Mapping[str, Any],
+    *,
+    environment_label: str,
+    default_environment_binding: Mapping[BrokerEnvironment, str],
+    default_asset_binding: Mapping[AssetScope, str],
+    path: Path,
+) -> BrokerScope:
+    name = _require(raw.get("name"), "name", "scope")
+    context = f"scope {name!r}"
+
+    identity = _build_scope_identity(
+        raw, environment_label=environment_label, context=context
+    )
 
     allowed_methods_raw = _require(
         raw.get("allowed_methods"), "allowed_methods", context
@@ -466,17 +587,36 @@ def _build_scope(raw: Mapping[str, Any], *, environment_label: str) -> BrokerSco
     required_capability_set = _build_required_capability_set(
         raw.get("required_capability_set"), name
     )
+    environment_binding = _resolve_scope_binding(
+        raw,
+        "environment_binding",
+        BrokerEnvironment,
+        default_environment_binding,
+        scope_name=name,
+        path=path,
+    )
+    asset_binding = _resolve_scope_binding(
+        raw,
+        "asset_binding",
+        AssetScope,
+        default_asset_binding,
+        scope_name=name,
+        path=path,
+    )
 
     return BrokerScope(
         name=name,
         capability_tuples=capability_tuples,
         profile_key=profile_key,
-        principal_class=principal_class,
-        principal=principal,
-        endpoint_class=endpoint_class,
+        principal_class=identity.principal_class,
+        principal=identity.principal,
+        endpoint_class=identity.endpoint_class,
         allowed_methods=allowed_methods,
         admissibility=admissibility,
         provenance=provenance,
+        inside_boundary=identity.inside_boundary,
+        environment_binding=environment_binding,
+        asset_binding=asset_binding,
         instance=instance,
         required_capability_set=required_capability_set,
     )
@@ -531,16 +671,18 @@ def _resolve_instance_path(
 
 
 def _check_principal_separation(scopes: tuple[BrokerScope, ...], path: Path) -> None:
-    """Refuse when two scopes of DIFFERENT ``principal_class`` share a
-    ``principal`` (plan §2 decision 1) — the kernel
+    """Refuse when two DISTINCT scopes share a ``principal`` (plan §2
+    decision 1; independent-review finding F2 generalizes this from
+    "different classes only" to EVERY pair, including two scopes of the
+    SAME ``principal_class``). The kernel
     :func:`~tos.brokercap.routing.credential_principal_separation_ok`
-    predicate for the READ/ORDER pair specifically, and the same equality
-    rule generalized to any other differing-class pair (including
-    SYNTHETIC)."""
+    predicate remains the documented anchor for the READ/ORDER pair
+    specifically — the one invariant it was written to check; every other
+    pair (same-class included) is refused by plain strict equality, so a
+    config author cannot recreate a shared-principal bypass merely by
+    giving two scopes matching classes."""
     for i, left in enumerate(scopes):
         for right in scopes[i + 1 :]:
-            if left.principal_class is right.principal_class:
-                continue
             classes = {left.principal_class, right.principal_class}
             if classes == {PrincipalClass.READ, PrincipalClass.ORDER}:
                 if credential_principal_separation_ok(left.principal, right.principal):
@@ -549,9 +691,30 @@ def _check_principal_separation(scopes: tuple[BrokerScope, ...], path: Path) -> 
                 continue
             raise BrokerScopeConfigError(
                 f"{path}: scopes {left.name!r} and {right.name!r} share principal "
-                f"{left.principal!r} across different principal classes "
-                f"({left.principal_class} / {right.principal_class}) — refusing to load"
+                f"{left.principal!r} (principal classes {left.principal_class} / "
+                f"{right.principal_class}) — refusing to load"
             )
+
+
+def _check_no_duplicate_tuples(scopes: tuple[BrokerScope, ...], path: Path) -> None:
+    """Refuse when the SAME capability tuple appears in two different
+    scopes (independent-review finding F3). This is what makes
+    :func:`resolve_scope`'s single match structurally unique — without it, a
+    duplicate tuple listed in two scopes would resolve by YAML list order,
+    letting an earlier (evidenced) scope's verdict silently promote a
+    request a later scope would deny."""
+    seen: list[tuple[CapabilityTuple, str]] = []
+    for scope in scopes:
+        for candidate in scope.capability_tuples:
+            for seen_tuple, seen_scope_name in seen:
+                if seen_tuple == candidate:
+                    raise BrokerScopeConfigError(
+                        f"{path}: capability tuple {candidate!r} appears in both "
+                        f"scope {seen_scope_name!r} and scope {scope.name!r} — "
+                        "duplicate tuples across scopes are refused so "
+                        "resolve_scope's single match stays structurally unique"
+                    )
+            seen.append((candidate, scope.name))
 
 
 def _load_binding(
@@ -564,6 +727,10 @@ def _load_binding(
         if value is None:
             raise BrokerScopeConfigError(
                 f"{path}: {field}[{key!r}] is still null (named-TBD) — refusing to load"
+            )
+        if not isinstance(value, str):
+            raise BrokerScopeConfigError(
+                f"{path}: {field}[{key!r}] must be a string, got {value!r}"
             )
         try:
             binding[member_type(key)] = value
@@ -611,11 +778,28 @@ def load_broker_scopes(path: Path, *, environment_label: str) -> BrokerScopesCon
             f"broker-scopes config file must be a top-level mapping: {path}"
         )
 
+    # Global (config-wide) binding tables load FIRST — every scope's
+    # per-scope override (finding F4) resolves against these as its default,
+    # so scope construction below needs them already built.
+    environment_binding = _load_binding(
+        raw.get("environment_binding"), "environment_binding", BrokerEnvironment, path
+    )
+    asset_binding = _load_binding(
+        raw.get("asset_binding"), "asset_binding", AssetScope, path
+    )
+
     scopes_raw = raw.get("scopes")
     if not isinstance(scopes_raw, list) or not scopes_raw:
         raise BrokerScopeConfigError(f"{path}: 'scopes' must be a non-empty list")
     scopes = tuple(
-        _build_scope(s, environment_label=environment_label) for s in scopes_raw
+        _build_scope(
+            s,
+            environment_label=environment_label,
+            default_environment_binding=environment_binding,
+            default_asset_binding=asset_binding,
+            path=path,
+        )
+        for s in scopes_raw
     )
 
     by_name: dict[str, BrokerScope] = {}
@@ -625,6 +809,7 @@ def load_broker_scopes(path: Path, *, environment_label: str) -> BrokerScopesCon
         by_name[scope.name] = scope
 
     _check_principal_separation(scopes, path)
+    _check_no_duplicate_tuples(scopes, path)
 
     active_scope_name = raw.get("active_scope")
     if active_scope_name is None:
@@ -642,12 +827,6 @@ def load_broker_scopes(path: Path, *, environment_label: str) -> BrokerScopesCon
             "boot with a prohibited active scope"
         )
 
-    environment_binding = _load_binding(
-        raw.get("environment_binding"), "environment_binding", BrokerEnvironment, path
-    )
-    asset_binding = _load_binding(
-        raw.get("asset_binding"), "asset_binding", AssetScope, path
-    )
     _check_instance_bindings(scopes, environment_binding, path)
     instance_path = _resolve_instance_path(
         raw.get("instance_path"), config_path=path, scopes=scopes
@@ -679,6 +858,12 @@ def resolve_scope(
     scope's tuple. A requested tuple present in no scope is
     ``UNSUPPORTED_DENY`` with ``scope=None`` (never rewritten to something
     an existing scope does admit).
+
+    Uniqueness across scopes is guaranteed by the loader
+    (:func:`_check_no_duplicate_tuples`, independent-review finding F3) — no
+    two scopes can carry the same tuple, so the first (and only) match this
+    loop finds is, structurally, the ONLY match; this function does not
+    itself need to guard against or pick among duplicates.
     """
     for scope in config.scopes:
         if requested not in scope.capability_tuples:
@@ -738,17 +923,24 @@ def credential_route_inventory(
 
     One entry per configured scope's own ``principal`` (``usable_credential``/
     ``broker_route`` are ``True`` iff the scope's ``endpoint_class`` is
-    ``BROKER_GET``/``BROKER_ORDER``), PLUS the gateway's own
-    ``active_principal`` entry — kept byte-for-byte identical to what
-    ``_wiring.py`` built for it before (``usable_credential=False``,
-    ``broker_route=False``, ``inside_boundary=True``).
+    ``BROKER_GET``/``BROKER_ORDER``; ``inside_boundary`` is the scope's OWN
+    ``inside_boundary`` config field, independent-review finding F1 — never
+    a hardcoded literal, so a scope declared ``inside_boundary: false`` (an
+    externally-reachable principal outside this workload's committed set,
+    ADR-002-013 §8) is actually visible to the kernel's
+    :func:`~tos.egress.predicates.credential_route_authority_disjoint`
+    boundary check), PLUS the gateway's own ``active_principal`` entry —
+    kept byte-for-byte identical to what ``_wiring.py`` built for it before
+    (``usable_credential=False``, ``broker_route=False``,
+    ``inside_boundary=True`` — the gateway's own workload identity is, by
+    definition, always inside its own boundary).
     """
     entries = tuple(
         CredentialRouteInventoryEntry(
             principal=scope.principal,
             usable_credential=scope.endpoint_class in _BROKER_REACHING_ENDPOINT_CLASSES,
             broker_route=scope.endpoint_class in _BROKER_REACHING_ENDPOINT_CLASSES,
-            inside_boundary=True,
+            inside_boundary=scope.inside_boundary,
         )
         for scope in config.scopes
     )
