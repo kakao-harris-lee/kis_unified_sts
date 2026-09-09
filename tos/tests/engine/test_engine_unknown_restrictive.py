@@ -225,7 +225,10 @@ def test_a_duplicate_result_is_recorded_as_duplicate_not_reapplied() -> None:
     assert second.halt_reason is HaltReason.RESULT_UNMATCHED
     assert second.result_disposition is ResultDisposition.DUPLICATE
     # the duplicate never re-touches the projection
-    assert core.ledger.outstanding(instrument_key()).model_dump() == after_first.model_dump()
+    assert (
+        core.ledger.outstanding(instrument_key()).model_dump()
+        == after_first.model_dump()
+    )
 
 
 def test_a_late_fill_after_timeout_on_the_same_attempt_is_applied() -> None:
@@ -236,7 +239,9 @@ def test_a_late_fill_after_timeout_on_the_same_attempt_is_applied() -> None:
     never released (capacity release is the RCL's alone).
     """
     core, _, _, attempt_id = _sent_core()
-    timeout_result = core.handle(_egress_event(EgressResultKind.TIMEOUT, attempt_id, sequence=2))
+    timeout_result = core.handle(
+        _egress_event(EgressResultKind.TIMEOUT, attempt_id, sequence=2)
+    )
     assert timeout_result.halt_reason is None
     assert timeout_result.result_disposition is ResultDisposition.APPLIED
     assert core.ledger.outstanding(instrument_key()).capacity_state is (
@@ -266,10 +271,14 @@ def test_the_four_dispositions_are_exhaustive_and_distinguishable() -> None:
     core, _, _, attempt_id = _sent_core()
 
     orphan_core, _ = build_core(transmit=RecordingTransmit())
-    orphan = orphan_core.handle(_egress_event(EgressResultKind.ACK, "attempt-x", sequence=1))
+    orphan = orphan_core.handle(
+        _egress_event(EgressResultKind.ACK, "attempt-x", sequence=1)
+    )
     assert orphan.result_disposition is ResultDisposition.ORPHAN_NO_RESERVATION
 
-    mismatched = core.handle(_egress_event(EgressResultKind.ACK, "attempt-someone-else", sequence=2))
+    mismatched = core.handle(
+        _egress_event(EgressResultKind.ACK, "attempt-someone-else", sequence=2)
+    )
     assert mismatched.result_disposition is ResultDisposition.MISMATCHED_ATTEMPT
 
     applied = core.handle(_egress_event(EgressResultKind.ACK, attempt_id, sequence=3))

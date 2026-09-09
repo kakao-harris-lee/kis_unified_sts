@@ -67,5 +67,9 @@ def test_the_canary_also_holds_for_egress_result_events() -> None:
     same_b = _egress("attempt-1")
     different = _egress("attempt-2")
 
-    assert event_identity(same_a, scheme=SCHEME) == event_identity(same_b, scheme=SCHEME)
-    assert event_identity(same_a, scheme=SCHEME) != event_identity(different, scheme=SCHEME)
+    assert event_identity(same_a, scheme=SCHEME) == event_identity(
+        same_b, scheme=SCHEME
+    )
+    assert event_identity(same_a, scheme=SCHEME) != event_identity(
+        different, scheme=SCHEME
+    )

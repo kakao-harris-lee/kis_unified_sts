@@ -335,7 +335,9 @@ def event_identity(event: EngineEvent, *, scheme: CanonicalizationScheme) -> str
     Returns:
         The derived, content-addressed event identity.
     """
-    return derive_id(EVENT_ID_PREFIX, scheme.compute_digest(event.model_dump(mode="json")))
+    return derive_id(
+        EVENT_ID_PREFIX, scheme.compute_digest(event.model_dump(mode="json"))
+    )
 
 
 class StageVerdict(FrozenModel):
