@@ -43,7 +43,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 from tos.brokeradapter import SyntheticFillPolicy, SyntheticPaperTransport
@@ -70,7 +70,7 @@ from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.orthostate_projection import OrthostateProjector
 from tos_runtime.engine.replay import ReplayVerdict
-from tos_runtime.engine.replay_stage import RecordedStage
+from tos_runtime.engine.replay_stage import EventCorrelatingCore, RecordedStage
 from tos_runtime.engine.replay_transmit import RecordedTransmit, any_recorded_hand_off
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.sinks import (
@@ -285,7 +285,7 @@ def verify_replay_or_halt(
 
     def _replay_core_factory() -> EngineCore:
         recorded_stage = RecordedStage(evidence_store)
-        return EngineCore(
+        core = EngineCore(
             registry=registry,
             stages=dict.fromkeys(stages, recorded_stage),
             configuration=configuration,
@@ -304,6 +304,20 @@ def verify_replay_or_halt(
             ),
             sink=NullEvidenceSink(),
             scheme=scheme,
+        )
+        # CR5-5, 2026-09-09: RecordedStage now correlates by event_id (kernel [KW3-EV]) rather
+        # than encounter order — it must be told which event is about to be handled before each
+        # call. EventCorrelatingCore is the seam (see its own docstring): it computes event_id
+        # and calls recorded_stage.set_current_event_id BEFORE delegating to the real core.
+        # verify_engine_replay_or_halt (tos_runtime.compose._boot_integrity) only ever calls
+        # .handle(event) on whatever this factory returns — the cast is a structural, not
+        # nominal, substitution, justified by that single-method usage (EventCorrelatingCore's
+        # own docstring).
+        return cast(
+            EngineCore,
+            EventCorrelatingCore(
+                core=core, recorded_stage=recorded_stage, scheme=scheme
+            ),
         )
 
     return verify_engine_replay_or_halt(
