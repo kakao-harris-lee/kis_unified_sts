@@ -166,6 +166,12 @@ services:
       # window is computed correctly. In UTC the 09:00 open resolves to 18:00 KST
       # and the loop "waits for market open" all session (CLAUDE.md §5).
       TZ: "Asia/Seoul"
+      # PRODUCER-side stream name. One knob, ${FUTURES_TICK_STREAM}, drives both
+      # halves: the producers publish to MONITOR_FUTURES_TICK_STREAM and the
+      # consumers read FUTURES_TICK_STREAM, so naming them from the same
+      # expression is what keeps them on one stream. Renaming only one side has
+      # no error path — the consumer just reads an empty stream forever.
+      MONITOR_FUTURES_TICK_STREAM: "${FUTURES_TICK_STREAM:-raw_data}"
       TRADING_MODE: "${TRADING_MODE:-paper}"
       TRADING_ASSET_CLASS: "futures"
       TRADING_STRATEGY: "${FUTURES_TRADING_STRATEGY:-}"
@@ -324,6 +330,12 @@ services:
       FUTURES_STRATEGY_SYMBOL: "${FUTURES_STRATEGY_SYMBOL:-}"
       INGEST_ASSET: "futures"
       INGEST_REFRESH_SECONDS: "${FUTURES_INGEST_REFRESH_SECONDS:-3600}"
+      # PRODUCER-side stream name. One knob, ${FUTURES_TICK_STREAM}, drives both
+      # halves: the producers publish to MONITOR_FUTURES_TICK_STREAM and the
+      # consumers read FUTURES_TICK_STREAM, so naming them from the same
+      # expression is what keeps them on one stream. Renaming only one side has
+      # no error path — the consumer just reads an empty stream forever.
+      MONITOR_FUTURES_TICK_STREAM: "${FUTURES_TICK_STREAM:-raw_data}"
       # Cold-start feed-start retry backoff (see stock-market-ingest above):
       # a KIS approval/connect failure at start() retries instead of crashing.
       INGEST_FEED_START_RETRY_INITIAL_SECONDS: "${INGEST_FEED_START_RETRY_INITIAL_SECONDS:-5}"
@@ -380,11 +392,9 @@ services:
       # stay on this service either way — the REST order path needs them; only
       # `ws` needs them for market data.
       FUTURES_ORDER_ROUTER_FEED: "${FUTURES_ORDER_ROUTER_FEED:-stream}"
-      # CONSUMER-side stream name. The producers publish to
-      # MONITOR_FUTURES_TICK_STREAM (TickStreamPublisherConfig.from_env, same
-      # `raw_data` default); these two must name the same stream or the router
-      # reads an empty one and blocks every signal. A unit test pins the two
-      # defaults together.
+      # CONSUMER-side stream name, from the same ${FUTURES_TICK_STREAM} knob the
+      # producers' MONITOR_FUTURES_TICK_STREAM uses. A unit test pins the two
+      # interpolation strings and the in-code defaults together.
       FUTURES_TICK_STREAM: "${FUTURES_TICK_STREAM:-raw_data}"
       # How deep into the stream tail to look at startup for this symbol's last
       # tick. Bounds the SEARCH, not the seeded book's age — entries apply

@@ -52,6 +52,13 @@ def _first_float(fields: Mapping[str, Any], keys: tuple[str, ...]) -> float | No
     return None
 
 
+#: Redis Stream the futures tick producers write and every futures consumer
+#: reads. Producers select it with ``MONITOR_FUTURES_TICK_STREAM`` and consumers
+#: with ``FUTURES_TICK_STREAM`` — two env names, one stream — so the DEFAULTS
+#: have to come from one place. Drifting them apart has no error path at all:
+#: the consumer simply reads an empty stream forever.
+DEFAULT_FUTURES_TICK_STREAM = "raw_data"
+
 #: Best-bid/best-ask fields an orderbook-bearing tick carries.
 #:
 #: The price/quantity set is what ``KISFuturesPriceFeed`` caches per orderbook

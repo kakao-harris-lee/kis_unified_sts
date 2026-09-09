@@ -902,6 +902,7 @@ async def _build_context_provider(
     from shared.execution.futures_instrument import resolve_futures_instrument_from_env
     from shared.indicators.streaming.engine import StreamingIndicatorEngine
     from shared.macro.base import read_latest_macro_snapshot
+    from shared.models.stream_models import DEFAULT_FUTURES_TICK_STREAM
     from shared.storage.config import StorageConfig
     from shared.storage.market_data_store import ParquetMarketDataStore
     from shared.streaming.consumer_feed import StreamConsumerFeed
@@ -920,7 +921,7 @@ async def _build_context_provider(
 
     feed = StreamConsumerFeed(
         redis=redis_client,
-        stream=os.environ.get("FUTURES_TICK_STREAM", "raw_data"),
+        stream=os.environ.get("FUTURES_TICK_STREAM", DEFAULT_FUTURES_TICK_STREAM),
         indicator_engine=engine,
     )
     feed.update_symbols([symbol])

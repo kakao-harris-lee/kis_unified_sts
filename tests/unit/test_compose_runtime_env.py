@@ -534,26 +534,34 @@ def test_runtime_mount_helper_agrees_with_the_actual_compose_volume():
 
 def test_producer_and_consumer_futures_tick_stream_defaults_agree():
     """The producers publish to MONITOR_FUTURES_TICK_STREAM and the consumers
-    read FUTURES_TICK_STREAM. Two names, one stream: if the defaults ever drift
-    apart the router reads an empty stream and blocks every signal with no
-    error anywhere. Pinned per the #622 F2 pattern."""
-    from services.monitoring.tick_stream_publisher import TickStreamPublisherConfig
+    read FUTURES_TICK_STREAM. Two names, one stream: if they ever drift apart
+    the consumers read an empty stream and block every signal, with no error
+    anywhere. Pinned per the #622 F2 pattern.
 
-    producer_default = TickStreamPublisherConfig.from_env().futures_stream
+    Reads the pydantic default rather than ``from_env()`` so the test does not
+    depend on the ambient environment.
+    """
+    from services.monitoring.tick_stream_publisher import TickStreamPublisherConfig
+    from shared.models.stream_models import DEFAULT_FUTURES_TICK_STREAM
+
+    producer_default = TickStreamPublisherConfig().futures_stream
+    assert producer_default == DEFAULT_FUTURES_TICK_STREAM
 
     compose = yaml.safe_load(
         (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     )
     services = compose["services"]
-    consumers = ("futures-order-router", "futures-monitor")
-    for name in consumers:
-        assert services[name]["environment"]["FUTURES_TICK_STREAM"] == (
-            "${FUTURES_TICK_STREAM:-" + producer_default + "}"
+    expression = "${FUTURES_TICK_STREAM:-" + producer_default + "}"
+
+    producers = ("trader-futures", "futures-market-ingest")
+    for name in producers:
+        assert services[name]["environment"]["MONITOR_FUTURES_TICK_STREAM"] == (
+            expression
         ), name
 
-    assert _read_env_template(".env.paper.example")["FUTURES_TICK_STREAM"] == (
-        producer_default
-    )
-    assert _read_env_template(".env.live.example")["FUTURES_TICK_STREAM"] == (
-        producer_default
-    )
+    consumers = ("futures-order-router", "futures-monitor", "futures-decision-engine")
+    for name in consumers:
+        assert services[name]["environment"]["FUTURES_TICK_STREAM"] == expression, name
+
+    for name in (".env.paper.example", ".env.live.example"):
+        assert _read_env_template(name)["FUTURES_TICK_STREAM"] == producer_default
