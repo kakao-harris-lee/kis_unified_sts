@@ -16,7 +16,10 @@ single place that calls :meth:`~tos.engine.EngineCore.handle` in this whole runt
 the yield-order coordinate stamping (mirroring :class:`tos.backtest.driver.YieldOrderCounter`'s
 documented reasoning, reimplemented locally rather than importing the backtest harness package
 into production runtime code), the crash-window idempotency check, and the send-boundary result
-re-injection loop. The replay module lands in [A-R-3].
+re-injection loop.
+
+[A-R-3] :mod:`tos_runtime.engine.replay` — :func:`~tos_runtime.engine.replay.replay_engine`, the
+independent re-derivation check :func:`tos.engine.sink.replay_result_for` is built for.
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos.*`` + ``tos_runtime.*``
 only. No ``shared.*``, no ``tos.backtest`` (a harness package, not a production dependency).
@@ -26,9 +29,12 @@ from __future__ import annotations
 
 from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import InboxReceipt, SqliteEventInbox
+from tos_runtime.engine.replay import ReplayVerdict, replay_engine
 
 __all__ = [
     "EngineDriver",
     "InboxReceipt",
+    "ReplayVerdict",
     "SqliteEventInbox",
+    "replay_engine",
 ]
