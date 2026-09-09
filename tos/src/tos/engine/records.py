@@ -641,14 +641,46 @@ class EngineEvidenceRecord(FrozenModel):
     A halt is always recorded **with** its reason, and a bounded-evaluation degradation is recorded
     under its own ``DECISION_DEGRADED`` kind so it stays distinguishable from an ordinary no-action
     (design #31 §3.4).
+
+    ⚠ This is a plain :class:`~tos.canonical.FrozenModel`, **not** a
+    :class:`~tos.canonical.DigestBoundArtifact` — it carries no ``canonical_digest`` and no
+    covered-content set (design #4 §3.1: evidence records have independent identity, never a
+    derived one). Every field added here, including ``event_id`` / ``bound_identity`` /
+    ``bound_digest`` below, is therefore a plain observation with no digest implication of any
+    kind — there is no covered set for them to join.
     """
 
     kind: EvidenceKind
     instrument_key: InstrumentKey | None = None
     step: CommitmentStep | None = None
+    #: The content-addressed identity of the event whose handling produced this record (Phase 3
+    #: wave 3 KW3-EV; :func:`event_identity`). Populated by the sequencer
+    #: (:func:`~tos.engine.sequencer.run_commitment_flow`) on every per-step record it emits for a
+    #: ``DECISION_TICK`` flow — ``ATTEMPT_REQUEST_CREATED``, ``FLOW_STEP_ADMITTED``,
+    #: ``FLOW_HALTED``, ``SEND_HANDED_OFF`` — so a replay can correlate every record belonging to
+    #: one flow instance by the event that produced it, rather than by encounter order (fragile
+    #: under a truncated replay window; Phase 3 wave 3 lane C-R finding). ``None`` for evidence
+    #: kinds this pass did not touch (e.g. ``DECISION_WITHHELD``,
+    #: ``COORDINATOR_PRECONDITION_REFUSED``, the ``EGRESS_RESULT`` kinds) and for a sequencer call
+    #: with no event to offer (a unit test exercising it directly).
+    event_id: str | None = None
     halt_reason: HaltReason | None = None
     stage_outcome: StageOutcome | None = None
     authority_class: StageAuthorityClass | None = None
+    #: The step verdict's bound identity/digest, copied verbatim from the
+    #: :class:`StageVerdict` that produced this ``FLOW_STEP_ADMITTED`` record (Phase 3 wave 3
+    #: KW3-EV). Steps 9 (``ATOMIC_COMMIT``) and 11 (``ORDER_CONFORMANCE_PROOF``) are the only
+    #: ones whose ADMIT verdict carries a non-``None`` value here today —
+    #: :func:`~tos.engine.sequencer._bindings_from` reads exactly
+    #: ``ORDER_CONFORMANCE_PROOF.bound_digest`` (the Order Conformance Proof digest) and
+    #: ``ATOMIC_COMMIT.bound_identity`` (the Action Flow Permit identity), the step-12 attempt
+    #: identity's two content-addressed inputs — but every step's verdict fields are copied
+    #: uniformly rather than special-cased by step number. Before this fix these values existed
+    #: only on the in-memory :class:`StageVerdict`; a rebooted replay could not reconstruct the
+    #: live ``attempt_id`` from durable evidence alone, so every later ``EGRESS_RESULT`` looked
+    #: orphaned against a freshly composed ledger.
+    bound_identity: str | None = None
+    bound_digest: str | None = None
     egress_result_kind: EgressResultKind | None = None
     #: The conservative disposition of a re-injected egress result (Phase 3 A-K-2); populated
     #: alongside ``EvidenceKind.RESULT_UNMATCHED`` (non-APPLIED) and ``EGRESS_RESULT_CONSUMED``

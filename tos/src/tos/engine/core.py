@@ -49,6 +49,7 @@ from tos.engine.records import (
     ProvisionalReservation,
     RegisteredStrategy,
     egress_result_outcome_digest,
+    event_identity,
 )
 from tos.engine.registry import StrategyRegistry
 from tos.engine.sequencer import (
@@ -467,6 +468,12 @@ class EngineCore:
                 "DECISION_TICK event carries no payload (fail-closed)"
             )
         key = payload.instrument_key
+        # ★ [KW3-EV] Computed once per tick and threaded into every per-step FLOW_STEP_ADMITTED /
+        # FLOW_HALTED / ATTEMPT_REQUEST_CREATED / SEND_HANDED_OFF evidence record the commitment
+        # flow emits, so a replay can correlate a flow instance's whole evidence trail by the
+        # exact event that produced it (Phase 3 wave 3 lane C-R finding — encounter-order
+        # correlation is fragile under a truncated replay window).
+        event_id = event_identity(event, scheme=self._scheme)
 
         refusal = self._coordinator_precondition_refusal(key, admission)
         if refusal is not None:
@@ -502,7 +509,9 @@ class EngineCore:
                 detail=detail,
             )
 
-        return self._run_entries(payload, dispatch.entries, admission)
+        return self._run_entries(
+            payload, dispatch.entries, admission, event_id=event_id
+        )
 
     def _coordinator_precondition_refusal(
         self, key: InstrumentKey, admission: OrderingAdmission
@@ -597,6 +606,8 @@ class EngineCore:
         payload: DecisionTickPayload,
         entries: tuple[RegisteredStrategy, ...],
         admission: OrderingAdmission,
+        *,
+        event_id: str,
     ) -> EventResult:
         """Run each registered strategy for the key; the first Proposal starts the flow."""
         key = payload.instrument_key
@@ -623,6 +634,7 @@ class EngineCore:
                 sink=self._sink,
                 scheme=self._scheme,
                 value_view=payload.value_view,
+                event_id=event_id,
             )
             return EventResult(
                 kind=EventKind.DECISION_TICK,
