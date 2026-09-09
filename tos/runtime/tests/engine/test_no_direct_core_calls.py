@@ -39,7 +39,7 @@ _SRC = _RUNTIME_ROOT / "src"
 _TESTS = _RUNTIME_ROOT / "tests"
 
 #: The only MODULES allowed to call ``core.handle(``/``core.run(`` directly, file-wide — these
-#: two ARE the sanctioned call sites, by design (module docstring). Nothing else gets a
+#: three ARE the sanctioned call sites, by design (module docstring). Nothing else gets a
 #: whole-file exemption; see ``_SANCTIONED_LINE_MARKER`` for the narrower, per-line allowance.
 _ALLOWED_FILES = {
     _SRC / "tos_runtime" / "engine" / "driver.py",
@@ -51,7 +51,7 @@ _ALLOWED_FILES = {
     _SRC / "tos_runtime" / "engine" / "replay_stage.py",
 }
 
-#: A direct call outside the two files above is refused UNLESS its own line carries this exact
+#: A direct call outside the three files above is refused UNLESS its own line carries this exact
 #: marker comment (independent review finding #15) — e.g. ``test_driver.py``'s crash-window
 #: simulations, which deliberately replicate ``EngineDriver._process_next``'s body up to (but not
 #: including) its own durable bookkeeping, to model a process death in exactly that gap.
