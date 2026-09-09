@@ -18,6 +18,7 @@ therefore by ``attempt_id`` alone, unconditionally — every test below reflects
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from pathlib import Path
 
@@ -172,7 +173,10 @@ def test_multiple_disjoint_attempts_pair_only_the_matching_ids() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_fill_ratio_is_paper_over_backtest_filled_quantity() -> None:
+def test_fill_ratio_is_a_shortfall_magnitude_when_paper_underfills() -> None:
+    """[E-R-3] shortfall = abs(backtest - paper) / backtest, matching
+    ``FillDeviation.fill_ratio``'s own "shortfall magnitude, not a signed ratio" contract.
+    """
     report = build_calibration_report(
         evidence_rows=(_paper_row("a1", filled=Decimal(8)),),
         backtest_fills=(_backtest_fill("a1", filled=Decimal(10)),),
@@ -180,7 +184,34 @@ def test_fill_ratio_is_paper_over_backtest_filled_quantity() -> None:
         observed_expectancy=Decimal(1),
     )
     (observation,) = report.observations
-    assert observation.fill_ratio == Decimal(8) / Decimal(10)
+    assert observation.fill_ratio == Decimal(2) / Decimal(10)
+
+
+def test_fill_ratio_is_symmetric_when_paper_overfills_relative_to_backtest() -> None:
+    """[E-R-3] "below the backtest's, or vice versa" (kernel docstring) — paper filling MORE
+    than backtest is the same deviation dimension, reported as the same non-negative magnitude
+    a matching under-fill would produce, never a negative value (FillDeviation would refuse to
+    construct one — see calibration_report.py's ``_fill_ratio`` docstring)."""
+    report = build_calibration_report(
+        evidence_rows=(_paper_row("a1", filled=Decimal(12)),),
+        backtest_fills=(_backtest_fill("a1", filled=Decimal(10)),),
+        budget=_budget(),
+        observed_expectancy=Decimal(1),
+    )
+    (observation,) = report.observations
+    assert observation.fill_ratio == Decimal(2) / Decimal(10)
+    assert observation.fill_ratio >= 0
+
+
+def test_fill_ratio_is_zero_on_an_exact_match() -> None:
+    report = build_calibration_report(
+        evidence_rows=(_paper_row("a1", filled=Decimal(10)),),
+        backtest_fills=(_backtest_fill("a1", filled=Decimal(10)),),
+        budget=_budget(),
+        observed_expectancy=Decimal(1),
+    )
+    (observation,) = report.observations
+    assert observation.fill_ratio == Decimal(0)
 
 
 def test_fill_ratio_is_none_when_backtest_filled_quantity_is_zero() -> None:
@@ -343,6 +374,44 @@ def test_loader_preserves_commit_order(store: SqliteEvidenceStore) -> None:
             record_class="EGRESS_RESULT_CONSUMED",
         )
     assert read_egress_result_consumed_records(store) == (first, second)
+
+
+def test_loader_round_trips_a_record_with_masked_keys_non_empty(tmp_path: Path) -> None:
+    """[E-R-3] pin the wrapper shape the loader unwraps: ``SqliteEvidenceStore.append`` writes
+    ``{"payload": scrubbed_payload, "masked_keys": [...]}`` into ``payload_json`` — this test
+    configures a non-empty ``secret_keys`` set so ``masked_keys`` is actually non-empty on the
+    written row (not just structurally present-but-empty, as every other test in this file
+    exercises), and confirms the loader still reads the (scrubbed) record back typed."""
+    scrubbing_store = SqliteEvidenceStore(
+        tmp_path / "evidence-scrubbed.sqlite3",
+        key_provider=_FixedKeyProvider(),
+        secret_keys=frozenset({"detail"}),
+    )
+    try:
+        written = EngineEvidenceRecord(
+            kind=EvidenceKind.EGRESS_RESULT_CONSUMED,
+            attempt_id="a1",
+            filled_quantity=Decimal(1),
+            remaining_quantity=Decimal(0),
+            detail="a secret value",
+        )
+        scrubbing_store.append(
+            written.model_dump(mode="json"),
+            kind=EvidenceKind.EGRESS_RESULT_CONSUMED.value,
+            record_class="EGRESS_RESULT_CONSUMED",
+        )
+        (raw_payload_json,) = scrubbing_store.connection.execute(
+            "SELECT payload_json FROM entries WHERE seq = 0"
+        ).fetchone()
+        wrapper = json.loads(raw_payload_json)
+        assert wrapper["masked_keys"] == ["detail"]
+        assert wrapper["payload"]["detail"] == "***REDACTED***"
+
+        (read_back,) = read_egress_result_consumed_records(scrubbing_store)
+        assert read_back.attempt_id == "a1"
+        assert read_back.detail == "***REDACTED***"
+    finally:
+        scrubbing_store.close()
 
 
 # ---------------------------------------------------------------------------

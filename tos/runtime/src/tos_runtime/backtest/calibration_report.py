@@ -49,14 +49,16 @@ coordinate of any kind — the runtime engine has no concept of "bars" at all, o
 driver does. There is therefore no derivable latency deviation between a paper observation and a
 backtest one in this runtime slice; every observation's ``latency_bars`` is ``None``.
 
-**fill_ratio is the paper/backtest filled-quantity ratio, not a shortfall-from-zero magnitude.**
-The kernel's own docstring for :class:`~tos.backtest.calibration.FillDeviation.fill_ratio` frames
-it as "the fill-ratio shortfall ... below the backtest's" — a magnitude that is 0 for a perfect
-match. This module instead reports the plain quotient ``paper.filled_quantity /
-backtest.filled_quantity`` (per the assigning brief), which is ~1.0 for a perfect match, not 0.
-This is deliberately flagged here: a ``DeviationBudget.max_fill_ratio_shortfall`` value authored
-against this module's output must be read as "how far the ratio may sit from 1.0-ish parity", not
-as a from-zero shortfall bound. ``None`` when either side never carries a fill magnitude, or the
+**fill_ratio is a shortfall per** :class:`~tos.backtest.calibration.FillDeviation` **[E-R-3
+correction — an earlier draft of this module computed a plain quotient; that was wrong and is
+fixed here].** The kernel's own docstring frames it as "the fill-ratio shortfall ... below the
+backtest's, or vice versa" — a non-negative MAGNITUDE that is 0 for a perfect match, symmetric for
+either direction of deviation; :class:`~tos.backtest.calibration.FillDeviation`'s own
+``model_validator`` refuses to construct with a negative ``fill_ratio`` at all ("a shortfall
+magnitude, not a signed ratio"). This module computes exactly that: ``abs(backtest.filled_quantity
+- paper.filled_quantity) / backtest.filled_quantity`` (see :func:`_fill_ratio`) — 0 on a match,
+the same non-negative value whether paper under- or over-filled relative to backtest (this single
+field carries no direction). ``None`` when either side never carries a fill magnitude, or the
 backtest side's magnitude is zero (division is not attempted).
 
 **Unpaired attempts are counts, never fabricated observations.** An attempt present on only one
@@ -206,14 +208,29 @@ def _latest_backtest_by_attempt(
 def _fill_ratio(
     paper: EngineEvidenceRecord, backtest: LocalFillRecord
 ) -> CanonicalDecimal | None:
-    """``paper.filled_quantity / backtest.filled_quantity`` — ``None`` if either magnitude is
-    absent, or the backtest magnitude is zero (module docstring — never fabricate a divide).
+    """``abs(backtest.filled_quantity - paper.filled_quantity) / backtest.filled_quantity`` —
+    ``None`` if either magnitude is absent, or the backtest magnitude is zero (module docstring
+    — never fabricate a divide).
+
+    [E-R-3 correction] a non-negative SHORTFALL magnitude, matching
+    :class:`~tos.backtest.calibration.FillDeviation.fill_ratio`'s own contract ("a shortfall
+    magnitude, not a signed ratio" — its ``model_validator`` raises on a negative value) and its
+    docstring's "below the backtest's, **or vice versa**" framing (paper under- or over-filling
+    relative to backtest are the same deviation dimension here; this module has no separate field
+    to carry direction). ``abs()`` is applied here, before construction — never inside
+    :func:`~tos.backtest.calibration.calibration_within_budget`, which compares the (already
+    non-negative, by construction) value directly (``> budget.max_fill_ratio_shortfall``, no
+    ``abs()`` of its own). There is no kernel gap this papers over: a raw signed value can never
+    reach that comparison, because :class:`~tos.backtest.calibration.FillDeviation` itself refuses
+    to construct with ``fill_ratio < 0`` (verified directly: constructing one with
+    ``Decimal("-0.2")`` raises ``pydantic.ValidationError`` wrapping the model's own
+    ``BacktestIntegrityError``). 0 on an exact match; symmetric for over- or under-fill.
     """
     paper_filled = paper.filled_quantity
     backtest_filled = backtest.filled_quantity
     if paper_filled is None or backtest_filled is None or backtest_filled == 0:
         return None
-    return paper_filled / backtest_filled
+    return abs(backtest_filled - paper_filled) / backtest_filled
 
 
 def _pair_deviation(
