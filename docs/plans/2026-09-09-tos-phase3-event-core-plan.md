@@ -136,11 +136,11 @@
 | 10 | MEDIUM | «typed algebra 는 escape 를 표현 못 한다» 거짓 — `Operand(ref=("ambient","now"))` 구성 가능 · 새 게이트가 실제로 잡음(웨이브 전 in-process 경로가 불안전했음) | 수용 — K2-#10: `Operand` 가 `ref[0]` 을 양성 검증 · 도크스트링 3곳 정정 · 두 게이트 구조 일치 |
 | 11 | LOW | replay 도크스트링 None/None «trivially MATCH» 오기 | 수용 — R2A-#1 과 함께 |
 | 12 | LOW | 로더 `*.yaml` 만 · `.yml` 조용히 무시 | 수용 — R2D-#12: `.yml` 포함 · 그 외 파일 존재 시 거부 |
-| 13 | LOW | `_find_consumed_receipt` 선형 스캔 | 수용 — R2A-#13: event_id 인덱스 |
+| 13 | LOW | `_find_consumed_receipt` 선형 스캔 | 부분 수용 — R2A-#13: 신규 `EVENT_HANDLING_STARTED` 조회는 inbox 열로 O(1) · `EVENT_CONSUMED` 조회는 evidence `entries` 에 event_id 열이 필요해 이연(잔여 ② · 재심 N4 로 문언 정정) |
 | 14 | LOW | `max_send_result_wait_ms=None` «fail-closed» 오기(실은 fail-silent) | 수용 — R2A-#14: 비옵션 + 문언 |
 | 15 | LOW | 편차 ⑥: 직접 호출 허용이 파일 전체 | 수용 — R2A-#15: 마커 주석 1줄로 축소 |
 | 16 | LOW | 두 bound 의 0 처리 불일치 | 수용 — R2A-#16: 양의 정수 규칙 통일 |
-| 17 | LOW | 런타임 스위트가 커널 뮤테이션 4종에 눈멂 | 수용 — R2A-#17A(불일치 결과 e2e) · R2D-#17D(escape ref·미지 키·규칙 삭제 digest) |
+| 17 | LOW | 런타임 스위트가 커널 뮤테이션 4종에 눈멂 | 수용 — R2A-#17A(불일치 결과 e2e) · R2D-#17D(escape ref·미지 키·규칙 삭제 digest). 재심 N5: M6(escape-checker 게이트 제거)은 #10 이후 **런타임에서 구성 불가한 입력**이라 런타임 red 가 존재할 수 없음(YAML 은 파서에서 먼저 거부) — 커널 `model_construct`/lowering 우회 핀만이 그 게이트의 테스트다. 후속 라운드가 «없는 테스트» 를 찾지 않도록 여기 기록 |
 
 **처분 착지(11커밋 `c923d15e..b59e7e4e`)**: K2-#4/#5 `c923d15e`(`NON_MONOTONIC_PROJECTION`·`QUANTITY_REGRESSION` — `_store` 전에 판정 · core 무변경) · K2-#6 `29774d88`(`EgressResultPayload.broker_execution_id` · 서명에서 reference 제외 · backtest anti-phantom 필드 집합 테스트 갱신) · K2-#10 `438b5def`(`Operand` 가 `ref[0]∈ADMISSIBLE_CONTEXT_SOURCES` 양성 검증 · pydantic 중첩 재검증으로 `model_construct` 우회 자체가 불가 → 2층 증명은 lowering monkeypatch) · K2-#6b `393f708f`(합성 transport 가 `syn-exec:{attempt}:{kind}` 결정론 id — 합성 정체성임을 명시 · §15.3) · R2D-#8/#12 `c3279fbc`(부재 ⇒ 거부 · `allow_no_strategies` 옵트아웃 + `STRATEGY_SOURCE_ABSENT_BY_OPERATOR_CHOICE` 증거 · `.yml` + stray 거부 · 폴백 의존 호출처 0) · R2D-#9/#17D `396b8972`(`config` ref + 빈 bindings ⇒ 로드 거부 · D-lane 런타임 단언 3) · R2A-#3 `9dd30561`(write-ahead `EVENT_HANDLING_STARTED` · 마커 有/CONSUMED 無 ⇒ 재처리 금지 + `HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND` halt · inbox 열로 O(1)) · R2A-#1/#11 `50ba0e7e`(None/None = uncompared) · R2A-#2 `f497104d`(`_ReplayStage` 부작용 0 · pipeline digest 가 flow 이전 산출임을 소스+테스트로 실증 · #1 만으로는 #2 미해결 실증) · R2A-#7/#14/#16 `fa21c3bd` · R2A-#13/#15/#17A `b59e7e4e`(`EVENT_CONSUMED` 선형 스캔은 evidence 테이블 열 필요 — 파일 소유 밖 · 공개 잔여).
 
@@ -148,6 +148,10 @@
 
 **독립 실측(최종 트리 `b59e7e4e`)**: runtime **556 passed** rc=0 · kernel **9266 passed** rc=0 · mypy 256/62 clean · ruff 0 · black 957 unchanged · firewall PASS · lint-imports 3 KEPT · budget 0 위반(31 등재) · completion GREEN · spec PASS · contract PASS · tos-spec/계약 문서 무편집 · 커널 편집 커밋 = K2 4건뿐(`git log -- tos/src/`).
 
-### 7.3 웨이브 1 재심
+### 7.3 웨이브 1 재심 (2026-09-09 · 같은 리뷰어)
 
-(기입 예정)
+verdict **approve** — 17건 중 15 완전 종결 · #13/#17 부분(정직 공개) · 프로브 재실행: 3부팅 통과(`total_compared=2 uncompared=1` — 비공허) · 재부팅 증거 delta 0(`RCL_APPEND` +1 은 writer-epoch fence, 빈 inbox 대조군으로 실증) · 크래시 후 재기동 send 0 + 이중 경로 HALT · rank/수량 역행 byte-identical · foreign 결과에도 TIMEOUT 주입 · 부재 거부/옵트아웃 증거 · `config` ref 거부가 파일+경로 명명 · `Operand` 이웃 5종 거부. 뮤테이션 21종 생존 2 — 둘 다 현 불변식 하 동치(M2: 마킹 누락은 다음 반복의 크래시 창 1 분기가 즉시 복구 · M20: attempt_id 검사는 APPLIED 가 포섭 · release 경로가 생기는 Phase 5 에 핀 필요). 커널 편집 4커밋 귀속 clean · 동결 표면 무편집 · 신규 리터럴/재시도/삼킴 0.
+
+신규 관찰(LOW 5) 처분: **N1** 마커 기록 후 `core.handle` 전 크래시 ⇒ tick 이 `HANDLING_INTERRUPTED_POSSIBLY_LIVE` 로 소비 표시되며 영영 평가되지 않음(보수적이나 무음 · 이름도 «possibly live» 오기) → 웨이브 2 C-R: halt 사유 분리(`HANDLING_INTERRUPTED_NO_SEND_EVIDENCE`) + 비-halt 증거 행으로 가시화 · **N2** `remaining_quantity` 비회생 규칙 없음(4/6→4/60 APPLIED · 대칭 축소 방향이 비보수) → 웨이브 2 K: `QUANTITY_REGRESSION` 을 remaining 축소에도 적용 · **N3** `_send_evidence_exists_after` 가 event 가 아니라 `seq >` 로 조회 — 단일 스레드 드라이버 불변식에 의존 → 웨이브 2 C-R: 불변식 주석 + 동시성 핀 · **N4** §7.2 #13 행 과대 → 위 정정 · **N5** #17 잔여 사유 기록 → 위 정정.
+
+**웨이브 1 종결 → 웨이브 2 착수(2026-09-09).**
