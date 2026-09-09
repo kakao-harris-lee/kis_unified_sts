@@ -261,26 +261,46 @@ class ReplayVerdict:
     — each already durably recorded as a ``REPLAY_DIVERGED`` halt (via
     :func:`~tos_runtime.evidence.emergency.record_halt`) by the time this is returned.
 
-    ``uncompared`` (independent review finding #1, 2026-09-09) counts events for which the
-    RECORDED baseline digest AND the REPLAYED digest were both ``None`` — "no outcome identity to
-    compare" (every ``EGRESS_RESULT`` event is honestly like this; see the module docstring). This
-    is deliberately NOT part of ``total_compared``: it was never a comparison at all, and it is
-    NOT a divergence either — ``ok`` does not consult it. An asymmetric ``None``/non-``None`` pair
-    is a genuine divergence and is counted in ``total_compared``/``diverged`` as before, never
-    here.
+    ``uncompared`` counts events for which NEITHER comparison this module performs could run at
+    all — never a divergence (``ok`` does not consult it), never merely "not interesting". Three
+    DISTINCT reasons put an event here, each named in ``uncompared_halt_reasons`` (re-review
+    finding R2, 2026-09-09, replacing an earlier, now-stale claim that every such event was an
+    honest ``EGRESS_RESULT`` — untrue since kernel lane KW3-RD, ``783fadf0``, gave every
+    ``EGRESS_RESULT`` a real digest):
+
+    1. **Pre-pipeline halt** — the recorded receipt's own ``halt_reason`` is in
+       :data:`_PIPELINE_NEVER_RAN_HALT_REASONS`: the LIVE run's pipeline structurally never ran
+       (a Coordinator-gate refusal or equivalent), so ``core.handle`` is never even called for
+       this event during replay either.
+    2. **Coordinator-gate refusal with no recorded reason** — the narrow ``None``/``None`` case
+       :func:`_compare_one_event` still recognizes: both sides carry no outcome digest and no
+       ``halt_reason``. Structurally never an ``EGRESS_RESULT`` (asserted directly in
+       :func:`_compare_one_event`).
+    3. **``"RECEIPT_FINGERPRINT_MISSING"``** (wave-3 finding #1(b), re-review finding R1,
+       2026-09-09) — a pre-CR6 ``DECISION_TICK`` receipt recorded no
+       :class:`~tos_runtime.engine.flow_fingerprint.FlowFingerprint` at all. Unlike the first two
+       reasons, THIS one is reported ALONGSIDE the event still being counted in
+       ``total_compared``: the digest half is always compared regardless of fingerprint
+       availability (re-review finding R1 fixed an early-return that used to skip the digest
+       comparison too, silently regressing coverage below what a pre-fingerprint boot already
+       had). ``has_unverifiable_receipts`` is ``True`` whenever this reason appears.
     """
 
     total_compared: int
     diverged: tuple[str, ...]
     uncompared: int = 0
-    #: Independent review finding #1, wave 2 (2026-09-09, lane C-R2): ``(event_id, halt_reason)``
-    #: pairs for receipts counted in ``uncompared`` specifically because the LIVE run's own
-    #: receipt already carried a ``halt_reason`` (a Coordinator-gate refusal —
-    #: ``AUTHORITY_NOT_CURRENT`` / ``LIVE_SCOPE_NOT_AUTHORIZED`` — or any other halt that never
-    #: reached the pipeline) — never populated for the wave-1 EGRESS_RESULT
-    #: None-recorded/None-replayed case (that one carries no reason to report; see
-    #: :func:`replay_engine`'s own docstring for why the two cases are distinguished).
+    #: ``(event_id, reason)`` pairs — see this class's own docstring for the three reasons a pair
+    #: can name. A ``"RECEIPT_FINGERPRINT_MISSING"`` pair's event IS counted in
+    #: ``total_compared`` (digest-only verified); the other two reasons' events are counted in
+    #: ``uncompared`` instead (re-review finding R1/R2, 2026-09-09).
     uncompared_halt_reasons: tuple[tuple[str, str], ...] = ()
+    #: Re-review finding R1 (2026-09-09): ``True`` iff at least one ``DECISION_TICK`` receipt in
+    #: this replay run had no recorded flow fingerprint to compare (a pre-CR6 receipt) — the
+    #: digest half was still verified for it, but its commitment-flow outcome (handed off? which
+    #: step halted? which attempt?) could not be independently checked. Never a divergence by
+    #: itself (a legacy receipt is not evidence of anything wrong) — a durable, visible fact a
+    #: caller (the boot gate) records rather than silently discards.
+    has_unverifiable_receipts: bool = False
 
     @property
     def ok(self) -> bool:
@@ -343,6 +363,10 @@ class _EventOutcome:
     uncompared: bool
     diverged: bool
     uncompared_reason: str | None = None
+    #: Re-review finding R1 (2026-09-09): set when this event WAS digest-compared (``uncompared``
+    #: is ``False``) but its ``DECISION_TICK`` flow fingerprint could not be — a pre-CR6 receipt.
+    #: Never set together with ``uncompared=True`` (that path returns before this could apply).
+    fingerprint_uncompared: bool = False
 
 
 def _compare_one_event(
@@ -387,23 +411,24 @@ def _compare_one_event(
         )
         return _EventOutcome(uncompared=True, diverged=False)
 
+    # Re-review finding R1 (2026-09-09): a pre-CR6 receipt with no recorded fingerprint must
+    # NEVER skip the digest comparison below — an early return here (the wave-3 shape) silently
+    # regressed coverage to "compares nothing at all" for exactly the receipts that most need
+    # verifying (every receipt written before this fix landed). The digest half is ALWAYS
+    # compared; only the fingerprint half is reported separately as unverifiable.
     fingerprint_mismatch: str | None = None
+    fingerprint_uncompared = False
     if event.kind is EventKind.DECISION_TICK:
         if receipt.flow_fingerprint is None:
-            # Wave-3 finding #1(b): a pre-this-fix receipt never recorded a fingerprint — never
-            # silently treat that as "ok" (fail-closed disclosure).
-            return _EventOutcome(
-                uncompared=True,
-                diverged=False,
-                uncompared_reason="RECEIPT_FINGERPRINT_MISSING",
+            fingerprint_uncompared = True
+        else:
+            actual_fingerprint = flow_fingerprint_for(result)
+            assert (
+                actual_fingerprint is not None
+            )  # DECISION_TICK guarantees this structurally
+            fingerprint_mismatch = first_mismatched_field(
+                receipt.flow_fingerprint, actual_fingerprint
             )
-        actual_fingerprint = flow_fingerprint_for(result)
-        assert (
-            actual_fingerprint is not None
-        )  # DECISION_TICK guarantees this structurally
-        fingerprint_mismatch = first_mismatched_field(
-            receipt.flow_fingerprint, actual_fingerprint
-        )
 
     state = replay_result_for(
         expected_outcome_digest=expected_digest,
@@ -426,7 +451,11 @@ def _compare_one_event(
             kind=_REPLAY_DIVERGED_KIND,
             record_class=_REPLAY_DIVERGED_RECORD_CLASS,
         )
-    return _EventOutcome(uncompared=False, diverged=diverged)
+    return _EventOutcome(
+        uncompared=False,
+        diverged=diverged,
+        fingerprint_uncompared=fingerprint_uncompared,
+    )
 
 
 def replay_engine(
@@ -483,6 +512,7 @@ def replay_engine(
     compared = 0
     uncompared = 0
     uncompared_halt_reasons: list[tuple[str, str]] = []
+    has_unverifiable_receipts = False
     for _seq, event in admitted:
         event_id = event_identity(event, scheme=scheme)
         if event_id not in recorded:
@@ -503,6 +533,11 @@ def replay_engine(
                 uncompared_halt_reasons.append((event_id, outcome.uncompared_reason))
             continue
         compared += 1
+        if outcome.fingerprint_uncompared:
+            # Re-review finding R1: the digest half above WAS compared (this event is already in
+            # `compared`) — only the flow fingerprint half is unverifiable (a pre-CR6 receipt).
+            has_unverifiable_receipts = True
+            uncompared_halt_reasons.append((event_id, "RECEIPT_FINGERPRINT_MISSING"))
         if outcome.diverged:
             diverged.append(event_id)
     return ReplayVerdict(
@@ -510,4 +545,5 @@ def replay_engine(
         diverged=tuple(diverged),
         uncompared=uncompared,
         uncompared_halt_reasons=tuple(uncompared_halt_reasons),
+        has_unverifiable_receipts=has_unverifiable_receipts,
     )

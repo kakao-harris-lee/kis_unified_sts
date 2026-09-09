@@ -59,6 +59,16 @@ EGRESS_COORDINATES_CONFIG_NAME = "egress_coordinates.yaml"
 #: provenance record (re-review finding F4, 2026-09-08).
 _ATTESTED_INPUTS_EVIDENCE_KIND = "OPERATOR_ATTESTED_INPUTS"
 
+#: Re-review finding R1 (2026-09-09): the NON-halt evidence kind recorded when boot proceeds but
+#: at least one receipt's flow fingerprint was unverifiable (a pre-CR6 receipt) — see
+#: :func:`verify_engine_replay_or_halt`'s own docstring.
+_REPLAY_RECEIPTS_UNVERIFIABLE_KIND = "REPLAY_RECEIPTS_UNVERIFIABLE"
+
+#: The exact reason string :mod:`tos_runtime.engine.replay` appends to
+#: ``ReplayVerdict.uncompared_halt_reasons`` for an unverifiable-fingerprint receipt — matched
+#: here to recover the event ids without duplicating the label.
+_RECEIPT_FINGERPRINT_MISSING_REASON = "RECEIPT_FINGERPRINT_MISSING"
+
 
 def verify_rcl_log_or_halt(
     rcl_log: SqliteCommitLog,
@@ -104,6 +114,14 @@ def verify_engine_replay_or_halt(
     Each individual divergence is already durably recorded (both evidence paths) by
     :func:`~tos_runtime.engine.replay.replay_engine` itself before this function ever raises.
 
+    Re-review finding R1 (2026-09-09): when the boot proceeds (no divergence) but at least one
+    ``DECISION_TICK`` receipt carried no flow fingerprint to verify (a pre-CR6 receipt —
+    :attr:`~tos_runtime.engine.replay.ReplayVerdict.has_unverifiable_receipts`), this durably
+    records a NON-halt ``REPLAY_RECEIPTS_UNVERIFIABLE`` evidence row naming the count and event
+    ids — a legacy receipt is not evidence of divergence (the digest half WAS compared for it),
+    so it never blocks the boot, and this runtime never auto-upgrades old receipts; the fact is
+    simply made durable and visible rather than silently discarded.
+
     Raises:
         EngineReplayDiverged: If at least one compared event's replay state was not ``MATCH``.
     """
@@ -119,6 +137,17 @@ def verify_engine_replay_or_halt(
         raise EngineReplayDiverged(
             f"engine replay diverged for {len(verdict.diverged)} of "
             f"{verdict.total_compared} compared events: {verdict.diverged!r}"
+        )
+    if verdict.has_unverifiable_receipts:
+        unverifiable_event_ids = [
+            event_id
+            for event_id, reason in verdict.uncompared_halt_reasons
+            if reason == _RECEIPT_FINGERPRINT_MISSING_REASON
+        ]
+        evidence_store.append(
+            {"count": len(unverifiable_event_ids), "event_ids": unverifiable_event_ids},
+            kind=_REPLAY_RECEIPTS_UNVERIFIABLE_KIND,
+            record_class=_REPLAY_RECEIPTS_UNVERIFIABLE_KIND,
         )
     return verdict
 

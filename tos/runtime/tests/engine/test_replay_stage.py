@@ -551,3 +551,191 @@ def test_p7_untampered_tick_only_inbox_stays_ok_and_the_tick_is_genuinely_compar
     assert verdict.diverged == ()
     assert verdict.total_compared == 1
     assert verdict.uncompared == 0
+
+
+def test_p8_deleting_the_flow_halted_row_for_a_denied_tick_now_diverges(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """Re-review probe P8: a tick denied at step 3 whose ONE ``FLOW_HALTED`` row is deleted
+    entirely. ``RecordedStage`` fails closed (``StageOutcome.UNKNOWN``, ``REPLAY_STAGE_EVIDENCE_
+    MISSING``) for that step instead of reproducing the recorded ``DENY`` — same halt STEP, but a
+    DIFFERENT ``halt_reason`` (``STAGE_UNKNOWN`` vs the live run's real ``STAGE_DENIED``). The
+    Proposal digest is unaffected either way; only the fingerprint's ``halt_reason`` field catches
+    this — confirming ``halt_step``/``halt_reason`` are the sensitive fields the re-review named.
+    """
+    stages = fx.admitting_stages(
+        denied_steps={CommitmentStep.VENUE_ADMISSIBILITY_DECISION: "denied for P8"}
+    )
+    driver = _driver(inbox, evidence_store, emergency_log, stages=stages)
+    tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+    assert tick_result.halt_reason is not None
+    assert tick_result.halt_reason.value == "STAGE_DENIED"
+
+    evidence_store.connection.execute("DROP TRIGGER IF EXISTS entries_no_delete")
+    deleted = evidence_store.connection.execute(
+        "DELETE FROM entries WHERE kind = 'FLOW_HALTED'"
+    )
+    assert deleted.rowcount == 1
+
+    verdict = replay_engine(
+        inbox,
+        evidence_store,
+        emergency_log,
+        _replay_build_core(evidence_store),
+        scheme=SCHEME,
+        window_events=None,
+    )
+    assert not verdict.ok
+    assert len(verdict.diverged) == 1
+
+    (row,) = evidence_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = 'REPLAY_DIVERGED'"
+    ).fetchall()
+    detail = json.loads(row[0])["payload"]
+    assert detail["fingerprint_mismatch_field"] == "halt_reason"
+
+
+def test_p8b_mutating_stage_denied_to_stage_unknown_on_the_flow_halted_row_now_diverges(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """Re-review probe P8b: instead of deleting the ``FLOW_HALTED`` row, tamper its own
+    ``halt_reason`` field from ``STAGE_DENIED`` to ``STAGE_UNKNOWN``. ``RecordedStage`` faithfully
+    reflects the (now-corrupted) durable evidence and reconstructs ``StageOutcome.UNKNOWN`` — the
+    live run's OWN receipt fingerprint (recorded honestly at the time, before any tampering)
+    still says ``STAGE_DENIED``, so the two disagree.
+    """
+    stages = fx.admitting_stages(
+        denied_steps={CommitmentStep.VENUE_ADMISSIBILITY_DECISION: "denied for P8b"}
+    )
+    driver = _driver(inbox, evidence_store, emergency_log, stages=stages)
+    tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+    assert tick_result.halt_reason is not None
+    assert tick_result.halt_reason.value == "STAGE_DENIED"
+
+    evidence_store.connection.execute("DROP TRIGGER IF EXISTS entries_no_update")
+    updated = evidence_store.connection.execute(
+        "UPDATE entries SET payload_json = "
+        'REPLACE(payload_json, \'"halt_reason":"STAGE_DENIED"\', '
+        '\'"halt_reason":"STAGE_UNKNOWN"\') '
+        "WHERE kind = 'FLOW_HALTED'"
+    )
+    assert updated.rowcount == 1
+
+    verdict = replay_engine(
+        inbox,
+        evidence_store,
+        emergency_log,
+        _replay_build_core(evidence_store),
+        scheme=SCHEME,
+        window_events=None,
+    )
+    assert not verdict.ok
+    assert len(verdict.diverged) == 1
+
+
+def test_p9_a_fingerprint_less_receipt_still_gets_its_digest_compared(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """Re-review finding R1, reproduced exactly: disabling ONLY the ``flow_fingerprint`` key on
+    an otherwise-untampered ``EVENT_CONSUMED`` receipt (simulating a pre-CR6 receipt) must NOT
+    lose the digest comparison too. Before this fix, ``_compare_one_event`` returned before
+    ``replay_result_for`` ran at all, so this receipt was silently ``compared=0`` — a coverage
+    regression BELOW what a pre-fingerprint boot already had. After the fix: the digest is
+    compared (``total_compared == 1``), the fingerprint half is honestly reported as unverifiable
+    (``has_unverifiable_receipts``), and the fact is named in ``uncompared_halt_reasons``.
+    """
+    gateway = fx.FakeGateway()
+    driver = _driver(
+        inbox,
+        evidence_store,
+        emergency_log,
+        stages=fx.admitting_stages(),
+        transmit=gateway,
+    )
+    tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+    assert tick_result.flow is not None and tick_result.flow.handed_off is True
+
+    evidence_store.connection.execute("DROP TRIGGER IF EXISTS entries_no_update")
+    updated = evidence_store.connection.execute(
+        "UPDATE entries SET payload_json = "
+        "REPLACE(payload_json, '\"flow_fingerprint\":', '\"flow_fingerprint_DISABLED\":') "
+        "WHERE kind = 'EVENT_CONSUMED'"
+    )
+    assert updated.rowcount == 1
+
+    verdict = replay_engine(
+        inbox,
+        evidence_store,
+        emergency_log,
+        _replay_build_core(evidence_store),
+        scheme=SCHEME,
+        window_events=None,
+    )
+    assert verdict.ok
+    assert verdict.diverged == ()
+    assert verdict.total_compared == 1  # the digest WAS compared — this is the R1 fix
+    assert verdict.uncompared == 0
+    assert verdict.has_unverifiable_receipts is True
+    admitted_event = next(iter(inbox.replay()))[1]
+    tick_event_id = event_identity(admitted_event, scheme=SCHEME)
+    assert (
+        tick_event_id,
+        "RECEIPT_FINGERPRINT_MISSING",
+    ) in verdict.uncompared_halt_reasons
+
+
+def test_p9b_a_fingerprint_less_receipt_cannot_see_a_flow_only_divergence(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """Re-review probe P9b: P9's fingerprint-disabling tamper PLUS deleting all 12
+    ``FLOW_STEP_ADMITTED`` rows (the original P5 scenario). Honest outcome, stated explicitly
+    rather than assumed: the Proposal digest is IDENTICAL regardless of what the commitment flow
+    does (it is fixed before the flow ever runs), so with the fingerprint unavailable there is
+    NOTHING left that could observe this divergence — ``ok=True`` is the honestly-correct
+    verdict here, not a bug, PROVIDED ``has_unverifiable_receipts`` says so truthfully. A legacy
+    receipt is unverifiable on the flow half by construction; this is that construction's own
+    boundary, not a gap in this fix.
+    """
+    gateway = fx.FakeGateway()
+    driver = _driver(
+        inbox,
+        evidence_store,
+        emergency_log,
+        stages=fx.admitting_stages(),
+        transmit=gateway,
+    )
+    driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+
+    evidence_store.connection.execute("DROP TRIGGER IF EXISTS entries_no_update")
+    evidence_store.connection.execute("DROP TRIGGER IF EXISTS entries_no_delete")
+    updated = evidence_store.connection.execute(
+        "UPDATE entries SET payload_json = "
+        "REPLACE(payload_json, '\"flow_fingerprint\":', '\"flow_fingerprint_DISABLED\":') "
+        "WHERE kind = 'EVENT_CONSUMED'"
+    )
+    assert updated.rowcount == 1
+    deleted = evidence_store.connection.execute(
+        "DELETE FROM entries WHERE kind = 'FLOW_STEP_ADMITTED'"
+    )
+    assert deleted.rowcount == 12
+
+    verdict = replay_engine(
+        inbox,
+        evidence_store,
+        emergency_log,
+        _replay_build_core(evidence_store),
+        scheme=SCHEME,
+        window_events=None,
+    )
+    assert verdict.ok  # honest, not silent: the digest genuinely cannot see this
+    assert verdict.diverged == ()
+    assert verdict.total_compared == 1
+    assert verdict.has_unverifiable_receipts is True
