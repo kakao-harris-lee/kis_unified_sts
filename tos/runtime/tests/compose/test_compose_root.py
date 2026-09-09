@@ -697,6 +697,90 @@ class TestRecomposeReplay:
         runtime3.rcl_log.close()
         runtime3.evidence_store.close()
 
+    def test_replay_does_not_re_execute_real_stages_across_a_reboot(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """Independent review finding #2 (2026-09-09), RED before the fix — the #2 claim
+        verification the task disposition asked for: "replay digest equals the recorded one while
+        IAP_CONSUMPTION/ARE_DECISION/AFG_DECISION/ARE_SNAPSHOT/RCL_APPEND evidence counts are
+        byte-identical before/after a reboot".
+
+        Before the fix, the boot-time replay core received the REAL ``stages`` dict, and each
+        real stage carries its OWN evidence sink bound to the real durable store (independent of
+        the replay ``EngineCore``'s own ``NullEvidenceSink``) — so replaying two ``DECISION_TICK``
+        events on every reboot RE-WROTE a second (then third, ...) round of ``IAP_CONSUMPTION``,
+        ``ARE_DECISION``, ``AFG_DECISION``, and ``ARE_SNAPSHOT`` evidence, and re-consumed the
+        single-use Independent Approval. After the fix
+        (``tos_runtime.compose._engine_wiring._ReplayStage``), a reboot's replay halts at the
+        very first injected stage (right after the already-emitted proposal) and touches none of
+        those sinks — the four kinds' row counts must be identical before and after the reboot.
+
+        ``RCL_APPEND`` is measured SEPARATELY, not asserted byte-identical: an idle reboot with
+        ZERO events ever processed still increases it by exactly 1 (measured directly — the RCL
+        log's own per-process writer-epoch bookkeeping, unrelated to engine replay), so
+        "unchanged" is the wrong invariant for it. The invariant this test actually checks for
+        ``RCL_APPEND`` is that a reboot AFTER a real hand-off increases it by that SAME baseline
+        1, never more — the review's own before-fix measurement (``RCL_APPEND 4->5``, a bare
+        ``+1``) already showed this kind was not doubled by stage replay even under the bug (the
+        RCL log's own compare-and-set fence refuses a stale-``expected_seq`` re-append rather than
+        duplicating it); this assertion guards against that CAS protection ever regressing.
+        """
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+        event = fx.crossing_event()
+        results = runtime.run_once((event,))
+        proposal_digest = results[0].pipeline.proposal.canonical_digest
+        assert proposal_digest is not None
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
+        write_approval_file(
+            custody_root,
+            proposal_digest=proposal_digest,
+            environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
+        )
+        results2 = runtime.run_once((event,))
+        assert results2[0].flow is not None and results2[0].flow.handed_off is True
+
+        watched_kinds = (
+            "IAP_CONSUMPTION",
+            "ARE_DECISION",
+            "AFG_DECISION",
+            "ARE_SNAPSHOT",
+        )
+
+        def _counts(store, kinds: tuple[str, ...]) -> dict[str, int]:
+            return {
+                kind: store.connection.execute(
+                    "SELECT COUNT(*) FROM entries WHERE kind = ?", (kind,)
+                ).fetchone()[0]
+                for kind in kinds
+            }
+
+        before_reboot = _counts(runtime.evidence_store, watched_kinds)
+        rcl_append_before = _counts(runtime.evidence_store, ("RCL_APPEND",))[
+            "RCL_APPEND"
+        ]
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+        runtime2 = _compose(tmp_path, config_dir, data_dir, custody_root)
+        after_reboot = _counts(runtime2.evidence_store, watched_kinds)
+        rcl_append_after = _counts(runtime2.evidence_store, ("RCL_APPEND",))[
+            "RCL_APPEND"
+        ]
+        assert after_reboot == before_reboot, (
+            f"boot-time replay re-executed a real stage's own evidence sink: "
+            f"before={before_reboot} after={after_reboot}"
+        )
+        assert rcl_append_after == rcl_append_before + 1, (
+            "RCL_APPEND should only ever gain the ordinary per-boot writer-epoch bump (+1), "
+            f"never a replay-driven duplicate: before={rcl_append_before} "
+            f"after={rcl_append_after}"
+        )
+        runtime2.rcl_log.close()
+        runtime2.evidence_store.close()
+
 
 class TestPendingDimensionAttestationGatesCompleteness:
     """A pending currentness dimension's operator attestation is what makes
