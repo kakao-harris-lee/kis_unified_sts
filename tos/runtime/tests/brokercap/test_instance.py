@@ -6,19 +6,22 @@ repo-relative path resolved from this test file's own location — never a
 hardcoded absolute path, never a copy checked into the runtime distribution
 (plan §2 decision 3: "YAML 은 docs/broker-profiles/ 에 그대로 ... 이동 금지").
 
-**A real gap this suite documents rather than papers over.** The real file's
-REAL_PROD document is missing BOTH `profile_identity._model_view` and
-`live_scope._model_view` (verified directly against the file — neither block
-carries the annotation the rest of the file uses throughout). The loader's
-`_model_view`-required discipline (module docstring) correctly refuses to
-invent either block, so loading the real two-document file end-to-end raises
-`BrokerInstanceConfigError` naming `profile_identity` (checked first) for the
-second document. `test_real_file_fails_on_missing_profile_identity_model_view`
-below pins that exact, expected failure — this is NOT a bug in the loader,
-and the draft YAML is byte-immutable so it is not "fixed" here (module
-docstring / task instructions). The rest of this suite exercises full
-instance-document semantics against the (complete) MOCK_VTS document, sliced
-out of the same real file's bytes with no edits (`_mock_vts_only_text`).
+**Both documents now load end-to-end (2026-09-10 instance-authoring act,
+operator-approved).** The REAL_PROD document used to be missing BOTH
+`profile_identity._model_view` and `live_scope._model_view` (this suite
+used to pin that gap as an expected `BrokerInstanceConfigError`). The
+operator approved adding exactly those two annotation blocks to the
+byte-immutable draft — every value is a re-spelling of a value REAL_PROD's
+own template already carried, never a newly declared value — so
+`load_instance_documents(_DRAFT_PATH)` now returns both documents. REAL_PROD
+stays `status: DRAFT` with `approvers: []`, so `verified_dimensions ==
+frozenset()`, `instance_version_current` is `False`, and
+`capability_admissible` is `PROHIBITED` for it — a template annotation is
+not an approval act, and this suite exercises that honest, unapproved
+verdict directly rather than pinning a load failure. The rest of this suite
+exercises full instance-document semantics against the MOCK_VTS document,
+sliced out of the same real file's bytes with no edits
+(`_mock_vts_only_text`), unaffected by this change.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ from tos_runtime.brokercap.instance import (
     BrokerInstanceConfigError,
     InstanceDocument,
     instance_version_current,
+    load_instance_document,
     load_instance_documents,
     select_document,
 )
@@ -60,9 +64,10 @@ def _mock_vts_only_text() -> str:
 
     No content is edited — this is a byte-range slice between the file's two
     ``---`` document separators, used so the rest of this suite can exercise
-    full instance-document semantics against a *complete* document without
-    the REAL_PROD document's missing ``_model_view`` blocks getting in the
-    way, and without ever writing back to the byte-immutable source file.
+    full instance-document semantics against MOCK_VTS alone (single-document
+    scenarios, e.g. ``select_document``) without depending on REAL_PROD's own
+    declaration set, and without ever writing back to the byte-immutable
+    source file.
     """
     lines = _DRAFT_PATH.read_text(encoding="utf-8").splitlines(keepends=True)
     separator_indices = [
@@ -141,7 +146,7 @@ def mock_vts_document(tmp_path: Path) -> InstanceDocument:
 
 
 # ===========================================================================
-# The real file: 2 raw YAML documents, sha256 unchanged, expected failure
+# The real file: 2 raw YAML documents, sha256 unchanged, both documents load
 # ===========================================================================
 
 
@@ -158,22 +163,69 @@ def test_real_file_has_exactly_two_raw_yaml_documents() -> None:
     assert raw_docs[1]["profile_identity"]["environment"] == "REAL_PROD"
 
 
-def test_real_file_fails_on_missing_profile_identity_model_view() -> None:
-    """Documents a real gap in the byte-immutable draft (module docstring).
+def test_real_file_loads_both_documents_via_load_instance_documents() -> None:
+    """2026-09-10 instance-authoring act (module docstring): REAL_PROD now
+    carries both `_model_view` blocks, so the real file's both documents
+    load end-to-end through the strict, "every document must be valid"
+    loader — no partial-success path is exercised any more."""
+    documents = load_instance_documents(_DRAFT_PATH)
+    assert len(documents) == 2
+    mock_doc, real_doc = documents
+    assert mock_doc.artifact_id == "KIS-BCP-MOCK-VTS-DRAFT-0001"
+    assert mock_doc.environment == "MOCK_VTS"
+    assert real_doc.artifact_id == "KIS-BCP-REAL-PROD-DRAFT-0001"
+    assert real_doc.environment == "REAL_PROD"
 
-    The REAL_PROD document has no `profile_identity._model_view` block at
-    all (verified directly against the file). The loader must refuse to
-    invent one rather than silently proceed — this is the expected,
-    fail-closed outcome, not a defect in this loader.
-    """
-    with pytest.raises(BrokerInstanceConfigError, match=r"\[doc 1\]\.profile_identity"):
-        load_instance_documents(_DRAFT_PATH)
+
+def test_real_prod_document_is_draft_with_zero_verified_dimensions() -> None:
+    """The new `_model_view` blocks re-spell REAL_PROD's own existing
+    template values in kernel vocabulary — they declare no new value and are
+    not an approval act. REAL_PROD therefore stays `status: DRAFT`,
+    `approvers: ()`, and `verified_dimensions == frozenset()` (plan §2
+    decision 3's VERIFIED-0 honesty), exactly like MOCK_VTS."""
+    real_doc = load_instance_document(_DRAFT_PATH, environment="REAL_PROD")
+    assert real_doc.status == "DRAFT"
+    assert real_doc.approvers == ()
+    assert real_doc.verified_dimensions == frozenset()
+    assert len(real_doc.declared_dimensions) == 17
 
 
-def test_real_file_sha256_unchanged_after_load_attempt() -> None:
+def test_real_prod_instance_version_current_is_false() -> None:
+    real_doc = load_instance_document(_DRAFT_PATH, environment="REAL_PROD")
+    assert (
+        instance_version_current(real_doc, degraded_since_authorization=None) is False
+    )
+    assert (
+        instance_version_current(real_doc, degraded_since_authorization=False) is False
+    )
+
+
+def test_real_prod_capability_admissible_is_prohibited() -> None:
+    """REAL_PROD now loads, but DRAFT + approvers=[] + VERIFIED-0 still make
+    every broker-reaching admissibility check PROHIBITED — the honest
+    verdict for an unapproved draft (module docstring), not a defect."""
+    from tos.brokercap.vocabulary import Admissibility
+
+    real_doc = load_instance_document(_DRAFT_PATH, environment="REAL_PROD")
+    required = RequiredCapabilitySet(
+        required_dimensions=frozenset({CapabilityDimension.ORDER_IDENTITY}),
+        required_level=AssuranceLevel.LEVEL_1_DOCUMENTED,
+        minimum_live_gate_satisfied=True,
+    )
+    verdict = capability_admissible(
+        real_doc.profile,
+        "ORDER_SEND",
+        required,
+        version_current=instance_version_current(
+            real_doc, degraded_since_authorization=None
+        ),
+    )
+    assert verdict is Admissibility.PROHIBITED
+
+
+def test_real_file_sha256_unchanged_after_full_load() -> None:
     before = _sha256(_DRAFT_PATH)
-    with pytest.raises(BrokerInstanceConfigError):
-        load_instance_documents(_DRAFT_PATH)
+    load_instance_documents(_DRAFT_PATH)
     after = _sha256(_DRAFT_PATH)
     assert before == after
 

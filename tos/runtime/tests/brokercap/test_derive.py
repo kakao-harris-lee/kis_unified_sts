@@ -16,10 +16,7 @@ from tos_runtime.brokercap.derive import (
     derive_item6_item12,
     load_active_instance_document,
 )
-from tos_runtime.brokercap.instance import (
-    BrokerInstanceConfigError,
-    load_instance_document,
-)
+from tos_runtime.brokercap.instance import load_instance_document
 from tos_runtime.brokercap.scopes import BrokerScopesConfig, load_broker_scopes
 
 # tos/runtime/tests/brokercap/test_derive.py -> repo root is 4 parents up.
@@ -123,7 +120,8 @@ def test_synthetic_scope_asset_binding_override_is_load_bearing_mutation_m5(
 
 # ===========================================================================
 # REAL_READ — broker-reaching (BROKER_GET), instance environment REAL_PROD
-# (which fails to load — the real draft's known REAL_PROD gap)
+# (2026-09-10 instance-authoring act: REAL_PROD now loads — DRAFT/approvers
+# [] keeps item 12 honestly not-current, never a load failure any more)
 # ===========================================================================
 
 
@@ -134,28 +132,40 @@ def test_real_read_item6_true_structurally_admissible_and_bound(
     scope = _scope(config, "REAL_READ")
     assert scope.admissibility is Admissibility.ADMISSIBLE
 
-    fields = derive_item6_item12(scope, config, instance=None)
+    instance = load_instance_document(config.instance_path, environment="REAL_PROD")
+    fields = derive_item6_item12(scope, config, instance)
 
     assert fields.account_instrument_action_allowed is True
-    # item 12: broker-reaching + no loadable instance -> honestly not current.
+    # item 12: broker-reaching + a loaded-but-DRAFT/unapproved instance ->
+    # still honestly not current (VERIFIED 0 / approvers=[]), not because the
+    # instance failed to load.
     assert fields.broker_constraint_generation_current is False
-    assert fields.broker_capability_profile is None
+    assert fields.broker_capability_profile is instance.profile
     assert fields.broker_profile_version_current is False
+    assert "instance=present" in fields.reason
+    assert "-> False" in fields.reason
 
 
-def test_real_read_instance_binding_fails_to_load_the_known_real_prod_gap(
+def test_real_read_instance_binds_to_the_real_prod_document(
     tmp_path: Path,
 ) -> None:
-    """Wave-1 fact: the real draft's REAL_PROD document lacks both
-    ``profile_identity._model_view`` and ``live_scope._model_view`` — the
-    loader honestly refuses rather than inventing them."""
+    """2026-09-10 instance-authoring act: the real draft's REAL_PROD document
+    now carries both ``profile_identity._model_view`` and
+    ``live_scope._model_view`` (operator-approved re-spelling of its own
+    existing template values, no new declared value), so the loader no
+    longer refuses it — this used to pin a ``BrokerInstanceConfigError``
+    naming ``profile_identity``; it now pins the honest, unapproved-draft
+    verdict instead."""
     config = _load_config(tmp_path, active_scope="SYNTHETIC_FUTURES_ORDER")
     scope = _scope(config, "REAL_READ")
     assert scope.instance is not None
-    with pytest.raises(BrokerInstanceConfigError, match="profile_identity"):
-        load_instance_document(
-            config.instance_path, environment=scope.instance.environment
-        )
+    instance = load_instance_document(
+        config.instance_path, environment=scope.instance.environment
+    )
+    assert instance.environment == "REAL_PROD"
+    assert instance.status == "DRAFT"
+    assert instance.approvers == ()
+    assert instance.verified_dimensions == frozenset()
 
 
 # ===========================================================================
