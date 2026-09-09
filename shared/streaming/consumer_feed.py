@@ -33,7 +33,8 @@ def _parse_entry_fields(
 
     Inverse of ``TickStreamPublisher._build_fields``: rebuilds the dict shape
     the KIS feeds' ``get_current_price`` returns (``code``/``close``/``open``/
-    ``high``/``low``/``volume``/``timestamp`` + optional ``volume_is_cumulative``).
+    ``high``/``low``/``volume``/``timestamp`` + optional ``volume_is_cumulative``
+    and the optional top-of-book fields).
     Returns ``None`` when the entry has no usable symbol or price.
     """
     try:
@@ -72,6 +73,11 @@ class StreamConsumerFeed:
         self._symbol_tick_ts: dict[str, float] = {}
         self._subscribed: set[str] = set()
         self._last_tick_ts: float | None = None
+        # Arrival time of the newest entry that carried a usable top of book —
+        # observability only (get_health_status), same clock as
+        # ``_last_tick_ts`` so the two ages are comparable.
+        self._last_orderbook_ts: float | None = None
+        self._aux_symbols_warned = False
         self._last_id: str = "$"
         self._running = False
         self._task: asyncio.Task[None] | None = None
@@ -84,8 +90,68 @@ class StreamConsumerFeed:
     async def get_current_price(self, symbol: str) -> dict[str, Any]:
         return dict(self._prices.get(symbol, {}))
 
-    def update_symbols(self, symbols: list[str]) -> None:
+    def update_symbols(
+        self, symbols: list[str], auxiliary_symbols: list[str] | None = None
+    ) -> None:
+        """Record the symbols this consumer cares about.
+
+        ``auxiliary_symbols`` exists for signature parity with
+        ``KIS*PriceFeed.update_symbols``: the WS feeds subscribe to the extra
+        symbols, but a stream consumer only ever sees what the *producer*
+        subscribed to and published. Passing it is therefore not an error but
+        also not a subscription — warn once so a missing cross-asset quote is
+        traceable to this, and see the producer (market_ingest /
+        orchestrator) to actually add the symbol.
+        """
         self._subscribed = set(symbols)
+        if auxiliary_symbols and not self._aux_symbols_warned:
+            self._aux_symbols_warned = True
+            logger.warning(
+                "stream feed ignores auxiliary_symbols=%s (stream=%s): only "
+                "symbols the producer publishes are available; subscribe them "
+                "on the producer instead",
+                list(auxiliary_symbols),
+                self.stream,
+            )
+
+    def get_orderbook_snapshot(self, symbol: str) -> dict[str, Any]:
+        """Return the cached top of book, or ``{}`` when none is known.
+
+        Contract-identical to ``KISFuturesPriceFeed.get_orderbook_snapshot``:
+        same key set (``code``/``timestamp`` + ``bid_price_1``/``bid_qty_1``/
+        ``ask_price_1``/``ask_qty_1``/``spread``), same
+        "both sides must be positive" precondition, and ``spread`` derived
+        from bid/ask when the producer did not carry it. ``timestamp`` is the
+        producer's tick time, not our arrival time, so a downstream freshness
+        check measures the market event.
+
+        Caveat: the cached dict is the producer's *merged* snapshot (trade
+        tick fields overwrite orderbook fields of the same name), so
+        ``timestamp`` tracks the newest tick of either kind — the same
+        semantics as the WS feed's own fallback branch, and one step looser
+        than its primary branch, which keeps the orderbook tick's own time.
+        """
+        price = self._prices.get(symbol)
+        if not price:
+            return {}
+        bid = price.get("bid_price_1")
+        ask = price.get("ask_price_1")
+        if bid is None or ask is None or float(bid) <= 0 or float(ask) <= 0:
+            return {}
+        snapshot: dict[str, Any] = {
+            "code": price.get("code", symbol),
+            "bid_price_1": float(bid),
+            "bid_qty_1": float(price.get("bid_qty_1") or 0.0),
+            "ask_price_1": float(ask),
+            "ask_qty_1": float(price.get("ask_qty_1") or 0.0),
+            "spread": (
+                float(price["spread"])
+                if price.get("spread") is not None
+                else float(ask) - float(bid)
+            ),
+            "timestamp": price.get("timestamp"),
+        }
+        return snapshot
 
     def set_tick_callback(
         self, callback: Callable[[str, dict[str, Any], datetime], None] | None
@@ -106,6 +172,8 @@ class StreamConsumerFeed:
         now = time.time()
         self._symbol_tick_ts[symbol] = now
         self._last_tick_ts = now
+        if price.get("bid_price_1") and price.get("ask_price_1"):
+            self._last_orderbook_ts = now
         if self._tick_callback is not None:
             ts = datetime.fromtimestamp(price.get("timestamp", time.time()), UTC)
             try:
@@ -153,6 +221,15 @@ class StreamConsumerFeed:
             "fresh_symbol_count": fresh,
             "stale_symbol_count": max(0, len(self._symbol_tick_ts) - fresh),
             "last_tick_ts": self._last_tick_ts,
+            # None until an entry carrying a usable top of book arrives. A
+            # stream whose ticks are trade-only reports a fresh
+            # `staleness_seconds` and a null orderbook age — the pair is what
+            # tells an operator the orderbook path is the dark one.
+            "orderbook_age_seconds": (
+                None
+                if self._last_orderbook_ts is None
+                else max(0.0, now - self._last_orderbook_ts)
+            ),
             "is_healthy": self.is_healthy(),
         }
 

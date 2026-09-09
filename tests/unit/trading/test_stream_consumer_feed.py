@@ -269,3 +269,120 @@ async def test_read_loop_rate_limits_repeated_xread_errors(monkeypatch, caplog):
         "event=tick_stream_read_error stream=market:ticks sleep_seconds=0.5"
     ]
     assert caplog.records[0].exc_info is not None
+
+
+# ---------------------------------------------------------------------------
+# Orderbook snapshot surface (order-router stream feed)
+# ---------------------------------------------------------------------------
+
+
+def _orderbook_entry(**kw) -> dict[bytes, bytes]:
+    base = {
+        "schema_version": "1",
+        "symbol": "A05603",
+        "price": "331.20",
+        "timestamp": "1700000000.0",
+        "bid_price_1": "331.18",
+        "bid_qty_1": "12",
+        "ask_price_1": "331.22",
+        "ask_qty_1": "9",
+        "spread": "0.04",
+    }
+    base.update({k: str(v) for k, v in kw.items()})
+    return _entry(**base)
+
+
+def test_orderbook_snapshot_returns_ws_feed_key_set():
+    feed = _feed()
+    feed._apply_entry(_orderbook_entry())
+
+    snap = feed.get_orderbook_snapshot("A05603")
+
+    assert set(snap) == {
+        "code",
+        "timestamp",
+        "bid_price_1",
+        "bid_qty_1",
+        "ask_price_1",
+        "ask_qty_1",
+        "spread",
+    }
+    assert snap["code"] == "A05603"
+    assert snap["bid_price_1"] == 331.18
+    assert snap["bid_qty_1"] == 12.0
+    assert snap["ask_price_1"] == 331.22
+    assert snap["ask_qty_1"] == 9.0
+    assert snap["spread"] == 0.04
+    # Producer tick time, not our arrival time — a downstream freshness check
+    # must measure the market event.
+    assert snap["timestamp"] == 1700000000.0
+
+
+def test_orderbook_snapshot_empty_without_a_two_sided_book():
+    feed = _feed()
+    # Trade-only entry: the pre-existing producer shape, still valid.
+    feed._apply_entry(_entry(schema_version="1", symbol="A05603", price="331.20"))
+    assert feed.get_orderbook_snapshot("A05603") == {}
+    assert feed.get_orderbook_snapshot("nope") == {}
+
+    # One-sided book is not a book.
+    feed._apply_entry(_orderbook_entry(ask_price_1="0"))
+    assert feed.get_orderbook_snapshot("A05603") == {}
+
+
+def test_orderbook_snapshot_derives_spread_when_producer_omits_it():
+    """`spread` is a pure function of bid/ask in the WS feed; keep the key set
+    identical even for a producer that publishes only the four prices."""
+    feed = _feed()
+    fields = _orderbook_entry()
+    del fields[b"spread"]
+    feed._apply_entry(fields)
+
+    snap = feed.get_orderbook_snapshot("A05603")
+    assert snap["spread"] == pytest.approx(331.22 - 331.18)
+    assert snap["bid_qty_1"] == 12.0
+
+
+def test_orderbook_snapshot_defaults_missing_quantities_to_zero():
+    feed = _feed()
+    fields = _orderbook_entry()
+    del fields[b"bid_qty_1"]
+    del fields[b"ask_qty_1"]
+    feed._apply_entry(fields)
+
+    snap = feed.get_orderbook_snapshot("A05603")
+    assert snap["bid_qty_1"] == 0.0 and snap["ask_qty_1"] == 0.0
+
+
+def test_update_symbols_warns_once_on_auxiliary_symbols(caplog):
+    feed = _feed()
+    with caplog.at_level(logging.WARNING, logger="shared.streaming.consumer_feed"):
+        feed.update_symbols(["A05603"], auxiliary_symbols=["101S6000"])
+        feed.update_symbols(["A05603"], auxiliary_symbols=["101S6000"])
+
+    warnings = [r for r in caplog.records if "auxiliary_symbols" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "101S6000" in warnings[0].getMessage()
+    assert feed._subscribed == {"A05603"}
+
+
+def test_update_symbols_without_auxiliary_is_silent(caplog):
+    feed = _feed()
+    with caplog.at_level(logging.WARNING, logger="shared.streaming.consumer_feed"):
+        feed.update_symbols(["A05603"])
+    assert not [r for r in caplog.records if "auxiliary_symbols" in r.getMessage()]
+
+
+def test_health_status_reports_orderbook_age():
+    feed = _feed()
+    assert feed.get_health_status()["orderbook_age_seconds"] is None
+
+    # A trade-only stream stays orderbook-dark even while ticks flow.
+    feed._apply_entry(_entry(schema_version="1", symbol="A05603", price="331.20"))
+    status = feed.get_health_status()
+    assert status["staleness_seconds"] is not None
+    assert status["orderbook_age_seconds"] is None
+
+    feed._apply_entry(_orderbook_entry())
+    age = feed.get_health_status()["orderbook_age_seconds"]
+    assert age is not None and age >= 0.0
