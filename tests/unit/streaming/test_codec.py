@@ -139,6 +139,7 @@ def test_market_tick_orderbook_fields_round_trip() -> None:
         ask_price_1=331.22,
         ask_qty_1=9.0,
         spread=0.04,
+        quote_ts=1771982304.0,
     )
 
     fields = encode(msg)
@@ -146,6 +147,7 @@ def test_market_tick_orderbook_fields_round_trip() -> None:
     assert fields["bid_price_1"] == "331.18"
     assert fields["ask_qty_1"] == "9.0"
     assert fields["spread"] == "0.04"
+    assert fields["quote_ts"] == "1771982304.0"
     assert decode(MarketTickMessage, fields) == msg
     assert msg.to_price_dict()["bid_price_1"] == 331.18
     assert msg.to_price_dict()["spread"] == 0.04
@@ -182,12 +184,14 @@ def test_market_tick_source_payload_carries_orderbook_when_present() -> None:
             "ask_price_1": 331.22,
             "ask_qty_1": 9,
             "spread": 0.04,
+            "quote_ts": 1771982304.0,
         },
         now=1771982310.0,
     )
 
     assert msg.bid_price_1 == 331.18 and msg.ask_qty_1 == 9.0
     assert msg.spread == 0.04
+    assert msg.quote_ts == 1771982304.0
 
 
 def test_market_tick_drops_negative_orderbook_values_without_losing_the_tick() -> None:
@@ -235,7 +239,7 @@ def test_market_tick_legacy_fields_carry_orderbook() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_orderbook_publish_fields_returns_the_five_keys() -> None:
+def test_orderbook_publish_fields_carries_the_quote_time_as_quote_ts() -> None:
     from services.monitoring.tick_stream_publisher import orderbook_publish_fields
 
     fields = orderbook_publish_fields(
@@ -250,16 +254,48 @@ def test_orderbook_publish_fields_returns_the_five_keys() -> None:
         }
     )
 
-    # `code`/`timestamp` are excluded on purpose: the trade tick owns identity
-    # and time, and a stale quote must not backdate a fresh print.
+    # `code` is excluded and the snapshot's `timestamp` is re-keyed: the
+    # published entry's `timestamp` belongs to the trade tick, so the book's
+    # own time has to travel separately or a freshness check bounds the wrong
+    # thing.
     assert set(fields) == {
         "bid_price_1",
         "bid_qty_1",
         "ask_price_1",
         "ask_qty_1",
         "spread",
+        "quote_ts",
     }
     assert fields["spread"] == 0.04
+    assert fields["quote_ts"] == 1771982309.0
+
+
+def test_orderbook_publish_fields_keeps_an_existing_quote_ts() -> None:
+    """A snapshot that already came off the stream carries `quote_ts`; re-keying
+    its `timestamp` again would launder a stale book into a fresh one."""
+    from services.monitoring.tick_stream_publisher import orderbook_publish_fields
+
+    fields = orderbook_publish_fields(
+        {
+            "bid_price_1": 331.18,
+            "ask_price_1": 331.22,
+            "quote_ts": 100.0,
+            "timestamp": 900.0,
+        }
+    )
+
+    assert fields["quote_ts"] == 100.0
+
+
+def test_orderbook_publish_fields_omits_quote_ts_when_unreadable() -> None:
+    from services.monitoring.tick_stream_publisher import orderbook_publish_fields
+
+    fields = orderbook_publish_fields(
+        {"bid_price_1": 331.18, "ask_price_1": 331.22, "timestamp": "nope"}
+    )
+
+    assert "quote_ts" not in fields
+    assert fields["bid_price_1"] == 331.18
 
 
 @pytest.mark.parametrize(

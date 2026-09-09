@@ -100,18 +100,30 @@ def _publisher(client) -> TickStreamPublisher:
 
 
 async def _consume(redis, entries_expected: int) -> StreamConsumerFeed:
+    """Drain everything already on the stream, then stop.
+
+    Waits for the reader to reach the stream's last id rather than a fixed
+    sleep — a wall-clock drain is time-fragile (#592).
+    """
+    tail = await redis.xrevrange(STREAM, count=1)
+    assert len(tail) == 1, "nothing published"
+    last_id = tail[0][0].decode() if isinstance(tail[0][0], bytes) else str(tail[0][0])
+
     feed = StreamConsumerFeed(redis=redis, stream=STREAM, xread_block_ms=20)
     feed._last_id = "0"  # read from the head: entries are already published
     feed.update_symbols([SYMBOL])
     await feed.start()
     try:
         for _ in range(200):
-            if len(feed._symbol_tick_ts) and feed._prices.get(SYMBOL):
-                if entries_expected <= 1 or feed._prices[SYMBOL].get("close"):
-                    break
+            if feed._last_id == last_id:
+                break
             await asyncio.sleep(0.01)
     finally:
         await feed.stop()
+    assert feed._last_id == last_id, (
+        f"reader stopped at {feed._last_id}, expected {last_id} "
+        f"({entries_expected} entries published)"
+    )
     return feed
 
 
@@ -142,15 +154,15 @@ async def test_stream_snapshot_matches_ws_feed_snapshot():
 
 
 @pytest.mark.asyncio
-async def test_stream_snapshot_timestamp_tracks_the_newest_tick():
-    """Documented divergence, pinned so it cannot drift silently.
+async def test_frozen_book_under_fresh_trades_keeps_the_quote_time():
+    """The condition the whole `quote_ts` field exists for.
 
-    The WS feed answers from its dedicated orderbook cache, which keeps the
-    orderbook tick's own time. The stream carries the producer's *merged*
-    snapshot, whose ``timestamp`` the later trade tick overwrites — the same
-    semantics as the WS feed's own fallback branch. Prices and quantities stay
-    identical; only the clock differs, and it reads newer, so a freshness check
-    downstream is looser here than on the WS feed, never stricter.
+    Trades keep printing while H0IFASP0 goes quiet — a real state the WS feed
+    models (`_log_orderbook_staleness`) and never expires the cached book for.
+    The producer then merges a frozen bid/ask onto a fresh trade timestamp
+    every ~0.2s. If the stream carried only the entry timestamp, a freshness
+    check would read age≈0 forever and pass a dead book into the entry gate.
+    Both feeds must report the ORDERBOOK tick's own time here.
     """
     ws, captured = _ws_feed()
     ws._on_tick(_orderbook_tick(ts=TICK_TS))
@@ -158,19 +170,54 @@ async def test_stream_snapshot_timestamp_tracks_the_newest_tick():
     ws_snapshot = ws.get_orderbook_snapshot(SYMBOL)
 
     server = fakeredis.FakeServer()
+    published = _producer_payload(ws, captured)
+    assert published["timestamp"] == TICK_TS + 5.0  # the trade print
+    assert published["quote_ts"] == TICK_TS  # the frozen book
     _publisher(fakeredis.FakeStrictRedis(server=server, db=1)).publish(
-        "futures", SYMBOL, _producer_payload(ws, captured)
+        "futures", SYMBOL, published
     )
     consumer = await _consume(
         fakeredis.aioredis.FakeRedis(server=server, db=1), entries_expected=1
     )
     stream_snapshot = consumer.get_orderbook_snapshot(SYMBOL)
 
-    assert ws_snapshot["timestamp"] == TICK_TS
-    assert stream_snapshot["timestamp"] == TICK_TS + 5.0
-    assert {k: v for k, v in stream_snapshot.items() if k != "timestamp"} == {
-        k: v for k, v in ws_snapshot.items() if k != "timestamp"
-    }
+    assert stream_snapshot == ws_snapshot
+    assert stream_snapshot["timestamp"] == TICK_TS
+    # The trade time is still available on the price dict, unchanged.
+    assert (await consumer.get_current_price(SYMBOL))["timestamp"] == TICK_TS + 5.0
+
+
+@pytest.mark.asyncio
+async def test_a_quoteless_entry_does_not_erase_a_known_book():
+    """Mirrors the WS feed, which never clears `_orderbooks` on a trade tick.
+
+    A producer cold start or a cutover handoff publishes trade-only entries for
+    a while. Dropping the book there would block every entry on
+    `orderbook_unavailable`, which reads as a market condition; keeping it with
+    its true `quote_ts` lets the freshness gate reject it as what it is.
+    """
+    ws, captured = _ws_feed()
+    ws._on_tick(_orderbook_tick(ts=TICK_TS))
+    ws._on_tick(_trade_tick(ts=TICK_TS))
+
+    server = fakeredis.FakeServer()
+    publisher = _publisher(fakeredis.FakeStrictRedis(server=server, db=1))
+    publisher.publish("futures", SYMBOL, _producer_payload(ws, captured))
+    # A later trade-only publish: same symbol, no book at all.
+    publisher.publish(
+        "futures",
+        SYMBOL,
+        {"code": SYMBOL, "close": 331.40, "timestamp": TICK_TS + 60.0},
+    )
+
+    consumer = await _consume(
+        fakeredis.aioredis.FakeRedis(server=server, db=1), entries_expected=2
+    )
+
+    assert (await consumer.get_current_price(SYMBOL))["close"] == pytest.approx(331.40)
+    snapshot = consumer.get_orderbook_snapshot(SYMBOL)
+    assert snapshot["bid_price_1"] == 331.18
+    assert snapshot["timestamp"] == TICK_TS  # still the old book's own time
 
 
 @pytest.mark.asyncio

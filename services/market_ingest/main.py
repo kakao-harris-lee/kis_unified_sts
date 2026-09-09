@@ -18,7 +18,10 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
-from services.monitoring.tick_stream_publisher import orderbook_publish_fields
+from services.monitoring.tick_stream_publisher import (
+    OrderbookMergeLog,
+    orderbook_publish_fields,
+)
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.exceptions import APIError, NetworkError, WebSocketDisconnectError
 from shared.stock_universe import (
@@ -192,6 +195,7 @@ class MarketIngestDaemon:
             os.environ.get("INGEST_DATA_FRESHNESS_INTERVAL_SECONDS", "5")
         )
         self._freshness = DataFreshnessTracker(asset)
+        self._orderbook_merge_log = OrderbookMergeLog(logger, f"{asset}-market-ingest")
         self._feed_started = False
         # The in-flight backoff feed-start retry task. One at a time: cold start
         # spawns it, and a futures rollover restart replaces it (see
@@ -207,17 +211,24 @@ class MarketIngestDaemon:
         publish the same shape or a consumer's quote silently depends on which
         one is running.
 
-        Best-effort: a feed without the accessor (test doubles), an empty
-        cache, or a one-sided book leaves ``data`` untouched.
+        Best-effort but not silent: a futures feed that cannot serve a book is
+        a data gap whose only downstream symptom is the router blocking every
+        signal, so the first failure is logged (see :class:`OrderbookMergeLog`).
+        A one-sided or empty book is NOT a failure — it is a normal pre-open
+        state — so it leaves ``data`` untouched without logging.
         """
         getter = getattr(self.feed, "get_orderbook_snapshot", None)
         if not callable(getter):
+            self._orderbook_merge_log.failed(
+                f"{type(self.feed).__name__} has no get_orderbook_snapshot"
+            )
             return data
         try:
             fields = orderbook_publish_fields(getter(symbol))
-        except Exception:  # noqa: BLE001 - never break the republish hot path
-            logger.debug("orderbook snapshot lookup failed symbol=%s", symbol)
+        except Exception as exc:  # noqa: BLE001 - never break the republish path
+            self._orderbook_merge_log.failed(f"lookup raised {exc!r}")
             return data
+        self._orderbook_merge_log.ok()
         if not fields:
             return data
         return {**data, **fields}

@@ -10,11 +10,15 @@ on the same account — which evicts one of the two connections (measured
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 import pytest
 
+from services.monitoring.tick_stream_publisher import OrderbookMergeLog
 from services.trading.orchestrator import TradingConfig, TradingOrchestrator
+
+ORCH_LOGGER = "services.trading.orchestrator"
 
 SYMBOL = "A05603"
 QUOTE = {
@@ -33,13 +37,13 @@ class _Feed:
     def __init__(self, snapshot=None, *, has_accessor=True, raises=False):
         self._snapshot = snapshot
         self._has_accessor = has_accessor
-        self._raises = raises
+        self.raises = raises
         self.callback = None
         if has_accessor:
             self.get_orderbook_snapshot = self._get_orderbook_snapshot
 
     def _get_orderbook_snapshot(self, symbol):  # noqa: ARG002
-        if self._raises:
+        if self.raises:
             raise RuntimeError("boom")
         return dict(self._snapshot or {})
 
@@ -74,6 +78,9 @@ def _orchestrator(feed, publisher) -> TradingOrchestrator:
     orch._stock_price_feed = None
     orch._stream_consumer_feed = None
     orch._tick_stream_publisher = publisher
+    orch._orderbook_merge_log = OrderbookMergeLog(
+        logging.getLogger(ORCH_LOGGER), "trader-futures"
+    )
     orch._init_indicator_engine()
     assert feed.callback is not None, "futures tick callback was never registered"
     return orch
@@ -114,3 +121,66 @@ def test_futures_tick_publishes_the_cached_top_of_book():
 def test_futures_tick_publishes_unchanged_when_no_usable_quote(feed):
     payload = _publish_one(feed, _Publisher())
     assert payload == TRADE
+
+
+# ---------------------------------------------------------------------------
+# Merge failures must be visible (a silent revert to trade-only ticks surfaces
+# only as the router blocking every signal, which reads as a market condition)
+# ---------------------------------------------------------------------------
+
+
+def _tick(feed, orch):
+    feed.callback(SYMBOL, dict(TRADE), datetime.fromtimestamp(TRADE["timestamp"], UTC))
+    assert orch is not None
+
+
+def test_a_feed_without_the_accessor_warns_exactly_once(caplog):
+    feed = _Feed(QUOTE, has_accessor=False)
+    publisher = _Publisher()
+    orch = _orchestrator(feed, publisher)
+
+    with caplog.at_level(logging.WARNING, logger=ORCH_LOGGER):
+        _tick(feed, orch)
+        _tick(feed, orch)
+
+    warnings = [
+        r for r in caplog.records if "orderbook merge unavailable" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "has no get_orderbook_snapshot" in warnings[0].getMessage()
+    assert len(publisher.published) == 2  # ticks still flow
+
+
+def test_a_raising_accessor_warns_once_and_logs_recovery(caplog):
+    feed = _Feed(QUOTE, raises=True)
+    publisher = _Publisher()
+    orch = _orchestrator(feed, publisher)
+
+    with caplog.at_level(logging.INFO, logger=ORCH_LOGGER):
+        _tick(feed, orch)
+        _tick(feed, orch)
+        feed.raises = False
+        _tick(feed, orch)
+        _tick(feed, orch)
+
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "orderbook merge" in r.getMessage()
+    ]
+    recoveries = [r for r in caplog.records if "merge recovered" in r.getMessage()]
+    assert len(warnings) == 1
+    assert len(recoveries) == 1
+    assert publisher.published[-1][2]["bid_price_1"] == 331.18
+
+
+def test_a_one_sided_book_is_not_treated_as_a_failure(caplog):
+    """Pre-open with no book is a market state, not a fault — warning on it
+    would train the operator to ignore the line that matters."""
+    feed = _Feed({"bid_price_1": 331.18, "ask_price_1": 0.0})
+    orch = _orchestrator(feed, _Publisher())
+
+    with caplog.at_level(logging.WARNING, logger=ORCH_LOGGER):
+        _tick(feed, orch)
+
+    assert [r for r in caplog.records if "orderbook merge" in r.getMessage()] == []

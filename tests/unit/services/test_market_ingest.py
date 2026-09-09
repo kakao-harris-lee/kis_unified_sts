@@ -641,3 +641,78 @@ def test_stock_tick_never_consults_the_orderbook_cache():
 
     assert feed.calls == []
     assert publisher.published[0][2] == {"close": 71500.0}
+
+
+def test_missing_accessor_warns_exactly_once_on_a_futures_feed(caplog):
+    """A silent revert to trade-only ticks has no local symptom: it surfaces as
+    the order-router blocking every signal on `orderbook_unavailable`, which
+    reads as a market condition rather than a data gap."""
+    import logging
+
+    class _NoAccessorFeed(FakeFeed):
+        pass
+
+    publisher = FakePublisher()
+    daemon = _futures_daemon(_NoAccessorFeed(), publisher)
+
+    with caplog.at_level(logging.WARNING, logger="services.market_ingest.main"):
+        daemon._on_tick("A05603", {"close": 331.20}, datetime.now(UTC))
+        daemon._on_tick("A05603", {"close": 331.21}, datetime.now(UTC))
+
+    warnings = [
+        r for r in caplog.records if "orderbook merge unavailable" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "has no get_orderbook_snapshot" in warnings[0].getMessage()
+    assert len(publisher.published) == 2  # ticks still flow
+
+
+def test_raising_accessor_warns_once_then_logs_recovery(caplog):
+    import logging
+
+    feed = OrderbookFeed(_QUOTE, raises=True)
+    publisher = FakePublisher()
+    daemon = _futures_daemon(feed, publisher)
+
+    with caplog.at_level(logging.INFO, logger="services.market_ingest.main"):
+        daemon._on_tick("A05603", {"close": 331.20}, datetime.now(UTC))
+        daemon._on_tick("A05603", {"close": 331.21}, datetime.now(UTC))
+        feed.raises = False
+        daemon._on_tick("A05603", {"close": 331.22}, datetime.now(UTC))
+        daemon._on_tick("A05603", {"close": 331.23}, datetime.now(UTC))
+
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "orderbook merge" in r.getMessage()
+    ]
+    recoveries = [r for r in caplog.records if "merge recovered" in r.getMessage()]
+    assert len(warnings) == 1
+    assert len(recoveries) == 1
+    assert publisher.published[-1][2]["bid_price_1"] == 331.18
+
+
+def test_an_empty_book_is_not_treated_as_a_merge_failure(caplog):
+    import logging
+
+    publisher = FakePublisher()
+    daemon = _futures_daemon(OrderbookFeed({}), publisher)
+
+    with caplog.at_level(logging.WARNING, logger="services.market_ingest.main"):
+        daemon._on_tick("A05603", {"close": 331.20}, datetime.now(UTC))
+
+    assert [r for r in caplog.records if "orderbook merge" in r.getMessage()] == []
+
+
+def test_stock_feed_without_the_accessor_never_warns(caplog):
+    """Only futures ticks take the merge path; a stock feed has no book."""
+    import logging
+
+    daemon = _daemon(
+        FakeFeed(), FakePublisher(), _provider([["005930"]]), asset="stock"
+    )
+
+    with caplog.at_level(logging.WARNING, logger="services.market_ingest.main"):
+        daemon._on_tick("005930", {"close": 71500.0}, datetime.now(UTC))
+
+    assert [r for r in caplog.records if "orderbook merge" in r.getMessage()] == []
