@@ -70,6 +70,25 @@ CREATE INDEX IF NOT EXISTS events_unconsumed
 ON events (seq) WHERE consumed_evidence_seq IS NULL
 """
 
+#: TOS Phase 3 Wave 2 Lane C-R (plan §2.2 "커널 결합"): a small side table, in this SAME inbox
+#: file (never the evidence store — the D3 failure-domain separation this file's own module
+#: docstring already argues for applies here identically: this is a durable, mutable, keyed-by
+#: -scope PROJECTION, not an append-only log entry), holding the LAST orthostate
+#: ``CompositeState`` observation :mod:`tos_runtime.engine.orthostate_projection` derived for
+#: each ``attempt_id`` — so a restart resumes projecting from the last known composite
+#: (conservatively, via ``tos.orthostate.reconstruct_conservative``) rather than from a wrongly
+#: re-derived genesis. Deliberately keyed by ``attempt_id``, never overwritten in place with a
+#: mutated value: :meth:`record_composite` REPLACES the row wholesale on every call — there is no
+#: partial-field update, mirroring ``tos.orthostate.records.CompositeState``'s own "no update
+#: method; a legitimate transition is a fresh observation" discipline at the storage layer too.
+_CREATE_ATTEMPT_COMPOSITES_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS attempt_composites (
+    attempt_id TEXT PRIMARY KEY,
+    composite_json TEXT NOT NULL,
+    observation_revision INTEGER NOT NULL
+)
+"""
+
 
 @dataclass(frozen=True)
 class InboxReceipt:
@@ -118,6 +137,7 @@ class SqliteEventInbox:
         self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.execute(_CREATE_EVENTS_TABLE_SQL)
         self._conn.execute(_CREATE_UNCONSUMED_INDEX_SQL)
+        self._conn.execute(_CREATE_ATTEMPT_COMPOSITES_TABLE_SQL)
         existing_columns = {
             row[1] for row in self._conn.execute("PRAGMA table_info(events)")
         }
@@ -293,3 +313,53 @@ class SqliteEventInbox:
         )
         for seq, payload_json in cur:
             yield seq, EngineEvent.model_validate(json.loads(payload_json))
+
+    # -- per-attempt orthostate composite side table (Phase 3 wave 2, plan §2.2) ----
+
+    def record_composite(
+        self, attempt_id: str, composite: dict, *, observation_revision: int
+    ) -> None:
+        """Durably REPLACE ``attempt_id``'s last known orthostate composite observation.
+
+        Args:
+            attempt_id: The scope key (the ADR-002-005 dimensions are tracked per attempt).
+            composite: The plain JSON-native mapping of the five dimension coordinates (this
+                queue stores whatever it is given — it never imports or interprets
+                ``tos.orthostate`` types itself, keeping this module's own firewall scope
+                unchanged; the caller, :mod:`tos_runtime.engine.orthostate_projection`, owns the
+                ``CompositeState`` <-> mapping conversion).
+            observation_revision: The caller's own monotonically-advancing observation counter
+                for this attempt (never a wall clock) — stored alongside for a caller that wants
+                to detect a stale write without re-parsing ``composite_json``.
+        """
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute(
+                "INSERT INTO attempt_composites (attempt_id, composite_json, "
+                "observation_revision) VALUES (?, ?, ?) "
+                "ON CONFLICT(attempt_id) DO UPDATE SET "
+                "composite_json = excluded.composite_json, "
+                "observation_revision = excluded.observation_revision",
+                (
+                    attempt_id,
+                    json.dumps(composite, sort_keys=True, separators=(",", ":")),
+                    observation_revision,
+                ),
+            )
+            self._conn.execute("COMMIT")
+        except BaseException:
+            self._conn.execute("ROLLBACK")
+            raise
+
+    def last_composite(self, attempt_id: str) -> tuple[dict, int] | None:
+        """``(composite, observation_revision)`` last recorded for ``attempt_id``, or ``None``
+        if this attempt has no prior recorded composite (a fresh/genesis attempt)."""
+        row = self._conn.execute(
+            "SELECT composite_json, observation_revision FROM attempt_composites "
+            "WHERE attempt_id = ?",
+            (attempt_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        composite_json, observation_revision = row
+        return json.loads(composite_json), observation_revision
