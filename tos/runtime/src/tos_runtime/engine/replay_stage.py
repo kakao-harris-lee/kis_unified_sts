@@ -267,6 +267,8 @@ class EventCorrelatingCore:
         event_id = event_identity(event, scheme=self.scheme)
         self.recorded_stage.set_current_event_id(event_id)
         # This class's own docstring is the sanction: it exists SOLELY to prime
-        # RecordedStage's event_id before delegating to the real core.
-        core = self.core
-        return core.handle(event)  # direct-core-call: sanctioned (determinism control)
+        # RecordedStage's event_id before delegating to the real core. Wave-3 review finding #5
+        # (2026-09-09): this module is listed whole in test_no_direct_core_calls.py's own
+        # _ALLOWED_FILES, with its own reason — the test-only per-line escape hatch is not used
+        # here, since this is a shipped module's OWN sanctioned entry point, not a test double.
+        return self.core.handle(event)

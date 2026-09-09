@@ -13,14 +13,13 @@ from dataclasses import fields
 from pathlib import Path
 
 from tos.canonical import CanonicalizationScheme
-from tos.engine import EngineCore
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.compose._egress_attestations import EgressAttestations
 from tos_runtime.compose._egress_coordinates import EgressCoordinatesConfig
 from tos_runtime.compose._risk_attestations import RiskAttestations
 from tos_runtime.engine.inbox import SqliteEventInbox
-from tos_runtime.engine.replay import ReplayVerdict, replay_engine
+from tos_runtime.engine.replay import ReplayableCore, ReplayVerdict, replay_engine
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog
@@ -92,7 +91,7 @@ def verify_engine_replay_or_halt(
     inbox: SqliteEventInbox,
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
-    build_core: Callable[[], EngineCore],
+    build_core: Callable[[], ReplayableCore],
     *,
     scheme: CanonicalizationScheme,
     window_events: int,

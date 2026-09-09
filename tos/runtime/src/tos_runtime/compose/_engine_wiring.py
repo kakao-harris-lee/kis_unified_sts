@@ -43,7 +43,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import yaml
 from tos.brokeradapter import SyntheticFillPolicy, SyntheticPaperTransport
@@ -283,7 +283,7 @@ def verify_replay_or_halt(
     stage's own bound evidence sink, ledger mutation, and transport call on every boot.
     """
 
-    def _replay_core_factory() -> EngineCore:
+    def _replay_core_factory() -> EventCorrelatingCore:
         recorded_stage = RecordedStage(evidence_store)
         core = EngineCore(
             registry=registry,
@@ -309,15 +309,11 @@ def verify_replay_or_halt(
         # than encounter order — it must be told which event is about to be handled before each
         # call. EventCorrelatingCore is the seam (see its own docstring): it computes event_id
         # and calls recorded_stage.set_current_event_id BEFORE delegating to the real core.
-        # verify_engine_replay_or_halt (tos_runtime.compose._boot_integrity) only ever calls
-        # .handle(event) on whatever this factory returns — the cast is a structural, not
-        # nominal, substitution, justified by that single-method usage (EventCorrelatingCore's
-        # own docstring).
-        return cast(
-            EngineCore,
-            EventCorrelatingCore(
-                core=core, recorded_stage=recorded_stage, scheme=scheme
-            ),
+        # Wave-3 review finding #5 (2026-09-09): verify_engine_replay_or_halt and replay_engine
+        # both declare their build_core parameter as tos_runtime.engine.replay.ReplayableCore (a
+        # Protocol EventCorrelatingCore satisfies structurally) — no cast needed at this boundary.
+        return EventCorrelatingCore(
+            core=core, recorded_stage=recorded_stage, scheme=scheme
         )
 
     return verify_engine_replay_or_halt(
