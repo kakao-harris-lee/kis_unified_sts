@@ -737,30 +737,6 @@ class TestStandInZero:
         runtime.evidence_store.close()
 
 
-#: CR5-3 (2026-09-09) kernel/evidence-surface finding, reported rather than worked around (see
-#: :mod:`tos_runtime.engine.replay_stage`'s own module docstring, "structurally unrecoverable
-#: steps" section, for the full derivation). ``tos.engine.sequencer._bindings_from`` derives step
-#: 12's ``(conformance_proof_digest, action_flow_permit_identity)`` from ``StageVerdict
-#: .bound_digest`` (step 11) and ``StageVerdict.bound_identity`` (step 9) — neither field is ever
-#: written to durable evidence (``tos.engine.records.EngineEvidenceRecord`` carries no such
-#: field; the only place they exist after a stage runs,
-#: ``tos_runtime.compose.context.VerdictRecorder.last_verdict``, is in-memory only and does not
-#: survive a reboot). A boot-time replay core can therefore never re-derive the live run's real
-#: ``attempt_id`` for a tick that reached a real hand-off, and refuses (fail-closed,
-#: ``REPLAY_STAGE_EVIDENCE_MISSING``) rather than fabricate a wrong one — which would itself
-#: silently corrupt every later ``EGRESS_RESULT`` event's replay. All three tests below drive at
-#: least one real hand-off, so all three hit this gap. Fixing it needs the kernel
-#: (``tos.engine.sequencer``/``tos.engine.records``) to durably carry these two fields — a future
-#: K-item, not a runtime-shell fix.
-_REPLAY_STAGE_EVIDENCE_GAP_XFAIL_REASON = (
-    "CR5-3 kernel/evidence-surface gap: FLOW_STEP_ADMITTED evidence for steps 9/11 never "
-    "carries StageVerdict.bound_identity/bound_digest, so a real hand-off's attempt_id cannot "
-    "be reconstructed during boot-time replay (RecordedStage fails closed instead of guessing) "
-    "— see tos_runtime.engine.replay_stage's own module docstring; needs a kernel evidence-"
-    "surface change (future K-item)"
-)
-
-
 class TestRecomposeReplay:
     """Scenario 3: re-compose over the same data_dir (simulated restart)."""
 
@@ -792,7 +768,6 @@ class TestRecomposeReplay:
         runtime2.rcl_log.close()
         runtime2.evidence_store.close()
 
-    @pytest.mark.xfail(strict=True, reason=_REPLAY_STAGE_EVIDENCE_GAP_XFAIL_REASON)
     def test_recompose_after_a_real_hand_off_does_not_diverge(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
@@ -843,7 +818,6 @@ class TestRecomposeReplay:
         runtime3.rcl_log.close()
         runtime3.evidence_store.close()
 
-    @pytest.mark.xfail(strict=True, reason=_REPLAY_STAGE_EVIDENCE_GAP_XFAIL_REASON)
     def test_replay_does_not_re_execute_real_stages_across_a_reboot(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
@@ -999,7 +973,6 @@ class TestRecomposeReplay:
         runtime3.rcl_log.close()
         runtime3.evidence_store.close()
 
-    @pytest.mark.xfail(strict=True, reason=_REPLAY_STAGE_EVIDENCE_GAP_XFAIL_REASON)
     def test_recompose_after_a_new_risk_latch_does_not_diverge(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
