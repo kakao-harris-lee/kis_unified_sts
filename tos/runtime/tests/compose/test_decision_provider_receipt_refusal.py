@@ -74,6 +74,7 @@ def _time_config() -> TrustworthyTimeConfig:
         max_time_source_disagreement_ms=50,
         min_time_independent_reference_count=1,
         max_clock_domain_conversion_uncertainty_ms=50,
+        max_send_result_wait_ms=5000,
         tz_db_version="2026a",
         trading_calendar_version="cal-1",
         verification_profile_version="vp-0",

@@ -51,6 +51,16 @@ _BOUND_KEYS: tuple[str, ...] = (
     # clocks", APPROVED value 50) — reused verbatim, same VER-002-KEYS
     # convention tos.marketfeed/tos.backtest.resolver already document.
     "MAX_clock_domain_conversion_uncertainty_ms",
+    # TOS Phase 3 Wave 1 Lane A-R (docs/plans/2026-09-09-tos-phase3-event-
+    # core-plan.md §1.1): the wait bound tos_runtime.engine.driver.EngineDriver's
+    # TimeoutInjector uses before treating a SENT_UNCONFIRMED hand-off with no
+    # egress result as TIMEOUT (RFC-005 §11 "timeout = UNKNOWN, never
+    # rejection"). No existing VERIFICATION-PROFILE-002 coordinate names this
+    # exact bound (grepped 2026-09-09: no "result_wait"/"claim_to_send" key) —
+    # unlike MAX_clock_domain_conversion_uncertainty_ms above, this is a new
+    # named-TBD with no prior approved value to cite; a Bounds-Approver
+    # decision fills it in before any deployment relies on timeout injection.
+    "MAX_send_result_wait_ms",
 )
 
 #: Non-bound identity/version strings the service needs to issue a
@@ -83,6 +93,7 @@ _BOUND_FIELD_BY_KEY: dict[str, str] = {
     "MAX_clock_domain_conversion_uncertainty_ms": (
         "max_clock_domain_conversion_uncertainty_ms"
     ),
+    "MAX_send_result_wait_ms": "max_send_result_wait_ms",
 }
 
 
@@ -103,6 +114,7 @@ class TrustworthyTimeConfig:
     max_time_source_disagreement_ms: int
     min_time_independent_reference_count: int
     max_clock_domain_conversion_uncertainty_ms: int
+    max_send_result_wait_ms: int
     tz_db_version: str
     trading_calendar_version: str
     verification_profile_version: str

@@ -55,6 +55,7 @@ def config_dir(tmp_path: Path) -> Path:
             "MAX_time_source_disagreement_ms": 50,
             "MIN_time_independent_reference_count": 1,
             "MAX_clock_domain_conversion_uncertainty_ms": 50,
+            "MAX_send_result_wait_ms": 5000,
             "tz_db_version": "tzdb-compose-0",
             "trading_calendar_version": "cal-compose-0",
             "verification_profile_version": "ver-compose-0",
