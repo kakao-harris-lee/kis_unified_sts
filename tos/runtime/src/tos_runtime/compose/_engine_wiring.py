@@ -146,10 +146,11 @@ def build_engine_driver(
     core: EngineCore,
     gateway: BrokerEgressGateway,
     evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
     scheme: CanonicalizationScheme,
     continuity_id: str,
     monotonic_source: MonotonicSource,
-    max_send_result_wait_ms: int | None,
+    max_send_result_wait_ms: int,
 ) -> tuple[SqliteEventInbox, EngineDriver]:
     """Construct the durable inbox and the engine driver, bound to ``gateway``.
 
@@ -160,16 +161,18 @@ def build_engine_driver(
         gateway: The already-composed send boundary whose retained
             ``.results`` the driver drains.
         evidence_store: The durable evidence store the driver appends
-            ``EVENT_CONSUMED`` receipts into.
+            ``EVENT_HANDLING_STARTED``/``EVENT_CONSUMED`` receipts into.
+        emergency_log: The sqlite-independent dual-path HALT log (independent review finding #3
+            — the driver's "possibly live" crash-window case).
         scheme: The canonicalization scheme for event identity and the
             outcome-digest stand-in.
         continuity_id: The single stream continuity every coordinate this
             driver issues carries.
         monotonic_source: The injected monotonic clock for timeout
             injection.
-        max_send_result_wait_ms: The injected wait bound before a
-            SENT_UNCONFIRMED hand-off is timed out; ``None`` disables
-            timeout injection.
+        max_send_result_wait_ms: The injected wait bound before a SENT_UNCONFIRMED hand-off is
+            timed out (independent review finding #14 — always a concrete positive int; compose
+            already supplies one via ``TrustworthyTimeConfig``, itself non-optional).
 
     Returns:
         ``(inbox, driver)`` — the driver is already bound to ``gateway``.
@@ -179,6 +182,7 @@ def build_engine_driver(
         core=core,
         inbox=inbox,
         evidence_store=evidence_store,
+        emergency_log=emergency_log,
         scheme=scheme,
         continuity_id=continuity_id,
         monotonic_source=monotonic_source,
@@ -256,7 +260,7 @@ def wire_engine_and_driver(
     scheme: CanonicalizationScheme,
     continuity_id: str,
     monotonic_source: MonotonicSource,
-    max_send_result_wait_ms: int | None,
+    max_send_result_wait_ms: int,
 ) -> WiredEngine:
     """The gateway + ``EngineCore`` + durable inbox/driver wiring — split out of ``_wiring.py``'s
     ``_finalize`` purely for the size budget; no behavioural difference from having this inline
@@ -311,6 +315,7 @@ def wire_engine_and_driver(
         core=core,
         gateway=gateway,
         evidence_store=evidence_store,
+        emergency_log=emergency_log,
         scheme=scheme,
         continuity_id=continuity_id,
         monotonic_source=monotonic_source,

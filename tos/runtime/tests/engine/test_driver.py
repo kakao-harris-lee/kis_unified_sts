@@ -9,12 +9,13 @@ always are on restart), while the two sqlite files retain everything durably com
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos.engine.records import EgressResultPayload, EngineEvent
+from tos.engine.records import EgressResultPayload, EngineEvent, event_identity
 from tos.engine.vocabulary import (
     EgressResultKind,
     EventKind,
@@ -23,6 +24,7 @@ from tos.engine.vocabulary import (
 )
 from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import SqliteEventInbox
+from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import KeyProvider, SqliteEvidenceStore
 
 from . import _fixtures as fx
@@ -32,13 +34,19 @@ SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
+#: Independent review finding #14: ``max_send_result_wait_ms`` is a concrete positive int now,
+#: never ``None`` — a caller that wants "timeout injection never fires within this test" passes a
+#: bound far larger than anything the test advances its ``FakeMonotonicSource`` by.
+_NO_TIMEOUT_WITHIN_TEST = 10**12
+
 
 def _make_driver(
     *,
     inbox: SqliteEventInbox,
     evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
     monotonic_source: FakeMonotonicSource,
-    max_send_result_wait_ms: int | None = None,
+    max_send_result_wait_ms: int = _NO_TIMEOUT_WITHIN_TEST,
     transmit: object = None,
 ) -> tuple[EngineDriver, object]:
     core = fx.build_core(transmit=transmit)
@@ -46,6 +54,7 @@ def _make_driver(
         core=core,
         inbox=inbox,
         evidence_store=evidence_store,
+        emergency_log=emergency_log,
         scheme=SCHEME,
         continuity_id="driver-tests",
         monotonic_source=monotonic_source,
@@ -58,10 +67,16 @@ def _make_driver(
 
 
 def test_consumption_order_is_seq_order(
-    inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore, monotonic_source
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    monotonic_source,
 ) -> None:
     driver, _core = _make_driver(
-        inbox=inbox, evidence_store=evidence_store, monotonic_source=monotonic_source
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic_source,
     )
     r1 = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
     r2 = driver.enqueue_and_run(fx.decision_tick_event(seq=2))
@@ -72,14 +87,20 @@ def test_consumption_order_is_seq_order(
 
 
 def test_reversed_reference_is_recorded_as_event_order_reversed(
-    inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore, monotonic_source
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    monotonic_source,
 ) -> None:
     """The driver stamps EVERY event with its own strictly-increasing counter (module docstring
     item 1), so a caller-supplied reference can never actually cause a reversal through the
     normal ``enqueue_and_run`` path — this is exactly the point: yield-order stamping makes a
     caller-side reversal structurally unrepresentable, which this test pins."""
     driver, _core = _make_driver(
-        inbox=inbox, evidence_store=evidence_store, monotonic_source=monotonic_source
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic_source,
     )
     first = driver.enqueue_and_run(fx.decision_tick_event(seq=5))
     second = driver.enqueue_and_run(
@@ -95,53 +116,24 @@ def test_reversed_reference_is_recorded_as_event_order_reversed(
 def test_restart_before_evidence_commit_reprocesses_once(
     tmp_path: Path, key_provider: KeyProvider
 ) -> None:
-    """Crash window 1: the process dies before the ``EVENT_CONSUMED`` evidence commit even
-    starts. On restart, the event is genuinely unconsumed and is processed normally, exactly
-    once."""
+    """Independent review finding #3 (2026-09-09) — RED before the fix.
+
+    This is the WIDEST of the three crash windows: ``core.handle`` has ALREADY run (including a
+    real send, simulated here by ``counting_transmit``) but the process crashes before ANY
+    ``EVENT_CONSUMED`` evidence is written at all — not evidence-committed-but-unmarked (that is
+    the narrower window ``test_restart_after_evidence_before_mark_recovers_without_reprocessing``
+    below exercises), but nothing durable about the consumption at all.
+
+    Before this fix, the driver had no way to distinguish this from "never started" on restart,
+    so it silently RE-HANDLED the event — re-invoking the send. The write-ahead
+    ``EVENT_HANDLING_STARTED`` marker (durably recorded BEFORE ``core.handle``, independent of the
+    ``EVENT_CONSUMED`` receipt) now lets restart recognise this window and refuse to re-handle:
+    the transport call count must stay at 1, and the event is marked consumed with a
+    ``HANDLING_INTERRUPTED_POSSIBLY_LIVE`` halt instead.
+    """
     inbox_path = tmp_path / "inbox.sqlite3"
     evidence_path = tmp_path / "evidence.sqlite3"
-    inbox = SqliteEventInbox(inbox_path, scheme=SCHEME)
-    store = SqliteEvidenceStore(evidence_path, key_provider=key_provider)
-    monotonic = FakeMonotonicSource()
-
-    # Enqueue directly (simulating the crash happened before any handling began).
-    stamped_seq_holder: list[int] = []
-
-    driver, _core = _make_driver(
-        inbox=inbox, evidence_store=store, monotonic_source=monotonic
-    )
-    receipt = inbox.enqueue(driver._stamp(fx.decision_tick_event(seq=1)))
-    stamped_seq_holder.append(receipt.seq)
-    store.close()
-    inbox.close()
-
-    # "Restart": fresh inbox/evidence-store handles, fresh core, fresh driver.
-    inbox2 = SqliteEventInbox(inbox_path, scheme=SCHEME)
-    store2 = SqliteEvidenceStore(evidence_path, key_provider=key_provider)
-    driver2, _core2 = _make_driver(
-        inbox=inbox2, evidence_store=store2, monotonic_source=monotonic
-    )
-    result = driver2.run_once()
-    assert result is not None
-    assert inbox2.is_consumed(stamped_seq_holder[0])
-
-    consumed_rows = store2.connection.execute(
-        "SELECT COUNT(*) FROM entries WHERE kind = 'EVENT_CONSUMED'"
-    ).fetchone()[0]
-    assert consumed_rows == 1
-    store2.close()
-    inbox2.close()
-
-
-def test_restart_after_evidence_before_mark_recovers_without_reprocessing(
-    tmp_path: Path, key_provider: KeyProvider
-) -> None:
-    """Crash window 2 (the load-bearing one): evidence was durably committed, but the inbox mark
-    never happened. Restart must recognise the existing EVENT_CONSUMED receipt and mark the row
-    WITHOUT calling ``core.handle`` again — pinned here via a transmit that raises on a second
-    call for the same attempt count."""
-    inbox_path = tmp_path / "inbox.sqlite3"
-    evidence_path = tmp_path / "evidence.sqlite3"
+    emergency_log = EmergencyAppendLog(tmp_path / "emergency.jsonl")
     inbox = SqliteEventInbox(inbox_path, scheme=SCHEME)
     store = SqliteEvidenceStore(evidence_path, key_provider=key_provider)
     monotonic = FakeMonotonicSource()
@@ -157,6 +149,164 @@ def test_restart_after_evidence_before_mark_recovers_without_reprocessing(
     driver, core = _make_driver(
         inbox=inbox,
         evidence_store=store,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic,
+        transmit=counting_transmit,
+    )
+    stamped = driver._stamp(fx.decision_tick_event(seq=1))
+    receipt = inbox.enqueue(stamped)
+
+    # Manually replicate _process_next's body up to (and including) core.handle — the send has
+    # ALREADY happened by this point — but WITHOUT the EVENT_CONSUMED evidence append or the
+    # inbox mark. This is exactly the widest crash window (finding #3).
+    event_id = event_identity(stamped, scheme=SCHEME)
+    marker_receipt = store.append(
+        {"event_id": event_id},
+        kind="EVENT_HANDLING_STARTED",
+        record_class="EVENT_HANDLING_STARTED",
+    )
+    assert marker_receipt.seq is not None
+    assert marker_receipt.key_generation is not None
+    inbox.mark_handling_started(
+        receipt.seq,
+        evidence_seq=marker_receipt.seq,
+        generation=marker_receipt.key_generation,
+    )
+    # direct-core-call: sanctioned (determinism control) — the send happens here
+    core.handle(stamped)  # direct-core-call: sanctioned (determinism control)
+    assert call_count["n"] == 1
+    assert (
+        inbox.is_consumed(receipt.seq) is False
+    )  # the crash window: nothing marked at all
+    store.close()
+    inbox.close()
+
+    # "Restart": fresh inbox/evidence-store handles, fresh core, fresh driver.
+    inbox2 = SqliteEventInbox(inbox_path, scheme=SCHEME)
+    store2 = SqliteEvidenceStore(evidence_path, key_provider=key_provider)
+    driver2, _core2 = _make_driver(
+        inbox=inbox2,
+        evidence_store=store2,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic,
+        transmit=counting_transmit,
+    )
+    recovered = driver2.run_once()
+    assert recovered is None  # no NEW EventResult — recovery, never a re-handling
+    assert inbox2.is_consumed(receipt.seq) is True
+    assert (
+        call_count["n"] == 1
+    )  # core.handle was NOT called again — the load-bearing assertion
+
+    consumed_rows = store2.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = 'EVENT_CONSUMED'"
+    ).fetchall()
+    assert (
+        len(consumed_rows) == 1
+    )  # exactly one receipt, never a re-handling's second one
+    payload = json.loads(consumed_rows[0][0])["payload"]
+    assert payload["halt_reason"] == "HANDLING_INTERRUPTED_POSSIBLY_LIVE"
+    assert (
+        payload["outcome_digest"] is None
+    )  # never fabricated — this event was never replayed
+    store2.close()
+    inbox2.close()
+
+
+def test_restart_with_send_evidence_after_marker_records_additional_possibly_live_halt(
+    tmp_path: Path, key_provider: KeyProvider
+) -> None:
+    """Finding #3's second half: when the interrupted flow's OWN durable evidence proves it
+    reached the send boundary before the crash (a real ``SEND_STARTED``/``SEND_HANDED_OFF``
+    record after the ``EVENT_HANDLING_STARTED`` marker — written, in production, by
+    ``tos.egressgw``'s gateway or ``tos.engine.sequencer`` respectively, both bound to this SAME
+    durable evidence store per independent review finding #2's own measurement), the driver ALSO
+    records a dual-path ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND`` HALT — durable,
+    operator-visible proof that this attempt's broker-side fate is genuinely unknown, never a
+    silently-dropped fact."""
+    inbox_path = tmp_path / "inbox.sqlite3"
+    evidence_path = tmp_path / "evidence.sqlite3"
+    emergency_log = EmergencyAppendLog(tmp_path / "emergency.jsonl")
+    inbox = SqliteEventInbox(inbox_path, scheme=SCHEME)
+    store = SqliteEvidenceStore(evidence_path, key_provider=key_provider)
+    monotonic = FakeMonotonicSource()
+
+    driver, _core = _make_driver(
+        inbox=inbox,
+        evidence_store=store,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic,
+    )
+    stamped = driver._stamp(fx.decision_tick_event(seq=1))
+    receipt = inbox.enqueue(stamped)
+
+    event_id = event_identity(stamped, scheme=SCHEME)
+    marker_receipt = store.append(
+        {"event_id": event_id},
+        kind="EVENT_HANDLING_STARTED",
+        record_class="EVENT_HANDLING_STARTED",
+    )
+    assert marker_receipt.seq is not None
+    assert marker_receipt.key_generation is not None
+    inbox.mark_handling_started(
+        receipt.seq,
+        evidence_seq=marker_receipt.seq,
+        generation=marker_receipt.key_generation,
+    )
+    # A test double for the real gateway's own durable pre-send record — never fabricated by
+    # EngineDriver itself in production; here it stands in for what the real send boundary would
+    # have already written before the crash.
+    store.append(
+        {"attempt_id": "attempt-x"}, kind="SEND_STARTED", record_class="SEND_STARTED"
+    )
+    store.close()
+    inbox.close()
+
+    inbox2 = SqliteEventInbox(inbox_path, scheme=SCHEME)
+    store2 = SqliteEvidenceStore(evidence_path, key_provider=key_provider)
+    driver2, _core2 = _make_driver(
+        inbox=inbox2,
+        evidence_store=store2,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic,
+    )
+    assert driver2.run_once() is None
+    assert inbox2.is_consumed(receipt.seq) is True
+
+    possibly_live_rows = store2.connection.execute(
+        "SELECT COUNT(*) FROM entries WHERE kind = 'HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND'"
+    ).fetchone()[0]
+    assert possibly_live_rows == 1
+    store2.close()
+    inbox2.close()
+
+
+def test_restart_after_evidence_before_mark_recovers_without_reprocessing(
+    tmp_path: Path, key_provider: KeyProvider
+) -> None:
+    """Crash window 2: evidence was durably committed, but the inbox mark
+    never happened. Restart must recognise the existing EVENT_CONSUMED receipt and mark the row
+    WITHOUT calling ``core.handle`` again — pinned here via a transmit that raises on a second
+    call for the same attempt count."""
+    inbox_path = tmp_path / "inbox.sqlite3"
+    evidence_path = tmp_path / "evidence.sqlite3"
+    emergency_log = EmergencyAppendLog(tmp_path / "emergency.jsonl")
+    inbox = SqliteEventInbox(inbox_path, scheme=SCHEME)
+    store = SqliteEvidenceStore(evidence_path, key_provider=key_provider)
+    monotonic = FakeMonotonicSource()
+
+    call_count = {"n": 0}
+
+    def counting_transmit(attempt: object) -> object:
+        call_count["n"] += 1
+        from tos.engine import SendHandoff
+
+        return SendHandoff(accepted_for_transmission=True, handoff_reference="x")
+
+    driver, core = _make_driver(
+        inbox=inbox,
+        evidence_store=store,
+        emergency_log=emergency_log,
         monotonic_source=monotonic,
         transmit=counting_transmit,
     )
@@ -164,11 +314,11 @@ def test_restart_after_evidence_before_mark_recovers_without_reprocessing(
     receipt = inbox.enqueue(stamped)
 
     # Manually replicate _process_next's body up to (and including) the evidence append, but
-    # WITHOUT the inbox.mark_consumed call — this is exactly crash window 2.
-    from tos.engine.records import event_identity
-
+    # WITHOUT the inbox.mark_consumed call — this is exactly crash window 2. (The write-ahead
+    # EVENT_HANDLING_STARTED marker is skipped here on purpose — this test exercises the
+    # EVENT_CONSUMED-exists recovery path specifically, not the marker-only one.)
     event_id = event_identity(stamped, scheme=SCHEME)
-    result = core.handle(stamped)
+    result = core.handle(stamped)  # direct-core-call: sanctioned (determinism control)
     evidence_seq, _generation = driver._record_consumed(
         event_id=event_id,
         payload_digest=SCHEME.compute_digest(stamped.model_dump(mode="json")),
@@ -188,6 +338,7 @@ def test_restart_after_evidence_before_mark_recovers_without_reprocessing(
     driver2, core2 = _make_driver(
         inbox=inbox2,
         evidence_store=store2,
+        emergency_log=emergency_log,
         monotonic_source=monotonic,
         transmit=counting_transmit,
     )
@@ -212,11 +363,15 @@ def test_restart_after_mark_is_a_pure_noop(
     """Crash window 3: everything already completed. Restart finds nothing pending."""
     inbox_path = tmp_path / "inbox.sqlite3"
     evidence_path = tmp_path / "evidence.sqlite3"
+    emergency_log = EmergencyAppendLog(tmp_path / "emergency.jsonl")
     inbox = SqliteEventInbox(inbox_path, scheme=SCHEME)
     store = SqliteEvidenceStore(evidence_path, key_provider=key_provider)
     monotonic = FakeMonotonicSource()
     driver, _core = _make_driver(
-        inbox=inbox, evidence_store=store, monotonic_source=monotonic
+        inbox=inbox,
+        evidence_store=store,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic,
     )
     driver.enqueue_and_run(fx.decision_tick_event(seq=1))
     store.close()
@@ -225,7 +380,10 @@ def test_restart_after_mark_is_a_pure_noop(
     inbox2 = SqliteEventInbox(inbox_path, scheme=SCHEME)
     store2 = SqliteEvidenceStore(evidence_path, key_provider=key_provider)
     driver2, _core2 = _make_driver(
-        inbox=inbox2, evidence_store=store2, monotonic_source=monotonic
+        inbox=inbox2,
+        evidence_store=store2,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic,
     )
     assert driver2.run_once() is None
     assert driver2.run_until_idle() == ()
@@ -237,7 +395,10 @@ def test_restart_after_mark_is_a_pure_noop(
 
 
 def test_gateway_results_are_drained_and_reinjected_as_egress_result_events(
-    inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore, monotonic_source
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    monotonic_source,
 ) -> None:
     """``FakeGateway`` retains an ACK result SYNCHRONOUSLY inside its own ``__call__`` (mirroring
     the real ``BrokerEgressGateway``'s step-18/19 ordering), so ONE ``enqueue_and_run`` call must
@@ -248,6 +409,7 @@ def test_gateway_results_are_drained_and_reinjected_as_egress_result_events(
     driver, _core = _make_driver(
         inbox=inbox,
         evidence_store=evidence_store,
+        emergency_log=emergency_log,
         monotonic_source=monotonic_source,
         transmit=gateway,
     )
@@ -265,10 +427,16 @@ def test_gateway_results_are_drained_and_reinjected_as_egress_result_events(
 
 
 def test_no_gateway_bound_is_a_safe_no_op(
-    inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore, monotonic_source
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    monotonic_source,
 ) -> None:
     driver, _core = _make_driver(
-        inbox=inbox, evidence_store=evidence_store, monotonic_source=monotonic_source
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic_source,
     )
     result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
     assert result is not None  # no gateway bound — nothing to drain, no crash
@@ -278,7 +446,10 @@ def test_no_gateway_bound_is_a_safe_no_op(
 
 
 def test_reenqueuing_the_same_unstamped_event_is_not_a_duplicate(
-    inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore, monotonic_source
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    monotonic_source,
 ) -> None:
     """``enqueue_and_run`` re-stamps its argument with a FRESH yield-order coordinate on every
     call (module docstring item 1), so passing the identical unstamped ``EngineEvent`` twice
@@ -290,7 +461,10 @@ def test_reenqueuing_the_same_unstamped_event_is_not_a_duplicate(
     an ALREADY-stamped event directly rather than through this re-stamping entry point.
     """
     driver, _core = _make_driver(
-        inbox=inbox, evidence_store=evidence_store, monotonic_source=monotonic_source
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic_source,
     )
     event = fx.decision_tick_event(seq=1)
     driver.enqueue_and_run(event)
@@ -302,12 +476,16 @@ def test_reenqueuing_the_same_unstamped_event_is_not_a_duplicate(
 
 
 def test_timeout_is_injected_after_the_configured_wait_and_capacity_stays_conservative(
-    inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore, monotonic_source
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    monotonic_source,
 ) -> None:
     gateway = fx.FakeGateway(auto_ack=False)
     driver, _core = _make_driver(
         inbox=inbox,
         evidence_store=evidence_store,
+        emergency_log=emergency_log,
         monotonic_source=monotonic_source,
         max_send_result_wait_ms=1000,
         transmit=gateway,
@@ -354,3 +532,98 @@ def test_timeout_is_injected_after_the_configured_wait_and_capacity_stays_conser
     assert (
         len(gateway.attempts) == 1
     )  # exactly one transport call for the whole scenario
+
+
+def test_a_foreign_attempt_result_does_not_silence_the_genuinely_pending_timeout_watch(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    monotonic_source,
+) -> None:
+    """Independent review finding #7 (2026-09-09), RED before the fix.
+
+    Reproduces the reviewer's exact probe: hand off (a real pending attempt is now watched), then
+    a result naming a COMPLETELY DIFFERENT ("foreign") attempt lands on the SAME scope, then the
+    wait bound elapses. Before the fix, ``_TimeoutTracker.observe_result`` popped the pending
+    entry for ANY result "applied or not" — so the foreign result silenced the watch for the
+    genuinely pending attempt and NO ``TIMEOUT`` was ever injected, defeating plan §1.1's "결과
+    유실 ⇒ TIMEOUT" guarantee. After the fix, the watch clears ONLY on an ``APPLIED`` result for
+    the EXACT tracked ``attempt_id`` — a foreign result is refused by the kernel itself
+    (``MISMATCHED_ATTEMPT``/``ORPHAN_NO_RESERVATION``) and must not touch the watch."""
+    gateway = fx.FakeGateway(auto_ack=False)
+    driver, _core = _make_driver(
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic_source,
+        max_send_result_wait_ms=1000,
+        transmit=gateway,
+    )
+    driver.bind_gateway(gateway)
+
+    tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+    assert tick_result.flow is not None and tick_result.flow.handed_off is True
+
+    # A result for a completely different ("foreign") attempt lands on the SAME scope.
+    foreign_result = driver.enqueue_and_run(
+        EngineEvent(
+            kind=EventKind.EGRESS_RESULT,
+            egress_result=EgressResultPayload(
+                instrument_key=fx.instrument_key(),
+                attempt_id="attempt-not-ours",
+                kind=EgressResultKind.ACK,
+            ),
+        )
+    )
+    assert foreign_result.result_disposition is not ResultDisposition.APPLIED
+
+    # The wait bound elapses — the genuinely pending attempt's TIMEOUT must still fire.
+    monotonic_source.advance(1500)
+    timeout_result = driver.run_once()
+    assert timeout_result is not None
+    assert timeout_result.reservation is not None
+    assert timeout_result.reservation.knowledge.value == "UNKNOWN"
+
+
+def test_mismatched_attempt_result_yields_result_unmatched_and_leaves_reservation_unchanged(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    monotonic_source,
+) -> None:
+    """Independent review finding #17 (A-lane half): one runtime end-to-end assertion that a
+    mismatched-attempt ``EGRESS_RESULT`` enqueued THROUGH THE DRIVER yields
+    ``ResultDisposition``/``HaltReason`` ``RESULT_UNMATCHED`` and leaves the reservation
+    projection byte-identical — the kernel already covers this (M1's own mutation kill), but the
+    runtime suite had no end-to-end assertion of its own (finding #17's own coverage-asymmetry
+    point)."""
+    gateway = fx.FakeGateway()
+    driver, _core = _make_driver(
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic_source,
+        transmit=gateway,
+    )
+    driver.bind_gateway(gateway)
+
+    tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+    assert tick_result.flow is not None and tick_result.flow.handed_off is True
+    before = _core.ledger.outstanding(fx.instrument_key())
+
+    mismatched_result = driver.enqueue_and_run(
+        EngineEvent(
+            kind=EventKind.EGRESS_RESULT,
+            egress_result=EgressResultPayload(
+                instrument_key=fx.instrument_key(),
+                attempt_id="attempt-not-ours",
+                kind=EgressResultKind.FULL_FILL,
+                filled_quantity=Decimal("1"),
+                remaining_quantity=Decimal("0"),
+            ),
+        )
+    )
+    assert mismatched_result.result_disposition is ResultDisposition.MISMATCHED_ATTEMPT
+    assert mismatched_result.halt_reason is HaltReason.RESULT_UNMATCHED
+    after = _core.ledger.outstanding(fx.instrument_key())
+    assert after == before  # never relaxed, never advanced — byte-identical projection

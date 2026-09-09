@@ -49,9 +49,21 @@ CREATE TABLE IF NOT EXISTS events (
     payload_json TEXT NOT NULL,
     payload_digest TEXT NOT NULL,
     consumed_evidence_seq INTEGER,
-    consumed_generation INTEGER
+    consumed_generation INTEGER,
+    handling_started_evidence_seq INTEGER,
+    handling_started_generation INTEGER
 )
 """
+
+#: Columns added after the table's original shape — guarded with a
+#: ``PRAGMA table_info`` check (:func:`_ensure_column`) rather than a bare ``ALTER TABLE`` so
+#: reopening an inbox file created before independent-review finding #3 landed does not raise
+#: "duplicate column" on a fresh file (which already carries both via
+#: ``_CREATE_EVENTS_TABLE_SQL`` above) while still gaining them on an older one.
+_ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("handling_started_evidence_seq", "INTEGER"),
+    ("handling_started_generation", "INTEGER"),
+)
 
 _CREATE_UNCONSUMED_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS events_unconsumed
@@ -106,6 +118,12 @@ class SqliteEventInbox:
         self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.execute(_CREATE_EVENTS_TABLE_SQL)
         self._conn.execute(_CREATE_UNCONSUMED_INDEX_SQL)
+        existing_columns = {
+            row[1] for row in self._conn.execute("PRAGMA table_info(events)")
+        }
+        for column, decl in _ADDED_COLUMNS:
+            if column not in existing_columns:
+                self._conn.execute(f"ALTER TABLE events ADD COLUMN {column} {decl}")
 
     def close(self) -> None:
         """Close the underlying sqlite3 connection."""
@@ -215,6 +233,47 @@ class SqliteEventInbox:
         except BaseException:
             self._conn.execute("ROLLBACK")
             raise
+
+    def mark_handling_started(
+        self, seq: int, *, evidence_seq: int, generation: int
+    ) -> None:
+        """Record this row's own write-ahead ``EVENT_HANDLING_STARTED`` evidence receipt
+        (independent review finding #3), so :meth:`handling_started_receipt` can answer in O(1)
+        by primary key instead of ``EngineDriver`` having to scan the whole evidence store by
+        ``event_id`` the way the pre-existing ``EVENT_CONSUMED`` crash-window check still does
+        (finding #13 — this NEW check gets an index from the start; the older one is disclosed,
+        unindexed, LOW-severity future work: see ``driver.py``'s own ``_find_consumed_receipt``
+        docstring).
+
+        Args:
+            seq: The inbox row this marker belongs to.
+            evidence_seq: The durable ``EVENT_HANDLING_STARTED`` evidence entry's own ``seq``.
+            generation: The evidence store's signing key generation at the time of that receipt.
+        """
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute(
+                "UPDATE events SET handling_started_evidence_seq = ?, "
+                "handling_started_generation = ? WHERE seq = ?",
+                (evidence_seq, generation, seq),
+            )
+            self._conn.execute("COMMIT")
+        except BaseException:
+            self._conn.execute("ROLLBACK")
+            raise
+
+    def handling_started_receipt(self, seq: int) -> tuple[int, int] | None:
+        """``(evidence_seq, generation)`` of ``seq``'s own ``EVENT_HANDLING_STARTED`` marker, or
+        ``None`` if handling was never (durably) started for this row — an O(1) lookup by primary
+        key (finding #13)."""
+        row = self._conn.execute(
+            "SELECT handling_started_evidence_seq, handling_started_generation "
+            "FROM events WHERE seq = ?",
+            (seq,),
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return row[0], row[1]
 
     def is_consumed(self, seq: int) -> bool:
         """Whether ``seq`` is already marked consumed."""

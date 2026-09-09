@@ -20,12 +20,21 @@ Four responsibilities, each load-bearing:
    do not import backtest into the runtime"). The counter is durably re-seeded from
    :attr:`~tos_runtime.engine.inbox.SqliteEventInbox.count` at construction, since every admitted
    event corresponds to exactly one issued coordinate.
-2. **Crash-window idempotency.** Draining (:meth:`_process_next`) checks, BEFORE calling
-   ``core.handle``, whether the Evidence Store already carries an ``EVENT_CONSUMED`` record for
-   the pulled event's content-addressed identity. If so, the event was already handled in a prior
-   process life that crashed after the evidence commit but before the inbox mark — re-handling
-   would re-invoke every side effect the flow had (including a real send to the gateway), so this
-   path marks the inbox row consumed and moves on, WITHOUT calling ``core.handle`` again.
+2. **Crash-window idempotency, over BOTH windows (independent review finding #3, 2026-09-09).**
+   Draining (:meth:`_process_next`) checks, BEFORE calling ``core.handle``, two things: (a)
+   whether the Evidence Store already carries an ``EVENT_CONSUMED`` record for the pulled event's
+   content-addressed identity — the narrower window, evidence committed but the inbox mark never
+   happened; and (b) whether the inbox row itself carries a write-ahead
+   ``EVENT_HANDLING_STARTED`` marker with no matching ``EVENT_CONSUMED`` at all — the WIDER
+   window: ``core.handle`` may have already run the real flow, including a real send, before the
+   crash. Before this fix, only (a) was checked, so a crash strictly between ``core.handle``
+   returning and the ``EVENT_CONSUMED`` append (the widest window of the three the module used to
+   document) went undetected on restart and the event was silently re-handled — re-invoking every
+   side effect the flow had, including re-sending an attempt already handed off (a blind
+   resubmit). Case (b) now marks the event durably interrupted (``HANDLING_INTERRUPTED_
+   POSSIBLY_LIVE``) instead, never calling ``core.handle`` again — see
+   ``_handle_interrupted_event`` for the residual this does NOT solve (no ledger rebuild; Phase 5
+   / J3).
 3. **Egress-result re-injection.** After a ``DECISION_TICK`` is handled, the driver drains any NEW
    results the wired :class:`~tos.egressgw.BrokerEgressGateway` retained (``gateway.results``) and
    ENQUEUES each as a stamped ``EGRESS_RESULT`` event — it never calls ``core.handle`` on a
@@ -73,10 +82,11 @@ from tos.engine.records import (
     InstrumentKey,
     event_identity,
 )
-from tos.engine.vocabulary import EgressResultKind, EventKind
+from tos.engine.vocabulary import EgressResultKind, EventKind, ResultDisposition
 from tos.ordering import OrderingEvent
 
 from tos_runtime.engine.inbox import SqliteEventInbox
+from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.time.sources import MonotonicSource
 
@@ -88,6 +98,33 @@ __all__ = ["EngineDriver"]
 #: ``core.handle`` itself already wrote through its own injected ``EvidenceSink``.
 _EVENT_CONSUMED_KIND = "EVENT_CONSUMED"
 _EVENT_CONSUMED_RECORD_CLASS = "EVENT_CONSUMED"
+
+#: The write-ahead marker (independent review finding #3, 2026-09-09): durably recorded BEFORE
+#: ``core.handle`` is ever called for a genuinely new event, so a crash between the call and the
+#: ``EVENT_CONSUMED`` receipt is distinguishable, on restart, from "never started" — see
+#: ``_handle_interrupted_event`` below.
+_EVENT_HANDLING_STARTED_KIND = "EVENT_HANDLING_STARTED"
+_EVENT_HANDLING_STARTED_RECORD_CLASS = "EVENT_HANDLING_STARTED"
+
+#: The halt reason (runtime-local vocabulary, not a kernel ``HaltReason`` member — this state is
+#: never reachable from inside the kernel) recorded on the durable ``EVENT_CONSUMED`` receipt an
+#: interrupted event is closed out with (finding #3).
+_HANDLING_INTERRUPTED_HALT_REASON = "HANDLING_INTERRUPTED_POSSIBLY_LIVE"
+
+#: The additional, dual-path (sqlite + emergency-log) HALT kind recorded when the flow that was
+#: interrupted had ALREADY reached the send boundary (finding #3's "possibly live" case) — an
+#: attempt whose broker-side fate is genuinely unknown, not merely an interrupted no-op.
+_HANDLING_INTERRUPTED_SEND_POSSIBLY_LIVE_KIND = (
+    "HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND"
+)
+
+#: Evidence kinds that prove the interrupted flow reached (or passed) the send boundary before
+#: the crash: the gateway's own pre-``SEND_STARTED`` write (``tos.egressgw.gateway`` — a raw
+#: string kind, not a kernel ``EvidenceKind`` member) and the engine sequencer's own
+#: ``EvidenceKind.SEND_HANDED_OFF`` (``tos.engine.sequencer``). Both are written by stages/sinks
+#: bound to the SAME durable evidence store this driver reads (independent review finding #2's
+#: own measurement: "each stage carries its own sink bound to the real SqliteEvidenceStore").
+_SEND_EVIDENCE_KINDS: tuple[str, ...] = ("SEND_STARTED", "SEND_HANDED_OFF")
 
 
 class _YieldOrderCounter:
@@ -134,7 +171,16 @@ class _PendingAttempt:
 class _TimeoutTracker:
     """Per-scope pending-attempt bookkeeping for :class:`EngineDriver`'s timeout injection."""
 
-    max_send_result_wait_ms: int | None
+    #: The injected wait bound; always a concrete positive int (independent review finding #14
+    #: — a ``None`` "disable injection entirely" escape hatch read as a fail-CLOSED default in
+    #: the docstring it used to carry, but never injecting a TIMEOUT for a lost result is
+    #: fail-SILENT (the attempt just sits ``SENT_UNCONFIRMED`` forever with no further evidence),
+    #: not fail-closed. Compose has always supplied a concrete value anyway
+    #: (``TrustworthyTimeConfig.max_send_result_wait_ms`` is itself non-optional and
+    #: ``load_time_config`` refuses a null — ``time/config.py``), so this only removes an
+    #: escape hatch nothing production-shaped ever used; a test that wants "never fires" now
+    #: passes a very large bound instead of ``None``.
+    max_send_result_wait_ms: int
     pending: dict[tuple[str, str], _PendingAttempt] = field(default_factory=dict)
 
     @staticmethod
@@ -149,15 +195,27 @@ class _TimeoutTracker:
             attempt_id=attempt_id, started_at_ms=now_ms
         )
 
-    def observe_result(self, key: InstrumentKey) -> None:
-        """Clear the pending entry once ANY result lands for this scope (at-most-one exposure)."""
-        self.pending.pop(self._key(key), None)
+    def observe_result(self, key: InstrumentKey, *, attempt_id: str) -> None:
+        """Clear the pending entry ONLY when it names the SAME attempt (independent review
+        finding #7).
+
+        Before this fix, ANY ``EGRESS_RESULT`` landing for the scope popped the pending entry —
+        "applied or not", including a result naming a completely different (foreign/mismatched)
+        attempt. The kernel itself refuses to apply such a result
+        (``ResultDisposition.MISMATCHED_ATTEMPT`` / ``ORPHAN_NO_RESERVATION``), but the timeout
+        watch for the GENUINELY pending attempt was silenced anyway — a lost result for the real
+        attempt would then never surface as a ``TIMEOUT``, defeating the "결과 유실 ⇒ TIMEOUT"
+        guarantee (plan §1.1) via any wrong-attempt-id result. Only an exact ``attempt_id`` match
+        clears the watch now.
+        """
+        tracker_key = self._key(key)
+        pending = self.pending.get(tracker_key)
+        if pending is not None and pending.attempt_id == attempt_id:
+            del self.pending[tracker_key]
 
     def due(self, *, now_ms: int) -> tuple[tuple[InstrumentKey, str], ...]:
         """Return ``(instrument_key, attempt_id)`` pairs whose wait bound has elapsed and have
         not already been timed out."""
-        if self.max_send_result_wait_ms is None:
-            return ()
         due: list[tuple[InstrumentKey, str]] = []
         for (account, instrument), pending in self.pending.items():
             if pending.timed_out:
@@ -188,10 +246,11 @@ class EngineDriver:
         core: EngineCore,
         inbox: SqliteEventInbox,
         evidence_store: SqliteEvidenceStore,
+        emergency_log: EmergencyAppendLog,
         scheme: CanonicalizationScheme,
         continuity_id: str,
         monotonic_source: MonotonicSource,
-        max_send_result_wait_ms: int | None,
+        max_send_result_wait_ms: int,
     ) -> None:
         """Wire the driver.
 
@@ -201,8 +260,11 @@ class EngineDriver:
                 ``tos.backtest.driver`` documents applies here too, for the same reason).
             inbox: The durable event admission queue.
             evidence_store: The durable evidence store — used both to append this driver's own
-                ``EVENT_CONSUMED`` receipts and to detect the crash-window "evidence exists,
-                inbox unmarked" condition.
+                ``EVENT_HANDLING_STARTED``/``EVENT_CONSUMED`` receipts and to detect the two
+                crash-window conditions (see ``_process_next``'s own docstring).
+            emergency_log: The sqlite-independent dual-path HALT log (independent review
+                finding #3) — used only for the "possibly live" crash-window case, where the
+                interrupted flow had already reached the send boundary before the crash.
             scheme: The canonicalization scheme used for event identity and the outcome-digest
                 stand-in.
             continuity_id: The single stream continuity every coordinate this driver issues
@@ -210,12 +272,16 @@ class EngineDriver:
             monotonic_source: The injected monotonic clock for timeout injection (never a direct
                 ``time.monotonic()`` read — design #40 D1.1).
             max_send_result_wait_ms: The injected wait bound before a SENT_UNCONFIRMED hand-off is
-                timed out; ``None`` disables timeout injection entirely (fail-closed default is
-                "never inject", not a hidden numeric default).
+                timed out (independent review finding #14: this used to be ``int | None`` with a
+                ``None`` "disable injection" escape hatch documented as a "fail-closed default" —
+                never injecting a TIMEOUT for a lost result is fail-SILENT, not fail-closed, and
+                compose has always supplied a concrete value anyway. A caller that genuinely wants
+                "never fires within this test" now passes a very large bound instead.
         """
         self._core = core
         self._inbox = inbox
         self._evidence_store = evidence_store
+        self._emergency_log = emergency_log
         self._scheme = scheme
         self._counter = _YieldOrderCounter(
             continuity_id=continuity_id, seed=inbox.count
@@ -270,8 +336,15 @@ class EngineDriver:
         Returns:
             ``(evidence_seq, key_generation)`` of the FIRST matching receipt, or ``None``. A
             linear scan over the whole evidence store — acceptable at this wave's scale (hermetic
-            tests); a durable index is future work if this ever needs to run against a
-            long-lived production store.
+            tests). Independent review finding #13: this specific lookup cannot be made O(1) the
+            way :meth:`SqliteEventInbox.handling_started_receipt` now is for the NEW
+            ``EVENT_HANDLING_STARTED`` marker below, because the whole reason this path runs is
+            that the inbox row's OWN ``consumed_evidence_seq`` column is still ``NULL`` (the
+            crash happened between the evidence commit and the inbox mark) — there is nothing on
+            the inbox row itself to index against yet. Genuinely indexing this would mean adding
+            an ``event_id``-keyed column to ``tos_runtime.evidence.store``'s ``entries`` table,
+            which is out of this lane's file ownership for this review round; a durable index
+            there is future work if this ever needs to run against a long-lived production store.
         """
         cur = self._evidence_store.connection.execute(
             "SELECT seq, key_generation, payload_json FROM entries "
@@ -283,6 +356,60 @@ class EngineDriver:
             if payload.get("event_id") == event_id:
                 return seq, key_generation
         return None
+
+    def _send_evidence_exists_after(self, marker_seq: int) -> bool:
+        """Whether any ``SEND_STARTED``/``SEND_HANDED_OFF`` evidence was durably recorded after
+        ``marker_seq`` (the interrupted event's own ``EVENT_HANDLING_STARTED`` receipt) — proof
+        that the interrupted flow reached the send boundary before the crash (finding #3).
+        """
+        placeholders = ",".join("?" for _ in _SEND_EVIDENCE_KINDS)
+        cur = self._evidence_store.connection.execute(
+            f"SELECT 1 FROM entries WHERE kind IN ({placeholders}) AND seq > ? LIMIT 1",
+            (*_SEND_EVIDENCE_KINDS, marker_seq),
+        )
+        return cur.fetchone() is not None
+
+    def _handle_interrupted_event(
+        self, *, seq: int, event_id: str, event: EngineEvent, marker_seq: int
+    ) -> None:
+        """Recover a crash between the write-ahead ``EVENT_HANDLING_STARTED`` marker and the
+        ``EVENT_CONSUMED`` receipt (independent review finding #3, the WIDEST of the three crash
+        windows: ``core.handle`` may have already run the real flow — including a real send —
+        before the crash).
+
+        Never re-handles the event (that would be a blind resubmit of a possibly-already-sent
+        attempt). Instead marks it durably interrupted with a conservative halt, and — if the
+        evidence shows the flow reached the send boundary before the crash — ALSO durably records
+        a dual-path ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND`` HALT naming the possibly-live
+        attempt for operator attention.
+
+        ⚠ **Residual, disclosed (design #31 §2.1(iii) J3 crash-recovery — provisional, §9
+        deferred).** This method does NOT rebuild the in-memory reservation ledger's state for
+        the possibly-live attempt — the ledger a freshly-restarted process holds is empty
+        regardless of this marking, exactly the same residual :mod:`tos_runtime.engine.replay`'s
+        own module docstring already discloses for the send boundary. A conservative ledger
+        rebuild from durable evidence (so a possibly-live attempt keeps occupying its scope's
+        at-most-one exposure slot across a restart) is Phase 5 / J3 work, not this wave's.
+        """
+        if self._send_evidence_exists_after(marker_seq):
+            record_halt(
+                self._evidence_store,
+                self._emergency_log,
+                payload={
+                    "event_id": event_id,
+                    "handling_started_evidence_seq": marker_seq,
+                },
+                kind=_HANDLING_INTERRUPTED_SEND_POSSIBLY_LIVE_KIND,
+                record_class=_HANDLING_INTERRUPTED_SEND_POSSIBLY_LIVE_KIND,
+            )
+        payload_digest = self._scheme.compute_digest(event.model_dump(mode="json"))
+        evidence_seq, generation = self._record_consumed(
+            event_id=event_id,
+            payload_digest=payload_digest,
+            outcome_digest=None,
+            halt_reason=_HANDLING_INTERRUPTED_HALT_REASON,
+        )
+        self._inbox.mark_consumed(seq, evidence_seq=evidence_seq, generation=generation)
 
     def _record_consumed(
         self,
@@ -320,6 +447,18 @@ class EngineDriver:
     def _process_next(self) -> tuple[int, EventResult] | None:
         """Drain crash-window rows, then process exactly one genuinely new event.
 
+        Two crash windows are recovered here, mirroring exactly what a real process restart
+        observes (the in-memory core/ledger reset to empty; the two sqlite files retain
+        everything durably committed):
+
+        1. **Evidence committed, inbox mark never happened** (``_find_consumed_receipt``) — the
+           narrower window; ``core.handle`` genuinely completed and its ``EVENT_CONSUMED``
+           receipt exists, so this just marks the row and moves on.
+        2. **Handling started, no ``EVENT_CONSUMED`` receipt at all** (``handling_started_receipt``
+           — independent review finding #3, the WIDEST window: ``core.handle`` may have already
+           run the real flow, including a real send, before the crash. Re-handling would be a
+           blind resubmit of a possibly-already-sent attempt — see ``_handle_interrupted_event``.
+
         Returns:
             ``(seq, EventResult)`` for the newly handled event, or ``None`` once the inbox has
             nothing left — every already-consumed / crash-window row was already skipped
@@ -340,6 +479,27 @@ class EngineDriver:
                     seq, evidence_seq=evidence_seq, generation=generation
                 )
                 continue  # crash-window recovery — keep draining, nothing new happened
+
+            interrupted = self._inbox.handling_started_receipt(seq)
+            if interrupted is not None:
+                marker_seq, _marker_generation = interrupted
+                self._handle_interrupted_event(
+                    seq=seq, event_id=event_id, event=event, marker_seq=marker_seq
+                )
+                continue  # crash-window recovery — keep draining, nothing NEW happened
+
+            marker_receipt = self._evidence_store.append(
+                {"event_id": event_id},
+                kind=_EVENT_HANDLING_STARTED_KIND,
+                record_class=_EVENT_HANDLING_STARTED_RECORD_CLASS,
+            )
+            assert marker_receipt.seq is not None
+            assert marker_receipt.key_generation is not None
+            self._inbox.mark_handling_started(
+                seq,
+                evidence_seq=marker_receipt.seq,
+                generation=marker_receipt.key_generation,
+            )
 
             result = self._core.handle(event)
             payload_digest = self._scheme.compute_digest(event.model_dump(mode="json"))
@@ -445,10 +605,23 @@ class EngineDriver:
                     now_ms=self._time.now_ms(),
                 )
             return
-        # An EGRESS_RESULT landed for this scope (applied or not) — any pending timeout watch for
-        # it is cleared: a late real result is exactly the "TIMEOUT then FILL" scenario the plan
-        # requires capacity to stay unchanged for; watching further would only ever re-fire.
-        self._timeouts.observe_result(result.instrument_key)
+        # An EGRESS_RESULT landed for this scope. The watch is cleared ONLY when the result was
+        # genuinely APPLIED to the exact attempt being watched (independent review finding #7,
+        # task disposition: "clears only when result.result_disposition is APPLIED AND
+        # attempt_id equals the tracked one"). A late real APPLIED result for the SAME attempt is
+        # exactly the "TIMEOUT then FILL" scenario the plan requires capacity to stay unchanged
+        # for; a result for a DIFFERENT attempt, or one the kernel itself refused to apply
+        # (MISMATCHED_ATTEMPT / ORPHAN_NO_RESERVATION / DUPLICATE / a rank- or quantity-regressing
+        # disposition), must not silence the genuinely pending watch.
+        if result.result_disposition is not ResultDisposition.APPLIED:
+            return
+        payload = event.egress_result
+        assert (
+            payload is not None
+        )  # guaranteed by EngineEvent validation for EGRESS_RESULT
+        self._timeouts.observe_result(
+            result.instrument_key, attempt_id=payload.attempt_id
+        )
 
     def _inject_due_timeouts(self) -> None:
         """Enqueue a synthetic ``EGRESS_RESULT(kind=TIMEOUT)`` for every scope past its bound."""
