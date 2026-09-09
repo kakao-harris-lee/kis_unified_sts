@@ -579,7 +579,38 @@ def test_orderbook_age_ignores_an_older_book_arriving_late():
     feed = _feed()
     feed._apply_entry(_orderbook_entry(quote_ts=5000.0))
     feed._apply_entry(_orderbook_entry(quote_ts=1000.0))
-    assert feed._last_orderbook_ts == 5000.0
+    assert feed._last_orderbook_ts == {"A05603": 5000.0}
+
+
+def test_orderbook_age_reports_the_stalest_subscribed_symbol():
+    """A single number that reported the freshest book could read healthy while
+    the symbol actually being traded is stale — the gate judges per symbol, so
+    the summary must never be less conservative than the gate."""
+    fresh = time.time() - 1.0
+    stale = time.time() - 600.0
+    feed = _feed()
+    feed.update_symbols(["A05603"], auxiliary_symbols=["101S6000"])
+    feed._apply_entry(_orderbook_entry(symbol="A05603", quote_ts=fresh))
+    feed._apply_entry(_orderbook_entry(symbol="101S6000", quote_ts=stale))
+
+    status = feed.get_health_status()
+    assert status["orderbook_age_seconds"] == pytest.approx(600.0, abs=5)
+    by_symbol = status["orderbook_age_by_symbol"]
+    assert by_symbol["A05603"] == pytest.approx(1.0, abs=5)
+    assert by_symbol["101S6000"] == pytest.approx(600.0, abs=5)
+
+
+def test_orderbook_age_ignores_symbols_we_do_not_follow():
+    """The stream carries every symbol its producer publishes; an unrelated
+    one going stale is not this consumer's health."""
+    feed = _feed()
+    feed.update_symbols(["A05603"])
+    feed._apply_entry(_orderbook_entry(symbol="A05603", quote_ts=time.time()))
+    feed._apply_entry(_orderbook_entry(symbol="A99999", quote_ts=time.time() - 9000))
+
+    status = feed.get_health_status()
+    assert status["orderbook_age_seconds"] == pytest.approx(0.0, abs=5)
+    assert "A99999" in status["orderbook_age_by_symbol"]
 
 
 # ---------------------------------------------------------------------------
@@ -623,25 +654,6 @@ async def test_seeding_applies_entries_inside_the_bound():
     await feed.start()
     try:
         assert feed.get_orderbook_snapshot("A05603")["bid_price_1"] == 331.18
-    finally:
-        await feed.stop()
-
-
-@pytest.mark.asyncio
-async def test_seeding_bound_judges_the_book_not_the_trade_print():
-    """A fresh trade carrying a day-old book must not be seeded."""
-    now = time.time()
-    redis = _SeedRedis(
-        _seed_entries(_orderbook_entry(timestamp=now, quote_ts=now - 86_400))
-    )
-    feed = StreamConsumerFeed(
-        redis=redis, stream="raw_data", seed_latest=True, seed_max_age_seconds=10.0
-    )
-    feed.update_symbols(["A05603"])
-
-    await feed.start()
-    try:
-        assert feed.get_orderbook_snapshot("A05603") == {}
     finally:
         await feed.stop()
 
@@ -692,5 +704,126 @@ async def test_seeding_covers_auxiliary_symbols():
     try:
         assert feed.get_orderbook_snapshot("101S6000")
         assert feed.get_orderbook_snapshot("A05603")
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_seeding_keeps_a_fresh_price_when_only_the_book_is_stale(caplog):
+    """A frozen book under live trades is exactly the state worth surviving a
+    restart: the price is current and useful. Dropping the whole entry for the
+    book's sake would leave the router with no price either, and it needs one
+    for PseudoOCO stops and for the paper fill simulator."""
+    now = time.time()
+    redis = _SeedRedis(
+        _seed_entries(_orderbook_entry(timestamp=now, quote_ts=now - 86_400))
+    )
+    feed = StreamConsumerFeed(
+        redis=redis, stream="raw_data", seed_latest=True, seed_max_age_seconds=10.0
+    )
+    feed.update_symbols(["A05603"])
+
+    with caplog.at_level(logging.INFO, logger="shared.streaming.consumer_feed"):
+        await feed.start()
+    try:
+        assert (await feed.get_current_price("A05603"))["close"] == 331.20
+        assert feed.get_orderbook_snapshot("A05603") == {}
+        seeded = [
+            r.getMessage()
+            for r in caplog.records
+            if "tick_stream_seeded" in r.getMessage()
+        ]
+        assert seeded and "entries_applied=1" in seeded[0]
+        assert "books_skipped_stale=1" in seeded[0]
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_seeding_drops_the_entry_when_the_trade_itself_is_stale(caplog):
+    """Yesterday's tail seeds nothing at all — neither price nor book."""
+    old = time.time() - 86_400
+    redis = _SeedRedis(_seed_entries(_orderbook_entry(timestamp=old, quote_ts=old)))
+    feed = StreamConsumerFeed(
+        redis=redis, stream="raw_data", seed_latest=True, seed_max_age_seconds=10.0
+    )
+    feed.update_symbols(["A05603"])
+
+    with caplog.at_level(logging.INFO, logger="shared.streaming.consumer_feed"):
+        await feed.start()
+    try:
+        assert await feed.get_current_price("A05603") == {}
+        assert feed.get_orderbook_snapshot("A05603") == {}
+        seeded = [
+            r.getMessage()
+            for r in caplog.records
+            if "tick_stream_seeded" in r.getMessage()
+        ]
+        assert seeded and "entries_applied=0" in seeded[0]
+        assert "entries_skipped_stale=1" in seeded[0]
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_live_book_replaces_a_seed_that_carried_none():
+    """The gap a stale-book seed leaves closes on the first live two-sided
+    entry — the router blocks `orderbook_unavailable` only until then."""
+    now = time.time()
+    redis = _SeedRedis(
+        _seed_entries(_orderbook_entry(timestamp=now, quote_ts=now - 86_400))
+    )
+    feed = StreamConsumerFeed(
+        redis=redis, stream="raw_data", seed_latest=True, seed_max_age_seconds=10.0
+    )
+    feed.update_symbols(["A05603"])
+
+    await feed.start()
+    try:
+        assert feed.get_orderbook_snapshot("A05603") == {}
+        feed._apply_entry(_orderbook_entry(timestamp=now, quote_ts=now))
+        assert feed.get_orderbook_snapshot("A05603")["bid_price_1"] == 331.18
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_seeding_counts_only_entries_it_actually_applied(caplog):
+    """entries_applied must not count entries filtered out by symbol, or the
+    log reads as a successful seed of a stream that had nothing for us."""
+    redis = _SeedRedis(_seed_entries(_orderbook_entry(symbol="A99999")))
+    feed = StreamConsumerFeed(redis=redis, stream="raw_data", seed_latest=True)
+    feed.update_symbols(["A05603"])
+
+    with caplog.at_level(logging.INFO, logger="shared.streaming.consumer_feed"):
+        await feed.start()
+    try:
+        seeded = [
+            r.getMessage()
+            for r in caplog.records
+            if "tick_stream_seeded" in r.getMessage()
+        ]
+        assert seeded and "entries_read=1" in seeded[0]
+        assert "entries_applied=0" in seeded[0]
+        assert "books_cached=0" in seeded[0]
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_an_entry_without_quote_ts_seeds_the_price_not_the_book():
+    """Pre-quote_ts entries have no book clock, so under a bound the
+    conservative reading applies: price yes, book no."""
+    now = time.time()
+    redis = _SeedRedis(_seed_entries(_orderbook_entry(timestamp=now)))
+    feed = StreamConsumerFeed(
+        redis=redis, stream="raw_data", seed_latest=True, seed_max_age_seconds=10.0
+    )
+    feed.update_symbols(["A05603"])
+
+    await feed.start()
+    try:
+        assert (await feed.get_current_price("A05603"))["close"] == 331.20
+        assert feed.get_orderbook_snapshot("A05603") == {}
     finally:
         await feed.stop()
