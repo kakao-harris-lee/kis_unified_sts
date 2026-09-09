@@ -61,9 +61,18 @@ decoupled chain reuses the orchestrator's `raw_data` stream instead.
   `trader-futures`; `ws` self-feeds and must not. See the feed-source note in
   Gate 1. An unrecognised value aborts startup.
 - `FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS` (default `10`): the router gate rejects
-  a quote older than this with `quote_stale` (0 disables). Router-only — it
-  feeds `futures_slippage_control.order_router_max_quote_age_seconds`, which the
+  a book whose own `quote_ts` is older than this with `quote_stale` (0 disables),
+  and startup seeding skips entries past the same bound. Router-only — it feeds
+  `futures_slippage_control.order_router_max_quote_age_seconds`, which the
   monolith ignores. Applies in both feed modes.
+- `FUTURES_ROUTER_SLIPPAGE_GATE` (default `true`): the send-time gate's own
+  rollback switch (`futures_slippage_control.order_router_gate`). Seeding stays
+  age-bounded even with the gate off.
+- `FUTURES_ORDER_ROUTER_SEED_COUNT` (default `50`): how deep into the stream tail
+  to look at startup. Search depth, not an age bound.
+- Stream names: producers publish to `MONITOR_FUTURES_TICK_STREAM`, consumers
+  read `FUTURES_TICK_STREAM`. Both default to `raw_data` and a unit test pins the
+  two defaults together — they must name the same stream.
 - `FUTURES_TRADING_PRODUCT` (default `mini`): futures front-month product
   (`mini` | `kospi200`). All decoupled futures services and the orchestrator
   resolve the same current contract through `shared.execution.futures_instrument`.
@@ -139,8 +148,13 @@ Each trading day, verify:
 
   ```bash
   redis-cli -p 6379 -n 1 xrevrange raw_data + - COUNT 1 \
-    | grep -E "bid_price_1|ask_price_1"
+    | grep -E "bid_price_1|ask_price_1|quote_ts"
   ```
+
+  `quote_ts` is the book's own event time. A `raw_data` tail where `timestamp`
+  keeps advancing while `quote_ts` does not is a frozen orderbook feed, and the
+  router will be rejecting entries with `quote_stale` — that is the gate working,
+  not a market condition.
 
 - `trader-futures` kept its WS through the shadow day: no reconnect storm and no
   `raw_data` gap while the router was up.
@@ -267,27 +281,41 @@ tick reaches a tick callback, so `trader-futures` and `futures-market-ingest`
 each merge the feed's cached top of book into the tick they republish
 (`orderbook_publish_fields`). Two consequences for reading Gate 1 numbers:
 
-- **Quiet books go stale, by design.** No trade print means no publish, so the
-  last quote ages in place. The router therefore blocks on
+- **A book can freeze while trades keep printing.** H0IFASP0 going quiet while
+  H0IFCNT0 continues is a real state the feed already models
+  (`_log_orderbook_staleness`), and the cached book is never age-expired — so
+  the producer merges a frozen bid/ask onto a fresh trade every ~0.2s. Each
+  entry therefore carries two times: `timestamp` (the trade print) and
+  `quote_ts` (that book's own event time). Everything bounding quote freshness
+  reads `quote_ts`; reading `timestamp` would report age≈0 for a dead book
+  forever. The router blocks on
   `futures_slippage_control.order_router_max_quote_age_seconds` (default 10s,
   `FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS`, 0 disables) with reason
-  `quote_stale:<age>` rather than sizing an entry against an old book — a
-  router-only key the monolith ignores, like `order_router_gate`. Publishing on
-  orderbook ticks would remove the limit; that is a documented follow-up
-  (design §8). `quote_stale` counts toward `slippage_blocked_count`, so read it
-  as a data-availability reject, not a market reject.
-- **Cross-asset is not carried.** The stream only carries symbols the producer
-  subscribed to, so with `futures_slippage_control.cross_asset.enabled: true` the
-  gate blocks every entry with `cross_asset_unavailable`. Paper is unaffected
-  (`paper_override` sets it `false`); the router logs a WARNING at startup if it
-  is on. Live must either publish the reference symbol from the producer, keep
-  cross-asset off, or run `ws` in an exclusive window.
+  `quote_stale:<age>` — a router-only key the monolith ignores, like
+  `order_router_gate`. It bounds the same quantity in `ws` mode, where the WS
+  feed's own orderbook cache supplies that time. Publishing on orderbook ticks
+  would shrink the stale window; that is a documented follow-up (design §8).
+  `quote_stale` counts toward `slippage_blocked_count`, so read it in Gate 1 as
+  a data-availability reject, not a market reject.
+- **Cross-asset availability depends on the producer.** `trader-futures` passes
+  its `cross_asset.reference_symbol` to the WS feed as an auxiliary subscription
+  and republishes every tick it receives, so **pre-cutover the reference symbol
+  IS on the stream** and the cross-asset check works in stream mode.
+  `futures-market-ingest` subscribes only its trading symbol, so **after the
+  cutover it is not**, and the gate would block every entry with
+  `cross_asset_unavailable`. Paper is unaffected either way (`paper_override`
+  sets `cross_asset.enabled: false`). The router logs a check-this WARNING at
+  startup when cross-asset is on in stream mode; verify the symbol is on
+  `raw_data`, disable cross-asset, or run `ws` in an exclusive window.
 
 On restart the router seeds its cache from the tail of the stream
-(`XREVRANGE`, 50 entries) so the first signal after a restart is not blocked on
-`orderbook_unavailable`. Seeded entries keep the producer's timestamp, so a
-restart during a halt seeds a book that the quote-age gate then rejects — which
-is the intended outcome, not a bug.
+(`XREVRANGE`, `FUTURES_ORDER_ROUTER_SEED_COUNT`, default 50) so the first signal
+after a restart is not blocked on `orderbook_unavailable`. The count bounds how
+deep to look for this symbol, not the seeded book's age: entries apply
+oldest-first, so the newest always wins. Age is bounded separately — seeding
+skips anything older than the quote-age knob, so a restart during a halt or on a
+day-old stream seeds nothing rather than relying on the gate to reject it
+afterwards.
 
 ## Gate 1b — Control Parity (blocks Gate 2 approval)
 
@@ -358,6 +386,18 @@ are in force in which mode.
 
 **Qualifications that change what these rows mean:**
 
+- **The volatility row spans a different amount of wall clock in each runtime
+  — operator decision.** `volatility.window_ticks: 20` counts TICKS, not
+  seconds. The monolith registers every raw WS trade tick, while the decoupled
+  router registers what reaches it through `raw_data`, which the publisher
+  throttles to `futures_min_interval_seconds` (0.2s) and conflates further when
+  a flush batch collapses to the newest tick per symbol. The same 20-tick window
+  therefore covers a longer, and a load-dependent, stretch of the session in the
+  decoupled chain, so its spike detector reacts to a slower move than the
+  monolith's. Not a defect of either, but the two are not the same control:
+  before Gate 2, either tune `window_ticks` for the decoupled runtime or record
+  the acceptance explicitly. Nothing in the shadow numbers reveals this on its
+  own — a lower volatility-cooldown count reads as a calmer market.
 - **The monolith's spread threshold is 1 tick in live, 6 in paper.**
   `paper_override.enabled: true` (`execution.yaml:233`) replaces
   `max_spread_ticks` with `${FUTURES_PAPER_MAX_SPREAD_TICKS:6}`
