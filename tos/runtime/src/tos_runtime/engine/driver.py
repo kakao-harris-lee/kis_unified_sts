@@ -83,11 +83,19 @@ from tos.engine.records import (
     InstrumentKey,
     event_identity,
 )
-from tos.engine.vocabulary import EgressResultKind, EventKind, ResultDisposition
+from tos.engine.vocabulary import (
+    EgressResultKind,
+    EventKind,
+    OrderingAdmission,
+    ResultDisposition,
+)
 from tos.ordering import OrderingEvent
 
 from tos_runtime.engine.inbox import SqliteEventInbox
-from tos_runtime.engine.orthostate_projection import OrthostateProjector
+from tos_runtime.engine.orthostate_projection import (
+    NEW_RISK_HALTED_BY_COUPLING_VIOLATION,
+    OrthostateProjector,
+)
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
@@ -526,6 +534,30 @@ class EngineDriver:
         assert receipt.key_generation is not None
         return receipt.seq, receipt.key_generation
 
+    def _new_risk_halted_result(
+        self, event: EngineEvent, halted: dict[str, object]
+    ) -> EventResult:
+        """Independent review finding #3: the synthetic ``EventResult`` returned for a
+        ``DECISION_TICK`` refused by the durable new-risk halt latch — ``core.handle`` is never
+        called for it. ``halt_reason`` stays ``None`` here (the kernel's ``HaltReason`` is a
+        closed enum this runtime-level latch is not a member of); the reason lives in ``detail``
+        and, durably, in the ``EVENT_CONSUMED`` receipt's own string ``halt_reason`` field
+        (:meth:`_record_consumed` takes a plain ``str``, not the kernel enum).
+        """
+        payload = event.decision_tick
+        key = payload.instrument_key if payload is not None else event.instrument_key()
+        return EventResult(
+            kind=EventKind.DECISION_TICK,
+            instrument_key=key,
+            ordering=OrderingAdmission.MONOTONE,
+            detail=(
+                f"refused by the durable new-risk halt latch ({NEW_RISK_HALTED_BY_COUPLING_VIOLATION}) "
+                f"first recorded for {halted.get('event_id')!r} "
+                f"(evidence_seq={halted.get('evidence_seq')!r}); clearing this latch is Phase 5 "
+                "operator re-arm, not provided in this wave"
+            ),
+        )
+
     # -- the drain loop --------------------------------------------------------
 
     def _process_next(self) -> tuple[int, EventResult] | None:
@@ -600,10 +632,34 @@ class EngineDriver:
                     generation=marker_receipt.key_generation,
                 )
 
-                result = self._core.handle(event)
                 payload_digest = self._scheme.compute_digest(
                     event.model_dump(mode="json")
                 )
+
+                if event.kind is EventKind.DECISION_TICK:
+                    halted = self._inbox.new_risk_halt()
+                    if halted is not None:
+                        # Independent review finding #3 (2026-09-09): a durably-latched
+                        # coupling/ownership violation blocks every NEW DECISION_TICK — never
+                        # core.handle at all for it (the tick is refused, not evaluated; nothing
+                        # is consumed, mirroring the kernel's own Coordinator-gate refusal
+                        # contract). An EGRESS_RESULT is NEVER refused this way (see the branch
+                        # below, unreached for that kind) — results still apply; knowledge may
+                        # improve even while new risk stays blocked. Clearing this latch is
+                        # Phase 5 operator re-arm, not provided in this wave.
+                        result = self._new_risk_halted_result(event, halted)
+                        evidence_seq, generation = self._record_consumed(
+                            event_id=event_id,
+                            payload_digest=payload_digest,
+                            outcome_digest=None,
+                            halt_reason=NEW_RISK_HALTED_BY_COUPLING_VIOLATION,
+                        )
+                        self._inbox.mark_consumed(
+                            seq, evidence_seq=evidence_seq, generation=generation
+                        )
+                        return seq, result
+
+                result = self._core.handle(event)
                 evidence_seq, generation = self._record_consumed(
                     event_id=event_id,
                     payload_digest=payload_digest,

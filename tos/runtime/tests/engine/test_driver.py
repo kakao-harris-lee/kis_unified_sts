@@ -615,6 +615,18 @@ def test_timeout_is_injected_after_the_configured_wait_and_capacity_stays_conser
     assert timeout_result.reservation is not None
     assert timeout_result.reservation.knowledge.value == "UNKNOWN"
 
+    # Independent review finding #2 / kernel disposition KW2b-#2 (2026-09-09): a TIMEOUT now
+    # projects Capacity as QUARANTINED_UNKNOWN (the kernel's own PROJECTION_ORDER/
+    # _RESULT_TRANSITIONS fix) — CPL-5 (Broker=UNKNOWN or Knowledge in {CONFLICTED, QUARANTINED}
+    # requires Capacity == QUARANTINED_UNKNOWN exactly) is now satisfied, not violated. Before
+    # KW2b-#2 this driver e2e recorded a false critical COUPLING_VIOLATION halt on every TIMEOUT
+    # — RFC-005 §11's own "normal" result kind. Re-run through the REAL, wired
+    # OrthostateProjector (this driver's own fixture default) and assert zero.
+    coupling_violation_rows = evidence_store.connection.execute(
+        "SELECT COUNT(*) FROM entries WHERE kind = 'COUPLING_VIOLATION'"
+    ).fetchone()[0]
+    assert coupling_violation_rows == 0
+
     # It fires only once — no repeated TIMEOUT spam.
     assert driver.run_once() is None
 
@@ -788,3 +800,65 @@ def test_process_next_is_not_reentrant(
     assert driver._draining is False
     second = driver.enqueue_and_run(fx.decision_tick_event(seq=2))
     assert second.instrument_key == fx.instrument_key()
+
+
+# -- new-risk halt latch (independent review finding #3, 2026-09-09) -----------
+
+
+def test_new_risk_halt_latch_refuses_decision_tick_but_not_egress_result(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    monotonic_source,
+) -> None:
+    """A durably-latched new-risk halt
+    (:data:`tos_runtime.engine.orthostate_projection.NEW_RISK_HALTED_BY_COUPLING_VIOLATION`) must
+    refuse every NEW ``DECISION_TICK`` this driver is asked to run — ``core.handle`` is never
+    even called for it (``pipeline is None``, ``outcome_digest is None``). An ``EGRESS_RESULT``
+    is NEVER refused this way: it must still reach the REAL kernel (results are still consumed;
+    knowledge may improve even while new risk stays blocked)."""
+    driver, _core = _make_driver(
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        monotonic_source=monotonic_source,
+    )
+    assert inbox.new_risk_halt() is None
+
+    inbox.record_new_risk_halt(
+        reason="NEW_RISK_HALTED_BY_COUPLING_VIOLATION",
+        event_id="attempt:test-latch",
+        evidence_seq=None,
+    )
+
+    tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+    assert (
+        tick_result.halt_reason is None
+    )  # not a kernel HaltReason member — see the driver's
+    # own _new_risk_halted_result docstring
+    assert tick_result.pipeline is None
+    assert tick_result.outcome_digest is None
+    assert "NEW_RISK_HALTED_BY_COUPLING_VIOLATION" in (tick_result.detail or "")
+
+    rows = evidence_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = 'EVENT_CONSUMED' ORDER BY seq"
+    ).fetchall()
+    payloads = [json.loads(r[0])["payload"] for r in rows]
+    assert payloads[-1]["halt_reason"] == "NEW_RISK_HALTED_BY_COUPLING_VIOLATION"
+    assert payloads[-1]["outcome_digest"] is None
+
+    # A second latched call: the SAME refusal, never crashing on a "re-refusal".
+    second_tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=2))
+    assert "NEW_RISK_HALTED_BY_COUPLING_VIOLATION" in (second_tick_result.detail or "")
+
+    # An EGRESS_RESULT still reaches the REAL kernel — never short-circuited by the latch.
+    orphan_result_event = EngineEvent(
+        kind=EventKind.EGRESS_RESULT,
+        egress_result=EgressResultPayload(
+            instrument_key=fx.instrument_key(),
+            attempt_id="no-such-attempt",
+            kind=EgressResultKind.ACK,
+        ),
+    )
+    egress_result = driver.enqueue_and_run(orphan_result_event)
+    assert egress_result.result_disposition is ResultDisposition.ORPHAN_NO_RESERVATION
