@@ -158,6 +158,16 @@ def config_dir(tmp_path: Path) -> Path:
         },
     )
     _write_yaml(
+        directory / "engine_driver.yaml",
+        {
+            # TOS Phase 3 Wave 1 Lane A-R — a boot-time cost bound, not a
+            # safety threshold (tos_runtime.compose._engine_wiring's own
+            # module docstring); large enough to cover every event this
+            # suite's compose end-to-end tests ever admit in one process.
+            "replay_window_events": 1000,
+        },
+    )
+    _write_yaml(
         directory / "release.yaml",
         {
             "expected_code_digest": EXPECTED_CODE_DIGEST,

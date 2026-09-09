@@ -8,14 +8,19 @@ the RCL log / risk-and-currentness phases build (design #40 §5 order 3-6).
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import fields
 from pathlib import Path
 
+from tos.canonical import CanonicalizationScheme
+from tos.engine import EngineCore
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.compose._egress_attestations import EgressAttestations
 from tos_runtime.compose._egress_coordinates import EgressCoordinatesConfig
 from tos_runtime.compose._risk_attestations import RiskAttestations
+from tos_runtime.engine.inbox import SqliteEventInbox
+from tos_runtime.engine.replay import ReplayVerdict, replay_engine
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog
@@ -24,9 +29,24 @@ __all__ = [
     "EGRESS_ATTESTATIONS_CONFIG_NAME",
     "RISK_ATTESTATIONS_CONFIG_NAME",
     "EGRESS_COORDINATES_CONFIG_NAME",
+    "EngineReplayDiverged",
     "verify_rcl_log_or_halt",
+    "verify_engine_replay_or_halt",
     "record_operator_attested_inputs",
 ]
+
+
+class EngineReplayDiverged(RuntimeError):
+    """Raised by :func:`verify_engine_replay_or_halt` when the independent re-derivation over
+    the durable event inbox (:mod:`tos_runtime.engine.replay`) diverges from the recorded outcome
+    for at least one compared event (TOS Phase 3 Wave 1 Lane A-R, plan §1.1 "재생 digest 동일").
+
+    Each individual divergence is already durably recorded by :func:`~tos_runtime.engine.replay
+    .replay_engine` itself (both evidence paths, via ``record_halt``) BEFORE this is ever raised —
+    raising here only refuses to hand back a runtime over a replay that failed, mirroring
+    :func:`verify_rcl_log_or_halt`'s own "never a silent halt" contract.
+    """
+
 
 EGRESS_ATTESTATIONS_CONFIG_NAME = "egress_attestations.yaml"
 RISK_ATTESTATIONS_CONFIG_NAME = "risk_attestations.yaml"
@@ -64,6 +84,42 @@ def verify_rcl_log_or_halt(
             runtime_identity=identity,
         )
         raise
+
+
+def verify_engine_replay_or_halt(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    build_core: Callable[[], EngineCore],
+    *,
+    scheme: CanonicalizationScheme,
+    window_events: int,
+) -> ReplayVerdict:
+    """Independently re-derive the last ``window_events`` admitted events (TOS Phase 3 Wave 1
+    Lane A-R, plan §1.1) and refuse to hand back a runtime if any diverges from its recorded
+    outcome. Mirrors :func:`verify_rcl_log_or_halt`'s own placement discipline: run at boot,
+    before the runtime this composes is handed back to any caller.
+
+    Each individual divergence is already durably recorded (both evidence paths) by
+    :func:`~tos_runtime.engine.replay.replay_engine` itself before this function ever raises.
+
+    Raises:
+        EngineReplayDiverged: If at least one compared event's replay state was not ``MATCH``.
+    """
+    verdict = replay_engine(
+        inbox,
+        evidence_store,
+        emergency_log,
+        build_core,
+        scheme=scheme,
+        window_events=window_events,
+    )
+    if not verdict.ok:
+        raise EngineReplayDiverged(
+            f"engine replay diverged for {len(verdict.diverged)} of "
+            f"{verdict.total_compared} compared events: {verdict.diverged!r}"
+        )
+    return verdict
 
 
 def record_operator_attested_inputs(

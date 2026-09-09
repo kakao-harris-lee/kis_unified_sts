@@ -198,6 +198,7 @@ def compose_paper_runtime(
 
     return _finalize(
         config_dir=config_dir,
+        data_dir=data_dir,
         infra=infra,
         rcl=rcl,
         risk=risk,
@@ -208,4 +209,5 @@ def compose_paper_runtime(
         identity=identity,
         registry=registry,
         release_admitted=release_admitted,
+        continuity_id=continuity_id,
     )

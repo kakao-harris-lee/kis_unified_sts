@@ -5,6 +5,7 @@ limit); no behavioural difference from having them inline in root.py.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from tos.brokeradapter import SyntheticPaperTransport
@@ -20,6 +21,8 @@ from tos.egressgw import (
 )
 from tos.engine import (
     EngineCore,
+    EngineEvent,
+    EventResult,
     StrategyRegistry,
 )
 from tos.venue import (
@@ -51,6 +54,8 @@ from tos_runtime.currentness.stages import (
 from tos_runtime.currentness.vector import CurrentnessAssembler
 from tos_runtime.custody.file_custody import FileCustody
 from tos_runtime.custody.key_provider import FileKeyProvider
+from tos_runtime.engine.driver import EngineDriver
+from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
@@ -144,9 +149,21 @@ class ComposedRuntime:
     #: — exposed so a caller building ``AggregateRiskDecisionInputs`` reuses
     #: the SAME floor the config declared, never a re-typed duplicate.
     required_scenario_kinds: frozenset
+    #: The durable event admission queue (TOS Phase 3 Wave 1 Lane A-R, plan
+    #: §1.1) — its own sqlite file, separate from ``evidence_store``'s.
+    inbox: SqliteEventInbox
+    #: The single driver over ``core``/``gateway`` (plan §1.1) — the ONLY
+    #: caller of ``core.handle``/``run`` in this composed runtime; see
+    #: ``tos/runtime/tests/engine/test_no_direct_core_calls.py``.
+    driver: EngineDriver
 
-    def run_once(self, events: object) -> tuple:
-        """Drive the composed ``EngineCore`` over ``events`` to completion.
+    def run_once(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
+        """Drive ``events`` through :attr:`driver` to completion, one at a time.
+
+        Kept for existing call-site compatibility (every compose end-to-end test calls
+        ``runtime.run_once((event,))``); the body no longer touches ``self.core`` directly —
+        :attr:`driver` is now the only caller of ``core.handle``/``run`` (TOS Phase 3 Wave 1
+        Lane A-R, plan §1.1: "테스트가 코어를 직접 호출하는 경로 제거").
 
         Args:
             events: An iterable of :class:`~tos.engine.records.EngineEvent`
@@ -154,6 +171,8 @@ class ComposedRuntime:
                 loop, which is Phase 5, ``cli.py``'s own module docstring).
 
         Returns:
-            One :class:`~tos.engine.core.EventResult` per event, in order.
+            One :class:`~tos.engine.core.EventResult` per event, in order — the result for EACH
+            enqueued event specifically; any re-injected follow-on ``EGRESS_RESULT`` events are
+            processed too (as a side effect, durably recorded) but are not included here.
         """
-        return self.core.run(events)  # type: ignore[arg-type]
+        return tuple(self.driver.enqueue_and_run(event) for event in events)

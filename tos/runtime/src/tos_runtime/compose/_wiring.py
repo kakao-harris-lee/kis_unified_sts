@@ -10,15 +10,12 @@ from __future__ import annotations
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
-from decimal import Decimal
 from pathlib import Path
 
 from tos.authority import AuthorityTransitionReason
-from tos.brokeradapter import SyntheticFillPolicy, SyntheticPaperTransport
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.egress import CredentialRouteInventoryEntry, EgressCoordinateSet
 from tos.egressgw import (
-    BrokerEgressGateway,
     ConformanceProofStage,
     EconomicEffectStage,
     OrderConstructionStage,
@@ -28,7 +25,6 @@ from tos.egressgw import (
 from tos.engine import (
     CommitmentStep,
     EngineConfiguration,
-    EngineCore,
     StageRequest,
     StrategyRegistry,
 )
@@ -64,6 +60,12 @@ from tos_runtime.compose._egress_coordinates import (
     load_egress_coordinates,
 )
 from tos_runtime.compose._engine_config import load_engine_config
+from tos_runtime.compose._engine_wiring import (
+    ENGINE_DRIVER_CONFIG_NAME,
+    load_engine_driver_config,
+    verify_replay_or_halt,
+    wire_engine_and_driver,
+)
 from tos_runtime.compose._pending_dimensions import PendingDimensionSpec
 from tos_runtime.compose._risk_attestations import (
     wrap_action_flow_inputs_provider,
@@ -91,13 +93,8 @@ from tos_runtime.custody.file_custody import FileCustody
 from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.ports import EvidenceAppendPort
-from tos_runtime.evidence.sinks import (
-    EngineEvidenceSinkAdapter,
-    GatewayEvidenceSinkAdapter,
-)
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
-from tos_runtime.rcl.obligation import CapacityObligationRecorder
 from tos_runtime.release.admission import ReleaseAdmissionService
 from tos_runtime.release.config import load_release_config
 from tos_runtime.risk.aggregate import (
@@ -315,6 +312,11 @@ class _Infra:
     emergency_log: EmergencyAppendLog
     time_service: TrustworthyTimeService
     time_config: TrustworthyTimeConfig
+    #: The RESOLVED monotonic source (never ``None`` here, unlike the caller-facing optional
+    #: parameter) — TOS Phase 3 Wave 1 Lane A-R's ``EngineDriver`` timeout injection reuses the
+    #: SAME source ``TrustworthyTimeService`` was built with, rather than reading a second,
+    #: independent ``time.monotonic()`` (design #40 D1.1 "never an ambient clock read").
+    monotonic_source: MonotonicSource
 
 
 def _build_custody_evidence_time(
@@ -329,6 +331,9 @@ def _build_custody_evidence_time(
     """custody / evidence store (``FileKeyProvider``) / emergency log /
     Trustworthy Time (``start()`` + two boot-time ``evaluate()`` cycles) —
     design #40 §5 order 1, D3/D4."""
+    resolved_monotonic_source = (
+        monotonic_source if monotonic_source is not None else ProcessMonotonicSource()
+    )
     key_provider = FileKeyProvider(custody_root, expected_owner_uid=uid)
     evidence_store = SqliteEvidenceStore(
         data_dir / "evidence.sqlite3", key_provider=key_provider
@@ -343,11 +348,7 @@ def _build_custody_evidence_time(
 
     time_config = load_time_config(config_dir / _TIME_CONFIG_NAME)
     time_service = TrustworthyTimeService(
-        monotonic=(
-            monotonic_source
-            if monotonic_source is not None
-            else ProcessMonotonicSource()
-        ),
+        monotonic=resolved_monotonic_source,
         references=(LocalSystemClockReader(),),
         config=time_config,
         identity=identity,
@@ -371,6 +372,7 @@ def _build_custody_evidence_time(
         emergency_log=emergency_log,
         time_service=time_service,
         time_config=time_config,
+        monotonic_source=resolved_monotonic_source,
     )
 
 
@@ -926,6 +928,7 @@ def _build_engine_configuration(config_dir: Path) -> EngineConfiguration:
 def _finalize(
     *,
     config_dir: Path,
+    data_dir: Path,
     infra: _Infra,
     rcl: _RclAndAuthority,
     risk: _RiskAndCurrentness,
@@ -936,58 +939,54 @@ def _finalize(
     identity: RuntimeIdentity,
     registry: StrategyRegistry | None,
     release_admitted: bool,
+    continuity_id: str,
 ) -> ComposedRuntime:
-    """The gateway + ``EngineCore`` wiring + the final
-    :class:`~tos_runtime.compose._types.ComposedRuntime` assembly — the
-    tail of :func:`~tos_runtime.compose.root.compose_paper_runtime`, split
-    out purely for the size budget."""
-    # Kernel round #1 §3 (lane B): the reservation id bound to any attempt
-    # in THIS compose root is always this same formula — the SAME one
-    # _build_realized_stages' AtomicCommitStage reservation_id_provider and
-    # _build_currentness_stages' TransmissionCapabilityStage context_reader
-    # already use — because this compose root wires exactly one
-    # InstrumentKey (context_resolver.instrument_key) for its whole process
-    # lifetime (see tos_runtime.rcl.obligation's own module docstring,
-    # "Reservation-id resolution").
-    instrument_key = context_resolver.instrument_key
-    obligation_recorder = CapacityObligationRecorder(
-        store=infra.evidence_store,
+    """The gateway + ``EngineCore`` + durable inbox/driver wiring (delegated to
+    :func:`~tos_runtime.compose._engine_wiring.wire_engine_and_driver`) + the boot-time replay
+    check + the final :class:`~tos_runtime.compose._types.ComposedRuntime` assembly — the tail of
+    :func:`~tos_runtime.compose.root.compose_paper_runtime`, split out purely for the size
+    budget."""
+    engine_configuration = _build_engine_configuration(config_dir)
+    wired = wire_engine_and_driver(
+        data_dir=data_dir,
+        context_resolver=context_resolver,
+        identity=identity,
+        evidence_store=infra.evidence_store,
         emergency_log=infra.emergency_log,
         projection=risk.projection,
-        reservation_id_resolver=lambda _attempt_id: (
-            f"resv-{instrument_key.account}-{instrument_key.instrument}"
-        ),
-    )
-    # Independent review finding #8: wiring on_refusal here means a
-    # SEND_REFUSED whose obligation this recorder cannot verify (e.g. the
-    # rcl projection's sqlite read fails) now raises out of
-    # GatewayEvidenceSinkAdapter.record and transitively out of
-    # BrokerEgressGateway.__call__ — a contract change from before this
-    # observer existed (the refusal path could not previously raise for
-    # this reason). Deliberate, fail-closed (see sinks.py's own module +
-    # record() docstrings for the full rationale).
-    gateway_sink = GatewayEvidenceSinkAdapter(
-        infra.evidence_store,
-        runtime_identity=identity,
-        on_refusal=obligation_recorder,
-    )
-    transport = SyntheticPaperTransport(
-        SyntheticFillPolicy(fill_numerator=1, fill_denominator=1, lot_size=Decimal("1"))
-    )
-    gateway = BrokerEgressGateway(
-        contexts=context_resolver, transport=transport, sink=gateway_sink
+        stages=stages,
+        configuration=engine_configuration,
+        registry=registry,
+        scheme=_SCHEME,
+        continuity_id=continuity_id,
+        monotonic_source=infra.monotonic_source,
+        max_send_result_wait_ms=infra.time_config.max_send_result_wait_ms,
     )
 
-    resolved_registry = registry if registry is not None else StrategyRegistry()
-    engine_sink = EngineEvidenceSinkAdapter(
-        infra.evidence_store, runtime_identity=identity
+    # Independent boot-time re-derivation over whatever this inbox has
+    # already durably admitted (design plan §1.1 "부팅 시
+    # verify_rcl_log_or_halt 뒤에 실행"). Reported deviation from the
+    # plan's literal adjacency: verify_rcl_log_or_halt itself runs earlier,
+    # inside _boot_services, BEFORE the engine core/gateway/inbox exist to
+    # replay at all — this call is the earliest point in compose where an
+    # engine replay check is even constructible, and it still runs strictly
+    # after the RCL log's own integrity is independently re-verified, which
+    # is the substantive ordering requirement. See
+    # tos_runtime.engine.replay's own module docstring for exactly what
+    # "side-effect-free" does and does not cover for a core that DID have a
+    # working transmit in its original run.
+    engine_driver_config = load_engine_driver_config(
+        config_dir / ENGINE_DRIVER_CONFIG_NAME
     )
-    core = EngineCore(
-        registry=resolved_registry,
+    verify_replay_or_halt(
+        inbox=wired.inbox,
+        evidence_store=infra.evidence_store,
+        emergency_log=infra.emergency_log,
+        registry=wired.resolved_registry,
         stages=stages,
-        configuration=_build_engine_configuration(config_dir),
-        transmit=gateway,
-        sink=engine_sink,
+        configuration=engine_configuration,
+        scheme=_SCHEME,
+        window_events=engine_driver_config.replay_window_events,
     )
 
     return ComposedRuntime(
@@ -1012,12 +1011,14 @@ def _finalize(
         venue_stage=construction_stages.venue_stage,
         proof_stage=construction_stages.proof_stage,
         context_resolver=context_resolver,
-        core=core,
-        gateway=gateway,
-        transport=transport,
-        registry=resolved_registry,
+        core=wired.core,
+        gateway=wired.gateway,
+        transport=wired.transport,
+        registry=wired.resolved_registry,
         release_admitted=release_admitted,
         required_scenario_kinds=risk.required_scenario_kinds,
+        inbox=wired.inbox,
+        driver=wired.driver,
     )
 
 
