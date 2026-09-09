@@ -55,6 +55,11 @@ decoupled chain reuses the orchestrator's `raw_data` stream instead.
 - `FUTURES_ORDER_ROUTER_MODE` (default `paper`): drives order_router
   (`paper` | `live`). Separate knob — order_router uses `paper` (synthetic fills,
   `.shadow` streams) where the others use `shadow`.
+- `FUTURES_ORDER_ROUTER_FEED` (default `stream`): where order_router gets its
+  prices (`stream` | `ws`). `stream` consumes `FUTURES_TICK_STREAM` (default
+  `raw_data`) and opens no KIS WebSocket, so the router can run beside
+  `trader-futures`; `ws` self-feeds and must not. See the feed-source note in
+  Gate 1. An unrecognised value aborts startup.
 - `FUTURES_TRADING_PRODUCT` (default `mini`): futures front-month product
   (`mini` | `kospi200`). All decoupled futures services and the orchestrator
   resolve the same current contract through `shared.execution.futures_instrument`.
@@ -114,6 +119,26 @@ Each trading day, verify:
   `redis-cli -p 6379 -n 1 xlen signal.final.futures.shadow` (paper; host Redis).
 - No restart loop:
   `docker compose --env-file .env.paper ps futures-decision-engine futures-risk-filter futures-order-router futures-monitor`.
+- **order_router is stream-fed and opened no KIS WebSocket** — the check that
+  keeps it from evicting `trader-futures` from the account's single futures WS:
+
+  ```bash
+  docker compose --env-file .env.paper logs futures-order-router \
+    | grep -E "order_router feed=" | tail -1          # expect: feed=stream stream=raw_data
+  docker compose --env-file .env.paper logs futures-order-router \
+    | grep -cE "\[KIS WS\]|Approval key obtained"    # expect: 0
+  ```
+
+- **`raw_data` carries the top of book** — without it the slippage gate has
+  nothing to evaluate and blocks everything with `orderbook_unavailable`:
+
+  ```bash
+  redis-cli -p 6379 -n 1 xrevrange raw_data + - COUNT 1 \
+    | grep -E "bid_price_1|ask_price_1"
+  ```
+
+- `trader-futures` kept its WS through the shadow day: no reconnect storm and no
+  `raw_data` gap while the router was up.
 - Sanity: compare shadow decisions with the orchestrator's paper trades for
   **direction**, not exact fill parity.
 - Setup D reaches the shadow stream. `setup_d_vwap_reversion` is the setup that
@@ -217,12 +242,33 @@ check above: the orchestrator is enforcing gates the shadow chain is not, so a
 shadow entry the orchestrator declined may be a real control divergence rather
 than fill noise.
 
-**DUAL-WS CAVEAT.** `futures-order-router` self-feeds a real KIS futures WebSocket
-even in paper mode (KIS 모의투자 serves no futures realtime feed). During shadow
-that is a 2nd futures WS alongside the orchestrator's = 2 concurrent on one KIS
-account. Confirm KIS allows this for your account, or run shadow in a window where
-`trader-futures` is paused. If order_router logs WS connect/auth failures, this is
-the likely cause.
+**FEED SOURCE — stream by default, `ws` is opt-in.** KIS serves **one** futures
+WebSocket per account: measured 2026-09-07/08, the second connection is dropped
+and, on 09-08 08:45–09:15, the orchestrator lost `raw_data` for 25 minutes until
+`futures-order-router` was stopped. `FUTURES_ORDER_ROUTER_FEED` (default
+`stream`) therefore has the router consume the `raw_data` ticks
+`trader-futures` already publishes — no KIS connection of its own — so Gate 1
+runs the router **alongside** the orchestrator, which is what makes a
+`slippage_gate` rejection observable at all.
+
+`FUTURES_ORDER_ROUTER_FEED=ws` restores the old self-fed path. It **MUST NOT**
+run while `trader-futures` (or `futures-market-ingest`) owns the account's
+futures WS — use it only in a window where the other WS owner is stopped. An
+unrecognised value is fatal at startup by design.
+
+Two limits of stream mode, both worth knowing before reading Gate 1 numbers:
+
+- **Freshness after cutover.** `trader-futures` publishes a merged snapshot every
+  loop (~1.5/s) whether or not a trade printed, so today the quote is ≤ ~1s old.
+  After cutover the producer is `futures-market-ingest`, which publishes on trade
+  ticks only — a quiet book over 30s leaves the quote stale and the gate blocks.
+  An orderbook-tick publisher is a documented follow-up (design §8).
+- **Cross-asset is not carried.** The stream only carries symbols the producer
+  subscribed to, so with `futures_slippage_control.cross_asset.enabled: true` the
+  gate blocks every entry with `cross_asset_unavailable`. Paper is unaffected
+  (`paper_override` sets it `false`); the router logs a WARNING at startup if it
+  is on. Live must either publish the reference symbol from the producer, keep
+  cross-asset off, or run `ws` in an exclusive window.
 
 ## Gate 1b — Control Parity (blocks Gate 2 approval)
 
@@ -685,9 +731,10 @@ automatically — verify each before going live:
 - The F-8 `FUTURES_ORCHESTRATOR_ENABLED` guard (`cli/main.py`, default `true`)
   prevents orchestrator↔decoupled double-trading. Set it to `false` at cutover,
   `true` at rollback.
-- **Dual-WS caveat** (see Gate 1): order_router self-feeds a real KIS futures WS in
-  both paper and live; futures-market-ingest owns a second. Never run
-  futures-market-ingest while `trader-futures` owns the WS.
+- **One futures WS per KIS account** (see Gate 1): order_router defaults to
+  `FUTURES_ORDER_ROUTER_FEED=stream` and opens none, so it may run beside
+  `trader-futures`. `ws` mode and `futures-market-ingest` each open one — never
+  run either while `trader-futures` owns the WS.
 - kill_switch is config-gated (`config/kill_switch.yaml::enabled`) and live-only.
   It reads the live `risk:state:futures` and sends real futures Telegram — keep it
   out of shadow runs (its own `futures-killswitch` profile).
