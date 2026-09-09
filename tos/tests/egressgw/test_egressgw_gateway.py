@@ -657,13 +657,15 @@ def test_mk2_a_resolver_asked_twice_never_leaks_its_second_answer_into_the_trans
 
 
 def test_mk1_send_once_reads_only_seal_attributes_never_context_again() -> None:
-    """(mutation M-K1, structural pin) ``send_once``'s keyword arguments never read
-    ``context.*`` for the outbound-economic / identity fields — only ``seal.*`` may.
+    """(mutation M-K1, structural pin) ``send_once``'s keyword arguments never read ANY
+    ``context.*`` attribute — zero exceptions (design §0 "봉인이 유일 입력 원천이어야 한다").
 
     An AST scan of ``BrokerEgressGateway.__call__``'s own source: if a future edit changed
     ``quantity=seal.outbound_quantity`` back to ``quantity=context.outbound_quantity`` (the
-    pre-Phase-4-작업-6 shape), this test fails loudly instead of silently reverting the seal's
-    "sole input source" guarantee.
+    pre-Phase-4-작업-6 shape) — or reintroduced ``reference=context.reference`` — this test fails
+    loudly instead of silently reverting the seal's "sole input source" guarantee. Deliberately
+    not a fixed forbidden-name list: *any* ``context.<anything>`` keyword value is disallowed, so
+    a newly added transport argument cannot quietly reopen this gap either.
     """
     import ast
     import textwrap
@@ -679,23 +681,16 @@ def test_mk1_send_once_reads_only_seal_attributes_never_context_again() -> None:
     ]
     assert len(send_once_calls) == 1, "expected exactly one send_once call in __call__"
     (call_node,) = send_once_calls
-    forbidden_context_attrs = {
-        "outbound_quantity",
-        "outbound_price",
-        "outbound_side",
-        "instrument_key",
-    }
     offenders = [
         f"{kw.arg}=context.{kw.value.attr}"
         for kw in call_node.keywords
         if isinstance(kw.value, ast.Attribute)
         and isinstance(kw.value.value, ast.Name)
         and kw.value.value.id == "context"
-        and kw.value.attr in forbidden_context_attrs
     ]
     assert offenders == [], (
-        f"send_once reads {offenders} from context — step 18 must source only from the seal "
-        "(design #34 phase 4 작업 6 §1.2, mutation M-K1)"
+        f"send_once reads {offenders} from context — step 18 must source only from the seal, "
+        "with zero exceptions (design #34 phase 4 작업 6 §0/§1.2, mutation M-K1)"
     )
 
 

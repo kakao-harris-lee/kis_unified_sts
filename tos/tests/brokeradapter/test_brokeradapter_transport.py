@@ -88,6 +88,13 @@ def test_the_send_signature_admits_no_retry_or_idempotency_parameter() -> None:
         "price",
         "side",
         "reference",
+        # Phase 4 작업 6 (design #34 phase 4 작업 6 §1.3) — the one deliberate addition
+        # to this signature since the set below was pinned: the sealed
+        # ``SendSeal.seal_digest`` an adapter may echo on its own evidence. It is
+        # explicitly NOT a retry/idempotency parameter (this test) and NOT a
+        # credential/session parameter (the sibling test below) — both forbidden-name
+        # lists are unchanged; only this exact-set membership widened to admit it.
+        "seal_digest",
     }
     for forbidden in (
         "retry",

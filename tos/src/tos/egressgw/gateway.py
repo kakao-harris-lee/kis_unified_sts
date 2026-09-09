@@ -43,13 +43,15 @@ Four structural seals carry the design's weight:
    refused. On an ``UNKNOWN`` / ``TIMEOUT`` outcome the gateway records brokercap's structurally
    all-restrictive ``uncertain_send_policy`` ladder and brokercap's ``same_order_retry_allowed``
    (``False`` for any unproven idempotency): no retry, no capacity release, no assumed rejection.
-4. **The seal is step 18's sole input source** (Phase 4 작업 6, design §1.2). Every scalar the
-   transport call needs — the coordinates, the outbound quantity / price / side, the instrument
-   key, the attempt identity — is copied onto one immutable :class:`~tos.egressgw.seal.SendSeal`
-   *before* the step-16 claim, and step 18 reads only the seal, never ``context`` a second time.
-   A substitution between the seal and the transport call is therefore structurally unrepresentable
-   rather than merely untested (ADR-002-013 §12 "No security-relevant field may be supplied or
-   changed downstream after the proof comparison").
+4. **The seal is step 18's sole input source, with zero exceptions** (Phase 4 작업 6, design
+   §0/§1.2). Every argument the transport call needs — the coordinates, the outbound quantity /
+   price / side, the instrument key, the attempt identity, and even the causal-ordering
+   ``reference`` event — is copied onto one immutable :class:`~tos.egressgw.seal.SendSeal` *before*
+   the step-16 claim, and step 18 reads only the seal, never ``context`` again. A substitution
+   between the seal and the transport call is therefore structurally unrepresentable rather than
+   merely untested (ADR-002-013 §12 "No security-relevant field may be supplied or changed
+   downstream after the proof comparison"; design §0 makes the seal the *only* source, not only
+   the source for the fields that happen to be security-relevant).
 
 ⚠ **Honest scope (design #34 §1.1 — closes no EV).** Six of the seventeen items are verified by
 shipped predicates over *structure and coordinates*; five are non-authoritative provisional
@@ -1767,12 +1769,12 @@ class BrokerEgressGateway:
         )
 
         # -- step 18: exactly one delegation to the injected transport --------------------
-        # Every economic / identity / coordinate argument below is read from ``seal`` alone —
-        # never from ``context`` a second time (Phase 4 작업 6 design §1.2 "seal is step 18's
-        # sole input source"). ``reference`` is the one exception, and deliberately so: it is a
-        # causal-ordering tag, not a security-relevant scalar (design §1.1 lists only its
-        # ``reference_digest`` as a sealed field, folded into ``outbound_request_digest`` so the
-        # seal still depends on *when* it was built without claiming to own the raw event).
+        # Every argument below is read from ``seal`` alone — never from ``context`` again, with
+        # ZERO exceptions (design §0 "봉인이 유일 입력 원천이어야 한다"; the M-K1 AST pin in the
+        # test suite enforces this literally). ``reference`` (the causal-ordering tag) is sealed
+        # too — ``seal.reference`` — even though it is not itself a security-relevant scalar,
+        # because the rule the seal exists to satisfy is "the seal is the ONLY source", not
+        # "the seal is the only source for the fields that matter".
         if self._transport is None:
             return self._halt(
                 attempt_id=attempt_id,
@@ -1790,7 +1792,7 @@ class BrokerEgressGateway:
                 quantity=seal.outbound_quantity,
                 price=seal.outbound_price,
                 side=seal.outbound_side,
-                reference=context.reference,
+                reference=seal.reference,
                 seal_digest=seal.seal_digest,
             )
         except (

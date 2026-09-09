@@ -37,7 +37,7 @@ scope:
 # expires_on 경과 시 --check red(운영자 조정 가능한 값).
 exceptions:
 - target: tos/src/tos/egressgw/gateway.py
-  measured: 1919
+  measured: 1921
   owner: tos-kernel
   decomposition_order: 1
   expires_on: '2026-12-31'
@@ -65,6 +65,10 @@ exceptions:
     docstring seal_digest 설명 추가. ``outbound_coordinates``/
     ``OUTBOUND_COORDINATE_NAMES`` 자체는 ``seal.py`` 로 이관되어 이 모듈의 실측을
     줄였으나(구 정의 ~30줄) 신규 배선이 net 증가.
+    2026-09-09 팀리드 follow-up([K-seal-5]) — measured 1919→1921(+2). step 18 이
+    ``reference=context.reference`` 대신 ``reference=seal.reference`` 를 읽도록
+    수정(§0 "봉인이 유일 입력 원천" 규칙에 예외 없음)하며 4번째 구조 항목·step 18
+    도크스트링 코멘트를 "reference 는 유일한 예외" 서술에서 "예외 없음" 서술로 재작성.
 - target: tos/src/tos/sir/predicates.py
   measured: 1681
   owner: tos-kernel

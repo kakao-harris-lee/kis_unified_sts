@@ -23,7 +23,7 @@ from tos.egressgw import (
     seal_matches_outbound,
 )
 
-from ._egressgw_fixtures import SCHEME, authorized_coordinates, happy_context
+from ._egressgw_fixtures import SCHEME, authorized_coordinates, happy_context, ordering
 
 # ---------------------------------------------------------------------------
 # build_send_seal — every required fact rejects None (design §1.4)
@@ -79,6 +79,27 @@ def test_build_send_seal_succeeds_on_the_unmodified_happy_context() -> None:
     )
     assert isinstance(seal, SendSeal)
     assert seal.attempt_id == attempt.attempt_id
+
+
+def test_send_seal_rejects_a_none_reference_directly() -> None:
+    """(design §0/§1.1) ``reference`` is a required sealed field like any other.
+
+    ``SendBoundaryContext.reference`` defaults to an empty ``OrderingEvent()`` and is never
+    itself ``None`` (so ``build_send_seal`` can never observe a missing ``reference`` through a
+    ``happy_context`` override the way it can for every other field above) — the rejection is
+    therefore exercised directly against :class:`SendSeal`'s own required-field type seal.
+    """
+    attempt, context = happy_context()
+    seal = build_send_seal(
+        context=context,
+        attempt=attempt,
+        coordinates=outbound_coordinates(context),
+        scheme=SCHEME,
+    )
+    tampered = dict(seal.model_dump())
+    tampered["reference"] = None
+    with pytest.raises(ValidationError):
+        SendSeal.model_validate(tampered)
 
 
 # ---------------------------------------------------------------------------
@@ -180,8 +201,9 @@ def test_seal_digests_are_deterministic_over_the_same_inputs() -> None:
                 ),
             },
         ),
+        ("reference", {"reference": ordering(2)}),
     ],
-    ids=["outbound_quantity", "outbound_side", "principal"],
+    ids=["outbound_quantity", "outbound_side", "principal", "reference"],
 )
 def test_seal_digests_change_when_any_one_field_changes(
     label: str, override: dict[str, Any]

@@ -8,10 +8,12 @@ claim and ``SEND_STARTED`` record, and the economic scalars (quantity / price / 
 from ``SendBoundaryContext`` straight to the transport call with nothing preventing a second,
 independent read of ``context`` between the claim and the call from observing a different value.
 :class:`SendSeal` closes that gap by being the **sole source** step 18 may read from: every
-identity, request-digest, principal / route coordinate, single-use nonce, and outbound economic
-scalar the transport call needs is copied onto one frozen tuple *before* anything is claimed, and
-the gateway (`gateway.py`) is rewired to read step 18's arguments from the seal alone, never from
-``context`` a second time.
+identity, request-digest, principal / route coordinate, single-use nonce, and outbound
+scalar the transport call needs — including the causal-ordering ``reference`` event, which
+design §0's "봉인이 유일 입력 원천이어야 한다" rule admits **no exception for**, security-relevant
+or not — is copied onto one frozen tuple *before* anything is claimed, and the gateway
+(`gateway.py`) is rewired to read step 18's arguments from the seal alone, never from ``context``
+a second time.
 
 **Why a plain ``FrozenModel`` and not a ``DigestBoundArtifact``.** The series' digest-bound
 artifacts (``tos.canonical.DigestBoundArtifact`` and its subclasses) exist to let an *externally
@@ -51,6 +53,7 @@ from tos.egressgw._base import (
     FrozenModel,
 )
 from tos.engine import AttemptRequest, InstrumentKey, reference_coordinate_digest
+from tos.ordering import OrderingEvent
 
 if (
     TYPE_CHECKING
@@ -149,7 +152,11 @@ class SendSeal(FrozenModel):
     * **single-use** — :attr:`capability_nonce`, :attr:`action_flow_permit_nonce`;
     * **the exact outbound (what step 18 hands the transport)** — :attr:`outbound_coordinates`
       (= :func:`outbound_coordinates`'s own result, unchanged), :attr:`outbound_quantity`,
-      :attr:`outbound_price`, :attr:`outbound_side`, :attr:`reference_digest`.
+      :attr:`outbound_price`, :attr:`outbound_side`, :attr:`reference` (the causal-ordering
+      event itself — sealed like every other transport argument, per design §0 "봉인이 유일
+      입력 원천이어야 한다": step 18 has zero exceptions, not even for a non-security-relevant
+      field), :attr:`reference_digest` (:attr:`reference`'s own digest, derived from the sealed
+      field rather than taken separately).
 
     Two digests close the seal: :attr:`outbound_request_digest` covers only the five "exact
     outbound" fields plus :attr:`attempt_id` / :attr:`instrument_key` — the kernel-side definition
@@ -189,6 +196,7 @@ class SendSeal(FrozenModel):
     outbound_quantity: CanonicalDecimal
     outbound_price: CanonicalDecimal
     outbound_side: str
+    reference: OrderingEvent
     reference_digest: str
 
     # -- the two closing digests -----------------------------------------------------------
@@ -261,7 +269,7 @@ def _gather_seal_fields(context: SendBoundaryContext) -> dict[str, Any]:
 
     Returns:
         A mapping keyed exactly by :class:`SendSeal`'s field names (``instrument_key`` through
-        ``outbound_side``) — the caller checks for ``None`` values.
+        ``reference``) — the caller checks for ``None`` values.
     """
     authorized = context.authorized_coordinates
     egress_request = context.egress_request
@@ -296,6 +304,7 @@ def _gather_seal_fields(context: SendBoundaryContext) -> dict[str, Any]:
         "outbound_quantity": context.outbound_quantity,
         "outbound_price": context.outbound_price,
         "outbound_side": context.outbound_side,
+        "reference": context.reference,
     }
 
 
@@ -358,7 +367,9 @@ def build_send_seal(
             f"{', '.join(missing)} (RFC-002 §10.8:761; design #34 phase 4 작업 6 §1.1)"
         )
 
-    reference_digest = reference_coordinate_digest(context.reference, scheme=scheme)
+    # Derived from the sealed ``reference`` field itself (``fields["reference"]``), never from a
+    # second, independent ``context.reference`` read — the field and its digest share one source.
+    reference_digest = reference_coordinate_digest(fields["reference"], scheme=scheme)
     outbound_request_digest = scheme.compute_digest(
         _outbound_preimage(
             coordinates=coordinates,
@@ -370,10 +381,13 @@ def build_send_seal(
             instrument_key=fields["instrument_key"],
         )
     )
+    _nested_model_fields = {"instrument_key", "reference"}
     covered: dict[str, Any] = {
         "attempt_id": attempt.attempt_id,
         **{
-            name: (value.model_dump(mode="json") if name == "instrument_key" else value)
+            name: (
+                value.model_dump(mode="json") if name in _nested_model_fields else value
+            )
             for name, value in fields.items()
         },
         "outbound_coordinates": [[name, value] for name, value in coordinates],
