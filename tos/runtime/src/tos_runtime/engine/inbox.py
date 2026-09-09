@@ -115,9 +115,23 @@ CREATE TABLE IF NOT EXISTS attempt_finality_witness (
 #: docstring). The ``CHECK (id = 1)`` + ``PRIMARY KEY`` makes this a genuine SINGLETON row: the
 #: FIRST halt recorded here sticks (an ``INSERT OR IGNORE`` — see :meth:`SqliteEventInbox
 #: .record_new_risk_halt` — silently no-ops on a second write, a primary-key conflict, never an
-#: overwrite), preserving the original cause. Clearing this latch is NOT provided in this wave
-#: (Phase 5 operator re-arm, per the disposition) — there is deliberately no ``DELETE``/``UPDATE``
-#: method here.
+#: overwrite), preserving the original cause.
+#:
+#: **Operator re-arm (re-review finding R3, 2026-09-09).** A runtime-wide, singleton, durable,
+#: and UNCLEARABLE latch is too strong: ADR-002-005 §7 / ADR-002-002 §15.2 both require a
+#: cancel-crossing fill (independent review finding #8's own dispatched scenario) to be
+#: *accepted*, not to leave the runtime permanently unable to take new risk. Deferring the clear
+#: path to "Phase 5" (the original disposition) makes the latch a ONE-WAY door on the normal
+#: path, for a race the spec calls routine — an operator decision, so this module provides the
+#: MECHANISM (:meth:`SqliteEventInbox.clear_new_risk_halt`) now rather than deferring it, while
+#: the latch itself (a genuine ledger/broker disagreement IS unknown exposure) stays in place —
+#: nothing clears it automatically anywhere in this runtime. The clear is guarded two ways: (1)
+#: it names the EXACT ``evidence_seq`` the operator is attesting they reviewed — a stale clear
+#: (naming an OLDER seq than the currently-latched one) cannot silently wipe a NEWER violation
+#: the operator never saw; (2) it requires a non-empty ``operator_attestation`` string — there is
+#: no config literal or automatic path that supplies one. See
+#: :meth:`~tos_runtime.compose._types.ComposedRuntime.clear_new_risk_halt` for the evidence-first
+#: wrapper a caller actually uses (this method is the storage-layer guard it delegates to).
 _CREATE_NEW_RISK_HALT_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS new_risk_halt (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -461,8 +475,8 @@ class SqliteEventInbox:
 
         This is a SINGLETON latch (module docstring): the FIRST call wins — a second call, for a
         different (or the same) reason, is silently ignored (``INSERT OR IGNORE`` against the
-        ``id = 1`` primary key), preserving the original cause rather than overwriting it.
-        Clearing the latch is NOT provided in this wave (Phase 5 operator re-arm).
+        ``id = 1`` primary key), preserving the original cause rather than overwriting it. See
+        :meth:`clear_new_risk_halt` for the guarded operator re-arm path (module docstring "R3").
         """
         self._conn.execute("BEGIN IMMEDIATE")
         try:
@@ -475,6 +489,43 @@ class SqliteEventInbox:
         except BaseException:
             self._conn.execute("ROLLBACK")
             raise
+
+    def clear_new_risk_halt(
+        self, *, latched_evidence_seq: int, operator_attestation: str
+    ) -> bool:
+        """Clear the latch — ONLY if it is still the exact violation named (re-review finding R3).
+
+        Args:
+            latched_evidence_seq: The ``evidence_seq`` of the violation the operator reviewed and
+                is attesting to. Must equal the CURRENTLY-latched row's own ``evidence_seq``
+                exactly — a caller naming a stale (older, already-superseded) seq is refused, so
+                a clear issued against yesterday's violation can never silently wipe a NEWER one
+                the operator has not seen.
+            operator_attestation: A non-empty (non-whitespace) free-text attestation. This method
+                does not interpret its content — the CALLER (:meth:`~tos_runtime.compose._types
+                .ComposedRuntime.clear_new_risk_halt`) is responsible for durably recording it as
+                evidence BEFORE calling this method (evidence-before-state-change, like every
+                other halt path in this runtime) — this is only the storage-layer guard.
+
+        Returns:
+            ``True`` if the latch was cleared; ``False`` if there was no latch, the named seq did
+            not match the currently-latched one, or the attestation was empty — in every refusal
+            case the latch (if any) is left completely untouched.
+        """
+        if not operator_attestation.strip():
+            return False
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            cur = self._conn.execute(
+                "DELETE FROM new_risk_halt WHERE id = 1 AND evidence_seq = ?",
+                (latched_evidence_seq,),
+            )
+            cleared = cur.rowcount > 0
+            self._conn.execute("COMMIT")
+        except BaseException:
+            self._conn.execute("ROLLBACK")
+            raise
+        return cleared
 
     def new_risk_halt(self) -> dict[str, object] | None:
         """The currently-latched new-risk halt, or ``None`` if none has ever been recorded.

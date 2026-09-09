@@ -543,6 +543,12 @@ class EngineDriver:
         closed enum this runtime-level latch is not a member of); the reason lives in ``detail``
         and, durably, in the ``EVENT_CONSUMED`` receipt's own string ``halt_reason`` field
         (:meth:`_record_consumed` takes a plain ``str``, not the kernel enum).
+
+        Re-review finding R3 (2026-09-09): the ``detail`` text used to say clearing this latch
+        was deferred to "Phase 5" — no longer true. The re-arm path is
+        :meth:`~tos_runtime.compose._types.ComposedRuntime.clear_new_risk_halt` (or, at the
+        storage layer, :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`),
+        available now; the ``detail`` text below names it.
         """
         payload = event.decision_tick
         key = payload.instrument_key if payload is not None else event.instrument_key()
@@ -553,8 +559,10 @@ class EngineDriver:
             detail=(
                 f"refused by the durable new-risk halt latch ({NEW_RISK_HALTED_BY_COUPLING_VIOLATION}) "
                 f"first recorded for {halted.get('event_id')!r} "
-                f"(evidence_seq={halted.get('evidence_seq')!r}); clearing this latch is Phase 5 "
-                "operator re-arm, not provided in this wave"
+                f"(evidence_seq={halted.get('evidence_seq')!r}); an operator may re-arm via "
+                "ComposedRuntime.clear_new_risk_halt(latched_evidence_seq="
+                f"{halted.get('evidence_seq')!r}, operator_attestation=...) — no automatic "
+                "clearing path exists anywhere in this runtime"
             ),
         )
 
@@ -645,8 +653,10 @@ class EngineDriver:
                         # is consumed, mirroring the kernel's own Coordinator-gate refusal
                         # contract). An EGRESS_RESULT is NEVER refused this way (see the branch
                         # below, unreached for that kind) — results still apply; knowledge may
-                        # improve even while new risk stays blocked. Clearing this latch is
-                        # Phase 5 operator re-arm, not provided in this wave.
+                        # improve even while new risk stays blocked. Clearing this latch is an
+                        # explicit operator action (re-review finding R3) — see
+                        # ComposedRuntime.clear_new_risk_halt / SqliteEventInbox
+                        # .clear_new_risk_halt; nothing here clears it automatically.
                         result = self._new_risk_halted_result(event, halted)
                         evidence_seq, generation = self._record_consumed(
                             event_id=event_id,

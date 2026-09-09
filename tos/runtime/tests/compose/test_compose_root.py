@@ -210,6 +210,68 @@ def _reach_trusted(runtime) -> None:
     assert runtime.time_service.health_state.value == "TRUSTED"
 
 
+def _reach_new_risk_halt_via_cancel_crossing_fill(runtime, custody_root: Path) -> int:
+    """Drive the SAME cancel-crossing-fill scenario as ``TestRecomposeReplay
+    .test_recompose_after_a_new_risk_latch_does_not_diverge`` (re-review finding R1) to reach a
+    latched new-risk-halt state (independent review finding #3 / #8), and return the latch's own
+    ``evidence_seq`` — the caller's handle for the R3 operator re-arm tests.
+    """
+    from decimal import Decimal
+
+    from tos.engine.records import EgressResultPayload, EngineEvent
+    from tos.engine.vocabulary import EgressResultKind, EventKind, ResultDisposition
+
+    event = fx.crossing_event()
+    results = runtime.run_once((event,))
+    proposal_digest = results[0].pipeline.proposal.canonical_digest
+    assert proposal_digest is not None
+    construction = runtime.construction_stage.construction
+    assert construction is not None and construction.intent is not None
+    write_approval_file(
+        custody_root,
+        proposal_digest=proposal_digest,
+        environment_label="non-live-test",
+        approved_intent_envelope_digest=construction.intent.canonical_digest,
+    )
+    results2 = runtime.run_once((event,))
+    assert results2[0].flow is not None and results2[0].flow.handed_off is True
+    attempt_id = results2[0].flow.attempt.attempt_id  # type: ignore[union-attr]
+
+    def _egress_result(kind: EgressResultKind, **magnitudes: Decimal) -> EngineEvent:
+        return EngineEvent(
+            kind=EventKind.EGRESS_RESULT,
+            egress_result=EgressResultPayload(
+                instrument_key=fx.instrument_key(),
+                attempt_id=attempt_id,
+                kind=kind,
+                **magnitudes,
+            ),
+        )
+
+    cancel_result = runtime.driver.enqueue_and_run(
+        _egress_result(EgressResultKind.CANCEL_ACK)
+    )
+    assert cancel_result.result_disposition is ResultDisposition.APPLIED
+
+    late_fill_result = runtime.driver.enqueue_and_run(
+        _egress_result(
+            EgressResultKind.FULL_FILL,
+            filled_quantity=Decimal("1"),
+            remaining_quantity=Decimal("0"),
+        )
+    )
+    assert (
+        late_fill_result.result_disposition
+        is ResultDisposition.NON_MONOTONIC_PROJECTION
+    )
+
+    halt = runtime.inbox.new_risk_halt()
+    assert halt is not None
+    evidence_seq = halt["evidence_seq"]
+    assert isinstance(evidence_seq, int)
+    return evidence_seq
+
+
 def _write_approval_for_crossing(custody_root: Path) -> None:
     strategy_registry, strategy = fx.registry_with_band_strategy()
     del strategy_registry
@@ -1691,6 +1753,179 @@ class TestOrthostateAndFinalityProjectionWiring:
             "SELECT COUNT(*) FROM entries WHERE kind = 'COUPLING_VIOLATION'"
         ).fetchone()[0]
         assert violation_rows == 0
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+
+class TestNewRiskHaltOperatorReArm:
+    """Re-review finding R3 (2026-09-09): the operator re-arm path for the independent-review
+    finding #3 new-risk halt latch — R3's own decision keeps the latch (a genuine ledger/broker
+    disagreement IS unknown exposure) but lands the clear mechanism now rather than deferring it
+    to Phase 5, since a spec-routine cancel-crossing fill (finding #8) trips it with no other
+    path back."""
+
+    def test_clear_with_the_right_seq_lets_the_next_decision_tick_proceed(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+        evidence_seq = _reach_new_risk_halt_via_cancel_crossing_fill(
+            runtime, custody_root
+        )
+
+        cleared = runtime.clear_new_risk_halt(
+            latched_evidence_seq=evidence_seq,
+            operator_attestation="reviewed the cancel-crossing fill, fill is genuine, clearing",
+        )
+        assert cleared is True
+        assert runtime.inbox.new_risk_halt() is None
+
+        rows = runtime.evidence_store.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = 'NEW_RISK_HALT_CLEARED_BY_OPERATOR'"
+        ).fetchall()
+        assert len(rows) == 1
+        import json
+
+        payload = json.loads(rows[0][0])["payload"]
+        assert payload["latched_evidence_seq"] == evidence_seq
+        assert payload["latched_reason"] == "NEW_RISK_HALTED_BY_COUPLING_VIOLATION"
+        assert "operator_attestation_sha256" in payload
+        assert (
+            len(payload["operator_attestation_sha256"]) == 64
+        )  # sha256 hex digest length
+
+        # The next DECISION_TICK now proceeds through the REAL kernel — never the synthetic
+        # latch-refusal result.
+        next_tick = runtime.driver.enqueue_and_run(fx.crossing_event(seq=99))
+        assert "NEW_RISK_HALTED_BY_COUPLING_VIOLATION" not in (next_tick.detail or "")
+        assert next_tick.pipeline is not None  # core.handle genuinely ran
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+    def test_stale_seq_is_refused_and_latch_stays_intact(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+        evidence_seq = _reach_new_risk_halt_via_cancel_crossing_fill(
+            runtime, custody_root
+        )
+
+        cleared = runtime.clear_new_risk_halt(
+            latched_evidence_seq=evidence_seq - 1,  # a stale/wrong seq
+            operator_attestation="reviewed, clearing",
+        )
+        assert cleared is False
+        assert runtime.inbox.new_risk_halt() is not None
+        assert runtime.inbox.new_risk_halt()["evidence_seq"] == evidence_seq
+
+        rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind = 'NEW_RISK_HALT_CLEARED_BY_OPERATOR'"
+        ).fetchone()[0]
+        assert rows == 0  # a refused clear appends no evidence — nothing to attest to
+
+        next_tick = runtime.driver.enqueue_and_run(fx.crossing_event(seq=99))
+        assert "NEW_RISK_HALTED_BY_COUPLING_VIOLATION" in (next_tick.detail or "")
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+    def test_empty_attestation_is_refused_and_latch_stays_intact(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+        evidence_seq = _reach_new_risk_halt_via_cancel_crossing_fill(
+            runtime, custody_root
+        )
+
+        for empty in ("", "   ", "\n\t"):
+            cleared = runtime.clear_new_risk_halt(
+                latched_evidence_seq=evidence_seq, operator_attestation=empty
+            )
+            assert cleared is False
+        assert runtime.inbox.new_risk_halt() is not None
+
+        rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind = 'NEW_RISK_HALT_CLEARED_BY_OPERATOR'"
+        ).fetchone()[0]
+        assert rows == 0
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+    def test_a_second_violation_after_clear_latches_again_with_a_new_seq(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """After a clear, a FRESH violation must latch again with a NEW ``evidence_seq`` — the
+        old (now-cleared) seq must not clear it.
+
+        A second REAL hand-off on the same attempt/instrument is not reachable here (the compose
+        root wires a single ``InstrumentKey``, and the first attempt's own outstanding exposure
+        blocks a second one — re-review finding R4's own residual note); a SECOND, differently
+        -shaped late fill (``PARTIAL_FILL`` this time, distinct magnitudes) for the SAME attempt
+        is a genuinely different event (content-addressed, so not an inbox duplicate) that
+        reaches the SAME cancel-crossing correction path and re-latches — the property under
+        test (a fresh violation gets a fresh seq, and the old seq cannot clear it) does not
+        depend on which attempt or instrument the second violation belongs to.
+        """
+        from decimal import Decimal
+
+        from tos.engine.records import EgressResultPayload, EngineEvent
+        from tos.engine.vocabulary import EgressResultKind, EventKind
+
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+        first_evidence_seq = _reach_new_risk_halt_via_cancel_crossing_fill(
+            runtime, custody_root
+        )
+        assert runtime.clear_new_risk_halt(
+            latched_evidence_seq=first_evidence_seq,
+            operator_attestation="first violation reviewed, clearing",
+        )
+        assert runtime.inbox.new_risk_halt() is None
+
+        # A second, differently-shaped late fill for the SAME attempt (distinct magnitudes ⇒ a
+        # distinct content-addressed event, never an inbox duplicate of the first).
+        halt_before = runtime.inbox.new_risk_halt()
+        assert halt_before is None
+        attempt_id_row = runtime.evidence_store.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = 'COUPLING_VIOLATION' ORDER BY seq LIMIT 1"
+        ).fetchone()
+        import json
+
+        attempt_id = json.loads(attempt_id_row[0])["payload"]["attempt_id"]
+        second_late_fill = EngineEvent(
+            kind=EventKind.EGRESS_RESULT,
+            egress_result=EgressResultPayload(
+                instrument_key=fx.instrument_key(),
+                attempt_id=attempt_id,
+                kind=EgressResultKind.PARTIAL_FILL,
+                filled_quantity=Decimal("1"),
+                remaining_quantity=Decimal("1"),
+            ),
+        )
+        runtime.driver.enqueue_and_run(second_late_fill)
+
+        second_halt = runtime.inbox.new_risk_halt()
+        assert second_halt is not None
+        second_evidence_seq = second_halt["evidence_seq"]
+        assert isinstance(second_evidence_seq, int)
+        assert second_evidence_seq != first_evidence_seq
+        assert second_evidence_seq > first_evidence_seq
+
+        # The OLD (now-cleared, superseded) seq no longer clears the NEW latch.
+        assert (
+            runtime.clear_new_risk_halt(
+                latched_evidence_seq=first_evidence_seq,
+                operator_attestation="stale clear attempt",
+            )
+            is False
+        )
+        assert runtime.inbox.new_risk_halt() is not None
+        assert runtime.inbox.new_risk_halt()["evidence_seq"] == second_evidence_seq
 
         runtime.rcl_log.close()
         runtime.evidence_store.close()

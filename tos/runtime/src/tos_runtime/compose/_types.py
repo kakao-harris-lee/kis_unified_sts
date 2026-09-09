@@ -5,6 +5,7 @@ limit); no behavioural difference from having them inline in root.py.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -176,3 +177,66 @@ class ComposedRuntime:
             processed too (as a side effect, durably recorded) but are not included here.
         """
         return tuple(self.driver.enqueue_and_run(event) for event in events)
+
+    #: The evidence kind recorded by :meth:`clear_new_risk_halt` — a runtime-level record, not a
+    #: kernel ``EvidenceKind`` member (re-review finding R3, 2026-09-09).
+    _NEW_RISK_HALT_CLEARED_KIND = "NEW_RISK_HALT_CLEARED_BY_OPERATOR"
+
+    def clear_new_risk_halt(
+        self, *, latched_evidence_seq: int, operator_attestation: str
+    ) -> bool:
+        """Operator re-arm for the independent-review finding #3 new-risk halt latch
+        (re-review finding R3, 2026-09-09 — see :mod:`tos_runtime.engine.inbox`'s own module
+        docstring "Operator re-arm" section for why this exists now rather than in a later
+        phase).
+
+        Evidence BEFORE state change, exactly like every other halt path in this runtime
+        (:func:`~tos_runtime.evidence.emergency.record_halt`'s own discipline, though this is a
+        CLEAR, not a halt, so it goes through the ordinary
+        :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.append` path instead): this method
+        first checks the CURRENTLY-latched halt matches ``latched_evidence_seq`` and that
+        ``operator_attestation`` is non-empty, THEN durably appends one
+        ``NEW_RISK_HALT_CLEARED_BY_OPERATOR`` evidence entry (the latched reason, the seq being
+        cleared, and the sha256 of the attestation text — never the raw text itself, which may be
+        arbitrarily long free-form operator prose), and ONLY THEN clears the latch via
+        :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`. If that final
+        clear itself refuses (a concurrent relatch changed the seq between the check above and
+        the clear — a narrow, honestly-disclosed TOCTOU this single-threaded runtime does not
+        currently reach, since :class:`~tos_runtime.engine.driver.EngineDriver` is itself
+        single-threaded), the evidence row still exists, recording that a clear was ATTEMPTED
+        against that seq even though it did not take effect — never a silently-dropped attempt.
+
+        Args:
+            latched_evidence_seq: The ``evidence_seq`` of the violation the operator reviewed.
+                Must equal the CURRENTLY-latched row's own seq — a stale value is refused, and no
+                evidence is appended for a refusal (nothing to attest to).
+            operator_attestation: Non-empty free-text operator attestation.
+
+        Returns:
+            ``True`` if the latch was cleared (and the evidence row appended); ``False`` if there
+            was no latch, the named seq did not match, or the attestation was empty — the latch
+            (if any) is left untouched in every refusal case, and no evidence row is appended.
+        """
+        current = self.inbox.new_risk_halt()
+        if current is None:
+            return False
+        if not operator_attestation.strip():
+            return False
+        if current.get("evidence_seq") != latched_evidence_seq:
+            return False
+        self.evidence_store.append(
+            {
+                "latched_evidence_seq": latched_evidence_seq,
+                "latched_reason": current.get("reason"),
+                "latched_event_id": current.get("event_id"),
+                "operator_attestation_sha256": hashlib.sha256(
+                    operator_attestation.encode("utf-8")
+                ).hexdigest(),
+            },
+            kind=self._NEW_RISK_HALT_CLEARED_KIND,
+            record_class=self._NEW_RISK_HALT_CLEARED_KIND,
+        )
+        return self.inbox.clear_new_risk_halt(
+            latched_evidence_seq=latched_evidence_seq,
+            operator_attestation=operator_attestation,
+        )
