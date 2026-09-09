@@ -127,6 +127,7 @@ def config_dir(tmp_path: Path) -> Path:
             # Mirrors the literals _wiring.py's _build_context_resolver used
             # to hardcode (kernel round #1 §7.2 survey) — see
             # tos_runtime.compose._egress_coordinates's own module docstring.
+            "endpoint": {"value": "synthetic://paper/order"},
             "action": {"value": "NEW_ORDER"},
             "method": {"value": "SUBMIT"},
             "route_identity": {"value": "synthetic-route"},

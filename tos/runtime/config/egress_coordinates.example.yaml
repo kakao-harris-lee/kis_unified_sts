@@ -3,10 +3,10 @@
 #
 # These are the ADR-002-013 §11.2/§12 authorized-egress-coordinate values
 # BrokerEgressGateway verifies every attempt's request against (item 17,
-# exact_binding_holds) — action / method / route identity / credential and
-# broker-session and egress generation / active principal — plus
-# capsule_terminus_fields, which names the ConstructionConfig fields whose
-# values feed capsule_egress_request_digest.
+# exact_binding_holds) — endpoint / action / method / route identity /
+# credential and broker-session and egress generation / active principal —
+# plus capsule_terminus_fields, which names the ConstructionConfig fields
+# whose values feed capsule_egress_request_digest.
 #
 # capsule_egress_request_digest is a STAND-IN for the eventual capsule-chain
 # terminus (design #34 / EGRESS-EV-003 "+Security" byte-level reconstruction
@@ -24,6 +24,8 @@
 # active_principal MAY contain the literal token `{environment_label}`,
 # substituted by the loader with the runtime's own environment label — the
 # ONLY templating this loader performs.
+endpoint:
+  value: null
 action:
   value: null
 method:

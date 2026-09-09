@@ -27,6 +27,7 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 def _valid_egress_coordinates() -> dict:
     return {
+        "endpoint": {"value": "synthetic://paper/order"},
         "action": {"value": "NEW_ORDER"},
         "method": {"value": "SUBMIT"},
         "route_identity": {"value": "synthetic-route"},
@@ -53,6 +54,7 @@ def test_loader_happy_path_and_environment_label_substitution(tmp_path: Path) ->
 
     loaded = load_egress_coordinates(path, environment_label="paper-env-7")
 
+    assert loaded.endpoint == "synthetic://paper/order"
     assert loaded.action == "NEW_ORDER"
     assert loaded.method == "SUBMIT"
     assert loaded.route_identity == "synthetic-route"
@@ -86,6 +88,7 @@ def test_active_principal_without_the_token_passes_through_unchanged(
 @pytest.mark.parametrize(
     "field",
     [
+        "endpoint",
         "action",
         "method",
         "route_identity",
@@ -167,6 +170,7 @@ def test_wired_coordinates_equal_the_configured_non_default_values(
     config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
 ) -> None:
     custom = {
+        "endpoint": {"value": "synthetic://custom/endpoint"},
         "action": {"value": "CUSTOM_ACTION"},
         "method": {"value": "CUSTOM_METHOD"},
         "route_identity": {"value": "custom-route"},
@@ -182,7 +186,7 @@ def test_wired_coordinates_equal_the_configured_non_default_values(
     resolved = runtime.context_resolver
 
     assert resolved.authorized_coordinates == EgressCoordinateSet(
-        endpoint="synthetic://paper/order",
+        endpoint="synthetic://custom/endpoint",
         account=runtime.context_resolver.instrument_key.account,
         environment="non-live-test",
         action="CUSTOM_ACTION",

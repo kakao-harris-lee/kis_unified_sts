@@ -5,18 +5,22 @@ inputs (TOS Phase 4 작업 6 §2.1, plan doc
 ``tos_runtime.compose._wiring._build_context_resolver`` used to construct its
 ``EgressCoordinateSet`` (the ADR-002-013 §11.2/§12 authorized-egress-
 coordinate literal ``BrokerEgressGateway`` verifies every attempt's request
-against) from **seven bare Python literals** — ``action="NEW_ORDER"``,
-``method="SUBMIT"``, ``route_identity="synthetic-route"``,
+against) from **eight bare Python literals** — ``endpoint="synthetic://paper/order"``,
+``action="NEW_ORDER"``, ``method="SUBMIT"``, ``route_identity="synthetic-route"``,
 ``credential_generation=0``, ``broker_session_generation=0``,
 ``egress_generation=1``, ``active_principal=f"egressgw-{environment_label}"``
-— plus an eighth value, ``capsule_egress_request_digest``, computed from a
+— plus a ninth value, ``capsule_egress_request_digest``, computed from a
 literal two-field dict (``{"account": ..., "instrument": ...}``). CLAUDE.md's
 non-negotiable configuration-driven rule ("thresholds, symbols, ... belong in
 YAML/env/config files, not hardcoded branches") applies to every one of
 these: they are per-deployment authorization facts, not compose-root
-identity.
+identity. (``endpoint`` was originally left out of this module's scope —
+review finding #2, 2026-09-09 — because the seal now makes it load-bearing
+via ``SendSeal.endpoint``/``outbound_coordinates``/``seal_digest``, so a
+bare literal here is no longer merely a missing-config gap; it is now
+included alongside the other seven.)
 
-This module moves all eight out to composition config, mirroring
+This module moves all nine out to composition config, mirroring
 :mod:`tos_runtime.compose._egress_attestations`'s own mechanism exactly:
 every field is a named-TBD ``null`` in the example config, and a still-null
 field refuses composition at startup (fail-closed, never a silent default).
@@ -80,16 +84,16 @@ class EgressCoordinateConfigError(Exception):
 
 @dataclass(frozen=True)
 class EgressCoordinatesConfig:
-    """The 7 ``EgressCoordinateSet`` authorized-coordinate literals plus
+    """The 8 ``EgressCoordinateSet`` authorized-coordinate literals plus
     ``capsule_terminus_fields`` (module docstring), moved out of
     ``tos_runtime.compose._wiring._build_context_resolver``.
 
-    ``endpoint`` and ``account`` are deliberately NOT here: ``endpoint`` has
-    no config gap this slice addresses, and ``account`` is a genuine live
-    per-attempt value (``ConstructionConfig.account``), never an authorized-
-    coordinate literal.
+    ``account`` is deliberately NOT here: it is a genuine live per-attempt
+    value (``ConstructionConfig.account``), never an authorized-coordinate
+    literal.
     """
 
+    endpoint: str
     action: str
     method: str
     route_identity: str
@@ -178,6 +182,7 @@ def load_egress_coordinates(
             f"egress-coordinates config file must be a top-level mapping: {path}"
         )
 
+    endpoint = _require_str(raw, "endpoint", path)
     action = _require_str(raw, "action", path)
     method = _require_str(raw, "method", path)
     route_identity = _require_str(raw, "route_identity", path)
@@ -209,6 +214,7 @@ def load_egress_coordinates(
         )
 
     return EgressCoordinatesConfig(
+        endpoint=endpoint,
         action=action,
         method=method,
         route_identity=route_identity,

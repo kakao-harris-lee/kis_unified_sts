@@ -279,7 +279,8 @@ class TestComposeRootWiring:
             "limit_source_is_injected_envelope",
             "economic_commitment_exclusive",
             "flow_commitment_exclusive",
-            # egress_coordinates.yaml (8, TOS Phase 4 작업 6 §2.1)
+            # egress_coordinates.yaml (9, TOS Phase 4 작업 6 §2.1 + review #2)
+            "endpoint",
             "action",
             "method",
             "route_identity",
