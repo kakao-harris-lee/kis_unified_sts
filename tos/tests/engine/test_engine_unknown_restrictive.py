@@ -33,6 +33,7 @@ from tos.engine import (
     EventKind,
     HaltReason,
     ProvisionalReservationLedger,
+    ResultDisposition,
     knowledge_for_result,
 )
 from tos.rcl import CapacityState
@@ -157,7 +158,11 @@ def test_the_projection_has_no_release_method_at_all() -> None:
 
 
 def test_a_result_for_an_unknown_attempt_is_refused() -> None:
-    """(§2.1(ii)) A result naming another attempt transitions nothing (positive identity)."""
+    """(§2.1(ii); Phase 3 A-K-2) A result naming another attempt transitions nothing.
+
+    Recorded as ``MISMATCHED_ATTEMPT`` — a conservative disposition, never an
+    :class:`~tos.canonical.ArtifactIntegrityError` crash (design plan 2026-09-09 §1.1).
+    """
     core, _, _, _ = _sent_core()
     before = core.ledger.outstanding(instrument_key())
     result = core.handle(
@@ -168,18 +173,117 @@ def test_a_result_for_an_unknown_attempt_is_refused() -> None:
             remaining_quantity=Decimal("0"),
         )
     )
-    assert result.halt_reason is HaltReason.ATTEMPT_IDENTITY_MISMATCH
+    assert result.halt_reason is HaltReason.RESULT_UNMATCHED
+    assert result.result_disposition is ResultDisposition.MISMATCHED_ATTEMPT
+    # projection unchanged: identical model_dump before/after (mutation guard — a silent APPLIED
+    # coercion of a mismatched attempt would still pass a bare object-identity/state check here
+    # only if it happened to also leave the dump untouched, so the dump comparison is the real gate).
+    assert core.ledger.outstanding(instrument_key()).model_dump() == before.model_dump()
     assert core.ledger.outstanding(instrument_key()) == before
 
 
 def test_a_result_with_no_projected_reservation_is_refused() -> None:
-    """(§2.2) An egress result is not a licence to create a reservation out of nothing."""
+    """(§2.2; Phase 3 A-K-2) An egress result is not a licence to create a reservation.
+
+    Recorded as ``ORPHAN_NO_RESERVATION`` rather than raised.
+    """
     core, _ = build_core(transmit=RecordingTransmit())
     result = core.handle(
         _egress_event(EgressResultKind.ACK, "attempt-unknown", sequence=1)
     )
-    assert result.halt_reason is HaltReason.RESERVATION_ABSENT_FOR_RESULT
+    assert result.halt_reason is HaltReason.RESULT_UNMATCHED
+    assert result.result_disposition is ResultDisposition.ORPHAN_NO_RESERVATION
+    assert result.reservation is None
     assert core.ledger.outstanding(instrument_key()) is None
+
+
+def test_a_duplicate_result_is_recorded_as_duplicate_not_reapplied() -> None:
+    """(Phase 3 A-K-2) The identical result applied twice is DUPLICATE the second time."""
+    core, _, _, attempt_id = _sent_core()
+    first = core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+        )
+    )
+    assert first.halt_reason is None
+    assert first.result_disposition is ResultDisposition.APPLIED
+    after_first = core.ledger.outstanding(instrument_key())
+
+    second = core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+        )
+    )
+    assert second.halt_reason is HaltReason.RESULT_UNMATCHED
+    assert second.result_disposition is ResultDisposition.DUPLICATE
+    # the duplicate never re-touches the projection
+    assert core.ledger.outstanding(instrument_key()).model_dump() == after_first.model_dump()
+
+
+def test_a_late_fill_after_timeout_on_the_same_attempt_is_applied() -> None:
+    """(Phase 3 A-K-2; ADR-002-002 §15.2 'later valid fill accepted') TIMEOUT then FULL_FILL applies.
+
+    A TIMEOUT is not a rejection and does not close the door on the *same* attempt: a later
+    FULL_FILL for that exact attempt is APPLIED — knowledge and capacity advance, and the scope is
+    never released (capacity release is the RCL's alone).
+    """
+    core, _, _, attempt_id = _sent_core()
+    timeout_result = core.handle(_egress_event(EgressResultKind.TIMEOUT, attempt_id, sequence=2))
+    assert timeout_result.halt_reason is None
+    assert timeout_result.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.POTENTIALLY_LIVE
+    )
+
+    fill_result = core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            attempt_id,
+            sequence=3,
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+        )
+    )
+    assert fill_result.halt_reason is None
+    assert fill_result.result_disposition is ResultDisposition.APPLIED
+    reservation = core.ledger.outstanding(instrument_key())
+    assert reservation.capacity_state is CapacityState.POSITION_CONSUMED
+    assert reservation.knowledge is EgressKnowledge.FILLED
+    # never released: still occupies the scope, still denies a new overlapping exposure
+    assert core.ledger.admits_new_exposure(instrument_key()) is False
+
+
+def test_the_four_dispositions_are_exhaustive_and_distinguishable() -> None:
+    """(Phase 3 A-K-2) Each of the four :class:`ResultDisposition` members is independently reachable."""
+    core, _, _, attempt_id = _sent_core()
+
+    orphan_core, _ = build_core(transmit=RecordingTransmit())
+    orphan = orphan_core.handle(_egress_event(EgressResultKind.ACK, "attempt-x", sequence=1))
+    assert orphan.result_disposition is ResultDisposition.ORPHAN_NO_RESERVATION
+
+    mismatched = core.handle(_egress_event(EgressResultKind.ACK, "attempt-someone-else", sequence=2))
+    assert mismatched.result_disposition is ResultDisposition.MISMATCHED_ATTEMPT
+
+    applied = core.handle(_egress_event(EgressResultKind.ACK, attempt_id, sequence=3))
+    assert applied.result_disposition is ResultDisposition.APPLIED
+
+    duplicate = core.handle(_egress_event(EgressResultKind.ACK, attempt_id, sequence=3))
+    assert duplicate.result_disposition is ResultDisposition.DUPLICATE
+
+    assert {
+        orphan.result_disposition,
+        mismatched.result_disposition,
+        applied.result_disposition,
+        duplicate.result_disposition,
+    } == set(ResultDisposition)
 
 
 def test_the_projection_never_revives_to_a_less_consumed_state() -> None:

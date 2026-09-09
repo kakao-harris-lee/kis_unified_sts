@@ -59,7 +59,7 @@ from tos.engine.sequencer import (
     validate_stage_map,
 )
 from tos.engine.sink import EvidenceSink, NullEvidenceSink
-from tos.engine.state import ProvisionalReservationLedger
+from tos.engine.state import ProvisionalReservationLedger, ResultApplication
 from tos.engine.vocabulary import (
     ADMISSIBLE_EVENT_KINDS,
     DispatchResolution,
@@ -67,6 +67,7 @@ from tos.engine.vocabulary import (
     EvidenceKind,
     HaltReason,
     OrderingAdmission,
+    ResultDisposition,
 )
 from tos.ordering import Ordering, OrderingEvent, compare_order
 
@@ -196,6 +197,9 @@ class EventResult:
     pipeline: PipelineResult | None = None
     flow: FlowResult | None = None
     reservation: ProvisionalReservation | None = None
+    #: The disposition of a re-injected ``EGRESS_RESULT`` (Phase 3 A-K-2); ``None`` for a
+    #: ``DECISION_TICK`` event, which never carries one.
+    result_disposition: ResultDisposition | None = None
     detail: str | None = None
 
 
@@ -421,45 +425,55 @@ class EngineCore:
     def _handle_egress_result(
         self, event: EngineEvent, admission: OrderingAdmission
     ) -> EventResult:
-        """Transition the provisional projection on a re-injected send-boundary result."""
+        """Apply — or conservatively record — a re-injected send-boundary result (Phase 3 A-K-2).
+
+        A late, orphaned, duplicated, or attempt-mismatched result is **not** a crash: the ledger
+        (:meth:`~tos.engine.state.ProvisionalReservationLedger.apply_egress_result`) now returns a
+        :class:`~tos.engine.state.ResultApplication` naming the disposition instead of raising, and
+        this handler records every non-``APPLIED`` disposition as ``EvidenceKind.RESULT_UNMATCHED`` /
+        ``HaltReason.RESULT_UNMATCHED`` — never relaxing capacity or knowledge on it.
+        """
         payload: EgressResultPayload | None = event.egress_result
         if payload is None:  # pragma: no cover - guaranteed by EngineEvent validation
             raise UnknownEventKindError(
                 "EGRESS_RESULT event carries no payload (fail-closed)"
             )
         key = payload.instrument_key
-        try:
-            reservation = self._ledger.apply_egress_result(payload)
-        except ArtifactIntegrityError as exc:
-            outstanding = self._ledger.outstanding(key)
-            halt = (
-                HaltReason.RESERVATION_ABSENT_FOR_RESULT
-                if outstanding is None
-                else HaltReason.ATTEMPT_IDENTITY_MISMATCH
+        application: ResultApplication = self._ledger.apply_egress_result(payload)
+        if not application.applied:
+            detail = (
+                f"egress result disposition={application.disposition} — not applied to the "
+                "reservation projection; capacity and knowledge are left exactly where they were "
+                "(design plan 2026-09-09 §1.1 '크래시는 이벤트가 아니다')"
             )
             self._sink.record(
                 EngineEvidenceRecord(
-                    kind=EvidenceKind.EVENT_REFUSED,
+                    kind=EvidenceKind.RESULT_UNMATCHED,
                     instrument_key=key,
-                    halt_reason=halt,
+                    halt_reason=HaltReason.RESULT_UNMATCHED,
                     egress_result_kind=payload.kind,
+                    result_disposition=application.disposition,
                     attempt_id=payload.attempt_id,
-                    detail=str(exc),
+                    detail=detail,
                 )
             )
             return EventResult(
                 kind=EventKind.EGRESS_RESULT,
                 instrument_key=key,
                 ordering=admission,
-                halt_reason=halt,
-                reservation=outstanding,
-                detail=str(exc),
+                halt_reason=HaltReason.RESULT_UNMATCHED,
+                reservation=application.projection,
+                result_disposition=application.disposition,
+                detail=detail,
             )
+        reservation = application.projection
+        assert reservation is not None  # APPLIED always stores a projection
         self._sink.record(
             EngineEvidenceRecord(
                 kind=EvidenceKind.EGRESS_RESULT_CONSUMED,
                 instrument_key=key,
                 egress_result_kind=payload.kind,
+                result_disposition=application.disposition,
                 capacity_state=reservation.capacity_state,
                 knowledge=reservation.knowledge,
                 attempt_id=payload.attempt_id,
@@ -474,4 +488,5 @@ class EngineCore:
             instrument_key=key,
             ordering=admission,
             reservation=reservation,
+            result_disposition=application.disposition,
         )

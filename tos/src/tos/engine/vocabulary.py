@@ -50,6 +50,7 @@ __all__ = [
     "EvidenceKind",
     "HaltReason",
     "OrderingAdmission",
+    "ResultDisposition",
     "StageAuthorityClass",
     "StageOutcome",
     "step_number",
@@ -332,6 +333,32 @@ class AdmissionVerdict(_NonTruthyStrEnum):
     INADMISSIBLE = "INADMISSIBLE"
 
 
+class ResultDisposition(_NonTruthyStrEnum):
+    """The conservative, recorded disposition of a re-injected ``EGRESS_RESULT`` (Phase 3 A-K-2).
+
+    A late, orphaned, duplicated, or attempt-mismatched result is not a crash — it is a **recorded
+    conservative outcome** (design plan 2026-09-09 §1.1 "크래시는 이벤트가 아니다"). Only
+    ``APPLIED`` transitions the reservation projection; the other three members leave it exactly
+    where it was and are recorded as ``EvidenceKind.RESULT_UNMATCHED`` /
+    ``HaltReason.RESULT_UNMATCHED`` — never silently dropped, never coerced into an
+    :class:`~tos.canonical.ArtifactIntegrityError` crash (ADR-002-002 §15.2 "later valid fill
+    accepted"; ADR-002-005 §7 "absence is not proof").
+    """
+
+    #: The result named the exact outstanding attempt and was not previously applied — the
+    #: projection advances (design #31 §2.2/§4.2 rule 3).
+    APPLIED = "APPLIED"
+    #: No reservation is projected for the result's scope at all — an egress result is not a
+    #: licence to create one (design #31 §2.2).
+    ORPHAN_NO_RESERVATION = "ORPHAN_NO_RESERVATION"
+    #: A reservation is projected, but the result names a different attempt — positive identity
+    #: match fails, so it applies to nothing (design #31 §2.1(ii)).
+    MISMATCHED_ATTEMPT = "MISMATCHED_ATTEMPT"
+    #: The exact ``(attempt_id, kind, filled_quantity, remaining_quantity, reference)`` tuple was
+    #: already applied to this reservation — a resend/replay of the same result, not a new fact.
+    DUPLICATE = "DUPLICATE"
+
+
 class OrderingAdmission(_NonTruthyStrEnum):
     """Causal-order admission of an incoming event against the last consumed one (§2.1(ii)).
 
@@ -379,8 +406,12 @@ class HaltReason(StrEnum):
     ATTEMPT_BINDING_INCOMPLETE = "ATTEMPT_BINDING_INCOMPLETE"
     AT_MOST_ONE_EXPOSURE_HELD = "AT_MOST_ONE_EXPOSURE_HELD"
     EVENT_ORDER_REVERSED = "EVENT_ORDER_REVERSED"
-    RESERVATION_ABSENT_FOR_RESULT = "RESERVATION_ABSENT_FOR_RESULT"
-    ATTEMPT_IDENTITY_MISMATCH = "ATTEMPT_IDENTITY_MISMATCH"
+    #: A re-injected egress result was not applied to the reservation projection — orphaned,
+    #: attempt-mismatched, or a duplicate (Phase 3 A-K-2; see :class:`ResultDisposition` for which).
+    #: Replaces the former ``RESERVATION_ABSENT_FOR_RESULT`` / ``ATTEMPT_IDENTITY_MISMATCH`` pair:
+    #: both were raised as an :class:`~tos.canonical.ArtifactIntegrityError` crash, which the design
+    #: plan (2026-09-09 §1.1) names as the defect this halt reason replaces with a recorded outcome.
+    RESULT_UNMATCHED = "RESULT_UNMATCHED"
     TRANSMIT_UNAVAILABLE = "TRANSMIT_UNAVAILABLE"
     TRANSMIT_RAISED = "TRANSMIT_RAISED"
 
@@ -403,6 +434,10 @@ class EvidenceKind(StrEnum):
     ATTEMPT_REQUEST_CREATED = "ATTEMPT_REQUEST_CREATED"
     SEND_HANDED_OFF = "SEND_HANDED_OFF"
     EGRESS_RESULT_CONSUMED = "EGRESS_RESULT_CONSUMED"
+    #: A re-injected egress result was recorded but not applied (Phase 3 A-K-2) — distinct from
+    #: ``EVENT_REFUSED`` because the *event* itself is well-formed and causally in order; only the
+    #: result's *disposition* against the projection is non-APPLIED (see :class:`ResultDisposition`).
+    RESULT_UNMATCHED = "RESULT_UNMATCHED"
 
 
 # ===========================================================================

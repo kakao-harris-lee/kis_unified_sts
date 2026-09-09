@@ -48,6 +48,7 @@ from tos.engine.vocabulary import (
     EventKind,
     EvidenceKind,
     HaltReason,
+    ResultDisposition,
     StageAuthorityClass,
     StageOutcome,
 )
@@ -552,6 +553,10 @@ class EngineEvidenceRecord(FrozenModel):
     stage_outcome: StageOutcome | None = None
     authority_class: StageAuthorityClass | None = None
     egress_result_kind: EgressResultKind | None = None
+    #: The conservative disposition of a re-injected egress result (Phase 3 A-K-2); populated
+    #: alongside ``EvidenceKind.RESULT_UNMATCHED`` (non-APPLIED) and ``EGRESS_RESULT_CONSUMED``
+    #: (APPLIED) — never inferred from ``halt_reason`` alone.
+    result_disposition: ResultDisposition | None = None
     capacity_state: CapacityState | None = None
     knowledge: EgressKnowledge | None = None
     outcome_type: str | None = None

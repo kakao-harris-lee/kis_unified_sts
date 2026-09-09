@@ -34,6 +34,7 @@ Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #31 §0.3). No clock, n
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from decimal import Decimal
 
 from tos.engine._base import ArtifactIntegrityError
@@ -42,13 +43,14 @@ from tos.engine.records import (
     InstrumentKey,
     ProvisionalReservation,
 )
-from tos.engine.vocabulary import EgressKnowledge, EgressResultKind
+from tos.engine.vocabulary import EgressKnowledge, EgressResultKind, ResultDisposition
 from tos.rcl import CapacityState
 
 __all__ = [
     "PROJECTION_ORDER",
     "PROJECTION_RANK",
     "ProvisionalReservationLedger",
+    "ResultApplication",
     "knowledge_for_result",
 ]
 
@@ -118,6 +120,30 @@ def knowledge_for_result(kind: EgressResultKind) -> EgressKnowledge:
     return mapped[0]
 
 
+@dataclass(frozen=True)
+class ResultApplication:
+    """The recorded, conservative outcome of one ``apply_egress_result`` call (Phase 3 A-K-2).
+
+    A late, orphaned, duplicated, or attempt-mismatched egress result is not a crash: the design
+    plan (2026-09-09 §1.1 "크래시는 이벤트가 아니다") requires the engine to hand the caller a
+    **recorded conservative outcome** instead of raising. ``applied`` is ``True`` **iff**
+    ``disposition is ResultDisposition.APPLIED``; the two are kept as separate fields (rather than
+    deriving one from the other at every call site) so a caller can gate on the boolean without
+    importing the enum, while the enum still carries which of the three non-APPLIED reasons held.
+
+    ``projection`` is:
+
+    * the *newly stored* projection when ``disposition is APPLIED``;
+    * the *unchanged* outstanding projection when ``disposition`` is ``MISMATCHED_ATTEMPT`` or
+      ``DUPLICATE`` (a reservation exists, but this result did not move it);
+    * ``None`` when ``disposition is ORPHAN_NO_RESERVATION`` (no reservation exists to report).
+    """
+
+    applied: bool
+    disposition: ResultDisposition
+    projection: ProvisionalReservation | None
+
+
 class ProvisionalReservationLedger:
     """The engine's in-memory, non-authoritative reservation projection (design #31 §4.4).
 
@@ -143,6 +169,13 @@ class ProvisionalReservationLedger:
             )
         self._max_unresolved = max_unresolved_send_per_scope
         self._reservations: dict[tuple[str, str], ProvisionalReservation] = {}
+        #: Per-scope signatures of every egress result already applied (Phase 3 A-K-2 DUPLICATE
+        #: detection): ``(attempt_id, kind, filled_quantity, remaining_quantity, reference)``. A
+        #: scope goes through at most one reservation lifecycle here (no release path exists — see
+        #: the module docstring), so this never needs resetting across attempts within a scope.
+        self._applied_result_signatures: dict[
+            tuple[str, str], tuple[tuple[object, ...], ...]
+        ] = {}
 
     @staticmethod
     def _key_tuple(key: InstrumentKey) -> tuple[str, str]:
@@ -331,39 +364,63 @@ class ProvisionalReservationLedger:
             )
         )
 
-    def apply_egress_result(
-        self, payload: EgressResultPayload
-    ) -> ProvisionalReservation:
-        """Transition the projection on a re-injected egress result (design #31 §2.2/§4.2 rule 3).
+    def apply_egress_result(self, payload: EgressResultPayload) -> ResultApplication:
+        """Apply — or conservatively record — a re-injected egress result (Phase 3 A-K-2).
 
-        The result is applied **only** to the exact attempt it names (positive identity), so a
-        late, duplicated, or reordered result can never transition another attempt's reservation.
-        ``UNKNOWN`` / ``TIMEOUT`` update only the knowledge axis and leave the capacity projection
-        at ``POTENTIALLY_LIVE``: not a rejection, not safe-to-retry, capacity not released
-        (RFC-005 §11:325-327; ADR-002-002 INV-005:168 / INV-006:174).
+        A late, orphaned, duplicated, or attempt-mismatched result is **not** raised as a crash
+        (the former behaviour): it is returned as a :class:`ResultApplication` naming the exact
+        :class:`~tos.engine.vocabulary.ResultDisposition` and leaving the projection untouched.
+        Only ``APPLIED`` transitions the reservation (design #31 §2.2/§4.2 rule 3):
+
+        * **ORPHAN_NO_RESERVATION** — no reservation is projected for the scope at all; an egress
+          result is not a licence to create one (design #31 §2.2).
+        * **MISMATCHED_ATTEMPT** — a reservation exists, but the result names a different attempt
+          (positive identity fails; design #31 §2.1(ii)). A late result *for the same attempt* is
+          never mismatched, including one that arrives after a ``TIMEOUT``/``UNKNOWN`` on that same
+          attempt (ADR-002-002 §15.2 "later valid fill accepted").
+        * **DUPLICATE** — the exact
+          ``(attempt_id, kind, filled_quantity, remaining_quantity, reference)`` tuple was already
+          applied to this reservation; a resend/replay of an already-recorded fact, not a new one.
+        * **APPLIED** — none of the above; the projection advances. ``UNKNOWN`` / ``TIMEOUT``
+          update only the knowledge axis and leave the capacity projection at
+          ``POTENTIALLY_LIVE``: not a rejection, not safe-to-retry, capacity never released
+          (RFC-005 §11:325-327; ADR-002-002 INV-005:168 / INV-006:174).
 
         Args:
             payload: The egress result payload.
 
         Returns:
-            The stored projection.
-
-        Raises:
-            ArtifactIntegrityError: If no reservation is projected for the scope, or if the
-                payload's ``attempt_id`` does not match the projected attempt identity.
+            The :class:`ResultApplication` naming the disposition and the resulting (or unchanged)
+            projection.
         """
         key = payload.instrument_key
+        key_tuple = self._key_tuple(key)
         current = self.outstanding(key)
         if current is None:
-            raise ArtifactIntegrityError(
-                f"no projected reservation for scope {self._key_tuple(key)} — an egress result is "
-                "not a licence to create one (fail-closed; design #31 §2.2)"
+            return ResultApplication(
+                applied=False,
+                disposition=ResultDisposition.ORPHAN_NO_RESERVATION,
+                projection=None,
             )
         if current.attempt_id is None or current.attempt_id != payload.attempt_id:
-            raise ArtifactIntegrityError(
-                f"egress result names attempt {payload.attempt_id!r} but the projected reservation "
-                f"is bound to {current.attempt_id!r} — a result applies only to its exact attempt "
-                "(positive identity; design #31 §2.1(ii))"
+            return ResultApplication(
+                applied=False,
+                disposition=ResultDisposition.MISMATCHED_ATTEMPT,
+                projection=current,
+            )
+        signature = (
+            payload.attempt_id,
+            payload.kind,
+            payload.filled_quantity,
+            payload.remaining_quantity,
+            payload.reference,
+        )
+        applied_signatures = self._applied_result_signatures.get(key_tuple, ())
+        if signature in applied_signatures:
+            return ResultApplication(
+                applied=False,
+                disposition=ResultDisposition.DUPLICATE,
+                projection=current,
             )
         knowledge, capacity_state = _RESULT_TRANSITIONS[payload.kind]
         update: dict[str, object] = {"knowledge": knowledge}
@@ -372,4 +429,8 @@ class ProvisionalReservationLedger:
         if payload.kind in (EgressResultKind.FULL_FILL, EgressResultKind.PARTIAL_FILL):
             update["filled_quantity"] = payload.filled_quantity
             update["remaining_quantity"] = payload.remaining_quantity
-        return self._store(current.model_copy(update=update))
+        stored = self._store(current.model_copy(update=update))
+        self._applied_result_signatures[key_tuple] = applied_signatures + (signature,)
+        return ResultApplication(
+            applied=True, disposition=ResultDisposition.APPLIED, projection=stored
+        )

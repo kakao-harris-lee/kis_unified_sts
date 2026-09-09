@@ -170,6 +170,7 @@ from tos.engine.state import (
     PROJECTION_ORDER,
     PROJECTION_RANK,
     ProvisionalReservationLedger,
+    ResultApplication,
     knowledge_for_result,
 )
 from tos.engine.vocabulary import (
@@ -192,6 +193,7 @@ from tos.engine.vocabulary import (
     EvidenceKind,
     HaltReason,
     OrderingAdmission,
+    ResultDisposition,
     StageAuthorityClass,
     StageOutcome,
     step_number,
@@ -221,6 +223,7 @@ __all__ = [
     "EvidenceKind",
     "HaltReason",
     "OrderingAdmission",
+    "ResultDisposition",
     "StageAuthorityClass",
     "StageOutcome",
     "step_number",
@@ -258,6 +261,7 @@ __all__ = [
     "PROJECTION_ORDER",
     "PROJECTION_RANK",
     "ProvisionalReservationLedger",
+    "ResultApplication",
     "knowledge_for_result",
     # sibling verdict adapters (§5.2 contract-typing edges)
     "action_flow_decision_verdict",
