@@ -624,18 +624,21 @@ def _build_scope(
 
 def _check_instance_bindings(
     scopes: tuple[BrokerScope, ...],
-    environment_binding: Mapping[BrokerEnvironment, str],
     path: Path,
 ) -> None:
-    """One source of truth (plan §2 decision 4): a scope's ``instance.
-    environment`` must equal ``environment_binding[tuple.environment]`` for
-    EVERY one of its own capability tuples — never a second, independently
-    -typed environment fact that could silently disagree."""
+    """One source of truth (plan §2 decision 4; re-review follow-up to
+    finding F4): a scope's ``instance.environment`` must equal its OWN
+    resolved ``environment_binding[tuple.environment]`` — the scope's own
+    override when it declares one (F4), the config-wide default otherwise —
+    for EVERY one of its own capability tuples. Checking against the
+    config-wide table UNCONDITIONALLY (the pre-fix behavior) would let an
+    overriding scope's cross-check pass against a table that scope no
+    longer actually binds through, defeating "one source of truth"."""
     for scope in scopes:
         if scope.instance is None:
             continue
         for capability_tuple in scope.capability_tuples:
-            expected = environment_binding.get(capability_tuple.environment)
+            expected = scope.environment_binding.get(capability_tuple.environment)
             if expected != scope.instance.environment:
                 raise BrokerScopeConfigError(
                     f"{path}: scope {scope.name!r} declares instance.environment "
@@ -827,7 +830,7 @@ def load_broker_scopes(path: Path, *, environment_label: str) -> BrokerScopesCon
             "boot with a prohibited active scope"
         )
 
-    _check_instance_bindings(scopes, environment_binding, path)
+    _check_instance_bindings(scopes, path)
     instance_path = _resolve_instance_path(
         raw.get("instance_path"), config_path=path, scopes=scopes
     )

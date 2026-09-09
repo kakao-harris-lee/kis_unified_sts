@@ -304,6 +304,54 @@ def test_not_a_mapping_refuses_to_load(tmp_path: Path) -> None:
 
 
 # ============================================================================
+# Instance cross-check uses the scope's OWN resolved environment_binding
+# (re-review finding: _check_instance_bindings used to validate against the
+# config-wide table even for a scope carrying its own F4 override)
+# ============================================================================
+
+
+def test_instance_cross_check_uses_the_scopes_own_environment_binding(
+    tmp_path: Path,
+) -> None:
+    """A scope declaring its own ``environment_binding`` override must have
+    ``instance.environment`` cross-checked against THAT map, not the
+    config-wide default — otherwise a scope could carry an override that
+    silently disagrees with its own declared INSTANCE binding while the
+    cross-check keeps passing against a table the scope no longer actually
+    binds through (one-source-of-truth violation)."""
+    raw = _load_example_dict()
+    _scope_by_name(raw, "REAL_READ")["environment_binding"] = {
+        "BROKER_PRODUCTION": "SYNTHETIC"
+    }
+    path = tmp_path / "broker_scopes.yaml"
+    _write(path, raw)
+
+    with pytest.raises(BrokerScopeConfigError, match="REAL_READ"):
+        load_broker_scopes(path, environment_label="paper-env-7")
+
+
+def test_instance_cross_check_passes_when_the_override_agrees_with_instance(
+    tmp_path: Path,
+) -> None:
+    """Positive companion: an override that maps BROKER_PRODUCTION to the
+    SAME string the scope's ``instance.environment`` already names still
+    loads cleanly — the cross-check is against the scope's own resolved
+    map, not a blanket refusal of overrides."""
+    raw = _load_example_dict()
+    _scope_by_name(raw, "REAL_READ")["environment_binding"] = {
+        "BROKER_PRODUCTION": "REAL_PROD"
+    }
+    path = tmp_path / "broker_scopes.yaml"
+    _write(path, raw)
+
+    config = load_broker_scopes(path, environment_label="paper-env-7")
+    real_read = next(s for s in config.scopes if s.name == "REAL_READ")
+    assert real_read.environment_binding[BrokerEnvironment.BROKER_PRODUCTION] == (
+        "REAL_PROD"
+    )
+
+
+# ============================================================================
 # EC-3 — config alone can never create a futures REAL order capability
 # ============================================================================
 
