@@ -654,6 +654,12 @@ class EngineCore:
                     egress_result_kind=payload.kind,
                     result_disposition=application.disposition,
                     attempt_id=payload.attempt_id,
+                    # ★ [KW2b-#13] The refused result's own reported magnitude, not the
+                    # (unchanged) reservation's — a cancel-crossing fill's quantity must reach
+                    # the hash-chained evidence store, not only the transport-local inbox row.
+                    filled_quantity=payload.filled_quantity,
+                    remaining_quantity=payload.remaining_quantity,
+                    broker_execution_id=payload.broker_execution_id,
                     detail=detail,
                 )
             )
@@ -677,6 +683,12 @@ class EngineCore:
                 capacity_state=reservation.capacity_state,
                 knowledge=reservation.knowledge,
                 attempt_id=payload.attempt_id,
+                # ★ [KW2b-#13] The now-stored magnitude, for the same reason RESULT_UNMATCHED
+                # carries the refused one — the hash-chained evidence store, not only the
+                # in-process EventResult, is what reconciliation actually reads.
+                filled_quantity=reservation.filled_quantity,
+                remaining_quantity=reservation.remaining_quantity,
+                broker_execution_id=payload.broker_execution_id,
                 detail=(
                     "the projection advanced; capacity is never released here — release is the "
                     "RCL's (RFC-002 §9.1:557; ADR-002-002 INV-005:168)"

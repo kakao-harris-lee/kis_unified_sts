@@ -25,6 +25,7 @@ from tos.engine import (
     EgressResultPayload,
     EngineEvent,
     EventKind,
+    EvidenceKind,
     HaltReason,
     ResultDisposition,
     knowledge_for_result,
@@ -204,6 +205,37 @@ def test_cancel_ack_then_late_full_fill_does_not_crash_and_is_recorded_non_monot
     assert core.ledger.outstanding(instrument_key()).capacity_state is (
         CapacityState.RELEASE_PENDING_PROOF
     )
+
+
+def test_the_cancel_crossing_fills_magnitude_reaches_the_evidence_store() -> None:
+    """([KW2b-#13]; Phase 3 wave 2 review finding #13) The refused fill's own quantity is not
+    lost to the hash-chained evidence store just because the projection itself could not move.
+
+    Before this fix ``RESULT_UNMATCHED`` recorded only ``kind`` / ``disposition`` / ``attempt_id``
+    — a reconciler reading the evidence chain alone could see *that* a fill crossed a cancel, but
+    not *how much*. The magnitude survived only in the transport-local inbox queue row.
+    """
+    core, sink, _, attempt_id = _sent_core()
+    core.handle(_egress_event(EgressResultKind.CANCEL_ACK, attempt_id, sequence=2))
+
+    late_fill = core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            attempt_id,
+            sequence=3,
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+            broker_execution_id="broker-exec-cancel-crossing",
+        )
+    )
+    assert late_fill.result_disposition is ResultDisposition.NON_MONOTONIC_PROJECTION
+
+    (record,) = [
+        entry for entry in sink.records if entry.kind is EvidenceKind.RESULT_UNMATCHED
+    ]
+    assert record.filled_quantity == Decimal("2")
+    assert record.remaining_quantity == Decimal("0")
+    assert record.broker_execution_id == "broker-exec-cancel-crossing"
 
 
 def test_mutation_cancel_ack_treated_as_released_is_a_cpl4_violation() -> None:

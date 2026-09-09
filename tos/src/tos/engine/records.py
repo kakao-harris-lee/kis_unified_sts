@@ -568,6 +568,18 @@ class EngineEvidenceRecord(FrozenModel):
     result_disposition: ResultDisposition | None = None
     capacity_state: CapacityState | None = None
     knowledge: EgressKnowledge | None = None
+    #: The re-injected egress result's own reported magnitudes and broker execution identity
+    #: (Phase 3 wave 2 review finding #13 / kernel disposition KW2b-#13). Populated from the
+    #: incoming :class:`EgressResultPayload` — never from the (possibly unchanged) reservation —
+    #: so a non-``APPLIED`` ``RESULT_UNMATCHED`` record still carries *what the refused result
+    #: itself reported*. Before this fix a cancel-crossing fill's magnitude survived only in the
+    #: transport-local inbox queue row, never in this hash-chained evidence store, so a
+    #: reconciler reading only the evidence chain could not see the size of the fact that was
+    #: refused. ``None`` for every non-fill-bearing kind and every kind that never reached a
+    #: broker (design #31 §2.2 — absence, never a zero standing in for one).
+    filled_quantity: CanonicalDecimal | None = None
+    remaining_quantity: CanonicalDecimal | None = None
+    broker_execution_id: str | None = None
     outcome_type: str | None = None
     outcome_digest: str | None = None
     capsule_id: str | None = None
