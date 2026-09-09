@@ -88,6 +88,54 @@
 - EC-1~EC-4 테스트 green + 뮤테이션 M-A/M-B red 실측 기록 · EC-5 미충족 등재 · EV 상태 변경 0 · draft YAML byte 불변 · 커널 diff 0.
 - `_egress_attestations` 잔존 3필드 각각 소유 phase 명시.
 
-## 9. 실행 결과·독립 리뷰 처분
+## 9. 실행 결과·독립 리뷰 처분 (2026-09-09 · 브랜치 `feat/tos-phase4-scopes` · Phase 3 `5802daab` 위 스택)
 
-(착지 시 기입)
+### 9.1 착지
+
+| 커밋 | 레인 | 내용 |
+|---|---|---|
+| `7cb53142` | — | 이 계획 |
+| `464ca681` | A | `tos_runtime.brokercap.scopes`(639행) + `broker_scopes.example.yaml`(4 스코프 · binding 표) + G-4: `_wiring.py` 리터럴 3곳·R2 헬퍼 제거 → `transport_nature`/`credential_route_inventory`/`refuse_principal_collision` 파생(1205→1189) · `ComposedRuntime.scopes` · 40 tests(M-A 뮤테이션 + 5축 전수 sweep) |
+| `3cfc76e5` | C | `tos_runtime.brokercap.instance`(609행): draft YAML `_model_view` 만 → 커널 `BrokerCapabilityProfile`(DRAFT · `conformance_class=None` — `_model_view` 에 없음) · AssuranceSource→ProvenanceClass 닫힌 표(OFFICIAL_* → OFFICIAL_DOCUMENT · 측정형 5종 unmapped) · MOCK_VTS 17/17 선언·VERIFIED 0 · `capability_admissible` PROHIBITED(version_current 강제 True 도) · 24 tests · YAML sha256 불변 |
+| `196bd3fb` | D | `brokercap/derive.py` item 6/12 파생 · 스코프 `instance`/`required_capability_set` 블록 + `instance_path` · `load_instance_document(environment)` · `_egress_attestations` 2필드 퇴역(잔존 키 = 부팅 거부) · `_boot_integrity` 가 `broker_scopes.yaml`·INSTANCE digest 기록 · EC-1~EC-4 green · EC-5 정직성 테스트 · M-C · 796 |
+| `8f096700` | E | 독립 리뷰 처분 §9.3 · 809 |
+
+**서베이 정정(실측)**: ① 슬라이스 #1 계획 문언과 달리 커널 `routing_admissibility` 는 `profile_evidence_ok is True` 만 REDUCED — 출하 예시의 `MOCK_STOCK_ORDER`(`null`)는 **PROHIBITED**(정직 · P0-2 증거 0). ② `CapabilityDimension` 에 `CANCELLATION_FINALITY` 없음 → `required_capability_set` 은 `CANCELLATION`. ③ **EC-5 에서 발견**: broker-reaching 활성 스코프는 게이트웨이 이전에 Phase 3 웨이브 2 B-R 의 Coordinator 양성 게이트(`live_scope_authorized` · NOT_AUTHORIZED 자세)가 `LIVE_SCOPE_NOT_AUTHORIZED` 로 step 1 전에 정지시킨다 — 파생 필드의 하중은 커널 `verify_send_boundary` 직접 구동 테스트로 실증(item 6 DENIED[VERIFIED 0] · 12 UNKNOWN · deferred 6 전부 UNKNOWN · NOT_APPLICABLE 0). ④ 종료 조건 항목: 레인 A 보고 47 tests 는 실측 40(보고 과대 · 코드 무관).
+
+### 9.2 발견 (운영자 항목)
+
+- **REAL_PROD INSTANCE 문서의 `profile_identity._model_view`·`live_scope._model_view` 부재**(draft YAML 2번째 문서). 로더는 값을 발명하지 않고 `[doc 1].profile_identity` 를 지목해 거부 — 예상 실패로 핀. MOCK_VTS 문서는 완전. **인스턴스 저작 행위(P0-2 트랙)** 로 annotation 보강 필요 · 이 계획은 YAML byte 불변.
+- KIS INSTANCE 는 주식·지수선물을 **하나의 `instrument_class`** 로 선언 → KIS 스코프에서 binding 검사의 asset 축은 판별력이 없다(INSTANCE 형상 · 로더 결함 아님 · 예시 YAML 주석 기록).
+- `degraded_since_authorization` 은 권한 부여 행위 이전엔 알 수 없어 예시 `null`(=deny) — P0-2 승인 시 운영자 attestation.
+
+### 9.3 독립 리뷰 (Claude 측 `code-reviewer` 레인 · 저작자 분리 · 대상 `7cb53142..196bd3fb`)
+
+1차 **needs-attention** · 비협상 위반 0 · MEDIUM 5 · LOW 4 · 뮤테이션 M1 4 red · M2 5 · M3 2 · M4 5 · M5 직접 프로브 flip · **M6 0 red** · M7 14 red.
+
+| # | 심각도 | 지적 | 처분(`8f096700`) |
+|---|---|---|---|
+| F1 | MEDIUM | inventory `inside_boundary=True` 리터럴 → `credential_route_authority_disjoint` 설정으로 반증 불가(M7 14 red = 하중) | 스코프 필수 필드 `inside_boundary`(null 거부) → 파생 · `false` 시 술어 flip 테스트 |
+| F2 | MEDIUM | principal 분리가 클래스 간만 — 같은 클래스(MOCK/REAL order) 동일 principal 허용 | 서로 다른 스코프 principal 동일 = 전부 로드 거부(READ/ORDER 쌍은 커널 술어 앵커 유지) |
+| F3 | MEDIUM | `resolve_scope` 첫 일치 우선 — 중복 tuple 이 YAML 순서로 승격 가능 | 스코프 간 중복 tuple 로드 거부(유일성 로더 보장) |
+| F4 | MEDIUM | 합성 profile_key 가 KIS `instrument_class` 문자열 차용 · 전역 `asset_binding` STOCK/FUTURES 동일 문자열 | 스코프별 binding 오버라이드(합성 = `SYNTHETIC_FUTURES`) · KIS 단일 instrument class 는 INSTANCE 형상으로 주석 기록 · M5 테스트 핀 |
+| F5 | MEDIUM | `instance_version_current` 가 `degraded_since_authorization=None` 고정 → 항상 False · approvers 게이트 사문(M6 0) | 스코프 `instance.degraded_since_authorization`(null=deny) attested 입력으로 커널 4인자 정직 공급 · M6 red |
+| F6 | LOW | 비문자열 principal → 맨 `AttributeError` · binding 값 비문자열 통과 | `BrokerScopeConfigError` 로 수렴 |
+| F7 | LOW | 크기 register 노트 1189 표기 stale(실 1197) | 노트 정정(오케스트레이터) |
+| F8 | LOW | 테스트 이름 `item6_true` 가 `is False` 단언 | 개명 |
+| F9 | LOW | INSTANCE 4,789행 부팅당 2회 파싱 | 1회 로드 → `_BootResult.instance_document` 스레딩 |
+
+리뷰어 자기 표기: 컨텍스트 독립은 성립하나 저작자와 같은 모델 계열(계보 독립 제한) — 2026-09-04 지시대로 코드는 Claude 측 심판.
+
+### 9.4 재심 (같은 리뷰어 · 대상 `196bd3fb..8f096700`)
+
+**needs-attention** — F1~F9 **전건 동작으로 종결**(리뷰어 자체 프로브 재실행: F1 `inside_boundary:false` 로 `credential_route_authority_disjoint` True→False flip · 게이트웨이 자기 principal 엔트리의 리터럴 True 는 `usable_credential=False, broker_route=False` 라 우회 후보 불가로 정당 · F2/F3 로드 거부 · F4 전역 표 변조는 합성 item 6 불변·스코프 오버라이드 변조는 flip · F5 `null` deny·False 기본 경로 0 · F6~F9). 뮤테이션: M5 13 red · M6 1 red · M7 1 red · M-deg(degraded None 재고정) 1 red.
+
+신규 1건 **MEDIUM** — `_check_instance_bindings` 가 F4 오버라이드 이후에도 **전역** `environment_binding` 을 검증(item 6 은 스코프 자체 표로 결속): REAL_READ 에 `BROKER_PRODUCTION→SYNTHETIC` 오버라이드 + `instance.environment: REAL_PROD` 가 로드 통과 · item 6 True(경로 개방은 0 — `capability_admissible` VERIFIED 0 deny). → **`758b8a15`**: 검사가 `scope.environment_binding` 을 읽도록 수정 · RED 테스트가 프로브를 재현(수정 전 «DID NOT RAISE») · 합의하는 오버라이드는 로드 유지. 런타임 **811**.
+
+### 9.5 최종 (2026-09-09)
+
+리뷰어 종결 확인 **approve**(`758b8a15` — 프로브 재실행: 불일치 오버라이드는 REAL_READ 를 지목해 거부 · 합의 오버라이드는 로드·스코프 자체 표로 해석 · 합성 baseline item 6 True 불변 · 신규 발견 0 · 비협상 위반 0). 최종 tip `758b8a15` · 런타임 **811 passed** · 커널 **9405 passed**(커널 diff 0) · ruff/black/mypy 0 · 크기 예산 PASS(37) · firewall PASS · lint-imports 3/3 · draft YAML sha256 불변 · EV 상태 변경 0.
+
+**§8 종료 조건 판정**: 스위트·린트·예산·firewall 충족 · EC-1~EC-4 green + 뮤테이션(M-A·M-B·M-C·M5·M6·M7·M-deg) red 실증 · EC-5 미충족 등재(§4) · `_egress_attestations` 잔존 3필드 Phase 5 명시 · 커널 diff 0 — **이 계획 종결**. Phase 4 자체는 §1 정직 귀결대로 미완(작업 4 운영자 레인 · deferred 4·5 웨이브 3 조건부 · 7~10 Phase 5 · KIS MOCK transport 별도 계획). push/PR 은 운영자 수동(Phase 3 브랜치 위 스택).
+
+**운영자 확인 대기(§7 + §9.2)**: ① Phase 4/5 의존 역전 처분(권고 (a)+(c)) ② 커널 reason 문언 «⚠ provisional stand-in»(item 6·12) 갱신은 커널 라운드 ③ `REAL_ORDER` 스코프 등재 유지 여부 ④ REAL_PROD INSTANCE `_model_view` annotation 보강(인스턴스 저작) ⑤ 웨이브 3(deferred 4·5 실체화) 착수 여부.
