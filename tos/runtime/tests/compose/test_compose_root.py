@@ -23,6 +23,7 @@ from tos_runtime.compose.root import (
 from tos_runtime.rcl.log import CommitLogCorruption
 from tos_runtime.risk.aggregate import AggregateRiskDecisionInputs
 from tos_runtime.risk.flow import ActionFlowDecisionInputs
+from tos_runtime.strategy.resolve import StrategyRegistryResolutionRefused
 
 from . import _fixtures as fx
 from .conftest import write_approval_file
@@ -179,6 +180,15 @@ def _compose(
     *,
     monotonic_source: object | None = None,
 ):
+    """Composes via the FILE strategy source (TOS Phase 3 슬라이스 D-R
+    ``[D-R-2]``) — writes the band-reversion strategy into
+    ``config_dir/strategies/`` rather than injecting a
+    :class:`~tos.engine.StrategyRegistry`, so this suite exercises the same
+    production path ``tos_runtime.strategy.resolve.resolve_strategy_registry``
+    wires. ``registry=fx.registry_with_band_strategy()[0]`` moved to
+    :func:`test_both_a_strategies_directory_and_an_injected_registry_refuses`,
+    the ONE remaining both-present-refusal test (brief item 4)."""
+    fx.write_band_strategy_file(config_dir)
     return compose_paper_runtime(
         config_dir,
         data_dir,
@@ -187,7 +197,6 @@ def _compose(
         construction=fx.construction_config(),
         aggregate_risk_inputs_provider=_aggregate_inputs,
         action_flow_inputs_provider=_action_flow_inputs,
-        registry=fx.registry_with_band_strategy()[0],
         monotonic_source=monotonic_source,
     )
 
@@ -206,6 +215,29 @@ def _write_approval_for_crossing(custody_root: Path) -> None:
     # The proposal digest is only known once the DSL policy actually
     # evaluates the crossing tick, so approvals are written per-flow using
     # the digest recorded on the returned EventResult (see the tests below).
+
+
+def test_both_a_strategies_directory_and_an_injected_registry_refuses(
+    config_dir: Path, data_dir: Path, custody_root: Path
+) -> None:
+    """TOS Phase 3 슬라이스 D-R ``[D-R-2]`` brief item 4: keep ONE refusal
+    test proving ``compose_paper_runtime`` still refuses when a caller
+    supplies BOTH a populated ``config_dir/strategies/`` directory AND an
+    injected :class:`~tos.engine.StrategyRegistry` — exactly one strategy
+    source is admissible (:mod:`tos_runtime.strategy.resolve`)."""
+    fx.write_band_strategy_file(config_dir)
+    injected_registry = fx.registry_with_band_strategy()[0]
+    with pytest.raises(StrategyRegistryResolutionRefused):
+        compose_paper_runtime(
+            config_dir,
+            data_dir,
+            custody_root,
+            "non-live-test",
+            construction=fx.construction_config(),
+            aggregate_risk_inputs_provider=_aggregate_inputs,
+            action_flow_inputs_provider=_action_flow_inputs,
+            registry=injected_registry,
+        )
 
 
 class TestComposeRootWiring:
@@ -289,12 +321,18 @@ class TestComposeRootWiring:
             "egress_generation",
             "active_principal",
             "capsule_terminus_fields",
+            # strategies/band.strategy.yaml (1, TOS Phase 3 슬라이스 D-R
+            # [D-R-2], plan §1.2 item 3 — one row per admitted strategy
+            # file; _compose() now writes the band strategy into
+            # config_dir/strategies/ instead of injecting a registry)
+            fx.BAND_STRATEGY_FILE_NAME,
         }
         for coordinate in stored["payload"]["attested_coordinates"]:
             assert coordinate["source_file"] in (
                 "egress_attestations.yaml",
                 "risk_attestations.yaml",
                 "egress_coordinates.yaml",
+                fx.BAND_STRATEGY_FILE_NAME,
             )
             assert len(coordinate["source_file_digest"]) == 64  # sha256 hex
 

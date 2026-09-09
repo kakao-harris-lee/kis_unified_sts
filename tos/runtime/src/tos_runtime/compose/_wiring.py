@@ -108,6 +108,10 @@ from tos_runtime.risk.ledger_stages import (
     CommitmentUnavailabilityStage,
     LedgerVerificationStage,
 )
+from tos_runtime.strategy.resolve import (
+    ResolvedStrategyRegistry,
+    resolve_strategy_registry,
+)
 from tos_runtime.time.config import TrustworthyTimeConfig, load_time_config
 from tos_runtime.time.generation import seed_from
 from tos_runtime.time.service import TimeServiceNotStarted, TrustworthyTimeService
@@ -1022,6 +1026,62 @@ def _finalize(
     )
 
 
+def _resolve_strategies_and_attested_inputs(
+    config_dir: Path,
+    environment_label: str,
+    identity: RuntimeIdentity,
+    infra: _Infra,
+    risk: _RiskAndCurrentness,
+    registry: StrategyRegistry | None,
+) -> tuple[EgressCoordinatesConfig, ResolvedStrategyRegistry]:
+    """Load ``egress_coordinates.yaml``, resolve the ONE strategy source
+    (TOS Phase 3 슬라이스 D-R ``[D-R-2]``, plan §1.2 —
+    :func:`~tos_runtime.strategy.resolve.resolve_strategy_registry`), and
+    record ``OPERATOR_ATTESTED_INPUTS`` (folding the resolved strategy file
+    digests, if any, into the SAME record as the other attested
+    coordinates) — split out of :func:`_boot_services` purely for the size
+    budget; no behavioural difference from having this inline there."""
+    egress_coordinates = load_egress_coordinates(
+        config_dir / _EGRESS_COORDINATES_CONFIG_NAME,
+        environment_label=environment_label,
+    )
+    resolved_strategies = resolve_strategy_registry(
+        config_dir,
+        injected_registry=registry,
+        evidence_store=infra.evidence_store,
+        emergency_log=infra.emergency_log,
+        identity=identity,
+    )
+    record_operator_attested_inputs(
+        config_dir,
+        infra.evidence_store,
+        identity,
+        risk.egress_attestations,
+        risk.risk_attestations,
+        egress_coordinates,
+        resolved_strategies.loaded,
+    )
+    return egress_coordinates, resolved_strategies
+
+
+@dataclass
+class _BootResult:
+    """:func:`_boot_services`'s return value — named fields instead of a
+    7-tuple purely so callers never destructure it (size-budget win: a
+    named-attribute return avoids the multi-line unpacking assignment a
+    growing tuple forces). ``registry`` is the RESOLVED
+    :class:`~tos.engine.StrategyRegistry` (TOS Phase 3 슬라이스 D-R
+    ``[D-R-2]``) — never the caller's raw injected one."""
+
+    identity: RuntimeIdentity
+    infra: _Infra
+    rcl: _RclAndAuthority
+    risk: _RiskAndCurrentness
+    release_admitted: bool
+    egress_coordinates: EgressCoordinatesConfig
+    registry: StrategyRegistry
+
+
 def _boot_services(
     config_dir: Path,
     data_dir: Path,
@@ -1030,16 +1090,12 @@ def _boot_services(
     uid: int,
     authority_domain: str,
     monotonic_source: MonotonicSource | None,
-) -> tuple[
-    RuntimeIdentity,
-    _Infra,
-    _RclAndAuthority,
-    _RiskAndCurrentness,
-    bool,
-    EgressCoordinatesConfig,
-]:
+    registry: StrategyRegistry | None,
+) -> _BootResult:
     """Identity + STAGE A release probe + custody/evidence/time + RCL/
-    authority + risk/currentness + STAGE B release probe — split out of
+    authority + risk/currentness + strategy-source resolution
+    (:func:`_resolve_strategies_and_attested_inputs` — TOS Phase 3 슬라이스
+    D-R ``[D-R-2]``) + STAGE B release probe — split out of
     :func:`~tos_runtime.compose.root.compose_paper_runtime` purely for the
     size budget; the actual STAGE A/B split and its rationale live on
     :func:`_stage_a_release_probe`/:func:`_stage_b_release_probe`
@@ -1078,22 +1134,21 @@ def _boot_services(
         infra.time_service,
         rcl.authority_epoch_service,
     )
-    egress_coordinates = load_egress_coordinates(
-        config_dir / _EGRESS_COORDINATES_CONFIG_NAME,
-        environment_label=environment_label,
-    )
-    record_operator_attested_inputs(
-        config_dir,
-        infra.evidence_store,
-        identity,
-        risk.egress_attestations,
-        risk.risk_attestations,
-        egress_coordinates,
+    egress_coordinates, resolved_strategies = _resolve_strategies_and_attested_inputs(
+        config_dir, environment_label, identity, infra, risk, registry
     )
     release_admitted = _stage_b_release_probe(
         release_service, identity, infra.time_service, rcl.rcl_log
     )
-    return identity, infra, rcl, risk, release_admitted, egress_coordinates
+    return _BootResult(
+        identity=identity,
+        infra=infra,
+        rcl=rcl,
+        risk=risk,
+        release_admitted=release_admitted,
+        egress_coordinates=egress_coordinates,
+        registry=resolved_strategies.registry,
+    )
 
 
 def _build_stage_map(

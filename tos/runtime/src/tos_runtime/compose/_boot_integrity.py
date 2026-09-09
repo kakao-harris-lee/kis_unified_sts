@@ -24,6 +24,7 @@ from tos_runtime.engine.replay import ReplayVerdict, replay_engine
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog
+from tos_runtime.strategy.loader import LoadedStrategies
 
 __all__ = [
     "EGRESS_ATTESTATIONS_CONFIG_NAME",
@@ -129,6 +130,7 @@ def record_operator_attested_inputs(
     egress_attestations: EgressAttestations,
     risk_attestations: RiskAttestations,
     egress_coordinates: EgressCoordinatesConfig,
+    loaded_strategies: LoadedStrategies | None = None,
 ) -> None:
     """Durably record ONE evidence entry enumerating every config-attested
     coordinate name (items 6/12/16 + the step 6/7 admission witnesses + the
@@ -139,6 +141,14 @@ def record_operator_attested_inputs(
     This record is what lets an auditor tell attested from derived
     downstream — the field VALUES themselves carry no marker of their own
     origin, so the origin is instead evidenced once, here, at boot.
+
+    ``loaded_strategies`` (TOS Phase 3 슬라이스 D-R ``[D-R-2]``, plan §1.2
+    item 3) adds one row per admitted strategy file — ``name``/
+    ``source_file`` both the file's own name, ``source_file_digest`` the
+    SAME sha256 :meth:`~tos_runtime.strategy.loader.load_strategies` already
+    computed while loading it (never re-hashed here); ``None`` when the
+    file source was not used (an injected registry, or the legacy neither-
+    present empty default — :mod:`tos_runtime.strategy.resolve`).
 
     Never re-derives ``config_dir``'s file names independently elsewhere —
     this is the ONE place that reads all three attestation/coordinate config
@@ -170,6 +180,15 @@ def record_operator_attested_inputs(
                     "name": field.name,
                     "source_file": prefix,
                     "source_file_digest": digest,
+                }
+            )
+    if loaded_strategies is not None:
+        for entry in loaded_strategies.strategies:
+            coordinates.append(
+                {
+                    "name": entry.path.name,
+                    "source_file": entry.path.name,
+                    "source_file_digest": entry.sha256_digest,
                 }
             )
     evidence_store.append(

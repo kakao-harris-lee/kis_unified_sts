@@ -17,6 +17,7 @@ from tos_runtime.strategy.loader import (
 
 from .conftest import (
     admissible_strategy_mapping,
+    in_process_typed_strategy,
     inadmissible_strategy_mapping,
     write_strategy_yaml,
 )
@@ -59,27 +60,53 @@ def test_unknown_key_refuses_naming_the_path(strategies_dir, parse, admit):
 
 
 def test_inadmissible_strategy_refuses_naming_the_path(strategies_dir, parse, admit):
-    """The refusal path a future D-K escape-checker gate will also drive —
-    this test exercises today's typed D1<->D4 admission refusal
-    (``compare_has_capsule_operand``), since ``strategy_admissible`` does not
-    yet call the lowering + escape-checker gate (plan §1.2 slice D-K, not
-    yet landed). ``load_strategies`` refuses on ANY ``AdmissionVerdict`` that
-    is not ``ADMISSIBLE`` — it is agnostic to which admission rule fired, so
-    it needs no change when the escape-checker gate lands."""
+    """This test exercises the typed D1<->D4 admission refusal
+    (``compare_has_capsule_operand``) — one of the several checks
+    ``strategy_admissible`` runs (the D-K lane's escape-checker gate is
+    another, exercised by ``tos/tests`` directly). ``load_strategies``
+    refuses on ANY ``AdmissionVerdict`` that is not ``ADMISSIBLE`` — it is
+    agnostic to which admission rule fired, so it needs no change
+    regardless of which gate inside ``strategy_admissible`` rejects."""
     mapping = inadmissible_strategy_mapping()
 
     # sanity: confirm the fixture is genuinely inadmissible via the real gate
-    from tos.engine.admission import strategy_admissible
-
-    from .conftest import shim_parse_strategy
-
-    parsed = shim_parse_strategy(mapping)
-    assert strategy_admissible(parsed).verdict is AdmissionVerdict.INADMISSIBLE
+    parsed = parse(mapping)
+    assert admit(parsed).verdict is AdmissionVerdict.INADMISSIBLE
 
     path = write_strategy_yaml(strategies_dir, "inadmissible.strategy.yaml", mapping)
     with pytest.raises(StrategyLoadError) as excinfo:
         load_strategies(strategies_dir, parse=parse, admit=admit)
     assert str(path) in str(excinfo.value)
+
+
+def test_yaml_and_in_process_typed_paths_admit_identically(
+    strategies_dir, parse, admit
+):
+    """Design #31 §1.2 "두 경로 동형" ("the two paths are isomorphic"): a
+    strategy authored as serialized YAML and the SAME strategy built
+    in-process via typed construction must converge on the identical
+    artifact (same digest/id) and admit identically. This is the concrete
+    proof that ``tos_runtime.strategy.loader``'s injected ``parse`` (wired
+    to the real kernel ``tos.dsl.serialization.parse_strategy`` in
+    production) does not create a second, divergent authoring surface."""
+    mapping = admissible_strategy_mapping()
+    path = write_strategy_yaml(strategies_dir, "band.strategy.yaml", mapping)
+
+    loaded = load_strategies(strategies_dir, parse=parse, admit=admit)
+    yaml_strategy = loaded.strategies[0].strategy
+    assert loaded.strategies[0].path == path
+
+    typed_strategy = in_process_typed_strategy()
+
+    assert yaml_strategy.canonical_digest == typed_strategy.canonical_digest
+    assert yaml_strategy.strategy_id == typed_strategy.strategy_id
+
+    yaml_admission = admit(yaml_strategy)
+    typed_admission = admit(typed_strategy)
+    assert (
+        yaml_admission.verdict is typed_admission.verdict is AdmissionVerdict.ADMISSIBLE
+    )
+    assert yaml_admission.instrument_key == typed_admission.instrument_key
 
 
 def test_null_leaf_anywhere_refuses_naming_the_field(strategies_dir, parse, admit):

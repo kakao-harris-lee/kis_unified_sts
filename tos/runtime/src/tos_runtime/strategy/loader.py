@@ -6,20 +6,17 @@ it through the kernel's own typed admission gate (TOS Phase 3 슬라이스 D-R,
 **Injected, not imported, gates.** Both ``parse`` and ``admit`` are injected
 callables rather than direct kernel imports:
 
-* ``admit`` is meant to be :func:`tos.engine.admission.strategy_admissible`
-  in production — injected here (rather than imported) purely so a test can
+* ``admit`` is :func:`tos.engine.admission.strategy_admissible` in
+  production — injected here (rather than imported) purely so a test can
   substitute a double without monkeypatching the kernel module, matching
   this package's sibling loaders' own injection style
   (``tos_runtime.risk``/``tos_runtime.authority``).
-* ``parse`` is meant to eventually be ``tos.dsl.serialization.parse_strategy``
-  (design #31 §9-4 / plan §1.2 slice D — kernel lane D-K), which as of this
-  writing (2026-09-09) has **not landed**: ``tos.dsl.serialization`` does not
-  exist yet. Until it lands, the composition root (plan §1.2 ``[D-R-2]``)
-  must inject a local shim that builds an :class:`~tos.dsl.AuthoredStrategy`
-  from the raw mapping via pydantic construction; this loader makes no
-  assumption about which one it receives, so swapping the shim for the real
-  kernel function later is a one-line change at the injection site, never a
-  change here.
+* ``parse`` is :func:`tos.dsl.serialization.parse_strategy` in production
+  (design #31 §9-4 / plan §1.2 slice D — kernel lane D-K, landed
+  2026-09-09 at ``[D-K-done]``). This loader still makes no assumption
+  about which callable it receives — the composition root
+  (:mod:`tos_runtime.strategy.resolve`, plan §1.2 ``[D-R-2]``) is the one
+  and only production injection site.
 
 **Whole-directory fail-closed refusal (plan §1.2).** An unparseable or
 inadmissible file refuses the ENTIRE load — this function never returns a
@@ -68,9 +65,8 @@ __all__ = [
 ]
 
 #: The injected parser: raw top-level YAML mapping -> in-process typed
-#: Authored Strategy. See this module's own docstring — production wires
-#: the eventual kernel ``tos.dsl.serialization.parse_strategy`` here once the
-#: D-K lane lands; today the composition root injects a local shim.
+#: Authored Strategy. Production wires :func:`tos.dsl.serialization.parse_strategy`
+#: here (this module's own docstring).
 ParseFn = Callable[[Mapping[str, Any]], AuthoredStrategy]
 
 #: The injected admission gate. Production wires

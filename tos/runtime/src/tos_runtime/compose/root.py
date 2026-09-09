@@ -142,19 +142,19 @@ def compose_paper_runtime(
         construction: Per-strategy Order Construction facts (steps 2/3/5/11) — see :class:`ConstructionConfig`.
         aggregate_risk_inputs_provider: Supplies step 6's :class:`~tos_runtime.risk.aggregate.AggregateRiskDecisionInputs` (``None`` => restrictive UNKNOWN); scenario-specific.
         action_flow_inputs_provider: Supplies step 7's :class:`~tos_runtime.risk.flow.ActionFlowDecisionInputs` analogously.
-        registry: The strategy registry (defaults to an empty one).
+        registry: An injected strategy registry — mutually exclusive with a populated ``config_dir / "strategies"`` directory (:mod:`tos_runtime.strategy.resolve`); neither falls back to an empty registry.
         authority_domain: The Safety Authority epoch's governed domain name.
         continuity_id: The ordering-event continuity id.
 
     Returns:
         The fully wired :class:`ComposedRuntime`.
-
     Raises:
         ReleaseAdmissionRefused: Release admission denies (fail-closed boot refusal, slice plan §4 item 1).
         Various ``*ConfigError``/custody exceptions: fail-closed config or custody/manifest violations, before any engine wiring.
+        StrategyRegistryResolutionRefused: Ambiguous/failed strategy source — see ``registry`` above.
     """
     uid = os.getuid()
-    identity, infra, rcl, risk, release_admitted, egress_coordinates = _boot_services(
+    boot = _boot_services(
         config_dir,
         data_dir,
         custody_root,
@@ -162,13 +162,14 @@ def compose_paper_runtime(
         uid,
         authority_domain,
         monotonic_source,
+        registry,
     )
 
     construction_stages = _build_construction_stages(construction)
     realized = _build_realized_stages(
-        infra=infra,
-        rcl=rcl,
-        risk=risk,
+        infra=boot.infra,
+        rcl=boot.rcl,
+        risk=boot.risk,
         construction_stages=construction_stages,
         construction=construction,
         aggregate_risk_inputs_provider=aggregate_risk_inputs_provider,
@@ -177,20 +178,19 @@ def compose_paper_runtime(
         environment_label=environment_label,
         uid=uid,
     )
-    # Late-bind the ACTION_FLOW dimension reader's cell now step 9's
-    # VerdictRecorder exists (see _ActionFlowDimensionState's own docstring).
-    risk.action_flow_dimension_state.step9_recorder = realized.step9_recorder
+    # Late-bind the ACTION_FLOW dimension reader's cell now step 9's VerdictRecorder exists.
+    boot.risk.action_flow_dimension_state.step9_recorder = realized.step9_recorder
     stages = _build_stage_map(construction_stages, realized)
 
     context_resolver = _build_context_resolver(
         construction_stages=construction_stages,
         realized=realized,
-        flow_governor=risk.flow_governor,
-        currentness_assembler=risk.currentness_assembler,
-        proof_issuer=risk.proof_issuer,
-        pending_dimension_specs=risk.pending_dimension_specs,
-        egress_attestations=risk.egress_attestations,
-        egress_coordinates=egress_coordinates,
+        flow_governor=boot.risk.flow_governor,
+        currentness_assembler=boot.risk.currentness_assembler,
+        proof_issuer=boot.risk.proof_issuer,
+        pending_dimension_specs=boot.risk.pending_dimension_specs,
+        egress_attestations=boot.risk.egress_attestations,
+        egress_coordinates=boot.egress_coordinates,
         construction=construction,
         environment_label=environment_label,
         continuity_id=continuity_id,
@@ -199,15 +199,15 @@ def compose_paper_runtime(
     return _finalize(
         config_dir=config_dir,
         data_dir=data_dir,
-        infra=infra,
-        rcl=rcl,
-        risk=risk,
+        infra=boot.infra,
+        rcl=boot.rcl,
+        risk=boot.risk,
         construction_stages=construction_stages,
         realized=realized,
         stages=stages,
         context_resolver=context_resolver,
-        identity=identity,
-        registry=registry,
-        release_admitted=release_admitted,
+        identity=boot.identity,
+        registry=boot.registry,
+        release_admitted=boot.release_admitted,
         continuity_id=continuity_id,
     )

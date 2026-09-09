@@ -23,7 +23,9 @@ bar-replay driver is part of this composition.
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
 
+import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.capsule import DecisionContextCapsule, PolicyRef
 from tos.capsule.capsule import CapsuleScope, SafetyCriticalFacts, SnapshotRef
@@ -161,6 +163,75 @@ def registry_with_band_strategy() -> tuple[StrategyRegistry, AuthoredStrategy]:
     strategy = band_reversion_strategy()
     registry.register(strategy, authored_config())
     return registry, strategy
+
+
+#: The strategy file name :func:`write_band_strategy_file` writes — matches
+#: this suite's own ``*.strategy.yaml`` naming convention
+#: (``tos/runtime/config/strategies/example.strategy.yaml``).
+BAND_STRATEGY_FILE_NAME = "band.strategy.yaml"
+
+
+def band_reversion_strategy_mapping() -> dict[str, object]:
+    """The raw-mapping equivalent of :func:`band_reversion_strategy` — same
+    ``dsl_version``/``config_binding_version``/policy content, shaped for
+    :func:`tos.dsl.serialization.parse_strategy` (the file-source authoring
+    path) rather than in-process typed construction. Both converge on the
+    IDENTICAL :class:`~tos.dsl.AuthoredStrategy` digest+id
+    (design #31 §1.2 "두 경로 동형") — ``parse_strategy`` issues via the
+    same :meth:`~tos.dsl.AuthoredStrategy.issue` call either way."""
+    return {
+        "dsl_version": "dsl-compose",
+        "config_binding_version": "cfg-bind-compose",
+        "policy": {
+            "rules": [
+                {
+                    "all_of": [
+                        {
+                            "left": {"ref": ["capsule", VALUE_NAMESPACE, "close"]},
+                            "op": "LT",
+                            "right": {
+                                "ref": ["capsule", VALUE_NAMESPACE, "lower_band"]
+                            },
+                        }
+                    ],
+                    "decision": {
+                        "kind": "ACTION",
+                        "rationale": "close pierced the lower band — compose e2e entry",
+                        "target": {
+                            "kind": "ACTION",
+                            "account": ACCOUNT,
+                            "instrument": INSTRUMENT,
+                            "direction": "LONG",
+                            "position_effect": "OPEN",
+                            "quantity_basis": "RISK",
+                            "edge_or_confidence": "compose-e2e",
+                            "rationale": "close pierced the lower band — compose e2e entry",
+                        },
+                    },
+                }
+            ],
+            "default": {
+                "kind": "NO_ACTION",
+                "rationale": "close is inside the band — hold, no proposal",
+            },
+        },
+    }
+
+
+def write_band_strategy_file(config_dir: Path) -> Path:
+    """Write :func:`band_reversion_strategy_mapping` into
+    ``config_dir / "strategies" / "band.strategy.yaml"`` (creating the
+    ``strategies`` directory if absent) — the file-source counterpart to
+    :func:`registry_with_band_strategy`'s injected-registry path
+    (TOS Phase 3 슬라이스 D-R ``[D-R-2]``)."""
+    strategies_dir = config_dir / "strategies"
+    strategies_dir.mkdir(exist_ok=True)
+    path = strategies_dir / BAND_STRATEGY_FILE_NAME
+    path.write_text(
+        yaml.safe_dump(band_reversion_strategy_mapping(), sort_keys=False),
+        encoding="utf-8",
+    )
+    return path
 
 
 def engine_configuration(**overrides: object) -> EngineConfiguration:
