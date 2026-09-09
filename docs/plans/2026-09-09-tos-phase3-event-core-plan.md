@@ -155,3 +155,19 @@ verdict **approve** — 17건 중 15 완전 종결 · #13/#17 부분(정직 공�
 신규 관찰(LOW 5) 처분: **N1** 마커 기록 후 `core.handle` 전 크래시 ⇒ tick 이 `HANDLING_INTERRUPTED_POSSIBLY_LIVE` 로 소비 표시되며 영영 평가되지 않음(보수적이나 무음 · 이름도 «possibly live» 오기) → 웨이브 2 C-R: halt 사유 분리(`HANDLING_INTERRUPTED_NO_SEND_EVIDENCE`) + 비-halt 증거 행으로 가시화 · **N2** `remaining_quantity` 비회생 규칙 없음(4/6→4/60 APPLIED · 대칭 축소 방향이 비보수) → 웨이브 2 K: `QUANTITY_REGRESSION` 을 remaining 축소에도 적용 · **N3** `_send_evidence_exists_after` 가 event 가 아니라 `seq >` 로 조회 — 단일 스레드 드라이버 불변식에 의존 → 웨이브 2 C-R: 불변식 주석 + 동시성 핀 · **N4** §7.2 #13 행 과대 → 위 정정 · **N5** #17 잔여 사유 기록 → 위 정정.
 
 **웨이브 1 종결 → 웨이브 2 착수(2026-09-09).**
+
+### 7.4 웨이브 2 착지 (2026-09-09 · 9커밋 `c592c8a2..0c909e34` · 레인 3 병렬)
+
+| 레인 | 커밋 | 내용 |
+|---|---|---|
+| K-W2 | `4d5d6424` `0e8af064` `9b18130d` | `CoordinatorPreconditions(Protocol)` + `EngineCore(preconditions=, transport_nature=)` 필수(순환 import 로 `TransportNatureLike` 구조 Protocol · 게이트는 `_handle_decision_tick` 최상단 · 양성 `is True` 중첩 — 엔진 폴라리티 캐너리 준수 · 백테스트는 `SyntheticNonLivePreconditions`(authority 주입 · `NonBrokerTransportNature`)) · `EgressResultKind` += `CANCEL_ACK`·`EXPIRED`(운영자 비준 ① · capacity 최대 `RELEASE_PENDING_PROOF` · cancel-crossing-fill 은 `NON_MONOTONIC_PROJECTION` 으로 사실 보존 — 실 RCL 의 §15.2 수용은 Phase 5) · N2 `QUANTITY_REGRESSION` 을 remaining 축에 확장(`_quantity_regressed` 분리) · `engine/orthostate_projection.py`(`result_transition_for` 8종 사상: CANCEL_ACK→`CANCEL_PENDING`(ADR-002-002 §16.2 문언) · attempt 는 `ACK_OBSERVED`(SUPERSEDED 는 다른 attempt 로의 대체) · Knowledge `RECONCILED` 는 어떤 결과도 주장 안 함) · `tos.engine` 폐쇄에 `tos.orthostate` 추가(역방향 불가 확인 · 형제 캐너리 4곳 갱신) · KW2-C3 내용은 C1/C2 에 흡수(별 커밋 없음) |
+| B-R | `df77c147` `cd1de003` | `compose/_preconditions.py::RuntimeCoordinatorPreconditions`(epoch 는 `SafetyAuthorityEpochService.epoch_current` 위임 · live scope 는 커널 `liveauth.is_live`(현 NOT_AUTHORIZED 자세에서 구조적 False) ∧ `reaches_broker is False`) · `_ReplayPreconditions`(True/True · 재생은 같은 파이프라인 경로 비교) · 신규 `coordinator_preconditions.example.yaml`(«NOT_AUTHORIZED» 만 수용 · 좌표 비붕괴 원칙으로 별 파일) · `_engine_wiring.py` 두 `EngineCore(` 결선 · 테스트 픽스처 `_AlwaysPermissivePreconditions`(드라이버/재생 테스트 전용) |
+| C-R | `c592c8a2` `028e45be` `9037d29f` `0c909e34` | N1: `HANDLING_INTERRUPTED_NO_SEND_EVIDENCE` + 비-halt `DECISION_TICK_DROPPED_ON_RECOVERY` 가시화 · N3: 불변식 주석 + `_draining` 재진입 가드(transmit 안에서 발화 — 시퀀서가 transmit 예외를 `TRANSMIT_RAISED` 로 접기 때문) · `OrthostateProjector`(APPLIED 결과만 · `coupling_violations` 위반 ⇒ 증거+halt · 3 고정 actor 로 `may_transition` 방어 · inbox `attempt_composites` 측 테이블 · 재기동 `reconstruct_conservative`) · `SyntheticFinalityProducer`(FULL_FILL 만 · `ORDER_FQP` 단일 차원 · `RECEIPT` 수량 leg — 가격 없음 정직 한계 · `finality.example.yaml` 4값 null) · `rcl/finality_witness.py`(`finality_witness_for` + `release_reservation` 시임 · **release 트리거 호출처는 런타임에 아직 0** — Phase 5) · CR-4: 드라이버 필수 인자화 + compose 결선 + e2e · **결선 중 실버그 2건 발견·수리**: ① 투영기가 `result_disposition` 을 안 봐 non-APPLIED 결과를 다른 attempt 에 오귀속 ② `coupling_violations` 를 부대조건 없이 호출해 CPL-6(authority epoch 현행)이 모든 hand-off 를 위반으로 판정 → `authority_epoch_current` 콜백을 투영기에 주입 |
+
+**공개 잔여**: ① `finality_witness` 를 소비해 RELEASED 전이를 트리거하는 호출처 없음(Phase 5 release-trigger 레인 · 증거·측 테이블에 durable 보존까지가 이 웨이브) ② cancel-crossing-fill 의 실 수용(§15.2)은 권위 RCL 소관 ③ 크기 예외 +2(`_finalize` 101 · `wire_engine_and_driver` 103).
+
+**독립 실측(최종 트리 `0c909e34`)**: runtime **614 passed** rc=0 · kernel **9327 passed** rc=0 · mypy 257/68 clean · ruff 0 · black 972 unchanged · firewall PASS · lint-imports 3 KEPT · budget 0 위반(33 등재) · completion GREEN · spec PASS · contract PASS · tos-spec/계약 문서 무편집 · 커널 편집 커밋 = K-W2 3건뿐.
+
+### 7.5 웨이브 2 독립 리뷰 처분
+
+(리뷰 후 기입)
