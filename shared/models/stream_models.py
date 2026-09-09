@@ -54,16 +54,19 @@ def _first_float(fields: Mapping[str, Any], keys: tuple[str, ...]) -> float | No
 
 #: Best-bid/best-ask fields an orderbook-bearing tick carries.
 #:
-#: Same set (minus ``code``/``timestamp``, which every tick already has) as the
-#: payload ``KISFuturesPriceFeed`` caches per orderbook tick and merges into its
-#: price snapshot — so a consumer can rebuild an orderbook snapshot from a
-#: stream entry without a second data path.
+#: The price/quantity set is what ``KISFuturesPriceFeed`` caches per orderbook
+#: tick, so a consumer can rebuild an orderbook snapshot from a stream entry
+#: without a second data path. ``quote_ts`` carries that orderbook tick's OWN
+#: time: an entry's ``timestamp`` belongs to the trade tick it was published
+#: for, and a book can be frozen while trades keep printing, so anything
+#: bounding quote freshness must read ``quote_ts`` and not ``timestamp``.
 ORDERBOOK_FIELDS: tuple[str, ...] = (
     "bid_price_1",
     "bid_qty_1",
     "ask_price_1",
     "ask_qty_1",
     "spread",
+    "quote_ts",
 )
 
 
@@ -141,6 +144,10 @@ class MarketTickMessage(StreamMessage):
     ask_price_1: float | None = Field(default=None, ge=0)
     ask_qty_1: float | None = Field(default=None, ge=0)
     spread: float | None = Field(default=None, ge=0)
+    # Event time of the orderbook tick these four prices came from — NOT this
+    # entry's `timestamp`, which is the trade tick's. Absent on entries written
+    # before this field existed; a consumer falls back to `timestamp` there.
+    quote_ts: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="before")
     @classmethod
@@ -216,6 +223,7 @@ class MarketTickMessage(StreamMessage):
             ask_price_1=_parse_non_negative_float(payload.get("ask_price_1")),
             ask_qty_1=_parse_non_negative_float(payload.get("ask_qty_1")),
             spread=_parse_non_negative_float(payload.get("spread")),
+            quote_ts=_parse_non_negative_float(payload.get("quote_ts")),
         )
 
     @classmethod
@@ -272,6 +280,7 @@ class MarketTickMessage(StreamMessage):
             ask_price_1=_parse_non_negative_float(fields.get("ask_price_1")),
             ask_qty_1=_parse_non_negative_float(fields.get("ask_qty_1")),
             spread=_parse_non_negative_float(fields.get("spread")),
+            quote_ts=_parse_non_negative_float(fields.get("quote_ts")),
         )
 
     def to_price_dict(self) -> dict[str, Any]:

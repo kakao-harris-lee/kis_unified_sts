@@ -41,8 +41,13 @@ def orderbook_publish_fields(snapshot: Mapping[str, Any] | None) -> dict[str, An
     the monolithic orchestrator) call this so the merge rule lives once.
 
     Returns ``{}`` unless both sides of the book are positive; never raises.
-    ``code``/``timestamp`` are deliberately excluded — the trade tick owns
-    those, and a stale quote must not backdate a fresh trade.
+    ``code`` is excluded and the snapshot's ``timestamp`` is re-keyed to
+    ``quote_ts``: the published entry's ``timestamp`` belongs to the trade tick,
+    and a stale quote must not backdate a fresh trade. Keeping the orderbook
+    tick's own time as a separate field is what lets a consumer bound the age of
+    the BOOK rather than of the last print — the two diverge exactly when it
+    matters, because the feed keeps merging a frozen book onto fresh trades
+    (``KISFuturesPriceFeed._log_orderbook_staleness`` models that condition).
     """
     if not snapshot:
         return {}
@@ -53,7 +58,17 @@ def orderbook_publish_fields(snapshot: Mapping[str, Any] | None) -> dict[str, An
         return {}
     if bid <= 0 or ask <= 0:
         return {}
-    return {key: snapshot[key] for key in ORDERBOOK_FIELDS if key in snapshot}
+    fields = {key: snapshot[key] for key in ORDERBOOK_FIELDS if key in snapshot}
+    if "quote_ts" not in fields:
+        # A WS feed snapshot times the book in `timestamp`; a snapshot that
+        # already came off the stream carries `quote_ts` and keeps it.
+        try:
+            quote_ts = float(snapshot.get("timestamp"))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return fields
+        if quote_ts >= 0:
+            fields["quote_ts"] = quote_ts
+    return fields
 
 
 class TickStreamPublisherConfig(ServiceConfigBase):
@@ -177,6 +192,52 @@ class TickStreamPublisherConfig(ServiceConfigBase):
         env_data.update(overrides)
 
         return cls(**env_data)
+
+
+class OrderbookMergeLog:
+    """One-shot WARNING / recovery-INFO latch for the futures orderbook merge.
+
+    Both producers merge the same way and fail the same way, and a silent
+    revert to trade-only ticks has no local symptom at all: it surfaces far
+    downstream as the order-router blocking every signal on
+    ``orderbook_unavailable``, which reads as a market condition rather than a
+    data gap. Prior reviews (#621 F5, #623 F2) asked for exactly this shape.
+
+    First failure logs WARNING, first success after that logs INFO, and the
+    steady state on either side is silent — the merge sits on a per-tick hot
+    path, so a per-occurrence log is not an option.
+    """
+
+    def __init__(self, log: logging.Logger, producer: str) -> None:
+        self._log = log
+        self._producer = producer
+        self._warned = False
+
+    @property
+    def warned(self) -> bool:
+        return self._warned
+
+    def failed(self, reason: str) -> None:
+        if self._warned:
+            return
+        self._warned = True
+        self._log.warning(
+            "%s: futures orderbook merge unavailable (%s) — republished ticks "
+            "carry no quote, so a stream consumer's entry gate blocks on "
+            "orderbook_unavailable. Logged once until it recovers.",
+            self._producer,
+            reason,
+        )
+
+    def ok(self) -> None:
+        if not self._warned:
+            return
+        self._warned = False
+        self._log.info(
+            "%s: futures orderbook merge recovered — republished ticks carry a "
+            "quote again",
+            self._producer,
+        )
 
 
 @dataclass(frozen=True)
