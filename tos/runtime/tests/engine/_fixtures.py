@@ -283,6 +283,25 @@ class FakeGateway:
         self.results = self.results + (payload,)
 
 
+class _AlwaysPermissivePreconditions:
+    """A ``True``/``True`` ``CoordinatorPreconditions`` double for THIS file's own
+    driver/replay fixtures (TOS Phase 3 Wave 2 KW2-B made ``preconditions`` a
+    required ``EngineCore`` constructor argument — design #31 §9-10; plan
+    §2.1). This module's own tests exercise the durable-inbox/driver/replay
+    machinery, not the Coordinator gate itself (that is
+    ``tos_runtime.compose._preconditions``'s own test scope,
+    ``tos/runtime/tests/compose/test_preconditions.py`` — Lane B-R), so every
+    tick here is unconditionally admitted past the gate, matching this
+    fixture set's pre-KW2-B behaviour exactly (there was no gate to fail
+    before)."""
+
+    def authority_epoch_current(self) -> bool | None:
+        return True
+
+    def live_scope_authorized(self, _transport_nature: Any) -> bool | None:
+        return True
+
+
 def build_core(
     *,
     registry: StrategyRegistry | None = None,
@@ -293,6 +312,7 @@ def build_core(
         registry=registry if registry is not None else registry_with(),
         stages=stages if stages is not None else admitting_stages(),
         configuration=engine_configuration(),
+        preconditions=_AlwaysPermissivePreconditions(),
         transmit=transmit,
         sink=NullEvidenceSink(),
         scheme=SCHEME,

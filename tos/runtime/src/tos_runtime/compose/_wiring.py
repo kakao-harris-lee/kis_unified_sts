@@ -67,6 +67,10 @@ from tos_runtime.compose._engine_wiring import (
     wire_engine_and_driver,
 )
 from tos_runtime.compose._pending_dimensions import PendingDimensionSpec
+from tos_runtime.compose._preconditions import (
+    COORDINATOR_PRECONDITIONS_CONFIG_NAME,
+    load_coordinator_preconditions_config,
+)
 from tos_runtime.compose._risk_attestations import (
     wrap_action_flow_inputs_provider,
     wrap_aggregate_risk_inputs_provider,
@@ -951,6 +955,11 @@ def _finalize(
     :func:`~tos_runtime.compose.root.compose_paper_runtime`, split out purely for the size
     budget."""
     engine_configuration = _build_engine_configuration(config_dir)
+    # Coordinator-preconditions governance posture (design #31 §9-10; plan §2.1) — fail-closed,
+    # from its own example-shaped file, same as every other tos_runtime.*.config value.
+    coordinator_preconditions_config = load_coordinator_preconditions_config(
+        config_dir / COORDINATOR_PRECONDITIONS_CONFIG_NAME
+    )
     wired = wire_engine_and_driver(
         data_dir=data_dir,
         context_resolver=context_resolver,
@@ -965,20 +974,18 @@ def _finalize(
         continuity_id=continuity_id,
         monotonic_source=infra.monotonic_source,
         max_send_result_wait_ms=infra.time_config.max_send_result_wait_ms,
+        authority_epoch_service=rcl.authority_epoch_service,
+        live_authorization_state=coordinator_preconditions_config.live_authorization_state,
     )
 
-    # Independent boot-time re-derivation over whatever this inbox has
-    # already durably admitted (design plan §1.1 "부팅 시
-    # verify_rcl_log_or_halt 뒤에 실행"). Reported deviation from the
-    # plan's literal adjacency: verify_rcl_log_or_halt itself runs earlier,
-    # inside _boot_services, BEFORE the engine core/gateway/inbox exist to
-    # replay at all — this call is the earliest point in compose where an
-    # engine replay check is even constructible, and it still runs strictly
-    # after the RCL log's own integrity is independently re-verified, which
-    # is the substantive ordering requirement. See
-    # tos_runtime.engine.replay's own module docstring for exactly what
-    # "side-effect-free" does and does not cover for a core that DID have a
-    # working transmit in its original run.
+    # Independent boot-time re-derivation over whatever this inbox has already durably admitted
+    # (design plan §1.1 "부팅 시 verify_rcl_log_or_halt 뒤에 실행"). Reported deviation from the
+    # plan's literal adjacency: verify_rcl_log_or_halt itself runs earlier, inside _boot_services,
+    # before the engine core/gateway/inbox exist to replay at all — this is the earliest point in
+    # compose an engine replay check is constructible, and it still runs strictly after the RCL
+    # log's own integrity is re-verified (the substantive ordering requirement). See
+    # tos_runtime.engine.replay's own module docstring for what "side-effect-free" does and does
+    # not cover for a core that DID have a working transmit in its original run.
     engine_driver_config = load_engine_driver_config(
         config_dir / ENGINE_DRIVER_CONFIG_NAME
     )

@@ -265,7 +265,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1189
+  measured: 1196
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -347,6 +347,15 @@ exceptions:
     1172→1189(+17, 대부분 두 함수의 갱신된 도크스트링 — 함수 자체는 100줄
     문턱 아래 유지, 무예외). compose_paper_runtime(root.py) 도 동일 커밋에서
     같은 파라미터를 받아 104→101→100줄로 두 차례 축약해 문턱 준수(무등재).
+    2026-09-09 TOS Phase 3 Wave 2 레인 B-R(Coordinator 양성 게이트, 설계
+    #31 §9-10) — _finalize 가 신규 tos_runtime.compose._preconditions
+    (RuntimeCoordinatorPreconditions) 를 배선: coordinator_preconditions.yaml
+    로더 호출 1줄 + wire_engine_and_driver 호출부에 authority_epoch_service/
+    live_authorization_state 인자 2줄 추가. 부수로 _finalize 가 함수 100줄
+    문턱을 104→102 줄로 초과 — 부팅-시-재생 순서 설명 주석(레인 A-R 저작,
+    본 레인 무편집 대상)을 12→7줄로 압축(문장 재배열만·내용 보존)해 함수를
+    100줄로 회복(무예외). 모듈 실측은 신규 import 3줄 + 호출부 순증분으로
+    1189→1196(+7).
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime

@@ -168,6 +168,18 @@ def config_dir(tmp_path: Path) -> Path:
         },
     )
     _write_yaml(
+        directory / "coordinator_preconditions.yaml",
+        {
+            # TOS Phase 3 Wave 2 Lane B-R (design #31 §9-10; plan §2.1) — the
+            # ONLY governance posture tos_runtime.compose._preconditions has
+            # wiring for today (ADR-002-025; tos-spec's own
+            # AUTHORITY-STATUS.csv "restricted_live,NOT_AUTHORIZED" row).
+            # This compose e2e suite's synthetic (reaches_broker=False)
+            # transport is exactly the case this posture admits.
+            "live_authorization_state": "NOT_AUTHORIZED",
+        },
+    )
+    _write_yaml(
         directory / "release.yaml",
         {
             "expected_code_digest": EXPECTED_CODE_DIGEST,

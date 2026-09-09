@@ -8,7 +8,7 @@ behavioural reason: :func:`build_engine_driver` is called from
 this compose root already documents (engine core wired first, driver last —
 the driver needs the composed core AND gateway to exist).
 
-Owns two things:
+Owns three things:
 
 1. :func:`load_engine_driver_config` — the ``replay_window_events`` boot-time
    cost bound (plan §1.1; see ``tos/runtime/config/engine_driver.example.yaml``).
@@ -17,10 +17,24 @@ Owns two things:
    SEPARATE from the evidence store — D3 failure-domain separation, operator-
    confirmed item 2) and the :class:`~tos_runtime.engine.driver.EngineDriver`
    bound to the already-composed core and gateway.
+3. :func:`wire_engine_and_driver` — since TOS Phase 3 Wave 2 Lane B-R, also
+   constructs the kernel's REQUIRED ``EngineCore(preconditions=...)`` argument
+   (design #31 §9-10; plan §2.1): a
+   :class:`~tos_runtime.compose._preconditions.RuntimeCoordinatorPreconditions`
+   for the live core, over the already-composed
+   :class:`~tos_runtime.authority.epoch.SafetyAuthorityEpochService` and the
+   caller-resolved restricted-live governance posture (``config_dir``'s
+   ``coordinator_preconditions.yaml`` — loaded by the caller, ``_wiring.py``'s
+   ``_finalize``, the same pattern ``engine_driver.yaml`` already follows), and
+   a side-effect-free
+   :class:`~tos_runtime.compose._preconditions._ReplayPreconditions` for the
+   boot-time replay core (see :class:`_ReplayStage`'s own docstring for why
+   the replay core needs its OWN stand-ins throughout, not the real ones).
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib
-(``pathlib``, ``yaml``) + ``tos.canonical``/``tos.egressgw``/``tos.engine`` +
-``tos_runtime.*`` only. No ``shared.*``.
+(``pathlib``, ``yaml``) + ``tos.canonical``/``tos.egressgw``/``tos.engine``/
+``tos.liveauth`` (transitively, via ``_preconditions``) + ``tos_runtime.*``
+only. No ``shared.*``.
 """
 
 from __future__ import annotations
@@ -46,7 +60,12 @@ from tos.engine.records import StageRequest, StageVerdict
 from tos.engine.vocabulary import StageAuthorityClass, StageOutcome
 from tos.workload import RuntimeIdentity
 
+from tos_runtime.authority.epoch import SafetyAuthorityEpochService
 from tos_runtime.compose._boot_integrity import verify_engine_replay_or_halt
+from tos_runtime.compose._preconditions import (
+    RuntimeCoordinatorPreconditions,
+    _ReplayPreconditions,
+)
 from tos_runtime.compose.context import ComposeContextResolver
 from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -273,6 +292,14 @@ def verify_replay_or_halt(
             registry=registry,
             stages=dict.fromkeys(stages, replay_stage),
             configuration=configuration,
+            # TOS Phase 3 Wave 2 Lane B-R: the replay core gets its OWN
+            # side-effect-free preconditions stand-in — never the real
+            # RuntimeCoordinatorPreconditions, which would re-evaluate TODAY's
+            # epoch/authorization state instead of reproducing the live run's
+            # already-recorded admission (see _ReplayPreconditions's own
+            # docstring). transport_nature is omitted (None) — the stand-in
+            # ignores it unconditionally.
+            preconditions=_ReplayPreconditions(),
             transmit=None,
             sink=NullEvidenceSink(),
             scheme=scheme,
@@ -302,6 +329,28 @@ class WiredEngine:
     driver: EngineDriver
 
 
+def _build_preconditions(
+    authority_epoch_service: SafetyAuthorityEpochService, live_authorization_state: str
+) -> RuntimeCoordinatorPreconditions:
+    """The live core's RFC-002 §10.7 Coordinator positive gates (design #31 §9-10; plan §2.1).
+
+    Read fresh on every ``DECISION_TICK`` — never a runtime-authored currentness/authorization
+    comparison; both delegate to the kernel's own ``tos.authority``/``tos.liveauth`` predicates
+    (see :class:`RuntimeCoordinatorPreconditions`'s own docstring).
+
+    Args:
+        authority_epoch_service: The already-composed
+            :class:`~tos_runtime.authority.epoch.SafetyAuthorityEpochService` for this runtime's
+            authority domain.
+        live_authorization_state: The caller-resolved, already-validated restricted-live
+            governance posture (``CoordinatorPreconditionsConfig.live_authorization_state``).
+    """
+    return RuntimeCoordinatorPreconditions(
+        epoch_service=authority_epoch_service,
+        live_authorization_state=live_authorization_state,
+    )
+
+
 def wire_engine_and_driver(
     *,
     data_dir: Path,
@@ -317,14 +366,24 @@ def wire_engine_and_driver(
     continuity_id: str,
     monotonic_source: MonotonicSource,
     max_send_result_wait_ms: int,
+    authority_epoch_service: SafetyAuthorityEpochService,
+    live_authorization_state: str,
 ) -> WiredEngine:
     """The gateway + ``EngineCore`` + durable inbox/driver wiring — split out of ``_wiring.py``'s
     ``_finalize`` purely for the size budget; no behavioural difference from having this inline
     there. Builds, in order: the obligation recorder + gateway evidence sink -> the synthetic
     transport + ``BrokerEgressGateway`` -> the resolved registry + engine evidence sink ->
-    ``EngineCore`` (steps 2-11/13/14 + this gateway as ``transmit``) -> the durable inbox +
+    the ``RuntimeCoordinatorPreconditions`` (design #31 §9-10; plan §2.1, via
+    :func:`_build_preconditions`) -> ``EngineCore`` (steps 2-11/13/14 + this gateway as
+    ``transmit`` + the Coordinator gate) -> the durable inbox +
     :class:`~tos_runtime.engine.driver.EngineDriver`, bound to both (TOS Phase 3 Wave 1 Lane A-R,
     plan §1.1: "engine core wired first, driver last").
+
+    Args:
+        authority_epoch_service: Forwarded to :func:`_build_preconditions` — see its own
+            docstring.
+        live_authorization_state: Forwarded to :func:`_build_preconditions` — see its own
+            docstring.
     """
     # Kernel round #1 §3 (lane B): the reservation id bound to any attempt in THIS compose root
     # is always this same formula — the SAME one _build_realized_stages' AtomicCommitStage
@@ -358,11 +417,16 @@ def wire_engine_and_driver(
 
     resolved_registry = registry if registry is not None else StrategyRegistry()
     engine_sink = EngineEvidenceSinkAdapter(evidence_store, runtime_identity=identity)
+    preconditions = _build_preconditions(
+        authority_epoch_service, live_authorization_state
+    )
     core = EngineCore(
         registry=resolved_registry,
         stages=stages,
         configuration=configuration,
+        preconditions=preconditions,
         transmit=gateway,
+        transport_nature=context_resolver.transport_nature,
         sink=engine_sink,
     )
 
