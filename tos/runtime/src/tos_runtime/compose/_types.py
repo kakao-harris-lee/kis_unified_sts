@@ -42,6 +42,7 @@ from tos_runtime.authority.epoch import (
 from tos_runtime.authority.iap import (
     IntentRegistry,
 )
+from tos_runtime.brokercap import BrokerScopesConfig
 from tos_runtime.compose.context import (
     ComposeContextResolver,
     RecordingActionFlowGovernor,
@@ -157,6 +158,11 @@ class ComposedRuntime:
     #: caller of ``core.handle``/``run`` in this composed runtime; see
     #: ``tos/runtime/tests/engine/test_no_direct_core_calls.py``.
     driver: EngineDriver
+    #: The loaded Broker Scope table (TOS Phase 4 plan §2 decisions 1-2, G-4)
+    #: — the SAME config :attr:`context_resolver`'s ``transport_nature`` /
+    #: ``credential_route_inventory`` were derived from, exposed so a caller
+    #: can inspect the active scope without re-loading the config file.
+    scopes: BrokerScopesConfig
 
     def run_once(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
         """Drive ``events`` through :attr:`driver` to completion, one at a time.

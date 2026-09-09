@@ -191,6 +191,7 @@ def compose_paper_runtime(
         pending_dimension_specs=boot.risk.pending_dimension_specs,
         egress_attestations=boot.risk.egress_attestations,
         egress_coordinates=boot.egress_coordinates,
+        broker_scopes=boot.broker_scopes,
         construction=construction,
         environment_label=environment_label,
         continuity_id=continuity_id,
@@ -210,4 +211,5 @@ def compose_paper_runtime(
         registry=boot.registry,
         release_admitted=boot.release_admitted,
         continuity_id=continuity_id,
+        broker_scopes=boot.broker_scopes,
     )

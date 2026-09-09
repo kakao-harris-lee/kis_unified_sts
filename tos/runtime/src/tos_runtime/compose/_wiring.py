@@ -14,12 +14,11 @@ from pathlib import Path
 
 from tos.authority import AuthorityTransitionReason
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos.egress import CredentialRouteInventoryEntry, EgressCoordinateSet
+from tos.egress import EgressCoordinateSet
 from tos.egressgw import (
     ConformanceProofStage,
     EconomicEffectStage,
     OrderConstructionStage,
-    TransportNature,
     VenueConstraintStage,
 )
 from tos.engine import (
@@ -45,6 +44,13 @@ from tos_runtime.authority.iap import (
     load_operator_approval_with_receipt,
 )
 from tos_runtime.authority.stages import IndependentApprovalStage
+from tos_runtime.brokercap import (
+    BrokerScopesConfig,
+    credential_route_inventory,
+    load_broker_scopes,
+    refuse_principal_collision,
+    transport_nature,
+)
 from tos_runtime.compose._boot_integrity import (
     record_operator_attested_inputs,
     verify_rcl_log_or_halt,
@@ -55,7 +61,6 @@ from tos_runtime.compose._currentness_wiring import (
 )
 from tos_runtime.compose._egress_attestations import EgressAttestations
 from tos_runtime.compose._egress_coordinates import (
-    EgressCoordinateConfigError,
     EgressCoordinatesConfig,
     load_egress_coordinates,
 )
@@ -137,6 +142,9 @@ _CURRENTNESS_CONFIG_NAME = "currentness.yaml"
 _CURRENTNESS_DIMENSIONS_CONFIG_NAME = "currentness_dimensions.yaml"
 _RELEASE_CONFIG_NAME = "release.yaml"
 _EGRESS_COORDINATES_CONFIG_NAME = "egress_coordinates.yaml"
+#: TOS Phase 4 plan §2 decisions 1-2 (G-4) — the runtime-configured Broker
+#: Scope table :mod:`tos_runtime.brokercap.scopes` loads.
+_BROKER_SCOPES_CONFIG_NAME = "broker_scopes.yaml"
 #: TOS Phase 3 Wave 2 Lane C-R follow-up (team-lead CR-4 dispatch, plan §2.2) — the SYNTHETIC
 #: post-trade finality policy (:mod:`tos_runtime.posttrade.config`).
 _FINALITY_CONFIG_NAME = "finality.yaml"
@@ -786,37 +794,6 @@ def _build_currentness_stages(
     return step13_stage, step14_stage
 
 
-def _refuse_active_principal_matching_transport_identity(
-    *, active_principal: str, environment_label: str
-) -> None:
-    """Fail-closed boot refusal (re-review residual R2, 2026-09-09).
-
-    Finding #1 made the gateway principal (``active_principal``)
-    config-driven, which opened a new degenerate-config surface with no
-    guard: an operator can set it to the transport's OWN identity
-    (``TransportNature.principal``, currently the literal
-    ``f"synthetic-paper-{environment_label}"`` in ``_build_context_resolver``
-    — tracked separately as config-gap G-4, not moved by this check).
-    Conflating the gateway's workload identity with the transport's own
-    identity is exactly what ADR-002-013 §8's non-transferable workload
-    identity forbids.
-
-    Raises:
-        EgressCoordinateConfigError: ``active_principal`` equals the
-            transport's own identity.
-    """
-    transport_principal = f"synthetic-paper-{environment_label}"
-    if active_principal == transport_principal:
-        raise EgressCoordinateConfigError(
-            "egress-coordinates config: active_principal "
-            f"{active_principal!r} equals the transport's own identity "
-            f"{transport_principal!r} — a workload cannot assume the "
-            "transport's identity as its own configured gateway principal "
-            "(ADR-002-013 §8 non-transferable workload identity); refusing "
-            "to compose"
-        )
-
-
 def _build_context_resolver(
     *,
     construction_stages: _ConstructionStages,
@@ -827,6 +804,7 @@ def _build_context_resolver(
     pending_dimension_specs: tuple[PendingDimensionSpec, ...],
     egress_attestations: EgressAttestations,
     egress_coordinates: EgressCoordinatesConfig,
+    broker_scopes: BrokerScopesConfig,
     construction: ConstructionConfig,
     environment_label: str,
     continuity_id: str,
@@ -835,14 +813,27 @@ def _build_context_resolver(
     (3)), wired with this environment's transport nature / credential-route
     inventory / authorized coordinates.
 
+    G-4 CLOSED (TOS Phase 4 plan §2 decision 2,
+    ``docs/plans/2026-09-09-tos-phase4-scopes-and-verify-realization-plan.md``):
+    the transport's declared nature and the credential-route inventory used
+    to carry three ``f"synthetic-paper-{environment_label}"`` literals
+    (kernel round #1 §7.2 survey) — they are now STRUCTURALLY DERIVED from
+    ``broker_scopes.active_scope`` via
+    :func:`~tos_runtime.brokercap.transport_nature` /
+    :func:`~tos_runtime.brokercap.credential_route_inventory`, so the
+    transport's identity can never drift from the configured scope table.
+    The old R2 boot refusal (a literal comparison,
+    ``_refuse_active_principal_matching_transport_identity``) is likewise
+    generalized to :func:`~tos_runtime.brokercap.refuse_principal_collision`
+    — ANY configured scope's principal, not just one hardcoded transport
+    literal.
+
     Raises:
-        EgressCoordinateConfigError: See
-            :func:`_refuse_active_principal_matching_transport_identity`
-            (re-review residual R2).
+        BrokerScopeConfigError: ``egress_coordinates.active_principal``
+            collides with some scope's own principal (generalized R2).
     """
-    _refuse_active_principal_matching_transport_identity(
-        active_principal=egress_coordinates.active_principal,
-        environment_label=environment_label,
+    refuse_principal_collision(
+        broker_scopes, active_principal=egress_coordinates.active_principal
     )
     return ComposeContextResolver(
         construction_stage=construction_stages.construction_stage,
@@ -856,32 +847,14 @@ def _build_context_resolver(
         proof_issuer=proof_issuer,
         pending_dimension_specs=pending_dimension_specs,
         egress_attestations=egress_attestations,
-        # Transport's OWN identity (slice #3) — not the principal below; literal kept (config-gap G-4).
-        transport_nature=TransportNature(
-            principal=f"synthetic-paper-{environment_label}",
-            reaches_broker=False,
-            credential_bearing=False,
-            route_bearing=False,
-            risk_relevant_live=False,
-        ),
+        # Transport's OWN identity (slice #3) — derived from the active scope, G-4 closed.
+        transport_nature=transport_nature(broker_scopes.active_scope),
         environment_label=environment_label,
         # ONE source (finding #1): same value as authorized_coordinates below,
         # required by the kernel's claim-principal-matches-active-principal check.
         principal=egress_coordinates.active_principal,
-        credential_route_inventory=(
-            CredentialRouteInventoryEntry(
-                principal=f"synthetic-paper-{environment_label}",
-                usable_credential=False,
-                broker_route=False,
-                inside_boundary=True,
-            ),
-            CredentialRouteInventoryEntry(
-                # ONE source (finding #1b): same identity as ``principal=`` above.
-                principal=egress_coordinates.active_principal,
-                usable_credential=False,
-                broker_route=False,
-                inside_boundary=True,
-            ),
+        credential_route_inventory=credential_route_inventory(
+            broker_scopes, active_principal=egress_coordinates.active_principal
         ),
         authorized_coordinates=EgressCoordinateSet(
             endpoint=egress_coordinates.endpoint,
@@ -952,6 +925,7 @@ def _finalize(
     registry: StrategyRegistry | None,
     release_admitted: bool,
     continuity_id: str,
+    broker_scopes: BrokerScopesConfig,
 ) -> ComposedRuntime:
     """The gateway + ``EngineCore`` + durable inbox/driver wiring (delegated to
     :func:`~tos_runtime.compose._engine_wiring.wire_engine_and_driver`) + the boot-time replay
@@ -1037,6 +1011,7 @@ def _finalize(
         required_scenario_kinds=risk.required_scenario_kinds,
         inbox=wired.inbox,
         driver=wired.driver,
+        scopes=broker_scopes,
     )
 
 
@@ -1048,8 +1023,9 @@ def _resolve_strategies_and_attested_inputs(
     risk: _RiskAndCurrentness,
     registry: StrategyRegistry | None,
     allow_no_strategies: bool,
-) -> tuple[EgressCoordinatesConfig, ResolvedStrategyRegistry]:
-    """Load ``egress_coordinates.yaml``, resolve the ONE strategy source
+) -> tuple[EgressCoordinatesConfig, BrokerScopesConfig, ResolvedStrategyRegistry]:
+    """Load ``egress_coordinates.yaml`` + ``broker_scopes.yaml`` (TOS Phase 4
+    plan §2 decisions 1-2, G-4), resolve the ONE strategy source
     (TOS Phase 3 슬라이스 D-R ``[D-R-2]``, plan §1.2 —
     :func:`~tos_runtime.strategy.resolve.resolve_strategy_registry`), and
     record ``OPERATOR_ATTESTED_INPUTS`` (folding the resolved strategy file
@@ -1067,6 +1043,10 @@ def _resolve_strategies_and_attested_inputs(
     fell back to an empty registry."""
     egress_coordinates = load_egress_coordinates(
         config_dir / _EGRESS_COORDINATES_CONFIG_NAME,
+        environment_label=environment_label,
+    )
+    broker_scopes = load_broker_scopes(
+        config_dir / _BROKER_SCOPES_CONFIG_NAME,
         environment_label=environment_label,
     )
     resolved_strategies = resolve_strategy_registry(
@@ -1087,13 +1067,13 @@ def _resolve_strategies_and_attested_inputs(
         resolved_strategies.loaded,
         resolved_strategies.loaded_bindings,
     )
-    return egress_coordinates, resolved_strategies
+    return egress_coordinates, broker_scopes, resolved_strategies
 
 
 @dataclass
 class _BootResult:
     """:func:`_boot_services`'s return value — named fields instead of a
-    7-tuple purely so callers never destructure it (size-budget win: a
+    growing tuple purely so callers never destructure it (size-budget win: a
     named-attribute return avoids the multi-line unpacking assignment a
     growing tuple forces). ``registry`` is the RESOLVED
     :class:`~tos.engine.StrategyRegistry` (TOS Phase 3 슬라이스 D-R
@@ -1105,6 +1085,7 @@ class _BootResult:
     risk: _RiskAndCurrentness
     release_admitted: bool
     egress_coordinates: EgressCoordinatesConfig
+    broker_scopes: BrokerScopesConfig
     registry: StrategyRegistry
 
 
@@ -1161,14 +1142,16 @@ def _boot_services(
         infra.time_service,
         rcl.authority_epoch_service,
     )
-    egress_coordinates, resolved_strategies = _resolve_strategies_and_attested_inputs(
-        config_dir,
-        environment_label,
-        identity,
-        infra,
-        risk,
-        registry,
-        allow_no_strategies,
+    egress_coordinates, broker_scopes, resolved_strategies = (
+        _resolve_strategies_and_attested_inputs(
+            config_dir,
+            environment_label,
+            identity,
+            infra,
+            risk,
+            registry,
+            allow_no_strategies,
+        )
     )
     release_admitted = _stage_b_release_probe(
         release_service, identity, infra.time_service, rcl.rcl_log
@@ -1180,6 +1163,7 @@ def _boot_services(
         risk=risk,
         release_admitted=release_admitted,
         egress_coordinates=egress_coordinates,
+        broker_scopes=broker_scopes,
         registry=resolved_strategies.registry,
     )
 

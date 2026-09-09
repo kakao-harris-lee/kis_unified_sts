@@ -14,6 +14,7 @@ import pytest
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.egress import EgressCoordinateSet
+from tos_runtime.brokercap import BrokerScopeConfigError
 from tos_runtime.compose._egress_coordinates import (
     EgressCoordinateConfigError,
     load_egress_coordinates,
@@ -291,11 +292,22 @@ def test_active_principal_matching_the_transport_identity_refuses_to_compose(
     active_principal``) config-driven, which opened a new degenerate-config
     surface with no guard: an operator can set ``active_principal`` to the
     exact string the transport's OWN identity is templated to
-    (``TransportNature.principal``, currently the literal
-    ``f"synthetic-paper-{environment_label}"`` in ``_wiring.py`` — tracked
-    separately as config-gap G-4, not moved by this fix). Before finding #1's
-    fix this collision was unreachable (the gateway principal was a
-    different hardcoded literal); now it is one config edit away.
+    (``TransportNature.principal``, then the literal
+    ``f"synthetic-paper-{environment_label}"`` in ``_wiring.py``). Before
+    finding #1's fix this collision was unreachable (the gateway principal
+    was a different hardcoded literal); now it is one config edit away.
+
+    **G-4 CLOSED (TOS Phase 4 plan §2 decision 2,
+    docs/plans/2026-09-09-tos-phase4-scopes-and-verify-realization-plan.md):**
+    the transport's own identity is no longer a ``_wiring.py`` literal — it
+    is the ``SYNTHETIC_FUTURES_ORDER`` scope's own configured ``principal``
+    (``tos_runtime.brokercap.scopes.BrokerScope``), and the refusal below is
+    now :func:`~tos_runtime.brokercap.refuse_principal_collision` (raising
+    :class:`~tos_runtime.brokercap.BrokerScopeConfigError`), generalized
+    from ONE hardcoded comparison to every configured scope's principal —
+    the fixture's ``broker_scopes.yaml`` (conftest.py) still templates that
+    scope's principal to ``f"synthetic-paper-{environment_label}"``, so the
+    degenerate config below still collides exactly as before.
 
     Conflating the gateway's workload identity with the transport's own
     identity is exactly what ADR-002-013 §8's "non-transferable workload
@@ -306,9 +318,7 @@ def test_active_principal_matching_the_transport_identity_refuses_to_compose(
     degenerate["active_principal"] = {"value": "synthetic-paper-{environment_label}"}
     _write(config_dir / "egress_coordinates.yaml", degenerate)
 
-    with pytest.raises(
-        EgressCoordinateConfigError, match="synthetic-paper-non-live-test"
-    ):
+    with pytest.raises(BrokerScopeConfigError, match="synthetic-paper-non-live-test"):
         _compose(tmp_path, config_dir, data_dir, custody_root)
 
 

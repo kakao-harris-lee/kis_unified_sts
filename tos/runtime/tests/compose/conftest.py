@@ -19,6 +19,14 @@ from tos_runtime.compose._pending_dimensions import PENDING_DIMENSION_KEYS
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
+#: The shipped example (TOS Phase 4 plan §2 decisions 1-2, G-4) — this
+#: fixture only fills the one named-TBD field (``active_scope``), never
+#: hand-retypes the scope table, so the compose e2e suite exercises the SAME
+#: config a real deployment would start from.
+_BROKER_SCOPES_EXAMPLE_PATH = (
+    Path(__file__).resolve().parents[2] / "config" / "broker_scopes.example.yaml"
+)
+
 #: The digest compose_paper_runtime computes for its own RuntimeIdentity.code_digest
 #: (tos_runtime.compose.root: ``_SCHEME.compute_digest({"component": "tos_runtime.compose"})``).
 #: Reproduced here (pure function, same scheme) so release.yaml can match it exactly.
@@ -139,6 +147,15 @@ def config_dir(tmp_path: Path) -> Path:
             "capsule_terminus_fields": {"value": ["account", "instrument"]},
         },
     )
+    broker_scopes_raw = yaml.safe_load(
+        _BROKER_SCOPES_EXAMPLE_PATH.read_text(encoding="utf-8")
+    )
+    # The example's ONE named-TBD field (module docstring) — this compose
+    # e2e suite activates the same SYNTHETIC scope _wiring.py's old
+    # hardcoded transport literal represented (G-4, now structurally
+    # derived instead — tos_runtime.brokercap.scopes).
+    broker_scopes_raw["active_scope"] = "SYNTHETIC_FUTURES_ORDER"
+    _write_yaml(directory / "broker_scopes.yaml", broker_scopes_raw)
     _write_yaml(
         directory / "risk_attestations.yaml",
         {
