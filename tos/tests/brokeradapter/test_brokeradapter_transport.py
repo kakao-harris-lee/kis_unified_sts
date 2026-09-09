@@ -554,3 +554,40 @@ def test_retry_primitive_scan_detects_a_planted_violation() -> None:
     assert "retry-named identifier" in joined
     assert "'for ... in range(...)' loop" in joined
     assert "send_once() call" in joined
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 wave 2 KW2-C1 — CANCEL_ACK / EXPIRED (new kinds; transport never emits them)
+# ---------------------------------------------------------------------------
+
+
+def test_synthetic_execution_id_accepts_the_two_new_kinds_without_crashing() -> None:
+    """(plan §2.2 "`_synthetic_execution_id` 는 새 kind 를 수용해야 함") No behaviour change:
+    the helper is a pure function of ``(attempt_id, kind)`` and already reads only
+    ``kind.value``, so it never needed a per-kind branch to begin with — this pins that fact
+    for the two kinds this wave adds to the vocabulary."""
+    import tos.brokeradapter.synthetic as synthetic
+
+    for kind in (EgressResultKind.CANCEL_ACK, EgressResultKind.EXPIRED):
+        stamped = synthetic._synthetic_execution_id("attempt-cancel-expiry", kind)
+        assert kind.value in stamped
+        assert "attempt-cancel-expiry" in stamped
+
+
+def test_neither_cancel_ack_nor_expired_is_declarable_by_this_transport() -> None:
+    """(module NON_FILL_DECLARABLE_KINDS docstring) This single-shot transport has no
+    cancel-request or expiry-observation entry point, so declaring either is refused —
+    distinctly from the "is a fill kind" refusal FULL_FILL/PARTIAL_FILL get."""
+    for kind in (EgressResultKind.CANCEL_ACK, EgressResultKind.EXPIRED):
+        assert kind not in NON_FILL_DECLARABLE_KINDS
+        with pytest.raises(
+            ValidationError, match="no cancel-request or expiry-observation"
+        ):
+            SyntheticFillPolicy(declared_kind=kind)
+
+
+def test_declaring_a_fill_kind_still_gets_the_original_fill_kind_message() -> None:
+    """(regression control) The pre-existing FULL_FILL/PARTIAL_FILL refusal message is
+    unchanged by the new branch added for CANCEL_ACK/EXPIRED."""
+    with pytest.raises(ValidationError, match="is a fill kind"):
+        SyntheticFillPolicy(declared_kind=EgressResultKind.FULL_FILL)

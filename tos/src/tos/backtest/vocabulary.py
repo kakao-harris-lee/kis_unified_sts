@@ -89,6 +89,12 @@ class FillMode(StrEnum):
     REPORT_UNKNOWN = "REPORT_UNKNOWN"
     #: The injected timeout scenario (design #31 §2.1 edge (i) / J1).
     REPORT_TIMEOUT = "REPORT_TIMEOUT"
+    #: The injected bare cancel-acknowledgement scenario (Phase 3 wave 2 KW2-C1) — a cancel
+    #: carries no fill magnitude (ADR-002-002 §16.2).
+    REPORT_CANCEL_ACK = "REPORT_CANCEL_ACK"
+    #: The injected broker-observed expiry scenario (Phase 3 wave 2 KW2-C1; ADR-002-005 §7) —
+    #: also no magnitude.
+    REPORT_EXPIRED = "REPORT_EXPIRED"
 
 
 class SettlementPolicy(StrEnum):
@@ -219,4 +225,6 @@ def settleable_result_kinds(mode: FillMode) -> frozenset[EgressResultKind]:
         FillMode.ACKNOWLEDGE: frozenset({EgressResultKind.ACK}),
         FillMode.REPORT_UNKNOWN: frozenset({EgressResultKind.UNKNOWN}),
         FillMode.REPORT_TIMEOUT: frozenset({EgressResultKind.TIMEOUT}),
+        FillMode.REPORT_CANCEL_ACK: frozenset({EgressResultKind.CANCEL_ACK}),
+        FillMode.REPORT_EXPIRED: frozenset({EgressResultKind.EXPIRED}),
     }[mode]

@@ -115,6 +115,14 @@ class EgressResultKind(_NonTruthyStrEnum):
     rejection nor safe-to-retry — they consume exposure at the worst-credible bound (RFC-005
     §11:325-327; ADR-002-002 INV-006:174), which is why they are distinct members rather than a
     missing value.
+
+    ``CANCEL_ACK`` (Phase 3 wave 2 KW2-C1; plan §2.2) is a **bare** broker cancel
+    acknowledgement — ADR-002-002 §16.2 "Cancel Acknowledgement moves the reservation to
+    ``RELEASE_PENDING_PROOF``", never straight to a released state (CPL-4 "cancel is not
+    release"). ``EXPIRED`` is a broker-observed order expiry (ADR-002-005 §7 Broker Order
+    vocabulary), governed by the identical CPL-4 rule per the plan's explicit instruction
+    ("EXPIRED 동일 규칙"). Neither carries a fill magnitude (design #31 §2.2 — see
+    :data:`FILL_RESULT_KINDS`).
     """
 
     ACK = "ACK"
@@ -123,6 +131,8 @@ class EgressResultKind(_NonTruthyStrEnum):
     REJECT = "REJECT"
     UNKNOWN = "UNKNOWN"
     TIMEOUT = "TIMEOUT"
+    CANCEL_ACK = "CANCEL_ACK"
+    EXPIRED = "EXPIRED"
 
 
 #: The result kinds that carry fill magnitudes; every other kind must carry none (design #31 §2.2).
@@ -148,6 +158,13 @@ class EgressKnowledge(StrEnum):
     FILLED = "FILLED"
     REJECTED = "REJECTED"
     UNKNOWN = "UNKNOWN"
+    #: A bare broker cancel acknowledgement was observed (Phase 3 KW2-C1) — distinct from
+    #: ``REJECTED``: ADR-002-002 §16.2 moves the reservation only to ``RELEASE_PENDING_PROOF``,
+    #: never further, until Final Quantity Proof (CPL-4).
+    CANCEL_ACKNOWLEDGED = "CANCEL_ACKNOWLEDGED"
+    #: A broker-observed order expiry (ADR-002-005 §7) — the same CPL-4 rule as a cancel
+    #: acknowledgement applies (Phase 3 KW2-C1).
+    EXPIRED = "EXPIRED"
 
 
 # ===========================================================================
@@ -374,10 +391,14 @@ class ResultDisposition(_NonTruthyStrEnum):
     #: ``RESULT_UNMATCHED`` evidence for reconciliation (ADR-002-002 §15.2), never raised as a
     #: crash (Phase 3 K2-p3-#4).
     NON_MONOTONIC_PROJECTION = "NON_MONOTONIC_PROJECTION"
-    #: A ``FULL_FILL`` / ``PARTIAL_FILL`` reports a ``filled_quantity`` strictly below the
-    #: already-recorded value for the same attempt — the quantity axis's own non-revival rule
-    #: (ADR-002-002 §15.1:710 "reduced by no more than the amount proven filled"; Phase 3
-    #: K2-p3-#5). The already-recorded, larger magnitude is retained.
+    #: A ``FULL_FILL`` / ``PARTIAL_FILL`` regresses the quantity axis for the same attempt — the
+    #: quantity axis's own non-revival rule (ADR-002-002 §15.1:710 "reduced by no more than the
+    #: amount proven filled"; Phase 3 K2-p3-#5 / wave 2 N2). Three independent shapes are folded
+    #: into this one disposition: (i) ``filled_quantity`` strictly below the already-recorded
+    #: value; (ii) ``remaining_quantity`` growing at all versus the already-recorded value; (iii)
+    #: ``remaining_quantity`` shrinking by more than ``filled_quantity`` grew (quantity vanishing
+    #: unaccounted). The already-recorded, more-conservative magnitudes are retained in every
+    #: case.
     QUANTITY_REGRESSION = "QUANTITY_REGRESSION"
 
 
@@ -436,6 +457,14 @@ class HaltReason(StrEnum):
     RESULT_UNMATCHED = "RESULT_UNMATCHED"
     TRANSMIT_UNAVAILABLE = "TRANSMIT_UNAVAILABLE"
     TRANSMIT_RAISED = "TRANSMIT_RAISED"
+    #: The Coordinator's RFC-002 §10.7 "verify current Safety Authority" positive gate did not
+    #: read ``True`` (Phase 3 KW2-B; design #31 §9-10; plan §2.1). Recorded before step 1 —
+    #: nothing is consumed.
+    AUTHORITY_NOT_CURRENT = "AUTHORITY_NOT_CURRENT"
+    #: The Coordinator's RFC-002 §10.7 "verify live authorization" positive gate did not read
+    #: ``True`` for this transport (Phase 3 KW2-B; design #31 §9-10; plan §2.1). Recorded before
+    #: step 1 — nothing is consumed.
+    LIVE_SCOPE_NOT_AUTHORIZED = "LIVE_SCOPE_NOT_AUTHORIZED"
 
 
 class EvidenceKind(StrEnum):
@@ -460,6 +489,10 @@ class EvidenceKind(StrEnum):
     #: ``EVENT_REFUSED`` because the *event* itself is well-formed and causally in order; only the
     #: result's *disposition* against the projection is non-APPLIED (see :class:`ResultDisposition`).
     RESULT_UNMATCHED = "RESULT_UNMATCHED"
+    #: The Coordinator's RFC-002 §10.7 positive gates (current Safety Authority / live
+    #: authorization) refused a ``DECISION_TICK`` before step 1 (Phase 3 KW2-B; design #31
+    #: §9-10). Distinct from ``DECISION_WITHHELD`` — the registry dispatch is never reached.
+    COORDINATOR_PRECONDITION_REFUSED = "COORDINATOR_PRECONDITION_REFUSED"
 
 
 # ===========================================================================

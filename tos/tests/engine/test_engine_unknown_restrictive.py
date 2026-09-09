@@ -119,6 +119,8 @@ def test_a_second_tick_after_unknown_is_still_denied_at_the_capacity_stage() -> 
         (EgressResultKind.UNKNOWN, {}),
         (EgressResultKind.TIMEOUT, {}),
         (EgressResultKind.REJECT, {}),
+        (EgressResultKind.CANCEL_ACK, {}),
+        (EgressResultKind.EXPIRED, {}),
         (
             EgressResultKind.PARTIAL_FILL,
             {"filled_quantity": Decimal("1"), "remaining_quantity": Decimal("1")},
@@ -469,6 +471,113 @@ def test_a_regressing_filled_quantity_is_refused_not_applied() -> None:
     assert second.result_disposition is ResultDisposition.QUANTITY_REGRESSION
     # the already-recorded, larger magnitude is retained — not overwritten downward
     assert core.ledger.outstanding_consumed_magnitude(instrument_key()) == Decimal("4")
+
+
+def test_a_growing_remaining_quantity_is_refused_not_applied() -> None:
+    """(Phase 3 wave 2 N2; ADR-002-002 §15.1) ``remaining_quantity`` may never grow.
+
+    The reviewer probe named in the wave 1 finding: PARTIAL(4/6) -> PARTIAL(4/60) with the
+    *same* filled magnitude. Before this fix ``apply_egress_result`` only compared
+    ``filled_quantity`` (unchanged here, so the old check passed it straight through) and
+    silently applied a remaining-quantity increase that implies the authorized quantity
+    itself grew for the same attempt — unrepresentable, and non-conservative.
+    """
+    core, _, _, attempt_id = _sent_core()
+    first = core.handle(
+        _egress_event(
+            EgressResultKind.PARTIAL_FILL,
+            attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("4"),
+            remaining_quantity=Decimal("6"),
+        )
+    )
+    assert first.result_disposition is ResultDisposition.APPLIED
+
+    second = core.handle(
+        _egress_event(
+            EgressResultKind.PARTIAL_FILL,
+            attempt_id,
+            sequence=3,
+            filled_quantity=Decimal("4"),
+            remaining_quantity=Decimal("60"),
+        )
+    )
+    assert second.halt_reason is HaltReason.RESULT_UNMATCHED
+    assert second.result_disposition is ResultDisposition.QUANTITY_REGRESSION
+    # the already-recorded projection is retained byte-for-byte — untouched by the refusal
+    assert core.ledger.outstanding(instrument_key()).remaining_quantity == Decimal("6")
+    assert core.ledger.outstanding(instrument_key()).filled_quantity == Decimal("4")
+
+
+def test_a_remaining_quantity_shrink_unmatched_by_a_filled_increase_is_refused() -> (
+    None
+):
+    """(Phase 3 wave 2 N2; CPL-2/CPL-4) ``remaining_quantity`` may not shrink for free.
+
+    The symmetric direction the same finding named: ``filled_quantity`` stays put while
+    ``remaining_quantity`` drops — 4 units of quantity would vanish, unaccounted by either a
+    proven fill or the still-outstanding remainder, which is an implicit, evidence-free
+    release of exposure.
+    """
+    core, _, _, attempt_id = _sent_core()
+    first = core.handle(
+        _egress_event(
+            EgressResultKind.PARTIAL_FILL,
+            attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("4"),
+            remaining_quantity=Decimal("6"),
+        )
+    )
+    assert first.result_disposition is ResultDisposition.APPLIED
+
+    second = core.handle(
+        _egress_event(
+            EgressResultKind.PARTIAL_FILL,
+            attempt_id,
+            sequence=3,
+            filled_quantity=Decimal("4"),
+            remaining_quantity=Decimal("2"),
+        )
+    )
+    assert second.halt_reason is HaltReason.RESULT_UNMATCHED
+    assert second.result_disposition is ResultDisposition.QUANTITY_REGRESSION
+    assert core.ledger.outstanding(instrument_key()).remaining_quantity == Decimal("6")
+
+
+def test_a_remaining_quantity_shrink_fully_matched_by_filled_growth_is_applied() -> (
+    None
+):
+    """(Phase 3 wave 2 N2, the non-regressing control) Ordinary partial-fill progression still works.
+
+    ``remaining`` shrinking by *exactly* as much as ``filled`` grew is the legitimate case the
+    N2 rule must not also catch — a control proving the new check does not over-reject.
+    """
+    core, _, _, attempt_id = _sent_core()
+    first = core.handle(
+        _egress_event(
+            EgressResultKind.PARTIAL_FILL,
+            attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("4"),
+            remaining_quantity=Decimal("6"),
+        )
+    )
+    assert first.result_disposition is ResultDisposition.APPLIED
+
+    second = core.handle(
+        _egress_event(
+            EgressResultKind.PARTIAL_FILL,
+            attempt_id,
+            sequence=3,
+            filled_quantity=Decimal("6"),
+            remaining_quantity=Decimal("4"),
+        )
+    )
+    assert second.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).remaining_quantity == Decimal("4")
+    assert core.ledger.outstanding(instrument_key()).filled_quantity == Decimal("6")
 
 
 def test_apply_egress_result_never_raises_artifact_integrity_error() -> None:

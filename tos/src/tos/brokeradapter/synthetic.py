@@ -54,6 +54,7 @@ from pydantic import model_validator
 from tos.brokeradapter.protocol import OutboundSendRequest
 from tos.canonical import ArtifactIntegrityError, CanonicalDecimal, FrozenModel
 from tos.engine import (
+    FILL_RESULT_KINDS,
     AttemptRequest,
     EgressResultKind,
     EgressResultPayload,
@@ -88,6 +89,18 @@ NON_FILL_DECLARABLE_KINDS: frozenset[EgressResultKind] = frozenset(
         EgressResultKind.TIMEOUT,
     }
 )
+
+#: ⚠ **Deliberately excludes ``CANCEL_ACK`` / ``EXPIRED`` (Phase 3 wave 2 KW2-C1).** This
+#: transport models a single-shot send/settle round trip only (module docstring); it has no
+#: cancel-request or expiry-observation entry point at all, so it can never honestly declare
+#: either outcome. Both kinds were added to the kernel's closed
+#: :class:`~tos.engine.EgressResultKind` vocabulary in this same wave (a cancel
+#: acknowledgement or a broker-observed expiry), but authoring one here would be inventing a
+#: cancel/expiry protocol this transport does not have. A real adapter that actually supports
+#: cancellation or observes expiry is future work; :func:`_synthetic_execution_id` below
+#: already accepts *any* :class:`~tos.engine.EgressResultKind` member generically (it only
+#: reads ``kind.value``), so extending that adapter later needs no change here — only a new
+#: code path that can actually produce one of these two kinds.
 
 #: The prefix stamped on every synthetic execution id (Phase 3 K2-p3-#6b) — distinct on sight from
 #: any real broker's own id format, so a reader (or a future consumer) never mistakes one for a
@@ -152,10 +165,20 @@ class SyntheticFillPolicy(FrozenModel):
         has_band = self.fill_numerator is not None or self.fill_denominator is not None
         if self.declared_kind is not None:
             if self.declared_kind not in NON_FILL_DECLARABLE_KINDS:
+                if self.declared_kind in FILL_RESULT_KINDS:
+                    raise ArtifactIntegrityError(
+                        f"SyntheticFillPolicy.declared_kind={self.declared_kind.value} is a "
+                        "fill kind — a fill / partial-fill outcome is DERIVED from the "
+                        "magnitudes and may never be declared (구조 파생 > 자기신고; RFC-005 "
+                        "§11:338-339)"
+                    )
                 raise ArtifactIntegrityError(
-                    f"SyntheticFillPolicy.declared_kind={self.declared_kind.value} is a fill "
-                    "kind — a fill / partial-fill outcome is DERIVED from the magnitudes and "
-                    "may never be declared (구조 파생 > 자기신고; RFC-005 §11:338-339)"
+                    f"SyntheticFillPolicy.declared_kind={self.declared_kind.value} is outside "
+                    "this transport's supported declarable outcomes "
+                    f"({sorted(k.value for k in NON_FILL_DECLARABLE_KINDS)}) — this single-shot "
+                    "send/settle transport has no cancel-request or expiry-observation entry "
+                    "point at all (Phase 3 wave 2 KW2-C1; module NON_FILL_DECLARABLE_KINDS "
+                    "docstring)"
                 )
             if has_band:
                 raise ArtifactIntegrityError(

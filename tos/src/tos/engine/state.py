@@ -95,6 +95,23 @@ _RESULT_TRANSITIONS: dict[
     ),
     EgressResultKind.UNKNOWN: (EgressKnowledge.UNKNOWN, None),
     EgressResultKind.TIMEOUT: (EgressKnowledge.UNKNOWN, None),
+    # ★ [KW2-C1] CANCEL_ACK / EXPIRED (Phase 3 wave 2 §2.2): both are broker-observed, but
+    # neither is a release. ADR-002-002 §16.2 "Cancel Acknowledgement moves the reservation to
+    # RELEASE_PENDING_PROOF unless the broker capability profile proves ... Final Quantity
+    # Proof" and CPL-4 "cancel is not release" (ADR-002-005 §10) apply identically to EXPIRED
+    # per the plan's explicit instruction — the projection may advance only as far as
+    # ``RELEASE_PENDING_PROOF``, never to a released state (which this projection cannot reach
+    # at all — see the module docstring "no release path"). A late/duplicate/reordered
+    # cancel-or-expiry is handled by the same rank/quantity non-revival machinery below as
+    # every other result kind — no special-casing required here.
+    EgressResultKind.CANCEL_ACK: (
+        EgressKnowledge.CANCEL_ACKNOWLEDGED,
+        CapacityState.RELEASE_PENDING_PROOF,
+    ),
+    EgressResultKind.EXPIRED: (
+        EgressKnowledge.EXPIRED,
+        CapacityState.RELEASE_PENDING_PROOF,
+    ),
 }
 
 
@@ -107,7 +124,9 @@ def knowledge_for_result(kind: EgressResultKind) -> EgressKnowledge:
     Returns:
         The :class:`~tos.engine.vocabulary.EgressKnowledge` member. ``UNKNOWN`` and ``TIMEOUT``
         both map to the explicit ``UNKNOWN`` member — never to a missing value, and never to
-        ``REJECTED`` (RFC-005 §11:325-327 "UNKNOWN is not a rejection").
+        ``REJECTED`` (RFC-005 §11:325-327 "UNKNOWN is not a rejection"). ``CANCEL_ACK`` /
+        ``EXPIRED`` each map to their own dedicated member (Phase 3 KW2-C1) — neither collapses
+        into ``REJECTED``, which would misrepresent a cancel/expiry as a broker rejection.
 
     Raises:
         ArtifactIntegrityError: If the kind is outside the closed mapping (fail-closed).
@@ -369,6 +388,56 @@ class ProvisionalReservationLedger:
             )
         )
 
+    @staticmethod
+    def _quantity_regressed(
+        current: ProvisionalReservation, payload: EgressResultPayload
+    ) -> bool:
+        """Whether ``payload`` would regress the quantity axis of ``current`` (§35 K2-p3-#5 / N2).
+
+        Factored out of :meth:`apply_egress_result` (size-budget discipline) — see that
+        method's own inline comments for the full citation and rationale of each of the three
+        independent, non-revival directions checked here:
+
+        1. ``filled_quantity`` strictly below the already-recorded value (ADR-002-002
+           §15.1:710 "reduced by no more than the amount proven filled");
+        2. ``remaining_quantity`` growing at all versus the already-recorded value (implies the
+           authorized quantity itself grew — unrepresentable for one attempt);
+        3. ``remaining_quantity`` shrinking by more than ``filled_quantity`` grew (quantity
+           vanishing unaccounted — CPL-2/CPL-4 forbid an evidence-free implicit release).
+
+        Only ``FULL_FILL`` / ``PARTIAL_FILL`` carry magnitudes at all; every other kind returns
+        ``False`` immediately (nothing to regress).
+
+        Args:
+            current: The outstanding projection before this result.
+            payload: The re-injected egress result payload.
+
+        Returns:
+            ``True`` iff any of the three directions above regressed.
+        """
+        if payload.kind not in (
+            EgressResultKind.FULL_FILL,
+            EgressResultKind.PARTIAL_FILL,
+        ):
+            return False
+        if (
+            current.filled_quantity is not None
+            and payload.filled_quantity is not None
+            and payload.filled_quantity < current.filled_quantity
+        ):
+            return True
+        if (
+            current.remaining_quantity is not None
+            and payload.remaining_quantity is not None
+        ):
+            remaining_delta = payload.remaining_quantity - current.remaining_quantity
+            filled_delta = (payload.filled_quantity or Decimal(0)) - (
+                current.filled_quantity or Decimal(0)
+            )
+            if remaining_delta > 0 or (-remaining_delta) > filled_delta:
+                return True
+        return False
+
     def apply_egress_result(self, payload: EgressResultPayload) -> ResultApplication:
         """Apply — or conservatively record — a re-injected egress result (Phase 3 A-K-2).
 
@@ -435,15 +504,12 @@ class ProvisionalReservationLedger:
                     disposition=ResultDisposition.NON_MONOTONIC_PROJECTION,
                     projection=current,
                 )
-        # ★ [K2-p3-#5] The quantity axis has its own, independent non-revival rule (ADR-002-002
-        # §15.1:710): a fill result may never *shrink* the already-recorded filled magnitude, even
-        # when the capacity rank above did not regress (e.g. two PARTIAL_FILLs on the same attempt).
-        if (
-            payload.kind in (EgressResultKind.FULL_FILL, EgressResultKind.PARTIAL_FILL)
-            and current.filled_quantity is not None
-            and payload.filled_quantity is not None
-            and payload.filled_quantity < current.filled_quantity
-        ):
+        # ★ [K2-p3-#5 / Phase 3 wave 2 N2] The quantity axis has its own, independent
+        # non-revival rule (ADR-002-002 §15.1:710), covering both ``filled_quantity`` shrinking
+        # and ``remaining_quantity`` growing or shrinking unmatched by a filled increase (wave 1
+        # review finding N2). See :meth:`_quantity_regressed` for the full citation of each of
+        # the three directions checked.
+        if self._quantity_regressed(current, payload):
             return ResultApplication(
                 applied=False,
                 disposition=ResultDisposition.QUANTITY_REGRESSION,
