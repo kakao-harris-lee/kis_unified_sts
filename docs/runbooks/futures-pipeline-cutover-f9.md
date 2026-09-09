@@ -160,11 +160,12 @@ Each trading day, verify:
   ```
 
   `timestamp` is the trade print, `quote_ts` the book that trade carried.
-  `timestamp` advancing across the five entries while `quote_ts` stays constant
-  is a frozen orderbook feed: the router will be rejecting entries with
-  `quote_stale`, and that is the gate working, not a market condition. Both
-  advancing together is healthy. No `quote_ts` at all means the producer
-  predates this field — redeploy it.
+  `XREVRANGE` returns newest first, so the `timestamp` values DESCEND down the
+  output. Descending `timestamp` next to a constant `quote_ts` is a frozen
+  orderbook feed: the router will be rejecting entries with `quote_stale`, and
+  that is the gate working, not a market condition. Both descending together is
+  healthy. No `quote_ts` at all means the producer predates this field —
+  redeploy it.
 
 - `trader-futures` kept its WS through the shadow day: no reconnect storm and no
   `raw_data` gap while the router was up.
@@ -319,17 +320,24 @@ each merge the feed's cached top of book into the tick they republish
   `raw_data`, disable cross-asset, or run `ws` in an exclusive window.
 
 On restart the router seeds its cache from the tail of the stream
-(`XREVRANGE`, `FUTURES_ORDER_ROUTER_SEED_COUNT`, default 50) so the first signal
-after a restart is not blocked on `orderbook_unavailable`. The count bounds how
-deep to look for this symbol, not the seeded book's age: entries apply
-oldest-first, so the newest always wins. Age is bounded separately, and the two clocks are
-judged apart: the price seeds when the trade print is inside the quote-age
-bound, the book only when `quote_ts` is. So a restart under a frozen book comes
-up with a current price and no book — the router serves PseudoOCO stops and
-paper fills immediately, and blocks entries on `orderbook_unavailable` only
-until the first live two-sided tick. A restart on a day-old stream seeds
-nothing at all. Either way seeding does not lean on the gate to reject what it
-handed over.
+(`XREVRANGE`, `FUTURES_ORDER_ROUTER_SEED_COUNT`, default 50). The count bounds
+how deep to look for the subscribed and auxiliary symbols, not the seeded
+book's age: entries apply oldest-first, so the newest always wins. Age is
+bounded separately by the quote-age knob, and the two clocks are judged apart —
+the price seeds when the trade print is inside the bound, the book only when
+`quote_ts` is. What a restart actually gets you:
+
+- **A current price, always** (when the tail is fresh at all). The exit monitor
+  and the paper fill simulator work from the first moment.
+- **A book only if the tail's `quote_ts` is inside the bound.** Under a frozen
+  orderbook feed the seed carries no book, so the first signals block on
+  `orderbook_unavailable`. When the first live two-sided tick arrives the book
+  is cached with its own — still old — `quote_ts`, so entries then block on
+  `quote_stale` instead. Neither is a market condition; both say the H0IFASP0
+  channel has not recovered, and entries resume only when it does.
+- **Nothing at all from a day-old stream.** Seeding does not lean on the gate to
+  reject what it handed over, and stays age-bounded even with
+  `FUTURES_ROUTER_SLIPPAGE_GATE=false`.
 
 ## Gate 1b — Control Parity (blocks Gate 2 approval)
 
