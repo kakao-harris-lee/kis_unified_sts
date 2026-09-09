@@ -208,6 +208,12 @@ class EgressResultPayload(FrozenModel):
     ``attempt_id`` is a mandatory positive identity: a result is applied **only** to the exact
     attempt it names, so a late / reordered result can never transition someone else's
     reservation (design #31 §2.1(ii)).
+
+    ``broker_execution_id`` carries the ADR-002-002 §15.3:725 "broker execution identity or a
+    broker-specific deterministic composite identity" the DUPLICATE detection keys on (Phase 3
+    K2-p3-#6) — never the driver's own ``reference`` coordinate, which is re-stamped on every
+    re-enqueue and therefore cannot identify a genuine broker resend. It is ``None`` for a result
+    that never reached a broker (e.g. a synthetic ``TIMEOUT`` injection).
     """
 
     instrument_key: InstrumentKey
@@ -215,6 +221,7 @@ class EgressResultPayload(FrozenModel):
     kind: EgressResultKind
     filled_quantity: CanonicalDecimal | None = None
     remaining_quantity: CanonicalDecimal | None = None
+    broker_execution_id: str | None = None
     reference: OrderingEvent = OrderingEvent()
 
     @model_validator(mode="after")

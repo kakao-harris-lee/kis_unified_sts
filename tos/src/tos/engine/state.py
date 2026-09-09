@@ -170,7 +170,12 @@ class ProvisionalReservationLedger:
         self._max_unresolved = max_unresolved_send_per_scope
         self._reservations: dict[tuple[str, str], ProvisionalReservation] = {}
         #: Per-scope signatures of every egress result already applied (Phase 3 A-K-2 DUPLICATE
-        #: detection): ``(attempt_id, kind, filled_quantity, remaining_quantity, reference)``. A
+        #: detection, keying tightened in K2-p3-#6): ``(attempt_id, kind, filled_quantity,
+        #: remaining_quantity, broker_execution_id)`` — **not** ``reference``, which the driver
+        #: re-stamps on every re-enqueue and so can never identify a genuine broker resend
+        #: (ADR-002-002 §15.3:725). With ``broker_execution_id is None`` (a result that never
+        #: reached a broker, e.g. a synthetic ``TIMEOUT``) this is a runtime-local replay guard
+        #: against re-processing a byte-identical resend, not §15.3 broker idempotency. A
         #: scope goes through at most one reservation lifecycle here (no release path exists — see
         #: the module docstring), so this never needs resetting across attempts within a scope.
         self._applied_result_signatures: dict[
@@ -382,8 +387,12 @@ class ProvisionalReservationLedger:
           never mismatched, including one that arrives after a ``TIMEOUT``/``UNKNOWN`` on that same
           attempt (ADR-002-002 §15.2 "later valid fill accepted").
         * **DUPLICATE** — the exact
-          ``(attempt_id, kind, filled_quantity, remaining_quantity, reference)`` tuple was already
-          applied to this reservation; a resend/replay of an already-recorded fact, not a new one.
+          ``(attempt_id, kind, filled_quantity, remaining_quantity, broker_execution_id)`` tuple
+          was already applied to this reservation; a resend/replay of an already-recorded fact,
+          not a new one. Keyed on the broker-side identity (ADR-002-002 §15.3:725), never the
+          driver's own ``reference`` coordinate (K2-p3-#6) — with ``broker_execution_id is None``
+          this degrades to a runtime-local replay guard against a byte-identical resend, not §15.3
+          broker idempotency.
         * **NON_MONOTONIC_PROJECTION** — the result names the exact outstanding attempt and is not
           a duplicate, but its target capacity state ranks *below* the currently-stored one (e.g. a
           late ``FULL_FILL`` after a ``REJECT``, or a late ``PARTIAL_FILL`` after a ``FULL_FILL``).
@@ -429,7 +438,7 @@ class ProvisionalReservationLedger:
             payload.kind,
             payload.filled_quantity,
             payload.remaining_quantity,
-            payload.reference,
+            payload.broker_execution_id,
         )
         applied_signatures = self._applied_result_signatures.get(key_tuple, ())
         if signature in applied_signatures:

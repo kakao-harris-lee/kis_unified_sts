@@ -231,6 +231,95 @@ def test_a_duplicate_result_is_recorded_as_duplicate_not_reapplied() -> None:
     )
 
 
+def test_duplicate_is_keyed_on_broker_execution_id_not_the_reference_coordinate() -> (
+    None
+):
+    """([K2-p3-#6] finding #6; ADR-002-002 §15.3:725) DUPLICATE keys on broker identity.
+
+    A genuine broker resend of the *same* fill carries a fresh ``reference`` coordinate — the
+    driver stamps a new monotone one on every re-enqueue — so keying the DUPLICATE signature on
+    ``reference`` can never catch it (only byte-identical already-stamped replays). Keying on
+    ``broker_execution_id`` instead (ADR-002-002 §15.3 "broker execution identity or a
+    broker-specific deterministic composite identity") catches the case the spec actually names:
+    two ``FULL_FILL``s for the same attempt and the same broker execution id, at *different*
+    reference coordinates, are the same fact reported twice.
+    """
+    core, _, _, attempt_id = _sent_core()
+    first = core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+            broker_execution_id="broker-exec-1",
+        )
+    )
+    assert first.result_disposition is ResultDisposition.APPLIED
+
+    second = core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            attempt_id,
+            sequence=3,  # a different reference coordinate — not a byte-identical replay
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+            broker_execution_id="broker-exec-1",  # same broker-side identity
+        )
+    )
+    assert second.halt_reason is HaltReason.RESULT_UNMATCHED
+    assert second.result_disposition is ResultDisposition.DUPLICATE
+
+
+def test_different_broker_execution_ids_are_both_applied() -> None:
+    """([K2-p3-#6]) Two distinct broker execution ids are two distinct facts, not a duplicate."""
+    core, _, _, attempt_id = _sent_core()
+    first = core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+            broker_execution_id="broker-exec-1",
+        )
+    )
+    assert first.result_disposition is ResultDisposition.APPLIED
+
+    second = core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            attempt_id,
+            sequence=3,
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+            broker_execution_id="broker-exec-2",
+        )
+    )
+    assert second.halt_reason is None
+    assert second.result_disposition is ResultDisposition.APPLIED
+
+
+def test_timeouts_with_no_broker_id_dedup_as_a_runtime_local_replay_guard() -> None:
+    """([K2-p3-#6]) With no broker id, the signature still dedups a byte-identical resend.
+
+    ``TIMEOUT`` never carries a ``broker_execution_id`` (no broker was ever reached). With
+    ``broker_execution_id is None`` for both, two TIMEOUTs for the same attempt now collide on the
+    signature *regardless of their reference coordinate* — this is a runtime-local replay guard
+    against re-processing the same synthetic timeout injection, **not** ADR-002-002 §15.3 broker
+    idempotency (which requires a broker-side identity that a TIMEOUT, by definition, never has).
+    """
+    core, _, _, attempt_id = _sent_core()
+    first = core.handle(_egress_event(EgressResultKind.TIMEOUT, attempt_id, sequence=2))
+    assert first.result_disposition is ResultDisposition.APPLIED
+
+    second = core.handle(
+        _egress_event(EgressResultKind.TIMEOUT, attempt_id, sequence=3)
+    )
+    assert second.halt_reason is HaltReason.RESULT_UNMATCHED
+    assert second.result_disposition is ResultDisposition.DUPLICATE
+
+
 def test_a_late_fill_after_timeout_on_the_same_attempt_is_applied() -> None:
     """(Phase 3 A-K-2; ADR-002-002 §15.2 'later valid fill accepted') TIMEOUT then FULL_FILL applies.
 

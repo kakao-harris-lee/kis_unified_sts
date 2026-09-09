@@ -360,8 +360,12 @@ class ResultDisposition(_NonTruthyStrEnum):
     #: A reservation is projected, but the result names a different attempt — positive identity
     #: match fails, so it applies to nothing (design #31 §2.1(ii)).
     MISMATCHED_ATTEMPT = "MISMATCHED_ATTEMPT"
-    #: The exact ``(attempt_id, kind, filled_quantity, remaining_quantity, reference)`` tuple was
-    #: already applied to this reservation — a resend/replay of the same result, not a new fact.
+    #: The exact ``(attempt_id, kind, filled_quantity, remaining_quantity, broker_execution_id)``
+    #: tuple was already applied to this reservation — a resend/replay of the same result, not a
+    #: new fact. Keyed on the broker-side execution identity (ADR-002-002 §15.3:725), never the
+    #: driver's own re-stamped ``reference`` coordinate (Phase 3 K2-p3-#6); with no broker id
+    #: (e.g. a synthetic ``TIMEOUT``) this degrades to a runtime-local replay guard, not §15.3
+    #: broker idempotency.
     DUPLICATE = "DUPLICATE"
     #: The result would move the capacity projection to a rank *below* its current one (e.g. a
     #: late ``FULL_FILL`` after a ``REJECT``, or a late ``PARTIAL_FILL`` after a ``FULL_FILL``).
