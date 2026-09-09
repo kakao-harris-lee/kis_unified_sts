@@ -930,3 +930,242 @@ def test_quarantine_resolution_edges_excludes_unknown_and_timeout() -> None:
         EgressResultKind.UNKNOWN,
         EgressResultKind.TIMEOUT,
     }
+
+
+# ---------------------------------------------------------------------------
+# [KW2c-R2] quarantine resolution is floored at the pre-quarantine settlement —
+# re-review finding R2: a bare ACK was silently reverting a proven settlement.
+# ---------------------------------------------------------------------------
+
+
+def test_full_fill_then_timeout_then_ack_stays_position_consumed() -> None:
+    """([KW2c-R2]) Re-review probe case A: a proven FULL_FILL must survive a TIMEOUT/ACK cycle.
+
+    Before the floor, ACK's table target (POTENTIALLY_LIVE, rank 2) unconditionally overwrote
+    whatever settlement preceded the quarantine — here POSITION_CONSUMED (rank 4) — silently
+    un-settling a proven fill with no coupling violation, no latch, no evidence anywhere.
+    """
+    core, _, _, attempt_id = _sent_core()
+    full_fill = core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+        )
+    )
+    assert full_fill.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.POSITION_CONSUMED
+    )
+
+    timeout = core.handle(
+        _egress_event(EgressResultKind.TIMEOUT, attempt_id, sequence=3)
+    )
+    assert timeout.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.QUARANTINED_UNKNOWN
+    )
+
+    ack = core.handle(_egress_event(EgressResultKind.ACK, attempt_id, sequence=4))
+    assert ack.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.POSITION_CONSUMED
+    ), "a bare ACK must never revive a proven FULL_FILL back to POTENTIALLY_LIVE"
+    # the fill magnitude itself must also survive the quarantine/resolution round trip
+    assert core.ledger.outstanding(instrument_key()).filled_quantity == Decimal("2")
+    assert core.ledger.outstanding(instrument_key()).remaining_quantity == Decimal("0")
+
+
+def test_reject_then_timeout_then_ack_stays_release_pending_proof() -> None:
+    """([KW2c-R2]) Re-review probe case B: a proven REJECT must survive a TIMEOUT/ACK cycle."""
+    core, _, _, attempt_id = _sent_core()
+    reject = core.handle(_egress_event(EgressResultKind.REJECT, attempt_id, sequence=2))
+    assert reject.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.RELEASE_PENDING_PROOF
+    )
+
+    core.handle(_egress_event(EgressResultKind.TIMEOUT, attempt_id, sequence=3))
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.QUARANTINED_UNKNOWN
+    )
+
+    ack = core.handle(_egress_event(EgressResultKind.ACK, attempt_id, sequence=4))
+    assert ack.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.RELEASE_PENDING_PROOF
+    ), "a bare ACK must never revive a proven REJECT back to POTENTIALLY_LIVE"
+
+
+def test_partial_fill_then_timeout_then_ack_stays_partially_consumed() -> None:
+    """([KW2c-R2]) Re-review probe case C: a proven PARTIAL_FILL must survive a TIMEOUT/ACK
+    cycle, and the quantity guard's own state (the magnitude) must not be disturbed either.
+    """
+    core, _, _, attempt_id = _sent_core()
+    partial = core.handle(
+        _egress_event(
+            EgressResultKind.PARTIAL_FILL,
+            attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("4"),
+            remaining_quantity=Decimal("6"),
+        )
+    )
+    assert partial.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.PARTIALLY_CONSUMED
+    )
+
+    core.handle(_egress_event(EgressResultKind.TIMEOUT, attempt_id, sequence=3))
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.QUARANTINED_UNKNOWN
+    )
+
+    ack = core.handle(_egress_event(EgressResultKind.ACK, attempt_id, sequence=4))
+    assert ack.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.PARTIALLY_CONSUMED
+    ), "a bare ACK must never revive a proven PARTIAL_FILL back to POTENTIALLY_LIVE"
+    assert core.ledger.outstanding(instrument_key()).filled_quantity == Decimal("4")
+    assert core.ledger.outstanding(instrument_key()).remaining_quantity == Decimal("6")
+
+
+def test_potentially_live_then_timeout_then_ack_still_resolves_to_potentially_live() -> (
+    None
+):
+    """([KW2c-R2]) The designed case must keep working: with no settlement to floor against
+    (the pre-quarantine state was itself POTENTIALLY_LIVE), ACK resolves the quarantine exactly
+    where the table says.
+    """
+    core, _, _, attempt_id = _quarantined_core()
+    ack = core.handle(_egress_event(EgressResultKind.ACK, attempt_id, sequence=3))
+    assert ack.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.POTENTIALLY_LIVE
+    )
+
+
+def test_a_second_timeout_does_not_overwrite_the_resolution_floor() -> None:
+    """([KW2c-R2]) A repeated TIMEOUT while already quarantined is DUPLICATE — it must not reset
+    the recorded pre-quarantine floor to QUARANTINED_UNKNOWN's own rank (which would defeat the
+    floor entirely on the next resolution).
+    """
+    core, _, _, attempt_id = _sent_core()
+    core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+        )
+    )
+    core.handle(_egress_event(EgressResultKind.TIMEOUT, attempt_id, sequence=3))
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.QUARANTINED_UNKNOWN
+    )
+
+    repeat = core.handle(
+        _egress_event(EgressResultKind.TIMEOUT, attempt_id, sequence=4)
+    )
+    assert repeat.result_disposition is ResultDisposition.DUPLICATE
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.QUARANTINED_UNKNOWN
+    )
+
+    ack = core.handle(_egress_event(EgressResultKind.ACK, attempt_id, sequence=5))
+    assert ack.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.POSITION_CONSUMED
+    ), "the DUPLICATE TIMEOUT must not have wiped the FULL_FILL floor"
+
+
+def test_a_second_distinct_quarantine_signal_does_not_overwrite_the_floor_either() -> (
+    None
+):
+    """([KW2c-R2]; N2) TIMEOUT then UNKNOWN — a *different* kind, so not a DUPLICATE — must
+    still leave the floor untouched and the projection quarantined (reviewer's case F: "TIMEOUT
+    -> UNKNOWN: APPLIED, stays QUARANTINED_UNKNOWN").
+    """
+    core, _, _, attempt_id = _sent_core()
+    core.handle(
+        _egress_event(
+            EgressResultKind.FULL_FILL,
+            attempt_id,
+            sequence=2,
+            filled_quantity=Decimal("2"),
+            remaining_quantity=Decimal("0"),
+        )
+    )
+    core.handle(_egress_event(EgressResultKind.TIMEOUT, attempt_id, sequence=3))
+
+    second_signal = core.handle(
+        _egress_event(EgressResultKind.UNKNOWN, attempt_id, sequence=4)
+    )
+    assert second_signal.halt_reason is None
+    assert second_signal.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.QUARANTINED_UNKNOWN
+    )
+
+    ack = core.handle(_egress_event(EgressResultKind.ACK, attempt_id, sequence=5))
+    assert ack.result_disposition is ResultDisposition.APPLIED
+    assert core.ledger.outstanding(instrument_key()).capacity_state is (
+        CapacityState.POSITION_CONSUMED
+    ), "the UNKNOWN signal must not have wiped the FULL_FILL floor either"
+
+
+def test_attempt_bound_then_timeout_then_full_fill_still_resolves_upward() -> None:
+    """([KW2c-R2]) The floor only ever raises the resolution target, never lowers it below the
+    table's own value — an upward resolution (a stronger settlement than the pre-quarantine
+    floor) still applies exactly as before. Exercised directly against the ledger because
+    ``ATTEMPT_BOUND`` (before ``mark_potentially_live``) never carries an outstanding
+    ``EGRESS_RESULT`` on the real core path.
+    """
+    ledger = ProvisionalReservationLedger(
+        max_unresolved_send_per_scope=PROVISIONAL_MAX_UNRESOLVED_SEND_PER_SCOPE
+    )
+    key = instrument_key()
+    ledger.commit_unbound(key, proposal_id="prop-r2")
+    ledger.bind_attempt(key, attempt_id="attempt-r2")
+    assert ledger.outstanding(key).capacity_state is CapacityState.ATTEMPT_BOUND
+
+    timeout_application = ledger.apply_egress_result(
+        EgressResultPayload(
+            instrument_key=key, attempt_id="attempt-r2", kind=EgressResultKind.TIMEOUT
+        )
+    )
+    assert timeout_application.disposition is ResultDisposition.APPLIED
+    assert ledger.outstanding(key).capacity_state is CapacityState.QUARANTINED_UNKNOWN
+
+    fill_application = ledger.apply_egress_result(
+        EgressResultPayload(
+            instrument_key=key,
+            attempt_id="attempt-r2",
+            kind=EgressResultKind.FULL_FILL,
+            filled_quantity=Decimal("3"),
+            remaining_quantity=Decimal("0"),
+        )
+    )
+    assert fill_application.disposition is ResultDisposition.APPLIED
+    assert ledger.outstanding(key).capacity_state is CapacityState.POSITION_CONSUMED
+
+
+def test_pre_quarantine_capacity_invariant_is_non_none_iff_quarantined() -> None:
+    """([KW2c-R2]) ``pre_quarantine_capacity`` is set exactly while quarantined — never before
+    entering, never left stale after resolving.
+    """
+    core, _, _, attempt_id = _sent_core()
+    assert core.ledger.outstanding(instrument_key()).pre_quarantine_capacity is None
+
+    core.handle(_egress_event(EgressResultKind.TIMEOUT, attempt_id, sequence=2))
+    quarantined = core.ledger.outstanding(instrument_key())
+    assert quarantined.capacity_state is CapacityState.QUARANTINED_UNKNOWN
+    assert quarantined.pre_quarantine_capacity is CapacityState.POTENTIALLY_LIVE
+
+    core.handle(_egress_event(EgressResultKind.ACK, attempt_id, sequence=3))
+    resolved = core.ledger.outstanding(instrument_key())
+    assert resolved.capacity_state is CapacityState.POTENTIALLY_LIVE
+    assert resolved.pre_quarantine_capacity is None

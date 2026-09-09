@@ -152,11 +152,19 @@ _RESULT_TRANSITIONS: dict[
 #: signature machinery — never this table. Every other member of the closed
 #: :class:`~tos.engine.vocabulary.EgressResultKind` vocabulary *is* positive evidence about this
 #: exact attempt (a broker acknowledgement, a fill, a proven rejection, a cancel/expiry
-#: acknowledgement) and each maps to exactly the capacity target :data:`_RESULT_TRANSITIONS`
-#: already assigns it in the non-quarantined case — except ``ACK``, whose ordinary mapping is
-#: ``None`` ("leave capacity where it is") because it never needs to *move* capacity when nothing
-#: was quarantined; resolving out of quarantine does need an explicit target, hence the separate
-#: table rather than reusing ``_RESULT_TRANSITIONS`` directly.
+#: acknowledgement).
+#:
+#: ⚠ [KW2c-R2] Every value here is a **minimum**, not a destination. ``_resolve_capacity_target``
+#: floors the actual resolution target at ``current.pre_quarantine_capacity`` (the rank held
+#: immediately before quarantine), because "escaping quarantine requires evidence" licenses
+#: *leaving* ``QUARANTINED_UNKNOWN``, never unwinding a settlement the projection had already
+#: proven before it entered quarantine. ``ACK``'s entry is the one that matters most here: its
+#: ordinary (non-quarantined) mapping in :data:`_RESULT_TRANSITIONS` is ``None`` ("leave capacity
+#: where it is") precisely because a bare acknowledgement proves nothing about settlement — that
+#: same weakness means it must never be read as a *destination* once a stronger settlement
+#: (``POSITION_CONSUMED``, ``PARTIALLY_CONSUMED``, ``RELEASE_PENDING_PROOF``) already existed
+#: before the quarantine (Phase 3 wave 2 re-review finding R2: a bare ``ACK`` was silently
+#: reverting a proven ``FULL_FILL`` back to ``POTENTIALLY_LIVE``).
 #:
 #: ⚠ Still the provisional, non-authoritative projection (module docstring). The real resolution
 #: of a Risk Capacity Ledger quarantine is an RCL act gated on Final Quantity Proof (ADR-002-002
@@ -543,7 +551,12 @@ class ProvisionalReservationLedger:
           KW2b-#2; ADR-002-002 §18.6 "escaping quarantine requires evidence, never assertion" —
           the one deliberate exception to the rank-regression guard, checked first: left to that
           guard alone, quarantine would be terminal, since ``QUARANTINED_UNKNOWN`` is the single
-          highest rank in :data:`PROJECTION_ORDER` and nothing could ever rank above it to exit);
+          highest rank in :data:`PROJECTION_ORDER` and nothing could ever rank above it to exit).
+          [KW2c-R2] The resolution target is **floored** at ``current.pre_quarantine_capacity``
+          (the rank held immediately before quarantine, if any) — the table's own value is a
+          minimum, never a destination (see :data:`QUARANTINE_RESOLUTION_EDGES`'s docstring for
+          why: re-review finding R2, a bare ``ACK`` was silently reverting a proven settlement
+          such as ``POSITION_CONSUMED`` back to ``POTENTIALLY_LIVE`` with no signal anywhere);
         * ``ResultDisposition.NON_MONOTONIC_PROJECTION`` when the target would otherwise regress
           the rank and is *not* a licensed resolution (Phase 3 K2-p3-#4) — refused before
           :meth:`_store` is ever reached, so its own non-revival guard never has to fire on this
@@ -556,13 +569,50 @@ class ProvisionalReservationLedger:
             and payload.kind in QUARANTINE_RESOLUTION_EDGES
         )
         if resolving_quarantine:
-            return QUARANTINE_RESOLUTION_EDGES[payload.kind], True
+            table_target = QUARANTINE_RESOLUTION_EDGES[payload.kind]
+            floor = current.pre_quarantine_capacity
+            if (
+                floor is not None
+                and PROJECTION_RANK[floor] > PROJECTION_RANK[table_target]
+            ):
+                return floor, True
+            return table_target, True
         if capacity_state is not None:
             current_rank = PROJECTION_RANK[current.capacity_state]
             next_rank = PROJECTION_RANK[capacity_state]
             if next_rank < current_rank:
                 return ResultDisposition.NON_MONOTONIC_PROJECTION
         return capacity_state, False
+
+    @staticmethod
+    def _pre_quarantine_floor_update(
+        current: ProvisionalReservation,
+        capacity_state: CapacityState,
+        resolving_quarantine: bool,
+    ) -> CapacityState | None:
+        """The next ``pre_quarantine_capacity`` value to store (Phase 3 wave 2 KW2c-R2).
+
+        Maintains the invariant declared on the field itself — non-``None`` **iff**
+        ``capacity_state is CapacityState.QUARANTINED_UNKNOWN``:
+
+        * entering quarantine for the first time (target is ``QUARANTINED_UNKNOWN`` and
+          ``current`` was not already quarantined) records ``current.capacity_state`` as the new
+          floor;
+        * a repeated ``UNKNOWN`` / ``TIMEOUT`` while already quarantined leaves the existing
+          floor untouched — it must never be re-derived from ``QUARANTINED_UNKNOWN`` itself,
+          which would erase the very floor it exists to remember;
+        * resolving out of quarantine (``resolving_quarantine`` is ``True``) clears the floor back
+          to ``None`` — it no longer applies once the projection has left ``QUARANTINED_UNKNOWN``;
+        * every other transition (never quarantined at all) leaves the field at its current value
+          (``None``, since it is never non-``None`` outside quarantine).
+        """
+        if capacity_state is CapacityState.QUARANTINED_UNKNOWN:
+            if current.capacity_state is CapacityState.QUARANTINED_UNKNOWN:
+                return current.pre_quarantine_capacity
+            return current.capacity_state
+        if resolving_quarantine:
+            return None
+        return current.pre_quarantine_capacity
 
     def apply_egress_result(self, payload: EgressResultPayload) -> ResultApplication:
         """Apply — or conservatively record — a re-injected egress result (Phase 3 A-K-2).
@@ -638,6 +688,9 @@ class ProvisionalReservationLedger:
         update: dict[str, object] = {"knowledge": knowledge}
         if capacity_state is not None:
             update["capacity_state"] = capacity_state
+            update["pre_quarantine_capacity"] = self._pre_quarantine_floor_update(
+                current, capacity_state, resolving_quarantine
+            )
         if payload.kind in (EgressResultKind.FULL_FILL, EgressResultKind.PARTIAL_FILL):
             update["filled_quantity"] = payload.filled_quantity
             update["remaining_quantity"] = payload.remaining_quantity

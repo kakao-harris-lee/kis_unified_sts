@@ -479,6 +479,16 @@ class ProvisionalReservation(FrozenModel):
     attempt_id: str | None = None
     filled_quantity: CanonicalDecimal | None = None
     remaining_quantity: CanonicalDecimal | None = None
+    #: The capacity state held immediately **before** an ``UNKNOWN`` / ``TIMEOUT`` first forced
+    #: this reservation into ``QUARANTINED_UNKNOWN`` (Phase 3 wave 2 re-review finding R2 /
+    #: kernel disposition KW2c-R2). Invariant: non-``None`` **iff** ``capacity_state is
+    #: CapacityState.QUARANTINED_UNKNOWN`` — set once on the first entry into quarantine, left
+    #: untouched by a repeated ``UNKNOWN`` / ``TIMEOUT`` while already quarantined, and cleared
+    #: back to ``None`` the moment positive evidence resolves the quarantine. It is the floor a
+    #: :data:`~tos.engine.state.QUARANTINE_RESOLUTION_EDGES` resolution may never rank below —
+    #: "escaping quarantine requires evidence" licenses *leaving* quarantine, it does not license
+    #: unwinding a settlement that was already proven before the quarantine began.
+    pre_quarantine_capacity: CapacityState | None = None
     authority: AllFalseCoordinatorAuthority = AllFalseCoordinatorAuthority()
 
 
