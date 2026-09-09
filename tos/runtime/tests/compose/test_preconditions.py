@@ -392,6 +392,41 @@ def test_authority_epoch_current_false_against_a_real_epoch_service_before_any_t
     assert preconditions.authority_epoch_current() is False
 
 
+def test_authority_epoch_current_refuses_once_the_bound_epoch_is_stale(
+    real_epoch_service: SafetyAuthorityEpochService,
+) -> None:
+    """Review finding #7 (P3W2 wave-2 review). The CLAIMED epoch must come
+    from the runtime's own state at composition time, not from re-reading
+    the current floor and feeding it back as its own claim (a ``floor >=
+    floor`` tautology can only detect an unreadable log, never a stale
+    epoch). This gate is composed once at boot and re-evaluated on every
+    ``DECISION_TICK`` — a Safety Authority epoch transition that happens
+    AFTER composition (e.g. a failover) must make a runtime bound to the
+    old epoch refuse on its very next tick, exactly the CPL-6 "a stale
+    epoch SHALL fail closed" guarantee (ADR-002-005 §10)."""
+    from tos.authority import AuthorityTransitionReason
+
+    real_epoch_service.transition(
+        leader_identity="leader-1",
+        transition_reason=AuthorityTransitionReason.SAFETY_AUTHORITY_FAILOVER,
+    )
+    # Composition happens here, at epoch floor 1 — this is what the runtime
+    # is bound to for the rest of its life, not whatever the floor happens
+    # to read as on a later tick.
+    preconditions = RuntimeCoordinatorPreconditions(
+        epoch_service=real_epoch_service, live_authorization_state=None
+    )
+    assert preconditions.authority_epoch_current() is True
+
+    # An epoch transition after composition (e.g. a failover) advances the
+    # floor out from under the already-bound runtime.
+    real_epoch_service.transition(
+        leader_identity="leader-2",
+        transition_reason=AuthorityTransitionReason.SAFETY_AUTHORITY_FAILOVER,
+    )
+    assert preconditions.authority_epoch_current() is False
+
+
 # ============================================================================
 # RuntimeCoordinatorPreconditions.live_scope_authorized
 # ============================================================================

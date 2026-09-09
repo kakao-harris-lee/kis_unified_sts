@@ -3,26 +3,10 @@
 Design #31 §9-10 / plan §2.1 ("Coordinator 양성 게이트", RFC-002 §10.7 "verify current
 Safety Authority · verify live authorization"). The kernel's own ``engine.core``
 gains a ``CoordinatorPreconditions`` Protocol and a REQUIRED ``preconditions``
-argument on ``EngineCore`` (kernel lane KW2-B — see the module-level note under
-``STATUS`` below); this module is the runtime-side implementation of that
-Protocol, plus the side-effect-free stand-in the boot-time replay core injects
-instead.
-
-**STATUS (2026-09-09):** ``tos.engine.core.CoordinatorPreconditions`` /
-``EngineCore(preconditions=...)`` had not landed in this module's own working
-tree at the moment it was first written (``git log --oneline -40 | grep KW2-B``
-— no match at that point). Kernel lane KW2-B landed shortly after (still
-uncommitted in this shared tree — ``git status`` shows ``tos/src/tos/engine/*``
-modified, not staged by this lane, per the "kernel diff 0" rule for this
-lane's own commits), adding ``CoordinatorPreconditions``/``TransportNatureLike``
-to ``tos.engine.core`` and the REQUIRED ``preconditions``/optional
-``transport_nature`` constructor arguments to ``EngineCore`` — with no default
-for ``preconditions``, which made every existing ``EngineCore(`` construction
-site in this shared tree (including this lane's own two, in
-``_engine_wiring.py``, and the ones in ``tos/runtime/tests/engine/_fixtures.py``
-owned by a concurrent lane) immediately raise ``TypeError`` until wired. This
-module and ``_engine_wiring.py`` are wired against the LANDED kernel Protocol
-now (``authority_epoch_current() -> bool | None``,
+argument on ``EngineCore`` (kernel lane KW2-B); this module is the runtime-side
+implementation of that Protocol, plus the side-effect-free stand-in the
+boot-time replay core injects instead. Wired against the landed kernel
+Protocol (``authority_epoch_current() -> bool | None``,
 ``live_scope_authorized(transport_nature: TransportNatureLike | None) -> bool | None``
 — note the kernel's own optional ``transport_nature``, wider than the plan's
 original non-optional sketch; see :meth:`RuntimeCoordinatorPreconditions
@@ -152,6 +136,21 @@ class RuntimeCoordinatorPreconditions:
     own pure predicates over injected state — this class authors no currentness or
     authorization comparison of its own, only the plumbing that reads the injected
     ports and hands their state to the kernel.
+
+    **The claimed epoch is bound once, at composition, never re-read per tick
+    (2026-09-09 wave-2 review finding #7 fix).** An earlier version re-derived
+    the "claimed" epoch from the SAME just-read floor it then compared the
+    claim against (``floor >= floor``, a tautology structurally incapable of
+    detecting a stale epoch — it could only ever detect an unreadable log).
+    This class instead captures :attr:`_bound_epoch` — this runtime's own
+    epoch floor at the moment ``RuntimeCoordinatorPreconditions`` is
+    constructed (:func:`~tos_runtime.compose._engine_wiring._build_preconditions`
+    runs exactly once per boot, inside ``wire_engine_and_driver``) — and holds
+    it fixed for the object's lifetime. A later Safety Authority epoch
+    transition (:meth:`~tos_runtime.authority.epoch.SafetyAuthorityEpochService.transition`,
+    e.g. a failover) then genuinely outdates the bound claim on the very next
+    tick, which is what CPL-6 ("a stale epoch SHALL fail closed", ADR-002-005
+    §10) requires.
     """
 
     def __init__(
@@ -175,33 +174,40 @@ class RuntimeCoordinatorPreconditions:
         """
         self._epoch_service = epoch_service
         self._live_authorization_state = live_authorization_state
+        #: This runtime's own epoch floor at composition time — the CLAIMED
+        #: epoch every later :meth:`authority_epoch_current` call is checked
+        #: against. Read exactly once, here, never again per tick (class
+        #: docstring). ``None`` when ``epoch_service`` is ``None`` (not wired
+        #: yet) or when the service's own floor is not yet established.
+        self._bound_epoch: int | None = (
+            epoch_service.current_epoch() if epoch_service is not None else None
+        )
 
     def authority_epoch_current(self) -> bool | None:
-        """Whether the Safety Authority epoch is currently established (§5.1).
+        """Whether this runtime's bound Safety Authority epoch is still current (§5.1).
 
-        Re-derives the epoch service's own current state on every call (no
-        cache — matches :meth:`SafetyAuthorityEpochService.current_state`'s own
-        rule) and asks the kernel's ``authority_epoch_current`` predicate
-        (via the service's own :meth:`~SafetyAuthorityEpochService.epoch_current`
-        wrapper — reused rather than re-authored) whether the service's own
-        just-derived epoch floor is current for its own domain. There is no
-        separately-carried "claimed epoch" at this Coordinator gate (unlike a
-        capability's own claim, §5.2) — the freshly-read floor **is** the
-        claim being tested, so a fenced (``None`` floor / domain) state
-        structurally yields ``False`` and an established floor yields ``True``
-        (the floor is trivially ``>=`` itself) without this method ever
-        writing its own ``is not None`` currentness comparison.
+        Asks the kernel's ``authority_epoch_current`` predicate (via the
+        service's own :meth:`~SafetyAuthorityEpochService.epoch_current`
+        wrapper — reused rather than re-authored) whether :attr:`_bound_epoch`
+        — the claim fixed at composition time, never re-derived here — is
+        still ``>=`` the CURRENT floor. ``epoch_current`` reads the log via
+        :meth:`~SafetyAuthorityEpochService.current_state` exactly ONCE per
+        call (no separate read to produce the claim, unlike the tautological
+        version this replaces — class docstring) so there is no TOCTOU window
+        between reading the claim and reading the floor.
 
         Returns:
             ``None`` if the epoch service has not been wired yet (composition
             ordering — "refusal upstream" per the Coordinator gate's own
             ``is True`` check, never treated as an affirmative grant);
-            otherwise the kernel predicate's own ``bool``.
+            otherwise the kernel predicate's own ``bool`` — ``False`` for a
+            still-unestablished bound epoch, a domain mismatch, or a floor
+            that has advanced past the bound claim since composition (a
+            stale epoch, CPL-6).
         """
         if self._epoch_service is None:
             return None
-        claimed_epoch = self._epoch_service.current_epoch()
-        return self._epoch_service.epoch_current(claimed_epoch)
+        return self._epoch_service.epoch_current(self._bound_epoch)
 
     def live_scope_authorized(
         self, transport_nature: TransportNatureLike | None

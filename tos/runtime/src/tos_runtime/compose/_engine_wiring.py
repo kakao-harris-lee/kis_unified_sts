@@ -208,13 +208,24 @@ def build_engine_driver(
             :class:`~tos_runtime.posttrade.finality.SyntheticFinalityProducer` this driver is
             wired with (team-lead CR-4 dispatch, plan §2.2) — REQUIRED, no default, so an
             unfilled config value refuses boot rather than silently omitting finality projection.
-        authority_epoch_current: The SAME live Safety-Authority-epoch check
+        authority_epoch_current: The SAME Safety-Authority-epoch check
             :class:`~tos_runtime.compose._preconditions.RuntimeCoordinatorPreconditions` performs
             for the kernel's own Coordinator gate (``preconditions.authority_epoch_current``,
             forwarded by the caller) — feeds
             :class:`~tos_runtime.engine.orthostate_projection.OrthostateProjector`'s CPL-6 side
             condition (its own module docstring: "CPL-6 needs a LIVE authority-epoch reading",
-            bug found wiring this driver reachable end to end).
+            bug found wiring this driver reachable end to end). **What this callable actually
+            means, precisely (2026-09-09 wave-2 review finding #7 fix):** whether the epoch this
+            runtime was BOUND TO at composition time (``RuntimeCoordinatorPreconditions``'s own
+            ``_bound_epoch``, captured once when it was constructed, never re-read per tick) is
+            still ``>=`` the CURRENT epoch floor — i.e. whether the Safety Authority epoch this
+            runtime composed under is still current, not merely whether the epoch log is
+            readable right now. An earlier version of this callable re-derived the claim from the
+            SAME just-read floor it then compared against (a ``floor >= floor`` tautology), which
+            could only ever detect an unreadable log — never a genuinely stale epoch (e.g. a
+            failover after this runtime booted). A caller reading this docstring should take
+            "CPL-6 side condition is ``True``" to mean "this runtime's own bound epoch has not
+            been superseded", not merely "the log is up".
 
     Returns:
         ``(inbox, driver)`` — the driver is already bound to ``gateway``.
