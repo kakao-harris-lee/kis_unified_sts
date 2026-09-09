@@ -5,14 +5,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
+from tos.dsl.vocabulary import DecisionKind, evaluate_policy
 from tos.engine import StrategyRegistry
 from tos.engine.records import InstrumentKey
 from tos.engine.vocabulary import DispatchResolution
 from tos.workload import RuntimeIdentity
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.strategy.bindings import STRATEGY_BINDINGS_FILE_NAME
 from tos_runtime.strategy.loader import StrategyLoadError
 from tos_runtime.strategy.resolve import (
     STRATEGY_REFUSED_EVIDENCE_KIND,
@@ -28,6 +32,24 @@ from .conftest import (
     admissible_strategy_mapping,
     write_strategy_yaml,
 )
+
+
+def _write_bindings_yaml(config_dir: Path, mapping: dict[str, Any]) -> Path:
+    path = config_dir / STRATEGY_BINDINGS_FILE_NAME
+    path.write_text(yaml.safe_dump(mapping, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def _config_ref_strategy_mapping(**overrides: Any) -> dict[str, Any]:
+    """``admissible_strategy_mapping`` with its outcome-gating compare's
+    RIGHT operand swapped for a ``config``-sourced ref — the shape every
+    positive-resolution test in this module needs (one capsule operand, one
+    config operand, matching the D1<->D4 admission rule)."""
+    mapping = admissible_strategy_mapping(**overrides)
+    mapping["policy"]["rules"][0]["all_of"][0]["right"] = {
+        "ref": ["config", "lower_band_threshold"]
+    }
+    return mapping
 
 
 class _FixedKeyProvider:
@@ -228,13 +250,15 @@ def test_load_strategies_error_is_the_underlying_cause(
 def test_config_sourced_ref_without_bindings_refuses_naming_the_ref(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
-    """2026-09-09 independent-review finding #9: reproduces the reviewer's
-    own probe — a compare of ``capsule.resolved_values.close LT
+    """2026-09-09 independent-review finding #9 (``[D-R-3]`` positive-
+    resolution disposition, rule 1): reproduces the reviewer's own probe —
+    a compare of ``capsule.resolved_values.close LT
     config.lower_band_threshold`` parses and is ADMISSIBLE (``config`` is an
     ``ADMISSIBLE_CONTEXT_SOURCES`` member and only ONE operand needs to be
-    capsule-sourced), but with Wave 1's hard-coded empty ``bindings`` the
-    rule can never resolve the ``config`` operand and silently never fires.
-    This module now refuses it at load, naming both the file and the ref."""
+    capsule-sourced), but no ``strategy_bindings.yaml`` exists at all in
+    this test's ``config_dir`` — rule 1 ("a strategy carries >= 1
+    config-sourced ref and the bindings file has no entry for its stem")
+    refuses it at load, naming both the file and the ref path."""
     config_dir = tmp_path / "config"
     strategies_dir = config_dir / "strategies"
     strategies_dir.mkdir(parents=True)
@@ -288,3 +312,266 @@ def test_escape_ref_source_is_refused_at_load(
         )
     assert str(path) in str(excinfo.value)
     assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
+
+
+# ============================================================================
+# [D-R-3b] positive bindings resolution (finding #9 disposition) — the five
+# rules resolve.py's own module docstring numbers.
+# ============================================================================
+
+
+def test_version_mismatch_refuses_naming_both_values(
+    tmp_path: Path, evidence_store, emergency_log, identity
+):
+    """Rule 2: an entry's ``config_binding_version`` must equal the target
+    strategy file's own."""
+    config_dir = tmp_path / "config"
+    strategies_dir = config_dir / "strategies"
+    strategies_dir.mkdir(parents=True)
+    mapping = _config_ref_strategy_mapping()
+    write_strategy_yaml(strategies_dir, "band.strategy.yaml", mapping)
+    _write_bindings_yaml(
+        config_dir,
+        {
+            "strategies": {
+                "band.strategy": {
+                    "config_binding_version": "WRONG-VERSION",
+                    "bindings": {"lower_band_threshold": 500},
+                }
+            }
+        },
+    )
+    with pytest.raises(StrategyRegistryResolutionRefused) as excinfo:
+        resolve_strategy_registry(
+            config_dir,
+            injected_registry=None,
+            evidence_store=evidence_store,
+            emergency_log=emergency_log,
+            identity=identity,
+        )
+    message = str(excinfo.value)
+    assert "WRONG-VERSION" in message
+    assert mapping["config_binding_version"] in message
+    assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
+
+
+def test_unresolvable_ref_path_refuses_naming_the_path(
+    tmp_path: Path, evidence_store, emergency_log, identity
+):
+    """Rule 3: a config-sourced ref longer than ``("config", <key>)`` can
+    never resolve against the flat ``bindings`` mapping."""
+    config_dir = tmp_path / "config"
+    strategies_dir = config_dir / "strategies"
+    strategies_dir.mkdir(parents=True)
+    mapping = admissible_strategy_mapping()
+    mapping["policy"]["rules"][0]["all_of"][0]["right"] = {
+        "ref": ["config", "lower_band_threshold", "nested"]
+    }
+    write_strategy_yaml(strategies_dir, "band.strategy.yaml", mapping)
+    _write_bindings_yaml(
+        config_dir,
+        {
+            "strategies": {
+                "band.strategy": {
+                    "config_binding_version": mapping["config_binding_version"],
+                    "bindings": {"lower_band_threshold": 500},
+                }
+            }
+        },
+    )
+    with pytest.raises(StrategyRegistryResolutionRefused) as excinfo:
+        resolve_strategy_registry(
+            config_dir,
+            injected_registry=None,
+            evidence_store=evidence_store,
+            emergency_log=emergency_log,
+            identity=identity,
+        )
+    assert "config.lower_band_threshold.nested" in str(excinfo.value)
+    assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
+
+
+def test_unused_bindings_key_refuses_naming_the_key(
+    tmp_path: Path, evidence_store, emergency_log, identity
+):
+    """Rule 4: a ``bindings`` key the strategy never references is drift."""
+    config_dir = tmp_path / "config"
+    strategies_dir = config_dir / "strategies"
+    strategies_dir.mkdir(parents=True)
+    mapping = _config_ref_strategy_mapping()
+    write_strategy_yaml(strategies_dir, "band.strategy.yaml", mapping)
+    _write_bindings_yaml(
+        config_dir,
+        {
+            "strategies": {
+                "band.strategy": {
+                    "config_binding_version": mapping["config_binding_version"],
+                    "bindings": {
+                        "lower_band_threshold": 500,
+                        "never_referenced": 1,
+                    },
+                }
+            }
+        },
+    )
+    with pytest.raises(StrategyRegistryResolutionRefused) as excinfo:
+        resolve_strategy_registry(
+            config_dir,
+            injected_registry=None,
+            evidence_store=evidence_store,
+            emergency_log=emergency_log,
+            identity=identity,
+        )
+    assert "never_referenced" in str(excinfo.value)
+    assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
+
+
+def test_orphan_bindings_stem_refuses(
+    tmp_path: Path, evidence_store, emergency_log, identity
+):
+    """Rule 5: a bindings entry for a stem with no matching strategy file."""
+    config_dir = tmp_path / "config"
+    strategies_dir = config_dir / "strategies"
+    strategies_dir.mkdir(parents=True)
+    mapping = admissible_strategy_mapping()
+    write_strategy_yaml(strategies_dir, "band.strategy.yaml", mapping)
+    _write_bindings_yaml(
+        config_dir,
+        {
+            "strategies": {
+                "no-such-strategy": {
+                    "config_binding_version": "cfg-anything",
+                    "bindings": {},
+                }
+            }
+        },
+    )
+    with pytest.raises(StrategyRegistryResolutionRefused) as excinfo:
+        resolve_strategy_registry(
+            config_dir,
+            injected_registry=None,
+            evidence_store=evidence_store,
+            emergency_log=emergency_log,
+            identity=identity,
+        )
+    assert "no-such-strategy" in str(excinfo.value)
+    assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
+
+
+def test_happy_path_registers_bindings_and_the_rule_actually_fires(
+    tmp_path: Path, evidence_store, emergency_log, identity
+):
+    """The whole point of finding #9: a config-sourced ref is no longer
+    inert. The registered ``EvaluationConfig.bindings`` carries the exact
+    values, and evaluating the policy over an environment where
+    ``capsule.resolved_values.close < config.lower_band_threshold`` holds
+    actually SELECTS the ACTION decision — not silently UNKNOWN/default."""
+    config_dir = tmp_path / "config"
+    strategies_dir = config_dir / "strategies"
+    strategies_dir.mkdir(parents=True)
+    mapping = _config_ref_strategy_mapping()
+    write_strategy_yaml(strategies_dir, "band.strategy.yaml", mapping)
+    _write_bindings_yaml(
+        config_dir,
+        {
+            "strategies": {
+                "band.strategy": {
+                    "config_binding_version": mapping["config_binding_version"],
+                    "bindings": {"lower_band_threshold": 500},
+                }
+            }
+        },
+    )
+    resolved = resolve_strategy_registry(
+        config_dir,
+        injected_registry=None,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        identity=identity,
+    )
+    assert _refusal_evidence_kinds(evidence_store) == []
+    assert resolved.loaded_bindings is not None
+    assert resolved.loaded_bindings.present is True
+    assert resolved.loaded_bindings.sha256_digest is not None
+
+    dispatch = resolved.registry.resolve(
+        InstrumentKey(account=ACCOUNT, instrument=INSTRUMENT)
+    )
+    assert dispatch.resolution is DispatchResolution.DISPATCHED
+    registered = dispatch.entries[0]
+    assert registered.config.bindings == {"lower_band_threshold": 500}
+
+    # The rule fires: close(100) < config.lower_band_threshold(500).
+    env = {
+        "capsule": {"resolved_values": {"close": 100}},
+        "config": dict(registered.config.bindings),
+    }
+    decision = evaluate_policy(registered.strategy.policy, env)
+    assert decision.kind is DecisionKind.ACTION
+
+    # Control: close(999) is NOT below the threshold -> default NO_ACTION.
+    env_no_fire = {
+        "capsule": {"resolved_values": {"close": 999}},
+        "config": dict(registered.config.bindings),
+    }
+    default_decision = evaluate_policy(registered.strategy.policy, env_no_fire)
+    assert default_decision.kind is DecisionKind.NO_ACTION
+
+
+def test_zero_config_refs_with_matching_empty_entry_is_fine(
+    tmp_path: Path, evidence_store, emergency_log, identity
+):
+    """A strategy with zero config-sourced refs may still have a bindings
+    entry, as long as it version-matches and declares zero bindings (rule 4
+    forces this: every key would otherwise be "unused")."""
+    config_dir = tmp_path / "config"
+    strategies_dir = config_dir / "strategies"
+    strategies_dir.mkdir(parents=True)
+    mapping = admissible_strategy_mapping()
+    write_strategy_yaml(strategies_dir, "band.strategy.yaml", mapping)
+    _write_bindings_yaml(
+        config_dir,
+        {
+            "strategies": {
+                "band.strategy": {
+                    "config_binding_version": mapping["config_binding_version"],
+                    "bindings": {},
+                }
+            }
+        },
+    )
+    resolved = resolve_strategy_registry(
+        config_dir,
+        injected_registry=None,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        identity=identity,
+    )
+    assert _refusal_evidence_kinds(evidence_store) == []
+    dispatch = resolved.registry.resolve(
+        InstrumentKey(account=ACCOUNT, instrument=INSTRUMENT)
+    )
+    assert dispatch.resolution is DispatchResolution.DISPATCHED
+
+
+def test_no_bindings_file_and_zero_config_refs_is_fine(
+    tmp_path: Path, evidence_store, emergency_log, identity
+):
+    """No ``strategy_bindings.yaml`` at all, and no strategy needs one —
+    the file's absence is not itself a refusal (module docstring)."""
+    config_dir = tmp_path / "config"
+    strategies_dir = config_dir / "strategies"
+    strategies_dir.mkdir(parents=True)
+    write_strategy_yaml(
+        strategies_dir, "band.strategy.yaml", admissible_strategy_mapping()
+    )
+    resolved = resolve_strategy_registry(
+        config_dir,
+        injected_registry=None,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        identity=identity,
+    )
+    assert _refusal_evidence_kinds(evidence_store) == []
+    assert resolved.loaded_bindings is not None
+    assert resolved.loaded_bindings.present is False

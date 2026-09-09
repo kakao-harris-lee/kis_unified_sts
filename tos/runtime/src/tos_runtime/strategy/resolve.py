@@ -27,24 +27,47 @@ with an empty registry and records a non-halt
 :func:`~tos_runtime.evidence.emergency.record_halt` — this is a stated
 choice that boots successfully, not a HALT/protective-action record).
 
-**Config-sourced context refs without a bindings surface are refused at
-load (finding #9, disposition applied).** ``config`` is an
+**Config-sourced context refs are positively resolved against a bindings
+file (finding #9, disposition applied — TOS Phase 3 슬라이스 D-R
+``[D-R-3]``).** ``config`` is an
 :data:`~tos.dsl.vocabulary.ADMISSIBLE_CONTEXT_SOURCES` member, and
 ``strategy_admissible`` only requires ONE capsule-sourced operand per
 outcome-gating compare — so a compare such as ``capsule.resolved_values.close
-LT config.lower_band_threshold`` parses and admits cleanly. Wave 1 carries
-no per-strategy bindings config surface yet (:func:`_register_all` always
-constructs :class:`~tos.dsl.EvaluationConfig` with ``bindings={}`` — a
-follow-up wave item, plan §7.1 deviation ④); with an empty bindings map,
-:func:`tos.dsl.vocabulary.resolve_operand` returns ``UNKNOWN`` for any
-``config``-sourced ref at evaluation time, silently making the rule never
-fire — no refusal, no evidence, no halt. Until a bindings config surface
-exists, this module refuses any admitted strategy file whose lowered
-program (:func:`tos.dsl.lowering.lower_strategy` + :func:`tos.dsl.candidate.
-iter_nodes` — read-only kernel consumption, no kernel behavior added) names
-a ``config``-sourced ``context_ref`` while bindings are empty, naming both
-the file and the ref path in the refusal, rather than admitting a strategy
-that can never do anything.
+LT config.lower_band_threshold`` parses and admits cleanly. An earlier
+revision (``[D-R-2]``) always constructed :class:`~tos.dsl.EvaluationConfig`
+with ``bindings={}``, which made any such rule permanently inert
+(:func:`tos.dsl.vocabulary.resolve_operand` returns ``UNKNOWN`` for a
+``config``-sourced ref against an empty mapping) — silently, with no
+refusal, no evidence, no halt — so that revision refused any strategy
+carrying one outright rather than admit an inert rule. This module now
+resolves such a ref POSITIVELY instead, against
+:mod:`tos_runtime.strategy.bindings` (``config_dir /
+"strategy_bindings.yaml"``), enforcing five rules per admitted strategy
+file (its own module docstring "five refusal rules"; ``stem`` = the
+strategy file's :attr:`~pathlib.Path.stem`, e.g. ``"example.strategy"`` for
+``example.strategy.yaml``):
+
+1. The strategy carries ``>= 1`` config-sourced ref and the bindings file
+   has no entry for its ``stem`` -> refused.
+2. An entry's ``config_binding_version`` does not equal the strategy file's
+   own -> refused (names both values).
+3. Any config-sourced ref does not resolve to a scalar leaf in that entry's
+   ``bindings`` (walked exactly like the kernel's own
+   :func:`~tos.dsl.vocabulary.resolve_operand` walks ``ref[1:]`` — a ref
+   longer than ``("config", <key>)`` can never resolve against the flat
+   ``dict[str, ScalarValue]`` shape :mod:`tos_runtime.strategy.bindings`
+   itself enforces) -> refused, naming the unresolvable path.
+4. A ``bindings`` key the strategy never actually references via a
+   config-sourced ref -> refused (drift: an unused knob is misconfiguration
+   under CLAUDE.md's "configuration-driven only").
+5. A bindings entry names a ``stem`` with no matching admitted strategy
+   file -> refused (an orphan entry).
+
+A strategy with ZERO config-sourced refs needs no entry at all (rule 1 does
+not apply); if one is present anyway, rules 2-4 still apply verbatim — rule
+4 alone already forces ``bindings == {}`` for a zero-ref strategy (every key
+is "unused" when nothing references any key), so no separate special case
+is needed.
 
 **Evidence before halt.** Any REFUSAL here is durably recorded as one
 ``STRATEGY_REFUSED`` evidence entry (both the sqlite evidence store and the
@@ -66,13 +89,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from tos.canonical import ArtifactIntegrityError
-from tos.dsl import EvaluationConfig
-from tos.dsl.candidate import iter_nodes
-from tos.dsl.lowering import lower_strategy
+from tos.dsl import EvaluationConfig, ScalarValue
 from tos.dsl.serialization import parse_strategy
-from tos.dsl.vocabulary import KIND_CONTEXT_REF, Operand
 from tos.engine import RegistrationRefused, StrategyRegistry
 from tos.engine.admission import strategy_admissible
 from tos.engine.vocabulary import CONFIG_CONTEXT_SOURCE
@@ -80,6 +101,13 @@ from tos.workload import RuntimeIdentity
 
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.strategy.bindings import (
+    STRATEGY_BINDINGS_FILE_NAME,
+    LoadedStrategyBindings,
+    OneStrategyBindings,
+    StrategyBindingsLoadError,
+    load_strategy_bindings,
+)
 from tos_runtime.strategy.loader import (
     LoadedStrategies,
     LoadedStrategy,
@@ -124,10 +152,14 @@ class ResolvedStrategyRegistry:
     when the source was an injected registry or the legacy neither-present
     empty default) — the composition root needs ``loaded`` to extend the
     ``OPERATOR_ATTESTED_INPUTS`` evidence record with each strategy file's
-    own digest (plan §1.2 item 3)."""
+    own digest (plan §1.2 item 3). ``loaded_bindings`` (``[D-R-3]``) is
+    populated the SAME way — only in the file-strategy-source path — so the
+    composition root can fold the bindings file's own digest into the same
+    evidence record."""
 
     registry: StrategyRegistry
     loaded: LoadedStrategies | None
+    loaded_bindings: LoadedStrategyBindings | None = None
 
 
 def _refuse(
@@ -148,88 +180,147 @@ def _refuse(
     )
 
 
-def _config_ref_path(loaded_strategy: LoadedStrategy) -> str | None:
-    """Return the dotted ``config``-sourced ref path (e.g.
-    ``"config.lower_band_threshold"``) of the FIRST outcome-gating
-    :class:`~tos.dsl.vocabulary.Operand` naming the ``config`` context
-    source, walking the strategy's own typed policy (rule guards only —
-    ``Operand`` never appears outside a :class:`~tos.dsl.vocabulary.Compare`,
-    see :mod:`tos.dsl.vocabulary`), or ``None`` if there is none.
+def _config_ref_paths(loaded_strategy: LoadedStrategy) -> tuple[tuple[str, ...], ...]:
+    """Every DISTINCT ``config``-sourced ref, as its raw component tuple, any
+    outcome-gating :class:`~tos.dsl.vocabulary.Compare` in the strategy's
+    policy names, in first-seen order.
 
-    Used ONLY to name the ref in a refusal message once
-    :func:`_refuse_config_refs_without_bindings` has already DETECTED the
-    presence of a config-sourced ``context_ref`` via the kernel's own
-    :func:`tos.dsl.lowering.lower_strategy` + :func:`tos.dsl.candidate.
-    iter_nodes` (the lowered candidate node carries only the ref's source,
-    not its full path — module docstring "Payload is intentionally
-    structural, not literal" — so naming the exact path requires this
-    separate, read-only walk of the typed authoring tree)."""
+    Walks the strategy's own TYPED policy directly (``Operand`` never
+    appears outside a ``Compare`` — see :mod:`tos.dsl.vocabulary`: neither
+    ``Decision`` nor ``TargetSpec`` carries one) rather than the kernel's
+    lowered candidate program: the lowered node payload is intentionally
+    structural, not literal (design #31), so it cannot recover the exact ref
+    path — this typed walk both detects a config-sourced ref AND names its
+    exact path in one pass, which is what positive resolution
+    (:func:`_resolve_bindings_or_refuse`) needs.
+
+    Returns:
+        The distinct ``ref`` tuples (e.g. ``("config", "lower_band_threshold")``),
+        never a joined string — callers join with ``"."`` only for messages.
+    """
     policy = loaded_strategy.strategy.policy
     if policy is None:  # pragma: no cover - admitted strategies always carry a policy
-        return None
+        return ()
+    seen: list[tuple[str, ...]] = []
     for rule in policy.rules:
         for compare in rule.all_of:
             for operand in (compare.left, compare.right):
-                path = _operand_config_ref_path(operand)
-                if path is not None:
-                    return path
-    return None
+                ref = operand.ref
+                if (
+                    ref is not None
+                    and ref[0] == CONFIG_CONTEXT_SOURCE
+                    and ref not in seen
+                ):
+                    seen.append(ref)
+    return tuple(seen)
 
 
-def _operand_config_ref_path(operand: Operand) -> str | None:
-    """``"."``-joined ref path if ``operand`` is a ``config``-sourced ref, else ``None``."""
-    if operand.ref is not None and operand.ref[0] == CONFIG_CONTEXT_SOURCE:
-        return ".".join(operand.ref)
-    return None
+def _ref_resolves_in_bindings(
+    ref: tuple[str, ...], bindings: dict[str, ScalarValue]
+) -> bool:
+    """Whether ``ref[1:]`` resolves to a scalar leaf in ``bindings`` —
+    mirrors :func:`tos.dsl.vocabulary.resolve_operand`'s own walk exactly
+    (``ref[0]`` is already known to be ``"config"`` by the caller), except it
+    walks ``bindings`` directly rather than a full environment, since
+    ``env["config"]`` IS ``dict(config.bindings)`` verbatim
+    (:func:`tos.dsl.determinism.build_environment`)."""
+    value: Any = bindings
+    for part in ref[1:]:
+        if isinstance(value, dict) and part in value:
+            value = value[part]
+        else:
+            return False
+    return isinstance(value, bool | int | float | str)
 
 
-def _refuse_config_refs_without_bindings(loaded: LoadedStrategies) -> None:
-    """Refuse any admitted strategy file whose lowered program contains a
-    ``config``-sourced ``context_ref`` while bindings are empty (module
-    docstring finding #9): with Wave 1's hard-coded ``bindings={}``
-    (:func:`_register_all`), such a rule can never resolve its ``config``
-    operand and silently never fires — no refusal, no evidence, no halt.
+def _resolve_bindings_or_refuse(
+    loaded: LoadedStrategies, loaded_bindings: LoadedStrategyBindings
+) -> None:
+    """Positive resolution of every admitted strategy's ``config``-sourced
+    refs against ``loaded_bindings`` — the five rules this module's own
+    docstring numbers (finding #9 disposition, ``[D-R-3]``).
 
-    Detection reuses the kernel's OWN lowering
-    (:func:`tos.dsl.lowering.lower_strategy`) + tree walk
-    (:func:`tos.dsl.candidate.iter_nodes`) — read-only consumption, no
-    kernel behavior added — exactly the seam ``strategy_admissible`` already
-    runs through (finding #9's suggested disposition).
+    Args:
+        loaded: The admitted strategy set (module invariant: never empty —
+            :func:`~tos_runtime.strategy.loader.load_strategies` itself
+            refuses an empty directory before this function is ever
+            reached).
+        loaded_bindings: The (possibly-absent — ``strategies`` is ``{}``
+            either way) loaded bindings file.
 
     Raises:
-        StrategyLoadError: The first (sorted-path order) offending file,
-            naming both the file and the offending ref's dotted path
-            (:func:`_config_ref_path`).
+        StrategyLoadError: The first (sorted-strategy-path order) violation
+            of any of the five rules, naming the file/stem/path/key.
     """
+    entries_by_stem = loaded_bindings.strategies
     for entry in loaded.strategies:
-        program = lower_strategy(entry.strategy)
-        has_config_ref = any(
-            node.kind == KIND_CONTEXT_REF and node.source == CONFIG_CONTEXT_SOURCE
-            for node in iter_nodes(program)
-        )
-        if not has_config_ref:
+        stem = entry.path.stem
+        refs = _config_ref_paths(entry)
+        binding_entry = entries_by_stem.get(stem)
+
+        if binding_entry is None:
+            if refs:
+                raise StrategyLoadError(
+                    f"{entry.path}: strategy carries {len(refs)} config-sourced "
+                    f"context_ref(s) (e.g. {'.'.join(refs[0])!r}) but "
+                    f"{loaded_bindings.path} has no entry for stem {stem!r} — "
+                    "refusing rather than admitting a strategy whose config "
+                    "operand can never resolve (rule 1)"
+                )
             continue
-        ref_path = _config_ref_path(entry)
+
+        strategy_version = entry.strategy.config_binding_version
+        if binding_entry.config_binding_version != strategy_version:
+            raise StrategyLoadError(
+                f"{entry.path}: {loaded_bindings.path} stem {stem!r} declares "
+                f"config_binding_version={binding_entry.config_binding_version!r}, "
+                f"the strategy file itself declares {strategy_version!r} — "
+                "refusing on version mismatch (rule 2)"
+            )
+
+        referenced_keys: set[str] = set()
+        for ref in refs:
+            if not _ref_resolves_in_bindings(ref, binding_entry.bindings):
+                raise StrategyLoadError(
+                    f"{entry.path}: config-sourced ref {'.'.join(ref)!r} does "
+                    f"not resolve to a scalar leaf in {loaded_bindings.path} "
+                    f"stem {stem!r}'s bindings — refusing rather than "
+                    "admitting a rule that can never resolve this operand "
+                    "(rule 3)"
+                )
+            if len(ref) >= 2:
+                referenced_keys.add(ref[1])
+
+        unused = sorted(set(binding_entry.bindings) - referenced_keys)
+        if unused:
+            raise StrategyLoadError(
+                f"{loaded_bindings.path}: stem {stem!r} declares bindings "
+                f"key(s) {unused} that {entry.path} never references via a "
+                "config-sourced context_ref — refusing (configuration "
+                "drift; an unused knob is misconfiguration under "
+                "CLAUDE.md's 'configuration-driven only', rule 4)"
+            )
+
+    admitted_stems = {entry.path.stem for entry in loaded.strategies}
+    orphans = sorted(set(entries_by_stem) - admitted_stems)
+    if orphans:
         raise StrategyLoadError(
-            f"{entry.path}: strategy carries a context_ref sourced from "
-            f"{CONFIG_CONTEXT_SOURCE!r} ({ref_path or '<path unavailable>'}) while "
-            "this compose root's bindings config surface is empty — the rule "
-            "could never resolve this operand and would silently never fire "
-            "(no bindings config source exists yet, plan §7.1 deviation ④); "
-            "refusing rather than admitting an inert strategy"
+            f"{loaded_bindings.path}: stem(s) {orphans} have no matching "
+            "admitted strategy file — refusing an orphan bindings entry "
+            "(rule 5)"
         )
 
 
-def _register_all(loaded: LoadedStrategies) -> StrategyRegistry:
-    """Register every loaded (already admitted) strategy into a fresh
-    registry, deriving each :class:`~tos.dsl.EvaluationConfig` from the
-    strategy's own ``config_binding_version`` with empty ``bindings`` —
-    Wave 1 scope carries no operator-configured per-strategy binding
-    surface yet (every fixture and the example strategy file both use
-    empty bindings today; a future wave adds a bindings config source
-    without changing this call site's shape — see
-    :func:`_refuse_config_refs_without_bindings`, run by the caller BEFORE
-    this function, for what happens to a strategy that needs one).
+def _register_all(
+    loaded: LoadedStrategies, bindings_by_stem: dict[str, OneStrategyBindings]
+) -> StrategyRegistry:
+    """Register every loaded (already admitted, already positively resolved
+    against ``bindings_by_stem`` by :func:`_resolve_bindings_or_refuse`)
+    strategy into a fresh registry, deriving each
+    :class:`~tos.dsl.EvaluationConfig` from the strategy's own
+    ``config_binding_version`` plus that stem's bindings (empty when the
+    stem has no entry — always valid post-resolution: rule 1 already
+    refused any zero-bindings strategy that actually needs one).
 
     Raises:
         RegistrationRefused: Defensive only — ``load_strategies`` already
@@ -241,7 +332,11 @@ def _register_all(loaded: LoadedStrategies) -> StrategyRegistry:
     for entry in loaded.strategies:
         config_binding_version = entry.strategy.config_binding_version
         assert config_binding_version is not None  # ISSUED strategy: required-covered
-        config = EvaluationConfig(config_version=config_binding_version, bindings={})
+        one = bindings_by_stem.get(entry.path.stem)
+        bindings = dict(one.bindings) if one is not None else {}
+        config = EvaluationConfig(
+            config_version=config_binding_version, bindings=bindings
+        )
         registry.register(entry.strategy, config)
     return registry
 
@@ -259,7 +354,10 @@ def resolve_strategy_registry(
 
     Args:
         config_dir: The compose config directory; ``config_dir /
-            "strategies"`` is checked for the file source.
+            "strategies"`` is checked for the file source and, when that
+            source is used, ``config_dir / "strategy_bindings.yaml"`` is
+            loaded and every admitted strategy's ``config``-sourced refs are
+            positively resolved against it (module docstring finding #9).
         injected_registry: The caller-supplied registry (test-compatibility
             path), or ``None``.
         evidence_store: Where a refusal's (or the ``allow_no_strategies``
@@ -329,20 +427,24 @@ def resolve_strategy_registry(
         )
         return ResolvedStrategyRegistry(registry=StrategyRegistry(), loaded=None)
 
+    bindings_path = config_dir / STRATEGY_BINDINGS_FILE_NAME
     try:
         loaded = load_strategies(
             strategies_dir, parse=parse_strategy, admit=strategy_admissible
         )
-        _refuse_config_refs_without_bindings(loaded)
-    except StrategyLoadError as exc:
+        loaded_bindings = load_strategy_bindings(bindings_path)
+        _resolve_bindings_or_refuse(loaded, loaded_bindings)
+    except (StrategyLoadError, StrategyBindingsLoadError) as exc:
         _refuse(evidence_store, emergency_log, identity, str(exc))
         raise StrategyRegistryResolutionRefused(str(exc)) from exc
 
     try:
-        registry = _register_all(loaded)
+        registry = _register_all(loaded, loaded_bindings.strategies)
     except RegistrationRefused as exc:
         reason = f"{strategies_dir}: an admitted strategy failed registry registration: {exc}"
         _refuse(evidence_store, emergency_log, identity, reason)
         raise StrategyRegistryResolutionRefused(reason) from exc
 
-    return ResolvedStrategyRegistry(registry=registry, loaded=loaded)
+    return ResolvedStrategyRegistry(
+        registry=registry, loaded=loaded, loaded_bindings=loaded_bindings
+    )
