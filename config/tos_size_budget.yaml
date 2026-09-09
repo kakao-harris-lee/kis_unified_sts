@@ -265,7 +265,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1203
+  measured: 1205
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -363,6 +363,11 @@ exceptions:
     압축했고(기존 coordinator_preconditions 주석 2줄은 타 레인 저작이라
     비편집) 추가 압축 여지가 없어 함수 예외로 등재(아래 별도 항목). 모듈
     실측은 신규 import 1줄 + 상수 2줄 + 호출부 순증분으로 1196→1203(+7).
+    2026-09-09 TOS Phase 3 슬라이스 D-R [D-R-3c] — finding #9 편차 ④ 해소:
+    _resolve_strategies_and_attested_inputs 의 record_operator_attested_inputs
+    호출부에 resolved_strategies.loaded_bindings 인자 1줄 + 도크스트링 정정
+    2줄 추가. 함수 자체는 100줄 문턱 아래 유지(무예외). 모듈 실측은
+    1203→1205(+2).
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime

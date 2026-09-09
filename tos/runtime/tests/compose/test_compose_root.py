@@ -7,6 +7,7 @@ the test itself creates with 0600 + uid, fully-valued config copies —
 from __future__ import annotations
 
 import contextlib
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -379,6 +380,63 @@ class TestComposeRootWiring:
                 fx.BAND_STRATEGY_FILE_NAME,
             )
             assert len(coordinate["source_file_digest"]) == 64  # sha256 hex
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+    def test_operator_attested_inputs_record_includes_bindings_file_when_present(
+        self, config_dir: Path, data_dir: Path, custody_root: Path
+    ) -> None:
+        """TOS Phase 3 슬라이스 D-R ``[D-R-3c]``: when ``config_dir/
+        strategy_bindings.yaml`` exists, its own digest folds into the SAME
+        ``OPERATOR_ATTESTED_INPUTS`` record as the strategy file's — a
+        compose-level proof of the wiring, not just ``resolve.py``'s own
+        unit tests. The band strategy has zero config-sourced refs, so an
+        empty-``bindings`` entry (version-matched) is a valid, minimal
+        bindings file (finding #9 disposition rule 4: an empty-refs
+        strategy's entry must have empty bindings)."""
+        import json
+
+        fx.write_band_strategy_file(config_dir)
+        bindings_path = config_dir / "strategy_bindings.yaml"
+        bindings_path.write_text(
+            yaml.safe_dump(
+                {
+                    "strategies": {
+                        "band.strategy": {
+                            "config_binding_version": "cfg-bind-compose",
+                            "bindings": {},
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        runtime = compose_paper_runtime(
+            config_dir,
+            data_dir,
+            custody_root,
+            "non-live-test",
+            construction=fx.construction_config(),
+            aggregate_risk_inputs_provider=_aggregate_inputs,
+            action_flow_inputs_provider=_action_flow_inputs,
+        )
+        rows = runtime.evidence_store.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = ?",
+            ("OPERATOR_ATTESTED_INPUTS",),
+        ).fetchall()
+        assert len(rows) == 1
+        stored = json.loads(rows[0][0])
+        coordinates = stored["payload"]["attested_coordinates"]
+        bindings_rows = [
+            c for c in coordinates if c["source_file"] == "strategy_bindings.yaml"
+        ]
+        assert len(bindings_rows) == 1
+        assert len(bindings_rows[0]["source_file_digest"]) == 64  # sha256 hex
+        assert (
+            bindings_rows[0]["source_file_digest"]
+            == hashlib.sha256(bindings_path.read_bytes()).hexdigest()
+        )
 
         runtime.rcl_log.close()
         runtime.evidence_store.close()

@@ -341,6 +341,45 @@ def _register_all(
     return registry
 
 
+def _resolve_neither_present(
+    strategies_dir: Path,
+    *,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    identity: RuntimeIdentity,
+    allow_no_strategies: bool,
+) -> ResolvedStrategyRegistry:
+    """Neither a strategies directory nor an injected registry — the
+    "neither present" branch (module docstring finding #8), split out of
+    :func:`resolve_strategy_registry` purely for the size budget."""
+    if not allow_no_strategies:
+        reason = (
+            f"{strategies_dir}: no strategies directory and no injected "
+            "StrategyRegistry — an engine with zero admitted strategies "
+            "is not a defined no-action (mirrors "
+            "tos_runtime.strategy.loader.load_strategies's own "
+            "zero-strategies refusal one layer down); pass "
+            "allow_no_strategies=True to state this choice explicitly"
+        )
+        _refuse(evidence_store, emergency_log, identity, reason)
+        raise StrategyRegistryResolutionRefused(reason)
+    # Explicit, stated operator choice (module docstring) — proceeds with an
+    # empty registry; evidenced (NOT via record_halt: a successful boot,
+    # not a halt/protective-action record).
+    evidence_store.append(
+        {
+            "detail": (
+                f"{strategies_dir}: no strategies directory and no "
+                "injected registry; allow_no_strategies=True"
+            )
+        },
+        kind=STRATEGY_SOURCE_ABSENT_EVIDENCE_KIND,
+        record_class=STRATEGY_SOURCE_ABSENT_EVIDENCE_KIND,
+        runtime_identity=identity,
+    )
+    return ResolvedStrategyRegistry(registry=StrategyRegistry(), loaded=None)
+
+
 def resolve_strategy_registry(
     config_dir: Path,
     *,
@@ -400,32 +439,13 @@ def resolve_strategy_registry(
     if not dir_present:
         if injected_registry is not None:
             return ResolvedStrategyRegistry(registry=injected_registry, loaded=None)
-        if not allow_no_strategies:
-            reason = (
-                f"{strategies_dir}: no strategies directory and no injected "
-                "StrategyRegistry — an engine with zero admitted strategies "
-                "is not a defined no-action (mirrors "
-                "tos_runtime.strategy.loader.load_strategies's own "
-                "zero-strategies refusal one layer down); pass "
-                "allow_no_strategies=True to state this choice explicitly"
-            )
-            _refuse(evidence_store, emergency_log, identity, reason)
-            raise StrategyRegistryResolutionRefused(reason)
-        # Explicit, stated operator choice (module docstring) — proceeds
-        # with an empty registry; evidenced (NOT via record_halt: this is a
-        # successful boot, not a halt/protective-action record).
-        evidence_store.append(
-            {
-                "detail": (
-                    f"{strategies_dir}: no strategies directory and no "
-                    "injected registry; allow_no_strategies=True"
-                )
-            },
-            kind=STRATEGY_SOURCE_ABSENT_EVIDENCE_KIND,
-            record_class=STRATEGY_SOURCE_ABSENT_EVIDENCE_KIND,
-            runtime_identity=identity,
+        return _resolve_neither_present(
+            strategies_dir,
+            evidence_store=evidence_store,
+            emergency_log=emergency_log,
+            identity=identity,
+            allow_no_strategies=allow_no_strategies,
         )
-        return ResolvedStrategyRegistry(registry=StrategyRegistry(), loaded=None)
 
     bindings_path = config_dir / STRATEGY_BINDINGS_FILE_NAME
     try:

@@ -24,6 +24,7 @@ from tos_runtime.engine.replay import ReplayVerdict, replay_engine
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog
+from tos_runtime.strategy.bindings import LoadedStrategyBindings
 from tos_runtime.strategy.loader import LoadedStrategies
 
 __all__ = [
@@ -131,6 +132,7 @@ def record_operator_attested_inputs(
     risk_attestations: RiskAttestations,
     egress_coordinates: EgressCoordinatesConfig,
     loaded_strategies: LoadedStrategies | None = None,
+    loaded_bindings: LoadedStrategyBindings | None = None,
 ) -> None:
     """Durably record ONE evidence entry enumerating every config-attested
     coordinate name (items 6/12/16 + the step 6/7 admission witnesses + the
@@ -149,6 +151,13 @@ def record_operator_attested_inputs(
     computed while loading it (never re-hashed here); ``None`` when the
     file source was not used (an injected registry, or the legacy neither-
     present empty default — :mod:`tos_runtime.strategy.resolve`).
+
+    ``loaded_bindings`` (``[D-R-3c]``, finding #9 disposition) adds ONE more
+    row for ``strategy_bindings.yaml`` itself, the same way, but ONLY when
+    the file actually exists (:attr:`~tos_runtime.strategy.bindings.
+    LoadedStrategyBindings.present`) — its absence is a normal, typed state
+    (module docstring of :mod:`tos_runtime.strategy.bindings`), not
+    something to attest.
 
     Never re-derives ``config_dir``'s file names independently elsewhere —
     this is the ONE place that reads all three attestation/coordinate config
@@ -191,6 +200,15 @@ def record_operator_attested_inputs(
                     "source_file_digest": entry.sha256_digest,
                 }
             )
+    if loaded_bindings is not None and loaded_bindings.present:
+        assert loaded_bindings.sha256_digest is not None  # present implies a digest
+        coordinates.append(
+            {
+                "name": loaded_bindings.path.name,
+                "source_file": loaded_bindings.path.name,
+                "source_file_digest": loaded_bindings.sha256_digest,
+            }
+        )
     evidence_store.append(
         {"attested_coordinates": coordinates},
         kind=_ATTESTED_INPUTS_EVIDENCE_KIND,

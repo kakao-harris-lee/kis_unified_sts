@@ -1053,9 +1053,10 @@ def _resolve_strategies_and_attested_inputs(
     (TOS Phase 3 슬라이스 D-R ``[D-R-2]``, plan §1.2 —
     :func:`~tos_runtime.strategy.resolve.resolve_strategy_registry`), and
     record ``OPERATOR_ATTESTED_INPUTS`` (folding the resolved strategy file
-    digests, if any, into the SAME record as the other attested
-    coordinates) — split out of :func:`_boot_services` purely for the size
-    budget; no behavioural difference from having this inline there.
+    digests AND the ``strategy_bindings.yaml`` digest, if any, into the
+    SAME record as the other attested coordinates — ``[D-R-3c]``) — split
+    out of :func:`_boot_services` purely for the size budget; no
+    behavioural difference from having this inline there.
 
     ``allow_no_strategies`` is threaded straight through from
     :func:`~tos_runtime.compose.root.compose_paper_runtime` — see
@@ -1084,6 +1085,7 @@ def _resolve_strategies_and_attested_inputs(
         risk.risk_attestations,
         egress_coordinates,
         resolved_strategies.loaded,
+        resolved_strategies.loaded_bindings,
     )
     return egress_coordinates, resolved_strategies
 
