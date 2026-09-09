@@ -800,6 +800,8 @@ def _build_context_resolver(
         proof_issuer=proof_issuer,
         pending_dimension_specs=pending_dimension_specs,
         egress_attestations=egress_attestations,
+        # Transport's OWN identity (slice #3, pre-existing) — not the
+        # gateway principal below; literal kept, tracked as a config-gap item.
         transport_nature=TransportNature(
             principal=f"synthetic-paper-{environment_label}",
             reaches_broker=False,
@@ -808,17 +810,10 @@ def _build_context_resolver(
             risk_relevant_live=False,
         ),
         environment_label=environment_label,
-        # ONE source (review #1): context.principal is the seal's
-        # claim_principal (tos/src/tos/egressgw/seal.py:285), which the
-        # kernel's _claim_principal_matches_active_principal validator
-        # (seal.py:246-261) now hard-requires to equal
-        # authorized_coordinates.active_principal. A second literal here
-        # that merely happened to match the fixture default silently
-        # refused every send the moment an operator configured a
-        # non-default active_principal (reviewer probe:
-        # SEND_SEAL_UNCONSTRUCTABLE, 0 transport requests). Derive it from
-        # the same already-substituted config value instead of a second
-        # f-string.
+        # ONE source (finding #1): must equal authorized_coordinates.
+        # active_principal below (seal.py's _claim_principal_matches_
+        # active_principal) — a second literal here silently refused
+        # every send once an operator configured a non-default value.
         principal=egress_coordinates.active_principal,
         credential_route_inventory=(
             CredentialRouteInventoryEntry(
@@ -828,7 +823,9 @@ def _build_context_resolver(
                 inside_boundary=True,
             ),
             CredentialRouteInventoryEntry(
-                principal=f"egressgw-{environment_label}",
+                # ONE source (finding #1b): same identity as ``principal=``
+                # above — a second literal here used to silently diverge.
+                principal=egress_coordinates.active_principal,
                 usable_credential=False,
                 broker_route=False,
                 inside_boundary=True,

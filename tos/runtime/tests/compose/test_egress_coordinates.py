@@ -200,6 +200,26 @@ def test_wired_coordinates_equal_the_configured_non_default_values(
         egress_generation=9,
         active_principal="custom-non-live-test",
     )
+
+    # Review follow-up finding #1b (2026-09-09): credential_route_inventory's
+    # gateway-principal entry was ALSO hardcoded to
+    # ``f"egressgw-{environment_label}"`` in ``_wiring.py`` — the same
+    # identity finding #1 already single-sourced for ``context.principal``
+    # above. A caller reverting either line back to its own literal would
+    # silently leave the inventory keyed to a DIFFERENT principal than the
+    # one that actually appears as ``context.principal`` / ``seal.
+    # claim_principal``, defeating ``credential_route_authority_disjoint``'s
+    # ability to corroborate the gateway's own transport. Assert the
+    # inventory carries an entry for the SAME principal as
+    # ``resolved.principal`` (not a second, independently-templated
+    # literal that merely happens to match the fixture default).
+    matching_inventory_principals = [
+        entry.principal
+        for entry in resolved.credential_route_inventory
+        if entry.principal == resolved.principal
+    ]
+    assert matching_inventory_principals == [resolved.principal]
+
     assert resolved.capsule_egress_request_digest == _SCHEME.compute_digest(
         {
             "account": runtime.context_resolver.instrument_key.account,
