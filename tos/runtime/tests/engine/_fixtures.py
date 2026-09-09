@@ -314,12 +314,22 @@ def build_core(
     stages: dict[CommitmentStep, Stage] | None = None,
     transmit: Any = None,
     preconditions: Any = None,
+    sink: Any = None,
 ) -> EngineCore:
     """``preconditions`` defaults to :class:`_AlwaysPermissivePreconditions` (module docstring —
     this fixture set exercises the durable-inbox/driver/replay machinery, not the Coordinator
     gate itself). A caller that specifically wants to exercise a gate refusal (independent
     review finding #1, wave 2, 2026-09-09 — ``tos_runtime.engine.replay``'s own Coordinator-gate
-    refusal case) passes a different ``CoordinatorPreconditions`` double instead."""
+    refusal case) passes a different ``CoordinatorPreconditions`` double instead.
+
+    ``sink`` defaults to :class:`~tos.engine.NullEvidenceSink` (this fixture set's own long-
+    standing default — kernel-level ``EngineEvidenceRecord``s, e.g. ``SEND_HANDED_OFF``, are
+    discarded, never landing in the durable ``evidence_store``). A caller that needs the LIVE
+    run's own kernel evidence to be durably queryable afterward (CR5, 2026-09-09 —
+    :class:`~tos_runtime.engine.replay_transmit.RecordedTransmit` reads ``SEND_HANDED_OFF``
+    evidence back out of the SAME durable store) passes
+    ``tos_runtime.evidence.sinks.EngineEvidenceSinkAdapter(evidence_store)`` instead.
+    """
     return EngineCore(
         registry=registry if registry is not None else registry_with(),
         stages=stages if stages is not None else admitting_stages(),
@@ -330,7 +340,7 @@ def build_core(
             else _AlwaysPermissivePreconditions()
         ),
         transmit=transmit,
-        sink=NullEvidenceSink(),
+        sink=sink if sink is not None else NullEvidenceSink(),
         scheme=SCHEME,
     )
 
