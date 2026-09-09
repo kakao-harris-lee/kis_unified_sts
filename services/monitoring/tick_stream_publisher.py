@@ -44,7 +44,10 @@ def orderbook_publish_fields(snapshot: Mapping[str, Any] | None) -> dict[str, An
     the collision this avoids. Both producers (``services/market_ingest`` and
     the monolithic orchestrator) call this so the merge rule lives once.
 
-    Returns ``{}`` unless both sides of the book are positive; never raises.
+    Returns ``{}`` unless both sides of the book are positive. Raises
+    ``ValueError`` for a two-sided book with no usable timestamp — that is a
+    fault, and the callers turn it into a one-shot WARNING rather than letting
+    it read as a normal empty book.
     ``code`` is excluded and the snapshot's ``timestamp`` is re-keyed to
     ``quote_ts``: the published entry's ``timestamp`` belongs to the trade tick,
     and a stale quote must not backdate a fresh trade. Keeping the orderbook
@@ -71,12 +74,17 @@ def orderbook_publish_fields(snapshot: Mapping[str, Any] | None) -> dict[str, An
         try:
             quote_ts = float(snapshot.get("timestamp"))  # type: ignore[arg-type]
         except (TypeError, ValueError):
-            quote_ts = -1.0
-        if quote_ts < 0:
-            # A book we cannot date is worse than no book: published without
-            # `quote_ts`, a consumer would fall back to the trade tick's time
-            # and read it as fresh. Publish the trade tick alone instead.
-            return {}
+            quote_ts = 0.0
+        if quote_ts <= 0:
+            # A two-sided book we cannot date is a fault, not an empty book:
+            # published without `quote_ts` a consumer would fall back to the
+            # trade tick's time and read a stale quote as fresh. Returning {}
+            # would look identical to the normal pre-open empty book and
+            # `OrderbookMergeLog` — which exists to catch exactly this silent
+            # revert — would stay quiet. Raise instead; both producers wrap the
+            # call and route it to a one-shot WARNING, so the tick path itself
+            # still never raises. (0 is undatable too: 1970 is not a quote.)
+            raise ValueError("orderbook snapshot has no usable timestamp")
         fields["quote_ts"] = quote_ts
     return fields
 

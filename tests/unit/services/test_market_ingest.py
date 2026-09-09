@@ -744,3 +744,25 @@ def test_an_empty_book_does_not_clear_the_failure_latch(caplog):
 
     assert daemon._orderbook_merge_log.warned is False
     assert len([r for r in caplog.records if "merge recovered" in r.getMessage()]) == 1
+
+
+def test_an_undatable_two_sided_book_warns_instead_of_publishing_silently(caplog):
+    """A book we cannot date is a fault, not a pre-open empty book. Returning
+    it silently would look identical to the normal empty case and the latch
+    would never fire."""
+    import logging
+
+    undatable = {**_QUOTE, "timestamp": None}
+    publisher = FakePublisher()
+    daemon = _futures_daemon(OrderbookFeed(undatable), publisher)
+
+    with caplog.at_level(logging.WARNING, logger="services.market_ingest.main"):
+        daemon._on_tick("A05603", {"close": 331.20}, datetime.now(UTC))
+
+    warnings = [
+        r for r in caplog.records if "orderbook merge unavailable" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "no usable timestamp" in warnings[0].getMessage()
+    # The trade tick still publishes, without a book.
+    assert publisher.published[0][2] == {"close": 331.20}

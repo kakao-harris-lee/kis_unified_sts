@@ -207,3 +207,20 @@ def test_an_empty_book_does_not_clear_the_failure_latch(caplog):
 
     assert orch._orderbook_merge_log.warned is False
     assert len([r for r in caplog.records if "merge recovered" in r.getMessage()]) == 1
+
+
+def test_an_undatable_two_sided_book_warns_instead_of_publishing_silently(caplog):
+    """Same rule as the ingest producer: an undatable book is a fault."""
+    feed = _Feed({**QUOTE, "timestamp": None})
+    publisher = _Publisher()
+    orch = _orchestrator(feed, publisher)
+
+    with caplog.at_level(logging.WARNING, logger=ORCH_LOGGER):
+        _tick(feed, orch)
+
+    warnings = [
+        r for r in caplog.records if "orderbook merge unavailable" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "no usable timestamp" in warnings[0].getMessage()
+    assert publisher.published[0][2] == TRADE

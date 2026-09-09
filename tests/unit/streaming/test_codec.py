@@ -289,19 +289,24 @@ def test_orderbook_publish_fields_prefers_an_explicit_quote_ts() -> None:
     assert fields["quote_ts"] == 100.0
 
 
-@pytest.mark.parametrize("stamp", ["nope", None, -1.0], ids=["text", "none", "neg"])
-def test_orderbook_publish_fields_drops_a_book_it_cannot_date(stamp) -> None:
-    """A book with no usable time is worse than no book: published without
-    `quote_ts`, a consumer falls back to the trade tick's time and reads a
-    stale quote as fresh. Publishing the trade alone fails closed."""
+@pytest.mark.parametrize(
+    "stamp", ["nope", None, -1.0, 0], ids=["text", "none", "neg", "zero"]
+)
+def test_orderbook_publish_fields_raises_for_a_book_it_cannot_date(stamp) -> None:
+    """A two-sided book with no usable time is a fault, not an empty book.
+
+    Published without `quote_ts` a consumer falls back to the trade tick's time
+    and reads a stale quote as fresh. Returning `{}` would be indistinguishable
+    from the normal pre-open empty book, so `OrderbookMergeLog` would stay
+    quiet about exactly the silent revert it exists to catch. The producers
+    wrap the call, so the tick path still does not raise.
+    """
     from services.monitoring.tick_stream_publisher import orderbook_publish_fields
 
-    assert (
+    with pytest.raises(ValueError, match="no usable timestamp"):
         orderbook_publish_fields(
             {"bid_price_1": 331.18, "ask_price_1": 331.22, "timestamp": stamp}
         )
-        == {}
-    )
 
 
 @pytest.mark.parametrize(
