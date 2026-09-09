@@ -370,6 +370,28 @@ class ComposeContextResolver:
     ) -> QuorumCommitCertificate | None:
         # ⚠ provisional (item 17, R-RCL-F0): only the command-digest axis is
         # consumed — this compose root claims no quorum-runtime replication.
+        #
+        # ``membership_generation``, ``restore_generation``, ``writer_epoch``,
+        # ``committed_revision``, and ``cluster_identity`` below are slice-#3
+        # PROVISIONAL STAND-INS (review finding #5, 2026-09-09) — this
+        # compose root has no real quorum-runtime replication yet, so there
+        # is no live source to read them from. They are replaced by a
+        # genuine issued QCC in Phase 5. None of the kernel's 17 items
+        # compares them: ``exact_binding_holds``
+        # (``tos/src/tos/egress/predicates.py``) checks only the QCC's
+        # *command* digest against the request record, never these fields —
+        # so, unlike ``egress_generation`` below, leaving them as fixed
+        # stand-ins is not currently load-bearing.
+        #
+        # ``egress_generation`` is DIFFERENT: it is one of the
+        # ``EgressCoordinateSet`` authorized-coordinate values the seal now
+        # makes load-bearing (``SendSeal.egress_generation``,
+        # ``outbound_coordinates``, ``seal_digest``), and
+        # ``authorized_coordinates.egress_generation`` is operator-configured
+        # (``tos_runtime.compose._egress_coordinates``). A second hardcoded
+        # ``1`` here used to silently drift from a non-default configured
+        # value with nothing to catch it. Read it from the SAME config value
+        # instead of a second literal.
         if command_digest is None:
             return None
         from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
@@ -386,7 +408,7 @@ class ComposeContextResolver:
             committed_revision=1,
             canonical_command_digest=command_digest,
             resulting_state_digest=command_digest,
-            egress_generation=1,
+            egress_generation=self.authorized_coordinates.egress_generation,
             active_egress_principal=self.principal,
         )
         assert isinstance(issued, QuorumCommitCertificate)

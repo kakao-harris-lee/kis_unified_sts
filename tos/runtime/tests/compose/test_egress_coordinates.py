@@ -7,6 +7,7 @@ gateway's own coordinate set).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,9 @@ from tos_runtime.compose._egress_coordinates import (
     load_egress_coordinates,
 )
 
-from .test_compose_root import _compose
+from . import _fixtures as fx
+from .conftest import write_approval_file
+from .test_compose_root import _compose, _reach_trusted
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
@@ -204,18 +207,72 @@ def test_wired_coordinates_equal_the_configured_non_default_values(
         }
     )
 
+    # Review finding #1 (2026-09-09): the M-R1 catcher above proved the
+    # *static* coordinate set matches this non-default config, but stopped
+    # at ``_compose(...)`` and never reached a send — which is exactly why
+    # it missed that ``_wiring.py`` still hardcoded ``context.principal`` to
+    # ``f"egressgw-{environment_label}"`` while ``active_principal`` (here,
+    # ``"custom-non-live-test"``) came from this same config. The kernel's
+    # ``_claim_principal_matches_active_principal`` validator requires
+    # ``seal.claim_principal`` (sourced from ``context.principal``) to equal
+    # ``seal.active_principal`` (sourced from ``authorized_coordinates.
+    # active_principal``); with the literal, this diverging config used to
+    # refuse EVERY send at the seal (reviewer probe:
+    # ``halt_reasons == ["SEND_SEAL_UNCONSTRUCTABLE"]``,
+    # ``transport requests == 0``). Run to the real synthetic hand-off and
+    # assert the opposite.
+    _reach_trusted(runtime)
+    event = fx.crossing_event()
+    results = runtime.run_once((event,))
+    proposal_digest = results[0].pipeline.proposal.canonical_digest
+    construction = runtime.construction_stage.construction
+    assert construction is not None and construction.intent is not None
+    write_approval_file(
+        custody_root,
+        proposal_digest=proposal_digest,
+        environment_label="non-live-test",
+        approved_intent_envelope_digest=construction.intent.canonical_digest,
+    )
+    runtime.run_once((event,))
+
+    rows = runtime.evidence_store.connection.execute(
+        "SELECT kind, payload_json FROM entries ORDER BY seq ASC"
+    ).fetchall()
+    halt_reasons = [
+        json.loads(payload_json)["payload"].get("halt_reason")
+        for kind, payload_json in rows
+        if kind == "SEND_REFUSED"
+    ]
+    assert "SEND_SEAL_UNCONSTRUCTABLE" not in halt_reasons, halt_reasons
+    assert len(runtime.transport.requests) == 1
+
+    # Review finding #5 (2026-09-09): the QCC G-3 stand-in used to hardcode
+    # ``egress_generation=1`` regardless of config (`context.py`'s
+    # ``_quorum_certificate_for_command``), while `authorized_coordinates.
+    # egress_generation` (this config's ``9``) came from the same loader.
+    # Nothing compared the two, so the issued
+    # ``QuorumCommitCertificate.egress_generation`` silently drifted from
+    # what the operator configured. Assert both read the SAME config value.
+    issued_contexts = [c for c in runtime.context_resolver.contexts if c is not None]
+    assert issued_contexts, "expected at least one resolved SendBoundaryContext"
+    qcc = issued_contexts[-1].quorum_commit_certificate
+    assert qcc is not None
+    assert qcc.egress_generation == 9
+
     runtime.rcl_log.close()
     runtime.evidence_store.close()
 
 
 def test_no_authorized_coordinate_literal_remains_in_wiring_source() -> None:
-    """ "No literal" grep test (Part 1 test list) — the seven authorized-
-    coordinate values must come from config only, never a bare literal in
+    """ "No literal" grep test (Part 1 test list) — the eight authorized-
+    coordinate values (review finding #2, 2026-09-09: ``endpoint`` joined
+    the other seven) must come from config only, never a bare literal in
     ``_wiring.py``."""
     import tos_runtime.compose._wiring as wiring_module
 
     source = Path(wiring_module.__file__).read_text(encoding="utf-8")
     for literal in (
+        '"synthetic://paper/order"',
         '"synthetic-route"',
         "NEW_ORDER",
         "SUBMIT",
