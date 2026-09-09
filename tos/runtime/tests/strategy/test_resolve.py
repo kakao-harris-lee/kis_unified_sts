@@ -575,3 +575,43 @@ def test_no_bindings_file_and_zero_config_refs_is_fine(
     assert _refusal_evidence_kinds(evidence_store) == []
     assert resolved.loaded_bindings is not None
     assert resolved.loaded_bindings.present is False
+
+
+# ============================================================================
+# [D-R-3d] re-review disposition #1 — see review-dr3.md.
+# ============================================================================
+
+
+def test_malformed_bindings_file_refuses_with_evidence(
+    tmp_path: Path, evidence_store, emergency_log, identity
+):
+    """Finding #1 (MEDIUM): pins that a
+    :class:`~tos_runtime.strategy.bindings.StrategyBindingsLoadError` (a
+    SIBLING of ``StrategyLoadError``, not a subclass of it) is caught by
+    ``resolve_strategy_registry``'s own ``except`` clause and converted to
+    ``StrategyRegistryResolutionRefused`` with BOTH evidence paths written
+    — narrowing that ``except`` to ``StrategyLoadError`` alone would let a
+    malformed-bindings failure escape uncaught, with no
+    ``STRATEGY_REFUSED`` entry and no emergency-log line (the "never a
+    silent halt" contract this module's own docstring states)."""
+    config_dir = tmp_path / "config"
+    strategies_dir = config_dir / "strategies"
+    strategies_dir.mkdir(parents=True)
+    write_strategy_yaml(
+        strategies_dir, "band.strategy.yaml", admissible_strategy_mapping()
+    )
+    (config_dir / STRATEGY_BINDINGS_FILE_NAME).write_text(
+        "strategies:\n  band.strategy:\n"
+        "    config_binding_version: null\n    bindings: {}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(StrategyRegistryResolutionRefused):
+        resolve_strategy_registry(
+            config_dir,
+            injected_registry=None,
+            evidence_store=evidence_store,
+            emergency_log=emergency_log,
+            identity=identity,
+        )
+    assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
+    assert emergency_log.path.read_text().strip() != ""

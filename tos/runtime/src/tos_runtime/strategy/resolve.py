@@ -95,7 +95,11 @@ from tos.canonical import ArtifactIntegrityError
 from tos.dsl import EvaluationConfig, ScalarValue
 from tos.dsl.serialization import parse_strategy
 from tos.engine import RegistrationRefused, StrategyRegistry
-from tos.engine.admission import strategy_admissible
+from tos.engine.admission import (
+    iter_outcome_gating_compares,
+    operand_source,
+    strategy_admissible,
+)
 from tos.engine.vocabulary import CONFIG_CONTEXT_SOURCE
 from tos.workload import RuntimeIdentity
 
@@ -185,14 +189,22 @@ def _config_ref_paths(loaded_strategy: LoadedStrategy) -> tuple[tuple[str, ...],
     outcome-gating :class:`~tos.dsl.vocabulary.Compare` in the strategy's
     policy names, in first-seen order.
 
-    Walks the strategy's own TYPED policy directly (``Operand`` never
-    appears outside a ``Compare`` — see :mod:`tos.dsl.vocabulary`: neither
-    ``Decision`` nor ``TargetSpec`` carries one) rather than the kernel's
-    lowered candidate program: the lowered node payload is intentionally
-    structural, not literal (design #31), so it cannot recover the exact ref
-    path — this typed walk both detects a config-sourced ref AND names its
-    exact path in one pass, which is what positive resolution
-    (:func:`_resolve_bindings_or_refuse`) needs.
+    Enumerates via the kernel's OWN published walk —
+    :func:`tos.engine.admission.iter_outcome_gating_compares` (which
+    outcome-gating comparisons exist) and
+    :func:`tos.engine.admission.operand_source` (which operand a ``ref``
+    names) — rather than re-implementing the "``Operand`` only appears
+    inside a ``Compare``" walk here (2026-09-09 independent-review finding
+    #2, DRY): completeness of this ref enumeration is now INHERITED from
+    the kernel's own admission-time enumerator, the same one
+    ``strategy_admissible`` runs, rather than a second, independently
+    asserted claim that could silently drift from it (e.g. if a future
+    kernel revision lets a non-``Compare`` node carry an operand, this
+    function tracks that automatically instead of quietly under-counting).
+    This typed walk still recovers the EXACT ref path (the kernel's lowered
+    candidate program does not — its node payload is intentionally
+    structural, not literal, design #31), which positive resolution
+    (:func:`_resolve_bindings_or_refuse`) needs to name in a refusal.
 
     Returns:
         The distinct ``ref`` tuples (e.g. ``("config", "lower_band_threshold")``),
@@ -202,16 +214,15 @@ def _config_ref_paths(loaded_strategy: LoadedStrategy) -> tuple[tuple[str, ...],
     if policy is None:  # pragma: no cover - admitted strategies always carry a policy
         return ()
     seen: list[tuple[str, ...]] = []
-    for rule in policy.rules:
-        for compare in rule.all_of:
-            for operand in (compare.left, compare.right):
-                ref = operand.ref
-                if (
-                    ref is not None
-                    and ref[0] == CONFIG_CONTEXT_SOURCE
-                    and ref not in seen
-                ):
-                    seen.append(ref)
+    for compare in iter_outcome_gating_compares(policy):
+        for operand in (compare.left, compare.right):
+            ref = operand.ref
+            if (
+                operand_source(operand) == CONFIG_CONTEXT_SOURCE
+                and ref is not None
+                and ref not in seen
+            ):
+                seen.append(ref)
     return tuple(seen)
 
 
