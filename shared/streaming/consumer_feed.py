@@ -19,7 +19,11 @@ from typing import Any
 
 from shared.models.stream_models import MarketTickMessage
 from shared.streaming.audit import RateLimitedLog, format_audit_kv
-from shared.streaming.codec import StreamDecodeError, decode
+from shared.streaming.codec import (
+    StreamDecodeError,
+    decode,
+    normalize_stream_fields,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +67,7 @@ class StreamConsumerFeed:
         xread_count: int = 200,
         seed_latest: bool = False,
         seed_count: int = 50,
+        seed_max_age_seconds: float | None = None,
     ) -> None:
         self.redis = redis
         self.stream = stream
@@ -73,15 +78,24 @@ class StreamConsumerFeed:
         self.xread_count = xread_count
         self.seed_latest = seed_latest
         self.seed_count = seed_count
+        self.seed_max_age_seconds = seed_max_age_seconds
         self._prices: dict[str, dict[str, Any]] = {}
+        # Last two-sided book seen per symbol, mirroring
+        # ``KISFuturesPriceFeed._orderbooks``: a later quote-less entry (a
+        # producer cold start, a cutover handoff) must not erase a book we
+        # know. Its age is bounded downstream by ``quote_ts``, which is the
+        # fail-closed path — an erased book blocks on "unavailable", which
+        # reads as a market condition rather than a data gap.
+        self._orderbooks: dict[str, dict[str, Any]] = {}
         self._symbol_tick_ts: dict[str, float] = {}
         self._subscribed: set[str] = set()
+        self._auxiliary: set[str] = set()
         self._last_tick_ts: float | None = None
-        # Arrival time of the newest entry that carried a usable top of book —
-        # observability only (get_health_status), same clock as
-        # ``_last_tick_ts`` so the two ages are comparable.
+        # Event time (producer clock) of the newest book we hold — the same
+        # value the gate reads, so a health snapshot and a `quote_stale` block
+        # cannot disagree. Deliberately NOT arrival time: a frozen book merged
+        # onto fresh trades arrives constantly while its quote ages.
         self._last_orderbook_ts: float | None = None
-        self._aux_symbols_warned = False
         self._last_id: str = "$"
         self._running = False
         self._task: asyncio.Task[None] | None = None
@@ -99,63 +113,61 @@ class StreamConsumerFeed:
     ) -> None:
         """Record the symbols this consumer cares about.
 
-        ``auxiliary_symbols`` exists for signature parity with
-        ``KIS*PriceFeed.update_symbols``: the WS feeds subscribe to the extra
-        symbols, but a stream consumer only ever sees what the *producer*
-        subscribed to and published. Passing it is therefore not an error but
-        also not a subscription — warn once so a missing cross-asset quote is
-        traceable to this, and see the producer (market_ingest /
-        orchestrator) to actually add the symbol.
+        ``auxiliary_symbols`` mirrors ``KIS*PriceFeed.update_symbols``. A stream
+        consumer subscribes to nothing, so whether an auxiliary symbol is
+        actually available depends on the PRODUCER: the monolithic orchestrator
+        passes its cross-asset reference symbol to the WS feed and republishes
+        every tick it receives, so pre-cutover the symbol is on the stream;
+        ``services/market_ingest`` subscribes only its trading symbol, so
+        post-cutover it is not. Recorded either way so seeding covers it, and
+        left to the caller (which knows the deployment) to warn.
         """
         self._subscribed = set(symbols)
-        if auxiliary_symbols and not self._aux_symbols_warned:
-            self._aux_symbols_warned = True
-            logger.warning(
-                "stream feed ignores auxiliary_symbols=%s (stream=%s): only "
-                "symbols the producer publishes are available; subscribe them "
-                "on the producer instead",
-                list(auxiliary_symbols),
-                self.stream,
-            )
+        self._auxiliary = set(auxiliary_symbols or [])
 
     def get_orderbook_snapshot(self, symbol: str) -> dict[str, Any]:
-        """Return the cached top of book, or ``{}`` when none is known.
+        """Return the last two-sided book seen, or ``{}`` when none is known.
 
-        Contract-identical to ``KISFuturesPriceFeed.get_orderbook_snapshot``:
-        same key set (``code``/``timestamp`` + ``bid_price_1``/``bid_qty_1``/
-        ``ask_price_1``/``ask_qty_1``/``spread``), same
-        "both sides must be positive" precondition, and ``spread`` derived
-        from bid/ask when the producer did not carry it. ``timestamp`` is the
-        producer's tick time, not our arrival time, so a downstream freshness
-        check measures the market event.
-
-        Caveat: the cached dict is the producer's *merged* snapshot (trade
-        tick fields overwrite orderbook fields of the same name), so
-        ``timestamp`` tracks the newest tick of either kind — the same
-        semantics as the WS feed's own fallback branch, and one step looser
-        than its primary branch, which keeps the orderbook tick's own time.
+        Contract-identical to the PRIMARY branch of
+        ``KISFuturesPriceFeed.get_orderbook_snapshot``: same key set
+        (``code``/``timestamp`` + ``bid_price_1``/``bid_qty_1``/``ask_price_1``/
+        ``ask_qty_1``/``spread``), same "both sides must be positive"
+        precondition, and ``timestamp`` is the ORDERBOOK tick's own event time —
+        ``quote_ts`` on the wire — so a freshness check downstream bounds the
+        age of the book and not of the last print. Entries written before
+        ``quote_ts`` existed fall back to the entry timestamp, which is the old
+        (looser) behaviour rather than a hard failure.
         """
-        price = self._prices.get(symbol)
-        if not price:
-            return {}
+        cached = self._orderbooks.get(symbol)
+        return dict(cached) if cached else {}
+
+    @staticmethod
+    def _orderbook_from_price(symbol: str, price: dict[str, Any]) -> dict[str, Any]:
+        """Build the WS-shaped book from a decoded entry, or ``{}``."""
         bid = price.get("bid_price_1")
         ask = price.get("ask_price_1")
-        if bid is None or ask is None or float(bid) <= 0 or float(ask) <= 0:
+        if bid is None or ask is None:
             return {}
-        snapshot: dict[str, Any] = {
+        try:
+            bid_f = float(bid)
+            ask_f = float(ask)
+        except (TypeError, ValueError):
+            return {}
+        if bid_f <= 0 or ask_f <= 0:
+            return {}
+        spread = price.get("spread")
+        quote_ts = price.get("quote_ts", price.get("timestamp"))
+        return {
             "code": price.get("code", symbol),
-            "bid_price_1": float(bid),
+            "bid_price_1": bid_f,
             "bid_qty_1": float(price.get("bid_qty_1") or 0.0),
-            "ask_price_1": float(ask),
+            "ask_price_1": ask_f,
             "ask_qty_1": float(price.get("ask_qty_1") or 0.0),
-            "spread": (
-                float(price["spread"])
-                if price.get("spread") is not None
-                else float(ask) - float(bid)
-            ),
-            "timestamp": price.get("timestamp"),
+            # `spread` is a pure function of bid/ask in the WS feed; derive it
+            # when a producer did not carry it so the key set never varies.
+            "spread": float(spread) if spread is not None else ask_f - bid_f,
+            "timestamp": quote_ts,
         }
-        return snapshot
 
     def set_tick_callback(
         self, callback: Callable[[str, dict[str, Any], datetime], None] | None
@@ -172,7 +184,12 @@ class StreamConsumerFeed:
         if parsed is None:
             return
         symbol, price = parsed
-        if seeded and self._subscribed and symbol not in self._subscribed:
+        if (
+            seeded
+            and self._subscribed
+            and symbol not in self._subscribed
+            and symbol not in self._auxiliary
+        ):
             return
         self._prices[symbol] = price
         # A live entry is aged from its arrival; a replayed one from the
@@ -184,9 +201,16 @@ class StreamConsumerFeed:
         self._symbol_tick_ts[symbol] = now
         if self._last_tick_ts is None or now > self._last_tick_ts:
             self._last_tick_ts = now
-        if price.get("bid_price_1") and price.get("ask_price_1"):
-            if self._last_orderbook_ts is None or now > self._last_orderbook_ts:
-                self._last_orderbook_ts = now
+        book = self._orderbook_from_price(symbol, price)
+        if book:
+            self._orderbooks[symbol] = book
+            # Producer event time, not arrival: a frozen book merged onto fresh
+            # trades arrives constantly while the quote itself ages.
+            quote_ts = book.get("timestamp")
+            if quote_ts is not None and (
+                self._last_orderbook_ts is None or quote_ts > self._last_orderbook_ts
+            ):
+                self._last_orderbook_ts = float(quote_ts)
         if seeded:
             # Cache prime, not a live tick: replaying old prints into the
             # volatility baseline or the indicator engine would fabricate
@@ -239,10 +263,14 @@ class StreamConsumerFeed:
             "fresh_symbol_count": fresh,
             "stale_symbol_count": max(0, len(self._symbol_tick_ts) - fresh),
             "last_tick_ts": self._last_tick_ts,
-            # None until an entry carrying a usable top of book arrives. A
-            # stream whose ticks are trade-only reports a fresh
-            # `staleness_seconds` and a null orderbook age — the pair is what
-            # tells an operator the orderbook path is the dark one.
+            # Age of the newest BOOK we hold, measured on the producer's clock
+            # (`quote_ts`) — the same quantity the order-router's `quote_stale`
+            # gate reads, so a block and this snapshot cannot disagree. None
+            # until a two-sided book has been seen: a trade-only stream reports
+            # a fresh `staleness_seconds` next to a null orderbook age, and that
+            # pair is what identifies the orderbook path as the dark one.
+            # Consumed by whoever polls the feed (dashboards, tests); the
+            # order-router does not currently log a feed heartbeat.
             "orderbook_age_seconds": (
                 None
                 if self._last_orderbook_ts is None
@@ -267,8 +295,14 @@ class StreamConsumerFeed:
         until the next tick arrives. For the order-router that means the
         send-time gate has no quote for the first signal after a restart and
         blocks it on ``orderbook_unavailable``. Replays the newest
-        ``seed_count`` entries oldest-first, for subscribed symbols only, and
-        leaves ``_last_id`` at ``$`` so the live loop does not re-apply them.
+        ``seed_count`` entries oldest-first, for subscribed (and auxiliary)
+        symbols only, and leaves ``_last_id`` at ``$`` so the live loop does
+        not re-apply them.
+
+        ``seed_max_age_seconds`` bounds what may be replayed at all. Seeding is
+        fail-closed on its own rather than leaning on a downstream freshness
+        check: a restart after a halt, or on a day-old stream, would otherwise
+        hand the router yesterday's book and rely on someone else to reject it.
 
         Best-effort: a stream that does not exist yet, or a Redis that refuses
         the read, leaves the cache exactly as cold as it was before.
@@ -285,16 +319,48 @@ class StreamConsumerFeed:
                 exc_info=True,
             )
             return
+        cutoff: float | None = None
+        if self.seed_max_age_seconds is not None and self.seed_max_age_seconds > 0:
+            cutoff = time.time() - self.seed_max_age_seconds
+        applied = 0
+        skipped_stale = 0
         for _entry_id, fields in reversed(list(entries or [])):
+            if cutoff is not None and self._entry_event_ts(fields) < cutoff:
+                skipped_stale += 1
+                continue
             self._apply_entry(fields, seeded=True)
+            applied += 1
         logger.info(
             format_audit_kv(
                 event="tick_stream_seeded",
                 stream=self.stream,
                 entries_read=len(entries or []),
+                entries_applied=applied,
+                entries_skipped_stale=skipped_stale,
+                max_age_seconds=self.seed_max_age_seconds,
                 symbols_cached=len(self._prices),
             )
         )
+
+    @staticmethod
+    def _entry_event_ts(fields: dict[Any, Any]) -> float:
+        """Producer event time of a raw entry, ``-inf`` when unreadable.
+
+        Prefers ``quote_ts`` (the book's own time) over ``timestamp`` (the trade
+        tick's) so an ageing book is judged on the field that ages, and treats
+        an unreadable time as infinitely old so it is skipped rather than
+        replayed blind.
+        """
+        raw = normalize_stream_fields(fields)
+        for key in ("quote_ts", "timestamp"):
+            value = raw.get(key)
+            if value is None:
+                continue
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+        return float("-inf")
 
     async def stop(self) -> None:
         self._running = False

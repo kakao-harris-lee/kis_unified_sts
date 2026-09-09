@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 
 import pytest
@@ -355,23 +356,24 @@ def test_orderbook_snapshot_defaults_missing_quantities_to_zero():
     assert snap["bid_qty_1"] == 0.0 and snap["ask_qty_1"] == 0.0
 
 
-def test_update_symbols_warns_once_on_auxiliary_symbols(caplog):
+def test_update_symbols_records_auxiliary_symbols(caplog):
+    """Availability of an auxiliary symbol depends on the producer, which this
+    class cannot see — so it records rather than warns, and the caller that
+    knows the deployment does the warning."""
     feed = _feed()
     with caplog.at_level(logging.WARNING, logger="shared.streaming.consumer_feed"):
         feed.update_symbols(["A05603"], auxiliary_symbols=["101S6000"])
-        feed.update_symbols(["A05603"], auxiliary_symbols=["101S6000"])
 
-    warnings = [r for r in caplog.records if "auxiliary_symbols" in r.getMessage()]
-    assert len(warnings) == 1
-    assert "101S6000" in warnings[0].getMessage()
     assert feed._subscribed == {"A05603"}
+    assert feed._auxiliary == {"101S6000"}
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
 
 
-def test_update_symbols_without_auxiliary_is_silent(caplog):
+def test_update_symbols_without_auxiliary_clears_the_set():
     feed = _feed()
-    with caplog.at_level(logging.WARNING, logger="shared.streaming.consumer_feed"):
-        feed.update_symbols(["A05603"])
-    assert not [r for r in caplog.records if "auxiliary_symbols" in r.getMessage()]
+    feed.update_symbols(["A05603"], auxiliary_symbols=["101S6000"])
+    feed.update_symbols(["A05603"])
+    assert feed._auxiliary == set()
 
 
 def test_health_status_reports_orderbook_age():
@@ -526,5 +528,169 @@ async def test_seeding_failure_leaves_the_feed_running(caplog):
         assert feed._running is True
         assert feed.get_orderbook_snapshot("A05603") == {}
         assert any("tick_stream_seed_failed" in r.getMessage() for r in caplog.records)
+    finally:
+        await feed.stop()
+
+
+# ---------------------------------------------------------------------------
+# quote_ts: the book's own clock, and the last-good-book cache
+# ---------------------------------------------------------------------------
+
+
+def test_snapshot_timestamp_is_the_quote_time_not_the_trade_time():
+    """The condition this exists for: a frozen book merged onto fresh trades.
+    Reading the entry timestamp would report age≈0 for a dead book forever."""
+    feed = _feed()
+    feed._apply_entry(_orderbook_entry(timestamp=2000.0, quote_ts=1000.0))
+
+    snap = feed.get_orderbook_snapshot("A05603")
+    assert snap["timestamp"] == 1000.0
+    # The trade time is still on the price dict, untouched.
+    assert feed._prices["A05603"]["timestamp"] == 2000.0
+    assert feed.get_health_status()["orderbook_age_seconds"] == pytest.approx(
+        time.time() - 1000.0, abs=5
+    )
+
+
+def test_snapshot_falls_back_to_entry_timestamp_for_pre_quote_ts_entries():
+    """Back-compat: entries written before quote_ts existed still yield a book,
+    at the old (looser) timestamp rather than none at all."""
+    feed = _feed()
+    feed._apply_entry(_orderbook_entry(timestamp=1500.0))
+    assert feed.get_orderbook_snapshot("A05603")["timestamp"] == 1500.0
+
+
+def test_a_quoteless_entry_does_not_erase_the_last_known_book():
+    """Mirrors KISFuturesPriceFeed, which never clears _orderbooks on a trade
+    tick. Erasing would block entries on `orderbook_unavailable`, which reads
+    as a market condition; keeping it lets the freshness gate reject it as the
+    data gap it is."""
+    feed = _feed()
+    feed._apply_entry(_orderbook_entry(timestamp=1000.0, quote_ts=1000.0))
+    feed._apply_entry(_entry(schema_version="1", symbol="A05603", price="331.90"))
+
+    snap = feed.get_orderbook_snapshot("A05603")
+    assert snap["bid_price_1"] == 331.18
+    assert snap["timestamp"] == 1000.0
+    assert feed._prices["A05603"]["close"] == 331.90
+
+
+def test_orderbook_age_ignores_an_older_book_arriving_late():
+    feed = _feed()
+    feed._apply_entry(_orderbook_entry(quote_ts=5000.0))
+    feed._apply_entry(_orderbook_entry(quote_ts=1000.0))
+    assert feed._last_orderbook_ts == 5000.0
+
+
+# ---------------------------------------------------------------------------
+# Seed age bound (fail-closed independently of the router's gate switch)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_seeding_skips_entries_older_than_the_bound(caplog):
+    """A restart after a halt, or on a day-old stream, must not hand the router
+    yesterday's book and rely on a downstream switch to reject it."""
+    stale_ts = time.time() - 86_400
+    redis = _SeedRedis(
+        _seed_entries(_orderbook_entry(timestamp=stale_ts, quote_ts=stale_ts))
+    )
+    feed = StreamConsumerFeed(
+        redis=redis, stream="raw_data", seed_latest=True, seed_max_age_seconds=10.0
+    )
+    feed.update_symbols(["A05603"])
+
+    with caplog.at_level(logging.INFO, logger="shared.streaming.consumer_feed"):
+        await feed.start()
+    try:
+        assert feed.get_orderbook_snapshot("A05603") == {}
+        assert any(
+            "entries_skipped_stale=1" in r.getMessage() for r in caplog.records
+        ), [r.getMessage() for r in caplog.records]
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_seeding_applies_entries_inside_the_bound():
+    fresh = time.time() - 1.0
+    redis = _SeedRedis(_seed_entries(_orderbook_entry(timestamp=fresh, quote_ts=fresh)))
+    feed = StreamConsumerFeed(
+        redis=redis, stream="raw_data", seed_latest=True, seed_max_age_seconds=10.0
+    )
+    feed.update_symbols(["A05603"])
+
+    await feed.start()
+    try:
+        assert feed.get_orderbook_snapshot("A05603")["bid_price_1"] == 331.18
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_seeding_bound_judges_the_book_not_the_trade_print():
+    """A fresh trade carrying a day-old book must not be seeded."""
+    now = time.time()
+    redis = _SeedRedis(
+        _seed_entries(_orderbook_entry(timestamp=now, quote_ts=now - 86_400))
+    )
+    feed = StreamConsumerFeed(
+        redis=redis, stream="raw_data", seed_latest=True, seed_max_age_seconds=10.0
+    )
+    feed.update_symbols(["A05603"])
+
+    await feed.start()
+    try:
+        assert feed.get_orderbook_snapshot("A05603") == {}
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_seeding_skips_entries_with_no_readable_time():
+    """Unreadable time is treated as infinitely old — fail-closed."""
+    redis = _SeedRedis(
+        [(b"1-0", {b"schema_version": b"1", b"symbol": b"A05603", b"price": b"331.2"})]
+    )
+    feed = StreamConsumerFeed(
+        redis=redis, stream="raw_data", seed_latest=True, seed_max_age_seconds=10.0
+    )
+    feed.update_symbols(["A05603"])
+
+    await feed.start()
+    try:
+        assert await feed.get_current_price("A05603") == {}
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_seeding_without_a_bound_applies_everything():
+    stale_ts = time.time() - 86_400
+    redis = _SeedRedis(
+        _seed_entries(_orderbook_entry(timestamp=stale_ts, quote_ts=stale_ts))
+    )
+    feed = StreamConsumerFeed(redis=redis, stream="raw_data", seed_latest=True)
+    feed.update_symbols(["A05603"])
+
+    await feed.start()
+    try:
+        assert feed.get_orderbook_snapshot("A05603")["bid_price_1"] == 331.18
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_seeding_covers_auxiliary_symbols():
+    redis = _SeedRedis(
+        _seed_entries(_orderbook_entry(symbol="101S6000"), _orderbook_entry())
+    )
+    feed = StreamConsumerFeed(redis=redis, stream="raw_data", seed_latest=True)
+    feed.update_symbols(["A05603"], auxiliary_symbols=["101S6000"])
+
+    await feed.start()
+    try:
+        assert feed.get_orderbook_snapshot("101S6000")
+        assert feed.get_orderbook_snapshot("A05603")
     finally:
         await feed.stop()
