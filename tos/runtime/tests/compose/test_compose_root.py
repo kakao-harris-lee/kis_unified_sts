@@ -1399,3 +1399,60 @@ class TestCapacityObligationRecording:
 
         runtime.rcl_log.close()
         runtime.evidence_store.close()
+
+
+class TestOrthostateAndFinalityProjectionWiring:
+    """Team-lead CR-4 dispatch (plan §2.2): the driver-level orthostate + SYNTHETIC finality
+    wiring (``tos_runtime.engine.driver.EngineDriver._project_orthostate_and_finality``) is
+    reachable end to end through the composed runtime, not merely unit-tested in isolation.
+    """
+
+    def test_full_fill_hand_off_records_finality_proof_and_composite(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """After a real synthetic ``FULL_FILL`` hand-off: exactly one
+        ``POSTTRADE_FINALITY_PROOF`` evidence row, the handed-off attempt's orthostate composite
+        is durably persisted, and no ``COUPLING_VIOLATION`` was recorded."""
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+        event = fx.crossing_event()
+
+        first = runtime.run_once((event,))
+        proposal_digest = first[0].pipeline.proposal.canonical_digest
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
+        write_approval_file(
+            custody_root,
+            proposal_digest=proposal_digest,
+            environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
+        )
+
+        second = runtime.run_once((event,))
+        flow = second[0].flow
+        assert flow is not None and flow.handed_off is True and flow.attempt is not None
+        attempt_id = flow.attempt.attempt_id
+
+        proof_rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind = 'POSTTRADE_FINALITY_PROOF'"
+        ).fetchone()[0]
+        assert proof_rows == 1
+        obligation_rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind = 'ECONOMIC_OBLIGATION'"
+        ).fetchone()[0]
+        assert obligation_rows == 1
+
+        stored = runtime.inbox.last_composite(attempt_id)
+        assert stored is not None
+        raw_composite, _revision = stored
+        assert raw_composite["broker_order_state"] == "FILLED"
+
+        assert runtime.inbox.finality_witness(attempt_id) is True
+
+        violation_rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind = 'COUPLING_VIOLATION'"
+        ).fetchone()[0]
+        assert violation_rows == 0
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()

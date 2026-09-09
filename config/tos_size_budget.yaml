@@ -265,7 +265,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1196
+  measured: 1203
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -356,6 +356,13 @@ exceptions:
     본 레인 무편집 대상)을 12→7줄로 압축(문장 재배열만·내용 보존)해 함수를
     100줄로 회복(무예외). 모듈 실측은 신규 import 3줄 + 호출부 순증분으로
     1189→1196(+7).
+    2026-09-09 팀리드 CR-4 후속(orthostate/finality 결선, plan §2.2) —
+    _finalize 가 finality.yaml 로더(load_finality_config) 호출 1줄 +
+    wire_engine_and_driver 호출부에 finality_config 인자 1줄을 추가하며
+    함수 100줄 문턱을 100→101 로 1줄 초과. 본 레인 신규 주석은 이미 1줄로
+    압축했고(기존 coordinator_preconditions 주석 2줄은 타 레인 저작이라
+    비편집) 추가 압축 여지가 없어 함수 예외로 등재(아래 별도 항목). 모듈
+    실측은 신규 import 1줄 + 상수 2줄 + 호출부 순증분으로 1196→1203(+7).
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime
@@ -369,3 +376,28 @@ exceptions:
     도크스트링 두 차례 축약으로 완화했으나(1033→1026) 완전 회피는 불가 —
     신규 함수 자체가 실측 증가분. _wiring.py 항목과 동일하게 목록 끝에 append
     (공유 워크트리 동시 편집 회피).
+- target: tos/runtime/src/tos_runtime/compose/_wiring.py::_finalize
+  measured: 101
+  owner: tos-runtime
+  decomposition_order: 32
+  expires_on: '2026-12-31'
+  note: >-
+    팀리드 CR-4 후속(orthostate/finality 결선, plan §2.2) — finality.yaml
+    로더 호출 1줄 + wire_engine_and_driver 호출부 인자 1줄을 추가하며
+    100→101 초과. 본 레인 신규 주석은 이미 1줄로 압축(더 압축할 여지 없음);
+    coordinator_preconditions 관련 기존 주석 2줄은 레인 B-R 저작이라
+    본 레인 편집 대상 밖(공유 파일 소유권 규율). 목록 끝에 append(공유
+    워크트리 동시 편집 회피).
+- target: tos/runtime/src/tos_runtime/compose/_engine_wiring.py::wire_engine_and_driver
+  measured: 103
+  owner: tos-runtime
+  decomposition_order: 33
+  expires_on: '2026-12-31'
+  note: >-
+    팀리드 CR-4 후속(orthostate/finality 결선, plan §2.2) — CPL-6 이
+    라이브 authority-epoch 재확인을 요구함을 실측(compose e2e 뮤테이션
+    프로브로 적발: side condition 미배선 시 모든 진짜 hand-off 가
+    COUPLING_VIOLATION 오탐)하고 authority_epoch_current 콜백 파라미터를
+    신규 배선(도크스트링 설명 포함)하며 100→103 초과. 안전-부담 파라미터의
+    도크스트링을 생략하는 것은 이 파일 자신의 기존 관례(finality_config 등
+    모든 신규 파라미터가 온전한 도크스트링을 받음)와 어긋나 압축 대신 등재.

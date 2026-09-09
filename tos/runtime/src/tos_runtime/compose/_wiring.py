@@ -98,6 +98,7 @@ from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.ports import EvidenceAppendPort
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.config import load_finality_config
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.release.admission import ReleaseAdmissionService
 from tos_runtime.release.config import load_release_config
@@ -136,6 +137,9 @@ _CURRENTNESS_CONFIG_NAME = "currentness.yaml"
 _CURRENTNESS_DIMENSIONS_CONFIG_NAME = "currentness_dimensions.yaml"
 _RELEASE_CONFIG_NAME = "release.yaml"
 _EGRESS_COORDINATES_CONFIG_NAME = "egress_coordinates.yaml"
+#: TOS Phase 3 Wave 2 Lane C-R follow-up (team-lead CR-4 dispatch, plan §2.2) — the SYNTHETIC
+#: post-trade finality policy (:mod:`tos_runtime.posttrade.config`).
+_FINALITY_CONFIG_NAME = "finality.yaml"
 
 #: Where operator-authored Independent Approval decisions live, keyed by
 #: proposal digest (``tos_runtime.authority.iap`` module docstring:
@@ -960,6 +964,8 @@ def _finalize(
     coordinator_preconditions_config = load_coordinator_preconditions_config(
         config_dir / COORDINATOR_PRECONDITIONS_CONFIG_NAME
     )
+    # SYNTHETIC post-trade finality policy (CR-4, plan §2.2) — fail-closed, from its own file.
+    finality_config = load_finality_config(config_dir / _FINALITY_CONFIG_NAME)
     wired = wire_engine_and_driver(
         data_dir=data_dir,
         context_resolver=context_resolver,
@@ -976,6 +982,7 @@ def _finalize(
         max_send_result_wait_ms=infra.time_config.max_send_result_wait_ms,
         authority_epoch_service=rcl.authority_epoch_service,
         live_authorization_state=coordinator_preconditions_config.live_authorization_state,
+        finality_config=finality_config,
     )
 
     # Independent boot-time re-derivation over whatever this inbox has already durably admitted

@@ -89,6 +89,23 @@ CREATE TABLE IF NOT EXISTS attempt_composites (
 )
 """
 
+#: TOS Phase 3 Wave 2 Lane C-R follow-up (team-lead CR-4 dispatch, plan §2.2): a second small
+#: side table, same file, same D3 rationale as :data:`_CREATE_ATTEMPT_COMPOSITES_TABLE_SQL` —
+#: durably holds the LAST ``finality_witness`` (:func:`tos_runtime.rcl.finality_witness
+#: .finality_witness_for`) :mod:`tos_runtime.engine.driver` derived for each ``attempt_id``, so a
+#: FUTURE release-trigger lane (Phase 5 — no such lane exists yet in this runtime, see
+#: ``tos_runtime.rcl.finality_witness``'s own module docstring) can read a durable witness
+#: instead of re-deriving one from a possibly-already-drained ``EGRESS_RESULT``. ``witness`` is
+#: stored as ``0``/``1``/``NULL`` (sqlite has no bool type) — ``NULL`` means "no witness
+#: currently established" (the ``finality_witness_for`` ``None`` case), never a stored ``False``
+#: (this dimension's own positive-polarity discipline: absence, not a negative claim).
+_CREATE_ATTEMPT_FINALITY_WITNESS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS attempt_finality_witness (
+    attempt_id TEXT PRIMARY KEY,
+    witness INTEGER
+)
+"""
+
 
 @dataclass(frozen=True)
 class InboxReceipt:
@@ -138,6 +155,7 @@ class SqliteEventInbox:
         self._conn.execute(_CREATE_EVENTS_TABLE_SQL)
         self._conn.execute(_CREATE_UNCONSUMED_INDEX_SQL)
         self._conn.execute(_CREATE_ATTEMPT_COMPOSITES_TABLE_SQL)
+        self._conn.execute(_CREATE_ATTEMPT_FINALITY_WITNESS_TABLE_SQL)
         existing_columns = {
             row[1] for row in self._conn.execute("PRAGMA table_info(events)")
         }
@@ -363,3 +381,42 @@ class SqliteEventInbox:
             return None
         composite_json, observation_revision = row
         return json.loads(composite_json), observation_revision
+
+    # -- per-attempt finality witness side table (Phase 3 wave 2 CR-4 follow-up) -----
+
+    def record_finality_witness(self, attempt_id: str, witness: bool | None) -> None:
+        """Durably REPLACE ``attempt_id``'s last derived ``finality_witness``.
+
+        Args:
+            attempt_id: The scope key.
+            witness: The value :func:`tos_runtime.rcl.finality_witness.finality_witness_for`
+                produced — ``True`` when a proof currently exists for this attempt, ``None``
+                otherwise (never a stored ``False`` — positive polarity, matching
+                ``finality_witness_for`` itself).
+        """
+        stored = None if witness is None else int(witness)
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute(
+                "INSERT INTO attempt_finality_witness (attempt_id, witness) "
+                "VALUES (?, ?) "
+                "ON CONFLICT(attempt_id) DO UPDATE SET witness = excluded.witness",
+                (attempt_id, stored),
+            )
+            self._conn.execute("COMMIT")
+        except BaseException:
+            self._conn.execute("ROLLBACK")
+            raise
+
+    def finality_witness(self, attempt_id: str) -> bool | None:
+        """The last ``finality_witness`` recorded for ``attempt_id``, or ``None`` if none has
+        ever been recorded (or the recorded value is itself ``None`` — the two are
+        indistinguishable by design: a caller with no witness must always fail closed
+        identically)."""
+        row = self._conn.execute(
+            "SELECT witness FROM attempt_finality_witness WHERE attempt_id = ?",
+            (attempt_id,),
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return bool(row[0])

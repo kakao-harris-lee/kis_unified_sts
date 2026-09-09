@@ -180,6 +180,18 @@ def config_dir(tmp_path: Path) -> Path:
         },
     )
     _write_yaml(
+        directory / "finality.yaml",
+        {
+            # TOS Phase 3 Wave 2 Lane C-R follow-up (team-lead CR-4 dispatch,
+            # plan §2.2) — the SYNTHETIC post-trade finality policy every
+            # SyntheticFinalityProducer this compose root wires needs.
+            "currency": "KRW",
+            "value_date": "2026-09-09",
+            "source_revision": "compose-e2e-rev-1",
+            "proof_recipe_id": "compose-e2e-recipe-1",
+        },
+    )
+    _write_yaml(
         directory / "release.yaml",
         {
             "expected_code_digest": EXPECTED_CODE_DIGEST,

@@ -87,8 +87,11 @@ from tos.engine.vocabulary import EgressResultKind, EventKind, ResultDisposition
 from tos.ordering import OrderingEvent
 
 from tos_runtime.engine.inbox import SqliteEventInbox
+from tos_runtime.engine.orthostate_projection import OrthostateProjector
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.finality import SyntheticFinalityProducer
+from tos_runtime.rcl.finality_witness import finality_witness_for
 from tos_runtime.time.sources import MonotonicSource
 
 __all__ = ["EngineDriver"]
@@ -143,6 +146,14 @@ _DECISION_TICK_DROPPED_ON_RECOVERY_KIND = "DECISION_TICK_DROPPED_ON_RECOVERY"
 #: bound to the SAME durable evidence store this driver reads (independent review finding #2's
 #: own measurement: "each stage carries its own sink bound to the real SqliteEvidenceStore").
 _SEND_EVIDENCE_KINDS: tuple[str, ...] = ("SEND_STARTED", "SEND_HANDED_OFF")
+
+#: Evidence kinds this driver appends when :class:`~tos_runtime.posttrade.finality
+#: .SyntheticFinalityProducer` produces a proof for a genuinely-``APPLIED`` ``EGRESS_RESULT``
+#: (team-lead CR-4 dispatch, plan §2.2). Not kernel ``EvidenceKind`` members — this is
+#: runtime-level evidence about a SYNTHETIC-transport artifact the kernel's own posttrade
+#: package never emits itself (``tos_runtime.posttrade.finality``'s own module docstring).
+_ECONOMIC_OBLIGATION_KIND = "ECONOMIC_OBLIGATION"
+_POSTTRADE_FINALITY_PROOF_KIND = "POSTTRADE_FINALITY_PROOF"
 
 
 class _YieldOrderCounter:
@@ -269,6 +280,8 @@ class EngineDriver:
         continuity_id: str,
         monotonic_source: MonotonicSource,
         max_send_result_wait_ms: int,
+        orthostate_projector: OrthostateProjector,
+        finality_producer: SyntheticFinalityProducer,
     ) -> None:
         """Wire the driver.
 
@@ -295,6 +308,14 @@ class EngineDriver:
                 never injecting a TIMEOUT for a lost result is fail-SILENT, not fail-closed, and
                 compose has always supplied a concrete value anyway. A caller that genuinely wants
                 "never fires within this test" now passes a very large bound instead.
+            orthostate_projector: Projects every genuinely-``APPLIED`` ``EGRESS_RESULT`` onto the
+                ADR-002-005 orthostate dimensions (team-lead CR-4 dispatch, plan §2.2) — REQUIRED
+                (no default): an omitted projector is a silent absence, not a valid "off" mode
+                (:mod:`tos_runtime.engine.orthostate_projection`'s own coupling-safety property
+                only holds if this actually runs on every applied result).
+            finality_producer: Produces a SYNTHETIC post-trade finality proof for a ``FULL_FILL``
+                (team-lead CR-4 dispatch, plan §2.2) — REQUIRED (no default), for the same reason
+                as ``orthostate_projector`` (:mod:`tos_runtime.posttrade.finality`).
         """
         self._core = core
         self._inbox = inbox
@@ -308,6 +329,8 @@ class EngineDriver:
         self._timeouts = _TimeoutTracker(
             max_send_result_wait_ms=max_send_result_wait_ms
         )
+        self._orthostate_projector = orthostate_projector
+        self._finality_producer = finality_producer
         #: The send boundary whose retained ``.results`` this driver drains — bound separately
         #: (see :meth:`bind_gateway`) because it does not exist until compose finishes wiring the
         #: rest of the chain that reads from THIS core's own ``transmit`` slot.
@@ -596,6 +619,7 @@ class EngineDriver:
                 )
 
                 self._track_timeouts(event, result)
+                self._project_orthostate_and_finality(event, result)
                 if event.kind is EventKind.DECISION_TICK:
                     self._drain_gateway_results()
                 return seq, result
@@ -714,3 +738,67 @@ class EngineDriver:
             )
             event = EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
             self._inbox.enqueue(self._stamp(event))
+
+    # -- orthostate + post-trade finality projection (team-lead CR-4, plan §2.2) --
+
+    def _project_orthostate_and_finality(
+        self, event: EngineEvent, result: EventResult
+    ) -> None:
+        """Project one processed event onto orthostate and, for a genuinely-applied
+        ``FULL_FILL``, a SYNTHETIC post-trade finality proof — the wiring the CR-3 modules
+        (``tos_runtime.engine.orthostate_projection``, ``tos_runtime.posttrade.finality``,
+        ``tos_runtime.rcl.finality_witness``) shipped isolated and tested but unreachable from
+        this driver.
+
+        Called unconditionally, right after every freshly-handled event's own
+        ``EVENT_CONSUMED`` receipt is durable (never on a crash-window recovery path, which
+        never calls ``core.handle`` at all and so has no fresh ``EventResult`` to project) —
+        exactly the same placement as :meth:`_track_timeouts`, which this mirrors.
+
+        :meth:`~tos_runtime.engine.orthostate_projection.OrthostateProjector.project` itself
+        no-ops for a ``DECISION_TICK`` or a non-``APPLIED`` result, so this method calls it
+        unconditionally; the ``FULL_FILL``-only finality-proof gate below is this method's own
+        (mirroring :meth:`_track_timeouts`'s own APPLIED-only gate for the SAME reason: a
+        non-``APPLIED`` result's ``EgressResultPayload`` still carries an attempt id and a
+        ``FULL_FILL`` kind by construction, but was never actually accepted onto THIS
+        attempt's reservation — producing a proof from it would assert finality for a fill the
+        kernel itself refused).
+
+        The durable ``attempt_finality_witness`` row is written for every genuinely-applied
+        ``EGRESS_RESULT`` (not only a ``FULL_FILL``) so a later, non-proof-bearing result for
+        the same attempt (e.g. a ``TIMEOUT``) does not leave a stale prior witness readable —
+        :func:`~tos_runtime.rcl.finality_witness.finality_witness_for` itself always returns
+        the correct value (``True`` only for THIS producer call's own proof, ``None``
+        otherwise), so writing it unconditionally on every applied result can only ever
+        record the CURRENT truth, never a stale one.
+
+        No release-trigger call site exists yet anywhere in this runtime to CONSUME this durable
+        witness (measured, ``tos_runtime.rcl.finality_witness``'s own module docstring survey) —
+        that consumption is Phase 5's; this method's job ends at durably recording the proof and
+        the witness so that future lane can read them.
+        """
+        self._orthostate_projector.project(event=event, result=result)
+        if event.kind is not EventKind.EGRESS_RESULT:
+            return
+        if result.result_disposition is not ResultDisposition.APPLIED:
+            return
+        payload = event.egress_result
+        assert (
+            payload is not None
+        )  # guaranteed by EngineEvent validation for EGRESS_RESULT
+
+        produced = self._finality_producer.produce(payload)
+        witness = finality_witness_for(None if produced is None else produced.proof)
+        self._inbox.record_finality_witness(payload.attempt_id, witness)
+        if produced is None:
+            return
+        self._evidence_store.append(
+            produced.record.model_dump(mode="json"),
+            kind=_ECONOMIC_OBLIGATION_KIND,
+            record_class=_ECONOMIC_OBLIGATION_KIND,
+        )
+        self._evidence_store.append(
+            produced.proof.model_dump(mode="json"),
+            kind=_POSTTRADE_FINALITY_PROOF_KIND,
+            record_class=_POSTTRADE_FINALITY_PROOF_KIND,
+        )

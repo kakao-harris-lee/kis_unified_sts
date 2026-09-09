@@ -39,6 +39,7 @@ only. No ``shared.*``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -69,6 +70,7 @@ from tos_runtime.compose._preconditions import (
 from tos_runtime.compose.context import ComposeContextResolver
 from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import SqliteEventInbox
+from tos_runtime.engine.orthostate_projection import OrthostateProjector
 from tos_runtime.engine.replay import ReplayVerdict
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.sinks import (
@@ -76,6 +78,8 @@ from tos_runtime.evidence.sinks import (
     GatewayEvidenceSinkAdapter,
 )
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.config import FinalityConfig
+from tos_runtime.posttrade.finality import SyntheticFinalityProducer
 from tos_runtime.rcl.obligation import CapacityObligationRecorder
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.time.sources import MonotonicSource
@@ -172,6 +176,8 @@ def build_engine_driver(
     continuity_id: str,
     monotonic_source: MonotonicSource,
     max_send_result_wait_ms: int,
+    finality_config: FinalityConfig,
+    authority_epoch_current: Callable[[], bool | None],
 ) -> tuple[SqliteEventInbox, EngineDriver]:
     """Construct the durable inbox and the engine driver, bound to ``gateway``.
 
@@ -194,11 +200,33 @@ def build_engine_driver(
         max_send_result_wait_ms: The injected wait bound before a SENT_UNCONFIRMED hand-off is
             timed out (independent review finding #14 — always a concrete positive int; compose
             already supplies one via ``TrustworthyTimeConfig``, itself non-optional).
+        finality_config: The caller-resolved (``_wiring.py``'s ``_finalize``, loaded from
+            ``config_dir``'s ``finality.yaml`` — the ``engine_driver.yaml``/
+            ``coordinator_preconditions.yaml`` precedent this module's own docstring item 3
+            already names) SYNTHETIC post-trade finality policy
+            (:mod:`tos_runtime.posttrade.config`). Feeds the
+            :class:`~tos_runtime.posttrade.finality.SyntheticFinalityProducer` this driver is
+            wired with (team-lead CR-4 dispatch, plan §2.2) — REQUIRED, no default, so an
+            unfilled config value refuses boot rather than silently omitting finality projection.
+        authority_epoch_current: The SAME live Safety-Authority-epoch check
+            :class:`~tos_runtime.compose._preconditions.RuntimeCoordinatorPreconditions` performs
+            for the kernel's own Coordinator gate (``preconditions.authority_epoch_current``,
+            forwarded by the caller) — feeds
+            :class:`~tos_runtime.engine.orthostate_projection.OrthostateProjector`'s CPL-6 side
+            condition (its own module docstring: "CPL-6 needs a LIVE authority-epoch reading",
+            bug found wiring this driver reachable end to end).
 
     Returns:
         ``(inbox, driver)`` — the driver is already bound to ``gateway``.
     """
     inbox = SqliteEventInbox(data_dir / INBOX_FILE_NAME, scheme=scheme)
+    orthostate_projector = OrthostateProjector(
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        authority_epoch_current=authority_epoch_current,
+    )
+    finality_producer = SyntheticFinalityProducer(config=finality_config, scheme=scheme)
     driver = EngineDriver(
         core=core,
         inbox=inbox,
@@ -208,6 +236,8 @@ def build_engine_driver(
         continuity_id=continuity_id,
         monotonic_source=monotonic_source,
         max_send_result_wait_ms=max_send_result_wait_ms,
+        orthostate_projector=orthostate_projector,
+        finality_producer=finality_producer,
     )
     driver.bind_gateway(gateway)
     return inbox, driver
@@ -368,6 +398,7 @@ def wire_engine_and_driver(
     max_send_result_wait_ms: int,
     authority_epoch_service: SafetyAuthorityEpochService,
     live_authorization_state: str,
+    finality_config: FinalityConfig,
 ) -> WiredEngine:
     """The gateway + ``EngineCore`` + durable inbox/driver wiring — split out of ``_wiring.py``'s
     ``_finalize`` purely for the size budget; no behavioural difference from having this inline
@@ -384,6 +415,8 @@ def wire_engine_and_driver(
             docstring.
         live_authorization_state: Forwarded to :func:`_build_preconditions` — see its own
             docstring.
+        finality_config: Forwarded to :func:`build_engine_driver` — see its own docstring
+            (team-lead CR-4 dispatch, plan §2.2).
     """
     # Kernel round #1 §3 (lane B): the reservation id bound to any attempt in THIS compose root
     # is always this same formula — the SAME one _build_realized_stages' AtomicCommitStage
@@ -440,6 +473,8 @@ def wire_engine_and_driver(
         continuity_id=continuity_id,
         monotonic_source=monotonic_source,
         max_send_result_wait_ms=max_send_result_wait_ms,
+        finality_config=finality_config,
+        authority_epoch_current=preconditions.authority_epoch_current,
     )
     return WiredEngine(
         gateway=gateway,

@@ -59,6 +59,10 @@ def _make_driver(
         continuity_id="driver-tests",
         monotonic_source=monotonic_source,
         max_send_result_wait_ms=max_send_result_wait_ms,
+        orthostate_projector=fx.orthostate_projector(
+            inbox, evidence_store, emergency_log
+        ),
+        finality_producer=fx.finality_producer(),
     )
     return driver, core
 

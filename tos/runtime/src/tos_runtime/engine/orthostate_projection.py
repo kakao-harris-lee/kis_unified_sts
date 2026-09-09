@@ -34,6 +34,21 @@ already-recorded attempt or replays an existing ``attempt_id``'s composite forwa
 ``tos/runtime/tests/engine/test_orthostate_projection.py``'s pin test for the grep-style +
 behavioural proof.
 
+**CPL-6 needs a LIVE authority-epoch reading (bug found wiring this into the driver, team-lead
+CR-4 dispatch).** :func:`tos.orthostate.coupling_violations` defaults its
+:class:`~tos.orthostate.state.CouplingSideConditions` to all-``None`` when none is supplied —
+fail-closed, so ``CPL-6`` (an Attempt at or beyond ``SEND_STARTED`` requires
+``authority_epoch_current is True``) would ALWAYS flag every genuine hand-off as a violation if
+this projector called ``coupling_violations`` bare. This module therefore takes a REQUIRED
+``authority_epoch_current: Callable[[], bool | None]`` — the SAME live check
+:class:`~tos_runtime.compose._preconditions.RuntimeCoordinatorPreconditions
+.authority_epoch_current` already performs for the kernel's own Coordinator gate (KW2-B) — and
+re-reads it fresh on every ``project`` call (never cached; an epoch can lapse between two
+observations). Injected as a plain callable rather than importing
+``RuntimeCoordinatorPreconditions`` directly, to avoid a ``tos_runtime.engine ->
+tos_runtime.compose`` import edge running backwards against this runtime's own composition-root
+layering (``compose`` depends on ``engine``, never the reverse).
+
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos.engine``/
 ``tos.orthostate`` + ``tos_runtime.engine.inbox``/``tos_runtime.evidence.*`` only. No
 ``shared.*``.
@@ -41,15 +56,17 @@ Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos.eng
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from tos.engine import EventResult
 from tos.engine.orthostate_projection import composite_state_for, result_transition_for
 from tos.engine.records import EngineEvent
-from tos.engine.vocabulary import EventKind
+from tos.engine.vocabulary import EventKind, ResultDisposition
 from tos.orthostate import (
     BrokerOrderState,
     CompositeState,
+    CouplingSideConditions,
     IntentState,
     KnowledgeState,
     StateDimension,
@@ -93,11 +110,24 @@ _GENESIS_KNOWLEDGE_STATE = KnowledgeState.UNOBSERVED
 @dataclass
 class OrthostateProjector:
     """Projects each consumed ``EGRESS_RESULT`` onto the ADR-002-005 orthostate dimensions and
-    durably keeps the last composite per attempt (inbox side table)."""
+    durably keeps the last composite per attempt (inbox side table).
+
+    Attributes:
+        inbox: The durable event admission queue (also the composite side table's owner).
+        evidence_store: The durable evidence store — coupling/ownership violations are recorded
+            here.
+        emergency_log: The dual-path HALT log — coupling/ownership violations are recorded here
+            too.
+        authority_epoch_current: A LIVE re-check of the Safety Authority epoch (module docstring
+            "CPL-6 needs a LIVE authority-epoch reading") — REQUIRED, no default, so an omitted
+            check does not silently default to the all-``None`` fail-closed side condition that
+            would flag every genuine hand-off as a CPL-6 violation.
+    """
 
     inbox: SqliteEventInbox
     evidence_store: SqliteEvidenceStore
     emergency_log: EmergencyAppendLog
+    authority_epoch_current: Callable[[], bool | None]
 
     def project(
         self, *, event: EngineEvent, result: EventResult
@@ -110,17 +140,25 @@ class OrthostateProjector:
 
         Returns:
             The newly-derived, durably-recorded ``CompositeState``, or ``None`` for anything
-            other than an ``EGRESS_RESULT`` whose reservation projection is present (a
-            ``DECISION_TICK`` never reaches this projector at all; a non-``APPLIED`` egress
-            result the kernel already refused to project capacity/knowledge for —
-            ``EngineCore._handle_egress_result``'s own non-``APPLIED`` branch — carries no
-            reservation and is likewise skipped: nothing changed on any dimension this projector
-            owns, so there is nothing new to project).
+            other than a genuinely-``APPLIED`` ``EGRESS_RESULT``. A ``DECISION_TICK`` never
+            reaches this projector at all. A non-``APPLIED`` egress result (``ORPHAN_NO_
+            RESERVATION`` / ``MISMATCHED_ATTEMPT`` / ``DUPLICATE`` / a rank- or
+            quantity-regressing disposition) is likewise skipped — **not** because its
+            ``result.reservation`` is absent (``EngineCore._handle_egress_result``'s own
+            non-``APPLIED`` branch still returns ``application.projection``, the SCOPE's
+            unchanged current projection, corrected here after this projector's own wiring
+            review turned up the wrong assumption), but because that projection belongs to the
+            scope, not to ``payload.attempt_id`` — filing it under a foreign/mismatched
+            attempt's key would misattribute the scope's real state to an attempt that never
+            legitimately advanced it. Only a genuinely-applied result's projection is this
+            attempt's own.
         """
         if event.kind is not EventKind.EGRESS_RESULT:
             return None
         payload = event.egress_result
         if payload is None or result.reservation is None:
+            return None
+        if result.result_disposition is not ResultDisposition.APPLIED:
             return None
         attempt_id = payload.attempt_id
 
@@ -154,7 +192,10 @@ class OrthostateProjector:
 
         self._check_ownership(genesis, next_composite, attempt_id=attempt_id)
 
-        violations = coupling_violations(next_composite)
+        side = CouplingSideConditions(
+            authority_epoch_current=self.authority_epoch_current()
+        )
+        violations = coupling_violations(next_composite, side)
         if violations:
             record_halt(
                 self.evidence_store,

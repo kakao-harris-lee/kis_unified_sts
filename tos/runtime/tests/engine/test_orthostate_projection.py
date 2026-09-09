@@ -13,6 +13,7 @@ from tos.engine.vocabulary import (
     EgressResultKind,
     EventKind,
     OrderingAdmission,
+    ResultDisposition,
 )
 from tos.orthostate import (
     BrokerOrderState,
@@ -66,6 +67,7 @@ def _applied_result(
         instrument_key=fx.instrument_key(),
         ordering=OrderingAdmission.MONOTONE,
         reservation=reservation,
+        result_disposition=ResultDisposition.APPLIED,
     )
 
 
@@ -76,7 +78,10 @@ def projector(
     emergency_log: EmergencyAppendLog,
 ) -> OrthostateProjector:
     return OrthostateProjector(
-        inbox=inbox, evidence_store=evidence_store, emergency_log=emergency_log
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        authority_epoch_current=lambda: True,
     )
 
 
@@ -100,6 +105,37 @@ def test_non_applied_result_with_no_reservation_is_not_projected(
         reservation=None,
     )
     assert projector.project(event=event, result=result) is None
+
+
+def test_mismatched_attempt_result_with_scope_reservation_is_not_projected(
+    projector: OrthostateProjector, inbox: SqliteEventInbox
+) -> None:
+    """Wiring-review correction: ``EngineCore._handle_egress_result``'s own non-``APPLIED``
+    branch STILL returns ``application.projection`` (the scope's unchanged current
+    reservation) — it is not ``None``. Before this gate, a foreign/mismatched-attempt result
+    would have been projected using the SCOPE's real state but filed under the mismatched
+    payload's OWN (wrong) ``attempt_id`` — a misattribution. Only a genuinely-``APPLIED``
+    result may write this attempt's composite."""
+    event = _egress_result_event(
+        kind=EgressResultKind.FULL_FILL, filled="1", remaining="0"
+    )
+    reservation = ProvisionalReservation(
+        instrument_key=fx.instrument_key(),
+        capacity_state=CapacityState.POTENTIALLY_LIVE,
+        knowledge=EgressKnowledge.SENT_UNCONFIRMED,
+        proposal_id="proposal-1",
+        attempt_id="attempt-the-real-one",  # NOT this event's attempt_id
+    )
+    result = EventResult(
+        kind=EventKind.EGRESS_RESULT,
+        instrument_key=fx.instrument_key(),
+        ordering=OrderingAdmission.MONOTONE,
+        reservation=reservation,
+        result_disposition=ResultDisposition.MISMATCHED_ATTEMPT,
+    )
+
+    assert projector.project(event=event, result=result) is None
+    assert inbox.last_composite(ATTEMPT_ID) is None
 
 
 def test_full_fill_projects_composite_and_records_it(
@@ -180,6 +216,66 @@ def test_coupling_violation_records_halt(
     assert "CPL-3" in payload["violations"]
 
 
+def test_stale_authority_epoch_records_cpl6_violation(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """Wiring-review bug found live (team-lead CR-4 dispatch): every genuine hand-off's Attempt
+    dimension lands at ``ACK_OBSERVED`` — a send-boundary-and-beyond state — so CPL-6 (an
+    authority epoch must be verifiably current at final egress) applies to EVERY FULL_FILL this
+    projector ever sees. An ``authority_epoch_current`` callable returning ``False`` (a stale
+    epoch) must record a CPL-6 violation; this is the compose e2e regression this projector
+    would silently mis-report as a bare, non-actionable halt without a dedicated unit test.
+    """
+    projector = OrthostateProjector(
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        authority_epoch_current=lambda: False,
+    )
+    event = _egress_result_event(
+        kind=EgressResultKind.FULL_FILL, filled="1", remaining="0"
+    )
+    result = _applied_result(
+        knowledge=EgressKnowledge.FILLED, capacity_state=CapacityState.POSITION_CONSUMED
+    )
+
+    composite = projector.project(event=event, result=result)
+    assert composite is not None
+
+    import json
+
+    rows = evidence_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = 'COUPLING_VIOLATION'"
+    ).fetchall()
+    assert len(rows) == 1
+    payload = json.loads(rows[0][0])["payload"]
+    assert payload["violations"] == ["CPL-6"]
+
+
+def test_current_authority_epoch_produces_no_cpl6_violation(
+    projector: OrthostateProjector, evidence_store: SqliteEvidenceStore
+) -> None:
+    """Control for the CPL-6 test above: the ``projector`` fixture's ``authority_epoch_current``
+    stand-in returns ``True``, so a genuine FULL_FILL hand-off records NO coupling violation at
+    all — the compose e2e scenario this fixture's default is meant to mirror."""
+    event = _egress_result_event(
+        kind=EgressResultKind.FULL_FILL, filled="1", remaining="0"
+    )
+    result = _applied_result(
+        knowledge=EgressKnowledge.FILLED, capacity_state=CapacityState.POSITION_CONSUMED
+    )
+
+    composite = projector.project(event=event, result=result)
+    assert composite is not None
+
+    rows = evidence_store.connection.execute(
+        "SELECT COUNT(*) FROM entries WHERE kind = 'COUPLING_VIOLATION'"
+    ).fetchone()[0]
+    assert rows == 0
+
+
 def test_restart_reconstructs_conservatively(
     projector: OrthostateProjector, inbox: SqliteEventInbox
 ) -> None:
@@ -203,6 +299,7 @@ def test_restart_reconstructs_conservatively(
         inbox=projector.inbox,
         evidence_store=projector.evidence_store,
         emergency_log=projector.emergency_log,
+        authority_epoch_current=lambda: True,
     )
     second_event = _egress_result_event(
         kind=EgressResultKind.FULL_FILL, filled="1", remaining="0"

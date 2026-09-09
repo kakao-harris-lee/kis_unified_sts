@@ -43,6 +43,10 @@ def _driver(
         continuity_id="replay-tests",
         monotonic_source=FakeMonotonicSource(),
         max_send_result_wait_ms=_NO_TIMEOUT_WITHIN_TEST,
+        orthostate_projector=fx.orthostate_projector(
+            inbox, evidence_store, emergency_log
+        ),
+        finality_producer=fx.finality_producer(),
     )
 
 
@@ -90,6 +94,10 @@ def test_window_events_limits_the_replay_to_the_most_recent_n(
         continuity_id="replay-tests",
         monotonic_source=FakeMonotonicSource(),
         max_send_result_wait_ms=_NO_TIMEOUT_WITHIN_TEST,
+        orthostate_projector=fx.orthostate_projector(
+            inbox, evidence_store, emergency_log
+        ),
+        finality_producer=fx.finality_producer(),
     )
     driver.enqueue_and_run(fx.decision_tick_event(seq=1))
     driver.enqueue_and_run(fx.decision_tick_event(seq=2))
@@ -209,6 +217,10 @@ def test_egress_result_none_outcome_digest_is_uncompared_not_diverged(
         continuity_id="replay-tests",
         monotonic_source=FakeMonotonicSource(),
         max_send_result_wait_ms=_NO_TIMEOUT_WITHIN_TEST,
+        orthostate_projector=fx.orthostate_projector(
+            inbox, evidence_store, emergency_log
+        ),
+        finality_producer=fx.finality_producer(),
     )
     driver.bind_gateway(gateway)
     tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))

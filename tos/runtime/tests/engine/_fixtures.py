@@ -55,6 +55,12 @@ from tos.engine.records import DecisionTickPayload, EgressResultPayload
 from tos.engine.vocabulary import EgressResultKind
 from tos.ordering import OrderingEvent
 from tos.time import HealthState, SessionContext, UncertaintyInterval
+from tos_runtime.engine.inbox import SqliteEventInbox
+from tos_runtime.engine.orthostate_projection import OrthostateProjector
+from tos_runtime.evidence.emergency import EmergencyAppendLog
+from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.config import FinalityConfig
+from tos_runtime.posttrade.finality import SyntheticFinalityProducer
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
@@ -317,3 +323,43 @@ def build_core(
         sink=NullEvidenceSink(),
         scheme=SCHEME,
     )
+
+
+def orthostate_projector(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+    *,
+    authority_epoch_current: Any = lambda: True,
+) -> OrthostateProjector:
+    """A real, test-scoped :class:`~tos_runtime.engine.orthostate_projection
+    .OrthostateProjector` — ``EngineDriver`` now requires one (team-lead CR-4 dispatch, plan
+    §2.2), so every test-suite driver construction needs a concrete instance, never a stand-in
+    that skips the projection. ``authority_epoch_current`` defaults to an always-current stand-in
+    (``lambda: True``): this fixture set's own driver/replay tests exercise the commitment-flow
+    machinery, not authority-epoch currency (that is
+    ``tos_runtime.compose._preconditions``'s own test scope) — a caller that specifically wants
+    to exercise CPL-6 passes a different callable."""
+    return OrthostateProjector(
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        authority_epoch_current=authority_epoch_current,
+    )
+
+
+#: A fully-valued, test-scoped SYNTHETIC finality policy — mirrors
+#: ``tos/runtime/tests/compose/conftest.py``'s own ``finality.yaml`` fixture values, so a driver
+#: test and a compose e2e test derive the identical proof shape for the same fill.
+_TEST_FINALITY_CONFIG = FinalityConfig(
+    currency="KRW",
+    value_date="2026-09-09",
+    source_revision="engine-test-rev-1",
+    proof_recipe_id="engine-test-recipe-1",
+)
+
+
+def finality_producer() -> SyntheticFinalityProducer:
+    """A real, test-scoped :class:`~tos_runtime.posttrade.finality.SyntheticFinalityProducer`
+    — ``EngineDriver`` now requires one (team-lead CR-4 dispatch, plan §2.2)."""
+    return SyntheticFinalityProducer(config=_TEST_FINALITY_CONFIG, scheme=SCHEME)
