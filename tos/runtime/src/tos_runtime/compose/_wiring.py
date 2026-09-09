@@ -808,7 +808,18 @@ def _build_context_resolver(
             risk_relevant_live=False,
         ),
         environment_label=environment_label,
-        principal=f"egressgw-{environment_label}",
+        # ONE source (review #1): context.principal is the seal's
+        # claim_principal (tos/src/tos/egressgw/seal.py:285), which the
+        # kernel's _claim_principal_matches_active_principal validator
+        # (seal.py:246-261) now hard-requires to equal
+        # authorized_coordinates.active_principal. A second literal here
+        # that merely happened to match the fixture default silently
+        # refused every send the moment an operator configured a
+        # non-default active_principal (reviewer probe:
+        # SEND_SEAL_UNCONSTRUCTABLE, 0 transport requests). Derive it from
+        # the same already-substituted config value instead of a second
+        # f-string.
+        principal=egress_coordinates.active_principal,
         credential_route_inventory=(
             CredentialRouteInventoryEntry(
                 principal=f"synthetic-paper-{environment_label}",
@@ -824,7 +835,7 @@ def _build_context_resolver(
             ),
         ),
         authorized_coordinates=EgressCoordinateSet(
-            endpoint="synthetic://paper/order",
+            endpoint=egress_coordinates.endpoint,
             account=construction.account,
             environment=environment_label,
             action=egress_coordinates.action,
