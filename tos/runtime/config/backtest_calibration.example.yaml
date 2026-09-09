@@ -1,0 +1,37 @@
+# tos_runtime.backtest calibration example config (TOS Phase 3 Wave 3 Lane E-R; plan §3.1)
+#
+# Loader: tos_runtime.backtest.config.load_backtest_calibration_config
+#
+# Feeds tos.backtest.calibration.DeviationBudget — the injected tolerance a set of
+# paper-vs-backtest FillDeviation observations (tos_runtime.backtest.calibration_report) is
+# measured against (calibration_within_budget). Every value below is an OPERATOR-APPROVED
+# policy value, never computed here ("null=named-TBD ⇒ refuse to start", mirroring
+# tos_runtime.posttrade.config / tos_runtime.release.config's own discipline).
+
+# DeviationBudget.max_price_bps — max acceptable |paper price - backtest price| in basis
+# points. NOTE (calibration_report.py module docstring): this runtime slice's synthetic paper
+# transport carries no price at all (tos.engine.records.EgressResultPayload has no price
+# field), so every FillDeviation this runtime produces has price_bps=None. Because this budget
+# field is REQUIRED — DeviationBudget has no way to express "price unbounded" — the kernel
+# verdict (calibration_within_budget) is therefore UNCONDITIONALLY INSUFFICIENT_OBSERVATIONS
+# today, regardless of the value filled in here, until a price surface exists (Phase 4 작업 2 /
+# Phase 7). Filling this in does not change that outcome by itself.
+max_price_bps: null
+
+# DeviationBudget.max_fill_ratio_shortfall — bounds the paper/backtest filled-quantity ratio
+# tos_runtime.backtest.calibration_report produces (paper.filled_quantity /
+# backtest.filled_quantity — a quotient near 1.0 for a match, NOT a from-zero shortfall
+# magnitude; see that module's docstring for why this differs from the kernel field's own
+# "shortfall" framing).
+max_fill_ratio_shortfall: null
+
+# DeviationBudget.max_latency_bars — bounds a settlement-bar-count deviation. NOTE: this
+# runtime slice's paper evidence (EngineEvidenceRecord) carries no bar-index / settlement-bar
+# coordinate of any kind, so every FillDeviation this runtime produces has latency_bars=None.
+max_latency_bars: null
+
+# DeviationBudget.min_observations — the minimum count of PAIRED paper/backtest observations
+# required before a WITHIN/EXCEEDED verdict may be claimed at all (zero paired observations is
+# always INSUFFICIENT_OBSERVATIONS regardless of this value — tos.backtest.calibration's own
+# unconditional rule).
+min_observations: null
