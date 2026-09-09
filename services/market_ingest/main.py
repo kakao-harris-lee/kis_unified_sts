@@ -18,6 +18,10 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
+from services.monitoring.tick_stream_publisher import (
+    OrderbookMergeLog,
+    orderbook_publish_fields,
+)
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.exceptions import APIError, NetworkError, WebSocketDisconnectError
 from shared.stock_universe import (
@@ -191,6 +195,7 @@ class MarketIngestDaemon:
             os.environ.get("INGEST_DATA_FRESHNESS_INTERVAL_SECONDS", "5")
         )
         self._freshness = DataFreshnessTracker(asset)
+        self._orderbook_merge_log = OrderbookMergeLog(logger, f"{asset}-market-ingest")
         self._feed_started = False
         # The in-flight backoff feed-start retry task. One at a time: cold start
         # spawns it, and a futures rollover restart replaces it (see
@@ -198,11 +203,46 @@ class MarketIngestDaemon:
         # backoff instead of leaving the feed dark until the next refresh.
         self._start_task: asyncio.Task[None] | None = None
 
+    def _with_orderbook(self, symbol: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Merge the feed's cached top of book into a futures trade tick.
+
+        Shares the merge rule with the monolithic orchestrator through
+        ``orderbook_publish_fields`` — both producers of this stream must
+        publish the same shape or a consumer's quote silently depends on which
+        one is running.
+
+        Best-effort but not silent: a futures feed that cannot serve a book is
+        a data gap whose only downstream symptom is the router blocking every
+        signal, so the first failure is logged (see :class:`OrderbookMergeLog`).
+        A one-sided or empty book is NOT a failure — it is a normal pre-open
+        state — so it leaves ``data`` untouched without logging.
+        """
+        getter = getattr(self.feed, "get_orderbook_snapshot", None)
+        if not callable(getter):
+            self._orderbook_merge_log.failed(
+                f"{type(self.feed).__name__} has no get_orderbook_snapshot"
+            )
+            return data
+        try:
+            fields = orderbook_publish_fields(getter(symbol))
+        except Exception as exc:  # noqa: BLE001 - never break the republish path
+            self._orderbook_merge_log.failed(f"lookup raised {exc!r}")
+            return data
+        if not fields:
+            # An empty or one-sided book is a normal pre-open state, not a
+            # recovery: clearing the latch here would report "recovered" while
+            # every republished tick still carries no quote.
+            return data
+        self._orderbook_merge_log.merged()
+        return {**data, **fields}
+
     def _on_tick(
         self, symbol: str, data: dict[str, Any], ts: datetime  # noqa: ARG002
     ) -> None:
         # Hot path: republish only. (ts is part of the feed callback contract
         # but the tick stream carries its own timestamp in `data`.)
+        if self.asset == "futures":
+            data = self._with_orderbook(symbol, data)
         self.publisher.publish(self.asset, symbol, data)
         # Cheap in-memory record (no Redis I/O here); the periodic freshness loop
         # does the actual write.

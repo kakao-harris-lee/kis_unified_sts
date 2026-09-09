@@ -29,7 +29,9 @@ KST = ZoneInfo("Asia/Seoul")
 UTC = ZoneInfo("UTC")
 
 # Path to the real event calendar (project root relative)
-_CALENDAR_PATH = Path(__file__).parent.parent.parent.parent / "config" / "scheduled_events.yaml"
+_CALENDAR_PATH = (
+    Path(__file__).parent.parent.parent.parent / "config" / "scheduled_events.yaml"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +72,8 @@ def _ctx_with_long_breakout(
         prev_close=349.0,
         today_open=349.5,
         atr_14=atr,
+        # Required by the builder; Setup C never reads vwap (F-4 invariance).
+        vwap=(last_15min_high + last_15min_low) / 2,
         last_15min_high=last_15min_high,
         last_15min_low=last_15min_low,
         scheduled_events=events,
@@ -94,6 +98,8 @@ def _ctx_with_short_breakout(
         prev_close=351.0,
         today_open=350.8,
         atr_14=atr,
+        # Required by the builder; Setup C never reads vwap (F-4 invariance).
+        vwap=(last_15min_high + last_15min_low) / 2,
         last_15min_high=last_15min_high,
         last_15min_low=last_15min_low,
         scheduled_events=events,
@@ -127,9 +133,9 @@ def test_real_calendar_has_in_session_events():
             )(e.scheduled_at.astimezone(KST))
         )
     ]
-    assert len(in_session) >= 20, (
-        f"Expected >= 20 in-session tier<=2 events, got {len(in_session)}"
-    )
+    assert (
+        len(in_session) >= 20
+    ), f"Expected >= 20 in-session tier<=2 events, got {len(in_session)}"
 
 
 def test_real_calendar_covers_backtest_window():
@@ -148,15 +154,14 @@ def test_real_calendar_covers_backtest_window():
             and bt_start <= e.scheduled_at.astimezone(KST).date() <= bt_end
             and (
                 lambda ts: (
-                    (ts.hour > 8 or (ts.hour == 8 and ts.minute >= 45))
-                    and ts.hour < 16
+                    (ts.hour > 8 or (ts.hour == 8 and ts.minute >= 45)) and ts.hour < 16
                 )
             )(e.scheduled_at.astimezone(KST))
         )
     ]
-    assert len(in_window) >= 8, (
-        f"Expected >= 8 in-session events in backtest window, got {len(in_window)}"
-    )
+    assert (
+        len(in_window) >= 8
+    ), f"Expected >= 8 in-session events in backtest window, got {len(in_window)}"
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +179,9 @@ def test_setup_c_fires_on_bok_event_long():
     setup = SetupCEventReaction()
     signal = setup.check(ctx)
 
-    assert signal is not None, f"Expected signal, got reject: {setup.last_reject_reason}"
+    assert (
+        signal is not None
+    ), f"Expected signal, got reject: {setup.last_reject_reason}"
     assert signal.direction == "long"
     assert signal.confidence == pytest.approx(0.75)
     assert "event_BOK_rate_decision" in signal.reason_tags
@@ -191,7 +198,9 @@ def test_setup_c_fires_on_bok_event_short():
     setup = SetupCEventReaction()
     signal = setup.check(ctx)
 
-    assert signal is not None, f"Expected signal, got reject: {setup.last_reject_reason}"
+    assert (
+        signal is not None
+    ), f"Expected signal, got reject: {setup.last_reject_reason}"
     assert signal.direction == "short"
     assert "event_BOK_rate_decision" in signal.reason_tags
 
@@ -211,7 +220,9 @@ def test_setup_c_fires_on_china_pmi_long():
     setup = SetupCEventReaction()
     signal = setup.check(ctx)
 
-    assert signal is not None, f"Expected signal, got reject: {setup.last_reject_reason}"
+    assert (
+        signal is not None
+    ), f"Expected signal, got reject: {setup.last_reject_reason}"
     assert signal.direction == "long"
     assert signal.confidence == pytest.approx(0.70)
     assert "event_CHINA_PMI" in signal.reason_tags
@@ -241,14 +252,18 @@ def test_setup_c_no_signal_china_pmi_outside_window():
 def test_setup_c_fires_on_kospi200_rebalance():
     """Setup C fires on KOSPI200 rebalance effective day open (09:00 KST)."""
     rebal_at = datetime(2026, 3, 12, 9, 0, 0, tzinfo=KST)
-    evt = _evt("kospi200_rebalance_2026_mar", "KOSPI200_REBALANCE", rebal_at, impact_tier=2)
+    evt = _evt(
+        "kospi200_rebalance_2026_mar", "KOSPI200_REBALANCE", rebal_at, impact_tier=2
+    )
     now = datetime(2026, 3, 12, 9, 8, 0, tzinfo=KST)
     ctx = _ctx_with_short_breakout(now, [evt])
 
     setup = SetupCEventReaction()
     signal = setup.check(ctx)
 
-    assert signal is not None, f"Expected signal, got reject: {setup.last_reject_reason}"
+    assert (
+        signal is not None
+    ), f"Expected signal, got reject: {setup.last_reject_reason}"
     assert "event_KOSPI200_REBALANCE" in signal.reason_tags
 
 
@@ -299,7 +314,9 @@ def test_setup_c_filters_kr_cpi_tier3():
     # tier 3 is > min_impact_tier=2 so it is rejected.
     cpi_at = datetime(2026, 1, 30, 8, 55, 0, tzinfo=KST)
     evt = _evt("kr_cpi_2026_feb", "KR_CPI_RELEASE", cpi_at, impact_tier=3)
-    now = datetime(2026, 1, 30, 9, 5, 0, tzinfo=KST)  # 10 min elapsed — within window_minutes
+    now = datetime(
+        2026, 1, 30, 9, 5, 0, tzinfo=KST
+    )  # 10 min elapsed — within window_minutes
     ctx = _ctx_with_long_breakout(now, [evt])
 
     setup = SetupCEventReaction()
@@ -321,8 +338,12 @@ def test_setup_c_cutoff_after_15h00_kst():
     # Put the event 5 min before now so it's in window
     now = datetime(2026, 1, 16, 15, 5, 0, tzinfo=KST)
     # Re-anchor the event to be within 5 minutes of now (but still after 09:00)
-    evt_recent = _evt("bok_2026_jan_late", "BOK_rate_decision",
-                      datetime(2026, 1, 16, 15, 1, 0, tzinfo=KST), impact_tier=1)
+    evt_recent = _evt(
+        "bok_2026_jan_late",
+        "BOK_rate_decision",
+        datetime(2026, 1, 16, 15, 1, 0, tzinfo=KST),
+        impact_tier=1,
+    )
     ctx = _ctx_with_long_breakout(now, [evt_recent])
 
     setup = SetupCEventReaction()

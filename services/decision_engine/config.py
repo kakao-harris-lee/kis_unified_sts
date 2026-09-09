@@ -28,7 +28,10 @@ from shared.config.base import ServiceConfigBase
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["DecisionEngineMarketRiskGateWiring"]
+__all__ = [
+    "DecisionEngineMarketRiskGateWiring",
+    "DecisionEngineSetupEvalWiring",
+]
 
 
 class DecisionEngineMarketRiskGateWiring(ServiceConfigBase):
@@ -69,6 +72,51 @@ class DecisionEngineMarketRiskGateWiring(ServiceConfigBase):
         except Exception:
             logger.warning(
                 "decision_engine.yaml market_risk_gate wiring load failed; "
-                "using defaults"
+                "using defaults",
+                exc_info=True,
+            )
+            return cls()
+
+
+class DecisionEngineSetupEvalWiring(ServiceConfigBase):
+    """Per-setup evaluation observability wiring for the futures decision_engine.
+
+    The daemon records one ``reject``/``fired`` evaluation per setup per tick
+    (``shared/strategy/entry/setup_eval_publisher.publish_setup_eval``) so
+    "0 candidates" is distinguishable from "never evaluated". A reject reason
+    holds for as long as its cause does, i.e. every ~60 s tick, so the INFO
+    line is throttled per (setup, outcome, reason-kind).
+
+    Its own interval rather than a reuse of the market-risk gate's
+    ``would_block_log_interval_seconds``: the two logs answer different
+    questions and an operator tuning one must not silently retune the other.
+    """
+
+    _default_config_file: ClassVar[str] = "decision_engine.yaml"
+    _default_section: ClassVar[str] = "setup_eval"
+
+    log_interval_seconds: float = Field(
+        default=300.0,
+        gt=0,
+        description=(
+            "Throttle for the per-setup evaluation INFO line (seconds per "
+            "setup/outcome/reason-kind). Redis publishing is never throttled."
+        ),
+    )
+
+    @classmethod
+    def load_or_default(cls, path: str | None = None) -> DecisionEngineSetupEvalWiring:
+        """Load from YAML when available; defaults on any read/parse problem.
+
+        Same graceful-degradation contract as
+        :meth:`DecisionEngineMarketRiskGateWiring.load_or_default` — a missing
+        file, missing section, or malformed value never blocks daemon startup.
+        """
+        try:
+            return cls.from_yaml(path)
+        except Exception:
+            logger.warning(
+                "decision_engine.yaml setup_eval wiring load failed; using defaults",
+                exc_info=True,
             )
             return cls()

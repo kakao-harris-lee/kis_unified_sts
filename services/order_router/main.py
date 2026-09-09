@@ -59,7 +59,7 @@ from shared.execution.contract_spec import ContractSpec
 from shared.execution.live_mode_guard import LiveModeGuard
 from shared.execution.passive_maker import PassiveMaker
 from shared.execution.pseudo_oco import PseudoOCO
-from shared.execution.slippage_control import ExecutionAction
+from shared.execution.slippage_control import ExecutionAction, quote_age_seconds
 from shared.execution.tick_math import _compute_slippage_ticks
 from shared.streaming.stage import StreamStage
 
@@ -264,6 +264,40 @@ class OrderRouterDaemon(StreamStage):
             with contextlib.suppress(asyncio.CancelledError):
                 await self._exit_task
             self._exit_task = None
+
+    def _quote_is_stale(
+        self,
+        payload: dict[str, Any] | None,
+        *,
+        max_age: float,
+        signal_id: str,
+        symbol: str,
+        label: str = "",
+    ) -> bool:
+        """True (and counted+logged) if ``payload`` is a book too old to trade on.
+
+        An empty payload is NOT stale here — it is "no book", which the
+        controller reports as ``orderbook_unavailable`` / ``cross_asset_
+        unavailable`` with its own reason. A book with no readable time IS
+        stale: ``parse_orderbook_snapshot`` substitutes ``now`` for a missing
+        timestamp, so letting it through would read an undated quote as fresh.
+        """
+        if max_age <= 0 or not payload:
+            return False
+        age = quote_age_seconds(payload)
+        if age is not None and age <= max_age:
+            return False
+        self.slippage_blocked_count += 1
+        logger.warning(
+            "slippage_gate: blocked signal_id=%s symbol=%s "
+            "reason=quote_stale:%s%s max_age=%.1fs",
+            signal_id,
+            symbol,
+            label,
+            "unknown_timestamp" if age is None else f"{age:.2f}s",
+            max_age,
+        )
+        return True
 
     async def _exit_monitor_loop(self) -> None:
         """Poll the live feed and drive PseudoOCO stop/target/expiry closes.
@@ -554,6 +588,33 @@ class OrderRouterDaemon(StreamStage):
                 if self.futures_price_feed is not None
                 else None
             )
+
+            # Quote-freshness gate (router-only, config
+            # `futures_slippage_control.order_router_max_quote_age_seconds`).
+            # `evaluate_entry` filters on the SIGNAL's age and never reads the
+            # quote's timestamp, and `parse_orderbook_snapshot` substitutes
+            # `now` when the timestamp is missing — so a feed that stopped
+            # ticking keeps serving its last, still-parseable book and the gate
+            # would happily size an entry against it.
+            #
+            # Both feeds report the ORDERBOOK tick's own event time here (the
+            # WS feed from its `_orderbooks` cache, the stream feed from
+            # `quote_ts`), so this bounds the age of the BOOK in either mode —
+            # which is the condition that matters, since trades keep printing
+            # over a frozen book and would otherwise refresh its apparent age
+            # every ~0.2s. An empty payload is left to the controller's own
+            # `orderbook_unavailable`.
+            max_quote_age = (
+                self.slippage_controller.config.order_router_max_quote_age_seconds
+            )
+            if self._quote_is_stale(
+                quote_payload,
+                max_age=max_quote_age,
+                signal_id=signal_id,
+                symbol=signal.symbol,
+            ):
+                return True  # consumed, no retry (mirrors the gate's aborts)
+
             cross_payload = None
             if self.slippage_controller.config.cross_asset_enabled:
                 cross_payload = (
@@ -563,6 +624,19 @@ class OrderRouterDaemon(StreamStage):
                     if self.futures_price_feed is not None
                     else None
                 )
+                # The cross-asset book gates the entry exactly like the primary
+                # one, so it has to be as fresh. A stale reference quote makes
+                # `cross_asset_wide_spread` compare against a spread that no
+                # longer exists — a pass on it is as wrong as a pass on a stale
+                # primary book, and both come from the same frozen-feed cause.
+                if self._quote_is_stale(
+                    cross_payload,
+                    max_age=max_quote_age,
+                    signal_id=signal_id,
+                    symbol=self.slippage_controller.config.cross_asset_symbol,
+                    label="cross:",
+                ):
+                    return True  # consumed, no retry
             decision = self.slippage_controller.evaluate_entry(
                 symbol=signal.symbol,
                 is_buy=signal.direction == "long",
@@ -708,6 +782,159 @@ def _resolve_mode() -> str:
     return mode if mode in ("paper", "live") else "off"
 
 
+_FEED_MODE_ENV = "FUTURES_ORDER_ROUTER_FEED"
+_FEED_SEED_COUNT_ENV = "FUTURES_ORDER_ROUTER_SEED_COUNT"
+_DEFAULT_FEED_SEED_COUNT = 50
+
+_FEED_MODE_STREAM = "stream"
+_FEED_MODE_WS = "ws"
+_FEED_MODES = (_FEED_MODE_STREAM, _FEED_MODE_WS)
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Read a positive int from env, falling back on absent/blank/invalid.
+
+    A bad value logs and uses the default rather than aborting: unlike the feed
+    mode, a wrong seed depth cannot cost another process its market data.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not an integer; using %d", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("%s=%d must be positive; using %d", name, value, default)
+        return default
+    return value
+
+
+def _resolve_feed_mode() -> str:
+    """Price-feed source for this router: ``stream`` (default) | ``ws``.
+
+    ``stream`` consumes the futures tick stream another process already
+    publishes (the monolithic orchestrator today, ``futures-market-ingest``
+    after cutover) and opens no KIS connection of its own. ``ws`` is the legacy
+    self-fed path and is an explicit opt-in: KIS allows only one futures
+    WebSocket per account, so a router in ``ws`` mode running beside
+    ``trader-futures`` knocks one of the two off the feed (measured
+    2026-09-07/08).
+
+    Fail-closed on an unrecognised value: silently defaulting would hide a
+    typo that costs the orchestrator its market data.
+    """
+    raw = os.getenv(_FEED_MODE_ENV, _FEED_MODE_STREAM).strip().lower()
+    mode = raw or _FEED_MODE_STREAM
+    if mode not in _FEED_MODES:
+        raise ValueError(
+            f"{_FEED_MODE_ENV}={raw!r} is not one of {'/'.join(_FEED_MODES)}"
+        )
+    return mode
+
+
+def _futures_kis_auth() -> Any:
+    """KIS futures credentials from env (real host for both paper and live).
+
+    One construction site for the two consumers: the ``ws`` feed branch (market
+    data) and the live REST order executor. ``is_real=True`` because KIS
+    모의투자 serves no futures realtime feed and no futures order path; paper
+    safety comes from simulating execution, not from aiming at the mock host.
+    """
+    from shared.kis.auth import KISAuthConfig
+
+    return KISAuthConfig(
+        app_key=os.environ.get("KIS_FUTURES_APP_KEY", ""),
+        app_secret=os.environ.get("KIS_FUTURES_APP_SECRET", ""),
+        is_real=True,
+    )
+
+
+def _build_price_feed(
+    *,
+    feed_mode: str,
+    redis: Any,
+    symbol: str,
+    auxiliary_symbols: list[str] | None = None,
+    cross_asset_enabled: bool = False,
+    seed_max_age_seconds: float | None = None,
+) -> Any:
+    """Build the router's price feed and subscribe it to ``symbol``.
+
+    Returns a duck-typed feed exposing ``get_current_price`` /
+    ``get_orderbook_snapshot`` / ``set_tick_callback`` / ``start`` / ``stop``:
+    :class:`StreamConsumerFeed` in ``stream`` mode,
+    :class:`KISFuturesPriceFeed` in ``ws`` mode. The caller still owns
+    ``set_tick_callback`` and ``start()``.
+
+    Extracted from ``_build_and_run`` so the selection is reachable by a test
+    without Redis, a KIS account or the daemon.
+    """
+    if feed_mode == _FEED_MODE_WS:
+        from shared.kis.futures_feed import KISFuturesPriceFeed
+
+        # This is the only branch that needs the KIS_FUTURES_* credentials for
+        # *market data* — the REST order path uses them in either mode.
+        feed: Any = KISFuturesPriceFeed(config=_futures_kis_auth())
+        feed.update_symbols([symbol], auxiliary_symbols=auxiliary_symbols)
+        logger.info(
+            "order_router feed=ws (own KIS futures WebSocket) — MUST NOT run "
+            "concurrently with trader-futures on the same KIS account"
+        )
+        return feed
+
+    from shared.models.stream_models import DEFAULT_FUTURES_TICK_STREAM
+    from shared.streaming.consumer_feed import StreamConsumerFeed
+
+    stream = os.environ.get("FUTURES_TICK_STREAM", DEFAULT_FUTURES_TICK_STREAM)
+    # Replay the tail of the stream at startup so the router comes up with a
+    # current price, and with a book when the tail carries a fresh one, instead
+    # of being blind until the next tick. The count bounds how deep to look for
+    # the subscribed and auxiliary symbols in a tail that interleaves them — it
+    # does not bound the seeded book's age (entries apply oldest-first, so the
+    # newest always wins); `seed_max_age_seconds` does that.
+    seed_count = _positive_int_env(_FEED_SEED_COUNT_ENV, _DEFAULT_FEED_SEED_COUNT)
+    feed = StreamConsumerFeed(
+        redis=redis,
+        stream=stream,
+        seed_latest=True,
+        seed_count=seed_count,
+        seed_max_age_seconds=seed_max_age_seconds,
+    )
+    feed.update_symbols([symbol], auxiliary_symbols=auxiliary_symbols)
+    logger.info(
+        "order_router feed=stream stream=%s seed_count=%d seed_max_age=%s "
+        "(no KIS WS opened)",
+        stream,
+        seed_count,
+        seed_max_age_seconds,
+    )
+    if cross_asset_enabled:
+        # The gate is fail-closed on a missing cross quote: an empty payload
+        # makes parse_orderbook_snapshot return None and evaluate_entry blocks
+        # with `cross_asset_unavailable:<symbol>`
+        # (shared/execution/slippage_control.py). Whether the reference symbol
+        # is on the stream depends on the PRODUCER, so this is a check-this
+        # warning, not a verdict: `trader-futures` passes its cross-asset symbol
+        # to the WS feed as an auxiliary subscription and republishes every tick
+        # it receives, so pre-cutover the symbol IS on the stream;
+        # `futures-market-ingest` subscribes only its trading symbol, so after
+        # the cutover it is not. Paper is unaffected either way
+        # (paper_override sets cross_asset.enabled: false).
+        logger.warning(
+            "order_router feed=stream with cross_asset enabled (%s): whether the "
+            "reference symbol is on the stream depends on the producer — "
+            "trader-futures republishes it (pre-cutover), futures-market-ingest "
+            "does not. If it is absent the gate blocks every entry with "
+            "cross_asset_unavailable. Verify it is on the stream, disable "
+            "cross_asset, or run %s=ws.",
+            auxiliary_symbols or [],
+            _FEED_MODE_ENV,
+        )
+    return feed
+
+
 def _final_stream_for(mode: str) -> str:
     """Final-signal stream the order_router consumes (F-1).
 
@@ -841,11 +1068,13 @@ async def _build_and_run() -> int:
         FuturesSlippageController,
         load_futures_slippage_config,
     )
-    from shared.kis.auth import KISAuthConfig
-    from shared.kis.futures_feed import KISFuturesPriceFeed
     from shared.risk.runtime_state import RuntimeRiskState
     from shared.storage import SQLiteRuntimeLedger
     from shared.storage.config import StorageConfig
+
+    # Resolved before anything is opened: an unrecognised value is fatal
+    # (fail-closed), and the failure should not leak a Redis connection.
+    feed_mode = _resolve_feed_mode()
 
     redis_url = redis_url_from_env()
     redis_client = aioredis.from_url(redis_url)
@@ -907,16 +1136,6 @@ async def _build_and_run() -> int:
         asset_class="futures",
     )
 
-    # Feed is ALWAYS real (both paper AND live): KIS 모의투자 serves no futures
-    # realtime feed, so the real WS is the only orderbook source. This drops the
-    # old KIS_FUTURES_MARKET gating on the feed — paper mode simulates execution,
-    # not data; live order placement remains gated by OrderExecutor.config.trading_mode.
-    kis_auth = KISAuthConfig(
-        app_key=os.environ.get("KIS_FUTURES_APP_KEY", ""),
-        app_secret=os.environ.get("KIS_FUTURES_APP_SECRET", ""),
-        is_real=True,
-    )
-    futures_feed = KISFuturesPriceFeed(config=kis_auth)
     aux_symbols = None
     if (
         slippage_controller is not None
@@ -925,7 +1144,25 @@ async def _build_and_run() -> int:
         and slippage_cfg.cross_asset_symbol != symbol
     ):
         aux_symbols = [slippage_cfg.cross_asset_symbol]
-    futures_feed.update_symbols([symbol], auxiliary_symbols=aux_symbols)
+    # Default `stream`: consume the futures ticks another process already
+    # publishes rather than opening a second KIS futures WebSocket on the same
+    # account (which evicts trader-futures). `ws` restores the self-fed path.
+    futures_feed = _build_price_feed(
+        feed_mode=feed_mode,
+        redis=redis_client,
+        symbol=symbol,
+        auxiliary_symbols=aux_symbols,
+        cross_asset_enabled=aux_symbols is not None,
+        # Read from config even when the gate itself was not built
+        # (`order_router_gate: false`, or slippage control disabled): seeding
+        # must be fail-closed on its own, not conditional on someone else's
+        # rollback switch staying on.
+        seed_max_age_seconds=(
+            slippage_cfg.order_router_max_quote_age_seconds
+            if slippage_cfg.order_router_max_quote_age_seconds > 0
+            else None
+        ),
+    )
     if slippage_controller is not None:
 
         def _register_slippage_tick(
@@ -970,7 +1207,7 @@ async def _build_and_run() -> int:
         order_executor = build_live_order_executor(
             execution_section,
             redis_url=redis_url,
-            kis_auth=kis_auth,
+            kis_auth=_futures_kis_auth(),
         )
         await order_executor.initialize()
         kis_adapter = KISFuturesAdapter(

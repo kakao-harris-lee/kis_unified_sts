@@ -13,16 +13,30 @@ reason's recent log.
 the gate decision's free-text ``reason`` string, which embeds ``score`` and
 would otherwise reset the throttle on every gate refresh.
 
+:func:`setup_eval_throttle_key` does the same job for the futures setup-eval
+observability: a setup's ``last_reject_reason`` embeds live measurements
+(``not_extreme(z=+0.42,need±1.8)``), so the raw string is a different key on
+almost every tick — it would defeat the throttle AND grow the cache without
+bound. Keying on the reason's structural prefix (everything before the first
+``(``) collapses one cause to one slot.
+
 Consumers:
 - ``services/stock_strategy/daemon_market_risk.py`` (``_log_market_risk_would_block``)
-- ``services/decision_engine/main.py`` (``_maybe_log_shadow_gate``)
+- ``services/decision_engine/main.py`` (``_maybe_log_shadow_gate``,
+  ``_publish_setup_eval``)
+- ``shared/strategy/entry/setup_eval_publisher.py`` (history-append dedup)
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-__all__ = ["ReasonLogThrottle", "gate_log_throttle_key"]
+__all__ = [
+    "ReasonLogThrottle",
+    "gate_log_throttle_key",
+    "setup_eval_reason_kind",
+    "setup_eval_throttle_key",
+]
 
 
 @dataclass
@@ -82,3 +96,45 @@ def gate_log_throttle_key(
     """
     base = f"band:{band}" if band is not None else f"reason:{reason}"
     return f"{base}:{side}" if side is not None else base
+
+
+def setup_eval_reason_kind(reason: str) -> str:
+    """Return the STRUCTURAL kind of a setup-eval reason (measurements stripped).
+
+    Setup reject reasons are built as ``kind(measurements)`` — e.g.
+    ``not_extreme(z=+0.42,need±1.8)``, ``vol_below_gate(0.85<0.9)``,
+    ``outside_time_window(297m∉[10,60])``, ``low_confidence(0.55<0.6)`` — while
+    others carry no measurement at all (``no_atr``, ``no_vwap``,
+    ``no_market_context``).
+    The parenthesised part changes on essentially every 60 s tick, so it must
+    not participate in any identity used for throttling or deduplication:
+
+      * as a throttle key it would reset the throttle every tick, i.e. no
+        throttle at all, and grow ``ReasonLogThrottle``'s cache without bound;
+      * as a history-dedup key it appends one Redis list row per tick instead
+        of one per state change.
+
+    Only the leading kind is returned; the full reason (numbers included) is
+    still what gets logged and stored, so no diagnostic detail is lost.
+
+    Non-``str`` input is coerced rather than rejected: this sits on the
+    best-effort observability path (a caller may hand it a signal attribute
+    that is not yet a string), and the previous key construction was an f-string
+    that accepted anything. Raising here would turn a logging concern into a
+    trading-path exception.
+    """
+    text = reason if isinstance(reason, str) else str(reason)
+    head, _, _ = text.partition("(")
+    return head.strip() or text
+
+
+def setup_eval_throttle_key(name: str, outcome: str, reason: str) -> str:
+    """Throttle/dedup key for one setup's evaluation outcome.
+
+    Built from the setup's registry name, the outcome (``reject``/``fired``)
+    and the reason's structural kind only — see
+    :func:`setup_eval_reason_kind` for why the measurements are dropped.
+    Namespaced like :func:`gate_log_throttle_key` so it cannot collide with a
+    gate key in a shared cache.
+    """
+    return f"setup_eval:{name}:{outcome}:{setup_eval_reason_kind(reason)}"

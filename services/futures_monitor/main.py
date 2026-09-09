@@ -60,6 +60,7 @@ async def _build_and_run() -> int:
         resolve_contract_spec,
     )
     from shared.execution.futures_instrument import resolve_futures_instrument_from_env
+    from shared.models.stream_models import DEFAULT_FUTURES_TICK_STREAM
     from shared.notification.telegram import notifier_for_domain
     from shared.streaming.consumer_feed import StreamConsumerFeed
     from shared.streaming.trading_state import TradingStatePublisher
@@ -71,7 +72,7 @@ async def _build_and_run() -> int:
         "FUTURES_MONITOR_POSITIONS_KEY", "futures:monitor:positions"
     )
     status_interval = float(os.environ.get("FUTURES_MONITOR_STATUS_INTERVAL", "5"))
-    tick_stream = os.environ.get("FUTURES_TICK_STREAM", "raw_data")
+    tick_stream = os.environ.get("FUTURES_TICK_STREAM", DEFAULT_FUTURES_TICK_STREAM)
 
     specs = ContractSpecRegistry.from_yaml("config/execution.yaml")
     instrument = resolve_futures_instrument_from_env()

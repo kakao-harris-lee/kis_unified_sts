@@ -30,7 +30,10 @@ strategy:
     params:
       enabled: true  # inner setup flag; outer strategy.enabled guards activation
 
-      # Time window: minutes after 09:00 KST market open
+      # Time window: minutes after the 08:45 KST futures open — the anchor is
+      # MarketContext.minutes_since_open(), whose default is 08:45
+      # (config/market_schedule.yaml::market_schedule.futures.regular.open).
+      # So 10 = 08:55 KST and 60 = 09:45 KST, not 09:10 / 10:00.
       valid_minutes_min: 10
       valid_minutes_max: 60       # tightened 120->60: 60-120m entries were all losers (PR #495 selectivity matrix B+60min, Sharpe 5.1)
 

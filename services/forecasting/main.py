@@ -16,7 +16,10 @@ from shared.forecasting.event_taxonomy import EventTaxonomy
 from shared.forecasting.forecast_publisher import ForecastPublisher
 from shared.forecasting.llm_event_scorer import LLMScorerClient
 from shared.forecasting.volatility_har_rv import VolatilityForecaster
-from shared.models.stream_models import MarketTickMessage
+from shared.models.stream_models import (
+    DEFAULT_FUTURES_TICK_STREAM,
+    MarketTickMessage,
+)
 from shared.streaming.codec import StreamDecodeError, decode
 
 logger = logging.getLogger(__name__)
@@ -32,7 +35,7 @@ class ForecastingService:
         storage_client: Any,
         taxonomy_path: Path,
         llm_client: LLMScorerClient | None = None,
-        futures_tick_stream: str = "raw_data",
+        futures_tick_stream: str = DEFAULT_FUTURES_TICK_STREAM,
     ):
         self._config = config
         self._redis = redis_client
@@ -270,9 +273,13 @@ async def _main() -> None:
         storage_client=None,
         taxonomy_path=taxonomy_path,
         llm_client=llm_client,
-        # Same env var the producer (TickStreamPublisher) reads, so the
-        # forecasting consumer always tracks the stream market_ingest writes.
-        futures_tick_stream=os.environ.get("MONITOR_FUTURES_TICK_STREAM", "raw_data"),
+        # This consumer reads the PRODUCER-side env name (a historical quirk;
+        # the other futures consumers read FUTURES_TICK_STREAM). Compose wires
+        # both names from one ${FUTURES_TICK_STREAM} knob, so it still tracks
+        # whatever stream the producers write.
+        futures_tick_stream=os.environ.get(
+            "MONITOR_FUTURES_TICK_STREAM", DEFAULT_FUTURES_TICK_STREAM
+        ),
     )
 
     loop = asyncio.get_running_loop()
