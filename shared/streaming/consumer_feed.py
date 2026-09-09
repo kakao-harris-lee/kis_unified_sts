@@ -61,6 +61,8 @@ class StreamConsumerFeed:
         stale_threshold_seconds: float = 30.0,
         xread_block_ms: int = 1000,
         xread_count: int = 200,
+        seed_latest: bool = False,
+        seed_count: int = 50,
     ) -> None:
         self.redis = redis
         self.stream = stream
@@ -69,6 +71,8 @@ class StreamConsumerFeed:
         self._stale_threshold = stale_threshold_seconds
         self.xread_block_ms = xread_block_ms
         self.xread_count = xread_count
+        self.seed_latest = seed_latest
+        self.seed_count = seed_count
         self._prices: dict[str, dict[str, Any]] = {}
         self._symbol_tick_ts: dict[str, float] = {}
         self._subscribed: set[str] = set()
@@ -163,17 +167,31 @@ class StreamConsumerFeed:
         """
         self._tick_callback = callback
 
-    def _apply_entry(self, fields: dict[Any, Any]) -> None:
+    def _apply_entry(self, fields: dict[Any, Any], *, seeded: bool = False) -> None:
         parsed = _parse_entry_fields(fields)
         if parsed is None:
             return
         symbol, price = parsed
+        if seeded and self._subscribed and symbol not in self._subscribed:
+            return
         self._prices[symbol] = price
+        # A live entry is aged from its arrival; a replayed one from the
+        # producer's own timestamp, or a cold start would report a 50-entry
+        # backlog as if every tick had just landed.
         now = time.time()
+        if seeded:
+            now = float(price.get("timestamp") or now)
         self._symbol_tick_ts[symbol] = now
-        self._last_tick_ts = now
+        if self._last_tick_ts is None or now > self._last_tick_ts:
+            self._last_tick_ts = now
         if price.get("bid_price_1") and price.get("ask_price_1"):
-            self._last_orderbook_ts = now
+            if self._last_orderbook_ts is None or now > self._last_orderbook_ts:
+                self._last_orderbook_ts = now
+        if seeded:
+            # Cache prime, not a live tick: replaying old prints into the
+            # volatility baseline or the indicator engine would fabricate
+            # history the process never observed.
+            return
         if self._tick_callback is not None:
             ts = datetime.fromtimestamp(price.get("timestamp", time.time()), UTC)
             try:
@@ -237,8 +255,46 @@ class StreamConsumerFeed:
         if self._running:
             return
         self._running = True
+        if self.seed_latest:
+            await self._seed_from_history()
         self._task = asyncio.create_task(self._read_loop())
         await asyncio.sleep(0)  # yield so _read_loop reaches its first xread
+
+    async def _seed_from_history(self) -> None:
+        """Prime the price cache from the tail of the stream before reading.
+
+        The read loop starts at ``$``, so a freshly started consumer is blind
+        until the next tick arrives. For the order-router that means the
+        send-time gate has no quote for the first signal after a restart and
+        blocks it on ``orderbook_unavailable``. Replays the newest
+        ``seed_count`` entries oldest-first, for subscribed symbols only, and
+        leaves ``_last_id`` at ``$`` so the live loop does not re-apply them.
+
+        Best-effort: a stream that does not exist yet, or a Redis that refuses
+        the read, leaves the cache exactly as cold as it was before.
+        """
+        try:
+            entries = await self.redis.xrevrange(self.stream, count=self.seed_count)
+        except Exception:
+            logger.warning(
+                format_audit_kv(
+                    event="tick_stream_seed_failed",
+                    stream=self.stream,
+                    seed_count=self.seed_count,
+                ),
+                exc_info=True,
+            )
+            return
+        for _entry_id, fields in reversed(list(entries or [])):
+            self._apply_entry(fields, seeded=True)
+        logger.info(
+            format_audit_kv(
+                event="tick_stream_seeded",
+                stream=self.stream,
+                entries_read=len(entries or []),
+                symbols_cached=len(self._prices),
+            )
+        )
 
     async def stop(self) -> None:
         self._running = False

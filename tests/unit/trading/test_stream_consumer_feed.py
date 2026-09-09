@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 
@@ -386,3 +387,144 @@ def test_health_status_reports_orderbook_age():
     feed._apply_entry(_orderbook_entry())
     age = feed.get_health_status()["orderbook_age_seconds"]
     assert age is not None and age >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# Cold-start seeding (order-router restart)
+# ---------------------------------------------------------------------------
+
+
+class _SeedRedis:
+    """Minimal async Redis double: XREVRANGE returns a fixed tail, XREAD idles."""
+
+    def __init__(self, entries, *, revrange_raises: bool = False):
+        self.entries = entries
+        self.revrange_raises = revrange_raises
+        self.revrange_calls: list[tuple[str, int]] = []
+
+    async def xrevrange(self, stream, count=None, **_kw):
+        self.revrange_calls.append((stream, count))
+        if self.revrange_raises:
+            raise RuntimeError("stream unavailable")
+        return list(self.entries)
+
+    async def xread(self, *_args, **_kwargs):
+        await asyncio.sleep(0.01)
+        return []
+
+
+def _seed_entries(*fields):
+    """Newest-first, as XREVRANGE returns them."""
+    return [(f"{i}-0".encode(), f) for i, f in enumerate(reversed(fields))]
+
+
+@pytest.mark.asyncio
+async def test_seed_latest_primes_the_cache_before_the_first_read():
+    """Without this the router is blind until the next tick, so the first
+    signal after a restart is blocked on `orderbook_unavailable`."""
+    redis = _SeedRedis(_seed_entries(_orderbook_entry()))
+    feed = StreamConsumerFeed(
+        redis=redis, stream="raw_data", seed_latest=True, seed_count=25
+    )
+    feed.update_symbols(["A05603"])
+
+    await feed.start()
+    try:
+        assert redis.revrange_calls == [("raw_data", 25)]
+        assert feed.get_orderbook_snapshot("A05603")["bid_price_1"] == 331.18
+        assert (await feed.get_current_price("A05603"))["close"] == 331.20
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_seeding_is_off_by_default():
+    redis = _SeedRedis(_seed_entries(_orderbook_entry()))
+    feed = StreamConsumerFeed(redis=redis, stream="raw_data")
+    feed.update_symbols(["A05603"])
+
+    await feed.start()
+    try:
+        assert redis.revrange_calls == []
+        assert feed.get_orderbook_snapshot("A05603") == {}
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_seeded_entries_age_from_the_producer_timestamp():
+    """A 50-entry replay must not read as 50 ticks that just landed — the
+    quote-age gate downstream would then pass a book from an hour ago."""
+    old = 1700000000.0
+    redis = _SeedRedis(_seed_entries(_orderbook_entry(timestamp=old)))
+    feed = StreamConsumerFeed(redis=redis, stream="raw_data", seed_latest=True)
+    feed.update_symbols(["A05603"])
+
+    await feed.start()
+    try:
+        status = feed.get_health_status()
+        assert status["last_tick_ts"] == old
+        assert status["staleness_seconds"] > 1_000_000  # ages from 2023, not now
+        assert status["orderbook_age_seconds"] > 1_000_000
+        assert feed.is_healthy() is False
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_seeding_applies_oldest_first_and_skips_other_symbols():
+    redis = _SeedRedis(
+        _seed_entries(
+            _orderbook_entry(price="331.10", timestamp=1.0),
+            _entry(schema_version="1", symbol="A99999", price="1.0"),
+            _orderbook_entry(price="331.30", timestamp=2.0),
+        )
+    )
+    feed = StreamConsumerFeed(redis=redis, stream="raw_data", seed_latest=True)
+    feed.update_symbols(["A05603"])
+
+    await feed.start()
+    try:
+        # Newest wins, so the replay order is oldest → newest.
+        assert (await feed.get_current_price("A05603"))["close"] == 331.30
+        assert await feed.get_current_price("A99999") == {}
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_seeding_does_not_replay_ticks_into_the_callback():
+    """Seeding primes a cache; firing the callback would inject prints the
+    process never observed into the volatility baseline."""
+    seen: list[str] = []
+    redis = _SeedRedis(_seed_entries(_orderbook_entry()))
+    feed = StreamConsumerFeed(
+        redis=redis,
+        stream="raw_data",
+        seed_latest=True,
+        tick_callback=lambda sym, _p, _ts: seen.append(sym),
+    )
+    feed.update_symbols(["A05603"])
+
+    await feed.start()
+    try:
+        assert seen == []
+        assert feed.get_orderbook_snapshot("A05603")
+    finally:
+        await feed.stop()
+
+
+@pytest.mark.asyncio
+async def test_seeding_failure_leaves_the_feed_running(caplog):
+    redis = _SeedRedis([], revrange_raises=True)
+    feed = StreamConsumerFeed(redis=redis, stream="raw_data", seed_latest=True)
+    feed.update_symbols(["A05603"])
+
+    with caplog.at_level(logging.WARNING, logger="shared.streaming.consumer_feed"):
+        await feed.start()
+    try:
+        assert feed._running is True
+        assert feed.get_orderbook_snapshot("A05603") == {}
+        assert any("tick_stream_seed_failed" in r.getMessage() for r in caplog.records)
+    finally:
+        await feed.stop()
