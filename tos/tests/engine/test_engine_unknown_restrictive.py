@@ -44,6 +44,7 @@ from tos.engine import (
     ResultDisposition,
     knowledge_for_result,
 )
+from tos.engine.state import _RESULT_TRANSITIONS
 from tos.rcl import CapacityState
 
 from ._engine_fixtures import (
@@ -921,15 +922,62 @@ def test_a_repeated_unknown_or_timeout_stays_quarantined(kind) -> None:
 
 
 def test_quarantine_resolution_edges_excludes_unknown_and_timeout() -> None:
-    """([KW2b-#2]) The closed resolution table never lists UNKNOWN/TIMEOUT as an escape route —
-    every *other* member of the closed EgressResultKind vocabulary is, and is, listed.
+    """([KW2b-#2]; derived positive invariant per Phase 3 wave 2 re-review #2 N2 / KW2d-N2) The
+    closed resolution table never lists UNKNOWN/TIMEOUT as an escape route.
+
+    The re-review's N2 objection: a table membership check keyed on the two *names*
+    ``UNKNOWN``/``TIMEOUT`` does not close under vocabulary growth — a future evidence-free
+    ``EgressResultKind`` would be silently admitted into :data:`QUARANTINE_RESOLUTION_EDGES`
+    unless the exclusion is derived from *why* the two are excluded, not just what they are
+    called. The real rule (module docstring: "``UNKNOWN``/``TIMEOUT`` are deliberately absent
+    ... neither carries positive evidence") is exactly: a kind is excluded here iff its own
+    ordinary (non-quarantined) :data:`_RESULT_TRANSITIONS` capacity target already **is**
+    ``QUARANTINED_UNKNOWN`` — those are structurally the evidence-free kinds, by the same table
+    that puts them there in the first place (state.py's own closed mapping, DRY / no drift).
+
+    A second exclusion term — "kinds with no ``_RESULT_TRANSITIONS`` entry at all" — is *not*
+    needed to match the shipped code: ``_RESULT_TRANSITIONS`` is total over the closed
+    ``EgressResultKind`` vocabulary (:func:`~tos.engine.state.knowledge_for_result` raises
+    ``ArtifactIntegrityError`` for any kind outside it, i.e. there is no such kind today), so the
+    single derived term below is the whole rule this table actually satisfies. If a future kind
+    were ever added to the vocabulary without a ``_RESULT_TRANSITIONS`` entry, this test would
+    raise a ``KeyError`` on that kind rather than silently passing — itself a fail-closed
+    property, not a gap.
     """
-    assert EgressResultKind.UNKNOWN not in QUARANTINE_RESOLUTION_EDGES
-    assert EgressResultKind.TIMEOUT not in QUARANTINE_RESOLUTION_EDGES
-    assert set(QUARANTINE_RESOLUTION_EDGES) == set(EgressResultKind) - {
+    excluded_by_transition = {
+        kind
+        for kind in EgressResultKind
+        if _RESULT_TRANSITIONS[kind][1] is CapacityState.QUARANTINED_UNKNOWN
+    }
+    assert excluded_by_transition == {
         EgressResultKind.UNKNOWN,
         EgressResultKind.TIMEOUT,
     }
+    assert (
+        set(QUARANTINE_RESOLUTION_EDGES)
+        == set(EgressResultKind) - excluded_by_transition
+    )
+
+    # cheap, readable named-absence assertions, retained alongside the derived rule above.
+    assert EgressResultKind.UNKNOWN not in QUARANTINE_RESOLUTION_EDGES
+    assert EgressResultKind.TIMEOUT not in QUARANTINE_RESOLUTION_EDGES
+
+
+def test_quarantine_resolution_edges_values_are_settled_states_below_quarantine() -> (
+    None
+):
+    """([KW2d-N2]) Every resolution target is a real ``PROJECTION_ORDER`` member ranking
+    strictly below ``QUARANTINED_UNKNOWN`` — the KW2c-R2 floor only ever raises a resolution up
+    to the pre-quarantine settlement, and that guarantee is void if a table value could itself
+    reach or exceed ``QUARANTINED_UNKNOWN``'s own rank.
+    """
+    for kind, target in QUARANTINE_RESOLUTION_EDGES.items():
+        assert (
+            target in PROJECTION_ORDER
+        ), f"{kind}: {target} is not a member of PROJECTION_ORDER at all"
+        assert (
+            PROJECTION_RANK[target] < PROJECTION_RANK[CapacityState.QUARANTINED_UNKNOWN]
+        ), f"{kind}: {target} must rank strictly below QUARANTINED_UNKNOWN"
 
 
 # ---------------------------------------------------------------------------
