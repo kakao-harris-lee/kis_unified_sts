@@ -91,54 +91,54 @@ a pure position swap among behaviourally-independent steps still differs) closes
 gap for steps 1-14; the residual dead zone is confined to the Send-Boundary segment 15-19, which the
 sequencer never even walks.
 
-**FINDING — detector 3 (the gateway's real execution order) narrows that 12-variant blind spot to
-4.** Steps 15-19 are constitutionally the Send Boundary, and are *executed* — not by
-``run_commitment_flow``, which explicitly refuses to host them — by ``BrokerEgressGateway.__call__``
-(``tos/src/tos/egressgw/gateway.py``), the real ``Transmit`` implementation in non-test wiring. So
-the tail's *executable* order lives there, not in the vocabulary tuple. But that executable order is
-**not driven by ``CommitmentStep`` at all**: ``GatewayEvidenceRecord.kind`` is a free-form ``str``
-(``records.py:564`` — no ``CommitmentStep`` field anywhere on it or on ``SendBoundaryContext``), and
-grepping ``tos/src/tos/egressgw/*.py`` for ``CommitmentStep``/``COMMITMENT_FLOW_ORDER`` finds zero
-matches in ``gateway.py`` or ``seal.py`` — the gateway's step 15-19 sequence is hardcoded Python
-control flow, entirely independent of ``COMMITMENT_FLOW_ORDER``. Two consequences, both FINDINGs in
-their own right:
+**FINDING — detector 3 (the gateway's real execution order) closes that 12-variant blind spot
+entirely (2026-09-09, KW3-GW, commit 9de02dcc).** Steps 15-19 are constitutionally the Send
+Boundary, and are *executed* — not by ``run_commitment_flow``, which explicitly refuses to host
+them — by ``BrokerEgressGateway.__call__`` (``tos/src/tos/egressgw/gateway.py``), the real
+``Transmit`` implementation in non-test wiring. So the tail's *executable* order lives there, not
+in the vocabulary tuple. Before KW3-GW, that executable order was not driven by ``CommitmentStep``
+at all and was not auditable from evidence (this lane's own ffaafcb4 finding: ``kind`` was a
+free-form ``str``, step 18 recorded nothing, ``SEND_SEALED`` sat at an undocumented "step 15½").
+KW3-GW closed this at the production layer: ``GatewayEvidenceRecord`` gained a
+``step: CommitmentStep | None`` field (``records.py:608-639``), a ``FIXED_KIND_STEPS`` map the
+gateway stamps every non-``SEND_REFUSED`` record from, a new ``NETWORK_CALL_ENTERED`` record
+emitted right before ``send_once`` (closing the step-18 gap), and a
+``_step_matches_fixed_kind_when_given`` model validator that rejects a stamped step disagreeing
+with its kind — so the correspondence is now enforced structurally, not merely documented. Two
+points remain true even after the fix:
 
-- The executable send order is **not fully auditable from evidence** in a ``CommitmentStep``-identity
-  sense: mapping ``GatewayEvidenceRecord.kind`` strings onto the ADR's five steps is a lossy,
-  best-effort correspondence (:data:`_GATEWAY_KIND_TO_STEP`), grounded in the gateway's own inline
-  step-number comments, not a structural guarantee. ``SEND_SEALED`` (the ``SendSeal``, Phase 4 작업
-  6) belongs to a phase the gateway's own comment calls "step 15½" — it has **no** ``CommitmentStep``
-  counterpart in the closed 19-step enum at all. Step 18 (``NETWORK_CALL``) has **no evidence kind of
-  its own** on the success path — ``__call__``'s "step 18" block calls
-  ``self._transport.send_once(...)`` directly and records nothing before the next (step 19)
-  record, so the network-call moment itself is unobservable from evidence, full stop.
-- Because the gateway consumes no ``CommitmentStep`` data, **no alias exists to patch on the gateway
-  side** — unlike detector 2, detector 3 cannot be made "mutation-sensitive" by monkeypatching; its
-  own real execution order is the *same fixed constant* for every one of the 56 variants (verified:
-  :func:`_run_gateway_happy_path_kinds` is called once, not per variant). Detector 3 is therefore
-  structurally closer to detector 1 (a static reference sequence) than to detector 2 (an
-  execution that actually consumes the mutated order) — its distinct value is that the reference
-  sequence is *extracted from one real gateway run* rather than hand-transcribed, so it would also
-  catch the gateway's own code drifting away from the ADR order someday, which detector 1 cannot.
+- Because the gateway still consumes no ``CommitmentStep`` data (it only ever *stamps* one on
+  outgoing records — grepped, zero reads of ``COMMITMENT_FLOW_ORDER``/``SEQUENCED_STEPS``
+  anywhere in ``tos/src/tos/egressgw/*.py``), **no alias exists to patch on the gateway side** —
+  unlike detector 2, detector 3 cannot be made "mutation-sensitive" by monkeypatching; its own real
+  execution order is the *same fixed constant* for every one of the 56 variants (verified:
+  :func:`_run_gateway_happy_path_steps` is called once, not per variant). Detector 3 is therefore
+  structurally closer to detector 1 (a static reference sequence) than to detector 2 (an execution
+  that actually consumes the mutated order) — its distinct value is that the reference sequence is
+  *extracted from one real gateway run* rather than hand-transcribed, so it would also catch the
+  gateway's own code drifting away from the ADR order someday, which detector 1 cannot.
+- Step 15 legitimately produces **two** distinct real evidence moments (the ``VERIFY_ITEM`` cluster
+  and a separate ``SEND_SEALED`` record — ``SEND_SEALED`` is step 15's own output per
+  ``FIXED_KIND_STEPS``, not a separate un-enumerated phase any more). :func:`_gateway_projection`
+  accounts for this with an explicit per-step moment count (:data:`_STEP_MOMENT_MULTIPLICITY`)
+  rather than silently collapsing it away, so a genuine mutation duplicate of any observable step
+  (including step 15 itself) still produces a distinguishable, differently-shaped sequence.
 
-Net effect: of detector 2's 12-variant blind spot, detector 3 additionally catches every variant
-that touches an *observable* boundary step (15, 16, 17, or 19) — including, notably, every
-duplication of an observable step, which detector 2 cannot see (its ``SEND_BOUNDARY_STEPS``
-``frozenset`` dedupes a duplicate for free) but detector 3's ``_gateway_projection`` does not
-(no deduplication on the mutated-order side — see its docstring). What remains, in
-:data:`_EXPECTED_ORDER_PIN_ONLY`, is exactly the 4 variants confined to step 18 alone (2 swaps with
-a neighbour, its own omission, its own duplication): the one step neither execution path can ever
-observe. Detector 1 catches all 4 (any swap/omission/duplication changes the tuple away from the
-fixed 19-member ADR sequence), so **all 56 variants are caught by at least one detector** — "생존 0"
-holds — but those 4 are, honestly, detector-1-only: a mutation confined to the network-call moment
-is a real, joint blind spot of both execution paths today, not merely a weak test. RFC-005 §7:192
-("SHALL NOT reorder") is what makes this a *contract* violation rather than a don't-care.
+Net effect: detector 3 now catches every one of detector 2's 12-variant blind spot, including step
+18 (via the new ``NETWORK_CALL_ENTERED`` record) and every duplication of an observable step
+(detector 2's ``SEND_BOUNDARY_STEPS`` ``frozenset`` dedupes a duplicate for free; detector 3's
+expansion-based projection does not). :data:`_EXPECTED_ORDER_PIN_ONLY` is therefore **empty** —
+verified empirically, not assumed (see its own docstring) — so every one of the 56 variants is now
+caught by at least two of the three detectors, not merely one. RFC-005 §7:192 ("SHALL NOT reorder")
+is a contract over the whole 19-step order, and as of this lane's second round it is enforced, for
+the Send-Boundary tail specifically, by real executable code (the gateway) rather than only by a
+hand-transcribed anchor.
 
 Runtime: 57 engine runs (1 control + 56 variants) through :func:`_run_variant`, each a single
 ``DECISION_TICK`` through the slice-1 stand-in wiring, plus exactly 1 real gateway run through
-:func:`_run_gateway_happy_path_kinds` (detector 3's reference sequence is a fixed constant, so it is
-computed once, not per variant) — well under the ~60s budget (see the lane's own measurement in its
-commit message).
+:func:`_run_gateway_happy_path_steps` (detector 3's reference sequence is a fixed constant, so it
+is computed once, not per variant) — well under the ~60s budget (see the lane's own measurement in
+its commit message).
 
 Regime tag: orchestration authoring evidence only; closes no EV.
 """
@@ -350,49 +350,66 @@ def _run_variant(order: tuple[CommitmentStep, ...]) -> tuple[Any, ...]:
 # detector 3: the gateway's own real execution order for steps 15-19
 # ---------------------------------------------------------------------------
 
-#: Grounded in ``gateway.py``'s OWN inline step-number comments (not an independently invented
-#: correspondence): "# -- step 15: the 17-item verify list --" (``VERIFY_ITEM``), the
-#: ``SEND_STARTED`` record's own detail text citing "ADR-002-002 §11.4:606" (step 16's ADR line),
-#: "# -- step 17: the POTENTIALLY_LIVE projection is observed --" (``POTENTIALLY_LIVE_OBSERVED``),
-#: and "# -- step 19: evidence --" (``EGRESS_RESULT_RECORDED``). Two kinds have deliberately no
-#: entry — see the two FINDINGs in the module docstring on ``SEND_SEALED`` ("step 15½", no
-#: ``CommitmentStep`` counterpart at all) and step 18 (``NETWORK_CALL``, no evidence kind of its
-#: own on the success path).
-_GATEWAY_KIND_TO_STEP: dict[str, CommitmentStep] = {
-    "VERIFY_ITEM": CommitmentStep.SEND_BOUNDARY_VERIFICATION,
-    "SEND_STARTED": CommitmentStep.SEND_STARTED_DURABLE,
-    "POTENTIALLY_LIVE_OBSERVED": CommitmentStep.POTENTIALLY_LIVE_TRANSITION,
-    "EGRESS_RESULT_RECORDED": CommitmentStep.EVIDENCE_RECORD,
+#: How many distinct real evidence *moments* one occurrence of an observable step produces on a
+#: real send (production field, Phase 3 wave 3 KW3-GW — ``GatewayEvidenceRecord.step`` /
+#: ``FIXED_KIND_STEPS``, ``tos/src/tos/egressgw/records.py:608-639``). Step 15 alone produces
+#: two: the 17 ``VERIFY_ITEM`` records (collapsed to one representative entry — see
+#: :func:`_run_gateway_happy_path_steps`) and a separate ``SEND_SEALED`` record, both legitimately
+#: ``CommitmentStep.SEND_BOUNDARY_VERIFICATION`` per ``FIXED_KIND_STEPS`` — ``SEND_SEALED`` is step
+#: 15's own output (KW3-GW's commit message), not the unenumerated "step 15½" this lane's earlier
+#: finding (commit ffaafcb4) described before KW3-GW folded it back into step 15 proper. Every
+#: other observable step produces exactly one moment; step 18 (``NETWORK_CALL``) now has one too,
+#: via the new ``NETWORK_CALL_ENTERED`` record KW3-GW added right before ``send_once`` — the
+#: no-evidence-for-step-18 finding this lane raised in ffaafcb4 is resolved.
+_STEP_MOMENT_MULTIPLICITY: dict[CommitmentStep, int] = {
+    CommitmentStep.SEND_BOUNDARY_VERIFICATION: 2,
+    CommitmentStep.SEND_STARTED_DURABLE: 1,
+    CommitmentStep.POTENTIALLY_LIVE_TRANSITION: 1,
+    CommitmentStep.NETWORK_CALL: 1,
+    CommitmentStep.EVIDENCE_RECORD: 1,
 }
 
-#: The four ``CommitmentStep`` members the gateway's evidence can distinguish at all. Step 18
-#: (``NETWORK_CALL``) and the unenumerated "step 15½" (``SEND_SEALED``) are excluded on purpose.
+#: All five Send-Boundary steps are now observable (KW3-GW closed the step-18 gap) — this is no
+#: longer a strict subset of the tail the way it was in ffaafcb4.
 _GATEWAY_OBSERVABLE_STEPS: frozenset[CommitmentStep] = frozenset(
-    _GATEWAY_KIND_TO_STEP.values()
+    _STEP_MOMENT_MULTIPLICITY
 )
 
 
 def _gateway_projection(
     order: tuple[CommitmentStep, ...],
 ) -> tuple[CommitmentStep, ...]:
-    """``order`` restricted to :data:`_GATEWAY_OBSERVABLE_STEPS`, preserving exact multiplicity.
+    """Expand every observable occurrence in ``order`` by its :data:`_STEP_MOMENT_MULTIPLICITY`,
+    so the result is directly comparable to :func:`_run_gateway_happy_path_steps`'s collapsed
+    output on the unmutated control (both produce ``[15, 15, 16, 17, 18, 19]``).
 
-    Deliberately **not** deduplicated: a genuine duplication mutation of an observable step (e.g.
-    ``dup_16_SEND_STARTED_DURABLE``) must survive this filter as a real duplicate so the comparison
-    in :func:`test_order_mutation_matrix_has_zero_survivors` can tell it apart from the control —
-    only :func:`_translate_gateway_kinds` (the *real execution* side) collapses anything, and only
-    because ``VERIFY_ITEM`` legitimately repeats 17 times for one step, an intrinsic multiplicity
-    of the gateway's own design that has nothing to do with any mutation here.
+    Nothing here collapses a genuine order-mutation duplicate: a mutation that duplicates an
+    observable step in ``order`` (e.g. ``dup_16_SEND_STARTED_DURABLE``) still produces two
+    separate — each further expanded — occurrences, so it remains distinguishable from the
+    control. Only the *intrinsic* step-15 multiplicity (constant, independent of any mutation
+    here) is folded into the per-step expansion factor.
     """
-    return tuple(step for step in order if step in _GATEWAY_OBSERVABLE_STEPS)
+    projected: list[CommitmentStep] = []
+    for step in order:
+        multiplicity = _STEP_MOMENT_MULTIPLICITY.get(step)
+        if multiplicity is not None:
+            projected.extend([step] * multiplicity)
+    return tuple(projected)
 
 
-def _run_gateway_happy_path_kinds() -> tuple[str, ...]:
+def _run_gateway_happy_path_steps() -> tuple[CommitmentStep, ...]:
     """Drive one real, fully-admitting send through :class:`BrokerEgressGateway`, reusing the
     egressgw suite's own baseline fixtures (the same ``happy_context`` / ``build_gateway`` that
-    back ``test_the_baseline_send_is_accepted_and_records_every_step_in_order`` in
-    ``tos/tests/egressgw/test_egressgw_gateway.py`` — imported, not copied), and return the raw,
-    ordered ``kind`` strings its evidence sink recorded.
+    back ``test_the_baseline_send_records_the_commitment_step_sequence_exactly`` in
+    ``tos/tests/egressgw/test_egressgw_gateway.py`` — imported, not copied), and return the
+    ordered, stamped :attr:`~tos.egressgw.records.GatewayEvidenceRecord.step` sequence, reading
+    the production field directly rather than re-deriving a kind→step correspondence by hand (the
+    approach ffaafcb4 used before KW3-GW added the field).
+
+    Mirrors that test's own collapse idiom exactly: only *consecutive* ``VERIFY_ITEM`` records
+    fold into one representative entry (17 -> 1); ``SEND_SEALED`` stays its own separate entry
+    even though it shares the same step, because it is a distinct real evidence moment, not a
+    repeat of the same one (see :data:`_STEP_MOMENT_MULTIPLICITY`).
 
     Note what this does **not** exercise: the gateway never reads ``COMMITMENT_FLOW_ORDER`` /
     ``SEQUENCED_STEPS`` / any of the aliases :func:`_run_variant` patches (grepped: zero matches
@@ -411,23 +428,20 @@ def _run_gateway_happy_path_kinds() -> tuple[str, ...]:
         f"{handoff!r}; a failure here means that fixture's shape changed, not that a mutation "
         "was caught"
     )
-    return sink.kinds
-
-
-def _translate_gateway_kinds(kinds: tuple[str, ...]) -> tuple[CommitmentStep, ...]:
-    """Map ``kinds`` through :data:`_GATEWAY_KIND_TO_STEP`, dropping unmapped kinds (``SEND_SEALED``
-    and anything else outside the table), then collapse consecutive repeats of the *same* step.
-
-    The collapse exists solely to fold the 17 consecutive ``VERIFY_ITEM`` records into one
-    ``SEND_BOUNDARY_VERIFICATION`` entry; it is a no-op for the other three mapped kinds, which a
-    real send emits at most once each.
-    """
-    translated: list[CommitmentStep] = []
-    for kind in kinds:
-        step = _GATEWAY_KIND_TO_STEP.get(kind)
-        if step is not None and (not translated or translated[-1] != step):
-            translated.append(step)
-    return tuple(translated)
+    collapsed: list[CommitmentStep] = []
+    previous_kind: str | None = None
+    for record in sink.records:
+        assert record.step is not None, (
+            f"gateway record kind={record.kind!r} was never stamped with a step — KW3-GW "
+            "(records.py:608-639) should have made every non-SEND_REFUSED kind on the happy "
+            "path carry one"
+        )
+        if record.kind == "VERIFY_ITEM" and previous_kind == "VERIFY_ITEM":
+            previous_kind = record.kind
+            continue
+        collapsed.append(record.step)
+        previous_kind = record.kind
+    return tuple(collapsed)
 
 
 # ---------------------------------------------------------------------------
@@ -491,14 +505,14 @@ def test_the_matrix_has_exactly_fifty_six_variants() -> None:
 #: moment itself (see ``_GATEWAY_OBSERVABLE_STEPS``). This is markedly narrower than detector 2's
 #: own 12-variant blind spot (see the module docstring) — adding detector 3 shrinks the residual
 #: from 12 to these 4, all attributable to the one genuinely un-instrumented step.
-_EXPECTED_ORDER_PIN_ONLY: frozenset[str] = frozenset(
-    {
-        "swap_17_18",
-        "swap_18_19",
-        "omit_18_NETWORK_CALL",
-        "dup_18_NETWORK_CALL",
-    }
-)
+#: Empty. KW3-GW (commit 9de02dcc) stamped ``CommitmentStep`` on every gateway record and closed
+#: the step-18 gap this lane's ffaafcb4 finding raised, so detector 3 — with the expansion-aware
+#: :func:`_gateway_projection` above — now catches every one of detector 2's 12-variant blind spot
+#: (verified empirically: this test was run once with this set at ``frozenset()`` before writing
+#: it in, and passed). Kept as a named constant, rather than inlined as a bare ``[]`` in the
+#: assertion below, so a future regression that reopens any gap reads as "the expected empty set
+#: drifted" rather than a bare, unexplained list literal.
+_EXPECTED_ORDER_PIN_ONLY: frozenset[str] = frozenset()
 
 #: The one variant :func:`_derive` cannot even compute (see the module docstring FINDING).
 _EXPECTED_UNREACHABLE: frozenset[str] = frozenset(
@@ -539,18 +553,20 @@ def test_order_mutation_matrix_has_zero_survivors() -> None:
        unreachable derivation, or a differing :func:`_fingerprint`) — reaches steps 1-14 fully, but
        is structurally blind to internal reordering/duplication within the Send-Boundary tail
        (steps 15-19), which it never walks (see the module docstring FINDING);
-    3. the egress gateway's own real send-boundary execution order (:func:`_gateway_projection`
-       compared against one real run via :func:`_run_gateway_happy_path_kinds` /
-       :func:`_translate_gateway_kinds`) — narrows detector 2's blind spot to just step 18
-       (``NETWORK_CALL``), which the gateway records no evidence for on the success path.
+    3. the egress gateway's own real, stamped send-boundary execution order
+       (:func:`_gateway_projection` compared against one real run via
+       :func:`_run_gateway_happy_path_steps`, reading the production
+       ``GatewayEvidenceRecord.step`` field KW3-GW added) — since KW3-GW (commit 9de02dcc) this
+       fully closes detector 2's 12-variant Send-Boundary blind spot; see the module docstring
+       FINDING.
 
     ``validate_stage_map`` ("detector 0") is not counted here: it takes no order argument at all
     and rejects a stage map only for *which* steps it hosts, never *in what sequence* — see the
     module docstring FINDING. It passes trivially for every variant in this matrix.
 
-    The test pins the *shape* of the order-pin-only residual (now 4 variants, all step 18) and the
-    1 unreachable variant against hand-derived expectations, so a future change that widens or
-    narrows either execution detector's blind spot shows up as a failing assertion here rather than
+    The test pins the order-pin-only residual at **empty** (:data:`_EXPECTED_ORDER_PIN_ONLY`) and
+    the 1 unreachable variant against hand-derived expectations, so a future change that reopens
+    either execution detector's blind spot shows up as a failing assertion here rather than
     silently.
     """
     control = _run_variant(COMMITMENT_FLOW_ORDER)
@@ -559,13 +575,13 @@ def test_order_mutation_matrix_has_zero_survivors() -> None:
         f"must hand off cleanly — a failure here means the harness itself is broken, not that a "
         f"mutation was caught: {control!r}"
     )
-    gateway_control = _translate_gateway_kinds(_run_gateway_happy_path_kinds())
+    gateway_control = _run_gateway_happy_path_steps()
     assert gateway_control == _gateway_projection(COMMITMENT_FLOW_ORDER), (
-        "the gateway's real, unmutated execution order must match the ADR anchor's own "
-        f"projection onto the observable steps — gateway={gateway_control!r} "
+        "the gateway's real, unmutated stamped-step sequence must match the ADR anchor's own "
+        f"expanded projection onto the observable steps — gateway={gateway_control!r} "
         f"anchor_projection={_gateway_projection(COMMITMENT_FLOW_ORDER)!r} (this re-derives "
-        "test_egressgw_gateway.py::test_the_baseline_send_is_accepted_and_records_every_"
-        "step_in_order through this module's own mapping, as a cross-check)"
+        "test_egressgw_gateway.py::test_the_baseline_send_records_the_commitment_step_"
+        "sequence_exactly through this module's own expansion, as a cross-check)"
     )
 
     survivors: list[str] = []
