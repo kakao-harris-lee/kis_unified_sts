@@ -1,6 +1,7 @@
-"""Strategy-file loader — reads every ``*.yaml`` under a directory, parses
-each into an in-process typed :class:`~tos.dsl.AuthoredStrategy`, and admits
-it through the kernel's own typed admission gate (TOS Phase 3 슬라이스 D-R,
+"""Strategy-file loader — reads every ``*.yaml``/``*.yml`` under a
+directory, parses each into an in-process typed
+:class:`~tos.dsl.AuthoredStrategy`, and admits it through the kernel's own
+typed admission gate (TOS Phase 3 슬라이스 D-R,
 ``docs/plans/2026-09-09-tos-phase3-event-core-plan.md`` §1.2).
 
 **Injected, not imported, gates.** Both ``parse`` and ``admit`` are injected
@@ -25,7 +26,11 @@ empty directory, or a directory that does not exist) is refused too: an
 engine with zero admitted strategies is not a defined no-action, it is a
 runtime with no configured behavior at all, so it does not start (mirrors
 :meth:`~tos.engine.registry.StrategyRegistry` positive-registration
-discipline one level up, at the file layer).
+discipline one level up, at the file layer). A **stray file** directly under
+``strategies_dir`` that is neither ``*.yaml`` nor ``*.yml`` (2026-09-09
+independent-review finding #12) also refuses the whole directory, naming the
+stray file — renaming a bad file to make it disappear from the glob would
+otherwise silently weaken this discipline instead of tripping it.
 
 **Named-TBD ``null`` leaves (fail-closed).** Every value anywhere in a
 strategy file's mapping — including nested rule/target fields — MUST be
@@ -131,10 +136,38 @@ def _first_null_leaf(value: Any, path: str) -> str | None:
     return None
 
 
+#: The only accepted strategy-file suffixes (2026-09-09 independent-review
+#: finding #12: ``*.yaml`` alone silently skipped a ``.yml`` file instead of
+#: refusing it).
+_STRATEGY_FILE_SUFFIXES = (".yaml", ".yml")
+
+
 def _iter_strategy_paths(strategies_dir: Path) -> Iterator[Path]:
-    """Yield every ``*.yaml`` file directly under ``strategies_dir``, in a
-    deterministic (sorted-name) order."""
-    yield from sorted(strategies_dir.glob("*.yaml"))
+    """Yield every ``*.yaml``/``*.yml`` file directly under
+    ``strategies_dir``, in a deterministic (sorted-name) order."""
+    yield from sorted(
+        path
+        for path in strategies_dir.iterdir()
+        if path.is_file() and path.suffix in _STRATEGY_FILE_SUFFIXES
+    )
+
+
+def _refuse_stray_files(strategies_dir: Path) -> None:
+    """Refuse the whole directory if it contains a regular file directly
+    under it that is neither ``*.yaml`` nor ``*.yml`` — a stray file (e.g. a
+    renamed-away bad strategy, an editor backup, a README) is never silently
+    ignored (module docstring, finding #12)."""
+    strays = sorted(
+        path
+        for path in strategies_dir.iterdir()
+        if path.is_file() and path.suffix not in _STRATEGY_FILE_SUFFIXES
+    )
+    if strays:
+        raise StrategyLoadError(
+            f"{strategies_dir}: unexpected file {strays[0]!s} is neither "
+            "*.yaml nor *.yml — refusing the whole directory rather than "
+            "silently ignoring a stray file"
+        )
 
 
 def _load_one(path: Path, *, parse: ParseFn, admit: AdmitFn) -> LoadedStrategy:
@@ -205,15 +238,17 @@ def load_strategies(
 
     Raises:
         StrategyLoadError: ``strategies_dir`` does not exist or is not a
-            directory, contains zero ``*.yaml`` files, or any one file fails
-            to load (fail-closed — the WHOLE load is refused, never a
-            partial admit; see this module's own docstring).
+            directory, contains a stray non-``*.yaml``/``*.yml`` file,
+            contains zero strategy files, or any one file fails to load
+            (fail-closed — the WHOLE load is refused, never a partial admit;
+            see this module's own docstring).
     """
     if not strategies_dir.is_dir():
         raise StrategyLoadError(
             f"{strategies_dir}: strategies directory does not exist — refusing "
             "to start with no configured strategies"
         )
+    _refuse_stray_files(strategies_dir)
     paths = list(_iter_strategy_paths(strategies_dir))
     if not paths:
         raise StrategyLoadError(

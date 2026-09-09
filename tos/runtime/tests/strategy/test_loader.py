@@ -8,6 +8,7 @@ import hashlib
 from pathlib import Path
 
 import pytest
+import yaml
 from tos.engine.vocabulary import AdmissionVerdict
 from tos_runtime.strategy.loader import (
     LoadedStrategies,
@@ -215,3 +216,30 @@ def test_null_leaf_on_optional_only_field_refuses(strategies_dir, parse, admit):
     message = str(excinfo.value)
     assert str(path) in message
     assert "quantity_basis" in message
+
+
+def test_yml_suffix_is_loaded_like_yaml(strategies_dir, parse, admit):
+    """2026-09-09 independent-review finding #12: ``*.yml`` (not just
+    ``*.yaml``) is a genuine strategy file, not silently skipped."""
+    path = strategies_dir / "band.strategy.yml"
+    path.write_text(
+        yaml.safe_dump(admissible_strategy_mapping(), sort_keys=False),
+        encoding="utf-8",
+    )
+    loaded = load_strategies(strategies_dir, parse=parse, admit=admit)
+    assert [entry.path for entry in loaded.strategies] == [path]
+
+
+def test_stray_non_strategy_file_refuses_naming_it(strategies_dir, parse, admit):
+    """2026-09-09 independent-review finding #12: a stray file that is
+    neither ``*.yaml`` nor ``*.yml`` (e.g. a renamed-away bad strategy, an
+    editor backup) refuses the WHOLE directory rather than being silently
+    ignored by the glob."""
+    write_strategy_yaml(
+        strategies_dir, "a-good.strategy.yaml", admissible_strategy_mapping()
+    )
+    stray = strategies_dir / "band.strategy.yaml.bak"
+    stray.write_text("not a strategy file", encoding="utf-8")
+    with pytest.raises(StrategyLoadError) as excinfo:
+        load_strategies(strategies_dir, parse=parse, admit=admit)
+    assert str(stray) in str(excinfo.value)

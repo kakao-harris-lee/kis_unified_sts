@@ -265,7 +265,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1172
+  measured: 1189
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -340,6 +340,13 @@ exceptions:
     구조분해 대입을 없애 compose_paper_runtime 도 함수 100줄 문턱 아래로
     유지 — 무예외). 신규 헬퍼+데이터클래스 자체가 모듈 실측 증가분 —
     1117→1172(+55).
+    2026-09-09 독립 리뷰 P3W1 R2-D finding #8 처분 — neither-present
+    기본 거부(allow_no_strategies: bool = False 신설, True 는 명시적
+    선택)를 _resolve_strategies_and_attested_inputs/_boot_services 두
+    함수 시그니처에 관통 배선(파라미터 1개 + 호출 인자 1개씩)하며
+    1172→1189(+17, 대부분 두 함수의 갱신된 도크스트링 — 함수 자체는 100줄
+    문턱 아래 유지, 무예외). compose_paper_runtime(root.py) 도 동일 커밋에서
+    같은 파라미터를 받아 104→101→100줄로 두 차례 축약해 문턱 준수(무등재).
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime

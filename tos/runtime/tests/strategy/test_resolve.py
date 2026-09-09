@@ -16,6 +16,7 @@ from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.strategy.loader import StrategyLoadError
 from tos_runtime.strategy.resolve import (
     STRATEGY_REFUSED_EVIDENCE_KIND,
+    STRATEGY_SOURCE_ABSENT_EVIDENCE_KIND,
     ResolvedStrategyRegistry,
     StrategyRegistryResolutionRefused,
     resolve_strategy_registry,
@@ -59,9 +60,37 @@ def _refusal_evidence_kinds(store: SqliteEvidenceStore) -> list[str]:
     return [row.kind for row in store.iter_entry_meta()]
 
 
-def test_neither_present_falls_back_to_empty_registry(
+def test_neither_present_refuses_by_default(
     tmp_path: Path, evidence_store, emergency_log, identity
 ):
+    """2026-09-09 independent-review finding #8: neither a strategies
+    directory nor an injected registry is no longer a silent empty-registry
+    fallback — it refuses, matching the loader's own "an engine with zero
+    admitted strategies... does not start" rule one layer down. An operator
+    who genuinely wants no strategies must say so via
+    ``allow_no_strategies=True`` (see
+    ``test_neither_present_with_allow_no_strategies_returns_empty_registry_with_evidence``).
+    """
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    with pytest.raises(StrategyRegistryResolutionRefused):
+        resolve_strategy_registry(
+            config_dir,
+            injected_registry=None,
+            evidence_store=evidence_store,
+            emergency_log=emergency_log,
+            identity=identity,
+        )
+    assert _refusal_evidence_kinds(evidence_store) == [STRATEGY_REFUSED_EVIDENCE_KIND]
+
+
+def test_neither_present_with_allow_no_strategies_returns_empty_registry_with_evidence(
+    tmp_path: Path, evidence_store, emergency_log, identity
+):
+    """The stated-choice opt-out (finding #8's suggested disposition):
+    ``allow_no_strategies=True`` permits the empty registry, and records a
+    non-halt ``STRATEGY_SOURCE_ABSENT_BY_OPERATOR_CHOICE`` evidence entry —
+    never the silent, unevidenced fallback the old default was."""
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     resolved = resolve_strategy_registry(
@@ -70,11 +99,14 @@ def test_neither_present_falls_back_to_empty_registry(
         evidence_store=evidence_store,
         emergency_log=emergency_log,
         identity=identity,
+        allow_no_strategies=True,
     )
     assert isinstance(resolved, ResolvedStrategyRegistry)
     assert resolved.loaded is None
     assert resolved.registry.declared_keys() == ()
-    assert _refusal_evidence_kinds(evidence_store) == []
+    assert _refusal_evidence_kinds(evidence_store) == [
+        STRATEGY_SOURCE_ABSENT_EVIDENCE_KIND
+    ]
 
 
 def test_injected_registry_used_when_no_strategies_dir(

@@ -1,33 +1,42 @@
 """Resolves the composition root's ONE strategy source (TOS Phase 3 슬라이스
 D-R ``[D-R-2]``, ``docs/plans/2026-09-09-tos-phase3-event-core-plan.md``
-§1.2): either ``config_dir/strategies/*.yaml`` (the production path, via
-:func:`~tos_runtime.strategy.loader.load_strategies` wired to the kernel's
-real :func:`tos.dsl.serialization.parse_strategy` /
+§1.2): either ``config_dir/strategies/*.yaml``/``*.yml`` (the production
+path, via :func:`~tos_runtime.strategy.loader.load_strategies` wired to the
+kernel's real :func:`tos.dsl.serialization.parse_strategy` /
 :func:`tos.engine.admission.strategy_admissible`), or a caller-injected
 :class:`~tos.engine.StrategyRegistry` (the test-compatibility path). Never
 both — an operator who points compose at a strategies directory AND injects
 a registry has two disagreeing sources of truth for what the engine will
 dispatch, and this module refuses rather than silently preferring one.
 
-Neither present is NOT the same refusal as an *empty* strategies directory:
-:func:`~tos_runtime.strategy.loader.load_strategies` itself already refuses
-a strategies directory that exists but contains zero files (its own
-docstring: "an engine with zero admitted strategies... does not start").
-When the directory does not exist at all, this module falls back to an
-empty :class:`~tos.engine.StrategyRegistry` (or the injected one, if given)
-— the pre-existing default this compose root has always had for callers
-that do not yet configure strategies at all (module-level docstring parity
-with :func:`~tos_runtime.compose.root.compose_paper_runtime`'s own
-``registry: The strategy registry (defaults to an empty one)``).
+**Neither present now REFUSES by default (2026-09-09 independent-review
+finding #8, disposition applied).** An earlier revision fell back to a
+silent empty :class:`~tos.engine.StrategyRegistry` here — a fail-open the
+sibling rule one layer down
+(:func:`~tos_runtime.strategy.loader.load_strategies`'s own "an engine with
+zero admitted strategies... does not start") already refused for the
+adjacent case (a directory that exists but is empty). The discriminator
+between refusal and silent boot was whether a directory happened to exist
+on disk, which is not an operator attestation of anything. This module now
+treats "neither present" identically to "empty directory": it refuses,
+UNLESS the caller passes ``allow_no_strategies=True`` — a keyword-only,
+explicitly-stated choice (never the default) — in which case it proceeds
+with an empty registry and records a non-halt
+``STRATEGY_SOURCE_ABSENT_BY_OPERATOR_CHOICE`` evidence entry (a plain
+:meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.append`, NOT
+:func:`~tos_runtime.evidence.emergency.record_halt` — this is a stated
+choice that boots successfully, not a HALT/protective-action record).
 
-**Evidence before halt.** Any refusal here is durably recorded as one
+**Evidence before halt.** Any REFUSAL here is durably recorded as one
 ``STRATEGY_REFUSED`` evidence entry (both the sqlite evidence store and the
 sqlite-independent emergency log, via
 :func:`~tos_runtime.evidence.emergency.record_halt` — mirrors
 :func:`~tos_runtime.compose._boot_integrity.verify_rcl_log_or_halt`'s own
 "never a silent halt" discipline) BEFORE :class:`StrategyRegistryResolutionRefused`
 is raised, so an operator inspecting the evidence trail after a refused boot
-sees exactly why, never just an uncaught exception.
+sees exactly why, never just an uncaught exception. The ``allow_no_strategies``
+SUCCESS path records its own, differently-kinded, non-halt evidence entry
+instead (see above) — it never raises.
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): ``tos.*`` (the
 kernel — including :mod:`tos.dsl.serialization`, the D-K lane's parser) +
@@ -57,6 +66,7 @@ from tos_runtime.strategy.loader import (
 __all__ = [
     "STRATEGIES_DIRNAME",
     "STRATEGY_REFUSED_EVIDENCE_KIND",
+    "STRATEGY_SOURCE_ABSENT_EVIDENCE_KIND",
     "ResolvedStrategyRegistry",
     "StrategyRegistryResolutionRefused",
     "resolve_strategy_registry",
@@ -70,6 +80,11 @@ STRATEGIES_DIRNAME = "strategies"
 
 #: The evidence kind/record class this module's refusal path records.
 STRATEGY_REFUSED_EVIDENCE_KIND = "STRATEGY_REFUSED"
+
+#: The evidence kind/record class recorded on the ``allow_no_strategies=True``
+#: SUCCESS path (module docstring finding #8) — deliberately NOT
+#: ``STRATEGY_REFUSED``: this path boots successfully, it is not a halt.
+STRATEGY_SOURCE_ABSENT_EVIDENCE_KIND = "STRATEGY_SOURCE_ABSENT_BY_OPERATOR_CHOICE"
 
 
 class StrategyRegistryResolutionRefused(ArtifactIntegrityError):
@@ -140,6 +155,7 @@ def resolve_strategy_registry(
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
     identity: RuntimeIdentity,
+    allow_no_strategies: bool = False,
 ) -> ResolvedStrategyRegistry:
     """Resolve the ONE strategy source for this compose (module docstring).
 
@@ -148,10 +164,17 @@ def resolve_strategy_registry(
             "strategies"`` is checked for the file source.
         injected_registry: The caller-supplied registry (test-compatibility
             path), or ``None``.
-        evidence_store: Where a refusal's evidence entry is durably recorded.
+        evidence_store: Where a refusal's (or the ``allow_no_strategies``
+            success path's) evidence entry is durably recorded.
         emergency_log: The sqlite-independent refusal evidence path.
-        identity: This process's runtime identity, stamped on the refusal
-            record.
+        identity: This process's runtime identity, stamped on the recorded
+            evidence entry.
+        allow_no_strategies: Keyword-only, defaults to ``False``. When
+            neither a strategies directory nor an injected registry is
+            supplied, the default REFUSES (module docstring finding #8);
+            passing ``True`` is the explicit, stated operator choice to
+            proceed with an empty registry instead. Has no effect when
+            either source IS present.
 
     Returns:
         The resolved registry, plus the loaded file set (``None`` unless the
@@ -159,8 +182,9 @@ def resolve_strategy_registry(
 
     Raises:
         StrategyRegistryResolutionRefused: Both a strategies directory and
-            an injected registry were supplied, the directory failed to
-            load (:class:`~tos_runtime.strategy.loader.StrategyLoadError`),
+            an injected registry were supplied; neither was supplied and
+            ``allow_no_strategies`` is ``False``; the directory failed to
+            load (:class:`~tos_runtime.strategy.loader.StrategyLoadError`);
             or an admitted strategy failed registry registration — always
             after the ``STRATEGY_REFUSED`` evidence entry is recorded.
     """
@@ -177,17 +201,34 @@ def resolve_strategy_registry(
         raise StrategyRegistryResolutionRefused(reason)
 
     if not dir_present:
-        # Legacy neither-present default (module docstring) — NOT the same
-        # refusal as an empty-but-present directory, which load_strategies
-        # itself already refuses.
-        return ResolvedStrategyRegistry(
-            registry=(
-                injected_registry
-                if injected_registry is not None
-                else StrategyRegistry()
-            ),
-            loaded=None,
+        if injected_registry is not None:
+            return ResolvedStrategyRegistry(registry=injected_registry, loaded=None)
+        if not allow_no_strategies:
+            reason = (
+                f"{strategies_dir}: no strategies directory and no injected "
+                "StrategyRegistry — an engine with zero admitted strategies "
+                "is not a defined no-action (mirrors "
+                "tos_runtime.strategy.loader.load_strategies's own "
+                "zero-strategies refusal one layer down); pass "
+                "allow_no_strategies=True to state this choice explicitly"
+            )
+            _refuse(evidence_store, emergency_log, identity, reason)
+            raise StrategyRegistryResolutionRefused(reason)
+        # Explicit, stated operator choice (module docstring) — proceeds
+        # with an empty registry; evidenced (NOT via record_halt: this is a
+        # successful boot, not a halt/protective-action record).
+        evidence_store.append(
+            {
+                "detail": (
+                    f"{strategies_dir}: no strategies directory and no "
+                    "injected registry; allow_no_strategies=True"
+                )
+            },
+            kind=STRATEGY_SOURCE_ABSENT_EVIDENCE_KIND,
+            record_class=STRATEGY_SOURCE_ABSENT_EVIDENCE_KIND,
+            runtime_identity=identity,
         )
+        return ResolvedStrategyRegistry(registry=StrategyRegistry(), loaded=None)
 
     try:
         loaded = load_strategies(

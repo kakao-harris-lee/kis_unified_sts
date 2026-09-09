@@ -1033,6 +1033,7 @@ def _resolve_strategies_and_attested_inputs(
     infra: _Infra,
     risk: _RiskAndCurrentness,
     registry: StrategyRegistry | None,
+    allow_no_strategies: bool,
 ) -> tuple[EgressCoordinatesConfig, ResolvedStrategyRegistry]:
     """Load ``egress_coordinates.yaml``, resolve the ONE strategy source
     (TOS Phase 3 슬라이스 D-R ``[D-R-2]``, plan §1.2 —
@@ -1040,7 +1041,15 @@ def _resolve_strategies_and_attested_inputs(
     record ``OPERATOR_ATTESTED_INPUTS`` (folding the resolved strategy file
     digests, if any, into the SAME record as the other attested
     coordinates) — split out of :func:`_boot_services` purely for the size
-    budget; no behavioural difference from having this inline there."""
+    budget; no behavioural difference from having this inline there.
+
+    ``allow_no_strategies`` is threaded straight through from
+    :func:`~tos_runtime.compose.root.compose_paper_runtime` — see
+    :func:`~tos_runtime.strategy.resolve.resolve_strategy_registry`'s own
+    docstring (2026-09-09 independent-review finding #8): ``False`` (the
+    default) now REFUSES when neither a strategies directory nor an
+    injected registry is supplied, where an earlier revision silently
+    fell back to an empty registry."""
     egress_coordinates = load_egress_coordinates(
         config_dir / _EGRESS_COORDINATES_CONFIG_NAME,
         environment_label=environment_label,
@@ -1051,6 +1060,7 @@ def _resolve_strategies_and_attested_inputs(
         evidence_store=infra.evidence_store,
         emergency_log=infra.emergency_log,
         identity=identity,
+        allow_no_strategies=allow_no_strategies,
     )
     record_operator_attested_inputs(
         config_dir,
@@ -1091,6 +1101,7 @@ def _boot_services(
     authority_domain: str,
     monotonic_source: MonotonicSource | None,
     registry: StrategyRegistry | None,
+    allow_no_strategies: bool,
 ) -> _BootResult:
     """Identity + STAGE A release probe + custody/evidence/time + RCL/
     authority + risk/currentness + strategy-source resolution
@@ -1135,7 +1146,13 @@ def _boot_services(
         rcl.authority_epoch_service,
     )
     egress_coordinates, resolved_strategies = _resolve_strategies_and_attested_inputs(
-        config_dir, environment_label, identity, infra, risk, registry
+        config_dir,
+        environment_label,
+        identity,
+        infra,
+        risk,
+        registry,
+        allow_no_strategies,
     )
     release_admitted = _stage_b_release_probe(
         release_service, identity, infra.time_service, rcl.rcl_log

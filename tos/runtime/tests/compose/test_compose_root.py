@@ -240,6 +240,50 @@ def test_both_a_strategies_directory_and_an_injected_registry_refuses(
         )
 
 
+def test_neither_strategy_source_refuses_by_default(
+    config_dir: Path, data_dir: Path, custody_root: Path
+) -> None:
+    """2026-09-09 independent-review finding #8, threaded end-to-end:
+    ``compose_paper_runtime`` itself now refuses (rather than silently
+    booting an empty registry) when NEITHER a populated
+    ``config_dir/strategies/`` directory NOR an injected registry is
+    supplied and the caller does not opt in via ``allow_no_strategies=True``
+    (see :func:`test_neither_strategy_source_with_allow_no_strategies_boots_empty`)."""
+    with pytest.raises(StrategyRegistryResolutionRefused):
+        compose_paper_runtime(
+            config_dir,
+            data_dir,
+            custody_root,
+            "non-live-test",
+            construction=fx.construction_config(),
+            aggregate_risk_inputs_provider=_aggregate_inputs,
+            action_flow_inputs_provider=_action_flow_inputs,
+        )
+
+
+def test_neither_strategy_source_with_allow_no_strategies_boots_empty(
+    config_dir: Path, data_dir: Path, custody_root: Path
+) -> None:
+    """The stated-choice opt-out: ``allow_no_strategies=True`` boots
+    successfully with an empty, declares-nothing registry — this is the
+    exact shape every OTHER test in this module deliberately avoids by
+    always writing a strategy file or injecting a registry via ``_compose``
+    (that helper's own docstring)."""
+    runtime = compose_paper_runtime(
+        config_dir,
+        data_dir,
+        custody_root,
+        "non-live-test",
+        construction=fx.construction_config(),
+        aggregate_risk_inputs_provider=_aggregate_inputs,
+        action_flow_inputs_provider=_action_flow_inputs,
+        allow_no_strategies=True,
+    )
+    assert runtime.registry.declared_keys() == ()
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+
+
 class TestComposeRootWiring:
     """Scenario-adjacent smoke coverage: composition succeeds, and every
     lane's durable artifacts land where the design says they should."""
