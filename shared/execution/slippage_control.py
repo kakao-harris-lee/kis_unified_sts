@@ -710,7 +710,8 @@ def _parse_windows(raw: Any) -> list[TimeWindow]:
 #: than refusing — a value in [1e11, 2.5e11) parses to a far-future date, which
 #: yields a NEGATIVE age and passes every freshness bound. (A millisecond epoch
 #: is further out still and already raised inside ``fromtimestamp``; the open
-#: hole was the range just above the upper bound.)
+#: hole was the range just above the upper bound, up to the parseable edge at
+#: 253402300800.)
 _MIN_EPOCH_SECONDS = 1e9
 _MAX_EPOCH_SECONDS = 1e11
 

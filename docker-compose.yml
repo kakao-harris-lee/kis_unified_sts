@@ -171,6 +171,9 @@ services:
       # consumers read FUTURES_TICK_STREAM, so naming them from the same
       # expression is what keeps them on one stream. Renaming only one side has
       # no error path — the consumer just reads an empty stream forever.
+      # Scope: the wired services only. `shared/llm/config.py` has its own
+      # `futures.tick_stream` literal + LLM_FUTURES_TICK_STREAM env and is NOT
+      # on this knob.
       MONITOR_FUTURES_TICK_STREAM: "${FUTURES_TICK_STREAM:-raw_data}"
       TRADING_MODE: "${TRADING_MODE:-paper}"
       TRADING_ASSET_CLASS: "futures"
@@ -335,6 +338,9 @@ services:
       # consumers read FUTURES_TICK_STREAM, so naming them from the same
       # expression is what keeps them on one stream. Renaming only one side has
       # no error path — the consumer just reads an empty stream forever.
+      # Scope: the wired services only. `shared/llm/config.py` has its own
+      # `futures.tick_stream` literal + LLM_FUTURES_TICK_STREAM env and is NOT
+      # on this knob.
       MONITOR_FUTURES_TICK_STREAM: "${FUTURES_TICK_STREAM:-raw_data}"
       # Cold-start feed-start retry backoff (see stock-market-ingest above):
       # a KIS approval/connect failure at start() retries instead of crashing.
@@ -396,10 +402,11 @@ services:
       # producers' MONITOR_FUTURES_TICK_STREAM uses. A unit test pins the two
       # interpolation strings and the in-code defaults together.
       FUTURES_TICK_STREAM: "${FUTURES_TICK_STREAM:-raw_data}"
-      # How deep into the stream tail to look at startup for this symbol's last
-      # tick. Bounds the SEARCH, not the seeded book's age — entries apply
-      # oldest-first so the newest always wins, and age is bounded by the
-      # quote-age knob below.
+      # How deep into the stream tail to look at startup for the subscribed and
+      # auxiliary symbols' last ticks (cross-asset adds a second symbol, and a
+      # multi-symbol tail interleaves them). Bounds the SEARCH, not the seeded
+      # book's age — entries apply oldest-first so the newest always wins, and
+      # age is bounded by the quote-age knob below.
       FUTURES_ORDER_ROUTER_SEED_COUNT: "${FUTURES_ORDER_ROUTER_SEED_COUNT:-50}"
       # See futures-market-ingest: must match trader-futures' contract.
       FUTURES_TRADING_PRODUCT: "${FUTURES_TRADING_PRODUCT:-mini}"
@@ -417,6 +424,9 @@ services:
       # Producers publish on trade ticks, so a quiet book leaves the last quote
       # aging in place — this is what stops an entry being sized against it.
       # Same interpolation-only reason as the two knobs above.
+      # Also bounds what startup seeding may replay, independently of
+      # FUTURES_ROUTER_SLIPPAGE_GATE below — seeding stays age-bounded with the
+      # gate off.
       FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS: "${FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS:-10}"
       # The gate's own rollback switch (router-only; the monolith ignores the
       # YAML key). Set false to run the router with the send-time gate off.
@@ -728,6 +738,11 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env]
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      # This service CONSUMES futures ticks but reads the producer-side env name
+      # (services/forecasting/main.py). Wired from the same ${FUTURES_TICK_STREAM}
+      # knob as everything else, or renaming the stream would strand it on the
+      # default while the rest of the chain moved.
+      MONITOR_FUTURES_TICK_STREAM: "${FUTURES_TICK_STREAM:-raw_data}"
     volumes:
       - ./config:/app/config:ro
       - ./logs:/app/logs

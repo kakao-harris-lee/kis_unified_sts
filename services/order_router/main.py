@@ -888,12 +888,12 @@ def _build_price_feed(
     from shared.streaming.consumer_feed import StreamConsumerFeed
 
     stream = os.environ.get("FUTURES_TICK_STREAM", DEFAULT_FUTURES_TICK_STREAM)
-    # Replay the tail of the stream at startup so the send-time gate has a
-    # quote for the first signal after a restart instead of blocking it on
-    # `orderbook_unavailable`. The count bounds how deep to look for THIS
-    # symbol in a tail that may interleave several — it does not bound the
-    # seeded book's age (entries apply oldest-first, so the newest always
-    # wins); `seed_max_age_seconds` does that.
+    # Replay the tail of the stream at startup so the router comes up with a
+    # current price, and with a book when the tail carries a fresh one, instead
+    # of being blind until the next tick. The count bounds how deep to look for
+    # the subscribed and auxiliary symbols in a tail that interleaves them — it
+    # does not bound the seeded book's age (entries apply oldest-first, so the
+    # newest always wins); `seed_max_age_seconds` does that.
     seed_count = _positive_int_env(_FEED_SEED_COUNT_ENV, _DEFAULT_FEED_SEED_COUNT)
     feed = StreamConsumerFeed(
         redis=redis,

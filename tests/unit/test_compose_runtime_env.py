@@ -553,8 +553,15 @@ def test_producer_and_consumer_futures_tick_stream_defaults_agree():
     services = compose["services"]
     expression = "${FUTURES_TICK_STREAM:-" + producer_default + "}"
 
-    producers = ("trader-futures", "futures-market-ingest")
-    for name in producers:
+    # `forecasting` is a CONSUMER that reads the producer-side env name, so it
+    # sits in the first group despite consuming — the point is that every
+    # service on this stream is named from one knob.
+    producer_side_env = (
+        "trader-futures",
+        "futures-market-ingest",
+        "forecasting",
+    )
+    for name in producer_side_env:
         assert services[name]["environment"]["MONITOR_FUTURES_TICK_STREAM"] == (
             expression
         ), name
