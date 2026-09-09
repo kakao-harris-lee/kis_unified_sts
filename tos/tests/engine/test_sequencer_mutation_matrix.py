@@ -54,14 +54,15 @@ would silently invalidate the whole harness rather than testing anything).
   patching them would have no observable effect and would misleadingly suggest they matter to the
   mutation's reach.
 
-**FINDING — ``validate_stage_map`` cannot detect an order mutation at all.** It takes only
-``stages: Mapping[CommitmentStep, Stage]`` (sequencer.py:141), no order argument, and rejects a
-stage map only for *which* steps it hosts, never *in what sequence* they run. Every one of our 56
-variants supplies the same, unchanged stage map (steps 2-11, 13, 14, built from whatever
-``INJECTED_STAGE_STEPS`` the mutated order derives — which by construction never includes steps 1,
-12, or a Send-Boundary step, exactly like the unmutated case). So ``validate_stage_map`` passes
-trivially for every variant in this matrix; it is not one of the two detectors that actually fire
-below, despite being named as a candidate in the lane brief.
+**FINDING — detector 0, ``validate_stage_map``, cannot detect an order mutation at all, by
+design.** It takes only ``stages: Mapping[CommitmentStep, Stage]`` (sequencer.py:141) — no order
+argument — and rejects a stage map only for *which* steps it hosts (a hosting/seal check), never
+*in what sequence* they run. Every one of our 56 variants supplies the same, unchanged stage map
+(steps 2-11, 13, 14, built from whatever ``INJECTED_STAGE_STEPS`` the mutated order derives — which
+by construction never includes steps 1, 12, or a Send-Boundary step, exactly like the unmutated
+case). So ``validate_stage_map`` passes trivially for every variant in this matrix; it is named as
+a candidate detector in the lane brief but is not counted as one of the three that actually fire
+below.
 
 **FINDING — one variant cannot even be represented: omitting step 15
 (``SEND_BOUNDARY_VERIFICATION``).** ``SEND_BOUNDARY_STEPS`` is derived by
@@ -71,39 +72,73 @@ below, despite being named as a candidate in the lane brief.
 because the *vocabulary module itself* cannot be reconstructed for that order. :func:`_derive`
 reproduces this and the harness reports it as its own ``"UNREACHABLE"`` outcome, distinct from
 "ran and matched the control" and "ran and differed" — a stronger, construction-time fail-closed
-than either.
+than either. (Detector 3, below, has no such fragility: :func:`_gateway_projection` is a plain
+membership filter with no ``.index()`` call, so it still catches this variant on its own merits.)
 
-**FINDING — the ADR order-pin is the only detector that reaches 12 of the 56 variants.**
-``run_commitment_flow``'s own execution is provably *insensitive* to how the five Send-Boundary
-steps (15-19) are internally ordered among themselves, and to duplicates of any of them, as long as
-none of them displaces ``SEND_BOUNDARY_VERIFICATION``'s own position: the post-loop
-send-boundary hand-off (sequencer.py:520-580, ``mark_potentially_live`` / ``transmit`` /
-``SEND_HANDED_OFF``) is unconditional Python that never looks any of steps 16-19 up by identity,
-and ``SEND_BOUNDARY_STEPS`` — the only thing that reads their identities — converts the trailing
-slice to a ``frozenset`` (vocabulary.py:239), which is insensitive to internal order and dedupes an
-inserted duplicate for free. Exactly 12 variants hit this dead zone (3 adjacent swaps confined to
-{16,17,18,19}, 4 omissions of {16,17,18,19}, and 5 duplications of {15,16,17,18,19} — see
-``_EXPECTED_ORDER_PIN_ONLY``): ``run_commitment_flow`` produces a **byte-identical** outcome to the
-control for every one of them. This is the exact shape of the drift the 2026-07-29 adversarial
+**FINDING — detector 2 (``run_commitment_flow``) is blind to 12 of the 56 variants; detector 1
+(the ADR order-pin) is the only one that reaches them.** ``run_commitment_flow``'s own execution is
+provably *insensitive* to how the five Send-Boundary steps (15-19) are internally ordered among
+themselves, and to duplicates of any of them, as long as none of them displaces
+``SEND_BOUNDARY_VERIFICATION``'s own position: the post-loop send-boundary hand-off
+(sequencer.py:520-580, ``mark_potentially_live`` / ``transmit`` / ``SEND_HANDED_OFF``) is
+unconditional Python that never looks any of steps 16-19 up by identity, and
+``SEND_BOUNDARY_STEPS`` — the only thing that reads their identities — converts the trailing slice
+to a ``frozenset`` (vocabulary.py:239), which is insensitive to internal order and dedupes an
+inserted duplicate for free. This is the exact shape of the drift the 2026-07-29 adversarial
 review's MINOR-1 finding names for steps 2/3 (test_engine_package.py:134-146) — except here the
 *positional* fingerprint (this module records each verdict's own ``step`` field in tuple order, so
 a pure position swap among behaviourally-independent steps still differs) closes MINOR-1's specific
 gap for steps 1-14; the residual dead zone is confined to the Send-Boundary segment 15-19, which the
-sequencer never even walks. Only the independently-transcribed ADR anchor
-(:data:`_ADR_002_002_SECTION_11_ORDER`, duplicated from test_engine_package.py's own anchor rather
-than imported — an anchor proves nothing if it is derived from, or shares a live binding with, the
-thing it is supposed to catch) catches these 12. The remaining 43 reachable variants, plus the 1
-unreachable one, are also caught by the ADR anchor (any swap/omission/duplication changes the tuple
-away from the fixed 19-member ADR sequence), so **all 56 are caught by at least one detector** —
-"생존 0" holds — but 12 of the 56 are, honestly, order-pin-only: reordering/duplicating the
-Send-Boundary tail is a real behavioural blind spot in ``run_commitment_flow`` today, not merely a
-weak test. RFC-005 §7:192 ("SHALL NOT reorder") is what makes this a *contract* violation rather
-than a don't-care; ``run_commitment_flow``'s honesty about its own scope (steps 1-14 only, design
-#31 §4.5 item-7) is exactly why it cannot be the sole guard for steps 15-19.
+sequencer never even walks.
 
-Runtime: 57 engine runs (1 control + 56 variants), each a single ``DECISION_TICK`` through the
-slice-1 stand-in wiring — well under the ~60s budget (see the lane's own measurement in its commit
-message).
+**FINDING — detector 3 (the gateway's real execution order) narrows that 12-variant blind spot to
+4.** Steps 15-19 are constitutionally the Send Boundary, and are *executed* — not by
+``run_commitment_flow``, which explicitly refuses to host them — by ``BrokerEgressGateway.__call__``
+(``tos/src/tos/egressgw/gateway.py``), the real ``Transmit`` implementation in non-test wiring. So
+the tail's *executable* order lives there, not in the vocabulary tuple. But that executable order is
+**not driven by ``CommitmentStep`` at all**: ``GatewayEvidenceRecord.kind`` is a free-form ``str``
+(``records.py:564`` — no ``CommitmentStep`` field anywhere on it or on ``SendBoundaryContext``), and
+grepping ``tos/src/tos/egressgw/*.py`` for ``CommitmentStep``/``COMMITMENT_FLOW_ORDER`` finds zero
+matches in ``gateway.py`` or ``seal.py`` — the gateway's step 15-19 sequence is hardcoded Python
+control flow, entirely independent of ``COMMITMENT_FLOW_ORDER``. Two consequences, both FINDINGs in
+their own right:
+
+- The executable send order is **not fully auditable from evidence** in a ``CommitmentStep``-identity
+  sense: mapping ``GatewayEvidenceRecord.kind`` strings onto the ADR's five steps is a lossy,
+  best-effort correspondence (:data:`_GATEWAY_KIND_TO_STEP`), grounded in the gateway's own inline
+  step-number comments, not a structural guarantee. ``SEND_SEALED`` (the ``SendSeal``, Phase 4 작업
+  6) belongs to a phase the gateway's own comment calls "step 15½" — it has **no** ``CommitmentStep``
+  counterpart in the closed 19-step enum at all. Step 18 (``NETWORK_CALL``) has **no evidence kind of
+  its own** on the success path — ``__call__``'s "step 18" block calls
+  ``self._transport.send_once(...)`` directly and records nothing before the next (step 19)
+  record, so the network-call moment itself is unobservable from evidence, full stop.
+- Because the gateway consumes no ``CommitmentStep`` data, **no alias exists to patch on the gateway
+  side** — unlike detector 2, detector 3 cannot be made "mutation-sensitive" by monkeypatching; its
+  own real execution order is the *same fixed constant* for every one of the 56 variants (verified:
+  :func:`_run_gateway_happy_path_kinds` is called once, not per variant). Detector 3 is therefore
+  structurally closer to detector 1 (a static reference sequence) than to detector 2 (an
+  execution that actually consumes the mutated order) — its distinct value is that the reference
+  sequence is *extracted from one real gateway run* rather than hand-transcribed, so it would also
+  catch the gateway's own code drifting away from the ADR order someday, which detector 1 cannot.
+
+Net effect: of detector 2's 12-variant blind spot, detector 3 additionally catches every variant
+that touches an *observable* boundary step (15, 16, 17, or 19) — including, notably, every
+duplication of an observable step, which detector 2 cannot see (its ``SEND_BOUNDARY_STEPS``
+``frozenset`` dedupes a duplicate for free) but detector 3's ``_gateway_projection`` does not
+(no deduplication on the mutated-order side — see its docstring). What remains, in
+:data:`_EXPECTED_ORDER_PIN_ONLY`, is exactly the 4 variants confined to step 18 alone (2 swaps with
+a neighbour, its own omission, its own duplication): the one step neither execution path can ever
+observe. Detector 1 catches all 4 (any swap/omission/duplication changes the tuple away from the
+fixed 19-member ADR sequence), so **all 56 variants are caught by at least one detector** — "생존 0"
+holds — but those 4 are, honestly, detector-1-only: a mutation confined to the network-call moment
+is a real, joint blind spot of both execution paths today, not merely a weak test. RFC-005 §7:192
+("SHALL NOT reorder") is what makes this a *contract* violation rather than a don't-care.
+
+Runtime: 57 engine runs (1 control + 56 variants) through :func:`_run_variant`, each a single
+``DECISION_TICK`` through the slice-1 stand-in wiring, plus exactly 1 real gateway run through
+:func:`_run_gateway_happy_path_kinds` (detector 3's reference sequence is a fixed constant, so it is
+computed once, not per variant) — well under the ~60s budget (see the lane's own measurement in its
+commit message).
 
 Regime tag: orchestration authoring evidence only; closes no EV.
 """
@@ -119,6 +154,7 @@ from tos.engine import standins as standins_module
 from tos.engine import vocabulary as vocabulary_module
 from tos.engine.vocabulary import COMMITMENT_FLOW_ORDER, CommitmentStep
 
+from ..egressgw._egressgw_fixtures import build_gateway, happy_context
 from ._engine_fixtures import admitting_stages, build_core, decision_tick
 
 # ---------------------------------------------------------------------------
@@ -311,6 +347,90 @@ def _run_variant(order: tuple[CommitmentStep, ...]) -> tuple[Any, ...]:
 
 
 # ---------------------------------------------------------------------------
+# detector 3: the gateway's own real execution order for steps 15-19
+# ---------------------------------------------------------------------------
+
+#: Grounded in ``gateway.py``'s OWN inline step-number comments (not an independently invented
+#: correspondence): "# -- step 15: the 17-item verify list --" (``VERIFY_ITEM``), the
+#: ``SEND_STARTED`` record's own detail text citing "ADR-002-002 §11.4:606" (step 16's ADR line),
+#: "# -- step 17: the POTENTIALLY_LIVE projection is observed --" (``POTENTIALLY_LIVE_OBSERVED``),
+#: and "# -- step 19: evidence --" (``EGRESS_RESULT_RECORDED``). Two kinds have deliberately no
+#: entry — see the two FINDINGs in the module docstring on ``SEND_SEALED`` ("step 15½", no
+#: ``CommitmentStep`` counterpart at all) and step 18 (``NETWORK_CALL``, no evidence kind of its
+#: own on the success path).
+_GATEWAY_KIND_TO_STEP: dict[str, CommitmentStep] = {
+    "VERIFY_ITEM": CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+    "SEND_STARTED": CommitmentStep.SEND_STARTED_DURABLE,
+    "POTENTIALLY_LIVE_OBSERVED": CommitmentStep.POTENTIALLY_LIVE_TRANSITION,
+    "EGRESS_RESULT_RECORDED": CommitmentStep.EVIDENCE_RECORD,
+}
+
+#: The four ``CommitmentStep`` members the gateway's evidence can distinguish at all. Step 18
+#: (``NETWORK_CALL``) and the unenumerated "step 15½" (``SEND_SEALED``) are excluded on purpose.
+_GATEWAY_OBSERVABLE_STEPS: frozenset[CommitmentStep] = frozenset(
+    _GATEWAY_KIND_TO_STEP.values()
+)
+
+
+def _gateway_projection(
+    order: tuple[CommitmentStep, ...],
+) -> tuple[CommitmentStep, ...]:
+    """``order`` restricted to :data:`_GATEWAY_OBSERVABLE_STEPS`, preserving exact multiplicity.
+
+    Deliberately **not** deduplicated: a genuine duplication mutation of an observable step (e.g.
+    ``dup_16_SEND_STARTED_DURABLE``) must survive this filter as a real duplicate so the comparison
+    in :func:`test_order_mutation_matrix_has_zero_survivors` can tell it apart from the control —
+    only :func:`_translate_gateway_kinds` (the *real execution* side) collapses anything, and only
+    because ``VERIFY_ITEM`` legitimately repeats 17 times for one step, an intrinsic multiplicity
+    of the gateway's own design that has nothing to do with any mutation here.
+    """
+    return tuple(step for step in order if step in _GATEWAY_OBSERVABLE_STEPS)
+
+
+def _run_gateway_happy_path_kinds() -> tuple[str, ...]:
+    """Drive one real, fully-admitting send through :class:`BrokerEgressGateway`, reusing the
+    egressgw suite's own baseline fixtures (the same ``happy_context`` / ``build_gateway`` that
+    back ``test_the_baseline_send_is_accepted_and_records_every_step_in_order`` in
+    ``tos/tests/egressgw/test_egressgw_gateway.py`` — imported, not copied), and return the raw,
+    ordered ``kind`` strings its evidence sink recorded.
+
+    Note what this does **not** exercise: the gateway never reads ``COMMITMENT_FLOW_ORDER`` /
+    ``SEQUENCED_STEPS`` / any of the aliases :func:`_run_variant` patches (grepped: zero matches
+    for any of those names in ``tos/src/tos/egressgw/*.py``) — its steps 15-19 order is hardcoded
+    Python control flow in ``BrokerEgressGateway.__call__``. So unlike :func:`_run_variant`, this
+    call's result is the **same constant** for every one of the 56 variants; the mutation-sensitive
+    part of detector 3 is entirely in :func:`_gateway_projection` reading the mutated tuple, not in
+    re-running the gateway per variant (see the module docstring FINDING on why this makes detector
+    3 structurally closer to detector 1 than to detector 2).
+    """
+    attempt, context = happy_context()
+    gateway, sink = build_gateway(attempt=attempt, context=context)
+    handoff = gateway(attempt)
+    assert handoff.accepted_for_transmission is True, (
+        "the egressgw suite's own happy-path fixture must accept the send — got "
+        f"{handoff!r}; a failure here means that fixture's shape changed, not that a mutation "
+        "was caught"
+    )
+    return sink.kinds
+
+
+def _translate_gateway_kinds(kinds: tuple[str, ...]) -> tuple[CommitmentStep, ...]:
+    """Map ``kinds`` through :data:`_GATEWAY_KIND_TO_STEP`, dropping unmapped kinds (``SEND_SEALED``
+    and anything else outside the table), then collapse consecutive repeats of the *same* step.
+
+    The collapse exists solely to fold the 17 consecutive ``VERIFY_ITEM`` records into one
+    ``SEND_BOUNDARY_VERIFICATION`` entry; it is a no-op for the other three mapped kinds, which a
+    real send emits at most once each.
+    """
+    translated: list[CommitmentStep] = []
+    for kind in kinds:
+        step = _GATEWAY_KIND_TO_STEP.get(kind)
+        if step is not None and (not translated or translated[-1] != step):
+            translated.append(step)
+    return tuple(translated)
+
+
+# ---------------------------------------------------------------------------
 # the 56-variant matrix
 # ---------------------------------------------------------------------------
 
@@ -363,22 +483,20 @@ def test_the_matrix_has_exactly_fifty_six_variants() -> None:
     ), "variant names must be unique"
 
 
-# The 12 variants where run_commitment_flow's own execution is byte-identical to the control (see
-# the module docstring FINDING on the Send-Boundary dead zone) — caught only by the ADR order-pin.
+#: The 4 variants where NEITHER detector 2 (``run_commitment_flow`` e2e) NOR detector 3 (the
+#: gateway's real execution order) can tell the mutation apart from the control — only detector 1
+#: (the ADR anchor) catches these. All four are confined to step 18 (``NETWORK_CALL``): detector 2
+#: is blind to the whole Send-Boundary tail (the sequencer never runs it at all), and detector 3 is
+#: blind to step 18 specifically because the gateway records no evidence kind for the network-call
+#: moment itself (see ``_GATEWAY_OBSERVABLE_STEPS``). This is markedly narrower than detector 2's
+#: own 12-variant blind spot (see the module docstring) — adding detector 3 shrinks the residual
+#: from 12 to these 4, all attributable to the one genuinely un-instrumented step.
 _EXPECTED_ORDER_PIN_ONLY: frozenset[str] = frozenset(
     {
-        "swap_16_17",
         "swap_17_18",
         "swap_18_19",
-        "omit_16_SEND_STARTED_DURABLE",
-        "omit_17_POTENTIALLY_LIVE_TRANSITION",
         "omit_18_NETWORK_CALL",
-        "omit_19_EVIDENCE_RECORD",
-        "dup_15_SEND_BOUNDARY_VERIFICATION",
-        "dup_16_SEND_STARTED_DURABLE",
-        "dup_17_POTENTIALLY_LIVE_TRANSITION",
         "dup_18_NETWORK_CALL",
-        "dup_19_EVIDENCE_RECORD",
     }
 )
 
@@ -388,21 +506,52 @@ _EXPECTED_UNREACHABLE: frozenset[str] = frozenset(
 )
 
 
+def _classify(
+    name: str,
+    order: tuple[CommitmentStep, ...],
+    control: tuple[Any, ...],
+    gateway_control: tuple[CommitmentStep, ...],
+) -> tuple[bool, bool, bool, bool]:
+    """Run all three detectors for one variant.
+
+    Returns:
+        ``(order_pin_red, e2e_red, gateway_red, unreachable)``.
+    """
+    mutant = _run_variant(order)
+    order_pin_red = tuple(order) != _ADR_002_002_SECTION_11_ORDER
+    e2e_red = mutant != control
+    gateway_red = _gateway_projection(order) != gateway_control
+    unreachable = mutant[0] == "UNREACHABLE"
+    del name  # only used by the caller for bookkeeping
+    return order_pin_red, e2e_red, gateway_red, unreachable
+
+
 def test_order_mutation_matrix_has_zero_survivors() -> None:
     """(plan §3.2/§5 «순서 뮤테이션 매트릭스 생존 0») The load-bearing assertion.
 
-    Runs the control (identity order) and all 56 variants through the same harness
-    (:func:`_run_variant`) and requires, for every variant, at least one of two detectors to be
-    red: the independently-transcribed ADR order-pin (:data:`_ADR_002_002_SECTION_11_ORDER`), or
-    ``run_commitment_flow``'s own execution differing from the control (a raised exception, an
-    unreachable derivation, or a differing :func:`_fingerprint`). ``validate_stage_map`` is not a
-    third detector here — see the module docstring FINDING on why it cannot see an order mutation
-    at all.
+    Runs the control (identity order) and all 56 variants through three detectors and requires, for
+    every variant, at least one to be red:
 
-    The test also pins the *shape* of the 12 order-pin-only survivors and the 1 unreachable
-    variant against hand-derived expectations, so a future change that widens or narrows
-    ``run_commitment_flow``'s Send-Boundary blind spot shows up as a failing assertion here rather
-    than silently.
+    1. the independently-transcribed ADR order-pin (:data:`_ADR_002_002_SECTION_11_ORDER`) —
+       always red for a genuine mutation, but by itself proves only that the *vocabulary tuple*
+       drifted, not that any executable code path noticed;
+    2. ``run_commitment_flow``'s own execution differing from the control (a raised exception, an
+       unreachable derivation, or a differing :func:`_fingerprint`) — reaches steps 1-14 fully, but
+       is structurally blind to internal reordering/duplication within the Send-Boundary tail
+       (steps 15-19), which it never walks (see the module docstring FINDING);
+    3. the egress gateway's own real send-boundary execution order (:func:`_gateway_projection`
+       compared against one real run via :func:`_run_gateway_happy_path_kinds` /
+       :func:`_translate_gateway_kinds`) — narrows detector 2's blind spot to just step 18
+       (``NETWORK_CALL``), which the gateway records no evidence for on the success path.
+
+    ``validate_stage_map`` ("detector 0") is not counted here: it takes no order argument at all
+    and rejects a stage map only for *which* steps it hosts, never *in what sequence* — see the
+    module docstring FINDING. It passes trivially for every variant in this matrix.
+
+    The test pins the *shape* of the order-pin-only residual (now 4 variants, all step 18) and the
+    1 unreachable variant against hand-derived expectations, so a future change that widens or
+    narrows either execution detector's blind spot shows up as a failing assertion here rather than
+    silently.
     """
     control = _run_variant(COMMITMENT_FLOW_ORDER)
     assert control[0] == "FLOW" and control[1] is True, (
@@ -410,30 +559,37 @@ def test_order_mutation_matrix_has_zero_survivors() -> None:
         f"must hand off cleanly — a failure here means the harness itself is broken, not that a "
         f"mutation was caught: {control!r}"
     )
+    gateway_control = _translate_gateway_kinds(_run_gateway_happy_path_kinds())
+    assert gateway_control == _gateway_projection(COMMITMENT_FLOW_ORDER), (
+        "the gateway's real, unmutated execution order must match the ADR anchor's own "
+        f"projection onto the observable steps — gateway={gateway_control!r} "
+        f"anchor_projection={_gateway_projection(COMMITMENT_FLOW_ORDER)!r} (this re-derives "
+        "test_egressgw_gateway.py::test_the_baseline_send_is_accepted_and_records_every_"
+        "step_in_order through this module's own mapping, as a cross-check)"
+    )
 
     survivors: list[str] = []
     order_pin_only: list[str] = []
     unreachable: list[str] = []
     for name, order in _ALL_VARIANTS:
-        mutant = _run_variant(order)
-        order_pin_red = tuple(order) != _ADR_002_002_SECTION_11_ORDER
-        e2e_red = mutant != control
-        if mutant[0] == "UNREACHABLE":
+        order_pin_red, e2e_red, gateway_red, is_unreachable = _classify(
+            name, order, control, gateway_control
+        )
+        if is_unreachable:
             unreachable.append(name)
-        elif not e2e_red:
+        elif not e2e_red and not gateway_red:
             order_pin_only.append(name)
-        if not order_pin_red and not e2e_red:
-            survivors.append(f"{name}: mutant={mutant!r}")
+        if not order_pin_red and not e2e_red and not gateway_red:
+            survivors.append(name)
 
     assert not survivors, (
-        f"{len(survivors)}/{len(_ALL_VARIANTS)} order-mutation variants survived BOTH detectors "
-        f"(ADR order-pin AND run_commitment_flow e2e) — plan §3.2/§5 requires 0 survivors: "
-        f"{survivors}"
+        f"{len(survivors)}/{len(_ALL_VARIANTS)} order-mutation variants survived ALL THREE "
+        f"detectors (ADR order-pin, run_commitment_flow e2e, gateway execution order) — plan "
+        f"§3.2/§5 requires 0 survivors: {survivors}"
     )
     assert set(order_pin_only) == _EXPECTED_ORDER_PIN_ONLY, (
-        "the set of variants only the ADR order-pin catches (run_commitment_flow's own execution "
-        "is identical to the control — the Send-Boundary dead zone documented in this module's "
-        f"docstring) drifted from the expected set — actual={sorted(order_pin_only)} "
+        "the set of variants only the ADR order-pin catches (both execution detectors identical "
+        f"to their controls) drifted from the expected set — actual={sorted(order_pin_only)} "
         f"expected={sorted(_EXPECTED_ORDER_PIN_ONLY)}"
     )
     assert set(unreachable) == _EXPECTED_UNREACHABLE, (
