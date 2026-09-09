@@ -221,3 +221,11 @@ verdict **approve** — 17건 중 15 완전 종결 · #13/#17 부분(정직 공�
 **D-R-3d 처분(`81563e91` · `e47a437e`)**: ① 리뷰어 테스트 채택 — 뮤테이션 i killed ② 커널 열거자 위임 ③ `_refuse_stem_collisions`(둘 다 명명·증거) ④ **결정**: 비파일 경로의 bindings 파일 존재는 거부 — 주입 레지스트리 = «소스 하나만» 위반 · `allow_no_strategies` = 전 항목 고아 · 부재는 무영향 · `_resolve_injected_registry` 추출로 예산 내 ⑤ 상수 임포트 ⑥ 규칙 3 테스트 확장 ⑦ `first_null_leaf` 개명(`__all__` 밖).
 
 **최종 실측(워크트리 `e47a437e` 격리)**: 커널 `9355 passed` · 런타임 `655 passed` · mypy 257/69 clean · ruff/black clean · firewall PASS · lint-imports 3/0 · 예산 PASS(36) · completion GREEN · spec PASS · contract PASS · `tos/src` 변경은 `6a130f7c` 에만 · spec/계약 diff 0. 재심 #2(`review-p3w2` · R1~R4) 와 D-R-3d 재심(`review-dr3`) 병렬 진행 중 — 결과는 §7.8.
+
+### 7.8 재심 #2 approve + D-R-3d 재심 approve (2026-09-09) → 웨이브 3 착수
+
+**웨이브 2 재심 #2(`review-p3w2` · R1~R4)**: **approve**. R1 compose 체인 재부팅 통과·래치가 재부팅을 생존 · R2 바닥이 8 시퀀스·24 스텝에서 불변식 유지(표 값 = 최소값이라 ACK 특례 없음) · R3 증거가 상태 변경에 선행·모든 거부 경로가 래치 유지+증거 0 · R4 `4b4aebdf` 는 도크스트링 2파일 + 정확한 예산 재등록(139=실측). N2 판정: **표-멤버십 핀 수용**(닫힌 선언 표·단일 소비자 — 우회 경로 없음 · 행동 테스트는 출하 코드로 작성 불가) + 권고: 두 이름의 부재 단언 대신 **파생 양성 불변식**(표 키 집합 = `EgressResultKind` − `_RESULT_TRANSITIONS` 목표가 QUARANTINED_UNKNOWN 인 kind) 으로 재서술해 어휘 성장에 닫히게. 신규 잔여 4(비차단): RR1 MEDIUM 저장층 attestation/seq 가드 미테스트(MR3c 생존 · 래퍼가 먼저 거르므로) · RR2 MEDIUM 문이 둘 — `inbox.clear_new_risk_halt` 직접 호출은 증거 0 으로 해제(올바른 seq 필요 · 드라이버 도크스트링에 공개) → `test_no_direct_core_calls.py` 식 기계 핀 · RR3 LOW 거부된 해제가 흔적 없음(`False` 4가지 사유 구분 불가) → 시도-거부 증거 행 또는 typed 사유 · RR4 LOW 해소 후 반복 TIMEOUT 은 DUPLICATE 서명 동일로 재격리 불가(UNKNOWN 은 가능 · 드라이버는 attempt 당 TIMEOUT 1회라 현 구성 도달 불가 · 서명에 해소 세대 반영은 이 웨이브 밖 — 기록만).
+
+**D-R-3d 재심(`review-dr3`)**: **approve**. 뮤테이션 17종 생존 0(i·m·n·o·p 포함) · 7건 전부 행동 테스트로 종결 · 크기 예외 추가 0. 비차단 관찰: presence 검사 3중(`is_file`) — 디렉터리명 `strategy_bindings.yaml` 은 일관되게 «부재» · 주입 레지스트리 경로가 이제 파일 I/O(의도된 fail-closed 확장 · 계약 변경 공개). 프로세스: 리뷰어 둘이 같은 측정 워크트리를 써 상대 프로브가 섞임 → **리뷰어별 워크트리 분리**를 규율에 추가.
+
+**착수(웨이브 3 · 병렬 5 + 후행 1)**: E-K(커널 calibration) · F-K(19-step 뮤테이션 매트릭스) · F-R(패리티 + blind resubmit 0) · CR4-RR(RR1/RR2/RR3 — 저장층 단위 테스트 2 · 직접 호출 기계 핀 · typed 거부 사유+시도-거부 증거) · KW2d-N2(파생 불변식 재서술) · E-R 은 `[E-K-done]` 후. 규율 추가: 전용 파일 = pathspec 커밋 · 공유 헝크 = 오케스트레이터 직렬화 · 리뷰어별 워크트리.
