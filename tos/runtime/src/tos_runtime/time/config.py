@@ -79,6 +79,16 @@ _VERSION_KEYS: tuple[str, ...] = (
     "safety_profile_version",
 )
 
+#: Bound keys that must be strictly positive rather than merely non-negative (independent review
+#: finding #16, 2026-09-09): ``MAX_send_result_wait_ms`` is the wait bound
+#: :class:`~tos_runtime.engine.driver.EngineDriver`'s ``_TimeoutTracker`` uses before injecting a
+#: synthetic ``TIMEOUT`` — a ``0`` value would time out every hand-off on the very next drain,
+#: which is not a smaller wait, it is a silently-disabled send boundary, mirroring
+#: ``replay_window_events``'s own "a zero/negative window is a disabled one" rule
+#: (``tos_runtime.compose._engine_wiring._require_positive_int``). Every other bound key keeps
+#: the plain non-negative rule below (deliberately not widened without a fresh review).
+_STRICTLY_POSITIVE_KEYS: frozenset[str] = frozenset({"MAX_send_result_wait_ms"})
+
 #: VER-002 key name -> :class:`TrustworthyTimeConfig` field name.
 _BOUND_FIELD_BY_KEY: dict[str, str] = {
     "MAX_time_source_precision_ms": "max_time_source_precision_ms",
@@ -156,7 +166,14 @@ def _resolve_bounds(raw: dict[str, Any]) -> dict[str, Any]:
             raise TimeConfigError(
                 f"time config key {key!r} must be a non-negative int (got {value!r})"
             )
-        if value < 0:
+        if key in _STRICTLY_POSITIVE_KEYS:
+            if value <= 0:
+                raise TimeConfigError(
+                    f"time config key {key!r} must be a positive int (got {value!r}) — a "
+                    "zero wait bound is not a shorter wait, it is a silently-disabled send "
+                    "boundary (independent review finding #16)"
+                )
+        elif value < 0:
             raise TimeConfigError(
                 f"time config key {key!r} must be non-negative (got {value!r})"
             )

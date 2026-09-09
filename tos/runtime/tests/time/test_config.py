@@ -85,6 +85,29 @@ def test_negative_bound_is_rejected(tmp_path: Path) -> None:
         load_time_config(path)
 
 
+def test_zero_send_result_wait_bound_is_rejected(tmp_path: Path) -> None:
+    """Independent review finding #16 (2026-09-09): every OTHER bound key accepts ``0``
+    (``MAX_process_suspension_ms`` above does), but ``MAX_send_result_wait_ms`` is the wait
+    ``EngineDriver``'s ``_TimeoutTracker`` uses before injecting a synthetic ``TIMEOUT`` — a
+    ``0`` value would time out every hand-off on the very next drain, mirroring
+    ``replay_window_events``'s own positive-int rule. Mutation companion: removing the
+    ``_STRICTLY_POSITIVE_KEYS`` branch (config.py) makes this pass with ``TimeConfigError``
+    never raised — red."""
+    content = dict(_FULLY_VALUED)
+    content["MAX_send_result_wait_ms"] = 0
+    path = _write_yaml(tmp_path / "time.yaml", content)
+    with pytest.raises(TimeConfigError, match="positive int"):
+        load_time_config(path)
+
+
+def test_negative_send_result_wait_bound_is_also_rejected(tmp_path: Path) -> None:
+    content = dict(_FULLY_VALUED)
+    content["MAX_send_result_wait_ms"] = -1
+    path = _write_yaml(tmp_path / "time.yaml", content)
+    with pytest.raises(TimeConfigError, match="positive int"):
+        load_time_config(path)
+
+
 def test_non_int_bound_is_rejected(tmp_path: Path) -> None:
     content = dict(_FULLY_VALUED)
     content["MAX_process_suspension_ms"] = "soon"
