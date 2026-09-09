@@ -705,6 +705,26 @@ def _parse_windows(raw: Any) -> list[TimeWindow]:
     return windows
 
 
+#: Bounds on a value accepted as epoch SECONDS: 2001-09 .. 5138. Outside this
+#: range a number is not a second-resolution timestamp, and guessing costs more
+#: than refusing — a value in [1e11, 2.5e11) parses to a far-future date, which
+#: yields a NEGATIVE age and passes every freshness bound. (A millisecond epoch
+#: is further out still and already raised inside ``fromtimestamp``; the open
+#: hole was the range just above the upper bound.)
+_MIN_EPOCH_SECONDS = 1e9
+_MAX_EPOCH_SECONDS = 1e11
+
+
+def _epoch_seconds_to_datetime(epoch: float) -> datetime | None:
+    """Convert plausible epoch seconds to UTC, else ``None`` (fail-closed)."""
+    if not (_MIN_EPOCH_SECONDS <= epoch < _MAX_EPOCH_SECONDS):
+        return None
+    try:
+        return datetime.fromtimestamp(epoch, tz=UTC)
+    except (OSError, ValueError, OverflowError):
+        return None
+
+
 def _parse_timestamp(value: Any) -> datetime | None:
     if value is None:
         return None
@@ -715,10 +735,7 @@ def _parse_timestamp(value: Any) -> datetime | None:
         return value.astimezone(UTC)
 
     if isinstance(value, (int, float)):
-        try:
-            return datetime.fromtimestamp(float(value), tz=UTC)
-        except (TypeError, OSError, ValueError):
-            return None
+        return _epoch_seconds_to_datetime(float(value))
 
     if isinstance(value, str):
         try:
@@ -727,21 +744,12 @@ def _parse_timestamp(value: Any) -> datetime | None:
             return dt
         except ValueError:
             pass
-        # Defensive: the tick-stream path decodes `timestamp` to a float before
-        # it reaches here (MarketTickMessage -> to_price_dict), so this branch
-        # only catches a producer that hands over a raw Redis field. Bounded to
-        # plausible epoch SECONDS (2001-09 .. 5138) so a non-epoch numeric — a
-        # millisecond epoch, an index, a price — returns None and fails closed
-        # rather than parsing to 1970 and reading as infinitely stale.
+        # Defensive: the tick-stream path decodes `timestamp` to a float
+        # before it reaches here (MarketTickMessage -> to_price_dict), so this
+        # branch only catches a producer that hands over a raw Redis field.
         try:
-            epoch = float(value)
+            return _epoch_seconds_to_datetime(float(value))
         except (TypeError, ValueError):
-            return None
-        if not (1e9 <= epoch < 1e11):
-            return None
-        try:
-            return datetime.fromtimestamp(epoch, tz=UTC)
-        except (OSError, ValueError, OverflowError):
             return None
 
     return None

@@ -265,6 +265,40 @@ class OrderRouterDaemon(StreamStage):
                 await self._exit_task
             self._exit_task = None
 
+    def _quote_is_stale(
+        self,
+        payload: dict[str, Any] | None,
+        *,
+        max_age: float,
+        signal_id: str,
+        symbol: str,
+        label: str = "",
+    ) -> bool:
+        """True (and counted+logged) if ``payload`` is a book too old to trade on.
+
+        An empty payload is NOT stale here — it is "no book", which the
+        controller reports as ``orderbook_unavailable`` / ``cross_asset_
+        unavailable`` with its own reason. A book with no readable time IS
+        stale: ``parse_orderbook_snapshot`` substitutes ``now`` for a missing
+        timestamp, so letting it through would read an undated quote as fresh.
+        """
+        if max_age <= 0 or not payload:
+            return False
+        age = quote_age_seconds(payload)
+        if age is not None and age <= max_age:
+            return False
+        self.slippage_blocked_count += 1
+        logger.warning(
+            "slippage_gate: blocked signal_id=%s symbol=%s "
+            "reason=quote_stale:%s%s max_age=%.1fs",
+            signal_id,
+            symbol,
+            label,
+            "unknown_timestamp" if age is None else f"{age:.2f}s",
+            max_age,
+        )
+        return True
+
     async def _exit_monitor_loop(self) -> None:
         """Poll the live feed and drive PseudoOCO stop/target/expiry closes.
 
@@ -573,19 +607,13 @@ class OrderRouterDaemon(StreamStage):
             max_quote_age = (
                 self.slippage_controller.config.order_router_max_quote_age_seconds
             )
-            if max_quote_age > 0 and quote_payload:
-                age = quote_age_seconds(quote_payload)
-                if age is None or age > max_quote_age:
-                    self.slippage_blocked_count += 1
-                    logger.warning(
-                        "slippage_gate: blocked signal_id=%s symbol=%s "
-                        "reason=quote_stale:%s max_age=%.1fs",
-                        signal_id,
-                        signal.symbol,
-                        "unknown_timestamp" if age is None else f"{age:.2f}s",
-                        max_quote_age,
-                    )
-                    return True  # consumed, no retry (mirrors the gate's aborts)
+            if self._quote_is_stale(
+                quote_payload,
+                max_age=max_quote_age,
+                signal_id=signal_id,
+                symbol=signal.symbol,
+            ):
+                return True  # consumed, no retry (mirrors the gate's aborts)
 
             cross_payload = None
             if self.slippage_controller.config.cross_asset_enabled:
@@ -596,6 +624,19 @@ class OrderRouterDaemon(StreamStage):
                     if self.futures_price_feed is not None
                     else None
                 )
+                # The cross-asset book gates the entry exactly like the primary
+                # one, so it has to be as fresh. A stale reference quote makes
+                # `cross_asset_wide_spread` compare against a spread that no
+                # longer exists — a pass on it is as wrong as a pass on a stale
+                # primary book, and both come from the same frozen-feed cause.
+                if self._quote_is_stale(
+                    cross_payload,
+                    max_age=max_quote_age,
+                    signal_id=signal_id,
+                    symbol=self.slippage_controller.config.cross_asset_symbol,
+                    label="cross:",
+                ):
+                    return True  # consumed, no retry
             decision = self.slippage_controller.evaluate_entry(
                 symbol=signal.symbol,
                 is_buy=signal.direction == "long",
@@ -843,9 +884,10 @@ def _build_price_feed(
         )
         return feed
 
+    from shared.models.stream_models import DEFAULT_FUTURES_TICK_STREAM
     from shared.streaming.consumer_feed import StreamConsumerFeed
 
-    stream = os.environ.get("FUTURES_TICK_STREAM", "raw_data")
+    stream = os.environ.get("FUTURES_TICK_STREAM", DEFAULT_FUTURES_TICK_STREAM)
     # Replay the tail of the stream at startup so the send-time gate has a
     # quote for the first signal after a restart instead of blocking it on
     # `orderbook_unavailable`. The count bounds how deep to look for THIS

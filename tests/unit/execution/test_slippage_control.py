@@ -2,6 +2,8 @@
 
 from datetime import datetime, time, timedelta
 
+import pytest
+
 from shared.execution.slippage_control import (
     ExecutionAction,
     FuturesSlippageController,
@@ -517,14 +519,25 @@ def test_numeric_string_timestamp_no_longer_silently_reads_as_now():
     assert snapshot.timestamp == datetime.fromtimestamp(1700000000.0, tz=UTC)
 
 
-def test_non_epoch_numeric_string_fails_closed():
-    """A millisecond epoch, an index or a price must not parse to a valid time:
-    1970 would read as infinitely stale (harmless) but a ms epoch reads as the
-    year 55000 (negative age) and would pass any freshness bound."""
+@pytest.mark.parametrize("as_str", [False, True], ids=["float", "str"])
+@pytest.mark.parametrize(
+    "bogus",
+    [0, 1.5, -1700000000, 1.7e11, 2.4e11, 1700000000000.0],
+    ids=["zero", "small", "negative", "just-over", "far-future", "ms-epoch"],
+)
+def test_non_epoch_numeric_fails_closed(bogus, as_str):
+    """Anything outside plausible epoch SECONDS must not date a quote.
+
+    The dangerous range is just above the bound: a value in [1e11, ~2.5e11)
+    parses to a far-future date, which makes the age NEGATIVE and passes every
+    freshness bound. (A millisecond epoch is further out and already raised
+    inside `fromtimestamp`, so it was never the hole.) A float reaches here on
+    the decoded stream path and a string only from a raw Redis field, so both
+    branches need the same bound.
+    """
     from shared.execution.slippage_control import quote_age_seconds
 
     quote = _quote(bid=331.20, ask=331.22)
-    for bogus in ("0", "1.5", "1700000000000.0", "-1700000000"):
-        quote["timestamp"] = bogus
-        assert parse_orderbook_snapshot("A05603", quote) is not None
-        assert quote_age_seconds(quote) is None, bogus
+    quote["timestamp"] = str(bogus) if as_str else bogus
+    assert parse_orderbook_snapshot("A05603", quote) is not None
+    assert quote_age_seconds(quote) is None

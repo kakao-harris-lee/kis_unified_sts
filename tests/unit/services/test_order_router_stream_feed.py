@@ -38,6 +38,7 @@ from shared.execution.contract_spec import ContractSpec
 from shared.streaming.consumer_feed import StreamConsumerFeed
 
 SYMBOL = "A05603"
+CROSS_SYMBOL = "101S6000"
 STREAM = "raw_data"
 FINAL_STREAM = "signal.final.futures.shadow"
 GROUP = "order_router"
@@ -534,3 +535,79 @@ def test_seed_age_bound_is_passed_through(monkeypatch):
 
     assert feed.seed_max_age_seconds == 7.5
     assert feed.seed_latest is True
+
+
+@pytest.mark.asyncio
+async def test_a_stale_cross_asset_quote_is_blocked(caplog):
+    """The cross book gates the entry like the primary one, so it must be as
+    fresh: a stale reference makes `cross_asset_wide_spread` compare against a
+    spread that no longer exists."""
+    now = datetime.now(UTC).timestamp()
+    redis, feed = await _stream_feed_with_quote(bid=331.20, ask=331.22)
+
+    controller = _paper_controller()
+    controller.config.cross_asset_enabled = True
+    controller.config.cross_asset_symbol = CROSS_SYMBOL
+    # A cross book that is present, two-sided and 5 minutes old.
+    feed._orderbooks[CROSS_SYMBOL] = {
+        "code": CROSS_SYMBOL,
+        "bid_price_1": 331.10,
+        "bid_qty_1": 10.0,
+        "ask_price_1": 331.12,
+        "ask_qty_1": 10.0,
+        "spread": 0.02,
+        "timestamp": now - 300.0,
+    }
+
+    with caplog.at_level(logging.WARNING, logger=ROUTER_LOGGER):
+        daemon, kis = await _route_one(redis, feed, controller, _signal(331.20))
+
+    assert daemon.slippage_blocked_count == 1
+    assert any("reason=quote_stale:cross:" in r.getMessage() for r in caplog.records), [
+        r.getMessage() for r in caplog.records
+    ]
+    kis.place_futures_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_cross_asset_quote_passes_through():
+    now = datetime.now(UTC).timestamp()
+    redis, feed = await _stream_feed_with_quote(bid=331.20, ask=331.22)
+
+    controller = _paper_controller()
+    controller.config.cross_asset_enabled = True
+    controller.config.cross_asset_symbol = CROSS_SYMBOL
+    feed._orderbooks[CROSS_SYMBOL] = {
+        "code": CROSS_SYMBOL,
+        "bid_price_1": 331.10,
+        "bid_qty_1": 10.0,
+        "ask_price_1": 331.12,
+        "ask_qty_1": 10.0,
+        "spread": 0.02,
+        "timestamp": now,
+    }
+
+    daemon, kis = await _route_one(redis, feed, controller, _signal(331.20))
+
+    assert daemon.slippage_blocked_count == 0
+    kis.place_futures_order.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_missing_cross_book_keeps_the_controllers_own_reason(caplog):
+    """No cross book at all is `cross_asset_unavailable`, not `quote_stale` —
+    the freshness gate must not steal a reason it did not decide."""
+    redis, feed = await _stream_feed_with_quote(bid=331.20, ask=331.22)
+
+    controller = _paper_controller()
+    controller.config.cross_asset_enabled = True
+    controller.config.cross_asset_symbol = CROSS_SYMBOL
+
+    with caplog.at_level(logging.WARNING, logger=ROUTER_LOGGER):
+        daemon, kis = await _route_one(redis, feed, controller, _signal(331.20))
+
+    assert daemon.slippage_blocked_count == 1
+    assert any(
+        "reason=cross_asset_unavailable" in r.getMessage() for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+    kis.place_futures_order.assert_not_awaited()
