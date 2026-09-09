@@ -112,14 +112,22 @@ class SyntheticBrokerGateway:
     hash to different values — the plan's own parity premise ("차이는 EventSource/Transmit 주입뿐")
     requires the SAME Transmit *semantics* on both sides, not merely "a Transmit of some kind".
 
-    This adapter drives the exact same deterministic synthetic-broker path
-    ``tos_runtime.compose._wiring`` wires for the real paper core
-    (``SyntheticPaperTransport`` + an injected ``SyntheticFillPolicy``) — through the SAME
-    ``send_once(attempt, *, instrument_key, coordinates, quantity, ...)`` call, with the SAME
-    injected :data:`PARITY_QUANTITY` the backtest side's ``FillParameters.scenario_quantity``
-    also carries — so both sides settle a FULL_FILL of the same magnitude via the same kernel
-    fill-band arithmetic (:meth:`~tos.brokeradapter.synthetic.SyntheticPaperTransport
-    ._filled_quantity`), not two independently-invented test doubles that happen to agree.
+    This adapter calls ``send_once(attempt, *, instrument_key, coordinates, quantity, ...)``
+    DIRECTLY, with the SAME injected :data:`PARITY_QUANTITY` the backtest side's
+    ``FillParameters.scenario_quantity`` also carries — so both sides settle a FULL_FILL of the
+    same magnitude via the same kernel fill-band arithmetic
+    (:meth:`~tos.brokeradapter.synthetic.SyntheticPaperTransport._filled_quantity`), not two
+    independently-invented test doubles that happen to agree.
+
+    **Narrowed scope (wave 3 review finding 6, LOW, 2026-09-09): same transport and same injected
+    quantity — NOT the full real-paper send boundary.** The real paper wiring puts
+    :class:`~tos.egressgw.BrokerEgressGateway` ON TOP of this transport
+    (``tos_runtime.compose._engine_wiring.py:429-446``); steps 15-19 (final-egress currentness,
+    QCC, single-use capability, ``SendSeal``, actual-outbound comparison, gateway evidence) run
+    inside that gateway, never inside ``SyntheticPaperTransport.send_once`` itself. This adapter
+    calls ``send_once`` directly, bypassing the gateway entirely — the send boundary (gateway/seal,
+    steps 15-19) is not exercised on either side of the parity comparison this adapter serves;
+    parity there is out of this test's scope.
 
     Retains results SYNCHRONOUSLY inside ``__call__`` (mirroring both ``fx.FakeGateway``'s own
     auto-ack and the real ``BrokerEgressGateway``'s step-18/19 ordering), so

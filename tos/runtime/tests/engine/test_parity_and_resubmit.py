@@ -35,8 +35,18 @@ values now (different ``capacity_state``/``knowledge``), so "차이는 EventSour
 requires the SAME Transmit *semantics*, not merely "a Transmit of some kind". The engine-driver
 side now drives :class:`~tos_runtime.tests.engine._parity_fixtures.SyntheticBrokerGateway` — a
 thin ``Transmit``-protocol adapter REUSING (never reimplementing) the kernel's own, already-shipped
-:class:`~tos.brokeradapter.synthetic.SyntheticPaperTransport` (design #34 §5.2), the same
-deterministic synthetic-broker path ``tos_runtime.compose._wiring`` wires for the real paper core.
+:class:`~tos.brokeradapter.synthetic.SyntheticPaperTransport` (design #34 §5.2): the SAME
+transport and the SAME injected quantity as the backtest side.
+
+**Narrowed scope (wave 3 review finding 6, LOW, 2026-09-09).** This is the transport
+(``send_once``) only, called directly — it is NOT the full real-paper send boundary. The real
+paper wiring puts :class:`~tos.egressgw.BrokerEgressGateway` ON TOP of
+``SyntheticPaperTransport`` (``tos_runtime.compose._engine_wiring.py:429-446``), and steps 15-19
+(final-egress currentness, QCC, single-use capability, ``SendSeal``, actual-outbound comparison,
+gateway evidence) run inside that gateway, never inside the transport itself. Neither side of
+this test exercises steps 15-19 — the backtest side has no gateway either — so this comparison
+demonstrates parity for the same core/sequencer/transport-and-quantity (design #31 §5 종료 조건
+③), not for the gateway/seal layer; parity there is out of this test's scope.
 **Injected, shared magnitude:** :data:`~tos_runtime.tests.engine._parity_fixtures.PARITY_QUANTITY`
 (``Decimal(1)``) is the SAME literal fed to the backtest side's ``FillParameters.scenario_quantity``
 and to the synthetic broker's ``send_once(..., quantity=PARITY_QUANTITY)`` call — both fill it in
