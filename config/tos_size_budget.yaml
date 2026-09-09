@@ -401,3 +401,24 @@ exceptions:
     신규 배선(도크스트링 설명 포함)하며 100→103 초과. 안전-부담 파라미터의
     도크스트링을 생략하는 것은 이 파일 자신의 기존 관례(finality_config 등
     모든 신규 파라미터가 온전한 도크스트링을 받음)와 어긋나 압축 대신 등재.
+- target: tos/runtime/src/tos_runtime/engine/replay.py::replay_engine
+  measured: 120
+  owner: tos-runtime
+  decomposition_order: 34
+  expires_on: '2026-12-31'
+  note: >-
+    독립 리뷰(웨이브 2) finding #1 처분(레인 C-R2, 2026-09-09) — 코디네이터
+    게이트 거부(halt_reason 有 · outcome_digest=None) receipt 를 재생이
+    True/True 무조건 전제로 실행해 비대칭 divergence 를 내는 결함(단일 게이트
+    거부가 이후 모든 재기동을 영구 실패시킴, compose 프로브 실증)을 수리.
+    `_recorded_receipts`(구 `_recorded_outcome_digests`)가 halt_reason 도
+    함께 읽고, `_PRE_PIPELINE_HALT_REASONS`(코디네이터 거부·EVENT_ORDER_
+    REVERSED·REGISTRY_MISSING/EXPLICIT_EMPTY — pipeline 이 구조적으로 None
+    인 halt 만의 닫힌 집합) 에 속하는 receipt 는 core.handle 자체를 호출하지
+    않고 uncompared 로 분류한다. 최초 초안은 "모든 halt_reason" 을 기준으로
+    했으나 TRANSMIT_UNAVAILABLE 등 pipeline 이 이미 실제 digest 를 가진
+    이후-halt 를 오분류해 기존 뮤테이션 테스트
+    (test_mutated_recorded_outcome_digest_is_detected_as_a_divergence)를
+    거짓 green 으로 만듦 — 실측으로 적발해 닫힌 halt-reason 집합으로 좁힘.
+    닫힌집합 상수·독스트링 확장·분기 3개 추가로 100→120 초과; 로직을
+    안전하게 좁히는 데 필요한 순증분이라 압축 대신 등재.

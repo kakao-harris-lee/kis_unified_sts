@@ -20,14 +20,49 @@ state as a divergence — reporting a permanent, un-recoverable boot-time
 :class:`~tos_runtime.compose._boot_integrity.EngineReplayDiverged` for every event whose recorded
 baseline digest is ``None``, i.e. every event AFTER the first real send hand-off, forever. This
 function now SKIPS the comparison (never calls :func:`~tos.engine.sink.replay_result_for` at
-all) ONLY in the one honest case — recorded digest ``None`` AND replayed digest ``None``, "no
-outcome identity to compare" — counting it in :attr:`ReplayVerdict.uncompared` rather than
-:attr:`ReplayVerdict.total_compared`. Every OTHER combination still goes through the normal
-comparison and is treated as a divergence exactly as before: a ``None``-recorded /
+all) in the one honest EGRESS_RESULT case — recorded digest ``None`` AND replayed digest
+``None``, "no outcome identity to compare" — counting it in :attr:`ReplayVerdict.uncompared`
+rather than :attr:`ReplayVerdict.total_compared`. Every OTHER combination still goes through the
+normal comparison and is treated as a divergence exactly as before: a ``None``-recorded /
 non-``None``-replayed pair (or the reverse) still reaches
 :func:`~tos.evidence.compute_replay_result` and comes back ``INCONCLUSIVE`` (non-``MATCH``), and
 two present-but-different digests still come back ``DIVERGED`` — this fix narrows the skip to
-exactly the ``None``/``None`` pair; it does not widen it.
+exactly the ``None``/``None`` pair; it does not widen it. (Wave 2's own finding #1 below widens
+the skip once more, to a DIFFERENT, narrowly-identified case — a recorded halt — never to a bare
+``None``/non-``None`` asymmetry with no halt reason attached.)
+
+**Independent review finding #1, wave 2 (2026-09-09), corrected here — a SEPARATE half of
+finding #1 from the EGRESS_RESULT case above.** A ``DECISION_TICK`` refused by the kernel's own
+RFC-002 §10.7 Coordinator gate (``tos.engine.core.EngineCore._coordinator_precondition_refusal``
+— ``HaltReason.AUTHORITY_NOT_CURRENT`` / ``LIVE_SCOPE_NOT_AUTHORIZED``, or any other halt
+reached before the decision pipeline ever ran) ALSO records ``outcome_digest=None`` on its
+``EVENT_CONSUMED`` receipt — but WITH a ``halt_reason``, unlike the honest EGRESS_RESULT case
+above. The boot-time replay core's own ``CoordinatorPreconditions`` stand-in
+(:class:`tos_runtime.compose._preconditions._ReplayPreconditions`) is unconditionally
+``True``/``True`` — by design, per its own docstring, because "a tick the gate refused at the
+time never produced pipeline evidence to replay in the first place". That premise is exactly
+what this receipt disproves: refused ticks DO get an ``EVENT_CONSUMED`` receipt (``outcome_
+digest=None``, real ``halt_reason``). So without this fix, replay would run the FULL pipeline
+for a historically-refused tick, manufacture a real, non-``None`` digest, and reach the exact
+``None``-recorded/non-``None``-replayed asymmetry the paragraph above already treats as a
+divergence — a single Coordinator-gate refusal (reachable via nothing more than a transient
+``sqlite3.Error`` on the authority-epoch log) permanently bricking every later boot. The fix:
+:func:`_recorded_receipts` now reads ``halt_reason`` alongside ``outcome_digest``, and
+:func:`replay_engine` counts a receipt as :attr:`ReplayVerdict.uncompared` (the reason preserved
+in :attr:`ReplayVerdict.uncompared_halt_reasons`) when ``outcome_digest`` is ``None`` AND
+``halt_reason`` is one of :data:`_PRE_PIPELINE_HALT_REASONS` — the CLOSED set of halt reasons
+that are STRUCTURALLY reached before ``EventResult.pipeline`` is ever populated (see that
+constant's own docstring for why this must be a closed set, not "any halt_reason": several other
+halt reasons, e.g. ``TRANSMIT_UNAVAILABLE``, are reached AFTER a real proposal already gave the
+receipt a real, non-``None`` digest, and must still be compared — an earlier draft of this fix
+treated any halt as uncompared and silently broke exactly that case, caught by this module's own
+``test_mutated_recorded_outcome_digest_is_detected_as_a_divergence``). For a genuine pre-pipeline
+halt, ``core.handle`` is never even called for it (unlike the EGRESS_RESULT case, which still
+re-derives to advance ledger state honestly; here the live run's own ``HaltReason`` accounting
+already establishes "nothing is consumed", so skipping the call reproduces the live run's ledger
+state exactly, rather than manufacturing a divergent one). A ``None``/non-``None`` asymmetry with
+no recorded ``halt_reason``, or with a halt reason outside the closed set, still reaches the
+normal comparison and is still reported as a divergence; this fix does not touch that path.
 
 **Side-effect scope, reported precisely (plan §1.1's own escape hatch: "if a fully
 side-effect-free rebuild is impossible without kernel changes, report precisely").** This module
@@ -76,6 +111,7 @@ from tos.canonical import CanonicalizationScheme
 from tos.engine import EngineCore
 from tos.engine.records import event_identity
 from tos.engine.sink import replay_result_for
+from tos.engine.vocabulary import HaltReason
 from tos.evidence import ReplayResultState
 
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -87,6 +123,32 @@ __all__ = ["ReplayVerdict", "replay_engine"]
 _EVENT_CONSUMED_KIND = "EVENT_CONSUMED"
 _REPLAY_DIVERGED_KIND = "REPLAY_DIVERGED"
 _REPLAY_DIVERGED_RECORD_CLASS = "REPLAY_DIVERGED"
+
+#: ``HaltReason`` members that are STRUCTURALLY reached BEFORE any decision pipeline runs
+#: (``tos.engine.core.EngineCore.handle`` / ``_handle_decision_tick`` /
+#: ``_coordinator_precondition_refusal``) — for every one of these, ``EventResult.pipeline`` is
+#: unconditionally ``None`` (never populated: each is returned directly, with no ``pipeline=``
+#: argument), so ``outcome_digest`` is unconditionally ``None`` too, in EVERY run, structurally —
+#: not merely as an artifact of what happened to occur this particular time. This is the ONLY
+#: set of halt reasons :func:`replay_engine` treats as "never ran the pipeline" (independent
+#: review finding #1, wave 2, 2026-09-09). Every OTHER halt reason (e.g. ``TRANSMIT_UNAVAILABLE``,
+#: ``STAGE_DENIED``, ``NO_ACTION_OUTCOME`` when reached WITH a proposal already produced, ...) is
+#: reached from inside ``_run_entries`` AFTER a real proposal already gave ``EventResult.pipeline``
+#: a real, non-``None`` ``outcome_digest`` — a receipt carrying one of THOSE halt reasons must
+#: still go through the normal digest comparison; treating ANY ``halt_reason`` as "uncompared"
+#: would silently swallow a genuine divergence for one of those (measured directly against this
+#: module's own test suite: ``test_mutated_recorded_outcome_digest_is_detected_as_a_divergence``
+#: halts at ``TRANSMIT_UNAVAILABLE`` with a REAL recorded digest and must still be compared and
+#: caught as a divergence when that digest is tampered with).
+_PRE_PIPELINE_HALT_REASONS: frozenset[str] = frozenset(
+    {
+        HaltReason.AUTHORITY_NOT_CURRENT.value,
+        HaltReason.LIVE_SCOPE_NOT_AUTHORIZED.value,
+        HaltReason.EVENT_ORDER_REVERSED.value,
+        HaltReason.REGISTRY_MISSING.value,
+        HaltReason.REGISTRY_EXPLICIT_EMPTY.value,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -110,6 +172,14 @@ class ReplayVerdict:
     total_compared: int
     diverged: tuple[str, ...]
     uncompared: int = 0
+    #: Independent review finding #1, wave 2 (2026-09-09, lane C-R2): ``(event_id, halt_reason)``
+    #: pairs for receipts counted in ``uncompared`` specifically because the LIVE run's own
+    #: receipt already carried a ``halt_reason`` (a Coordinator-gate refusal —
+    #: ``AUTHORITY_NOT_CURRENT`` / ``LIVE_SCOPE_NOT_AUTHORIZED`` — or any other halt that never
+    #: reached the pipeline) — never populated for the wave-1 EGRESS_RESULT
+    #: None-recorded/None-replayed case (that one carries no reason to report; see
+    #: :func:`replay_engine`'s own docstring for why the two cases are distinguished).
+    uncompared_halt_reasons: tuple[tuple[str, str], ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -117,11 +187,23 @@ class ReplayVerdict:
         return len(self.diverged) == 0
 
 
-def _recorded_outcome_digests(
+@dataclass(frozen=True)
+class _RecordedReceipt:
+    """One durable ``EVENT_CONSUMED`` receipt's comparison-relevant fields."""
+
+    outcome_digest: str | None
+    halt_reason: str | None
+
+
+def _recorded_receipts(
     evidence_store: SqliteEvidenceStore,
-) -> dict[str, str | None]:
-    """Read every ``EVENT_CONSUMED`` receipt's recorded ``outcome_digest``, keyed by event id."""
-    recorded: dict[str, str | None] = {}
+) -> dict[str, _RecordedReceipt]:
+    """Read every ``EVENT_CONSUMED`` receipt's recorded ``outcome_digest``/``halt_reason``, keyed
+    by event id (independent review finding #1, wave 2, 2026-09-09: ``halt_reason`` is now read
+    too, alongside ``outcome_digest``, so :func:`replay_engine` can tell a genuinely-halted
+    receipt apart from an honest EGRESS_RESULT ``None`` — see :class:`ReplayVerdict`'s own
+    ``uncompared_halt_reasons`` docstring)."""
+    recorded: dict[str, _RecordedReceipt] = {}
     cur = evidence_store.connection.execute(
         "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
         (_EVENT_CONSUMED_KIND,),
@@ -130,7 +212,10 @@ def _recorded_outcome_digests(
         payload = json.loads(payload_json).get("payload", {})
         event_id = payload.get("event_id")
         if event_id is not None:
-            recorded[event_id] = payload.get("outcome_digest")
+            recorded[event_id] = _RecordedReceipt(
+                outcome_digest=payload.get("outcome_digest"),
+                halt_reason=payload.get("halt_reason"),
+            )
     return recorded
 
 
@@ -176,7 +261,7 @@ def replay_engine(
             "— a zero/negative window is not a smaller replay, it is a silently-disabled one"
         )
 
-    recorded = _recorded_outcome_digests(evidence_store)
+    recorded = _recorded_receipts(evidence_store)
     admitted = list(inbox.replay())
     if window_events is not None:
         admitted = admitted[-window_events:]
@@ -185,22 +270,46 @@ def replay_engine(
     diverged: list[str] = []
     compared = 0
     uncompared = 0
+    uncompared_halt_reasons: list[tuple[str, str]] = []
     for _seq, event in admitted:
         event_id = event_identity(event, scheme=scheme)
         if event_id not in recorded:
             # Nothing to compare against (e.g. outside the replay window's own history, or a row
             # admitted but not yet consumed) — not a divergence, just not yet a baseline.
             continue
-        expected_digest = recorded[event_id]
+        receipt = recorded[event_id]
+        expected_digest = receipt.outcome_digest
+        if (
+            expected_digest is None
+            and receipt.halt_reason in _PRE_PIPELINE_HALT_REASONS
+        ):
+            # Independent review finding #1, wave 2 (2026-09-09): the LIVE run's own receipt is
+            # itself a halt (e.g. a Coordinator-gate refusal — AUTHORITY_NOT_CURRENT /
+            # LIVE_SCOPE_NOT_AUTHORIZED — or any other halt reached before the decision
+            # pipeline ran; tos.engine.core.EventResult.outcome_digest is None whenever no
+            # pipeline ran). The boot-time replay core's own CoordinatorPreconditions stand-in
+            # (tos_runtime.compose._preconditions._ReplayPreconditions) is unconditionally
+            # True/True — it cannot reproduce a HISTORICAL refusal — so re-deriving this event
+            # here would run the pipeline for real and manufacture a digest with nothing honest
+            # to compare it against (an asymmetric None-recorded/non-None-replayed pair the old
+            # code treated as a divergence — a single gate refusal permanently bricked every
+            # later boot). Never call core.handle for this event at all: the live run's own
+            # HaltReason accounting ("nothing is consumed") means skipping it here reproduces
+            # the live run's ledger state exactly, not merely avoids a false comparison.
+            uncompared += 1
+            uncompared_halt_reasons.append((event_id, receipt.halt_reason))
+            continue
         # Always re-derive the event's outcome (this advances the SAME core's ledger state for
         # every subsequent event in the stream) even when the comparison below is skipped.
         result = core.handle(event)
         actual_digest = result.outcome_digest
         if expected_digest is None and actual_digest is None:
-            # Independent review finding #1: neither side has an outcome identity to compare
-            # (e.g. an EGRESS_RESULT event — tos.engine.core.EventResult.outcome_digest is
-            # honestly None for every one of them). This is "no outcome identity", not a
-            # divergence — see the module docstring and ReplayVerdict.uncompared.
+            # Independent review finding #1 (wave 1): neither side has an outcome identity to
+            # compare (e.g. an EGRESS_RESULT event — tos.engine.core.EventResult.outcome_digest
+            # is honestly None for every one of them, with no halt_reason at all). This is "no
+            # outcome identity", not a divergence — see the module docstring and
+            # ReplayVerdict.uncompared. Distinguished from the halt-reason case above: this one
+            # carries no reason to report (uncompared_halt_reasons stays empty for it).
             uncompared += 1
             continue
         state = replay_result_for(
@@ -225,5 +334,8 @@ def replay_engine(
                 record_class=_REPLAY_DIVERGED_RECORD_CLASS,
             )
     return ReplayVerdict(
-        total_compared=compared, diverged=tuple(diverged), uncompared=uncompared
+        total_compared=compared,
+        diverged=tuple(diverged),
+        uncompared=uncompared,
+        uncompared_halt_reasons=tuple(uncompared_halt_reasons),
     )

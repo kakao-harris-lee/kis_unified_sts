@@ -781,6 +781,77 @@ class TestRecomposeReplay:
         runtime2.rcl_log.close()
         runtime2.evidence_store.close()
 
+    def test_recompose_after_a_coordinator_gate_refusal_does_not_diverge(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """Independent review finding #1, WAVE 2 (2026-09-09, lane C-R2), RED before the fix.
+
+        A DIFFERENT half of finding #1 from ``test_recompose_after_a_real_hand_off_does_not_
+        diverge`` above (that one is the wave-1 EGRESS_RESULT ``None``/``None`` case, already
+        fixed): here the recorded ``EVENT_CONSUMED`` receipt carries a genuine Coordinator-gate
+        refusal (``HaltReason.AUTHORITY_NOT_CURRENT``), not an honest EGRESS_RESULT ``None``.
+
+        Reproduces the reviewer's own P1 compose probe ("fence the epoch service ... one tick
+        ... re-compose over the same data_dir") using the SAME mechanism
+        ``TestStaleGenerationProviderYieldsUnknown`` above already uses to fence the RCL tip
+        generation provider: a second :class:`~tos_runtime.rcl.log.SqliteCommitLog` handle on
+        the SAME ``rcl.sqlite3`` file acquires a competing Writer Epoch, so the runtime's own
+        ``authority_epoch_service`` (bound to its ORIGINAL, now-stale ``writer_epoch``) reads
+        ``StaleEpochRead`` on its next ``read_linearizable`` —
+        ``SafetyAuthorityEpochService.current_state()``'s own documented fenced-``None``
+        treatment (``tos_runtime/authority/epoch.py``), exactly the ``StaleEpochRead`` /
+        ``sqlite3.Error`` reachability finding #1 itself names. One tick run while fenced is
+        refused by the Coordinator gate and records ``outcome_digest=None`` +
+        ``halt_reason=AUTHORITY_NOT_CURRENT``.
+
+        The boot-time replay core's own ``CoordinatorPreconditions`` stand-in
+        (``_ReplayPreconditions``) is unconditionally ``True``/``True`` — a re-compose over the
+        SAME ``data_dir`` runs the FULL pipeline for that same tick during replay and derives a
+        REAL, non-``None`` digest, an asymmetric ``None``/non-``None`` pair the replay
+        comparison used to treat as a divergence, raising
+        :class:`~tos_runtime.compose._boot_integrity.EngineReplayDiverged` on every subsequent
+        boot — permanently un-bootable. After the fix, a receipt whose own ``halt_reason`` is a
+        structurally-pre-pipeline one is never compared at all (counted ``uncompared``, the
+        reason preserved) — the recompose must succeed, and not merely once (a THIRD boot must
+        also succeed, mirroring the wave-1 sibling test's own "not just the second time happens
+        to work" discipline).
+        """
+        from tos_runtime.rcl.log import SqliteCommitLog
+
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+
+        # Usurp the runtime's own Writer Epoch on the SAME rcl.sqlite3 file — its
+        # authority_epoch_service reads with the STALE writer_epoch it captured at boot, so
+        # current_state() (StaleEpochRead) fences to current_epoch_floor=None and the
+        # Coordinator gate refuses the next DECISION_TICK.
+        usurper = SqliteCommitLog(
+            runtime.rcl_log.path, evidence_port=runtime.evidence_store
+        )
+        usurper.acquire_epoch(runtime.identity)
+        try:
+            event = fx.crossing_event()
+            results = runtime.run_once((event,))
+            assert results[0].halt_reason is not None
+            assert results[0].halt_reason.value == "AUTHORITY_NOT_CURRENT"
+            assert results[0].outcome_digest is None
+        finally:
+            usurper.close()
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+        # Second boot over the SAME data_dir: must NOT raise EngineReplayDiverged. A fresh boot
+        # acquires its own new (current) Writer Epoch, so this is not "still fenced" — it is
+        # exactly the ordinary reboot the reviewer's probe performed.
+        runtime2 = _compose(tmp_path, config_dir, data_dir, custody_root)
+        runtime2.rcl_log.close()
+        runtime2.evidence_store.close()
+
+        # Third boot: must ALSO succeed — not just "the second time happens to work".
+        runtime3 = _compose(tmp_path, config_dir, data_dir, custody_root)
+        runtime3.rcl_log.close()
+        runtime3.evidence_store.close()
+
 
 class TestPendingDimensionAttestationGatesCompleteness:
     """A pending currentness dimension's operator attestation is what makes

@@ -313,12 +313,22 @@ def build_core(
     registry: StrategyRegistry | None = None,
     stages: dict[CommitmentStep, Stage] | None = None,
     transmit: Any = None,
+    preconditions: Any = None,
 ) -> EngineCore:
+    """``preconditions`` defaults to :class:`_AlwaysPermissivePreconditions` (module docstring —
+    this fixture set exercises the durable-inbox/driver/replay machinery, not the Coordinator
+    gate itself). A caller that specifically wants to exercise a gate refusal (independent
+    review finding #1, wave 2, 2026-09-09 — ``tos_runtime.engine.replay``'s own Coordinator-gate
+    refusal case) passes a different ``CoordinatorPreconditions`` double instead."""
     return EngineCore(
         registry=registry if registry is not None else registry_with(),
         stages=stages if stages is not None else admitting_stages(),
         configuration=engine_configuration(),
-        preconditions=_AlwaysPermissivePreconditions(),
+        preconditions=(
+            preconditions
+            if preconditions is not None
+            else _AlwaysPermissivePreconditions()
+        ),
         transmit=transmit,
         sink=NullEvidenceSink(),
         scheme=SCHEME,

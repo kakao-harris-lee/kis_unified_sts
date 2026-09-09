@@ -241,3 +241,68 @@ def test_egress_result_none_outcome_digest_is_uncompared_not_diverged(
         verdict.total_compared == 1
     )  # only the DECISION_TICK has a real outcome digest
     assert verdict.uncompared == 1  # the EGRESS_RESULT: None recorded, None replayed
+    assert verdict.uncompared_halt_reasons == ()  # no halt reason on this one
+
+
+class _AlwaysRefusedPreconditions:
+    """A ``False``/``False`` ``CoordinatorPreconditions`` double — every ``DECISION_TICK`` this
+    core ever sees is refused before step 1 (``HaltReason.AUTHORITY_NOT_CURRENT``)."""
+
+    def authority_epoch_current(self) -> bool | None:
+        return False
+
+    def live_scope_authorized(self, _transport_nature: object) -> bool | None:
+        return False
+
+
+def test_coordinator_gate_refusal_receipt_is_uncompared_not_diverged(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """Independent review finding #1, wave 2 (2026-09-09), RED before the fix.
+
+    A DIFFERENT half of finding #1 from the EGRESS_RESULT case above: here the LIVE run's own
+    ``EVENT_CONSUMED`` receipt carries a genuine Coordinator-gate refusal
+    (``HaltReason.AUTHORITY_NOT_CURRENT``), not an honest EGRESS_RESULT ``None``. The driver here
+    is built with ``_AlwaysRefusedPreconditions`` (refused live), but ``replay_engine``'s
+    ``build_core`` factory below uses the DEFAULT ``_AlwaysPermissivePreconditions`` (mirroring
+    ``_ReplayPreconditions``'s own unconditional True/True design in the real compose wiring) —
+    so, before the fix, replay would run the FULL pipeline for this refused tick and manufacture
+    a real digest, an asymmetric None-recorded/non-None-replayed pair the old comparison logic
+    reported as a divergence.
+    """
+    driver = EngineDriver(
+        core=fx.build_core(transmit=None, preconditions=_AlwaysRefusedPreconditions()),
+        inbox=inbox,
+        evidence_store=evidence_store,
+        emergency_log=emergency_log,
+        scheme=SCHEME,
+        continuity_id="replay-tests",
+        monotonic_source=FakeMonotonicSource(),
+        max_send_result_wait_ms=_NO_TIMEOUT_WITHIN_TEST,
+        orthostate_projector=fx.orthostate_projector(
+            inbox, evidence_store, emergency_log
+        ),
+        finality_producer=fx.finality_producer(),
+    )
+    tick_result = driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+    assert tick_result.halt_reason is not None
+    assert tick_result.halt_reason.value == "AUTHORITY_NOT_CURRENT"
+    assert tick_result.outcome_digest is None
+
+    verdict = replay_engine(
+        inbox,
+        evidence_store,
+        emergency_log,
+        lambda: fx.build_core(transmit=None),  # default: _AlwaysPermissivePreconditions
+        scheme=SCHEME,
+        window_events=None,
+    )
+    assert verdict.ok
+    assert verdict.diverged == ()
+    assert verdict.total_compared == 0
+    assert verdict.uncompared == 1
+    assert len(verdict.uncompared_halt_reasons) == 1
+    event_id, halt_reason = verdict.uncompared_halt_reasons[0]
+    assert halt_reason == "AUTHORITY_NOT_CURRENT"
