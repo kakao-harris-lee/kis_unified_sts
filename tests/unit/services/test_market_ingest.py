@@ -716,3 +716,31 @@ def test_stock_feed_without_the_accessor_never_warns(caplog):
         daemon._on_tick("005930", {"close": 71500.0}, datetime.now(UTC))
 
     assert [r for r in caplog.records if "orderbook merge" in r.getMessage()] == []
+
+
+def test_an_empty_book_does_not_clear_the_failure_latch(caplog):
+    """Recovery is keyed on a merge that actually produced a book. Treating a
+    bare successful call as recovery would report "recovered" while every
+    republished tick still carries no quote — and the latch would then be free
+    to warn again on the next failure, turning a one-shot line into a flapping
+    one."""
+    import logging
+
+    feed = OrderbookFeed(_QUOTE, raises=True)
+    daemon = _futures_daemon(feed, FakePublisher())
+
+    with caplog.at_level(logging.INFO, logger="services.market_ingest.main"):
+        daemon._on_tick("A05603", {"close": 331.20}, datetime.now(UTC))  # WARNING
+        feed.raises = False
+        feed.snapshot = {}  # accessor works, book is empty
+        daemon._on_tick("A05603", {"close": 331.21}, datetime.now(UTC))
+
+        assert daemon._orderbook_merge_log.warned is True
+        assert [r for r in caplog.records if "merge recovered" in r.getMessage()] == []
+
+        feed.snapshot = _QUOTE  # a real two-sided book
+        daemon._on_tick("A05603", {"close": 331.22}, datetime.now(UTC))
+        daemon._on_tick("A05603", {"close": 331.23}, datetime.now(UTC))
+
+    assert daemon._orderbook_merge_log.warned is False
+    assert len([r for r in caplog.records if "merge recovered" in r.getMessage()]) == 1

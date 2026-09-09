@@ -270,9 +270,11 @@ def test_orderbook_publish_fields_carries_the_quote_time_as_quote_ts() -> None:
     assert fields["quote_ts"] == 1771982309.0
 
 
-def test_orderbook_publish_fields_keeps_an_existing_quote_ts() -> None:
-    """A snapshot that already came off the stream carries `quote_ts`; re-keying
-    its `timestamp` again would launder a stale book into a fresh one."""
+def test_orderbook_publish_fields_prefers_an_explicit_quote_ts() -> None:
+    """No feed emits this shape today, but the rule is worth pinning: an
+    explicit `quote_ts` wins, and only in its absence does the snapshot's
+    `timestamp` become it. Re-keying over a caller's value would launder a
+    stale book into a fresh one."""
     from services.monitoring.tick_stream_publisher import orderbook_publish_fields
 
     fields = orderbook_publish_fields(
@@ -287,15 +289,19 @@ def test_orderbook_publish_fields_keeps_an_existing_quote_ts() -> None:
     assert fields["quote_ts"] == 100.0
 
 
-def test_orderbook_publish_fields_omits_quote_ts_when_unreadable() -> None:
+@pytest.mark.parametrize("stamp", ["nope", None, -1.0], ids=["text", "none", "neg"])
+def test_orderbook_publish_fields_drops_a_book_it_cannot_date(stamp) -> None:
+    """A book with no usable time is worse than no book: published without
+    `quote_ts`, a consumer falls back to the trade tick's time and reads a
+    stale quote as fresh. Publishing the trade alone fails closed."""
     from services.monitoring.tick_stream_publisher import orderbook_publish_fields
 
-    fields = orderbook_publish_fields(
-        {"bid_price_1": 331.18, "ask_price_1": 331.22, "timestamp": "nope"}
+    assert (
+        orderbook_publish_fields(
+            {"bid_price_1": 331.18, "ask_price_1": 331.22, "timestamp": stamp}
+        )
+        == {}
     )
-
-    assert "quote_ts" not in fields
-    assert fields["bid_price_1"] == 331.18
 
 
 @pytest.mark.parametrize(

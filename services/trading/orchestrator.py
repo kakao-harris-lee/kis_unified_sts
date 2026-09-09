@@ -1177,13 +1177,17 @@ class TradingOrchestrator:
                         )
                     else:
                         try:
-                            monitor_data.update(
-                                orderbook_publish_fields(snapshot_getter(symbol))
+                            book_fields = orderbook_publish_fields(
+                                snapshot_getter(symbol)
                             )
                         except Exception as exc:  # noqa: BLE001 - never break ticks
                             self._orderbook_merge_log.failed(f"lookup raised {exc!r}")
                         else:
-                            self._orderbook_merge_log.ok()
+                            # An empty or one-sided book is a normal pre-open
+                            # state, not a recovery — see OrderbookMergeLog.
+                            if book_fields:
+                                monitor_data.update(book_fields)
+                                self._orderbook_merge_log.merged()
                     self._tick_stream_publisher.publish("futures", symbol, monitor_data)
 
             self._futures_price_feed.set_tick_callback(_on_futures_tick)

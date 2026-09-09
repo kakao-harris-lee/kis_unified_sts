@@ -228,9 +228,12 @@ class MarketIngestDaemon:
         except Exception as exc:  # noqa: BLE001 - never break the republish path
             self._orderbook_merge_log.failed(f"lookup raised {exc!r}")
             return data
-        self._orderbook_merge_log.ok()
         if not fields:
+            # An empty or one-sided book is a normal pre-open state, not a
+            # recovery: clearing the latch here would report "recovered" while
+            # every republished tick still carries no quote.
             return data
+        self._orderbook_merge_log.merged()
         return {**data, **fields}
 
     def _on_tick(

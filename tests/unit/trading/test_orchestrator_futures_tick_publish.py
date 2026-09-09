@@ -184,3 +184,26 @@ def test_a_one_sided_book_is_not_treated_as_a_failure(caplog):
         _tick(feed, orch)
 
     assert [r for r in caplog.records if "orderbook merge" in r.getMessage()] == []
+
+
+def test_an_empty_book_does_not_clear_the_failure_latch(caplog):
+    """Same rule as the ingest producer: recovery means a book was actually
+    merged, not that the accessor returned without raising."""
+    feed = _Feed(QUOTE, raises=True)
+    orch = _orchestrator(feed, _Publisher())
+
+    with caplog.at_level(logging.INFO, logger=ORCH_LOGGER):
+        _tick(feed, orch)  # WARNING
+        feed.raises = False
+        feed._snapshot = {}  # accessor works, book is empty
+        _tick(feed, orch)
+
+        assert orch._orderbook_merge_log.warned is True
+        assert [r for r in caplog.records if "merge recovered" in r.getMessage()] == []
+
+        feed._snapshot = QUOTE
+        _tick(feed, orch)
+        _tick(feed, orch)
+
+    assert orch._orderbook_merge_log.warned is False
+    assert len([r for r in caplog.records if "merge recovered" in r.getMessage()]) == 1
