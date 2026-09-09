@@ -284,6 +284,64 @@ def test_none_of_the_new_types_carry_a_performance_surface_field() -> None:
 
 
 # ---------------------------------------------------------------------------
+# the claim gate is external — pinned, not incidental (team-lead decision, Phase 3 wave 3 §3.1)
+# ---------------------------------------------------------------------------
+
+
+def test_calibration_names_are_not_reexported_from_the_package_namespace() -> None:
+    """The submodule is imported by path (``tos.backtest.calibration``), never through the package.
+
+    A future re-export is a deliberate act that must update
+    ``test_backtest_result_surface.py``'s ``_SEALED_MODELS`` / ``_RUN_RESULTS`` drift canaries in
+    the same change — this pin catches a silent widening that forgot to.
+    """
+    import tos.backtest as package
+
+    exported_names = set(package.__all__)
+    package_vars = vars(package)
+    for name in (
+        "CalibrationVerdict",
+        "DeviationBudget",
+        "ExpectancyClaim",
+        "FillDeviation",
+        "calibration_within_budget",
+        "claim_expectancy",
+        "expectancy_claim_permitted",
+    ):
+        assert name not in exported_names, (
+            f"tos.backtest.__all__ carries {name!r} — the calibration claim gate is external by "
+            "decision (module docstring); re-exporting it requires updating the sealed-model "
+            "drift canaries in test_backtest_result_surface.py in the same change"
+        )
+        assert name not in package_vars, (
+            f"tos.backtest exposes {name!r} in its namespace even though __all__ does not list it "
+            "— the anti-phantom convention in this suite sweeps vars(), not just __all__"
+        )
+
+
+def test_run_results_carry_no_expectancy_or_calibration_field() -> None:
+    """(§1.2 B1, reaffirmed) The sealed run types gained no field from this module's addition.
+
+    Belt-and-suspenders alongside the existing ``seal_performance_surface`` construction-time
+    check: this module's own suite independently pins that ``BacktestRun`` /
+    ``MultiSymbolBacktestRun`` carry no ``expectancy`` field (the literal name the plan originally
+    asked for) and no ``calibration`` field either (a plausible alternate name this module's
+    docstring explicitly rejects as an evasion of the seal, not a satisfaction of it).
+    """
+    import dataclasses
+
+    from tos.backtest.results import BacktestRun, MultiSymbolBacktestRun
+
+    for run_type in (BacktestRun, MultiSymbolBacktestRun):
+        names = {field.name for field in dataclasses.fields(run_type)}
+        for forbidden_token in ("expectancy", "calibration"):
+            assert not any(forbidden_token in name for name in names), (
+                f"{run_type.__name__} declares a field containing {forbidden_token!r}: {names} — "
+                "the calibration claim gate must stay external (module docstring)"
+            )
+
+
+# ---------------------------------------------------------------------------
 # mutation-matrix documentation (run manually, see test file docstring / PR report):
 #
 # Mutation 1 — change "0 observations => INSUFFICIENT" to "0 observations => WITHIN":

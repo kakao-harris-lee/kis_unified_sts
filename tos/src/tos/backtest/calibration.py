@@ -33,6 +33,31 @@ tolerance, not a licence to claim compliance with no evidence at all. An observa
 ``None`` value on a dimension the budget bounds is likewise insufficient: the budget states a bound
 on that dimension, so a claim that the (unmeasured) dimension is "within" it would be unsupported.
 
+**The claim gate is external, never merged into a run result — by decision, not oversight.**
+This module's types are deliberately **not** re-exported from :mod:`tos.backtest`'s package
+``__init__``, and neither :class:`~tos.backtest.results.BacktestRun` nor
+:class:`~tos.backtest.results.MultiSymbolBacktestRun` gains an ``expectancy`` (or any
+calibration-claim) field. The plan that requested this module's slice (Phase 3 wave 3 §3.1)
+originally asked for exactly that field, on those two types — but that collides head-on with the
+already-ratified §1.2 B1 seal :func:`~tos.backtest._base.seal_performance_surface` enforces on every
+construction of those two run types via their own ``PERFORMANCE_SURFACE_TOKENS`` check
+(``tos/src/tos/backtest/_base.py``), which lists ``"expectancy"`` explicitly; the governance suite
+already has a passing case naming it by hand
+(``tos/tests/backtest/test_backtest_result_surface.py::test_the_seal_catches_every_planted_performance_name["expectancy"]``).
+A differently-named field that still *carries* an :class:`ExpectancyClaim` would not satisfy that
+seal, only dodge its literal token match — an ``ExpectancyClaim`` that can hold a value **is** a
+performance-claim surface under any field name, so renaming it would be evading the seal rather than
+respecting it (team-lead decision, Phase 3 wave 3 §3.1 escalation). The correct shape is therefore:
+the run result stays exactly as sealed today, and a calibration claim is a **separate artifact**
+the runtime calibration report produces alongside — never inside — a ``BacktestRun`` /
+``MultiSymbolBacktestRun``. Consumers (the runtime lane's ``calibration_report.py``, in particular)
+import this module by its submodule path, ``from tos.backtest.calibration import ...``, not through
+the package namespace; that keeps the package's own sealed-model census
+(``test_backtest_result_surface.py``'s ``_SEALED_MODELS`` / ``_RUN_RESULTS`` drift canaries)
+authoritative over what the package actually exports. A future re-export is a deliberate act that
+must update those canaries in the same change, not a side effect of adding a module here — this
+module's own test suite pins the current non-export state so a silent widening would be caught.
+
 Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #33 §0.3). No clock, no RNG, no network.
 """
 
