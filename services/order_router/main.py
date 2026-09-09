@@ -59,7 +59,7 @@ from shared.execution.contract_spec import ContractSpec
 from shared.execution.live_mode_guard import LiveModeGuard
 from shared.execution.passive_maker import PassiveMaker
 from shared.execution.pseudo_oco import PseudoOCO
-from shared.execution.slippage_control import ExecutionAction
+from shared.execution.slippage_control import ExecutionAction, quote_age_seconds
 from shared.execution.tick_math import _compute_slippage_ticks
 from shared.streaming.stage import StreamStage
 
@@ -554,6 +554,35 @@ class OrderRouterDaemon(StreamStage):
                 if self.futures_price_feed is not None
                 else None
             )
+
+            # Quote-freshness gate (router-only, config
+            # `futures_slippage_control.order_router_max_quote_age_seconds`).
+            # `evaluate_entry` filters on the SIGNAL's age and never reads the
+            # quote's timestamp, and `parse_orderbook_snapshot` substitutes
+            # `now` when the timestamp is missing — so a feed that stopped
+            # ticking keeps serving its last, still-parseable book and the gate
+            # would happily size an entry against it. Both producers of the
+            # tick stream publish on trade ticks, so a quiet book is exactly
+            # when this happens. Fail-closed, and applied in `ws` mode too:
+            # this is a property of the gate, not of the feed. An empty payload
+            # is left to the controller's own `orderbook_unavailable`.
+            max_quote_age = (
+                self.slippage_controller.config.order_router_max_quote_age_seconds
+            )
+            if max_quote_age > 0 and quote_payload:
+                age = quote_age_seconds(quote_payload)
+                if age is None or age > max_quote_age:
+                    self.slippage_blocked_count += 1
+                    logger.warning(
+                        "slippage_gate: blocked signal_id=%s symbol=%s "
+                        "reason=quote_stale:%s max_age=%.1fs",
+                        signal_id,
+                        signal.symbol,
+                        "unknown_timestamp" if age is None else f"{age:.2f}s",
+                        max_quote_age,
+                    )
+                    return True  # consumed, no retry (mirrors the gate's aborts)
+
             cross_payload = None
             if self.slippage_controller.config.cross_asset_enabled:
                 cross_payload = (
@@ -709,6 +738,14 @@ def _resolve_mode() -> str:
 
 
 _FEED_MODE_ENV = "FUTURES_ORDER_ROUTER_FEED"
+# Entries replayed from the tail of the tick stream at startup so the
+# send-time gate has a quote for the first signal after a restart instead of
+# blocking it on `orderbook_unavailable`. One trading symbol at ~1.5 ticks/s
+# means 50 entries is well under a minute of history — enough to be current,
+# short enough that a restart during a halt does not seed a stale book past
+# the quote-age gate.
+_FEED_SEED_COUNT = 50
+
 _FEED_MODE_STREAM = "stream"
 _FEED_MODE_WS = "ws"
 _FEED_MODES = (_FEED_MODE_STREAM, _FEED_MODE_WS)
@@ -789,7 +826,12 @@ def _build_price_feed(
     from shared.streaming.consumer_feed import StreamConsumerFeed
 
     stream = os.environ.get("FUTURES_TICK_STREAM", "raw_data")
-    feed = StreamConsumerFeed(redis=redis, stream=stream)
+    feed = StreamConsumerFeed(
+        redis=redis,
+        stream=stream,
+        seed_latest=True,
+        seed_count=_FEED_SEED_COUNT,
+    )
     feed.update_symbols([symbol], auxiliary_symbols=auxiliary_symbols)
     logger.info(
         "order_router feed=stream stream=%s (no KIS WS opened)",

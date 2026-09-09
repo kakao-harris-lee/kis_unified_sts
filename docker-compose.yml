@@ -393,6 +393,11 @@ services:
       # blocks every entry.
       FUTURES_SLIPPAGE_TICK_SIZE: "${FUTURES_SLIPPAGE_TICK_SIZE:-0.02}"
       FUTURES_PAPER_MAX_SPREAD_TICKS: "${FUTURES_PAPER_MAX_SPREAD_TICKS:-6}"
+      # Quote-freshness reject for the same gate (router-only key; 0 disables).
+      # Producers publish on trade ticks, so a quiet book leaves the last quote
+      # aging in place — this is what stops an entry being sized against it.
+      # Same interpolation-only reason as the two knobs above.
+      FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS: "${FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS:-10}"
       # Publishes the kill-switch api_error_rate metric for the decoupled futures
       # pipeline under its own source key (…:order_router), fed by OrderExecutor
       # REST outcomes. Opt out via ORDER_ROUTER_PUBLISH_KIS_ERROR_RATE=false.

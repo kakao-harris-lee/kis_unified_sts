@@ -436,3 +436,82 @@ def test_load_order_router_gate_reads_explicit_false():
 def test_load_missing_section_returns_disabled_default():
     cfg = load_futures_slippage_config({}, paper_trading=True)
     assert cfg == SlippageControlConfig()
+
+
+# ---------------------------------------------------------------------------
+# Quote-freshness knob + helper (order-router-only, like order_router_gate)
+# ---------------------------------------------------------------------------
+
+
+def test_load_max_quote_age_defaults_to_ten_seconds():
+    cfg = load_futures_slippage_config(_exec_cfg(), paper_trading=False)
+    assert cfg.order_router_max_quote_age_seconds == 10.0
+
+
+def test_load_max_quote_age_reads_explicit_value():
+    exec_cfg = _exec_cfg()
+    exec_cfg["futures_slippage_control"]["order_router_max_quote_age_seconds"] = 2.5
+    cfg = load_futures_slippage_config(exec_cfg, paper_trading=False)
+    assert cfg.order_router_max_quote_age_seconds == 2.5
+
+
+def test_load_max_quote_age_zero_is_preserved_as_disabled():
+    exec_cfg = _exec_cfg()
+    exec_cfg["futures_slippage_control"]["order_router_max_quote_age_seconds"] = 0
+    cfg = load_futures_slippage_config(exec_cfg, paper_trading=False)
+    assert cfg.order_router_max_quote_age_seconds == 0.0
+
+
+def test_repo_execution_yaml_exposes_the_quote_age_knob():
+    """The knob must survive `${VAR:default}` interpolation in the real file —
+    a router-only key the monolith ignores, same shape as order_router_gate."""
+    from shared.config.loader import ConfigLoader
+
+    cfg = load_futures_slippage_config(
+        ConfigLoader.load("execution.yaml"), paper_trading=True
+    )
+    assert cfg.order_router_max_quote_age_seconds == 10.0
+
+
+def test_quote_age_seconds_reads_epoch_float_and_string_and_iso():
+    from datetime import UTC
+
+    from shared.execution.slippage_control import quote_age_seconds
+
+    now = datetime(2026, 4, 28, 5, 0, 0, tzinfo=UTC)
+    epoch = now.timestamp() - 3.0
+
+    assert quote_age_seconds({"timestamp": epoch}, now=now) == 3.0
+    # Redis Stream fields arrive as strings.
+    assert quote_age_seconds({"timestamp": str(epoch)}, now=now) == 3.0
+    assert quote_age_seconds({"timestamp": "2026-04-28T04:59:57+00:00"}, now=now) == 3.0
+
+
+def test_quote_age_seconds_returns_none_when_unreadable():
+    from shared.execution.slippage_control import quote_age_seconds
+
+    assert quote_age_seconds(None) is None
+    assert quote_age_seconds({}) is None
+    assert quote_age_seconds({"timestamp": "not-a-time"}) is None
+
+
+def test_quote_age_seconds_allows_a_producer_clock_slightly_ahead():
+    from datetime import UTC
+
+    from shared.execution.slippage_control import quote_age_seconds
+
+    now = datetime(2026, 4, 28, 5, 0, 0, tzinfo=UTC)
+    assert quote_age_seconds({"timestamp": now.timestamp() + 2.0}, now=now) == -2.0
+
+
+def test_numeric_string_timestamp_no_longer_silently_reads_as_now():
+    """Regression: `parse_orderbook_snapshot` fell back to `now` for a numeric
+    string, i.e. it reported a stale quote as freshly timestamped."""
+    from datetime import UTC
+
+    quote = _quote(bid=331.20, ask=331.22)
+    quote["timestamp"] = "1700000000.0"
+    snapshot = parse_orderbook_snapshot("A05603", quote)
+
+    assert snapshot is not None
+    assert snapshot.timestamp == datetime.fromtimestamp(1700000000.0, tz=UTC)

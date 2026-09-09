@@ -227,6 +227,7 @@ async def _stream_feed_with_quote(
     last: float | None = None,
     bid_qty: float = 10.0,
     ask_qty: float = 10.0,
+    quote_ts: float | None = None,
 ):
     """Publish one orchestrator-shaped merged snapshot and consume it.
 
@@ -252,7 +253,9 @@ async def _stream_feed_with_quote(
         {
             "code": SYMBOL,
             "close": bid if last is None else last,
-            "timestamp": datetime.now(UTC).timestamp(),
+            "timestamp": (
+                datetime.now(UTC).timestamp() if quote_ts is None else quote_ts
+            ),
             "bid_price_1": bid,
             "bid_qty_1": bid_qty,
             "ask_price_1": ask,
@@ -375,3 +378,82 @@ async def test_paper_adapter_fills_from_a_stream_feed():
     # so the simulator fills at the limit.
     assert fill is not None
     assert fill.price == 331.21 and fill.quantity == 1
+
+
+# ---------------------------------------------------------------------------
+# Quote-freshness gate (router-only; applies in both feed modes)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stale_quote_is_blocked_before_the_controller_sees_it(caplog):
+    """`evaluate_entry` filters on the SIGNAL's age and never reads the quote's
+    timestamp, so without this gate a feed that stopped ticking keeps serving
+    its last, still-parseable book. Both producers publish on trade ticks, so a
+    quiet book is exactly when it happens."""
+    controller = _paper_controller()
+    assert controller.config.order_router_max_quote_age_seconds == 10.0
+    stale = datetime.now(UTC).timestamp() - 120.0
+    redis, feed = await _stream_feed_with_quote(bid=331.20, ask=331.22, quote_ts=stale)
+
+    with caplog.at_level(logging.WARNING, logger=ROUTER_LOGGER):
+        daemon, kis = await _route_one(redis, feed, controller, _signal(331.20))
+
+    assert daemon.slippage_blocked_count == 1
+    assert any("reason=quote_stale" in r.getMessage() for r in caplog.records), [
+        r.getMessage() for r in caplog.records
+    ]
+    kis.place_futures_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_quote_without_a_readable_timestamp_is_blocked(caplog):
+    """Fail-closed: `parse_orderbook_snapshot` substitutes `now` for a missing
+    timestamp, so an ageless quote would otherwise read as brand new."""
+    redis, feed = await _stream_feed_with_quote(bid=331.20, ask=331.22)
+    feed._prices["A05603"].pop("timestamp")
+
+    with caplog.at_level(logging.WARNING, logger=ROUTER_LOGGER):
+        daemon, kis = await _route_one(
+            redis, feed, _paper_controller(), _signal(331.20)
+        )
+
+    assert daemon.slippage_blocked_count == 1
+    assert any(
+        "reason=quote_stale:unknown_timestamp" in r.getMessage() for r in caplog.records
+    )
+    kis.place_futures_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_quote_age_zero_disables_the_freshness_gate():
+    """The knob is a rollback switch, like order_router_gate."""
+    controller = _paper_controller()
+    controller.config.order_router_max_quote_age_seconds = 0.0
+    stale = datetime.now(UTC).timestamp() - 3600.0
+    redis, feed = await _stream_feed_with_quote(bid=331.20, ask=331.22, quote_ts=stale)
+
+    daemon, kis = await _route_one(redis, feed, controller, _signal(331.20))
+
+    assert daemon.slippage_blocked_count == 0
+    kis.place_futures_order.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_empty_book_still_reports_orderbook_unavailable(caplog):
+    """The freshness gate must not steal the controller's own reason for the
+    case where there is no book at all."""
+    redis, feed = await _stream_feed_with_quote(bid=331.20, ask=331.22)
+    feed._prices.clear()
+    assert feed.get_orderbook_snapshot(SYMBOL) == {}
+
+    with caplog.at_level(logging.WARNING, logger=ROUTER_LOGGER):
+        daemon, kis = await _route_one(
+            redis, feed, _paper_controller(), _signal(331.20)
+        )
+
+    assert daemon.slippage_blocked_count == 1
+    assert any(
+        "reason=orderbook_unavailable" in r.getMessage() for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+    kis.place_futures_order.assert_not_awaited()

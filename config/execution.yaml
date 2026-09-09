@@ -199,6 +199,12 @@ futures_slippage_control:
   # order_router 전송 직전 게이트만의 롤백 스위치(F-9 Gate 1b 제어 동등성) — 모놀리식은 이 키를 무시한다.
   order_router_gate: ${FUTURES_ROUTER_SLIPPAGE_GATE:true}
 
+  # 호가 신선도 상한(초). order_router 전용 — 모놀리식은 이 키를 무시한다. 0 = 비활성.
+  # evaluate_entry 는 신호 나이(max_signal_age_seconds)만 보고 호가 시각은 보지 않는다.
+  # 스트림 피드는 producer 가 체결 틱마다 발행하므로 체결이 끊긴 구간의 마지막 호가는
+  # "낡았지만 파싱 가능"한 상태로 남는다 — 그 호가로 진입하지 않도록 여기서 막는다.
+  order_router_max_quote_age_seconds: ${FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS:10}
+
   # Rule 1: 유동성/스프레드 필터
   max_spread_ticks: 1
   min_depth_multiplier: 3.0

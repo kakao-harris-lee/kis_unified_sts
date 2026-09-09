@@ -48,6 +48,7 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     # `ws` is the opt-in self-fed path (one futures WS per KIS account).
     assert paper["FUTURES_ORDER_ROUTER_FEED"] == "stream"
     assert paper["FUTURES_TICK_STREAM"] == "raw_data"
+    assert paper["FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS"] == "10"
     assert paper["FUTURES_STRATEGY_SYMBOL"] == ""
     # Empty = every setup whose strategy.enabled is true; the knob exists so an
     # operator can narrow the DECOUPLED roster without touching the switch
@@ -85,6 +86,7 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert live["FUTURES_ORDER_ROUTER_MODE"] == "paper"
     assert live["FUTURES_ORDER_ROUTER_FEED"] == "stream"
     assert live["FUTURES_TICK_STREAM"] == "raw_data"
+    assert live["FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS"] == "10"
     assert live["FUTURES_STRATEGY_SYMBOL"] == ""
     assert live["FUTURES_DECISION_ENGINE_SETUPS"] == ""
     assert live["FUTURES_EXECUTOR_TRADING_MODE"] == "PAPER"
@@ -381,6 +383,14 @@ def test_futures_daemons_share_contract_resolution_env_with_orchestrator():
     router_env = services["futures-order-router"]["environment"]
     for knob in ("FUTURES_SLIPPAGE_TICK_SIZE", "FUTURES_PAPER_MAX_SPREAD_TICKS"):
         assert router_env[knob] == orchestrator_env[knob], knob
+    # Router-only quote-freshness reject: the monolith ignores the YAML key, so
+    # unlike the two above it is plumbed here and NOT to trader-futures. Without
+    # it the container is stuck on the YAML default (`.env.*` is
+    # interpolation-only) and the knob cannot be tuned per deployment.
+    assert (
+        router_env["FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS"]
+        == "${FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS:-10}"
+    )
     assert (
         router_env["FUTURES_SLIPPAGE_TICK_SIZE"]
         == "${FUTURES_SLIPPAGE_TICK_SIZE:-0.02}"
