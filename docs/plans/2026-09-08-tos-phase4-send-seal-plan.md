@@ -100,7 +100,7 @@ compose e2e 에서: `SEND_SEALED` 가 `SEND_STARTED` 앞에 durable 로 기록 �
 
 ### 6.2 독립 리뷰 처분 (Claude 측 `code-reviewer` 레인 · 저작자와 분리 · 2026-09-09)
 
-1차 verdict **needs-attention**(HIGH 1 · MEDIUM 6 · LOW 5) · 게이트 전부 green 재현 · 뮤테이션 M1/M2/M3/M5/M7/M8 red · **green 뮤테이션 4(M1b·M1c·M4·M6-kernel)** = 핀 강도 결함 · A2 principal 동일성은 ADR-002-013 §8:227/§12:373 정합(픽스처 우연 아님) · 레인 R e2e 는 실 게이트웨이 구동 · 커밋 귀속 clean(경합 0).
+1차 verdict **needs-attention**(HIGH 1 · MEDIUM 6 · LOW 5) · 게이트 전부 green 재현 · 뮤테이션 M1/M2/M3/M5/M7/M8 red · **green 뮤테이션 4(M1b·M1c·M4·M6-kernel)** = 핀 강도 결함 · A2 principal 동일성은 ADR-002-013 §8:227/§12:373 정합(픽스처 우연 아님) · 레인 R e2e 는 실 게이트웨이 구동 · 1차 착지 7커밋의 귀속은 clean(처분 아크에서 경합 1건 발생 — 아래).
 
 | # | 심각도 | 지적 | 처분 |
 |---|---|---|---|
@@ -123,6 +123,13 @@ compose e2e 에서: `SEND_SEALED` 가 `SEND_STARTED` 앞에 durable 로 기록 �
 
 **독립 실측(최종 트리 `68b94587`)**: runtime **493 passed** rc=0 · kernel **9142 passed**(`8b1682dc` 기준 · `68b94587` 은 런타임만 변경 · egressgw/brokeradapter/slice 서브셋 378 passed 재확인) · mypy 254/54 clean · ruff 0 · black clean · firewall PASS · lint-imports 3 KEPT · budget 0 위반(31 등재 · `_wiring.py` 1084→1081) · completion GREEN · spec PASS · contract PASS · `_wiring.py` 잔여 리터럴 = G-4 의 `synthetic-paper-{env}` 2건뿐.
 
-### 6.3 재심
+### 6.3 재심 (2026-09-09 · 같은 리뷰어)
 
-(기입 예정)
+verdict **approve** — 12건 전부 동작으로 종결(각각 새 트리에서 프로브/뮤테이션 재실행: #1 비기본 `active_principal` 로 transport 도달 1건 · #1b inventory 가 config principal 추적 · #2 `endpoint` null 거부·리터럴 복원 red · #3 클레임 키 복원 red · #4 M1/M1b/M1c/M1d 전부 **핀 자체로** red · #5 `egress_generation: 9` 가 좌표·QCC·봉인 셋 다 도달 · #6 M4 red · #7 M6 커널 red · #9 프로브 raise · #10 빈 endpoint 거부) · 기존 red 뮤테이션 전부 유지 · 신규 fail-open/리터럴/재시도 0 · EV 상태 변경 0 · 처분 문서 정직성 확인(«경합 0» 과대 문언 1건 → 위 정정).
+
+잔여(LOW · 비차단) 처분:
+- **R1** M-K1 핀이 `AnnAssign`·`NamedExpr` 별칭을 못 잡음 → 후속 커밋 `[seal-residual-R1/R2]` 에서 핀 확장 + `context` 를 받을 수 있는 호출처 허용목록 고정.
+- **R2** #1 수정으로 `active_principal` 을 transport 정체성(`synthetic-paper-{env}`)과 같게 설정할 수 있게 됨(현 스탠드인에선 우회 아님 · ADR-002-013 §8 비양도 workload 정체성 취지 위반) → 같은 후속 커밋에서 부팅 시 동일성 거부. G-4 이관 시 하중을 받는 항목.
+- **R3** 공유 파일 경합의 결과로 중간 커밋 3개(`24745032`·`719779c3`·`dff34ee5`)에서 gateway.py register 1931 vs 실측 1921 드리프트 — 최종 트리는 정확(gateway 1931·`_wiring` 1081·`__call__` 256 = 실측). 이 범위를 bisect 할 때 크기 예산 실패는 진짜 회귀가 아님을 여기 기록. 히스토리 재작성 없음.
+
+후속 커밋 `9cdd4531` `[seal-residual-R1/R2]`: 핀에 `AnnAssign`/`NamedExpr`/튜플 언패킹 별칭 금지 + `context` 를 받는 호출처 허용목록(`verify_send_boundary`·`outbound_binding_mismatch`·`outbound_coordinates`·`build_send_seal`·`_seal_and_claim`·`_record_uncertain`) — 두 뮤턴트 핀 자체로 red · `_refuse_active_principal_matching_transport_identity` 부팅 거부(프로브 config 로 RED→GREEN · 기본/custom config 는 여전히 send 1) · `_wiring.py` 1081→1116 재등재 · 커널 diff 0. 최종: runtime **494 passed** · egressgw 서브셋 green · budget PASS(31) · ruff/black/mypy clean · completion GREEN. **이 슬라이스 종결 · push/PR 은 운영자 수동(커널 라운드 #1 브랜치 위 스택 — PR base 는 그 브랜치 또는 머지 후 main 재대상).**
