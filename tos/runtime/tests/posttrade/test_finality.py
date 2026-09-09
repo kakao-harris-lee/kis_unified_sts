@@ -71,6 +71,38 @@ def test_full_fill_produces_valid_proof() -> None:
     assert FinalityDimensionKind.ORDER_FQP.value not in result.proof.does_not_prove
 
 
+def test_partial_fill_kind_widened_into_eligible_kinds_is_still_refused_by_remaining_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Independent review finding #6, mutation M6 (2026-09-09), RED before the fix.
+
+    The reviewer's own M6 mutation widens ``_ELIGIBLE_KINDS`` to also admit
+    ``PARTIAL_FILL`` and constructs "a complete ``SyntheticFinalityResult`` that passes all
+    three kernel gates" — none of ``obligation_leg_set_complete`` /
+    ``finality_dimensions_orthogonal`` / ``finality_proof_class_specific`` ever inspects
+    ``remaining_quantity``, so before this fix the kind-membership check was the ONLY thing
+    standing between a partial fill and a full ``ORDER_FQP`` ("zero remaining") proof.
+
+    This is the ONLY reachable way to exercise the fix directly: the kernel's own
+    ``EgressResultPayload`` validator (``tos/src/tos/engine/records.py``) already refuses to
+    construct a ``FULL_FILL``-kind payload with a nonzero ``remaining_quantity`` at all
+    (structural derivation, RFC-005 §11) — so a genuinely malformed FULL_FILL can never reach
+    this producer under today's ``_ELIGIBLE_KINDS``; the gap is specifically "what protects the
+    ``ORDER_FQP`` claim if a FUTURE edit admits another kind", exactly what M6 mutates.
+    """
+    import tos_runtime.posttrade.finality as finality_module
+
+    monkeypatch.setattr(
+        finality_module,
+        "_ELIGIBLE_KINDS",
+        frozenset({EgressResultKind.FULL_FILL, EgressResultKind.PARTIAL_FILL}),
+    )
+    payload = _fill_payload(
+        kind=EgressResultKind.PARTIAL_FILL, filled="5", remaining="5"
+    )
+    assert _producer().produce(payload) is None
+
+
 def test_partial_fill_produces_no_proof() -> None:
     payload = _fill_payload(
         kind=EgressResultKind.PARTIAL_FILL, filled="5", remaining="5"

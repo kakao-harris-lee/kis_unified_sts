@@ -98,8 +98,23 @@ class SyntheticFinalityProducer:
     a proof. Even for a ``FULL_FILL`` a proof is issued only when the built artifacts actually
     pass the kernel's own gates (:func:`~tos.posttrade.predicates.obligation_leg_set_complete`,
     :func:`~tos.posttrade.predicates.finality_dimensions_orthogonal`,
-    :func:`~tos.posttrade.predicates.finality_proof_class_specific`) — this producer never hands
-    out a proof its own kernel-checked shape does not support.
+    :func:`~tos.posttrade.predicates.finality_proof_class_specific`).
+
+    **Independent review finding #6 (2026-09-09), corrected here.** The ``FULL_FILL``-only
+    restriction used to be producer-LOCAL (the ``_ELIGIBLE_KINDS`` membership check alone) —
+    none of the three kernel gates above actually assert ``payload.remaining_quantity == 0`` for
+    the leg this producer's own ``ORDER_FQP`` claim asserts ("zero remaining executable
+    quantity", ADR-002-030 §12 line 338). Today ``tos.engine.records.EgressResultPayload``'s own
+    validator already refuses to construct a ``FULL_FILL``-kind payload with a nonzero
+    ``remaining_quantity`` at all (structural derivation, RFC-005 §11), so this producer's
+    ``_ELIGIBLE_KINDS`` check alone happens to be safe FOR TODAY's one-member set — but nothing
+    that gate calls re-checks the magnitude, so a future edit widening ``_ELIGIBLE_KINDS`` (e.g.
+    the reviewer's own mutation, adding ``PARTIAL_FILL``) would have produced a full "zero
+    remaining" proof for a fill that still has quantity outstanding. :meth:`produce` now checks
+    ``payload.remaining_quantity == 0`` and ``payload.filled_quantity`` present and positive
+    directly against the PAYLOAD, before any kernel gate runs — this producer's own ``ORDER_FQP``
+    claim is enforced structurally here too, not only inferred from ``_ELIGIBLE_KINDS``
+    membership.
     """
 
     config: FinalityConfig
@@ -114,14 +129,22 @@ class SyntheticFinalityProducer:
 
         Returns:
             A :class:`SyntheticFinalityResult`, or ``None`` when ``payload.kind`` is not
-            ``FULL_FILL``, when ``filled_quantity`` is absent (never reachable for a validated
-            ``FULL_FILL`` payload, but checked rather than assumed), or when the built artifacts
-            fail any of the three kernel gates named on this class's own docstring.
+            ``FULL_FILL``, when ``filled_quantity`` is absent or not positive, when
+            ``remaining_quantity`` is absent or nonzero (independent review finding #6 — the
+            positive precondition this producer's own ``ORDER_FQP`` claim requires), or when the
+            built artifacts fail any of the three kernel gates named on this class's own
+            docstring.
         """
         if payload.kind not in _ELIGIBLE_KINDS:
             return None
         filled_quantity = payload.filled_quantity
-        if filled_quantity is None:
+        if filled_quantity is None or filled_quantity <= 0:
+            return None
+        remaining_quantity = payload.remaining_quantity
+        if remaining_quantity is None or remaining_quantity != 0:
+            # Independent review finding #6: a FULL_FILL kind alone does not prove "zero
+            # remaining executable quantity" — the ORDER_FQP claim itself does, so it is
+            # checked directly against the payload, not inferred from the kind.
             return None
 
         account = payload.instrument_key.account
