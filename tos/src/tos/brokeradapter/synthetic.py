@@ -32,6 +32,16 @@ be recorded as a ``FULL_FILL``. The already-filled part is never re-requested (R
 anything, because no broker was contacted. It closes no EV and it establishes no currentness,
 capability, or capacity fact (design #34 §1.1/§2.4).
 
+**SYNTHETIC execution identity (Phase 3 K2-p3-#6b).** Every result stamps
+``EgressResultPayload.broker_execution_id`` with a deterministic value derived from
+``(attempt.attempt_id, kind)`` — no clock, no RNG, the same discipline as the fill band above.
+This is a **SYNTHETIC** identity, never a real broker one: it exists so the kernel's DUPLICATE
+detection (``tos.engine.state.ProvisionalReservationLedger.apply_egress_result``, Phase 3
+K2-p3-#6) has an ADR-002-002 §15.3:725 "broker execution identity or broker-specific deterministic
+composite identity" to key on for the *paper* path, instead of degrading to the reference-excluded
+runtime-local replay guard that fires only for a byte-identical resend. It carries exactly the same
+non-authoritative status as the rest of this module — see the paragraph above.
+
 Firewall: ``pydantic`` + stdlib + ``tos.*`` only; **no network stdlib, no clock, no RNG**.
 """
 
@@ -78,6 +88,39 @@ NON_FILL_DECLARABLE_KINDS: frozenset[EgressResultKind] = frozenset(
         EgressResultKind.TIMEOUT,
     }
 )
+
+#: The prefix stamped on every synthetic execution id (Phase 3 K2-p3-#6b) — distinct on sight from
+#: any real broker's own id format, so a reader (or a future consumer) never mistakes one for a
+#: genuine broker-issued identity.
+_SYNTHETIC_EXECUTION_ID_PREFIX = "syn-exec"
+
+
+def _synthetic_execution_id(attempt_id: str, kind: EgressResultKind) -> str:
+    """The deterministic **SYNTHETIC** execution id ``send_once`` stamps on every result.
+
+    A pure function of ``(attempt_id, kind)`` — no clock, no RNG, no ambient state, the same
+    discipline :class:`SyntheticFillPolicy` already holds the fill band to (design #34 §5.2). This
+    is what lets the kernel's DUPLICATE detection
+    (:meth:`tos.engine.state.ProvisionalReservationLedger.apply_egress_result`, Phase 3 K2-p3-#6)
+    key on an ADR-002-002 §15.3:725 "broker execution identity or broker-specific deterministic
+    composite identity" for the *paper* path, instead of degrading to the reference-excluded
+    runtime-local replay guard. ``kind`` is included (not just ``attempt_id``) because a single
+    attempt can genuinely carry more than one distinct egress result over its lifetime (e.g. a
+    ``TIMEOUT`` followed by a later ``FULL_FILL`` for the same attempt — ADR-002-002 §15.2 "later
+    valid fill accepted") and those are different facts, not a resend of the same one.
+
+    ⚠ **SYNTHETIC, not a broker identity.** This id is never evidence that any broker was
+    contacted — it carries the same non-authoritative status as every other result this transport
+    produces (module docstring).
+
+    Args:
+        attempt_id: The Coordinator's content-addressed attempt identity.
+        kind: The result kind this id is being stamped for.
+
+    Returns:
+        A deterministic, prefixed, human-distinguishable synthetic identity string.
+    """
+    return f"{_SYNTHETIC_EXECUTION_ID_PREFIX}:{attempt_id}:{kind.value}"
 
 
 class SyntheticFillPolicy(FrozenModel):
@@ -234,6 +277,9 @@ class SyntheticPaperTransport:
                 instrument_key=instrument_key,
                 attempt_id=attempt.attempt_id,
                 kind=self._policy.declared_kind,
+                broker_execution_id=_synthetic_execution_id(
+                    attempt.attempt_id, self._policy.declared_kind
+                ),
                 reference=reference,
             )
         if quantity is None or not quantity.is_finite() or quantity <= 0:
@@ -244,6 +290,9 @@ class SyntheticPaperTransport:
                 instrument_key=instrument_key,
                 attempt_id=attempt.attempt_id,
                 kind=EgressResultKind.UNKNOWN,
+                broker_execution_id=_synthetic_execution_id(
+                    attempt.attempt_id, EgressResultKind.UNKNOWN
+                ),
                 reference=reference,
             )
         filled = self._filled_quantity(quantity)
@@ -253,6 +302,9 @@ class SyntheticPaperTransport:
                 instrument_key=instrument_key,
                 attempt_id=attempt.attempt_id,
                 kind=EgressResultKind.ACK,
+                broker_execution_id=_synthetic_execution_id(
+                    attempt.attempt_id, EgressResultKind.ACK
+                ),
                 reference=reference,
             )
         # ★ structural derivation: the kind follows the magnitudes, never a label.
@@ -267,6 +319,7 @@ class SyntheticPaperTransport:
             kind=kind,
             filled_quantity=filled,
             remaining_quantity=remaining,
+            broker_execution_id=_synthetic_execution_id(attempt.attempt_id, kind),
             reference=reference,
         )
 
