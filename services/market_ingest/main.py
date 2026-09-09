@@ -18,9 +18,9 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
+from services.monitoring.tick_stream_publisher import orderbook_publish_fields
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.exceptions import APIError, NetworkError, WebSocketDisconnectError
-from shared.models.stream_models import ORDERBOOK_FIELDS
 from shared.stock_universe import (
     build_effective_universe_snapshot,
     parse_effective_universe_codes,
@@ -202,35 +202,25 @@ class MarketIngestDaemon:
     def _with_orderbook(self, symbol: str, data: dict[str, Any]) -> dict[str, Any]:
         """Merge the feed's cached top of book into a futures trade tick.
 
-        The futures WS delivers orderbook (H0IFASP0) and trade (H0IFCNT0) ticks
-        separately and only the trade tick reaches this callback, so a
-        republished tick would otherwise carry no quote at all. Consumers that
-        need one — the order-router's send-time slippage gate and its paper
-        fill simulator — then have no source but their own second WS on the
-        same KIS account, which is exactly the collision this merge removes.
+        Shares the merge rule with the monolithic orchestrator through
+        ``orderbook_publish_fields`` — both producers of this stream must
+        publish the same shape or a consumer's quote silently depends on which
+        one is running.
 
         Best-effort: a feed without the accessor (test doubles), an empty
-        cache, or a one-sided book leaves ``data`` untouched. ``timestamp`` is
-        deliberately not merged — the trade tick's own time wins, matching the
-        merged snapshot the monolithic orchestrator publishes.
+        cache, or a one-sided book leaves ``data`` untouched.
         """
         getter = getattr(self.feed, "get_orderbook_snapshot", None)
         if not callable(getter):
             return data
         try:
-            snapshot = getter(symbol) or {}
+            fields = orderbook_publish_fields(getter(symbol))
         except Exception:  # noqa: BLE001 - never break the republish hot path
             logger.debug("orderbook snapshot lookup failed symbol=%s", symbol)
             return data
-        bid = snapshot.get("bid_price_1")
-        ask = snapshot.get("ask_price_1")
-        if not bid or not ask:
+        if not fields:
             return data
-        merged = dict(data)
-        merged.update(
-            {key: snapshot[key] for key in ORDERBOOK_FIELDS if key in snapshot}
-        )
-        return merged
+        return {**data, **fields}
 
     def _on_tick(
         self, symbol: str, data: dict[str, Any], ts: datetime  # noqa: ARG002

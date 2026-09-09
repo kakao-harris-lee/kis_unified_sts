@@ -228,3 +228,80 @@ def test_market_tick_legacy_fields_carry_orderbook() -> None:
     )
 
     assert msg.bid_price_1 == 331.18 and msg.ask_price_1 == 331.22
+
+
+# ---------------------------------------------------------------------------
+# orderbook_publish_fields — the merge rule both producers share
+# ---------------------------------------------------------------------------
+
+
+def test_orderbook_publish_fields_returns_the_five_keys() -> None:
+    from services.monitoring.tick_stream_publisher import orderbook_publish_fields
+
+    fields = orderbook_publish_fields(
+        {
+            "code": "A05603",
+            "timestamp": 1771982309.0,
+            "bid_price_1": 331.18,
+            "bid_qty_1": 12.0,
+            "ask_price_1": 331.22,
+            "ask_qty_1": 9.0,
+            "spread": 0.04,
+        }
+    )
+
+    # `code`/`timestamp` are excluded on purpose: the trade tick owns identity
+    # and time, and a stale quote must not backdate a fresh print.
+    assert set(fields) == {
+        "bid_price_1",
+        "bid_qty_1",
+        "ask_price_1",
+        "ask_qty_1",
+        "spread",
+    }
+    assert fields["spread"] == 0.04
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        None,
+        {},
+        {"bid_price_1": 331.18},
+        {"bid_price_1": 331.18, "ask_price_1": 0.0},
+        {"bid_price_1": 0.0, "ask_price_1": 331.22},
+        {"bid_price_1": "nope", "ask_price_1": "nope"},
+    ],
+    ids=["none", "empty", "bid-only", "zero-ask", "zero-bid", "garbage"],
+)
+def test_orderbook_publish_fields_rejects_anything_but_a_two_sided_book(
+    snapshot,
+) -> None:
+    from services.monitoring.tick_stream_publisher import orderbook_publish_fields
+
+    assert orderbook_publish_fields(snapshot) == {}
+
+
+def test_market_tick_still_ignores_unknown_keys() -> None:
+    """`extra="ignore"` is the existing contract — the publisher's rollout
+    aliases (`code`/`close`/`current_price`) ride in the same field map. Adding
+    the orderbook fields must not turn that into a rejection."""
+    msg = decode(
+        MarketTickMessage,
+        {
+            "schema_version": "1",
+            "asset": "futures",
+            "symbol": "A05603",
+            "price": "331.20",
+            "timestamp": "1771982309.0",
+            "bid_price_1": "331.18",
+            "ask_price_1": "331.22",
+            "code": "A05603",
+            "close": "331.20",
+            "current_price": "331.20",
+            "totally_unknown": "whatever",
+        },
+    )
+
+    assert msg.bid_price_1 == 331.18
+    assert not hasattr(msg, "totally_unknown")

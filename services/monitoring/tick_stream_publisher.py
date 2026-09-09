@@ -12,6 +12,7 @@ import os
 import threading
 import time
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,11 +21,39 @@ from pydantic import ConfigDict, Field
 
 from shared.config.base import ServiceConfigBase
 from shared.exceptions import InfrastructureError
-from shared.models.stream_models import MarketTickMessage
+from shared.models.stream_models import ORDERBOOK_FIELDS, MarketTickMessage
 from shared.streaming.client import RedisClient
 from shared.streaming.codec import encode
 
 logger = logging.getLogger(__name__)
+
+
+def orderbook_publish_fields(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Top-of-book fields to merge into a futures tick before publishing.
+
+    The KIS futures feed delivers orderbook (H0IFASP0) and trade (H0IFCNT0)
+    ticks separately and only the trade tick reaches a tick callback, so every
+    producer of the futures tick stream would otherwise publish quote-less
+    ticks. A consumer that needs a quote — the decoupled order-router's
+    send-time slippage gate, its paper fill simulator — would then have no
+    source but a second KIS WebSocket on the same account, which is exactly
+    the collision this avoids. Both producers (``services/market_ingest`` and
+    the monolithic orchestrator) call this so the merge rule lives once.
+
+    Returns ``{}`` unless both sides of the book are positive; never raises.
+    ``code``/``timestamp`` are deliberately excluded — the trade tick owns
+    those, and a stale quote must not backdate a fresh trade.
+    """
+    if not snapshot:
+        return {}
+    try:
+        bid = float(snapshot.get("bid_price_1") or 0.0)
+        ask = float(snapshot.get("ask_price_1") or 0.0)
+    except (TypeError, ValueError):
+        return {}
+    if bid <= 0 or ask <= 0:
+        return {}
+    return {key: snapshot[key] for key in ORDERBOOK_FIELDS if key in snapshot}
 
 
 class TickStreamPublisherConfig(ServiceConfigBase):

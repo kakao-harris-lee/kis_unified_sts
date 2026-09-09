@@ -36,6 +36,7 @@ import pandas as pd
 import yaml
 
 from services.monitoring.metrics import get_metrics_collector
+from services.monitoring.tick_stream_publisher import orderbook_publish_fields
 from services.trading import market_data_bootstrap as _market_data_bootstrap
 from services.trading import runtime_config as _runtime_config
 from services.trading import session_calendar as _session_calendar
@@ -1151,6 +1152,28 @@ class TradingOrchestrator:
                         fallback_name = self._symbol_names.get(symbol, "")
                         if fallback_name:
                             monitor_data["name"] = fallback_name
+                    # `data` is the TRADE tick payload — the futures feed
+                    # delivers orderbook (H0IFASP0) ticks on a separate channel
+                    # that never reaches this callback. Merge the feed's cached
+                    # top of book so a stream consumer (the decoupled
+                    # order-router's send-time gate) does not have to open a
+                    # second KIS futures WebSocket on this same account, which
+                    # would evict one of the two connections. Same merge rule
+                    # as services/market_ingest, and best-effort: a feed
+                    # without the accessor (stream-cutover mode) or an empty
+                    # book publishes exactly what it published before.
+                    snapshot_getter = getattr(
+                        self._futures_price_feed, "get_orderbook_snapshot", None
+                    )
+                    if callable(snapshot_getter):
+                        try:
+                            monitor_data.update(
+                                orderbook_publish_fields(snapshot_getter(symbol))
+                            )
+                        except Exception:  # noqa: BLE001 - never break the tick path
+                            logger.debug(
+                                "orderbook merge skipped (futures): symbol=%s", symbol
+                            )
                     self._tick_stream_publisher.publish("futures", symbol, monitor_data)
 
             self._futures_price_feed.set_tick_callback(_on_futures_tick)
