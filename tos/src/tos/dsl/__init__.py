@@ -39,6 +39,8 @@ Public surface groups by module:
 * :mod:`tos.dsl.determinism` — the pure ``evaluate`` + recorded-input signature.
 * :mod:`tos.dsl.bounds` — the bounded-evaluation (symbolic) state machine.
 * :mod:`tos.dsl.evidence` — the enforcement-evidence records.
+* :mod:`tos.dsl.lowering` — the typed-algebra -> candidate-AST lowering (design #31
+  §3.5 D4 / §9-4 seam closure).
 """
 
 from __future__ import annotations
@@ -91,6 +93,7 @@ from tos.dsl.evidence import (
     CapabilityManifest,
     analyze_candidate,
 )
+from tos.dsl.lowering import lower_strategy
 from tos.dsl.outcome import (
     NoActionOutcome,
     Outcome,
@@ -181,6 +184,8 @@ __all__ = [
     "resolve_vector_realization",
     # strategy
     "AuthoredStrategy",
+    # lowering (typed algebra -> candidate AST, design #31 §9-4)
+    "lower_strategy",
     # context value carrier (design #32 §2.2 — shape is dsl-owned, production is marketfeed's)
     "VALUE_NAMESPACE",
     "ContextValue",
