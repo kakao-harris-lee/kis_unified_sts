@@ -1,0 +1,76 @@
+# KIS 모의투자(paper) stock-order transport config example
+# (tos_runtime.transport.kis_mock.config).
+#
+# Loader: tos_runtime.transport.kis_mock.config.load_kis_mock_transport_config
+# (consumed by tos_runtime.transport.kis_mock.adapter.KisMockTransport's constructor,
+# via tos_runtime.transport.kis_mock.client.build_client(config) — T2's compose root
+# wires both).
+#
+# ── Host seal (plan §2 결정 5) ──────────────────────────────────────────────
+# `endpoint_rest_base` must byte-exact match the INSTANCE MOCK_VTS document's own
+# `_kis.endpoints.rest_base` literal (docs/broker-profiles/KIS-BROKER-CAPABILITY-
+# PROFILE-draft.yaml, measured "https://openapivts.koreainvestment.com:29443") and
+# must NOT equal the INSTANCE REAL_PROD document's own rest_base
+# ("https://openapi.koreainvestment.com:9443") — the loader refuses to start either
+# way. A config value cannot re-point this transport at a live host, no matter what
+# an operator (or an attacker with write access to this file) sets it to; this is a
+# structural guard, not merely documentation.
+#
+# ── `V`-prefix + shape rule (plan §2 결정 5; independent review disposition F7) ──
+# KIS's own TR-id convention prefixes every 모의(paper) order TR with `V`
+# (`VTTC0011U`/`VTTC0012U`, N-17 collation memo
+# docs/plans/2026-07-29-tos-p02-n17-spec-collation.md); every 실전(real) one uses
+# `T` (`TTTC0011U`/`TTTC0012U`), and futures 야간(night) real TRs use `STTN`/`CTF*`.
+# Every observed id is exactly nine characters, shaped 1 letter + 3 letters + 4
+# digits + 1 letter. `tr_id_buy`/`tr_id_sell` MUST match that shape with a `V`
+# prefix (`^V[A-Z]{3}\d{4}[A-Z]$`) — the loader refuses `T`/`STTN`/`CTF` prefixes by
+# name, and any other shape deviation generically, so a config cannot smuggle a
+# real-order (or malformed) TR id past it.
+#
+# ── mode: live is unconditionally refused (independent review disposition F1/F6) ──
+# The compose context resolver currently sets `EgressRequestRecord.
+# request_bytes_digest` equal to `capsule_egress_request_digest` — a documented
+# STAND-IN, never a hash of real KIS wire bytes. A live send's own digest check
+# would therefore always mismatch today, regardless of how correct this transport
+# is. `mode: live` is refused at load time until T2 binds
+# `tos_runtime.transport.kis_mock.codec.KisOrderWireCodec` into that resolver — see
+# `codec.py`'s own module docstring for the exact serialization recipe T2 must
+# reproduce. `dry_run` is the only usable value today.
+#
+# Every value below is a named-TBD `null` except `mode` (dry_run) and
+# `allow_plaintext_for_tests` (false — plaintext HTTP is a hermetic-test-only escape
+# hatch, never a real deployment value). `field_map`'s and `static_body_fields`'
+# own KEYS are already fixed (the closed dynamic-source vocabulary
+# `tos_runtime.transport.kis_mock.config.DYNAMIC_FIELD_SOURCES`, and the five KIS
+# wire fields with no per-attempt source, respectively); only their VALUES are
+# named-TBD, pending the operator's disposition of the plan's §6 확인 지점 2
+# proposal table (docs/runbooks/tos-kis-mock-transport.md).
+#
+# field_map covers the four KIS order_cash fields with a genuine per-attempt
+# kernel source (account/instrument/quantity/price -> CANO/PDNO/ORD_QTY/ORD_UNPR).
+# static_body_fields covers the remaining five, which are per-deployment constants
+# with no per-attempt source at all (N-17 memo) — SLL_TYPE and CNDT_PRIC may
+# legitimately be an EXPLICIT empty string once attested (KIS's own SDK defaults
+# both to "", `order_cash.py`'s `sll_type: str = ""`); only `null` (still named-TBD)
+# refuses, not an attested empty string.
+mode: dry_run
+endpoint_rest_base: null
+order_path: null
+token_path: null
+tr_id_buy: null
+tr_id_sell: null
+field_map:
+  account: null
+  instrument: null
+  quantity: null
+  price: null
+static_body_fields:
+  ACNT_PRDT_CD: null
+  ORD_DVSN: null
+  EXCG_ID_DVSN_CD: null
+  SLL_TYPE: null
+  CNDT_PRIC: null
+min_send_interval_ms: null
+token_reissue_min_interval_s: null
+request_timeout_s: null
+allow_plaintext_for_tests: false
