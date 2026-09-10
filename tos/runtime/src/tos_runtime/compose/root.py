@@ -74,6 +74,7 @@ from tos.engine import (
 
 from tos_runtime.compose._finalize_wiring import _finalize
 from tos_runtime.compose._recovery_wiring import apply_recovery_barrier
+from tos_runtime.compose._release_wiring import apply_release_wiring
 from tos_runtime.compose._request_digest import KisWireCodecDigest
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.compose._types import (
@@ -245,6 +246,15 @@ def compose_paper_runtime(
         instance_document=boot.instance_document,
         transport_kind=transport_kind,
         transport_config=boot.transport_config,
+    )
+    # TOS Phase 5 W2-R (plan §10 row ①③) — attach the finality release consumer BEFORE the
+    # recovery barrier runs (see apply_release_wiring's own docstring for why running before a
+    # possible driver detach is harmless).
+    composed = apply_release_wiring(
+        composed,
+        config_dir=config_dir,
+        scheme=_SCHEME,
+        monotonic_source=boot.infra.monotonic_source,
     )
     return apply_recovery_barrier(
         composed,

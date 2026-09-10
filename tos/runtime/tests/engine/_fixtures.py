@@ -376,6 +376,7 @@ _TEST_FINALITY_CONFIG = FinalityConfig(
     value_date="2026-09-09",
     source_revision="engine-test-rev-1",
     proof_recipe_id="engine-test-recipe-1",
+    release_proof_wait_ms=60_000,
 )
 
 

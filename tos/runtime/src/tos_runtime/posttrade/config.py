@@ -1,14 +1,20 @@
 """SYNTHETIC post-trade finality runtime config loader (TOS Phase 3 Wave 2 Lane C-R; plan §2.2).
 
 Loads ``tos/runtime/config/finality.example.yaml`` (or an operator-approved copy). The four
-values here are the scope-tuple components :class:`~tos.posttrade.records.ObligationLegScope`
-needs that this runtime cannot honestly derive from an ``EgressResultPayload`` alone
+scope-tuple values are what :class:`~tos.posttrade.records.ObligationLegScope` needs that this
+runtime cannot honestly derive from an ``EgressResultPayload`` alone
 (``currency``/``value_date``/``source_revision``) plus the approved proof-recipe identity
 (``proof_recipe_id``, ADR-002-030 §29 Q3) — every one of them is an OPERATOR-APPROVED STATIC
 value, never computed here (mirrors :mod:`tos_runtime.release.config`'s own "null=named-TBD ⇒
 refuse to start" discipline). What IS derived from the result at hand — the account, the
 instrument, the exact filled quantity — is never duplicated into this config; see
 :mod:`tos_runtime.posttrade.finality`.
+
+**``release_proof_wait_ms`` (TOS Phase 5 W2-R; plan §10 row ④).** The obligation-expiry bound
+:mod:`tos_runtime.posttrade.release_consumer`'s :class:`~tos_runtime.posttrade.release_consumer
+.FinalityReleaseConsumer` uses to record (never act on) a ``RELEASE_PROOF_OVERDUE`` evidence row
+once a reservation has sat in ``RELEASE_PENDING_PROOF``/``QUARANTINED_UNKNOWN`` longer than this
+many milliseconds — an OPERATOR-APPROVED STATIC value, same discipline as the other four.
 """
 
 from __future__ import annotations
@@ -42,12 +48,15 @@ class FinalityConfig:
             .PostTradeFinalityProof.source_revision`).
         proof_recipe_id: The Phase-0-approved proof recipe identity (ADR §29 Q3) this SYNTHETIC
             producer issues every proof under.
+        release_proof_wait_ms: The obligation-expiry bound (module docstring's "release_proof_
+            wait_ms" section) — a positive int, never derived.
     """
 
     currency: str
     value_date: str
     source_revision: str
     proof_recipe_id: str
+    release_proof_wait_ms: int
 
 
 def _require_mapping(path: Path) -> dict[str, Any]:
@@ -88,6 +97,27 @@ def _require_str(raw: dict[str, Any], key: str) -> str:
     return value
 
 
+def _require_positive_int(raw: dict[str, Any], key: str) -> int:
+    if key not in raw:
+        raise FinalityConfigError(f"finality config missing required key: {key!r}")
+    value = raw[key]
+    if value is None:
+        raise FinalityConfigError(
+            "finality config has an unfilled (named-TBD) key — fail-closed at startup "
+            f"until an operator fills it: {key!r}"
+        )
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise FinalityConfigError(
+            f"finality config key {key!r} must be an int (got {value!r})"
+        )
+    if value <= 0:
+        raise FinalityConfigError(
+            f"finality config key {key!r} must be a positive int (got {value!r}) — a "
+            "zero/negative wait bound is not a smaller bound, it is a silently-disabled one"
+        )
+    return value
+
+
 def load_finality_config(path: Path) -> FinalityConfig:
     """Load + validate the SYNTHETIC finality config file, fail-closed.
 
@@ -99,7 +129,7 @@ def load_finality_config(path: Path) -> FinalityConfig:
 
     Raises:
         FinalityConfigError: The file is missing/unreadable/not valid YAML/not a mapping, or a
-            required key is missing or still ``null`` (named-TBD).
+            required key is missing, still ``null`` (named-TBD), or the wrong shape.
     """
     raw = _require_mapping(path)
     return FinalityConfig(
@@ -107,4 +137,5 @@ def load_finality_config(path: Path) -> FinalityConfig:
         value_date=_require_str(raw, "value_date"),
         source_revision=_require_str(raw, "source_revision"),
         proof_recipe_id=_require_str(raw, "proof_recipe_id"),
+        release_proof_wait_ms=_require_positive_int(raw, "release_proof_wait_ms"),
     )

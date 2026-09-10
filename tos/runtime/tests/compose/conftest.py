@@ -211,6 +211,10 @@ def config_dir(tmp_path: Path) -> Path:
             "value_date": "2026-09-09",
             "source_revision": "compose-e2e-rev-1",
             "proof_recipe_id": "compose-e2e-recipe-1",
+            # TOS Phase 5 W2-R (plan §10 row ④) — large enough that no compose e2e test's
+            # synchronous run ever crosses it, so the obligation-expiry evidence stays absent
+            # unless a test deliberately advances the injected clock past it.
+            "release_proof_wait_ms": 3_600_000,
         },
     )
     _write_yaml(
