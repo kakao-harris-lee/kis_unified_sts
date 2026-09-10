@@ -832,9 +832,21 @@ class FuturesRiskConfig(ServiceConfigBase):
     #: cap (ConcurrentPositionsFilter). StockRiskConfig overrides it.
     _asset_class: ClassVar[str] = "futures"
 
-    account_equity_krw: int = Field(
+    account_equity_krw: float = Field(
         default=5_000_000,
-        description="Account equity in KRW",
+        gt=0,
+        description=(
+            "Account equity in KRW — the MDD filters' denominator. float/gt=0 "
+            "mirrors services/futures_margin_risk/config.py::"
+            "fallback_account_equity_krw, because config/risk.yaml now shares "
+            "that block's ${FUTURES_MARGIN_FALLBACK_EQUITY:...} knob (F-9 gap "
+            "G4): an int field would reject the scientific notation the margin "
+            "config accepts (5e7), crash-looping the risk_filter daemon while "
+            "the margin lane kept running. gt=0 is the other half — the MDD "
+            "filters divide by this value with equity_nonpositive='raise', so "
+            "0/negative would raise inside every candidate's evaluate() and "
+            "leave the whole candidate stream pending forever."
+        ),
     )
     daily_mdd_limit_pct: float = Field(
         default=0.03,

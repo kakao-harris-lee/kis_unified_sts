@@ -362,10 +362,17 @@ def _build_leverage_wiring(
 
     Read-only: no order path is touched. Only built when ``leverage.enabled``,
     so the default (disabled) path wires nothing and behaviour is unchanged even
-    though the filter itself is never constructed then either. Any failure fails
-    OPEN — returns ``(None, None)`` so the filter (if built) stays inert and
-    passes every signal — mirroring the fail-open contract in
-    ``shared/risk/filters/leverage.py``. Enforcement remains a separate operator
+    though the filter itself is never constructed then either. Any failure *in
+    this function* fails OPEN — returns ``(None, None)`` so the filter (if
+    built) stays inert and passes every signal — mirroring the fail-open
+    contract in ``shared/risk/filters/leverage.py``. One import moved out of
+    that envelope: ``TradingStateReader`` is now imported at module scope (the
+    startup log resolves its ``positions_key`` before this runs), so an import
+    failure of ``shared.streaming.trading_state`` is fatal at module import
+    rather than degrading to an inert filter. That module pulls in only stdlib
+    plus ``redis``, both of which this daemon already hard-requires, so the
+    case is not reachable without the process being unable to start anyway.
+    Enforcement remains a separate operator
     decision (``leverage.mode`` flip to ``enforce``); this wiring only makes the
     shadow filter able to *compute* gross leverage.
     """
@@ -607,7 +614,24 @@ async def _build_and_run() -> int:
         os.environ.get(_FUTURES_POSITIONS_KEY_ENV, _DEFAULT_FUTURES_POSITIONS_KEY),
     )
 
-    risk_config = FuturesRiskConfig.from_yaml()
+    try:
+        risk_config = FuturesRiskConfig.from_yaml()
+    except Exception:
+        # config/risk.yaml::risk.account_equity_krw shares the margin lane's
+        # ${FUTURES_MARGIN_FALLBACK_EQUITY:...} knob (F-9 gap G4), so a value
+        # this config rejects (non-numeric, <= 0, or an empty-but-SET env var —
+        # ConfigLoader._resolve_env_vars returns '' for a set-empty var) kills
+        # THIS daemon while services/futures_margin_risk keeps running on the
+        # same string. Name the variable in the log so the crash-loop is
+        # diagnosable from `docker logs` alone, then re-raise (a risk filter
+        # that cannot load its limits must not start).
+        logger.exception(
+            "risk_filter: config/risk.yaml load failed — check "
+            "FUTURES_MARGIN_FALLBACK_EQUITY (currently %r); it must be a "
+            "positive number shared with config/futures_margin.yaml",
+            os.environ.get("FUTURES_MARGIN_FALLBACK_EQUITY"),
+        )
+        raise
     trading_windows = load_trading_windows()
 
     # Sync redis for the open-position provider (layer.evaluate is sync).

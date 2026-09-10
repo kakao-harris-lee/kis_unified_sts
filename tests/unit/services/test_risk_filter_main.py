@@ -762,22 +762,34 @@ def test_suffix_bound_before_leverage_wiring() -> None:
     ``_build_leverage_wiring`` constructs the ``TradingStateReader`` whose
     positions key the LeverageFilter reads; binding the suffix after it would
     reproduce G3 exactly.
+
+    Compares STATEMENT positions in ``_build_and_run``'s body — the index of
+    the statement containing each call, in ``body`` order — rather than raw
+    line numbers from an unordered ``ast.walk``, so the assertion actually
+    means "this statement executes first".
     """
     import ast
     import inspect
 
     from services.risk_filter import main as m
 
-    tree = ast.parse(inspect.getsource(m._build_and_run))
-    lineno = {
-        node.func.id: node.lineno
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in ("ensure_state_key_suffix", "_build_leverage_wiring")
-    }
-    assert "ensure_state_key_suffix" in lineno, "risk_filter never binds the suffix"
-    assert lineno["ensure_state_key_suffix"] < lineno["_build_leverage_wiring"]
+    func = ast.parse(inspect.getsource(m._build_and_run)).body[0]
+    assert isinstance(func, ast.AsyncFunctionDef)
+
+    targets = ("ensure_state_key_suffix", "_build_leverage_wiring")
+    stmt_index: dict[str, int] = {}
+    for i, stmt in enumerate(func.body):
+        for node in ast.walk(stmt):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in targets
+            ):
+                stmt_index.setdefault(node.func.id, i)
+
+    missing = [name for name in targets if name not in stmt_index]
+    assert not missing, f"not called at the top level of _build_and_run: {missing}"
+    assert stmt_index["ensure_state_key_suffix"] < stmt_index["_build_leverage_wiring"]
 
 
 # ---------------------------------------------------------------------------
