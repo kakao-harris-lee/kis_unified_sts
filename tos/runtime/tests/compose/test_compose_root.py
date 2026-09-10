@@ -1781,6 +1781,74 @@ class TestOrthostateAndFinalityProjectionWiring:
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
+    def test_full_fill_hand_off_never_releases_rcl_capacity_end_to_end(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """TOS Phase 5 W2-R (plan §10 row ①): the finality release consumer
+        (:mod:`tos_runtime.posttrade.release_consumer`) is live through
+        :func:`~tos_runtime.compose.root.compose_paper_runtime`, but this compose root's ONE
+        concrete broker witness (:class:`~tos_runtime.recon.witness_synthetic
+        .SyntheticLedgerWitness`) is store-derived, never independent of the evidence-receipt
+        path it corroborates (plan §10's own "정직 상태" — see
+        ``tos_runtime.recon.service.ReconciliationService``'s own module docstring). So even
+        after a genuine, real ``FULL_FILL`` hand-off, the RCL reservation must show ZERO
+        ``RELEASED``/``POSITION_CONSUMED`` rows — capacity release stays structurally absent
+        until a genuinely independent (real broker) witness replaces the synthetic one.
+        """
+        import json
+
+        from tos.rcl import CapacityState
+        from tos_runtime.rcl.reservation_identity import scope_reservation_id
+
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+        event = fx.crossing_event()
+
+        first = runtime.run_once((event,))
+        proposal_digest = first[0].pipeline.proposal.canonical_digest
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
+        write_approval_file(
+            custody_root,
+            proposal_digest=proposal_digest,
+            environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
+        )
+
+        second = runtime.run_once((event,))
+        flow = second[0].flow
+        assert flow is not None and flow.handed_off is True and flow.attempt is not None
+
+        released_or_consumed = [
+            state
+            for _reservation_id, state, _seq, _scope in runtime.rcl_log.reservation_rows()
+            if state in (CapacityState.RELEASED, CapacityState.POSITION_CONSUMED)
+        ]
+        assert released_or_consumed == []
+
+        held_payload_rows = runtime.evidence_store.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = 'CAPACITY_RELEASE_HELD'"
+        ).fetchall()
+        assert len(held_payload_rows) == 1
+        held_payload = json.loads(held_payload_rows[0][0])["payload"]
+        # Independent-review finding M5 (2026-09-10): assert *why* it held, not merely that it
+        # held -- a hold for a trivial upstream reason would otherwise pass this test
+        # identically. Also pins the reservation id itself (finding M5's own measured mutation:
+        # a total `_reservation_id` drift left the prior assertions passing unchanged).
+        instrument_key = runtime.context_resolver.instrument_key
+        assert held_payload["reservation_id"] == scope_reservation_id(
+            instrument_key.account, instrument_key.instrument
+        )
+        assert held_payload["reason"] == "NOT_CORROBORATED"
+        assert held_payload["detail"] == "WITNESS_NOT_INDEPENDENT"
+        intent_rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind = 'CAPACITY_RELEASE_INTENT'"
+        ).fetchone()[0]
+        assert intent_rows == 0
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
 
 class TestNewRiskHaltOperatorReArm:
     """Re-review finding R3 (2026-09-09): the operator re-arm path for the independent-review

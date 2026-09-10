@@ -292,7 +292,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1088
+  measured: 1087
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -395,6 +395,13 @@ exceptions:
     호출부에 resolved_strategies.loaded_bindings 인자 1줄 + 도크스트링 정정
     2줄 추가. 함수 자체는 100줄 문턱 아래 유지(무예외). 모듈 실측은
     1203→1205(+2).
+    2026-09-10 TOS Phase 5 W2-R 독립 리뷰 M6 처분 — 두 곳의 손작성
+    `f"resv-{account}-{instrument}"` (AtomicCommitStage 의
+    reservation_id_provider · TransmissionCapabilityStage 의
+    reservation_identity)를 신규 `tos_runtime.rcl.reservation_identity
+    .scope_reservation_id` 호출로 교체(import 1줄 + 호출부 2곳 각 1줄 감소)
+    하며 순감소 1205→1196(−9, 이전 재등재 이후 다른 레인의 변경 포함 실측
+    스냅샷 갱신 — 이 커밋 자신의 순증분은 −1).
     2026-09-10 T2 lane A(KIS wire-codec digest binding, plan
     docs/plans/2026-09-10-tos-kis-mock-transport-plan.md §8 설계 정정 ①) —
     _build_context_resolver 의 capsule_egress_request_digest: str 필드를
@@ -431,6 +438,14 @@ exceptions:
     이번 재등재로 실질 충족(1088 < 1197). `_finalize_wiring.py` 는
     1000줄/100줄 문턱 양쪽 모두 아래(221줄 모듈 · 최대 함수 99줄)라 신규
     등재 없음.
+    2026-09-10 병합(feat/tos-phase5-w2-finality ← main `e5fd37f1`) — 위 두
+    독립 계보(W2-R M6 처분의 1205→1196 · T2 lane A/C 의 1197→1238→1088)가
+    같은 파일을 각자의 브랜치에서 편집해 병합 시 숫자가 어긋남(T2 계보 자신도
+    베이스라인 1197 이 W2-R 의 1196 갱신을 모르고 출발했음을 이미 자인).
+    병합 결과물을 재실측한 실제 값으로 상단 measured 필드를 1087 로 재등재
+    (T2 가 기록한 1088 과 1줄 차이 — 두 브랜치의 독립 변경이 겹친 뒤의
+    실측이므로 어느 한쪽 계보의 산술만으로는 재현되지 않음, 실측이 유일한
+    근거).
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime
@@ -470,23 +485,13 @@ exceptions:
     파일 _transport_wiring.py — 이 함수 실측에는 영향 없음) — 이 함수 자신은
     on_record kwarg 의 값 표현식만 바뀌어 136→142(+6, 조건부 표현식 3줄 +
     보강 주석 3줄). 안전-부담 배선 변경이라 압축 대신 등재.
-- target: tos/runtime/src/tos_runtime/posttrade/finality.py::SyntheticFinalityProducer.produce
-  measured: 107
-  owner: tos-runtime
-  decomposition_order: 35
-  expires_on: '2026-12-31'
-  note: >-
-    독립 리뷰(웨이브 2) finding #6 처분(레인 C-R2, 2026-09-09) — `_ELIGIBLE_
-    KINDS` 멤버십만으로 "zero remaining executable quantity"(ORDER_FQP 주장)
-    를 보장했고, 커널 3종 게이트 중 어느 것도 remaining_quantity 를 검사하지
-    않음을 실측(리뷰어 M6 뮤테이션: `_ELIGIBLE_KINDS` 에 PARTIAL_FILL 추가 시
-    완전한 proof 가 발급됨). `payload.remaining_quantity == 0` 및
-    `filled_quantity` 존재·양수 양성 전제를 payload 에 직접 추가(커널 게이트
-    호출 이전)하며 100→107 초과. 오늘의 유일 멤버(FULL_FILL)에 대해서는
-    커널 자체 `EgressResultPayload` validator 가 이미 이 불변식을 구조적으로
-    보장해 새 분기가 도달 불가능하지만, `_ELIGIBLE_KINDS` 확장에 대한
-    방어선이므로 유지(모듈 도크스트링 상세). 신규 전제 4줄 + 확장된
-    Returns 도크스트링 순증분 — 압축 대신 등재.
+    2026-09-10 병합(feat/tos-phase5-w2-finality ← main `e5fd37f1`) —
+    `tos/runtime/src/tos_runtime/posttrade/finality.py::SyntheticFinalityProducer.produce`
+    예외 항목(main 측, T2 미편집분)은 W2-R 이 이미 `produce`/`produce_non_execution`
+    분리로 27줄까지 줄여 등재 해제한 상태(W2-R 커밋 `bf5a68e4`) — T2 는 이
+    변경을 보지 못한 브랜치에서 작업해 병합 시 해당 항목이 재등장할 뻔했으나,
+    병합된 코드의 `produce` 는 여전히 27줄(W2-R 상태 그대로, T2 무편집)이라
+    옛 항목을 재등재하지 않고 계속 해제 상태로 유지.
 - target: tos/runtime/src/tos_runtime/engine/driver.py::EngineDriver._process_next
   measured: 141
   owner: tos-runtime
@@ -542,7 +547,7 @@ exceptions:
     목록 끝에 append(gateway.py 항목의 2026-09-07 재등재 주석과 동일 관례) —
     후속 하우스키핑에서 물리적 재정렬 가능.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 133
+  measured: 142
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
@@ -559,10 +564,23 @@ exceptions:
     ``apply_recovery_barrier(composed, ...)`` 호출 1건(kwargs 4 · black 개행)이
     ``compose_paper_runtime`` 끝에 추가됨 — 정본 결선 순서 문서라 분해 대신 등재
     (Phase 5 계획 §2 결정 2: 장벽이 READY 가 아니면 드라이버 미결선).
+    **2026-09-10 Phase 5 W2-R 재등재 109→118**: finality release consumer 결선
+    ``apply_release_wiring(composed, ...)`` 호출 1건(kwargs 3 · 주석 2줄 · black
+    개행) — recovery barrier 호출 직전에 추가(플랜 §10 행 ①③: 드라이버가
+    detach 되기 전에 consumer 를 붙여도 안전 — ``apply_release_wiring`` 자신의
+    도크스트링 참조). ``_wiring.py``/``_engine_wiring.py`` 는 무편집(plan §4
+    "`_wiring.py`는 성장 금지" — `ComposedRuntime` 의 이미 공개된 필드만 재사용,
+    `_release_wiring.py` 신규 모듈로 격리). root.py 는 정본 결선 순서 문서라
+    호출 시퀀스 재구성은 하지 않음 — 압축 대신 등재.
     **2026-09-10 T2 lane C 재등재 109→133**: ``transport_kind`` 파라미터
     (도크스트링 포함) + ``_boot_services``/``_build_context_resolver``/
     ``_finalize`` 호출부에 신규 인자 관통 배선(digest-source 삼항식 8줄 포함)
     — 정본 결선 순서 문서라 분해 대신 등재.
+    **2026-09-10 병합(feat/tos-phase5-w2-finality ← main `e5fd37f1`) 재등재
+    142**: 위 두 독립 계보(W2-R 의 109→118 · T2 lane C 의 109→133)가 같은
+    함수를 각자 브랜치에서 확장해 병합 후 실측 재측정 — 118 도 133 도 아닌
+    142(두 변경 모두 함수 본문에 남아 합산되었기 때문). root.py 는 정본
+    결선 순서 문서라 분해 대신 등재 유지.
 - target: tos/runtime/src/tos_runtime/compose/_boot_integrity.py::record_operator_attested_inputs
   measured: 104
   owner: tos-runtime
