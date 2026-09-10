@@ -435,6 +435,15 @@ class ComposeContextResolver:
         account = self.authorized_coordinates.account
         if quantity is None or price is None or account is None:
             return None
+        # Independent review LOW-1: self.authorized_coordinates.account and
+        # self.instrument_key.account are the SAME value at every compose root this codebase
+        # wires today (tos_runtime.compose._wiring._build_context_resolver sets both from the
+        # SAME construction.account) — a mutation swapping the account source below is
+        # unfalsifiable through this class's own tests for that reason, not because the
+        # distinction does not matter. The distinction review F2 actually cares about (account
+        # is a SEALED outbound coordinate, never a custody-loaded value) is pinned one layer
+        # down, at the codec (tos_runtime.transport.kis_mock.codec's own
+        # test_account_is_the_seal_field_never_instrument_key_account).
         return self.request_bytes_digest_source(
             account=account,
             instrument=self.instrument_key.instrument,

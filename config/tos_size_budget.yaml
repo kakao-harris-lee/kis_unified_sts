@@ -292,7 +292,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1238
+  measured: 1088
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -419,6 +419,18 @@ exceptions:
     1220→1238(+18). 도크스트링 압축(2곳)으로 20줄 상쇄를 시도했으나 신규
     파라미터 배선 자체가 순증분이라 완전 상쇄는 불가 — 등재(무예외 목표
     미달성, 정직 재등재).
+    2026-09-10 T2 재심 처분(MEDIUM-5) — 재심이 «_finalize(112줄, 자체가
+    100줄 문턱 초과 등재분) 를 별도 모듈로 분리하면 _wiring.py 는 1197 아래로
+    복귀하고 _finalize 자체 예외도 퇴역 가능» 이라는 구체 대안을 제시,
+    채택. 신설 tos_runtime/compose/_finalize_wiring.py 로 _finalize +
+    _build_engine_configuration 을 이관하고, _finalize 자신도
+    _verify_boot_replay 헬퍼(재생 검증 블록 추출)로 분리해 99줄로 복귀(함수
+    예외 완전 퇴역 — 아래 옛 `_wiring.py::_finalize` 항목 삭제). 이관 자체가
+    _wiring.py 의 대규모 순감소 — 1238→1088(-150). 1088 은 여전히
+    module_max_lines(1000) 초과라 등재는 유지하되, 1197 «성장 금지» 목표는
+    이번 재등재로 실질 충족(1088 < 1197). `_finalize_wiring.py` 는
+    1000줄/100줄 문턱 양쪽 모두 아래(221줄 모듈 · 최대 함수 99줄)라 신규
+    등재 없음.
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime
@@ -432,25 +444,8 @@ exceptions:
     도크스트링 두 차례 축약으로 완화했으나(1033→1026) 완전 회피는 불가 —
     신규 함수 자체가 실측 증가분. _wiring.py 항목과 동일하게 목록 끝에 append
     (공유 워크트리 동시 편집 회피).
-- target: tos/runtime/src/tos_runtime/compose/_wiring.py::_finalize
-  measured: 112
-  owner: tos-runtime
-  decomposition_order: 32
-  expires_on: '2026-12-31'
-  note: >-
-    팀리드 CR-4 후속(orthostate/finality 결선, plan §2.2) — finality.yaml
-    로더 호출 1줄 + wire_engine_and_driver 호출부 인자 1줄을 추가하며
-    100→101 초과. 본 레인 신규 주석은 이미 1줄로 압축(더 압축할 여지 없음);
-    coordinator_preconditions 관련 기존 주석 2줄은 레인 B-R 저작이라
-    본 레인 편집 대상 밖(공유 파일 소유권 규율). 목록 끝에 append(공유
-    워크트리 동시 편집 회피).
-    2026-09-10 T2 lane C(compose 결선) — 시그니처에 instance_document/
-    transport_kind/transport_config 파라미터 3개 추가 + wire_engine_and_driver
-    호출부에 nonlive_admitted/active_scope/instance_document/custody/
-    transport_kind/transport_config kwarg 6개를 추가하며 101→112(+11). 신규
-    kwarg 는 이미 무주석(자기서술적 이름) — 추가 압축 여지 없음.
 - target: tos/runtime/src/tos_runtime/compose/_engine_wiring.py::wire_engine_and_driver
-  measured: 136
+  measured: 142
   owner: tos-runtime
   decomposition_order: 33
   expires_on: '2026-12-31'
@@ -469,6 +464,12 @@ exceptions:
     _build_preconditions 호출부 확장(3줄)을 추가하며 103→136(+33). 신규
     파라미터 6개의 도크스트링이 순증분 대부분 — 이 파일 자신의 «안전-부담
     파라미터는 온전한 도크스트링을 받는다» 관례상 압축 대신 등재.
+    2026-09-10 T2 재심 처분(HIGH-1/MEDIUM-6) — on_record 를 transport_kind
+    is KIS_MOCK 조건부로 전환(삼항식 3줄 + 도크스트링 보강 2줄) +
+    SealRegistry 클래스 자체의 바운딩/한정-배선 도크스트링 확장(별도
+    파일 _transport_wiring.py — 이 함수 실측에는 영향 없음) — 이 함수 자신은
+    on_record kwarg 의 값 표현식만 바뀌어 136→142(+6, 조건부 표현식 3줄 +
+    보강 주석 3줄). 안전-부담 배선 변경이라 압축 대신 등재.
 - target: tos/runtime/src/tos_runtime/posttrade/finality.py::SyntheticFinalityProducer.produce
   measured: 107
   owner: tos-runtime

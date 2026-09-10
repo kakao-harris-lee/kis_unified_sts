@@ -213,6 +213,22 @@ def test_provisioned_scopes_is_pinned_exactly() -> None:
     )
 
 
+def test_scope_principal_reads_the_manifest_only_no_credential_file_needed(
+    custody_root: Path, evidence_double: FakeEvidenceDouble, expected_owner_uid: int
+) -> None:
+    """Independent review LOW-5: ``scope_principal``'s own "zero secret I/O" docstring claim had
+    no test. Proven directly: the scope's credential FILE is never written at all (unlike every
+    other test in this suite, which calls ``write_scope_file``), and ``scope_principal`` still
+    returns the manifest principal, with no evidence recorded either (a real ``load()`` always
+    appends one ``CUSTODY_LOAD`` record; this method appends none)."""
+    custody = _make_custody(
+        custody_root, evidence_double, expected_owner_uid=expected_owner_uid
+    )
+    assert not (custody_root / "read.principal").exists()
+    assert custody.scope_principal("read.principal") == "read-principal-v1"
+    assert evidence_double.records == []
+
+
 @pytest.mark.parametrize(
     "scope",
     [

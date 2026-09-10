@@ -72,6 +72,7 @@ from tos.engine import (
     StrategyRegistry,
 )
 
+from tos_runtime.compose._finalize_wiring import _finalize
 from tos_runtime.compose._recovery_wiring import apply_recovery_barrier
 from tos_runtime.compose._request_digest import KisWireCodecDigest
 from tos_runtime.compose._transport_wiring import TransportKind
@@ -86,7 +87,6 @@ from tos_runtime.compose._wiring import (
     _build_context_resolver,
     _build_realized_stages,
     _build_stage_map,
-    _finalize,
 )
 from tos_runtime.risk.aggregate import (
     AggregateRiskDecisionInputs,

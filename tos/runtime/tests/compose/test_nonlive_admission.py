@@ -286,6 +286,27 @@ def test_condition4_transport_nature_none_refuses(
     assert "risk_relevant_live_not_false" in verdict.reasons
 
 
+class _ReachesBrokerOnly:
+    """A minimal duck type satisfying the KERNEL's own ``TransportNatureLike`` Protocol
+    (``tos.engine.core`` — declares only ``reaches_broker``) but genuinely lacking
+    ``risk_relevant_live``. Independent review MEDIUM-3: the caller-side ``typing.cast`` in
+    ``RuntimeCoordinatorPreconditions.live_scope_authorized`` is a static-typing-only widening —
+    at runtime, nothing stops a Protocol-conforming object shaped exactly like this from reaching
+    condition 4."""
+
+    reaches_broker = True
+
+
+def test_condition4_a_reaches_broker_only_duck_type_refuses_rather_than_raises(
+    mock_vts_document: InstanceDocument,
+) -> None:
+    kwargs = _positive_kwargs(mock_vts_document)
+    kwargs["transport_nature"] = _ReachesBrokerOnly()
+    verdict = nonlive_broker_consuming_admitted(**kwargs)
+    assert verdict.admitted is False
+    assert "risk_relevant_live_not_false" in verdict.reasons
+
+
 def test_condition5_instance_environment_mismatch_refuses(
     mock_vts_document: InstanceDocument,
 ) -> None:

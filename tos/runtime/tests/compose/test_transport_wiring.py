@@ -11,12 +11,14 @@ directories; the Broker Capability Profile INSTANCE document is loaded READ-ONLY
 from __future__ import annotations
 
 import ast
+import dataclasses
 import os
 from pathlib import Path
 
 import pytest
 import yaml
 from tos.egressgw.records import GatewayEvidenceRecord
+from tos_runtime.brokercap.instance import load_instance_documents
 from tos_runtime.brokercap.scopes import BrokerScopesConfig, load_broker_scopes
 from tos_runtime.compose._request_digest import CapsuleStandInDigest, KisWireCodecDigest
 from tos_runtime.compose._transport_wiring import (
@@ -171,6 +173,63 @@ def test_load_transport_config_kis_mock_attests_codec_bound(
     assert config.mode == "live"
 
 
+def _documents_with_rest_base_cleared(
+    instance_path: Path, *, environment: str
+) -> tuple:
+    """The real, loaded INSTANCE documents, with ``environment``'s own ``rest_base`` cleared to
+    ``None`` — never a hand-built document (independent review MEDIUM-4's own "never invented"
+    concern applies to test fixtures too)."""
+    return tuple(
+        (
+            dataclasses.replace(document, rest_base=None)
+            if document.environment == environment
+            else document
+        )
+        for document in load_instance_documents(instance_path)
+    )
+
+
+def test_load_transport_config_kis_mock_refuses_when_mock_document_rest_base_is_none(
+    tmp_path: Path,
+    mock_stock_order_scopes: BrokerScopesConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Independent review MEDIUM-4: the mock-document host-seal guard had never actually gone
+    red — every fixture's real document always carries ``rest_base``. Clearing it (never
+    inventing a replacement) must refuse boot."""
+    fx.write_kis_mock_transport_config(tmp_path)
+    assert mock_stock_order_scopes.instance_path is not None
+    doctored = _documents_with_rest_base_cleared(
+        mock_stock_order_scopes.instance_path, environment="MOCK_VTS"
+    )
+    monkeypatch.setattr(
+        "tos_runtime.compose._transport_wiring.load_instance_documents",
+        lambda _path: doctored,
+    )
+    with pytest.raises(TransportWiringError, match="rest_base"):
+        load_transport_config(TransportKind.KIS_MOCK, tmp_path, mock_stock_order_scopes)
+
+
+def test_load_transport_config_kis_mock_refuses_when_real_document_rest_base_is_none(
+    tmp_path: Path,
+    mock_stock_order_scopes: BrokerScopesConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Symmetric to the MOCK-document case above — the REAL_PROD exclusion fact must be
+    provable too, never assumed present."""
+    fx.write_kis_mock_transport_config(tmp_path)
+    assert mock_stock_order_scopes.instance_path is not None
+    doctored = _documents_with_rest_base_cleared(
+        mock_stock_order_scopes.instance_path, environment="REAL_PROD"
+    )
+    monkeypatch.setattr(
+        "tos_runtime.compose._transport_wiring.load_instance_documents",
+        lambda _path: doctored,
+    )
+    with pytest.raises(TransportWiringError, match="rest_base"):
+        load_transport_config(TransportKind.KIS_MOCK, tmp_path, mock_stock_order_scopes)
+
+
 # ===========================================================================
 # refuse_transport_scope_mismatch — one source of truth (plan §2 decisions 5/7)
 # ===========================================================================
@@ -304,6 +363,31 @@ def test_refuse_custody_principal_mismatch_wrong_principal_refuses(
         )
 
 
+def test_refuse_custody_principal_mismatch_checks_both_scopes_independently(
+    custody_root: Path, mock_stock_order_scopes: BrokerScopesConfig
+) -> None:
+    """Independent review MEDIUM-2: corrupt ONLY ``kis_mock.app_secret``'s manifest principal —
+    proves both scopes are actually checked (never just whichever happens to appear first in
+    ``_KIS_MOCK_CUSTODY_SCOPES``); a mutation dropping either scope from that tuple would make
+    this test wrongly pass without raising."""
+    _build_custody(custody_root)
+    manifest_path = custody_root / "custody.manifest.yaml"
+    raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    raw["scopes"]["kis_mock.app_secret"]["principal"] = "some-other-principal"
+    manifest_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    custody = FileCustody(
+        custody_root,
+        environment_label=_ENVIRONMENT_LABEL,
+        expected_owner_uid=os.getuid(),
+        evidence=_NullEvidence(),
+    )
+    with pytest.raises(TransportWiringError, match="kis_mock.app_secret"):
+        refuse_custody_principal_mismatch(
+            TransportKind.KIS_MOCK, custody, mock_stock_order_scopes.active_scope
+        )
+
+
 class _NullEvidence:
     def append(self, *args: object, **kwargs: object) -> None:  # noqa: ARG002
         return None  # a no-op evidence double — args are intentionally unused
@@ -328,6 +412,14 @@ def test_seal_registry_captures_from_send_sealed_and_pops_single_use() -> None:
 
 
 def test_seal_registry_ignores_non_send_sealed_records() -> None:
+    """Independent review LOW-2: the kernel's own ``GatewayEvidenceRecord`` construction-time
+    validator (``_seal_fields_match_their_kind``, ``tos/src/tos/egressgw/records.py``) already
+    rejects a non-``None`` ``send_seal`` on any kind other than ``SEND_SEALED`` — so a
+    ``kind == "SEND_SEALED"`` mutation in :meth:`SealRegistry.capture` is unfalsifiable through
+    any record this suite (or production) can actually construct; the ``send_seal is not None``
+    guard alone already carries the whole load for every REACHABLE record. This test still pins
+    the OBSERVABLE behaviour (a kind-less-seal record captures nothing), not a claim that the
+    kind check itself is load-bearing."""
     registry = SealRegistry()
     seal = seal_fx.build_seal(attempt_id="attempt-y")
     registry.capture(GatewayEvidenceRecord(kind="SEND_STARTED", attempt_id="attempt-y"))
@@ -340,9 +432,69 @@ def test_seal_registry_ignores_non_send_sealed_records() -> None:
     assert registry("attempt-y") is seal
 
 
+def test_seal_registry_evicts_on_a_later_send_refused_for_the_same_attempt() -> None:
+    """HIGH-1's bounding half: a ``SEND_REFUSED`` recorded for an attempt this registry already
+    holds a captured seal for means that seal will never be consumed — evict it rather than let
+    it survive past the attempt's own terminal record."""
+    registry = SealRegistry()
+    seal = seal_fx.build_seal(attempt_id="attempt-z")
+    registry.capture(
+        GatewayEvidenceRecord(
+            kind="SEND_SEALED", attempt_id="attempt-z", send_seal=seal
+        )
+    )
+    registry.capture(GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="attempt-z"))
+    assert registry("attempt-z") is None
+
+
 def test_seal_registry_unknown_attempt_returns_none() -> None:
     registry = SealRegistry()
     assert registry("never-seen") is None
+
+
+def test_synthetic_compose_never_wires_the_seal_registry_observer(
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Independent review HIGH-1: under the DEFAULT ``synthetic`` transport,
+    ``SealRegistry.capture`` must never be wired as the gateway evidence sink's ``on_record``
+    observer at all — ``SyntheticPaperTransport`` never calls the lookup, so wiring it
+    unconditionally (the pre-fix behaviour) retained every ``SendSeal`` for the whole process
+    lifetime. Proven by spying on ``SealRegistry.capture`` itself and driving a REAL synthetic
+    hand-off (the same scenario ``test_compose_root.py::test_one_synthetic_transport_handoff``
+    drives) through the actual compose root — the spy must never fire."""
+    calls: list[object] = []
+    original_capture = SealRegistry.capture
+
+    def _spying_capture(self: SealRegistry, record: object) -> None:
+        calls.append(record)
+        original_capture(self, record)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(SealRegistry, "capture", _spying_capture)
+
+    runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+    _reach_trusted(runtime)
+    event = fx.crossing_event()
+    results = runtime.run_once((event,))
+    proposal_digest = results[0].pipeline.proposal.canonical_digest
+    construction = runtime.construction_stage.construction
+    assert construction is not None and construction.intent is not None
+    write_approval_file(
+        custody_root,
+        proposal_digest=proposal_digest,
+        environment_label="non-live-test",
+        approved_intent_envelope_digest=construction.intent.canonical_digest,
+    )
+    runtime.run_once((event,))
+    assert len(runtime.transport.requests) == 1  # the hand-off genuinely happened
+
+    assert calls == []  # ...but the (unwired) SealRegistry observer never fired
+
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
 
 
 # ===========================================================================
@@ -383,6 +535,12 @@ def test_build_transport_kis_mock_builds_a_kis_mock_transport(
         runtime_identity=None,
     )
     assert isinstance(transport, KisMockTransport)
+    # Independent review MEDIUM-2: pin the exact custody scope names build_transport wires the
+    # adapter with — a mutation swapping app_key_scope/app_secret_scope (or dropping one from
+    # _KIS_MOCK_CUSTODY_SCOPES) previously went undetected, because dry_run never loads a
+    # credential.
+    assert transport._app_key_scope == "kis_mock.app_key"  # noqa: SLF001
+    assert transport._app_secret_scope == "kis_mock.app_secret"  # noqa: SLF001
 
 
 class _NullCustody:

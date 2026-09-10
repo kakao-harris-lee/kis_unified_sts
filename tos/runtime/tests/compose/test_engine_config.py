@@ -15,7 +15,7 @@ from tos_runtime.compose._engine_config import (
     EngineConfigError,
     load_engine_config,
 )
-from tos_runtime.compose._wiring import _build_engine_configuration
+from tos_runtime.compose._finalize_wiring import _build_engine_configuration
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 

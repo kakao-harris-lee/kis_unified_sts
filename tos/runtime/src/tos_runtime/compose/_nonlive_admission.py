@@ -128,8 +128,24 @@ def _capability_tuples_mock_simulation(active_scope: BrokerScope | None) -> bool
 
 
 def _risk_relevant_live_false(transport_nature: TransportNature | None) -> bool:
-    """Condition 4 — explicit ``is False``, never a falsy/None check."""
-    return transport_nature is not None and transport_nature.risk_relevant_live is False
+    """Condition 4 — explicit ``is False``, never a falsy/None check.
+
+    Independent review MEDIUM-3: ``transport_nature`` is typed as the concrete
+    :class:`~tos.egressgw.TransportNature`, but the kernel Coordinator Protocol
+    (``tos.engine.core.CoordinatorPreconditions.live_scope_authorized``) only guarantees a
+    ``TransportNatureLike`` carrying ``reaches_broker`` — the caller
+    (:meth:`~tos_runtime.compose._preconditions.RuntimeCoordinatorPreconditions
+    .live_scope_authorized`) narrows via ``typing.cast``, a static-typing-only widening with no
+    runtime check. A Protocol-conforming object that genuinely lacks ``risk_relevant_live``
+    (structurally sanctioned by the kernel Protocol) would raise ``AttributeError`` from a plain
+    ``.risk_relevant_live`` read — an uncaught exception in a positive safety gate is not a
+    refusal. ``getattr(..., None)`` makes a missing attribute the SAME "unestablished ⇒ refuse"
+    case ``None``/``True`` already are, never a crash.
+    """
+    return (
+        transport_nature is not None
+        and getattr(transport_nature, "risk_relevant_live", None) is False
+    )
 
 
 def _instance_matches_scope_binding(

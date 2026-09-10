@@ -449,7 +449,8 @@ def wire_engine_and_driver(
     """The gateway + ``EngineCore`` + durable inbox/driver wiring — split out of ``_wiring.py``'s
     ``_finalize`` purely for the size budget; no behavioural difference from having this inline
     there. Builds, in order: the ``SealRegistry`` + obligation recorder + gateway evidence sink
-    (T2 lane C: now also wired with the registry's ``capture`` as ``on_record``) -> the selected
+    (T2 lane C: the registry's ``capture`` is wired as ``on_record`` ONLY for ``kis-mock`` —
+    independent review HIGH-1) -> the selected
     transport (:func:`~tos_runtime.compose._transport_wiring.build_transport` — synthetic or
     KIS MOCK) + ``BrokerEgressGateway`` -> the resolved registry + engine evidence sink -> the
     ``RuntimeCoordinatorPreconditions`` (design #31 §9-10; plan §2.1, via
@@ -490,8 +491,11 @@ def wire_engine_and_driver(
         ),
     )
     # T2 lane C: the SendSeal capture/lookup seam between the gateway's own SEND_SEALED record
-    # and a kis-mock transport's injected SealLookup port — wired into the gateway sink's
-    # on_record observer below regardless of transport kind (harmless, cheap, for synthetic).
+    # and a kis-mock transport's injected SealLookup port. Independent review HIGH-1: on_record
+    # is wired ONLY for kis-mock, which is this registry's only consumer (SealRegistry's own
+    # docstring) — SyntheticPaperTransport never calls the lookup, so wiring the observer
+    # unconditionally (the pre-fix behaviour) retained every SendSeal on the DEFAULT synthetic
+    # path forever, for the whole process lifetime.
     seal_registry = SealRegistry()
     # Independent review finding #8: wiring on_refusal here means a SEND_REFUSED whose
     # obligation this recorder cannot verify (e.g. the rcl projection's sqlite read fails) now
@@ -502,7 +506,9 @@ def wire_engine_and_driver(
         evidence_store,
         runtime_identity=identity,
         on_refusal=obligation_recorder,
-        on_record=seal_registry.capture,
+        on_record=(
+            seal_registry.capture if transport_kind is TransportKind.KIS_MOCK else None
+        ),
     )
     transport = build_transport(
         transport_kind,

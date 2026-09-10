@@ -40,11 +40,17 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, CanonicalDecimal, get_scheme
 
 from tos_runtime.transport.kis_mock.codec import KisOrderWireCodec
+
+if TYPE_CHECKING:
+    # Independent review LOW-3: a TYPE_CHECKING-only import — a genuine runtime import of
+    # tos_runtime.compose._types here would be a cycle (_types -> context -> this module); see
+    # default_request_bytes_digest_source's own docstring for the full explanation.
+    from tos_runtime.compose._types import ConstructionConfig
 
 __all__ = [
     "CapsuleStandInDigest",
@@ -150,19 +156,22 @@ class KisWireCodecDigest:
 
 
 def default_request_bytes_digest_source(
-    construction: object, capsule_terminus_fields: Iterable[str]
+    construction: ConstructionConfig, capsule_terminus_fields: Iterable[str]
 ) -> CapsuleStandInDigest:
     """Build the DEFAULT :class:`CapsuleStandInDigest` (T2 lane C — moved out of
     ``tos_runtime.compose._wiring`` to keep that module's own size budget net-negative; no
     behavioural change from the T2 lane A version this replaces).
 
-    ``construction`` is typed as ``object`` (never
-    :class:`~tos_runtime.compose._types.ConstructionConfig` directly) deliberately: importing
-    that type here would import :mod:`tos_runtime.compose._types`, which imports
-    :mod:`tos_runtime.compose.context`, which imports THIS module — a cycle. Every caller today
-    passes the real ``ConstructionConfig``; this function only ever reads named attributes off it
-    via ``getattr``, so the narrower ``object`` annotation costs nothing at the one real call site
-    and avoids the cycle structurally rather than by caller discipline alone.
+    ``construction`` is typed as :class:`~tos_runtime.compose._types.ConstructionConfig` under
+    ``TYPE_CHECKING`` only (independent review LOW-3) — a genuine RUNTIME import of
+    :mod:`tos_runtime.compose._types` here would be a cycle (it imports
+    :mod:`tos_runtime.compose.context`, which imports THIS module), but a ``TYPE_CHECKING``-guarded
+    import plus the ``from __future__ import annotations`` string-annotation deferral this module
+    already carries costs nothing at runtime and gives full static typing at the one real call
+    site — strictly better than the bare ``object`` this signature carried before, which discarded
+    typing entirely rather than avoiding the cycle. This function still only ever reads named
+    attributes off ``construction`` via ``getattr``, never anything ``ConstructionConfig``-specific
+    beyond that.
 
     Args:
         construction: The per-strategy Order Construction facts object (every caller today:

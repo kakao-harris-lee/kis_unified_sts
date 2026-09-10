@@ -93,9 +93,15 @@ __all__ = [
 #: config (mirrors ``_engine_wiring.ENGINE_DRIVER_CONFIG_NAME``'s own convention).
 KIS_MOCK_TRANSPORT_CONFIG_NAME = "kis_mock_transport.yaml"
 
-#: The two custody scopes a ``kis-mock`` boot requires (plan §2 decision 4) — kept as a single
-#: source of truth here rather than repeating the literal pair at every call site.
-_KIS_MOCK_CUSTODY_SCOPES = ("kis_mock.app_key", "kis_mock.app_secret")
+#: The two custody scope names a ``kis-mock`` boot requires (plan §2 decision 4) — the ONE
+#: source of truth for both the provisioning/principal check (:func:`refuse_custody_principal_
+#: mismatch`) and the adapter construction (:func:`build_transport`'s own ``app_key_scope``/
+#: ``app_secret_scope`` kwargs) — independent review MEDIUM-2: these two literals used to be
+#: written twice (once here, once again inline in ``build_transport``), so a mutation swapping
+#: or dropping one there went undetected by every existing test.
+_KIS_MOCK_APP_KEY_SCOPE = "kis_mock.app_key"
+_KIS_MOCK_APP_SECRET_SCOPE = "kis_mock.app_secret"
+_KIS_MOCK_CUSTODY_SCOPES = (_KIS_MOCK_APP_KEY_SCOPE, _KIS_MOCK_APP_SECRET_SCOPE)
 
 #: The Broker Capability Profile INSTANCE document environment name every KIS MOCK boot's host
 #: seal excludes (plan §2 decision 5) — the same literal ``environment_binding.BROKER_PRODUCTION``
@@ -341,21 +347,43 @@ class SealRegistry:
     port — SINGLE-USE (:meth:`__call__` pops): a second lookup for the same attempt returns
     ``None``, mirroring the kernel gateway's own at-most-one-send-per-attempt discipline. Never
     reconstructs a seal from any other source.
+
+    **Only wired for ``kis-mock`` (independent review HIGH-1).** A caller MUST wire
+    :meth:`capture` as the gateway evidence sink's ``on_record`` observer ONLY when this
+    registry actually has a consumer (:func:`build_transport`'s ``kis-mock`` branch) — see
+    :mod:`tos_runtime.compose._engine_wiring`'s own construction site. Wiring it unconditionally
+    (the pre-fix behaviour) meant every ``SendSeal`` on the DEFAULT ``synthetic`` path — which
+    never calls :meth:`__call__` at all — accumulated in :attr:`_seals` for the process lifetime,
+    an unbounded in-memory retention on every existing deployment, not only ``kis-mock`` ones.
+
+    **Bounding the ``kis-mock`` registry itself (HIGH-1's second half).** Under normal (non-crash)
+    operation, ``tos.egressgw.gateway.BrokerEgressGateway.__call__`` never halts between recording
+    ``SEND_SEALED`` and calling the transport — so every captured seal is popped by the adapter's
+    own single-use lookup almost immediately. The one reachable exception is a sink itself raising
+    between those two points (a crash-adjacent path the kernel already treats as "possibly live",
+    module docstring of ``tos.egressgw.gateway``) — bounded to at most one stale entry per such
+    crash, not unbounded growth. As defense in depth against a future gateway change that DOES
+    halt in that window, :meth:`capture` also evicts any earlier-captured seal for the SAME
+    ``attempt_id`` the moment a ``SEND_REFUSED`` record arrives for it — a refusal recorded for an
+    attempt this registry already holds a seal for means that seal was never (and will never be)
+    consumed.
     """
 
     _seals: dict[str, SendSeal] = field(default_factory=dict)
 
     def capture(self, record: GatewayEvidenceRecord) -> None:
         """The :class:`~tos_runtime.evidence.sinks.GatewayEvidenceSinkAdapter` ``on_record``
-        observer — captures ``record.send_seal`` for a ``kind == "SEND_SEALED"`` record only; a
-        no-op for every other kind (the adapter wires this unconditionally, module docstring).
+        observer (wired ONLY for ``kis-mock``, class docstring) — captures ``record.send_seal``
+        for a ``kind == "SEND_SEALED"`` record, evicts any stale entry on a later
+        ``kind == "SEND_REFUSED"`` for the same attempt (class docstring's bounding discipline),
+        and is a no-op for every other kind.
         """
-        if (
-            record.kind == "SEND_SEALED"
-            and record.attempt_id is not None
-            and record.send_seal is not None
-        ):
+        if record.attempt_id is None:
+            return
+        if record.kind == "SEND_SEALED" and record.send_seal is not None:
             self._seals[record.attempt_id] = record.send_seal
+        elif record.kind == "SEND_REFUSED":
+            self._seals.pop(record.attempt_id, None)
 
     def __call__(self, attempt_id: str) -> SendSeal | None:
         """The adapter's own ``SealLookup.__call__`` — single-use (``dict.pop``)."""
@@ -429,9 +457,13 @@ def build_transport(
         :class:`~tos.brokeradapter.Transport` Protocol either way.
 
     Raises:
-        AssertionError: ``kind`` is ``kis-mock`` and ``transport_config`` is ``None`` — a caller
-            contract violation (:func:`resolve_transport_boot` always returns a non-``None``
-            config for ``kis-mock``; this is a defensive narrow, not a reachable runtime state).
+        TransportWiringError: ``kind`` is ``kis-mock`` and ``transport_config`` is ``None`` — a
+            caller contract violation (:func:`resolve_transport_boot` always returns a
+            non-``None`` config for ``kis-mock``; not a reachable state through this module's own
+            call sites, but a typed refusal rather than a bare ``assert`` — independent review
+            MEDIUM-6, matching the Phase 5 W1 ``driver.py`` disposition: a bare ``assert`` is
+            stripped under ``python -O``, degrading into an unrelated ``AttributeError`` several
+            frames from the actual contract violation instead of naming it).
     """
     if kind is TransportKind.SYNTHETIC:
         return SyntheticPaperTransport(
@@ -439,17 +471,18 @@ def build_transport(
                 fill_numerator=1, fill_denominator=1, lot_size=Decimal("1")
             )
         )
-    assert transport_config is not None, (
-        "build_transport: kis-mock requires a non-None transport_config — "
-        "resolve_transport_boot always supplies one"
-    )
+    if transport_config is None:
+        raise TransportWiringError(
+            "build_transport: kis-mock requires a non-None transport_config — "
+            "resolve_transport_boot always supplies one"
+        )
     client = build_client(transport_config)
     return KisMockTransport(
         config=transport_config,
         client=client,
         custody=custody,
-        app_key_scope="kis_mock.app_key",
-        app_secret_scope="kis_mock.app_secret",
+        app_key_scope=_KIS_MOCK_APP_KEY_SCOPE,
+        app_secret_scope=_KIS_MOCK_APP_SECRET_SCOPE,
         monotonic=monotonic,
         seal_lookup=seal_lookup,
         evidence_sink=_evidence_recorder(evidence_store, runtime_identity),
