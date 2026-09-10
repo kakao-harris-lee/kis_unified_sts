@@ -29,6 +29,8 @@ Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos.eng
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from tos.engine import EventResult
 from tos.engine.records import EngineEvent
 from tos.engine.vocabulary import EventKind, ResultDisposition
@@ -36,8 +38,21 @@ from tos.engine.vocabulary import EventKind, ResultDisposition
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
-from tos_runtime.posttrade.release_consumer import FinalityReleaseConsumer
 from tos_runtime.rcl.finality_witness import finality_witness_for
+
+if TYPE_CHECKING:
+    # TOS Phase 5 W2-R re-review finding NEW-1 (2026-09-10): a runtime import here forms a
+    # cycle -- `release_consumer` imports `tos_runtime.engine.inbox`, which triggers
+    # `tos_runtime/engine/__init__.py`, which imports `driver`, which imports THIS module,
+    # which would (at runtime) import `release_consumer` right back, mid-initialization. This
+    # module only ever uses `FinalityReleaseConsumer` as a type annotation
+    # (`project_finality`'s own `release_consumer` parameter) -- both this module and
+    # `tos_runtime.posttrade.release_consumer` already carry `from __future__ import
+    # annotations`, so the annotation is never evaluated at runtime and this import is safe to
+    # defer to type-checking time only. See `engine/driver.py`'s own matching fix (the other
+    # half of the SAME cycle) and `tests/posttrade/test_release_consumer.py`'s fresh-subprocess
+    # import test, which pins the cycle closed.
+    from tos_runtime.posttrade.release_consumer import FinalityReleaseConsumer
 
 __all__ = [
     "ECONOMIC_OBLIGATION_KIND",

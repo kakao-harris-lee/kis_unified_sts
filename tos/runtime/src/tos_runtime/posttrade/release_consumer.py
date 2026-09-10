@@ -67,6 +67,20 @@ finality 판정" is a rejected alternative).** Per attempt:
      finality for a proof bound to the now-superseded generation; pinned directly by
      ``tests/posttrade/test_release_consumer.py``'s divergent-scope / advanced-generation tests.
 
+   **Honest ceiling (re-review, 2026-09-10): independent in MECHANISM, not (yet) in every
+   reachable VALUE.** Both inputs above are read through a genuinely separate code path from
+   the one that minted the proof under test — that is what makes the gate non-vacuous, and what
+   the divergent-scope/advanced-generation tests exercise directly. But for every input this
+   compose root can actually construct today, the two sides still coincide: this compose root
+   wires exactly ONE :class:`~tos.engine.records.InstrumentKey` for its whole process lifetime
+   (so the RCL reservation's own persisted account can never differ from the proof's, absent a
+   test that deliberately forces it, as the divergent-scope test does), and
+   :mod:`tos_runtime.posttrade.finality` hardcodes ``obligation_generation=0`` for every proof it
+   mints (so no genuine correction ever exists to advance ``active_generation`` past it). A
+   future multi-instrument compose root or a real correction/generation-advance lane is what
+   would make this gate's own divergence reachable from production traffic, not merely from a
+   test.
+
 Any non-positive gate records ``CAPACITY_RELEASE_HELD`` (with the reason) and performs NO RCL
 transition. Every positive path records ``CAPACITY_RELEASE_INTENT`` BEFORE calling
 :func:`~tos_runtime.rcl.finality_witness.release_reservation` — evidence always precedes the RCL

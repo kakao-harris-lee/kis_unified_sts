@@ -84,6 +84,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from tos.canonical import ArtifactIntegrityError, CanonicalizationScheme
 from tos.engine import EngineCore, EventResult
@@ -112,8 +113,20 @@ from tos_runtime.engine.orthostate_projection import (
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
-from tos_runtime.posttrade.release_consumer import FinalityReleaseConsumer
 from tos_runtime.time.sources import MonotonicSource
+
+if TYPE_CHECKING:
+    # TOS Phase 5 W2-R re-review finding NEW-1 (2026-09-10): the other half of the SAME import
+    # cycle `engine/finality_projection.py`'s own matching fix comment describes -- this module
+    # imports `tos_runtime.engine.finality_projection` (a genuine runtime import: `project_finality`
+    # is actually CALLED from `_project_finality` below, so that one import must stay a real
+    # top-level import) which, before this fix, transitively re-entered `release_consumer`
+    # while THIS module (reached via `tos_runtime.engine`'s own package `__init__`) was still
+    # mid-import. `FinalityReleaseConsumer` itself is used here ONLY as a type annotation
+    # (`_release_consumer`'s field type, `bind_release_consumer`'s parameter) -- both this
+    # module and `tos_runtime.posttrade.release_consumer` already carry `from __future__ import
+    # annotations`, so deferring this import to type-checking time only is safe.
+    from tos_runtime.posttrade.release_consumer import FinalityReleaseConsumer
 
 __all__ = ["EngineDriver", "EngineDriverInvariantError"]
 
