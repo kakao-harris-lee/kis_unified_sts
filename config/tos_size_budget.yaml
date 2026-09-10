@@ -433,23 +433,6 @@ exceptions:
     신규 배선(도크스트링 설명 포함)하며 100→103 초과. 안전-부담 파라미터의
     도크스트링을 생략하는 것은 이 파일 자신의 기존 관례(finality_config 등
     모든 신규 파라미터가 온전한 도크스트링을 받음)와 어긋나 압축 대신 등재.
-- target: tos/runtime/src/tos_runtime/posttrade/finality.py::SyntheticFinalityProducer.produce
-  measured: 107
-  owner: tos-runtime
-  decomposition_order: 35
-  expires_on: '2026-12-31'
-  note: >-
-    독립 리뷰(웨이브 2) finding #6 처분(레인 C-R2, 2026-09-09) — `_ELIGIBLE_
-    KINDS` 멤버십만으로 "zero remaining executable quantity"(ORDER_FQP 주장)
-    를 보장했고, 커널 3종 게이트 중 어느 것도 remaining_quantity 를 검사하지
-    않음을 실측(리뷰어 M6 뮤테이션: `_ELIGIBLE_KINDS` 에 PARTIAL_FILL 추가 시
-    완전한 proof 가 발급됨). `payload.remaining_quantity == 0` 및
-    `filled_quantity` 존재·양수 양성 전제를 payload 에 직접 추가(커널 게이트
-    호출 이전)하며 100→107 초과. 오늘의 유일 멤버(FULL_FILL)에 대해서는
-    커널 자체 `EgressResultPayload` validator 가 이미 이 불변식을 구조적으로
-    보장해 새 분기가 도달 불가능하지만, `_ELIGIBLE_KINDS` 확장에 대한
-    방어선이므로 유지(모듈 도크스트링 상세). 신규 전제 4줄 + 확장된
-    Returns 도크스트링 순증분 — 압축 대신 등재.
 - target: tos/runtime/src/tos_runtime/engine/driver.py::EngineDriver._process_next
   measured: 141
   owner: tos-runtime
@@ -505,7 +488,7 @@ exceptions:
     목록 끝에 append(gateway.py 항목의 2026-09-07 재등재 주석과 동일 관례) —
     후속 하우스키핑에서 물리적 재정렬 가능.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 109
+  measured: 118
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
@@ -522,3 +505,11 @@ exceptions:
     ``apply_recovery_barrier(composed, ...)`` 호출 1건(kwargs 4 · black 개행)이
     ``compose_paper_runtime`` 끝에 추가됨 — 정본 결선 순서 문서라 분해 대신 등재
     (Phase 5 계획 §2 결정 2: 장벽이 READY 가 아니면 드라이버 미결선).
+    **2026-09-10 Phase 5 W2-R 재등재 109→118**: finality release consumer 결선
+    ``apply_release_wiring(composed, ...)`` 호출 1건(kwargs 3 · 주석 2줄 · black
+    개행) — recovery barrier 호출 직전에 추가(플랜 §10 행 ①③: 드라이버가
+    detach 되기 전에 consumer 를 붙여도 안전 — ``apply_release_wiring`` 자신의
+    도크스트링 참조). ``_wiring.py``/``_engine_wiring.py`` 는 무편집(plan §4
+    "`_wiring.py`는 성장 금지" — `ComposedRuntime` 의 이미 공개된 필드만 재사용,
+    `_release_wiring.py` 신규 모듈로 격리). root.py 는 정본 결선 순서 문서라
+    호출 시퀀스 재구성은 하지 않음 — 압축 대신 등재.
