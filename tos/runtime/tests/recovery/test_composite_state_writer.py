@@ -116,7 +116,7 @@ def test_write_failure_propagates_to_the_caller(tmp_path: Path) -> None:
     unwritable.mkdir()
     writer = CompositeStateWriter(unwritable)
 
-    with pytest.raises(
-        Exception
-    ):  # noqa: B017 -- sqlite3's own OperationalError/IsADirectory
+    # sqlite3's own OperationalError/IsADirectoryError -- deliberately broad (B017): the point
+    # of this test is "some exception propagates", not which concrete sqlite3 type it is.
+    with pytest.raises(Exception):  # noqa: B017
         writer("attempt-abc", _composite())

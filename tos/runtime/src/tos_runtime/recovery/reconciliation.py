@@ -61,6 +61,33 @@ observation age check. This is conservative, never permissive: an ``UNTRUSTED``/
 would, and a ``TRUSTED`` boot can now ALSO succeed (the "resume path must supply a real marker"
 requirement) rather than being structurally unable to ever clear anything.
 
+**Scope-wide permit conservatism (accepted as-is, 2026-09-10 team-lead disposition).**
+:func:`_reconcile_one` narrows ``WitnessScope.attempt_ids`` to exactly the ONE attempt under
+reconciliation, but that narrowing does not reach into
+:meth:`~tos_runtime.recon.evidence_reader.SqliteEvidenceReceiptReader.receipts` or
+:meth:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness.observe` — both readers'
+own ``_in_scope`` filters only ``scope.account`` / ``scope.instrument_keys`` (their own
+docstrings: "never filtered by ``attempt_id``... a receipt for an attempt outside
+``scope.attempt_ids`` is the 'receipt-only' classification, not something to drop"), so every
+receipt/order for the WHOLE ``(account, instrument)`` — every other attempt, every orphan order
+— is still observed and folded into the SAME
+:class:`~tos_runtime.recon.service.ReconciliationReport`.
+:attr:`~tos_runtime.recon.service.ReconciliationReport.permits_capacity_release` /
+:attr:`~tos_runtime.recon.service.ReconciliationReport.permits_rearm` are themselves a
+conjunction "over every attempt and orphan order found" in that report (that class's own
+docstring) — not narrowed to ``attempt_id``, unlike the ``matched`` check just above it, which
+IS filtered to this one ``attempt_id``. The practical consequence: a possibly-live attempt that
+is itself genuinely ``MATCHED`` can still see :attr:`ReconciliationOutcome.cleared` ``False``
+if ANY other attempt or orphan order sharing its ``(account, instrument)`` fails its own
+field-specific gate this same call. This is intentional, not a bug this module works around:
+plan §2 decision 2's "복구는 부팅 전 장벽" is exactly "nothing in this scope may resume until
+everything in this scope is resolved" — a possibly-live attempt should not clear capacity while
+some unrelated position in the SAME instrument is itself unreconciled. Narrowing the permit
+flags to ``attempt_id`` (so an unrelated failure could no longer block this attempt) would
+change :class:`~tos_runtime.recon.service.ReconciliationService`'s own report contract
+(W1-b) — out of scope for this module, and not requested; this module instead documents the
+consequence honestly rather than silently relying on undocumented conservatism.
+
 **Fail-closed on any read failure (defence in depth).** :meth:`ReconciliationService.reconcile`
 guards its own ``BrokerWitness.observe`` call against
 :class:`~tos_runtime.recon.ports.WitnessUnavailable` internally, but does **not** guard its
