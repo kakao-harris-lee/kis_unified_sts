@@ -37,6 +37,7 @@ _ARG_ADDERS = {
     "tools.broker_probes.probes_real": "add_real_args",
     "tools.broker_probes.probes_balance": "add_balance_args",
     "tools.broker_probes.probes_real_order": "add_real_order_args",
+    "tools.broker_probes.probes_ca": "add_ca_args",
 }
 
 

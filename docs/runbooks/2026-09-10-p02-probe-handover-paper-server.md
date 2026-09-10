@@ -2,11 +2,11 @@
 
 > **대상**: 모의투자(배포) 서버 운영자. **목적**: VERIFICATION-PROFILE-002 의 브로커 `value_ms: null` 키를 닫기 위한 잔여 프로브 실행 · 산출물을 개발 측으로 돌려보내기.
 > 정본은 `docs/runbooks/kis-capability-probes.md`(이하 «런북»)이며, 이 문서는 **지금 남은 것만** 추린 실행 요약이다. 충돌 시 런북이 우선.
-> 코드 정본 `tools/broker_probes/registry.py`(프로브 20종) · 캠페인 `docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/`.
+> 코드 정본 `tools/broker_probes/registry.py`(프로브 22종 · 2026-09-10 N-19/P-CA 등재) · 캠페인 `docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/`.
 
 ## 0. 한 줄 요약
 
-남은 실행은 **모의(MOCK_VTS) 4건(P-8·P-15→N-15·P-BAL·P-EXT) + 실전 조회(REAL_PROD, GET 전용) 2건(N-16·N-18)**이다. 그 밖에 N-19/P-CA 2건은 코드 미등재로 실행 불가, P-R5 계열은 정책상 영구 금지다. 실주문·실자금 이동은 어디에도 없다.
+남은 실행은 **모의(MOCK_VTS) 5건(P-8·P-15→N-15·P-BAL·P-CA·P-EXT) + 실전 조회(REAL_PROD, GET 전용) 2건(N-16·N-18)**이다. N-19(명세 대조)는 서버 실행이 아니라 개발 측 데스크워크로 이미 완료됐다(`docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md`). P-CA는 2026-09-10 구현 착지로 `registry.py`에 `supported=True`로 등재됐다(런북 §5.8). P-R5 계열은 정책상 영구 금지다. 실주문·실자금 이동은 어디에도 없다.
 
 ## 1. 실행 전 확인 (전부 필수)
 
@@ -30,10 +30,10 @@
 | 1 | **P-8** ×5 | `python -m tools.broker_probes.run P-8 --symbol <mini 근월물> --confirm` (기본 `--pace-s 1.1` 유지 · `--symbol` 없으면 즉시 exit 4) | 선물 정규장 · `KIS_FUTURES_ACCOUNT_NO` · P-5 이력 있으면 좋음 | ~10 min/회 · HIGH(모의 정정 주문 발생) | 2026-07-29 5런은 전부 측정 성공이었으나 정리 단계가 결과를 지웠음 → 수정(`4fbf3618`) 후 **재실행 5회 필요**. `protective_request_complete` 의 유일 원천이며 `protection_gap`/`protection_overlap`(인접 키)을 **부분적으로** 정보한다 |
 | 2 | **P-15 → N-15** | `python -m tools.broker_probes.run P-15 --confirm` 직후 `python -m tools.broker_probes.run N-15 --symbol <mini 근월물> --trials 1 --confirm` | **앱키 공유 워커 전부 정지**(재발급 소모) | P-15 ~3 min · N-15 ~18 min/trial · HIGH | N-15 4회 전패 기록(`EGW00133`·tokenP 중단) · 재설계본(`PRE_EXISTING` 격리·1200s 창) 미실행 |
 | 3 | **P-BAL** (모의) | `python -m tools.broker_probes.run P-BAL --asset stock --env mock --confirm` (런북 §5.6 대상 3종 중 **2번 모의 주식만** — 1·3번은 `--env real` 이라 이 캠페인 범위 밖 · 원하면 §2 의 실전 셸 절차로 별도 승인 후) | 모의 잔고 보유 | ~1 min · LOW | 2026-08-05 예약분 미집행(페이지 크기 실측) |
-| 4 | **P-EXT** ×≥5 | `python -m tools.broker_probes.run P-EXT --symbol <mini 근월물> --confirm` | 운영자가 **HTS/MTS 로 수동 모의 주문**을 프로브 대기 중 넣음 · 5회 반복 | ~15 min/trial · MEDIUM | `external_activity_detect` 미실행(운영자 동석 필요) |
-| 5 | **N-16** (실전 조회) | 별도 셸: 실전 키 export → `python -m tools.broker_probes.run N-16 --confirm` → 셸 종료 | 야간 창 18:00–05:00 KST · **실전 주식 포지션 보유 상태** · 운영자 승인 | 1 call · MEDIUM | 야간 재실행 필요(보유 상태에서) |
-| 6 | **N-18** (실전 조회) | 같은 실전 셸에서 `python -m tools.broker_probes.run N-18 --day-symbol <주간 선물코드> --night-symbol <야간 선물코드> --confirm` (두 심볼 없으면 N-18c 두 레그가 `skip` 으로 빠져 야간코드 질문이 미답으로 남음) | 운영자 승인 | 3 calls · MEDIUM | 미실행 |
-| — | **N-19 → P-CA** | **실행 불가** | — | — | `registry.py` 에 **미등재**(2026-08-07 정의만 · diff 초안) — 개발 측이 먼저 등재해야 함. 실행하지 말 것 |
+| 4 | **P-CA** | `python -m tools.broker_probes.run P-CA --asset stock --symbol <종목> --event-class <class> --effective-time <ISO> [--payable-time <ISO>] [--reference-check] --confirm` (런북 §5.8) | **대상 종목의 예정 CA와 선행 보유 필요 — 없으면 실행하지 않는다.** `--reference-check`는 필수급이다: 모의(VTS)가 이 12개 ksdinfo TR·CA 반영을 실제로 처리하는지 자체가 UNKNOWN(N-19 §2.1) — 그 여부 자체가 **첫 관측**이다. **관측 창 동안 해당 계좌에 다른 주문·입출금·타 CA 가 없어야 함(operator attest — 감지는 계좌 단위 변화라 귀속 미검증 `attribution: UNVERIFIED_ACCOUNT_LEVEL_CHANGE` 로 기록됨)**. 현금배당은 현금 leg 만 관측(ex-leg 는 잔고면에서 관측 불가 → 명시 skip) | 이벤트 창 전후 폴링(operator 동석) · LOW | 2026-09-10 구현 착지, 모의 서버에서 첫 실측 필요 |
+| 5 | **P-EXT** ×≥5 | `python -m tools.broker_probes.run P-EXT --symbol <mini 근월물> --confirm` | 운영자가 **HTS/MTS 로 수동 모의 주문**을 프로브 대기 중 넣음 · 5회 반복 | ~15 min/trial · MEDIUM | `external_activity_detect` 미실행(운영자 동석 필요) |
+| 6 | **N-16** (실전 조회) | 별도 셸: 실전 키 export → `python -m tools.broker_probes.run N-16 --confirm` → 셸 종료 | 야간 창 18:00–05:00 KST · **실전 주식 포지션 보유 상태** · 운영자 승인 | 1 call · MEDIUM | 야간 재실행 필요(보유 상태에서) |
+| 7 | **N-18** (실전 조회) | 같은 실전 셸에서 `python -m tools.broker_probes.run N-18 --day-symbol <주간 선물코드> --night-symbol <야간 선물코드> --confirm` (두 심볼 없으면 N-18c 두 레그가 `skip` 으로 빠져 야간코드 질문이 미답으로 남음) | 운영자 승인 | 3 calls · MEDIUM | 미실행 |
 | — | **P-R5 / P-R5-PRE** | **실행 금지** | — | — | 실전 주문 = 정책 영구 차단(preflight 판정 `ABORT_ORDER_AVAILABLE_ZERO_OR_UNREADABLE` 은 terminal · «입금 대기» 아님). P-R5-PRE 도 실전 주문 트랙 전용이라 돌리지 않음 |
 | (선택) | P-11 | `… P-11 --asset stock --symbol 005930 --confirm --allow-fill` | 시장가 체결 · 포지션 남음 · **맨 마지막** | ~15 min · HIGH | 재측정 원하면 — 필수 아님 |
 
@@ -56,11 +56,11 @@
 
 - **판본 ①** = `registry.py::BOUND_KEYS` 11키(설계 #10 10-bullet) — `--coverage` 가 세는 것.
 - **판본 ②** = VP-002 `value_ms: null` 브로커 10키.
-- 교집합 6키(`external_activity_detect`·`broker_query_consistency`·`final_quantity_proof`·`late_fill_observation`·`rate_limit_recovery`·`protective_request_complete`)만 이 캠페인이 채운다. 판본 ② 전용 4키 중 `non_trade_*` 2키는 N-19/P-CA(미등재) 소관, `protection_gap`/`protection_overlap` 은 `registry.py::ADJACENT_BOUND_KEYS`(P-8 이 **부분 정보** · 프로브 단독 측정 불가 플래그) — P-8 산출만으로 값이 서지 않는다.
+- 교집합 6키(`external_activity_detect`·`broker_query_consistency`·`final_quantity_proof`·`late_fill_observation`·`rate_limit_recovery`·`protective_request_complete`)만 이 캠페인이 채운다. 판본 ② 전용 4키 중 `non_trade_*` 2키는 N-19(완료)/P-CA(등재·실행 대기) 소관 — 단 P-CA 단독으로는 `value_ms`를 확립하지 못한다(N-19 문서 모델 + Bounds-Approver 판단 연언, 정의서 §7). `protection_gap`/`protection_overlap` 은 `registry.py::ADJACENT_BOUND_KEYS`(P-8 이 **부분 정보** · 프로브 단독 측정 불가 플래그) — P-8 산출만으로 값이 서지 않는다.
 - 후보값 3(`fqp` 10421ms · `query_consistency` 8017ms(모의 전용·실전 leg 영구 차단) · `rate_limit_recovery` 1635ms)은 이미 있고 **승인 아님**.
 
 ## 6. 개발 측 선행 항목 (서버 실행과 무관하게 진행)
 
-- N-19/P-CA 프로브 `registry.py` 등재(2026-08-07 정의 · 반증형·GET-only·보유 선행·선물 제외) — 등재 후 이 문서 §2 에 행 추가.
+- ~~N-19/P-CA 프로브 `registry.py` 등재~~ — **완료(2026-09-10)**. N-19 는 명세 대조로 종결(`docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md`), P-CA 는 `probes_ca.py::probe_pca` 구현 착지로 `supported=True`(런북 §5.8) — 이 문서 §2 에 행 추가 완료(순서 4).
 - 런북 §9.4 P-BAL 기입면(`position_balance_margin` completeness/pagination 슬롯) 판정은 `docs/broker-profiles/`·tos-spec 템플릿 소관 — 판정 전까지 P-BAL 값은 아티팩트 안에만.
 - INSTANCE REAL_PROD 문서 `_model_view` 는 2026-09-10 보강 완료(`cc1a90e9`) — 프로브와 무관.
