@@ -573,16 +573,29 @@ KIS_MOCK_REST_BASE = "https://openapivts.koreainvestment.com:29443"
 KIS_MOCK_ORDER_PRINCIPAL = "kis-mock-order-non-live-test"
 
 
-def write_kis_mock_transport_config(config_dir: Path, *, mode: str = "dry_run") -> Path:
+def write_kis_mock_transport_config(
+    config_dir: Path,
+    *,
+    mode: str = "dry_run",
+    endpoint_rest_base: str = KIS_MOCK_REST_BASE,
+    allow_plaintext_for_tests: bool = False,
+    min_send_interval_ms: int = 1100,
+) -> Path:
     """Write a fully-valued ``kis_mock_transport.yaml`` (T2 lane C test fixture) — every
     named-TBD field of the shipped example filled with a concrete, schema-valid value.
+
+    ``endpoint_rest_base``/``allow_plaintext_for_tests``/``min_send_interval_ms`` default to
+    the real-host, TLS-only, T2-lane-C shape every existing caller relies on; T3's own
+    hermetic-fake-KIS-server counterfactual (``test_kis_mock_e2e_honesty.py``) is the only
+    caller that overrides them, to point this config at the fake server's own ``127.0.0.1``
+    ``http://`` base instead of inventing a second, duplicated config-writer.
     """
     path = config_dir / "kis_mock_transport.yaml"
     path.write_text(
         yaml.safe_dump(
             {
                 "mode": mode,
-                "endpoint_rest_base": KIS_MOCK_REST_BASE,
+                "endpoint_rest_base": endpoint_rest_base,
                 "order_path": "/uapi/domestic-stock/v1/trading/order-cash",
                 "token_path": "/oauth2/tokenP",
                 "tr_id_buy": "VTTC0012U",
@@ -600,10 +613,10 @@ def write_kis_mock_transport_config(config_dir: Path, *, mode: str = "dry_run") 
                     "SLL_TYPE": "",
                     "CNDT_PRIC": "",
                 },
-                "min_send_interval_ms": 1100,
+                "min_send_interval_ms": min_send_interval_ms,
                 "token_reissue_min_interval_s": 60,
                 "request_timeout_s": 5.0,
-                "allow_plaintext_for_tests": False,
+                "allow_plaintext_for_tests": allow_plaintext_for_tests,
             },
             sort_keys=False,
         ),
