@@ -61,7 +61,34 @@ from tos.posttrade import (
 
 from tos_runtime.posttrade.config import FinalityConfig
 
-__all__ = ["SyntheticFinalityResult", "SyntheticFinalityProducer"]
+__all__ = [
+    "FULL_FILL_OBLIGATION_ID_PREFIX",
+    "FULL_FILL_PROOF_ID_PREFIX",
+    "NON_EXECUTION_OBLIGATION_ID_PREFIX",
+    "NON_EXECUTION_PROOF_ID_PREFIX",
+    "SyntheticFinalityResult",
+    "SyntheticFinalityProducer",
+]
+
+#: Idempotency-key / :func:`~tos.canonical.derive_id` namespace prefixes (TOS Phase 5 W2-R
+#: independent-review M4 fix, 2026-09-10). :meth:`SyntheticFinalityProducer.produce` and
+#: :meth:`~SyntheticFinalityProducer.produce_non_execution` used to share ONE prefix each
+#: (``"synthetic-fqp-obligation"``/``"synthetic-fqp-proof"``), so an attempt that legitimately
+#: produced BOTH a ``FULL_FILL`` proof (via :meth:`produce`) and a later non-execution proof
+#: (via :meth:`produce_non_execution`) would mint COLLIDING ``obligation_id``/``proof_id``
+#: content-addressed identities AND collide on ``idempotency_key`` — the later row would
+#: silently shadow the earlier one in every idempotency-key-keyed reload
+#: (:mod:`tos_runtime.posttrade.release_consumer`'s own ``_reload_proof``/``_reload_obligation``,
+#: and :mod:`tos_runtime.recon.evidence_reader`'s ``_attempts_with_finality_proof``). Distinct
+#: prefixes make the two artifact families non-collidable by construction; the ``FULL_FILL``
+#: prefixes are UNCHANGED literal values (so
+#: :mod:`tos_runtime.recon.evidence_reader`'s own already-shipped, disclosed-coupling prefix
+#: match keeps working unmodified — it correctly never recognizes a non-execution proof as a
+#: Final Quantity Proof for a fill, which it structurally is not).
+FULL_FILL_OBLIGATION_ID_PREFIX = "synthetic-fqp-obligation"
+FULL_FILL_PROOF_ID_PREFIX = "synthetic-fqp-proof"
+NON_EXECUTION_OBLIGATION_ID_PREFIX = "synthetic-fqp-nonexec-obligation"
+NON_EXECUTION_PROOF_ID_PREFIX = "synthetic-fqp-nonexec-proof"
 
 #: The one obligation leg this SYNTHETIC producer ever asserts — see module docstring.
 _REQUIRED_LEGS: frozenset[ObligationLegDirection] = frozenset(
@@ -165,7 +192,12 @@ class SyntheticFinalityProducer:
             # remaining executable quantity" — the ORDER_FQP claim itself does, so it is
             # checked directly against the payload, not inferred from the kind.
             return None
-        return self._build_synthetic_result(payload, quantity=filled_quantity)
+        return self._build_synthetic_result(
+            payload,
+            quantity=filled_quantity,
+            obligation_id_prefix=FULL_FILL_OBLIGATION_ID_PREFIX,
+            proof_id_prefix=FULL_FILL_PROOF_ID_PREFIX,
+        )
 
     def produce_non_execution(
         self, payload: EgressResultPayload
@@ -199,14 +231,26 @@ class SyntheticFinalityProducer:
         """
         if payload.kind not in _NON_EXECUTION_KINDS:
             return None
-        return self._build_synthetic_result(payload, quantity=Decimal("0"))
+        return self._build_synthetic_result(
+            payload,
+            quantity=Decimal("0"),
+            obligation_id_prefix=NON_EXECUTION_OBLIGATION_ID_PREFIX,
+            proof_id_prefix=NON_EXECUTION_PROOF_ID_PREFIX,
+        )
 
     def _build_synthetic_result(
-        self, payload: EgressResultPayload, *, quantity: Decimal
+        self,
+        payload: EgressResultPayload,
+        *,
+        quantity: Decimal,
+        obligation_id_prefix: str,
+        proof_id_prefix: str,
     ) -> SyntheticFinalityResult | None:
-        """Shared artifact construction for :meth:`produce` (``quantity=filled_quantity``) and
-        :meth:`produce_non_execution` (``quantity=Decimal("0")``) — every gate/leg/idempotency-
-        key convention stays identical between the two, only the asserted magnitude differs.
+        """Shared artifact construction for :meth:`produce` (``quantity=filled_quantity``,
+        the ``FULL_FILL_*`` prefixes) and :meth:`produce_non_execution` (``quantity=Decimal("0")``,
+        the ``NON_EXECUTION_*`` prefixes) — every gate/leg convention stays identical between the
+        two; only the asserted magnitude and the id/idempotency-key namespace differ (module
+        docstring's M4 fix — distinct prefixes so the two artifact families can never collide).
         """
         account = payload.instrument_key.account
         leg_scope = ObligationLegScope(
@@ -238,13 +282,13 @@ class SyntheticFinalityProducer:
             return None
 
         obligation_id = derive_id(
-            "synthetic-fqp-obligation",
+            obligation_id_prefix,
             self.scheme.compute_digest(
                 {"attempt_id": payload.attempt_id, "instrument_key": account}
             ),
         )
         proof_id = derive_id(
-            "synthetic-fqp-proof",
+            proof_id_prefix,
             self.scheme.compute_digest({"obligation_id": obligation_id}),
         )
 
@@ -255,7 +299,7 @@ class SyntheticFinalityProducer:
             obligation_type="SYNTHETIC_ORDER_FQP",
             obligation_version="1",
             obligation_generation=0,
-            idempotency_key=f"synthetic-fqp-obligation:{payload.attempt_id}",
+            idempotency_key=f"{obligation_id_prefix}:{payload.attempt_id}",
             source_event_ids=(payload.attempt_id,),
             account_scope=account,
             instrument_identity=payload.instrument_key.instrument,
@@ -280,7 +324,7 @@ class SyntheticFinalityProducer:
             does_not_prove=_ORDER_FQP_DOES_NOT_PROVE,
             proof_recipe_id=self.config.proof_recipe_id,
             source_revision=self.config.source_revision,
-            idempotency_key=f"synthetic-fqp-proof:{payload.attempt_id}",
+            idempotency_key=f"{proof_id_prefix}:{payload.attempt_id}",
         )
         assert isinstance(proof, PostTradeFinalityProof)
 

@@ -107,6 +107,7 @@ from tos_runtime.evidence.ports import EvidenceAppendPort
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.config import load_finality_config
 from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.reservation_identity import scope_reservation_id
 from tos_runtime.release.admission import ReleaseAdmissionService
 from tos_runtime.release.config import load_release_config
 from tos_runtime.risk.aggregate import (
@@ -719,9 +720,8 @@ def _build_realized_stages(
             rcl_log,
             writer_epoch=writer_epoch,
             permit_provider=permit_provider,
-            reservation_id_provider=lambda request: (
-                f"resv-{request.instrument_key.account}-"
-                f"{request.instrument_key.instrument}"
+            reservation_id_provider=lambda request: scope_reservation_id(
+                request.instrument_key.account, request.instrument_key.instrument
             ),
             time_permits_new_risk=time_gate,
         )
@@ -784,9 +784,8 @@ def _build_currentness_stages(
         rcl_log,
         writer_epoch=writer_epoch,
         context_reader=lambda request: TransmissionCapabilityContext(
-            reservation_identity=(
-                f"resv-{request.instrument_key.account}-"
-                f"{request.instrument_key.instrument}"
+            reservation_identity=scope_reservation_id(
+                request.instrument_key.account, request.instrument_key.instrument
             ),
             account_scope=request.instrument_key.account,
             instrument_scope=request.instrument_key.instrument,

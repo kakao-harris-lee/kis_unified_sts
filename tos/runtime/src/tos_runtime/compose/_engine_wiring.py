@@ -82,6 +82,7 @@ from tos_runtime.posttrade.config import FinalityConfig
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
 from tos_runtime.rcl.obligation import CapacityObligationRecorder
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
+from tos_runtime.rcl.reservation_identity import scope_reservation_id
 from tos_runtime.recovery.composite_state_writer import (
     COMPOSITE_STATE_STORE_FILE_NAME,
     CompositeStateWriter,
@@ -446,8 +447,8 @@ def wire_engine_and_driver(
         store=evidence_store,
         emergency_log=emergency_log,
         projection=projection,
-        reservation_id_resolver=lambda _attempt_id: (
-            f"resv-{instrument_key.account}-{instrument_key.instrument}"
+        reservation_id_resolver=lambda _attempt_id: scope_reservation_id(
+            instrument_key.account, instrument_key.instrument
         ),
     )
     # Independent review finding #8: wiring on_refusal here means a SEND_REFUSED whose

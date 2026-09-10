@@ -118,6 +118,7 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
+from tos_runtime.rcl.reservation_identity import scope_reservation_id
 from tos_runtime.recon.evidence_reader import SqliteEvidenceReceiptReader
 from tos_runtime.recon.ports import WitnessScope
 from tos_runtime.recon.service import ReconciliationClass, ReconciliationService
@@ -217,7 +218,9 @@ def _build_reconciliation_service(
         rcl_reader=SqliteReservationProjectionReader(rcl_log),
         evidence_reader=SqliteEvidenceReceiptReader(evidence_store),
         witness=SyntheticLedgerWitness(evidence_store),
-        reservation_id_for_attempt=lambda _attempt_id: f"resv-{account}-{instrument}",
+        reservation_id_for_attempt=lambda _attempt_id: scope_reservation_id(
+            account, instrument
+        ),
     )
 
 

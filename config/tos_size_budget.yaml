@@ -292,7 +292,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1197
+  measured: 1196
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -395,6 +395,13 @@ exceptions:
     호출부에 resolved_strategies.loaded_bindings 인자 1줄 + 도크스트링 정정
     2줄 추가. 함수 자체는 100줄 문턱 아래 유지(무예외). 모듈 실측은
     1203→1205(+2).
+    2026-09-10 TOS Phase 5 W2-R 독립 리뷰 M6 처분 — 두 곳의 손작성
+    `f"resv-{account}-{instrument}"` (AtomicCommitStage 의
+    reservation_id_provider · TransmissionCapabilityStage 의
+    reservation_identity)를 신규 `tos_runtime.rcl.reservation_identity
+    .scope_reservation_id` 호출로 교체(import 1줄 + 호출부 2곳 각 1줄 감소)
+    하며 순감소 1205→1196(−9, 이전 재등재 이후 다른 레인의 변경 포함 실측
+    스냅샷 갱신 — 이 커밋 자신의 순증분은 −1).
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime

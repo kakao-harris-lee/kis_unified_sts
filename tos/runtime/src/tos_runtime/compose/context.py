@@ -128,6 +128,7 @@ from tos_runtime.currentness.proof import EgressCurrentnessProofIssuer
 from tos_runtime.currentness.stages import TransmissionCapabilityStage
 from tos_runtime.currentness.vector import CurrentnessAssembler
 from tos_runtime.rcl.log import StaleEpochRead
+from tos_runtime.rcl.reservation_identity import scope_reservation_id
 from tos_runtime.risk.aggregate import (
     AggregateRiskDecisionInputs,
     AggregateRiskService,
@@ -475,8 +476,8 @@ class ComposeContextResolver:
             capability_id=f"cap-{attempt.attempt_id}",
             nonce=nonce,
             single_use=True,
-            reservation_identity=(
-                f"resv-{self.instrument_key.account}-{self.instrument_key.instrument}"
+            reservation_identity=scope_reservation_id(
+                self.instrument_key.account, self.instrument_key.instrument
             ),
             attempt_identity=attempt.attempt_id,
             account_scope=self.instrument_key.account,
