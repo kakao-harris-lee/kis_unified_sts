@@ -80,3 +80,14 @@
 3. authoritative durability 의 «선택된 storage ADR» 지목(설계 #40 D3 sqlite 를 그 ADR 로 확인).
 4. 레거시 `services/dashboard` 의 투영 읽기 결선 시점(Phase 5 안 / 후속).
 5. 커널 `egressgw/mesh.py` 분리(등재 갱신) 승인 — 커널 라운드 #2 로 묶을지.
+
+## 8. 운영자 처분 (2026-09-10)
+
+| # | 처분 |
+|---|---|
+| 1 | **전역 new-risk 래치 + 명시 재무장(seq 결속·attestation·증거 선기록·HAG 2인) 승인** — W3 에서 구현 · 대안 불채택 |
+| 2 | 설정값 ⓘ + 이 Phase 신설값 = **개발 측 근거 제안표 → 운영자 승인** · 승인 전 named-TBD null |
+| 3 | authoritative durability 의 storage ADR = **설계 #40 D3 sqlite WAL** 로 확정(신규 ADR 없음) · 런타임 Redis 키 0 은 종료 조건 4 의 공허 충족으로 기록 |
+| 4 | 레거시 `services/dashboard` 의 읽기 전용 투영 결선은 **W4 안에서**(write 포트 0 negative-grep 으로 종료 조건 3 실증) |
+| 5 | **커널 라운드 #2 로 묶어 승인**: `egressgw/mesh.py` 분리 + `SendBoundaryContext` deferred 6 입력 필드 + Phase 3 이월 ⓔ(`GatewayEvidenceRecord.step` 필수화) + item 6/12 reason 문언 정정 · **W1 착지 후 시작, W3 착수 전 선행** |
+| 착수 | **즉시 — W1 ∥ MOCK transport T1** · 브랜치 `feat/tos-phase5-w1-recovery`(워크트리 `../kis_unified_sts-phase5-w1`, main `296c0e5f` 기점) |
