@@ -293,6 +293,87 @@ def test_bad_iso_time_is_refused(stock_env: None) -> None:
         pc.probe_pca(_args(effective_time="not-a-date"))
 
 
+def test_naive_iso_time_without_utc_offset_is_refused_before_any_call(
+    monkeypatch: pytest.MonkeyPatch, stock_env: None
+) -> None:
+    """F1: a naive timestamp parses fine via fromisoformat, then crashes later
+    (aware - naive TypeError) at the moment the first leg would be observed —
+    after the CA window has already been consumed. It must be refused at parse
+    time, before any network call."""
+    monkeypatch.setattr("requests.Session", lambda: _ExplodingSession())
+    with pytest.raises(ProbeError, match="--effective-time.*(offset|\\+09:00)"):
+        pc.probe_pca(_args(effective_time="2020-01-01T09:00:00"))
+
+
+def test_future_operator_time_is_refused(
+    monkeypatch: pytest.MonkeyPatch, stock_env: None
+) -> None:
+    """F2: a t0 later than 'now' would record a negative latency."""
+    from datetime import UTC, datetime
+
+    monkeypatch.setattr(pc, "_reference_now", lambda: datetime(2020, 1, 1, tzinfo=UTC))
+    monkeypatch.setattr("requests.Session", lambda: _ExplodingSession())
+    with pytest.raises(ProbeError, match="--payable-time"):
+        pc.probe_pca(_args(payable_time="2020-06-01T09:00:00+09:00"))
+
+
+def test_operator_time_equal_to_now_is_accepted(
+    monkeypatch: pytest.MonkeyPatch, stock_env: None, wire: Any
+) -> None:
+    from datetime import UTC, datetime
+
+    t0 = datetime(2020, 1, 1, 9, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(pc, "_reference_now", lambda: t0)
+    wire(_ScriptedSession([_balance_body(10)]))
+    # Must not raise — t0 == now is the boundary, not "future".
+    pc.probe_pca(
+        _args(effective_time=t0.isoformat(), poll_ms=0.0, pace_s=0.0, window_s=1e-9)
+    )
+
+
+def test_non_kst_offset_is_recorded_and_warned_not_silently_normalized(
+    stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """F8: the CLI help promises KST; a different (still valid) offset must not
+    be silently accepted as if it were +09:00 — it is recorded verbatim and the
+    operator is warned."""
+    wire(_ScriptedSession([_balance_body(10)]))
+    run = pc.probe_pca(
+        _args(
+            effective_time="2020-01-01T00:00:00+00:00",
+            poll_ms=0.0,
+            pace_s=0.0,
+            window_s=1e-9,
+        )
+    )
+    assert any(
+        obs.get("t0_offsets", {}).get("effective_time") == "+00:00"
+        for obs in run.observations
+    )
+    out = capsys.readouterr().out
+    assert "+00:00" in out and "KST" in out
+
+
+def test_kst_offset_is_recorded_without_a_warning(
+    stock_env: None, wire: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    wire(_ScriptedSession([_balance_body(10)]))
+    run = pc.probe_pca(
+        _args(
+            effective_time="2020-01-01T09:00:00+09:00",
+            poll_ms=0.0,
+            pace_s=0.0,
+            window_s=1e-9,
+        )
+    )
+    assert any(
+        obs.get("t0_offsets", {}).get("effective_time") == "+09:00"
+        for obs in run.observations
+    )
+    out = capsys.readouterr().out
+    assert "not KST" not in out
+
+
 # ---------------------------------------------------------------------------
 # dry-run: zero network, no credentials required
 # ---------------------------------------------------------------------------
@@ -323,16 +404,82 @@ def test_no_holding_is_an_explicit_skip_not_a_negative(
     stock_env: None, wire: Any
 ) -> None:
     wire(_ScriptedSession([_balance_body(0)]))
-    run = pc.probe_pca(_args(effective_time="2026-09-30T09:00:00+09:00"))
+    run = pc.probe_pca(_args(effective_time="2020-01-01T09:00:00+09:00"))
     assert any(entry["what"] == "no holding — cannot establish" for entry in run.skips)
     assert "class_leg_table" not in run.measurements
 
 
 def test_baseline_rejection_is_an_error_and_stops(stock_env: None, wire: Any) -> None:
     wire(_ScriptedSession([_balance_body(10, rt_cd="1")]))
-    run = pc.probe_pca(_args(effective_time="2026-09-30T09:00:00+09:00"))
+    run = pc.probe_pca(_args(effective_time="2020-01-01T09:00:00+09:00"))
     assert any("rejected" in message for message in run.errors)
     assert "class_leg_table" not in run.measurements
+
+
+def _paged_balance(
+    *,
+    qty_row: dict[str, Any] | None = None,
+    cash: float = 0.0,
+    fk: str = "",
+    nk: str = "",
+) -> _FakeResponse:
+    body: dict[str, Any] = {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "msg1": "정상처리 되었습니다.",
+        "output1": [qty_row] if qty_row else [],
+        "output2": [{"dnca_tot_amt": str(cash)}],
+        "ctx_area_fk100": fk,
+        "ctx_area_nk100": nk,
+    }
+    return _FakeResponse(body)
+
+
+def test_symbol_on_second_page_is_found_not_reported_as_no_holding(
+    stock_env: None, wire: Any
+) -> None:
+    """F6: a single-page balance read cannot tell 'not held' from 'held on a
+    later page' — it must walk continuation keys before concluding no holding."""
+    page1 = _paged_balance(
+        qty_row={"pdno": "000660", "hldg_qty": "3"}, fk="F1", nk="N1"
+    )
+    page2 = _paged_balance(qty_row={"pdno": "005930", "hldg_qty": "7"}, cash=500.0)
+    session = wire(_ScriptedSession([page1, page2]))
+    run = pc.probe_pca(
+        _args(
+            effective_time="2020-01-01T09:00:00+09:00",
+            poll_ms=0.0,
+            pace_s=0.0,
+            window_s=1e-9,
+        )
+    )
+    assert not any(
+        entry["what"] == "no holding — cannot establish" for entry in run.skips
+    )
+    assert run.measurements["baseline"]["hldg_qty"] == 7
+    assert len(session.calls) == 2
+
+
+def test_pagination_cap_hit_is_an_error_not_no_holding(
+    stock_env: None, wire: Any
+) -> None:
+    """F6: the broker never signals end-of-set within the page cap and the
+    symbol is never found — this must surface as an error, not a silent
+    'no holding' conclusion (which would be fail-open)."""
+    pages = [
+        _paged_balance(
+            qty_row={"pdno": "999999", "hldg_qty": "1"}, fk=f"F{i}", nk=f"N{i}"
+        )
+        for i in range(pc._MAX_BALANCE_PAGES)
+    ]
+    wire(_ScriptedSession(pages))
+    run = pc.probe_pca(_args(effective_time="2020-01-01T09:00:00+09:00"))
+    assert not any(
+        entry["what"] == "no holding — cannot establish" for entry in run.skips
+    )
+    assert any(
+        "page" in message.lower() and "cap" in message.lower() for message in run.errors
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +493,7 @@ def test_quantity_leg_detection_on_second_poll_latency_is_one_effective_interval
 ) -> None:
     from datetime import UTC, datetime, timedelta
 
-    t0 = datetime(2026, 9, 30, 9, 0, 0, tzinfo=UTC)
+    t0 = datetime(2020, 1, 1, 9, 0, 0, tzinfo=UTC)
     interval = timedelta(seconds=1)
     # clock is consumed once per poll iteration; poll #1 sees no change, poll #2
     # (t0 + 1 interval) sees the quantity change => latency == 1 effective interval.
@@ -372,38 +519,87 @@ def test_quantity_leg_detection_on_second_poll_latency_is_one_effective_interval
     assert record["t0_field"] == "effective_time"
     assert record["latency_ms"] == pytest.approx(1000.0)
     assert record["poll_interval_ms_effective"] == pytest.approx(1000.0)
+    # F3: a detected balance change is not verified to be caused by THIS CA —
+    # any account-level activity in the window looks identical.
+    assert record["attribution"] == "UNVERIFIED_ACCOUNT_LEVEL_CHANGE"
     table = run.measurements["class_leg_table"]
     assert [row for row in table if row["leg"] == "quantity"][0]["status"] == "OBSERVED"
     assert run.measurements["leg_provenance_class"] == "MEASURED"
 
 
-def test_cash_dividend_quantity_leg_pairs_with_ex_time(
+def test_attribution_caveat_is_recorded_once_when_legs_are_polled(
+    stock_env: None, wire: Any
+) -> None:
+    wire(_ScriptedSession([_balance_body(10)]), clock=None)
+    run = pc.probe_pca(
+        _args(
+            effective_time="2020-01-01T09:00:00+09:00",
+            poll_ms=0.0,
+            pace_s=0.0,
+            window_s=1e-9,
+        )
+    )
+    assert any("attribution_caveat" in obs for obs in run.observations)
+
+
+def test_cash_dividend_never_tracks_a_quantity_or_ex_leg(
+    stock_env: None, wire: Any
+) -> None:
+    """F4: 배당 기준가-조정(ex) leg is a PRICE adjustment — hldg_qty cannot see
+    it (N-19 §2.3: no price field in the balance TR response). P-CA must not
+    silently CENSOR an unobservable leg; it must say so explicitly and never
+    poll for it."""
+    wire(_ScriptedSession([_balance_body(10)]))
+    run = pc.probe_pca(
+        _args(
+            event_class="cash_dividend",
+            ex_time="2020-01-01T09:00:00+09:00",
+        )
+    )
+    assert any(
+        entry["what"] == "legs.cash_dividend.ex"
+        and "NOT_OBSERVABLE_ON_BALANCE_SURFACE" in entry["reason"]
+        for entry in run.skips
+    )
+    # No CENSORED (or any) row for the ex/quantity leg — it was never tracked.
+    table = run.measurements.get("class_leg_table", [])
+    assert not [row for row in table if row["leg"] in ("quantity", "ex")]
+
+
+def test_cash_dividend_cash_leg_still_tracked_via_payable_time(
     stock_env: None, wire: Any
 ) -> None:
     from datetime import UTC, datetime
 
-    t0 = datetime(2026, 9, 30, 9, 0, 0, tzinfo=UTC)
+    t0 = datetime(2020, 1, 1, 9, 0, 0, tzinfo=UTC)
     wire(
-        _ScriptedSession([_balance_body(10), _balance_body(11)]),
+        _ScriptedSession(
+            [
+                _balance_body(10, cash=1_000_000.0),
+                _balance_body(10, cash=1_100_000.0),
+            ]
+        ),
         clock=[t0],
     )
     run = pc.probe_pca(
         _args(
             event_class="cash_dividend",
-            ex_time=t0.isoformat(),
+            ex_time="2020-01-01T09:00:00+09:00",
+            payable_time=t0.isoformat(),
             poll_ms=0.0,
             pace_s=0.0,
             window_s=60.0,
         )
     )
-    record = run.measurements["legs.cash_dividend.quantity"]
-    assert record["t0_field"] == "ex_time"
+    assert any(entry["what"] == "legs.cash_dividend.ex" for entry in run.skips)
+    record = run.measurements["legs.cash_dividend.cash"]
+    assert record["t0_field"] == "payable_time"
 
 
 def test_cash_leg_detection(stock_env: None, wire: Any) -> None:
     from datetime import UTC, datetime
 
-    t0 = datetime(2026, 9, 30, 9, 0, 0, tzinfo=UTC)
+    t0 = datetime(2020, 1, 1, 9, 0, 0, tzinfo=UTC)
     wire(
         _ScriptedSession(
             [
@@ -427,7 +623,7 @@ def test_window_expiry_is_censored_and_reports_no_value(
 ) -> None:
     from datetime import UTC, datetime
 
-    t0 = datetime(2026, 9, 30, 9, 0, 0, tzinfo=UTC)
+    t0 = datetime(2020, 1, 1, 9, 0, 0, tzinfo=UTC)
     # window_s small; monotonic clock advances only via real time, which we do
     # not fast-forward, so the loop condition `time.monotonic() < deadline`
     # with window_s=0 boundary would never enter — use a scripted session with
@@ -443,13 +639,36 @@ def test_window_expiry_is_censored_and_reports_no_value(
     table = run.measurements["class_leg_table"]
     row = [r for r in table if r["leg"] == "quantity"][0]
     assert row["status"] == "CENSORED"
+    # F5 (kills mutation M7 — a CENSORED row given a fabricated latency_ms):
+    # a CENSORED row must carry NEITHER a timestamp NOR a value. It must also
+    # not be tagged candidate_only — there is no candidate value to flag.
     assert "t1" not in row
+    assert "latency_ms" not in row
+    assert "candidate_only" not in row
     assert any(
         "CENSORED" in entry["reason"]
         for entry in run.skips
         if entry["what"] == "legs.bonus_issue.quantity"
     )
     assert run.measurements["leg_provenance_class"] == "NOT_MEASURED"
+
+
+def test_no_bare_b_non_trade_scalar_ever_appears_in_measurements(
+    stock_env: None, wire: Any
+) -> None:
+    """F5: this probe must never write a B_non_trade_* value as a scalar —
+    only measurements.class_leg_table (per (event_class x leg) candidates)."""
+    from datetime import UTC, datetime
+
+    t0 = datetime(2020, 1, 1, 9, 0, 0, tzinfo=UTC)
+    wire(_ScriptedSession([_balance_body(10), _balance_body(11)]), clock=[t0])
+    run = pc.probe_pca(
+        _args(effective_time=t0.isoformat(), poll_ms=0.0, pace_s=0.0, window_s=60.0)
+    )
+    assert not [k for k in run.measurements if k.startswith("B_non_trade")]
+    blob = json.dumps(run.to_dict(), ensure_ascii=False)
+    assert '"B_non_trade_event_detect":' not in blob.replace(" ", "")
+    assert '"B_non_trade_reconcile":' not in blob.replace(" ", "")
 
 
 def test_no_operator_time_supplied_skips_leg_polling_entirely(
@@ -530,7 +749,7 @@ def test_rate_limit_on_baseline_stops_with_no_further_call(
             ]
         )
     )
-    run = pc.probe_pca(_args(effective_time="2026-09-30T09:00:00+09:00"))
+    run = pc.probe_pca(_args(effective_time="2020-01-01T09:00:00+09:00"))
     assert any("rate-limited" in message for message in run.errors)
     assert len(session.calls) == 1
 
@@ -550,7 +769,7 @@ def test_rate_limit_during_poll_stops_with_no_further_call(
     )
     run = pc.probe_pca(
         _args(
-            effective_time="2026-09-30T09:00:00+09:00",
+            effective_time="2020-01-01T09:00:00+09:00",
             poll_ms=0.0,
             pace_s=0.0,
             window_s=60.0,

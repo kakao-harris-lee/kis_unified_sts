@@ -1,53 +1,50 @@
 """P-CA — corporate-action reflection probe. READ-ONLY BY CONSTRUCTION, GET-only.
 
-Why this probe exists
-----------------------
-``docs/plans/2026-08-07-tos-p02-nontrade-probe-definition.md`` §5.2 defines P-CA as
-the opportunistic, operator-in-the-loop half of the two-probe pair that feeds the
+Why this probe exists (``docs/plans/2026-08-07-tos-p02-nontrade-probe-definition.md``
+§5.2): it is the opportunistic half of the two-probe pair feeding the
 ``B_non_trade_event_detect`` / ``B_non_trade_reconcile`` adjacent bound keys
 (``registry.py::ADJACENT_BOUND_KEYS``). N-19
 (``docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md``) is the documentary
-half: it found that KIS exposes 12 GET-only 예탁원정보(ksdinfo) reference TRs
-(§2.1) that carry CA *schedule* fields, but that NONE of them, and no field of the
-주식잔고조회 balance TR (``TTTC8434R``/``VTTC8434R``), documents WHEN a corporate
-action is reflected in balance/position/체결통보. ``hldg_qty`` (quantity) and
-``dnca_tot_amt`` (예수금총금액 — cash/deposit total, N-19 §2.3) are therefore the
-only INDIRECT observation surface for that reflection: this probe polls them.
+half: KIS exposes 12 GET-only 예탁원정보(ksdinfo) reference TRs (§2.1) carrying
+CA *schedule* fields, but none of them — nor any field of the 주식잔고조회
+balance TR (``TTTC8434R``/``VTTC8434R``) — documents WHEN a CA is reflected in
+balance/position. ``hldg_qty`` (quantity) and ``dnca_tot_amt`` (예수금총금액 —
+cash/deposit total, N-19 §2.3) are the only INDIRECT observation surface: this
+probe polls them.
 
 ADR-002-010 §8:171 forbids collapsing the seven CA times into one "corporate
-action date" (``tos/src/tos/nontrade/records.py:359-366`` keeps them as separate
-fields). This probe honours that: it pairs each leg it can observe with the ONE
-of the seven times that leg's rationale calls for (design doc §5.2 table), and it
-never emits a single scalar. ``measurements.class_leg_table`` is the only
-aggregate this probe writes; the two VP-002 keys stay ``NOT_ESTABLISHED`` — a
-Bounds-Approver judgement, never something this probe writes for itself
-(``common.py::ProbeRun`` docstring, "Probes measure; humans approve.").
+action date" (``tos/src/tos/nontrade/records.py:359-366`` keeps them separate).
+This probe honours that: it pairs each OBSERVABLE leg with the one of the seven
+times its rationale calls for (§5.2 table / :func:`_legs_to_track`) and never
+emits a single scalar — ``measurements.class_leg_table`` is the only aggregate
+this probe writes. Both VP-002 keys stay ``NOT_ESTABLISHED``, a Bounds-Approver
+judgement (``common.py::ProbeRun``: "Probes measure; humans approve.").
 
-Falsification-first (design doc §5.2, §8.4 / VP-002:772 "observed 0 != 0"): an
-unobserved leg within the polling window is recorded as CENSORED, never as a
-zero latency. A leg's absence from ``class_leg_table`` with a value is not
-evidence the reflection is instantaneous.
+Falsification-first (§5.2, §8.4 / VP-002:772 "observed 0 != 0"): an unobserved
+leg within the polling window is CENSORED, never a zero latency.
 
-Safety model
-------------
-Strictly GET-only, and structurally so — mirrors ``probes_balance.py`` (P-BAL):
+Attribution caveat (independent review finding F3): a detected balance change
+is attributed to the CA being measured by TIMING ALONE — the row carries no
+broker-side reference to the specific event. See ``attribution_caveat``
+(:func:`_finalize`) and runbook §5.8.
+
+Safety model — strictly GET-only, and structurally so (mirrors P-BAL):
 
 * :data:`ALLOWLIST` is the complete set of calls this module may ever make: the
-  two balance-inquiry TRs (real/mock) plus the 12 ksdinfo reference TRs. There is
-  no order/cancel/amend path anywhere in this file.
-* :func:`_get` is the ONLY transport, and calls
-  :func:`~tools.broker_probes.common.assert_read_only_call` (GET (+ TR id (+ URL
-  path) *before* the session is touched.
+  two balance TRs (real/mock) plus the 12 ksdinfo reference TRs. No
+  order/cancel/amend path exists anywhere in this file.
+* :func:`_get` is the ONLY transport and calls
+  :func:`~tools.broker_probes.common.assert_read_only_call` before the session
+  is touched.
 * This module does not import :mod:`tools.broker_probes.probes_order` or
-  :mod:`tools.broker_probes.probes_real_order` (both carry order paths).
-  ``tests/tools/test_broker_probes_ca.py`` pins all of this against the module's
-  own AST, the same way ``test_broker_probes_balance.py`` does for P-BAL.
+  :mod:`tools.broker_probes.probes_real_order` (both carry order paths) —
+  ``tests/tools/test_broker_probes_ca.py`` pins this against the module's own
+  AST, as ``test_broker_probes_balance.py`` does for P-BAL.
 
-Futures are refused outright (design doc §5.2 prerequisite 4 / §4): the mock
-server does not serve a futures balance query at all
-(``shared/kis/client.py:1031`` NOTE, guard ``:1047``), and the real futures
-account is never funded with margin (CLAUDE.md Non-Negotiable Rules) — there is
-no environment in which a futures CA reflection could be observed here.
+Futures are refused outright (§5.2 prerequisite 4): the mock server does not
+serve a futures balance query at all (``shared/kis/client.py:1031`` NOTE, guard
+``:1047``), and the real futures account is never funded with margin
+(CLAUDE.md Non-Negotiable Rules).
 
 Nothing in this module can mutate an order, in mock or in real.
 """
@@ -206,6 +203,31 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _reference_now() -> datetime:
+    """'Now' for the future-time check only (:func:`_parse_operator_time`) —
+    a SEPARATE seam from :func:`_now` so a test's scripted poll clock is never
+    silently consumed by argument validation that runs before polling starts.
+    """
+    return datetime.now(UTC)
+
+
+#: KST — the offset every ``--ex-time``/``--effective-time``/``--payable-time``
+#: help string promises. A different (still valid) offset is accepted, never
+#: silently treated as KST (finding F8) — see :func:`_parse_operator_time`.
+_KST_OFFSET = "+09:00"
+
+
+def _offset_str(value: datetime) -> str:
+    """``value``'s UTC offset as ``+HH:MM``/``-HH:MM`` — ``strftime('%z')`` with
+    the colon ``isoformat()`` already uses elsewhere in this module, so the two
+    representations of the same offset never disagree in an artifact."""
+    offset = value.utcoffset()
+    total_minutes = int(offset.total_seconds() // 60) if offset else 0
+    sign = "+" if total_minutes >= 0 else "-"
+    total_minutes = abs(total_minutes)
+    return f"{sign}{total_minutes // 60:02d}:{total_minutes % 60:02d}"
+
+
 # ---------------------------------------------------------------------------
 # Trial parameters — parsed and validated once, up front
 # ---------------------------------------------------------------------------
@@ -227,16 +249,42 @@ class _Trial:
     payable_time: datetime | None
     settlement_time_raw: str
     reference_check: bool
+    #: Per-flag UTC offset actually supplied (e.g. ``{"effective_time": "+09:00"}``)
+    #: — F8: recorded and warned on when != KST, never silently normalized.
+    t0_offsets: dict[str, str]
 
 
-def _parse_operator_time(raw: str, flag: str) -> datetime | None:
+def _parse_operator_time(raw: str, flag: str) -> tuple[datetime | None, str | None]:
+    """Parse one operator time. Returns ``(value, offset)``.
+
+    Two preconditions beyond "is it ISO-8601" (independent review F1/F2): a
+    naive value would crash ``now - t0_dt`` in :func:`_poll_loop` AFTER the
+    window is spent — reject it here, before any network call; a future value
+    would record a negative latency — reject it too, against
+    :func:`_reference_now`.
+    """
     raw = (raw or "").strip()
     if not raw:
-        return None
+        return None, None
     try:
-        return datetime.fromisoformat(raw)
+        parsed = datetime.fromisoformat(raw)
     except ValueError as exc:
         raise ProbeError(f"{flag} must be ISO-8601 (got {raw!r}): {exc}") from None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ProbeError(
+            f"{flag} must carry a UTC offset (got {raw!r}) — KST is "
+            f"'{_KST_OFFSET}', e.g. 2026-09-30T09:00:00{_KST_OFFSET}. A naive "
+            "timestamp cannot be safely compared against the (UTC, aware) poll "
+            "clock."
+        )
+    now = _reference_now()
+    if parsed > now:
+        raise ProbeError(
+            f"{flag} is in the future ({raw!r} > {now.isoformat()}) — P-CA "
+            "pairs a poll against a time that has ALREADY passed; a future t0 "
+            "would record a negative latency."
+        )
+    return parsed, _offset_str(parsed)
 
 
 def _parse_trial(args: argparse.Namespace) -> _Trial:
@@ -276,6 +324,22 @@ def _parse_trial(args: argparse.Namespace) -> _Trial:
     if pace_s < 0:
         raise ProbeError("--pace-s must be >= 0")
 
+    t0_offsets: dict[str, str] = {}
+    ex_time, ex_offset = _parse_operator_time(getattr(args, "ex_time", ""), "--ex-time")
+    effective_time, effective_offset = _parse_operator_time(
+        getattr(args, "effective_time", ""), "--effective-time"
+    )
+    payable_time, payable_offset = _parse_operator_time(
+        getattr(args, "payable_time", ""), "--payable-time"
+    )
+    for flag_name, offset in (
+        ("ex_time", ex_offset),
+        ("effective_time", effective_offset),
+        ("payable_time", payable_offset),
+    ):
+        if offset is not None:
+            t0_offsets[flag_name] = offset
+
     return _Trial(
         symbol=symbol,
         event_class=event_class,
@@ -284,29 +348,27 @@ def _parse_trial(args: argparse.Namespace) -> _Trial:
         poll_ms=poll_ms,
         pace_s=pace_s,
         effective_poll_ms=max(poll_ms, pace_s * 1000.0),
-        ex_time=_parse_operator_time(getattr(args, "ex_time", ""), "--ex-time"),
-        effective_time=_parse_operator_time(
-            getattr(args, "effective_time", ""), "--effective-time"
-        ),
-        payable_time=_parse_operator_time(
-            getattr(args, "payable_time", ""), "--payable-time"
-        ),
+        ex_time=ex_time,
+        effective_time=effective_time,
+        payable_time=payable_time,
         settlement_time_raw=str(getattr(args, "settlement_time", "") or "").strip(),
         reference_check=bool(getattr(args, "reference_check", False)),
+        t0_offsets=t0_offsets,
     )
 
 
 def _legs_to_track(trial: _Trial) -> list[tuple[str, str, datetime]]:
-    """(leg name, t0 field name, t0 instant) for every leg an operator time was
-    supplied for. Design doc §5.2 table: quantity leg pairs with ``ex_time`` only
-    for ``cash_dividend`` (기준가/수량 adjustment leg); every other class pairs
-    the quantity leg with ``effective_time`` (수량 변환 leg). Cash leg always
-    pairs with ``payable_time``."""
-    qty_field = "ex_time" if trial.event_class == "cash_dividend" else "effective_time"
-    qty_t0 = trial.ex_time if qty_field == "ex_time" else trial.effective_time
+    """(leg name, t0 field name, t0 instant) for every leg ACTUALLY observable
+    on the balance surface. ``cash_dividend``'s 기준가-조정(ex) leg is a PRICE
+    adjustment — N-19 §2.3 confirms no balance field carries a price, so it is
+    NEVER tracked here (finding F4; :func:`probe_pca` emits an explicit
+    ``NOT_OBSERVABLE_ON_BALANCE_SURFACE`` skip for it instead of a silent
+    CENSOR). Every other class's quantity leg (수량 변환) pairs with
+    ``effective_time``. Cash leg always pairs with ``payable_time``.
+    """
     legs: list[tuple[str, str, datetime]] = []
-    if qty_t0 is not None:
-        legs.append(("quantity", qty_field, qty_t0))
+    if trial.event_class != "cash_dividend" and trial.effective_time is not None:
+        legs.append(("quantity", "effective_time", trial.effective_time))
     if trial.payable_time is not None:
         legs.append(("cash", "payable_time", trial.payable_time))
     return legs
@@ -349,12 +411,9 @@ def _get(
     return int(response.status_code), parsed, text, elapsed_ms
 
 
-def _balance_params(creds: Any) -> dict[str, str]:
-    """Mirror the runtime's stock balance params (client.py:921-933).
-
-    A single-page snapshot only: P-CA does not paginate (P-BAL already measures
-    pagination behaviour) — empty continuation keys, exactly page 1.
-    """
+def _balance_params(creds: Any, *, fk: str = "", nk: str = "") -> dict[str, str]:
+    """Mirror the runtime's stock balance params (client.py:921-933), with the
+    continuation keys USABLE (finding F6 — see :func:`_read_balance`)."""
     return {
         "CANO": creds.cano,
         "ACNT_PRDT_CD": creds.acnt_prdt_cd,
@@ -365,8 +424,8 @@ def _balance_params(creds: Any) -> dict[str, str]:
         "FUND_STTL_ICLD_YN": "N",
         "FNCG_AMT_AUTO_RDPT_YN": "N",
         "PRCS_DVSN": "01",
-        "CTX_AREA_FK100": "",
-        "CTX_AREA_NK100": "",
+        "CTX_AREA_FK100": fk,
+        "CTX_AREA_NK100": nk,
     }
 
 
@@ -399,28 +458,91 @@ def _ksdinfo_params(key: str, symbol: str) -> dict[str, str]:
     return params
 
 
-def _read_position(parsed: dict[str, Any], symbol: str) -> tuple[int, float]:
-    """Read ``(hldg_qty for symbol, dnca_tot_amt account total)`` from a balance body."""
-    rows = parsed.get("output1")
-    rows = rows if isinstance(rows, list) else []
-    qty = 0
+def _find_symbol_qty(rows: list[Any], symbol: str) -> int | None:
+    """``hldg_qty`` for ``symbol``'s row on THIS page, or ``None`` if the row is
+    not on this page — distinct from "found, and it is 0" (finding F6)."""
     for row in rows:
         if not isinstance(row, dict):
             continue
         if str(row.get("pdno") or "").strip() == symbol:
             try:
-                qty = int(float(row.get("hldg_qty") or 0))
+                return int(float(row.get("hldg_qty") or 0))
             except (TypeError, ValueError):
-                qty = 0
-            break
+                return 0
+    return None
+
+
+def _read_cash_total(parsed: dict[str, Any]) -> float:
+    """Account-level ``dnca_tot_amt`` (예수금총금액) from a balance body."""
     out2 = parsed.get("output2")
-    cash = 0.0
     if isinstance(out2, list) and out2 and isinstance(out2[0], dict):
         try:
-            cash = float(out2[0].get("dnca_tot_amt") or 0)
+            return float(out2[0].get("dnca_tot_amt") or 0)
         except (TypeError, ValueError):
-            cash = 0.0
-    return qty, cash
+            return 0.0
+    return 0.0
+
+
+#: Cap on balance pages walked per read (baseline snapshot or each poll).
+#: Finding F6: a single-page read cannot distinguish "not held" from "held on
+#: a later page" (shared/kis/client.py's own defect, measured by P-BAL). A
+#: single-symbol lookup needs far fewer pages than P-BAL's exhaustive walk;
+#: hitting the cap is an ERROR (:data:`_BAL_CAPPED`), never "no holding".
+_MAX_BALANCE_PAGES = 5
+
+_BAL_OK = "OK"
+_BAL_RATE_LIMITED = "RATE_LIMITED"
+_BAL_REJECTED = "REJECTED"
+_BAL_CAPPED = "CAPPED"
+
+
+def _read_balance(
+    session: Any,
+    auth: Any,
+    base_url: str,
+    tr_id: str,
+    creds: Any,
+    symbol: str,
+    pacer: _Pacer,
+) -> tuple[str, int, float, dict[str, Any], str]:
+    """Walk balance pages (capped at :data:`_MAX_BALANCE_PAGES`) until
+    ``symbol``'s row is found or the broker signals end-of-set. Returns
+    ``(status, qty, cash, parsed_last_page, text_last_page)`` where ``status``
+    is one of :data:`_BAL_OK` / :data:`_BAL_RATE_LIMITED` / :data:`_BAL_REJECTED`
+    / :data:`_BAL_CAPPED` (F6: capped ⇒ INCONCLUSIVE, never "not held")."""
+    fk = nk = ""
+    cash = 0.0
+    parsed: dict[str, Any] = {}
+    text = ""
+    for _page in range(_MAX_BALANCE_PAGES):
+        pacer.wait()
+        status, parsed, text, _elapsed_ms = _get(
+            session,
+            auth,
+            base_url=base_url,
+            path=_STOCK_BALANCE_PATH,
+            tr_id=tr_id,
+            params=_balance_params(creds, fk=fk, nk=nk),
+        )
+        if is_rate_limited(status, parsed, text):
+            return _BAL_RATE_LIMITED, 0, cash, parsed, text
+        rt_cd = str(parsed.get("rt_cd") or "").strip()
+        if rt_cd != "0":
+            return _BAL_REJECTED, 0, cash, parsed, text
+        rows = parsed.get("output1")
+        rows = rows if isinstance(rows, list) else []
+        cash = _read_cash_total(parsed)
+        found_qty = _find_symbol_qty(rows, symbol)
+        if found_qty is not None:
+            return _BAL_OK, found_qty, cash, parsed, text
+        next_fk = str(parsed.get("ctx_area_fk100") or "").strip()
+        next_nk = str(parsed.get("ctx_area_nk100") or "").strip()
+        if not next_fk and not next_nk:
+            # Broker end-of-set and the symbol was never on any page walked —
+            # genuinely absent, not truncated.
+            return _BAL_OK, 0, cash, parsed, text
+        fk, nk = next_fk, next_nk
+    return _BAL_CAPPED, 0, cash, parsed, text
 
 
 # ---------------------------------------------------------------------------
@@ -438,39 +560,31 @@ def _do_baseline(
     pacer: _Pacer,
     symbol: str,
 ) -> tuple[int, float] | None:
-    """One paced GET balance snapshot. Returns ``(qty, cash)`` or ``None`` if the
-    run should stop here (rate-limited, rejected, or no holding)."""
-    pacer.wait()
-    status, parsed, text, elapsed_ms = _get(
-        session,
-        auth,
-        base_url=base_url,
-        path=_STOCK_BALANCE_PATH,
-        tr_id=tr_id,
-        params=_balance_params(creds),
+    """Paced, paginated balance snapshot (:func:`_read_balance`). Returns
+    ``(qty, cash)`` or ``None`` if the run should stop here (rate-limited,
+    rejected, capped, or no holding)."""
+    status, qty, cash, parsed, _text = _read_balance(
+        session, auth, base_url, tr_id, creds, symbol, pacer
     )
-    run.observe(
-        baseline_call={
-            "http_status": status,
-            "rt_cd": parsed.get("rt_cd"),
-            "elapsed_ms": round(elapsed_ms, 1),
-        }
-    )
-    if is_rate_limited(status, parsed, text):
-        run.error(
-            f"rate-limited on baseline balance call (status={status}); "
-            "stopping — no retry"
-        )
+    run.observe(baseline_call={"status_kind": status, "rt_cd": parsed.get("rt_cd")})
+    if status == _BAL_RATE_LIMITED:
+        run.error("rate-limited on baseline balance call; stopping — no retry")
         return None
-    rt_cd = str(parsed.get("rt_cd") or "").strip()
-    if rt_cd != "0":
+    if status == _BAL_REJECTED:
         run.error(
-            f"baseline balance call rejected: rt_cd={rt_cd!r} "
+            f"baseline balance call rejected: rt_cd={parsed.get('rt_cd')!r} "
             f"msg_cd={parsed.get('msg_cd')!r} msg1={parsed.get('msg1')!r}"
         )
         return None
+    if status == _BAL_CAPPED:
+        run.error(
+            f"baseline balance read hit the {_MAX_BALANCE_PAGES}-page cap "
+            f"without finding {symbol}'s row or a broker end-of-set signal — "
+            "INCONCLUSIVE, not 'no holding' (a truncated read must never be "
+            "reported as an absent position, finding F6)."
+        )
+        return None
 
-    qty, cash = _read_position(parsed, symbol)
     run.measure("baseline", {"hldg_qty": qty, "dnca_tot_amt": cash})
     if qty <= 0:
         run.skip(
@@ -522,8 +636,7 @@ def _do_reference_check(
 
 
 class _RateLimited(ProbeError):
-    """Internal control-flow signal: a rate limit was already recorded via
-    ``run.error`` and the caller must stop without any further broker call."""
+    """Signal: a rate limit was already recorded via ``run.error``; stop, no retry."""
 
 
 def _poll_loop(
@@ -550,31 +663,27 @@ def _poll_loop(
     deadline = time.monotonic() + trial.window_s
 
     while pending and time.monotonic() < deadline:
-        poll_pacer.wait()
         polls_used += 1
-        status, parsed, text, _elapsed_ms = _get(
-            session,
-            auth,
-            base_url=base_url,
-            path=_STOCK_BALANCE_PATH,
-            tr_id=tr_id,
-            params=_balance_params(creds),
+        status, qty, cash, parsed, _text = _read_balance(
+            session, auth, base_url, tr_id, creds, trial.symbol, poll_pacer
         )
-        if is_rate_limited(status, parsed, text):
-            run.error(
-                f"rate-limited during poll #{polls_used} (status={status}); "
-                "stopping — no retry"
-            )
+        if status == _BAL_RATE_LIMITED:
+            run.error(f"rate-limited during poll #{polls_used}; stopping — no retry")
             break
-        rt_cd = str(parsed.get("rt_cd") or "").strip()
-        if rt_cd != "0":
+        if status == _BAL_REJECTED:
             run.error(
-                f"poll #{polls_used} rejected: rt_cd={rt_cd!r} "
+                f"poll #{polls_used} rejected: rt_cd={parsed.get('rt_cd')!r} "
                 f"msg_cd={parsed.get('msg_cd')!r}"
             )
             break
+        if status == _BAL_CAPPED:
+            run.error(
+                f"poll #{polls_used} hit the {_MAX_BALANCE_PAGES}-page cap "
+                f"without finding {trial.symbol}'s row — INCONCLUSIVE, stopping "
+                "(finding F6: a truncated read is not evidence of no change)."
+            )
+            break
 
-        qty, cash = _read_position(parsed, trial.symbol)
         now = _now()
         run.observe(poll={"index": polls_used, "hldg_qty": qty, "dnca_tot_amt": cash})
         for name, observed, baseline in (
@@ -592,6 +701,8 @@ def _poll_loop(
                     "latency_ms": (now - t0_dt).total_seconds() * 1000.0,
                     "poll_interval_ms_effective": trial.effective_poll_ms,
                     "candidate_only": True,
+                    # F3: TIMING ALONE — no broker-side CA reference on the row.
+                    "attribution": "UNVERIFIED_ACCOUNT_LEVEL_CHANGE",
                     f"baseline_{name if name == 'quantity' else 'cash'}": baseline,
                     f"observed_{name if name == 'quantity' else 'cash'}": observed,
                 }
@@ -616,6 +727,8 @@ def _finalize(
             row = dict(found[name])
             row["status"] = "OBSERVED"
         else:
+            # No "candidate_only" here (F5): that flag means "a value exists,
+            # unapproved" — a CENSORED row has NO value to flag as a candidate.
             row = {
                 "event_class": trial.event_class,
                 "leg": name,
@@ -623,7 +736,6 @@ def _finalize(
                 "t0": t0_dt.isoformat(),
                 "status": "CENSORED",
                 "window_s": trial.window_s,
-                "candidate_only": True,
             }
             run.skip(
                 f"legs.{trial.event_class}.{name}",
@@ -634,16 +746,28 @@ def _finalize(
             )
         class_leg_table.append(row)
 
+    run.observe(
+        # F3: OBSERVED rows are timing-only attribution — see each row's
+        # "attribution": "UNVERIFIED_ACCOUNT_LEVEL_CHANGE" (_poll_loop). This is
+        # the one-sentence artifact-level caveat an approval reader must see
+        # before citing any OBSERVED row as this CA's effect.
+        attribution_caveat=(
+            "OBSERVED rows in class_leg_table are UNVERIFIED_ACCOUNT_LEVEL_CHANGE: "
+            "detected by TIMING ALONE (a balance change during the polling "
+            "window), not by any broker-side reference to this corporate "
+            "action on the row — a concurrent order fill, deposit/withdrawal, "
+            "or unrelated corporate action on the SAME account within the "
+            "window is indistinguishable from the event being measured "
+            "(runbook §5.8 prerequisite: operator attests no such activity)."
+        )
+    )
     run.measure("class_leg_table", class_leg_table)
     run.measure("polls_used", polls_used)
     run.measure("poll_interval_ms_effective", trial.effective_poll_ms)
     run.measure(
-        # The framework's own provenance_class (common.py::ProbeRun.to_dict)
-        # only distinguishes mode/errors, not per-leg observation — a window
-        # that legitimately CENSORS every leg is neither an error nor a full
-        # measurement. This supplements it with the framework's own
-        # MEASURED/NOT_MEASURED vocabulary (no third value exists there);
-        # "at least one leg observed live" is the honest per-leg signal.
+        # Supplements the framework's own mode/errors-only provenance_class
+        # (common.py::ProbeRun.to_dict) with a per-leg signal: a window that
+        # legitimately CENSORS every leg is neither an error nor a measurement.
         "leg_provenance_class",
         "MEASURED" if found else "NOT_MEASURED",
     )
@@ -694,6 +818,16 @@ def _build_run(spec: ProbeSpec, args: argparse.Namespace, trial: _Trial) -> Prob
                 "futures, so it is never paired with a measurement here."
             ),
         )
+    if trial.t0_offsets:
+        run.observe(t0_offsets=dict(trial.t0_offsets))
+        for flag_name, offset in trial.t0_offsets.items():
+            if offset != _KST_OFFSET:
+                print(
+                    f"  WARNING: --{flag_name.replace('_', '-')} offset {offset} "
+                    f"is not KST ({_KST_OFFSET}) — recorded verbatim, NOT "
+                    "normalized. Every other operator time and the poll clock "
+                    "are UTC/KST; mixing offsets miscomputes latency_ms."
+                )
     return run
 
 
@@ -710,15 +844,12 @@ def _dry_run_would_send(trial: _Trial) -> str:
 def probe_pca(args: argparse.Namespace) -> ProbeRun:
     """P-CA CORPORATE_ADMINISTRATIVE_EVENTS — opportunistic GET-only reflection latency.
 
-    Per (event_class x leg): pairs a broker-reflect poll (t1) with the ONE of the
-    seven ADR §8 times that leg's rationale names as t0 (design doc §5.2 table),
-    per :func:`_legs_to_track`. Procedure (design doc §5.2 ⑤): baseline balance
-    snapshot -> optional ``--reference-check`` -> operator ``[Enter]`` prompt
-    (P-EXT form) -> bounded poll loop (:func:`_poll_loop`) -> per-leg
-    OBSERVED/CENSORED classification (:func:`_finalize`). No aggregate scalar is
-    ever written for ``B_non_trade_event_detect``/``B_non_trade_reconcile`` —
-    both stay ``NOT_ESTABLISHED``, a Bounds-Approver decision this probe cannot
-    make.
+    Procedure (design doc §5.2 ⑤): baseline balance snapshot -> optional
+    ``--reference-check`` -> operator ``[Enter]`` prompt (P-EXT form) -> bounded
+    poll loop (:func:`_poll_loop`) -> per-leg OBSERVED/CENSORED classification
+    (:func:`_finalize`). No aggregate scalar is ever written for
+    ``B_non_trade_event_detect``/``B_non_trade_reconcile`` — a Bounds-Approver
+    decision this probe cannot make.
     """
     spec = get("P-CA")
     trial = _parse_trial(args)
@@ -758,6 +889,17 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
                 _do_reference_check(run, session, auth, base_url, pacer, trial)
             except _RateLimited:
                 return run
+
+        if trial.event_class == "cash_dividend":
+            # F4: the 기준가-조정(ex) leg is a PRICE adjustment — never CENSOR
+            # it silently (:func:`_legs_to_track` never tracks it at all); say
+            # explicitly why it is unobservable, every cash_dividend run.
+            run.skip(
+                "legs.cash_dividend.ex",
+                "NOT_OBSERVABLE_ON_BALANCE_SURFACE — 기준가 조정은 잔고 TR로 "
+                "관측 불가(N-19 §2.3: 주식잔고조회 72필드 중 가격 필드 없음); "
+                "현금 leg만 관측 가능.",
+            )
 
         legs = _legs_to_track(trial)
         if not legs:
@@ -800,12 +942,7 @@ def add_ca_args(parser: argparse.ArgumentParser) -> None:
         "--env",
         choices=("mock", "real"),
         default="mock",
-        help=(
-            "Which environment to read (default 'mock' — policy-safe, low-cost "
-            "default per design doc §5.2 M-3). A MOCK_VTS artifact is never "
-            "REAL_PROD-citable (§6.2 / ADR-002-004 §13.14); --env real requires "
-            "operator-approved real credentials in the environment."
-        ),
+        help="Environment to read (default 'mock', §5.2 M-3). MOCK_VTS is never REAL_PROD-citable (§6.2).",
     )
     parser.add_argument(
         "--event-class",
@@ -816,18 +953,12 @@ def add_ca_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--ex-time",
         default="",
-        help=(
-            "ISO-8601 KST (e.g. 2026-09-30T09:00:00+09:00) — 배당락/권리락. t0 "
-            "for the quantity leg when --event-class=cash_dividend."
-        ),
+        help="ISO-8601 KST — 배당락/권리락. Validated only, never paired with a leg (N-19 §2.3 — 기준가 조정은 잔고 TR로 관측 불가).",
     )
     parser.add_argument(
         "--effective-time",
         default="",
-        help=(
-            "ISO-8601 KST — 신주 효력(상장/등록)일. t0 for the quantity leg for "
-            "every --event-class other than cash_dividend."
-        ),
+        help="ISO-8601 KST — 신주 효력(상장/등록)일. t0 for the quantity leg, every class but cash_dividend.",
     )
     parser.add_argument(
         "--payable-time",
@@ -837,50 +968,30 @@ def add_ca_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--settlement-time",
         default="",
-        help=(
-            "ISO-8601 KST — 결제 시점. Recorded verbatim, never measured: "
-            "settlement is a futures-only leg (design doc §5.2) and this probe "
-            "refuses --asset futures."
-        ),
+        help="ISO-8601 KST — 결제 시점. Recorded verbatim, never measured (futures-only leg; --asset futures is refused).",
     )
     parser.add_argument(
         "--poll-ms",
         type=float,
         default=5000.0,
-        help=(
-            "Requested polling interval (default 5000ms). Floored by --pace-s "
-            "— the effective interval max(--poll-ms, --pace-s*1000) is what "
-            "gets recorded, not the requested value."
-        ),
+        help="Requested polling interval (default 5000ms), floored by --pace-s.",
     )
     parser.add_argument(
         "--window-s",
         type=float,
         default=3600.0,
-        help=(
-            "Maximum polling seconds per trial (default 3600 = 1h). Expiry "
-            "records CENSORED for every leg still pending — never a value."
-        ),
+        help="Max polling seconds per trial (default 3600). Expiry ⇒ CENSORED, never a value.",
     )
     parser.add_argument(
         "--pace-s",
         type=float,
         default=DEFAULT_PACE_S,
-        help=(
-            f"Minimum interval between ANY two broker calls (default "
-            f"{DEFAULT_PACE_S}s) — baseline, reference-check and every poll "
-            "alike. Local re-implementation of the measured P-13/P-BAL pace; "
-            "see the module note on why probes_order is not imported here."
-        ),
+        help=f"Min interval between ANY two broker calls (default {DEFAULT_PACE_S}s).",
     )
     parser.add_argument(
         "--reference-check",
         action="store_true",
-        help=(
-            "Also call the ksdinfo TR matching --event-class once BEFORE "
-            "polling and record its raw dates as observations.reference_dates "
-            "— the first live MOCK feasibility observation N-19 §3 asks for."
-        ),
+        help="Also GET the ksdinfo TR for --event-class BEFORE polling (N-19 §3 MOCK feasibility observation).",
     )
 
 

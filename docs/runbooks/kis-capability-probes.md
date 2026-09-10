@@ -1144,10 +1144,13 @@ N-18b(해외지수 심볼 표기)를 담지 못한다. `session_phase_semantics`
 대조 · `SPEC_CROSSCHECK` · `ENV_NONE` · 서버 불요 · 개발 측 데스크워크 · 산출
 `docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md`)와 **P-CA**(기회주의 관측 ·
 `MANUAL` · GET 전용 · 선행 보유 · 선물 제외 · N-19 선행)로 `registry.py` 에 등재됐다.
-등재 시점에는 둘 다 `supported=False`(N-19 는 스크립트가 아님 · P-CA 는 구현 후속)이며
-`--coverage` 의 `unsupported` 에 사유와 함께 노출된다. 두 키의 bound 는 P-CA 구현·실행
-전까지 **NOT_ESTABLISHED** 로 남으며, "프로브 전건 실행 = 전 키 확보"가 아님은 여전히
-승인 패키지에 명시할 것. 집계값은 스칼라가 아니라 class×leg 표다(정의서 §5.2).
+등재 시점에는 둘 다 `supported=False`였다. **`1f944ad9`(2026-09-10) 이후 P-CA는
+`supported=True`**로 착지했다(`probes_ca.py::probe_pca`, §5.8) — N-19는 문서 대조라
+여전히 `supported=False`(스크립트가 아님, `--coverage`의 `unsupported`에 사유와 함께
+노출)이지만, P-CA는 더 이상 `unsupported`에 나타나지 않는다. 두 키의 bound 는 P-CA
+실행·N-19 문서 모델 + Bounds-Approver 판단이 함께 갖춰지기 전까지 **NOT_ESTABLISHED**
+로 남으며, "P-CA가 실행 가능해졌다 = 두 키가 확보됐다"가 아님은 여전히 승인 패키지에
+명시할 것. 집계값은 스칼라가 아니라 class×leg 표다(정의서 §5.2).
 
 ### 9.3 결과 디렉터리 잔재
 
