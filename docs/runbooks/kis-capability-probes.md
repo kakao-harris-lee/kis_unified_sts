@@ -152,7 +152,7 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 | **P-R5-PRE** | OPEN_ORDER_QUERY | REAL_READ_ONLY | REAL_PROD | `python -m tools.broker_probes.run P-R5-PRE --symbol <mini> --expect-account-fingerprint <hex> --confirm` | 5 GET (~10 s) | MEDIUM | 아니오 |
 | **P-R5** | OPEN_ORDER_QUERY | ORDER | REAL_PROD | **§5.7 전용 절차** (`--i-understand-this-places-real-orders`) | ~5 min at N=3 | **HIGH — 실자금** | **예 (실전)** |
 | **N-19** | CORPORATE_ADMINISTRATIVE_EVENTS | SPEC_CROSSCHECK | NONE | (스크립트 아님 — 명세 대조 · 산출 `docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md`) | ~2-3 h 데스크워크 | LOW | 아니오 |
-| **P-CA** | CORPORATE_ADMINISTRATIVE_EVENTS | MANUAL (GET 전용) | MOCK_VTS / REAL_PROD (`--env`) | `python -m tools.broker_probes.run P-CA --asset stock --symbol <종목> --confirm` (**구현 전까지 `supported=False` — 실행 시 skip 사유 출력**) | 이벤트 창 전후 폴링 · 운영자 7-시각 기록 | LOW | 아니오 |
+| **P-CA** | CORPORATE_ADMINISTRATIVE_EVENTS | MANUAL (GET 전용) | MOCK_VTS / REAL_PROD (`--env`) | `python -m tools.broker_probes.run P-CA --asset stock --symbol <종목> --event-class <class> --effective-time <ISO> [--payable-time <ISO>] [--reference-check] --confirm` (2026-09-10 구현 착지 — **§5.8**) | 이벤트 창 전후 폴링 · 운영자 7-시각 기록 | LOW | 아니오 |
 
 > **P-NMPR·P-BAL·P-R5-PRE·P-R5는 정본 16에 속하지 않는다.** 각각 N-17 대조,
 > wave-3b 런타임 트레이스(H4), 그리고 wave-3b D-2의 NOT-IN-SCOPE 항목에서 파생된
@@ -857,6 +857,72 @@ python -m tools.broker_probes.run P-R5 \
 **세션 종료 시 운영자 체크리스트**: ① 계좌 포지션 0 확인 ② 당일 잔존 주문 0 확인
 ③ 실전 자격증명 셸 **종료**(§5.4 규칙 5 — 실전 자격증명이 남은 셸에서 모의 프로브를
 돌리지 않는다) ④ 아티팩트를 §6.3대로 승인 패키지로 복사.
+
+---
+
+### 5.8 P-CA 실행 절차 (corporate-action 반영 지연) — GET 전용·operator t0
+
+#### 목적
+
+측정 대상은 CA(기업행위)가 **경제적으로 실효된 시점**(ADR §8 7-시각 중 하나)부터
+**broker가 잔고에 반영하기까지의 지연**이다. N-19
+(`docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md`)가 문서 대조로 확립한 것:
+KIS는 12개 예탁원정보(ksdinfo) GET TR로 CA **일정**을 노출하지만(§2.1
+VERIFIED/E1), 그 일정이 잔고·포지션에 **언제** 반영되는지는 어느 TR도 서술하지
+않는다(§2.2 UNKNOWN). 따라서 P-CA는 `hldg_qty`(수량)·`dnca_tot_amt`(예수금총금액 —
+현금)를 폴링해 그 반영을 **간접 관측**한다.
+
+#### 선행 조건
+
+- **N-19 선착지 완료.** CA-API 존부는 VERIFIED(E1)이나 모의(VTS) 처리 여부는
+  UNKNOWN — `--reference-check`가 그 1차 관측이다.
+- **대상 종목 선행 보유.** baseline `hldg_qty <= 0`이면 프로브는 폴링 없이
+  즉시 `skip`한다(P-BAL 문형) — 모의는 KIS 모의투자 주문 산물, 실전은 기존
+  실주식 보유.
+- **선물 제외.** `--asset futures`는 `ProbeError`로 즉시 거부된다(모의 선물잔고
+  미지원 `shared/kis/client.py:1031` NOTE·가드 `:1047`, 실선물 무증거금 —
+  CLAUDE.md Non-Negotiable Rules).
+- **READ-ONLY.** `probes_ca.py`에는 주문 경로가 없고 GET 외 HTTP 메서드
+  리터럴조차 없다(AST 테스트로 강제, P-BAL과 동일 규율).
+- **operator가 관련 7-시각을 미리 확보**해 둔다(N-19 참조원 또는 외부 CA
+  캘린더) — in-repo CA 캘린더는 부재하므로 `--ex-time`/`--effective-time`/
+  `--payable-time`을 ISO-8601 KST(`YYYY-MM-DDTHH:MM:SS+09:00`)로 직접 공급한다.
+
+#### 절차
+
+1. `--confirm` 없이 실행해 dry-run 배너와 `would_send`를 확인한다(네트워크 0건).
+2. 베이스라인 잔고 스냅샷 1회(GET) — `hldg_qty`·`dnca_tot_amt` 기록. 보유 0이면
+   여기서 종료(`skip`).
+3. `--reference-check` 지정 시, `--event-class`에 대응하는 ksdinfo TR을 폴링
+   전 1회 GET해 `observations.reference_dates`에 원문을 기록한다. 모의에서
+   오류/거부면 `observations.mock_reference_support`에
+   `UNSUPPORTED_OR_ERROR:<rt_cd/msg>`를 남긴다 — 이것이 N-19 §3이 요구한 1차
+   MOCK feasibility 관측이다.
+4. 추적할 leg가 하나도 없으면(7-시각 전부 미공급) `skip`하고 폴링하지 않는다.
+5. operator 프롬프트(`[Enter when the first relevant time has passed]`, P-EXT
+   문형) — 관련 시각이 지난 뒤 Enter.
+6. `--poll-ms`(하한 `--pace-s`)로 잔고를 폴링한다. `hldg_qty` 최초 변화 =
+   수량 leg 감지(t0 = `--event-class cash_dividend`면 `ex_time`, 그 외는
+   `effective_time`). `dnca_tot_amt` 최초 변화 = 현금 leg 감지(t0 =
+   `payable_time`). `--window-s` 만료 시 미감지 leg는 **`CENSORED`**로
+   기록되며 값(0 포함)을 절대 쓰지 않는다.
+7. `measurements.class_leg_table`(class×leg 표, OBSERVED/CENSORED)이 유일한
+   집계다 — `B_non_trade_event_detect`/`_reconcile` 단일 스칼라는 **절대
+   쓰지 않는다**(estimand 미정의, 설계 문서 §11).
+
+#### CENSORED 의미론
+
+leg가 창 안에서 관측되지 않았다는 것은 지연이 0이라는 증거가 **아니다**
+(VP-002:772 "관측 0건 ≠ 0"). `class_leg_table`의 해당 행은 `status: "CENSORED"`
++ `window_s`만 담고 `latency_ms`를 쓰지 않는다.
+
+#### 아티팩트 처리
+
+경로·`artifact_id`·`UNAPPROVED_CANDIDATE` 규율은 §6.1과 동일하다. 기입면은
+§5.1/§5.2 정의서와 동일하게 `capabilities.corporate_actions.evidence_refs`
+(+ `.status`) — 전용 수치 슬롯은 없다(§6). 값 확립(`value_ms`)은 이 프로브
+단독으로는 불가하며 N-19 문서 모델 + Bounds-Approver 판단이 함께 필요하다
+(설계 문서 §7 연언 요건).
 
 ---
 

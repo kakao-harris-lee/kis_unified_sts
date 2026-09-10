@@ -8,11 +8,16 @@ probes for the two adjacent ``VERIFICATION-PROFILE-002`` bound keys
 * **P-CA** — an opportunistic GET-only observation, gated on N-19 landing
   first, that can never place an order.
 
-Neither probe is executable yet (``supported=False`` — see each ``skip_reason``),
-so this test guards the *registration*, not behavior: the right kind/environment/
-flags are on file, both bound keys are cited, both probes show up in
-``coverage_report()['unsupported']`` with a real reason, and the ratified
-canonical-12 / census-4 counts are untouched by adding follow-ups. It also pins
+N-19 is a documentary cross-check, not a script (``supported=False`` — see its
+``skip_reason``). P-CA landed as a runnable probe
+(``tools/broker_probes/probes_ca.py::probe_pca``, tested in
+``tests/tools/test_broker_probes_ca.py``) once N-19
+(``docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md``) established the
+CA-API exists (VERIFIED/E1); this test guards the *registration* for both —
+the right kind/environment/flags are on file, both bound keys are cited, N-19
+shows up in ``coverage_report()['unsupported']`` with a real reason, P-CA does
+not, and the ratified canonical-12 / census-4 counts are untouched by adding
+follow-ups. It also pins
 the corrected ``ADJACENT_BOUND_KEYS`` ``vp_line`` values against a live re-read
 of the VERIFICATION-PROFILE-002 source file, so future drift in that file fails
 this test loudly instead of silently going stale (see the drift table in the
@@ -127,19 +132,20 @@ class TestPCARegistration:
         spec = get("P-CA")
         assert spec.emits_orders is False
         assert spec.requires_confirm is True
-        assert spec.supported is False
+        assert spec.supported is True
 
-    def test_skip_reason_present(self) -> None:
+    def test_skip_reason_is_now_empty(self) -> None:
+        # P-CA landed as a runnable probe — skip_reason is cleared, not stale.
         spec = get("P-CA")
-        assert spec.skip_reason.strip() != ""
+        assert spec.skip_reason == ""
 
     def test_prerequisites_present(self) -> None:
         spec = get("P-CA")
         assert len(spec.prerequisites) > 0
 
-    def test_no_entrypoint_yet(self) -> None:
+    def test_entrypoint_is_the_landed_probe(self) -> None:
         spec = get("P-CA")
-        assert spec.entrypoint == ""
+        assert spec.entrypoint == "tools.broker_probes.probes_ca:probe_pca"
 
     def test_source_does_not_start_with_draft_or_plan(self) -> None:
         spec = get("P-CA")
@@ -162,10 +168,12 @@ class TestCoverageInvariantsUnchanged:
         report = coverage_report()
         assert report["total"] == 22
 
-    def test_both_new_probes_in_unsupported_with_reason(self) -> None:
+    def test_n19_still_unsupported_pca_no_longer_is(self) -> None:
+        # N-19 is a documentary cross-check, not a script — it stays unsupported.
+        # P-CA landed as a runnable probe and must not appear here any more.
         unsupported = coverage_report()["unsupported"]
         assert "N-19" in unsupported and unsupported["N-19"].strip() != ""
-        assert "P-CA" in unsupported and unsupported["P-CA"].strip() != ""
+        assert "P-CA" not in unsupported
 
     def test_non_trade_bound_keys_touched(self) -> None:
         # B_non_trade_event_detect / _reconcile live in ADJACENT_BOUND_KEYS, not

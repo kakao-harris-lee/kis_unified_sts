@@ -937,23 +937,19 @@ PROBES: dict[str, ProbeSpec] = {
         duration="이벤트 창 전후 폴링, operator in the loop",
         emits_orders=False,  # GET 전용; 보유는 선행조건(P-BAL 선례)
         requires_confirm=True,
-        supported=False,
-        skip_reason=(
-            "기회주의: (a) N-19 선행 필수 — KIS CA-API 존부·모의 CA 처리 여부 UNKNOWN; "
-            "(b) operator 공급 7-시각(ex/effective/payable/settlement) 필수 (in-repo CA "
-            "캘린더 부재: SEIBRO stub market_data_collectors.py:57-66·DART 텍스트만); "
-            "(c) REAL_PROD 표본은 예정 CA와 겹치는 선행 실주식 보유 필요. 선물 제외 "
-            "(모의 잔고부재 client.py:1056 / 실선물 무증거금). (a) 미착지 시 unanchorable."
-        ),
+        supported=True,
+        skip_reason="",
         prerequisites=(
-            "N-19 선착지 — CA-API 존부·모의 CA 처리 여부·독립 참조원(§13.13) 확립 전 unanchorable",
+            "N-19 선착지 완료 — docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md "
+            "(CA-API 존부 VERIFIED/E1, 모의 CA 처리 여부 UNKNOWN → --reference-check로 "
+            "1차 관측, 독립 참조원 §13.13 미확정 — P-CA t0는 operator 공급 유지)",
             "operator가 관련 7-시각(ex/effective/payable/settlement)을 프롬프트 시 축자 기록 (P-EXT 문형)",
             "대상 종목 선행 보유 — 모의=KIS 모의투자 주문 산물 / 실전=기존 실주식 보유; 보유 0이면 확립 불가 (P-BAL 문형)",
-            "선물 제외 — 모의 선물잔고 미지원(shared/kis/client.py:1040 NOTE·가드 :1056) + 실선물 무증거금·무보유",
+            "선물 제외 — 모의 선물잔고 미지원(shared/kis/client.py:1031 NOTE·가드 :1047) + 실선물 무증거금·무보유",
             "READ-ONLY: GET 폴링만, 모듈에 주문 경로 없음 (P-BAL 문형)",
             "--env real 시 운영자 승인 (실 자격증명); MOCK 아티팩트는 REAL_PROD 문서 인용 불가(§6.2·ADR-002-004 §13.14)",
         ),
-        entrypoint="",
+        entrypoint="tools.broker_probes.probes_ca:probe_pca",
     ),
 }
 
