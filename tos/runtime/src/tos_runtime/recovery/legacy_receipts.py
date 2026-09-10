@@ -34,10 +34,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from pydantic import ValidationError
 from tos.canonical import CanonicalizationScheme
 from tos.engine import EventKind
 from tos.engine.records import event_identity
 
+from tos_runtime.engine.flow_fingerprint import FlowFingerprint
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 
@@ -49,14 +51,35 @@ __all__ = ["LegacyReceiptFacts", "legacy_receipts_in_window"]
 _EVENT_CONSUMED_KIND = "EVENT_CONSUMED"
 
 
+def _has_a_valid_flow_fingerprint(payload: object) -> bool:
+    """Whether ``payload`` (an ``EVENT_CONSUMED`` receipt's own ``flow_fingerprint`` field)
+    validates as a genuine :class:`~tos_runtime.engine.flow_fingerprint.FlowFingerprint`
+    (independent-review finding F4) — never a bare presence check
+    (``payload.get("flow_fingerprint") is not None``, this module's own original check, which
+    an empty dict / bare string / forged shape all satisfy vacuously)."""
+    if payload is None:
+        return False
+    try:
+        FlowFingerprint.model_validate(payload)
+    except ValidationError:
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class LegacyReceiptFacts:
     """The legacy-receipt facts for one replay window (module docstring).
 
     Attributes:
         count: How many ``DECISION_TICK`` receipts in the window are consumed but carry no
-            ``flow_fingerprint`` at all.
-        event_ids: Those receipts' own content-addressed event ids, in ascending order.
+            VALID ``flow_fingerprint`` (independent-review finding F4 — validated against the
+            real :class:`~tos_runtime.engine.flow_fingerprint.FlowFingerprint` model, never a
+            bare presence check), PLUS how many ``EVENT_CONSUMED`` rows in the ``entries`` table
+            carry no ``event_id`` at all (corrupted/forged — never correlatable to a specific
+            tick, so never silently dropped either).
+        event_ids: Those receipts' own content-addressed event ids, in ascending order — a
+            malformed no-``event_id`` row contributes to :attr:`count` but has no event id of
+            its own to report here.
     """
 
     count: int
@@ -106,6 +129,7 @@ def legacy_receipts_in_window(
     # recorded receipt for a given event_id is "the" receipt replay (and this gate) ever
     # consults, never a union across every receipt ever appended for that id.
     has_fingerprint_by_event: dict[str, bool] = {}
+    malformed_no_event_id = 0
     cursor = evidence_store.connection.execute(
         "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
         (_EVENT_CONSUMED_KIND,),
@@ -113,9 +137,18 @@ def legacy_receipts_in_window(
     for (payload_json,) in cursor:
         payload = json.loads(payload_json).get("payload", {})
         event_id = payload.get("event_id")
+        if event_id is None:
+            # Independent-review finding F4: a genuine EngineDriver-written EVENT_CONSUMED
+            # receipt always carries event_id (a required _record_consumed argument) -- a row
+            # without one is corrupted/forged and cannot be matched to a specific tick, so it is
+            # counted directly rather than silently dropped by the membership check below.
+            malformed_no_event_id += 1
+            continue
         if event_id not in decision_tick_ids:
             continue
-        has_fingerprint_by_event[event_id] = payload.get("flow_fingerprint") is not None
+        has_fingerprint_by_event[event_id] = _has_a_valid_flow_fingerprint(
+            payload.get("flow_fingerprint")
+        )
 
     legacy_ids = tuple(
         sorted(
@@ -124,4 +157,6 @@ def legacy_receipts_in_window(
             if not has_fingerprint
         )
     )
-    return LegacyReceiptFacts(count=len(legacy_ids), event_ids=legacy_ids)
+    return LegacyReceiptFacts(
+        count=len(legacy_ids) + malformed_no_event_id, event_ids=legacy_ids
+    )

@@ -91,6 +91,7 @@ from tos_runtime.time.sources import MonotonicSource
 __all__ = [
     "ENGINE_DRIVER_CONFIG_NAME",
     "INBOX_FILE_NAME",
+    "REPLAY_VERDICT_IDENTICAL_KIND",
     "EngineDriverConfig",
     "EngineDriverConfigError",
     "WiredEngine",
@@ -106,6 +107,12 @@ ENGINE_DRIVER_CONFIG_NAME = "engine_driver.yaml"
 #: ``evidence.sqlite3`` (module docstring item 2 / D3 failure-domain
 #: separation).
 INBOX_FILE_NAME = "inbox.sqlite3"
+
+#: Independent-review finding F5 (2026-09-10): the durable evidence kind recorded by
+#: :func:`verify_replay_or_halt` for a genuinely clean (non-diverged) replay result — see that
+#: function's own inline comment for why this did not already exist. Read by
+#: :mod:`tos_runtime.recovery.inputs` for the recovery barrier's obligation 1.
+REPLAY_VERDICT_IDENTICAL_KIND = "REPLAY_VERDICT_IDENTICAL"
 
 
 class EngineDriverConfigError(Exception):
@@ -327,7 +334,7 @@ def verify_replay_or_halt(
             core=core, recorded_stage=recorded_stage, scheme=scheme
         )
 
-    return verify_engine_replay_or_halt(
+    verdict = verify_engine_replay_or_halt(
         inbox,
         evidence_store,
         emergency_log,
@@ -335,6 +342,24 @@ def verify_replay_or_halt(
         scheme=scheme,
         window_events=window_events,
     )
+    # Independent-review finding F5 (2026-09-10): verify_engine_replay_or_halt records evidence
+    # ONLY on divergence (REPLAY_DIVERGED, inside replay_engine) or unverifiable receipts
+    # (REPLAY_RECEIPTS_UNVERIFIABLE) -- the ordinary "everything matched cleanly" case left NO
+    # durable trace at all. tos_runtime.recovery.barrier's own obligation 1 used to hardcode
+    # ok=True for this ("guaranteed by construction, this barrier only runs after replay already
+    # passed"), which is true for the boot that just ran but gives a LATER read of this evidence
+    # store (or a mutation removing this call entirely) nothing durable to verify against. This
+    # is that durable record.
+    evidence_store.append(
+        {
+            "total_compared": verdict.total_compared,
+            "uncompared": verdict.uncompared,
+            "has_unverifiable_receipts": verdict.has_unverifiable_receipts,
+        },
+        kind=REPLAY_VERDICT_IDENTICAL_KIND,
+        record_class=REPLAY_VERDICT_IDENTICAL_KIND,
+    )
+    return verdict
 
 
 @dataclass

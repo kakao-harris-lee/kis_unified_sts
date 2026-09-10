@@ -56,7 +56,21 @@ from tos.sbr.vocabulary import ObligationResult, ReadinessVerdict
 from tos_runtime.recovery.inputs import RecoveryInputs
 from tos_runtime.recovery.reconciliation import RECON_UNAVAILABLE, ReconciliationOutcome
 
-__all__ = ["RECON_UNAVAILABLE", "RecoveryVerdict", "RecoveryBarrier"]
+__all__ = [
+    "RECON_UNAVAILABLE",
+    "RecoveryBarrier",
+    "RecoveryBarrierInvariantError",
+    "RecoveryVerdict",
+]
+
+
+class RecoveryBarrierInvariantError(RuntimeError):
+    """Raised when one of :meth:`RecoveryBarrier.verdict`'s own defence-in-depth invariant
+    re-checks fails (independent-review finding F8, 2026-09-10) — a typed exception, never a
+    bare ``assert`` (which ``python -O`` strips entirely, silently discarding the check exactly
+    when it matters most). Should be unreachable in practice; its existence documents that this
+    module treats "unreachable" as "raises loudly", never "silently assumed"."""
+
 
 #: The outcome substituted for a possibly-live attempt with no entry at all in
 #: :attr:`~tos_runtime.recovery.inputs.RecoveryInputs.possibly_live_reconciliation` — reconciliation
@@ -93,14 +107,18 @@ def _satisfied(obligation_id: str, *, ok: bool) -> RecoveryObligation:
 def _build_obligations(inputs: RecoveryInputs) -> frozenset[RecoveryObligation]:
     """The six plan §2 decision 2 barrier gates, each as one flat obligation.
 
-    1. Replay verdict identical — GUARANTEED by the time this runs: this barrier only ever
-       executes after :func:`~tos_runtime.compose._engine_wiring.verify_replay_or_halt` already
-       raised :class:`~tos_runtime.compose._boot_integrity.EngineReplayDiverged` on any genuine
-       divergence, INSIDE the same boot (``compose_paper_runtime`` -> ``_finalize``) — a caller
-       can only reach this module at all when that check already passed. Recorded here as a
-       documented obligation (never re-verified — re-running replay a second time would be the
-       exact "the guard is also the oracle" failure design #39 §5.3 warns against), not skipped
-       silently.
+    1. Replay verdict identical — :attr:`~tos_runtime.recovery.inputs.RecoveryInputs
+       .replay_verdict_ok` (independent-review finding F5, 2026-09-10): a durable
+       ``REPLAY_VERDICT_IDENTICAL`` row exists in the evidence store AND no ``REPLAY_DIVERGED``
+       row exists at all. This barrier only ever executes after
+       :func:`~tos_runtime.compose._engine_wiring.verify_replay_or_halt` already raised
+       :class:`~tos_runtime.compose._boot_integrity.EngineReplayDiverged` on any genuine
+       divergence THIS boot, INSIDE the same boot (``compose_paper_runtime`` -> ``_finalize``) —
+       but that guarantee alone used to be recorded as a hardcoded ``ok=True`` here, never
+       actually checked against a durable fact; a caller that removed the ``_finalize`` call
+       entirely (or a LATER read of this same evidence store) had no durable trace to catch it.
+       Never re-verified by re-running replay a second time — that would be the exact "the guard
+       is also the oracle" failure design #39 §5.3 warns against — only read back.
     2. Every possibly-live attempt (ⓗ) is either absent or positively RECONCILED — never a bare
        "none exist" check: :attr:`~tos_runtime.recovery.inputs.RecoveryInputs
        .possibly_live_reconciliation` (:mod:`tos_runtime.recovery.reconciliation`) must mark
@@ -113,12 +131,13 @@ def _build_obligations(inputs: RecoveryInputs) -> frozenset[RecoveryObligation]:
        (design #40 v1.1 note ② forbids equating the two epochs outright): a genesis boot with an
        empty evidence store and no recorded runtime generation is consistent (nothing to compare
        yet); any other combination requires both to be present.
-    5. Inbox unconsumed events are replayable — GUARANTEED by construction: every unconsumed
-       event was already read back, without error, by
-       :func:`~tos_runtime.recovery.possibly_live.reconstruct_possibly_live_attempts` /
-       :func:`~tos_runtime.recovery.inputs.assemble_recovery_inputs`'s own unconsumed count
-       before this function is ever called — a row that failed to parse would have raised there,
-       not silently vanished into this obligation being marked SATISFIED.
+    5. Inbox unconsumed events are replayable — :attr:`~tos_runtime.recovery.inputs
+       .RecoveryInputs.inbox_events_parseable` (independent-review finding F5, 2026-09-10):
+       every admitted inbox row parses through the kernel ``EngineEvent`` model
+       (:func:`~tos_runtime.recovery.inputs._inbox_events_parseable`). Previously a bare
+       ``ok=True`` reasoned "a row that failed to parse would have raised before this function
+       is ever called" — true, but that meant a malformed row crashed the boot with an
+       unhandled exception rather than producing a graceful FAILED obligation here.
     6. Composite-state restore OK for every possibly-live attempt (staterestore).
     """
     genesis_consistent = (
@@ -134,7 +153,7 @@ def _build_obligations(inputs: RecoveryInputs) -> frozenset[RecoveryObligation]:
     )
     return frozenset(
         {
-            _satisfied(_OBLIGATION_REPLAY_IDENTICAL, ok=True),
+            _satisfied(_OBLIGATION_REPLAY_IDENTICAL, ok=inputs.replay_verdict_ok),
             _satisfied(_OBLIGATION_NO_POSSIBLY_LIVE, ok=all_possibly_live_cleared),
             _satisfied(
                 _OBLIGATION_NO_LEGACY_RECEIPTS, ok=inputs.legacy_receipts.count == 0
@@ -143,7 +162,7 @@ def _build_obligations(inputs: RecoveryInputs) -> frozenset[RecoveryObligation]:
                 _OBLIGATION_GENERATION_CONSISTENT,
                 ok=genesis_consistent or both_present,
             ),
-            _satisfied(_OBLIGATION_INBOX_REPLAYABLE, ok=True),
+            _satisfied(_OBLIGATION_INBOX_REPLAYABLE, ok=inputs.inbox_events_parseable),
             _satisfied(
                 _OBLIGATION_COMPOSITE_STATE_OK,
                 ok=not inputs.composite_state_incomplete_attempt_ids,
@@ -240,13 +259,22 @@ class RecoveryBarrier:
             RecoveryAuthorityEffect()
         )  # every flag False — unconstructable otherwise
         # Defence in depth (module docstring): re-check separation on the ALREADY-validated
-        # effect rather than trusting construction alone.
-        assert recovery_authority_separated(effect, forced_ready_requested=False), (
-            "RecoveryAuthorityEffect() must always separate authority — this assertion documents "
-            "the defence-in-depth re-check design #17 calls for, and should be unreachable"
-        )
+        # effect rather than trusting construction alone. Independent-review finding F8
+        # (2026-09-10): an `assert` here is stripped entirely under `python -O`, silently
+        # discarding this defence-in-depth re-check exactly when a `-O`-run process would most
+        # need it caught — an explicit check raising a typed, never-optimized-away exception
+        # survives that mode.
+        if not recovery_authority_separated(effect, forced_ready_requested=False):
+            raise RecoveryBarrierInvariantError(
+                "RecoveryAuthorityEffect() must always separate authority — this check "
+                "documents the defence-in-depth re-check design #17 calls for, and should be "
+                "unreachable"
+            )
         # Documents (does not decide) that nothing here revives a prior authority (SBR-INV-014).
-        assert recovery_completion_revives_nothing()
+        if not recovery_completion_revives_nothing():
+            raise RecoveryBarrierInvariantError(
+                "recovery_completion_revives_nothing() returned False -- SBR-INV-014 violated"
+            )
 
         readiness = ReadinessVerdict.READY if closed else ReadinessVerdict.NOT_READY
         reconciliation = {

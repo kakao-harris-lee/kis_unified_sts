@@ -87,10 +87,12 @@ from tos_runtime.recon.ports import (
     ReservationProjectionReader,
     WitnessOrder,
     WitnessScope,
+    WitnessSnapshot,
     WitnessUnavailable,
 )
 
 __all__ = [
+    "WITNESS_NOT_INDEPENDENT_REASON",
     "AttemptClassification",
     "ReconciliationClass",
     "ReconciliationReport",
@@ -101,6 +103,15 @@ __all__ = [
 _RCL_INDEPENDENCE_CLASS = "RCL_RESERVATION_LOG"
 _EVIDENCE_INDEPENDENCE_CLASS = "EVIDENCE_RECEIPT"
 _WITNESS_INDEPENDENCE_CLASS = "BROKER_WITNESS"
+
+#: Independent-review finding F2 (2026-09-10): surfaced on :attr:`ReconciliationReport.reason`
+#: when the witness path declared itself store-derived
+#: (:attr:`~tos_runtime.recon.ports.WitnessSnapshot.independent_of_evidence_store` ``False``) and
+#: that collapse is why full corroboration did not complete for at least one attempt/order in
+#: scope — distinguishable from the generic ``None``/"no observations in scope" reasons so a
+#: caller (:mod:`tos_runtime.recovery.reconciliation`) can report it honestly rather than folding
+#: it into a generic "not corroborated".
+WITNESS_NOT_INDEPENDENT_REASON = "WITNESS_NOT_INDEPENDENT"
 
 #: The two capacity-releasing fields this service actually has quantity data for
 #: (``tos.recon.CAPACITY_RELEASING_FIELDS`` names both; RCL carries no per-dimension
@@ -159,6 +170,7 @@ def _order_existence_observations(
     evidence: EgressReceiptObservation | None,
     witness_order: WitnessOrder | None,
     freshness: FreshnessMarker,
+    witness_independence_class: str,
 ) -> tuple[EvidencePathObservation, ...]:
     """Build the ``ORDER_EXISTENCE`` observations for one attempt/order.
 
@@ -167,6 +179,12 @@ def _order_existence_observations(
     either reports the attempt or it does not (an absent path is simply fewer usable
     observations, never a recorded disagreement, matching ``classify_field``'s own "fewer
     paths -> SINGLE_SOURCE/UNKNOWN" degradation rather than an invented conflict).
+
+    Args:
+        witness_independence_class: The independence-class label the witness-sourced
+            observation is stamped with (independent-review finding F2) — the SAME class as the
+            receipt path whenever the witness declared itself store-derived, never
+            unconditionally :data:`_WITNESS_INDEPENDENCE_CLASS`.
     """
     observations: list[EvidencePathObservation] = []
     if rcl_present:
@@ -196,7 +214,7 @@ def _order_existence_observations(
             EvidencePathObservation(
                 field=SafetyRelevantField.ORDER_EXISTENCE,
                 source_ref="witness",
-                independence_class=_WITNESS_INDEPENDENCE_CLASS,
+                independence_class=witness_independence_class,
                 asserted_bound=ConservativeBound(),
                 agrees_within_tolerance=True,
                 freshness_marker=freshness,
@@ -212,11 +230,16 @@ def _quantity_observations(
     witness_value: Decimal | None,
     freshness: FreshnessMarker,
     evidence_source_ref: str,
+    witness_independence_class: str,
 ) -> tuple[EvidencePathObservation, ...]:
     """Build the observations for one quantity field from the two paths that carry a
     magnitude at all (module docstring — RCL carries none). Agreement is exact equality:
     Phase 5 injects no Verification Profile tolerance value, so this is the conservative
     (strictest) default until a caller-injected tolerance replaces it.
+
+    Args:
+        witness_independence_class: See :func:`_order_existence_observations` (same
+            independent-review finding F2 bridge).
     """
     observations: list[EvidencePathObservation] = []
     if evidence_value is not None:
@@ -239,7 +262,7 @@ def _quantity_observations(
             EvidencePathObservation(
                 field=field,
                 source_ref="witness",
-                independence_class=_WITNESS_INDEPENDENCE_CLASS,
+                independence_class=witness_independence_class,
                 asserted_bound=ConservativeBound(
                     lower=witness_value, upper=witness_value
                 ),
@@ -332,6 +355,7 @@ class ReconciliationService:
         evidence: EgressReceiptObservation | None,
         witness_order: WitnessOrder | None,
         freshness: FreshnessMarker,
+        witness_independence_class: str,
     ) -> tuple[ReconciliationClass, tuple[FieldConfidence, ...], bool, bool]:
         """One attempt's classification, field confidences, rearm-ok, capacity-ok.
 
@@ -346,6 +370,7 @@ class ReconciliationService:
             evidence=evidence,
             witness_order=witness_order,
             freshness=freshness,
+            witness_independence_class=witness_independence_class,
         )
         existence_confidence = FieldConfidence(
             field=SafetyRelevantField.ORDER_EXISTENCE,
@@ -386,6 +411,7 @@ class ReconciliationService:
                 witness_value=witness_values[field],
                 freshness=freshness,
                 evidence_source_ref=evidence_source_ref,
+                witness_independence_class=witness_independence_class,
             )
             confidence = FieldConfidence(
                 field=field,
@@ -418,6 +444,7 @@ class ReconciliationService:
         receipts_by_attempt: dict[str, EgressReceiptObservation],
         witness_by_attempt: dict[str, WitnessOrder],
         freshness: FreshnessMarker,
+        witness_independence_class: str,
     ) -> tuple[AttemptClassification, tuple[FieldConfidence, ...], bool, bool]:
         """One known attempt id's full verdict — split out of :meth:`reconcile` to stay
         under the module's function size budget."""
@@ -432,6 +459,7 @@ class ReconciliationService:
                 evidence=evidence,
                 witness_order=witness_order,
                 freshness=freshness,
+                witness_independence_class=witness_independence_class,
             )
         )
         record = AttemptClassification(
@@ -445,11 +473,18 @@ class ReconciliationService:
 
     @staticmethod
     def _classify_orphan_order(
-        order: WitnessOrder, *, freshness: FreshnessMarker
+        order: WitnessOrder,
+        *,
+        freshness: FreshnessMarker,
+        witness_independence_class: str,
     ) -> tuple[AttemptClassification, FieldConfidence]:
         """One orphan broker order's verdict — split out of :meth:`reconcile`."""
         existence_obs = _order_existence_observations(
-            rcl_present=False, evidence=None, witness_order=order, freshness=freshness
+            rcl_present=False,
+            evidence=None,
+            witness_order=order,
+            freshness=freshness,
+            witness_independence_class=witness_independence_class,
         )
         confidence = FieldConfidence(
             field=SafetyRelevantField.ORDER_EXISTENCE,
@@ -504,6 +539,15 @@ class ReconciliationService:
         attempt_ids = (
             set(scope.attempt_ids) | set(receipts_by_attempt) | set(witness_by_attempt)
         )
+        # Independent-review finding F2 (2026-09-10): a witness that declares itself
+        # store-derived (never independent of the evidence-receipt path) is stamped with the
+        # SAME independence-class label as that path, so classify_field's own >=2-distinct-class
+        # corroboration test can never be satisfied by two byte-identical reads of one store.
+        witness_independence_class = (
+            _WITNESS_INDEPENDENCE_CLASS
+            if snapshot.independent_of_evidence_store
+            else _EVIDENCE_INDEPENDENCE_CLASS
+        )
 
         classifications: list[AttemptClassification] = []
         field_confidences: list[FieldConfidence] = []
@@ -516,6 +560,7 @@ class ReconciliationService:
                 receipts_by_attempt=receipts_by_attempt,
                 witness_by_attempt=witness_by_attempt,
                 freshness=freshness,
+                witness_independence_class=witness_independence_class,
             )
             classifications.append(record)
             field_confidences.extend(confidences)
@@ -523,13 +568,22 @@ class ReconciliationService:
             capacity_flags.append(capacity_ok)
 
         for order in orphan_orders:
-            record, confidence = self._classify_orphan_order(order, freshness=freshness)
+            record, confidence = self._classify_orphan_order(
+                order,
+                freshness=freshness,
+                witness_independence_class=witness_independence_class,
+            )
             classifications.append(record)
             field_confidences.append(confidence)
             rearm_flags.append(False)
             capacity_flags.append(False)
 
-        reason = None if rearm_flags else "no observations in scope"
+        reason = self._reason_for(
+            capacity_flags=capacity_flags,
+            rearm_flags=rearm_flags,
+            witness_involved=bool(witness_by_attempt) or bool(orphan_orders),
+            snapshot=snapshot,
+        )
         return ReconciliationReport(
             field_confidences=tuple(field_confidences),
             classifications=tuple(classifications),
@@ -537,3 +591,32 @@ class ReconciliationService:
             permits_rearm=bool(rearm_flags) and all(rearm_flags),
             reason=reason,
         )
+
+    @staticmethod
+    def _reason_for(
+        *,
+        capacity_flags: list[bool],
+        rearm_flags: list[bool],
+        witness_involved: bool,
+        snapshot: WitnessSnapshot,
+    ) -> str | None:
+        """The report's own ``reason`` — split out of :meth:`reconcile` to stay under the
+        module's function size budget (independent-review finding F2 added the
+        ``WITNESS_NOT_INDEPENDENT_REASON`` branch)."""
+        if not rearm_flags:
+            return "no observations in scope"
+        fully_cleared = (bool(capacity_flags) and all(capacity_flags)) and (
+            bool(rearm_flags) and all(rearm_flags)
+        )
+        if (
+            not fully_cleared
+            and witness_involved
+            and not snapshot.independent_of_evidence_store
+        ):
+            # Independent-review finding F2: name the witness-independence collapse
+            # explicitly rather than folding it into a generic "not corroborated" — this
+            # compose root's ONE concrete witness (SyntheticLedgerWitness) is ALWAYS
+            # store-derived, so this reason will surface for every attempt it touches until a
+            # genuinely independent (e.g. real broker) witness replaces it.
+            return WITNESS_NOT_INDEPENDENT_REASON
+        return None

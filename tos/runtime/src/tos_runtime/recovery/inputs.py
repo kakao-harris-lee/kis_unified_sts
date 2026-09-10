@@ -11,18 +11,16 @@ field is read straight off a durable store this runtime already owns:
 * The durable inbox's unconsumed count and possibly-live attempt set —
   :class:`~tos_runtime.engine.inbox.SqliteEventInbox` (:mod:`tos_runtime.recovery
   .possibly_live`).
-* The kernel ``tos.staterestore`` on-disk composite-state substrate, keyed by each possibly-live
-  attempt's own event id (there is no other durable identity to key a restart-time composite
-  reload on at this boot-time layer). **Disclosed limitation**: nothing in this runtime shell
-  writes to that store yet (measured directly: zero ``tos.staterestore`` references anywhere
-  under ``tos_runtime`` before this module) — :func:`tos.staterestore.reload_conservative` is
-  called for real, but for every attempt it re-derives from an EMPTY store, so it deterministically
-  raises :class:`~tos.staterestore.IncompleteStoreError` (no durable Intent marker) today. That
-  is treated as the fail-closed "composite state not restorable" fact, not swallowed — it is
-  exactly the conservative reading design #39 argues for an absent store, and it means every
-  possibly-live attempt is ALSO flagged incomplete here until a future wave wires the driver's own
-  write path into this store (out of this lane's owned files — see this module's own
-  ``composite_state_incomplete_attempt_ids`` field docstring).
+* The kernel ``tos.staterestore`` on-disk composite-state substrate, keyed by ``attempt_id``
+  (:class:`~tos_runtime.recovery.composite_state_writer.CompositeStateWriter` writes there now —
+  see that module's own module docstring for why ``attempt_id``, not a possibly-live attempt's
+  own ``event_id``). This module resolves ``event_id`` -> ``attempt_id`` via the SAME durable
+  ``SEND_HANDED_OFF`` link :func:`~tos_runtime.recovery.reconciliation.send_handed_off_attempt_id`
+  bridges for reconciliation before ever calling :func:`tos.staterestore.reload_conservative`
+  (independent-review finding F3, 2026-09-10 — see :func:`_composite_state_incomplete_ids`'s own
+  docstring). A possibly-live attempt with no ``SEND_HANDED_OFF`` row at all (the flow never
+  reached the send boundary) has no attempt id to reload a composite for, and is reported
+  incomplete for exactly that reason, never silently treated as satisfied.
 * The D4 custody manifest's own identity — :class:`~tos_runtime.custody.file_custody
   .CustodyManifest` (re-loaded independently, read-only, the same file
   :class:`~tos_runtime.custody.file_custody.FileCustody` already validated at boot).
@@ -45,6 +43,7 @@ import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from pydantic import ValidationError
 from tos.canonical import CanonicalizationScheme
 from tos.rcl import CapacityState
 from tos.staterestore import IncompleteStoreError, reload_conservative
@@ -64,6 +63,7 @@ from tos_runtime.recovery.possibly_live import (
 from tos_runtime.recovery.reconciliation import (
     ReconciliationOutcome,
     reconcile_possibly_live_attempts,
+    send_handed_off_attempt_id,
 )
 from tos_runtime.time.service import TrustworthyTimeService
 
@@ -74,6 +74,51 @@ __all__ = ["OpenReservation", "RecoveryInputs", "assemble_recovery_inputs"]
 #: (``tos/src/tos/rcl/vocabulary.py``'s ``CapacityState``). Every other member (including
 #: ``QUARANTINED_UNKNOWN``/``RELEASE_PENDING_PROOF``) still holds capacity and counts as open.
 _CLOSED_RESERVATION_STATES = frozenset({CapacityState.RELEASED})
+
+#: Independent-review finding F5 (2026-09-10): the evidence kind
+#: ``tos_runtime.compose._engine_wiring.REPLAY_VERDICT_IDENTICAL_KIND`` records for a genuinely
+#: clean replay — replicated here as a citation, not a re-derivation (this module's own
+#: established convention for evidence-kind literals shared across packages; avoids a
+#: ``tos_runtime.recovery -> tos_runtime.compose`` import edge running backwards against this
+#: runtime's own composition-root layering). ``tos_runtime.engine.replay``'s own
+#: ``_REPLAY_DIVERGED_KIND`` cited the same way.
+_REPLAY_VERDICT_IDENTICAL_KIND = "REPLAY_VERDICT_IDENTICAL"
+_REPLAY_DIVERGED_KIND = "REPLAY_DIVERGED"
+
+
+def _replay_verdict_ok(evidence_store: SqliteEvidenceStore) -> bool:
+    """Obligation 1 (independent-review finding F5): a durable ``REPLAY_VERDICT_IDENTICAL`` row
+    exists in this evidence store AND no ``REPLAY_DIVERGED`` row exists at all — never a bare
+    ``ok=True`` constant. A genesis boot with an empty evidence store (no replay ever ran, no
+    ``EVENT_CONSUMED`` baseline to compare against) has neither row and correctly fails this
+    check; :func:`RecoveryBarrier.verdict`'s own genesis-consistency obligation (4) is the one
+    that recognizes a genuinely empty store as legitimate, not this one.
+    """
+    (identical_count,) = evidence_store.connection.execute(
+        "SELECT COUNT(*) FROM entries WHERE kind = ?",
+        (_REPLAY_VERDICT_IDENTICAL_KIND,),
+    ).fetchone()
+    if identical_count == 0:
+        return False
+    (diverged_count,) = evidence_store.connection.execute(
+        "SELECT COUNT(*) FROM entries WHERE kind = ?", (_REPLAY_DIVERGED_KIND,)
+    ).fetchone()
+    return diverged_count == 0
+
+
+def _inbox_events_parseable(inbox: SqliteEventInbox) -> bool:
+    """Obligation 5 (independent-review finding F5, 2026-09-10): every unconsumed inbox row
+    parses through the kernel ``EngineEvent`` model. ``SqliteEventInbox.replay()`` already
+    validates via ``EngineEvent.model_validate`` internally — this converts a malformed row's
+    ``pydantic.ValidationError`` into a graceful ``False`` (FAILED obligation) instead of an
+    unhandled exception escaping :func:`assemble_recovery_inputs`.
+    """
+    try:
+        for _seq, _event in inbox.replay():
+            pass
+    except ValidationError:
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -147,6 +192,20 @@ class RecoveryInputs:
     possibly_live_reconciliation: dict[str, ReconciliationOutcome] = field(
         default_factory=dict
     )
+    #: Obligation 1 (independent-review finding F5, 2026-09-10): whether a durable
+    #: ``REPLAY_VERDICT_IDENTICAL`` row exists in the evidence store AND no ``REPLAY_DIVERGED``
+    #: row exists at all (:func:`_replay_verdict_ok`) — never a bare ``True`` constant. Defaults
+    #: to ``True`` here ONLY for hand-constructed test inputs isolating a different obligation
+    #: (mirrors :attr:`possibly_live_reconciliation`'s own default-for-tests convention);
+    #: :func:`assemble_recovery_inputs` always computes the real value.
+    replay_verdict_ok: bool = True
+    #: Obligation 5 (independent-review finding F5, 2026-09-10): whether every unconsumed inbox
+    #: row parses through the kernel ``EngineEvent`` model (:func:`_inbox_events_parseable`) —
+    #: ``SqliteEventInbox.replay()`` already validates internally, so a malformed row would
+    #: otherwise raise an unhandled exception out of a boot-time barrier call instead of a
+    #: graceful FAILED obligation. Defaults to ``True`` here ONLY for hand-constructed test
+    #: inputs (mirrors :attr:`replay_verdict_ok`'s own convention).
+    inbox_events_parseable: bool = True
 
 
 def _open_reservations(rcl_log: SqliteCommitLog) -> tuple[OpenReservation, ...]:
@@ -165,12 +224,30 @@ def _open_reservations(rcl_log: SqliteCommitLog) -> tuple[OpenReservation, ...]:
 
 def _composite_state_incomplete_ids(
     possibly_live_attempts: tuple[PossiblyLiveAttempt, ...],
+    evidence_store: SqliteEvidenceStore,
     composite_state_store_path: Path,
 ) -> tuple[str, ...]:
+    """Which possibly-live attempts (named by their own ``event_id``) have NO cleanly
+    reconstructable ``tos.staterestore`` composite (obligation 6).
+
+    Independent-review finding F3 (2026-09-10): the staterestore write is keyed by
+    ``attempt_id`` (:mod:`tos_runtime.recovery.composite_state_writer`'s own module docstring),
+    never by a possibly-live attempt's own ``event_id`` — so this read side must resolve
+    ``event_id`` -> ``attempt_id`` via the SAME durable ``SEND_HANDED_OFF`` link
+    :func:`~tos_runtime.recovery.reconciliation.send_handed_off_attempt_id` already bridges for
+    reconciliation, before ever calling :func:`tos.staterestore.reload_conservative`. A possibly-
+    live attempt with no such row at all (crash window 1 — marker only, the flow never reached
+    the send boundary) has no attempt id to reload a composite for in the first place, so it is
+    ALSO reported incomplete here, never silently treated as satisfied.
+    """
     incomplete: list[str] = []
     for attempt in possibly_live_attempts:
+        attempt_id = send_handed_off_attempt_id(evidence_store, attempt.event_id)
+        if attempt_id is None:
+            incomplete.append(attempt.event_id)
+            continue
         try:
-            reload_conservative(composite_state_store_path, attempt.event_id)
+            reload_conservative(composite_state_store_path, attempt_id)
         except IncompleteStoreError:
             incomplete.append(attempt.event_id)
     return tuple(incomplete)
@@ -222,12 +299,35 @@ def assemble_recovery_inputs(
     Returns:
         The fully assembled :class:`RecoveryInputs`.
     """
-    possibly_live_attempts = reconstruct_possibly_live_attempts(inbox, scheme=scheme)
     last_seq, _digest, last_key_generation = evidence_store.last_committed()
+    environment_label, manifest_digest = _custody_identity(custody_root)
+    if not _inbox_events_parseable(inbox):
+        # Obligation 5 (independent-review finding F5): a malformed row makes
+        # SqliteEventInbox.replay() itself raise a kernel EngineEvent ValidationError --
+        # every OTHER inbox-derived computation below would raise too, so this returns a
+        # conservative, fully-populated RecoveryInputs with inbox_events_parseable=False
+        # (obligation 5 FAILED) rather than letting the exception escape the boot-time
+        # barrier ungracefully.
+        return RecoveryInputs(
+            rcl_writer_epoch=rcl_log.current_epoch(),
+            rcl_runtime_generation=rcl_log.latest_runtime_generation(),
+            open_reservations=_open_reservations(rcl_log),
+            evidence_tip_seq=last_seq,
+            evidence_tip_key_generation=last_key_generation,
+            legacy_receipts=LegacyReceiptFacts(count=0, event_ids=()),
+            inbox_unconsumed_count=0,
+            possibly_live_attempts=(),
+            composite_state_incomplete_attempt_ids=(),
+            custody_environment_label=environment_label,
+            custody_manifest_digest=manifest_digest,
+            replay_verdict_ok=_replay_verdict_ok(evidence_store),
+            inbox_events_parseable=False,
+        )
+
+    possibly_live_attempts = reconstruct_possibly_live_attempts(inbox, scheme=scheme)
     unconsumed_count = sum(
         1 for seq, _event in inbox.replay() if not inbox.is_consumed(seq)
     )
-    environment_label, manifest_digest = _custody_identity(custody_root)
     reconciliation = reconcile_possibly_live_attempts(
         possibly_live_attempts,
         rcl_log=rcl_log,
@@ -250,9 +350,11 @@ def assemble_recovery_inputs(
         inbox_unconsumed_count=unconsumed_count,
         possibly_live_attempts=possibly_live_attempts,
         composite_state_incomplete_attempt_ids=_composite_state_incomplete_ids(
-            possibly_live_attempts, composite_state_store_path
+            possibly_live_attempts, evidence_store, composite_state_store_path
         ),
         custody_environment_label=environment_label,
         custody_manifest_digest=manifest_digest,
         possibly_live_reconciliation=reconciliation,
+        replay_verdict_ok=_replay_verdict_ok(evidence_store),
+        inbox_events_parseable=True,
     )

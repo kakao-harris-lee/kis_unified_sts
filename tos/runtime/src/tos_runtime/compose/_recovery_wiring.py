@@ -53,6 +53,7 @@ from tos_runtime.recovery import (
     RecoveryInputs,
     assemble_recovery_inputs,
 )
+from tos_runtime.recovery.composite_state_writer import COMPOSITE_STATE_STORE_FILE_NAME
 
 __all__ = ["COMPOSITE_STATE_STORE_FILE_NAME", "apply_recovery_barrier"]
 
@@ -64,10 +65,6 @@ _RECOVERY_BARRIER_KIND = "RECOVERY_BARRIER"
 #: 2's own "정지 사유 evidence") — mirrors every other boot-time halt in this compose root
 #: (``verify_rcl_log_or_halt``/``verify_engine_replay_or_halt``, ``_boot_integrity.py``).
 _RECOVERY_BARRIER_HOLD_KIND = "RECOVERY_BARRIER_HOLD"
-#: Where a per-data-dir ``tos.staterestore`` composite-state store would live — a SEPARATE sqlite
-#: file from both the evidence store and the inbox (the same D3 failure-domain-separation
-#: discipline every other durable file in this runtime follows).
-COMPOSITE_STATE_STORE_FILE_NAME = "composite_state.sqlite3"
 
 
 def _inputs_digest(inputs: RecoveryInputs) -> str:

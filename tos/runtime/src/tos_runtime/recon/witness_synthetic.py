@@ -212,4 +212,8 @@ class SyntheticLedgerWitness:
             positions=(),
             cash=None,
             provenance=self._provenance,
+            # Independent-review finding F2 (2026-09-10): this is the mechanical form of the
+            # module docstring's own disclosed independence caveat — this witness reads the SAME
+            # durable store as the evidence-receipt path, so it is NEVER independent of it.
+            independent_of_evidence_store=False,
         )

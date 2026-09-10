@@ -12,7 +12,7 @@ from decimal import Decimal
 
 import pytest
 from tos.rcl import CapacityState
-from tos.recon import FieldConfidenceClass, FreshnessMarker
+from tos.recon import FieldConfidenceClass, FreshnessMarker, SafetyRelevantField
 from tos_runtime.recon import service as service_module
 from tos_runtime.recon.ports import (
     BrokerWitness,
@@ -138,13 +138,20 @@ def test_fake_witness_satisfies_protocol() -> None:
 
 
 def test_matched_set_yields_positive_confidence_and_both_permits_true(fresh) -> None:
+    """Independent-review finding F2: full corroboration requires a witness that is genuinely
+    independent of the evidence-receipt path — ``independent_of_evidence_store=True`` here
+    stands in for a real (non-store-derived) broker witness; see
+    ``test_synthetic_witness_never_permits_capacity_release`` below for the OTHER half (a
+    store-derived witness, ``SyntheticLedgerWitness``'s own shape, can never fully clear).
+    """
     rcl = FakeRclReader({"a1": CapacityState.POSITION_CONSUMED})
     evidence = FakeEvidenceReader((_matched_receipt(),))
     witness = FakeWitness(
         WitnessSnapshot(
             observed_at_generation=1,
             orders=(_matched_witness_order(),),
-            provenance="synthetic-ledger",
+            provenance="independent-broker-double",
+            independent_of_evidence_store=True,
         )
     )
     service = ReconciliationService(rcl, evidence, witness)
@@ -167,6 +174,44 @@ def test_matched_set_yields_positive_confidence_and_both_permits_true(fresh) -> 
         for fc in report.field_confidences
     )
     assert report.reason is None
+
+
+def test_synthetic_witness_never_permits_capacity_release(fresh) -> None:
+    """Independent-review finding F2 (HIGH): the SAME MATCHED setup as the test above, but the
+    witness declares itself store-derived (``independent_of_evidence_store=False``, the
+    ``SyntheticLedgerWitness`` shape) — the quantity fields' witness observation is stamped
+    with the SAME independence class as the evidence-receipt path, so they can never reach
+    ``CORROBORATED`` (only two byte-identical-source observations, never sufficiently
+    independent), and ``permits_capacity_release`` is permanently ``False``. A mutation that
+    unconditionally stamped the witness path with ``BROKER_WITNESS`` regardless of
+    ``independent_of_evidence_store`` would turn this red."""
+    rcl = FakeRclReader({"a1": CapacityState.POSITION_CONSUMED})
+    evidence = FakeEvidenceReader((_matched_receipt(),))
+    witness = FakeWitness(
+        WitnessSnapshot(
+            observed_at_generation=1,
+            orders=(_matched_witness_order(),),
+            provenance="synthetic-ledger",
+            independent_of_evidence_store=False,
+        )
+    )
+    service = ReconciliationService(rcl, evidence, witness)
+
+    report = service.reconcile(
+        WitnessScope(account="acct-1", attempt_ids=("a1",)), freshness=fresh
+    )
+
+    assert report.permits_capacity_release is False
+    assert report.reason == service_module.WITNESS_NOT_INDEPENDENT_REASON
+    assert not any(
+        fc.confidence_class is FieldConfidenceClass.CORROBORATED
+        and fc.field
+        in (
+            SafetyRelevantField.CUMULATIVE_FILLED_QUANTITY,
+            SafetyRelevantField.REMAINING_EXECUTABLE_QUANTITY,
+        )
+        for fc in report.field_confidences
+    )
 
 
 # ============================================================================
@@ -313,7 +358,8 @@ def test_matched_attempt_with_conflicting_quantities_does_not_permit(fresh) -> N
             orders=(
                 _matched_witness_order(quantity=Decimal("5"), remaining=Decimal("5")),
             ),
-            provenance="synthetic-ledger",
+            provenance="independent-broker-double",
+            independent_of_evidence_store=True,
         )
     )
     service = ReconciliationService(rcl, evidence, witness)

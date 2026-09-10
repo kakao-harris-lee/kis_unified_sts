@@ -10,7 +10,12 @@ from __future__ import annotations
 
 import pytest
 from tos.sbr.vocabulary import ReadinessVerdict
-from tos_runtime.recovery.barrier import RECON_UNAVAILABLE, RecoveryBarrier
+from tos_runtime.recovery import barrier as barrier_module
+from tos_runtime.recovery.barrier import (
+    RECON_UNAVAILABLE,
+    RecoveryBarrier,
+    RecoveryBarrierInvariantError,
+)
 from tos_runtime.recovery.inputs import RecoveryInputs
 from tos_runtime.recovery.legacy_receipts import LegacyReceiptFacts
 from tos_runtime.recovery.possibly_live import PossiblyLiveAttempt
@@ -118,6 +123,33 @@ def test_authority_effect_is_all_false() -> None:
     assert effect.classifies_protective is False
     assert effect.transmits_broker is False
     assert effect.grants_rearm is False
+
+
+def test_authority_separation_invariant_failure_raises_typed_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F8 (independent review, 2026-09-10): the defence-in-depth re-check used to be a bare
+    ``assert`` — silently stripped under ``python -O``. It must now be an explicit check that
+    raises :class:`~tos_runtime.recovery.barrier.RecoveryBarrierInvariantError`, not swallowed by
+    interpreter flags."""
+    monkeypatch.setattr(
+        barrier_module, "recovery_authority_separated", lambda *_args, **_kwargs: False
+    )
+    with pytest.raises(RecoveryBarrierInvariantError):
+        RecoveryBarrier.verdict(_clean_inputs())
+
+
+def test_completion_revives_nothing_invariant_failure_raises_typed_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same defence-in-depth discipline (F8) for the second re-check."""
+    monkeypatch.setattr(
+        barrier_module,
+        "recovery_completion_revives_nothing",
+        lambda *_args, **_kwargs: False,
+    )
+    with pytest.raises(RecoveryBarrierInvariantError):
+        RecoveryBarrier.verdict(_clean_inputs())
 
 
 def test_multiple_hold_reasons_are_all_named() -> None:

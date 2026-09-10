@@ -66,25 +66,13 @@ crash-window/re-injection loop never touches ``apply_egress_result`` directly �
 ``core.handle`` and reads the returned ``EventResult`` — so it needed no change either way.
 
 **GAP 2 close-out (TOS Phase 5 W1) — composite-state persistence before the consumption
-receipt.** :meth:`_process_next` now calls :attr:`_orthostate_projector`'s
-:meth:`~tos_runtime.engine.orthostate_projection.OrthostateProjector.project` (previously called
-only from :meth:`_project_finality`, right AFTER the ``EVENT_CONSUMED`` receipt) BEFORE
-:meth:`_record_consumed` for the SAME event, and — when an optional
-``recovery_composite_writer`` was injected — durably persists the resulting composite state
-keyed by that event's own id before that receipt exists. This ordering (state write, THEN
-receipt) is deliberate: :mod:`tos_runtime.recovery.possibly_live` classifies an inbox row as
-possibly-live exactly when it carries a durable ``EVENT_HANDLING_STARTED`` marker but NO
-``EVENT_CONSUMED`` receipt — so a crash strictly between the state write and the receipt leaves
-the row correctly flagged possibly-live (still held) while its composite state is ALREADY durable
-(no longer flagged incomplete). The reverse ordering (receipt first) would let a crash between the
-two leave the receipt durable — which drops the row out of "possibly-live" entirely on restart,
-since it now looks fully consumed — with no composite state ever written for it: an incomplete
-restore that nothing would ever again flag. See
-:mod:`tos_runtime.recovery.composite_state_writer`'s own module docstring for why the write is
-keyed by event id, never the composite's own ``intent_identity``. ``recovery_composite_writer``
-defaults to ``None`` (a no-op) — every existing test-suite driver construction keeps its
-pre-GAP-2 behaviour unchanged; only the real compose wiring
-(:func:`~tos_runtime.compose._engine_wiring.build_engine_driver`) supplies a real one.
+receipt.** :meth:`_process_next` calls :meth:`_project_orthostate_and_persist` (which itself
+calls :attr:`_orthostate_projector`'s own ``.project``) BEFORE :meth:`_record_consumed` for the
+SAME event — see that method's own docstring for the full write-before-receipt crash-window
+reasoning, the ``attempt_id`` keying (independent-review finding F3), and the write-failure HALT
+contract (surviving-mutation fix). ``recovery_composite_writer`` defaults to ``None`` (a no-op)
+— every existing test-suite driver construction keeps its pre-GAP-2 behaviour unchanged; only
+:func:`~tos_runtime.compose._engine_wiring.build_engine_driver` supplies a real one.
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``pydantic`` +
 ``tos.canonical``/``tos.engine``/``tos.egressgw``/``tos.orthostate`` + ``tos_runtime.*`` only. No
@@ -141,6 +129,12 @@ _EVENT_CONSUMED_RECORD_CLASS = "EVENT_CONSUMED"
 #: ``_handle_interrupted_event`` below.
 _EVENT_HANDLING_STARTED_KIND = "EVENT_HANDLING_STARTED"
 _EVENT_HANDLING_STARTED_RECORD_CLASS = "EVENT_HANDLING_STARTED"
+
+#: TOS Phase 5 W1 close-out, surviving-mutation fix (2026-09-10): the dual-path HALT kind
+#: recorded when :attr:`EngineDriver._recovery_composite_writer` raises — a failed
+#: staterestore write is never silently skipped; see ``_project_orthostate_and_persist``'s
+#: own docstring.
+_COMPOSITE_STATE_WRITE_FAILED_KIND = "COMPOSITE_STATE_WRITE_FAILED"
 
 #: The halt reason recorded on the durable ``EVENT_CONSUMED`` receipt when an interrupted
 #: event's OWN durable evidence proves the flow never reached (or could not be proven to have
@@ -560,22 +554,47 @@ class EngineDriver:
         "possibly-live" entirely on restart, since it now looks fully consumed — with no
         composite state ever written for it and nothing left to flag that gap.
 
-        Split out of :meth:`_process_next` purely for that method's own function-size budget
-        (``config/tos_size_budget.yaml``) — no behavioural difference from having this inline
-        there; the call site is still the exact same point in the SAME drain iteration, so the
-        ordering guarantee above is unaffected by the extraction.
+        Split out of :meth:`_process_next` purely for that method's own function-size budget —
+        no behavioural difference from having this inline there.
+
+        **A failed write halts, never silently continues (surviving-mutation fix, 2026-09-10).**
+        An unwritable store must not be swallowed — that would leave THIS event's composite
+        state genuinely missing while the driver durably recorded ``EVENT_CONSUMED`` anyway,
+        permanently hiding the gap. A failure is recorded via
+        :func:`~tos_runtime.evidence.emergency.record_halt` and RE-RAISED, so
+        :meth:`_process_next` aborts before ever reaching :meth:`_record_consumed` — no
+        ``EVENT_CONSUMED`` for this event on a failed attempt.
 
         Args:
             event: The just-``core.handle``-processed event.
             result: The ``EventResult`` ``core.handle`` returned for it.
-            event_id: That event's own content-addressed identity (already computed by the
-                caller) — the key :class:`~tos_runtime.recovery.composite_state_writer
-                .CompositeStateWriter` persists under, never the composite's own
-                ``intent_identity`` (see that class's own module docstring for why).
+            event_id: Recorded on a write-failure HALT for correlation only — NOT the
+                staterestore key (independent-review finding F3 moved that to the attempt's own
+                ``attempt_id``; see :class:`~tos_runtime.recovery.composite_state_writer
+                .CompositeStateWriter`'s own module docstring for why).
         """
         composite = self._orthostate_projector.project(event=event, result=result)
-        if composite is not None and self._recovery_composite_writer is not None:
-            self._recovery_composite_writer(event_id, composite)
+        if composite is None or self._recovery_composite_writer is None:
+            return
+        payload = event.egress_result
+        assert payload is not None  # project() returns non-None only for EGRESS_RESULT
+        try:
+            self._recovery_composite_writer(payload.attempt_id, composite)
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 -- any write failure halts, never swallowed
+            record_halt(
+                self._evidence_store,
+                self._emergency_log,
+                payload={
+                    "event_id": event_id,
+                    "attempt_id": payload.attempt_id,
+                    "detail": f"{type(exc).__name__}: {exc}",
+                },
+                kind=_COMPOSITE_STATE_WRITE_FAILED_KIND,
+                record_class=_COMPOSITE_STATE_WRITE_FAILED_KIND,
+            )
+            raise
 
     def _record_consumed(
         self,

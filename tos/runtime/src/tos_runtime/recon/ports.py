@@ -105,6 +105,14 @@ class WitnessSnapshot:
     tell a Phase 5 synthetic-transport-derived snapshot apart from a genuine broker read
     (Phase 6+). See :mod:`tos_runtime.recon.witness_synthetic`'s module docstring for the
     disclosed Phase 5 independence caveat this field exists to keep visible.
+
+    ``independent_of_evidence_store`` (independent-review finding F2, 2026-09-10) makes that
+    same caveat MECHANICAL rather than merely documented: ``True`` only when this witness reads
+    a genuinely separate source from the evidence-receipt path (:class:`~tos_runtime.recon.ports
+    .EvidenceReceiptReader`) — e.g. a real broker API/ledger. Defaults to ``False`` (fail-closed):
+    a witness that does not explicitly declare independence is treated as store-derived, so
+    :class:`~tos_runtime.recon.service.ReconciliationService` never silently credits two
+    byte-identical reads of the SAME durable store as two independent corroborating paths.
     """
 
     observed_at_generation: int | None
@@ -112,6 +120,7 @@ class WitnessSnapshot:
     positions: tuple[tuple[str, Decimal], ...] = ()
     cash: Decimal | None = None
     provenance: str = ""
+    independent_of_evidence_store: bool = False
 
 
 class WitnessUnavailable(Exception):

@@ -117,3 +117,88 @@ def test_legacy_receipt_within_a_wider_window_is_still_found(
     )
     assert facts.count == 1
     assert facts.event_ids == (legacy_id,)
+
+
+# ============================================================================
+# Independent-review finding F4: validate against the real FlowFingerprint model
+# ============================================================================
+
+
+def test_empty_dict_flow_fingerprint_is_legacy(
+    inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore
+) -> None:
+    """An empty dict satisfies ``is not None`` (the module's own original, now-removed check)
+    but fails ``FlowFingerprint`` validation (``handed_off`` is required)."""
+    event_id = _admit_and_consume(inbox, evidence_store, seq=1, flow_fingerprint={})
+    facts = legacy_receipts_in_window(
+        inbox, evidence_store, scheme=SCHEME, window_events=None
+    )
+    assert facts.count == 1
+    assert facts.event_ids == (event_id,)
+
+
+def test_string_flow_fingerprint_is_legacy(
+    inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore
+) -> None:
+    """A bare string also satisfies ``is not None`` but is not even a mapping."""
+    event = fx.crossing_event(seq=1)
+    receipt = inbox.enqueue(event)
+    event_id = event_identity(event, scheme=SCHEME)
+    consumed = evidence_store.append(
+        {
+            "event_id": event_id,
+            "outcome_digest": "digest-x",
+            "flow_fingerprint": "not-a-fingerprint",
+        },
+        kind="EVENT_CONSUMED",
+        record_class="EVENT_CONSUMED",
+    )
+    inbox.mark_consumed(
+        receipt.seq, evidence_seq=consumed.seq, generation=consumed.key_generation
+    )
+    facts = legacy_receipts_in_window(
+        inbox, evidence_store, scheme=SCHEME, window_events=None
+    )
+    assert facts.count == 1
+    assert facts.event_ids == (event_id,)
+
+
+def test_forged_shape_flow_fingerprint_is_legacy(
+    inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore
+) -> None:
+    """A dict with unrelated/wrong-typed fields (never a genuine ``FlowResult``-derived
+    fingerprint) fails ``FlowFingerprint``'s own strict (``extra="forbid"``) validation.
+    """
+    event_id = _admit_and_consume(
+        inbox,
+        evidence_store,
+        seq=1,
+        flow_fingerprint={"unrelated_field": "forged", "handed_off": "not-a-bool"},
+    )
+    facts = legacy_receipts_in_window(
+        inbox, evidence_store, scheme=SCHEME, window_events=None
+    )
+    assert facts.count == 1
+    assert facts.event_ids == (event_id,)
+
+
+def test_event_consumed_row_missing_event_id_counts_as_legacy(
+    inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore
+) -> None:
+    """A corrupted/forged ``EVENT_CONSUMED`` row with no ``event_id`` at all cannot be matched
+    to a specific ``DECISION_TICK`` — it must still count, never be silently dropped by the
+    ``event_id not in decision_tick_ids`` membership filter every genuine row goes through.
+    """
+    # A real, well-formed DECISION_TICK receipt in the window (so decision_tick_ids is
+    # non-empty and the scan actually runs).
+    _admit_and_consume(inbox, evidence_store, seq=1, flow_fingerprint=_FINGERPRINT)
+    # Plus one corrupted row with no event_id at all.
+    evidence_store.append(
+        {"outcome_digest": "digest-corrupted"},
+        kind="EVENT_CONSUMED",
+        record_class="EVENT_CONSUMED",
+    )
+    facts = legacy_receipts_in_window(
+        inbox, evidence_store, scheme=SCHEME, window_events=None
+    )
+    assert facts.count == 1

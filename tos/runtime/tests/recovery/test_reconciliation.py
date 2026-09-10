@@ -25,6 +25,7 @@ The four scenarios below are the task brief's own acceptance tests:
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -43,8 +44,19 @@ from tos.workload import RuntimeIdentity
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
-from tos_runtime.recon.ports import WitnessScope
-from tos_runtime.recon.service import ReconciliationClass, ReconciliationReport
+from tos_runtime.recon.ports import (
+    EgressReceiptObservation,
+    WitnessOrder,
+    WitnessOrderState,
+    WitnessScope,
+    WitnessSnapshot,
+)
+from tos_runtime.recon.service import (
+    WITNESS_NOT_INDEPENDENT_REASON,
+    ReconciliationClass,
+    ReconciliationReport,
+    ReconciliationService,
+)
 from tos_runtime.recovery.barrier import RecoveryBarrier
 from tos_runtime.recovery.inputs import RecoveryInputs
 from tos_runtime.recovery.legacy_receipts import LegacyReceiptFacts
@@ -188,11 +200,21 @@ def _clean_inputs(**overrides: object) -> RecoveryInputs:
     return RecoveryInputs(**base)  # type: ignore[arg-type]
 
 
-def test_a_corroborated_attempt_clears_and_barrier_goes_ready(
+def test_a1_synthetic_witness_holds_with_witness_not_independent(
     rcl_log: SqliteCommitLog,
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
 ) -> None:
+    """Independent-review finding F2 (HIGH): ``reconcile_possibly_live_attempts`` always builds
+    a :class:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness` (Phase 5's only real
+    path) — store-derived, never independent of the evidence-receipt path it also reads. Even
+    with a fully corroborating setup (SEND_HANDED_OFF link, matching receipt + finality proof,
+    an open RCL reservation), the attempt now correctly HOLDS with
+    :data:`~tos_runtime.recon.service.WITNESS_NOT_INDEPENDENT_REASON` — this is the honest state
+    until a genuinely independent (e.g. real broker) witness replaces it. See
+    ``test_a2_an_independent_witness_double_clears_the_same_attempt`` below for the OTHER half,
+    proven directly at the :class:`~tos_runtime.recon.service.ReconciliationService` level.
+    """
     attempt = _one_possibly_live_attempt(inbox, evidence_store)
     _record_corroborating_evidence(evidence_store, event_id=attempt.event_id)
     _open_the_scope_reservation(rcl_log)
@@ -209,7 +231,7 @@ def test_a_corroborated_attempt_clears_and_barrier_goes_ready(
     )
 
     assert reconciliation[attempt.event_id] == ReconciliationOutcome(
-        cleared=True, reason=RECONCILED_MATCHED
+        cleared=False, reason=WITNESS_NOT_INDEPENDENT_REASON
     )
 
     verdict = RecoveryBarrier.verdict(
@@ -218,7 +240,84 @@ def test_a_corroborated_attempt_clears_and_barrier_goes_ready(
             possibly_live_reconciliation=reconciliation,
         )
     )
-    assert verdict.ready is True
+    assert verdict.ready is False
+
+
+def test_a2_an_independent_witness_double_clears_the_same_attempt() -> None:
+    """The OTHER half of F2: a genuinely independent witness double (``provenance`` naming a
+    real broker, ``independent_of_evidence_store=True``) — never
+    ``reconcile_possibly_live_attempts`` (which always builds a ``SyntheticLedgerWitness``), but
+    :class:`~tos_runtime.recon.service.ReconciliationService` directly, the SAME mechanism that
+    function uses internally — CAN clear a matching attempt, proving F2's fix narrows on the
+    witness's OWN declared independence, not on some unrelated always-false gate."""
+    key = fx.instrument_key()
+    receipt = EgressReceiptObservation(
+        attempt_id=_ATTEMPT_ID,
+        account=key.account,
+        instrument=key.instrument,
+        egress_result_kind="FULL_FILL",
+        broker_execution_id="exec-recon-a2",
+        filled_quantity=Decimal("10"),
+        remaining_quantity=Decimal("0"),
+        finality_proof_recorded=True,
+        source_ref="evidence-egress-result",
+    )
+    witness_order = WitnessOrder(
+        attempt_id=_ATTEMPT_ID,
+        broker_execution_id="exec-recon-a2",
+        quantity=Decimal("10"),
+        remaining=Decimal("0"),
+        state=WitnessOrderState.FILLED,
+    )
+
+    class _FakeRclReader:
+        def reservation_state(self, _reservation_id: str) -> CapacityState:
+            return CapacityState.POSITION_CONSUMED
+
+        def reservation_last_seq(self, _reservation_id: str) -> int | None:
+            return None
+
+        def all_reservations(self) -> dict[str, CapacityState]:
+            return {}
+
+        def instrument_state(self, _key: object) -> CapacityState | None:
+            return None
+
+        def instrument_last_seq(self, _key: object) -> int | None:
+            return None
+
+    class _FakeEvidenceReader:
+        def receipts(
+            self, _scope: WitnessScope
+        ) -> tuple[EgressReceiptObservation, ...]:
+            return (receipt,)
+
+    class _IndependentWitness:
+        def observe(self, _scope: WitnessScope) -> WitnessSnapshot:
+            return WitnessSnapshot(
+                observed_at_generation=1,
+                orders=(witness_order,),
+                provenance="independent-broker-double",
+                independent_of_evidence_store=True,
+            )
+
+    service = ReconciliationService(
+        rcl_reader=_FakeRclReader(),
+        evidence_reader=_FakeEvidenceReader(),
+        witness=_IndependentWitness(),
+    )
+    report = service.reconcile(
+        WitnessScope(account=key.account, attempt_ids=(_ATTEMPT_ID,)),
+        freshness=FreshnessMarker(
+            fresh_within_horizon=True,
+            time_confidence_held=True,
+            time_generation=1,
+            anchored_generation=1,
+        ),
+    )
+
+    assert report.permits_capacity_release is True
+    assert report.permits_rearm is True
 
 
 def test_b_evidence_store_unreachable_holds_unavailable(
