@@ -1,23 +1,34 @@
 """A minimal, self-contained ``SendSeal`` builder for the adapter test suite.
 
 Unlike ``tos/tests/egressgw/_egressgw_fixtures.py`` (which drives the full gateway to produce a
-seal), this module constructs a :class:`~tos.egressgw.SendSeal` directly via its own constructor
-— everything this adapter suite needs is a syntactically valid, self-consistent seal with a
-``request_bytes_digest`` the caller can choose (usually: made to match what
-``KisMockTransport`` will independently compute for the given body fields, so the "happy path"
-digest check passes; deliberately mismatched, for the mismatch test).
+seal), this module constructs a :class:`~tos.egressgw.SendSeal` directly via its own constructor.
+
+**The digest invariant this builder encodes (review disposition F1, `dc6b47ba`).** By default,
+:func:`build_seal` sets BOTH ``request_bytes_digest`` AND ``capsule_egress_request_digest`` to
+:class:`~tos_runtime.transport.kis_mock.codec.KisOrderWireCodec`'s own digest of the sealed
+outbound. This is **not** a tautology dressed up as a test: it is the literal invariant T2 will
+make hold in production once the compose context resolver binds the SAME codec into
+``capsule_egress_request_digest`` (today it does not — see ``codec.py``'s own module docstring
+for the exact file:line where the compose root currently sets ``request_bytes_digest ==
+capsule_egress_request_digest`` to a STAND-IN value, never a real wire-bytes digest). Building
+fixtures against the FUTURE invariant, rather than an arbitrary matching pair, is what lets this
+suite exercise the adapter's ACK/REJECT/UNKNOWN/TIMEOUT/pacing/token logic realistically today,
+while ``mode: live`` stays config-refused until T2's binding actually lands (see
+:mod:`tos_runtime.transport.kis_mock.config`'s own docstring).
+
+Pass an explicit ``request_bytes_digest`` (deliberately not matching the codec's own) to exercise
+the digest-mismatch path instead.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping
 from decimal import Decimal
 
 from tos.egressgw import OUTBOUND_COORDINATE_NAMES, SendSeal
 from tos.engine import InstrumentKey
 from tos.ordering import OrderingEvent
+from tos_runtime.transport.kis_mock.codec import KisOrderWireCodec
 
 ACCOUNT = "kis-mock-account-value"
 INSTRUMENT = "005930"
@@ -28,32 +39,24 @@ ACTION = "NEW_ORDER"
 METHOD = "SUBMIT"
 ACTIVE_PRINCIPAL = "kis-mock-order-non-live-test"
 
+#: The suite's default dynamic field map (the four kernel-sourced KIS wire fields).
+DEFAULT_FIELD_MAP: Mapping[str, str] = {
+    "account": "CANO",
+    "instrument": "PDNO",
+    "quantity": "ORD_QTY",
+    "price": "ORD_UNPR",
+}
 
-def expected_body_bytes(
-    *,
-    field_map: Mapping[str, str],
-    account: str,
-    instrument: str,
-    quantity: Decimal,
-    price: Decimal,
-) -> bytes:
-    """Reproduce ``KisMockTransport``'s own canonical body-bytes serialization (its own private
-    ``_canonical_json_bytes``/``_decimal_to_kis_string`` are intentionally NOT imported here —
-    this is the test suite's OWN independent reconstruction of the same, small, documented
-    algorithm, so a happy-path test does not become tautological with the implementation).
-    """
-    dynamic_sources = {
-        "account": account,
-        "instrument": instrument,
-        "quantity": format(quantity, "f"),
-        "price": format(price, "f"),
-    }
-    fields = {
-        wire_name: dynamic_sources[source] for source, wire_name in field_map.items()
-    }
-    return json.dumps(
-        fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("utf-8")
+#: The suite's default static body fields (the five per-deployment-constant KIS wire fields —
+#: review F1's "known T1 gap" fields; arbitrary but fixed test values, never operator-approved
+#: ones — see the runbook's proposal table for the real disposition).
+DEFAULT_STATIC_BODY_FIELDS: Mapping[str, str] = {
+    "ACNT_PRDT_CD": "01",
+    "ORD_DVSN": "00",
+    "EXCG_ID_DVSN_CD": "KRX",
+    "SLL_TYPE": "",
+    "CNDT_PRIC": "",
+}
 
 
 def build_seal(
@@ -65,30 +68,22 @@ def build_seal(
     instrument: str = INSTRUMENT,
     account: str = ACCOUNT,
     field_map: Mapping[str, str] | None = None,
+    static_body_fields: Mapping[str, str] | None = None,
     request_bytes_digest: str | None = None,
+    capsule_egress_request_digest: str | None = None,
 ) -> SendSeal:
     """Build a self-consistent :class:`~tos.egressgw.SendSeal`.
 
-    ``request_bytes_digest`` defaults to the digest of the canonical body
-    :func:`expected_body_bytes` computes for the same ``field_map``/values — i.e. the "everything
-    matches" happy path. Pass an explicit (wrong) value to exercise the mismatch path.
+    ``request_bytes_digest``/``capsule_egress_request_digest`` both default to
+    :meth:`~tos_runtime.transport.kis_mock.codec.KisOrderWireCodec.digest` of
+    :meth:`~tos_runtime.transport.kis_mock.codec.KisOrderWireCodec.encode`'s own output for the
+    same ``field_map``/``static_body_fields``/values — the module docstring's "future invariant".
+    Pass an explicit (non-matching) ``request_bytes_digest`` to exercise the mismatch path.
     """
     if field_map is None:
-        field_map = {
-            "account": "CANO",
-            "instrument": "PDNO",
-            "quantity": "ORD_QTY",
-            "price": "ORD_UNPR",
-        }
-    if request_bytes_digest is None:
-        body = expected_body_bytes(
-            field_map=field_map,
-            account=account,
-            instrument=instrument,
-            quantity=quantity,
-            price=price,
-        )
-        request_bytes_digest = hashlib.sha256(body).hexdigest()
+        field_map = DEFAULT_FIELD_MAP
+    if static_body_fields is None:
+        static_body_fields = DEFAULT_STATIC_BODY_FIELDS
 
     coordinate_values = {
         "endpoint": ENDPOINT,
@@ -106,12 +101,56 @@ def build_seal(
         (name, coordinate_values[name]) for name in OUTBOUND_COORDINATE_NAMES
     )
 
+    if request_bytes_digest is None or capsule_egress_request_digest is None:
+        # Build a provisional seal first (any digest values will do — the codec reads only
+        # the account coordinate / instrument_key / outbound_quantity / outbound_price, all of
+        # which are already fixed above) purely so KisOrderWireCodec.encode can be handed a
+        # real SendSeal rather than a bespoke stand-in shape.
+        provisional = SendSeal(
+            attempt_id=attempt_id,
+            instrument_key=InstrumentKey(account=account, instrument=instrument),
+            request_bytes_digest=f"provisional-{attempt_id}",
+            canonical_command_digest=f"cmd-digest-{attempt_id}",
+            capsule_egress_request_digest=f"provisional-{attempt_id}",
+            claim_request_digest=f"claim-digest-{attempt_id}",
+            claim_principal=ACTIVE_PRINCIPAL,
+            active_principal=ACTIVE_PRINCIPAL,
+            endpoint=ENDPOINT,
+            account=account,
+            environment=ENVIRONMENT,
+            route_identity=ROUTE_IDENTITY,
+            credential_generation=0,
+            broker_session_generation=0,
+            egress_generation=1,
+            action=ACTION,
+            method=METHOD,
+            capability_nonce=f"cap-nonce-{attempt_id}",
+            action_flow_permit_nonce=f"permit-nonce-{attempt_id}",
+            outbound_coordinates=outbound_coordinates,
+            outbound_quantity=quantity,
+            outbound_price=price,
+            outbound_side=side,
+            reference=OrderingEvent(event_id=f"ev-{attempt_id}", quorum_commit_index=1),
+            reference_digest=f"ref-digest-{attempt_id}",
+            outbound_request_digest=f"outbound-req-digest-{attempt_id}",
+            seal_digest=f"seal-digest-{attempt_id}",
+        )
+        codec_digest = KisOrderWireCodec.digest(
+            KisOrderWireCodec.encode(
+                provisional, field_map=field_map, static_body_fields=static_body_fields
+            )
+        )
+        if request_bytes_digest is None:
+            request_bytes_digest = codec_digest
+        if capsule_egress_request_digest is None:
+            capsule_egress_request_digest = codec_digest
+
     return SendSeal(
         attempt_id=attempt_id,
         instrument_key=InstrumentKey(account=account, instrument=instrument),
         request_bytes_digest=request_bytes_digest,
         canonical_command_digest=f"cmd-digest-{attempt_id}",
-        capsule_egress_request_digest=f"capsule-digest-{attempt_id}",
+        capsule_egress_request_digest=capsule_egress_request_digest,
         claim_request_digest=f"claim-digest-{attempt_id}",
         claim_principal=ACTIVE_PRINCIPAL,
         active_principal=ACTIVE_PRINCIPAL,

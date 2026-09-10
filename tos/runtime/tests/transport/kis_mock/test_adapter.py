@@ -27,19 +27,19 @@ from ._fakes import (
     RecordingEvidenceSink,
     make_seal_lookup,
 )
-from ._seal_fixtures import build_seal
+from ._seal_fixtures import (
+    ACCOUNT,
+    DEFAULT_FIELD_MAP,
+    DEFAULT_STATIC_BODY_FIELDS,
+    build_seal,
+)
 
 ORDER_PATH = "/uapi/domestic-stock/v1/trading/order-cash"
 TOKEN_PATH = "/oauth2/tokenP"
-FIELD_MAP = {
-    "account": "CANO",
-    "instrument": "PDNO",
-    "quantity": "ORD_QTY",
-    "price": "ORD_UNPR",
-}
+FIELD_MAP = DEFAULT_FIELD_MAP
+STATIC_BODY_FIELDS = DEFAULT_STATIC_BODY_FIELDS
 APP_KEY_SCOPE = "kis_mock.app_key"
 APP_SECRET_SCOPE = "kis_mock.app_secret"
-ACCOUNT_SCOPE = "kis_mock.account"
 
 
 @pytest.fixture
@@ -61,6 +61,7 @@ def _config(server: FakeKisServer, **overrides: Any) -> KisMockTransportConfig:
         "tr_id_buy": "VTTC0012U",
         "tr_id_sell": "VTTC0011U",
         "field_map": FIELD_MAP,
+        "static_body_fields": STATIC_BODY_FIELDS,
         "min_send_interval_ms": 1000,
         "token_reissue_min_interval_s": 60,
         "request_timeout_s": 2.0,
@@ -91,11 +92,12 @@ def _build_transport(
         allow_plaintext_for_tests=cfg.allow_plaintext_for_tests,
     )
     mono = monotonic or FakeMonotonicSource()
+    # (review F2) No "account" custody scope — the account number is sourced exclusively from
+    # the sealed outbound coordinate (SendSeal.account), never custody.
     cust = custody or InMemoryCredentialCustody(
         {
             APP_KEY_SCOPE: b"app-key-value",
             APP_SECRET_SCOPE: b"app-secret-value",
-            ACCOUNT_SCOPE: b"kis-mock-account-value",
         }
     )
     ev = evidence or RecordingEvidenceSink()
@@ -106,7 +108,6 @@ def _build_transport(
         custody=cust,
         app_key_scope=APP_KEY_SCOPE,
         app_secret_scope=APP_SECRET_SCOPE,
-        account_scope=ACCOUNT_SCOPE,
         monotonic=mono,
         seal_lookup=make_seal_lookup(seal_map),
         evidence_sink=ev,
@@ -226,11 +227,9 @@ def test_dry_run_never_touches_the_network(server: FakeKisServer) -> None:
     (record,) = evidence.of_kind("TRANSPORT_DRY_RUN")
     assert record["attempt_id"] == attempt.attempt_id
     assert record["tr_id"] == "VTTC0012U"
-    # the account credential IS loaded (needed to build+digest the body) even in dry_run
-    assert ACCOUNT_SCOPE in custody.load_calls
-    # but no token material is touched — dry_run never reaches token issuance
-    assert APP_KEY_SCOPE not in custody.load_calls
-    assert APP_SECRET_SCOPE not in custody.load_calls
+    # (review F2) the account number is sourced from the seal, never custody — and dry_run
+    # never reaches token issuance either — so NO custody scope is loaded at all.
+    assert custody.load_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -397,6 +396,98 @@ def test_malformed_json_maps_to_unknown(server: FakeKisServer) -> None:
     assert record["reason"] == "malformed_json"
 
 
+def test_rt_cd_absent_maps_to_unknown_never_reject(server: FakeKisServer) -> None:
+    """(review F4) A 200 response whose JSON body is a well-formed dict but carries no
+    ``rt_cd`` key at all must be UNKNOWN, never REJECT — absence is not non-acceptance
+    (RFC-005 §11:322-323). Before this fix, an absent ``rt_cd`` fell through to
+    ``rt_cd == "0"`` being False and was mis-mapped to REJECT."""
+    attempt = _attempt("no-rtcd-1")
+    seal = build_seal(attempt_id=attempt.attempt_id)
+    server.set_response(
+        TOKEN_PATH, status=200, body={"access_token": "tok-1", "expires_in": 86400}
+    )
+    server.set_response(ORDER_PATH, status=200, body={"some_other_field": "x"})
+    transport, evidence, _, _ = _build_transport(
+        server, seals={attempt.attempt_id: seal}
+    )
+    result = _send(transport, attempt)
+    assert result.kind is EgressResultKind.UNKNOWN
+    (record,) = evidence.of_kind("TRANSPORT_SEND")
+    assert record["reason"] == "rt_cd_absent"
+
+
+def test_an_empty_dict_body_maps_to_unknown_never_reject(server: FakeKisServer) -> None:
+    """(review F4) ``{}`` is a well-formed dict with no ``rt_cd`` key — same rule as above."""
+    attempt = _attempt("empty-dict-1")
+    seal = build_seal(attempt_id=attempt.attempt_id)
+    server.set_response(
+        TOKEN_PATH, status=200, body={"access_token": "tok-1", "expires_in": 86400}
+    )
+    server.set_response(ORDER_PATH, status=200, body={})
+    transport, evidence, _, _ = _build_transport(
+        server, seals={attempt.attempt_id: seal}
+    )
+    result = _send(transport, attempt)
+    assert result.kind is EgressResultKind.UNKNOWN
+    (record,) = evidence.of_kind("TRANSPORT_SEND")
+    assert record["reason"] == "rt_cd_absent"
+
+
+# ---------------------------------------------------------------------------
+# account sourcing (review F2) — CANO comes from the sealed outbound coordinate, never custody
+# ---------------------------------------------------------------------------
+
+
+def test_account_field_is_sourced_from_the_seal_never_custody(
+    server: FakeKisServer,
+) -> None:
+    attempt, seal = _live_ack_setup(server)
+    assert seal.account == ACCOUNT
+    # A custody double that does NOT provision any "account"-shaped scope at all — if the
+    # adapter tried to load one, this would raise CustodyScopeNotProvisioned.
+    custody = InMemoryCredentialCustody(
+        {
+            APP_KEY_SCOPE: b"app-key-value",
+            APP_SECRET_SCOPE: b"app-secret-value",
+        }
+    )
+    transport, _, cust, _ = _build_transport(
+        server, custody=custody, seals={attempt.attempt_id: seal}
+    )
+    _send(transport, attempt)
+    (request,) = server.requests_for(ORDER_PATH)
+    import json as _json
+
+    body = _json.loads(request.body)
+    assert body["CANO"] == seal.account
+    # Only app_key/app_secret are ever loaded (once for token issuance, once for the order
+    # call itself — review F5's narrow with-block discipline reloads fresh each network call)
+    # — never anything account-shaped.
+    assert set(cust.load_calls) == {APP_KEY_SCOPE, APP_SECRET_SCOPE}
+    assert not any("account" in scope for scope in cust.load_calls)
+
+
+def test_a_different_custody_bound_value_never_leaks_into_the_body(
+    server: FakeKisServer,
+) -> None:
+    """A custody double bound to a DIFFERENT (unrelated) value than the seal's own account must
+    never leak into the body — because the adapter never even asks custody about it."""
+    attempt, seal = _live_ack_setup(server)
+    custody = InMemoryCredentialCustody(
+        {
+            APP_KEY_SCOPE: b"app-key-value",
+            APP_SECRET_SCOPE: b"app-secret-value",
+            "some.other.scope": b"a-completely-different-account-value",
+        }
+    )
+    transport, _, _, _ = _build_transport(
+        server, custody=custody, seals={attempt.attempt_id: seal}
+    )
+    _send(transport, attempt)
+    (request,) = server.requests_for(ORDER_PATH)
+    assert b"a-completely-different-account-value" not in request.body
+
+
 # ---------------------------------------------------------------------------
 # pacing (decision 6)
 # ---------------------------------------------------------------------------
@@ -545,7 +636,13 @@ def test_an_expired_token_within_the_reissue_cooldown_raises_token_stale_with_ze
     # no NEW requests were made for the second, refused attempt
     assert len(server.requests_for(TOKEN_PATH)) == 1
     assert len(server.requests_for(ORDER_PATH)) == 1
-    assert len(evidence.of_kind("TRANSPORT_TOKEN_STALE")) == 1
+    (stale_record,) = evidence.of_kind("TRANSPORT_TOKEN_STALE")
+    # (review F8) the burned attempt's evidence explains how much cooldown remained, so an
+    # operator reading the record understands why this attempt was refused.
+    assert stale_record["cooldown_remaining_ms"] > 0
+    assert stale_record["cooldown_remaining_ms"] == (
+        cfg.token_reissue_min_interval_s * 1000 - stale_record["elapsed_ms"]
+    )
 
 
 def test_a_later_attempt_after_the_cooldown_reissues_the_token(
@@ -598,7 +695,6 @@ def test_the_app_secret_never_appears_in_any_evidence_record(
         {
             APP_KEY_SCOPE: b"app-key-value",
             APP_SECRET_SCOPE: b"unmistakable-secret-marker",
-            ACCOUNT_SCOPE: b"kis-mock-account-value",
         }
     )
     transport, evidence, _, _ = _build_transport(server, custody=custody)
@@ -610,6 +706,25 @@ def test_the_app_secret_never_appears_in_any_evidence_record(
     dump = repr(evidence.records)
     assert "unmistakable-secret-marker" not in dump
     assert "tok-1" not in dump  # the bearer token itself is also never surfaced
+
+
+def test_the_adapter_holds_no_persistent_raw_credential_attribute(
+    server: FakeKisServer,
+) -> None:
+    """(review F5) After a live send, the adapter instance itself must not be holding any raw
+    credential-shaped ``bytes``/``bytearray`` attribute — credentials are loaded, used inside the
+    narrowest possible scope, and dropped; only the (non-secret) bearer token string and
+    bookkeeping timestamps persist across calls. This does not prove every transient copy was
+    scrubbed from process memory (Python ``bytes``/``str`` are immutable and cannot themselves
+    be zeroed — the module docstring says so honestly) — it proves the adapter does not
+    deliberately retain one as instance state."""
+    attempt, seal = _live_ack_setup(server)
+    transport, _, _, _ = _build_transport(server, seals={attempt.attempt_id: seal})
+    _send(transport, attempt)
+    for name, value in vars(transport).items():
+        assert not isinstance(
+            value, (bytes, bytearray)
+        ), f"adapter holds a raw bytes-shaped attribute {name!r} after send_once returned"
 
 
 def test_the_seal_digest_never_appears_on_the_wire(server: FakeKisServer) -> None:

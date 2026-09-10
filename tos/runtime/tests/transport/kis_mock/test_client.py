@@ -12,7 +12,9 @@ from tos_runtime.transport.kis_mock.client import (
     KisMockConnectionError,
     KisMockHttpClient,
     KisMockTimeoutError,
+    build_client,
 )
+from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 
 from ._fake_kis_server import FakeKisServer
 
@@ -33,6 +35,67 @@ def _client(server: FakeKisServer, *, timeout_s: float = 2.0) -> KisMockHttpClie
         request_timeout_s=timeout_s,
         allow_plaintext_for_tests=True,
     )
+
+
+def _config(**overrides: object) -> KisMockTransportConfig:
+    base: dict[str, object] = {
+        "mode": "dry_run",
+        "endpoint_rest_base": "https://openapivts.koreainvestment.com:29443",
+        "order_path": "/uapi/domestic-stock/v1/trading/order-cash",
+        "token_path": "/oauth2/tokenP",
+        "tr_id_buy": "VTTC0012U",
+        "tr_id_sell": "VTTC0011U",
+        "field_map": {
+            "account": "CANO",
+            "instrument": "PDNO",
+            "quantity": "ORD_QTY",
+            "price": "ORD_UNPR",
+        },
+        "static_body_fields": {
+            "ACNT_PRDT_CD": "01",
+            "ORD_DVSN": "00",
+            "EXCG_ID_DVSN_CD": "KRX",
+            "SLL_TYPE": "",
+            "CNDT_PRIC": "",
+        },
+        "min_send_interval_ms": 1100,
+        "token_reissue_min_interval_s": 60,
+        "request_timeout_s": 3.0,
+        "allow_plaintext_for_tests": False,
+    }
+    base.update(overrides)
+    return KisMockTransportConfig(**base)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# build_client — the one sanctioned way to construct a client for real use (review F3):
+# always from a validated KisMockTransportConfig, never a caller-supplied URL.
+# ---------------------------------------------------------------------------
+
+
+def test_build_client_uses_the_configs_own_endpoint_and_timeout_and_plaintext_flag(
+    server: FakeKisServer,
+) -> None:
+    config = _config(
+        endpoint_rest_base=server.rest_base,
+        allow_plaintext_for_tests=True,
+        request_timeout_s=1.5,
+    )
+    client = build_client(config)
+    assert isinstance(client, KisMockHttpClient)
+    server.set_response(
+        "/oauth2/tokenP", status=200, body={"access_token": "t", "expires_in": 1}
+    )
+    client.issue_token(b"k", b"s", path="/oauth2/tokenP")
+    assert len(server.requests_for("/oauth2/tokenP")) == 1
+
+
+def test_build_client_rejects_http_when_the_config_forbids_it() -> None:
+    config = _config(
+        endpoint_rest_base="http://127.0.0.1:1", allow_plaintext_for_tests=False
+    )
+    with pytest.raises(KisMockClientError, match="allow_plaintext_for_tests"):
+        build_client(config)
 
 
 # ---------------------------------------------------------------------------

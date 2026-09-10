@@ -20,8 +20,18 @@ HTTP response (any status code) is returned as a plain :class:`RawResponse` — 
 interprets ``rt_cd``/``msg_cd`` itself; that is the adapter's job (RFC-002 §10.8:739, broker
 behaviour stays behind the adapter boundary).
 
-Firewall: stdlib only (``http.client``, ``json``, ``ssl``, ``socket``, ``dataclasses``,
-``urllib.parse``) — no ``tos``/``tos_runtime`` sibling import, no ``os.environ``.
+**One sanctioned construction path (review disposition F3).** :func:`build_client` is the ONLY
+way production code (the adapter, T2's compose root) should ever obtain a
+:class:`KisMockHttpClient` — it derives every constructor argument from a validated
+:class:`~tos_runtime.transport.kis_mock.config.KisMockTransportConfig`, never from a
+caller-supplied URL. The bare :class:`KisMockHttpClient` constructor stays a public, directly
+testable primitive (this module's own test suite constructs it against a fake server's own
+dynamically-assigned port, which is not itself the config's ``endpoint_rest_base``), but nothing
+outside this package's tests should call it directly.
+
+Firewall: stdlib (``http.client``, ``json``, ``ssl``, ``socket``, ``dataclasses``,
+``urllib.parse``) + this package's own sibling :mod:`~tos_runtime.transport.kis_mock.config`
+(for :func:`build_client`'s type) — no ``tos`` import, no ``os.environ``.
 """
 
 from __future__ import annotations
@@ -34,12 +44,15 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
+from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
+
 __all__ = [
     "KisMockClientError",
     "KisMockConnectionError",
     "KisMockHttpClient",
     "KisMockTimeoutError",
     "RawResponse",
+    "build_client",
 ]
 
 
@@ -243,3 +256,24 @@ class KisMockHttpClient:
             "custtype": "P",
         }
         return self._do_request("POST", path, headers=headers, body=body)
+
+
+def build_client(config: KisMockTransportConfig) -> KisMockHttpClient:
+    """The one sanctioned way to build a :class:`KisMockHttpClient` for real use (review F3).
+
+    Every argument comes from ``config`` — never a caller-supplied URL — so a client can never
+    be pointed anywhere the config loader's own host-seal check
+    (:func:`tos_runtime.transport.kis_mock.config.load_kis_mock_transport_config`) did not
+    already validate.
+
+    Args:
+        config: The fail-closed-loaded config.
+
+    Returns:
+        A client targeting exactly ``config.endpoint_rest_base``.
+    """
+    return KisMockHttpClient(
+        rest_base=config.endpoint_rest_base,
+        request_timeout_s=config.request_timeout_s,
+        allow_plaintext_for_tests=config.allow_plaintext_for_tests,
+    )

@@ -34,13 +34,25 @@ them. Every one of this class's own raised exceptions (:class:`SendRefused`,
 :class:`TokenStale`) is therefore, from the driver's perspective, an honest "unknown, try a new
 attempt later" outcome — exactly the disposition decision 2/6 call for.
 
-**Credential handling.** Every custody scope is loaded inside a ``with`` block and its bytes are
-zeroed the moment this class is done needing them (:class:`~tos_runtime.custody.ports.
-CredentialHandle`'s own zero-on-close discipline) — this class holds the account number
-(``kis_mock.account``) only long enough to build one request body, and holds the app
-key/secret (``kis_mock.app_key``/``kis_mock.app_secret``) only long enough to issue or use one
-token. Neither ever appears in an evidence payload or an exception message (test suite scans
-every evidence record this class emits for the literal secret bytes).
+**Credential handling — an honest accounting, not an overclaim (review disposition F5).** The
+KIS account number is NOT a custody credential in this design (review F2 — see
+:mod:`tos_runtime.transport.kis_mock.codec`'s own module docstring): it is the sealed outbound
+``account`` coordinate, read directly off the :class:`~tos.egressgw.SendSeal`, never loaded from
+custody at all. The app key/secret ARE custody-loaded, and every load happens inside the
+narrowest ``with`` block this class can manage — wrapped directly around the one network call
+that needs them (:meth:`_issue_token`/:meth:`_send_order_with_credentials`), so the
+:class:`~tos_runtime.custody.ports.CredentialHandle`'s own bytearray is zeroed
+(:meth:`~tos_runtime.custody.ports.CredentialHandle.close`) as soon as that one call returns.
+**What this does NOT claim:** :meth:`~tos_runtime.custody.ports.CredentialHandle.value` returns
+a plain ``bytes`` copy, and :meth:`~tos_runtime.transport.kis_mock.client.KisMockHttpClient.
+post_order` decodes that into a ``str`` header value — both are Python immutable objects this
+class (or anything else) cannot zero in memory, so some residual copy of the secret can outlive
+the ``with`` block for as long as the garbage collector happens to keep it alive. Narrowing the
+``with`` block is what this class actually does: it bounds *when* a credential is loaded and
+*how many* copies this class itself deliberately creates, not a promise that every derived copy
+is scrubbed. Neither the access token, the app key, nor the app secret ever appears in an
+evidence payload or an exception message this class raises (test suite scans every evidence
+record this class emits for the literal secret bytes).
 
 **Token lifecycle (decision 4).** ``token_reissue_min_interval_s`` governs the *token endpoint's
 own* pacing — the minimum spacing between two ``issue_token`` calls (N-15's own finding: "토큰
@@ -58,11 +70,8 @@ time`` + this package's own sibling modules only. No third-party import, no ``os
 
 from __future__ import annotations
 
-import hashlib
-import json
 import time
 from collections.abc import Mapping
-from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
 
 from tos.canonical import CanonicalDecimal
@@ -84,6 +93,7 @@ from tos_runtime.transport.kis_mock.client import (
     KisMockTimeoutError,
     RawResponse,
 )
+from tos_runtime.transport.kis_mock.codec import KisOrderWireCodec
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 
 __all__ = [
@@ -144,19 +154,6 @@ class EvidenceRecorder(Protocol):
         ...
 
 
-def _decimal_to_kis_string(value: CanonicalDecimal) -> str:
-    """KIS requires numeric body fields as plain (non-scientific) decimal strings (N-17 memo:
-    "ORD_QTY, ORD_UNPR 등을 String 으로 전달")."""
-    return format(Decimal(value), "f")
-
-
-def _canonical_json_bytes(fields: Mapping[str, str]) -> bytes:
-    """Deterministic body-bytes serialization: sorted keys, no incidental whitespace."""
-    return json.dumps(
-        fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("utf-8")
-
-
 class KisMockTransport:
     """The KIS 모의투자 stock-order ``Transport`` (see module docstring for the full contract)."""
 
@@ -168,7 +165,6 @@ class KisMockTransport:
         custody: CredentialCustody,
         app_key_scope: str,
         app_secret_scope: str,
-        account_scope: str,
         monotonic: MonotonicSource,
         seal_lookup: SealLookup,
         evidence_sink: EvidenceRecorder,
@@ -179,13 +175,14 @@ class KisMockTransport:
             config: The fail-closed-loaded :class:`KisMockTransportConfig`.
             client: The stdlib HTTP shim.
             custody: The credential source (Phase 2's ``CredentialCustody`` Protocol) —
-                scope-provisioning (whether ``app_key_scope``/etc. are actually loadable) is a
-                compose-root/T2 concern; this class only calls ``custody.load(scope)``.
+                scope-provisioning (whether ``app_key_scope``/``app_secret_scope`` are actually
+                loadable) is a compose-root/T2 concern; this class only calls
+                ``custody.load(scope)``. There is deliberately no account-number scope (review
+                F2) — the account number is the sealed outbound ``account`` coordinate, read
+                directly off the :class:`~tos.egressgw.SendSeal`
+                (:mod:`tos_runtime.transport.kis_mock.codec`).
             app_key_scope: The custody scope name for the KIS app key.
             app_secret_scope: The custody scope name for the KIS app secret.
-            account_scope: The custody scope name for the KIS account number (never sourced
-                from the sealed authorization coordinates — the real account number is
-                custody-loaded like any other credential, module docstring).
             monotonic: The injected monotonic clock (pacing + token bookkeeping — never
                 ``time.time()``).
             seal_lookup: Resolves an attempt's :class:`~tos.egressgw.SendSeal`.
@@ -196,7 +193,6 @@ class KisMockTransport:
         self._custody = custody
         self._app_key_scope = app_key_scope
         self._app_secret_scope = app_secret_scope
-        self._account_scope = account_scope
         self._monotonic = monotonic
         self._seal_lookup = seal_lookup
         self._evidence = evidence_sink
@@ -263,9 +259,15 @@ class KisMockTransport:
             )
 
         tr_id = self._tr_id_for_side(seal.outbound_side)
-        body_fields = self._build_body_fields(seal)
-        body_bytes = _canonical_json_bytes(body_fields)
-        computed_digest = hashlib.sha256(body_bytes).hexdigest()
+        # (review F1) the shared KisOrderWireCodec is the ONLY body-construction/digest
+        # authority this class uses — see codec.py's own module docstring for the exact
+        # serialization recipe and why a live send is refused at config-load time today.
+        body_bytes = KisOrderWireCodec.encode(
+            seal,
+            field_map=self._config.field_map,
+            static_body_fields=self._config.static_body_fields,
+        )
+        computed_digest = KisOrderWireCodec.digest(body_bytes)
 
         if computed_digest != seal.request_bytes_digest:
             self._evidence(
@@ -293,7 +295,7 @@ class KisMockTransport:
             {
                 "attempt_id": attempt_id,
                 "seal_digest": seal.seal_digest,
-                "request_bytes_digest": hashlib.sha256(body_bytes).hexdigest(),
+                "request_bytes_digest": KisOrderWireCodec.digest(body_bytes),
                 "tr_id": tr_id,
             },
         )
@@ -309,17 +311,12 @@ class KisMockTransport:
         self, attempt_id: str, seal: SendSeal, tr_id: str, body_bytes: bytes
     ) -> EgressResultPayload:
         """decision 2/6 — exactly one POST, paced, with typed-fault mapping."""
-        access_token, app_key, app_secret = self._ensure_token()
+        access_token = self._ensure_token_string()
         self._enforce_pacing()
         t0 = self._monotonic.now_ms()
         try:
-            response = self._client.post_order(
-                tr_id,
-                body_bytes,
-                access_token=access_token,
-                app_key=app_key,
-                app_secret=app_secret,
-                path=self._config.order_path,
+            response = self._send_order_with_credentials(
+                tr_id, body_bytes, access_token
             )
         except KisMockTimeoutError:
             self._last_send_started_at_ms = t0
@@ -355,30 +352,25 @@ class KisMockTransport:
             status=response.status,
         )
 
-    # -- body construction (decision 3) ------------------------------------------------------
-
-    def _build_body_fields(self, seal: SendSeal) -> dict[str, str]:
-        """Build the KIS wire body from the seal's own fields + custody's account number —
-        never from a code literal (module docstring's "known T1 gap" in
-        :mod:`tos_runtime.transport.kis_mock.config` lists which of the nine ``order_cash``
-        fields this can populate today)."""
-        with self._custody.load(self._account_scope) as handle:
-            account_value = handle.value().decode("utf-8").strip()
-        dynamic_sources: dict[str, str] = {
-            "account": account_value,
-            "instrument": seal.instrument_key.instrument,
-            "quantity": _decimal_to_kis_string(seal.outbound_quantity),
-            "price": _decimal_to_kis_string(seal.outbound_price),
-        }
-        fields: dict[str, str] = {}
-        for source_name, wire_name in self._config.field_map.items():
-            if source_name not in dynamic_sources:
-                raise KisMockAdapterError(
-                    f"KisMockTransport: field_map source {source_name!r} is not a recognized "
-                    "dynamic value — the config loader should have refused this at boot"
-                )
-            fields[wire_name] = dynamic_sources[source_name]
-        return fields
+    def _send_order_with_credentials(
+        self, tr_id: str, body_bytes: bytes, access_token: str
+    ) -> RawResponse:
+        """(review F5) The app key/secret are loaded inside the NARROWEST possible ``with``
+        block — wrapped directly around the one network call that needs them, so the
+        credential handles are zeroed the instant this one POST returns (module docstring's
+        honest accounting of what that does and does not guarantee)."""
+        with (
+            self._custody.load(self._app_key_scope) as key_handle,
+            self._custody.load(self._app_secret_scope) as secret_handle,
+        ):
+            return self._client.post_order(
+                tr_id,
+                body_bytes,
+                access_token=access_token,
+                app_key=key_handle.value(),
+                app_secret=secret_handle.value(),
+                path=self._config.order_path,
+            )
 
     def _tr_id_for_side(self, side: str) -> str:
         if side == "BUY":
@@ -391,8 +383,8 @@ class KisMockTransport:
 
     # -- token lifecycle (decision 4) --------------------------------------------------------
 
-    def _ensure_token(self) -> tuple[str, bytes, bytes]:
-        """Return ``(access_token, app_key, app_secret)`` for the send about to happen.
+    def _ensure_token_string(self) -> str:
+        """Return the bearer access token string for the send about to happen.
 
         Raises:
             TokenStale: The held token (or the absence of one) is stale and the reissue cooldown
@@ -406,58 +398,63 @@ class KisMockTransport:
         )
         if not needs_fresh:
             assert self._access_token is not None
-            with (
-                self._custody.load(self._app_key_scope) as key_handle,
-                self._custody.load(self._app_secret_scope) as secret_handle,
-            ):
-                return self._access_token, key_handle.value(), secret_handle.value()
+            return self._access_token
 
-        if (
-            self._last_token_issue_attempt_ms is not None
-            and (now - self._last_token_issue_attempt_ms)
-            < self._config.token_reissue_min_interval_s * 1000
-        ):
-            self._evidence(
-                "TRANSPORT_TOKEN_STALE",
-                {
-                    "reissue_cooldown_s": self._config.token_reissue_min_interval_s,
-                    "elapsed_ms": now - self._last_token_issue_attempt_ms,
-                },
-            )
-            raise TokenStale(
-                "KisMockTransport: token is stale/absent and the reissue cooldown "
-                f"({self._config.token_reissue_min_interval_s}s) has not elapsed since the "
-                "last issuance attempt — refusing to reissue within this attempt (decision 4)"
-            )
+        if self._last_token_issue_attempt_ms is not None:
+            elapsed_since_last_attempt_ms = now - self._last_token_issue_attempt_ms
+            cooldown_ms = self._config.token_reissue_min_interval_s * 1000
+            if elapsed_since_last_attempt_ms < cooldown_ms:
+                # (review F8) the burned attempt's evidence explains exactly how much cooldown
+                # remained, so a reader of the evidence store understands why this attempt was
+                # refused rather than reissued.
+                self._evidence(
+                    "TRANSPORT_TOKEN_STALE",
+                    {
+                        "reissue_cooldown_s": self._config.token_reissue_min_interval_s,
+                        "elapsed_ms": elapsed_since_last_attempt_ms,
+                        "cooldown_remaining_ms": cooldown_ms
+                        - elapsed_since_last_attempt_ms,
+                    },
+                )
+                raise TokenStale(
+                    "KisMockTransport: token is stale/absent and the reissue cooldown "
+                    f"({self._config.token_reissue_min_interval_s}s) has not elapsed since "
+                    "the last issuance attempt — refusing to reissue within this attempt "
+                    "(decision 4)"
+                )
 
         self._last_token_issue_attempt_ms = now
+        self._issue_token()
+        assert self._access_token is not None
+        return self._access_token
+
+    def _issue_token(self) -> None:
+        """(review F5) The app key/secret are loaded inside the narrowest possible ``with``
+        block — wrapped directly around the one ``issue_token`` network call."""
         with (
             self._custody.load(self._app_key_scope) as key_handle,
             self._custody.load(self._app_secret_scope) as secret_handle,
         ):
-            app_key = key_handle.value()
-            app_secret = secret_handle.value()
             body = self._client.issue_token(
-                app_key, app_secret, path=self._config.token_path
+                key_handle.value(), secret_handle.value(), path=self._config.token_path
             )
-            access_token = body.get("access_token")
-            expires_in = body.get("expires_in")
-            if not isinstance(access_token, str) or not access_token:
-                raise KisMockClientError(
-                    "KisMockTransport: token response missing a usable access_token"
-                )
-            if (
-                not isinstance(expires_in, int)
-                or isinstance(expires_in, bool)
-                or expires_in <= 0
-            ):
-                raise KisMockClientError(
-                    "KisMockTransport: token response missing a usable expires_in"
-                )
-            self._access_token = access_token
-            self._token_expires_in_s = expires_in
-            self._token_issued_at_ms = self._monotonic.now_ms()
-            return self._access_token, app_key, app_secret
+        access_token = body.get("access_token")
+        expires_in = body.get("expires_in")
+        if not isinstance(access_token, str) or not access_token:
+            raise KisMockClientError(
+                "KisMockTransport: token response missing a usable access_token"
+            )
+        if (
+            not isinstance(expires_in, int)
+            or isinstance(expires_in, bool)
+            or expires_in <= 0
+        ):
+            raise KisMockClientError(
+                "KisMockTransport: token response missing a usable expires_in"
+            )
+        self._access_token = access_token
+        self._token_expires_in_s = expires_in
+        self._token_issued_at_ms = self._monotonic.now_ms()
 
     # -- pacing (decision 6) -----------------------------------------------------------------
 
@@ -481,15 +478,19 @@ class KisMockTransport:
     ) -> tuple[EgressResultKind, str | None, dict[str, Any]]:
         """Map one KIS HTTP response to ``(kind, broker_execution_id, evidence_extra)``.
 
-        5xx and an unparseable body are ``UNKNOWN`` (never a rejection — RFC-005 §11:322-323);
-        ``rt_cd == "0"`` with a present ``ODNO`` is ``ACK``; anything else with a parseable body
-        is ``REJECT`` (a throttle response, KIS's own ``EGW00201``, is still a ``REJECT`` — this
-        adapter never retries it, decision 6 — but its evidence carries ``reason=throttled``).
+        5xx, an unparseable body, and a well-formed body with no ``rt_cd`` key at all are ALL
+        ``UNKNOWN`` (never a rejection — RFC-005 §11:322-323, review disposition F4: absence of
+        the one field this adapter reads is not evidence of non-acceptance); ``rt_cd == "0"``
+        with a present ``ODNO`` is ``ACK``; anything else with an rt_cd present is ``REJECT`` (a
+        throttle response, KIS's own ``EGW00201``, is still a ``REJECT`` — this adapter never
+        retries it, decision 6 — but its evidence carries ``reason=throttled``).
         """
         if response.status >= 500:
             return EgressResultKind.UNKNOWN, None, {"reason": "server_error"}
         if response.json is None:
             return EgressResultKind.UNKNOWN, None, {"reason": "malformed_json"}
+        if "rt_cd" not in response.json:
+            return EgressResultKind.UNKNOWN, None, {"reason": "rt_cd_absent"}
         rt_cd = response.json.get("rt_cd")
         if rt_cd == "0":
             output = response.json.get("output")
