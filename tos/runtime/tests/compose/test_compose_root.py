@@ -1716,8 +1716,11 @@ class TestCapacityObligationRecording:
 
 class TestOrthostateAndFinalityProjectionWiring:
     """Team-lead CR-4 dispatch (plan §2.2): the driver-level orthostate + SYNTHETIC finality
-    wiring (``tos_runtime.engine.driver.EngineDriver._project_orthostate_and_finality``) is
-    reachable end to end through the composed runtime, not merely unit-tested in isolation.
+    wiring (``tos_runtime.engine.driver.EngineDriver._process_next``'s own orthostate-projection
+    call plus ``EngineDriver._project_finality`` — TOS Phase 5 W1 GAP 2 split the two apart and
+    reordered the former ahead of the ``EVENT_CONSUMED`` receipt; see that method's own module
+    docstring) is reachable end to end through the composed runtime, not merely unit-tested in
+    isolation.
     """
 
     def test_full_fill_hand_off_records_finality_proof_and_composite(

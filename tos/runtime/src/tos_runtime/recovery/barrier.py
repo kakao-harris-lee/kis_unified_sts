@@ -54,25 +54,9 @@ from tos.sbr.records import RecoveryAuthorityEffect, RecoveryObligation
 from tos.sbr.vocabulary import ObligationResult, ReadinessVerdict
 
 from tos_runtime.recovery.inputs import RecoveryInputs
+from tos_runtime.recovery.reconciliation import RECON_UNAVAILABLE, RECONCILED
 
-__all__ = ["RECON_UNAVAILABLE", "RecoveryVerdict", "RecoveryBarrier"]
-
-#: The reason recorded for a possibly-live attempt when reconciliation cannot actually be run
-#: yet. **Checked directly at the time this lane finished (sibling lane W1-b landed
-#: concurrently)**: :class:`tos_runtime.recon.service.ReconciliationService` DOES exist and
-#: imports cleanly, but its constructor requires three injected ports — the RCL side
-#: (:class:`~tos_runtime.rcl.projection.ReservationProjectionReader`, already landed) and the
-#: broker-witness side (:class:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness`,
-#: already landed) are usable, but the THIRD, ``EvidenceReceiptReader``
-#: (:mod:`tos_runtime.recon.ports`'s own docstring, verbatim: "This package ships no concrete
-#: implementation (out of this lane's file list) — a future lane wires one"), has no
-#: implementation anywhere in the tree yet. A partially-wired ``ReconciliationService`` with a
-#: fabricated or stubbed evidence-receipt reader would silently misreport confidence on the
-#: exact path this barrier exists to protect, so this module does not attempt one under time
-#: pressure — it checks for a real, usable service at :meth:`RecoveryBarrier.verdict` time
-#: (:func:`_reconciliation_service_available`) and only falls back to this constant when one is
-#: not actually constructible.
-RECON_UNAVAILABLE = "RECON_UNAVAILABLE"
+__all__ = ["RECONCILED", "RECON_UNAVAILABLE", "RecoveryVerdict", "RecoveryBarrier"]
 
 _OBLIGATION_REPLAY_IDENTICAL = "PHASE5_W1_REPLAY_VERDICT_IDENTICAL"
 _OBLIGATION_NO_POSSIBLY_LIVE = "PHASE5_W1_NO_POSSIBLY_LIVE_ATTEMPTS"
@@ -111,7 +95,12 @@ def _build_obligations(inputs: RecoveryInputs) -> frozenset[RecoveryObligation]:
        documented obligation (never re-verified — re-running replay a second time would be the
        exact "the guard is also the oracle" failure design #39 §5.3 warns against), not skipped
        silently.
-    2. No possibly-live attempts (ⓗ).
+    2. Every possibly-live attempt (ⓗ) is either absent or positively RECONCILED — never a bare
+       "none exist" check: :attr:`~tos_runtime.recovery.inputs.RecoveryInputs
+       .possibly_live_reconciliation` (:mod:`tos_runtime.recovery.reconciliation`) must mark
+       every entry in :attr:`~tos_runtime.recovery.inputs.RecoveryInputs.possibly_live_attempts`
+       :attr:`~tos_runtime.recovery.reconciliation.ReconciliationOutcome.cleared`; a missing
+       entry (reconciliation never ran for it) fails closed exactly like an explicit ``False``.
     3. No legacy receipts in the replay window (ⓑ).
     4. RCL generation state consistent with the evidence tip — a structural PRESENCE check only
        (design #40 v1.1 note ② forbids equating the two epochs outright): a genesis boot with an
@@ -132,12 +121,15 @@ def _build_obligations(inputs: RecoveryInputs) -> frozenset[RecoveryObligation]:
         inputs.evidence_tip_seq is not None
         and inputs.rcl_runtime_generation is not None
     )
+    all_possibly_live_cleared = all(
+        inputs.possibly_live_reconciliation.get(attempt.event_id, RECON_UNAVAILABLE)
+        == RECONCILED
+        for attempt in inputs.possibly_live_attempts
+    )
     return frozenset(
         {
             _satisfied(_OBLIGATION_REPLAY_IDENTICAL, ok=True),
-            _satisfied(
-                _OBLIGATION_NO_POSSIBLY_LIVE, ok=not inputs.possibly_live_attempts
-            ),
+            _satisfied(_OBLIGATION_NO_POSSIBLY_LIVE, ok=all_possibly_live_cleared),
             _satisfied(
                 _OBLIGATION_NO_LEGACY_RECEIPTS, ok=inputs.legacy_receipts.count == 0
             ),
@@ -154,45 +146,18 @@ def _build_obligations(inputs: RecoveryInputs) -> frozenset[RecoveryObligation]:
     )
 
 
-def _reconciliation_service_available() -> bool:
-    """Whether a genuinely usable :class:`tos_runtime.recon.service.ReconciliationService` can
-    be constructed today (module-level ``RECON_UNAVAILABLE`` docstring).
-
-    Checks, in order: the service class itself imports; its three port Protocols import; AND a
-    concrete, non-test implementation of :class:`~tos_runtime.recon.ports.EvidenceReceiptReader`
-    exists in :mod:`tos_runtime.recon` (the one port that module's own docstring says is not yet
-    shipped). Returns ``False`` the instant any of those is missing — never partially wires a
-    service with a stand-in evidence-receipt reader (see the ``RECON_UNAVAILABLE`` docstring for
-    why that would be unsafe here specifically).
-    """
-    try:
-        import tos_runtime.recon.ports as recon_ports
-        import tos_runtime.recon.service as recon_service  # noqa: F401
-    except ImportError:
-        return False
-    # `tos_runtime.recon.ports` documents (verbatim, module docstring) that it ships NO concrete
-    # `EvidenceReceiptReader` — every symbol that module exports is data/Protocol, never an
-    # implementation. Confirm that remains true rather than assuming the docstring never changed:
-    # a concrete adapter would be a class, not a `Protocol`/dataclass/StrEnum this module marks.
-    reader_protocol = getattr(recon_ports, "EvidenceReceiptReader", None)
-    if reader_protocol is None:
-        return False
-    concrete_readers = [
-        name
-        for name in vars(recon_service)
-        if name.lower().endswith("evidencereceiptreader")
-    ]
-    return bool(concrete_readers)
-
-
 def _reason_for(inputs: RecoveryInputs, *, ready: bool) -> str:
     if ready:
         return "all six recovery-barrier obligations satisfied"
     reasons: list[str] = []
-    if inputs.possibly_live_attempts:
-        reasons.append(
-            f"{len(inputs.possibly_live_attempts)} possibly-live attempt(s) unreconciled"
-        )
+    unreconciled = [
+        attempt
+        for attempt in inputs.possibly_live_attempts
+        if inputs.possibly_live_reconciliation.get(attempt.event_id, RECON_UNAVAILABLE)
+        != RECONCILED
+    ]
+    if unreconciled:
+        reasons.append(f"{len(unreconciled)} possibly-live attempt(s) unreconciled")
     if inputs.legacy_receipts.count:
         reasons.append(
             f"{inputs.legacy_receipts.count} legacy (fingerprint-less) receipt(s) in window (ⓑ)"
@@ -229,11 +194,11 @@ class RecoveryVerdict:
             durably records the full :class:`~tos_runtime.recovery.inputs.RecoveryInputs`
             alongside this).
         possibly_live_reconciliation: ``{event_id: reason}`` for every possibly-live attempt —
-            ``RECON_UNAVAILABLE`` for all of them today (module docstring, step 5).
-        reconciliation_service_available: Whether a genuinely usable ``ReconciliationService``
-            was constructible at this verdict (see ``RECON_UNAVAILABLE``'s own docstring) —
-            exposed so a test (or a future wave) can observe the moment this flips ``True``
-            without re-deriving the check.
+            copied straight from :attr:`~tos_runtime.recovery.inputs.RecoveryInputs
+            .possibly_live_reconciliation` (:mod:`tos_runtime.recovery.reconciliation`):
+            :data:`RECONCILED` when cleared, a :class:`~tos_runtime.recon.service
+            .ReconciliationReport`-supplied reason otherwise, or :data:`RECON_UNAVAILABLE` when
+            reconciliation never ran for that entry at all.
         authority_effect: The all-false :class:`~tos.sbr.records.RecoveryAuthorityEffect` this
             verdict carries (SBR-INV-003 — a recovery verdict creates no authority).
     """
@@ -242,7 +207,6 @@ class RecoveryVerdict:
     ready: bool
     reason: str
     possibly_live_reconciliation: dict[str, str]
-    reconciliation_service_available: bool
     authority_effect: RecoveryAuthorityEffect
 
 
@@ -277,14 +241,10 @@ class RecoveryBarrier:
         assert recovery_completion_revives_nothing()
 
         readiness = ReadinessVerdict.READY if closed else ReadinessVerdict.NOT_READY
-        service_available = _reconciliation_service_available()
-        # Step 5: even when a usable service exists, this barrier still records
-        # RECON_UNAVAILABLE for every possibly-live attempt today — see RECON_UNAVAILABLE's own
-        # docstring for exactly which port is missing and why a partial wiring is refused rather
-        # than attempted. `service_available` is surfaced on the verdict so this is observable
-        # and testable, never silently true.
         reconciliation = {
-            attempt.event_id: RECON_UNAVAILABLE
+            attempt.event_id: inputs.possibly_live_reconciliation.get(
+                attempt.event_id, RECON_UNAVAILABLE
+            )
             for attempt in inputs.possibly_live_attempts
         }
         return RecoveryVerdict(
@@ -292,6 +252,5 @@ class RecoveryBarrier:
             ready=readiness is ReadinessVerdict.READY,
             reason=_reason_for(inputs, ready=closed),
             possibly_live_reconciliation=reconciliation,
-            reconciliation_service_available=service_available,
             authority_effect=effect,
         )

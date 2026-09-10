@@ -26,25 +26,43 @@ field is read straight off a durable store this runtime already owns:
 * The D4 custody manifest's own identity — :class:`~tos_runtime.custody.file_custody
   .CustodyManifest` (re-loaded independently, read-only, the same file
   :class:`~tos_runtime.custody.file_custody.FileCustody` already validated at boot).
+* Every possibly-live attempt's reconciliation outcome — :mod:`tos_runtime.recovery
+  .reconciliation`, run against a real :class:`~tos_runtime.recon.service.ReconciliationService`
+  this module assembles from three durable ports: the RCL reservation projection
+  (:class:`~tos_runtime.rcl.projection.SqliteReservationProjectionReader`), the evidence-receipt
+  reader (:class:`~tos_runtime.recon.evidence_reader.SqliteEvidenceReceiptReader`), and the
+  broker witness (currently :class:`~tos_runtime.recon.witness_synthetic.SyntheticLedgerWitness`
+  — see that module's own disclosed independence caveat), plus a freshness marker derived from
+  this runtime's own time service. Only a positively-established confidence clears an attempt
+  (plan §2 decision 2); see :mod:`tos_runtime.recovery.reconciliation`'s own module docstring.
 
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``hashlib``, ``pathlib``) +
-``tos.*`` + ``tos_runtime.*`` only. No ``shared.*``.
+Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``dataclasses``, ``hashlib``,
+``pathlib``) + ``tos.*`` + ``tos_runtime.*`` only. No ``shared.*``.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from tos.canonical import CanonicalizationScheme
+from tos.engine.records import InstrumentKey
 from tos.rcl import CapacityState
+from tos.recon import FreshnessMarker
 from tos.staterestore import IncompleteStoreError, reload_conservative
+from tos.time.domains import HealthState
 
 from tos_runtime.custody.file_custody import MANIFEST_FILENAME, CustodyManifest
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.projection import SqliteReservationProjectionReader
+from tos_runtime.recon.evidence_reader import SqliteEvidenceReceiptReader
+from tos_runtime.recon.ports import WitnessScope
+from tos_runtime.recon.service import ReconciliationService
+from tos_runtime.recon.witness_synthetic import SyntheticLedgerWitness
 from tos_runtime.recovery.legacy_receipts import (
     LegacyReceiptFacts,
     legacy_receipts_in_window,
@@ -53,6 +71,8 @@ from tos_runtime.recovery.possibly_live import (
     PossiblyLiveAttempt,
     reconstruct_possibly_live_attempts,
 )
+from tos_runtime.recovery.reconciliation import reconcile_possibly_live_attempts
+from tos_runtime.time.service import TimeServiceNotStarted, TrustworthyTimeService
 
 __all__ = ["OpenReservation", "RecoveryInputs", "assemble_recovery_inputs"]
 
@@ -127,6 +147,13 @@ class RecoveryInputs:
     custody_environment_label: str | None
     #: sha256 of the custody manifest file's raw bytes — the manifest's own content identity.
     custody_manifest_digest: str | None
+    #: ``{event_id: reason}`` for every entry in :attr:`possibly_live_attempts`
+    #: (:mod:`tos_runtime.recovery.reconciliation`) — :data:`~tos_runtime.recovery.barrier
+    #: .RECONCILED` when cleared, else an unreconciled reason. Defaults to empty for hand-
+    #: constructed test inputs that never called reconciliation —
+    #: :mod:`tos_runtime.recovery.barrier` treats a missing entry as unreconciled (fail-closed),
+    #: never as vacuously cleared.
+    possibly_live_reconciliation: dict[str, str] = field(default_factory=dict)
 
 
 def _open_reservations(rcl_log: SqliteCommitLog) -> tuple[OpenReservation, ...]:
@@ -165,6 +192,62 @@ def _custody_identity(custody_root: Path) -> tuple[str | None, str | None]:
     return manifest.environment_label, hashlib.sha256(raw).hexdigest()
 
 
+def _build_reconciliation_service(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    *,
+    account: str,
+    instrument: str,
+) -> ReconciliationService:
+    """Assemble a real :class:`~tos_runtime.recon.service.ReconciliationService` from this
+    boot's own three durable ports (module docstring), plus the ``reservation_id_for_attempt``
+    bridge :mod:`tos_runtime.recon.service`'s own module docstring names.
+
+    This compose root's RCL commit log keys reservations at SCOPE granularity — the SAME
+    ``f"resv-{account}-{instrument}"`` identity :class:`~tos_runtime.rcl.obligation
+    .CapacityObligationRecorder`'s own ``reservation_id_resolver``
+    (``tos_runtime/compose/_engine_wiring.py::wire_engine_and_driver``) already produces for
+    exactly this reason — never a new formula invented here. Every attempt id maps onto this
+    SAME constant reservation id, because this compose root wires exactly one
+    ``InstrumentKey`` for its whole process lifetime (that module's own documented assumption,
+    reused verbatim by :mod:`tos_runtime.recovery.reconciliation`'s own "one scope" section).
+    """
+    return ReconciliationService(
+        rcl_reader=SqliteReservationProjectionReader(rcl_log),
+        evidence_reader=SqliteEvidenceReceiptReader(evidence_store),
+        witness=SyntheticLedgerWitness(evidence_store),
+        reservation_id_for_attempt=lambda _attempt_id: f"resv-{account}-{instrument}",
+    )
+
+
+def _build_freshness_marker(time_service: TrustworthyTimeService) -> FreshnessMarker:
+    """A real (never-``None``-by-default) :class:`~tos.recon.FreshnessMarker` derived from this
+    runtime's own time service.
+
+    **Disclosed simplification**: this compose root has no separate "is this OBSERVATION within
+    its own approved freshness horizon" computation wired (a Verification Profile bound this
+    Phase does not yet inject) — ``fresh_within_horizon`` reuses the same
+    :attr:`~tos.time.domains.HealthState.TRUSTED` fact ``time_confidence_held`` does, rather than
+    a genuine per-observation age check. This is conservative, never permissive: an
+    ``UNTRUSTED``/``DEGRADED_HOLDOVER`` boot still fails every flag closed exactly as the
+    kernel's own all-``None`` default would.
+    """
+    try:
+        snapshot = time_service.current_snapshot()
+    except TimeServiceNotStarted:
+        return (
+            FreshnessMarker()
+        )  # all-None -- fails closed, honestly, never started at all
+    trusted = snapshot.health_state is HealthState.TRUSTED
+    generation = snapshot.time_continuity_identity.tts_generation
+    return FreshnessMarker(
+        fresh_within_horizon=trusted,
+        time_confidence_held=trusted,
+        time_generation=generation,
+        anchored_generation=generation,
+    )
+
+
 def assemble_recovery_inputs(
     *,
     rcl_log: SqliteCommitLog,
@@ -174,6 +257,9 @@ def assemble_recovery_inputs(
     window_events: int | None,
     custody_root: Path,
     composite_state_store_path: Path,
+    time_service: TrustworthyTimeService,
+    account: str,
+    instrument: str,
 ) -> RecoveryInputs:
     """Assemble :class:`RecoveryInputs` purely from durable sources (module docstring).
 
@@ -188,6 +274,13 @@ def assemble_recovery_inputs(
         composite_state_store_path: Where a ``tos.staterestore`` composite-state store for this
             data directory would live (module docstring's disclosed limitation: nothing writes
             here yet, so every reload is conservatively incomplete).
+        time_service: This runtime's own :class:`~tos_runtime.time.service
+            .TrustworthyTimeService` (forwarded to :mod:`tos_runtime.recovery.reconciliation`
+            for the freshness marker).
+        account: The single scope account this compose root's ``context_resolver`` is bound to
+            (forwarded to reconciliation).
+        instrument: The single scope instrument this compose root's ``context_resolver`` is
+            bound to (forwarded to reconciliation).
 
     Returns:
         The fully assembled :class:`RecoveryInputs`.
@@ -199,7 +292,7 @@ def assemble_recovery_inputs(
     )
     environment_label, manifest_digest = _custody_identity(custody_root)
 
-    return RecoveryInputs(
+    partial = RecoveryInputs(
         rcl_writer_epoch=rcl_log.current_epoch(),
         rcl_runtime_generation=rcl_log.latest_runtime_generation(),
         open_reservations=_open_reservations(rcl_log),
@@ -216,3 +309,25 @@ def assemble_recovery_inputs(
         custody_environment_label=environment_label,
         custody_manifest_digest=manifest_digest,
     )
+    if not possibly_live_attempts:
+        return partial
+
+    try:
+        service = _build_reconciliation_service(
+            rcl_log, evidence_store, account=account, instrument=instrument
+        )
+    except (
+        Exception
+    ):  # noqa: BLE001 -- construction failure is treated as unavailable, fail-closed
+        service = None
+    scope = WitnessScope(
+        account=account,
+        instrument_keys=(InstrumentKey(account=account, instrument=instrument),),
+    )
+    reconciliation = reconcile_possibly_live_attempts(
+        partial,
+        service=service,
+        scope=scope,
+        freshness=_build_freshness_marker(time_service),
+    )
+    return dataclasses.replace(partial, possibly_live_reconciliation=reconciliation)

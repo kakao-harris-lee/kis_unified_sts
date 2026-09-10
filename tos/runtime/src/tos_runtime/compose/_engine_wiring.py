@@ -82,6 +82,10 @@ from tos_runtime.posttrade.config import FinalityConfig
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
 from tos_runtime.rcl.obligation import CapacityObligationRecorder
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
+from tos_runtime.recovery.composite_state_writer import (
+    COMPOSITE_STATE_STORE_FILE_NAME,
+    CompositeStateWriter,
+)
 from tos_runtime.time.sources import MonotonicSource
 
 __all__ = [
@@ -238,6 +242,12 @@ def build_engine_driver(
         authority_epoch_current=authority_epoch_current,
     )
     finality_producer = SyntheticFinalityProducer(config=finality_config, scheme=scheme)
+    # TOS Phase 5 W1 GAP 2: the real staterestore composite-state writer -- the ONE concrete
+    # implementation this compose root wires (tests construct EngineDriver without one, which
+    # degrades to the documented pre-GAP-2 no-op; see EngineDriver's own constructor docstring).
+    recovery_composite_writer = CompositeStateWriter(
+        data_dir / COMPOSITE_STATE_STORE_FILE_NAME
+    )
     driver = EngineDriver(
         core=core,
         inbox=inbox,
@@ -249,6 +259,7 @@ def build_engine_driver(
         max_send_result_wait_ms=max_send_result_wait_ms,
         orthostate_projector=orthostate_projector,
         finality_producer=finality_producer,
+        recovery_composite_writer=recovery_composite_writer,
     )
     driver.bind_gateway(gateway)
     return inbox, driver

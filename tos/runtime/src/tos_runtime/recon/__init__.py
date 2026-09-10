@@ -12,6 +12,7 @@ confidence-design.md``).
 
 from __future__ import annotations
 
+from tos_runtime.recon.evidence_reader import SqliteEvidenceReceiptReader
 from tos_runtime.recon.ports import (
     BrokerWitness,
     EgressReceiptObservation,
@@ -38,6 +39,7 @@ __all__ = [
     "ReconciliationClass",
     "ReconciliationReport",
     "ReconciliationService",
+    "SqliteEvidenceReceiptReader",
     "SyntheticLedgerWitness",
     "WitnessOrder",
     "WitnessOrderState",

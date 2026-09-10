@@ -41,12 +41,27 @@ evidence-store append call, and reads no clock (freshness is an injected
 :class:`~tos.recon.FreshnessMarker` parameter — ``tos.recon`` itself is clock-free, design
 #9 §3.5). See ``tos/runtime/tests/recon/test_service.py``'s negative-grep test.
 
+**``attempt_id`` vs ``reservation_id`` (Phase 5 W1 close-out).** This module never assumed the
+two share one identity space, but shipped no bridge between them until a real caller measured
+the gap directly: a compose root whose RCL commit log keys reservations at SCOPE granularity
+(one reservation per ``(account, instrument)``, shared by every attempt in that scope — e.g.
+:class:`~tos_runtime.rcl.obligation.CapacityObligationRecorder`'s own
+``reservation_id_resolver``) would otherwise see :meth:`ReconciliationService.reconcile` call
+``rcl_reader.reservation_state`` with the wrong key for every attempt, so ``rcl_present`` is
+always ``False`` and :class:`ReconciliationClass.MATCHED` — and therefore any capacity
+release/re-arm — is structurally unreachable. The constructor's optional
+``reservation_id_for_attempt`` callable closes this: an injected caller-side mapping from
+attempt id to whatever identity the caller's own ``rcl_reader`` actually uses, defaulting to the
+identity mapping (unchanged behaviour for a caller whose RCL projection genuinely is
+per-attempt).
+
 Firewall: stdlib + ``tos.recon`` + ``tos.rcl`` (``CapacityState`` only, for the type
 signature this service reads through) + ``tos_runtime.recon.ports`` only.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
@@ -266,6 +281,8 @@ class ReconciliationService:
         rcl_reader: ReservationProjectionReader,
         evidence_reader: EvidenceReceiptReader,
         witness: BrokerWitness,
+        *,
+        reservation_id_for_attempt: Callable[[str], str | None] | None = None,
     ) -> None:
         """Bind this service to its three injected observation ports.
 
@@ -275,10 +292,38 @@ class ReconciliationService:
             witness: The broker-witness port. See module docstring's independence-class
                 caveat for what a ``SyntheticLedgerWitness`` injection here does and does
                 not establish.
+            reservation_id_for_attempt: Maps an ``attempt_id`` (as reported by the
+                evidence-receipt / witness observations) onto the identity
+                :attr:`rcl_reader` actually keys its reservation projection by. This
+                package's own predicates (design #9) never assume ``attempt_id`` and
+                ``reservation_id`` share one identity space — a caller whose RCL commit log
+                keys reservations differently from its attempt ids (e.g. a scope-level
+                reservation id shared by every attempt in that scope — the SAME identity
+                :class:`~tos_runtime.rcl.obligation.CapacityObligationRecorder`'s own
+                ``reservation_id_resolver`` already produces for exactly that reason)
+                supplies this to bridge the gap. Defaults to ``None``, which means "``rcl_reader``
+                is keyed by attempt id directly" (the identity mapping — unchanged pre-existing
+                behaviour for a caller whose RCL projection genuinely is per-attempt). Called
+                once per attempt per :meth:`reconcile`; returning ``None`` for a given attempt id
+                is treated exactly like "no mapping known", i.e. :meth:`reconcile` looks up
+                ``rcl_reader.reservation_state`` with the ORIGINAL ``attempt_id`` unchanged (never
+                silently skips the RCL path) — this function narrows, it does not gate.
         """
         self._rcl_reader = rcl_reader
         self._evidence_reader = evidence_reader
         self._witness = witness
+        self._reservation_id_for_attempt = reservation_id_for_attempt
+
+    def _reservation_id_for(self, attempt_id: str) -> str:
+        """Resolve ``attempt_id`` onto the identity :attr:`_rcl_reader` is actually keyed by
+        (constructor's own ``reservation_id_for_attempt`` docstring) — the identity mapping when
+        no resolver was injected, or the resolver's own mapping otherwise (falling back to the
+        identity mapping if the resolver itself returns ``None`` for this attempt — narrows,
+        never gates)."""
+        if self._reservation_id_for_attempt is None:
+            return attempt_id
+        resolved = self._reservation_id_for_attempt(attempt_id)
+        return attempt_id if resolved is None else resolved
 
     def _attempt_field_confidences_and_gates(
         self,
@@ -376,7 +421,9 @@ class ReconciliationService:
     ) -> tuple[AttemptClassification, tuple[FieldConfidence, ...], bool, bool]:
         """One known attempt id's full verdict — split out of :meth:`reconcile` to stay
         under the module's function size budget."""
-        rcl_state = self._rcl_reader.reservation_state(attempt_id)
+        rcl_state = self._rcl_reader.reservation_state(
+            self._reservation_id_for(attempt_id)
+        )
         evidence = receipts_by_attempt.get(attempt_id)
         witness_order = witness_by_attempt.get(attempt_id)
         classification, confidences, rearm_ok, capacity_ok = (

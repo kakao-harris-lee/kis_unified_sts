@@ -13,6 +13,12 @@ Public surface:
   reconstruction.
 * :mod:`tos_runtime.recovery.legacy_receipts` — Phase 3 carryover ⓑ (fingerprint-less receipts
   in the replay window).
+* :mod:`tos_runtime.recovery.reconciliation` — runs a real, already-constructed
+  :class:`~tos_runtime.recon.service.ReconciliationService` (assembled by
+  :mod:`tos_runtime.recovery.inputs`, using :class:`~tos_runtime.recon.evidence_reader
+  .SqliteEvidenceReceiptReader` for the one port that package ships as a bare Protocol only)
+  against every possibly-live attempt's shared account/instrument scope; only a positively-
+  established confidence clears them.
 * :mod:`tos_runtime.recovery.barrier` — :class:`~tos_runtime.recovery.barrier.RecoveryBarrier`,
   folding the above into the kernel's own :class:`~tos.sbr.vocabulary.ReadinessVerdict` via
   :func:`tos.sbr.predicates.obligation_graph_closed` (never re-authoring that judgement here).
@@ -30,6 +36,7 @@ from __future__ import annotations
 
 from tos_runtime.recovery.barrier import (
     RECON_UNAVAILABLE,
+    RECONCILED,
     RecoveryBarrier,
     RecoveryVerdict,
 )
@@ -46,8 +53,10 @@ from tos_runtime.recovery.possibly_live import (
     PossiblyLiveAttempt,
     reconstruct_possibly_live_attempts,
 )
+from tos_runtime.recovery.reconciliation import reconcile_possibly_live_attempts
 
 __all__ = [
+    "RECONCILED",
     "RECON_UNAVAILABLE",
     "LegacyReceiptFacts",
     "OpenReservation",
@@ -57,5 +66,6 @@ __all__ = [
     "RecoveryVerdict",
     "assemble_recovery_inputs",
     "legacy_receipts_in_window",
+    "reconcile_possibly_live_attempts",
     "reconstruct_possibly_live_attempts",
 ]

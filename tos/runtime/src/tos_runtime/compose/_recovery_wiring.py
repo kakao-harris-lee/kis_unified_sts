@@ -129,6 +129,7 @@ def apply_recovery_barrier(
     engine_driver_config = load_engine_driver_config(
         config_dir / ENGINE_DRIVER_CONFIG_NAME
     )
+    instrument_key = runtime.context_resolver.instrument_key
     inputs = assemble_recovery_inputs(
         rcl_log=runtime.rcl_log,
         evidence_store=runtime.evidence_store,
@@ -137,6 +138,9 @@ def apply_recovery_barrier(
         window_events=engine_driver_config.replay_window_events,
         custody_root=custody_root,
         composite_state_store_path=data_dir / COMPOSITE_STATE_STORE_FILE_NAME,
+        time_service=runtime.time_service,
+        account=instrument_key.account,
+        instrument=instrument_key.instrument,
     )
     verdict = RecoveryBarrier.verdict(inputs)
 

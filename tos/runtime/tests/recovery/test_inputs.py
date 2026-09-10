@@ -10,10 +10,22 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.recovery.inputs import assemble_recovery_inputs
+from tos_runtime.time.service import TimeServiceNotStarted
 
 from .conftest import SCHEME, fx
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
+
+
+class _NeverStartedTimeService:
+    """A minimal :class:`~tos_runtime.time.service.TrustworthyTimeService` double for these
+    unit tests, which do not boot a full compose chain: raises the SAME
+    ``TimeServiceNotStarted`` a genuinely never-started real service raises, so
+    :mod:`tos_runtime.recovery.reconciliation`'s own fail-closed freshness path is exercised
+    exactly as it would be against a real one."""
+
+    def current_snapshot(self):
+        raise TimeServiceNotStarted("never started (test double)")
 
 
 @pytest.fixture()
@@ -39,6 +51,9 @@ def _assemble(
         window_events=None,
         custody_root=custody_root,
         composite_state_store_path=tmp_path / "composite_state.sqlite3",
+        time_service=_NeverStartedTimeService(),
+        account=fx.instrument_key().account,
+        instrument=fx.instrument_key().instrument,
     )
 
 
