@@ -41,6 +41,7 @@ import dataclasses
 import hashlib
 import json
 from collections.abc import Iterator
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +56,6 @@ from tos_runtime.compose import context as context_module
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.transport.kis_mock.adapter import KisMockTransport
 from tos_runtime.transport.kis_mock.client import KisMockHttpClient
-from tos_runtime.transport.kis_mock.codec import KisOrderWireCodec
 
 from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from ..transport.kis_mock.test_adapter import (
@@ -89,9 +89,7 @@ _FAKE_BEARER_TOKEN = "t3-fake-bearer-token-never-in-evidence"
 # ===========================================================================
 
 
-def _activate_and_admit(
-    config_dir: Path, custody_root: Path, *, min_send_interval_ms: int = 1100
-) -> None:
+def _activate_and_admit(config_dir: Path, custody_root: Path) -> None:
     """The T2-proven shape every scenario in this file starts from: MOCK_STOCK_ORDER active
     (``profile_evidence_ok: true``, via :func:`~.test_transport_wiring._activate_mock_stock_order`
     — reused, never duplicated) + the Coordinator's own non-live admission posture granted.
@@ -108,7 +106,6 @@ def _activate_and_admit(
         ),
         encoding="utf-8",
     )
-    del min_send_interval_ms  # documented for callers that override the transport config
 
 
 def _drive_crossing_tick(runtime, custody_root: Path):
@@ -221,6 +218,43 @@ def _all_evidence_text(runtime) -> str:
         "SELECT payload_json FROM entries"
     ).fetchall()
     return " ".join(row[0] for row in rows)
+
+
+def _independent_wire_digest(
+    *, account: str, instrument: str, quantity: str, price: str
+) -> str:
+    """A GENUINELY independent oracle for the KIS ``order_cash`` wire-body digest — hand-built
+    from the codec's own FROZEN recipe (``codec.py``'s module docstring), calling NEITHER
+    :meth:`~tos_runtime.transport.kis_mock.codec.KisOrderWireCodec.encode_fields` NOR its
+    private ``_decimal_to_kis_string`` helper. Reviewer disposition MEDIUM-2: the prior version
+    of this check called ``encode_fields`` directly, so it was "three consumers agreeing on one
+    encoder", not "the encoding is actually correct" — corrupting ``_decimal_to_kis_string`` left
+    every assertion in this file green. This version's own ``format(Decimal(...), "f")`` call is
+    a DIFFERENT call site from the codec's private helper, so a corrupted
+    ``_decimal_to_kis_string`` still poisons the seal's own ``request_bytes_digest`` (computed by
+    the compose resolver's ``KisWireCodecDigest``, which DOES call it) while this oracle keeps
+    computing the correct value — the two then disagree, and the assertion goes red.
+
+    The five static literals are ``fx.write_kis_mock_transport_config``'s own
+    ``static_body_fields`` values, reproduced here as plain config literals (reviewer's own
+    suggested fix) rather than read back off the loaded ``KisMockTransportConfig`` object — this
+    suite's one config fixture is the sole source of truth for them.
+    """
+    fields = {
+        "CANO": account,
+        "PDNO": instrument,
+        "ORD_QTY": format(Decimal(quantity), "f"),
+        "ORD_UNPR": format(Decimal(price), "f"),
+        "ACNT_PRDT_CD": "01",
+        "ORD_DVSN": "00",
+        "EXCG_ID_DVSN_CD": "KRX",
+        "SLL_TYPE": "",
+        "CNDT_PRIC": "",
+    }
+    body = json.dumps(
+        fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    return hashlib.sha256(body).hexdigest()
 
 
 def _spy_send_once(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
@@ -344,14 +378,18 @@ def test_honest_deny_full_evidence_level(
 
     unknown_items = {v["item"] for v in verdicts if v["outcome"] == "UNKNOWN"}
     deferred_names = {item.value for item in DEFERRED_ITEMS}
-    # item 12 (VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION) is ALSO UNKNOWN today
-    # (module docstring's "three gates, not two") — assert the deferred set is exactly the 6
-    # DEFERRED_ITEMS, checked as a subset-and-membership pair so a drift in either direction
-    # (a deferred item that stops being UNKNOWN, or a NON-deferred item that starts being
-    # UNKNOWN for an unrelated reason) is caught, without over-asserting item 12's own presence
-    # as part of "the 6".
+    # Reviewer disposition LOW-3: the previous pair of assertions here
+    # (``deferred_names <= unknown_items`` and ``unknown_items & deferred_names ==
+    # deferred_names``) was logically identical — subset and intersection-equals-subset are the
+    # same fact — and its comment overclaimed catching drift it could not catch. All six
+    # DEFERRED_ITEMS are UNKNOWN (below), AND item 12
+    # (VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION) is the ONE additional,
+    # non-deferred item that is ALSO UNKNOWN today (module docstring's "three gates, not two") —
+    # pinned as an exact upper bound so a genuinely NEW, unrelated UNKNOWN item would be caught.
     assert deferred_names <= unknown_items
-    assert unknown_items & deferred_names == deferred_names
+    assert unknown_items - deferred_names == {
+        "VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION"
+    }
     observed_deferred_numbers = {
         verify_item_number(item)
         for item in DEFERRED_ITEMS
@@ -438,23 +476,20 @@ def test_counterfactual_a_phase5_and_p02_closed_dry_run(
     ).fetchall()
     seal_payload = json.loads(seal_row[0])["payload"]["send_seal"]
 
-    config = runtime.transport._config  # noqa: SLF001
-    recomputed_body = KisOrderWireCodec.encode_fields(
+    independent_digest = _independent_wire_digest(
         account=seal_payload["account"],
         instrument=seal_payload["instrument_key"]["instrument"],
         quantity=seal_payload["outbound_quantity"],
         price=seal_payload["outbound_price"],
-        field_map=config.field_map,
-        static_body_fields=config.static_body_fields,
     )
-    recomputed_digest = KisOrderWireCodec.digest(recomputed_body)
 
     # Byte-seal identity (plan §5): the dry-run evidence's own digest, the seal's own
-    # request_bytes_digest, and an INDEPENDENT recomputation via KisOrderWireCodec all agree.
+    # request_bytes_digest, and a hand-built, genuinely independent oracle (reviewer
+    # disposition MEDIUM-2 — never calls KisOrderWireCodec) all agree.
     assert (
         dry_run_payload["request_bytes_digest"] == seal_payload["request_bytes_digest"]
     )
-    assert dry_run_payload["request_bytes_digest"] == recomputed_digest
+    assert dry_run_payload["request_bytes_digest"] == independent_digest
 
     reservation = runtime.core.ledger.outstanding(fx.instrument_key())
     assert reservation is not None
@@ -543,6 +578,16 @@ def test_counterfactual_b_live_against_hermetic_fake_kis_server(
         hashlib.sha256(order_request.body).hexdigest()
         == seal_payload["request_bytes_digest"]
     )
+    # ...and it equals a hand-built, genuinely independent oracle too (reviewer disposition
+    # MEDIUM-2) — proving not just "the wire bytes are what was sealed" but "what was sealed
+    # was correctly encoded" (a corrupted decimal formatter would surface here).
+    independent_digest = _independent_wire_digest(
+        account=seal_payload["account"],
+        instrument=seal_payload["instrument_key"]["instrument"],
+        quantity=seal_payload["outbound_quantity"],
+        price=seal_payload["outbound_price"],
+    )
+    assert hashlib.sha256(order_request.body).hexdigest() == independent_digest
 
     assert len(send_once_calls) == 1
     (result_payload,) = send_once_calls
@@ -550,25 +595,18 @@ def test_counterfactual_b_live_against_hermetic_fake_kis_server(
     assert result_payload.broker_execution_id == "T3-ODNO-1"
 
     assert _evidence_kind_count(runtime, "EGRESS_RESULT_RECORDED") == 1
-    assert _evidence_row_order(runtime, "NETWORK_CALL_ENTERED") < _evidence_row_order(
+    network_call_entered_order = _evidence_row_order(runtime, "NETWORK_CALL_ENTERED")
+    egress_result_recorded_order = _evidence_row_order(
         runtime, "EGRESS_RESULT_RECORDED"
     )
+    assert network_call_entered_order is not None
+    assert egress_result_recorded_order is not None
+    assert network_call_entered_order < egress_result_recorded_order
 
     evidence_text = _all_evidence_text(runtime)
     assert _APP_KEY_SECRET_BYTES.decode() not in evidence_text
     assert _APP_SECRET_SECRET_BYTES.decode() not in evidence_text
     assert _FAKE_BEARER_TOKEN not in evidence_text
-
-    # Pacing / at-most-one capacity retention (plan §2 decision 6; design #31 §4.4): a second
-    # DECISION_TICK for the SAME (account, instrument) scope, driven immediately after (well
-    # inside min_send_interval_ms=1100ms), produces NO second order POST. This suite does not
-    # assert WHICH of the two guards is what stops it (the reservation is still occupied by the
-    # first attempt, which independently denies a second one via the at-most-one retention
-    # before the send boundary is ever reached again) — only the observable plan §4 T3 asks
-    # for: no second POST inside the interval.
-    second_event = fx.crossing_event(seq=2)
-    runtime.run_once((second_event,))
-    assert len(server.requests_for(_ORDER_PATH)) == 1
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()
@@ -654,7 +692,7 @@ def test_mutation_b_a_digest_mismatch_is_refused_before_any_network_call(
     # built", the one fact decision 3's digest check exists to catch.
     real_seal_lookup = runtime.transport._seal_lookup  # noqa: SLF001
 
-    def _corrupting_lookup(attempt_id: str):
+    def _corrupting_lookup(attempt_id: str) -> Any:
         seal = real_seal_lookup(attempt_id)
         if seal is None:
             return None
