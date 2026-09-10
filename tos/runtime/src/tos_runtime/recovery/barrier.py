@@ -54,9 +54,15 @@ from tos.sbr.records import RecoveryAuthorityEffect, RecoveryObligation
 from tos.sbr.vocabulary import ObligationResult, ReadinessVerdict
 
 from tos_runtime.recovery.inputs import RecoveryInputs
-from tos_runtime.recovery.reconciliation import RECON_UNAVAILABLE, RECONCILED
+from tos_runtime.recovery.reconciliation import RECON_UNAVAILABLE, ReconciliationOutcome
 
-__all__ = ["RECONCILED", "RECON_UNAVAILABLE", "RecoveryVerdict", "RecoveryBarrier"]
+__all__ = ["RECON_UNAVAILABLE", "RecoveryVerdict", "RecoveryBarrier"]
+
+#: The outcome substituted for a possibly-live attempt with no entry at all in
+#: :attr:`~tos_runtime.recovery.inputs.RecoveryInputs.possibly_live_reconciliation` — reconciliation
+#: never ran for it, treated exactly like an explicit unavailable/unmatched result (fail-closed,
+#: never vacuously cleared).
+_UNRECONCILED = ReconciliationOutcome(cleared=False, reason=RECON_UNAVAILABLE)
 
 _OBLIGATION_REPLAY_IDENTICAL = "PHASE5_W1_REPLAY_VERDICT_IDENTICAL"
 _OBLIGATION_NO_POSSIBLY_LIVE = "PHASE5_W1_NO_POSSIBLY_LIVE_ATTEMPTS"
@@ -99,8 +105,9 @@ def _build_obligations(inputs: RecoveryInputs) -> frozenset[RecoveryObligation]:
        "none exist" check: :attr:`~tos_runtime.recovery.inputs.RecoveryInputs
        .possibly_live_reconciliation` (:mod:`tos_runtime.recovery.reconciliation`) must mark
        every entry in :attr:`~tos_runtime.recovery.inputs.RecoveryInputs.possibly_live_attempts`
-       :attr:`~tos_runtime.recovery.reconciliation.ReconciliationOutcome.cleared`; a missing
-       entry (reconciliation never ran for it) fails closed exactly like an explicit ``False``.
+       :attr:`~tos_runtime.recovery.reconciliation.ReconciliationOutcome.cleared` ``True``; a
+       missing entry (reconciliation never ran for it) fails closed exactly like an explicit
+       ``False`` (:data:`_UNRECONCILED`).
     3. No legacy receipts in the replay window (ⓑ).
     4. RCL generation state consistent with the evidence tip — a structural PRESENCE check only
        (design #40 v1.1 note ② forbids equating the two epochs outright): a genesis boot with an
@@ -122,8 +129,7 @@ def _build_obligations(inputs: RecoveryInputs) -> frozenset[RecoveryObligation]:
         and inputs.rcl_runtime_generation is not None
     )
     all_possibly_live_cleared = all(
-        inputs.possibly_live_reconciliation.get(attempt.event_id, RECON_UNAVAILABLE)
-        == RECONCILED
+        inputs.possibly_live_reconciliation.get(attempt.event_id, _UNRECONCILED).cleared
         for attempt in inputs.possibly_live_attempts
     )
     return frozenset(
@@ -153,8 +159,9 @@ def _reason_for(inputs: RecoveryInputs, *, ready: bool) -> str:
     unreconciled = [
         attempt
         for attempt in inputs.possibly_live_attempts
-        if inputs.possibly_live_reconciliation.get(attempt.event_id, RECON_UNAVAILABLE)
-        != RECONCILED
+        if not inputs.possibly_live_reconciliation.get(
+            attempt.event_id, _UNRECONCILED
+        ).cleared
     ]
     if unreconciled:
         reasons.append(f"{len(unreconciled)} possibly-live attempt(s) unreconciled")
@@ -194,11 +201,12 @@ class RecoveryVerdict:
             durably records the full :class:`~tos_runtime.recovery.inputs.RecoveryInputs`
             alongside this).
         possibly_live_reconciliation: ``{event_id: reason}`` for every possibly-live attempt —
-            copied straight from :attr:`~tos_runtime.recovery.inputs.RecoveryInputs
-            .possibly_live_reconciliation` (:mod:`tos_runtime.recovery.reconciliation`):
-            :data:`RECONCILED` when cleared, a :class:`~tos_runtime.recon.service
-            .ReconciliationReport`-supplied reason otherwise, or :data:`RECON_UNAVAILABLE` when
-            reconciliation never ran for that entry at all.
+            the ``reason`` half of :attr:`~tos_runtime.recovery.inputs.RecoveryInputs
+            .possibly_live_reconciliation`'s own :class:`~tos_runtime.recovery.reconciliation
+            .ReconciliationOutcome` (:data:`~tos_runtime.recovery.reconciliation
+            .RECONCILED_MATCHED` when cleared, :data:`~tos_runtime.recovery.reconciliation
+            .NO_ATTEMPT_ID`, a :class:`~tos_runtime.recon.service.ReconciliationReport`-supplied
+            reason, or :data:`RECON_UNAVAILABLE` otherwise).
         authority_effect: The all-false :class:`~tos.sbr.records.RecoveryAuthorityEffect` this
             verdict carries (SBR-INV-003 — a recovery verdict creates no authority).
     """
@@ -243,8 +251,8 @@ class RecoveryBarrier:
         readiness = ReadinessVerdict.READY if closed else ReadinessVerdict.NOT_READY
         reconciliation = {
             attempt.event_id: inputs.possibly_live_reconciliation.get(
-                attempt.event_id, RECON_UNAVAILABLE
-            )
+                attempt.event_id, _UNRECONCILED
+            ).reason
             for attempt in inputs.possibly_live_attempts
         }
         return RecoveryVerdict(
