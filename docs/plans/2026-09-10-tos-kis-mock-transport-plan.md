@@ -80,3 +80,11 @@
 | 1 | **별도 non-live admission 신설** 승인 — 기존 게이트 ② 불변 · 5조건 전부 양성일 때만 · REAL 구조 불가 · posture 는 named-TBD null |
 | 2·3 | TR ID·경로·필드 매핑 · `min_send_interval_ms` · 토큰 재발급 간격 = **개발 측이 근거(공식 명세+N-17/N-19 · P-13/N-15 실측) 붙여 제안표 작성 → 운영자 승인** · 승인 전 예시 YAML null 유지(부팅 거부) |
 | 4 | **T1~T3 먼저 착지, Phase 5 W1 과 병행** — 브랜치 `feat/tos-kis-mock-transport-t1`(워크트리 `../kis_unified_sts-mock-transport`, main `296c0e5f` 기점) |
+
+## 8. 실행 결과 — T1 착지 (2026-09-10 · PR #669 → main `fb16b102`)
+
+- **착지**: `tos_runtime/transport/kis_mock/{config,client,codec,adapter}.py` · 예시 설정 · custody 스코프 2종(`kis_mock.app_key`/`app_secret` — account 는 seal 에서) · 런북 `docs/runbooks/tos-kis-mock-transport.md`(값 제안표 · 운영자 승인 대기 · 토큰 재발급 간격은 서버 실측 대기). 런타임 940 · brokeradapter canary 52 · 커널 diff 0 · 실주문 0.
+- **독립 리뷰**: 1차 needs-attention(HIGH 2 · MEDIUM 3 · LOW 3) → 처분 `17c74f9a` → 재심 approve + M8 커버리지 핀 `d1fe6151`. 뮤테이션 M1~M8 전부 red.
+- **설계 정정 (리뷰 HIGH 2건)**: ① 세션 seal 의 `request_bytes_digest` 는 오늘 `capsule_egress_request_digest`(캡슐 터미너스 stand-in)와 동일해야 하므로(커널 `exact_binding`) 어댑터의 KIS 본문 digest 와 **결코 일치할 수 없다** → **공유 wire codec `KisOrderWireCodec`**(9필드 정확 · sorted/compact JSON · sha256)을 어댑터의 유일 본문 원천으로 두고, **T2 가 compose context resolver 의 두 digest 를 이 codec digest 로 결속**해야 한다. 그 전까지 `mode: live` 는 로드 단계에서 무조건 거부(dry_run 전용). ② CANO 는 custody 가 아니라 `seal.account`(«seal 은 유일 원천»).
+- **T2 must**(리뷰어 목록): codec 결속 · `build_client(config)` 만 사용(주입 client 는 테스트 시임) · `FileCustody.PROVISIONED_SCOPES` 에 `kis_mock.*` 확장 · Coordinator non-live admission(§7-1) · CLI `--transport kis-mock`.
+- **T2 이월 사실**: `static_body_fields` 5필드 값·TR ID·간격값은 운영자 승인 제안표(런북 §2) — 승인 전 null=부팅 거부.
