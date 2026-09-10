@@ -192,6 +192,13 @@ def config_dir(tmp_path: Path) -> Path:
             # This compose e2e suite's synthetic (reaches_broker=False)
             # transport is exactly the case this posture admits.
             "live_authorization_state": "NOT_AUTHORIZED",
+            # T2 lane B (plan §2 decision 7 / §7 operator disposition row 1)
+            # — this compose e2e suite's active scope is the SYNTHETIC one
+            # (reaches_broker=False), which never reaches this posture at
+            # all (gate ② already admits it), so the value here is inert for
+            # every existing e2e test; `false` is the honest "not
+            # operator-admitted" default, never a silent grant.
+            "nonlive_broker_consuming": {"admitted": False},
         },
     )
     _write_yaml(
