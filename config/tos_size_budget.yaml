@@ -497,7 +497,7 @@ exceptions:
     목록 끝에 append(gateway.py 항목의 2026-09-07 재등재 주석과 동일 관례) —
     후속 하우스키핑에서 물리적 재정렬 가능.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 102
+  measured: 109
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
