@@ -33,7 +33,7 @@
 | 4 | **P-EXT** ×≥5 | `python -m tools.broker_probes.run P-EXT --symbol <mini 근월물> --confirm` | 운영자가 **HTS/MTS 로 수동 모의 주문**을 프로브 대기 중 넣음 · 5회 반복 | ~15 min/trial · MEDIUM | `external_activity_detect` 미실행(운영자 동석 필요) |
 | 5 | **N-16** (실전 조회) | 별도 셸: 실전 키 export → `python -m tools.broker_probes.run N-16 --confirm` → 셸 종료 | 야간 창 18:00–05:00 KST · **실전 주식 포지션 보유 상태** · 운영자 승인 | 1 call · MEDIUM | 야간 재실행 필요(보유 상태에서) |
 | 6 | **N-18** (실전 조회) | 같은 실전 셸에서 `python -m tools.broker_probes.run N-18 --day-symbol <주간 선물코드> --night-symbol <야간 선물코드> --confirm` (두 심볼 없으면 N-18c 두 레그가 `skip` 으로 빠져 야간코드 질문이 미답으로 남음) | 운영자 승인 | 3 calls · MEDIUM | 미실행 |
-| — | **N-19 → P-CA** | **실행 불가** | — | — | `registry.py` 에 **미등재**(2026-08-07 정의만 · diff 초안) — 개발 측이 먼저 등재해야 함. 실행하지 말 것 |
+| — | **N-19 → P-CA** | **아직 실행 대상 아님** | — | — | 2026-09-10 `registry.py` **등재 완료**(둘 다 `supported=False`). N-19 는 개발 측 명세 대조(서버 불요 · 산출 `docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md`). P-CA 는 구현 착지 후 이 표에 실행 행이 추가된다 — 그 전엔 실행해도 skip 사유만 출력 |
 | — | **P-R5 / P-R5-PRE** | **실행 금지** | — | — | 실전 주문 = 정책 영구 차단(preflight 판정 `ABORT_ORDER_AVAILABLE_ZERO_OR_UNREADABLE` 은 terminal · «입금 대기» 아님). P-R5-PRE 도 실전 주문 트랙 전용이라 돌리지 않음 |
 | (선택) | P-11 | `… P-11 --asset stock --symbol 005930 --confirm --allow-fill` | 시장가 체결 · 포지션 남음 · **맨 마지막** | ~15 min · HIGH | 재측정 원하면 — 필수 아님 |
 

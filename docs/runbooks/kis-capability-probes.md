@@ -151,6 +151,8 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 | **P-BAL** | POSITIONS_BALANCES_MARGIN | REAL_READ_ONLY | REAL_PROD / MOCK_VTS (`--env`) | `python -m tools.broker_probes.run P-BAL --asset stock --env real --confirm` | ~1 min | LOW | 아니오 |
 | **P-R5-PRE** | OPEN_ORDER_QUERY | REAL_READ_ONLY | REAL_PROD | `python -m tools.broker_probes.run P-R5-PRE --symbol <mini> --expect-account-fingerprint <hex> --confirm` | 5 GET (~10 s) | MEDIUM | 아니오 |
 | **P-R5** | OPEN_ORDER_QUERY | ORDER | REAL_PROD | **§5.7 전용 절차** (`--i-understand-this-places-real-orders`) | ~5 min at N=3 | **HIGH — 실자금** | **예 (실전)** |
+| **N-19** | CORPORATE_ADMINISTRATIVE_EVENTS | SPEC_CROSSCHECK | NONE | (스크립트 아님 — 명세 대조 · 산출 `docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md`) | ~2-3 h 데스크워크 | LOW | 아니오 |
+| **P-CA** | CORPORATE_ADMINISTRATIVE_EVENTS | MANUAL (GET 전용) | MOCK_VTS / REAL_PROD (`--env`) | `python -m tools.broker_probes.run P-CA --asset stock --symbol <종목> --confirm` (**구현 전까지 `supported=False` — 실행 시 skip 사유 출력**) | 이벤트 창 전후 폴링 · 운영자 7-시각 기록 | LOW | 아니오 |
 
 > **P-NMPR·P-BAL·P-R5-PRE·P-R5는 정본 16에 속하지 않는다.** 각각 N-17 대조,
 > wave-3b 런타임 트레이스(H4), 그리고 wave-3b D-2의 NOT-IN-SCOPE 항목에서 파생된
@@ -1069,11 +1071,17 @@ N-18b(해외지수 심볼 표기)를 담지 못한다. `session_phase_semantics`
 아니다. 6건 전부 §6.4의 "값이 확립되지 않았으면 `null`을 유지한다" 상태이며, 실측
 후에도 `status`/`assurance_level` 승격은 자동이 아니다.
 
-### 9.2 프로브가 정의되지 않은 broker 관련 키
+### 9.2 프로브가 정의되지 않은 broker 관련 키 — **처분 완료 (2026-09-10 등재)**
 
-`B_non_trade_event_detect`(:815) / `B_non_trade_reconcile`(:833) — corporate-action
-표면이 repo에 부재하여(grep 0) **측정 대상 자체가 없다.** 이 두 키는 이번 캠페인으로
-채워지지 않으며, "프로브 전건 실행 = 전 키 확보"가 아님을 승인 패키지에 명시할 것.
+`B_non_trade_event_detect`(VP-002 :922) / `B_non_trade_reconcile`(:940) 은 2026-08-07
+정의(`docs/plans/2026-08-07-tos-p02-nontrade-probe-definition.md`)에 따라 **N-19**(명세
+대조 · `SPEC_CROSSCHECK` · `ENV_NONE` · 서버 불요 · 개발 측 데스크워크 · 산출
+`docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md`)와 **P-CA**(기회주의 관측 ·
+`MANUAL` · GET 전용 · 선행 보유 · 선물 제외 · N-19 선행)로 `registry.py` 에 등재됐다.
+등재 시점에는 둘 다 `supported=False`(N-19 는 스크립트가 아님 · P-CA 는 구현 후속)이며
+`--coverage` 의 `unsupported` 에 사유와 함께 노출된다. 두 키의 bound 는 P-CA 구현·실행
+전까지 **NOT_ESTABLISHED** 로 남으며, "프로브 전건 실행 = 전 키 확보"가 아님은 여전히
+승인 패키지에 명시할 것. 집계값은 스칼라가 아니라 class×leg 표다(정의서 §5.2).
 
 ### 9.3 결과 디렉터리 잔재
 

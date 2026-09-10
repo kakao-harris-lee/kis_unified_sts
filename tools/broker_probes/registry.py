@@ -7,7 +7,7 @@ Sources of the probe set (12 + 4 = 16 ratified, plus 4 follow-ups):
   P-13, P-14, P-15, P-16, P-EXT, P-FQP.
 * **4 census additions** — ``docs/plans/2026-07-29-tos-phase0-p02-execution-plan.md``
   §1 T2 (:34-38): N-15, N-16, N-17, N-18.
-* **4 follow-ups**, all deliberately **outside** the ratified 16 — each one's
+* **6 follow-ups**, all deliberately **outside** the ratified 16 — each one's
   ``source`` starts with neither "draft" nor "plan", so the canonical/census
   counts in :func:`coverage_report` stay exactly as ratified:
 
@@ -16,6 +16,11 @@ Sources of the probe set (12 + 4 = 16 ratified, plus 4 follow-ups):
   * P-R5-PRE / P-R5 — wave-3b D-2's NOT-IN-SCOPE item. **P-R5 is the only probe
     in this register that places orders on a REAL account**; see
     ``tools/broker_probes/probes_real_order.py`` and runbook §5.7.
+  * N-19 / P-CA — ``docs/plans/2026-08-07-tos-p02-nontrade-probe-definition.md``
+    §5, registering probes for the two ``B_non_trade_event_detect`` /
+    ``B_non_trade_reconcile`` ``ADJACENT_BOUND_KEYS``. Both ``supported=False``
+    (see ``skip_reason``); N-19 is a documentary cross-check (``ENV_NONE``),
+    P-CA is an opportunistic GET-only observation gated on N-19.
 
 ``bounds_keys`` cite ``tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml``
 key names verified by direct read (line numbers in :data:`BOUND_KEYS`).
@@ -196,24 +201,30 @@ ADJACENT_BOUND_KEYS: dict[str, BoundKey] = {
     ),
     "B_non_trade_event_detect": BoundKey(
         "B_non_trade_event_detect",
-        815,
+        922,
         "null",
         "source_and_broker_specific",
         "CONTAIN",
         "reference_source_and_broker_capability_profile",
         True,
-        "ADR-002-010. Corporate-action surface is absent from the repo "
-        "(draft memo §3.1 row 12: grep 0 hits) — no probe defined.",
+        "ADR-002-010. Dominated by broker reflection delay (clock c: effective->"
+        "broker-reflect, per event_class x leg over the 7 separate times in "
+        "tos/nontrade/records.py:359-366), NOT poll cadence — semantics is "
+        "source_and_broker_specific, not hard_maximum. Probes: N-19 (spec) + P-CA "
+        "(opportunistic, GET-only, N-19-gated). Bound stays NOT_ESTABLISHED; safety "
+        "carried by effective_window_blocks_new_risk (predicates.py:873-919, no-numeric) "
+        "and BC-AC-019 EV-L3.",
     ),
     "B_non_trade_reconcile": BoundKey(
         "B_non_trade_reconcile",
-        833,
+        940,
         "null",
         "source_and_broker_specific",
         "QUARANTINE_UNKNOWN",
         "reconciliation_and_broker_capability_profile",
         True,
-        "ADR-002-010. Same gap as B_non_trade_event_detect.",
+        "ADR-002-010. Permitted unreconciled budget, bounded by broker field-level "
+        "reconciliation evidence + finality timing. Probes: N-19 + P-CA. NOT_ESTABLISHED.",
     ),
     "B_post_trade_effect_to_obligation_commit": BoundKey(
         "B_post_trade_effect_to_obligation_commit",
@@ -864,6 +875,85 @@ PROBES: dict[str, ProbeSpec] = {
             "config/execution.yaml::futures_contract_spec and never assumed",
         ),
         entrypoint="tools.broker_probes.probes_real_order:probe_real_order",
+    ),
+    # ---- non_trade follow-up (source starts with neither "draft" nor "plan" so
+    # coverage_report()'s canonical-12 / census-4 counts stay exactly as ratified) ----
+    "N-19": _S(
+        probe_id="N-19",
+        title=(
+            "Spec cross-check — corporate-action reflection model "
+            "(CA-schedule API 존부 / 7-시각별 반영 시점 / reconciliation 증거 / 독립 참조원)"
+        ),
+        source="non_trade 2키 프로브 정의 설계 (2026-08-07)",
+        kind="SPEC_CROSSCHECK",
+        environment=ENV_NONE,
+        dimension="CORPORATE_ADMINISTRATIVE_EVENTS",
+        bounds_keys=("B_non_trade_event_detect", "B_non_trade_reconcile"),
+        instance_fields=(
+            "capabilities.corporate_actions.fallback_reference",
+            "capabilities.corporate_actions.status",
+            "capabilities.corporate_actions.evidence_refs",
+        ),
+        statistic="categorical; documentary cross-check, no measurement (N-17 형).",
+        risk="LOW",
+        duration="~2-3 h desk work",
+        supported=False,
+        skip_reason=(
+            "N-19 is a documentary cross-check, not a script (N-17 형). 수단"
+            "(kis-code-assistant-mcp 조회 전용)은 이미 결정됨 -- plan §1 T3 D6 조건문은 "
+            "2026-07-29 운영자 MCP 재가동 보고(대화 수준·리포 외 행위)로 해소됐고 N-17이 "
+            "그 수단으로 실제 대조를 수행했다 (registry.py N-17 skip_reason·런북 §7이 반영). "
+            "따라서 N-19는 동일 MCP 경로로 즉시 착수 가능 -- 차단 선행조건 없음. 첫 질문: "
+            "KIS가 CA 조회/통지 API를 노출하는가. 체크리스트는 런북 §7-CA."
+        ),
+        entrypoint="",
+    ),
+    "P-CA": _S(
+        probe_id="P-CA",
+        title=(
+            "corporate_action reflection -- 7-time x leg (effective->broker-reflect->"
+            "detect) latency (기회주의·GET-only·operator t0)"
+        ),
+        source="non_trade 2키 프로브 정의 설계 (2026-08-07)",
+        kind="MANUAL",
+        environment=ENV_MOCK,  # P-BAL식 --env 오버라이드; 아티팩트가 실제 env 기록 (§5.2 M-3)
+        dimension="CORPORATE_ADMINISTRATIVE_EVENTS",
+        bounds_keys=("B_non_trade_event_detect", "B_non_trade_reconcile"),
+        instance_fields=(
+            "capabilities.corporate_actions.evidence_refs",
+            "capabilities.corporate_actions.status",
+        ),
+        statistic=(
+            "per (event_class x leg) — single t0_effective 폐기 (ADR §8:171 no-collapse; "
+            "records.py:359-366). 배당 기준가-조정 leg: t0=ex_time; 배당 현금 leg: "
+            "t0=payable_time; 분할/병합 수량 leg: t0=effective_time; (선물 결제 leg: "
+            "t0=settlement_time — 관측 제외). 셀 후보 = candidate max(t1_leg - t0_leg). "
+            "aggregate B_non_trade_* 는 스칼라 아닌 class x leg 표 (source_and_broker_specific "
+            "추정량은 런북 §8 미정의). Rare event => tiny n => candidate_only; 단발로 "
+            "hard_maximum 주장 금지. 늦은 반영 0관측 != 0 (VP-002:772). 1차 산출 = N-19 "
+            "모델/후보 봉쇄창 대비 FALSIFICATION."
+        ),
+        risk="LOW",  # GET-only (P-BAL 극성); 표와 일치
+        duration="이벤트 창 전후 폴링, operator in the loop",
+        emits_orders=False,  # GET 전용; 보유는 선행조건(P-BAL 선례)
+        requires_confirm=True,
+        supported=False,
+        skip_reason=(
+            "기회주의: (a) N-19 선행 필수 — KIS CA-API 존부·모의 CA 처리 여부 UNKNOWN; "
+            "(b) operator 공급 7-시각(ex/effective/payable/settlement) 필수 (in-repo CA "
+            "캘린더 부재: SEIBRO stub market_data_collectors.py:57-66·DART 텍스트만); "
+            "(c) REAL_PROD 표본은 예정 CA와 겹치는 선행 실주식 보유 필요. 선물 제외 "
+            "(모의 잔고부재 client.py:1056 / 실선물 무증거금). (a) 미착지 시 unanchorable."
+        ),
+        prerequisites=(
+            "N-19 선착지 — CA-API 존부·모의 CA 처리 여부·독립 참조원(§13.13) 확립 전 unanchorable",
+            "operator가 관련 7-시각(ex/effective/payable/settlement)을 프롬프트 시 축자 기록 (P-EXT 문형)",
+            "대상 종목 선행 보유 — 모의=KIS 모의투자 주문 산물 / 실전=기존 실주식 보유; 보유 0이면 확립 불가 (P-BAL 문형)",
+            "선물 제외 — 모의 선물잔고 미지원(shared/kis/client.py:1040 NOTE·가드 :1056) + 실선물 무증거금·무보유",
+            "READ-ONLY: GET 폴링만, 모듈에 주문 경로 없음 (P-BAL 문형)",
+            "--env real 시 운영자 승인 (실 자격증명); MOCK 아티팩트는 REAL_PROD 문서 인용 불가(§6.2·ADR-002-004 §13.14)",
+        ),
+        entrypoint="",
     ),
 }
 
