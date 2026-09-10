@@ -91,3 +91,11 @@
 | 4 | 레거시 `services/dashboard` 의 읽기 전용 투영 결선은 **W4 안에서**(write 포트 0 negative-grep 으로 종료 조건 3 실증) |
 | 5 | **커널 라운드 #2 로 묶어 승인**: `egressgw/mesh.py` 분리 + `SendBoundaryContext` deferred 6 입력 필드 + Phase 3 이월 ⓔ(`GatewayEvidenceRecord.step` 필수화) + item 6/12 reason 문언 정정 · **W1 착지 후 시작, W3 착수 전 선행** |
 | 착수 | **즉시 — W1 ∥ MOCK transport T1** · 브랜치 `feat/tos-phase5-w1-recovery`(워크트리 `../kis_unified_sts-phase5-w1`, main `296c0e5f` 기점) |
+
+## 9. 실행 결과 — W1 착지 (2026-09-10 · PR #670 → main `7579196c`)
+
+- **착지**(레인 W1-a/W1-b/W1-c · 9커밋): `tos_runtime/recovery/`(barrier · inputs · possibly_live · legacy_receipts · reconciliation · composite_state_writer) · `tos_runtime/recon/`(ports · witness_synthetic · evidence_reader · service) · `compose/_recovery_wiring.py` · `_engine_wiring.py`(`REPLAY_VERDICT_IDENTICAL` durable 기록) · `driver.py`(composite-state 쓰기 · 영수증 이전 · 실패 = halt) · 테스트 recovery 57 · recon 39 · 크래시 drill 11. 런타임 1038(T1 병합 포함) · 커널 diff 0 · 예산 재등재 2(root.py 109 · `_process_next` 141).
+- **정직 상태**: 합성 witness 는 evidence 와 같은 저장소를 읽으므로 **비독립으로 표기**되어 `WITNESS_NOT_INDEPENDENT` HOLD — **실 broker witness(KIS 조회 어댑터) 전까지 어떤 possibly-live 도 자동 해제되지 않는다**(종료 조건 1 의 구조적 실증). 스코프 단위 permit 은 보수적(같은 instrument 의 무관한 attempt 가 실패하면 좋은 attempt 도 HOLD) — 수용·문서화.
+- **독립 리뷰**: 1차 needs-attention(HIGH 2 · MEDIUM 5 · LOW 1 · 뮤테이션 생존 1) → 처분(attempt 단위 reconciliation · 비독립 표기 · SEND_HANDED_OFF 키잉 · `FlowFingerprint` 검증 · durable replay verdict · inbox 전행 파싱 · 상수 단일화 · typed invariant · 쓰기 실패 halt) → 재심 F1~F8 전건 동작 종결 · 뮤테이션 9종 red · 잔여 3(mypy·assert·문언) 처분.
+- **이월**: obligation 1 의 양성 행은 그 행을 쓰는 호출이 자기 성공을 증언(음성 행만 부팅 간 하중 · LOW) · W1-a 의 `_reconciliation_service_available` 프로브는 실 결선으로 대체됨 · 실 broker witness 는 MOCK transport T2/T3 이후.
+- **공유 워크트리 충돌 1회**(W1-a 재가동 ↔ W1-c · 파일 clobber → ImportError) — 복구 완료 · 교훈은 메모리(`subagent-reports-arrive-out-of-order`)에 기록: 끝난 레인에 메시지 금지.
