@@ -518,3 +518,7 @@ exceptions:
     독립 리뷰 F7 정정) · ``_finalize`` 101→103(scopes 매개변수 + ComposedRuntime
     인자 1줄). root.py 는 정본 결선 순서 문서라 호출 시퀀스 재구성은 하지 않음.
     목록 끝에 append(공유 워크트리 관례).
+    **2026-09-10 Phase 5 W1-a 재등재 102→109**: recovery barrier 결선
+    ``apply_recovery_barrier(composed, ...)`` 호출 1건(kwargs 4 · black 개행)이
+    ``compose_paper_runtime`` 끝에 추가됨 — 정본 결선 순서 문서라 분해 대신 등재
+    (Phase 5 계획 §2 결정 2: 장벽이 READY 가 아니면 드라이버 미결선).
