@@ -14,7 +14,12 @@ the stated order (slice plan §4):
     ``Stage``s for steps 4, 6-10, 13, 14; the kernel's OWN existing
     implementations for steps 2, 3, 5, 11) -> ``BrokerEgressGateway`` (the
     compose-root ``SendBoundaryContext`` resolver,
-    :mod:`tos_runtime.compose.context`) -> ``SyntheticPaperTransport``.
+    :mod:`tos_runtime.compose.context`) -> ``SyntheticPaperTransport``
+    -> the TOS Phase 5 W1 recovery barrier
+    (:func:`~tos_runtime.compose._recovery_wiring.apply_recovery_barrier` — see
+    that module's own docstring for why this runs here, right after ``_finalize``,
+    rather than literally "before the engine driver is wired": the durable inbox
+    the barrier reads does not exist any earlier in this function).
 
     **Release admission is moved ahead of custody/evidence/RCL, reported
     deviation from the plan's literal listed order.** See the "identity +
@@ -67,6 +72,7 @@ from tos.engine import (
     StrategyRegistry,
 )
 
+from tos_runtime.compose._recovery_wiring import apply_recovery_barrier
 from tos_runtime.compose._types import (
     ComposedRuntime,
     ConstructionConfig,
@@ -197,7 +203,7 @@ def compose_paper_runtime(
         continuity_id=continuity_id,
     )
 
-    return _finalize(
+    composed = _finalize(
         config_dir=config_dir,
         data_dir=data_dir,
         infra=boot.infra,
@@ -212,4 +218,11 @@ def compose_paper_runtime(
         release_admitted=boot.release_admitted,
         continuity_id=continuity_id,
         broker_scopes=boot.broker_scopes,
+    )
+    return apply_recovery_barrier(
+        composed,
+        config_dir=config_dir,
+        data_dir=data_dir,
+        custody_root=custody_root,
+        scheme=_SCHEME,
     )

@@ -61,11 +61,13 @@ from tos_runtime.engine.inbox import NewRiskHaltClearOutcome, SqliteEventInbox
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.recovery.barrier import RecoveryVerdict
 from tos_runtime.time.service import TrustworthyTimeService
 
 __all__ = [
     "ComposedRuntime",
     "ConstructionConfig",
+    "RecoveryBarrierHeld",
     "ReleaseAdmissionRefused",
 ]
 
@@ -89,6 +91,18 @@ class ReleaseAdmissionRefused(RuntimeError):
     """Raised by :func:`compose_paper_runtime` when release admission denies
     (slice plan §4 item 1: "release admission(거부 시 기동 중단)") — nothing
     past custody/evidence/RCL is constructed when this is raised."""
+
+
+class RecoveryBarrierHeld(RuntimeError):
+    """Raised by :meth:`ComposedRuntime.run_once` when the TOS Phase 5 W1 recovery barrier
+    (:mod:`tos_runtime.recovery.barrier`, wired by :mod:`tos_runtime.compose._recovery_wiring`)
+    did not resolve to :attr:`~tos.sbr.vocabulary.ReadinessVerdict.READY`.
+
+    A typed refusal, never a silent no-op (plan §2 decision 2): a caller that tries to drive an
+    event through a held runtime learns exactly why, via :attr:`ComposedRuntime.recovery`,
+    rather than getting an ``AttributeError`` on a ``None`` driver or — worse — a call that
+    quietly does nothing.
+    """
 
 
 @dataclass(frozen=True)
@@ -156,13 +170,21 @@ class ComposedRuntime:
     inbox: SqliteEventInbox
     #: The single driver over ``core``/``gateway`` (plan §1.1) — the ONLY
     #: caller of ``core.handle``/``run`` in this composed runtime; see
-    #: ``tos/runtime/tests/engine/test_no_direct_core_calls.py``.
-    driver: EngineDriver
+    #: ``tos/runtime/tests/engine/test_no_direct_core_calls.py``. ``None`` iff the TOS Phase 5
+    #: W1 recovery barrier (:attr:`recovery`) did not resolve to ``READY`` — see
+    #: :meth:`run_once`'s own ``RecoveryBarrierHeld`` refusal.
+    driver: EngineDriver | None
     #: The loaded Broker Scope table (TOS Phase 4 plan §2 decisions 1-2, G-4)
     #: — the SAME config :attr:`context_resolver`'s ``transport_nature`` /
     #: ``credential_route_inventory`` were derived from, exposed so a caller
     #: can inspect the active scope without re-loading the config file.
     scopes: BrokerScopesConfig
+    #: The TOS Phase 5 W1 recovery-barrier verdict (:mod:`tos_runtime.recovery.barrier`),
+    #: stamped by :func:`tos_runtime.compose._recovery_wiring.apply_recovery_barrier`
+    #: immediately after this runtime is otherwise fully composed. ``None`` only transiently,
+    #: before that wiring runs inside :func:`~tos_runtime.compose.root.compose_paper_runtime` —
+    #: never observable on a runtime a caller actually receives.
+    recovery: RecoveryVerdict | None = None
 
     def run_once(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
         """Drive ``events`` through :attr:`driver` to completion, one at a time.
@@ -181,7 +203,16 @@ class ComposedRuntime:
             One :class:`~tos.engine.core.EventResult` per event, in order — the result for EACH
             enqueued event specifically; any re-injected follow-on ``EGRESS_RESULT`` events are
             processed too (as a side effect, durably recorded) but are not included here.
+
+        Raises:
+            RecoveryBarrierHeld: If :attr:`driver` is ``None`` (the TOS Phase 5 W1 recovery
+                barrier did not resolve to ``READY``) — a typed refusal, never a silent no-op.
         """
+        if self.driver is None:
+            raise RecoveryBarrierHeld(
+                "recovery barrier is not READY -- the engine driver is not wired "
+                f"(recovery={self.recovery!r})"
+            )
         return tuple(self.driver.enqueue_and_run(event) for event in events)
 
     #: The evidence kind recorded by :meth:`clear_new_risk_halt` on success — a runtime-level
