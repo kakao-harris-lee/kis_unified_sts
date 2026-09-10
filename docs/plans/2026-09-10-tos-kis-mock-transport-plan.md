@@ -72,3 +72,11 @@
 2. 주문 TR ID·경로·필드 매핑 값(공식 명세 대조 후 설정 기입 · P-1/N-17 산출물 인용).
 3. `min_send_interval_ms`·`token_reissue_min_interval_s` 값(P-13·N-15 실측 — 작업 4 운영자 레인과 결속).
 4. 착수 시점: Phase 5 W3(안전 메시 owner) 전에 T1~T3 를 먼저 착지할지(권고: **먼저** — 송신은 어차피 0 이고 Phase 5 가 닫히는 날 코드 변경 0 으로 첫 주문이 나가야 «구조 완결» 이 실증된다).
+
+## 7. 운영자 처분 (2026-09-10)
+
+| # | 처분 |
+|---|---|
+| 1 | **별도 non-live admission 신설** 승인 — 기존 게이트 ② 불변 · 5조건 전부 양성일 때만 · REAL 구조 불가 · posture 는 named-TBD null |
+| 2·3 | TR ID·경로·필드 매핑 · `min_send_interval_ms` · 토큰 재발급 간격 = **개발 측이 근거(공식 명세+N-17/N-19 · P-13/N-15 실측) 붙여 제안표 작성 → 운영자 승인** · 승인 전 예시 YAML null 유지(부팅 거부) |
+| 4 | **T1~T3 먼저 착지, Phase 5 W1 과 병행** — 브랜치 `feat/tos-kis-mock-transport-t1`(워크트리 `../kis_unified_sts-mock-transport`, main `296c0e5f` 기점) |
