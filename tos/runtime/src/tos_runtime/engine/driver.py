@@ -102,6 +102,7 @@ from tos.engine.vocabulary import (
 from tos.ordering import OrderingEvent
 from tos.orthostate import CompositeState
 
+from tos_runtime.engine.finality_projection import project_finality
 from tos_runtime.engine.flow_fingerprint import FlowFingerprint, flow_fingerprint_for
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.orthostate_projection import (
@@ -111,7 +112,7 @@ from tos_runtime.engine.orthostate_projection import (
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
-from tos_runtime.rcl.finality_witness import finality_witness_for
+from tos_runtime.posttrade.release_consumer import FinalityReleaseConsumer
 from tos_runtime.time.sources import MonotonicSource
 
 __all__ = ["EngineDriver", "EngineDriverInvariantError"]
@@ -181,14 +182,6 @@ _DECISION_TICK_DROPPED_ON_RECOVERY_KIND = "DECISION_TICK_DROPPED_ON_RECOVERY"
 #: bound to the SAME durable evidence store this driver reads (independent review finding #2's
 #: own measurement: "each stage carries its own sink bound to the real SqliteEvidenceStore").
 _SEND_EVIDENCE_KINDS: tuple[str, ...] = ("SEND_STARTED", "SEND_HANDED_OFF")
-
-#: Evidence kinds this driver appends when :class:`~tos_runtime.posttrade.finality
-#: .SyntheticFinalityProducer` produces a proof for a genuinely-``APPLIED`` ``EGRESS_RESULT``
-#: (team-lead CR-4 dispatch, plan §2.2). Not kernel ``EvidenceKind`` members — this is
-#: runtime-level evidence about a SYNTHETIC-transport artifact the kernel's own posttrade
-#: package never emits itself (``tos_runtime.posttrade.finality``'s own module docstring).
-_ECONOMIC_OBLIGATION_KIND = "ECONOMIC_OBLIGATION"
-_POSTTRADE_FINALITY_PROOF_KIND = "POSTTRADE_FINALITY_PROOF"
 
 
 class _YieldOrderCounter:
@@ -379,6 +372,14 @@ class EngineDriver:
         self._orthostate_projector = orthostate_projector
         self._finality_producer = finality_producer
         self._recovery_composite_writer = recovery_composite_writer
+        #: TOS Phase 5 W2-R — the release consumer :meth:`_project_finality` (delegating to
+        #: :func:`~tos_runtime.engine.finality_projection.project_finality`) hands every
+        #: genuinely-applied ``EGRESS_RESULT`` payload to. Bound separately (see
+        #: :meth:`bind_release_consumer`), mirroring :attr:`_gateway` below: it does not exist
+        #: until compose finishes wiring the RCL log / reconciliation service this consumer
+        #: needs. ``None`` degrades to the pre-W2-R behaviour (module docstring of
+        #: :mod:`tos_runtime.engine.finality_projection`).
+        self._release_consumer: FinalityReleaseConsumer | None = None
         #: The send boundary whose retained ``.results`` this driver drains — bound separately
         #: (see :meth:`bind_gateway`) because it does not exist until compose finishes wiring the
         #: rest of the chain that reads from THIS core's own ``transmit`` slot.
@@ -394,6 +395,17 @@ class EngineDriver:
         #: the first. Structurally unreachable, not merely undocumented: the guard raises rather
         #: than silently nesting.
         self._draining = False
+
+    def bind_release_consumer(self, consumer: FinalityReleaseConsumer) -> None:
+        """Attach the TOS Phase 5 W2-R finality release consumer this driver's finality-
+        projection hook calls after every genuinely-applied ``EGRESS_RESULT`` (see
+        :attr:`_release_consumer`'s own docstring and
+        :func:`~tos_runtime.engine.finality_projection.project_finality`).
+
+        Args:
+            consumer: The release consumer to attach.
+        """
+        self._release_consumer = consumer
 
     def bind_gateway(self, gateway: object) -> None:
         """Attach the send boundary whose retained ``.results`` this driver drains.
@@ -932,63 +944,18 @@ class EngineDriver:
     # -- post-trade finality projection (team-lead CR-4, plan §2.2) --
 
     def _project_finality(self, event: EngineEvent, result: EventResult) -> None:
-        """For a genuinely-applied ``FULL_FILL``, produce a SYNTHETIC post-trade finality
-        proof — the wiring the CR-3 modules (``tos_runtime.posttrade.finality``,
-        ``tos_runtime.rcl.finality_witness``) shipped isolated and tested but unreachable from
-        this driver.
-
-        **TOS Phase 5 W1 GAP 2 (2026-09-10): renamed from ``_project_orthostate_and_finality`` —
-        orthostate projection itself moved EARLIER, into ``_process_next``, so it runs BEFORE
-        this event's own ``EVENT_CONSUMED`` receipt rather than after (see this module's own
-        docstring, "GAP 2 close-out"). This method now handles ONLY the finality half; it no
-        longer calls ``OrthostateProjector.project`` at all** (that call, and its own
-        no-op-for-``DECISION_TICK``-or-non-``APPLIED`` behaviour, now lives in
-        :meth:`_process_next` directly, immediately before ``_record_consumed``).
-
-        Called unconditionally, right after every freshly-handled event's own
-        ``EVENT_CONSUMED`` receipt is durable (never on a crash-window recovery path, which
-        never calls ``core.handle`` at all and so has no fresh ``EventResult`` to project) —
-        exactly the same placement as :meth:`_track_timeouts`, which this mirrors. The
-        ``FULL_FILL``-only finality-proof gate below is this method's own (mirroring
-        :meth:`_track_timeouts`'s own APPLIED-only gate for the SAME reason: a non-``APPLIED``
-        result's ``EgressResultPayload`` still carries an attempt id and a ``FULL_FILL`` kind by
-        construction, but was never actually accepted onto THIS attempt's reservation —
-        producing a proof from it would assert finality for a fill the kernel itself refused).
-
-        The durable ``attempt_finality_witness`` row is written for every genuinely-applied
-        ``EGRESS_RESULT`` (not only a ``FULL_FILL``) so a later, non-proof-bearing result for
-        the same attempt (e.g. a ``TIMEOUT``) does not leave a stale prior witness readable —
-        :func:`~tos_runtime.rcl.finality_witness.finality_witness_for` itself always returns
-        the correct value (``True`` only for THIS producer call's own proof, ``None``
-        otherwise), so writing it unconditionally on every applied result can only ever
-        record the CURRENT truth, never a stale one.
-
-        No release-trigger call site exists yet anywhere in this runtime to CONSUME this durable
-        witness (measured, ``tos_runtime.rcl.finality_witness``'s own module docstring survey) —
-        that consumption is Phase 5's; this method's job ends at durably recording the proof and
-        the witness so that future lane can read them.
+        """Delegates to :func:`~tos_runtime.engine.finality_projection.project_finality` (TOS
+        Phase 5 W2-R; plan §10 row ②) — a pure move of what used to be this method's own body,
+        split out to recover this module's own size headroom. See that function's own docstring
+        for the full behaviour (SYNTHETIC ``FULL_FILL`` proof production, the durable witness
+        row, and — new in W2-R — the :attr:`_release_consumer` hand-off) and
+        :meth:`bind_release_consumer` for how :attr:`_release_consumer` gets attached.
         """
-        if event.kind is not EventKind.EGRESS_RESULT:
-            return
-        if result.result_disposition is not ResultDisposition.APPLIED:
-            return
-        payload = event.egress_result
-        assert (
-            payload is not None
-        )  # guaranteed by EngineEvent validation for EGRESS_RESULT
-
-        produced = self._finality_producer.produce(payload)
-        witness = finality_witness_for(None if produced is None else produced.proof)
-        self._inbox.record_finality_witness(payload.attempt_id, witness)
-        if produced is None:
-            return
-        self._evidence_store.append(
-            produced.record.model_dump(mode="json"),
-            kind=_ECONOMIC_OBLIGATION_KIND,
-            record_class=_ECONOMIC_OBLIGATION_KIND,
-        )
-        self._evidence_store.append(
-            produced.proof.model_dump(mode="json"),
-            kind=_POSTTRADE_FINALITY_PROOF_KIND,
-            record_class=_POSTTRADE_FINALITY_PROOF_KIND,
+        project_finality(
+            event,
+            result,
+            inbox=self._inbox,
+            evidence_store=self._evidence_store,
+            finality_producer=self._finality_producer,
+            release_consumer=self._release_consumer,
         )
