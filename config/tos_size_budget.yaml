@@ -451,7 +451,7 @@ exceptions:
     방어선이므로 유지(모듈 도크스트링 상세). 신규 전제 4줄 + 확장된
     Returns 도크스트링 순증분 — 압축 대신 등재.
 - target: tos/runtime/src/tos_runtime/engine/driver.py::EngineDriver._process_next
-  measured: 140
+  measured: 141
   owner: tos-runtime
   decomposition_order: 36
   expires_on: '2026-12-31'
@@ -478,6 +478,14 @@ exceptions:
     139→140(black 이 halt_reason 지역변수 대입을 3줄로 개행 + 신규 인자
     2줄 — 순증분 최소화 목적의 한 줄 압축 시도는 black 자체가 다시 개행함,
     measured-drift 가드 재실측 갱신, 로직 변경 없음).
+    2026-09-10 Phase 5 W1 close-out GAP 2(레인 W1-c) — orthostate 프로젝션+staterestore
+    기록 호출을 `_project_orthostate_and_persist` 신규 헬퍼로 추출(팀리드 지시: 인라인
+    시 140→156 초과이므로 분리)하고 `_process_next` 에는 위치 인자 호출 한 줄만 남김
+    (`self._project_orthostate_and_persist(event, result, event_id)`, `_record_consumed`
+    직전 — GAP 2 의 핵심 순서 보장이 이 위치 자체이므로 호출 위치는 그대로 유지). 순인상
+    +1(호출 1줄) — 이 한 줄은 더 압축 불가(신규 헬퍼 호출 자체가 실질 신규 기능이며,
+    인접 도크스트링 보정은 원문과 동일한 3줄 폭으로 재작성해 순증 0으로 맞춤). 140→141,
+    measured-drift 가드 재실측 갱신.
 - target: tos/src/tos/egressgw/records.py
   measured: 1027
   owner: tos-kernel
@@ -497,7 +505,7 @@ exceptions:
     목록 끝에 append(gateway.py 항목의 2026-09-07 재등재 주석과 동일 관례) —
     후속 하우스키핑에서 물리적 재정렬 가능.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 102
+  measured: 109
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
@@ -510,3 +518,7 @@ exceptions:
     독립 리뷰 F7 정정) · ``_finalize`` 101→103(scopes 매개변수 + ComposedRuntime
     인자 1줄). root.py 는 정본 결선 순서 문서라 호출 시퀀스 재구성은 하지 않음.
     목록 끝에 append(공유 워크트리 관례).
+    **2026-09-10 Phase 5 W1-a 재등재 102→109**: recovery barrier 결선
+    ``apply_recovery_barrier(composed, ...)`` 호출 1건(kwargs 4 · black 개행)이
+    ``compose_paper_runtime`` 끝에 추가됨 — 정본 결선 순서 문서라 분해 대신 등재
+    (Phase 5 계획 §2 결정 2: 장벽이 READY 가 아니면 드라이버 미결선).

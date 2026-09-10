@@ -65,14 +65,24 @@ too: an orphaned/mismatched/duplicate egress result is a recorded conservative o
 crash-window/re-injection loop never touches ``apply_egress_result`` directly — it only calls
 ``core.handle`` and reads the returned ``EventResult`` — so it needed no change either way.
 
+**GAP 2 close-out (TOS Phase 5 W1) — composite-state persistence before the consumption
+receipt.** :meth:`_process_next` calls :meth:`_project_orthostate_and_persist` (which itself
+calls :attr:`_orthostate_projector`'s own ``.project``) BEFORE :meth:`_record_consumed` for the
+SAME event — see that method's own docstring for the full write-before-receipt crash-window
+reasoning, the ``attempt_id`` keying (independent-review finding F3), and the write-failure HALT
+contract (surviving-mutation fix). ``recovery_composite_writer`` defaults to ``None`` (a no-op)
+— every existing test-suite driver construction keeps its pre-GAP-2 behaviour unchanged; only
+:func:`~tos_runtime.compose._engine_wiring.build_engine_driver` supplies a real one.
+
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``pydantic`` +
-``tos.canonical``/``tos.engine``/``tos.egressgw`` + ``tos_runtime.*`` only. No ``shared.*``, no
-``tos.backtest``.
+``tos.canonical``/``tos.engine``/``tos.egressgw``/``tos.orthostate`` + ``tos_runtime.*`` only. No
+``shared.*``, no ``tos.backtest``.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from tos.canonical import ArtifactIntegrityError, CanonicalizationScheme
@@ -90,6 +100,7 @@ from tos.engine.vocabulary import (
     ResultDisposition,
 )
 from tos.ordering import OrderingEvent
+from tos.orthostate import CompositeState
 
 from tos_runtime.engine.flow_fingerprint import FlowFingerprint, flow_fingerprint_for
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -103,7 +114,16 @@ from tos_runtime.posttrade.finality import SyntheticFinalityProducer
 from tos_runtime.rcl.finality_witness import finality_witness_for
 from tos_runtime.time.sources import MonotonicSource
 
-__all__ = ["EngineDriver"]
+__all__ = ["EngineDriver", "EngineDriverInvariantError"]
+
+
+class EngineDriverInvariantError(RuntimeError):
+    """A driver-internal type-narrowing invariant turned out false (independent-review
+    residual, 2026-09-10) — typed, never a bare ``assert`` (``python -O`` strips those
+    entirely). Should be unreachable; mirrors :class:`~tos_runtime.recovery.barrier
+    .RecoveryBarrierInvariantError`'s discipline, defined locally to avoid an
+    engine -> recovery import."""
+
 
 #: The runtime-local evidence kind for a driver-recorded consumption receipt. Not a
 #: ``tos.engine.vocabulary.EvidenceKind`` member — this is runtime-level evidence about the
@@ -118,6 +138,12 @@ _EVENT_CONSUMED_RECORD_CLASS = "EVENT_CONSUMED"
 #: ``_handle_interrupted_event`` below.
 _EVENT_HANDLING_STARTED_KIND = "EVENT_HANDLING_STARTED"
 _EVENT_HANDLING_STARTED_RECORD_CLASS = "EVENT_HANDLING_STARTED"
+
+#: TOS Phase 5 W1 close-out, surviving-mutation fix (2026-09-10): the dual-path HALT kind
+#: recorded when :attr:`EngineDriver._recovery_composite_writer` raises — a failed
+#: staterestore write is never silently skipped; see ``_project_orthostate_and_persist``'s
+#: own docstring.
+_COMPOSITE_STATE_WRITE_FAILED_KIND = "COMPOSITE_STATE_WRITE_FAILED"
 
 #: The halt reason recorded on the durable ``EVENT_CONSUMED`` receipt when an interrupted
 #: event's OWN durable evidence proves the flow never reached (or could not be proven to have
@@ -291,6 +317,7 @@ class EngineDriver:
         max_send_result_wait_ms: int,
         orthostate_projector: OrthostateProjector,
         finality_producer: SyntheticFinalityProducer,
+        recovery_composite_writer: Callable[[str, CompositeState], None] | None = None,
     ) -> None:
         """Wire the driver.
 
@@ -325,6 +352,17 @@ class EngineDriver:
             finality_producer: Produces a SYNTHETIC post-trade finality proof for a ``FULL_FILL``
                 (team-lead CR-4 dispatch, plan §2.2) — REQUIRED (no default), for the same reason
                 as ``orthostate_projector`` (:mod:`tos_runtime.posttrade.finality`).
+            recovery_composite_writer: TOS Phase 5 W1 GAP 2 — durably persists the composite state
+                :attr:`_orthostate_projector` derives for a genuinely-touched ``EGRESS_RESULT``
+                event, keyed by that event's own id
+                (:mod:`tos_runtime.recovery.composite_state_writer`'s own module docstring for
+                why the key is the event id, never the composite's ``intent_identity``). Optional,
+                defaulting to ``None`` (module docstring: a no-op — the pre-GAP-2 behaviour every
+                existing test-suite driver construction already exercises) so this is the ONE
+                constructor argument here NOT required — unlike ``orthostate_projector`` /
+                ``finality_producer``, an omitted writer degrades this runtime back to exactly
+                its prior (documented, disclosed) "nothing writes to ``tos.staterestore`` yet"
+                state, never a silent behaviour change for a caller that has not opted in.
         """
         self._core = core
         self._inbox = inbox
@@ -340,6 +378,7 @@ class EngineDriver:
         )
         self._orthostate_projector = orthostate_projector
         self._finality_producer = finality_producer
+        self._recovery_composite_writer = recovery_composite_writer
         #: The send boundary whose retained ``.results`` this driver drains — bound separately
         #: (see :meth:`bind_gateway`) because it does not exist until compose finishes wiring the
         #: rest of the chain that reads from THIS core's own ``transmit`` slot.
@@ -505,6 +544,55 @@ class EngineDriver:
         )
         self._inbox.mark_consumed(seq, evidence_seq=evidence_seq, generation=generation)
 
+    def _project_orthostate_and_persist(
+        self, event: EngineEvent, result: EventResult, event_id: str
+    ) -> None:
+        """Project ``event``'s orthostate composite and, if a real recovery composite writer was
+        injected, persist it — called from :meth:`_process_next` for every freshly-handled
+        event, BEFORE that SAME event's own ``EVENT_CONSUMED`` receipt (TOS Phase 5 W1 GAP 2;
+        full write-before-receipt crash-window reasoning is in the module docstring's "GAP 2
+        close-out" section, not repeated here). Split out of :meth:`_process_next` purely for
+        that method's own function-size budget.
+
+        **A failed write halts, never silently continues (surviving-mutation fix, 2026-09-10).**
+        A failure is recorded via :func:`~tos_runtime.evidence.emergency.record_halt` and
+        RE-RAISED, so :meth:`_process_next` aborts before ever reaching :meth:`_record_consumed`
+        — no ``EVENT_CONSUMED`` for this event on a failed attempt.
+
+        Args:
+            event: The just-``core.handle``-processed event.
+            result: The ``EventResult`` ``core.handle`` returned for it.
+            event_id: Recorded on a write-failure HALT for correlation only — NOT the
+                staterestore key (see :class:`~tos_runtime.recovery.composite_state_writer
+                .CompositeStateWriter`'s own module docstring, independent-review finding F3).
+        """
+        composite = self._orthostate_projector.project(event=event, result=result)
+        if composite is None or self._recovery_composite_writer is None:
+            return
+        payload = event.egress_result
+        if payload is None:
+            raise EngineDriverInvariantError(
+                "project() returned non-None but egress_result is None -- project() "
+                "returns non-None only for EGRESS_RESULT events"
+            )
+        try:
+            self._recovery_composite_writer(payload.attempt_id, composite)
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 -- any write failure halts, never swallowed
+            record_halt(
+                self._evidence_store,
+                self._emergency_log,
+                payload={
+                    "event_id": event_id,
+                    "attempt_id": payload.attempt_id,
+                    "detail": f"{type(exc).__name__}: {exc}",
+                },
+                kind=_COMPOSITE_STATE_WRITE_FAILED_KIND,
+                record_class=_COMPOSITE_STATE_WRITE_FAILED_KIND,
+            )
+            raise
+
     def _record_consumed(
         self,
         *,
@@ -604,9 +692,9 @@ class EngineDriver:
         **Bounded residual: new-risk-latch ordering window (re-review finding R4, 2026-09-09).**
         This loop pulls the LOWEST unconsumed ``seq`` and checks the new-risk halt latch
         (:meth:`SqliteEventInbox.new_risk_halt`) before handling it — but the latch itself is
-        only SET later, from inside :meth:`_project_orthostate_and_finality`, when a violating
-        ``EGRESS_RESULT`` is processed. That ``EGRESS_RESULT`` is, in turn, only enqueued at the
-        END of the very same drain call that produced it (:meth:`_drain_gateway_results`). So a
+        only SET later, from ``_project_orthostate_and_persist`` (GAP 2; was
+        ``_project_finality``), when a violating result is processed — itself only enqueued at
+        the END of the very same drain call that produced it (:meth:`_drain_gateway_results`). So a
         ``DECISION_TICK`` already sitting at a LOWER ``seq`` than the violating result — admitted
         before the violation existed, but not yet pulled by this loop — is processed BEFORE the
         latch exists, and is never itself refused by it. This is not reachable in the CURRENT
@@ -708,6 +796,7 @@ class EngineDriver:
                 halt_reason_str = (
                     None if result.halt_reason is None else result.halt_reason.value
                 )
+                self._project_orthostate_and_persist(event, result, event_id)
                 evidence_seq, generation = self._record_consumed(
                     event_id=event_id,
                     payload_digest=payload_digest,
@@ -720,7 +809,7 @@ class EngineDriver:
                 )
 
                 self._track_timeouts(event, result)
-                self._project_orthostate_and_finality(event, result)
+                self._project_finality(event, result)
                 if event.kind is EventKind.DECISION_TICK:
                     self._drain_gateway_results()
                 return seq, result
@@ -840,30 +929,31 @@ class EngineDriver:
             event = EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
             self._inbox.enqueue(self._stamp(event))
 
-    # -- orthostate + post-trade finality projection (team-lead CR-4, plan §2.2) --
+    # -- post-trade finality projection (team-lead CR-4, plan §2.2) --
 
-    def _project_orthostate_and_finality(
-        self, event: EngineEvent, result: EventResult
-    ) -> None:
-        """Project one processed event onto orthostate and, for a genuinely-applied
-        ``FULL_FILL``, a SYNTHETIC post-trade finality proof — the wiring the CR-3 modules
-        (``tos_runtime.engine.orthostate_projection``, ``tos_runtime.posttrade.finality``,
+    def _project_finality(self, event: EngineEvent, result: EventResult) -> None:
+        """For a genuinely-applied ``FULL_FILL``, produce a SYNTHETIC post-trade finality
+        proof — the wiring the CR-3 modules (``tos_runtime.posttrade.finality``,
         ``tos_runtime.rcl.finality_witness``) shipped isolated and tested but unreachable from
         this driver.
+
+        **TOS Phase 5 W1 GAP 2 (2026-09-10): renamed from ``_project_orthostate_and_finality`` —
+        orthostate projection itself moved EARLIER, into ``_process_next``, so it runs BEFORE
+        this event's own ``EVENT_CONSUMED`` receipt rather than after (see this module's own
+        docstring, "GAP 2 close-out"). This method now handles ONLY the finality half; it no
+        longer calls ``OrthostateProjector.project`` at all** (that call, and its own
+        no-op-for-``DECISION_TICK``-or-non-``APPLIED`` behaviour, now lives in
+        :meth:`_process_next` directly, immediately before ``_record_consumed``).
 
         Called unconditionally, right after every freshly-handled event's own
         ``EVENT_CONSUMED`` receipt is durable (never on a crash-window recovery path, which
         never calls ``core.handle`` at all and so has no fresh ``EventResult`` to project) —
-        exactly the same placement as :meth:`_track_timeouts`, which this mirrors.
-
-        :meth:`~tos_runtime.engine.orthostate_projection.OrthostateProjector.project` itself
-        no-ops for a ``DECISION_TICK`` or a non-``APPLIED`` result, so this method calls it
-        unconditionally; the ``FULL_FILL``-only finality-proof gate below is this method's own
-        (mirroring :meth:`_track_timeouts`'s own APPLIED-only gate for the SAME reason: a
-        non-``APPLIED`` result's ``EgressResultPayload`` still carries an attempt id and a
-        ``FULL_FILL`` kind by construction, but was never actually accepted onto THIS
-        attempt's reservation — producing a proof from it would assert finality for a fill the
-        kernel itself refused).
+        exactly the same placement as :meth:`_track_timeouts`, which this mirrors. The
+        ``FULL_FILL``-only finality-proof gate below is this method's own (mirroring
+        :meth:`_track_timeouts`'s own APPLIED-only gate for the SAME reason: a non-``APPLIED``
+        result's ``EgressResultPayload`` still carries an attempt id and a ``FULL_FILL`` kind by
+        construction, but was never actually accepted onto THIS attempt's reservation —
+        producing a proof from it would assert finality for a fill the kernel itself refused).
 
         The durable ``attempt_finality_witness`` row is written for every genuinely-applied
         ``EGRESS_RESULT`` (not only a ``FULL_FILL``) so a later, non-proof-bearing result for
@@ -878,7 +968,6 @@ class EngineDriver:
         that consumption is Phase 5's; this method's job ends at durably recording the proof and
         the witness so that future lane can read them.
         """
-        self._orthostate_projector.project(event=event, result=result)
         if event.kind is not EventKind.EGRESS_RESULT:
             return
         if result.result_disposition is not ResultDisposition.APPLIED:
