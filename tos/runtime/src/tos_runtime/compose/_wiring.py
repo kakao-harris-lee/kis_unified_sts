@@ -78,6 +78,10 @@ from tos_runtime.compose._preconditions import (
     COORDINATOR_PRECONDITIONS_CONFIG_NAME,
     load_coordinator_preconditions_config,
 )
+from tos_runtime.compose._request_digest import (
+    CapsuleStandInDigest,
+    RequestBytesDigestSource,
+)
 from tos_runtime.compose._risk_attestations import (
     wrap_action_flow_inputs_provider,
     wrap_aggregate_risk_inputs_provider,
@@ -796,6 +800,24 @@ def _build_currentness_stages(
     return step13_stage, step14_stage
 
 
+def _default_request_bytes_digest_source(
+    construction: ConstructionConfig, egress_coordinates: EgressCoordinatesConfig
+) -> CapsuleStandInDigest:
+    """The unchanged capsule-terminus stand-in (T2 lane A —
+    :mod:`tos_runtime.compose._request_digest` module docstring): the SAME boot-time constant
+    ``_build_context_resolver`` computed before this lane, over
+    ``egress_coordinates.capsule_terminus_fields``, now wrapped in the new digest-source seam.
+    """
+    return CapsuleStandInDigest(
+        digest=_SCHEME.compute_digest(
+            {
+                name: getattr(construction, name)
+                for name in egress_coordinates.capsule_terminus_fields
+            }
+        )
+    )
+
+
 def _build_context_resolver(
     *,
     construction_stages: _ConstructionStages,
@@ -811,6 +833,7 @@ def _build_context_resolver(
     construction: ConstructionConfig,
     environment_label: str,
     continuity_id: str,
+    request_bytes_digest_source: RequestBytesDigestSource | None = None,
 ) -> ComposeContextResolver:
     """The gateway's lazy ``SendBoundaryContext`` resolver (design #35 §3.1
     (3)), wired with this environment's transport nature / credential-route
@@ -828,6 +851,10 @@ def _build_context_resolver(
     ``instance_document`` is loaded EXACTLY ONCE per boot, by
     :func:`_resolve_strategies_and_attested_inputs`, and threaded through
     :class:`_BootResult` (finding F9 — no second re-load here).
+
+    Args:
+        request_bytes_digest_source: T2 lane A's digest-source seam. ``None``
+            (every caller today) builds :func:`_default_request_bytes_digest_source`.
 
     Raises:
         BrokerScopeConfigError: ``active_principal`` collides with a scope's
@@ -871,15 +898,11 @@ def _build_context_resolver(
             egress_generation=egress_coordinates.egress_generation,
             active_principal=egress_coordinates.active_principal,
         ),
-        # capsule_egress_request_digest is a STAND-IN for the eventual capsule-chain
-        # terminus (design #34 / EGRESS-EV-003 "+Security", not landed in this Phase;
-        # see _egress_coordinates's module docstring) — capsule_terminus_fields only
-        # selects WHICH ConstructionConfig fields feed it (config), never the digest.
-        capsule_egress_request_digest=_SCHEME.compute_digest(
-            {
-                name: getattr(construction, name)
-                for name in egress_coordinates.capsule_terminus_fields
-            }
+        # STAND-IN by default; T2 lane A: a caller may inject a real codec digest instead.
+        request_bytes_digest_source=(
+            request_bytes_digest_source
+            if request_bytes_digest_source is not None
+            else _default_request_bytes_digest_source(construction, egress_coordinates)
         ),
         outbound_side=construction.outbound_side,
         action_class=construction.action_class,

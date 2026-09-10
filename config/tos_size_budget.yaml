@@ -292,7 +292,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1197
+  measured: 1220
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -395,6 +395,18 @@ exceptions:
     호출부에 resolved_strategies.loaded_bindings 인자 1줄 + 도크스트링 정정
     2줄 추가. 함수 자체는 100줄 문턱 아래 유지(무예외). 모듈 실측은
     1203→1205(+2).
+    2026-09-10 T2 lane A(KIS wire-codec digest binding, plan
+    docs/plans/2026-09-10-tos-kis-mock-transport-plan.md §8 설계 정정 ①) —
+    _build_context_resolver 의 capsule_egress_request_digest: str 필드를
+    request_bytes_digest_source: RequestBytesDigestSource 시임으로 교체(신규
+    모듈 tos_runtime/compose/_request_digest.py, CapsuleStandInDigest/
+    KisWireCodecDigest 2구현). 기본값 조립을 별도 함수
+    _default_request_bytes_digest_source 로 분리해 _build_context_resolver
+    를 100줄 문턱 아래(98줄)로 유지(무예외) — 신규 import 4줄 + 파라미터 1줄
+    + 헬퍼 함수 14줄 + 호출부 순증분으로 (베이스라인 1197, 당시 실측치와
+    상단 measured 필드 간 소수 괴리는 선행 항목의 기록되지 않은 편차이며
+    본 항목은 그 실측 불변 상태 위에서) 1197→1219. black 재포맷이 개행 1줄을
+    추가해 1219→1220(+1, 코드 의미 불변).
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime
