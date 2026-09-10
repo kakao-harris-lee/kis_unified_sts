@@ -257,6 +257,42 @@ def _independent_wire_digest(
     return hashlib.sha256(body).hexdigest()
 
 
+def _assert_byte_seal_identity_and_result_ordering(
+    runtime, order_request: Any, seal_payload: dict[str, Any]
+) -> None:
+    """Counterfactual B's own byte-seal-identity block, extracted (review LOW: keep
+    ``test_counterfactual_b_live_against_hermetic_fake_kis_server`` at or under the 100-line
+    function budget) — the wire bytes the fake server actually received equal BOTH the seal's
+    own ``request_bytes_digest`` and a hand-built, genuinely independent oracle
+    (:func:`_independent_wire_digest`, reviewer disposition MEDIUM-2 — never calls
+    ``KisOrderWireCodec``), and ``EGRESS_RESULT_RECORDED`` is recorded exactly once, after
+    ``NETWORK_CALL_ENTERED``.
+    """
+    # The wire bytes ARE the sealed bytes — the sha256 of what the fake server actually
+    # received equals the seal's own request_bytes_digest, not a value this test invents.
+    received_digest = hashlib.sha256(order_request.body).hexdigest()
+    assert received_digest == seal_payload["request_bytes_digest"]
+    # ...and it equals a hand-built, genuinely independent oracle too — proving not just "the
+    # wire bytes are what was sealed" but "what was sealed was correctly encoded" (a corrupted
+    # decimal formatter would surface here).
+    independent_digest = _independent_wire_digest(
+        account=seal_payload["account"],
+        instrument=seal_payload["instrument_key"]["instrument"],
+        quantity=seal_payload["outbound_quantity"],
+        price=seal_payload["outbound_price"],
+    )
+    assert received_digest == independent_digest
+
+    assert _evidence_kind_count(runtime, "EGRESS_RESULT_RECORDED") == 1
+    network_call_entered_order = _evidence_row_order(runtime, "NETWORK_CALL_ENTERED")
+    egress_result_recorded_order = _evidence_row_order(
+        runtime, "EGRESS_RESULT_RECORDED"
+    )
+    assert network_call_entered_order is not None
+    assert egress_result_recorded_order is not None
+    assert network_call_entered_order < egress_result_recorded_order
+
+
 def _spy_send_once(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     """Spy on every :class:`KisMockTransport` instance's ``send_once`` (class-level patch, the
     same technique ``test_transport_wiring.py``'s own
@@ -544,7 +580,6 @@ def test_counterfactual_b_live_against_hermetic_fake_kis_server(
         mode="live",
         endpoint_rest_base=server.rest_base,
         allow_plaintext_for_tests=True,
-        min_send_interval_ms=1100,
     )
     _lift_phase5_deferred_mesh(monkeypatch)
     _lift_p02_capability_profile(monkeypatch)
@@ -572,36 +607,12 @@ def test_counterfactual_b_live_against_hermetic_fake_kis_server(
     ).fetchall()
     seal_payload = json.loads(seal_row[0])["payload"]["send_seal"]
 
-    # The wire bytes ARE the sealed bytes — the sha256 of what the fake server actually
-    # received equals the seal's own request_bytes_digest, not a value this test invents.
-    assert (
-        hashlib.sha256(order_request.body).hexdigest()
-        == seal_payload["request_bytes_digest"]
-    )
-    # ...and it equals a hand-built, genuinely independent oracle too (reviewer disposition
-    # MEDIUM-2) — proving not just "the wire bytes are what was sealed" but "what was sealed
-    # was correctly encoded" (a corrupted decimal formatter would surface here).
-    independent_digest = _independent_wire_digest(
-        account=seal_payload["account"],
-        instrument=seal_payload["instrument_key"]["instrument"],
-        quantity=seal_payload["outbound_quantity"],
-        price=seal_payload["outbound_price"],
-    )
-    assert hashlib.sha256(order_request.body).hexdigest() == independent_digest
+    _assert_byte_seal_identity_and_result_ordering(runtime, order_request, seal_payload)
 
     assert len(send_once_calls) == 1
     (result_payload,) = send_once_calls
     assert result_payload.kind.value == "ACK"
     assert result_payload.broker_execution_id == "T3-ODNO-1"
-
-    assert _evidence_kind_count(runtime, "EGRESS_RESULT_RECORDED") == 1
-    network_call_entered_order = _evidence_row_order(runtime, "NETWORK_CALL_ENTERED")
-    egress_result_recorded_order = _evidence_row_order(
-        runtime, "EGRESS_RESULT_RECORDED"
-    )
-    assert network_call_entered_order is not None
-    assert egress_result_recorded_order is not None
-    assert network_call_entered_order < egress_result_recorded_order
 
     evidence_text = _all_evidence_text(runtime)
     assert _APP_KEY_SECRET_BYTES.decode() not in evidence_text
