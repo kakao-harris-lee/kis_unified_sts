@@ -73,6 +73,8 @@ from tos.engine import (
 )
 
 from tos_runtime.compose._recovery_wiring import apply_recovery_barrier
+from tos_runtime.compose._request_digest import KisWireCodecDigest
+from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.compose._types import (
     ComposedRuntime,
     ConstructionConfig,
@@ -98,6 +100,7 @@ __all__ = [
     "ComposedRuntime",
     "ConstructionConfig",
     "ReleaseAdmissionRefused",
+    "TransportKind",
     "compose_paper_runtime",
 ]
 
@@ -135,6 +138,7 @@ def compose_paper_runtime(
     continuity_id: str = "paper-runtime",
     monotonic_source: MonotonicSource | None = None,
     allow_no_strategies: bool = False,
+    transport_kind: TransportKind = TransportKind.SYNTHETIC,
 ) -> ComposedRuntime:
     """Wire the whole Phase 2 paper-runtime service chain, in order (module
     docstring: exact order + every reported deviation).
@@ -151,11 +155,19 @@ def compose_paper_runtime(
         authority_domain: The Safety Authority epoch's governed domain name.
         continuity_id: The ordering-event continuity id.
         allow_no_strategies: ``False`` refuses with neither source (finding #8).
+        transport_kind: ``synthetic`` (the default) or ``kis-mock`` (TOS KIS MOCK transport plan
+            T2 lane C — :mod:`tos_runtime.compose._transport_wiring`). Boot refuses when this
+            disagrees with the active broker scope's own shape
+            (:func:`~tos_runtime.compose._transport_wiring.refuse_transport_scope_mismatch`) or,
+            for ``kis-mock``, when the custody principal for either KIS MOCK scope does not match
+            the active scope's own principal
+            (:func:`~tos_runtime.compose._transport_wiring.refuse_custody_principal_mismatch`).
 
     Returns:
         The fully wired :class:`ComposedRuntime`.
     Raises:
-        ReleaseAdmissionRefused / config or custody exceptions / StrategyRegistryResolutionRefused.
+        ReleaseAdmissionRefused / config or custody exceptions / StrategyRegistryResolutionRefused
+        / :class:`~tos_runtime.compose._transport_wiring.TransportWiringError`.
     """
     uid = os.getuid()
     boot = _boot_services(
@@ -168,6 +180,7 @@ def compose_paper_runtime(
         monotonic_source,
         registry,
         allow_no_strategies,
+        transport_kind,
     )
 
     construction_stages = _build_construction_stages(construction)
@@ -187,6 +200,16 @@ def compose_paper_runtime(
     boot.risk.action_flow_dimension_state.step9_recorder = realized.step9_recorder
     stages = _build_stage_map(construction_stages, realized)
 
+    # T2 lane C: a kis-mock boot binds the genuine KIS wire-codec digest into the context
+    # resolver (closing the T2 lane A gap for THIS wiring path) — synthetic keeps the stand-in.
+    request_bytes_digest_source = (
+        KisWireCodecDigest(
+            field_map=boot.transport_config.field_map,
+            static_body_fields=boot.transport_config.static_body_fields,
+        )
+        if boot.transport_config is not None
+        else None
+    )
     context_resolver = _build_context_resolver(
         construction_stages=construction_stages,
         realized=realized,
@@ -201,6 +224,7 @@ def compose_paper_runtime(
         construction=construction,
         environment_label=environment_label,
         continuity_id=continuity_id,
+        request_bytes_digest_source=request_bytes_digest_source,
     )
 
     composed = _finalize(
@@ -218,6 +242,9 @@ def compose_paper_runtime(
         release_admitted=boot.release_admitted,
         continuity_id=continuity_id,
         broker_scopes=boot.broker_scopes,
+        instance_document=boot.instance_document,
+        transport_kind=transport_kind,
+        transport_config=boot.transport_config,
     )
     return apply_recovery_barrier(
         composed,

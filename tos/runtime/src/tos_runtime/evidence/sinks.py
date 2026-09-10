@@ -28,6 +28,18 @@ stop" reasoning ``BrokerEgressGateway._halt``'s own docstring gives for why
 its halt path itself never swallows a failure: an obligation the observer
 could not verify is not a success either.
 
+**``on_record`` observer (TOS KIS MOCK transport plan T2 lane C).**
+:class:`GatewayEvidenceSinkAdapter` also accepts an optional ``on_record``
+callback, invoked AFTER the durable append, for EVERY record kind
+(unconditionally — unlike ``on_refusal``'s ``SEND_REFUSED``-only filter).
+This is the seam :mod:`tos_runtime.compose._transport_wiring`'s
+``SealRegistry`` uses to capture the kernel gateway's own ``SEND_SEALED``
+record's ``send_seal`` field (``tos/src/tos/egressgw/gateway.py`` records it,
+with the full :class:`~tos.egressgw.SendSeal`, BEFORE the transport is ever
+called) — the registry itself decides which kind it cares about; this
+adapter stays a dumb, unconditional forwarder. An exception ``on_record``
+raises is likewise NOT caught here (same "never a silent stop" reasoning).
+
 **Contract change (independent review finding #8).** Before ``on_refusal``
 existed, ``GatewayEvidenceSinkAdapter.record`` could raise only from the
 ``store.append`` call itself — the refusal path could not raise for any
@@ -127,6 +139,7 @@ class GatewayEvidenceSinkAdapter:
         record_class_by_kind: Mapping[str, str] | None = None,
         runtime_identity: RuntimeIdentity | None = None,
         on_refusal: Callable[[GatewayEvidenceRecord], None] | None = None,
+        on_record: Callable[[GatewayEvidenceRecord], None] | None = None,
     ) -> None:
         """Bind this adapter to a store.
 
@@ -142,11 +155,17 @@ class GatewayEvidenceSinkAdapter:
                 docstring's "``on_refusal`` observer"). This sink never
                 itself writes to the rcl log; an exception the observer
                 raises propagates unchanged.
+            on_record: Optional observer invoked AFTER the durable append
+                returns, for EVERY record kind (module docstring's
+                "``on_record`` observer") — unlike ``on_refusal``, never
+                filtered by kind; the observer itself decides what it cares
+                about. An exception it raises propagates unchanged.
         """
         self._store = store
         self._record_class_by_kind = dict(record_class_by_kind or {})
         self._runtime_identity = runtime_identity
         self._on_refusal = on_refusal
+        self._on_record = on_record
 
     def record(self, record: GatewayEvidenceRecord) -> None:
         """Durably append one gateway evidence record (design #34 §4.6 Protocol).
@@ -156,10 +175,11 @@ class GatewayEvidenceSinkAdapter:
         existed, upholding the ``SEND_STARTED``/first-byte durability
         ordering the gateway's own Protocol return type cannot express.
 
-        The injected ``on_refusal`` observer, if any, runs only AFTER this
-        durable append has already committed, and only for a
-        ``kind == "SEND_REFUSED"`` record — evidence first, verification
-        second, never the other way around. Whatever the observer raises
+        The injected ``on_record`` observer, if any, runs first (module
+        docstring's "``on_record`` observer" — unconditional, every kind),
+        THEN the injected ``on_refusal`` observer, if any, runs only for a
+        ``kind == "SEND_REFUSED"`` record — evidence first, observers
+        second, never the other way around. Whatever either observer raises
         propagates out of this call, and transitively out of
         ``BrokerEgressGateway.__call__``, uncaught (module docstring's
         "contract change" — the refusal path could not raise for this
@@ -171,5 +191,7 @@ class GatewayEvidenceSinkAdapter:
             record_class=_resolve_record_class(record.kind, self._record_class_by_kind),
             runtime_identity=self._runtime_identity,
         )
+        if self._on_record is not None:
+            self._on_record(record)
         if self._on_refusal is not None and record.kind == "SEND_REFUSED":
             self._on_refusal(record)

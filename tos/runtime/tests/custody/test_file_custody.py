@@ -192,9 +192,23 @@ def test_provisioned_scopes_is_pinned_exactly() -> None:
     only that a few sampled strings were refused. This pins the exact set,
     so ANY addition, removal, or rename is caught immediately regardless of
     which specific scope strings the behavioural tests happen to exercise.
+
+    TOS KIS MOCK transport plan T2 lane C extended this set with the two
+    stock MOCK-order custody scopes (``kis_mock.app_key``/
+    ``kis_mock.app_secret``) — deliberately NOT ``kis_mock.account`` (review
+    F2: the account number is the sealed outbound coordinate, never a
+    custody credential).
     """
     assert (
-        frozenset({"read.principal", "evidence.key", "replay.params"})
+        frozenset(
+            {
+                "read.principal",
+                "evidence.key",
+                "replay.params",
+                "kis_mock.app_key",
+                "kis_mock.app_secret",
+            }
+        )
         == PROVISIONED_SCOPES
     )
 

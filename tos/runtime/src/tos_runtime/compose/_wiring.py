@@ -79,13 +79,14 @@ from tos_runtime.compose._preconditions import (
     load_coordinator_preconditions_config,
 )
 from tos_runtime.compose._request_digest import (
-    CapsuleStandInDigest,
     RequestBytesDigestSource,
+    default_request_bytes_digest_source,
 )
 from tos_runtime.compose._risk_attestations import (
     wrap_action_flow_inputs_provider,
     wrap_aggregate_risk_inputs_provider,
 )
+from tos_runtime.compose._transport_wiring import TransportKind, resolve_transport_boot
 from tos_runtime.compose._types import (
     ComposedRuntime,
     ConstructionConfig,
@@ -136,6 +137,7 @@ from tos_runtime.time.sources import (
     MonotonicSource,
     ProcessMonotonicSource,
 )
+from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
@@ -800,24 +802,6 @@ def _build_currentness_stages(
     return step13_stage, step14_stage
 
 
-def _default_request_bytes_digest_source(
-    construction: ConstructionConfig, egress_coordinates: EgressCoordinatesConfig
-) -> CapsuleStandInDigest:
-    """The unchanged capsule-terminus stand-in (T2 lane A —
-    :mod:`tos_runtime.compose._request_digest` module docstring): the SAME boot-time constant
-    ``_build_context_resolver`` computed before this lane, over
-    ``egress_coordinates.capsule_terminus_fields``, now wrapped in the new digest-source seam.
-    """
-    return CapsuleStandInDigest(
-        digest=_SCHEME.compute_digest(
-            {
-                name: getattr(construction, name)
-                for name in egress_coordinates.capsule_terminus_fields
-            }
-        )
-    )
-
-
 def _build_context_resolver(
     *,
     construction_stages: _ConstructionStages,
@@ -902,7 +886,9 @@ def _build_context_resolver(
         request_bytes_digest_source=(
             request_bytes_digest_source
             if request_bytes_digest_source is not None
-            else _default_request_bytes_digest_source(construction, egress_coordinates)
+            else default_request_bytes_digest_source(
+                construction, egress_coordinates.capsule_terminus_fields
+            )
         ),
         outbound_side=construction.outbound_side,
         action_class=construction.action_class,
@@ -952,6 +938,9 @@ def _finalize(
     release_admitted: bool,
     continuity_id: str,
     broker_scopes: BrokerScopesConfig,
+    instance_document: InstanceDocument | None,
+    transport_kind: TransportKind,
+    transport_config: KisMockTransportConfig | None,
 ) -> ComposedRuntime:
     """The gateway + ``EngineCore`` + durable inbox/driver wiring (delegated to
     :func:`~tos_runtime.compose._engine_wiring.wire_engine_and_driver`) + the boot-time replay
@@ -983,6 +972,12 @@ def _finalize(
         authority_epoch_service=rcl.authority_epoch_service,
         live_authorization_state=coordinator_preconditions_config.live_authorization_state,
         finality_config=finality_config,
+        nonlive_admitted=coordinator_preconditions_config.nonlive_broker_consuming_admitted,
+        active_scope=broker_scopes.active_scope,
+        instance_document=instance_document,
+        custody=infra.custody,
+        transport_kind=transport_kind,
+        transport_config=transport_config,
     )
 
     # Independent boot-time re-derivation over whatever this inbox has already durably admitted
@@ -1049,18 +1044,22 @@ def _resolve_strategies_and_attested_inputs(
     risk: _RiskAndCurrentness,
     registry: StrategyRegistry | None,
     allow_no_strategies: bool,
+    transport_kind: TransportKind,
 ) -> tuple[
     EgressCoordinatesConfig,
     BrokerScopesConfig,
     ResolvedStrategyRegistry,
     InstanceDocument | None,
+    KisMockTransportConfig | None,
 ]:
     """Load ``egress_coordinates.yaml`` + ``broker_scopes.yaml`` (TOS Phase 4
     plan §2 decisions 1-2, G-4), resolve the ONE strategy source (TOS Phase
     3 슬라이스 D-R ``[D-R-2]``), load the active scope's INSTANCE document
     EXACTLY ONCE (finding F9 — threaded through :class:`_BootResult`, no
-    second re-load), and records ``OPERATOR_ATTESTED_INPUTS`` — split out
-    of :func:`_boot_services` for the size budget.
+    second re-load), resolve the transport-kind boot facts (T2 lane C —
+    :func:`~tos_runtime.compose._transport_wiring.resolve_transport_boot`), and
+    record ``OPERATOR_ATTESTED_INPUTS`` — split out of :func:`_boot_services`
+    for the size budget.
 
     ``allow_no_strategies`` (finding #8): ``False`` (the default) REFUSES
     when neither a strategies directory nor an injected registry is
@@ -1075,6 +1074,9 @@ def _resolve_strategies_and_attested_inputs(
         environment_label=environment_label,
     )
     instance_document = load_active_instance_document(broker_scopes)
+    transport_boot = resolve_transport_boot(
+        transport_kind, config_dir, broker_scopes, infra.custody
+    )
     resolved_strategies = resolve_strategy_registry(
         config_dir,
         injected_registry=registry,
@@ -1094,8 +1096,15 @@ def _resolve_strategies_and_attested_inputs(
         resolved_strategies.loaded_bindings,
         broker_scopes=broker_scopes,
         instance_document=instance_document,
+        extra_config_files=transport_boot.extra_config_files,
     )
-    return egress_coordinates, broker_scopes, resolved_strategies, instance_document
+    return (
+        egress_coordinates,
+        broker_scopes,
+        resolved_strategies,
+        instance_document,
+        transport_boot.transport_config,
+    )
 
 
 @dataclass
@@ -1117,6 +1126,8 @@ class _BootResult:
     #: Loaded EXACTLY ONCE (finding F9) — never re-loaded downstream.
     instance_document: InstanceDocument | None
     registry: StrategyRegistry
+    #: T2 lane C — ``None`` for ``synthetic``, loaded for ``kis-mock``.
+    transport_config: KisMockTransportConfig | None
 
 
 def _boot_services(
@@ -1129,6 +1140,7 @@ def _boot_services(
     monotonic_source: MonotonicSource | None,
     registry: StrategyRegistry | None,
     allow_no_strategies: bool,
+    transport_kind: TransportKind,
 ) -> _BootResult:
     """Identity + STAGE A release probe + custody/evidence/time + RCL/
     authority + risk/currentness + strategy-source resolution
@@ -1172,16 +1184,21 @@ def _boot_services(
         infra.time_service,
         rcl.authority_epoch_service,
     )
-    egress_coordinates, broker_scopes, resolved_strategies, instance_document = (
-        _resolve_strategies_and_attested_inputs(
-            config_dir,
-            environment_label,
-            identity,
-            infra,
-            risk,
-            registry,
-            allow_no_strategies,
-        )
+    (
+        egress_coordinates,
+        broker_scopes,
+        resolved_strategies,
+        instance_document,
+        transport_config,
+    ) = _resolve_strategies_and_attested_inputs(
+        config_dir,
+        environment_label,
+        identity,
+        infra,
+        risk,
+        registry,
+        allow_no_strategies,
+        transport_kind,
     )
     release_admitted = _stage_b_release_probe(
         release_service, identity, infra.time_service, rcl.rcl_log
@@ -1196,6 +1213,7 @@ def _boot_services(
         broker_scopes=broker_scopes,
         instance_document=instance_document,
         registry=resolved_strategies.registry,
+        transport_config=transport_config,
     )
 
 

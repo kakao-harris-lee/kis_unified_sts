@@ -38,11 +38,11 @@ Firewall: stdlib + ``tos.canonical`` (:class:`RequestBytesDigestSource` and
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from tos.canonical import CanonicalDecimal
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, CanonicalDecimal, get_scheme
 
 from tos_runtime.transport.kis_mock.codec import KisOrderWireCodec
 
@@ -50,7 +50,10 @@ __all__ = [
     "CapsuleStandInDigest",
     "KisWireCodecDigest",
     "RequestBytesDigestSource",
+    "default_request_bytes_digest_source",
 ]
+
+_SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 
 @runtime_checkable
@@ -144,3 +147,37 @@ class KisWireCodecDigest:
             static_body_fields=self.static_body_fields,
         )
         return KisOrderWireCodec.digest(body)
+
+
+def default_request_bytes_digest_source(
+    construction: object, capsule_terminus_fields: Iterable[str]
+) -> CapsuleStandInDigest:
+    """Build the DEFAULT :class:`CapsuleStandInDigest` (T2 lane C — moved out of
+    ``tos_runtime.compose._wiring`` to keep that module's own size budget net-negative; no
+    behavioural change from the T2 lane A version this replaces).
+
+    ``construction`` is typed as ``object`` (never
+    :class:`~tos_runtime.compose._types.ConstructionConfig` directly) deliberately: importing
+    that type here would import :mod:`tos_runtime.compose._types`, which imports
+    :mod:`tos_runtime.compose.context`, which imports THIS module — a cycle. Every caller today
+    passes the real ``ConstructionConfig``; this function only ever reads named attributes off it
+    via ``getattr``, so the narrower ``object`` annotation costs nothing at the one real call site
+    and avoids the cycle structurally rather than by caller discipline alone.
+
+    Args:
+        construction: The per-strategy Order Construction facts object (every caller today:
+            :class:`~tos_runtime.compose._types.ConstructionConfig`) — only attributes named in
+            ``capsule_terminus_fields`` are read, via ``getattr``.
+        capsule_terminus_fields: Which of ``construction``'s own attribute names feed the digest
+            (:data:`~tos_runtime.compose._egress_coordinates.EgressCoordinatesConfig.capsule_terminus_fields`
+            at the one real call site).
+
+    Returns:
+        The stand-in digest source, wrapping the SAME boot-time computation the prior inline
+        helper performed.
+    """
+    return CapsuleStandInDigest(
+        digest=_SCHEME.compute_digest(
+            {name: getattr(construction, name) for name in capsule_terminus_fields}
+        )
+    )

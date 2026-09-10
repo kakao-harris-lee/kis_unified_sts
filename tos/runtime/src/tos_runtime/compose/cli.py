@@ -23,18 +23,21 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
+from tos_runtime.compose._transport_wiring import TransportKind
+
 __all__ = ["Args", "build_parser", "parse_args"]
 
 
 @dataclass(frozen=True)
 class Args:
     """The four :func:`~tos_runtime.compose.root.compose_paper_runtime`
-    positional arguments, parsed from argv only."""
+    positional arguments, plus ``transport`` (T2 lane C), parsed from argv only."""
 
     config_dir: Path
     data_dir: Path
     custody_root: Path
     environment_label: str
+    transport: TransportKind
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -79,6 +82,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         help="This process's boot-argument environment label (e.g. 'non-live-test'/'paper').",
     )
+    parser.add_argument(
+        "--transport",
+        choices=[kind.value for kind in TransportKind],
+        default=TransportKind.SYNTHETIC.value,
+        help=(
+            "The transport this composition wires (TOS KIS MOCK transport plan T2 lane C): "
+            "'synthetic' (default, non-broker-reaching) or 'kis-mock' (KIS 모의투자 stock "
+            "order-verification transport — requires a broker-reaching active scope and "
+            "provisioned kis_mock.* custody, see tos_runtime.compose._transport_wiring)."
+        ),
+    )
     return parser
 
 
@@ -99,4 +113,5 @@ def parse_args(argv: list[str] | None = None) -> Args:
         data_dir=namespace.data_dir,
         custody_root=namespace.custody_root,
         environment_label=namespace.environment_label,
+        transport=TransportKind(namespace.transport),
     )
