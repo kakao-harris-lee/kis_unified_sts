@@ -35,6 +35,7 @@ codebase — never a fake kernel predicate, never a relaxed gate in the module u
 
 from __future__ import annotations
 
+import sys
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -153,9 +154,16 @@ def rcl_log(tmp_path: Path, evidence_store: SqliteEvidenceStore) -> SqliteCommit
     instance.close()
 
 
+#: TOS Phase 5 W2-R re-review finding NEW-2 (2026-09-10): a fake starting at ``0`` cannot
+#: distinguish "recorded the actual ``now_ms`` reading" from "recorded a hardcoded ``0``" --
+#: both look identical on the very first observation. A non-zero, non-round base makes the two
+#: distinguishable directly.
+_MONOTONIC_BASE_MS = 1_700_000_000_000
+
+
 @pytest.fixture
 def monotonic_source() -> FakeMonotonicSource:
-    return FakeMonotonicSource()
+    return FakeMonotonicSource(start=_MONOTONIC_BASE_MS)
 
 
 def _open_reservation(
@@ -384,6 +392,55 @@ def _kind_seq(evidence_store: SqliteEvidenceStore, kind: str) -> list[int]:
         "SELECT seq FROM entries WHERE kind = ? ORDER BY seq ASC", (kind,)
     ).fetchall()
     return [seq for (seq,) in rows]
+
+
+# -- NEW-1 fix: import tos_runtime.posttrade.release_consumer cannot re-open the cycle ----
+
+
+def test_release_consumer_imports_cleanly_after_a_cold_cache_eviction() -> None:
+    """TOS Phase 5 W2-R re-review finding NEW-1 (2026-09-10): ``import
+    tos_runtime.posttrade.release_consumer`` used to fail with an ``ImportError`` on a
+    partially-initialized module -- ``release_consumer`` -> ``tos_runtime.engine.inbox``
+    (triggers ``tos_runtime/engine/__init__.py``) -> ``engine.driver`` -> ``engine
+    .finality_projection`` -> back to ``release_consumer``, still mid-import.
+
+    **No ``subprocess``/``os.environ``/``importlib.import_module`` here (firewall TOS-FW-B/
+    TOS-FW-C/TOS-FW-D forbid all three under ``tos/`` for tests too, per
+    ``tools/tos_firewall_check.py``'s own "parses every ``.py`` under ``tos/`` (src AND tests)"
+    scope, and TOS-FW-D specifically closes the static-analysis gap ``importlib.import_module``
+    would otherwise open).** A genuine cold start is reproduced IN-PROCESS instead, using a
+    PLAIN ``import`` statement (not a dynamic call -- the firewall's own AST check greps for
+    ``ast.Call`` nodes naming ``import_module``/``__import__``/``exec``/``eval``; the ``import``
+    keyword compiles to a different opcode entirely and is a genuinely static, allowlist-checked
+    import like any other in this file). **Measured, not assumed (first attempt at this test was
+    silently a no-op):** evicting ONLY the four modules literally named in the traceback
+    (``release_consumer``, ``engine.finality_projection``, ``engine.driver``, ``engine``) is NOT
+    enough -- ``tos_runtime.engine.inbox`` (a SIBLING submodule ``release_consumer.py`` imports
+    first, at line 156) stays cached, and ``from tos_runtime.engine.inbox import
+    SqliteEventInbox`` never needs to re-run ``tos_runtime/engine/__init__.py`` at all once that
+    exact dotted name is already a key in ``sys.modules`` -- CPython's own import machinery
+    short-circuits on the full dotted name before it ever re-checks the parent package chain.
+    This test therefore evicts EVERY ``tos_runtime.engine*`` entry (the whole subpackage, not a
+    hand-picked subset) plus ``tos_runtime.posttrade.release_consumer`` itself, then re-imports
+    fresh -- verified by hand to reproduce the identical traceback against a deliberately
+    re-broken copy of the fix, and to pass cleanly against the real one.
+    """
+    evicted_prefixes = ("tos_runtime.engine",)
+    to_evict = [
+        name
+        for name in list(sys.modules)
+        if name == "tos_runtime.posttrade.release_consumer"
+        or any(
+            name == prefix or name.startswith(f"{prefix}.")
+            for prefix in evicted_prefixes
+        )
+    ]
+    saved = {name: sys.modules.pop(name) for name in to_evict}
+    try:
+        import tos_runtime.posttrade.release_consumer  # noqa: F401
+    finally:
+        for name, module in saved.items():
+            sys.modules[name] = module
 
 
 # -- FULL_FILL -> POSITION_CONSUMED (happy path) -------------------------------------
@@ -783,6 +840,12 @@ def test_obligation_expiry_first_observation_only_records_wait_start(
     # H2 fix: the wait-start marker is in-memory ONLY, never a durable evidence row (module
     # docstring's "never persist a monotonic reading") -- assert directly on the in-memory map.
     assert len(consumer._wait_start_ms) == 1  # noqa: SLF001
+    # NEW-2 fix: the recorded value must be the ACTUAL monotonic reading, not a hardcoded 0 --
+    # only distinguishable because monotonic_source starts at a non-zero, non-round base.
+    ((_stored_key, stored_first_observed_ms),) = (
+        consumer._wait_start_ms.items()
+    )  # noqa: SLF001
+    assert stored_first_observed_ms == _MONOTONIC_BASE_MS
     wait_start_rows = evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = 'RELEASE_PROOF_WAIT_START'"
     ).fetchone()[0]

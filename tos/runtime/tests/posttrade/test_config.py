@@ -1,5 +1,5 @@
 """Hermetic tests for :mod:`tos_runtime.posttrade.config` (TOS Phase 5 W2-R independent-review
-finding M2, 2026-09-10).
+finding M2, 2026-09-10; re-review finding e′, 2026-09-10).
 
 **Coverage gap this file closes.** Every existing test in this package constructs
 :class:`~tos_runtime.posttrade.config.FinalityConfig` directly
@@ -10,6 +10,12 @@ already-filled YAML (``compose/conftest.py``) — nothing ever called
 ``_require_positive_int`` with a literal ``60_000`` instead of raising on ``None`` — survived
 every one of the 1052 tests in the runtime suite as a result. This file pins the named-TBD-null
 refusal (plan §7 item 2's own operator-owned gate) and the type/positivity guards directly.
+
+**e′ (re-review, 2026-09-10): the four PRE-EXISTING string fields' own ``_require_str`` null/
+wrong-type guards had no test of their own either** — every existing test in this package (and
+this file's own ``release_proof_wait_ms`` tests above) always supplies fully-valued
+``currency``/``value_date``/``source_revision``/``proof_recipe_id``. The parametrized test below
+closes that gap for all four, one null case and one wrong-type case each.
 """
 
 from __future__ import annotations
@@ -73,4 +79,39 @@ def test_release_proof_wait_ms_missing_key_is_refused(tmp_path: Path) -> None:
     raw = dict(_VALID_RAW)
     del raw["release_proof_wait_ms"]
     with pytest.raises(FinalityConfigError, match="release_proof_wait_ms"):
+        load_finality_config(_write(tmp_path, raw))
+
+
+# -- e′ fix: the four pre-existing string fields' own null/wrong-type guards, pinned ----
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["currency", "value_date", "source_revision", "proof_recipe_id"],
+)
+def test_string_field_null_is_named_tbd_refused(tmp_path: Path, field: str) -> None:
+    raw = dict(_VALID_RAW, **{field: None})
+    with pytest.raises(FinalityConfigError, match=field):
+        load_finality_config(_write(tmp_path, raw))
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["currency", "value_date", "source_revision", "proof_recipe_id"],
+)
+def test_string_field_wrong_type_is_refused(tmp_path: Path, field: str) -> None:
+    """An int where a string is required -- ``_require_str``'s own ``isinstance`` guard."""
+    raw = dict(_VALID_RAW, **{field: 42})
+    with pytest.raises(FinalityConfigError, match=field):
+        load_finality_config(_write(tmp_path, raw))
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["currency", "value_date", "source_revision", "proof_recipe_id"],
+)
+def test_string_field_blank_is_refused(tmp_path: Path, field: str) -> None:
+    """A blank/whitespace-only string is not a concrete value either."""
+    raw = dict(_VALID_RAW, **{field: "   "})
+    with pytest.raises(FinalityConfigError, match=field):
         load_finality_config(_write(tmp_path, raw))
