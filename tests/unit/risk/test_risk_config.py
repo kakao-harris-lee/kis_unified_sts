@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from shared.config.loader import ConfigLoader
 from shared.risk.config import FuturesRiskConfig, load_trading_windows
 
 # ---------------------------------------------------------------------------
@@ -42,9 +43,47 @@ class TestFuturesRiskConfigFromYaml:
         config = FuturesRiskConfig.from_yaml()
         assert isinstance(config, FuturesRiskConfig)
 
-    def test_account_equity_krw(self) -> None:
+    def test_account_equity_krw(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """F-9 gap G4: the MDD denominator is the futures-margin fallback.
+
+        ``config/risk.yaml`` holds ``${FUTURES_MARGIN_FALLBACK_EQUITY:50000000}``
+        — the same env indirection ``config/futures_margin.yaml`` uses for
+        ``fallback_account_equity_krw`` (the LeverageFilter denominator), so one
+        operator knob moves both. ``ConfigLoader._resolve_env_vars`` yields the
+        default as a *string*; the pydantic ``int`` field must coerce it.
+        """
+        monkeypatch.delenv("FUTURES_MARGIN_FALLBACK_EQUITY", raising=False)
+        ConfigLoader.clear_cache()
         config = FuturesRiskConfig.from_yaml()
-        assert config.account_equity_krw == 5_000_000
+        assert config.account_equity_krw == 50_000_000
+        assert isinstance(config.account_equity_krw, int)
+
+    def test_account_equity_krw_matches_leverage_denominator(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same denominator as the futures margin read-model / LeverageFilter."""
+        from services.futures_margin_risk.config import FuturesMarginConfig
+
+        monkeypatch.delenv("FUTURES_MARGIN_FALLBACK_EQUITY", raising=False)
+        ConfigLoader.clear_cache()
+        assert float(FuturesRiskConfig.from_yaml().account_equity_krw) == pytest.approx(
+            FuturesMarginConfig.load_or_default().fallback_account_equity_krw
+        )
+
+    def test_account_equity_krw_follows_env_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FUTURES_MARGIN_FALLBACK_EQUITY", "12345678")
+        ConfigLoader.clear_cache()
+        assert FuturesRiskConfig.from_yaml().account_equity_krw == 12_345_678
+
+    def test_stock_equity_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``risk_stock`` keeps its own literal denominator (cash account)."""
+        from shared.risk.config import StockRiskConfig
+
+        monkeypatch.delenv("FUTURES_MARGIN_FALLBACK_EQUITY", raising=False)
+        ConfigLoader.clear_cache()
+        assert StockRiskConfig.from_yaml().account_equity_krw == 10_000_000
 
     def test_daily_mdd_limit_pct(self) -> None:
         config = FuturesRiskConfig.from_yaml()
