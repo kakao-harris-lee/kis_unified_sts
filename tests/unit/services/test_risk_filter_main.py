@@ -14,9 +14,11 @@ from services.risk_filter.main import (
     _streams_for,
 )
 from shared.decision.signal import Signal
+from shared.risk.filters.base import FilterResult
 from shared.risk.layer import LayerResult, RiskFilterLayer
 from shared.streaming.approval_gate import ApprovalGateConfig
 from shared.streaming.approval_keys import approval_field_id, pending_approval_key
+from shared.streaming.trading_state import TradingStateReader
 
 CANDIDATE_STREAM = "signal.candidate.futures"
 FINAL_STREAM = "signal.final.futures"
@@ -676,3 +678,214 @@ def test_build_leverage_wiring_provider_fails_open_on_read_error(monkeypatch) ->
     provider, _specs = _build_leverage_wiring(cfg)
     assert provider is not None
     assert provider() is None
+
+
+# ---------------------------------------------------------------------------
+# F-9 Gate 1 gap G3 (2026-09-10): shadow trading-state key isolation
+#
+# ``shared.streaming.trading_state._key`` reads TRADING_STATE_KEY_SUFFIX at CALL
+# time, so a shadow-mode risk_filter that never sets it resolves
+# ``trading:futures:positions`` — the monolithic orchestrator's book — as the
+# LeverageFilter's position source.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def restore_state_suffix():
+    """Save/restore TRADING_STATE_KEY_SUFFIX around a test.
+
+    ``ensure_state_key_suffix`` writes ``os.environ`` directly (it has to — the
+    daemon's own process env is the contract), which monkeypatch cannot undo.
+    """
+    import os
+
+    before = os.environ.get("TRADING_STATE_KEY_SUFFIX")
+    try:
+        yield
+    finally:
+        if before is None:
+            os.environ.pop("TRADING_STATE_KEY_SUFFIX", None)
+        else:
+            os.environ["TRADING_STATE_KEY_SUFFIX"] = before
+
+
+def test_shadow_mode_sets_state_key_suffix(restore_state_suffix) -> None:
+    import os
+
+    from services.risk_filter.main import ensure_state_key_suffix
+
+    os.environ.pop("TRADING_STATE_KEY_SUFFIX", None)
+    ensure_state_key_suffix("shadow", label="futures risk filter")
+
+    assert os.environ["TRADING_STATE_KEY_SUFFIX"] == "shadow"
+    assert (
+        TradingStateReader("futures").positions_key
+        == "trading:futures:positions:shadow"
+    )
+
+
+def test_shadow_mode_preserves_operator_pinned_suffix(restore_state_suffix) -> None:
+    """An explicitly configured suffix wins — never clobbered by the default."""
+    import os
+
+    from services.risk_filter.main import ensure_state_key_suffix
+
+    os.environ["TRADING_STATE_KEY_SUFFIX"] = "gate1b"
+    ensure_state_key_suffix("shadow", label="futures risk filter")
+
+    assert os.environ["TRADING_STATE_KEY_SUFFIX"] == "gate1b"
+
+
+def test_live_mode_clears_leaked_state_key_suffix(restore_state_suffix, caplog) -> None:
+    """live must never read/write a shadow key — a leaked suffix is cleared."""
+    import logging as _logging
+    import os
+
+    from services.risk_filter.main import ensure_state_key_suffix
+
+    os.environ["TRADING_STATE_KEY_SUFFIX"] = "shadow"
+    with caplog.at_level(_logging.WARNING, logger="shared.streaming.trading_state"):
+        ensure_state_key_suffix("live", label="futures risk filter")
+
+    assert os.environ["TRADING_STATE_KEY_SUFFIX"] == ""
+    assert TradingStateReader("futures").positions_key == "trading:futures:positions"
+    assert any(
+        "clearing TRADING_STATE_KEY_SUFFIX for live futures risk filter"
+        in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_suffix_bound_before_leverage_wiring() -> None:
+    """Ordering pin: the suffix is bound BEFORE the leverage provider is built.
+
+    ``_build_leverage_wiring`` constructs the ``TradingStateReader`` whose
+    positions key the LeverageFilter reads; binding the suffix after it would
+    reproduce G3 exactly.
+    """
+    import ast
+    import inspect
+
+    from services.risk_filter import main as m
+
+    tree = ast.parse(inspect.getsource(m._build_and_run))
+    lineno = {
+        node.func.id: node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in ("ensure_state_key_suffix", "_build_leverage_wiring")
+    }
+    assert "ensure_state_key_suffix" in lineno, "risk_filter never binds the suffix"
+    assert lineno["ensure_state_key_suffix"] < lineno["_build_leverage_wiring"]
+
+
+# ---------------------------------------------------------------------------
+# F-9 Gate 1b gap G2 (2026-09-10): one verdict log line per candidate
+# ---------------------------------------------------------------------------
+
+
+def _stream_fields(signal: Signal, signal_id: str = "sig-1") -> dict[bytes, bytes]:
+    fields = signal.to_stream_dict()
+    fields["signal_id"] = signal_id
+    return {k.encode(): str(v).encode() for k, v in fields.items()}
+
+
+def _verdict_line(caplog) -> str:
+    lines = [
+        r.getMessage()
+        for r in caplog.records
+        if r.getMessage().startswith("risk_filter verdict=")
+    ]
+    assert len(lines) == 1, f"expected exactly one verdict line, got {lines}"
+    return lines[0]
+
+
+@pytest.mark.asyncio
+async def test_verdict_log_passed(redis, signals_writer, caplog) -> None:
+    import logging as _logging
+
+    result = LayerResult(
+        passed=True,
+        skip_reason=None,
+        size_multiplier=0.5,
+        filter_outcomes=[
+            FilterResult(passed=True, filter_name="trading_hours"),
+            FilterResult(
+                passed=True, filter_name="consecutive_loss", size_multiplier=0.5
+            ),
+        ],
+    )
+    daemon = _make_daemon(
+        redis=redis, signals_writer=signals_writer, layer=_StubLayer(result)
+    )
+    with caplog.at_level(_logging.INFO, logger="services.risk_filter.main"):
+        assert await daemon.handle_message(b"1-1", _stream_fields(_signal("long")))
+
+    line = _verdict_line(caplog)
+    assert "verdict=passed" in line
+    assert "signal_id=sig-1" in line
+    assert "setup_type=A_gap_reversion" in line
+    assert "direction=long" in line
+    assert "symbol=A05603" in line
+    assert "filter=-" in line
+    assert "reason=-" in line
+    assert "size_multiplier=0.500" in line
+    assert "outcomes=trading_hours:pass,consecutive_loss:pass" in line
+
+
+@pytest.mark.asyncio
+async def test_verdict_log_rejected_names_filter_and_reason(
+    redis, signals_writer, caplog
+) -> None:
+    """The G2 payload: WHICH filter rejected and WHY, for every rejection."""
+    import logging as _logging
+
+    result = LayerResult(
+        passed=False,
+        skip_reason="gross_leverage_exceeded",
+        size_multiplier=1.0,
+        filter_outcomes=[
+            FilterResult(passed=True, filter_name="trading_hours"),
+            FilterResult(
+                passed=False,
+                filter_name="leverage",
+                skip_reason="gross_leverage_exceeded",
+                size_multiplier=1.0,
+            ),
+        ],
+    )
+    daemon = _make_daemon(
+        redis=redis, signals_writer=signals_writer, layer=_StubLayer(result)
+    )
+    with caplog.at_level(_logging.INFO, logger="services.risk_filter.main"):
+        assert await daemon.handle_message(b"1-1", _stream_fields(_signal("short")))
+
+    line = _verdict_line(caplog)
+    assert "verdict=rejected" in line
+    assert "direction=short" in line
+    assert "filter=leverage" in line
+    assert "reason=gross_leverage_exceeded" in line
+    assert "outcomes=trading_hours:pass,leverage:fail" in line
+    # No final-stream entry — the log is the only record of the rejection.
+    assert await redis.xrange(FINAL_STREAM) == []
+
+
+@pytest.mark.asyncio
+async def test_verdict_log_without_outcomes_uses_placeholders(
+    redis, signals_writer, caplog
+) -> None:
+    """Empty filter list (backtest / degraded layer) still logs one line."""
+    import logging as _logging
+
+    result = LayerResult(passed=False, skip_reason=None, size_multiplier=1.0)
+    daemon = _make_daemon(
+        redis=redis, signals_writer=signals_writer, layer=_StubLayer(result)
+    )
+    with caplog.at_level(_logging.INFO, logger="services.risk_filter.main"):
+        assert await daemon.handle_message(b"1-1", _stream_fields(_signal("long")))
+
+    line = _verdict_line(caplog)
+    assert "verdict=rejected" in line
+    assert "filter=- reason=-" in line
+    assert "outcomes=-" in line
