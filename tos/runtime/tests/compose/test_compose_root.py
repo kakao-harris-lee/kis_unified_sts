@@ -1787,7 +1787,10 @@ class TestOrthostateAndFinalityProjectionWiring:
         ``RELEASED``/``POSITION_CONSUMED`` rows — capacity release stays structurally absent
         until a genuinely independent (real broker) witness replaces the synthetic one.
         """
+        import json
+
         from tos.rcl import CapacityState
+        from tos_runtime.rcl.reservation_identity import scope_reservation_id
 
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
@@ -1815,10 +1818,21 @@ class TestOrthostateAndFinalityProjectionWiring:
         ]
         assert released_or_consumed == []
 
-        held_rows = runtime.evidence_store.connection.execute(
-            "SELECT COUNT(*) FROM entries WHERE kind = 'CAPACITY_RELEASE_HELD'"
-        ).fetchone()[0]
-        assert held_rows == 1
+        held_payload_rows = runtime.evidence_store.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = 'CAPACITY_RELEASE_HELD'"
+        ).fetchall()
+        assert len(held_payload_rows) == 1
+        held_payload = json.loads(held_payload_rows[0][0])["payload"]
+        # Independent-review finding M5 (2026-09-10): assert *why* it held, not merely that it
+        # held -- a hold for a trivial upstream reason would otherwise pass this test
+        # identically. Also pins the reservation id itself (finding M5's own measured mutation:
+        # a total `_reservation_id` drift left the prior assertions passing unchanged).
+        instrument_key = runtime.context_resolver.instrument_key
+        assert held_payload["reservation_id"] == scope_reservation_id(
+            instrument_key.account, instrument_key.instrument
+        )
+        assert held_payload["reason"] == "NOT_CORROBORATED"
+        assert held_payload["detail"] == "WITNESS_NOT_INDEPENDENT"
         intent_rows = runtime.evidence_store.connection.execute(
             "SELECT COUNT(*) FROM entries WHERE kind = 'CAPACITY_RELEASE_INTENT'"
         ).fetchone()[0]
