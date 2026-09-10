@@ -199,6 +199,22 @@ def _broker_scopes_coordinates(
     return rows
 
 
+def _extra_config_file_coordinates(
+    extra_config_files: tuple[Path, ...],
+) -> list[dict[str, str]]:
+    """One row per ``extra_config_files`` entry (T2 lane C) — split out of
+    :func:`record_operator_attested_inputs` purely for the size budget, mirroring
+    :func:`_broker_scopes_coordinates`."""
+    return [
+        {
+            "name": path.name,
+            "source_file": path.name,
+            "source_file_digest": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+        for path in extra_config_files
+    ]
+
+
 def record_operator_attested_inputs(
     config_dir: Path,
     evidence_store: SqliteEvidenceStore,
@@ -211,6 +227,7 @@ def record_operator_attested_inputs(
     *,
     broker_scopes: BrokerScopesConfig | None = None,
     instance_document: InstanceDocument | None = None,
+    extra_config_files: tuple[Path, ...] = (),
 ) -> None:
     """Durably record ONE evidence entry enumerating every config-attested
     coordinate name (items 6/12/16 + the step 6/7 admission witnesses + the
@@ -238,6 +255,9 @@ def record_operator_attested_inputs(
     LoadedStrategyBindings.present`) — its absence is a normal, typed state
     (module docstring of :mod:`tos_runtime.strategy.bindings`), not
     something to attest.
+
+    ``extra_config_files`` (T2 lane C) adds one row per file via
+    :func:`_extra_config_file_coordinates` — empty for ``synthetic``.
 
     Never re-derives ``config_dir``'s file names independently elsewhere —
     this is the ONE place that reads all three attestation/coordinate config
@@ -292,6 +312,7 @@ def record_operator_attested_inputs(
     coordinates.extend(
         _broker_scopes_coordinates(config_dir, broker_scopes, instance_document)
     )
+    coordinates.extend(_extra_config_file_coordinates(extra_config_files))
     evidence_store.append(
         {"attested_coordinates": coordinates},
         kind=_ATTESTED_INPUTS_EVIDENCE_KIND,

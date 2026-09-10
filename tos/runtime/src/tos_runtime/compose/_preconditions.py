@@ -12,22 +12,44 @@ Protocol (``authority_epoch_current() -> bool | None``,
 original non-optional sketch; see :meth:`RuntimeCoordinatorPreconditions
 .live_scope_authorized`'s own docstring for the ``None`` treatment).
 
+**Two questions, not one (T2 lane B; plan §2 decision 7 / §7 operator
+disposition row 1, ``docs/plans/2026-09-10-tos-kis-mock-transport-plan.md``).**
+The kernel Protocol still carries only the two methods above — the kernel
+diff for this arc is 0. What changed is what ``live_scope_authorized`` asks
+internally: a synthetic (non-broker-reaching) transport is authorized exactly
+as before (gate ①/② below, unchanged); a broker-reaching transport is now ALSO
+asked a second, independent question — :func:`~tos_runtime.compose
+._nonlive_admission.nonlive_broker_consuming_admitted` — which admits it only
+under a positively-configured operator posture AND a scope that is
+structurally incapable of ever being REAL (see that module's own docstring
+for the five required conditions). Neither question ever widens the other:
+gate ① (kernel ``is_live`` default-non-live judgement) still gates everything,
+and a REAL-shaped scope fails the new question's condition 3 regardless of
+posture.
+
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib
-(``pathlib``, ``yaml``, ``dataclasses``) + ``tos.authority``/``tos.liveauth``/
-``tos.egressgw`` + ``tos_runtime.authority.epoch`` only. No ``shared.*``.
+(``pathlib``, ``yaml``, ``dataclasses``, ``typing``) +
+``tos.authority``/``tos.liveauth``/``tos.egressgw`` +
+``tos_runtime.authority.epoch``/``tos_runtime.compose._nonlive_admission``/
+``tos_runtime.brokercap.instance``/``tos_runtime.brokercap.scopes`` only. No
+``shared.*``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
+from tos.egressgw import TransportNature
 from tos.engine import TransportNatureLike
 from tos.liveauth import ContinuousValidityInputs, is_live
 
 from tos_runtime.authority.epoch import SafetyAuthorityEpochService
+from tos_runtime.brokercap.instance import InstanceDocument
+from tos_runtime.brokercap.scopes import BrokerScope
+from tos_runtime.compose._nonlive_admission import nonlive_broker_consuming_admitted
 
 __all__ = [
     "COORDINATOR_PRECONDITIONS_CONFIG_NAME",
@@ -66,13 +88,23 @@ class CoordinatorPreconditionsConfigError(Exception):
 
 @dataclass(frozen=True)
 class CoordinatorPreconditionsConfig:
-    """The one operator-configured Coordinator-precondition governance fact.
+    """The operator-configured Coordinator-precondition governance facts.
 
     ``live_authorization_state`` is a GOVERNANCE fact the runtime reads, never
     one it computes or self-issues (module docstring; ADR-002-025).
+
+    ``nonlive_broker_consuming_admitted`` is the T2 lane B posture (plan §2
+    decision 7 / §7 operator disposition row 1) — a SEPARATE governance fact
+    from ``live_authorization_state``, gating only the new
+    non-live-broker-consuming question
+    :meth:`RuntimeCoordinatorPreconditions.live_scope_authorized` asks for a
+    broker-reaching transport. It is one of five required conditions
+    (:mod:`tos_runtime.compose._nonlive_admission` module docstring) — a
+    ``True`` posture alone never admits a REAL-shaped scope.
     """
 
     live_authorization_state: str
+    nonlive_broker_consuming_admitted: bool
 
 
 def load_coordinator_preconditions_config(path: Path) -> CoordinatorPreconditionsConfig:
@@ -86,10 +118,13 @@ def load_coordinator_preconditions_config(path: Path) -> CoordinatorPrecondition
 
     Raises:
         CoordinatorPreconditionsConfigError: The file is missing/unreadable/not
-            valid YAML/not a mapping, the ``live_authorization_state`` key is
+            valid YAML/not a mapping; the ``live_authorization_state`` key is
             absent or still ``null`` (named-TBD), or its value is not one of
             :data:`_SUPPORTED_LIVE_AUTHORIZATION_STATES` (no runtime wiring
-            exists yet for any other restricted-live governance posture).
+            exists yet for any other restricted-live governance posture); or
+            the ``nonlive_broker_consuming.admitted`` key is absent, the
+            block itself is not a mapping, the value is still ``null``
+            (named-TBD), or the value is not a ``bool``.
     """
     if not path.is_file():
         raise CoordinatorPreconditionsConfigError(
@@ -125,7 +160,30 @@ def load_coordinator_preconditions_config(path: Path) -> CoordinatorPrecondition
             "— no runtime wiring exists yet for any other restricted-live "
             "governance posture (fail-closed, never silently trusted)"
         )
-    return CoordinatorPreconditionsConfig(live_authorization_state=value)
+    nonlive_block = raw.get("nonlive_broker_consuming")
+    if not isinstance(nonlive_block, dict):
+        raise CoordinatorPreconditionsConfigError(
+            f"{path}: 'nonlive_broker_consuming' is missing or not a mapping "
+            "— refusing to start until an operator supplies "
+            "{admitted: bool} (T2 lane B; plan §2 decision 7)"
+        )
+    nonlive_admitted = nonlive_block.get("admitted")
+    if nonlive_admitted is None:
+        raise CoordinatorPreconditionsConfigError(
+            f"{path}: 'nonlive_broker_consuming.admitted' is missing or "
+            "still null (named-TBD) — refusing to start until an operator "
+            "supplies a concrete true/false posture (plan §2 decision 7 / "
+            "§7 operator disposition row 1)"
+        )
+    if not isinstance(nonlive_admitted, bool):
+        raise CoordinatorPreconditionsConfigError(
+            f"{path}: 'nonlive_broker_consuming.admitted' must be a bool, "
+            f"got {nonlive_admitted!r}"
+        )
+    return CoordinatorPreconditionsConfig(
+        live_authorization_state=value,
+        nonlive_broker_consuming_admitted=nonlive_admitted,
+    )
 
 
 class RuntimeCoordinatorPreconditions:
@@ -174,6 +232,9 @@ class RuntimeCoordinatorPreconditions:
         *,
         epoch_service: SafetyAuthorityEpochService | None,
         live_authorization_state: str | None,
+        nonlive_admitted: bool | None = None,
+        active_scope: BrokerScope | None = None,
+        instance_document: InstanceDocument | None = None,
     ) -> None:
         """Wire the preconditions object over its injected ports.
 
@@ -187,9 +248,26 @@ class RuntimeCoordinatorPreconditions:
                 :class:`CoordinatorPreconditionsConfig`'s governance posture
                 (``None`` when not yet configured — same "cannot be evaluated"
                 treatment as above).
+            nonlive_admitted: The loaded
+                :class:`CoordinatorPreconditionsConfig`
+                ``.nonlive_broker_consuming_admitted`` posture (T2 lane B;
+                plan §2 decision 7). ``None`` (the default) when the caller
+                does not wire this path at all — a broker-reaching transport
+                is then refused exactly as it was before this posture
+                existed (:meth:`live_scope_authorized`'s own docstring).
+            active_scope: This runtime's currently-active
+                :class:`~tos_runtime.brokercap.scopes.BrokerScope`. ``None``
+                (the default) when not wired — same "not available"
+                treatment as ``nonlive_admitted``.
+            instance_document: The Broker Capability Profile INSTANCE
+                document bound to ``active_scope``. ``None`` (the default)
+                when not wired — same "not available" treatment.
         """
         self._epoch_service = epoch_service
         self._live_authorization_state = live_authorization_state
+        self._nonlive_admitted = nonlive_admitted
+        self._active_scope = active_scope
+        self._instance_document = instance_document
         #: This runtime's own epoch floor at composition time — the CLAIMED
         #: epoch every later :meth:`authority_epoch_current` call is checked
         #: against. Read exactly once, here, never again per tick (class
@@ -231,11 +309,13 @@ class RuntimeCoordinatorPreconditions:
         """Whether ``transport_nature`` may proceed under the current live-scope
         governance posture (§5-6 liveauth; RFC-002 §10.7).
 
-        Composes two independently conservative gates with AND — either one
-        alone refusing is enough to refuse the whole check:
+        Asks TWO independent questions (T2 lane B; plan §2 decision 7 / §7
+        operator disposition row 1 — module docstring). Gate ① always gates
+        both; ``reaches_broker is False`` OR the new non-live
+        broker-consuming admission (never both required) then decides:
 
-        1. **The kernel's own default-non-live judgement.** With this
-           runtime's restricted-live governance posture read as
+        1. **The kernel's own default-non-live judgement (gate ①, unchanged).**
+           With this runtime's restricted-live governance posture read as
            ``NOT_AUTHORIZED`` (module docstring; ADR-002-025), no
            :class:`~tos.liveauth.LiveAuthorization` is ever constructed —
            ``authorization=None`` is passed to the kernel's own ``is_live``
@@ -247,16 +327,22 @@ class RuntimeCoordinatorPreconditions:
            (a positively-authorized state this module does not yet
            recognise — see :data:`_SUPPORTED_LIVE_AUTHORIZATION_STATES`)
            flows through this same call rather than silently bypassing it.
-        2. **The structural transport check.** ``transport_nature
-           .reaches_broker is False`` — an explicit ``is False`` (never a
-           falsy check): ``True`` **or** ``None`` (an unestablished nature)
-           is conservatively broker-consuming
-           (``tos.egressgw.records.TransportNature``'s own docstring) and
-           refuses regardless of the governance posture above (structural
-           non-live guarantee — a broker-reaching transport can never be
-           "live-scope authorized" while restricted-live is
-           ``NOT_AUTHORIZED``, matching the CLAUDE.md non-negotiable that the
-           real futures account is never funded with margin).
+           A gate-① refusal short-circuits everything below.
+        2. **The structural transport check (gate ②, unchanged).**
+           ``transport_nature.reaches_broker is False`` — an explicit ``is
+           False`` (never a falsy check) — admits immediately: a
+           non-broker-reaching transport never needs the new question below.
+        3. **The new non-live broker-consuming admission (only reached when
+           gate ② does NOT hold, i.e. ``reaches_broker is True``).** Delegates
+           to :func:`~tos_runtime.compose._nonlive_admission
+           .nonlive_broker_consuming_admitted` over this instance's own
+           ``nonlive_admitted``/``active_scope``/``instance_document`` ports —
+           admits only when all five of that function's conditions hold
+           (its own module docstring), one of which makes a REAL-shaped
+           scope structurally unadmittable regardless of posture. An
+           unestablished ``reaches_broker`` (``None``) reaches neither gate ②
+           nor this question and refuses (``TransportNature``'s own
+           docstring: unknown is conservatively broker-consuming).
 
         Args:
             transport_nature: The declared nature of the transport this
@@ -272,9 +358,12 @@ class RuntimeCoordinatorPreconditions:
             ``None`` if the governance posture has not been configured yet, or
             names a posture this module has no wiring for (both are
             "cannot be evaluated" — refusal upstream, never an affirmative
-            grant); ``False`` if ``transport_nature`` is ``None`` or
-            broker-reaching; otherwise ``True`` only for a non-broker-reaching
-            transport under the ``NOT_AUTHORIZED`` posture.
+            grant); ``False`` if ``transport_nature`` is ``None``, has an
+            unestablished ``reaches_broker``, or is broker-reaching without a
+            positive non-live broker-consuming admission; otherwise ``True``
+            for a non-broker-reaching transport, or a broker-reaching one
+            with a positive admission, both under the ``NOT_AUTHORIZED``
+            posture.
         """
         if self._live_authorization_state is None:
             return None
@@ -287,7 +376,28 @@ class RuntimeCoordinatorPreconditions:
             current_state=None,
             inputs=ContinuousValidityInputs(),
         )
-        return (not currently_live) and (transport_nature.reaches_broker is False)
+        if currently_live:
+            return False
+        if transport_nature.reaches_broker is False:
+            return True
+        if transport_nature.reaches_broker is True:
+            verdict = nonlive_broker_consuming_admitted(
+                posture_admitted=self._nonlive_admitted,
+                # The kernel's own TransportNatureLike Protocol (module
+                # docstring) declares only `reaches_broker` — narrower than
+                # this class's own construction site, which always receives
+                # the real `tos.egressgw.records.TransportNature` (this
+                # class's own docstring: "including the real ... TransportNature"
+                # satisfies the Protocol structurally). This cast is a
+                # static-typing widening only, no runtime check — condition
+                # 4 needs `risk_relevant_live`, a field the narrower Protocol
+                # never declares.
+                transport_nature=cast(TransportNature, transport_nature),
+                active_scope=self._active_scope,
+                instance_document=self._instance_document,
+            )
+            return verdict.admitted
+        return False
 
 
 class _ReplayPreconditions:

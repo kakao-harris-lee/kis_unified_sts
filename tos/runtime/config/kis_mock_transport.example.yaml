@@ -27,15 +27,21 @@
 # name, and any other shape deviation generically, so a config cannot smuggle a
 # real-order (or malformed) TR id past it.
 #
-# ── mode: live is unconditionally refused (independent review disposition F1/F6) ──
-# The compose context resolver currently sets `EgressRequestRecord.
-# request_bytes_digest` equal to `capsule_egress_request_digest` — a documented
-# STAND-IN, never a hash of real KIS wire bytes. A live send's own digest check
-# would therefore always mismatch today, regardless of how correct this transport
-# is. `mode: live` is refused at load time until T2 binds
-# `tos_runtime.transport.kis_mock.codec.KisOrderWireCodec` into that resolver — see
-# `codec.py`'s own module docstring for the exact serialization recipe T2 must
-# reproduce. `dry_run` is the only usable value today.
+# ── mode: live requires the compose root's own codec_bound=True attestation ──
+# (independent review disposition F1/F6; T2 lane A follow-up) ──────────────────
+# By DEFAULT the compose context resolver binds `EgressRequestRecord.
+# request_bytes_digest` / `SendBoundaryContext.capsule_egress_request_digest` to a
+# documented STAND-IN, never a hash of real KIS wire bytes — a live send's own
+# digest check would mismatch every attempt under that default wiring. T2 lane A
+# landed `tos_runtime.transport.kis_mock.codec.KisOrderWireCodec.encode_fields` +
+# `tos_runtime.compose._request_digest.KisWireCodecDigest`, the seam that closes
+# this gap — see `codec.py`'s own module docstring for the exact serialization
+# recipe. Binding it into the DEFAULT compose wiring (`compose --transport
+# kis-mock`) is a later lane's job: `load_kis_mock_transport_config` refuses
+# `mode: live` unless ITS CALLER passes `codec_bound=True` (a Python-level
+# attestation, not a config-file field this file can express) proving that later
+# lane's wiring actually ran. `dry_run` is the only usable value against this
+# example config's own `null` values.
 #
 # Every value below is a named-TBD `null` except `mode` (dry_run) and
 # `allow_plaintext_for_tests` (false — plaintext HTTP is a hermetic-test-only escape

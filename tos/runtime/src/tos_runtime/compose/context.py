@@ -75,6 +75,7 @@ Firewall (tools/tos_firewall_check.py R1, runtime scope): stdlib + ``tos.*``
 
 from __future__ import annotations
 
+import functools
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -124,6 +125,7 @@ from tos_runtime.compose._pending_dimensions import (
     PendingDimensionSpec,
     stamp_pending_dimensions,
 )
+from tos_runtime.compose._request_digest import RequestBytesDigestSource
 from tos_runtime.currentness.proof import EgressCurrentnessProofIssuer
 from tos_runtime.currentness.stages import TransmissionCapabilityStage
 from tos_runtime.currentness.vector import CurrentnessAssembler
@@ -337,7 +339,15 @@ class ComposeContextResolver:
     principal: str
     credential_route_inventory: tuple[CredentialRouteInventoryEntry, ...]
     authorized_coordinates: EgressCoordinateSet
-    capsule_egress_request_digest: str
+    #: Computes the ONE per-attempt request-bytes digest shared by
+    #: ``EgressRequestRecord.request_bytes_digest`` and
+    #: ``SendBoundaryContext.capsule_egress_request_digest`` (T2 lane A — see
+    #: :mod:`tos_runtime.compose._request_digest`'s own module docstring for the gap this
+    #: closes). Defaults to the unchanged capsule-terminus stand-in
+    #: (:class:`~tos_runtime.compose._request_digest.CapsuleStandInDigest`) at every call site
+    #: today (:mod:`tos_runtime.compose._wiring`); a later lane injects
+    #: :class:`~tos_runtime.compose._request_digest.KisWireCodecDigest`.
+    request_bytes_digest_source: RequestBytesDigestSource
     outbound_side: str
     action_class: ActionClass
     observed_session_phase: str
@@ -354,9 +364,9 @@ class ComposeContextResolver:
     _yield_seq: int = 0
 
     def _egress_request_for_command(
-        self, command_digest: str | None
+        self, command_digest: str | None, *, request_bytes_digest: str | None
     ) -> EgressRequestRecord | None:
-        if command_digest is None:
+        if command_digest is None or request_bytes_digest is None:
             return None
         from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 
@@ -365,7 +375,7 @@ class ComposeContextResolver:
         issued = EgressRequestRecord.issue(
             scheme=scheme,
             request_id=f"ereq-{command_digest[:16]}",
-            request_bytes_digest=self.capsule_egress_request_digest,
+            request_bytes_digest=request_bytes_digest,
             canonical_command_digest=command_digest,
             endpoint=coordinates.endpoint,
             account=coordinates.account,
@@ -381,6 +391,65 @@ class ComposeContextResolver:
         )
         assert isinstance(issued, EgressRequestRecord)
         return issued
+
+    def _resolve_request_bytes_digest(
+        self, construction: CandidateConstruction
+    ) -> str | None:
+        """The ONE per-attempt request-bytes digest, computed once and shared by both
+        :meth:`_egress_request_for_command` (item 17's ``EgressRequestRecord.
+        request_bytes_digest``) and :meth:`__call__`'s own ``send_boundary_context``
+        ``capsule_egress_request_digest`` kwarg — the exact two fields the kernel's
+        ``exact_binding_holds`` (``tos/src/tos/egress/predicates.py``) requires to agree
+        (T2 lane A, plan §8 "설계 정정 ①").
+
+        Reads the SAME per-attempt sources the kernel itself later seals: ``self.
+        authorized_coordinates.account`` (-> ``SendSeal.account``, ``build_send_seal``'s
+        ``_gather_seal_fields``), ``self.instrument_key.instrument`` (-> ``SendSeal.
+        instrument_key.instrument``), and ``construction.derivation.quantity``/``.price`` (->
+        ``SendBoundaryContext.outbound_quantity``/``.outbound_price`` — ``tos.egressgw.records.
+        send_boundary_context`` reads these off this SAME ``construction`` object, via
+        ``construction.derivation.quantity``/``.price``). A codec-based
+        ``request_bytes_digest_source`` therefore digests EXACTLY the bytes ``SendSeal`` itself
+        carries, never a look-alike.
+
+        Returns ``None`` when the derivation produced no value, or when ``authorized_coordinates
+        .account`` is unset (``EgressCoordinateSet.account: str | None`` — unlike
+        ``InstrumentKey.instrument``, which is required/non-empty by construction, design #31
+        §3.3). ``tos.egressgw.construction.construct_candidate_command`` only ever compiles a
+        ``command`` when ``derivation.outcome is DerivationOutcome.DERIVED`` — the ONE case
+        ``QuantityDerivation``'s own validator guarantees carries non-``None`` ``quantity``/
+        ``price`` — so ``quantity``/``price`` being ``None`` here means ``construction.command``
+        is also ``None`` (an early, un-compiled denial), which already makes
+        :meth:`_egress_request_for_command` return ``None`` unconditionally (its own
+        ``command_digest is None`` guard) regardless of this digest's value; likewise, an unset
+        ``account`` already makes the ``EgressRequestRecord.issue(...)`` call inside
+        :meth:`_egress_request_for_command` carry ``account=None``, which is refused there by
+        the SAME fail-closed discipline every other absent authorized coordinate already gets.
+        Returning ``None`` here is therefore honest — never a fabricated digest for values that
+        do not exist — and has no effect on either attempt's outcome (``exact_binding_holds``
+        already short-circuits ``False`` on an absent ``request``, independent of
+        ``capsule_egress_request_digest``).
+        """
+        quantity = construction.derivation.quantity
+        price = construction.derivation.price
+        account = self.authorized_coordinates.account
+        if quantity is None or price is None or account is None:
+            return None
+        # Independent review LOW-1: self.authorized_coordinates.account and
+        # self.instrument_key.account are the SAME value at every compose root this codebase
+        # wires today (tos_runtime.compose._wiring._build_context_resolver sets both from the
+        # SAME construction.account) — a mutation swapping the account source below is
+        # unfalsifiable through this class's own tests for that reason, not because the
+        # distinction does not matter. The distinction review F2 actually cares about (account
+        # is a SEALED outbound coordinate, never a custody-loaded value) is pinned one layer
+        # down, at the codec (tos_runtime.transport.kis_mock.codec's own
+        # test_account_is_the_seal_field_never_instrument_key_account).
+        return self.request_bytes_digest_source(
+            account=account,
+            instrument=self.instrument_key.instrument,
+            quantity=quantity,
+            price=price,
+        )
 
     def _quorum_certificate_for_command(
         self, command_digest: str | None
@@ -619,6 +688,11 @@ class ComposeContextResolver:
         egress_currentness_proof = self._issue_egress_currentness_proof(attempt)
         item16 = self.proof_issuer.item16_fields(attempt.attempt_id)
         item6item12 = self._item6_item12_fields()
+        # T2 lane A: ONE digest, computed once, shared by egress_request_for_command below
+        # (item 17's EgressRequestRecord.request_bytes_digest) and the
+        # capsule_egress_request_digest kwarg further down — see
+        # _resolve_request_bytes_digest's own docstring.
+        request_bytes_digest = self._resolve_request_bytes_digest(construction)
 
         context = send_boundary_context(
             attempt=attempt,
@@ -629,7 +703,10 @@ class ComposeContextResolver:
                 source_continuity_id=self.continuity_id,
                 source_native_sequence=self._yield_seq,
             ),
-            egress_request_for_command=self._egress_request_for_command,
+            egress_request_for_command=functools.partial(
+                self._egress_request_for_command,
+                request_bytes_digest=request_bytes_digest,
+            ),
             quorum_certificate_for_command=self._quorum_certificate_for_command,
             instrument_key=self.instrument_key,
             transport_nature=self.transport_nature,
@@ -677,7 +754,7 @@ class ComposeContextResolver:
             egress_currentness_proof=egress_currentness_proof,
             egress_currentness_result=item16.egress_currentness_result,
             authorized_coordinates=self.authorized_coordinates,
-            capsule_egress_request_digest=self.capsule_egress_request_digest,
+            capsule_egress_request_digest=request_bytes_digest,
             outbound_side=self.outbound_side,
         )
         self.contexts += (context,)
