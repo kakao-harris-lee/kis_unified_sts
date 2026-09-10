@@ -441,6 +441,7 @@ def test_release_consumer_imports_cleanly_after_a_cold_cache_eviction() -> None:
     finally:
         for name, module in saved.items():
             sys.modules[name] = module
+        sys.modules["tos_runtime"].engine = saved["tos_runtime.engine"]
 
 
 # -- FULL_FILL -> POSITION_CONSUMED (happy path) -------------------------------------
