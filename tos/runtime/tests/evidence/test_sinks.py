@@ -155,3 +155,75 @@ def test_no_on_refusal_configured_is_a_safe_default(
     adapter.record(GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="a1"))
     last_seq, _, _ = store.last_committed()
     assert last_seq == 0
+
+
+# ---------------------------------------------------------------------------
+# TOS KIS MOCK transport plan T2 lane C — ``on_record`` observer (independent
+# review LOW-6, mirroring the ``on_refusal`` tests above)
+# ---------------------------------------------------------------------------
+
+
+def test_on_record_is_called_for_every_kind(store: SqliteEvidenceStore) -> None:
+    """Unlike ``on_refusal`` (``SEND_REFUSED`` only), ``on_record`` fires unconditionally."""
+    observed: list[GatewayEvidenceRecord] = []
+    adapter = GatewayEvidenceSinkAdapter(store, on_record=observed.append)
+    sealed = GatewayEvidenceRecord(kind="SEND_SEALED", attempt_id="a1")
+    started = GatewayEvidenceRecord(kind="SEND_STARTED", attempt_id="a1")
+    refused = GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="a1")
+    adapter.record(sealed)
+    adapter.record(started)
+    adapter.record(refused)
+    assert observed == [sealed, started, refused]
+
+
+def test_on_record_runs_only_after_the_durable_append_commits(
+    store: SqliteEvidenceStore,
+) -> None:
+    """The observer sees the record only AFTER ``store.append`` has already
+    committed — evidence first, observers second (module docstring)."""
+    seen_seq_at_call_time: list[int | None] = []
+
+    def observer(_record: GatewayEvidenceRecord) -> None:
+        last_seq, _, _ = store.last_committed()
+        seen_seq_at_call_time.append(last_seq)
+
+    adapter = GatewayEvidenceSinkAdapter(store, on_record=observer)
+    adapter.record(GatewayEvidenceRecord(kind="SEND_STARTED", attempt_id="a1"))
+    assert seen_seq_at_call_time == [0]
+
+
+def test_on_record_exception_propagates(store: SqliteEvidenceStore) -> None:
+    """An observer failure is never swallowed — the append itself already
+    durably committed, but the caller must still see the failure."""
+
+    def failing_observer(_record: GatewayEvidenceRecord) -> None:
+        raise RuntimeError("seal capture failed")
+
+    adapter = GatewayEvidenceSinkAdapter(store, on_record=failing_observer)
+    with pytest.raises(RuntimeError, match="seal capture failed"):
+        adapter.record(GatewayEvidenceRecord(kind="SEND_STARTED", attempt_id="a1"))
+    last_seq, _, _ = store.last_committed()
+    assert last_seq == 0
+
+
+def test_no_on_record_configured_is_a_safe_default(store: SqliteEvidenceStore) -> None:
+    """The default (``on_record=None``) sink behaves exactly as before this change."""
+    adapter = GatewayEvidenceSinkAdapter(store)
+    adapter.record(GatewayEvidenceRecord(kind="SEND_STARTED", attempt_id="a1"))
+    last_seq, _, _ = store.last_committed()
+    assert last_seq == 0
+
+
+def test_on_record_runs_before_on_refusal_for_a_send_refused_record(
+    store: SqliteEvidenceStore,
+) -> None:
+    """Both observers fire for ``SEND_REFUSED`` — ``on_record`` first, per the ``record()``
+    docstring's documented order."""
+    order: list[str] = []
+    adapter = GatewayEvidenceSinkAdapter(
+        store,
+        on_record=lambda _r: order.append("on_record"),
+        on_refusal=lambda _r: order.append("on_refusal"),
+    )
+    adapter.record(GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="a1"))
+    assert order == ["on_record", "on_refusal"]

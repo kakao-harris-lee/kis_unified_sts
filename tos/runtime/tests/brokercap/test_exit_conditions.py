@@ -44,6 +44,7 @@ from tos_runtime.brokercap.scopes import (
     load_broker_scopes,
     resolve_scope,
 )
+from tos_runtime.compose._transport_wiring import TransportKind
 
 from ..compose import _fixtures as fx
 from ..compose.conftest import config_dir as config_dir  # noqa: F401
@@ -392,9 +393,26 @@ class TestEC5HonestyNotAPass:
         at the gateway/kernel level directly below
         (:meth:`test_kernel_level_item6_item12_deny_honestly_for_the_broker_reaching_scope`),
         since this e2e path cannot reach the gateway at all for a
-        broker-reaching scope."""
+        broker-reaching scope.
+
+        T2 lane C: an active broker-reaching scope now requires the
+        ``kis-mock`` transport (:func:`~tos_runtime.compose._transport_wiring
+        .refuse_transport_scope_mismatch` — one source of truth), so this
+        e2e path composes with it. The compose-wide fixture's own
+        ``nonlive_broker_consuming.admitted: false`` posture is left
+        untouched, so the Coordinator gate's honest denial is EXACTLY the
+        same as before this lane — the transport kind is orthogonal to it.
+        """
         _ec5_config_dir(config_dir)
-        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        fx.write_kis_mock_transport_config(config_dir)
+        fx.provision_kis_mock_custody(custody_root)
+        runtime = _compose(
+            tmp_path,
+            config_dir,
+            data_dir,
+            custody_root,
+            transport_kind=TransportKind.KIS_MOCK,
+        )
         _reach_trusted(runtime)
         event = fx.crossing_event()
         results = runtime.run_once((event,))
@@ -402,7 +420,13 @@ class TestEC5HonestyNotAPass:
         assert results[0].pipeline is None
         assert results[0].halt_reason is not None
         assert results[0].halt_reason.value == "LIVE_SCOPE_NOT_AUTHORIZED"
-        assert runtime.transport.requests == ()
+        # T2 lane C: runtime.transport is now a KisMockTransport (no synthetic-only
+        # `.requests` attribute) — zero transport calls is instead proven by the
+        # absence of ANY TRANSPORT_* evidence row this adapter would otherwise emit.
+        transport_evidence_rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind LIKE 'TRANSPORT_%'"
+        ).fetchone()[0]
+        assert transport_evidence_rows == 0
         assert runtime.gateway.verifications == ()
 
         runtime.rcl_log.close()
@@ -596,7 +620,16 @@ class TestF9SingleInstanceLoadPerBoot:
         # actually causes the real INSTANCE file to be parsed at all (the
         # default fixture's SYNTHETIC_FUTURES_ORDER scope has no `instance`
         # block, so it would never exercise either call site).
+        #
+        # T2 lane C: a broker-reaching active scope now requires the
+        # kis-mock transport (refuse_transport_scope_mismatch). This test's
+        # own counted call site (`derive_module.load_instance_document`) is
+        # unaffected: kis-mock's OWN host-seal loading uses the plural
+        # `load_instance_documents` (a different function this monkeypatch
+        # does not touch), so the count this test pins stays exactly 1.
         _ec5_config_dir(config_dir)
+        fx.write_kis_mock_transport_config(config_dir)
+        fx.provision_kis_mock_custody(custody_root)
         calls: list[int] = []
         original = derive_module.load_instance_document
 
@@ -605,7 +638,13 @@ class TestF9SingleInstanceLoadPerBoot:
             return original(*args, **kwargs)
 
         monkeypatch.setattr(derive_module, "load_instance_document", _counting)
-        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        runtime = _compose(
+            tmp_path,
+            config_dir,
+            data_dir,
+            custody_root,
+            transport_kind=TransportKind.KIS_MOCK,
+        )
 
         assert len(calls) == 1
 

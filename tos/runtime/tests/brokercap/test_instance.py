@@ -517,3 +517,60 @@ def test_module_never_bypasses_pydantic_validators() -> None:
     source = Path(instance_module.__file__).read_text(encoding="utf-8")
     assert "model_construct" not in source
     assert "model_copy(update=" not in source
+
+
+# ===========================================================================
+# rest_base (T2 lane C) — the host-seal fact tos_runtime.compose._transport_wiring
+# reads off InstanceDocument. Independent review MEDIUM-4: neither the positive read nor
+# any of _read_rest_base's shape-deviation -> None paths had a test before this.
+# ===========================================================================
+
+
+def test_mock_vts_document_rest_base_is_read_from_kis_endpoints() -> None:
+    document = load_instance_document(_DRAFT_PATH, environment="MOCK_VTS")
+    assert document.rest_base == "https://openapivts.koreainvestment.com:29443"
+
+
+def test_real_prod_document_rest_base_is_read_from_kis_endpoints() -> None:
+    document = load_instance_document(_DRAFT_PATH, environment="REAL_PROD")
+    assert document.rest_base == "https://openapi.koreainvestment.com:9443"
+
+
+@pytest.mark.parametrize(
+    "profile_identity",
+    [
+        {},
+        {"_kis": None},
+        {"_kis": "not-a-dict"},
+        {"_kis": {}},
+        {"_kis": {"endpoints": None}},
+        {"_kis": {"endpoints": "not-a-dict"}},
+        {"_kis": {"endpoints": {}}},
+        {"_kis": {"endpoints": {"rest_base": None}}},
+        {"_kis": {"endpoints": {"rest_base": ""}}},
+        {"_kis": {"endpoints": {"rest_base": 123}}},
+    ],
+    ids=[
+        "no_kis_block",
+        "kis_none",
+        "kis_not_a_dict",
+        "kis_empty",
+        "endpoints_none",
+        "endpoints_not_a_dict",
+        "endpoints_empty",
+        "rest_base_none",
+        "rest_base_empty_string",
+        "rest_base_not_a_string",
+    ],
+)
+def test_read_rest_base_returns_none_for_every_shape_deviation(
+    profile_identity: dict[str, object],
+) -> None:
+    """Never invented (module docstring) — every shape deviation returns ``None``, never a
+    fabricated or default host string."""
+    assert instance_module._read_rest_base(profile_identity) is None
+
+
+def test_read_rest_base_returns_the_value_for_a_well_shaped_block() -> None:
+    profile_identity = {"_kis": {"endpoints": {"rest_base": "https://example.test:1"}}}
+    assert instance_module._read_rest_base(profile_identity) == "https://example.test:1"

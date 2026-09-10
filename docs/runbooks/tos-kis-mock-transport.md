@@ -1,21 +1,27 @@
-# TOS KIS MOCK transport 운영 런북 (레인 T1)
+# TOS KIS MOCK transport 운영 런북 (레인 T1 → T2 lane C 갱신)
 
 - **상위 계획**: `docs/plans/2026-09-10-tos-kis-mock-transport-plan.md`
-- **레인**: T1 어댑터(`tos_runtime.transport.kis_mock`) — T2(Coordinator admission·compose 결선)와
-  T3(e2e 정직성)는 별도 레인 소관, 이 런북은 T1 산출물만 다룬다.
+- **레인**: T1 어댑터(`tos_runtime.transport.kis_mock`) 착지 + T2 lane C(compose 결선
+  `--transport {synthetic,kis-mock}`, `tos_runtime.compose._transport_wiring`, custody
+  `PROVISIONED_SCOPES` 확장) 착지. T2 lane A(codec digest 결속)·lane B(Coordinator non-live
+  admission)는 각각 `tos_runtime.compose._request_digest`/`_nonlive_admission` — 이 런북은
+  그 위에서 lane C 가 실제로 결선한 사실만 갱신한다. T3(e2e 정직성 나머지 절반)는 별도.
 - **권한 부여 0 · 실주문 0 · 라이브 권한 0**: 이 문서와 그 산출물은 아무것도 승인하지 않는다.
 - **독립 리뷰 처분 반영**(`dc6b47ba` 재심 · F1~F8, 8건 전부 해소): §2.1의 wire codec 분리,
   `mode: live` 부팅 거부, account 소싱 전환(§3), TR ID 형상 검증, `rt_cd` 부재 판정,
   자격증명 보관 정직화, 토큰 정체 evidence 확장 — 아래 각 절에서 상세.
 
-## 1. T1이 착지한 것 / 아닌 것
+## 1. 착지한 것 / 아직 아닌 것
 
 | 착지 | 착지 아님 |
 |---|---|
-| `tos_runtime/transport/kis_mock/{config,client,codec,adapter}.py` — 설정 로더·stdlib HTTP 클라이언트·공유 wire codec·`Transport` 어댑터 | Coordinator `nonlive_broker_consuming` admission (T2) |
-| 예시 설정 `kis_mock_transport.example.yaml`(전항목 named-TBD null, `static_body_fields` 포함) | compose 결선(`_wiring.py`/`root.py`/`cli.py`) — `build_client(config)` 팩토리는 착지, 호출은 T2 소관 |
-| custody manifest 예시에 `kis_mock.app_key`/`kis_mock.app_secret` 2스코프 행 추가(계정 스코프는 **드롭** — §3) | `FileCustody.PROVISIONED_SCOPES` 확장(현재 3스코프 고정 — 아래 §4 참조) |
-| 헤르메틱 가짜 KIS 서버 기반 단위 테스트(config/client/codec/adapter, 124건) | 실 게이트웨이 통합 e2e(T3) |
+| `tos_runtime/transport/kis_mock/{config,client,codec,adapter}.py` — 설정 로더·stdlib HTTP 클라이언트·공유 wire codec·`Transport` 어댑터 (T1) | 실 게이트웨이 통합 e2e 전체(T3 나머지 절반 — "정직 deny" crossing 테스트는 착지) |
+| 예시 설정 `kis_mock_transport.example.yaml`(전항목 named-TBD null, `static_body_fields` 포함) (T1) | `field_map`/`static_body_fields`/TR ID/`min_send_interval_ms`/`token_reissue_min_interval_s` 값 자체(§4 제안표 — 운영자 승인 대기, 예시 설정은 여전히 null) |
+| custody manifest 예시에 `kis_mock.app_key`/`kis_mock.app_secret` 2스코프 행 (T1) | 실전 모의 서버의 실제 credential 값 채움(운영자 레인, §5) |
+| 헤르메틱 가짜 KIS 서버 기반 단위 테스트(config/client/codec/adapter) (T1) | INSTANCE VERIFIED 승격 · Phase 5 deferred 항목 4/5/7/8/9/10 owner |
+| `FileCustody.PROVISIONED_SCOPES` 에 `kis_mock.app_key`/`kis_mock.app_secret` 추가 + 원칙-일치 부팅 거부(`scope_principal`) (T2 lane C) | |
+| `compose --transport {synthetic,kis-mock}` (`cli.py`/`root.py`/`tos_runtime.compose._transport_wiring`) — 스코프/transport 일관성 거부·custody principal 거부·호스트 봉인(INSTANCE MOCK_VTS/REAL_PROD `rest_base`) (T2 lane C) | |
+| `SealRegistry`(gateway `SEND_SEALED` evidence → 어댑터 `SealLookup`, 단발성) + `KisWireCodecDigest` 를 `kis-mock` 부팅의 기본 컨텍스트 리졸버에 결속(T2 lane A 의 seam 을 실제로 배선) (T2 lane C) | |
 
 **오늘 이 어댑터를 어딘가에 연결해도 송신은 나가지 않는다** — 두 겹으로 막힌다: (a) 계획 §0
 "핵심 귀결"이 지목한 3중 차단(Coordinator ② · 게이트웨이 deferred 6 UNKNOWN · INSTANCE
@@ -104,18 +110,14 @@ named-TBD `null` 상태로 유지된다 — 로더가 부팅을 거부하는 것
 `KIS_ORDER_CASH_WIRE_FIELDS`(codec.py)와 정확 일치 검증한다 — 이전 판의 "known T1 gap"(5필드
 미해결)은 스키마 확장으로 해소되었고, 남은 것은 값 자체의 운영자 승인뿐이다.
 
-## 5. custody 파일 준비 절차
+## 5. custody 파일 준비 절차 (T2 lane C 착지 — `PROVISIONED_SCOPES` 확장 완료)
 
-`kis_mock.app_key`/`kis_mock.app_secret` 두 스코프(계정 스코프는 §3 에 따라 없음)가
-`tos_runtime.custody.file_custody.FileCustody`로 로드되려면 **두 가지가 선행**되어야 한다
-(순서 중요):
+`kis_mock.app_key`/`kis_mock.app_secret` 두 스코프(계정 스코프는 §3 에 따라 없음)는
+`tos_runtime.custody.file_custody.FileCustody.PROVISIONED_SCOPES` 에 이미 등재되어
+있다(`frozenset({"read.principal", "evidence.key", "replay.params", "kis_mock.app_key",
+"kis_mock.app_secret"})`) — 더 이상 별도 착지가 필요 없다. 남은 것은 파일 준비뿐:
 
-1. **`FileCustody.PROVISIONED_SCOPES` 확장** (`tos/runtime/src/tos_runtime/custody/
-   file_custody.py`) — 현재 `frozenset({"read.principal", "evidence.key", "replay.params"})`
-   고정. 이 두 스코프를 추가하는 것은 T1(전송 어댑터 패키지)의 소관이 아니라 T2(compose 결선)
-   또는 별도 custody 확장 레인의 소관이다 — T1은 `CredentialCustody` Protocol에만 의존하고
-   구체 구현을 건드리지 않는다(운영자 승인 없이 공유 Phase 2 모듈을 수정하지 않기 위함).
-2. **파일 준비** (스코프 확장 이후):
+1. **파일 준비**:
    ```bash
    install -m 0600 /dev/null <custody_root>/kis_mock.app_key
    install -m 0600 /dev/null <custody_root>/kis_mock.app_secret
@@ -123,9 +125,15 @@ named-TBD `null` 상태로 유지된다 — 로더가 부팅을 거부하는 것
    sha256sum <custody_root>/kis_mock.app_key      # -> custody.manifest.yaml 의 expected_sha256
    sha256sum <custody_root>/kis_mock.app_secret
    ```
-   `custody.manifest.yaml`(예시 아님, 실 배포판)에 위 2스코프 행을 `tos/runtime/config/
-   custody.manifest.example.yaml`과 동일한 `file`/`principal` 값으로, `expected_sha256`은
-   방금 계산한 값으로 채운다.
+2. **manifest principal 규칙**(계획 §2 결정 4 — `refuse_custody_principal_mismatch`가 부팅
+   시점에 강제): `custody.manifest.yaml`(예시 아님, 실 배포판)의 `kis_mock.app_key`/
+   `kis_mock.app_secret` 두 행 모두 `principal` 필드가 활성 broker scope(`MOCK_STOCK_ORDER`)
+   의 `principal` 과 **문자 그대로 동일**해야 한다. `CustodyManifest` 는
+   `{environment_label}` 치환을 하지 않는다(`load_broker_scopes` 와 다름) — 예시 설정의
+   `"kis-mock-order-{environment_label}"` 은 치환되지 않은 견본 문자열이므로, 실 배포에서는
+   그 자리에 실제 환경 라벨을 채운 구체 값(예: `kis-mock-order-paper`)을 직접 써야
+   `refuse_custody_principal_mismatch` 를 통과한다. `file`/`expected_sha256`은 위에서 계산한
+   값으로 채운다.
 3. **자격증명 보관에 대한 정직한 설명**(독립 리뷰 F5): 어댑터는 app key/secret 을 실제
    네트워크 호출(`issue_token`/`post_order`) 하나를 감싸는 가장 좁은 `with` 블록 안에서만
    로드하고, 그 블록을 벗어나면 `CredentialHandle` 자신의 바이트버퍼는 zero-out 된다. 다만
@@ -134,21 +142,49 @@ named-TBD `null` 상태로 유지된다 — 로더가 부팅을 거부하는 것
    좁혔다"는 사실과 "메모리상 모든 사본이 지워진다"는 주장은 다르며, 이 코드베이스는 후자를
    주장하지 않는다(`adapter.py` 모듈 docstring이 이를 그대로 기술).
 
-## 6. dry_run 부팅 절차 (자리표시자 — CLI 플래그는 T2 소관)
+## 6. dry_run 부팅 절차 (T2 lane C 착지 — 실제 호출면)
 
-T1은 CLI 결선을 포함하지 않는다. T2가 `--transport kis-mock` 플래그를 추가하면, 예상 절차는:
+`tos_runtime/compose/cli.py`는 `argparse` 인자 파싱만 한다 — 데몬 루프도, 전략/이벤트
+주입도 하지 않는다(`cli.py` 모듈 docstring). 오늘 실제로 존재하는 호출면은 `python -c`로
+`tos_runtime.compose.cli.parse_args` + `tos_runtime.compose.root.compose_paper_runtime` 을
+직접 조합해 부르는 것뿐이다 — `sts-runtime` 같은 별도 실행 파일은 **존재하지 않는다**
+(전작 초안의 자리표시자 커맨드는 발명이었다 — 정정).
 
 ```bash
-# (T2 완료 후 예상 커맨드 — 아직 존재하지 않음)
-sts-runtime compose --transport kis-mock \
-  --kis-mock-config <path>/kis_mock_transport.yaml \
-  --custody-root <custody_root>
+# argv 만 CLI 로 파싱 (config_dir/data_dir/custody_root/environment_label/transport)
+python -c "
+from pathlib import Path
+from tos_runtime.compose.cli import parse_args
+args = parse_args([
+    '--config-dir', '<config_dir>',
+    '--data-dir', '<data_dir>',
+    '--custody-root', '<custody_root>',
+    '--environment-label', '<environment_label>',
+    '--transport', 'kis-mock',
+])
+print(args)
+"
 ```
+
+실제 부팅은 `compose_paper_runtime(args.config_dir, args.data_dir, args.custody_root,
+args.environment_label, construction=..., aggregate_risk_inputs_provider=...,
+action_flow_inputs_provider=..., transport_kind=args.transport)` 를 호출하는 캐릭터 코드가
+필요하다 — `construction`/두 risk-inputs provider 는 전략별 고유 값이라 CLI 플래그로
+표현되지 않는다(`cli.py` 모듈 docstring). `config_dir` 에는 `kis_mock_transport.yaml`
+(파일명 고정 — `tos_runtime.compose._transport_wiring.KIS_MOCK_TRANSPORT_CONFIG_NAME`)이
+§4 제안표 승인 후 채워진 채로 있어야 한다; `broker_scopes.yaml` 의 `active_scope` 는
+`MOCK_STOCK_ORDER`(`profile_evidence_ok: true`)여야 하고, `coordinator_preconditions.yaml`
+의 `nonlive_broker_consuming.admitted` 는 dry_run 부팅만 원한다면 `false`(§2.2 참조 — 부팅
+자체는 admission 과 무관), 실제 crossing 이벤트를 admission 통과까지 구동하려면 `true`
+여야 한다(5조건 나머지는 스코프/INSTANCE 정합).
 
 `kis_mock_transport.yaml`의 `mode: dry_run`을 유지한 채 부팅 → evidence 저장소에서
 `TRANSPORT_DRY_RUN` 레코드 존재를 확인하는 것이 이 계획의 **운영자 종료 조건**이다(계획 §5).
-`live` 전환은 T2 가 §2.2 의 codec 결속을 착지하고, 로더의 `mode: live` 무조건 거부를 걷어낸
-뒤에만 가능하다 — 이 런북의 개정판에서 별도로 다룬다.
+`live` 전환은 §2.2 의 codec 결속이 **기본 compose 경로**(`--transport kis-mock`)에 실제로
+배선된 뒤에만 가능하다 — T2 lane C 가 `KisWireCodecDigest` 를 `kis-mock` 부팅의 컨텍스트
+리졸버 기본값으로 결속했으므로(`root.py::compose_paper_runtime`), `codec_bound=True` 는
+이제 `kis-mock` 부팅마다 자동으로 참이다; 남은 것은 §4 제안표의 값 승인과 호스트/TR ID 가
+INSTANCE 문서와 실제로 일치하는지의 운영 확인뿐이다.
 
 ## 7. TR ID 형상 검증 (독립 리뷰 F7)
 

@@ -102,6 +102,14 @@ class InstanceDocument:
         environment: The document's own ``profile_identity.environment`` scalar.
         status: The document's own ``profile_identity.status`` scalar (e.g. ``"DRAFT"``).
         approvers: The document's own ``profile_identity.approvers`` list, as a tuple.
+        rest_base: The document's own ``profile_identity._kis.endpoints.rest_base`` scalar
+            (TOS KIS MOCK transport plan T2 lane C) — read as a plain, non-``_model_view``
+            scalar (the module docstring's ``_model_view`` discipline governs kernel-typed
+            values only; ``_kis`` is a non-normative, broker-specific annotation the kernel
+            model has no field for at all, so there is nothing to validate it against).
+            ``None`` when absent — never invented; a caller that needs this fact to prove a
+            host seal (:mod:`tos_runtime.compose._transport_wiring`) refuses boot on ``None``
+            rather than falling back to a guess.
         profile: The constructed kernel :class:`BrokerCapabilityProfile` (``DRAFT``).
         declared_dimensions: Every :class:`CapabilityDimension` that has a declaration
             in this document (regardless of status — "declared" is not "verified").
@@ -120,6 +128,7 @@ class InstanceDocument:
     environment: str | None
     status: str | None
     approvers: tuple[str, ...]
+    rest_base: str | None
     profile: BrokerCapabilityProfile
     declared_dimensions: frozenset[CapabilityDimension]
     verified_dimensions: frozenset[CapabilityDimension]
@@ -195,6 +204,26 @@ _LIVE_SCOPE_FIELDS = (
 
 #: The reserved template placeholder for an unfilled required field (never a value).
 _TBD = "TBD"
+
+
+def _read_rest_base(profile_identity: dict[str, Any]) -> str | None:
+    """Read ``profile_identity._kis.endpoints.rest_base`` as a plain scalar (T2 lane C —
+    :class:`InstanceDocument`'s own docstring: this is a non-normative ``_kis`` annotation, not a
+    ``_model_view`` block, so it is read directly rather than validated against a kernel field).
+
+    Returns ``None`` on any shape deviation (``_kis``/``endpoints`` absent or not a mapping,
+    ``rest_base`` absent or not a non-empty string) — never invented, never raises: a caller that
+    needs this fact to prove a host seal treats ``None`` as "cannot be proven" and refuses boot
+    itself (module docstring).
+    """
+    kis_block = profile_identity.get("_kis")
+    if not isinstance(kis_block, dict):
+        return None
+    endpoints = kis_block.get("endpoints")
+    if not isinstance(endpoints, dict):
+        return None
+    rest_base = endpoints.get("rest_base")
+    return rest_base if isinstance(rest_base, str) and rest_base else None
 
 
 def _tbd_to_none(value: Any) -> Any:
@@ -480,6 +509,7 @@ def _build_instance_document(
         environment=profile_identity.get("environment"),
         status=profile_identity.get("status"),
         approvers=tuple(approvers_raw),
+        rest_base=_read_rest_base(profile_identity),
         profile=profile,
         declared_dimensions=declared_dimensions,
         verified_dimensions=verified_dimensions,

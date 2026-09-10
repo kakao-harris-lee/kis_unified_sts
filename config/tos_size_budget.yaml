@@ -292,7 +292,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1196
+  measured: 1087
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -402,6 +402,50 @@ exceptions:
     .scope_reservation_id` 호출로 교체(import 1줄 + 호출부 2곳 각 1줄 감소)
     하며 순감소 1205→1196(−9, 이전 재등재 이후 다른 레인의 변경 포함 실측
     스냅샷 갱신 — 이 커밋 자신의 순증분은 −1).
+    2026-09-10 T2 lane A(KIS wire-codec digest binding, plan
+    docs/plans/2026-09-10-tos-kis-mock-transport-plan.md §8 설계 정정 ①) —
+    _build_context_resolver 의 capsule_egress_request_digest: str 필드를
+    request_bytes_digest_source: RequestBytesDigestSource 시임으로 교체(신규
+    모듈 tos_runtime/compose/_request_digest.py, CapsuleStandInDigest/
+    KisWireCodecDigest 2구현). 기본값 조립을 별도 함수
+    _default_request_bytes_digest_source 로 분리해 _build_context_resolver
+    를 100줄 문턱 아래(98줄)로 유지(무예외) — 신규 import 4줄 + 파라미터 1줄
+    + 헬퍼 함수 14줄 + 호출부 순증분으로 (베이스라인 1197, 당시 실측치와
+    상단 measured 필드 간 소수 괴리는 선행 항목의 기록되지 않은 편차이며
+    본 항목은 그 실측 불변 상태 위에서) 1197→1219. black 재포맷이 개행 1줄을
+    추가해 1219→1220(+1, 코드 의미 불변).
+    2026-09-10 T2 lane C(compose 결선, plan §4 T2 행·§8 "T2 must") — 신설
+    모듈 tos_runtime/compose/_transport_wiring.py 를 결선: _default_request_
+    bytes_digest_source 를 모듈 밖(tos_runtime/compose/_request_digest.py)으로
+    이관(순환 임포트 회피를 위해 construction: object 로 폭 넓힌 시그니처 — 편차
+    보고) 하고 3줄 함수를 완전 제거, 신규 import 2줄 +
+    _resolve_strategies_and_attested_inputs/_boot_services/_finalize 세
+    함수 시그니처에 transport_kind/instance_document/transport_kind/
+    transport_config 파라미터 4개 관통 배선 + resolve_transport_boot 호출
+    1줄 + wire_engine_and_driver 호출부 신규 kwarg 6줄을 추가하며
+    1220→1238(+18). 도크스트링 압축(2곳)으로 20줄 상쇄를 시도했으나 신규
+    파라미터 배선 자체가 순증분이라 완전 상쇄는 불가 — 등재(무예외 목표
+    미달성, 정직 재등재).
+    2026-09-10 T2 재심 처분(MEDIUM-5) — 재심이 «_finalize(112줄, 자체가
+    100줄 문턱 초과 등재분) 를 별도 모듈로 분리하면 _wiring.py 는 1197 아래로
+    복귀하고 _finalize 자체 예외도 퇴역 가능» 이라는 구체 대안을 제시,
+    채택. 신설 tos_runtime/compose/_finalize_wiring.py 로 _finalize +
+    _build_engine_configuration 을 이관하고, _finalize 자신도
+    _verify_boot_replay 헬퍼(재생 검증 블록 추출)로 분리해 99줄로 복귀(함수
+    예외 완전 퇴역 — 아래 옛 `_wiring.py::_finalize` 항목 삭제). 이관 자체가
+    _wiring.py 의 대규모 순감소 — 1238→1088(-150). 1088 은 여전히
+    module_max_lines(1000) 초과라 등재는 유지하되, 1197 «성장 금지» 목표는
+    이번 재등재로 실질 충족(1088 < 1197). `_finalize_wiring.py` 는
+    1000줄/100줄 문턱 양쪽 모두 아래(221줄 모듈 · 최대 함수 99줄)라 신규
+    등재 없음.
+    2026-09-10 병합(feat/tos-phase5-w2-finality ← main `e5fd37f1`) — 위 두
+    독립 계보(W2-R M6 처분의 1205→1196 · T2 lane A/C 의 1197→1238→1088)가
+    같은 파일을 각자의 브랜치에서 편집해 병합 시 숫자가 어긋남(T2 계보 자신도
+    베이스라인 1197 이 W2-R 의 1196 갱신을 모르고 출발했음을 이미 자인).
+    병합 결과물을 재실측한 실제 값으로 상단 measured 필드를 1087 로 재등재
+    (T2 가 기록한 1088 과 1줄 차이 — 두 브랜치의 독립 변경이 겹친 뒤의
+    실측이므로 어느 한쪽 계보의 산술만으로는 재현되지 않음, 실측이 유일한
+    근거).
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime
@@ -415,20 +459,8 @@ exceptions:
     도크스트링 두 차례 축약으로 완화했으나(1033→1026) 완전 회피는 불가 —
     신규 함수 자체가 실측 증가분. _wiring.py 항목과 동일하게 목록 끝에 append
     (공유 워크트리 동시 편집 회피).
-- target: tos/runtime/src/tos_runtime/compose/_wiring.py::_finalize
-  measured: 103
-  owner: tos-runtime
-  decomposition_order: 32
-  expires_on: '2026-12-31'
-  note: >-
-    팀리드 CR-4 후속(orthostate/finality 결선, plan §2.2) — finality.yaml
-    로더 호출 1줄 + wire_engine_and_driver 호출부 인자 1줄을 추가하며
-    100→101 초과. 본 레인 신규 주석은 이미 1줄로 압축(더 압축할 여지 없음);
-    coordinator_preconditions 관련 기존 주석 2줄은 레인 B-R 저작이라
-    본 레인 편집 대상 밖(공유 파일 소유권 규율). 목록 끝에 append(공유
-    워크트리 동시 편집 회피).
 - target: tos/runtime/src/tos_runtime/compose/_engine_wiring.py::wire_engine_and_driver
-  measured: 103
+  measured: 142
   owner: tos-runtime
   decomposition_order: 33
   expires_on: '2026-12-31'
@@ -440,6 +472,26 @@ exceptions:
     신규 배선(도크스트링 설명 포함)하며 100→103 초과. 안전-부담 파라미터의
     도크스트링을 생략하는 것은 이 파일 자신의 기존 관례(finality_config 등
     모든 신규 파라미터가 온전한 도크스트링을 받음)와 어긋나 압축 대신 등재.
+    2026-09-10 T2 lane C(compose 결선) — nonlive_admitted/active_scope/
+    instance_document/custody/transport_kind/transport_config 파라미터 6개
+    (각 온전한 도크스트링 포함 — 이 파일 관례 유지) + SealRegistry 결선(3줄) +
+    build_transport 호출(8줄) + gateway_sink on_record 배선(1줄) +
+    _build_preconditions 호출부 확장(3줄)을 추가하며 103→136(+33). 신규
+    파라미터 6개의 도크스트링이 순증분 대부분 — 이 파일 자신의 «안전-부담
+    파라미터는 온전한 도크스트링을 받는다» 관례상 압축 대신 등재.
+    2026-09-10 T2 재심 처분(HIGH-1/MEDIUM-6) — on_record 를 transport_kind
+    is KIS_MOCK 조건부로 전환(삼항식 3줄 + 도크스트링 보강 2줄) +
+    SealRegistry 클래스 자체의 바운딩/한정-배선 도크스트링 확장(별도
+    파일 _transport_wiring.py — 이 함수 실측에는 영향 없음) — 이 함수 자신은
+    on_record kwarg 의 값 표현식만 바뀌어 136→142(+6, 조건부 표현식 3줄 +
+    보강 주석 3줄). 안전-부담 배선 변경이라 압축 대신 등재.
+    2026-09-10 병합(feat/tos-phase5-w2-finality ← main `e5fd37f1`) —
+    `tos/runtime/src/tos_runtime/posttrade/finality.py::SyntheticFinalityProducer.produce`
+    예외 항목(main 측, T2 미편집분)은 W2-R 이 이미 `produce`/`produce_non_execution`
+    분리로 27줄까지 줄여 등재 해제한 상태(W2-R 커밋 `bf5a68e4`) — T2 는 이
+    변경을 보지 못한 브랜치에서 작업해 병합 시 해당 항목이 재등장할 뻔했으나,
+    병합된 코드의 `produce` 는 여전히 27줄(W2-R 상태 그대로, T2 무편집)이라
+    옛 항목을 재등재하지 않고 계속 해제 상태로 유지.
 - target: tos/runtime/src/tos_runtime/engine/driver.py::EngineDriver._process_next
   measured: 141
   owner: tos-runtime
@@ -495,7 +547,7 @@ exceptions:
     목록 끝에 append(gateway.py 항목의 2026-09-07 재등재 주석과 동일 관례) —
     후속 하우스키핑에서 물리적 재정렬 가능.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 118
+  measured: 142
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
@@ -520,3 +572,26 @@ exceptions:
     "`_wiring.py`는 성장 금지" — `ComposedRuntime` 의 이미 공개된 필드만 재사용,
     `_release_wiring.py` 신규 모듈로 격리). root.py 는 정본 결선 순서 문서라
     호출 시퀀스 재구성은 하지 않음 — 압축 대신 등재.
+    **2026-09-10 T2 lane C 재등재 109→133**: ``transport_kind`` 파라미터
+    (도크스트링 포함) + ``_boot_services``/``_build_context_resolver``/
+    ``_finalize`` 호출부에 신규 인자 관통 배선(digest-source 삼항식 8줄 포함)
+    — 정본 결선 순서 문서라 분해 대신 등재.
+    **2026-09-10 병합(feat/tos-phase5-w2-finality ← main `e5fd37f1`) 재등재
+    142**: 위 두 독립 계보(W2-R 의 109→118 · T2 lane C 의 109→133)가 같은
+    함수를 각자 브랜치에서 확장해 병합 후 실측 재측정 — 118 도 133 도 아닌
+    142(두 변경 모두 함수 본문에 남아 합산되었기 때문). root.py 는 정본
+    결선 순서 문서라 분해 대신 등재 유지.
+- target: tos/runtime/src/tos_runtime/compose/_boot_integrity.py::record_operator_attested_inputs
+  measured: 104
+  owner: tos-runtime
+  decomposition_order: 39
+  expires_on: '2026-12-31'
+  note: >-
+    신규 등재(TOS KIS MOCK transport plan T2 lane C, plan
+    docs/plans/2026-09-10-tos-kis-mock-transport-plan.md §4 row T2) —
+    extra_config_files: tuple[Path, ...] = () 파라미터 추가(kis-mock 보정
+    transport config 파일을 OPERATOR_ATTESTED_INPUTS 증거에 결속). 루프 본문은
+    신설 헬퍼 _extra_config_file_coordinates 로 뽑아 호출부 1줄로 압축했고
+    도크스트링 신규 단락도 6줄에서 2줄로 압축했으나, 이미 대형이던 기존
+    도크스트링(53줄) 위에서는 100줄 문턱을 완전히 회피하지 못하고 99→104
+    (+5) 초과 — 등재(무예외 목표 미달성, 정직 등재).

@@ -22,6 +22,7 @@ bar-replay driver is part of this composition.
 
 from __future__ import annotations
 
+import stat
 from decimal import Decimal
 from pathlib import Path
 
@@ -554,3 +555,80 @@ def action_flow_requested_limit() -> CapacityVector:
             CapacityComponent(dimension_id="afg.ORDER", magnitude=Decimal("1")),
         )
     )
+
+
+# ===========================================================================
+# TOS KIS MOCK transport plan T2 lane C — kis-mock compose test fixtures
+# ===========================================================================
+
+#: The real INSTANCE MOCK_VTS document's own ``rest_base`` (docs/broker-profiles/
+#: KIS-BROKER-CAPABILITY-PROFILE-draft.yaml) — this suite's config never invents its own host.
+KIS_MOCK_REST_BASE = "https://openapivts.koreainvestment.com:29443"
+
+#: ``MOCK_STOCK_ORDER.principal`` in ``broker_scopes.example.yaml``, substituted for the SAME
+#: ``environment_label`` (``"non-live-test"``) every compose e2e test in this suite composes
+#: with (:func:`_compose` in ``test_compose_root.py``) — the custody-principal consistency
+#: check (:func:`~tos_runtime.compose._transport_wiring.refuse_custody_principal_mismatch`)
+#: requires byte-exact equality with this value.
+KIS_MOCK_ORDER_PRINCIPAL = "kis-mock-order-non-live-test"
+
+
+def write_kis_mock_transport_config(config_dir: Path, *, mode: str = "dry_run") -> Path:
+    """Write a fully-valued ``kis_mock_transport.yaml`` (T2 lane C test fixture) — every
+    named-TBD field of the shipped example filled with a concrete, schema-valid value.
+    """
+    path = config_dir / "kis_mock_transport.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "mode": mode,
+                "endpoint_rest_base": KIS_MOCK_REST_BASE,
+                "order_path": "/uapi/domestic-stock/v1/trading/order-cash",
+                "token_path": "/oauth2/tokenP",
+                "tr_id_buy": "VTTC0012U",
+                "tr_id_sell": "VTTC0011U",
+                "field_map": {
+                    "account": "CANO",
+                    "instrument": "PDNO",
+                    "quantity": "ORD_QTY",
+                    "price": "ORD_UNPR",
+                },
+                "static_body_fields": {
+                    "ACNT_PRDT_CD": "01",
+                    "ORD_DVSN": "00",
+                    "EXCG_ID_DVSN_CD": "KRX",
+                    "SLL_TYPE": "",
+                    "CNDT_PRIC": "",
+                },
+                "min_send_interval_ms": 1100,
+                "token_reissue_min_interval_s": 60,
+                "request_timeout_s": 5.0,
+                "allow_plaintext_for_tests": False,
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def provision_kis_mock_custody(
+    custody_root: Path, *, principal: str = KIS_MOCK_ORDER_PRINCIPAL
+) -> None:
+    """Add the two ``kis_mock.*`` custody scopes (T2 lane C) to an already-provisioned
+    ``custody_root`` (``tos/runtime/tests/compose/conftest.py``'s own ``custody_root`` fixture) —
+    manifest rows + 0600 secret files, both principals equal to ``principal`` (defaults to the
+    SAME value :data:`KIS_MOCK_ORDER_PRINCIPAL` names)."""
+    manifest_path = custody_root / "custody.manifest.yaml"
+    raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    scopes = raw.setdefault("scopes", {})
+    for scope_name in ("kis_mock.app_key", "kis_mock.app_secret"):
+        scopes[scope_name] = {
+            "file": scope_name,
+            "principal": principal,
+            "expected_sha256": None,
+        }
+        scope_path = custody_root / scope_name
+        scope_path.write_bytes(f"test-secret-{scope_name}".encode())
+        scope_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    manifest_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")

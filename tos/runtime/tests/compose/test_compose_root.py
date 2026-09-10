@@ -17,6 +17,7 @@ from tos_runtime.compose._pending_dimensions import (
     load_pending_currentness_dimensions,
     stamp_pending_dimensions,
 )
+from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.compose.root import (
     ReleaseAdmissionRefused,
     compose_paper_runtime,
@@ -181,6 +182,7 @@ def _compose(
     custody_root: Path,
     *,
     monotonic_source: object | None = None,
+    transport_kind: TransportKind = TransportKind.SYNTHETIC,
 ):
     """Composes via the FILE strategy source (TOS Phase 3 슬라이스 D-R
     ``[D-R-2]``) — writes the band-reversion strategy into
@@ -189,7 +191,12 @@ def _compose(
     production path ``tos_runtime.strategy.resolve.resolve_strategy_registry``
     wires. ``registry=fx.registry_with_band_strategy()[0]`` moved to
     :func:`test_both_a_strategies_directory_and_an_injected_registry_refuses`,
-    the ONE remaining both-present-refusal test (brief item 4)."""
+    the ONE remaining both-present-refusal test (brief item 4).
+
+    ``transport_kind`` (T2 lane C) defaults to ``synthetic`` — every existing
+    e2e test's active scope is SYNTHETIC (``reaches_broker=False``), which
+    :func:`~tos_runtime.compose._transport_wiring.refuse_transport_scope_mismatch`
+    requires to pair with ``synthetic``."""
     fx.write_band_strategy_file(config_dir)
     return compose_paper_runtime(
         config_dir,
@@ -200,6 +207,7 @@ def _compose(
         aggregate_risk_inputs_provider=_aggregate_inputs,
         action_flow_inputs_provider=_action_flow_inputs,
         monotonic_source=monotonic_source,
+        transport_kind=transport_kind,
     )
 
 

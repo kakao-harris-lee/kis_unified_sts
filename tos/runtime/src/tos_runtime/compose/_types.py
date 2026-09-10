@@ -9,7 +9,7 @@ import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from tos.brokeradapter import SyntheticPaperTransport
+from tos.brokeradapter import Transport
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.egressgw import (
     AdmittedPriceObservation,
@@ -158,7 +158,10 @@ class ComposedRuntime:
     context_resolver: ComposeContextResolver
     core: EngineCore
     gateway: BrokerEgressGateway
-    transport: SyntheticPaperTransport
+    #: T2 lane C — widened from ``SyntheticPaperTransport`` to the kernel's own ``Transport``
+    #: Protocol: either the synthetic transport or a fully-wired ``KisMockTransport`` satisfies
+    #: it structurally.
+    transport: Transport
     registry: StrategyRegistry
     release_admitted: bool
     #: The loaded coverage floor (``risk.yaml``'s ``required_scenario_kinds``)
