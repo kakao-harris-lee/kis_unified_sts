@@ -149,6 +149,10 @@ MAX_ORDER_QUANTITY = 1_000_000  # Safety cap for quantity
 
 _SETUP_TYPE_BY_STRATEGY = SETUP_TYPE_BY_STRATEGY
 _SIGNALS_ALL_INSERT_SQL = SIGNALS_ALL_INSERT_SQL
+# ``producer`` field of the futures:daily_reference:{symbol} read-model — the
+# compose service name, so an operator reading a stale key knows which process
+# to look at (the other producer is `market-ingest`).
+_DAILY_REFERENCE_PRODUCER = "trader-futures"
 _risk_params_for_runtime_capital = _runtime_config.risk_params_for_runtime_capital
 
 
@@ -796,15 +800,29 @@ class TradingOrchestrator:
         needs it to compute gap_pct. Falls back silently on per-symbol failure —
         downstream guards (`if ctx.prev_close <= 0: return None`) handle missing
         data without crashing.
+
+        Each fetched value is also published as the
+        ``futures:daily_reference:{symbol}`` read-model so the decoupled
+        decision-engine — which has no KIS credentials and whose parquet daily
+        bars never carried the trading symbol — reads the SAME number this
+        process uses. The publish is best-effort (the helper swallows and warns
+        on any Redis failure): the trading path here is unaffected either way.
         """
         if not self._kis_client:
             return
         symbols = list(self.config.symbols or [])
         if not symbols:
             return
+        from shared.streaming.client import RedisClient
+        from shared.streaming.daily_reference import (
+            SOURCE_KIS_REST,
+            fetch_futures_prev_close,
+            publish_futures_daily_reference,
+        )
+
         for symbol in symbols:
             try:
-                price = await self._kis_client._get_futures_price(symbol)
+                prev_close = await fetch_futures_prev_close(self._kis_client, symbol)
             except Exception as e:
                 logger.warning(
                     "prev_close prefetch failed for %s: %s — Setup A will skip",
@@ -812,7 +830,6 @@ class TradingOrchestrator:
                     e,
                 )
                 continue
-            prev_close = float(price.get("prev_close", 0) or 0)
             if prev_close > 0:
                 self._futures_daily_reference[symbol] = {"prev_close": prev_close}
                 logger.info(
@@ -820,6 +837,18 @@ class TradingOrchestrator:
                     symbol,
                     prev_close,
                 )
+                try:
+                    await publish_futures_daily_reference(
+                        RedisClient.get_client(),
+                        symbol=symbol,
+                        prev_close=prev_close,
+                        source=SOURCE_KIS_REST,
+                        producer=_DAILY_REFERENCE_PRODUCER,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "prev_close read-model publish failed for %s: %s", symbol, e
+                    )
 
     def _load_stream_staleness_threshold(self) -> float:
         """Staleness threshold for the stream feed — mirror the failover config."""
