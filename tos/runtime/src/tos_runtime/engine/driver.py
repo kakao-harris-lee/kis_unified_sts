@@ -114,7 +114,16 @@ from tos_runtime.posttrade.finality import SyntheticFinalityProducer
 from tos_runtime.rcl.finality_witness import finality_witness_for
 from tos_runtime.time.sources import MonotonicSource
 
-__all__ = ["EngineDriver"]
+__all__ = ["EngineDriver", "EngineDriverInvariantError"]
+
+
+class EngineDriverInvariantError(RuntimeError):
+    """A driver-internal type-narrowing invariant turned out false (independent-review
+    residual, 2026-09-10) — typed, never a bare ``assert`` (``python -O`` strips those
+    entirely). Should be unreachable; mirrors :class:`~tos_runtime.recovery.barrier
+    .RecoveryBarrierInvariantError`'s discipline, defined locally to avoid an
+    engine -> recovery import."""
+
 
 #: The runtime-local evidence kind for a driver-recorded consumption receipt. Not a
 #: ``tos.engine.vocabulary.EvidenceKind`` member — this is runtime-level evidence about the
@@ -540,44 +549,32 @@ class EngineDriver:
     ) -> None:
         """Project ``event``'s orthostate composite and, if a real recovery composite writer was
         injected, persist it — called from :meth:`_process_next` for every freshly-handled
-        event, BEFORE that SAME event's own ``EVENT_CONSUMED`` receipt (TOS Phase 5 W1 GAP 2).
-
-        **Why before, not after (module docstring's own "GAP 2 close-out" repeats this in
-        brief; this is the full reasoning).** :mod:`tos_runtime.recovery.possibly_live`
-        classifies an inbox row as possibly-live exactly when it carries a durable
-        ``EVENT_HANDLING_STARTED`` marker but NO ``EVENT_CONSUMED`` receipt. Ordering the
-        composite-state write BEFORE that receipt means a crash strictly between the two leaves
-        the row correctly flagged possibly-live (still held by the recovery barrier) while its
-        composite state is ALREADY durable (no longer flagged incomplete by
-        :mod:`tos_runtime.recovery.inputs`). The reverse ordering (receipt first) would let a
-        crash between the two leave the receipt durable — which drops the row out of
-        "possibly-live" entirely on restart, since it now looks fully consumed — with no
-        composite state ever written for it and nothing left to flag that gap.
-
-        Split out of :meth:`_process_next` purely for that method's own function-size budget —
-        no behavioural difference from having this inline there.
+        event, BEFORE that SAME event's own ``EVENT_CONSUMED`` receipt (TOS Phase 5 W1 GAP 2;
+        full write-before-receipt crash-window reasoning is in the module docstring's "GAP 2
+        close-out" section, not repeated here). Split out of :meth:`_process_next` purely for
+        that method's own function-size budget.
 
         **A failed write halts, never silently continues (surviving-mutation fix, 2026-09-10).**
-        An unwritable store must not be swallowed — that would leave THIS event's composite
-        state genuinely missing while the driver durably recorded ``EVENT_CONSUMED`` anyway,
-        permanently hiding the gap. A failure is recorded via
-        :func:`~tos_runtime.evidence.emergency.record_halt` and RE-RAISED, so
-        :meth:`_process_next` aborts before ever reaching :meth:`_record_consumed` — no
-        ``EVENT_CONSUMED`` for this event on a failed attempt.
+        A failure is recorded via :func:`~tos_runtime.evidence.emergency.record_halt` and
+        RE-RAISED, so :meth:`_process_next` aborts before ever reaching :meth:`_record_consumed`
+        — no ``EVENT_CONSUMED`` for this event on a failed attempt.
 
         Args:
             event: The just-``core.handle``-processed event.
             result: The ``EventResult`` ``core.handle`` returned for it.
             event_id: Recorded on a write-failure HALT for correlation only — NOT the
-                staterestore key (independent-review finding F3 moved that to the attempt's own
-                ``attempt_id``; see :class:`~tos_runtime.recovery.composite_state_writer
-                .CompositeStateWriter`'s own module docstring for why).
+                staterestore key (see :class:`~tos_runtime.recovery.composite_state_writer
+                .CompositeStateWriter`'s own module docstring, independent-review finding F3).
         """
         composite = self._orthostate_projector.project(event=event, result=result)
         if composite is None or self._recovery_composite_writer is None:
             return
         payload = event.egress_result
-        assert payload is not None  # project() returns non-None only for EGRESS_RESULT
+        if payload is None:
+            raise EngineDriverInvariantError(
+                "project() returned non-None but egress_result is None -- project() "
+                "returns non-None only for EGRESS_RESULT events"
+            )
         try:
             self._recovery_composite_writer(payload.attempt_id, composite)
         except (

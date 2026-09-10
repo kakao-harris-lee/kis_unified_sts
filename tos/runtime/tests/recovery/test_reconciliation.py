@@ -9,8 +9,17 @@ The four scenarios below are the task brief's own acceptance tests:
 
 (a) a possibly-live attempt whose evidence + witness corroborate (a ``FULL_FILL`` receipt with
     finality proof, a durably-linked ``attempt_id`` via ``SEND_HANDED_OFF``, and an open RCL
-    reservation) is cleared, and folding the result into
-    :class:`~tos_runtime.recovery.barrier.RecoveryBarrier` yields ``READY``.
+    reservation) — split into two tests by independent-review finding F2 (2026-09-10), since a
+    same-store witness can no longer count as independent corroboration on its own:
+    (a1) ``test_a1_synthetic_witness_holds_with_witness_not_independent`` — the SAME
+    corroborating setup, but reconciled with the real, store-derived
+    ``SyntheticLedgerWitness``, stays HELD with reason ``WITNESS_NOT_INDEPENDENT`` (never
+    ``READY``) because the witness is not independent of the evidence-receipt path it is meant
+    to corroborate; and
+    (a2) ``test_a2_an_independent_witness_double_clears_the_same_attempt`` — the identical
+    attempt, but reconciled against a genuinely independent witness double
+    (``independent_of_evidence_store=True``, distinct provenance), clears
+    (``permits_capacity_release`` and ``permits_rearm`` both ``True``).
 (b) the same attempt, but the evidence store is unreachable when reconciliation runs, stays
     HELD with :data:`~tos_runtime.recovery.reconciliation.RECON_UNAVAILABLE`.
 (c) the SAME corroborating setup as (a), but the time service never started (so

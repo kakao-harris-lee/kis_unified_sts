@@ -103,7 +103,7 @@ def _replay_verdict_ok(evidence_store: SqliteEvidenceStore) -> bool:
     (diverged_count,) = evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = ?", (_REPLAY_DIVERGED_KIND,)
     ).fetchone()
-    return diverged_count == 0
+    return bool(diverged_count == 0)
 
 
 def _inbox_events_parseable(inbox: SqliteEventInbox) -> bool:
@@ -175,9 +175,11 @@ class RecoveryInputs:
     #: The ⓗ possibly-live attempt set (:mod:`tos_runtime.recovery.possibly_live`).
     possibly_live_attempts: tuple[PossiblyLiveAttempt, ...]
     #: Possibly-live attempts whose ``tos.staterestore`` composite reload was NOT cleanly
-    #: reconstructable (today: every one of them — see module docstring's disclosed limitation).
-    #: Empty when :attr:`possibly_live_attempts` is empty (nothing to restore is not a failure to
-    #: restore).
+    #: reconstructable — either no ``SEND_HANDED_OFF`` row exists to resolve an ``attempt_id``
+    #: at all, or a resolved ``attempt_id``'s own composite reload came back genuinely
+    #: incomplete (:func:`_composite_state_incomplete_ids`; module docstring's ``event_id`` ->
+    #: ``attempt_id`` bridge). Empty when :attr:`possibly_live_attempts` is empty (nothing to
+    #: restore is not a failure to restore).
     composite_state_incomplete_attempt_ids: tuple[str, ...]
     #: The D4 custody manifest's own ``environment_label`` (``None`` if the manifest file is
     #: absent — should not happen post-boot, since :class:`~tos_runtime.custody.file_custody
@@ -285,9 +287,11 @@ def assemble_recovery_inputs(
         window_events: The SAME ``engine_driver.yaml`` ``replay_window_events`` bound the boot-
             time replay check already used.
         custody_root: The D4 custody directory (for the manifest identity read).
-        composite_state_store_path: Where a ``tos.staterestore`` composite-state store for this
-            data directory would live (module docstring's disclosed limitation: nothing writes
-            here yet, so every reload is conservatively incomplete).
+        composite_state_store_path: Where the ``tos.staterestore`` composite-state store for
+            this data directory lives — :class:`~tos_runtime.recovery.composite_state_writer
+            .CompositeStateWriter` writes here (keyed by ``attempt_id``, independent-review
+            finding F3), and :func:`_composite_state_incomplete_ids` reloads from it after
+            resolving each possibly-live attempt's ``event_id`` onto that SAME ``attempt_id``.
         time_service: This runtime's own :class:`~tos_runtime.time.service
             .TrustworthyTimeService` (forwarded to :mod:`tos_runtime.recovery.reconciliation`
             for the freshness marker).
