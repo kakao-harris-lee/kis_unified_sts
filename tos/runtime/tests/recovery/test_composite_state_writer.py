@@ -4,6 +4,7 @@ module's own module docstring for why the original event-id keying was wrong).""
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -116,7 +117,8 @@ def test_write_failure_propagates_to_the_caller(tmp_path: Path) -> None:
     unwritable.mkdir()
     writer = CompositeStateWriter(unwritable)
 
-    # sqlite3's own OperationalError/IsADirectoryError -- deliberately broad (B017): the point
-    # of this test is "some exception propagates", not which concrete sqlite3 type it is.
-    with pytest.raises(Exception):  # noqa: B017
+    # A directory where a sqlite file is expected -- ``sqlite3.connect().execute()`` raises its
+    # own OperationalError("unable to open database file") on this specific OS-level failure
+    # (verified directly against this fixture, not assumed).
+    with pytest.raises(sqlite3.OperationalError):
         writer("attempt-abc", _composite())
