@@ -566,6 +566,38 @@ def test_cash_dividend_never_tracks_a_quantity_or_ex_leg(
     assert not [row for row in table if row["leg"] in ("quantity", "ex")]
 
 
+def test_legs_to_track_direct_cash_dividend_has_no_quantity_or_ex_entry() -> None:
+    """M12 pin: even when ex_time/effective_time/payable_time are ALL supplied,
+    cash_dividend must resolve to EXACTLY the cash leg. Asserted directly
+    against :func:`pc._legs_to_track`'s return value — independent of the
+    runtime ``NOT_OBSERVABLE_ON_BALANCE_SURFACE`` skip (which fires regardless
+    of what the leg list actually contains, so a mutant that restores a
+    quantity/ex leg for cash_dividend would otherwise survive)."""
+    from datetime import UTC, datetime
+
+    t_ex = datetime(2020, 1, 1, 9, 0, 0, tzinfo=UTC)
+    t_eff = datetime(2020, 1, 2, 9, 0, 0, tzinfo=UTC)
+    t_pay = datetime(2020, 1, 3, 9, 0, 0, tzinfo=UTC)
+    trial = pc._Trial(
+        symbol="005930",
+        event_class="cash_dividend",
+        is_real=False,
+        window_s=60.0,
+        poll_ms=0.0,
+        pace_s=0.0,
+        effective_poll_ms=0.0,
+        ex_time=t_ex,
+        effective_time=t_eff,
+        payable_time=t_pay,
+        settlement_time_raw="",
+        reference_check=False,
+        t0_offsets={},
+    )
+    legs = pc._legs_to_track(trial)
+    assert legs == [("cash", "payable_time", t_pay)]
+    assert not [leg for leg in legs if leg[0] in ("quantity", "ex")]
+
+
 def test_cash_dividend_cash_leg_still_tracked_via_payable_time(
     stock_env: None, wire: Any
 ) -> None:
@@ -585,6 +617,7 @@ def test_cash_dividend_cash_leg_still_tracked_via_payable_time(
         _args(
             event_class="cash_dividend",
             ex_time="2020-01-01T09:00:00+09:00",
+            effective_time="2020-01-01T09:00:00+09:00",
             payable_time=t0.isoformat(),
             poll_ms=0.0,
             pace_s=0.0,
@@ -594,6 +627,10 @@ def test_cash_dividend_cash_leg_still_tracked_via_payable_time(
     assert any(entry["what"] == "legs.cash_dividend.ex" for entry in run.skips)
     record = run.measurements["legs.cash_dividend.cash"]
     assert record["t0_field"] == "payable_time"
+    # M12: --ex-time AND --effective-time were both supplied — a mutant that
+    # revives a quantity/ex leg for cash_dividend must still be caught here.
+    table = run.measurements["class_leg_table"]
+    assert not [row for row in table if row["leg"] in ("quantity", "ex")]
 
 
 def test_cash_leg_detection(stock_env: None, wire: Any) -> None:
