@@ -884,6 +884,11 @@ VERIFIED/E1), 그 일정이 잔고·포지션에 **언제** 반영되는지는 �
   CLAUDE.md Non-Negotiable Rules).
 - **READ-ONLY.** `probes_ca.py`에는 주문 경로가 없고 GET 외 HTTP 메서드
   리터럴조차 없다(AST 테스트로 강제, P-BAL과 동일 규율).
+- **관측 창 동안 계좌 정적 유지(operator attest).** 감지는 `hldg_qty`/`dnca_tot_amt`
+  의 **계좌 단위** 최초 변화이므로 CA 와 무관한 주문·입출금·타 CA 가 같은 창에
+  겹치면 그 변화가 leg 의 latency 로 잡힌다. 창 동안 해당 계좌에 다른 활동이 없어야
+  하며, 각 leg 행은 `attribution: UNVERIFIED_ACCOUNT_LEVEL_CHANGE` 와 아티팩트
+  `observations.attribution_caveat` 로 이 한계를 명시한다(리뷰 F3).
 - **operator가 관련 7-시각을 미리 확보**해 둔다(N-19 참조원 또는 외부 CA
   캘린더) — in-repo CA 캘린더는 부재하므로 `--ex-time`/`--effective-time`/
   `--payable-time`을 ISO-8601 KST(`YYYY-MM-DDTHH:MM:SS+09:00`)로 직접 공급한다.
