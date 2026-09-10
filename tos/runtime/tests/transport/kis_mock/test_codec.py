@@ -116,6 +116,28 @@ def test_account_is_read_from_the_sealed_account_coordinate() -> None:
     assert decoded["CANO"] == "acct-from-seal" == seal.account
 
 
+def test_account_is_the_seal_field_never_instrument_key_account() -> None:
+    """(F2, team-lead re-review mutation M8) Every OTHER fixture in this suite builds
+    ``instrument_key.account`` equal to ``seal.account``, so a mutation swapping
+    ``seal.account`` for ``seal.instrument_key.account`` inside the codec would silently
+    survive every other test here. This test builds a seal where the two DIVERGE and asserts
+    ``CANO`` follows ``seal.account`` — never ``seal.instrument_key.account``."""
+    seal = build_seal(
+        field_map=FIELD_MAP,
+        static_body_fields=STATIC_FIELDS,
+        account="seal-account-value",
+        instrument_key_account="different-instrument-key-account-value",
+    )
+    assert seal.account == "seal-account-value"
+    assert seal.instrument_key.account == "different-instrument-key-account-value"
+    body = KisOrderWireCodec.encode(
+        seal, field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS
+    )
+    decoded = json.loads(body)
+    assert decoded["CANO"] == "seal-account-value"
+    assert decoded["CANO"] != "different-instrument-key-account-value"
+
+
 def test_missing_a_required_field_refuses() -> None:
     # Build a seal using a VALID field_map/static_body_fields (so seal construction itself
     # succeeds) — the broken map is exercised only against the encode() call under test.

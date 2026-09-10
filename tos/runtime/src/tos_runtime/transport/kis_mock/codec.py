@@ -53,6 +53,13 @@ byte):**
    ("utf-8")`` — deterministic: alphabetically sorted keys, no incidental whitespace, UTF-8.
 4. ``digest(body_bytes) = hashlib.sha256(body_bytes).hexdigest()``.
 
+**Construction note (reviewer F3).** This module has nothing to do with HTTP construction, but
+the same discipline applies one layer over: :func:`tos_runtime.transport.kis_mock.client.
+build_client` (``config`` in, a wired :class:`~tos_runtime.transport.kis_mock.client.
+KisMockHttpClient` out) is the only sanctioned PRODUCTION construction path. An adapter
+constructed with a directly-injected, hand-rolled client is a TEST seam, not a pattern T2 should
+carry into the compose root.
+
 Firewall: stdlib (``hashlib``, ``json``, ``decimal``) + ``tos.canonical``/``tos.egressgw`` only
 — no ``tos_runtime`` sibling import needed (this module has no config/custody/network
 dependency of its own; the adapter is the only in-package caller).

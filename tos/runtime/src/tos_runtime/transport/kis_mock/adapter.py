@@ -63,6 +63,14 @@ the reissue cooldown has not yet elapsed since the last issuance attempt, this c
 UNKNOWN") — a *later*, separate ``send_once`` call, once the cooldown has since elapsed, is free
 to issue a fresh token.
 
+**Construction note (reviewer F3).** This class takes ``client`` by injection, which is
+deliberate for testability (this module's own test suite injects a client wired to a hermetic
+fake server) — but for any REAL deployment, that ``client`` must come from
+:func:`tos_runtime.transport.kis_mock.client.build_client`
+(``build_client(config)``), never a hand-rolled :class:`~tos_runtime.transport.kis_mock.client.
+KisMockHttpClient` constructed some other way. ``build_client(config)`` is the only sanctioned
+production construction; an injected client is a test seam — T2 must not hand-roll one.
+
 Firewall: stdlib (``hashlib``, ``json``, ``time``) + ``tos.*`` (``tos.brokeradapter``,
 ``tos.egressgw``, ``tos.engine``, ``tos.ordering``) + ``tos_runtime.custody``/``tos_runtime.
 time`` + this package's own sibling modules only. No third-party import, no ``os.environ``.

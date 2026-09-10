@@ -464,7 +464,36 @@ def test_account_field_is_sourced_from_the_seal_never_custody(
     # call itself — review F5's narrow with-block discipline reloads fresh each network call)
     # — never anything account-shaped.
     assert set(cust.load_calls) == {APP_KEY_SCOPE, APP_SECRET_SCOPE}
-    assert not any("account" in scope for scope in cust.load_calls)
+
+
+def test_account_field_follows_seal_account_when_instrument_key_account_diverges(
+    server: FakeKisServer,
+) -> None:
+    """(F2, team-lead re-review mutation M8) A companion to the codec-level test of the same
+    name: build a seal whose ``instrument_key.account`` deliberately differs from
+    ``seal.account`` and confirm the ACTUAL wire body the adapter sends carries ``seal.account``
+    — never ``instrument_key.account``. Every other test in this file builds the two equal,
+    which is exactly why a mutation confusing the two would otherwise survive."""
+    attempt = _attempt("m8-diverge")
+    seal = build_seal(
+        attempt_id=attempt.attempt_id,
+        account="seal-account-value",
+        instrument_key_account="different-instrument-key-account-value",
+    )
+    server.set_response(
+        TOKEN_PATH, status=200, body={"access_token": "tok-1", "expires_in": 86400}
+    )
+    server.set_response(
+        ORDER_PATH, status=200, body={"rt_cd": "0", "output": {"ODNO": "ODNO-m8"}}
+    )
+    transport, _, _, _ = _build_transport(server, seals={attempt.attempt_id: seal})
+    _send(transport, attempt)
+    (request,) = server.requests_for(ORDER_PATH)
+    import json as _json
+
+    body = _json.loads(request.body)
+    assert body["CANO"] == "seal-account-value" == seal.account
+    assert body["CANO"] != seal.instrument_key.account
 
 
 def test_a_different_custody_bound_value_never_leaks_into_the_body(

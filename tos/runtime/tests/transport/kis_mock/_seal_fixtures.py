@@ -67,6 +67,7 @@ def build_seal(
     price: Decimal = Decimal("70000"),
     instrument: str = INSTRUMENT,
     account: str = ACCOUNT,
+    instrument_key_account: str | None = None,
     field_map: Mapping[str, str] | None = None,
     static_body_fields: Mapping[str, str] | None = None,
     request_bytes_digest: str | None = None,
@@ -79,7 +80,17 @@ def build_seal(
     :meth:`~tos_runtime.transport.kis_mock.codec.KisOrderWireCodec.encode`'s own output for the
     same ``field_map``/``static_body_fields``/values — the module docstring's "future invariant".
     Pass an explicit (non-matching) ``request_bytes_digest`` to exercise the mismatch path.
+
+    ``instrument_key_account`` defaults to ``account`` (the two coincide in every OTHER test in
+    this suite, which is exactly why a mutation swapping ``seal.account`` for
+    ``seal.instrument_key.account`` in :mod:`tos_runtime.transport.kis_mock.codec` would
+    otherwise go undetected — team-lead re-review, mutation M8). Pass a DIFFERENT value here to
+    build a seal where the two coordinates diverge, and assert the codec follows ``seal.account``
+    (see ``test_codec.py::test_account_is_the_seal_field_never_instrument_key_account`` and
+    ``test_adapter.py``'s companion live-send assertion).
     """
+    if instrument_key_account is None:
+        instrument_key_account = account
     if field_map is None:
         field_map = DEFAULT_FIELD_MAP
     if static_body_fields is None:
@@ -108,7 +119,9 @@ def build_seal(
         # real SendSeal rather than a bespoke stand-in shape.
         provisional = SendSeal(
             attempt_id=attempt_id,
-            instrument_key=InstrumentKey(account=account, instrument=instrument),
+            instrument_key=InstrumentKey(
+                account=instrument_key_account, instrument=instrument
+            ),
             request_bytes_digest=f"provisional-{attempt_id}",
             canonical_command_digest=f"cmd-digest-{attempt_id}",
             capsule_egress_request_digest=f"provisional-{attempt_id}",
@@ -147,7 +160,9 @@ def build_seal(
 
     return SendSeal(
         attempt_id=attempt_id,
-        instrument_key=InstrumentKey(account=account, instrument=instrument),
+        instrument_key=InstrumentKey(
+            account=instrument_key_account, instrument=instrument
+        ),
         request_bytes_digest=request_bytes_digest,
         canonical_command_digest=f"cmd-digest-{attempt_id}",
         capsule_egress_request_digest=capsule_egress_request_digest,
