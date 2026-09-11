@@ -65,6 +65,7 @@ from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.recovery.barrier import RecoveryVerdict
 from tos_runtime.safety.rearm import prepare_new_risk_halt_clear
+from tos_runtime.safety.shutdown import ControlledShutdown, ShutdownOutcome
 from tos_runtime.time.service import TrustworthyTimeService
 
 __all__ = [
@@ -220,6 +221,35 @@ class ComposedRuntime:
                 f"(recovery={self.recovery!r})"
             )
         return tuple(self.driver.enqueue_and_run(event) for event in events)
+
+    def shutdown(self, *, reason: str) -> ShutdownOutcome:
+        """Run the TOS Phase 5 W3.2 controlled-shutdown procedure once (lane d3;
+        :mod:`tos_runtime.safety.shutdown`'s own module docstring has the full honesty
+        discipline — what each step proves, what it deliberately does not, and why).
+
+        A thin sequencing wrapper ONLY: the actual step bodies, the kernel-predicate calls,
+        and the recovery-handoff package construction all live in
+        :class:`~tos_runtime.safety.shutdown.ControlledShutdown`, kept out of this dataclass
+        purely for the ``tools/tos_size_budget.py`` function-length budget (no behavioural
+        difference from inlining it here).
+
+        Args:
+            reason: A free-text operator/runtime reason for the shutdown — recorded on the
+                ``CONTROLLED_SHUTDOWN_STARTED`` evidence row and as the new-risk-halt
+                latch's own reason.
+
+        Returns:
+            The :class:`~tos_runtime.safety.shutdown.ShutdownOutcome`. Closes
+            :attr:`inbox`, :attr:`rcl_log`, and :attr:`evidence_store` as part of the
+            procedure — this runtime is not usable for further calls afterward.
+        """
+        return ControlledShutdown(
+            inbox=self.inbox,
+            rcl_log=self.rcl_log,
+            evidence_store=self.evidence_store,
+            custody=self.custody,
+            key_provider=self.key_provider,
+        ).run(reason=reason)
 
     #: The evidence kind recorded by :meth:`clear_new_risk_halt` on success — a runtime-level
     #: record, not a kernel ``EvidenceKind`` member (re-review finding R3, 2026-09-09).
