@@ -33,6 +33,11 @@ from shared.streaming.data_freshness import DataFreshnessTracker
 
 logger = logging.getLogger(__name__)
 
+# ``producer`` field of the futures:daily_reference:{symbol} read-model — the
+# compose service name, so an operator reading a stale key knows which process
+# to look at (the other producer is `trader-futures`).
+_DAILY_REFERENCE_PRODUCER = "market-ingest"
+
 # Cold-start feed failures we degrade from fatal to non-fatal. An intentional
 # superset of the tuple caught by
 # ``services/trading/orchestrator._start_market_data_loop``: it adds
@@ -150,6 +155,7 @@ class MarketIngestDaemon:
         rest_rate_limited: Callable[[], bool] | None = None,
         feed_start_retry_initial_seconds: float = 5.0,
         feed_start_retry_max_seconds: float = 60.0,
+        daily_reference_prefetch: Callable[[list[str]], Awaitable[None]] | None = None,
     ) -> None:
         self.asset = asset
         self.feed = feed
@@ -180,6 +186,13 @@ class MarketIngestDaemon:
         # reconnect_initial_delay/reconnect_max_delay convention.
         self.feed_start_retry_initial_seconds = feed_start_retry_initial_seconds
         self.feed_start_retry_max_seconds = feed_start_retry_max_seconds
+        # Futures only: publish the prev_close read-model
+        # (futures:daily_reference:{symbol}) for the symbols this daemon ticks.
+        # WS H0IFCNT0 frames don't carry prev_close and the decoupled
+        # decision-engine has no KIS credentials, so after the F-9 cutover this
+        # daemon is the producer that keeps Setup A from going blind. Best-effort:
+        # a failure logs a WARNING and the daemon keeps ingesting ticks.
+        self.daily_reference_prefetch = daily_reference_prefetch
         self._symbols: list[str] = []
         self._stop = asyncio.Event()
         self._rest_active = False
@@ -263,6 +276,25 @@ class MarketIngestDaemon:
             # Stock feed accepts live update_symbols (diffs sub/unsub internally).
             self.feed.update_symbols(symbols)
         self._symbols = symbols
+        await self._run_daily_reference_prefetch()
+
+    async def _run_daily_reference_prefetch(self) -> None:
+        """Publish the prev_close read-model for the current symbols (best-effort).
+
+        Called at start and on every (re)application of the symbol set, so a
+        quarterly rollover publishes the new contract's reference instead of
+        leaving the decision-engine on the retired one.
+        """
+        if self.daily_reference_prefetch is None or not self._symbols:
+            return
+        try:
+            await self.daily_reference_prefetch(list(self._symbols))
+        except Exception as e:
+            logger.warning(
+                "daily_reference prefetch failed for %s: %s — Setup A may skip",
+                self.asset,
+                e,
+            )
 
     def _enqueue_new_symbol_coverage(self, new_symbols: list[str]) -> None:
         """Queue newly-admitted stock symbols for on-entry deep daily backfill.
@@ -511,6 +543,9 @@ class MarketIngestDaemon:
         # crash-loops the container. The retry task keeps the daemon alive and
         # re-attempts on the configured backoff.
         await self._spawn_feed_start()
+        # After the (non-blocking) feed-start spawn so a slow KIS REST call
+        # cannot delay the WS connect.
+        await self._run_daily_reference_prefetch()
         freshness_task = asyncio.create_task(self._freshness_loop())
         freshness_task.add_done_callback(self._on_freshness_done)
         logger.info(
@@ -566,6 +601,61 @@ class MarketIngestDaemon:
         self._stop.set()
 
 
+def _build_daily_reference_prefetch(
+    kis_client: Any, redis_client: Any | None = None
+) -> Callable[[list[str]], Awaitable[None]]:
+    """Build the futures prev_close prefetch → publish callable.
+
+    One REST call per symbol (``FHMIF10000000``), published as
+    ``futures:daily_reference:{symbol}`` for the decoupled decision-engine.
+    Per-symbol failures are logged and skipped — one unreadable contract must
+    not stop the others from being published.
+
+    Args:
+        kis_client: KIS REST client (futures credentials).
+        redis_client: SYNC Redis client; ``None`` resolves the shared singleton
+            lazily, so a Redis outage at import time cannot break the daemon.
+    """
+    from shared.streaming.daily_reference import (
+        SOURCE_KIS_REST,
+        fetch_futures_prev_close,
+        publish_futures_daily_reference,
+    )
+
+    async def _prefetch(symbols: list[str]) -> None:
+        redis = redis_client
+        if redis is None:
+            from shared.streaming.client import RedisClient
+
+            redis = RedisClient.get_client()
+        for symbol in symbols:
+            try:
+                prev_close = await fetch_futures_prev_close(kis_client, symbol)
+            except Exception as e:
+                logger.warning(
+                    "prev_close prefetch failed for %s: %s — Setup A will skip",
+                    symbol,
+                    e,
+                )
+                continue
+            if prev_close <= 0:
+                logger.warning(
+                    "prev_close prefetch returned %s for %s — Setup A will skip",
+                    prev_close,
+                    symbol,
+                )
+                continue
+            await publish_futures_daily_reference(
+                redis,
+                symbol=symbol,
+                prev_close=prev_close,
+                source=SOURCE_KIS_REST,
+                producer=_DAILY_REFERENCE_PRODUCER,
+            )
+
+    return _prefetch
+
+
 async def _build_and_run() -> int:
     """Production entrypoint. INGEST_ASSET=stock|futures selects feed + universe."""
     import os
@@ -591,6 +681,7 @@ async def _build_and_run() -> int:
     rest_price_fetcher: Callable[[str], Awaitable[dict[str, Any] | None]] | None = None
     session_gate: Callable[[], bool] | None = None
     rest_rate_limited: Callable[[], bool] | None = None
+    daily_reference_prefetch: Callable[[list[str]], Awaitable[None]] | None = None
     if asset == "stock":
         from shared.kis.stock_feed import KISStockPriceFeed
 
@@ -668,6 +759,16 @@ async def _build_and_run() -> int:
         async def symbol_provider() -> list[str]:
             return [resolve_futures_instrument_from_env().symbol]
 
+        # prev_close producer for the decoupled chain. The WS feed's frames
+        # never carry prev_close and the decision-engine has no KIS
+        # credentials, so this REST prefetch is the only way Setup A sees a gap
+        # after the F-9 cutover retires the orchestrator.
+        from shared.kis.client import KISClient
+
+        futures_rest_client = KISClient(auth)
+        cleanup_kis = futures_rest_client
+        daily_reference_prefetch = _build_daily_reference_prefetch(futures_rest_client)
+
         # Re-resolve hourly so a quarterly rollover triggers a restart-on-change.
         refresh_interval = float(os.environ.get("INGEST_REFRESH_SECONDS", "3600"))
         restart_on_change = True
@@ -694,6 +795,7 @@ async def _build_and_run() -> int:
         feed_start_retry_max_seconds=float(
             os.environ.get("INGEST_FEED_START_RETRY_MAX_SECONDS", "60")
         ),
+        daily_reference_prefetch=daily_reference_prefetch,
     )
 
     loop = asyncio.get_running_loop()

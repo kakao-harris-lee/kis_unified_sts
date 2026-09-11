@@ -51,3 +51,16 @@ futures_contract:
     stream_key: "stream:futures.contract"
     stream_maxlen: 5000
     stream_ttl_seconds: 86400
+
+# prev_close read-model (futures:daily_reference:{symbol}).
+#
+# Published by the session-start KIS REST prefetch in BOTH futures producers
+# (services/trading/orchestrator.py::_prefetch_futures_daily_reference and
+# services/market_ingest/main.py) and read by the decoupled decision-engine
+# (services/decision_engine/daily_reference.py), which has no KIS credentials.
+# Both publishers read this one value through
+# shared/streaming/daily_reference.py::load_daily_reference_ttl_seconds — a
+# second hardcoded bound is what lets a key outlive the freshness check.
+# 86400 = this repo's default operational TTL (CLAUDE.md).
+daily_reference:
+  ttl_seconds: 86400
