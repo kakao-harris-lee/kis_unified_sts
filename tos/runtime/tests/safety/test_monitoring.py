@@ -24,13 +24,19 @@ _NS_PER_MS = 1_000_000
 class FakeEvidenceTip:
     """A :class:`~tos_runtime.safety.monitoring.EvidenceTipObserver` double — a settable
     ``(seq, chain_digest, key_generation)`` triple, mirroring
-    ``SqliteEvidenceStore.last_committed``'s own shape."""
+    ``SqliteEvidenceStore.last_committed``'s own shape. ``chain_digest`` is independently
+    settable (review disposition, HIGH-2) so a test can drive a genuine continuity break
+    (a ``seq`` advance with no digest movement, or vice versa) without monkeypatching any
+    kernel predicate."""
 
-    def __init__(self, seq: int | None = None) -> None:
+    def __init__(
+        self, seq: int | None = None, chain_digest: str = "chain-digest-0"
+    ) -> None:
         self.seq = seq
+        self.chain_digest = chain_digest
 
     def __call__(self) -> tuple[int | None, str, int | None]:
-        return self.seq, "chain-digest", 1
+        return self.seq, self.chain_digest, 1
 
 
 class FakeClock:
@@ -72,6 +78,24 @@ class RecordingAlertRecorder:
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     def __call__(self, kind: str, fields: Any) -> None:
+        self.calls.append((kind, dict(fields)))
+
+
+class RaisingThenRecordingAlertRecorder:
+    """An :class:`~tos_runtime.safety.monitoring.AlertRecorder` double that raises on its
+    first ``fail_times`` calls, then records like :class:`RecordingAlertRecorder` — pins
+    that a delivery failure is never swallowed (it propagates) and is honestly carried
+    into the NEXT snapshot's ``delivery_failures`` (review disposition, HIGH-2's sibling
+    requirement)."""
+
+    def __init__(self, fail_times: int = 1) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self._remaining_failures = fail_times
+
+    def __call__(self, kind: str, fields: Any) -> None:
+        if self._remaining_failures > 0:
+            self._remaining_failures -= 1
+            raise RuntimeError("simulated STM_ALERT delivery failure")
         self.calls.append((kind, dict(fields)))
 
 
@@ -157,6 +181,20 @@ def _build_service(
     return service, tip, clock, time_health, inbox, recorder
 
 
+def _prime(service: MonitoringService, recorder: RecordingAlertRecorder) -> None:
+    """Consume this service's first tick and clear the recorder.
+
+    Module docstring "Honest-source table" consequence (review disposition, HIGH-2): a
+    brand-new service's first :meth:`~MonitoringService.clear` call always reports
+    ``None`` (continuity cannot be established without a prior observation), regardless of
+    how healthy every other signal is. Tests that want to exercise STEADY-STATE (second
+    tick onward) behavior call this first so their own assertions are not about the
+    first-tick consequence itself (that consequence has its own dedicated test below).
+    """
+    service.clear()
+    recorder.calls.clear()
+
+
 # ---------------------------------------------------------------------------
 # loader refusals
 # ---------------------------------------------------------------------------
@@ -230,7 +268,43 @@ def test_invalid_criticality_refuses_to_load(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# nominal / negative clear() behavior
+# first-tick consequence (module docstring "Honest-source table"; review disposition
+# HIGH-2) — a dedicated pair of tests for the documented first-observation behavior
+# before any steady-state test primes past it.
+# ---------------------------------------------------------------------------
+
+
+def test_first_tick_reports_unknown_before_continuity_established(
+    nominal_coverage_path: Path,
+) -> None:
+    """A brand-new service's first clear() reports None even though every OTHER signal
+    (freshness, time health, inbox backlog) is nominal — continuity has no prior
+    observation to compare against yet, and this service refuses to assert it."""
+    service, *_rest, recorder = _build_service(nominal_coverage_path)
+    clearance = service.clear()
+    assert clearance.clear is None
+    assert "source_continuity_unestablished" in clearance.reasons
+    assert len(recorder.calls) == 1
+    assert recorder.calls[0][0] == "STM_ALERT"
+
+
+def test_second_tick_with_an_idle_evidence_tip_clears(
+    nominal_coverage_path: Path,
+) -> None:
+    """The seq/digest pair not moving at all between two ticks is an ordinary idle tick —
+    continuity holds (module docstring "Honest-source table" — "unchanged ⇔ unchanged").
+    """
+    service, *_rest, recorder = _build_service(nominal_coverage_path)
+    service.clear()
+    recorder.calls.clear()
+    clearance = service.clear()
+    assert clearance.clear is True
+    assert clearance.reasons == ()
+    assert recorder.calls == []
+
+
+# ---------------------------------------------------------------------------
+# nominal / negative clear() behavior (steady-state — past the first tick)
 # ---------------------------------------------------------------------------
 
 
@@ -238,6 +312,7 @@ def test_all_healthy_clears(nominal_coverage_path: Path) -> None:
     service, *_rest, recorder = _build_service(
         nominal_coverage_path, seq=1, now_ns=0, time_state="TRUSTED", unconsumed=0
     )
+    _prime(service, recorder)
     clearance = service.clear()
     assert clearance.clear is True
     assert clearance.reasons == ()
@@ -245,36 +320,62 @@ def test_all_healthy_clears(nominal_coverage_path: Path) -> None:
 
 
 def test_empty_evidence_store_is_unknown(nominal_coverage_path: Path) -> None:
-    """seq=None (an empty store) is honestly UNKNOWN, not fresh (module docstring)."""
+    """seq=None (an empty store) is honestly UNKNOWN (a GAP, not a continuity-unknown) —
+    module docstring "Tri-state combination"."""
     service, *_rest, recorder = _build_service(nominal_coverage_path, seq=None)
     clearance = service.clear()
     assert clearance.clear is None
     assert "evidence_tip_never_observed" in clearance.reasons
+    assert "source_continuity_unestablished" not in clearance.reasons
     assert len(recorder.calls) == 1
     assert recorder.calls[0][0] == "STM_ALERT"
 
 
 def test_evidence_tip_stall_over_bound_denies(nominal_coverage_path: Path) -> None:
-    service, tip, clock, *_rest = _build_service(nominal_coverage_path, seq=1, now_ns=0)
-    # First observation establishes the seq at t=0 (fresh, no stall yet).
-    first = service.clear()
-    assert first.clear is True
-    # seq never advances; clock jumps past the 1000ms bound.
+    service, tip, clock, *_rest, recorder = _build_service(
+        nominal_coverage_path, seq=1, now_ns=0
+    )
+    _prime(service, recorder)
+    # Steady-state tick, still under bound: the idle seq/digest pair holds continuity.
+    clock.now_ns = 500 * _NS_PER_MS
+    steady = service.clear()
+    assert steady.clear is True
+    # seq never advances again; clock jumps past the 1000ms bound.
     clock.now_ns = 2_000 * _NS_PER_MS
-    second = service.clear()
-    assert second.clear is False
-    assert "evidence_tip_stalled" in second.reasons
+    stalled = service.clear()
+    assert stalled.clear is False
+    assert "evidence_tip_stalled" in stalled.reasons
+
+
+def test_continuity_break_denies_without_predicate_monkeypatch(
+    nominal_coverage_path: Path,
+) -> None:
+    """Drives the REAL service (no kernel-predicate monkeypatch) into a False
+    conformance via a genuine continuity break: seq advances but the chain digest does
+    NOT move — an inconsistent (torn) evidence chain (review disposition, HIGH-2
+    reachability requirement)."""
+    service, tip, *_rest, recorder = _build_service(nominal_coverage_path, seq=1)
+    _prime(service, recorder)
+    tip.seq = 2  # advances; tip.chain_digest is left unchanged — the break.
+    clearance = service.clear()
+    assert clearance.clear is False
+    assert "source_continuity_broken" in clearance.reasons
+    assert len(recorder.calls) == 1
 
 
 def test_time_unhealthy_denies(nominal_coverage_path: Path) -> None:
-    service, *_rest = _build_service(nominal_coverage_path, time_state="UNTRUSTED")
+    service, *_rest, recorder = _build_service(
+        nominal_coverage_path, time_state="UNTRUSTED"
+    )
+    _prime(service, recorder)
     clearance = service.clear()
     assert clearance.clear is False
     assert "time_health_not_in_healthy_states" in clearance.reasons
 
 
 def test_inbox_backlog_over_bound_denies(nominal_coverage_path: Path) -> None:
-    service, *_rest = _build_service(nominal_coverage_path, unconsumed=999)
+    service, *_rest, recorder = _build_service(nominal_coverage_path, unconsumed=999)
+    _prime(service, recorder)
     clearance = service.clear()
     assert clearance.clear is False
     assert "inbox_unconsumed_over_bound" in clearance.reasons
@@ -286,6 +387,7 @@ def test_stm_alert_emitted_exactly_once_per_non_true_clear(
     service, *_rest, recorder = _build_service(
         nominal_coverage_path, time_state="UNTRUSTED"
     )
+    _prime(service, recorder)
     service.clear()
     service.clear()
     assert len(recorder.calls) == 2
@@ -294,9 +396,37 @@ def test_stm_alert_emitted_exactly_once_per_non_true_clear(
 
 def test_stm_alert_never_emitted_on_true_clear(nominal_coverage_path: Path) -> None:
     service, *_rest, recorder = _build_service(nominal_coverage_path)
+    _prime(service, recorder)
     service.clear()
     service.clear()
     assert recorder.calls == []
+
+
+def test_alert_delivery_failure_is_never_swallowed_and_denies_the_next_tick(
+    nominal_coverage_path: Path,
+) -> None:
+    """A recorder that raises must not be swallowed (it propagates immediately) AND must
+    be honestly carried into the NEXT snapshot's delivery_failures (review disposition,
+    HIGH-2's sibling requirement) — never a literal ``()``."""
+    tip = FakeEvidenceTip(1)
+    clock = FakeClock(0)
+    time_health = FakeTimeHealth("UNTRUSTED")  # a non-True clear() on every tick
+    inbox = FakeInboxUnconsumed(0)
+    recorder = RaisingThenRecordingAlertRecorder(fail_times=1)
+    service = MonitoringService(
+        config_path=nominal_coverage_path,
+        evidence_tip_observer=tip,
+        time_health_observer=time_health,
+        inbox_unconsumed_observer=inbox,
+        monotonic_ns=clock,
+        evidence_recorder=recorder,
+    )
+    with pytest.raises(RuntimeError, match="simulated STM_ALERT delivery failure"):
+        service.clear()
+    clearance = service.clear()
+    assert clearance.clear is False
+    assert "stm_alert_delivery_failed" in clearance.reasons
+    assert len(recorder.calls) == 1  # this second attempt succeeded and was recorded
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +443,8 @@ def test_service_satisfies_safety_mesh_service_protocol(
 
 
 def test_dimension_report_reflects_clear(nominal_coverage_path: Path) -> None:
-    service, *_rest = _build_service(nominal_coverage_path)
+    service, *_rest, recorder = _build_service(nominal_coverage_path)
+    _prime(service, recorder)
     report = service.dimension_report()
     assert report is not None
     assert report.bound_generation == 3

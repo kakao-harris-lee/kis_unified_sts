@@ -35,6 +35,23 @@ M6 lesson from ``tos-phase4-scopes-round-2026-09-09``).
   ``tos/src/tos/stm/predicates.py:832``). The health judgement itself is
   ``snapshot.aggregate_result`` compared with ``is``, never truthiness (module docstring
   "Truthy-sentinel discipline").
+* ``snapshot.source_continuity_present`` (review disposition, HIGH-2) — **not** a constant.
+  Derived from successive ``(seq, chain_digest)`` observations of the evidence tip (the
+  ``last_chain_digest`` the evidence-tip observer already returns and this module
+  previously discarded): a strictly-advancing ``seq`` paired with a changed ``chain_digest``
+  (an ordinary append), or an unchanged ``seq`` paired with an unchanged digest (an idle
+  tick — nothing new, nothing torn), both report continuity ``True``; a ``seq`` regression,
+  or a digest change with no ``seq`` advance (or vice versa — an append without a matching
+  digest movement, or a digest movement with no append), reports ``False``. On the very
+  FIRST observation this service ever makes (no prior ``(seq, digest)`` to compare against)
+  continuity is honestly ``None`` — **consequence**: a brand-new
+  :class:`MonitoringService` instance's first :meth:`clear` call reports ``None`` (UNKNOWN)
+  even when every live check looks healthy, because a ``CONFORMING`` claim requires a
+  concrete (non-``None``) ``source_continuity_present``
+  (``tos/src/tos/stm/records.py:373`` default is ``None``; the coexistence-seal validator at
+  ``:413`` refuses to let a ``CONFORMING`` claim coexist with an unestablished continuity
+  fact) and this service refuses to assert continuity it has not observed. The second and
+  every later call establishes a prior observation and reports a concrete ``True``/``False``.
 
 **The three self-observations (plan §2 decision 2 "MonitoringService" bullet) — each an
 injected zero/one-argument callable port, never an imported concrete module (this package
@@ -49,7 +66,18 @@ wires the real callables):**
    in ``SqliteEvidenceStore`` exposes a committed entry's own timestamp without a full-table
    scan, and the ADR concept "how long has this evidence tip gone stale" is naturally a
    stall measurement over successive observations, not a single entry's age) and compares
-   the stall duration against ``bounds.max_evidence_tip_stall_ms``.
+   the stall duration against ``bounds.max_evidence_tip_stall_ms``. ``last_chain_digest`` is
+   ALSO consulted (paired with ``last_seq``) to derive ``source_continuity_present`` (module
+   docstring "Honest-source table").
+   **Wiring contract (review disposition, HIGH-1) — the observer's counted tip MUST
+   EXCLUDE this very service's own ``STM_ALERT`` evidence writes.** If the composed
+   observer counts every entry kind, the ``STM_ALERT`` this service itself emits on a
+   non-``True`` :meth:`clear` advances the observed ``seq`` on the very next tick, which
+   this service would then read as "the tip advanced" and reset the stall clock — a
+   continuing stall would flap deny/clear/clear instead of staying denied. The composing
+   layer MUST wire a ``kinds_excluded={"STM_ALERT"}``-shaped reader (e.g. ``MAX(seq) FROM
+   entries WHERE kind != 'STM_ALERT'``), never the raw unfiltered ``last_committed``, when
+   this same evidence store also receives this service's own alert writes.
 2. ``time_health_observer`` — returns the Trustworthy Time service's health-state token
    name as a plain ``str`` (never importing ``tos_runtime.time.service.HealthState`` here,
    to keep this module import-decoupled); compared against the config-declared
@@ -89,22 +117,41 @@ scope does not need. Flagged for a follow-up wave if gap lifecycle tracking is r
 
 **Tri-state combination.** ``critical_coverage_complete_or_gap`` is a static, always-``True``
 (given a boot-accepted document) gate; the dynamic result comes from
-``snapshot.aggregate_result``: ``CONFORMING`` (and an honestly-backed claim) ⇒ ``True``;
-``RESTRICTED`` / ``NON_CONFORMING`` ⇒ ``False``; ``UNKNOWN`` (the evidence tip has never
-been observed, i.e. an empty store) ⇒ ``None`` — the plan's own worked case, matching the
-kernel's own ``unknown_is_restrictive`` philosophy (``tos/src/tos/stm/predicates.py:1029``:
-"Missing, stale, conflicting ... monitoring state blocks dependent new risk") without this
-service fabricating the seven-axis ``MonitoringUnknownState`` record that predicate itself
-needs (this service has no honest source for six of those seven axes — only the freshness
-one — so it is not called directly; flagged for a follow-up wave). A coverage gap (should
-the static check somehow fail) dominates to ``False`` regardless of the dynamic result — a
-gap is restrictive, never silently overridden by a healthy-looking tick
-(STM-INV-002 line 163).
+``snapshot.aggregate_result``, itself derived from three buckets — never a fixed
+CONFORMING/NON_CONFORMING/UNKNOWN literal:
+
+* ``active_gaps`` — the evidence tip has NEVER been observed (an empty store, ``seq is
+  None``): a genuine absence of coverage (STM-INV-002 line 163 "missing ... coverage is a
+  gap"), reported once and not also double-counted as an "unknown".
+* ``active_unknowns`` — a real observation exists but ``source_continuity_present`` cannot
+  yet be judged (this service's own FIRST tick — module docstring "Honest-source table").
+* ``active_violations`` / ``delivery_failures`` — a definite, positively-observed problem
+  (a stall over bound, a broken continuity chain, an unhealthy time state, an inbox
+  backlog over bound, or a remembered prior alert-delivery failure).
+
+Any ``active_gaps`` or ``active_unknowns`` entry ⇒ ``UNKNOWN`` ⇒ :meth:`clear` reports
+``None`` — matching the kernel's own ``unknown_is_restrictive`` philosophy
+(``tos/src/tos/stm/predicates.py:1029``: "Missing, stale, conflicting ... monitoring state
+blocks dependent new risk") without this service fabricating the seven-axis
+``MonitoringUnknownState`` record that predicate itself needs (this service has an honest
+source for only two of those seven axes — freshness and continuity — so it is not called
+directly; flagged for a follow-up wave). Otherwise any ``active_violations`` /
+``delivery_failures`` entry ⇒ ``NON_CONFORMING`` ⇒ ``False``. Only when every bucket is
+empty ⇒ ``CONFORMING`` ⇒ ``True``. A coverage gap on the STATIC manifest check (should it
+somehow fail) dominates to ``False`` regardless of the dynamic result.
 
 **``STM_ALERT`` emission (plan §2 decision 8).** Emitted exactly once per non-``True``
 :meth:`clear` call, never on a ``True`` one — this runtime has no delivery channel of its
 own for the alert; :meth:`clear`'s caller (or the evidence store's own downstream readers)
-owns delivery.
+owns delivery. **Delivery failure is never swallowed** (review disposition, HIGH-2's sibling
+requirement on ``delivery_failures``): the ``evidence_recorder`` call is wrapped, and a
+raised exception both (a) propagates out of :meth:`clear` immediately (the caller sees the
+failure at the moment it happened) and (b) is remembered on this instance, so the VERY NEXT
+:meth:`clear` call's snapshot honestly carries it in ``delivery_failures`` (a real recorded
+fact, never a literal ``()``) — denying that next tick too, until a delivery attempt
+succeeds again. A delivery failure can only be observed retrospectively (the recorder is
+called after this tick's own verdict is already computed), so it cannot deny the SAME tick
+it happened on; this is a documented one-tick lag, not a gap in coverage.
 
 Pure module beyond stdlib + third-party: ``pydantic`` (via ``tos.stm`` records) + ``yaml`` +
 ``tos.stm`` + ``tos_runtime.safety.ports`` + ``tos_runtime.safety._policy_loader`` +
@@ -177,8 +224,11 @@ _REASON_COVERAGE_GAP = "critical_coverage_complete_or_gap"
 _REASON_SNAPSHOT_DISHONEST = "conformance_requires_complete_current_valid"
 _REASON_EVIDENCE_TIP_UNKNOWN = "evidence_tip_never_observed"
 _REASON_EVIDENCE_TIP_STALL = "evidence_tip_stalled"
+_REASON_CONTINUITY_UNESTABLISHED = "source_continuity_unestablished"
+_REASON_CONTINUITY_BROKEN = "source_continuity_broken"
 _REASON_TIME_UNHEALTHY = "time_health_not_in_healthy_states"
 _REASON_INBOX_BACKLOG = "inbox_unconsumed_over_bound"
+_REASON_ALERT_DELIVERY_FAILED = "stm_alert_delivery_failed"
 
 #: ``STM_ALERT`` evidence kind (module docstring "STM_ALERT emission").
 _EVIDENCE_KIND_STM_ALERT = "STM_ALERT"
@@ -259,6 +309,33 @@ class _LoadedCoverage:
     manifest: MonitorCoverageManifest
     bounds: _Bounds
     config_path: Path
+
+
+@dataclass(frozen=True)
+class _Observation:
+    """One :meth:`MonitoringService.clear` tick's raw self-observation results (review
+    disposition, HIGH-2) — the single source both :meth:`MonitoringService._build_snapshot`
+    and :meth:`MonitoringService.clear`'s own reason derivation read, so the two can never
+    disagree about what was actually observed.
+
+    ``freshness_ok`` / ``continuity_ok`` are ``None`` exactly when unestablished (module
+    docstring "Honest-source table"): ``freshness_ok is None`` only when the evidence tip
+    has NEVER been observed (``seq is None``, a gap); ``continuity_ok is None`` only on
+    this service's first-ever REAL observation (a seq exists, but there is no PRIOR
+    observation to compare against yet — an unknown, not a gap). ``continuity_ok`` is left
+    ``None`` (never computed) when ``freshness_ok`` is itself ``None`` — the gap already
+    says everything there is to say; a second, redundant "also unknown" would double-count
+    the same absent fact.
+    """
+
+    freshness_ok: bool | None
+    continuity_ok: bool | None
+    evidence_numeric_state: NumericInputState
+    last_seq: int | None
+    time_state: str
+    time_ok: bool
+    unconsumed: int
+    inbox_ok: bool
 
 
 def _require_item_flags(
@@ -433,6 +510,16 @@ class MonitoringService:
         # consulted by a caller directly; purely this service's own staleness memory.
         self._evidence_tip_last_seq: int | None = None
         self._evidence_tip_last_advance_ns: int | None = None
+        # Continuity-detector bookkeeping (review disposition, HIGH-2) — the RAW previous
+        # (seq, chain_digest) pair, updated on EVERY real observation (unlike the stall
+        # tracker above, which only updates when seq changes) — a continuity break is
+        # exactly a mismatch between "did seq change" and "did the digest change".
+        self._continuity_last_seq: int | None = None
+        self._continuity_last_chain_digest: str | None = None
+        # The previous clear() call's own STM_ALERT delivery outcome (review disposition,
+        # HIGH-2's sibling requirement) — None until a delivery has been attempted and
+        # failed; cleared the next time a delivery is attempted and succeeds.
+        self._last_delivery_failure: str | None = None
         self._snapshot_generation = 0
 
     @property
@@ -443,79 +530,125 @@ class MonitoringService:
     def dimension_key(self) -> DimensionKey:
         return DimensionKey.MONITORING
 
-    def _observe_evidence_tip(
-        self, now_ns: int
-    ) -> tuple[bool | None, NumericInputState]:
-        seq, _chain_digest, _key_generation = self._evidence_tip_observer()
+    def _observe(self, now_ns: int) -> _Observation:
+        """Every self-observation port, called exactly once per :meth:`clear` tick (review
+        disposition, HIGH-2 — the single source :meth:`_build_snapshot` and :meth:`clear`'s
+        own reason derivation both read, so they can never disagree)."""
+        seq, chain_digest, _key_generation = self._evidence_tip_observer()
+
         if seq is None:
-            return None, NumericInputState.MISSING_SAMPLE
-        if seq != self._evidence_tip_last_seq:
-            self._evidence_tip_last_seq = seq
-            self._evidence_tip_last_advance_ns = now_ns
-        assert self._evidence_tip_last_advance_ns is not None
-        stall_ms = (now_ns - self._evidence_tip_last_advance_ns) // _NS_PER_MS
-        return (
-            stall_ms <= self._docs.bounds.max_evidence_tip_stall_ms,
-            NumericInputState.WELL_FORMED,
-        )
+            # Never observed at all — a GAP (module docstring "Tri-state combination"),
+            # not an "unknown". Continuity is left unjudged: the gap already says
+            # everything there is to say about this obligation this tick.
+            freshness_ok: bool | None = None
+            continuity_ok: bool | None = None
+            evidence_numeric_state = NumericInputState.MISSING_SAMPLE
+        else:
+            if seq != self._evidence_tip_last_seq:
+                self._evidence_tip_last_seq = seq
+                self._evidence_tip_last_advance_ns = now_ns
+            assert self._evidence_tip_last_advance_ns is not None
+            stall_ms = (now_ns - self._evidence_tip_last_advance_ns) // _NS_PER_MS
+            freshness_ok = stall_ms <= self._docs.bounds.max_evidence_tip_stall_ms
+            evidence_numeric_state = NumericInputState.WELL_FORMED
 
-    def _build_snapshot(self) -> ContinuousConformanceSnapshot:
-        self._snapshot_generation += 1
-        now_ns = self._monotonic_ns()
+            if self._continuity_last_seq is None:
+                # First-ever REAL observation — no prior (seq, digest) to compare against
+                # (module docstring "Honest-source table" — the documented first-tick
+                # consequence), not a fabricated True.
+                continuity_ok = None
+            else:
+                seq_advanced = seq > self._continuity_last_seq
+                seq_regressed = seq < self._continuity_last_seq
+                digest_changed = chain_digest != self._continuity_last_chain_digest
+                # A regression is always a break; otherwise "advanced" and "digest
+                # changed" must agree (both, an ordinary append; neither, an idle tick) —
+                # disagreement (an append with no digest movement, or a digest movement
+                # with no append) is exactly a torn/rewritten chain.
+                continuity_ok = (
+                    False if seq_regressed else (seq_advanced == digest_changed)
+                )
+            self._continuity_last_seq = seq
+            self._continuity_last_chain_digest = chain_digest
 
-        evidence_ok, evidence_numeric_state = self._observe_evidence_tip(now_ns)
         time_state = self._time_health_observer()
         time_ok = time_state in self._docs.bounds.healthy_time_states
         unconsumed = self._inbox_unconsumed_observer()
         inbox_ok = unconsumed <= self._docs.bounds.max_inbox_unconsumed
 
-        def _result(ok: bool | None) -> AggregateConformanceResult:
-            if ok is None:
-                return AggregateConformanceResult.UNKNOWN
-            if ok is True:
-                return AggregateConformanceResult.CONFORMING
-            return AggregateConformanceResult.NON_CONFORMING
-
-        evaluations = (
-            MonitorEvaluation(
-                evaluator_digest="stm-evaluator-evidence-tip-v1",
-                canonical_input_digest=f"last_seq={self._evidence_tip_last_seq!r}",
-                result=_result(evidence_ok),
-                numeric_input_state=evidence_numeric_state,
-            ),
-            MonitorEvaluation(
-                evaluator_digest="stm-evaluator-time-health-v1",
-                canonical_input_digest=f"health_state={time_state!r}",
-                result=_result(time_ok),
-                numeric_input_state=NumericInputState.WELL_FORMED,
-            ),
-            MonitorEvaluation(
-                evaluator_digest="stm-evaluator-inbox-backlog-v1",
-                canonical_input_digest=f"unconsumed={unconsumed!r}",
-                result=_result(inbox_ok),
-                numeric_input_state=NumericInputState.WELL_FORMED,
-            ),
+        return _Observation(
+            freshness_ok=freshness_ok,
+            continuity_ok=continuity_ok,
+            evidence_numeric_state=evidence_numeric_state,
+            last_seq=self._evidence_tip_last_seq,
+            time_state=time_state,
+            time_ok=time_ok,
+            unconsumed=unconsumed,
+            inbox_ok=inbox_ok,
         )
+
+    def _build_snapshot(self, obs: _Observation) -> ContinuousConformanceSnapshot:
+        self._snapshot_generation += 1
 
         active_violations: list[str] = []
-        if evidence_ok is False:
-            active_violations.append(_OBLIGATION_EVIDENCE_TIP)
-        if time_ok is False:
+        active_unknowns: list[str] = []
+        active_gaps: list[str] = []
+
+        if obs.freshness_ok is None:
+            active_gaps.append(_OBLIGATION_EVIDENCE_TIP)
+        else:
+            if obs.freshness_ok is False:
+                active_violations.append(_OBLIGATION_EVIDENCE_TIP)
+            if obs.continuity_ok is None:
+                active_unknowns.append(_OBLIGATION_EVIDENCE_TIP)
+            elif obs.continuity_ok is False:
+                active_violations.append(_OBLIGATION_EVIDENCE_TIP)
+
+        if obs.time_ok is False:
             active_violations.append(_OBLIGATION_TIME_HEALTH)
-        if inbox_ok is False:
+        if obs.inbox_ok is False:
             active_violations.append(_OBLIGATION_INBOX_BACKLOG)
-        active_unknowns: tuple[str, ...] = (
-            (_OBLIGATION_EVIDENCE_TIP,) if evidence_ok is None else ()
+
+        delivery_failures = (
+            (self._last_delivery_failure,) if self._last_delivery_failure else ()
         )
 
-        if evidence_ok is None:
+        if active_gaps or active_unknowns:
             aggregate_result = AggregateConformanceResult.UNKNOWN
-        elif active_violations:
+        elif active_violations or delivery_failures:
             aggregate_result = AggregateConformanceResult.NON_CONFORMING
         else:
             aggregate_result = AggregateConformanceResult.CONFORMING
 
+        def _eval_result(values: tuple[bool | None, ...]) -> AggregateConformanceResult:
+            if any(v is None for v in values):
+                return AggregateConformanceResult.UNKNOWN
+            if any(v is False for v in values):
+                return AggregateConformanceResult.NON_CONFORMING
+            return AggregateConformanceResult.CONFORMING
+
         manifest = self._docs.manifest
+        evaluations = (
+            MonitorEvaluation(
+                evaluator_digest="stm-evaluator-evidence-tip-v1",
+                canonical_input_digest=f"last_seq={obs.last_seq!r}",
+                result=_eval_result((obs.freshness_ok, obs.continuity_ok)),
+                numeric_input_state=obs.evidence_numeric_state,
+            ),
+            MonitorEvaluation(
+                evaluator_digest="stm-evaluator-time-health-v1",
+                canonical_input_digest=f"health_state={obs.time_state!r}",
+                result=_eval_result((obs.time_ok,)),
+                numeric_input_state=NumericInputState.WELL_FORMED,
+            ),
+            MonitorEvaluation(
+                evaluator_digest="stm-evaluator-inbox-backlog-v1",
+                canonical_input_digest=f"unconsumed={obs.unconsumed!r}",
+                result=_eval_result((obs.inbox_ok,)),
+                numeric_input_state=NumericInputState.WELL_FORMED,
+            ),
+        )
+
         return ContinuousConformanceSnapshot(
             snapshot_id=f"{manifest.coverage_manifest_id}-snapshot",
             snapshot_generation=self._snapshot_generation,
@@ -526,14 +659,33 @@ class MonitoringService:
             scope=manifest.coverage_manifest_id,
             owner_epoch=self.identity,
             monitor_results=evaluations,
-            source_continuity_present=True,
+            source_continuity_present=obs.continuity_ok,
             active_violations=tuple(active_violations),
-            active_unknowns=active_unknowns,
-            active_gaps=(),
+            active_unknowns=tuple(active_unknowns),
+            active_gaps=tuple(active_gaps),
             active_suppressions=(),
-            delivery_failures=(),
+            delivery_failures=delivery_failures,
             aggregate_result=aggregate_result,
         )
+
+    def _reasons_from_observation(self, obs: _Observation) -> list[str]:
+        reasons: list[str] = []
+        if obs.freshness_ok is None:
+            reasons.append(_REASON_EVIDENCE_TIP_UNKNOWN)
+        else:
+            if obs.freshness_ok is False:
+                reasons.append(_REASON_EVIDENCE_TIP_STALL)
+            if obs.continuity_ok is None:
+                reasons.append(_REASON_CONTINUITY_UNESTABLISHED)
+            elif obs.continuity_ok is False:
+                reasons.append(_REASON_CONTINUITY_BROKEN)
+        if obs.time_ok is False:
+            reasons.append(_REASON_TIME_UNHEALTHY)
+        if obs.inbox_ok is False:
+            reasons.append(_REASON_INBOX_BACKLOG)
+        if self._last_delivery_failure is not None:
+            reasons.append(_REASON_ALERT_DELIVERY_FAILED)
+        return reasons
 
     def clear(self) -> MeshClearance:
         """The deferred-item / Coordinator verdict (module docstring)."""
@@ -548,16 +700,9 @@ class MonitoringService:
         if coverage_ok is not True:
             reasons.append(_REASON_COVERAGE_GAP)
 
-        snapshot = self._build_snapshot()
-        if snapshot.aggregate_result is AggregateConformanceResult.UNKNOWN:
-            reasons.append(_REASON_EVIDENCE_TIP_UNKNOWN)
-        else:
-            if _OBLIGATION_EVIDENCE_TIP in snapshot.active_violations:
-                reasons.append(_REASON_EVIDENCE_TIP_STALL)
-            if _OBLIGATION_TIME_HEALTH in snapshot.active_violations:
-                reasons.append(_REASON_TIME_UNHEALTHY)
-            if _OBLIGATION_INBOX_BACKLOG in snapshot.active_violations:
-                reasons.append(_REASON_INBOX_BACKLOG)
+        obs = self._observe(self._monotonic_ns())
+        reasons.extend(self._reasons_from_observation(obs))
+        snapshot = self._build_snapshot(obs)
 
         honest = conformance_requires_complete_current_valid(snapshot)
         if honest is not True:
@@ -579,19 +724,32 @@ class MonitoringService:
             identity=self.identity, clear=overall, reasons=tuple(reasons)
         )
         if overall is not True:
-            self._evidence_recorder(
-                _EVIDENCE_KIND_STM_ALERT,
-                {
-                    "identity": self.identity,
-                    "clear": overall,
-                    "reasons": clearance.reasons,
-                    "aggregate_result": (
-                        snapshot.aggregate_result.value
-                        if snapshot.aggregate_result is not None
-                        else None
-                    ),
-                },
-            )
+            try:
+                self._evidence_recorder(
+                    _EVIDENCE_KIND_STM_ALERT,
+                    {
+                        "identity": self.identity,
+                        "clear": overall,
+                        "reasons": clearance.reasons,
+                        "aggregate_result": (
+                            snapshot.aggregate_result.value
+                            if snapshot.aggregate_result is not None
+                            else None
+                        ),
+                    },
+                )
+            except Exception as exc:
+                # Never swallow (review disposition, HIGH-2's sibling requirement): the
+                # caller sees this failure NOW, and the NEXT tick's snapshot honestly
+                # carries it in delivery_failures (module docstring "STM_ALERT emission").
+                self._last_delivery_failure = (
+                    f"{_EVIDENCE_KIND_STM_ALERT}_delivery_failed: {exc!r}"
+                )
+                raise
+            else:
+                self._last_delivery_failure = None
+        else:
+            self._last_delivery_failure = None
         return clearance
 
     def dimension_report(self) -> DimensionReport | None:
