@@ -64,10 +64,35 @@ _OWNED_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
     }
 )
 
-#: The 17 mandated-floor dimensions with no Phase 2 runtime owner, sorted for
-#: a deterministic config file / iteration order.
+#: Dimensions Phase 5 W3 has since given a real ``dimension_readers`` entry
+#: (plan §2 decision 3, "1차원=1커밋") — each key here is deliberately
+#: EXCLUDED from :data:`PENDING_DIMENSION_KEYS` below and, symmetrically,
+#: refused if a ``currentness_dimensions.yaml`` config still carries a block
+#: for it (module docstring; a stale config must never silently pretend to
+#: attest a value this runtime now derives on its own — mirrors
+#: :mod:`tos_runtime.compose._egress_attestations`'s own
+#: ``_RETIRED_DERIVED_KEYS`` idiom). Grown one key at a time, never all at
+#: once, so each dimension's own RED test / reader / config-block removal
+#: lands as one reviewable commit.
+_READER_OWNED_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
+    {
+        #: ``tos_runtime.compose._currentness_wiring``'s own
+        #: ``_currentness_policy_dimension_reader_for`` — the assembler's own governing
+        #: ``CurrentnessPolicy``/``mandated`` floor, run through the kernel's own
+        #: ``tos.cur.predicates.policy_covers_mandated_dimensions`` (no new runtime state
+        #: needed — this composition already holds both facts).
+        DimensionKey.CURRENTNESS_POLICY,
+    }
+)
+
+#: The mandated-floor dimensions with no Phase 2/5 runtime owner yet, sorted
+#: for a deterministic config file / iteration order. Shrinks as
+#: :data:`_READER_OWNED_DIMENSION_KEYS` grows.
 PENDING_DIMENSION_KEYS: tuple[DimensionKey, ...] = tuple(
-    sorted(MANDATED_DIMENSION_FLOOR - _OWNED_DIMENSION_KEYS, key=lambda k: k.value)
+    sorted(
+        MANDATED_DIMENSION_FLOOR - _OWNED_DIMENSION_KEYS - _READER_OWNED_DIMENSION_KEYS,
+        key=lambda k: k.value,
+    )
 )
 
 #: The operator-attestation owner-identity label stamped on every pending
@@ -154,6 +179,15 @@ def load_pending_currentness_dimensions(path: Path) -> tuple[PendingDimensionSpe
     if not isinstance(raw, dict):
         raise PendingDimensionConfigError(
             f"pending-dimensions config file must be a top-level mapping: {path}"
+        )
+    stale = sorted(
+        key.value for key in _READER_OWNED_DIMENSION_KEYS if key.value in raw
+    )
+    if stale:
+        raise PendingDimensionConfigError(
+            f"{path}: {stale!r} are no longer pending — each now has a real "
+            "tos_runtime.currentness.vector.CurrentnessAssembler dimension_readers "
+            "entry (Phase 5 plan §2 decision 3); remove these blocks from this config"
         )
 
     specs: list[PendingDimensionSpec] = []

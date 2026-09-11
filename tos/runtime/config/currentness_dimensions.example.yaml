@@ -50,12 +50,12 @@ CRITICAL_INPUT:
   bound_digest: null
   restrictive_floor: null
   positively_established: null
-# owner note: Phase 5 (a real currentness-policy owner) replaces this attestation
-CURRENTNESS_POLICY:
-  bound_generation: null
-  bound_digest: null
-  restrictive_floor: null
-  positively_established: null
+# CURRENTNESS_POLICY: Phase 5 W3-b landed a real dimension_readers entry
+# (tos_runtime.compose._currentness_wiring._currentness_policy_dimension_reader_for,
+# over tos.cur.predicates.policy_covers_mandated_dimensions) — this block is
+# REMOVED, never left null; a config that still carries a CURRENTNESS_POLICY
+# key here now refuses to load (tos_runtime.compose._pending_dimensions
+# _READER_OWNED_DIMENSION_KEYS).
 # owner note: Phase 5 (a real decision-proof-intent owner) replaces this attestation
 DECISION_PROOF_INTENT:
   bound_generation: null

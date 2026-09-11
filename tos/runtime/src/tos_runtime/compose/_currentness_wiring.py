@@ -14,7 +14,12 @@ from pathlib import Path
 from tos.afg import ActionAmplificationEnvelope
 from tos.authority import currentness_admissible
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos.cur import MANDATED_DIMENSION_FLOOR, CurrentnessPolicy, DimensionKey
+from tos.cur import (
+    MANDATED_DIMENSION_FLOOR,
+    CurrentnessPolicy,
+    DimensionKey,
+    policy_covers_mandated_dimensions,
+)
 from tos.engine.vocabulary import StageOutcome
 
 from tos_runtime.authority.epoch import SafetyAuthorityEpochService
@@ -162,6 +167,39 @@ def _action_flow_dimension_reader_for(
     return _reader
 
 
+def _currentness_policy_dimension_reader_for(
+    policy: CurrentnessPolicy,
+) -> Callable[[], DimensionReport | None]:
+    """The CURRENTNESS_POLICY currentness dimension (Phase 5 W3-b, plan §2
+    decision 3 — the first of the 9 dimension-owner replacements).
+
+    No new runtime state is needed: this composition already builds its own
+    governing ``policy`` (below, ``required_dimensions=MANDATED_DIMENSION_FLOOR``)
+    — the reader only asks the kernel's own
+    :func:`~tos.cur.predicates.policy_covers_mandated_dimensions` whether
+    THIS policy declares at least the FULL mandated floor (never
+    ``CurrentnessAssembler``'s own narrower ``self._mandated`` — a SEPARATE,
+    deliberately smaller floor this class itself is constructed with; see
+    its own docstring), never a comparison this module authors itself
+    (MEDIUM-A discipline, module docstring).
+
+    Always returns a report (never ``None``): ``policy`` is always present
+    at composition time, so there is no "cannot observe yet" case here,
+    unlike the RCL-backed readers above.
+    """
+
+    def _reader() -> DimensionReport | None:
+        return DimensionReport(
+            bound_generation=policy.policy_generation,
+            positively_established=policy_covers_mandated_dimensions(
+                policy, MANDATED_DIMENSION_FLOOR
+            ),
+            restrictive_floor=0,
+        )
+
+    return _reader
+
+
 def _load_action_flow_envelope(path: Path) -> ActionAmplificationEnvelope:
     """Build the Action Flow Governor's ``ActionAmplificationEnvelope`` from
     the ``risk.yaml`` block (``tos_runtime.risk`` has no dedicated loader for
@@ -256,6 +294,10 @@ def _build_risk_and_currentness(
             _action_flow_dimension_reader_for(
                 rcl_log, writer_epoch, action_flow_dimension_state
             ),
+        ),
+        DimensionKey.CURRENTNESS_POLICY: (
+            "tos_runtime.currentness",
+            _currentness_policy_dimension_reader_for(currentness_policy),
         ),
     }
     currentness_assembler = CurrentnessAssembler(
