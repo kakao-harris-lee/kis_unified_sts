@@ -1,6 +1,10 @@
 """Tests for :mod:`tos_runtime.safety.shutdown` (Phase 5 W3.2 plan §2 decision 9,
-lane d3). Fixtures are local to this file (shared-worktree convention — see
-``tos/runtime/tests/safety/test_protective.py``'s own docstring)."""
+lane d3). Fixtures are local to this file, never shared via ``conftest.py`` or
+another test module: ``tos/runtime/tests/safety/`` is a shared worktree where
+several lanes land tests concurrently (this file is lane d3's own), so a
+fixture this file alone needs stays here rather than risking a merge
+conflict or an accidental cross-lane dependency in a file another lane also
+edits."""
 
 from __future__ import annotations
 

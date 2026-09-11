@@ -1,6 +1,9 @@
 """Tests for :mod:`tos_runtime.safety.protective` (Phase 5 W3.2 plan §2 decision 8,
-lane d2). Fixtures are local to this file (shared-worktree convention — see
-``tos/runtime/tests/safety/conftest.py``'s own docstring)."""
+lane d2). Fixtures are local to this file, never added to ``conftest.py``:
+``tos/runtime/tests/safety/`` is a shared worktree where several lanes land
+tests concurrently (this file is lane d2's own), so a fixture this file
+alone needs stays here rather than risking a merge conflict or an
+accidental cross-lane dependency in the shared ``conftest.py``."""
 
 from __future__ import annotations
 
@@ -132,6 +135,28 @@ def test_capacity_exhausted_is_always_true_given_no_profile_or_budget_source() -
     verdict = service.verdict()
     assert verdict.capacity_exhausted is True
     assert "capacity_exhausted" in verdict.reasons
+
+
+def test_capacity_exhausted_true_is_the_disclosed_consequence_of_the_two_none_sourced_inputs() -> (
+    None
+):
+    """MEDIUM disposition (W3.2 review): pins that ``capacity_exhausted=True`` is not an
+    isolated fact but the documented consequence of the two genuinely-absent inputs
+    ``protective_capacity_exhausted(None, budget_remaining=None)`` is called with — both
+    named in ``UNEVALUATED_PROTECTIVE_FACTS`` and both recorded in the durable
+    ``PROTECTIVE_VERDICT`` evidence payload alongside the exhausted result, so a reader of
+    either surface can see the fact and its cause together."""
+    service, recorder = _service()
+    verdict = service.verdict()
+
+    assert "protective_capacity_profile" in verdict.unevaluated
+    assert "protective_capacity_budget_remaining" in verdict.unevaluated
+    assert verdict.capacity_exhausted is True
+
+    _kind, fields = recorder.calls[0]
+    assert fields["capacity_exhausted"] is True
+    assert "protective_capacity_profile" in fields["unevaluated"]
+    assert "protective_capacity_budget_remaining" in fields["unevaluated"]
 
 
 # ---------------------------------------------------------------------------

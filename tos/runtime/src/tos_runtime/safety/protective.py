@@ -296,6 +296,18 @@ class ProtectiveActionService:
         once, and return the resulting :class:`ProtectiveVerdict`."""
         inputs = self._derestriction_inputs()
         derestriction = derestriction_admissible(inputs)
+        # Both arguments are genuinely absent, not stand-ins (module docstring's own
+        # "Honest-source table"; MEDIUM disposition, W3.2 review): no
+        # ProtectiveCapacityProfile policy-document loader exists yet (unlike
+        # SafetyProfileService/IncidentService's own YAML loaders — building one is new
+        # scope, not this service's verdict-only mandate), and no bounded
+        # protective-retry-budget tracker exists either. Both names are listed in
+        # UNEVALUATED_PROTECTIVE_FACTS below ("protective_capacity_profile" /
+        # "protective_capacity_budget_remaining") so a caller can see, structurally,
+        # which coordinates are missing. Consequence: protective_capacity_exhausted's own
+        # fail-closed rule (a None profile or a None budget is "exhausted") makes this
+        # service report capacity_exhausted=True on EVERY call until both sources land —
+        # never a fabricated False credit of capacity that was never proven to exist.
         capacity_exhausted = protective_capacity_exhausted(None, budget_remaining=None)
         classification: ProtectiveActionOutcome | None = None
 
