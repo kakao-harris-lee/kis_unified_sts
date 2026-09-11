@@ -233,10 +233,24 @@ class SafetyMeshSnapshot:
     consumer in that same tick via :func:`_current_tick_snapshot` (the currentness
     dimension readers, the deferred-mesh-fields supply, and the item-16 latch
     owner's ``incident_clear``/``profile_clear`` closures).
+
+    **``tick_generation`` (W3.1 independent review MEDIUM-8, latent: M17 survives).**
+    A snapshot carries no signal of ITS OWN staleness without this: if the Coordinator's
+    refresh is skipped for a whole tick (the kernel's own ``authority_epoch_current()``
+    gate — design #31 §9-10 — already refuses BEFORE ``live_scope_authorized`` is ever
+    reached, per ``tos.engine.core``'s own gate-①-then-② sequencing), a LATER same-tick
+    (or several-ticks-later) consumer reading the cell would see a snapshot from
+    whenever the Coordinator last actually ran, with no way to tell it apart from a
+    genuinely current one. ``tick_generation`` is stamped from the durable
+    :class:`~tos_runtime.engine.inbox.SqliteEventInbox`'s own ``count`` (how many events
+    this runtime has EVER admitted — already shared via :class:`_InboxCell`, and already
+    monotonic and externally observable independent of whether the Coordinator gate ever
+    ran) — ``None`` only in the dead pre-``_finalize`` window before the inbox exists.
     """
 
     clearances: Mapping[str, MeshClearance]
     reports: Mapping[str, DimensionReport | None]
+    tick_generation: int | None
 
     def clear_for(self, identity: str) -> MeshClearance | None:
         """This service's clearance from THIS snapshot, or ``None`` if ``identity``
@@ -251,16 +265,21 @@ class SafetyMeshSnapshot:
         return self.reports.get(identity)
 
     @staticmethod
-    def take(services: Sequence[SafetyMeshService]) -> SafetyMeshSnapshot:
+    def take(
+        services: Sequence[SafetyMeshService], *, tick_generation: int | None
+    ) -> SafetyMeshSnapshot:
         """Evaluate every service's :meth:`~tos_runtime.safety.ports.SafetyMeshService
         .clear` and :meth:`~tos_runtime.safety.ports.SafetyMeshService.dimension_report`
-        exactly once each, in the order given."""
+        exactly once each, in the order given, and stamp the result with
+        ``tick_generation`` (the class docstring's own MEDIUM-8 rationale)."""
         clearances: dict[str, MeshClearance] = {}
         reports: dict[str, DimensionReport | None] = {}
         for service in services:
             clearances[service.identity] = service.clear()
             reports[service.identity] = service.dimension_report()
-        return SafetyMeshSnapshot(clearances=clearances, reports=reports)
+        return SafetyMeshSnapshot(
+            clearances=clearances, reports=reports, tick_generation=tick_generation
+        )
 
 
 @dataclass
@@ -273,8 +292,19 @@ class _SafetyMeshTickCell:
     snapshot: SafetyMeshSnapshot | None = None
 
 
+def _current_tick_generation(inbox_cell: _InboxCell) -> int | None:
+    """The honest per-tick identity :class:`SafetyMeshSnapshot`'s own docstring
+    documents (MEDIUM-8) — ``None`` only before ``_finalize`` binds the durable inbox
+    (the dead pre-boot-completion window, mirrors every other late-bound cell's own
+    "absent until filled" discipline)."""
+    inbox = inbox_cell.inbox
+    return inbox.count if inbox is not None else None
+
+
 def _refresh_tick_snapshot(
-    services: Sequence[SafetyMeshService], cell: _SafetyMeshTickCell
+    services: Sequence[SafetyMeshService],
+    cell: _SafetyMeshTickCell,
+    inbox_cell: _InboxCell,
 ) -> SafetyMeshSnapshot:
     """Take a FRESH :class:`SafetyMeshSnapshot`, unconditionally, and store it into
     ``cell`` — the Coordinator's own call, made once per tick regardless of which
@@ -282,21 +312,35 @@ def _refresh_tick_snapshot(
     current snapshot before ANY later same-tick consumer runs, synthetic transport
     included — plan §2 decision 5's own "synthetic e2e 불변" is unaffected, since this
     call authors no admission judgement of its own)."""
-    snapshot = SafetyMeshSnapshot.take(services)
+    snapshot = SafetyMeshSnapshot.take(
+        services, tick_generation=_current_tick_generation(inbox_cell)
+    )
     cell.snapshot = snapshot
     return snapshot
 
 
 def _current_tick_snapshot(
-    services: Sequence[SafetyMeshService], cell: _SafetyMeshTickCell
+    services: Sequence[SafetyMeshService],
+    cell: _SafetyMeshTickCell,
+    inbox_cell: _InboxCell,
 ) -> SafetyMeshSnapshot:
-    """Reuse THIS tick's already-taken snapshot when one exists (the normal live
-    path — the Coordinator always runs first); otherwise take one now (a defensive
-    fallback for a consumer invoked with no Coordinator call in front of it, e.g. a
-    unit test exercising a reader in isolation — never a crash on an empty cell)."""
-    if cell.snapshot is not None:
+    """Reuse THIS tick's already-taken snapshot when one exists AND its
+    ``tick_generation`` still matches the inbox's current count (the normal live path —
+    the Coordinator always refreshes first, in the SAME tick, before this ever runs);
+    otherwise take a fresh one now (MEDIUM-8: a generation MISMATCH means the
+    Coordinator's own refresh was skipped for one or more ticks — e.g. the kernel's
+    ``authority_epoch_current()`` gate refused before ``live_scope_authorized`` was ever
+    reached — so the cell's snapshot is honestly stale and this consumer self-heals
+    rather than silently trusting it; an EMPTY cell, e.g. a unit test exercising a
+    reader with no Coordinator call in front of it, is just the ``None == None``
+    instance of the same comparison — never a crash either way)."""
+    current_generation = _current_tick_generation(inbox_cell)
+    if (
+        cell.snapshot is not None
+        and cell.snapshot.tick_generation == current_generation
+    ):
         return cell.snapshot
-    return _refresh_tick_snapshot(services, cell)
+    return _refresh_tick_snapshot(services, cell, inbox_cell)
 
 
 @dataclass
@@ -359,6 +403,7 @@ def _mesh_dimension_reader_for(
     identity: str,
     services: Sequence[SafetyMeshService],
     cell: _SafetyMeshTickCell,
+    inbox_cell: _InboxCell,
 ) -> Callable[[], DimensionReport | None]:
     """One safety-mesh service's currentness dimension reader, sourced from the SAME
     per-tick :class:`SafetyMeshSnapshot` the other two consumers read (never a second,
@@ -366,7 +411,7 @@ def _mesh_dimension_reader_for(
     """
 
     def _reader() -> DimensionReport | None:
-        return _current_tick_snapshot(services, cell).report_for(identity)
+        return _current_tick_snapshot(services, cell, inbox_cell).report_for(identity)
 
     return _reader
 
@@ -454,13 +499,15 @@ def build_safety_mesh(
     ] = {
         service.dimension_key: (
             service.identity,
-            _mesh_dimension_reader_for(service.identity, services, tick_cell),
+            _mesh_dimension_reader_for(
+                service.identity, services, tick_cell, inbox_cell
+            ),
         )
         for service in services
     }
 
     def _deferred_fields() -> dict[str, Any]:
-        snapshot = _current_tick_snapshot(services, tick_cell)
+        snapshot = _current_tick_snapshot(services, tick_cell, inbox_cell)
         return {
             "safety_profile_current": _clear_value(snapshot, profile_service.identity),
             "deviation_clear": _clear_value(snapshot, deviation_service.identity),
@@ -472,10 +519,12 @@ def build_safety_mesh(
     restrictive_latch = RestrictiveLatchOwner(
         latch,
         incident_clear=lambda: _clear_value(
-            _current_tick_snapshot(services, tick_cell), incident_service.identity
+            _current_tick_snapshot(services, tick_cell, inbox_cell),
+            incident_service.identity,
         ),
         profile_clear=lambda: _clear_value(
-            _current_tick_snapshot(services, tick_cell), profile_service.identity
+            _current_tick_snapshot(services, tick_cell, inbox_cell),
+            profile_service.identity,
         ),
     )
     return _SafetyMesh(
@@ -484,6 +533,8 @@ def build_safety_mesh(
         deferred_fields=_deferred_fields,
         latch=restrictive_latch,
         inbox_cell=inbox_cell,
-        refresh_tick_snapshot=lambda: _refresh_tick_snapshot(services, tick_cell),
+        refresh_tick_snapshot=lambda: _refresh_tick_snapshot(
+            services, tick_cell, inbox_cell
+        ),
         config_files=tuple(config_dir / name for name in SAFETY_MESH_CONFIG_FILE_NAMES),
     )

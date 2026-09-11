@@ -83,13 +83,13 @@ wires the real callables):**
    to keep this module import-decoupled); compared against the config-declared
    ``bounds.healthy_time_states`` list.
 3. ``inbox_unconsumed_observer`` — the count of currently-unconsumed
-   :class:`~tos_runtime.engine.inbox.SqliteEventInbox` rows. **No public reader for this
-   exists on ``SqliteEventInbox`` today** (its own ``count`` property is "how many events
-   this inbox has ever admitted", not the unconsumed subset — ``tos/runtime/src
-   /tos_runtime/engine/inbox.py:252``; ``next_unconsumed`` returns at most one row). This
-   service therefore only defines the port's SHAPE (``Callable[[], int]``); the compose
-   layer supplies the actual closure (e.g. a small ``SELECT COUNT(*) ... WHERE
-   consumed_evidence_seq IS NULL`` reader), out of this lane's file ownership (plan §4).
+   :class:`~tos_runtime.engine.inbox.SqliteEventInbox` rows. This service only defines
+   the port's SHAPE (``Callable[[], int]``); the compose layer supplies the actual
+   closure, out of this lane's file ownership (plan §4) — now
+   :attr:`~tos_runtime.engine.inbox.SqliteEventInbox.unconsumed_count`, a public reader
+   added alongside this composition (W3.1 independent review LOW-1: this module's own
+   ``count`` property is "how many events this inbox has ever admitted", not the
+   unconsumed subset, so a SEPARATE reader was needed — it now exists and is wired).
 
 ``monotonic_ns`` is a fourth injected port (the stall clock — mirrors
 ``tos_runtime.time.service.TrustworthyTimeService.monotonic``'s shape) and

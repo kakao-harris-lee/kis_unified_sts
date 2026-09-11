@@ -11,6 +11,7 @@ whole runtime suite green.
 
 from __future__ import annotations
 
+import pytest
 from tos.brokercap import (
     Admissibility,
     AssetScope,
@@ -21,6 +22,9 @@ from tos.brokercap import (
     OperationClass,
     ProfileKey,
 )
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.cur import MANDATED_DIMENSION_FLOOR, CurrentnessPolicy, DimensionKey
+from tos.egressgw import TransportNature
 from tos.engine import StageVerdict
 from tos.engine.vocabulary import CommitmentStep, StageAuthorityClass, StageOutcome
 from tos.sbr import ReadinessVerdict, RecoveryAuthorityEffect
@@ -30,7 +34,9 @@ from tos_runtime.brokercap.scopes import (
     PrincipalClass,
     ScopeInstanceBinding,
 )
+from tos_runtime.compose import _currentness_wiring
 from tos_runtime.compose._currentness_wiring import (
+    _currentness_policy_dimension_reader_for,
     _environment_scope_dimension_reader_for,
     _EnvironmentScopeDimensionState,
     _recovery_dimension_reader_for,
@@ -40,6 +46,8 @@ from tos_runtime.compose._currentness_wiring import (
 )
 from tos_runtime.compose.context import VerdictRecorder
 from tos_runtime.recovery.barrier import RecoveryVerdict
+
+_SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 
 def _recovery_verdict(*, ready: bool) -> RecoveryVerdict:
@@ -268,3 +276,76 @@ def test_environment_scope_reader_is_false_when_a_broker_reaching_scope_has_no_i
     report = reader()
     assert report is not None
     assert report.positively_established is False
+
+
+def test_environment_scope_reader_never_takes_the_vacuous_pass_on_an_unknown_reachability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W3.1 independent review LOW-8: ``reaches_broker`` is typed ``bool | None`` on the
+    kernel's own ``TransportNature`` — the reader's ``is False`` identity check must
+    never let ``None`` (unknown reachability) fall into the vacuous-True branch meant
+    only for a scope PROVEN not to reach a broker. Simulated via a monkeypatched
+    ``transport_nature`` (the real runtime helper always derives a concrete bool from
+    ``endpoint_class``, so this case cannot otherwise be driven through a real scope).
+    """
+    scope = _broker_reaching_scope(instance=None)
+    monkeypatch.setattr(
+        _currentness_wiring,
+        "transport_nature",
+        lambda _scope: TransportNature(reaches_broker=None),
+    )
+    state = _EnvironmentScopeDimensionState(active_scope=scope)
+    reader = _environment_scope_dimension_reader_for("paper", state)
+    report = reader()
+    assert report is not None
+    # Falls through to the real (broker-reaching) check, which denies here (no
+    # instance) -- never the vacuous True the SYNTHETIC/NONE branch would give.
+    assert report.positively_established is False
+
+
+# ============================================================================
+# CURRENTNESS_POLICY (W3.1 independent review LOW-9 — the consumer-side pin MEDIUM-3's
+# fix needed: an operator config that genuinely under-declares must genuinely deny)
+# ============================================================================
+
+
+def test_currentness_policy_reader_is_false_when_the_operator_config_under_declares() -> (
+    None
+):
+    """MEDIUM-3 fixed the tautology by sourcing ``required_dimensions`` from operator
+    config instead of ``MANDATED_DIMENSION_FLOOR`` itself -- this pins that an operator
+    config missing one mandated key now genuinely flips the CURRENTNESS_POLICY
+    dimension's ``positively_established`` to ``False``, never silently passing."""
+    under_declared = tuple(
+        key for key in MANDATED_DIMENSION_FLOOR if key is not DimensionKey.RELEASE
+    )
+    assert DimensionKey.RELEASE not in under_declared  # the missing mandated key
+    policy = CurrentnessPolicy.issue(
+        scheme=_SCHEME,
+        policy_id="test-under-declared-policy",
+        policy_generation=1,
+        required_dimensions=under_declared,
+    )
+    assert isinstance(policy, CurrentnessPolicy)
+    reader = _currentness_policy_dimension_reader_for(policy)
+    report = reader()
+    assert report is not None
+    assert report.positively_established is False
+
+
+def test_currentness_policy_reader_is_true_when_the_operator_config_covers_the_floor() -> (
+    None
+):
+    policy = CurrentnessPolicy.issue(
+        scheme=_SCHEME,
+        policy_id="test-complete-policy",
+        policy_generation=1,
+        required_dimensions=tuple(
+            sorted(MANDATED_DIMENSION_FLOOR, key=lambda k: k.value)
+        ),
+    )
+    assert isinstance(policy, CurrentnessPolicy)
+    reader = _currentness_policy_dimension_reader_for(policy)
+    report = reader()
+    assert report is not None
+    assert report.positively_established is True

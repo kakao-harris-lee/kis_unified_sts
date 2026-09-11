@@ -367,13 +367,17 @@ def _environment_scope_dimension_reader_for(
     :func:`~tos_runtime.brokercap.scopes.transport_nature` helper, the SAME structural
     fact that split keys off):
 
-    - A scope whose :func:`~tos_runtime.brokercap.scopes.transport_nature` never
-      ``reaches_broker`` (``SYNTHETIC``/``NONE`` endpoint classes) has no environment
-      binding evidence to check at all — ``positively_established=True`` vacuously, the
-      same "no constraint generation exists to be stale" discipline
-      :func:`derive_item6_item12` already documents for its own item 12, never a
-      fabricated pass invented for this reader alone.
-    - For a broker-reaching scope, the real three-source check, both sides in the SAME
+    - A scope whose :func:`~tos_runtime.brokercap.scopes.transport_nature`
+      ``reaches_broker`` ``is False`` (``SYNTHETIC``/``NONE`` endpoint classes — an
+      explicit identity check, W3.1 independent review LOW-8, never truthiness: the
+      field's own type is ``bool | None``, and ``None`` must never silently take this
+      vacuous-True branch) has no environment binding evidence to check at all —
+      ``positively_established=True`` vacuously, the same "no constraint generation
+      exists to be stale" discipline :func:`derive_item6_item12` already documents for
+      its own item 12, never a fabricated pass invented for this reader alone.
+    - For every other case (``reaches_broker`` is ``True`` OR ``None`` — unknown
+      reachability never gets the vacuous pass either), the real three-source check,
+      both sides in the SAME
       broker-environment-axis string space (never ``environment_label``, the operator's
       OWN, differently-typed deployment label — D1.1 — which is not what this predicate
       compares at all): ``scope_environment`` is
@@ -400,7 +404,7 @@ def _environment_scope_dimension_reader_for(
         active_scope = state.active_scope
         if active_scope is None:
             return None
-        if not transport_nature(active_scope).reaches_broker:
+        if transport_nature(active_scope).reaches_broker is False:
             return DimensionReport(
                 bound_generation=0, positively_established=True, restrictive_floor=0
             )

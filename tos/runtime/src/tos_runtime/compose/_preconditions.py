@@ -458,25 +458,42 @@ class RuntimeCoordinatorPreconditions:
         by gate ② before this method is ever called, unchanged).
 
         ``True`` only when :attr:`_safety_mesh` is non-empty AND every service's
-        clearance (read from ``snapshot`` when given — this tick's shared evaluation,
-        never a second independent ``.clear()`` call — or computed directly as a
-        fallback when no snapshot mechanism is wired) reports ``MeshClearance.clear is
-        True`` — an explicit ``is True`` check (never truthiness) and a non-vacuous
-        requirement (an EMPTY mesh is ``False``, never a vacuous pass): a
-        broker-reaching send with no safety-mesh wired at all must never be treated as
-        though the mesh had positively cleared it.
+        clearance reports ``MeshClearance.clear is True`` — an explicit ``is True``
+        check (never truthiness) and a non-vacuous requirement (an EMPTY mesh is
+        ``False``, never a vacuous pass): a broker-reaching send with no safety-mesh
+        wired at all must never be treated as though the mesh had positively cleared
+        it.
+
+        **Where each service's clearance comes from (W3.1 independent review
+        MEDIUM-8, latent — M17 survives).** This distinguishes two structurally
+        different cases, decided ONCE at construction time
+        (:attr:`_mesh_snapshot_refresher`), never per-call:
+
+        - :attr:`_mesh_snapshot_refresher` is ``None`` (no per-tick snapshot mechanism
+          was ever wired at all — the legacy/unit-test path): each service's
+          ``.clear()`` is called directly, exactly as before that mechanism existed.
+        - :attr:`_mesh_snapshot_refresher` is wired (not ``None``): ``snapshot`` is
+          ALWAYS trusted as-is, even when it is ``None`` this particular call (the
+          refresher returned nothing — a no-op/broken refresher, or a genuine gap) —
+          NEVER a silent fallback to a direct ``service.clear()`` call, which would
+          quietly resurrect the exact per-tick amplification MEDIUM-6 eliminated
+          without any signal that the refresher stopped doing its job. A missing
+          clearance in this branch is treated as unestablished (held), the same as
+          any other non-``True`` clearance.
 
         Records ``COORDINATOR_MESH_HELD`` evidence (identities + reasons) for every
         non-positive service when the question refuses, via the injected
         :attr:`_mesh_evidence_recorder` (``None`` records nothing — module docstring).
         """
+        snapshot_mechanism_wired = self._mesh_snapshot_refresher is not None
         held: list[dict[str, Any]] = []
         for service in self._safety_mesh:
-            clearance = (
-                snapshot.clear_for(service.identity)
-                if snapshot is not None
-                else service.clear()
-            )
+            if snapshot_mechanism_wired:
+                clearance = (
+                    None if snapshot is None else snapshot.clear_for(service.identity)
+                )
+            else:
+                clearance = service.clear()
             if clearance is None or clearance.clear is not True:
                 held.append(
                     {

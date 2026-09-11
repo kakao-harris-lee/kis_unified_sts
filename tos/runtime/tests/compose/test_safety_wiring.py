@@ -10,10 +10,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from tos.cur import DimensionKey
+from tos.egressgw import TransportNature
+from tos_runtime.compose._preconditions import RuntimeCoordinatorPreconditions
 from tos_runtime.compose._safety_wiring import (
     _STM_ALERT_KIND,
     _current_tick_snapshot,
     _evidence_tip_observer_excluding_own_alerts,
+    _InboxCell,
     _refresh_tick_snapshot,
     _SafetyMeshTickCell,
     _stm_alert_recorder_for,
@@ -22,6 +25,15 @@ from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.safety.ports import MeshClearance
 
 from ..evidence.conftest import FixedKeyProvider
+
+
+class _FakeInbox:
+    """A minimal double for :class:`~tos_runtime.engine.inbox.SqliteEventInbox` that
+    exposes only the one field :func:`~tos_runtime.compose._safety_wiring
+    ._current_tick_generation` reads — ``count`` — as a freely-mutable test knob."""
+
+    def __init__(self, *, count: int = 0) -> None:
+        self.count = count
 
 
 def _store(tmp_path: Path) -> SqliteEvidenceStore:
@@ -199,23 +211,24 @@ def test_snapshot_is_computed_once_and_reused_by_every_consumer_within_one_tick(
     service = _CountingMeshService()
     services = (service,)
     cell = _SafetyMeshTickCell()
+    inbox_cell = _InboxCell(inbox=_FakeInbox(count=1))  # type: ignore[arg-type]
 
     # Consumer 1: the Coordinator ALWAYS refreshes, unconditionally, at the top of
     # every live_scope_authorized() call -- this is what makes the cell hold THIS
     # tick's snapshot before either later consumer runs.
-    _refresh_tick_snapshot(services, cell)
+    _refresh_tick_snapshot(services, cell, inbox_cell)
     assert service.clear_calls == 1
     assert service.dimension_report_calls == 1
 
-    # Consumer 2: the currentness dimension_report reader -- reuses the cell, no new
-    # evaluation.
-    snapshot_for_currentness = _current_tick_snapshot(services, cell)
+    # Consumer 2: the currentness dimension_report reader -- reuses the cell (SAME
+    # tick_generation, no new event admitted meanwhile), no new evaluation.
+    snapshot_for_currentness = _current_tick_snapshot(services, cell, inbox_cell)
     assert snapshot_for_currentness.report_for(service.identity) is None
     assert service.clear_calls == 1
     assert service.dimension_report_calls == 1
 
     # Consumer 3: the deferred-mesh-fields read -- also reuses the cell.
-    snapshot_for_deferred = _current_tick_snapshot(services, cell)
+    snapshot_for_deferred = _current_tick_snapshot(services, cell, inbox_cell)
     assert snapshot_for_deferred.clear_for(service.identity).clear is True
     assert service.clear_calls == 1
     assert service.dimension_report_calls == 1
@@ -228,11 +241,14 @@ def test_snapshot_refreshes_on_the_next_tick() -> None:
     service = _CountingMeshService()
     services = (service,)
     cell = _SafetyMeshTickCell()
+    fake_inbox = _FakeInbox(count=1)
+    inbox_cell = _InboxCell(inbox=fake_inbox)  # type: ignore[arg-type]
 
-    _refresh_tick_snapshot(services, cell)  # tick 1
+    _refresh_tick_snapshot(services, cell, inbox_cell)  # tick 1
     assert service.clear_calls == 1
 
-    _refresh_tick_snapshot(services, cell)  # tick 2
+    fake_inbox.count = 2  # a new event was admitted -- tick 2
+    _refresh_tick_snapshot(services, cell, inbox_cell)  # tick 2
     assert service.clear_calls == 2
 
 
@@ -243,9 +259,87 @@ def test_current_tick_snapshot_takes_one_when_the_cell_starts_empty() -> None:
     service = _CountingMeshService()
     services = (service,)
     cell = _SafetyMeshTickCell()
+    inbox_cell = _InboxCell(inbox=_FakeInbox(count=1))  # type: ignore[arg-type]
     assert cell.snapshot is None
 
-    snapshot = _current_tick_snapshot(services, cell)
+    snapshot = _current_tick_snapshot(services, cell, inbox_cell)
     assert snapshot.clear_for(service.identity).clear is True
     assert service.clear_calls == 1
     assert cell.snapshot is snapshot
+
+
+# ============================================================================
+# MEDIUM-8 (W3.1 re-review, latent — M17 survives): a stale snapshot with no tick
+# identity is indistinguishable from a current one when the Coordinator's own refresh
+# is skipped for a tick (e.g. the kernel's authority_epoch_current() gate refuses
+# before live_scope_authorized is ever reached).
+# ============================================================================
+
+
+def test_current_tick_snapshot_self_heals_when_the_tick_generation_advances() -> None:
+    """The core of MEDIUM-8: a consumer reading the cell AFTER the inbox's own event
+    count has moved on from what the cell's snapshot was stamped with must re-evaluate
+    (self-heal), never silently trust a snapshot from a tick that has already passed."""
+    service = _CountingMeshService()
+    services = (service,)
+    cell = _SafetyMeshTickCell()
+    fake_inbox = _FakeInbox(count=1)
+    inbox_cell = _InboxCell(inbox=fake_inbox)  # type: ignore[arg-type]
+
+    _refresh_tick_snapshot(services, cell, inbox_cell)  # tick generation 1
+    assert service.clear_calls == 1
+    assert cell.snapshot is not None and cell.snapshot.tick_generation == 1
+
+    # A new event was admitted (the Coordinator's own refresh for THAT tick was
+    # skipped -- e.g. authority_epoch_current() refused before live_scope_authorized
+    # ever ran) -- the cell still holds generation-1's snapshot.
+    fake_inbox.count = 2
+    snapshot = _current_tick_snapshot(services, cell, inbox_cell)
+    assert snapshot.tick_generation == 2
+    assert service.clear_calls == 2  # re-evaluated, not silently reused
+
+
+def test_current_tick_snapshot_reuses_across_the_pre_finalize_window() -> None:
+    """Before the durable inbox is bound (``inbox_cell.inbox is None``), every
+    generation reads as ``None`` -- the degenerate "no way to distinguish ticks yet"
+    case, reused rather than endlessly re-evaluated (mirrors every other late-bound
+    cell's own dead-pre-fill-window discipline)."""
+    service = _CountingMeshService()
+    services = (service,)
+    cell = _SafetyMeshTickCell()
+    inbox_cell = _InboxCell()  # .inbox is None
+    assert inbox_cell.inbox is None
+
+    _refresh_tick_snapshot(services, cell, inbox_cell)
+    assert service.clear_calls == 1
+
+    snapshot = _current_tick_snapshot(services, cell, inbox_cell)
+    assert snapshot.tick_generation is None
+    assert service.clear_calls == 1  # reused, not re-evaluated
+
+
+def test_a_real_live_scope_authorized_call_repopulates_the_cell_for_that_tick() -> None:
+    """Drives a REAL ``RuntimeCoordinatorPreconditions.live_scope_authorized`` (not a
+    hand-rolled simulation) and asserts the shared tick cell was repopulated with a
+    fresh, correctly-stamped snapshot for that call — even on the non-broker-reaching
+    (gate ②) path, since the refresh is UNCONDITIONAL, at the very top of every call."""
+    service = _CountingMeshService()
+    services = (service,)
+    cell = _SafetyMeshTickCell()
+    fake_inbox = _FakeInbox(count=7)
+    inbox_cell = _InboxCell(inbox=fake_inbox)  # type: ignore[arg-type]
+
+    preconditions = RuntimeCoordinatorPreconditions(
+        epoch_service=None,
+        live_authorization_state="NOT_AUTHORIZED",
+        safety_mesh=services,
+        mesh_snapshot_refresher=lambda: _refresh_tick_snapshot(
+            services, cell, inbox_cell
+        ),
+    )
+
+    assert cell.snapshot is None
+    preconditions.live_scope_authorized(TransportNature(reaches_broker=False))
+    assert cell.snapshot is not None
+    assert cell.snapshot.tick_generation == 7
+    assert service.clear_calls == 1
