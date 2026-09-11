@@ -183,6 +183,14 @@ def compose_paper_runtime(
         allow_no_strategies,
         transport_kind,
     )
+    # Late-bind the ENVIRONMENT_SCOPE dimension reader's cell now the active broker
+    # scope is resolved (W3.1 independent review MEDIUM-2; plan §2 decision 3) — the
+    # SAME "constructed before its dependency exists" ordering already documented for
+    # ACTION_FLOW/TRADING_APPROVAL below, except this one is already satisfiable right
+    # here: `_boot_services` resolves `broker_scopes` internally before returning.
+    boot.risk.environment_scope_dimension_state.active_scope = (
+        boot.broker_scopes.active_scope
+    )
 
     construction_stages = _build_construction_stages(construction)
     realized = _build_realized_stages(
@@ -230,12 +238,8 @@ def compose_paper_runtime(
         authority_epoch_service=boot.rcl.authority_epoch_service,
         safety_mesh=boot.risk.safety_mesh,
         projection=boot.risk.projection,
+        evidence_store=boot.infra.evidence_store,
         request_bytes_digest_source=request_bytes_digest_source,
-    )
-    # Late-bind the EGRESS_IDENTITY dimension reader's cell now the composed
-    # credential-route inventory exists (Phase 5 W3-b, plan §2 decision 3).
-    boot.risk.egress_identity_dimension_state.credential_route_inventory = (
-        context_resolver.credential_route_inventory
     )
 
     composed = _finalize(

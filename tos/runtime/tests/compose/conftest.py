@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.cur import MANDATED_DIMENSION_FLOOR
 from tos_runtime.compose._pending_dimensions import PENDING_DIMENSION_KEYS
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
@@ -106,7 +107,14 @@ def config_dir(tmp_path: Path) -> Path:
     )
     _write_yaml(
         directory / "currentness.yaml",
-        {"B_capability_claim_to_send": 500},
+        {
+            "B_capability_claim_to_send": 500,
+            # MEDIUM-3: the operator-declared CURRENTNESS_POLICY dimension set — the
+            # full mandated floor, same as production would declare correctly.
+            "required_dimensions": sorted(
+                key.value for key in MANDATED_DIMENSION_FLOOR
+            ),
+        },
     )
     _write_yaml(
         directory / "currentness_dimensions.yaml",

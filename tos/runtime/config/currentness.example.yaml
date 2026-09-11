@@ -25,3 +25,15 @@
 # max_claim_to_send_bound_ms argument (tos.cur.EgressCurrentnessProof's own
 # field of the same name).
 B_capability_claim_to_send: null
+
+# The operator-declared CURRENTNESS_POLICY dimension set (Phase 5 W3-b; W3.1
+# independent review MEDIUM-3) — fed verbatim into CurrentnessPolicy.required_
+# dimensions. Every tos.cur.DimensionKey name below is one of the 21 non-
+# conditional MANDATED_DIMENSION_FLOOR members ("a policy may require more,
+# never fewer" — tos.cur.predicates.vector_complete's own §5.1 rule); an
+# operator MAY add more, but removing one here would make the CURRENTNESS_
+# POLICY currentness dimension genuinely report positively_established=False
+# (never silently narrowed). Left null (named-TBD) here, same discipline as
+# B_capability_claim_to_send above, until an operator explicitly approves this
+# list for THIS deployment.
+required_dimensions: null

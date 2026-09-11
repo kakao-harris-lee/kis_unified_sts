@@ -92,12 +92,12 @@ _READER_OWNED_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
         #: ``tos.brockercap.predicates.environment_binding_ok`` over the SAME
         #: environment/scope tokens ``tos_runtime.compose.context`` already computes.
         DimensionKey.ENVIRONMENT_SCOPE,
-        #: ``_egress_identity_dimension_reader_for`` — the kernel's own
-        #: ``tos.egress.predicates.credential_route_authority_disjoint`` over the
-        #: composed credential-route inventory (partial coverage, honestly disclosed
-        #: in that reader's own docstring — two sibling predicates have no runtime
-        #: owner yet).
-        DimensionKey.EGRESS_IDENTITY,
+        #: EGRESS_IDENTITY is deliberately NOT here (W3.1 independent review MEDIUM-4):
+        #: it was briefly reader-owned via ``credential_route_authority_disjoint`` alone
+        #: (1 of 3 kernel predicates), and asserting ``positively_established`` on that
+        #: partial coverage was an over-claim. Reverted to pending — the one real
+        #: predicate is now recorded as an evidence-only observation, never a dimension
+        #: verdict (``_wiring.py``'s ``_record_egress_identity_observation``).
         #: The four Phase 5 W3-a1/a2 safety-mesh services (plan §2 decision 2) —
         #: ``tos_runtime.compose._safety_wiring.build_safety_mesh``'s own
         #: ``dimension_readers``, folded in by ``_build_dimension_readers``.

@@ -78,12 +78,15 @@ def test_environment_scope_is_no_longer_pending() -> None:
     assert DimensionKey.ENVIRONMENT_SCOPE not in PENDING_DIMENSION_KEYS
 
 
-def test_egress_identity_is_no_longer_pending() -> None:
-    """RED until the EGRESS_IDENTITY currentness dimension reader lands
-    (``tos.egress.predicates.credential_route_authority_disjoint`` over the
-    already-composed credential-route inventory, Phase 5 W3-b
-    "1차원=1커밋")."""
-    assert DimensionKey.EGRESS_IDENTITY not in PENDING_DIMENSION_KEYS
+def test_egress_identity_stays_pending() -> None:
+    """W3.1 independent review MEDIUM-4: EGRESS_IDENTITY was briefly reader-owned
+    with only 1 of 3 kernel predicates evaluated
+    (``credential_route_authority_disjoint``) — reporting ``positively_established
+    =True`` on that partial coverage was an over-claim. Reverted to pending; the
+    one real predicate is now recorded as an evidence-only observation (never a
+    dimension verdict) — see ``_wiring.py``'s ``_record_egress_identity_observation``.
+    """
+    assert DimensionKey.EGRESS_IDENTITY in PENDING_DIMENSION_KEYS
 
 
 @pytest.mark.parametrize(
@@ -104,11 +107,12 @@ def test_safety_mesh_dimension_is_no_longer_pending(
     assert safety_mesh_key not in PENDING_DIMENSION_KEYS
 
 
-def test_pending_dimension_keys_reaches_the_plan_exit_condition_of_eight() -> None:
-    """Plan §5 exit condition: ``_pending_dimensions`` 17→8 once all 9 dimension-owner
-    replacements (CURRENTNESS_POLICY, RECOVERY, TRADING_APPROVAL, ENVIRONMENT_SCOPE,
-    EGRESS_IDENTITY, and the four safety-mesh services) have landed."""
-    assert len(PENDING_DIMENSION_KEYS) == 8
+def test_pending_dimension_keys_reaches_the_plan_exit_condition_of_nine() -> None:
+    """Plan §5 exit condition, revised per W3.1 review MEDIUM-4 (EGRESS_IDENTITY
+    reverted to pending): ``_pending_dimensions`` 17->9 once the 8 real
+    dimension-owner replacements (CURRENTNESS_POLICY, RECOVERY, TRADING_APPROVAL,
+    ENVIRONMENT_SCOPE, and the four safety-mesh services) have landed."""
+    assert len(PENDING_DIMENSION_KEYS) == 9
 
 
 @pytest.mark.parametrize(
@@ -118,7 +122,6 @@ def test_pending_dimension_keys_reaches_the_plan_exit_condition_of_eight() -> No
         DimensionKey.RECOVERY,
         DimensionKey.TRADING_APPROVAL,
         DimensionKey.ENVIRONMENT_SCOPE,
-        DimensionKey.EGRESS_IDENTITY,
         DimensionKey.SAFETY_ENVELOPE_PROFILE,
         DimensionKey.DEVIATION,
         DimensionKey.INCIDENT,

@@ -14,7 +14,11 @@ from pathlib import Path
 
 from tos.authority import AuthorityTransitionReason
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos.egress import EgressCoordinateSet
+from tos.egress import (
+    CredentialRouteInventoryEntry,
+    EgressCoordinateSet,
+    credential_route_authority_disjoint,
+)
 from tos.egressgw import (
     ConformanceProofStage,
     EconomicEffectStage,
@@ -790,6 +794,34 @@ def _build_currentness_stages(
     return step13_stage, step14_stage
 
 
+#: W3.1 independent review MEDIUM-4 evidence kind — see
+#: :func:`_record_egress_identity_observation`.
+_EGRESS_IDENTITY_OBSERVATION_KIND = "EGRESS_IDENTITY_OBSERVATION"
+
+
+def _record_egress_identity_observation(
+    evidence_store: SqliteEvidenceStore,
+    inventory: tuple[CredentialRouteInventoryEntry, ...],
+) -> None:
+    """W3.1 independent review MEDIUM-4 disposition: EGRESS_IDENTITY is reverted to
+    pending (:mod:`tos_runtime.compose._pending_dimensions` — no dimension verdict is
+    authored from partial predicate coverage). The ONE kernel predicate this
+    composition CAN honestly evaluate —
+    :func:`~tos.egress.predicates.credential_route_authority_disjoint`, over the
+    composed (boot-time-static) credential-route inventory — is still worth recording,
+    as an EVIDENCE-ONLY OBSERVATION, never a currentness verdict: this function writes
+    it once at boot and never feeds it back into any admission decision."""
+    evidence_store.append(
+        {
+            "credential_route_authority_disjoint": credential_route_authority_disjoint(
+                inventory
+            )
+        },
+        kind=_EGRESS_IDENTITY_OBSERVATION_KIND,
+        record_class=_EGRESS_IDENTITY_OBSERVATION_KIND,
+    )
+
+
 def _build_context_resolver(
     *,
     construction_stages: _ConstructionStages,
@@ -808,27 +840,34 @@ def _build_context_resolver(
     authority_epoch_service: SafetyAuthorityEpochService,
     safety_mesh: _SafetyMesh,
     projection: SqliteReservationProjectionReader,
+    evidence_store: SqliteEvidenceStore,
     request_bytes_digest_source: RequestBytesDigestSource | None = None,
 ) -> ComposeContextResolver:
     """The gateway's lazy ``SendBoundaryContext`` resolver (design #35 §3.1 (3)) — transport
     nature / credential-route inventory STRUCTURALLY DERIVED from ``broker_scopes.active_scope``
     (G-4, plan §2 decision 2; ``refuse_principal_collision`` generalizes the old R2 literal
-    check over EVERY configured scope's principal). ``instance_document`` is loaded EXACTLY
-    ONCE per boot (finding F9). ``authority_epoch_service`` feeds item 4's deferred-mesh field;
-    ``safety_mesh``/``projection`` feed items 7-10 + the item-16 latch/capacity owners (Phase 5
-    W3-b, plan §2 decisions 4/6/8) — all forwarded straight to :class:`ComposeContextResolver`.
-    ``request_bytes_digest_source`` is T2 lane A's digest-source seam (``None`` -> builds
-    :func:`_default_request_bytes_digest_source`).
+    check over EVERY configured scope's principal). ``instance_document`` loaded EXACTLY ONCE
+    per boot (F9); ``authority_epoch_service``/``safety_mesh``/``projection`` feed items 4/7-10
+    + the item-16 latch/capacity owners (Phase 5 W3-b, §2 decisions 4/6/8); ``evidence_store``
+    records the EGRESS_IDENTITY evidence-only observation (MEDIUM-4 —
+    :func:`_record_egress_identity_observation`) — all forwarded to
+    :class:`ComposeContextResolver`. ``request_bytes_digest_source`` is T2 lane A's digest seam
+    (``None`` -> :func:`_default_request_bytes_digest_source`).
 
     Raises:
-        BrokerScopeConfigError: ``active_principal`` collides with a scope's own
-            principal (generalized R2), or a config/kernel mismatch.
+        BrokerScopeConfigError: principal collision (R2) or a config/kernel mismatch.
     """
     refuse_principal_collision(
         broker_scopes, active_principal=egress_coordinates.active_principal
     )
     instrument_key = InstrumentKey(
         account=construction.account, instrument=construction.instrument
+    )
+    resolved_credential_route_inventory = credential_route_inventory(
+        broker_scopes, active_principal=egress_coordinates.active_principal
+    )
+    _record_egress_identity_observation(
+        evidence_store, resolved_credential_route_inventory
     )
     return ComposeContextResolver(
         construction_stage=construction_stages.construction_stage,
@@ -854,9 +893,7 @@ def _build_context_resolver(
         # ONE source (finding #1): same value as authorized_coordinates below,
         # required by the kernel's claim-principal-matches-active-principal check.
         principal=egress_coordinates.active_principal,
-        credential_route_inventory=credential_route_inventory(
-            broker_scopes, active_principal=egress_coordinates.active_principal
-        ),
+        credential_route_inventory=resolved_credential_route_inventory,
         authorized_coordinates=EgressCoordinateSet(
             endpoint=egress_coordinates.endpoint,
             account=construction.account,
