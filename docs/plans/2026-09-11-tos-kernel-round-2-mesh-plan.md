@@ -52,3 +52,20 @@
 
 1. (Phase 5 §10 확인 6) W2-K 를 이 라운드 후속 커밋으로 붙일지 — 미확인 시 미착수.
 2. `False` ⇒ DENIED 극성(결정 2) — Phase 5 결정 5 문언은 True/None 만 언급.
+
+## 7. 실행 결과 — 라운드 #2 착지 (2026-09-11 · 브랜치 `feat/tos-kernel-round-2` · main `ba908a80` 기점)
+
+| 레인 | 커밋 | 내용 |
+|---|---|---|
+| K-1/K-2 | `1f36dfe4` | `egressgw/mesh.py` 신설(`resolve_broker_applicability` · `deferred_item_verdict` 공개) · `SendBoundaryContext` deferred 6 필드 + 팩토리 kwargs · 닫힌 항목↔필드 표(표 밖 = `ArtifactIntegrityError`) · `True`⇒SATISFIED · `False`⇒DENIED · `None`⇒UNKNOWN(문언 불변) · `vocabulary→_base` 순환 엣지 제거(`ArtifactIntegrityError` 를 `tos.canonical` 에서) |
+| K-3 | `6eeecbe0` | `GatewayEvidenceRecord.step: CommitmentStep` 필수 · 검증기 None 조기 반환 삭제 · 커널 5 + 런타임 테스트 32곳 step 기입 |
+| K-4/5/6 | `c8a037ab` | item 6/12 사유 «⚠ provisional stand-in» 제거 · SendSeal docstring 2곳(단위는 compose 의 digest source 가 정함) · 예산 재등재 |
+| 테스트 | `44f9f3ee`·`867f6af4`·`a0465f27` | 극성표 18케이스 + M6 구조 오류 · step 필수 핀(M4) · mesh→gateway 무import AST 핀(M5) |
+| 처분 | `10205c69` | MEDIUM 3(상대 import 핀 누락 · 사유 문언이 «호출자가 파생했다» 단언 → «파생 책임» · item 12 SATISFIED 의 attestation 표기 복원) + LOW 4(`_verdict` → `records.py` 로 이동해 함수 내부 import 제거 · `_closure_child` · 런타임 attestation 집합 ↔ 커널 docstring 재계수 링크 테스트 · synthetic+`False` ⇒ NOT_APPLICABLE ×6) |
+| 잔여 | `c321c89a` | LOW-8 상대 import 해석기(level ≥ 2 포함) · LOW-9 예산 노트 정정 |
+
+- **게이트**: `tos/tests` **9433 passed** · `tos/runtime/tests` **1183 passed** · ruff/black/mypy 0 · firewall PASS · lint-imports 3/0 · budget 0 violations(`gateway.py` 2007→**1849** · `records.py` 1027→**1113** · `send_boundary_context` 211→236 · `mesh.py` 246 무등재) · contract/completion/spec GREEN · 런타임 **소스** diff 0 · bound 문서 무접촉.
+- **독립 리뷰**: 1차 needs-attention(MEDIUM 3 · LOW 7 · 동작 결함 0 · M5d 상대 import 생존) → 처분 → 재심 **approve** · 뮤테이션 M1~M7 + M5a~d + M10(synthetic 분기 순서) 전부 red · M8(truthiness) 은 pydantic 경계 정규화로 등가 뮤턴트(수용).
+- **K-4 재계수 실측**: 남은 운영자 attestation 은 **3**(item 12 `venue_session_account_facts_current` · item 16 `restrictive_latch_state`·`worst_credible_capacity`) — 커널 정적 분할표 «5 provisional (3,6,12,14,15)» 은 그대로 참이라 유지하고 재계수를 병기 · 런타임 `EgressAttestations` 필드 집합과 링크 테스트로 결속.
+- **composed 동작 불변**: T3 e2e(`test_kis_mock_e2e_honesty.py`) UNKNOWN 집합 {4,5,7,8,9,10} green · monkeypatch 대상만 `deferred_item_verdict` 3인자로 기계적 갱신(런타임 테스트 1파일 · 계획 «step 만» 범위 밖 — 사유: 이름·시그니처 변경의 필연적 파급).
+- **이월**: 런타임 `load_egress_attestations` docstring «five» (런타임 소스 diff 0 원칙으로 이번 라운드 미수정 → W3 attestation 제거 시 함께) · 계약 문서 764행 `gateway.py:939` 인용 드리프트(byte-frozen · 기록만) · **운영자 확인 ⑵ `False ⇒ DENIED` 극성**(한 분기 · 되돌리기 저비용 — 리뷰어 확인) · **운영자 확인 ⑴ W2-K/ⓖ** 미착수.
