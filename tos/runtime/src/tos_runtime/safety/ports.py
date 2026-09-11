@@ -71,7 +71,8 @@ class MeshClearance:
 @runtime_checkable
 class SafetyMeshService(Protocol):
     """The shared runtime-owner shape (module docstring). Implementations live in
-    :mod:`tos_runtime.safety.profile` / ``.deviation`` / ``.incident`` / ``.monitoring``."""
+    :mod:`tos_runtime.safety.profile` / ``.deviation`` / ``.incident`` / ``.monitoring``.
+    """
 
     @property
     def identity(self) -> str:
