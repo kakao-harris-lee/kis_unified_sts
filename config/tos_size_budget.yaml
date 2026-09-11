@@ -95,9 +95,12 @@ exceptions:
     2026-09-11 kernel round #2 K-1 mesh 분리(§2 결정 1) — measured 2007→1844(-163).
     ``resolve_broker_applicability``/``_deferred_item_verdict``(→ 공개명
     ``deferred_item_verdict``, +context 인자) 를 신규 ``egressgw/mesh.py`` 로,
-    ``_verdict``/``_positive`` 를 ``_base.py`` 로 이관 — 이 모듈은 이제 import 만
-    한다. K-3(``step`` 필수화)·K-4(item 6/12 문언 재작성)·K-5(SendSeal docstring
-    정정) 는 같은 파일에서 순증감 없이 문언만 바뀌었다(측정치 불변).
+    ``_verdict``/``_positive`` 를 당시 ``_base.py`` 로 이관 — 이 모듈은 이제 import 만
+    한다(``_verdict`` 는 독립 리뷰 라운드 #1 LOW-1 처분에서 ``records.py`` 로
+    재이관됨 — 아래 records.py 항목 및 2026-09-11 LOW-1 노트 참고. 이 문단은 K-1
+    당시의 실제 이력이라 그대로 둔다). K-3(``step`` 필수화)·K-4(item 6/12 문언
+    재작성)·K-5(SendSeal docstring 정정) 는 같은 파일에서 순증감 없이 문언만
+    바뀌었다(측정치 불변).
     2026-09-11 독립 리뷰 라운드 #1 처분(MEDIUM-2/MEDIUM-3) — measured 1844→1849(+5).
     item 6/12 UNKNOWN 사유 문언을 "caller derives"(단정) → "caller is responsible for
     deriving"(책임 서술)로 재작성(커널은 `bool | None` 만 보고 출처를 검증할 수
