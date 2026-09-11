@@ -27,8 +27,13 @@ from __future__ import annotations
 
 from tos.brokercap import environment_binding_ok
 from tos.egress import credential_route_authority_disjoint
-from tos.egressgw._base import ArtifactIntegrityError, _verdict
-from tos.egressgw.records import SendBoundaryContext, TransportNature, VerifyItemVerdict
+from tos.egressgw._base import ArtifactIntegrityError
+from tos.egressgw.records import (
+    SendBoundaryContext,
+    TransportNature,
+    VerifyItemVerdict,
+    _verdict,
+)
 from tos.egressgw.vocabulary import (
     BrokerApplicability,
     SendVerifyItem,

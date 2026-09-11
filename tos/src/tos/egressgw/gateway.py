@@ -113,7 +113,6 @@ from tos.egressgw._base import (
     ArtifactIntegrityError,
     CanonicalizationScheme,
     _positive,
-    _verdict,
     get_scheme,
 )
 from tos.egressgw.construction import fold_venue_admissibility
@@ -123,6 +122,7 @@ from tos.egressgw.records import (
     SendBoundaryContext,
     SendBoundaryVerification,
     VerifyItemVerdict,
+    _verdict,
 )
 from tos.egressgw.seal import (
     OUTBOUND_COORDINATE_NAMES,
@@ -595,10 +595,11 @@ def _check_allowance(
       (design #34 §1.1-3). The gateway therefore admits **no** live send, by construction rather
       than by policy.
 
-    The allowance flags themselves are supplied by the caller (compose), derived from the
-    active Broker Scope and its bound Broker Capability Profile INSTANCE document (Phase 4
-    plan §2 decision 4) — this gate judges only whether the supplied flag is positive, never
-    how it was derived (kernel round #2 §2 decision 4).
+    The allowance flags are injected facts, never derived here: the caller (compose) is
+    responsible for deriving them from the active Broker Scope and its bound Broker Capability
+    Profile INSTANCE document (Phase 4 plan §2 decision 4). This gate sees only a ``bool |
+    None`` and cannot verify where it came from — it judges only whether the supplied flag is
+    positive (kernel round #2 §2 decision 4; independent review round #1 MEDIUM-2).
     """
     del attempt
     item = SendVerifyItem.ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY
@@ -645,9 +646,9 @@ def _check_allowance(
             VerifyOutcome.UNKNOWN,
             reason=(
                 "the account / instrument / action class allowance is not positively "
-                "established — the caller (compose) derives this flag from the scope table + "
-                "INSTANCE (Phase 4 plan §2 decision 4); this gate only judges its positivity "
-                "(kernel round #2 §2 decision 4)"
+                "established — the caller is responsible for deriving this flag from the "
+                "scope table + INSTANCE (Phase 4 plan §2 decision 4); this gate judges only "
+                "the supplied flag's positivity (kernel round #2 §2 decision 4)"
             ),
         )
     if not _positive(context.max_quantity_within_allowance):
@@ -764,16 +765,20 @@ def _check_venue_generations(
             item,
             VerifyOutcome.UNKNOWN,
             reason=(
-                "the broker-constraint generation is not positively current — the caller "
-                "(compose) derives this flag from the scope table + INSTANCE (Phase 4 plan §2 "
-                "decision 4); this gate only judges its positivity (kernel round #2 §2 "
-                "decision 4)"
+                "the broker-constraint generation is not positively current — the caller is "
+                "responsible for deriving this flag from the scope table + INSTANCE (Phase 4 "
+                "plan §2 decision 4); this gate judges only the supplied flag's positivity "
+                "(kernel round #2 §2 decision 4)"
             ),
         )
     return _verdict(
         item,
         VerifyOutcome.SATISFIED,
-        reason="venue / account / broker-constraint generations current",
+        reason=(
+            "venue / account / broker-constraint generations current — the venue / session / "
+            "account-facts half is still an operator attestation (Phase 5 replaces it); the "
+            "broker-constraint-generation half is derived (Phase 4 plan §2 decision 4)"
+        ),
     )
 
 

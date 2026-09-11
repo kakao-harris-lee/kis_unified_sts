@@ -59,6 +59,8 @@ from tos.egressgw._base import (
 )
 from tos.egressgw.seal import SendSeal
 from tos.egressgw.vocabulary import (
+    PROVISIONAL_ITEMS,
+    REALIZED_ITEMS,
     BrokerApplicability,
     DerivationOutcome,
     EffectBasis,
@@ -540,6 +542,46 @@ class VerifyItemVerdict(FrozenModel):
                 "review #4)"
             )
         return self
+
+
+def _verdict(
+    item: SendVerifyItem,
+    outcome: VerifyOutcome,
+    *,
+    reason: str | None = None,
+    native: object | None = None,
+    native_value: str | None = None,
+    preserved_worst_credible_capacity: int | None = None,
+    preserved_obligation_magnitude_unknown: bool = False,
+) -> VerifyItemVerdict:
+    """Assemble one item verdict, deriving its disposition from the design §4.1 partition.
+
+    Shared by ``gateway.py``'s eleven non-deferred item checks and ``mesh.py``'s deferred-item
+    judgement (kernel round #2 §2 decision 1) — a single definition, never duplicated. Lives
+    here (next to :class:`VerifyItemVerdict` itself) rather than in ``_base.py``: this module
+    already imports :data:`~tos.egressgw.vocabulary.REALIZED_ITEMS` /
+    :data:`~tos.egressgw.vocabulary.PROVISIONAL_ITEMS` at module scope, so no function-body
+    import is needed here (independent review round #1 LOW-1 — the prior placement in
+    ``_base.py`` needed a deferred import of this very class to avoid a real base<->records
+    import cycle; moving the function next to its own return type removes the cycle instead of
+    working around it).
+    """
+    if item in REALIZED_ITEMS:
+        disposition = VerifyDisposition.REALIZED_STRUCTURAL
+    elif item in PROVISIONAL_ITEMS:
+        disposition = VerifyDisposition.PROVISIONAL_STAND_IN
+    else:
+        disposition = VerifyDisposition.DEFERRED_APPLICABILITY
+    return VerifyItemVerdict(
+        item=item,
+        disposition=disposition,
+        outcome=outcome,
+        reason=reason,
+        native_verdict_type=None if native is None else type(native).__name__,
+        native_verdict_value=native_value,
+        preserved_worst_credible_capacity=preserved_worst_credible_capacity,
+        preserved_obligation_magnitude_unknown=preserved_obligation_magnitude_unknown,
+    )
 
 
 class SendBoundaryVerification(FrozenModel):

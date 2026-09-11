@@ -64,6 +64,29 @@ def test_the_synthetic_baseline_is_positively_established_as_non_broker() -> Non
     assert _deferred_outcomes() == {VerifyOutcome.NOT_APPLICABLE}
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "safety_authority_epoch_current",
+        "live_scope_valid",
+        "safety_profile_current",
+        "deviation_clear",
+        "incident_clear",
+        "monitoring_clear",
+    ],
+)
+def test_an_explicit_false_deferred_flag_is_still_not_applicable_under_synthetic(
+    field: str,
+) -> None:
+    """(§2 decision 2 ordering — independent review round #1 LOW-6) The NON_BROKER_SYNTHETIC
+    branch runs unconditionally before the item->field table lookup: even an explicit ``False``
+    on one of the six deferred fields is still NOT_APPLICABLE under a positively established
+    synthetic send, never DENIED. Every existing synthetic-baseline test leaves the six fields
+    ``None``, which would also read as NOT_APPLICABLE if the branch order were reversed — this
+    is the one case (an explicit, non-None value) a reordering could not hide behind."""
+    assert _deferred_outcomes(**{field: False}) == {VerifyOutcome.NOT_APPLICABLE}
+
+
 # ---------------------------------------------------------------------------
 # a declaration alone never establishes it (the 자기신고 refusal)
 # ---------------------------------------------------------------------------

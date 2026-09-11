@@ -254,6 +254,7 @@ def _closure_child(queue: mp.Queue) -> None:
     import tos.egressgw._base  # noqa: F401
     import tos.egressgw.construction  # noqa: F401
     import tos.egressgw.gateway  # noqa: F401
+    import tos.egressgw.mesh  # noqa: F401
     import tos.egressgw.records  # noqa: F401
     import tos.egressgw.seal  # noqa: F401
     import tos.egressgw.vocabulary  # noqa: F401
@@ -345,6 +346,15 @@ def test_mesh_never_imports_gateway() -> None:
     ``tos.*`` top-level granularity, and would not flag ``tos.egressgw.gateway`` — it is already
     inside the allowed ``tos.egressgw`` package) cannot catch it; this AST scan checks it
     directly against ``mesh.py``'s own source.
+
+    Covers absolute (``import tos.egressgw.gateway`` / ``from tos.egressgw import gateway`` /
+    ``from tos.egressgw.gateway import ...``, at module scope or lazily inside a function — the
+    ``ast.walk`` traversal does not distinguish) **and relative** forms
+    (``from . import gateway`` — ``ImportFrom(module=None, level=1)`` — and
+    ``from .gateway import ...`` — ``ImportFrom(module="gateway", level=1)``). Independent review
+    round #1 MEDIUM-1: the first version of this pin guarded on ``node.module`` truthiness, which
+    silently dropped every relative form (``from . import gateway`` parses with ``module=None``
+    and would never even reach the membership check).
     """
     mesh_path = _SRC / "mesh.py"
     tree = ast.parse(mesh_path.read_text(encoding="utf-8"), filename=str(mesh_path))
@@ -356,15 +366,29 @@ def test_mesh_never_imports_gateway() -> None:
                     ".gateway"
                 ):
                     offenders.append(f"mesh.py:{node.lineno} import {alias.name}")
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            if node.module in ("tos.egressgw.gateway", "tos.egressgw"):
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level:
+                # Relative import: `from . import gateway` (module="") or
+                # `from .gateway import X` (module="gateway") — both resolve, from mesh.py's own
+                # location inside tos/egressgw/, to the gateway submodule.
+                if module == "" or module.split(".")[0] == "gateway":
+                    for alias in node.names:
+                        if module == "" and alias.name != "gateway":
+                            continue
+                        offenders.append(
+                            f"mesh.py:{node.lineno} relative import of gateway "
+                            f"(level={node.level}, module={module!r}, name={alias.name!r})"
+                        )
+                continue
+            if module in ("tos.egressgw.gateway", "tos.egressgw"):
                 for alias in node.names:
                     if alias.name == "gateway":
                         offenders.append(
-                            f"mesh.py:{node.lineno} from {node.module} import {alias.name}"
+                            f"mesh.py:{node.lineno} from {module} import {alias.name}"
                         )
-            if node.module == "tos.egressgw.gateway":
-                offenders.append(f"mesh.py:{node.lineno} from {node.module} import ...")
+            if module == "tos.egressgw.gateway":
+                offenders.append(f"mesh.py:{node.lineno} from {module} import ...")
     assert offenders == [], f"mesh.py imports gateway.py — circular edge: {offenders}"
 
 

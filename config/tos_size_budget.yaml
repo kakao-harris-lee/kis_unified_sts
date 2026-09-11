@@ -37,7 +37,7 @@ scope:
 # expires_on 경과 시 --check red(운영자 조정 가능한 값).
 exceptions:
 - target: tos/src/tos/egressgw/gateway.py
-  measured: 1844
+  measured: 1849
   owner: tos-kernel
   decomposition_order: 1
   expires_on: '2026-12-31'
@@ -98,6 +98,12 @@ exceptions:
     ``_verdict``/``_positive`` 를 ``_base.py`` 로 이관 — 이 모듈은 이제 import 만
     한다. K-3(``step`` 필수화)·K-4(item 6/12 문언 재작성)·K-5(SendSeal docstring
     정정) 는 같은 파일에서 순증감 없이 문언만 바뀌었다(측정치 불변).
+    2026-09-11 독립 리뷰 라운드 #1 처분(MEDIUM-2/MEDIUM-3) — measured 1844→1849(+5).
+    item 6/12 UNKNOWN 사유 문언을 "caller derives"(단정) → "caller is responsible for
+    deriving"(책임 서술)로 재작성(커널은 `bool | None` 만 보고 출처를 검증할 수
+    없음) · item 12 SATISFIED 사유에 venue_session_account_facts_current 가
+    여전히 operator attestation 임을 알리는 절 추가(그 필드의 UNKNOWN 분기는 이미
+    정직했으나 SATISFIED 분기만 그 사실을 누락하고 있었음).
 - target: tos/src/tos/sir/predicates.py
   measured: 1681
   owner: tos-kernel
@@ -539,7 +545,7 @@ exceptions:
     인접 도크스트링 보정은 원문과 동일한 3줄 폭으로 재작성해 순증 0으로 맞춤). 140→141,
     measured-drift 가드 재실측 갱신.
 - target: tos/src/tos/egressgw/records.py
-  measured: 1071
+  measured: 1113
   owner: tos-kernel
   decomposition_order: 37
   expires_on: '2026-12-31'
@@ -561,6 +567,12 @@ exceptions:
     ``send_boundary_context`` factory kwargs 6개 + docstring Args 항목 6개 +
     pass-through 배선 6줄. K-3(§2 결정 3): ``step`` 을 필수 필드로 바꾸고 검증자의
     조기 ``None`` 반환 제거(순증 거의 0, 문언 재작성 위주).
+    2026-09-11 독립 리뷰 라운드 #1 처분(LOW-1) — measured 1071→1113(+42). `_verdict`
+    헬퍼(레인 K-1 에서 신설된 `_base.py` 버전 — 함수-본문 지연 import 로 base<->records
+    순환을 우회하고 있었음)를 이 모듈로 이관(`VerifyItemVerdict` 바로 옆) — 이제
+    `REALIZED_ITEMS`/`PROVISIONAL_ITEMS` 를 모듈 스코프에서 직접 참조하므로 지연
+    import 가 완전히 사라진다(순환을 우회가 아니라 제거). `gateway.py`/`mesh.py` 는
+    이 모듈에서 `_verdict` 를 import.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
   measured: 142
   owner: tos-runtime
