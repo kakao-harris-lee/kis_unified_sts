@@ -311,7 +311,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1087
+  measured: 1088
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -465,6 +465,13 @@ exceptions:
     (T2 가 기록한 1088 과 1줄 차이 — 두 브랜치의 독립 변경이 겹친 뒤의
     실측이므로 어느 한쪽 계보의 산술만으로는 재현되지 않음, 실측이 유일한
     근거).
+    **2026-09-11 Phase 5 W3-b 재등재 1087→1088**: `_boot_services`의 기존
+    `_build_risk_and_currentness(...)` 호출부에 `environment_label,` 인자 1줄
+    추가(ENVIRONMENT_SCOPE 커런트니스 차원 리더가 필요로 함, plan §2 결정 3) —
+    신규 호출이 아니라 기존 호출에 인자 1개 관통 배선. `_wiring.py` 는 1호출+
+    import 만이라는 W3 계획의 목표(§8 결정)는 새 모듈(`_safety_wiring.py`)을
+    아직 결선하지 않았으므로 아직 적용 대상이 아니고, 이 1줄은 그 목표와
+    무관한 별도 배선.
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime
@@ -577,7 +584,7 @@ exceptions:
     import 가 완전히 사라진다(순환을 우회가 아니라 제거). `gateway.py`/`mesh.py` 는
     이 모듈에서 `_verdict` 를 import.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 142
+  measured: 150
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
@@ -611,6 +618,15 @@ exceptions:
     함수를 각자 브랜치에서 확장해 병합 후 실측 재측정 — 118 도 133 도 아닌
     142(두 변경 모두 함수 본문에 남아 합산되었기 때문). root.py 는 정본
     결선 순서 문서라 분해 대신 등재 유지.
+    **2026-09-11 Phase 5 W3-b 재등재 142→150**: TRADING_APPROVAL 커런트니스
+    차원 리더의 late-bound 셀을 `_build_realized_stages` 직후 채우는 1줄
+    (`boot.risk.trading_approval_dimension_state.step4_recorder = ...`,
+    기존 ACTION_FLOW 줄 바로 옆) + RECOVERY 차원 리더의 late-bound 셀을
+    `apply_recovery_barrier` 직후 채우는 블록(`composed = apply_recovery_barrier
+    (...)` 로 반환값을 받고 셀을 채운 뒤 반환 — 종전엔 바로 반환하던 자리, 주석
+    3줄 포함) — 둘 다 정본 결선 순서 문서(root.py)에서만 표현 가능한 타이밍
+    의존(각 셀은 해당 레코더/판정이 실제로 존재하는 시점에만 채워질 수 있음).
+    분해 대신 등재.
 - target: tos/runtime/src/tos_runtime/compose/_boot_integrity.py::record_operator_attested_inputs
   measured: 104
   owner: tos-runtime

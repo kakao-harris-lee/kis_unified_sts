@@ -59,15 +59,40 @@ def test_currentness_policy_is_no_longer_pending() -> None:
     assert DimensionKey.CURRENTNESS_POLICY not in PENDING_DIMENSION_KEYS
 
 
+def test_recovery_is_no_longer_pending() -> None:
+    """RED until the RECOVERY currentness dimension reader lands (W1 barrier
+    verdict, Phase 5 W3-b "1차원=1커밋")."""
+    assert DimensionKey.RECOVERY not in PENDING_DIMENSION_KEYS
+
+
+def test_trading_approval_is_no_longer_pending() -> None:
+    """RED until the TRADING_APPROVAL currentness dimension reader lands
+    (step 4's own recorded verdict, Phase 5 W3-b "1차원=1커밋")."""
+    assert DimensionKey.TRADING_APPROVAL not in PENDING_DIMENSION_KEYS
+
+
+def test_environment_scope_is_no_longer_pending() -> None:
+    """RED until the ENVIRONMENT_SCOPE currentness dimension reader lands
+    (``tos.brokercap.environment_binding_ok`` over the already-computed
+    scope/evidence environment labels, Phase 5 W3-b "1차원=1커밋")."""
+    assert DimensionKey.ENVIRONMENT_SCOPE not in PENDING_DIMENSION_KEYS
+
+
+@pytest.mark.parametrize(
+    "reader_owned_key",
+    [
+        DimensionKey.CURRENTNESS_POLICY,
+        DimensionKey.RECOVERY,
+        DimensionKey.TRADING_APPROVAL,
+        DimensionKey.ENVIRONMENT_SCOPE,
+    ],
+)
 def test_a_reader_owned_key_still_present_in_config_refuses_to_load(
-    tmp_path: Path,
+    tmp_path: Path, reader_owned_key: DimensionKey
 ) -> None:
-    """Once CURRENTNESS_POLICY is reader-owned (previous test), a config that
-    still carries a CURRENTNESS_POLICY block must refuse to load — never
-    silently ignored."""
+    """Once a dimension is reader-owned, a config that still carries a block
+    for it must refuse to load — never silently ignored."""
     path = tmp_path / "currentness_dimensions.yaml"
-    _write_full_config(
-        path, extra={DimensionKey.CURRENTNESS_POLICY.value: _valid_block()}
-    )
-    with pytest.raises(PendingDimensionConfigError, match="CURRENTNESS_POLICY"):
+    _write_full_config(path, extra={reader_owned_key.value: _valid_block()})
+    with pytest.raises(PendingDimensionConfigError, match=reader_owned_key.value):
         load_pending_currentness_dimensions(path)

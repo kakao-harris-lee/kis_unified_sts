@@ -82,6 +82,16 @@ _READER_OWNED_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
         #: ``tos.cur.predicates.policy_covers_mandated_dimensions`` (no new runtime state
         #: needed — this composition already holds both facts).
         DimensionKey.CURRENTNESS_POLICY,
+        #: ``_recovery_dimension_reader_for`` — the TOS Phase 5 W1 recovery barrier's own
+        #: ``RecoveryVerdict.readiness_verdict``.
+        DimensionKey.RECOVERY,
+        #: ``_trading_approval_dimension_reader_for`` — step 4's own recorded
+        #: ``IndependentApprovalStage`` verdict.
+        DimensionKey.TRADING_APPROVAL,
+        #: ``_environment_scope_dimension_reader_for`` — the kernel's own
+        #: ``tos.brockercap.predicates.environment_binding_ok`` over the SAME
+        #: environment/scope tokens ``tos_runtime.compose.context`` already computes.
+        DimensionKey.ENVIRONMENT_SCOPE,
     }
 )
 

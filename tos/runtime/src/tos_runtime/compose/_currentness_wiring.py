@@ -13,6 +13,7 @@ from pathlib import Path
 
 from tos.afg import ActionAmplificationEnvelope
 from tos.authority import currentness_admissible
+from tos.brokercap import environment_binding_ok
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.cur import (
     MANDATED_DIMENSION_FLOOR,
@@ -21,6 +22,7 @@ from tos.cur import (
     policy_covers_mandated_dimensions,
 )
 from tos.engine.vocabulary import StageOutcome
+from tos.sbr import ReadinessVerdict
 
 from tos_runtime.authority.epoch import SafetyAuthorityEpochService
 from tos_runtime.compose._egress_attestations import (
@@ -46,6 +48,7 @@ from tos_runtime.currentness.vector import CurrentnessAssembler, DimensionReport
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
+from tos_runtime.recovery.barrier import RecoveryVerdict
 from tos_runtime.risk.aggregate import (
     load_adverse_scenario_set,
     load_required_scenario_kinds,
@@ -97,6 +100,14 @@ class _RiskAndCurrentness:
     #: ``_build_realized_stages`` creates it (see
     #: ``_ActionFlowDimensionState``'s own docstring for why).
     action_flow_dimension_state: _ActionFlowDimensionState
+    #: Late-bound cell the RECOVERY dimension reader closes over — filled in with the
+    #: W1 recovery barrier's own verdict once ``apply_recovery_barrier`` runs (see
+    #: ``_RecoveryDimensionState``'s own docstring for why).
+    recovery_dimension_state: _RecoveryDimensionState
+    #: Late-bound cell the TRADING_APPROVAL dimension reader closes over — filled in
+    #: with step 4's own ``VerdictRecorder`` once ``_build_realized_stages`` creates it
+    #: (see ``_TradingApprovalDimensionState``'s own docstring for why).
+    trading_approval_dimension_state: _TradingApprovalDimensionState
 
 
 def _authority_dimension_reader_for(
@@ -200,6 +211,147 @@ def _currentness_policy_dimension_reader_for(
     return _reader
 
 
+@dataclass
+class _RecoveryDimensionState:
+    """A late-bound cell for the RECOVERY dimension reader (below).
+
+    ``CurrentnessAssembler`` is constructed (in :func:`_build_risk_and_currentness`,
+    design #40 §5 order 6) strictly BEFORE the TOS Phase 5 W1 recovery barrier ever
+    runs (:func:`~tos_runtime.compose._recovery_wiring.apply_recovery_barrier` is the
+    LAST call in :func:`~tos_runtime.compose.root.compose_paper_runtime`, after
+    ``_finalize``) — so this reader closes over this mutable cell, and
+    ``compose_paper_runtime`` fills in :attr:`verdict` right after
+    ``apply_recovery_barrier`` returns, before it ever hands the composed runtime to a
+    caller that could drive an attempt (the exact same ordering discipline
+    :class:`_ActionFlowDimensionState` already relies on for step 9's recorder).
+    """
+
+    verdict: RecoveryVerdict | None = None
+
+
+def _recovery_dimension_reader_for(
+    state: _RecoveryDimensionState,
+) -> Callable[[], DimensionReport | None]:
+    """The RECOVERY currentness dimension (Phase 5 W3-b, plan §2 decision 3 —
+    dimension-owner replacement 2/9).
+
+    The owner is W1's own :class:`~tos_runtime.recovery.barrier.RecoveryBarrier` —
+    this reader copies its already-decided :attr:`~tos_runtime.recovery.barrier
+    .RecoveryVerdict.readiness_verdict` verbatim (the SAME
+    ``is ReadinessVerdict.READY`` identity check
+    :meth:`~tos_runtime.recovery.barrier.RecoveryVerdict.ready` itself is —
+    ``tos.sbr``'s own non-truthy discipline forbids ``if verdict:``), never a second
+    judgement of its own (MEDIUM-A discipline, module docstring).
+
+    ``bound_generation=0`` is this reader's own deliberate, explicit statement, not an
+    invented placeholder: the recovery barrier is a single boot-time judgement (design
+    #17 §3.5), not a versioned/generational artifact, so there is no real generation
+    counter to report (the same "an owner reporting 0 is that owner's own choice"
+    discipline :class:`~tos_runtime.currentness.vector.DimensionReport`'s own docstring
+    states).
+
+    Returns ``None`` (dimension absent, never a fabricated verdict) until
+    :attr:`_RecoveryDimensionState.verdict` is filled in — i.e. for the entire
+    composition-time window before ``compose_paper_runtime`` has actually run the
+    barrier.
+    """
+
+    def _reader() -> DimensionReport | None:
+        verdict = state.verdict
+        if verdict is None:
+            return None
+        return DimensionReport(
+            bound_generation=0,
+            positively_established=verdict.readiness_verdict is ReadinessVerdict.READY,
+            restrictive_floor=0,
+        )
+
+    return _reader
+
+
+@dataclass
+class _TradingApprovalDimensionState:
+    """A late-bound cell for the TRADING_APPROVAL dimension reader (below) — the SAME
+    "constructed before the recorder exists" ordering :class:`_ActionFlowDimensionState`
+    already documents, for step 4's own :class:`~tos_runtime.compose.context
+    .VerdictRecorder` instead of step 9's."""
+
+    step4_recorder: VerdictRecorder | None = None
+
+
+def _trading_approval_dimension_reader_for(
+    state: _TradingApprovalDimensionState,
+) -> Callable[[], DimensionReport | None]:
+    """The TRADING_APPROVAL currentness dimension (Phase 5 W3-b, plan §2 decision 3 —
+    dimension-owner replacement 3/9).
+
+    Derived from step 4's own ``IndependentApprovalStage`` outcome — the SAME
+    structural-derivation discipline :func:`_action_flow_dimension_reader_for` already
+    applies to step 9 (``positively_established`` only when step 4 itself last recorded
+    ``ADMIT``, never a second comparison against the decision this reader would have to
+    re-fetch via :meth:`~tos_runtime.authority.iap.IntentRegistry.decision_current`
+    itself — that call needs a SPECIFIC per-attempt
+    ``IndependentApprovalDecision``/``LoadedApproval`` this parameterless reader has no
+    way to obtain; step 4's own recorded verdict is this attempt's actual, already-
+    decided answer to exactly that question).
+
+    ``bound_generation=0``: step 4's :class:`~tos.engine.records.StageVerdict` carries
+    no generation counter of its own to report (an explicit, deliberate 0, not an
+    invented default — same discipline as :func:`_recovery_dimension_reader_for`).
+
+    Returns ``None`` (dimension absent) whenever step 4 has not yet recorded ANY verdict
+    for this attempt, or its own recorder has not yet been late-bound into ``state``
+    (composition-time window, mirrors :func:`_action_flow_dimension_reader_for`).
+    """
+
+    def _reader() -> DimensionReport | None:
+        recorder = state.step4_recorder
+        verdict = recorder.last_verdict if recorder is not None else None
+        if verdict is None:
+            return None
+        return DimensionReport(
+            bound_generation=0,
+            positively_established=verdict.outcome is StageOutcome.ADMIT,
+            restrictive_floor=0,
+        )
+
+    return _reader
+
+
+def _environment_scope_dimension_reader_for(
+    environment_label: str,
+) -> Callable[[], DimensionReport | None]:
+    """The ENVIRONMENT_SCOPE currentness dimension (Phase 5 W3-b, plan §2 decision 3 —
+    dimension-owner replacement 4/9).
+
+    No new runtime state is needed: this composition already computes the SAME three
+    facts :mod:`tos_runtime.compose.context` passes as
+    ``scope_environment``/``evidence_environment``/``environment_inherited`` on every
+    ``send_boundary_context`` call (``environment_label`` for both environment tokens,
+    ``environment_inherited=False`` — this composition wires exactly one environment for
+    its whole process lifetime, never a cross-environment inheritance path) — the reader
+    only asks the kernel's own :func:`~tos.brokercap.predicates.environment_binding_ok`
+    over those SAME values, never re-deriving or comparing them itself (MEDIUM-A
+    discipline, module docstring).
+
+    Always returns a report (never ``None``): ``environment_label`` is a boot argument,
+    always present at composition time.
+    """
+
+    def _reader() -> DimensionReport | None:
+        return DimensionReport(
+            bound_generation=0,
+            positively_established=environment_binding_ok(
+                evidence_environment=environment_label,
+                scope_environment=environment_label,
+                inherited=False,
+            ),
+            restrictive_floor=0,
+        )
+
+    return _reader
+
+
 def _load_action_flow_envelope(path: Path) -> ActionAmplificationEnvelope:
     """Build the Action Flow Governor's ``ActionAmplificationEnvelope`` from
     the ``risk.yaml`` block (``tos_runtime.risk`` has no dedicated loader for
@@ -237,6 +389,70 @@ def _load_action_flow_envelope(path: Path) -> ActionAmplificationEnvelope:
     return ActionAmplificationEnvelope(**{name: raw[name] for name in fields})
 
 
+@dataclass
+class _DimensionStates:
+    """Every late-bound dimension-reader cell :func:`_build_dimension_readers` creates —
+    bundled so :func:`_build_risk_and_currentness` can hand all three to
+    :class:`_RiskAndCurrentness` in one field, and :func:`~tos_runtime.compose.root
+    .compose_paper_runtime` can late-bind each once its own recorder/verdict exists."""
+
+    action_flow: _ActionFlowDimensionState
+    recovery: _RecoveryDimensionState
+    trading_approval: _TradingApprovalDimensionState
+
+
+def _build_dimension_readers(
+    *,
+    rcl_log: SqliteCommitLog,
+    writer_epoch: int,
+    authority_epoch_service: SafetyAuthorityEpochService,
+    currentness_policy: CurrentnessPolicy,
+    environment_label: str,
+) -> tuple[
+    dict[DimensionKey, tuple[str, Callable[[], DimensionReport | None]]],
+    _DimensionStates,
+]:
+    """The full ``dimension_readers`` map (module docstring, "Reader map") — split out
+    of :func:`_build_risk_and_currentness` purely for the size budget; no behavioural
+    difference from having this inline there."""
+    dimension_states = _DimensionStates(
+        action_flow=_ActionFlowDimensionState(),
+        recovery=_RecoveryDimensionState(),
+        trading_approval=_TradingApprovalDimensionState(),
+    )
+    dimension_readers: dict[
+        DimensionKey, tuple[str, Callable[[], DimensionReport | None]]
+    ] = {
+        DimensionKey.SAFETY_AUTHORITY: (
+            "tos_runtime.authority",
+            _authority_dimension_reader_for(authority_epoch_service),
+        ),
+        DimensionKey.ACTION_FLOW: (
+            "tos_runtime.risk",
+            _action_flow_dimension_reader_for(
+                rcl_log, writer_epoch, dimension_states.action_flow
+            ),
+        ),
+        DimensionKey.CURRENTNESS_POLICY: (
+            "tos_runtime.currentness",
+            _currentness_policy_dimension_reader_for(currentness_policy),
+        ),
+        DimensionKey.RECOVERY: (
+            "tos_runtime.recovery",
+            _recovery_dimension_reader_for(dimension_states.recovery),
+        ),
+        DimensionKey.TRADING_APPROVAL: (
+            "tos_runtime.authority.iap",
+            _trading_approval_dimension_reader_for(dimension_states.trading_approval),
+        ),
+        DimensionKey.ENVIRONMENT_SCOPE: (
+            "tos_runtime.brokercap",
+            _environment_scope_dimension_reader_for(environment_label),
+        ),
+    }
+    return dimension_readers, dimension_states
+
+
 def _build_risk_and_currentness(
     config_dir: Path,
     rcl_log: SqliteCommitLog,
@@ -244,9 +460,17 @@ def _build_risk_and_currentness(
     evidence_store: SqliteEvidenceStore,
     time_service: TrustworthyTimeService,
     authority_epoch_service: SafetyAuthorityEpochService,
+    environment_label: str,
 ) -> _RiskAndCurrentness:
     """Aggregate Risk Authority + Action Flow Governor (order 5), currentness
-    assembler + Egress Currentness Proof issuer (order 6)."""
+    assembler + Egress Currentness Proof issuer (order 6).
+
+    Args:
+        environment_label: Forwarded to
+            :func:`_environment_scope_dimension_reader_for` — the SAME boot argument
+            :mod:`tos_runtime.compose.context` uses for
+            ``scope_environment``/``evidence_environment`` (Phase 5 W3-b).
+    """
     projection = SqliteReservationProjectionReader(rcl_log)
     scenario_set = load_adverse_scenario_set(config_dir / _RISK_CONFIG_NAME)
     required_scenario_kinds = load_required_scenario_kinds(
@@ -281,25 +505,13 @@ def _build_risk_and_currentness(
     )
     assert isinstance(currentness_policy, CurrentnessPolicy)
 
-    action_flow_dimension_state = _ActionFlowDimensionState()
-    dimension_readers: dict[
-        DimensionKey, tuple[str, Callable[[], DimensionReport | None]]
-    ] = {
-        DimensionKey.SAFETY_AUTHORITY: (
-            "tos_runtime.authority",
-            _authority_dimension_reader_for(authority_epoch_service),
-        ),
-        DimensionKey.ACTION_FLOW: (
-            "tos_runtime.risk",
-            _action_flow_dimension_reader_for(
-                rcl_log, writer_epoch, action_flow_dimension_state
-            ),
-        ),
-        DimensionKey.CURRENTNESS_POLICY: (
-            "tos_runtime.currentness",
-            _currentness_policy_dimension_reader_for(currentness_policy),
-        ),
-    }
+    dimension_readers, dimension_states = _build_dimension_readers(
+        rcl_log=rcl_log,
+        writer_epoch=writer_epoch,
+        authority_epoch_service=authority_epoch_service,
+        currentness_policy=currentness_policy,
+        environment_label=environment_label,
+    )
     currentness_assembler = CurrentnessAssembler(
         rcl_log,
         time_service,
@@ -336,6 +548,8 @@ def _build_risk_and_currentness(
         pending_dimension_specs=pending_dimension_specs,
         egress_attestations=egress_attestations,
         risk_attestations=risk_attestations,
-        action_flow_dimension_state=action_flow_dimension_state,
+        action_flow_dimension_state=dimension_states.action_flow,
+        recovery_dimension_state=dimension_states.recovery,
+        trading_approval_dimension_state=dimension_states.trading_approval,
         proof_issuer=proof_issuer,
     )

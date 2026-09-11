@@ -74,12 +74,12 @@ EGRESS_IDENTITY:
   bound_digest: null
   restrictive_floor: null
   positively_established: null
-# owner note: Phase 5 (a real environment-scope owner) replaces this attestation
-ENVIRONMENT_SCOPE:
-  bound_generation: null
-  bound_digest: null
-  restrictive_floor: null
-  positively_established: null
+# ENVIRONMENT_SCOPE: Phase 5 W3-b landed a real dimension_readers entry
+# (tos_runtime.compose._currentness_wiring._environment_scope_dimension_reader_for,
+# over tos.brokercap.predicates.environment_binding_ok) — this block is
+# REMOVED, never left null; a config that still carries an ENVIRONMENT_SCOPE
+# key here now refuses to load (tos_runtime.compose._pending_dimensions
+# _READER_OWNED_DIMENSION_KEYS).
 # owner note: Phase 5 (a real incident-management owner) replaces this attestation
 INCIDENT:
   bound_generation: null
@@ -98,12 +98,12 @@ POST_TRADE:
   bound_digest: null
   restrictive_floor: null
   positively_established: null
-# owner note: Phase 5 (a real recovery/Recovery-Barrier owner) replaces this attestation
-RECOVERY:
-  bound_generation: null
-  bound_digest: null
-  restrictive_floor: null
-  positively_established: null
+# RECOVERY: Phase 5 W3-b landed a real dimension_readers entry
+# (tos_runtime.compose._currentness_wiring._recovery_dimension_reader_for,
+# over the TOS Phase 5 W1 recovery barrier's own RecoveryVerdict) — this
+# block is REMOVED, never left null; a config that still carries a RECOVERY
+# key here now refuses to load (tos_runtime.compose._pending_dimensions
+# _READER_OWNED_DIMENSION_KEYS).
 # owner note: Phase 5 (a real release-admission currentness owner) replaces this attestation
 RELEASE:
   bound_generation: null
@@ -116,9 +116,9 @@ SAFETY_ENVELOPE_PROFILE:
   bound_digest: null
   restrictive_floor: null
   positively_established: null
-# owner note: Phase 5 (a real Trading Approval Policy owner) replaces this attestation
-TRADING_APPROVAL:
-  bound_generation: null
-  bound_digest: null
-  restrictive_floor: null
-  positively_established: null
+# TRADING_APPROVAL: Phase 5 W3-b landed a real dimension_readers entry
+# (tos_runtime.compose._currentness_wiring._trading_approval_dimension_reader_for,
+# over step 4's own recorded IndependentApprovalStage verdict) — this block
+# is REMOVED, never left null; a config that still carries a
+# TRADING_APPROVAL key here now refuses to load
+# (tos_runtime.compose._pending_dimensions _READER_OWNED_DIMENSION_KEYS).

@@ -197,8 +197,10 @@ def compose_paper_runtime(
         environment_label=environment_label,
         uid=uid,
     )
-    # Late-bind the ACTION_FLOW dimension reader's cell now step 9's VerdictRecorder exists.
+    # Late-bind the ACTION_FLOW / TRADING_APPROVAL dimension readers' cells now steps
+    # 9/4's VerdictRecorders exist (Phase 5 W3-b, plan §2 decision 3).
     boot.risk.action_flow_dimension_state.step9_recorder = realized.step9_recorder
+    boot.risk.trading_approval_dimension_state.step4_recorder = realized.step4_recorder
     stages = _build_stage_map(construction_stages, realized)
 
     # T2 lane C: a kis-mock boot binds the genuine KIS wire-codec digest into the context
@@ -256,10 +258,16 @@ def compose_paper_runtime(
         scheme=_SCHEME,
         monotonic_source=boot.infra.monotonic_source,
     )
-    return apply_recovery_barrier(
+    composed = apply_recovery_barrier(
         composed,
         config_dir=config_dir,
         data_dir=data_dir,
         custody_root=custody_root,
         scheme=_SCHEME,
     )
+    # Late-bind the RECOVERY dimension reader's cell now the barrier has actually run
+    # (Phase 5 W3-b, plan §2 decision 3) — strictly before this function ever hands
+    # `composed` to a caller that could drive an attempt (_RecoveryDimensionState's own
+    # docstring).
+    boot.risk.recovery_dimension_state.verdict = composed.recovery
+    return composed

@@ -1032,6 +1032,7 @@ def _boot_services(
         infra.evidence_store,
         infra.time_service,
         rcl.authority_epoch_service,
+        environment_label,
     )
     (
         egress_coordinates,
