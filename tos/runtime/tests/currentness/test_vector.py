@@ -29,14 +29,26 @@ def _assembler(
     authority_dimension_reader=lambda: None,
     action_flow_dimension_reader=lambda: None,
 ) -> CurrentnessAssembler:
+    # Reader-map generalization (plan §2 decision 3) — this helper still
+    # exposes the two original named kwargs so every existing test below is
+    # unchanged; only the plumbing into CurrentnessAssembler's own
+    # constructor (now a single dimension_readers map) is adapted here.
     return CurrentnessAssembler(
         log,
         time_service,
         writer_epoch=writer_epoch,
         policy=policy,
         mandated=frozenset({DimensionKey.COMMIT_LOG, DimensionKey.TRUSTWORTHY_TIME}),
-        authority_dimension_reader=authority_dimension_reader,
-        action_flow_dimension_reader=action_flow_dimension_reader,
+        dimension_readers={
+            DimensionKey.SAFETY_AUTHORITY: (
+                "tos_runtime.authority",
+                authority_dimension_reader,
+            ),
+            DimensionKey.ACTION_FLOW: (
+                "tos_runtime.risk",
+                action_flow_dimension_reader,
+            ),
+        },
     )
 
 

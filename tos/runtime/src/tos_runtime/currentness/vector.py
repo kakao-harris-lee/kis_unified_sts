@@ -62,11 +62,29 @@ fields into a :class:`~tos.cur.CurrentnessDimension` at the shared vector
 revision. A reader returning ``None`` means it could not observe the
 dimension at all — the dimension is omitted from the assembled vector, never
 defaulted to established.
+
+**Reader map (Phase 5 W3-b, plan
+``docs/plans/2026-09-11-tos-phase5-w3-safety-mesh-plan.md`` §2 decision 3).**
+``CurrentnessAssembler`` no longer hardcodes two owner-reader kwargs. Every
+injected dimension — Safety Authority / Action Flow Permit (this Phase 2
+slice) and every later Phase 5 owner (RECOVERY, TRADING_APPROVAL,
+CURRENTNESS_POLICY, ENVIRONMENT_SCOPE, the four safety-mesh dimensions, …) —
+is one entry in :attr:`dimension_readers`: ``DimensionKey -> (owner_identity,
+reader)``. This is a pure generalization of the same "``None`` in, ``None``
+out, owner decides every field" contract :meth:`_dimension_from_report`
+already enforced for the two hardcoded readers — no behavioural change for
+SAFETY_AUTHORITY/ACTION_FLOW, which are simply two more map entries now
+(:mod:`tos_runtime.compose._currentness_wiring`'s own construction call).
+A caller registering the SAME key twice is a caller bug the ``dict`` literal
+itself would silently last-write-wins on; this class does not additionally
+guard against it (compose-time key-collision refusal, if ever needed, is
+:mod:`tos_runtime.compose._pending_dimensions`'s job — see its own
+"owned/pending-duplicated key" boot refusal).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from tos.authority import AuthorityEpochState, authority_epoch_current
@@ -96,6 +114,14 @@ __all__ = [
 ]
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
+
+#: The default ``dimension_readers`` value — no injected dimension at all.
+#: A plain ``{}`` default would be a mutable-default-argument hazard; this
+#: named module-level constant is the shared empty instance every caller
+#: that supplies none of its own readers gets.
+_EMPTY_DIMENSION_READERS: Mapping[
+    DimensionKey, tuple[str, Callable[[], DimensionReport | None]]
+] = {}
 
 #: The locally-reported domain label for the RCL commitment-epoch currency
 #: check (module docstring "Domain-label honesty") — never the Safety
@@ -173,17 +199,16 @@ class CurrentnessAssembler:
             ``MANDATED_DIMENSION_FLOOR`` by the kernel's own
             :func:`~tos.cur.predicates.vector_complete` — this class does not
             re-floor it).
-        authority_dimension_reader: Injected callable returning lane P's own
-            :class:`DimensionReport` for the Safety Authority dimension, or
-            ``None`` when unavailable — **never** an import of
-            ``tos_runtime.authority`` (lane P's own package; cross-lane
+        dimension_readers: ``DimensionKey -> (owner_identity, reader)`` — one
+            entry per injected dimension this process can observe (module
+            docstring, "Reader map"). Each reader returns the owning lane's
+            own :class:`DimensionReport`, or ``None`` when unavailable —
+            **never** an import of the owning lane's package (cross-lane
             inputs are injected callables only, per the coordinator's task
             brief). The reader, not this assembler, decides
             ``positively_established``/``restrictive_floor`` (MEDIUM-A).
-        action_flow_dimension_reader: Injected callable returning lane Q's
-            own :class:`DimensionReport` for the Action Flow Permit
-            dimension, analogously — never an import of ``tos_runtime.risk``
-            (lane Q's own package).
+            Defaults to an empty mapping (no injected dimension at all —
+            only ``_owned_dimensions`` is assembled).
         scheme: The canonicalization scheme digests are computed under.
     """
 
@@ -195,8 +220,9 @@ class CurrentnessAssembler:
         writer_epoch: WriterEpoch,
         policy: CurrentnessPolicy,
         mandated: frozenset[DimensionKey],
-        authority_dimension_reader: Callable[[], DimensionReport | None],
-        action_flow_dimension_reader: Callable[[], DimensionReport | None],
+        dimension_readers: Mapping[
+            DimensionKey, tuple[str, Callable[[], DimensionReport | None]]
+        ] = _EMPTY_DIMENSION_READERS,
         scheme: CanonicalizationScheme = _SCHEME,
     ) -> None:
         self._log = log
@@ -204,8 +230,7 @@ class CurrentnessAssembler:
         self._writer_epoch = writer_epoch
         self._policy = policy
         self._mandated = mandated
-        self._authority_dimension_reader = authority_dimension_reader
-        self._action_flow_dimension_reader = action_flow_dimension_reader
+        self._dimension_readers = dict(dimension_readers)
         self._scheme = scheme
 
     def commit_certificate(self) -> SingleNodeCommitCertificate | None:
@@ -316,30 +341,24 @@ class CurrentnessAssembler:
     def _injected_dimensions(
         self, *, revision: CurrentnessRevision
     ) -> list[CurrentnessDimension]:
-        """The Safety Authority / Action Flow Permit dimensions, present only
-        when their injected readers return a :class:`DimensionReport` —
-        split out of :meth:`assemble` to stay under the module size budget.
+        """Every dimension in :attr:`_dimension_readers`, present only when
+        its own reader returns a :class:`DimensionReport` (module docstring,
+        "Reader map") — split out of :meth:`assemble` to stay under the
+        module size budget. Iteration order follows ``dict`` insertion order
+        (the caller's own construction call), which is immaterial: dimension
+        identity, not position, is what ``tos.cur`` compares on.
         """
         dimensions: list[CurrentnessDimension] = []
-        authority_dimension = self._dimension_from_report(
-            self._authority_dimension_reader(),
-            dimension_key=DimensionKey.SAFETY_AUTHORITY,
-            owner_identity="tos_runtime.authority",
-            revision=revision,
-            scheme=self._scheme,
-        )
-        if authority_dimension is not None:
-            dimensions.append(authority_dimension)
-
-        action_flow_dimension = self._dimension_from_report(
-            self._action_flow_dimension_reader(),
-            dimension_key=DimensionKey.ACTION_FLOW,
-            owner_identity="tos_runtime.risk",
-            revision=revision,
-            scheme=self._scheme,
-        )
-        if action_flow_dimension is not None:
-            dimensions.append(action_flow_dimension)
+        for dimension_key, (owner_identity, reader) in self._dimension_readers.items():
+            dimension = self._dimension_from_report(
+                reader(),
+                dimension_key=dimension_key,
+                owner_identity=owner_identity,
+                revision=revision,
+                scheme=self._scheme,
+            )
+            if dimension is not None:
+                dimensions.append(dimension)
         return dimensions
 
     def assemble(

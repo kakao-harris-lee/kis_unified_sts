@@ -244,18 +244,27 @@ def _build_risk_and_currentness(
     assert isinstance(currentness_policy, CurrentnessPolicy)
 
     action_flow_dimension_state = _ActionFlowDimensionState()
+    dimension_readers: dict[
+        DimensionKey, tuple[str, Callable[[], DimensionReport | None]]
+    ] = {
+        DimensionKey.SAFETY_AUTHORITY: (
+            "tos_runtime.authority",
+            _authority_dimension_reader_for(authority_epoch_service),
+        ),
+        DimensionKey.ACTION_FLOW: (
+            "tos_runtime.risk",
+            _action_flow_dimension_reader_for(
+                rcl_log, writer_epoch, action_flow_dimension_state
+            ),
+        ),
+    }
     currentness_assembler = CurrentnessAssembler(
         rcl_log,
         time_service,
         writer_epoch=writer_epoch,
         policy=currentness_policy,
         mandated=frozenset({DimensionKey.COMMIT_LOG, DimensionKey.TRUSTWORTHY_TIME}),
-        authority_dimension_reader=_authority_dimension_reader_for(
-            authority_epoch_service
-        ),
-        action_flow_dimension_reader=_action_flow_dimension_reader_for(
-            rcl_log, writer_epoch, action_flow_dimension_state
-        ),
+        dimension_readers=dimension_readers,
     )
     # `is_complete` is the SAME currentness_assembler.is_complete callable
     # every other consumer uses (== tos.cur.predicates.vector_complete,
