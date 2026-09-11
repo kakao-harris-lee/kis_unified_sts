@@ -78,6 +78,14 @@ def test_environment_scope_is_no_longer_pending() -> None:
     assert DimensionKey.ENVIRONMENT_SCOPE not in PENDING_DIMENSION_KEYS
 
 
+def test_egress_identity_is_no_longer_pending() -> None:
+    """RED until the EGRESS_IDENTITY currentness dimension reader lands
+    (``tos.egress.predicates.credential_route_authority_disjoint`` over the
+    already-composed credential-route inventory, Phase 5 W3-b
+    "1차원=1커밋")."""
+    assert DimensionKey.EGRESS_IDENTITY not in PENDING_DIMENSION_KEYS
+
+
 @pytest.mark.parametrize(
     "reader_owned_key",
     [
@@ -85,6 +93,7 @@ def test_environment_scope_is_no_longer_pending() -> None:
         DimensionKey.RECOVERY,
         DimensionKey.TRADING_APPROVAL,
         DimensionKey.ENVIRONMENT_SCOPE,
+        DimensionKey.EGRESS_IDENTITY,
     ],
 )
 def test_a_reader_owned_key_still_present_in_config_refuses_to_load(

@@ -584,7 +584,7 @@ exceptions:
     import 가 완전히 사라진다(순환을 우회가 아니라 제거). `gateway.py`/`mesh.py` 는
     이 모듈에서 `_verdict` 를 import.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 150
+  measured: 155
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
@@ -626,6 +626,11 @@ exceptions:
     (...)` 로 반환값을 받고 셀을 채운 뒤 반환 — 종전엔 바로 반환하던 자리, 주석
     3줄 포함) — 둘 다 정본 결선 순서 문서(root.py)에서만 표현 가능한 타이밍
     의존(각 셀은 해당 레코더/판정이 실제로 존재하는 시점에만 채워질 수 있음).
+    분해 대신 등재.
+    **2026-09-11 Phase 5 W3-b 재등재 150→155**: EGRESS_IDENTITY 커런트니스
+    차원 리더의 late-bound 셀을 `_build_context_resolver` 직후 채우는 5줄
+    (`boot.risk.egress_identity_dimension_state.credential_route_inventory = ...`,
+    주석 2줄 포함) — 해당 인벤토리는 `context_resolver` 생성 시점에만 존재.
     분해 대신 등재.
 - target: tos/runtime/src/tos_runtime/compose/_boot_integrity.py::record_operator_attested_inputs
   measured: 104

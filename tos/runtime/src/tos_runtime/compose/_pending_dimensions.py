@@ -92,6 +92,12 @@ _READER_OWNED_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
         #: ``tos.brockercap.predicates.environment_binding_ok`` over the SAME
         #: environment/scope tokens ``tos_runtime.compose.context`` already computes.
         DimensionKey.ENVIRONMENT_SCOPE,
+        #: ``_egress_identity_dimension_reader_for`` — the kernel's own
+        #: ``tos.egress.predicates.credential_route_authority_disjoint`` over the
+        #: composed credential-route inventory (partial coverage, honestly disclosed
+        #: in that reader's own docstring — two sibling predicates have no runtime
+        #: owner yet).
+        DimensionKey.EGRESS_IDENTITY,
     }
 )
 

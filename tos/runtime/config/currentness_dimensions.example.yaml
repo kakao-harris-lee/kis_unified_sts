@@ -68,12 +68,14 @@ DEVIATION:
   bound_digest: null
   restrictive_floor: null
   positively_established: null
-# owner note: Phase 5 (a real egress-identity owner) replaces this attestation
-EGRESS_IDENTITY:
-  bound_generation: null
-  bound_digest: null
-  restrictive_floor: null
-  positively_established: null
+# EGRESS_IDENTITY: Phase 5 W3-b landed a real dimension_readers entry
+# (tos_runtime.compose._currentness_wiring._egress_identity_dimension_reader_for,
+# over tos.egress.predicates.credential_route_authority_disjoint — partial
+# coverage, honestly disclosed in that reader's own docstring: two sibling
+# egress-identity predicates still have no runtime owner) — this block is
+# REMOVED, never left null; a config that still carries an EGRESS_IDENTITY
+# key here now refuses to load (tos_runtime.compose._pending_dimensions
+# _READER_OWNED_DIMENSION_KEYS).
 # ENVIRONMENT_SCOPE: Phase 5 W3-b landed a real dimension_readers entry
 # (tos_runtime.compose._currentness_wiring._environment_scope_dimension_reader_for,
 # over tos.brokercap.predicates.environment_binding_ok) — this block is

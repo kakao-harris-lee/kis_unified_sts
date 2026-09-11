@@ -21,6 +21,10 @@ from tos.cur import (
     DimensionKey,
     policy_covers_mandated_dimensions,
 )
+from tos.egress import (
+    CredentialRouteInventoryEntry,
+    credential_route_authority_disjoint,
+)
 from tos.engine.vocabulary import StageOutcome
 from tos.sbr import ReadinessVerdict
 
@@ -108,6 +112,10 @@ class _RiskAndCurrentness:
     #: with step 4's own ``VerdictRecorder`` once ``_build_realized_stages`` creates it
     #: (see ``_TradingApprovalDimensionState``'s own docstring for why).
     trading_approval_dimension_state: _TradingApprovalDimensionState
+    #: Late-bound cell the EGRESS_IDENTITY dimension reader closes over — filled in
+    #: with the composed credential-route inventory once ``_build_context_resolver``
+    #: returns (see ``_EgressIdentityDimensionState``'s own docstring for why).
+    egress_identity_dimension_state: _EgressIdentityDimensionState
 
 
 def _authority_dimension_reader_for(
@@ -352,6 +360,71 @@ def _environment_scope_dimension_reader_for(
     return _reader
 
 
+@dataclass
+class _EgressIdentityDimensionState:
+    """A late-bound cell for the EGRESS_IDENTITY dimension reader (below).
+
+    ``CurrentnessAssembler`` is constructed inside :func:`_build_risk_and_currentness`
+    (design #40 §5 order 6) strictly BEFORE this composition's credential-route
+    inventory is resolved (:func:`~tos_runtime.brokercap.credential_route_inventory` is
+    called by ``_wiring.py``'s ``_build_context_resolver``, part of order 7+) — so this
+    reader closes over this mutable cell, and
+    :func:`~tos_runtime.compose.root.compose_paper_runtime` fills in
+    :attr:`credential_route_inventory` right after ``_build_context_resolver`` returns,
+    strictly before it ever hands the composed runtime to a caller that could drive an
+    attempt (the same ordering discipline :class:`_ActionFlowDimensionState` already
+    documents).
+    """
+
+    credential_route_inventory: tuple[CredentialRouteInventoryEntry, ...] | None = None
+
+
+def _egress_identity_dimension_reader_for(
+    state: _EgressIdentityDimensionState,
+) -> Callable[[], DimensionReport | None]:
+    """The EGRESS_IDENTITY currentness dimension (Phase 5 W3-b, plan §2 decision 3 —
+    dimension-owner replacement 5/9).
+
+    **Partial coverage, honestly disclosed.** ``tos.egress``'s own EGRESS_IDENTITY-
+    shaped predicates are :func:`~tos.egress.predicates.credential_route_authority_disjoint`
+    (used here — over the SAME ``credential_route_inventory`` tuple
+    :mod:`tos_runtime.compose.context` already threads into every
+    ``send_boundary_context`` call, never re-derived),
+    :func:`~tos.egress.predicates.stale_principal_structurally_rejected` (needs a
+    committed :class:`~tos.egress.ActiveEgressPrincipalSet` this composition tracks
+    NOWHERE — no runtime owner exists yet for that structure), and
+    :func:`~tos.egress.predicates.egress_generation_monotonic` (needs a PRIOR/new
+    :class:`~tos.ordering.OrderingEvent` pair; a currentness dimension reader is a
+    parameterless, per-boot fact, not a per-attempt comparison, so there is no honest
+    "prior" this reader could hold without inventing one). Per the plan's own "if no
+    honest source exists for a dimension, STOP that dimension" instruction (applied here
+    at the sub-predicate level): this reader uses ONLY the one predicate it can
+    honestly evaluate, and omits the other two rather than fabricating their inputs —
+    a real gap, not silently smoothed over (W3.2 follow-up: a runtime owner for the
+    active-principal-set / prior-event history would complete this dimension).
+
+    ``bound_generation=0``: the credential-route inventory is a static,
+    boot-time-resolved configuration table (``tos_runtime.brokercap.credential_route_inventory``),
+    not a generational artifact — an explicit, deliberate 0 (same discipline as the
+    other new readers above).
+
+    Returns ``None`` (dimension absent) until :attr:`_EgressIdentityDimensionState
+    .credential_route_inventory` is late-bound (composition-time window).
+    """
+
+    def _reader() -> DimensionReport | None:
+        inventory = state.credential_route_inventory
+        if inventory is None:
+            return None
+        return DimensionReport(
+            bound_generation=0,
+            positively_established=credential_route_authority_disjoint(inventory),
+            restrictive_floor=0,
+        )
+
+    return _reader
+
+
 def _load_action_flow_envelope(path: Path) -> ActionAmplificationEnvelope:
     """Build the Action Flow Governor's ``ActionAmplificationEnvelope`` from
     the ``risk.yaml`` block (``tos_runtime.risk`` has no dedicated loader for
@@ -399,6 +472,7 @@ class _DimensionStates:
     action_flow: _ActionFlowDimensionState
     recovery: _RecoveryDimensionState
     trading_approval: _TradingApprovalDimensionState
+    egress_identity: _EgressIdentityDimensionState
 
 
 def _build_dimension_readers(
@@ -419,6 +493,7 @@ def _build_dimension_readers(
         action_flow=_ActionFlowDimensionState(),
         recovery=_RecoveryDimensionState(),
         trading_approval=_TradingApprovalDimensionState(),
+        egress_identity=_EgressIdentityDimensionState(),
     )
     dimension_readers: dict[
         DimensionKey, tuple[str, Callable[[], DimensionReport | None]]
@@ -449,6 +524,10 @@ def _build_dimension_readers(
             "tos_runtime.brokercap",
             _environment_scope_dimension_reader_for(environment_label),
         ),
+        DimensionKey.EGRESS_IDENTITY: (
+            "tos_runtime.egress",
+            _egress_identity_dimension_reader_for(dimension_states.egress_identity),
+        ),
     }
     return dimension_readers, dimension_states
 
@@ -463,14 +542,8 @@ def _build_risk_and_currentness(
     environment_label: str,
 ) -> _RiskAndCurrentness:
     """Aggregate Risk Authority + Action Flow Governor (order 5), currentness
-    assembler + Egress Currentness Proof issuer (order 6).
-
-    Args:
-        environment_label: Forwarded to
-            :func:`_environment_scope_dimension_reader_for` — the SAME boot argument
-            :mod:`tos_runtime.compose.context` uses for
-            ``scope_environment``/``evidence_environment`` (Phase 5 W3-b).
-    """
+    assembler + Egress Currentness Proof issuer (order 6). ``environment_label`` is
+    forwarded to :func:`_build_dimension_readers` (Phase 5 W3-b)."""
     projection = SqliteReservationProjectionReader(rcl_log)
     scenario_set = load_adverse_scenario_set(config_dir / _RISK_CONFIG_NAME)
     required_scenario_kinds = load_required_scenario_kinds(
@@ -551,5 +624,6 @@ def _build_risk_and_currentness(
         action_flow_dimension_state=dimension_states.action_flow,
         recovery_dimension_state=dimension_states.recovery,
         trading_approval_dimension_state=dimension_states.trading_approval,
+        egress_identity_dimension_state=dimension_states.egress_identity,
         proof_issuer=proof_issuer,
     )

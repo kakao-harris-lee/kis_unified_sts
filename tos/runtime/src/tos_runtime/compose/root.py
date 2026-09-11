@@ -229,6 +229,11 @@ def compose_paper_runtime(
         continuity_id=continuity_id,
         request_bytes_digest_source=request_bytes_digest_source,
     )
+    # Late-bind the EGRESS_IDENTITY dimension reader's cell now the composed
+    # credential-route inventory exists (Phase 5 W3-b, plan §2 decision 3).
+    boot.risk.egress_identity_dimension_state.credential_route_inventory = (
+        context_resolver.credential_route_inventory
+    )
 
     composed = _finalize(
         config_dir=config_dir,
