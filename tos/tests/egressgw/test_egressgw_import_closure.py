@@ -336,6 +336,38 @@ def _run_child(target) -> dict:
     return result
 
 
+def test_mesh_never_imports_gateway() -> None:
+    """(kernel round #2 §2 decision 1 — mutation M5) ``mesh.py`` must not import ``gateway.py``.
+
+    ``gateway.py`` imports ``mesh.py`` (:func:`~tos.egressgw.mesh.resolve_broker_applicability` /
+    :func:`~tos.egressgw.mesh.deferred_item_verdict`); the reverse edge would be circular. This
+    is an **intra-package** edge, so the package-level allowlist checks above (which operate at
+    ``tos.*`` top-level granularity, and would not flag ``tos.egressgw.gateway`` — it is already
+    inside the allowed ``tos.egressgw`` package) cannot catch it; this AST scan checks it
+    directly against ``mesh.py``'s own source.
+    """
+    mesh_path = _SRC / "mesh.py"
+    tree = ast.parse(mesh_path.read_text(encoding="utf-8"), filename=str(mesh_path))
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "tos.egressgw.gateway" or alias.name.endswith(
+                    ".gateway"
+                ):
+                    offenders.append(f"mesh.py:{node.lineno} import {alias.name}")
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module in ("tos.egressgw.gateway", "tos.egressgw"):
+                for alias in node.names:
+                    if alias.name == "gateway":
+                        offenders.append(
+                            f"mesh.py:{node.lineno} from {node.module} import {alias.name}"
+                        )
+            if node.module == "tos.egressgw.gateway":
+                offenders.append(f"mesh.py:{node.lineno} from {node.module} import ...")
+    assert offenders == [], f"mesh.py imports gateway.py — circular edge: {offenders}"
+
+
 def test_source_imports_no_tos_module_outside_the_declared_allowlist() -> None:
     """(§0.3, the strict claim) No source statically imports a ``tos.*`` module off the list."""
     offenders: list[str] = []
