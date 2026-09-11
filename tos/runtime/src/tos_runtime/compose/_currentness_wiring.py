@@ -1001,7 +1001,17 @@ def _build_risk_and_currentness(
     )
     envelope = _load_action_flow_envelope(config_dir / _RISK_CONFIG_NAME)
     flow_governor = RecordingActionFlowGovernor(
-        rcl_log, evidence_store, envelope, writer_epoch=writer_epoch
+        rcl_log,
+        evidence_store,
+        envelope,
+        writer_epoch=writer_epoch,
+        # Phase 5 W3.2 plan §2 decision 8 (lane d2 follow-up) — the real fact
+        # ProtectiveActionService.protective_classification_digest supplies, replacing
+        # the None default that left ActionFlowDecisionInputs.
+        # protective_classification_digest permanently unfed (risk/flow.py:389-390).
+        protective_classification_digest_provider=(
+            safety_mesh.protective_action.protective_classification_digest
+        ),
     )
 
     # W3.1 independent review MEDIUM-3: `required_dimensions` used to be built by
