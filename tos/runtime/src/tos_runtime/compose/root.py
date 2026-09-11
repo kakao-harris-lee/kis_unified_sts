@@ -227,6 +227,7 @@ def compose_paper_runtime(
         construction=construction,
         environment_label=environment_label,
         continuity_id=continuity_id,
+        authority_epoch_service=boot.rcl.authority_epoch_service,
         request_bytes_digest_source=request_bytes_digest_source,
     )
     # Late-bind the EGRESS_IDENTITY dimension reader's cell now the composed

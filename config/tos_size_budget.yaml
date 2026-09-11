@@ -311,7 +311,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1088
+  measured: 1085
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -472,6 +472,11 @@ exceptions:
     import 만이라는 W3 계획의 목표(§8 결정)는 새 모듈(`_safety_wiring.py`)을
     아직 결선하지 않았으므로 아직 적용 대상이 아니고, 이 1줄은 그 목표와
     무관한 별도 배선.
+    **2026-09-11 Phase 5 W3-b EGRESS_IDENTITY/item-4 재등재 1088→1085(-3)**:
+    `_build_context_resolver`에 `authority_epoch_service` 매개변수 1줄 추가(item
+    4 deferred-mesh 필드가 필요로 함, plan §2 결정 4) + 호출부(`ComposeContextResolver
+    (...)`) 1줄 관통 배선 — 둘 다 기존 함수 편집. 같은 함수의 도크스트링을
+    산문 1단락으로 압축(§100줄 문턱 재확보)하며 net 순감소.
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime
@@ -584,7 +589,7 @@ exceptions:
     import 가 완전히 사라진다(순환을 우회가 아니라 제거). `gateway.py`/`mesh.py` 는
     이 모듈에서 `_verdict` 를 import.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 155
+  measured: 156
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
@@ -632,6 +637,10 @@ exceptions:
     (`boot.risk.egress_identity_dimension_state.credential_route_inventory = ...`,
     주석 2줄 포함) — 해당 인벤토리는 `context_resolver` 생성 시점에만 존재.
     분해 대신 등재.
+    **2026-09-11 Phase 5 W3-b item-4 재등재 155→156**: `_build_context_resolver`
+    호출부에 `authority_epoch_service=boot.rcl.authority_epoch_service,` 인자
+    1줄 추가(item 4 deferred-mesh 필드, plan §2 결정 4) — 정본 결선 순서
+    문서라 분해 대신 등재.
 - target: tos/runtime/src/tos_runtime/compose/_boot_integrity.py::record_operator_attested_inputs
   measured: 104
   owner: tos-runtime

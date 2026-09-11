@@ -114,6 +114,7 @@ from tos.venue import (
     VenueConstraintSnapshot,
 )
 
+from tos_runtime.authority.epoch import SafetyAuthorityEpochService
 from tos_runtime.brokercap import (
     BrokerScopesConfig,
     InstanceDocument,
@@ -354,6 +355,11 @@ class ComposeContextResolver:
     observed_session_phase: str
     continuity_id: str
     instrument_key: InstrumentKey
+    #: Item 4's deferred-mesh owner (Phase 5 W3-b, plan §2 decision 4) — the SAME
+    #: composed :class:`~tos_runtime.authority.epoch.SafetyAuthorityEpochService` the
+    #: Coordinator's ``RuntimeCoordinatorPreconditions.authority_epoch_current`` already
+    #: reads (:mod:`tos_runtime.compose._preconditions`), never a second service.
+    authority_epoch_service: SafetyAuthorityEpochService
     #: The exact venue facts step 3 folded — passed straight through to item 11
     #: rather than rebuilt, so item 11's re-fold cannot silently disagree with
     #: the fold ``VenueConstraintStage`` (step 3) already performed.
@@ -363,6 +369,14 @@ class ComposeContextResolver:
 
     contexts: tuple[SendBoundaryContext, ...] = field(default_factory=tuple)
     _yield_seq: int = 0
+    #: Item 4's CLAIMED Safety Authority epoch, bound ONCE at construction time — never
+    #: re-read per attempt (the same "claim fixed at composition, never re-derived"
+    #: discipline :class:`~tos_runtime.compose._preconditions.RuntimeCoordinatorPreconditions`
+    #: already documents for its own ``_bound_epoch``). Set in :meth:`__post_init__`.
+    _bound_authority_epoch: int | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        self._bound_authority_epoch = self.authority_epoch_service.current_epoch()
 
     def _egress_request_for_command(
         self, command_digest: str | None, *, request_bytes_digest: str | None
@@ -657,6 +671,35 @@ class ComposeContextResolver:
             "worst_credible_capacity": attestations.worst_credible_capacity,
         }
 
+    def _deferred_mesh_fields(self) -> dict[str, Any]:
+        """Items 4/5/7/8/9/10's ``SendBoundaryContext`` deferred-mesh fields (Phase 5
+        W3-b, plan §2 decision 4 — kernel round #2 §2 decision 2's closed item↔field
+        table: ``True`` ⇒ SATISFIED, ``False`` ⇒ DENIED, ``None`` ⇒ UNKNOWN, the
+        kernel judges positivity only).
+
+        Item 4 (``safety_authority_epoch_current``) is the only one this composition
+        can honestly supply today: the Safety Authority epoch service's own
+        :meth:`~tos_runtime.authority.epoch.SafetyAuthorityEpochService.epoch_current`,
+        checked against :attr:`_bound_authority_epoch` — the claim fixed ONCE at this
+        resolver's construction, never re-derived per attempt (same discipline as
+        :class:`~tos_runtime.compose._preconditions.RuntimeCoordinatorPreconditions`'s
+        own ``_bound_epoch``) — never a second currentness/authorization comparison
+        authored here.
+
+        Items 5 (``live_scope_valid``) / 7 / 8 / 9 / 10 are deliberately ABSENT (never a
+        key in the returned dict, so ``send_boundary_context`` leaves them at their own
+        ``None`` default): item 5 stays UNKNOWN per plan §2 decision 4's operator
+        confirmation ③ (a); items 7-10 have no runtime owner wired into this resolver
+        yet (the four safety-mesh services, W3-a1/a2 — SAFETY_ENVELOPE_PROFILE and
+        DEVIATION have landed but are not yet composed here, INCIDENT/MONITORING have
+        not landed at all; supplying only SOME of the four would be a worse, silently
+        partial signal than supplying none — this waits for all four together)."""
+        return {
+            "safety_authority_epoch_current": self.authority_epoch_service.epoch_current(
+                self._bound_authority_epoch
+            ),
+        }
+
     def _item6_item12_fields(self) -> Item6Item12Fields:
         """Items 6/12's derived fields (TOS Phase 4 plan §2 decision 4) —
         the ONE call site :meth:`_egress_gate_stand_in_fields` and
@@ -757,6 +800,7 @@ class ComposeContextResolver:
             authorized_coordinates=self.authorized_coordinates,
             capsule_egress_request_digest=request_bytes_digest,
             outbound_side=self.outbound_side,
+            **self._deferred_mesh_fields(),
         )
         self.contexts += (context,)
         return context

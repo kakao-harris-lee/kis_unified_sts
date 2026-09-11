@@ -799,32 +799,28 @@ def _build_context_resolver(
     construction: ConstructionConfig,
     environment_label: str,
     continuity_id: str,
+    authority_epoch_service: SafetyAuthorityEpochService,
     request_bytes_digest_source: RequestBytesDigestSource | None = None,
 ) -> ComposeContextResolver:
-    """The gateway's lazy ``SendBoundaryContext`` resolver (design #35 §3.1
-    (3)), wired with this environment's transport nature / credential-route
-    inventory / authorized coordinates.
+    """The gateway's lazy ``SendBoundaryContext`` resolver (design #35 §3.1 (3)), wired
+    with this environment's transport nature / credential-route inventory / authorized
+    coordinates.
 
-    G-4 CLOSED (plan §2 decision 2): transport nature / credential-route
-    inventory are STRUCTURALLY DERIVED from ``broker_scopes.active_scope``
+    G-4 CLOSED (plan §2 decision 2): transport nature / credential-route inventory are
+    STRUCTURALLY DERIVED from ``broker_scopes.active_scope``
     (:func:`~tos_runtime.brokercap.transport_nature` /
-    :func:`~tos_runtime.brokercap.credential_route_inventory`), never the
-    three old ``f"synthetic-paper-{environment_label}"`` literals; the old
-    R2 literal-comparison boot refusal is likewise generalized to
-    :func:`~tos_runtime.brokercap.refuse_principal_collision` over EVERY
-    configured scope's principal.
-
-    ``instance_document`` is loaded EXACTLY ONCE per boot, by
-    :func:`_resolve_strategies_and_attested_inputs`, and threaded through
-    :class:`_BootResult` (finding F9 — no second re-load here).
-
-    Args:
-        request_bytes_digest_source: T2 lane A's digest-source seam. ``None``
-            (every caller today) builds :func:`_default_request_bytes_digest_source`.
+    :func:`~tos_runtime.brokercap.credential_route_inventory`) — the old R2 literal-
+    comparison boot refusal is likewise generalized to
+    :func:`~tos_runtime.brokercap.refuse_principal_collision` over EVERY configured
+    scope's principal. ``instance_document`` is loaded EXACTLY ONCE per boot (finding
+    F9 — no second re-load here). ``authority_epoch_service`` feeds item 4's deferred-
+    mesh field (Phase 5 W3-b, plan §2 decision 4), forwarded straight to
+    :class:`ComposeContextResolver`. ``request_bytes_digest_source`` is T2 lane A's
+    digest-source seam (``None`` -> builds :func:`_default_request_bytes_digest_source`).
 
     Raises:
-        BrokerScopeConfigError: ``active_principal`` collides with a scope's
-            own principal (generalized R2), or a config/kernel mismatch.
+        BrokerScopeConfigError: ``active_principal`` collides with a scope's own
+            principal (generalized R2), or a config/kernel mismatch.
     """
     refuse_principal_collision(
         broker_scopes, active_principal=egress_coordinates.active_principal
@@ -843,6 +839,7 @@ def _build_context_resolver(
         egress_attestations=egress_attestations,
         broker_scopes=broker_scopes,
         instance_document=instance_document,
+        authority_epoch_service=authority_epoch_service,
         # Transport's OWN identity (slice #3) — derived from the active scope, G-4 closed.
         transport_nature=transport_nature(broker_scopes.active_scope),
         environment_label=environment_label,
