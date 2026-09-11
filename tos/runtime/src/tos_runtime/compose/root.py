@@ -191,8 +191,24 @@ def compose_paper_runtime(
     boot.risk.environment_scope_dimension_state.active_scope = (
         boot.broker_scopes.active_scope
     )
+    # Late-bind the RELEASE dimension reader's cell now STAGE B has actually run
+    # (Phase 5 W3.2, plan §2 decision 6) — `_boot_services` only returns at all once
+    # `_stage_b_release_probe` has admitted (a refusal raises instead), so this is
+    # always `True` here; see `_ReleaseDimensionState`'s own docstring for why that is
+    # honest, not fabricated.
+    boot.risk.release_dimension_state.release_admitted = boot.release_admitted
 
     construction_stages = _build_construction_stages(construction)
+    # Late-bind the CONSTRAINT dimension reader's cell now step 3's own VerdictRecorder
+    # exists (Phase 5 W3.2, plan §2 decision 2).
+    boot.risk.constraint_dimension_state.venue_recorder = (
+        construction_stages.venue_recorder
+    )
+    # Late-bind the CONSTRUCTION dimension reader's cell now step 2's own stage exists
+    # (Phase 5 W3.2, plan §2 decision 3).
+    boot.risk.construction_dimension_state.construction_stage = (
+        construction_stages.construction_stage
+    )
     realized = _build_realized_stages(
         infra=boot.infra,
         rcl=boot.rcl,
@@ -209,6 +225,11 @@ def compose_paper_runtime(
     # 9/4's VerdictRecorders exist (Phase 5 W3-b, plan §2 decision 3).
     boot.risk.action_flow_dimension_state.step9_recorder = realized.step9_recorder
     boot.risk.trading_approval_dimension_state.step4_recorder = realized.step4_recorder
+    # Late-bind the DECISION_PROOF_INTENT dimension reader's cell now step 13's own
+    # VerdictRecorder exists (Phase 5 W3.2, plan §2 decision 2).
+    boot.risk.decision_proof_intent_dimension_state.step13_recorder = (
+        realized.step13_recorder
+    )
     stages = _build_stage_map(construction_stages, realized)
 
     # T2 lane C: a kis-mock boot binds the genuine KIS wire-codec digest into the context
@@ -273,6 +294,7 @@ def compose_paper_runtime(
         config_dir=config_dir,
         scheme=_SCHEME,
         monotonic_source=boot.infra.monotonic_source,
+        post_trade_dimension_state=boot.risk.post_trade_dimension_state,
     )
     composed = apply_recovery_barrier(
         composed,

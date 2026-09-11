@@ -517,6 +517,7 @@ def _stage_b_release_probe(
 class _ConstructionStages:
     construction_stage: OrderConstructionStage
     venue_stage: VenueConstraintStage
+    venue_recorder: VerdictRecorder  #: wraps venue_stage for CONSTRAINT's reader
     economic_stage: EconomicEffectStage
     proof_stage: ConformanceProofStage
 
@@ -560,6 +561,7 @@ def _build_construction_stages(construction: ConstructionConfig) -> _Constructio
     return _ConstructionStages(
         construction_stage=construction_stage,
         venue_stage=venue_stage,
+        venue_recorder=VerdictRecorder(venue_stage),
         economic_stage=economic_stage,
         proof_stage=proof_stage,
     )
@@ -573,7 +575,9 @@ class _RealizedStages:
     step8_stage: LedgerVerificationStage
     step9_recorder: VerdictRecorder
     step10_stage: CommitmentUnavailabilityStage
-    step13_stage: AttemptBindVerificationStage
+    step13_recorder: (
+        VerdictRecorder  #: wraps step 13 for DECISION_PROOF_INTENT's reader
+    )
     step14_stage: TransmissionCapabilityStage
 
 
@@ -726,7 +730,7 @@ def _build_realized_stages(
         )
     )
     step10_stage = CommitmentUnavailabilityStage(projection)
-    step13_stage, step14_stage = _build_currentness_stages(
+    step13_recorder, step14_stage = _build_currentness_stages(
         rcl_log=rcl_log,
         writer_epoch=writer_epoch,
         proof_stage=proof_stage,
@@ -741,7 +745,7 @@ def _build_realized_stages(
         step8_stage=step8_stage,
         step9_recorder=step9_recorder,
         step10_stage=step10_stage,
-        step13_stage=step13_stage,
+        step13_recorder=step13_recorder,
         step14_stage=step14_stage,
     )
 
@@ -754,7 +758,7 @@ def _build_currentness_stages(
     flow_governor: RecordingActionFlowGovernor,
     step4_recorder: VerdictRecorder,
     construction: ConstructionConfig,
-) -> tuple[AttemptBindVerificationStage, TransmissionCapabilityStage]:
+) -> tuple[VerdictRecorder, TransmissionCapabilityStage]:
     """Steps 13 (Attempt Bind Verification) + 14 (Transmission Capability) —
     split out of :func:`_build_realized_stages` purely for the size budget."""
     step13_stage = AttemptBindVerificationStage(
@@ -791,7 +795,7 @@ def _build_currentness_stages(
             side_action_scope=construction.outbound_side,
         ),
     )
-    return step13_stage, step14_stage
+    return VerdictRecorder(step13_stage), step14_stage
 
 
 #: W3.1 independent review MEDIUM-4 evidence kind — see
@@ -1123,7 +1127,7 @@ def _build_stage_map(
     split out purely for the size budget."""
     return {
         CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION: construction_stages.construction_stage,
-        CommitmentStep.VENUE_ADMISSIBILITY_DECISION: construction_stages.venue_stage,
+        CommitmentStep.VENUE_ADMISSIBILITY_DECISION: construction_stages.venue_recorder,
         CommitmentStep.INDEPENDENT_APPROVAL: realized.step4_recorder,
         CommitmentStep.ECONOMIC_EFFECT_ENVELOPE: construction_stages.economic_stage,
         CommitmentStep.AGGREGATE_RISK_DECISION: realized.step6_stage,
@@ -1132,6 +1136,6 @@ def _build_stage_map(
         CommitmentStep.ATOMIC_COMMIT: realized.step9_recorder,
         CommitmentStep.COMMITMENT_UNAVAILABILITY: realized.step10_stage,
         CommitmentStep.ORDER_CONFORMANCE_PROOF: construction_stages.proof_stage,
-        CommitmentStep.ATTEMPT_BIND_VERIFICATION: realized.step13_stage,
+        CommitmentStep.ATTEMPT_BIND_VERIFICATION: realized.step13_recorder,
         CommitmentStep.TRANSMISSION_CAPABILITY: realized.step14_stage,
     }

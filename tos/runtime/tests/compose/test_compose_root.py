@@ -1192,9 +1192,13 @@ class TestPendingDimensionAttestationGatesCompleteness:
     def test_one_false_attestation_makes_the_vector_incomplete(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
+        # RELEASE used to be the dimension flipped here; Phase 5 W3.2 gave it a real
+        # dimension_readers entry (_release_dimension_reader_for), so this test now
+        # flips CONTEXT instead — one of the three dimensions still genuinely pending
+        # (tos_runtime.compose._pending_dimensions.PENDING_DIMENSION_KEYS).
         dims_path = config_dir / "currentness_dimensions.yaml"
         raw = yaml.safe_load(dims_path.read_text(encoding="utf-8"))
-        raw["RELEASE"]["positively_established"] = False
+        raw["CONTEXT"]["positively_established"] = False
         dims_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
 
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)

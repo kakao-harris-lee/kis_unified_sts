@@ -311,7 +311,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1137
+  measured: 1141
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -494,6 +494,19 @@ exceptions:
     공급) — 신규 함수 자체가 순증분 대부분. `_build_context_resolver` 자신도
     도크스트링을 재차 압축했으나(15→10줄) 여전히 100줄 문턱을 101로 초과 —
     함수 자신을 아래 목록 끝에 별도 등재(무예외 목표 미달성, 정직 등재).
+    **2026-09-11 Phase 5 W3.2 재등재 1137→1141(+4)**: 6차원 owner 착지(plan §2
+    결정 2) — step 3(venue)·step 13(bind verification)에 step 4/9 와 동일한
+    `VerdictRecorder` 관용구 부착. `_ConstructionStages`에 `venue_recorder`
+    필드 1줄 + `_build_construction_stages`의 반환식에 `venue_recorder=
+    VerdictRecorder(venue_stage)` 1줄(venue_stage 자신은 `ComposeContextResolver`
+    가 그대로 읽으므로 무편집 — 신규 필드 추가일 뿐) + `_RealizedStages`의
+    `step13_stage: AttemptBindVerificationStage` 필드를 `step13_recorder:
+    VerdictRecorder`로 대체(순증분 0) + `_build_stage_map`의 두 항목을 레코더로
+    교체(순증분 0). 순수 신규 증가는 필드 1줄 + 호출부 1줄 = 2줄이나, 두 필드
+    옆 인라인 주석(각 1줄)까지 포함해 흑자 후 +4 — 계획 §4 결정 2 의 "`_wiring.py`
+    는 성장 0 목표"는 이번 파도만은 재등재로 해소(도크스트링 상세 설명은 전부
+    `_currentness_wiring.py`의 CONSTRAINT/DECISION_PROOF_INTENT 리더 자신의
+    도크스트링으로 이관 — 이 파일에는 1줄 포인터만 남김).
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime
@@ -619,7 +632,7 @@ exceptions:
     import 가 완전히 사라진다(순환을 우회가 아니라 제거). `gateway.py`/`mesh.py` 는
     이 모듈에서 `_verdict` 를 import.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 166
+  measured: 188
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
@@ -684,6 +697,14 @@ exceptions:
     해당 차원 상태 자체가 폐기됨) 5줄 제거와 `_build_context_resolver` 호출부의
     `evidence_store=boot.infra.evidence_store,` 인자 1줄 추가가 상쇄되어 순증
     +4. 정본 결선 순서 문서라 분해 대신 등재.
+    **2026-09-11 Phase 5 W3.2 lane d1 재등재 166→188(+22)**: 잔여 4차원
+    (CONSTRAINT·CONSTRUCTION·DECISION_PROOF_INTENT·RELEASE) late-bound 셀을
+    실 recorder/스테이지/부팅 판정이 존재하는 시점에 채우는 4개 블록(각 1-4줄
+    · 계획 §2 결정 2/3/6) + `apply_release_wiring` 호출부에
+    `post_trade_dimension_state=boot.risk.post_trade_dimension_state,` 인자
+    1줄(POST_TRADE 리더의 셀 — 계획 §2 결정 5). AGGREGATE_RISK 는 late-bind
+    불필요(리더가 `risk_service` 를 직접 닫음 — `_currentness_wiring.py` 자신의
+    등재 참조). 정본 결선 순서 문서라 분해 대신 등재.
 - target: tos/runtime/src/tos_runtime/compose/_boot_integrity.py::record_operator_attested_inputs
   measured: 104
   owner: tos-runtime
@@ -765,3 +786,38 @@ exceptions:
     새 스냅샷 소비자 아님)/`time_health_state`/`evidence_recorder` 4개 포트를
     조립하는 블록(주석 6줄 포함) + `_SafetyMesh` 반환에 `protective_action=` 1줄
     추가 — 이 함수가 그 유일한 결선 지점이라 분해 대신 등재.
+- target: tos/runtime/src/tos_runtime/compose/_currentness_wiring.py
+  measured: 1081
+  owner: tos-runtime
+  decomposition_order: 44
+  expires_on: '2026-12-31'
+  note: >-
+    2026-09-11 Phase 5 W3.2 lane d1 신규 등재(계획 §2 결정 2-6) — 잔여
+    6차원 owner(AGGREGATE_RISK·CONSTRUCTION·CONSTRAINT·DECISION_PROOF_INTENT·
+    POST_TRADE·RELEASE) 리더 6개 + 각자의 late-bound state 셀 5개
+    (`_ConstructionDimensionState`/`_ConstraintDimensionState`/
+    `_DecisionProofIntentDimensionState`/`_PostTradeDimensionState`/
+    `_ReleaseDimensionState`) + 각 리더의 상세 도크스트링(정직성 근거·기각
+    대안·kernel `dimension_positively_established` 가 `bound_generation=None`
+    을 «좌표 누락» 으로 취급한다는 발견 포함) 이 이 모듈에 추가되며 828→1081
+    로 문턱 초과. lane b(W3.1)가 이미 828줄로 이 모듈을 무예외 상태로 남겼던
+    것이 이번 파도에서 처음 초과 — 리더 9개(4 기존 + 5 신규, AGGREGATE_RISK는
+    상태 셀 없이 `risk_service` 를 직접 닫음)를 한 모듈에 유지하는 것 자체가
+    `_build_dimension_readers` 단일 조립 지점(설계 §2 결정 1) 의 목적이라
+    분해 대신 등재.
+- target: tos/runtime/src/tos_runtime/compose/_currentness_wiring.py::_build_risk_and_currentness
+  measured: 101
+  owner: tos-runtime
+  decomposition_order: 45
+  expires_on: '2026-12-31'
+  note: >-
+    2026-09-11 Phase 5 W3.2 lane d1 신규 등재 — `_build_dimension_readers` 호출에
+    `risk_service=risk_service` 인자 1줄(AGGREGATE_RISK 리더가 필요) +
+    `_RiskAndCurrentness` 반환식에 5개 신규 late-bound state 필드
+    (`construction_dimension_state`/`constraint_dimension_state`/
+    `decision_proof_intent_dimension_state`/`post_trade_dimension_state`/
+    `release_dimension_state`) 5줄 추가로 96→101 로 100줄 문턱을 1줄 초과.
+    도크스트링을 2줄로 압축했으나(원래 3줄) black 이 `required_scenario_kinds`/
+    `risk_service` 대입식을 88자 문턱 때문에 각각 3줄로 재개행해 순감소가
+    상쇄됨 — 이 함수가 `_RiskAndCurrentness`(9개 late-bound 셀을 보유)의 유일한
+    조립 지점이라 분해 대신 등재(무예외 목표 미달성, 정직 등재).

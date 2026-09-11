@@ -31,6 +31,14 @@ This is a compose-only artifact: it satisfies the SAME
 :mod:`tos_runtime.currentness.vector`'s own owned/injected dimensions use,
 and is passed to :meth:`~tos_runtime.currentness.vector.CurrentnessAssembler.assemble`'s
 own ``extra_dimensions`` parameter — never invented inside that module.
+
+**Current count (historical "17" above is this module's ORIGINAL framing, left unedited —
+:data:`PENDING_DIMENSION_KEYS` below is the live truth).** Phase 5 W3-a1/a2/b/W3.1/W3.2 have
+since landed real dimension-owner readers for fourteen of the original seventeen
+(:data:`_READER_OWNED_DIMENSION_KEYS` — each entry's own comment names its reader). Three
+remain pending: ``CONTEXT``/``CRITICAL_INPUT`` (no runtime ``tos.capsule`` producer exists at
+all — a future capsule-chain wave, not this one) and ``EGRESS_IDENTITY`` (partial kernel
+predicate coverage only — see :data:`_READER_OWNED_DIMENSION_KEYS`'s own comment).
 """
 
 from __future__ import annotations
@@ -92,11 +100,16 @@ _READER_OWNED_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
         #: ``tos.brockercap.predicates.environment_binding_ok`` over the SAME
         #: environment/scope tokens ``tos_runtime.compose.context`` already computes.
         DimensionKey.ENVIRONMENT_SCOPE,
-        #: EGRESS_IDENTITY is deliberately NOT here (W3.1 independent review MEDIUM-4):
-        #: it was briefly reader-owned via ``credential_route_authority_disjoint`` alone
-        #: (1 of 3 kernel predicates), and asserting ``positively_established`` on that
-        #: partial coverage was an over-claim. Reverted to pending — the one real
-        #: predicate is now recorded as an evidence-only observation, never a dimension
+        #: EGRESS_IDENTITY is deliberately NOT here (W3.1 independent review MEDIUM-4,
+        #: re-investigated and reconfirmed in Phase 5 W3.2): it was briefly reader-owned
+        #: via ``credential_route_authority_disjoint`` alone (1 of 3 kernel predicates),
+        #: and asserting ``positively_established`` on that partial coverage was an
+        #: over-claim. Still pending — ``stale_principal_structurally_rejected`` and
+        #: ``egress_generation_monotonic`` (the other two kernel predicates,
+        #: ``tos.egress.predicates``) need an ``ActiveEgressPrincipalSet``/prior
+        #: ``OrderingEvent`` this runtime has ZERO production imports of
+        #: (``grep -rn ActiveEgressPrincipalSet tos/runtime/src`` — empty); the one real
+        #: predicate is recorded as an evidence-only observation, never a dimension
         #: verdict (``_wiring.py``'s ``_record_egress_identity_observation``).
         #: The four Phase 5 W3-a1/a2 safety-mesh services (plan §2 decision 2) —
         #: ``tos_runtime.compose._safety_wiring.build_safety_mesh``'s own
@@ -105,6 +118,23 @@ _READER_OWNED_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
         DimensionKey.DEVIATION,
         DimensionKey.INCIDENT,
         DimensionKey.MONITORING,
+        #: Phase 5 W3.2 (plan §2 decisions 2-6) — the six remaining currentness dimension
+        #: owners: ``_aggregate_risk_dimension_reader_for`` (step 6's already-computed
+        #: ``AggregateRiskDecision.result``), ``_construction_dimension_reader_for``
+        #: (step 2's already-computed ioc verdicts), ``_constraint_dimension_reader_for``
+        #: (step 3's ``order_shape_admissible`` verdict, partial coverage disclosed),
+        #: ``_decision_proof_intent_dimension_reader_for`` (step 13's
+        #: ``exact_binding_holds`` verdict), ``_post_trade_dimension_reader_for``
+        #: (``FinalityReleaseConsumer.latest_release_is_conflict_free``), and
+        #: ``_release_dimension_reader_for`` (boot's own STAGE B release-admission
+        #: verdict) — see each reader's own docstring in
+        #: ``tos_runtime.compose._currentness_wiring``.
+        DimensionKey.AGGREGATE_RISK,
+        DimensionKey.CONSTRUCTION,
+        DimensionKey.CONSTRAINT,
+        DimensionKey.DECISION_PROOF_INTENT,
+        DimensionKey.POST_TRADE,
+        DimensionKey.RELEASE,
     }
 )
 

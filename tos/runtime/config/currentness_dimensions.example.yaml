@@ -5,8 +5,10 @@
 # MANDATED_DIMENSION_FLOOR (every non-conditional tos.cur.DimensionKey
 # member). This composition's own live services structurally establish
 # exactly four of them (COMMIT_LOG, TRUSTWORTHY_TIME, SAFETY_AUTHORITY,
-# ACTION_FLOW). The 17 below have NO runtime owner in Phase 2 — no lane
-# P/Q/R/S service computes a real positively_established verdict for them.
+# ACTION_FLOW). The 17 below (historical framing) had NO runtime owner in
+# Phase 2 — no lane P/Q/R/S service computed a real positively_established
+# verdict for them. Fourteen have since landed real dimension-owner readers
+# (Phase 5 W3-a1/a2/b/W3.1/W3.2); only the three blocks below remain.
 #
 # Every field below is a named-TBD `null` in this example — an operator
 # MUST fill in a concrete value for every field of every dimension before
@@ -20,24 +22,25 @@
 # real Phase 5 runtime owner's verdict — never presented as if a runtime
 # owner produced them.
 
-# owner note: Phase 5 (a real Aggregate Risk currentness owner) replaces this attestation
-AGGREGATE_RISK:
-  bound_generation: null
-  bound_digest: null
-  restrictive_floor: null
-  positively_established: null
-# owner note: Phase 5 (a real Order Construction Policy constraint owner) replaces this attestation
-CONSTRAINT:
-  bound_generation: null
-  bound_digest: null
-  restrictive_floor: null
-  positively_established: null
-# owner note: Phase 5 (a real Order Construction Policy owner) replaces this attestation
-CONSTRUCTION:
-  bound_generation: null
-  bound_digest: null
-  restrictive_floor: null
-  positively_established: null
+# AGGREGATE_RISK: Phase 5 W3.2 landed a real dimension_readers entry
+# (tos_runtime.compose._currentness_wiring._aggregate_risk_dimension_reader_for,
+# over step 6's own already-computed AggregateRiskDecision.result) — this
+# block is REMOVED, never left null; a config that still carries an
+# AGGREGATE_RISK key here now refuses to load (tos_runtime.compose
+# ._pending_dimensions._READER_OWNED_DIMENSION_KEYS).
+# CONSTRAINT: Phase 5 W3.2 landed a real dimension_readers entry
+# (tos_runtime.compose._currentness_wiring._constraint_dimension_reader_for,
+# over step 3's own VenueConstraintStage verdict, partial coverage
+# disclosed in the reader's own docstring) — this block is REMOVED, never
+# left null; a config that still carries a CONSTRAINT key here now refuses
+# to load (tos_runtime.compose._pending_dimensions
+# _READER_OWNED_DIMENSION_KEYS).
+# CONSTRUCTION: Phase 5 W3.2 landed a real dimension_readers entry
+# (tos_runtime.compose._currentness_wiring._construction_dimension_reader_for,
+# over step 2's own already-computed ioc verdicts) — this block is
+# REMOVED, never left null; a config that still carries a CONSTRUCTION key
+# here now refuses to load (tos_runtime.compose._pending_dimensions
+# _READER_OWNED_DIMENSION_KEYS).
 # owner note: Phase 5 (a real decision-context owner) replaces this attestation
 CONTEXT:
   bound_generation: null
@@ -56,12 +59,14 @@ CRITICAL_INPUT:
 # REMOVED, never left null; a config that still carries a CURRENTNESS_POLICY
 # key here now refuses to load (tos_runtime.compose._pending_dimensions
 # _READER_OWNED_DIMENSION_KEYS).
-# owner note: Phase 5 (a real decision-proof-intent owner) replaces this attestation
-DECISION_PROOF_INTENT:
-  bound_generation: null
-  bound_digest: null
-  restrictive_floor: null
-  positively_established: null
+# DECISION_PROOF_INTENT: Phase 5 W3.2 landed a real dimension_readers entry
+# (tos_runtime.compose._currentness_wiring
+# ._decision_proof_intent_dimension_reader_for, over step 13's own
+# AttemptBindVerificationStage verdict — deliberately NOT the item-16 egress
+# currentness proof, which would be circular; see the reader's own
+# docstring) — this block is REMOVED, never left null; a config that still
+# carries a DECISION_PROOF_INTENT key here now refuses to load
+# (tos_runtime.compose._pending_dimensions _READER_OWNED_DIMENSION_KEYS).
 # DEVIATION: Phase 5 W3-a1 landed a real dimension_readers entry
 # (tos_runtime.safety.deviation.DeviationService, via
 # tos_runtime.compose._safety_wiring.build_safety_mesh) — this block is
@@ -72,8 +77,12 @@ DECISION_PROOF_INTENT:
 # W3.1 independent review MEDIUM-4 (2026-09-11): a reader briefly landed here
 # using only credential_route_authority_disjoint (1 of 3 kernel predicates) and
 # was reverted -- asserting positively_established on 1/3 coverage was an
-# over-claim. The one real predicate is now an evidence-only observation
-# (_wiring.py's _record_egress_identity_observation), never a dimension verdict.
+# over-claim. Phase 5 W3.2 re-investigated the other two predicates
+# (stale_principal_structurally_rejected / egress_generation_monotonic) and
+# found this runtime still has zero production ActiveEgressPrincipalSet
+# producers — still pending. The one real predicate is an evidence-only
+# observation (_wiring.py's _record_egress_identity_observation), never a
+# dimension verdict.
 EGRESS_IDENTITY:
   bound_generation: null
   bound_digest: null
@@ -97,24 +106,26 @@ EGRESS_IDENTITY:
 # REMOVED, never left null; a config that still carries a MONITORING key
 # here now refuses to load (tos_runtime.compose._pending_dimensions
 # _READER_OWNED_DIMENSION_KEYS).
-# owner note: Phase 5 (a real post-trade owner) replaces this attestation
-POST_TRADE:
-  bound_generation: null
-  bound_digest: null
-  restrictive_floor: null
-  positively_established: null
+# POST_TRADE: Phase 5 W3.2 landed a real dimension_readers entry
+# (tos_runtime.compose._currentness_wiring._post_trade_dimension_reader_for,
+# over tos_runtime.posttrade.release_consumer.FinalityReleaseConsumer
+# .latest_release_is_conflict_free) — this block is REMOVED, never left
+# null; a config that still carries a POST_TRADE key here now refuses to
+# load (tos_runtime.compose._pending_dimensions
+# _READER_OWNED_DIMENSION_KEYS).
 # RECOVERY: Phase 5 W3-b landed a real dimension_readers entry
 # (tos_runtime.compose._currentness_wiring._recovery_dimension_reader_for,
 # over the TOS Phase 5 W1 recovery barrier's own RecoveryVerdict) — this
 # block is REMOVED, never left null; a config that still carries a RECOVERY
 # key here now refuses to load (tos_runtime.compose._pending_dimensions
 # _READER_OWNED_DIMENSION_KEYS).
-# owner note: Phase 5 (a real release-admission currentness owner) replaces this attestation
-RELEASE:
-  bound_generation: null
-  bound_digest: null
-  restrictive_floor: null
-  positively_established: null
+# RELEASE: Phase 5 W3.2 landed a real dimension_readers entry
+# (tos_runtime.compose._currentness_wiring._release_dimension_reader_for,
+# over boot's own STAGE B release-admission verdict,
+# tos_runtime.compose._wiring._stage_b_release_probe) — this block is
+# REMOVED, never left null; a config that still carries a RELEASE key here
+# now refuses to load (tos_runtime.compose._pending_dimensions
+# _READER_OWNED_DIMENSION_KEYS).
 # SAFETY_ENVELOPE_PROFILE: Phase 5 W3-a1 landed a real dimension_readers entry
 # (tos_runtime.safety.profile.SafetyProfileService, via
 # tos_runtime.compose._safety_wiring.build_safety_mesh) — this block is
