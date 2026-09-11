@@ -1,5 +1,6 @@
-"""Tests for :mod:`tos_runtime.compose._currentness_wiring`'s late-bound dimension
-readers (Phase 5 W3-b).
+"""Tests for :mod:`tos_runtime.compose._dimension_readers`'s late-bound dimension
+readers (Phase 5 W3-b; module moved out of ``_currentness_wiring`` 2026-09-12 for
+the size budget — this test file's own name is unchanged).
 
 Covers W3.1 independent review MEDIUM-5 (mutation M9 survived): nothing pinned that a
 not-yet-late-bound cell yields an ABSENT dimension (``None``) rather than a fabricated
@@ -39,8 +40,8 @@ from tos_runtime.brokercap.scopes import (
     PrincipalClass,
     ScopeInstanceBinding,
 )
-from tos_runtime.compose import _currentness_wiring
-from tos_runtime.compose._currentness_wiring import (
+from tos_runtime.compose import _dimension_readers
+from tos_runtime.compose._dimension_readers import (
     _aggregate_risk_dimension_reader_for,
     _constraint_dimension_reader_for,
     _ConstraintDimensionState,
@@ -373,7 +374,7 @@ def test_environment_scope_reader_never_takes_the_vacuous_pass_on_an_unknown_rea
     """
     scope = _broker_reaching_scope(instance=None)
     monkeypatch.setattr(
-        _currentness_wiring,
+        _dimension_readers,
         "transport_nature",
         lambda _scope: TransportNature(reaches_broker=None),
     )

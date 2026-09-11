@@ -786,38 +786,3 @@ exceptions:
     새 스냅샷 소비자 아님)/`time_health_state`/`evidence_recorder` 4개 포트를
     조립하는 블록(주석 6줄 포함) + `_SafetyMesh` 반환에 `protective_action=` 1줄
     추가 — 이 함수가 그 유일한 결선 지점이라 분해 대신 등재.
-- target: tos/runtime/src/tos_runtime/compose/_currentness_wiring.py
-  measured: 1081
-  owner: tos-runtime
-  decomposition_order: 44
-  expires_on: '2026-12-31'
-  note: >-
-    2026-09-11 Phase 5 W3.2 lane d1 신규 등재(계획 §2 결정 2-6) — 잔여
-    6차원 owner(AGGREGATE_RISK·CONSTRUCTION·CONSTRAINT·DECISION_PROOF_INTENT·
-    POST_TRADE·RELEASE) 리더 6개 + 각자의 late-bound state 셀 5개
-    (`_ConstructionDimensionState`/`_ConstraintDimensionState`/
-    `_DecisionProofIntentDimensionState`/`_PostTradeDimensionState`/
-    `_ReleaseDimensionState`) + 각 리더의 상세 도크스트링(정직성 근거·기각
-    대안·kernel `dimension_positively_established` 가 `bound_generation=None`
-    을 «좌표 누락» 으로 취급한다는 발견 포함) 이 이 모듈에 추가되며 828→1081
-    로 문턱 초과. lane b(W3.1)가 이미 828줄로 이 모듈을 무예외 상태로 남겼던
-    것이 이번 파도에서 처음 초과 — 리더 9개(4 기존 + 5 신규, AGGREGATE_RISK는
-    상태 셀 없이 `risk_service` 를 직접 닫음)를 한 모듈에 유지하는 것 자체가
-    `_build_dimension_readers` 단일 조립 지점(설계 §2 결정 1) 의 목적이라
-    분해 대신 등재.
-- target: tos/runtime/src/tos_runtime/compose/_currentness_wiring.py::_build_risk_and_currentness
-  measured: 101
-  owner: tos-runtime
-  decomposition_order: 45
-  expires_on: '2026-12-31'
-  note: >-
-    2026-09-11 Phase 5 W3.2 lane d1 신규 등재 — `_build_dimension_readers` 호출에
-    `risk_service=risk_service` 인자 1줄(AGGREGATE_RISK 리더가 필요) +
-    `_RiskAndCurrentness` 반환식에 5개 신규 late-bound state 필드
-    (`construction_dimension_state`/`constraint_dimension_state`/
-    `decision_proof_intent_dimension_state`/`post_trade_dimension_state`/
-    `release_dimension_state`) 5줄 추가로 96→101 로 100줄 문턱을 1줄 초과.
-    도크스트링을 2줄로 압축했으나(원래 3줄) black 이 `required_scenario_kinds`/
-    `risk_service` 대입식을 88자 문턱 때문에 각각 3줄로 재개행해 순감소가
-    상쇄됨 — 이 함수가 `_RiskAndCurrentness`(9개 late-bound 셀을 보유)의 유일한
-    조립 지점이라 분해 대신 등재(무예외 목표 미달성, 정직 등재).

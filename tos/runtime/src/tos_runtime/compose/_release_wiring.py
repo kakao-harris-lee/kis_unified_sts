@@ -38,7 +38,7 @@ from pathlib import Path
 
 from tos.canonical import CanonicalizationScheme
 
-from tos_runtime.compose._currentness_wiring import _PostTradeDimensionState
+from tos_runtime.compose._dimension_readers import _PostTradeDimensionState
 from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.posttrade.config import load_finality_config
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
@@ -89,7 +89,7 @@ def apply_release_wiring(
             test that injects a fake one).
         post_trade_dimension_state: The POST_TRADE currentness dimension reader's late-bound
             cell (Phase 5 W3.2, plan §2 decision 5 —
-            :class:`~tos_runtime.compose._currentness_wiring._PostTradeDimensionState`) —
+            :class:`~tos_runtime.compose._dimension_readers._PostTradeDimensionState`) —
             filled in with the built consumer below, or left ``None`` (module docstring's
             "consumer not wired" case) when ``runtime.driver`` is already ``None``.
 
