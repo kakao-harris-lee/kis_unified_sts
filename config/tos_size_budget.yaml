@@ -311,7 +311,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1100
+  measured: 1137
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -486,6 +486,14 @@ exceptions:
     의 `extra_config_files` 표현식을 `risk.safety_mesh.config_files` 병합용
     괄호식으로 확장. `_build_context_resolver` 자체는 도크스트링 압축(위 항목)으로
     100줄 문턱 아래 유지.
+    **2026-09-11 W3.1 재심 처분(MEDIUM-4/HIGH-1 계열) 재등재 1100→1137**:
+    `_record_egress_identity_observation` 신규 헬퍼(EGRESS_IDENTITY 를 차원
+    판정이 아닌 증거 전용 관측으로 1회 boot 기록, disposition: pending 8→9
+    복원) + `_build_context_resolver`에 `evidence_store` 매개변수 1줄 +
+    `resolved_credential_route_inventory` 지역변수 재사용(관측·리졸버 양쪽에
+    공급) — 신규 함수 자체가 순증분 대부분. `_build_context_resolver` 자신도
+    도크스트링을 재차 압축했으나(15→10줄) 여전히 100줄 문턱을 101로 초과 —
+    함수 자신을 아래 목록 끝에 별도 등재(무예외 목표 미달성, 정직 등재).
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime
@@ -500,7 +508,7 @@ exceptions:
     신규 함수 자체가 실측 증가분. _wiring.py 항목과 동일하게 목록 끝에 append
     (공유 워크트리 동시 편집 회피).
 - target: tos/runtime/src/tos_runtime/compose/_engine_wiring.py::wire_engine_and_driver
-  measured: 145
+  measured: 149
   owner: tos-runtime
   decomposition_order: 33
   expires_on: '2026-12-31'
@@ -537,6 +545,14 @@ exceptions:
     + `_build_preconditions` 호출부에 `safety_mesh=safety_mesh,`/
     `evidence_store=evidence_store,` 2줄 추가. 안전-부담 파라미터 관례상
     압축 대신 등재.
+    **2026-09-11 W3.1 재심 처분(MEDIUM-6, once-per-tick SafetyMeshSnapshot)
+    재등재 145→149**: `_build_preconditions`/`wire_engine_and_driver` 둘 다에
+    `mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None`
+    매개변수(각 온전한 도크스트링 포함 — 이 파일 관례 유지) + `_build_preconditions`
+    호출부에 `mesh_snapshot_refresher=mesh_snapshot_refresher,` 1줄 추가 —
+    Coordinator 의 mesh-check 경로에서 `clear()`/`dimension_report()` 를 틱당
+    정확히 1회로 고정하는 팀리드 처분(3곳 소비자가 같은 스냅샷을 공유).
+    안전-부담 파라미터 관례상 압축 대신 등재.
 - target: tos/runtime/src/tos_runtime/engine/driver.py::EngineDriver._process_next
   measured: 141
   owner: tos-runtime
@@ -603,7 +619,7 @@ exceptions:
     import 가 완전히 사라진다(순환을 우회가 아니라 제거). `gateway.py`/`mesh.py` 는
     이 모듈에서 `_verdict` 를 import.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 162
+  measured: 166
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
@@ -660,6 +676,14 @@ exceptions:
     인자 2줄 + 안전 메시 inbox 셀 late-bind 블록(`boot.risk.safety_mesh.inbox_cell
     .inbox = composed.inbox`, 주석 3줄 포함) 4줄 추가(plan §2 결정 6/8) — 정본 결선
     순서 문서라 분해 대신 등재.
+    **2026-09-11 W3.1 재심 처분(MEDIUM-2/MEDIUM-4) 재등재 162→166**:
+    ENVIRONMENT_SCOPE 차원 리더의 late-bound 셀을 `_boot_services` 직후 채우는
+    블록(`boot.risk.environment_scope_dimension_state.active_scope = ...`, 주석
+    5줄 포함) 8줄 추가 — EGRESS_IDENTITY 차원 리더의 late-bind 블록(MEDIUM-4:
+    positively_established 1/3 증거로 과잉 판정하던 것을 pending 8→9 로 원복,
+    해당 차원 상태 자체가 폐기됨) 5줄 제거와 `_build_context_resolver` 호출부의
+    `evidence_store=boot.infra.evidence_store,` 인자 1줄 추가가 상쇄되어 순증
+    +4. 정본 결선 순서 문서라 분해 대신 등재.
 - target: tos/runtime/src/tos_runtime/compose/_boot_integrity.py::record_operator_attested_inputs
   measured: 104
   owner: tos-runtime
@@ -674,3 +698,59 @@ exceptions:
     도크스트링 신규 단락도 6줄에서 2줄로 압축했으나, 이미 대형이던 기존
     도크스트링(53줄) 위에서는 100줄 문턱을 완전히 회피하지 못하고 99→104
     (+5) 초과 — 등재(무예외 목표 미달성, 정직 등재).
+- target: tos/runtime/src/tos_runtime/compose/_wiring.py::_build_context_resolver
+  measured: 101
+  owner: tos-runtime
+  decomposition_order: 40
+  expires_on: '2026-12-31'
+  note: >-
+    W3.1 독립 리뷰 처분(MEDIUM-4) 신규 등재 — `evidence_store: SqliteEvidenceStore`
+    매개변수 1줄 + `_record_egress_identity_observation(evidence_store,
+    resolved_credential_route_inventory)` 호출 1건(EGRESS_IDENTITY 를 차원 판정이
+    아닌 증거 전용 관측으로 기록, disposition: pending 8→9 복원) + 도크스트링
+    재압축(15→10줄)을 거쳤으나 99→101 로 100줄 문턱을 여전히 2줄 초과 — 이 파일
+    자신의 «안전-부담 파라미터는 온전한 도크스트링을 받는다» 관례상 완전 압축은
+    포기하고 등재(무예외 목표 미달성, 정직 등재).
+- target: tos/runtime/src/tos_runtime/compose/_finalize_wiring.py::_finalize
+  measured: 101
+  owner: tos-runtime
+  decomposition_order: 41
+  expires_on: '2026-12-31'
+  note: >-
+    W3.1 독립 리뷰 처분(MEDIUM-6, once-per-tick SafetyMeshSnapshot) 신규 등재 —
+    `wire_engine_and_driver` 호출부에 `mesh_snapshot_refresher=risk.safety_mesh
+    .refresh_tick_snapshot,` 1줄 추가 — Coordinator 의 mesh-check 경로가 매 틱
+    3곳(currentness/deferred-fields/Coordinator 자신)에서 각각 `clear()`를
+    부르던 것을 틱당 1회로 고정하는 공유 스냅샷 배선의 마지막 관통 지점. 100→101
+    초과 — 정본 결선(엔진+게이트웨이+드라이버 조립) 순서 문서라 분해 대신 등재.
+- target: tos/runtime/src/tos_runtime/compose/_preconditions.py::RuntimeCoordinatorPreconditions.live_scope_authorized
+  measured: 107
+  owner: tos-runtime
+  decomposition_order: 42
+  expires_on: '2026-12-31'
+  note: >-
+    W3.1 독립 리뷰 처분(MEDIUM-6, once-per-tick SafetyMeshSnapshot) 신규 등재 —
+    `mesh_snapshot_refresher`(주어졌을 때)를 매 호출 최상단에서 무조건 1회
+    호출해 이번 틱의 `SafetyMeshSnapshot`을 셀에 채우는 블록(주석 6줄 포함) +
+    `_mesh_clear`를 그 스냅샷을 받아 `service.clear()`를 직접 부르는 대신
+    `snapshot.clear_for(identity)`를 읽도록 재작성(스냅샷 부재 시에만
+    `service.clear()` 폴백, 기존 유닛 테스트의 페이크 서비스 호환 유지)하며
+    100→107(+7) — Coordinator 자신이 매 틱 스냅샷을 «갱신하는» 유일한 소비자여야
+    한다는 팀리드 처분의 핵심 지점이라 분해 대신 등재.
+- target: tos/runtime/src/tos_runtime/compose/_safety_wiring.py::build_safety_mesh
+  measured: 116
+  owner: tos-runtime
+  decomposition_order: 43
+  expires_on: '2026-12-31'
+  note: >-
+    W3.1 독립 리뷰 처분(HIGH-1/MEDIUM-6) 신규 등재 — HIGH-1: 구성 직후
+    `monitoring_service.clear()` 1회 웜업 호출(주석 포함, 최초 관측이 항상
+    UNKNOWN 인 a2 의 HIGH-2 수정으로 인한 첫 틱 회귀를 boot 시점에 소진) +
+    `_evidence_tip_observer_excluding_own_alerts` 로 STM_ALERT 자기 관측 배제.
+    MEDIUM-6: `_SafetyMeshTickCell`/`_mesh_dimension_reader_for`/
+    `_clear_value`/`_current_tick_snapshot` 를 통해 `dimension_readers`·
+    `_deferred_fields`·`RestrictiveLatchOwner` 세 소비자 모두 같은 per-tick
+    스냅샷을 공유하도록 재배선(개별 `service.clear()`/`service.dimension_report()`
+    직접 호출을 제거) — 이 함수 자신이 그 세 소비자의 결선 지점이라 순증분
+    대부분이 여기 남는다. 100→116(+16) — 팀리드가 명시한 구조적 처분(one
+    evaluation per tick, shared by all consumers)의 결선 지점이라 분해 대신 등재.
