@@ -66,6 +66,7 @@ from tos_runtime.compose._preconditions import (
     RuntimeCoordinatorPreconditions,
     _ReplayPreconditions,
 )
+from tos_runtime.compose._safety_wiring import SafetyMeshSnapshot
 from tos_runtime.compose._transport_wiring import (
     SealRegistry,
     TransportKind,
@@ -415,6 +416,7 @@ def _build_preconditions(
     instance_document: InstanceDocument | None,
     safety_mesh: Sequence[SafetyMeshService] = (),
     evidence_store: SqliteEvidenceStore | None = None,
+    mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None,
 ) -> RuntimeCoordinatorPreconditions:
     """The live core's RFC-002 §10.7 Coordinator positive gates (design #31 §9-10; plan §2.1).
 
@@ -436,6 +438,11 @@ def _build_preconditions(
             Coordinator's third question. Empty (default) when not wired.
         evidence_store: Builds the ``COORDINATOR_MESH_HELD`` recorder when given; ``None``
             (default) wires no evidence recorder (the refusal itself is unaffected).
+        mesh_snapshot_refresher: Forwarded straight through to
+            :class:`RuntimeCoordinatorPreconditions` — the once-per-tick
+            :class:`~tos_runtime.compose._safety_wiring.SafetyMeshSnapshot` refresher
+            (team-lead disposition following the HIGH-1/HIGH-2 statefulness fix). ``None``
+            (default) falls back to per-service ``clear()`` calls, unaffected.
     """
     return RuntimeCoordinatorPreconditions(
         epoch_service=authority_epoch_service,
@@ -449,6 +456,7 @@ def _build_preconditions(
             if evidence_store is not None
             else None
         ),
+        mesh_snapshot_refresher=mesh_snapshot_refresher,
     )
 
 
@@ -477,6 +485,7 @@ def wire_engine_and_driver(
     transport_kind: TransportKind,
     transport_config: KisMockTransportConfig | None,
     safety_mesh: Sequence[SafetyMeshService] = (),
+    mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None,
 ) -> WiredEngine:
     """The gateway + ``EngineCore`` + durable inbox/driver wiring — split out of ``_wiring.py``'s
     ``_finalize`` purely for the size budget; no behavioural difference from having this inline
@@ -506,6 +515,8 @@ def wire_engine_and_driver(
             credential port a ``kis-mock`` transport loads its app key/secret through.
         transport_kind: The selected transport kind (T2 lane C).
         transport_config: The loaded KIS MOCK transport config, or ``None`` for ``synthetic``.
+        mesh_snapshot_refresher: Forwarded to :func:`_build_preconditions` — see its own
+            docstring.
     """
     # Kernel round #1 §3 (lane B): the reservation id bound to any attempt in THIS compose root
     # is always this same formula — the SAME one _build_realized_stages' AtomicCommitStage
@@ -565,6 +576,7 @@ def wire_engine_and_driver(
         instance_document=instance_document,
         safety_mesh=safety_mesh,
         evidence_store=evidence_store,
+        mesh_snapshot_refresher=mesh_snapshot_refresher,
     )
     core = EngineCore(
         registry=resolved_registry,

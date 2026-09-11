@@ -62,6 +62,7 @@ from tos_runtime.authority.epoch import SafetyAuthorityEpochService
 from tos_runtime.brokercap.instance import InstanceDocument
 from tos_runtime.brokercap.scopes import BrokerScope
 from tos_runtime.compose._nonlive_admission import nonlive_broker_consuming_admitted
+from tos_runtime.compose._safety_wiring import SafetyMeshSnapshot
 from tos_runtime.safety.ports import SafetyMeshService
 
 __all__ = [
@@ -250,6 +251,7 @@ class RuntimeCoordinatorPreconditions:
         instance_document: InstanceDocument | None = None,
         safety_mesh: Sequence[SafetyMeshService] = (),
         mesh_evidence_recorder: Callable[[Mapping[str, Any]], None] | None = None,
+        mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None,
     ) -> None:
         """Wire the preconditions object over its injected ports.
 
@@ -287,6 +289,17 @@ class RuntimeCoordinatorPreconditions:
                 (identities + reasons) whenever the mesh question refuses. ``None``
                 (the default) records nothing — the refusal itself still holds,
                 only the extra evidence trace is skipped.
+            mesh_snapshot_refresher: Takes a FRESH per-tick
+                :class:`~tos_runtime.compose._safety_wiring.SafetyMeshSnapshot` and
+                shares it with the currentness/deferred-fields consumers (team-lead
+                disposition, post-HIGH-1/HIGH-2 — see
+                :class:`~tos_runtime.compose._safety_wiring.SafetyMeshSnapshot`'s own
+                docstring). Called UNCONDITIONALLY, once, at the very top of every
+                :meth:`live_scope_authorized` call — regardless of which branch is
+                ultimately taken, so the shared snapshot is current before ANY later
+                same-tick consumer runs (synthetic transport included). ``None`` (the
+                default) falls back to calling ``.clear()`` on each of
+                :attr:`_safety_mesh` directly, unchanged from before this disposition.
         """
         self._epoch_service = epoch_service
         self._live_authorization_state = live_authorization_state
@@ -295,6 +308,7 @@ class RuntimeCoordinatorPreconditions:
         self._instance_document = instance_document
         self._safety_mesh = tuple(safety_mesh)
         self._mesh_evidence_recorder = mesh_evidence_recorder
+        self._mesh_snapshot_refresher = mesh_snapshot_refresher
         #: This runtime's own epoch floor at composition time — the CLAIMED
         #: epoch every later :meth:`authority_epoch_current` call is checked
         #: against. Read exactly once, here, never again per tick (class
@@ -392,6 +406,18 @@ class RuntimeCoordinatorPreconditions:
             with a positive admission, both under the ``NOT_AUTHORIZED``
             posture.
         """
+        # Team-lead disposition (post-HIGH-1/HIGH-2): refresh the shared per-tick
+        # SafetyMeshSnapshot UNCONDITIONALLY, before any of the branches below --
+        # regardless of which one is ultimately taken, so a LATER same-tick consumer
+        # (the currentness dimension readers, the deferred-mesh-fields supply) sees
+        # THIS tick's snapshot rather than a stale one from the previous tick. This
+        # authors no admission judgement of its own (kernel diff 0; the "synthetic e2e
+        # 불변" invariant is unaffected — the refresh is a pure side observation).
+        snapshot = (
+            self._mesh_snapshot_refresher()
+            if self._mesh_snapshot_refresher is not None
+            else None
+        )
         if self._live_authorization_state is None:
             return None
         if self._live_authorization_state not in _SUPPORTED_LIVE_AUTHORIZATION_STATES:
@@ -423,20 +449,22 @@ class RuntimeCoordinatorPreconditions:
                 active_scope=self._active_scope,
                 instance_document=self._instance_document,
             )
-            return verdict.admitted and self._mesh_clear()
+            return verdict.admitted and self._mesh_clear(snapshot)
         return False
 
-    def _mesh_clear(self) -> bool:
+    def _mesh_clear(self, snapshot: SafetyMeshSnapshot | None) -> bool:
         """The Coordinator's THIRD question (T2/W3-b; plan §2 decision 5) — asked ONLY
         on the broker-reaching path reached above (a synthetic transport is admitted
         by gate ② before this method is ever called, unchanged).
 
         ``True`` only when :attr:`_safety_mesh` is non-empty AND every service's
-        :meth:`~tos_runtime.safety.ports.SafetyMeshService.clear` reports
-        ``MeshClearance.clear is True`` — an explicit ``is True`` check (never
-        truthiness) and a non-vacuous requirement (an EMPTY mesh is ``False``, never a
-        vacuous pass): a broker-reaching send with no safety-mesh wired at all must
-        never be treated as though the mesh had positively cleared it.
+        clearance (read from ``snapshot`` when given — this tick's shared evaluation,
+        never a second independent ``.clear()`` call — or computed directly as a
+        fallback when no snapshot mechanism is wired) reports ``MeshClearance.clear is
+        True`` — an explicit ``is True`` check (never truthiness) and a non-vacuous
+        requirement (an EMPTY mesh is ``False``, never a vacuous pass): a
+        broker-reaching send with no safety-mesh wired at all must never be treated as
+        though the mesh had positively cleared it.
 
         Records ``COORDINATOR_MESH_HELD`` evidence (identities + reasons) for every
         non-positive service when the question refuses, via the injected
@@ -444,10 +472,17 @@ class RuntimeCoordinatorPreconditions:
         """
         held: list[dict[str, Any]] = []
         for service in self._safety_mesh:
-            clearance = service.clear()
-            if clearance.clear is not True:
+            clearance = (
+                snapshot.clear_for(service.identity)
+                if snapshot is not None
+                else service.clear()
+            )
+            if clearance is None or clearance.clear is not True:
                 held.append(
-                    {"identity": clearance.identity, "reasons": clearance.reasons}
+                    {
+                        "identity": service.identity,
+                        "reasons": () if clearance is None else clearance.reasons,
+                    }
                 )
         mesh_clear = bool(self._safety_mesh) and not held
         if not mesh_clear and self._mesh_evidence_recorder is not None:

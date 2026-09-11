@@ -31,7 +31,7 @@ instead — :func:`~tos_runtime.compose.root.compose_paper_runtime` fills it in 
 inbox exists, strictly before handing the composed runtime to any caller that could
 drive an attempt (the identical "구성 순서" discipline
 :mod:`tos_runtime.compose._currentness_wiring`'s own ``_RecoveryDimensionState`` /
-``_EgressIdentityDimensionState`` already document for their own late-bound cells).
+``_EnvironmentScopeDimensionState`` already document for their own late-bound cells).
 
 **``DeviationService.combined_within_envelope`` carry-over (team-lead follow-up,
 2026-09-11).** :class:`~tos_runtime.safety.deviation.DeviationService`'s constructor
@@ -43,20 +43,25 @@ to — the config-file attestation stands, unmodified, as a documented, honest g
 silently forced through a constructor that has no parameter for it (W3.2 follow-up
 candidate, per the plan's own "no honest source, do not fake" rule).
 
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``pathlib``,
-``sqlite3``) + ``tos.cur`` (``DimensionKey``) + ``tos.egress`` (``RestrictiveLatchState``,
+Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``pathlib``)
++ ``tos.cur`` (``DimensionKey``) + ``tos.egress`` (``RestrictiveLatchState``,
 transitively via ``tos_runtime.safety.latch``) + ``tos_runtime.*`` only. No ``shared.*``.
+LOW-7 (W3.1 independent review): this module never imports ``sqlite3`` directly — the
+evidence-tip/inbox-backlog observers go through ``SqliteEvidenceStore.last_committed_
+excluding``/``SqliteEventInbox.unconsumed_count``'s own public APIs (both
+``tos_runtime.*``, already covered above).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from tos.cur import DimensionKey
 from tos.engine.records import InstrumentKey
+from tos.time import HealthState
 
 from tos_runtime.currentness.vector import DimensionReport
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -70,15 +75,17 @@ from tos_runtime.safety.latch import (
     RestrictiveLatchOwner,
 )
 from tos_runtime.safety.monitoring import AlertRecorder, MonitoringService
-from tos_runtime.safety.ports import SafetyMeshService
+from tos_runtime.safety.ports import MeshClearance, SafetyMeshService
 from tos_runtime.safety.profile import SafetyProfileService
 from tos_runtime.time.service import TrustworthyTimeService
 from tos_runtime.time.sources import MonotonicSource
 
 __all__ = [
     "SAFETY_MESH_CONFIG_FILE_NAMES",
+    "SafetyMeshSnapshot",
     "_InboxCell",
     "_SafetyMesh",
+    "_SafetyMeshTickCell",
     "build_capacity_owner",
     "build_safety_mesh",
 ]
@@ -122,7 +129,7 @@ class _TimeHealthAdapter:
     def __init__(self, time_service: TrustworthyTimeService) -> None:
         self._time_service = time_service
 
-    def health_state(self) -> Any:
+    def health_state(self) -> HealthState:
         return self._time_service.health_state
 
 
@@ -184,6 +191,114 @@ def _stm_alert_recorder_for(evidence_store: SqliteEvidenceStore) -> AlertRecorde
     return _recorder
 
 
+def _evidence_tip_observer_excluding_own_alerts(
+    evidence_store: SqliteEvidenceStore,
+) -> Callable[[], tuple[int | None, str, int | None]]:
+    """The ``evidence_tip_observer`` port :class:`~tos_runtime.safety.monitoring
+    .MonitoringService` needs (W3.1 independent review HIGH-1).
+
+    **Self-perturbation, and why this seam exists.** The SAME evidence store also
+    receives this service's own ``STM_ALERT`` writes
+    (:func:`_stm_alert_recorder_for`, above). Wiring the plain
+    :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.last_committed` here would
+    let a genuine, continuing stall flap deny/clear/clear: the very ``STM_ALERT`` this
+    service emits on a non-``True`` :meth:`~tos_runtime.safety.monitoring.MonitoringService.clear`
+    advances the tip the NEXT call reads, which that call would then honestly (but
+    wrongly) read as "the tip advanced" and reset the stall clock. Reads
+    :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.last_committed_excluding`
+    instead — the SAME store, with its own ``STM_ALERT`` kind excluded from
+    consideration — so the observation is independent of this service's own writes
+    (the module docstring's own "Wiring contract").
+    """
+    excluded = frozenset({_STM_ALERT_KIND})
+
+    def _observer() -> tuple[int | None, str, int | None]:
+        return evidence_store.last_committed_excluding(excluded)
+
+    return _observer
+
+
+@dataclass(frozen=True)
+class SafetyMeshSnapshot:
+    """One consistent, per-tick evaluation of every safety-mesh service (team-lead
+    disposition following the HIGH-1/HIGH-2 fixes: :meth:`~tos_runtime.safety.ports
+    .SafetyMeshService.clear` is now STATEFUL for at least one service — MONITORING's
+    continuity tracking advances on every call — so 3+ independent call sites within
+    the SAME tick could each see a DIFFERENT answer, not merely a wasted extra call).
+
+    Computed exactly once per tick via :func:`_refresh_tick_snapshot` (the
+    Coordinator's third question calls this UNCONDITIONALLY, at the top of every
+    ``live_scope_authorized`` call — kernel diff 0, this is purely a runtime-side
+    coordination point) and read — never independently recomputed — by every LATER
+    consumer in that same tick via :func:`_current_tick_snapshot` (the currentness
+    dimension readers, the deferred-mesh-fields supply, and the item-16 latch
+    owner's ``incident_clear``/``profile_clear`` closures).
+    """
+
+    clearances: Mapping[str, MeshClearance]
+    reports: Mapping[str, DimensionReport | None]
+
+    def clear_for(self, identity: str) -> MeshClearance | None:
+        """This service's clearance from THIS snapshot, or ``None`` if ``identity``
+        was not one of the services this snapshot was taken over."""
+        return self.clearances.get(identity)
+
+    def report_for(self, identity: str) -> DimensionReport | None:
+        """This service's currentness dimension report from THIS snapshot — ``None``
+        both when ``identity`` is unknown and when the service itself reported no
+        dimension (the two cases are indistinguishable here, and both are honestly
+        absent either way)."""
+        return self.reports.get(identity)
+
+    @staticmethod
+    def take(services: Sequence[SafetyMeshService]) -> SafetyMeshSnapshot:
+        """Evaluate every service's :meth:`~tos_runtime.safety.ports.SafetyMeshService
+        .clear` and :meth:`~tos_runtime.safety.ports.SafetyMeshService.dimension_report`
+        exactly once each, in the order given."""
+        clearances: dict[str, MeshClearance] = {}
+        reports: dict[str, DimensionReport | None] = {}
+        for service in services:
+            clearances[service.identity] = service.clear()
+            reports[service.identity] = service.dimension_report()
+        return SafetyMeshSnapshot(clearances=clearances, reports=reports)
+
+
+@dataclass
+class _SafetyMeshTickCell:
+    """The mutable holder :func:`_refresh_tick_snapshot`/:func:`_current_tick_snapshot`
+    share — starts empty every boot, and is overwritten (never merged, never
+    incrementally updated) on every tick by the Coordinator's own unconditional
+    refresh."""
+
+    snapshot: SafetyMeshSnapshot | None = None
+
+
+def _refresh_tick_snapshot(
+    services: Sequence[SafetyMeshService], cell: _SafetyMeshTickCell
+) -> SafetyMeshSnapshot:
+    """Take a FRESH :class:`SafetyMeshSnapshot`, unconditionally, and store it into
+    ``cell`` — the Coordinator's own call, made once per tick regardless of which
+    branch ``live_scope_authorized`` ultimately takes (so the cell holds a genuinely
+    current snapshot before ANY later same-tick consumer runs, synthetic transport
+    included — plan §2 decision 5's own "synthetic e2e 불변" is unaffected, since this
+    call authors no admission judgement of its own)."""
+    snapshot = SafetyMeshSnapshot.take(services)
+    cell.snapshot = snapshot
+    return snapshot
+
+
+def _current_tick_snapshot(
+    services: Sequence[SafetyMeshService], cell: _SafetyMeshTickCell
+) -> SafetyMeshSnapshot:
+    """Reuse THIS tick's already-taken snapshot when one exists (the normal live
+    path — the Coordinator always runs first); otherwise take one now (a defensive
+    fallback for a consumer invoked with no Coordinator call in front of it, e.g. a
+    unit test exercising a reader in isolation — never a crash on an empty cell)."""
+    if cell.snapshot is not None:
+        return cell.snapshot
+    return _refresh_tick_snapshot(services, cell)
+
+
 @dataclass
 class _SafetyMesh:
     """Everything :func:`build_safety_mesh` assembles — handed to
@@ -210,6 +325,10 @@ class _SafetyMesh:
     #: reader close over — ``compose_paper_runtime`` fills in ``.inbox`` once
     #: ``_finalize`` builds the durable inbox.
     inbox_cell: _InboxCell
+    #: The Coordinator's own per-tick refresh (:func:`_refresh_tick_snapshot`, bound over
+    #: :attr:`services` and the shared tick cell) — called UNCONDITIONALLY, once per
+    #: tick, by :class:`~tos_runtime.compose._preconditions.RuntimeCoordinatorPreconditions`.
+    refresh_tick_snapshot: Callable[[], SafetyMeshSnapshot]
     #: Every safety-mesh policy-document path this call loaded — for
     #: ``OPERATOR_ATTESTED_INPUTS`` (``extra_config_files``).
     config_files: tuple[Path, ...] = field(default_factory=tuple)
@@ -224,6 +343,32 @@ def build_capacity_owner(
     directly once ``instrument_key`` is known, rather than threading it through this
     module's own early construction window."""
     return CapacityOwner(projection, scope)
+
+
+def _clear_value(snapshot: SafetyMeshSnapshot, identity: str) -> bool | None:
+    """The tri-state ``clear`` value for ``identity`` from ``snapshot`` — ``None`` both
+    when the service reported ``None`` (unestablished) and when ``identity`` is
+    somehow absent from the snapshot (never reachable in production wiring — every
+    identity here comes from the SAME ``services`` tuple the snapshot was taken over —
+    but never a crash on a caller's typo either)."""
+    clearance = snapshot.clear_for(identity)
+    return None if clearance is None else clearance.clear
+
+
+def _mesh_dimension_reader_for(
+    identity: str,
+    services: Sequence[SafetyMeshService],
+    cell: _SafetyMeshTickCell,
+) -> Callable[[], DimensionReport | None]:
+    """One safety-mesh service's currentness dimension reader, sourced from the SAME
+    per-tick :class:`SafetyMeshSnapshot` the other two consumers read (never a second,
+    independent ``service.dimension_report()`` call — see that class's own docstring).
+    """
+
+    def _reader() -> DimensionReport | None:
+        return _current_tick_snapshot(services, cell).report_for(identity)
+
+    return _reader
 
 
 def build_safety_mesh(
@@ -271,38 +416,67 @@ def build_safety_mesh(
     inbox_cell = _InboxCell()
     monitoring_service = MonitoringService(
         config_path=config_dir / _MONITOR_COVERAGE_CONFIG_NAME,
-        evidence_tip_observer=evidence_store.last_committed,
+        evidence_tip_observer=_evidence_tip_observer_excluding_own_alerts(
+            evidence_store
+        ),
         time_health_observer=lambda: time_service.health_state.value,
         inbox_unconsumed_observer=_inbox_unconsumed_observer_for(inbox_cell),
         monotonic_ns=lambda: monotonic_source.now_ms() * _NS_PER_MS,
         evidence_recorder=_stm_alert_recorder_for(evidence_store),
     )
+    # Boot-time warm-up (never a fabricated verdict): MonitoringService's own honest
+    # continuity contract reports source_continuity_present=None (UNKNOWN) on the VERY
+    # FIRST observation it ever makes, on ANY instance, since there is no prior
+    # (seq, chain_digest) to compare against yet (monitoring.py's own "Honest-source
+    # table"). Left unaddressed, the FIRST real DECISION_TICK after boot would see the
+    # Coordinator's third question -- the first call this instance ever makes -- read
+    # UNKNOWN and refuse, even on an otherwise healthy runtime. Discharging that one
+    # unavoidable "no baseline yet" observation here, at boot (before any attempt is
+    # ever driven), is what a production system does before trusting a stall detector
+    # -- an honest warm-up read, never a second judgement authored by this module
+    # (mesh services still author none; this call only primes internal state a real
+    # kernel-predicate call already governs on every LATER call).
+    monitoring_service.clear()
     services: tuple[SafetyMeshService, ...] = (
         profile_service,
         deviation_service,
         incident_service,
         monitoring_service,
     )
+    # Team-lead disposition (post-HIGH-1/HIGH-2): clear() is now STATEFUL for at least
+    # one service (MONITORING's continuity tracking), so the three per-tick consumers
+    # below (dimension readers, deferred fields, the latch's incident/profile closures)
+    # all read from ONE SafetyMeshSnapshot per tick instead of each calling .clear()/
+    # .dimension_report() independently — see SafetyMeshSnapshot's own docstring.
+    tick_cell = _SafetyMeshTickCell()
     dimension_readers: dict[
         DimensionKey, tuple[str, Callable[[], DimensionReport | None]]
     ] = {
-        service.dimension_key: (service.identity, service.dimension_report)
+        service.dimension_key: (
+            service.identity,
+            _mesh_dimension_reader_for(service.identity, services, tick_cell),
+        )
         for service in services
     }
 
     def _deferred_fields() -> dict[str, Any]:
+        snapshot = _current_tick_snapshot(services, tick_cell)
         return {
-            "safety_profile_current": profile_service.clear().clear,
-            "deviation_clear": deviation_service.clear().clear,
-            "incident_clear": incident_service.clear().clear,
-            "monitoring_clear": monitoring_service.clear().clear,
+            "safety_profile_current": _clear_value(snapshot, profile_service.identity),
+            "deviation_clear": _clear_value(snapshot, deviation_service.identity),
+            "incident_clear": _clear_value(snapshot, incident_service.identity),
+            "monitoring_clear": _clear_value(snapshot, monitoring_service.identity),
         }
 
     latch: NewRiskHaltReader = _LateBoundInboxReader(inbox_cell)
     restrictive_latch = RestrictiveLatchOwner(
         latch,
-        incident_clear=lambda: incident_service.clear().clear,
-        profile_clear=lambda: profile_service.clear().clear,
+        incident_clear=lambda: _clear_value(
+            _current_tick_snapshot(services, tick_cell), incident_service.identity
+        ),
+        profile_clear=lambda: _clear_value(
+            _current_tick_snapshot(services, tick_cell), profile_service.identity
+        ),
     )
     return _SafetyMesh(
         services=services,
@@ -310,5 +484,6 @@ def build_safety_mesh(
         deferred_fields=_deferred_fields,
         latch=restrictive_latch,
         inbox_cell=inbox_cell,
+        refresh_tick_snapshot=lambda: _refresh_tick_snapshot(services, tick_cell),
         config_files=tuple(config_dir / name for name in SAFETY_MESH_CONFIG_FILE_NAMES),
     )
