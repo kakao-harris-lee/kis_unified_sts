@@ -99,13 +99,16 @@ def _verdict(
     native_value: str | None = None,
     preserved_worst_credible_capacity: int | None = None,
     preserved_obligation_magnitude_unknown: bool = False,
-) -> "VerifyItemVerdict":
+) -> VerifyItemVerdict:
     """Assemble one item verdict, deriving its disposition from the design §4.1 partition.
 
     Shared by ``gateway.py``'s eleven non-deferred item checks and ``mesh.py``'s deferred-item
     judgement (kernel round #2 §2 decision 1) — a single definition, never duplicated.
     """
-    from tos.egressgw.records import VerifyItemVerdict  # noqa: PLC0415 - breaks the base<->records cycle
+    # Deferred (function-body) import: records.py imports this module (_base) for the two
+    # authority blocks above, so a module-scope import here would recreate that cycle the
+    # other way. By the time this function actually runs, tos.egressgw.records is fully loaded.
+    from tos.egressgw.records import VerifyItemVerdict  # noqa: PLC0415
 
     if item in REALIZED_ITEMS:
         disposition = VerifyDisposition.REALIZED_STRUCTURAL

@@ -608,12 +608,14 @@ class GatewayEvidenceRecord(FrozenModel):
     #: Which of the closed 19 ADR-002-002 §11 :class:`~tos.engine.CommitmentStep` this record
     #: belongs to (Phase 3 wave 3 KW3-GW — mutation-matrix finding: the executable Send Boundary
     #: order was not auditable from evidence because ``kind`` alone did not carry step identity).
-    #: ``gateway.py`` stamps this on every record it emits. Most kinds have exactly one fixed
-    #: step (enforced below, when stated, by :meth:`_step_matches_fixed_kind_when_given`);
-    #: ``SEND_REFUSED`` is the one exception — it is emitted from many different steps depending
-    #: on which check failed, so its step is supplied per halt site, never derived from the kind.
-    #: ``None`` stays backward compatible with every call site predating this field.
-    step: CommitmentStep | None = None
+    #: **Required** (kernel round #2 §2 decision 3) — ``gateway.py`` stamps this on every record
+    #: it emits, and a record built without it is unconstructable rather than silently accepted:
+    #: an unstamped record is exactly the auditability gap this field exists to close. Most
+    #: kinds have exactly one fixed step (enforced below by
+    #: :meth:`_step_matches_fixed_kind_when_given`); ``SEND_REFUSED`` is the one exception — it
+    #: is emitted from many different steps depending on which check failed, so its step is
+    #: supplied per halt site, never derived from the kind.
+    step: CommitmentStep
     authority_effect: AllFalseGatewayAuthority = AllFalseGatewayAuthority()
 
     #: The kinds ``gateway.py`` itself stamps :attr:`send_seal_digest` onto (its own
@@ -667,16 +669,14 @@ class GatewayEvidenceRecord(FrozenModel):
 
     @model_validator(mode="after")
     def _step_matches_fixed_kind_when_given(self) -> GatewayEvidenceRecord:
-        """When both ``kind`` and ``step`` are given, ``step`` must be the kind's fixed one.
+        """``step`` must be the kind's fixed one, when that kind has exactly one.
 
-        Backward compatible by construction: a record built without ``step`` (every call site
-        predating Phase 3 wave 3 KW3-GW) is untouched — a ``None`` step is never rejected here.
-        This only catches a *stated* step that disagrees with a kind that has exactly one
-        legitimate step. ``SEND_REFUSED`` has no entry in :attr:`FIXED_KIND_STEPS` and is
-        therefore exempt (its step varies by which check actually failed).
+        ``step`` is now a required field (kernel round #2 §2 decision 3) — a record built
+        without it is unconstructable before this validator ever runs. This validator only
+        catches a *stated* step that disagrees with a kind that has exactly one legitimate step.
+        ``SEND_REFUSED`` has no entry in :attr:`FIXED_KIND_STEPS` and is therefore exempt (its
+        step varies by which check actually failed).
         """
-        if self.step is None:
-            return self
         expected = self.FIXED_KIND_STEPS.get(self.kind)
         if expected is not None and self.step is not expected:
             raise ArtifactIntegrityError(

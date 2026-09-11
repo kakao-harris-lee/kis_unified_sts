@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 import yaml
 from tos.egressgw.records import GatewayEvidenceRecord
+from tos.engine.vocabulary import CommitmentStep
 from tos_runtime.brokercap.instance import load_instance_documents
 from tos_runtime.brokercap.scopes import BrokerScopesConfig, load_broker_scopes
 from tos_runtime.compose._request_digest import CapsuleStandInDigest, KisWireCodecDigest
@@ -403,7 +404,10 @@ def test_seal_registry_captures_from_send_sealed_and_pops_single_use() -> None:
     seal = seal_fx.build_seal(attempt_id="attempt-x")
     registry.capture(
         GatewayEvidenceRecord(
-            kind="SEND_SEALED", attempt_id="attempt-x", send_seal=seal
+            kind="SEND_SEALED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+            attempt_id="attempt-x",
+            send_seal=seal,
         )
     )
 
@@ -422,11 +426,20 @@ def test_seal_registry_ignores_non_send_sealed_records() -> None:
     kind check itself is load-bearing."""
     registry = SealRegistry()
     seal = seal_fx.build_seal(attempt_id="attempt-y")
-    registry.capture(GatewayEvidenceRecord(kind="SEND_STARTED", attempt_id="attempt-y"))
+    registry.capture(
+        GatewayEvidenceRecord(
+            kind="SEND_STARTED",
+            step=CommitmentStep.SEND_STARTED_DURABLE,
+            attempt_id="attempt-y",
+        )
+    )
     assert registry("attempt-y") is None
     registry.capture(
         GatewayEvidenceRecord(
-            kind="SEND_SEALED", attempt_id="attempt-y", send_seal=seal
+            kind="SEND_SEALED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+            attempt_id="attempt-y",
+            send_seal=seal,
         )
     )
     assert registry("attempt-y") is seal
@@ -440,10 +453,19 @@ def test_seal_registry_evicts_on_a_later_send_refused_for_the_same_attempt() -> 
     seal = seal_fx.build_seal(attempt_id="attempt-z")
     registry.capture(
         GatewayEvidenceRecord(
-            kind="SEND_SEALED", attempt_id="attempt-z", send_seal=seal
+            kind="SEND_SEALED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+            attempt_id="attempt-z",
+            send_seal=seal,
         )
     )
-    registry.capture(GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="attempt-z"))
+    registry.capture(
+        GatewayEvidenceRecord(
+            kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+            attempt_id="attempt-z",
+        )
+    )
     assert registry("attempt-z") is None
 
 

@@ -105,7 +105,6 @@ from tos.egress import (
     ClaimObservation,
     RestrictiveLatchState,
     capability_and_permit_single_use,
-    credential_route_authority_disjoint,
     exact_binding_holds,
     monotonic_denial_no_revival,
 )
@@ -123,7 +122,6 @@ from tos.egressgw.records import (
     GatewayEvidenceRecord,
     SendBoundaryContext,
     SendBoundaryVerification,
-    TransportNature,
     VerifyItemVerdict,
 )
 from tos.egressgw.seal import (
@@ -135,15 +133,11 @@ from tos.egressgw.seal import (
 from tos.egressgw.vocabulary import (
     ADMITTING_VERIFY_OUTCOMES,
     DEFERRED_ITEMS,
-    PROVISIONAL_ITEMS,
-    REALIZED_ITEMS,
     SEND_VERIFY_ITEMS,
     BrokerApplicability,
     SendHaltReason,
     SendVerifyItem,
-    VerifyDisposition,
     VerifyOutcome,
-    verify_item_number,
 )
 from tos.engine import (
     AttemptRequest,
@@ -385,7 +379,6 @@ class SendAttemptLedger:
             )
         )
         return True
-
 
 
 def verify_send_boundary(
