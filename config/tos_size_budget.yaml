@@ -738,7 +738,7 @@ exceptions:
     100→107(+7) — Coordinator 자신이 매 틱 스냅샷을 «갱신하는» 유일한 소비자여야
     한다는 팀리드 처분의 핵심 지점이라 분해 대신 등재.
 - target: tos/runtime/src/tos_runtime/compose/_safety_wiring.py::build_safety_mesh
-  measured: 122
+  measured: 140
   owner: tos-runtime
   decomposition_order: 43
   expires_on: '2026-12-31'
@@ -760,3 +760,8 @@ exceptions:
     `inbox_cell` 인자 1개씩 관통 배선(틱 세대 식별자의 소스 — 이미 이 함수가
     쥐고 있는 `_InboxCell`을 재사용, 새 결선 없음) — 이 함수 자신이 그 다섯
     호출부 전부의 결선 지점이라 순증분이 여기 남는다. 분해 대신 등재.
+    **2026-09-11 W3.2 lane d2 재등재 122→140(+18)**: `ProtectiveActionService`
+    구성(§2 결정 8) — `latch_state`/`incident_clear`(같은 per-tick 스냅샷 재사용,
+    새 스냅샷 소비자 아님)/`time_health_state`/`evidence_recorder` 4개 포트를
+    조립하는 블록(주석 6줄 포함) + `_SafetyMesh` 반환에 `protective_action=` 1줄
+    추가 — 이 함수가 그 유일한 결선 지점이라 분해 대신 등재.

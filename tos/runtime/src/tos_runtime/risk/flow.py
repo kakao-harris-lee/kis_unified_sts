@@ -82,7 +82,7 @@ import (slice plan §5 cross-lane isolation).
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -219,6 +219,9 @@ class ActionFlowGovernor:
         *,
         writer_epoch: int,
         canonicalization_version: str = EV_L1_PROVISIONAL_VERSION,
+        protective_classification_digest_provider: (
+            Callable[[], str | None] | None
+        ) = None,
     ) -> None:
         """Compose the governor over its injected ports.
 
@@ -241,6 +244,24 @@ class ActionFlowGovernor:
                 calls are fenced under.
             canonicalization_version: The registered ``tos.canonical`` scheme
                 version used to digest every issued decision/permit.
+            protective_classification_digest_provider: Optional real-fact
+                supplier for ``ActionFlowDecisionInputs.
+                protective_classification_digest`` (Phase 5 W3.2 plan §2
+                decision 8) — typically
+                ``tos_runtime.safety.protective.ProtectiveActionService
+                .protective_classification_digest``. When supplied,
+                :meth:`decide` ALWAYS uses this provider's fresh value in
+                place of whatever the caller's own inputs carry (the same
+                "always derived, never a caller literal" treatment
+                ``tos_runtime.compose._risk_attestations
+                .wrap_action_flow_inputs_provider`` already gives
+                ``generation_current`` — this is a real fact with exactly
+                one honest source, not an operator attestation to merge).
+                ``None`` (the default) preserves the prior behavior: the
+                caller-supplied ``inputs.protective_classification_digest``
+                passes through unchanged (compose wiring has not threaded a
+                provider in yet — a disclosed follow-up, not this
+                constructor's concern).
 
         Raises:
             ActionFlowConfigError: ``envelope`` leaves any amplification axis
@@ -258,6 +279,7 @@ class ActionFlowGovernor:
         self._envelope = envelope
         self._writer_epoch = writer_epoch
         self._scheme = get_scheme(canonicalization_version)
+        self._protective_digest_provider = protective_classification_digest_provider
 
     @property
     def envelope(self) -> ActionAmplificationEnvelope:
@@ -303,6 +325,11 @@ class ActionFlowGovernor:
             }
         )
         decision_id = derive_id("afg-decision", decision_digest_seed)
+        protective_classification_digest = (
+            inputs.protective_classification_digest
+            if self._protective_digest_provider is None
+            else self._protective_digest_provider()
+        )
         decision = action_flow_decision(
             coverage=coverage,
             scope_complete=scope_complete,
@@ -324,7 +351,7 @@ class ActionFlowGovernor:
             cause_digest=inputs.cause_digest,
             lineage_digest=inputs.lineage_digest,
             amplification_envelope_digest=inputs.amplification_envelope_digest,
-            protective_classification_digest=inputs.protective_classification_digest,
+            protective_classification_digest=protective_classification_digest,
         )
         self._evidence.append(
             {
