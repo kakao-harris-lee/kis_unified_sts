@@ -14,6 +14,7 @@ from tos.egress import RestrictiveLatchState
 from tos.egressgw.vocabulary import SendVerifyItem, VerifyOutcome
 from tos_runtime.compose._egress_attestations import (
     EgressAttestationConfigError,
+    EgressAttestations,
     load_egress_attestations,
 )
 
@@ -193,3 +194,37 @@ def test_worst_credible_capacity_is_descriptive_not_gating(
 
     runtime = _run_to_send_boundary(config_dir, data_dir, custody_root, tmp_path)
     assert len(runtime.transport.requests) == 1
+
+
+# ============================================================================
+# kernel round #2 K-4 (§2 decision 4) — link the kernel-side recount to the
+# actual runtime attestation set (independent review round #1 LOW-3: the
+# kernel's own test_the_package_recounts_the_actual_remaining_attestations
+# (tos/tests/egressgw/test_egressgw_package.py) can only go red when the
+# package docstring changes, not when this module's own attested field set
+# does. This test closes that gap from the runtime side, so a field added
+# to or removed from EgressAttestations without a matching kernel docstring
+# update is caught somewhere.
+# ============================================================================
+
+
+def test_the_attested_field_set_matches_the_kernel_docstrings_recount() -> None:
+    """The exact three field names ``EgressAttestations`` carries must equal the three names
+    the kernel's ``tos.egressgw`` package docstring recount names as the only remaining
+    non-authoritative operator attestations."""
+    import dataclasses
+
+    import tos.egressgw
+
+    attested_fields = {f.name for f in dataclasses.fields(EgressAttestations)}
+    assert attested_fields == {
+        "venue_session_account_facts_current",
+        "restrictive_latch_state",
+        "worst_credible_capacity",
+    }
+    doc = " ".join((tos.egressgw.__doc__ or "").split())
+    for name in attested_fields:
+        assert name in doc, (
+            f"{name!r} is an EgressAttestations field but the kernel package docstring's "
+            "recount does not name it — the two pins have drifted apart"
+        )

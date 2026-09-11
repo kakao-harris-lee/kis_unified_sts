@@ -37,7 +37,7 @@ scope:
 # expires_on 경과 시 --check red(운영자 조정 가능한 값).
 exceptions:
 - target: tos/src/tos/egressgw/gateway.py
-  measured: 2007
+  measured: 1849
   owner: tos-kernel
   decomposition_order: 1
   expires_on: '2026-12-31'
@@ -92,6 +92,21 @@ exceptions:
     반복되는 ``self._sink.record(GatewayEvidenceRecord(...))`` 5곳을
     축약(아래 ``__call__`` 항목 참고 — 순감소 방향이나 신규 step 배선이
     net 증가로 남음).
+    2026-09-11 kernel round #2 K-1 mesh 분리(§2 결정 1) — measured 2007→1844(-163).
+    ``resolve_broker_applicability``/``_deferred_item_verdict``(→ 공개명
+    ``deferred_item_verdict``, +context 인자) 를 신규 ``egressgw/mesh.py`` 로,
+    ``_verdict``/``_positive`` 를 당시 ``_base.py`` 로 이관 — 이 모듈은 이제 import 만
+    한다(``_verdict`` 는 독립 리뷰 라운드 #1 LOW-1 처분에서 ``records.py`` 로
+    재이관됨 — 아래 records.py 항목 및 2026-09-11 LOW-1 노트 참고. 이 문단은 K-1
+    당시의 실제 이력이라 그대로 둔다). K-3(``step`` 필수화)·K-4(item 6/12 문언
+    재작성)·K-5(SendSeal docstring 정정) 는 같은 파일에서 순증감 없이 문언만
+    바뀌었다(측정치 불변).
+    2026-09-11 독립 리뷰 라운드 #1 처분(MEDIUM-2/MEDIUM-3) — measured 1844→1849(+5).
+    item 6/12 UNKNOWN 사유 문언을 "caller derives"(단정) → "caller is responsible for
+    deriving"(책임 서술)로 재작성(커널은 `bool | None` 만 보고 출처를 검증할 수
+    없음) · item 12 SATISFIED 사유에 venue_session_account_facts_current 가
+    여전히 operator attestation 임을 알리는 절 추가(그 필드의 UNKNOWN 분기는 이미
+    정직했으나 SATISFIED 분기만 그 사실을 누락하고 있었음).
 - target: tos/src/tos/sir/predicates.py
   measured: 1681
   owner: tos-kernel
@@ -198,13 +213,17 @@ exceptions:
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
     2026-09-07 decomposition_order 13→14(measured 불변, __call__ 재정렬로 인한 이동).
 - target: tos/src/tos/egressgw/records.py::send_boundary_context
-  measured: 211
+  measured: 236
   owner: tos-kernel
   decomposition_order: 15
   expires_on: '2026-12-31'
   note: >-
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
     2026-09-07 decomposition_order 14→15(measured 불변, __call__ 재정렬로 인한 이동).
+    2026-09-11 kernel round #2 K-2(§2 결정 2) — measured 211→236(+25). 신규
+    deferred-6 kwargs(safety_authority_epoch_current/live_scope_valid/
+    safety_profile_current/deviation_clear/incident_clear/monitoring_clear) 6개와
+    그 pass-through 배선 6줄 추가.
 - target: tos/src/tos/nontrade/predicates.py::nontrade_disposition
   measured: 186
   owner: tos-kernel
@@ -529,7 +548,7 @@ exceptions:
     인접 도크스트링 보정은 원문과 동일한 3줄 폭으로 재작성해 순증 0으로 맞춤). 140→141,
     measured-drift 가드 재실측 갱신.
 - target: tos/src/tos/egressgw/records.py
-  measured: 1027
+  measured: 1113
   owner: tos-kernel
   decomposition_order: 37
   expires_on: '2026-12-31'
@@ -546,6 +565,17 @@ exceptions:
     동시 append 중이라 중간 삽입/재정렬로 인한 편집 충돌을 피하기 위해
     목록 끝에 append(gateway.py 항목의 2026-09-07 재등재 주석과 동일 관례) —
     후속 하우스키핑에서 물리적 재정렬 가능.
+    2026-09-11 kernel round #2 — measured 1027→1071(+44). K-2(§2 결정 2, +32):
+    ``SendBoundaryContext`` 신규 필드 6개(safety_authority_epoch_current 등) +
+    ``send_boundary_context`` factory kwargs 6개 + docstring Args 항목 6개 +
+    pass-through 배선 6줄. K-3(§2 결정 3): ``step`` 을 필수 필드로 바꾸고 검증자의
+    조기 ``None`` 반환 제거(순증 거의 0, 문언 재작성 위주).
+    2026-09-11 독립 리뷰 라운드 #1 처분(LOW-1) — measured 1071→1113(+42). `_verdict`
+    헬퍼(레인 K-1 에서 신설된 `_base.py` 버전 — 함수-본문 지연 import 로 base<->records
+    순환을 우회하고 있었음)를 이 모듈로 이관(`VerifyItemVerdict` 바로 옆) — 이제
+    `REALIZED_ITEMS`/`PROVISIONAL_ITEMS` 를 모듈 스코프에서 직접 참조하므로 지연
+    import 가 완전히 사라진다(순환을 우회가 아니라 제거). `gateway.py`/`mesh.py` 는
+    이 모듈에서 `_verdict` 를 import.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
   measured: 142
   owner: tos-runtime

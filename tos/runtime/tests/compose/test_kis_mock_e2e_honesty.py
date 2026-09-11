@@ -25,7 +25,7 @@ independent gates, not the two the plan's §0 headline names:
 The counterfactual tests below therefore apply exactly two *conceptual* lifts (deferred Phase 5
 mesh; P0-2 broker-capability-profile facts) even though the P0-2 lift touches three verify
 items (6, 12) plus the ``capability_admissible`` call — see :func:`_lift_p02_capability_profile`'s
-own docstring. Team-lead brief §0 note "잔여 ①" (forcing ``_deferred_item_verdict`` alone does not
+own docstring. Team-lead brief §0 note "잔여 ①" (forcing ``deferred_item_verdict`` alone does not
 reach the transport because item 6 blocks independently) is confirmed and extended here: item 12
 blocks independently too.
 
@@ -132,20 +132,28 @@ def _drive_crossing_tick(runtime, custody_root: Path):
 def _lift_phase5_deferred_mesh(monkeypatch: pytest.MonkeyPatch) -> None:
     """Force every :data:`~tos.egressgw.vocabulary.DEFERRED_ITEMS` verdict to ``SATISFIED`` —
     the narrowest seam naming "Phase 5 W3 closed": :func:`tos.egressgw.gateway
-    ._deferred_item_verdict` is the ONE function :func:`~tos.egressgw.gateway.verify_send_boundary`
+    .deferred_item_verdict` is the ONE function :func:`~tos.egressgw.gateway.verify_send_boundary`
     dispatches every deferred item through (module-global lookup at call time, so patching the
     module attribute takes effect), reusing the gateway's own ``_verdict`` builder rather than
-    hand-constructing a :class:`~tos.egressgw.records.VerifyItemVerdict`."""
+    hand-constructing a :class:`~tos.egressgw.records.VerifyItemVerdict`.
 
-    def _satisfied(item: Any, applicability: Any) -> Any:
-        del applicability
+    Kernel round #2 §2 decisions 1/2 moved this function to :mod:`tos.egressgw.mesh`, dropped
+    its leading underscore, and added a third ``context`` parameter (the six injected mesh
+    flags) — ``gateway.py`` still imports it by name into its own module namespace
+    (``from tos.egressgw.mesh import deferred_item_verdict``), so patching
+    ``gateway_module.deferred_item_verdict`` still takes effect at
+    ``verify_send_boundary``'s call site, unchanged.
+    """
+
+    def _satisfied(item: Any, applicability: Any, context: Any) -> Any:
+        del applicability, context
         return gateway_module._verdict(
             item,
             VerifyOutcome.SATISFIED,
             reason="T3 counterfactual: Phase 5 W3 safety-governance mesh simulated closed",
         )
 
-    monkeypatch.setattr(gateway_module, "_deferred_item_verdict", _satisfied)
+    monkeypatch.setattr(gateway_module, "deferred_item_verdict", _satisfied)
 
 
 def _lift_p02_capability_profile(monkeypatch: pytest.MonkeyPatch) -> None:

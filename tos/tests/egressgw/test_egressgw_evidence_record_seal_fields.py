@@ -20,6 +20,7 @@ from tos.egressgw import (
     build_send_seal,
     outbound_coordinates,
 )
+from tos.engine import CommitmentStep
 
 from ._egressgw_fixtures import SCHEME, happy_context
 
@@ -40,7 +41,10 @@ def test_send_seal_digest_is_rejected_on_a_kind_that_never_legitimately_carries_
     """(independent review finding #9) The reviewer's own probe now raises."""
     with pytest.raises(ValidationError, match="send_seal_digest"):
         GatewayEvidenceRecord(
-            kind="SEND_REFUSED", attempt_id="a", send_seal_digest="deadbeef"
+            kind="SEND_REFUSED",
+            attempt_id="a",
+            send_seal_digest="deadbeef",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
         )
 
 
@@ -48,24 +52,40 @@ def test_send_seal_is_rejected_on_a_kind_other_than_send_sealed() -> None:
     """The full seal is legitimate only on the ``SEND_SEALED`` record."""
     seal = _a_seal()
     with pytest.raises(ValidationError, match="send_seal"):
-        GatewayEvidenceRecord(kind="SEND_STARTED", attempt_id="a", send_seal=seal)
+        GatewayEvidenceRecord(
+            kind="SEND_STARTED",
+            attempt_id="a",
+            send_seal=seal,
+            step=CommitmentStep.SEND_STARTED_DURABLE,
+        )
 
 
-@pytest.mark.parametrize("kind", ["SEND_STARTED", "EGRESS_RESULT_RECORDED"])
+@pytest.mark.parametrize(
+    ("kind", "step"),
+    [
+        ("SEND_STARTED", CommitmentStep.SEND_STARTED_DURABLE),
+        ("EGRESS_RESULT_RECORDED", CommitmentStep.EVIDENCE_RECORD),
+    ],
+)
 def test_send_seal_digest_is_accepted_on_the_kinds_the_gateway_actually_stamps_it_onto(
-    kind: str,
+    kind: str, step: CommitmentStep
 ) -> None:
     """(independent review finding #9) ``gateway.py``'s own ``send_seal_digest=`` call sites."""
     seal = _a_seal()
     record = GatewayEvidenceRecord(
-        kind=kind, attempt_id="a", send_seal_digest=seal.seal_digest
+        kind=kind, attempt_id="a", send_seal_digest=seal.seal_digest, step=step
     )
     assert record.send_seal_digest == seal.seal_digest
 
 
 def test_send_seal_is_accepted_on_send_sealed() -> None:
     seal = _a_seal()
-    record = GatewayEvidenceRecord(kind="SEND_SEALED", attempt_id="a", send_seal=seal)
+    record = GatewayEvidenceRecord(
+        kind="SEND_SEALED",
+        attempt_id="a",
+        send_seal=seal,
+        step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+    )
     assert record.send_seal is seal
 
 
@@ -75,5 +95,16 @@ def test_send_seal_digest_is_rejected_on_send_sealed_itself() -> None:
     seal = _a_seal()
     with pytest.raises(ValidationError, match="send_seal_digest"):
         GatewayEvidenceRecord(
-            kind="SEND_SEALED", attempt_id="a", send_seal_digest=seal.seal_digest
+            kind="SEND_SEALED",
+            attempt_id="a",
+            send_seal_digest=seal.seal_digest,
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
         )
+
+
+def test_step_is_a_required_field() -> None:
+    """(kernel round #2 §2 decision 3 — mutation M4) A record built without ``step`` is
+    unconstructable — the Phase 3 wave 3 KW3-GW auditability gap this field closes cannot be
+    silently reopened by a call site that simply omits it."""
+    with pytest.raises(ValidationError, match="step"):
+        GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="a")

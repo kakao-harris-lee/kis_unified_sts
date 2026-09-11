@@ -33,8 +33,14 @@ honesty of everything here:
 
 Of the seventeen verify items, six are verified by shipped predicates over structure and
 coordinates (1, 2, 11, 13, 16, 17), five are non-authoritative provisional stand-ins (3, 6, 12,
-14, 15), and six — the live safety-governance mesh (4, 5, 7, 8, 9, 10) — are deferred and gated
-on broker-applicability. Tag for any claim: "send-boundary structural / coordinate wiring only;
+14, 15) at the kernel's own disposition-table level (design #34 §4.1; :data:`PROVISIONAL_ITEMS`)
+— though the reference runtime composition (``tos_runtime.compose``) now structurally derives
+items 3, 6, 14, and 15 (never a bare literal), leaving three fields as the only remaining
+non-authoritative operator attestations with no owning runtime producer (item 12's
+``venue_session_account_facts_current``, item 16's ``restrictive_latch_state`` and
+``worst_credible_capacity`` — Phase 5 replaces these; kernel round #2 §2 decision 4 recount) —
+and six — the live safety-governance mesh (4, 5, 7, 8, 9, 10) — are deferred and gated on
+broker-applicability. Tag for any claim: "send-boundary structural / coordinate wiring only;
 no currentness, QCC, single-use, credential-isolation, or capacity acceptance; **no ADR
 acceptance, restricted-live, or production is authorized**."
 
@@ -98,9 +104,9 @@ from tos.egressgw.gateway import (
     SendTransport,
     outbound_binding_mismatch,
     outbound_coordinates,
-    resolve_broker_applicability,
     verify_send_boundary,
 )
+from tos.egressgw.mesh import resolve_broker_applicability
 from tos.egressgw.records import (
     DERIVED_AXES,
     AdmittedPriceObservation,
