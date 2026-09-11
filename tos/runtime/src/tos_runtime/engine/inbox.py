@@ -268,6 +268,21 @@ class SqliteEventInbox:
         row = self._conn.execute("SELECT COUNT(*) FROM events").fetchone()
         return int(row[0])
 
+    @property
+    def unconsumed_count(self) -> int:
+        """How many admitted events are NOT yet consumed (the subset :attr:`count` does not
+        distinguish) — the MONITORING safety-mesh service's own inbox-backlog observation
+        (Phase 5 W3-b, plan §2 decision 2's "MonitoringService" bullet, item 3:
+        ``inbox_unconsumed_observer``). Reuses the SAME partial index
+        :meth:`next_unconsumed`'s own query already relies on
+        (``events_unconsumed ON events (seq) WHERE consumed_evidence_seq IS NULL``), so this
+        count is never a second, independently-derived view of consumption.
+        """
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM events WHERE consumed_evidence_seq IS NULL"
+        ).fetchone()
+        return int(row[0])
+
     def enqueue(self, event: EngineEvent) -> InboxReceipt:
         """Durably admit one event, allocating its ``seq`` internally.
 

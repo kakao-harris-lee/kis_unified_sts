@@ -154,14 +154,10 @@ class _LateBoundInboxReader:
 
 def _inbox_unconsumed_observer_for(cell: _InboxCell) -> Callable[[], int]:
     """The ``inbox_unconsumed_observer`` port :class:`~tos_runtime.safety.monitoring
-    .MonitoringService` needs (that module's own docstring, item 3 — "no public reader
-    for this exists on ``SqliteEventInbox`` today ... the compose layer supplies the
-    actual closure"). Reads the durable partial index
-    (``tos_runtime.engine.inbox``'s own ``ON events (seq) WHERE consumed_evidence_seq IS
-    NULL``) directly off the inbox's own sqlite connection — a reported shim (this
-    module reaches ``SqliteEventInbox``'s private ``_conn``, mirroring
-    :mod:`tos_runtime.compose.context`'s own precedent of reaching into a sibling
-    module's private attribute when no public accessor exists yet).
+    .MonitoringService` needs (that module's own docstring, item 3). Reads
+    :attr:`~tos_runtime.engine.inbox.SqliteEventInbox.unconsumed_count` — the public
+    property that owns this observation (added alongside this wiring specifically so
+    this module never has to reach into the inbox's private connection).
 
     Returns ``0`` before the cell is filled (module docstring dead-window reasoning) —
     never a fabricated backlog count.
@@ -171,10 +167,7 @@ def _inbox_unconsumed_observer_for(cell: _InboxCell) -> Callable[[], int]:
         inbox = cell.inbox
         if inbox is None:
             return 0
-        row = inbox._conn.execute(  # noqa: SLF001 - reported shim, see docstring
-            "SELECT COUNT(*) FROM events WHERE consumed_evidence_seq IS NULL"
-        ).fetchone()
-        return int(row[0]) if row is not None else 0
+        return inbox.unconsumed_count
 
     return _observer
 
