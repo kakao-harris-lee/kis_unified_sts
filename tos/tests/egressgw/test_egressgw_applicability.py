@@ -268,3 +268,73 @@ def test_a_broker_consuming_send_also_loses_the_brokercap_allowance_item() -> No
     )
     assert allowance.outcome is VerifyOutcome.DENIED
     assert "PROHIBITED" in (allowance.reason or "")
+
+
+# ---------------------------------------------------------------------------
+# kernel round #2 §2 decision 2 — the deferred-6 injection polarity table
+# ---------------------------------------------------------------------------
+
+#: item -> the SendBoundaryContext field it reads (mirrors mesh._DEFERRED_ITEM_FIELDS —
+#: transcribed independently here, not imported, so a drift between the two is caught).
+_DEFERRED_FIELD_BY_ITEM = {
+    SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH: "safety_authority_epoch_current",
+    SendVerifyItem.VALID_LIVE_SCOPE: "live_scope_valid",
+    SendVerifyItem.HARD_SAFETY_ENVELOPE_VERSIONS: "safety_profile_current",
+    SendVerifyItem.SAFETY_DEVIATION: "deviation_clear",
+    SendVerifyItem.SAFETY_INCIDENT: "incident_clear",
+    SendVerifyItem.SAFETY_MONITORING: "monitoring_clear",
+}
+
+
+def _deferred_verdict_for(item: SendVerifyItem, **field_overrides) -> VerifyOutcome:
+    """The one named ``item``'s outcome under a BROKER_RESOURCE_CONSUMING send (so the deferred
+    mesh is required, never NOT_APPLICABLE) with the given field(s) overridden."""
+    attempt, context = happy_context(
+        transport_nature=synthetic_nature(reaches_broker=True), **field_overrides
+    )
+    verification = verify_send_boundary(attempt=attempt, context=context)
+    return next(v for v in verification.verdicts if v.item is item).outcome
+
+
+@pytest.mark.parametrize("item", sorted(DEFERRED_ITEMS, key=lambda i: i.value))
+def test_a_positively_supplied_deferred_flag_is_satisfied(item: SendVerifyItem) -> None:
+    """(§2 decision 2) ``True`` -> SATISFIED, for every one of the six deferred items."""
+    field = _DEFERRED_FIELD_BY_ITEM[item]
+    assert _deferred_verdict_for(item, **{field: True}) is VerifyOutcome.SATISFIED
+
+
+@pytest.mark.parametrize("item", sorted(DEFERRED_ITEMS, key=lambda i: i.value))
+def test_an_explicitly_denied_deferred_flag_is_denied_not_unknown(
+    item: SendVerifyItem,
+) -> None:
+    """(§2 decision 2 / §3 기각 대안) ``False`` -> DENIED — an explicit negative signal from the
+    owning runtime service is a denial, never folded into UNKNOWN."""
+    field = _DEFERRED_FIELD_BY_ITEM[item]
+    assert _deferred_verdict_for(item, **{field: False}) is VerifyOutcome.DENIED
+
+
+@pytest.mark.parametrize("item", sorted(DEFERRED_ITEMS, key=lambda i: i.value))
+def test_an_unsupplied_deferred_flag_is_unknown(item: SendVerifyItem) -> None:
+    """(§2 decision 2, unchanged wording) ``None`` -> UNKNOWN — the owning runtime has not
+    landed the fact yet."""
+    field = _DEFERRED_FIELD_BY_ITEM[item]
+    assert _deferred_verdict_for(item, **{field: None}) is VerifyOutcome.UNKNOWN
+
+
+def test_deferred_item_verdict_rejects_an_item_outside_the_closed_six() -> None:
+    """(§2 decision 2 — mutation M6) An item outside the closed six-item table is a structural
+    error, never a silent UNKNOWN, whenever the send actually requires the mesh (a
+    NON_BROKER_SYNTHETIC send never reaches the table lookup at all — see the synthetic-baseline
+    test above)."""
+    from tos.egressgw import ArtifactIntegrityError
+    from tos.egressgw.mesh import deferred_item_verdict
+
+    _, context = happy_context(transport_nature=synthetic_nature(reaches_broker=True))
+    with pytest.raises(
+        ArtifactIntegrityError, match="deferred safety-governance mesh items"
+    ):
+        deferred_item_verdict(
+            SendVerifyItem.ORDER_CONSTRUCTION,  # item 13 — not one of the six
+            BrokerApplicability.BROKER_RESOURCE_CONSUMING,
+            context,
+        )
