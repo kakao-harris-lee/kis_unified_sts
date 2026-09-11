@@ -595,8 +595,10 @@ def _check_allowance(
       (design #34 §1.1-3). The gateway therefore admits **no** live send, by construction rather
       than by policy.
 
-    The allowance flags themselves are ⚠ provisional stand-ins: the approved Broker Capability
-    Profile INSTANCE is P0-2-blocked (design #34 §4.1 item 6).
+    The allowance flags themselves are supplied by the caller (compose), derived from the
+    active Broker Scope and its bound Broker Capability Profile INSTANCE document (Phase 4
+    plan §2 decision 4) — this gate judges only whether the supplied flag is positive, never
+    how it was derived (kernel round #2 §2 decision 4).
     """
     del attempt
     item = SendVerifyItem.ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY
@@ -643,7 +645,9 @@ def _check_allowance(
             VerifyOutcome.UNKNOWN,
             reason=(
                 "the account / instrument / action class allowance is not positively "
-                "established — ⚠ provisional stand-in pending the P0-2 approved Profile INSTANCE"
+                "established — the caller (compose) derives this flag from the scope table + "
+                "INSTANCE (Phase 4 plan §2 decision 4); this gate only judges its positivity "
+                "(kernel round #2 §2 decision 4)"
             ),
         )
     if not _positive(context.max_quantity_within_allowance):
@@ -651,15 +655,15 @@ def _check_allowance(
             item,
             VerifyOutcome.UNKNOWN,
             reason=(
-                "the maximum-quantity allowance is not positively established — ⚠ provisional "
-                "stand-in; the derived size's own bound is enclosed in the Authorized "
-                "Construction Envelope (design #34 §3.1)"
+                "the maximum-quantity allowance is not positively established; the derived "
+                "size's own bound is enclosed in the Authorized Construction Envelope "
+                "(design #34 §3.1)"
             ),
         )
     return _verdict(
         item,
         VerifyOutcome.SATISFIED,
-        reason="⚠ provisional stand-in: account / instrument / action / quantity allowance held",
+        reason="account / instrument / action / quantity allowance held",
     )
 
 
@@ -750,7 +754,9 @@ def _check_venue_generations(
             VerifyOutcome.UNKNOWN,
             reason=(
                 "the venue / session / halt / tradability / account / margin / settlement facts "
-                "are not positively current — ⚠ provisional stand-in (design #34 §4.1 item 12)"
+                "are not positively current — no owning runtime service supplies this fact yet "
+                "(design #34 §4.1 item 12; Phase 5 replaces the operator attestation this flag "
+                "is still read from)"
             ),
         )
     if not _positive(context.broker_constraint_generation_current):
@@ -758,14 +764,16 @@ def _check_venue_generations(
             item,
             VerifyOutcome.UNKNOWN,
             reason=(
-                "the broker-constraint generation is not positively current — ⚠ provisional; "
-                "the versioned Profile is P0-2-blocked (RFC-002 §10.8:765)"
+                "the broker-constraint generation is not positively current — the caller "
+                "(compose) derives this flag from the scope table + INSTANCE (Phase 4 plan §2 "
+                "decision 4); this gate only judges its positivity (kernel round #2 §2 "
+                "decision 4)"
             ),
         )
     return _verdict(
         item,
         VerifyOutcome.SATISFIED,
-        reason="⚠ provisional stand-in: venue / account / broker-constraint generations current",
+        reason="venue / account / broker-constraint generations current",
     )
 
 
@@ -1435,11 +1443,14 @@ class BrokerEgressGateway:
         The ledger claims ``request_digest=seal.claim_request_digest`` — the item-1 single-use
         identity (``context.request_digest``), the same one item 1's own
         ``capability_and_permit_single_use`` check verifies against. This is **not**
-        ``seal.request_bytes_digest`` — the item-17 Capsule/exact-binding identity — which is a
-        different value by design: in the composed runtime the claim identity is per-attempt
-        while the exact-binding identity is per account+instrument (identical across every
-        attempt on the same egress request). Binding the ledger claim to the wrong one of the
-        two would record an admission decision the verify list never actually made.
+        ``seal.request_bytes_digest`` — the item-17 Capsule/exact-binding identity, whose own
+        unit is whichever digest source the compose root binds: per-attempt (quantity and price
+        included) once bound to the KIS wire codec (T2 seal-codec binding), or per
+        account+instrument (identical across every attempt on the same egress request) under the
+        earlier capsule stand-in — that the claim identity and the exact-binding identity can
+        land on a different value is still the design, whichever source is bound. Binding the
+        ledger claim to the wrong one of the two would record an admission decision the verify
+        list never actually made.
 
         Args:
             attempt_id: The attempt identity (for the halt record).

@@ -65,6 +65,22 @@ def test_the_package_states_the_six_five_six_split() -> None:
     assert "six" in doc and "deferred" in doc
 
 
+def test_the_package_recounts_the_actual_remaining_attestations() -> None:
+    """(kernel round #2 §2 decision 4) The 6/5/6 split is the kernel's own static disposition
+    table (design #34 §4.1) — it does not shrink just because a runtime later derives some of
+    the five provisional items structurally. This test locks the honest amendment: the docstring
+    also names the actual remaining count in the reference runtime composition, not just the
+    kernel-level classification."""
+    doc = " ".join((tos.egressgw.__doc__ or "").split())
+    assert (
+        "three fields as the only remaining non-authoritative operator attestations"
+        in doc
+    )
+    assert "venue_session_account_facts_current" in doc
+    assert "restrictive_latch_state" in doc
+    assert "worst_credible_capacity" in doc
+
+
 def test_no_module_exposes_a_sibling_kernel_production_symbol() -> None:
     """(§0.3 / §11-3, author-level) The kernels are consumed; their productions are not re-hosted.
 
