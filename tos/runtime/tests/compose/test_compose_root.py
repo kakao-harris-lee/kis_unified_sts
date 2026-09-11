@@ -451,12 +451,22 @@ class TestComposeRootWiring:
         stored = json.loads(rows[0][0])
         names = {c["name"] for c in stored["payload"]["attested_coordinates"]}
         assert names == {
-            # egress_attestations.yaml (3, TOS Phase 4 plan §2 decision 4 —
+            # egress_attestations.yaml (1, TOS Phase 4 plan §2 decision 4 —
             # account_instrument_action_allowed/broker_constraint_generation_current
-            # are derived now, not attested)
+            # are derived now, not attested; TOS Phase 5 W3 plan §2 decision 6 —
+            # restrictive_latch_state/worst_credible_capacity are now real runtime
+            # owners, tos_runtime.safety.latch, not attestations either)
             "venue_session_account_facts_current",
-            "restrictive_latch_state",
-            "worst_credible_capacity",
+            # Phase 5 W3 safety-mesh policy documents (extra_config_files,
+            # tos_runtime.compose._safety_wiring.SAFETY_MESH_CONFIG_FILE_NAMES) —
+            # named-config-document rows, not attestations, but folded into the
+            # SAME OPERATOR_ATTESTED_INPUTS evidence record by name
+            "safety_envelope.yaml",
+            "safety_profile.yaml",
+            "safety_activation.yaml",
+            "safety_deviations.yaml",
+            "safety_incidents.yaml",
+            "monitor_coverage.yaml",
             # broker_scopes.yaml (1) — the active scope's own name
             "SYNTHETIC_FUTURES_ORDER",
             # risk_attestations.yaml (6)
@@ -488,6 +498,12 @@ class TestComposeRootWiring:
                 "risk_attestations.yaml",
                 "egress_coordinates.yaml",
                 "broker_scopes.yaml",
+                "safety_envelope.yaml",
+                "safety_profile.yaml",
+                "safety_activation.yaml",
+                "safety_deviations.yaml",
+                "safety_incidents.yaml",
+                "monitor_coverage.yaml",
                 fx.BAND_STRATEGY_FILE_NAME,
             )
             assert len(coordinate["source_file_digest"]) == 64  # sha256 hex

@@ -87,6 +87,31 @@ def test_egress_identity_is_no_longer_pending() -> None:
 
 
 @pytest.mark.parametrize(
+    "safety_mesh_key",
+    [
+        DimensionKey.SAFETY_ENVELOPE_PROFILE,
+        DimensionKey.DEVIATION,
+        DimensionKey.INCIDENT,
+        DimensionKey.MONITORING,
+    ],
+)
+def test_safety_mesh_dimension_is_no_longer_pending(
+    safety_mesh_key: DimensionKey,
+) -> None:
+    """RED until each of the four Phase 5 W3-a1/a2 safety-mesh services lands its own
+    ``dimension_readers`` entry (``tos_runtime.compose._safety_wiring.build_safety_mesh``).
+    """
+    assert safety_mesh_key not in PENDING_DIMENSION_KEYS
+
+
+def test_pending_dimension_keys_reaches_the_plan_exit_condition_of_eight() -> None:
+    """Plan §5 exit condition: ``_pending_dimensions`` 17→8 once all 9 dimension-owner
+    replacements (CURRENTNESS_POLICY, RECOVERY, TRADING_APPROVAL, ENVIRONMENT_SCOPE,
+    EGRESS_IDENTITY, and the four safety-mesh services) have landed."""
+    assert len(PENDING_DIMENSION_KEYS) == 8
+
+
+@pytest.mark.parametrize(
     "reader_owned_key",
     [
         DimensionKey.CURRENTNESS_POLICY,
@@ -94,6 +119,10 @@ def test_egress_identity_is_no_longer_pending() -> None:
         DimensionKey.TRADING_APPROVAL,
         DimensionKey.ENVIRONMENT_SCOPE,
         DimensionKey.EGRESS_IDENTITY,
+        DimensionKey.SAFETY_ENVELOPE_PROFILE,
+        DimensionKey.DEVIATION,
+        DimensionKey.INCIDENT,
+        DimensionKey.MONITORING,
     ],
 )
 def test_a_reader_owned_key_still_present_in_config_refuses_to_load(

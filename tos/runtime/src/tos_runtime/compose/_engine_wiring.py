@@ -39,7 +39,7 @@ only. No ``shared.*``.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -94,6 +94,7 @@ from tos_runtime.recovery.composite_state_writer import (
     COMPOSITE_STATE_STORE_FILE_NAME,
     CompositeStateWriter,
 )
+from tos_runtime.safety.ports import SafetyMeshService
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 
@@ -388,6 +389,23 @@ class WiredEngine:
     driver: EngineDriver
 
 
+def _mesh_held_evidence_recorder_for(
+    evidence_store: SqliteEvidenceStore,
+) -> Callable[[Mapping[str, Any]], None]:
+    """The Coordinator's ``COORDINATOR_MESH_HELD`` evidence sink (Phase 5 W3-b, plan §2
+    decision 5) — over this runtime's real evidence store, mirroring every other
+    boot-time/tick evidence append in this module's own call sites."""
+
+    def _recorder(fields: Mapping[str, Any]) -> None:
+        evidence_store.append(
+            dict(fields),
+            kind="COORDINATOR_MESH_HELD",
+            record_class="COORDINATOR_MESH_HELD",
+        )
+
+    return _recorder
+
+
 def _build_preconditions(
     authority_epoch_service: SafetyAuthorityEpochService,
     live_authorization_state: str,
@@ -395,6 +413,8 @@ def _build_preconditions(
     nonlive_admitted: bool,
     active_scope: BrokerScope,
     instance_document: InstanceDocument | None,
+    safety_mesh: Sequence[SafetyMeshService] = (),
+    evidence_store: SqliteEvidenceStore | None = None,
 ) -> RuntimeCoordinatorPreconditions:
     """The live core's RFC-002 §10.7 Coordinator positive gates (design #31 §9-10; plan §2.1).
 
@@ -412,6 +432,10 @@ def _build_preconditions(
             straight through to :class:`RuntimeCoordinatorPreconditions`.
         active_scope: This runtime's active :class:`~tos_runtime.brokercap.scopes.BrokerScope`.
         instance_document: The bound Broker Capability Profile INSTANCE document, or ``None``.
+        safety_mesh: The Phase 5 W3 safety-mesh services (plan §2 decision 5) — the
+            Coordinator's third question. Empty (default) when not wired.
+        evidence_store: Builds the ``COORDINATOR_MESH_HELD`` recorder when given; ``None``
+            (default) wires no evidence recorder (the refusal itself is unaffected).
     """
     return RuntimeCoordinatorPreconditions(
         epoch_service=authority_epoch_service,
@@ -419,6 +443,12 @@ def _build_preconditions(
         nonlive_admitted=nonlive_admitted,
         active_scope=active_scope,
         instance_document=instance_document,
+        safety_mesh=safety_mesh,
+        mesh_evidence_recorder=(
+            _mesh_held_evidence_recorder_for(evidence_store)
+            if evidence_store is not None
+            else None
+        ),
     )
 
 
@@ -446,6 +476,7 @@ def wire_engine_and_driver(
     custody: CredentialCustody,
     transport_kind: TransportKind,
     transport_config: KisMockTransportConfig | None,
+    safety_mesh: Sequence[SafetyMeshService] = (),
 ) -> WiredEngine:
     """The gateway + ``EngineCore`` + durable inbox/driver wiring — split out of ``_wiring.py``'s
     ``_finalize`` purely for the size budget; no behavioural difference from having this inline
@@ -532,6 +563,8 @@ def wire_engine_and_driver(
         nonlive_admitted=nonlive_admitted,
         active_scope=active_scope,
         instance_document=instance_document,
+        safety_mesh=safety_mesh,
+        evidence_store=evidence_store,
     )
     core = EngineCore(
         registry=resolved_registry,

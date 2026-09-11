@@ -27,16 +27,28 @@ gate ① (kernel ``is_live`` default-non-live judgement) still gates everything,
 and a REAL-shaped scope fails the new question's condition 3 regardless of
 posture.
 
+**A third question, broker-reaching only (Phase 5 W3-b; plan §2 decision 5).** The
+kernel Protocol still carries only the two methods above — kernel diff 0 again.
+``live_scope_authorized`` now ANDs a THIRD, independent question into the
+broker-reaching arm only (:meth:`RuntimeCoordinatorPreconditions._mesh_clear`): every
+injected Phase 5 W3 safety-mesh service
+(:class:`~tos_runtime.safety.ports.SafetyMeshService`) must report
+``clear().clear is True``, non-vacuously (an empty mesh is ``False``, never a vacuous
+pass). The synthetic (``reaches_broker is False``) path is entirely unaffected — the
+mesh question is never even reached there, so a mesh left unwired (``safety_mesh=()``,
+the default) never changes synthetic-path behaviour.
+
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib
-(``pathlib``, ``yaml``, ``dataclasses``, ``typing``) +
+(``pathlib``, ``yaml``, ``dataclasses``, ``typing``, ``collections.abc``) +
 ``tos.authority``/``tos.liveauth``/``tos.egressgw`` +
 ``tos_runtime.authority.epoch``/``tos_runtime.compose._nonlive_admission``/
-``tos_runtime.brokercap.instance``/``tos_runtime.brokercap.scopes`` only. No
-``shared.*``.
+``tos_runtime.brokercap.instance``/``tos_runtime.brokercap.scopes``/
+``tos_runtime.safety.ports`` only. No ``shared.*``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -50,6 +62,7 @@ from tos_runtime.authority.epoch import SafetyAuthorityEpochService
 from tos_runtime.brokercap.instance import InstanceDocument
 from tos_runtime.brokercap.scopes import BrokerScope
 from tos_runtime.compose._nonlive_admission import nonlive_broker_consuming_admitted
+from tos_runtime.safety.ports import SafetyMeshService
 
 __all__ = [
     "COORDINATOR_PRECONDITIONS_CONFIG_NAME",
@@ -235,6 +248,8 @@ class RuntimeCoordinatorPreconditions:
         nonlive_admitted: bool | None = None,
         active_scope: BrokerScope | None = None,
         instance_document: InstanceDocument | None = None,
+        safety_mesh: Sequence[SafetyMeshService] = (),
+        mesh_evidence_recorder: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> None:
         """Wire the preconditions object over its injected ports.
 
@@ -262,12 +277,24 @@ class RuntimeCoordinatorPreconditions:
             instance_document: The Broker Capability Profile INSTANCE
                 document bound to ``active_scope``. ``None`` (the default)
                 when not wired — same "not available" treatment.
+            safety_mesh: The Phase 5 W3 safety-mesh services (plan §2 decision 5) the
+                Coordinator's THIRD question ANDs together for a broker-reaching
+                transport (:meth:`live_scope_authorized`'s own docstring). Empty (the
+                default) when not wired — a broker-reaching transport is then always
+                refused by this question (non-vacuous: an empty mesh is never
+                positively clear), while a synthetic transport is unaffected.
+            mesh_evidence_recorder: Records ``COORDINATOR_MESH_HELD`` evidence
+                (identities + reasons) whenever the mesh question refuses. ``None``
+                (the default) records nothing — the refusal itself still holds,
+                only the extra evidence trace is skipped.
         """
         self._epoch_service = epoch_service
         self._live_authorization_state = live_authorization_state
         self._nonlive_admitted = nonlive_admitted
         self._active_scope = active_scope
         self._instance_document = instance_document
+        self._safety_mesh = tuple(safety_mesh)
+        self._mesh_evidence_recorder = mesh_evidence_recorder
         #: This runtime's own epoch floor at composition time — the CLAIMED
         #: epoch every later :meth:`authority_epoch_current` call is checked
         #: against. Read exactly once, here, never again per tick (class
@@ -396,8 +423,41 @@ class RuntimeCoordinatorPreconditions:
                 active_scope=self._active_scope,
                 instance_document=self._instance_document,
             )
-            return verdict.admitted
+            return verdict.admitted and self._mesh_clear()
         return False
+
+    def _mesh_clear(self) -> bool:
+        """The Coordinator's THIRD question (T2/W3-b; plan §2 decision 5) — asked ONLY
+        on the broker-reaching path reached above (a synthetic transport is admitted
+        by gate ② before this method is ever called, unchanged).
+
+        ``True`` only when :attr:`_safety_mesh` is non-empty AND every service's
+        :meth:`~tos_runtime.safety.ports.SafetyMeshService.clear` reports
+        ``MeshClearance.clear is True`` — an explicit ``is True`` check (never
+        truthiness) and a non-vacuous requirement (an EMPTY mesh is ``False``, never a
+        vacuous pass): a broker-reaching send with no safety-mesh wired at all must
+        never be treated as though the mesh had positively cleared it.
+
+        Records ``COORDINATOR_MESH_HELD`` evidence (identities + reasons) for every
+        non-positive service when the question refuses, via the injected
+        :attr:`_mesh_evidence_recorder` (``None`` records nothing — module docstring).
+        """
+        held: list[dict[str, Any]] = []
+        for service in self._safety_mesh:
+            clearance = service.clear()
+            if clearance.clear is not True:
+                held.append(
+                    {"identity": clearance.identity, "reasons": clearance.reasons}
+                )
+        mesh_clear = bool(self._safety_mesh) and not held
+        if not mesh_clear and self._mesh_evidence_recorder is not None:
+            self._mesh_evidence_recorder(
+                {
+                    "held_services": held,
+                    "mesh_wired": bool(self._safety_mesh),
+                }
+            )
+        return mesh_clear
 
 
 class _ReplayPreconditions:

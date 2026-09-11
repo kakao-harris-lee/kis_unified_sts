@@ -41,6 +41,7 @@ from tos_runtime.compose._risk_attestations import (
     RiskAttestations,
     load_risk_attestations,
 )
+from tos_runtime.compose._safety_wiring import _SafetyMesh
 from tos_runtime.compose.context import (
     RecordingActionFlowGovernor,
     RecordingAggregateRiskService,
@@ -116,6 +117,9 @@ class _RiskAndCurrentness:
     #: with the composed credential-route inventory once ``_build_context_resolver``
     #: returns (see ``_EgressIdentityDimensionState``'s own docstring for why).
     egress_identity_dimension_state: _EgressIdentityDimensionState
+    #: The four W3-a1/a2 safety-mesh services + item-16 latch owner (Phase 5 W3-b, plan §2
+    #: decision 8) — see :mod:`tos_runtime.compose._safety_wiring`'s own module docstring.
+    safety_mesh: _SafetyMesh
 
 
 def _authority_dimension_reader_for(
@@ -482,6 +486,7 @@ def _build_dimension_readers(
     authority_epoch_service: SafetyAuthorityEpochService,
     currentness_policy: CurrentnessPolicy,
     environment_label: str,
+    safety_mesh: _SafetyMesh,
 ) -> tuple[
     dict[DimensionKey, tuple[str, Callable[[], DimensionReport | None]]],
     _DimensionStates,
@@ -528,6 +533,7 @@ def _build_dimension_readers(
             "tos_runtime.egress",
             _egress_identity_dimension_reader_for(dimension_states.egress_identity),
         ),
+        **safety_mesh.dimension_readers,
     }
     return dimension_readers, dimension_states
 
@@ -540,10 +546,11 @@ def _build_risk_and_currentness(
     time_service: TrustworthyTimeService,
     authority_epoch_service: SafetyAuthorityEpochService,
     environment_label: str,
+    safety_mesh: _SafetyMesh,
 ) -> _RiskAndCurrentness:
     """Aggregate Risk Authority + Action Flow Governor (order 5), currentness
-    assembler + Egress Currentness Proof issuer (order 6). ``environment_label`` is
-    forwarded to :func:`_build_dimension_readers` (Phase 5 W3-b)."""
+    assembler + Egress Currentness Proof issuer (order 6). ``environment_label`` /
+    ``safety_mesh`` are forwarded to :func:`_build_dimension_readers` (Phase 5 W3-b)."""
     projection = SqliteReservationProjectionReader(rcl_log)
     scenario_set = load_adverse_scenario_set(config_dir / _RISK_CONFIG_NAME)
     required_scenario_kinds = load_required_scenario_kinds(
@@ -584,6 +591,7 @@ def _build_risk_and_currentness(
         authority_epoch_service=authority_epoch_service,
         currentness_policy=currentness_policy,
         environment_label=environment_label,
+        safety_mesh=safety_mesh,
     )
     currentness_assembler = CurrentnessAssembler(
         rcl_log,
@@ -625,5 +633,6 @@ def _build_risk_and_currentness(
         recovery_dimension_state=dimension_states.recovery,
         trading_approval_dimension_state=dimension_states.trading_approval,
         egress_identity_dimension_state=dimension_states.egress_identity,
+        safety_mesh=safety_mesh,
         proof_issuer=proof_issuer,
     )

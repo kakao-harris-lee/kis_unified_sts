@@ -140,6 +140,11 @@ from tos_runtime.risk.flow import (
     ActionFlowDecisionInputs,
     ActionFlowGovernor,
 )
+from tos_runtime.safety.latch import (
+    CapacityOwner,
+    RestrictiveLatchOwner,
+    egress_owner_fields,
+)
 
 __all__ = [
     "ComposeContextResolver",
@@ -360,6 +365,17 @@ class ComposeContextResolver:
     #: Coordinator's ``RuntimeCoordinatorPreconditions.authority_epoch_current`` already
     #: reads (:mod:`tos_runtime.compose._preconditions`), never a second service.
     authority_epoch_service: SafetyAuthorityEpochService
+    #: Items 7/8/9/10's deferred egress-mesh fields (Phase 5 W3-b, plan §2 decision 8) —
+    #: :attr:`~tos_runtime.compose._safety_wiring._SafetyMesh.deferred_fields`, evaluated
+    #: fresh on every call (never cached), never a second judgement authored here.
+    safety_mesh_deferred_fields: Callable[[], dict[str, Any]]
+    #: Item 16's restrictive-latch owner (W3-c) — the composed
+    #: :class:`~tos_runtime.compose._safety_wiring._SafetyMesh.latch`.
+    latch: RestrictiveLatchOwner
+    #: Item 16's worst-credible-capacity owner (W3-c) — built once ``instrument_key`` is
+    #: known (:func:`~tos_runtime.compose._safety_wiring.build_capacity_owner`), unlike
+    #: :attr:`latch` which needs the late-bound inbox cell instead.
+    capacity: CapacityOwner
     #: The exact venue facts step 3 folded — passed straight through to item 11
     #: rather than rebuilt, so item 11's re-fold cannot silently disagree with
     #: the fold ``VenueConstraintStage`` (step 3) already performed.
@@ -645,12 +661,15 @@ class ComposeContextResolver:
         (items 6/12) are STRUCTURALLY DERIVED (TOS Phase 4 plan §2 decision
         4) via :func:`~tos_runtime.brokercap.derive_item6_item12`, never an
         attestation any more — see :meth:`_item6_item12_fields`.
-        ``venue_session_account_facts_current`` / ``restrictive_latch_state``
-        / ``worst_credible_capacity`` remain explicit operator attestations
-        from composition config (:mod:`tos_runtime.compose._egress_attestations`
-        — see its own module docstring for which Phase replaces each), never
-        a bare Python literal. ``max_quantity_within_allowance`` is the one
-        exception: it HAS a real Phase 2 producer (step 2's own
+        ``venue_session_account_facts_current`` remains an explicit operator
+        attestation from composition config
+        (:mod:`tos_runtime.compose._egress_attestations` — see its own module
+        docstring for which Phase replaces it). ``restrictive_latch_state`` /
+        ``worst_credible_capacity`` (item 16) are Phase 5 W3 real runtime
+        owners now (:mod:`tos_runtime.safety.latch`, plan §2 decision 6) —
+        never an attestation any more; see :attr:`latch` / :attr:`capacity`.
+        ``max_quantity_within_allowance`` is the one exception: it HAS a real
+        Phase 2 producer (step 2's own
         ``CandidateConstruction.no_silent_widening_ok``) and is derived
         from that live value instead of an attestation or a derivation."""
         attestations = self.egress_attestations
@@ -667,8 +686,7 @@ class ComposeContextResolver:
             "broker_constraint_generation_current": (
                 derived.broker_constraint_generation_current
             ),
-            "restrictive_latch_state": attestations.restrictive_latch_state,
-            "worst_credible_capacity": attestations.worst_credible_capacity,
+            **egress_owner_fields(self.latch, self.capacity).fields(),
         }
 
     def _deferred_mesh_fields(self) -> dict[str, Any]:
@@ -686,18 +704,20 @@ class ComposeContextResolver:
         own ``_bound_epoch``) — never a second currentness/authorization comparison
         authored here.
 
-        Items 5 (``live_scope_valid``) / 7 / 8 / 9 / 10 are deliberately ABSENT (never a
-        key in the returned dict, so ``send_boundary_context`` leaves them at their own
-        ``None`` default): item 5 stays UNKNOWN per plan §2 decision 4's operator
-        confirmation ③ (a); items 7-10 have no runtime owner wired into this resolver
-        yet (the four safety-mesh services, W3-a1/a2 — SAFETY_ENVELOPE_PROFILE and
-        DEVIATION have landed but are not yet composed here, INCIDENT/MONITORING have
-        not landed at all; supplying only SOME of the four would be a worse, silently
-        partial signal than supplying none — this waits for all four together)."""
+        Items 7/8/9/10 come from :attr:`safety_mesh_deferred_fields` — the four W3-a1/a2
+        safety-mesh services' own ``clear().clear`` (:mod:`tos_runtime.compose
+        ._safety_wiring`'s own ``build_safety_mesh``), evaluated fresh on every call.
+
+        Item 5 (``live_scope_valid``) is deliberately ABSENT (never a key in the
+        returned dict, so ``send_boundary_context`` leaves it at its own ``None``
+        default) — it stays UNKNOWN per plan §2 decision 4's operator confirmation ③
+        (a), Phase 5's own committed posture until a live authorization runtime exists.
+        """
         return {
             "safety_authority_epoch_current": self.authority_epoch_service.epoch_current(
                 self._bound_authority_epoch
             ),
+            **self.safety_mesh_deferred_fields(),
         }
 
     def _item6_item12_fields(self) -> Item6Item12Fields:

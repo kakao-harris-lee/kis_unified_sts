@@ -62,12 +62,12 @@ DECISION_PROOF_INTENT:
   bound_digest: null
   restrictive_floor: null
   positively_established: null
-# owner note: Phase 5 (a real deviation-tracking owner) replaces this attestation
-DEVIATION:
-  bound_generation: null
-  bound_digest: null
-  restrictive_floor: null
-  positively_established: null
+# DEVIATION: Phase 5 W3-a1 landed a real dimension_readers entry
+# (tos_runtime.safety.deviation.DeviationService, via
+# tos_runtime.compose._safety_wiring.build_safety_mesh) — this block is
+# REMOVED, never left null; a config that still carries a DEVIATION key
+# here now refuses to load (tos_runtime.compose._pending_dimensions
+# _READER_OWNED_DIMENSION_KEYS).
 # EGRESS_IDENTITY: Phase 5 W3-b landed a real dimension_readers entry
 # (tos_runtime.compose._currentness_wiring._egress_identity_dimension_reader_for,
 # over tos.egress.predicates.credential_route_authority_disjoint — partial
@@ -82,18 +82,18 @@ DEVIATION:
 # REMOVED, never left null; a config that still carries an ENVIRONMENT_SCOPE
 # key here now refuses to load (tos_runtime.compose._pending_dimensions
 # _READER_OWNED_DIMENSION_KEYS).
-# owner note: Phase 5 (a real incident-management owner) replaces this attestation
-INCIDENT:
-  bound_generation: null
-  bound_digest: null
-  restrictive_floor: null
-  positively_established: null
-# owner note: Phase 5 (a real monitoring owner) replaces this attestation
-MONITORING:
-  bound_generation: null
-  bound_digest: null
-  restrictive_floor: null
-  positively_established: null
+# INCIDENT: Phase 5 W3-a2 landed a real dimension_readers entry
+# (tos_runtime.safety.incident.IncidentService, via
+# tos_runtime.compose._safety_wiring.build_safety_mesh) — this block is
+# REMOVED, never left null; a config that still carries an INCIDENT key
+# here now refuses to load (tos_runtime.compose._pending_dimensions
+# _READER_OWNED_DIMENSION_KEYS).
+# MONITORING: Phase 5 W3-a2 landed a real dimension_readers entry
+# (tos_runtime.safety.monitoring.MonitoringService, via
+# tos_runtime.compose._safety_wiring.build_safety_mesh) — this block is
+# REMOVED, never left null; a config that still carries a MONITORING key
+# here now refuses to load (tos_runtime.compose._pending_dimensions
+# _READER_OWNED_DIMENSION_KEYS).
 # owner note: Phase 5 (a real post-trade owner) replaces this attestation
 POST_TRADE:
   bound_generation: null
@@ -112,12 +112,12 @@ RELEASE:
   bound_digest: null
   restrictive_floor: null
   positively_established: null
-# owner note: Phase 5 (a real Safety Envelope Profile owner) replaces this attestation
-SAFETY_ENVELOPE_PROFILE:
-  bound_generation: null
-  bound_digest: null
-  restrictive_floor: null
-  positively_established: null
+# SAFETY_ENVELOPE_PROFILE: Phase 5 W3-a1 landed a real dimension_readers entry
+# (tos_runtime.safety.profile.SafetyProfileService, via
+# tos_runtime.compose._safety_wiring.build_safety_mesh) — this block is
+# REMOVED, never left null; a config that still carries a
+# SAFETY_ENVELOPE_PROFILE key here now refuses to load
+# (tos_runtime.compose._pending_dimensions _READER_OWNED_DIMENSION_KEYS).
 # TRADING_APPROVAL: Phase 5 W3-b landed a real dimension_readers entry
 # (tos_runtime.compose._currentness_wiring._trading_approval_dimension_reader_for,
 # over step 4's own recorded IndependentApprovalStage verdict) — this block

@@ -98,6 +98,13 @@ _READER_OWNED_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
         #: in that reader's own docstring — two sibling predicates have no runtime
         #: owner yet).
         DimensionKey.EGRESS_IDENTITY,
+        #: The four Phase 5 W3-a1/a2 safety-mesh services (plan §2 decision 2) —
+        #: ``tos_runtime.compose._safety_wiring.build_safety_mesh``'s own
+        #: ``dimension_readers``, folded in by ``_build_dimension_readers``.
+        DimensionKey.SAFETY_ENVELOPE_PROFILE,
+        DimensionKey.DEVIATION,
+        DimensionKey.INCIDENT,
+        DimensionKey.MONITORING,
     }
 )
 

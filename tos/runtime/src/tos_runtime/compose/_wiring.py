@@ -74,6 +74,11 @@ from tos_runtime.compose._risk_attestations import (
     wrap_action_flow_inputs_provider,
     wrap_aggregate_risk_inputs_provider,
 )
+from tos_runtime.compose._safety_wiring import (
+    _SafetyMesh,
+    build_capacity_owner,
+    build_safety_mesh,
+)
 from tos_runtime.compose._transport_wiring import TransportKind, resolve_transport_boot
 from tos_runtime.compose._types import (
     ConstructionConfig,
@@ -98,6 +103,7 @@ from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.ports import EvidenceAppendPort
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.rcl.reservation_identity import scope_reservation_id
 from tos_runtime.release.admission import ReleaseAdmissionService
 from tos_runtime.release.config import load_release_config
@@ -800,23 +806,19 @@ def _build_context_resolver(
     environment_label: str,
     continuity_id: str,
     authority_epoch_service: SafetyAuthorityEpochService,
+    safety_mesh: _SafetyMesh,
+    projection: SqliteReservationProjectionReader,
     request_bytes_digest_source: RequestBytesDigestSource | None = None,
 ) -> ComposeContextResolver:
-    """The gateway's lazy ``SendBoundaryContext`` resolver (design #35 §3.1 (3)), wired
-    with this environment's transport nature / credential-route inventory / authorized
-    coordinates.
-
-    G-4 CLOSED (plan §2 decision 2): transport nature / credential-route inventory are
-    STRUCTURALLY DERIVED from ``broker_scopes.active_scope``
-    (:func:`~tos_runtime.brokercap.transport_nature` /
-    :func:`~tos_runtime.brokercap.credential_route_inventory`) — the old R2 literal-
-    comparison boot refusal is likewise generalized to
-    :func:`~tos_runtime.brokercap.refuse_principal_collision` over EVERY configured
-    scope's principal. ``instance_document`` is loaded EXACTLY ONCE per boot (finding
-    F9 — no second re-load here). ``authority_epoch_service`` feeds item 4's deferred-
-    mesh field (Phase 5 W3-b, plan §2 decision 4), forwarded straight to
-    :class:`ComposeContextResolver`. ``request_bytes_digest_source`` is T2 lane A's
-    digest-source seam (``None`` -> builds :func:`_default_request_bytes_digest_source`).
+    """The gateway's lazy ``SendBoundaryContext`` resolver (design #35 §3.1 (3)) — transport
+    nature / credential-route inventory STRUCTURALLY DERIVED from ``broker_scopes.active_scope``
+    (G-4, plan §2 decision 2; ``refuse_principal_collision`` generalizes the old R2 literal
+    check over EVERY configured scope's principal). ``instance_document`` is loaded EXACTLY
+    ONCE per boot (finding F9). ``authority_epoch_service`` feeds item 4's deferred-mesh field;
+    ``safety_mesh``/``projection`` feed items 7-10 + the item-16 latch/capacity owners (Phase 5
+    W3-b, plan §2 decisions 4/6/8) — all forwarded straight to :class:`ComposeContextResolver`.
+    ``request_bytes_digest_source`` is T2 lane A's digest-source seam (``None`` -> builds
+    :func:`_default_request_bytes_digest_source`).
 
     Raises:
         BrokerScopeConfigError: ``active_principal`` collides with a scope's own
@@ -824,6 +826,9 @@ def _build_context_resolver(
     """
     refuse_principal_collision(
         broker_scopes, active_principal=egress_coordinates.active_principal
+    )
+    instrument_key = InstrumentKey(
+        account=construction.account, instrument=construction.instrument
     )
     return ComposeContextResolver(
         construction_stage=construction_stages.construction_stage,
@@ -840,6 +845,9 @@ def _build_context_resolver(
         broker_scopes=broker_scopes,
         instance_document=instance_document,
         authority_epoch_service=authority_epoch_service,
+        safety_mesh_deferred_fields=safety_mesh.deferred_fields,
+        latch=safety_mesh.latch,
+        capacity=build_capacity_owner(projection, instrument_key),
         # Transport's OWN identity (slice #3) — derived from the active scope, G-4 closed.
         transport_nature=transport_nature(broker_scopes.active_scope),
         environment_label=environment_label,
@@ -873,9 +881,7 @@ def _build_context_resolver(
         action_class=construction.action_class,
         observed_session_phase=construction.observed_session_phase,
         continuity_id=continuity_id,
-        instrument_key=InstrumentKey(
-            account=construction.account, instrument=construction.instrument
-        ),
+        instrument_key=instrument_key,
         venue_snapshot=construction.venue_snapshot,
         venue_policy=construction.venue_policy,
         venue_decision=construction.venue_decision,
@@ -942,7 +948,9 @@ def _resolve_strategies_and_attested_inputs(
         resolved_strategies.loaded_bindings,
         broker_scopes=broker_scopes,
         instance_document=instance_document,
-        extra_config_files=transport_boot.extra_config_files,
+        extra_config_files=(
+            transport_boot.extra_config_files + risk.safety_mesh.config_files
+        ),
     )
     return (
         egress_coordinates,
@@ -1022,6 +1030,12 @@ def _boot_services(
     verify_rcl_log_or_halt(
         rcl.rcl_log, infra.evidence_store, infra.emergency_log, identity
     )
+    safety_mesh = build_safety_mesh(
+        config_dir,
+        evidence_store=infra.evidence_store,
+        time_service=infra.time_service,
+        monotonic_source=infra.monotonic_source,
+    )
     risk = _build_risk_and_currentness(
         config_dir,
         rcl.rcl_log,
@@ -1030,6 +1044,7 @@ def _boot_services(
         infra.time_service,
         rcl.authority_epoch_service,
         environment_label,
+        safety_mesh,
     )
     (
         egress_coordinates,

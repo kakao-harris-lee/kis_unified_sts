@@ -311,7 +311,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1085
+  measured: 1100
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -477,6 +477,15 @@ exceptions:
     4 deferred-mesh 필드가 필요로 함, plan §2 결정 4) + 호출부(`ComposeContextResolver
     (...)`) 1줄 관통 배선 — 둘 다 기존 함수 편집. 같은 함수의 도크스트링을
     산문 1단락으로 압축(§100줄 문턱 재확보)하며 net 순감소.
+    **2026-09-11 Phase 5 W3 안전 메시 4개 서비스 결선 재등재 1085→1100(+15)**:
+    `_safety_wiring.build_safety_mesh` 신규 import+호출 1건(§8 결정, 1호출+import)
+    + `_build_context_resolver`에 `safety_mesh`/`projection` 매개변수 2줄 +
+    `ComposeContextResolver(...)` 호출부에 `safety_mesh_deferred_fields`/`latch`/
+    `capacity=build_capacity_owner(...)` 3줄 + `instrument_key` 지역변수 추출
+    (구 인라인 `InstrumentKey(...)` 대체) + `_resolve_strategies_and_attested_inputs`
+    의 `extra_config_files` 표현식을 `risk.safety_mesh.config_files` 병합용
+    괄호식으로 확장. `_build_context_resolver` 자체는 도크스트링 압축(위 항목)으로
+    100줄 문턱 아래 유지.
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime
@@ -491,7 +500,7 @@ exceptions:
     신규 함수 자체가 실측 증가분. _wiring.py 항목과 동일하게 목록 끝에 append
     (공유 워크트리 동시 편집 회피).
 - target: tos/runtime/src/tos_runtime/compose/_engine_wiring.py::wire_engine_and_driver
-  measured: 142
+  measured: 145
   owner: tos-runtime
   decomposition_order: 33
   expires_on: '2026-12-31'
@@ -523,6 +532,11 @@ exceptions:
     변경을 보지 못한 브랜치에서 작업해 병합 시 해당 항목이 재등장할 뻔했으나,
     병합된 코드의 `produce` 는 여전히 27줄(W2-R 상태 그대로, T2 무편집)이라
     옛 항목을 재등재하지 않고 계속 해제 상태로 유지.
+    **2026-09-11 Phase 5 W3-b 재등재 142→145**: Coordinator 세번째 질문(plan
+    §2 결정 5) — `safety_mesh: Sequence[SafetyMeshService] = ()` 매개변수 1줄
+    + `_build_preconditions` 호출부에 `safety_mesh=safety_mesh,`/
+    `evidence_store=evidence_store,` 2줄 추가. 안전-부담 파라미터 관례상
+    압축 대신 등재.
 - target: tos/runtime/src/tos_runtime/engine/driver.py::EngineDriver._process_next
   measured: 141
   owner: tos-runtime
@@ -589,7 +603,7 @@ exceptions:
     import 가 완전히 사라진다(순환을 우회가 아니라 제거). `gateway.py`/`mesh.py` 는
     이 모듈에서 `_verdict` 를 import.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 156
+  measured: 162
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
@@ -641,6 +655,11 @@ exceptions:
     호출부에 `authority_epoch_service=boot.rcl.authority_epoch_service,` 인자
     1줄 추가(item 4 deferred-mesh 필드, plan §2 결정 4) — 정본 결선 순서
     문서라 분해 대신 등재.
+    **2026-09-11 Phase 5 W3 안전 메시 결선 재등재 156→162**: `_build_context_resolver`
+    호출부에 `safety_mesh=boot.risk.safety_mesh,`/`projection=boot.risk.projection,`
+    인자 2줄 + 안전 메시 inbox 셀 late-bind 블록(`boot.risk.safety_mesh.inbox_cell
+    .inbox = composed.inbox`, 주석 3줄 포함) 4줄 추가(plan §2 결정 6/8) — 정본 결선
+    순서 문서라 분해 대신 등재.
 - target: tos/runtime/src/tos_runtime/compose/_boot_integrity.py::record_operator_attested_inputs
   measured: 104
   owner: tos-runtime

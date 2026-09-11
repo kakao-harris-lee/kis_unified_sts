@@ -228,6 +228,8 @@ def compose_paper_runtime(
         environment_label=environment_label,
         continuity_id=continuity_id,
         authority_epoch_service=boot.rcl.authority_epoch_service,
+        safety_mesh=boot.risk.safety_mesh,
+        projection=boot.risk.projection,
         request_bytes_digest_source=request_bytes_digest_source,
     )
     # Late-bind the EGRESS_IDENTITY dimension reader's cell now the composed
@@ -255,6 +257,10 @@ def compose_paper_runtime(
         transport_kind=transport_kind,
         transport_config=boot.transport_config,
     )
+    # Late-bind the safety-mesh inbox cell now the durable inbox exists (Phase 5 W3-b,
+    # plan §2 decision 6/8) — RestrictiveLatchOwner's new-risk-halt reader and
+    # MonitoringService's inbox-backlog observer both close over this cell.
+    boot.risk.safety_mesh.inbox_cell.inbox = composed.inbox
     # TOS Phase 5 W2-R (plan §10 row ①③) — attach the finality release consumer BEFORE the
     # recovery barrier runs (see apply_release_wiring's own docstring for why running before a
     # possible driver detach is harmless).

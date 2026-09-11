@@ -124,8 +124,166 @@ def config_dir(tmp_path: Path) -> Path:
         directory / "egress_attestations.yaml",
         {
             "venue_session_account_facts_current": {"attested": True},
-            "restrictive_latch_state": {"clear": True},
-            "worst_credible_capacity": {"value": 1},
+        },
+    )
+    # Phase 5 W3 safety-mesh policy documents (tos_runtime.compose._safety_wiring) — a
+    # minimal NOMINAL "everything clear" fixture (one governed dimension, no active
+    # deviations/incidents, all three MONITORING obligations closed) so every compose
+    # e2e test's happy path exercises a genuinely CLEAR mesh, not a fabricated one.
+    _write_yaml(
+        directory / "safety_envelope.yaml",
+        {
+            "envelope": {
+                "envelope_id": "env-compose-1",
+                "envelope_generation": 1,
+                "envelope_version": {
+                    "version": "v1",
+                    "effective_date": "2026-09-01",
+                    "evidence_package_version": None,
+                    "approver_identity": "operator-compose",
+                    "expiration_or_revalidation_date": None,
+                    "superseded_version_link": None,
+                    "change_classification": None,
+                },
+                "governed_dimensions": [
+                    {
+                        "dimension": "max_notional",
+                        "envelope_max": "100",
+                        "unit": "KRW",
+                        "multiplier": "1",
+                        "sign": "POSITIVE",
+                        "precision": "0",
+                        "rounding": "NEAREST",
+                        "boundary": "INCLUSIVE",
+                    }
+                ],
+                "permitted_scope": ["default"],
+                "prohibited_fallbacks": [],
+                "residual_risk_ceiling": None,
+                "evidence_package_ref": None,
+            }
+        },
+    )
+    _write_yaml(
+        directory / "safety_profile.yaml",
+        {
+            "profile": {
+                "profile_id": "prof-compose-1",
+                "profile_generation": 1,
+                "profile_version": {
+                    "version": "v1",
+                    "effective_date": "2026-09-01",
+                    "evidence_package_version": None,
+                    "approver_identity": "operator-compose",
+                    "expiration_or_revalidation_date": None,
+                    "superseded_version_link": None,
+                    "change_classification": None,
+                },
+                "target_envelope_id": "env-compose-1",
+                "target_envelope_generation": 1,
+                "governed_dimensions": [
+                    {
+                        "dimension": "max_notional",
+                        "profile_value": "50",
+                        "unit": "KRW",
+                        "multiplier": "1",
+                        "sign": "POSITIVE",
+                        "precision": "0",
+                        "rounding": "NEAREST",
+                        "boundary": "INCLUSIVE",
+                    }
+                ],
+                "scope": ["default"],
+                "permitted_behaviors": [],
+                "fallback_rules": [],
+                "evidence_package_ref": None,
+            }
+        },
+    )
+    _write_yaml(
+        directory / "safety_activation.yaml",
+        {
+            "activation": {
+                "activation_id": "act-compose-1",
+                "profile_generation": 1,
+                "envelope_digest": None,
+                "profile_digest": None,
+                "bundle_digest": None,
+                "scope": [],
+                "approval_ids": ["appr-compose-1"],
+                "compatibility_attestation_refs": ["attest-compose-1"],
+                "predecessor_generation": None,
+                "restrictive_generation_effects": [],
+            },
+            "not_expired": True,
+        },
+    )
+    _write_yaml(
+        directory / "safety_deviations.yaml",
+        {
+            "deviations": {
+                "active_set": {
+                    "active_set_id": "dev-set-compose-1",
+                    "active_set_generation": 1,
+                    "deviation_generation": 1,
+                    "is_complete": True,
+                    "combined_within_envelope": True,
+                },
+                "applicable_decision_ids": [],
+                "members": [],
+            }
+        },
+    )
+    _write_yaml(
+        directory / "safety_incidents.yaml",
+        {
+            "incidents": {
+                "active_set": {
+                    "active_set_id": "inc-set-compose-1",
+                    "active_set_generation": 1,
+                    "incident_generation": 1,
+                    "safety_cell": "compose-cell-1",
+                    "shared_dependencies": [],
+                    "is_complete": True,
+                    "is_current": True,
+                },
+                "applicable_incident_ids": [],
+                "members": [],
+            }
+        },
+    )
+    _write_yaml(
+        directory / "monitor_coverage.yaml",
+        {
+            "coverage": {
+                "manifest": {
+                    "coverage_manifest_id": "cov-compose-1",
+                    "coverage_generation": 1,
+                    "coverage_manifest_digest": "cov-digest-compose-1",
+                    "policy_digest": "cov-policy-digest-compose-1",
+                    "is_complete": True,
+                },
+                "items": {
+                    obligation: {
+                        "restrictive_response_present": True,
+                        "alert_path_present": True,
+                        "evidence_path_present": True,
+                        "currentness_rule_present": True,
+                        "closure_1_to_12_complete": True,
+                        "criticality": "CRITICAL",
+                    }
+                    for obligation in (
+                        "evidence-tip-currency",
+                        "time-service-health",
+                        "inbox-backlog",
+                    )
+                },
+                "bounds": {
+                    "max_evidence_tip_stall_ms": 60_000,
+                    "healthy_time_states": ["TRUSTED"],
+                    "max_inbox_unconsumed": 100,
+                },
+            }
         },
     )
     _write_yaml(
