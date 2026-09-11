@@ -27,16 +27,28 @@ gate ① (kernel ``is_live`` default-non-live judgement) still gates everything,
 and a REAL-shaped scope fails the new question's condition 3 regardless of
 posture.
 
+**A third question, broker-reaching only (Phase 5 W3-b; plan §2 decision 5).** The
+kernel Protocol still carries only the two methods above — kernel diff 0 again.
+``live_scope_authorized`` now ANDs a THIRD, independent question into the
+broker-reaching arm only (:meth:`RuntimeCoordinatorPreconditions._mesh_clear`): every
+injected Phase 5 W3 safety-mesh service
+(:class:`~tos_runtime.safety.ports.SafetyMeshService`) must report
+``clear().clear is True``, non-vacuously (an empty mesh is ``False``, never a vacuous
+pass). The synthetic (``reaches_broker is False``) path is entirely unaffected — the
+mesh question is never even reached there, so a mesh left unwired (``safety_mesh=()``,
+the default) never changes synthetic-path behaviour.
+
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib
-(``pathlib``, ``yaml``, ``dataclasses``, ``typing``) +
+(``pathlib``, ``yaml``, ``dataclasses``, ``typing``, ``collections.abc``) +
 ``tos.authority``/``tos.liveauth``/``tos.egressgw`` +
 ``tos_runtime.authority.epoch``/``tos_runtime.compose._nonlive_admission``/
-``tos_runtime.brokercap.instance``/``tos_runtime.brokercap.scopes`` only. No
-``shared.*``.
+``tos_runtime.brokercap.instance``/``tos_runtime.brokercap.scopes``/
+``tos_runtime.safety.ports`` only. No ``shared.*``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -50,6 +62,8 @@ from tos_runtime.authority.epoch import SafetyAuthorityEpochService
 from tos_runtime.brokercap.instance import InstanceDocument
 from tos_runtime.brokercap.scopes import BrokerScope
 from tos_runtime.compose._nonlive_admission import nonlive_broker_consuming_admitted
+from tos_runtime.compose._safety_wiring import SafetyMeshSnapshot
+from tos_runtime.safety.ports import SafetyMeshService
 
 __all__ = [
     "COORDINATOR_PRECONDITIONS_CONFIG_NAME",
@@ -235,6 +249,9 @@ class RuntimeCoordinatorPreconditions:
         nonlive_admitted: bool | None = None,
         active_scope: BrokerScope | None = None,
         instance_document: InstanceDocument | None = None,
+        safety_mesh: Sequence[SafetyMeshService] = (),
+        mesh_evidence_recorder: Callable[[Mapping[str, Any]], None] | None = None,
+        mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None,
     ) -> None:
         """Wire the preconditions object over its injected ports.
 
@@ -262,12 +279,36 @@ class RuntimeCoordinatorPreconditions:
             instance_document: The Broker Capability Profile INSTANCE
                 document bound to ``active_scope``. ``None`` (the default)
                 when not wired — same "not available" treatment.
+            safety_mesh: The Phase 5 W3 safety-mesh services (plan §2 decision 5) the
+                Coordinator's THIRD question ANDs together for a broker-reaching
+                transport (:meth:`live_scope_authorized`'s own docstring). Empty (the
+                default) when not wired — a broker-reaching transport is then always
+                refused by this question (non-vacuous: an empty mesh is never
+                positively clear), while a synthetic transport is unaffected.
+            mesh_evidence_recorder: Records ``COORDINATOR_MESH_HELD`` evidence
+                (identities + reasons) whenever the mesh question refuses. ``None``
+                (the default) records nothing — the refusal itself still holds,
+                only the extra evidence trace is skipped.
+            mesh_snapshot_refresher: Takes a FRESH per-tick
+                :class:`~tos_runtime.compose._safety_wiring.SafetyMeshSnapshot` and
+                shares it with the currentness/deferred-fields consumers (team-lead
+                disposition, post-HIGH-1/HIGH-2 — see
+                :class:`~tos_runtime.compose._safety_wiring.SafetyMeshSnapshot`'s own
+                docstring). Called UNCONDITIONALLY, once, at the very top of every
+                :meth:`live_scope_authorized` call — regardless of which branch is
+                ultimately taken, so the shared snapshot is current before ANY later
+                same-tick consumer runs (synthetic transport included). ``None`` (the
+                default) falls back to calling ``.clear()`` on each of
+                :attr:`_safety_mesh` directly, unchanged from before this disposition.
         """
         self._epoch_service = epoch_service
         self._live_authorization_state = live_authorization_state
         self._nonlive_admitted = nonlive_admitted
         self._active_scope = active_scope
         self._instance_document = instance_document
+        self._safety_mesh = tuple(safety_mesh)
+        self._mesh_evidence_recorder = mesh_evidence_recorder
+        self._mesh_snapshot_refresher = mesh_snapshot_refresher
         #: This runtime's own epoch floor at composition time — the CLAIMED
         #: epoch every later :meth:`authority_epoch_current` call is checked
         #: against. Read exactly once, here, never again per tick (class
@@ -365,6 +406,18 @@ class RuntimeCoordinatorPreconditions:
             with a positive admission, both under the ``NOT_AUTHORIZED``
             posture.
         """
+        # Team-lead disposition (post-HIGH-1/HIGH-2): refresh the shared per-tick
+        # SafetyMeshSnapshot UNCONDITIONALLY, before any of the branches below --
+        # regardless of which one is ultimately taken, so a LATER same-tick consumer
+        # (the currentness dimension readers, the deferred-mesh-fields supply) sees
+        # THIS tick's snapshot rather than a stale one from the previous tick. This
+        # authors no admission judgement of its own (kernel diff 0; the "synthetic e2e
+        # 불변" invariant is unaffected — the refresh is a pure side observation).
+        snapshot = (
+            self._mesh_snapshot_refresher()
+            if self._mesh_snapshot_refresher is not None
+            else None
+        )
         if self._live_authorization_state is None:
             return None
         if self._live_authorization_state not in _SUPPORTED_LIVE_AUTHORIZATION_STATES:
@@ -396,8 +449,67 @@ class RuntimeCoordinatorPreconditions:
                 active_scope=self._active_scope,
                 instance_document=self._instance_document,
             )
-            return verdict.admitted
+            return verdict.admitted and self._mesh_clear(snapshot)
         return False
+
+    def _mesh_clear(self, snapshot: SafetyMeshSnapshot | None) -> bool:
+        """The Coordinator's THIRD question (T2/W3-b; plan §2 decision 5) — asked ONLY
+        on the broker-reaching path reached above (a synthetic transport is admitted
+        by gate ② before this method is ever called, unchanged).
+
+        ``True`` only when :attr:`_safety_mesh` is non-empty AND every service's
+        clearance reports ``MeshClearance.clear is True`` — an explicit ``is True``
+        check (never truthiness) and a non-vacuous requirement (an EMPTY mesh is
+        ``False``, never a vacuous pass): a broker-reaching send with no safety-mesh
+        wired at all must never be treated as though the mesh had positively cleared
+        it.
+
+        **Where each service's clearance comes from (W3.1 independent review
+        MEDIUM-8, latent — M17 survives).** This distinguishes two structurally
+        different cases, decided ONCE at construction time
+        (:attr:`_mesh_snapshot_refresher`), never per-call:
+
+        - :attr:`_mesh_snapshot_refresher` is ``None`` (no per-tick snapshot mechanism
+          was ever wired at all — the legacy/unit-test path): each service's
+          ``.clear()`` is called directly, exactly as before that mechanism existed.
+        - :attr:`_mesh_snapshot_refresher` is wired (not ``None``): ``snapshot`` is
+          ALWAYS trusted as-is, even when it is ``None`` this particular call (the
+          refresher returned nothing — a no-op/broken refresher, or a genuine gap) —
+          NEVER a silent fallback to a direct ``service.clear()`` call, which would
+          quietly resurrect the exact per-tick amplification MEDIUM-6 eliminated
+          without any signal that the refresher stopped doing its job. A missing
+          clearance in this branch is treated as unestablished (held), the same as
+          any other non-``True`` clearance.
+
+        Records ``COORDINATOR_MESH_HELD`` evidence (identities + reasons) for every
+        non-positive service when the question refuses, via the injected
+        :attr:`_mesh_evidence_recorder` (``None`` records nothing — module docstring).
+        """
+        snapshot_mechanism_wired = self._mesh_snapshot_refresher is not None
+        held: list[dict[str, Any]] = []
+        for service in self._safety_mesh:
+            if snapshot_mechanism_wired:
+                clearance = (
+                    None if snapshot is None else snapshot.clear_for(service.identity)
+                )
+            else:
+                clearance = service.clear()
+            if clearance is None or clearance.clear is not True:
+                held.append(
+                    {
+                        "identity": service.identity,
+                        "reasons": () if clearance is None else clearance.reasons,
+                    }
+                )
+        mesh_clear = bool(self._safety_mesh) and not held
+        if not mesh_clear and self._mesh_evidence_recorder is not None:
+            self._mesh_evidence_recorder(
+                {
+                    "held_services": held,
+                    "mesh_wired": bool(self._safety_mesh),
+                }
+            )
+        return mesh_clear
 
 
 class _ReplayPreconditions:

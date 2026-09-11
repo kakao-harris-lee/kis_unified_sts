@@ -621,6 +621,41 @@ class SqliteEvidenceStore:
         last_seq, last_chain_digest, last_key_generation = row
         return last_seq, last_chain_digest, last_key_generation
 
+    def last_committed_excluding(
+        self, kinds: frozenset[str]
+    ) -> tuple[int | None, str, int | None]:
+        """Same as :meth:`last_committed`, but ignores rows whose ``kind`` is in
+        ``kinds`` (W3.1 independent review HIGH-1).
+
+        Exists for a caller that BOTH observes this store's own tip AND writes to it
+        (e.g. a stall detector whose own alert-emission sink is this same store): reading
+        the unfiltered tip would see the caller's own writes as "the tip advanced",
+        self-perturbing the very observation the caller is making. Excluding the
+        caller's own write ``kind``(s) from the tip query breaks that loop.
+
+        Args:
+            kinds: The ``kind`` values to exclude from consideration — never a
+                caller-supplied SQL fragment (bound as ordinary parameters below).
+
+        Returns:
+            ``(last_seq, last_chain_digest, last_key_generation)`` over the entries NOT
+            in ``kinds``, or ``(None, _CHAIN_GENESIS, None)`` when no such entry exists
+            (mirrors :meth:`last_committed`'s own empty-store contract — indistinguishable
+            from "no entries at all" when every entry happens to be excluded).
+        """
+        if not kinds:
+            return self.last_committed()
+        placeholders = ", ".join("?" for _ in kinds)
+        row = self._conn.execute(
+            f"SELECT seq, chain_digest, key_generation FROM entries "
+            f"WHERE kind NOT IN ({placeholders}) ORDER BY seq DESC LIMIT 1",
+            tuple(sorted(kinds)),
+        ).fetchone()
+        if row is None:
+            return None, _CHAIN_GENESIS, None
+        last_seq, last_chain_digest, last_key_generation = row
+        return last_seq, last_chain_digest, last_key_generation
+
     def iter_entry_meta(self) -> Iterator[_EntryRow]:
         """Yield every entry's meta fields (no payload) — :mod:`tos_runtime.evidence.retention`'s read shape."""
         cur = self._conn.execute(

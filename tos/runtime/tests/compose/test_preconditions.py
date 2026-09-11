@@ -14,7 +14,7 @@ below, and its own minimal :class:`SafetyAuthorityEpochService` wiring
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import pytest
@@ -37,6 +37,7 @@ from tos.capsule.capsule import (
     SafetyCriticalFacts,
     SnapshotRef,
 )
+from tos.cur import DimensionKey
 from tos.egressgw import TransportNature
 from tos.engine import (
     EngineConfiguration,
@@ -73,7 +74,9 @@ from tos_runtime.compose._preconditions import (
     _ReplayPreconditions,
     load_coordinator_preconditions_config,
 )
+from tos_runtime.compose._safety_wiring import SafetyMeshSnapshot
 from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.safety.ports import MeshClearance
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.service import TrustworthyTimeService
 from tos_runtime.time.sources import ReferenceObservation
@@ -185,6 +188,17 @@ _REAL = TransportNature(
     risk_relevant_live=True,
 )
 _UNESTABLISHED = TransportNature()  # every field None — conservatively broker-consuming
+#: A broker-reaching, non-real (mock) transport nature that clears T2 lane B's OWN
+#: (non-mesh) admission question outright — used by the mesh-specific tests below so
+#: only the mesh question itself is under test (mirrors "all_five_positive_admits"'s
+#: own ``nature``).
+_REAL_ADMISSIBLE_NATURE = TransportNature(
+    principal="kis-mock-order-test",
+    reaches_broker=True,
+    credential_bearing=True,
+    route_bearing=True,
+    risk_relevant_live=False,
+)
 
 
 def _write_yaml(path: Path, content: dict) -> None:
@@ -313,6 +327,56 @@ def test_example_file_is_named_tbd_null() -> None:
 # ============================================================================
 # RuntimeCoordinatorPreconditions.authority_epoch_current — fake double
 # ============================================================================
+
+
+class _FakeMeshService:
+    """A minimal :class:`~tos_runtime.safety.ports.SafetyMeshService` double (Phase 5
+    W3-b) — the Coordinator's THIRD question (:meth:`RuntimeCoordinatorPreconditions
+    ._mesh_clear`) only ever calls :meth:`clear`, never :meth:`dimension_report` /
+    :meth:`describe`, so those two are stubbed just enough to satisfy the Protocol's
+    ``runtime_checkable`` structural check."""
+
+    def __init__(
+        self, *, identity: str, clear: bool | None, reasons: tuple[str, ...] = ()
+    ) -> None:
+        self._identity = identity
+        self._clear = clear
+        self._reasons = reasons if clear is not True else ()
+        #: MEDIUM-8 (M17) pin: counts direct ``.clear()`` calls, so a test can assert
+        #: none happened when a snapshot mechanism is wired (never a silent fallback).
+        self.clear_calls = 0
+
+    @property
+    def identity(self) -> str:
+        return self._identity
+
+    @property
+    def dimension_key(self) -> DimensionKey:
+        return DimensionKey.SAFETY_ENVELOPE_PROFILE
+
+    def dimension_report(self) -> None:
+        return None
+
+    def clear(self) -> MeshClearance:
+        self.clear_calls += 1
+        return MeshClearance(
+            identity=self._identity, clear=self._clear, reasons=self._reasons
+        )
+
+    def describe(self) -> Mapping[str, object]:
+        return {}
+
+
+def _all_clear_mesh() -> tuple[_FakeMeshService, ...]:
+    """A non-empty, all-positively-clear fake safety mesh — what a caller wires once
+    every W3-a1/a2 service genuinely clears (used by the "everything positive admits"
+    test below)."""
+    return (
+        _FakeMeshService(identity="fake-profile", clear=True),
+        _FakeMeshService(identity="fake-deviation", clear=True),
+        _FakeMeshService(identity="fake-incident", clear=True),
+        _FakeMeshService(identity="fake-monitoring", clear=True),
+    )
 
 
 class _FakeEpochService:
@@ -671,8 +735,148 @@ def test_live_scope_authorized_broker_reaching_all_five_positive_admits(
         nonlive_admitted=True,
         active_scope=_mock_stock_order_scope(),
         instance_document=mock_vts_document,
+        safety_mesh=_all_clear_mesh(),
     )
     assert preconditions.live_scope_authorized(nature) is True
+
+
+# ============================================================================
+# RuntimeCoordinatorPreconditions — the Coordinator's THIRD question, the
+# safety mesh (Phase 5 W3-b, plan §2 decision 5)
+# ============================================================================
+
+
+def _broker_reaching_preconditions(
+    *,
+    safety_mesh: tuple[_FakeMeshService, ...],
+    mock_vts_document: InstanceDocument,
+    mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot | None] | None = None,
+) -> RuntimeCoordinatorPreconditions:
+    return RuntimeCoordinatorPreconditions(
+        epoch_service=None,
+        live_authorization_state="NOT_AUTHORIZED",
+        nonlive_admitted=True,
+        active_scope=_mock_stock_order_scope(),
+        instance_document=mock_vts_document,
+        safety_mesh=safety_mesh,
+        mesh_snapshot_refresher=mesh_snapshot_refresher,
+    )
+
+
+def test_mesh_empty_refuses_a_broker_reaching_transport_non_vacuously(
+    mock_vts_document: InstanceDocument,
+) -> None:
+    """M4 (plan §5): an EMPTY safety_mesh must never be treated as a vacuous pass on the
+    broker-reaching path — every other T2 lane B port positively admits, but the third
+    question alone must still refuse with no mesh wired at all."""
+    preconditions = _broker_reaching_preconditions(
+        safety_mesh=(), mock_vts_document=mock_vts_document
+    )
+    assert preconditions.live_scope_authorized(_REAL_ADMISSIBLE_NATURE) is False
+
+
+@pytest.mark.parametrize("non_positive_index", [0, 1, 2, 3])
+def test_mesh_one_service_not_positively_clear_refuses(
+    mock_vts_document: InstanceDocument, non_positive_index: int
+) -> None:
+    """Each of the four services being individually non-positive (``False`` or ``None``)
+    alone refuses the broker-reaching path — the AND is over every service, not a
+    majority or an any-True shortcut."""
+    services = list(_all_clear_mesh())
+    services[non_positive_index] = _FakeMeshService(
+        identity=services[non_positive_index].identity,
+        clear=False if non_positive_index % 2 == 0 else None,
+    )
+    preconditions = _broker_reaching_preconditions(
+        safety_mesh=tuple(services), mock_vts_document=mock_vts_document
+    )
+    assert preconditions.live_scope_authorized(_REAL_ADMISSIBLE_NATURE) is False
+
+
+def test_mesh_all_true_admits(mock_vts_document: InstanceDocument) -> None:
+    """All four positively clear admits (mirrors ``all_five_positive_admits`` above,
+    isolated to just the mesh question)."""
+    preconditions = _broker_reaching_preconditions(
+        safety_mesh=_all_clear_mesh(), mock_vts_document=mock_vts_document
+    )
+    assert preconditions.live_scope_authorized(_REAL_ADMISSIBLE_NATURE) is True
+
+
+def test_mesh_a_no_op_refresher_refuses_never_falls_back_to_a_direct_clear_call(
+    mock_vts_document: InstanceDocument,
+) -> None:
+    """W3.1 independent review MEDIUM-8 (M17): every OTHER condition here is
+    positively admitted (mirrors ``test_mesh_all_true_admits`` exactly, so this
+    genuinely reaches ``_mesh_clear`` rather than short-circuiting earlier), but the
+    injected ``mesh_snapshot_refresher`` is wired and a no-op (returns ``None`` instead
+    of a real snapshot — a broken production wiring, or a stub that forgot to populate
+    the cell). The mesh question must REFUSE, and none of the four services' own
+    ``.clear()`` may be called directly — that fallback is legitimate ONLY when no
+    snapshot mechanism was ever wired at construction time at all (the untouched
+    ``test_mesh_all_true_admits``/``test_mesh_one_service_not_positively_clear_refuses``
+    tests above, which wire no refresher)."""
+    services = _all_clear_mesh()
+    preconditions = _broker_reaching_preconditions(
+        safety_mesh=services,
+        mock_vts_document=mock_vts_document,
+        mesh_snapshot_refresher=lambda: None,
+    )
+    verdict = preconditions.live_scope_authorized(_REAL_ADMISSIBLE_NATURE)
+    assert verdict is not True
+    assert all(service.clear_calls == 0 for service in services)
+
+
+def test_mesh_empty_on_synthetic_path_is_unaffected() -> None:
+    """A synthetic (non-broker-reaching) transport is admitted by gate ② before the mesh
+    question is ever reached — an unwired (empty) mesh must never change synthetic-path
+    behaviour (plan §2 decision 5's own "합성 e2e 불변")."""
+    preconditions = RuntimeCoordinatorPreconditions(
+        epoch_service=None, live_authorization_state="NOT_AUTHORIZED"
+    )
+    synthetic = TransportNature(
+        principal="synthetic-test",
+        reaches_broker=False,
+        credential_bearing=False,
+        route_bearing=False,
+        risk_relevant_live=False,
+    )
+    assert preconditions.live_scope_authorized(synthetic) is True
+
+
+def test_mesh_held_evidence_recorder_called_only_when_mesh_refuses(
+    mock_vts_document: InstanceDocument,
+) -> None:
+    """``mesh_evidence_recorder`` fires exactly when the mesh question itself refuses —
+    never on an unrelated upstream refusal, never on a genuine admit."""
+    recorded: list[Mapping[str, object]] = []
+    admitted_preconditions = RuntimeCoordinatorPreconditions(
+        epoch_service=None,
+        live_authorization_state="NOT_AUTHORIZED",
+        nonlive_admitted=True,
+        active_scope=_mock_stock_order_scope(),
+        instance_document=mock_vts_document,
+        safety_mesh=_all_clear_mesh(),
+        mesh_evidence_recorder=recorded.append,
+    )
+    assert admitted_preconditions.live_scope_authorized(_REAL_ADMISSIBLE_NATURE) is True
+    assert recorded == []
+
+    held_preconditions = RuntimeCoordinatorPreconditions(
+        epoch_service=None,
+        live_authorization_state="NOT_AUTHORIZED",
+        nonlive_admitted=True,
+        active_scope=_mock_stock_order_scope(),
+        instance_document=mock_vts_document,
+        safety_mesh=(
+            _FakeMeshService(identity="fake-profile", clear=False, reasons=("x",)),
+        ),
+        mesh_evidence_recorder=recorded.append,
+    )
+    assert held_preconditions.live_scope_authorized(_REAL_ADMISSIBLE_NATURE) is False
+    assert len(recorded) == 1
+    assert recorded[0]["held_services"] == [
+        {"identity": "fake-profile", "reasons": ("x",)}
+    ]
 
 
 def test_live_scope_authorized_broker_reaching_real_shaped_scope_refuses_even_with_posture_true(

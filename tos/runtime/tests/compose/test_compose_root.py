@@ -219,6 +219,67 @@ def _reach_trusted(runtime) -> None:
     assert runtime.time_service.health_state.value == "TRUSTED"
 
 
+def _write_rearm_approval(
+    custody_root: Path,
+    latched_evidence_seq: int,
+    *,
+    environment_label: str = "non-live-test",
+    approvals: list[dict[str, str]] | None = None,
+    mode: int = 0o600,
+) -> Path:
+    """Write one ``approvals/rearm/<latched_evidence_seq>.yaml`` two-person
+    decision file (:mod:`tos_runtime.safety.rearm` module docstring) — the
+    TOS Phase 5 W3 replacement for the old free-text ``operator_attestation``
+    string this suite used to pass directly to ``clear_new_risk_halt``.
+    Defaults to a genuinely satisfying two-distinct-principal ``APPROVE`` pair.
+
+    Also writes a matching ``approvals/rearm/roster.yaml`` (independent-review
+    HIGH-3 disposition: the effective-principal graph is loaded from an
+    operator-authored roster, never a constant identity graph — see
+    :mod:`tos_runtime.safety.rearm`'s own module docstring), derived from
+    ``approvals`` — two genuinely distinct, unconnected principals, exactly
+    what this suite's happy-path re-arm scenarios need.
+    """
+    import os
+
+    if approvals is None:
+        approvals = [
+            {"principal_id": "alice", "decision": "APPROVE"},
+            {"principal_id": "bob", "decision": "APPROVE"},
+        ]
+    roster_path = custody_root / "approvals" / "rearm" / "roster.yaml"
+    roster_path.parent.mkdir(parents=True, exist_ok=True)
+    roster_path.write_text(
+        yaml.safe_dump(
+            {
+                "environment_label": environment_label,
+                "principals": [
+                    {"id": entry["principal_id"]}
+                    for entry in sorted(approvals, key=lambda e: e["principal_id"])
+                ],
+                "control_edges": [],
+                "unresolved_control": False,
+            },
+            sort_keys=False,
+        )
+    )
+    os.chmod(roster_path, mode)
+    path = custody_root / "approvals" / "rearm" / f"{latched_evidence_seq}.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "environment_label": environment_label,
+                "latched_evidence_seq": latched_evidence_seq,
+                "approvals": approvals,
+            },
+            sort_keys=False,
+        )
+    )
+    os.chmod(path, mode)
+    return path
+
+
 def _reach_new_risk_halt_via_cancel_crossing_fill(runtime, custody_root: Path) -> int:
     """Drive the SAME cancel-crossing-fill scenario as ``TestRecomposeReplay
     .test_recompose_after_a_new_risk_latch_does_not_diverge`` (re-review finding R1) to reach a
@@ -414,12 +475,22 @@ class TestComposeRootWiring:
         stored = json.loads(rows[0][0])
         names = {c["name"] for c in stored["payload"]["attested_coordinates"]}
         assert names == {
-            # egress_attestations.yaml (3, TOS Phase 4 plan §2 decision 4 —
+            # egress_attestations.yaml (1, TOS Phase 4 plan §2 decision 4 —
             # account_instrument_action_allowed/broker_constraint_generation_current
-            # are derived now, not attested)
+            # are derived now, not attested; TOS Phase 5 W3 plan §2 decision 6 —
+            # restrictive_latch_state/worst_credible_capacity are now real runtime
+            # owners, tos_runtime.safety.latch, not attestations either)
             "venue_session_account_facts_current",
-            "restrictive_latch_state",
-            "worst_credible_capacity",
+            # Phase 5 W3 safety-mesh policy documents (extra_config_files,
+            # tos_runtime.compose._safety_wiring.SAFETY_MESH_CONFIG_FILE_NAMES) —
+            # named-config-document rows, not attestations, but folded into the
+            # SAME OPERATOR_ATTESTED_INPUTS evidence record by name
+            "safety_envelope.yaml",
+            "safety_profile.yaml",
+            "safety_activation.yaml",
+            "safety_deviations.yaml",
+            "safety_incidents.yaml",
+            "monitor_coverage.yaml",
             # broker_scopes.yaml (1) — the active scope's own name
             "SYNTHETIC_FUTURES_ORDER",
             # risk_attestations.yaml (6)
@@ -451,6 +522,12 @@ class TestComposeRootWiring:
                 "risk_attestations.yaml",
                 "egress_coordinates.yaml",
                 "broker_scopes.yaml",
+                "safety_envelope.yaml",
+                "safety_profile.yaml",
+                "safety_activation.yaml",
+                "safety_deviations.yaml",
+                "safety_incidents.yaml",
+                "monitor_coverage.yaml",
                 fx.BAND_STRATEGY_FILE_NAME,
             )
             assert len(coordinate["source_file_digest"]) == 64  # sha256 hex
@@ -1870,9 +1947,10 @@ class TestNewRiskHaltOperatorReArm:
             runtime, custody_root
         )
 
+        _write_rearm_approval(custody_root, evidence_seq)
         outcome = runtime.clear_new_risk_halt(
             latched_evidence_seq=evidence_seq,
-            operator_attestation="reviewed the cancel-crossing fill, fill is genuine, clearing",
+            approvals_dir=custody_root / "approvals",
         )
         assert outcome is NewRiskHaltClearOutcome.CLEARED
         assert runtime.inbox.new_risk_halt() is None
@@ -1890,6 +1968,14 @@ class TestNewRiskHaltOperatorReArm:
         assert (
             len(payload["operator_attestation_sha256"]) == 64
         )  # sha256 hex digest length
+
+        # TOS Phase 5 W3 plan §2 decision 7: the HAG two-person re-arm quorum
+        # (tos_runtime.safety.rearm.ReArmWorkflow) records its own APPROVED evidence
+        # before this wrapper's own CLEARED row above.
+        rearm_rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind = 'REARM_APPROVED'"
+        ).fetchone()[0]
+        assert rearm_rows == 1
 
         # The success path writes no refusal evidence (re-review finding RR3).
         refused_rows = runtime.evidence_store.connection.execute(
@@ -1919,9 +2005,12 @@ class TestNewRiskHaltOperatorReArm:
             runtime, custody_root
         )
 
+        # No approval file needed here: the seq-mismatch pre-check in
+        # ``ComposedRuntime.clear_new_risk_halt`` runs BEFORE the HAG re-arm
+        # workflow is ever consulted (TOS Phase 5 W3 plan §2 decision 7).
         outcome = runtime.clear_new_risk_halt(
             latched_evidence_seq=evidence_seq - 1,  # a stale/wrong seq
-            operator_attestation="reviewed, clearing",
+            approvals_dir=custody_root / "approvals",
         )
         assert outcome is NewRiskHaltClearOutcome.SEQ_MISMATCH
         assert runtime.inbox.new_risk_halt() is not None
@@ -1942,7 +2031,6 @@ class TestNewRiskHaltOperatorReArm:
         assert payload["outcome"] == "SEQ_MISMATCH"
         assert payload["requested_evidence_seq"] == evidence_seq - 1
         assert payload["current_latched_evidence_seq"] == evidence_seq
-        assert len(payload["operator_attestation_sha256"]) == 64
 
         next_tick = runtime.driver.enqueue_and_run(fx.crossing_event(seq=99))
         assert "NEW_RISK_HALTED_BY_COUPLING_VIOLATION" in (next_tick.detail or "")
@@ -1950,9 +2038,13 @@ class TestNewRiskHaltOperatorReArm:
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
-    def test_empty_attestation_is_refused_and_latch_stays_intact(
+    def test_no_approval_file_is_refused_and_latch_stays_intact(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
+        """TOS Phase 5 W3 plan §2 decision 7 (mutation M6): with NO
+        ``approvals/rearm/<seq>.yaml`` file present at all, the HAG re-arm
+        workflow refuses before it ever reaches a kernel predicate — replaces
+        the old free-text-attestation refusal this test used to exercise."""
         from tos_runtime.engine.inbox import NewRiskHaltClearOutcome
 
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
@@ -1961,11 +2053,11 @@ class TestNewRiskHaltOperatorReArm:
             runtime, custody_root
         )
 
-        for empty in ("", "   ", "\n\t"):
-            outcome = runtime.clear_new_risk_halt(
-                latched_evidence_seq=evidence_seq, operator_attestation=empty
-            )
-            assert outcome is NewRiskHaltClearOutcome.EMPTY_ATTESTATION
+        outcome = runtime.clear_new_risk_halt(
+            latched_evidence_seq=evidence_seq,
+            approvals_dir=custody_root / "approvals",
+        )
+        assert outcome is NewRiskHaltClearOutcome.QUORUM_REFUSED
         assert runtime.inbox.new_risk_halt() is not None
 
         cleared_rows = runtime.evidence_store.connection.execute(
@@ -1973,11 +2065,17 @@ class TestNewRiskHaltOperatorReArm:
         ).fetchone()[0]
         assert cleared_rows == 0
 
-        # One NEW_RISK_HALT_CLEAR_REFUSED row per refused attempt (re-review finding RR3).
+        # The HAG workflow's own refusal evidence (tos_runtime.safety.rearm), PLUS this
+        # wrapper's own NEW_RISK_HALT_CLEAR_REFUSED row (re-review finding RR3) — both
+        # are durably recorded for one refused attempt.
+        rearm_refused_rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind = 'REARM_REFUSED'"
+        ).fetchone()[0]
+        assert rearm_refused_rows == 1
         refused_rows = runtime.evidence_store.connection.execute(
             "SELECT COUNT(*) FROM entries WHERE kind = 'NEW_RISK_HALT_CLEAR_REFUSED'"
         ).fetchone()[0]
-        assert refused_rows == 3
+        assert refused_rows == 1
 
         runtime.rcl_log.close()
         runtime.evidence_store.close()
@@ -2008,10 +2106,11 @@ class TestNewRiskHaltOperatorReArm:
         first_evidence_seq = _reach_new_risk_halt_via_cancel_crossing_fill(
             runtime, custody_root
         )
+        _write_rearm_approval(custody_root, first_evidence_seq)
         assert (
             runtime.clear_new_risk_halt(
                 latched_evidence_seq=first_evidence_seq,
-                operator_attestation="first violation reviewed, clearing",
+                approvals_dir=custody_root / "approvals",
             )
             is NewRiskHaltClearOutcome.CLEARED
         )
@@ -2046,11 +2145,12 @@ class TestNewRiskHaltOperatorReArm:
         assert second_evidence_seq != first_evidence_seq
         assert second_evidence_seq > first_evidence_seq
 
-        # The OLD (now-cleared, superseded) seq no longer clears the NEW latch.
+        # The OLD (now-cleared, superseded) seq no longer clears the NEW latch — the
+        # seq-mismatch pre-check refuses before any approval file is even consulted.
         assert (
             runtime.clear_new_risk_halt(
                 latched_evidence_seq=first_evidence_seq,
-                operator_attestation="stale clear attempt",
+                approvals_dir=custody_root / "approvals",
             )
             is NewRiskHaltClearOutcome.SEQ_MISMATCH
         )

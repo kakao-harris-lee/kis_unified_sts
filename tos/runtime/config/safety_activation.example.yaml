@@ -1,0 +1,35 @@
+# Activation Record policy document (tos_runtime.safety.profile.SafetyProfileService).
+#
+# Loaded into tos.spg.ActivationRecord via model_validate, plus one operator
+# attestation this lane does not derive: `not_expired`. spg performs no time
+# arithmetic of its own (design #12 §3.5) and this service owns no
+# date-comparison logic, so whether this generation has not expired is
+# stated explicitly by the operator until a real expiry-evaluation producer
+# exists (the same discipline tos_runtime.compose._egress_attestations
+# already applies to items 12/16). `not_expired: true` combined with a
+# TRUSTED time source is required for tos.spg.expiry_suspends_new_risk to
+# report "not suspended" — see tos_runtime/safety/profile.py.
+#
+# Every value below is a named-TBD `null` — an operator MUST replace every
+# null with a concrete, governance-approved value before this file can be
+# used in production. The loader refuses to start on a still-null required
+# field (fail-closed).
+activation:
+  activation_id: null
+  profile_generation: null
+  envelope_digest: null
+  profile_digest: null
+  bundle_digest: null
+  scope: []
+  # Non-empty once approvals have been recorded for this activation
+  # (feeds ActivationInputs.staging_complete — see profile.py).
+  approval_ids: []
+  # Non-empty once compatibility attestations have been recorded
+  # (feeds ActivationInputs.attestation_complete — see profile.py).
+  compatibility_attestation_refs: []
+  predecessor_generation: null
+  restrictive_generation_effects: []
+
+# Operator attestation — see module docstring above. Not part of the kernel
+# ActivationRecord schema; read directly by SafetyProfileService.
+not_expired: null

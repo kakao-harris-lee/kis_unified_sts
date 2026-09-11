@@ -8,7 +8,10 @@ admission (T2 lane B) genuinely ADMITS the send — no ``LIVE_SCOPE_NOT_AUTHORIZ
 recorded. The kernel gateway's own 17-item verify list still denies it honestly, today, at THREE
 independent gates, not the two the plan's §0 headline names:
 
-1. the six DEFERRED_ITEMS (items 4/5/7/8/9/10 — the Phase 5 W3 safety-governance mesh);
+1. item 5 (``VALID_LIVE_SCOPE`` / ``live_scope_valid``) of the six DEFERRED_ITEMS — the ONE
+   still genuinely UNKNOWN after Phase 5 W3-b landed real owners for the other five
+   (items 4/7/8/9/10 — the Safety Authority epoch service + the four safety-mesh services,
+   SAFETY_ENVELOPE_PROFILE/DEVIATION/INCIDENT/MONITORING);
 2. item 6 (``ALLOWED_ACCOUNT_INSTRUMENT_ACTION_AND_MAX_QUANTITY``) — brokercap
    ``capability_admissible`` is structurally ``PROHIBITED`` for a Broker Capability Profile
    INSTANCE with no approved ``minimum_live_gate_satisfied``/``VERIFIED`` dimension (P0-2);
@@ -74,6 +77,14 @@ _ENVIRONMENT_LABEL = "non-live-test"
 _EXPECTED_DEFERRED_ITEM_NUMBERS = frozenset(
     verify_item_number(item) for item in DEFERRED_ITEMS
 )
+
+#: Phase 5 W3 landed real safety-mesh services (SAFETY_ENVELOPE_PROFILE/DEVIATION/
+#: INCIDENT/MONITORING) + the Safety Authority epoch supply — 5 of the 6 DEFERRED_ITEMS are
+#: genuinely SATISFIED in production now, not merely simulated (``_lift_phase5_deferred_mesh``
+#: below still exists for tests that need ALL SIX lifted, e.g. counterfactual A/B). Only item 5
+#: (``VALID_LIVE_SCOPE`` / ``live_scope_valid``) stays UNKNOWN — plan §2 decision 4's own
+#: operator confirmation ③ (a): committed until a live-authorization runtime exists (Phase 6+).
+_EXPECTED_UNSUPPLIED_DEFERRED_ITEM_NUMBERS = frozenset({5})
 
 #: A distinctive token that must NEVER appear in any recorded evidence payload — stands in for
 #: every credential/token secret this suite's custody/fake-server fixtures mint.
@@ -422,25 +433,45 @@ def test_honest_deny_full_evidence_level(
 
     unknown_items = {v["item"] for v in verdicts if v["outcome"] == "UNKNOWN"}
     deferred_names = {item.value for item in DEFERRED_ITEMS}
-    # Reviewer disposition LOW-3: the previous pair of assertions here
-    # (``deferred_names <= unknown_items`` and ``unknown_items & deferred_names ==
-    # deferred_names``) was logically identical — subset and intersection-equals-subset are the
-    # same fact — and its comment overclaimed catching drift it could not catch. All six
-    # DEFERRED_ITEMS are UNKNOWN (below), AND item 12
+    # Phase 5 W3-b landed real owners for 5 of the 6 DEFERRED_ITEMS (module docstring's
+    # own updated count) — only VALID_LIVE_SCOPE (item 5) is still genuinely UNKNOWN
+    # (this composition supplies no live-authorization runtime yet). item 12
     # (VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION) is the ONE additional,
-    # non-deferred item that is ALSO UNKNOWN today (module docstring's "three gates, not two") —
-    # pinned as an exact upper bound so a genuinely NEW, unrelated UNKNOWN item would be caught.
-    assert deferred_names <= unknown_items
-    assert unknown_items - deferred_names == {
-        "VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION"
+    # non-deferred item that is ALSO UNKNOWN today (module docstring's "three gates, not
+    # two") — pinned as an exact set so a genuinely NEW, unrelated UNKNOWN item, or an
+    # accidentally-fabricated positive on item 5, would both be caught.
+    assert unknown_items == {
+        "VALID_LIVE_SCOPE",
+        "VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION",
     }
-    observed_deferred_numbers = {
+    observed_unsupplied_deferred_numbers = {
         verify_item_number(item)
         for item in DEFERRED_ITEMS
         if item.value in unknown_items
     }
-    assert observed_deferred_numbers == _EXPECTED_DEFERRED_ITEM_NUMBERS
+    assert (
+        observed_unsupplied_deferred_numbers
+        == _EXPECTED_UNSUPPLIED_DEFERRED_ITEM_NUMBERS
+    )
     assert sorted(_EXPECTED_DEFERRED_ITEM_NUMBERS) == [4, 5, 7, 8, 9, 10]
+
+    # The 5 now-supplied deferred items are SATISFIED, never merely absent-from-unknown by
+    # accident — each traced to its own real Phase 5 W3 owner (module docstring).
+    satisfied_deferred = {
+        v["item"]
+        for v in verdicts
+        if v["item"] in deferred_names and v["item"] not in unknown_items
+    }
+    assert satisfied_deferred == {
+        "CURRENT_SAFETY_AUTHORITY_EPOCH",
+        "HARD_SAFETY_ENVELOPE_VERSIONS",
+        "SAFETY_DEVIATION",
+        "SAFETY_INCIDENT",
+        "SAFETY_MONITORING",
+    }
+    for v in verdicts:
+        if v["item"] in satisfied_deferred:
+            assert v["outcome"] == "SATISFIED"
 
     # item 6's own verdict: DENIED (not UNKNOWN — capability_admissible is PROHIBITED, not
     # REDUCED), reason names PROHIBITED explicitly (gateway.py _check_allowance).
@@ -816,10 +847,10 @@ def test_mutation_d_lifting_only_p02_capability_profile_still_denies(
 
     verdicts = _verify_item_payloads(runtime)
     unknown_items = {v["item"] for v in verdicts if v["outcome"] == "UNKNOWN"}
-    deferred_names = {item.value for item in DEFERRED_ITEMS}
-    assert (
-        deferred_names <= unknown_items
-    )  # still all 6 UNKNOWN — this lift never touched them
+    # This lift never touched the deferred mesh — 5 of 6 DEFERRED_ITEMS are genuinely
+    # SATISFIED by their real Phase 5 W3 owners regardless (module docstring); only item 5
+    # (VALID_LIVE_SCOPE) is still honestly UNKNOWN, which alone still denies the send.
+    assert "VALID_LIVE_SCOPE" in unknown_items
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()

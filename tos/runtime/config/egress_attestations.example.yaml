@@ -3,24 +3,27 @@
 # LANDED (TOS Phase 4 plan §2 decision 4): account_instrument_action_allowed /
 # broker_constraint_generation_current (items 6/12) are no longer attestations
 # — tos_runtime.brokercap.derive.derive_item6_item12 now derives them
-# structurally from the active Broker Scope + bound INSTANCE document. This
-# file must NOT carry either key any more (the loader refuses to start if it
-# does — a stale operator config must never silently pretend to attest a
-# value this runtime derives on its own).
+# structurally from the active Broker Scope + bound INSTANCE document.
 #
-# Three SendBoundaryContext fields remain genuine operator attestations —
-# each still has NO runtime producer:
+# LANDED (TOS Phase 5 W3 plan §2 decision 6): restrictive_latch_state /
+# worst_credible_capacity (item 16) are no longer attestations either — they
+# are now supplied by the real runtime owners tos_runtime.safety.latch
+# (RestrictiveLatchOwner / CapacityOwner), wired in tos_runtime.compose.context.
 #
-#   * venue_session_account_facts_current (item 12) — Phase 5 (no runtime
-#     owns venue/session/account-facts currency yet).
+# This file must NOT carry any of the four keys above any more (the loader
+# refuses to start if it does — a stale operator config must never silently
+# pretend to attest a value this runtime derives/owns on its own).
 #
-#   * restrictive_latch_state / worst_credible_capacity (item 16) — Phase 5
-#     (a real latch/capacity-owning runtime service replaces these).
+# One SendBoundaryContext field remains a genuine operator attestation — it
+# still has NO runtime producer:
 #
-# Every field below is a named-TBD `null` in this example — an operator MUST
-# fill in a concrete value for every field before compose_paper_runtime will
-# start; a still-null field refuses composition at startup (fail-closed,
-# never a silent default).
+#   * venue_session_account_facts_current (item 12) — W5 (no runtime owns
+#     venue/session/account-facts currency yet).
+#
+# The field below is a named-TBD `null` in this example — an operator MUST
+# fill in a concrete value before compose_paper_runtime will start; a
+# still-null field refuses composition at startup (fail-closed, never a
+# silent default).
 #
 # max_quantity_within_allowance (also an item-6 field) is NOT configured
 # here: it has a genuine Phase 2 producer (step 2's own
@@ -28,7 +31,3 @@
 # that live value instead.
 venue_session_account_facts_current:
   attested: null
-restrictive_latch_state:
-  clear: null
-worst_credible_capacity:
-  value: null

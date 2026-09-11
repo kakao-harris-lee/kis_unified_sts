@@ -1,0 +1,76 @@
+# Monitor Coverage Manifest policy document (tos_runtime.safety.monitoring
+# .MonitoringService).
+#
+# TOS Phase 5 W3 plan §2 decision 2, MONITORING bullet
+# (docs/plans/2026-09-11-tos-phase5-w3-safety-mesh-plan.md). Fed to
+# tos.stm.MonitorCoverageManifest + tos.stm.CoverageItem, consumed by
+# critical_coverage_complete_or_gap. The dynamic conformance snapshot itself
+# is built fresh on every clear() call from this runtime's own
+# self-observations (evidence-tip stall / time-service health / inbox
+# backlog) — it is never read from this file.
+#
+# named-TBD discipline: every value below is null. The loader refuses to
+# start on any unfilled required field (tos_runtime.safety.monitoring
+# .MonitoringConfigError).
+#
+# `items` must carry EXACTLY these three obligations — this service's
+# self-observation code only knows how to evaluate these three:
+#   * evidence-tip-currency — is the evidence store's own append tip still
+#     advancing within `bounds.max_evidence_tip_stall_ms`?
+#   * time-service-health — is the Trustworthy Time service's own health
+#     state one of `bounds.healthy_time_states`?
+#   * inbox-backlog — is the engine inbox's own unconsumed-row count within
+#     `bounds.max_inbox_unconsumed`?
+coverage:
+  manifest:
+    coverage_manifest_id: null
+    coverage_generation: null
+    # An opaque operator-approved reference token — never computed locally
+    # (this service never calls .issue(); mirrors
+    # tos_runtime.posttrade.config's own "operator-approved static value,
+    # never derived" discipline for policy_digest / proof_recipe_id).
+    coverage_manifest_digest: null
+    policy_digest: null
+    is_complete: null
+  items:
+    evidence-tip-currency:
+      # §9 line 275-286 item-level closure flags — operator-declared static
+      # policy claims (this service's own alert_path_present /
+      # evidence_path_present / restrictive_response_present /
+      # currentness_rule_present ARE real — they are what STM_ALERT
+      # emission, this clear() call, and this dimension_report() call ARE —
+      # but the flags are still config-declared, never self-computed, so a
+      # future obligation added to this manifest cannot silently default to
+      # "yes" without an operator explicitly saying so).
+      restrictive_response_present: null
+      alert_path_present: null
+      evidence_path_present: null
+      currentness_rule_present: null
+      closure_1_to_12_complete: null
+      criticality: null  # CRITICAL / NON_CRITICAL_APPROVED_EXCLUSION / UNKNOWN_MATERIALITY
+    time-service-health:
+      restrictive_response_present: null
+      alert_path_present: null
+      evidence_path_present: null
+      currentness_rule_present: null
+      closure_1_to_12_complete: null
+      criticality: null
+    inbox-backlog:
+      restrictive_response_present: null
+      alert_path_present: null
+      evidence_path_present: null
+      currentness_rule_present: null
+      closure_1_to_12_complete: null
+      criticality: null
+  bounds:
+    # How long (ms) the evidence store's own last-committed seq may go
+    # without advancing before this service calls it stalled. A stall
+    # detector across successive clear() calls, not a per-entry wall-clock
+    # age (no accessor exposes a committed entry's own timestamp without a
+    # full-table scan — module docstring item 1).
+    max_evidence_tip_stall_ms: null
+    # Non-empty list of Trustworthy Time HealthState token names considered
+    # healthy (e.g. ["TRUSTED"]).
+    healthy_time_states: null
+    # Maximum tolerated count of currently-unconsumed engine-inbox rows.
+    max_inbox_unconsumed: null

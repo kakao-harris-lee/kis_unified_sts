@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-from tos.egress import RestrictiveLatchState
 from tos.egressgw.vocabulary import SendVerifyItem, VerifyOutcome
 from tos_runtime.compose._egress_attestations import (
     EgressAttestationConfigError,
@@ -28,8 +27,6 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 def _valid_egress_attestations() -> dict:
     return {
         "venue_session_account_facts_current": {"attested": True},
-        "restrictive_latch_state": {"clear": True},
-        "worst_credible_capacity": {"value": 1},
     }
 
 
@@ -48,13 +45,9 @@ def _write(path: Path, content: dict) -> None:
         lambda raw: raw["venue_session_account_facts_current"].__setitem__(
             "attested", None
         ),
-        lambda raw: raw["restrictive_latch_state"].__setitem__("clear", None),
-        lambda raw: raw["worst_credible_capacity"].__setitem__("value", None),
     ],
     ids=[
         "venue_session_account_facts_current",
-        "restrictive_latch_state.clear",
-        "worst_credible_capacity.value",
     ],
 )
 def test_a_still_null_field_refuses_to_load(tmp_path: Path, mutate) -> None:
@@ -79,7 +72,12 @@ def test_missing_file_refuses_to_load(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "stale_key",
-    ["account_instrument_action_allowed", "broker_constraint_generation_current"],
+    [
+        "account_instrument_action_allowed",
+        "broker_constraint_generation_current",
+        "restrictive_latch_state",
+        "worst_credible_capacity",
+    ],
 )
 def test_a_retired_derived_key_still_present_refuses_to_load(
     tmp_path: Path, stale_key: str
@@ -93,8 +91,17 @@ def test_a_retired_derived_key_still_present_refuses_to_load(
 
 
 # ============================================================================
-# (i) restrictive_latch_state: clear: false -> the composed SendBoundaryContext
-# carries the non-CLEAR latch, item 16 denies, zero transport calls.
+# (i) restrictive_latch_state / worst_credible_capacity are no longer loaded
+# from THIS config (TOS Phase 5 W3 plan §2 decision 6 — tos_runtime.safety.latch
+# owns both now); the item-16 DENY_LATCHED-denies-send and
+# worst-credible-capacity-is-descriptive-not-gating behaviors are unchanged at
+# the kernel/gateway level, but exercising them end-to-end now requires a
+# composed ``safety_mesh`` (or a fake RestrictiveLatchOwner/CapacityOwner pair)
+# wired through ``compose/context.py`` (lane b's ``_safety_wiring.py`` —
+# not yet landed as of this lane's own commit). ``tos_runtime.safety.latch``'s
+# own unit tests (``tos/runtime/tests/safety/test_latch.py``) cover
+# ``RestrictiveLatchOwner``/``CapacityOwner`` directly; a full compose e2e
+# re-exercise of item 16 belongs with that wiring landing, not here.
 # ============================================================================
 
 
@@ -120,25 +127,6 @@ def _run_to_send_boundary(
     )
     runtime.run_once((event,))
     return runtime
-
-
-def test_refusing_latch_yields_zero_transport_calls_attributed_to_item_16(
-    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
-) -> None:
-    raw = _valid_egress_attestations()
-    raw["restrictive_latch_state"] = {"clear": False}
-    _write(config_dir / "egress_attestations.yaml", raw)
-
-    runtime = _run_to_send_boundary(config_dir, data_dir, custody_root, tmp_path)
-    assert runtime.transport.requests == ()
-    assert len(runtime.gateway.verifications) >= 1
-    verification = runtime.gateway.verifications[-1]
-    assert verification.admitted is not True
-    item16 = next(
-        v for v in verification.verdicts if v.item is SendVerifyItem.CURRENTNESS
-    )
-    assert item16.outcome is VerifyOutcome.DENIED
-    assert item16.native_verdict_value == RestrictiveLatchState.DENY_LATCHED.value
 
 
 # ============================================================================
@@ -178,50 +166,40 @@ def test_refusing_boolean_attestation_yields_zero_transport_calls(
 
 
 # ============================================================================
-# worst_credible_capacity: NOT an independent gate (gateway.py's own
-# _check_currentness only folds it into the DENIAL REASON TEXT when
-# currentness already denies for another reason) -- proven here by showing
-# an extreme value does NOT by itself block an otherwise-healthy hand-off.
-# ============================================================================
-
-
-def test_worst_credible_capacity_is_descriptive_not_gating(
-    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
-) -> None:
-    raw = _valid_egress_attestations()
-    raw["worst_credible_capacity"] = {"value": 0}
-    _write(config_dir / "egress_attestations.yaml", raw)
-
-    runtime = _run_to_send_boundary(config_dir, data_dir, custody_root, tmp_path)
-    assert len(runtime.transport.requests) == 1
-
-
-# ============================================================================
 # kernel round #2 K-4 (§2 decision 4) — link the kernel-side recount to the
 # actual runtime attestation set (independent review round #1 LOW-3: the
 # kernel's own test_the_package_recounts_the_actual_remaining_attestations
 # (tos/tests/egressgw/test_egressgw_package.py) can only go red when the
 # package docstring changes, not when this module's own attested field set
 # does. This test closes that gap from the runtime side, so a field added
-# to or removed from EgressAttestations without a matching kernel docstring
-# update is caught somewhere.
+# to EgressAttestations without a matching kernel docstring update is caught
+# somewhere.
+#
+# TOS Phase 5 W3 plan §2 decision 6 (this lane): the runtime attested set
+# shrank from 3 fields to 1 (restrictive_latch_state / worst_credible_capacity
+# moved to tos_runtime.safety.latch), but the KERNEL docstring recount stays at
+# 3 this wave (kernel diff 0 — carried over to a future kernel round). The
+# assertion below is therefore now a ONE-DIRECTION containment check (every
+# runtime-attested field must be named in the kernel docstring), never exact
+# set equality — the kernel docstring is allowed to still name more than the
+# runtime actually attests, since it also still describes item 12/16 as a
+# 3-field non-authoritative group pending that future kernel recount.
 # ============================================================================
 
 
 def test_the_attested_field_set_matches_the_kernel_docstrings_recount() -> None:
-    """The exact three field names ``EgressAttestations`` carries must equal the three names
-    the kernel's ``tos.egressgw`` package docstring recount names as the only remaining
-    non-authoritative operator attestations."""
+    """Every ``EgressAttestations`` field name must appear in the kernel's
+    ``tos.egressgw`` package docstring recount (module docstring — a
+    containment check, not exact equality, since the kernel docstring's own
+    recount (3) has not yet been brought down to this runtime's shrunk
+    attested set (1); TOS Phase 5 W3 plan §2 decision 6, kernel round #3
+    carryover)."""
     import dataclasses
 
     import tos.egressgw
 
     attested_fields = {f.name for f in dataclasses.fields(EgressAttestations)}
-    assert attested_fields == {
-        "venue_session_account_facts_current",
-        "restrictive_latch_state",
-        "worst_credible_capacity",
-    }
+    assert attested_fields == {"venue_session_account_facts_current"}
     doc = " ".join((tos.egressgw.__doc__ or "").split())
     for name in attested_fields:
         assert name in doc, (

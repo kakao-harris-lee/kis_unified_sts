@@ -14,7 +14,11 @@ from pathlib import Path
 
 from tos.authority import AuthorityTransitionReason
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos.egress import EgressCoordinateSet
+from tos.egress import (
+    CredentialRouteInventoryEntry,
+    EgressCoordinateSet,
+    credential_route_authority_disjoint,
+)
 from tos.egressgw import (
     ConformanceProofStage,
     EconomicEffectStage,
@@ -74,6 +78,11 @@ from tos_runtime.compose._risk_attestations import (
     wrap_action_flow_inputs_provider,
     wrap_aggregate_risk_inputs_provider,
 )
+from tos_runtime.compose._safety_wiring import (
+    _SafetyMesh,
+    build_capacity_owner,
+    build_safety_mesh,
+)
 from tos_runtime.compose._transport_wiring import TransportKind, resolve_transport_boot
 from tos_runtime.compose._types import (
     ConstructionConfig,
@@ -98,6 +107,7 @@ from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.ports import EvidenceAppendPort
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.rcl.reservation_identity import scope_reservation_id
 from tos_runtime.release.admission import ReleaseAdmissionService
 from tos_runtime.release.config import load_release_config
@@ -784,6 +794,34 @@ def _build_currentness_stages(
     return step13_stage, step14_stage
 
 
+#: W3.1 independent review MEDIUM-4 evidence kind — see
+#: :func:`_record_egress_identity_observation`.
+_EGRESS_IDENTITY_OBSERVATION_KIND = "EGRESS_IDENTITY_OBSERVATION"
+
+
+def _record_egress_identity_observation(
+    evidence_store: SqliteEvidenceStore,
+    inventory: tuple[CredentialRouteInventoryEntry, ...],
+) -> None:
+    """W3.1 independent review MEDIUM-4 disposition: EGRESS_IDENTITY is reverted to
+    pending (:mod:`tos_runtime.compose._pending_dimensions` — no dimension verdict is
+    authored from partial predicate coverage). The ONE kernel predicate this
+    composition CAN honestly evaluate —
+    :func:`~tos.egress.predicates.credential_route_authority_disjoint`, over the
+    composed (boot-time-static) credential-route inventory — is still worth recording,
+    as an EVIDENCE-ONLY OBSERVATION, never a currentness verdict: this function writes
+    it once at boot and never feeds it back into any admission decision."""
+    evidence_store.append(
+        {
+            "credential_route_authority_disjoint": credential_route_authority_disjoint(
+                inventory
+            )
+        },
+        kind=_EGRESS_IDENTITY_OBSERVATION_KIND,
+        record_class=_EGRESS_IDENTITY_OBSERVATION_KIND,
+    )
+
+
 def _build_context_resolver(
     *,
     construction_stages: _ConstructionStages,
@@ -799,35 +837,37 @@ def _build_context_resolver(
     construction: ConstructionConfig,
     environment_label: str,
     continuity_id: str,
+    authority_epoch_service: SafetyAuthorityEpochService,
+    safety_mesh: _SafetyMesh,
+    projection: SqliteReservationProjectionReader,
+    evidence_store: SqliteEvidenceStore,
     request_bytes_digest_source: RequestBytesDigestSource | None = None,
 ) -> ComposeContextResolver:
-    """The gateway's lazy ``SendBoundaryContext`` resolver (design #35 §3.1
-    (3)), wired with this environment's transport nature / credential-route
-    inventory / authorized coordinates.
-
-    G-4 CLOSED (plan §2 decision 2): transport nature / credential-route
-    inventory are STRUCTURALLY DERIVED from ``broker_scopes.active_scope``
-    (:func:`~tos_runtime.brokercap.transport_nature` /
-    :func:`~tos_runtime.brokercap.credential_route_inventory`), never the
-    three old ``f"synthetic-paper-{environment_label}"`` literals; the old
-    R2 literal-comparison boot refusal is likewise generalized to
-    :func:`~tos_runtime.brokercap.refuse_principal_collision` over EVERY
-    configured scope's principal.
-
-    ``instance_document`` is loaded EXACTLY ONCE per boot, by
-    :func:`_resolve_strategies_and_attested_inputs`, and threaded through
-    :class:`_BootResult` (finding F9 — no second re-load here).
-
-    Args:
-        request_bytes_digest_source: T2 lane A's digest-source seam. ``None``
-            (every caller today) builds :func:`_default_request_bytes_digest_source`.
+    """The gateway's lazy ``SendBoundaryContext`` resolver (design #35 §3.1 (3)) — transport
+    nature / credential-route inventory STRUCTURALLY DERIVED from ``broker_scopes.active_scope``
+    (G-4, plan §2 decision 2; ``refuse_principal_collision`` generalizes the old R2 literal
+    check over EVERY configured scope's principal). ``instance_document`` loaded EXACTLY ONCE
+    per boot (F9); ``authority_epoch_service``/``safety_mesh``/``projection`` feed items 4/7-10
+    + the item-16 latch/capacity owners (Phase 5 W3-b, §2 decisions 4/6/8); ``evidence_store``
+    records the EGRESS_IDENTITY evidence-only observation (MEDIUM-4 —
+    :func:`_record_egress_identity_observation`) — all forwarded to
+    :class:`ComposeContextResolver`. ``request_bytes_digest_source`` is T2 lane A's digest seam
+    (``None`` -> :func:`_default_request_bytes_digest_source`).
 
     Raises:
-        BrokerScopeConfigError: ``active_principal`` collides with a scope's
-            own principal (generalized R2), or a config/kernel mismatch.
+        BrokerScopeConfigError: principal collision (R2) or a config/kernel mismatch.
     """
     refuse_principal_collision(
         broker_scopes, active_principal=egress_coordinates.active_principal
+    )
+    instrument_key = InstrumentKey(
+        account=construction.account, instrument=construction.instrument
+    )
+    resolved_credential_route_inventory = credential_route_inventory(
+        broker_scopes, active_principal=egress_coordinates.active_principal
+    )
+    _record_egress_identity_observation(
+        evidence_store, resolved_credential_route_inventory
     )
     return ComposeContextResolver(
         construction_stage=construction_stages.construction_stage,
@@ -843,15 +883,17 @@ def _build_context_resolver(
         egress_attestations=egress_attestations,
         broker_scopes=broker_scopes,
         instance_document=instance_document,
+        authority_epoch_service=authority_epoch_service,
+        safety_mesh_deferred_fields=safety_mesh.deferred_fields,
+        latch=safety_mesh.latch,
+        capacity=build_capacity_owner(projection, instrument_key),
         # Transport's OWN identity (slice #3) — derived from the active scope, G-4 closed.
         transport_nature=transport_nature(broker_scopes.active_scope),
         environment_label=environment_label,
         # ONE source (finding #1): same value as authorized_coordinates below,
         # required by the kernel's claim-principal-matches-active-principal check.
         principal=egress_coordinates.active_principal,
-        credential_route_inventory=credential_route_inventory(
-            broker_scopes, active_principal=egress_coordinates.active_principal
-        ),
+        credential_route_inventory=resolved_credential_route_inventory,
         authorized_coordinates=EgressCoordinateSet(
             endpoint=egress_coordinates.endpoint,
             account=construction.account,
@@ -876,9 +918,7 @@ def _build_context_resolver(
         action_class=construction.action_class,
         observed_session_phase=construction.observed_session_phase,
         continuity_id=continuity_id,
-        instrument_key=InstrumentKey(
-            account=construction.account, instrument=construction.instrument
-        ),
+        instrument_key=instrument_key,
         venue_snapshot=construction.venue_snapshot,
         venue_policy=construction.venue_policy,
         venue_decision=construction.venue_decision,
@@ -945,7 +985,9 @@ def _resolve_strategies_and_attested_inputs(
         resolved_strategies.loaded_bindings,
         broker_scopes=broker_scopes,
         instance_document=instance_document,
-        extra_config_files=transport_boot.extra_config_files,
+        extra_config_files=(
+            transport_boot.extra_config_files + risk.safety_mesh.config_files
+        ),
     )
     return (
         egress_coordinates,
@@ -1025,6 +1067,12 @@ def _boot_services(
     verify_rcl_log_or_halt(
         rcl.rcl_log, infra.evidence_store, infra.emergency_log, identity
     )
+    safety_mesh = build_safety_mesh(
+        config_dir,
+        evidence_store=infra.evidence_store,
+        time_service=infra.time_service,
+        monotonic_source=infra.monotonic_source,
+    )
     risk = _build_risk_and_currentness(
         config_dir,
         rcl.rcl_log,
@@ -1032,6 +1080,8 @@ def _boot_services(
         infra.evidence_store,
         infra.time_service,
         rcl.authority_epoch_service,
+        environment_label,
+        safety_mesh,
     )
     (
         egress_coordinates,

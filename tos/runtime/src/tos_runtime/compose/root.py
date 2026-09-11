@@ -183,6 +183,14 @@ def compose_paper_runtime(
         allow_no_strategies,
         transport_kind,
     )
+    # Late-bind the ENVIRONMENT_SCOPE dimension reader's cell now the active broker
+    # scope is resolved (W3.1 independent review MEDIUM-2; plan §2 decision 3) — the
+    # SAME "constructed before its dependency exists" ordering already documented for
+    # ACTION_FLOW/TRADING_APPROVAL below, except this one is already satisfiable right
+    # here: `_boot_services` resolves `broker_scopes` internally before returning.
+    boot.risk.environment_scope_dimension_state.active_scope = (
+        boot.broker_scopes.active_scope
+    )
 
     construction_stages = _build_construction_stages(construction)
     realized = _build_realized_stages(
@@ -197,8 +205,10 @@ def compose_paper_runtime(
         environment_label=environment_label,
         uid=uid,
     )
-    # Late-bind the ACTION_FLOW dimension reader's cell now step 9's VerdictRecorder exists.
+    # Late-bind the ACTION_FLOW / TRADING_APPROVAL dimension readers' cells now steps
+    # 9/4's VerdictRecorders exist (Phase 5 W3-b, plan §2 decision 3).
     boot.risk.action_flow_dimension_state.step9_recorder = realized.step9_recorder
+    boot.risk.trading_approval_dimension_state.step4_recorder = realized.step4_recorder
     stages = _build_stage_map(construction_stages, realized)
 
     # T2 lane C: a kis-mock boot binds the genuine KIS wire-codec digest into the context
@@ -225,6 +235,10 @@ def compose_paper_runtime(
         construction=construction,
         environment_label=environment_label,
         continuity_id=continuity_id,
+        authority_epoch_service=boot.rcl.authority_epoch_service,
+        safety_mesh=boot.risk.safety_mesh,
+        projection=boot.risk.projection,
+        evidence_store=boot.infra.evidence_store,
         request_bytes_digest_source=request_bytes_digest_source,
     )
 
@@ -247,6 +261,10 @@ def compose_paper_runtime(
         transport_kind=transport_kind,
         transport_config=boot.transport_config,
     )
+    # Late-bind the safety-mesh inbox cell now the durable inbox exists (Phase 5 W3-b,
+    # plan §2 decision 6/8) — RestrictiveLatchOwner's new-risk-halt reader and
+    # MonitoringService's inbox-backlog observer both close over this cell.
+    boot.risk.safety_mesh.inbox_cell.inbox = composed.inbox
     # TOS Phase 5 W2-R (plan §10 row ①③) — attach the finality release consumer BEFORE the
     # recovery barrier runs (see apply_release_wiring's own docstring for why running before a
     # possible driver detach is harmless).
@@ -256,10 +274,16 @@ def compose_paper_runtime(
         scheme=_SCHEME,
         monotonic_source=boot.infra.monotonic_source,
     )
-    return apply_recovery_barrier(
+    composed = apply_recovery_barrier(
         composed,
         config_dir=config_dir,
         data_dir=data_dir,
         custody_root=custody_root,
         scheme=_SCHEME,
     )
+    # Late-bind the RECOVERY dimension reader's cell now the barrier has actually run
+    # (Phase 5 W3-b, plan §2 decision 3) — strictly before this function ever hands
+    # `composed` to a caller that could drive an attempt (_RecoveryDimensionState's own
+    # docstring).
+    boot.risk.recovery_dimension_state.verdict = composed.recovery
+    return composed

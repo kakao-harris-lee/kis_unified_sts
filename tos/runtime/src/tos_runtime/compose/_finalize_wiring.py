@@ -176,6 +176,8 @@ def _finalize(
         custody=infra.custody,
         transport_kind=transport_kind,
         transport_config=transport_config,
+        safety_mesh=risk.safety_mesh.services,
+        mesh_snapshot_refresher=risk.safety_mesh.refresh_tick_snapshot,
     )
 
     _verify_boot_replay(
