@@ -179,6 +179,15 @@ class NewRiskHaltClearOutcome(StrEnum):
     #: but the storage-layer clear itself still refused — a concurrent relatch changed the seq
     #: between the two (never reachable through this single-threaded runtime today).
     STORAGE_REFUSED = "STORAGE_REFUSED"
+    #: Wrapper-only (TOS Phase 5 W3 plan §2 decision 7): the HAG two-person re-arm quorum
+    #: (:mod:`tos_runtime.safety.rearm`) did not positively approve — a missing/malformed
+    #: ``approvals/rearm/<seq>.yaml`` file, or any of the five kernel predicates
+    #: (``dual_control_effective_distinct`` / ``quorum_independence_satisfied`` /
+    #: ``approval_binding_exact`` / ``approval_set_single_use`` / ``no_automatic_rearm``) not
+    #: positively satisfied. Replaces the free-text ``EMPTY_ATTESTATION`` refusal for this
+    #: wrapper's own pre-checks (latch present + seq match still refuse with ``NO_LATCH`` /
+    #: ``SEQ_MISMATCH`` before a re-arm file is even consulted).
+    QUORUM_REFUSED = "QUORUM_REFUSED"
 
 
 @dataclass(frozen=True)

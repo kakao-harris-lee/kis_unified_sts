@@ -6,8 +6,10 @@ limit); no behavioural difference from having them inline in root.py.
 from __future__ import annotations
 
 import hashlib
+import os
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 
 from tos.brokeradapter import Transport
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
@@ -62,6 +64,7 @@ from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.recovery.barrier import RecoveryVerdict
+from tos_runtime.safety.rearm import ReArmStatus, ReArmWorkflow
 from tos_runtime.time.service import TrustworthyTimeService
 
 __all__ = [
@@ -228,7 +231,7 @@ class ComposedRuntime:
     _NEW_RISK_HALT_CLEAR_REFUSED_KIND = "NEW_RISK_HALT_CLEAR_REFUSED"
 
     def clear_new_risk_halt(
-        self, *, latched_evidence_seq: int, operator_attestation: str
+        self, *, latched_evidence_seq: int, approvals_dir: Path
     ) -> NewRiskHaltClearOutcome:
         """Operator re-arm for the independent-review finding #3 new-risk halt latch
         (re-review finding R3, 2026-09-09 — see :mod:`tos_runtime.engine.inbox`'s own module
@@ -237,15 +240,24 @@ class ComposedRuntime:
         :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`'s for why a direct
         call on the storage layer is refused by a mechanical pin (re-review finding RR2).
 
-        Evidence BEFORE state change, exactly like every other halt path in this runtime
-        (:func:`~tos_runtime.evidence.emergency.record_halt`'s own discipline, though this is a
-        CLEAR, not a halt, so it goes through the ordinary
-        :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.append` path instead): this method
-        first checks the CURRENTLY-latched halt matches ``latched_evidence_seq`` and that
-        ``operator_attestation`` is non-empty, THEN durably appends one
-        ``NEW_RISK_HALT_CLEARED_BY_OPERATOR`` evidence entry (the latched reason, the seq being
-        cleared, and the sha256 of the attestation text — never the raw text itself, which may be
-        arbitrarily long free-form operator prose), and ONLY THEN clears the latch via
+        **TOS Phase 5 W3 plan §2 decision 7.** The single free-text operator attestation this
+        method used to accept is replaced by :class:`~tos_runtime.safety.rearm.ReArmWorkflow` — a
+        HAG two-person quorum evaluated over an operator-authored
+        ``approvals_dir/rearm/<latched_evidence_seq>.yaml`` decision file (see that module's own
+        docstring for the five kernel predicates it checks). This method still owns the ONE
+        pre-check the workflow cannot do on its own (there is no latch to name a two-person
+        decision file after until one exists) — NO_LATCH / SEQ_MISMATCH — and still owns the
+        actual storage-layer clear call (the machine pin
+        ``tests/engine/test_no_direct_latch_clear.py`` allows only this file to call
+        :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`); the workflow owns
+        everything about whether the quorum is satisfied, including its OWN ``REARM_APPROVED`` /
+        ``REARM_REFUSED`` evidence (recorded before this method ever reaches the storage call).
+
+        Evidence BEFORE state change, exactly like every other halt path in this runtime: this
+        method first checks the CURRENTLY-latched halt matches ``latched_evidence_seq``, THEN
+        (if the workflow approves) durably appends one ``NEW_RISK_HALT_CLEARED_BY_OPERATOR``
+        evidence entry (the latched reason, the seq being cleared, and the sha256 of the
+        workflow's own non-secret attestation marker text), and ONLY THEN clears the latch via
         :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`. If that final
         clear itself refuses (a concurrent relatch changed the seq between the check above and
         the clear — a narrow, honestly-disclosed TOCTOU this single-threaded runtime does not
@@ -255,32 +267,32 @@ class ComposedRuntime:
         attempt — and this method ALSO appends a ``NEW_RISK_HALT_CLEAR_REFUSED`` row for it
         (re-review finding RR3).
 
-        **Every refusal is now durably recorded (re-review finding RR3, 2026-09-09).** Before this
-        fix, a refused clear returned a bare ``False`` with zero evidence — a caller that ignored
-        the return value, or a stale-seq clear attempt (exactly "the operator reviewed an old
-        violation, not the current one"), left no trace anywhere. Every refusal path — no latch,
-        empty attestation, seq mismatch, or the storage-layer TOCTOU refusal above — now appends
-        one ``NEW_RISK_HALT_CLEAR_REFUSED`` entry (the typed outcome, the requested seq, the
-        CURRENTLY-latched seq if any, and the attestation's sha256) before returning.
+        **Every refusal is durably recorded (re-review finding RR3, 2026-09-09).** Every refusal
+        path — no latch, seq mismatch, the HAG quorum refusing (which ALSO leaves its own
+        ``REARM_REFUSED`` row via the workflow), or the storage-layer TOCTOU refusal above — now
+        appends one ``NEW_RISK_HALT_CLEAR_REFUSED`` entry (the typed outcome, the requested seq,
+        the CURRENTLY-latched seq if any) before returning.
 
         Args:
             latched_evidence_seq: The ``evidence_seq`` of the violation the operator reviewed.
                 Must equal the CURRENTLY-latched row's own seq — a stale value is refused (with a
                 ``NEW_RISK_HALT_CLEAR_REFUSED`` evidence row, per RR3).
-            operator_attestation: Non-empty free-text operator attestation.
+            approvals_dir: The directory
+                ``approvals_dir/rearm/<latched_evidence_seq>.yaml`` is resolved under (the same
+                root :mod:`tos_runtime.authority.iap` uses for
+                ``approvals/<proposal_digest>.yaml``).
 
         Returns:
             :class:`~tos_runtime.engine.inbox.NewRiskHaltClearOutcome` — :attr:`~tos_runtime
             .engine.inbox.NewRiskHaltClearOutcome.CLEARED` on success; ``NO_LATCH`` /
-            ``EMPTY_ATTESTATION`` / ``SEQ_MISMATCH`` / ``STORAGE_REFUSED`` on refusal (the latch,
+            ``SEQ_MISMATCH`` / ``QUORUM_REFUSED`` / ``STORAGE_REFUSED`` on refusal (the latch,
             if any, is left completely untouched in every refusal case).
         """
         current = self.inbox.new_risk_halt()
-        attestation_sha256 = hashlib.sha256(
-            operator_attestation.encode("utf-8")
-        ).hexdigest()
 
-        def _refuse(outcome: NewRiskHaltClearOutcome) -> NewRiskHaltClearOutcome:
+        def _refuse(
+            outcome: NewRiskHaltClearOutcome,
+        ) -> NewRiskHaltClearOutcome:
             self.evidence_store.append(
                 {
                     "outcome": outcome.value,
@@ -288,7 +300,6 @@ class ComposedRuntime:
                     "current_latched_evidence_seq": (
                         current.get("evidence_seq") if current is not None else None
                     ),
-                    "operator_attestation_sha256": attestation_sha256,
                 },
                 kind=self._NEW_RISK_HALT_CLEAR_REFUSED_KIND,
                 record_class=self._NEW_RISK_HALT_CLEAR_REFUSED_KIND,
@@ -297,11 +308,26 @@ class ComposedRuntime:
 
         if current is None:
             return _refuse(NewRiskHaltClearOutcome.NO_LATCH)
-        if not operator_attestation.strip():
-            return _refuse(NewRiskHaltClearOutcome.EMPTY_ATTESTATION)
         if current.get("evidence_seq") != latched_evidence_seq:
             return _refuse(NewRiskHaltClearOutcome.SEQ_MISMATCH)
 
+        workflow = ReArmWorkflow(
+            approvals_dir,
+            self.evidence_store,
+            self.inbox,
+            self.time_service,
+            environment_label=self.identity.cell_id or "",
+            expected_owner_uid=os.getuid(),
+        )
+        rearm_outcome = workflow.approve_and_clear(latched_evidence_seq)
+        if rearm_outcome.status is not ReArmStatus.APPROVED:
+            return _refuse(NewRiskHaltClearOutcome.QUORUM_REFUSED)
+
+        attestation_text = rearm_outcome.attestation_text
+        assert attestation_text is not None  # APPROVED always carries one
+        attestation_sha256 = hashlib.sha256(
+            attestation_text.encode("utf-8")
+        ).hexdigest()
         self.evidence_store.append(
             {
                 "latched_evidence_seq": latched_evidence_seq,
@@ -314,7 +340,7 @@ class ComposedRuntime:
         )
         outcome = self.inbox.clear_new_risk_halt(
             latched_evidence_seq=latched_evidence_seq,
-            operator_attestation=operator_attestation,
+            operator_attestation=attestation_text,
         )
         if outcome is not NewRiskHaltClearOutcome.CLEARED:
             return _refuse(NewRiskHaltClearOutcome.STORAGE_REFUSED)
