@@ -1,0 +1,55 @@
+{
+  "canonical_12": [
+    "P-1",
+    "P-11",
+    "P-13",
+    "P-14",
+    "P-15",
+    "P-16",
+    "P-2",
+    "P-5",
+    "P-5b",
+    "P-8",
+    "P-EXT",
+    "P-FQP"
+  ],
+  "canonical_count": 12,
+  "census_4": [
+    "N-15",
+    "N-16",
+    "N-17",
+    "N-18"
+  ],
+  "census_count": 4,
+  "total": 22,
+  "bound_keys_touched": [
+    "B_broker_query_consistency",
+    "B_egress_hard_fence",
+    "B_external_activity_contain",
+    "B_external_activity_detect",
+    "B_final_quantity_proof",
+    "B_late_fill_observation",
+    "B_non_trade_event_detect",
+    "B_non_trade_reconcile",
+    "B_protective_request_complete",
+    "B_rate_limit_recovery",
+    "B_startup_reconciliation"
+  ],
+  "bound_keys_not_touched": [
+    "B_capability_claim_to_send",
+    "B_venue_constraint_loss_detect"
+  ],
+  "order_emitting": [
+    "P-11",
+    "P-2",
+    "P-5",
+    "P-8",
+    "P-FQP",
+    "P-NMPR",
+    "P-R5"
+  ],
+  "unsupported": {
+    "N-17": "N-17 is a documentary cross-check, not a script. The instrument question (kis-code-assistant-mcp vs manual official-doc reading) is RESOLVED, not open: the operator reported the MCP back online on 2026-07-29 -- a conversation-level act with no copy in this repo -- which discharged the plan §1 T3 D6 conditional, and the cross-check then ran on that instrument, producing docs/plans/2026-07-29-tos-p02-n17-spec-collation.md (5 confirmed / 6 partial / 5 unknown). Disposition record: docs/plans/2026-08-07-tos-p02-d5-d6-decision-record.md §2. Use the checklist in docs/runbooks/kis-capability-probes.md §7.",
+    "N-19": "N-19 is a documentary cross-check, not a script (N-17 형). 수단(kis-code-assistant-mcp 조회 전용)은 이미 결정됨 -- plan §1 T3 D6 조건문은 2026-07-29 운영자 MCP 재가동 보고(대화 수준·리포 외 행위)로 해소됐고 N-17이 그 수단으로 실제 대조를 수행했다 (registry.py N-17 skip_reason·런북 §7이 반영). 따라서 N-19는 동일 MCP 경로로 즉시 착수 가능 -- 차단 선행조건 없음. 첫 질문: KIS가 CA 조회/통지 API를 노출하는가. 체크리스트는 런북 §7-CA."
+  }
+}
