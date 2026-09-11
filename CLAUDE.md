@@ -212,13 +212,16 @@ plan review) in an independent model lane.
 
 - Platform work (strategy, ops, frontend, DevX, data, execution) → use the
   `trading-harness` skill.
-- **Codex review excludes code (operator directive 2026-09-04).** Code diffs,
-  PRs, and implementation results are never sent to Codex. Code review is a
-  Claude-side pass (`code-reviewer` / `review-synthesizer`, separate from the
-  author). `codex-gate` remains for plan critiques and other non-code artifacts,
-  and only when the operator asks explicitly — still opt-in — finishing an implementation, passing tests, or
-  making a commit is not a trigger. Reason: paid external calls had become too
-  frequent.
+- **Codex code scope is limited to hard-to-reverse paths (operator directive
+  2026-09-11; supersedes the blanket exclusion of 2026-09-04).** Live order paths,
+  money movement, risk limits, auth and credential handling, DB migrations, and data
+  purge may go to Codex once the operator approves scope and cost. Every other code
+  diff or PR stays with the Claude-side pass (`code-reviewer` / `review-synthesizer`,
+  separate from the author) and is never sent to Codex. `codex-gate` also remains for
+  plan critiques and other non-code artifacts. All of it is opt-in — finishing an
+  implementation, passing tests, or making a commit is not a trigger. Reason: the
+  2026-09-04 exclusion was aimed at paid-call frequency; bounding the scope keeps that
+  cost down without leaving Claude to approve its own code.
 - Scope every gate run to the diff or plan under question. Do not re-adjudicate
   already-disposed material; a fresh full-corpus review is an operator decision.
 - Keep the OpenAI Codex Claude Code plugin enabled, but keep its optional
@@ -254,6 +257,7 @@ Agent roster, skill list, directory layout, and execution detail live under
 | 2026-08-21 | Disabled per-turn Codex stop review; kept explicit scoped `codex-gate` reviews and moved thin reviewer forwarders to Haiku | review harness | Prevent duplicate fresh Codex tasks, long Stop-hook stalls, and avoidable Claude token use |
 | 2026-08-25 | Cost rebalance — pinned `model:` per agent (Sonnet 5 for execution/audit lenses, Opus only for `architecture-auditor`, `security-auditor`, and the fallback review lane), removed the global `sonnet -> Opus` env remap, made Codex adjudication explicitly operator-triggered | `agents/`, `~/.claude/fable/`, harness docs | Every subagent was silently running on Opus; review ran more often than it was asked for |
 | 2026-09-04 | **Codex review excludes code** — `codex-gate` / `codex-reviewer` return `SCOPE_EXCLUDED` for code diffs; code review is the Claude-side fallback lane; Codex plan critique stays available on explicit operator request · **plans/specs/roadmaps authored solo by the session model (Opus 5 [1m] / Fable 5.1 [1m])**, no planner/deep-reasoner pipeline | CLAUDE.md, codex-gate, codex-reviewer, codex-plan-reviewer | Operator directive — paid external calls too frequent, spec authoring too slow |
+| 2026-09-11 | **Codex code scope reopened, bounded** — hard-to-reverse paths (live order paths, money movement, risk limits, auth/credentials, DB migrations, data purge) may go to `codex-gate` / `codex-reviewer` once the operator approves scope and cost; every other code diff stays with the Claude-side lane. Supersedes the 2026-09-04 blanket exclusion | CLAUDE.md, codex-gate, codex-reviewer, codex-plan-reviewer | A week with zero cross-model review of code left Claude approving its own code; cost is bounded by scope, not by prohibition |
 | 2026-08-30 | Doc-only fix to the model-lanes paragraph: it claimed every audit lens runs on Sonnet 5, contradicting the 2026-08-25 row and the actual frontmatter (`architecture-auditor`/`security-auditor` are Opus) | CLAUDE.md | Cost audit found the prose had drifted from the pinned `model:` values; agent files unchanged |
 
 ## Documentation Map
