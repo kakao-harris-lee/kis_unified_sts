@@ -261,6 +261,62 @@ also enforces at least 100 signals and absolute backtest tracking error <= 20%.
 Passing the bundle check does **not** replace the actual shadow logs, Phase-5
 artifacts, or written operator approval.
 
+**Daily checks added 2026-09-10** (F-9 gap closure, plan
+`docs/plans/2026-09-10-f9-gate1-parity-gap-closure.md`):
+
+- **Setup A has a previous close.** The decoupled daemon has no
+  MarketDataProvider; before PR #668 it read parquet daily bars for the trading
+  symbol, which do not exist (`data/market/futures/daily` holds only
+  `101S6000` / `krx_kospi200f_continuous`, stale since 2026-06-25), so every
+  session evaluated Setup A as `no_prev_close` (2026-09-09: 411 warnings,
+  2026-09-10: 830) while the orchestrator fired Setup A at 08:55 / 08:59. The
+  producer now publishes the REST `futs_prdy_clpr` it already prefetches:
+
+  ```bash
+  redis-cli -p 6379 -n 1 hgetall futures:daily_reference:<trading symbol>   # prev_close, source, asof_ts (today, KST), producer
+  docker logs --tail 300 kis_paper-futures-decision-engine | grep -E "prev_close source="
+  ```
+
+  An `asof_ts` older than today means the producer did not prefetch this
+  session (`trader-futures` pre-cutover, `futures-market-ingest` after): Setup A
+  rows read `no_prev_close` again and the day proves nothing about Setup A.
+- **Every risk-filter verdict is on the log.** Rejections used to be silent
+  (no log line, the audit writer is the `shared/backtest` no-op stub, no
+  metric), so no Gate 1b row could ever be evidenced CLOSED. PR #667 logs one
+  line per candidate:
+
+  ```bash
+  docker logs --since <session start> kis_paper-futures-risk-filter \
+    | grep -oE "verdict=(passed|rejected)( filter=[A-Za-z_]+)?" | sort | uniq -c
+  ```
+
+  The total must equal the day's `signal.candidate.futures.shadow` entries;
+  `filter=` names the rejecting filter and is what a CLOSED row cites.
+- **The shadow `LeverageFilter` reads the SHADOW book.** Until PR #667 the
+  risk-filter process never set `TRADING_STATE_KEY_SUFFIX` (the monitor does),
+  so the filter read `trading:futures:positions` — the orchestrator's book — and
+  rejected every shadow entry while the orchestrator held one contract (≈5.5x
+  against the 3.0 cap on 2026-09-10; the only pass that day fell in the
+  orchestrator's flat window 09:38–09:43). Check the startup line:
+
+  ```bash
+  docker logs kis_paper-futures-risk-filter | grep -E "positions_key=" | tail -1   # expect trading:futures:positions:shadow
+  ```
+
+- **Read the decision-engine log with `--tail`.** After the 2026-09-09
+  23:32 / 23:34 host reboots the container's JSON log carries a broken record
+  at the boundary: `docker logs` without `--tail`, with `--since`, or with a
+  `--tail` large enough to cross it stop at 2026-09-09 23:30. `--tail 900` and
+  smaller return the current day. Recreating the container clears it.
+
+**Shadow observation log** (Gate 1 — feeds the Gate 2 one-line summary):
+
+| Day | Consumers | Setup D candidates → final → fills | Orchestrator (ledger) | Direction parity | Notes |
+|---|---|---|---|---|---|
+| 2026-09-08 | 3 (router stopped, DUAL-WS) | 0 — Setup D not yet ported | 20 fills, all Setup D | n/a | scope gap → #659 / #660 |
+| 2026-09-09 | 3, router from 14:54 (stream) | 30 (26 short → 4 long) → 7 → 0 (backlog, `stale_signal`) | 11 Setup D (9 short → 2 long) | OK on direction and sequence | first stream-mode session started mid-day |
+| 2026-09-10 | 4 (stream) | 30 (all long, 09:35–10:57) → 1 → 1 (long 09:39:50 @1103.95, stop 09:41:21 @1101.59, −588,839 KRW) | A short ×1 (+1.66), D long ×5, D short ×6 (all stop-loss) | morning long OK; Setup A blind (`no_prev_close`); afternoon shorts absent (`vol_below_gate` 0.66→0.37 vs monolith 0.89) | 29 / 30 rejections silent — LeverageFilter cross-read + DailyMDD 150k lockout (plan gaps G2–G4); `slippage_gate: blocked` 0 |
+
 **INERT-GATE CAVEAT — read before interpreting any Gate 1 pass rate.** Several
 filters in the decoupled chain cannot reject anything as shipped (see Gate 1b).
 A shadow chain containing structurally-inert gates produces an **inflated** pass
@@ -372,6 +428,11 @@ inventory"). Line numbers here are as of `26fc52b0` and will drift.
 | Daily trade ceiling | none on this path | `DailyTradeCountFilter` (`layer.py:251`, compare `daily_trade_count.py:68`), `max_daily_trades: 3` (`risk.yaml:6`) | **present** — see caveat below |
 | Exit semantics (holding period / EOD flatten) | `setup_target_exit` honours the signal's stop/target and adds an EOD close at 15:15 KST (`config/strategies/futures/setup_*.yaml` `exit.params.eod_close_*`); no TTL-driven close | PseudoOCO force-closes the position at `signal.valid_until` (`shared/execution/pseudo_oco.py::check_expiry`, called from `order_router/main.py`), i.e. `signal_ttl_minutes` becomes a HOLDING cap — 10 min for Setup A/D, 30 for C. No EOD flatten exists anywhere in the decoupled chain | **intentional deviation candidate** — operator disposition required |
 | Post-exit re-entry cooldown | `services/trading/reentry_guard.py`, per-strategy cooldown after an exit (orchestrator-only) | none — no per-strategy cooldown in the decoupled chain (`ConsecutiveLossFilter` is a different control: it counts losses, it does not space re-entries) | **intentional deviation candidate** — operator disposition required |
+| Setup A previous close (`gap_pct` input) | REST `FHMIF10000000.futs_prdy_clpr` prefetched at session start (`orchestrator.py::_prefetch_futures_daily_reference`) | parquet daily bars for the trading symbol — none exist (only `101S6000` / `krx_kospi200f_continuous`, stale 2026-06-25) → `no_prev_close` every session; PR #668 publishes the prefetched value as `futures:daily_reference:{symbol}` (24h TTL) and the daemon reads it, parquet as fallback | **gap, measured 2026-09-09/10** — CLOSED once #668 is deployed and a session shows Setup A rows past `no_prev_close` |
+| Gross leverage cap | none (position-count caps only) | `LeverageFilter` armed (`risk.yaml` `leverage.mode: enforce`, cap 3.0, equity `futures_margin.yaml` fallback 50,000,000) — in shadow it read `trading:futures:positions`, the orchestrator's book (`TRADING_STATE_KEY_SUFFIX` unset in the risk-filter process); PR #667 binds the suffix like the monitor and logs `positions_key=` | **shadow contamination, measured 2026-09-10** — until #667 is deployed every shadow entry while the orchestrator held a contract was rejected (≈5.5x > 3.0); afterwards a genuine decoupled-only control: dispose CLOSED (with a shadow rejection) or ACCEPTED |
+| Daily / weekly MDD | catastrophic-only breaker (#600; P&L in points, no equity denominator) | `DailyMDDFilter` / `WeeklyMDDFilter` on `risk.account_equity_krw` — was 5,000,000 (3% = 150,000 KRW; one full-size stop-loss of −588,839 KRW locked 2026-09-10 out after 09:41); PR #667 makes it `${FUTURES_MARGIN_FALLBACK_EQUITY:50000000}` (the leverage / margin lane's denominator → 1,500,000 KRW per day). Side effect: the same `FuturesRiskConfig.from_yaml()` feeds the MDD filters of `scripts/walk_forward_{phase3,sensitivity,bootstrap}.py` and `scripts/optimize_decision_engine.py`, so backtests re-run after #667 carry the 10× looser ceiling than the archived Setup A/C/D artefacts | **divergence, measured 2026-09-10** — decoupled-only control; the value (and the backtest re-baseline) is an operator decision, record ACCEPTED with the number |
+| Setup D volatility-gate window cadence | `shared/decision/setups/vwap_reversion.py::_vol_reference` — the same 780-bar trailing window, filled on every tick (~90/min → ≈10 min of history) | same code, filled once per 60 s bar (≈2 sessions — the design's own unit, plan 2026-09-08-setup-d-decoupled-port) | **intentional deviation, measured 2026-09-10** — 11:02 monolith `vol_below_gate(0.89<0.9)` then fired 6 shorts 12:04–13:39 (all stop-loss); shadow held `vol_below_gate` 0.66→0.37 from 11:00 and fired none. Not a wiring gap; dispose ACCEPTED (the decoupled cadence is canonical) |
+| Risk-filter verdict observability | n/a (monolith gates log inline) | rejections were silent — `handle_message` ACKed without a log, `layer.py:82` "Signal rejected" is a docstring example, `SignalsAllWriter` is the `shared/backtest` no-op, no metric; PR #667 logs `risk_filter verdict=… filter=… reason=…` per candidate | **prerequisite** — no CLOSED row above can be evidenced without it; 2026-09-10 had 29 unexplained rejections |
 | Setup D adapter-layer entry gates | `shared/strategy/entry/setup_d_adapter.py`: the `short_blocked_regimes: ["BULL_STRONG"]` direction block (PR #559, `setup_d_vwap_reversion.yaml`) — the only one in force. The file's `regime_gate` block is `enabled: false`, and Setup D's adapter carries no LLM tuning/veto and no daily-bias filter | none — the daemon calls the Setup CORE (`shared/decision/setups/vwap_reversion.py`) directly, so the adapter layer does not travel with the cutover | **intentional deviation** — operator decision ② 2026-09-09: not ported; observed via setup_eval |
 | Setup A `regime_gate` | `shared/strategy/gates/regime_gate.py` via the Setup A adapter; `regime_gate.enabled: true` in `config/strategies/futures/setup_a_gap_reversion.yaml` (activated 2026-05-23, PR #330 follow-up). Blocks entries on the live HAR-RV / event-impact regime | none — same reason as the Setup D row above | **OPEN** — needs operator disposition (decision ② covered Setup D only) |
 
@@ -464,11 +525,15 @@ are in force in which mode.
     stop-outs); the orchestrator's re-entry guard is what bounds that, and it
     does not travel with the cutover. Watch the shadow stream for repeated
     same-direction candidates on one symbol before signing this off.
-- **Other filters in the chain are inert for unrelated reasons** —
-  `MarginGateFilter` fails open while the `futures_margin_risk` publisher is
-  dormant (`layer.py:350`), `LeverageFilter` is inert without a snapshot
-  provider (`layer.py:387`). They are not parity gaps, but they do inflate the
-  Gate 1 pass rate the same way.
+- **Two more filters are armed, not inert — check them, don't assume.**
+  `MarginGateFilter` is fed by the scheduler's `futures_margin_risk intraday`
+  job (every 10 min 08–15 KST → `futures:risk:latest`; `level=ok` on
+  2026-09-10 with `degraded=True`, `atr:A01609` / `account_snapshot_stale`
+  missing — advisory) and rejects only `block_new_entries` / `critical`.
+  `LeverageFilter` has had a snapshot provider since P5-3
+  (`_build_leverage_wiring`, `mode: enforce` since 2026-07-12) and DID reject
+  on 2026-09-10 — against the wrong book (row "Gross leverage cap"). Neither is
+  a parity gap, but both shape the Gate 1 pass rate.
 
 ### Consequence of cutting over with the gaps open
 
@@ -529,6 +594,15 @@ Setup D adapter direction block (BULL_STRONG short) not ported:
                                      CLOSED @ ______  | ACCEPTED by ______ because ______
 Setup A regime_gate (enabled in monolith) not ported:
                                      CLOSED @ ______  | ACCEPTED by ______ because ______
+Setup A previous-close source (#668):
+                                     CLOSED @ ______  | ACCEPTED by ______ because ______
+Gross leverage cap reads the shadow book (#667):
+                                     CLOSED @ ______  | ACCEPTED by ______ because ______
+Daily/weekly MDD denominator = FUTURES_MARGIN_FALLBACK_EQUITY (#667):
+                                     CLOSED @ ______  | ACCEPTED by ______ because ______
+Setup D vol-gate window cadence (60 s canonical):
+                                     CLOSED @ ______  | ACCEPTED by ______ because ______
+Risk-filter verdict log present for every signed session:      yes / no
 Paper vs live spread threshold understood (1 tick live / 6 paper):  yes / no
 Live-only nature of the order_router caps understood:               yes / no
 ```
