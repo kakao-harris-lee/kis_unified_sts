@@ -85,6 +85,9 @@ def test_egress_identity_stays_pending() -> None:
     =True`` on that partial coverage was an over-claim. Reverted to pending; the
     one real predicate is now recorded as an evidence-only observation (never a
     dimension verdict) — see ``_wiring.py``'s ``_record_egress_identity_observation``.
+    Phase 5 W3.2 re-investigated the other two predicates
+    (``stale_principal_structurally_rejected`` / ``egress_generation_monotonic``) and
+    found no production ``ActiveEgressPrincipalSet`` source exists — still pending.
     """
     assert DimensionKey.EGRESS_IDENTITY in PENDING_DIMENSION_KEYS
 
@@ -107,12 +110,36 @@ def test_safety_mesh_dimension_is_no_longer_pending(
     assert safety_mesh_key not in PENDING_DIMENSION_KEYS
 
 
-def test_pending_dimension_keys_reaches_the_plan_exit_condition_of_nine() -> None:
-    """Plan §5 exit condition, revised per W3.1 review MEDIUM-4 (EGRESS_IDENTITY
-    reverted to pending): ``_pending_dimensions`` 17->9 once the 8 real
-    dimension-owner replacements (CURRENTNESS_POLICY, RECOVERY, TRADING_APPROVAL,
-    ENVIRONMENT_SCOPE, and the four safety-mesh services) have landed."""
-    assert len(PENDING_DIMENSION_KEYS) == 9
+@pytest.mark.parametrize(
+    "w32_key",
+    [
+        DimensionKey.AGGREGATE_RISK,
+        DimensionKey.CONSTRUCTION,
+        DimensionKey.CONSTRAINT,
+        DimensionKey.DECISION_PROOF_INTENT,
+        DimensionKey.POST_TRADE,
+        DimensionKey.RELEASE,
+    ],
+)
+def test_w32_dimension_is_no_longer_pending(w32_key: DimensionKey) -> None:
+    """RED until each of Phase 5 W3.2's six remaining dimension-owner readers lands
+    (plan §2 decisions 2-6, ``tos_runtime.compose._currentness_wiring``)."""
+    assert w32_key not in PENDING_DIMENSION_KEYS
+
+
+def test_context_and_critical_input_stay_pending() -> None:
+    """No ``tos.capsule`` runtime producer exists at all (survey §1) — a future
+    capsule-chain wave, not Phase 5 W3.2, owns these two."""
+    assert DimensionKey.CONTEXT in PENDING_DIMENSION_KEYS
+    assert DimensionKey.CRITICAL_INPUT in PENDING_DIMENSION_KEYS
+
+
+def test_pending_dimension_keys_reaches_the_plan_exit_condition_of_three() -> None:
+    """Plan §5 exit condition: ``_pending_dimensions`` 9->3 once Phase 5 W3.2's six
+    dimension-owner replacements (AGGREGATE_RISK, CONSTRUCTION, CONSTRAINT,
+    DECISION_PROOF_INTENT, POST_TRADE, RELEASE) have landed — leaving only
+    CONTEXT, CRITICAL_INPUT, and EGRESS_IDENTITY pending."""
+    assert len(PENDING_DIMENSION_KEYS) == 3
 
 
 @pytest.mark.parametrize(
@@ -126,6 +153,12 @@ def test_pending_dimension_keys_reaches_the_plan_exit_condition_of_nine() -> Non
         DimensionKey.DEVIATION,
         DimensionKey.INCIDENT,
         DimensionKey.MONITORING,
+        DimensionKey.AGGREGATE_RISK,
+        DimensionKey.CONSTRUCTION,
+        DimensionKey.CONSTRAINT,
+        DimensionKey.DECISION_PROOF_INTENT,
+        DimensionKey.POST_TRADE,
+        DimensionKey.RELEASE,
     ],
 )
 def test_a_reader_owned_key_still_present_in_config_refuses_to_load(

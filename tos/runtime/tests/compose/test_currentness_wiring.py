@@ -1,5 +1,6 @@
-"""Tests for :mod:`tos_runtime.compose._currentness_wiring`'s late-bound dimension
-readers (Phase 5 W3-b).
+"""Tests for :mod:`tos_runtime.compose._dimension_readers`'s late-bound dimension
+readers (Phase 5 W3-b; module moved out of ``_currentness_wiring`` 2026-09-12 for
+the size budget — this test file's own name is unchanged).
 
 Covers W3.1 independent review MEDIUM-5 (mutation M9 survived): nothing pinned that a
 not-yet-late-bound cell yields an ABSENT dimension (``None``) rather than a fabricated
@@ -11,7 +12,11 @@ whole runtime suite green.
 
 from __future__ import annotations
 
+import types
+from typing import Any
+
 import pytest
+from tos.are import RiskDecisionResult
 from tos.brokercap import (
     Admissibility,
     AssetScope,
@@ -27,6 +32,7 @@ from tos.cur import MANDATED_DIMENSION_FLOOR, CurrentnessPolicy, DimensionKey
 from tos.egressgw import TransportNature
 from tos.engine import StageVerdict
 from tos.engine.vocabulary import CommitmentStep, StageAuthorityClass, StageOutcome
+from tos.ioc import ConformanceResult
 from tos.sbr import ReadinessVerdict, RecoveryAuthorityEffect
 from tos_runtime.brokercap.scopes import (
     BrokerScope,
@@ -34,13 +40,24 @@ from tos_runtime.brokercap.scopes import (
     PrincipalClass,
     ScopeInstanceBinding,
 )
-from tos_runtime.compose import _currentness_wiring
-from tos_runtime.compose._currentness_wiring import (
+from tos_runtime.compose import _dimension_readers
+from tos_runtime.compose._dimension_readers import (
+    _aggregate_risk_dimension_reader_for,
+    _constraint_dimension_reader_for,
+    _ConstraintDimensionState,
+    _construction_dimension_reader_for,
+    _ConstructionDimensionState,
     _currentness_policy_dimension_reader_for,
+    _decision_proof_intent_dimension_reader_for,
+    _DecisionProofIntentDimensionState,
     _environment_scope_dimension_reader_for,
     _EnvironmentScopeDimensionState,
+    _post_trade_dimension_reader_for,
+    _PostTradeDimensionState,
     _recovery_dimension_reader_for,
     _RecoveryDimensionState,
+    _release_dimension_reader_for,
+    _ReleaseDimensionState,
     _trading_approval_dimension_reader_for,
     _TradingApprovalDimensionState,
 )
@@ -48,6 +65,73 @@ from tos_runtime.compose.context import VerdictRecorder
 from tos_runtime.recovery.barrier import RecoveryVerdict
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
+
+
+def _bind_verification_verdict(outcome: StageOutcome) -> StageVerdict:
+    return StageVerdict(
+        step=CommitmentStep.ATTEMPT_BIND_VERIFICATION,
+        outcome=outcome,
+        authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
+    )
+
+
+def _venue_verdict(outcome: StageOutcome) -> StageVerdict:
+    return StageVerdict(
+        step=CommitmentStep.VENUE_ADMISSIBILITY_DECISION,
+        outcome=outcome,
+        authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
+    )
+
+
+class _FakeRiskService:
+    """Duck-typed double for ``RecordingAggregateRiskService`` — the reader only ever
+    reads ``.last_decision``, so this stub carries nothing else (mirrors this test
+    module's own ``_stage_verdict``/``VerdictRecorder`` doubles above)."""
+
+    def __init__(self) -> None:
+        self.last_decision: Any = None
+
+
+def _aggregate_risk_decision(
+    *, result: RiskDecisionResult, decision_generation: int
+) -> types.SimpleNamespace:
+    """A minimal stand-in for ``tos.are.AggregateRiskDecision`` carrying only the two
+    fields :func:`_aggregate_risk_dimension_reader_for` reads."""
+    return types.SimpleNamespace(result=result, decision_generation=decision_generation)
+
+
+def _candidate_construction(
+    *,
+    conformance_result: ConformanceResult | None,
+    numerical_result: ConformanceResult | None,
+    no_silent_widening_ok: bool | None,
+) -> types.SimpleNamespace:
+    """A minimal stand-in for ``tos.egressgw.CandidateConstruction`` carrying only the
+    three fields :func:`_construction_dimension_reader_for` reads."""
+    return types.SimpleNamespace(
+        conformance_result=conformance_result,
+        numerical_result=numerical_result,
+        no_silent_widening_ok=no_silent_widening_ok,
+    )
+
+
+class _FakeConstructionStage:
+    """Duck-typed double for ``tos.egressgw.OrderConstructionStage`` — the reader only
+    ever reads ``.construction``."""
+
+    def __init__(self, construction: Any = None) -> None:
+        self.construction = construction
+
+
+class _FakePostTradeConsumer:
+    """Duck-typed double for ``FinalityReleaseConsumer`` — the reader only ever calls
+    ``.latest_release_is_conflict_free()``."""
+
+    def __init__(self, *, conflict_free: bool) -> None:
+        self._conflict_free = conflict_free
+
+    def latest_release_is_conflict_free(self) -> bool:
+        return self._conflict_free
 
 
 def _recovery_verdict(*, ready: bool) -> RecoveryVerdict:
@@ -290,7 +374,7 @@ def test_environment_scope_reader_never_takes_the_vacuous_pass_on_an_unknown_rea
     """
     scope = _broker_reaching_scope(instance=None)
     monkeypatch.setattr(
-        _currentness_wiring,
+        _dimension_readers,
         "transport_nature",
         lambda _scope: TransportNature(reaches_broker=None),
     )
@@ -349,3 +433,254 @@ def test_currentness_policy_reader_is_true_when_the_operator_config_covers_the_f
     report = reader()
     assert report is not None
     assert report.positively_established is True
+
+
+# ============================================================================
+# AGGREGATE_RISK (Phase 5 W3.2, plan §2 decision 4)
+# ============================================================================
+
+
+def test_aggregate_risk_reader_is_none_before_any_decision() -> None:
+    """Mutation M9 discipline (module docstring): no decision recorded yet is honestly
+    absent, never a fabricated positive."""
+    reader = _aggregate_risk_dimension_reader_for(_FakeRiskService())
+    assert reader() is None
+
+
+def test_aggregate_risk_reader_reports_true_and_a_real_generation_after_grant() -> None:
+    service = _FakeRiskService()
+    reader = _aggregate_risk_dimension_reader_for(service)
+    service.last_decision = _aggregate_risk_decision(
+        result=RiskDecisionResult.GRANT, decision_generation=7
+    )
+    report = reader()
+    assert report is not None
+    assert report.positively_established is True
+    assert report.bound_generation == 7
+
+
+@pytest.mark.parametrize(
+    "result", [RiskDecisionResult.DENY, RiskDecisionResult.UNKNOWN]
+)
+def test_aggregate_risk_reader_reports_false_for_non_grant_results(
+    result: RiskDecisionResult,
+) -> None:
+    """Positive-identity check (``is GRANT``), never truthiness -- DENY and UNKNOWN both
+    deny."""
+    service = _FakeRiskService()
+    reader = _aggregate_risk_dimension_reader_for(service)
+    service.last_decision = _aggregate_risk_decision(
+        result=result, decision_generation=1
+    )
+    report = reader()
+    assert report is not None
+    assert report.positively_established is False
+
+
+# ============================================================================
+# CONSTRUCTION (Phase 5 W3.2, plan §2 decision 3)
+# ============================================================================
+
+
+def test_construction_reader_is_none_before_the_cell_is_filled() -> None:
+    state = _ConstructionDimensionState()
+    reader = _construction_dimension_reader_for(state)
+    assert reader() is None
+
+
+def test_construction_reader_is_none_before_step_2_has_a_candidate() -> None:
+    state = _ConstructionDimensionState(construction_stage=_FakeConstructionStage())
+    reader = _construction_dimension_reader_for(state)
+    assert reader() is None
+
+
+def test_construction_reader_reports_true_when_all_three_ioc_verdicts_are_positive() -> (
+    None
+):
+    stage = _FakeConstructionStage(
+        _candidate_construction(
+            conformance_result=ConformanceResult.CONFORMANT,
+            numerical_result=ConformanceResult.CONFORMANT,
+            no_silent_widening_ok=True,
+        )
+    )
+    state = _ConstructionDimensionState(construction_stage=stage)
+    reader = _construction_dimension_reader_for(state)
+    report = reader()
+    assert report is not None
+    assert report.positively_established is True
+    # M1 discipline (plan §5): a real, disclosed 0 -- never an invented per-attempt
+    # counter this reader has no honest source for.
+    assert report.bound_generation == 0
+
+
+@pytest.mark.parametrize(
+    ("conformance_result", "numerical_result", "no_silent_widening_ok"),
+    [
+        (ConformanceResult.NON_CONFORMANT, ConformanceResult.CONFORMANT, True),
+        (ConformanceResult.CONFORMANT, ConformanceResult.UNKNOWN, True),
+        (ConformanceResult.CONFORMANT, ConformanceResult.CONFORMANT, False),
+        (None, None, None),
+    ],
+)
+def test_construction_reader_reports_false_unless_all_three_verdicts_are_positive(
+    conformance_result: ConformanceResult | None,
+    numerical_result: ConformanceResult | None,
+    no_silent_widening_ok: bool | None,
+) -> None:
+    stage = _FakeConstructionStage(
+        _candidate_construction(
+            conformance_result=conformance_result,
+            numerical_result=numerical_result,
+            no_silent_widening_ok=no_silent_widening_ok,
+        )
+    )
+    state = _ConstructionDimensionState(construction_stage=stage)
+    reader = _construction_dimension_reader_for(state)
+    report = reader()
+    assert report is not None
+    assert report.positively_established is False
+
+
+# ============================================================================
+# CONSTRAINT (Phase 5 W3.2, plan §2 decisions 2/3)
+# ============================================================================
+
+
+def test_constraint_reader_is_none_before_the_cell_is_filled() -> None:
+    state = _ConstraintDimensionState()
+    reader = _constraint_dimension_reader_for(state)
+    assert reader() is None
+
+
+def test_constraint_reader_is_none_when_the_recorder_has_no_verdict_yet() -> None:
+    state = _ConstraintDimensionState(
+        venue_recorder=VerdictRecorder(lambda _r: _venue_verdict(StageOutcome.ADMIT))
+    )
+    reader = _constraint_dimension_reader_for(state)
+    assert reader() is None
+
+
+def test_constraint_reader_reports_true_after_an_admit_verdict() -> None:
+    recorder = VerdictRecorder(lambda _r: _venue_verdict(StageOutcome.ADMIT))
+    recorder(None)
+    state = _ConstraintDimensionState(venue_recorder=recorder)
+    reader = _constraint_dimension_reader_for(state)
+    report = reader()
+    assert report is not None
+    assert report.positively_established is True
+    assert report.bound_generation == 0
+
+
+def test_constraint_reader_reports_false_after_a_deny_verdict() -> None:
+    recorder = VerdictRecorder(lambda _r: _venue_verdict(StageOutcome.DENY))
+    recorder(None)
+    state = _ConstraintDimensionState(venue_recorder=recorder)
+    reader = _constraint_dimension_reader_for(state)
+    report = reader()
+    assert report is not None
+    assert report.positively_established is False
+
+
+# ============================================================================
+# DECISION_PROOF_INTENT (Phase 5 W3.2, plan §2 decision 2)
+# ============================================================================
+
+
+def test_decision_proof_intent_reader_is_none_before_the_cell_is_filled() -> None:
+    state = _DecisionProofIntentDimensionState()
+    reader = _decision_proof_intent_dimension_reader_for(state)
+    assert reader() is None
+
+
+def test_decision_proof_intent_reader_is_none_when_the_recorder_has_no_verdict_yet() -> (
+    None
+):
+    state = _DecisionProofIntentDimensionState(
+        step13_recorder=VerdictRecorder(
+            lambda _r: _bind_verification_verdict(StageOutcome.ADMIT)
+        )
+    )
+    reader = _decision_proof_intent_dimension_reader_for(state)
+    assert reader() is None
+
+
+def test_decision_proof_intent_reader_reports_true_after_an_admit_verdict() -> None:
+    recorder = VerdictRecorder(
+        lambda _r: _bind_verification_verdict(StageOutcome.ADMIT)
+    )
+    recorder(None)
+    state = _DecisionProofIntentDimensionState(step13_recorder=recorder)
+    reader = _decision_proof_intent_dimension_reader_for(state)
+    report = reader()
+    assert report is not None
+    assert report.positively_established is True
+    assert report.bound_generation == 0
+
+
+def test_decision_proof_intent_reader_reports_false_after_a_deny_verdict() -> None:
+    recorder = VerdictRecorder(lambda _r: _bind_verification_verdict(StageOutcome.DENY))
+    recorder(None)
+    state = _DecisionProofIntentDimensionState(step13_recorder=recorder)
+    reader = _decision_proof_intent_dimension_reader_for(state)
+    report = reader()
+    assert report is not None
+    assert report.positively_established is False
+
+
+# ============================================================================
+# POST_TRADE (Phase 5 W3.2, plan §2 decision 5)
+# ============================================================================
+
+
+def test_post_trade_reader_is_none_when_no_consumer_was_ever_wired() -> None:
+    """Distinct from "no evidence yet" (which the consumer itself resolves to True,
+    module docstring) -- this is the "consumer literally does not exist" case."""
+    state = _PostTradeDimensionState()
+    reader = _post_trade_dimension_reader_for(state)
+    assert reader() is None
+
+
+def test_post_trade_reader_reports_true_for_a_first_attempt_with_no_conflict() -> None:
+    """M2 discipline (plan §5): the first attempt has no post-trade fact at all, which
+    the consumer itself resolves to True -- never False and never None."""
+    state = _PostTradeDimensionState(
+        consumer=_FakePostTradeConsumer(conflict_free=True)
+    )
+    reader = _post_trade_dimension_reader_for(state)
+    report = reader()
+    assert report is not None
+    assert report.positively_established is True
+    assert report.bound_generation == 0
+
+
+def test_post_trade_reader_reports_false_when_the_consumer_reports_a_conflict() -> None:
+    state = _PostTradeDimensionState(
+        consumer=_FakePostTradeConsumer(conflict_free=False)
+    )
+    reader = _post_trade_dimension_reader_for(state)
+    report = reader()
+    assert report is not None
+    assert report.positively_established is False
+
+
+# ============================================================================
+# RELEASE (Phase 5 W3.2, plan §2 decision 6)
+# ============================================================================
+
+
+def test_release_reader_is_none_before_the_cell_is_filled() -> None:
+    state = _ReleaseDimensionState()
+    reader = _release_dimension_reader_for(state)
+    assert reader() is None
+
+
+def test_release_reader_reports_true_once_boot_admitted_release() -> None:
+    """Boot's own STAGE B probe always returns True when it returns at all (a refusal
+    raises instead, module docstring) -- this pins the honest, non-invented mapping."""
+    state = _ReleaseDimensionState(release_admitted=True)
+    reader = _release_dimension_reader_for(state)
+    report = reader()
+    assert report is not None
+    assert report.positively_established is True
+    assert report.bound_generation == 0

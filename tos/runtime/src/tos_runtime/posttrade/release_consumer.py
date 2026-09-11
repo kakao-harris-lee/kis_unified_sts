@@ -350,6 +350,56 @@ class FinalityReleaseConsumer:
         """
         return scope_reservation_id(self.account, self.instrument)
 
+    # -- currentness (Phase 5 W3.2 POST_TRADE dimension reader) -----------------------
+
+    def latest_release_is_conflict_free(self) -> bool:
+        """Whether this consumer's own scope's MOST RECENT recorded post-trade release
+        evidence is free of a reconciliation conflict — the read
+        :mod:`tos_runtime.compose._currentness_wiring`'s POST_TRADE dimension reader
+        (:func:`~tos_runtime.compose._currentness_wiring._post_trade_dimension_reader_for`)
+        uses, never a second judgement authored there.
+
+        Scans this scope's own :data:`CAPACITY_RELEASE_INTENT_KIND` /
+        :data:`CAPACITY_RELEASE_HELD_KIND` evidence rows (newest ``seq`` first, mirroring
+        :meth:`_active_generation`'s own scan style) for the first one matching this
+        consumer's own :meth:`_reservation_id`:
+
+        - No matching row at all (no post-trade fact yet for this scope) ⇒ ``True`` — a
+          scope that has never sent an attempt has no post-trade fact YET, which is the
+          normal state before any send, never treated as a conflict.
+        - The latest matching row is a :data:`CAPACITY_RELEASE_INTENT_KIND` (a release
+          actually proceeded) ⇒ ``True``.
+        - The latest matching row is a :data:`CAPACITY_RELEASE_HELD_KIND` whose recorded
+          ``reason`` is :attr:`ReleaseHoldReason.NOT_CORROBORATED` ⇒ ``False`` — the ONE
+          hold reason that structurally means gate 3's reconciliation found a genuine
+          conflict (an orphan broker order, or a non-``MATCHED`` classification) between
+          what this scope expected and what actually happened downstream.
+        - Any OTHER :data:`CAPACITY_RELEASE_HELD_KIND` reason (no witness yet, proof not
+          yet reloaded, reconciliation itself unavailable, the RCL transition itself
+          refused, ...) ⇒ ``True`` — a normal, transient "not yet complete" gate, never a
+          conflict; folding every hold into ``False`` would permanently block new risk on
+          ordinary pipeline timing, which this dimension does not do.
+
+        Returns:
+            ``True`` unless the most recent recorded outcome for this scope is a
+            genuine reconciliation conflict.
+        """
+        reservation_id = self._reservation_id()
+        rows = self.evidence_store.connection.execute(
+            "SELECT kind, payload_json FROM entries WHERE kind IN (?, ?) ORDER BY seq DESC",
+            (CAPACITY_RELEASE_INTENT_KIND, CAPACITY_RELEASE_HELD_KIND),
+        ).fetchall()
+        for kind, payload_json in rows:
+            decoded = json.loads(payload_json)["payload"]
+            if decoded.get("reservation_id") != reservation_id:
+                continue
+            if kind == CAPACITY_RELEASE_INTENT_KIND:
+                return True
+            return bool(
+                decoded.get("reason") != ReleaseHoldReason.NOT_CORROBORATED.value
+            )
+        return True
+
     # -- FULL_FILL -> POSITION_CONSUMED -----------------------------------------------
 
     def _consume_full_fill(

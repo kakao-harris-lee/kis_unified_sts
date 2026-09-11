@@ -311,7 +311,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1137
+  measured: 1141
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -494,6 +494,19 @@ exceptions:
     공급) — 신규 함수 자체가 순증분 대부분. `_build_context_resolver` 자신도
     도크스트링을 재차 압축했으나(15→10줄) 여전히 100줄 문턱을 101로 초과 —
     함수 자신을 아래 목록 끝에 별도 등재(무예외 목표 미달성, 정직 등재).
+    **2026-09-11 Phase 5 W3.2 재등재 1137→1141(+4)**: 6차원 owner 착지(plan §2
+    결정 2) — step 3(venue)·step 13(bind verification)에 step 4/9 와 동일한
+    `VerdictRecorder` 관용구 부착. `_ConstructionStages`에 `venue_recorder`
+    필드 1줄 + `_build_construction_stages`의 반환식에 `venue_recorder=
+    VerdictRecorder(venue_stage)` 1줄(venue_stage 자신은 `ComposeContextResolver`
+    가 그대로 읽으므로 무편집 — 신규 필드 추가일 뿐) + `_RealizedStages`의
+    `step13_stage: AttemptBindVerificationStage` 필드를 `step13_recorder:
+    VerdictRecorder`로 대체(순증분 0) + `_build_stage_map`의 두 항목을 레코더로
+    교체(순증분 0). 순수 신규 증가는 필드 1줄 + 호출부 1줄 = 2줄이나, 두 필드
+    옆 인라인 주석(각 1줄)까지 포함해 흑자 후 +4 — 계획 §4 결정 2 의 "`_wiring.py`
+    는 성장 0 목표"는 이번 파도만은 재등재로 해소(도크스트링 상세 설명은 전부
+    `_currentness_wiring.py`의 CONSTRAINT/DECISION_PROOF_INTENT 리더 자신의
+    도크스트링으로 이관 — 이 파일에는 1줄 포인터만 남김).
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime
@@ -619,7 +632,7 @@ exceptions:
     import 가 완전히 사라진다(순환을 우회가 아니라 제거). `gateway.py`/`mesh.py` 는
     이 모듈에서 `_verdict` 를 import.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 166
+  measured: 188
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
@@ -684,6 +697,14 @@ exceptions:
     해당 차원 상태 자체가 폐기됨) 5줄 제거와 `_build_context_resolver` 호출부의
     `evidence_store=boot.infra.evidence_store,` 인자 1줄 추가가 상쇄되어 순증
     +4. 정본 결선 순서 문서라 분해 대신 등재.
+    **2026-09-11 Phase 5 W3.2 lane d1 재등재 166→188(+22)**: 잔여 4차원
+    (CONSTRAINT·CONSTRUCTION·DECISION_PROOF_INTENT·RELEASE) late-bound 셀을
+    실 recorder/스테이지/부팅 판정이 존재하는 시점에 채우는 4개 블록(각 1-4줄
+    · 계획 §2 결정 2/3/6) + `apply_release_wiring` 호출부에
+    `post_trade_dimension_state=boot.risk.post_trade_dimension_state,` 인자
+    1줄(POST_TRADE 리더의 셀 — 계획 §2 결정 5). AGGREGATE_RISK 는 late-bind
+    불필요(리더가 `risk_service` 를 직접 닫음 — `_currentness_wiring.py` 자신의
+    등재 참조). 정본 결선 순서 문서라 분해 대신 등재.
 - target: tos/runtime/src/tos_runtime/compose/_boot_integrity.py::record_operator_attested_inputs
   measured: 104
   owner: tos-runtime
@@ -738,7 +759,7 @@ exceptions:
     100→107(+7) — Coordinator 자신이 매 틱 스냅샷을 «갱신하는» 유일한 소비자여야
     한다는 팀리드 처분의 핵심 지점이라 분해 대신 등재.
 - target: tos/runtime/src/tos_runtime/compose/_safety_wiring.py::build_safety_mesh
-  measured: 122
+  measured: 140
   owner: tos-runtime
   decomposition_order: 43
   expires_on: '2026-12-31'
@@ -760,3 +781,8 @@ exceptions:
     `inbox_cell` 인자 1개씩 관통 배선(틱 세대 식별자의 소스 — 이미 이 함수가
     쥐고 있는 `_InboxCell`을 재사용, 새 결선 없음) — 이 함수 자신이 그 다섯
     호출부 전부의 결선 지점이라 순증분이 여기 남는다. 분해 대신 등재.
+    **2026-09-11 W3.2 lane d2 재등재 122→140(+18)**: `ProtectiveActionService`
+    구성(§2 결정 8) — `latch_state`/`incident_clear`(같은 per-tick 스냅샷 재사용,
+    새 스냅샷 소비자 아님)/`time_health_state`/`evidence_recorder` 4개 포트를
+    조립하는 블록(주석 6줄 포함) + `_SafetyMesh` 반환에 `protective_action=` 1줄
+    추가 — 이 함수가 그 유일한 결선 지점이라 분해 대신 등재.

@@ -77,6 +77,10 @@ from tos_runtime.safety.latch import (
 from tos_runtime.safety.monitoring import AlertRecorder, MonitoringService
 from tos_runtime.safety.ports import MeshClearance, SafetyMeshService
 from tos_runtime.safety.profile import SafetyProfileService
+from tos_runtime.safety.protective import (
+    ProtectiveActionService,
+    ProtectiveEvidenceRecorder,
+)
 from tos_runtime.time.service import TrustworthyTimeService
 from tos_runtime.time.sources import MonotonicSource
 
@@ -187,6 +191,23 @@ def _stm_alert_recorder_for(evidence_store: SqliteEvidenceStore) -> AlertRecorde
 
     def _recorder(kind: str, fields: Mapping[str, Any]) -> None:
         evidence_store.append(dict(fields), kind=kind, record_class=_STM_ALERT_KIND)
+
+    return _recorder
+
+
+def _protective_verdict_recorder_for(
+    evidence_store: SqliteEvidenceStore,
+) -> ProtectiveEvidenceRecorder:
+    """The ``evidence_recorder`` port :class:`~tos_runtime.safety.protective
+    .ProtectiveActionService` needs — the same ``(kind, fields) -> None`` shape
+    :func:`_stm_alert_recorder_for` gives MONITORING, over this composition's real
+    evidence store, with ``record_class`` taken from the caller's own ``kind`` (this
+    service has exactly one evidence kind, ``PROTECTIVE_VERDICT`` — unlike
+    :func:`_stm_alert_recorder_for`, which hardcodes MONITORING's single kind, there is
+    no second kind here to hardcode against by mistake)."""
+
+    def _recorder(kind: str, fields: Mapping[str, Any]) -> None:
+        evidence_store.append(dict(fields), kind=kind, record_class=kind)
 
     return _recorder
 
@@ -373,6 +394,14 @@ class _SafetyMesh:
     #: :attr:`services` and the shared tick cell) — called UNCONDITIONALLY, once per
     #: tick, by :class:`~tos_runtime.compose._preconditions.RuntimeCoordinatorPreconditions`.
     refresh_tick_snapshot: Callable[[], SafetyMeshSnapshot]
+    #: The verdict-only ``tos.protective`` surface (W3.2 plan §2 decision 8, lane d2) —
+    #: NOT one of :attr:`services` (it owns no §9 currentness dimension). A caller
+    #: threading ``protective_action.protective_classification_digest`` into
+    #: ``tos_runtime.risk.flow.ActionFlowGovernor``'s
+    #: ``protective_classification_digest_provider`` is a disclosed follow-up
+    #: (``tos_runtime.compose._currentness_wiring``'s own construction site — outside
+    #: this module's scope; see :mod:`tos_runtime.safety.protective`'s own docstring).
+    protective_action: ProtectiveActionService
     #: Every safety-mesh policy-document path this call loaded — for
     #: ``OPERATOR_ATTESTED_INPUTS`` (``extra_config_files``).
     config_files: tuple[Path, ...] = field(default_factory=tuple)
@@ -527,6 +556,23 @@ def build_safety_mesh(
             profile_service.identity,
         ),
     )
+    # W3.2 lane d2 (plan §2 decision 8): the verdict-only ProtectiveActionService — reads
+    # the SAME per-tick incident clearance the latch owner's own `incident_clear` closure
+    # reads (never a second, independent `.clear()` call — SafetyMeshSnapshot's own
+    # docstring), the just-built latch owner's `state()`, and the real time-health port;
+    # see tos_runtime.safety.protective's own module docstring for the full honest-source
+    # table (three of five DeRestrictionInputs facts stay None; both
+    # protective_capacity_exhausted arguments stay None — no policy-document loader / retry
+    # tracker exists yet).
+    protective_action = ProtectiveActionService(
+        latch_state=restrictive_latch.state,
+        incident_clear=lambda: _clear_value(
+            _current_tick_snapshot(services, tick_cell, inbox_cell),
+            incident_service.identity,
+        ),
+        time_health_state=lambda: time_service.health_state,
+        evidence_recorder=_protective_verdict_recorder_for(evidence_store),
+    )
     return _SafetyMesh(
         services=services,
         dimension_readers=dimension_readers,
@@ -536,5 +582,6 @@ def build_safety_mesh(
         refresh_tick_snapshot=lambda: _refresh_tick_snapshot(
             services, tick_cell, inbox_cell
         ),
+        protective_action=protective_action,
         config_files=tuple(config_dir / name for name in SAFETY_MESH_CONFIG_FILE_NAMES),
     )

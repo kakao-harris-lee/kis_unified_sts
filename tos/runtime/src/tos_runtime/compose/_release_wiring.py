@@ -38,6 +38,7 @@ from pathlib import Path
 
 from tos.canonical import CanonicalizationScheme
 
+from tos_runtime.compose._dimension_readers import _PostTradeDimensionState
 from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.posttrade.config import load_finality_config
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
@@ -64,6 +65,7 @@ def apply_release_wiring(
     config_dir: Path,
     scheme: CanonicalizationScheme,
     monotonic_source: MonotonicSource,
+    post_trade_dimension_state: _PostTradeDimensionState,
 ) -> ComposedRuntime:
     """Build the TOS Phase 5 W2-R :class:`~tos_runtime.posttrade.release_consumer
     .FinalityReleaseConsumer` and attach it to ``runtime.driver``.
@@ -85,10 +87,16 @@ def apply_release_wiring(
             docstring — never a fresh ``ProcessMonotonicSource()``, which would desynchronize
             this consumer's obligation-expiry clock from the driver's own timeout clock in a
             test that injects a fake one).
+        post_trade_dimension_state: The POST_TRADE currentness dimension reader's late-bound
+            cell (Phase 5 W3.2, plan §2 decision 5 —
+            :class:`~tos_runtime.compose._dimension_readers._PostTradeDimensionState`) —
+            filled in with the built consumer below, or left ``None`` (module docstring's
+            "consumer not wired" case) when ``runtime.driver`` is already ``None``.
 
     Returns:
         ``runtime`` itself. A no-op (returns ``runtime`` unchanged) when ``runtime.driver`` is
-        already ``None`` — nothing to attach a consumer to.
+        already ``None`` — nothing to attach a consumer to, and
+        ``post_trade_dimension_state.consumer`` stays ``None``.
     """
     if runtime.driver is None:
         return runtime
@@ -117,4 +125,5 @@ def apply_release_wiring(
         release_proof_wait_ms=finality_config.release_proof_wait_ms,
     )
     runtime.driver.bind_release_consumer(consumer)
+    post_trade_dimension_state.consumer = consumer
     return runtime

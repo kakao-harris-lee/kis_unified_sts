@@ -705,6 +705,44 @@ class TestSyntheticEventDrivesTheChain:
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
+    def test_action_flow_decision_carries_a_real_protective_classification_digest(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """Phase 5 W3.2 plan §2 decision 8, lane d2/d1 cross-lane follow-up: the
+        Action Flow Governor is wired with ``ProtectiveActionService
+        .protective_classification_digest`` as its ``protective_classification_digest_
+        provider`` (``_currentness_wiring._build_risk_and_currentness``), so every
+        genuinely-admitted ACTION_FLOW_DECISION now carries a REAL digest — never the
+        ``None`` default a caller-supplied input would otherwise leave permanently
+        unfed (``tos_runtime.risk.flow`` module history)."""
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+
+        event = fx.crossing_event()
+        results = runtime.run_once((event,))
+        proposal_digest = results[0].pipeline.proposal.canonical_digest
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
+        write_approval_file(
+            custody_root,
+            proposal_digest=proposal_digest,
+            environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
+        )
+
+        results2 = runtime.run_once((event,))
+        flow = results2[0].flow
+        assert flow is not None
+        verdict_by_step = {v.step.value: v for v in flow.verdicts}
+        assert verdict_by_step["ACTION_FLOW_DECISION"].outcome.value == "ADMIT"
+
+        decision = runtime.flow_governor.last_decision
+        assert decision is not None
+        assert decision.protective_classification_digest is not None
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
     def test_admitted_consumption_evidence_carries_a_real_receipt_anchor(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
@@ -1192,9 +1230,13 @@ class TestPendingDimensionAttestationGatesCompleteness:
     def test_one_false_attestation_makes_the_vector_incomplete(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
+        # RELEASE used to be the dimension flipped here; Phase 5 W3.2 gave it a real
+        # dimension_readers entry (_release_dimension_reader_for), so this test now
+        # flips CONTEXT instead — one of the three dimensions still genuinely pending
+        # (tos_runtime.compose._pending_dimensions.PENDING_DIMENSION_KEYS).
         dims_path = config_dir / "currentness_dimensions.yaml"
         raw = yaml.safe_load(dims_path.read_text(encoding="utf-8"))
-        raw["RELEASE"]["positively_established"] = False
+        raw["CONTEXT"]["positively_established"] = False
         dims_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
 
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
