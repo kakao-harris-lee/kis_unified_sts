@@ -24,12 +24,16 @@ evaluated against FIVE kernel ``tos.hag`` predicates:
   produces has never been consumed before (checked against this runtime's own
   ``REARM_APPROVED`` evidence history — module's own durable record of every
   prior successful re-arm).
-* :func:`~tos.hag.no_automatic_rearm` — accepted for completeness (it is
-  unconditionally ``True`` by kernel construction, §18/§20 HAG-INV-014); the
-  REAL "never automatic" guarantee here is structural: with no approval file
-  present, :meth:`ReArmWorkflow.approve_and_clear` refuses before it ever
-  reaches a kernel predicate — there is no code path that synthesises an
-  approval.
+
+**``no_automatic_rearm`` is not called here.** The kernel
+:func:`~tos.hag.no_automatic_rearm` (§18/§20 HAG-INV-014) is realized as an
+UNCONDITIONAL ``True`` — every recovery-event input it accepts is discarded, so
+calling it with no real recovery-event facts to pass would be a vacuous,
+always-passing check that misleads a reader into thinking a real gate ran. The
+REAL "never automatic" guarantee here is structural, not a predicate call: with
+no approval file present, :meth:`ReArmWorkflow.approve_and_clear` refuses
+before it ever reaches a kernel predicate — there is no code path in this
+module that synthesises an approval.
 
 **Evidence discipline (design #40 D3.1's own "evidence before state change").**
 A successful evaluation appends ONE ``REARM_APPROVED`` entry (principal ids
@@ -74,21 +78,22 @@ from tos.hag import (
     approval_binding_exact,
     approval_set_single_use,
     dual_control_effective_distinct,
-    no_automatic_rearm,
     quorum_independence_satisfied,
 )
 
 from tos_runtime.custody.file_custody import verify_file_mode_and_owner
 from tos_runtime.custody.ports import CustodyLoadRefused
-from tos_runtime.engine.inbox import SqliteEventInbox
+from tos_runtime.engine.inbox import NewRiskHaltClearOutcome, SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.time.service import TrustworthyTimeService
 
 __all__ = [
+    "NewRiskHaltDoorDecision",
     "ReArmApprovalFileError",
     "ReArmOutcome",
     "ReArmStatus",
     "ReArmWorkflow",
+    "prepare_new_risk_halt_clear",
 ]
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
@@ -408,7 +413,6 @@ class ReArmWorkflow:
             "approval_set_single_use": (
                 approval_set_single_use(consumption, prior_consumptions) is True
             ),
-            "no_automatic_rearm": no_automatic_rearm() is True,
         }
         failed = tuple(name for name, satisfied in checks.items() if not satisfied)
         if failed:
@@ -479,3 +483,108 @@ class ReArmWorkflow:
             assert isinstance(record, ApprovalSetConsumptionRecord)
             records.append(record)
         return tuple(records)
+
+
+@dataclass(frozen=True)
+class NewRiskHaltDoorDecision:
+    """The result of :func:`prepare_new_risk_halt_clear` — either a terminal,
+    already-evidenced refusal, or the go-ahead for the caller's OWN
+    storage-layer clear call.
+
+    Split out of :meth:`~tos_runtime.compose._types.ComposedRuntime
+    .clear_new_risk_halt` purely for the ``tools/tos_size_budget.py``
+    function-length budget (that method was over budget with this inlined) —
+    no behavioural change. The machine pin
+    ``tests/engine/test_no_direct_latch_clear.py`` still allows only
+    ``compose/_types.py`` to call
+    :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`, so
+    this function stops one step short of that call and hands back everything
+    the caller needs to make it.
+
+    Attributes:
+        refusal: A terminal :class:`~tos_runtime.engine.inbox
+            .NewRiskHaltClearOutcome` (``NO_LATCH`` / ``SEQ_MISMATCH`` /
+            ``QUORUM_REFUSED``), already durably evidenced by this function —
+            ``None`` means "proceed to the storage clear".
+        attestation_text: Non-``None`` exactly when ``refusal is None`` — the
+            workflow's non-secret attestation marker text for the caller's own
+            ``operator_attestation`` argument.
+    """
+
+    refusal: NewRiskHaltClearOutcome | None
+    attestation_text: str | None
+
+
+def prepare_new_risk_halt_clear(
+    *,
+    current: Mapping[str, object] | None,
+    latched_evidence_seq: int,
+    approvals_dir: Path,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    time_service: TrustworthyTimeService,
+    environment_label: str,
+    expected_owner_uid: int,
+    refused_kind: str,
+) -> NewRiskHaltDoorDecision:
+    """Every check ``ComposedRuntime.clear_new_risk_halt`` needs BEFORE its own
+    storage-layer clear call — the seq pre-checks plus the HAG two-person
+    re-arm quorum (:class:`ReArmWorkflow`) — extracted from that method purely
+    for the size budget (:class:`NewRiskHaltDoorDecision`'s own docstring); no
+    behavioural change.
+
+    Args:
+        current: The caller's own ``inbox.new_risk_halt()`` reading (read
+            once by the caller and passed in here, rather than re-read).
+        latched_evidence_seq: The seq the operator is attempting to clear.
+        approvals_dir: See :class:`ReArmWorkflow`.
+        evidence_store: See :class:`ReArmWorkflow`; also where this
+            function's own ``NEW_RISK_HALT_CLEAR_REFUSED`` rows are appended
+            for the ``NO_LATCH``/``SEQ_MISMATCH``/``QUORUM_REFUSED`` paths.
+        inbox: See :class:`ReArmWorkflow` (read-only).
+        time_service: See :class:`ReArmWorkflow`.
+        environment_label: See :class:`ReArmWorkflow`.
+        expected_owner_uid: See :class:`ReArmWorkflow`.
+        refused_kind: The evidence ``kind``/``record_class`` string for a
+            refusal recorded here (the caller's own
+            ``_NEW_RISK_HALT_CLEAR_REFUSED_KIND`` — a runtime-level record
+            kind, not a kernel one, passed in rather than duplicated here).
+
+    Returns:
+        The :class:`NewRiskHaltDoorDecision`.
+    """
+
+    def _refuse(outcome: NewRiskHaltClearOutcome) -> NewRiskHaltDoorDecision:
+        evidence_store.append(
+            {
+                "outcome": outcome.value,
+                "requested_evidence_seq": latched_evidence_seq,
+                "current_latched_evidence_seq": (
+                    current.get("evidence_seq") if current is not None else None
+                ),
+            },
+            kind=refused_kind,
+            record_class=refused_kind,
+        )
+        return NewRiskHaltDoorDecision(refusal=outcome, attestation_text=None)
+
+    if current is None:
+        return _refuse(NewRiskHaltClearOutcome.NO_LATCH)
+    if current.get("evidence_seq") != latched_evidence_seq:
+        return _refuse(NewRiskHaltClearOutcome.SEQ_MISMATCH)
+
+    workflow = ReArmWorkflow(
+        approvals_dir,
+        evidence_store,
+        inbox,
+        time_service,
+        environment_label=environment_label,
+        expected_owner_uid=expected_owner_uid,
+    )
+    rearm_outcome = workflow.approve_and_clear(latched_evidence_seq)
+    if rearm_outcome.status is not ReArmStatus.APPROVED:
+        return _refuse(NewRiskHaltClearOutcome.QUORUM_REFUSED)
+
+    return NewRiskHaltDoorDecision(
+        refusal=None, attestation_text=rearm_outcome.attestation_text
+    )

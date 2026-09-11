@@ -230,7 +230,12 @@ def test_no_matching_latch_is_refused(
 
 
 # ============================================================================
-# no_automatic_rearm — trivially true, but exercised
+# no_automatic_rearm — NOT called by ReArmWorkflow (rearm.py module docstring:
+# calling an unconditionally-True kernel predicate with no real inputs would be
+# vacuous). Documents, standalone, exactly why: it is always True regardless of
+# input, so it cannot distinguish "recovered" from "not recovered" — the real
+# guarantee here is structural (no approval file present ⇒ refuse before any
+# predicate runs).
 # ============================================================================
 
 
