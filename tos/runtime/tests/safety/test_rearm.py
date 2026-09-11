@@ -10,7 +10,12 @@ from pathlib import Path
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.safety.rearm import ReArmStatus, ReArmWorkflow
 
-from .conftest import FakeNewRiskHaltInbox, FakeTimeService, write_rearm_approval_file
+from .conftest import (
+    FakeNewRiskHaltInbox,
+    FakeTimeService,
+    write_rearm_approval_file,
+    write_rearm_roster_file,
+)
 
 _ENV_LABEL = "non-live-test"
 _SEQ = 42
@@ -173,6 +178,102 @@ def test_the_same_principal_twice_is_refused_not_a_quorum() -> None:
         )
         is False
     )
+
+
+# ============================================================================
+# HIGH-3 disposition: the effective-principal graph comes from an
+# operator-authored roster (approvals/rearm/roster.yaml), never a constant
+# identity graph — see tos_runtime.safety.rearm module docstring.
+# ============================================================================
+
+
+def test_roster_absent_is_refused_before_any_predicate(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    write_rearm_approval_file(
+        tmp_path / "approvals", latched_evidence_seq=_SEQ, write_roster=False
+    )
+    workflow = _workflow(tmp_path, evidence_store)
+
+    outcome = workflow.approve_and_clear(_SEQ)
+
+    assert outcome.status is ReArmStatus.REFUSED
+    assert outcome.reasons == ("ROSTER_ABSENT",)
+    assert outcome.attestation_text is None
+
+
+def test_an_approver_missing_from_the_roster_is_refused(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    write_rearm_approval_file(
+        tmp_path / "approvals", latched_evidence_seq=_SEQ, write_roster=False
+    )
+    write_rearm_roster_file(
+        tmp_path / "approvals", principal_ids=["alice", "carol"]
+    )  # "bob" (an approver) is not on this roster
+    workflow = _workflow(tmp_path, evidence_store)
+
+    outcome = workflow.approve_and_clear(_SEQ)
+
+    assert outcome.status is ReArmStatus.REFUSED
+    assert len(outcome.reasons) == 1
+    assert outcome.reasons[0].startswith("approver_not_in_roster:")
+    assert "bob" in outcome.reasons[0]
+
+
+def test_roster_unresolved_control_true_is_refused(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    write_rearm_approval_file(
+        tmp_path / "approvals", latched_evidence_seq=_SEQ, write_roster=False
+    )
+    write_rearm_roster_file(
+        tmp_path / "approvals",
+        principal_ids=["alice", "bob"],
+        unresolved_control=True,
+    )
+    workflow = _workflow(tmp_path, evidence_store)
+
+    outcome = workflow.approve_and_clear(_SEQ)
+
+    assert outcome.status is ReArmStatus.REFUSED
+    assert "dual_control_effective_distinct" in outcome.reasons
+    assert "quorum_independence_satisfied" in outcome.reasons
+
+
+def test_two_approvers_who_collapse_via_a_roster_edge_are_refused(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    """The mutation HIGH-3 disposes: with the OLD constant-fed graph
+    (``edges=()``), this scenario was — wrongly — APPROVED. A roster edge
+    linking the two approvers must now collapse them to one effective
+    principal and refuse."""
+    write_rearm_approval_file(
+        tmp_path / "approvals", latched_evidence_seq=_SEQ, write_roster=False
+    )
+    write_rearm_roster_file(
+        tmp_path / "approvals",
+        principal_ids=["alice", "bob"],
+        control_edges=[{"from": "alice", "to": "bob", "kind": "impersonate"}],
+    )
+    workflow = _workflow(tmp_path, evidence_store)
+
+    outcome = workflow.approve_and_clear(_SEQ)
+
+    assert outcome.status is ReArmStatus.REFUSED
+    assert "dual_control_effective_distinct" in outcome.reasons
+    assert "quorum_independence_satisfied" in outcome.reasons
+
+
+def test_nominal_two_independent_principals_on_the_roster_is_approved(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    write_rearm_approval_file(tmp_path / "approvals", latched_evidence_seq=_SEQ)
+    workflow = _workflow(tmp_path, evidence_store)
+
+    outcome = workflow.approve_and_clear(_SEQ)
+
+    assert outcome.status is ReArmStatus.APPROVED
 
 
 # ============================================================================

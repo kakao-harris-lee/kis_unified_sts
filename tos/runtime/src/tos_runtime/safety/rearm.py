@@ -25,6 +25,29 @@ evaluated against FIVE kernel ``tos.hag`` predicates:
   ``REARM_APPROVED`` evidence history — module's own durable record of every
   prior successful re-arm).
 
+**The effective-principal graph is loaded from an operator-authored roster
+(independent review HIGH-3, disposed).** The two independence predicates above
+(``dual_control_effective_distinct`` / ``quorum_independence_satisfied``) both
+consume an :class:`~tos.hag.EffectivePrincipalGraph`. An earlier build of this
+module asserted that graph itself — ``edges=()``, ``unresolved_control=False``
+— which made the collapse the identity (no roster edge could ever merge two
+approvers) and the whole-graph-denial arm unreachable: the "two distinct
+effective natural persons" claim degenerated to "two distinct non-blank
+strings in one file", with no roster/graph source at all. Fixed: the graph is
+now built from ``approvals_dir/rearm/roster.yaml`` (:func:`_load_roster`) — an
+operator-authored document under the SAME custody gate as the decision file
+(0600 + owner uid), declaring ``principals: [{id: ...}, ...]``,
+``control_edges: [{from: ..., to: ..., kind: ...}, ...]``, and
+``unresolved_control: <bool>`` (an explicit, named-TBD-refusing value — never
+a literal default). Every attesting principal must be a roster principal
+(checked explicitly, with its own disclosed refusal reason, ahead of the
+kernel predicate's own equivalent membership gate); the roster's own
+``unresolved_control`` flows through unchanged to the graph, so a roster that
+cannot positively assert full control resolution correctly denies (plan §6
+confirmation 5 — the operator owns the re-arm roster's custody). A missing
+roster file refuses (``ROSTER_ABSENT``) before any kernel predicate runs — the
+same "never automatic" discipline as a missing decision file.
+
 **``no_automatic_rearm`` is not called here.** The kernel
 :func:`~tos.hag.no_automatic_rearm` (§18/§20 HAG-INV-014) is realized as an
 UNCONDITIONAL ``True`` — every recovery-event input it accepts is discarded, so
@@ -70,6 +93,7 @@ from tos.hag import (
     AttestationDecision,
     AuthorityClass,
     ConflictRole,
+    EffectiveControlEdge,
     EffectivePrincipalGraph,
     EffectivePrincipalNode,
     HumanApprovalAttestation,
@@ -113,9 +137,21 @@ _REARM_QUORUM_N = 2
 
 
 class ReArmApprovalFileError(Exception):
-    """Raised internally for any refusal reading/validating the on-disk approval
-    file — always caught by :meth:`ReArmWorkflow.approve_and_clear` and turned
-    into a ``REFUSED`` :class:`ReArmOutcome`, never propagated to the caller."""
+    """Raised internally for any refusal reading/validating an on-disk operator
+    file (the decision file or the roster) — always caught by
+    :meth:`ReArmWorkflow.approve_and_clear` and turned into a ``REFUSED``
+    :class:`ReArmOutcome`, never propagated to the caller."""
+
+
+class _RosterAbsent(ReArmApprovalFileError):
+    """The roster file itself does not exist — refused with the specific
+    ``ROSTER_ABSENT`` reason token (never folded into a generic message), since
+    "no roster" is a distinct, disclosed refusal from "a malformed roster"."""
+
+
+class _RosterInvalid(ReArmApprovalFileError):
+    """The roster file exists but fails custody, parsing, environment-label, or
+    shape validation."""
 
 
 class ReArmStatus(StrEnum):
@@ -227,8 +263,143 @@ def _verify_entries(
     return tuple(entries)
 
 
+@dataclass(frozen=True)
+class _Roster:
+    """The operator-authored effective-principal roster
+    (``approvals_dir/rearm/roster.yaml`` — module docstring HIGH-3 disposition;
+    plan §6 confirmation 5). Everything :func:`_build_hag_artifacts` needs to
+    build the REAL :class:`~tos.hag.EffectivePrincipalGraph` — never a
+    constant."""
+
+    principal_ids: frozenset[str]
+    edges: tuple[EffectiveControlEdge, ...]
+    unresolved_control: bool
+
+
+def _parse_roster_principals(raw: Mapping[str, Any], path: Path) -> frozenset[str]:
+    """The ``principals: [{id, ...}, ...]`` half of :func:`_load_roster` (split
+    out purely for the size budget)."""
+    principals_raw = raw.get("principals")
+    if not isinstance(principals_raw, list) or not principals_raw:
+        raise _RosterInvalid(
+            f"{path} 'principals' must be a non-empty list of {{id, ...}} entries"
+        )
+    principal_ids: set[str] = set()
+    for entry in principals_raw:
+        if not isinstance(entry, dict):
+            raise _RosterInvalid(f"{path} every 'principals' entry must be a mapping")
+        principal_id = entry.get("id")
+        if not isinstance(principal_id, str) or not principal_id.strip():
+            raise _RosterInvalid(f"{path} a 'principals' entry has a missing/blank id")
+        principal_ids.add(principal_id)
+    return frozenset(principal_ids)
+
+
+def _parse_roster_edges(
+    raw: Mapping[str, Any], path: Path
+) -> tuple[EffectiveControlEdge, ...]:
+    """The ``control_edges: [{from, to, kind}, ...]`` half of :func:`_load_roster`
+    (split out purely for the size budget)."""
+    edges_raw = raw.get("control_edges", [])
+    if not isinstance(edges_raw, list):
+        raise _RosterInvalid(f"{path} 'control_edges' must be a list")
+    edges: list[EffectiveControlEdge] = []
+    for entry in edges_raw:
+        if not isinstance(entry, dict):
+            raise _RosterInvalid(
+                f"{path} every 'control_edges' entry must be a mapping"
+            )
+        source = entry.get("from")
+        target = entry.get("to")
+        relation = entry.get("kind")
+        if not isinstance(source, str) or not source.strip():
+            raise _RosterInvalid(
+                f"{path} a 'control_edges' entry has a missing/blank 'from'"
+            )
+        if not isinstance(target, str) or not target.strip():
+            raise _RosterInvalid(
+                f"{path} a 'control_edges' entry has a missing/blank 'to'"
+            )
+        edges.append(
+            EffectiveControlEdge(
+                source=source,
+                target=target,
+                relation=relation if isinstance(relation, str) else None,
+                resolved=True,
+            )
+        )
+    return tuple(edges)
+
+
+def _load_roster(
+    path: Path,
+    *,
+    expected_owner_uid: int,
+    getuid: Callable[[], int],
+    environment_label: str,
+) -> _Roster:
+    """Custody-gated read + parse of the operator-authored re-arm roster (the
+    same 0600-mode + owner-uid + environment-label custody convention
+    :func:`_load_raw_rearm_file`/:func:`_verify_environment_label` apply to the
+    decision file, reused rather than re-authored).
+
+    Raises:
+        _RosterAbsent: The file does not exist at all (a distinct, disclosed
+            reason — ``ROSTER_ABSENT`` — never folded into a generic message).
+        _RosterInvalid: The file exists but fails custody, parsing, the
+            environment-label check, or the ``principals``/``control_edges``/
+            ``unresolved_control`` shape.
+    """
+    if not path.is_file():
+        raise _RosterAbsent(f"rearm roster file not found: {path}")
+    try:
+        verify_file_mode_and_owner(
+            path, expected_owner_uid=expected_owner_uid, getuid=getuid
+        )
+    except CustodyLoadRefused as exc:
+        raise _RosterInvalid(
+            f"{path} failed the custody mode/owner gate: {exc}"
+        ) from exc
+    try:
+        raw_text = path.read_text()
+    except OSError as exc:
+        raise _RosterInvalid(f"cannot read {path}: {exc}") from exc
+    try:
+        raw = yaml.safe_load(raw_text)
+    except yaml.YAMLError as exc:
+        raise _RosterInvalid(f"{path} is not valid YAML: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise _RosterInvalid(
+            f"{path} must parse to a mapping (got {type(raw).__name__})"
+        )
+
+    file_label = raw.get("environment_label")
+    if file_label != environment_label or not file_label:
+        raise _RosterInvalid(
+            f"{path} environment_label={file_label!r} does not match runtime "
+            f"environment_label={environment_label!r} — refuse (cross-environment "
+            "isolation)"
+        )
+
+    principal_ids = _parse_roster_principals(raw, path)
+    edges = _parse_roster_edges(raw, path)
+
+    unresolved_control = raw.get("unresolved_control")
+    if not isinstance(unresolved_control, bool):
+        raise _RosterInvalid(
+            f"{path} 'unresolved_control' is still null (named-TBD) or not a "
+            "bool — refusing to start until the operator declares it explicitly"
+        )
+
+    return _Roster(
+        principal_ids=principal_ids,
+        edges=edges,
+        unresolved_control=unresolved_control,
+    )
+
+
 def _build_hag_artifacts(
-    entries: Sequence[Mapping[str, Any]], latched_evidence_seq: int
+    entries: Sequence[Mapping[str, Any]], latched_evidence_seq: int, roster: _Roster
 ) -> tuple[
     HumanApprovalRequest,
     tuple[HumanApprovalAttestation, ...],
@@ -270,14 +441,15 @@ def _build_hag_artifacts(
         assert isinstance(attestation, HumanApprovalAttestation)
         attestation_list.append(attestation)
     attestations = tuple(attestation_list)
-    node_ids = sorted({entry["principal_id"] for entry in entries})
     graph = EffectivePrincipalGraph.issue(
         scheme=_SCHEME,
         graph_id=f"rearm-graph-{latched_evidence_seq}",
         graph_generation=latched_evidence_seq,
-        nodes=tuple(EffectivePrincipalNode(principal_id=p) for p in node_ids),
-        edges=(),
-        unresolved_control=False,
+        nodes=tuple(
+            EffectivePrincipalNode(principal_id=p) for p in sorted(roster.principal_ids)
+        ),
+        edges=roster.edges,
+        unresolved_control=roster.unresolved_control,
     )
     assert isinstance(graph, EffectivePrincipalGraph)
     approval_set = HumanApprovalSet.issue(
@@ -382,9 +554,15 @@ class ReArmWorkflow:
         if current is None or current.get("evidence_seq") != latched_evidence_seq:
             return self._refuse(latched_evidence_seq, ("no_matching_latch",))
 
+        approver_ids = frozenset(entry["principal_id"] for entry in entries)
+        roster_result = self._resolve_roster(latched_evidence_seq, approver_ids)
+        if isinstance(roster_result, ReArmOutcome):
+            return roster_result
+        roster = roster_result
+
         try:
             request, attestations, graph, approval_set, consumption = (
-                _build_hag_artifacts(entries, latched_evidence_seq)
+                _build_hag_artifacts(entries, latched_evidence_seq, roster)
             )
         except (ValueError, ArtifactIntegrityError) as exc:
             return self._refuse(
@@ -430,6 +608,7 @@ class ReArmWorkflow:
                 "principal_sha256": principal_sha256,
                 "request_digest": request.canonical_digest,
                 "approval_set_digest": approval_set.canonical_digest,
+                "roster_digest": graph.canonical_digest,
                 "consumption_id": consumption.consumption_id,
                 "consumed_generation": consumption.consumed_generation,
             },
@@ -456,6 +635,35 @@ class ReArmWorkflow:
         return ReArmOutcome(
             status=ReArmStatus.REFUSED, reasons=reasons, attestation_text=None
         )
+
+    def _resolve_roster(
+        self, latched_evidence_seq: int, approver_ids: frozenset[str]
+    ) -> _Roster | ReArmOutcome:
+        """Load the operator roster and check every attesting principal is on
+        it (module docstring HIGH-3 disposition) — returns the loaded
+        :class:`_Roster` on success, or an already-evidenced ``REFUSED``
+        :class:`ReArmOutcome` (split out of :meth:`approve_and_clear` purely
+        for the size budget)."""
+        roster_path = self._approvals_dir / "rearm" / "roster.yaml"
+        try:
+            roster = _load_roster(
+                roster_path,
+                expected_owner_uid=self._expected_owner_uid,
+                getuid=self._getuid,
+                environment_label=self._environment_label,
+            )
+        except _RosterAbsent:
+            return self._refuse(latched_evidence_seq, ("ROSTER_ABSENT",))
+        except ReArmApprovalFileError as exc:
+            return self._refuse(latched_evidence_seq, (f"roster: {exc}",))
+
+        not_in_roster = sorted(approver_ids - roster.principal_ids)
+        if not_in_roster:
+            return self._refuse(
+                latched_evidence_seq,
+                (f"approver_not_in_roster: {not_in_roster}",),
+            )
+        return roster
 
     def _prior_consumptions(self) -> tuple[ApprovalSetConsumptionRecord, ...]:
         """Reconstruct every past successful re-arm's consumption record from this

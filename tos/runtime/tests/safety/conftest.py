@@ -263,6 +263,41 @@ class FakeTimeService:
     /authority/conftest.py``'s own ``FakeTimeService`` rationale)."""
 
 
+def write_rearm_roster_file(
+    approvals_dir: Path,
+    *,
+    principal_ids: list[str],
+    control_edges: list[dict[str, str]] | None = None,
+    unresolved_control: bool = False,
+    environment_label: str = "non-live-test",
+    mode: int = 0o600,
+) -> Path:
+    """Write ``approvals/rearm/roster.yaml`` — the operator-authored
+    effective-principal roster (:mod:`tos_runtime.safety.rearm` module
+    docstring, independent-review HIGH-3 disposition).
+
+    Defaults (``control_edges=None`` -> ``[]``, ``unresolved_control=False``)
+    describe genuinely distinct, unconnected principals; a caller passes an
+    edge connecting two ``principal_ids`` (or ``unresolved_control=True``) to
+    exercise a refusal.
+    """
+    path = approvals_dir / "rearm" / "roster.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "environment_label": environment_label,
+                "principals": [{"id": principal_id} for principal_id in principal_ids],
+                "control_edges": control_edges or [],
+                "unresolved_control": unresolved_control,
+            },
+            sort_keys=False,
+        )
+    )
+    os.chmod(path, mode)
+    return path
+
+
 def write_rearm_approval_file(
     approvals_dir: Path,
     *,
@@ -270,6 +305,9 @@ def write_rearm_approval_file(
     environment_label: str = "non-live-test",
     approvals: list[dict[str, str]] | None = None,
     mode: int = 0o600,
+    write_roster: bool = True,
+    roster_control_edges: list[dict[str, str]] | None = None,
+    roster_unresolved_control: bool = False,
 ) -> Path:
     """Write one ``approvals/rearm/<latched_evidence_seq>.yaml`` two-person
     decision file (:mod:`tos_runtime.safety.rearm` module docstring).
@@ -277,12 +315,30 @@ def write_rearm_approval_file(
     Defaults to a genuinely satisfying two-distinct-principal ``APPROVE`` pair;
     a caller mutates ``approvals`` to exercise a refusal (one entry, a
     duplicate principal, a ``DENY``, etc).
+
+    Also writes a matching ``roster.yaml`` (:func:`write_rearm_roster_file`,
+    ``principal_ids`` derived from ``approvals`` — a genuinely independent
+    default roster) unless ``write_roster=False``, so every EXISTING caller
+    keeps working unchanged after the HIGH-3 disposition (the roster is no
+    longer optional — :mod:`tos_runtime.safety.rearm` refuses without one).
+    Pass ``write_roster=False`` and call :func:`write_rearm_roster_file`
+    explicitly to exercise a roster-specific refusal (a collapsing edge, an
+    unresolved roster, a missing roster, an approver absent from the roster).
     """
     if approvals is None:
         approvals = [
             {"principal_id": "alice", "decision": "APPROVE"},
             {"principal_id": "bob", "decision": "APPROVE"},
         ]
+    if write_roster:
+        write_rearm_roster_file(
+            approvals_dir,
+            principal_ids=sorted({entry["principal_id"] for entry in approvals}),
+            control_edges=roster_control_edges,
+            unresolved_control=roster_unresolved_control,
+            environment_label=environment_label,
+            mode=mode,
+        )
     path = approvals_dir / "rearm" / f"{latched_evidence_seq}.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
