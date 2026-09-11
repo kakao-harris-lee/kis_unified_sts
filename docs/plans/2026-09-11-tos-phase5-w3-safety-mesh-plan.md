@@ -71,3 +71,21 @@
 3. **item 5 `live_scope_valid`** — 비-live MOCK 송신에서 «valid live scope» 의 정직한 값: (a) None 유지(UNKNOWN ⇒ MOCK 은 item 5 로 계속 deny · Phase 6 라이브 인가 전까지) · (b) non-live admission 통과 시 True(«이 송신의 live-scope 질문은 non-live 로 확정됨»). 계획 기본 = **(a)**.
 4. 정책 문서 값(envelope·profile·activation·coverage) 제안표 → 승인 전 null.
 5. 재무장 2인 principal 의 custody/approvals 배치(운영 서버).
+
+## 7. 실행 결과 — W3.1 착지 (2026-09-11 · 브랜치 `feat/tos-phase5-w3-safety-mesh` · main `4b72a5cc` 기점)
+
+| 레인 | 커밋 | 내용 |
+|---|---|---|
+| 공유 계약 | `ba9d1848` | `safety/ports.py` — `SafetyMeshService` Protocol · `MeshClearance`(팀 리드 저작) |
+| a1 | `d4cbb578` | `safety/profile.py`(spg · item 7) · `safety/deviation.py`(wdr · item 8) · `_policy_loader.py` · 설정 4 · 41 테스트 |
+| a2 | `19698d9d` | `safety/incident.py`(sir · item 9) · `safety/monitoring.py`(stm · item 10 · 자기 관측 3포트 · `STM_ALERT`) · 설정 2 · 51 테스트 |
+| c | `6c83ebb7`·`c82211f8` | `safety/latch.py`(`RestrictiveLatchOwner` · `CapacityOwner` · `egress_owner_fields`) · `safety/rearm.py`(`ReArmWorkflow` HAG 2인 · `approvals/rearm/<seq>.yaml`) · `_types.py` 문 `clear_new_risk_halt(latched_evidence_seq, approvals_dir)` · `no_automatic_rearm` 사문 호출 제거(구조 보장 명시) |
+| b | `cbbc409f`·`1e606009`·`46f1a545`·`76f02aac`·`0ec70da3`·`07ff6dca`·`2772e290` | `CurrentnessAssembler` 리더 맵 · 차원 owner 교체(1차원=1커밋 원칙 · 2~4 는 일괄) · deferred 4 · `_safety_wiring.py` · Coordinator 제3 질문 · `EgressAttestations` 3→1 을 `context.py` 결선과 **원자 커밋** · `SqliteEventInbox.unconsumed_count` |
+| 처분 | `d138abfd`·`ffda3fef`·`ae6420c4`·`15a21d2d`·`1013f267`·`36b17c45`·`bb00193e` | 아래 리뷰 |
+
+- **독립 리뷰 1차 needs-attention(HIGH 3 · MEDIUM 6+1 · LOW 6)** — 전부 «공시되지 않은 상수» 류: H1 모니터링 stall 감지가 자기 `STM_ALERT` 가 전진시키는 tip 을 측정(실 stall 시 True/False/True 요동) → tip 리더가 `STM_ALERT` 제외(`evidence/store.py` 리더 신설 · RED-first) · H2 `source_continuity_present=True` 상수(16조합 전부 CONFORMING) → 연속 `(seq, chain_digest)` 관측에서 파생(첫 관측 None · torn/regression False) + gaps/failures 파생 · H3 `EffectivePrincipalGraph(edges=(), unresolved_control=False)` 상수로 2인 독립성 사문 → 운영자 roster 파일(custody 게이트 · `ROSTER_ABSENT` 거부 · collapse 엣지 테스트) · M2 ENVIRONMENT_SCOPE 항등식 → 스코프 `environment_binding` vs INSTANCE `environment` · M3 CURRENTNESS_POLICY 항등식 → `currentness.yaml::required_dimensions`(운영자 선언) vs 커널 floor · **M4 EGRESS_IDENTITY 1/3 커버리지로 established 주장 → attestation 으로 되돌림(pending 8→9 · 정직한 수)** · M6 `clear()` 틱당 3회 호출(상태형) → 틱당 1회 `SafetyMeshSnapshot` 공유 · M7 래치 핀 정규식이 `self._inbox` 에 눈멂 → `[\w.]*inbox\.` · M1 `_wiring.py` 1087→1100 = **팀 리드 수용**(파라미터 스레딩 · 재등재).
+- **재심 approve**(`36b17c45`) · 잠재 M8(틱 셀 세대 부재 · 폴백이 무동작 refresher 가림) + LOW 3 → `bb00193e`(inbox `count` 로 세대 스탬프 · 불일치 시 재평가 · 결선된 refresher 무동작 ⇒ 거부 · `is False` · 정책 음성 테스트 · docstring).
+- **게이트(`bb00193e`)**: 런타임 **1369** · 커널 **9433** · 커널 diff 0 · ruff/black/mypy 0 · firewall PASS · lint-imports 3/0 · budget 0(40 등재) · completion GREEN.
+- **종료 조건 대비**: `_pending_dimensions` **17→9**(계획 8 목표 → EGRESS_IDENTITY 정직 복귀로 9) · `_egress_attestations` **3→1** · deferred 공급 5(4·7·8·9·10) · T3 e2e UNKNOWN = **item 5 만**(+item 12 는 W5 소관 비-deferred) · 합성 e2e 불변 · 뮤테이션 M1~M7·M9~M17 red(M8 등가 뮤턴트).
+- **정직 상태·이월(W3.2)**: `DeviationService.combined_within_envelope` 는 attestation(a1 생성자에 주입점 없음) · sir `restriction_dominates_send` 미호출(per-send 세대 필요) · stm `unknown_is_restrictive` 7축 중 1축 · spg `mixed_versions_present=False` 카디널리티 논거 · EGRESS_IDENTITY 나머지 2 술어 · 모니터링 첫 관측은 compose 시 1회 priming(실 관측) · 커널 docstring 재계수 3→1 은 커널 라운드 #3.
+- **교훈**: 사용량 한도로 두 레인이 동시에 중단(미커밋 편집 잔존) → `git status` 스냅샷 후 «커밋 범위» 지시로 재개 · 다른 레인 파일을 깨는 축소는 소비자 결선과 **원자 커밋** · «정직한 첫 관측 None» 은 e2e 를 깨므로 compose 시 실 관측 priming 으로 흡수.
