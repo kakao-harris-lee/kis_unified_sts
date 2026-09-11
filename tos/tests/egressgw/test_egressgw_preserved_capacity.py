@@ -27,6 +27,7 @@ from tos.egressgw import (
     VerifyOutcome,
     verify_send_boundary,
 )
+from tos.engine import CommitmentStep
 
 from ._egressgw_fixtures import build_gateway, full_fill_transport, happy_context
 
@@ -284,7 +285,11 @@ def test_gateway_evidence_record_rejects_the_field_only_via_the_model_default() 
     """(§1.3) The field exists on ``GatewayEvidenceRecord`` and defaults to ``None``."""
     from tos.egressgw import GatewayEvidenceRecord
 
-    record = GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="a1")
+    record = GatewayEvidenceRecord(
+        kind="SEND_REFUSED",
+        attempt_id="a1",
+        step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+    )
     assert record.preserved_worst_credible_capacity is None
     assert record.preserved_obligation_magnitude_unknown is False
     record2 = GatewayEvidenceRecord(
@@ -292,6 +297,7 @@ def test_gateway_evidence_record_rejects_the_field_only_via_the_model_default() 
         attempt_id="a1",
         item=SendVerifyItem.CURRENTNESS,
         preserved_worst_credible_capacity=9,
+        step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
     )
     assert record2.preserved_worst_credible_capacity == 9
     record3 = GatewayEvidenceRecord(
@@ -299,5 +305,6 @@ def test_gateway_evidence_record_rejects_the_field_only_via_the_model_default() 
         attempt_id="a1",
         item=SendVerifyItem.CURRENTNESS,
         preserved_obligation_magnitude_unknown=True,
+        step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
     )
     assert record3.preserved_obligation_magnitude_unknown is True

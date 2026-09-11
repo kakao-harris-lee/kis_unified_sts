@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from tos.engine.vocabulary import StageAuthorityClass
+from tos.engine.vocabulary import CommitmentStep, StageAuthorityClass
 from tos_runtime.compose._pending_dimensions import (
     load_pending_currentness_dimensions,
     stamp_pending_dimensions,
@@ -1652,6 +1652,7 @@ class TestCapacityObligationRecording:
         # (this class's own docstring).
         refusal = GatewayEvidenceRecord(
             kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             attempt_id=attempt_id,
             item=SendVerifyItem.CURRENTNESS,
             preserved_worst_credible_capacity=7,
@@ -1708,6 +1709,7 @@ class TestCapacityObligationRecording:
         runtime.gateway._sink.record(  # noqa: SLF001
             GatewayEvidenceRecord(
                 kind="SEND_REFUSED",
+                step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
                 attempt_id="attempt-mutation-probe",
                 item=SendVerifyItem.CURRENTNESS,
                 preserved_worst_credible_capacity=7,
