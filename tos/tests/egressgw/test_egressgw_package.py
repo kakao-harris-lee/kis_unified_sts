@@ -19,6 +19,7 @@ import tos.egressgw
 import tos.egressgw._base
 import tos.egressgw.construction
 import tos.egressgw.gateway
+import tos.egressgw.mesh
 import tos.egressgw.records
 import tos.egressgw.vocabulary
 
@@ -27,6 +28,7 @@ _MODULES = {
     "tos.egressgw._base": tos.egressgw._base,
     "tos.egressgw.construction": tos.egressgw.construction,
     "tos.egressgw.gateway": tos.egressgw.gateway,
+    "tos.egressgw.mesh": tos.egressgw.mesh,
     "tos.egressgw.records": tos.egressgw.records,
     "tos.egressgw.vocabulary": tos.egressgw.vocabulary,
 }

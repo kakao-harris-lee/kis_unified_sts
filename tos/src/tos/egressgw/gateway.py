@@ -113,9 +113,12 @@ from tos.egressgw._base import (
     EV_L1_PROVISIONAL_VERSION,
     ArtifactIntegrityError,
     CanonicalizationScheme,
+    _positive,
+    _verdict,
     get_scheme,
 )
 from tos.egressgw.construction import fold_venue_admissibility
+from tos.egressgw.mesh import deferred_item_verdict, resolve_broker_applicability
 from tos.egressgw.records import (
     GatewayEvidenceRecord,
     SendBoundaryContext,
@@ -168,7 +171,6 @@ __all__ = [
     "SendTransport",
     "outbound_binding_mismatch",
     "outbound_coordinates",
-    "resolve_broker_applicability",
     "verify_send_boundary",
 ]
 
@@ -385,175 +387,6 @@ class SendAttemptLedger:
         return True
 
 
-# ===========================================================================
-# §4.2 — the broker-applicability positive gate (runs BEFORE the per-item gates)
-# ===========================================================================
-
-
-def resolve_broker_applicability(
-    nature: TransportNature | None,
-    context: SendBoundaryContext,
-) -> BrokerApplicability:
-    """Positively establish whether this send consumes a broker resource (design #34 §4.2).
-
-    RFC-002 §10.8:741 triggers the verify list "before any risk-relevant **or**
-    broker-resource-consuming transmission", so this — not live / non-live — is the axis that
-    decides whether the deferred safety-governance mesh is required (design #34 MAJOR-1).
-
-    Returns :attr:`~tos.egressgw.vocabulary.BrokerApplicability.NON_BROKER_SYNTHETIC` **only**
-    when every one of the following positively holds:
-
-    1. the declared :class:`~tos.egressgw.records.TransportNature` names a principal and carries
-       ``reaches_broker is False``, ``credential_bearing is False``, ``route_bearing is False``,
-       and ``risk_relevant_live is False`` — **explicit ``False``**, because a ``None`` is an
-       unestablished nature and is conservatively broker-consuming (negative polarity, §4.2);
-    2. that declaration is **structurally corroborated**: the transport principal is explicitly
-       represented in the injected credential-route inventory holding neither a usable credential
-       (``usable_credential is False``) nor a broker route (``broker_route is False``). A
-       self-report alone never establishes it — the structural fact is that a synthetic transport
-       does not constitute the ADR-002-013 §1 Final Egress Trust Boundary at all, and that is
-       what the inventory shows (design #34 §1.1-1 / §4.5);
-    3. egress :func:`~tos.egress.credential_route_authority_disjoint` holds over the whole
-       inventory — an ∅ inventory is ``False`` there (disjointness unproven), so an empty
-       inventory can never produce a synthetic verdict;
-    4. the environment binds positively to the injected non-live-test scope token through
-       brokercap :func:`~tos.brokercap.environment_binding_ok` (profile- and VERIFIED-independent
-       — BC-INV-009 §4.7).
-
-    Any positively-established broker-reaching or risk-relevant-live flag returns
-    ``BROKER_RESOURCE_CONSUMING``; anything unestablished returns ``UNKNOWN``. **Both** make the
-    deferred mesh required, so the fail-closed behaviour is identical — the distinction exists so
-    the recorded evidence says which it was.
-
-    Args:
-        nature: The declared transport nature (``None`` ⇒ ``UNKNOWN``).
-        context: The send-boundary context carrying the inventory and environment coordinates.
-
-    Returns:
-        The :class:`~tos.egressgw.vocabulary.BrokerApplicability` verdict.
-    """
-    if nature is None:
-        return BrokerApplicability.UNKNOWN
-    if (
-        nature.reaches_broker is True
-        or nature.credential_bearing is True
-        or nature.route_bearing is True
-        or nature.risk_relevant_live is True
-    ):
-        return BrokerApplicability.BROKER_RESOURCE_CONSUMING
-    if not (
-        nature.reaches_broker is False
-        and nature.credential_bearing is False
-        and nature.route_bearing is False
-        and nature.risk_relevant_live is False
-    ):
-        return BrokerApplicability.UNKNOWN
-    principal = nature.principal
-    if principal is None or not principal.strip():
-        return BrokerApplicability.UNKNOWN
-    inventory = context.credential_route_inventory
-    if not credential_route_authority_disjoint(inventory):
-        return BrokerApplicability.UNKNOWN
-    corroborated = False
-    for entry in inventory:
-        if entry.principal == principal:
-            if entry.usable_credential is False and entry.broker_route is False:
-                corroborated = True
-            else:
-                # The principal is represented but holds (or may hold) a credential or a route:
-                # that is a broker-reaching transport whatever it declared about itself.
-                return BrokerApplicability.BROKER_RESOURCE_CONSUMING
-    if not corroborated:
-        return BrokerApplicability.UNKNOWN
-    if context.non_live_test_environment_token is None:
-        return BrokerApplicability.UNKNOWN
-    if context.scope_environment != context.non_live_test_environment_token:
-        return BrokerApplicability.UNKNOWN
-    if not environment_binding_ok(
-        context.evidence_environment,
-        context.scope_environment,
-        context.environment_inherited,
-    ):
-        return BrokerApplicability.UNKNOWN
-    return BrokerApplicability.NON_BROKER_SYNTHETIC
-
-
-# ===========================================================================
-# §4.1 — the 17-item verify list
-# ===========================================================================
-
-
-def _verdict(
-    item: SendVerifyItem,
-    outcome: VerifyOutcome,
-    *,
-    reason: str | None = None,
-    native: object | None = None,
-    native_value: str | None = None,
-    preserved_worst_credible_capacity: int | None = None,
-    preserved_obligation_magnitude_unknown: bool = False,
-) -> VerifyItemVerdict:
-    """Assemble one item verdict, deriving its disposition from the design §4.1 partition."""
-    if item in REALIZED_ITEMS:
-        disposition = VerifyDisposition.REALIZED_STRUCTURAL
-    elif item in PROVISIONAL_ITEMS:
-        disposition = VerifyDisposition.PROVISIONAL_STAND_IN
-    else:
-        disposition = VerifyDisposition.DEFERRED_APPLICABILITY
-    return VerifyItemVerdict(
-        item=item,
-        disposition=disposition,
-        outcome=outcome,
-        reason=reason,
-        native_verdict_type=None if native is None else type(native).__name__,
-        native_verdict_value=native_value,
-        preserved_worst_credible_capacity=preserved_worst_credible_capacity,
-        preserved_obligation_magnitude_unknown=preserved_obligation_magnitude_unknown,
-    )
-
-
-def _positive(flag: bool | None) -> bool:
-    """Positive-polarity read of an injected stand-in flag (``None`` / ``False`` ⇒ not admitted)."""
-    return flag is True
-
-
-def _deferred_item_verdict(
-    item: SendVerifyItem, applicability: BrokerApplicability
-) -> VerifyItemVerdict:
-    """Judge one deferred safety-governance mesh item (design #34 §4.2 MAJOR-2).
-
-    ``NOT_APPLICABLE`` **only** for a positively established synthetic non-broker send — a
-    recorded positive judgement, never a silent skip. Everything else (a broker-reaching send, a
-    risk-relevant-live send, or an unresolved nature) makes the item *required*, and because its
-    owning runtime has not landed the required fact is unverifiable ⇒ ``UNKNOWN`` ⇒ deny
-    (RFC-002 §10.8:741 trigger → :761 "reject … missing, stale, conflicting, or unverifiable").
-    """
-    if applicability is BrokerApplicability.NON_BROKER_SYNTHETIC:
-        return _verdict(
-            item,
-            VerifyOutcome.NOT_APPLICABLE,
-            reason=(
-                f"item {verify_item_number(item)} is not applicable: the send was positively "
-                "established as synthetic and non-broker-reaching, so no broker resource is "
-                "consumed and no live scope is in play. The justification is 'no broker route "
-                "was reached', NOT 'no live scope was armed' — a real paper-account API call is "
-                "non-live and still broker-resource-consuming, and would be denied here "
-                "(design #34 §4.2/§4.7)"
-            ),
-            native_value=applicability.value,
-        )
-    return _verdict(
-        item,
-        VerifyOutcome.UNKNOWN,
-        reason=(
-            f"item {verify_item_number(item)} is required for a "
-            f"{applicability.value} send and its owning runtime has not landed — the required "
-            "fact is unverifiable, which is a rejection (RFC-002 §10.8:741 → :761); "
-            "design #34 §4.1 records this item as Deferred"
-        ),
-        native_value=applicability.value,
-    )
-
 
 def verify_send_boundary(
     *,
@@ -578,7 +411,7 @@ def verify_send_boundary(
     verdicts: list[VerifyItemVerdict] = []
     for item in SEND_VERIFY_ITEMS:
         if item in DEFERRED_ITEMS:
-            verdicts.append(_deferred_item_verdict(item, applicability))
+            verdicts.append(deferred_item_verdict(item, applicability, context))
         else:
             verdicts.append(_ITEM_CHECKS[item](attempt, context, applicability))
 

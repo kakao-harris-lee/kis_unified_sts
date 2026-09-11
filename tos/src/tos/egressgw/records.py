@@ -732,6 +732,25 @@ class SendBoundaryContext(FrozenModel):
     #: ⚠ provisional RCL stand-in — real epoch fencing is deferred (design #34 §4.1 item 3).
     commitment_epoch_current: bool | None = None
 
+    # ---- items 4/5/7/8/9/10 (Deferred): live safety-governance mesh (kernel round #2 §2
+    # decision 2) — each field is the owning runtime service's own positively-supplied flag,
+    # threaded straight through by :func:`~tos.egressgw.mesh.deferred_item_verdict`: ``True`` ⇒
+    # SATISFIED, ``False`` ⇒ DENIED (an explicit negative is a denial, not an unknown), ``None``
+    # ⇒ UNKNOWN (the owning runtime has not landed). The kernel judges positivity only; deriving
+    # the value itself belongs to the calling runtime (compose), never here.
+    #: Item 4 — Safety Authority epoch currency (``CURRENT_SAFETY_AUTHORITY_EPOCH``).
+    safety_authority_epoch_current: bool | None = None
+    #: Item 5 — live-scope validity (``VALID_LIVE_SCOPE``).
+    live_scope_valid: bool | None = None
+    #: Item 7 — Hard Safety Envelope version currency (``HARD_SAFETY_ENVELOPE_VERSIONS``).
+    safety_profile_current: bool | None = None
+    #: Item 8 — safety-deviation clear (``SAFETY_DEVIATION``).
+    deviation_clear: bool | None = None
+    #: Item 9 — safety-incident clear (``SAFETY_INCIDENT``).
+    incident_clear: bool | None = None
+    #: Item 10 — safety-monitoring clear (``SAFETY_MONITORING``).
+    monitoring_clear: bool | None = None
+
     # ---- items 6 / 12 (Provisional): broker + venue generation facts ------------------
     broker_capability_profile: BrokerCapabilityProfile | None = None
     required_capability_set: RequiredCapabilitySet | None = None
@@ -859,6 +878,13 @@ def send_boundary_context(
     # -- item 17: the authorized coordinates -------------------------------------------
     authorized_coordinates: EgressCoordinateSet | None = None,
     capsule_egress_request_digest: str | None = None,
+    # -- items 4 / 5 / 7 / 8 / 9 / 10: the deferred live safety-governance mesh flags ---
+    safety_authority_epoch_current: bool | None = None,
+    live_scope_valid: bool | None = None,
+    safety_profile_current: bool | None = None,
+    deviation_clear: bool | None = None,
+    incident_clear: bool | None = None,
+    monitoring_clear: bool | None = None,
     # -- items 3 / 6 / 12 / 14 / 15: the provisional stand-in facts ---------------------
     commitment_epoch_current: bool | None = None,
     broker_capability_profile: BrokerCapabilityProfile | None = None,
@@ -940,6 +966,18 @@ def send_boundary_context(
         worst_credible_capacity: The worst-credible capacity obligation cur preserves (item 16).
         authorized_coordinates: The authorized egress coordinate set (item 17).
         capsule_egress_request_digest: The Capsule-bound request-bytes digest (item 17).
+        safety_authority_epoch_current: The Safety Authority epoch's own currency flag,
+            positively supplied by its owning runtime service (item 4).
+        live_scope_valid: The live-scope validity flag, positively supplied by its owning
+            runtime service (item 5).
+        safety_profile_current: The Hard Safety Envelope version-currency flag, positively
+            supplied by its owning runtime service (item 7).
+        deviation_clear: The safety-deviation-clear flag, positively supplied by its owning
+            runtime service (item 8).
+        incident_clear: The safety-incident-clear flag, positively supplied by its owning
+            runtime service (item 9).
+        monitoring_clear: The safety-monitoring-clear flag, positively supplied by its owning
+            runtime service (item 10).
         commitment_epoch_current: ⚠ provisional RCL epoch stand-in (item 3).
         broker_capability_profile: The Broker Capability Profile (items 6 / 12).
         required_capability_set: The required capability set (items 6 / 12).
@@ -985,6 +1023,12 @@ def send_boundary_context(
         reservation_attempt_id=attempt.attempt_id,
         reservation_conformance_proof_digest=attempt.conformance_proof_digest,
         reservation_action_flow_permit_identity=attempt.action_flow_permit_identity,
+        safety_authority_epoch_current=safety_authority_epoch_current,
+        live_scope_valid=live_scope_valid,
+        safety_profile_current=safety_profile_current,
+        deviation_clear=deviation_clear,
+        incident_clear=incident_clear,
+        monitoring_clear=monitoring_clear,
         commitment_epoch_current=commitment_epoch_current,
         broker_capability_profile=broker_capability_profile,
         required_capability_set=required_capability_set,

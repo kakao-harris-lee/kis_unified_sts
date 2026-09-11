@@ -21,6 +21,23 @@ Both blocks are the ioc ``OrderConstructionAuthorityEffect`` / egress ``AllFalse
 isomorph, authored locally rather than imported so a sibling's flag-set drift cannot silently
 change what this package claims (the series' local-authorship discipline).
 
+This module also holds the two shared verify-item helpers ``gateway.py`` and ``mesh.py`` both
+need (kernel round #2 §2 decision 1 — a single definition, never duplicated):
+
+* ``_verdict`` — assembles one :class:`~tos.egressgw.records.VerifyItemVerdict`, deriving its
+  design-§4.1 disposition from :data:`~tos.egressgw.vocabulary.REALIZED_ITEMS` /
+  :data:`~tos.egressgw.vocabulary.PROVISIONAL_ITEMS` / (else) ``DEFERRED_APPLICABILITY``.
+* ``_positive`` — the shared positive-polarity read of an injected stand-in flag (``None`` /
+  ``False`` ⇒ not admitted).
+
+``records.py`` imports this module (for the two authority blocks above), so ``_verdict`` cannot
+import :class:`~tos.egressgw.records.VerifyItemVerdict` at module scope without recreating that
+cycle the other way — the import is deferred into the function body instead (a standard,
+call-time-safe break: by the time ``_verdict`` actually runs, ``tos.egressgw.records`` is fully
+loaded). ``vocabulary.py`` no longer imports this module (it now takes
+``ArtifactIntegrityError`` straight from :mod:`tos.canonical`), so this module importing
+``vocabulary`` at module scope for the item-disposition sets is safe.
+
 Firewall (design #1 §3.2 / design #34 §0.3): ``pydantic`` + stdlib + ``tos.*`` only. No
 ``importlib`` / ``exec`` / ``eval`` / ``compile``, no ``os.environ`` / ``getenv``, no network
 stdlib, no ``shared.*``, no ``numpy`` / ``pandas``, no wall clock (``time`` / ``datetime``) and
@@ -29,6 +46,8 @@ injected (design #34 §0.3/§12.1-8).
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from pydantic import model_validator
 
@@ -43,6 +62,16 @@ from tos.canonical import (
     derive_id,
     get_scheme,
 )
+from tos.egressgw.vocabulary import (
+    PROVISIONAL_ITEMS,
+    REALIZED_ITEMS,
+    SendVerifyItem,
+    VerifyDisposition,
+    VerifyOutcome,
+)
+
+if TYPE_CHECKING:
+    from tos.egressgw.records import VerifyItemVerdict
 
 __all__ = [
     "CONSTRUCTION_SHALL_NOT_FLAGS",
@@ -59,6 +88,46 @@ __all__ = [
     "derive_id",
     "get_scheme",
 ]
+
+
+def _verdict(
+    item: SendVerifyItem,
+    outcome: VerifyOutcome,
+    *,
+    reason: str | None = None,
+    native: object | None = None,
+    native_value: str | None = None,
+    preserved_worst_credible_capacity: int | None = None,
+    preserved_obligation_magnitude_unknown: bool = False,
+) -> "VerifyItemVerdict":
+    """Assemble one item verdict, deriving its disposition from the design §4.1 partition.
+
+    Shared by ``gateway.py``'s eleven non-deferred item checks and ``mesh.py``'s deferred-item
+    judgement (kernel round #2 §2 decision 1) — a single definition, never duplicated.
+    """
+    from tos.egressgw.records import VerifyItemVerdict  # noqa: PLC0415 - breaks the base<->records cycle
+
+    if item in REALIZED_ITEMS:
+        disposition = VerifyDisposition.REALIZED_STRUCTURAL
+    elif item in PROVISIONAL_ITEMS:
+        disposition = VerifyDisposition.PROVISIONAL_STAND_IN
+    else:
+        disposition = VerifyDisposition.DEFERRED_APPLICABILITY
+    return VerifyItemVerdict(
+        item=item,
+        disposition=disposition,
+        outcome=outcome,
+        reason=reason,
+        native_verdict_type=None if native is None else type(native).__name__,
+        native_verdict_value=native_value,
+        preserved_worst_credible_capacity=preserved_worst_credible_capacity,
+        preserved_obligation_magnitude_unknown=preserved_obligation_magnitude_unknown,
+    )
+
+
+def _positive(flag: bool | None) -> bool:
+    """Positive-polarity read of an injected stand-in flag (``None`` / ``False`` ⇒ not admitted)."""
+    return flag is True
 
 
 #: RFC-002 §9.1:553 verbatim — the six things an Order Construction Service SHALL NOT do.

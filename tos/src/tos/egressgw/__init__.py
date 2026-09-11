@@ -98,9 +98,9 @@ from tos.egressgw.gateway import (
     SendTransport,
     outbound_binding_mismatch,
     outbound_coordinates,
-    resolve_broker_applicability,
     verify_send_boundary,
 )
+from tos.egressgw.mesh import resolve_broker_applicability
 from tos.egressgw.records import (
     DERIVED_AXES,
     AdmittedPriceObservation,
