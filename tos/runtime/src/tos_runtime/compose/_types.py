@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,6 +71,7 @@ from tos_runtime.time.service import TrustworthyTimeService
 __all__ = [
     "ComposedRuntime",
     "ConstructionConfig",
+    "OperationsFacts",
     "RecoveryBarrierHeld",
     "ReleaseAdmissionRefused",
 ]
@@ -134,6 +135,45 @@ class ConstructionConfig:
     shape_price_field_key: str | None = None
 
 
+@dataclass(frozen=True)
+class OperationsFacts:
+    """Read callables :func:`~tos_runtime.compose._operations_wiring.apply_operations_wiring`
+    exposes on :attr:`ComposedRuntime.operations` (TOS Phase 5 W4 plan §2 decision 11) — the
+    ``operations`` field group of the operator projection (plan §2.7). Defined here, not in
+    ``_operations_wiring.py``, purely to avoid that module importing THIS one for
+    :class:`ComposedRuntime`'s own type while this one imports it back for the field's type (a
+    two-file cycle) — the same "shared dataclass lives in ``_types.py``" placement
+    :class:`ConstructionConfig` already uses.
+
+    Every field is a zero-argument read callable, never a stored value — the SAME "read
+    callable, not a snapshot" discipline :mod:`tos_runtime.operator.projection` requires of its
+    own constructor arguments, so ``apply_operations_wiring`` can hand these straight through.
+    """
+
+    #: ``{"evidence": int | None, "rcl": int | None, "inbox": int | None}`` — each store's own
+    #: on-disk ``PRAGMA user_version`` (:func:`~tos_runtime.operations.schema_migrations
+    #: .schema_version`), read fresh on every call (never cached — a ``migrate`` CLI run between
+    #: two projection exports must be visible on the very next one).
+    schema_versions: Callable[[], dict[str, int | None]]
+    #: ``{"generation": int, "age_monotonic_ns": None, "manifest_digest": str}`` for the highest
+    #: ``gen*`` manifest under the composed ``backup_root``, or ``None`` when no ``backup_root``
+    #: was given or no manifest exists yet. ``age_monotonic_ns`` is always ``None`` — a backup
+    #: manifest's ``created_at_monotonic_ns`` was stamped by a DIFFERENT process's monotonic
+    #: clock, and monotonic clocks are not comparable across processes (module docstring of
+    #: ``_operations_wiring.py`` has the full reasoning); no trusted wall-clock source exists
+    #: either (plan §2.7's own "벽시계 값 비노출" decision), so this fact stays honestly absent
+    #: until a cross-process-comparable time source exists.
+    last_backup: Callable[[], dict[str, object] | None]
+    #: The STAGE B dependency-admission verdict (``composed.release_admitted`` — the SAME fact
+    #: :attr:`~ComposedRuntime.release_admitted` already carries; plan §2 decision 5).
+    dependency_admission: Callable[[], bool | None]
+    #: Placeholder — TOS Phase 5 W4 lane e3 (``operations/key_rotation.py``) has not landed at
+    #: the time this wiring was authored; returns ``None`` unconditionally (never a fabricated
+    #: verdict) until a follow-up threads the real
+    #: :class:`~tos_runtime.operations.key_rotation.KeyContinuityVerdict` through here.
+    key_continuity: Callable[[], str | None]
+
+
 @dataclass
 class ComposedRuntime:
     """Every live composed service, plus the wired ``EngineCore``/gateway/
@@ -192,6 +232,13 @@ class ComposedRuntime:
     #: before that wiring runs inside :func:`~tos_runtime.compose.root.compose_paper_runtime` —
     #: never observable on a runtime a caller actually receives.
     recovery: RecoveryVerdict | None = None
+    #: TOS Phase 5 W4 §2 decision 11 — set by
+    #: :func:`~tos_runtime.compose._operations_wiring.apply_operations_wiring` (called from
+    #: :func:`~tos_runtime.compose.root.compose_paper_runtime`, right after
+    #: ``apply_recovery_barrier``). ``None`` only transiently before that wiring runs — never
+    #: observable on a runtime a caller actually receives (mirrors :attr:`recovery`'s own
+    #: docstring).
+    operations: OperationsFacts | None = None
 
     def run_once(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
         """Drive ``events`` through :attr:`driver` to completion, one at a time.
