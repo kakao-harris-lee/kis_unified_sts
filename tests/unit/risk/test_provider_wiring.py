@@ -291,9 +291,22 @@ def _capture_call_site_kwargs(
     construction site: every line of production wiring before it has run, and
     nothing after it (no daemon, no stream consumer) ever starts.
     """
+    import os
+
     import shared.streaming.client as client_mod
 
     monkeypatch.setenv(env_key, "shadow")
+    # ``services/risk_filter``'s real ``_build_and_run`` now binds
+    # TRADING_STATE_KEY_SUFFIX (F-9 gap G3) by writing ``os.environ``
+    # directly — the daemon's own process env is the contract. Re-set the
+    # variable through monkeypatch first so teardown has a recorded undo
+    # (restoring the previous value, or removing it when it was absent);
+    # otherwise the "shadow" write survives into later tests on this worker
+    # and they resolve suffixed ``trading:{asset}:*`` keys. "" reads as unset
+    # to ``ensure_state_key_suffix``, so the wiring under test is unchanged.
+    monkeypatch.setenv(
+        "TRADING_STATE_KEY_SUFFIX", os.environ.get("TRADING_STATE_KEY_SUFFIX", "")
+    )
     monkeypatch.setattr(
         client_mod.RedisClient, "get_client", classmethod(lambda cls: fake_redis)
     )

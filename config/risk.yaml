@@ -1,5 +1,27 @@
 risk:
-  account_equity_krw: 5000000
+  # F-9 Gate 1 gap G4 (2026-09-10): MDD 필터(Daily/Weekly)의 분모를
+  # LeverageFilter · 선물 증거금 읽기 모델과 **같은 값**으로 통일한다.
+  # 이 값의 유일한 소비처는 shared/risk/layer.py:246,250 (DailyMDDFilter /
+  # WeeklyMDDFilter) 이며 사이징 경로는 쓰지 않는다(모놀리식은
+  # config/risk_management.yaml::RiskConfig 를 쓴다).
+  # 이전 값 5,000,000원 × 3% = 150,000원 한도라, 정상 크기 kospi200 1계약
+  # stop 1회(2026-09-10 −588,839원)로 섀도 체인이 당일 락아웃되어
+  # orchestrator 재진입(당일 11건)을 재현하지 못했다.
+  # 단일 소스 = config/futures_margin.yaml::fallback_account_equity_krw
+  # (services/futures_margin_risk/config.py) 와 동일한 env 인다이렉션이라
+  # 운영자가 FUTURES_MARGIN_FALLBACK_EQUITY 하나만 움직이면 MDD 분모와
+  # 레버리지 분모가 함께 간다. risk_stock 은 손대지 않는다(현금 주식 계좌).
+  # ⚠ 부수 효과 — 백테스트 MDD 기준선: FuturesRiskConfig.from_yaml() 로 같은
+  # 필터를 만드는 오프라인 소비처 4곳도 함께 움직인다 —
+  # scripts/walk_forward_phase3.py:232 · walk_forward_sensitivity.py:128 ·
+  # walk_forward_bootstrap.py:182 · optimize_decision_engine.py:318.
+  # 일일 한도 150,000→1,500,000원, 주간 350,000→3,500,000원. 보관된 Setup
+  # A/C/D walk-forward 아티팩트는 5,000,000 기준선 산출물이라 재실행 결과와
+  # 다르다(수용 여부는 운영자 판단).
+  # ⚠ env 를 "설정했지만 빈 값"(FUTURES_MARGIN_FALLBACK_EQUITY=)으로 두면
+  # ConfigLoader._resolve_env_vars 가 '' 를 돌려줘 이 설정과 futures_margin
+  # 양쪽이 모두 실패한다(로더의 기존 동작 — 여기서 고치지 않는다).
+  account_equity_krw: ${FUTURES_MARGIN_FALLBACK_EQUITY:50000000}
   daily_mdd_limit_pct: 0.03
   weekly_mdd_limit_pct: 0.07
   max_position_risk_pct: 0.015

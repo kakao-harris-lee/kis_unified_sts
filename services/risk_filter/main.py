@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.decision.signal import Signal
-from shared.risk.layer import RiskFilterLayer
+from shared.risk.layer import LayerResult, RiskFilterLayer
 
 if TYPE_CHECKING:
     from shared.risk.config import FuturesRiskConfig
@@ -38,6 +38,7 @@ from shared.streaming.approval_gate import (
     record_pending,
 )
 from shared.streaming.stage import StreamStage
+from shared.streaming.trading_state import TradingStateReader, ensure_state_key_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,33 @@ def _entry_size_factor(fields: dict[bytes, bytes]) -> float:
     if not 0.0 < value <= 1.0:
         return 1.0
     return value
+
+
+def _rejecting_filter(result: LayerResult) -> str:
+    """Name of the filter that rejected *result*, or ``"-"`` when none did.
+
+    ``RiskFilterLayer`` short-circuits, so at most one outcome can carry
+    ``passed=False`` and it is always the last one. Falls back to ``"-"`` when
+    the layer produced no outcomes at all (empty filter list).
+    """
+    for outcome in result.filter_outcomes:
+        if not outcome.passed:
+            return outcome.filter_name
+    return "-"
+
+
+def _outcomes_summary(result: LayerResult) -> str:
+    """Compact ``name:pass|fail,...`` trace of every filter that ran.
+
+    Filters after the rejector are absent (short-circuit semantics), so the
+    list doubles as "how far down the chain the candidate got".
+    """
+    if not result.filter_outcomes:
+        return "-"
+    return ",".join(
+        f"{o.filter_name}:{'pass' if o.passed else 'fail'}"
+        for o in result.filter_outcomes
+    )
 
 
 def _resolve_mode() -> str:
@@ -206,6 +234,27 @@ class RiskFilterDaemon(StreamStage):
             )
             return False  # leave pending (base does NOT XACK)
 
+        # F-9 Gate 1b gap G2 (2026-09-10): the ONLY durable record of a
+        # verdict. ``SignalsAllWriter`` is wired with ``archive_client=None``
+        # (a no-op stub — ClickHouse is not an active runtime) and there is no
+        # metric, so before this line 29 of 30 shadow rejections on 2026-09-10
+        # carried no reason anywhere. Unthrottled on purpose: the candidate
+        # stream is at most ~1/min, and Gate 1b's "CLOSED = shadow rejection
+        # evidence" needs every row, not a sampled one.
+        logger.info(
+            "risk_filter verdict=%s signal_id=%s setup_type=%s direction=%s "
+            "symbol=%s filter=%s reason=%s size_multiplier=%.3f outcomes=%s",
+            "passed" if result.passed else "rejected",
+            signal_id,
+            signal.setup_type,
+            signal.direction,
+            signal.symbol,
+            _rejecting_filter(result),
+            result.skip_reason or "-",
+            result.size_multiplier,
+            _outcomes_summary(result),
+        )
+
         try:
             await self.signals_writer.enqueue(
                 signal,
@@ -313,10 +362,17 @@ def _build_leverage_wiring(
 
     Read-only: no order path is touched. Only built when ``leverage.enabled``,
     so the default (disabled) path wires nothing and behaviour is unchanged even
-    though the filter itself is never constructed then either. Any failure fails
-    OPEN — returns ``(None, None)`` so the filter (if built) stays inert and
-    passes every signal — mirroring the fail-open contract in
-    ``shared/risk/filters/leverage.py``. Enforcement remains a separate operator
+    though the filter itself is never constructed then either. Any failure *in
+    this function* fails OPEN — returns ``(None, None)`` so the filter (if
+    built) stays inert and passes every signal — mirroring the fail-open
+    contract in ``shared/risk/filters/leverage.py``. One import moved out of
+    that envelope: ``TradingStateReader`` is now imported at module scope (the
+    startup log resolves its ``positions_key`` before this runs), so an import
+    failure of ``shared.streaming.trading_state`` is fatal at module import
+    rather than degrading to an inert filter. That module pulls in only stdlib
+    plus ``redis``, both of which this daemon already hard-requires, so the
+    case is not reachable without the process being unable to start anyway.
+    Enforcement remains a separate operator
     decision (``leverage.mode`` flip to ``enforce``); this wiring only makes the
     shadow filter able to *compute* gross leverage.
     """
@@ -330,7 +386,6 @@ def _build_leverage_wiring(
             build_product_specs,
             load_execution_contract_specs,
         )
-        from shared.streaming.trading_state import TradingStateReader
 
         margin_config = FuturesMarginConfig.load_or_default()
         execution_specs = load_execution_contract_specs()
@@ -539,10 +594,44 @@ async def _build_and_run() -> int:
         logger.info("FUTURES_RISK_FILTER=%s (off) — risk_filter inert, exiting", mode)
         await redis_client.aclose()
         return 0
+    # F-9 Gate 1 gap G3 (2026-09-10): bind the trading-state key suffix BEFORE
+    # anything resolves a ``trading:{asset}:*`` key — ``_build_leverage_wiring``
+    # below builds a ``TradingStateReader`` whose positions key is resolved from
+    # this env var. Without it the shadow chain read the UNSUFFIXED
+    # ``trading:futures:positions`` — the monolithic orchestrator's book — so a
+    # single orchestrator contract (~5.5x on the 50M denominator) rejected every
+    # shadow candidate through the enforce-mode LeverageFilter. Same helper /
+    # same semantics as ``services/futures_monitor``.
+    ensure_state_key_suffix(mode, label="futures risk filter")
     candidate_stream, final_stream = _streams_for(mode)
     risk_state_suffix = "shadow" if mode == "shadow" else ""
+    logger.info(
+        "risk_filter mode=%s trading_state_key_suffix=%r "
+        "leverage_positions_key=%s monitor_positions_key=%s",
+        mode,
+        os.environ.get("TRADING_STATE_KEY_SUFFIX", ""),
+        TradingStateReader("futures").positions_key,
+        os.environ.get(_FUTURES_POSITIONS_KEY_ENV, _DEFAULT_FUTURES_POSITIONS_KEY),
+    )
 
-    risk_config = FuturesRiskConfig.from_yaml()
+    try:
+        risk_config = FuturesRiskConfig.from_yaml()
+    except Exception:
+        # config/risk.yaml::risk.account_equity_krw shares the margin lane's
+        # ${FUTURES_MARGIN_FALLBACK_EQUITY:...} knob (F-9 gap G4), so a value
+        # this config rejects (non-numeric, <= 0, or an empty-but-SET env var —
+        # ConfigLoader._resolve_env_vars returns '' for a set-empty var) kills
+        # THIS daemon while services/futures_margin_risk keeps running on the
+        # same string. Name the variable in the log so the crash-loop is
+        # diagnosable from `docker logs` alone, then re-raise (a risk filter
+        # that cannot load its limits must not start).
+        logger.exception(
+            "risk_filter: config/risk.yaml load failed — check "
+            "FUTURES_MARGIN_FALLBACK_EQUITY (currently %r); it must be a "
+            "positive number shared with config/futures_margin.yaml",
+            os.environ.get("FUTURES_MARGIN_FALLBACK_EQUITY"),
+        )
+        raise
     trading_windows = load_trading_windows()
 
     # Sync redis for the open-position provider (layer.evaluate is sync).

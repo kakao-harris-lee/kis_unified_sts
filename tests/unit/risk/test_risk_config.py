@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from shared.config.loader import ConfigLoader
 from shared.risk.config import FuturesRiskConfig, load_trading_windows
 
 # ---------------------------------------------------------------------------
@@ -42,9 +43,91 @@ class TestFuturesRiskConfigFromYaml:
         config = FuturesRiskConfig.from_yaml()
         assert isinstance(config, FuturesRiskConfig)
 
-    def test_account_equity_krw(self) -> None:
+    def test_account_equity_krw(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """F-9 gap G4: the MDD denominator is the futures-margin fallback.
+
+        ``config/risk.yaml`` holds ``${FUTURES_MARGIN_FALLBACK_EQUITY:50000000}``
+        — the same env indirection ``config/futures_margin.yaml`` uses for
+        ``fallback_account_equity_krw`` (the LeverageFilter denominator), so one
+        operator knob moves both. ``ConfigLoader._resolve_env_vars`` yields the
+        default as a *string*; the pydantic ``float`` field must coerce it.
+        """
+        monkeypatch.delenv("FUTURES_MARGIN_FALLBACK_EQUITY", raising=False)
+        ConfigLoader.clear_cache()
         config = FuturesRiskConfig.from_yaml()
-        assert config.account_equity_krw == 5_000_000
+        assert config.account_equity_krw == pytest.approx(50_000_000.0)
+        assert isinstance(config.account_equity_krw, float)
+
+    def test_account_equity_krw_accepts_scientific_notation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The shared knob must not be narrower here than in the margin lane.
+
+        ``FuturesMarginConfig.fallback_account_equity_krw`` is a ``float``, so
+        ``FUTURES_MARGIN_FALLBACK_EQUITY=5e7`` is valid for the margin daemon.
+        While this field was an ``int`` the same value raised
+        ``ValidationError(int_parsing)`` inside ``from_yaml()``, crash-looping
+        services/risk_filter while the margin lane kept running on it.
+        """
+        from services.futures_margin_risk.config import FuturesMarginConfig
+
+        monkeypatch.setenv("FUTURES_MARGIN_FALLBACK_EQUITY", "5e7")
+        ConfigLoader.clear_cache()
+        assert FuturesRiskConfig.from_yaml().account_equity_krw == pytest.approx(
+            50_000_000.0
+        )
+        assert FuturesMarginConfig.load_or_default().fallback_account_equity_krw == (
+            pytest.approx(50_000_000.0)
+        )
+
+    @pytest.mark.parametrize("bad", ["0", "-1"])
+    def test_account_equity_krw_rejects_nonpositive(
+        self, monkeypatch: pytest.MonkeyPatch, bad: str
+    ) -> None:
+        """gt=0: the MDD filters divide by this with equity_nonpositive='raise'.
+
+        A 0/negative denominator would raise inside every candidate's
+        ``layer.evaluate``; ``handle_message`` catches that and returns False,
+        so the whole candidate stream would stay pending forever. Fail at
+        config load instead — same ``gt=0`` the margin config already has.
+        """
+        from pydantic import ValidationError
+
+        monkeypatch.setenv("FUTURES_MARGIN_FALLBACK_EQUITY", bad)
+        ConfigLoader.clear_cache()
+        with pytest.raises(ValidationError):
+            FuturesRiskConfig.from_yaml()
+
+    def test_account_equity_krw_matches_leverage_denominator(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same denominator as the futures margin read-model / LeverageFilter."""
+        from services.futures_margin_risk.config import FuturesMarginConfig
+
+        monkeypatch.delenv("FUTURES_MARGIN_FALLBACK_EQUITY", raising=False)
+        ConfigLoader.clear_cache()
+        assert float(FuturesRiskConfig.from_yaml().account_equity_krw) == pytest.approx(
+            FuturesMarginConfig.load_or_default().fallback_account_equity_krw
+        )
+
+    def test_account_equity_krw_follows_env_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FUTURES_MARGIN_FALLBACK_EQUITY", "12345678")
+        ConfigLoader.clear_cache()
+        assert FuturesRiskConfig.from_yaml().account_equity_krw == pytest.approx(
+            12_345_678.0
+        )
+
+    def test_stock_equity_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``risk_stock`` keeps its own literal denominator (cash account)."""
+        from shared.risk.config import StockRiskConfig
+
+        monkeypatch.delenv("FUTURES_MARGIN_FALLBACK_EQUITY", raising=False)
+        ConfigLoader.clear_cache()
+        assert StockRiskConfig.from_yaml().account_equity_krw == pytest.approx(
+            10_000_000.0
+        )
 
     def test_daily_mdd_limit_pct(self) -> None:
         config = FuturesRiskConfig.from_yaml()

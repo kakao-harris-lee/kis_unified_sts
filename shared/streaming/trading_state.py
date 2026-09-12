@@ -63,6 +63,35 @@ def _key(template: str, asset: str) -> str:
     return f"{base}:{safe_suffix}" if safe_suffix else base
 
 
+def ensure_state_key_suffix(mode: str, *, label: str) -> None:
+    """Bind ``TRADING_STATE_KEY_SUFFIX`` to *mode* before any key is resolved.
+
+    Shared by every daemon that reads or writes the ``trading:{asset}:*``
+    namespace in a shadow lane. :func:`_key` reads the env var at *call* time,
+    so a shadow-mode process that never sets it silently resolves to the
+    UNSUFFIXED (production / monolithic-orchestrator) keys — the F-9 Gate 1
+    gap G3 (2026-09-10): ``services/risk_filter`` cross-read the
+    orchestrator's ``trading:futures:positions`` book and rejected shadow
+    candidates on the orchestrator's leverage.
+
+    shadow: set the suffix to ``"shadow"`` unless the operator already pinned
+    one (an explicit value wins). live: clear a leaked suffix with a WARNING so
+    a live lane can never write to a shadow key. Any other mode is a no-op.
+
+    Must run BEFORE anything constructs a reader/publisher or captures a key.
+
+    Args:
+        mode: Resolved daemon mode (``shadow`` | ``live`` | anything else).
+        label: Daemon name for the live-clear WARNING (e.g. ``"futures
+            monitor"``, ``"futures risk filter"``).
+    """
+    if mode == "shadow" and not os.environ.get("TRADING_STATE_KEY_SUFFIX", "").strip():
+        os.environ["TRADING_STATE_KEY_SUFFIX"] = "shadow"
+    if mode == "live" and os.environ.get("TRADING_STATE_KEY_SUFFIX", "").strip():
+        logger.warning("clearing TRADING_STATE_KEY_SUFFIX for live %s", label)
+        os.environ["TRADING_STATE_KEY_SUFFIX"] = ""
+
+
 def _get_redis() -> redis.Redis:
     """Get the shared Redis client singleton."""
     from shared.streaming.client import RedisClient
@@ -539,6 +568,17 @@ class TradingStateReader:
 
     def __init__(self, asset_class: str) -> None:
         self._asset = asset_class
+
+    @property
+    def positions_key(self) -> str:
+        """Redis key this reader's :meth:`get_positions` resolves to *now*.
+
+        Resolved on every access because :func:`_key` reads
+        ``TRADING_STATE_KEY_SUFFIX`` at call time. Exposed so a daemon can log
+        which book it is about to read (shadow vs. the unsuffixed orchestrator
+        book) instead of duplicating the suffix logic to guess it.
+        """
+        return _key(_KEY_POSITIONS, self._asset)
 
     def get_status(self) -> dict[str, Any]:
         """Read orchestrator status hash."""
