@@ -1,0 +1,68 @@
+# KST-native trading calendar (tos_runtime.calendar.config.load_calendar_config).
+#
+# Phase 5 W5 plan §2 decision 1
+# (docs/plans/2026-09-12-tos-phase5-w5-scenarios-plan.md): calendar content is
+# DATA, session-phase judgement is the kernel's. This module never validates
+# a `phase`/`closed_phase`/`expired_phase` token against a runtime enum —
+# they are opaque strings this file defines, matching the kernel's own
+# session-phase vocabulary, which is deliberately not an enum either.
+#
+# Every value below is a named-TBD placeholder. The legacy runtime
+# (config/market_schedule.yaml, shared/calendar.py) has TWO DISAGREEING
+# holiday tables and TWO DISAGREEING stock pre-market windows for 2026 (W5
+# survey scratchpad/w5-survey-legacy.md §1-2) — this loader deliberately does
+# NOT copy either one. An operator must choose and sign off the values below
+# (plan §6 ②) before this file is anything but a refusal-at-boot skeleton.
+# `null`/absent required fields refuse composition at startup — never a
+# silent default (same fail-closed discipline every tos_runtime.*.config
+# loader in this codebase follows).
+#
+# Day tokens (in `days` / `weekday` below) are one of:
+#   MON TUE WED THU FRI SAT SUN
+# Times are "HH:MM" (24h, no seconds). A window with `crosses_midnight: true`
+# must have `end` strictly before `start` (it runs from `start` on its
+# listed day(s) to `end` the following day); a window with
+# `crosses_midnight: false` must have `end` strictly after `start`.
+
+# An opaque version label for this calendar's content — bump it whenever any
+# value below changes, so tos_runtime.time's own trading_calendar_version can
+# be cross-checked against it (plan §2 decision 3: a mismatch refuses boot).
+calendar_version: null
+
+# IANA zone id, resolved via stdlib zoneinfo.ZoneInfo at load time. A value
+# that zoneinfo cannot resolve refuses to start (plan §6 ③: this depends on
+# the system tzdata database being installed).
+tz_id: null
+
+# Explicit list of "YYYY-MM-DD" holiday dates. `[]` is an accepted, DELIBERATE
+# value ("there are no holidays") — `null` (this placeholder) is refused as
+# still-TBD. See plan §6 ② for the reconciliation the operator must do
+# between the two disagreeing legacy holiday tables before filling this in.
+holidays: null
+
+# instrument_class -> list of session windows. Each window:
+#   - phase: an opaque token this file defines (e.g. "CONTINUOUS")
+#   - start / end: "HH:MM"
+#   - days: explicit list of day tokens this window's occurrence STARTS on
+#   - crosses_midnight: true/false
+# `sessions: {}` (no instrument classes at all) is an accepted, deliberate
+# value; a present instrument_class key with an explicit `[]` window list
+# means "this class is known, but always closed_phase" — distinct from the
+# class being ABSENT here entirely, which session_phase_at reports as
+# completely unknown (phase=None, is_open=None, boundary_unix_ms=None).
+sessions: null
+
+# The phase token reported for any instant that falls outside every
+# configured window (or on a holiday) for a known instrument class.
+closed_phase: null
+
+# instrument_class -> futures expiry rule:
+#   - weekday: a day token (e.g. "THU")
+#   - ordinal: 1..5 (e.g. 2 = "the second <weekday> of the rule month")
+#   - months: explicit non-empty list of 1..12 (the months this rule applies to)
+#   - expired_phase: the opaque phase token session_phase_at's caller (a
+#     later lane's effective_phase_at) reports once maturity_at judges the
+#     instant expired
+# `futures_expiry: {}` (no expiry rules for any class) is an accepted,
+# deliberate value.
+futures_expiry: null
