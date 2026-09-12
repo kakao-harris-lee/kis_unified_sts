@@ -47,11 +47,15 @@ from tos_runtime.brokercap.scopes import (
 from tos_runtime.compose._transport_wiring import TransportKind
 
 from ..compose import _fixtures as fx
-from ..compose.conftest import config_dir as config_dir  # noqa: F401
-from ..compose.conftest import custody_root as custody_root  # noqa: F401
-from ..compose.conftest import data_dir as data_dir  # noqa: F401
 from ..compose.conftest import write_approval_file
 from ..compose.test_compose_root import _compose, _reach_trusted
+
+# ``config_dir`` / ``data_dir`` / ``custody_root`` are NOT imported here: they are re-exported by
+# this package's own ``conftest.py`` (kernel round #3 K-6) precisely so pytest resolves them as
+# fixtures for the test methods below without this module ever binding those names itself — the
+# same names appear as parameters throughout this file, and importing them here too would trip
+# ruff's F811 (a false positive: pyflakes reads "parameter shadows import" without knowing pytest
+# resolves fixtures by name, never by import visibility).
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -441,9 +445,14 @@ class TestEC5HonestyNotAPass:
         it — bypassing the earlier Coordinator-preconditions halt (previous
         test) purely to exercise items 6/12/deferred in isolation, exactly
         as the plan asks: item 6 DENIED naming brokercap's PROHIBITED
-        verdict, item 12 UNKNOWN (DRAFT ⇒ not current), every deferred item
-        (4/5/7/8/9/10) UNKNOWN — never NOT_APPLICABLE (that would claim
-        this send was synthetic, which a broker-reaching scope never is)."""
+        verdict, item 12 DENIED (DRAFT ⇒ ``broker_constraint_generation_current``
+        is a strict ``bool`` — :func:`~tos_runtime.brokercap.derive_item6_item12`
+        never returns ``None`` for it — so the DRAFT profile's honest ``False``
+        is now an explicit denial, not folded into ``UNKNOWN`` the way the
+        pre-kernel-round-#3 gate's ``_positive()`` single-polarity check did;
+        kernel round #3 §11 결정 5), every deferred item (4/5/7/8/9/10)
+        UNKNOWN — never NOT_APPLICABLE (that would claim this send was
+        synthetic, which a broker-reaching scope never is)."""
         from tos.egress import RestrictiveLatchState
         from tos.egressgw import verify_send_boundary
         from tos.engine import AttemptRequest
@@ -470,7 +479,9 @@ class TestEC5HonestyNotAPass:
             broker_capability_profile=derived.broker_capability_profile,
             required_capability_set=derived.required_capability_set,
             broker_profile_version_current=derived.broker_profile_version_current,
-            venue_session_account_facts_current=True,
+            session_facts_current=True,
+            tradability_facts_current=True,
+            account_facts_current=True,
             broker_constraint_generation_current=(
                 derived.broker_constraint_generation_current
             ),
@@ -492,7 +503,8 @@ class TestEC5HonestyNotAPass:
         item12 = by_item[
             SendVerifyItem.VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION
         ]
-        assert item12.outcome is VerifyOutcome.UNKNOWN
+        assert item12.outcome is VerifyOutcome.DENIED
+        assert "broker-constraint generation" in (item12.reason or "")
 
         deferred_items = (
             SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH,

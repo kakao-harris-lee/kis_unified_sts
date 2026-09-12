@@ -802,7 +802,9 @@ def _build_context_resolver(
     currentness_assembler: CurrentnessAssembler,
     proof_issuer: EgressCurrentnessProofIssuer,
     pending_dimension_specs: tuple[PendingDimensionSpec, ...],
-    venue_session_account_facts_reader: Callable[[], bool | None],
+    session_facts_current_reader: Callable[[], bool | None],
+    tradability_facts_current_reader: Callable[[], bool | None],
+    account_facts_current_reader: Callable[[], bool | None],
     observed_session_phase_reader: Callable[[], str | None],
     egress_coordinates: EgressCoordinatesConfig,
     broker_scopes: BrokerScopesConfig,
@@ -824,8 +826,10 @@ def _build_context_resolver(
     + the item-16 latch/capacity owners (Phase 5 W3-b, §2 decisions 4/6/8); ``evidence_store``
     records the EGRESS_IDENTITY evidence-only observation (MEDIUM-4 —
     :func:`~tos_runtime.compose.context.record_egress_identity_observation`) — all forwarded to
-    :class:`ComposeContextResolver`. ``venue_session_account_facts_reader`` (TOS Phase 5 W5 plan
-    §2 decision 3) is item 12's real runtime owner read, replacing the retired
+    :class:`ComposeContextResolver`. ``session_facts_current_reader`` /
+    ``tradability_facts_current_reader`` / ``account_facts_current_reader`` (kernel round #3 §2
+    decision 4, superseding TOS Phase 5 W5 plan §2 decision 3's single reader) are item 12's three
+    real runtime-owner sub-fact reads, replacing the retired
     ``tos_runtime.compose._egress_attestations`` attestation. ``request_bytes_digest_source`` is
     T2 lane A's digest seam (``None`` -> :func:`_default_request_bytes_digest_source`).
 
@@ -855,7 +859,9 @@ def _build_context_resolver(
         currentness_assembler=currentness_assembler,
         proof_issuer=proof_issuer,
         pending_dimension_specs=pending_dimension_specs,
-        venue_session_account_facts_reader=venue_session_account_facts_reader,
+        session_facts_current_reader=session_facts_current_reader,
+        tradability_facts_current_reader=tradability_facts_current_reader,
+        account_facts_current_reader=account_facts_current_reader,
         broker_scopes=broker_scopes,
         instance_document=instance_document,
         authority_epoch_service=authority_epoch_service,

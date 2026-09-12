@@ -88,6 +88,17 @@ mutation it intends, mirroring this runtime's own halt-then-append convention ev
 (:func:`~tos_runtime.evidence.emergency.record_halt`'s own discipline, inverted for a positive
 outcome instead of a halt).
 
+**W2-K wiring (kernel round #3 §2 decision 5).** :meth:`consume` now RETURNS a
+:class:`ReleaseOutcome` (previously ``None``) reporting whether the RCL transition actually
+committed, plus the exact ``(proof_digest, evidence_seq, resolution_generation)`` triple its
+caller (:func:`~tos_runtime.engine.finality_projection.project_finality`) needs to build a kernel
+:class:`~tos.engine.state.FinalityProofRef` and call
+:meth:`~tos.engine.state.ProvisionalReservationLedger.release` — the engine's own in-memory
+projection reaches ``RELEASED`` (kernel round #3) only AFTER this consumer's own RCL write is
+durable, never before or independently of it (this module stays "kernel diff 0": it still never
+imports ``tos.engine.state`` itself, only reports the primitive data another module turns into
+the kernel type).
+
 **Destinations.** A ``FULL_FILL`` targets :attr:`~tos.rcl.CapacityState.POSITION_CONSUMED`; a
 ``CANCEL_ACK``/``EXPIRED``/``REJECT`` targets :attr:`~tos.rcl.CapacityState.RELEASED`, gated on a
 FRESHLY-PRODUCED non-execution proof (:meth:`~tos_runtime.posttrade.finality
@@ -203,6 +214,7 @@ __all__ = [
     "RELEASE_PROOF_OVERDUE_KIND",
     "FinalityReleaseConsumer",
     "ReleaseHoldReason",
+    "ReleaseOutcome",
 ]
 
 #: The obligation-record evidence kind this consumer appends for a freshly-produced
@@ -268,6 +280,39 @@ class ReleaseHoldReason(StrEnum):
 
 
 @dataclass(frozen=True)
+class ReleaseOutcome:
+    """What :meth:`FinalityReleaseConsumer.consume` actually did for one attempt (kernel round #3
+    §2 decision 5 W2-K wiring).
+
+    Deliberately DATA ONLY — never a ``tos.engine.state`` import here (this module's own firewall
+    scope, module docstring, never grew to include it). The caller
+    (:func:`~tos_runtime.engine.finality_projection.project_finality`) is the one that turns this
+    into a kernel :class:`~tos.engine.state.FinalityProofRef` and calls
+    :meth:`~tos.engine.state.ProvisionalReservationLedger.release`.
+
+    Attributes:
+        released: ``True`` iff the RCL transition actually committed (``_release`` reached
+            :func:`~tos_runtime.rcl.finality_witness.release_reservation` without a
+            :class:`~tos_runtime.rcl.log.ReservationTransitionRefusal`). ``False`` for every hold
+            reason, every non-release-eligible result kind, and a refused RCL transition.
+        attempt_id: The attempt this outcome is for — always present, even on ``released=False``.
+        proof_digest: The committed :class:`~tos.posttrade.PostTradeFinalityProof`'s own
+            ``proof_id`` — ``None`` unless ``released`` is ``True``.
+        evidence_seq: The durable ``seq`` the ``CAPACITY_RELEASE_INTENT`` evidence row this
+            consumer appends BEFORE the RCL call itself received — ``None`` unless ``released``.
+        resolution_generation: The ``active_generation`` gate 4 validated the proof against (the
+            SAME value :meth:`_apply_gate4_and_release` fed
+            :func:`~tos.posttrade.finality_proof_current`) — ``None`` unless ``released``.
+    """
+
+    released: bool
+    attempt_id: str
+    proof_digest: str | None = None
+    evidence_seq: int | None = None
+    resolution_generation: int | None = None
+
+
+@dataclass(frozen=True)
 class FinalityReleaseConsumer:
     """Bind this consumer to every collaborator :meth:`consume` needs (module docstring).
 
@@ -325,23 +370,29 @@ class FinalityReleaseConsumer:
 
     # -- entry point -----------------------------------------------------------------
 
-    def consume(self, payload: EgressResultPayload) -> None:
+    def consume(self, payload: EgressResultPayload) -> ReleaseOutcome:
         """Attempt a release for one genuinely-``APPLIED`` ``EGRESS_RESULT`` payload.
 
         Args:
             payload: The re-injected ``EGRESS_RESULT`` payload the driver just applied — the
                 SAME payload :mod:`tos_runtime.engine.finality_projection` passed its own
                 finality producer.
+
+        Returns:
+            The :class:`ReleaseOutcome` (kernel round #3 §2 decision 5 W2-K wiring) — the
+            caller's own signal for whether the kernel's in-memory projection may now be
+            released too.
         """
         reservation_id = self._reservation_id()
         self._check_obligation_expiry(reservation_id=reservation_id)
 
         if payload.kind is EgressResultKind.FULL_FILL:
-            self._consume_full_fill(payload, reservation_id=reservation_id)
-        elif payload.kind in _NON_EXECUTION_KINDS:
-            self._consume_non_execution(payload, reservation_id=reservation_id)
-        # else: ACK / PARTIAL_FILL / UNKNOWN / TIMEOUT -- no release destination at all
-        # (module docstring); nothing recorded, since no release was ever attempted.
+            return self._consume_full_fill(payload, reservation_id=reservation_id)
+        if payload.kind in _NON_EXECUTION_KINDS:
+            return self._consume_non_execution(payload, reservation_id=reservation_id)
+        # ACK / PARTIAL_FILL / UNKNOWN / TIMEOUT -- no release destination at all (module
+        # docstring); nothing recorded, since no release was ever attempted.
+        return ReleaseOutcome(released=False, attempt_id=payload.attempt_id)
 
     def _reservation_id(self) -> str:
         """The scope-level RCL reservation id (module docstring's M6 fix —
@@ -404,11 +455,10 @@ class FinalityReleaseConsumer:
 
     def _consume_full_fill(
         self, payload: EgressResultPayload, *, reservation_id: str
-    ) -> None:
+    ) -> ReleaseOutcome:
         witness = self.inbox.finality_witness(payload.attempt_id)
         if witness is not True:
-            self._hold(payload, reservation_id, ReleaseHoldReason.NO_WITNESS)
-            return
+            return self._hold(payload, reservation_id, ReleaseHoldReason.NO_WITNESS)
         proof = self._reload_proof(
             payload.attempt_id, id_prefix=FULL_FILL_PROOF_ID_PREFIX
         )
@@ -416,23 +466,22 @@ class FinalityReleaseConsumer:
             payload.attempt_id, id_prefix=FULL_FILL_OBLIGATION_ID_PREFIX
         )
         if proof is None or obligation is None:
-            self._hold(payload, reservation_id, ReleaseHoldReason.PROOF_NOT_RELOADED)
-            return
+            return self._hold(
+                payload, reservation_id, ReleaseHoldReason.PROOF_NOT_RELOADED
+            )
         report, corroborated = self._reconcile(payload.attempt_id)
         if report is None:
-            self._hold(
+            return self._hold(
                 payload, reservation_id, ReleaseHoldReason.RECONCILIATION_UNAVAILABLE
             )
-            return
         if not corroborated:
-            self._hold(
+            return self._hold(
                 payload,
                 reservation_id,
                 ReleaseHoldReason.NOT_CORROBORATED,
                 detail=report.reason,
             )
-            return
-        self._apply_gate4_and_release(
+        return self._apply_gate4_and_release(
             payload,
             reservation_id=reservation_id,
             proof=proof,
@@ -445,29 +494,26 @@ class FinalityReleaseConsumer:
 
     def _consume_non_execution(
         self, payload: EgressResultPayload, *, reservation_id: str
-    ) -> None:
+    ) -> ReleaseOutcome:
         report, corroborated = self._reconcile(payload.attempt_id)
         if report is None:
-            self._hold(
+            return self._hold(
                 payload, reservation_id, ReleaseHoldReason.RECONCILIATION_UNAVAILABLE
             )
-            return
         if not corroborated:
-            self._hold(
+            return self._hold(
                 payload,
                 reservation_id,
                 ReleaseHoldReason.NOT_CORROBORATED,
                 detail=report.reason,
             )
-            return
         produced = self.finality_producer.produce_non_execution(payload)
         if produced is None:
-            self._hold(
+            return self._hold(
                 payload,
                 reservation_id,
                 ReleaseHoldReason.NON_EXECUTION_PROOF_UNPRODUCIBLE,
             )
-            return
         self.evidence_store.append(
             produced.record.model_dump(mode="json"),
             kind=_ECONOMIC_OBLIGATION_KIND,
@@ -487,9 +533,10 @@ class FinalityReleaseConsumer:
             payload.attempt_id, id_prefix=NON_EXECUTION_OBLIGATION_ID_PREFIX
         )
         if proof is None or obligation is None:
-            self._hold(payload, reservation_id, ReleaseHoldReason.PROOF_NOT_RELOADED)
-            return
-        self._apply_gate4_and_release(
+            return self._hold(
+                payload, reservation_id, ReleaseHoldReason.PROOF_NOT_RELOADED
+            )
+        return self._apply_gate4_and_release(
             payload,
             reservation_id=reservation_id,
             proof=proof,
@@ -539,11 +586,10 @@ class FinalityReleaseConsumer:
         obligation: EconomicObligationRecord,
         report_reason: str | None,
         to_state: CapacityState,
-    ) -> None:
+    ) -> ReleaseOutcome:
         reservation_scope = self._reservation_scope(reservation_id)
         if reservation_scope is None:
-            self._hold(payload, reservation_id, ReleaseHoldReason.NO_RESERVATION)
-            return
+            return self._hold(payload, reservation_id, ReleaseHoldReason.NO_RESERVATION)
         target_scope = ObligationLegScope(
             leg=ObligationLegDirection.RECEIPT,
             account=reservation_scope.account,
@@ -558,22 +604,23 @@ class FinalityReleaseConsumer:
             target_obligation_ref=obligation.obligation_id,
             target_obligation_version=obligation.obligation_version,
         ):
-            self._hold(
+            return self._hold(
                 payload, reservation_id, ReleaseHoldReason.PROOF_NOT_TRANSFERABLE
             )
-            return
         active_generation = self._active_generation(
             account=reservation_scope.account, instrument=reservation_scope.instrument
         )
         if not finality_proof_current(proof, active_generation):
-            self._hold(payload, reservation_id, ReleaseHoldReason.PROOF_NOT_CURRENT)
-            return
-        self._release(
+            return self._hold(
+                payload, reservation_id, ReleaseHoldReason.PROOF_NOT_CURRENT
+            )
+        return self._release(
             payload,
             reservation_id=reservation_id,
             proof=proof,
             report_reason=report_reason,
             to_state=to_state,
+            resolution_generation=active_generation,
         )
 
     def _reservation_scope(self, reservation_id: str) -> ReservationScope | None:
@@ -623,20 +670,26 @@ class FinalityReleaseConsumer:
         proof: PostTradeFinalityProof,
         report_reason: str | None,
         to_state: CapacityState,
-    ) -> None:
+        resolution_generation: int | None,
+    ) -> ReleaseOutcome:
         current_state = self.projection.reservation_state(reservation_id)
         if current_state is None:
-            self._hold(payload, reservation_id, ReleaseHoldReason.NO_RESERVATION)
-            return
+            return self._hold(payload, reservation_id, ReleaseHoldReason.NO_RESERVATION)
         current_seq = self.projection.reservation_last_seq(reservation_id)
         expected_seq = -1 if current_seq is None else current_seq
-        self.evidence_store.append(
+        # ★ kernel round #3 §2 decision 5 (ⓖ): SyntheticFinalityProducer hardcodes
+        # obligation_generation=0 for every proof it mints (module docstring's own note); the
+        # honest floor for the kernel's own resolution_generation axis is therefore 0, never a
+        # fabricated None, once gate 4 has already validated currentness against it.
+        generation = 0 if resolution_generation is None else resolution_generation
+        intent_receipt = self.evidence_store.append(
             {
                 "attempt_id": payload.attempt_id,
                 "reservation_id": reservation_id,
                 "proof_id": proof.proof_id,
                 "destination": to_state.value,
                 "report_reason": report_reason,
+                "resolution_generation": generation,
             },
             kind=CAPACITY_RELEASE_INTENT_KIND,
             record_class=CAPACITY_RELEASE_INTENT_KIND,
@@ -661,12 +714,19 @@ class FinalityReleaseConsumer:
                 proof=proof,
             )
         except ReservationTransitionRefusal as exc:
-            self._hold(
+            return self._hold(
                 payload,
                 reservation_id,
                 ReleaseHoldReason.RCL_TRANSITION_REFUSED,
                 detail=str(exc),
             )
+        return ReleaseOutcome(
+            released=True,
+            attempt_id=payload.attempt_id,
+            proof_digest=proof.proof_id,
+            evidence_seq=intent_receipt.seq,
+            resolution_generation=generation,
+        )
 
     # -- HELD ---------------------------------------------------------------------------
 
@@ -677,7 +737,7 @@ class FinalityReleaseConsumer:
         reason: ReleaseHoldReason,
         *,
         detail: str | None = None,
-    ) -> None:
+    ) -> ReleaseOutcome:
         self.evidence_store.append(
             {
                 "attempt_id": payload.attempt_id,
@@ -688,6 +748,7 @@ class FinalityReleaseConsumer:
             kind=CAPACITY_RELEASE_HELD_KIND,
             record_class=CAPACITY_RELEASE_HELD_KIND,
         )
+        return ReleaseOutcome(released=False, attempt_id=payload.attempt_id)
 
     # -- durable re-loads (module docstring's "never an in-memory proof object") -------
 

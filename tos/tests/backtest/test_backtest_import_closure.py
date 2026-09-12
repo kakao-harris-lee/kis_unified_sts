@@ -75,6 +75,11 @@ _ALLOWED_TOS_PACKAGES = frozenset(
         "tos.cur",
         "tos.engine",
         "tos.orthostate",
+        # kernel round #3 §2 결정 1 (2026-09-12): tos.engine now directly realizes
+        # tos.nontrade too (the CORPORATE_ACTION handler), reaching every tos.engine
+        # consumer through the already-ratified tos.engine edge — same widening as
+        # tos.orthostate above.
+        "tos.nontrade",
         "tos.backtest",
     }
 )
@@ -106,7 +111,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.hag",
         "tos.iap",
         "tos.liveauth",
-        "tos.nontrade",
         "tos.posttrade",
         "tos.protective",
         "tos.recon",

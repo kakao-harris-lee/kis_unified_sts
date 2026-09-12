@@ -83,7 +83,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from tos.canonical import ArtifactIntegrityError, CanonicalizationScheme
@@ -91,7 +90,6 @@ from tos.engine import EngineCore, EventResult
 from tos.engine.records import (
     EgressResultPayload,
     EngineEvent,
-    InstrumentKey,
     event_identity,
 )
 from tos.engine.vocabulary import (
@@ -103,6 +101,7 @@ from tos.engine.vocabulary import (
 from tos.ordering import OrderingEvent
 from tos.orthostate import CompositeState
 
+from tos_runtime.engine._timeout_tracker import _TimeoutTracker
 from tos_runtime.engine.finality_projection import project_finality
 from tos_runtime.engine.flow_fingerprint import FlowFingerprint, flow_fingerprint_for
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -226,79 +225,6 @@ class _YieldOrderCounter:
             source_continuity_id=self._continuity_id,
             source_native_sequence=sequence,
         )
-
-
-@dataclass
-class _PendingAttempt:
-    """One outstanding, not-yet-resulted attempt this driver is timing (item 4)."""
-
-    attempt_id: str
-    started_at_ms: int
-    timed_out: bool = False
-
-
-@dataclass
-class _TimeoutTracker:
-    """Per-scope pending-attempt bookkeeping for :class:`EngineDriver`'s timeout injection."""
-
-    #: The injected wait bound; always a concrete positive int (independent review finding #14
-    #: — a ``None`` "disable injection entirely" escape hatch read as a fail-CLOSED default in
-    #: the docstring it used to carry, but never injecting a TIMEOUT for a lost result is
-    #: fail-SILENT (the attempt just sits ``SENT_UNCONFIRMED`` forever with no further evidence),
-    #: not fail-closed. Compose has always supplied a concrete value anyway
-    #: (``TrustworthyTimeConfig.max_send_result_wait_ms`` is itself non-optional and
-    #: ``load_time_config`` refuses a null — ``time/config.py``), so this only removes an
-    #: escape hatch nothing production-shaped ever used; a test that wants "never fires" now
-    #: passes a very large bound instead of ``None``.
-    max_send_result_wait_ms: int
-    pending: dict[tuple[str, str], _PendingAttempt] = field(default_factory=dict)
-
-    @staticmethod
-    def _key(key: InstrumentKey) -> tuple[str, str]:
-        return (key.account, key.instrument)
-
-    def observe_handoff(
-        self, key: InstrumentKey, *, attempt_id: str, now_ms: int
-    ) -> None:
-        """Record a fresh SENT_UNCONFIRMED hand-off as pending a result."""
-        self.pending[self._key(key)] = _PendingAttempt(
-            attempt_id=attempt_id, started_at_ms=now_ms
-        )
-
-    def observe_result(self, key: InstrumentKey, *, attempt_id: str) -> None:
-        """Clear the pending entry ONLY when it names the SAME attempt (independent review
-        finding #7).
-
-        Before this fix, ANY ``EGRESS_RESULT`` landing for the scope popped the pending entry —
-        "applied or not", including a result naming a completely different (foreign/mismatched)
-        attempt. The kernel itself refuses to apply such a result
-        (``ResultDisposition.MISMATCHED_ATTEMPT`` / ``ORPHAN_NO_RESERVATION``), but the timeout
-        watch for the GENUINELY pending attempt was silenced anyway — a lost result for the real
-        attempt would then never surface as a ``TIMEOUT``, defeating the "결과 유실 ⇒ TIMEOUT"
-        guarantee (plan §1.1) via any wrong-attempt-id result. Only an exact ``attempt_id`` match
-        clears the watch now.
-        """
-        tracker_key = self._key(key)
-        pending = self.pending.get(tracker_key)
-        if pending is not None and pending.attempt_id == attempt_id:
-            del self.pending[tracker_key]
-
-    def due(self, *, now_ms: int) -> tuple[tuple[InstrumentKey, str], ...]:
-        """Return ``(instrument_key, attempt_id)`` pairs whose wait bound has elapsed and have
-        not already been timed out."""
-        due: list[tuple[InstrumentKey, str]] = []
-        for (account, instrument), pending in self.pending.items():
-            if pending.timed_out:
-                continue
-            if now_ms - pending.started_at_ms >= self.max_send_result_wait_ms:
-                pending.timed_out = True
-                due.append(
-                    (
-                        InstrumentKey(account=account, instrument=instrument),
-                        pending.attempt_id,
-                    )
-                )
-        return tuple(due)
 
 
 class EngineDriver:
@@ -458,7 +384,8 @@ class EngineDriver:
 
         Mirrors ``tos.backtest.driver._stamped_tick``/``_stamped_egress``: the caller-supplied
         reference is discarded entirely, because only the driver's own single monotone counter
-        can guarantee "coordinate order == processing order" across both event kinds.
+        can guarantee "coordinate order == processing order" across every event kind. Kernel
+        round #3 §2 결정 1 added the third (``CORPORATE_ACTION``) branch.
         """
         reference = self._counter.next_reference()
         if event.kind is EventKind.DECISION_TICK:
@@ -466,10 +393,22 @@ class EngineDriver:
             assert tick_payload is not None
             stamped_tick = tick_payload.model_copy(update={"reference": reference})
             return EngineEvent(kind=EventKind.DECISION_TICK, decision_tick=stamped_tick)
-        egress_payload = event.egress_result
-        assert egress_payload is not None
-        stamped_egress = egress_payload.model_copy(update={"reference": reference})
-        return EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=stamped_egress)
+        if event.kind is EventKind.EGRESS_RESULT:
+            egress_payload = event.egress_result
+            assert egress_payload is not None
+            stamped_egress = egress_payload.model_copy(update={"reference": reference})
+            return EngineEvent(
+                kind=EventKind.EGRESS_RESULT, egress_result=stamped_egress
+            )
+        corporate_action_payload = event.corporate_action
+        assert corporate_action_payload is not None
+        stamped_corporate_action = corporate_action_payload.model_copy(
+            update={"reference": reference}
+        )
+        return EngineEvent(
+            kind=EventKind.CORPORATE_ACTION,
+            corporate_action=stamped_corporate_action,
+        )
 
     # -- crash-window recovery ------------------------------------------------
 
@@ -646,14 +585,21 @@ class EngineDriver:
         outcome_digest: str | None,
         halt_reason: str | None,
         flow_fingerprint: FlowFingerprint | None,
+        nontrade_disposition: str | None = None,
     ) -> tuple[int, int]:
         """Durably append this driver's own ``EVENT_CONSUMED`` receipt.
 
         Args:
             flow_fingerprint: The ``DECISION_TICK`` commitment-flow fingerprint (wave-3 review
-                finding #1(b)) — ``None`` for an ``EGRESS_RESULT`` (no ``.flow`` to fingerprint)
-                and for the two crash-window recovery paths above (no fresh ``EventResult`` ever
-                existed for them either — mirrors ``outcome_digest=None``'s own convention there).
+                finding #1(b)) — ``None`` for an ``EGRESS_RESULT``/``CORPORATE_ACTION`` (no
+                ``.flow`` to fingerprint) and for the two crash-window recovery paths above (no
+                fresh ``EventResult`` ever existed for them either — mirrors
+                ``outcome_digest=None``'s own convention there).
+            nontrade_disposition: A ``CORPORATE_ACTION`` event's judged
+                :class:`~tos.nontrade.NonTradeDisposition`, as its own string value (kernel round
+                #3 §2 결정 3) — ``None`` for every other event kind. Replay compares this
+                alongside ``outcome_digest``: a mismatch is a divergence exactly like a digest
+                mismatch (:mod:`tos_runtime.engine.replay`'s own comparison logic).
 
         Returns:
             ``(evidence_seq, key_generation)`` for :meth:`SqliteEventInbox.mark_consumed`.
@@ -669,6 +615,7 @@ class EngineDriver:
                     if flow_fingerprint is None
                     else flow_fingerprint.model_dump(mode="json")
                 ),
+                "nontrade_disposition": nontrade_disposition,
             },
             kind=_EVENT_CONSUMED_KIND,
             record_class=_EVENT_CONSUMED_RECORD_CLASS,
@@ -848,6 +795,11 @@ class EngineDriver:
                     outcome_digest=result.outcome_digest,
                     halt_reason=halt_reason_str,
                     flow_fingerprint=flow_fingerprint_for(result),
+                    nontrade_disposition=(
+                        None
+                        if result.nontrade_outcome is None
+                        else result.nontrade_outcome.disposition.value
+                    ),
                 )
                 self._inbox.mark_consumed(
                     seq, evidence_seq=evidence_seq, generation=generation
@@ -996,4 +948,5 @@ class EngineDriver:
             evidence_store=self._evidence_store,
             finality_producer=self._finality_producer,
             release_consumer=self._release_consumer,
+            ledger=self._core.ledger,
         )

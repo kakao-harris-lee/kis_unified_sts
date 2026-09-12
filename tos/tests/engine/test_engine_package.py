@@ -48,6 +48,7 @@ from tos.engine import (
     step_number,
     vocabulary,
 )
+from tos.rcl import CapacityState
 
 #: Every submodule, imported statically (the firewall forbids ``importlib.import_module``).
 _SUBMODULES = {
@@ -94,7 +95,7 @@ def test_every_submodule_declares_a_resolvable_surface(module_name, module) -> N
         "fail-closed guarantee: steps 1-14 only",
         "escape-safety: not demonstrated",
         "reproducibility, not distinctness",
-        "release: impossible here",
+        "release: gated on a finality-proof token only",
     ],
 )
 def test_the_package_docstring_carries_its_honesty_declarations(phrase) -> None:
@@ -111,7 +112,7 @@ def test_the_package_docstring_carries_its_honesty_declarations(phrase) -> None:
     [
         (state, "NON-AUTHORITATIVE PROVISIONAL"),
         (standins, "NON-AUTHORITATIVE PROVISIONAL"),
-        (state, "no ``release`` / ``free`` / ``clear`` method"),
+        (state, "release only via finality proof"),
         (sequencer, "steps 15-19 are not hostable"),
         (sink, "over-realization"),
     ],
@@ -238,14 +239,28 @@ def test_an_unknown_step_has_no_number() -> None:
         step_number("STEP_20")  # type: ignore[arg-type]
 
 
-def test_the_projection_rank_is_a_total_order_over_the_projected_states() -> None:
-    """(§2.4) The non-revival rank is total and contains no "released" state."""
+def test_the_projection_rank_is_a_total_order_ending_at_released() -> None:
+    """(§2.4; kernel round #3 §2 decision 5) The non-revival rank is total, and ``RELEASED`` is
+    now its last (highest) member — reachable only through
+    :meth:`~tos.engine.state.ProvisionalReservationLedger.release`'s finality-proof-token gate,
+    never through an ordinary egress result. This test used to pin the OPPOSITE fact ("no released
+    state") when this projection truly had no release path at all; that pin is now false — round
+    #3 added a token-gated release, and this rank must include it so the non-revival guard treats
+    an already-``RELEASED`` reservation as terminal (nothing ranks above it to revive into).
+    """
     ranks = list(PROJECTION_RANK.values())
     assert sorted(ranks) == list(range(len(ranks)))
     assert len(set(PROJECTION_RANK)) == len(PROJECTION_RANK)
-    assert "RELEASED" not in {state.name for state in PROJECTION_RANK}, (
-        "the engine's projection has no released state — release is the RCL's act "
-        "(RFC-002 §9.1:557-558)"
+    assert "RELEASED" in {state.name for state in PROJECTION_RANK}, (
+        "the engine's projection now has a released state, reachable only via "
+        "ProvisionalReservationLedger.release's finality-proof-token gate (kernel round #3 §2 "
+        "decision 5) — RCL remains the sole capacity-mutation authority (RFC-002 §9.1:557-558); "
+        "this projection's release only mirrors a fact the RCL already established"
+    )
+    assert PROJECTION_RANK[CapacityState.RELEASED] == len(ranks) - 1, (
+        "RELEASED must be the LAST (highest) rank — it is reachable only through the dedicated "
+        "release() token gate, never through the ordinary rank-advance path any egress result "
+        "uses (kernel round #3 §2 decision 5)"
     )
 
 

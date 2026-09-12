@@ -366,15 +366,20 @@ class ComposeContextResolver:
     #: for why these exist and what they honestly are (an interim operator
     #: sign-off, never a fabricated kernel-derived verdict).
     pending_dimension_specs: tuple[PendingDimensionSpec, ...]
-    #: Item 12's ``venue_session_account_facts_current`` (TOS Phase 5 W5 plan §2
-    #: decision 3) — a zero-argument read off the composed
+    #: Item 12's three venue-half sub-facts (kernel round #3 §2 decision 4,
+    #: replacing the single ``venue_session_account_facts_reader`` this
+    #: resolver used to carry) — three zero-argument reads off the composed
     #: :class:`~tos_runtime.calendar.owner.SessionFactsOwner`
-    #: (:mod:`tos_runtime.compose._session_wiring`), evaluated fresh on every call
-    #: (never cached here), replacing the retired
+    #: (:mod:`tos_runtime.compose._session_wiring`), each evaluated fresh on
+    #: every call (never cached here). The kernel's own
+    #: :func:`~tos.egressgw.venuefacts.venue_session_account_facts_current`
+    #: composes these three, replacing the retired
     #: ``tos_runtime.compose._egress_attestations`` operator attestation. Items
     #: 6/12's OTHER two fields are derived, not attested — see
     #: ``broker_scopes``/``instance_document`` below.
-    venue_session_account_facts_reader: Callable[[], bool | None]
+    session_facts_current_reader: Callable[[], bool | None]
+    tradability_facts_current_reader: Callable[[], bool | None]
+    account_facts_current_reader: Callable[[], bool | None]
     #: The runtime-configured Broker Scope table (TOS Phase 4 plan §2
     #: decision 4) — feeds :func:`~tos_runtime.brokercap.derive_item6_item12`
     #: for items 6/12, replacing two of the former egress attestations.
@@ -709,15 +714,20 @@ class ComposeContextResolver:
         (items 6/12) are STRUCTURALLY DERIVED (TOS Phase 4 plan §2 decision
         4) via :func:`~tos_runtime.brokercap.derive_item6_item12`, never an
         attestation any more — see :meth:`_item6_item12_fields`.
-        ``venue_session_account_facts_current`` (TOS Phase 5 W5 plan §2
-        decision 3) is now a real runtime owner's read too
-        (:attr:`venue_session_account_facts_reader` —
+        Item 12's three venue-half sub-facts (kernel round #3 §2 decision 4,
+        superseding TOS Phase 5 W5 plan §2 decision 3's single pre-composed
+        field) are now real runtime-owner reads too
+        (:attr:`session_facts_current_reader` /
+        :attr:`tradability_facts_current_reader` /
+        :attr:`account_facts_current_reader` —
         :class:`~tos_runtime.calendar.owner.SessionFactsOwner`, replacing the
         retired ``tos_runtime.compose._egress_attestations`` operator
-        attestation). ``restrictive_latch_state`` / ``worst_credible_capacity``
-        (item 16) are Phase 5 W3 real runtime owners too
-        (:mod:`tos_runtime.safety.latch`, plan §2 decision 6) — never an
-        attestation any more; see :attr:`latch` / :attr:`capacity`.
+        attestation); the kernel's own
+        :func:`~tos.egressgw.venuefacts.venue_session_account_facts_current`
+        composes them, never this compose layer. ``restrictive_latch_state`` /
+        ``worst_credible_capacity`` (item 16) are Phase 5 W3 real runtime
+        owners too (:mod:`tos_runtime.safety.latch`, plan §2 decision 6) —
+        never an attestation any more; see :attr:`latch` / :attr:`capacity`.
         ``max_quantity_within_allowance`` is the one exception: it HAS a real
         Phase 2 producer (step 2's own
         ``CandidateConstruction.no_silent_widening_ok``) and is derived
@@ -729,9 +739,9 @@ class ComposeContextResolver:
             "max_quantity_within_allowance": (
                 None if construction is None else construction.no_silent_widening_ok
             ),
-            "venue_session_account_facts_current": (
-                self.venue_session_account_facts_reader()
-            ),
+            "session_facts_current": self.session_facts_current_reader(),
+            "tradability_facts_current": self.tradability_facts_current_reader(),
+            "account_facts_current": self.account_facts_current_reader(),
             "broker_constraint_generation_current": (
                 derived.broker_constraint_generation_current
             ),

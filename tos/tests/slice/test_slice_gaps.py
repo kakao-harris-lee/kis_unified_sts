@@ -18,8 +18,12 @@ contracts (§7), on exactly the surface that previously demonstrated the gap:
 * **GAP-4** — an Explicit Flat derives its magnitude from the observed held position.
 
 The one thing design #35 deliberately did **not** close is still asserted as an absence:
-:func:`test_gap_4_the_scope_stays_occupied_because_there_is_no_release_path`. Its staying green
-is the executable evidence that GAP-4 sized a flat without inventing an RCL release path.
+:func:`test_gap_4_the_scope_stays_occupied_through_the_ordinary_result_path`. Its staying green
+is the executable evidence that GAP-4 sized a flat without inventing an RCL release path — the
+projection's OWN 1-arg-only mutators (``commit_unbound``/``bind_attempt``/
+``mark_potentially_live``/``apply_egress_result``) still never themselves reach ``RELEASED``;
+only the kernel round #3 §2 decision 5 finality-proof-token gate (``release``, a SEPARATE,
+narrowly-typed method GAP-4's own flat-sizing path never calls) can.
 
 ⚠ Authoring evidence; closes no EV.
 """
@@ -53,6 +57,7 @@ from tos.egressgw import (
     derive_order_size,
 )
 from tos.engine import EgressResultPayload, InstrumentKey, StageRequest
+from tos.rcl import CapacityState
 
 from ._slice_fixtures import (
     CROSSING_BAR_INDEX,
@@ -492,19 +497,27 @@ def test_gap_4_a_pure_close_policy_sizes_without_any_risk_budget() -> None:
     assert "risk budget" in entry.denial_reason
 
 
-def test_gap_4_the_scope_stays_occupied_because_there_is_no_release_path() -> None:
-    """The companion fact, deliberately unchanged: no release path was invented for GAP-4.
+def test_gap_4_the_scope_stays_occupied_through_the_ordinary_result_path() -> None:
+    """The companion fact: no release path was invented for GAP-4 itself.
 
-    ``ProvisionalReservationLedger`` exposes no ``release`` / ``free`` / ``clear`` method at all
-    (state.py:22) and ``RELEASED`` is absent from its projection order, so the round trip waits
-    for the real RCL (RFC-002 §9.1:557) regardless of GAP-4. **This test staying green is the
-    executable evidence of GAP-4's boundary**: a flat is now sized from an observation of the
-    projection, and the projection is still read-only (design #35 §5.3).
+    ``ProvisionalReservationLedger`` gained exactly ONE gated method since this test's original
+    claim (kernel round #3 §2 decision 5's ``release``, token-gated on
+    :class:`~tos.engine.state.FinalityProofRef`) — but GAP-4's own round trip (an Explicit Flat
+    deriving its magnitude from the observed held position) never calls it, so the scope waits
+    for the real RCL (RFC-002 §9.1:557) exactly as before regardless of GAP-4. ``free``/``clear``/
+    ``reset`` remain absent under every spelling. **This test staying green is the executable
+    evidence of GAP-4's boundary**: a flat is sized from an observation of the projection, and the
+    projection's ordinary result path is still read-only (design #35 §5.3).
     """
     sliced = run_slice()
     ledger = sliced.core.ledger
-    for method in ("release", "free", "clear", "reset"):
+    assert hasattr(ledger, "release")
+    for method in ("free", "clear", "reset"):
         assert not hasattr(ledger, method), f"the projection gained a {method} path"
     outstanding = ledger.outstanding(sliced.run.instrument_key)
     assert outstanding is not None
     assert ledger.admits_new_exposure(sliced.run.instrument_key) is False
+    assert outstanding.capacity_state is not CapacityState.RELEASED, (
+        "GAP-4's own flat-sizing round trip must never itself reach RELEASED — only the "
+        "separate, token-gated release() may"
+    )

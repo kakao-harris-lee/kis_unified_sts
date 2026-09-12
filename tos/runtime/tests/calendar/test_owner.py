@@ -201,14 +201,15 @@ def test_absent_wall_clock_yields_none_phase_and_records_absent_once(
     assert _kind_count(evidence_store, SESSION_FACTS_SOURCE_ABSENT_KIND) == 1
 
 
-def test_venue_session_account_facts_current_is_false_when_phase_absent(
+def test_session_facts_current_is_false_when_phase_absent(
     tmp_path: Path, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """``session_current`` (plan §2 decision 3 (c)) is a plain boolean
-    conjunction, never itself tri-state — an absent phase fact makes it
-    definitely ``False`` (never a mysterious ``None`` needing its own
-    propagation; only ``tradability_current``/``account_facts_current`` can
-    be ``None``)."""
+    """``session_facts_current`` (kernel round #3 §2 decision 4, ex-plan §2
+    decision 3 (c)'s ``session_current`` conjunct) is a plain boolean, never
+    itself tri-state — an absent phase fact makes it definitely ``False``
+    (never a mysterious ``None`` needing its own propagation; only
+    ``tradability_facts_current``/``account_facts_current`` can be
+    ``None``)."""
     calendar_path = write_fixture_calendar(tmp_path)
     calendar = load_calendar_config(calendar_path)
     owner = SessionFactsOwner(
@@ -219,19 +220,16 @@ def test_venue_session_account_facts_current_is_false_when_phase_absent(
         time_tz_db_version=None,
         time_trading_calendar_version=None,
     )
-    assert (
-        owner.venue_session_account_facts_current(STOCK_CLASS, broker_reaching=False)
-        is False
-    )
-    # False dominates the AND regardless of broker_reaching.
-    assert (
-        owner.venue_session_account_facts_current(STOCK_CLASS, broker_reaching=True)
-        is False
-    )
+    assert owner.session_facts_current(STOCK_CLASS) is False
 
 
 # ============================================================================
-# venue_session_account_facts_current — AND-with-None-propagation (decision 3c)
+# session_facts_current / tradability_facts_current / account_facts_current —
+# the three raw sub-facts (kernel round #3 §2 decision 4). The None-
+# propagating AND that used to live here now lives in the kernel's own
+# ``tos.egressgw.venuefacts.venue_session_account_facts_current`` (see
+# ``tos/tests/egressgw/test_venuefacts.py`` for its exhaustive 27-combination
+# table) — this owner supplies each raw sub-fact only.
 # ============================================================================
 
 
@@ -251,18 +249,18 @@ def test_synthetic_scope_open_session_is_true(
         time_trading_calendar_version=calendar.calendar_version,
     )
     assert owner.phase_for_step3(STOCK_CLASS) == "CONTINUOUS"
-    assert (
-        owner.venue_session_account_facts_current(STOCK_CLASS, broker_reaching=False)
-        is True
-    )
+    assert owner.session_facts_current(STOCK_CLASS) is True
+    assert owner.tradability_facts_current(broker_reaching=False) is True
+    assert owner.account_facts_current(broker_reaching=False) is True
 
 
-def test_broker_reaching_scope_open_session_is_unknown_not_true(
+def test_broker_reaching_scope_tradability_and_account_are_unknown_not_true(
     tmp_path: Path, evidence_store: SqliteEvidenceStore
 ) -> None:
     """Mutation M2: a broker-reaching scope must NEVER be silently fabricated
     True — this is the exact fact ``test_kis_mock_e2e_honesty.py``'s honesty
-    pin depends on staying UNKNOWN."""
+    pin depends on staying UNKNOWN (via the kernel composite, which sees a
+    ``None`` sub-fact here)."""
     calendar_path = write_fixture_calendar(tmp_path)
     calendar = load_calendar_config(calendar_path)
     instant = _kst_ms(2026, 1, 5, 10, 0)
@@ -274,10 +272,10 @@ def test_broker_reaching_scope_open_session_is_unknown_not_true(
         time_tz_db_version="tzdb-1",
         time_trading_calendar_version=calendar.calendar_version,
     )
-    assert (
-        owner.venue_session_account_facts_current(STOCK_CLASS, broker_reaching=True)
-        is None
-    )
+    assert owner.tradability_facts_current(broker_reaching=True) is None
+    assert owner.account_facts_current(broker_reaching=True) is None
+    # session_facts_current does not depend on broker_reaching at all.
+    assert owner.session_facts_current(STOCK_CLASS) is True
 
 
 def test_after_hours_phase_is_closed(
@@ -323,14 +321,13 @@ def test_holiday_phase_is_closed_even_during_the_regular_window(
     assert owner.phase_for_step3(STOCK_CLASS) == "CLOSED"
 
 
-def test_closed_phase_venue_session_account_facts_is_not_false_by_itself(
+def test_closed_phase_session_facts_current_is_not_false_by_itself(
     tmp_path: Path, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """``venue_session_account_facts_current``'s own ``session_current``
-    conjunct only checks phase non-``None`` (a KNOWN closed phase is still a
-    known fact) — this owner never re-implements the kernel's own
-    ``session_phase_admits`` membership judgement, so a closed phase alone
-    does not, by itself, make the composite ``False``."""
+    """``session_facts_current`` only checks phase non-``None`` (a KNOWN
+    closed phase is still a known fact) — this owner never re-implements the
+    kernel's own ``session_phase_admits`` membership judgement, so a closed
+    phase alone does not, by itself, make this sub-fact ``False``."""
     calendar_path = write_fixture_calendar(tmp_path)
     calendar = load_calendar_config(calendar_path)
     instant = _kst_ms(2026, 1, 5, 22, 0)
@@ -342,10 +339,8 @@ def test_closed_phase_venue_session_account_facts_is_not_false_by_itself(
         time_tz_db_version="tzdb-1",
         time_trading_calendar_version=calendar.calendar_version,
     )
-    assert (
-        owner.venue_session_account_facts_current(STOCK_CLASS, broker_reaching=False)
-        is True
-    )
+    assert owner.phase_for_step3(STOCK_CLASS) == "CLOSED"
+    assert owner.session_facts_current(STOCK_CLASS) is True
 
 
 # ============================================================================

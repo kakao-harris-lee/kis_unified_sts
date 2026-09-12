@@ -9,10 +9,19 @@ rest of compose actually consumes:
 * :meth:`SessionFactsOwner.phase_for_step3` — the ``observed_session_phase``
   string step 3's ``VenueConstraintStage`` needs (W5 survey §2: previously a
   hardcoded ``ConstructionConfig`` literal, now this owner's honest read).
-* :meth:`SessionFactsOwner.venue_session_account_facts_current` — item 12's
-  remaining operator attestation (:mod:`tos_runtime.compose._egress_attestations`,
-  now retired to zero, plan §2 decision 4), replaced by a real, structurally
-  derived fact.
+* :meth:`SessionFactsOwner.session_facts_current` /
+  :meth:`SessionFactsOwner.tradability_facts_current` /
+  :meth:`SessionFactsOwner.account_facts_current` — item 12's three raw
+  sub-facts (kernel round #3 §2 decision 4, splitting the single
+  ``venue_session_account_facts_current`` method this owner used to expose
+  into the three sub-facts the kernel's own
+  :func:`~tos.egressgw.venuefacts.venue_session_account_facts_current` now
+  composes). This owner supplies each raw sub-fact and composes nothing
+  itself any more — the None-propagating AND moved into the kernel (round #1
+  §0's "판정은 커널 술어만 한다" discipline), replacing
+  :mod:`tos_runtime.compose._egress_attestations`'s retired operator
+  attestation (plan §2 decision 4) with three real, structurally derived
+  facts instead of one pre-composed one.
 
 **Never asserts admissibility itself.** The phase token this owner produces is
 opaque calendar DATA (:mod:`tos_runtime.calendar.config`'s own module
@@ -40,8 +49,9 @@ An EC-1 governance gate (``tests/brokercap/test_exit_conditions.py`` and
 ``tests/brokercap/test_scopes.py``) only allows that
 :class:`~tos_runtime.brokercap.scopes.BrokerScope` attribute to be read
 inside the ``brokercap`` package itself.
-:meth:`SessionFactsOwner.venue_session_account_facts_current` therefore
-takes a plain ``broker_reaching: bool`` the CALLER derives via
+:meth:`SessionFactsOwner.tradability_facts_current` /
+:meth:`SessionFactsOwner.account_facts_current` therefore each take a plain
+``broker_reaching: bool`` the CALLER derives via
 :func:`tos_runtime.brokercap.is_broker_reaching` (see
 :mod:`tos_runtime.compose.root`) — never the scope object itself.
 
@@ -109,18 +119,6 @@ class SessionFacts:
     session_context: SessionContext | None
     wall_clock: WallClockReading | None
     tick_generation: int | None
-
-
-def _and_with_none(*values: bool | None) -> bool | None:
-    """Three-way AND with ``None`` propagation (plan §2 decision 3 (c)):
-    ``False`` dominates (any known-negative fact makes the whole conjunction
-    negative); otherwise ``None`` if any conjunct is unknown; ``True`` only
-    when every conjunct is positively known."""
-    if any(v is False for v in values):
-        return False
-    if any(v is None for v in values):
-        return None
-    return True
 
 
 class SessionFactsOwner:
@@ -242,40 +240,48 @@ class SessionFactsOwner:
         tick, or ``None`` when no wall-clock reading is available."""
         return self.observe(instrument_class).session_context
 
-    def venue_session_account_facts_current(
-        self, instrument_class: str, *, broker_reaching: bool
-    ) -> bool | None:
-        """Item 12's ``venue_session_account_facts_current`` (plan §2 decision
-        3 (c)) — a three-way AND, with ``None`` propagation, of:
+    def session_facts_current(self, instrument_class: str) -> bool:
+        """Item 12's ``session_facts_current`` sub-fact (kernel round #3 §2
+        decision 4, ex-``venue_session_account_facts_current``'s
+        ``session_current`` conjunct): this tick's phase fact exists, was
+        observed at the CURRENT tick generation, and
+        ``calendar.calendar_version`` matches ``time.yaml``'s
+        ``trading_calendar_version`` (the same cross-check the constructor
+        already enforces at boot — re-asserted per-call as a genuine
+        currentness fact, not a re-derivation of a different judgement).
 
-        * ``session_current``: this tick's phase fact exists, was observed at
-          the CURRENT tick generation, and ``calendar.calendar_version``
-          matches ``time.yaml``'s ``trading_calendar_version`` (the same
-          cross-check the constructor already enforces at boot — re-asserted
-          per-call as a genuine currentness fact, not a re-derivation of a
-          different judgement).
-        * ``tradability_current`` / ``account_facts_current``: structurally
-          ``True`` when ``broker_reaching`` is ``False`` (the caller derives
-          this via :func:`~tos_runtime.brokercap.is_broker_reaching` — the
-          same structural fact :func:`~tos_runtime.brokercap.derive_item6_item12`
-          already uses for item 12's OTHER field) — a synthetic transport is
-          its own only ledger, so there is no separate tradability/account-
-          halt source to be stale. When ``broker_reaching`` is ``True``,
-          ``None``: this runtime has no KIS tradability/account-halt query TR
-          consumer yet (a transport-track follow-up), so these two facts are
-          honestly unsourced, never fabricated ``True``.
+        Always a strict ``bool`` — never itself tri-state, unlike the other
+        two sub-facts below (an absent phase fact makes this definitely
+        ``False``, never a mysterious ``None`` needing its own propagation).
+        The kernel's own
+        :func:`~tos.egressgw.venuefacts.venue_session_account_facts_current`
+        composes this with the other two sub-facts; this owner supplies the
+        raw fact only.
         """
         facts = self.observe(instrument_class)
-        session_current = (
+        return (
             facts.phase_fact.phase is not None
             and facts.tick_generation == self._tick_generation_reader()
             and self._calendar.calendar_version == self._time_trading_calendar_version
         )
-        tradability_current: bool | None = None if broker_reaching else True
-        account_facts_current: bool | None = None if broker_reaching else True
-        return _and_with_none(
-            session_current, tradability_current, account_facts_current
-        )
+
+    def tradability_facts_current(self, *, broker_reaching: bool) -> bool | None:
+        """Item 12's ``tradability_facts_current`` sub-fact (kernel round #3
+        §2 decision 4) — structurally ``True`` when ``broker_reaching`` is
+        ``False`` (a synthetic transport is its own only ledger, so there is
+        no separate tradability source to be stale); ``None`` when
+        ``broker_reaching`` is ``True`` (this runtime has no KIS
+        tradability-halt query TR consumer yet — a transport-track follow-up
+        — so this fact is honestly unsourced, never fabricated ``True``)."""
+        return None if broker_reaching else True
+
+    def account_facts_current(self, *, broker_reaching: bool) -> bool | None:
+        """Item 12's ``account_facts_current`` sub-fact (kernel round #3 §2
+        decision 4) — the same structural derivation as
+        :meth:`tradability_facts_current`, for the account-halt source
+        instead of the tradability one (no separate query TR consumer yet for
+        a broker-reaching scope)."""
+        return None if broker_reaching else True
 
     def _compute(self, instrument_class: str, generation: int | None) -> SessionFacts:
         reading = self._wall_clock.read()

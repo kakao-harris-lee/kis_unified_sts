@@ -202,26 +202,38 @@ def _lift_p02_capability_profile(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _lift_venue_session_account_facts(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Force item 12's OTHER half — :meth:`~tos_runtime.calendar.owner
-    .SessionFactsOwner.venue_session_account_facts_current` — to ``True`` (TOS
-    Phase 5 W5 plan §2 decision 3). This scope (MOCK_STOCK_ORDER) is
-    broker-reaching, so the real owner honestly returns ``None`` here (no
-    tradability/account-halt source exists yet for a broker scope) — a
-    SEPARATE, independent reason item 12 stays UNKNOWN from P0-2's
+    """Force item 12's OTHER half — the kernel composite over
+    :meth:`~tos_runtime.calendar.owner.SessionFactsOwner.session_facts_current` /
+    ``tradability_facts_current`` / ``account_facts_current`` (kernel round #3 §2
+    decision 4, superseding TOS Phase 5 W5 plan §2 decision 3's single
+    pre-composed method) — to ``True`` by forcing all three sub-facts ``True``.
+    This scope (MOCK_STOCK_ORDER) is broker-reaching, so the real owner
+    honestly returns ``None`` for tradability/account (no tradability/
+    account-halt source exists yet for a broker scope) — a SEPARATE,
+    independent reason item 12 stays UNKNOWN from P0-2's
     ``broker_constraint_generation_current`` gate (module docstring; see
     :func:`test_honest_deny_full_evidence_level`'s pin distinguishing the two).
     The counterfactual/mutation-b tests below need BOTH halves lifted to reach
     a genuine SATISFIED send.
     """
 
-    def _always_true(  # noqa: ARG001 - fixed monkeypatch signature, args deliberately unused
-        self, instrument_class: str, *, broker_reaching: bool
+    def _always_true_session(  # noqa: ARG001 - fixed monkeypatch signature
+        self, instrument_class: str
+    ) -> bool:
+        return True
+
+    def _always_true_flag(  # noqa: ARG001 - fixed monkeypatch signature
+        self, *, broker_reaching: bool
     ) -> bool:
         return True
 
     monkeypatch.setattr(
-        SessionFactsOwner, "venue_session_account_facts_current", _always_true
+        SessionFactsOwner, "session_facts_current", _always_true_session
     )
+    monkeypatch.setattr(
+        SessionFactsOwner, "tradability_facts_current", _always_true_flag
+    )
+    monkeypatch.setattr(SessionFactsOwner, "account_facts_current", _always_true_flag)
 
 
 def _verify_item_payloads(runtime) -> list[dict[str, Any]]:
@@ -909,12 +921,15 @@ def test_mutation_e_lifting_only_venue_session_account_facts_switches_the_item12
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """(e) TOS Phase 5 W5 — the mirror of mutation (d): lift ONLY
-    ``venue_session_account_facts_current`` (the P0-2 capability-profile facts
-    untouched). Item 12 stays UNKNOWN, but the reason text SWITCHES to the
-    OTHER branch (``broker_constraint_generation_current`` blocked by P0-2) —
-    proving the two reasons are genuinely independent and distinguishable,
-    not one fact silently masking the other."""
+    """(e) TOS Phase 5 W5 — the mirror of mutation (d): lift ONLY the venue-half
+    sub-facts (the P0-2 capability-profile facts untouched). Item 12's outcome
+    SWITCHES from UNKNOWN to the OTHER branch's own outcome — DENIED, not
+    UNKNOWN (kernel round #3 §11 결정 5: ``broker_constraint_generation_current``
+    is a strict ``bool`` here, and the DRAFT/unapproved-INSTANCE P0-2 gap makes
+    it honestly ``False``, which now denies explicitly rather than folding into
+    ``UNKNOWN``) — and the reason text names the broker-constraint half,
+    proving the two reasons are genuinely independent and distinguishable, not
+    one fact silently masking the other."""
     _activate_and_admit(config_dir, custody_root)
     fx.write_kis_mock_transport_config(config_dir)
     _lift_venue_session_account_facts(monkeypatch)
@@ -940,7 +955,7 @@ def test_mutation_e_lifting_only_venue_session_account_facts_switches_the_item12
         for v in verdicts
         if v["item"] == "VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION"
     )
-    assert item12_verdict["outcome"] == "UNKNOWN"
+    assert item12_verdict["outcome"] == "DENIED"
     assert "broker-constraint generation" in item12_verdict["detail"]
     assert "venue / session" not in item12_verdict["detail"]
 

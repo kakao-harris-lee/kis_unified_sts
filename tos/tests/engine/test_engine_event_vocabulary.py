@@ -40,6 +40,7 @@ from tos.ordering import OrderingEvent
 from ._engine_fixtures import (
     RecordingTransmit,
     build_core,
+    corporate_action_event,
     decision_tick,
     instrument_key,
     issue_capsule,
@@ -48,15 +49,29 @@ from ._engine_fixtures import (
 
 
 class _BogusEvent:
-    """An object shaped like an event but carrying a kind outside the closed vocabulary."""
+    """An object shaped like an event but carrying a kind outside the closed vocabulary.
+
+    ``"CORPORATE_ACTION"`` is now a REAL :class:`EventKind` member's value (kernel round #3 §2
+    결정 1) — but this bare **string** is still not admitted, because :func:`admit_kind` checks
+    positive membership of the exact enum object, never string equality (the SAME distinction
+    :func:`test_a_string_that_merely_matches_a_member_value_is_not_admitted` locks for
+    ``"DECISION_TICK"``, now parametrized here too). Admitting this string would require the
+    caller to have actually constructed ``EventKind.CORPORATE_ACTION``, not merely a lookalike
+    string — this fixture proves that boundary still holds even once the member is real.
+    """
 
     kind = "CORPORATE_ACTION"
 
 
-def test_the_vocabulary_is_exactly_the_two_declared_kinds() -> None:
-    """(§2.2) The closed set and the enum agree — no member is admissible-but-unlisted."""
+def test_the_vocabulary_is_exactly_the_three_declared_kinds() -> None:
+    """(§2.2; kernel round #3 §2 결정 1) The closed set and the enum agree — no member is
+    admissible-but-unlisted. This test used to pin exactly two kinds; that pin is now false —
+    round #3 added ``CORPORATE_ACTION`` as the enum-addition-only extension design #31 §2.2
+    itself anticipated (the dispatcher interface did not change: :func:`admit_kind` and the
+    handler signature are exactly as before)."""
     assert frozenset(EventKind) == ADMISSIBLE_EVENT_KINDS
     assert sorted(k.value for k in ADMISSIBLE_EVENT_KINDS) == [
+        "CORPORATE_ACTION",
         "DECISION_TICK",
         "EGRESS_RESULT",
     ]
@@ -67,15 +82,25 @@ def test_the_vocabulary_is_exactly_the_two_declared_kinds() -> None:
     ["CORPORATE_ACTION", "CANCEL", "", None, 0, object(), _BogusEvent()],
 )
 def test_an_unknown_kind_is_a_fail_closed_error(bogus) -> None:
-    """(§7.2-7) Anything outside the closed vocabulary raises — it is never dropped silently."""
+    """(§7.2-7) Anything outside the closed vocabulary raises — it is never dropped silently.
+
+    ``"CORPORATE_ACTION"`` stays in this list even though it is now a real member's *value*
+    (kernel round #3 §2 결정 1) — see :class:`_BogusEvent`'s own docstring for why the bare
+    string is still refused."""
     with pytest.raises(UnknownEventKindError):
         admit_kind(bogus)
 
 
-def test_a_string_that_merely_matches_a_member_value_is_not_admitted() -> None:
-    """(§2.2) Admission is positive **membership**, not string equality — no coercion path."""
+@pytest.mark.parametrize(
+    "value", ["DECISION_TICK", "EGRESS_RESULT", "CORPORATE_ACTION"]
+)
+def test_a_string_that_merely_matches_a_member_value_is_not_admitted(value) -> None:
+    """(§2.2) Admission is positive **membership**, not string equality — no coercion path.
+
+    Parametrized over all three real member values (kernel round #3 §2 결정 1 added the third) —
+    a bare string identical to any of them is still refused."""
     with pytest.raises(UnknownEventKindError):
-        admit_kind("DECISION_TICK")
+        admit_kind(value)
 
 
 def test_the_core_refuses_an_event_whose_kind_is_outside_the_vocabulary() -> None:
@@ -85,25 +110,37 @@ def test_the_core_refuses_an_event_whose_kind_is_outside_the_vocabulary() -> Non
         core.handle(_BogusEvent())  # type: ignore[arg-type]
 
 
-def test_both_admissible_kinds_are_actually_handled() -> None:
-    """(§2.2) Every vocabulary member has a handler — an unhandled member is not a no-op."""
+def test_every_admissible_kind_is_actually_handled() -> None:
+    """(§2.2; kernel round #3 §2 결정 1) Every vocabulary member has a handler — an unhandled
+    member is not a no-op. This test used to name only two kinds; round #3's third
+    (``CORPORATE_ACTION``) reaches its own handler too, never an ``UnknownEventKindError``.
+    """
     core, _ = build_core(transmit=RecordingTransmit())
     for kind in ADMISSIBLE_EVENT_KINDS:
         assert admit_kind(kind) is kind
     assert core.handle(decision_tick(sequence=1)).kind is EventKind.DECISION_TICK
+    ca_result = core.handle(corporate_action_event(sequence=2))
+    assert ca_result.kind is EventKind.CORPORATE_ACTION
+    assert ca_result.nontrade_outcome is not None
 
 
 def test_an_event_payload_must_match_its_kind() -> None:
-    """(§2.2) The closed-vocabulary discipline reaches the payload shape too."""
+    """(§2.2; kernel round #3 §2 결정 1) The closed-vocabulary discipline reaches the payload
+    shape too — now over all three kinds, not two."""
     with pytest.raises(ValidationError, match="requires a decision_tick payload"):
         EngineEvent(kind=EventKind.DECISION_TICK)
     with pytest.raises(ValidationError, match="requires a egress_result payload"):
         EngineEvent(kind=EventKind.EGRESS_RESULT)
+    with pytest.raises(ValidationError, match="requires a corporate_action payload"):
+        EngineEvent(kind=EventKind.CORPORATE_ACTION)
 
 
 def test_an_event_may_not_carry_the_other_kinds_payload() -> None:
-    """(§2.2) Two payloads on one event is an ambiguous event — unconstructable."""
+    """(§2.2; kernel round #3 §2 결정 1) Two payloads on one event is an ambiguous event —
+    unconstructable. Covers all three O(n²) same-event pairings the three-kind vocabulary now
+    admits, not just the original two-kind pair."""
     tick = decision_tick(sequence=1)
+    ca = corporate_action_event(sequence=1)
     with pytest.raises(ValidationError, match="must not carry"):
         EngineEvent(
             kind=EventKind.DECISION_TICK,
@@ -113,6 +150,22 @@ def test_an_event_may_not_carry_the_other_kinds_payload() -> None:
                 attempt_id="a",
                 kind=EgressResultKind.ACK,
             ),
+        )
+    with pytest.raises(ValidationError, match="must not carry"):
+        EngineEvent(
+            kind=EventKind.DECISION_TICK,
+            decision_tick=tick.decision_tick,
+            corporate_action=ca.corporate_action,
+        )
+    with pytest.raises(ValidationError, match="must not carry"):
+        EngineEvent(
+            kind=EventKind.EGRESS_RESULT,
+            egress_result=EgressResultPayload(
+                instrument_key=instrument_key(),
+                attempt_id="a",
+                kind=EgressResultKind.ACK,
+            ),
+            corporate_action=ca.corporate_action,
         )
 
 

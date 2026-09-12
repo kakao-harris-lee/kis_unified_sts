@@ -284,18 +284,24 @@ def test_the_consumed_magnitude_accessor_reads_the_projection_and_changes_nothin
     assert core.ledger.admits_new_exposure(key) is False
 
 
-def test_the_accessor_is_not_a_release_path_under_any_of_the_four_forbidden_names() -> (
-    None
-):
-    """(design #35 §5.3) A read accessor was added; no release path was.
+def test_the_accessor_is_a_read_and_release_is_the_only_gated_mutator() -> None:
+    """(design #35 §5.3; kernel round #3 §2 decision 5) A read accessor was added; ``free`` /
+    ``clear`` / ``reset`` were not, and never became, mutators here — ``release`` is the ONE
+    exception, and it is a typed, token-gated exception, not a bare name.
 
-    The projection deliberately has no ``release`` / ``free`` / ``clear`` / ``reset`` — releasing
-    capacity is the RCL's act (RFC-002 §9.1:557) and a producer-local counter may not create
-    headroom (§9.1:558). The accessor is none of those, and the absence is grepped rather than
-    asserted in prose (the #27 anti-phantom discipline).
+    This test used to pin the total absence of every one of the four forbidden spellings,
+    ``release`` included, when the projection truly had no release path of any kind. That pin is
+    now false: round #3 added :meth:`~tos.engine.state.ProvisionalReservationLedger.release`,
+    gated on a :class:`~tos.engine.state.FinalityProofRef` token (never a response kind or bare
+    string) and called only after the RCL-owned finality-release consumer has already recorded
+    the release itself (RFC-002 §9.1:557-558 — the RCL remains sole capacity-mutation authority;
+    this projection's release only mirrors a fact already established there). ``free`` / ``clear``
+    / ``reset`` stay absent under every spelling, and the absence is grepped rather than asserted
+    in prose (the #27 anti-phantom discipline).
     """
     ledger = ProvisionalReservationLedger(max_unresolved_send_per_scope=1)
-    for name in ("release", "free", "clear", "reset"):
+    assert hasattr(ledger, "release")
+    for name in ("free", "clear", "reset"):
         assert not hasattr(ledger, name)
     assert hasattr(ledger, "outstanding_consumed_magnitude")
 
@@ -305,8 +311,17 @@ def test_the_accessor_is_not_a_release_path_under_any_of_the_four_forbidden_name
         if not name.startswith("_")
         and any(token in name for token in ("release", "free", "clear", "reset"))
     }
-    assert mutators == set()
-    assert CapacityState.RELEASED not in PROJECTION_ORDER
+    assert mutators == {"release"}, (
+        f"exactly one gated mutator spelling should exist ('release'), got {mutators!r} — a "
+        "second one would be an unreviewed, ungated new mutation surface"
+    )
+    assert CapacityState.RELEASED in PROJECTION_ORDER
+    # Calling release with anything other than the typed token is refused, not silently ignored —
+    # there is no response-kind/string path to RELEASED (mutation M5).
+    with pytest.raises(TypeError):
+        ledger.release("EGRESS_RESULT")  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        ledger.release(EgressResultKind.FULL_FILL)  # type: ignore[arg-type]
 
 
 def test_every_stage_request_carries_the_two_observations_restrictively() -> None:

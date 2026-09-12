@@ -609,3 +609,68 @@ def test_new_risk_halt_latch_receipt_is_uncompared_not_diverged(
     assert len(verdict.uncompared_halt_reasons) == 1
     event_id, halt_reason = verdict.uncompared_halt_reasons[0]
     assert halt_reason == NEW_RISK_HALTED_BY_COUPLING_VIOLATION
+
+
+# ===========================================================================
+# CORPORATE_ACTION replay comparison (kernel round #3 §2 결정 3)
+# ===========================================================================
+
+
+def test_corporate_action_replay_matches(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """A CORPORATE_ACTION event replays identically: same outcome_digest, same
+    nontrade_disposition — never uncompared, never diverged."""
+    driver = _driver(inbox, evidence_store, emergency_log)
+    driver.enqueue_and_run(fx.corporate_action_event(seq=1))
+
+    verdict = replay_engine(
+        inbox,
+        evidence_store,
+        emergency_log,
+        lambda: fx.build_core(transmit=None),
+        scheme=SCHEME,
+        window_events=None,
+    )
+    assert verdict.ok
+    assert verdict.total_compared == 1
+    assert verdict.diverged == ()
+
+
+def test_mutated_recorded_nontrade_disposition_is_detected_as_a_divergence(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """Mutation guard (kernel round #3 §2 결정 3): tamper ONLY the recorded
+    ``nontrade_disposition`` string (the ``outcome_digest`` stays byte-identical) — replay must
+    still catch it as a divergence, proving the disposition is compared as its own independent
+    signal, not folded silently into the digest comparison alone."""
+    driver = _driver(inbox, evidence_store, emergency_log)
+    driver.enqueue_and_run(fx.corporate_action_event(seq=1))
+
+    evidence_store.connection.execute("DROP TRIGGER IF EXISTS entries_no_update")
+    evidence_store.connection.execute(
+        "UPDATE entries SET payload_json = "
+        'REPLACE(payload_json, \'"nontrade_disposition":"NONTRADE_TRAPPED"\', '
+        '\'"nontrade_disposition":"NONTRADE_BLOCK_NEW_RISK"\') '
+        "WHERE kind = 'EVENT_CONSUMED'"
+    )
+
+    verdict = replay_engine(
+        inbox,
+        evidence_store,
+        emergency_log,
+        lambda: fx.build_core(transmit=None),
+        scheme=SCHEME,
+        window_events=None,
+    )
+    assert not verdict.ok
+    assert len(verdict.diverged) == 1
+
+    halts = evidence_store.connection.execute(
+        "SELECT COUNT(*) FROM entries WHERE kind = 'REPLAY_DIVERGED'"
+    ).fetchone()[0]
+    assert halts == 1
