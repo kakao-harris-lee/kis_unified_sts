@@ -1676,6 +1676,44 @@ class TestReleaseAdmissionRefusalBlocksBoot:
         assert "expected_code_digest" in str(excinfo.value)
 
 
+class TestIdentityCodeDigestBoundToObservation:
+    """Re-review disposition (HIGH, 2026-09-12) — ``release/admission.py``'s
+    ``_runtime_attestation_matches`` never actually read ``identity.code_digest``;
+    only ``observation``'s own digests were compared against config, so a
+    caller building ``identity`` from a constant instead of the real observation
+    went undetected by every prior test. ``_runtime_attestation_matches`` now
+    also requires ``identity.code_digest == observation.source_tree_digest``.
+    This pins that the M2-shaped mutation — ``_build_identity`` returning a
+    constant ``code_digest`` disconnected from the observation it was handed —
+    goes red: compose must refuse at STAGE A, before any sqlite file exists."""
+
+    def test_constant_identity_code_digest_refuses_at_stage_a(
+        self,
+        config_dir: Path,
+        data_dir: Path,
+        custody_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import tos_runtime.compose._wiring as wiring_module
+
+        real_build_identity = wiring_module._build_identity
+
+        def _constant_digest_build_identity(environment_label, code_digest):
+            identity = real_build_identity(environment_label, code_digest)
+            return identity.model_copy(
+                update={"code_digest": "a-hardcoded-constant-not-the-observation"}
+            )
+
+        monkeypatch.setattr(
+            wiring_module, "_build_identity", _constant_digest_build_identity
+        )
+        with pytest.raises(ReleaseAdmissionRefused):
+            _compose(tmp_path, config_dir, data_dir, custody_root)
+        assert list(data_dir.glob("*.sqlite3")) == []
+        assert list(custody_root.glob("*.sqlite3")) == []
+
+
 class TestSoftwareDeploymentOkThreadedIntoSafetyMesh:
     """Phase 5 W4 §2 decision 6 (2026-09-12 reorder) — ``_stage_b_release_probe``
     now runs right after the RCL log is verified, BEFORE ``build_safety_mesh``, so

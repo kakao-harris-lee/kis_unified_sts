@@ -4,13 +4,16 @@
 compose-plan.md` §3 item 4).
 
 Calls the kernel's :func:`~tos.sci.predicates.software_deployment_ok_verdict`
-**only** — this module makes no admission decision of its own. The two
+**only** — this module makes no admission decision of its own. The THREE
 comparisons it performs itself are ``observation.source_tree_digest ==
-config.expected_code_digest`` and ``observation.dependency_set_digest ==
-config.expected_dependency_set_digest`` (Phase 5 W4 plan §2 decision 5 — the
+config.expected_code_digest``, ``observation.dependency_set_digest ==
+config.expected_dependency_set_digest``, and ``identity.code_digest ==
+observation.source_tree_digest`` (Phase 5 W4 plan §2 decision 5 — the
 ``observation`` is a REAL measurement from
 :mod:`tos_runtime.operations.dependency_admission`, replacing the earlier
-constant ``code_digest`` fixture): no kernel predicate computes
+constant ``code_digest`` fixture; the third comparison is a re-review
+disposition, HIGH, 2026-09-12 — ``identity.code_digest`` used to flow in
+unchecked): no kernel predicate computes
 ``RuntimeArtifactAttestation.runtime_artifact_match`` (the §18 runtime-
 measurement predicates are explicitly not-Phase-1, per that record's own
 module docstring), so this is "runtime input collection: equality" — the
@@ -75,10 +78,21 @@ def _runtime_attestation_matches(
     ``runtime_artifact_match`` — the module docstring's "runtime input
     collection: equality" fallback (no kernel predicate computes this).
 
-    ``runtime_artifact_match`` is ``True`` only when BOTH the observed
-    source-tree digest and the observed dependency-set digest match their
-    operator-approved expected values (Phase 5 W4 plan §2 decision 5 (e)) —
-    a single-coordinate match is not sufficient.
+    ``runtime_artifact_match`` is ``True`` only when the observed
+    source-tree digest and the observed dependency-set digest BOTH match
+    their operator-approved expected values (Phase 5 W4 plan §2 decision 5
+    (e)) AND ``identity.code_digest`` itself equals
+    ``observation.source_tree_digest`` (re-review disposition, HIGH,
+    2026-09-12: ``identity.code_digest`` was never actually read here —
+    only the observation's own digests were compared against config, so a
+    caller that built ``identity`` from a constant instead of the real
+    observation would go undetected; every green test still passed because
+    nothing checked the binding between the two. ``tos_runtime.compose
+    ._wiring._build_identity`` sets ``identity.code_digest`` FROM this same
+    observation, so on the real boot path this is always an identity
+    check — but it is a REAL check now, not an accident of two callers
+    agreeing by construction). A single-coordinate match is not
+    sufficient.
     """
     source_matches = (
         observation.source_tree_digest is not None
@@ -88,11 +102,16 @@ def _runtime_attestation_matches(
         observation.dependency_set_digest is not None
         and observation.dependency_set_digest == expected_dependency_set_digest
     )
-    match = source_matches and dependency_matches
+    identity_matches = (
+        identity.code_digest is not None
+        and identity.code_digest == observation.source_tree_digest
+    )
+    match = source_matches and dependency_matches and identity_matches
     attestation = RuntimeArtifactAttestation.issue(
         scheme=_SCHEME,
         attestation_id=f"attest-{identity.process_nonce}",
         runtime_continuity_generation=identity.runtime_generation,
+        workload_identity=identity.cell_id,
         actual_executable_and_image_digest=observation.source_tree_digest,
         actual_library_dependency_set_digest=observation.dependency_set_digest,
         observed_runtime_artifact_set_digest=observation.source_tree_digest,

@@ -65,6 +65,31 @@ def test_refuses_when_dependency_set_digest_mismatches(
     assert admitted is False
 
 
+def test_refuses_when_identity_code_digest_disagrees_with_the_observation(
+    identity: RuntimeIdentity, observation: RuntimeArtifactObservation
+) -> None:
+    """Re-review disposition (HIGH, 2026-09-12): ``identity.code_digest`` used
+    to flow into the attestation unread — only ``observation.source_tree_digest``
+    was ever compared against config, so a caller could hand in an ``identity``
+    built from a constant instead of the real observation and nothing would
+    catch it. Even when BOTH observation digests genuinely match config, a
+    disagreeing ``identity.code_digest`` must still deny."""
+    mismatched_identity = identity.model_copy(
+        update={"code_digest": "identity-built-from-a-constant-not-the-observation"}
+    )
+    restriction = ReleaseRestrictionLookup(resolved=True, active=None)
+    admitted = release_admission(
+        mismatched_identity,
+        AdmissionResult.ADMIT,
+        restriction,
+        currentness_current=True,
+        observation=observation,
+        expected_code_digest="digest-abc",
+        expected_dependency_set_digest="dep-digest-abc",
+    )
+    assert admitted is False
+
+
 def test_refuses_when_admission_is_not_admit(
     identity: RuntimeIdentity, observation: RuntimeArtifactObservation
 ) -> None:
