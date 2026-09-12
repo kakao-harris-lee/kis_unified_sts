@@ -122,3 +122,51 @@
 - **정직 상태(e2e 실증)**: `compose_paper_runtime` 경로의 실 FULL_FILL 핸드오프 → RCL `RELEASED`/`POSITION_CONSUMED` 행 0 · `CAPACITY_RELEASE_INTENT` 0 · `CAPACITY_RELEASE_HELD` 1(`NOT_CORROBORATED` · `WITNESS_NOT_INDEPENDENT`). 게이트 4 입력은 **기제상 독립이나 오늘 도달 가능한 입력에서는 값이 일치**(compose root 가 `InstrumentKey` 1개 · `finality.py` 가 `obligation_generation=0` 고정) — 다중 instrument compose root 또는 실 정정 레인이 붙어야 분기 도달.
 - **구조적 발견(리뷰어 확인)**: CANCEL_ACK/EXPIRED/REJECT ⇒ `RELEASED` 경로는 witness 독립성과 **무관하게** 도달 불가 — `ReconciliationService._quantity_observations` 가 수량 CORROBORATED 에 독립 수치 관측 2개를 요구하나 `EgressResultPayload` 검증기가 이 세 kind 의 수량을 금지하고, `field_reconciled_proof_ok`(`tos/src/tos/recon/predicates.py:377`) 자체가 «cancel ACK ⇒ FQP 토큰 없음 ⇒ False» 를 의도 케이스로 명시. → **운영자 확인 지점 7**: (a) recon 서비스/커널 술어에 «종단 비체결 상태의 0-수량 대조 경로» 확장(커널 diff · 라운드 #2 후보) 또는 (b) 비체결 반환은 확장 전까지 영구 HOLD 수용. 권고: (a) 를 커널 라운드 #2 검토 항목으로 등재, 착지 전까지 (b).
 - **이월(LOW)**: 반환 시도당 evidence 클라이언트 측 스캔 6회(규약상 수용 · 병목 시 후속) · `finality_projection` 순환 테스트의 `sys.modules` 복원 잔여 1줄.
+
+## 11. 운영자 처분 — Phase 5 W1~W5 착지 후 (2026-09-12 · main `837afad3`)
+
+운영자가 W3.1/W3.2/W4/W5 계획 §6 의 확인 지점과 이월 항목을 선택지로 받아 **전부 추천안으로 결정**했다. 아래가 그 결정의 정본이며, 각 하위 계획의 §6 은 이 표를 가리킨다.
+
+### 11.1 다음 착수 순서
+
+| # | 결정 |
+|---|---|
+| 1 | **커널 라운드 #3 를 다음 웨이브로**(계획 `2026-09-12-tos-kernel-round-3-plan.md` 저작 → 레인 K) — 범위 = C1·C2·C4·C7(아래 11.3) |
+| 2 | 라운드 #3 **→** 런타임 엔트리포인트 웨이브(`ConstructionConfig` 로더 · CLI `run` 실구성 · `shutdown()`/projection/restore-drill 완전화 · **G-1 결선 포함**) **순차** — 커널 편집은 한 레인·한 시점 |
+
+### 11.2 결선 게이트
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 3 | **G-1 벽시계 값 노출**(W3.2 §6 ② · W5 §6 ①) | **승인** — `LocalWallClockReference` 를 컴포즈에 결선하되 `TrustworthyTimeService.health_state is TRUSTED` 일 때만 세션 사실 생산 · 스냅샷 `wall_clock_observation` 기입(`time/service.py:449`) · 슬라이스 #1 «값 비노출» 결정은 «TRUSTED 게이트 뒤 노출» 로 개정. 구현은 엔트리포인트 웨이브 |
+| 4 | G-2 item 16 보존 의무 트리거 발행자 변경(W3.2 §6 ③) | **보류** — 라운드 #3 검토 후 재상정 |
+| 5 | deferred 항목 `False ⇒ DENIED` 극성(라운드 #2 이월) | **확정** — 서비스의 명시적 False 는 DENIED(운영자 재무장 필요) |
+| 6 | egress item 5 `live_scope_valid`(W3.1 §6) | **None 유지**(원천 없음 정직 · attestation 부활 안 함) |
+| 7 | 새 세대 evidence 키 파일만 존재 시 부팅 거부(W4 §6 ④) | **확정**(deny-first) |
+| 8 | 스키마 마이그레이션은 CLI `migrate` 만 · 부팅 자동 적용 0(W4 §6 ③) | **확정** |
+| 9 | 합성(비브로커) 스코프에서 item 12 의 tradability/account 반쪽 «구조적 True»(W5 §6 ④) | **승인**(Phase 4 `derive_item6_item12` 와 동일 관용구 · 브로커 스코프는 None) |
+| 10 | 만기 처리 = 캘린더 `EXPIRED` 위상 + 커널 멤버십 거부(W5 §6 ⑤) | **현 방식 유지** — 커널 만기 술어(C3)는 라운드 #3 범위에서 제외 |
+
+### 11.3 커널 라운드 #3 범위
+
+| 포함 | 제외(사유) |
+|---|---|
+| **C1** `EventKind.CORPORATE_ACTION` + 엔진 dispatch(nontrade 이벤트 엔진 진입 · 핸들러는 disposition 소비·cause 토큰 발행까지 · 용량 적용 0) · **C2** item 12 세션·계좌 합성 술어(`venue_session_account_facts_current` 의 커널 정의 · 라운드 #2 `mesh.py` 분리 패턴) · **C4** W2-K(엔진 투영 `RELEASED` · ⓖ dedup 세대 · Phase 5 §10 운영자 확인 6 해소) · **C7** 문언 정정(`egressgw/__init__` «no owning runtime producer» · staterestore composite ledger 주석 · 본 계획 §2 결정 2 `RESUME_CONSERVATIVE` → `ReadinessVerdict.READY`) | C3 만기 술어(결정 10) · C5 스키마/backup/키 연속성 커널 어휘화(런타임 전용으로 충분) · C6 `tos.obs`(ADR-DEV-014 Proposed 상태 · spec 선행) · C8 orthostate 조정 API(규모 큼 · 별도 라운드) |
+
+### 11.4 값 확정
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 11 | 캘린더 값 | **제안값 채택**: 주식 정규 09:00–15:30 · 프리마켓 08:30–08:40 · 시간외 15:40–16:00 · 선물 정규 08:45–15:45 · 야간 18:00→05:00(마감 캡처 06:00 은 레거시 별도 키) · 만기 둘째 목요일 [3,6,9,12] · 2026 휴장일 = `config/market_schedule.yaml` 기준(2026-08-17 대체휴일 포함 · `shared/calendar.py` 하드코딩 표는 정정 대상) · 위상 어휘 `PRE_OPEN/CONTINUOUS/AFTER_HOURS/CLOSED/EXPIRED` · `calendar_version = "krx-2026.09"` — 적용 = 엔트리포인트 웨이브가 `calendar.yaml` 실파일로 착지 |
+| 12 | 의존성 기대 digest(`expected_code_digest`·`expected_dependency_set_digest`) | **보류(운영자 수동)** — paper 서버에서 `tos-runtime print-digests` 실행 후 `release.yaml` 기입 · 개발 트리 값은 e2e 픽스처가 자체 계산 |
+| 13~15 | transport 값 제안표(T2 이월) · 안전 메시 정책값 제안표(W3.1 이월) · ⓘ 설정값(`max_send_result_wait_ms`·`replay_window_events`·finality 정책·장벽 timeout·회전 주기) | **개발 측 제안표 저작 → 운영자 승인** — `docs/plans/2026-09-12-tos-operator-value-proposals.md`(본 PR) · 승인 전 named-TBD null 유지 |
+| 16 | 재무장 2인 principal roster 배치 | **보류(운영자 수동 · 서버 custody 디렉터리)** — 파일 스키마는 제안표 문서에 수록 |
+
+### 11.5 배포·문서
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 17 | 대시보드 `/api/tos/projection` · compose `./data/tos_runtime:ro` · Caddy 매처 paper 서버 반영 | **예 — 운영자 수동 배포**(코드는 main `c626d878` 에 있음) |
+| 18 | spec 편집: `OPERATOR-001` owner = `tos_runtime.operator.projection` · KRX 세션/만기 사실 Broker Capability Profile INSTANCE 등재 | **예** — spec 거버넌스 PR 별도(bound 문서 무접촉 · 계약 본문 무접촉) |
+| 19 | `STM_ALERT_RESOLVED` 발행자(운영자 ack workflow) | **예** — 엔트리포인트 웨이브에 포함(HAG 승인 파일 관용구 · projection `unresolved` 소비) |
+| 20 | tzdata | **부팅 거부 유지**(서드파티 0 원칙 · 컨테이너 이미지가 시스템 tzdata 를 갖추는 것은 배포 책임) |
