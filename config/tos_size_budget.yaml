@@ -803,9 +803,10 @@ exceptions:
     `software_deployment_ok: bool | None = None` 파라미터 1개(§2 결정 6, STAGE B
     `release_admission` 결과를 SAFETY_ENVELOPE_PROFILE 로 관통 배선) + 도크스트링
     Args 항목 5줄 + `SafetyProfileService(...)` 호출에 인자 1줄 — 이 함수가 그
-    유일한 결선 지점이라 분해 대신 등재. `_wiring.py`(STAGE B 이전에 이 함수가
-    호출돼 그 시점엔 값이 없음)는 호출부를 고치지 않아 파라미터가 `None` 기본값을
-    그대로 쓴다 — 조작된 `True` 금지 원칙 유지, 배선 자체는 후속 과제로 이월.
+    유일한 결선 지점이라 분해 대신 등재. (같은 PR 의 `b5a3e7a1` 이 STAGE B
+    `_stage_b_release_probe` 를 이 함수 호출 앞으로 재배치해 `_wiring.py` 가
+    `software_deployment_ok=release_admitted` 실값을 넘긴다 — 최초 결선 시점의
+    «`None` 기본값·후속 이월» 문언은 W4 독립 리뷰 MEDIUM 1 로 정정.)
     **2026-09-12 Phase 5 W4 최종 후속 재등재 147→148**: `_SafetyMesh` 반환문에
     `peek_tick_snapshot=tick_cell.peek,` 1줄 추가(§2 결정 7 — operator projection
     이 `.clear()` 재호출 없이 마지막 스냅샷을 읽는 유일한 경로) — 이 함수가
