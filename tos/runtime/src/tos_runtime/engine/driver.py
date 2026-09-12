@@ -996,4 +996,5 @@ class EngineDriver:
             evidence_store=self._evidence_store,
             finality_producer=self._finality_producer,
             release_consumer=self._release_consumer,
+            ledger=self._core.ledger,
         )

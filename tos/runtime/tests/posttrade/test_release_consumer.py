@@ -488,7 +488,7 @@ def test_full_fill_with_independent_witness_releases_to_position_consumed(
         witness=_IndependentFullFillWitness(),
         monotonic_source=monotonic_source,
     )
-    consumer.consume(payload)
+    outcome = consumer.consume(payload)
 
     assert _reservation_state(rcl_log) is CapacityState.POSITION_CONSUMED
     assert _held_rows(evidence_store) == []
@@ -499,6 +499,89 @@ def test_full_fill_with_independent_witness_releases_to_position_consumed(
     assert len(intent_seqs) == 1
     assert len(rcl_seqs) >= 1
     assert intent_seqs[0] < rcl_seqs[-1]
+
+    # kernel round #3 §2 decision 5 W2-K wiring: consume() now REPORTS the release via
+    # ReleaseOutcome, so tos_runtime.engine.finality_projection can build a kernel
+    # FinalityProofRef and call the engine's own ledger.release(ref).
+    assert outcome.released is True
+    assert outcome.attempt_id == _ATTEMPT_ID
+    assert outcome.proof_digest == produced.proof.proof_id
+    assert outcome.evidence_seq == intent_seqs[0]
+    assert (
+        outcome.resolution_generation == 0
+    )  # SyntheticFinalityProducer's own hardcoded 0
+
+
+def test_full_fill_release_outcome_feeds_a_real_kernel_ledger_release(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    monotonic_source: FakeMonotonicSource,
+) -> None:
+    """The full kernel round #3 §2 decision 5 / W2-K chain, end to end at the unit level (the
+    real compose e2e suite cannot reach this: its one synthetic broker witness is never
+    independent, so gate 3 never corroborates there — see
+    ``tests/compose/test_compose_root.py::test_full_fill_hand_off_never_releases_rcl_capacity_end_to_end``).
+    Here gate 3 is stubbed to corroborate (mirroring
+    ``test_cancel_ack_releases_when_reconciliation_permits_it``'s own pattern), so this proves
+    the WIRING — ``FinalityReleaseConsumer.consume``'s ``ReleaseOutcome`` really does carry
+    everything :func:`~tos_runtime.engine.finality_projection.project_finality` needs to build a
+    kernel :class:`~tos.engine.state.FinalityProofRef` and release the engine's OWN in-memory
+    projection too."""
+    from tos.engine.state import FinalityProofRef, ProvisionalReservationLedger
+
+    producer = _producer()
+    payload = EgressResultPayload(
+        instrument_key=_KEY,
+        attempt_id=_ATTEMPT_ID,
+        kind=EgressResultKind.FULL_FILL,
+        filled_quantity=Decimal("10"),
+        remaining_quantity=Decimal("0"),
+    )
+    produced = producer.produce(payload)
+    assert produced is not None
+    evidence_store.append(
+        produced.record.model_dump(mode="json"),
+        kind="ECONOMIC_OBLIGATION",
+        record_class="ECONOMIC_OBLIGATION",
+    )
+    evidence_store.append(
+        produced.proof.model_dump(mode="json"),
+        kind="POSTTRADE_FINALITY_PROOF",
+        record_class="POSTTRADE_FINALITY_PROOF",
+    )
+    inbox.record_finality_witness(_ATTEMPT_ID, True)
+    _record_full_fill_receipt(evidence_store, finality_proof_recorded=False)
+    _open_reservation(rcl_log)
+
+    consumer = _consumer(
+        rcl_log=rcl_log,
+        evidence_store=evidence_store,
+        inbox=inbox,
+        witness=_IndependentFullFillWitness(),
+        monotonic_source=monotonic_source,
+    )
+    outcome = consumer.consume(payload)
+    assert outcome.released is True
+
+    # The SAME attempt, projected in the engine's own in-memory ledger up to POTENTIALLY_LIVE --
+    # exactly where it sits right before an EGRESS_RESULT lands, in every real compose root.
+    ledger = ProvisionalReservationLedger(max_unresolved_send_per_scope=1)
+    ledger.commit_unbound(_KEY, proposal_id="proposal-relc-1")
+    ledger.bind_attempt(_KEY, attempt_id=_ATTEMPT_ID)
+    ledger.mark_potentially_live(_KEY)
+    application = ledger.apply_egress_result(payload)
+    assert application.applied is True
+    assert ledger.outstanding(_KEY).capacity_state is CapacityState.POSITION_CONSUMED
+
+    ref = FinalityProofRef(
+        attempt_id=outcome.attempt_id,
+        proof_digest=outcome.proof_digest,
+        evidence_seq=outcome.evidence_seq,
+        resolution_generation=outcome.resolution_generation,
+    )
+    assert ledger.release(ref) is True
+    assert ledger.outstanding(_KEY).capacity_state is CapacityState.RELEASED
 
 
 def test_full_fill_without_witness_holds(
@@ -527,12 +610,19 @@ def test_full_fill_without_witness_holds(
         witness=_IndependentFullFillWitness(),
         monotonic_source=monotonic_source,
     )
-    consumer.consume(payload)
+    outcome = consumer.consume(payload)
 
     assert _reservation_state(rcl_log) is CapacityState.POTENTIALLY_LIVE
     held = _held_rows(evidence_store)
     assert len(held) == 1
     assert held[0]["reason"] == ReleaseHoldReason.NO_WITNESS.value
+    # kernel round #3 §2 decision 5 W2-K wiring: a held (non-released) outcome carries no
+    # proof_digest/evidence_seq/resolution_generation -- the caller must not build a
+    # FinalityProofRef from it.
+    assert outcome.released is False
+    assert outcome.proof_digest is None
+    assert outcome.evidence_seq is None
+    assert outcome.resolution_generation is None
 
 
 # -- mutation pin (a): a non-positive report must hold even for a FULL_FILL payload ---
@@ -705,7 +795,7 @@ def test_cancel_ack_releases_when_reconciliation_permits_it(
         instrument=_INSTRUMENT,
         release_proof_wait_ms=60_000,
     )
-    consumer.consume(payload)
+    outcome = consumer.consume(payload)
 
     assert _reservation_state(rcl_log) is CapacityState.RELEASED
     assert _held_rows(evidence_store) == []
@@ -721,6 +811,13 @@ def test_cancel_ack_releases_when_reconciliation_permits_it(
     rcl_seqs = _kind_seq(evidence_store, "RCL_RESERVATION_TRANSITION")
     assert len(intent_seqs) == 1
     assert intent_seqs[0] < rcl_seqs[-1]
+
+    # kernel round #3 §2 decision 5 W2-K wiring.
+    assert outcome.released is True
+    assert outcome.attempt_id == _ATTEMPT_ID
+    assert outcome.evidence_seq == intent_seqs[0]
+    assert outcome.resolution_generation == 0
+    assert outcome.proof_digest is not None
 
 
 def test_cancel_ack_never_releases_under_the_current_reconciliation_model(

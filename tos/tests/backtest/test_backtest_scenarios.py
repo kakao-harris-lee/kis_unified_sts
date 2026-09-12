@@ -205,20 +205,26 @@ def test_row_2_partial_carries_the_remaining_magnitude_into_the_projection() -> 
 
 
 def test_row_3_reject_leaves_the_scope_occupied() -> None:
-    """(§5.1 row 3 / §2.1) Even a proven rejection frees nothing — release is the RCL's act.
+    """(§5.1 row 3 / §2.1) Even a proven rejection frees nothing through the ordinary result path
+    — release is the RCL's act.
 
     ``RELEASE_PENDING_PROOF`` sits among the most consumed ranks in the projection order
-    (``state.py:64`` — only ``QUARANTINED_UNKNOWN`` ranks above it, for genuinely unresolved
-    evidence, per Phase 3 wave 2 KW2b-#2), not a release: ``RELEASED`` is absent from the
-    vocabulary entirely (``state.py:57``).
+    (``state.py`` — only ``QUARANTINED_UNKNOWN``/``RELEASED`` rank above it, per Phase 3 wave 2
+    KW2b-#2 and kernel round #3 §2 decision 5 respectively). Applying this REJECT result through
+    ``apply_egress_result`` alone — never the dedicated, token-gated ``release`` — leaves the
+    scope occupied; ``free``/``clear`` remain absent under every spelling.
     """
     _run, core, _fill_model, _sink = run_scenario(scenario_for(ScenarioId.ENTRY_REJECT))
     assert core.ledger.admits_new_exposure(instrument_key()) is False
-    for forbidden in ("release", "free", "clear"):
+    for forbidden in ("free", "clear"):
         assert not hasattr(core.ledger, forbidden), (
             f"the projection exposes {forbidden!r} — releasing capacity is the RCL's "
             "(RFC-002 §9.1:557); a producer-local release would create headroom (:558)"
         )
+    assert (
+        core.ledger.outstanding(instrument_key()).capacity_state
+        is not CapacityState.RELEASED
+    ), "an ordinary REJECT result must never itself reach RELEASED (only release() may)"
 
 
 # ---------------------------------------------------------------------------

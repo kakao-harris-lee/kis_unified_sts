@@ -216,6 +216,15 @@ class EgressResultPayload(FrozenModel):
     K2-p3-#6) — never the driver's own ``reference`` coordinate, which is re-stamped on every
     re-enqueue and therefore cannot identify a genuine broker resend. It is ``None`` for a result
     that never reached a broker (e.g. a synthetic ``TIMEOUT`` injection).
+
+    ``resolution_generation`` (kernel round #3 §2 decision 5 ⓖ) is the extra duplicate-detection
+    axis :class:`~tos.engine.state.ProvisionalReservationLedger`'s dedup signature adds: when a
+    quarantine-resolution consumer resolves a TIMEOUT/UNKNOWN and the SAME result later arrives
+    again (byte-identical in every other field) at a *different* generation, that is a genuinely
+    new result, not the same one resent twice. ``None`` means "no generation tracked" — the honest
+    default for every producer that does not yet stamp one, and behaves exactly as the pre-round-3
+    5-tuple signature did (two ``None`` results with otherwise-identical fields still compare
+    equal, so ordinary producers are unaffected).
     """
 
     instrument_key: InstrumentKey
@@ -224,6 +233,7 @@ class EgressResultPayload(FrozenModel):
     filled_quantity: CanonicalDecimal | None = None
     remaining_quantity: CanonicalDecimal | None = None
     broker_execution_id: str | None = None
+    resolution_generation: int | None = None
     reference: OrderingEvent = OrderingEvent()
 
     @model_validator(mode="after")

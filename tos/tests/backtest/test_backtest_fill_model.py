@@ -250,6 +250,7 @@ def test_the_engine_egress_payload_has_no_price_field() -> None:
         "filled_quantity",
         "remaining_quantity",
         "broker_execution_id",
+        "resolution_generation",
         "reference",
     }
     assert not [name for name in field_names if "price" in name.lower()]

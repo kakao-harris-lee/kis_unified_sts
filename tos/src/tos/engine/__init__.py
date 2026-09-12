@@ -74,9 +74,13 @@ Where the honesty boundaries sit, explicitly:
 * **reproducibility, not distinctness.** The pipeline reproduces the same outcome from the same
   inputs; making *different* bars produce *different* identities depends on D-E2 distinct Snapshot
   digests (design #31 §6 Gap-1 / §9-9).
-* **release: impossible here.** The provisional projection has no release path at all, because
-  releasing capacity is the RCL's and a producer-local counter creates no headroom
-  (RFC-002 §9.1:557-558).
+* **release: gated on a finality-proof token only.** No egress result ever frees a scope through
+  the ordinary rank-advance path — releasing capacity is the RCL's act and a producer-local
+  counter creates no headroom (RFC-002 §9.1:557-558). The one exception (kernel round #3 §2
+  decision 5) is :meth:`~tos.engine.state.ProvisionalReservationLedger.release`, gated on a typed
+  :class:`~tos.engine.state.FinalityProofRef` — never a response kind or a bare string — and
+  called only after the RCL-owned finality-release consumer has already recorded the release
+  itself; this projection mirrors that fact, it does not originate one.
 
 The package is **pure, non-transmitting, authority-free, and clock-free**: it imports ``pydantic`` +
 stdlib + the allowlisted ``tos.*`` only; it reads no ``os.environ``, opens no socket, uses no
@@ -192,6 +196,7 @@ from tos.engine.state import (
     PROJECTION_ORDER,
     PROJECTION_RANK,
     QUARANTINE_RESOLUTION_EDGES,
+    FinalityProofRef,
     ProvisionalReservationLedger,
     ResultApplication,
     knowledge_for_result,
@@ -286,6 +291,7 @@ __all__ = [
     "PROJECTION_ORDER",
     "PROJECTION_RANK",
     "QUARANTINE_RESOLUTION_EDGES",
+    "FinalityProofRef",
     "ProvisionalReservationLedger",
     "ResultApplication",
     "knowledge_for_result",
