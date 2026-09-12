@@ -60,18 +60,29 @@ class FakeMonotonicSource:
         return self.value
 
 
+#: G-1 (team-lead follow-up, 2026-09-13): a fixed, non-None default wall
+#: reading. Anchor validity now needs a real Δwall-Δmono observation
+#: (``TrustworthyTimeService._observed_suspension_ms``) — a reader that never
+#: supplies a wall value can no longer reach TRUSTED at all, which would
+#: break every existing ``make_trusted()``-driven test in this package.
+#: Held CONSTANT across every read() by default (this class's instances are
+#: never mutated between evaluate() calls unless a test does so explicitly),
+#: so Δwall == 0 and the observed suspension is always exactly 0 for every
+#: test that isn't specifically about wall-clock/suspension semantics.
+_DEFAULT_TEST_WALL_CLOCK_UNIX_MS = 1_700_000_000_000
+
+
 @dataclass
 class FakeReferenceReader:
     reachable: bool = True
     healthy: bool = True
     quality: str | None = "FAKE"
     common_mode_group: str | None = None
-    #: G-1 (runtime operations wiring plan §2 decision 1) — ``None`` by
-    #: default (every existing fixture/test in this package predates G-1 and
-    #: does not care about a wall-clock value); a test that DOES (e.g. a real
-    #: ``TrustworthyTimeService``-backed future-dated-approval pin) sets this
+    #: G-1 (runtime operations wiring plan §2 decision 1) — a fixed, static
+    #: default (see :data:`_DEFAULT_TEST_WALL_CLOCK_UNIX_MS`'s own docstring);
+    #: a test proving the "no wall clock at all" gap sets this to ``None``
     #: explicitly.
-    wall_clock_unix_ms: int | None = None
+    wall_clock_unix_ms: int | None = _DEFAULT_TEST_WALL_CLOCK_UNIX_MS
 
     def read(self) -> ReferenceObservation:
         return ReferenceObservation(

@@ -144,6 +144,14 @@ class TrustworthyTimeService:
         #: G-1 (decision 8): whether the TIME_WALL_CLOCK_EXPOSED announcement
         #: has already been appended for this service instance.
         self._wall_clock_exposed = False
+        #: G-1 (team-lead follow-up, 2026-09-13): the previous cycle's
+        #: ``(now_ms, wall_clock_unix_ms)`` reading pair — ``None`` until the
+        #: first ``evaluate()`` completes. Feeds :meth:`_observed_suspension_ms`
+        #: on the NEXT cycle; updated only after a cycle's own evidence append
+        #: succeeds (same "no state moves before the receipt" discipline as
+        #: every other mutation in :meth:`evaluate`).
+        self._previous_monotonic_ms: int | None = None
+        self._previous_wall_clock_unix_ms: int | None = None
 
     @property
     def health_state(self) -> HealthState:
@@ -257,69 +265,58 @@ class TrustworthyTimeService:
             )
         return from_state
 
-    def _anchor_ok(self, anchor: TimeContinuityIdentity, now_ms: int) -> bool:
+    def _anchor_ok(
+        self, anchor: TimeContinuityIdentity, now_ms: int, *, suspension_ms: int | None
+    ) -> bool:
         """Kernel ``anchor_valid`` call: is ``anchor`` still continuous at ``now_ms``?
 
-        ``suspension_ms=0`` here is a **known, documented literal**, not an
-        observed value (survey ``scratchpad/ep-survey-wiring.md` §1b`` and
-        runtime operations wiring plan §2 decision 2's own parenthetical
-        anticipated exactly this finding). It is deliberately left
-        UNCHANGED by this wave: replacing it with the honest per-cycle
-        observation (:meth:`_observed_suspension_ms`, which is ``None``
-        whenever ``expected_evaluate_cadence_ms`` is unset — the config
-        state of every shipped example and, as surveyed, every existing test
-        fixture across this distribution) makes kernel ``anchor_valid``
-        return ``False`` unconditionally (``tos/src/tos/time/predicates.py``
-        :143-145: ``suspension_ms is None`` => invalid), which makes
-        ``HealthState.TRUSTED`` permanently unreachable anywhere this literal
-        currently lets it be reached — including the ~30 ``_reach_trusted()``
-        call sites across ``tests/compose/test_compose_root.py`` and every
-        downstream compose e2e file (owned by other lanes/shared infra, not
-        this lane), plus this lane's own ``tests/time/test_service.py`` /
-        ``tests/authority/*`` TRUSTED-reaching tests. This is a real,
-        confirmed finding (not a guess) reported back to the team lead rather
-        than applied unilaterally, since fixing the fallout crosses lane
-        ownership boundaries and only a real ``expected_evaluate_cadence_ms``
-        value (still named-TBD, plan §6 confirmation point ②) resolves it
-        honestly. Decision 2's OTHER half — exposing the observation on the
-        issued snapshot's ``suspension_status`` when a cadence IS configured
-        — is implemented below (:meth:`_observed_suspension_ms`,
-        :meth:`evaluate`) and does not touch this literal.
+        ``suspension_ms`` is the REAL per-cycle observation from
+        :meth:`_observed_suspension_ms` (team-lead follow-up, 2026-09-13,
+        superseding an earlier ``suspension_ms=0`` literal this method used
+        to pass unconditionally — see git history for that finding). ``None``
+        on the very first ``evaluate()`` cycle (no previous reading to diff
+        against) makes the kernel's own ``anchor_valid`` refuse (``tos/src/
+        tos/time/predicates.py`` :143-145: ``suspension_ms is None`` =>
+        invalid) — harmless there, since the first cycle's own
+        ``UNINITIALIZED -> SYNCHRONIZING`` transition never consults
+        ``anchor_ok`` in the first place (:meth:`_propose_transition`).
         """
         continuity_now = anchor.model_copy(update={"monotonic_anchor_value": now_ms})
         return anchor_valid(
             continuity_now,
             anchor,
-            suspension_ms=0,
+            suspension_ms=suspension_ms,
             max_suspension_ms=self._config.max_process_suspension_ms,
         )
 
     def _observed_suspension_ms(
-        self, anchor: TimeContinuityIdentity, now_ms: int
-    ) -> tuple[bool, int | None]:
-        """Compute this cycle's ``(suspended, suspension_ms)`` observation for
-        the issued snapshot's ``suspension_status`` (G-1, runtime operations
-        wiring plan §2 decision 2) — independent of :meth:`_anchor_ok`'s own
-        (unchanged, see its docstring) literal.
+        self, now_ms: int, wall_clock_unix_ms: int | None
+    ) -> int | None:
+        """This cycle's observed process-suspension magnitude (team-lead
+        follow-up, 2026-09-13, runtime operations wiring plan §2 decision 2):
+        ``max(0, Δwall_clock_ms - Δmonotonic_ms)`` between the PREVIOUS
+        ``evaluate()`` cycle's ``(monotonic, wall_clock)`` reading pair and
+        THIS cycle's — a real system suspend/sleep stops the monotonic clock
+        while the wall clock keeps advancing (an NTP step shows up the same
+        way), so a wall delta that outruns the monotonic delta is an honest,
+        conservative signal of exactly what the anchor predicate is meant to
+        protect against. Clamped at 0 (never negative — the monotonic clock
+        running AHEAD of the wall clock is not "negative suspension").
 
-        Returns ``(False, None)`` unchanged — the kernel default, exactly as
-        before this method existed — whenever
-        ``expected_evaluate_cadence_ms`` is unset (``None``). When set, the
-        elapsed monotonic gap since the anchor's last-ratcheted value is
-        compared against the configured cadence:
-        ``suspension_ms = max(0, elapsed - cadence)``, and ``suspended`` is
-        whether the RAW elapsed gap itself exceeds
-        ``max_process_suspension_ms`` (an absolute bound, independent of the
-        cadence-relative magnitude).
+        Returns ``None`` — never a fabricated ``0`` — whenever no comparison
+        is possible: the first ``evaluate()`` cycle ever (no previous
+        reading), or either the previous or current cycle's reference
+        reader(s) supplied no wall-clock value at all
+        (:attr:`~tos_runtime.time.sources.ReferenceObservation.
+        wall_clock_unix_ms` was ``None`` that cycle).
         """
-        cadence = self._config.expected_evaluate_cadence_ms
-        if cadence is None:
-            return False, None
-        anchor_value = anchor.monotonic_anchor_value or now_ms
-        elapsed = max(0, now_ms - anchor_value)
-        suspension_ms = max(0, elapsed - cadence)
-        suspended = elapsed > self._config.max_process_suspension_ms
-        return suspended, suspension_ms
+        prev_mono = self._previous_monotonic_ms
+        prev_wall = self._previous_wall_clock_unix_ms
+        if prev_mono is None or prev_wall is None or wall_clock_unix_ms is None:
+            return None
+        delta_wall = wall_clock_unix_ms - prev_wall
+        delta_mono = now_ms - prev_mono
+        return max(0, delta_wall - delta_mono)
 
     def _read_reference_sources(
         self,
@@ -590,12 +587,16 @@ class TrustworthyTimeService:
         generation, anchor = self._require_started()
         now_ms = self._monotonic.now_ms()
 
-        anchor_ok = self._anchor_ok(anchor, now_ms)
         kernel_sources, reachable_count, wall_clock_observation = (
             self._read_reference_sources()
         )
+        suspension_ms = self._observed_suspension_ms(now_ms, wall_clock_observation)
+        suspended = (
+            suspension_ms is not None
+            and suspension_ms > self._config.max_process_suspension_ms
+        )
+        anchor_ok = self._anchor_ok(anchor, now_ms, suspension_ms=suspension_ms)
         required_ok = self._required_ok(anchor_ok, kernel_sources, reachable_count)
-        suspended, suspension_ms = self._observed_suspension_ms(anchor, now_ms)
 
         applied_state, reason, commit_generation, next_anchor = self._decide_transition(
             self._health_state, anchor_ok, required_ok, generation, anchor, now_ms
@@ -657,6 +658,11 @@ class TrustworthyTimeService:
         self._health_state = applied_state
         self._last_transition_reason = reason
         self._snapshot = snapshot
+        # Feeds the NEXT cycle's _observed_suspension_ms — captured
+        # unconditionally (regardless of this cycle's health-state outcome),
+        # same as every other post-receipt mutation above.
+        self._previous_monotonic_ms = now_ms
+        self._previous_wall_clock_unix_ms = wall_clock_observation
         return snapshot
 
     def wall_clock_now(self) -> int | None:

@@ -42,6 +42,19 @@ class FakeMonotonicSource:
         return self.value
 
 
+#: G-1 (team-lead follow-up, 2026-09-13): a fixed, non-None default wall
+#: reading for :class:`FakeReferenceReader` — since anchor validity now needs
+#: a REAL Δwall-Δmono observation (:meth:`~tos_runtime.time.service
+#: .TrustworthyTimeService._observed_suspension_ms`), a reader that never
+#: supplies a wall value can no longer reach TRUSTED at all (no comparison is
+#: possible). Every test in this file that does not care about wall-clock
+#: semantics gets this STATIC value by default — held constant across every
+#: read() unless a test explicitly varies ``.wall_clock_unix_ms`` between
+#: calls, so ``Δwall == 0`` and the observed suspension is always exactly
+#: ``0`` (never a source of flakiness for tests that aren't about this).
+_DEFAULT_TEST_WALL_CLOCK_UNIX_MS = 1_700_000_000_000
+
+
 @dataclass
 class FakeReferenceReader:
     """A reference reader whose observation is set explicitly by the test."""
@@ -50,10 +63,11 @@ class FakeReferenceReader:
     healthy: bool = True
     quality: str | None = "FAKE"
     common_mode_group: str | None = None
-    #: G-1 (runtime operations wiring plan §2 decision 1) — None by default,
-    #: matching every EXISTING test in this file (none of them care about a
-    #: wall-clock value); a test that does sets this explicitly.
-    wall_clock_unix_ms: int | None = None
+    #: G-1 (runtime operations wiring plan §2 decision 1) — a fixed, static
+    #: default (see :data:`_DEFAULT_TEST_WALL_CLOCK_UNIX_MS`'s own docstring);
+    #: a test proving the "no wall clock at all" gap sets this to ``None``
+    #: explicitly.
+    wall_clock_unix_ms: int | None = _DEFAULT_TEST_WALL_CLOCK_UNIX_MS
 
     def read(self) -> ReferenceObservation:
         return ReferenceObservation(
@@ -572,21 +586,28 @@ def test_wall_clock_now_reverts_to_none_after_untrusted_regression() -> None:
     assert service.wall_clock_now() is None
 
 
-def test_reader_without_a_wall_clock_value_never_fabricates_one() -> None:
-    """A reference reader that does not supply wall_clock_unix_ms (the
-    default for every reader in this file's fixtures) must never see one
-    invented on its behalf — the snapshot's observation stays honestly
-    None even once TRUSTED."""
+def test_reader_without_a_wall_clock_value_never_fabricates_one_and_keeps_trusted_unreachable() -> (
+    None
+):
+    """A reference reader that never supplies wall_clock_unix_ms must never
+    see one invented on its behalf — AND, since anchor validity now needs a
+    real Δwall-Δmono comparison (team-lead follow-up, 2026-09-13), a service
+    with no wall-observing reader at all can no longer reach TRUSTED: there
+    is never a comparison to make (:meth:`TrustworthyTimeService
+    ._observed_suspension_ms` returns ``None`` forever, which the kernel's
+    own ``anchor_valid`` treats as invalid)."""
     monotonic = FakeMonotonicSource(1000)
     service, _ = _build(
-        monotonic=monotonic
-    )  # default FakeReferenceReader: no wall clock
+        monotonic=monotonic,
+        references=[FakeReferenceReader(wall_clock_unix_ms=None)],
+    )
     service.start()
     service.evaluate()  # -> SYNCHRONIZING
     monotonic.value = 1010
-    snap = service.evaluate()  # -> TRUSTED
-    assert service.health_state is HealthState.TRUSTED
+    snap = service.evaluate()  # still SYNCHRONIZING -- no wall observation ever
+    assert service.health_state is not HealthState.TRUSTED
     assert snap.wall_clock_observation is None
+    assert snap.suspension_status.suspension_ms is None
     assert service.wall_clock_now() is None
 
 
@@ -620,97 +641,89 @@ def test_time_wall_clock_exposed_evidence_appended_exactly_once() -> None:
 
 def test_time_wall_clock_exposed_never_fires_without_a_reading() -> None:
     monotonic = FakeMonotonicSource(1000)
-    service, evidence = _build(monotonic=monotonic)  # no wall clock configured
+    service, evidence = _build(
+        monotonic=monotonic,
+        references=[FakeReferenceReader(wall_clock_unix_ms=None)],
+    )
     service.start()
     service.evaluate()
     monotonic.value = 1010
-    service.evaluate()  # -> TRUSTED, but no wall-clock observation
-    assert service.health_state is HealthState.TRUSTED
+    service.evaluate()  # never TRUSTED -- no wall reader to observe suspension from
+    assert service.health_state is not HealthState.TRUSTED
     assert not any(r.kind == "TIME_WALL_CLOCK_EXPOSED" for r in evidence.appended)
 
 
 # ----------------------------------------------------------------------------
-# G-1 (decision 2) — expected_evaluate_cadence_ms-gated suspension_status
+# G-1 (team-lead follow-up, 2026-09-13) — observed_suspension_ms =
+# max(0, Δwall_clock_ms - Δmonotonic_ms) between consecutive evaluate() cycles,
+# fed into BOTH the kernel anchor_valid call and the issued snapshot's
+# suspension_status. Supersedes the earlier expected_evaluate_cadence_ms
+# config key (removed — one source for one fact).
 # ----------------------------------------------------------------------------
 
 
-def test_suspension_status_stays_unfilled_when_cadence_is_unset() -> None:
-    """Unchanged behavior (the current, shipped state): every existing
-    config in this distribution leaves expected_evaluate_cadence_ms null,
-    so suspension_status must stay exactly the kernel default."""
+def test_two_real_evaluate_cycles_with_the_real_local_reader_reach_trusted() -> None:
+    """(a) The REAL local wall-clock reader (not a fake) paired with a
+    controllable monotonic source: two evaluate() cycles reach TRUSTED, and
+    the issued snapshot's suspension_status.suspension_ms is a real,
+    computed, small non-negative int -- never None (a comparison WAS made)
+    and never a large/fabricated value (real wall time barely moves between
+    two in-process calls)."""
+    from tos_runtime.time.sources import LocalSystemClockReader
+
     monotonic = FakeMonotonicSource(1000)
-    service, _ = _build(monotonic=monotonic)  # _config()'s cadence is None
+    service, _ = _build(
+        monotonic=monotonic,
+        references=[LocalSystemClockReader()],
+        config=_config(max_process_suspension_ms=5000),
+    )
     service.start()
-    service.evaluate()
+    service.evaluate()  # -> SYNCHRONIZING (first cycle: no previous reading yet)
     monotonic.value = 1010
-    snap = service.evaluate()
-    assert snap.suspension_status.suspended is False
-    assert snap.suspension_status.suspension_ms is None
-
-
-def test_suspension_ms_is_computed_when_cadence_is_configured() -> None:
-    """M7 (plan §5 mutation table, positive direction): with a real cadence
-    configured, a gap larger than it produces a positive suspension_ms —
-    proving the fill-in is not a dead branch."""
-    monotonic = FakeMonotonicSource(1000)
-    service, _ = _build(
-        monotonic=monotonic,
-        config=_config(expected_evaluate_cadence_ms=5, max_process_suspension_ms=1000),
-    )
-    service.start()
-    service.evaluate()  # -> SYNCHRONIZING, anchor at 1000
-    monotonic.value = 1010  # elapsed 10ms since the anchor, cadence 5ms
-    snap = service.evaluate()
-    assert snap.suspension_status.suspension_ms == 5  # max(0, 10 - 5)
-    assert (
-        snap.suspension_status.suspended is False
-    )  # 10 <= max_process_suspension_ms(1000)
-
-
-def test_suspension_ms_clamps_to_zero_within_cadence() -> None:
-    monotonic = FakeMonotonicSource(1000)
-    service, _ = _build(
-        monotonic=monotonic,
-        config=_config(
-            expected_evaluate_cadence_ms=1000, max_process_suspension_ms=1000
-        ),
-    )
-    service.start()
-    service.evaluate()
-    monotonic.value = 1010  # elapsed 10ms, well within the 1000ms cadence
-    snap = service.evaluate()
-    assert snap.suspension_status.suspension_ms == 0
-    assert snap.suspension_status.suspended is False
-
-
-def test_suspended_flag_reflects_the_raw_elapsed_gap_not_the_cadence() -> None:
-    """`suspended` is gated on the ABSOLUTE max_process_suspension_ms bound
-    (independent of the cadence-relative suspension_ms magnitude) —
-    deliberately different denominators for the two fields."""
-    monotonic = FakeMonotonicSource(1000)
-    service, _ = _build(
-        monotonic=monotonic,
-        config=_config(expected_evaluate_cadence_ms=1, max_process_suspension_ms=5),
-    )
-    service.start()
-    service.evaluate()
-    monotonic.value = 1010  # elapsed 10ms > max_process_suspension_ms(5)
-    snap = service.evaluate()
-    assert snap.suspension_status.suspended is True
-    assert snap.suspension_status.suspension_ms == 9  # max(0, 10 - 1)
-
-
-def test_anchor_ok_literal_is_unchanged_this_wave() -> None:
-    """Documents the deliberate scope boundary (service.py's own _anchor_ok
-    docstring): reaching TRUSTED with the default (cadence-unset) config
-    still works exactly as before -- this wave does NOT feed the observed
-    suspension_ms into the kernel anchor_valid call, because doing so would
-    make TRUSTED permanently unreachable everywhere no real cadence value
-    is configured (confirmed, not merely feared: see the docstring)."""
-    monotonic = FakeMonotonicSource(1000)
-    service, _ = _build(monotonic=monotonic)  # default config: cadence unset
-    service.start()
-    service.evaluate()
-    monotonic.value = 1010
-    service.evaluate()
+    snap = service.evaluate()  # -> TRUSTED
     assert service.health_state is HealthState.TRUSTED
+    assert snap.suspension_status.suspension_ms is not None
+    assert 0 <= snap.suspension_status.suspension_ms < 5000
+    assert snap.suspension_status.suspended is False
+
+
+def test_a_wall_clock_jump_far_beyond_the_bound_is_observed_as_suspended() -> None:
+    """(b) M7 replacement: a reference reader whose SECOND reading jumps by
+    `max_process_suspension_ms + 1000` while the monotonic clock advances
+    only 10ms -- an honest signal of a real suspend/sleep (or an NTP step).
+    `suspended` must be True and TRUSTED must not be reached. Mutation
+    companion: reverting `_anchor_ok` to the old `suspension_ms=0` literal
+    makes this go red (the jump would be silently ignored)."""
+    monotonic = FakeMonotonicSource(1000)
+    reader = FakeReferenceReader(wall_clock_unix_ms=1_700_000_000_000)
+    service, _ = _build(
+        monotonic=monotonic,
+        references=[reader],
+        config=_config(max_process_suspension_ms=100),
+    )
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING (baseline reading captured)
+
+    monotonic.value = 1010  # Δmono = 10ms
+    reader.wall_clock_unix_ms += 100 + 1000  # Δwall = 1100ms >> Δmono
+    snap = service.evaluate()
+
+    assert service.health_state is not HealthState.TRUSTED
+    assert snap.suspension_status.suspended is True
+    assert snap.suspension_status.suspension_ms == 1090  # max(0, 1100 - 10)
+
+
+def test_first_evaluate_cycle_has_no_previous_reading_to_compare() -> None:
+    """(c) The very first evaluate() cycle can never observe a suspension —
+    there is no previous cycle to diff against. Harmless: this cycle's own
+    UNINITIALIZED -> SYNCHRONIZING transition never consults anchor_ok."""
+    monotonic = FakeMonotonicSource(1000)
+    service, _ = _build(
+        monotonic=monotonic,
+        references=[FakeReferenceReader(wall_clock_unix_ms=1_700_000_000_000)],
+    )
+    service.start()
+    snap = service.evaluate()
+    assert service.health_state is HealthState.SYNCHRONIZING
+    assert snap.suspension_status.suspension_ms is None
+    assert snap.suspension_status.suspended is False
