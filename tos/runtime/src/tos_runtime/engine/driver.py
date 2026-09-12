@@ -329,46 +329,34 @@ class EngineDriver:
 
         Args:
             core: The composed :class:`~tos.engine.EngineCore` — the SAME core instance for the
-                whole process lifetime (the ledger-reinstantiation prohibition
-                ``tos.backtest.driver`` documents applies here too, for the same reason).
+                whole process lifetime (``tos.backtest.driver``'s ledger-reinstantiation
+                prohibition applies here too, for the same reason).
             inbox: The durable event admission queue.
-            evidence_store: The durable evidence store — used both to append this driver's own
-                ``EVENT_HANDLING_STARTED``/``EVENT_CONSUMED`` receipts and to detect the two
+            evidence_store: The durable evidence store — appends this driver's own
+                ``EVENT_HANDLING_STARTED``/``EVENT_CONSUMED`` receipts and detects the two
                 crash-window conditions (see ``_process_next``'s own docstring).
             emergency_log: The sqlite-independent dual-path HALT log (independent review
-                finding #3) — used only for the "possibly live" crash-window case, where the
-                interrupted flow had already reached the send boundary before the crash.
-            scheme: The canonicalization scheme used for event identity and the outcome-digest
-                stand-in.
-            continuity_id: The single stream continuity every coordinate this driver issues
-                carries (:class:`_YieldOrderCounter`).
+                finding #3) — used only for the "possibly live" crash-window case.
+            scheme: The canonicalization scheme used for event identity and the outcome-digest stand-in.
+            continuity_id: The single stream continuity every coordinate this driver issues carries (:class:`_YieldOrderCounter`).
             monotonic_source: The injected monotonic clock for timeout injection (never a direct
                 ``time.monotonic()`` read — design #40 D1.1).
             max_send_result_wait_ms: The injected wait bound before a SENT_UNCONFIRMED hand-off is
-                timed out (independent review finding #14: this used to be ``int | None`` with a
-                ``None`` "disable injection" escape hatch documented as a "fail-closed default" —
-                never injecting a TIMEOUT for a lost result is fail-SILENT, not fail-closed, and
-                compose has always supplied a concrete value anyway. A caller that genuinely wants
-                "never fires within this test" now passes a very large bound instead.
+                timed out (independent review finding #14: never ``None`` — a fail-SILENT
+                escape hatch, not fail-closed; a test wanting "never fires" passes a very large
+                bound instead).
             orthostate_projector: Projects every genuinely-``APPLIED`` ``EGRESS_RESULT`` onto the
-                ADR-002-005 orthostate dimensions (team-lead CR-4 dispatch, plan §2.2) — REQUIRED
-                (no default): an omitted projector is a silent absence, not a valid "off" mode
-                (:mod:`tos_runtime.engine.orthostate_projection`'s own coupling-safety property
-                only holds if this actually runs on every applied result).
+                ADR-002-005 orthostate dimensions (plan §2.2) — REQUIRED (no default): an omitted
+                projector is a silent absence, not a valid "off" mode
+                (:mod:`tos_runtime.engine.orthostate_projection`).
             finality_producer: Produces a SYNTHETIC post-trade finality proof for a ``FULL_FILL``
-                (team-lead CR-4 dispatch, plan §2.2) — REQUIRED (no default), for the same reason
-                as ``orthostate_projector`` (:mod:`tos_runtime.posttrade.finality`).
+                (plan §2.2) — REQUIRED, for the same reason as ``orthostate_projector``
+                (:mod:`tos_runtime.posttrade.finality`).
             recovery_composite_writer: TOS Phase 5 W1 GAP 2 — durably persists the composite state
-                :attr:`_orthostate_projector` derives for a genuinely-touched ``EGRESS_RESULT``
-                event, keyed by that event's own id
-                (:mod:`tos_runtime.recovery.composite_state_writer`'s own module docstring for
-                why the key is the event id, never the composite's ``intent_identity``). Optional,
-                defaulting to ``None`` (module docstring: a no-op — the pre-GAP-2 behaviour every
-                existing test-suite driver construction already exercises) so this is the ONE
-                constructor argument here NOT required — unlike ``orthostate_projector`` /
-                ``finality_producer``, an omitted writer degrades this runtime back to exactly
-                its prior (documented, disclosed) "nothing writes to ``tos.staterestore`` yet"
-                state, never a silent behaviour change for a caller that has not opted in.
+                :attr:`_orthostate_projector` derives, keyed by the event's own id
+                (:mod:`tos_runtime.recovery.composite_state_writer`). Optional, defaulting to
+                ``None`` (a no-op, the pre-GAP-2 behaviour) — the ONE constructor argument here
+                NOT required, unlike ``orthostate_projector``/``finality_producer``.
         """
         self._core = core
         self._inbox = inbox
@@ -399,6 +387,10 @@ class EngineDriver:
         self._gateway: object | None = None
         #: How many of the gateway's retained results this driver has already drained.
         self._drained_results = 0
+        #: TOS Phase 5 W4 §2 decision 7 — see :meth:`bind_after_turn`.
+        self._after_turn: Callable[[], None] | None = None
+        self._after_turn_failures = 0
+        self._after_turn_last_error: str | None = None
         #: Re-entrancy guard (re-review finding N3, 2026-09-09): ``True`` for the entire duration
         #: of one :meth:`_process_next` call. ``_send_evidence_exists_after``'s soundness (see its
         #: own docstring) depends on this driver never pulling a second event while the first
@@ -430,6 +422,34 @@ class EngineDriver:
                 ``tos.backtest.fills.RetainedEgressResults``'s own "declared locally" seam).
         """
         self._gateway = gateway
+
+    def bind_after_turn(self, callback: Callable[[], None]) -> None:
+        """Attach a callback invoked once per PROCESSED turn (plan §2 decision 7): after each
+        ``_process_next`` call inside ``run_once``/``run_until_idle``/``enqueue_and_run`` that
+        returns a handled result — never on idle ``None``. Never propagates (see
+        :meth:`_fire_after_turn`)."""
+        self._after_turn = callback
+
+    def _fire_after_turn(self) -> None:
+        """Invoke :attr:`_after_turn` if bound; count and never re-raise a failure."""
+        callback = self._after_turn
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception as exc:  # noqa: BLE001 - must never halt a drain
+            self._after_turn_failures += 1
+            self._after_turn_last_error = repr(exc)
+
+    @property
+    def after_turn_failures(self) -> int:
+        """Count of :meth:`bind_after_turn` callback exceptions."""
+        return self._after_turn_failures
+
+    @property
+    def after_turn_last_error(self) -> str | None:
+        """``repr()`` of the last :meth:`bind_after_turn` exception, or ``None``."""
+        return self._after_turn_last_error
 
     # -- stamping ------------------------------------------------------------
 
@@ -850,7 +870,10 @@ class EngineDriver:
             process life (crash-window recovery — see module docstring item 2).
         """
         processed = self._process_next()
-        return None if processed is None else processed[1]
+        if processed is None:
+            return None
+        self._fire_after_turn()
+        return processed[1]
 
     def run_until_idle(self) -> tuple[EventResult, ...]:
         """Call :meth:`run_once` until the inbox has nothing left to admit or recover."""
@@ -860,6 +883,7 @@ class EngineDriver:
             if processed is None:
                 return tuple(results)
             results.append(processed[1])
+            self._fire_after_turn()
 
     def enqueue_and_run(self, event: EngineEvent) -> EventResult:
         """Stamp, durably admit, and fully process ``event`` (the compose-root convenience API).
@@ -884,6 +908,7 @@ class EngineDriver:
             if processed is None:
                 break
             seq, result = processed
+            self._fire_after_turn()
             if seq == target_seq:
                 result_for_target = result
         if result_for_target is None:
