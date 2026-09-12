@@ -103,7 +103,7 @@ named-TBD `null` 상태로 유지된다 — 로더가 부팅을 거부하는 것
 | `static_body_fields.EXCG_ID_DVSN_CD` | `"KRX"` 제안 | `order_cash.py` docstring "[필수] 거래소ID구분코드 (ex. KRX)" — NXT/SOR 라우팅은 후속 |
 | `static_body_fields.SLL_TYPE` | `""` 제안(매수 시 미사용) | `order_cash.py:34` 기본값 `sll_type: str = ""` |
 | `static_body_fields.CNDT_PRIC` | `""` 제안(조건가 미사용) | `order_cash.py:35` 기본값 `cndt_pric: str = ""` |
-| `min_send_interval_ms` | **1100**(권고 기본값) | P-13 실측(clean 상한 1.0 rps · 스로틀 2.0 rps · `EGW00201`) — `docs/plans/2026-08-06-tos-phase0-p01-residual-17key-disposition-draft.md:141`, `docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:1890-1926`. clean 1.0 rps ⇒ 최소 간격 1000ms; 여유 100ms를 더해 1100ms 제안 |
+| `min_send_interval_ms` | **2000**(권고 기본값 · 하한 1100 · 주문 엔드포인트 실측 후 조정) | P-13 실측은 **`endpoint_class=query` 한정**(clean 1.0 rps · 스로틀 2.0 rps · `EGW00201` — `docs/plans/2026-08-06-tos-phase0-p01-residual-17key-disposition-draft.md:141`, `docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:1834-1849`). 그 다음 절(`…draft.yaml:1890-1926`)은 **«query 값을 주문 클래스로 외삽하지 말 것»** 경고와 2026-07-31 `--pace-s 1.1`(=1100ms) 페이싱에서도 주문/취소가 스로틀된 관측을 담는다 → 1100 은 하한일 뿐 주문 간격의 근거가 아니다. 보수 방향 = 크게. (2026-09-12 값 제안표 리뷰 HIGH-2 정정 · `docs/plans/2026-09-12-tos-operator-value-proposals.md` §6 와 동일) |
 | `token_reissue_min_interval_s` | **서버 캠페인 실측 대기** | N-15 실측 4회가 **전패**(`docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:2119,2162`) — `token_blackout_window_ms: null` 이 그 결과. 이 값은 토큰 **재발급 쿨다운**(N-15 자체 관측 "토큰 1분 재발급 제한")이지 토큰 수명이 아님 — 어댑터는 수명을 각 토큰 응답의 `expires_in` 필드에서 읽는다(값이 없으면 부팅 없이 그 응답 자체를 거부) |
 
 이제 `field_map`(4) + `static_body_fields`(5) = 9필드 **전항목**을 로더가 구성 시점에
