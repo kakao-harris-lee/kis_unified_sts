@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from services.dashboard.app import create_app
+from services.dashboard.routes import tos_projection
 
 _ROUTE_MODULE = (
     Path(__file__).resolve().parents[3]
@@ -146,20 +147,66 @@ def test_unsupported_schema_version_reports_unavailable(monkeypatch, tmp_path):
     assert body["projection"] is None
 
 
+_TOS_PREFIX = "/api/tos"
+# FastAPI/Starlette do not implicitly add HEAD or OPTIONS to a route's
+# `.methods` set (verified directly against the live app: a GET-only route
+# reports `{"GET"}`, nothing more) — but the check strips them anyway so the
+# assertion stays correct if that framework behavior ever changes.
+_IMPLICIT_METHODS = {"HEAD", "OPTIONS"}
+
+
+def _non_meta_methods_under_prefix(routes, prefix: str) -> set[str]:
+    """Union of non-implicit HTTP methods for every route under ``prefix``.
+
+    Matches by ``path.startswith(prefix)`` rather than an exact path so a new
+    route added anywhere under the prefix (not just at the one path this
+    module happens to define today) is caught — plan §2 decision 8c pins the
+    *whole* router to GET, not one endpoint.
+    """
+    methods: set[str] = set()
+    for route in routes:
+        path = getattr(route, "path", None)
+        if path is None or not path.startswith(prefix):
+            continue
+        methods |= set(getattr(route, "methods", set()) or set())
+    return methods - _IMPLICIT_METHODS
+
+
 def test_route_is_get_only():
     app = create_app()
-    tos_routes = [
-        route
-        for route in app.routes
-        if getattr(route, "path", None) == "/api/tos/projection"
-    ]
-    assert tos_routes, "expected /api/tos/projection to be registered"
 
-    methods: set[str] = set()
-    for route in tos_routes:
-        methods |= set(getattr(route, "methods", set()) or set())
+    app_methods = _non_meta_methods_under_prefix(app.routes, _TOS_PREFIX)
+    assert app_methods, "expected at least one /api/tos route registered on the app"
+    assert app_methods == {"GET"}
 
-    assert methods == {"GET"}
+    # Independent of the app's prefix/mounting: check the router object
+    # itself, so a route added to `router` would be caught even if some
+    # future app wiring changed how/where it's mounted.
+    router_methods = _non_meta_methods_under_prefix(tos_projection.router.routes, "")
+    assert router_methods, "expected at least one route on tos_projection.router"
+    assert router_methods == {"GET"}
+
+
+def test_get_only_checker_detects_an_added_post():
+    """Negative self-check: prove the checker actually catches a violation.
+
+    Builds a throwaway router with one POST endpoint under /api/tos/... and
+    runs the same `_non_meta_methods_under_prefix` helper against it. If this
+    assertion ever stopped failing, the positive checks above would be
+    vacuous — this is the same idiom as the runtime's negative-grep
+    self-tests (`tests/operator/test_no_write_port.py`).
+    """
+    from fastapi import APIRouter
+
+    poisoned = APIRouter(prefix="/api/tos", tags=["tos"])
+
+    @poisoned.post("/mutation-canary")
+    async def _mutation_canary() -> dict[str, bool]:
+        return {"ok": True}
+
+    methods = _non_meta_methods_under_prefix(poisoned.routes, _TOS_PREFIX)
+    assert methods == {"POST"}
+    assert methods != {"GET"}
 
 
 def test_route_module_does_not_import_tos_or_tos_runtime():
