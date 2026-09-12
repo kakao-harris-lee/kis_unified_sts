@@ -80,7 +80,9 @@ Where the honesty boundaries sit, explicitly:
   decision 5) is :meth:`~tos.engine.state.ProvisionalReservationLedger.release`, gated on a typed
   :class:`~tos.engine.state.FinalityProofRef` — never a response kind or a bare string — and
   called only after the RCL-owned finality-release consumer has already recorded the release
-  itself; this projection mirrors that fact, it does not originate one.
+  itself; this projection mirrors that fact, it does not originate one. RELEASED returns the
+  projected capacity for a fresh attempt; it revives nothing — the released attempt itself stays
+  terminal (kernel round #3 §2 decision 5b).
 
 The package is **pure, non-transmitting, authority-free, and clock-free**: it imports ``pydantic`` +
 stdlib + the allowlisted ``tos.*`` only; it reads no ``os.environ``, opens no socket, uses no

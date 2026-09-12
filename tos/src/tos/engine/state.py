@@ -37,6 +37,18 @@ Two structural properties carry the design's weight:
   RFC-002 §9.1:557 — this projection's own ``release`` mirrors an RCL fact already established
   elsewhere, it does not originate one).
 
+* **RELEASED returns the projected capacity; it revives nothing (kernel round #3 §2 decision
+  5b).** Phase 5 §10:114 names the very gap this closes: "엔진 in-memory 투영은 W2-K 전까지 프로세스
+  수명 동안 점유 유지" — before this, a released scope stayed unresolved-and-outstanding forever, so
+  no fresh attempt could ever be admitted for it again, defeating the whole point of a release.
+  :meth:`ProvisionalReservationLedger.outstanding` / :meth:`outstanding_count` /
+  :meth:`outstanding_consumed_magnitude` now treat a ``RELEASED`` reservation as **not**
+  outstanding, so :meth:`admits_new_exposure` reopens the scope for a brand-new attempt the
+  moment the released one is the only occupant. This is **not** revival: the released attempt
+  itself stays terminal forever (its own ``attempt_id`` is remembered and permanently refused by
+  any later :meth:`_store` call, whether or not the scope has since moved on to a new attempt) —
+  only the *scope* reopens, for a genuinely fresh attempt, never the same one.
+
 Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #31 §0.3). No clock, no RNG.
 """
 
@@ -339,6 +351,14 @@ class ProvisionalReservationLedger:
         self._applied_result_signatures: dict[
             tuple[str, str], tuple[tuple[object, ...], ...]
         ] = {}
+        #: Every ``attempt_id`` that has ever reached ``RELEASED`` for a scope, kept **after** a
+        #: fresh ``commit_unbound`` replaces the scope's stored reservation (kernel round #3 §2
+        #: decision 5b). :meth:`_store`'s reopening exception lets a brand-new reservation
+        #: overwrite an already-``RELEASED`` entry (see that method), which means the released
+        #: entry itself is no longer sitting in ``self._reservations`` to protect against a stray
+        #: attempt to revive it — this remembers it instead, so the SAME attempt_id can never
+        #: transition again even after the scope has moved on to a new attempt.
+        self._released_attempt_ids: dict[tuple[str, str], set[str]] = {}
 
     @staticmethod
     def _key_tuple(key: InstrumentKey) -> tuple[str, str]:
@@ -348,15 +368,32 @@ class ProvisionalReservationLedger:
     # -- observation ---------------------------------------------------------
 
     def outstanding(self, key: InstrumentKey) -> ProvisionalReservation | None:
-        """The unresolved reservation projected for ``key``, if any."""
-        return self._reservations.get(self._key_tuple(key))
+        """The unresolved reservation projected for ``key``, if any.
+
+        A ``RELEASED`` reservation is **never** returned here (kernel round #3 §2 decision 5b):
+        ``RELEASED`` returns the projected capacity, so it is no longer "outstanding" in the sense
+        that blocks a fresh attempt — the released reservation is not revived by this exclusion,
+        it simply stops counting against the at-most-one retention. Every mutator that reads
+        through this accessor first (:meth:`bind_attempt`, :meth:`mark_potentially_live`,
+        :meth:`apply_egress_result`) therefore sees "nothing projected" for a released scope and
+        refuses or reports a conservative disposition exactly as it would for a genuinely empty
+        scope — none of them can ever transition an already-``RELEASED`` entry.
+        """
+        reservation = self._reservations.get(self._key_tuple(key))
+        if (
+            reservation is not None
+            and reservation.capacity_state is CapacityState.RELEASED
+        ):
+            return None
+        return reservation
 
     def outstanding_count(self, key: InstrumentKey) -> int:
-        """How many unresolved reservations the projection holds for ``key``.
+        """How many unresolved (never ``RELEASED``) reservations the projection holds for ``key``.
 
         Slice #1 projects at most one per scope, so this is 0 or 1; it is expressed as a count so
         the comparison against the injected ``MAX_unresolved_send_per_scope`` bound stays explicit
-        rather than hidden in a boolean.
+        rather than hidden in a boolean. A ``RELEASED`` reservation contributes 0 (kernel round #3
+        §2 decision 5b — see :meth:`outstanding`).
         """
         return len(
             [
@@ -403,6 +440,12 @@ class ProvisionalReservationLedger:
         unresolved count is strictly below the injected bound. This is a *restrictive-only*
         observation of the projection — it creates no headroom for anyone (RFC-002 §9.1:558) and
         it grants nothing; only the real RCL commits capacity.
+
+        Since a ``RELEASED`` reservation never counts toward :meth:`outstanding_count` (kernel
+        round #3 §2 decision 5b), a scope whose only occupant has been released is admitted again
+        here — the released *scope* reopens for a fresh attempt; the released *attempt* itself
+        never does (:meth:`_store`'s own non-revival memory refuses it by ``attempt_id``
+        regardless of what this method reports).
 
         Args:
             key: The (account, instrument) scope.
@@ -457,6 +500,11 @@ class ProvisionalReservationLedger:
                     update={"capacity_state": CapacityState.RELEASED}
                 )
             )
+            # Kernel round #3 §2 decision 5b: remembered even after a later fresh commit_unbound
+            # replaces this scope's stored entry — see the non-revival guard in _store.
+            self._released_attempt_ids.setdefault(
+                self._key_tuple(reservation.instrument_key), set()
+            ).add(ref.attempt_id)
             return True
         return False
 
@@ -480,22 +528,50 @@ class ProvisionalReservationLedger:
                 passes this, so the non-revival guard stays absolute for them — none of the three
                 is ever legitimately reachable while quarantined in the first place (the at-most-
                 one exposure retention denies a new attempt for an occupied, quarantined scope).
+
+        Raises:
+            ArtifactIntegrityError: The generic rank-regression guard fires, OR ``reservation``
+                names an ``attempt_id`` that has already reached ``RELEASED`` for this scope
+                (kernel round #3 §2 decision 5b) — checked FIRST, unconditionally, so a released
+                attempt can never transition again even after a later fresh ``commit_unbound`` has
+                already replaced its scope entry (at which point the generic rank check below no
+                longer sees it at all).
         """
         key_tuple = self._key_tuple(reservation.instrument_key)
+        if (
+            reservation.attempt_id is not None
+            and reservation.attempt_id in self._released_attempt_ids.get(key_tuple, ())
+        ):
+            raise ArtifactIntegrityError(
+                f"attempt_id {reservation.attempt_id!r} has already reached RELEASED for scope "
+                f"{key_tuple} — a released attempt may never transition again, even after the "
+                "scope has since reopened for a new attempt (non-revival; kernel round #3 §2 "
+                "decision 5b)"
+            )
         current = self._reservations.get(key_tuple)
         if current is not None:
-            current_rank = PROJECTION_RANK[current.capacity_state]
-            next_rank = PROJECTION_RANK[reservation.capacity_state]
-            resolving_quarantine = (
-                allow_quarantine_resolution
-                and current.capacity_state is CapacityState.QUARANTINED_UNKNOWN
+            # Kernel round #3 §2 decision 5b: a scope whose only occupant is already RELEASED is
+            # reopening for a genuinely fresh attempt (the ONLY way to reach this branch is a new
+            # commit_unbound, admitted because outstanding_count now excludes RELEASED) — not a
+            # revival of the released entry itself, which the attempt_id check above already
+            # guards independently of rank. The generic rank-regression guard below would
+            # otherwise refuse this unconditionally, since RELEASED sits at the highest local rank.
+            reopening_a_released_scope = (
+                current.capacity_state is CapacityState.RELEASED
             )
-            if next_rank < current_rank and not resolving_quarantine:
-                raise ArtifactIntegrityError(
-                    "provisional capacity projection may not revive to a less-consumed state "
-                    f"({current.capacity_state} -> {reservation.capacity_state}) — non-revival "
-                    "(ADR-002-002 §10.1; design #31 §2.4)"
+            if not reopening_a_released_scope:
+                current_rank = PROJECTION_RANK[current.capacity_state]
+                next_rank = PROJECTION_RANK[reservation.capacity_state]
+                resolving_quarantine = (
+                    allow_quarantine_resolution
+                    and current.capacity_state is CapacityState.QUARANTINED_UNKNOWN
                 )
+                if next_rank < current_rank and not resolving_quarantine:
+                    raise ArtifactIntegrityError(
+                        "provisional capacity projection may not revive to a less-consumed state "
+                        f"({current.capacity_state} -> {reservation.capacity_state}) — "
+                        "non-revival (ADR-002-002 §10.1; design #31 §2.4)"
+                    )
         self._reservations[key_tuple] = reservation
         return reservation
 

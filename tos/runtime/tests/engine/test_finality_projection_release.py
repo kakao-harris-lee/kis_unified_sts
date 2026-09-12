@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
+import pytest
+from tos.canonical import ArtifactIntegrityError
 from tos.engine import EventResult
 from tos.engine.records import EgressResultPayload, EngineEvent, InstrumentKey
 from tos.engine.state import ProvisionalReservationLedger
@@ -140,8 +142,57 @@ def test_a_released_outcome_releases_the_kernel_ledger_too(
         ledger=ledger,
     )
 
-    assert ledger.outstanding(_KEY).capacity_state is CapacityState.RELEASED
+    # (kernel round #3 §2 decision 5b) RELEASED returns the scope — outstanding() no longer
+    # reports a released reservation at all, and the scope is admitted again.
+    assert ledger.outstanding(_KEY) is None
+    assert ledger.admits_new_exposure(_KEY) is True
     assert _release_skipped_count(evidence_store) == 0
+
+
+def test_a_new_attempt_is_admitted_on_the_same_scope_after_project_finality_releases(
+    evidence_store: SqliteEvidenceStore, inbox: SqliteEventInbox
+) -> None:
+    """(kernel round #3 §2 decision 5b — team-lead disposition on the K-3 flag: reopening the
+    scope after release is W2-K's whole purpose, Phase 5 §10:114) The compose e2e path cannot
+    reach this: its one synthetic broker witness is never independent, so a real release never
+    actually happens there (module docstring). This drives the SAME real kernel ledger
+    ``project_finality`` mutates directly, proving the engine's own ``admits_new_exposure`` —
+    not a test-local stand-in — reopens the scope once ``project_finality`` has released it.
+    """
+    ledger = _live_ledger()
+    event, result, payload = _full_fill_event_and_payload()
+    ledger.apply_egress_result(payload)
+    assert (
+        ledger.admits_new_exposure(_KEY) is False
+    )  # occupied — the ordinary at-most-one gate
+
+    consumer = _StubConsumer(
+        _StubOutcome(
+            released=True,
+            attempt_id=_ATTEMPT,
+            proof_digest="proof-digest-new-attempt",
+            evidence_seq=9,
+            resolution_generation=1,
+        )
+    )
+    project_finality(
+        event,
+        result,
+        inbox=inbox,
+        evidence_store=evidence_store,
+        finality_producer=_NullFinalityProducer(),
+        release_consumer=consumer,
+        ledger=ledger,
+    )
+
+    assert ledger.admits_new_exposure(_KEY) is True
+    fresh = ledger.commit_unbound(_KEY, proposal_id="proposal-fp-2")
+    assert fresh.capacity_state is CapacityState.COMMITTED_UNBOUND
+    bound = ledger.bind_attempt(_KEY, attempt_id="attempt-fp-2")
+    assert bound.attempt_id == "attempt-fp-2"
+    # The released attempt itself stays terminal even now that the scope has moved on.
+    with pytest.raises(ArtifactIntegrityError, match="already reached RELEASED"):
+        ledger.bind_attempt(_KEY, attempt_id=_ATTEMPT)
 
 
 def test_a_held_outcome_records_release_skipped(

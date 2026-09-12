@@ -581,7 +581,10 @@ def test_full_fill_release_outcome_feeds_a_real_kernel_ledger_release(
         resolution_generation=outcome.resolution_generation,
     )
     assert ledger.release(ref) is True
-    assert ledger.outstanding(_KEY).capacity_state is CapacityState.RELEASED
+    # (kernel round #3 §2 decision 5b) RELEASED returns the scope — outstanding() no longer
+    # reports a released reservation at all, and the scope is admitted again.
+    assert ledger.outstanding(_KEY) is None
+    assert ledger.admits_new_exposure(_KEY) is True
 
 
 def test_full_fill_without_witness_holds(
