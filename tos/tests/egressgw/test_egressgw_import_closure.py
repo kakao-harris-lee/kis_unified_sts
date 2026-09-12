@@ -94,11 +94,12 @@ _DECLARED_BUT_NOT_TAKEN = frozenset({"tos.capsule", "tos.evidence"})
 
 #: Siblings that must stay outside the closure entirely — including the D-E4 twin, which is
 #: reached only through the injected structural transport port (design #34 §0.3/§5.1).
-#: ``tos.orthostate`` is deliberately absent (2026-09-09, Phase 3 wave 2 KW2-C2): ``tos.engine``
-#: now directly realizes it (``engine/orthostate_projection.py``), so it reaches every
-#: ``tos.engine`` consumer, this package included, through the already ratified ``tos.engine``
-#: edge — the ``bound = _ALLOWED_TOS_PACKAGES | set(engine["tos_tops"])`` subset tests below
-#: already account for it and stay green unedited.
+#: ``tos.orthostate`` and (kernel round #3 §2 결정 1, 2026-09-12) ``tos.nontrade`` are
+#: deliberately absent: ``tos.engine`` now directly realizes both
+#: (``engine/orthostate_projection.py``; ``engine/_corporate_action.py``), so each reaches
+#: every ``tos.engine`` consumer, this package included, through the already ratified
+#: ``tos.engine`` edge — the ``bound = _ALLOWED_TOS_PACKAGES | set(engine["tos_tops"])``
+#: subset tests below already account for it and stay green unedited.
 _FORBIDDEN_SIBLINGS = frozenset(
     {
         "tos.brokeradapter",
@@ -108,7 +109,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.hag",
         "tos.iap",
         "tos.liveauth",
-        "tos.nontrade",
         "tos.posttrade",
         "tos.protective",
         "tos.recon",

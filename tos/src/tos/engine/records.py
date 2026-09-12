@@ -22,6 +22,8 @@ Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #31 §0.3). No clock, n
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from pydantic import model_validator
 
 from tos.capsule import DecisionContextCapsule
@@ -52,14 +54,23 @@ from tos.engine.vocabulary import (
     StageAuthorityClass,
     StageOutcome,
 )
+from tos.nontrade import (
+    CorrectionReversalRecord,
+    CredibleTransitionLegKind,
+    NonTradeDisposition,
+    NonTradeEventRecord,
+    SplitTransformationSpec,
+    TransitionEnvelope,
+)
 from tos.ordering import OrderingEvent
-from tos.rcl import CapacityState
+from tos.rcl import CapacityState, TransitionCause
 from tos.time import HealthState, SessionContext, UncertaintyInterval
 
 __all__ = [
     "ATTEMPT_ID_PREFIX",
     "EVENT_ID_PREFIX",
     "AttemptRequest",
+    "CorporateActionPayload",
     "DecisionTickPayload",
     "EgressResultOutcome",
     "EgressResultPayload",
@@ -67,6 +78,7 @@ __all__ = [
     "EngineEvent",
     "EngineEvidenceRecord",
     "InstrumentKey",
+    "NonTradeOutcome",
     "ProvisionalReservation",
     "RegisteredStrategy",
     "SendHandoff",
@@ -276,6 +288,105 @@ class EgressResultPayload(FrozenModel):
         return self
 
 
+class CorporateActionPayload(FrozenModel):
+    """A ``CORPORATE_ACTION`` payload re-injected from :mod:`tos.nontrade` (kernel round #3 §2
+    결정 1, ``docs/plans/2026-09-12-tos-kernel-round-3-plan.md``).
+
+    Carries the non-trade event record plus the artifacts a transformation / correction may
+    accompany it with, the caller's declared required-leg set, and every **injected coordinate**
+    :func:`~tos.nontrade.nontrade_disposition` and its supporting predicates need — the SAME
+    coordinate set :class:`~tos_runtime.nontrade.observations.NonTradeObservation` already
+    carries (Phase 5 W5 plan §2 decision 6, lane f3): sibling-owned facts (are/rcl/recon/venue/
+    time) this round's kernel does not derive, but that a caller (a synthetic fixture today; a
+    future corporate-action feed later) CAN honestly supply, exactly as ``NonTradeObservation``
+    already demonstrates in this same runtime. None of these is fabricated when absent — every
+    field defaults ``None`` (or empty), and the handler passes exactly what it is given, never a
+    positive stand-in (design #21 M6 discipline, carried over verbatim from the W5 lane).
+
+    ``old_route_identity`` / ``new_route_identity`` are NOT separate fields here: they are read
+    directly off :attr:`event`'s own ``old_instrument_identity`` / ``new_instrument_identity`` —
+    already present on :class:`~tos.nontrade.NonTradeEventRecord`, so re-declaring them here
+    would be a duplicate, possibly-diverging coordinate rather than a single source of truth.
+    """
+
+    instrument_key: InstrumentKey
+    event: NonTradeEventRecord
+    envelope: TransitionEnvelope | None = None
+    split_spec: SplitTransformationSpec | None = None
+    correction: CorrectionReversalRecord | None = None
+    required_legs: frozenset[CredibleTransitionLegKind] = frozenset()
+    #: The correction-history lookup pair (design #21 §4.6 gates 3/4) —
+    #: :func:`~tos.nontrade.correction_reversal_idempotent`'s ``prior``/``original_retained``.
+    prior_correction: CorrectionReversalRecord | None = None
+    original_retained: bool | None = None
+    #: §12 line 248 — whether the instrument identity transition is positively final.
+    identity_transition_final: bool | None = None
+    #: §10 line 221 "Unknown materiality is material" — only ``is False`` exempts.
+    event_is_material: bool | None = None
+    #: The venue-owned material-change invalidation trigger set this event names.
+    change_triggers: frozenset[str] = frozenset()
+    #: §8 effective-time window — opaque injected boundary tokens (this package reads no clock).
+    earliest_credible_boundary: str | None = None
+    latest_completion_boundary: str | None = None
+    source_disagreement_bounded: bool | None = None
+    #: The injected recon ``FieldConfidenceClass`` tokens for this event's material fields.
+    field_confidences: frozenset[str] = frozenset()
+    #: The injected venue ``OrderAdmissibilityResult`` token (design #21 §5.5 rank 3 / the
+    #: ``instrument_lineage_preserved`` fresh-decision conjunct).
+    venue_admissibility: str | None = None
+    #: The injected time ``FreshnessVerdict`` token (``effective_window_blocks_new_risk``).
+    time_freshness: str | None = None
+    #: The injected venue ``protective_label_no_bypass`` output — carried for the consuming
+    #: runtime; structurally unable to relax any rank (design #21 §5.5 / §6.1 M6).
+    protective_action_may_proceed: bool | None = None
+    #: The injected are ``worst_intermediate_risk`` magnitude.
+    injected_worst_intermediate_risk: CanonicalDecimal | None = None
+    #: The injected are ``credible_space_bounded`` verdict.
+    injected_credible_space_bounded: bool | None = None
+    #: Whether the injected rcl credible-union capacity is known (not ``UNKNOWN``).
+    injected_union_capacity_known: bool | None = None
+    reference: OrderingEvent = OrderingEvent()
+
+
+class NonTradeOutcome(FrozenModel):
+    """One ``CORPORATE_ACTION`` event's judged outcome (kernel round #3 §2 결정 2(b)/(c)).
+
+    A disposition **grants nothing** (design #21 §6 line 144) — this record only reports the
+    :func:`~tos.nontrade.nontrade_disposition` verdict, the full per-predicate result table (plus
+    which of the supporting predicates this exact payload let the handler skip, never
+    fabricate), and a **proposed** (never applied) capacity remap cause the RCL alone may act on
+    (ADR-002-010 §10 line 217).
+    """
+
+    disposition: NonTradeDisposition
+    #: Every one of the 16 ``nontrade_disposition`` kwargs this handler actually passed, keyed by
+    #: kwarg name — ``bool | str | None`` covers every value shape among them (the
+    #: ``correction_outcome`` enum member's own ``.value`` string, every plain bool/None kwarg,
+    #: and the ``field_confidences`` frozenset rendered as a sorted joined string so the whole
+    #: mapping stays a flat, digestible shape).
+    predicate_results: Mapping[str, bool | str | None]
+    #: The kernel predicate names skipped for THIS payload — never called at all rather than fed
+    #: a fabricated value — because the artifact they need is absent: the transformation triad
+    #: (``split_polarity_coherent``/``transformation_units_and_rounding_explicit``/
+    #: ``transformation_residual_conservative``) when ``split_spec is None``,
+    #: ``correction_reversal_idempotent`` when ``correction is None`` (mirrors
+    #: :mod:`tos_runtime.nontrade.processor`'s own conditional-evaluation structure).
+    unevaluated: tuple[str, ...]
+    #: A **proposal** only (never applied here) — ``RECOGNIZED_EXTERNAL_CHANGE`` iff
+    #: ``disposition is NonTradeDisposition.NONTRADE_ADMISSIBLE`` and the payload carries an
+    #: envelope (a remap target actually exists to propose over); ``None`` otherwise. The RCL
+    #: alone may act on this cause token (ADR-002-010 §10 line 217; §6 line 144).
+    capacity_remap_proposal: TransitionCause | None = None
+    #: ``True`` for every non-``NONTRADE_ADMISSIBLE`` member (design #21's own total-order
+    #: ranking — ``nontrade/vocabulary.py``'s ``NonTradeDisposition`` docstring).
+    restrictive: bool
+    #: The content-addressed digest of (disposition, capacity_remap_proposal, predicate_results)
+    #: — computed once by the handler via the injected canonicalization scheme (kernel round #3
+    #: §2 결정 2(c)) so ``EventResult.outcome_digest``'s third branch reads a real digest, never a
+    #: vacuous ``None``.
+    outcome_digest: str
+
+
 class EngineEvent(FrozenModel):
     """One event of the closed vocabulary (design #31 §2.2).
 
@@ -287,30 +398,37 @@ class EngineEvent(FrozenModel):
     kind: EventKind
     decision_tick: DecisionTickPayload | None = None
     egress_result: EgressResultPayload | None = None
+    corporate_action: CorporateActionPayload | None = None
 
     @model_validator(mode="after")
     def _payload_matches_kind(self) -> EngineEvent:
         """Reject an event whose payload does not match its kind (fail-closed)."""
+        fields = ("decision_tick", "egress_result", "corporate_action")
         expected = {
-            EventKind.DECISION_TICK: ("decision_tick", "egress_result"),
-            EventKind.EGRESS_RESULT: ("egress_result", "decision_tick"),
+            EventKind.DECISION_TICK: "decision_tick",
+            EventKind.EGRESS_RESULT: "egress_result",
+            EventKind.CORPORATE_ACTION: "corporate_action",
         }[self.kind]
-        present, absent = expected
-        if getattr(self, present) is None:
+        if getattr(self, expected) is None:
             raise ArtifactIntegrityError(
-                f"EngineEvent kind={self.kind} requires a {present} payload"
+                f"EngineEvent kind={self.kind} requires a {expected} payload"
             )
-        if getattr(self, absent) is not None:
-            raise ArtifactIntegrityError(
-                f"EngineEvent kind={self.kind} must not carry a {absent} payload"
-            )
+        for other in fields:
+            if other == expected:
+                continue
+            if getattr(self, other) is not None:
+                raise ArtifactIntegrityError(
+                    f"EngineEvent kind={self.kind} must not carry a {other} payload"
+                )
         return self
 
-    def payload(self) -> DecisionTickPayload | EgressResultPayload:
+    def payload(
+        self,
+    ) -> DecisionTickPayload | EgressResultPayload | CorporateActionPayload:
         """Return the single payload ``_payload_matches_kind`` guarantees is present.
 
         Returns:
-            The ``DECISION_TICK`` or ``EGRESS_RESULT`` payload.
+            The ``DECISION_TICK``, ``EGRESS_RESULT``, or ``CORPORATE_ACTION`` payload.
 
         Raises:
             ArtifactIntegrityError: If neither payload is present — unreachable through normal
@@ -320,6 +438,8 @@ class EngineEvent(FrozenModel):
             return self.decision_tick
         if self.egress_result is not None:
             return self.egress_result
+        if self.corporate_action is not None:
+            return self.corporate_action
         raise ArtifactIntegrityError("EngineEvent carries no payload (fail-closed)")
 
     def reference(self) -> OrderingEvent:
@@ -696,6 +816,13 @@ class EngineEvidenceRecord(FrozenModel):
     #: alongside ``EvidenceKind.RESULT_UNMATCHED`` (non-APPLIED) and ``EGRESS_RESULT_CONSUMED``
     #: (APPLIED) — never inferred from ``halt_reason`` alone.
     result_disposition: ResultDisposition | None = None
+    #: A ``CORPORATE_ACTION`` event's judged :class:`~tos.nontrade.NonTradeDisposition`, as its
+    #: own string value (kernel round #3 §2 결정 1/3) — populated alongside
+    #: ``EvidenceKind.CORPORATE_ACTION_CONSUMED`` for every disposition, restrictive or
+    #: admissible alike (design #21 "a disposition grants nothing" — this is the record of the
+    #: judgement, not of a grant). The SAME string the runtime replay comparison (kernel round
+    #: #3 §2 결정 3) re-derives and compares against.
+    nontrade_disposition: str | None = None
     capacity_state: CapacityState | None = None
     knowledge: EgressKnowledge | None = None
     #: The re-injected egress result's own reported magnitudes and broker execution identity

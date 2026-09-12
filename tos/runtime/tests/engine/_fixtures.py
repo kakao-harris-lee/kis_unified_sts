@@ -51,8 +51,13 @@ from tos.engine import (
     TimeAdmissionInputs,
     provisional_stage_map,
 )
-from tos.engine.records import DecisionTickPayload, EgressResultPayload
+from tos.engine.records import (
+    CorporateActionPayload,
+    DecisionTickPayload,
+    EgressResultPayload,
+)
 from tos.engine.vocabulary import EgressResultKind
+from tos.nontrade import NonTradeEventRecord
 from tos.ordering import OrderingEvent
 from tos.time import HealthState, SessionContext, UncertaintyInterval
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -250,6 +255,23 @@ def egress_result_event(
             instrument_key=instrument_key(),
             attempt_id=attempt_id,
             kind=kind,
+        ),
+    )
+
+
+def corporate_action_event(*, seq: int = 1, **payload_overrides: Any) -> EngineEvent:
+    """An UNSTAMPED ``CORPORATE_ACTION`` event (kernel round #3 §2 결정 1) — the minimal,
+    honestly empty-coordinate payload; pass ``venue_admissibility=...`` etc. to reach a
+    different disposition rank."""
+    return EngineEvent(
+        kind=EventKind.CORPORATE_ACTION,
+        corporate_action=CorporateActionPayload(
+            instrument_key=instrument_key(),
+            event=NonTradeEventRecord(),
+            reference=OrderingEvent(
+                source_continuity_id="fixture", source_native_sequence=seq
+            ),
+            **payload_overrides,
         ),
     )
 

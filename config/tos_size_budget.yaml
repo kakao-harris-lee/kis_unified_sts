@@ -606,7 +606,7 @@ exceptions:
     정확히 1회로 고정하는 팀리드 처분(3곳 소비자가 같은 스냅샷을 공유).
     안전-부담 파라미터 관례상 압축 대신 등재.
 - target: tos/runtime/src/tos_runtime/engine/driver.py::EngineDriver._process_next
-  measured: 141
+  measured: 146
   owner: tos-runtime
   decomposition_order: 36
   expires_on: '2026-12-31'
@@ -641,6 +641,15 @@ exceptions:
     +1(호출 1줄) — 이 한 줄은 더 압축 불가(신규 헬퍼 호출 자체가 실질 신규 기능이며,
     인접 도크스트링 보정은 원문과 동일한 3줄 폭으로 재작성해 순증 0으로 맞춤). 140→141,
     measured-drift 가드 재실측 갱신.
+    **2026-09-13 커널 라운드 #3 K-4(레인 kr3-lane-K, plan §2 결정 1-3)** —
+    `_stamp` 이 두 이벤트 종류(DECISION_TICK/EGRESS_RESULT)만 가정하던 assert
+    를 CORPORATE_ACTION 을 포함한 3-way 분기로 확장(기존 2-way 분기는 신규
+    킨드에서 크래시했다 — 실제 버그 발견/수리). `_process_next` 자신의 드레인
+    루프 본문에 새 분기는 추가하지 않았으나, `_stamp` 확장이 이 함수가 호출하는
+    코드 경로의 실측 라인 수에 반영되어 141→146(+5, 신규 이벤트 종류 처리 로직
+    — 로직 확장, 순수 서식 아님). 별도 헬퍼로의 추가 분리는 이 항목의 기존
+    "own transaction boundary" 논거(위 2026-09-09 항목)를 다시 어기므로 보류
+    (압축 대신 등재), measured-drift 가드 재실측 갱신.
 - target: tos/src/tos/egressgw/records.py
   measured: 1132
   owner: tos-kernel
