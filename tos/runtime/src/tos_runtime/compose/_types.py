@@ -167,10 +167,19 @@ class OperationsFacts:
     #: The STAGE B dependency-admission verdict (``composed.release_admitted`` — the SAME fact
     #: :attr:`~ComposedRuntime.release_admitted` already carries; plan §2 decision 5).
     dependency_admission: Callable[[], bool | None]
-    #: Placeholder — TOS Phase 5 W4 lane e3 (``operations/key_rotation.py``) has not landed at
-    #: the time this wiring was authored; returns ``None`` unconditionally (never a fabricated
-    #: verdict) until a follow-up threads the real
-    #: :class:`~tos_runtime.operations.key_rotation.KeyContinuityVerdict` through here.
+    #: The evidence store's own boot-time
+    #: :class:`~tos_runtime.operations.key_rotation.KeyContinuityCheck` verdict string (one of
+    #: :class:`~tos_runtime.operations.key_rotation.KeyContinuityVerdict`'s three constants),
+    #: read from :attr:`~tos_runtime.evidence.store.SqliteEvidenceStore.key_continuity` — a fact
+    #: this constructor already computed and refuses to open on anything but
+    #: ``CONTINUOUS`` (that same module's own docstring). Consequence, disclosed rather than
+    #: hidden: this can only ever read as ``CONTINUOUS`` for the lifetime of a runtime this
+    #: projection is attached to (any other verdict means the store never finished opening,
+    #: so no ``ComposedRuntime`` — and no projection — exists to read it from). Still an
+    #: honest, informative fact, not a constant: it is genuinely SOURCED from the boot-time
+    #: check, and the SAME projection is exported from ``restore-drill``'s own recompose too,
+    #: where a reader benefits from seeing "yes, a store opened here and passed its continuity
+    #: check" rather than a value with no source at all.
     key_continuity: Callable[[], str | None]
 
 

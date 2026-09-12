@@ -16,9 +16,10 @@ all read-only over an already-composed runtime:
    this fact stays honestly absent rather than computed from two incomparable readings.
 2. **``OperationsFacts`` construction** (plan §2 decision 11 (b)/(c)/(d)): schema versions of the
    three runtime-owned stores, the backup fact from step 1, the STAGE B dependency-admission
-   verdict (``composed.release_admitted`` — the SAME fact, not re-derived), and a ``key_continuity``
-   placeholder (TOS Phase 5 W4 lane e3 had not landed when this wiring was authored — see
-   :class:`~tos_runtime.compose._types.OperationsFacts`'s own docstring). Stored on
+   verdict (``composed.release_admitted`` — the SAME fact, not re-derived), and the evidence
+   store's own boot-time key-continuity verdict (``composed.evidence_store.key_continuity`` — see
+   :class:`~tos_runtime.compose._types.OperationsFacts`'s own docstring for why this can only ever
+   read ``CONTINUOUS`` on a runtime that exists to be read from at all). Stored on
    :attr:`~tos_runtime.compose._types.ComposedRuntime.operations`.
 3. **Operator-projection wiring** (plan §2 decisions 7/8, when ``projection_path`` is given): build
    an :class:`~tos_runtime.operator.projection.OperatorProjection` from read callables over
@@ -371,7 +372,7 @@ def apply_operations_wiring(
         schema_versions=_schema_versions_reader(composed),
         last_backup=lambda: last_backup,
         dependency_admission=lambda: composed.release_admitted,
-        key_continuity=lambda: None,
+        key_continuity=lambda: composed.evidence_store.key_continuity.verdict,
     )
     composed.operations = operations
 

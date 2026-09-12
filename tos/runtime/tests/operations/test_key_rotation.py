@@ -280,3 +280,108 @@ def test_rotate_evidence_key_when_rcl_write_fails_still_rotates_and_marks_unreco
     finally:
         store.close()
         rcl_log.close()
+
+
+# ============================================================================
+# permit_rotation_pending_for_generation — the rotate-key CLI ordering fix
+# ============================================================================
+#
+# FileKeyProvider's own rotation-order contract is "place the new generation's key file
+# FIRST, only THEN call rotate()" — but `test_existing_chain_plus_ungated_new_generation_
+# file_refuses_reopen` above proves a PLAIN re-open with the new file already present is
+# refused unconditionally. That is precisely the state a `rotate-key` CLI invocation (a
+# fresh process, not one that kept a store open across the file placement, unlike this
+# module's own `test_rotate_evidence_key_reopens_...` test) would observe. These tests
+# cover the one, narrowly-scoped override that lets exactly that CLI path proceed.
+
+
+def test_permit_rotation_pending_for_generation_allows_reopen_and_signs_under_old_tip(
+    tmp_path: Path,
+) -> None:
+    keydir = tmp_path / "keys"
+    _write_key(keydir, 1, b"gen-1-key-bytes-000000000000000")
+    provider = FileKeyProvider(keydir, expected_owner_uid=os.getuid())
+
+    store = SqliteEvidenceStore(tmp_path / "evidence.sqlite3", key_provider=provider)
+    store.append({"a": 1}, kind="TEST", record_class="TESTCLASS")
+    store.close()
+
+    # Operator places the new generation's file FIRST (file-first contract) — a plain
+    # reopen at this point would refuse (see the sibling test above).
+    _write_key(keydir, 2, b"gen-2-key-bytes-000000000000000")
+
+    reopened = SqliteEvidenceStore(
+        tmp_path / "evidence.sqlite3",
+        key_provider=provider,
+        permit_rotation_pending_for_generation=2,
+    )
+    try:
+        assert reopened.key_continuity.verdict == KeyContinuityVerdict.ROTATION_PENDING
+        # Signs under the EXISTING tip (1), never the pending new generation (2) — rotate()
+        # is still the only sanctioned way to switch the signing key.
+        assert reopened.key_generation == 1
+
+        rcl_log = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=reopened)
+        try:
+            outcome = rotate_evidence_key(reopened, provider, rcl_log, 2)
+            assert outcome == RotationOutcome.ROTATED
+            assert reopened.key_generation == 2
+        finally:
+            rcl_log.close()
+    finally:
+        reopened.close()
+
+    # A SUBSEQUENT, ordinary reopen (no override needed) now succeeds as CONTINUOUS.
+    final = SqliteEvidenceStore(tmp_path / "evidence.sqlite3", key_provider=provider)
+    try:
+        assert final.key_continuity.verdict == KeyContinuityVerdict.CONTINUOUS
+        assert final.key_generation == 2
+    finally:
+        final.close()
+
+
+def test_permit_rotation_pending_for_generation_does_not_help_a_mismatched_generation(
+    tmp_path: Path,
+) -> None:
+    """The override only applies when the caller's claimed generation matches what is
+    ACTUALLY the highest one on disk — never a blanket bypass."""
+    keydir = tmp_path / "keys"
+    _write_key(keydir, 1, b"gen-1-key-bytes-000000000000000")
+    provider = FileKeyProvider(keydir, expected_owner_uid=os.getuid())
+
+    store = SqliteEvidenceStore(tmp_path / "evidence.sqlite3", key_provider=provider)
+    store.append({"a": 1}, kind="TEST", record_class="TESTCLASS")
+    store.close()
+
+    _write_key(keydir, 2, b"gen-2-key-bytes-000000000000000")
+
+    with pytest.raises(KeyContinuityRefused, match="ROTATION_PENDING"):
+        SqliteEvidenceStore(
+            tmp_path / "evidence.sqlite3",
+            key_provider=provider,
+            permit_rotation_pending_for_generation=3,
+        )
+
+
+def test_permit_rotation_pending_for_generation_does_not_help_history_unverifiable(
+    tmp_path: Path,
+) -> None:
+    """The override is scoped to ROTATION_PENDING only — a HISTORY_UNVERIFIABLE verdict
+    (here: the tip's own key file vanished) still refuses unconditionally."""
+    keydir = tmp_path / "keys"
+    _write_key(keydir, 1, b"gen-1-key-bytes-000000000000000")
+    provider = FileKeyProvider(keydir, expected_owner_uid=os.getuid())
+
+    store = SqliteEvidenceStore(tmp_path / "evidence.sqlite3", key_provider=provider)
+    store.append({"a": 1}, kind="TEST", record_class="TESTCLASS")
+    store.close()
+
+    (keydir / "evidence.key.1").unlink()
+    _write_key(keydir, 2, b"gen-2-key-bytes-000000000000000")
+
+    with pytest.raises(KeyContinuityRefused, match="HISTORY_UNVERIFIABLE"):
+        SqliteEvidenceStore(
+            tmp_path / "evidence.sqlite3",
+            key_provider=provider,
+            permit_rotation_pending_for_generation=2,
+        )

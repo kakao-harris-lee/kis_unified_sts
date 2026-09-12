@@ -10,11 +10,11 @@ none of which are expressible as bare CLI flags (this module's long-standing con
 by this wave). :func:`main` therefore does not itself compose or drive anything for ``run``; a
 real launcher parses :class:`Args` here and supplies the rest itself.
 
-**The four operations subcommands DO real work directly from bare flags** (plan §2 decision 10),
+**The five operations subcommands DO real work directly from bare flags** (plan §2 decision 10),
 because none of them need a ``ConstructionConfig``/risk-input-provider: ``backup-set``,
-``restore-drill``, ``migrate``, ``print-digests`` each call straight into
+``restore-drill``, ``migrate``, ``rotate-key``, ``print-digests`` each call straight into
 :mod:`tos_runtime.operations.backup_set` / :mod:`tos_runtime.operations.schema_migrations` /
-:mod:`tos_runtime.operations.dependency_admission`.
+:mod:`tos_runtime.operations.key_rotation` / :mod:`tos_runtime.operations.dependency_admission`.
 
 **No subcommand token given ⇒ ``run`` (backward compatibility).** :func:`parse_args` prepends
 ``"run"`` to ``argv`` when the first token is not one of :data:`_SUBCOMMANDS` — the OLD bare
@@ -50,12 +50,19 @@ from pathlib import Path
 
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.custody.key_provider import FileKeyProvider
+from tos_runtime.evidence.store import KeyContinuityRefused, SqliteEvidenceStore
 from tos_runtime.operations.backup_set import DurableSetPaths, backup_set, restore_set
 from tos_runtime.operations.dependency_admission import (
     observe_runtime_artifact,
     print_digests_text,
 )
+from tos_runtime.operations.key_rotation import (
+    KeyRotationRefused,
+    RotationOutcome,
+    rotate_evidence_key,
+)
 from tos_runtime.operations.schema_migrations import STORE_MIGRATIONS, apply_migrations
+from tos_runtime.rcl.log import SqliteCommitLog
 
 __all__ = [
     "Args",
@@ -63,13 +70,21 @@ __all__ = [
     "MigrateArgs",
     "PrintDigestsArgs",
     "RestoreDrillArgs",
+    "RotateKeyArgs",
     "build_parser",
     "main",
     "parse_args",
 ]
 
 #: The recognized subcommand tokens (module docstring's own "no token given ⇒ run" rule).
-_SUBCOMMANDS = ("run", "backup-set", "restore-drill", "migrate", "print-digests")
+_SUBCOMMANDS = (
+    "run",
+    "backup-set",
+    "restore-drill",
+    "migrate",
+    "rotate-key",
+    "print-digests",
+)
 
 #: Duplicated from :mod:`tos_runtime.operations.backup_set`'s own private
 #: ``_LIVE_ENVIRONMENT_LABELS`` (not exported) — the SAME "duplicate the literal, do not reach
@@ -122,6 +137,17 @@ class MigrateArgs:
 
     data_dir: Path
     store: str | None = None
+
+
+@dataclass(frozen=True)
+class RotateKeyArgs:
+    """``rotate-key`` subcommand args — opens the evidence store + RCL log the same way
+    ``run`` does (no driver, no engine), then calls
+    :func:`~tos_runtime.operations.key_rotation.rotate_evidence_key`."""
+
+    data_dir: Path
+    custody_root: Path
+    new_generation: int
 
 
 @dataclass(frozen=True)
@@ -247,6 +273,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--store", choices=sorted(STORE_MIGRATIONS), default=None
     )
 
+    rotate_parser = subparsers.add_parser(
+        "rotate-key",
+        help=(
+            "Rotate the evidence-signing key to --new-generation (design #40 D4.1; the new "
+            "generation's key file must already be staged, file-first, under --custody-root)."
+        ),
+    )
+    rotate_parser.add_argument("--data-dir", required=True, type=Path)
+    rotate_parser.add_argument("--custody-root", required=True, type=Path)
+    rotate_parser.add_argument("--new-generation", required=True, type=int)
+
     subparsers.add_parser(
         "print-digests",
         help="Print this process's own source-tree/dependency-set digests (stdout only).",
@@ -257,7 +294,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def parse_args(
     argv: list[str] | None = None,
-) -> Args | BackupSetArgs | RestoreDrillArgs | MigrateArgs | PrintDigestsArgs:
+) -> (
+    Args
+    | BackupSetArgs
+    | RestoreDrillArgs
+    | MigrateArgs
+    | RotateKeyArgs
+    | PrintDigestsArgs
+):
     """Parse ``argv`` (defaults to ``sys.argv[1:]``) into the args object for whichever
     subcommand was named (or ``run``, implicitly — module docstring).
 
@@ -304,9 +348,57 @@ def parse_args(
         )
     if command == "migrate":
         return MigrateArgs(data_dir=namespace.data_dir, store=namespace.store)
+    if command == "rotate-key":
+        return RotateKeyArgs(
+            data_dir=namespace.data_dir,
+            custody_root=namespace.custody_root,
+            new_generation=namespace.new_generation,
+        )
     # command == "print-digests" — argparse itself refuses any token outside _SUBCOMMANDS,
     # so every other branch is exhaustive; this is the only remaining reachable case.
     return PrintDigestsArgs()
+
+
+def _dispatch_rotate_key(args: RotateKeyArgs) -> int:
+    """The ``rotate-key`` subcommand's own dispatch — split out of :func:`main` purely for
+    the 100-line function budget (no behaviour difference from inlining it there).
+
+    Opens the evidence store + RCL log the SAME way ``run`` does (no driver, no engine) —
+    :attr:`~tos_runtime.evidence.store.SqliteEvidenceStore.__init__`'s
+    ``permit_rotation_pending_for_generation`` is what lets this open at all when the new
+    generation's key file is already staged (that parameter's own docstring). Never re-raises
+    a refusal — every refusal is printed and reported via a non-zero exit code instead.
+    """
+    paths = DurableSetPaths.from_data_dir(args.data_dir)
+    key_provider = FileKeyProvider(args.custody_root, expected_owner_uid=os.getuid())
+    try:
+        evidence_store = SqliteEvidenceStore(
+            paths.evidence,
+            key_provider=key_provider,
+            permit_rotation_pending_for_generation=args.new_generation,
+        )
+    except KeyContinuityRefused as exc:
+        print(f"rotate-key: refused — {exc}", file=sys.stderr)
+        return 1
+    try:
+        rcl_log = SqliteCommitLog(paths.rcl, evidence_port=evidence_store)
+        try:
+            outcome = rotate_evidence_key(
+                evidence_store, key_provider, rcl_log, args.new_generation
+            )
+        except KeyRotationRefused as exc:
+            print(f"rotate-key: refused — {exc}", file=sys.stderr)
+            return 1
+        finally:
+            rcl_log.close()
+    finally:
+        evidence_store.close()
+
+    print(f"rotate-key: {outcome}")
+    # ROTATED_RCL_UNRECORDED is still a rotation that DID happen (module docstring of
+    # tos_runtime.operations.key_rotation's own M8 note) — reported on stdout above, but a
+    # non-zero exit still flags it for an operator/script to notice and reconcile the RCL side.
+    return 0 if outcome == RotationOutcome.ROTATED else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -371,6 +463,9 @@ def main(argv: list[str] | None = None) -> int:
             apply_migrations(path_by_store[store_name], store_name)
             print(f"migrate: {store_name} at {path_by_store[store_name]} is current")
         return 0
+
+    if isinstance(args, RotateKeyArgs):
+        return _dispatch_rotate_key(args)
 
     # isinstance(args, PrintDigestsArgs) — the only remaining case.
     observation = observe_runtime_artifact()

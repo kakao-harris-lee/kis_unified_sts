@@ -8,11 +8,15 @@ own behaviour (that is ``tests/operations/*``'s scope).
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
 import pytest
 from tos_runtime.compose import cli
 from tos_runtime.compose._transport_wiring import TransportKind
+from tos_runtime.custody.key_provider import FileKeyProvider
+from tos_runtime.evidence.store import KeyContinuityVerdict, SqliteEvidenceStore
 from tos_runtime.operations.backup_set import DurableSetPaths
 from tos_runtime.operations.schema_migrations import STORE_MIGRATIONS
 
@@ -364,3 +368,244 @@ def test_print_digests_dispatches_and_prints_the_exact_text(
 def test_print_digests_takes_no_extra_arguments(tmp_path: Path) -> None:
     args = cli.parse_args(["print-digests"])
     assert isinstance(args, cli.PrintDigestsArgs)
+
+
+# -- rotate-key -----------------------------------------------------------------
+
+
+def _write_key(root: Path, generation: int, data: bytes) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"evidence.key.{generation}"
+    path.write_bytes(data)
+    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+
+
+def test_rotate_key_parses_args(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    custody_root = tmp_path / "custody"
+
+    args = cli.parse_args(
+        [
+            "rotate-key",
+            "--data-dir",
+            str(data_dir),
+            "--custody-root",
+            str(custody_root),
+            "--new-generation",
+            "2",
+        ]
+    )
+
+    assert isinstance(args, cli.RotateKeyArgs)
+    assert args.data_dir == data_dir
+    assert args.custody_root == custody_root
+    assert args.new_generation == 2
+
+
+def test_rotate_key_dispatches_with_the_right_args(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: dict[str, object] = {}
+
+    class _FakeKeyProvider:
+        pass
+
+    class _FakeStore:
+        def close(self) -> None:
+            calls["store_closed"] = True
+
+    class _FakeRclLog:
+        def close(self) -> None:
+            calls["rcl_closed"] = True
+
+    def _fake_file_key_provider(custody_root: Path, *, expected_owner_uid: int):
+        calls["custody_root"] = custody_root
+        return _FakeKeyProvider()
+
+    def _fake_store_ctor(
+        path: Path, *, key_provider, permit_rotation_pending_for_generation
+    ):
+        calls["evidence_path"] = path
+        calls["permit"] = permit_rotation_pending_for_generation
+        return _FakeStore()
+
+    def _fake_rcl_ctor(path: Path, *, evidence_port):
+        calls["rcl_path"] = path
+        calls["evidence_port"] = evidence_port
+        return _FakeRclLog()
+
+    def _fake_rotate(store, key_provider, rcl_log, new_generation):
+        calls["rotate_args"] = (store, key_provider, rcl_log, new_generation)
+        return cli.RotationOutcome.ROTATED
+
+    monkeypatch.setattr(cli, "FileKeyProvider", _fake_file_key_provider)
+    monkeypatch.setattr(cli, "SqliteEvidenceStore", _fake_store_ctor)
+    monkeypatch.setattr(cli, "SqliteCommitLog", _fake_rcl_ctor)
+    monkeypatch.setattr(cli, "rotate_evidence_key", _fake_rotate)
+
+    data_dir = tmp_path / "data"
+    custody_root = tmp_path / "custody"
+    exit_code = cli.main(
+        [
+            "rotate-key",
+            "--data-dir",
+            str(data_dir),
+            "--custody-root",
+            str(custody_root),
+            "--new-generation",
+            "2",
+        ]
+    )
+
+    assert exit_code == 0
+    assert calls["custody_root"] == custody_root
+    assert calls["permit"] == 2
+    assert calls["evidence_path"] == DurableSetPaths.from_data_dir(data_dir).evidence
+    assert calls["rcl_path"] == DurableSetPaths.from_data_dir(data_dir).rcl
+    assert calls["store_closed"] is True
+    assert calls["rcl_closed"] is True
+
+
+def test_rotate_key_reports_non_zero_for_rotated_rcl_unrecorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _FakeStore:
+        def close(self) -> None:
+            pass
+
+    class _FakeRclLog:
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(cli, "FileKeyProvider", lambda *_a, **_k: object())
+    monkeypatch.setattr(cli, "SqliteEvidenceStore", lambda *_a, **_k: _FakeStore())
+    monkeypatch.setattr(cli, "SqliteCommitLog", lambda *_a, **_k: _FakeRclLog())
+    monkeypatch.setattr(
+        cli,
+        "rotate_evidence_key",
+        lambda *_a, **_k: cli.RotationOutcome.ROTATED_RCL_UNRECORDED,
+    )
+
+    exit_code = cli.main(
+        [
+            "rotate-key",
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--custody-root",
+            str(tmp_path / "custody"),
+            "--new-generation",
+            "2",
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_rotate_key_reports_a_continuity_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _refuse(*args: object, **kwargs: object):
+        raise cli.KeyContinuityRefused("boom")
+
+    monkeypatch.setattr(cli, "FileKeyProvider", lambda *_a, **_k: object())
+    monkeypatch.setattr(cli, "SqliteEvidenceStore", _refuse)
+
+    def _must_not_be_called(*args: object, **kwargs: object):
+        raise AssertionError(
+            "rotate_evidence_key must not be called after a refused open"
+        )
+
+    monkeypatch.setattr(cli, "rotate_evidence_key", _must_not_be_called)
+
+    exit_code = cli.main(
+        [
+            "rotate-key",
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--custody-root",
+            str(tmp_path / "custody"),
+            "--new-generation",
+            "2",
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_rotate_key_reports_a_rotation_refusal_and_still_closes_handles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: dict[str, object] = {}
+
+    class _FakeStore:
+        def close(self) -> None:
+            calls["store_closed"] = True
+
+    class _FakeRclLog:
+        def close(self) -> None:
+            calls["rcl_closed"] = True
+
+    def _refuse(*args: object, **kwargs: object):
+        raise cli.KeyRotationRefused("nope")
+
+    monkeypatch.setattr(cli, "FileKeyProvider", lambda *_a, **_k: object())
+    monkeypatch.setattr(cli, "SqliteEvidenceStore", lambda *_a, **_k: _FakeStore())
+    monkeypatch.setattr(cli, "SqliteCommitLog", lambda *_a, **_k: _FakeRclLog())
+    monkeypatch.setattr(cli, "rotate_evidence_key", _refuse)
+
+    exit_code = cli.main(
+        [
+            "rotate-key",
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--custody-root",
+            str(tmp_path / "custody"),
+            "--new-generation",
+            "2",
+        ]
+    )
+
+    assert exit_code == 1
+    assert calls["store_closed"] is True
+    assert calls["rcl_closed"] is True
+
+
+def test_rotate_key_real_end_to_end_gen1_then_place_gen2_then_rotate_then_reopen(
+    tmp_path: Path,
+) -> None:
+    """The exact scenario team-lead's directive names: gen 1 → place gen 2 file 0600 →
+    rotate → reopen succeeds."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    custody_root = tmp_path / "custody"
+
+    _write_key(custody_root, 1, b"gen-1-key-bytes-000000000000000")
+    provider = FileKeyProvider(custody_root, expected_owner_uid=os.getuid())
+    store = SqliteEvidenceStore(data_dir / "evidence.sqlite3", key_provider=provider)
+    store.append({"a": 1}, kind="TEST", record_class="TESTCLASS")
+    store.close()
+
+    _write_key(custody_root, 2, b"gen-2-key-bytes-000000000000000")
+
+    exit_code = cli.main(
+        [
+            "rotate-key",
+            "--data-dir",
+            str(data_dir),
+            "--custody-root",
+            str(custody_root),
+            "--new-generation",
+            "2",
+        ]
+    )
+    assert exit_code == 0
+
+    reopened_provider = FileKeyProvider(custody_root, expected_owner_uid=os.getuid())
+    reopened = SqliteEvidenceStore(
+        data_dir / "evidence.sqlite3", key_provider=reopened_provider
+    )
+    try:
+        assert reopened.key_continuity.verdict == KeyContinuityVerdict.CONTINUOUS
+        assert reopened.key_generation == 2
+    finally:
+        reopened.close()

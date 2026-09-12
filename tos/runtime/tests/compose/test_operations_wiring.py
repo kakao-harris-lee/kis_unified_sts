@@ -397,16 +397,24 @@ def test_operations_dependency_admission_matches_release_admitted(
     assert document["operations"]["dependency_admission"] is runtime.release_admitted
 
 
-def test_operations_key_continuity_is_a_placeholder_none(
+def test_operations_key_continuity_reports_the_real_boot_time_verdict(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
-    """TOS Phase 5 W4 lane e3 had not landed when this wiring was authored (module docstring
-    of ``OperationsFacts.key_continuity``) — a follow-up wires the real verdict."""
+    """The evidence store's own boot-time continuity check (module docstring of
+    ``OperationsFacts.key_continuity``) — always ``CONTINUOUS`` for a runtime that exists to be
+    read from at all (any other verdict means the store's constructor already raised).
+    """
     projection_path = tmp_path / "operator_projection.json"
-    _compose(config_dir, data_dir, custody_root, projection_path=projection_path)
+    runtime = _compose(
+        config_dir, data_dir, custody_root, projection_path=projection_path
+    )
 
     document = json.loads(projection_path.read_text())
-    assert document["operations"]["key_continuity"] is None
+    assert (
+        document["operations"]["key_continuity"]
+        == runtime.evidence_store.key_continuity.verdict
+        == "CONTINUOUS"
+    )
 
 
 # -- alerts: nothing has ever been resolved (no producer exists yet) ---------
