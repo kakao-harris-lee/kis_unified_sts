@@ -21,6 +21,14 @@ value** (:attr:`InboxReceipt.duplicate`), never an unhandled exception the calle
 to interpret. A different id can only mean different bytes, so there is no representable case where
 retrying loses data.
 
+**Schema-ledger genesis timestamp uses ``time.monotonic_ns`` directly (disclosed choice, TOS
+Phase 5 W4 plan §2 decision 3).** Unlike the evidence store and RCL log, this constructor takes
+no injected ``monotonic_ns`` callable — widening that public signature for one boot-time-only
+ledger stamp was judged not worth it. The schema-ledger genesis row is written at most once per
+file (``ensure_schema_current``'s ``CREATED`` case) and is never read back for anything time-
+sensitive, so this is a disclosed exception to the "never read the wall/monotonic clock directly"
+convention, not an oversight.
+
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``json``, ``sqlite3``,
 ``time``) + ``pydantic`` + ``tos.canonical``/``tos.engine`` + ``tos_runtime.operations`` (the
 schema-ledger boot check, TOS Phase 5 W4 plan §2 decision 3) only. No ``shared.*``, no

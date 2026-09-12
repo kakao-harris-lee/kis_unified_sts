@@ -6,13 +6,14 @@ single sqlite3 file, **separate from the evidence store's own file** (design
 #40 D3.1 "장애 도메인 분리"): ``journal_mode=WAL``, ``synchronous=FULL``, every
 mutation inside ``BEGIN IMMEDIATE`` ... ``COMMIT``.
 
-**Module layout note (size-budget decomposition, 2026-09-08).** The sqlite
-schema DDL/triggers live in :mod:`tos_runtime.rcl.schema`, and the pre-insert
-gate + replay-fold helpers (reservation from_state checking, duplicate-command
-classification, the replay fold itself) live in :mod:`tos_runtime.rcl.gates`
-— both extracted purely to keep this module under the repo's 1000-line
-module size budget (``tools/tos_size_budget.py``). No behavior changed by
-that extraction: every function there is called from exactly the places it
+**Module layout note (size-budget decomposition, 2026-09-08; extended 2026-09-12).** The sqlite
+schema DDL/triggers AND the schema-ledger boot check (``apply_schema_ledger``, TOS Phase 5 W4
+plan §2 decision 3) live in :mod:`tos_runtime.rcl.schema`; the pre-insert gate + replay-fold
+helpers (reservation from_state checking, duplicate-command classification, the replay fold
+itself, and the row->model helper ``row_to_commit_entry`` shared by :meth:`replay`/
+:meth:`read_linearizable`) live in :mod:`tos_runtime.rcl.gates` — all extracted purely to keep
+this module under the repo's 1000-line module size budget (``tools/tos_size_budget.py``). No
+behavior changed by that extraction: every function there is called from exactly the places it
 used to be, over the exact same ``sqlite3.Connection``, inside the exact
 same transactions. Likewise, :meth:`SqliteCommitLog._commit_entry` was split
 into three sequentially-called private methods
@@ -248,7 +249,6 @@ import sqlite3
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
 
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.rcl import (
@@ -279,6 +279,7 @@ from tos_runtime.rcl.gates import (
     existing_command_row,
     fold_reservations_from_entries,
     reservation_lifecycle_refusal,
+    row_to_commit_entry,
 )
 from tos_runtime.rcl.schema import (
     CREATE_ENTRIES_TABLE_SQL,
@@ -334,19 +335,6 @@ class StaleEpochRead(RuntimeError):
     def __init__(self, reason: AppendRefusalReason) -> None:
         super().__init__(f"read_linearizable refused: {reason}")
         self.reason = reason
-
-
-def _row_to_commit_entry(row: tuple[Any, ...]) -> CommitEntry:
-    """Build a :class:`~tos.rcl.CommitEntry` from one ``entries`` row (shared by replay/read)."""
-    seq, writer_epoch, command_id, command_digest, kind, payload_digest = row
-    return CommitEntry(
-        seq=seq,
-        writer_epoch=writer_epoch,
-        command_id=command_id,
-        command_digest=command_digest,
-        kind=CommandType(kind) if kind is not None else None,
-        payload_digest=payload_digest,
-    )
 
 
 class SqliteCommitLog:
@@ -580,7 +568,7 @@ class SqliteCommitLog:
         except BaseException:
             self._safe_rollback()
             raise
-        entries = tuple(_row_to_commit_entry(row) for row in rows)
+        entries = tuple(row_to_commit_entry(row) for row in rows)
         return LogView(
             epoch=current, last_seq=(None if tip < 0 else tip), entries=entries
         )
@@ -592,7 +580,7 @@ class SqliteCommitLog:
             "payload_digest FROM entries ORDER BY seq ASC"
         ).fetchall()
         for row in rows:
-            yield _row_to_commit_entry(row)
+            yield row_to_commit_entry(row)
 
     # -- reservation lifecycle (D2.1 item 4) ------------------------------
 

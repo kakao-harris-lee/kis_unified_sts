@@ -793,17 +793,3 @@ exceptions:
     유일한 결선 지점이라 분해 대신 등재. `_wiring.py`(STAGE B 이전에 이 함수가
     호출돼 그 시점엔 값이 없음)는 호출부를 고치지 않아 파라미터가 `None` 기본값을
     그대로 쓴다 — 조작된 `True` 금지 원칙 유지, 배선 자체는 후속 과제로 이월.
-- target: tos/runtime/src/tos_runtime/rcl/log.py
-  measured: 1004
-  owner: tos-runtime
-  decomposition_order: 44
-  expires_on: '2026-12-31'
-  note: >-
-    Phase 5 W4 lane e1 신규 등재 — 스키마 ledger 결선(plan §2 결정 3):
-    `apply_schema_ledger`(rcl/schema.py, 새 함수 — DDL/트리거와 함께 두는 것이
-    2026-09-08 자신의 모듈 분해 관례와 동일) import 1줄 + `file_is_fresh` import
-    1줄 + 생성자 안 `was_fresh = file_is_fresh(...)` 1줄 + `apply_schema_ledger(...)`
-    호출 1줄(순증 +4, 도크스트링 문구는 순증 0 — 기존 한 줄을 다시 씀). 이 파일은
-    이미 정확히 1000줄에서 등재 없이 통과 중이던 파일이라 슬랙이 0이었음 —
-    스키마 ledger 는 신규 필수 부팅 검사(§2 결정 3)라 생략 불가. 더 줄이려면
-    독스트링을 깎아야 하나 그건 실질 코드가 아니라 문서 손상이라 분해 대신 등재.
