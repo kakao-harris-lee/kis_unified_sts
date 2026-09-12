@@ -238,7 +238,7 @@ Firewall: stdlib (``sqlite3``, ``json``, ``time``, ``fcntl``) + ``pydantic``
 (transitively, via ``tos.rcl``/``tos.canonical``/``tos.workload`` models) +
 ``tos.canonical``/``tos.rcl``/``tos.workload`` + ``tos_runtime.evidence``
 (the ``EvidenceAppendPort`` seam) + ``tos_runtime.rcl`` (self — ``schema``/
-``gates`` siblings) only (R1 allowlist).
+``gates`` siblings; ``schema`` also carries the schema-ledger boot check) only (R1 allowlist).
 """
 
 from __future__ import annotations
@@ -269,6 +269,7 @@ from tos.rcl import (
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.evidence.ports import EvidenceAppendPort
+from tos_runtime.operations.schema_ledger import file_is_fresh
 from tos_runtime.rcl.gates import (
     ReservationRefusalReason,
     ReservationTransitionRefusal,
@@ -284,6 +285,7 @@ from tos_runtime.rcl.schema import (
     CREATE_EPOCHS_TABLE_SQL,
     CREATE_RESERVATIONS_TABLE_SQL,
     NO_MUTATION_TRIGGERS_SQL,
+    apply_schema_ledger,
 )
 
 __all__ = [
@@ -402,11 +404,13 @@ class SqliteCommitLog:
         )
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
+        was_fresh = file_is_fresh(self._conn)  # before any CREATE TABLE below
         self._conn.execute(CREATE_EPOCHS_TABLE_SQL)
         self._conn.execute(CREATE_ENTRIES_TABLE_SQL)
         self._conn.execute(CREATE_RESERVATIONS_TABLE_SQL)
         for trigger_sql in NO_MUTATION_TRIGGERS_SQL:
             self._conn.execute(trigger_sql)
+        apply_schema_ledger(self._conn, was_fresh=was_fresh, monotonic_ns=monotonic_ns)
 
     # -- lifecycle -------------------------------------------------------
 

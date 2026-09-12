@@ -21,14 +21,17 @@ value** (:attr:`InboxReceipt.duplicate`), never an unhandled exception the calle
 to interpret. A different id can only mean different bytes, so there is no representable case where
 retrying loses data.
 
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``json``, ``sqlite3``) +
-``pydantic`` + ``tos.canonical``/``tos.engine`` only. No ``shared.*``, no ``tos.backtest``.
+Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``json``, ``sqlite3``,
+``time``) + ``pydantic`` + ``tos.canonical``/``tos.engine`` + ``tos_runtime.operations`` (the
+schema-ledger boot check, TOS Phase 5 W4 plan §2 decision 3) only. No ``shared.*``, no
+``tos.backtest``.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import StrEnum
@@ -37,7 +40,26 @@ from pathlib import Path
 from tos.canonical import CanonicalizationScheme
 from tos.engine.records import EngineEvent, event_identity
 
-__all__ = ["InboxReceipt", "NewRiskHaltClearOutcome", "SqliteEventInbox"]
+from tos_runtime.operations.schema_ledger import (
+    compute_schema_shape_digest,
+    ensure_schema_current,
+    file_is_fresh,
+)
+
+__all__ = [
+    "INBOX_SCHEMA_VERSION",
+    "InboxReceipt",
+    "NewRiskHaltClearOutcome",
+    "SqliteEventInbox",
+]
+
+#: TOS Phase 5 W4 plan §2 decision 3 — see
+#: ``tos_runtime.evidence.store.EVIDENCE_SCHEMA_VERSION``'s own docstring for the shared
+#: convention. Baseline v1 already includes the ``_ADDED_COLUMNS`` columns below (the plan's own
+#: "baseline includes the added columns" instruction) — this store's schema-ledger baseline and
+#: its pre-ledger ``_ADDED_COLUMNS`` idiom are two independent mechanisms that happen to agree on
+#: the SAME target shape; the older idiom is kept as-is for a file older than either mechanism.
+INBOX_SCHEMA_VERSION = 1
 
 _CREATE_EVENTS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS events (
@@ -235,6 +257,9 @@ class SqliteEventInbox:
         self._conn = sqlite3.connect(str(path), isolation_level=None)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
+        # Captured BEFORE any CREATE TABLE below runs — see
+        # tos_runtime.operations.schema_ledger.file_is_fresh's own docstring.
+        was_fresh = file_is_fresh(self._conn)
         self._conn.execute(_CREATE_EVENTS_TABLE_SQL)
         self._conn.execute(_CREATE_UNCONSUMED_INDEX_SQL)
         self._conn.execute(_CREATE_ATTEMPT_COMPOSITES_TABLE_SQL)
@@ -246,6 +271,22 @@ class SqliteEventInbox:
         for column, decl in _ADDED_COLUMNS:
             if column not in existing_columns:
                 self._conn.execute(f"ALTER TABLE events ADD COLUMN {column} {decl}")
+        ensure_schema_current(
+            self._conn,
+            store_name="inbox",
+            schema_version=INBOX_SCHEMA_VERSION,
+            was_fresh=was_fresh,
+            migration_digest=compute_schema_shape_digest(
+                self._conn,
+                (
+                    "events",
+                    "attempt_composites",
+                    "attempt_finality_witness",
+                    "new_risk_halt",
+                ),
+            ),
+            monotonic_ns=time.monotonic_ns,
+        )
 
     def close(self) -> None:
         """Close the underlying sqlite3 connection."""

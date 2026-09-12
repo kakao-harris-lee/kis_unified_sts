@@ -83,7 +83,8 @@ merely undocumented.
 
 Firewall: stdlib (``sqlite3``, ``json``, ``time``) + ``pydantic`` +
 ``tos.canonical``/``tos.evidence``/``tos.workload`` + ``tos_runtime.evidence``
-only (R1 allowlist).
++ ``tos_runtime.operations`` (the schema-ledger boot check, TOS Phase 5 W4
+plan §2 decision 3) only (R1 allowlist).
 """
 
 from __future__ import annotations
@@ -107,14 +108,26 @@ from tos.evidence import (
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.evidence import outbox as _outbox
+from tos_runtime.operations.schema_ledger import (
+    compute_schema_shape_digest,
+    ensure_schema_current,
+    file_is_fresh,
+)
 
 __all__ = [
     "ChainVerification",
+    "EVIDENCE_SCHEMA_VERSION",
     "EvidenceCorruption",
     "InjectedCrash",
     "KeyProvider",
     "SqliteEvidenceStore",
 ]
+
+#: TOS Phase 5 W4 plan §2 decision 3 — this store's own ``PRAGMA user_version`` /
+#: ``schema_ledger`` baseline. Bumped only when this store's table shape actually changes; see
+#: :mod:`tos_runtime.operations.schema_migrations` for the registered migration this version
+#: corresponds to.
+EVIDENCE_SCHEMA_VERSION = 1
 
 #: The genesis commitment every fresh chain folds from — matches
 #: :mod:`tos.evidence.chain`'s own (private) ``_CHAIN_GENESIS`` convention.
@@ -273,10 +286,23 @@ class SqliteEvidenceStore:
         self._conn = sqlite3.connect(str(path), isolation_level=None)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
+        # Captured BEFORE any CREATE TABLE below runs (schema_ledger's own module docstring on
+        # `file_is_fresh` — a fresh file looks identical to an already-populated one otherwise).
+        was_fresh = file_is_fresh(self._conn)
         self._conn.execute(_CREATE_ENTRIES_TABLE_SQL)
         self._conn.execute(_CREATE_NO_UPDATE_TRIGGER_SQL)
         self._conn.execute(_CREATE_NO_DELETE_TRIGGER_SQL)
         _outbox.create_outbox_table(self._conn)
+        ensure_schema_current(
+            self._conn,
+            store_name="evidence",
+            schema_version=EVIDENCE_SCHEMA_VERSION,
+            was_fresh=was_fresh,
+            migration_digest=compute_schema_shape_digest(
+                self._conn, ("entries", "outbox")
+            ),
+            monotonic_ns=monotonic_ns,
+        )
         key_generation, key = key_provider.current()
         self._scheme = Sha256HmacChainScheme(key=key, key_generation=key_generation)
 
