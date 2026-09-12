@@ -47,11 +47,15 @@ from tos_runtime.brokercap.scopes import (
 from tos_runtime.compose._transport_wiring import TransportKind
 
 from ..compose import _fixtures as fx
-from ..compose.conftest import config_dir as config_dir  # noqa: F401
-from ..compose.conftest import custody_root as custody_root  # noqa: F401
-from ..compose.conftest import data_dir as data_dir  # noqa: F401
 from ..compose.conftest import write_approval_file
 from ..compose.test_compose_root import _compose, _reach_trusted
+
+# ``config_dir`` / ``data_dir`` / ``custody_root`` are NOT imported here: they are re-exported by
+# this package's own ``conftest.py`` (kernel round #3 K-6) precisely so pytest resolves them as
+# fixtures for the test methods below without this module ever binding those names itself — the
+# same names appear as parameters throughout this file, and importing them here too would trip
+# ruff's F811 (a false positive: pyflakes reads "parameter shadows import" without knowing pytest
+# resolves fixtures by name, never by import visibility).
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
