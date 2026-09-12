@@ -1676,6 +1676,70 @@ class TestReleaseAdmissionRefusalBlocksBoot:
         assert "expected_code_digest" in str(excinfo.value)
 
 
+class TestSoftwareDeploymentOkThreadedIntoSafetyMesh:
+    """Phase 5 W4 §2 decision 6 (2026-09-12 reorder) — ``_stage_b_release_probe``
+    now runs right after the RCL log is verified, BEFORE ``build_safety_mesh``, so
+    its real ``release_admitted`` verdict (never a literal ``True``) reaches
+    SAFETY_ENVELOPE_PROFILE's ``SemanticValidationInputs.software_deployment_ok``.
+
+    ``TestReleaseAdmissionRefusalBlocksBoot`` above already proves release
+    admission gates the WHOLE boot on a digest mismatch, but that refusal is a
+    STAGE A rejection (pure digest comparison, no I/O) — ``_stage_b_release_probe``
+    is never reached in that scenario either before or after this reorder, so it
+    does not by itself pin the STAGE B -> ``build_safety_mesh`` wiring. The two
+    tests below do: one over a normal boot (the real ``True`` reaches the
+    service), one mutation-style (forcing ``decide()`` to refuse proves
+    ``build_safety_mesh`` is never even called with a stale/hardcoded value)."""
+
+    def test_normal_boot_threads_the_real_admitted_verdict(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        composed = _compose(tmp_path, config_dir, data_dir, custody_root)
+        assert composed.release_admitted is True
+        # Honest read path: the kernel's own EngineCore stores the injected
+        # CoordinatorPreconditions as ``self._preconditions`` (tos/src/tos/engine/
+        # core.py), which in turn stores the safety-mesh tuple it was constructed
+        # with as ``self._safety_mesh`` (tos_runtime.compose._preconditions
+        # .RuntimeCoordinatorPreconditions.__init__) — item 0 of that tuple is
+        # SAFETY_ENVELOPE_PROFILE (build_safety_mesh's own services tuple order).
+        profile_service = composed.core._preconditions._safety_mesh[0]
+        assert profile_service._software_deployment_ok is True
+
+    def test_a_refused_stage_b_verdict_never_reaches_build_safety_mesh(
+        self,
+        config_dir: Path,
+        data_dir: Path,
+        custody_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """M2-style guard: if ``software_deployment_ok`` were hardcoded ``True``
+        (disconnected from the real STAGE B verdict), forcing that verdict to
+        refuse would not stop ``build_safety_mesh`` from running with a stale
+        ``True``. Forcing ``ReleaseAdmissionService.decide`` to always return
+        ``False`` must instead raise before ``build_safety_mesh`` is ever
+        called."""
+        import tos_runtime.compose._wiring as wiring_module
+        from tos_runtime.release.admission import ReleaseAdmissionService
+
+        calls: list[object] = []
+        real_build_safety_mesh = wiring_module.build_safety_mesh
+
+        def _spy_build_safety_mesh(*args: object, **kwargs: object) -> object:
+            calls.append(kwargs.get("software_deployment_ok"))
+            return real_build_safety_mesh(*args, **kwargs)
+
+        monkeypatch.setattr(wiring_module, "build_safety_mesh", _spy_build_safety_mesh)
+        monkeypatch.setattr(
+            ReleaseAdmissionService,
+            "decide",
+            lambda _self, *_args, **_kwargs: False,
+        )
+        with pytest.raises(ReleaseAdmissionRefused):
+            _compose(tmp_path, config_dir, data_dir, custody_root)
+        assert calls == []
+
+
 class TestCapacityObligationRecording:
     """Kernel round #1 §3 (lane B) — the compose root wires a REAL
     ``CapacityObligationRecorder`` onto the REAL gateway sink, resolving the

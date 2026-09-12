@@ -1036,14 +1036,13 @@ def _boot_services(
     allow_no_strategies: bool,
     transport_kind: TransportKind,
 ) -> _BootResult:
-    """Identity + STAGE A release probe + custody/evidence/time + RCL/
-    authority + risk/currentness + strategy-source resolution
-    (:func:`_resolve_strategies_and_attested_inputs` — TOS Phase 3 슬라이스
-    D-R ``[D-R-2]``) + STAGE B release probe — split out of
-    :func:`~tos_runtime.compose.root.compose_paper_runtime` purely for the
-    size budget; the actual STAGE A/B split and its rationale live on
-    :func:`_stage_a_release_probe`/:func:`_stage_b_release_probe`
-    themselves."""
+    """Identity + STAGE A release probe + custody/evidence/time + RCL/authority + STAGE
+    B release probe + safety mesh/risk/currentness + strategy-source resolution
+    (:func:`_resolve_strategies_and_attested_inputs` — TOS Phase 3 슬라이스 D-R
+    ``[D-R-2]``), split out of
+    :func:`~tos_runtime.compose.root.compose_paper_runtime` for the size budget.
+    STAGE B now runs right after the RCL log is verified — see
+    :func:`_stage_a_release_probe`/:func:`_stage_b_release_probe`."""
     observation = observe_runtime_artifact()
     identity = _build_identity(environment_label, observation.source_tree_digest)
     release_config = load_release_config(config_dir / _RELEASE_CONFIG_NAME)
@@ -1071,11 +1070,15 @@ def _boot_services(
     verify_rcl_log_or_halt(
         rcl.rcl_log, infra.evidence_store, infra.emergency_log, identity
     )
+    release_admitted = _stage_b_release_probe(
+        release_service, identity, infra.time_service, rcl.rcl_log
+    )
     safety_mesh = build_safety_mesh(
         config_dir,
         evidence_store=infra.evidence_store,
         time_service=infra.time_service,
         monotonic_source=infra.monotonic_source,
+        software_deployment_ok=release_admitted,
     )
     risk = _build_risk_and_currentness(
         config_dir,
@@ -1102,9 +1105,6 @@ def _boot_services(
         registry,
         allow_no_strategies,
         transport_kind,
-    )
-    release_admitted = _stage_b_release_probe(
-        release_service, identity, infra.time_service, rcl.rcl_log
     )
     return _BootResult(
         identity=identity,
