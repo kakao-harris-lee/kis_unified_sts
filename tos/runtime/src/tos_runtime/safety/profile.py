@@ -249,6 +249,7 @@ class SafetyProfileService:
         profile_path: Path,
         activation_path: Path,
         time_source: TimeHealthSource | None = None,
+        software_deployment_ok: bool | None = None,
     ) -> None:
         """Load + validate the three policy documents, fail-closed.
 
@@ -263,6 +264,11 @@ class SafetyProfileService:
                 :class:`TimeHealthSource`); ``None`` means this service can never
                 establish time-verifiability, so :meth:`clear` reports ``None`` whenever
                 no sibling check has already positively failed.
+            software_deployment_ok: The injected Phase 5 W4
+                ``tos_runtime.release.admission.release_admission`` verdict (ADR-002-029
+                step 8; :class:`~tos.spg.SemanticValidationInputs.software_deployment_ok`)
+                — ``None`` when this fact is not yet available at construction time
+                (e.g. release admission has not run yet), never a fabricated ``True``.
 
         Raises:
             SafetyProfileConfigError: Any document is missing, unreadable, not valid
@@ -271,6 +277,7 @@ class SafetyProfileService:
         """
         self._docs = _load_documents(envelope_path, profile_path, activation_path)
         self._time_source = time_source
+        self._software_deployment_ok = software_deployment_ok
 
     @property
     def identity(self) -> str:
@@ -307,7 +314,12 @@ class SafetyProfileService:
         return ActivationInputs(
             version_fully_active=version_fully_active,
             mixed_versions_present=False,
-            units_compatible=units_compatible(bundle, SemanticValidationInputs()),
+            units_compatible=units_compatible(
+                bundle,
+                SemanticValidationInputs(
+                    software_deployment_ok=self._software_deployment_ok
+                ),
+            ),
             envelope_bounded=envelope_bounded(envelope, profile),
             staging_complete=bool(activation.approval_ids),
             attestation_complete=bool(activation.compatibility_attestation_refs),

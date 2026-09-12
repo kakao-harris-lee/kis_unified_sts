@@ -451,6 +451,7 @@ def build_safety_mesh(
     evidence_store: SqliteEvidenceStore,
     time_service: TrustworthyTimeService,
     monotonic_source: MonotonicSource,
+    software_deployment_ok: bool | None = None,
 ) -> _SafetyMesh:
     """Load + construct the four W3-a1/a2 safety-mesh services and the item-16
     restrictive-latch owner (module docstring) — the ONE call
@@ -468,6 +469,11 @@ def build_safety_mesh(
             observation.
         monotonic_source: This composition's real monotonic clock — the MONITORING
             service's stall-detector clock.
+        software_deployment_ok: Phase 5 W4 §2 decision 6 — the STAGE B
+            ``tos_runtime.release.admission.release_admission`` verdict, threaded into
+            SAFETY_ENVELOPE_PROFILE's ``SemanticValidationInputs``. ``None`` (the
+            default) when that fact is not yet available at this call site — never a
+            fabricated ``True``.
 
     Raises:
         SafetyProfileConfigError / DeviationConfigError / IncidentConfigError /
@@ -479,6 +485,7 @@ def build_safety_mesh(
         envelope_path=config_dir / _SAFETY_ENVELOPE_CONFIG_NAME,
         profile_path=config_dir / _SAFETY_PROFILE_CONFIG_NAME,
         activation_path=config_dir / _SAFETY_ACTIVATION_CONFIG_NAME,
+        software_deployment_ok=software_deployment_ok,
         time_source=_TimeHealthAdapter(time_service),
     )
     deviation_service = DeviationService(

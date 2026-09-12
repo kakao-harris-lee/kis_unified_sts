@@ -759,7 +759,7 @@ exceptions:
     100→107(+7) — Coordinator 자신이 매 틱 스냅샷을 «갱신하는» 유일한 소비자여야
     한다는 팀리드 처분의 핵심 지점이라 분해 대신 등재.
 - target: tos/runtime/src/tos_runtime/compose/_safety_wiring.py::build_safety_mesh
-  measured: 140
+  measured: 147
   owner: tos-runtime
   decomposition_order: 43
   expires_on: '2026-12-31'
@@ -786,3 +786,10 @@ exceptions:
     새 스냅샷 소비자 아님)/`time_health_state`/`evidence_recorder` 4개 포트를
     조립하는 블록(주석 6줄 포함) + `_SafetyMesh` 반환에 `protective_action=` 1줄
     추가 — 이 함수가 그 유일한 결선 지점이라 분해 대신 등재.
+    **2026-09-12 Phase 5 W4 lane e2 재등재 140→147(+7)**: 결정 6 — 시그니처에
+    `software_deployment_ok: bool | None = None` 파라미터 1개(§2 결정 6, STAGE B
+    `release_admission` 결과를 SAFETY_ENVELOPE_PROFILE 로 관통 배선) + 도크스트링
+    Args 항목 5줄 + `SafetyProfileService(...)` 호출에 인자 1줄 — 이 함수가 그
+    유일한 결선 지점이라 분해 대신 등재. `_wiring.py`(STAGE B 이전에 이 함수가
+    호출돼 그 시점엔 값이 없음)는 호출부를 고치지 않아 파라미터가 `None` 기본값을
+    그대로 쓴다 — 조작된 `True` 금지 원칙 유지, 배선 자체는 후속 과제로 이월.

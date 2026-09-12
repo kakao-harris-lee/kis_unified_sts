@@ -322,3 +322,69 @@ def test_mutation_m1_constant_true_is_caught(
     clearance = service.clear()
     assert clearance.clear is False
     assert "profile_within_envelope" in clearance.reasons
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 W4 §2 decision 6 -- software_deployment_ok threaded, never fabricated
+# ---------------------------------------------------------------------------
+
+
+def test_software_deployment_ok_defaults_to_none(
+    nominal_profile_paths: tuple[Path, Path, Path],
+) -> None:
+    """Constructing without the new argument keeps prior behaviour -- never a
+    fabricated ``True``."""
+    service = _service(nominal_profile_paths, None)
+    assert service._software_deployment_ok is None
+
+
+def test_software_deployment_ok_true_is_stored(
+    nominal_profile_paths: tuple[Path, Path, Path],
+) -> None:
+    envelope_path, profile_path, activation_path = nominal_profile_paths
+    service = SafetyProfileService(
+        envelope_path=envelope_path,
+        profile_path=profile_path,
+        activation_path=activation_path,
+        time_source=None,
+        software_deployment_ok=True,
+    )
+    assert service._software_deployment_ok is True
+
+
+def test_semantic_validation_reflects_software_deployment_ok() -> None:
+    """The constructor's ``software_deployment_ok`` is exactly the value
+    ``tos.spg.semantic_validation`` folds through ``SemanticValidationInputs``
+    (Phase 5 W4 §2 decision 6). With every OTHER injected precondition held
+    ``True``, flipping ONLY ``software_deployment_ok`` flips whether
+    ``SCHEMA_INCOMPLETE_OR_DOWNGRADE`` is in the reason set -- ``None`` keeps
+    the prior (fails-closed) behaviour, a real ``True`` clears that one
+    reason."""
+    envelope = spg_module.HardSafetyEnvelope.model_validate(
+        NOMINAL_ENVELOPE["envelope"]
+    )
+    profile = spg_module.RuntimeSafetyProfile.model_validate(NOMINAL_PROFILE["profile"])
+    bundle = spg_module.SafetyConfigurationBundle(envelope=envelope, profile=profile)
+
+    def _reason_set(software_deployment_ok: bool | None) -> frozenset:
+        inputs = spg_module.SemanticValidationInputs(
+            signature_and_revocation_ok=True,
+            canonical_reproducible=True,
+            cross_field_consistent=True,
+            aggregate_effect_within=True,
+            software_deployment_ok=software_deployment_ok,
+            bundle_member_digests_match=True,
+            time_validity_ok=True,
+            change_direction=spg_module.ChangeDirection.RESTRICTIVE,
+        )
+        return spg_module.semantic_validation(bundle, inputs).reason_set
+
+    reasons_when_none = _reason_set(None)
+    reasons_when_true = _reason_set(True)
+    assert (
+        spg_module.ValidationReason.SCHEMA_INCOMPLETE_OR_DOWNGRADE in reasons_when_none
+    )
+    assert (
+        spg_module.ValidationReason.SCHEMA_INCOMPLETE_OR_DOWNGRADE
+        not in reasons_when_true
+    )
