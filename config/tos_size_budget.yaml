@@ -632,7 +632,7 @@ exceptions:
     import 가 완전히 사라진다(순환을 우회가 아니라 제거). `gateway.py`/`mesh.py` 는
     이 모듈에서 `_verdict` 를 import.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 188
+  measured: 201
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
@@ -705,6 +705,13 @@ exceptions:
     1줄(POST_TRADE 리더의 셀 — 계획 §2 결정 5). AGGREGATE_RISK 는 late-bind
     불필요(리더가 `risk_service` 를 직접 닫음 — `_currentness_wiring.py` 자신의
     등재 참조). 정본 결선 순서 문서라 분해 대신 등재.
+    **2026-09-12 Phase 5 W4 재등재 188→201**: `projection_path`/`backup_root`
+    매개변수 2개(docstring Args 항목 2개 포함) + `apply_operations_wiring
+    (composed, ...)` 호출 1건(주석 3줄 · 계획 §2 결정 11 — operations facts +
+    operator projection 은 evidence/RCL/inbox/release_admitted/recovery 가
+    전부 존재하는 시점에만 결선 가능하므로 `apply_recovery_barrier` 직후,
+    함수 끝에 추가). root.py 는 정본 결선 순서 문서라 호출 시퀀스 재구성은
+    하지 않음 — 분해 대신 등재.
 - target: tos/runtime/src/tos_runtime/compose/_boot_integrity.py::record_operator_attested_inputs
   measured: 104
   owner: tos-runtime
@@ -733,7 +740,7 @@ exceptions:
     자신의 «안전-부담 파라미터는 온전한 도크스트링을 받는다» 관례상 완전 압축은
     포기하고 등재(무예외 목표 미달성, 정직 등재).
 - target: tos/runtime/src/tos_runtime/compose/_finalize_wiring.py::_finalize
-  measured: 101
+  measured: 103
   owner: tos-runtime
   decomposition_order: 41
   expires_on: '2026-12-31'
@@ -744,6 +751,12 @@ exceptions:
     3곳(currentness/deferred-fields/Coordinator 자신)에서 각각 `clear()`를
     부르던 것을 틱당 1회로 고정하는 공유 스냅샷 배선의 마지막 관통 지점. 100→101
     초과 — 정본 결선(엔진+게이트웨이+드라이버 조립) 순서 문서라 분해 대신 등재.
+    **2026-09-12 Phase 5 W4 재등재 101→103**: `ComposedRuntime(...)` 호출부에
+    `safety_mesh_peek=risk.safety_mesh.peek_tick_snapshot,`/
+    `protective_last_verdict=lambda: risk.safety_mesh.protective_action
+    .last_verdict,` 인자 2줄 추가(§2 결정 7 — operator projection 의
+    safety_mesh/protective 필드를 실값화) — 이 함수가 `ComposedRuntime` 조립의
+    유일한 지점이라 분해 대신 등재.
 - target: tos/runtime/src/tos_runtime/compose/_preconditions.py::RuntimeCoordinatorPreconditions.live_scope_authorized
   measured: 107
   owner: tos-runtime
@@ -759,7 +772,7 @@ exceptions:
     100→107(+7) — Coordinator 자신이 매 틱 스냅샷을 «갱신하는» 유일한 소비자여야
     한다는 팀리드 처분의 핵심 지점이라 분해 대신 등재.
 - target: tos/runtime/src/tos_runtime/compose/_safety_wiring.py::build_safety_mesh
-  measured: 140
+  measured: 148
   owner: tos-runtime
   decomposition_order: 43
   expires_on: '2026-12-31'
@@ -786,3 +799,15 @@ exceptions:
     새 스냅샷 소비자 아님)/`time_health_state`/`evidence_recorder` 4개 포트를
     조립하는 블록(주석 6줄 포함) + `_SafetyMesh` 반환에 `protective_action=` 1줄
     추가 — 이 함수가 그 유일한 결선 지점이라 분해 대신 등재.
+    **2026-09-12 Phase 5 W4 lane e2 재등재 140→147(+7)**: 결정 6 — 시그니처에
+    `software_deployment_ok: bool | None = None` 파라미터 1개(§2 결정 6, STAGE B
+    `release_admission` 결과를 SAFETY_ENVELOPE_PROFILE 로 관통 배선) + 도크스트링
+    Args 항목 5줄 + `SafetyProfileService(...)` 호출에 인자 1줄 — 이 함수가 그
+    유일한 결선 지점이라 분해 대신 등재. (같은 PR 의 `b5a3e7a1` 이 STAGE B
+    `_stage_b_release_probe` 를 이 함수 호출 앞으로 재배치해 `_wiring.py` 가
+    `software_deployment_ok=release_admitted` 실값을 넘긴다 — 최초 결선 시점의
+    «`None` 기본값·후속 이월» 문언은 W4 독립 리뷰 MEDIUM 1 로 정정.)
+    **2026-09-12 Phase 5 W4 최종 후속 재등재 147→148**: `_SafetyMesh` 반환문에
+    `peek_tick_snapshot=tick_cell.peek,` 1줄 추가(§2 결정 7 — operator projection
+    이 `.clear()` 재호출 없이 마지막 스냅샷을 읽는 유일한 경로) — 이 함수가
+    `_SafetyMesh` 조립의 유일한 지점이라 분해 대신 등재.

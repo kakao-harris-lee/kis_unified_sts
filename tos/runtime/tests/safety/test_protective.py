@@ -285,7 +285,15 @@ def test_service_exposes_no_send_or_mutation_method() -> None:
     public_methods = {
         name for name in dir(ProtectiveActionService) if not name.startswith("_")
     }
-    assert public_methods == {"verdict", "protective_classification_digest", "describe"}
+    # `last_verdict` (TOS Phase 5 W4 §2 decision 7) is a PURE, read-only property — it
+    # never calls `verdict()` and never appends evidence (that property's own docstring)
+    # — so it belongs in this "no send/mutation" allowlist alongside the other reads.
+    assert public_methods == {
+        "verdict",
+        "protective_classification_digest",
+        "describe",
+        "last_verdict",
+    }
 
 
 def test_describe_states_zero_execution_path() -> None:
@@ -318,3 +326,44 @@ def test_verdict_is_frozen_dataclass_instance() -> None:
     except Exception:
         raised = True
     assert raised
+
+
+# ---------------------------------------------------------------------------
+# last_verdict (TOS Phase 5 W4 §2 decision 7 — operator projection)
+# ---------------------------------------------------------------------------
+
+
+def test_last_verdict_is_none_before_the_first_call() -> None:
+    service, _ = _service()
+    assert service.last_verdict is None
+
+
+def test_last_verdict_matches_the_most_recent_verdict_call() -> None:
+    service, _ = _service()
+    result = service.verdict()
+    assert service.last_verdict == result
+
+
+def test_last_verdict_updates_on_each_call_reflecting_changed_inputs() -> None:
+    # A mutable latch reader so the SAME service instance sees a changed input across calls.
+    latch_state = {"value": RestrictiveLatchState.CLEAR}
+    service = ProtectiveActionService(
+        latch_state=lambda: latch_state["value"],
+        incident_clear=lambda: True,
+        time_health_state=lambda: HealthState.TRUSTED,
+        evidence_recorder=_RecordingEvidenceRecorder(),
+    )
+    first = service.verdict()
+    latch_state["value"] = RestrictiveLatchState.DENY_LATCHED
+    second = service.verdict()
+    assert first != second
+    assert service.last_verdict == second
+
+
+def test_reading_last_verdict_appends_no_evidence() -> None:
+    service, rec = _service()
+    service.verdict()
+    before = len(rec.calls)
+    for _ in range(3):
+        _ = service.last_verdict
+    assert len(rec.calls) == before

@@ -41,6 +41,9 @@ class _FixedKeyProvider:
     def current(self) -> tuple[int, bytes]:
         return (1, b"test-fixed-key-bytes")
 
+    def generations(self) -> tuple[int, ...]:
+        return (1,)
+
 
 def _store(tmp_path: Path) -> SqliteEvidenceStore:
     return SqliteEvidenceStore(

@@ -343,3 +343,44 @@ def test_a_real_live_scope_authorized_call_repopulates_the_cell_for_that_tick() 
     assert cell.snapshot is not None
     assert cell.snapshot.tick_generation == 7
     assert service.clear_calls == 1
+
+
+# ============================================================================
+# _SafetyMeshTickCell.peek — TOS Phase 5 W4 §2 decision 7 (operator projection)
+# ============================================================================
+
+
+def test_peek_is_none_before_any_refresh() -> None:
+    cell = _SafetyMeshTickCell()
+    assert cell.peek() is None
+
+
+def test_peek_returns_the_last_refreshed_snapshot() -> None:
+    service = _CountingMeshService()
+    services = (service,)
+    cell = _SafetyMeshTickCell()
+    inbox_cell = _InboxCell(inbox=_FakeInbox(count=1))  # type: ignore[arg-type]
+
+    refreshed = _refresh_tick_snapshot(services, cell, inbox_cell)
+
+    assert cell.peek() is refreshed
+
+
+def test_peek_never_calls_clear_or_dimension_report(tmp_path: Path) -> None:
+    """The pin the team lead asked for: reading ``peek()`` any number of times must
+    never trigger a second, independent per-service evaluation."""
+    service = _CountingMeshService()
+    services = (service,)
+    cell = _SafetyMeshTickCell()
+    inbox_cell = _InboxCell(inbox=_FakeInbox(count=1))  # type: ignore[arg-type]
+
+    _refresh_tick_snapshot(services, cell, inbox_cell)
+    assert service.clear_calls == 1
+    assert service.dimension_report_calls == 1
+
+    for _ in range(5):
+        snapshot = cell.peek()
+        assert snapshot is not None
+
+    assert service.clear_calls == 1
+    assert service.dimension_report_calls == 1

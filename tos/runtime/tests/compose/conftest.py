@@ -17,6 +17,10 @@ import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.cur import MANDATED_DIMENSION_FLOOR
 from tos_runtime.compose._pending_dimensions import PENDING_DIMENSION_KEYS
+from tos_runtime.operations.dependency_admission import (
+    observe_dependency_set_digest,
+    observe_source_tree_digest,
+)
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
@@ -29,9 +33,17 @@ _BROKER_SCOPES_EXAMPLE_PATH = (
 )
 
 #: The digest compose_paper_runtime computes for its own RuntimeIdentity.code_digest
-#: (tos_runtime.compose.root: ``_SCHEME.compute_digest({"component": "tos_runtime.compose"})``).
-#: Reproduced here (pure function, same scheme) so release.yaml can match it exactly.
-EXPECTED_CODE_DIGEST = _SCHEME.compute_digest({"component": "tos_runtime.compose"})
+#: (tos_runtime.compose._wiring._build_identity: the installed source-tree digest,
+#: tos_runtime.operations.dependency_admission.observe_source_tree_digest). Reproduced
+#: here (pure function, same measurement, same installed tree the test process itself
+#: runs from) so release.yaml can match it exactly.
+EXPECTED_CODE_DIGEST = observe_source_tree_digest()
+
+#: The digest compose_paper_runtime computes for its STAGE A/B dependency-set
+#: observation (tos_runtime.operations.dependency_admission
+#: .observe_dependency_set_digest) — the installed distribution set this test process
+#: itself is running under.
+EXPECTED_DEPENDENCY_SET_DIGEST = observe_dependency_set_digest()
 
 
 def _write_yaml(path: Path, content: dict) -> None:
@@ -387,6 +399,7 @@ def config_dir(tmp_path: Path) -> Path:
         directory / "release.yaml",
         {
             "expected_code_digest": EXPECTED_CODE_DIGEST,
+            "expected_dependency_set_digest": EXPECTED_DEPENDENCY_SET_DIGEST,
             "admission_result": "ADMIT",
             "restriction_state_resolved": True,
             "restriction_present": False,
@@ -409,6 +422,7 @@ def mismatched_release_config_dir(config_dir: Path) -> Path:
         config_dir / "release.yaml",
         {
             "expected_code_digest": "deliberately-mismatched-digest",
+            "expected_dependency_set_digest": EXPECTED_DEPENDENCY_SET_DIGEST,
             "admission_result": "ADMIT",
             "restriction_state_resolved": True,
             "restriction_present": False,

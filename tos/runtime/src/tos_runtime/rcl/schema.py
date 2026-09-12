@@ -32,18 +32,41 @@ mechanically unrepresentable — matching
 :mod:`tos_runtime.evidence.store`'s own discipline); ``reservations`` rejects
 only ``DELETE`` (``UPDATE`` is its whole purpose, as the live projection).
 
-Firewall: stdlib only (bare SQL strings; no ``sqlite3`` import needed here —
-execution is the caller's job).
+**Schema-ledger integration lives here too (TOS Phase 5 W4 plan §2 decision 3, size-budget
+decomposition).** :func:`apply_schema_ledger` wraps the
+:mod:`tos_runtime.operations.schema_ledger` boot check for THIS store specifically — moved out of
+``log.py``'s own ``__init__`` for the same 1000-line module-size-budget reason every other
+extraction in this file's own module docstring already documents (a pure decomposition, no
+behavior change: the check still runs on the SAME connection, in the SAME order, inside the SAME
+``__init__`` call).
+
+Firewall: stdlib (``sqlite3``) only, plus ``tos_runtime.operations`` for the schema-ledger check
+(the DDL constants above remain bare SQL strings needing no import).
 """
 
 from __future__ import annotations
+
+import sqlite3
+from collections.abc import Callable
+
+from tos_runtime.operations.schema_ledger import (
+    compute_schema_shape_digest,
+    ensure_schema_current,
+)
 
 __all__ = [
     "CREATE_ENTRIES_TABLE_SQL",
     "CREATE_EPOCHS_TABLE_SQL",
     "CREATE_RESERVATIONS_TABLE_SQL",
     "NO_MUTATION_TRIGGERS_SQL",
+    "RCL_SCHEMA_VERSION",
+    "apply_schema_ledger",
 ]
+
+#: TOS Phase 5 W4 plan §2 decision 3 — see
+#: ``tos_runtime.evidence.store.EVIDENCE_SCHEMA_VERSION``'s own docstring for the shared
+#: convention.
+RCL_SCHEMA_VERSION = 1
 
 CREATE_EPOCHS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS epochs (
@@ -118,3 +141,30 @@ NO_MUTATION_TRIGGERS_SQL: tuple[str, ...] = (
     END
     """,
 )
+
+
+def apply_schema_ledger(
+    conn: sqlite3.Connection,
+    *,
+    was_fresh: bool,
+    monotonic_ns: Callable[[], int],
+) -> None:
+    """Run the schema-ledger boot check for the RCL commit log (module docstring).
+
+    Args:
+        conn: The log's own live connection, called AFTER its DDL (this module's own three
+            ``CREATE TABLE``/triggers) has already run.
+        was_fresh: :func:`~tos_runtime.operations.schema_ledger.file_is_fresh`, captured by the
+            caller BEFORE that DDL ran.
+        monotonic_ns: Injected monotonic-clock callable for a genesis ledger row.
+    """
+    ensure_schema_current(
+        conn,
+        store_name="rcl",
+        schema_version=RCL_SCHEMA_VERSION,
+        was_fresh=was_fresh,
+        migration_digest=compute_schema_shape_digest(
+            conn, ("epochs", "entries", "reservations")
+        ),
+        monotonic_ns=monotonic_ns,
+    )

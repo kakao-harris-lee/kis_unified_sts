@@ -81,9 +81,27 @@ injected version string.
 invariant is unrepresentable through this store's own sqlite handle, not
 merely undocumented.
 
+**``rotate-key`` ordering (TOS Phase 5 W4 §2 decision 4(b), discovered during implementation).**
+:class:`~tos_runtime.custody.key_provider.FileKeyProvider`'s own rotation-order contract is
+"place the new generation's key file FIRST, only THEN call :meth:`SqliteEvidenceStore.rotate`" —
+but that means the new file is ALREADY on disk by the time an operator's ``rotate-key`` CLI
+invocation opens this store fresh, and the constructor's own deny-first continuity gate
+(``__init__``'s own body, below) unconditionally refuses exactly that state
+(``KeyContinuityVerdict.ROTATION_PENDING``) for every caller — empirically confirmed: a plain
+re-open with the new generation's file present always raises, with no way to reach
+:func:`~tos_runtime.operations.key_rotation.rotate_evidence_key` at all. ``__init__``'s
+``permit_rotation_pending_for_generation`` parameter is the one, narrowly-scoped exception: a
+caller (only the ``rotate-key`` CLI path) that explicitly names the EXACT pending generation it
+intends to rotate to may open the store anyway, signing under the store's OWN EXISTING tip
+generation (never the pending new one — ``rotate()`` is still the only way to actually switch
+signing keys). Every other caller passes ``None`` (the default) and gets the unconditional
+refusal unchanged; every OTHER non-``CONTINUOUS`` verdict still refuses regardless of this
+parameter (see :func:`_rotation_permitted`'s own docstring for the exact condition).
+
 Firewall: stdlib (``sqlite3``, ``json``, ``time``) + ``pydantic`` +
 ``tos.canonical``/``tos.evidence``/``tos.workload`` + ``tos_runtime.evidence``
-only (R1 allowlist).
++ ``tos_runtime.operations`` (the schema-ledger boot check, TOS Phase 5 W4
+plan §2 decision 3) only (R1 allowlist).
 """
 
 from __future__ import annotations
@@ -107,14 +125,34 @@ from tos.evidence import (
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.evidence import outbox as _outbox
+from tos_runtime.operations.key_rotation import (
+    KeyContinuityCheck,
+    KeyContinuityRefused,
+    KeyContinuityVerdict,
+    verify_key_generation_continuity,
+)
+from tos_runtime.operations.schema_ledger import (
+    compute_schema_shape_digest,
+    ensure_schema_current,
+    file_is_fresh,
+)
 
 __all__ = [
     "ChainVerification",
+    "EVIDENCE_SCHEMA_VERSION",
     "EvidenceCorruption",
     "InjectedCrash",
+    "KeyContinuityCheck",
+    "KeyContinuityRefused",
     "KeyProvider",
     "SqliteEvidenceStore",
 ]
+
+#: TOS Phase 5 W4 plan §2 decision 3 — this store's own ``PRAGMA user_version`` /
+#: ``schema_ledger`` baseline. Bumped only when this store's table shape actually changes; see
+#: :mod:`tos_runtime.operations.schema_migrations` for the registered migration this version
+#: corresponds to.
+EVIDENCE_SCHEMA_VERSION = 1
 
 #: The genesis commitment every fresh chain folds from — matches
 #: :mod:`tos.evidence.chain`'s own (private) ``_CHAIN_GENESIS`` convention.
@@ -199,14 +237,33 @@ class KeyProvider(Protocol):
     Custody of the real key bytes is ``tos_runtime.custody`` territory
     (design #40 D4, sequence item 4 — out of this slice's scope); this
     Protocol is the seam a future custody implementation satisfies. Tests
-    inject a fixed-byte double. Consulted exactly once, at construction —
-    :meth:`SqliteEvidenceStore.rotate` is the ongoing rotation mechanism
-    thereafter (explicit ``new_generation``/``new_key`` arguments, not a
-    second ``KeyProvider`` call).
+    inject a fixed-byte double. :meth:`current` is consulted exactly once, at
+    construction — :meth:`SqliteEvidenceStore.rotate` is the ongoing rotation
+    mechanism thereafter (explicit ``new_generation``/``new_key`` arguments,
+    not a second :meth:`current` call).
+
+    :meth:`generations` was added by TOS Phase 5 W4 plan §2 decision 4 — the
+    constructor's own key-generation continuity gate
+    (:func:`tos_runtime.operations.key_rotation.verify_key_generation_continuity`)
+    calls it, ALSO at construction, before :meth:`current` — every caller
+    that constructs a :class:`SqliteEvidenceStore` with a custom
+    :class:`KeyProvider` double must implement both methods.
     """
 
     def current(self) -> tuple[int, bytes]:
         """Return ``(key_generation, key_bytes)`` for the initial signing key."""
+        ...
+
+    def generations(self) -> tuple[int, ...]:
+        """Return every key generation this provider can currently supply, sorted ascending."""
+        ...
+
+    def key_for(self, generation: int) -> bytes:
+        """Return the key bytes for a SPECIFIC ``generation`` — added alongside
+        ``permit_rotation_pending_for_generation`` (module docstring's "rotate-key ordering"
+        note): the rotation-pending-permitted construction path signs under the store's
+        existing tip generation via this method, never :meth:`current` (which would resolve
+        the PENDING new generation instead)."""
         ...
 
 
@@ -221,6 +278,84 @@ class _EntryRow(NamedTuple):
     appended_at_monotonic_ns: int
     entry_digest: str
     chain_digest: str
+
+
+def _tip_key_generation(conn: sqlite3.Connection) -> int | None:
+    """The ``key_generation`` of the most recently committed ``entries`` row, or ``None`` for
+    an empty (fresh) store — the constructor's own continuity-gate input (TOS Phase 5 W4 plan
+    §2 decision 4)."""
+    row = conn.execute(
+        "SELECT key_generation FROM entries ORDER BY seq DESC LIMIT 1"
+    ).fetchone()
+    return None if row is None else int(row[0])
+
+
+def _tip_has_rotation_commit_for(conn: sqlite3.Connection, generation: int) -> bool:
+    """Whether a ``KEY_ROTATION`` entry recording ``new_key_generation == generation`` exists.
+
+    Reads ``payload_json`` in Python rather than sqlite's ``json_extract`` — the JSON1
+    extension is not guaranteed compiled into every sqlite3 build this runtime might run
+    against, and the number of rotations in a store's lifetime is small enough that a full
+    scan of ``KEY_ROTATION``-kind rows costs nothing worth optimizing for.
+    """
+    cur = conn.execute(
+        "SELECT payload_json FROM entries WHERE kind = ?", ("KEY_ROTATION",)
+    )
+    for (payload_json,) in cur:
+        payload = json.loads(payload_json)
+        if payload.get("payload", {}).get("new_key_generation") == generation:
+            return True
+    return False
+
+
+def _rotation_permitted(
+    continuity: KeyContinuityCheck,
+    provider_generations: tuple[int, ...],
+    permit_rotation_pending_for_generation: int | None,
+    conn: sqlite3.Connection,
+) -> bool:
+    """Whether the constructor's ``permit_rotation_pending_for_generation`` override
+    (that parameter's own docstring) applies to THIS specific ``continuity`` result.
+
+    ``True`` only when ALL of: the verdict is exactly ``ROTATION_PENDING`` (never
+    ``HISTORY_UNVERIFIABLE``, which always refuses regardless of this parameter); the caller
+    supplied a generation; the highest generation actually on disk equals it (never a
+    caller-claimed generation the custody root does not, in fact, have staged); and a real
+    tip generation exists (a fresh store with no prior entries at all is a different,
+    ill-defined case this override does not cover — module docstring)."""
+    if continuity.verdict != KeyContinuityVerdict.ROTATION_PENDING:
+        return False
+    if permit_rotation_pending_for_generation is None:
+        return False
+    if not provider_generations:
+        return False
+    if max(provider_generations) != permit_rotation_pending_for_generation:
+        return False
+    return _tip_key_generation(conn) is not None
+
+
+def _resolve_signing_key(
+    continuity: KeyContinuityCheck, conn: sqlite3.Connection, key_provider: KeyProvider
+) -> tuple[int, bytes]:
+    """The ``(key_generation, key_bytes)`` pair the constructor signs new entries with.
+
+    ``key_provider.current()`` (the highest generation on disk) when ``continuity`` is
+    ``CONTINUOUS``; otherwise the store's OWN EXISTING tip generation — NEVER the pending new
+    one — for the rotation-pending-permitted path (module docstring's "rotate-key ordering"
+    note; :meth:`SqliteEvidenceStore.rotate` is the only sanctioned way to actually switch
+    signing keys). The constructor only reaches this function at all when ``continuity`` is
+    either ``CONTINUOUS`` or an explicitly-permitted ``ROTATION_PENDING`` — see
+    :func:`_rotation_permitted`.
+    """
+    if continuity.verdict == KeyContinuityVerdict.CONTINUOUS:
+        return key_provider.current()
+    key_generation = _tip_key_generation(conn)
+    if key_generation is None:
+        raise KeyContinuityRefused(  # unreachable; never a bare `assert` (`-O` strips it)
+            "SqliteEvidenceStore: rotation-pending permitted with no tip key generation "
+            "— invariant violation, refusing"
+        )
+    return key_generation, key_provider.key_for(key_generation)
 
 
 class SqliteEvidenceStore:
@@ -242,6 +377,7 @@ class SqliteEvidenceStore:
         canonicalization_version: str = _CANONICALIZATION_VERSION,
         monotonic_ns: Callable[[], int] = time.monotonic_ns,
         crash_hook: Callable[[str], None] | None = None,
+        permit_rotation_pending_for_generation: int | None = None,
     ) -> None:
         """Open (or create) the evidence store at ``path``.
 
@@ -264,6 +400,11 @@ class SqliteEvidenceStore:
             crash_hook: Test-only crash-injection callable (contract ④); see
                 the module docstring's fault-contract table. ``None`` in
                 production.
+            permit_rotation_pending_for_generation: The ONE sanctioned override of the
+                deny-first continuity gate below — ``None`` (default) for every normal
+                caller, unchanged behaviour. See :func:`_rotation_permitted`'s own
+                docstring for the exact condition and the module docstring's "rotate-key
+                ordering" note for why this exists at all.
         """
         self.path = path
         self._secret_keys = secret_keys
@@ -273,11 +414,51 @@ class SqliteEvidenceStore:
         self._conn = sqlite3.connect(str(path), isolation_level=None)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
+        # Captured BEFORE any CREATE TABLE below runs (schema_ledger's own module docstring on
+        # `file_is_fresh` — a fresh file looks identical to an already-populated one otherwise).
+        was_fresh = file_is_fresh(self._conn)
         self._conn.execute(_CREATE_ENTRIES_TABLE_SQL)
         self._conn.execute(_CREATE_NO_UPDATE_TRIGGER_SQL)
         self._conn.execute(_CREATE_NO_DELETE_TRIGGER_SQL)
         _outbox.create_outbox_table(self._conn)
-        key_generation, key = key_provider.current()
+        ensure_schema_current(
+            self._conn,
+            store_name="evidence",
+            schema_version=EVIDENCE_SCHEMA_VERSION,
+            was_fresh=was_fresh,
+            migration_digest=compute_schema_shape_digest(
+                self._conn, ("entries", "outbox")
+            ),
+            monotonic_ns=monotonic_ns,
+        )
+        # TOS Phase 5 W4 plan §2 decision 4 — the key-generation continuity gate. Must run
+        # BEFORE `key_provider.current()` is ever consulted: a boot that is not CONTINUOUS
+        # must never select (let alone sign with) any key at all (see module docstring's own
+        # forward pointer and `tos_runtime.operations.key_rotation`'s module docstring for the
+        # gap this closes).
+        provider_generations = key_provider.generations()
+        continuity = verify_key_generation_continuity(
+            _tip_key_generation(self._conn),
+            lambda generation: _tip_has_rotation_commit_for(self._conn, generation),
+            provider_generations,
+        )
+        if (
+            continuity.verdict != KeyContinuityVerdict.CONTINUOUS
+            and not _rotation_permitted(
+                continuity,
+                provider_generations,
+                permit_rotation_pending_for_generation,
+                self._conn,
+            )
+        ):
+            raise KeyContinuityRefused(
+                f"SqliteEvidenceStore: key generation continuity refused "
+                f"({continuity.verdict}) for {path}: {continuity.reason}"
+            )
+        #: Boot-time continuity fact for a later reader (e.g. the operator projection's
+        #: ``operations.key_continuity``) — module docstring on why this can be ``ROTATION_PENDING``.
+        self.key_continuity: KeyContinuityCheck = continuity
+        key_generation, key = _resolve_signing_key(continuity, self._conn, key_provider)
         self._scheme = Sha256HmacChainScheme(key=key, key_generation=key_generation)
 
     @property

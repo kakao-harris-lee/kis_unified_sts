@@ -232,6 +232,22 @@ class CurrentnessAssembler:
         self._mandated = mandated
         self._dimension_readers = dict(dimension_readers)
         self._scheme = scheme
+        #: TOS Phase 5 W4 §2 decision 7 — the completeness of the MOST RECENT
+        #: :meth:`assemble` call, retained so a read-only observer (the operator
+        #: projection's ``currentness.last_assemble_complete``) can report it WITHOUT
+        #: itself calling :meth:`assemble` (a second, independent vector issuance —
+        #: :attr:`last_assemble_complete`'s own docstring). ``None`` before the first
+        #: call, and again whenever that call refused to issue a vector at all (no
+        #: vector to judge completeness of).
+        self._last_assemble_complete: bool | None = None
+
+    @property
+    def last_assemble_complete(self) -> bool | None:
+        """Whether the MOST RECENT :meth:`assemble` call issued a vector AND that vector
+        was complete under :meth:`is_complete` — ``None`` before the first call, or
+        whenever that call refused to issue a vector at all. A PURE attribute read —
+        never calls :meth:`assemble` itself."""
+        return self._last_assemble_complete
 
     def commit_certificate(self) -> SingleNodeCommitCertificate | None:
         """The current :class:`SingleNodeCommitCertificate`, or ``None`` if no
@@ -390,8 +406,10 @@ class CurrentnessAssembler:
         try:
             snapshot = self._time.current_snapshot()
         except TimeServiceNotStarted:
+            self._last_assemble_complete = None
             return None
         if not state_permits_new_normal_risk(snapshot.health_state):
+            self._last_assemble_complete = None
             return None
         assert snapshot.health_state is HealthState.TRUSTED  # narrowed above
 
@@ -399,6 +417,7 @@ class CurrentnessAssembler:
         if (
             not view.epoch
         ):  # None or 0 (unacquired sentinel, tos_runtime.rcl.log.SqliteCommitLog.current_epoch)
+            self._last_assemble_complete = None
             return None
         # The revision identity carries whatever last_seq IS (including
         # None for an empty log) — it is a shared ORDERING label every
@@ -434,6 +453,7 @@ class CurrentnessAssembler:
             dimensions=dims_tuple,
         )
         assert isinstance(issued, SafetyCurrentnessVector)
+        self._last_assemble_complete = self.is_complete(issued)
         return issued
 
     def is_complete(self, vector: SafetyCurrentnessVector) -> bool:

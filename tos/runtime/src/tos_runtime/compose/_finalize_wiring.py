@@ -220,4 +220,6 @@ def _finalize(
         inbox=wired.inbox,
         driver=wired.driver,
         scopes=broker_scopes,
+        safety_mesh_peek=risk.safety_mesh.peek_tick_snapshot,
+        protective_last_verdict=lambda: risk.safety_mesh.protective_action.last_verdict,
     )

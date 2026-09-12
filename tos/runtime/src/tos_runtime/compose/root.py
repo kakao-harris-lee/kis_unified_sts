@@ -73,6 +73,7 @@ from tos.engine import (
 )
 
 from tos_runtime.compose._finalize_wiring import _finalize
+from tos_runtime.compose._operations_wiring import apply_operations_wiring
 from tos_runtime.compose._recovery_wiring import apply_recovery_barrier
 from tos_runtime.compose._release_wiring import apply_release_wiring
 from tos_runtime.compose._request_digest import KisWireCodecDigest
@@ -140,6 +141,8 @@ def compose_paper_runtime(
     monotonic_source: MonotonicSource | None = None,
     allow_no_strategies: bool = False,
     transport_kind: TransportKind = TransportKind.SYNTHETIC,
+    projection_path: Path | None = None,
+    backup_root: Path | None = None,
 ) -> ComposedRuntime:
     """Wire the whole Phase 2 paper-runtime service chain, in order (module
     docstring: exact order + every reported deviation).
@@ -163,6 +166,11 @@ def compose_paper_runtime(
             for ``kis-mock``, when the custody principal for either KIS MOCK scope does not match
             the active scope's own principal
             (:func:`~tos_runtime.compose._transport_wiring.refuse_custody_principal_mismatch`).
+        projection_path: TOS Phase 5 W4 §2 decisions 7/9/11 — where the operator projection JSON
+            is exported, or ``None`` (the default) to disable export entirely. Never a fabricated
+            default path.
+        backup_root: TOS Phase 5 W4 §2 decision 11 — where to look for the latest durable-set
+            backup manifest, or ``None`` (the default) to skip backup observation entirely.
 
     Returns:
         The fully wired :class:`ComposedRuntime`.
@@ -308,4 +316,10 @@ def compose_paper_runtime(
     # `composed` to a caller that could drive an attempt (_RecoveryDimensionState's own
     # docstring).
     boot.risk.recovery_dimension_state.verdict = composed.recovery
+    # TOS Phase 5 W4 (plan §2 decision 11) — operations facts + (optional) operator
+    # projection, wired last: every durable fact this reads (evidence/RCL/inbox,
+    # release_admitted, recovery) already exists by this point.
+    composed = apply_operations_wiring(
+        composed, projection_path=projection_path, backup_root=backup_root
+    )
     return composed
