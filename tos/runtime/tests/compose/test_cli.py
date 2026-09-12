@@ -8,14 +8,18 @@ own behaviour (that is ``tests/operations/*``'s scope).
 
 from __future__ import annotations
 
+import ast
 import os
 import stat
 from pathlib import Path
 
 import pytest
+import yaml
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos_runtime.compose import cli
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.custody.key_provider import FileKeyProvider
+from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import KeyContinuityVerdict, SqliteEvidenceStore
 from tos_runtime.operations.backup_set import DurableSetPaths
 from tos_runtime.operations.schema_migrations import STORE_MIGRATIONS
@@ -609,3 +613,615 @@ def test_rotate_key_real_end_to_end_gen1_then_place_gen2_then_rotate_then_reopen
         assert reopened.key_generation == 2
     finally:
         reopened.close()
+
+
+# -- rearm / ack-alert / nontrade-eval (runtime operations wiring plan §2 decisions 4/5) -------
+
+
+def _write_rearm_files(
+    approvals_dir: Path,
+    *,
+    seq: int,
+    approvals: list[dict[str, str]] | None = None,
+    environment_label: str = "non-live-test",
+    write_roster: bool = True,
+) -> None:
+    if approvals is None:
+        approvals = [
+            {"principal_id": "alice", "decision": "APPROVE"},
+            {"principal_id": "bob", "decision": "APPROVE"},
+        ]
+    rearm_dir = approvals_dir / "rearm"
+    rearm_dir.mkdir(parents=True, exist_ok=True)
+    decision_path = rearm_dir / f"{seq}.yaml"
+    decision_path.write_text(
+        yaml.safe_dump(
+            {
+                "environment_label": environment_label,
+                "latched_evidence_seq": seq,
+                "approvals": approvals,
+            },
+            sort_keys=False,
+        )
+    )
+    os.chmod(decision_path, 0o600)
+    if write_roster:
+        roster_path = rearm_dir / "roster.yaml"
+        roster_path.write_text(
+            yaml.safe_dump(
+                {
+                    "environment_label": environment_label,
+                    "principals": [
+                        {"id": entry["principal_id"]} for entry in approvals
+                    ],
+                    "control_edges": [],
+                    "unresolved_control": False,
+                },
+                sort_keys=False,
+            )
+        )
+        os.chmod(roster_path, 0o600)
+
+
+def test_rearm_parses_args(tmp_path: Path) -> None:
+    args = cli.parse_args(
+        [
+            "rearm",
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--custody-root",
+            str(tmp_path / "custody"),
+            "--approvals-dir",
+            str(tmp_path / "approvals"),
+            "--config-dir",
+            str(tmp_path / "config"),
+            "--environment-label",
+            "non-live-test",
+            "--seq",
+            "42",
+        ]
+    )
+    assert isinstance(args, cli.RearmArgs)
+    assert args.seq == 42
+    assert args.environment_label == "non-live-test"
+
+
+def test_rearm_real_end_to_end_two_person_quorum_clears_the_latch(
+    tmp_path: Path,
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Team-lead follow-up: ``rearm`` is a complete operator door — an APPROVED HAG quorum must
+    actually clear the storage-layer latch (``compose/_cli_ops.rearm_and_clear``), not merely
+    report that a live runtime would."""
+    approvals_dir = tmp_path / "approvals"
+    seq = 7
+
+    key_provider = FileKeyProvider(custody_root, expected_owner_uid=os.getuid())
+    inbox = SqliteEventInbox(
+        data_dir / "inbox.sqlite3", scheme=get_scheme(EV_L1_PROVISIONAL_VERSION)
+    )
+    inbox.record_new_risk_halt(
+        reason="NEW_RISK_HALTED_BY_COUPLING_VIOLATION", event_id=None, evidence_seq=seq
+    )
+    inbox.close()
+    del key_provider
+
+    _write_rearm_files(approvals_dir, seq=seq)
+
+    exit_code = cli.main(
+        [
+            "rearm",
+            "--data-dir",
+            str(data_dir),
+            "--custody-root",
+            str(custody_root),
+            "--approvals-dir",
+            str(approvals_dir),
+            "--config-dir",
+            str(config_dir),
+            "--environment-label",
+            "non-live-test",
+            "--seq",
+            str(seq),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "cleared" in captured.out
+
+    reopened = SqliteEventInbox(
+        data_dir / "inbox.sqlite3", scheme=get_scheme(EV_L1_PROVISIONAL_VERSION)
+    )
+    try:
+        assert reopened.new_risk_halt() is None
+    finally:
+        reopened.close()
+
+    key_provider2 = FileKeyProvider(custody_root, expected_owner_uid=os.getuid())
+    evidence_store = SqliteEvidenceStore(
+        data_dir / "evidence.sqlite3", key_provider=key_provider2
+    )
+    try:
+        kinds = [entry.kind for entry in evidence_store.iter_entry_meta()]
+        assert "NEW_RISK_HALT_CLEARED_BY_OPERATOR" in kinds
+    finally:
+        evidence_store.close()
+
+
+def test_rearm_refused_quorum_never_calls_the_storage_clear_and_exits_nonzero(
+    tmp_path: Path,
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation-shaped pin (team-lead follow-up): a refused HAG quorum must never reach the
+    storage-layer clear at all — spies on ``SqliteEventInbox.clear_new_risk_halt`` itself, and
+    monkeypatches ``prepare_new_risk_halt_clear`` (via ``tos_runtime.compose._cli_ops``, the
+    module ``rearm_and_clear`` calls it from) to force a refusal deterministically."""
+    from tos_runtime.compose import _cli_ops
+    from tos_runtime.safety.rearm import NewRiskHaltDoorDecision
+
+    approvals_dir = tmp_path / "approvals"
+    seq = 7
+
+    key_provider = FileKeyProvider(custody_root, expected_owner_uid=os.getuid())
+    inbox = SqliteEventInbox(
+        data_dir / "inbox.sqlite3", scheme=get_scheme(EV_L1_PROVISIONAL_VERSION)
+    )
+    inbox.record_new_risk_halt(
+        reason="NEW_RISK_HALTED_BY_COUPLING_VIOLATION", event_id=None, evidence_seq=seq
+    )
+    inbox.close()
+    del key_provider
+
+    calls: list[int] = []
+    real_clear = SqliteEventInbox.clear_new_risk_halt
+
+    def _spy_clear(self: SqliteEventInbox, **kwargs: object) -> object:
+        calls.append(1)
+        return real_clear(self, **kwargs)  # type: ignore[arg-type]
+
+    def _fake_prepare(**_kwargs: object) -> NewRiskHaltDoorDecision:
+        from tos_runtime.engine.inbox import NewRiskHaltClearOutcome
+
+        return NewRiskHaltDoorDecision(
+            refusal=NewRiskHaltClearOutcome.SEQ_MISMATCH, attestation_text=None
+        )
+
+    monkeypatch.setattr(SqliteEventInbox, "clear_new_risk_halt", _spy_clear)
+    monkeypatch.setattr(_cli_ops, "prepare_new_risk_halt_clear", _fake_prepare)
+
+    exit_code = cli.main(
+        [
+            "rearm",
+            "--data-dir",
+            str(data_dir),
+            "--custody-root",
+            str(custody_root),
+            "--approvals-dir",
+            str(approvals_dir),
+            "--config-dir",
+            str(config_dir),
+            "--environment-label",
+            "non-live-test",
+            "--seq",
+            str(seq),
+        ]
+    )
+
+    assert exit_code == 1
+    assert calls == []
+
+    reopened = SqliteEventInbox(
+        data_dir / "inbox.sqlite3", scheme=get_scheme(EV_L1_PROVISIONAL_VERSION)
+    )
+    try:
+        current = reopened.new_risk_halt()
+        assert current is not None
+        assert current["evidence_seq"] == seq
+    finally:
+        reopened.close()
+
+
+def test_rearm_refuses_when_no_approval_file_exists(
+    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+) -> None:
+    approvals_dir = tmp_path / "approvals"
+    seq = 7
+    inbox = SqliteEventInbox(
+        data_dir / "inbox.sqlite3", scheme=get_scheme(EV_L1_PROVISIONAL_VERSION)
+    )
+    inbox.record_new_risk_halt(
+        reason="NEW_RISK_HALTED_BY_COUPLING_VIOLATION", event_id=None, evidence_seq=seq
+    )
+    inbox.close()
+
+    exit_code = cli.main(
+        [
+            "rearm",
+            "--data-dir",
+            str(data_dir),
+            "--custody-root",
+            str(custody_root),
+            "--approvals-dir",
+            str(approvals_dir),
+            "--config-dir",
+            str(config_dir),
+            "--environment-label",
+            "non-live-test",
+            "--seq",
+            str(seq),
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_rearm_refuses_a_single_approver_mutation_m5_surfaced_through_the_cli(
+    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+) -> None:
+    """Mutation M5 (a two-person quorum weakened to one approver must refuse) is pinned at the
+    predicate level by ``tests/safety/test_rearm.py::test_mutation_m5_a_single_approver_is_refused``
+    — this test proves the SAME refusal surfaces through the CLI end to end."""
+    approvals_dir = tmp_path / "approvals"
+    seq = 7
+    inbox = SqliteEventInbox(
+        data_dir / "inbox.sqlite3", scheme=get_scheme(EV_L1_PROVISIONAL_VERSION)
+    )
+    inbox.record_new_risk_halt(
+        reason="NEW_RISK_HALTED_BY_COUPLING_VIOLATION", event_id=None, evidence_seq=seq
+    )
+    inbox.close()
+
+    _write_rearm_files(
+        approvals_dir,
+        seq=seq,
+        approvals=[{"principal_id": "alice", "decision": "APPROVE"}],
+    )
+
+    exit_code = cli.main(
+        [
+            "rearm",
+            "--data-dir",
+            str(data_dir),
+            "--custody-root",
+            str(custody_root),
+            "--approvals-dir",
+            str(approvals_dir),
+            "--config-dir",
+            str(config_dir),
+            "--environment-label",
+            "non-live-test",
+            "--seq",
+            str(seq),
+        ]
+    )
+
+    assert exit_code == 1
+
+
+# -- ack-alert -------------------------------------------------------------------------------
+
+
+def test_ack_alert_parses_args(tmp_path: Path) -> None:
+    args = cli.parse_args(
+        [
+            "ack-alert",
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--custody-root",
+            str(tmp_path / "custody"),
+            "--approvals-dir",
+            str(tmp_path / "approvals"),
+            "--environment-label",
+            "non-live-test",
+            "--seq",
+            "3",
+        ]
+    )
+    assert isinstance(args, cli.AckAlertArgs)
+    assert args.seq == 3
+
+
+def test_ack_alert_real_end_to_end_acknowledges_a_real_alert_seq(
+    tmp_path: Path, data_dir: Path, custody_root: Path
+) -> None:
+    approvals_dir = tmp_path / "approvals"
+    key_provider = FileKeyProvider(custody_root, expected_owner_uid=os.getuid())
+    store = SqliteEvidenceStore(
+        data_dir / "evidence.sqlite3", key_provider=key_provider
+    )
+    receipt = store.append(
+        {"identity": "stm", "clear": False, "reasons": ["x"]},
+        kind="STM_ALERT",
+        record_class="STM_ALERT",
+    )
+    store.close()
+    seq = receipt.seq
+    assert seq is not None
+
+    ack_dir = approvals_dir / "alerts"
+    ack_dir.mkdir(parents=True, exist_ok=True)
+    ack_path = ack_dir / f"{seq}.yaml"
+    ack_path.write_text(
+        yaml.safe_dump(
+            {
+                "environment_label": "non-live-test",
+                "principal_id": "alice",
+                "acknowledged_at_label": "cli-e2e-test",
+            }
+        )
+    )
+    os.chmod(ack_path, 0o600)
+
+    exit_code = cli.main(
+        [
+            "ack-alert",
+            "--data-dir",
+            str(data_dir),
+            "--custody-root",
+            str(custody_root),
+            "--approvals-dir",
+            str(approvals_dir),
+            "--environment-label",
+            "non-live-test",
+            "--seq",
+            str(seq),
+        ]
+    )
+
+    assert exit_code == 0
+
+    reopened_provider = FileKeyProvider(custody_root, expected_owner_uid=os.getuid())
+    reopened = SqliteEvidenceStore(
+        data_dir / "evidence.sqlite3", key_provider=reopened_provider
+    )
+    try:
+        kinds = [
+            entry.kind
+            for entry in reopened.iter_entry_meta()
+            if entry.kind == "STM_ALERT_ACKNOWLEDGED"
+        ]
+        assert kinds == ["STM_ALERT_ACKNOWLEDGED"]
+    finally:
+        reopened.close()
+
+
+def test_ack_alert_refuses_a_bogus_seq(
+    tmp_path: Path, data_dir: Path, custody_root: Path
+) -> None:
+    approvals_dir = tmp_path / "approvals"
+    bogus_seq = 4242
+    ack_dir = approvals_dir / "alerts"
+    ack_dir.mkdir(parents=True, exist_ok=True)
+    ack_path = ack_dir / f"{bogus_seq}.yaml"
+    ack_path.write_text(
+        yaml.safe_dump(
+            {
+                "environment_label": "non-live-test",
+                "principal_id": "alice",
+                "acknowledged_at_label": "cli-e2e-test",
+            }
+        )
+    )
+    os.chmod(ack_path, 0o600)
+
+    exit_code = cli.main(
+        [
+            "ack-alert",
+            "--data-dir",
+            str(data_dir),
+            "--custody-root",
+            str(custody_root),
+            "--approvals-dir",
+            str(approvals_dir),
+            "--environment-label",
+            "non-live-test",
+            "--seq",
+            str(bogus_seq),
+        ]
+    )
+
+    assert exit_code == 1
+
+
+# -- nontrade-eval ----------------------------------------------------------------------------
+
+
+def test_nontrade_eval_parses_args(tmp_path: Path) -> None:
+    args = cli.parse_args(
+        ["nontrade-eval", "--observation", str(tmp_path / "obs.yaml")]
+    )
+    assert isinstance(args, cli.NontradeEvalArgs)
+
+
+def test_nontrade_eval_prints_disposition_for_a_minimal_observation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    observation_path = tmp_path / "obs.yaml"
+    observation_path.write_text(
+        yaml.safe_dump(
+            {
+                "observation_id": "obs-1",
+                "event_class": "ADMINISTRATIVE_BROKER",
+                "source_label": "manual-cli-test",
+            }
+        )
+    )
+
+    exit_code = cli.main(["nontrade-eval", "--observation", str(observation_path)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "disposition=" in captured.out
+    assert "restrictive=" in captured.out
+    assert "predicates:" in captured.out
+    assert "zero evidence was appended to any real store" in captured.out
+
+
+def test_nontrade_eval_refuses_an_unsupported_nested_field(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    observation_path = tmp_path / "obs.yaml"
+    observation_path.write_text(
+        yaml.safe_dump(
+            {
+                "observation_id": "obs-1",
+                "event_class": "ADMINISTRATIVE_BROKER",
+                "source_label": "manual-cli-test",
+                "split_spec": {"pre_quantity": "1"},
+            }
+        )
+    )
+
+    exit_code = cli.main(["nontrade-eval", "--observation", str(observation_path)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "split_spec" in captured.err
+
+
+def test_nontrade_eval_refuses_a_missing_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    exit_code = cli.main(
+        ["nontrade-eval", "--observation", str(tmp_path / "missing.yaml")]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.err
+
+
+def test_nontrade_eval_never_opens_an_evidence_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pins the module docstring's "opens no store, no custody" claim mechanically: if a future
+    edit wired a real store into this subcommand, constructing one here would raise."""
+
+    def _must_not_be_called(*_a: object, **_k: object) -> None:
+        raise AssertionError("nontrade-eval must never construct a SqliteEvidenceStore")
+
+    monkeypatch.setattr(cli, "SqliteEvidenceStore", _must_not_be_called)
+
+    observation_path = tmp_path / "obs.yaml"
+    observation_path.write_text(
+        yaml.safe_dump(
+            {
+                "observation_id": "obs-1",
+                "event_class": "ADMINISTRATIVE_BROKER",
+                "source_label": "manual-cli-test",
+            }
+        )
+    )
+
+    exit_code = cli.main(["nontrade-eval", "--observation", str(observation_path)])
+    assert exit_code == 0
+
+
+# -- _cli_ops.py structural pin (team-lead follow-up: second HAG-gated door) -------------------
+
+_CLI_OPS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "src"
+    / "tos_runtime"
+    / "compose"
+    / "_cli_ops.py"
+)
+
+
+def _clear_new_risk_halt_calls(tree: ast.Module) -> list[ast.Call]:
+    """Every ``Call`` node whose function is an attribute access named
+    ``clear_new_risk_halt`` (matches ``inbox.clear_new_risk_halt(...)`` regardless of the
+    receiver expression — mirrors ``tests/engine/test_no_direct_latch_clear.py``'s own
+    receiver-shape tolerance, at the AST level instead of regex)."""
+    calls = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "clear_new_risk_halt"
+        ):
+            calls.append(node)
+    return calls
+
+
+def _is_refusal_guard(node: ast.stmt) -> bool:
+    """Whether ``node`` is a guard clause shaped like
+    ``if decision.refusal is not None: return ...`` — an ``If`` whose test mentions
+    ``refusal`` and whose body contains a ``Return`` (the guard-clause pattern
+    ``rearm_and_clear`` mirrors from ``compose/_types.py``'s own early-return shape, rather
+    than a nested ``if``)."""
+    if not isinstance(node, ast.If):
+        return False
+    test_dump = ast.dump(node.test)
+    if "refusal" not in test_dump:
+        return False
+    return any(isinstance(stmt, ast.Return) for stmt in node.body)
+
+
+def test_cli_ops_has_exactly_one_clear_call_reachable_only_past_a_refusal_guard() -> (
+    None
+):
+    """Pragmatic AST pin (team-lead follow-up): ``_cli_ops.py`` must contain exactly ONE
+    ``clear_new_risk_halt(`` call site, and it must be reachable only AFTER a guard clause
+    that already returned on any non-``APPROVED`` HAG-quorum outcome — i.e. the storage clear
+    can only ever execute on the approved path, never unconditionally.
+
+    ``rearm_and_clear`` uses a guard-clause (early-return) shape, not a nested ``if`` block, to
+    mirror ``ComposedRuntime.clear_new_risk_halt``'s own real control flow
+    (``compose/_types.py:419-420``) — so this check looks for "a refusal guard with an earlier
+    line number than the call", the guard-clause equivalent of "nested under the approved
+    branch", rather than literally requiring AST nesting.
+    """
+    tree = ast.parse(_CLI_OPS_PATH.read_text(encoding="utf-8"))
+
+    calls = _clear_new_risk_halt_calls(tree)
+    assert len(calls) == 1, (
+        f"expected exactly one clear_new_risk_halt( call site in _cli_ops.py, found "
+        f"{len(calls)}"
+    )
+    call_lineno = calls[0].lineno
+
+    function_node = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "rearm_and_clear"
+    )
+    guard_linenos = [
+        stmt.lineno for stmt in function_node.body if _is_refusal_guard(stmt)
+    ]
+    assert guard_linenos, (
+        "rearm_and_clear must contain a guard clause (`if ...refusal... is not None: "
+        "return ...`) before its clear_new_risk_halt( call"
+    )
+    assert min(guard_linenos) < call_lineno, (
+        "the refusal guard clause must appear BEFORE the clear_new_risk_halt( call — the "
+        "call must only be reachable on the approved path"
+    )
+
+
+def test_the_refusal_guard_detector_rejects_an_unguarded_call(tmp_path: Path) -> None:
+    """Proves :func:`_is_refusal_guard` is not vacuous: a scratch module with an UNGUARDED
+    ``clear_new_risk_halt(`` call (no preceding refusal-checking ``If``) would fail the pin
+    above."""
+    scratch = tmp_path / "scratch_unguarded.py"
+    scratch.write_text(
+        "def rearm_and_clear(inbox):\n"
+        "    return inbox.clear_new_risk_halt(latched_evidence_seq=1)\n"
+    )
+    tree = ast.parse(scratch.read_text(encoding="utf-8"))
+    function_node = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "rearm_and_clear"
+    )
+    guard_linenos = [
+        stmt.lineno for stmt in function_node.body if _is_refusal_guard(stmt)
+    ]
+    assert guard_linenos == []

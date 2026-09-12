@@ -83,6 +83,7 @@ from tos_runtime.compose._session_wiring import (
     SessionInboxCell,
     apply_nontrade_wiring,
     apply_session_wiring,
+    build_nontrade_admissibility_provider,
     build_nontrade_processor,
     build_session_facts_owner,
 )
@@ -183,9 +184,14 @@ def compose_paper_runtime(
         backup_root: TOS Phase 5 W4 §2 decision 11 — where to look for the latest durable-set
             backup manifest, or ``None`` (the default) to skip backup observation entirely.
         wall_clock: TOS Phase 5 W5 plan §2 decision 2 — the injected wall-clock reference for
-            the KST session/calendar owner, or ``None`` (the default) for the honest production
-            default (:class:`~tos_runtime.calendar.ports.AbsentWallClockReference` — G-1 is
-            still pending operator decision, plan §6 ①; no CLI flag wires anything else in).
+            the KST session/calendar owner, or ``None`` (the default) for the production
+            default (G-1, runtime operations wiring plan §2 decision 1):
+            :class:`~tos_runtime.calendar.ports.TrustedWallClockReference` bound to this call's
+            own ``TrustworthyTimeService`` — reads a real value once that service's boot-time
+            ``evaluate()`` cycles (below) have reached ``HealthState.TRUSTED``, honestly
+            ``None`` otherwise; no CLI flag overrides this default (an explicit ``wall_clock``
+            argument, e.g. ``FixedWallClockReference``/``AbsentWallClockReference``, is
+            test-only).
 
     Returns:
         The fully wired :class:`ComposedRuntime`.
@@ -232,6 +238,7 @@ def compose_paper_runtime(
         wall_clock=wall_clock,
         evidence_store=boot.infra.evidence_store,
         time_config=boot.infra.time_config,
+        time_service=boot.infra.time_service,
         tick_generation_reader=session_inbox_cell.read,
     )
 
@@ -350,24 +357,30 @@ def compose_paper_runtime(
         session_inbox_cell=session_inbox_cell,
         session_facts_owner=session_facts_owner,
     )
-    # TOS Phase 5 W5 plan §2 decision 7 (rollover) — the non-trade event processor, wired with
-    # an honest venue-admissibility read over the SAME session_phase_reader/construction step 3
-    # itself uses (build_nontrade_processor's own docstring). Optional: a config_dir with no
-    # nontrade.yaml at all (every compose e2e test that predates this wiring) leaves
+    # TOS runtime operations wiring plan §2 decision 3 + follow-up (originally W5 plan §2
+    # decision 7, rollover) — the ONE honest venue-admissibility provider, built once and
+    # shared by the dry-run non-trade processor AND observe_nontrade's engine path
+    # (build_nontrade_admissibility_provider's own docstring), PLUS the engine driver's shared
+    # new-risk latch bind (apply_nontrade_wiring's own docstring — both independent of whether
+    # a nontrade.yaml exists at all). The dry-run processor itself stays optional: a config_dir
+    # with no nontrade.yaml at all (every compose e2e test that predates this wiring) leaves
     # composed.nontrade None, exactly like projection_path/backup_root's own optionality —
     # never a boot refusal for a caller that has not configured this yet.
+    nontrade_admissibility_provider = build_nontrade_admissibility_provider(
+        construction=construction,
+        session_phase_reader=session_phase_reader,
+    )
     composed = apply_nontrade_wiring(
         composed,
         nontrade_processor=(
             build_nontrade_processor(
                 config_dir=config_dir,
-                evidence_store=boot.infra.evidence_store,
-                construction=construction,
-                session_phase_reader=session_phase_reader,
+                admissibility_provider=nontrade_admissibility_provider,
             )
             if (config_dir / NONTRADE_CONFIG_NAME).is_file()
             else None
         ),
+        admissibility_provider=nontrade_admissibility_provider,
     )
     # TOS Phase 5 W2-R (plan §10 row ①③) — attach the finality release consumer BEFORE the
     # recovery barrier runs (see apply_release_wiring's own docstring for why running before a

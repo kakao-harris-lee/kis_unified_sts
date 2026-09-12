@@ -16,6 +16,12 @@ This is NOT a test of ``NonTradeEventProcessor`` itself (``tos/runtime/tests/non
 (``tos/tests/engine/test_engine_corporate_action.py`` owns that). It is purely the
 cross-implementation equality proof the round's own end-condition names.
 
+**Converter promoted to production (TOS runtime operations wiring plan, 2026-09-13, §2
+decision 3).** This module used to define its own local ``_payload_from_observation`` copy; it
+now imports :func:`~tos_runtime.nontrade.convert.payload_from_observation` instead — the SAME
+function :meth:`~tos_runtime.compose._types.ComposedRuntime.observe_nontrade`'s engine path
+calls — so this proof and the real caller are provably running the identical conversion.
+
 Regime tag: authoring evidence only; closes no EV.
 """
 
@@ -23,11 +29,11 @@ from __future__ import annotations
 
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.engine._corporate_action import handle_corporate_action
-from tos.engine.records import CorporateActionPayload, InstrumentKey
+from tos.engine.records import InstrumentKey
 from tos_runtime.nontrade import NonTradeEventProcessor
+from tos_runtime.nontrade.convert import payload_from_observation
 from tos_runtime.nontrade.observations import NonTradeObservation
 
-from .conftest import FakeEvidenceRecorder
 from .fixtures.synthetic_observations import (
     REQUIRED_LEGS_BY_CLASS,
     cash_dividend,
@@ -45,54 +51,28 @@ _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 _ADMISSIBLE_TOKEN = "ADMISSIBLE"
 _FRESH_TOKEN = "FRESH"
 
-
-def _payload_from_observation(
-    obs: NonTradeObservation, *, admissibility: str | None
-) -> CorporateActionPayload:
-    """Convert one W5 lane-f3 :class:`NonTradeObservation` into a kernel
-    :class:`~tos.engine.records.CorporateActionPayload` carrying EXACTLY the same facts —
-    the two types share the identical coordinate shape by construction (kernel round #3 §2 결정
-    1's own design note), so this is a field-for-field copy, never a re-derivation."""
-    required_legs = REQUIRED_LEGS_BY_CLASS.get(obs.event_class, frozenset())
-    return CorporateActionPayload(
-        instrument_key=InstrumentKey(account="acct-equiv", instrument="instr-equiv"),
-        event=obs.to_kernel_record(),
-        envelope=obs.transition_envelope,
-        split_spec=obs.split_spec,
-        correction=obs.correction,
-        required_legs=required_legs,
-        prior_correction=obs.prior_correction,
-        original_retained=obs.original_retained,
-        identity_transition_final=obs.identity_transition_final,
-        event_is_material=obs.event_is_material,
-        change_triggers=obs.change_triggers,
-        earliest_credible_boundary=obs.earliest_credible_boundary,
-        latest_completion_boundary=obs.latest_completion_boundary,
-        source_disagreement_bounded=obs.source_disagreement_bounded,
-        field_confidences=obs.field_confidences,
-        venue_admissibility=admissibility,
-        time_freshness=_FRESH_TOKEN,
-        protective_action_may_proceed=obs.protective_action_may_proceed,
-        injected_worst_intermediate_risk=obs.injected_worst_intermediate_risk,
-        injected_credible_space_bounded=obs.injected_credible_space_bounded,
-        injected_union_capacity_known=obs.injected_union_capacity_known,
-    )
+_INSTRUMENT_KEY = InstrumentKey(account="acct-equiv", instrument="instr-equiv")
 
 
 def _processor_disposition(obs: NonTradeObservation, *, admissibility: str | None):
     processor = NonTradeEventProcessor(
-        FakeEvidenceRecorder(),
         REQUIRED_LEGS_BY_CLASS,
         venue_admissibility_provider=(
             None if admissibility is None else lambda _route_key: admissibility
         ),
         time_freshness_provider=lambda: _FRESH_TOKEN,
     )
-    return processor.process(obs).disposition
+    return processor.evaluate(obs).disposition
 
 
 def _engine_disposition(obs: NonTradeObservation, *, admissibility: str | None):
-    payload = _payload_from_observation(obs, admissibility=admissibility)
+    payload = payload_from_observation(
+        obs,
+        instrument_key=_INSTRUMENT_KEY,
+        required_legs_by_class=REQUIRED_LEGS_BY_CLASS,
+        admissibility=admissibility,
+        time_freshness=_FRESH_TOKEN,
+    )
     return handle_corporate_action(payload, scheme=_SCHEME).disposition
 
 

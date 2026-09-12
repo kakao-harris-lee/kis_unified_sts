@@ -1,40 +1,32 @@
-"""``NonTradeEventProcessor`` — the nontrade consumer OUTSIDE the engine (Phase 5 W5
-plan §2 decision 6, lane f3).
+"""``NonTradeEventProcessor`` — the nontrade DRY-RUN evaluator OUTSIDE the engine (originally
+Phase 5 W5 plan §2 decision 6, lane f3; narrowed to dry-run-only by the TOS runtime operations
+wiring plan, 2026-09-13, §2 decision 3).
 
-**Applies nothing.** ``tos.nontrade`` is a decision kernel only (ADR-002-010 §1
-line 19 / §10 line 217: "the Risk Capacity Ledger remains the sole authority that
-reserves, commits, releases, transfers, or remaps capacity"; "the event processor
-... may propose a remap but SHALL NOT update capacity independently"). This
-module folds an observed non-trade event through every applicable kernel
-predicate, records the sole :class:`~tos.nontrade.vocabulary.NonTradeDisposition`
-producer's verdict as evidence, and reports a ``restrictive`` bool — it never
-reserves, commits, releases, remaps, or writes any capacity or composite state
-itself (the ``rcl`` is the sole capacity authority, ADR-002-010 §1/§10; structural
-pin: ``tests/nontrade/test_no_write_port.py``).
+**Applies nothing, and now records nothing either.** ``tos.nontrade`` is a decision kernel only
+(ADR-002-010 §1 line 19 / §10 line 217: "the Risk Capacity Ledger remains the sole authority that
+reserves, commits, releases, transfers, or remaps capacity"; "the event processor ... may
+propose a remap but SHALL NOT update capacity independently"). This module folds an observed
+non-trade event through every applicable kernel predicate and reports the resulting
+:class:`~tos.nontrade.vocabulary.NonTradeDisposition` — it never reserves, commits, releases,
+remaps, or writes any capacity or composite state (the ``rcl`` is the sole capacity authority,
+ADR-002-010 §1/§10; structural pin: ``tests/nontrade/test_no_write_port.py``), and, since the
+runtime operations wiring plan, it no longer appends durable evidence either
+(:meth:`NonTradeEventProcessor.evaluate` — the STATEFUL path is the engine now, see below).
 
-**Latching is a different lane's job.** When a disposition is conservative
-(:data:`_RESTRICTIVE_DISPOSITIONS`), this processor reports ``restrictive=True``
-and a ``latch_reason`` token on :class:`NonTradeOutcome` — it does **not** call
-``tos_runtime.engine.inbox.SqliteEventInbox.record_new_risk_halt`` (the public
-entry point that durably latches a new-risk halt, ``engine/inbox.py:574``)
-itself. This package's own structural pin (AST import scan,
-``tests/nontrade/test_no_write_port.py``) forbids importing
-``tos_runtime.rcl``, ``tos_runtime.engine``, ``tos_runtime.recovery``, or
-``tos_runtime.transport`` at all, so the wiring from ``restrictive`` to that
-entry point is left to a different lane (Phase 5 W5 plan §4, lane f4/f2) — see
-this module's own docstring "Report back" note below for what that lane needs.
-
-**Report back (missing entry points, surveyed not built here).** (1)
-``record_new_risk_halt`` exists and is public
-(``tos_runtime/engine/inbox.py:574``) — the wiring lane calls it directly with a
-``reason`` taken from :attr:`NonTradeOutcome.latch_reason`. (2) No
-"incident-candidate" reporting entry point was found on
-:class:`~tos_runtime.safety.incident.IncidentService` — it only *reads* a static
-policy document and reports clearance (``clear()``); it has no method to report
-a new incident candidate. A ``NONTRADE_MATERIAL_CHANGE`` / restrictive-disposition
-evidence entry is therefore the only "incident candidate" trace this lane can
-leave; whether a future incident-candidate entry point should be added is an
-operator decision (Phase 5 W5 plan §6 confirmation point 9), not this lane's.
+**The engine is the ONLY stateful non-trade path.** Kernel round #3 gave the engine its own
+``CORPORATE_ACTION`` handler (:func:`tos.engine._corporate_action.handle_corporate_action`,
+reached through :class:`~tos_runtime.engine.driver.EngineDriver` via
+:meth:`~tos_runtime.compose._types.ComposedRuntime.observe_nontrade`), which judges the SAME
+disposition over the SAME kernel predicates
+(``tests/nontrade/test_engine_processor_equivalence.py`` proves the two independently-written
+call sites agree) and, when restrictive, latches a new-risk halt through
+:func:`~tos_runtime.nontrade.latch.latch_restrictive` — the shared implementation
+:mod:`tos_runtime.engine.driver` and (previously) this package's own caller both use. This class
+is now a **dry-run evaluator only**: :meth:`evaluate` (renamed from ``process``, TOS runtime
+operations wiring plan) returns the same outcome shape the engine path would reach, for the
+``nontrade-eval`` CLI's "what would this observation judge to?" preview — it appends zero
+evidence and touches zero durable state, so calling it can never itself latch anything or leave
+a trace, unlike the engine path.
 
 **Required-legs configuration (M6 discipline).** ``required_legs_by_class`` is a
 constructor-injected mapping, never a module-level literal: the event-class ->
@@ -44,12 +36,14 @@ the mapping means "we do not know what legs this class requires" — the
 processor does not call :func:`~tos.nontrade.predicates.transition_envelope_complete`
 at all in that case (rather than silently feeding it an empty ``frozenset``,
 which the kernel predicate already treats as its own separate ∅ fail-closed
-guard) and names the predicate in :attr:`NonTradeOutcome.unevaluated`.
+guard) and names the predicate in :attr:`NonTradeOutcome.unevaluated`. The SAME mapping is also
+exposed to the engine path via :meth:`NonTradeEventProcessor.required_legs_for`, so
+:mod:`tos_runtime.nontrade.convert`'s caller resolves the identical per-class policy rather than
+loading ``nontrade.yaml`` a second time.
 
 Firewall: stdlib + ``tos.canonical`` (``CanonicalDecimal``, re-exported facts) +
 ``tos.nontrade`` + ``tos.venue.predicates`` (``material_change_closure`` —
 consumed as an injected closure, never re-authored; ADR-002-019 owns it) +
-``tos_runtime.evidence.ports`` (``EvidenceAppendPort``) +
 ``tos_runtime.nontrade.observations`` only. No ``shared.*``. No
 ``tos_runtime.rcl`` / ``.engine`` / ``.recovery`` / ``.transport`` (this
 package's own structural pin).
@@ -80,7 +74,6 @@ from tos.nontrade import (
 )
 from tos.venue.predicates import material_change_closure
 
-from tos_runtime.evidence.ports import EvidenceAppendPort
 from tos_runtime.nontrade.observations import NonTradeObservation
 
 __all__ = [
@@ -90,8 +83,10 @@ __all__ = [
     "NonTradeOutcome",
 ]
 
-#: This module's own runtime evidence kind constants (Phase 5 W5 plan §2
-#: decision 10) — never re-exported from the kernel, which authors no evidence.
+#: Historical evidence-kind labels (Phase 5 W5 plan §2 decision 10) — this dry-run evaluator no
+#: longer appends either (TOS runtime operations wiring plan §2 decision 3: the engine path is
+#: the only stateful one now); kept as exported vocabulary tokens only, e.g. for the
+#: ``nontrade-eval`` CLI's own output labeling, never fed to an ``append()`` call in this module.
 NONTRADE_DISPOSITION_KIND = "NONTRADE_DISPOSITION"
 NONTRADE_MATERIAL_CHANGE_KIND = "NONTRADE_MATERIAL_CHANGE"
 
@@ -122,20 +117,42 @@ _TRANSFORMATION_PREDICATES: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class NonTradeOutcome:
-    """One :meth:`NonTradeEventProcessor.process` call's result.
+    """One non-trade observation's judged outcome — either
+    :meth:`NonTradeEventProcessor.evaluate`'s dry-run result, or
+    :meth:`~tos_runtime.compose._types.ComposedRuntime.observe_nontrade`'s engine-path result
+    (TOS runtime operations wiring plan §2 decision 3 — the runtime dataclass shape is shared by
+    both callers; ``observe_nontrade`` maps the kernel's own
+    :class:`~tos.engine.records.NonTradeOutcome` onto this same shape).
 
-    ``restrictive`` / ``latch_reason`` are this processor's ONLY output toward a
-    new-risk latch — it never calls the latch itself (module docstring).
+    ``restrictive`` / ``latch_reason`` are this outcome's own report toward a new-risk latch —
+    NEITHER this class nor :meth:`NonTradeEventProcessor.evaluate` ever calls the latch itself;
+    only the engine path (:mod:`tos_runtime.engine.driver`, via
+    :func:`~tos_runtime.nontrade.latch.latch_restrictive`) does.
     """
 
     observation_id: str
-    disposition: NonTradeDisposition
+    #: ``None`` only when :attr:`queued` is ``True`` (the recovery-barrier-held case — the
+    #: observation was durably enqueued but not yet judged by anything; never a fabricated
+    #: disposition standing in for "we do not know yet").
+    disposition: NonTradeDisposition | None
     restrictive: bool
     latch_reason: str | None
     predicate_results: Mapping[str, object]
     unevaluated: tuple[str, ...]
     material_change_closure: frozenset[str] | None
+    #: The durable evidence row this specific disposition was recorded under — ``None`` for a
+    #: dry-run :meth:`NonTradeEventProcessor.evaluate` call (records nothing, module docstring)
+    #: and for a queued (:attr:`queued` ``True``) observation (nothing has been judged yet); a
+    #: real seq (the engine's own ``EVENT_CONSUMED`` receipt) only for the engine path.
     evidence_seq: int | None
+    #: ``True`` iff the TOS Phase 5 W1 recovery barrier was holding
+    #: (:attr:`~tos_runtime.compose._types.ComposedRuntime.driver` is ``None``) when
+    #: ``observe_nontrade`` was called: the observation was durably enqueued
+    #: (``NONTRADE_QUEUED_UNTIL_RECOVERY`` evidence) but not judged — every other field above
+    #: stays at its own honest "nothing known yet" default. Always ``False`` for
+    #: :meth:`NonTradeEventProcessor.evaluate` (a dry-run call is never queued — it either
+    #: returns immediately or does not run at all).
+    queued: bool = False
 
 
 def _evaluate_envelope(
@@ -215,7 +232,6 @@ class NonTradeEventProcessor:
 
     def __init__(
         self,
-        evidence_recorder: EvidenceAppendPort,
         required_legs_by_class: Mapping[
             NonTradeEventClass, frozenset[CredibleTransitionLegKind]
         ],
@@ -226,37 +242,51 @@ class NonTradeEventProcessor:
         time_freshness_provider: Callable[[], str | None] | None = None,
     ) -> None:
         """Args:
-        evidence_recorder: The durable-append seam (module docstring); a
-            :class:`~tos.evidence.EvidenceAppendReceipt` proves every append.
         required_legs_by_class: The event-class -> applicable-leg-set policy
             (module docstring M6 discipline — never a literal in this module).
         dep_graph_provider: Returns the venue constraint dependency adjacency for
             :func:`~tos.venue.predicates.material_change_closure`, or ``None``
-            when no dependency graph is wired yet (skips the closure + its
-            evidence entirely — never a fabricated empty graph).
+            when no dependency graph is wired yet (skips the closure entirely —
+            never a fabricated empty graph).
         venue_admissibility_provider: Returns the injected venue
             ``OrderAdmissibilityResult`` token for one instrument route key, or
             ``None`` when no venue admissibility source is wired.
         time_freshness_provider: Returns the injected time ``FreshnessVerdict``
             token, or ``None`` when no time source is wired.
         """
-        self._evidence = evidence_recorder
         self._required_legs_by_class = required_legs_by_class
         self._dep_graph_provider = dep_graph_provider
         self._venue_admissibility_provider = venue_admissibility_provider
         self._time_freshness_provider = time_freshness_provider
 
-    def process(self, obs: NonTradeObservation) -> NonTradeOutcome:
-        """Fold ``obs`` through every applicable kernel predicate.
+    def required_legs_for(
+        self, event_class: NonTradeEventClass
+    ) -> frozenset[CredibleTransitionLegKind]:
+        """The configured required-leg set for ``event_class``, or an empty ``frozenset`` when
+        this class has no entry in the caller's policy mapping (module docstring M6 discipline).
+
+        Exposed so the engine path
+        (:mod:`tos_runtime.nontrade.convert`, via
+        :meth:`~tos_runtime.compose._types.ComposedRuntime.observe_nontrade`) resolves the SAME
+        per-class policy this dry-run evaluator uses, rather than loading ``nontrade.yaml`` a
+        second time.
+        """
+        return self._required_legs_by_class.get(event_class, frozenset())
+
+    def evaluate(self, obs: NonTradeObservation) -> NonTradeOutcome:
+        """Fold ``obs`` through every applicable kernel predicate — a DRY RUN: records no
+        evidence and touches no durable state (module docstring; renamed from ``process`` by the
+        TOS runtime operations wiring plan §2 decision 3, when this became the ``nontrade-eval``
+        CLI's preview-only evaluator).
 
         Args:
             obs: The observed non-trade event.
 
         Returns:
-            The :class:`NonTradeOutcome` — disposition, restrictive/latch_reason,
-            the per-predicate result table, the unevaluated predicate names, the
-            material-change closure (if a dependency graph was provided), and the
-            durable evidence seq the disposition was recorded under.
+            The :class:`NonTradeOutcome` — disposition, restrictive/latch_reason, the
+            per-predicate result table, the unevaluated predicate names, and the material-change
+            closure (if a dependency graph was provided). :attr:`~NonTradeOutcome.evidence_seq`
+            is always ``None`` (dry run) and :attr:`~NonTradeOutcome.queued` is always ``False``.
         """
         record = obs.to_kernel_record()
         unevaluated: list[str] = []
@@ -325,13 +355,7 @@ class NonTradeEventProcessor:
         )
         restrictive = disposition in _RESTRICTIVE_DISPOSITIONS
         latch_reason = disposition.value if restrictive else None
-
-        receipt = self._evidence.append(
-            _disposition_payload(obs, disposition, results, unevaluated),
-            kind=NONTRADE_DISPOSITION_KIND,
-            record_class=NONTRADE_DISPOSITION_KIND,
-        )
-        closure = self._record_material_change(obs)
+        closure = self._material_change_closure(obs)
 
         return NonTradeOutcome(
             observation_id=obs.observation_id,
@@ -341,7 +365,8 @@ class NonTradeEventProcessor:
             predicate_results=results,
             unevaluated=tuple(unevaluated),
             material_change_closure=closure,
-            evidence_seq=receipt.seq,
+            evidence_seq=None,
+            queued=False,
         )
 
     def _resolve_admissibility(self, obs: NonTradeObservation) -> str | None:
@@ -354,28 +379,19 @@ class NonTradeEventProcessor:
             return None
         return self._venue_admissibility_provider(key)
 
-    def _record_material_change(
+    def _material_change_closure(
         self, obs: NonTradeObservation
     ) -> frozenset[str] | None:
-        """Compute + evidence the §18 material-change closure, only when a
-        dependency graph is wired (module docstring — never a fabricated empty
-        graph); returns ``None`` (no evidence appended) otherwise."""
+        """Compute the §18 material-change closure, only when a dependency graph is wired
+        (module docstring — never a fabricated empty graph); returns ``None`` otherwise. Records
+        no evidence (dry-run evaluator, module docstring) — unlike this method's pre-runtime-
+        operations-wiring-plan predecessor, ``_record_material_change``."""
         if self._dep_graph_provider is None:
             return None
         dep_graph = self._dep_graph_provider()
         if dep_graph is None:
             return None
-        closure = material_change_closure(dep_graph, obs.change_triggers)
-        self._evidence.append(
-            {
-                "observation_id": obs.observation_id,
-                "change_triggers": sorted(obs.change_triggers),
-                "closure": sorted(closure),
-            },
-            kind=NONTRADE_MATERIAL_CHANGE_KIND,
-            record_class=NONTRADE_MATERIAL_CHANGE_KIND,
-        )
-        return closure
+        return material_change_closure(dep_graph, obs.change_triggers)
 
 
 def _fold_disposition(
@@ -417,25 +433,3 @@ def _fold_disposition(
         injected_credible_space_bounded=obs.injected_credible_space_bounded,
         injected_union_capacity_known=obs.injected_union_capacity_known,
     )
-
-
-def _disposition_payload(
-    obs: NonTradeObservation,
-    disposition: NonTradeDisposition,
-    results: Mapping[str, object],
-    unevaluated: list[str],
-) -> dict[str, object]:
-    """The ``NONTRADE_DISPOSITION`` evidence payload — observation identity, the
-    disposition, the full per-predicate result table, and the unevaluated list."""
-    rendered_results = {
-        name: (value.value if hasattr(value, "value") else value)
-        for name, value in results.items()
-    }
-    return {
-        "observation_id": obs.observation_id,
-        "event_class": obs.event_class.value,
-        "source_label": obs.source_label,
-        "disposition": disposition.value,
-        "predicate_results": rendered_results,
-        "unevaluated": list(unevaluated),
-    }

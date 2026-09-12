@@ -23,10 +23,17 @@ from tos_runtime.calendar.model import WallClockReading
 from tos_runtime.calendar.owner import SessionCalendarMismatch
 from tos_runtime.calendar.ports import AbsentWallClockReference, FixedWallClockReference
 from tos_runtime.compose._session_wiring import RetiredConfigPresent
+from tos_runtime.compose._transport_wiring import TransportKind
+from tos_runtime.compose.root import compose_paper_runtime
 
 from . import _fixtures as fx
 from .conftest import write_approval_file
-from .test_compose_root import _compose, _reach_trusted
+from .test_compose_root import (
+    _action_flow_inputs,
+    _aggregate_inputs,
+    _compose,
+    _reach_trusted,
+)
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -379,6 +386,54 @@ def test_venue_phase_is_re_read_per_attempt_not_captured_at_construction(
     assert result2.flow is not None
     verdict_by_step_2 = {v.step.value: v for v in result2.flow.verdicts}
     assert verdict_by_step_2["VENUE_ADMISSIBILITY_DECISION"].outcome.value != "ADMIT"
+
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+
+
+# ============================================================================
+# (9) Production default (wall_clock omitted entirely) -- G-1 (runtime
+#     operations wiring plan §2 decision 1): TrustedWallClockReference wired
+#     in, real session facts, TIME_WALL_CLOCK_EXPOSED exactly once,
+#     SESSION_FACTS_SOURCE_ABSENT zero.
+# ============================================================================
+
+
+def test_production_default_wall_clock_boots_with_real_session_facts(
+    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+) -> None:
+    """Calls ``compose_paper_runtime`` directly (bypassing this suite's own
+    ``_compose()`` helper, which always injects a ``FixedWallClockReference``
+    -- module docstring on ``_compose`` -- specifically so dozens of OTHER
+    e2e tests need no calendar-boundary reasoning). Omitting ``wall_clock``
+    entirely exercises the REAL production default: G-1's
+    ``TrustedWallClockReference`` bound to this runtime's own
+    ``TrustworthyTimeService``, which reaches TRUSTED during compose's own
+    boot-time evaluate() x2 (``_wiring.py``'s ``_build_custody_evidence_time``)
+    BEFORE ``build_session_facts_owner`` is ever called -- so a real
+    wall-clock reading is available from the very first read, never through
+    the pre-G-1 ``AbsentWallClockReference`` default."""
+    fx.write_band_strategy_file(config_dir)
+    runtime = compose_paper_runtime(
+        config_dir,
+        data_dir,
+        custody_root,
+        "non-live-test",
+        construction=fx.construction_config(),
+        aggregate_risk_inputs_provider=_aggregate_inputs,
+        action_flow_inputs_provider=_action_flow_inputs,
+        transport_kind=TransportKind.SYNTHETIC,
+        # wall_clock intentionally omitted -- the production default.
+    )
+    _reach_trusted(runtime)
+
+    # A real reading reached the owner: step 3's phase read is not None (the
+    # shared conftest.py calendar is open 24/7, so ANY real wall-clock value
+    # resolves to a real phase, never the "no reading" None case).
+    assert runtime.session_facts is not None
+    assert runtime.session_facts.phase_for_step3(fx.INSTRUMENT_CLASS) == "CONTINUOUS"
+    assert _kind_count(runtime, "SESSION_FACTS_SOURCE_ABSENT") == 0
+    assert _kind_count(runtime, "TIME_WALL_CLOCK_EXPOSED") == 1
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()

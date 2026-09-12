@@ -25,9 +25,11 @@ from tos.egressgw import (
 from tos.engine import (
     EngineCore,
     EngineEvent,
+    EventKind,
     EventResult,
     StrategyRegistry,
 )
+from tos.engine import NonTradeOutcome as KernelNonTradeOutcome
 from tos.venue import (
     ActionClass,
     OrderAdmissibilityDecision,
@@ -64,6 +66,7 @@ from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import NewRiskHaltClearOutcome, SqliteEventInbox
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.nontrade.convert import payload_from_observation
 from tos_runtime.nontrade.observations import NonTradeObservation
 from tos_runtime.nontrade.processor import NonTradeEventProcessor, NonTradeOutcome
 from tos_runtime.rcl.log import SqliteCommitLog
@@ -286,14 +289,25 @@ class ComposedRuntime:
     #: ``None`` only transiently before that wiring runs — never observable on a runtime a
     #: caller actually receives (mirrors :attr:`recovery`'s own docstring).
     session_facts: SessionFactsOwner | None = None
-    #: TOS Phase 5 W5 plan §2 decision 7 — the non-trade event processor, set by
-    #: :func:`~tos_runtime.compose._session_wiring.apply_nontrade_wiring` (called from
-    #: :func:`~tos_runtime.compose.root.compose_paper_runtime`, right after
-    #: ``apply_session_wiring``). ``None`` only transiently before that wiring runs — never
-    #: observable on a runtime a caller actually receives (mirrors :attr:`session_facts`'s own
-    #: docstring). Never call :attr:`nontrade`'s own ``process`` directly to reach a new-risk
-    #: latch — :meth:`observe_nontrade` is the sanctioned door (module docstring discipline).
+    #: TOS Phase 5 W5 plan §2 decision 7 — the DRY-RUN non-trade processor (``nontrade-eval``
+    #: CLI preview only), set by :func:`~tos_runtime.compose._session_wiring
+    #: .apply_nontrade_wiring` (called from :func:`~tos_runtime.compose.root
+    #: .compose_paper_runtime`, right after ``apply_session_wiring``). ``None`` only transiently
+    #: before that wiring runs, or permanently when ``config_dir`` carries no ``nontrade.yaml``
+    #: — never observable-as-transient on a runtime a caller actually receives (mirrors
+    #: :attr:`session_facts`'s own docstring). Never call :attr:`nontrade`'s own ``evaluate``
+    #: directly to reach a new-risk latch — :meth:`observe_nontrade` is the sanctioned door
+    #: (module docstring discipline); it does not read this attribute at all.
     nontrade: NonTradeEventProcessor | None = None
+    #: TOS runtime operations wiring plan §2 decision 3 (follow-up) — the SAME honest,
+    #: single-scope venue-admissibility read :func:`~tos_runtime.compose._session_wiring
+    #: .build_nontrade_admissibility_provider` builds for the dry-run :attr:`nontrade`
+    #: processor above, shared (never rebuilt) with :meth:`observe_nontrade`'s engine path. Set
+    #: by :func:`~tos_runtime.compose._session_wiring.apply_nontrade_wiring`, unconditionally —
+    #: unlike :attr:`nontrade`, this is wired even when ``config_dir`` carries no
+    #: ``nontrade.yaml`` (the engine path does not depend on that file). ``None`` only
+    #: transiently before that wiring runs.
+    nontrade_admissibility_provider: Callable[[str], str | None] | None = None
 
     def run_once(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
         """Drive ``events`` through :attr:`driver` to completion, one at a time.
@@ -454,55 +468,136 @@ class ComposedRuntime:
             return NewRiskHaltClearOutcome.STORAGE_REFUSED
         return outcome
 
-    #: The evidence kind :meth:`observe_nontrade` appends for a restrictive disposition (TOS
-    #: Phase 5 W5 plan §2 decision 7 / §6 confirmation ⑨) — a runtime-level record kind, not a
-    #: kernel ``EvidenceKind`` or a ``tos.nontrade`` producer: ``IncidentService`` has no
-    #: candidate-reporting entry point (:mod:`tos_runtime.nontrade.processor` module docstring
-    #: "Report back" section), so this is the only "incident candidate" trace this runtime can
-    #: leave until an operator decides whether to add a real entry point.
-    _INCIDENT_CANDIDATE_KIND = "INCIDENT_CANDIDATE"
+    #: The evidence kind :meth:`observe_nontrade` appends when the TOS Phase 5 W1 recovery
+    #: barrier holds (:attr:`driver` is ``None``): the observation is durably enqueued but not
+    #: yet judged by anything (TOS runtime operations wiring plan §2 decision 3/8) — an honest
+    #: "queued", never a fabricated disposition.
+    _NONTRADE_QUEUED_UNTIL_RECOVERY_KIND = "NONTRADE_QUEUED_UNTIL_RECOVERY"
 
     def observe_nontrade(self, obs: NonTradeObservation) -> NonTradeOutcome:
-        """Fold one non-trade observation through :attr:`nontrade` and, when restrictive, latch
-        a new-risk halt (TOS Phase 5 W5 plan §2 decision 7).
+        """Fold one non-trade observation through the ENGINE's own ``CORPORATE_ACTION`` handler
+        (TOS runtime operations wiring plan §2 decision 3 — originally Phase 5 W5 plan §2
+        decision 7, which routed this through the dry-run
+        :class:`~tos_runtime.nontrade.processor.NonTradeEventProcessor` directly; that path is
+        now :meth:`~tos_runtime.nontrade.processor.NonTradeEventProcessor.evaluate`'s own
+        preview-only lane, never called from here).
 
-        THE sanctioned door from an observed non-trade event to the new-risk halt latch:
-        :mod:`tos_runtime.nontrade`'s own processor never calls
-        :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.record_new_risk_halt` itself (its
-        module docstring's own "Latching is a different lane's job" section names this method as
-        that lane). The evidence-before-state-change ordering below mirrors
-        :meth:`clear_new_risk_halt`'s own discipline (that method's ``NEW_RISK_HALT_CLEARED_BY_
-        OPERATOR`` row is appended BEFORE its storage-layer call): the ``INCIDENT_CANDIDATE`` row
-        is appended first, so a crash between the two leaves a durable trace of the disposition
-        that was ABOUT to latch, never a bare halt row with no explanation reachable from it.
+        Converts ``obs`` into a kernel :class:`~tos.engine.records.CorporateActionPayload`
+        (:func:`~tos_runtime.nontrade.convert.payload_from_observation`) and an
+        :class:`~tos.engine.records.EngineEvent`, then:
+
+        * **Driver wired** (:attr:`driver` real): runs it through
+          :meth:`~tos_runtime.engine.driver.EngineDriver.enqueue_and_run` — the SAME
+          ``core.handle`` call every other event kind gets. The driver's own post-consumption
+          hook (:meth:`~tos_runtime.engine.driver.EngineDriver._apply_nontrade_latch`) latches a
+          new-risk halt through the shared
+          :func:`~tos_runtime.nontrade.latch.latch_restrictive` when the judged outcome is
+          restrictive — THE sanctioned door onto
+          :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.record_new_risk_halt`, never called
+          from this method directly any more.
+        * **Recovery barrier held** (:attr:`driver` is ``None``): nothing can judge the event yet
+          — it is durably enqueued (:attr:`inbox`) and an honest
+          ``NONTRADE_QUEUED_UNTIL_RECOVERY`` evidence row is appended; the returned outcome
+          reports ``queued=True`` and every judgement field at its own honest default (never a
+          fabricated disposition). A later driver rebind drains and judges the queued row like
+          any other durably-admitted event.
+
+        **Admissibility is real; time-freshness is a documented gap.** ``payload_from_
+        observation`` is called with :attr:`nontrade_admissibility_provider` — the SAME honest
+        provider the dry-run :attr:`nontrade` processor uses
+        (:func:`~tos_runtime.compose._session_wiring.build_nontrade_admissibility_provider` —
+        built once, shared, never rebuilt), resolved against ``obs``'s route identity the SAME
+        way :meth:`~tos_runtime.nontrade.processor.NonTradeEventProcessor._resolve_admissibility`
+        does. ``time_freshness`` stays ``None`` — no live source exists anywhere in this
+        runtime yet (the dry-run processor's own provider is ``None`` too); an honest absence,
+        never a fabricated ``FRESH``.
 
         Args:
             obs: The observed non-trade event.
 
         Returns:
-            The :class:`~tos_runtime.nontrade.processor.NonTradeOutcome` — unchanged from what
-            :attr:`nontrade` itself produced.
-
-        Raises:
-            AssertionError: :attr:`nontrade` is ``None`` (wiring has not run yet — never
-                observable on a runtime a caller actually receives, mirrors every other
-                transiently-``None`` attribute's own discipline on this class).
+            The :class:`~tos_runtime.nontrade.processor.NonTradeOutcome` — mapped from the
+            kernel's own :class:`~tos.engine.records.NonTradeOutcome` when judged, or an honest
+            ``queued=True`` placeholder when the recovery barrier held.
         """
-        assert self.nontrade is not None, "ComposedRuntime.nontrade is not wired yet"
-        outcome = self.nontrade.process(obs)
-        if outcome.restrictive:
-            self.evidence_store.append(
-                {
-                    "observation_id": outcome.observation_id,
-                    "disposition": outcome.disposition.value,
-                    "latch_reason": outcome.latch_reason,
-                },
-                kind=self._INCIDENT_CANDIDATE_KIND,
-                record_class=self._INCIDENT_CANDIDATE_KIND,
+        required_legs = (
+            None
+            if self.nontrade is None
+            else {obs.event_class: self.nontrade.required_legs_for(obs.event_class)}
+        )
+        route_key = obs.new_instrument_identity or obs.old_instrument_identity
+        admissibility = (
+            None
+            if self.nontrade_admissibility_provider is None or route_key is None
+            else self.nontrade_admissibility_provider(route_key)
+        )
+        payload = payload_from_observation(
+            obs,
+            instrument_key=self.context_resolver.instrument_key,
+            required_legs_by_class=required_legs,
+            admissibility=admissibility,
+        )
+        event = EngineEvent(kind=EventKind.CORPORATE_ACTION, corporate_action=payload)
+
+        if self.driver is not None:
+            result = self.driver.enqueue_and_run(event)
+            assert (
+                result.nontrade_outcome is not None
+            )  # every CORPORATE_ACTION result carries one (kernel round #3 §2 결정 2)
+            return _nontrade_outcome_from_kernel(
+                observation_id=obs.observation_id,
+                kernel_outcome=result.nontrade_outcome,
+                evidence_seq=self.driver.last_nontrade_evidence_seq(),
             )
-            self.inbox.record_new_risk_halt(
-                reason=outcome.latch_reason or outcome.disposition.value,
-                event_id=obs.observation_id,
-                evidence_seq=outcome.evidence_seq,
-            )
-        return outcome
+
+        self.inbox.enqueue(event)
+        self.evidence_store.append(
+            {"observation_id": obs.observation_id},
+            kind=self._NONTRADE_QUEUED_UNTIL_RECOVERY_KIND,
+            record_class=self._NONTRADE_QUEUED_UNTIL_RECOVERY_KIND,
+        )
+        return _queued_nontrade_outcome(obs.observation_id)
+
+
+def _nontrade_outcome_from_kernel(
+    *,
+    observation_id: str,
+    kernel_outcome: KernelNonTradeOutcome,
+    evidence_seq: int | None,
+) -> NonTradeOutcome:
+    """Map the kernel's own :class:`~tos.engine.records.NonTradeOutcome` (a judged
+    ``CORPORATE_ACTION`` result) onto the runtime :class:`~tos_runtime.nontrade.processor
+    .NonTradeOutcome` shape (size-budget discipline: factored out of
+    :meth:`ComposedRuntime.observe_nontrade`, which stays a readable orchestration)."""
+    return NonTradeOutcome(
+        observation_id=observation_id,
+        disposition=kernel_outcome.disposition,
+        restrictive=kernel_outcome.restrictive,
+        latch_reason=(
+            f"NONTRADE_{kernel_outcome.disposition.value}"
+            if kernel_outcome.restrictive
+            else None
+        ),
+        predicate_results=dict(kernel_outcome.predicate_results),
+        unevaluated=kernel_outcome.unevaluated,
+        material_change_closure=None,
+        evidence_seq=evidence_seq,
+        queued=False,
+    )
+
+
+def _queued_nontrade_outcome(observation_id: str) -> NonTradeOutcome:
+    """The honest ``queued=True`` placeholder :meth:`ComposedRuntime.observe_nontrade` returns
+    when the recovery barrier holds — every judgement field at its own default, never a
+    fabricated disposition (size-budget discipline: factored out of that method)."""
+    return NonTradeOutcome(
+        observation_id=observation_id,
+        disposition=None,
+        restrictive=False,
+        latch_reason=None,
+        predicate_results={},
+        unevaluated=(),
+        material_change_closure=None,
+        evidence_seq=None,
+        queued=True,
+    )

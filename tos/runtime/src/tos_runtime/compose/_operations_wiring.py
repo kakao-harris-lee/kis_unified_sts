@@ -70,6 +70,7 @@ kernel-owned and untouched here, per :mod:`tos_runtime.operations.backup_set`'s 
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +99,13 @@ _MANIFEST_SUFFIX = ".set.manifest.json"
 #: alert-candidate reader below filters FOR (the two uses are symmetric: one excludes the kind
 #: from a staleness read, the other selects only that kind).
 _STM_ALERT_KIND = "STM_ALERT"
+
+#: Duplicated from :mod:`tos_runtime.safety.ack` (its own
+#: ``EVIDENCE_KIND_STM_ALERT_ACKNOWLEDGED`` — public there, but this module does not import
+#: :mod:`tos_runtime.safety.ack` to avoid a compose-wiring -> safety-package coupling this
+#: read-only reader does not otherwise need; same duplicate-literal discipline as
+#: ``_STM_ALERT_KIND`` immediately above). Runtime operations wiring plan §2 decision 4/8.
+_STM_ALERT_ACKNOWLEDGED_KIND = "STM_ALERT_ACKNOWLEDGED"
 
 _BACKUP_SET_OBSERVED_KIND = "BACKUP_SET_OBSERVED"
 _OPERATOR_PROJECTION_ENABLED_KIND = "OPERATOR_PROJECTION_ENABLED"
@@ -334,10 +342,34 @@ def _read_unresolved_candidates(composed: ComposedRuntime) -> tuple[int, ...]:
     return seqs[-MAX_UNRESOLVED_STM_ALERT_SEQS:]
 
 
-def _read_resolved() -> tuple[int, ...]:
-    # No STM_ALERT_RESOLVED producer exists anywhere in this runtime yet (plan §6 confirmation
-    # point ⑧) — an honest "nothing has ever been resolved", not a failure.
-    return ()
+def _read_resolved(composed: ComposedRuntime) -> tuple[int, ...]:
+    """The seqs the operator projection's ``unresolved_stm_alert_seqs`` field excludes.
+
+    **Runtime operations wiring plan (2026-09-13) §2 decision 4/8.** There is still no
+    ``STM_ALERT_RESOLVED`` producer anywhere in this runtime, and there never will be — ADR-002-028
+    :159/:187/:191/:388/:511 is explicit that acknowledgement is not resolution, containment,
+    incident closure, recovery readiness, or re-arm. What DOES exist now is
+    :func:`tos_runtime.safety.ack.acknowledge_alert`'s own ``STM_ALERT_ACKNOWLEDGED`` producer — a
+    single-operator confirmation-of-receipt, nothing more. This reader returns every ``alert_seq``
+    named by an ``STM_ALERT_ACKNOWLEDGED`` row (a direct payload read, since
+    ``iter_entry_meta`` carries no payload — mirrors
+    ``tos_runtime.safety.rearm.ReArmWorkflow._prior_consumptions``'s own
+    ``SELECT payload_json FROM entries WHERE kind = ?`` idiom). The exported JSON field name
+    (``unresolved_stm_alert_seqs``, schema v1) is UNCHANGED — only its meaning is now precisely
+    "not yet acknowledged", never "not yet fixed/closed" (see
+    :mod:`tos_runtime.operator.projection`'s own "alert ownership" docstring section).
+    """
+    rows = composed.evidence_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = ?",
+        (_STM_ALERT_ACKNOWLEDGED_KIND,),
+    ).fetchall()
+    seqs: list[int] = []
+    for (payload_json,) in rows:
+        payload = json.loads(payload_json)["payload"]
+        alert_seq = payload.get("alert_seq")
+        if isinstance(alert_seq, int):
+            seqs.append(alert_seq)
+    return tuple(seqs)
 
 
 def _build_projection(
@@ -375,7 +407,7 @@ def _build_projection(
         read_unresolved_stm_alert_candidate_seqs=lambda: _read_unresolved_candidates(
             composed
         ),
-        read_resolved_stm_alert_seqs=_read_resolved,
+        read_resolved_stm_alert_seqs=lambda: _read_resolved(composed),
         read_export_status=read_export_status,
     )
 

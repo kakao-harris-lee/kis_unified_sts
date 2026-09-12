@@ -9,6 +9,7 @@ import pytest
 from tos.iap import ApprovalResult, ConsumptionOutcome, ConsumptionStatus
 from tos.rcl import AppendReceipt, CommandType, CommitEntry
 from tos.time import HealthState
+from tos.workload import RuntimeIdentity
 from tos_runtime.authority.iap import (
     IntentRegistry,
     OperatorApprovalFileError,
@@ -18,10 +19,14 @@ from tos_runtime.authority.iap import (
 )
 from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog
 from tos_runtime.time.config import TrustworthyTimeConfig
+from tos_runtime.time.service import TrustworthyTimeService
 
 from .conftest import (
     FakeEvidenceAppendPort,
+    FakeMonotonicSource,
+    FakeReferenceReader,
     FakeTimeService,
+    _time_config,
     expiry_snapshot,
     write_approval_file,
 )
@@ -672,6 +677,53 @@ def test_load_operator_approval_with_receipt_refuses_a_future_dated_issuance(
             path,
             time=time_service,
             time_config=expiry_time_config,
+            expected_owner_uid=expected_owner_uid,
+            environment_label="non-live-test",
+        )
+
+
+def test_real_time_service_refuses_a_future_dated_issuance(
+    approvals_dir: Path, expected_owner_uid: int
+) -> None:
+    """G-1 end-to-end pin (runtime operations wiring plan §2 decision 1,
+    mutation M2): the SAME refusal as
+    ``test_load_operator_approval_with_receipt_refuses_a_future_dated_issuance``
+    above, but through a REAL ``TrustworthyTimeService`` driven to TRUSTED —
+    not the ``FakeTimeService`` double — proving the wiring from
+    ``LocalSystemClockReader``-shaped reference reads through
+    ``_issue_snapshot``'s ``wall_clock_observation`` fill-in to
+    ``load_operator_approval_with_receipt``'s consumer check is genuinely
+    connected. M2: removing the ``_issue_snapshot`` fill-in (service.py)
+    makes ``wall_now`` stay ``None`` again, which makes this future-dated
+    approval SILENTLY ADMITTED (the check at iap.py:477 is skipped whenever
+    ``wall_now is None``) — this test goes red."""
+    monotonic = FakeMonotonicSource(first=1_000)
+    time_service = TrustworthyTimeService(
+        monotonic=monotonic,
+        references=[FakeReferenceReader(wall_clock_unix_ms=1_000_000)],
+        config=_time_config(),
+        identity=RuntimeIdentity(cell_id="test-cell", process_nonce="test-nonce-real"),
+        evidence=FakeEvidenceAppendPort(),
+    )
+    time_service.start()
+    time_service.evaluate()  # -> SYNCHRONIZING
+    monotonic.value = 1_010
+    time_service.evaluate()  # -> TRUSTED, wall_clock_observation == 1_000_000
+    assert time_service.wall_clock_now() == 1_000_000
+
+    path = write_approval_file(
+        approvals_dir / "p1.yaml",
+        decision_id="d1",
+        max_decision_age_ms=60_000,
+        # More than max_future_timestamp_tolerance_ms (200, _time_config's
+        # default) ahead of the real service's wall_clock_now().
+        issued_at_unix_ms=1_000_000 + 10_000,
+    )
+    with pytest.raises(OperatorApprovalFileError, match="future-dated"):
+        load_operator_approval_with_receipt(
+            path,
+            time=time_service,
+            time_config=_time_config(),
             expected_owner_uid=expected_owner_uid,
             environment_label="non-live-test",
         )

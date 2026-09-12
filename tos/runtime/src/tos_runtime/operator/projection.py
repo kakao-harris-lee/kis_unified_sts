@@ -41,14 +41,25 @@ why this needs a two-step, late-bound construction): counts SUM; ``last_error`` 
 exporter's own message when both sides have one (a write failure is necessarily the NEWER of the
 two — discovered only on the build AFTER it happened).
 
-**Alert ownership (plan §2 decision 12).** ``alerts.unresolved_stm_alert_seqs`` is DERIVED here:
-"unresolved" = "in the candidate set and NOT in the resolved set". There is no
-``STM_ALERT_RESOLVED`` evidence producer wired anywhere yet (plan §6 confirmation point ⑧), so a
-caller-supplied resolved-seq reader that legitimately returns ``()`` is the honest "nothing has
-ever been resolved" fact, not a failure. If the RESOLVED reader itself fails, this module
-deliberately does **not** propagate that failure into "assume everything is resolved" (which
-would silently hide real alerts) — a failed resolved-read is treated the same as "resolved is
-empty" so nothing is ever wrongly excluded from ``unresolved_stm_alert_seqs``. If the CANDIDATE
+**Alert ownership (plan §2 decision 12; runtime operations wiring plan (2026-09-13) §2 decision
+4/8).** ``alerts.unresolved_stm_alert_seqs`` is DERIVED here: "unresolved" = "in the candidate set
+and NOT in the resolved set". There is still no ``STM_ALERT_RESOLVED`` evidence producer wired
+anywhere, and there never will be — ADR-002-028 :159/:187/:191/:388/:511 is explicit that no
+acknowledgement, mute, dedup, or operator action ever creates "resolved"/"incident closed"/
+"recovery readiness". What exists now is ``tos_runtime.safety.ack.acknowledge_alert``'s own
+single-operator ``STM_ALERT_ACKNOWLEDGED`` producer — a confirmation of receipt, nothing more
+(that module's own docstring: "acknowledgement is not containment, remediation, incident closure,
+recovery readiness, or re-arm"). The caller-supplied "resolved"-seq reader
+(``tos_runtime.compose._operations_wiring._read_resolved``) now sources from THOSE acknowledged
+seqs — so this field's exported name, ``unresolved_stm_alert_seqs`` (schema v1, UNCHANGED), means
+precisely **"not yet acknowledged"**, never "not yet fixed" or "not yet closed"; an acknowledged
+alert leaving this list grants no authority and clears no state anywhere else in the runtime (the
+safety mesh's own ``clear()`` verdict, the new-risk-halt latch, and the re-arm workflow are all
+structurally unreachable from ``tos_runtime.safety.ack`` — see that module's own "structural pin"
+docstring section). If the RESOLVED (acknowledged-seq) reader itself fails, this module
+deliberately does **not** propagate that failure into "assume everything is acknowledged" (which
+would silently hide real alerts) — a failed read is treated the same as "nothing acknowledged
+yet" so nothing is ever wrongly excluded from ``unresolved_stm_alert_seqs``. If the CANDIDATE
 reader fails, the derived list becomes genuinely unknown (``None``) — there is nothing safe to
 report at all. Alert **delivery** is out of this module's scope entirely: the legacy
 Telegram-based alert-manager reads this file and delivers it; this runtime does not know a

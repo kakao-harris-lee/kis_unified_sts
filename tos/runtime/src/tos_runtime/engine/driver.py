@@ -111,6 +111,7 @@ from tos_runtime.engine.orthostate_projection import (
 )
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.nontrade.latch import LatchOutcome
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
 from tos_runtime.time.sources import MonotonicSource
 
@@ -317,6 +318,10 @@ class EngineDriver:
         self._after_turn: Callable[[], None] | None = None
         self._after_turn_failures = 0
         self._after_turn_last_error: str | None = None
+        #: Plan §2 decision 3 — ``latch_restrictive``, bound late (:meth:`bind_nontrade_latch`).
+        self._nontrade_latch: Callable[..., LatchOutcome] | None = None
+        #: Last processed ``CORPORATE_ACTION``'s ``EVENT_CONSUMED`` seq (:meth:`last_nontrade_evidence_seq`).
+        self._last_nontrade_evidence_seq: int | None = None
         #: Re-entrancy guard (re-review finding N3, 2026-09-09): ``True`` for the entire duration
         #: of one :meth:`_process_next` call. ``_send_evidence_exists_after``'s soundness (see its
         #: own docstring) depends on this driver never pulling a second event while the first
@@ -355,6 +360,16 @@ class EngineDriver:
         returns a handled result — never on idle ``None``. Never propagates (see
         :meth:`_fire_after_turn`)."""
         self._after_turn = callback
+
+    def bind_nontrade_latch(self, latch: Callable[..., LatchOutcome]) -> None:
+        """Attach :func:`~tos_runtime.nontrade.latch.latch_restrictive` (never imported by type
+        here, mirroring :meth:`bind_gateway`) — called by :meth:`_apply_nontrade_latch` for a
+        restrictive ``CORPORATE_ACTION`` result (plan §2 decision 3)."""
+        self._nontrade_latch = latch
+
+    def last_nontrade_evidence_seq(self) -> int | None:
+        """See :attr:`_last_nontrade_evidence_seq`."""
+        return self._last_nontrade_evidence_seq
 
     def _fire_after_turn(self) -> None:
         """Invoke :attr:`_after_turn` if bound; count and never re-raise a failure."""
@@ -628,6 +643,36 @@ class EngineDriver:
         assert receipt.key_generation is not None
         return receipt.seq, receipt.key_generation
 
+    def _apply_nontrade_latch(
+        self, *, event_id: str, result: EventResult, evidence_seq: int
+    ) -> None:
+        """After ``_record_consumed``: remember a judged ``nontrade_outcome``'s evidence seq
+        and, when restrictive, latch through the bound
+        :func:`~tos_runtime.nontrade.latch.latch_restrictive` (plan §2 decision 3). A no-op for
+        every non-``CORPORATE_ACTION`` event. Raises :class:`EngineDriverInvariantError` if
+        restrictive but :meth:`bind_nontrade_latch` was never called — never silently skipped.
+        """
+        outcome = result.nontrade_outcome
+        if outcome is None:
+            return
+        self._last_nontrade_evidence_seq = evidence_seq
+        if outcome.restrictive is not True:
+            return
+        if self._nontrade_latch is None:
+            raise EngineDriverInvariantError(
+                "EngineDriver processed a restrictive CORPORATE_ACTION result "
+                f"(event_id={event_id!r}) but bind_nontrade_latch was never called"
+            )
+        self._nontrade_latch(
+            inbox=self._inbox,
+            evidence_store=self._evidence_store,
+            disposition=outcome.disposition.value,
+            latch_reason=f"NONTRADE_{outcome.disposition.value}",
+            event_id=event_id,
+            evidence_seq=evidence_seq,
+            source="engine",
+        )
+
     def _new_risk_halted_result(
         self, event: EngineEvent, halted: dict[str, object]
     ) -> EventResult:
@@ -800,6 +845,9 @@ class EngineDriver:
                         if result.nontrade_outcome is None
                         else result.nontrade_outcome.disposition.value
                     ),
+                )
+                self._apply_nontrade_latch(
+                    event_id=event_id, result=result, evidence_seq=evidence_seq
                 )
                 self._inbox.mark_consumed(
                     seq, evidence_seq=evidence_seq, generation=generation
