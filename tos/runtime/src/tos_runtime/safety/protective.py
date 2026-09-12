@@ -276,6 +276,22 @@ class ProtectiveActionService:
         self._time_health_state = time_health_state
         self._evidence_recorder = evidence_recorder
         self._scheme = get_scheme(canonicalization_version)
+        #: TOS Phase 5 W4 §2 decision 7 — the most recent :meth:`verdict` result, retained so
+        #: a read-only observer (the operator projection's ``protective.last_verdict``) can
+        #: report it WITHOUT triggering a second, independent evaluation (:meth:`verdict`
+        #: both re-evaluates the kernel predicates fresh AND appends a durable
+        #: ``PROTECTIVE_VERDICT`` evidence row on every call — see that method's own
+        #: docstring; reading :attr:`last_verdict` does neither). ``None`` until the first
+        #: real call.
+        self._last_verdict: ProtectiveVerdict | None = None
+
+    @property
+    def last_verdict(self) -> ProtectiveVerdict | None:
+        """The most recent :meth:`verdict` result, or ``None`` if :meth:`verdict` has never
+        been called. A PURE attribute read — never calls :meth:`verdict` itself, never
+        appends evidence (this property's own contract; see :attr:`_last_verdict`'s
+        docstring)."""
+        return self._last_verdict
 
     def _derestriction_inputs(self) -> DeRestrictionInputs:
         """Build :class:`~tos.protective.DeRestrictionInputs` from real ports only,
@@ -345,6 +361,7 @@ class ProtectiveActionService:
                 "protective_classification_digest": result.protective_classification_digest,
             },
         )
+        self._last_verdict = result
         return result
 
     def protective_classification_digest(self) -> str | None:

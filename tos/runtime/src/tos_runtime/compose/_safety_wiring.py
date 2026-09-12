@@ -312,6 +312,22 @@ class _SafetyMeshTickCell:
 
     snapshot: SafetyMeshSnapshot | None = None
 
+    def peek(self) -> SafetyMeshSnapshot | None:
+        """The LAST snapshot taken, or ``None`` if the Coordinator has never refreshed yet
+        (TOS Phase 5 W4 §2 decision 7 — the operator projection's own read-only source for
+        ``safety_mesh.snapshot_generation``/per-service ``{clear, reasons}``).
+
+        Never calls ``.clear()``/``.dimension_report()`` on any service and never mutates
+        :attr:`snapshot` — a pure read of whatever the Coordinator's own per-tick refresh
+        last stored. This is the ONE sanctioned way for a read-only observer (never a
+        currentness/latch/deferred-field CONSUMER, which all correctly go through
+        :func:`_current_tick_snapshot`'s own self-healing re-refresh) to see the mesh's
+        state without itself becoming a second per-tick evaluation
+        (:class:`SafetyMeshSnapshot`'s own docstring on why a second call is not even
+        idempotent for MONITORING's stateful continuity tracking).
+        """
+        return self.snapshot
+
 
 def _current_tick_generation(inbox_cell: _InboxCell) -> int | None:
     """The honest per-tick identity :class:`SafetyMeshSnapshot`'s own docstring
@@ -394,6 +410,12 @@ class _SafetyMesh:
     #: :attr:`services` and the shared tick cell) — called UNCONDITIONALLY, once per
     #: tick, by :class:`~tos_runtime.compose._preconditions.RuntimeCoordinatorPreconditions`.
     refresh_tick_snapshot: Callable[[], SafetyMeshSnapshot]
+    #: TOS Phase 5 W4 §2 decision 7 — a READ-ONLY peek at the tick cell's own
+    #: :meth:`_SafetyMeshTickCell.peek` (that method's own docstring on why this never
+    #: triggers a service ``.clear()``). For the operator projection only — every OTHER
+    #: consumer (currentness readers, deferred fields, the latch) still goes through
+    #: :func:`_current_tick_snapshot`'s self-healing re-refresh, never this.
+    peek_tick_snapshot: Callable[[], SafetyMeshSnapshot | None]
     #: The verdict-only ``tos.protective`` surface (W3.2 plan §2 decision 8, lane d2) —
     #: NOT one of :attr:`services` (it owns no §9 currentness dimension). A caller
     #: threading ``protective_action.protective_classification_digest`` into
@@ -589,6 +611,7 @@ def build_safety_mesh(
         refresh_tick_snapshot=lambda: _refresh_tick_snapshot(
             services, tick_cell, inbox_cell
         ),
+        peek_tick_snapshot=tick_cell.peek,
         protective_action=protective_action,
         config_files=tuple(config_dir / name for name in SAFETY_MESH_CONFIG_FILE_NAMES),
     )

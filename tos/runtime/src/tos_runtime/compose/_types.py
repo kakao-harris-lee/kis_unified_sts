@@ -45,6 +45,7 @@ from tos_runtime.authority.iap import (
     IntentRegistry,
 )
 from tos_runtime.brokercap import BrokerScopesConfig
+from tos_runtime.compose._safety_wiring import SafetyMeshSnapshot
 from tos_runtime.compose.context import (
     ComposeContextResolver,
     RecordingActionFlowGovernor,
@@ -64,6 +65,7 @@ from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.recovery.barrier import RecoveryVerdict
+from tos_runtime.safety.protective import ProtectiveVerdict
 from tos_runtime.safety.rearm import prepare_new_risk_halt_clear
 from tos_runtime.safety.shutdown import ControlledShutdown, ShutdownOutcome
 from tos_runtime.time.service import TrustworthyTimeService
@@ -248,6 +250,18 @@ class ComposedRuntime:
     #: observable on a runtime a caller actually receives (mirrors :attr:`recovery`'s own
     #: docstring).
     operations: OperationsFacts | None = None
+    #: TOS Phase 5 W4 §2 decision 7 — a read-only peek at the safety mesh's own per-tick
+    #: :class:`~tos_runtime.compose._safety_wiring.SafetyMeshSnapshot`
+    #: (:meth:`~tos_runtime.compose._safety_wiring._SafetyMeshTickCell.peek`'s own
+    #: docstring on why this never triggers a service ``.clear()``) — set directly at
+    #: ``_finalize`` construction time (the mesh already fully exists by then; never
+    #: transiently ``None`` on a runtime a caller receives, unlike :attr:`recovery`).
+    safety_mesh_peek: Callable[[], SafetyMeshSnapshot | None] | None = None
+    #: TOS Phase 5 W4 §2 decision 7 — reads
+    #: :attr:`~tos_runtime.safety.protective.ProtectiveActionService.last_verdict` (that
+    #: property's own docstring on why this is a pure read, never a second evaluation).
+    #: Set directly at ``_finalize`` construction time, same as :attr:`safety_mesh_peek`.
+    protective_last_verdict: Callable[[], ProtectiveVerdict | None] | None = None
 
     def run_once(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
         """Drive ``events`` through :attr:`driver` to completion, one at a time.

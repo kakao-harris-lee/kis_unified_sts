@@ -41,27 +41,26 @@ all read-only over an already-composed runtime:
    a one-element list cell filled in immediately after the exporter is built, before ``export()``
    ever runs (see this function's own body).
 
-**Two disclosed gaps this wiring cannot close without editing a file outside this lane's
-ownership (team-lead Phase B directive: report rather than add new surface elsewhere).**
+**``safety_mesh.services`` / ``protective.last_verdict`` / ``currentness.last_assemble_complete``
+— retained, never re-evaluated (final Phase B follow-up).** Every field this module used to
+report ``None`` "pending a peek/retained accessor" now has a real, non-mutating source:
 
-- ``safety_mesh.services`` stays ``None`` for every one of the four services. The only retained,
-  once-per-tick evaluation is :mod:`tos_runtime.compose._safety_wiring`'s private
-  ``_SafetyMeshTickCell``/``_current_tick_snapshot`` pair — neither is exported, and the only
-  exported entry point, :attr:`~tos_runtime.compose._safety_wiring._SafetyMesh
-  .refresh_tick_snapshot`, is the Coordinator's own UNCONDITIONAL per-tick refresh: calling it
-  again here would be a SECOND ``.clear()``/``.dimension_report()`` round within the same tick —
-  exactly the self-perturbation :class:`~tos_runtime.compose._safety_wiring.SafetyMeshSnapshot`'s
-  own docstring exists to prevent (and MONITORING's continuity tracking is stateful, so a second
-  call is not even idempotent). Closing this honestly needs a new, read-only "peek the last
-  snapshot without refreshing" accessor on ``_safety_wiring.py`` — out of this lane's file
-  ownership for Phase B.
-- ``protective.last_verdict`` stays ``None``. :meth:`~tos_runtime.safety.protective
-  .ProtectiveActionService.verdict` both evaluates fresh AND appends a ``PROTECTIVE_VERDICT``
-  evidence record on every call (no retained, side-effect-free accessor exists) — calling it from
-  a read-only projection would make OBSERVATION itself durably mutate state, the same class of
-  self-perturbation bug the STM_ALERT precedent already forbids. Closing this honestly needs a
-  retained "last verdict" cache on ``ProtectiveActionService`` itself — also out of this lane's
-  file ownership for Phase B.
+- ``safety_mesh.snapshot_generation``/per-service ``{clear, reasons}`` read
+  :attr:`~tos_runtime.compose._types.ComposedRuntime.safety_mesh_peek` —
+  :meth:`~tos_runtime.compose._safety_wiring._SafetyMeshTickCell.peek`'s own docstring on why
+  this is a PURE read of the Coordinator's own last per-tick refresh, never a second
+  ``.clear()``/``.dimension_report()`` round (which would be the same self-perturbation
+  :class:`~tos_runtime.compose._safety_wiring.SafetyMeshSnapshot`'s own docstring warns against).
+  ``None`` only before the Coordinator's very first refresh (the dead pre-first-tick window).
+- ``protective.last_verdict`` reads
+  :attr:`~tos_runtime.compose._types.ComposedRuntime.protective_last_verdict`, which reads
+  :attr:`~tos_runtime.safety.protective.ProtectiveActionService.last_verdict` — a retained,
+  side-effect-free property (that class's own docstring) — ``None`` until the first real
+  :meth:`~tos_runtime.safety.protective.ProtectiveActionService.verdict` call.
+- ``currentness.last_assemble_complete`` reads
+  :attr:`~tos_runtime.currentness.vector.CurrentnessAssembler.last_assemble_complete`, retained
+  by that class's own :meth:`~tos_runtime.currentness.vector.CurrentnessAssembler.assemble` —
+  ``None`` before the first call, or whenever that call refused to issue a vector at all.
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``hashlib``, ``pathlib``) +
 ``tos_runtime.*`` only. No ``shared.*``, no ``tos.staterestore`` (composite-state stays
@@ -107,6 +106,17 @@ _OPERATOR_PROJECTION_ENABLED_KIND = "OPERATOR_PROJECTION_ENABLED"
 #: own ``_IDENTITY`` constant: ``safety-profile-service-spg-v1`` /
 #: ``deviation-service-wdr-v1`` / ``incident-service-sir-v1`` / ``monitoring-service-stm-v1``).
 _SAFETY_MESH_SERVICE_KEYS: tuple[str, ...] = ("spg", "wdr", "sir", "stm")
+
+#: Duplicated from each service's own private ``_IDENTITY`` constant (``safety/profile.py`` /
+#: ``safety/deviation.py`` / ``safety/incident.py`` / ``safety/monitoring.py``) — maps a
+#: :class:`~tos_runtime.compose._safety_wiring.SafetyMeshSnapshot`'s full identity keys back
+#: to the schema's short names.
+_SAFETY_MESH_IDENTITY_TO_KEY: dict[str, str] = {
+    "safety-profile-service-spg-v1": "spg",
+    "deviation-service-wdr-v1": "wdr",
+    "incident-service-sir-v1": "sir",
+    "monitoring-service-stm-v1": "stm",
+}
 
 
 def _highest_generation_manifest(backup_root: Path | None) -> BackupSetManifest | None:
@@ -217,10 +227,9 @@ def _read_time(composed: ComposedRuntime) -> dict[str, object]:
     return {"health": composed.time_service.health_state.value}
 
 
-def _read_safety_mesh(composed: ComposedRuntime) -> dict[str, object]:
-    # See this module's own docstring "disclosed gaps" section — no safe, non-mutating
-    # per-service peek exists yet.
-    del composed  # unused — kept for a uniform Callable[[ComposedRuntime], ...] reader shape
+def _null_safety_mesh() -> dict[str, object]:
+    """The honest "no snapshot available yet" shape — same schema as the populated case,
+    every leaf ``None``/``[]`` (module docstring's OBS-INV-003 discipline)."""
     return {
         "snapshot_generation": None,
         "services": {
@@ -229,15 +238,27 @@ def _read_safety_mesh(composed: ComposedRuntime) -> dict[str, object]:
     }
 
 
+def _read_safety_mesh(composed: ComposedRuntime) -> dict[str, object]:
+    if composed.safety_mesh_peek is None:
+        return _null_safety_mesh()
+    snapshot = composed.safety_mesh_peek()
+    if snapshot is None:
+        return _null_safety_mesh()
+    services: dict[str, object] = {
+        key: {"clear": None, "reasons": []} for key in _SAFETY_MESH_SERVICE_KEYS
+    }
+    for identity, clearance in snapshot.clearances.items():
+        key = _SAFETY_MESH_IDENTITY_TO_KEY.get(identity)
+        if key is None:
+            continue  # an unrecognized identity is dropped, never guessed into a slot
+        services[key] = {"clear": clearance.clear, "reasons": list(clearance.reasons)}
+    return {"snapshot_generation": snapshot.tick_generation, "services": services}
+
+
 def _read_currentness(composed: ComposedRuntime) -> dict[str, object]:
-    del composed  # unused — see above
     return {
         "pending_dimensions": [key.name for key in PENDING_DIMENSION_KEYS],
-        # No retained "did the last assemble() complete" flag exists on
-        # CurrentnessAssembler — calling assemble() here to find out would be a second,
-        # independent evaluation of a currentness vector outside its own tick (the same
-        # self-perturbation class this module's docstring already flags for safety_mesh).
-        "last_assemble_complete": None,
+        "last_assemble_complete": composed.currentness_assembler.last_assemble_complete,
     }
 
 
@@ -272,9 +293,23 @@ def _read_release(composed: ComposedRuntime) -> dict[str, object]:
 
 
 def _read_protective(composed: ComposedRuntime) -> dict[str, object]:
-    # See this module's own docstring "disclosed gaps" section.
-    del composed  # unused — see _read_safety_mesh
-    return {"last_verdict": None}
+    if composed.protective_last_verdict is None:
+        return {"last_verdict": None}
+    verdict = composed.protective_last_verdict()
+    if verdict is None:
+        return {"last_verdict": None}
+    return {
+        "last_verdict": {
+            "derestriction_admissible": verdict.derestriction_admissible,
+            "capacity_exhausted": verdict.capacity_exhausted,
+            "classification": (
+                None if verdict.classification is None else verdict.classification.value
+            ),
+            "unevaluated": list(verdict.unevaluated),
+            "reasons": list(verdict.reasons),
+            "protective_classification_digest": verdict.protective_classification_digest,
+        }
+    }
 
 
 def _read_operations(operations: OperationsFacts) -> dict[str, object]:

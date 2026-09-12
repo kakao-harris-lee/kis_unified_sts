@@ -450,3 +450,73 @@ def test_action_flow_dimension_reader_report_is_copied_verbatim(
     )
     assert dim.bound_generation == 7
     assert dim.positively_established is True
+
+
+# ============================================================================
+# last_assemble_complete (TOS Phase 5 W4 §2 decision 7 — operator projection)
+# ============================================================================
+
+
+def test_last_assemble_complete_is_none_before_the_first_call(
+    log: SqliteCommitLog,
+    trusted_time_service: FakeTimeService,
+    writer_epoch: int,
+    complete_policy,
+) -> None:
+    assembler = _assembler(
+        log, trusted_time_service, writer_epoch=writer_epoch, policy=complete_policy
+    )
+    assert assembler.last_assemble_complete is None
+
+
+def test_last_assemble_complete_is_none_after_a_refused_assemble(
+    log: SqliteCommitLog,
+    not_started_time_service: FakeTimeService,
+    writer_epoch: int,
+    complete_policy,
+) -> None:
+    assembler = _assembler(
+        log, not_started_time_service, writer_epoch=writer_epoch, policy=complete_policy
+    )
+    assert assembler.assemble() is None
+    assert assembler.last_assemble_complete is None
+
+
+def test_last_assemble_complete_matches_is_complete_after_a_successful_assemble(
+    log: SqliteCommitLog,
+    trusted_time_service: FakeTimeService,
+    writer_epoch: int,
+    complete_policy,
+) -> None:
+    assembler = _assembler(
+        log, trusted_time_service, writer_epoch=writer_epoch, policy=complete_policy
+    )
+    vector = assembler.assemble()
+    assert vector is not None
+    assert assembler.last_assemble_complete == assembler.is_complete(vector)
+
+
+def test_reading_last_assemble_complete_does_not_itself_call_assemble(
+    log: SqliteCommitLog,
+    trusted_time_service: FakeTimeService,
+    writer_epoch: int,
+    complete_policy,
+) -> None:
+    assembler = _assembler(
+        log, trusted_time_service, writer_epoch=writer_epoch, policy=complete_policy
+    )
+    assembler.assemble()
+
+    calls = {"n": 0}
+    real_current_snapshot = trusted_time_service.current_snapshot
+
+    def _counting_current_snapshot():
+        calls["n"] += 1
+        return real_current_snapshot()
+
+    trusted_time_service.current_snapshot = _counting_current_snapshot
+
+    # Reading the property several times must never re-invoke assemble()'s own logic.
+    for _ in range(3):
+        _ = assembler.last_assemble_complete
+    assert calls["n"] == 0

@@ -23,6 +23,7 @@ from tos_runtime.operations.backup_set import (
 )
 
 from . import _fixtures as fx
+from .conftest import write_approval_file
 from .test_compose_root import _action_flow_inputs, _aggregate_inputs
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
@@ -77,6 +78,29 @@ def _compose(
 
 def _kind_count(evidence_store, kind: str) -> int:
     return sum(1 for entry in evidence_store.iter_entry_meta() if entry.kind == kind)
+
+
+def _reach_admitted_send(runtime, custody_root: Path) -> None:
+    """Drive ``fx.crossing_event()`` twice — once to construct the proposal/intent, then
+    again with a real approval file written so the flow ADMITs all the way through
+    ACTION_FLOW_DECISION to an actual send attempt (mirrors ``test_compose_root.py``'s own
+    ``test_engine_steps_admit_for_real_and_reach_the_transport``). Needed because a single
+    pass halts at INDEPENDENT_APPROVAL (UNKNOWN, no approval file yet) — never reaching the
+    protective/currentness-proof code paths a bare ``run_once`` call does not exercise.
+    """
+    event = fx.crossing_event()
+    results = runtime.run_once((event,))
+    proposal_digest = results[0].pipeline.proposal.canonical_digest
+    assert proposal_digest is not None
+    construction = runtime.construction_stage.construction
+    assert construction is not None and construction.intent is not None
+    write_approval_file(
+        custody_root,
+        proposal_digest=proposal_digest,
+        environment_label="non-live-test",
+        approved_intent_envelope_digest=construction.intent.canonical_digest,
+    )
+    runtime.run_once((event,))
 
 
 def _write_manifest(backup_root: Path, generation: int) -> BackupSetManifest:
@@ -197,6 +221,35 @@ def test_export_field_combines_an_earlier_write_failure_into_the_next_successful
     assert document["export"]["last_error"] is not None
 
 
+def test_currentness_last_assemble_complete_is_null_before_any_assemble_call(
+    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+) -> None:
+    projection_path = tmp_path / "operator_projection.json"
+    _compose(config_dir, data_dir, custody_root, projection_path=projection_path)
+
+    document = json.loads(projection_path.read_text())
+    assert document["currentness"]["last_assemble_complete"] is None
+    assert document["currentness"]["pending_dimensions"] == [
+        "CONTEXT",
+        "CRITICAL_INPUT",
+        "EGRESS_IDENTITY",
+    ]
+
+
+def test_currentness_last_assemble_complete_reports_a_real_bool_after_a_processed_tick(
+    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+) -> None:
+    projection_path = tmp_path / "operator_projection.json"
+    runtime = _compose(
+        config_dir, data_dir, custody_root, projection_path=projection_path
+    )
+
+    _reach_admitted_send(runtime, custody_root)
+
+    document = json.loads(projection_path.read_text())
+    assert isinstance(document["currentness"]["last_assemble_complete"], bool)
+
+
 def test_recovery_field_reflects_the_real_readiness_verdict(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
@@ -255,13 +308,14 @@ def test_release_admitted_and_software_deployment_ok_are_the_same_fact(
 # -- disclosed gaps: safety_mesh.services / protective.last_verdict stay None ---
 
 
-def test_safety_mesh_services_are_reported_none_pending_a_peek_accessor(
+def test_safety_mesh_is_reported_null_before_the_coordinator_s_first_refresh(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
-    """Documents the Phase B gap this lane's own module docstring discloses: no safe,
-    non-mutating per-tick safety-mesh peek exists yet outside ``_safety_wiring.py`` (out of
-    this lane's file ownership) — every service reports ``clear: null``, never a fabricated
-    value."""
+    """Boot itself never drives a tick through the Coordinator (``build_safety_mesh``'s own
+    warm-up ``monitoring_service.clear()`` call bypasses the tick cell entirely) — so
+    ``safety_mesh_peek()`` genuinely has nothing to report yet. This is the honest
+    "nothing observed yet" case, not the disclosed-gap case (see the sibling test below for
+    the real, populated case after a tick)."""
     projection_path = tmp_path / "operator_projection.json"
     _compose(config_dir, data_dir, custody_root, projection_path=projection_path)
 
@@ -274,17 +328,60 @@ def test_safety_mesh_services_are_reported_none_pending_a_peek_accessor(
         assert service["reasons"] == []
 
 
-def test_protective_last_verdict_is_reported_none_pending_a_retained_accessor(
+def test_safety_mesh_reports_the_real_snapshot_after_a_processed_tick(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
-    """Documents the second Phase B gap: ``ProtectiveActionService.verdict()`` both evaluates
-    fresh AND appends evidence on every call — no side-effect-free read exists, so calling it
-    from the projection would make observation itself mutate state."""
+    projection_path = tmp_path / "operator_projection.json"
+    runtime = _compose(
+        config_dir, data_dir, custody_root, projection_path=projection_path
+    )
+
+    _reach_admitted_send(runtime, custody_root)
+
+    document = json.loads(projection_path.read_text())
+    safety_mesh = document["safety_mesh"]
+    assert safety_mesh["snapshot_generation"] is not None
+    assert set(safety_mesh["services"]) == {"spg", "wdr", "sir", "stm"}
+    for service in safety_mesh["services"].values():
+        assert service["clear"] is not None
+        assert isinstance(service["reasons"], list)
+
+
+def test_protective_last_verdict_is_reported_null_before_any_real_evaluation(
+    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+) -> None:
+    """``ProtectiveActionService.verdict()`` is never called during boot (only a real tick's
+    ``ActionFlowGovernor`` reaches it, via ``protective_classification_digest``) — the honest
+    "no evaluation happened yet" case, not the disclosed-gap case (see the sibling test below
+    for the real, populated case after a tick)."""
     projection_path = tmp_path / "operator_projection.json"
     _compose(config_dir, data_dir, custody_root, projection_path=projection_path)
 
     document = json.loads(projection_path.read_text())
     assert document["protective"]["last_verdict"] is None
+
+
+def test_protective_last_verdict_reports_the_real_verdict_after_a_processed_tick(
+    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+) -> None:
+    projection_path = tmp_path / "operator_projection.json"
+    runtime = _compose(
+        config_dir, data_dir, custody_root, projection_path=projection_path
+    )
+
+    _reach_admitted_send(runtime, custody_root)
+
+    document = json.loads(projection_path.read_text())
+    last_verdict = document["protective"]["last_verdict"]
+    assert last_verdict is not None
+    assert set(last_verdict) == {
+        "derestriction_admissible",
+        "capacity_exhausted",
+        "classification",
+        "unevaluated",
+        "reasons",
+        "protective_classification_digest",
+    }
 
 
 # -- backup-set observation ---------------------------------------------------
