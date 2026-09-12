@@ -66,19 +66,27 @@ def test_the_package_states_the_six_five_six_split() -> None:
 
 
 def test_the_package_recounts_the_actual_remaining_attestations() -> None:
-    """(kernel round #2 §2 decision 4) The 6/5/6 split is the kernel's own static disposition
-    table (design #34 §4.1) — it does not shrink just because a runtime later derives some of
-    the five provisional items structurally. This test locks the honest amendment: the docstring
-    also names the actual remaining count in the reference runtime composition, not just the
-    kernel-level classification."""
+    """(kernel round #3 §2 decision 6, superseding round #2 §2 decision 4) The 6/5/6 split is the
+    kernel's own static disposition table (design #34 §4.1) — it does not shrink just because a
+    runtime later derives some of the five provisional items structurally. This test locks the
+    honest amendment: the docstring also names the actual remaining count in the reference
+    runtime composition, not just the kernel-level classification.
+
+    Round #2 landed the docstring recount at "three fields ... remaining ... attestations" when
+    only items 3, 6, 14, and 15 were structurally derived. Round #3 lands the last two owners
+    (item 12's ``venue_session_account_facts_current`` via ``SessionFactsOwner`` — W5; item 16's
+    ``restrictive_latch_state`` / ``worst_credible_capacity`` via ``tos_runtime.safety.latch`` —
+    W3), so the honest count is now zero remaining operator attestations. The old "three fields"
+    pin is false today: it would silently mask a regression if a future owner were retired without
+    updating this count.
+    """
     doc = " ".join((tos.egressgw.__doc__ or "").split())
-    assert (
-        "three fields as the only remaining non-authoritative operator attestations"
-        in doc
-    )
+    assert "zero remaining" in doc
+    assert "non-authoritative operator attestations" in doc
     assert "venue_session_account_facts_current" in doc
     assert "restrictive_latch_state" in doc
     assert "worst_credible_capacity" in doc
+    assert "three fields as the only remaining" not in doc
 
 
 def test_no_module_exposes_a_sibling_kernel_production_symbol() -> None:
