@@ -15,6 +15,13 @@ Drives two facts through a FULL composed runtime:
    (:meth:`~tos_runtime.compose._types.ComposedRuntime.observe_nontrade`), records an
    ``INCIDENT_CANDIDATE`` row, and — being a runtime-wide, first-call-wins latch — is never
    silently overwritten by a second restrictive observation.
+3. **``observe_nontrade``'s engine path shares the SAME real venue-admissibility provider the
+   dry-run processor uses** (TOS runtime operations wiring plan §2 decision 3 follow-up —
+   scenario (g) below) — proven via the disposition RANK it lands at (rank 3
+   ``NONTRADE_TRAPPED`` vs rank 4 ``NONTRADE_BLOCK_NEW_RISK``), since this compose root's
+   genuinely-absent ``time_freshness`` source keeps full ``NONTRADE_ADMISSIBLE`` (rank 5)
+   unreachable through either lane regardless of admissibility (empirically confirmed, not
+   assumed — see scenario (g)'s own module-level comment).
 
 Hermetic (D1.4): real sqlite files under ``tmp_path``, reusing this suite's own
 ``_compose``/``_reach_trusted``/``write_approval_file``/``_drive_crossing_tick`` helpers
@@ -32,11 +39,19 @@ never an import of that sibling test package's module.
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 import yaml
-from tos.nontrade import NonTradeEventClass
+from tos.nontrade import (
+    CredibleTransitionLegKind,
+    NonTradeDisposition,
+    NonTradeEventClass,
+    SplitTransformationKind,
+    SplitTransformationSpec,
+    TransitionEnvelope,
+)
 from tos_runtime.calendar import phase as calendar_phase
 from tos_runtime.calendar.ports import FixedWallClockReference
 from tos_runtime.engine.driver import EngineDriverInvariantError
@@ -163,6 +178,56 @@ def _second_restrictive_observation() -> NonTradeObservation:
         identity_transition_final=True,
         event_is_material=True,
         change_triggers=frozenset({"instrument:KRX:005930"}),
+    )
+
+
+def _admissible_corporate_action() -> NonTradeObservation:
+    """A "happy path" ``CORPORATE_ACTION`` observation — every rank-5 conjunct THIS runtime CAN
+    positively prove, mirroring ``tests/nontrade/fixtures/synthetic_observations.py
+    ::stock_split_forward`` (module docstring — no cross-package fixture import, this is a
+    local re-derivation). Its envelope carries only ``PRE_EVENT_POSITION_AND_ORDER`` — the ONE
+    leg ``_write_nontrade_config``'s own ``nontrade.yaml`` requires for ``CORPORATE_ACTION`` in
+    this suite. At an ADMISSIBLE-venue instant this lands at ``NONTRADE_BLOCK_NEW_RISK``, not
+    ``NONTRADE_ADMISSIBLE`` — this compose root's genuinely-absent ``time_freshness`` source
+    (module docstring section (g)) keeps rank 5 unreachable regardless of admissibility.
+    """
+    split = SplitTransformationSpec(
+        kind=SplitTransformationKind.FORWARD_SPLIT,
+        pre_quantity=Decimal("100"),
+        post_quantity=Decimal("200"),
+        pre_basis=Decimal("20"),
+        post_basis=Decimal("10"),
+        unit_spec="shares",
+        rounding_rule="round-down",
+        fractional_residual=Decimal("0"),
+        cash_in_lieu=Decimal("0"),
+    )
+    envelope = TransitionEnvelope(
+        present_legs=frozenset(
+            {CredibleTransitionLegKind.PRE_EVENT_POSITION_AND_ORDER}
+        ),
+        pre_event_exposure=Decimal("2000"),
+        post_event_credible_exposure=Decimal("2000"),
+    )
+    return NonTradeObservation(
+        observation_id="stock-split-005930-2026Q3-admissible",
+        event_class=NonTradeEventClass.CORPORATE_ACTION,
+        source_label="synthetic-fixture",
+        event_subtype="FORWARD_SPLIT",
+        old_instrument_identity="KRX:005930",
+        new_instrument_identity="KRX:005930",
+        identity_transition_final=True,
+        transition_envelope=envelope,
+        split_spec=split,
+        event_is_material=True,
+        change_triggers=frozenset({"instrument:KRX:005930"}),
+        earliest_credible_boundary="2026-09-08T00:00:00",
+        latest_completion_boundary="2026-09-10T00:00:00",
+        source_disagreement_bounded=True,
+        field_confidences=frozenset({"CORROBORATED"}),
+        injected_worst_intermediate_risk=Decimal("5"),
+        injected_credible_space_bounded=True,
+        injected_union_capacity_known=True,
     )
 
 
@@ -299,14 +364,14 @@ def test_lifecycle_expiry_observation_latches_new_risk_first_call_wins(
     # (record_new_risk_halt is a first-call-wins singleton, engine/inbox.py:574). Both fixtures
     # land at NONTRADE_TRAPPED here — rank 3 ("the admissibility token is neither ADMISSIBLE nor
     # RESTRICTED_PROTECTIVE_ONLY -- UNCONDITIONALLY -> NONTRADE_TRAPPED", tos.nontrade.predicates
-    # .nontrade_disposition) dominates for BOTH: observe_nontrade's engine path does not yet wire
-    # a live venue-admissibility source (documented gap, ComposedRuntime.observe_nontrade's own
-    # docstring), so every corporate action it judges gets admissibility=None — "neither
-    # ADMISSIBLE nor RESTRICTED_PROTECTIVE_ONLY" exactly like the old dry-run path's honestly-
-    # wired EXPIRED/INADMISSIBLE token was, so the same disposition is expected, not a test bug.
-    # The proof of first-call-wins is therefore on IDENTITY (the exact halt row is untouched),
-    # not on the dispositions differing — an INCIDENT_CANDIDATE row is still appended for the
-    # second call (every restrictive disposition is evidenced independently).
+    # .nontrade_disposition) dominates for BOTH: observe_nontrade's engine path now shares the
+    # SAME real, honest venue-admissibility provider the dry-run processor uses
+    # (ComposedRuntime.nontrade_admissibility_provider), and the venue is EXPIRED (hence
+    # INADMISSIBLE) at this instant for every corporate action it judges here — "neither
+    # ADMISSIBLE nor RESTRICTED_PROTECTIVE_ONLY", so the same disposition is expected, not a
+    # test bug. The proof of first-call-wins is therefore on IDENTITY (the exact halt row is
+    # untouched), not on the dispositions differing — an INCIDENT_CANDIDATE row is still
+    # appended for the second call (every restrictive disposition is evidenced independently).
     second_obs = _second_restrictive_observation()
     assert second_obs.observation_id != obs.observation_id
     second_outcome = runtime.observe_nontrade(second_obs)
@@ -551,11 +616,124 @@ def test_barrier_held_queues_the_observation_then_drains_and_latches_once_recove
     real_driver.run_until_idle()
     halt = runtime.inbox.new_risk_halt()
     assert halt is not None, (
-        "the queued LIFECYCLE observation is restrictive (rank 3, no admissibility source "
-        "wired) -- draining it must judge and latch it, exactly like observe_nontrade's "
-        "own driver-wired path does"
+        "the queued LIFECYCLE observation is restrictive (rank 3 -- the venue is EXPIRED, "
+        "hence not ADMISSIBLE, at this instant) -- draining it must judge and latch it, "
+        "exactly like observe_nontrade's own driver-wired path does"
     )
     assert _incident_candidate_count(runtime) == 1
+
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+
+
+# ============================================================================
+# (g) TOS runtime operations wiring plan §2 decision 3 follow-up: observe_nontrade's
+#     engine path shares the SAME real venue-admissibility provider the dry-run
+#     processor uses. **Ceiling fact, empirically confirmed, not assumed:** this compose
+#     root's time_freshness_provider is genuinely None (no real source exists anywhere in
+#     this runtime -- module docstring of _session_wiring.py), so
+#     effective_window_blocks_new_risk (kernel predicates.py:873) can NEVER return True here
+#     (it requires time_freshness == "FRESH" exactly) -- rank 5 (NONTRADE_ADMISSIBLE) is
+#     therefore UNREACHABLE through either lane in this runtime regardless of admissibility,
+#     and every corporate action processed here is restrictive and latches. The real,
+#     observable effect of a genuine admissibility source is the RANK the disposition lands
+#     at: rank 3 (NONTRADE_TRAPPED, admissibility unconditionally not ADMISSIBLE/
+#     RESTRICTED_PROTECTIVE_ONLY -- scenario (c) above, at the EXPIRED instant) versus rank 4
+#     (NONTRADE_BLOCK_NEW_RISK, every OTHER conjunct positively proven except the window --
+#     this scenario, at a CONTINUOUS/admissible instant). Both lanes must agree on this rank,
+#     and a mutation forcing the shared provider back to a constant None must collapse the
+#     admissible-instant case back to rank 3.
+# ============================================================================
+
+
+def test_admissible_venue_instant_reaches_block_new_risk_not_trapped_through_both_lanes(
+    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+) -> None:
+    """At a regular (non-expired, admissible-venue) instant, with a "happy path" observation,
+    BOTH the dry-run evaluator and observe_nontrade's engine path must land at rank 4
+    (``NONTRADE_BLOCK_NEW_RISK``) rather than rank 3 (``NONTRADE_TRAPPED``) -- the equivalence
+    the follow-up restores: ``nontrade_admissibility_provider`` is the SAME shared instance
+    both lanes read (``build_nontrade_admissibility_provider``'s own docstring), resolved
+    against this observation's own route identity exactly like the dry-run processor's
+    ``_resolve_admissibility`` does. Full ``NONTRADE_ADMISSIBLE`` (rank 5) is unreachable in
+    this compose root regardless (module docstring section (g)) -- both dispositions ARE
+    restrictive and DO latch; the pin is on WHICH restrictive rank, not on latching at all.
+    """
+    _write_futures_calendar(config_dir)
+    _write_nontrade_config(config_dir)
+    runtime = _compose(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        wall_clock=FixedWallClockReference(_DAY_BEFORE_EXPIRY_UNIX_MS),
+    )
+    _reach_trusted(runtime)
+    assert runtime.session_facts.phase_for_step3(fx.INSTRUMENT_CLASS) == "CONTINUOUS"
+    assert runtime.nontrade is not None
+    assert runtime.nontrade_admissibility_provider is not None
+    assert runtime.inbox.new_risk_halt() is None
+
+    obs = _admissible_corporate_action()
+
+    dry_run_outcome = runtime.nontrade.evaluate(obs)
+    assert dry_run_outcome.disposition is NonTradeDisposition.NONTRADE_BLOCK_NEW_RISK
+    assert (
+        dry_run_outcome.predicate_results["effective_window_blocks_new_risk"] is False
+    ), (
+        "confirms the ceiling fact this module docstring states: no time_freshness source "
+        "means the window conjunct can never positively establish, so rank 5 is unreachable "
+        "here regardless of admissibility"
+    )
+
+    engine_outcome = runtime.observe_nontrade(obs)
+    assert engine_outcome.disposition is NonTradeDisposition.NONTRADE_BLOCK_NEW_RISK, (
+        "the engine path must land at the SAME rank as the dry-run evaluator now that both "
+        "share the same real admissibility provider -- NONTRADE_TRAPPED here would mean the "
+        "engine path is still seeing admissibility=None"
+    )
+    assert engine_outcome.restrictive is True
+    assert engine_outcome.queued is False
+    assert engine_outcome.latch_reason == "NONTRADE_NONTRADE_BLOCK_NEW_RISK"
+
+    halt = runtime.inbox.new_risk_halt()
+    assert halt is not None
+    assert halt["reason"] == "NONTRADE_NONTRADE_BLOCK_NEW_RISK"
+    assert _incident_candidate_count(runtime) == 1
+
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+
+
+def test_mutation_forcing_the_admissibility_provider_to_none_flips_the_rank_to_trapped(
+    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+) -> None:
+    """Mutation lens: force ``runtime.nontrade_admissibility_provider`` to always return
+    ``None`` (the exact regression the follow-up fixes) -- the SAME observation/instant the
+    prior test pins at rank 4 (``NONTRADE_BLOCK_NEW_RISK``) must collapse back to rank 3
+    (``NONTRADE_TRAPPED``, admissibility unconditionally not ADMISSIBLE) through the engine
+    path, proving that test's rank pin genuinely depends on the shared provider being real,
+    not an artifact of something else."""
+    _write_futures_calendar(config_dir)
+    _write_nontrade_config(config_dir)
+    runtime = _compose(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        wall_clock=FixedWallClockReference(_DAY_BEFORE_EXPIRY_UNIX_MS),
+    )
+    _reach_trusted(runtime)
+    runtime.nontrade_admissibility_provider = lambda _route_key: None
+
+    obs = _admissible_corporate_action()
+    engine_outcome = runtime.observe_nontrade(obs)
+    assert engine_outcome.disposition is NonTradeDisposition.NONTRADE_TRAPPED, (
+        "M-follow-up: forcing the shared provider to None must flip the prior test's "
+        "NONTRADE_BLOCK_NEW_RISK pin to NONTRADE_TRAPPED -- proving it is not vacuously true"
+    )
+    assert engine_outcome.restrictive is True
+    assert runtime.inbox.new_risk_halt() is not None
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()

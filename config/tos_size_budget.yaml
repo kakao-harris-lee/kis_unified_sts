@@ -696,11 +696,18 @@ exceptions:
     로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
     1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 274
+  measured: 278
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-09-13 nontrade admissibility 후속 재등재 274→278(레인 g2, 계획 §2 결정 3
+    후속)**: 공유 admissibility provider 를 `build_nontrade_admissibility_provider(...)`
+    로 한 번만 만들어 지역변수(`nontrade_admissibility_provider`)에 담고,
+    `build_nontrade_processor`/`apply_nontrade_wiring` 양쪽 호출부에
+    `admissibility_provider=nontrade_admissibility_provider,` 각 1줄씩 전달(신규
+    호출 1건 + 인자 2줄) + 주석 재작성 — 순증 +4. 호출 시퀀스 자체는 무변경. root.py
+    는 정본 결선 순서 문서라 분해 대신 등재.
     **2026-09-13 nontrade 엔진 경로 재등재 272→274(레인 g2, 계획 §2 결정 3)**:
     `build_nontrade_processor` 호출부에서 `evidence_store=boot.infra.evidence_store,`
     1줄 제거(드라이런 프로세서는 더 이상 evidence 포트를 받지 않음)하고 주석을
