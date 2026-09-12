@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 from tos.engine.vocabulary import CommitmentStep, StageAuthorityClass
+from tos_runtime.calendar.ports import FixedWallClockReference, WallClockReference
 from tos_runtime.compose._pending_dimensions import (
     load_pending_currentness_dimensions,
     stamp_pending_dimensions,
@@ -183,6 +184,7 @@ def _compose(
     *,
     monotonic_source: object | None = None,
     transport_kind: TransportKind = TransportKind.SYNTHETIC,
+    wall_clock: WallClockReference | None = None,
 ):
     """Composes via the FILE strategy source (TOS Phase 3 슬라이스 D-R
     ``[D-R-2]``) — writes the band-reversion strategy into
@@ -196,7 +198,17 @@ def _compose(
     ``transport_kind`` (T2 lane C) defaults to ``synthetic`` — every existing
     e2e test's active scope is SYNTHETIC (``reaches_broker=False``), which
     :func:`~tos_runtime.compose._transport_wiring.refuse_transport_scope_mismatch`
-    requires to pair with ``synthetic``."""
+    requires to pair with ``synthetic``.
+
+    ``wall_clock`` (TOS Phase 5 W5 plan §2 decision 2) defaults to a
+    :class:`~tos_runtime.calendar.ports.FixedWallClockReference` at
+    :data:`~._fixtures.DEFAULT_WALL_CLOCK_UNIX_MS` — NOT the production-honest
+    ``AbsentWallClockReference`` default ``compose_paper_runtime`` itself uses,
+    because dozens of existing happy-path e2e tests in this suite need step 3
+    ADMISSIBLE / item 12 SATISFIED to reach the transport at all. A test that
+    wants to exercise the absent/holiday/mismatch paths passes its own
+    ``wall_clock`` (or a ``config_dir`` with its own ``calendar.yaml``) — see
+    ``tests/compose/test_session_wiring.py``."""
     fx.write_band_strategy_file(config_dir)
     return compose_paper_runtime(
         config_dir,
@@ -208,6 +220,11 @@ def _compose(
         action_flow_inputs_provider=_action_flow_inputs,
         monotonic_source=monotonic_source,
         transport_kind=transport_kind,
+        wall_clock=(
+            wall_clock
+            if wall_clock is not None
+            else FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS)
+        ),
     )
 
 
@@ -475,12 +492,13 @@ class TestComposeRootWiring:
         stored = json.loads(rows[0][0])
         names = {c["name"] for c in stored["payload"]["attested_coordinates"]}
         assert names == {
-            # egress_attestations.yaml (1, TOS Phase 4 plan §2 decision 4 —
-            # account_instrument_action_allowed/broker_constraint_generation_current
-            # are derived now, not attested; TOS Phase 5 W3 plan §2 decision 6 —
-            # restrictive_latch_state/worst_credible_capacity are now real runtime
-            # owners, tos_runtime.safety.latch, not attestations either)
-            "venue_session_account_facts_current",
+            # egress_attestations.yaml retired to zero (TOS Phase 5 W5 plan §2
+            # decision 4): venue_session_account_facts_current (item 12) is now a
+            # real runtime owner read (tos_runtime.calendar.owner.SessionFactsOwner),
+            # never an attested coordinate here any more; account_instrument_action_
+            # allowed/broker_constraint_generation_current (TOS Phase 4 plan §2
+            # decision 4) and restrictive_latch_state/worst_credible_capacity (TOS
+            # Phase 5 W3 plan §2 decision 6) were already derived/owned before this.
             # Phase 5 W3 safety-mesh policy documents (extra_config_files,
             # tos_runtime.compose._safety_wiring.SAFETY_MESH_CONFIG_FILE_NAMES) —
             # named-config-document rows, not attestations, but folded into the
@@ -518,7 +536,6 @@ class TestComposeRootWiring:
         }
         for coordinate in stored["payload"]["attested_coordinates"]:
             assert coordinate["source_file"] in (
-                "egress_attestations.yaml",
                 "risk_attestations.yaml",
                 "egress_coordinates.yaml",
                 "broker_scopes.yaml",
@@ -642,9 +659,11 @@ class TestSyntheticEventDrivesTheChain:
         send is THEN admitted at the gateway boundary too, because the
         Safety Currentness Vector is complete (4 structurally-owned
         dimensions + 17 operator-attested pending dimensions, see
-        ``tos_runtime.compose._pending_dimensions``) and every one of item
-        6/12/16's egress-gate stand-ins is supplied as an explicit operator
-        attestation (``tos_runtime.compose._egress_attestations``).
+        ``tos_runtime.compose._pending_dimensions``) and item 6/12/16's
+        egress-gate stand-ins are all real runtime owners now (item 12 —
+        ``tos_runtime.calendar.owner.SessionFactsOwner``, TOS Phase 5 W5;
+        item 16 — ``tos_runtime.safety.latch``, TOS Phase 5 W3) except item 6,
+        which is structurally derived (``tos_runtime.brokercap.derive_item6_item12``).
 
         Step 4 (``INDEPENDENT_APPROVAL``) genuinely admits: ``decision_current``
         is derived by lane P's ``IntentRegistry.decision_current`` (policy-

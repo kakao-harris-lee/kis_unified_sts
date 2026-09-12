@@ -16,7 +16,6 @@ from tos.canonical import CanonicalizationScheme
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.brokercap import BrokerScopesConfig, InstanceDocument
-from tos_runtime.compose._egress_attestations import EgressAttestations
 from tos_runtime.compose._egress_coordinates import EgressCoordinatesConfig
 from tos_runtime.compose._risk_attestations import RiskAttestations
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -28,7 +27,6 @@ from tos_runtime.strategy.bindings import LoadedStrategyBindings
 from tos_runtime.strategy.loader import LoadedStrategies
 
 __all__ = [
-    "EGRESS_ATTESTATIONS_CONFIG_NAME",
     "RISK_ATTESTATIONS_CONFIG_NAME",
     "EGRESS_COORDINATES_CONFIG_NAME",
     "BROKER_SCOPES_CONFIG_NAME",
@@ -51,7 +49,6 @@ class EngineReplayDiverged(RuntimeError):
     """
 
 
-EGRESS_ATTESTATIONS_CONFIG_NAME = "egress_attestations.yaml"
 RISK_ATTESTATIONS_CONFIG_NAME = "risk_attestations.yaml"
 #: Same config file name ``_wiring.py``/``_egress_coordinates.py`` use for
 #: the egress-coordinates config (TOS Phase 4 작업 6 §2.1).
@@ -219,7 +216,6 @@ def record_operator_attested_inputs(
     config_dir: Path,
     evidence_store: SqliteEvidenceStore,
     identity: RuntimeIdentity,
-    egress_attestations: EgressAttestations,
     risk_attestations: RiskAttestations,
     egress_coordinates: EgressCoordinatesConfig,
     loaded_strategies: LoadedStrategies | None = None,
@@ -266,11 +262,6 @@ def record_operator_attested_inputs(
     """
     coordinates: list[dict[str, str]] = []
     for path, prefix, dataclass_type in (
-        (
-            config_dir / EGRESS_ATTESTATIONS_CONFIG_NAME,
-            EGRESS_ATTESTATIONS_CONFIG_NAME,
-            type(egress_attestations),
-        ),
         (
             config_dir / RISK_ATTESTATIONS_CONFIG_NAME,
             RISK_ATTESTATIONS_CONFIG_NAME,

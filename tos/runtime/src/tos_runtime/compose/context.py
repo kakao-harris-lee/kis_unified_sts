@@ -79,7 +79,7 @@ import functools
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tos.afg import (
     ActionFlowDecision,
@@ -93,6 +93,7 @@ from tos.egress import (
     EgressCoordinateSet,
     EgressRequestRecord,
     QuorumCommitCertificate,
+    credential_route_authority_disjoint,
 )
 from tos.egressgw import (
     CandidateConstruction,
@@ -100,7 +101,6 @@ from tos.egressgw import (
     OrderConstructionStage,
     SendBoundaryContext,
     TransportNature,
-    VenueConstraintStage,
     send_boundary_context,
 )
 from tos.engine import AttemptRequest, InstrumentKey, StageRequest, StageVerdict
@@ -121,7 +121,6 @@ from tos_runtime.brokercap import (
     Item6Item12Fields,
     derive_item6_item12,
 )
-from tos_runtime.compose._egress_attestations import EgressAttestations
 from tos_runtime.compose._pending_dimensions import (
     PendingDimensionSpec,
     stamp_pending_dimensions,
@@ -130,6 +129,7 @@ from tos_runtime.compose._request_digest import RequestBytesDigestSource
 from tos_runtime.currentness.proof import EgressCurrentnessProofIssuer
 from tos_runtime.currentness.stages import TransmissionCapabilityStage
 from tos_runtime.currentness.vector import CurrentnessAssembler
+from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import StaleEpochRead
 from tos_runtime.rcl.reservation_identity import scope_reservation_id
 from tos_runtime.risk.aggregate import (
@@ -146,13 +146,54 @@ from tos_runtime.safety.latch import (
     egress_owner_fields,
 )
 
+if TYPE_CHECKING:
+    # TYPE_CHECKING-only: _venue_phase.py imports ConstructionConfig from
+    # _types.py, which imports THIS module for ComposeContextResolver — a
+    # top-level import here would be circular. Postponed annotations (module
+    # docstring's own `from __future__ import annotations`) mean the string
+    # form below is all mypy needs.
+    from tos_runtime.compose._venue_phase import VenuePhaseStage
+
 __all__ = [
     "ComposeContextResolver",
     "RecordingActionFlowGovernor",
     "RecordingAggregateRiskService",
     "VerdictRecorder",
     "make_permit_provider",
+    "record_egress_identity_observation",
 ]
+
+#: W3.1 independent review MEDIUM-4 evidence kind — see
+#: :func:`record_egress_identity_observation`.
+_EGRESS_IDENTITY_OBSERVATION_KIND = "EGRESS_IDENTITY_OBSERVATION"
+
+
+def record_egress_identity_observation(
+    evidence_store: SqliteEvidenceStore,
+    inventory: tuple[CredentialRouteInventoryEntry, ...],
+) -> None:
+    """W3.1 independent review MEDIUM-4 disposition: EGRESS_IDENTITY is reverted to
+    pending (:mod:`tos_runtime.compose._pending_dimensions` — no dimension verdict is
+    authored from partial predicate coverage). The ONE kernel predicate this
+    composition CAN honestly evaluate —
+    :func:`~tos.egress.predicates.credential_route_authority_disjoint`, over the
+    composed (boot-time-static) credential-route inventory — is still worth recording,
+    as an EVIDENCE-ONLY OBSERVATION, never a currentness verdict: this function writes
+    it once at boot and never feeds it back into any admission decision.
+
+    Moved here from ``_wiring.py`` (team-lead review follow-up, 2026-09-12) purely for
+    that module's own size budget — no behavioural difference from having it there;
+    :func:`~tos_runtime.compose._wiring._build_context_resolver` is still the one
+    caller."""
+    evidence_store.append(
+        {
+            "credential_route_authority_disjoint": credential_route_authority_disjoint(
+                inventory
+            )
+        },
+        kind=_EGRESS_IDENTITY_OBSERVATION_KIND,
+        record_class=_EGRESS_IDENTITY_OBSERVATION_KIND,
+    )
 
 
 class VerdictRecorder:
@@ -312,7 +353,7 @@ class ComposeContextResolver:
 
     construction_stage: OrderConstructionStage
     proof_stage: ConformanceProofStage
-    venue_stage: VenueConstraintStage
+    venue_stage: VenuePhaseStage
     step4_recorder: VerdictRecorder
     step9_recorder: VerdictRecorder
     step14_stage: TransmissionCapabilityStage
@@ -325,13 +366,15 @@ class ComposeContextResolver:
     #: for why these exist and what they honestly are (an interim operator
     #: sign-off, never a fabricated kernel-derived verdict).
     pending_dimension_specs: tuple[PendingDimensionSpec, ...]
-    #: The 3 remaining operator-attested egress-gate stand-ins for items
-    #: 12/16 (team-lead follow-up guidance, 2026-09-08) — see
-    #: :mod:`tos_runtime.compose._egress_attestations`'s own module
-    #: docstring for why these exist and which Phase replaces each. Items
+    #: Item 12's ``venue_session_account_facts_current`` (TOS Phase 5 W5 plan §2
+    #: decision 3) — a zero-argument read off the composed
+    #: :class:`~tos_runtime.calendar.owner.SessionFactsOwner`
+    #: (:mod:`tos_runtime.compose._session_wiring`), evaluated fresh on every call
+    #: (never cached here), replacing the retired
+    #: ``tos_runtime.compose._egress_attestations`` operator attestation. Items
     #: 6/12's OTHER two fields are derived, not attested — see
     #: ``broker_scopes``/``instance_document`` below.
-    egress_attestations: EgressAttestations
+    venue_session_account_facts_reader: Callable[[], bool | None]
     #: The runtime-configured Broker Scope table (TOS Phase 4 plan §2
     #: decision 4) — feeds :func:`~tos_runtime.brokercap.derive_item6_item12`
     #: for items 6/12, replacing two of the former egress attestations.
@@ -357,7 +400,12 @@ class ComposeContextResolver:
     request_bytes_digest_source: RequestBytesDigestSource
     outbound_side: str
     action_class: ActionClass
-    observed_session_phase: str
+    #: TOS Phase 5 W5 plan §2 decision 5 — a zero-argument read off the SAME
+    #: :class:`~tos_runtime.calendar.owner.SessionFactsOwner` step 3's
+    #: ``VenueConstraintStage`` reads (its own per-tick cache means both reads
+    #: agree within one attempt), replacing the retired
+    #: ``ConstructionConfig.observed_session_phase`` literal.
+    observed_session_phase_reader: Callable[[], str | None]
     continuity_id: str
     instrument_key: InstrumentKey
     #: Item 4's deferred-mesh owner (Phase 5 W3-b, plan §2 decision 4) — the SAME
@@ -661,18 +709,19 @@ class ComposeContextResolver:
         (items 6/12) are STRUCTURALLY DERIVED (TOS Phase 4 plan §2 decision
         4) via :func:`~tos_runtime.brokercap.derive_item6_item12`, never an
         attestation any more — see :meth:`_item6_item12_fields`.
-        ``venue_session_account_facts_current`` remains an explicit operator
-        attestation from composition config
-        (:mod:`tos_runtime.compose._egress_attestations` — see its own module
-        docstring for which Phase replaces it). ``restrictive_latch_state`` /
-        ``worst_credible_capacity`` (item 16) are Phase 5 W3 real runtime
-        owners now (:mod:`tos_runtime.safety.latch`, plan §2 decision 6) —
-        never an attestation any more; see :attr:`latch` / :attr:`capacity`.
+        ``venue_session_account_facts_current`` (TOS Phase 5 W5 plan §2
+        decision 3) is now a real runtime owner's read too
+        (:attr:`venue_session_account_facts_reader` —
+        :class:`~tos_runtime.calendar.owner.SessionFactsOwner`, replacing the
+        retired ``tos_runtime.compose._egress_attestations`` operator
+        attestation). ``restrictive_latch_state`` / ``worst_credible_capacity``
+        (item 16) are Phase 5 W3 real runtime owners too
+        (:mod:`tos_runtime.safety.latch`, plan §2 decision 6) — never an
+        attestation any more; see :attr:`latch` / :attr:`capacity`.
         ``max_quantity_within_allowance`` is the one exception: it HAS a real
         Phase 2 producer (step 2's own
         ``CandidateConstruction.no_silent_widening_ok``) and is derived
         from that live value instead of an attestation or a derivation."""
-        attestations = self.egress_attestations
         return {
             "account_instrument_action_allowed": (
                 derived.account_instrument_action_allowed
@@ -681,7 +730,7 @@ class ComposeContextResolver:
                 None if construction is None else construction.no_silent_widening_ok
             ),
             "venue_session_account_facts_current": (
-                attestations.venue_session_account_facts_current
+                self.venue_session_account_facts_reader()
             ),
             "broker_constraint_generation_current": (
                 derived.broker_constraint_generation_current
@@ -792,7 +841,7 @@ class ComposeContextResolver:
             venue_snapshot=self.venue_snapshot,
             venue_policy=self.venue_policy,
             venue_decision=self.venue_decision,
-            observed_session_phase=self.observed_session_phase,
+            observed_session_phase=self.observed_session_phase_reader(),
             action_class=self.action_class,
             order_shape=self.venue_stage.resolved_shape,
             venue_shape_constraints=self.venue_stage.shape_constraints,
@@ -806,9 +855,9 @@ class ComposeContextResolver:
             required_capability_set=item6item12.required_capability_set,
             broker_profile_version_current=(item6item12.broker_profile_version_current),
             idempotency_proven=None,
-            # Items 6/12/16 stand-ins: operator attestations from composition
-            # config (see tos_runtime.compose._egress_attestations's own
-            # module docstring for which Phase replaces each), except
+            # Items 6/12/16 stand-ins: real runtime owners now (item 12 --
+            # tos_runtime.calendar.owner.SessionFactsOwner, TOS Phase 5 W5;
+            # item 16 -- tos_runtime.safety.latch, TOS Phase 5 W3), except
             # max_quantity_within_allowance which HAS a real Phase 2 producer
             # (step 2's own CandidateConstruction.no_silent_widening_ok).
             **self._egress_gate_stand_in_fields(construction, item6item12),

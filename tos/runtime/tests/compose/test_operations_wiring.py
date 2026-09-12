@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 
 import pytest
+from tos_runtime.calendar.ports import FixedWallClockReference
 from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.operations.backup_set import (
     BackupSetManifest,
@@ -73,6 +74,11 @@ def _compose(
         action_flow_inputs_provider=_action_flow_inputs,
         projection_path=projection_path,
         backup_root=backup_root,
+        # TOS Phase 5 W5 plan §2 decision 2 — this module's own _compose (module
+        # docstring: duplicated from test_compose_root.py, not imported) needs the
+        # SAME non-production FixedWallClockReference default so step 3 stays
+        # ADMISSIBLE / item 12 SATISFIED for _reach_admitted_send's real-send tests.
+        wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
     )
 
 

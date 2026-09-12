@@ -10,6 +10,7 @@ import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from tos.brokeradapter import Transport
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
@@ -19,7 +20,6 @@ from tos.egressgw import (
     ConformanceProofStage,
     OrderConstructionStage,
     ProposedConstructionEnvelope,
-    VenueConstraintStage,
     VenueQuantityConstraint,
 )
 from tos.engine import (
@@ -45,6 +45,7 @@ from tos_runtime.authority.iap import (
     IntentRegistry,
 )
 from tos_runtime.brokercap import BrokerScopesConfig
+from tos_runtime.calendar.owner import SessionFactsOwner
 from tos_runtime.compose._safety_wiring import SafetyMeshSnapshot
 from tos_runtime.compose.context import (
     ComposeContextResolver,
@@ -63,12 +64,21 @@ from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import NewRiskHaltClearOutcome, SqliteEventInbox
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.nontrade.observations import NonTradeObservation
+from tos_runtime.nontrade.processor import NonTradeEventProcessor, NonTradeOutcome
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.recovery.barrier import RecoveryVerdict
 from tos_runtime.safety.protective import ProtectiveVerdict
 from tos_runtime.safety.rearm import prepare_new_risk_halt_clear
 from tos_runtime.safety.shutdown import ControlledShutdown, ShutdownOutcome
 from tos_runtime.time.service import TrustworthyTimeService
+
+if TYPE_CHECKING:
+    # TYPE_CHECKING-only: _venue_phase.py imports ConstructionConfig FROM this
+    # module, so a top-level import here would be circular. Postponed
+    # annotations (module docstring's own `from __future__ import annotations`)
+    # mean the string form below is all mypy needs.
+    from tos_runtime.compose._venue_phase import VenuePhaseStage
 
 __all__ = [
     "ComposedRuntime",
@@ -131,7 +141,15 @@ class ConstructionConfig:
     order_shape: OrderShapeFields
     venue_shape_constraints: VenueShapeConstraints
     action_class: ActionClass
-    observed_session_phase: str
+    #: TOS Phase 5 W5 plan §2 decision 5 — replaces the former
+    #: ``observed_session_phase: str`` literal. Keys
+    #: :mod:`tos_runtime.calendar`'s session windows/futures-expiry rules for
+    #: this deployment (e.g. ``"krx-stock"``/``"krx-index-futures"``); step
+    #: 3's actual ``observed_session_phase`` is now a late-bound read off
+    #: :class:`~tos_runtime.calendar.owner.SessionFactsOwner`
+    #: (:mod:`tos_runtime.compose._session_wiring`), never a caller-supplied
+    #: phase string.
+    instrument_class: str
     outbound_side: str
     price_field_key: str | None = None
     shape_price_field_key: str | None = None
@@ -208,7 +226,7 @@ class ComposedRuntime:
     step9_recorder: VerdictRecorder
     step14_stage: TransmissionCapabilityStage
     construction_stage: OrderConstructionStage
-    venue_stage: VenueConstraintStage
+    venue_stage: VenuePhaseStage
     proof_stage: ConformanceProofStage
     context_resolver: ComposeContextResolver
     core: EngineCore
@@ -262,6 +280,20 @@ class ComposedRuntime:
     #: property's own docstring on why this is a pure read, never a second evaluation).
     #: Set directly at ``_finalize`` construction time, same as :attr:`safety_mesh_peek`.
     protective_last_verdict: Callable[[], ProtectiveVerdict | None] | None = None
+    #: TOS Phase 5 W5 plan §2 decision 3 — the KST session/venue-facts owner, set by
+    #: :func:`~tos_runtime.compose._session_wiring.apply_session_wiring` (called from
+    #: :func:`~tos_runtime.compose.root.compose_paper_runtime`, right after ``_finalize``).
+    #: ``None`` only transiently before that wiring runs — never observable on a runtime a
+    #: caller actually receives (mirrors :attr:`recovery`'s own docstring).
+    session_facts: SessionFactsOwner | None = None
+    #: TOS Phase 5 W5 plan §2 decision 7 — the non-trade event processor, set by
+    #: :func:`~tos_runtime.compose._session_wiring.apply_nontrade_wiring` (called from
+    #: :func:`~tos_runtime.compose.root.compose_paper_runtime`, right after
+    #: ``apply_session_wiring``). ``None`` only transiently before that wiring runs — never
+    #: observable on a runtime a caller actually receives (mirrors :attr:`session_facts`'s own
+    #: docstring). Never call :attr:`nontrade`'s own ``process`` directly to reach a new-risk
+    #: latch — :meth:`observe_nontrade` is the sanctioned door (module docstring discipline).
+    nontrade: NonTradeEventProcessor | None = None
 
     def run_once(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
         """Drive ``events`` through :attr:`driver` to completion, one at a time.
@@ -420,4 +452,57 @@ class ComposedRuntime:
                 record_class=self._NEW_RISK_HALT_CLEAR_REFUSED_KIND,
             )
             return NewRiskHaltClearOutcome.STORAGE_REFUSED
+        return outcome
+
+    #: The evidence kind :meth:`observe_nontrade` appends for a restrictive disposition (TOS
+    #: Phase 5 W5 plan §2 decision 7 / §6 confirmation ⑨) — a runtime-level record kind, not a
+    #: kernel ``EvidenceKind`` or a ``tos.nontrade`` producer: ``IncidentService`` has no
+    #: candidate-reporting entry point (:mod:`tos_runtime.nontrade.processor` module docstring
+    #: "Report back" section), so this is the only "incident candidate" trace this runtime can
+    #: leave until an operator decides whether to add a real entry point.
+    _INCIDENT_CANDIDATE_KIND = "INCIDENT_CANDIDATE"
+
+    def observe_nontrade(self, obs: NonTradeObservation) -> NonTradeOutcome:
+        """Fold one non-trade observation through :attr:`nontrade` and, when restrictive, latch
+        a new-risk halt (TOS Phase 5 W5 plan §2 decision 7).
+
+        THE sanctioned door from an observed non-trade event to the new-risk halt latch:
+        :mod:`tos_runtime.nontrade`'s own processor never calls
+        :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.record_new_risk_halt` itself (its
+        module docstring's own "Latching is a different lane's job" section names this method as
+        that lane). The evidence-before-state-change ordering below mirrors
+        :meth:`clear_new_risk_halt`'s own discipline (that method's ``NEW_RISK_HALT_CLEARED_BY_
+        OPERATOR`` row is appended BEFORE its storage-layer call): the ``INCIDENT_CANDIDATE`` row
+        is appended first, so a crash between the two leaves a durable trace of the disposition
+        that was ABOUT to latch, never a bare halt row with no explanation reachable from it.
+
+        Args:
+            obs: The observed non-trade event.
+
+        Returns:
+            The :class:`~tos_runtime.nontrade.processor.NonTradeOutcome` — unchanged from what
+            :attr:`nontrade` itself produced.
+
+        Raises:
+            AssertionError: :attr:`nontrade` is ``None`` (wiring has not run yet — never
+                observable on a runtime a caller actually receives, mirrors every other
+                transiently-``None`` attribute's own discipline on this class).
+        """
+        assert self.nontrade is not None, "ComposedRuntime.nontrade is not wired yet"
+        outcome = self.nontrade.process(obs)
+        if outcome.restrictive:
+            self.evidence_store.append(
+                {
+                    "observation_id": outcome.observation_id,
+                    "disposition": outcome.disposition.value,
+                    "latch_reason": outcome.latch_reason,
+                },
+                kind=self._INCIDENT_CANDIDATE_KIND,
+                record_class=self._INCIDENT_CANDIDATE_KIND,
+            )
+            self.inbox.record_new_risk_halt(
+                reason=outcome.latch_reason or outcome.disposition.value,
+                event_id=obs.observation_id,
+                evidence_seq=outcome.evidence_seq,
+            )
         return outcome

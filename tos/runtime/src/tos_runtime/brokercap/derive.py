@@ -59,6 +59,7 @@ from tos_runtime.brokercap.scopes import BrokerScope, BrokerScopesConfig, Endpoi
 __all__ = [
     "Item6Item12Fields",
     "derive_item6_item12",
+    "is_broker_reaching",
     "load_active_instance_document",
 ]
 
@@ -73,6 +74,25 @@ _BROKER_REACHING_ENDPOINT_CLASSES = frozenset(
 _NO_GENERATION_ENDPOINT_CLASSES = frozenset(
     {EndpointClass.NONE, EndpointClass.SYNTHETIC}
 )
+
+
+def is_broker_reaching(scope: BrokerScope) -> bool:
+    """Whether ``scope``'s endpoint class actually reaches a broker (module
+    docstring; the SAME ``_BROKER_REACHING_ENDPOINT_CLASSES`` this module's own
+    :func:`derive_item6_item12` uses).
+
+    Exposed so OTHER runtime packages can ask this exact structural question
+    without themselves reading ``.endpoint_class`` — the EC-1 governance gate
+    (``tests/brokercap/test_exit_conditions.py::
+    test_no_consumer_of_endpoint_class_outside_the_allowlist`` and
+    ``tests/brokercap/test_scopes.py::
+    test_no_consumer_of_a_prohibited_scopes_endpoint_class_outside_this_module``)
+    only allows ``.endpoint_class`` to be read inside this package. TOS Phase 5
+    W5's :class:`~tos_runtime.calendar.owner.SessionFactsOwner` calls this
+    (via :mod:`tos_runtime.compose.root`) instead of reading the attribute
+    itself, for item 12's ``venue_session_account_facts_current``.
+    """
+    return scope.endpoint_class in _BROKER_REACHING_ENDPOINT_CLASSES
 
 
 @dataclass(frozen=True)

@@ -83,6 +83,19 @@ INSTRUMENT = "ES"
 DECISION_CLASS = "entry"
 SIDE = "BUY"
 SESSION_PHASE = "CONTINUOUS"
+#: TOS Phase 5 W5 plan §2 decision 5 — keys the calendar.yaml session-window /
+#: futures-expiry lookup this suite's ConstructionConfig now carries, replacing
+#: the retired ``observed_session_phase: str`` literal. Matches the instrument
+#: class key ``conftest.py``'s ``calendar.yaml`` fixture defines.
+INSTRUMENT_CLASS = "krx-index-futures"
+#: A fixed Monday 2026-09-14 10:00:00 Asia/Seoul instant (a real, non-holiday
+#: weekday) — the default wall-clock reading this suite's ``_compose()`` helper
+#: injects so every existing happy-path e2e test keeps observing an ADMISSIBLE
+#: step 3 (the conftest.py calendar fixture is open 24/7, so the EXACT instant
+#: does not matter for that fixture; this constant exists so every test that
+#: wants a deterministic, non-``None`` wall-clock reading shares ONE fixed
+#: instant rather than each hand-rolling its own arbitrary timestamp).
+DEFAULT_WALL_CLOCK_UNIX_MS = 1_789_347_600_000
 
 LOWER_BAND = 4_500_000
 UPPER_BAND = 4_520_000
@@ -498,7 +511,7 @@ def construction_config() -> ConstructionConfig:
         order_shape=order_shape(),
         venue_shape_constraints=venue_shape_constraints(),
         action_class=ActionClass.NEW_LONG,
-        observed_session_phase=SESSION_PHASE,
+        instrument_class=INSTRUMENT_CLASS,
         outbound_side=SIDE,
         price_field_key=PRICE_FIELD_KEY,
         shape_price_field_key=PRICE_FIELD_KEY,

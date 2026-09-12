@@ -55,6 +55,7 @@ from tos.egressgw import gateway as gateway_module
 from tos.egressgw.vocabulary import DEFERRED_ITEMS, VerifyOutcome, verify_item_number
 from tos.rcl import CapacityState
 from tos_runtime.brokercap.instance import load_instance_documents
+from tos_runtime.calendar.owner import SessionFactsOwner
 from tos_runtime.compose import context as context_module
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.transport.kis_mock.adapter import KisMockTransport
@@ -198,6 +199,29 @@ def _lift_p02_capability_profile(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
     monkeypatch.setattr(context_module, "derive_item6_item12", _lifted_derive)
+
+
+def _lift_venue_session_account_facts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force item 12's OTHER half — :meth:`~tos_runtime.calendar.owner
+    .SessionFactsOwner.venue_session_account_facts_current` — to ``True`` (TOS
+    Phase 5 W5 plan §2 decision 3). This scope (MOCK_STOCK_ORDER) is
+    broker-reaching, so the real owner honestly returns ``None`` here (no
+    tradability/account-halt source exists yet for a broker scope) — a
+    SEPARATE, independent reason item 12 stays UNKNOWN from P0-2's
+    ``broker_constraint_generation_current`` gate (module docstring; see
+    :func:`test_honest_deny_full_evidence_level`'s pin distinguishing the two).
+    The counterfactual/mutation-b tests below need BOTH halves lifted to reach
+    a genuine SATISFIED send.
+    """
+
+    def _always_true(  # noqa: ARG001 - fixed monkeypatch signature, args deliberately unused
+        self, instrument_class: str, *, broker_reaching: bool
+    ) -> bool:
+        return True
+
+    monkeypatch.setattr(
+        SessionFactsOwner, "venue_session_account_facts_current", _always_true
+    )
 
 
 def _verify_item_payloads(runtime) -> list[dict[str, Any]]:
@@ -444,6 +468,25 @@ def test_honest_deny_full_evidence_level(
         "VALID_LIVE_SCOPE",
         "VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION",
     }
+    # TOS Phase 5 W5 (plan §2 decision 3): item 12's kernel gate (gateway.py's
+    # _check_venue_generations) checks venue_session_account_facts_current BEFORE
+    # broker_constraint_generation_current -- whichever is non-positive FIRST decides the
+    # reason text. This scope (MOCK_STOCK_ORDER) is broker-reaching, so the real
+    # SessionFactsOwner honestly returns None for venue_session_account_facts_current (no
+    # tradability/account-halt source exists for a broker scope yet) -- a DIFFERENT,
+    # independent reason from item 12's OTHER half (broker_constraint_generation_current,
+    # blocked by the P0-2 unapproved-INSTANCE gap). Pinning the reason text distinguishes
+    # the two: mutation M2 (forcing venue_session_account_facts_current to True for a
+    # broker-reaching scope) would flip this reason to the SECOND branch's text instead,
+    # making this assertion go red.
+    (item12_verdict,) = (
+        v
+        for v in verdicts
+        if v["item"] == "VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION"
+    )
+    assert "venue / session" in item12_verdict["detail"]
+    assert "broker-constraint generation" not in item12_verdict["detail"]
+
     observed_unsupplied_deferred_numbers = {
         verify_item_number(item)
         for item in DEFERRED_ITEMS
@@ -520,6 +563,7 @@ def test_counterfactual_a_phase5_and_p02_closed_dry_run(
     fx.write_kis_mock_transport_config(config_dir)  # mode: dry_run (default)
     _lift_phase5_deferred_mesh(monkeypatch)
     _lift_p02_capability_profile(monkeypatch)
+    _lift_venue_session_account_facts(monkeypatch)
     do_request_calls = _spy_do_request(monkeypatch)
 
     runtime = _compose(
@@ -622,6 +666,7 @@ def test_counterfactual_b_live_against_hermetic_fake_kis_server(
     )
     _lift_phase5_deferred_mesh(monkeypatch)
     _lift_p02_capability_profile(monkeypatch)
+    _lift_venue_session_account_facts(monkeypatch)
     send_once_calls = _spy_send_once(monkeypatch)
 
     runtime = _compose(
@@ -725,6 +770,7 @@ def test_mutation_b_a_digest_mismatch_is_refused_before_any_network_call(
     fx.write_kis_mock_transport_config(config_dir)
     _lift_phase5_deferred_mesh(monkeypatch)
     _lift_p02_capability_profile(monkeypatch)
+    _lift_venue_session_account_facts(monkeypatch)
     do_request_calls = _spy_do_request(monkeypatch)
 
     runtime = _compose(
@@ -851,6 +897,52 @@ def test_mutation_d_lifting_only_p02_capability_profile_still_denies(
     # SATISFIED by their real Phase 5 W3 owners regardless (module docstring); only item 5
     # (VALID_LIVE_SCOPE) is still honestly UNKNOWN, which alone still denies the send.
     assert "VALID_LIVE_SCOPE" in unknown_items
+
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+
+
+def test_mutation_e_lifting_only_venue_session_account_facts_switches_the_item12_reason(
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(e) TOS Phase 5 W5 — the mirror of mutation (d): lift ONLY
+    ``venue_session_account_facts_current`` (the P0-2 capability-profile facts
+    untouched). Item 12 stays UNKNOWN, but the reason text SWITCHES to the
+    OTHER branch (``broker_constraint_generation_current`` blocked by P0-2) —
+    proving the two reasons are genuinely independent and distinguishable,
+    not one fact silently masking the other."""
+    _activate_and_admit(config_dir, custody_root)
+    fx.write_kis_mock_transport_config(config_dir)
+    _lift_venue_session_account_facts(monkeypatch)
+    send_once_calls = _spy_send_once(monkeypatch)
+
+    runtime = _compose(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        transport_kind=TransportKind.KIS_MOCK,
+    )
+    _reach_trusted(runtime)
+
+    result = _drive_crossing_tick(runtime, custody_root)
+    assert result.flow is not None and result.flow.handoff is not None
+    assert result.flow.handoff.accepted_for_transmission is not True
+    assert send_once_calls == []
+
+    verdicts = _verify_item_payloads(runtime)
+    (item12_verdict,) = (
+        v
+        for v in verdicts
+        if v["item"] == "VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION"
+    )
+    assert item12_verdict["outcome"] == "UNKNOWN"
+    assert "broker-constraint generation" in item12_verdict["detail"]
+    assert "venue / session" not in item12_verdict["detail"]
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()
