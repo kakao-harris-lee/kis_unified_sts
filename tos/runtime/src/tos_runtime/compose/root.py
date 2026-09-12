@@ -72,11 +72,18 @@ from tos.engine import (
     StrategyRegistry,
 )
 
+from tos_runtime.brokercap import is_broker_reaching
+from tos_runtime.calendar.ports import WallClockReference
 from tos_runtime.compose._finalize_wiring import _finalize
 from tos_runtime.compose._operations_wiring import apply_operations_wiring
 from tos_runtime.compose._recovery_wiring import apply_recovery_barrier
 from tos_runtime.compose._release_wiring import apply_release_wiring
 from tos_runtime.compose._request_digest import KisWireCodecDigest
+from tos_runtime.compose._session_wiring import (
+    SessionInboxCell,
+    apply_session_wiring,
+    build_session_facts_owner,
+)
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.compose._types import (
     ComposedRuntime,
@@ -143,6 +150,7 @@ def compose_paper_runtime(
     transport_kind: TransportKind = TransportKind.SYNTHETIC,
     projection_path: Path | None = None,
     backup_root: Path | None = None,
+    wall_clock: WallClockReference | None = None,
 ) -> ComposedRuntime:
     """Wire the whole Phase 2 paper-runtime service chain, in order (module
     docstring: exact order + every reported deviation).
@@ -171,6 +179,10 @@ def compose_paper_runtime(
             default path.
         backup_root: TOS Phase 5 W4 §2 decision 11 — where to look for the latest durable-set
             backup manifest, or ``None`` (the default) to skip backup observation entirely.
+        wall_clock: TOS Phase 5 W5 plan §2 decision 2 — the injected wall-clock reference for
+            the KST session/calendar owner, or ``None`` (the default) for the honest production
+            default (:class:`~tos_runtime.calendar.ports.AbsentWallClockReference` — G-1 is
+            still pending operator decision, plan §6 ①; no CLI flag wires anything else in).
 
     Returns:
         The fully wired :class:`ComposedRuntime`.
@@ -206,7 +218,31 @@ def compose_paper_runtime(
     # honest, not fabricated.
     boot.risk.release_dimension_state.release_admitted = boot.release_admitted
 
-    construction_stages = _build_construction_stages(construction)
+    # TOS Phase 5 W5 (plan §2 decisions 1-5): the KST session/venue-facts owner. Built here,
+    # before `_build_construction_stages`, because step 3 needs a phase reader at construction
+    # time; its tick-generation reader is a late-bound cell (mirrors `_SafetyMesh`'s own inbox
+    # cell, `_safety_wiring.py`) since the durable inbox does not exist until `_finalize` --
+    # `apply_session_wiring` below fills it in once it does.
+    session_inbox_cell = SessionInboxCell()
+    session_facts_owner = build_session_facts_owner(
+        config_dir=config_dir,
+        wall_clock=wall_clock,
+        evidence_store=boot.infra.evidence_store,
+        time_config=boot.infra.time_config,
+        tick_generation_reader=session_inbox_cell.read,
+    )
+
+    # Shared reader (SAME callable object at both call sites below) so step 3's own fold and
+    # the send-boundary context's `observed_session_phase` field can never disagree within one
+    # attempt (SessionFactsOwner.observe caches per tick generation).
+    session_phase_reader = lambda: session_facts_owner.phase_for_step3(  # noqa: E731
+        construction.instrument_class
+    )
+
+    construction_stages = _build_construction_stages(
+        construction,
+        session_phase_reader=session_phase_reader,
+    )
     # Late-bind the CONSTRAINT dimension reader's cell now step 3's own VerdictRecorder
     # exists (Phase 5 W3.2, plan §2 decision 2).
     boot.risk.constraint_dimension_state.venue_recorder = (
@@ -257,7 +293,11 @@ def compose_paper_runtime(
         currentness_assembler=boot.risk.currentness_assembler,
         proof_issuer=boot.risk.proof_issuer,
         pending_dimension_specs=boot.risk.pending_dimension_specs,
-        egress_attestations=boot.risk.egress_attestations,
+        venue_session_account_facts_reader=lambda: session_facts_owner.venue_session_account_facts_current(
+            construction.instrument_class,
+            broker_reaching=is_broker_reaching(boot.broker_scopes.active_scope),
+        ),
+        observed_session_phase_reader=session_phase_reader,
         egress_coordinates=boot.egress_coordinates,
         broker_scopes=boot.broker_scopes,
         instance_document=boot.instance_document,
@@ -294,6 +334,14 @@ def compose_paper_runtime(
     # plan §2 decision 6/8) — RestrictiveLatchOwner's new-risk-halt reader and
     # MonitoringService's inbox-backlog observer both close over this cell.
     boot.risk.safety_mesh.inbox_cell.inbox = composed.inbox
+    # TOS Phase 5 W5 — late-bind the session-facts owner's own tick-generation cell now
+    # the durable inbox exists (same ordering as the safety-mesh cell above), and attach
+    # the owner to the composed runtime.
+    composed = apply_session_wiring(
+        composed,
+        session_inbox_cell=session_inbox_cell,
+        session_facts_owner=session_facts_owner,
+    )
     # TOS Phase 5 W2-R (plan §10 row ①③) — attach the finality release consumer BEFORE the
     # recovery barrier runs (see apply_release_wiring's own docstring for why running before a
     # possible driver detach is harmless).

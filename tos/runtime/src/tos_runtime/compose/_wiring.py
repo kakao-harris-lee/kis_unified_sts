@@ -28,6 +28,7 @@ from tos.egressgw import (
 from tos.engine import (
     CommitmentStep,
     StageRequest,
+    StageVerdict,
     StrategyRegistry,
 )
 from tos.engine.records import InstrumentKey
@@ -64,7 +65,6 @@ from tos_runtime.compose._currentness_wiring import (
     _build_risk_and_currentness,
     _RiskAndCurrentness,
 )
-from tos_runtime.compose._egress_attestations import EgressAttestations
 from tos_runtime.compose._egress_coordinates import (
     EgressCoordinatesConfig,
     load_egress_coordinates,
@@ -521,9 +521,48 @@ class _ConstructionStages:
     proof_stage: ConformanceProofStage
 
 
-def _build_construction_stages(construction: ConstructionConfig) -> _ConstructionStages:
+class _PhaseRefreshingVenueCall:
+    """Re-reads a late-bound ``Callable[[], str | None]`` session-phase cell fresh
+    before every call, then delegates to the real ``VenueConstraintStage`` (TOS
+    Phase 5 W5 plan §2 decision 5).
+
+    ``VenueConstraintStage`` stores ``observed_session_phase`` once, at
+    construction, as a private attribute with no public setter (kernel diff 0 —
+    ``tos.egressgw.construction.VenueConstraintStage.__init__``) — this wrapper
+    writes ``_observed_session_phase`` directly instead (a reported shim, the
+    SAME discipline :class:`~tos_runtime.compose.context.ComposeContextResolver`'s
+    own underscore-attribute reads already use, e.g.
+    ``_reconstruct_transmission_capability``'s ``self.step14_stage._log``), so
+    the kernel stage itself is never edited and every OTHER attempt still goes
+    through step 3's real, unmodified fold.
+    """
+
+    def __init__(
+        self, stage: VenueConstraintStage, phase_reader: Callable[[], str | None]
+    ) -> None:
+        self._stage = stage
+        self._phase_reader = phase_reader
+
+    def __call__(self, request: StageRequest) -> StageVerdict:
+        self._stage._observed_session_phase = self._phase_reader()  # noqa: SLF001
+        return self._stage(request)
+
+
+def _build_construction_stages(
+    construction: ConstructionConfig,
+    *,
+    session_phase_reader: Callable[[], str | None],
+) -> _ConstructionStages:
     """Steps 2/3/5/11 — the kernel's OWN, already-shipped Order Construction
-    stages (design #34 §3.2)."""
+    stages (design #34 §3.2).
+
+    ``session_phase_reader`` (TOS Phase 5 W5 plan §2 decision 5) supplies step
+    3's ``observed_session_phase`` fresh on every call, via
+    :class:`_PhaseRefreshingVenueCall` — replacing the former
+    ``ConstructionConfig.observed_session_phase`` literal with a live read off
+    :class:`~tos_runtime.calendar.owner.SessionFactsOwner`
+    (:mod:`tos_runtime.compose._session_wiring`).
+    """
     construction_stage = OrderConstructionStage(
         envelope=construction.envelope,
         price=construction.price,
@@ -540,7 +579,10 @@ def _build_construction_stages(construction: ConstructionConfig) -> _Constructio
         price_field_key=construction.price_field_key,
     )
     venue_stage = VenueConstraintStage(
-        observed_session_phase=construction.observed_session_phase,
+        # Overwritten by _PhaseRefreshingVenueCall before every actual call the
+        # stage map ever makes (below) -- this initial value is never read by
+        # the engine directly.
+        observed_session_phase=None,
         action_class=construction.action_class,
         snapshot=construction.venue_snapshot,
         policy=construction.venue_policy,
@@ -560,7 +602,9 @@ def _build_construction_stages(construction: ConstructionConfig) -> _Constructio
     return _ConstructionStages(
         construction_stage=construction_stage,
         venue_stage=venue_stage,
-        venue_recorder=VerdictRecorder(venue_stage),
+        venue_recorder=VerdictRecorder(
+            _PhaseRefreshingVenueCall(venue_stage, session_phase_reader)
+        ),
         economic_stage=economic_stage,
         proof_stage=proof_stage,
     )
@@ -833,7 +877,8 @@ def _build_context_resolver(
     currentness_assembler: CurrentnessAssembler,
     proof_issuer: EgressCurrentnessProofIssuer,
     pending_dimension_specs: tuple[PendingDimensionSpec, ...],
-    egress_attestations: EgressAttestations,
+    venue_session_account_facts_reader: Callable[[], bool | None],
+    observed_session_phase_reader: Callable[[], str | None],
     egress_coordinates: EgressCoordinatesConfig,
     broker_scopes: BrokerScopesConfig,
     instance_document: InstanceDocument | None,
@@ -854,8 +899,10 @@ def _build_context_resolver(
     + the item-16 latch/capacity owners (Phase 5 W3-b, §2 decisions 4/6/8); ``evidence_store``
     records the EGRESS_IDENTITY evidence-only observation (MEDIUM-4 —
     :func:`_record_egress_identity_observation`) — all forwarded to
-    :class:`ComposeContextResolver`. ``request_bytes_digest_source`` is T2 lane A's digest seam
-    (``None`` -> :func:`_default_request_bytes_digest_source`).
+    :class:`ComposeContextResolver`. ``venue_session_account_facts_reader`` (TOS Phase 5 W5 plan
+    §2 decision 3) is item 12's real runtime owner read, replacing the retired
+    ``tos_runtime.compose._egress_attestations`` attestation. ``request_bytes_digest_source`` is
+    T2 lane A's digest seam (``None`` -> :func:`_default_request_bytes_digest_source`).
 
     Raises:
         BrokerScopeConfigError: principal collision (R2) or a config/kernel mismatch.
@@ -883,7 +930,7 @@ def _build_context_resolver(
         currentness_assembler=currentness_assembler,
         proof_issuer=proof_issuer,
         pending_dimension_specs=pending_dimension_specs,
-        egress_attestations=egress_attestations,
+        venue_session_account_facts_reader=venue_session_account_facts_reader,
         broker_scopes=broker_scopes,
         instance_document=instance_document,
         authority_epoch_service=authority_epoch_service,
@@ -919,7 +966,7 @@ def _build_context_resolver(
         ),
         outbound_side=construction.outbound_side,
         action_class=construction.action_class,
-        observed_session_phase=construction.observed_session_phase,
+        observed_session_phase_reader=observed_session_phase_reader,
         continuity_id=continuity_id,
         instrument_key=instrument_key,
         venue_snapshot=construction.venue_snapshot,
@@ -981,7 +1028,6 @@ def _resolve_strategies_and_attested_inputs(
         config_dir,
         infra.evidence_store,
         identity,
-        risk.egress_attestations,
         risk.risk_attestations,
         egress_coordinates,
         resolved_strategies.loaded,

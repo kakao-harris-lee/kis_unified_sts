@@ -45,6 +45,7 @@ from tos_runtime.authority.iap import (
     IntentRegistry,
 )
 from tos_runtime.brokercap import BrokerScopesConfig
+from tos_runtime.calendar.owner import SessionFactsOwner
 from tos_runtime.compose._safety_wiring import SafetyMeshSnapshot
 from tos_runtime.compose.context import (
     ComposeContextResolver,
@@ -131,7 +132,15 @@ class ConstructionConfig:
     order_shape: OrderShapeFields
     venue_shape_constraints: VenueShapeConstraints
     action_class: ActionClass
-    observed_session_phase: str
+    #: TOS Phase 5 W5 plan §2 decision 5 — replaces the former
+    #: ``observed_session_phase: str`` literal. Keys
+    #: :mod:`tos_runtime.calendar`'s session windows/futures-expiry rules for
+    #: this deployment (e.g. ``"krx-stock"``/``"krx-index-futures"``); step
+    #: 3's actual ``observed_session_phase`` is now a late-bound read off
+    #: :class:`~tos_runtime.calendar.owner.SessionFactsOwner`
+    #: (:mod:`tos_runtime.compose._session_wiring`), never a caller-supplied
+    #: phase string.
+    instrument_class: str
     outbound_side: str
     price_field_key: str | None = None
     shape_price_field_key: str | None = None
@@ -262,6 +271,12 @@ class ComposedRuntime:
     #: property's own docstring on why this is a pure read, never a second evaluation).
     #: Set directly at ``_finalize`` construction time, same as :attr:`safety_mesh_peek`.
     protective_last_verdict: Callable[[], ProtectiveVerdict | None] | None = None
+    #: TOS Phase 5 W5 plan §2 decision 3 — the KST session/venue-facts owner, set by
+    #: :func:`~tos_runtime.compose._session_wiring.apply_session_wiring` (called from
+    #: :func:`~tos_runtime.compose.root.compose_paper_runtime`, right after ``_finalize``).
+    #: ``None`` only transiently before that wiring runs — never observable on a runtime a
+    #: caller actually receives (mirrors :attr:`recovery`'s own docstring).
+    session_facts: SessionFactsOwner | None = None
 
     def run_once(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
         """Drive ``events`` through :attr:`driver` to completion, one at a time.

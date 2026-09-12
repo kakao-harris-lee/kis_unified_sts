@@ -311,11 +311,24 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1141
+  measured: 1187
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
   note: >-
+    **2026-09-12 black 재포맷 1186→1187(+1)**.
+    **2026-09-12 Phase 5 W5 재등재 1141→1186(+45)**: step 3의 `observed_session_phase`
+    를 late-bound 로 전환(계획 §2 결정 5) — `_build_construction_stages` 가
+    `session_phase_reader: Callable[[], str | None]` 매개변수를 받고, 신설
+    `_PhaseRefreshingVenueCall`(kernel `VenueConstraintStage` 를 편집하지 않고
+    `_observed_session_phase` 를 매 호출 전 재기입하는 얇은 어댑터 — 도크스트링
+    포함 약 20줄) 로 `venue_stage` 를 감싸 `VerdictRecorder` 에 전달. `StageVerdict`
+    import 1줄 추가. `_build_context_resolver` 는 `egress_attestations` 매개변수를
+    `venue_session_account_facts_reader: Callable[[], bool | None]` 로 교체(item 12
+    가 이제 `tos_runtime.calendar.owner.SessionFactsOwner` 의 실 owner 읽기 —
+    `tos_runtime.compose._egress_attestations` 삭제); `record_operator_attested_inputs`
+    호출부에서 `risk.egress_attestations` 인자 제거. 모듈 최상단
+    `from tos_runtime.compose._egress_attestations import EgressAttestations` 제거.
     레인 A2 등재(kernel round #1 §2.2 재심 finding #3, MEDIUM) — IAP 만료
     영수증을 compose root 에 결선(_decision_provider 가
     load_operator_approval_with_receipt 를 쓰도록 전환 + time/time_config 를
@@ -632,11 +645,21 @@ exceptions:
     import 가 완전히 사라진다(순환을 우회가 아니라 제거). `gateway.py`/`mesh.py` 는
     이 모듈에서 `_verdict` 를 import.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 201
+  measured: 242
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-09-12 black 재포맷 235→242(+7)**.
+    **2026-09-12 Phase 5 W5 재등재 201→235(+34)**: `wall_clock` 매개변수 1개
+    (docstring Args 1항목 포함) + 세션-사실 owner 조기 구성(계획 §2 결정 3 —
+    `SessionInboxCell()` · `build_session_facts_owner(...)` 호출, step 3 가
+    `_build_construction_stages` 시점에 phase reader 를 필요로 하기 때문에
+    durable inbox 존재 이전인 이 지점에서 구성) + `_build_construction_stages`/
+    `_build_context_resolver` 호출부에 람다 셀 배선 2건 + `_finalize` 이후
+    `apply_session_wiring(composed, session_inbox_cell=..., session_facts_owner=...)`
+    호출 1건(안전-메시 inbox 셀과 동일한 순서 원칙). root.py 는 정본 결선 순서
+    문서라 호출 시퀀스 재구성은 하지 않음 — 분해 대신 등재.
     신규 등재(TOS Phase 4 잔여 웨이브 1 레인 A · G-4, 2026-09-09) —
     broker_scopes.yaml 을 부팅 결선에 넣으며 ``_build_context_resolver`` 와
     ``_finalize`` 호출부에 ``broker_scopes=boot.broker_scopes,`` 각 1줄 추가로
@@ -712,26 +735,30 @@ exceptions:
     전부 존재하는 시점에만 결선 가능하므로 `apply_recovery_barrier` 직후,
     함수 끝에 추가). root.py 는 정본 결선 순서 문서라 호출 시퀀스 재구성은
     하지 않음 — 분해 대신 등재.
-- target: tos/runtime/src/tos_runtime/compose/_boot_integrity.py::record_operator_attested_inputs
-  measured: 104
-  owner: tos-runtime
-  decomposition_order: 39
-  expires_on: '2026-12-31'
-  note: >-
-    신규 등재(TOS KIS MOCK transport plan T2 lane C, plan
-    docs/plans/2026-09-10-tos-kis-mock-transport-plan.md §4 row T2) —
-    extra_config_files: tuple[Path, ...] = () 파라미터 추가(kis-mock 보정
-    transport config 파일을 OPERATOR_ATTESTED_INPUTS 증거에 결속). 루프 본문은
-    신설 헬퍼 _extra_config_file_coordinates 로 뽑아 호출부 1줄로 압축했고
-    도크스트링 신규 단락도 6줄에서 2줄로 압축했으나, 이미 대형이던 기존
-    도크스트링(53줄) 위에서는 100줄 문턱을 완전히 회피하지 못하고 99→104
-    (+5) 초과 — 등재(무예외 목표 미달성, 정직 등재).
+# 2026-09-12 Phase 5 W5: _boot_integrity.py::record_operator_attested_inputs's own
+# exception entry (decomposition_order 39) is REMOVED here — removing the
+# egress_attestations row-generation tuple entry (item 12's attestation retired,
+# plan §2 decision 4) brought the function to 98 lines, at/under the 100-line
+# budget (tools/tos_size_budget.py's own [stale-under-budget] check: "measured 98
+# lines, at or under budget — remove from exceptions"). decomposition_order 39 is
+# deliberately left unfilled rather than renumbering every later entry (the tool
+# only rejects a DUPLICATE decomposition_order, never a gap — module docstring's
+# own enforced failure classes (a)-(f) do not include "must be contiguous").
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py::_build_context_resolver
-  measured: 101
+  measured: 104
   owner: tos-runtime
   decomposition_order: 40
   expires_on: '2026-12-31'
   note: >-
+    **2026-09-12 black 재포맷 103→104(+1)**.
+    **2026-09-12 Phase 5 W5 재등재 101→103(+2)**: `egress_attestations:
+    EgressAttestations` 매개변수를 `venue_session_account_facts_reader:
+    Callable[[], bool | None]` 로 교체(item 12 — `tos_runtime.calendar.owner
+    .SessionFactsOwner` 의 실 owner 읽기, 계획 §2 결정 3) + `ComposeContextResolver(...)`
+    호출부의 `egress_attestations=egress_attestations,` 를
+    `venue_session_account_facts_reader=venue_session_account_facts_reader,` 로
+    교체(순증 0) + 도크스트링 1줄 갱신(순증 +1) — 매개변수 이름 자체가
+    1글자 길어져(+1) 총 +2.
     W3.1 독립 리뷰 처분(MEDIUM-4) 신규 등재 — `evidence_store: SqliteEvidenceStore`
     매개변수 1줄 + `_record_egress_identity_observation(evidence_store,
     resolved_credential_route_inventory)` 호출 1건(EGRESS_IDENTITY 를 차원 판정이

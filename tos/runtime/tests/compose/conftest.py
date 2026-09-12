@@ -140,10 +140,38 @@ def config_dir(tmp_path: Path) -> Path:
             for key in PENDING_DIMENSION_KEYS
         },
     )
+    # TOS Phase 5 W5 (plan §2 decisions 1-4): egress_attestations.yaml is retired to
+    # zero -- venue_session_account_facts_current now has a real runtime owner
+    # (tos_runtime.calendar.owner.SessionFactsOwner via calendar.yaml below), so this
+    # file is deliberately NOT written here any more (a leftover file refuses boot --
+    # RetiredConfigPresent, tests/compose/test_session_wiring.py). This fixture's
+    # calendar is deliberately permissive (one full-day CONTINUOUS window, every
+    # weekday, no holidays) so every OTHER compose e2e test's happy path keeps
+    # reaching an ADMISSIBLE step 3 / SATISFIED item 12 (for the non-broker-reaching
+    # SYNTHETIC_FUTURES_ORDER scope this suite activates below) regardless of which
+    # instant the test's own wall-clock fixture injects; tests/compose/
+    # test_session_wiring.py exercises the interesting negative paths (holiday,
+    # after-hours, absent wall clock, calendar-version mismatch) with their OWN,
+    # narrower calendar configs.
     _write_yaml(
-        directory / "egress_attestations.yaml",
+        directory / "calendar.yaml",
         {
-            "venue_session_account_facts_current": {"attested": True},
+            "calendar_version": "cal-compose-0",
+            "tz_id": "Asia/Seoul",
+            "holidays": [],
+            "sessions": {
+                "krx-index-futures": [
+                    {
+                        "phase": "CONTINUOUS",
+                        "start": "00:00",
+                        "end": "23:59",
+                        "days": ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"],
+                        "crosses_midnight": False,
+                    }
+                ]
+            },
+            "closed_phase": "CLOSED",
+            "futures_expiry": {},
         },
     )
     # Phase 5 W3 safety-mesh policy documents (tos_runtime.compose._safety_wiring) — a
