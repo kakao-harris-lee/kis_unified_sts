@@ -2,7 +2,7 @@
 
 - **목적**: Phase 5 §11 처분 13~16 — 런타임이 부팅을 거부하는 모든 named-TBD `null` 에 대해 **개발 측 제안값 + 근거 + 보수 방향** 을 한 곳에 모아 운영자 승인을 받는다. 승인 전에는 예시 파일의 `null` 을 유지한다(부팅 거부 = 정직). 승인 후 적용은 «런타임 엔트리포인트 웨이브» 가 실파일(`config/*.yaml`)로 착지시킨다.
 - **원천 등급**: **A** = 규범 문서에 이미 승인된 값(VER-002 `APPROVED`) · **B** = 공식 SDK/런북/측정 근거 · **C** = 개발 측 보수 제안(근거 명시 · 서버 실측 후 하향 가능) · **M** = 운영자·서버에서만 산출 가능(수동).
-- **실측 근거**: `scratchpad/ops-values-survey.md`(26 예시 파일 전수 · 로더 거부 규칙 `file:line` · e2e 픽스처 값 · VER-002 대조). 픽스처 값은 테스트용이며 제안이 아니다(VER-002 승인치와 어긋나는 픽스처 4건은 별도 표기).
+- **실측 근거**: `scratchpad/ops-values-survey.md`(26 예시 파일 전수 · 로더 거부 규칙 `file:line` · e2e 픽스처 값 · VER-002 대조). 픽스처 값은 테스트용이며 제안이 아니다(VER-002 승인치와 어긋나는 픽스처 5건 — time 4 + `max_amplification_per_cause` — 은 별도 표기).
 - **읽는 법**: 각 표의 «제안» 열이 승인 대상. «보수 방향» 은 그 값을 틀렸을 때 안전한 쪽(작게/크게).
 
 ## 1. `time.yaml` — Trustworthy Time 경계
@@ -28,7 +28,7 @@
 | 파일 · 키 | 제안 | 등급 | 근거 · 보수 방향 |
 |---|---|---|---|
 | `currentness.B_capability_claim_to_send` | **500** | A | VER-002:301 APPROVED(단, «fenced egress journal·broker transport 구현 후 RECHECK» 표기 — 이 소비 지점에 대한 재승인이 이 표의 승인) |
-| `currentness.required_dimensions` | **커널 `MANDATED_DIMENSION_FLOOR` 17 키 전부를 명시 나열** | C | 운영자 선언이어야 하며 커널 floor 에서 재파생하면 항등식(W3.1 MEDIUM-3) · floor 보다 좁게 선언 = 부팅 거부 |
+| `currentness.required_dimensions` | **커널 `MANDATED_DIMENSION_FLOOR` 의 21 키 전부를 명시 나열**(`tos/src/tos/cur/vocabulary.py` · `DimensionKey` 22 중 조건부 `RESTRICTED_LIVE_TRIAL` 제외 · 적용 시 `python -c "from tos.cur.vocabulary import MANDATED_DIMENSION_FLOOR as F; print(sorted(k.value for k in F))"` 출력을 그대로 옮긴다) | C | 운영자 선언이어야 하며 커널 floor 에서 재파생하면 항등식(W3.1 MEDIUM-3) · floor 보다 좁게 선언 = 부팅 거부(`policy_covers_mandate`). **정정(리뷰 HIGH-1)**: 초안의 «17» 은 Phase 5 서베이의 «attestation 잔존 차원 수» 였고 floor 가 아님 |
 | `authority.containment_bound_ms` | **60000** | C | Safety Authority epoch 온라인 currentness witness 봉쇄 경계(ADR-002-003 §12.1) · VER-002 키 없음 · 작을수록 보수(짧은 봉쇄) · epoch 갱신 주기 서버 실측 후 하향 |
 | `authority.trading_approval_policy_generation` | **1** | C | 현재 로드되는 `TradingApprovalPolicy.policy_generation` 과 일치해야 함(승인 파일 세대 1) |
 | `engine.dsl_evaluation_budget_steps` | **64** | C | VER-002 미등재(«provisional») · 등록 전략(band)의 정적 스텝 수 상한 · 전략 추가 시 정적 계수 재측정 · 작을수록 보수 |
@@ -90,10 +90,10 @@ paper(합성 transport · KIS MOCK dry_run) 용 최소 보수 문서. 실선물�
 | `tr_id_buy` / `tr_id_sell` | `VTTC0012U` / `VTTC0011U` | B | SDK `order_cash.py:103-118`(demo) |
 | `field_map` | account→`CANO` · instrument→`PDNO` · quantity→`ORD_QTY` · price→`ORD_UNPR` | B | SDK 필드명 |
 | `static_body_fields.ORD_DVSN` / `EXCG_ID_DVSN_CD` / `SLL_TYPE` / `CNDT_PRIC` | `"00"`(지정가) / `"KRX"` / `""` / `""` | B | 시장가 `"01"` 은 별도 승인 |
-| `static_body_fields.ACNT_PRDT_CD` | **`"01"`**(위탁종합 상품코드 관례) — **계좌 개설 서류로 확인 후 확정** | M | 계좌별 상이 가능 |
-| `min_send_interval_ms` | **1100** | B | P-13 실측 1.0 rps 한도 + 100ms |
-| `token_reissue_min_interval_s` | **60** | C | KIS 공지 «접근토큰 발급 1분당 1회» 관례 · N-15 서버 실측 4/4 실패 → 실측 후 확정 |
-| `request_timeout_s` | **5.0** | C | `MAX_send_result_wait_ms` 6000 과 정합 |
+| `static_body_fields.ACNT_PRDT_CD` | **`"01"`**(위탁종합 상품코드 관례 · 근거 미제시) — **계좌 개설 서류로 확인 후 확정** | M | 값 «01» 의 공식 출처 인용 없음 · 계좌별 상이 가능 |
+| `min_send_interval_ms` | **2000**(하한 1100 · 주문 엔드포인트 실측 후 조정) | C | P-13 은 `endpoint_class=query` 한정 측정(clean 1.0 rps · throttle 2.0 rps · `EGW00201` · profile draft 1832-1849) 이고 그 다음 절(1890-1926)은 **«query 값을 주문 클래스로 외삽 금지»** 경고 + 2026-07-31 `--pace-s 1.1` 에서도 주문/취소가 스로틀된 관측을 담는다 → 1100 은 하한일 뿐 근거 있는 주문 간격이 아니다 · 보수 방향 = 크게 · **정정(리뷰 HIGH-2)**: 런북 §4 의 «1100 = P-13 실측» 문언도 같은 이유로 정정 대상(별도 런북 PR) |
+| `token_reissue_min_interval_s` | **60** | C(근거 미제시) | «1분당 1회» 는 이 저장소에 공식 공지 원문 인용이 없음(개발자센터 공지 URL·일자 확보 시 B 로 승격) · N-15 서버 실측 4/4 실패 → 실측 후 확정 · 보수 방향 = 크게 |
+| `request_timeout_s` | **5.0** | C | `MAX_send_result_wait_ms` 6000 과 정합 · `min_send_interval_ms` 2000 과 독립(간격은 송신 시작 간, 타임아웃은 응답 대기) |
 | `mode` | `dry_run`(운영자 캠페인 완료 전) | B | `live` 는 codec 결속 + Coordinator non-live admission + P0-2 종결 후 |
 
 ## 7. `calendar.yaml`(§11 결정 11 · 채택됨 — 실파일 형태)
