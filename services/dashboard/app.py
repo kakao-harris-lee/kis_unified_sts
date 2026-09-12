@@ -83,6 +83,13 @@ OPENAPI_TAGS = [
         "name": "feedback-reports",
         "description": "Unified performance feedback reports (weekly/monthly/quarterly, read-only)",
     },
+    {
+        "name": "tos",
+        "description": (
+            "Read-only tos_runtime operator projection (Phase 5 W4; not an "
+            "authority source)"
+        ),
+    },
 ]
 
 
@@ -231,6 +238,7 @@ def _register_routes(app: FastAPI) -> None:
         strategies,
         strategy_builder,
         strategy_lab,
+        tos_projection,
         trades,
         trading,
         universe,
@@ -257,6 +265,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(strategies.router)
     app.include_router(metrics.router, tags=["metrics"])
     app.include_router(health.router)
+    app.include_router(tos_projection.router)
 
     # WebSocket endpoint
     @app.websocket("/ws")

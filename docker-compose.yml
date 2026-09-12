@@ -638,6 +638,10 @@ services:
       - ./reports:/app/reports:ro
       - ./data/runtime:/app/data/runtime
       - ./data/market:/app/data/market:ro
+      # Phase 5 W4 e5 (plan §2 decision 9): read-only mount of the
+      # tos_runtime-exported operator projection JSON. The dashboard opens
+      # it by path only (never imports tos/tos_runtime, never writes here).
+      - ./data/tos_runtime:/app/data/tos_runtime:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
