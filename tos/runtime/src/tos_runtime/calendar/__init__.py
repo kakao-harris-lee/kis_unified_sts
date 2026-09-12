@@ -19,6 +19,7 @@ from tos_runtime.calendar.config import (
     load_calendar_config,
 )
 from tos_runtime.calendar.model import MaturityFact, PhaseFact, WallClockReading
+from tos_runtime.calendar.phase import effective_phase_at, maturity_at, session_phase_at
 from tos_runtime.calendar.ports import (
     AbsentWallClockReference,
     FixedWallClockReference,
@@ -36,6 +37,9 @@ __all__ = [
     "MaturityFact",
     "PhaseFact",
     "WallClockReading",
+    "effective_phase_at",
+    "maturity_at",
+    "session_phase_at",
     "AbsentWallClockReference",
     "FixedWallClockReference",
     "LocalWallClockReference",
