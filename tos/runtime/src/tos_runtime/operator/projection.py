@@ -33,8 +33,13 @@ transitively, the driver turn that triggers an export — see
 :meth:`tos_runtime.engine.driver.EngineDriver.bind_after_turn`). The failing group's own field is
 recorded as ``None`` and an internal counter/last-error pair is surfaced under this SAME
 document's own ``export.failures``/``export.last_error`` fields — a self-observation of this
-build cycle's own read health, distinct from (and unaware of) any later JSON-file write failure
-:class:`~tos_runtime.operator.export.ProjectionExporter` might separately encounter.
+build cycle's own read health. A caller may ALSO supply ``read_export_status`` (optional,
+``None`` by default) to fold a :class:`~tos_runtime.operator.export.ProjectionExporter`'s own
+write-side failure count/last error into these SAME two fields (compose wiring's own directive —
+see :func:`tos_runtime.compose._operations_wiring.apply_operations_wiring`'s module docstring for
+why this needs a two-step, late-bound construction): counts SUM; ``last_error`` prefers the
+exporter's own message when both sides have one (a write failure is necessarily the NEWER of the
+two — discovered only on the build AFTER it happened).
 
 **Alert ownership (plan §2 decision 12).** ``alerts.unresolved_stm_alert_seqs`` is DERIVED here:
 "unresolved" = "in the candidate set and NOT in the resolved set". There is no
@@ -125,6 +130,7 @@ class OperatorProjection:
         read_operations: ReadCallable,
         read_unresolved_stm_alert_candidate_seqs: ReadCallable,
         read_resolved_stm_alert_seqs: ReadCallable,
+        read_export_status: Callable[[], tuple[int, str | None]] | None = None,
     ) -> None:
         self._readers: dict[str, ReadCallable] = {
             "runtime": read_runtime,
@@ -142,6 +148,16 @@ class OperatorProjection:
         }
         self._read_candidate_seqs = read_unresolved_stm_alert_candidate_seqs
         self._read_resolved_seqs = read_resolved_stm_alert_seqs
+        #: Optional — a caller (compose wiring) that ALSO owns a
+        #: :class:`~tos_runtime.operator.export.ProjectionExporter` may supply this to fold that
+        #: exporter's own write-side ``failures``/``last_error`` into THIS document's
+        #: ``export.failures``/``export.last_error`` (module docstring — a write failure from a
+        #: PRIOR export cycle becomes visible on the NEXT build, since the exporter itself never
+        #: raises and this projection has no other way to learn about it). ``None`` (the default,
+        #: and every existing standalone construction's behaviour) means this document's
+        #: ``export.failures``/``export.last_error`` reflect ONLY this build's own read-callable
+        #: failures, exactly as before this field existed.
+        self._read_export_status = read_export_status
         #: ``projection_generation`` — a monotonic export sequence number (plan §2.7), one of the
         #: two fields (with ``exported_at_monotonic_ns``) this class computes itself rather than
         #: reading from a callable: both are facts ABOUT this projection's own build history, not
@@ -181,6 +197,25 @@ class OperatorProjection:
         )
         resolved = _read("alerts.resolved_stm_alert_seqs", self._read_resolved_seqs)
         unresolved = _unresolved_seqs(candidates, resolved)
+
+        # Fold a supplied exporter's own write-side failure count into this SAME document's
+        # export field (module docstring / __init__'s own docstring on read_export_status) — the
+        # exporter's last_error wins when both sides have one, since it is the NEWER of the two
+        # (a write failure can only be observed on the NEXT build, after this build's own reads
+        # already ran); read_failures always SUMS (never overwritten).
+        if self._read_export_status is not None:
+            try:
+                exporter_failures, exporter_last_error = self._read_export_status()
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 - a broken status read never crashes a build
+                read_failures += 1
+                if last_error is None:
+                    last_error = f"export_status: {exc!r}"
+            else:
+                read_failures += exporter_failures
+                if exporter_last_error is not None:
+                    last_error = exporter_last_error
 
         document: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,

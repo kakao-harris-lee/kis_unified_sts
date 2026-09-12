@@ -47,6 +47,7 @@ def _all_none_projection(
     *,
     candidate_seqs=lambda: None,
     resolved_seqs=lambda: None,
+    export_status=None,
 ) -> OperatorProjection:
     """A projection where every group reader legitimately returns ``None`` — the "nothing has a
     source yet" baseline (module docstring's OBS-INV-003 discipline)."""
@@ -54,6 +55,7 @@ def _all_none_projection(
     return OperatorProjection(
         read_unresolved_stm_alert_candidate_seqs=candidate_seqs,
         read_resolved_stm_alert_seqs=resolved_seqs,
+        read_export_status=export_status,
         **readers,
     )
 
@@ -264,3 +266,64 @@ def test_unresolved_seqs_are_truncated_to_the_export_cap() -> None:
     unresolved = document["alerts"]["unresolved_stm_alert_seqs"]
     assert len(unresolved) == MAX_UNRESOLVED_STM_ALERT_SEQS
     assert unresolved == list(many[:MAX_UNRESOLVED_STM_ALERT_SEQS])
+
+
+# -- read_export_status: folding an exporter's write-side failures into export.* -------------
+
+
+def test_no_read_export_status_supplied_behaves_exactly_as_before() -> None:
+    """The default (``None``) — every existing standalone construction's behaviour — must be
+    unchanged: ``export.failures``/``export.last_error`` reflect only this build's own reads.
+    """
+    document = _all_none_projection().build()
+    assert document["export"] == {"failures": 0, "last_error": None}
+
+
+def test_read_export_status_failures_are_summed_with_read_failures() -> None:
+    def _boom() -> None:
+        raise ValueError("boom")
+
+    document = _all_none_projection(
+        candidate_seqs=_boom, export_status=lambda: (2, None)
+    ).build()
+    # 1 own read failure (the candidate reader) + 2 supplied exporter failures = 3.
+    assert document["export"]["failures"] == 3
+
+
+def test_read_export_status_last_error_wins_when_both_sides_have_one() -> None:
+    def _boom() -> None:
+        raise ValueError("own read failed")
+
+    document = _all_none_projection(
+        candidate_seqs=_boom,
+        export_status=lambda: (1, "exporter write failed"),
+    ).build()
+    assert document["export"]["last_error"] == "exporter write failed"
+    assert document["export"]["failures"] == 2
+
+
+def test_read_export_status_last_error_falls_back_to_own_when_exporter_has_none() -> (
+    None
+):
+    def _boom() -> None:
+        raise ValueError("own read failed")
+
+    document = _all_none_projection(
+        candidate_seqs=_boom, export_status=lambda: (0, None)
+    ).build()
+    assert "own read failed" in document["export"]["last_error"]
+    assert document["export"]["failures"] == 1
+
+
+def test_read_export_status_with_no_failures_on_either_side() -> None:
+    document = _all_none_projection(export_status=lambda: (0, None)).build()
+    assert document["export"] == {"failures": 0, "last_error": None}
+
+
+def test_a_raising_read_export_status_is_counted_and_never_crashes_the_build() -> None:
+    def _boom() -> None:
+        raise RuntimeError("exporter status read broke")
+
+    document = _all_none_projection(export_status=_boom).build()
+    assert document["export"]["failures"] == 1
+    assert "exporter status read broke" in document["export"]["last_error"]

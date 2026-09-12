@@ -28,7 +28,17 @@ all read-only over an already-composed runtime:
    :meth:`~tos_runtime.engine.driver.EngineDriver.bind_after_turn` (only when a driver is actually
    wired — the recovery barrier may have held it back), and append one
    ``OPERATOR_PROJECTION_ENABLED`` evidence record (a digest of the path, never the path string
-   itself, which could carry an operator's own home-directory username).
+   itself, which could carry an operator's own home-directory username). **The exported
+   ``export.failures``/``export.last_error`` fields combine BOTH failure sources** (team-lead
+   Phase B directive): the projection's own read-callable failures for THIS build, summed with
+   the :class:`~tos_runtime.operator.export.ProjectionExporter`'s own accumulated write-side
+   failures (a prior export cycle's atomic-write error, which the exporter itself never raises —
+   see that class's own docstring). ``last_error`` prefers the exporter's own message when both
+   sides have one (a write failure is necessarily the NEWER of the two, discovered only on the
+   NEXT build after it happened). The two-step construction this needs — the exporter cannot
+   exist until the projection does, but the projection needs to read the exporter's counters — is
+   a one-element list cell filled in immediately after the exporter is built, before ``export()``
+   ever runs (see this function's own body).
 
 **Two disclosed gaps this wiring cannot close without editing a file outside this lane's
 ownership (team-lead Phase B directive: report rather than add new surface elsewhere).**
@@ -295,12 +305,24 @@ def _read_resolved() -> tuple[int, ...]:
 
 
 def _build_projection(
-    composed: ComposedRuntime, operations: OperationsFacts
+    composed: ComposedRuntime,
+    operations: OperationsFacts,
+    *,
+    read_export_status: Any,
 ) -> OperatorProjection:
     """Assemble the plan §2.7 :class:`~tos_runtime.operator.projection.OperatorProjection` from
     read callables over ``composed`` — never a write method (module docstring). Each field
     group's own logic lives in a module-level ``_read_*`` function (above) so this function
-    itself stays a plain wiring list."""
+    itself stays a plain wiring list.
+
+    Args:
+        read_export_status: Forwarded to :class:`~tos_runtime.operator.projection
+            .OperatorProjection`'s own ``read_export_status`` — folds a
+            :class:`~tos_runtime.operator.export.ProjectionExporter`'s write-side
+            ``failures``/``last_error`` into this SAME document's ``export`` field (see
+            :func:`apply_operations_wiring`'s own docstring for the two-step construction this
+            requires).
+    """
     return OperatorProjection(
         read_runtime=lambda: _read_runtime(composed),
         read_recovery=lambda: _read_recovery(composed),
@@ -318,6 +340,7 @@ def _build_projection(
             composed
         ),
         read_resolved_stm_alert_seqs=_read_resolved,
+        read_export_status=read_export_status,
     )
 
 
@@ -353,8 +376,27 @@ def apply_operations_wiring(
     composed.operations = operations
 
     if projection_path is not None:
-        projection = _build_projection(composed, operations)
+        # Two-step construction (team-lead Phase B directive: fold the exporter's own
+        # write-side failures/last_error into the SAME document's export field): the exporter
+        # cannot be built until the projection exists (ProjectionExporter's own constructor
+        # takes ``projection``), but the projection's ``read_export_status`` needs to read the
+        # exporter's counters — a 1-element list acts as a late-bound cell the projection's
+        # closure reads through, filled in immediately after the exporter is actually built (a
+        # build BEFORE that point can only ever happen via the same `export()` call below, which
+        # runs strictly after the cell is filled).
+        exporter_cell: list[ProjectionExporter] = []
+
+        def _read_export_status() -> tuple[int, str | None]:
+            if not exporter_cell:
+                return (0, None)
+            exporter_ref = exporter_cell[0]
+            return (exporter_ref.failures, exporter_ref.last_error)
+
+        projection = _build_projection(
+            composed, operations, read_export_status=_read_export_status
+        )
         exporter = ProjectionExporter(path=projection_path, projection=projection)
+        exporter_cell.append(exporter)
         exporter.export()
         if composed.driver is not None:
             composed.driver.bind_after_turn(exporter.as_after_turn_callback())

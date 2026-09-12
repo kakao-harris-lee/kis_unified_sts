@@ -10,6 +10,7 @@ touching a file another lane owns.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -164,6 +165,36 @@ def test_projection_generation_increments_after_a_processed_event(
 
     second_generation = json.loads(projection_path.read_text())["projection_generation"]
     assert second_generation > first_generation
+
+
+def test_export_field_combines_an_earlier_write_failure_into_the_next_successful_export(
+    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+) -> None:
+    """team-lead Phase B directive: ``export.failures``/``export.last_error`` fold a
+    :class:`~tos_runtime.operator.export.ProjectionExporter`'s own write-side failures into the
+    SAME document's export field. Drives one genuine write failure (an unwritable projection
+    directory) then restores write access and asserts the NEXT successful export reports it.
+    """
+    projection_dir = tmp_path / "projection_dir"
+    projection_dir.mkdir()
+    projection_path = projection_dir / "operator_projection.json"
+
+    runtime = _compose(
+        config_dir, data_dir, custody_root, projection_path=projection_path
+    )
+    assert runtime.driver is not None
+
+    os.chmod(projection_dir, 0o500)
+    try:
+        runtime.run_once((fx.crossing_event(seq=101),))
+    finally:
+        os.chmod(projection_dir, 0o700)
+
+    runtime.run_once((fx.crossing_event(seq=102),))
+
+    document = json.loads(projection_path.read_text())
+    assert document["export"]["failures"] >= 1
+    assert document["export"]["last_error"] is not None
 
 
 def test_recovery_field_reflects_the_real_readiness_verdict(
