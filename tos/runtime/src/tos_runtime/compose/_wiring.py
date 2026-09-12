@@ -106,6 +106,7 @@ from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.ports import EvidenceAppendPort
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.operations.dependency_admission import observe_runtime_artifact
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.rcl.reservation_identity import scope_reservation_id
@@ -275,15 +276,15 @@ def _decision_provider(
 # ===========================================================================
 
 
-def _build_identity(environment_label: str) -> RuntimeIdentity:
-    """This process's :class:`~tos.workload.RuntimeIdentity` — pure
-    computation, no I/O (so a STAGE A release-admission probe can run
-    against it before any file is opened)."""
+def _build_identity(environment_label: str, code_digest: str) -> RuntimeIdentity:
+    """This process's :class:`~tos.workload.RuntimeIdentity` — creates no
+    data files; reads the source tree only (so a STAGE A release-admission
+    probe can run against it before any file is opened)."""
     return RuntimeIdentity(
         cell_id=environment_label,
         runtime_generation=0,
         process_nonce=secrets.token_hex(8),
-        code_digest=_SCHEME.compute_digest({"component": "tos_runtime.compose"}),
+        code_digest=code_digest,
     )
 
 
@@ -302,16 +303,14 @@ def _stage_a_release_probe(
     currentness stack is up. But the compose e2e test's scenario 7 requires
     "release admission refusal => compose raises before any service starts
     (assert no sqlite files created)" for the ordinary refusal case (an
-    operator-approved ``expected_code_digest`` that does not match this
-    build) — that particular fact (``identity.code_digest ==
-    expected_code_digest``) is pure computation, no I/O, available
-    immediately. So release admission runs TWICE: this STAGE A probe, with
-    ``currentness_current`` forced to ``True`` so ONLY the digest/admission-
-    result/restriction facts can fail it (never a false pass — Stage A can
-    only ever refuse EARLIER than the truth, never admit something Stage B
-    would refuse), and a STAGE B check later (:func:`_stage_b_release_probe`,
-    once currentness is actually wired) with the REAL, honestly-derived
-    boot-time currentness signal.
+    operator-approved digest mismatch) — that fact is pure computation over
+    the already-measured runtime artifact observation, no further I/O,
+    available immediately. So release admission runs TWICE: this STAGE A
+    probe, with ``currentness_current`` forced to ``True`` so ONLY the
+    digest/admission-result/restriction facts can fail it (Stage A never
+    admits what a later STAGE B check would refuse), and that STAGE B check
+    (:func:`_stage_b_release_probe`, once currentness is actually wired)
+    uses the REAL, honestly-derived boot-time currentness signal.
 
     Raises:
         ReleaseAdmissionRefused: The probe denies.
@@ -1045,9 +1044,10 @@ def _boot_services(
     size budget; the actual STAGE A/B split and its rationale live on
     :func:`_stage_a_release_probe`/:func:`_stage_b_release_probe`
     themselves."""
-    identity = _build_identity(environment_label)
+    observation = observe_runtime_artifact()
+    identity = _build_identity(environment_label, observation.source_tree_digest)
     release_config = load_release_config(config_dir / _RELEASE_CONFIG_NAME)
-    release_service = ReleaseAdmissionService(release_config)
+    release_service = ReleaseAdmissionService(release_config, observation)
     _stage_a_release_probe(release_service, release_config, identity)
 
     infra = _build_custody_evidence_time(
