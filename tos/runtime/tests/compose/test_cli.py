@@ -8,6 +8,7 @@ own behaviour (that is ``tests/operations/*``'s scope).
 
 from __future__ import annotations
 
+import ast
 import os
 import stat
 from pathlib import Path
@@ -685,13 +686,16 @@ def test_rearm_parses_args(tmp_path: Path) -> None:
     assert args.environment_label == "non-live-test"
 
 
-def test_rearm_real_end_to_end_two_person_quorum_approves(
+def test_rearm_real_end_to_end_two_person_quorum_clears_the_latch(
     tmp_path: Path,
     config_dir: Path,
     data_dir: Path,
     custody_root: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Team-lead follow-up: ``rearm`` is a complete operator door — an APPROVED HAG quorum must
+    actually clear the storage-layer latch (``compose/_cli_ops.rearm_and_clear``), not merely
+    report that a live runtime would."""
     approvals_dir = tmp_path / "approvals"
     seq = 7
 
@@ -727,8 +731,101 @@ def test_rearm_real_end_to_end_two_person_quorum_approves(
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "APPROVED" in captured.out
-    assert "does not itself clear the latch" in captured.out
+    assert "cleared" in captured.out
+
+    reopened = SqliteEventInbox(
+        data_dir / "inbox.sqlite3", scheme=get_scheme(EV_L1_PROVISIONAL_VERSION)
+    )
+    try:
+        assert reopened.new_risk_halt() is None
+    finally:
+        reopened.close()
+
+    key_provider2 = FileKeyProvider(custody_root, expected_owner_uid=os.getuid())
+    evidence_store = SqliteEvidenceStore(
+        data_dir / "evidence.sqlite3", key_provider=key_provider2
+    )
+    try:
+        kinds = [entry.kind for entry in evidence_store.iter_entry_meta()]
+        assert "NEW_RISK_HALT_CLEARED_BY_OPERATOR" in kinds
+    finally:
+        evidence_store.close()
+
+
+def test_rearm_refused_quorum_never_calls_the_storage_clear_and_exits_nonzero(
+    tmp_path: Path,
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation-shaped pin (team-lead follow-up): a refused HAG quorum must never reach the
+    storage-layer clear at all — spies on ``SqliteEventInbox.clear_new_risk_halt`` itself, and
+    monkeypatches ``prepare_new_risk_halt_clear`` (via ``tos_runtime.compose._cli_ops``, the
+    module ``rearm_and_clear`` calls it from) to force a refusal deterministically."""
+    from tos_runtime.compose import _cli_ops
+    from tos_runtime.safety.rearm import NewRiskHaltDoorDecision
+
+    approvals_dir = tmp_path / "approvals"
+    seq = 7
+
+    key_provider = FileKeyProvider(custody_root, expected_owner_uid=os.getuid())
+    inbox = SqliteEventInbox(
+        data_dir / "inbox.sqlite3", scheme=get_scheme(EV_L1_PROVISIONAL_VERSION)
+    )
+    inbox.record_new_risk_halt(
+        reason="NEW_RISK_HALTED_BY_COUPLING_VIOLATION", event_id=None, evidence_seq=seq
+    )
+    inbox.close()
+    del key_provider
+
+    calls: list[int] = []
+    real_clear = SqliteEventInbox.clear_new_risk_halt
+
+    def _spy_clear(self: SqliteEventInbox, **kwargs: object) -> object:
+        calls.append(1)
+        return real_clear(self, **kwargs)  # type: ignore[arg-type]
+
+    def _fake_prepare(**_kwargs: object) -> NewRiskHaltDoorDecision:
+        from tos_runtime.engine.inbox import NewRiskHaltClearOutcome
+
+        return NewRiskHaltDoorDecision(
+            refusal=NewRiskHaltClearOutcome.SEQ_MISMATCH, attestation_text=None
+        )
+
+    monkeypatch.setattr(SqliteEventInbox, "clear_new_risk_halt", _spy_clear)
+    monkeypatch.setattr(_cli_ops, "prepare_new_risk_halt_clear", _fake_prepare)
+
+    exit_code = cli.main(
+        [
+            "rearm",
+            "--data-dir",
+            str(data_dir),
+            "--custody-root",
+            str(custody_root),
+            "--approvals-dir",
+            str(approvals_dir),
+            "--config-dir",
+            str(config_dir),
+            "--environment-label",
+            "non-live-test",
+            "--seq",
+            str(seq),
+        ]
+    )
+
+    assert exit_code == 1
+    assert calls == []
+
+    reopened = SqliteEventInbox(
+        data_dir / "inbox.sqlite3", scheme=get_scheme(EV_L1_PROVISIONAL_VERSION)
+    )
+    try:
+        current = reopened.new_risk_halt()
+        assert current is not None
+        assert current["evidence_seq"] == seq
+    finally:
+        reopened.close()
 
 
 def test_rearm_refuses_when_no_approval_file_exists(
@@ -1025,3 +1122,106 @@ def test_nontrade_eval_never_opens_an_evidence_store(
 
     exit_code = cli.main(["nontrade-eval", "--observation", str(observation_path)])
     assert exit_code == 0
+
+
+# -- _cli_ops.py structural pin (team-lead follow-up: second HAG-gated door) -------------------
+
+_CLI_OPS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "src"
+    / "tos_runtime"
+    / "compose"
+    / "_cli_ops.py"
+)
+
+
+def _clear_new_risk_halt_calls(tree: ast.Module) -> list[ast.Call]:
+    """Every ``Call`` node whose function is an attribute access named
+    ``clear_new_risk_halt`` (matches ``inbox.clear_new_risk_halt(...)`` regardless of the
+    receiver expression — mirrors ``tests/engine/test_no_direct_latch_clear.py``'s own
+    receiver-shape tolerance, at the AST level instead of regex)."""
+    calls = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "clear_new_risk_halt"
+        ):
+            calls.append(node)
+    return calls
+
+
+def _is_refusal_guard(node: ast.stmt) -> bool:
+    """Whether ``node`` is a guard clause shaped like
+    ``if decision.refusal is not None: return ...`` — an ``If`` whose test mentions
+    ``refusal`` and whose body contains a ``Return`` (the guard-clause pattern
+    ``rearm_and_clear`` mirrors from ``compose/_types.py``'s own early-return shape, rather
+    than a nested ``if``)."""
+    if not isinstance(node, ast.If):
+        return False
+    test_dump = ast.dump(node.test)
+    if "refusal" not in test_dump:
+        return False
+    return any(isinstance(stmt, ast.Return) for stmt in node.body)
+
+
+def test_cli_ops_has_exactly_one_clear_call_reachable_only_past_a_refusal_guard() -> (
+    None
+):
+    """Pragmatic AST pin (team-lead follow-up): ``_cli_ops.py`` must contain exactly ONE
+    ``clear_new_risk_halt(`` call site, and it must be reachable only AFTER a guard clause
+    that already returned on any non-``APPROVED`` HAG-quorum outcome — i.e. the storage clear
+    can only ever execute on the approved path, never unconditionally.
+
+    ``rearm_and_clear`` uses a guard-clause (early-return) shape, not a nested ``if`` block, to
+    mirror ``ComposedRuntime.clear_new_risk_halt``'s own real control flow
+    (``compose/_types.py:419-420``) — so this check looks for "a refusal guard with an earlier
+    line number than the call", the guard-clause equivalent of "nested under the approved
+    branch", rather than literally requiring AST nesting.
+    """
+    tree = ast.parse(_CLI_OPS_PATH.read_text(encoding="utf-8"))
+
+    calls = _clear_new_risk_halt_calls(tree)
+    assert len(calls) == 1, (
+        f"expected exactly one clear_new_risk_halt( call site in _cli_ops.py, found "
+        f"{len(calls)}"
+    )
+    call_lineno = calls[0].lineno
+
+    function_node = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "rearm_and_clear"
+    )
+    guard_linenos = [
+        stmt.lineno for stmt in function_node.body if _is_refusal_guard(stmt)
+    ]
+    assert guard_linenos, (
+        "rearm_and_clear must contain a guard clause (`if ...refusal... is not None: "
+        "return ...`) before its clear_new_risk_halt( call"
+    )
+    assert min(guard_linenos) < call_lineno, (
+        "the refusal guard clause must appear BEFORE the clear_new_risk_halt( call — the "
+        "call must only be reachable on the approved path"
+    )
+
+
+def test_the_refusal_guard_detector_rejects_an_unguarded_call(tmp_path: Path) -> None:
+    """Proves :func:`_is_refusal_guard` is not vacuous: a scratch module with an UNGUARDED
+    ``clear_new_risk_halt(`` call (no preceding refusal-checking ``If``) would fail the pin
+    above."""
+    scratch = tmp_path / "scratch_unguarded.py"
+    scratch.write_text(
+        "def rearm_and_clear(inbox):\n"
+        "    return inbox.clear_new_risk_halt(latched_evidence_seq=1)\n"
+    )
+    tree = ast.parse(scratch.read_text(encoding="utf-8"))
+    function_node = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "rearm_and_clear"
+    )
+    guard_linenos = [
+        stmt.lineno for stmt in function_node.body if _is_refusal_guard(stmt)
+    ]
+    assert guard_linenos == []

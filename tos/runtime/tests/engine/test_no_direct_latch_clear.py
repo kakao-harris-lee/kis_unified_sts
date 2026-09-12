@@ -1,16 +1,22 @@
-"""Grep-pin canary: nothing under ``tos_runtime/src`` outside
-:mod:`tos_runtime.compose._types` calls ``SqliteEventInbox.clear_new_risk_halt`` directly
-(re-review finding RR2, 2026-09-09) — mirrors ``test_no_direct_core_calls.py``'s own idiom for
-``EngineCore.handle``/``run``.
+"""Grep-pin canary: nothing under ``tos_runtime/src`` outside the two sanctioned doors —
+:mod:`tos_runtime.compose._types` and :mod:`tos_runtime.compose._cli_ops` — calls
+``SqliteEventInbox.clear_new_risk_halt`` directly (re-review finding RR2, 2026-09-09; second door
+added by the runtime operations wiring plan (2026-09-13) follow-up) — mirrors
+``test_no_direct_core_calls.py``'s own idiom for ``EngineCore.handle``/``run``.
 
 **Why this exists.** ``ComposedRuntime.clear_new_risk_halt`` (:mod:`tos_runtime.compose._types`)
-is the ONLY sanctioned door onto the independent-review finding #3 new-risk halt latch's clear
-path: it durably appends ``NEW_RISK_HALT_CLEARED_BY_OPERATOR`` / ``NEW_RISK_HALT_CLEAR_REFUSED``
-evidence BEFORE calling the storage-layer guard
-(:meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`). The storage layer
-performs the exact same seq/attestation checks but writes NO evidence of its own — the re-review
-measured directly that a bare ``inbox.clear_new_risk_halt(...)`` call clears the latch with zero
-evidence rows. This pin makes "only the wrapper calls it" mechanical rather than conventional.
+and ``tos_runtime.compose._cli_ops.rearm_and_clear`` are the ONLY two sanctioned doors onto the
+independent-review finding #3 new-risk halt latch's clear path — both durably append
+``NEW_RISK_HALT_CLEARED_BY_OPERATOR`` / ``NEW_RISK_HALT_CLEAR_REFUSED`` evidence BEFORE calling
+the storage-layer guard (:meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`),
+and both go through the IDENTICAL HAG two-person quorum evaluation
+(:func:`~tos_runtime.safety.rearm.prepare_new_risk_halt_clear`) first — one for a live,
+fully-composed ``ComposedRuntime``, the other for the operator CLI's ``rearm`` subcommand, which
+has no live runtime to call the first door on (``compose/cli.py``'s own "canonical blocker
+list"). The storage layer performs the exact same seq/attestation checks but writes NO evidence
+of its own — the re-review measured directly that a bare ``inbox.clear_new_risk_halt(...)`` call
+clears the latch with zero evidence rows. This pin makes "only the two doors call it" mechanical
+rather than conventional.
 
 A pattern match, not an AST walk — deliberately simple, mirroring
 ``test_no_direct_core_calls.py``'s own stated rationale. Scoped to ``tos_runtime/src`` ONLY (not
@@ -28,11 +34,19 @@ from pathlib import Path
 _RUNTIME_ROOT = Path(__file__).resolve().parents[2]  # tos/runtime
 _SRC = _RUNTIME_ROOT / "src"
 
-#: The only MODULE allowed to call ``inbox.clear_new_risk_halt(`` directly — this IS the
-#: sanctioned wrapper, by design (module docstring). No per-line marker escape hatch: there is no
-#: legitimate reason for a second production caller to exist under ``src``.
+#: The MODULES allowed to call ``inbox.clear_new_risk_halt(`` directly (module docstring). TWO,
+#: by design — both go through the IDENTICAL HAG two-person quorum evaluation
+#: (``tos_runtime.safety.rearm.prepare_new_risk_halt_clear``); neither bypasses it:
+#: ``compose/_types.py`` is the sanctioned door for a live, fully-composed ``ComposedRuntime``;
+#: ``compose/_cli_ops.py`` is the SECOND sanctioned door, added for the operator CLI's ``rearm``
+#: subcommand (team-lead directive, runtime operations wiring plan (2026-09-13) follow-up) —
+#: no live ``ComposedRuntime`` is ever reachable from the CLI today (``compose/cli.py``'s own
+#: "canonical blocker list"), so the CLI needs its own door to the SAME HAG-gated clear rather
+#: than being unable to complete a re-arm at all. No per-line marker escape hatch beyond these
+#: two: there is no legitimate reason for a THIRD production caller to exist under ``src``.
 _ALLOWED_FILES = {
     _SRC / "tos_runtime" / "compose" / "_types.py",
+    _SRC / "tos_runtime" / "compose" / "_cli_ops.py",
 }
 
 #: Matches a call to ``clear_new_risk_halt(`` on something ending in ``inbox`` (``self.inbox.``,
@@ -72,9 +86,10 @@ def test_no_direct_inbox_latch_clear_calls_outside_the_compose_wrapper() -> None
                     f"{path.relative_to(_RUNTIME_ROOT)}:{lineno}: {line.strip()}"
                 )
     assert offenders == [], (
-        "direct SqliteEventInbox.clear_new_risk_halt( call(s) found outside "
-        "tos_runtime/compose/_types.py — this bypasses the evidence-writing operator door "
-        "(re-review finding RR2):\n" + "\n".join(offenders)
+        "direct SqliteEventInbox.clear_new_risk_halt( call(s) found outside the two "
+        "sanctioned doors (tos_runtime/compose/_types.py, tos_runtime/compose/_cli_ops.py) "
+        "— this bypasses the evidence-writing operator door(s) (re-review finding RR2):\n"
+        + "\n".join(offenders)
     )
 
 

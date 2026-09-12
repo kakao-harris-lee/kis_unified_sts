@@ -26,18 +26,18 @@ the SAME idiom as ``rotate-key`` above — open the evidence store / inbox / tim
 * ``rearm --data-dir --custody-root --approvals-dir --config-dir --environment-label --seq``
   evaluates the HAG two-person re-arm quorum
   (:func:`~tos_runtime.safety.rearm.prepare_new_risk_halt_clear`) against an operator-authored
-  ``approvals_dir/rearm/<seq>.yaml`` decision file + ``approvals_dir/rearm/roster.yaml`` and
-  durably evidences the verdict (``REARM_APPROVED``/``REARM_REFUSED``). **Scope decision (mirrors
-  ``restore-drill``'s own documented narrowing above):** this subcommand does NOT itself perform
-  the storage-layer clear. :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`
-  is machine-pinned (``tests/engine/test_no_direct_latch_clear.py``) to ONE caller,
-  :meth:`~tos_runtime.compose._types.ComposedRuntime.clear_new_risk_halt` — reaching it needs a
-  live, fully-composed ``ComposedRuntime`` (the same ``ConstructionConfig``/risk-input-provider
-  gap ``run`` has, see the blocker list below). ``rearm`` exits ``0`` when the quorum is
-  ``APPROVED`` (the durable evidence a live runtime's own ``clear_new_risk_halt`` call will read
-  and re-derive — ``ReArmWorkflow`` re-checks single-use/quorum against the SAME durable history
-  every time, never a cached decision) and non-zero on any refusal; it prints which of the two
-  outcomes occurred, never silently claims the halt was cleared.
+  ``approvals_dir/rearm/<seq>.yaml`` decision file + ``approvals_dir/rearm/roster.yaml``, and —
+  only on an ``APPROVED`` outcome — clears the storage-layer latch via
+  :func:`~tos_runtime.compose._cli_ops.rearm_and_clear`, the SECOND sanctioned door onto
+  :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt` (team-lead directive:
+  since no live ``ComposedRuntime`` is ever reachable from the CLI today — the SAME
+  ``ConstructionConfig``/risk-input-provider gap ``run`` has, see the blocker list below —
+  ``ComposedRuntime.clear_new_risk_halt`` alone would leave this subcommand unable to ever
+  complete a re-arm; the machine pin, ``tests/engine/test_no_direct_latch_clear.py``, now allows
+  exactly these two callers, both gated by the SAME HAG quorum evaluation). ``rearm`` exits ``0``
+  only when the latch was actually cleared and non-zero on any refusal (quorum refused, or the
+  disclosed storage-layer TOCTOU window); it prints which outcome occurred, never silently claims
+  a clear that did not happen.
 * ``ack-alert --data-dir --custody-root --approvals-dir --environment-label --seq`` calls
   :func:`~tos_runtime.safety.ack.acknowledge_alert` against an operator-authored
   ``approvals_dir/alerts/<seq>.yaml`` file. Needs only the evidence store (no inbox, no time
@@ -120,6 +120,7 @@ from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.nontrade import NonTradeEventClass
 from tos.workload import RuntimeIdentity
 
+from tos_runtime.compose._cli_ops import rearm_and_clear
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -139,7 +140,6 @@ from tos_runtime.operations.key_rotation import (
 from tos_runtime.operations.schema_migrations import STORE_MIGRATIONS, apply_migrations
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.safety.ack import acknowledge_alert
-from tos_runtime.safety.rearm import prepare_new_risk_halt_clear
 from tos_runtime.time.config import load_time_config
 from tos_runtime.time.service import TrustworthyTimeService
 from tos_runtime.time.sources import LocalSystemClockReader, ProcessMonotonicSource
@@ -596,13 +596,6 @@ def _dispatch_rotate_key(args: RotateKeyArgs) -> int:
 #: to ``_LIVE_ENVIRONMENT_LABELS`` above.
 _TIME_CONFIG_NAME = "time.yaml"
 
-#: Duplicated from ``tos_runtime.compose._types.ComposedRuntime``'s own private
-#: ``_NEW_RISK_HALT_CLEAR_REFUSED_KIND`` (not exported) — the exact same runtime-level evidence
-#: kind string a live ``ComposedRuntime.clear_new_risk_halt`` call would use for the SAME
-#: seq/latch pre-check refusals this subcommand's own ``prepare_new_risk_halt_clear`` call can
-#: reach (``NO_LATCH``/``SEQ_MISMATCH``/``QUORUM_REFUSED``).
-_NEW_RISK_HALT_CLEAR_REFUSED_KIND = "NEW_RISK_HALT_CLEAR_REFUSED"
-
 
 def _build_cli_identity(environment_label: str) -> RuntimeIdentity:
     """This process's own :class:`~tos.workload.RuntimeIdentity` for a directly-opened (not
@@ -619,9 +612,11 @@ def _build_cli_identity(environment_label: str) -> RuntimeIdentity:
 
 
 def _dispatch_rearm(args: RearmArgs) -> int:
-    """The ``rearm`` subcommand's own dispatch (module docstring's own scope decision — this
-    evaluates the HAG quorum and durably evidences the verdict; it does NOT itself perform the
-    storage-layer clear, which is machine-pinned to ``compose/_types.py`` alone).
+    """The ``rearm`` subcommand's own dispatch — evaluates the HAG two-person quorum and, only
+    on an ``APPROVED`` outcome, clears the storage-layer latch (:func:`~tos_runtime.compose
+    ._cli_ops.rearm_and_clear` — the second sanctioned door onto
+    :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`, for exactly this
+    CLI-only, no-live-``ComposedRuntime`` case; see that module's own docstring).
 
     Opens the evidence store + inbox + a started :class:`~tos_runtime.time.service
     .TrustworthyTimeService` directly (the ``rotate-key`` idiom — no driver, no engine, no full
@@ -651,34 +646,24 @@ def _dispatch_rearm(args: RearmArgs) -> int:
             time_service.evaluate()
             time_service.evaluate()
 
-            current = inbox.new_risk_halt()
-            decision = prepare_new_risk_halt_clear(
-                current=current,
-                latched_evidence_seq=args.seq,
-                approvals_dir=args.approvals_dir,
-                evidence_store=evidence_store,
+            result = rearm_and_clear(
                 inbox=inbox,
+                evidence_store=evidence_store,
                 time_service=time_service,
+                approvals_dir=args.approvals_dir,
                 environment_label=args.environment_label,
                 expected_owner_uid=os.getuid(),
-                refused_kind=_NEW_RISK_HALT_CLEAR_REFUSED_KIND,
+                latched_evidence_seq=args.seq,
             )
         finally:
             inbox.close()
     finally:
         evidence_store.close()
 
-    if decision.refusal is not None:
-        print(f"rearm: refused — {decision.refusal.value}", file=sys.stderr)
+    if not result.cleared:
+        print(f"rearm: {result.reason}", file=sys.stderr)
         return 1
-    print(
-        f"rearm: APPROVED for evidence_seq={args.seq} — HAG two-person quorum durably "
-        "evidenced (REARM_APPROVED). This subcommand does not itself clear the latch "
-        "(tests/engine/test_no_direct_latch_clear.py restricts "
-        "SqliteEventInbox.clear_new_risk_halt to compose/_types.py) — a live "
-        "ComposedRuntime.clear_new_risk_halt(latched_evidence_seq=..., "
-        "approvals_dir=...) call against this SAME approval file completes the clear."
-    )
+    print(f"rearm: cleared evidence_seq={args.seq} (HAG two-person quorum APPROVED).")
     return 0
 
 
