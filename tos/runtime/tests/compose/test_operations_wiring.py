@@ -550,3 +550,57 @@ def test_alerts_delivery_owner_and_unresolved_seq_list_shape(
         if entry.kind == "STM_ALERT"
     ]
     assert unresolved == real_stm_alert_seqs[-50:]
+
+
+def test_acknowledging_an_alert_removes_it_from_the_unresolved_list(
+    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+) -> None:
+    """Runtime operations wiring plan (2026-09-13) §2 decision 4/8:
+    :func:`tos_runtime.safety.ack.acknowledge_alert` is the resolved-seq reader's real source
+    now. Acknowledging one of boot's own genuine ``STM_ALERT`` rows must remove exactly that
+    seq from the exported ``unresolved_stm_alert_seqs`` — and must NOT clear/latch/re-arm
+    anything else (the safety-mesh/new-risk-halt state this compose otherwise exercises stays
+    untouched by this call, per :mod:`tos_runtime.safety.ack`'s own structural pin).
+    """
+    from tos_runtime.safety.ack import acknowledge_alert
+
+    projection_path = tmp_path / "operator_projection.json"
+    runtime = _compose(
+        config_dir, data_dir, custody_root, projection_path=projection_path
+    )
+
+    real_stm_alert_seqs = [
+        entry.seq
+        for entry in runtime.evidence_store.iter_entry_meta()
+        if entry.kind == "STM_ALERT"
+    ]
+    assert real_stm_alert_seqs, "boot must have emitted at least one real STM_ALERT"
+    target_seq = real_stm_alert_seqs[0]
+
+    approvals_dir = tmp_path / "approvals"
+    ack_path = approvals_dir / "alerts" / f"{target_seq}.yaml"
+    ack_path.parent.mkdir(parents=True, exist_ok=True)
+    ack_path.write_text(
+        "environment_label: non-live-test\n"
+        "principal_id: alice\n"
+        "acknowledged_at_label: shift-handover-1\n"
+    )
+    os.chmod(ack_path, 0o600)
+
+    outcome = acknowledge_alert(
+        evidence_store=runtime.evidence_store,
+        approvals_dir=approvals_dir,
+        alert_seq=target_seq,
+        environment_label="non-live-test",
+        expected_owner_uid=os.getuid(),
+    )
+    assert outcome.acknowledged is True
+
+    new_risk_halt_before = runtime.inbox.new_risk_halt()
+
+    runtime.run_once((fx.crossing_event(),))
+
+    document = json.loads(projection_path.read_text())
+    unresolved = document["alerts"]["unresolved_stm_alert_seqs"]
+    assert target_seq not in unresolved
+    assert runtime.inbox.new_risk_halt() == new_risk_halt_before
