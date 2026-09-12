@@ -240,10 +240,6 @@ class NonTradeEventProcessor:
         ) = None,
         venue_admissibility_provider: Callable[[str], str | None] | None = None,
         time_freshness_provider: Callable[[], str | None] | None = None,
-        *,
-        evidence_recorder: (
-            object | None
-        ) = None,  # noqa: ARG002 -- transitional, see below
     ) -> None:
         """Args:
         required_legs_by_class: The event-class -> applicable-leg-set policy
@@ -257,11 +253,6 @@ class NonTradeEventProcessor:
             ``None`` when no venue admissibility source is wired.
         time_freshness_provider: Returns the injected time ``FreshnessVerdict``
             token, or ``None`` when no time source is wired.
-        evidence_recorder: **Transitional, ignored.** The old evidence-append seam —
-            accepted-but-unused only so :mod:`tos_runtime.compose._session_wiring`'s
-            still-unrerouted ``build_nontrade_processor`` (this same runtime operations wiring
-            wave's own next commit rewires it) keeps constructing this class without a
-            mid-wave TypeError. Removed the moment that caller stops passing it.
         """
         self._required_legs_by_class = required_legs_by_class
         self._dep_graph_provider = dep_graph_provider
@@ -377,14 +368,6 @@ class NonTradeEventProcessor:
             evidence_seq=None,
             queued=False,
         )
-
-    def process(self, obs: NonTradeObservation) -> NonTradeOutcome:
-        """**Transitional alias for :meth:`evaluate` — removed the moment
-        :mod:`tos_runtime.compose._types`'s ``observe_nontrade`` stops calling it** (this same
-        runtime operations wiring wave's own next commit reroutes that caller through the
-        engine). Kept only so the currently-still-wired legacy path does not break mid-wave;
-        never call this from new code — call :meth:`evaluate` directly."""
-        return self.evaluate(obs)
 
     def _resolve_admissibility(self, obs: NonTradeObservation) -> str | None:
         """The injected venue admissibility token for ``obs``'s instrument route,

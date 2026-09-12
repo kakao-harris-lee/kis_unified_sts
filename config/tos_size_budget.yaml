@@ -696,11 +696,17 @@ exceptions:
     로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
     1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 272
+  measured: 274
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-09-13 nontrade 엔진 경로 재등재 272→274(레인 g2, 계획 §2 결정 3)**:
+    `build_nontrade_processor` 호출부에서 `evidence_store=boot.infra.evidence_store,`
+    1줄 제거(드라이런 프로세서는 더 이상 evidence 포트를 받지 않음)하고 주석을
+    새 결선(엔진 경로 + `apply_nontrade_wiring` 의 드라이버 래치 바인드)에 맞춰
+    6줄→8줄로 재작성 — 순증 +2. 호출 시퀀스 자체는 무변경. root.py 는 정본 결선
+    순서 문서라 분해 대신 등재.
     **2026-09-13 G-1 런타임 운영 결선 웨이브 재등재 266→272(+6)**: `wall_clock`
     매개변수 docstring 을 G-1 결정(계획 §2 결정 1)에 맞춰 재작성
     — `TrustedWallClockReference` 가 기본값이 됨을 설명(이전엔

@@ -39,6 +39,7 @@ import yaml
 from tos.nontrade import NonTradeEventClass
 from tos_runtime.calendar import phase as calendar_phase
 from tos_runtime.calendar.ports import FixedWallClockReference
+from tos_runtime.engine.driver import EngineDriverInvariantError
 from tos_runtime.nontrade import NonTradeObservation
 
 from . import _fixtures as fx
@@ -250,9 +251,10 @@ def test_day_before_expiry_is_regular_phase_admitted_and_reaches_transport(
 
 
 # ============================================================================
-# (c) LIFECYCLE observation latches new risk, records INCIDENT_CANDIDATE once
-#     per restrictive call, first-call-wins on the latch itself, and a
-#     subsequent tick is genuinely refused.
+# (c) LIFECYCLE observation, routed through the ENGINE's own CORPORATE_ACTION handler
+#     (TOS runtime operations wiring plan §2 decision 3), latches new risk, records
+#     INCIDENT_CANDIDATE once per restrictive call, first-call-wins on the latch itself,
+#     and a subsequent tick is genuinely refused.
 # ============================================================================
 
 
@@ -275,24 +277,36 @@ def test_lifecycle_expiry_observation_latches_new_risk_first_call_wins(
     obs = _futures_lifecycle_expiry()
     outcome = runtime.observe_nontrade(obs)
     assert outcome.restrictive is True
+    assert outcome.queued is False
     assert outcome.latch_reason is not None
+    # evidence_seq now names the ENGINE's own EVENT_CONSUMED receipt (the driver's
+    # last_nontrade_evidence_seq()), never a dry-run NONTRADE_DISPOSITION seq — the dry-run
+    # processor (still wired at runtime.nontrade for the nontrade-eval CLI) records nothing.
+    assert outcome.evidence_seq == runtime.driver.last_nontrade_evidence_seq()
+    assert outcome.evidence_seq is not None
 
     halt = runtime.inbox.new_risk_halt()
     assert halt is not None
     assert halt["reason"] == outcome.latch_reason
-    assert halt["event_id"] == obs.observation_id
+    # The latched event_id is now the ENGINE's own content-addressed event identity (the
+    # stamped EngineEvent's), never obs.observation_id directly — the kernel disposition still
+    # authors the SAME reason/disposition string either way; only the identity coordinate
+    # changed shape (this is the exact rerouting this scenario now proves).
+    assert halt["event_id"] is not None
     assert _incident_candidate_count(runtime) == 1
 
     # a second, DIFFERENT restrictive observation must NOT overwrite the first latch reason
     # (record_new_risk_halt is a first-call-wins singleton, engine/inbox.py:574). Both fixtures
     # land at NONTRADE_TRAPPED here — rank 3 ("the admissibility token is neither ADMISSIBLE nor
     # RESTRICTED_PROTECTIVE_ONLY -- UNCONDITIONALLY -> NONTRADE_TRAPPED", tos.nontrade.predicates
-    # .nontrade_disposition) dominates for BOTH once the honestly-wired venue_admissibility_
-    # provider reports the venue is EXPIRED/INADMISSIBLE at this instant, so the same-string
-    # disposition is expected, not a test bug. The proof of first-call-wins is therefore on
-    # IDENTITY (the exact halt row, including `event_id`), not on the dispositions differing —
-    # an INCIDENT_CANDIDATE row is still appended for the second call (every restrictive
-    # disposition is evidenced independently), but the underlying halt row is untouched.
+    # .nontrade_disposition) dominates for BOTH: observe_nontrade's engine path does not yet wire
+    # a live venue-admissibility source (documented gap, ComposedRuntime.observe_nontrade's own
+    # docstring), so every corporate action it judges gets admissibility=None — "neither
+    # ADMISSIBLE nor RESTRICTED_PROTECTIVE_ONLY" exactly like the old dry-run path's honestly-
+    # wired EXPIRED/INADMISSIBLE token was, so the same disposition is expected, not a test bug.
+    # The proof of first-call-wins is therefore on IDENTITY (the exact halt row is untouched),
+    # not on the dispositions differing — an INCIDENT_CANDIDATE row is still appended for the
+    # second call (every restrictive disposition is evidenced independently).
     second_obs = _second_restrictive_observation()
     assert second_obs.observation_id != obs.observation_id
     second_outcome = runtime.observe_nontrade(second_obs)
@@ -301,16 +315,46 @@ def test_lifecycle_expiry_observation_latches_new_risk_first_call_wins(
     assert (
         halt_after_second == halt
     ), "first-call-wins: the second call must not change the row"
-    assert (
-        halt_after_second["event_id"] == obs.observation_id
-    ), "the latched event_id must still be the FIRST observation's, never the second's"
     assert _incident_candidate_count(runtime) == 2
 
     # a subsequent DECISION_TICK is genuinely refused by the durable latch (engine/driver.py's
     # own new-risk-halt refusal path — never a runtime re-derivation of the refusal).
     refused_tick = runtime.driver.enqueue_and_run(fx.crossing_event(seq=99))
-    assert repr(obs.observation_id) in (refused_tick.detail or "")
+    assert repr(halt["event_id"]) in (refused_tick.detail or "")
     assert refused_tick.outcome_digest is None
+
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+
+
+def test_m3_mutation_an_unbound_latch_refuses_loudly_rather_than_silently_skipping(
+    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+) -> None:
+    """Mutation lens M3 ("driver hook ignores restrictive → red"), at the compose e2e level —
+    complements ``tests/engine/test_driver_nontrade_latch.py``'s own unit-level M3 proof.
+    Detaching the bound latch AFTER a normal compose (mirrors ``bind_nontrade_latch(None)``
+    never being reachable through any real wiring path — this monkeypatches the driver's own
+    private attribute directly, the only way to reach the "never bound" state post-compose)
+    must make the very next restrictive ``observe_nontrade`` call raise
+    ``EngineDriverInvariantError`` rather than silently completing with no halt."""
+    _write_futures_calendar(config_dir)
+    _write_nontrade_config(config_dir)
+    runtime = _compose(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        wall_clock=FixedWallClockReference(_AFTER_EXPIRY_UNIX_MS),
+    )
+    _reach_trusted(runtime)
+    assert runtime.driver is not None
+    runtime.driver._nontrade_latch = (
+        None  # noqa: SLF001 -- mutation lens, not production code
+    )
+
+    obs = _futures_lifecycle_expiry()
+    with pytest.raises(EngineDriverInvariantError):
+        runtime.observe_nontrade(obs)
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()
@@ -383,10 +427,19 @@ def test_m5_mutation_regular_phase_past_expiry_would_send_and_pin_a_red(
 
 
 # ============================================================================
-# (e) Mutation lens M7: bypass the sanctioned door -- calling the processor
-#     directly (never through ComposedRuntime.observe_nontrade) must NOT
-#     latch anything, proving scenario (c)'s halt assertions genuinely depend
-#     on observe_nontrade's own wiring, not on the processor alone.
+# (e) Mutation lens M7/M8: bypass the sanctioned door -- calling the DRY-RUN evaluator
+#     directly (never through ComposedRuntime.observe_nontrade) must NOT latch anything,
+#     proving scenario (c)'s halt assertions genuinely depend on observe_nontrade's own
+#     engine-routed wiring, not on the (now evidence-free, structurally latch-incapable)
+#     processor module alone. M8 ("observe_nontrade reintroduces the out-of-engine
+#     processor latch") is pinned structurally instead of behaviorally here: this
+#     package's own grep/AST pins (tests/nontrade/test_processor.py's
+#     test_no_forbidden_capacity_or_engine_imports_under_nontrade /
+#     test_no_capacity_write_receiver_call_shapes_under_nontrade) already prove
+#     tos_runtime.nontrade never imports tos_runtime.engine and never calls a capacity/
+#     engine receiver shape at all -- NonTradeEventProcessor.evaluate() cannot reach
+#     record_new_risk_halt even if a future edit tried to reintroduce the call, because the
+#     import itself is refused.
 # ============================================================================
 
 
@@ -394,13 +447,13 @@ def test_m7_mutation_bypassing_observe_nontrade_never_latches(
     config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
 ) -> None:
     """M7: "nontrade restrictive 에서 래치 생략 → red". Calls
-    :meth:`~tos_runtime.nontrade.processor.NonTradeEventProcessor.process` DIRECTLY —
-    ``runtime.nontrade.process(obs)``, bypassing :meth:`ComposedRuntime.observe_nontrade`
+    :meth:`~tos_runtime.nontrade.processor.NonTradeEventProcessor.evaluate` DIRECTLY —
+    ``runtime.nontrade.evaluate(obs)``, bypassing :meth:`ComposedRuntime.observe_nontrade`
     entirely — and asserts the disposition is STILL genuinely restrictive (the kernel predicate
     itself is unaffected) while the durable new-risk halt latch stays completely untouched. This
     is the exact gap :meth:`observe_nontrade` exists to close; a caller that reached for the
-    processor directly instead of the sanctioned door would silently lose the latch scenario
-    (c) proves exists.
+    dry-run evaluator directly instead of the sanctioned door would silently lose the latch
+    scenario (c) proves exists.
     """
     _write_futures_calendar(config_dir)
     _write_nontrade_config(config_dir)
@@ -416,13 +469,17 @@ def test_m7_mutation_bypassing_observe_nontrade_never_latches(
     assert runtime.inbox.new_risk_halt() is None
 
     obs = _futures_lifecycle_expiry()
-    bypassed_outcome = runtime.nontrade.process(obs)
+    bypassed_outcome = runtime.nontrade.evaluate(obs)
     assert bypassed_outcome.restrictive is True, (
         "the kernel disposition itself must still be restrictive -- what M7 removes is the "
         "LATCH call, never the processor's own honest verdict"
     )
+    assert bypassed_outcome.evidence_seq is None, (
+        "the dry-run evaluator records zero evidence (TOS runtime operations wiring plan §2 "
+        "decision 3) -- there is no evidence_seq to report"
+    )
     assert runtime.inbox.new_risk_halt() is None, (
-        "M7 mutation check: calling the processor directly (bypassing "
+        "M7 mutation check: calling the evaluator directly (bypassing "
         "ComposedRuntime.observe_nontrade) must leave the new-risk halt latch completely "
         "untouched -- if this were non-None here, scenario (c)'s own latch assertions would be "
         "proving nothing about observe_nontrade specifically"
@@ -431,6 +488,74 @@ def test_m7_mutation_bypassing_observe_nontrade_never_latches(
         "the INCIDENT_CANDIDATE row is observe_nontrade's own act too -- bypassing it must "
         "leave zero candidate rows, not just zero halt rows"
     )
+
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+
+
+# ============================================================================
+# (f) Recovery barrier held: observe_nontrade queues (never judges), and the queued
+#     event is drained + judged/latched once a real driver exists again.
+# ============================================================================
+
+
+def _queued_until_recovery_count(runtime) -> int:
+    return runtime.evidence_store.connection.execute(
+        "SELECT COUNT(*) FROM entries WHERE kind = 'NONTRADE_QUEUED_UNTIL_RECOVERY'"
+    ).fetchone()[0]
+
+
+def test_barrier_held_queues_the_observation_then_drains_and_latches_once_recovered(
+    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+) -> None:
+    """No compose e2e fixture in this suite drives a genuinely-HELD recovery barrier (every
+    existing scenario reaches TRUSTED/READY) — this test simulates the held state the same way
+    scenario (a)'s M3 sibling simulates an unbound latch: composing normally, then detaching
+    ``runtime.driver`` to ``None`` (the exact post-``_recovery_wiring`` shape a real HOLD
+    verdict leaves — ``compose/_types.py``'s own :attr:`~tos_runtime.compose._types
+    .ComposedRuntime.driver` docstring), never re-deriving the barrier's own judgement.
+    """
+    _write_futures_calendar(config_dir)
+    _write_nontrade_config(config_dir)
+    runtime = _compose(
+        tmp_path,
+        config_dir,
+        data_dir,
+        custody_root,
+        wall_clock=FixedWallClockReference(_AFTER_EXPIRY_UNIX_MS),
+    )
+    _reach_trusted(runtime)
+    real_driver = runtime.driver
+    assert real_driver is not None
+    runtime.driver = None
+    assert runtime.inbox.new_risk_halt() is None
+    inbox_count_before = runtime.inbox.count
+
+    obs = _futures_lifecycle_expiry()
+    outcome = runtime.observe_nontrade(obs)
+    assert outcome.queued is True
+    assert outcome.disposition is None
+    assert outcome.restrictive is False
+    assert outcome.latch_reason is None
+    assert outcome.evidence_seq is None
+    assert _queued_until_recovery_count(runtime) == 1
+    assert runtime.inbox.count == inbox_count_before + 1
+    assert (
+        runtime.inbox.new_risk_halt() is None
+    ), "queued (not judged) must never latch -- nothing has evaluated the disposition yet"
+
+    # "recovery": a real driver exists again and drains the durably-queued event -- the SAME
+    # discipline every other crash-window-recovered row already gets (module docstring of
+    # tos_runtime.engine.driver's own _process_next).
+    runtime.driver = real_driver
+    real_driver.run_until_idle()
+    halt = runtime.inbox.new_risk_halt()
+    assert halt is not None, (
+        "the queued LIFECYCLE observation is restrictive (rank 3, no admissibility source "
+        "wired) -- draining it must judge and latch it, exactly like observe_nontrade's "
+        "own driver-wired path does"
+    )
+    assert _incident_candidate_count(runtime) == 1
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()

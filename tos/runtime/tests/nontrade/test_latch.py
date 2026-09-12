@@ -19,22 +19,14 @@ _SRC = _RUNTIME_ROOT / "src"
 #: storage-layer definition itself, this package's own shared latch, and the pre-existing
 #: callers the entrypoint-wave survey found (``scratchpad/ep-survey-wiring.md`` §3). Never
 #: widened silently — a new caller here is a design decision, not a drive-by addition.
-#:
-#: **Transitional entry (removed in the very next commit of this same wave).**
-#: ``compose/_types.py`` still calls it directly from the OLD ``observe_nontrade`` path as of
-#: this commit — that call is retired (rerouted through the engine + this module's
-#: :func:`~tos_runtime.nontrade.latch.latch_restrictive`) in the commit that reroutes
-#: ``observe_nontrade``, landed together with the ``compose/_session_wiring.py`` nontrade-block
-#: wiring; this allowlist entry is deleted in that same commit, not left standing.
+#: ``compose/_types.py``'s OLD ``observe_nontrade`` used to call this directly too; that call
+#: is retired now that ``observe_nontrade`` routes through the engine + this module's
+#: :func:`~tos_runtime.nontrade.latch.latch_restrictive` instead.
 _ALLOWED_FILES = {
     _SRC / "tos_runtime" / "engine" / "inbox.py",
     _SRC / "tos_runtime" / "nontrade" / "latch.py",
     _SRC / "tos_runtime" / "engine" / "orthostate_projection.py",
     _SRC / "tos_runtime" / "safety" / "shutdown.py",
-    _SRC
-    / "tos_runtime"
-    / "compose"
-    / "_types.py",  # transitional — see docstring above
 }
 
 #: Requires a receiver dot immediately before the call (``x.record_new_risk_halt(``) — mirrors
