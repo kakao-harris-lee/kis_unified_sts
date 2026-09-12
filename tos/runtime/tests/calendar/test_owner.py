@@ -25,7 +25,6 @@ from tos_runtime.calendar.owner import (
     SESSION_CALENDAR_BOUND_KIND,
     SESSION_FACTS_OBSERVED_KIND,
     SESSION_FACTS_SOURCE_ABSENT_KIND,
-    SESSION_OPEN_EXPECTATION_KIND,
     SessionCalendarMismatch,
     SessionFactsOwner,
 )
@@ -424,11 +423,12 @@ def test_observe_caches_within_the_same_tick_generation(
 
 
 # ============================================================================
-# SESSION_OPEN_EXPECTATION — recorded, non-authoritative, unevaluated
+# Session-open-expectation fields (folded into SESSION_FACTS_OBSERVED — team-
+# lead review follow-up, 2026-09-12: no separate kind, no per-tick firing)
 # ============================================================================
 
 
-def test_session_open_expectation_recorded_as_unevaluated(
+def test_session_open_expectation_fields_folded_into_session_facts_observed(
     tmp_path: Path, evidence_store: SqliteEvidenceStore
 ) -> None:
     calendar_path = write_fixture_calendar(tmp_path)
@@ -444,18 +444,19 @@ def test_session_open_expectation_recorded_as_unevaluated(
     owner.observe(STOCK_CLASS)
     rows = evidence_store.connection.execute(
         "SELECT payload_json FROM entries WHERE kind = ?",
-        (SESSION_OPEN_EXPECTATION_KIND,),
+        (SESSION_FACTS_OBSERVED_KIND,),
     ).fetchall()
     assert len(rows) == 1
     payload = json.loads(rows[0][0])["payload"]
-    assert payload["evaluated"] is False
+    assert payload["open_expectation_evaluated"] is False
 
 
-def test_session_open_expectation_not_recorded_when_wall_clock_absent(
+def test_session_open_expectation_fields_absent_when_wall_clock_absent(
     tmp_path: Path, evidence_store: SqliteEvidenceStore
 ) -> None:
-    """No session context, no wall clock -- SESSION_OPEN_EXPECTATION is only
-    ever recorded alongside a real observed instant."""
+    """No session context, no wall clock -- the open-expectation fields are
+    only ever folded in alongside a real observed instant (never fabricated
+    for an absent wall clock)."""
     calendar_path = write_fixture_calendar(tmp_path)
     calendar = load_calendar_config(calendar_path)
     owner = SessionFactsOwner(
@@ -467,7 +468,38 @@ def test_session_open_expectation_not_recorded_when_wall_clock_absent(
         time_trading_calendar_version=None,
     )
     owner.observe(STOCK_CLASS)
-    assert _kind_count(evidence_store, SESSION_OPEN_EXPECTATION_KIND) == 0
+    rows = evidence_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = ?",
+        (SESSION_FACTS_OBSERVED_KIND,),
+    ).fetchall()
+    assert len(rows) == 1
+    payload = json.loads(rows[0][0])["payload"]
+    assert "open_expectation_evaluated" not in payload
+
+
+def test_session_open_expectation_fields_do_not_fire_every_tick(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    """The folded fields inherit SESSION_FACTS_OBSERVED's own change-only
+    gate -- three same-phase ticks record them exactly once, not three
+    times."""
+    calendar_path = write_fixture_calendar(tmp_path)
+    calendar = load_calendar_config(calendar_path)
+    generation = _SteppingGeneration(1)
+    owner = SessionFactsOwner(
+        calendar=calendar,
+        wall_clock=FixedWallClockReference(_kst_ms(2026, 1, 5, 10, 0)),
+        evidence_store=evidence_store,
+        tick_generation_reader=generation.read,
+        time_tz_db_version=None,
+        time_trading_calendar_version=None,
+    )
+    owner.observe(STOCK_CLASS)
+    generation.generation = 2
+    owner.observe(STOCK_CLASS)
+    generation.generation = 3
+    owner.observe(STOCK_CLASS)
+    assert _kind_count(evidence_store, SESSION_FACTS_OBSERVED_KIND) == 1
 
 
 # ============================================================================

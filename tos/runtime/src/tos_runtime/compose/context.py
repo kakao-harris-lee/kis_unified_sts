@@ -79,7 +79,7 @@ import functools
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tos.afg import (
     ActionFlowDecision,
@@ -93,6 +93,7 @@ from tos.egress import (
     EgressCoordinateSet,
     EgressRequestRecord,
     QuorumCommitCertificate,
+    credential_route_authority_disjoint,
 )
 from tos.egressgw import (
     CandidateConstruction,
@@ -100,7 +101,6 @@ from tos.egressgw import (
     OrderConstructionStage,
     SendBoundaryContext,
     TransportNature,
-    VenueConstraintStage,
     send_boundary_context,
 )
 from tos.engine import AttemptRequest, InstrumentKey, StageRequest, StageVerdict
@@ -129,6 +129,7 @@ from tos_runtime.compose._request_digest import RequestBytesDigestSource
 from tos_runtime.currentness.proof import EgressCurrentnessProofIssuer
 from tos_runtime.currentness.stages import TransmissionCapabilityStage
 from tos_runtime.currentness.vector import CurrentnessAssembler
+from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import StaleEpochRead
 from tos_runtime.rcl.reservation_identity import scope_reservation_id
 from tos_runtime.risk.aggregate import (
@@ -145,13 +146,54 @@ from tos_runtime.safety.latch import (
     egress_owner_fields,
 )
 
+if TYPE_CHECKING:
+    # TYPE_CHECKING-only: _venue_phase.py imports ConstructionConfig from
+    # _types.py, which imports THIS module for ComposeContextResolver — a
+    # top-level import here would be circular. Postponed annotations (module
+    # docstring's own `from __future__ import annotations`) mean the string
+    # form below is all mypy needs.
+    from tos_runtime.compose._venue_phase import VenuePhaseStage
+
 __all__ = [
     "ComposeContextResolver",
     "RecordingActionFlowGovernor",
     "RecordingAggregateRiskService",
     "VerdictRecorder",
     "make_permit_provider",
+    "record_egress_identity_observation",
 ]
+
+#: W3.1 independent review MEDIUM-4 evidence kind — see
+#: :func:`record_egress_identity_observation`.
+_EGRESS_IDENTITY_OBSERVATION_KIND = "EGRESS_IDENTITY_OBSERVATION"
+
+
+def record_egress_identity_observation(
+    evidence_store: SqliteEvidenceStore,
+    inventory: tuple[CredentialRouteInventoryEntry, ...],
+) -> None:
+    """W3.1 independent review MEDIUM-4 disposition: EGRESS_IDENTITY is reverted to
+    pending (:mod:`tos_runtime.compose._pending_dimensions` — no dimension verdict is
+    authored from partial predicate coverage). The ONE kernel predicate this
+    composition CAN honestly evaluate —
+    :func:`~tos.egress.predicates.credential_route_authority_disjoint`, over the
+    composed (boot-time-static) credential-route inventory — is still worth recording,
+    as an EVIDENCE-ONLY OBSERVATION, never a currentness verdict: this function writes
+    it once at boot and never feeds it back into any admission decision.
+
+    Moved here from ``_wiring.py`` (team-lead review follow-up, 2026-09-12) purely for
+    that module's own size budget — no behavioural difference from having it there;
+    :func:`~tos_runtime.compose._wiring._build_context_resolver` is still the one
+    caller."""
+    evidence_store.append(
+        {
+            "credential_route_authority_disjoint": credential_route_authority_disjoint(
+                inventory
+            )
+        },
+        kind=_EGRESS_IDENTITY_OBSERVATION_KIND,
+        record_class=_EGRESS_IDENTITY_OBSERVATION_KIND,
+    )
 
 
 class VerdictRecorder:
@@ -311,7 +353,7 @@ class ComposeContextResolver:
 
     construction_stage: OrderConstructionStage
     proof_stage: ConformanceProofStage
-    venue_stage: VenueConstraintStage
+    venue_stage: VenuePhaseStage
     step4_recorder: VerdictRecorder
     step9_recorder: VerdictRecorder
     step14_stage: TransmissionCapabilityStage

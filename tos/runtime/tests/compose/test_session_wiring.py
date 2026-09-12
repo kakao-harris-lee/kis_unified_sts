@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from tos_runtime.calendar.model import WallClockReading
 from tos_runtime.calendar.owner import SessionCalendarMismatch
 from tos_runtime.calendar.ports import AbsentWallClockReference, FixedWallClockReference
 from tos_runtime.compose._session_wiring import RetiredConfigPresent
@@ -41,6 +42,19 @@ _MONDAY_2026_09_14_10_00_KST_UNIX_MS = fx.DEFAULT_WALL_CLOCK_UNIX_MS
 _MONDAY_2026_09_14_22_00_KST_UNIX_MS = 1_789_390_800_000
 #: Saturday 2026-09-19 10:00 KST -- outside any weekday-only window.
 _SATURDAY_2026_09_19_10_00_KST_UNIX_MS = 1_789_779_600_000
+
+
+class _SteppingWallClock:
+    """A settable ``WallClockReference`` test double -- the test flips
+    ``.unix_ms`` between ``run_once`` calls to prove step 3 re-reads the
+    phase PER ATTEMPT rather than capturing it once at construction (team-
+    lead review follow-up, mutation lens M1-b)."""
+
+    def __init__(self, unix_ms: int) -> None:
+        self.unix_ms = unix_ms
+
+    def read(self) -> WallClockReading:
+        return WallClockReading(unix_ms=self.unix_ms, source_label="stepping-test")
 
 
 def _write_narrow_calendar(
@@ -288,40 +302,83 @@ def test_session_facts_observed_does_not_grow_across_repeated_reads(
 
 
 # ============================================================================
-# (7) SESSION_OPEN_EXPECTATION -- recorded, zero consumers (negative-grep)
+# (7) Session-open-expectation fields -- folded into SESSION_FACTS_OBSERVED
+# (team-lead review follow-up, 2026-09-12: no separate kind), zero consumers
 # ============================================================================
 
 
-def test_session_open_expectation_is_recorded_and_never_consumed(
+def test_session_open_expectation_fields_are_recorded_and_never_consumed(
     config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
 ) -> None:
     runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
     _reach_trusted(runtime)
     runtime.session_facts.phase_for_step3(fx.INSTRUMENT_CLASS)
-    assert _kind_count(runtime, "SESSION_OPEN_EXPECTATION") >= 1
+    rows = runtime.evidence_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = 'SESSION_FACTS_OBSERVED'"
+    ).fetchall()
+    assert len(rows) >= 1
+    payload = json.loads(rows[0][0])["payload"]
+    assert payload["open_expectation_evaluated"] is False
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()
 
 
-#: Matches a read of the SESSION_OPEN_EXPECTATION evidence kind by NAME (a
-#: consumer would have to name the kind to filter/query for it) -- the sole
+#: Matches a read of the folded open-expectation field by NAME (a consumer
+#: would have to name the field to filter/query for it) -- the sole
 #: producer, calendar/owner.py, is excluded below.
-_SESSION_OPEN_EXPECTATION_MENTION = re.compile(r"SESSION_OPEN_EXPECTATION")
+_OPEN_EXPECTATION_FIELD_MENTION = re.compile(r"open_expectation_evaluated")
 
 
-def test_no_runtime_module_consumes_session_open_expectation_for_admission() -> None:
-    """Plan §2 decision 3 (b): ``SESSION_OPEN_EXPECTATION`` is recorded but
-    NON-authoritative -- nothing in the runtime reads this evidence kind back
-    to make an admission decision. A grep-pin canary (mirrors
-    ``tests/engine/test_no_direct_latch_clear.py``'s own idiom): scoped to
-    ``tos_runtime/src`` only, the sole producer (``calendar/owner.py``, which
-    defines and appends the kind) is the only allowed mention."""
+def test_no_runtime_module_consumes_open_expectation_fields_for_admission() -> None:
+    """Plan §2 decision 3 (b): the open-expectation fields folded into
+    ``SESSION_FACTS_OBSERVED`` are recorded but NON-authoritative -- nothing
+    in the runtime reads them back to make an admission decision. A
+    grep-pin canary (mirrors ``tests/engine/test_no_direct_latch_clear.py``'s
+    own idiom): scoped to ``tos_runtime/src`` only, the sole producer
+    (``calendar/owner.py``) is the only allowed mention."""
     allowed = {_SRC / "tos_runtime" / "calendar" / "owner.py"}
     offenders = []
     for path in _SRC.rglob("*.py"):
         if path in allowed:
             continue
-        if _SESSION_OPEN_EXPECTATION_MENTION.search(path.read_text(encoding="utf-8")):
+        if _OPEN_EXPECTATION_FIELD_MENTION.search(path.read_text(encoding="utf-8")):
             offenders.append(str(path))
     assert offenders == []
+
+
+# ============================================================================
+# (8) Per-attempt phase read -- mutation lens M1-b (team-lead review follow-up)
+# ============================================================================
+
+
+def test_venue_phase_is_re_read_per_attempt_not_captured_at_construction(
+    config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+) -> None:
+    """Two SEPARATE attempts, the wall clock moved across the window boundary
+    between them -- attempt 2's step-3 verdict must reflect the CURRENT
+    phase, not whatever the phase reader returned when the runtime was
+    composed. A construction-time-capture regression (mutation M1-b: build
+    one ``VenueConstraintStage`` once, at boot, and never rebuild) would see
+    attempt 2 wrongly ADMIT (the same stale phase as attempt 1), making the
+    second assertion below go red.
+    """
+    _write_narrow_calendar(config_dir)
+    clock = _SteppingWallClock(_MONDAY_2026_09_14_10_00_KST_UNIX_MS)
+    runtime = _compose(tmp_path, config_dir, data_dir, custody_root, wall_clock=clock)
+    _reach_trusted(runtime)
+
+    result1 = runtime.run_once((fx.crossing_event(seq=1),))[0]
+    assert result1.flow is not None
+    verdict_by_step_1 = {v.step.value: v for v in result1.flow.verdicts}
+    assert verdict_by_step_1["VENUE_ADMISSIBILITY_DECISION"].outcome.value == "ADMIT"
+
+    clock.unix_ms = _MONDAY_2026_09_14_22_00_KST_UNIX_MS
+
+    result2 = runtime.run_once((fx.crossing_event(seq=2),))[0]
+    assert result2.flow is not None
+    verdict_by_step_2 = {v.step.value: v for v in result2.flow.verdicts}
+    assert verdict_by_step_2["VENUE_ADMISSIBILITY_DECISION"].outcome.value != "ADMIT"
+
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()

@@ -14,21 +14,15 @@ from pathlib import Path
 
 from tos.authority import AuthorityTransitionReason
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos.egress import (
-    CredentialRouteInventoryEntry,
-    EgressCoordinateSet,
-    credential_route_authority_disjoint,
-)
+from tos.egress import EgressCoordinateSet
 from tos.egressgw import (
     ConformanceProofStage,
     EconomicEffectStage,
     OrderConstructionStage,
-    VenueConstraintStage,
 )
 from tos.engine import (
     CommitmentStep,
     StageRequest,
-    StageVerdict,
     StrategyRegistry,
 )
 from tos.engine.records import InstrumentKey
@@ -88,11 +82,13 @@ from tos_runtime.compose._types import (
     ConstructionConfig,
     ReleaseAdmissionRefused,
 )
+from tos_runtime.compose._venue_phase import VenuePhaseStage, build_venue_phase_stage
 from tos_runtime.compose.context import (
     ComposeContextResolver,
     RecordingActionFlowGovernor,
     VerdictRecorder,
     make_permit_provider,
+    record_egress_identity_observation,
 )
 from tos_runtime.currentness.proof import EgressCurrentnessProofIssuer
 from tos_runtime.currentness.stages import (
@@ -515,37 +511,10 @@ def _stage_b_release_probe(
 @dataclass
 class _ConstructionStages:
     construction_stage: OrderConstructionStage
-    venue_stage: VenueConstraintStage
+    venue_stage: VenuePhaseStage
     venue_recorder: VerdictRecorder  #: wraps venue_stage for CONSTRAINT's reader
     economic_stage: EconomicEffectStage
     proof_stage: ConformanceProofStage
-
-
-class _PhaseRefreshingVenueCall:
-    """Re-reads a late-bound ``Callable[[], str | None]`` session-phase cell fresh
-    before every call, then delegates to the real ``VenueConstraintStage`` (TOS
-    Phase 5 W5 plan §2 decision 5).
-
-    ``VenueConstraintStage`` stores ``observed_session_phase`` once, at
-    construction, as a private attribute with no public setter (kernel diff 0 —
-    ``tos.egressgw.construction.VenueConstraintStage.__init__``) — this wrapper
-    writes ``_observed_session_phase`` directly instead (a reported shim, the
-    SAME discipline :class:`~tos_runtime.compose.context.ComposeContextResolver`'s
-    own underscore-attribute reads already use, e.g.
-    ``_reconstruct_transmission_capability``'s ``self.step14_stage._log``), so
-    the kernel stage itself is never edited and every OTHER attempt still goes
-    through step 3's real, unmodified fold.
-    """
-
-    def __init__(
-        self, stage: VenueConstraintStage, phase_reader: Callable[[], str | None]
-    ) -> None:
-        self._stage = stage
-        self._phase_reader = phase_reader
-
-    def __call__(self, request: StageRequest) -> StageVerdict:
-        self._stage._observed_session_phase = self._phase_reader()  # noqa: SLF001
-        return self._stage(request)
 
 
 def _build_construction_stages(
@@ -554,13 +523,11 @@ def _build_construction_stages(
     session_phase_reader: Callable[[], str | None],
 ) -> _ConstructionStages:
     """Steps 2/3/5/11 — the kernel's OWN, already-shipped Order Construction
-    stages (design #34 §3.2).
-
-    ``session_phase_reader`` (TOS Phase 5 W5 plan §2 decision 5) supplies step
-    3's ``observed_session_phase`` fresh on every call, via
-    :class:`_PhaseRefreshingVenueCall` — replacing the former
-    ``ConstructionConfig.observed_session_phase`` literal with a live read off
-    :class:`~tos_runtime.calendar.owner.SessionFactsOwner`
+    stages (design #34 §3.2), except step 3 (:func:`build_venue_phase_stage`,
+    :mod:`tos_runtime.compose._venue_phase`), which rebuilds fresh per attempt
+    with ``session_phase_reader`` (TOS Phase 5 W5 plan §2 decision 5) —
+    replacing the former ``ConstructionConfig.observed_session_phase`` literal
+    with a live read off :class:`~tos_runtime.calendar.owner.SessionFactsOwner`
     (:mod:`tos_runtime.compose._session_wiring`).
     """
     construction_stage = OrderConstructionStage(
@@ -578,19 +545,7 @@ def _build_construction_stages(
         generation=1,
         price_field_key=construction.price_field_key,
     )
-    venue_stage = VenueConstraintStage(
-        # Overwritten by _PhaseRefreshingVenueCall before every actual call the
-        # stage map ever makes (below) -- this initial value is never read by
-        # the engine directly.
-        observed_session_phase=None,
-        action_class=construction.action_class,
-        snapshot=construction.venue_snapshot,
-        policy=construction.venue_policy,
-        shape=construction.order_shape,
-        constraints=construction.venue_shape_constraints,
-        decision=construction.venue_decision,
-        shape_price_field_key=construction.shape_price_field_key,
-    )
+    venue_stage = build_venue_phase_stage(construction, session_phase_reader)
     economic_stage = EconomicEffectStage(construction_stage=construction_stage)
     proof_stage = ConformanceProofStage(
         construction_stage=construction_stage,
@@ -602,9 +557,7 @@ def _build_construction_stages(
     return _ConstructionStages(
         construction_stage=construction_stage,
         venue_stage=venue_stage,
-        venue_recorder=VerdictRecorder(
-            _PhaseRefreshingVenueCall(venue_stage, session_phase_reader)
-        ),
+        venue_recorder=VerdictRecorder(venue_stage),
         economic_stage=economic_stage,
         proof_stage=proof_stage,
     )
@@ -841,34 +794,6 @@ def _build_currentness_stages(
     return VerdictRecorder(step13_stage), step14_stage
 
 
-#: W3.1 independent review MEDIUM-4 evidence kind — see
-#: :func:`_record_egress_identity_observation`.
-_EGRESS_IDENTITY_OBSERVATION_KIND = "EGRESS_IDENTITY_OBSERVATION"
-
-
-def _record_egress_identity_observation(
-    evidence_store: SqliteEvidenceStore,
-    inventory: tuple[CredentialRouteInventoryEntry, ...],
-) -> None:
-    """W3.1 independent review MEDIUM-4 disposition: EGRESS_IDENTITY is reverted to
-    pending (:mod:`tos_runtime.compose._pending_dimensions` — no dimension verdict is
-    authored from partial predicate coverage). The ONE kernel predicate this
-    composition CAN honestly evaluate —
-    :func:`~tos.egress.predicates.credential_route_authority_disjoint`, over the
-    composed (boot-time-static) credential-route inventory — is still worth recording,
-    as an EVIDENCE-ONLY OBSERVATION, never a currentness verdict: this function writes
-    it once at boot and never feeds it back into any admission decision."""
-    evidence_store.append(
-        {
-            "credential_route_authority_disjoint": credential_route_authority_disjoint(
-                inventory
-            )
-        },
-        kind=_EGRESS_IDENTITY_OBSERVATION_KIND,
-        record_class=_EGRESS_IDENTITY_OBSERVATION_KIND,
-    )
-
-
 def _build_context_resolver(
     *,
     construction_stages: _ConstructionStages,
@@ -898,7 +823,7 @@ def _build_context_resolver(
     per boot (F9); ``authority_epoch_service``/``safety_mesh``/``projection`` feed items 4/7-10
     + the item-16 latch/capacity owners (Phase 5 W3-b, §2 decisions 4/6/8); ``evidence_store``
     records the EGRESS_IDENTITY evidence-only observation (MEDIUM-4 —
-    :func:`_record_egress_identity_observation`) — all forwarded to
+    :func:`~tos_runtime.compose.context.record_egress_identity_observation`) — all forwarded to
     :class:`ComposeContextResolver`. ``venue_session_account_facts_reader`` (TOS Phase 5 W5 plan
     §2 decision 3) is item 12's real runtime owner read, replacing the retired
     ``tos_runtime.compose._egress_attestations`` attestation. ``request_bytes_digest_source`` is
@@ -916,7 +841,7 @@ def _build_context_resolver(
     resolved_credential_route_inventory = credential_route_inventory(
         broker_scopes, active_principal=egress_coordinates.active_principal
     )
-    _record_egress_identity_observation(
+    record_egress_identity_observation(
         evidence_store, resolved_credential_route_inventory
     )
     return ComposeContextResolver(

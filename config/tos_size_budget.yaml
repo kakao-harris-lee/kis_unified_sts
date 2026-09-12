@@ -311,11 +311,22 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1187
+  measured: 1112
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
   note: >-
+    **2026-09-12 team-lead 리뷰 후속 재등재 1187→1112(-75)**: `_PhaseRefreshingVenueCall`
+    (private-attribute 기입 방식, 전 항목)를 완전 삭제하고 신설
+    `tos_runtime/compose/_venue_phase.py::VenuePhaseStage`(매 호출마다 커널
+    `VenueConstraintStage` 를 공개 생성자로 재구성 — private 기입 0)로 대체 —
+    `_build_construction_stages` 는 `build_venue_phase_stage(construction,
+    session_phase_reader)` 팩토리 호출 1줄만 남음. `_record_egress_identity_observation`
+    +`_EGRESS_IDENTITY_OBSERVATION_KIND`(약 25줄)를 `context.py::record_egress_identity_observation`
+    로 이관(호출부 1줄만 잔존) — `_wiring.py` 자신의 성장 억제를 위해 W3.1 MEDIUM-4
+    항목을 이번에 이관. `VenueConstraintStage`/`StageVerdict`/`CredentialRouteInventoryEntry`/
+    `credential_route_authority_disjoint` import 4건도 함께 제거(모두 무사용).
+    1000줄 문턱은 여전히 초과 — 등재 유지(무예외 목표 미달성, 정직 등재).
     **2026-09-12 black 재포맷 1186→1187(+1)**.
     **2026-09-12 Phase 5 W5 재등재 1141→1186(+45)**: step 3의 `observed_session_phase`
     를 late-bound 로 전환(계획 §2 결정 5) — `_build_construction_stages` 가

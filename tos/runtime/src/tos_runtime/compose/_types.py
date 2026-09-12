@@ -10,6 +10,7 @@ import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from tos.brokeradapter import Transport
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
@@ -19,7 +20,6 @@ from tos.egressgw import (
     ConformanceProofStage,
     OrderConstructionStage,
     ProposedConstructionEnvelope,
-    VenueConstraintStage,
     VenueQuantityConstraint,
 )
 from tos.engine import (
@@ -70,6 +70,13 @@ from tos_runtime.safety.protective import ProtectiveVerdict
 from tos_runtime.safety.rearm import prepare_new_risk_halt_clear
 from tos_runtime.safety.shutdown import ControlledShutdown, ShutdownOutcome
 from tos_runtime.time.service import TrustworthyTimeService
+
+if TYPE_CHECKING:
+    # TYPE_CHECKING-only: _venue_phase.py imports ConstructionConfig FROM this
+    # module, so a top-level import here would be circular. Postponed
+    # annotations (module docstring's own `from __future__ import annotations`)
+    # mean the string form below is all mypy needs.
+    from tos_runtime.compose._venue_phase import VenuePhaseStage
 
 __all__ = [
     "ComposedRuntime",
@@ -217,7 +224,7 @@ class ComposedRuntime:
     step9_recorder: VerdictRecorder
     step14_stage: TransmissionCapabilityStage
     construction_stage: OrderConstructionStage
-    venue_stage: VenueConstraintStage
+    venue_stage: VenuePhaseStage
     proof_stage: ConformanceProofStage
     context_resolver: ComposeContextResolver
     core: EngineCore

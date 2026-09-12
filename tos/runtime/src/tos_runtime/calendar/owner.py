@@ -70,7 +70,6 @@ __all__ = [
     "SESSION_CALENDAR_BOUND_KIND",
     "SESSION_FACTS_OBSERVED_KIND",
     "SESSION_FACTS_SOURCE_ABSENT_KIND",
-    "SESSION_OPEN_EXPECTATION_KIND",
     "SessionCalendarMismatch",
     "SessionFacts",
     "SessionFactsOwner",
@@ -79,10 +78,12 @@ __all__ = [
 #: Evidence kinds (plan §2 decision 10) — runtime constants, never a kernel
 #: ``EvidenceKind`` member (mirrors ``ComposedRuntime``'s own
 #: ``_NEW_RISK_HALT_CLEARED_KIND`` precedent for a runtime-level record kind).
+#: There is no separate ``SESSION_OPEN_EXPECTATION`` kind (team-lead review
+#: follow-up, 2026-09-12: folded into ``SESSION_FACTS_OBSERVED_KIND``'s own
+#: payload — see :meth:`SessionFactsOwner._maybe_record_observed`).
 SESSION_CALENDAR_BOUND_KIND = "SESSION_CALENDAR_BOUND"
 SESSION_FACTS_SOURCE_ABSENT_KIND = "SESSION_FACTS_SOURCE_ABSENT"
 SESSION_FACTS_OBSERVED_KIND = "SESSION_FACTS_OBSERVED"
-SESSION_OPEN_EXPECTATION_KIND = "SESSION_OPEN_EXPECTATION"
 
 #: Sentinel distinguishing "never observed before" from an observed ``None``
 #: phase/expired value, so the very first observation for an instrument class
@@ -144,8 +145,9 @@ class SessionFactsOwner:
             wall_clock: The injected wall-clock reference (production default:
                 :class:`~tos_runtime.calendar.ports.AbsentWallClockReference`).
             evidence_store: Where ``SESSION_CALENDAR_BOUND``/
-                ``SESSION_FACTS_SOURCE_ABSENT``/``SESSION_FACTS_OBSERVED``/
-                ``SESSION_OPEN_EXPECTATION`` are recorded.
+                ``SESSION_FACTS_SOURCE_ABSENT``/``SESSION_FACTS_OBSERVED``
+                (the latter's payload folds in the "session open expectation"
+                fields — no separate kind) are recorded.
             tick_generation_reader: Zero-argument callable returning the
                 current tick generation, or ``None`` before any tick has run
                 (typically a late-bound cell over the durable inbox's own
@@ -302,7 +304,6 @@ class SessionFactsOwner:
         )
         maturity_fact = maturity_at(reading.unix_ms, instrument_class, self._calendar)
         session_context = self._build_session_context(phase_fact)
-        self._record_session_open_expectation(session_context)
         return SessionFacts(
             phase_fact=phase_fact,
             maturity_fact=maturity_fact,
@@ -342,55 +343,52 @@ class SessionFactsOwner:
             boundary_value=phase_fact.boundary_unix_ms,
         )
 
-    def _record_session_open_expectation(self, session_context: SessionContext) -> None:
-        """Record ``SESSION_OPEN_EXPECTATION`` (plan §2 decision 3 (b)).
-
-        ``session_open_positively`` (:mod:`tos.time.predicates`) is
-        deliberately NEVER called here: it needs a real
-        ``UncertaintyInterval`` from the reference time frame, and
-        ``TrustworthyTimeService`` exposes none today (W5 survey §3 — no
-        ``current_snapshot()`` field or public accessor carries one). Rather
-        than fabricate an interval to force a call, this records the
-        observation as explicitly UNEVALUATED — non-authoritative, consumed
-        by nothing (``tests/compose/test_session_wiring.py`` pins a
-        zero-consumer negative-grep).
-        """
-        self._evidence_store.append(
-            {
-                "evaluated": False,
-                "reason": (
-                    "no UncertaintyInterval source is exposed by "
-                    "TrustworthyTimeService today (W5 survey §3) -- "
-                    "session_open_positively is never called with a "
-                    "fabricated interval"
-                ),
-                "phase": session_context.phase,
-                "is_open": session_context.is_open,
-            },
-            kind=SESSION_OPEN_EXPECTATION_KIND,
-            record_class=SESSION_OPEN_EXPECTATION_KIND,
-        )
-
     def _maybe_record_observed(
         self, instrument_class: str, facts: SessionFacts
     ) -> None:
         """Record ``SESSION_FACTS_OBSERVED`` only when the phase token or the
         maturity ``expired`` state actually changed since the last observed
         generation for this instrument class (plan §2 decision 10 — never
-        every tick)."""
+        every tick).
+
+        Folds in the "session open expectation" fields (team-lead review
+        follow-up, 2026-09-12: a separate ``SESSION_OPEN_EXPECTATION`` kind
+        used to fire on every tick a wall-clock reading existed, unbounded by
+        the change gate below — merging its fields into THIS payload means
+        they inherit the exact same change-only trigger, never every tick
+        either). ``session_open_positively`` (:mod:`tos.time.predicates`) is
+        deliberately NEVER called: it needs a real ``UncertaintyInterval``
+        from the reference time frame, and ``TrustworthyTimeService`` exposes
+        none today (W5 survey §3 — no ``current_snapshot()`` field or public
+        accessor carries one). Rather than fabricate an interval to force a
+        call, the folded fields record this as explicitly UNEVALUATED —
+        non-authoritative, consumed by nothing
+        (``tests/compose/test_session_wiring.py`` pins a zero-consumer
+        negative-grep) — present only when a real ``session_context`` exists
+        this tick (never fabricated for an absent wall clock).
+        """
         new_phase = facts.phase_fact.phase
         new_expired = facts.maturity_fact.expired
         prev_phase = self._last_phase.get(instrument_class, _NEVER_OBSERVED)
         prev_expired = self._last_expired.get(instrument_class, _NEVER_OBSERVED)
         changed = prev_phase != new_phase or prev_expired != new_expired
         if changed:
+            payload: dict[str, object] = {
+                "instrument_class": instrument_class,
+                "phase": new_phase,
+                "expired": new_expired,
+                "tick_generation": facts.tick_generation,
+            }
+            if facts.session_context is not None:
+                payload["open_expectation_evaluated"] = False
+                payload["open_expectation_reason"] = (
+                    "no UncertaintyInterval source is exposed by "
+                    "TrustworthyTimeService today (W5 survey §3) -- "
+                    "session_open_positively is never called with a "
+                    "fabricated interval"
+                )
             self._evidence_store.append(
-                {
-                    "instrument_class": instrument_class,
-                    "phase": new_phase,
-                    "expired": new_expired,
-                    "tick_generation": facts.tick_generation,
-                },
+                payload,
                 kind=SESSION_FACTS_OBSERVED_KIND,
                 record_class=SESSION_FACTS_OBSERVED_KIND,
             )
