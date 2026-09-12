@@ -1,9 +1,10 @@
-"""Tests for :mod:`tos_runtime.nontrade.processor` (Phase 5 W5 plan §2 decision
-6, lane f3): the four synthetic fixtures' dispositions, the split-polarity and
-envelope-completeness conservative mutations, correction/reversal idempotency,
-the LIFECYCLE restrictive+latch_reason path, evidence-append-once, the
-unevaluated-predicate bookkeeping, the M7-prep non-constant-restrictive proof,
-and the package's own no-write structural pin.
+"""Tests for :mod:`tos_runtime.nontrade.processor` (originally Phase 5 W5 plan §2 decision 6,
+lane f3; narrowed to dry-run-only by the TOS runtime operations wiring plan, 2026-09-13, §2
+decision 3): the four synthetic fixtures' dispositions, the split-polarity and
+envelope-completeness conservative mutations, correction/reversal idempotency, the LIFECYCLE
+restrictive+latch_reason path, the dry-run-records-nothing proof, the unevaluated-predicate
+bookkeeping, the M7-prep non-constant-restrictive proof, and the package's own no-write
+structural pin.
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ from pathlib import Path
 from tos.nontrade import NonTradeDisposition, NonTradeEventClass
 from tos_runtime.nontrade import NonTradeEventProcessor
 
-from .conftest import FakeEvidenceRecorder
 from .fixtures.synthetic_observations import (
     cash_dividend,
     cash_dividend_missing_leg,
@@ -36,16 +36,13 @@ def _processor(
     admissible_provider=None,
     fresh_time_provider=None,
     dep_graph_provider=None,
-) -> tuple[NonTradeEventProcessor, FakeEvidenceRecorder]:
-    recorder = FakeEvidenceRecorder()
-    processor = NonTradeEventProcessor(
-        recorder,
+) -> NonTradeEventProcessor:
+    return NonTradeEventProcessor(
         required_legs_by_class,
         dep_graph_provider=dep_graph_provider,
         venue_admissibility_provider=admissible_provider,
         time_freshness_provider=fresh_time_provider,
     )
-    return processor, recorder
 
 
 # ============================================================================
@@ -56,29 +53,28 @@ def _processor(
 def test_stock_split_forward_reaches_admissible(
     required_legs_by_class, admissible_provider, fresh_time_provider
 ) -> None:
-    processor, recorder = _processor(
+    processor = _processor(
         required_legs_by_class,
         admissible_provider=admissible_provider,
         fresh_time_provider=fresh_time_provider,
     )
-    outcome = processor.process(stock_split_forward())
+    outcome = processor.evaluate(stock_split_forward())
     assert outcome.disposition is NonTradeDisposition.NONTRADE_ADMISSIBLE
     assert outcome.restrictive is False
     assert outcome.latch_reason is None
     assert outcome.predicate_results["split_polarity_coherent"] is True
     assert outcome.predicate_results["transition_envelope_complete"] is True
-    assert recorder.kinds() == ["NONTRADE_DISPOSITION"]
 
 
 def test_cash_dividend_reaches_block_new_risk_on_empty_triggers(
     required_legs_by_class, admissible_provider, fresh_time_provider
 ) -> None:
-    processor, _recorder = _processor(
+    processor = _processor(
         required_legs_by_class,
         admissible_provider=admissible_provider,
         fresh_time_provider=fresh_time_provider,
     )
-    outcome = processor.process(cash_dividend())
+    outcome = processor.evaluate(cash_dividend())
     assert outcome.disposition is NonTradeDisposition.NONTRADE_BLOCK_NEW_RISK
     assert outcome.restrictive is True
     assert outcome.predicate_results["material_change_trigger_nonempty"] is False
@@ -90,12 +86,12 @@ def test_cash_dividend_reaches_block_new_risk_on_empty_triggers(
 def test_symbol_route_change_reaches_block_new_risk(
     required_legs_by_class, admissible_provider, fresh_time_provider
 ) -> None:
-    processor, _recorder = _processor(
+    processor = _processor(
         required_legs_by_class,
         admissible_provider=admissible_provider,
         fresh_time_provider=fresh_time_provider,
     )
-    outcome = processor.process(symbol_route_change())
+    outcome = processor.evaluate(symbol_route_change())
     assert outcome.disposition is NonTradeDisposition.NONTRADE_BLOCK_NEW_RISK
     assert outcome.restrictive is True
     # lineage itself is preserved (both routes present, admissible token) even
@@ -110,10 +106,10 @@ def test_lifecycle_expiry_reaches_trapped_with_latch_reason(
     (honestly reflecting "no fresh exact decision" — plan §2 decision 7): rank 3
     of :func:`~tos.nontrade.predicates.nontrade_disposition` is unconditional, so
     this lands at ``NONTRADE_TRAPPED``, restrictive, with a latch_reason."""
-    processor, _recorder = _processor(
+    processor = _processor(
         required_legs_by_class, fresh_time_provider=fresh_time_provider
     )
-    outcome = processor.process(futures_lifecycle_expiry())
+    outcome = processor.evaluate(futures_lifecycle_expiry())
     assert outcome.disposition is NonTradeDisposition.NONTRADE_TRAPPED
     assert outcome.restrictive is True
     assert outcome.latch_reason == "NONTRADE_TRAPPED"
@@ -127,12 +123,12 @@ def test_lifecycle_expiry_reaches_trapped_with_latch_reason(
 def test_reversed_split_quantities_break_polarity_coherence(
     required_legs_by_class, admissible_provider, fresh_time_provider
 ) -> None:
-    processor, _recorder = _processor(
+    processor = _processor(
         required_legs_by_class,
         admissible_provider=admissible_provider,
         fresh_time_provider=fresh_time_provider,
     )
-    outcome = processor.process(stock_split_forward(reversed_quantities=True))
+    outcome = processor.evaluate(stock_split_forward(reversed_quantities=True))
     assert outcome.predicate_results["split_polarity_coherent"] is False
     assert outcome.disposition is NonTradeDisposition.NONTRADE_BLOCK_NEW_RISK
     assert outcome.restrictive is True
@@ -146,13 +142,13 @@ def test_reversed_split_quantities_break_polarity_coherence(
 def test_envelope_missing_a_required_leg_is_not_complete(
     required_legs_by_class, admissible_provider, fresh_time_provider
 ) -> None:
-    processor, _recorder = _processor(
+    processor = _processor(
         required_legs_by_class,
         admissible_provider=admissible_provider,
         fresh_time_provider=fresh_time_provider,
     )
-    complete_outcome = processor.process(cash_dividend())
-    incomplete_outcome = processor.process(cash_dividend_missing_leg())
+    complete_outcome = processor.evaluate(cash_dividend())
+    incomplete_outcome = processor.evaluate(cash_dividend_missing_leg())
     assert complete_outcome.predicate_results["transition_envelope_complete"] is True
     assert incomplete_outcome.predicate_results["transition_envelope_complete"] is False
     assert incomplete_outcome.disposition is NonTradeDisposition.NONTRADE_BLOCK_NEW_RISK
@@ -167,10 +163,10 @@ def test_envelope_missing_a_required_leg_is_not_complete(
 def test_correction_then_replay_is_applied_once_then_idempotent(
     required_legs_by_class,
 ) -> None:
-    processor, _recorder = _processor(required_legs_by_class)
+    processor = _processor(required_legs_by_class)
     first, replay = correction_pair()
-    first_outcome = processor.process(first)
-    replay_outcome = processor.process(replay)
+    first_outcome = processor.evaluate(first)
+    replay_outcome = processor.evaluate(replay)
     assert first_outcome.predicate_results["correction_reversal_idempotent"] == (
         "APPLIED_ONCE"
     )
@@ -182,46 +178,47 @@ def test_correction_then_replay_is_applied_once_then_idempotent(
 
 
 # ============================================================================
-# (6) evidence appended once per process()
+# (6) evaluate() is a dry run: zero evidence, zero durable state (TOS runtime
+# operations wiring plan §2 decision 3 — the engine is the only stateful path now)
 # ============================================================================
 
 
-def test_disposition_evidence_appended_exactly_once_per_process_call(
+def test_evaluate_holds_no_evidence_append_port_at_all(
     required_legs_by_class, admissible_provider, fresh_time_provider
 ) -> None:
-    processor, recorder = _processor(
+    """Structural proof, not a call-count: this class does not even HOLD an evidence-append
+    seam any more, so there is nothing an ``evaluate()`` call could append to, even by
+    accident — the old ``evidence_recorder`` constructor argument is gone entirely."""
+    processor = _processor(
         required_legs_by_class,
         admissible_provider=admissible_provider,
         fresh_time_provider=fresh_time_provider,
     )
-    processor.process(stock_split_forward())
-    disposition_appends = [
-        kind for kind in recorder.kinds() if kind == "NONTRADE_DISPOSITION"
-    ]
-    assert len(disposition_appends) == 1
+    assert not hasattr(processor, "_evidence")
+    outcome = processor.evaluate(stock_split_forward())
+    assert outcome.evidence_seq is None
+    assert outcome.queued is False
 
 
-def test_material_change_evidence_only_appended_when_dep_graph_provided(
+def test_material_change_closure_only_computed_when_dep_graph_provided(
     required_legs_by_class, admissible_provider, fresh_time_provider
 ) -> None:
-    processor_without_graph, recorder_without_graph = _processor(
+    processor_without_graph = _processor(
         required_legs_by_class,
         admissible_provider=admissible_provider,
         fresh_time_provider=fresh_time_provider,
     )
-    outcome_without_graph = processor_without_graph.process(symbol_route_change())
-    assert "NONTRADE_MATERIAL_CHANGE" not in recorder_without_graph.kinds()
+    outcome_without_graph = processor_without_graph.evaluate(symbol_route_change())
     assert outcome_without_graph.material_change_closure is None
 
     dep_graph = {"instrument:KRX:005930": frozenset({"decision:KRX:005930:001"})}
-    processor_with_graph, recorder_with_graph = _processor(
+    processor_with_graph = _processor(
         required_legs_by_class,
         admissible_provider=admissible_provider,
         fresh_time_provider=fresh_time_provider,
         dep_graph_provider=lambda: dep_graph,
     )
-    outcome_with_graph = processor_with_graph.process(symbol_route_change())
-    assert recorder_with_graph.kinds().count("NONTRADE_MATERIAL_CHANGE") == 1
+    outcome_with_graph = processor_with_graph.evaluate(symbol_route_change())
     assert outcome_with_graph.material_change_closure is not None
     assert "decision:KRX:005930:001" in outcome_with_graph.material_change_closure
 
@@ -234,7 +231,7 @@ def test_material_change_evidence_only_appended_when_dep_graph_provided(
 def test_unevaluated_names_exactly_the_skipped_predicates(
     required_legs_by_class, admissible_provider, fresh_time_provider
 ) -> None:
-    processor, _recorder = _processor(
+    processor = _processor(
         required_legs_by_class,
         admissible_provider=admissible_provider,
         fresh_time_provider=fresh_time_provider,
@@ -242,12 +239,12 @@ def test_unevaluated_names_exactly_the_skipped_predicates(
     # stock_split_forward carries a split_spec but no correction, and its event
     # class HAS a required_legs_by_class entry — only the correction predicate
     # should be unevaluated.
-    outcome = processor.process(stock_split_forward())
+    outcome = processor.evaluate(stock_split_forward())
     assert outcome.unevaluated == ("correction_reversal_idempotent",)
 
     # futures_lifecycle_expiry carries neither an envelope-config entry for its
     # class, nor a split_spec, nor a correction — all four skip.
-    lifecycle_outcome = processor.process(futures_lifecycle_expiry())
+    lifecycle_outcome = processor.evaluate(futures_lifecycle_expiry())
     assert set(lifecycle_outcome.unevaluated) == {
         "transition_envelope_complete",
         "split_polarity_coherent",
@@ -277,16 +274,16 @@ def test_unevaluated_names_exactly_the_skipped_predicates(
 def test_restrictive_is_not_a_constant_across_fixtures(
     required_legs_by_class, admissible_provider, fresh_time_provider
 ) -> None:
-    admissible_processor, _r = _processor(
+    admissible_processor = _processor(
         required_legs_by_class,
         admissible_provider=admissible_provider,
         fresh_time_provider=fresh_time_provider,
     )
-    not_restrictive = admissible_processor.process(stock_split_forward())
-    trapped_processor, _r2 = _processor(
+    not_restrictive = admissible_processor.evaluate(stock_split_forward())
+    trapped_processor = _processor(
         required_legs_by_class, fresh_time_provider=fresh_time_provider
     )
-    restrictive = trapped_processor.process(futures_lifecycle_expiry())
+    restrictive = trapped_processor.evaluate(futures_lifecycle_expiry())
     assert not_restrictive.restrictive is False
     assert restrictive.restrictive is True
     assert not_restrictive.restrictive != restrictive.restrictive
@@ -294,7 +291,10 @@ def test_restrictive_is_not_a_constant_across_fixtures(
 
 # ============================================================================
 # (9) no-write structural pin: nontrade/ never reserves, commits, releases,
-# remaps, or writes capacity/composite state (rcl is the sole authority).
+# remaps, or writes capacity/composite state (rcl is the sole authority), and
+# never imports tos_runtime.engine/.rcl/.recovery/.transport at all — including
+# nontrade/latch.py, which calls SqliteEventInbox.record_new_risk_halt through a
+# duck-typed Protocol precisely so this pin stays true.
 # Mirrors tests/operator/test_no_write_port.py's two-part idiom.
 # ============================================================================
 
@@ -343,9 +343,9 @@ def test_no_forbidden_capacity_or_engine_imports_under_nontrade() -> None:
                     offenders.append(f"{path}:{node.lineno}: from {module} import ...")
     assert not offenders, (
         "tos_runtime.nontrade must never import tos_runtime.rcl / .engine / "
-        ".recovery / .transport (Phase 5 W5 plan §2 decision 6 — nontrade "
-        "applies nothing, rcl is the sole capacity authority); offenders:\n"
-        + "\n".join(offenders)
+        ".recovery / .transport (nontrade applies nothing, rcl is the sole "
+        "capacity authority; nontrade/latch.py duck-types its inbox/evidence-store "
+        "arguments precisely to keep this true); offenders:\n" + "\n".join(offenders)
     )
 
 

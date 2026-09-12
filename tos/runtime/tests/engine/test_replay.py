@@ -30,6 +30,7 @@ from tos_runtime.engine.replay_transmit import (
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.sinks import EngineEvidenceSinkAdapter
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.nontrade.latch import latch_restrictive
 
 from . import _fixtures as fx
 from .conftest import FakeMonotonicSource
@@ -49,7 +50,7 @@ def _driver(
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
 ) -> EngineDriver:
-    return EngineDriver(
+    driver = EngineDriver(
         core=fx.build_core(transmit=None),
         inbox=inbox,
         evidence_store=evidence_store,
@@ -63,6 +64,13 @@ def _driver(
         ),
         finality_producer=fx.finality_producer(),
     )
+    # This suite's CORPORATE_ACTION replay scenarios (added kernel round #3 K-4) reach a
+    # restrictive disposition by default (fx.corporate_action_event's honestly-empty payload) —
+    # TOS runtime operations wiring plan §2 decision 3 made an un-bound latch on a restrictive
+    # result a loud EngineDriverInvariantError rather than a silent skip, so every driver this
+    # suite builds needs the real shared latch bound, exactly like a real compose root.
+    driver.bind_nontrade_latch(latch_restrictive)
+    return driver
 
 
 def test_identical_replay_matches_for_every_event(
