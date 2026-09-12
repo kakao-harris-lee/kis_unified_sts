@@ -108,6 +108,11 @@ from tos.evidence import (
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.evidence import outbox as _outbox
+from tos_runtime.operations.key_rotation import (
+    KeyContinuityRefused,
+    KeyContinuityVerdict,
+    verify_key_generation_continuity,
+)
 from tos_runtime.operations.schema_ledger import (
     compute_schema_shape_digest,
     ensure_schema_current,
@@ -119,6 +124,7 @@ __all__ = [
     "EVIDENCE_SCHEMA_VERSION",
     "EvidenceCorruption",
     "InjectedCrash",
+    "KeyContinuityRefused",
     "KeyProvider",
     "SqliteEvidenceStore",
 ]
@@ -212,14 +218,25 @@ class KeyProvider(Protocol):
     Custody of the real key bytes is ``tos_runtime.custody`` territory
     (design #40 D4, sequence item 4 — out of this slice's scope); this
     Protocol is the seam a future custody implementation satisfies. Tests
-    inject a fixed-byte double. Consulted exactly once, at construction —
-    :meth:`SqliteEvidenceStore.rotate` is the ongoing rotation mechanism
-    thereafter (explicit ``new_generation``/``new_key`` arguments, not a
-    second ``KeyProvider`` call).
+    inject a fixed-byte double. :meth:`current` is consulted exactly once, at
+    construction — :meth:`SqliteEvidenceStore.rotate` is the ongoing rotation
+    mechanism thereafter (explicit ``new_generation``/``new_key`` arguments,
+    not a second :meth:`current` call).
+
+    :meth:`generations` was added by TOS Phase 5 W4 plan §2 decision 4 — the
+    constructor's own key-generation continuity gate
+    (:func:`tos_runtime.operations.key_rotation.verify_key_generation_continuity`)
+    calls it, ALSO at construction, before :meth:`current` — every caller
+    that constructs a :class:`SqliteEvidenceStore` with a custom
+    :class:`KeyProvider` double must implement both methods.
     """
 
     def current(self) -> tuple[int, bytes]:
         """Return ``(key_generation, key_bytes)`` for the initial signing key."""
+        ...
+
+    def generations(self) -> tuple[int, ...]:
+        """Return every key generation this provider can currently supply, sorted ascending."""
         ...
 
 
@@ -234,6 +251,34 @@ class _EntryRow(NamedTuple):
     appended_at_monotonic_ns: int
     entry_digest: str
     chain_digest: str
+
+
+def _tip_key_generation(conn: sqlite3.Connection) -> int | None:
+    """The ``key_generation`` of the most recently committed ``entries`` row, or ``None`` for
+    an empty (fresh) store — the constructor's own continuity-gate input (TOS Phase 5 W4 plan
+    §2 decision 4)."""
+    row = conn.execute(
+        "SELECT key_generation FROM entries ORDER BY seq DESC LIMIT 1"
+    ).fetchone()
+    return None if row is None else int(row[0])
+
+
+def _tip_has_rotation_commit_for(conn: sqlite3.Connection, generation: int) -> bool:
+    """Whether a ``KEY_ROTATION`` entry recording ``new_key_generation == generation`` exists.
+
+    Reads ``payload_json`` in Python rather than sqlite's ``json_extract`` — the JSON1
+    extension is not guaranteed compiled into every sqlite3 build this runtime might run
+    against, and the number of rotations in a store's lifetime is small enough that a full
+    scan of ``KEY_ROTATION``-kind rows costs nothing worth optimizing for.
+    """
+    cur = conn.execute(
+        "SELECT payload_json FROM entries WHERE kind = ?", ("KEY_ROTATION",)
+    )
+    for (payload_json,) in cur:
+        payload = json.loads(payload_json)
+        if payload.get("payload", {}).get("new_key_generation") == generation:
+            return True
+    return False
 
 
 class SqliteEvidenceStore:
@@ -303,6 +348,21 @@ class SqliteEvidenceStore:
             ),
             monotonic_ns=monotonic_ns,
         )
+        # TOS Phase 5 W4 plan §2 decision 4 — the key-generation continuity gate. Must run
+        # BEFORE `key_provider.current()` is ever consulted: a boot that is not CONTINUOUS
+        # must never select (let alone sign with) any key at all (see module docstring's own
+        # forward pointer and `tos_runtime.operations.key_rotation`'s module docstring for the
+        # gap this closes).
+        continuity = verify_key_generation_continuity(
+            _tip_key_generation(self._conn),
+            lambda generation: _tip_has_rotation_commit_for(self._conn, generation),
+            key_provider.generations(),
+        )
+        if continuity.verdict != KeyContinuityVerdict.CONTINUOUS:
+            raise KeyContinuityRefused(
+                f"SqliteEvidenceStore: key generation continuity refused "
+                f"({continuity.verdict}) for {path}: {continuity.reason}"
+            )
         key_generation, key = key_provider.current()
         self._scheme = Sha256HmacChainScheme(key=key, key_generation=key_generation)
 
