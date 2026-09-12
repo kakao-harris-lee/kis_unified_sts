@@ -52,13 +52,14 @@ from tos.venue.state import session_phase_admits
 
 from tos_runtime.calendar.config import load_calendar_config
 from tos_runtime.calendar.owner import SessionFactsOwner
-from tos_runtime.calendar.ports import AbsentWallClockReference, WallClockReference
+from tos_runtime.calendar.ports import TrustedWallClockReference, WallClockReference
 from tos_runtime.compose._types import ComposedRuntime, ConstructionConfig
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.nontrade.config import NONTRADE_CONFIG_NAME, load_required_legs_config
 from tos_runtime.nontrade.processor import NonTradeEventProcessor
 from tos_runtime.time.config import TrustworthyTimeConfig
+from tos_runtime.time.service import TrustworthyTimeService
 
 __all__ = [
     "CALENDAR_CONFIG_NAME",
@@ -115,6 +116,7 @@ def build_session_facts_owner(
     wall_clock: WallClockReference | None,
     evidence_store: SqliteEvidenceStore,
     time_config: TrustworthyTimeConfig,
+    time_service: TrustworthyTimeService,
     tick_generation_reader: Callable[[], int | None],
 ) -> SessionFactsOwner:
     """Load ``calendar.yaml``, refuse a leftover ``egress_attestations.yaml``
@@ -123,13 +125,22 @@ def build_session_facts_owner(
     Args:
         config_dir: The SAME directory ``compose_paper_runtime`` was given.
         wall_clock: The injected wall-clock reference, or ``None`` to use the
-            honest production default
-            (:class:`~tos_runtime.calendar.ports.AbsentWallClockReference` —
-            plan §2 decision 2, G-1).
+            production default (G-1, runtime operations wiring plan §2
+            decision 1):
+            :class:`~tos_runtime.calendar.ports.TrustedWallClockReference`
+            bound to ``time_service`` — reads a real value once that
+            service's own boot-time ``evaluate()`` cycles have reached
+            ``HealthState.TRUSTED``, and honestly ``None`` otherwise (never
+            the permanently-absent pre-G-1 default).
         evidence_store: Where the owner's boot-time evidence rows land.
         time_config: The loaded ``time.yaml`` (``_Infra.time_config``) — the
             source of ``tz_db_version``/``trading_calendar_version`` the
             owner cross-checks against ``calendar.yaml``.
+        time_service: The SAME ``TrustworthyTimeService`` instance
+            ``_boot_services`` already started and ran its two boot-time
+            ``evaluate()`` cycles on (``_Infra.time_service``) — the source
+            :class:`~tos_runtime.calendar.ports.TrustedWallClockReference`
+            reads when ``wall_clock`` is not explicitly injected.
         tick_generation_reader: Zero-argument callable (typically
             :meth:`SessionInboxCell.read`) returning the current tick
             generation, or ``None`` before the inbox is wired.
@@ -152,7 +163,9 @@ def build_session_facts_owner(
         )
     calendar = load_calendar_config(config_dir / CALENDAR_CONFIG_NAME)
     effective_wall_clock = (
-        wall_clock if wall_clock is not None else AbsentWallClockReference()
+        wall_clock
+        if wall_clock is not None
+        else TrustedWallClockReference(time_service)
     )
     return SessionFactsOwner(
         calendar=calendar,

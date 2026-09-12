@@ -183,9 +183,14 @@ def compose_paper_runtime(
         backup_root: TOS Phase 5 W4 §2 decision 11 — where to look for the latest durable-set
             backup manifest, or ``None`` (the default) to skip backup observation entirely.
         wall_clock: TOS Phase 5 W5 plan §2 decision 2 — the injected wall-clock reference for
-            the KST session/calendar owner, or ``None`` (the default) for the honest production
-            default (:class:`~tos_runtime.calendar.ports.AbsentWallClockReference` — G-1 is
-            still pending operator decision, plan §6 ①; no CLI flag wires anything else in).
+            the KST session/calendar owner, or ``None`` (the default) for the production
+            default (G-1, runtime operations wiring plan §2 decision 1):
+            :class:`~tos_runtime.calendar.ports.TrustedWallClockReference` bound to this call's
+            own ``TrustworthyTimeService`` — reads a real value once that service's boot-time
+            ``evaluate()`` cycles (below) have reached ``HealthState.TRUSTED``, honestly
+            ``None`` otherwise; no CLI flag overrides this default (an explicit ``wall_clock``
+            argument, e.g. ``FixedWallClockReference``/``AbsentWallClockReference``, is
+            test-only).
 
     Returns:
         The fully wired :class:`ComposedRuntime`.
@@ -232,6 +237,7 @@ def compose_paper_runtime(
         wall_clock=wall_clock,
         evidence_store=boot.infra.evidence_store,
         time_config=boot.infra.time_config,
+        time_service=boot.infra.time_service,
         tick_generation_reader=session_inbox_cell.read,
     )
 
