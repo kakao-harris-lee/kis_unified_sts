@@ -66,6 +66,12 @@ class FakeReferenceReader:
     healthy: bool = True
     quality: str | None = "FAKE"
     common_mode_group: str | None = None
+    #: G-1 (runtime operations wiring plan §2 decision 1) — ``None`` by
+    #: default (every existing fixture/test in this package predates G-1 and
+    #: does not care about a wall-clock value); a test that DOES (e.g. a real
+    #: ``TrustworthyTimeService``-backed future-dated-approval pin) sets this
+    #: explicitly.
+    wall_clock_unix_ms: int | None = None
 
     def read(self) -> ReferenceObservation:
         return ReferenceObservation(
@@ -73,6 +79,7 @@ class FakeReferenceReader:
             healthy=self.healthy,
             quality=self.quality,
             common_mode_group=self.common_mode_group,
+            wall_clock_unix_ms=self.wall_clock_unix_ms,
         )
 
 
@@ -252,12 +259,24 @@ class FakeTimeService:
     exactly): returns a fixed, injected :class:`~tos.time.TimeHealthSnapshot`
     (or raises ``TimeServiceNotStarted`` when none is set) — the real FSM is
     lane K's own test scope, not this lane's. Using a duck-typed double
-    (rather than driving the real FSM to a chosen wall-clock reading, which
-    :class:`TrustworthyTimeService` cannot do — see
-    :func:`load_operator_approval_with_receipt`'s own "honest gap" docstring
-    note: ``wall_clock_observation`` is never populated by the real service
-    in the current build) keeps this test hermetic and lets it exercise the
-    expiry composition logic directly."""
+    (rather than driving the real FSM to a chosen wall-clock reading) keeps
+    most of these tests hermetic and focused on the expiry composition logic
+    directly, at an arbitrary chosen instant, without needing a real clock
+    read or a multi-``evaluate()`` FSM walk for every scenario.
+
+    G-1 update (runtime operations wiring plan §2 decision 1): the real
+    :class:`~tos_runtime.time.service.TrustworthyTimeService` CAN now
+    populate ``wall_clock_observation`` once TRUSTED, PROVIDED it is wired
+    with a reference reader that itself supplies a
+    :attr:`~tos_runtime.time.sources.ReferenceObservation.wall_clock_unix_ms`
+    value (:class:`FakeReferenceReader` above defaults this to ``None`` —
+    matching every reader already configured on the shared ``time_service``
+    fixture, unaffected). ``test_iap.py``'s
+    ``test_real_time_service_refuses_a_future_dated_issuance`` exercises this
+    end-to-end with the real service, replacing this double for that one
+    case, precisely to prove the wiring is genuinely connected now — this
+    double remains the right tool for every OTHER expiry-composition test in
+    this suite, which do not need a live FSM walk."""
 
     def __init__(self, snapshot: TimeHealthSnapshot | None = None) -> None:
         self._snapshot = snapshot

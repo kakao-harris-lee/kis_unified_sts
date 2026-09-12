@@ -83,6 +83,19 @@ MAX_clock_domain_conversion_uncertainty_ms: null
 # deployment relies on timeout injection.
 MAX_send_result_wait_ms: null
 
+# G-1 (docs/plans/2026-09-13-tos-runtime-operations-wiring-plan.md §2 decision
+# 2): the driver-loop's expected evaluate() cadence, in milliseconds. Unlike
+# every bound above, `null` here is not merely "not yet approved" -- it means
+# TrustworthyTimeService cannot derive an observed process-suspension
+# magnitude at all (no expected gap to compare an actual gap against), so
+# `suspension_status` on every issued snapshot stays unfilled (kernel
+# default), exactly as before this key existed. This key's real value is
+# still undecided as of this wave (plan §6 confirmation point (2)) -- the
+# driver loop's actual cadence is a later wave's decision. Required key
+# (must be present); `null` is a legitimate value here, not a startup
+# rejection (tos_runtime.time.config._NULLABLE_BOUND_KEYS).
+expected_evaluate_cadence_ms: null
+
 # --- non-bound identity/version strings -----------------------------------
 # Required by tos.time.TimeHealthSnapshot's own _REQUIRED_COVERED fields —
 # an ISSUED snapshot cannot exist without these regardless, so this loader

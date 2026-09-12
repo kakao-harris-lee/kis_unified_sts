@@ -50,6 +50,10 @@ class FakeReferenceReader:
     healthy: bool = True
     quality: str | None = "FAKE"
     common_mode_group: str | None = None
+    #: G-1 (runtime operations wiring plan §2 decision 1) — None by default,
+    #: matching every EXISTING test in this file (none of them care about a
+    #: wall-clock value); a test that does sets this explicitly.
+    wall_clock_unix_ms: int | None = None
 
     def read(self) -> ReferenceObservation:
         return ReferenceObservation(
@@ -57,6 +61,7 @@ class FakeReferenceReader:
             healthy=self.healthy,
             quality=self.quality,
             common_mode_group=self.common_mode_group,
+            wall_clock_unix_ms=self.wall_clock_unix_ms,
         )
 
 
@@ -502,3 +507,210 @@ def test_snapshot_exposed_only_after_evidence_append_succeeds() -> None:
     with pytest.raises(TimeServiceNotStarted):
         service.current_snapshot()
     assert service.health_state is HealthState.UNINITIALIZED
+
+
+# ----------------------------------------------------------------------------
+# G-1 (runtime operations wiring plan §2 decision 1) — wall-clock exposure
+# ----------------------------------------------------------------------------
+
+
+def test_wall_clock_now_is_none_before_trusted() -> None:
+    """M1 (plan §5 mutation table): a SYNCHRONIZING snapshot — even one
+    carrying a real wall-clock observation — must never be surfaced through
+    ``wall_clock_now()``."""
+    monotonic = FakeMonotonicSource(1000)
+    service, _ = _build(
+        monotonic=monotonic,
+        references=[FakeReferenceReader(wall_clock_unix_ms=1_700_000_000_000)],
+    )
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING only
+    assert service.health_state is HealthState.SYNCHRONIZING
+    assert service.wall_clock_now() is None
+
+
+def test_wall_clock_now_is_none_before_any_evaluate() -> None:
+    service, _ = _build(monotonic=FakeMonotonicSource(1000))
+    service.start()
+    assert service.wall_clock_now() is None
+
+
+def test_wall_clock_now_returns_the_reading_once_trusted() -> None:
+    monotonic = FakeMonotonicSource(1000)
+    service, _ = _build(
+        monotonic=monotonic,
+        references=[FakeReferenceReader(wall_clock_unix_ms=1_700_000_000_000)],
+    )
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING
+    monotonic.value = 1010
+    snap = service.evaluate()  # -> TRUSTED
+    assert service.health_state is HealthState.TRUSTED
+    assert snap.wall_clock_observation == 1_700_000_000_000
+    assert service.wall_clock_now() == 1_700_000_000_000
+
+
+def test_wall_clock_now_reverts_to_none_after_untrusted_regression() -> None:
+    """Reaching TRUSTED once does not latch wall_clock_now() permanently —
+    a later regression to UNTRUSTED must re-gate it, same as HealthState
+    itself (mirrors test_monotonic_regression_prevents_trusted_and_forces_
+    untrusted's own FSM shape)."""
+    monotonic = FakeMonotonicSource(1000)
+    service, _ = _build(
+        monotonic=monotonic,
+        references=[FakeReferenceReader(wall_clock_unix_ms=1_700_000_000_000)],
+    )
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING
+    monotonic.value = 1010
+    service.evaluate()  # -> TRUSTED
+    assert service.wall_clock_now() == 1_700_000_000_000
+
+    monotonic.value = 500  # regression -> UNTRUSTED
+    service.evaluate()
+    assert service.health_state is HealthState.UNTRUSTED
+    assert service.wall_clock_now() is None
+
+
+def test_reader_without_a_wall_clock_value_never_fabricates_one() -> None:
+    """A reference reader that does not supply wall_clock_unix_ms (the
+    default for every reader in this file's fixtures) must never see one
+    invented on its behalf — the snapshot's observation stays honestly
+    None even once TRUSTED."""
+    monotonic = FakeMonotonicSource(1000)
+    service, _ = _build(
+        monotonic=monotonic
+    )  # default FakeReferenceReader: no wall clock
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING
+    monotonic.value = 1010
+    snap = service.evaluate()  # -> TRUSTED
+    assert service.health_state is HealthState.TRUSTED
+    assert snap.wall_clock_observation is None
+    assert service.wall_clock_now() is None
+
+
+def test_time_wall_clock_exposed_evidence_appended_exactly_once() -> None:
+    """Decision 8: TIME_WALL_CLOCK_EXPOSED fires exactly once per service
+    instance, the first TRUSTED cycle that carries a wall-clock reading —
+    never again on subsequent TRUSTED cycles, and never before TRUSTED."""
+    monotonic = FakeMonotonicSource(1000)
+    service, evidence = _build(
+        monotonic=monotonic,
+        references=[FakeReferenceReader(wall_clock_unix_ms=1_700_000_000_000)],
+    )
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING: no TIME_WALL_CLOCK_EXPOSED yet
+    assert not any(r.kind == "TIME_WALL_CLOCK_EXPOSED" for r in evidence.appended)
+
+    monotonic.value = 1010
+    service.evaluate()  # -> TRUSTED: fires exactly once
+    exposed = [r for r in evidence.appended if r.kind == "TIME_WALL_CLOCK_EXPOSED"]
+    assert len(exposed) == 1
+    assert exposed[0].payload["wall_clock_observation"] == 1_700_000_000_000
+    assert exposed[0].payload["unit"] == "unix_ms"
+
+    monotonic.value = 1020
+    service.evaluate()  # still TRUSTED: no second announcement
+    exposed_again = [
+        r for r in evidence.appended if r.kind == "TIME_WALL_CLOCK_EXPOSED"
+    ]
+    assert len(exposed_again) == 1
+
+
+def test_time_wall_clock_exposed_never_fires_without_a_reading() -> None:
+    monotonic = FakeMonotonicSource(1000)
+    service, evidence = _build(monotonic=monotonic)  # no wall clock configured
+    service.start()
+    service.evaluate()
+    monotonic.value = 1010
+    service.evaluate()  # -> TRUSTED, but no wall-clock observation
+    assert service.health_state is HealthState.TRUSTED
+    assert not any(r.kind == "TIME_WALL_CLOCK_EXPOSED" for r in evidence.appended)
+
+
+# ----------------------------------------------------------------------------
+# G-1 (decision 2) — expected_evaluate_cadence_ms-gated suspension_status
+# ----------------------------------------------------------------------------
+
+
+def test_suspension_status_stays_unfilled_when_cadence_is_unset() -> None:
+    """Unchanged behavior (the current, shipped state): every existing
+    config in this distribution leaves expected_evaluate_cadence_ms null,
+    so suspension_status must stay exactly the kernel default."""
+    monotonic = FakeMonotonicSource(1000)
+    service, _ = _build(monotonic=monotonic)  # _config()'s cadence is None
+    service.start()
+    service.evaluate()
+    monotonic.value = 1010
+    snap = service.evaluate()
+    assert snap.suspension_status.suspended is False
+    assert snap.suspension_status.suspension_ms is None
+
+
+def test_suspension_ms_is_computed_when_cadence_is_configured() -> None:
+    """M7 (plan §5 mutation table, positive direction): with a real cadence
+    configured, a gap larger than it produces a positive suspension_ms —
+    proving the fill-in is not a dead branch."""
+    monotonic = FakeMonotonicSource(1000)
+    service, _ = _build(
+        monotonic=monotonic,
+        config=_config(expected_evaluate_cadence_ms=5, max_process_suspension_ms=1000),
+    )
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING, anchor at 1000
+    monotonic.value = 1010  # elapsed 10ms since the anchor, cadence 5ms
+    snap = service.evaluate()
+    assert snap.suspension_status.suspension_ms == 5  # max(0, 10 - 5)
+    assert (
+        snap.suspension_status.suspended is False
+    )  # 10 <= max_process_suspension_ms(1000)
+
+
+def test_suspension_ms_clamps_to_zero_within_cadence() -> None:
+    monotonic = FakeMonotonicSource(1000)
+    service, _ = _build(
+        monotonic=monotonic,
+        config=_config(
+            expected_evaluate_cadence_ms=1000, max_process_suspension_ms=1000
+        ),
+    )
+    service.start()
+    service.evaluate()
+    monotonic.value = 1010  # elapsed 10ms, well within the 1000ms cadence
+    snap = service.evaluate()
+    assert snap.suspension_status.suspension_ms == 0
+    assert snap.suspension_status.suspended is False
+
+
+def test_suspended_flag_reflects_the_raw_elapsed_gap_not_the_cadence() -> None:
+    """`suspended` is gated on the ABSOLUTE max_process_suspension_ms bound
+    (independent of the cadence-relative suspension_ms magnitude) —
+    deliberately different denominators for the two fields."""
+    monotonic = FakeMonotonicSource(1000)
+    service, _ = _build(
+        monotonic=monotonic,
+        config=_config(expected_evaluate_cadence_ms=1, max_process_suspension_ms=5),
+    )
+    service.start()
+    service.evaluate()
+    monotonic.value = 1010  # elapsed 10ms > max_process_suspension_ms(5)
+    snap = service.evaluate()
+    assert snap.suspension_status.suspended is True
+    assert snap.suspension_status.suspension_ms == 9  # max(0, 10 - 1)
+
+
+def test_anchor_ok_literal_is_unchanged_this_wave() -> None:
+    """Documents the deliberate scope boundary (service.py's own _anchor_ok
+    docstring): reaching TRUSTED with the default (cadence-unset) config
+    still works exactly as before -- this wave does NOT feed the observed
+    suspension_ms into the kernel anchor_valid call, because doing so would
+    make TRUSTED permanently unreachable everywhere no real cadence value
+    is configured (confirmed, not merely feared: see the docstring)."""
+    monotonic = FakeMonotonicSource(1000)
+    service, _ = _build(monotonic=monotonic)  # default config: cadence unset
+    service.start()
+    service.evaluate()
+    monotonic.value = 1010
+    service.evaluate()
+    assert service.health_state is HealthState.TRUSTED

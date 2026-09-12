@@ -22,6 +22,10 @@ _FULLY_VALUED: dict[str, object] = {
     "MIN_time_independent_reference_count": 1,
     "MAX_clock_domain_conversion_uncertainty_ms": 50,
     "MAX_send_result_wait_ms": 5000,
+    # G-1 (runtime operations wiring plan §2 decision 2): the ONE key in this
+    # "fully valued" fixture that is legitimately `null` even when every
+    # other key is filled — see _NULLABLE_BOUND_KEYS's own docstring.
+    "expected_evaluate_cadence_ms": None,
     "tz_db_version": "2026a",
     "trading_calendar_version": "cal-1",
     "verification_profile_version": "vp-0",
@@ -130,6 +134,57 @@ def test_fully_valued_config_loads(tmp_path: Path) -> None:
     assert config.trading_calendar_version == "cal-1"
     assert config.verification_profile_version == "vp-0"
     assert config.safety_profile_version == "sp-0"
+    assert config.expected_evaluate_cadence_ms is None
+
+
+# ----------------------------------------------------------------------------
+# expected_evaluate_cadence_ms (G-1, runtime operations wiring plan §2
+# decision 2) — required-but-NULLABLE, unlike every other bound key above.
+# ----------------------------------------------------------------------------
+
+
+def test_missing_cadence_key_is_rejected(tmp_path: Path) -> None:
+    """Unlike a plain dataclass construction (which defaults this field),
+    the YAML loader still requires the KEY to be present -- silent absence
+    is not the same as an explicit `null`."""
+    content = dict(_FULLY_VALUED)
+    del content["expected_evaluate_cadence_ms"]
+    path = _write_yaml(tmp_path / "time.yaml", content)
+    with pytest.raises(TimeConfigError, match="missing required keys"):
+        load_time_config(path)
+
+
+def test_null_cadence_is_accepted_unlike_other_bound_keys(tmp_path: Path) -> None:
+    """The one key this loader treats differently from every _BOUND_KEYS
+    member: `null` here loads successfully (named-TBD is a legitimate,
+    honest value), not a fail-closed rejection."""
+    path = _write_yaml(tmp_path / "time.yaml", _FULLY_VALUED)
+    config = load_time_config(path)
+    assert config.expected_evaluate_cadence_ms is None
+
+
+def test_concrete_cadence_value_loads(tmp_path: Path) -> None:
+    content = dict(_FULLY_VALUED)
+    content["expected_evaluate_cadence_ms"] = 250
+    path = _write_yaml(tmp_path / "time.yaml", content)
+    config = load_time_config(path)
+    assert config.expected_evaluate_cadence_ms == 250
+
+
+def test_negative_cadence_is_rejected(tmp_path: Path) -> None:
+    content = dict(_FULLY_VALUED)
+    content["expected_evaluate_cadence_ms"] = -1
+    path = _write_yaml(tmp_path / "time.yaml", content)
+    with pytest.raises(TimeConfigError, match="non-negative"):
+        load_time_config(path)
+
+
+def test_non_int_cadence_is_rejected(tmp_path: Path) -> None:
+    content = dict(_FULLY_VALUED)
+    content["expected_evaluate_cadence_ms"] = "soon"
+    path = _write_yaml(tmp_path / "time.yaml", content)
+    with pytest.raises(TimeConfigError, match="non-negative int or null"):
+        load_time_config(path)
 
 
 def test_example_yaml_shape_matches_loader_keys() -> None:

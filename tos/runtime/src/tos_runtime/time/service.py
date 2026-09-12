@@ -41,6 +41,7 @@ from tos.time import (
     FreshnessVerdict,
     HealthState,
     ReferenceSource,
+    SuspensionStatus,
     TimeContinuityIdentity,
     TimeHealthSnapshot,
     anchor_valid,
@@ -70,6 +71,10 @@ _STARTUP_KIND = "TIME_SERVICE_STARTUP"
 _STARTUP_RECORD_CLASS = "TIME_STARTUP"
 _SNAPSHOT_KIND = "TIME_HEALTH_SNAPSHOT"
 _SNAPSHOT_RECORD_CLASS = "TIME_HEALTH_SNAPSHOT"
+#: G-1 taking-effect announcement (runtime operations wiring plan §2
+#: decision 8) — appended exactly once per service instance.
+_WALL_CLOCK_EXPOSED_KIND = "TIME_WALL_CLOCK_EXPOSED"
+_WALL_CLOCK_EXPOSED_RECORD_CLASS = "TIME_WALL_CLOCK_EXPOSED"
 
 
 class TimeServiceNotStarted(RuntimeError):
@@ -136,6 +141,9 @@ class TrustworthyTimeService:
         self._snapshot: TimeHealthSnapshot | None = None
         self._snapshot_seq = 0
         self._last_transition_reason: str | None = None
+        #: G-1 (decision 8): whether the TIME_WALL_CLOCK_EXPOSED announcement
+        #: has already been appended for this service instance.
+        self._wall_clock_exposed = False
 
     @property
     def health_state(self) -> HealthState:
@@ -250,7 +258,34 @@ class TrustworthyTimeService:
         return from_state
 
     def _anchor_ok(self, anchor: TimeContinuityIdentity, now_ms: int) -> bool:
-        """Kernel ``anchor_valid`` call: is ``anchor`` still continuous at ``now_ms``?"""
+        """Kernel ``anchor_valid`` call: is ``anchor`` still continuous at ``now_ms``?
+
+        ``suspension_ms=0`` here is a **known, documented literal**, not an
+        observed value (survey ``scratchpad/ep-survey-wiring.md` §1b`` and
+        runtime operations wiring plan §2 decision 2's own parenthetical
+        anticipated exactly this finding). It is deliberately left
+        UNCHANGED by this wave: replacing it with the honest per-cycle
+        observation (:meth:`_observed_suspension_ms`, which is ``None``
+        whenever ``expected_evaluate_cadence_ms`` is unset — the config
+        state of every shipped example and, as surveyed, every existing test
+        fixture across this distribution) makes kernel ``anchor_valid``
+        return ``False`` unconditionally (``tos/src/tos/time/predicates.py``
+        :143-145: ``suspension_ms is None`` => invalid), which makes
+        ``HealthState.TRUSTED`` permanently unreachable anywhere this literal
+        currently lets it be reached — including the ~30 ``_reach_trusted()``
+        call sites across ``tests/compose/test_compose_root.py`` and every
+        downstream compose e2e file (owned by other lanes/shared infra, not
+        this lane), plus this lane's own ``tests/time/test_service.py`` /
+        ``tests/authority/*`` TRUSTED-reaching tests. This is a real,
+        confirmed finding (not a guess) reported back to the team lead rather
+        than applied unilaterally, since fixing the fallout crosses lane
+        ownership boundaries and only a real ``expected_evaluate_cadence_ms``
+        value (still named-TBD, plan §6 confirmation point ②) resolves it
+        honestly. Decision 2's OTHER half — exposing the observation on the
+        issued snapshot's ``suspension_status`` when a cadence IS configured
+        — is implemented below (:meth:`_observed_suspension_ms`,
+        :meth:`evaluate`) and does not touch this literal.
+        """
         continuity_now = anchor.model_copy(update={"monotonic_anchor_value": now_ms})
         return anchor_valid(
             continuity_now,
@@ -259,19 +294,64 @@ class TrustworthyTimeService:
             max_suspension_ms=self._config.max_process_suspension_ms,
         )
 
-    def _read_reference_sources(self) -> tuple[tuple[ReferenceSource, ...], int]:
+    def _observed_suspension_ms(
+        self, anchor: TimeContinuityIdentity, now_ms: int
+    ) -> tuple[bool, int | None]:
+        """Compute this cycle's ``(suspended, suspension_ms)`` observation for
+        the issued snapshot's ``suspension_status`` (G-1, runtime operations
+        wiring plan §2 decision 2) — independent of :meth:`_anchor_ok`'s own
+        (unchanged, see its docstring) literal.
+
+        Returns ``(False, None)`` unchanged — the kernel default, exactly as
+        before this method existed — whenever
+        ``expected_evaluate_cadence_ms`` is unset (``None``). When set, the
+        elapsed monotonic gap since the anchor's last-ratcheted value is
+        compared against the configured cadence:
+        ``suspension_ms = max(0, elapsed - cadence)``, and ``suspended`` is
+        whether the RAW elapsed gap itself exceeds
+        ``max_process_suspension_ms`` (an absolute bound, independent of the
+        cadence-relative magnitude).
+        """
+        cadence = self._config.expected_evaluate_cadence_ms
+        if cadence is None:
+            return False, None
+        anchor_value = anchor.monotonic_anchor_value or now_ms
+        elapsed = max(0, now_ms - anchor_value)
+        suspension_ms = max(0, elapsed - cadence)
+        suspended = elapsed > self._config.max_process_suspension_ms
+        return suspended, suspension_ms
+
+    def _read_reference_sources(
+        self,
+    ) -> tuple[tuple[ReferenceSource, ...], int, int | None]:
         """Read every injected reference source; return the kernel-shaped
-        records plus how many are reachable+healthy this cycle.
+        records, how many are reachable+healthy this cycle, and this cycle's
+        wall-clock observation (G-1, runtime operations wiring plan §2
+        decision 1).
 
         The count — not just a bool — matters as of the HIGH-2 fix (review of
         ba7d438f): whether disagreement can be honestly asserted as 0 depends
         on whether there is exactly one reachable source (nothing to disagree
         with) or more than one (a real comparison would be needed, and Phase 2
         performs none) — see :meth:`_required_ok`.
+
+        The wall-clock value is the first reachable+healthy observation that
+        actually carries one (Phase 2 wires exactly one reader kind,
+        :class:`~tos_runtime.time.sources.LocalSystemClockReader`, so in
+        practice there is at most one candidate) — never fabricated when no
+        injected reader supplies one.
         """
         observations = [reader.read() for reader in self._references]
         reachable_count = sum(
             1 for obs in observations if obs.reachable and obs.healthy
+        )
+        wall_clock_unix_ms = next(
+            (
+                obs.wall_clock_unix_ms
+                for obs in observations
+                if obs.reachable and obs.healthy and obs.wall_clock_unix_ms is not None
+            ),
+            None,
         )
         kernel_sources = tuple(
             ReferenceSource(
@@ -285,7 +365,7 @@ class TrustworthyTimeService:
             )
             for obs in observations
         )
-        return kernel_sources, reachable_count
+        return kernel_sources, reachable_count, wall_clock_unix_ms
 
     def _required_ok(
         self,
@@ -454,6 +534,8 @@ class TrustworthyTimeService:
         anchor: TimeContinuityIdentity,
         now_ms: int,
         kernel_sources: tuple[ReferenceSource, ...],
+        wall_clock_observation: int | None,
+        suspension_status: SuspensionStatus,
     ) -> TimeHealthSnapshot:
         # DigestBoundArtifact.issue() is annotated to return the BASE class
         # (no Self/TypeVar — tos/src/tos/canonical/_base.py:232), even though
@@ -477,6 +559,8 @@ class TrustworthyTimeService:
             bounds=Bounds(
                 source_disagreement_bound_ms=self._config.max_time_source_disagreement_ms
             ),
+            wall_clock_observation=wall_clock_observation,
+            suspension_status=suspension_status,
             issuer_continuity_id=anchor.monotonic_anchor_id,
             issue_monotonic_value=now_ms,
             maximum_consumer_age_ms=self._config.max_time_conservative_freshness_age_ms,
@@ -507,8 +591,11 @@ class TrustworthyTimeService:
         now_ms = self._monotonic.now_ms()
 
         anchor_ok = self._anchor_ok(anchor, now_ms)
-        kernel_sources, reachable_count = self._read_reference_sources()
+        kernel_sources, reachable_count, wall_clock_observation = (
+            self._read_reference_sources()
+        )
         required_ok = self._required_ok(anchor_ok, kernel_sources, reachable_count)
+        suspended, suspension_ms = self._observed_suspension_ms(anchor, now_ms)
 
         applied_state, reason, commit_generation, next_anchor = self._decide_transition(
             self._health_state, anchor_ok, required_ok, generation, anchor, now_ms
@@ -521,6 +608,10 @@ class TrustworthyTimeService:
             anchor=next_anchor,
             now_ms=now_ms,
             kernel_sources=kernel_sources,
+            wall_clock_observation=wall_clock_observation,
+            suspension_status=SuspensionStatus(
+                suspended=suspended, suspension_ms=suspension_ms
+            ),
         )
 
         # "영수증 없으면 일어나지 않았다" — durable commit BEFORE any of the
@@ -533,6 +624,33 @@ class TrustworthyTimeService:
             record_class=_SNAPSHOT_RECORD_CLASS,
         )
 
+        # G-1 taking-effect announcement (runtime operations wiring plan §2
+        # decision 8): exactly once per service instance, the first time a
+        # TRUSTED snapshot carries a real wall-clock observation. A SEPARATE
+        # evidence append from the snapshot's own row above — ordered after
+        # it, per the same "receipt before observable state" discipline (if
+        # THIS append raises, the snapshot itself was already durably
+        # committed and IS exposed; only the exposure flag below would not
+        # yet be set, so a retry-from-caller would correctly re-attempt this
+        # announcement on the next evaluate() rather than silently losing it).
+        if (
+            applied_state is HealthState.TRUSTED
+            and wall_clock_observation is not None
+            and not self._wall_clock_exposed
+        ):
+            self._evidence.append(
+                {
+                    "event": _WALL_CLOCK_EXPOSED_KIND,
+                    "snapshot_id": snapshot.snapshot_id,
+                    "wall_clock_observation": wall_clock_observation,
+                    "unit": "unix_ms",
+                    "source_label": "LOCAL_SYSTEM_CLOCK",
+                },
+                kind=_WALL_CLOCK_EXPOSED_KIND,
+                record_class=_WALL_CLOCK_EXPOSED_RECORD_CLASS,
+            )
+            self._wall_clock_exposed = True
+
         if commit_generation != generation.current:
             generation.next()
         self._anchor = next_anchor
@@ -540,3 +658,19 @@ class TrustworthyTimeService:
         self._last_transition_reason = reason
         self._snapshot = snapshot
         return snapshot
+
+    def wall_clock_now(self) -> int | None:
+        """The current wall-clock reading, or ``None`` (G-1, runtime
+        operations wiring plan §2 decision 1).
+
+        Gated on ``HealthState.TRUSTED``: a ``SYNCHRONIZING``/``DEGRADED_
+        HOLDOVER``/``UNTRUSTED`` cycle — even one whose snapshot happens to
+        carry a wall-clock observation — never exposes it through this
+        method. This is the ONE read
+        :class:`~tos_runtime.calendar.ports.TrustedWallClockReference` calls;
+        it never reads ``current_snapshot().wall_clock_observation`` directly
+        (which would skip this gate).
+        """
+        if self._health_state is not HealthState.TRUSTED or self._snapshot is None:
+            return None
+        return self._snapshot.wall_clock_observation

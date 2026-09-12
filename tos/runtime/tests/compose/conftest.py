@@ -77,6 +77,15 @@ def config_dir(tmp_path: Path) -> Path:
             "MIN_time_independent_reference_count": 1,
             "MAX_clock_domain_conversion_uncertainty_ms": 50,
             "MAX_send_result_wait_ms": 5000,
+            # G-1 (runtime operations wiring plan §2 decision 2): still
+            # named-TBD as of this wave (plan §6 confirmation point (2)) --
+            # `null` here is the honest "no cadence decision yet" value, not
+            # a rejected one (tos_runtime.time.config._NULLABLE_BOUND_KEYS).
+            # Left null deliberately: the compose e2e suite's own boot-time
+            # TRUSTED reachability does not depend on this key (service.py's
+            # _anchor_ok literal is unchanged this wave -- see that method's
+            # docstring for why replacing it is NOT done here).
+            "expected_evaluate_cadence_ms": None,
             "tz_db_version": "tzdb-compose-0",
             "trading_calendar_version": "cal-compose-0",
             "verification_profile_version": "ver-compose-0",

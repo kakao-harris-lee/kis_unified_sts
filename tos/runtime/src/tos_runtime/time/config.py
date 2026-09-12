@@ -79,6 +79,19 @@ _VERSION_KEYS: tuple[str, ...] = (
     "safety_profile_version",
 )
 
+#: G-1 (runtime operations wiring plan §2 decision 2): the driver-loop
+#: cadence ``TrustworthyTimeService`` needs to turn a raw elapsed-monotonic
+#: gap into an observed suspension magnitude. Unlike every key in
+#: ``_BOUND_KEYS`` above, this one stays REQUIRED-but-NULLABLE: the key must
+#: be present (no silent absence), but ``null`` is a legitimate, honest
+#: "no cadence decision yet" value (named-TBD; plan §6 confirmation point ②
+#: — the driver loop's real cadence is undecided as of this wave), not a
+#: fail-closed rejection like the VER-002 bound keys above. When ``null``,
+#: ``TrustworthyTimeService`` fills ``suspension_status`` exactly as before
+#: this key existed (kernel default — unobserved); a concrete value turns the
+#: computation on.
+_NULLABLE_BOUND_KEYS: tuple[str, ...] = ("expected_evaluate_cadence_ms",)
+
 #: Bound keys that must be strictly positive rather than merely non-negative (independent review
 #: finding #16, 2026-09-09): ``MAX_send_result_wait_ms`` is the wait bound
 #: :class:`~tos_runtime.engine.driver.EngineDriver`'s ``_TimeoutTracker`` uses before injecting a
@@ -129,6 +142,14 @@ class TrustworthyTimeConfig:
     trading_calendar_version: str
     verification_profile_version: str
     safety_profile_version: str
+    #: G-1 (runtime operations wiring plan §2 decision 2): ``None`` (named-TBD)
+    #: until a Bounds-Approver/driver-loop decision fills it in. Defaults to
+    #: ``None`` here (unlike every field above) so every EXISTING direct
+    #: ``TrustworthyTimeConfig(...)`` construction across this distribution's
+    #: test suite keeps working unchanged; :func:`load_time_config` still
+    #: requires the YAML key to be PRESENT (see ``_NULLABLE_BOUND_KEYS``) —
+    #: only a bare dataclass construction may omit it.
+    expected_evaluate_cadence_ms: int | None = None
 
 
 def _require_mapping(path: Path) -> dict[str, Any]:
@@ -181,6 +202,31 @@ def _resolve_bounds(raw: dict[str, Any]) -> dict[str, Any]:
     return resolved
 
 
+def _resolve_nullable_bounds(raw: dict[str, Any]) -> dict[str, Any]:
+    """Resolve :data:`_NULLABLE_BOUND_KEYS` — present-but-``null``-allowed,
+    unlike :func:`_resolve_bounds`'s fail-closed-on-``null`` keys."""
+    missing = [key for key in _NULLABLE_BOUND_KEYS if key not in raw]
+    if missing:
+        raise TimeConfigError(f"time config missing required keys: {missing}")
+    resolved: dict[str, Any] = {}
+    for key in _NULLABLE_BOUND_KEYS:
+        value = raw[key]
+        if value is None:
+            resolved[key] = None
+            continue
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TimeConfigError(
+                f"time config key {key!r} must be a non-negative int or null "
+                f"(got {value!r})"
+            )
+        if value < 0:
+            raise TimeConfigError(
+                f"time config key {key!r} must be non-negative (got {value!r})"
+            )
+        resolved[key] = value
+    return resolved
+
+
 def _resolve_versions(raw: dict[str, Any]) -> dict[str, Any]:
     missing = [key for key in _VERSION_KEYS if key not in raw]
     if missing:
@@ -213,5 +259,6 @@ def load_time_config(path: Path) -> TrustworthyTimeConfig:
     """
     raw = _require_mapping(path)
     bounds = _resolve_bounds(raw)
+    nullable_bounds = _resolve_nullable_bounds(raw)
     versions = _resolve_versions(raw)
-    return TrustworthyTimeConfig(**bounds, **versions)
+    return TrustworthyTimeConfig(**bounds, **nullable_bounds, **versions)
