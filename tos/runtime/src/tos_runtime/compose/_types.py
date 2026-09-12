@@ -64,6 +64,8 @@ from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import NewRiskHaltClearOutcome, SqliteEventInbox
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.nontrade.observations import NonTradeObservation
+from tos_runtime.nontrade.processor import NonTradeEventProcessor, NonTradeOutcome
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.recovery.barrier import RecoveryVerdict
 from tos_runtime.safety.protective import ProtectiveVerdict
@@ -284,6 +286,14 @@ class ComposedRuntime:
     #: ``None`` only transiently before that wiring runs — never observable on a runtime a
     #: caller actually receives (mirrors :attr:`recovery`'s own docstring).
     session_facts: SessionFactsOwner | None = None
+    #: TOS Phase 5 W5 plan §2 decision 7 — the non-trade event processor, set by
+    #: :func:`~tos_runtime.compose._session_wiring.apply_nontrade_wiring` (called from
+    #: :func:`~tos_runtime.compose.root.compose_paper_runtime`, right after
+    #: ``apply_session_wiring``). ``None`` only transiently before that wiring runs — never
+    #: observable on a runtime a caller actually receives (mirrors :attr:`session_facts`'s own
+    #: docstring). Never call :attr:`nontrade`'s own ``process`` directly to reach a new-risk
+    #: latch — :meth:`observe_nontrade` is the sanctioned door (module docstring discipline).
+    nontrade: NonTradeEventProcessor | None = None
 
     def run_once(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
         """Drive ``events`` through :attr:`driver` to completion, one at a time.
@@ -442,4 +452,57 @@ class ComposedRuntime:
                 record_class=self._NEW_RISK_HALT_CLEAR_REFUSED_KIND,
             )
             return NewRiskHaltClearOutcome.STORAGE_REFUSED
+        return outcome
+
+    #: The evidence kind :meth:`observe_nontrade` appends for a restrictive disposition (TOS
+    #: Phase 5 W5 plan §2 decision 7 / §6 confirmation ⑨) — a runtime-level record kind, not a
+    #: kernel ``EvidenceKind`` or a ``tos.nontrade`` producer: ``IncidentService`` has no
+    #: candidate-reporting entry point (:mod:`tos_runtime.nontrade.processor` module docstring
+    #: "Report back" section), so this is the only "incident candidate" trace this runtime can
+    #: leave until an operator decides whether to add a real entry point.
+    _INCIDENT_CANDIDATE_KIND = "INCIDENT_CANDIDATE"
+
+    def observe_nontrade(self, obs: NonTradeObservation) -> NonTradeOutcome:
+        """Fold one non-trade observation through :attr:`nontrade` and, when restrictive, latch
+        a new-risk halt (TOS Phase 5 W5 plan §2 decision 7).
+
+        THE sanctioned door from an observed non-trade event to the new-risk halt latch:
+        :mod:`tos_runtime.nontrade`'s own processor never calls
+        :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.record_new_risk_halt` itself (its
+        module docstring's own "Latching is a different lane's job" section names this method as
+        that lane). The evidence-before-state-change ordering below mirrors
+        :meth:`clear_new_risk_halt`'s own discipline (that method's ``NEW_RISK_HALT_CLEARED_BY_
+        OPERATOR`` row is appended BEFORE its storage-layer call): the ``INCIDENT_CANDIDATE`` row
+        is appended first, so a crash between the two leaves a durable trace of the disposition
+        that was ABOUT to latch, never a bare halt row with no explanation reachable from it.
+
+        Args:
+            obs: The observed non-trade event.
+
+        Returns:
+            The :class:`~tos_runtime.nontrade.processor.NonTradeOutcome` — unchanged from what
+            :attr:`nontrade` itself produced.
+
+        Raises:
+            AssertionError: :attr:`nontrade` is ``None`` (wiring has not run yet — never
+                observable on a runtime a caller actually receives, mirrors every other
+                transiently-``None`` attribute's own discipline on this class).
+        """
+        assert self.nontrade is not None, "ComposedRuntime.nontrade is not wired yet"
+        outcome = self.nontrade.process(obs)
+        if outcome.restrictive:
+            self.evidence_store.append(
+                {
+                    "observation_id": outcome.observation_id,
+                    "disposition": outcome.disposition.value,
+                    "latch_reason": outcome.latch_reason,
+                },
+                kind=self._INCIDENT_CANDIDATE_KIND,
+                record_class=self._INCIDENT_CANDIDATE_KIND,
+            )
+            self.inbox.record_new_risk_halt(
+                reason=outcome.latch_reason or outcome.disposition.value,
+                event_id=obs.observation_id,
+                evidence_seq=outcome.evidence_seq,
+            )
         return outcome

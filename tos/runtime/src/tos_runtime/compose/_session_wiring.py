@@ -1,4 +1,4 @@
-"""Phase 5 W5 session/calendar compose wiring (plan §2 decisions 1-5,
+"""Phase 5 W5 session/calendar compose wiring (plan §2 decisions 1-5 and 7,
 ``docs/plans/2026-09-12-tos-phase5-w5-scenarios-plan.md``).
 
 Builds the :class:`~tos_runtime.calendar.owner.SessionFactsOwner` and attaches
@@ -22,21 +22,42 @@ identical reason — :func:`apply_session_wiring`, called immediately after
 ``apply_recovery_barrier``), fills it in and attaches the owner to
 :attr:`~tos_runtime.compose._types.ComposedRuntime.session_facts`.
 
+**Rollover wiring (plan §2 decision 7).** :func:`build_nontrade_processor` /
+:func:`apply_nontrade_wiring` construct a
+:class:`~tos_runtime.nontrade.processor.NonTradeEventProcessor` and attach it
+to :attr:`~tos_runtime.compose._types.ComposedRuntime.nontrade`. Its
+``venue_admissibility_provider`` is wired HONESTLY, not left ``None``: this
+compose root has exactly one live scope (one ``ConstructionConfig``), so the
+provider ignores the observation's own route-identity argument (there is
+nothing to select AMONG) and folds the REAL, currently-observed session phase
+(the SAME ``session_phase_reader`` step 3 itself reads) through the kernel's
+own ``tos.venue.state.session_phase_admits`` against the REAL
+``venue_policy``/``venue_snapshot``/``action_class`` this runtime composed
+with — never a runtime re-derivation of admissibility, and never a fabricated
+constant. ``dep_graph_provider``/``time_freshness_provider`` are left ``None``
+(no real venue-dependency-graph or time-freshness source exists in this
+runtime yet — W5 survey; a fabricated one would be worse than an honest gap).
+
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib
-(``pathlib``) + ``tos_runtime.*`` only. No ``shared.*``.
+(``pathlib``) + ``tos.venue`` (``session_phase_admits`` only) + ``tos_runtime.*``
+only. No ``shared.*``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
+
+from tos.venue.state import session_phase_admits
 
 from tos_runtime.calendar.config import load_calendar_config
 from tos_runtime.calendar.owner import SessionFactsOwner
 from tos_runtime.calendar.ports import AbsentWallClockReference, WallClockReference
-from tos_runtime.compose._types import ComposedRuntime
+from tos_runtime.compose._types import ComposedRuntime, ConstructionConfig
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.nontrade.config import NONTRADE_CONFIG_NAME, load_required_legs_config
+from tos_runtime.nontrade.processor import NonTradeEventProcessor
 from tos_runtime.time.config import TrustworthyTimeConfig
 
 __all__ = [
@@ -44,7 +65,9 @@ __all__ = [
     "RETIRED_EGRESS_ATTESTATIONS_CONFIG_NAME",
     "RetiredConfigPresent",
     "SessionInboxCell",
+    "apply_nontrade_wiring",
     "apply_session_wiring",
+    "build_nontrade_processor",
     "build_session_facts_owner",
 ]
 
@@ -167,4 +190,85 @@ def apply_session_wiring(
     """
     session_inbox_cell.inbox = runtime.inbox
     runtime.session_facts = session_facts_owner
+    return runtime
+
+
+def build_nontrade_processor(
+    *,
+    config_dir: Path,
+    evidence_store: SqliteEvidenceStore,
+    construction: ConstructionConfig,
+    session_phase_reader: Callable[[], str | None],
+    dep_graph_provider: Callable[[], Mapping[str, frozenset[str]] | None] | None = None,
+    time_freshness_provider: Callable[[], str | None] | None = None,
+) -> NonTradeEventProcessor:
+    """Load ``nontrade.yaml`` and construct the
+    :class:`~tos_runtime.nontrade.processor.NonTradeEventProcessor` (plan §2
+    decision 7).
+
+    Args:
+        config_dir: The SAME directory ``compose_paper_runtime`` was given.
+        evidence_store: Where ``NONTRADE_DISPOSITION``/``NONTRADE_MATERIAL_CHANGE``
+            land (the processor's own evidence recorder).
+        construction: This runtime's single ``ConstructionConfig`` scope — the
+            source of the REAL ``venue_policy``/``venue_snapshot``/``action_class``
+            the honest ``venue_admissibility_provider`` below folds through the
+            kernel's own ``session_phase_admits``.
+        session_phase_reader: The SAME zero-argument callable step 3 reads
+            (module docstring) — never a second, independently-derived phase
+            read that could disagree with step 3 within one attempt.
+        dep_graph_provider: Forwarded to the processor unchanged; ``None``
+            (the honest default — no real dependency-graph source exists yet).
+        time_freshness_provider: Forwarded unchanged; ``None`` (no real time-
+            freshness source exists yet).
+
+    Raises:
+        tos_runtime.nontrade.config.NonTradeConfigError: ``nontrade.yaml`` is
+            missing/malformed/still named-TBD for a present class key.
+    """
+    required_legs = load_required_legs_config(config_dir / NONTRADE_CONFIG_NAME)
+
+    def _venue_admissibility_provider(_route_key: str) -> str | None:
+        """Module docstring's honest, single-scope admissibility read — the
+        route-identity argument is unused because this compose root has
+        exactly one scope to answer for, never a multi-route lookup."""
+        result = session_phase_admits(
+            observed_phase=session_phase_reader(),
+            action=construction.action_class,
+            snapshot=construction.venue_snapshot,
+            policy=construction.venue_policy,
+        )
+        return result.value
+
+    return NonTradeEventProcessor(
+        evidence_recorder=evidence_store,
+        required_legs_by_class=required_legs,
+        dep_graph_provider=dep_graph_provider,
+        venue_admissibility_provider=_venue_admissibility_provider,
+        time_freshness_provider=time_freshness_provider,
+    )
+
+
+def apply_nontrade_wiring(
+    runtime: ComposedRuntime, *, nontrade_processor: NonTradeEventProcessor | None
+) -> ComposedRuntime:
+    """Attach ``nontrade_processor`` to ``runtime`` (plan §2 decision 7).
+
+    Args:
+        runtime: The composed runtime — mutated in place and returned (same
+            discipline as :func:`apply_session_wiring`).
+        nontrade_processor: Built by :func:`build_nontrade_processor`, or
+            ``None`` when ``config_dir`` carries no ``nontrade.yaml`` at all —
+            a compose root with no non-trade observation source configured is
+            a legitimate, deliberate "not configured" state (the SAME
+            optionality :func:`~tos_runtime.compose.root.compose_paper_runtime`
+            already gives ``projection_path``/``backup_root``), never a boot
+            refusal for every OTHER existing compose e2e test that predates
+            this wiring.
+
+    Returns:
+        ``runtime`` itself, with :attr:`~tos_runtime.compose._types.ComposedRuntime
+        .nontrade` set (possibly to ``None``).
+    """
+    runtime.nontrade = nontrade_processor
     return runtime

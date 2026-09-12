@@ -656,11 +656,18 @@ exceptions:
     import 가 완전히 사라진다(순환을 우회가 아니라 제거). `gateway.py`/`mesh.py` 는
     이 모듈에서 `_verdict` 를 import.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 242
+  measured: 261
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-09-12 Phase 5 W5 rollover 재등재 242→261(+19)**: 결선 순서 문서에 nontrade
+    소비자 배선 1건 추가(계획 §2 결정 7, 레인 f4) — `apply_session_wiring` 직후
+    `apply_nontrade_wiring(composed, nontrade_processor=(build_nontrade_processor(...)
+    if (config_dir / NONTRADE_CONFIG_NAME).is_file() else None))` 호출(주석 4줄 +
+    삼항식으로 `nontrade.yaml` 부재 시 선택적 스킵 — 기존 모든 compose e2e 테스트가
+    이 파일 없이도 그대로 부팅되도록). import 1줄(`NONTRADE_CONFIG_NAME`) 추가.
+    root.py 는 정본 결선 순서 문서라 분해 대신 등재.
     **2026-09-12 black 재포맷 235→242(+7)**.
     **2026-09-12 Phase 5 W5 재등재 201→235(+34)**: `wall_clock` 매개변수 1개
     (docstring Args 1항목 포함) + 세션-사실 owner 조기 구성(계획 §2 결정 3 —

@@ -81,7 +81,9 @@ from tos_runtime.compose._release_wiring import apply_release_wiring
 from tos_runtime.compose._request_digest import KisWireCodecDigest
 from tos_runtime.compose._session_wiring import (
     SessionInboxCell,
+    apply_nontrade_wiring,
     apply_session_wiring,
+    build_nontrade_processor,
     build_session_facts_owner,
 )
 from tos_runtime.compose._transport_wiring import TransportKind
@@ -97,6 +99,7 @@ from tos_runtime.compose._wiring import (
     _build_realized_stages,
     _build_stage_map,
 )
+from tos_runtime.nontrade.config import NONTRADE_CONFIG_NAME
 from tos_runtime.risk.aggregate import (
     AggregateRiskDecisionInputs,
 )
@@ -341,6 +344,25 @@ def compose_paper_runtime(
         composed,
         session_inbox_cell=session_inbox_cell,
         session_facts_owner=session_facts_owner,
+    )
+    # TOS Phase 5 W5 plan §2 decision 7 (rollover) — the non-trade event processor, wired with
+    # an honest venue-admissibility read over the SAME session_phase_reader/construction step 3
+    # itself uses (build_nontrade_processor's own docstring). Optional: a config_dir with no
+    # nontrade.yaml at all (every compose e2e test that predates this wiring) leaves
+    # composed.nontrade None, exactly like projection_path/backup_root's own optionality —
+    # never a boot refusal for a caller that has not configured this yet.
+    composed = apply_nontrade_wiring(
+        composed,
+        nontrade_processor=(
+            build_nontrade_processor(
+                config_dir=config_dir,
+                evidence_store=boot.infra.evidence_store,
+                construction=construction,
+                session_phase_reader=session_phase_reader,
+            )
+            if (config_dir / NONTRADE_CONFIG_NAME).is_file()
+            else None
+        ),
     )
     # TOS Phase 5 W2-R (plan §10 row ①③) — attach the finality release consumer BEFORE the
     # recovery barrier runs (see apply_release_wiring's own docstring for why running before a
