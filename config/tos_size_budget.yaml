@@ -37,7 +37,7 @@ scope:
 # expires_on 경과 시 --check red(운영자 조정 가능한 값).
 exceptions:
 - target: tos/src/tos/egressgw/gateway.py
-  measured: 1849
+  measured: 1827
   owner: tos-kernel
   decomposition_order: 1
   expires_on: '2026-12-31'
@@ -107,6 +107,11 @@ exceptions:
     없음) · item 12 SATISFIED 사유에 venue_session_account_facts_current 가
     여전히 operator attestation 임을 알리는 절 추가(그 필드의 UNKNOWN 분기는 이미
     정직했으나 SATISFIED 분기만 그 사실을 누락하고 있었음).
+    2026-09-12 kernel round #3 K-2(§2 결정 4) — measured 1849→1827(-22).
+    ``_check_venue_generations`` 의 전체 판정 본문(약 34줄)이 신규
+    ``egressgw/venuefacts.py::venue_generation_item_verdict`` 로 이관되고, 이
+    모듈에는 ``(attempt, applicability)`` 를 버리고 위임만 하는 얇은 래퍼(약 12줄)만
+    남았다(mesh 분리와 동일 패턴) — import 1줄 추가를 감안해도 순감소.
 - target: tos/src/tos/sir/predicates.py
   measured: 1681
   owner: tos-kernel
@@ -213,7 +218,7 @@ exceptions:
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
     2026-09-07 decomposition_order 13→14(measured 불변, __call__ 재정렬로 인한 이동).
 - target: tos/src/tos/egressgw/records.py::send_boundary_context
-  measured: 236
+  measured: 245
   owner: tos-kernel
   decomposition_order: 15
   expires_on: '2026-12-31'
@@ -224,6 +229,11 @@ exceptions:
     deferred-6 kwargs(safety_authority_epoch_current/live_scope_valid/
     safety_profile_current/deviation_clear/incident_clear/monitoring_clear) 6개와
     그 pass-through 배선 6줄 추가.
+    2026-09-12 kernel round #3 K-2(§2 결정 4) — measured 236→245(+9). 단일
+    kwarg `venue_session_account_facts_current` 를 3개
+    (`session_facts_current`/`tradability_facts_current`/`account_facts_current`)
+    로 분할하며 kwargs 선언 1→3줄 + pass-through 배선 1→3줄(순증 4줄) 및 인접
+    docstring Args 항목 확장.
 - target: tos/src/tos/nontrade/predicates.py::nontrade_disposition
   measured: 186
   owner: tos-kernel
@@ -311,7 +321,7 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1112
+  measured: 1118
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
@@ -531,6 +541,11 @@ exceptions:
     는 성장 0 목표"는 이번 파도만은 재등재로 해소(도크스트링 상세 설명은 전부
     `_currentness_wiring.py`의 CONSTRAINT/DECISION_PROOF_INTENT 리더 자신의
     도크스트링으로 이관 — 이 파일에는 1줄 포인터만 남김).
+    2026-09-12 kernel round #3 K-2(§2 결정 4) — measured 1112→1118(+6). 커널
+    필드 분할(단일 → 3개)이 강제한 소비자 갱신: `_build_context_resolver` 매개변수
+    `venue_session_account_facts_reader` 1줄을 3개 리더 매개변수로 교체(+2줄) +
+    `ComposeContextResolver(...)` 호출부 pass-through 1→3줄(+2줄) + 도크스트링
+    설명 확장(+2줄).
 - target: tos/runtime/src/tos_runtime/authority/iap.py
   measured: 1026
   owner: tos-runtime
@@ -627,7 +642,7 @@ exceptions:
     인접 도크스트링 보정은 원문과 동일한 3줄 폭으로 재작성해 순증 0으로 맞춤). 140→141,
     measured-drift 가드 재실측 갱신.
 - target: tos/src/tos/egressgw/records.py
-  measured: 1113
+  measured: 1132
   owner: tos-kernel
   decomposition_order: 37
   expires_on: '2026-12-31'
@@ -655,8 +670,13 @@ exceptions:
     `REALIZED_ITEMS`/`PROVISIONAL_ITEMS` 를 모듈 스코프에서 직접 참조하므로 지연
     import 가 완전히 사라진다(순환을 우회가 아니라 제거). `gateway.py`/`mesh.py` 는
     이 모듈에서 `_verdict` 를 import.
+    2026-09-12 kernel round #3 K-2(§2 결정 4) — measured 1113→1132(+19). item 12
+    필드를 단일 `venue_session_account_facts_current: bool | None` 에서 3개
+    (`session_facts_current`/`tradability_facts_current`/`account_facts_current`)
+    로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
+    1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 261
+  measured: 266
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
@@ -753,6 +773,12 @@ exceptions:
     전부 존재하는 시점에만 결선 가능하므로 `apply_recovery_barrier` 직후,
     함수 끝에 추가). root.py 는 정본 결선 순서 문서라 호출 시퀀스 재구성은
     하지 않음 — 분해 대신 등재.
+    **2026-09-12 kernel round #3 K-2(§2 결정 4) 재등재 261→266(+5)**: 커널
+    필드 분할이 강제한 소비자 갱신 — `_build_context_resolver` 호출부의
+    `venue_session_account_facts_reader=lambda: ...` 람다 1개를 3개 람다
+    (`session_facts_current_reader`/`tradability_facts_current_reader`/
+    `account_facts_current_reader`, 각 `session_facts_owner`의 대응 리더 호출)로
+    교체 — 정본 결선 순서 문서라 분해 대신 등재.
 # 2026-09-12 Phase 5 W5: _boot_integrity.py::record_operator_attested_inputs's own
 # exception entry (decomposition_order 39) is REMOVED here — removing the
 # egress_attestations row-generation tuple entry (item 12's attestation retired,
@@ -763,7 +789,7 @@ exceptions:
 # only rejects a DUPLICATE decomposition_order, never a gap — module docstring's
 # own enforced failure classes (a)-(f) do not include "must be contiguous").
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py::_build_context_resolver
-  measured: 104
+  measured: 110
   owner: tos-runtime
   decomposition_order: 40
   expires_on: '2026-12-31'
@@ -784,6 +810,14 @@ exceptions:
     재압축(15→10줄)을 거쳤으나 99→101 로 100줄 문턱을 여전히 2줄 초과 — 이 파일
     자신의 «안전-부담 파라미터는 온전한 도크스트링을 받는다» 관례상 완전 압축은
     포기하고 등재(무예외 목표 미달성, 정직 등재).
+    **2026-09-12 kernel round #3 K-2(§2 결정 4) 재등재 104→110(+6)**: 단일
+    `venue_session_account_facts_reader` 매개변수를 3개
+    (`session_facts_current_reader`/`tradability_facts_current_reader`/
+    `account_facts_current_reader`, 각 `Callable[[], bool | None]`)로 교체(+2줄)
+    + `ComposeContextResolver(...)` 호출부 pass-through 1→3줄(+2줄) +
+    도크스트링 갱신(+2줄) — item 12 합성이 커널
+    `tos.egressgw.venuefacts.venue_session_account_facts_current` 로 이관되며
+    이 리졸버는 세 원시 sub-fact 를 각각 공급할 뿐 합성하지 않는다.
 - target: tos/runtime/src/tos_runtime/compose/_finalize_wiring.py::_finalize
   measured: 103
   owner: tos-runtime

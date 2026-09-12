@@ -806,8 +806,18 @@ class SendBoundaryContext(FrozenModel):
     #: account / instrument / action-class / max-quantity allowance is a stand-in (§4.1 item 6).
     account_instrument_action_allowed: bool | None = None
     max_quantity_within_allowance: bool | None = None
+    #: Item 12's venue-half sub-facts (kernel round #3 §2 decision 4, replacing the single
+    #: ``venue_session_account_facts_current`` field a runtime owner used to pre-compose): the
+    #: owning runtime service (:class:`~tos_runtime.calendar.owner.SessionFactsOwner`) supplies
+    #: each raw sub-fact; :func:`~tos.egressgw.venuefacts.venue_session_account_facts_current`
+    #: composes them (None-propagating AND) inside the kernel, never here. ``session_facts_current``
+    #: is a strict ``bool`` in practice (the owner's calendar read is never itself unresolved);
+    #: ``tradability_facts_current`` / ``account_facts_current`` are ``None`` for a broker-reaching
+    #: scope with no tradability/account-halt query source yet.
+    session_facts_current: bool | None = None
+    tradability_facts_current: bool | None = None
+    account_facts_current: bool | None = None
     #: ⚠ provisional — broker-constraint generation currency (§4.1 item 12).
-    venue_session_account_facts_current: bool | None = None
     broker_constraint_generation_current: bool | None = None
 
     # ---- item 11 (Realize): venue snapshot + admissibility decision -------------------
@@ -935,7 +945,9 @@ def send_boundary_context(
     idempotency_proven: bool | None = None,
     account_instrument_action_allowed: bool | None = None,
     max_quantity_within_allowance: bool | None = None,
-    venue_session_account_facts_current: bool | None = None,
+    session_facts_current: bool | None = None,
+    tradability_facts_current: bool | None = None,
+    account_facts_current: bool | None = None,
     broker_constraint_generation_current: bool | None = None,
     approval_consumed_for_this_intent: bool | None = None,
     action_flow_permit_identity: str | None = None,
@@ -1027,7 +1039,12 @@ def send_boundary_context(
         idempotency_proven: The positive same-order-retry witness (items 6 / 12).
         account_instrument_action_allowed: ⚠ provisional allowance stand-in (item 6).
         max_quantity_within_allowance: ⚠ provisional allowance stand-in (item 6).
-        venue_session_account_facts_current: ⚠ provisional currency stand-in (item 12).
+        session_facts_current: item 12's session sub-fact, positively supplied by its owning
+            runtime service (kernel round #3 §2 decision 4).
+        tradability_facts_current: item 12's tradability sub-fact, positively supplied by its
+            owning runtime service, or ``None`` when unsourced (kernel round #3 §2 decision 4).
+        account_facts_current: item 12's account sub-fact, positively supplied by its owning
+            runtime service, or ``None`` when unsourced (kernel round #3 §2 decision 4).
         broker_constraint_generation_current: ⚠ provisional currency stand-in (item 12).
         approval_consumed_for_this_intent: ⚠ provisional iap stand-in (item 14).
         action_flow_permit_identity: ⚠ provisional afg stand-in (item 15).
@@ -1078,7 +1095,9 @@ def send_boundary_context(
         idempotency_proven=idempotency_proven,
         account_instrument_action_allowed=account_instrument_action_allowed,
         max_quantity_within_allowance=max_quantity_within_allowance,
-        venue_session_account_facts_current=venue_session_account_facts_current,
+        session_facts_current=session_facts_current,
+        tradability_facts_current=tradability_facts_current,
+        account_facts_current=account_facts_current,
         broker_constraint_generation_current=broker_constraint_generation_current,
         venue_snapshot=venue_snapshot,
         venue_policy=venue_policy,

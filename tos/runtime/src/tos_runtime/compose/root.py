@@ -296,8 +296,13 @@ def compose_paper_runtime(
         currentness_assembler=boot.risk.currentness_assembler,
         proof_issuer=boot.risk.proof_issuer,
         pending_dimension_specs=boot.risk.pending_dimension_specs,
-        venue_session_account_facts_reader=lambda: session_facts_owner.venue_session_account_facts_current(
+        session_facts_current_reader=lambda: session_facts_owner.session_facts_current(
             construction.instrument_class,
+        ),
+        tradability_facts_current_reader=lambda: session_facts_owner.tradability_facts_current(
+            broker_reaching=is_broker_reaching(boot.broker_scopes.active_scope),
+        ),
+        account_facts_current_reader=lambda: session_facts_owner.account_facts_current(
             broker_reaching=is_broker_reaching(boot.broker_scopes.active_scope),
         ),
         observed_session_phase_reader=session_phase_reader,

@@ -130,6 +130,7 @@ from tos.egressgw.seal import (
     build_send_seal,
     outbound_coordinates,
 )
+from tos.egressgw.venuefacts import venue_generation_item_verdict
 from tos.egressgw.vocabulary import (
     ADMITTING_VERIFY_OUTCOMES,
     DEFERRED_ITEMS,
@@ -746,40 +747,17 @@ def _check_venue_generations(
     context: SendBoundaryContext,
     applicability: BrokerApplicability,
 ) -> VerifyItemVerdict:
-    """Item 12 — venue / session / account / broker-constraint generation currency (provisional)."""
+    """Item 12 — venue / session / account / broker-constraint generation currency.
+
+    Delegates the full judgement to :func:`~tos.egressgw.venuefacts.venue_generation_item_verdict`
+    (kernel round #3 §2 decision 4, splitting this item's logic out of ``gateway.py`` the same way
+    round #2 §2 decision 1 split the deferred mesh into ``mesh.py``) — this wrapper exists only so
+    the item stays dispatched through :data:`_ITEM_CHECKS`'s uniform
+    ``(attempt, context, applicability) -> VerifyItemVerdict`` signature; ``attempt`` and
+    ``applicability`` are not inputs to item 12's own judgement.
+    """
     del attempt, applicability
-    item = SendVerifyItem.VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION
-    if not _positive(context.venue_session_account_facts_current):
-        return _verdict(
-            item,
-            VerifyOutcome.UNKNOWN,
-            reason=(
-                "the venue / session / halt / tradability / account / margin / settlement facts "
-                "are not positively current — no owning runtime service supplies this fact yet "
-                "(design #34 §4.1 item 12; Phase 5 replaces the operator attestation this flag "
-                "is still read from)"
-            ),
-        )
-    if not _positive(context.broker_constraint_generation_current):
-        return _verdict(
-            item,
-            VerifyOutcome.UNKNOWN,
-            reason=(
-                "the broker-constraint generation is not positively current — the caller is "
-                "responsible for deriving this flag from the scope table + INSTANCE (Phase 4 "
-                "plan §2 decision 4); this gate judges only the supplied flag's positivity "
-                "(kernel round #2 §2 decision 4)"
-            ),
-        )
-    return _verdict(
-        item,
-        VerifyOutcome.SATISFIED,
-        reason=(
-            "venue / account / broker-constraint generations current — the venue / session / "
-            "account-facts half is still an operator attestation (Phase 5 replaces it); the "
-            "broker-constraint-generation half is derived (Phase 4 plan §2 decision 4)"
-        ),
-    )
+    return venue_generation_item_verdict(context)
 
 
 # -- item 13 -----------------------------------------------------------------------------

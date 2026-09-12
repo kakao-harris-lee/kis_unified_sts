@@ -54,6 +54,7 @@ import tos.egressgw.gateway
 import tos.egressgw.mesh
 import tos.egressgw.records
 import tos.egressgw.seal
+import tos.egressgw.venuefacts
 import tos.egressgw.vocabulary
 
 #: The §0.3 allowlist **as actually taken** — the only top-level ``tos.*`` packages the sources
@@ -210,6 +211,7 @@ _SUBMODULES = (
     "tos.egressgw.mesh",
     "tos.egressgw.records",
     "tos.egressgw.seal",
+    "tos.egressgw.venuefacts",
     "tos.egressgw.vocabulary",
 )
 
@@ -221,6 +223,7 @@ _LOADED_SUBMODULES = {
     "tos.egressgw.mesh": tos.egressgw.mesh,
     "tos.egressgw.records": tos.egressgw.records,
     "tos.egressgw.seal": tos.egressgw.seal,
+    "tos.egressgw.venuefacts": tos.egressgw.venuefacts,
     "tos.egressgw.vocabulary": tos.egressgw.vocabulary,
 }
 
@@ -257,6 +260,7 @@ def _closure_child(queue: mp.Queue) -> None:
     import tos.egressgw.mesh  # noqa: F401
     import tos.egressgw.records  # noqa: F401
     import tos.egressgw.seal  # noqa: F401
+    import tos.egressgw.venuefacts  # noqa: F401
     import tos.egressgw.vocabulary  # noqa: F401
 
     tos_tops = sorted(
@@ -421,6 +425,61 @@ def test_mesh_never_imports_gateway() -> None:
             if module == "tos.egressgw.gateway":
                 offenders.append(f"mesh.py:{node.lineno} from {module} import ...")
     assert offenders == [], f"mesh.py imports gateway.py — circular edge: {offenders}"
+
+
+def _module_imports_gateway(path: Path) -> list[str]:
+    """The same gateway-import scan :func:`test_mesh_never_imports_gateway` runs against
+    ``mesh.py``, generalized to any module at this package's own depth (kernel round #3 §2
+    decision 4 / mutation M4 — ``venuefacts.py`` must not import ``gateway.py`` either, for the
+    same circularity reason: ``gateway.py`` imports ``venuefacts.py``)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "tos.egressgw.gateway" or alias.name.endswith(
+                    ".gateway"
+                ):
+                    offenders.append(f"{path.name}:{node.lineno} import {alias.name}")
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level:
+                prefix = _resolve_relative_import_prefix(module, node.level)
+                if prefix is None:
+                    continue
+                if prefix == "tos.egressgw.gateway":
+                    offenders.append(
+                        f"{path.name}:{node.lineno} relative import resolves to gateway "
+                        f"(level={node.level}, module={module!r})"
+                    )
+                    continue
+                for alias in node.names:
+                    if f"{prefix}.{alias.name}" == "tos.egressgw.gateway":
+                        offenders.append(
+                            f"{path.name}:{node.lineno} relative import resolves to gateway "
+                            f"(level={node.level}, module={module!r}, name={alias.name!r})"
+                        )
+                continue
+            if module in ("tos.egressgw.gateway", "tos.egressgw"):
+                for alias in node.names:
+                    if alias.name == "gateway":
+                        offenders.append(
+                            f"{path.name}:{node.lineno} from {module} import {alias.name}"
+                        )
+            if module == "tos.egressgw.gateway":
+                offenders.append(f"{path.name}:{node.lineno} from {module} import ...")
+    return offenders
+
+
+def test_venuefacts_never_imports_gateway() -> None:
+    """(kernel round #3 §2 decision 4 — mutation M4) ``venuefacts.py`` must not import
+    ``gateway.py``, mirroring :func:`test_mesh_never_imports_gateway`: ``gateway.py`` imports
+    :func:`~tos.egressgw.venuefacts.venue_generation_item_verdict`, so the reverse edge would be
+    circular."""
+    offenders = _module_imports_gateway(_SRC / "venuefacts.py")
+    assert (
+        offenders == []
+    ), f"venuefacts.py imports gateway.py — circular edge: {offenders}"
 
 
 def test_source_imports_no_tos_module_outside_the_declared_allowlist() -> None:
