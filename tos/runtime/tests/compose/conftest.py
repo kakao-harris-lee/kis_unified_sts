@@ -15,7 +15,12 @@ from pathlib import Path
 import pytest
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.cur import MANDATED_DIMENSION_FLOOR
 from tos_runtime.compose._pending_dimensions import PENDING_DIMENSION_KEYS
+from tos_runtime.operations.dependency_admission import (
+    observe_dependency_set_digest,
+    observe_source_tree_digest,
+)
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
@@ -28,9 +33,17 @@ _BROKER_SCOPES_EXAMPLE_PATH = (
 )
 
 #: The digest compose_paper_runtime computes for its own RuntimeIdentity.code_digest
-#: (tos_runtime.compose.root: ``_SCHEME.compute_digest({"component": "tos_runtime.compose"})``).
-#: Reproduced here (pure function, same scheme) so release.yaml can match it exactly.
-EXPECTED_CODE_DIGEST = _SCHEME.compute_digest({"component": "tos_runtime.compose"})
+#: (tos_runtime.compose._wiring._build_identity: the installed source-tree digest,
+#: tos_runtime.operations.dependency_admission.observe_source_tree_digest). Reproduced
+#: here (pure function, same measurement, same installed tree the test process itself
+#: runs from) so release.yaml can match it exactly.
+EXPECTED_CODE_DIGEST = observe_source_tree_digest()
+
+#: The digest compose_paper_runtime computes for its STAGE A/B dependency-set
+#: observation (tos_runtime.operations.dependency_admission
+#: .observe_dependency_set_digest) — the installed distribution set this test process
+#: itself is running under.
+EXPECTED_DEPENDENCY_SET_DIGEST = observe_dependency_set_digest()
 
 
 def _write_yaml(path: Path, content: dict) -> None:
@@ -106,7 +119,14 @@ def config_dir(tmp_path: Path) -> Path:
     )
     _write_yaml(
         directory / "currentness.yaml",
-        {"B_capability_claim_to_send": 500},
+        {
+            "B_capability_claim_to_send": 500,
+            # MEDIUM-3: the operator-declared CURRENTNESS_POLICY dimension set — the
+            # full mandated floor, same as production would declare correctly.
+            "required_dimensions": sorted(
+                key.value for key in MANDATED_DIMENSION_FLOOR
+            ),
+        },
     )
     _write_yaml(
         directory / "currentness_dimensions.yaml",
@@ -120,12 +140,198 @@ def config_dir(tmp_path: Path) -> Path:
             for key in PENDING_DIMENSION_KEYS
         },
     )
+    # TOS Phase 5 W5 (plan §2 decisions 1-4): egress_attestations.yaml is retired to
+    # zero -- venue_session_account_facts_current now has a real runtime owner
+    # (tos_runtime.calendar.owner.SessionFactsOwner via calendar.yaml below), so this
+    # file is deliberately NOT written here any more (a leftover file refuses boot --
+    # RetiredConfigPresent, tests/compose/test_session_wiring.py). This fixture's
+    # calendar is deliberately permissive (one full-day CONTINUOUS window, every
+    # weekday, no holidays) so every OTHER compose e2e test's happy path keeps
+    # reaching an ADMISSIBLE step 3 / SATISFIED item 12 (for the non-broker-reaching
+    # SYNTHETIC_FUTURES_ORDER scope this suite activates below) regardless of which
+    # instant the test's own wall-clock fixture injects; tests/compose/
+    # test_session_wiring.py exercises the interesting negative paths (holiday,
+    # after-hours, absent wall clock, calendar-version mismatch) with their OWN,
+    # narrower calendar configs.
     _write_yaml(
-        directory / "egress_attestations.yaml",
+        directory / "calendar.yaml",
         {
-            "venue_session_account_facts_current": {"attested": True},
-            "restrictive_latch_state": {"clear": True},
-            "worst_credible_capacity": {"value": 1},
+            "calendar_version": "cal-compose-0",
+            "tz_id": "Asia/Seoul",
+            "holidays": [],
+            "sessions": {
+                "krx-index-futures": [
+                    {
+                        "phase": "CONTINUOUS",
+                        "start": "00:00",
+                        "end": "23:59",
+                        "days": ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"],
+                        "crosses_midnight": False,
+                    }
+                ]
+            },
+            "closed_phase": "CLOSED",
+            "futures_expiry": {},
+        },
+    )
+    # Phase 5 W3 safety-mesh policy documents (tos_runtime.compose._safety_wiring) — a
+    # minimal NOMINAL "everything clear" fixture (one governed dimension, no active
+    # deviations/incidents, all three MONITORING obligations closed) so every compose
+    # e2e test's happy path exercises a genuinely CLEAR mesh, not a fabricated one.
+    _write_yaml(
+        directory / "safety_envelope.yaml",
+        {
+            "envelope": {
+                "envelope_id": "env-compose-1",
+                "envelope_generation": 1,
+                "envelope_version": {
+                    "version": "v1",
+                    "effective_date": "2026-09-01",
+                    "evidence_package_version": None,
+                    "approver_identity": "operator-compose",
+                    "expiration_or_revalidation_date": None,
+                    "superseded_version_link": None,
+                    "change_classification": None,
+                },
+                "governed_dimensions": [
+                    {
+                        "dimension": "max_notional",
+                        "envelope_max": "100",
+                        "unit": "KRW",
+                        "multiplier": "1",
+                        "sign": "POSITIVE",
+                        "precision": "0",
+                        "rounding": "NEAREST",
+                        "boundary": "INCLUSIVE",
+                    }
+                ],
+                "permitted_scope": ["default"],
+                "prohibited_fallbacks": [],
+                "residual_risk_ceiling": None,
+                "evidence_package_ref": None,
+            }
+        },
+    )
+    _write_yaml(
+        directory / "safety_profile.yaml",
+        {
+            "profile": {
+                "profile_id": "prof-compose-1",
+                "profile_generation": 1,
+                "profile_version": {
+                    "version": "v1",
+                    "effective_date": "2026-09-01",
+                    "evidence_package_version": None,
+                    "approver_identity": "operator-compose",
+                    "expiration_or_revalidation_date": None,
+                    "superseded_version_link": None,
+                    "change_classification": None,
+                },
+                "target_envelope_id": "env-compose-1",
+                "target_envelope_generation": 1,
+                "governed_dimensions": [
+                    {
+                        "dimension": "max_notional",
+                        "profile_value": "50",
+                        "unit": "KRW",
+                        "multiplier": "1",
+                        "sign": "POSITIVE",
+                        "precision": "0",
+                        "rounding": "NEAREST",
+                        "boundary": "INCLUSIVE",
+                    }
+                ],
+                "scope": ["default"],
+                "permitted_behaviors": [],
+                "fallback_rules": [],
+                "evidence_package_ref": None,
+            }
+        },
+    )
+    _write_yaml(
+        directory / "safety_activation.yaml",
+        {
+            "activation": {
+                "activation_id": "act-compose-1",
+                "profile_generation": 1,
+                "envelope_digest": None,
+                "profile_digest": None,
+                "bundle_digest": None,
+                "scope": [],
+                "approval_ids": ["appr-compose-1"],
+                "compatibility_attestation_refs": ["attest-compose-1"],
+                "predecessor_generation": None,
+                "restrictive_generation_effects": [],
+            },
+            "not_expired": True,
+        },
+    )
+    _write_yaml(
+        directory / "safety_deviations.yaml",
+        {
+            "deviations": {
+                "active_set": {
+                    "active_set_id": "dev-set-compose-1",
+                    "active_set_generation": 1,
+                    "deviation_generation": 1,
+                    "is_complete": True,
+                    "combined_within_envelope": True,
+                },
+                "applicable_decision_ids": [],
+                "members": [],
+            }
+        },
+    )
+    _write_yaml(
+        directory / "safety_incidents.yaml",
+        {
+            "incidents": {
+                "active_set": {
+                    "active_set_id": "inc-set-compose-1",
+                    "active_set_generation": 1,
+                    "incident_generation": 1,
+                    "safety_cell": "compose-cell-1",
+                    "shared_dependencies": [],
+                    "is_complete": True,
+                    "is_current": True,
+                },
+                "applicable_incident_ids": [],
+                "members": [],
+            }
+        },
+    )
+    _write_yaml(
+        directory / "monitor_coverage.yaml",
+        {
+            "coverage": {
+                "manifest": {
+                    "coverage_manifest_id": "cov-compose-1",
+                    "coverage_generation": 1,
+                    "coverage_manifest_digest": "cov-digest-compose-1",
+                    "policy_digest": "cov-policy-digest-compose-1",
+                    "is_complete": True,
+                },
+                "items": {
+                    obligation: {
+                        "restrictive_response_present": True,
+                        "alert_path_present": True,
+                        "evidence_path_present": True,
+                        "currentness_rule_present": True,
+                        "closure_1_to_12_complete": True,
+                        "criticality": "CRITICAL",
+                    }
+                    for obligation in (
+                        "evidence-tip-currency",
+                        "time-service-health",
+                        "inbox-backlog",
+                    )
+                },
+                "bounds": {
+                    "max_evidence_tip_stall_ms": 60_000,
+                    "healthy_time_states": ["TRUSTED"],
+                    "max_inbox_unconsumed": 100,
+                },
+            }
         },
     )
     _write_yaml(
@@ -192,6 +398,13 @@ def config_dir(tmp_path: Path) -> Path:
             # This compose e2e suite's synthetic (reaches_broker=False)
             # transport is exactly the case this posture admits.
             "live_authorization_state": "NOT_AUTHORIZED",
+            # T2 lane B (plan §2 decision 7 / §7 operator disposition row 1)
+            # — this compose e2e suite's active scope is the SYNTHETIC one
+            # (reaches_broker=False), which never reaches this posture at
+            # all (gate ② already admits it), so the value here is inert for
+            # every existing e2e test; `false` is the honest "not
+            # operator-admitted" default, never a silent grant.
+            "nonlive_broker_consuming": {"admitted": False},
         },
     )
     _write_yaml(
@@ -204,12 +417,17 @@ def config_dir(tmp_path: Path) -> Path:
             "value_date": "2026-09-09",
             "source_revision": "compose-e2e-rev-1",
             "proof_recipe_id": "compose-e2e-recipe-1",
+            # TOS Phase 5 W2-R (plan §10 row ④) — large enough that no compose e2e test's
+            # synchronous run ever crosses it, so the obligation-expiry evidence stays absent
+            # unless a test deliberately advances the injected clock past it.
+            "release_proof_wait_ms": 3_600_000,
         },
     )
     _write_yaml(
         directory / "release.yaml",
         {
             "expected_code_digest": EXPECTED_CODE_DIGEST,
+            "expected_dependency_set_digest": EXPECTED_DEPENDENCY_SET_DIGEST,
             "admission_result": "ADMIT",
             "restriction_state_resolved": True,
             "restriction_present": False,
@@ -232,6 +450,7 @@ def mismatched_release_config_dir(config_dir: Path) -> Path:
         config_dir / "release.yaml",
         {
             "expected_code_digest": "deliberately-mismatched-digest",
+            "expected_dependency_set_digest": EXPECTED_DEPENDENCY_SET_DIGEST,
             "admission_result": "ADMIT",
             "restriction_state_resolved": True,
             "restriction_present": False,

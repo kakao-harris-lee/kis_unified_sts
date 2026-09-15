@@ -65,22 +65,31 @@ too: an orphaned/mismatched/duplicate egress result is a recorded conservative o
 crash-window/re-injection loop never touches ``apply_egress_result`` directly — it only calls
 ``core.handle`` and reads the returned ``EventResult`` — so it needed no change either way.
 
+**GAP 2 close-out (TOS Phase 5 W1) — composite-state persistence before the consumption
+receipt.** :meth:`_process_next` calls :meth:`_project_orthostate_and_persist` (which itself
+calls :attr:`_orthostate_projector`'s own ``.project``) BEFORE :meth:`_record_consumed` for the
+SAME event — see that method's own docstring for the full write-before-receipt crash-window
+reasoning, the ``attempt_id`` keying (independent-review finding F3), and the write-failure HALT
+contract (surviving-mutation fix). ``recovery_composite_writer`` defaults to ``None`` (a no-op)
+— every existing test-suite driver construction keeps its pre-GAP-2 behaviour unchanged; only
+:func:`~tos_runtime.compose._engine_wiring.build_engine_driver` supplies a real one.
+
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``pydantic`` +
-``tos.canonical``/``tos.engine``/``tos.egressgw`` + ``tos_runtime.*`` only. No ``shared.*``, no
-``tos.backtest``.
+``tos.canonical``/``tos.engine``/``tos.egressgw``/``tos.orthostate`` + ``tos_runtime.*`` only. No
+``shared.*``, no ``tos.backtest``.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from tos.canonical import ArtifactIntegrityError, CanonicalizationScheme
 from tos.engine import EngineCore, EventResult
 from tos.engine.records import (
     EgressResultPayload,
     EngineEvent,
-    InstrumentKey,
     event_identity,
 )
 from tos.engine.vocabulary import (
@@ -90,7 +99,10 @@ from tos.engine.vocabulary import (
     ResultDisposition,
 )
 from tos.ordering import OrderingEvent
+from tos.orthostate import CompositeState
 
+from tos_runtime.engine._timeout_tracker import _TimeoutTracker
+from tos_runtime.engine.finality_projection import project_finality
 from tos_runtime.engine.flow_fingerprint import FlowFingerprint, flow_fingerprint_for
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.orthostate_projection import (
@@ -99,11 +111,33 @@ from tos_runtime.engine.orthostate_projection import (
 )
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.nontrade.latch import LatchOutcome
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
-from tos_runtime.rcl.finality_witness import finality_witness_for
 from tos_runtime.time.sources import MonotonicSource
 
-__all__ = ["EngineDriver"]
+if TYPE_CHECKING:
+    # TOS Phase 5 W2-R re-review finding NEW-1 (2026-09-10): the other half of the SAME import
+    # cycle `engine/finality_projection.py`'s own matching fix comment describes -- this module
+    # imports `tos_runtime.engine.finality_projection` (a genuine runtime import: `project_finality`
+    # is actually CALLED from `_project_finality` below, so that one import must stay a real
+    # top-level import) which, before this fix, transitively re-entered `release_consumer`
+    # while THIS module (reached via `tos_runtime.engine`'s own package `__init__`) was still
+    # mid-import. `FinalityReleaseConsumer` itself is used here ONLY as a type annotation
+    # (`_release_consumer`'s field type, `bind_release_consumer`'s parameter) -- both this
+    # module and `tos_runtime.posttrade.release_consumer` already carry `from __future__ import
+    # annotations`, so deferring this import to type-checking time only is safe.
+    from tos_runtime.posttrade.release_consumer import FinalityReleaseConsumer
+
+__all__ = ["EngineDriver", "EngineDriverInvariantError"]
+
+
+class EngineDriverInvariantError(RuntimeError):
+    """A driver-internal type-narrowing invariant turned out false (independent-review
+    residual, 2026-09-10) — typed, never a bare ``assert`` (``python -O`` strips those
+    entirely). Should be unreachable; mirrors :class:`~tos_runtime.recovery.barrier
+    .RecoveryBarrierInvariantError`'s discipline, defined locally to avoid an
+    engine -> recovery import."""
+
 
 #: The runtime-local evidence kind for a driver-recorded consumption receipt. Not a
 #: ``tos.engine.vocabulary.EvidenceKind`` member — this is runtime-level evidence about the
@@ -118,6 +152,12 @@ _EVENT_CONSUMED_RECORD_CLASS = "EVENT_CONSUMED"
 #: ``_handle_interrupted_event`` below.
 _EVENT_HANDLING_STARTED_KIND = "EVENT_HANDLING_STARTED"
 _EVENT_HANDLING_STARTED_RECORD_CLASS = "EVENT_HANDLING_STARTED"
+
+#: TOS Phase 5 W1 close-out, surviving-mutation fix (2026-09-10): the dual-path HALT kind
+#: recorded when :attr:`EngineDriver._recovery_composite_writer` raises — a failed
+#: staterestore write is never silently skipped; see ``_project_orthostate_and_persist``'s
+#: own docstring.
+_COMPOSITE_STATE_WRITE_FAILED_KIND = "COMPOSITE_STATE_WRITE_FAILED"
 
 #: The halt reason recorded on the durable ``EVENT_CONSUMED`` receipt when an interrupted
 #: event's OWN durable evidence proves the flow never reached (or could not be proven to have
@@ -156,14 +196,6 @@ _DECISION_TICK_DROPPED_ON_RECOVERY_KIND = "DECISION_TICK_DROPPED_ON_RECOVERY"
 #: own measurement: "each stage carries its own sink bound to the real SqliteEvidenceStore").
 _SEND_EVIDENCE_KINDS: tuple[str, ...] = ("SEND_STARTED", "SEND_HANDED_OFF")
 
-#: Evidence kinds this driver appends when :class:`~tos_runtime.posttrade.finality
-#: .SyntheticFinalityProducer` produces a proof for a genuinely-``APPLIED`` ``EGRESS_RESULT``
-#: (team-lead CR-4 dispatch, plan §2.2). Not kernel ``EvidenceKind`` members — this is
-#: runtime-level evidence about a SYNTHETIC-transport artifact the kernel's own posttrade
-#: package never emits itself (``tos_runtime.posttrade.finality``'s own module docstring).
-_ECONOMIC_OBLIGATION_KIND = "ECONOMIC_OBLIGATION"
-_POSTTRADE_FINALITY_PROOF_KIND = "POSTTRADE_FINALITY_PROOF"
-
 
 class _YieldOrderCounter:
     """One monotone counter stamping every event this driver yields to the core.
@@ -196,79 +228,6 @@ class _YieldOrderCounter:
         )
 
 
-@dataclass
-class _PendingAttempt:
-    """One outstanding, not-yet-resulted attempt this driver is timing (item 4)."""
-
-    attempt_id: str
-    started_at_ms: int
-    timed_out: bool = False
-
-
-@dataclass
-class _TimeoutTracker:
-    """Per-scope pending-attempt bookkeeping for :class:`EngineDriver`'s timeout injection."""
-
-    #: The injected wait bound; always a concrete positive int (independent review finding #14
-    #: — a ``None`` "disable injection entirely" escape hatch read as a fail-CLOSED default in
-    #: the docstring it used to carry, but never injecting a TIMEOUT for a lost result is
-    #: fail-SILENT (the attempt just sits ``SENT_UNCONFIRMED`` forever with no further evidence),
-    #: not fail-closed. Compose has always supplied a concrete value anyway
-    #: (``TrustworthyTimeConfig.max_send_result_wait_ms`` is itself non-optional and
-    #: ``load_time_config`` refuses a null — ``time/config.py``), so this only removes an
-    #: escape hatch nothing production-shaped ever used; a test that wants "never fires" now
-    #: passes a very large bound instead of ``None``.
-    max_send_result_wait_ms: int
-    pending: dict[tuple[str, str], _PendingAttempt] = field(default_factory=dict)
-
-    @staticmethod
-    def _key(key: InstrumentKey) -> tuple[str, str]:
-        return (key.account, key.instrument)
-
-    def observe_handoff(
-        self, key: InstrumentKey, *, attempt_id: str, now_ms: int
-    ) -> None:
-        """Record a fresh SENT_UNCONFIRMED hand-off as pending a result."""
-        self.pending[self._key(key)] = _PendingAttempt(
-            attempt_id=attempt_id, started_at_ms=now_ms
-        )
-
-    def observe_result(self, key: InstrumentKey, *, attempt_id: str) -> None:
-        """Clear the pending entry ONLY when it names the SAME attempt (independent review
-        finding #7).
-
-        Before this fix, ANY ``EGRESS_RESULT`` landing for the scope popped the pending entry —
-        "applied or not", including a result naming a completely different (foreign/mismatched)
-        attempt. The kernel itself refuses to apply such a result
-        (``ResultDisposition.MISMATCHED_ATTEMPT`` / ``ORPHAN_NO_RESERVATION``), but the timeout
-        watch for the GENUINELY pending attempt was silenced anyway — a lost result for the real
-        attempt would then never surface as a ``TIMEOUT``, defeating the "결과 유실 ⇒ TIMEOUT"
-        guarantee (plan §1.1) via any wrong-attempt-id result. Only an exact ``attempt_id`` match
-        clears the watch now.
-        """
-        tracker_key = self._key(key)
-        pending = self.pending.get(tracker_key)
-        if pending is not None and pending.attempt_id == attempt_id:
-            del self.pending[tracker_key]
-
-    def due(self, *, now_ms: int) -> tuple[tuple[InstrumentKey, str], ...]:
-        """Return ``(instrument_key, attempt_id)`` pairs whose wait bound has elapsed and have
-        not already been timed out."""
-        due: list[tuple[InstrumentKey, str]] = []
-        for (account, instrument), pending in self.pending.items():
-            if pending.timed_out:
-                continue
-            if now_ms - pending.started_at_ms >= self.max_send_result_wait_ms:
-                pending.timed_out = True
-                due.append(
-                    (
-                        InstrumentKey(account=account, instrument=instrument),
-                        pending.attempt_id,
-                    )
-                )
-        return tuple(due)
-
-
 class EngineDriver:
     """Single-threaded, deterministic driver over a durable :class:`SqliteEventInbox`.
 
@@ -291,40 +250,40 @@ class EngineDriver:
         max_send_result_wait_ms: int,
         orthostate_projector: OrthostateProjector,
         finality_producer: SyntheticFinalityProducer,
+        recovery_composite_writer: Callable[[str, CompositeState], None] | None = None,
     ) -> None:
         """Wire the driver.
 
         Args:
             core: The composed :class:`~tos.engine.EngineCore` — the SAME core instance for the
-                whole process lifetime (the ledger-reinstantiation prohibition
-                ``tos.backtest.driver`` documents applies here too, for the same reason).
+                whole process lifetime (``tos.backtest.driver``'s ledger-reinstantiation
+                prohibition applies here too, for the same reason).
             inbox: The durable event admission queue.
-            evidence_store: The durable evidence store — used both to append this driver's own
-                ``EVENT_HANDLING_STARTED``/``EVENT_CONSUMED`` receipts and to detect the two
+            evidence_store: The durable evidence store — appends this driver's own
+                ``EVENT_HANDLING_STARTED``/``EVENT_CONSUMED`` receipts and detects the two
                 crash-window conditions (see ``_process_next``'s own docstring).
             emergency_log: The sqlite-independent dual-path HALT log (independent review
-                finding #3) — used only for the "possibly live" crash-window case, where the
-                interrupted flow had already reached the send boundary before the crash.
-            scheme: The canonicalization scheme used for event identity and the outcome-digest
-                stand-in.
-            continuity_id: The single stream continuity every coordinate this driver issues
-                carries (:class:`_YieldOrderCounter`).
+                finding #3) — used only for the "possibly live" crash-window case.
+            scheme: The canonicalization scheme used for event identity and the outcome-digest stand-in.
+            continuity_id: The single stream continuity every coordinate this driver issues carries (:class:`_YieldOrderCounter`).
             monotonic_source: The injected monotonic clock for timeout injection (never a direct
                 ``time.monotonic()`` read — design #40 D1.1).
             max_send_result_wait_ms: The injected wait bound before a SENT_UNCONFIRMED hand-off is
-                timed out (independent review finding #14: this used to be ``int | None`` with a
-                ``None`` "disable injection" escape hatch documented as a "fail-closed default" —
-                never injecting a TIMEOUT for a lost result is fail-SILENT, not fail-closed, and
-                compose has always supplied a concrete value anyway. A caller that genuinely wants
-                "never fires within this test" now passes a very large bound instead.
+                timed out (independent review finding #14: never ``None`` — a fail-SILENT
+                escape hatch, not fail-closed; a test wanting "never fires" passes a very large
+                bound instead).
             orthostate_projector: Projects every genuinely-``APPLIED`` ``EGRESS_RESULT`` onto the
-                ADR-002-005 orthostate dimensions (team-lead CR-4 dispatch, plan §2.2) — REQUIRED
-                (no default): an omitted projector is a silent absence, not a valid "off" mode
-                (:mod:`tos_runtime.engine.orthostate_projection`'s own coupling-safety property
-                only holds if this actually runs on every applied result).
+                ADR-002-005 orthostate dimensions (plan §2.2) — REQUIRED (no default): an omitted
+                projector is a silent absence, not a valid "off" mode
+                (:mod:`tos_runtime.engine.orthostate_projection`).
             finality_producer: Produces a SYNTHETIC post-trade finality proof for a ``FULL_FILL``
-                (team-lead CR-4 dispatch, plan §2.2) — REQUIRED (no default), for the same reason
-                as ``orthostate_projector`` (:mod:`tos_runtime.posttrade.finality`).
+                (plan §2.2) — REQUIRED, for the same reason as ``orthostate_projector``
+                (:mod:`tos_runtime.posttrade.finality`).
+            recovery_composite_writer: TOS Phase 5 W1 GAP 2 — durably persists the composite state
+                :attr:`_orthostate_projector` derives, keyed by the event's own id
+                (:mod:`tos_runtime.recovery.composite_state_writer`). Optional, defaulting to
+                ``None`` (a no-op, the pre-GAP-2 behaviour) — the ONE constructor argument here
+                NOT required, unlike ``orthostate_projector``/``finality_producer``.
         """
         self._core = core
         self._inbox = inbox
@@ -340,12 +299,29 @@ class EngineDriver:
         )
         self._orthostate_projector = orthostate_projector
         self._finality_producer = finality_producer
+        self._recovery_composite_writer = recovery_composite_writer
+        #: TOS Phase 5 W2-R — the release consumer :meth:`_project_finality` (delegating to
+        #: :func:`~tos_runtime.engine.finality_projection.project_finality`) hands every
+        #: genuinely-applied ``EGRESS_RESULT`` payload to. Bound separately (see
+        #: :meth:`bind_release_consumer`), mirroring :attr:`_gateway` below: it does not exist
+        #: until compose finishes wiring the RCL log / reconciliation service this consumer
+        #: needs. ``None`` degrades to the pre-W2-R behaviour (module docstring of
+        #: :mod:`tos_runtime.engine.finality_projection`).
+        self._release_consumer: FinalityReleaseConsumer | None = None
         #: The send boundary whose retained ``.results`` this driver drains — bound separately
         #: (see :meth:`bind_gateway`) because it does not exist until compose finishes wiring the
         #: rest of the chain that reads from THIS core's own ``transmit`` slot.
         self._gateway: object | None = None
         #: How many of the gateway's retained results this driver has already drained.
         self._drained_results = 0
+        #: TOS Phase 5 W4 §2 decision 7 — see :meth:`bind_after_turn`.
+        self._after_turn: Callable[[], None] | None = None
+        self._after_turn_failures = 0
+        self._after_turn_last_error: str | None = None
+        #: Plan §2 decision 3 — ``latch_restrictive``, bound late (:meth:`bind_nontrade_latch`).
+        self._nontrade_latch: Callable[..., LatchOutcome] | None = None
+        #: Last processed ``CORPORATE_ACTION``'s ``EVENT_CONSUMED`` seq (:meth:`last_nontrade_evidence_seq`).
+        self._last_nontrade_evidence_seq: int | None = None
         #: Re-entrancy guard (re-review finding N3, 2026-09-09): ``True`` for the entire duration
         #: of one :meth:`_process_next` call. ``_send_evidence_exists_after``'s soundness (see its
         #: own docstring) depends on this driver never pulling a second event while the first
@@ -355,6 +331,17 @@ class EngineDriver:
         #: the first. Structurally unreachable, not merely undocumented: the guard raises rather
         #: than silently nesting.
         self._draining = False
+
+    def bind_release_consumer(self, consumer: FinalityReleaseConsumer) -> None:
+        """Attach the TOS Phase 5 W2-R finality release consumer this driver's finality-
+        projection hook calls after every genuinely-applied ``EGRESS_RESULT`` (see
+        :attr:`_release_consumer`'s own docstring and
+        :func:`~tos_runtime.engine.finality_projection.project_finality`).
+
+        Args:
+            consumer: The release consumer to attach.
+        """
+        self._release_consumer = consumer
 
     def bind_gateway(self, gateway: object) -> None:
         """Attach the send boundary whose retained ``.results`` this driver drains.
@@ -367,6 +354,44 @@ class EngineDriver:
         """
         self._gateway = gateway
 
+    def bind_after_turn(self, callback: Callable[[], None]) -> None:
+        """Attach a callback invoked once per PROCESSED turn (plan §2 decision 7): after each
+        ``_process_next`` call inside ``run_once``/``run_until_idle``/``enqueue_and_run`` that
+        returns a handled result — never on idle ``None``. Never propagates (see
+        :meth:`_fire_after_turn`)."""
+        self._after_turn = callback
+
+    def bind_nontrade_latch(self, latch: Callable[..., LatchOutcome]) -> None:
+        """Attach :func:`~tos_runtime.nontrade.latch.latch_restrictive` (never imported by type
+        here, mirroring :meth:`bind_gateway`) — called by :meth:`_apply_nontrade_latch` for a
+        restrictive ``CORPORATE_ACTION`` result (plan §2 decision 3)."""
+        self._nontrade_latch = latch
+
+    def last_nontrade_evidence_seq(self) -> int | None:
+        """See :attr:`_last_nontrade_evidence_seq`."""
+        return self._last_nontrade_evidence_seq
+
+    def _fire_after_turn(self) -> None:
+        """Invoke :attr:`_after_turn` if bound; count and never re-raise a failure."""
+        callback = self._after_turn
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception as exc:  # noqa: BLE001 - must never halt a drain
+            self._after_turn_failures += 1
+            self._after_turn_last_error = repr(exc)
+
+    @property
+    def after_turn_failures(self) -> int:
+        """Count of :meth:`bind_after_turn` callback exceptions."""
+        return self._after_turn_failures
+
+    @property
+    def after_turn_last_error(self) -> str | None:
+        """``repr()`` of the last :meth:`bind_after_turn` exception, or ``None``."""
+        return self._after_turn_last_error
+
     # -- stamping ------------------------------------------------------------
 
     def _stamp(self, event: EngineEvent) -> EngineEvent:
@@ -374,7 +399,8 @@ class EngineDriver:
 
         Mirrors ``tos.backtest.driver._stamped_tick``/``_stamped_egress``: the caller-supplied
         reference is discarded entirely, because only the driver's own single monotone counter
-        can guarantee "coordinate order == processing order" across both event kinds.
+        can guarantee "coordinate order == processing order" across every event kind. Kernel
+        round #3 §2 결정 1 added the third (``CORPORATE_ACTION``) branch.
         """
         reference = self._counter.next_reference()
         if event.kind is EventKind.DECISION_TICK:
@@ -382,10 +408,22 @@ class EngineDriver:
             assert tick_payload is not None
             stamped_tick = tick_payload.model_copy(update={"reference": reference})
             return EngineEvent(kind=EventKind.DECISION_TICK, decision_tick=stamped_tick)
-        egress_payload = event.egress_result
-        assert egress_payload is not None
-        stamped_egress = egress_payload.model_copy(update={"reference": reference})
-        return EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=stamped_egress)
+        if event.kind is EventKind.EGRESS_RESULT:
+            egress_payload = event.egress_result
+            assert egress_payload is not None
+            stamped_egress = egress_payload.model_copy(update={"reference": reference})
+            return EngineEvent(
+                kind=EventKind.EGRESS_RESULT, egress_result=stamped_egress
+            )
+        corporate_action_payload = event.corporate_action
+        assert corporate_action_payload is not None
+        stamped_corporate_action = corporate_action_payload.model_copy(
+            update={"reference": reference}
+        )
+        return EngineEvent(
+            kind=EventKind.CORPORATE_ACTION,
+            corporate_action=stamped_corporate_action,
+        )
 
     # -- crash-window recovery ------------------------------------------------
 
@@ -505,6 +543,55 @@ class EngineDriver:
         )
         self._inbox.mark_consumed(seq, evidence_seq=evidence_seq, generation=generation)
 
+    def _project_orthostate_and_persist(
+        self, event: EngineEvent, result: EventResult, event_id: str
+    ) -> None:
+        """Project ``event``'s orthostate composite and, if a real recovery composite writer was
+        injected, persist it — called from :meth:`_process_next` for every freshly-handled
+        event, BEFORE that SAME event's own ``EVENT_CONSUMED`` receipt (TOS Phase 5 W1 GAP 2;
+        full write-before-receipt crash-window reasoning is in the module docstring's "GAP 2
+        close-out" section, not repeated here). Split out of :meth:`_process_next` purely for
+        that method's own function-size budget.
+
+        **A failed write halts, never silently continues (surviving-mutation fix, 2026-09-10).**
+        A failure is recorded via :func:`~tos_runtime.evidence.emergency.record_halt` and
+        RE-RAISED, so :meth:`_process_next` aborts before ever reaching :meth:`_record_consumed`
+        — no ``EVENT_CONSUMED`` for this event on a failed attempt.
+
+        Args:
+            event: The just-``core.handle``-processed event.
+            result: The ``EventResult`` ``core.handle`` returned for it.
+            event_id: Recorded on a write-failure HALT for correlation only — NOT the
+                staterestore key (see :class:`~tos_runtime.recovery.composite_state_writer
+                .CompositeStateWriter`'s own module docstring, independent-review finding F3).
+        """
+        composite = self._orthostate_projector.project(event=event, result=result)
+        if composite is None or self._recovery_composite_writer is None:
+            return
+        payload = event.egress_result
+        if payload is None:
+            raise EngineDriverInvariantError(
+                "project() returned non-None but egress_result is None -- project() "
+                "returns non-None only for EGRESS_RESULT events"
+            )
+        try:
+            self._recovery_composite_writer(payload.attempt_id, composite)
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 -- any write failure halts, never swallowed
+            record_halt(
+                self._evidence_store,
+                self._emergency_log,
+                payload={
+                    "event_id": event_id,
+                    "attempt_id": payload.attempt_id,
+                    "detail": f"{type(exc).__name__}: {exc}",
+                },
+                kind=_COMPOSITE_STATE_WRITE_FAILED_KIND,
+                record_class=_COMPOSITE_STATE_WRITE_FAILED_KIND,
+            )
+            raise
+
     def _record_consumed(
         self,
         *,
@@ -513,14 +600,21 @@ class EngineDriver:
         outcome_digest: str | None,
         halt_reason: str | None,
         flow_fingerprint: FlowFingerprint | None,
+        nontrade_disposition: str | None = None,
     ) -> tuple[int, int]:
         """Durably append this driver's own ``EVENT_CONSUMED`` receipt.
 
         Args:
             flow_fingerprint: The ``DECISION_TICK`` commitment-flow fingerprint (wave-3 review
-                finding #1(b)) — ``None`` for an ``EGRESS_RESULT`` (no ``.flow`` to fingerprint)
-                and for the two crash-window recovery paths above (no fresh ``EventResult`` ever
-                existed for them either — mirrors ``outcome_digest=None``'s own convention there).
+                finding #1(b)) — ``None`` for an ``EGRESS_RESULT``/``CORPORATE_ACTION`` (no
+                ``.flow`` to fingerprint) and for the two crash-window recovery paths above (no
+                fresh ``EventResult`` ever existed for them either — mirrors
+                ``outcome_digest=None``'s own convention there).
+            nontrade_disposition: A ``CORPORATE_ACTION`` event's judged
+                :class:`~tos.nontrade.NonTradeDisposition`, as its own string value (kernel round
+                #3 §2 결정 3) — ``None`` for every other event kind. Replay compares this
+                alongside ``outcome_digest``: a mismatch is a divergence exactly like a digest
+                mismatch (:mod:`tos_runtime.engine.replay`'s own comparison logic).
 
         Returns:
             ``(evidence_seq, key_generation)`` for :meth:`SqliteEventInbox.mark_consumed`.
@@ -536,6 +630,7 @@ class EngineDriver:
                     if flow_fingerprint is None
                     else flow_fingerprint.model_dump(mode="json")
                 ),
+                "nontrade_disposition": nontrade_disposition,
             },
             kind=_EVENT_CONSUMED_KIND,
             record_class=_EVENT_CONSUMED_RECORD_CLASS,
@@ -547,6 +642,36 @@ class EngineDriver:
         assert receipt.seq is not None
         assert receipt.key_generation is not None
         return receipt.seq, receipt.key_generation
+
+    def _apply_nontrade_latch(
+        self, *, event_id: str, result: EventResult, evidence_seq: int
+    ) -> None:
+        """After ``_record_consumed``: remember a judged ``nontrade_outcome``'s evidence seq
+        and, when restrictive, latch through the bound
+        :func:`~tos_runtime.nontrade.latch.latch_restrictive` (plan §2 decision 3). A no-op for
+        every non-``CORPORATE_ACTION`` event. Raises :class:`EngineDriverInvariantError` if
+        restrictive but :meth:`bind_nontrade_latch` was never called — never silently skipped.
+        """
+        outcome = result.nontrade_outcome
+        if outcome is None:
+            return
+        self._last_nontrade_evidence_seq = evidence_seq
+        if outcome.restrictive is not True:
+            return
+        if self._nontrade_latch is None:
+            raise EngineDriverInvariantError(
+                "EngineDriver processed a restrictive CORPORATE_ACTION result "
+                f"(event_id={event_id!r}) but bind_nontrade_latch was never called"
+            )
+        self._nontrade_latch(
+            inbox=self._inbox,
+            evidence_store=self._evidence_store,
+            disposition=outcome.disposition.value,
+            latch_reason=f"NONTRADE_{outcome.disposition.value}",
+            event_id=event_id,
+            evidence_seq=evidence_seq,
+            source="engine",
+        )
 
     def _new_risk_halted_result(
         self, event: EngineEvent, halted: dict[str, object]
@@ -604,9 +729,9 @@ class EngineDriver:
         **Bounded residual: new-risk-latch ordering window (re-review finding R4, 2026-09-09).**
         This loop pulls the LOWEST unconsumed ``seq`` and checks the new-risk halt latch
         (:meth:`SqliteEventInbox.new_risk_halt`) before handling it — but the latch itself is
-        only SET later, from inside :meth:`_project_orthostate_and_finality`, when a violating
-        ``EGRESS_RESULT`` is processed. That ``EGRESS_RESULT`` is, in turn, only enqueued at the
-        END of the very same drain call that produced it (:meth:`_drain_gateway_results`). So a
+        only SET later, from ``_project_orthostate_and_persist`` (GAP 2; was
+        ``_project_finality``), when a violating result is processed — itself only enqueued at
+        the END of the very same drain call that produced it (:meth:`_drain_gateway_results`). So a
         ``DECISION_TICK`` already sitting at a LOWER ``seq`` than the violating result — admitted
         before the violation existed, but not yet pulled by this loop — is processed BEFORE the
         latch exists, and is never itself refused by it. This is not reachable in the CURRENT
@@ -708,19 +833,28 @@ class EngineDriver:
                 halt_reason_str = (
                     None if result.halt_reason is None else result.halt_reason.value
                 )
+                self._project_orthostate_and_persist(event, result, event_id)
                 evidence_seq, generation = self._record_consumed(
                     event_id=event_id,
                     payload_digest=payload_digest,
                     outcome_digest=result.outcome_digest,
                     halt_reason=halt_reason_str,
                     flow_fingerprint=flow_fingerprint_for(result),
+                    nontrade_disposition=(
+                        None
+                        if result.nontrade_outcome is None
+                        else result.nontrade_outcome.disposition.value
+                    ),
+                )
+                self._apply_nontrade_latch(
+                    event_id=event_id, result=result, evidence_seq=evidence_seq
                 )
                 self._inbox.mark_consumed(
                     seq, evidence_seq=evidence_seq, generation=generation
                 )
 
                 self._track_timeouts(event, result)
-                self._project_orthostate_and_finality(event, result)
+                self._project_finality(event, result)
                 if event.kind is EventKind.DECISION_TICK:
                     self._drain_gateway_results()
                 return seq, result
@@ -736,7 +870,10 @@ class EngineDriver:
             process life (crash-window recovery — see module docstring item 2).
         """
         processed = self._process_next()
-        return None if processed is None else processed[1]
+        if processed is None:
+            return None
+        self._fire_after_turn()
+        return processed[1]
 
     def run_until_idle(self) -> tuple[EventResult, ...]:
         """Call :meth:`run_once` until the inbox has nothing left to admit or recover."""
@@ -746,6 +883,7 @@ class EngineDriver:
             if processed is None:
                 return tuple(results)
             results.append(processed[1])
+            self._fire_after_turn()
 
     def enqueue_and_run(self, event: EngineEvent) -> EventResult:
         """Stamp, durably admit, and fully process ``event`` (the compose-root convenience API).
@@ -770,6 +908,7 @@ class EngineDriver:
             if processed is None:
                 break
             seq, result = processed
+            self._fire_after_turn()
             if seq == target_seq:
                 result_for_target = result
         if result_for_target is None:
@@ -840,66 +979,22 @@ class EngineDriver:
             event = EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
             self._inbox.enqueue(self._stamp(event))
 
-    # -- orthostate + post-trade finality projection (team-lead CR-4, plan §2.2) --
+    # -- post-trade finality projection (team-lead CR-4, plan §2.2) --
 
-    def _project_orthostate_and_finality(
-        self, event: EngineEvent, result: EventResult
-    ) -> None:
-        """Project one processed event onto orthostate and, for a genuinely-applied
-        ``FULL_FILL``, a SYNTHETIC post-trade finality proof — the wiring the CR-3 modules
-        (``tos_runtime.engine.orthostate_projection``, ``tos_runtime.posttrade.finality``,
-        ``tos_runtime.rcl.finality_witness``) shipped isolated and tested but unreachable from
-        this driver.
-
-        Called unconditionally, right after every freshly-handled event's own
-        ``EVENT_CONSUMED`` receipt is durable (never on a crash-window recovery path, which
-        never calls ``core.handle`` at all and so has no fresh ``EventResult`` to project) —
-        exactly the same placement as :meth:`_track_timeouts`, which this mirrors.
-
-        :meth:`~tos_runtime.engine.orthostate_projection.OrthostateProjector.project` itself
-        no-ops for a ``DECISION_TICK`` or a non-``APPLIED`` result, so this method calls it
-        unconditionally; the ``FULL_FILL``-only finality-proof gate below is this method's own
-        (mirroring :meth:`_track_timeouts`'s own APPLIED-only gate for the SAME reason: a
-        non-``APPLIED`` result's ``EgressResultPayload`` still carries an attempt id and a
-        ``FULL_FILL`` kind by construction, but was never actually accepted onto THIS
-        attempt's reservation — producing a proof from it would assert finality for a fill the
-        kernel itself refused).
-
-        The durable ``attempt_finality_witness`` row is written for every genuinely-applied
-        ``EGRESS_RESULT`` (not only a ``FULL_FILL``) so a later, non-proof-bearing result for
-        the same attempt (e.g. a ``TIMEOUT``) does not leave a stale prior witness readable —
-        :func:`~tos_runtime.rcl.finality_witness.finality_witness_for` itself always returns
-        the correct value (``True`` only for THIS producer call's own proof, ``None``
-        otherwise), so writing it unconditionally on every applied result can only ever
-        record the CURRENT truth, never a stale one.
-
-        No release-trigger call site exists yet anywhere in this runtime to CONSUME this durable
-        witness (measured, ``tos_runtime.rcl.finality_witness``'s own module docstring survey) —
-        that consumption is Phase 5's; this method's job ends at durably recording the proof and
-        the witness so that future lane can read them.
+    def _project_finality(self, event: EngineEvent, result: EventResult) -> None:
+        """Delegates to :func:`~tos_runtime.engine.finality_projection.project_finality` (TOS
+        Phase 5 W2-R; plan §10 row ②) — a pure move of what used to be this method's own body,
+        split out to recover this module's own size headroom. See that function's own docstring
+        for the full behaviour (SYNTHETIC ``FULL_FILL`` proof production, the durable witness
+        row, and — new in W2-R — the :attr:`_release_consumer` hand-off) and
+        :meth:`bind_release_consumer` for how :attr:`_release_consumer` gets attached.
         """
-        self._orthostate_projector.project(event=event, result=result)
-        if event.kind is not EventKind.EGRESS_RESULT:
-            return
-        if result.result_disposition is not ResultDisposition.APPLIED:
-            return
-        payload = event.egress_result
-        assert (
-            payload is not None
-        )  # guaranteed by EngineEvent validation for EGRESS_RESULT
-
-        produced = self._finality_producer.produce(payload)
-        witness = finality_witness_for(None if produced is None else produced.proof)
-        self._inbox.record_finality_witness(payload.attempt_id, witness)
-        if produced is None:
-            return
-        self._evidence_store.append(
-            produced.record.model_dump(mode="json"),
-            kind=_ECONOMIC_OBLIGATION_KIND,
-            record_class=_ECONOMIC_OBLIGATION_KIND,
-        )
-        self._evidence_store.append(
-            produced.proof.model_dump(mode="json"),
-            kind=_POSTTRADE_FINALITY_PROOF_KIND,
-            record_class=_POSTTRADE_FINALITY_PROOF_KIND,
+        project_finality(
+            event,
+            result,
+            inbox=self._inbox,
+            evidence_store=self._evidence_store,
+            finality_producer=self._finality_producer,
+            release_consumer=self._release_consumer,
+            ledger=self._core.ledger,
         )

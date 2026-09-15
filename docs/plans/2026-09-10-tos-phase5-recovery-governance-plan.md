@@ -28,7 +28,7 @@
 ## 2. 결정 (Phase 공통)
 
 1. **owner 교체는 1차원=1커밋**: 각 attestation 을 실 서비스로 바꿀 때 (a) RED 테스트(«attestation 제거 시 부팅 거부» → «서비스 verdict 로 대체») (b) 서비스는 커널 술어 호출만(판정 저작 0) (c) `owner_identity` 를 서비스 identity 로 스탬프 (d) `_pending_dimensions`·`_egress_attestations` 의 해당 키 **삭제 + 잔존 키 = 부팅 거부**(Phase 4 레인 D 관용구). 남는 attestation 은 문서화된 owner 부재 사유가 있어야 한다.
-2. **복구는 부팅 전 장벽**: `tos_runtime/recovery/` 신설 — compose 는 `RecoveryBarrier.verdict()` 가 `RESUME_CONSERVATIVE`(커널 `sbr` 어휘) 가 아니면 엔진 드라이버를 **결선하지 않는다**(정지 사유 evidence). 장벽 입력 = staterestore composite state · RCL log tip/generation · evidence tip · inbox 미소비 · 재생 verdict(Phase 3) · possibly-live attempt 집합(ⓗ) · legacy 영수증 잔존(ⓑ). 전부 구조 파생, 운영자 «정상» 선언 입력 0.
+2. **복구는 부팅 전 장벽**: `tos_runtime/recovery/` 신설 — compose 는 `RecoveryBarrier.verdict()` 가 `ReadinessVerdict.READY`(커널 `sbr` 어휘 — `tos/src/tos/sbr/vocabulary.py:144`, ADR-002-017 §16 line 419; 커널 라운드 #3 §2 결정 6 정정 — `RESUME_CONSERVATIVE` 는 이 어휘에 존재하지 않던 오기)가 아니면 엔진 드라이버를 **결선하지 않는다**(정지 사유 evidence). 장벽 입력 = staterestore composite state · RCL log tip/generation · evidence tip · inbox 미소비 · 재생 verdict(Phase 3) · possibly-live attempt 집합(ⓗ) · legacy 영수증 잔존(ⓑ). 전부 구조 파생, 운영자 «정상» 선언 입력 0.
 3. **3자 reconciliation**: `tos_runtime/recon/` — 커널 `recon` 술어에 (RCL 예약/커밋, evidence 영수증, broker witness) 3자 관측을 주입 → `ReconciliationConfidence`. broker witness 는 **포트** `BrokerWitness.observe(scope) -> WitnessSnapshot`; Phase 5 구현은 합성 transport 의 자체 원장(`SyntheticLedgerWitness`) · KIS 는 후속. confidence 가 양성 아니면 **재무장 0·용량 반환 0**(종료 조건 1).
 4. **용량 반환은 finality witness 로만**: `PROJECTION_ORDER` 에 `RELEASED` 를 넣는 것은 finality 소비자(W2)가 `FinalityProof` 를 evidence 에 **선기록**한 뒤. `UNKNOWN`/`TIMEOUT` 은 만료·해소 전까지 점유(ⓒ·ⓖ). orphan broker order(witness 에만 있는 주문) 는 예약 없는 결과와 같은 «기록된 보수 결과»(Phase 3 `ResultDisposition`) + 사고 후보.
 5. **안전 메시 4 서비스는 같은 형상**: `SafetyProfileService`(spg · item 7 envelope/profile version) · `DeviationService`(wdr · 8) · `IncidentService`(sir · 9) · `MonitoringService`(stm · 10) — 각각 «정책 문서(설정 YAML, named-TBD)·현 세대·활성 집합·scope» 를 로드해 커널 술어로 verdict 를 내고, (i) currentness 차원 owner (ii) `SendBoundaryContext` 의 해당 deferred item 입력 (iii) coordinator 전제조건 셋에 동시 공급. 커널 diff: `SendBoundaryContext` 에 deferred 6 입력 필드(`safety_authority_epoch_current`·`live_scope_valid`·`safety_profile_current`·`deviation_clear`·`incident_clear`·`monitoring_clear`: `bool|None`) + `_deferred_item_verdict` 주입 분기(NON_BROKER_SYNTHETIC→N/A 불변 · True 만 SATISFIED · None→UNKNOWN). `gateway.py` 등재 한계(2007) 상 deferred 판정을 `egressgw/mesh.py` 로 분리(커널 라운드 · 등재 갱신).
@@ -80,3 +80,93 @@
 3. authoritative durability 의 «선택된 storage ADR» 지목(설계 #40 D3 sqlite 를 그 ADR 로 확인).
 4. 레거시 `services/dashboard` 의 투영 읽기 결선 시점(Phase 5 안 / 후속).
 5. 커널 `egressgw/mesh.py` 분리(등재 갱신) 승인 — 커널 라운드 #2 로 묶을지.
+
+## 8. 운영자 처분 (2026-09-10)
+
+| # | 처분 |
+|---|---|
+| 1 | **전역 new-risk 래치 + 명시 재무장(seq 결속·attestation·증거 선기록·HAG 2인) 승인** — W3 에서 구현 · 대안 불채택 |
+| 2 | 설정값 ⓘ + 이 Phase 신설값 = **개발 측 근거 제안표 → 운영자 승인** · 승인 전 named-TBD null |
+| 3 | authoritative durability 의 storage ADR = **설계 #40 D3 sqlite WAL** 로 확정(신규 ADR 없음) · 런타임 Redis 키 0 은 종료 조건 4 의 공허 충족으로 기록 |
+| 4 | 레거시 `services/dashboard` 의 읽기 전용 투영 결선은 **W4 안에서**(write 포트 0 negative-grep 으로 종료 조건 3 실증) |
+| 5 | **커널 라운드 #2 로 묶어 승인**: `egressgw/mesh.py` 분리 + `SendBoundaryContext` deferred 6 입력 필드 + Phase 3 이월 ⓔ(`GatewayEvidenceRecord.step` 필수화) + item 6/12 reason 문언 정정 · **W1 착지 후 시작, W3 착수 전 선행** |
+| 착수 | **즉시 — W1 ∥ MOCK transport T1** · 브랜치 `feat/tos-phase5-w1-recovery`(워크트리 `../kis_unified_sts-phase5-w1`, main `296c0e5f` 기점) |
+
+## 9. 실행 결과 — W1 착지 (2026-09-10 · PR #670 → main `7579196c`)
+
+- **착지**(레인 W1-a/W1-b/W1-c · 9커밋): `tos_runtime/recovery/`(barrier · inputs · possibly_live · legacy_receipts · reconciliation · composite_state_writer) · `tos_runtime/recon/`(ports · witness_synthetic · evidence_reader · service) · `compose/_recovery_wiring.py` · `_engine_wiring.py`(`REPLAY_VERDICT_IDENTICAL` durable 기록) · `driver.py`(composite-state 쓰기 · 영수증 이전 · 실패 = halt) · 테스트 recovery 57 · recon 39 · 크래시 drill 11. 런타임 1038(T1 병합 포함) · 커널 diff 0 · 예산 재등재 2(root.py 109 · `_process_next` 141).
+- **정직 상태**: 합성 witness 는 evidence 와 같은 저장소를 읽으므로 **비독립으로 표기**되어 `WITNESS_NOT_INDEPENDENT` HOLD — **실 broker witness(KIS 조회 어댑터) 전까지 어떤 possibly-live 도 자동 해제되지 않는다**(종료 조건 1 의 구조적 실증). 스코프 단위 permit 은 보수적(같은 instrument 의 무관한 attempt 가 실패하면 좋은 attempt 도 HOLD) — 수용·문서화.
+- **독립 리뷰**: 1차 needs-attention(HIGH 2 · MEDIUM 5 · LOW 1 · 뮤테이션 생존 1) → 처분(attempt 단위 reconciliation · 비독립 표기 · SEND_HANDED_OFF 키잉 · `FlowFingerprint` 검증 · durable replay verdict · inbox 전행 파싱 · 상수 단일화 · typed invariant · 쓰기 실패 halt) → 재심 F1~F8 전건 동작 종결 · 뮤테이션 9종 red · 잔여 3(mypy·assert·문언) 처분.
+- **이월**: obligation 1 의 양성 행은 그 행을 쓰는 호출이 자기 성공을 증언(음성 행만 부팅 간 하중 · LOW) · W1-a 의 `_reconciliation_service_available` 프로브는 실 결선으로 대체됨 · 실 broker witness 는 MOCK transport T2/T3 이후.
+- **공유 워크트리 충돌 1회**(W1-a 재가동 ↔ W1-c · 파일 clobber → ImportError) — 복구 완료 · 교훈은 메모리(`subagent-reports-arrive-out-of-order`)에 기록: 끝난 레인에 메시지 금지.
+
+## 10. W2 설계 정정 — 서베이 실측 후 (2026-09-10 · main `7f3ffa52`)
+
+**실측(§4 W2 행의 전제 수정)**: (a) `RELEASED` 는 커널 `CapacityState`(`tos/src/tos/rcl/vocabulary.py:31`)에 있고 RCL 원장 게이트 `release_admissible`(`rcl/commitlog.py:463`) + 런타임 `rcl/gates.py:343` + `rcl/finality_witness.py::release_reservation` 시임까지 **전부 존재**하나 **프로덕션 호출 지점 0** · (b) 엔진 in-memory 투영 `PROJECTION_ORDER`(`tos/src/tos/engine/state.py:74-82`)에는 `RELEASED` 가 **부재**(커널 테스트 3건이 부재를 직접 핀) · (c) ⓖ TIMEOUT 해소 세대는 커널 dedup 서명(`engine/state.py:258-271`)에 산다 · (d) driver 는 `attempt_finality_witness` 행과 `POSTTRADE_FINALITY_PROOF` evidence 를 **쓰기만** 하고 읽는 프로덕션 소비자 0 · (e) W1 recon 이 `ReconciliationReport.permits_capacity_release` · `EgressReceiptObservation.finality_proof_recorded` · `WitnessSnapshot.independent_of_evidence_store` 를 이미 공급 · (f) 헤드룸 0 파일: `_wiring.py` 1197(성장 금지) · `rcl/log.py` 1000 · `engine/driver.py` 994.
+
+**분리 결정**: W2 를 **W2-R(런타임 · 커널 diff 0 · 즉시)** 과 **W2-K(커널 라운드 #2 번들 확장 · 운영자 확인)** 로 나눈다.
+
+| 레인 | 내용 | 결선 |
+|---|---|---|
+| **W2-R** | ① `tos_runtime/posttrade/release_consumer.py`(신설) — **RCL 원장(권위·durable)** 에 대한 유일한 용량 반환 호출 지점. APPLIED `EGRESS_RESULT` 뒤 매 턴: durable witness 행 + `POSTTRADE_FINALITY_PROOF` evidence(재로드 · 메모리 객체 아님) + `ReconciliationService.reconcile(scope)` 보고(`permits_capacity_release is True` ∧ 해당 attempt `MATCHED`) + 커널 `finality_proof_non_transferable`/`finality_proof_current` 양성 → **evidence 선기록 `CAPACITY_RELEASE_INTENT`** → `release_reservation`(FULL_FILL ⇒ `POSITION_CONSUMED` · CANCEL_ACK/EXPIRED/REJECT ⇒ `RELEASED`, 비체결 FQP(filled 0 · remaining 0)은 **witness 대조 후에만** 생산 — 응답 단독 금지 §3). 어느 게이트든 비양성 ⇒ 전이 0 + `CAPACITY_RELEASE_HELD`(사유) ② `engine/finality_projection.py`(신설) — `driver._project_finality` 본문 순수 이동(driver 헤드룸 확보) + 소비자 호출 ③ `compose/_release_wiring.py`(신설) — W1 `recovery/reconciliation.py:216` 과 **같은 생성 경로**로 recon 서비스 재사용 · `_engine_wiring` 은 1호출만 ④ obligation 만료 = `release_proof_wait_ms`(설정 named-TBD null) 초과한 `RELEASE_PENDING_PROOF`/`QUARANTINED_UNKNOWN` 예약에 `RELEASE_PROOF_OVERDUE` evidence(기록만 · 상태 변경 0 · 사고 후보) | driver 훅 · `_engine_wiring` 1호출 |
+| **W2-K** (운영자 확인 6) | 커널 라운드 #2 번들에 추가 제안: `PROJECTION_ORDER` 에 `RELEASED` + `ProvisionalReservationLedger` 의 **finality-proof-token 게이트** release 메서드(응답 kind 로는 불가) + ⓖ dedup 서명에 해소 세대 · 커널 테스트 3건 개정 | 커널 라운드 |
+
+**정직 상태(W2-R 착지 시)**: 합성 witness 는 비독립이므로 composed 런타임에서 `permits_capacity_release` 는 항상 False ⇒ **실 반환 0** — 소비자의 하중은 독립 witness fake 를 주입한 테스트에서만 실증되고, 실 KIS 조회 witness(transport T2/T3 이후)가 붙는 날 코드 변경 0 으로 첫 반환이 일어난다(T1 과 같은 «구조 완결» 논리). 엔진 in-memory 투영은 W2-K 전까지 프로세스 수명 동안 점유 유지(재부팅 시 RCL RELEASED 와 정합) — 한계로 기록.
+
+**운영자 확인 지점 6**: W2-K 를 커널 라운드 #2(처분 5 번들)에 묶을지. 권고: 묶는다(둘 다 W3 착수 전 선행 조건).
+
+### 10.1 실행 결과 — W2-R 착지 (2026-09-10 · 브랜치 `feat/tos-phase5-w2-finality` · main `7f3ffa52` 기점)
+
+- **착지** `d99e4456`·`bf5a68e4`: `posttrade/release_consumer.py`(`FinalityReleaseConsumer` — RCL 원장 `RELEASED`/`POSITION_CONSUMED` 의 유일 프로덕션 호출 지점 · durable proof/obligation 재로드 · `CAPACITY_RELEASE_INTENT` 선기록(evidence seq 순서 핀) · 비양성 ⇒ `CAPACITY_RELEASE_HELD`(사유) · `RELEASE_PROOF_OVERDUE` 기록만) · `engine/finality_projection.py`(driver `_project_finality` 순수 이동 + 소비자 호출 · driver 994→974) · `compose/_release_wiring.py`(`_recovery_wiring` 관용구 — `EngineDriver.bind_release_consumer` 후결선 · `_wiring.py`/`_engine_wiring.py` 무접촉) · `posttrade/finality.py` `produce_non_execution`(FULL_FILL_*/NON_EXECUTION_* 키 접두 분리) · `finality.yaml::release_proof_wait_ms`(null=부팅 거부) · `rcl/reservation_identity.py::scope_reservation_id`(수기 6곳 대체).
+- **독립 리뷰**: 1차 needs-attention(HIGH 2 · MEDIUM 7 · LOW 4 · 뮤테이션 생존 5/14) → 처분 `3b0ada34`·`9b768593`(게이트 4 입력을 RCL 예약 행 scope·evidence obligation 세대로 독립화 · 단조 클록 영속 제거 + TRUSTED 시간에서만 만료 평가 · 점유 단위(last_seq) 키잉 · 비체결 경로도 게이트 4 통과 · 접두 분리·재로드 kind 선택 · e2e 사유·예약 id 핀 · MATCHED 핀) → 재심 신규 MEDIUM 1(import 순환 `release_consumer→engine→driver→finality_projection`) → `ddd7de3e`·`28bbacbb`(`TYPE_CHECKING` 가드 · 헤르메틱 순환 재발 테스트 — subprocess/importlib 는 firewall TOS-FW-B/D 차단이라 `sys.modules` 축출+정적 import) → **최종 approve** · 뮤테이션 전건 red. 런타임 **1080** · 커널 9405 · 커널 diff 0.
+- **정직 상태(e2e 실증)**: `compose_paper_runtime` 경로의 실 FULL_FILL 핸드오프 → RCL `RELEASED`/`POSITION_CONSUMED` 행 0 · `CAPACITY_RELEASE_INTENT` 0 · `CAPACITY_RELEASE_HELD` 1(`NOT_CORROBORATED` · `WITNESS_NOT_INDEPENDENT`). 게이트 4 입력은 **기제상 독립이나 오늘 도달 가능한 입력에서는 값이 일치**(compose root 가 `InstrumentKey` 1개 · `finality.py` 가 `obligation_generation=0` 고정) — 다중 instrument compose root 또는 실 정정 레인이 붙어야 분기 도달.
+- **구조적 발견(리뷰어 확인)**: CANCEL_ACK/EXPIRED/REJECT ⇒ `RELEASED` 경로는 witness 독립성과 **무관하게** 도달 불가 — `ReconciliationService._quantity_observations` 가 수량 CORROBORATED 에 독립 수치 관측 2개를 요구하나 `EgressResultPayload` 검증기가 이 세 kind 의 수량을 금지하고, `field_reconciled_proof_ok`(`tos/src/tos/recon/predicates.py:377`) 자체가 «cancel ACK ⇒ FQP 토큰 없음 ⇒ False» 를 의도 케이스로 명시. → **운영자 확인 지점 7**: (a) recon 서비스/커널 술어에 «종단 비체결 상태의 0-수량 대조 경로» 확장(커널 diff · 라운드 #2 후보) 또는 (b) 비체결 반환은 확장 전까지 영구 HOLD 수용. 권고: (a) 를 커널 라운드 #2 검토 항목으로 등재, 착지 전까지 (b).
+- **이월(LOW)**: 반환 시도당 evidence 클라이언트 측 스캔 6회(규약상 수용 · 병목 시 후속) · `finality_projection` 순환 테스트의 `sys.modules` 복원 잔여 1줄.
+
+## 11. 운영자 처분 — Phase 5 W1~W5 착지 후 (2026-09-12 · main `837afad3`)
+
+운영자가 W3.1/W3.2/W4/W5 계획 §6 의 확인 지점과 이월 항목을 선택지로 받아 **전부 추천안으로 결정**했다. 아래가 그 결정의 정본이며, 각 하위 계획의 §6 은 이 표를 가리킨다.
+
+### 11.1 다음 착수 순서
+
+| # | 결정 |
+|---|---|
+| 1 | **커널 라운드 #3 를 다음 웨이브로**(계획 `2026-09-12-tos-kernel-round-3-plan.md` 저작 → 레인 K) — 범위 = C1·C2·C4·C7(아래 11.3) |
+| 2 | 라운드 #3 **→** 런타임 엔트리포인트 웨이브(`ConstructionConfig` 로더 · CLI `run` 실구성 · `shutdown()`/projection/restore-drill 완전화 · **G-1 결선 포함**) **순차** — 커널 편집은 한 레인·한 시점 |
+
+### 11.2 결선 게이트
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 3 | **G-1 벽시계 값 노출**(W3.2 §6 ② · W5 §6 ①) | **승인** — `LocalWallClockReference` 를 컴포즈에 결선하되 `TrustworthyTimeService.health_state is TRUSTED` 일 때만 세션 사실 생산 · 스냅샷 `wall_clock_observation` 기입(`time/service.py:449`) · 슬라이스 #1 «값 비노출» 결정은 «TRUSTED 게이트 뒤 노출» 로 개정. 구현은 엔트리포인트 웨이브 |
+| 4 | G-2 item 16 보존 의무 트리거 발행자 변경(W3.2 §6 ③) | **보류** — 라운드 #3 검토 후 재상정 |
+| 5 | deferred 항목 `False ⇒ DENIED` 극성(라운드 #2 이월) | **확정** — 서비스의 명시적 False 는 DENIED(운영자 재무장 필요) |
+| 6 | egress item 5 `live_scope_valid`(W3.1 §6) | **None 유지**(원천 없음 정직 · attestation 부활 안 함) |
+| 7 | 새 세대 evidence 키 파일만 존재 시 부팅 거부(W4 §6 ④) | **확정**(deny-first) |
+| 8 | 스키마 마이그레이션은 CLI `migrate` 만 · 부팅 자동 적용 0(W4 §6 ③) | **확정** |
+| 9 | 합성(비브로커) 스코프에서 item 12 의 tradability/account 반쪽 «구조적 True»(W5 §6 ④) | **승인**(Phase 4 `derive_item6_item12` 와 동일 관용구 · 브로커 스코프는 None) |
+| 10 | 만기 처리 = 캘린더 `EXPIRED` 위상 + 커널 멤버십 거부(W5 §6 ⑤) | **현 방식 유지** — 커널 만기 술어(C3)는 라운드 #3 범위에서 제외 |
+
+### 11.3 커널 라운드 #3 범위
+
+| 포함 | 제외(사유) |
+|---|---|
+| **C1** `EventKind.CORPORATE_ACTION` + 엔진 dispatch(nontrade 이벤트 엔진 진입 · 핸들러는 disposition 소비·cause 토큰 발행까지 · 용량 적용 0) · **C2** item 12 세션·계좌 합성 술어(`venue_session_account_facts_current` 의 커널 정의 · 라운드 #2 `mesh.py` 분리 패턴) · **C4** W2-K(엔진 투영 `RELEASED` · ⓖ dedup 세대 · Phase 5 §10 운영자 확인 6 해소) · **C7** 문언 정정(`egressgw/__init__` «no owning runtime producer» · staterestore composite ledger 주석 · 본 계획 §2 결정 2 `RESUME_CONSERVATIVE` → `ReadinessVerdict.READY`) | C3 만기 술어(결정 10) · C5 스키마/backup/키 연속성 커널 어휘화(런타임 전용으로 충분) · C6 `tos.obs`(ADR-DEV-014 Proposed 상태 · spec 선행) · C8 orthostate 조정 API(규모 큼 · 별도 라운드) |
+
+### 11.4 값 확정
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 11 | 캘린더 값 | **제안값 채택**: 주식 정규 09:00–15:30 · 프리마켓 08:30–08:40 · 시간외 15:40–16:00 · 선물 정규 08:45–15:45 · 야간 18:00→05:00(마감 캡처 06:00 은 레거시 별도 키) · 만기 둘째 목요일 [3,6,9,12] · 2026 휴장일 = `config/market_schedule.yaml` 기준(2026-08-17 대체휴일 포함 · `shared/calendar.py` 하드코딩 표는 정정 대상) · 위상 어휘 `PRE_OPEN/CONTINUOUS/AFTER_HOURS/CLOSED/EXPIRED` · `calendar_version = "krx-2026.09"` — 적용 = 엔트리포인트 웨이브가 `calendar.yaml` 실파일로 착지 |
+| 12 | 의존성 기대 digest(`expected_code_digest`·`expected_dependency_set_digest`) | **보류(운영자 수동)** — paper 서버에서 `tos-runtime print-digests` 실행 후 `release.yaml` 기입 · 개발 트리 값은 e2e 픽스처가 자체 계산 |
+| 13~15 | transport 값 제안표(T2 이월) · 안전 메시 정책값 제안표(W3.1 이월) · ⓘ 설정값(`max_send_result_wait_ms`·`replay_window_events`·finality 정책·장벽 timeout·회전 주기) | **개발 측 제안표 저작 → 운영자 승인** — `docs/plans/2026-09-12-tos-operator-value-proposals.md`(본 PR) · 승인 전 named-TBD null 유지 |
+| 16 | 재무장 2인 principal roster 배치 | **보류(운영자 수동 · 서버 custody 디렉터리)** — 파일 스키마는 제안표 문서에 수록 |
+
+### 11.5 배포·문서
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 17 | 대시보드 `/api/tos/projection` · compose `./data/tos_runtime:ro` · Caddy 매처 paper 서버 반영 | **예 — 운영자 수동 배포**(코드는 main `c626d878` 에 있음) |
+| 18 | spec 편집: `OPERATOR-001` owner = `tos_runtime.operator.projection` · KRX 세션/만기 사실 Broker Capability Profile INSTANCE 등재 | **예** — spec 거버넌스 PR 별도(bound 문서 무접촉 · 계약 본문 무접촉) |
+| 19 | `STM_ALERT_RESOLVED` 발행자(운영자 ack workflow) | **예** — 엔트리포인트 웨이브에 포함(HAG 승인 파일 관용구 · projection `unresolved` 소비) |
+| 20 | tzdata | **부팅 거부 유지**(서드파티 0 원칙 · 컨테이너 이미지가 시스템 tzdata 를 갖추는 것은 배포 책임) |

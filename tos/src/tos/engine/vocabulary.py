@@ -86,23 +86,29 @@ class _NonTruthyStrEnum(StrEnum):
 class EventKind(StrEnum):
     """The closed set of event kinds the single event core processes (design #31 §2.2).
 
-    Slice #1 carries exactly two: a ``DECISION_TICK`` (an admitted Critical Input refresh that
+    Slice #1 carried exactly two: a ``DECISION_TICK`` (an admitted Critical Input refresh that
     drives one decision-pipeline run for the bound instrument) and an ``EGRESS_RESULT`` (the
     typed result re-injected from the D-E4 send boundary, so the core can transition its
     provisional reservation projection — RFC-002 §10.7:719 "maintain potentially live order
-    state"). Extension (cancel / reconciliation / corporate-action events) is an enum addition
-    only; the dispatcher interface does not change (design #31 §2.2).
+    state"). Design #31 §2.2 anticipated the enum-addition-only extension this closed set has
+    now taken once: ``CORPORATE_ACTION`` (kernel round #3 §2 결정 1) folds one non-trade event
+    (:mod:`tos.nontrade`) through the sole ``nontrade_disposition`` producer and reports its
+    disposition + capacity-remap *proposal* only — no capacity, projection, or latch state is
+    touched by this kind's own handler (kernel round #3 §2 결정 2(d)). The dispatcher interface
+    itself does not change: every new kind still routes through the same
+    ``(EngineEvent, OrderingAdmission) -> EventResult`` handler signature.
     """
 
     DECISION_TICK = "DECISION_TICK"
     EGRESS_RESULT = "EGRESS_RESULT"
+    CORPORATE_ACTION = "CORPORATE_ACTION"
 
 
 #: The positive-membership admission set for the dispatcher (design #31 §2.2 "닫힘 규율").
 #: The dispatcher advances **only** for a kind in this set; anything else is a fail-closed error,
 #: never a silent drop.
 ADMISSIBLE_EVENT_KINDS: frozenset[EventKind] = frozenset(
-    {EventKind.DECISION_TICK, EventKind.EGRESS_RESULT}
+    {EventKind.DECISION_TICK, EventKind.EGRESS_RESULT, EventKind.CORPORATE_ACTION}
 )
 
 
@@ -502,6 +508,11 @@ class EvidenceKind(StrEnum):
     #: authorization) refused a ``DECISION_TICK`` before step 1 (Phase 3 KW2-B; design #31
     #: §9-10). Distinct from ``DECISION_WITHHELD`` — the registry dispatch is never reached.
     COORDINATOR_PRECONDITION_REFUSED = "COORDINATOR_PRECONDITION_REFUSED"
+    #: A ``CORPORATE_ACTION`` event was folded through the sole ``nontrade_disposition``
+    #: producer (kernel round #3 §2 결정 1/2) — recorded for every disposition, restrictive or
+    #: admissible alike, never only the admissible ones (design #21's own "a disposition grants
+    #: nothing" — this evidence kind records the judgement, not a grant).
+    CORPORATE_ACTION_CONSUMED = "CORPORATE_ACTION_CONSUMED"
 
 
 # ===========================================================================

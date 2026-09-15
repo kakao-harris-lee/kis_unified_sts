@@ -39,14 +39,13 @@ only. No ``shared.*``.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import yaml
-from tos.brokeradapter import SyntheticFillPolicy, SyntheticPaperTransport
+from tos.brokeradapter import Transport
 from tos.canonical import CanonicalizationScheme
 from tos.egressgw import BrokerEgressGateway
 from tos.engine import (
@@ -60,12 +59,21 @@ from tos.engine import (
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.authority.epoch import SafetyAuthorityEpochService
+from tos_runtime.brokercap.instance import InstanceDocument
+from tos_runtime.brokercap.scopes import BrokerScope
 from tos_runtime.compose._boot_integrity import verify_engine_replay_or_halt
 from tos_runtime.compose._preconditions import (
     RuntimeCoordinatorPreconditions,
     _ReplayPreconditions,
 )
+from tos_runtime.compose._safety_wiring import SafetyMeshSnapshot
+from tos_runtime.compose._transport_wiring import (
+    SealRegistry,
+    TransportKind,
+    build_transport,
+)
 from tos_runtime.compose.context import ComposeContextResolver
+from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.orthostate_projection import OrthostateProjector
@@ -82,11 +90,19 @@ from tos_runtime.posttrade.config import FinalityConfig
 from tos_runtime.posttrade.finality import SyntheticFinalityProducer
 from tos_runtime.rcl.obligation import CapacityObligationRecorder
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
+from tos_runtime.rcl.reservation_identity import scope_reservation_id
+from tos_runtime.recovery.composite_state_writer import (
+    COMPOSITE_STATE_STORE_FILE_NAME,
+    CompositeStateWriter,
+)
+from tos_runtime.safety.ports import SafetyMeshService
 from tos_runtime.time.sources import MonotonicSource
+from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 
 __all__ = [
     "ENGINE_DRIVER_CONFIG_NAME",
     "INBOX_FILE_NAME",
+    "REPLAY_VERDICT_IDENTICAL_KIND",
     "EngineDriverConfig",
     "EngineDriverConfigError",
     "WiredEngine",
@@ -102,6 +118,12 @@ ENGINE_DRIVER_CONFIG_NAME = "engine_driver.yaml"
 #: ``evidence.sqlite3`` (module docstring item 2 / D3 failure-domain
 #: separation).
 INBOX_FILE_NAME = "inbox.sqlite3"
+
+#: Independent-review finding F5 (2026-09-10): the durable evidence kind recorded by
+#: :func:`verify_replay_or_halt` for a genuinely clean (non-diverged) replay result — see that
+#: function's own inline comment for why this did not already exist. Read by
+#: :mod:`tos_runtime.recovery.inputs` for the recovery barrier's obligation 1.
+REPLAY_VERDICT_IDENTICAL_KIND = "REPLAY_VERDICT_IDENTICAL"
 
 
 class EngineDriverConfigError(Exception):
@@ -238,6 +260,12 @@ def build_engine_driver(
         authority_epoch_current=authority_epoch_current,
     )
     finality_producer = SyntheticFinalityProducer(config=finality_config, scheme=scheme)
+    # TOS Phase 5 W1 GAP 2: the real staterestore composite-state writer -- the ONE concrete
+    # implementation this compose root wires (tests construct EngineDriver without one, which
+    # degrades to the documented pre-GAP-2 no-op; see EngineDriver's own constructor docstring).
+    recovery_composite_writer = CompositeStateWriter(
+        data_dir / COMPOSITE_STATE_STORE_FILE_NAME
+    )
     driver = EngineDriver(
         core=core,
         inbox=inbox,
@@ -249,6 +277,7 @@ def build_engine_driver(
         max_send_result_wait_ms=max_send_result_wait_ms,
         orthostate_projector=orthostate_projector,
         finality_producer=finality_producer,
+        recovery_composite_writer=recovery_composite_writer,
     )
     driver.bind_gateway(gateway)
     return inbox, driver
@@ -316,7 +345,7 @@ def verify_replay_or_halt(
             core=core, recorded_stage=recorded_stage, scheme=scheme
         )
 
-    return verify_engine_replay_or_halt(
+    verdict = verify_engine_replay_or_halt(
         inbox,
         evidence_store,
         emergency_log,
@@ -324,6 +353,24 @@ def verify_replay_or_halt(
         scheme=scheme,
         window_events=window_events,
     )
+    # Independent-review finding F5 (2026-09-10): verify_engine_replay_or_halt records evidence
+    # ONLY on divergence (REPLAY_DIVERGED, inside replay_engine) or unverifiable receipts
+    # (REPLAY_RECEIPTS_UNVERIFIABLE) -- the ordinary "everything matched cleanly" case left NO
+    # durable trace at all. tos_runtime.recovery.barrier's own obligation 1 used to hardcode
+    # ok=True for this ("guaranteed by construction, this barrier only runs after replay already
+    # passed"), which is true for the boot that just ran but gives a LATER read of this evidence
+    # store (or a mutation removing this call entirely) nothing durable to verify against. This
+    # is that durable record.
+    evidence_store.append(
+        {
+            "total_compared": verdict.total_compared,
+            "uncompared": verdict.uncompared,
+            "has_unverifiable_receipts": verdict.has_unverifiable_receipts,
+        },
+        kind=REPLAY_VERDICT_IDENTICAL_KIND,
+        record_class=REPLAY_VERDICT_IDENTICAL_KIND,
+    )
+    return verdict
 
 
 @dataclass
@@ -333,15 +380,43 @@ class WiredEngine:
     """
 
     gateway: BrokerEgressGateway
-    transport: SyntheticPaperTransport
+    #: T2 lane C — widened from ``SyntheticPaperTransport`` to the kernel's own
+    #: ``Transport`` Protocol: either the synthetic transport or a fully-wired
+    #: ``KisMockTransport`` satisfies it structurally (module docstring).
+    transport: Transport
     core: EngineCore
     resolved_registry: StrategyRegistry
     inbox: SqliteEventInbox
     driver: EngineDriver
 
 
+def _mesh_held_evidence_recorder_for(
+    evidence_store: SqliteEvidenceStore,
+) -> Callable[[Mapping[str, Any]], None]:
+    """The Coordinator's ``COORDINATOR_MESH_HELD`` evidence sink (Phase 5 W3-b, plan §2
+    decision 5) — over this runtime's real evidence store, mirroring every other
+    boot-time/tick evidence append in this module's own call sites."""
+
+    def _recorder(fields: Mapping[str, Any]) -> None:
+        evidence_store.append(
+            dict(fields),
+            kind="COORDINATOR_MESH_HELD",
+            record_class="COORDINATOR_MESH_HELD",
+        )
+
+    return _recorder
+
+
 def _build_preconditions(
-    authority_epoch_service: SafetyAuthorityEpochService, live_authorization_state: str
+    authority_epoch_service: SafetyAuthorityEpochService,
+    live_authorization_state: str,
+    *,
+    nonlive_admitted: bool,
+    active_scope: BrokerScope,
+    instance_document: InstanceDocument | None,
+    safety_mesh: Sequence[SafetyMeshService] = (),
+    evidence_store: SqliteEvidenceStore | None = None,
+    mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None,
 ) -> RuntimeCoordinatorPreconditions:
     """The live core's RFC-002 §10.7 Coordinator positive gates (design #31 §9-10; plan §2.1).
 
@@ -355,10 +430,33 @@ def _build_preconditions(
             authority domain.
         live_authorization_state: The caller-resolved, already-validated restricted-live
             governance posture (``CoordinatorPreconditionsConfig.live_authorization_state``).
+        nonlive_admitted: T2 lane B's ``nonlive_broker_consuming_admitted`` posture, forwarded
+            straight through to :class:`RuntimeCoordinatorPreconditions`.
+        active_scope: This runtime's active :class:`~tos_runtime.brokercap.scopes.BrokerScope`.
+        instance_document: The bound Broker Capability Profile INSTANCE document, or ``None``.
+        safety_mesh: The Phase 5 W3 safety-mesh services (plan §2 decision 5) — the
+            Coordinator's third question. Empty (default) when not wired.
+        evidence_store: Builds the ``COORDINATOR_MESH_HELD`` recorder when given; ``None``
+            (default) wires no evidence recorder (the refusal itself is unaffected).
+        mesh_snapshot_refresher: Forwarded straight through to
+            :class:`RuntimeCoordinatorPreconditions` — the once-per-tick
+            :class:`~tos_runtime.compose._safety_wiring.SafetyMeshSnapshot` refresher
+            (team-lead disposition following the HIGH-1/HIGH-2 statefulness fix). ``None``
+            (default) falls back to per-service ``clear()`` calls, unaffected.
     """
     return RuntimeCoordinatorPreconditions(
         epoch_service=authority_epoch_service,
         live_authorization_state=live_authorization_state,
+        nonlive_admitted=nonlive_admitted,
+        active_scope=active_scope,
+        instance_document=instance_document,
+        safety_mesh=safety_mesh,
+        mesh_evidence_recorder=(
+            _mesh_held_evidence_recorder_for(evidence_store)
+            if evidence_store is not None
+            else None
+        ),
+        mesh_snapshot_refresher=mesh_snapshot_refresher,
     )
 
 
@@ -380,16 +478,28 @@ def wire_engine_and_driver(
     authority_epoch_service: SafetyAuthorityEpochService,
     live_authorization_state: str,
     finality_config: FinalityConfig,
+    nonlive_admitted: bool,
+    active_scope: BrokerScope,
+    instance_document: InstanceDocument | None,
+    custody: CredentialCustody,
+    transport_kind: TransportKind,
+    transport_config: KisMockTransportConfig | None,
+    safety_mesh: Sequence[SafetyMeshService] = (),
+    mesh_snapshot_refresher: Callable[[], SafetyMeshSnapshot] | None = None,
 ) -> WiredEngine:
     """The gateway + ``EngineCore`` + durable inbox/driver wiring — split out of ``_wiring.py``'s
     ``_finalize`` purely for the size budget; no behavioural difference from having this inline
-    there. Builds, in order: the obligation recorder + gateway evidence sink -> the synthetic
-    transport + ``BrokerEgressGateway`` -> the resolved registry + engine evidence sink ->
-    the ``RuntimeCoordinatorPreconditions`` (design #31 §9-10; plan §2.1, via
-    :func:`_build_preconditions`) -> ``EngineCore`` (steps 2-11/13/14 + this gateway as
-    ``transmit`` + the Coordinator gate) -> the durable inbox +
-    :class:`~tos_runtime.engine.driver.EngineDriver`, bound to both (TOS Phase 3 Wave 1 Lane A-R,
-    plan §1.1: "engine core wired first, driver last").
+    there. Builds, in order: the ``SealRegistry`` + obligation recorder + gateway evidence sink
+    (T2 lane C: the registry's ``capture`` is wired as ``on_record`` ONLY for ``kis-mock`` —
+    independent review HIGH-1) -> the selected
+    transport (:func:`~tos_runtime.compose._transport_wiring.build_transport` — synthetic or
+    KIS MOCK) + ``BrokerEgressGateway`` -> the resolved registry + engine evidence sink -> the
+    ``RuntimeCoordinatorPreconditions`` (design #31 §9-10; plan §2.1, via
+    :func:`_build_preconditions`, now also carrying T2 lane B's non-live broker-consuming
+    admission ports) -> ``EngineCore`` (steps 2-11/13/14 + this gateway as ``transmit`` + the
+    Coordinator gate) -> the durable inbox + :class:`~tos_runtime.engine.driver.EngineDriver`,
+    bound to both (TOS Phase 3 Wave 1 Lane A-R, plan §1.1: "engine core wired first, driver
+    last").
 
     Args:
         authority_epoch_service: Forwarded to :func:`_build_preconditions` — see its own
@@ -398,6 +508,15 @@ def wire_engine_and_driver(
             docstring.
         finality_config: Forwarded to :func:`build_engine_driver` — see its own docstring
             (team-lead CR-4 dispatch, plan §2.2).
+        nonlive_admitted: Forwarded to :func:`_build_preconditions` (T2 lane B).
+        active_scope: Forwarded to :func:`_build_preconditions` (T2 lane B).
+        instance_document: Forwarded to :func:`_build_preconditions` (T2 lane B).
+        custody: Forwarded to :func:`~tos_runtime.compose._transport_wiring.build_transport` — the
+            credential port a ``kis-mock`` transport loads its app key/secret through.
+        transport_kind: The selected transport kind (T2 lane C).
+        transport_config: The loaded KIS MOCK transport config, or ``None`` for ``synthetic``.
+        mesh_snapshot_refresher: Forwarded to :func:`_build_preconditions` — see its own
+            docstring.
     """
     # Kernel round #1 §3 (lane B): the reservation id bound to any attempt in THIS compose root
     # is always this same formula — the SAME one _build_realized_stages' AtomicCommitStage
@@ -410,20 +529,38 @@ def wire_engine_and_driver(
         store=evidence_store,
         emergency_log=emergency_log,
         projection=projection,
-        reservation_id_resolver=lambda _attempt_id: (
-            f"resv-{instrument_key.account}-{instrument_key.instrument}"
+        reservation_id_resolver=lambda _attempt_id: scope_reservation_id(
+            instrument_key.account, instrument_key.instrument
         ),
     )
+    # T2 lane C: the SendSeal capture/lookup seam between the gateway's own SEND_SEALED record
+    # and a kis-mock transport's injected SealLookup port. Independent review HIGH-1: on_record
+    # is wired ONLY for kis-mock, which is this registry's only consumer (SealRegistry's own
+    # docstring) — SyntheticPaperTransport never calls the lookup, so wiring the observer
+    # unconditionally (the pre-fix behaviour) retained every SendSeal on the DEFAULT synthetic
+    # path forever, for the whole process lifetime.
+    seal_registry = SealRegistry()
     # Independent review finding #8: wiring on_refusal here means a SEND_REFUSED whose
     # obligation this recorder cannot verify (e.g. the rcl projection's sqlite read fails) now
     # raises out of GatewayEvidenceSinkAdapter.record and transitively out of
     # BrokerEgressGateway.__call__ — deliberate, fail-closed (sinks.py's own module + record()
     # docstrings carry the full rationale).
     gateway_sink = GatewayEvidenceSinkAdapter(
-        evidence_store, runtime_identity=identity, on_refusal=obligation_recorder
+        evidence_store,
+        runtime_identity=identity,
+        on_refusal=obligation_recorder,
+        on_record=(
+            seal_registry.capture if transport_kind is TransportKind.KIS_MOCK else None
+        ),
     )
-    transport = SyntheticPaperTransport(
-        SyntheticFillPolicy(fill_numerator=1, fill_denominator=1, lot_size=Decimal("1"))
+    transport = build_transport(
+        transport_kind,
+        transport_config=transport_config,
+        custody=custody,
+        monotonic=monotonic_source,
+        seal_lookup=seal_registry,
+        evidence_store=evidence_store,
+        runtime_identity=identity,
     )
     gateway = BrokerEgressGateway(
         contexts=context_resolver, transport=transport, sink=gateway_sink
@@ -432,7 +569,14 @@ def wire_engine_and_driver(
     resolved_registry = registry if registry is not None else StrategyRegistry()
     engine_sink = EngineEvidenceSinkAdapter(evidence_store, runtime_identity=identity)
     preconditions = _build_preconditions(
-        authority_epoch_service, live_authorization_state
+        authority_epoch_service,
+        live_authorization_state,
+        nonlive_admitted=nonlive_admitted,
+        active_scope=active_scope,
+        instance_document=instance_document,
+        safety_mesh=safety_mesh,
+        evidence_store=evidence_store,
+        mesh_snapshot_refresher=mesh_snapshot_refresher,
     )
     core = EngineCore(
         registry=resolved_registry,

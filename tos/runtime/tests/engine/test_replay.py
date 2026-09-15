@@ -30,6 +30,7 @@ from tos_runtime.engine.replay_transmit import (
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.sinks import EngineEvidenceSinkAdapter
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.nontrade.latch import latch_restrictive
 
 from . import _fixtures as fx
 from .conftest import FakeMonotonicSource
@@ -49,7 +50,7 @@ def _driver(
     evidence_store: SqliteEvidenceStore,
     emergency_log: EmergencyAppendLog,
 ) -> EngineDriver:
-    return EngineDriver(
+    driver = EngineDriver(
         core=fx.build_core(transmit=None),
         inbox=inbox,
         evidence_store=evidence_store,
@@ -63,6 +64,13 @@ def _driver(
         ),
         finality_producer=fx.finality_producer(),
     )
+    # This suite's CORPORATE_ACTION replay scenarios (added kernel round #3 K-4) reach a
+    # restrictive disposition by default (fx.corporate_action_event's honestly-empty payload) —
+    # TOS runtime operations wiring plan §2 decision 3 made an un-bound latch on a restrictive
+    # result a loud EngineDriverInvariantError rather than a silent skip, so every driver this
+    # suite builds needs the real shared latch bound, exactly like a real compose root.
+    driver.bind_nontrade_latch(latch_restrictive)
+    return driver
 
 
 def test_identical_replay_matches_for_every_event(
@@ -609,3 +617,68 @@ def test_new_risk_halt_latch_receipt_is_uncompared_not_diverged(
     assert len(verdict.uncompared_halt_reasons) == 1
     event_id, halt_reason = verdict.uncompared_halt_reasons[0]
     assert halt_reason == NEW_RISK_HALTED_BY_COUPLING_VIOLATION
+
+
+# ===========================================================================
+# CORPORATE_ACTION replay comparison (kernel round #3 §2 결정 3)
+# ===========================================================================
+
+
+def test_corporate_action_replay_matches(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """A CORPORATE_ACTION event replays identically: same outcome_digest, same
+    nontrade_disposition — never uncompared, never diverged."""
+    driver = _driver(inbox, evidence_store, emergency_log)
+    driver.enqueue_and_run(fx.corporate_action_event(seq=1))
+
+    verdict = replay_engine(
+        inbox,
+        evidence_store,
+        emergency_log,
+        lambda: fx.build_core(transmit=None),
+        scheme=SCHEME,
+        window_events=None,
+    )
+    assert verdict.ok
+    assert verdict.total_compared == 1
+    assert verdict.diverged == ()
+
+
+def test_mutated_recorded_nontrade_disposition_is_detected_as_a_divergence(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    emergency_log: EmergencyAppendLog,
+) -> None:
+    """Mutation guard (kernel round #3 §2 결정 3): tamper ONLY the recorded
+    ``nontrade_disposition`` string (the ``outcome_digest`` stays byte-identical) — replay must
+    still catch it as a divergence, proving the disposition is compared as its own independent
+    signal, not folded silently into the digest comparison alone."""
+    driver = _driver(inbox, evidence_store, emergency_log)
+    driver.enqueue_and_run(fx.corporate_action_event(seq=1))
+
+    evidence_store.connection.execute("DROP TRIGGER IF EXISTS entries_no_update")
+    evidence_store.connection.execute(
+        "UPDATE entries SET payload_json = "
+        'REPLACE(payload_json, \'"nontrade_disposition":"NONTRADE_TRAPPED"\', '
+        '\'"nontrade_disposition":"NONTRADE_BLOCK_NEW_RISK"\') '
+        "WHERE kind = 'EVENT_CONSUMED'"
+    )
+
+    verdict = replay_engine(
+        inbox,
+        evidence_store,
+        emergency_log,
+        lambda: fx.build_core(transmit=None),
+        scheme=SCHEME,
+        window_events=None,
+    )
+    assert not verdict.ok
+    assert len(verdict.diverged) == 1
+
+    halts = evidence_store.connection.execute(
+        "SELECT COUNT(*) FROM entries WHERE kind = 'REPLAY_DIVERGED'"
+    ).fetchone()[0]
+    assert halts == 1

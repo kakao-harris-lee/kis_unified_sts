@@ -31,6 +31,14 @@ This is a compose-only artifact: it satisfies the SAME
 :mod:`tos_runtime.currentness.vector`'s own owned/injected dimensions use,
 and is passed to :meth:`~tos_runtime.currentness.vector.CurrentnessAssembler.assemble`'s
 own ``extra_dimensions`` parameter — never invented inside that module.
+
+**Current count (historical "17" above is this module's ORIGINAL framing, left unedited —
+:data:`PENDING_DIMENSION_KEYS` below is the live truth).** Phase 5 W3-a1/a2/b/W3.1/W3.2 have
+since landed real dimension-owner readers for fourteen of the original seventeen
+(:data:`_READER_OWNED_DIMENSION_KEYS` — each entry's own comment names its reader). Three
+remain pending: ``CONTEXT``/``CRITICAL_INPUT`` (no runtime ``tos.capsule`` producer exists at
+all — a future capsule-chain wave, not this one) and ``EGRESS_IDENTITY`` (partial kernel
+predicate coverage only — see :data:`_READER_OWNED_DIMENSION_KEYS`'s own comment).
 """
 
 from __future__ import annotations
@@ -64,10 +72,80 @@ _OWNED_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
     }
 )
 
-#: The 17 mandated-floor dimensions with no Phase 2 runtime owner, sorted for
-#: a deterministic config file / iteration order.
+#: Dimensions Phase 5 W3 has since given a real ``dimension_readers`` entry
+#: (plan §2 decision 3, "1차원=1커밋") — each key here is deliberately
+#: EXCLUDED from :data:`PENDING_DIMENSION_KEYS` below and, symmetrically,
+#: refused if a ``currentness_dimensions.yaml`` config still carries a block
+#: for it (module docstring; a stale config must never silently pretend to
+#: attest a value this runtime now derives on its own — mirrors
+#: :mod:`tos_runtime.compose._egress_attestations`'s own
+#: ``_RETIRED_DERIVED_KEYS`` idiom). Grown one key at a time, never all at
+#: once, so each dimension's own RED test / reader / config-block removal
+#: lands as one reviewable commit.
+_READER_OWNED_DIMENSION_KEYS: frozenset[DimensionKey] = frozenset(
+    {
+        #: ``tos_runtime.compose._currentness_wiring``'s own
+        #: ``_currentness_policy_dimension_reader_for`` — the assembler's own governing
+        #: ``CurrentnessPolicy``/``mandated`` floor, run through the kernel's own
+        #: ``tos.cur.predicates.policy_covers_mandated_dimensions`` (no new runtime state
+        #: needed — this composition already holds both facts).
+        DimensionKey.CURRENTNESS_POLICY,
+        #: ``_recovery_dimension_reader_for`` — the TOS Phase 5 W1 recovery barrier's own
+        #: ``RecoveryVerdict.readiness_verdict``.
+        DimensionKey.RECOVERY,
+        #: ``_trading_approval_dimension_reader_for`` — step 4's own recorded
+        #: ``IndependentApprovalStage`` verdict.
+        DimensionKey.TRADING_APPROVAL,
+        #: ``_environment_scope_dimension_reader_for`` — the kernel's own
+        #: ``tos.brockercap.predicates.environment_binding_ok`` over the SAME
+        #: environment/scope tokens ``tos_runtime.compose.context`` already computes.
+        DimensionKey.ENVIRONMENT_SCOPE,
+        #: EGRESS_IDENTITY is deliberately NOT here (W3.1 independent review MEDIUM-4,
+        #: re-investigated and reconfirmed in Phase 5 W3.2): it was briefly reader-owned
+        #: via ``credential_route_authority_disjoint`` alone (1 of 3 kernel predicates),
+        #: and asserting ``positively_established`` on that partial coverage was an
+        #: over-claim. Still pending — ``stale_principal_structurally_rejected`` and
+        #: ``egress_generation_monotonic`` (the other two kernel predicates,
+        #: ``tos.egress.predicates``) need an ``ActiveEgressPrincipalSet``/prior
+        #: ``OrderingEvent`` this runtime has ZERO production imports of
+        #: (``grep -rn ActiveEgressPrincipalSet tos/runtime/src`` — empty); the one real
+        #: predicate is recorded as an evidence-only observation, never a dimension
+        #: verdict (``_wiring.py``'s ``_record_egress_identity_observation``).
+        #: The four Phase 5 W3-a1/a2 safety-mesh services (plan §2 decision 2) —
+        #: ``tos_runtime.compose._safety_wiring.build_safety_mesh``'s own
+        #: ``dimension_readers``, folded in by ``_build_dimension_readers``.
+        DimensionKey.SAFETY_ENVELOPE_PROFILE,
+        DimensionKey.DEVIATION,
+        DimensionKey.INCIDENT,
+        DimensionKey.MONITORING,
+        #: Phase 5 W3.2 (plan §2 decisions 2-6) — the six remaining currentness dimension
+        #: owners: ``_aggregate_risk_dimension_reader_for`` (step 6's already-computed
+        #: ``AggregateRiskDecision.result``), ``_construction_dimension_reader_for``
+        #: (step 2's already-computed ioc verdicts), ``_constraint_dimension_reader_for``
+        #: (step 3's ``order_shape_admissible`` verdict, partial coverage disclosed),
+        #: ``_decision_proof_intent_dimension_reader_for`` (step 13's
+        #: ``exact_binding_holds`` verdict), ``_post_trade_dimension_reader_for``
+        #: (``FinalityReleaseConsumer.latest_release_is_conflict_free``), and
+        #: ``_release_dimension_reader_for`` (boot's own STAGE B release-admission
+        #: verdict) — see each reader's own docstring in
+        #: ``tos_runtime.compose._currentness_wiring``.
+        DimensionKey.AGGREGATE_RISK,
+        DimensionKey.CONSTRUCTION,
+        DimensionKey.CONSTRAINT,
+        DimensionKey.DECISION_PROOF_INTENT,
+        DimensionKey.POST_TRADE,
+        DimensionKey.RELEASE,
+    }
+)
+
+#: The mandated-floor dimensions with no Phase 2/5 runtime owner yet, sorted
+#: for a deterministic config file / iteration order. Shrinks as
+#: :data:`_READER_OWNED_DIMENSION_KEYS` grows.
 PENDING_DIMENSION_KEYS: tuple[DimensionKey, ...] = tuple(
-    sorted(MANDATED_DIMENSION_FLOOR - _OWNED_DIMENSION_KEYS, key=lambda k: k.value)
+    sorted(
+        MANDATED_DIMENSION_FLOOR - _OWNED_DIMENSION_KEYS - _READER_OWNED_DIMENSION_KEYS,
+        key=lambda k: k.value,
+    )
 )
 
 #: The operator-attestation owner-identity label stamped on every pending
@@ -154,6 +232,15 @@ def load_pending_currentness_dimensions(path: Path) -> tuple[PendingDimensionSpe
     if not isinstance(raw, dict):
         raise PendingDimensionConfigError(
             f"pending-dimensions config file must be a top-level mapping: {path}"
+        )
+    stale = sorted(
+        key.value for key in _READER_OWNED_DIMENSION_KEYS if key.value in raw
+    )
+    if stale:
+        raise PendingDimensionConfigError(
+            f"{path}: {stale!r} are no longer pending — each now has a real "
+            "tos_runtime.currentness.vector.CurrentnessAssembler dimension_readers "
+            "entry (Phase 5 plan §2 decision 3); remove these blocks from this config"
         )
 
     specs: list[PendingDimensionSpec] = []

@@ -1,0 +1,18 @@
+# tos_runtime.nontrade.config -- required_legs_by_class (TOS Phase 5 W5 plan
+# §2 decision 7). Caller policy, not a kernel or nontrade-package constant
+# (tos_runtime.nontrade.processor's own M6 discipline): which
+# CredibleTransitionLegKind members must be present in a NonTradeObservation's
+# transition envelope before transition_envelope_complete() is even called,
+# per NonTradeEventClass.
+#
+# A class key entirely ABSENT from this mapping is a legitimate "not
+# configured" value -- the processor skips transition_envelope_complete() for
+# that class and names it unevaluated, rather than treating an empty leg set
+# as its own separate failure. Only a PRESENT key whose value is still `null`
+# refuses to load.
+#
+# named-TBD: fill in the real leg set(s) an operator wants enforced before
+# deploying. Never leave `null` in a live deployment -- the loader refuses to
+# start while any PRESENT key is still null.
+required_legs_by_class:
+  CORPORATE_ACTION: null
