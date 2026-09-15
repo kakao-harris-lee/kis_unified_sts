@@ -107,12 +107,7 @@ from tos.engine import AttemptRequest, InstrumentKey, StageRequest, StageVerdict
 from tos.engine.vocabulary import StageOutcome
 from tos.ordering import OrderingEvent
 from tos.rcl import TransmissionCapability
-from tos.venue import (
-    ActionClass,
-    OrderAdmissibilityDecision,
-    VenueConstraintPolicy,
-    VenueConstraintSnapshot,
-)
+from tos.venue import ActionClass
 
 from tos_runtime.authority.epoch import SafetyAuthorityEpochService
 from tos_runtime.brokercap import (
@@ -147,12 +142,12 @@ from tos_runtime.safety.latch import (
 )
 
 if TYPE_CHECKING:
-    # TYPE_CHECKING-only: _venue_phase.py imports ConstructionConfig from
+    # TYPE_CHECKING-only: _venue_wiring.py imports ConstructionConfig from
     # _types.py, which imports THIS module for ComposeContextResolver — a
     # top-level import here would be circular. Postponed annotations (module
     # docstring's own `from __future__ import annotations`) mean the string
     # form below is all mypy needs.
-    from tos_runtime.compose._venue_phase import VenuePhaseStage
+    from tos_runtime.compose._venue_wiring import VenueServiceStage
 
 __all__ = [
     "ComposeContextResolver",
@@ -353,7 +348,7 @@ class ComposeContextResolver:
 
     construction_stage: OrderConstructionStage
     proof_stage: ConformanceProofStage
-    venue_stage: VenuePhaseStage
+    venue_stage: VenueServiceStage
     step4_recorder: VerdictRecorder
     step9_recorder: VerdictRecorder
     step14_stage: TransmissionCapabilityStage
@@ -429,13 +424,6 @@ class ComposeContextResolver:
     #: known (:func:`~tos_runtime.compose._safety_wiring.build_capacity_owner`), unlike
     #: :attr:`latch` which needs the late-bound inbox cell instead.
     capacity: CapacityOwner
-    #: The exact venue facts step 3 folded — passed straight through to item 11
-    #: rather than rebuilt, so item 11's re-fold cannot silently disagree with
-    #: the fold ``VenueConstraintStage`` (step 3) already performed.
-    venue_snapshot: VenueConstraintSnapshot | None = None
-    venue_policy: VenueConstraintPolicy | None = None
-    venue_decision: OrderAdmissibilityDecision | None = None
-
     contexts: tuple[SendBoundaryContext, ...] = field(default_factory=tuple)
     _yield_seq: int = 0
     #: Item 4's CLAIMED Safety Authority epoch, bound ONCE at construction time — never
@@ -848,9 +836,14 @@ class ComposeContextResolver:
             prior_claims=(),
             principal=self.principal,
             request_digest=attempt.attempt_id,
-            venue_snapshot=self.venue_snapshot,
-            venue_policy=self.venue_policy,
-            venue_decision=self.venue_decision,
+            # Attempt-fresh reads off the same VenueServiceStage step 3 itself folded against
+            # (TOS venue constraint service wave, plan §2 decision 9) — never boot-time
+            # constants: last_snapshot/last_decision are re-issued per tick/attempt by the
+            # live VenueConstraintService, so item 11 reads THIS attempt's own decision, not a
+            # stale one from an earlier tick (mutation M12 guard).
+            venue_snapshot=self.venue_stage.last_snapshot,
+            venue_policy=self.venue_stage.policy,
+            venue_decision=self.venue_stage.last_decision,
             observed_session_phase=self.observed_session_phase_reader(),
             action_class=self.action_class,
             order_shape=self.venue_stage.resolved_shape,

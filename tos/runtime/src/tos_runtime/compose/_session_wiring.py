@@ -23,15 +23,17 @@ identical reason — :func:`apply_session_wiring`, called immediately after
 :attr:`~tos_runtime.compose._types.ComposedRuntime.session_facts`.
 
 **Rollover wiring (originally plan §2 decision 7; narrowed and then corrected by the TOS
-runtime operations wiring plan §2 decision 3 and its follow-up).**
+runtime operations wiring plan §2 decision 3 and its follow-up; venue facts moved to the
+governed service by the TOS venue constraint service wave, plan §2 decision 9).**
 :func:`build_nontrade_admissibility_provider` builds the ONE honest, single-scope
 venue-admissibility read this compose root has — this compose root has exactly one live scope
-(one ``ConstructionConfig``), so the provider ignores the observation's own route-identity
-argument (there is nothing to select AMONG) and folds the REAL, currently-observed session
-phase (the SAME ``session_phase_reader`` step 3 itself reads) through the kernel's own
-``tos.venue.state.session_phase_admits`` against the REAL
-``venue_policy``/``venue_snapshot``/``action_class`` this runtime composed with — never a
-runtime re-derivation of admissibility, and never a fabricated constant. It is built ONCE and
+(one ``ConstructionConfig`` plus the ONE governed venue-constraint service composed for it), so
+the provider ignores the observation's own route-identity argument (there is nothing to select
+AMONG) and folds the REAL, currently-observed session phase (the SAME ``session_phase_reader``
+step 3 itself reads) through the kernel's own ``tos.venue.state.session_phase_admits`` against
+the REAL, governed ``venue_service.policy`` and this attempt's own ``venue_service.snapshot()``
+— never a runtime re-derivation of admissibility, and never a fabricated constant. It is built
+ONCE and
 shared by BOTH non-trade lanes: :func:`build_nontrade_processor` wires it into the DRY-RUN
 :class:`~tos_runtime.nontrade.processor.NonTradeEventProcessor` (the ``nontrade-eval`` CLI's
 own preview evaluator — it records nothing and never latches), and
@@ -63,7 +65,7 @@ from pathlib import Path
 
 from tos.venue.state import session_phase_admits
 
-from tos_runtime.calendar.config import load_calendar_config
+from tos_runtime.calendar.config import CalendarConfig
 from tos_runtime.calendar.owner import SessionFactsOwner
 from tos_runtime.calendar.ports import TrustedWallClockReference, WallClockReference
 from tos_runtime.compose._types import ComposedRuntime, ConstructionConfig
@@ -74,6 +76,7 @@ from tos_runtime.nontrade.latch import latch_restrictive
 from tos_runtime.nontrade.processor import NonTradeEventProcessor
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.service import TrustworthyTimeService
+from tos_runtime.venue import VenueConstraintService
 
 __all__ = [
     "CALENDAR_CONFIG_NAME",
@@ -128,17 +131,24 @@ class SessionInboxCell:
 def build_session_facts_owner(
     *,
     config_dir: Path,
+    calendar: CalendarConfig,
     wall_clock: WallClockReference | None,
     evidence_store: SqliteEvidenceStore,
     time_config: TrustworthyTimeConfig,
     time_service: TrustworthyTimeService,
     tick_generation_reader: Callable[[], int | None],
 ) -> SessionFactsOwner:
-    """Load ``calendar.yaml``, refuse a leftover ``egress_attestations.yaml``
-    (mutation M9), and construct the :class:`SessionFactsOwner`.
+    """Refuse a leftover ``egress_attestations.yaml`` (mutation M9) and construct the
+    :class:`SessionFactsOwner` over the ALREADY-loaded ``calendar``.
 
     Args:
-        config_dir: The SAME directory ``compose_paper_runtime`` was given.
+        config_dir: The SAME directory ``compose_paper_runtime`` was given — used only for
+            the retired-config check below; ``calendar.yaml`` itself is loaded exactly once by
+            the caller (TOS venue constraint service wave, plan §2 decision 9 — the SAME
+            loaded ``CalendarConfig`` also feeds ``build_venue_service``'s own admitting-phase
+            token cross-check, so this module never re-reads the file a second time).
+        calendar: The already-loaded, validated calendar
+            (:func:`~tos_runtime.calendar.config.load_calendar_config`).
         wall_clock: The injected wall-clock reference, or ``None`` to use the
             production default (G-1, runtime operations wiring plan §2
             decision 1):
@@ -163,8 +173,6 @@ def build_session_facts_owner(
     Raises:
         RetiredConfigPresent: ``config_dir/egress_attestations.yaml`` still
             exists.
-        tos_runtime.calendar.config.CalendarConfigError: ``calendar.yaml`` is
-            missing/malformed/still named-TBD.
         tos_runtime.calendar.owner.SessionCalendarMismatch: the two configs'
             calendar-version labels disagree.
     """
@@ -176,7 +184,6 @@ def build_session_facts_owner(
             "real runtime owner (tos_runtime.calendar.owner.SessionFactsOwner); "
             "remove this file"
         )
-    calendar = load_calendar_config(config_dir / CALENDAR_CONFIG_NAME)
     effective_wall_clock = (
         wall_clock
         if wall_clock is not None
@@ -224,6 +231,7 @@ def apply_session_wiring(
 def build_nontrade_admissibility_provider(
     *,
     construction: ConstructionConfig,
+    venue_service: VenueConstraintService,
     session_phase_reader: Callable[[], str | None],
 ) -> Callable[[str], str | None]:
     """The honest, single-scope venue-admissibility read (module docstring) — built ONCE and
@@ -236,9 +244,12 @@ def build_nontrade_admissibility_provider(
     over the SAME instance, never independently re-derive the read.
 
     Args:
-        construction: This runtime's single ``ConstructionConfig`` scope — the source of the
-            REAL ``venue_policy``/``venue_snapshot``/``action_class`` folded through the
-            kernel's own ``session_phase_admits``.
+        construction: This runtime's single ``ConstructionConfig`` scope — the source of
+            ``action_class``, folded through the kernel's own ``session_phase_admits``.
+        venue_service: The SAME governed :class:`~tos_runtime.venue.VenueConstraintService`
+            step 3 folds against (``compose/_venue_wiring.py``'s ``build_venue_service``) — the
+            source of the REAL ``policy`` and this attempt's own ``snapshot()`` (TOS venue
+            constraint service wave, plan §2 decision 9; never a runtime-authored judgement).
         session_phase_reader: The SAME zero-argument callable step 3 reads (module docstring)
             — never a second, independently-derived phase read that could disagree with step 3
             within one attempt.
@@ -254,8 +265,8 @@ def build_nontrade_admissibility_provider(
         result = session_phase_admits(
             observed_phase=session_phase_reader(),
             action=construction.action_class,
-            snapshot=construction.venue_snapshot,
-            policy=construction.venue_policy,
+            snapshot=venue_service.snapshot(),
+            policy=venue_service.policy,
         )
         return result.value
 

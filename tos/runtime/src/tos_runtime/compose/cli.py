@@ -16,6 +16,14 @@ because none of them need a ``ConstructionConfig``/risk-input-provider: ``backup
 :mod:`tos_runtime.operations.backup_set` / :mod:`tos_runtime.operations.schema_migrations` /
 :mod:`tos_runtime.operations.key_rotation` / :mod:`tos_runtime.operations.dependency_admission`.
 
+**``print-policy-digests --config-dir`` (TOS venue constraint service wave, plan §2 decision 7)**
+follows the SAME bare-flags idiom: loads the Venue Constraint Policy / Order Construction Policy
+YAMLs under ``--config-dir`` with the compose scheme and prints each one's ``policy_id``/
+``policy_generation``/``canonical_digest`` to stdout — opens no evidence store, reads no
+``safety_activation.yaml`` — so an operator can copy the printed digests into that file's
+``members:`` list (the SAME "print, then the operator hand-fills an activation document"
+idiom :mod:`tos_runtime.calendar` already establishes for its own bind digest).
+
 **Three MORE operations subcommands, added by the runtime operations wiring plan
 (2026-09-13) §2 decisions 4/5/7: ``rearm``, ``ack-alert``, ``nontrade-eval``.** All three follow
 the SAME idiom as ``rotate-key`` above — open the evidence store / inbox / time service directly
@@ -54,19 +62,22 @@ the SAME idiom as ``rotate-key`` above — open the evidence store / inbox / tim
   zero evidence reaches any real durable store.
 
 **Canonical blocker list for why ``run`` still refuses (plan §2 decision 7; §7 of the plan
-document is the other copy of this same list — keep both in sync).** Three independent gaps,
-each requiring its own follow-up wave, and each gates the NEXT column's own follow-up (dashboards,
-``shutdown``, live projection export all need a live composed runtime too, so they wait on ALL
-three, not just one):
+document is the other copy of this same list — keep both in sync).** Blocker (a) is RESOLVED
+by the TOS venue constraint service wave
+(``docs/plans/2026-09-15-tos-venue-constraint-service-plan.md``): ``VenueConstraintSnapshot``/
+``OrderAdmissibilityDecision`` are now issued by a real, governed runtime service
+(:mod:`tos_runtime.venue`, wired in ``compose/_venue_wiring.py``), never a test fixture hand-
+issuing them. Three independent gaps remain, each requiring its own follow-up wave, and each
+gates the NEXT column's own follow-up (dashboards, ``shutdown``, live projection export all need
+a live composed runtime too, so they wait on ALL three, not just one):
 
-(a) **``ConstructionConfig``'s three issued/generation-numbered kernel artifacts**
-    (``VenueConstraintPolicy``/``VenueConstraintSnapshot``/``OrderAdmissibilityDecision``) have no
-    YAML loader anywhere — every existing caller is a test fixture hand-issuing them
-    (``tests/compose/_fixtures.py``). Building one would let CONFIGURATION author a decision only
-    a real venue-constraint SERVICE is supposed to issue (a stand-in fixed into governance,
-    exactly the "판정 저작" this plan explicitly rejects — see §3 rejected alternatives). Needs: a
-    real venue-constraint service, plus Order Construction Policy ratification (currently
-    unratified — ``root.py``'s own docstring).
+(a′) **``ConstructionConfig``'s remaining caller-supplied inputs have no production source
+    yet**: ``envelope`` (needs the approved-Intent / IAP authoring flow), ``price`` (needs a
+    ``tos.marketfeed`` adapter), and ``order_shape`` (needs a strategy's own proposal to carry a
+    concrete shape) — plus ``compose/_wiring.py``'s own ``intent_id``/``intent_version``/
+    ``envelope_id``/``command_id``/``generation`` literals (the venue wave's own §2.10 residue;
+    step 2's ``policy_id``/``policy_version``/``policy_generation`` are now the governed Order
+    Construction Policy's real coordinates, not a literal).
 (b) **The two risk-input providers** (``aggregate_risk_inputs_provider`` /
     ``action_flow_inputs_provider``) have no production source — every caller hand-builds a
     synthetic ``AggregateRiskDecisionInputs``/``ActionFlowDecisionInputs`` per test request. Needs
@@ -76,7 +87,7 @@ three, not just one):
     are all pull-based; every real caller is a test fixture. Needs a ``tos.marketfeed`` runtime
     adapter and a scheduler/poll loop.
 
-Resolving order (a)/(b)/(c) is an operator decision (plan §6 confirmation point 5), not this
+Resolving (a′)/(b)/(c) is an operator decision (plan §6 confirmation point 5), not this
 module's to make.
 
 **No subcommand token given ⇒ ``run`` (backward compatibility).** :func:`parse_args` prepends
@@ -143,6 +154,13 @@ from tos_runtime.safety.ack import acknowledge_alert
 from tos_runtime.time.config import load_time_config
 from tos_runtime.time.service import TrustworthyTimeService
 from tos_runtime.time.sources import LocalSystemClockReader, ProcessMonotonicSource
+from tos_runtime.venue import (
+    ORDER_CONSTRUCTION_POLICY_CONFIG_NAME,
+    VENUE_POLICY_CONFIG_NAME,
+    VenuePolicyConfigError,
+    load_order_construction_policy,
+    load_venue_constraint_policy,
+)
 
 __all__ = [
     "AckAlertArgs",
@@ -151,6 +169,7 @@ __all__ = [
     "MigrateArgs",
     "NontradeEvalArgs",
     "PrintDigestsArgs",
+    "PrintPolicyDigestsArgs",
     "RearmArgs",
     "RestoreDrillArgs",
     "RotateKeyArgs",
@@ -167,6 +186,7 @@ _SUBCOMMANDS = (
     "migrate",
     "rotate-key",
     "print-digests",
+    "print-policy-digests",
     "rearm",
     "ack-alert",
     "nontrade-eval",
@@ -241,6 +261,15 @@ class PrintDigestsArgs:
     """``print-digests`` subcommand args — none; the observation reads the CURRENT process's own
     installed source tree/dependency set (:mod:`tos_runtime.operations.dependency_admission`).
     """
+
+
+@dataclass(frozen=True)
+class PrintPolicyDigestsArgs:
+    """``print-policy-digests`` subcommand args (module docstring) — loads the two governed
+    policy YAMLs under ``config_dir`` and prints their id/generation/digest; opens no store,
+    reads no activation file."""
+
+    config_dir: Path
 
 
 @dataclass(frozen=True)
@@ -406,6 +435,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print this process's own source-tree/dependency-set digests (stdout only).",
     )
 
+    policy_digests_parser = subparsers.add_parser(
+        "print-policy-digests",
+        help=(
+            "Print the governed Venue Constraint Policy / Order Construction Policy "
+            "YAMLs' own id/generation/digest under --config-dir (stdout only; opens no "
+            "store, reads no activation file)."
+        ),
+    )
+    policy_digests_parser.add_argument("--config-dir", required=True, type=Path)
+
     _add_rearm_ack_nontrade_subparsers(subparsers)
 
     return parser
@@ -469,6 +508,7 @@ def parse_args(
     | MigrateArgs
     | RotateKeyArgs
     | PrintDigestsArgs
+    | PrintPolicyDigestsArgs
     | RearmArgs
     | AckAlertArgs
     | NontradeEvalArgs
@@ -544,6 +584,8 @@ def parse_args(
         )
     if command == "nontrade-eval":
         return NontradeEvalArgs(observation=namespace.observation)
+    if command == "print-policy-digests":
+        return PrintPolicyDigestsArgs(config_dir=namespace.config_dir)
     # command == "print-digests" — argparse itself refuses any token outside _SUBCOMMANDS,
     # so every other branch is exhaustive; this is the only remaining reachable case.
     return PrintDigestsArgs()
@@ -609,6 +651,36 @@ def _build_cli_identity(environment_label: str) -> RuntimeIdentity:
         process_nonce=secrets.token_hex(8),
         code_digest=observe_runtime_artifact().source_tree_digest,
     )
+
+
+def _dispatch_print_policy_digests(args: PrintPolicyDigestsArgs) -> int:
+    """The ``print-policy-digests`` subcommand's own dispatch (module docstring) — loads both
+    governed policy YAMLs with the compose scheme and prints each one's own ``policy_id``/
+    ``policy_generation``/``canonical_digest``. Opens no evidence store, reads no
+    ``safety_activation.yaml`` — a refused load (missing file, activation NOT required here)
+    is printed and reported via a non-zero exit code, never a raised traceback."""
+    scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
+    try:
+        loaded_venue = load_venue_constraint_policy(
+            args.config_dir / VENUE_POLICY_CONFIG_NAME, scheme=scheme
+        )
+        loaded_ocp = load_order_construction_policy(
+            args.config_dir / ORDER_CONSTRUCTION_POLICY_CONFIG_NAME, scheme=scheme
+        )
+    except VenuePolicyConfigError as exc:
+        print(f"print-policy-digests: refused — {exc}", file=sys.stderr)
+        return 1
+    print(
+        "VENUE_CONSTRAINT_POLICY "
+        f"{loaded_venue.policy.policy_id} {loaded_venue.policy.policy_generation} "
+        f"{loaded_venue.policy.canonical_digest}"
+    )
+    print(
+        "ORDER_CONSTRUCTION_POLICY "
+        f"{loaded_ocp.policy.policy_id} {loaded_ocp.policy.policy_generation} "
+        f"{loaded_ocp.policy.canonical_digest}"
+    )
+    return 0
 
 
 def _dispatch_rearm(args: RearmArgs) -> int:
@@ -889,6 +961,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if isinstance(args, RotateKeyArgs):
         return _dispatch_rotate_key(args)
+
+    if isinstance(args, PrintPolicyDigestsArgs):
+        return _dispatch_print_policy_digests(args)
 
     if isinstance(args, RearmArgs):
         return _dispatch_rearm(args)

@@ -82,7 +82,7 @@ from tos_runtime.compose._types import (
     ConstructionConfig,
     ReleaseAdmissionRefused,
 )
-from tos_runtime.compose._venue_phase import VenuePhaseStage, build_venue_phase_stage
+from tos_runtime.compose._venue_wiring import VenueServiceStage
 from tos_runtime.compose.context import (
     ComposeContextResolver,
     RecordingActionFlowGovernor,
@@ -132,6 +132,7 @@ from tos_runtime.time.sources import (
     ProcessMonotonicSource,
 )
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
+from tos_runtime.venue import LoadedOrderConstructionPolicy, VenueConstraintService
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
@@ -511,7 +512,7 @@ def _stage_b_release_probe(
 @dataclass
 class _ConstructionStages:
     construction_stage: OrderConstructionStage
-    venue_stage: VenuePhaseStage
+    venue_stage: VenueServiceStage
     venue_recorder: VerdictRecorder  #: wraps venue_stage for CONSTRAINT's reader
     economic_stage: EconomicEffectStage
     proof_stage: ConformanceProofStage
@@ -520,32 +521,38 @@ class _ConstructionStages:
 def _build_construction_stages(
     construction: ConstructionConfig,
     *,
-    session_phase_reader: Callable[[], str | None],
+    venue_service: VenueConstraintService,
+    loaded_ocp: LoadedOrderConstructionPolicy,
 ) -> _ConstructionStages:
-    """Steps 2/3/5/11 — the kernel's OWN, already-shipped Order Construction
-    stages (design #34 §3.2), except step 3 (:func:`build_venue_phase_stage`,
-    :mod:`tos_runtime.compose._venue_phase`), which rebuilds fresh per attempt
-    with ``session_phase_reader`` (TOS Phase 5 W5 plan §2 decision 5) —
-    replacing the former ``ConstructionConfig.observed_session_phase`` literal
-    with a live read off :class:`~tos_runtime.calendar.owner.SessionFactsOwner`
-    (:mod:`tos_runtime.compose._session_wiring`).
-    """
+    """Steps 2/3/5/11 (design #34 §3.2). Step 2's OCP coordinates come from ``build_venue_service``
+    (plan §2 decision 6); intent/envelope/command-id/generation are the (a′) residue (§2.10).
+    Step 3 folds the REAL governed ``venue_service`` (plan §2 decision 4)."""
+    ocp = loaded_ocp.policy
+    # build_venue_service's own loader always fills these (never a real absence here).
+    assert ocp.policy_id is not None and ocp.policy_version is not None
+    assert ocp.policy_generation is not None
     construction_stage = OrderConstructionStage(
         envelope=construction.envelope,
         price=construction.price,
-        venue_constraint=construction.venue_constraint,
+        venue_constraint=venue_service.quantity_constraint,
         scheme=_SCHEME,
         intent_id=f"intent-{construction.account}-{construction.instrument}",
         intent_version="intent-v1",
         envelope_id="compose-envelope",
-        policy_id="compose-ocp",
-        policy_version="ocp-v1",
-        policy_generation=1,
+        policy_id=ocp.policy_id,
+        policy_version=ocp.policy_version,
+        policy_generation=ocp.policy_generation,
         command_id=f"cmd-{construction.account}-{construction.instrument}",
         generation=1,
         price_field_key=construction.price_field_key,
     )
-    venue_stage = build_venue_phase_stage(construction, session_phase_reader)
+    venue_stage = VenueServiceStage(
+        venue_service,
+        construction_stage,
+        construction.action_class,
+        construction.order_shape,
+        construction.shape_price_field_key,
+    )
     economic_stage = EconomicEffectStage(construction_stage=construction_stage)
     proof_stage = ConformanceProofStage(
         construction_stage=construction_stage,
@@ -900,9 +907,6 @@ def _build_context_resolver(
         observed_session_phase_reader=observed_session_phase_reader,
         continuity_id=continuity_id,
         instrument_key=instrument_key,
-        venue_snapshot=construction.venue_snapshot,
-        venue_policy=construction.venue_policy,
-        venue_decision=construction.venue_decision,
     )
 
 

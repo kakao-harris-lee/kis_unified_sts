@@ -65,16 +65,11 @@ from tos.ioc import AxisBinding, ConformanceAxis, QuantityUnitKind
 from tos.ordering import OrderingEvent
 from tos.rcl import CapacityComponent, CapacityVector
 from tos.time import HealthState, SessionContext, UncertaintyInterval
-from tos.venue import (
-    ActionClass,
-    ActionPhaseAdmission,
-    OrderAdmissibilityDecision,
-    OrderShapeFields,
-    VenueConstraintPolicy,
-    VenueConstraintSnapshot,
-    VenueShapeConstraints,
-)
+from tos.venue import ActionClass, OrderShapeFields
 from tos_runtime.compose.root import ConstructionConfig
+from tos_runtime.transport.kis_mock.codec import KIS_ORDER_CASH_WIRE_FIELDS
+
+from ..venue._documents import ocp_yaml
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
@@ -418,59 +413,6 @@ def admitted_price(**overrides: object) -> AdmittedPriceObservation:
     return AdmittedPriceObservation(**base)
 
 
-def venue_quantity_constraint() -> object:
-    from tos.egressgw import VenueQuantityConstraint
-
-    return VenueQuantityConstraint(
-        lot_size=LOT_SIZE,
-        min_quantity=MIN_QUANTITY,
-        max_quantity=MAX_QUANTITY,
-        quantity_unit=QuantityUnitKind.CONTRACTS,
-    )
-
-
-def venue_policy() -> VenueConstraintPolicy:
-    issued = VenueConstraintPolicy.issue(
-        scheme=SCHEME,
-        policy_id="vpol-compose",
-        policy_generation=1,
-        scope="scope-compose",
-        admitting_phase_rules=(
-            ActionPhaseAdmission(
-                action=ActionClass.NEW_LONG, admitting_phases=frozenset({SESSION_PHASE})
-            ),
-        ),
-    )
-    assert isinstance(issued, VenueConstraintPolicy)
-    return issued
-
-
-def venue_snapshot() -> VenueConstraintSnapshot:
-    issued = VenueConstraintSnapshot.issue(
-        scheme=SCHEME,
-        snapshot_id="vsnap-compose",
-        constraint_generation=1,
-        policy_id="vpol-compose",
-        policy_generation=1,
-        observed_session_phase=SESSION_PHASE,
-    )
-    assert isinstance(issued, VenueConstraintSnapshot)
-    return issued
-
-
-def venue_admissible_decision() -> OrderAdmissibilityDecision:
-    from tos.venue import OrderAdmissibilityResult
-
-    issued = OrderAdmissibilityDecision.issue(
-        scheme=SCHEME,
-        decision_id="vdec-compose",
-        decision_generation=1,
-        result=OrderAdmissibilityResult.ADMISSIBLE,
-    )
-    assert isinstance(issued, OrderAdmissibilityDecision)
-    return issued
-
-
 def order_shape() -> OrderShapeFields:
     return OrderShapeFields(
         price=4200,
@@ -483,33 +425,19 @@ def order_shape() -> OrderShapeFields:
     )
 
 
-def venue_shape_constraints() -> VenueShapeConstraints:
-    return VenueShapeConstraints(
-        price_min=1000,
-        price_max=9_000_000,
-        tick_size=500,
-        lot_size=2,
-        min_quantity=2,
-        max_quantity=100,
-        allowed_order_types=frozenset({"LIMIT"}),
-        allowed_tifs=frozenset({"DAY"}),
-        allowed_sides=frozenset({SIDE}),
-        allowed_position_effects=frozenset({"OPEN"}),
-    )
-
-
 def construction_config() -> ConstructionConfig:
+    """TOS venue constraint service wave (plan §2 decision 5): the former
+    ``venue_snapshot``/``venue_policy``/``venue_decision``/``venue_shape_constraints``/
+    ``venue_constraint`` fields are gone — those facts now come exclusively from the governed
+    Venue Constraint Policy + Order Construction Policy ``conftest.py``'s own ``config_dir``
+    fixture writes and ``compose/_venue_wiring.py``'s ``build_venue_service`` loads (never a
+    test-authored stand-in)."""
     return ConstructionConfig(
         account=ACCOUNT,
         instrument=INSTRUMENT,
         envelope=proposed_envelope(),
         price=admitted_price(),
-        venue_constraint=venue_quantity_constraint(),
-        venue_snapshot=venue_snapshot(),
-        venue_policy=venue_policy(),
-        venue_decision=venue_admissible_decision(),
         order_shape=order_shape(),
-        venue_shape_constraints=venue_shape_constraints(),
         action_class=ActionClass.NEW_LONG,
         instrument_class=INSTRUMENT_CLASS,
         outbound_side=SIDE,
@@ -586,6 +514,17 @@ KIS_MOCK_REST_BASE = "https://openapivts.koreainvestment.com:29443"
 KIS_MOCK_ORDER_PRINCIPAL = "kis-mock-order-non-live-test"
 
 
+class _Unset:
+    """A distinguishable "no override given" sentinel — distinct from ``None`` itself, which
+    :func:`write_kis_mock_transport_config`'s own ``wire_codec`` keyword uses to mean "write a
+    literal ``null``" (team-lead review MEDIUM, 2026-09-15: a test proving the wire-codec-
+    mismatch REFUSAL needs to request that exact ``null`` deliberately, which a plain ``None``
+    default could not distinguish from "no override, keep today's auto-fix")."""
+
+
+_UNSET = _Unset()
+
+
 def write_kis_mock_transport_config(
     config_dir: Path,
     *,
@@ -593,6 +532,7 @@ def write_kis_mock_transport_config(
     endpoint_rest_base: str = KIS_MOCK_REST_BASE,
     allow_plaintext_for_tests: bool = False,
     min_send_interval_ms: int = 1100,
+    wire_codec: str | None | _Unset = _UNSET,
 ) -> Path:
     """Write a fully-valued ``kis_mock_transport.yaml`` (T2 lane C test fixture) — every
     named-TBD field of the shipped example filled with a concrete, schema-valid value.
@@ -602,6 +542,29 @@ def write_kis_mock_transport_config(
     hermetic-fake-KIS-server counterfactual (``test_kis_mock_e2e_honesty.py``) is the only
     caller that overrides them, to point this config at the fake server's own ``127.0.0.1``
     ``http://`` base instead of inventing a second, duplicated config-writer.
+
+    **Also keeps ``order_construction_policy.yaml`` in step** (TOS venue constraint service
+    wave, plan §2 decision 6): ``build_venue_service`` refuses to boot a ``kis-mock`` transport
+    unless the governed Order Construction Policy's own ``_runtime.wire_codec`` exactly names
+    ``kind: kis-order-cash-v1`` + the nine :data:`~tos_runtime.transport.kis_mock.codec
+    .KIS_ORDER_CASH_WIRE_FIELDS`. Every existing caller of this function already calls it
+    immediately before a ``transport_kind=TransportKind.KIS_MOCK`` compose against the SAME
+    ``config_dir`` (never a bare probe directory this fixture module does not itself write
+    ``order_construction_policy.yaml`` into) — so this rewrites that ALREADY-present file in
+    place rather than requiring every one of those call sites to also learn a second fixture
+    call. A directory with no such file yet (the transport-config-loader-only unit tests in
+    ``test_transport_wiring.py``, which never reach ``compose_paper_runtime`` at all) is left
+    untouched.
+
+    Args:
+        wire_codec: Left at :data:`_UNSET` (the default), the OCP rewrite below writes the
+            exact ``kis-order-cash-v1`` codec block every existing kis-mock e2e caller relies
+            on. Passed ``None``, it writes a literal ``wire_codec: null`` instead — a
+            DELIBERATE mismatch a boot-refusal test can compose against (team-lead review
+            MEDIUM, 2026-09-15: no compose-level test previously exercised this path, since
+            every caller got the auto-fix unconditionally). A caller-supplied raw YAML
+            fragment string is written through unchanged (the same convention
+            :func:`~tests.venue._documents.ocp_yaml`'s own ``wire_codec`` parameter uses).
     """
     path = config_dir / "kis_mock_transport.yaml"
     path.write_text(
@@ -635,6 +598,26 @@ def write_kis_mock_transport_config(
         ),
         encoding="utf-8",
     )
+    ocp_path = config_dir / "order_construction_policy.yaml"
+    if ocp_path.is_file():
+        if isinstance(wire_codec, _Unset):
+            effective_wire_codec = (
+                "{kind: kis-order-cash-v1, wire_fields: "
+                f"{sorted(KIS_ORDER_CASH_WIRE_FIELDS)!r}}}"
+            )
+        elif wire_codec is None:
+            effective_wire_codec = "null"
+        else:
+            effective_wire_codec = wire_codec
+        ocp_path.write_text(
+            ocp_yaml(
+                environment="non-live-test",
+                account=ACCOUNT,
+                instrument=INSTRUMENT,
+                wire_codec=effective_wire_codec,
+            ),
+            encoding="utf-8",
+        )
     return path
 
 
