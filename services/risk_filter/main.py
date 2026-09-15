@@ -625,13 +625,16 @@ async def _build_and_run() -> int:
     ensure_state_key_suffix(mode, label="futures risk filter")
     candidate_stream, final_stream = _streams_for(mode)
     risk_state_suffix = "shadow" if mode == "shadow" else ""
+    positions_key = os.environ.get(
+        _FUTURES_POSITIONS_KEY_ENV, _DEFAULT_FUTURES_POSITIONS_KEY
+    )
     logger.info(
         "risk_filter mode=%s trading_state_key_suffix=%r "
         "leverage_positions_key=%s monitor_positions_key=%s",
         mode,
         os.environ.get("TRADING_STATE_KEY_SUFFIX", ""),
         TradingStateReader("futures").positions_key,
-        os.environ.get(_FUTURES_POSITIONS_KEY_ENV, _DEFAULT_FUTURES_POSITIONS_KEY),
+        positions_key,
     )
 
     try:
@@ -658,9 +661,6 @@ async def _build_and_run() -> int:
     from shared.streaming.client import RedisClient
 
     sync_redis = RedisClient.get_client()
-    positions_key = os.environ.get(
-        _FUTURES_POSITIONS_KEY_ENV, _DEFAULT_FUTURES_POSITIONS_KEY
-    )
 
     leverage_provider, leverage_product_specs = _build_leverage_wiring(risk_config)
     volatility_provider = _build_volatility_reference_provider(risk_config, sync_redis)
