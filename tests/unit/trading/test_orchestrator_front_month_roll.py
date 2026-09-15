@@ -11,6 +11,7 @@ from __future__ import annotations
 import functools
 import logging
 from datetime import date
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -154,3 +155,74 @@ async def test_start_rolls_before_feed_prefetch_and_components(monkeypatch):
     feed.update_symbols.assert_called_once_with(["A01612"], auxiliary_symbols=[])
     kis_client._get_futures_price.assert_awaited_once_with("A01612")
     assert o._futures_daily_reference == {"A01612": {"prev_close": 812.5}}
+
+
+# --------------------------------------------------------------------------- #
+# Candle cache (review F1): the expired contract must not come back from Redis
+# --------------------------------------------------------------------------- #
+
+
+def _candle(close: float) -> SimpleNamespace:
+    return SimpleNamespace(
+        open=close, high=close, low=close, close=close, volume=1, minute=540
+    )
+
+
+@pytest.mark.asyncio
+async def test_candle_cache_load_skips_rolled_out_contract(monkeypatch):
+    """09-11 prod: `Candle cache loaded` seeded A01609 next to A01612."""
+    import shared.streaming.trading_state as trading_state
+
+    cache = {
+        "A01609": [{"close": 400.0}],
+        "A01612": [{"close": 405.0}],
+    }
+    monkeypatch.setattr(
+        trading_state,
+        "TradingStateReader",
+        lambda asset_class: SimpleNamespace(get_candle_cache=lambda: cache),
+    )
+    o = _bare(["A01612"])
+    o._position_tracker = None
+    o._indicator_engine = MagicMock()
+    o._indicator_engine.is_warm.return_value = False
+
+    loaded = await o._load_candle_cache_from_redis()
+
+    assert loaded == 1
+    o._indicator_engine.seed_candles.assert_called_once_with("A01612", cache["A01612"])
+
+
+def test_candle_cache_save_drops_rolled_out_contract():
+    """09-11 prod: `Candle cache saved: 2 symbols` re-published A01609."""
+    o = _bare(["A01612"])
+    o._position_tracker = None
+    o._state_publisher = MagicMock()
+    o._indicator_engine = SimpleNamespace(
+        _accumulators={
+            "A01609": SimpleNamespace(candles=[_candle(400.0)]),
+            "A01612": SimpleNamespace(candles=[_candle(405.0)]),
+        }
+    )
+
+    o._save_candle_cache_to_redis()
+
+    (saved,), _ = o._state_publisher.publish_candle_cache.call_args
+    assert set(saved) == {"A01612"}
+
+
+def test_candle_cache_save_keeps_symbols_of_open_positions():
+    o = _bare(["A01612"])
+    o._position_tracker = SimpleNamespace(positions=[SimpleNamespace(code="A05610")])
+    o._state_publisher = MagicMock()
+    o._indicator_engine = SimpleNamespace(
+        _accumulators={
+            "A05610": SimpleNamespace(candles=[_candle(300.0)]),
+            "A01612": SimpleNamespace(candles=[_candle(405.0)]),
+        }
+    )
+
+    o._save_candle_cache_to_redis()
+
+    (saved,), _ = o._state_publisher.publish_candle_cache.call_args
+    assert set(saved) == {"A01612", "A05610"}

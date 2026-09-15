@@ -3127,12 +3127,19 @@ class TradingOrchestrator:
         )
 
     def _save_candle_cache_to_redis(self) -> None:
-        """Serialize indicator engine candles to Redis for restart recovery."""
+        """Serialize indicator engine candles to Redis for restart recovery.
+
+        Only symbols still traded or held are saved: the publish replaces the
+        whole hash, so an accumulator for a contract that rolled out (or a
+        symbol that left the universe) drops out of the cache instead of being
+        re-published with a fresh TTL on every save.
+        """
         if not self._state_publisher or not self._indicator_engine:
             return
+        market_symbols = set(self._get_market_symbols())
         candle_data: dict[str, list[dict]] = {}
         for symbol, acc in self._indicator_engine._accumulators.items():
-            if not acc.candles:
+            if symbol not in market_symbols or not acc.candles:
                 continue
             candle_data[symbol] = [
                 {
@@ -3153,7 +3160,12 @@ class TradingOrchestrator:
             )
 
     async def _load_candle_cache_from_redis(self) -> int:
-        """Load cached candles from Redis to pre-warm indicators."""
+        """Load cached candles from Redis to pre-warm indicators.
+
+        Seeds only symbols still traded or held. After a futures front-month
+        roll the cache still carries the expired contract (2026-09-11: A01609
+        was seeded next to A01612 and reported as the warm sample symbol).
+        """
         try:
             from shared.streaming.trading_state import TradingStateReader
 
@@ -3161,9 +3173,12 @@ class TradingOrchestrator:
             cache = reader.get_candle_cache()
             if not cache:
                 return 0
+            market_symbols = set(self._get_market_symbols())
             loaded = 0
             for symbol, candles in cache.items():
-                if self._indicator_engine.is_warm(symbol):
+                if symbol not in market_symbols or self._indicator_engine.is_warm(
+                    symbol
+                ):
                     continue
                 self._indicator_engine.seed_candles(symbol, candles)
                 loaded += 1
