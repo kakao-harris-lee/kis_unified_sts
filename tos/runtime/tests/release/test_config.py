@@ -10,6 +10,7 @@ from tos_runtime.release.config import ReleaseAdmissionConfigError, load_release
 
 _VALID = """
 expected_code_digest: "digest-abc"
+expected_dependency_set_digest: "dep-digest-abc"
 admission_result: "ADMIT"
 restriction_state_resolved: true
 restriction_present: false
@@ -35,6 +36,7 @@ def test_valid_config_loads(tmp_path: Path) -> None:
     path = _write(tmp_path, _VALID)
     config = load_release_config(path)
     assert config.expected_code_digest == "digest-abc"
+    assert config.expected_dependency_set_digest == "dep-digest-abc"
     assert config.admission_result is AdmissionResult.ADMIT
     assert config.restriction_state_resolved is True
     assert config.restriction_present is False
@@ -44,6 +46,16 @@ def test_valid_config_loads(tmp_path: Path) -> None:
 def test_null_expected_code_digest_refuses(tmp_path: Path) -> None:
     text = _VALID.replace(
         'expected_code_digest: "digest-abc"', "expected_code_digest: null"
+    )
+    path = _write(tmp_path, text)
+    with pytest.raises(ReleaseAdmissionConfigError):
+        load_release_config(path)
+
+
+def test_null_expected_dependency_set_digest_refuses(tmp_path: Path) -> None:
+    text = _VALID.replace(
+        'expected_dependency_set_digest: "dep-digest-abc"',
+        "expected_dependency_set_digest: null",
     )
     path = _write(tmp_path, text)
     with pytest.raises(ReleaseAdmissionConfigError):

@@ -75,10 +75,11 @@ Firewall (tools/tos_firewall_check.py R1, runtime scope): stdlib + ``tos.*``
 
 from __future__ import annotations
 
+import functools
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tos.afg import (
     ActionFlowDecision,
@@ -92,6 +93,7 @@ from tos.egress import (
     EgressCoordinateSet,
     EgressRequestRecord,
     QuorumCommitCertificate,
+    credential_route_authority_disjoint,
 )
 from tos.egressgw import (
     CandidateConstruction,
@@ -99,7 +101,6 @@ from tos.egressgw import (
     OrderConstructionStage,
     SendBoundaryContext,
     TransportNature,
-    VenueConstraintStage,
     send_boundary_context,
 )
 from tos.engine import AttemptRequest, InstrumentKey, StageRequest, StageVerdict
@@ -113,21 +114,24 @@ from tos.venue import (
     VenueConstraintSnapshot,
 )
 
+from tos_runtime.authority.epoch import SafetyAuthorityEpochService
 from tos_runtime.brokercap import (
     BrokerScopesConfig,
     InstanceDocument,
     Item6Item12Fields,
     derive_item6_item12,
 )
-from tos_runtime.compose._egress_attestations import EgressAttestations
 from tos_runtime.compose._pending_dimensions import (
     PendingDimensionSpec,
     stamp_pending_dimensions,
 )
+from tos_runtime.compose._request_digest import RequestBytesDigestSource
 from tos_runtime.currentness.proof import EgressCurrentnessProofIssuer
 from tos_runtime.currentness.stages import TransmissionCapabilityStage
 from tos_runtime.currentness.vector import CurrentnessAssembler
+from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import StaleEpochRead
+from tos_runtime.rcl.reservation_identity import scope_reservation_id
 from tos_runtime.risk.aggregate import (
     AggregateRiskDecisionInputs,
     AggregateRiskService,
@@ -136,6 +140,19 @@ from tos_runtime.risk.flow import (
     ActionFlowDecisionInputs,
     ActionFlowGovernor,
 )
+from tos_runtime.safety.latch import (
+    CapacityOwner,
+    RestrictiveLatchOwner,
+    egress_owner_fields,
+)
+
+if TYPE_CHECKING:
+    # TYPE_CHECKING-only: _venue_phase.py imports ConstructionConfig from
+    # _types.py, which imports THIS module for ComposeContextResolver — a
+    # top-level import here would be circular. Postponed annotations (module
+    # docstring's own `from __future__ import annotations`) mean the string
+    # form below is all mypy needs.
+    from tos_runtime.compose._venue_phase import VenuePhaseStage
 
 __all__ = [
     "ComposeContextResolver",
@@ -143,7 +160,40 @@ __all__ = [
     "RecordingAggregateRiskService",
     "VerdictRecorder",
     "make_permit_provider",
+    "record_egress_identity_observation",
 ]
+
+#: W3.1 independent review MEDIUM-4 evidence kind — see
+#: :func:`record_egress_identity_observation`.
+_EGRESS_IDENTITY_OBSERVATION_KIND = "EGRESS_IDENTITY_OBSERVATION"
+
+
+def record_egress_identity_observation(
+    evidence_store: SqliteEvidenceStore,
+    inventory: tuple[CredentialRouteInventoryEntry, ...],
+) -> None:
+    """W3.1 independent review MEDIUM-4 disposition: EGRESS_IDENTITY is reverted to
+    pending (:mod:`tos_runtime.compose._pending_dimensions` — no dimension verdict is
+    authored from partial predicate coverage). The ONE kernel predicate this
+    composition CAN honestly evaluate —
+    :func:`~tos.egress.predicates.credential_route_authority_disjoint`, over the
+    composed (boot-time-static) credential-route inventory — is still worth recording,
+    as an EVIDENCE-ONLY OBSERVATION, never a currentness verdict: this function writes
+    it once at boot and never feeds it back into any admission decision.
+
+    Moved here from ``_wiring.py`` (team-lead review follow-up, 2026-09-12) purely for
+    that module's own size budget — no behavioural difference from having it there;
+    :func:`~tos_runtime.compose._wiring._build_context_resolver` is still the one
+    caller."""
+    evidence_store.append(
+        {
+            "credential_route_authority_disjoint": credential_route_authority_disjoint(
+                inventory
+            )
+        },
+        kind=_EGRESS_IDENTITY_OBSERVATION_KIND,
+        record_class=_EGRESS_IDENTITY_OBSERVATION_KIND,
+    )
 
 
 class VerdictRecorder:
@@ -303,7 +353,7 @@ class ComposeContextResolver:
 
     construction_stage: OrderConstructionStage
     proof_stage: ConformanceProofStage
-    venue_stage: VenueConstraintStage
+    venue_stage: VenuePhaseStage
     step4_recorder: VerdictRecorder
     step9_recorder: VerdictRecorder
     step14_stage: TransmissionCapabilityStage
@@ -316,13 +366,20 @@ class ComposeContextResolver:
     #: for why these exist and what they honestly are (an interim operator
     #: sign-off, never a fabricated kernel-derived verdict).
     pending_dimension_specs: tuple[PendingDimensionSpec, ...]
-    #: The 3 remaining operator-attested egress-gate stand-ins for items
-    #: 12/16 (team-lead follow-up guidance, 2026-09-08) — see
-    #: :mod:`tos_runtime.compose._egress_attestations`'s own module
-    #: docstring for why these exist and which Phase replaces each. Items
+    #: Item 12's three venue-half sub-facts (kernel round #3 §2 decision 4,
+    #: replacing the single ``venue_session_account_facts_reader`` this
+    #: resolver used to carry) — three zero-argument reads off the composed
+    #: :class:`~tos_runtime.calendar.owner.SessionFactsOwner`
+    #: (:mod:`tos_runtime.compose._session_wiring`), each evaluated fresh on
+    #: every call (never cached here). The kernel's own
+    #: :func:`~tos.egressgw.venuefacts.venue_session_account_facts_current`
+    #: composes these three, replacing the retired
+    #: ``tos_runtime.compose._egress_attestations`` operator attestation. Items
     #: 6/12's OTHER two fields are derived, not attested — see
     #: ``broker_scopes``/``instance_document`` below.
-    egress_attestations: EgressAttestations
+    session_facts_current_reader: Callable[[], bool | None]
+    tradability_facts_current_reader: Callable[[], bool | None]
+    account_facts_current_reader: Callable[[], bool | None]
     #: The runtime-configured Broker Scope table (TOS Phase 4 plan §2
     #: decision 4) — feeds :func:`~tos_runtime.brokercap.derive_item6_item12`
     #: for items 6/12, replacing two of the former egress attestations.
@@ -337,12 +394,41 @@ class ComposeContextResolver:
     principal: str
     credential_route_inventory: tuple[CredentialRouteInventoryEntry, ...]
     authorized_coordinates: EgressCoordinateSet
-    capsule_egress_request_digest: str
+    #: Computes the ONE per-attempt request-bytes digest shared by
+    #: ``EgressRequestRecord.request_bytes_digest`` and
+    #: ``SendBoundaryContext.capsule_egress_request_digest`` (T2 lane A — see
+    #: :mod:`tos_runtime.compose._request_digest`'s own module docstring for the gap this
+    #: closes). Defaults to the unchanged capsule-terminus stand-in
+    #: (:class:`~tos_runtime.compose._request_digest.CapsuleStandInDigest`) at every call site
+    #: today (:mod:`tos_runtime.compose._wiring`); a later lane injects
+    #: :class:`~tos_runtime.compose._request_digest.KisWireCodecDigest`.
+    request_bytes_digest_source: RequestBytesDigestSource
     outbound_side: str
     action_class: ActionClass
-    observed_session_phase: str
+    #: TOS Phase 5 W5 plan §2 decision 5 — a zero-argument read off the SAME
+    #: :class:`~tos_runtime.calendar.owner.SessionFactsOwner` step 3's
+    #: ``VenueConstraintStage`` reads (its own per-tick cache means both reads
+    #: agree within one attempt), replacing the retired
+    #: ``ConstructionConfig.observed_session_phase`` literal.
+    observed_session_phase_reader: Callable[[], str | None]
     continuity_id: str
     instrument_key: InstrumentKey
+    #: Item 4's deferred-mesh owner (Phase 5 W3-b, plan §2 decision 4) — the SAME
+    #: composed :class:`~tos_runtime.authority.epoch.SafetyAuthorityEpochService` the
+    #: Coordinator's ``RuntimeCoordinatorPreconditions.authority_epoch_current`` already
+    #: reads (:mod:`tos_runtime.compose._preconditions`), never a second service.
+    authority_epoch_service: SafetyAuthorityEpochService
+    #: Items 7/8/9/10's deferred egress-mesh fields (Phase 5 W3-b, plan §2 decision 8) —
+    #: :attr:`~tos_runtime.compose._safety_wiring._SafetyMesh.deferred_fields`, evaluated
+    #: fresh on every call (never cached), never a second judgement authored here.
+    safety_mesh_deferred_fields: Callable[[], dict[str, Any]]
+    #: Item 16's restrictive-latch owner (W3-c) — the composed
+    #: :class:`~tos_runtime.compose._safety_wiring._SafetyMesh.latch`.
+    latch: RestrictiveLatchOwner
+    #: Item 16's worst-credible-capacity owner (W3-c) — built once ``instrument_key`` is
+    #: known (:func:`~tos_runtime.compose._safety_wiring.build_capacity_owner`), unlike
+    #: :attr:`latch` which needs the late-bound inbox cell instead.
+    capacity: CapacityOwner
     #: The exact venue facts step 3 folded — passed straight through to item 11
     #: rather than rebuilt, so item 11's re-fold cannot silently disagree with
     #: the fold ``VenueConstraintStage`` (step 3) already performed.
@@ -352,11 +438,19 @@ class ComposeContextResolver:
 
     contexts: tuple[SendBoundaryContext, ...] = field(default_factory=tuple)
     _yield_seq: int = 0
+    #: Item 4's CLAIMED Safety Authority epoch, bound ONCE at construction time — never
+    #: re-read per attempt (the same "claim fixed at composition, never re-derived"
+    #: discipline :class:`~tos_runtime.compose._preconditions.RuntimeCoordinatorPreconditions`
+    #: already documents for its own ``_bound_epoch``). Set in :meth:`__post_init__`.
+    _bound_authority_epoch: int | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        self._bound_authority_epoch = self.authority_epoch_service.current_epoch()
 
     def _egress_request_for_command(
-        self, command_digest: str | None
+        self, command_digest: str | None, *, request_bytes_digest: str | None
     ) -> EgressRequestRecord | None:
-        if command_digest is None:
+        if command_digest is None or request_bytes_digest is None:
             return None
         from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 
@@ -365,7 +459,7 @@ class ComposeContextResolver:
         issued = EgressRequestRecord.issue(
             scheme=scheme,
             request_id=f"ereq-{command_digest[:16]}",
-            request_bytes_digest=self.capsule_egress_request_digest,
+            request_bytes_digest=request_bytes_digest,
             canonical_command_digest=command_digest,
             endpoint=coordinates.endpoint,
             account=coordinates.account,
@@ -381,6 +475,65 @@ class ComposeContextResolver:
         )
         assert isinstance(issued, EgressRequestRecord)
         return issued
+
+    def _resolve_request_bytes_digest(
+        self, construction: CandidateConstruction
+    ) -> str | None:
+        """The ONE per-attempt request-bytes digest, computed once and shared by both
+        :meth:`_egress_request_for_command` (item 17's ``EgressRequestRecord.
+        request_bytes_digest``) and :meth:`__call__`'s own ``send_boundary_context``
+        ``capsule_egress_request_digest`` kwarg — the exact two fields the kernel's
+        ``exact_binding_holds`` (``tos/src/tos/egress/predicates.py``) requires to agree
+        (T2 lane A, plan §8 "설계 정정 ①").
+
+        Reads the SAME per-attempt sources the kernel itself later seals: ``self.
+        authorized_coordinates.account`` (-> ``SendSeal.account``, ``build_send_seal``'s
+        ``_gather_seal_fields``), ``self.instrument_key.instrument`` (-> ``SendSeal.
+        instrument_key.instrument``), and ``construction.derivation.quantity``/``.price`` (->
+        ``SendBoundaryContext.outbound_quantity``/``.outbound_price`` — ``tos.egressgw.records.
+        send_boundary_context`` reads these off this SAME ``construction`` object, via
+        ``construction.derivation.quantity``/``.price``). A codec-based
+        ``request_bytes_digest_source`` therefore digests EXACTLY the bytes ``SendSeal`` itself
+        carries, never a look-alike.
+
+        Returns ``None`` when the derivation produced no value, or when ``authorized_coordinates
+        .account`` is unset (``EgressCoordinateSet.account: str | None`` — unlike
+        ``InstrumentKey.instrument``, which is required/non-empty by construction, design #31
+        §3.3). ``tos.egressgw.construction.construct_candidate_command`` only ever compiles a
+        ``command`` when ``derivation.outcome is DerivationOutcome.DERIVED`` — the ONE case
+        ``QuantityDerivation``'s own validator guarantees carries non-``None`` ``quantity``/
+        ``price`` — so ``quantity``/``price`` being ``None`` here means ``construction.command``
+        is also ``None`` (an early, un-compiled denial), which already makes
+        :meth:`_egress_request_for_command` return ``None`` unconditionally (its own
+        ``command_digest is None`` guard) regardless of this digest's value; likewise, an unset
+        ``account`` already makes the ``EgressRequestRecord.issue(...)`` call inside
+        :meth:`_egress_request_for_command` carry ``account=None``, which is refused there by
+        the SAME fail-closed discipline every other absent authorized coordinate already gets.
+        Returning ``None`` here is therefore honest — never a fabricated digest for values that
+        do not exist — and has no effect on either attempt's outcome (``exact_binding_holds``
+        already short-circuits ``False`` on an absent ``request``, independent of
+        ``capsule_egress_request_digest``).
+        """
+        quantity = construction.derivation.quantity
+        price = construction.derivation.price
+        account = self.authorized_coordinates.account
+        if quantity is None or price is None or account is None:
+            return None
+        # Independent review LOW-1: self.authorized_coordinates.account and
+        # self.instrument_key.account are the SAME value at every compose root this codebase
+        # wires today (tos_runtime.compose._wiring._build_context_resolver sets both from the
+        # SAME construction.account) — a mutation swapping the account source below is
+        # unfalsifiable through this class's own tests for that reason, not because the
+        # distinction does not matter. The distinction review F2 actually cares about (account
+        # is a SEALED outbound coordinate, never a custody-loaded value) is pinned one layer
+        # down, at the codec (tos_runtime.transport.kis_mock.codec's own
+        # test_account_is_the_seal_field_never_instrument_key_account).
+        return self.request_bytes_digest_source(
+            account=account,
+            instrument=self.instrument_key.instrument,
+            quantity=quantity,
+            price=price,
+        )
 
     def _quorum_certificate_for_command(
         self, command_digest: str | None
@@ -475,8 +628,8 @@ class ComposeContextResolver:
             capability_id=f"cap-{attempt.attempt_id}",
             nonce=nonce,
             single_use=True,
-            reservation_identity=(
-                f"resv-{self.instrument_key.account}-{self.instrument_key.instrument}"
+            reservation_identity=scope_reservation_id(
+                self.instrument_key.account, self.instrument_key.instrument
             ),
             attempt_identity=attempt.attempt_id,
             account_scope=self.instrument_key.account,
@@ -561,15 +714,24 @@ class ComposeContextResolver:
         (items 6/12) are STRUCTURALLY DERIVED (TOS Phase 4 plan §2 decision
         4) via :func:`~tos_runtime.brokercap.derive_item6_item12`, never an
         attestation any more — see :meth:`_item6_item12_fields`.
-        ``venue_session_account_facts_current`` / ``restrictive_latch_state``
-        / ``worst_credible_capacity`` remain explicit operator attestations
-        from composition config (:mod:`tos_runtime.compose._egress_attestations`
-        — see its own module docstring for which Phase replaces each), never
-        a bare Python literal. ``max_quantity_within_allowance`` is the one
-        exception: it HAS a real Phase 2 producer (step 2's own
+        Item 12's three venue-half sub-facts (kernel round #3 §2 decision 4,
+        superseding TOS Phase 5 W5 plan §2 decision 3's single pre-composed
+        field) are now real runtime-owner reads too
+        (:attr:`session_facts_current_reader` /
+        :attr:`tradability_facts_current_reader` /
+        :attr:`account_facts_current_reader` —
+        :class:`~tos_runtime.calendar.owner.SessionFactsOwner`, replacing the
+        retired ``tos_runtime.compose._egress_attestations`` operator
+        attestation); the kernel's own
+        :func:`~tos.egressgw.venuefacts.venue_session_account_facts_current`
+        composes them, never this compose layer. ``restrictive_latch_state`` /
+        ``worst_credible_capacity`` (item 16) are Phase 5 W3 real runtime
+        owners too (:mod:`tos_runtime.safety.latch`, plan §2 decision 6) —
+        never an attestation any more; see :attr:`latch` / :attr:`capacity`.
+        ``max_quantity_within_allowance`` is the one exception: it HAS a real
+        Phase 2 producer (step 2's own
         ``CandidateConstruction.no_silent_widening_ok``) and is derived
         from that live value instead of an attestation or a derivation."""
-        attestations = self.egress_attestations
         return {
             "account_instrument_action_allowed": (
                 derived.account_instrument_action_allowed
@@ -577,14 +739,44 @@ class ComposeContextResolver:
             "max_quantity_within_allowance": (
                 None if construction is None else construction.no_silent_widening_ok
             ),
-            "venue_session_account_facts_current": (
-                attestations.venue_session_account_facts_current
-            ),
+            "session_facts_current": self.session_facts_current_reader(),
+            "tradability_facts_current": self.tradability_facts_current_reader(),
+            "account_facts_current": self.account_facts_current_reader(),
             "broker_constraint_generation_current": (
                 derived.broker_constraint_generation_current
             ),
-            "restrictive_latch_state": attestations.restrictive_latch_state,
-            "worst_credible_capacity": attestations.worst_credible_capacity,
+            **egress_owner_fields(self.latch, self.capacity).fields(),
+        }
+
+    def _deferred_mesh_fields(self) -> dict[str, Any]:
+        """Items 4/5/7/8/9/10's ``SendBoundaryContext`` deferred-mesh fields (Phase 5
+        W3-b, plan §2 decision 4 — kernel round #2 §2 decision 2's closed item↔field
+        table: ``True`` ⇒ SATISFIED, ``False`` ⇒ DENIED, ``None`` ⇒ UNKNOWN, the
+        kernel judges positivity only).
+
+        Item 4 (``safety_authority_epoch_current``) is the only one this composition
+        can honestly supply today: the Safety Authority epoch service's own
+        :meth:`~tos_runtime.authority.epoch.SafetyAuthorityEpochService.epoch_current`,
+        checked against :attr:`_bound_authority_epoch` — the claim fixed ONCE at this
+        resolver's construction, never re-derived per attempt (same discipline as
+        :class:`~tos_runtime.compose._preconditions.RuntimeCoordinatorPreconditions`'s
+        own ``_bound_epoch``) — never a second currentness/authorization comparison
+        authored here.
+
+        Items 7/8/9/10 come from :attr:`safety_mesh_deferred_fields` — the four W3-a1/a2
+        safety-mesh services' own ``clear().clear`` (:mod:`tos_runtime.compose
+        ._safety_wiring`'s own ``build_safety_mesh``), evaluated fresh on every call.
+
+        Item 5 (``live_scope_valid``) is deliberately ABSENT (never a key in the
+        returned dict, so ``send_boundary_context`` leaves it at its own ``None``
+        default) — it stays UNKNOWN per plan §2 decision 4's operator confirmation ③
+        (a), Phase 5's own committed posture until a live authorization runtime exists.
+        """
+        return {
+            "safety_authority_epoch_current": self.authority_epoch_service.epoch_current(
+                self._bound_authority_epoch
+            ),
+            **self.safety_mesh_deferred_fields(),
         }
 
     def _item6_item12_fields(self) -> Item6Item12Fields:
@@ -619,6 +811,11 @@ class ComposeContextResolver:
         egress_currentness_proof = self._issue_egress_currentness_proof(attempt)
         item16 = self.proof_issuer.item16_fields(attempt.attempt_id)
         item6item12 = self._item6_item12_fields()
+        # T2 lane A: ONE digest, computed once, shared by egress_request_for_command below
+        # (item 17's EgressRequestRecord.request_bytes_digest) and the
+        # capsule_egress_request_digest kwarg further down — see
+        # _resolve_request_bytes_digest's own docstring.
+        request_bytes_digest = self._resolve_request_bytes_digest(construction)
 
         context = send_boundary_context(
             attempt=attempt,
@@ -629,7 +826,10 @@ class ComposeContextResolver:
                 source_continuity_id=self.continuity_id,
                 source_native_sequence=self._yield_seq,
             ),
-            egress_request_for_command=self._egress_request_for_command,
+            egress_request_for_command=functools.partial(
+                self._egress_request_for_command,
+                request_bytes_digest=request_bytes_digest,
+            ),
             quorum_certificate_for_command=self._quorum_certificate_for_command,
             instrument_key=self.instrument_key,
             transport_nature=self.transport_nature,
@@ -651,7 +851,7 @@ class ComposeContextResolver:
             venue_snapshot=self.venue_snapshot,
             venue_policy=self.venue_policy,
             venue_decision=self.venue_decision,
-            observed_session_phase=self.observed_session_phase,
+            observed_session_phase=self.observed_session_phase_reader(),
             action_class=self.action_class,
             order_shape=self.venue_stage.resolved_shape,
             venue_shape_constraints=self.venue_stage.shape_constraints,
@@ -665,9 +865,9 @@ class ComposeContextResolver:
             required_capability_set=item6item12.required_capability_set,
             broker_profile_version_current=(item6item12.broker_profile_version_current),
             idempotency_proven=None,
-            # Items 6/12/16 stand-ins: operator attestations from composition
-            # config (see tos_runtime.compose._egress_attestations's own
-            # module docstring for which Phase replaces each), except
+            # Items 6/12/16 stand-ins: real runtime owners now (item 12 --
+            # tos_runtime.calendar.owner.SessionFactsOwner, TOS Phase 5 W5;
+            # item 16 -- tos_runtime.safety.latch, TOS Phase 5 W3), except
             # max_quantity_within_allowance which HAS a real Phase 2 producer
             # (step 2's own CandidateConstruction.no_silent_widening_ok).
             **self._egress_gate_stand_in_fields(construction, item6item12),
@@ -677,8 +877,9 @@ class ComposeContextResolver:
             egress_currentness_proof=egress_currentness_proof,
             egress_currentness_result=item16.egress_currentness_result,
             authorized_coordinates=self.authorized_coordinates,
-            capsule_egress_request_digest=self.capsule_egress_request_digest,
+            capsule_egress_request_digest=request_bytes_digest,
             outbound_side=self.outbound_side,
+            **self._deferred_mesh_fields(),
         )
         self.contexts += (context,)
         return context

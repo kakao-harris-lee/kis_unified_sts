@@ -3,17 +3,15 @@
 .SqliteCommitLog.apply_reservation_transition` admits a ``RELEASED``/``POSITION_CONSUMED``
 transition on (TOS Phase 3 Wave 2 Lane C-R; plan §2.2).
 
-**Seam, not a call site (measured, plan §0 survey).** No lane in this runtime yet calls
-``apply_reservation_transition`` to a ``RELEASED`` destination in production — ``grep -rn
-"CapacityState.RELEASED" tos/runtime/src/tos_runtime`` finds only this module's own docstrings
-and predicate references, never a live call site. :func:`finality_witness_for` is the plumbing a
-future release-trigger lane supplies its proof through; :func:`release_reservation` is a thin,
-already-tested wrapper around :meth:`~tos_runtime.rcl.log.SqliteCommitLog
-.apply_reservation_transition` that demonstrates the exact wiring — ``proof -> witness ->
-apply_reservation_transition`` — end to end (``tos/runtime/tests/rcl/test_finality_witness.py``),
-without inventing the reservation-identity / writer-epoch / expected-seq bookkeeping a real
-release trigger would need (that bookkeeping is the future lane's own concern, not manufactured
-here).
+**The seam now has a call site (TOS Phase 5 W2-R; plan §10 row ①).**
+:mod:`tos_runtime.posttrade.release_consumer`'s ``FinalityReleaseConsumer`` is the ONE
+production call site that calls :func:`release_reservation` (via
+:meth:`~tos_runtime.rcl.log.SqliteCommitLog.apply_reservation_transition`) toward a
+``RELEASED``/``POSITION_CONSUMED`` destination — it owns the reservation-identity / writer-epoch
+/ expected-seq bookkeeping this module deliberately never invented. :func:`finality_witness_for`
+is the plumbing that consumer supplies its re-loaded proof through; :func:`release_reservation`
+remains the thin wrapper this module always was, still exercised in isolation end to end
+(``tos/runtime/tests/rcl/test_finality_witness.py``) exactly as before.
 
 ``finality_witness_for`` never re-derives the finality gates
 :mod:`tos_runtime.posttrade.finality`'s producer already checked before handing out a proof — it

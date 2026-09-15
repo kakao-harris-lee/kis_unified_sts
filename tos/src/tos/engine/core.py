@@ -38,14 +38,17 @@ from typing import Protocol, runtime_checkable
 
 from tos.capsule import DecisionContextCapsule
 from tos.engine._base import ArtifactIntegrityError, CanonicalizationScheme, get_scheme
+from tos.engine._corporate_action import handle_corporate_action
 from tos.engine.pipeline import PipelineResult, run_decision_pipeline
 from tos.engine.records import (
+    CorporateActionPayload,
     DecisionTickPayload,
     EgressResultPayload,
     EngineConfiguration,
     EngineEvent,
     EngineEvidenceRecord,
     InstrumentKey,
+    NonTradeOutcome,
     ProvisionalReservation,
     RegisteredStrategy,
     egress_result_outcome_digest,
@@ -288,35 +291,44 @@ class EventResult:
     #: ``NON_MONOTONIC_PROJECTION`` refusal) changes it, because the disposition is itself part of
     #: what :class:`~tos.engine.records.EgressResultOutcome` covers.
     result_outcome_digest: str | None = None
+    #: A ``CORPORATE_ACTION`` event's judged outcome (kernel round #3 §2 결정 2(c)); ``None`` for
+    #: every other kind, which never sets this field.
+    nontrade_outcome: NonTradeOutcome | None = None
     detail: str | None = None
 
     @property
     def outcome_digest(self) -> str | None:
         """The outcome digest this event established, for ``EVENT_CONSUMED`` replay evidence.
 
-        (Phase 3 A-K-3 / wave 3 KW3-RD; design #31 §7.1.) Derived from whichever stage the event
-        actually reached — **never a new hash of mutable state**: a ``DECISION_TICK`` that emitted
-        an outcome exposes its already-computed
+        (Phase 3 A-K-3 / wave 3 KW3-RD; design #31 §7.1; third branch kernel round #3 §2 결정
+        2(c).) Derived from whichever stage the event actually reached — **never a new hash of
+        mutable state**: a ``DECISION_TICK`` that emitted an outcome exposes its already-computed
         :attr:`~tos.engine.pipeline.PipelineResult.outcome_digest` (the emitted Decision/Proposal's
         own canonical digest); an ``EGRESS_RESULT`` exposes :attr:`result_outcome_digest` — the
         digest of its *applied outcome* (disposition + resulting capacity/knowledge/quantities),
-        never a hash of the live, still-mutable :mod:`tos.engine.state` projection itself. The two
-        are mutually exclusive by construction (:attr:`pipeline` is only ever set for a
-        ``DECISION_TICK``, :attr:`result_outcome_digest` only ever for an ``EGRESS_RESULT``), so
-        checking ``pipeline`` first and falling back is unambiguous rather than a priority choice.
+        never a hash of the live, still-mutable :mod:`tos.engine.state` projection itself; a
+        ``CORPORATE_ACTION`` exposes :attr:`nontrade_outcome`'s own
+        :attr:`~tos.engine.records.NonTradeOutcome.outcome_digest`. The three are mutually
+        exclusive by construction (:attr:`pipeline` only for a ``DECISION_TICK``,
+        :attr:`result_outcome_digest` only for an ``EGRESS_RESULT``, :attr:`nontrade_outcome`
+        only for a ``CORPORATE_ACTION``), so checking them in order and falling back is
+        unambiguous rather than a priority choice.
 
         Before Phase 3 wave 3 KW3-RD this was unconditionally ``None`` for every ``EGRESS_RESULT``
         (wave 3 lane F-R survey finding), which made both the backtest=paper parity comparison and
         the runtime replay comparison vacuous for result events — ``None == None`` reads as
         "uncompared" (:data:`~tos.evidence.ReplayResultState.INCONCLUSIVE`), not "verified
         identical". A Coordinator-gate refusal (before step 1, before any handler runs) still sets
-        neither field and correctly stays ``None`` — the core genuinely produced no outcome there.
+        none of the three and correctly stays ``None`` — the core genuinely produced no outcome
+        there.
 
         Returns:
             The recorded outcome digest, or ``None`` when the event produced none at all.
         """
         if self.pipeline is not None:
             return self.pipeline.outcome_digest
+        if self.nontrade_outcome is not None:
+            return self.nontrade_outcome.outcome_digest
         return self.result_outcome_digest
 
 
@@ -454,6 +466,7 @@ class EngineCore:
         return {
             EventKind.DECISION_TICK: self._handle_decision_tick,
             EventKind.EGRESS_RESULT: self._handle_egress_result,
+            EventKind.CORPORATE_ACTION: self._handle_corporate_action,
         }
 
     # -- DECISION_TICK -------------------------------------------------------
@@ -748,4 +761,48 @@ class EngineCore:
             reservation=reservation,
             result_disposition=application.disposition,
             result_outcome_digest=result_outcome_digest,
+        )
+
+    # -- CORPORATE_ACTION -----------------------------------------------------
+
+    def _handle_corporate_action(
+        self, event: EngineEvent, admission: OrderingAdmission
+    ) -> EventResult:
+        """Judge a re-injected non-trade event and record its outcome (kernel round #3 §2 결정
+        1/2, ``docs/plans/2026-09-12-tos-kernel-round-3-plan.md``).
+
+        Delegates the actual predicate-calling judgement to
+        :func:`~tos.engine._corporate_action.handle_corporate_action` (size-budget discipline;
+        see that function's own module docstring for the full kwarg-by-kwarg accounting) — this
+        method itself touches no ledger, no projection, and no orthostate: it reads the payload,
+        calls the delegate, records evidence, and returns. capacity/projection/latch state are
+        never mutated here (ADR-002-010 §10 line 217) — only :attr:`NonTradeOutcome
+        .capacity_remap_proposal` is carried as a proposal for the RCL (a future runtime consumer)
+        to act on.
+        """
+        payload: CorporateActionPayload | None = event.corporate_action
+        if payload is None:  # pragma: no cover - guaranteed by EngineEvent validation
+            raise UnknownEventKindError(
+                "CORPORATE_ACTION event carries no payload (fail-closed)"
+            )
+        key = payload.instrument_key
+        outcome: NonTradeOutcome = handle_corporate_action(payload, scheme=self._scheme)
+        self._sink.record(
+            EngineEvidenceRecord(
+                kind=EvidenceKind.CORPORATE_ACTION_CONSUMED,
+                instrument_key=key,
+                nontrade_disposition=outcome.disposition.value,
+                outcome_digest=outcome.outcome_digest,
+                detail=(
+                    "judged only — no ledger, projection, or latch mutation (ADR-002-010 §10 "
+                    "line 217); capacity_remap_proposal is a proposal for the RCL alone to act "
+                    "on"
+                ),
+            )
+        )
+        return EventResult(
+            kind=EventKind.CORPORATE_ACTION,
+            instrument_key=key,
+            ordering=admission,
+            nontrade_outcome=outcome,
         )

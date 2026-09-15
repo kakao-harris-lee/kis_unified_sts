@@ -21,6 +21,17 @@ Both blocks are the ioc ``OrderConstructionAuthorityEffect`` / egress ``AllFalse
 isomorph, authored locally rather than imported so a sibling's flag-set drift cannot silently
 change what this package claims (the series' local-authorship discipline).
 
+This module also holds ``_positive`` — the shared positive-polarity read of an injected
+stand-in flag (``None`` / ``False`` ⇒ not admitted) that both ``gateway.py`` and ``mesh.py``
+import (kernel round #2 §2 decision 1 — a single definition, never duplicated). The sibling
+helper ``_verdict`` (which assembles a :class:`~tos.egressgw.records.VerifyItemVerdict`) lives
+in ``records.py`` itself instead, next to the class it returns: it needs
+:data:`~tos.egressgw.vocabulary.REALIZED_ITEMS` / :data:`~tos.egressgw.vocabulary.
+PROVISIONAL_ITEMS` *and* :class:`~tos.egressgw.records.VerifyItemVerdict`, and putting it here
+would recreate the very base<->records cycle a prior revision of this module worked around with
+a function-body import (independent review round #1 LOW-1: fixed by moving the function instead
+of hiding the cycle).
+
 Firewall (design #1 §3.2 / design #34 §0.3): ``pydantic`` + stdlib + ``tos.*`` only. No
 ``importlib`` / ``exec`` / ``eval`` / ``compile``, no ``os.environ`` / ``getenv``, no network
 stdlib, no ``shared.*``, no ``numpy`` / ``pandas``, no wall clock (``time`` / ``datetime``) and
@@ -59,6 +70,11 @@ __all__ = [
     "derive_id",
     "get_scheme",
 ]
+
+
+def _positive(flag: bool | None) -> bool:
+    """Positive-polarity read of an injected stand-in flag (``None`` / ``False`` ⇒ not admitted)."""
+    return flag is True
 
 
 #: RFC-002 §9.1:553 verbatim — the six things an Order Construction Service SHALL NOT do.

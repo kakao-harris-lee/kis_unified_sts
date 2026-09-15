@@ -170,20 +170,24 @@ def test_the_field_is_additive_and_defaults_to_none() -> None:
 
 
 def test_the_engine_import_closure_allowlist_is_unchanged() -> None:
-    """(§15.2 ③ ★) The committed canary's own constant is read — fifteen packages, no marketfeed.
+    """(§15.2 ③ ★) The committed canary's own constant is read — sixteen packages, no marketfeed.
 
     Anti-phantom in its existence form: rather than asserting "we did not have to edit the engine
     canary" (true through design #32; no longer true as of Phase 3 wave 2 KW2-C2 — see this file's
     module docstring), the shipped constant is imported and inspected. ``tos.orthostate`` is the
-    one later, separately sanctioned addition (2026-09-09); ``tos.marketfeed`` was, and remains,
-    never added — the D-E2 value surface rides the pre-existing ``engine -> dsl`` edge instead
-    (module docstring claim 1).
+    first later, separately sanctioned addition (2026-09-09); ``tos.nontrade`` is the second
+    (kernel round #3 §2 결정 1, 2026-09-12 — the ``CORPORATE_ACTION`` handler), the SAME
+    one-way-safety argument as ``tos.orthostate`` (this test used to pin fifteen, before that
+    second addition; that pin is now false). ``tos.marketfeed`` was, and remains, never added —
+    the D-E2 value surface rides the pre-existing ``engine -> dsl`` edge instead (module
+    docstring claim 1).
     """
     from .test_engine_import_closure import _ALLOWED_TOS_PACKAGES
 
-    assert len(_ALLOWED_TOS_PACKAGES) == 15
+    assert len(_ALLOWED_TOS_PACKAGES) == 16
     assert "tos.marketfeed" not in _ALLOWED_TOS_PACKAGES
     assert "tos.orthostate" in _ALLOWED_TOS_PACKAGES
+    assert "tos.nontrade" in _ALLOWED_TOS_PACKAGES
 
 
 # ---------------------------------------------------------------------------

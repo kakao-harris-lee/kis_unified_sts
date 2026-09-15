@@ -1,0 +1,40 @@
+# 승인: Phase 5 계획 §11 결정 11 (2026-09-12) · 제안표 §7 · 휴장일 19건 = config/market_schedule.yaml:88-106 과 1:1
+#
+# 재대조(2026-09-13, g4): config/market_schedule.yaml:88-106 의 2026년 항목
+# 19건을 날짜 단위로 재확인 — 정본과 완전 일치(추가/누락 없음). 정본에 없는
+# 지방선거일(2026-06-03)·KRX 연말 휴장(2026-12-31)은 여기에도 포함하지
+# 않는다(제안표 §7 "운영자 검토 후보" — 정본 파일에 먼저 추가된 뒤에야 반영).
+calendar_version: "krx-2026.09"
+tz_id: "Asia/Seoul"
+closed_phase: "CLOSED"
+holidays:            # config/market_schedule.yaml:88-106 의 2026 항목 19건을 그대로 옮김(정본) · shared/calendar.py 표는 정정 대상
+  - "2026-01-01"   # 신정
+  - "2026-02-16"   # 설날 연휴
+  - "2026-02-17"   # 설날
+  - "2026-02-18"   # 설날 연휴
+  - "2026-03-01"   # 삼일절(일요일)
+  - "2026-03-02"   # 대체휴일
+  - "2026-05-05"   # 어린이날
+  - "2026-05-24"   # 부처님오신날(일요일)
+  - "2026-05-25"   # 대체휴일
+  - "2026-06-06"   # 현충일(토요일)
+  - "2026-08-15"   # 광복절(토요일)
+  - "2026-08-17"   # 대체휴일
+  - "2026-09-24"   # 추석 연휴
+  - "2026-09-25"   # 추석
+  - "2026-09-26"   # 추석 연휴(토요일)
+  - "2026-10-03"   # 개천절(토요일)
+  - "2026-10-05"   # 대체휴일
+  - "2026-10-09"   # 한글날
+  - "2026-12-25"   # 크리스마스
+  # 운영자 검토 후보(정본 파일에 없음 · 확인 후 정본에 먼저 추가): 2026-06-03(지방선거일) · 2026-12-31(KRX 연말 휴장)
+sessions:
+  krx-stock:
+    - {phase: PRE_OPEN,    start: "08:30", end: "08:40", days: [MON,TUE,WED,THU,FRI], crosses_midnight: false}
+    - {phase: CONTINUOUS,  start: "09:00", end: "15:30", days: [MON,TUE,WED,THU,FRI], crosses_midnight: false}
+    - {phase: AFTER_HOURS, start: "15:40", end: "16:00", days: [MON,TUE,WED,THU,FRI], crosses_midnight: false}
+  krx-index-futures:
+    - {phase: CONTINUOUS,  start: "08:45", end: "15:45", days: [MON,TUE,WED,THU,FRI], crosses_midnight: false}
+    # 야간 18:00→05:00 은 실선물 전용(MOCK 에 야간 TR 없음 · U-4) — 실선물 영구 부재이므로 창을 두지 않는다
+futures_expiry:
+  krx-index-futures: {weekday: THU, ordinal: 2, months: [3,6,9,12], expired_phase: EXPIRED}
