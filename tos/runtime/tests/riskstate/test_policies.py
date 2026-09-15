@@ -307,6 +307,33 @@ def test_afg_scope_independence_axis_null_refused(tmp_path: Path) -> None:
         load_action_flow_policy(path, scheme=SCHEME)
 
 
+def test_afg_deployment_facts_block_missing_refused(tmp_path: Path) -> None:
+    """Review HIGH (team-lead 2026-09-16): the reviewer's own mutation — "default to
+    (False, False, True) when ``_runtime.deployment_facts`` is absent entirely" — must be
+    refused by ``require_mapping_key``'s absent-key check, distinct from
+    :func:`test_afg_deployment_facts_null_refused`'s "present but one axis null" shape.
+    """
+    path = _write(
+        tmp_path,
+        "afg.yaml",
+        action_flow_policy_yaml(include_deployment_facts=False),
+    )
+    with pytest.raises(VenuePolicyConfigError, match="deployment_facts"):
+        load_action_flow_policy(path, scheme=SCHEME)
+
+
+def test_afg_scope_independence_block_missing_refused(tmp_path: Path) -> None:
+    """Same shape as :func:`test_afg_deployment_facts_block_missing_refused`, for
+    ``_runtime.scope_independence`` — an absent block, not merely one null axis."""
+    path = _write(
+        tmp_path,
+        "afg.yaml",
+        action_flow_policy_yaml(include_scope_independence=False),
+    )
+    with pytest.raises(VenuePolicyConfigError, match="scope_independence"):
+        load_action_flow_policy(path, scheme=SCHEME)
+
+
 def test_afg_action_class_map_unknown_venue_action_class_refused(
     tmp_path: Path,
 ) -> None:

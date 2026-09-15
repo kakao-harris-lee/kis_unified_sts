@@ -221,6 +221,8 @@ def action_flow_policy_yaml(
     concurrent_consumers_share_one_envelope: str = "false",
     envelope_reset_on_duplicate: str = "false",
     duplicate_event_created_new_allowance: str = "false",
+    include_deployment_facts: bool = True,
+    include_scope_independence: bool = True,
 ) -> str:
     """The standard fixture ``action_flow_policy.yaml`` INSTANCE document."""
     mv_generation = (
@@ -275,26 +277,43 @@ def action_flow_policy_yaml(
             runtime_limit: {runtime_limit}
             envelope_max: {envelope_max}
             decision_effective_limit: {decision_effective_limit}
-          scope_independence:
-            scope: "{scope_independence_scope}"
-            allocation_separated: {allocation_separated}
-            refill_separated: {refill_separated}
-            broker_enforcement_separated: {broker_enforcement_separated}
-            credential_session_state_separated: {credential_session_state_separated}
-            failure_domain_separated: {failure_domain_separated}
-            final_route_separated: {final_route_separated}
-            basis_is_local_counter_only: {basis_is_local_counter_only}
-            basis_is_scheduler_priority_only: {basis_is_scheduler_priority_only}
-          covered_scopes: {covered_scopes}
-          required_scopes: {required_scopes}
-          applicable_action_flow_scopes: {applicable_action_flow_scopes}
         """)
-    deployment_facts_block = (
-        "  deployment_facts:\n"
-        f"    concurrent_consumers_share_one_envelope: {concurrent_consumers_share_one_envelope}\n"
-        f"    envelope_reset_on_duplicate: {envelope_reset_on_duplicate}\n"
-        f"    duplicate_event_created_new_allowance: {duplicate_event_created_new_allowance}\n"
+    if include_scope_independence:
+        scope_independence_block = (
+            "  scope_independence:\n"
+            f'    scope: "{scope_independence_scope}"\n'
+            f"    allocation_separated: {allocation_separated}\n"
+            f"    refill_separated: {refill_separated}\n"
+            f"    broker_enforcement_separated: {broker_enforcement_separated}\n"
+            f"    credential_session_state_separated: {credential_session_state_separated}\n"
+            f"    failure_domain_separated: {failure_domain_separated}\n"
+            f"    final_route_separated: {final_route_separated}\n"
+            f"    basis_is_local_counter_only: {basis_is_local_counter_only}\n"
+            f"    basis_is_scheduler_priority_only: {basis_is_scheduler_priority_only}\n"
+        )
+    else:
+        # BLOCK MISSING entirely (lane a review HIGH, team-lead 2026-09-16) — as opposed to
+        # `test_afg_scope_independence_axis_null_refused`'s "present but one axis null" shape,
+        # this omits the whole `scope_independence:` key so the loader's own
+        # `require_mapping_key` absent-key refusal is exercised, not its null-axis refusal.
+        scope_independence_block = ""
+    runtime_tail = (
+        f"  covered_scopes: {covered_scopes}\n"
+        f"  required_scopes: {required_scopes}\n"
+        f"  applicable_action_flow_scopes: {applicable_action_flow_scopes}\n"
     )
+    if include_deployment_facts:
+        deployment_facts_block = (
+            "  deployment_facts:\n"
+            f"    concurrent_consumers_share_one_envelope: {concurrent_consumers_share_one_envelope}\n"
+            f"    envelope_reset_on_duplicate: {envelope_reset_on_duplicate}\n"
+            f"    duplicate_event_created_new_allowance: {duplicate_event_created_new_allowance}\n"
+        )
+    else:
+        # BLOCK MISSING entirely (lane a review HIGH, team-lead 2026-09-16) — the reviewer's
+        # own mutation scenario: "default to (False, False, True) when the block is absent"
+        # must be refused by `require_mapping_key`, not silently defaulted.
+        deployment_facts_block = ""
     return (
         head
         + _NULL_ENVELOPE_REF_BLOCK
@@ -303,6 +322,8 @@ def action_flow_policy_yaml(
         + _AFG_AUTHORITY_BLOCK
         + model_view
         + runtime_head
+        + scope_independence_block
+        + runtime_tail
         + action_class_map_block
         + deployment_facts_block
     )
