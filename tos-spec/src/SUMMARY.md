@@ -49,6 +49,7 @@
 - [Complexity Justification Register](part-1-foundation/COMPLEXITY-REGISTER-002.md)
 - [DR-0001 — Single-Operator Live Governance](decision-records/DR-0001-Single-Operator-Live-Governance.md)
 - [DR-0002 — Order Construction and Venue Constraint Policy Instance Ratification Path](decision-records/DR-0002-Order-Construction-and-Venue-Constraint-Policy-Instance-Ratification.md)
+- [DR-0003 — Aggregate Risk / Action Flow Policy Instances and the Single-Source Position Observation](decision-records/DR-0003-Aggregate-Risk-and-Action-Flow-Policy-Instances-and-Single-Source-Position-Observation.md)
 
 # Decision Framework
 
