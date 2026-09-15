@@ -453,8 +453,7 @@ def test_futures_equity_denominator_knob_reaches_both_consumers():
     )
     assert risk_yaml["risk"]["account_equity_krw"] == yaml_expression
     assert (
-        margin_yaml["futures_margin"]["fallback_account_equity_krw"]
-        == yaml_expression
+        margin_yaml["futures_margin"]["fallback_account_equity_krw"] == yaml_expression
     )
 
 
