@@ -65,8 +65,9 @@ _FEED_START_FAILURES = (
 )
 
 SymbolProvider = Callable[[], Awaitable[list[str]]]
-# (symbols, asof) -> True only when every symbol's reference reached Redis.
-DailyReferencePrefetch = Callable[[list[str], datetime], Awaitable[bool]]
+# (symbols, asof, failure_log_level) -> True only when every symbol's reference
+# reached Redis. failure_log_level is the level for per-symbol failure lines.
+DailyReferencePrefetch = Callable[[list[str], datetime, int], Awaitable[bool]]
 
 
 def _load_trade_target_codes(raw: str | None) -> list[str]:
@@ -211,6 +212,9 @@ class MarketIngestDaemon:
         self._daily_reference_schedule = daily_reference_schedule
         # (KST date, symbols) of the last fully successful publish.
         self._daily_reference_published: tuple[date, tuple[str, ...]] | None = None
+        # KST date whose failure WARNING has been logged; later failures that
+        # day log at DEBUG. Cleared by a success or the window-closed WARNING.
+        self._daily_reference_failed_day: date | None = None
         self._now_fn = now_fn
         self._symbols: list[str] = []
         self._stop = asyncio.Event()
@@ -304,12 +308,17 @@ class MarketIngestDaemon:
         Publishes only when all hold:
           * the (KST date, symbols) pair differs from the last fully successful
             publish — once per trade day, again after a rollover;
-          * the schedule is due — a KRX trading day at or after futures open
-            minus the configured offset, so today's date is never stamped on a
-            close KIS has not rolled over yet.
+          * the schedule is due — a KRX trading day from futures open minus the
+            configured offset (today's date is never stamped on a close KIS has
+            not rolled over yet) until futures close.
         A failed or partial publish leaves the marker unchanged, so the next
         poll retries. Never raises: an escaped exception would end the loop
         and leave the read-model unpublished for the container's life.
+
+        Log volume under a persistent failure is bounded per KST day: one
+        WARNING on the first failing poll (its per-symbol reasons at INFO),
+        DEBUG for every retry after it, and one WARNING when the window closes
+        with still no successful publish.
         """
         schedule = self._daily_reference_schedule
         if self.daily_reference_prefetch is None or schedule is None:
@@ -319,27 +328,56 @@ class MarketIngestDaemon:
         symbols = tuple(self._symbols)
         try:
             now = to_kst(self._now_fn())
-            marker = (now.date(), symbols)
-            if marker == self._daily_reference_published or not schedule.is_due(now):
-                return False
-            ok = await self.daily_reference_prefetch(list(symbols), now)
         except Exception as e:
-            logger.warning(
-                "daily_reference poll failed for %s: %s — retrying in %.0fs",
-                ", ".join(symbols),
-                e,
-                schedule.poll_seconds,
-            )
+            logger.warning("daily_reference poll skipped: clock failed: %r", e)
             return False
-        if not ok:
-            logger.info(
-                "daily_reference incomplete for %s — retrying in %.0fs",
-                ", ".join(symbols),
-                schedule.poll_seconds,
-            )
+        today = now.date()
+        marker = (today, symbols)
+        if marker == self._daily_reference_published:
             return False
-        self._daily_reference_published = marker
-        return True
+        already_failed_today = self._daily_reference_failed_day == today
+        try:
+            if not schedule.is_due(now):
+                if already_failed_today and schedule.window_closed(now):
+                    logger.warning(
+                        "daily_reference window closed at %s KST with no successful "
+                        "publish for %s today — the decision-engine had no fresh "
+                        "prev_close (parquet fallback or Setup A skip)",
+                        schedule.publish_until.strftime("%H:%M"),
+                        ", ".join(symbols),
+                    )
+                    self._daily_reference_failed_day = None
+                return False
+            ok = await self.daily_reference_prefetch(
+                list(symbols),
+                now,
+                logging.DEBUG if already_failed_today else logging.INFO,
+            )
+            detail, cause = "incomplete", " (per-symbol reason above)"
+        except Exception as e:
+            ok = False
+            detail, cause = "poll failed", f": {e!r}"
+        if ok:
+            if already_failed_today:
+                logger.info(
+                    "daily_reference published for %s after failed polls",
+                    ", ".join(symbols),
+                )
+            self._daily_reference_published = marker
+            self._daily_reference_failed_day = None
+            return True
+        logger.log(
+            logging.DEBUG if already_failed_today else logging.WARNING,
+            "daily_reference %s for %s%s — retrying every %.0fs until %s KST%s",
+            detail,
+            ", ".join(symbols),
+            cause,
+            schedule.poll_seconds,
+            schedule.publish_until.strftime("%H:%M"),
+            "" if already_failed_today else "; further failures today log at DEBUG",
+        )
+        self._daily_reference_failed_day = today
+        return False
 
     async def _daily_reference_loop(self) -> None:
         """Keep today's prev_close read-model published (futures only).
@@ -692,13 +730,16 @@ def _build_daily_reference_prefetch(
             lazily, so a Redis outage at import time cannot break the daemon.
     """
 
-    async def _prefetch(symbols: list[str], asof: datetime) -> bool:
+    async def _prefetch(
+        symbols: list[str], asof: datetime, failure_log_level: int
+    ) -> bool:
         result = await prefetch_and_publish_futures_daily_references(
             kis_client,
             symbols,
             producer=_DAILY_REFERENCE_PRODUCER,
             redis=redis_client,
             asof=asof,
+            failure_log_level=failure_log_level,
         )
         return result.published_all(symbols)
 

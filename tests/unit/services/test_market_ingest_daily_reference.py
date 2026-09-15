@@ -11,6 +11,7 @@ clock; loop-level tests wait on events with a deadline, never a fixed sleep.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, time
 
 import fakeredis
@@ -32,7 +33,9 @@ NEXT_SYMBOL = "A05612"
 # 2026-09-14 (Mon) and 2026-09-15 (Tue) are KRX trading days; 09-12 is a Saturday.
 MONDAY_0900 = datetime(2026, 9, 14, 9, 0, tzinfo=KST)
 TUESDAY_0900 = datetime(2026, 9, 15, 9, 0, tzinfo=KST)
-SCHEDULE = DailyReferenceSchedule(poll_seconds=60, publish_from=time(8, 45))
+SCHEDULE = DailyReferenceSchedule(
+    poll_seconds=60, publish_from=time(8, 45), publish_until=time(15, 45)
+)
 DEADLINE_S = 2.0
 
 
@@ -87,11 +90,11 @@ class _RecordingPrefetch:
 
     def __init__(self, outcomes=None):
         self.outcomes = list(outcomes or [])
-        self.calls: list[tuple[list[str], datetime]] = []
+        self.calls: list[tuple[list[str], datetime, int]] = []
         self.succeeded = asyncio.Event()
 
-    async def __call__(self, symbols, asof):
-        self.calls.append((list(symbols), asof))
+    async def __call__(self, symbols, asof, failure_log_level):
+        self.calls.append((list(symbols), asof, failure_log_level))
         outcome = self.outcomes.pop(0) if self.outcomes else True
         if isinstance(outcome, Exception):
             raise outcome
@@ -140,7 +143,7 @@ async def test_prefetch_publishes_through_the_shared_helper(redis_client):
     kis = _KISClient(prev_close=411.25)
     prefetch = _build_daily_reference_prefetch(kis, redis_client)
 
-    assert await prefetch([SYMBOL], MONDAY_0900) is True
+    assert await prefetch([SYMBOL], MONDAY_0900, logging.INFO) is True
 
     payload = read_futures_daily_reference(redis_client, SYMBOL)
     assert payload is not None
@@ -155,7 +158,7 @@ async def test_prefetch_reports_a_partial_publish_as_failure(redis_client):
     """A False return is what makes the daemon retry on the next poll."""
     prefetch = _build_daily_reference_prefetch(_KISClient(prev_close=0), redis_client)
 
-    assert await prefetch([SYMBOL], MONDAY_0900) is False
+    assert await prefetch([SYMBOL], MONDAY_0900, logging.INFO) is False
     assert read_futures_daily_reference(redis_client, SYMBOL) is None
 
 
@@ -197,7 +200,7 @@ async def test_does_not_publish_before_the_window_opens():
 
     clock.now = datetime(2026, 9, 15, 8, 45, tzinfo=KST)
     assert await daemon._publish_daily_reference_if_due() is True
-    assert prefetch.calls == [([SYMBOL], clock.now)]
+    assert prefetch.calls == [([SYMBOL], clock.now, logging.INFO)]
 
 
 async def test_does_not_publish_on_a_non_trading_day():
@@ -228,6 +231,7 @@ async def test_a_raising_schedule_check_is_a_retryable_poll_not_a_dead_loop(capl
 
     class _FlakySchedule:
         poll_seconds = 60.0
+        publish_until = time(15, 45)
 
         def __init__(self):
             self.calls = 0
@@ -265,14 +269,14 @@ async def test_a_rollover_republishes_the_new_contract_the_same_day():
     await daemon._apply_symbols([NEXT_SYMBOL])
 
     assert await daemon._publish_daily_reference_if_due() is True
-    assert [symbols for symbols, _ in prefetch.calls] == [[SYMBOL], [NEXT_SYMBOL]]
+    assert [symbols for symbols, _, _ in prefetch.calls] == [[SYMBOL], [NEXT_SYMBOL]]
 
 
 async def test_apply_symbols_never_waits_on_the_prefetch():
     """R1: the inline await on a symbol change blocked the refresh loop."""
     never = asyncio.Event()
 
-    async def _blocked(_symbols, _asof):
+    async def _blocked(_symbols, _asof, _level):
         await never.wait()
         return True
 
@@ -312,6 +316,122 @@ def test_the_schedule_defaults_to_the_yaml_config():
 
 
 # ---------------------------------------------------------------------------
+# persistent failure — bounded window and bounded log volume (N3)
+# ---------------------------------------------------------------------------
+
+
+class _UnreachableKIS:
+    async def _get_futures_price(self, _symbol):
+        raise ConnectionError("KIS unreachable")
+
+
+def _minute(hour: int, minute: int, day: int = 15) -> datetime:
+    return datetime(2026, 9, day, hour, minute, tzinfo=KST)
+
+
+def _warnings(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+
+async def test_no_poll_after_the_futures_close():
+    clock = _Clock(_minute(15, 44))
+    prefetch = _RecordingPrefetch([False, True])
+    daemon = _daemon(prefetch, clock=clock)
+
+    assert await daemon._publish_daily_reference_if_due() is False
+    assert len(prefetch.calls) == 1
+
+    for hhmm in ((15, 45), (18, 0), (23, 59)):
+        clock.now = _minute(*hhmm)
+        assert await daemon._publish_daily_reference_if_due() is False
+    assert len(prefetch.calls) == 1, "retries stop at the configured close"
+
+
+async def test_a_persistent_failure_logs_one_warning_per_day(redis_client, caplog):
+    """N3 regression: every 60 s poll from 08:45 to midnight logged a WARNING
+    plus an INFO (~915 polls). The real builder is used so the helper's
+    per-symbol lines count too."""
+    clock = _Clock(_minute(8, 45))
+    daemon = _daemon(
+        _build_daily_reference_prefetch(_UnreachableKIS(), redis_client), clock=clock
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        for minute in range(10):
+            clock.now = _minute(9, minute)
+            assert await daemon._publish_daily_reference_if_due() is False
+
+    warnings = _warnings(caplog)
+    assert len(warnings) == 1, warnings
+    assert "daily_reference poll failed" not in warnings[0]
+    assert (
+        "incomplete" in warnings[0]
+        and "further failures today log at DEBUG" in warnings[0]
+    )
+    reasons = [
+        r for r in caplog.records if "prev_close prefetch failed" in r.getMessage()
+    ]
+    assert [r.levelno for r in reasons] == [logging.INFO] + [logging.DEBUG] * 9
+
+
+async def test_the_window_close_warns_once_when_nothing_succeeded(caplog):
+    clock = _Clock(_minute(9, 0))
+    daemon = _daemon(_RecordingPrefetch([False, False]), clock=clock)
+
+    with caplog.at_level(logging.DEBUG):
+        await daemon._publish_daily_reference_if_due()
+        clock.now = _minute(9, 1)
+        await daemon._publish_daily_reference_if_due()
+        for hhmm in ((15, 45), (15, 46), (20, 0)):
+            clock.now = _minute(*hhmm)
+            assert await daemon._publish_daily_reference_if_due() is False
+
+    warnings = _warnings(caplog)
+    assert len(warnings) == 2, warnings
+    assert "window closed at 15:45 KST with no successful publish for A05609" in (
+        warnings[1]
+    )
+
+
+async def test_no_close_warning_after_a_late_success(caplog):
+    clock = _Clock(_minute(9, 0))
+    daemon = _daemon(_RecordingPrefetch([False, True]), clock=clock)
+
+    with caplog.at_level(logging.INFO):
+        await daemon._publish_daily_reference_if_due()
+        clock.now = _minute(9, 1)
+        assert await daemon._publish_daily_reference_if_due() is True
+        clock.now = _minute(15, 45)
+        await daemon._publish_daily_reference_if_due()
+
+    assert len(_warnings(caplog)) == 1
+    assert "daily_reference published for A05609 after failed polls" in caplog.text
+
+
+async def test_no_close_warning_when_the_daemon_never_polled_in_the_window(caplog):
+    daemon = _daemon(_RecordingPrefetch(), clock=_Clock(_minute(16, 0)))
+
+    with caplog.at_level(logging.WARNING):
+        assert await daemon._publish_daily_reference_if_due() is False
+
+    assert _warnings(caplog) == []
+
+
+async def test_the_next_trade_day_warns_again(caplog):
+    clock = _Clock(_minute(9, 0, day=14))
+    daemon = _daemon(_RecordingPrefetch([False, False, False]), clock=clock)
+
+    with caplog.at_level(logging.WARNING):
+        await daemon._publish_daily_reference_if_due()
+        clock.now = _minute(9, 1, day=14)
+        await daemon._publish_daily_reference_if_due()
+        clock.now = _minute(9, 0, day=15)
+        await daemon._publish_daily_reference_if_due()
+
+    assert len(_warnings(caplog)) == 2, "one per KST day"
+
+
+# ---------------------------------------------------------------------------
 # run() wiring — background task, deadline-bounded waits
 # ---------------------------------------------------------------------------
 
@@ -322,7 +442,7 @@ async def test_run_starts_the_freshness_loop_while_the_prefetch_is_blocked():
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def _blocked(_symbols, _asof):
+    async def _blocked(_symbols, _asof, _level):
         entered.set()
         await release.wait()
         return True
@@ -347,7 +467,10 @@ async def test_run_starts_the_freshness_loop_while_the_prefetch_is_blocked():
 async def test_run_retries_a_failed_boot_publish_on_the_poll_interval():
     prefetch = _RecordingPrefetch([ConnectionError("KIS unreachable"), True])
     daemon = _daemon(
-        prefetch, schedule=DailyReferenceSchedule(0.01, publish_from=time(8, 45))
+        prefetch,
+        schedule=DailyReferenceSchedule(
+            0.01, publish_from=time(8, 45), publish_until=time(15, 45)
+        ),
     )
 
     task = asyncio.create_task(daemon.run())

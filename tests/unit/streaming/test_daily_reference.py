@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, time
 
 import fakeredis
 import pytest
 
-from shared.decision.context import _load_futures_open_from_config
+from shared.decision.context import (
+    load_futures_close_from_config,
+    load_futures_open_from_config,
+)
 from shared.strategy.market_time import KST
 from shared.streaming import daily_reference as mod
 from shared.streaming.daily_reference import (
@@ -115,6 +119,12 @@ def test_publish_never_leaves_a_key_without_ttl_when_the_transaction_fails(
 
         def __init__(self, inner):
             self._inner = inner
+
+        # Direct DEL/HSET pass through, so a non-transactional implementation
+        # reaches the failing EXPIRE and leaves a TTL -1 key (the R2 defect)
+        # instead of dying early on a missing method.
+        def delete(self, *args, **kwargs):
+            return self._inner.delete(*args, **kwargs)
 
         def hset(self, *args, **kwargs):
             return self._inner.hset(*args, **kwargs)
@@ -302,6 +312,53 @@ async def test_prefetch_keeps_values_when_redis_is_unavailable(monkeypatch, capl
     assert "daily_reference publish failed" in caplog.text
 
 
+async def test_prefetch_publishes_with_the_configured_ttl(redis_client, monkeypatch):
+    """N2: the helper path must use the YAML TTL, not a literal."""
+    monkeypatch.setattr(
+        mod,
+        "load_daily_reference_config",
+        lambda: DailyReferenceConfig(ttl_seconds=12_345),
+    )
+
+    await prefetch_and_publish_futures_daily_references(
+        _KISClient({_SYMBOL: 411.25}),
+        [_SYMBOL],
+        producer="market-ingest",
+        redis=redis_client,
+    )
+
+    assert 12_340 <= redis_client.ttl(daily_reference_key(_SYMBOL)) <= 12_345
+
+
+async def test_prefetch_logs_failures_at_the_requested_level(monkeypatch, caplog):
+    """A retrying caller can quiet the per-symbol lines — KIS, value, and Redis
+    failures alike — without losing them at DEBUG."""
+
+    def _boom():
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(
+        "shared.streaming.client.RedisClient.get_client", staticmethod(_boom)
+    )
+    kis = _KISClient({_SYMBOL: ConnectionError("KIS"), _OTHER: 0, "A05612": 411.25})
+
+    with caplog.at_level(logging.DEBUG, logger="shared.streaming.daily_reference"):
+        await prefetch_and_publish_futures_daily_references(
+            kis,
+            [_SYMBOL, _OTHER, "A05612"],
+            producer="market-ingest",
+            failure_log_level=logging.DEBUG,
+        )
+
+    failures = [
+        r
+        for r in caplog.records
+        if "fail" in r.getMessage() or "returned" in r.getMessage()
+    ]
+    assert len(failures) == 3, [r.getMessage() for r in caplog.records]
+    assert {r.levelno for r in failures} == {logging.DEBUG}
+
+
 async def test_prefetch_with_nothing_usable_never_touches_redis(monkeypatch):
     def _unexpected():
         raise AssertionError("Redis resolved with nothing to publish")
@@ -372,8 +429,8 @@ def test_an_invalid_setting_warns_and_uses_the_fallback(monkeypatch, caplog, nam
     assert f"daily_reference.{name}={bad!r} is invalid" in caplog.text
 
 
-def test_schedule_publishes_from_the_futures_open_minus_the_offset():
-    hour, minute = _load_futures_open_from_config()
+def test_schedule_window_is_open_minus_offset_until_the_futures_close():
+    hour, minute = load_futures_open_from_config()
     schedule = load_daily_reference_schedule(
         DailyReferenceConfig(
             ttl_seconds=86_400, poll_seconds=90, open_offset_minutes=10
@@ -384,14 +441,21 @@ def test_schedule_publishes_from_the_futures_open_minus_the_offset():
     assert schedule.publish_from == time(
         (open_minutes - 10) // 60, (open_minutes - 10) % 60
     )
+    assert schedule.publish_until == time(*load_futures_close_from_config())
 
 
-def test_schedule_is_due_only_on_a_trading_day_from_publish_from():
-    schedule = DailyReferenceSchedule(poll_seconds=60, publish_from=time(8, 45))
+def test_schedule_is_due_only_on_a_trading_day_inside_the_window():
+    schedule = DailyReferenceSchedule(
+        poll_seconds=60, publish_from=time(8, 45), publish_until=time(15, 45)
+    )
 
     assert not schedule.is_due(datetime(2026, 9, 15, 8, 44, 59, tzinfo=KST))
     assert schedule.is_due(datetime(2026, 9, 15, 8, 45, tzinfo=KST))
-    assert schedule.is_due(datetime(2026, 9, 15, 20, 0, tzinfo=KST))
+    assert schedule.is_due(datetime(2026, 9, 15, 15, 44, 59, tzinfo=KST))
+    assert not schedule.is_due(datetime(2026, 9, 15, 15, 45, tzinfo=KST)), "close"
+    assert not schedule.is_due(datetime(2026, 9, 15, 20, 0, tzinfo=KST))
+    assert not schedule.window_closed(datetime(2026, 9, 15, 15, 44, 59, tzinfo=KST))
+    assert schedule.window_closed(datetime(2026, 9, 15, 15, 45, tzinfo=KST))
     assert not schedule.is_due(datetime(2026, 9, 12, 10, 0, tzinfo=KST)), "Saturday"
     # KST-native: 23:50 UTC on the 14th is 08:50 KST on the 15th.
     assert schedule.is_due(datetime.fromisoformat("2026-09-14T23:50:00+00:00"))

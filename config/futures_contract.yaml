@@ -71,7 +71,9 @@ daily_reference:
   ttl_seconds: 86400
   # market-ingest publish check interval, which is also the retry interval
   # after a KIS/Redis failure. Values below 60 are rejected (WARNING → 60): a
-  # faster retry during a KIS outage spends the REST rate budget.
+  # faster retry during a KIS outage spends the REST rate budget. Retries stop
+  # at market_schedule.yaml::futures.regular.close; a failing day logs one
+  # WARNING on its first failure and one when the window closes, DEBUG between.
   poll_seconds: 60
   # market-ingest publishes from market_schedule.yaml::futures.regular.open
   # minus this many minutes (KST, trading days only). 0 = the open itself,

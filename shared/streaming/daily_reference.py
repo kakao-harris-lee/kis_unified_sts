@@ -97,15 +97,26 @@ class DailyReferenceSchedule:
         publish_from: KST wall-clock time from which today's reference may be
             stamped — futures regular open minus ``open_offset_minutes``.
             Earlier, KIS may still report the close from two sessions back.
+        publish_until: KST wall-clock end of the window (exclusive) — futures
+            regular close. Nothing trades on the reference afterwards, so a
+            persistent failure stops retrying here instead of at midnight.
     """
 
     poll_seconds: float
     publish_from: time
+    publish_until: time
 
     def is_due(self, now: datetime) -> bool:
-        """True on a KRX trading day at or after :attr:`publish_from` (KST)."""
+        """True on a KRX trading day inside ``[publish_from, publish_until)`` KST."""
         kst_now = to_kst(now)
-        return kst_now.time() >= self.publish_from and is_trading_day_kst(kst_now)
+        return (
+            self.publish_from <= kst_now.time() < self.publish_until
+            and is_trading_day_kst(kst_now)
+        )
+
+    def window_closed(self, now: datetime) -> bool:
+        """True once today's window has ended (KST wall clock)."""
+        return to_kst(now).time() >= self.publish_until
 
 
 @dataclass(frozen=True)
@@ -178,16 +189,21 @@ def load_daily_reference_schedule(
     """Build the publish schedule from YAML.
 
     ``publish_from`` = ``config/market_schedule.yaml::futures.regular.open``
-    minus ``daily_reference.open_offset_minutes`` (clamped at midnight).
+    minus ``daily_reference.open_offset_minutes`` (clamped at midnight);
+    ``publish_until`` = ``futures.regular.close``.
     """
-    from shared.decision.context import _load_futures_open_from_config
+    from shared.decision.context import (
+        load_futures_close_from_config,
+        load_futures_open_from_config,
+    )
 
     cfg = config or load_daily_reference_config()
-    hour, minute = _load_futures_open_from_config()
+    hour, minute = load_futures_open_from_config()
     minutes = max(0, hour * 60 + minute - cfg.open_offset_minutes)
     return DailyReferenceSchedule(
         poll_seconds=cfg.poll_seconds,
         publish_from=time(minutes // 60, minutes % 60),
+        publish_until=time(*load_futures_close_from_config()),
     )
 
 
@@ -213,6 +229,7 @@ def publish_futures_daily_reference(
     producer: str,
     asof: datetime | None = None,
     ttl_seconds: int | None = None,
+    failure_log_level: int = logging.WARNING,
 ) -> bool:
     """Publish ``symbol``'s prev_close read-model atomically. Never raises.
 
@@ -233,12 +250,15 @@ def publish_futures_daily_reference(
         asof: Observation time; defaults to now (KST). Naive means KST.
         ttl_seconds: Override the configured TTL; ``None`` reads
             :func:`load_daily_reference_config`.
+        failure_log_level: Level for the refusal/failure line — a retrying
+            caller lowers it after its first report of the day.
 
     Returns:
         ``True`` when the hash was written, ``False`` on refusal or failure.
     """
     if not is_usable_prev_close(prev_close):
-        logger.warning(
+        logger.log(
+            failure_log_level,
             "daily_reference publish refused for %s: prev_close=%s is not "
             "finite and positive",
             symbol,
@@ -265,7 +285,9 @@ def publish_futures_daily_reference(
         pipe.expire(key, ttl)
         pipe.execute()
     except Exception as e:
-        logger.warning("daily_reference publish failed for %s: %s", symbol, e)
+        logger.log(
+            failure_log_level, "daily_reference publish failed for %s: %s", symbol, e
+        )
         return False
     logger.info(
         "daily_reference published: %s prev_close=%s source=%s producer=%s "
@@ -287,12 +309,13 @@ async def prefetch_and_publish_futures_daily_references(
     producer: str,
     redis: Any | None = None,
     asof: datetime | None = None,
+    failure_log_level: int = logging.WARNING,
 ) -> DailyReferencePrefetchResult:
     """REST-fetch each symbol's prev_close, then publish the usable ones.
 
     The one fetch → guard → publish path shared by both futures producers.
-    Per-symbol failures (KIS error, non-finite or non-positive value) log a
-    WARNING and skip that symbol only.  Redis is resolved once per call and
+    Per-symbol failures (KIS error, non-finite or non-positive value, Redis
+    error) log at ``failure_log_level`` and skip that symbol only.  Redis is resolved once per call and
     every Redis command runs in a worker thread, so a slow or down Redis never
     stalls the caller's event loop.
 
@@ -303,6 +326,10 @@ async def prefetch_and_publish_futures_daily_references(
         redis: SYNC Redis client; ``None`` resolves the shared
             ``RedisClient`` singleton (DB 1) inside the worker thread.
         asof: Observation time stamped on every hash; defaults to now (KST).
+        failure_log_level: Level for per-symbol failure lines. WARNING by
+            default; market-ingest's retry loop passes INFO on its first
+            failing poll of the day (its own WARNING summarises) and DEBUG
+            after that.
 
     Returns:
         The usable values and which of them reached Redis.
@@ -312,14 +339,16 @@ async def prefetch_and_publish_futures_daily_references(
         try:
             value = await fetch_futures_prev_close(kis_client, symbol)
         except Exception as e:
-            logger.warning(
+            logger.log(
+                failure_log_level,
                 "prev_close prefetch failed for %s: %s — Setup A will skip",
                 symbol,
                 e,
             )
             continue
         if not is_usable_prev_close(value):
-            logger.warning(
+            logger.log(
+                failure_log_level,
                 "prev_close prefetch returned %s for %s — Setup A will skip",
                 value,
                 symbol,
@@ -334,6 +363,7 @@ async def prefetch_and_publish_futures_daily_references(
         prev_closes,
         producer=producer,
         asof=to_kst(asof or now_kst()),
+        failure_log_level=failure_log_level,
     )
     return DailyReferencePrefetchResult(prev_closes=prev_closes, published=published)
 
@@ -344,6 +374,7 @@ def _publish_all(
     *,
     producer: str,
     asof: datetime,
+    failure_log_level: int,
 ) -> frozenset[str]:
     """Resolve Redis once and publish every value (worker thread)."""
     client = redis
@@ -353,7 +384,8 @@ def _publish_all(
 
             client = RedisClient.get_client()
         except Exception as e:
-            logger.warning(
+            logger.log(
+                failure_log_level,
                 "daily_reference publish failed for %s: Redis unavailable: %s",
                 ", ".join(prev_closes),
                 e,
@@ -371,6 +403,7 @@ def _publish_all(
             producer=producer,
             asof=asof,
             ttl_seconds=ttl,
+            failure_log_level=failure_log_level,
         )
     )
 
