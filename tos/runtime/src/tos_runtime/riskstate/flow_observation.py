@@ -250,6 +250,50 @@ class InboxFlowReader:
                 return entry.appended_at_monotonic_ns
         return None
 
+    def _scan_sealed_lineage(
+        self,
+        sealed_payloads: list[dict[str, object]],
+        *,
+        root_event_id: str,
+        attempt_id: str,
+        terminal_attempts: set[str],
+        resolved_root_event_seq: int | None,
+    ) -> tuple[set[str], int, bool | None]:
+        """The sealed-payload lineage scan + the pre-seal fallback — split out of
+        :meth:`observe` purely for that method's own 100-line size budget.
+
+        Returns ``(cause_attempts, in_flight_count, this_attempt_lineage_found)``. The
+        fallback: when THIS attempt has sealed nothing yet (DR-0003 §2.3's own "event ->
+        proposal -> attempt chain read from the inbox" — evaluated at step 7, strictly
+        BEFORE step 15 ever seals anything for it, so a SEND_SEALED-tracing match can never
+        positively confirm a brand-new attempt's own lineage), the root event's own durable
+        presence at a positively resolved inbox seq IS the structural fact DR-0003 names —
+        never a fabricated ``True`` when the root itself could not be resolved. The
+        SEND_SEALED-tracing check still stands, unchanged, for an ALREADY-sealed attempt
+        whose seal does NOT trace to its claimed root (a genuine inconsistency).
+        """
+        cause_attempts: set[str] = set()
+        in_flight_count = 0
+        this_attempt_sealed = False
+        this_attempt_lineage_found: bool | None = None
+        for payload in sealed_payloads:
+            aid = payload.get("attempt_id")
+            seal = payload.get("send_seal")
+            if not isinstance(aid, str) or not isinstance(seal, Mapping):
+                continue
+            event_id, predecessors = _sealed_reference(seal)
+            traces = _traces_to(root_event_id, event_id, predecessors)
+            if aid == attempt_id:
+                this_attempt_sealed = True
+                this_attempt_lineage_found = traces
+            if traces:
+                cause_attempts.add(aid)
+                if aid not in terminal_attempts:
+                    in_flight_count += 1
+        if not this_attempt_sealed and resolved_root_event_seq is not None:
+            this_attempt_lineage_found = True
+        return cause_attempts, in_flight_count, this_attempt_lineage_found
+
     def observe(
         self,
         *,
@@ -289,32 +333,11 @@ class InboxFlowReader:
             if isinstance(aid, str):
                 terminal_attempts.add(aid)
 
-        cause_attempts: set[str] = set()
-        in_flight_count = 0
-        this_attempt_lineage_found: bool | None = None
-        for payload in sealed_payloads:
-            aid = payload.get("attempt_id")
-            seal = payload.get("send_seal")
-            if not isinstance(aid, str) or not isinstance(seal, Mapping):
-                continue
-            event_id, predecessors = _sealed_reference(seal)
-            traces = _traces_to(root_event_id, event_id, predecessors)
-            if aid == attempt_id:
-                this_attempt_lineage_found = traces
-            if traces:
-                cause_attempts.add(aid)
-                if aid not in terminal_attempts:
-                    in_flight_count += 1
-
         sources: list[str] = []
-        if sealed_payloads:
-            sources.append(f"evidence:{_SEND_SEALED_KIND}")
-        if consumed_payloads:
-            sources.append("evidence:EGRESS_RESULT_CONSUMED")
-        if unmatched_payloads:
-            sources.append("evidence:RESULT_UNMATCHED")
-        sources.append("inbox:unconsumed_count")
 
+        # Resolved BEFORE the sealed-payload loop below (module docstring's own "resolved
+        # structurally" section) — the pre-seal fallback for `this_attempt_lineage_found`
+        # needs to know whether the root event is itself durably, positively present.
         resolved_root_event_seq: int | None
         if root_event_seq is not None:
             resolved_root_event_seq = root_event_seq
@@ -323,6 +346,25 @@ class InboxFlowReader:
             resolved_root_event_seq = self._resolve_root_event_seq(root_event_id)
             if self._scheme is not None:
                 sources.append("inbox:event_identity")
+
+        cause_attempts, in_flight_count, this_attempt_lineage_found = (
+            self._scan_sealed_lineage(
+                sealed_payloads,
+                root_event_id=root_event_id,
+                attempt_id=attempt_id,
+                terminal_attempts=terminal_attempts,
+                resolved_root_event_seq=resolved_root_event_seq,
+            )
+        )
+
+        if sealed_payloads:
+            sources.append(f"evidence:{_SEND_SEALED_KIND}")
+        if consumed_payloads:
+            sources.append("evidence:EGRESS_RESULT_CONSUMED")
+        if unmatched_payloads:
+            sources.append("evidence:RESULT_UNMATCHED")
+        sources.append("inbox:unconsumed_count")
+
         handling_started_monotonic = self._resolve_handling_started_monotonic(
             resolved_root_event_seq
         )
