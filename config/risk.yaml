@@ -10,7 +10,11 @@ risk:
   # 단일 소스 = config/futures_margin.yaml::fallback_account_equity_krw
   # (services/futures_margin_risk/config.py) 와 동일한 env 인다이렉션이라
   # 운영자가 FUTURES_MARGIN_FALLBACK_EQUITY 하나만 움직이면 MDD 분모와
-  # 레버리지 분모가 함께 간다. risk_stock 은 손대지 않는다(현금 주식 계좌).
+  # 레버리지 분모가 함께 간다. `.env.paper` 는 interpolation 전용이라
+  # docker-compose.yml 이 futures-risk-filter · scheduler(증거금 데몬) 두 서비스에
+  # 같은 식 ${FUTURES_MARGIN_FALLBACK_EQUITY:-50000000} 으로 전달한다
+  # (tests/unit/test_compose_runtime_env.py 가 두 문자열과 이 기본값을 고정).
+  # risk_stock 은 손대지 않는다(현금 주식 계좌).
   # ⚠ 부수 효과 — 백테스트 MDD 기준선: FuturesRiskConfig.from_yaml() 로 같은
   # 필터를 만드는 오프라인 소비처 4곳도 함께 움직인다 —
   # scripts/walk_forward_phase3.py:232 · walk_forward_sensitivity.py:128 ·
