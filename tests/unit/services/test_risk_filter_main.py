@@ -847,8 +847,46 @@ async def test_verdict_log_passed(redis, signals_writer, caplog) -> None:
     assert "symbol=A05603" in line
     assert "filter=-" in line
     assert "reason=-" in line
-    assert "size_multiplier=0.500" in line
-    assert "outcomes=trading_hours:pass,consecutive_loss:pass" in line
+    assert " size_multiplier=0.500 " in line
+    assert "layer_size_multiplier=0.500" in line
+    assert "entry_size_factor=1.000" in line
+    # A size-reducing pass is distinguishable from a plain pass.
+    assert "outcomes=trading_hours:pass,consecutive_loss:pass@0.50" in line
+
+
+@pytest.mark.asyncio
+async def test_verdict_log_size_multiplier_is_the_forwarded_product(
+    redis, signals_writer, caplog
+) -> None:
+    """F4: the logged ``size_multiplier`` is what order_router will apply.
+
+    The upstream ``entry_size_factor`` stacks on the layer product; logging the
+    layer product alone reported 1.000 for a candidate forwarded at 0.5.
+    """
+    import logging as _logging
+
+    result = LayerResult(
+        passed=True,
+        skip_reason=None,
+        size_multiplier=1.0,
+        filter_outcomes=[FilterResult(passed=True, filter_name="trading_hours")],
+    )
+    daemon = _make_daemon(
+        redis=redis, signals_writer=signals_writer, layer=_StubLayer(result)
+    )
+    fields = _stream_fields(_signal("long"))
+    fields[b"entry_size_factor"] = b"0.5"
+    with caplog.at_level(_logging.INFO, logger="services.risk_filter.main"):
+        assert await daemon.handle_message(b"1-1", fields)
+
+    line = _verdict_line(caplog)
+    forwarded = float((await redis.xrange(FINAL_STREAM))[0][1][b"size_multiplier"])
+    assert forwarded == pytest.approx(0.5)
+    assert f" size_multiplier={forwarded:.3f} " in line
+    assert "layer_size_multiplier=1.000" in line
+    assert "entry_size_factor=0.500" in line
+    # The entry factor is not a filter outcome — no spurious @factor here.
+    assert line.endswith("outcomes=trading_hours:pass")
 
 
 @pytest.mark.asyncio

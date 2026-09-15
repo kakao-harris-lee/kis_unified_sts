@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.decision.signal import Signal
+from shared.risk.filters.base import FilterResult
 from shared.risk.layer import LayerResult, RiskFilterLayer
 
 if TYPE_CHECKING:
@@ -104,14 +105,21 @@ def _outcomes_summary(result: LayerResult) -> str:
     """Compact ``name:pass|fail,...`` trace of every filter that ran.
 
     Filters after the rejector are absent (short-circuit semantics), so the
-    list doubles as "how far down the chain the candidate got".
+    list doubles as "how far down the chain the candidate got". A passing
+    filter that also scaled size shows its factor (``consecutive_loss:pass@0.50``)
+    — otherwise a size-reducing pass is indistinguishable from a plain pass.
     """
     if not result.filter_outcomes:
         return "-"
-    return ",".join(
-        f"{o.filter_name}:{'pass' if o.passed else 'fail'}"
-        for o in result.filter_outcomes
-    )
+    return ",".join(_outcome_token(o) for o in result.filter_outcomes)
+
+
+def _outcome_token(outcome: FilterResult) -> str:
+    if not outcome.passed:
+        return f"{outcome.filter_name}:fail"
+    if outcome.size_multiplier != 1.0:
+        return f"{outcome.filter_name}:pass@{outcome.size_multiplier:.2f}"
+    return f"{outcome.filter_name}:pass"
 
 
 def _resolve_mode() -> str:
@@ -233,6 +241,16 @@ class RiskFilterDaemon(StreamStage):
             )
             return False  # leave pending (base does NOT XACK)
 
+        # Multiplicative size composition: the upstream entry factor
+        # (market-risk gate enforce size_factor today; any future LLM size
+        # factor rides the same field) stacks with the RiskFilterLayer product.
+        # Every factor is <= 1.0, so the composition only ever shrinks size —
+        # the most conservative verdict wins cumulatively. order_router applies
+        # this final product to base_quantity. Computed once so the verdict log
+        # and the final-stream field can never disagree.
+        entry_size_factor = _entry_size_factor(fields)
+        size_multiplier = result.size_multiplier * entry_size_factor
+
         # F-9 Gate 1b gap G2 (2026-09-10): the ONLY durable record of a
         # verdict. ``SignalsAllWriter`` is wired with ``archive_client=None``
         # (a no-op stub — ClickHouse is not an active runtime) and there is no
@@ -251,7 +269,7 @@ class RiskFilterDaemon(StreamStage):
         logger.info(
             "risk_filter verdict=%s msg_id=%s signal_id=%s setup_type=%s "
             "direction=%s symbol=%s filter=%s reason=%s size_multiplier=%.3f "
-            "outcomes=%s",
+            "layer_size_multiplier=%.3f entry_size_factor=%.3f outcomes=%s",
             "passed" if result.passed else "rejected",
             decode_stream_id(msg_id),
             signal_id,
@@ -260,7 +278,9 @@ class RiskFilterDaemon(StreamStage):
             signal.symbol,
             _rejecting_filter(result),
             result.skip_reason or "-",
+            size_multiplier,
             result.size_multiplier,
+            entry_size_factor,
             _outcomes_summary(result),
         )
 
@@ -281,16 +301,7 @@ class RiskFilterDaemon(StreamStage):
             try:
                 fields_out = signal.to_stream_dict()
                 fields_out["signal_id"] = signal_id
-                # Multiplicative size composition: the upstream entry factor
-                # (market-risk gate enforce size_factor today; any future
-                # LLM size factor rides the same field) stacks with the
-                # RiskFilterLayer product. Every factor is <= 1.0, so the
-                # composition only ever shrinks size — the most conservative
-                # verdict wins cumulatively. order_router applies the final
-                # product to base_quantity.
-                fields_out["size_multiplier"] = str(
-                    result.size_multiplier * _entry_size_factor(fields)
-                )
+                fields_out["size_multiplier"] = str(size_multiplier)
                 fields_out["filtered_at_ms"] = str(int(time.time() * 1000))
                 gate_trace = fields.get(_MARKET_RISK_GATE_FIELD)
                 if gate_trace:
