@@ -59,7 +59,10 @@ async def _build_and_run() -> int:
         ContractSpecRegistry,
         resolve_contract_spec,
     )
-    from shared.execution.futures_instrument import resolve_futures_instrument_from_env
+    from shared.execution.futures_instrument import (
+        resolve_futures_instrument_from_env,
+        run_with_front_month_watch,
+    )
     from shared.models.stream_models import DEFAULT_FUTURES_TICK_STREAM
     from shared.notification.telegram import notifier_for_domain
     from shared.streaming.consumer_feed import StreamConsumerFeed
@@ -124,10 +127,11 @@ async def _build_and_run() -> int:
         os.environ.get("TRADING_STATE_KEY_SUFFIX", ""),
     )
     try:
-        await daemon.run()
+        return await run_with_front_month_watch(
+            daemon.run, daemon.stop, instrument, daemon_name="futures-monitor"
+        )
     finally:
         await redis_client.aclose()
-    return 0
 
 
 def main() -> int:
