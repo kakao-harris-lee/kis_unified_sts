@@ -2,8 +2,8 @@
 
 - **Decision ID:** DR-0002
 - **Date:** 2026-09-15
-- **Status:** Proposed (becomes Accepted on System Owner merge of the
-  ratifying change; see §6)
+- **Status:** Accepted (System Owner, 2026-09-16 — PR #688 merged 2026-09-15;
+  acceptance confirmed with the adoption of the first policy instances, see §6)
 - **Decision Owner:** System Owner (final risk-acceptance authority, vision §12.1)
 - **Category:** Governance Decision
 - **Originating Finding:** RFC-002 §9.1 row "Construct canonical broker command"

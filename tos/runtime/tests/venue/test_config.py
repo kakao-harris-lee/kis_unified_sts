@@ -271,6 +271,20 @@ def test_load_venue_constraint_policy_scope_two_entry_singleton_refused(
         load_venue_constraint_policy(path, scheme=SCHEME)
 
 
+@pytest.mark.parametrize("marker", ['"TBD"', '""'])
+def test_load_venue_constraint_policy_scope_named_tbd_singleton_refused(
+    tmp_path: Path, marker: str
+) -> None:
+    """An operator-fill gate: a scope coordinate still at the template's
+    ``TBD`` marker (or empty) must not boot as a phantom scope — the real
+    deploy files under ``config/tos_runtime/paper/`` ship exactly this way
+    until the operator fills them."""
+    text = venue_policy_yaml().replace('accounts: ["acct-1"]', f"accounts: [{marker}]")
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="named-TBD"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
 def test_load_venue_constraint_policy_scope_action_classes_unknown_token_refused(
     tmp_path: Path,
 ) -> None:
@@ -594,6 +608,15 @@ def test_load_order_construction_policy_scope_empty_singleton_refused(
     text = ocp_yaml().replace('environments: ["paper"]', "environments: []")
     path = write_fixture_ocp(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="EXACTLY one"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_scope_named_tbd_singleton_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace('instruments: ["K200F"]', 'instruments: ["TBD"]')
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="named-TBD"):
         load_order_construction_policy(path, scheme=SCHEME)
 
 

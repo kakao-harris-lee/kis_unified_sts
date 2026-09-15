@@ -33,7 +33,11 @@ under `_runtime` — and is active only when `safety_activation.yaml`'s `members
 list names its exact `policy_id`/`policy_generation`/`canonical_digest`
 (`tos-runtime print-policy-digests --config-dir <dir>` prints those digests;
 the operator copies them by hand, the same way `release.yaml` digests are
-filled). A numeric shape bound with no source stays `null` — the kernel then
-returns `UNKNOWN` for order-shape admissibility and nothing is sent — never an
-invented value. Until the values are adopted, the only instances are the test
-documents under `tos/runtime/tests/venue/_documents.py`.
+filled). A numeric shape bound with no source stays `null` — never an
+invented value — and the runtime then sends nothing: a null `max_quantity`
+already denies at step 2 (incomplete venue quantity constraint) and a null
+price band makes the kernel's order-shape admissibility `UNKNOWN`. The adopted
+`paper/` instances (2026-09-16, plan §6 ②) ship exactly so, with
+`scope.accounts`/`scope.instruments` left `TBD` for the operator to fill
+(the loader refuses `TBD`); `tos/runtime/tests/compose/test_deploy_policies.py`
+pins both the refusal and the fail-closed boot.

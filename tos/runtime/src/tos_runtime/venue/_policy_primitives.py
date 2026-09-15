@@ -271,4 +271,13 @@ def require_singleton_list_str(
             f"{path}: {ctx}.{key} must be a list of EXACTLY one string for a "
             f"single live scope (v1) — got {len(values)}"
         )
+    # A scope coordinate left at the template's ``TBD`` marker (or empty) is an
+    # OPERATOR-FILL gate, never a bootable value: a policy whose account or
+    # instrument is literally "TBD" would bind a phantom scope (deploy files
+    # under config/tos_runtime/paper/ ship exactly this way until filled).
+    if values[0] == TBD_STR or not values[0].strip():
+        raise VenuePolicyConfigError(
+            f"{path}: {ctx}.{key} is still {TBD_STR!r}/empty (named-TBD) — fill the "
+            "deployment coordinate before activation"
+        )
     return values[0]
