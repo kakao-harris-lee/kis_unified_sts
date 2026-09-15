@@ -1058,7 +1058,10 @@ async def _build_and_run() -> int:
         resolve_contract_spec,
     )
     from shared.execution.fill_logger import FillLogger
-    from shared.execution.futures_instrument import resolve_futures_instrument_from_env
+    from shared.execution.futures_instrument import (
+        resolve_futures_instrument_from_env,
+        run_with_front_month_watch,
+    )
     from shared.execution.kis_futures_adapter import KISFuturesAdapter
     from shared.execution.live_exit_executor import LiveExitExecutor
     from shared.execution.live_mode_guard import LiveModeGuard
@@ -1275,7 +1278,9 @@ async def _build_and_run() -> int:
     error_rate_tracker = await start_error_rate_publisher(enabled=publish_error_rate)
 
     try:
-        await daemon.run()
+        return await run_with_front_month_watch(
+            daemon.run, daemon.stop, instrument, daemon_name="order-router"
+        )
     finally:
         await stop_error_rate_publisher(error_rate_tracker)
         await fill_logger.flush()
@@ -1283,7 +1288,6 @@ async def _build_and_run() -> int:
         await redis_client.aclose()
         if runtime_ledger is not None:
             runtime_ledger.close()
-    return 0
 
 
 def main() -> int:

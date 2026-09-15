@@ -15,7 +15,7 @@ import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from services.monitoring.tick_stream_publisher import (
@@ -29,9 +29,20 @@ from shared.stock_universe import (
     parse_effective_universe_codes,
     select_stock_universe,
 )
+from shared.strategy.market_time import now_kst, to_kst
+from shared.streaming.daily_reference import (
+    DailyReferenceSchedule,
+    load_daily_reference_schedule,
+    prefetch_and_publish_futures_daily_references,
+)
 from shared.streaming.data_freshness import DataFreshnessTracker
 
 logger = logging.getLogger(__name__)
+
+# ``producer`` field of the futures:daily_reference:{symbol} read-model — the
+# compose service name, so an operator reading a stale key knows which process
+# to look at (the other producer is `trader-futures`).
+_DAILY_REFERENCE_PRODUCER = "market-ingest"
 
 # Cold-start feed failures we degrade from fatal to non-fatal. An intentional
 # superset of the tuple caught by
@@ -54,6 +65,9 @@ _FEED_START_FAILURES = (
 )
 
 SymbolProvider = Callable[[], Awaitable[list[str]]]
+# (symbols, asof, failure_log_level) -> True only when every symbol's reference
+# reached Redis. failure_log_level is the level for per-symbol failure lines.
+DailyReferencePrefetch = Callable[[list[str], datetime, int], Awaitable[bool]]
 
 
 def _load_trade_target_codes(raw: str | None) -> list[str]:
@@ -150,6 +164,9 @@ class MarketIngestDaemon:
         rest_rate_limited: Callable[[], bool] | None = None,
         feed_start_retry_initial_seconds: float = 5.0,
         feed_start_retry_max_seconds: float = 60.0,
+        daily_reference_prefetch: DailyReferencePrefetch | None = None,
+        daily_reference_schedule: DailyReferenceSchedule | None = None,
+        now_fn: Callable[[], datetime] = now_kst,
     ) -> None:
         self.asset = asset
         self.feed = feed
@@ -180,6 +197,25 @@ class MarketIngestDaemon:
         # reconnect_initial_delay/reconnect_max_delay convention.
         self.feed_start_retry_initial_seconds = feed_start_retry_initial_seconds
         self.feed_start_retry_max_seconds = feed_start_retry_max_seconds
+        # Futures only: publish the prev_close read-model
+        # (futures:daily_reference:{symbol}) for the symbols this daemon ticks.
+        # WS H0IFCNT0 frames don't carry prev_close and the decoupled
+        # decision-engine has no KIS credentials, so after the F-9 cutover this
+        # daemon is the producer that keeps Setup A from going blind. The
+        # consumer only accepts a reference stamped with today's KST date, so
+        # publishing once at boot is not enough: _daily_reference_loop
+        # republishes every trade day and retries a failed publish on the next
+        # poll. Best-effort: a failure logs a WARNING and ticks keep flowing.
+        self.daily_reference_prefetch = daily_reference_prefetch
+        if daily_reference_prefetch is not None and daily_reference_schedule is None:
+            daily_reference_schedule = load_daily_reference_schedule()
+        self._daily_reference_schedule = daily_reference_schedule
+        # (KST date, symbols) of the last fully successful publish.
+        self._daily_reference_published: tuple[date, tuple[str, ...]] | None = None
+        # KST date whose failure WARNING has been logged; later failures that
+        # day log at DEBUG. Cleared by a success or the window-closed WARNING.
+        self._daily_reference_failed_day: date | None = None
+        self._now_fn = now_fn
         self._symbols: list[str] = []
         self._stop = asyncio.Event()
         self._rest_active = False
@@ -262,7 +298,114 @@ class MarketIngestDaemon:
         else:
             # Stock feed accepts live update_symbols (diffs sub/unsub internally).
             self.feed.update_symbols(symbols)
+        # A rollover changes the (date, symbols) marker, so the next
+        # _daily_reference_loop poll publishes the new contract's reference.
         self._symbols = symbols
+
+    async def _publish_daily_reference_if_due(self) -> bool:
+        """One poll of the prev_close read-model; True when it published.
+
+        Publishes only when all hold:
+          * the (KST date, symbols) pair differs from the last fully successful
+            publish — once per trade day, again after a rollover;
+          * the schedule is due — a KRX trading day from futures open minus the
+            configured offset (today's date is never stamped on a close KIS has
+            not rolled over yet) until futures close.
+        A failed or partial publish leaves the marker unchanged, so the next
+        poll retries. Never raises: an escaped exception would end the loop
+        and leave the read-model unpublished for the container's life.
+
+        Log volume under a persistent failure is bounded per KST day: one
+        WARNING on the first failing poll (its per-symbol reasons at INFO),
+        DEBUG for every retry after it, and one WARNING when the window closes
+        with still no successful publish.
+        """
+        schedule = self._daily_reference_schedule
+        if self.daily_reference_prefetch is None or schedule is None:
+            return False
+        if not self._symbols:
+            return False
+        symbols = tuple(self._symbols)
+        try:
+            now = to_kst(self._now_fn())
+        except Exception as e:
+            logger.warning("daily_reference poll skipped: clock failed: %r", e)
+            return False
+        today = now.date()
+        marker = (today, symbols)
+        if marker == self._daily_reference_published:
+            return False
+        already_failed_today = self._daily_reference_failed_day == today
+        try:
+            if not schedule.is_due(now):
+                if already_failed_today and schedule.window_closed(now):
+                    logger.warning(
+                        "daily_reference window closed at %s KST with no successful "
+                        "publish for %s today — the decision-engine had no fresh "
+                        "prev_close (parquet fallback or Setup A skip)",
+                        schedule.publish_until.strftime("%H:%M"),
+                        ", ".join(symbols),
+                    )
+                    self._daily_reference_failed_day = None
+                return False
+            ok = await self.daily_reference_prefetch(
+                list(symbols),
+                now,
+                logging.DEBUG if already_failed_today else logging.INFO,
+            )
+            detail, cause = "incomplete", " (per-symbol reason above)"
+        except Exception as e:
+            ok = False
+            detail, cause = "poll failed", f": {e!r}"
+        if ok:
+            if already_failed_today:
+                logger.info(
+                    "daily_reference published for %s after failed polls",
+                    ", ".join(symbols),
+                )
+            self._daily_reference_published = marker
+            self._daily_reference_failed_day = None
+            return True
+        logger.log(
+            logging.DEBUG if already_failed_today else logging.WARNING,
+            "daily_reference %s for %s%s — retrying every %.0fs until %s KST%s",
+            detail,
+            ", ".join(symbols),
+            cause,
+            schedule.poll_seconds,
+            schedule.publish_until.strftime("%H:%M"),
+            "" if already_failed_today else "; further failures today log at DEBUG",
+        )
+        self._daily_reference_failed_day = today
+        return False
+
+    async def _daily_reference_loop(self) -> None:
+        """Keep today's prev_close read-model published (futures only).
+
+        Checks immediately, then every ``poll_seconds``. Runs as a background
+        task so a slow KIS/Redis call never delays the freshness loop, the
+        refresh loop, or SIGTERM handling.
+        """
+        schedule = self._daily_reference_schedule
+        if self.daily_reference_prefetch is None or schedule is None:
+            return
+        while not self._stop.is_set():
+            await self._publish_daily_reference_if_due()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), timeout=schedule.poll_seconds)
+
+    def _on_daily_reference_done(self, task: asyncio.Task) -> None:
+        """Surface a daily-reference loop crash (asyncio task exceptions are silent)."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "daily_reference loop crashed asset=%s: %r",
+                self.asset,
+                exc,
+                exc_info=exc,
+            )
 
     def _enqueue_new_symbol_coverage(self, new_symbols: list[str]) -> None:
         """Queue newly-admitted stock symbols for on-entry deep daily backfill.
@@ -513,6 +656,10 @@ class MarketIngestDaemon:
         await self._spawn_feed_start()
         freshness_task = asyncio.create_task(self._freshness_loop())
         freshness_task.add_done_callback(self._on_freshness_done)
+        # Background, like the loops above: a slow or failing KIS REST call
+        # must not delay the WS connect, the freshness loop, or shutdown.
+        daily_reference_task = asyncio.create_task(self._daily_reference_loop())
+        daily_reference_task.add_done_callback(self._on_daily_reference_done)
         logger.info(
             "market-ingest running asset=%s symbols=%d", self.asset, len(symbols)
         )
@@ -546,16 +693,17 @@ class MarketIngestDaemon:
             # Suppress BOTH the expected CancelledError AND any exception a task
             # already died with (already logged by its done-callback) so feed/
             # publisher cleanup below always runs and the original error isn't
-            # masked. All three background tasks (feed-start retry, REST fallback,
-            # freshness loop) are cancelled and awaited — none is lost or
-            # double-awaited.
+            # masked. All four background tasks (feed-start retry, REST fallback,
+            # freshness loop, daily-reference loop) are cancelled and awaited —
+            # none is lost or double-awaited.
             if self._start_task is not None:
                 self._start_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await self._start_task
             fallback_task.cancel()
             freshness_task.cancel()
-            for bg_task in (fallback_task, freshness_task):
+            daily_reference_task.cancel()
+            for bg_task in (fallback_task, freshness_task, daily_reference_task):
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await bg_task
             await self.feed.stop()
@@ -564,6 +712,38 @@ class MarketIngestDaemon:
 
     async def stop(self) -> None:
         self._stop.set()
+
+
+def _build_daily_reference_prefetch(
+    kis_client: Any, redis_client: Any | None = None
+) -> DailyReferencePrefetch:
+    """Build the futures prev_close prefetch → publish callable.
+
+    One REST call per symbol (``FHMIF10000000``), published as
+    ``futures:daily_reference:{symbol}`` for the decoupled decision-engine,
+    through the helper the orchestrator also uses. The callable reports whether
+    EVERY symbol reached Redis, so the daemon's loop retries a partial publish.
+
+    Args:
+        kis_client: KIS REST client (futures credentials).
+        redis_client: SYNC Redis client; ``None`` resolves the shared singleton
+            lazily, so a Redis outage at import time cannot break the daemon.
+    """
+
+    async def _prefetch(
+        symbols: list[str], asof: datetime, failure_log_level: int
+    ) -> bool:
+        result = await prefetch_and_publish_futures_daily_references(
+            kis_client,
+            symbols,
+            producer=_DAILY_REFERENCE_PRODUCER,
+            redis=redis_client,
+            asof=asof,
+            failure_log_level=failure_log_level,
+        )
+        return result.published_all(symbols)
+
+    return _prefetch
 
 
 async def _build_and_run() -> int:
@@ -591,6 +771,7 @@ async def _build_and_run() -> int:
     rest_price_fetcher: Callable[[str], Awaitable[dict[str, Any] | None]] | None = None
     session_gate: Callable[[], bool] | None = None
     rest_rate_limited: Callable[[], bool] | None = None
+    daily_reference_prefetch: DailyReferencePrefetch | None = None
     if asset == "stock":
         from shared.kis.stock_feed import KISStockPriceFeed
 
@@ -668,6 +849,16 @@ async def _build_and_run() -> int:
         async def symbol_provider() -> list[str]:
             return [resolve_futures_instrument_from_env().symbol]
 
+        # prev_close producer for the decoupled chain. The WS feed's frames
+        # never carry prev_close and the decision-engine has no KIS
+        # credentials, so this REST prefetch is the only way Setup A sees a gap
+        # after the F-9 cutover retires the orchestrator.
+        from shared.kis.client import KISClient
+
+        futures_rest_client = KISClient(auth)
+        cleanup_kis = futures_rest_client
+        daily_reference_prefetch = _build_daily_reference_prefetch(futures_rest_client)
+
         # Re-resolve hourly so a quarterly rollover triggers a restart-on-change.
         refresh_interval = float(os.environ.get("INGEST_REFRESH_SECONDS", "3600"))
         restart_on_change = True
@@ -694,6 +885,7 @@ async def _build_and_run() -> int:
         feed_start_retry_max_seconds=float(
             os.environ.get("INGEST_FEED_START_RETRY_MAX_SECONDS", "60")
         ),
+        daily_reference_prefetch=daily_reference_prefetch,
     )
 
     loop = asyncio.get_running_loop()
