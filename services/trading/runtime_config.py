@@ -155,6 +155,10 @@ class TradingConfig:
 
     # 거래 대상
     symbols: list[str] = field(default_factory=list)  # 주식 종목 코드들
+    # Futures only: symbols[0] came from resolve_futures_instrument_from_env()
+    # (not passed explicitly), so the orchestrator re-resolves it at every
+    # session start to follow the front-month roll.
+    futures_symbol_auto_resolved: bool = False
 
     # 스케줄
     schedule: MarketSchedule = field(default_factory=MarketSchedule)
@@ -437,6 +441,7 @@ class TradingConfig:
     ) -> TradingConfig:
         """선물용 설정"""
         # Auto-detect KOSPI200 mini futures front-month code
+        auto_resolved = not symbols
         symbols = symbols or cls._get_futures_default_symbols()
         # Load the market schedule from config so that the session open/close
         # anchors (including the 08:45 futures open) reflect the YAML source of
@@ -448,6 +453,7 @@ class TradingConfig:
             initial_capital=initial_capital,
             order_amount_per_trade=order_amount,
             symbols=symbols,
+            futures_symbol_auto_resolved=auto_resolved,
             telegram_token=os.getenv("TELEGRAM_FUTURES_BOT_TOKEN", ""),
             telegram_chat_id=os.getenv("TELEGRAM_FUTURES_CHAT_ID", ""),
             schedule=schedule,
@@ -464,14 +470,21 @@ class TradingConfig:
           entries on the wide-spread guard).
         """
         from shared.execution.futures_instrument import (
+            EXPLICIT_SYMBOL_SOURCE,
             resolve_futures_instrument_from_env,
         )
 
         instrument = resolve_futures_instrument_from_env()
         logger.info(
-            "Futures default symbol (resolved): %s (product=%s source=%s)",
+            "Futures default symbol (resolved): %s (product=%s source=%s "
+            "front_month_roll=%s)",
             instrument.symbol,
             instrument.product,
             instrument.source,
+            (
+                "off (pinned)"
+                if instrument.source == EXPLICIT_SYMBOL_SOURCE
+                else "at session start"
+            ),
         )
         return [instrument.symbol]

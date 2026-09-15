@@ -93,7 +93,10 @@ from shared.exceptions import (
 )
 from shared.execution.config import ATSRoutingConfig
 from shared.execution.futures_instrument import (
+    EXPLICIT_SYMBOL_SOURCE,
     FuturesProductContractValidation,
+    front_month_roll_message,
+    resolve_futures_instrument_from_env,
     validate_futures_runtime_product_contract,
 )
 from shared.execution.models import ExecutionVenue
@@ -604,6 +607,11 @@ class TradingOrchestrator:
 
         logger.info("Starting trading...")
 
+        # Before anything reads config.symbols: the KIS client, price feeds,
+        # data provider, prewarm and prev_close prefetch below are all rebuilt
+        # from it every session.
+        self._roll_futures_front_month_at_session_start()
+
         # Initialize components
         await self._initialize_components()
 
@@ -675,6 +683,36 @@ class TradingOrchestrator:
             f"Strategy: {self._strategy_label()}\n"
             f"Capital: {self.config.initial_capital:,.0f}"
         )
+
+    def _roll_futures_front_month_at_session_start(self) -> None:
+        """Re-resolve the futures contract so a daemon follows the front-month roll.
+
+        ``TradingConfig.futures()`` resolves the contract once at process start,
+        but the daemon loops sessions in-process: trader-futures started on the
+        09-10 expiry day opened its 2026-09-11 session on the dead A01609 (zero
+        ticks). ``start()`` rebuilds every symbol consumer from ``config.symbols``
+        each session, so swapping the code here rolls them all in place. Skipped
+        for explicit symbols (constructor argument or ``FUTURES_STRATEGY_SYMBOL``).
+        """
+        if (
+            self.config.asset_class != "futures"
+            or not self.config.futures_symbol_auto_resolved
+            or not self.config.symbols
+        ):
+            return
+        instrument = resolve_futures_instrument_from_env()
+        old_symbol = self.config.symbols[0]
+        if (
+            instrument.source == EXPLICIT_SYMBOL_SOURCE
+            or instrument.symbol == old_symbol
+        ):
+            return
+        logger.warning(front_month_roll_message(old_symbol, instrument.symbol))
+        self.config.symbols = [
+            instrument.symbol if symbol == old_symbol else symbol
+            for symbol in self.config.symbols
+        ]
+        self._futures_daily_reference.pop(old_symbol, None)
 
     async def _initialize_components(self):
         """Initialize trading components"""
