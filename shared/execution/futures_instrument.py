@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import os
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -234,12 +235,20 @@ def front_month_roll_message(old_symbol: str, new_symbol: str) -> str:
     """The single WARNING text every futures process logs on a front-month roll.
 
     ``expiry`` is the new contract's expiry, i.e. when the next roll happens.
+    Never raises: an unparseable code reports ``expiry unknown`` so the roll
+    itself is not blocked by its own log line.
     """
-    year, month = parse_code(new_symbol)
-    return (
-        f"futures front-month rolled: {old_symbol} -> {new_symbol} "
-        f"(expiry {get_expiry_date(year, month).isoformat()})"
-    )
+    try:
+        year, month = parse_code(new_symbol)
+        expiry = get_expiry_date(year, month).isoformat()
+    except (ValueError, IndexError):
+        expiry = "unknown"
+    return f"futures front-month rolled: {old_symbol} -> {new_symbol} (expiry {expiry})"
+
+
+def _parse_hhmm(value: Any) -> time:
+    hour, minute = str(value).strip().split(":")[:2]
+    return time(int(hour), int(minute))
 
 
 @dataclass(frozen=True)
@@ -248,7 +257,10 @@ class FrontMonthRolloverSchedule:
 
     Loaded from ``config/market_schedule.yaml::market_schedule.futures.
     front_month_rollover``; the dataclass defaults are the fallback when the
-    file or a key is absent (same convention as ``MarketSchedule.load_from_yaml``).
+    block or a key is absent (same convention as ``MarketSchedule.load_from_yaml``).
+    A non-positive poll interval falls back to the default (it would busy-spin
+    every daemon), and a ``check_time`` not before ``futures.regular.open`` is
+    kept but warned about (the roll restart would land inside the session).
     """
 
     check_time: time = time(8, 30)
@@ -259,25 +271,55 @@ class FrontMonthRolloverSchedule:
         from shared.config.loader import ConfigLoader
 
         default = cls()
+        defaults_text = (
+            f"{default.check_time:%H:%M} KST every "
+            f"{default.poll_interval_seconds:.0f}s"
+        )
         try:
             data: Any = ConfigLoader.load("market_schedule.yaml")
-            raw = data["market_schedule"]["futures"].get("front_month_rollover") or {}
-            hour, minute = str(raw.get("check_time", "")).strip().split(":")[:2]
-            return cls(
-                check_time=time(int(hour), int(minute)),
-                poll_interval_seconds=float(
-                    raw.get("poll_interval_seconds", default.poll_interval_seconds)
-                ),
+            futures = data["market_schedule"]["futures"]
+            raw = futures.get("front_month_rollover")
+            if not raw:
+                logger.info(
+                    "front_month_rollover not configured in market_schedule.yaml; "
+                    "using defaults (%s)",
+                    defaults_text,
+                )
+                return default
+            check_time = (
+                _parse_hhmm(raw["check_time"])
+                if "check_time" in raw
+                else default.check_time
             )
+            poll_interval_seconds = float(
+                raw.get("poll_interval_seconds", default.poll_interval_seconds)
+            )
+            open_raw = (futures.get("regular") or {}).get("open")
+            futures_open = _parse_hhmm(open_raw) if open_raw else None
         except Exception as exc:  # noqa: BLE001 — a bad config must not kill a daemon
             logger.warning(
-                "front_month_rollover schedule unreadable (%s); using default %s KST "
-                "every %.0fs",
+                "front_month_rollover schedule unreadable (%s); using defaults (%s)",
                 exc,
-                default.check_time.strftime("%H:%M"),
-                default.poll_interval_seconds,
+                defaults_text,
             )
             return default
+
+        if not math.isfinite(poll_interval_seconds) or poll_interval_seconds <= 0:
+            logger.warning(
+                "front_month_rollover.poll_interval_seconds=%s must be a positive "
+                "number; using %.0fs",
+                poll_interval_seconds,
+                default.poll_interval_seconds,
+            )
+            poll_interval_seconds = default.poll_interval_seconds
+        if futures_open is not None and check_time >= futures_open:
+            logger.warning(
+                "front_month_rollover.check_time %s KST is not before the futures "
+                "open %s KST; a roll restart would land inside the session",
+                check_time.strftime("%H:%M"),
+                futures_open.strftime("%H:%M"),
+            )
+        return cls(check_time=check_time, poll_interval_seconds=poll_interval_seconds)
 
 
 async def run_with_front_month_watch(
@@ -324,35 +366,52 @@ async def run_with_front_month_watch(
     rolled_to: str | None = None
 
     async def _watch() -> None:
+        # Every Exception is caught per iteration: an asyncio task that raises
+        # dies silently, which would leave the daemon unwatched for good and
+        # re-raise at shutdown (a clean SIGTERM exiting 1). CancelledError is a
+        # BaseException, so cancellation still ends the task.
         nonlocal rolled_to
         last_checked: date | None = None
+        last_failure: str | None = None
         while True:
-            now = now_fn().astimezone(KST)
-            if last_checked != now.date() and now.time() >= schedule.check_time:
-                last_checked = now.date()
-                try:
-                    new_symbol = front_month_changed(
-                        instrument.symbol,
-                        instrument.product,
-                        now.date(),
-                        environ=environ,
-                    )
-                except Exception:  # noqa: BLE001 — keep the daemon; retry tomorrow
-                    logger.exception("%s: front-month check failed", daemon_name)
-                    new_symbol = None
-                if new_symbol is not None:
-                    rolled_to = new_symbol
-                    logger.warning(
-                        front_month_roll_message(instrument.symbol, new_symbol)
-                    )
-                    logger.warning(
-                        "%s: exiting with status %d so compose restarts it on %s",
-                        daemon_name,
-                        FRONT_MONTH_ROLL_EXIT_CODE,
-                        new_symbol,
-                    )
-                    await stop()
+            try:
+                if rolled_to is None:
+                    now = now_fn().astimezone(KST)
+                    if last_checked != now.date() and now.time() >= schedule.check_time:
+                        new_symbol = front_month_changed(
+                            instrument.symbol,
+                            instrument.product,
+                            now.date(),
+                            environ=environ,
+                        )
+                        last_checked = now.date()
+                        if new_symbol is not None:
+                            rolled_to = new_symbol
+                            logger.warning(
+                                front_month_roll_message(instrument.symbol, new_symbol)
+                            )
+                            logger.warning(
+                                "%s: exiting with status %d so compose restarts it "
+                                "on %s",
+                                daemon_name,
+                                FRONT_MONTH_ROLL_EXIT_CODE,
+                                new_symbol,
+                            )
+                if rolled_to is not None:
+                    await stop()  # retried on the next poll if it raises
                     return
+                if last_failure is not None:
+                    logger.info("%s: front-month check recovered", daemon_name)
+                    last_failure = None
+            except Exception as exc:  # noqa: BLE001 — log and keep watching
+                failure = f"{type(exc).__name__}: {exc}"
+                if failure != last_failure:  # one traceback per distinct failure
+                    logger.exception(
+                        "%s: front-month check failed; retrying every %.0fs",
+                        daemon_name,
+                        schedule.poll_interval_seconds,
+                    )
+                    last_failure = failure
             await asyncio.sleep(schedule.poll_interval_seconds)
 
     watch_task = asyncio.create_task(_watch(), name=f"{daemon_name}-front-month-watch")

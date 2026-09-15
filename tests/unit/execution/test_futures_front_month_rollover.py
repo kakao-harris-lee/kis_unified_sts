@@ -133,6 +133,56 @@ def test_schedule_falls_back_to_defaults_on_unreadable_config(monkeypatch, caplo
     assert "front_month_rollover schedule unreadable" in caplog.text
 
 
+def _schedule_yaml(monkeypatch, rollover: dict | None, *, futures_open="08:45"):
+    from shared.config.loader import ConfigLoader
+
+    futures: dict = {"regular": {"open": futures_open, "close": "15:45"}}
+    if rollover is not None:
+        futures["front_month_rollover"] = rollover
+    data = {"market_schedule": {"futures": futures}}
+    monkeypatch.setattr(ConfigLoader, "load", lambda *_a, **_k: data)
+
+
+@pytest.mark.parametrize("poll", [0, -5])
+def test_schedule_non_positive_poll_falls_back_to_default(monkeypatch, caplog, poll):
+    _schedule_yaml(monkeypatch, {"check_time": "08:20", "poll_interval_seconds": poll})
+    with caplog.at_level(logging.WARNING, logger=fi.__name__):
+        schedule = FrontMonthRolloverSchedule.from_yaml()
+    assert schedule.poll_interval_seconds == 60.0
+    assert schedule.check_time == time(8, 20)  # the valid key is still honoured
+    assert "poll_interval_seconds" in caplog.text
+
+
+@pytest.mark.parametrize("check_time", ["08:45", "09:10"])
+def test_schedule_warns_when_check_is_not_before_the_open(
+    monkeypatch, caplog, check_time
+):
+    _schedule_yaml(monkeypatch, {"check_time": check_time, "poll_interval_seconds": 60})
+    with caplog.at_level(logging.WARNING, logger=fi.__name__):
+        schedule = FrontMonthRolloverSchedule.from_yaml()
+    assert schedule.check_time.strftime("%H:%M") == check_time
+    assert "is not before the futures open 08:45 KST" in caplog.text
+
+
+def test_schedule_before_the_open_does_not_warn(monkeypatch, caplog):
+    _schedule_yaml(monkeypatch, {"check_time": "08:44", "poll_interval_seconds": 30})
+    with caplog.at_level(logging.WARNING, logger=fi.__name__):
+        schedule = FrontMonthRolloverSchedule.from_yaml()
+    assert schedule == FrontMonthRolloverSchedule(
+        check_time=time(8, 44), poll_interval_seconds=30.0
+    )
+    assert caplog.records == []
+
+
+def test_schedule_missing_block_uses_defaults_at_info(monkeypatch, caplog):
+    _schedule_yaml(monkeypatch, None)
+    with caplog.at_level(logging.INFO, logger=fi.__name__):
+        schedule = FrontMonthRolloverSchedule.from_yaml()
+    assert schedule == FrontMonthRolloverSchedule()
+    assert "front_month_rollover not configured" in caplog.text
+    assert all(r.levelno == logging.INFO for r in caplog.records)
+
+
 # --------------------------------------------------------------------------- #
 # run_with_front_month_watch (the decoupled daemons' daily check)
 # --------------------------------------------------------------------------- #
@@ -258,3 +308,116 @@ async def test_pinned_symbol_runs_without_a_check(caplog):
 
     assert code == 0
     assert "front-month rollover check disabled" in caplog.text
+
+
+# --------------------------------------------------------------------------- #
+# Watch task resilience (review F2)
+# --------------------------------------------------------------------------- #
+
+
+def _raising_once_then(*instants: datetime):
+    """now_fn that raises on its first call, then behaves like ``_clock``."""
+    later = _clock(*instants)
+    calls = 0
+
+    def _now() -> datetime:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("clock unavailable")
+        return later()
+
+    return _now
+
+
+def _failure_records(caplog) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if "front-month check failed" in r.message]
+
+
+@pytest.mark.asyncio
+async def test_watch_survives_a_raising_clock_and_still_rolls(caplog):
+    daemon = _FakeDaemon()
+
+    with caplog.at_level(logging.INFO, logger=fi.__name__):
+        code = await asyncio.wait_for(
+            run_with_front_month_watch(
+                daemon.run,
+                daemon.stop,
+                _F200_SEPT,
+                daemon_name="test-daemon",
+                schedule=_EVERY_TICK,
+                environ=_NO_OVERRIDE,
+                now_fn=_raising_once_then(datetime(2026, 9, 11, 8, 31, tzinfo=KST)),
+            ),
+            timeout=5,
+        )
+
+    assert code == FRONT_MONTH_ROLL_EXIT_CODE
+    assert daemon.stop_calls == 1
+    (failure,) = _failure_records(caplog)
+    assert failure.exc_info is not None  # logged with its traceback
+    assert "front-month rolled: A01609 -> A01612" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_shutdown_after_an_earlier_watch_error_exits_zero(caplog):
+    """A clean SIGTERM must not re-raise a watch failure and exit 1."""
+    daemon = _FakeDaemon()
+    polls = 0
+    raising = _raising_once_then(datetime(2026, 9, 11, 8, 0, tzinfo=KST))
+
+    def _now() -> datetime:
+        nonlocal polls
+        polls += 1
+        if polls == 5:  # the signal arrives before the check time
+            asyncio.get_running_loop().call_soon(daemon._stop.set)
+        return raising()
+
+    with caplog.at_level(logging.INFO, logger=fi.__name__):
+        code = await asyncio.wait_for(
+            run_with_front_month_watch(
+                daemon.run,
+                daemon.stop,
+                _F200_SEPT,
+                daemon_name="test-daemon",
+                schedule=_EVERY_TICK,
+                environ=_NO_OVERRIDE,
+                now_fn=_now,
+            ),
+            timeout=5,
+        )
+
+    assert code == 0
+    assert daemon.stop_calls == 0
+    assert len(_failure_records(caplog)) == 1
+    assert "front-month check recovered" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_failed_stop_is_retried_on_the_next_poll():
+    daemon = _FakeDaemon()
+    real_stop = daemon.stop
+    attempts = 0
+
+    async def _flaky_stop() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ConnectionError("redis blip during stop")
+        await real_stop()
+
+    code = await asyncio.wait_for(
+        run_with_front_month_watch(
+            daemon.run,
+            _flaky_stop,
+            _F200_SEPT,
+            daemon_name="test-daemon",
+            schedule=_EVERY_TICK,
+            environ=_NO_OVERRIDE,
+            now_fn=_clock(datetime(2026, 9, 11, 8, 30, tzinfo=KST)),
+        ),
+        timeout=5,
+    )
+
+    assert code == FRONT_MONTH_ROLL_EXIT_CODE
+    assert attempts == 2
