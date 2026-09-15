@@ -201,7 +201,29 @@ class TestFuturesRiskConfigDefaults:
         assert isinstance(config, FuturesRiskConfig)
 
     def test_default_account_equity_krw(self) -> None:
-        assert FuturesRiskConfig().account_equity_krw == 5_000_000
+        assert FuturesRiskConfig().account_equity_krw == pytest.approx(50_000_000.0)
+
+    def test_default_account_equity_krw_equals_yaml_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A YAML-less construction gets the same denominator as the YAML path.
+
+        With the env var unset, ``config/risk.yaml`` resolves to its
+        ``${FUTURES_MARGIN_FALLBACK_EQUITY:50000000}`` default; the pydantic
+        default must match it, or any construction that skips ``from_yaml()``
+        silently runs the MDD filters on a different (pre-G4) denominator.
+        """
+        monkeypatch.delenv("FUTURES_MARGIN_FALLBACK_EQUITY", raising=False)
+        ConfigLoader.clear_cache()
+        assert FuturesRiskConfig().account_equity_krw == pytest.approx(
+            FuturesRiskConfig.from_yaml().account_equity_krw
+        )
+
+    def test_stock_default_account_equity_krw_unchanged(self) -> None:
+        """G4 is futures-only: StockRiskConfig keeps its own pre-G4 default."""
+        from shared.risk.config import StockRiskConfig
+
+        assert StockRiskConfig().account_equity_krw == pytest.approx(5_000_000.0)
 
     def test_default_daily_mdd_limit_pct(self) -> None:
         assert FuturesRiskConfig().daily_mdd_limit_pct == pytest.approx(0.03)

@@ -833,7 +833,11 @@ class FuturesRiskConfig(ServiceConfigBase):
     _asset_class: ClassVar[str] = "futures"
 
     account_equity_krw: float = Field(
-        default=5_000_000,
+        # Same value as the config/risk.yaml default (and the margin lane's
+        # fallback_account_equity_krw default), so a construction that skips
+        # the YAML does not resurrect the pre-G4 5M denominator (150,000원
+        # daily MDD cap). StockRiskConfig pins its own default below.
+        default=50_000_000.0,
         gt=0,
         description=(
             "Account equity in KRW — the MDD filters' denominator. float/gt=0 "
@@ -946,6 +950,15 @@ class StockRiskConfig(FuturesRiskConfig):
     _default_section: ClassVar[str] = "risk_stock"
     _env_prefix: ClassVar[str] = "STOCK_RISK_"
     _asset_class: ClassVar[str] = "stock"
+
+    account_equity_krw: float = Field(
+        # Keeps the default this class inherited before FuturesRiskConfig's moved
+        # to the futures lane's 50M (F-9 gap G4 is futures-only; the cash stock
+        # account's YAML value lives in config/risk.yaml::risk_stock).
+        default=5_000_000.0,
+        gt=0,
+        description="Stock account equity in KRW — the MDD filters' denominator.",
+    )
 
     core_correlation: CoreCorrelationSettings = Field(
         default_factory=CoreCorrelationSettings,
