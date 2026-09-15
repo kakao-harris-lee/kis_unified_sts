@@ -248,6 +248,7 @@ class _FakeSyncRedis:
         raises: bool = False,
         hget_result: str | None = None,
         hlen_result: int = 0,
+        hashes: dict[str, dict[str, str]] | None = None,
     ) -> None:
         self.hexists_calls: list[tuple[str, str]] = []
         self.hget_calls: list[tuple[str, str]] = []
@@ -256,6 +257,7 @@ class _FakeSyncRedis:
         self._raises = raises
         self._hget_result = hget_result
         self._hlen_result = hlen_result
+        self._hashes = hashes or {}
 
     def hexists(self, key: str, field: str) -> bool:
         self.hexists_calls.append((key, field))
@@ -269,8 +271,8 @@ class _FakeSyncRedis:
             raise RuntimeError("redis down")
         return self._hget_result
 
-    def hgetall(self, key: str) -> dict[str, str]:  # noqa: ARG002
-        return {}
+    def hgetall(self, key: str) -> dict[str, str]:
+        return dict(self._hashes.get(key, {}))
 
     def hlen(self, key: str) -> int:
         self.hlen_calls.append(key)
@@ -476,6 +478,64 @@ def test_production_open_positions_count_provider_fails_closed(
     assert isinstance(counts, dict)
     # Whatever cap an operator configures, this must be read as "over it".
     assert counts["futures"] >= 10**6
+
+
+# ---------------------------------------------------------------------------
+# F-9 Gate 1 gap G3: the shadow LeverageFilter reads the SHADOW position book
+# ---------------------------------------------------------------------------
+
+#: Hardcoded for the same reason as the anchors above. The unsuffixed key is
+#: the monolithic orchestrator's book; the ``:shadow`` one is the decoupled
+#: chain's (``services/futures_monitor`` in shadow mode).
+_ORCHESTRATOR_POSITIONS_KEY = "trading:futures:positions"
+_SHADOW_POSITIONS_KEY = "trading:futures:positions:shadow"
+
+
+def _position_hash(code: str) -> dict[str, str]:
+    import json
+
+    return {
+        f"pos-{code}": json.dumps({"code": code, "quantity": 1, "current_price": 400.0})
+    }
+
+
+@pytest.mark.parametrize(
+    ("seeded_key", "expect_visible"),
+    [
+        pytest.param(_SHADOW_POSITIONS_KEY, True, id="shadow-book-visible"),
+        pytest.param(_ORCHESTRATOR_POSITIONS_KEY, False, id="orchestrator-book-hidden"),
+    ],
+)
+def test_shadow_leverage_provider_reads_only_the_shadow_book(
+    monkeypatch: pytest.MonkeyPatch, seeded_key: str, expect_visible: bool
+) -> None:
+    """Behavioural pin for G3, independent of how the suffix gets bound.
+
+    Runs the real shadow ``_build_and_run`` and exercises the captured
+    ``leverage_snapshot_provider`` against a fake Redis holding a position
+    under ONE of the two books. The AST ordering test in
+    tests/unit/services/test_risk_filter_main.py passes a conditional call or
+    misses an attribute-style call; this one fails whenever the shadow
+    provider can see the orchestrator's positions or cannot see its own.
+    """
+    monkeypatch.delenv("TRADING_STATE_KEY_SUFFIX", raising=False)
+    fake = _FakeSyncRedis(hashes={seeded_key: _position_hash(_FUTURES_SYMBOL)})
+    kwargs = _capture_call_site_kwargs(
+        importlib.import_module("services.risk_filter.main"),
+        "FUTURES_RISK_FILTER",
+        monkeypatch,
+        fake,
+    )
+
+    provider = kwargs.get("leverage_snapshot_provider")
+    assert provider is not None, (
+        "risk.leverage.enabled is true in config/risk.yaml, so the shadow "
+        "daemon must wire a leverage snapshot provider"
+    )
+    snapshot = provider()
+    assert snapshot is not None
+    codes = [p["code"] for p in snapshot["positions"]]
+    assert codes == ([_FUTURES_SYMBOL] if expect_visible else [])
 
 
 # ---------------------------------------------------------------------------
