@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -103,15 +102,13 @@ def test_observe_at_and_after_market_open_captures_today_open():
 
 
 def _publish(redis_client, *, symbol, prev_close, asof):
-    asyncio.run(
-        publish_futures_daily_reference(
-            redis_client,
-            symbol=symbol,
-            prev_close=prev_close,
-            source=SOURCE_KIS_REST,
-            producer="trader-futures",
-            asof=asof,
-        )
+    publish_futures_daily_reference(
+        redis_client,
+        symbol=symbol,
+        prev_close=prev_close,
+        source=SOURCE_KIS_REST,
+        producer="trader-futures",
+        asof=asof,
     )
 
 

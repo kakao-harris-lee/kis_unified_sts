@@ -607,9 +607,8 @@ def _build_daily_reference_prefetch(
     """Build the futures prev_close prefetch → publish callable.
 
     One REST call per symbol (``FHMIF10000000``), published as
-    ``futures:daily_reference:{symbol}`` for the decoupled decision-engine.
-    Per-symbol failures are logged and skipped — one unreadable contract must
-    not stop the others from being published.
+    ``futures:daily_reference:{symbol}`` for the decoupled decision-engine,
+    through the helper the orchestrator also uses.
 
     Args:
         kis_client: KIS REST client (futures credentials).
@@ -617,41 +616,16 @@ def _build_daily_reference_prefetch(
             lazily, so a Redis outage at import time cannot break the daemon.
     """
     from shared.streaming.daily_reference import (
-        SOURCE_KIS_REST,
-        fetch_futures_prev_close,
-        publish_futures_daily_reference,
+        prefetch_and_publish_futures_daily_references,
     )
 
     async def _prefetch(symbols: list[str]) -> None:
-        redis = redis_client
-        if redis is None:
-            from shared.streaming.client import RedisClient
-
-            redis = RedisClient.get_client()
-        for symbol in symbols:
-            try:
-                prev_close = await fetch_futures_prev_close(kis_client, symbol)
-            except Exception as e:
-                logger.warning(
-                    "prev_close prefetch failed for %s: %s — Setup A will skip",
-                    symbol,
-                    e,
-                )
-                continue
-            if prev_close <= 0:
-                logger.warning(
-                    "prev_close prefetch returned %s for %s — Setup A will skip",
-                    prev_close,
-                    symbol,
-                )
-                continue
-            await publish_futures_daily_reference(
-                redis,
-                symbol=symbol,
-                prev_close=prev_close,
-                source=SOURCE_KIS_REST,
-                producer=_DAILY_REFERENCE_PRODUCER,
-            )
+        await prefetch_and_publish_futures_daily_references(
+            kis_client,
+            symbols,
+            producer=_DAILY_REFERENCE_PRODUCER,
+            redis=redis_client,
+        )
 
     return _prefetch
 

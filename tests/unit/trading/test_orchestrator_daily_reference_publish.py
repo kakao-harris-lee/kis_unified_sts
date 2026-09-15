@@ -89,6 +89,37 @@ async def test_a_zero_prev_close_is_neither_cached_nor_published(redis_client):
     assert read_futures_daily_reference(redis_client, SYMBOL) is None
 
 
+async def test_prefetch_delegates_to_the_shared_helper(monkeypatch):
+    """R3: fetch → guard → publish lives in one shared helper; the orchestrator
+    only caches what the helper returns."""
+    from shared.streaming.daily_reference import DailyReferencePrefetchResult
+
+    seen: dict[str, object] = {}
+
+    async def _helper(kis_client, symbols, *, producer, redis=None, asof=None):
+        seen.update(kis_client=kis_client, symbols=list(symbols), producer=producer)
+        return DailyReferencePrefetchResult(
+            prev_closes={SYMBOL: 411.25}, published=frozenset()
+        )
+
+    monkeypatch.setattr(
+        "shared.streaming.daily_reference.prefetch_and_publish_futures_daily_references",
+        _helper,
+    )
+    kis = _KISClient()
+    orch = _orchestrator(kis)
+
+    await orch._prefetch_futures_daily_reference()
+
+    assert seen == {
+        "kis_client": kis,
+        "symbols": [SYMBOL],
+        "producer": "trader-futures",
+    }
+    assert orch._futures_daily_reference == {SYMBOL: {"prev_close": 411.25}}
+    assert kis.calls == [], "the orchestrator no longer fetches on its own"
+
+
 async def test_a_redis_outage_still_caches_prev_close_for_the_trading_path(
     monkeypatch, caplog
 ):
@@ -107,7 +138,7 @@ async def test_a_redis_outage_still_caches_prev_close_for_the_trading_path(
         await orch._prefetch_futures_daily_reference()
 
     assert orch._futures_daily_reference == {SYMBOL: {"prev_close": 411.25}}
-    assert "read-model publish failed" in caplog.text
+    assert "daily_reference publish failed" in caplog.text
 
 
 async def test_every_configured_symbol_is_published(redis_client):
