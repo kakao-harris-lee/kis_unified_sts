@@ -51,3 +51,34 @@ futures_contract:
     stream_key: "stream:futures.contract"
     stream_maxlen: 5000
     stream_ttl_seconds: 86400
+
+# prev_close read-model (futures:daily_reference:{symbol}).
+#
+# Published by BOTH futures producers through
+# shared/streaming/daily_reference.py::prefetch_and_publish_futures_daily_references
+# — trader-futures at session start
+# (services/trading/orchestrator.py::_prefetch_futures_daily_reference) and
+# market-ingest once per trade day (services/market_ingest/main.py::
+# _daily_reference_loop) — and read by the decoupled decision-engine
+# (services/decision_engine/daily_reference.py), which has no KIS credentials.
+# Every setting is read through load_daily_reference_config; a missing key or
+# an invalid value logs a WARNING and uses the fallback.
+daily_reference:
+  # 86400 = this repo's default operational TTL (CLAUDE.md). The TTL only
+  # expires the key of a producer that stopped publishing: freshness is the
+  # consumer's check that asof_ts falls on the current KST trade date, not
+  # this TTL, so there is no second TTL-based bound to keep in sync.
+  ttl_seconds: 86400
+  # market-ingest publish check interval, which is also the retry interval
+  # after a KIS/Redis failure. Values below 60 are rejected (WARNING → 60): a
+  # faster retry during a KIS outage spends the REST rate budget. Retries stop
+  # at market_schedule.yaml::futures.regular.close; a failing day logs one
+  # WARNING on its first failure and one when the window closes, DEBUG between.
+  poll_seconds: 60
+  # market-ingest publishes from market_schedule.yaml::futures.regular.open
+  # minus this many minutes (KST, trading days only). 0 = the open itself,
+  # the same moment trader-futures publishes at session start. Raise it only
+  # if KIS is confirmed to roll futs_prdy_clpr over before the open — an
+  # earlier publish would stamp today's date on the close from two sessions
+  # back, and the consumer's date check would accept it.
+  open_offset_minutes: 0

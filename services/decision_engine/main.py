@@ -927,7 +927,6 @@ async def _build_context_provider(
     feed.update_symbols([symbol])
     await feed.start()
 
-    daily_ref = FuturesDailyReference(store=store, symbol=symbol)
     macro_stream = os.environ.get("MACRO_OVERNIGHT_STREAM", "stream:macro.overnight")
     events_path = os.environ.get(
         "SCHEDULED_EVENTS_PATH", "config/scheduled_events.yaml"
@@ -939,6 +938,12 @@ async def _build_context_provider(
     import redis as _redis_sync
 
     sync_redis = _redis_sync.Redis.from_url(redis_url, decode_responses=True)
+
+    # Same sync client feeds the prev_close read-model
+    # (futures:daily_reference:{symbol}, published by the producers' session-start
+    # REST prefetch). Without it the daemon falls back to the parquet daily bars,
+    # which never carried the TRADING symbol — Setup A's permanent blind spot.
+    daily_ref = FuturesDailyReference(store=store, symbol=symbol, redis=sync_redis)
 
     def _macro_reader() -> Any:
         return read_latest_macro_snapshot(sync_redis, macro_stream)
