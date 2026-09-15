@@ -514,6 +514,17 @@ KIS_MOCK_REST_BASE = "https://openapivts.koreainvestment.com:29443"
 KIS_MOCK_ORDER_PRINCIPAL = "kis-mock-order-non-live-test"
 
 
+class _Unset:
+    """A distinguishable "no override given" sentinel — distinct from ``None`` itself, which
+    :func:`write_kis_mock_transport_config`'s own ``wire_codec`` keyword uses to mean "write a
+    literal ``null``" (team-lead review MEDIUM, 2026-09-15: a test proving the wire-codec-
+    mismatch REFUSAL needs to request that exact ``null`` deliberately, which a plain ``None``
+    default could not distinguish from "no override, keep today's auto-fix")."""
+
+
+_UNSET = _Unset()
+
+
 def write_kis_mock_transport_config(
     config_dir: Path,
     *,
@@ -521,6 +532,7 @@ def write_kis_mock_transport_config(
     endpoint_rest_base: str = KIS_MOCK_REST_BASE,
     allow_plaintext_for_tests: bool = False,
     min_send_interval_ms: int = 1100,
+    wire_codec: str | None | _Unset = _UNSET,
 ) -> Path:
     """Write a fully-valued ``kis_mock_transport.yaml`` (T2 lane C test fixture) — every
     named-TBD field of the shipped example filled with a concrete, schema-valid value.
@@ -543,6 +555,16 @@ def write_kis_mock_transport_config(
     call. A directory with no such file yet (the transport-config-loader-only unit tests in
     ``test_transport_wiring.py``, which never reach ``compose_paper_runtime`` at all) is left
     untouched.
+
+    Args:
+        wire_codec: Left at :data:`_UNSET` (the default), the OCP rewrite below writes the
+            exact ``kis-order-cash-v1`` codec block every existing kis-mock e2e caller relies
+            on. Passed ``None``, it writes a literal ``wire_codec: null`` instead — a
+            DELIBERATE mismatch a boot-refusal test can compose against (team-lead review
+            MEDIUM, 2026-09-15: no compose-level test previously exercised this path, since
+            every caller got the auto-fix unconditionally). A caller-supplied raw YAML
+            fragment string is written through unchanged (the same convention
+            :func:`~tests.venue._documents.ocp_yaml`'s own ``wire_codec`` parameter uses).
     """
     path = config_dir / "kis_mock_transport.yaml"
     path.write_text(
@@ -578,15 +600,21 @@ def write_kis_mock_transport_config(
     )
     ocp_path = config_dir / "order_construction_policy.yaml"
     if ocp_path.is_file():
+        if isinstance(wire_codec, _Unset):
+            effective_wire_codec = (
+                "{kind: kis-order-cash-v1, wire_fields: "
+                f"{sorted(KIS_ORDER_CASH_WIRE_FIELDS)!r}}}"
+            )
+        elif wire_codec is None:
+            effective_wire_codec = "null"
+        else:
+            effective_wire_codec = wire_codec
         ocp_path.write_text(
             ocp_yaml(
                 environment="non-live-test",
                 account=ACCOUNT,
                 instrument=INSTRUMENT,
-                wire_codec=(
-                    "{kind: kis-order-cash-v1, wire_fields: "
-                    f"{sorted(KIS_ORDER_CASH_WIRE_FIELDS)!r}}}"
-                ),
+                wire_codec=effective_wire_codec,
             ),
             encoding="utf-8",
         )

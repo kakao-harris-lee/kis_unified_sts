@@ -45,6 +45,7 @@ from .test_compose_root import (
     _compose,
     _reach_trusted,
 )
+from .test_transport_wiring import _activate_mock_stock_order
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -149,6 +150,23 @@ class TestVenueServiceE2E:
             constraints=runtime.venue.shape_constraints,
         )
         assert decision.result is fold
+
+        # HIGH-2 (team-lead review, 2026-09-15): the returned StageVerdict must bind the REAL
+        # issued decision's own digest/identity — a mutation that returns stage0's verdict
+        # (built with decision=None, before the real decision was issued) would leave
+        # bound_digest/bound_identity None here (tos.engine.adapters.venue_admissibility_verdict
+        # sets both from `decision`, `tos/src/tos/engine/adapters.py:105-106`).
+        assert step3.bound_digest is not None
+        assert step3.bound_digest == decision.canonical_digest
+        assert step3.bound_identity == decision.decision_id
+
+        # HIGH-1 (team-lead review, 2026-09-15): this scope (SYNTHETIC_FUTURES_ORDER) declares
+        # no `instance:` block at all (config/broker_scopes.example.yaml) — pin that premise so
+        # this test fails loudly if the fixture ever binds one — and the decision's own
+        # broker-capability fields must stay honestly None, never an invented "draft" digest.
+        assert runtime.context_resolver.instance_document is None
+        assert decision.broker_capability_profile_version is None
+        assert decision.broker_capability_profile_digest is None
 
         construction = runtime.construction_stage.construction
         assert construction is not None and construction.command is not None
@@ -331,6 +349,44 @@ def test_compose_context_resolver_has_no_venue_decision_field() -> None:
 
 
 # ===========================================================================
+# HIGH-1 (team-lead review, 2026-09-15): brokercap digest stays None for a genuinely DRAFT
+# INSTANCE document — never an invented "draft" string (mutation M7).
+# ===========================================================================
+
+
+def test_broker_capability_profile_facts_stay_none_for_a_real_draft_instance_document() -> (
+    None
+):
+    """Loads the REAL, repo-tracked KIS draft INSTANCE document (the same file
+    ``test_transport_wiring.py`` loads for its own kis-mock e2e tests) and pins
+    :func:`~tos_runtime.compose._venue_wiring._broker_capability_profile_facts` against it
+    directly — the happy-path e2e boot (``SYNTHETIC_FUTURES_ORDER``) never binds an INSTANCE
+    document at all, so it alone cannot prove the DRAFT-specific "digest stays None" claim this
+    test exists to pin."""
+    from tos_runtime.brokercap.instance import load_instance_document
+    from tos_runtime.compose._venue_wiring import _broker_capability_profile_facts
+
+    path = (
+        Path(__file__).resolve().parents[4]
+        / "docs"
+        / "broker-profiles"
+        / "KIS-BROKER-CAPABILITY-PROFILE-draft.yaml"
+    )
+    document = load_instance_document(path, environment="MOCK_VTS")
+    # The premise this test's own name asserts — fails loudly if this fixture file is ever
+    # finalized to ISSUED (at which point a real digest would become the honest value).
+    assert document.status == "DRAFT"
+    assert document.profile.canonical_digest is None
+
+    version, digest = _broker_capability_profile_facts(document)
+    assert digest is None
+    profile_version = document.profile.profile_version
+    assert profile_version is not None
+    assert version == profile_version.profile_version
+    assert version is not None  # the version string itself IS real, unlike the digest
+
+
+# ===========================================================================
 # Negative boot tests (mutations M2, M10, M11; scope mismatch)
 # ===========================================================================
 
@@ -412,6 +468,66 @@ class TestVenueBootRefusals:
             encoding="utf-8",
         )
         _sync_venue_activation_digest(config_dir)
+        fx.write_band_strategy_file(config_dir)
+        with pytest.raises(VenuePolicyScopeMismatch):
+            compose_paper_runtime(
+                config_dir,
+                data_dir,
+                custody_root,
+                "non-live-test",
+                construction=fx.construction_config(),
+                aggregate_risk_inputs_provider=_aggregate_inputs,
+                action_flow_inputs_provider=_action_flow_inputs,
+                transport_kind=TransportKind.SYNTHETIC,
+            )
+
+    def test_kis_mock_wire_codec_null_refuses_at_compose_level(
+        self, tmp_path: Path
+    ) -> None:
+        """MEDIUM (team-lead review, 2026-09-15): ``write_kis_mock_transport_config`` used to
+        unconditionally rewrite ``order_construction_policy.yaml``'s ``wire_codec`` into the
+        exact KIS codec block, so no compose-level test ever proved a ``kis-mock`` boot with
+        ``wire_codec: null`` is actually refused. Reuses the SAME MOCK_STOCK_ORDER scope +
+        custody + transport-config recipe ``test_transport_wiring.py``'s own
+        ``test_e2e_boot_wires_a_kis_mock_transport_and_codec_digest_source`` already proves
+        boots successfully — the ONE difference is the deliberate ``wire_codec=None`` override
+        here."""
+        config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
+        _activate_mock_stock_order(config_dir)
+        fx.write_kis_mock_transport_config(config_dir, wire_codec=None)
+        fx.provision_kis_mock_custody(custody_root)
+        fx.write_band_strategy_file(config_dir)
+        with pytest.raises(VenuePolicyScopeMismatch):
+            compose_paper_runtime(
+                config_dir,
+                data_dir,
+                custody_root,
+                "non-live-test",
+                construction=fx.construction_config(),
+                aggregate_risk_inputs_provider=_aggregate_inputs,
+                action_flow_inputs_provider=_action_flow_inputs,
+                transport_kind=TransportKind.KIS_MOCK,
+            )
+
+    def test_synthetic_wire_codec_non_null_refuses_at_compose_level(
+        self, tmp_path: Path
+    ) -> None:
+        """MEDIUM inverse (team-lead review, 2026-09-15): a ``synthetic`` transport boot with a
+        non-null ``wire_codec`` declared must also refuse at the compose level — the shared
+        ``config_dir`` fixture already writes ``wire_codec: null``, so this only needs to
+        overwrite the OCP file with a non-null codec before composing (no kis-mock
+        scope/custody dance needed — the active scope stays the default SYNTHETIC one).
+        """
+        config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
+        (config_dir / "order_construction_policy.yaml").write_text(
+            ocp_yaml(
+                environment=_VENUE_POLICY_ENVIRONMENT,
+                account=_VENUE_POLICY_ACCOUNT,
+                instrument=_VENUE_POLICY_INSTRUMENT,
+                wire_codec='{kind: kis-order-cash-v1, wire_fields: ["CANO"]}',
+            ),
+            encoding="utf-8",
+        )
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(VenuePolicyScopeMismatch):
             compose_paper_runtime(
