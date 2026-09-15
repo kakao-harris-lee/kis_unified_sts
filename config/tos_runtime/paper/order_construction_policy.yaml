@@ -1,0 +1,98 @@
+# =============================================================================
+# Order Construction Policy — paper / KRX index futures (KOSPI200)
+# =============================================================================
+# INSTANCE of tos-spec/src/part-1-foundation/verification/ORDER-CONSTRUCTION-POLICY-template.yaml
+# (placement + activation per tos-spec/src/decision-records/DR-0002 §2.1/§2.2;
+# v1 coverage per DR-0002 §2.3 — the kernel record's covered content is
+# policy_id / policy_generation / policy_version ONLY; signer / approval /
+# evidence-package binding is a kernel-round candidate, so they stay unbound).
+#
+# APPROVAL PROVENANCE: docs/plans/2026-09-15-tos-venue-constraint-service-plan.md
+# §6 ② proposal table, adopted by the operator on 2026-09-16.
+#
+# TRANSPORT BINDING (`_runtime.wire_codec`): the paper compose default is the
+# SYNTHETIC transport, for which the loader requires `wire_codec: null`. A
+# `--transport kis-mock` deployment must instead declare
+#   wire_codec: {kind: "kis-order-cash-v1", wire_fields: [CANO, ACNT_PRDT_CD,
+#   PDNO, ORD_DVSN, ORD_QTY, ORD_UNPR, EXCG_ID_DVSN_CD, SLL_TYPE, CNDT_PRIC]}
+# (tos_runtime/transport/kis_mock/codec.py KIS_ORDER_CASH_WIRE_FIELDS) — that
+# is a NEW policy generation, not an in-place edit.
+#
+# OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"): scope.accounts,
+# scope.instruments (same values as venue_constraint_policy.yaml), then
+# `tos-runtime print-policy-digests --config-dir <dir>` → safety_activation.yaml
+# `members:` (kind ORDER_CONSTRUCTION_POLICY).
+# =============================================================================
+
+artifact_type: ORDER_CONSTRUCTION_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: "ocp-paper-krx-index-futures"
+policy_generation: 1
+construction_generation: 1
+canonical_digest: TBD
+status: ISSUED
+effective_from: "2026-09-16"
+review_due: null
+scope:
+  environments: ["paper"]
+  safety_cells: []
+  brokers: ["KIS_KOREA_INVESTMENT_SECURITIES"]
+  accounts: ["TBD"]
+  venues: []
+  market_segments: []
+  instruments: ["TBD"]
+  contracts: []
+  action_classes: ["NEW_LONG", "NEW_SHORT", "CLOSE"]
+  order_types: ["LIMIT"]
+intent_schema_versions: []
+authorized_construction_envelope_schema_versions: []
+canonical_broker_command_schema_versions: []
+economic_effect_envelope_schema_versions: []
+order_conformance_proof_schema_versions: []
+field_presence_and_mapping_rules:
+  - "compiler = tos.egressgw.construction.construct_candidate_command (kernel); no runtime mapping is authored outside the kernel"
+account_instrument_contract_and_route_rules:
+  - "route identity = egress_coordinates.yaml route_identity; account/instrument = ConstructionConfig (single live scope)"
+direction_side_and_position_effect_rules:
+  - "long/short symmetric: NEW_LONG↔BUY/OPEN, NEW_SHORT↔SELL/OPEN, CLOSE↔opposite side/CLOSE"
+unit_multiplier_currency_and_numeric_rules:
+  - "quantity unit CONTRACTS; price at ×100 integer index-point scale (tick 5 = 0.05pt); currency KRW"
+price_tick_lot_quantity_and_rounding_rules:
+  - "no silent rounding — construction denies an off-grid shape rather than rounding it"
+order_type_time_in_force_expiration_and_mode_rules:
+  - "LIMIT / DAY only; non-live (paper) environment and route identity are carried explicitly"
+split_aggregation_retry_cancel_amend_and_replace_rules: []
+canonicalization_and_duplicate_field_rules:
+  - "canonicalization_version ev-l1-provisional-0 (EV_L1_PROVISIONAL_VERSION) — must equal the compose scheme"
+serializer_sdk_signer_and_actual_outbound_rules:
+  - "synthetic transport: no wire codec; kis-mock: KisOrderWireCodec (9 fields, sorted-key JSON, sha256) — declared under _runtime.wire_codec per transport"
+compiler_dependency_and_compatibility_rules:
+  - "compiler identity = the installed source-tree digest admitted by release.yaml (tos_runtime.operations.dependency_admission)"
+economic_effect_and_capacity_rules: []
+invalidation_and_failure_responses:
+  - "construction failure is denial; unknown conformance is UNKNOWN (TOS-GAP-001)"
+common_mode_requirements: []
+residual_risks:
+  - "signer_identity / approval_identity / evidence_package_ref are not bound in v1 (kernel construct_candidate_command takes the three coordinates only — kernel round #4 candidate)"
+approved_by: ["operator (System Owner) — 2026-09-16, plan §6 ② 채택"]
+authority:
+  grants_approval: false
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+evidence:
+  activation_record_id: TBD
+  independent_review_id: "PR #694 / #699 independent review (sonnet) — see plan §7"
+  evidence_location: "evidence store row ORDER_CONSTRUCTION_POLICY_BOUND"
+_model_view:
+  policy_generation: 1
+  policy_version: "1.0.0"
+_runtime:
+  canonicalization_version: "ev-l1-provisional-0"
+  wire_codec: null
