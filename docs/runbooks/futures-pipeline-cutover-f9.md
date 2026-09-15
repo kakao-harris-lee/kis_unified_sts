@@ -290,25 +290,33 @@ artifacts, or written operator approval.
   ```
 
   The daemons log through `logging.basicConfig` (stderr), so every `docker logs`
-  pipe below needs `2>&1`. Raw count per verdict and rejecting filter (every
-  evaluation, redeliveries included):
+  pipe below needs `2>&1`. Count from the harvested files (step "Harvest the
+  session's logs" below) — they are what an observation-log row cites, and they
+  survive a redeploy. `sort -u` puts every harvest of the day in time order
+  (lines start with the KST `asctime`) and drops the lines two overlapping
+  harvests of the same container both contain, while keeping real redeliveries
+  (their timestamps differ). For a live look mid-session, replace the `cat` with
+  `docker logs --since <session start> kis_paper-futures-risk-filter 2>&1`.
+
+  Raw count per verdict and rejecting filter (every evaluation, redeliveries
+  included):
 
   ```bash
-  docker logs --since <session start> kis_paper-futures-risk-filter 2>&1 \
-    | grep -F "risk_filter verdict=" \
+  cat reports/f9-gate1/<KST date>/futures-risk-filter.*.log \
+    | grep -F "risk_filter verdict=" | sort -u \
     | grep -oE "verdict=(passed|rejected)|filter=[^ ]+" | paste -d' ' - - \
     | sort | uniq -c
   ```
 
   A candidate whose signals_all enqueue / final XADD / expire / approval
-  hold fails is left pending and redelivered (XAUTOCLAIM), and logs a fresh
-  verdict line under the SAME `msg_id` each time — the raw count above then
-  overstates passes. De-duplicated count, keeping the last evaluation per
-  stream entry:
+  hold fails is left pending and redelivered (XAUTOCLAIM, also into a
+  recreated container), and logs a fresh verdict line under the SAME `msg_id`
+  each time — the raw count above then overstates passes. De-duplicated count,
+  keeping the last evaluation per stream entry across all of the day's files:
 
   ```bash
-  docker logs --since <session start> kis_paper-futures-risk-filter 2>&1 \
-    | grep -F "risk_filter verdict=" \
+  cat reports/f9-gate1/<KST date>/futures-risk-filter.*.log \
+    | grep -F "risk_filter verdict=" | sort -u \
     | awk '{v=f=m=""; for (i = 1; i <= NF; i++) {
               if ($i ~ /^verdict=/) v = $i; else if ($i ~ /^filter=/) f = $i;
               else if ($i ~ /^msg_id=/) m = $i }
@@ -316,12 +324,26 @@ artifacts, or written operator approval.
     | sort | uniq -c
   ```
 
-  The de-duplicated total must equal the day's `signal.candidate.futures.shadow`
-  entries; a raw total above it is the redelivery count. `filter=` names the
-  rejecting filter (`-` on a pass) and is what a CLOSED row cites;
-  `size_multiplier=` is the product actually forwarded to order_router
-  (`layer_size_multiplier` × `entry_size_factor`), and `outcomes=` marks a
-  filter that passed but scaled size as `name:pass@0.50`.
+  The last line per `msg_id` is the final evaluation, not always the one that
+  took effect: when the final XADD succeeded and only the TTL `expire` failed,
+  the earlier pass was already forwarded and the redelivery can forward it again
+  or be rejected (#696). A `msg_id` with more than one line is worth reading in
+  full.
+
+  Reconciling with the candidate stream: the de-duplicated total equals the
+  day's `signal.candidate.futures.shadow` entries **minus** the distinct
+  `Unparseable candidate; ACKing as poison-pill` lines (same `cat … | sort -u`;
+  ACKed with no verdict);
+  any remaining shortfall should equal the entries whose evaluation keeps
+  raising (`Filter evaluation failed … leaving pending` — no verdict line, still
+  in `XPENDING signal.candidate.futures.shadow risk_filter`). A raw total above
+  the de-duplicated one is the redelivery count. `filter=` names the rejecting
+  filter (`-` on a pass) and is what a CLOSED row cites. On `verdict=passed`
+  lines `size_multiplier=` is the product forwarded to order_router (or held
+  for Telegram approval when that gate is on) — `layer_size_multiplier` ×
+  `entry_size_factor`; on `verdict=rejected` lines nothing is forwarded and the
+  field only echoes the entry factor, so do not read it as a size. `outcomes=`
+  marks a filter that passed but scaled size as `name:pass@0.50`.
 - **The shadow `LeverageFilter` reads the SHADOW book.** Until PR #667 the
   risk-filter process never set `TRADING_STATE_KEY_SUFFIX` (the monitor does),
   so the filter read `trading:futures:positions` — the orchestrator's book — and
@@ -347,19 +369,24 @@ artifacts, or written operator approval.
   close (and before any redeploy, even mid-day), per session:
 
   ```bash
-  D=$(TZ=Asia/Seoul date +%F); OUT=reports/f9-gate1/$D; mkdir -p "$OUT"
+  D=$(TZ=Asia/Seoul date +%F); TS=$(TZ=Asia/Seoul date +%H%M%S)
+  OUT=reports/f9-gate1/$D; mkdir -p "$OUT"
   for c in futures-risk-filter futures-order-router futures-monitor; do
-    docker logs --since "${D}T08:00:00+09:00" "kis_paper-$c" > "$OUT/$c.log" 2>&1
+    docker logs --since "${D}T08:00:00+09:00" "kis_paper-$c" > "$OUT/$c.$TS.log" 2>&1
   done
   # decision-engine: see the --tail caveat above until the container is recreated
-  docker logs --tail 900 kis_paper-futures-decision-engine > "$OUT/futures-decision-engine.log" 2>&1
-  grep -c "risk_filter verdict=" "$OUT/futures-risk-filter.log"   # non-zero on any day with candidates
+  docker logs --tail 900 kis_paper-futures-decision-engine > "$OUT/futures-decision-engine.$TS.log" 2>&1
+  grep -c "risk_filter verdict=" "$OUT"/futures-risk-filter.*.log   # per harvest; non-zero on any day with candidates
   ```
 
-  `reports/**` is git-ignored; cite the harvested files (path + line count) in
-  the observation-log row, not the live `docker logs` output. A mid-session
-  redeploy splits the day: harvest before it and again at the close, and read
-  both files together.
+  Every harvest writes new `<service>.<HHMMSS KST>.log` files, so harvesting
+  before a mid-session redeploy and again at the close keeps both halves of the
+  day — never rename or overwrite them. The per-file `grep -c` overlaps when a
+  container was harvested twice without being recreated; count across files
+  only with the `sort -u` commands in "Every risk-filter verdict is on the log"
+  above. `reports/**` is git-ignored; cite the harvested files (paths + the
+  de-duplicated counts) in the observation-log row, not live `docker logs`
+  output.
 
 **Shadow observation log** (Gate 1 — feeds the Gate 2 one-line summary):
 
@@ -485,7 +512,7 @@ inventory"). Line numbers here are as of `26fc52b0` and will drift.
 | Margin gate position source | none — the monolith builds no margin gate (`futures:risk:latest` is published beside it, not read by it) | `MarginGateFilter` armed (`risk.yaml` `margin_gate.mode: enforce`, rejects `block_new_entries` ≥ 0.80 / `critical` ≥ 0.90 margin usage, `futures_margin.yaml` thresholds) reads `futures:risk:latest`, which `services/futures_margin_risk` (scheduler, every 10 min 08–15 KST) computes from the UNSUFFIXED `trading:futures:positions` — the orchestrator's book. `services/risk_filter` passes no `margin_snapshot_provider`, so PR #667's suffix binding moves only the LeverageFilter to the shadow book, not this gate | **shadow contamination, not yet measured** — one full-size orchestrator contract ≈ 275M × 0.08 ≈ 22M = 44% of 50M (`ok`, as observed 2026-09-10); two held at once (A/C/D overlap) ≈ 88% → every shadow candidate is rejected `margin_gate_block_new_entries` whatever the shadow book holds. Until the code fix (#690: in-process margin computation from the shadow positions, no new Redis key) read verdict-log `filter=margin_gate` rejections inside such a window as contamination, not as evidence for or against any row; CLOSED after #690 is deployed |
 | Daily / weekly MDD | catastrophic-only breaker (#600; P&L in points, no equity denominator) | `DailyMDDFilter` / `WeeklyMDDFilter` on `risk.account_equity_krw` — was 5,000,000 (3% = 150,000 KRW; one full-size stop-loss of −588,839 KRW locked 2026-09-10 out after 09:41); PR #667 makes it `${FUTURES_MARGIN_FALLBACK_EQUITY:50000000}` (the leverage / margin lane's denominator → 1,500,000 KRW per day). Side effect: the same `FuturesRiskConfig.from_yaml()` feeds the MDD filters of `scripts/walk_forward_{phase3,sensitivity,bootstrap}.py` and `scripts/optimize_decision_engine.py`, so backtests re-run after #667 carry the 10× looser ceiling than the archived Setup A/C/D artefacts | **divergence, measured 2026-09-10** — decoupled-only control; the value (and the backtest re-baseline) is an operator decision, record ACCEPTED with the number |
 | Setup D volatility-gate window cadence | `shared/decision/setups/vwap_reversion.py::_vol_reference` — the same 780-bar trailing window, filled on every tick (~90/min → ≈10 min of history) | same code, filled once per 60 s bar (≈2 sessions — the design's own unit, plan 2026-09-08-setup-d-decoupled-port) | **intentional deviation, measured 2026-09-10** — 11:02 monolith `vol_below_gate(0.89<0.9)` then fired 6 shorts 12:04–13:39 (all stop-loss); shadow held `vol_below_gate` 0.66→0.37 from 11:00 and fired none. Not a wiring gap; dispose ACCEPTED (the decoupled cadence is canonical) |
-| Risk-filter verdict observability | n/a (monolith gates log inline) | rejections were silent — `handle_message` ACKed without a log, `layer.py:82` "Signal rejected" is a docstring example, `SignalsAllWriter` is the `shared/backtest` no-op, no metric; PR #667 logs `risk_filter verdict=… filter=… reason=…` per candidate | **prerequisite** — no CLOSED row above can be evidenced without it; 2026-09-10 had 29 unexplained rejections |
+| Risk-filter verdict observability | n/a (monolith gates log inline) | rejections were silent — `handle_message` ACKed without a log, `layer.py:82` "Signal rejected" is a docstring example, `SignalsAllWriter` is the `shared/backtest` no-op, no metric; PR #667 logs `risk_filter verdict=… msg_id=… filter=… reason=…` per evaluation (a redelivered candidate logs again under the same `msg_id`) | **prerequisite** — no CLOSED row above can be evidenced without it; 2026-09-10 had 29 unexplained rejections |
 | Setup D adapter-layer entry gates | `shared/strategy/entry/setup_d_adapter.py`: the `short_blocked_regimes: ["BULL_STRONG"]` direction block (PR #559, `setup_d_vwap_reversion.yaml`) — the only one in force. The file's `regime_gate` block is `enabled: false`, and Setup D's adapter carries no LLM tuning/veto and no daily-bias filter | none — the daemon calls the Setup CORE (`shared/decision/setups/vwap_reversion.py`) directly, so the adapter layer does not travel with the cutover | **intentional deviation** — operator decision ② 2026-09-09: not ported; observed via setup_eval |
 | Setup A `regime_gate` | `shared/strategy/gates/regime_gate.py` via the Setup A adapter; `regime_gate.enabled: true` in `config/strategies/futures/setup_a_gap_reversion.yaml` (activated 2026-05-23, PR #330 follow-up). Blocks entries on the live HAR-RV / event-impact regime | none — same reason as the Setup D row above | **OPEN** — needs operator disposition (decision ② covered Setup D only) |
 
