@@ -24,6 +24,59 @@ Two layers, deliberately NOT sharing fixtures across suites (mirrors
 * One ``compose_paper_runtime``-level boot-refusal test (``RiskStateConfigError``) using the
   shared ``config_dir`` fixture UNMODIFIED (it never carries the two risk-state policy files,
   so it is the correct fixture for "files absent" cases).
+* **E2E layer (``TestComposeE2E``)** — the plan's own acceptance criterion (§1: "합성 paper
+  e2e 에서 step 6/7 GRANT 가 손으로 지은 리터럴 없이 도달"): the FULL compose stack, driven
+  through the SAME 2-``run_once``-call pattern ``test_compose_root.py``'s own ADMIT tests use
+  (first call discovers the proposal digest and writes the operator approval file; second call
+  reaches the steps this wave's own service feeds), with BOTH
+  ``aggregate_risk_inputs_provider``/``action_flow_inputs_provider`` left ``None`` — the
+  production :class:`~tos_runtime.riskstate.service.RiskStateService` default. Uses
+  ``config_dir_with_risk_state`` (:mod:`tests.compose.conftest`), an OPT-IN layered fixture
+  built on top of the shared ``config_dir`` (mirroring that module's own
+  ``mismatched_release_config_dir`` idiom) — the ~400 other compose e2e tests requesting
+  ``config_dir`` directly are completely unaffected.
+
+  **Honest finding, reported per team-lead disposition 2026-09-16, not papered over: step 7
+  (ACTION_FLOW_DECISION) reaches UNKNOWN, never GRANT, through the REAL
+  ``tos.afg.amplification_bounded`` predicate — a pre-existing, disclosed gap in lane a's own
+  ``flow_observation.py``, not something this wave's wiring can close.**
+  ``amplification_bounded`` (``tos/src/tos/afg/predicates.py:311-353``) iterates ALL 11
+  ``ActionAmplificationEnvelope`` axes unconditionally and returns ``False`` the instant ANY
+  bound OR its paired observed count is ``None``. Two of those axes —
+  ``max_duplicate_redelivery_expansion``/``duplicate_redelivery_expansion`` and
+  ``max_failover_reconnect_replay_expansion``/``failover_reconnect_replay_expansion`` — have a
+  bound the governor's own ``declares_every_bound()`` REQUIRES be concrete just to construct
+  (``tos/src/tos/afg/records.py:252-262``, ``all(... is not None for name in
+  type(self).model_fields)``), while their OBSERVED counterpart
+  (:class:`~tos_runtime.riskstate.flow_observation.FlowObservation`'s own
+  ``duplicates_rejected``/``replays`` fields) is documented by lane a as STRUCTURALLY always
+  ``None`` in this runtime: no durable per-root-cause dedup or replay counter exists anywhere
+  in ``tos_runtime`` (``SqliteEventInbox.enqueue``'s own ``InboxReceipt.duplicate`` is a
+  transient return value, never durably counted; the only durable replay-verdict evidence is a
+  ONE-PER-BOOT whole-log verdict, not a per-cause count — that module's own "Two fields this
+  fixed 3-argument reader cannot honestly source" section). The combination is airtight: a
+  required-concrete bound paired with a structurally-unobservable count means
+  ``amplification_bounded`` can NEVER return ``True`` for ANY attempt, in ANY deployment of
+  this runtime as it stands — regardless of how correctly :class:`RiskStateService` wires
+  everything else (this suite independently confirms every OTHER witness
+  ``action_flow_decision`` needs — ``scope_graph_complete``, ``cause_lineage_complete`` (after
+  the ``lineage_found`` pre-seal fix below), ``envelope_not_enlarged``,
+  ``atomic_economic_flow_coverage`` — is genuinely satisfied). Closing this gap needs a durable
+  per-root-cause dedup/replay counter added to the inbox's own schema — kernel-adjacent runtime
+  work outside this wave's remit, reported here as a concrete next-wave candidate rather than
+  worked around with a literal.
+
+  **A second, real fix landed alongside this finding, NOT reported as a gap:**
+  :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe`'s own
+  ``this_attempt_lineage_found`` used to require a durable ``SEND_SEALED`` row already tracing
+  to the root event — a condition that can NEVER hold for a brand-new attempt being evaluated
+  at step 7, strictly BEFORE step 15 ever seals anything for it (measured directly against
+  this suite's own e2e run: ``lineage_attested`` was always ``False`` pre-fix). Fixed by
+  falling back to "the root event's own durable presence at a positively resolved inbox seq"
+  (via the SAME ``current_seq_reader`` this wave already wired) when NO sealed row exists yet
+  for this specific attempt — the SEND_SEALED-tracing check still stands, unchanged, for an
+  ALREADY-sealed attempt whose seal does NOT trace to its claimed root (a genuine
+  inconsistency). See :mod:`tos_runtime.riskstate.flow_observation`'s own module docstring.
 """
 
 from __future__ import annotations
@@ -42,6 +95,7 @@ from tos.engine.vocabulary import CommitmentStep
 from tos.ordering import OrderingEvent
 from tos.spg import GovernedDimensionLimit, HardSafetyEnvelope
 from tos.venue import ActionClass
+from tos_runtime.calendar.ports import FixedWallClockReference
 from tos_runtime.compose._riskstate_wiring import (
     RiskPolicyScopeMismatch,
     build_risk_state_service,
@@ -65,6 +119,12 @@ from ..riskstate._documents import (
     aggregate_risk_policy_yaml,
 )
 from . import _fixtures as fx
+from . import _symmetry_fixtures as sfx
+from .conftest import config_dir as _config_dir_fixture
+from .conftest import config_dir_with_risk_state as _config_dir_with_risk_state_fixture
+from .conftest import custody_root as _custody_root_fixture
+from .conftest import data_dir as _data_dir_fixture
+from .conftest import write_approval_file
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
@@ -737,7 +797,6 @@ def test_compose_paper_runtime_with_explicit_providers_leaves_risk_state_none(
     """Plan §5 실증 (8): explicit providers are still honored when the two policy files are
     absent — ``ComposedRuntime.risk_state`` stays ``None`` (the pre-existing test seam).
     """
-    from tos_runtime.calendar.ports import FixedWallClockReference
     from tos_runtime.risk.aggregate import AggregateRiskDecisionInputs
     from tos_runtime.risk.flow import ActionFlowDecisionInputs
 
@@ -760,3 +819,174 @@ def test_compose_paper_runtime_with_explicit_providers_leaves_risk_state_none(
         wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
     )
     assert runtime.risk_state is None
+
+
+# ===========================================================================
+# E2E layer — the plan's own acceptance criterion (module docstring)
+# ===========================================================================
+
+
+def _fresh_risk_state_dirs(root: Path) -> tuple[Path, Path, Path]:
+    """One independent ``(config_dir_with_risk_state, data_dir, custody_root)`` triple under
+    ``root`` — mirrors ``test_symmetry.py::_fresh_compose_dirs``'s own ``__wrapped__`` idiom
+    (pytest refuses a fixture function called directly; the plain function each decorator
+    wraps is reachable via ``__wrapped__``), extended one layer to also apply
+    ``config_dir_with_risk_state`` on top of the base ``config_dir``."""
+    root.mkdir(parents=True, exist_ok=True)
+    config_dir = _config_dir_fixture.__wrapped__(root)
+    config_dir = _config_dir_with_risk_state_fixture.__wrapped__(config_dir)
+    data_dir = _data_dir_fixture.__wrapped__(root)
+    custody_root = _custody_root_fixture.__wrapped__(root)
+    return config_dir, data_dir, custody_root
+
+
+def _drive_two_calls(runtime, custody_root: Path, event):
+    """The SAME two-``run_once``-call pattern ``test_compose_root.py``'s own ADMIT tests use
+    (first call discovers the proposal digest and writes the approval file; second call
+    reaches the steps this wave's service feeds) — returns the second call's own
+    ``FlowResult``."""
+    results = runtime.run_once((event,))
+    proposal_digest = results[0].pipeline.proposal.canonical_digest
+    construction = runtime.construction_stage.construction
+    assert construction is not None and construction.intent is not None
+    write_approval_file(
+        custody_root,
+        proposal_digest=proposal_digest,
+        environment_label="non-live-test",
+        approved_intent_envelope_digest=construction.intent.canonical_digest,
+    )
+    results2 = runtime.run_once((event,))
+    flow = results2[0].flow
+    assert flow is not None
+    return {v.step.value: v for v in flow.verdicts}
+
+
+def _evidence_kind_counts(runtime) -> dict[str, int]:
+    rows = runtime.evidence_store.connection.execute(
+        "SELECT kind FROM entries ORDER BY seq ASC"
+    ).fetchall()
+    counts: dict[str, int] = {}
+    for (kind,) in rows:
+        counts[kind] = counts.get(kind, 0) + 1
+    return counts
+
+
+class TestComposeE2E:
+    """The plan's own acceptance criterion, driven through the FULL compose stack with no
+    explicit providers (module docstring's own "E2E layer" section — read that first for the
+    honest step 7 finding this class's own assertions reflect)."""
+
+    def test_first_attempt_reaches_aggregate_risk_grant(
+        self,
+        config_dir_with_risk_state: Path,
+        data_dir: Path,
+        custody_root: Path,
+    ) -> None:
+        """Plan §5 실증 (1) — no explicit providers, the production
+        :class:`~tos_runtime.riskstate.service.RiskStateService` supplies both steps 6/7's
+        inputs. Step 6 (AGGREGATE_RISK_DECISION) reaches a real ``GRANT``/``ADMIT`` with no
+        hand-built literal cell anywhere in this test. Step 7 (ACTION_FLOW_DECISION) reaches
+        ``UNKNOWN`` — the module docstring's own honest ``amplification_bounded`` finding,
+        asserted here as the REAL outcome, never papered over. Both ``*_POLICY_BOUND`` rows
+        and exactly one ``RISK_STATE_OBSERVED`` row are recorded."""
+        fx.write_band_strategy_file(config_dir_with_risk_state)
+        runtime = compose_paper_runtime(
+            config_dir_with_risk_state,
+            data_dir,
+            custody_root,
+            "non-live-test",
+            construction=fx.construction_config(),
+            aggregate_risk_inputs_provider=None,
+            action_flow_inputs_provider=None,
+            wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
+        )
+        assert runtime.risk_state is not None
+
+        event = fx.crossing_event()
+        verdict_by_step = _drive_two_calls(runtime, custody_root, event)
+
+        are_verdict = verdict_by_step["AGGREGATE_RISK_DECISION"]
+        assert are_verdict.outcome.value == "ADMIT", are_verdict.reason
+        assert are_verdict.native_verdict_value == "GRANT"
+
+        afg_verdict = verdict_by_step["ACTION_FLOW_DECISION"]
+        assert afg_verdict.outcome.value == "UNKNOWN", (
+            "expected the honest amplification_bounded gap (module docstring) — got "
+            f"{afg_verdict.outcome.value}: {afg_verdict.reason}"
+        )
+
+        counts = _evidence_kind_counts(runtime)
+        assert counts.get("AGGREGATE_RISK_POLICY_BOUND") == 1
+        assert counts.get("ACTION_FLOW_POLICY_BOUND") == 1
+        assert counts.get("RISK_STATE_OBSERVED") == 1
+
+    def test_seeded_prior_fill_flips_aggregate_risk_decision_to_deny(
+        self,
+        config_dir_with_risk_state: Path,
+        data_dir: Path,
+        custody_root: Path,
+    ) -> None:
+        """Plan §5 실증 (2) — a durable prior fill large enough to exceed the policy's own
+        effective limit (``_RISK_STATE_ENVELOPE_MAX``, ``tests/compose/conftest.py``) flips
+        step 6 from ``GRANT`` to ``DENY`` on the very next attempt, via the REAL
+        ``tos.are.adverse_increment`` headroom check over the position observation's own
+        durable-evidence fold — no hand-built cell anywhere in this test either."""
+        fx.write_band_strategy_file(config_dir_with_risk_state)
+        runtime = compose_paper_runtime(
+            config_dir_with_risk_state,
+            data_dir,
+            custody_root,
+            "non-live-test",
+            construction=fx.construction_config(),
+            aggregate_risk_inputs_provider=None,
+            action_flow_inputs_provider=None,
+            wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
+        )
+        # A prior fill comfortably over the fixture's own 100_000 effective limit — the SAME
+        # durable evidence-row SHAPE the real synthetic transport would produce (module
+        # docstring's own unit-layer helpers, reused here against the real evidence store).
+        _seed_send_sealed(
+            runtime.evidence_store,
+            attempt_id="prior-fill-attempt",
+            side="BUY",
+            quantity="99990",
+        )
+        _seed_egress_result(
+            runtime.evidence_store,
+            kind="EGRESS_RESULT_CONSUMED",
+            attempt_id="prior-fill-attempt",
+            filled_quantity="99990",
+        )
+
+        event = fx.crossing_event()
+        verdict_by_step = _drive_two_calls(runtime, custody_root, event)
+        are_verdict = verdict_by_step["AGGREGATE_RISK_DECISION"]
+        assert are_verdict.outcome.value == "DENY", are_verdict.reason
+        assert are_verdict.native_verdict_value == "DENY"
+
+    def test_new_short_mirrors_new_long_at_aggregate_risk_grant(
+        self, tmp_path: Path
+    ) -> None:
+        """Plan §5 실증 (7) — the NEW_SHORT mirror (:mod:`tests.compose._symmetry_fixtures`,
+        TOS Phase 5 W5 plan §2 decision 8) reaches the SAME step 6 ``GRANT``/``ADMIT`` as the
+        NEW_LONG case, through the real ``EvidencePositionReader`` — position sign flips
+        (``SELL`` vs ``BUY``), usage MAGNITUDE (and therefore the decision) does not."""
+        config_dir, data_dir, custody_root = _fresh_risk_state_dirs(tmp_path / "short")
+        sfx.write_mirrored_strategy_file(config_dir)
+        runtime = compose_paper_runtime(
+            config_dir,
+            data_dir,
+            custody_root,
+            "non-live-test",
+            construction=sfx.mirrored_construction_config(),
+            aggregate_risk_inputs_provider=None,
+            action_flow_inputs_provider=None,
+            wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
+        )
+        assert runtime.risk_state is not None
+
+        event = fx.crossing_event()
+        verdict_by_step = _drive_two_calls(runtime, custody_root, event)
+        are_verdict = verdict_by_step["AGGREGATE_RISK_DECISION"]
+        assert are_verdict.outcome.value == "ADMIT", are_verdict.reason
+        assert are_verdict.native_verdict_value == "GRANT"
