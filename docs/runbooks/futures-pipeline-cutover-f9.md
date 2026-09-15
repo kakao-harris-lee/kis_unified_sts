@@ -338,6 +338,28 @@ artifacts, or written operator approval.
   at the boundary: `docker logs` without `--tail`, with `--since`, or with a
   `--tail` large enough to cross it stop at 2026-09-09 23:30. `--tail 900` and
   smaller return the current day. Recreating the container clears it.
+- **Harvest the session's logs before anything recreates a container.** The
+  verdict lines are the only record of a shadow rejection, and they live only in
+  each container's json-file log, which rotates at 10m × 3
+  (`docker-compose.yml` `x-pipeline-service` logging) and is discarded with the
+  container — `scripts/deploy_paper.sh`, `up -d --force-recreate`, or a rebuild
+  erases the Gate 1b evidence for every session not yet copied out. After the
+  close (and before any redeploy, even mid-day), per session:
+
+  ```bash
+  D=$(TZ=Asia/Seoul date +%F); OUT=reports/f9-gate1/$D; mkdir -p "$OUT"
+  for c in futures-risk-filter futures-order-router futures-monitor; do
+    docker logs --since "${D}T08:00:00+09:00" "kis_paper-$c" > "$OUT/$c.log" 2>&1
+  done
+  # decision-engine: see the --tail caveat above until the container is recreated
+  docker logs --tail 900 kis_paper-futures-decision-engine > "$OUT/futures-decision-engine.log" 2>&1
+  grep -c "risk_filter verdict=" "$OUT/futures-risk-filter.log"   # non-zero on any day with candidates
+  ```
+
+  `reports/**` is git-ignored; cite the harvested files (path + line count) in
+  the observation-log row, not the live `docker logs` output. A mid-session
+  redeploy splits the day: harvest before it and again at the close, and read
+  both files together.
 
 **Shadow observation log** (Gate 1 — feeds the Gate 2 one-line summary):
 
