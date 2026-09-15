@@ -142,6 +142,22 @@ class VenueConstraintService:
 4. 커널 라운드 #4 후보 등재 여부: `construct_candidate_command(policy: OrderConstructionPolicy)`(signer/approval/evidence 결속) · `VenueShapeConstraints` 가격대별 tick **표**(주식) · 계약월 정체성.
 5. band/tradability 원천 웨이브 순서: broker 조회(P-CA 관용구 · GET-only) vs marketfeed 기준가 — (b)(c) 와 함께 다음 결정.
 
-## 7. 착지 기록
+## 7. 착지 기록 (2026-09-15/16)
 
-(레인 착지 후 기입)
+| 레인 | PR → main | 커밋 | 내용 |
+|---|---|---|---|
+| S(spec) | **#688 → `018abe79`** | 1 | `decision-records/DR-0002` + SUMMARY(템플릿·RFC·ADR 무접촉 · `tos_spec_status --check` PASS) · 독립 리뷰(사실 대조) LOW 1 · Status 문언은 `Proposed`(운영자 확인 ① 뒤 1줄 전환) |
+| a(패키지) | **#694 → `13281d23`** | `ed82b850`·`3bc72225`·`0a725a2d`·`22e5b2e4` | `tos_runtime/venue/`: `config.py`(재수출 shim 159) · `_policy_primitives.py` 274 · `_venue_policy_loader.py` 477 · `_order_construction_policy_loader.py` 260 · `activation.py` 198 · `service.py` 400 · tests 88 · 계획 문서 동반 착지 |
+| b(결선) | **#699 → `a71d6773`** | `8005ac60`·`e498d1f1`·`79569088` | `compose/_venue_wiring.py` 444(신설) · `_venue_phase.py` 삭제 · `ConstructionConfig` venue 5필드 삭제 · `_wiring.py` 리터럴 제거(1118→1122 재등재) · `context.py` attempt 단위 읽기(885→878) · `root.py` 캘린더 1회 로드 공유(413→449) · `_session_wiring.py` provider 서비스화 · `cli.py` `print-policy-digests` + 차단 목록 (a)→(a′)(905→980) · tests 107(venue+`test_venue_wiring.py`) |
+
+- **리뷰 이력**(sonnet · 저자와 다른 패스 · 뮤테이션 실행표 필수):
+  - 레인 a 1차 **BLOCKER 1 · HIGH 1**: 템플릿 형상 미구현(정정 메시지가 레인 완료 뒤 도착 — 원안 §4.1 스칼라 scope 로 착지) · activation digest 부분일치 핀 부재(M10 GREEN) → `3bc72225`/`0a725a2d` → 재심 **MEDIUM 1**(`effective_from`/`review_due` 존재 검사 · OCP `action_classes` 미검증) → `22e5b2e4`(+`config.py` 1016행 초과 → **분할**) → 뮤테이션 M1~M14 전건 red.
+  - 레인 b 1차 **HIGH 2 · MEDIUM 1**(코드 결함 0 · 핀 부재): brokercap digest 발명 무감지(M6 GREEN) · step 3 verdict 의 decision 결속 무감지(M9 GREEN) · kis-mock `wire_codec: null` 컴포즈 레벨 거부 e2e 부재(픽스처가 항상 덮어씀) → `79569088`(실 KIS 초안 INSTANCE 로드 핀 · `bound_digest/identity == decision` 핀 · `write_kis_mock_transport_config(wire_codec=…)` + e2e 2) → 재심 지적 0 · M6/M9/M10-e2e red.
+- **종료 조건 대비(§5)**: 실증 (1) 부팅 evidence 2종 1회·step 3 ADMIT·item 11 SATISFIED·`decision.result == fold`·candidate digest 결속 ✓ (2) 같은 tick 스냅샷 1·결정 2·generation 불변 ✓ (3) CLOSED → INADMISSIBLE·DENY ✓ (4) 재부팅 generation 단조 ✓ (5) `print-policy-digests` == `VENUE_POLICY_BOUND` digest ✓ (6) 미러는 verdict/evidence 시퀀스 동일(`test_symmetry.py`)로 간접 — decision 필드 직접 비교는 없음(정직 등재) (7) `run` 파싱 전용 + 개정 목록 ✓ · 뮤테이션 M1~M12 전건 red(레인 a 표 M1~M14 · 레인 b 표 M1~M11 + 재심 3).
+- **발견·정정**:
+  - 서베이 오판: `find … | head -20` 절단으로 «VCP/OCP 템플릿 없음» 으로 계획 초안을 썼음 → `verification/` 87종 중 4종 존재 확인 후 §0/§2.6/§4/§4.1 정정 · 레인 S 범위를 DR-0002 만으로 축소 · 인스턴스 = 템플릿 형상 + `_model_view`/`_runtime`(brokercap INSTANCE 관용구).
+  - 공유 워크트리 충돌: 리뷰어 뮤테이션(`git checkout --` 되돌리기) 중 레인 a 가 늦게 도착한 정정을 적용 시작 → 리뷰어가 감지·중단(피해 0). 규칙: **리뷰 중에는 같은 워크트리의 레인에 편집 지시를 보내지 않는다.**
+  - OCP v1 covered 내용 = id/version/generation 만: 커널 `construct_candidate_command` 가 좌표 3 만 받아 자체 발행하므로 로더가 signer/approval 을 채우면 같은 id·다른 digest = `CRITICAL_CONFLICT` 형상 → 커널 라운드 #4 후보(§6 ④).
+  - synthetic scope 는 `instance_document is None` → decision 의 brokercap version/digest 둘 다 None(정직) · kis-mock scope 는 DRAFT 초안 → version 실값 · digest None.
+  - `_wiring.py` 순증 0 목표 미달(+4: mypy 좁히기 assert 2 — 커널 필드가 `.issue()` 뒤에도 `str | None`) · `root.py` +33(캘린더 1회 로드 공유) · `cli.py` +75 — 전부 드리프트 재등재(신규 예외 0).
+- **정직 상태·이월**: `run` 은 (a′) envelope(승인 Intent/IAP)·price(marketfeed)·order_shape(전략 제안) + `_wiring.py` intent/envelope/command id 리터럴 · (b) 리스크 제공자 2 · (c) 틱 원천으로 계속 차단 · 실 KRX 배포 정책은 price band 원천 0 → `order_shape_admissible` UNKNOWN → 송신 0(§6 ②⑤) · 실파일 미착지(값 제안표 §6 ② 대기) · `members:` digest 운영자 수동(§6 ③) · tradability 맵 빈 값 · capsule/continuity None · ADR-002-014 §13 중 2·3·8(내용)만 실현(DR-0002 §2.2 공시) · DR-0002 Status 문언 `Proposed` → 운영자 회신 후 `Accepted` 1줄 커밋 · 투영 venue 필드군 없음(후속).
