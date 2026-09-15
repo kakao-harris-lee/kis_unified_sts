@@ -424,6 +424,16 @@ class _SafetyMesh:
     #: (``tos_runtime.compose._currentness_wiring``'s own construction site — outside
     #: this module's scope; see :mod:`tos_runtime.safety.protective`'s own docstring).
     protective_action: ProtectiveActionService
+    #: The SAFETY_ENVELOPE_PROFILE service itself (TOS risk state service wave, lane b
+    #: addition) — exposed BY NAME, distinct from :attr:`services`' own positional tuple, so
+    #: a caller (:mod:`tos_runtime.compose._riskstate_wiring`) can reach its loaded
+    #: :attr:`~tos_runtime.safety.profile.SafetyProfileService.envelope` (the Hard Safety
+    #: Envelope's own ``governed_dimensions``) without indexing into ``services`` by position
+    #: (fragile — a services-tuple reorder would silently break that read) or opening a
+    #: second ``safety_envelope.yaml`` load (this service already validated the one that
+    #: exists). Mirrors :attr:`protective_action`'s own "named, not just in the tuple"
+    #: pattern.
+    profile_service: SafetyProfileService
     #: Every safety-mesh policy-document path this call loaded — for
     #: ``OPERATOR_ATTESTED_INPUTS`` (``extra_config_files``).
     config_files: tuple[Path, ...] = field(default_factory=tuple)
@@ -613,5 +623,6 @@ def build_safety_mesh(
         ),
         peek_tick_snapshot=tick_cell.peek,
         protective_action=protective_action,
+        profile_service=profile_service,
         config_files=tuple(config_dir / name for name in SAFETY_MESH_CONFIG_FILE_NAMES),
     )

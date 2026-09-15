@@ -221,8 +221,11 @@ def action_flow_policy_yaml(
     concurrent_consumers_share_one_envelope: str = "false",
     envelope_reset_on_duplicate: str = "false",
     duplicate_event_created_new_allowance: str = "false",
+    buy_side_token: str = "BUY",
+    sell_side_token: str = "SELL",
     include_deployment_facts: bool = True,
     include_scope_independence: bool = True,
+    include_side_tokens: bool = True,
 ) -> str:
     """The standard fixture ``action_flow_policy.yaml`` INSTANCE document."""
     mv_generation = (
@@ -314,6 +317,18 @@ def action_flow_policy_yaml(
         # own mutation scenario: "default to (False, False, True) when the block is absent"
         # must be refused by `require_mapping_key`, not silently defaulted.
         deployment_facts_block = ""
+    if include_side_tokens:
+        # Lane b addition (risk state service wave, plan §4.1 deviation) — the two
+        # recognized outbound-side tokens `EvidencePositionReader` needs, sourced from this
+        # SAME governed policy instance rather than a runtime literal (policies.py's own
+        # `LoadedActionFlowPolicy.side_tokens` docstring).
+        side_tokens_block = (
+            "  side_tokens:\n"
+            f'    buy: "{buy_side_token}"\n'
+            f'    sell: "{sell_side_token}"\n'
+        )
+    else:
+        side_tokens_block = ""
     return (
         head
         + _NULL_ENVELOPE_REF_BLOCK
@@ -326,6 +341,7 @@ def action_flow_policy_yaml(
         + runtime_tail
         + action_class_map_block
         + deployment_facts_block
+        + side_tokens_block
     )
 
 

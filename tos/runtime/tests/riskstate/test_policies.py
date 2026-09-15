@@ -54,6 +54,8 @@ def test_load_aggregate_risk_policy_happy_path(tmp_path: Path) -> None:
     assert loaded.required_scopes == frozenset({RiskScopeKind.INSTRUMENT})
     assert loaded.applicable_risk_scopes == ("INSTRUMENT",)
     assert loaded.unit == "CONTRACTS"
+    assert loaded.instrument_scope == "K200F"
+    assert loaded.account_scope == "acct-1"
 
 
 def test_load_aggregate_risk_policy_digest_recomputed_on_reload(tmp_path: Path) -> None:
@@ -211,6 +213,7 @@ def test_load_action_flow_policy_happy_path(tmp_path: Path) -> None:
     assert loaded.deployment_facts.concurrent_consumers_share_one_envelope is False
     assert loaded.deployment_facts.envelope_reset_on_duplicate is False
     assert loaded.deployment_facts.duplicate_event_created_new_allowance is False
+    assert loaded.side_tokens == ("BUY", "SELL")
     from tos.venue import ActionClass
 
     assert (
@@ -331,6 +334,30 @@ def test_afg_scope_independence_block_missing_refused(tmp_path: Path) -> None:
         action_flow_policy_yaml(include_scope_independence=False),
     )
     with pytest.raises(VenuePolicyConfigError, match="scope_independence"):
+        load_action_flow_policy(path, scheme=SCHEME)
+
+
+def test_afg_side_tokens_block_missing_refused(tmp_path: Path) -> None:
+    """Lane b addition — ``_runtime.side_tokens`` absent entirely is refused (same
+    ``require_mapping_key`` discipline as ``deployment_facts``/``scope_independence``).
+    """
+    path = _write(
+        tmp_path,
+        "afg.yaml",
+        action_flow_policy_yaml(include_side_tokens=False),
+    )
+    with pytest.raises(VenuePolicyConfigError, match="side_tokens"):
+        load_action_flow_policy(path, scheme=SCHEME)
+
+
+def test_afg_side_tokens_equal_refused(tmp_path: Path) -> None:
+    """A single token cannot distinguish a directional buy from a directional sell."""
+    path = _write(
+        tmp_path,
+        "afg.yaml",
+        action_flow_policy_yaml(buy_side_token="SAME", sell_side_token="SAME"),
+    )
+    with pytest.raises(VenuePolicyConfigError, match="side_tokens"):
         load_action_flow_policy(path, scheme=SCHEME)
 
 

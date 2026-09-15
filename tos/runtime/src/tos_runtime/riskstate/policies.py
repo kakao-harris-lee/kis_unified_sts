@@ -275,6 +275,10 @@ class LoadedAggregateRiskPolicy:
     required_scopes: frozenset[RiskScopeKind]
     applicable_risk_scopes: tuple[str, ...]
     unit: str
+    #: Top-level ``instrument_scope``/``account_scope`` singleton strings (lane b addition —
+    #: validated but previously discarded; a wiring-time cross-check needs the actual values).
+    instrument_scope: str
+    account_scope: str
 
 
 def _parse_are_model_view(
@@ -475,6 +479,23 @@ def _parse_are_runtime_sets(
     )
 
 
+def _parse_are_top_level_scopes(raw: dict[str, Any], path: Path) -> dict[str, str]:
+    """The two singleton scope strings + the list-scope/``global_scope_included`` presence
+    checks — split out for :func:`load_aggregate_risk_policy`'s own 100-line size budget.
+    """
+    singleton_scopes = {
+        key: _require_singleton_scope(raw, key, path)
+        for key in _ARE_SINGLETON_SCOPE_KEYS
+    }
+    for key in _ARE_LIST_SCOPE_KEYS:
+        _require_explicit_list_str(raw, key, path, "policy")
+    if not isinstance(raw.get("global_scope_included"), bool):
+        raise VenuePolicyConfigError(
+            f"{path}: policy.global_scope_included must be a bool"
+        )
+    return singleton_scopes
+
+
 def load_aggregate_risk_policy(
     path: Path, *, scheme: CanonicalizationScheme
 ) -> LoadedAggregateRiskPolicy:
@@ -508,15 +529,7 @@ def load_aggregate_risk_policy(
     require_nullable_str_key_present(raw, "effective_from", path, "policy")
     require_nullable_str_key_present(raw, "review_due", path, "policy")
 
-    for key in _ARE_SINGLETON_SCOPE_KEYS:
-        _require_singleton_scope(raw, key, path)
-    for key in _ARE_LIST_SCOPE_KEYS:
-        _require_explicit_list_str(raw, key, path, "policy")
-    global_scope_included = raw.get("global_scope_included")
-    if not isinstance(global_scope_included, bool):
-        raise VenuePolicyConfigError(
-            f"{path}: policy.global_scope_included must be a bool"
-        )
+    singleton_scopes = _parse_are_top_level_scopes(raw, path)
 
     (
         model_view_generation,
@@ -572,6 +585,8 @@ def load_aggregate_risk_policy(
         required_scopes=required_scopes,
         applicable_risk_scopes=applicable_tokens,
         unit=unit,
+        instrument_scope=singleton_scopes["instrument_scope"],
+        account_scope=singleton_scopes["account_scope"],
     )
 
 
@@ -609,6 +624,11 @@ class LoadedActionFlowPolicy:
     applicable_action_flow_scopes: tuple[str, ...]
     action_class_map: Mapping[Any, ActionClassKind]
     deployment_facts: DeploymentFlowFacts
+    #: ``(buy_side_token, sell_side_token)`` — lane b addition (plan §4.1 deviation, reported):
+    #: :class:`~tos_runtime.riskstate.position.EvidencePositionReader` needs these as REQUIRED,
+    #: non-default arguments; sourced from this instance's own ``_runtime.side_tokens:
+    #: {buy, sell}`` (cross-checked at wiring time, :mod:`tos_runtime.compose._riskstate_wiring`).
+    side_tokens: tuple[str, str]
 
 
 def _parse_afg_model_view(
@@ -744,8 +764,13 @@ def _parse_scope_independence(
 
 
 def _parse_action_class_map(
-    runtime_raw: dict[str, Any], path: Path
+    runtime_raw: dict[str, Any],
+    path: Path,
+    *,
+    governed_action_classes: tuple[ActionClassKind, ...],
 ) -> dict[Any, ActionClassKind]:
+    """Also cross-checks every value against ``governed_action_classes`` (folded in here,
+    not the caller, purely for that function's own 100-line size budget)."""
     from tos.venue import (
         ActionClass,  # local import: keeps the top-level import list minimal
     )
@@ -771,6 +796,12 @@ def _parse_action_class_map(
                 f"{path}: _runtime.action_class_map[{key!r}] value {value!r} is not a known "
                 "ActionClassKind"
             ) from exc
+        if kind not in governed_action_classes:
+            raise VenuePolicyConfigError(
+                f"{path}: _runtime.action_class_map maps onto {kind!r}, which is not among "
+                f"_model_view.governed_action_classes "
+                f"{sorted(c.value for c in governed_action_classes)!r}"
+            )
         result[venue_class] = kind
     return result
 
@@ -845,16 +876,29 @@ def _parse_afg_runtime_scope_sets(
     return tuple(covered_scopes), frozenset(required_scopes), tuple(applicable_tokens)
 
 
+def _parse_side_tokens(runtime_raw: dict[str, Any], path: Path) -> tuple[str, str]:
+    """``_runtime.side_tokens: {buy, sell}`` (:class:`LoadedActionFlowPolicy`'s own docstring)
+    — fail-closed on a missing block, a missing/blank string, or equal tokens."""
+    side_raw = require_mapping_key(runtime_raw, "side_tokens", path)
+    buy = require_filled_str(side_raw, "buy", path, "_runtime.side_tokens")
+    sell = require_filled_str(side_raw, "sell", path, "_runtime.side_tokens")
+    if buy == sell:
+        raise VenuePolicyConfigError(
+            f"{path}: _runtime.side_tokens.buy and .sell are both {buy!r} — the two tokens "
+            "must be distinct to distinguish a directional buy from a directional sell"
+        )
+    return (buy, sell)
+
+
 def _parse_afg_runtime_core(
     runtime_raw: dict[str, Any],
     path: Path,
     *,
     governed_dimensions: tuple[ActionFlowDimensionKind, ...],
     governed_scopes: tuple[ActionFlowScopeKind, ...],
-) -> tuple[str, dict[str, CapacityVector], ScopeIndependenceEvidence]:
-    """``flow_dimension_id``/``limits``/``scope_independence`` — split out of
-    :func:`load_action_flow_policy` purely for that function's own 100-line size budget; no
-    behavioural difference from having this inline."""
+) -> tuple[str, dict[str, CapacityVector], ScopeIndependenceEvidence, tuple[str, str]]:
+    """``flow_dimension_id``/``limits``/``scope_independence``/``side_tokens`` — split out for
+    :func:`load_action_flow_policy`'s own 100-line size budget."""
     flow_dimension_id = require_str(runtime_raw, "flow_dimension_id", path, "_runtime")
     if flow_dimension_id not in {d.value for d in governed_dimensions}:
         raise VenuePolicyConfigError(
@@ -869,7 +913,8 @@ def _parse_afg_runtime_core(
             f"{path}: _runtime.scope_independence.scope {scope_independence.scope!r} is not "
             f"among _model_view.governed_scopes {sorted(s.value for s in governed_scopes)!r}"
         )
-    return flow_dimension_id, limits, scope_independence
+    side_tokens = _parse_side_tokens(runtime_raw, path)
+    return flow_dimension_id, limits, scope_independence, side_tokens
 
 
 def load_action_flow_policy(
@@ -917,25 +962,22 @@ def load_action_flow_policy(
     ) = _parse_afg_model_view(raw, path, top_level_generation=top_level_generation)
 
     runtime_raw = require_mapping_key(raw, "_runtime", path)
-    flow_dimension_id, limits, scope_independence = _parse_afg_runtime_core(
-        runtime_raw,
-        path,
-        governed_dimensions=governed_dimensions,
-        governed_scopes=governed_scopes,
+    flow_dimension_id, limits, scope_independence, side_tokens = (
+        _parse_afg_runtime_core(
+            runtime_raw,
+            path,
+            governed_dimensions=governed_dimensions,
+            governed_scopes=governed_scopes,
+        )
     )
 
     covered_scopes, required_scopes, applicable_tokens = _parse_afg_runtime_scope_sets(
         runtime_raw, path
     )
 
-    action_class_map = _parse_action_class_map(runtime_raw, path)
-    for kind in action_class_map.values():
-        if kind not in governed_action_classes:
-            raise VenuePolicyConfigError(
-                f"{path}: _runtime.action_class_map maps onto {kind!r}, which is not among "
-                f"_model_view.governed_action_classes "
-                f"{sorted(c.value for c in governed_action_classes)!r}"
-            )
+    action_class_map = _parse_action_class_map(
+        runtime_raw, path, governed_action_classes=governed_action_classes
+    )
     deployment_facts = _parse_deployment_facts(runtime_raw, path)
 
     require_template_shape(
@@ -971,4 +1013,5 @@ def load_action_flow_policy(
         applicable_action_flow_scopes=applicable_tokens,
         action_class_map=action_class_map,
         deployment_facts=deployment_facts,
+        side_tokens=side_tokens,
     )
