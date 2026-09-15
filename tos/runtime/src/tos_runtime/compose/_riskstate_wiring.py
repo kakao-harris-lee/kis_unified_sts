@@ -247,8 +247,22 @@ def build_risk_state_service(
         rcl_tip_reader=rcl_tip_reader,
         monotonic_reader=monotonic_reader,
         max_attempts_reader=max_attempts_reader,
+        current_seq_reader=_current_seq_reader_for(inbox),
         evidence_store=evidence_store,
         environment_label=environment_label,
         action_class=construction.action_class,
         activated_member_digests=(are_digest, afg_digest),
     )
+
+
+def _current_seq_reader_for(inbox: SqliteEventInbox) -> Callable[[], int | None]:
+    """The inbox row CURRENTLY being handled, or ``None`` when nothing is pending — the
+    engine driver handles exactly one row at a time (module docstring's own "resolved
+    structurally" cross-check note), so this is a genuine structural fact, never a guess.
+    """
+
+    def _reader() -> int | None:
+        pulled = inbox.next_unconsumed()
+        return None if pulled is None else pulled[0]
+
+    return _reader

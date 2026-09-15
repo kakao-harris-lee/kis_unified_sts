@@ -32,23 +32,43 @@ not merely an honest gap. The bound already exists as the SAME ``ActionAmplifica
 second config load, never a re-typed literal), via ``max_attempts_reader`` (an ``int``-or-``None``
 zero-arg callable, mirroring this module's every other reader parameter).
 
-**Deviation, reported: ``root_event_id`` is read from ``StageRequest.reference.event_id``.**
-Plan §4.1 does not name a "root event id" reader at all; :meth:`action_flow_inputs_for` needs
-one to call :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe`. The ONLY
-structural coordinate a :class:`~tos.engine.records.StageRequest` carries toward this is its
-own ``reference: OrderingEvent`` (threaded from the DECISION_TICK payload that started the
-whole commitment flow, all the way through the gateway's own seal construction — module
-docstring of :mod:`tos_runtime.riskstate.flow_observation` cites the identical bridge). This is
-NOT necessarily the durable inbox's own content-addressed ``tos.engine.records.event_identity``
-digest (measured: the compose test fixture ``crossing_event`` sets ``reference.event_id`` to a
-human label, ``f"compose-tick-{seq}"``, never that digest) — so :attr:`FlowObservation
-.root_event_seq` / ``.handling_started_monotonic`` (and therefore ``elapsed_monotonic``) resolve
-to ``None`` unless a caller's own tick construction keeps the two equal. Lineage tracing itself
-(:func:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe`'s own
-``_traces_to`` comparison) is unaffected either way: it compares this SAME label against the
-identical label a ``SEND_SEALED`` row's own ``send_seal.reference.event_id`` carries (both
-sourced from the one ``StageRequest.reference`` this attempt shares), never against the digest.
-Reported as a follow-up for the marketfeed/tick-source wave (plan §6 item 5), not fixed here.
+**``root_event_id`` is read from ``StageRequest.reference.event_id`` (structural, but not the
+durable inbox's own identity — ``root_event_seq`` is resolved independently, below).** No
+``StageRequest`` field carries the inbox's own content-addressed
+``tos.engine.records.event_identity`` digest; ``reference.event_id`` (threaded from the
+DECISION_TICK payload through the gateway's own seal construction) is the best available label
+for lineage-tracing purposes (:func:`~tos_runtime.riskstate.flow_observation.InboxFlowReader
+.observe`'s own ``_traces_to`` comparison — it compares this SAME label against the identical
+label a ``SEND_SEALED`` row's own ``send_seal.reference.event_id`` carries, both sourced from
+the one ``StageRequest.reference`` this attempt shares, so lineage tracing itself is sound
+regardless of whether the label matches the inbox's real digest).
+
+**``root_event_seq``/``elapsed_monotonic`` are resolved structurally, NOT via identity
+matching (team-lead disposition 2026-09-16, fixing an earlier gap).** This runtime's engine
+driver handles exactly ONE inbox row at a time (``EngineDriver._process_next``'s own
+``_draining`` re-entrancy guard: it pulls ``next_unconsumed()``, marks handling started, THEN
+calls ``core.handle`` — the whole 19-step commitment flow — and only marks the row consumed
+AFTER that returns), so the row :meth:`~tos_runtime.engine.inbox.SqliteEventInbox
+.next_unconsumed` reports DURING step 6/7 processing is genuinely, structurally the current
+attempt's own root event — not a guess, not an identity recomputation that might miss. This
+service's ``current_seq_reader`` reads exactly that (:mod:`tos_runtime.compose
+._riskstate_wiring` wires it straight from the composed inbox) and passes it to
+:meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe` as
+``root_event_seq=`` — bypassing that reader's own ``root_event_id``-to-``event_identity``
+fallback matching entirely. ``elapsed_monotonic`` is then a real, two real-reads difference
+(current monotonic reading minus the ``EVENT_HANDLING_STARTED`` marker's own recorded
+monotonic reading), never structurally absent.
+
+**Unit bridge: ``monotonic_reader`` is milliseconds, ``appended_at_monotonic_ns`` is
+nanoseconds.** ``tos_runtime.time.sources.MonotonicSource`` (this runtime's only injectable
+per-process monotonic clock, and ``monotonic_reader``'s own source) reports whole
+milliseconds; the durable evidence store's own ``appended_at_monotonic_ns`` column (what
+``EVENT_HANDLING_STARTED``'s marker records) is nanoseconds. ``risk.yaml``'s
+``max_elapsed_monotonic`` fixture value (``60_000``) reads as a millisecond bound consistent
+with every sibling ``*_ms`` config value in this runtime's own config files — this service
+therefore converts the nanosecond marker DOWN to whole milliseconds
+(``handling_started_monotonic // 1_000_000``) before subtracting, so ``elapsed_monotonic``
+stays in the SAME unit as the bound it is compared against.
 
 **Deviation, reported: ``grant_identity``/``attempt_id`` are the proposal id.** No attempt
 identity exists yet at step 6/7 (``StageRequest.attempt`` is populated only from step 13
@@ -66,9 +86,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from decimal import Decimal
-from typing import Any
 
-from tos.afg import ActionCause, ActionClassKind, ActionFlowStateSnapshot
+from tos.afg import (
+    ActionCause,
+    ActionClassKind,
+    ActionFlowStateSnapshot,
+    ObservedAmplification,
+)
 from tos.are import AdverseScenarioKind, AdverseScenarioSet, ProjectedCell
 from tos.canonical import CanonicalizationScheme
 from tos.egressgw.records import CandidateConstruction
@@ -96,6 +120,7 @@ from tos_runtime.riskstate.policies import (
 )
 from tos_runtime.riskstate.position import (
     EvidencePositionReader,
+    PositionObservation,
     conservative_current_usage,
     in_flight_overlap_effect,
 )
@@ -181,6 +206,7 @@ class RiskStateService:
         rcl_tip_reader: Callable[[], int | None],
         monotonic_reader: Callable[[], int | None],
         max_attempts_reader: Callable[[], int | None],
+        current_seq_reader: Callable[[], int | None],
         evidence_store: SqliteEvidenceStore,
         environment_label: str,
         action_class: ActionClass,
@@ -214,6 +240,9 @@ class RiskStateService:
             monotonic_reader: The time service's current monotonic reading, or ``None``.
             max_attempts_reader: The governing ``ActionAmplificationEnvelope.max_attempts``
                 bound (module docstring's own "added dependency" deviation).
+            current_seq_reader: The inbox's currently-being-handled row seq, or ``None``
+                when nothing is pending (module docstring's own "resolved structurally"
+                section) — sourced from ``SqliteEventInbox.next_unconsumed()``.
             evidence_store: The durable evidence append port.
             environment_label: Used to compose this service's own snapshot/observation ids.
             action_class: This composition's fixed, per-attempt :class:`~tos.venue.ActionClass`.
@@ -234,12 +263,30 @@ class RiskStateService:
         self._rcl_tip_reader = rcl_tip_reader
         self._monotonic_reader = monotonic_reader
         self._max_attempts_reader = max_attempts_reader
+        self._current_seq_reader = current_seq_reader
         self._evidence_store = evidence_store
         self._environment_label = environment_label
         self._action_class = action_class
         self._envelope_max = _envelope_max_vector(are_policy, hse_envelope)
         self._snapshot_seq = 0
         self._observation_seq = 0
+        #: One (attempt_id, FlowObservation) slot, filled by whichever of
+        #: :meth:`aggregate_inputs_for` / :meth:`action_flow_inputs_for` observes flow state
+        #: FIRST for a given attempt, and reused by the other — so exactly ONE
+        #: ``RISK_STATE_OBSERVED`` evidence row (carrying BOTH position and flow) is recorded
+        #: per attempt, never two, and the durable inbox/evidence reads underlying
+        #: :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe` happen once.
+        self._flow_obs_cache: tuple[str | None, FlowObservation] | None = None
+        self._record_boot_evidence(are_policy, afg_policy, activated_member_digests)
+
+    def _record_boot_evidence(
+        self,
+        are_policy: LoadedAggregateRiskPolicy,
+        afg_policy: LoadedActionFlowPolicy,
+        activated_member_digests: tuple[str, str],
+    ) -> None:
+        """The two boot-time ``*_POLICY_BOUND`` rows (module docstring) — split out of
+        :meth:`__init__` purely for that method's own 100-line size budget."""
         are_digest, afg_digest = activated_member_digests
         self._record_policy_bound(
             _ARE_BOUND_KIND,
@@ -275,21 +322,71 @@ class RiskStateService:
             record_class=kind,
         )
 
+    def _observe_flow(self, request: StageRequest) -> FlowObservation:
+        """Observe flow state for ``request``'s own attempt, ONCE per attempt (module
+        docstring's own ``_flow_obs_cache`` note) — whichever of :meth:`aggregate_inputs_for`
+        / :meth:`action_flow_inputs_for` calls this FIRST for a given attempt id does the
+        real inbox/evidence read; the other reuses the cached result."""
+        attempt_id = getattr(request.proposal, "proposal_id", None)
+        if self._flow_obs_cache is not None and self._flow_obs_cache[0] == attempt_id:
+            return self._flow_obs_cache[1]
+        obs = self._flow_reader.observe(
+            root_event_id=request.reference.event_id or "",
+            attempt_id=attempt_id or "",
+            root_event_seq=self._current_seq_reader(),
+        )
+        self._flow_obs_cache = (attempt_id, obs)
+        return obs
+
     def _record_observation(
         self,
         *,
         attempt_id: str | None,
-        obs_position: dict[str, Any],
-        obs_flow: dict[str, Any],
-        absent_fields: tuple[str, ...],
+        position_obs: PositionObservation,
+        flow_obs: FlowObservation,
+        extra_absent: tuple[str, ...],
     ) -> None:
+        """Record ONE ``RISK_STATE_OBSERVED`` row carrying BOTH position and flow state
+        (plan §2.4's own "position 관측 + flow 관측 + absent_fields" shape) — split out of
+        :meth:`aggregate_inputs_for` purely for that method's own 100-line size budget.
+        """
         self._observation_seq += 1
+        flow_absent = tuple(
+            name
+            for name, value in (
+                ("duplicates_rejected", flow_obs.duplicates_rejected),
+                ("replays", flow_obs.replays),
+                ("root_event_seq", flow_obs.root_event_seq),
+                ("handling_started_monotonic", flow_obs.handling_started_monotonic),
+                ("lineage_found", flow_obs.lineage_found),
+            )
+            if value is None
+        )
         self._evidence_store.append(
             {
                 "attempt_id": attempt_id,
-                "position": obs_position,
-                "flow": obs_flow,
-                "absent_fields": list(absent_fields),
+                "position": {
+                    "scope_key": position_obs.scope_key,
+                    "confirmed_net": str(position_obs.confirmed_net),
+                    "unknown_buy": str(position_obs.unknown_buy),
+                    "unknown_sell": str(position_obs.unknown_sell),
+                    "in_flight_buy": str(position_obs.in_flight_buy),
+                    "in_flight_sell": str(position_obs.in_flight_sell),
+                    "attempts_seen": position_obs.attempts_seen,
+                    "sources": list(position_obs.sources),
+                },
+                "flow": {
+                    "queue_depth": flow_obs.queue_depth,
+                    "in_flight": flow_obs.in_flight,
+                    "attempts_for_cause": flow_obs.attempts_for_cause,
+                    "duplicates_rejected": flow_obs.duplicates_rejected,
+                    "replays": flow_obs.replays,
+                    "root_event_seq": flow_obs.root_event_seq,
+                    "handling_started_monotonic": flow_obs.handling_started_monotonic,
+                    "lineage_found": flow_obs.lineage_found,
+                    "sources": list(flow_obs.sources),
+                },
+                "absent_fields": list(extra_absent) + list(flow_absent),
             },
             kind=_OBSERVED_KIND,
             record_class=_OBSERVED_KIND,
@@ -300,6 +397,7 @@ class RiskStateService:
     ) -> AggregateRiskDecisionInputs | None:
         """Build step 6's inputs for ``request`` (module docstring; plan §2.4)."""
         position_obs = self._position_reader.observe()
+        flow_obs = self._observe_flow(request)
         conservative_usage = conservative_current_usage(position_obs)
         overlap_effect = in_flight_overlap_effect(position_obs)
         construction = self._construction_stage_reader()
@@ -333,18 +431,9 @@ class RiskStateService:
         )
         self._record_observation(
             attempt_id=grant_identity,
-            obs_position={
-                "scope_key": position_obs.scope_key,
-                "confirmed_net": str(position_obs.confirmed_net),
-                "unknown_buy": str(position_obs.unknown_buy),
-                "unknown_sell": str(position_obs.unknown_sell),
-                "in_flight_buy": str(position_obs.in_flight_buy),
-                "in_flight_sell": str(position_obs.in_flight_sell),
-                "attempts_seen": position_obs.attempts_seen,
-                "sources": list(position_obs.sources),
-            },
-            obs_flow={},
-            absent_fields=absent,
+            position_obs=position_obs,
+            flow_obs=flow_obs,
+            extra_absent=absent,
         )
         return AggregateRiskDecisionInputs(
             cells=cells,
@@ -398,47 +487,67 @@ class RiskStateService:
         """Build step 7's inputs for ``request`` (module docstring; plan §2.4). Returns
         ``None`` (UNKNOWN — never a fabricated grant) when the RCL tip is unreadable or this
         composition's fixed :attr:`_action_class` is not among the policy's own
-        ``action_class_map``."""
+        ``action_class_map``.
+
+        Emits no evidence of its own — :meth:`aggregate_inputs_for` (step 6) always runs
+        first for the same attempt in the real commitment flow (a step-6 DENY/UNKNOWN halts
+        the sequencer before step 7's stage is ever invoked at all), so ONE
+        ``RISK_STATE_OBSERVED`` row per attempt, recorded there, already covers both position
+        and flow state (module docstring's own ``_flow_obs_cache`` note); this method reuses
+        that SAME cached :class:`~tos_runtime.riskstate.flow_observation.FlowObservation`
+        rather than reading the inbox/evidence store a second time.
+        """
         rcl_tip = self._rcl_tip_reader()
         if rcl_tip is None:
             return None
         action_class_kind = self._afg_policy.action_class_map.get(self._action_class)
         if action_class_kind is None:
             return None
-        attempt_id = getattr(request.proposal, "proposal_id", None)
-        flow_obs = self._flow_reader.observe(
-            root_event_id=request.reference.event_id or "", attempt_id=attempt_id or ""
-        )
+        flow_obs = self._observe_flow(request)
         cause = self._action_cause_for(request, flow_obs)
-        self._record_observation(
-            attempt_id=attempt_id,
-            obs_position={},
-            obs_flow={
-                "queue_depth": flow_obs.queue_depth,
-                "in_flight": flow_obs.in_flight,
-                "attempts_for_cause": flow_obs.attempts_for_cause,
-                "duplicates_rejected": flow_obs.duplicates_rejected,
-                "replays": flow_obs.replays,
-                "root_event_seq": flow_obs.root_event_seq,
-                "handling_started_monotonic": flow_obs.handling_started_monotonic,
-                "lineage_found": flow_obs.lineage_found,
-                "sources": list(flow_obs.sources),
-            },
-            absent_fields=tuple(
-                name
-                for name, value in (
-                    ("duplicates_rejected", flow_obs.duplicates_rejected),
-                    ("replays", flow_obs.replays),
-                    ("root_event_seq", flow_obs.root_event_seq),
-                    ("handling_started_monotonic", flow_obs.handling_started_monotonic),
-                    ("lineage_found", flow_obs.lineage_found),
-                )
-                if value is None
-            ),
-        )
         return self._build_action_flow_inputs(
             request, rcl_tip, action_class_kind, flow_obs, cause
         )
+
+    def _elapsed_monotonic_ms(self, flow_obs: FlowObservation) -> Decimal | None:
+        """``monotonic_reader()`` minus the ``EVENT_HANDLING_STARTED`` marker's own
+        recorded monotonic reading, in whole milliseconds — split out of
+        :meth:`_build_action_flow_inputs` purely for that method's own 100-line size
+        budget.
+
+        Unit bridge (module docstring): ``flow_obs.handling_started_monotonic`` is
+        nanoseconds (the evidence store's own ``appended_at_monotonic_ns`` column);
+        ``monotonic_reader`` is milliseconds (this runtime's only injectable per-process
+        monotonic clock, ``tos_runtime.time.sources.MonotonicSource.now_ms``). Converted
+        down to whole milliseconds here so ``elapsed_monotonic`` stays in the SAME unit as
+        ``risk.yaml``'s own ``max_elapsed_monotonic`` bound.
+        """
+        mono_now_ms = self._monotonic_reader()
+        if mono_now_ms is None or flow_obs.handling_started_monotonic is None:
+            return None
+        return Decimal(mono_now_ms - (flow_obs.handling_started_monotonic // 1_000_000))
+
+    def _afg_digests(
+        self, cause: ActionCause, observed: ObservedAmplification
+    ) -> tuple[str, str, str]:
+        """``(cause_digest, lineage_digest, amplification_envelope_digest)`` — split out of
+        :meth:`_build_action_flow_inputs` purely for that method's own 100-line size
+        budget."""
+        cause_digest = self._scheme.compute_digest(
+            {
+                "root_cause_identity": cause.root_cause_identity,
+                "parent_lineage": list(cause.parent_lineage),
+                "command_identity": cause.command_identity,
+                "command_digest": cause.command_digest,
+            }
+        )
+        lineage_digest = self._scheme.compute_digest(
+            {"parent_lineage": list(cause.parent_lineage)}
+        )
+        amplification_envelope_digest = self._scheme.compute_digest(
+            observed.model_dump(mode="json")
+        )
+        return cause_digest, lineage_digest, amplification_envelope_digest
 
     def _build_action_flow_inputs(
         self,
@@ -450,16 +559,10 @@ class RiskStateService:
     ) -> ActionFlowDecisionInputs:
         """Split out of :meth:`action_flow_inputs_for` purely for that method's own 100-line
         size budget; no behavioural difference from having this inline."""
-        mono_now = self._monotonic_reader()
-        elapsed = (
-            None
-            if mono_now is None or flow_obs.handling_started_monotonic is None
-            else Decimal(mono_now - flow_obs.handling_started_monotonic)
-        )
         observed = to_observed_amplification(
             flow_obs,
             self._afg_policy.deployment_facts,
-            elapsed_monotonic=elapsed,
+            elapsed_monotonic=self._elapsed_monotonic_ms(flow_obs),
             fan_out=flow_obs.attempts_for_cause,
             depth=(None if flow_obs.lineage_found is None else 1),
         )
@@ -478,30 +581,24 @@ class RiskStateService:
         vectors = committed_flow_vectors(
             self._rcl_log, flow_dimension_id=self._afg_policy.flow_dimension_id
         )
-        cause_digest = self._scheme.compute_digest(
-            {
-                "root_cause_identity": cause.root_cause_identity,
-                "parent_lineage": list(cause.parent_lineage),
-                "command_identity": cause.command_identity,
-                "command_digest": cause.command_digest,
-            }
-        )
-        lineage_digest = self._scheme.compute_digest(
-            {"parent_lineage": list(cause.parent_lineage)}
-        )
-        amplification_envelope_digest = self._scheme.compute_digest(
-            observed.model_dump(mode="json")
+        cause_digest, lineage_digest, amplification_envelope_digest = self._afg_digests(
+            cause, observed
         )
         return ActionFlowDecisionInputs(
             cause=cause,
             snapshot=snapshot,
             required_scopes=self._afg_policy.required_scopes,
-            # Structural fact, not an attestation (grep-measured: no code path anywhere in
-            # tos_runtime lets a "producer" select its own narrower scope — scope is always
-            # drawn from the governed Action Flow Policy's own `covered_scopes`). `False` is
-            # required (not merely permitted) here: `scope_graph_complete` treats `None` the
-            # same as a producer-declared scope, both fail-closed (tos.afg.predicates
-            # `scope_graph_complete`'s own docstring, point 3).
+            # DERIVED from how `snapshot` (above) was actually built, not a separate
+            # attestation: `_snapshot_for` sets `covered_scopes` EXCLUSIVELY from
+            # `self._afg_policy.covered_scopes` — the activated, governed policy document —
+            # and takes no argument through which `request`/`cause`/any producer-supplied
+            # value could substitute or narrow it. Since this snapshot's own scope coverage
+            # structurally cannot have come from a producer, `producer_self_declared_scope`
+            # is positively `False` by construction, not a guess or a hardcoded admission
+            # literal. `False` is required here (not merely permitted):
+            # `scope_graph_complete` treats `None` the same as a producer-declared scope,
+            # both fail-closed (tos.afg.predicates `scope_graph_complete`'s own docstring,
+            # point 3).
             producer_self_declared_scope=False,
             observed_amplification=observed,
             requested_limit=flow_vector,

@@ -250,6 +250,7 @@ def _service(
         rcl_tip_reader=lambda: 1,
         monotonic_reader=lambda: 1_000,
         max_attempts_reader=lambda: max_attempts,
+        current_seq_reader=lambda: None,
         evidence_store=evidence_store,
         environment_label="riskstate-wiring-test",
         action_class=action_class,
