@@ -48,6 +48,7 @@
 - [Architecture Gate Status and Semantic Merge Map](part-1-foundation/ARCHITECTURE-GATE-STATUS.md)
 - [Complexity Justification Register](part-1-foundation/COMPLEXITY-REGISTER-002.md)
 - [DR-0001 — Single-Operator Live Governance](decision-records/DR-0001-Single-Operator-Live-Governance.md)
+- [DR-0002 — Order Construction and Venue Constraint Policy Instance Ratification Path](decision-records/DR-0002-Order-Construction-and-Venue-Constraint-Policy-Instance-Ratification.md)
 
 # Decision Framework
 
