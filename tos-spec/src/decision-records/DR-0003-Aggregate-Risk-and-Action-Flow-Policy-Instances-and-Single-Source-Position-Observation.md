@@ -41,8 +41,9 @@ extends DR-0002 to them rather than restating it.
 Two further questions are specific to these policies and are decided here:
 
 1. **Which state the runtime may observe for the Aggregate Risk State
-   Snapshot.** ADR-002-021 §9 lists positions, orders, fills, commitments and
-   UNKNOWN outcomes among the snapshot's consistency cut; ARE-INV-006 says
+   Snapshot.** ADR-002-021 §5.3 defines the snapshot over "positions, orders,
+   fills, commitments, UNKNOWNs", and §9 lists confirmed positions, broker
+   orders, fills and UNKNOWN outcomes among the consistency cut; ARE-INV-006 says
    UNKNOWN state "consumes conservative capacity and blocks new risk". The
    runtime has no broker position query and no position ledger. It does have
    an append-only evidence store carrying every sealed send and every
