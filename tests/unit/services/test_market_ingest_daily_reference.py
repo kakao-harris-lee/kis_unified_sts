@@ -214,12 +214,38 @@ async def test_a_raising_prefetch_is_retried_on_the_next_poll(caplog):
 
     with caplog.at_level("WARNING"):
         assert await daemon._publish_daily_reference_if_due() is False
-    assert "daily_reference prefetch failed for A05609" in caplog.text
+    assert "daily_reference poll failed for A05609" in caplog.text
 
     assert await daemon._publish_daily_reference_if_due() is True
     assert len(prefetch.calls) == 2
     assert await daemon._publish_daily_reference_if_due() is False
     assert len(prefetch.calls) == 2, "success latches the day"
+
+
+async def test_a_raising_schedule_check_is_a_retryable_poll_not_a_dead_loop(caplog):
+    """Anything that escapes the poll would end the loop for the container's
+    life — the same blind state R1 fixed."""
+
+    class _FlakySchedule:
+        poll_seconds = 60.0
+
+        def __init__(self):
+            self.calls = 0
+
+        def is_due(self, _now):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("calendar unavailable")
+            return True
+
+    prefetch = _RecordingPrefetch()
+    daemon = _daemon(prefetch, schedule=_FlakySchedule())
+
+    with caplog.at_level("WARNING"):
+        assert await daemon._publish_daily_reference_if_due() is False
+    assert "daily_reference poll failed for A05609" in caplog.text
+    assert await daemon._publish_daily_reference_if_due() is True
+    assert len(prefetch.calls) == 1
 
 
 async def test_a_partial_publish_is_retried_on_the_next_poll():

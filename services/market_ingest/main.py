@@ -33,6 +33,7 @@ from shared.strategy.market_time import now_kst, to_kst
 from shared.streaming.daily_reference import (
     DailyReferenceSchedule,
     load_daily_reference_schedule,
+    prefetch_and_publish_futures_daily_references,
 )
 from shared.streaming.data_freshness import DataFreshnessTracker
 
@@ -307,23 +308,24 @@ class MarketIngestDaemon:
             minus the configured offset, so today's date is never stamped on a
             close KIS has not rolled over yet.
         A failed or partial publish leaves the marker unchanged, so the next
-        poll retries.
+        poll retries. Never raises: an escaped exception would end the loop
+        and leave the read-model unpublished for the container's life.
         """
         schedule = self._daily_reference_schedule
         if self.daily_reference_prefetch is None or schedule is None:
             return False
         if not self._symbols:
             return False
-        now = to_kst(self._now_fn())
         symbols = tuple(self._symbols)
-        marker = (now.date(), symbols)
-        if marker == self._daily_reference_published or not schedule.is_due(now):
-            return False
         try:
+            now = to_kst(self._now_fn())
+            marker = (now.date(), symbols)
+            if marker == self._daily_reference_published or not schedule.is_due(now):
+                return False
             ok = await self.daily_reference_prefetch(list(symbols), now)
         except Exception as e:
             logger.warning(
-                "daily_reference prefetch failed for %s: %s — retrying in %.0fs",
+                "daily_reference poll failed for %s: %s — retrying in %.0fs",
                 ", ".join(symbols),
                 e,
                 schedule.poll_seconds,
@@ -689,9 +691,6 @@ def _build_daily_reference_prefetch(
         redis_client: SYNC Redis client; ``None`` resolves the shared singleton
             lazily, so a Redis outage at import time cannot break the daemon.
     """
-    from shared.streaming.daily_reference import (
-        prefetch_and_publish_futures_daily_references,
-    )
 
     async def _prefetch(symbols: list[str], asof: datetime) -> bool:
         result = await prefetch_and_publish_futures_daily_references(
