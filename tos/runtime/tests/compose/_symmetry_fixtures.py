@@ -40,25 +40,12 @@ from tos.dsl import (
 )
 from tos.egressgw import ProposedConstructionEnvelope
 from tos.ioc import AxisBinding, ConformanceAxis
-from tos.venue import (
-    ActionClass,
-    ActionPhaseAdmission,
-    OrderAdmissibilityDecision,
-    OrderShapeFields,
-    VenueConstraintPolicy,
-    VenueConstraintSnapshot,
-    VenueShapeConstraints,
-)
+from tos.venue import ActionClass, OrderShapeFields
 from tos_runtime.compose.root import ConstructionConfig
 
 from . import _fixtures as fx
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
-
-#: The mirrored side's own identity suffix ("short") — every SHORT-side artifact id below is the
-#: LONG one's id with this suffix appended, so a stray id COLLISION between the two sides (which
-#: would make the pair not genuinely independent) is visible on sight rather than needing a diff.
-_SHORT_SUFFIX = "-short"
 
 
 def _value_ref(field_key: str) -> Operand:
@@ -201,58 +188,6 @@ def mirrored_proposed_envelope() -> ProposedConstructionEnvelope:
     )
 
 
-def mirrored_venue_policy() -> VenueConstraintPolicy:
-    """:func:`~._fixtures.venue_policy`, mirrored: the admitting-phase rule is keyed by
-    ``ActionClass.NEW_SHORT`` instead of ``NEW_LONG`` — ``session_phase_admits`` looks the
-    action class up **exactly** (``tos.venue.state.session_phase_admits``: "per-exact-phase and
-    per-exact-action"), so a policy that still only admitted ``NEW_LONG`` would make the SHORT
-    run INADMISSIBLE at step 3 while the LONG run is ADMISSIBLE — a real divergence this fixture
-    exists to prevent, not paper over."""
-    issued = VenueConstraintPolicy.issue(
-        scheme=SCHEME,
-        policy_id="vpol-compose" + _SHORT_SUFFIX,
-        policy_generation=1,
-        scope="scope-compose-short",
-        admitting_phase_rules=(
-            ActionPhaseAdmission(
-                action=ActionClass.NEW_SHORT,
-                admitting_phases=frozenset({fx.SESSION_PHASE}),
-            ),
-        ),
-    )
-    assert isinstance(issued, VenueConstraintPolicy)
-    return issued
-
-
-def mirrored_venue_snapshot() -> VenueConstraintSnapshot:
-    """:func:`~._fixtures.venue_snapshot`, mirrored — ``policy_id``/``policy_generation`` point at
-    :func:`mirrored_venue_policy`, never the LONG policy (a snapshot referencing the wrong policy
-    would be its own, different kind of bug from an un-mirrored admitting rule)."""
-    issued = VenueConstraintSnapshot.issue(
-        scheme=SCHEME,
-        snapshot_id="vsnap-compose" + _SHORT_SUFFIX,
-        constraint_generation=1,
-        policy_id="vpol-compose" + _SHORT_SUFFIX,
-        policy_generation=1,
-        observed_session_phase=fx.SESSION_PHASE,
-    )
-    assert isinstance(issued, VenueConstraintSnapshot)
-    return issued
-
-
-def mirrored_venue_admissible_decision() -> OrderAdmissibilityDecision:
-    from tos.venue import OrderAdmissibilityResult
-
-    issued = OrderAdmissibilityDecision.issue(
-        scheme=SCHEME,
-        decision_id="vdec-compose" + _SHORT_SUFFIX,
-        decision_generation=1,
-        result=OrderAdmissibilityResult.ADMISSIBLE,
-    )
-    assert isinstance(issued, OrderAdmissibilityDecision)
-    return issued
-
-
 def mirrored_order_shape() -> OrderShapeFields:
     """:func:`~._fixtures.order_shape` with ``side`` flipped to ``"SELL"`` — every OTHER field
     (price/quantity/order_type/tif/position_effect) is the identical value, so a divergence
@@ -261,21 +196,18 @@ def mirrored_order_shape() -> OrderShapeFields:
     return fx.order_shape().model_copy(update={"side": "SELL"})
 
 
-def mirrored_venue_shape_constraints() -> VenueShapeConstraints:
-    """:func:`~._fixtures.venue_shape_constraints` with ``allowed_sides`` flipped to
-    ``{"SELL"}`` — every other bound (price/tick/lot/quantity/order-type/tif/position-effect) is
-    the identical value."""
-    return fx.venue_shape_constraints().model_copy(
-        update={"allowed_sides": frozenset({"SELL"})}
-    )
-
-
 def mirrored_construction_config() -> ConstructionConfig:
     """:func:`~._fixtures.construction_config`, mirrored (plan §2 decision 8: "픽스처
-    side·action_class·venue_shape_constraints.allowed_sides 미러", extended to
-    ``venue_policy``/``venue_snapshot``/``venue_decision``/``envelope`` per this module's own
-    docstring — everything a flipped ``ActionClass``/side touches). ``envelope``/``price``/
-    ``venue_constraint``/``instrument_class``/the two price-field keys are the exact SAME
+    side·action_class·venue_shape_constraints.allowed_sides 미러", extended to ``envelope`` per
+    this module's own docstring — everything a flipped ``ActionClass``/side touches).
+
+    **Venue facts are no longer per-side fixture content** (TOS venue constraint service wave,
+    plan §2 decision 5) — ``conftest.py``'s ONE governed ``venue_constraint_policy.yaml``
+    admits BOTH ``NEW_LONG``/``NEW_SHORT`` and BOTH ``BUY``/``SELL`` (the same "mirror the
+    admitting rule and the allowed side" intent decision 8 originally named for the fixture
+    hand-issued snapshot/policy/decision, now realized at the governed-policy layer instead —
+    see ``conftest.py``'s own ``venue_constraint_policy.yaml`` write for the shared admission).
+    ``envelope``/``price``/``instrument_class``/the two price-field keys are the exact SAME
     fx-derived values as the LONG side: nothing about sizing, pricing, or the calendar lookup key
     is side-dependent."""
     return ConstructionConfig(
@@ -283,12 +215,7 @@ def mirrored_construction_config() -> ConstructionConfig:
         instrument=fx.INSTRUMENT,
         envelope=mirrored_proposed_envelope(),
         price=fx.admitted_price(),
-        venue_constraint=fx.venue_quantity_constraint(),
-        venue_snapshot=mirrored_venue_snapshot(),
-        venue_policy=mirrored_venue_policy(),
-        venue_decision=mirrored_venue_admissible_decision(),
         order_shape=mirrored_order_shape(),
-        venue_shape_constraints=mirrored_venue_shape_constraints(),
         action_class=ActionClass.NEW_SHORT,
         instrument_class=fx.INSTRUMENT_CLASS,
         outbound_side="SELL",

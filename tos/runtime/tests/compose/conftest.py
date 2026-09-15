@@ -21,8 +21,28 @@ from tos_runtime.operations.dependency_admission import (
     observe_dependency_set_digest,
     observe_source_tree_digest,
 )
+from tos_runtime.venue import (
+    load_order_construction_policy,
+    load_venue_constraint_policy,
+)
+
+from ..venue._documents import ocp_yaml, venue_policy_yaml
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
+
+#: This suite's single scope coordinates for the governed venue/OCP policies (TOS venue
+#: constraint service wave, plan §2 decision 9) — MUST match ``_fixtures.py``'s own
+#: ACCOUNT/INSTRUMENT/INSTRUMENT_CLASS constants and this fixture's own ``environment_label``
+#: ("non-live-test") and ``calendar.yaml`` (below): the loader's scope cross-check requires an
+#: exact match, and the admitting-phase tokens must be ones ``calendar.yaml`` actually declares
+#: for that instrument class.
+_VENUE_POLICY_ENVIRONMENT = "non-live-test"
+_VENUE_POLICY_ACCOUNT = "acct-compose"
+_VENUE_POLICY_INSTRUMENT = "ES"
+_VENUE_POLICY_INSTRUMENT_CLASS = "krx-index-futures"
+#: The ONE session-phase token this fixture's ``calendar.yaml`` (below) declares for
+#: ``krx-index-futures`` — the ONLY token an admitting-phase rule may legally name.
+_VENUE_POLICY_ADMITTING_PHASE = "CONTINUOUS"
 
 #: The shipped example (TOS Phase 4 plan §2 decisions 1-2, G-4) — this
 #: fixture only fills the one named-TBD field (``active_scope``), never
@@ -174,6 +194,53 @@ def config_dir(tmp_path: Path) -> Path:
             "futures_expiry": {},
         },
     )
+    # TOS venue constraint service wave (plan §2 decisions 1/2/6/9) — the two governed policy
+    # YAMLs `build_venue_service` loads. Every numeric shape bound below reproduces this
+    # suite's OWN pre-wave fixture values (formerly `_fixtures.py::venue_shape_constraints`) so
+    # every existing e2e test's happy path keeps folding the SAME admissible shape at step 3:
+    # the crossing event's own "close" value (4_499_000, `_fixtures.CROSSING_CLOSE`) is the
+    # price step 3 actually resolves (shape_price_field_key="close" projects off the tick's own
+    # value view, never the injected `order_shape().price` stand-in — see
+    # `tos.egressgw.construction.VenueConstraintStage._shape_for`'s own docstring), and
+    # 1_000 <= 4_499_000 <= 9_000_000 with (4_499_000 - 1_000) % 500 == 0.
+    (directory / "venue_constraint_policy.yaml").write_text(
+        venue_policy_yaml(
+            environment=_VENUE_POLICY_ENVIRONMENT,
+            account=_VENUE_POLICY_ACCOUNT,
+            instrument=_VENUE_POLICY_INSTRUMENT,
+            instrument_class=_VENUE_POLICY_INSTRUMENT_CLASS,
+            quantity_unit="CONTRACTS",
+            currency="KRW",
+            price_min="1000",
+            price_max="9000000",
+            tick_size="500",
+            lot_size="2",
+            min_quantity="2",
+            max_quantity="100",
+            # Both NEW_LONG and NEW_SHORT admit the SAME token — one shared config_dir
+            # fixture serves both the LONG (test_compose_root.py) and SHORT
+            # (test_symmetry.py) e2e suites (plan §2 decision 8 mirroring).
+            admitting_phases=f'["{_VENUE_POLICY_ADMITTING_PHASE}"]',
+            admitting_phases_short=f'["{_VENUE_POLICY_ADMITTING_PHASE}"]',
+        ),
+        encoding="utf-8",
+    )
+    (directory / "order_construction_policy.yaml").write_text(
+        ocp_yaml(
+            environment=_VENUE_POLICY_ENVIRONMENT,
+            account=_VENUE_POLICY_ACCOUNT,
+            instrument=_VENUE_POLICY_INSTRUMENT,
+            # synthetic transport (this suite's default) requires wire_codec: null.
+            wire_codec="null",
+        ),
+        encoding="utf-8",
+    )
+    loaded_venue_policy = load_venue_constraint_policy(
+        directory / "venue_constraint_policy.yaml", scheme=_SCHEME
+    )
+    loaded_ocp_policy = load_order_construction_policy(
+        directory / "order_construction_policy.yaml", scheme=_SCHEME
+    )
     # Phase 5 W3 safety-mesh policy documents (tos_runtime.compose._safety_wiring) — a
     # minimal NOMINAL "everything clear" fixture (one governed dimension, no active
     # deviations/incidents, all three MONITORING obligations closed) so every compose
@@ -264,6 +331,28 @@ def config_dir(tmp_path: Path) -> Path:
                 "restrictive_generation_effects": [],
             },
             "not_expired": True,
+            # TOS venue constraint service wave (plan §2 decision 7) — a SEPARATE top-level
+            # key `tos_runtime.safety.profile` never reads; `tos_runtime.venue.activation`
+            # exact-matches against it. Digests are the REAL, freshly kernel-computed values
+            # from the two loads just above — never hardcoded (plan §5 discipline).
+            "members": [
+                {
+                    "kind": "VENUE_CONSTRAINT_POLICY",
+                    "member_id": loaded_venue_policy.policy.policy_id,
+                    "generation": loaded_venue_policy.policy.policy_generation,
+                    "digest": loaded_venue_policy.policy.canonical_digest,
+                    "resolved": True,
+                    "immutable": True,
+                },
+                {
+                    "kind": "ORDER_CONSTRUCTION_POLICY",
+                    "member_id": loaded_ocp_policy.policy.policy_id,
+                    "generation": loaded_ocp_policy.policy.policy_generation,
+                    "digest": loaded_ocp_policy.policy.canonical_digest,
+                    "resolved": True,
+                    "immutable": True,
+                },
+            ],
         },
     )
     _write_yaml(
