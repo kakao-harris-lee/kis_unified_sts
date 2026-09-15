@@ -14,6 +14,7 @@ import os
 import socket
 
 from shared.config.runtime_defaults import redis_url_from_env
+from shared.streaming.trading_state import ensure_state_key_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +30,15 @@ def _streams_for(mode: str) -> tuple[str, str]:
 
 
 def _ensure_shadow_isolation(mode: str) -> None:
-    if mode == "shadow" and not os.environ.get("TRADING_STATE_KEY_SUFFIX", "").strip():
-        os.environ["TRADING_STATE_KEY_SUFFIX"] = "shadow"
-    if mode == "live" and os.environ.get("TRADING_STATE_KEY_SUFFIX", "").strip():
-        logger.warning("clearing TRADING_STATE_KEY_SUFFIX for live futures monitor")
-        os.environ["TRADING_STATE_KEY_SUFFIX"] = ""
+    """Bind the trading-state key suffix to *mode* (shared helper, same logic).
+
+    A thin module-local wrapper kept so this entrypoint and its existing tests
+    (tests/unit/futures_monitor/test_entrypoint.py) keep the historical name.
+    The behaviour lives in
+    :func:`shared.streaming.trading_state.ensure_state_key_suffix`;
+    ``services/risk_filter`` calls that helper directly (F-9 gap G3).
+    """
+    ensure_state_key_suffix(mode, label="futures monitor")
 
 
 async def _build_and_run() -> int:

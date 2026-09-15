@@ -378,6 +378,15 @@ services:
       <<: [*redis-runtime-env, *runtime-storage-env]
       TZ: "Asia/Seoul"
       FUTURES_RISK_FILTER: "${FUTURES_PIPELINE_MODE:-shadow}"
+      # ONE equity denominator for the futures risk lane (F-9 gap G4):
+      # config/risk.yaml::risk.account_equity_krw (Daily/Weekly MDD) and
+      # config/futures_margin.yaml::fallback_account_equity_krw (LeverageFilter
+      # here, the margin read-model in `scheduler`) both interpolate this var.
+      # `.env.paper` is interpolation-only, so without this line an operator
+      # override never reaches the container. The `scheduler` block carries the
+      # SAME expression — a unit test pins the two strings and the YAML default
+      # together, so the MDD and margin denominators cannot drift apart.
+      FUTURES_MARGIN_FALLBACK_EQUITY: "${FUTURES_MARGIN_FALLBACK_EQUITY:-50000000}"
 
   futures-order-router:
     <<: *pipeline-service
@@ -504,6 +513,10 @@ services:
       ECOS_API_KEY: "${ECOS_API_KEY:-}"
       PYTHONPATH: "/app"
       TZ: "Asia/Seoul"
+      # services.futures_margin_risk (crontab) reads
+      # config/futures_margin.yaml::fallback_account_equity_krw from this var —
+      # same knob and default as futures-risk-filter above (F-9 gap G4).
+      FUTURES_MARGIN_FALLBACK_EQUITY: "${FUTURES_MARGIN_FALLBACK_EQUITY:-50000000}"
 
   # =============================================================================
   # Telegram interactive-alerts bot — single python-telegram-bot Application in
