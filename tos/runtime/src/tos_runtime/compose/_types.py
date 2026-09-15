@@ -66,6 +66,7 @@ from tos_runtime.nontrade.observations import NonTradeObservation
 from tos_runtime.nontrade.processor import NonTradeEventProcessor, NonTradeOutcome
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.recovery.barrier import RecoveryVerdict
+from tos_runtime.riskstate.service import RiskStateService
 from tos_runtime.safety.protective import ProtectiveVerdict
 from tos_runtime.safety.rearm import prepare_new_risk_halt_clear
 from tos_runtime.safety.shutdown import ControlledShutdown, ShutdownOutcome
@@ -85,6 +86,7 @@ __all__ = [
     "OperationsFacts",
     "RecoveryBarrierHeld",
     "ReleaseAdmissionRefused",
+    "RiskStateConfigError",
 ]
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
@@ -107,6 +109,17 @@ class ReleaseAdmissionRefused(RuntimeError):
     """Raised by :func:`compose_paper_runtime` when release admission denies
     (slice plan §4 item 1: "release admission(거부 시 기동 중단)") — nothing
     past custody/evidence/RCL is constructed when this is raised."""
+
+
+class RiskStateConfigError(RuntimeError):
+    """Raised by :func:`compose_paper_runtime` (TOS risk state service wave, plan §3 "run
+    차단 목록") when ``aggregate_risk_policy.yaml``/``action_flow_policy.yaml`` are absent
+    under ``config_dir`` AND no explicit ``aggregate_risk_inputs_provider``/
+    ``action_flow_inputs_provider`` was injected — a production boot must never silently fall
+    back to a caller supplying ``None`` for both step 6/7 inputs (that would make every
+    attempt UNKNOWN forever with no boot-time signal at all). Supplying explicit providers
+    (the existing test seam) or the two policy files (the production path) both avoid this.
+    """
 
 
 class RecoveryBarrierHeld(RuntimeError):
@@ -275,6 +288,17 @@ class ComposedRuntime:
     #: :attr:`session_facts`'s own "``None`` only transiently, never observable on a runtime a
     #: caller actually receives" discipline).
     venue: VenueConstraintService | None = None
+    #: TOS risk state service wave (plan §2.4/§3) — the production step 6/7 decision-inputs
+    #: source :func:`~tos_runtime.compose._riskstate_wiring.build_risk_state_service`
+    #: constructs whenever ``aggregate_risk_policy.yaml``/``action_flow_policy.yaml`` both
+    #: exist under ``config_dir`` (regardless of whether an explicit
+    #: ``aggregate_risk_inputs_provider``/``action_flow_inputs_provider`` was ALSO injected —
+    #: see :func:`~tos_runtime.compose.root.compose_paper_runtime`'s own docstring for the
+    #: exact boot rule). ``None`` when those two files are absent AND explicit providers were
+    #: injected (the existing test seam); a production boot with neither raises
+    #: :class:`~tos_runtime.compose._riskstate_wiring.RiskPolicyScopeMismatch` or
+    #: ``RiskStateConfigError`` instead of silently returning a ``None`` here.
+    risk_state: RiskStateService | None = None
     #: TOS Phase 5 W4 §2 decision 11 — set by
     #: :func:`~tos_runtime.compose._operations_wiring.apply_operations_wiring` (called from
     #: :func:`~tos_runtime.compose.root.compose_paper_runtime`, right after
