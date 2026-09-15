@@ -32,10 +32,11 @@ def _streams_for(mode: str) -> tuple[str, str]:
 def _ensure_shadow_isolation(mode: str) -> None:
     """Bind the trading-state key suffix to *mode* (shared helper, same logic).
 
-    Kept as a thin module-local name so the entrypoint reads the same as the
-    other daemons'; the behaviour lives in
-    :func:`shared.streaming.trading_state.ensure_state_key_suffix`, which
-    ``services/risk_filter`` also calls (F-9 gap G3).
+    A thin module-local wrapper kept so this entrypoint and its existing tests
+    (tests/unit/futures_monitor/test_entrypoint.py) keep the historical name.
+    The behaviour lives in
+    :func:`shared.streaming.trading_state.ensure_state_key_suffix`;
+    ``services/risk_filter`` calls that helper directly (F-9 gap G3).
     """
     ensure_state_key_suffix(mode, label="futures monitor")
 

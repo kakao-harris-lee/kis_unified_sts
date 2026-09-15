@@ -695,7 +695,11 @@ def restore_state_suffix():
     """Save/restore TRADING_STATE_KEY_SUFFIX around a test.
 
     ``ensure_state_key_suffix`` writes ``os.environ`` directly (it has to — the
-    daemon's own process env is the contract), which monkeypatch cannot undo.
+    daemon's own process env is the contract). That write bypasses
+    monkeypatch's undo log: ``monkeypatch.setenv`` would record and restore the
+    previous value, but ``monkeypatch.delenv(raising=False)`` on an absent
+    variable records nothing, so the daemon's later "shadow" write would leak
+    into subsequent tests on the same worker.
     """
     import os
 

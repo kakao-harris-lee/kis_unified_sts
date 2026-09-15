@@ -66,8 +66,10 @@ def _key(template: str, asset: str) -> str:
 def ensure_state_key_suffix(mode: str, *, label: str) -> None:
     """Bind ``TRADING_STATE_KEY_SUFFIX`` to *mode* before any key is resolved.
 
-    Shared by every daemon that reads or writes the ``trading:{asset}:*``
-    namespace in a shadow lane. :func:`_key` reads the env var at *call* time,
+    Shared by ``services/futures_monitor`` and ``services/risk_filter``
+    (``services/stock_monitor`` and ``scripts/analysis/llm_market_context.py``
+    still carry local copies of the same logic). :func:`_key` reads the env
+    var at *call* time,
     so a shadow-mode process that never sets it silently resolves to the
     UNSUFFIXED (production / monolithic-orchestrator) keys — the F-9 Gate 1
     gap G3 (2026-09-10): ``services/risk_filter`` cross-read the

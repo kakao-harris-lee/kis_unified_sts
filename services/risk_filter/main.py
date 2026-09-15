@@ -251,11 +251,15 @@ class RiskFilterDaemon(StreamStage):
         entry_size_factor = _entry_size_factor(fields)
         size_multiplier = result.size_multiplier * entry_size_factor
 
-        # F-9 Gate 1b gap G2 (2026-09-10): the ONLY durable record of a
-        # verdict. ``SignalsAllWriter`` is wired with ``archive_client=None``
-        # (a no-op stub — ClickHouse is not an active runtime) and there is no
-        # metric, so before this line 29 of 30 shadow rejections on 2026-09-10
-        # carried no reason anywhere. Unthrottled on purpose: the candidate
+        # F-9 Gate 1b gap G2 (2026-09-10): the ONLY record of a verdict.
+        # ``SignalsAllWriter`` is wired with ``archive_client=None`` (a no-op
+        # stub — ClickHouse is not an active runtime) and there is no metric,
+        # so before this line 29 of 30 shadow rejections on 2026-09-10 carried
+        # no reason anywhere. It is NOT durable: the container's json-file log
+        # rotates at 10m x 3 (docker-compose.yml x-pipeline-service logging)
+        # and is discarded when the container is recreated — harvest it per
+        # session before any redeploy (runbook futures-pipeline-cutover-f9.md,
+        # Gate 1b). Unthrottled on purpose: the candidate
         # stream is at most ~1/min, and Gate 1b's "CLOSED = shadow rejection
         # evidence" needs every row, not a sampled one.
         # Logged BEFORE the writes below on purpose, so a failed write still
@@ -370,9 +374,17 @@ def _build_leverage_wiring(
     and per-contract multipliers stay consistent with the margin lane — DRY,
     and NO new Redis key:
 
-    * open positions ← the same ``trading:futures:positions`` hash the margin
-      publisher reads (:class:`~shared.streaming.trading_state.TradingStateReader`);
-      its records already carry ``code`` / ``quantity`` / ``current_price``;
+    * open positions ← :class:`~shared.streaming.trading_state.TradingStateReader`
+      ``("futures")``, the reader the margin publisher also uses; its records
+      already carry ``code`` / ``quantity`` / ``current_price``. NOT the same
+      hash in shadow mode: the key resolves ``TRADING_STATE_KEY_SUFFIX`` at call
+      time and ``_build_and_run`` binds it first (F-9 gap G3), so the shadow
+      daemon reads the decoupled chain's ``trading:futures:positions:shadow``
+      while ``services/futures_margin_risk`` (scheduler container, no suffix)
+      keeps reading the orchestrator's unsuffixed ``trading:futures:positions``.
+      The enforce-mode ``MarginGateFilter`` therefore still judges shadow
+      candidates from that unsuffixed book via ``futures:risk:latest`` —
+      follow-up #690;
     * account equity ← ``FuturesMarginConfig.fallback_account_equity_krw`` (the
       exact denominator the margin daemon uses when no live broker snapshot is
       available — the futures balance endpoint is REST-unstable / mock-blocked);
