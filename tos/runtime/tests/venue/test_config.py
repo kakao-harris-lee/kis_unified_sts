@@ -49,7 +49,7 @@ def test_load_venue_constraint_policy_happy_path(tmp_path: Path) -> None:
 def test_load_venue_constraint_policy_scope_identity_composed(tmp_path: Path) -> None:
     path = write_fixture_venue_policy(tmp_path)
     loaded = load_venue_constraint_policy(path, scheme=SCHEME)
-    assert loaded.policy.scope == "paper/kis/acct-1/krx/futures/index-futures/K200F"
+    assert loaded.policy.scope == "paper/kis/acct-1/krx/futures/K200F"
 
 
 def test_load_venue_constraint_policy_all_shape_bounds_null(tmp_path: Path) -> None:
@@ -70,6 +70,24 @@ def test_load_venue_constraint_policy_all_shape_bounds_null(tmp_path: Path) -> N
     }
 
 
+def test_load_venue_constraint_policy_canonical_digest_tbd_accepted_and_reload_matches(
+    tmp_path: Path,
+) -> None:
+    """``canonical_digest: TBD`` (the fixture default) passes; reloading the
+    SAME document with the freshly computed digest substituted in must also
+    pass and produce the identical digest (module docstring's tamper/stale
+    cross-check, positive side)."""
+    path = write_fixture_venue_policy(tmp_path)
+    loaded = load_venue_constraint_policy(path, scheme=SCHEME)
+    text_with_real_digest = venue_policy_yaml().replace(
+        "canonical_digest: TBD", f'canonical_digest: "{loaded.policy.canonical_digest}"'
+    )
+    path2 = tmp_path / "reload2.yaml"
+    path2.write_text(text_with_real_digest, encoding="utf-8")
+    loaded2 = load_venue_constraint_policy(path2, scheme=SCHEME)
+    assert loaded2.policy.canonical_digest == loaded.policy.canonical_digest
+
+
 # ===========================================================================
 # venue_constraint_policy.yaml — negative / fail-closed cases
 # ===========================================================================
@@ -86,8 +104,45 @@ def test_load_venue_constraint_policy_not_a_mapping(tmp_path: Path) -> None:
         load_venue_constraint_policy(path, scheme=SCHEME)
 
 
+def test_load_venue_constraint_policy_wrong_artifact_type_refused(
+    tmp_path: Path,
+) -> None:
+    text = venue_policy_yaml().replace(
+        "artifact_type: VENUE_CONSTRAINT_POLICY",
+        "artifact_type: ORDER_CONSTRUCTION_POLICY",
+    )
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="artifact_type"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
+def test_load_venue_constraint_policy_wrong_schema_version_refused(
+    tmp_path: Path,
+) -> None:
+    text = venue_policy_yaml().replace(
+        'schema_version: "1.0-DRAFT"', 'schema_version: "2.0"'
+    )
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="schema_version"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
+def test_load_venue_constraint_policy_draft_status_refused(tmp_path: Path) -> None:
+    text = venue_policy_yaml(status="DRAFT")
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="ISSUED"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
 def test_load_venue_constraint_policy_missing_policy_id(tmp_path: Path) -> None:
     text = venue_policy_yaml().replace('policy_id: "vcp-fixture-1"\n', "")
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="policy_id"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
+def test_load_venue_constraint_policy_tbd_policy_id_refused(tmp_path: Path) -> None:
+    text = venue_policy_yaml().replace('policy_id: "vcp-fixture-1"', "policy_id: TBD")
     path = write_fixture_venue_policy(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="policy_id"):
         load_venue_constraint_policy(path, scheme=SCHEME)
@@ -100,9 +155,80 @@ def test_load_venue_constraint_policy_null_policy_id_refused(tmp_path: Path) -> 
         load_venue_constraint_policy(path, scheme=SCHEME)
 
 
+def test_load_venue_constraint_policy_tampered_digest_refused(tmp_path: Path) -> None:
+    text = venue_policy_yaml(canonical_digest='"deadbeef"')
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="canonical_digest"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
+def test_load_venue_constraint_policy_scope_empty_singleton_refused(
+    tmp_path: Path,
+) -> None:
+    text = venue_policy_yaml().replace('environments: ["paper"]', "environments: []")
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="EXACTLY one"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
+def test_load_venue_constraint_policy_scope_two_entry_singleton_refused(
+    tmp_path: Path,
+) -> None:
+    text = venue_policy_yaml().replace(
+        'environments: ["paper"]', 'environments: ["paper", "live"]'
+    )
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="EXACTLY one"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
+def test_load_venue_constraint_policy_scope_action_classes_unknown_token_refused(
+    tmp_path: Path,
+) -> None:
+    text = venue_policy_yaml(action_classes='["NOT_A_REAL_ACTION", "NEW_SHORT"]')
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="ActionClass"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
+def test_load_venue_constraint_policy_action_outside_declared_scope_refused(
+    tmp_path: Path,
+) -> None:
+    """The cross-check: an ``admitting_phase_rules`` action not present in
+    ``scope.action_classes`` must refuse (a scope-declaration bug)."""
+    text = venue_policy_yaml(action_classes='["NEW_SHORT"]')
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="not in scope.action_classes"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
+def test_load_venue_constraint_policy_missing_model_view_refused(
+    tmp_path: Path,
+) -> None:
+    text = venue_policy_yaml()
+    idx = text.index("_model_view:")
+    end_idx = text.index("_runtime:")
+    text = text[:idx] + text[end_idx:]
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="_model_view"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
+def test_load_venue_constraint_policy_missing_runtime_block_refused(
+    tmp_path: Path,
+) -> None:
+    text = venue_policy_yaml()
+    idx = text.index("_runtime:")
+    text = text[:idx]
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="_runtime"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
 _ADMITTING_PHASE_RULES_BLOCK = (
-    'admitting_phase_rules:\n  - action: "NEW_LONG"\n    admitting_phases: ["REGULAR"]\n'
-    '  - action: "NEW_SHORT"\n    admitting_phases: ["REGULAR"]\n'
+    '_model_view:\n  admitting_phase_rules:\n    - action: "NEW_LONG"\n'
+    '      admitting_phases: ["REGULAR"]\n    - action: "NEW_SHORT"\n'
+    '      admitting_phases: ["REGULAR"]\n'
 )
 
 
@@ -110,8 +236,7 @@ def test_load_venue_constraint_policy_null_admitting_phase_rules_refused(
     tmp_path: Path,
 ) -> None:
     text = venue_policy_yaml().replace(
-        _ADMITTING_PHASE_RULES_BLOCK,
-        "admitting_phase_rules: null\n",
+        _ADMITTING_PHASE_RULES_BLOCK, "_model_view:\n  admitting_phase_rules: null\n"
     )
     path = write_fixture_venue_policy(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="admitting_phase_rules"):
@@ -121,9 +246,8 @@ def test_load_venue_constraint_policy_null_admitting_phase_rules_refused(
 def test_load_venue_constraint_policy_empty_admitting_phase_rules_is_accepted(
     tmp_path: Path,
 ) -> None:
-    text = venue_policy_yaml().replace(
-        _ADMITTING_PHASE_RULES_BLOCK,
-        "admitting_phase_rules: []\n",
+    text = venue_policy_yaml(action_classes="[]").replace(
+        _ADMITTING_PHASE_RULES_BLOCK, "_model_view:\n  admitting_phase_rules: []\n"
     )
     path = write_fixture_venue_policy(tmp_path, text)
     loaded = load_venue_constraint_policy(path, scheme=SCHEME)
@@ -167,7 +291,7 @@ def test_load_venue_constraint_policy_unknown_quantity_unit_refused(
 def test_load_venue_constraint_policy_missing_shape_constraint_key_refused(
     tmp_path: Path,
 ) -> None:
-    text = venue_policy_yaml().replace("  max_quantity: null\n", "")
+    text = venue_policy_yaml().replace("    max_quantity: null\n", "")
     path = write_fixture_venue_policy(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="max_quantity"):
         load_venue_constraint_policy(path, scheme=SCHEME)
@@ -195,23 +319,35 @@ def test_load_venue_constraint_policy_empty_allowed_order_types_is_accepted(
     assert loaded.policy.shape_constraints.allowed_order_types == frozenset()
 
 
-def test_load_venue_constraint_policy_missing_scope_field_refused(
-    tmp_path: Path,
-) -> None:
-    text = venue_policy_yaml().replace('  instrument: "K200F"\n', "")
-    path = write_fixture_venue_policy(tmp_path, text)
-    with pytest.raises(VenuePolicyConfigError, match="scope.instrument"):
-        load_venue_constraint_policy(path, scheme=SCHEME)
-
-
 def test_load_venue_constraint_policy_null_dependency_closure_edges_refused(
     tmp_path: Path,
 ) -> None:
     text = venue_policy_yaml().replace(
-        "dependency_closure:\n  edges: []\n", "dependency_closure:\n  edges: null\n"
+        "dependency_closure:\n    edges: []\n", "dependency_closure:\n    edges: null\n"
     )
     path = write_fixture_venue_policy(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="edges"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
+def test_load_venue_constraint_policy_missing_template_list_key_refused(
+    tmp_path: Path,
+) -> None:
+    text = venue_policy_yaml().replace("approved_sources: []\n", "")
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="approved_sources"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
+def test_load_venue_constraint_policy_missing_authority_mapping_refused(
+    tmp_path: Path,
+) -> None:
+    text = venue_policy_yaml()
+    start = text.index("authority:\n")
+    end = text.index("evidence:\n")
+    text = text[:start] + text[end:]
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="authority"):
         load_venue_constraint_policy(path, scheme=SCHEME)
 
 
@@ -231,6 +367,16 @@ def test_load_order_construction_policy_happy_path(tmp_path: Path) -> None:
     assert loaded.policy.evidence_package_ref is None
     assert loaded.wire_codec_kind is None
     assert loaded.wire_fields == frozenset()
+    assert loaded.construction_generation == 1
+
+
+def test_load_order_construction_policy_null_construction_generation_accepted(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml(construction_generation="null")
+    path = write_fixture_ocp(tmp_path, text)
+    loaded = load_order_construction_policy(path, scheme=SCHEME)
+    assert loaded.construction_generation is None
 
 
 def test_load_order_construction_policy_digest_matches_kernel_issuance(
@@ -280,10 +426,73 @@ def test_load_order_construction_policy_missing_file(tmp_path: Path) -> None:
         load_order_construction_policy(tmp_path / "nope.yaml", scheme=SCHEME)
 
 
+def test_load_order_construction_policy_wrong_artifact_type_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace(
+        "artifact_type: ORDER_CONSTRUCTION_POLICY",
+        "artifact_type: VENUE_CONSTRAINT_POLICY",
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="artifact_type"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_draft_status_refused(tmp_path: Path) -> None:
+    text = ocp_yaml(status="DRAFT")
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="ISSUED"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_tbd_policy_id_refused(tmp_path: Path) -> None:
+    text = ocp_yaml().replace('policy_id: "ocp-fixture-1"', "policy_id: TBD")
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="policy_id"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_tampered_digest_refused(tmp_path: Path) -> None:
+    text = ocp_yaml(canonical_digest='"deadbeef"')
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="canonical_digest"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_scope_empty_singleton_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace('environments: ["paper"]', "environments: []")
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="EXACTLY one"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_model_view_generation_mismatch_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml(model_view_policy_generation=99)
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="policy_generation"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_missing_model_view_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml()
+    idx = text.index("_model_view:")
+    end_idx = text.index("_runtime:")
+    text = text[:idx] + text[end_idx:]
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="_model_view"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
 def test_load_order_construction_policy_missing_wire_codec_key_refused(
     tmp_path: Path,
 ) -> None:
-    text = ocp_yaml().replace("wire_codec: null\n", "")
+    text = ocp_yaml().replace("  wire_codec: null\n", "")
     path = write_fixture_ocp(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="wire_codec"):
         load_order_construction_policy(path, scheme=SCHEME)
@@ -304,4 +513,13 @@ def test_load_order_construction_policy_malformed_wire_codec_mapping_refused(
     text = ocp_yaml(wire_codec='{kind: "kis-order-cash-v1"}')
     path = write_fixture_ocp(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="wire_fields"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_missing_template_list_key_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace("intent_schema_versions: []\n", "")
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="intent_schema_versions"):
         load_order_construction_policy(path, scheme=SCHEME)
