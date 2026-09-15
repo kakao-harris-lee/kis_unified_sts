@@ -211,6 +211,8 @@ def ocp_yaml(
         construction_generation: {construction_generation}
         canonical_digest: {canonical_digest}
         status: {status}
+        effective_from: null
+        review_due: null
         scope:
           environments: ["paper"]
           safety_cells: []

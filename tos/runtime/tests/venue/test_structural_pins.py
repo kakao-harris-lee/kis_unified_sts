@@ -1,13 +1,21 @@
 """AST-pin canaries for tos_runtime.venue (plan §5 mutation table M3/M9):
 
-* ``VenueConstraintPolicy.issue`` / ``OrderConstructionPolicy.issue`` may be
-  called ONLY inside ``venue/config.py``.
+* ``VenueConstraintPolicy.issue`` may be called ONLY inside
+  ``venue/_venue_policy_loader.py``.
+* ``OrderConstructionPolicy.issue`` may be called ONLY inside
+  ``venue/_order_construction_policy_loader.py``.
 * ``VenueConstraintSnapshot.issue`` / ``OrderAdmissibilityDecision.issue``
   may be called ONLY inside ``venue/service.py``.
 * No ``tos_runtime`` module ever passes an ``OrderAdmissibilityResult.<MEMBER>``
   attribute access as a call ARGUMENT or KEYWORD VALUE (comparisons via
   ``is``/``is not``/``in`` are fine — only construction-time use is forbidden,
   plan §2 decision 1's "런타임은 어느 판정도 저작하지 않는다").
+
+``venue/config.py`` is a thin re-export shim over
+``_venue_policy_loader.py``/``_order_construction_policy_loader.py``/
+``_policy_primitives.py`` (split purely for module-size-budget reasons, see
+``config.py``'s own module docstring) — it defines no ``.issue()`` call of
+its own, so it never appears as an allowed home below.
 
 An AST walk over each file's own statements — never a text grep — so a
 multi-line, aliased, or nested call cannot slip past it (mirrors
@@ -22,14 +30,15 @@ from pathlib import Path
 
 _RUNTIME_ROOT = Path(__file__).resolve().parents[2]  # tos/runtime
 _SRC = _RUNTIME_ROOT / "src" / "tos_runtime"
-_VENUE_CONFIG = _SRC / "venue" / "config.py"
+_VENUE_POLICY_LOADER = _SRC / "venue" / "_venue_policy_loader.py"
+_OCP_LOADER = _SRC / "venue" / "_order_construction_policy_loader.py"
 _VENUE_SERVICE = _SRC / "venue" / "service.py"
 
 #: {method-owner-class-name: allowed file} for the four ``.issue()`` calls
 #: this pin scopes (plan §5 mutation M9).
 _ISSUE_METHOD_HOMES: dict[str, Path] = {
-    "VenueConstraintPolicy": _VENUE_CONFIG,
-    "OrderConstructionPolicy": _VENUE_CONFIG,
+    "VenueConstraintPolicy": _VENUE_POLICY_LOADER,
+    "OrderConstructionPolicy": _OCP_LOADER,
     "VenueConstraintSnapshot": _VENUE_SERVICE,
     "OrderAdmissibilityDecision": _VENUE_SERVICE,
 }
@@ -66,8 +75,9 @@ def test_issue_calls_scoped_to_their_owning_module() -> None:
             if path != allowed_file:
                 offenders.append(f"{path}:{node.lineno}: {owner}.issue(...)")
     assert offenders == [], (
-        "each of VenueConstraintPolicy/OrderConstructionPolicy.issue "
-        f"(only in {_VENUE_CONFIG}) and VenueConstraintSnapshot/"
+        "VenueConstraintPolicy.issue (only in "
+        f"{_VENUE_POLICY_LOADER}), OrderConstructionPolicy.issue (only in "
+        f"{_OCP_LOADER}), and VenueConstraintSnapshot/"
         f"OrderAdmissibilityDecision.issue (only in {_VENUE_SERVICE}) must be "
         f"called from exactly its owning module (plan §5 M9): {offenders}"
     )

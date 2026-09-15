@@ -172,6 +172,27 @@ def test_load_order_construction_policy_old_scalar_scope_shape_refused(
         load_order_construction_policy(path, scheme=SCHEME)
 
 
+def test_load_venue_constraint_policy_missing_effective_from_refused(
+    tmp_path: Path,
+) -> None:
+    """Team-lead review MEDIUM, 2026-09-15: ``effective_from`` (may be
+    ``null``, but the KEY must be present per DR-0002 §2.1 "every template
+    key is present") was previously unchecked."""
+    text = venue_policy_yaml().replace('effective_from: "2026-09-15"\n', "")
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="effective_from"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
+def test_load_venue_constraint_policy_missing_review_due_refused(
+    tmp_path: Path,
+) -> None:
+    text = venue_policy_yaml().replace("review_due: null\n", "")
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="review_due"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
 def test_load_venue_constraint_policy_wrong_artifact_type_refused(
     tmp_path: Path,
 ) -> None:
@@ -492,6 +513,46 @@ def test_load_order_construction_policy_wire_codec_mapping(tmp_path: Path) -> No
 def test_load_order_construction_policy_missing_file(tmp_path: Path) -> None:
     with pytest.raises(VenuePolicyConfigError, match="not found"):
         load_order_construction_policy(tmp_path / "nope.yaml", scheme=SCHEME)
+
+
+def test_load_order_construction_policy_missing_effective_from_refused(
+    tmp_path: Path,
+) -> None:
+    """Team-lead review MEDIUM, 2026-09-15 (mirrors the venue-policy case)."""
+    text = ocp_yaml().replace("effective_from: null\n", "")
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="effective_from"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_missing_review_due_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace("review_due: null\n", "")
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="review_due"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_scope_action_classes_null_refused(
+    tmp_path: Path,
+) -> None:
+    """Team-lead review MEDIUM, 2026-09-15: ``scope.action_classes`` was
+    previously unvalidated on the OCP loader entirely (the VCP loader always
+    validated it) — a ``null`` value must refuse, not silently pass."""
+    text = ocp_yaml().replace("action_classes: []\n", "action_classes: null\n")
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="action_classes"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_scope_action_classes_unknown_token_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace("action_classes: []\n", 'action_classes: ["NOPE"]\n')
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="ActionClass"):
+        load_order_construction_policy(path, scheme=SCHEME)
 
 
 def test_load_order_construction_policy_wrong_artifact_type_refused(
