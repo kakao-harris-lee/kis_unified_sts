@@ -1922,7 +1922,7 @@ requires-dist = [
     { name = "slowapi", marker = "extra == 'api'", specifier = ">=0.1.9" },
     { name = "statsmodels", specifier = ">=0.14" },
     { name = "structlog", specifier = ">=23.0" },
-    { name = "ta-lib", specifier = ">=0.5.1" },
+    { name = "ta-lib", specifier = ">=0.5.1,<0.8" },
     { name = "types-pyyaml", marker = "extra == 'dev'" },
     { name = "types-redis", marker = "extra == 'dev'" },
     { name = "types-requests", marker = "extra == 'dev'" },
