@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from tos.egressgw._base import ArtifactIntegrityError
+from tos.canonical import ArtifactIntegrityError
 
 __all__ = [
     "ADMITTING_VERIFY_OUTCOMES",

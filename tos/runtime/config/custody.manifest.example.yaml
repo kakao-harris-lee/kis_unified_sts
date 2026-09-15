@@ -15,13 +15,38 @@
 # never as a vacuous match).
 environment_label: null
 
-# Exactly the three scopes Phase 2 provisions
-# (tos_runtime.custody.file_custody.PROVISIONED_SCOPES). `order.*` is
-# deliberately absent and always will be for futures REAL (root CLAUDE.md
-# non-negotiable rule); stock order-scope custody is Phase 4 and gets its own
-# manifest row only when that phase lands — never add an `order.*` entry
-# here as a shortcut, `FileCustody.load` refuses it structurally regardless
-# of what a manifest declares.
+# Phase 2 provisions exactly three scopes
+# (tos_runtime.custody.file_custody.PROVISIONED_SCOPES): `read.principal`,
+# `evidence.key`, `replay.params`. `order.*` is deliberately absent and
+# always will be for futures REAL (root CLAUDE.md non-negotiable rule).
+#
+# Stock order-scope custody is Phase 4 (tos-kis-mock-transport plan) — the
+# two `kis_mock.*` rows below are that phase's own scopes, named for the KIS
+# MOCK stock transport
+# (tos_runtime.transport.kis_mock.adapter.KisMockTransport) rather than
+# `order.*` (the scope names this plan's transport actually consumes; the
+# `order.*` prohibition above is about that different, unrelated name).
+# **Provisioned as of T2 lane C.** `tos_runtime.custody.file_custody.
+# PROVISIONED_SCOPES` now includes `kis_mock.app_key`/`kis_mock.app_secret` —
+# see the runbook `docs/runbooks/tos-kis-mock-transport.md` for the custody
+# file preparation steps. There is deliberately NO `kis_mock.account` scope
+# (review F2): the KIS account number is not a custody credential in this
+# design — it is the sealed outbound `account` coordinate, read directly off
+# the `SendSeal` (see `tos_runtime.transport.kis_mock.codec`'s own module
+# docstring).
+#
+# Each `kis_mock.*` row's `principal` mirrors `broker_scopes.example.yaml`'s
+# `MOCK_STOCK_ORDER.principal` (`"kis-mock-order-{environment_label}"`)
+# verbatim — the plan's decision 4 requires both to match the ACTIVE broker
+# scope's own (already `{environment_label}`-substituted) `principal` string
+# before `compose --transport kis-mock` may boot
+# (`tos_runtime.compose._transport_wiring.refuse_custody_principal_mismatch`
+# — one principal names both the credential and the route). Note that,
+# unlike `broker_scopes.yaml`, `CustodyManifest` performs NO
+# `{environment_label}` substitution of its own: this example's literal
+# token string is illustrative only, and a real deployment's manifest MUST
+# write the concrete, already-substituted principal (e.g.
+# `kis-mock-order-paper`) for the check above to ever pass.
 #
 # Each scope names:
 #   file            - path to the credential file, RELATIVE to this
@@ -51,4 +76,12 @@ scopes:
   replay.params:
     file: replay.params
     principal: replay-params-v1
+    expected_sha256: null
+  kis_mock.app_key:
+    file: kis_mock.app_key
+    principal: "kis-mock-order-{environment_label}"
+    expected_sha256: null
+  kis_mock.app_secret:
+    file: kis_mock.app_secret
+    principal: "kis-mock-order-{environment_label}"
     expected_sha256: null

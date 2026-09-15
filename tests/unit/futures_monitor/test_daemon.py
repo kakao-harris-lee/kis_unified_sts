@@ -175,6 +175,49 @@ async def test_recover_from_hash(redis):
     assert d._open["A05603"]["entry_price"] == 331.20
 
 
+def _position_record(symbol: str) -> str:
+    return json.dumps(
+        {
+            "symbol": symbol,
+            "side": "long",
+            "entry_price": 400.0,
+            "quantity": 1,
+            "opened_at_ms": 1757462400000,
+            "setup_type": "setup_a_gap_reversion",
+            "signal_id": "s-roll",
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_recover_warns_for_position_on_a_rolled_out_contract(redis, caplog):
+    """Review F5 on PR #689: flag a pre-roll record, but still recover it."""
+    await redis.hset(POS_KEY, "A01609", _position_record("A01609"))
+    await redis.hset(POS_KEY, "A01612", _position_record("A01612"))
+    d = _make_daemon(redis)
+    d.contract_symbol = "A01612"
+
+    with caplog.at_level(logging.WARNING, logger="services.futures_monitor.daemon"):
+        await d.recover_open_positions()
+
+    assert set(d._open) == {"A01609", "A01612"}  # behaviour unchanged
+    warnings = [r.getMessage() for r in caplog.records]
+    assert len(warnings) == 1
+    assert "A01609 is not on the current contract A01612" in warnings[0]
+
+
+@pytest.mark.asyncio
+async def test_recover_without_contract_symbol_does_not_warn(redis, caplog):
+    await redis.hset(POS_KEY, "A01609", _position_record("A01609"))
+    d = _make_daemon(redis)  # contract_symbol defaults to None
+
+    with caplog.at_level(logging.WARNING, logger="services.futures_monitor.daemon"):
+        await d.recover_open_positions()
+
+    assert set(d._open) == {"A01609"}
+    assert caplog.records == []
+
+
 @pytest.mark.asyncio
 async def test_mtm_side_aware_unrealized(redis):
     d = _make_daemon(redis)
@@ -232,9 +275,7 @@ async def test_consume_loop_logs_audit_context_before_poison_pill_ack(caplog):
     ]
     messages = [record.getMessage() for record in caplog.records]
     drop_log = next(
-        message
-        for message in messages
-        if "event=stream_message_dropped" in message
+        message for message in messages if "event=stream_message_dropped" in message
     )
     assert "stream=signal.final.futures.shadow" in drop_log
     assert "consumer_group=futures_monitor" in drop_log
@@ -275,9 +316,7 @@ async def test_consume_loop_logs_ack_failed_when_poison_pill_xack_fails(caplog):
     messages = [record.getMessage() for record in caplog.records]
     assert not any("event=stream_message_dropped" in message for message in messages)
     ack_log = next(
-        message
-        for message in messages
-        if "event=stream_message_ack_failed" in message
+        message for message in messages if "event=stream_message_ack_failed" in message
     )
     assert "stream=signal.final.futures.shadow" in ack_log
     assert "consumer_group=futures_monitor" in ack_log

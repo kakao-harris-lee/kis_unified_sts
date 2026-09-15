@@ -51,8 +51,10 @@ import tos.egressgw
 import tos.egressgw._base
 import tos.egressgw.construction
 import tos.egressgw.gateway
+import tos.egressgw.mesh
 import tos.egressgw.records
 import tos.egressgw.seal
+import tos.egressgw.venuefacts
 import tos.egressgw.vocabulary
 
 #: The §0.3 allowlist **as actually taken** — the only top-level ``tos.*`` packages the sources
@@ -92,11 +94,12 @@ _DECLARED_BUT_NOT_TAKEN = frozenset({"tos.capsule", "tos.evidence"})
 
 #: Siblings that must stay outside the closure entirely — including the D-E4 twin, which is
 #: reached only through the injected structural transport port (design #34 §0.3/§5.1).
-#: ``tos.orthostate`` is deliberately absent (2026-09-09, Phase 3 wave 2 KW2-C2): ``tos.engine``
-#: now directly realizes it (``engine/orthostate_projection.py``), so it reaches every
-#: ``tos.engine`` consumer, this package included, through the already ratified ``tos.engine``
-#: edge — the ``bound = _ALLOWED_TOS_PACKAGES | set(engine["tos_tops"])`` subset tests below
-#: already account for it and stay green unedited.
+#: ``tos.orthostate`` and (kernel round #3 §2 결정 1, 2026-09-12) ``tos.nontrade`` are
+#: deliberately absent: ``tos.engine`` now directly realizes both
+#: (``engine/orthostate_projection.py``; ``engine/_corporate_action.py``), so each reaches
+#: every ``tos.engine`` consumer, this package included, through the already ratified
+#: ``tos.engine`` edge — the ``bound = _ALLOWED_TOS_PACKAGES | set(engine["tos_tops"])``
+#: subset tests below already account for it and stay green unedited.
 _FORBIDDEN_SIBLINGS = frozenset(
     {
         "tos.brokeradapter",
@@ -106,7 +109,6 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.hag",
         "tos.iap",
         "tos.liveauth",
-        "tos.nontrade",
         "tos.posttrade",
         "tos.protective",
         "tos.recon",
@@ -206,8 +208,10 @@ _SUBMODULES = (
     "tos.egressgw._base",
     "tos.egressgw.construction",
     "tos.egressgw.gateway",
+    "tos.egressgw.mesh",
     "tos.egressgw.records",
     "tos.egressgw.seal",
+    "tos.egressgw.venuefacts",
     "tos.egressgw.vocabulary",
 )
 
@@ -216,8 +220,10 @@ _LOADED_SUBMODULES = {
     "tos.egressgw._base": tos.egressgw._base,
     "tos.egressgw.construction": tos.egressgw.construction,
     "tos.egressgw.gateway": tos.egressgw.gateway,
+    "tos.egressgw.mesh": tos.egressgw.mesh,
     "tos.egressgw.records": tos.egressgw.records,
     "tos.egressgw.seal": tos.egressgw.seal,
+    "tos.egressgw.venuefacts": tos.egressgw.venuefacts,
     "tos.egressgw.vocabulary": tos.egressgw.vocabulary,
 }
 
@@ -251,8 +257,10 @@ def _closure_child(queue: mp.Queue) -> None:
     import tos.egressgw._base  # noqa: F401
     import tos.egressgw.construction  # noqa: F401
     import tos.egressgw.gateway  # noqa: F401
+    import tos.egressgw.mesh  # noqa: F401
     import tos.egressgw.records  # noqa: F401
     import tos.egressgw.seal  # noqa: F401
+    import tos.egressgw.venuefacts  # noqa: F401
     import tos.egressgw.vocabulary  # noqa: F401
 
     tos_tops = sorted(
@@ -331,6 +339,147 @@ def _run_child(target) -> dict:
     proc.join(timeout=180)
     assert proc.exitcode == 0, f"closure child exited abnormally: {proc.exitcode}"
     return result
+
+
+#: ``mesh.py``'s own fully-qualified containing package, for resolving a relative import in it.
+_MESH_PACKAGE_BITS = ("tos", "egressgw")
+
+
+def _resolve_relative_import_prefix(module: str, level: int) -> str | None:
+    """Resolve one ``ImportFrom(module, level)`` in ``mesh.py`` to the absolute dotted prefix it
+    names, mirroring CPython's own ``importlib._bootstrap._resolve_name`` (a relative import
+    resolves against ``package.rsplit('.', level - 1)[0]``, then appends ``module`` if given).
+
+    Returns ``None`` if ``level`` escapes ``tos.egressgw``'s own two-component package path —
+    not reachable in practice: Python itself refuses such an import ("attempted relative import
+    beyond top-level package") before this pin ever runs, which is its own red signal (the same
+    shape as an absolute circular import — a collection-time ``ImportError``).
+    """
+    if level > len(_MESH_PACKAGE_BITS):
+        return None
+    base = ".".join(_MESH_PACKAGE_BITS[: len(_MESH_PACKAGE_BITS) - level + 1])
+    return f"{base}.{module}" if module else base
+
+
+def test_mesh_never_imports_gateway() -> None:
+    """(kernel round #2 §2 decision 1 — mutation M5) ``mesh.py`` must not import ``gateway.py``.
+
+    ``gateway.py`` imports ``mesh.py`` (:func:`~tos.egressgw.mesh.resolve_broker_applicability` /
+    :func:`~tos.egressgw.mesh.deferred_item_verdict`); the reverse edge would be circular. This
+    is an **intra-package** edge, so the package-level allowlist checks above (which operate at
+    ``tos.*`` top-level granularity, and would not flag ``tos.egressgw.gateway`` — it is already
+    inside the allowed ``tos.egressgw`` package) cannot catch it; this AST scan checks it
+    directly against ``mesh.py``'s own source.
+
+    Covers absolute forms (``import tos.egressgw.gateway`` / ``from tos.egressgw import
+    gateway`` / ``from tos.egressgw.gateway import ...``, at module scope or lazily inside a
+    function — the ``ast.walk`` traversal does not distinguish) and **every relative form**, by
+    resolving ``(module, level)`` to an absolute dotted prefix via
+    :func:`_resolve_relative_import_prefix` rather than pattern-matching each level by hand:
+    ``from . import gateway`` (level 1, module ``None``), ``from .gateway import ...`` (level 1,
+    module ``"gateway"``), and ``from ..egressgw import gateway`` (level 2, module
+    ``"egressgw"``) all resolve to the same absolute name and are all caught the same way.
+
+    Independent review round #1 MEDIUM-1: the first version of this pin guarded on
+    ``node.module`` truthiness, which silently dropped every relative form. Independent review
+    round #1 LOW-8: the MEDIUM-1 fix itself only pattern-matched levels 1 and 2 by hand and
+    missed ``from ..egressgw import gateway`` — replaced with the general resolver above, which
+    handles any level up to this package's own depth (and a level beyond that is Python's own
+    ``ImportError``, not a case this pin needs to reach).
+    """
+    mesh_path = _SRC / "mesh.py"
+    tree = ast.parse(mesh_path.read_text(encoding="utf-8"), filename=str(mesh_path))
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "tos.egressgw.gateway" or alias.name.endswith(
+                    ".gateway"
+                ):
+                    offenders.append(f"mesh.py:{node.lineno} import {alias.name}")
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level:
+                prefix = _resolve_relative_import_prefix(module, node.level)
+                if prefix is None:
+                    continue
+                if prefix == "tos.egressgw.gateway":
+                    offenders.append(
+                        f"mesh.py:{node.lineno} relative import resolves to gateway "
+                        f"(level={node.level}, module={module!r})"
+                    )
+                    continue
+                for alias in node.names:
+                    if f"{prefix}.{alias.name}" == "tos.egressgw.gateway":
+                        offenders.append(
+                            f"mesh.py:{node.lineno} relative import resolves to gateway "
+                            f"(level={node.level}, module={module!r}, name={alias.name!r})"
+                        )
+                continue
+            if module in ("tos.egressgw.gateway", "tos.egressgw"):
+                for alias in node.names:
+                    if alias.name == "gateway":
+                        offenders.append(
+                            f"mesh.py:{node.lineno} from {module} import {alias.name}"
+                        )
+            if module == "tos.egressgw.gateway":
+                offenders.append(f"mesh.py:{node.lineno} from {module} import ...")
+    assert offenders == [], f"mesh.py imports gateway.py — circular edge: {offenders}"
+
+
+def _module_imports_gateway(path: Path) -> list[str]:
+    """The same gateway-import scan :func:`test_mesh_never_imports_gateway` runs against
+    ``mesh.py``, generalized to any module at this package's own depth (kernel round #3 §2
+    decision 4 / mutation M4 — ``venuefacts.py`` must not import ``gateway.py`` either, for the
+    same circularity reason: ``gateway.py`` imports ``venuefacts.py``)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "tos.egressgw.gateway" or alias.name.endswith(
+                    ".gateway"
+                ):
+                    offenders.append(f"{path.name}:{node.lineno} import {alias.name}")
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level:
+                prefix = _resolve_relative_import_prefix(module, node.level)
+                if prefix is None:
+                    continue
+                if prefix == "tos.egressgw.gateway":
+                    offenders.append(
+                        f"{path.name}:{node.lineno} relative import resolves to gateway "
+                        f"(level={node.level}, module={module!r})"
+                    )
+                    continue
+                for alias in node.names:
+                    if f"{prefix}.{alias.name}" == "tos.egressgw.gateway":
+                        offenders.append(
+                            f"{path.name}:{node.lineno} relative import resolves to gateway "
+                            f"(level={node.level}, module={module!r}, name={alias.name!r})"
+                        )
+                continue
+            if module in ("tos.egressgw.gateway", "tos.egressgw"):
+                for alias in node.names:
+                    if alias.name == "gateway":
+                        offenders.append(
+                            f"{path.name}:{node.lineno} from {module} import {alias.name}"
+                        )
+            if module == "tos.egressgw.gateway":
+                offenders.append(f"{path.name}:{node.lineno} from {module} import ...")
+    return offenders
+
+
+def test_venuefacts_never_imports_gateway() -> None:
+    """(kernel round #3 §2 decision 4 — mutation M4) ``venuefacts.py`` must not import
+    ``gateway.py``, mirroring :func:`test_mesh_never_imports_gateway`: ``gateway.py`` imports
+    :func:`~tos.egressgw.venuefacts.venue_generation_item_verdict`, so the reverse edge would be
+    circular."""
+    offenders = _module_imports_gateway(_SRC / "venuefacts.py")
+    assert (
+        offenders == []
+    ), f"venuefacts.py imports gateway.py — circular edge: {offenders}"
 
 
 def test_source_imports_no_tos_module_outside_the_declared_allowlist() -> None:

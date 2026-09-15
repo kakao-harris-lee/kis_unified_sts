@@ -27,3 +27,9 @@ source_revision: null
 # The Phase-0-approved proof recipe identity (ADR §29 Q3) this SYNTHETIC producer
 # issues every proof under.
 proof_recipe_id: null
+
+# TOS Phase 5 W2-R (plan §10 row ④): the obligation-expiry bound (milliseconds) a
+# reservation may sit in RELEASE_PENDING_PROOF/QUARANTINED_UNKNOWN before
+# FinalityReleaseConsumer records (never acts on) a RELEASE_PROOF_OVERDUE evidence
+# row — an incident candidate for an operator, not a state change.
+release_proof_wait_ms: null

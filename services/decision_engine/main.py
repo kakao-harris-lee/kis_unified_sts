@@ -875,13 +875,15 @@ def build_atr_readings(engine: Any, symbol: str) -> Callable[[], dict[str, float
 
 async def _build_context_provider(
     redis_client: Any,
+    instrument: Any = None,
 ) -> tuple[Any, Any, Any, Any]:
     """Wire indicator engine + StreamConsumerFeed(raw_data) + FuturesContextProvider.
 
     Mode-agnostic: used for both shadow and live producing modes. Returns
     ``(context_provider, feed, sync_redis, atr_readings)``.  The caller is
     responsible for calling ``await feed.stop()`` and ``sync_redis.close()`` on
-    shutdown.
+    shutdown. ``instrument`` is the contract the caller's front-month check
+    watches; ``None`` resolves it here.
 
     ``atr_readings`` is a zero-arg ``{symbol: current_atr}`` reader over the
     same ``engine.get_indicators(symbol)["atr"]`` accessor the context provider
@@ -907,7 +909,8 @@ async def _build_context_provider(
     from shared.storage.market_data_store import ParquetMarketDataStore
     from shared.streaming.consumer_feed import StreamConsumerFeed
 
-    instrument = resolve_futures_instrument_from_env()
+    if instrument is None:
+        instrument = resolve_futures_instrument_from_env()
     symbol = instrument.symbol
 
     engine = StreamingIndicatorEngine()
@@ -927,7 +930,6 @@ async def _build_context_provider(
     feed.update_symbols([symbol])
     await feed.start()
 
-    daily_ref = FuturesDailyReference(store=store, symbol=symbol)
     macro_stream = os.environ.get("MACRO_OVERNIGHT_STREAM", "stream:macro.overnight")
     events_path = os.environ.get(
         "SCHEDULED_EVENTS_PATH", "config/scheduled_events.yaml"
@@ -939,6 +941,12 @@ async def _build_context_provider(
     import redis as _redis_sync
 
     sync_redis = _redis_sync.Redis.from_url(redis_url, decode_responses=True)
+
+    # Same sync client feeds the prev_close read-model
+    # (futures:daily_reference:{symbol}, published by the producers' session-start
+    # REST prefetch). Without it the daemon falls back to the parquet daily bars,
+    # which never carried the TRADING symbol — Setup A's permanent blind spot.
+    daily_ref = FuturesDailyReference(store=store, symbol=symbol, redis=sync_redis)
 
     def _macro_reader() -> Any:
         return read_latest_macro_snapshot(sync_redis, macro_stream)
@@ -962,7 +970,7 @@ async def _build_context_provider(
 
 
 async def _resolve_context_provider(
-    mode: str, redis_client: Any
+    mode: str, redis_client: Any, instrument: Any = None
 ) -> tuple[Any, Any, Any, Any]:
     """Return (context_provider, feed, sync_redis, atr_readings) for the mode.
 
@@ -972,7 +980,7 @@ async def _resolve_context_provider(
     feed=sync_redis=atr_readings=None (no engine exists to sample).
     """
     if _is_producing_mode(mode):
-        return await _build_context_provider(redis_client)
+        return await _build_context_provider(redis_client, instrument)
 
     async def _stub_context_provider() -> None:
         return None
@@ -1113,6 +1121,11 @@ async def _build_and_run() -> int:
 
     import redis.asyncio as aioredis
 
+    from shared.execution.futures_instrument import (
+        resolve_futures_instrument_from_env,
+        run_with_front_month_watch,
+    )
+
     redis_url = redis_url_from_env()
     redis_client = aioredis.from_url(redis_url)
 
@@ -1120,8 +1133,11 @@ async def _build_and_run() -> int:
     mode = _resolve_mode()
     candidate_stream = _candidate_stream_for(mode)
 
+    # Resolved once and shared by the context provider and the front-month
+    # check, so the check watches exactly the contract the engine consumes.
+    instrument = resolve_futures_instrument_from_env()
     context_provider, feed, sync_redis, atr_readings = await _resolve_context_provider(
-        mode, redis_client
+        mode, redis_client, instrument
     )
     volatility_publisher = _build_volatility_publisher(redis_client, atr_readings)
 
@@ -1164,7 +1180,14 @@ async def _build_and_run() -> int:
         loop.add_signal_handler(sig, lambda: asyncio.create_task(daemon.stop()))
 
     try:
-        await daemon.run()
+        if _is_producing_mode(mode):
+            exit_code = await run_with_front_month_watch(
+                daemon.run, daemon.stop, instrument, daemon_name="decision-engine"
+            )
+        else:
+            # Inert modes consume no contract; nothing to roll.
+            await daemon.run()
+            exit_code = 0
     finally:
         if feed is not None:
             await feed.stop()
@@ -1174,7 +1197,7 @@ async def _build_and_run() -> int:
         await redis_client.aclose()
         if runtime_ledger is not None:
             runtime_ledger.close()
-    return 0
+    return exit_code
 
 
 def main() -> int:

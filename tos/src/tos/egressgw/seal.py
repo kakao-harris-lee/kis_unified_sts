@@ -146,12 +146,15 @@ class SendSeal(FrozenModel):
       digest — the item-17 Capsule/exact-binding identity), :attr:`canonical_command_digest`,
       :attr:`capsule_egress_request_digest`, :attr:`claim_request_digest` (= ``context.
       request_digest`` — the item-1 single-use identity the step-16 ledger claim binds).
-      **These are two deliberately different identities** (independent review finding #3): in
-      the composed runtime, :attr:`claim_request_digest` is per-attempt (content-addressed to
-      the attempt itself) while :attr:`request_bytes_digest` is per account+instrument (identical
-      across every attempt on the same egress request) — the seal carries both rather than
-      collapsing them into one, so a caller cannot accidentally bind the ledger's single-use
-      claim to the wrong identity;
+      **These are two deliberately different identities** (independent review finding #3):
+      :attr:`claim_request_digest` is always per-attempt (content-addressed to the attempt
+      itself). :attr:`request_bytes_digest`'s own unit is whichever digest source the compose
+      root binds: **per-attempt** (quantity and price included) once bound to the KIS wire codec
+      (T2 seal-codec binding), or **per account+instrument** (identical across every attempt on
+      the same egress request) under the earlier capsule stand-in — that the two identities can
+      land on a different value is still the design, whichever source is bound: the seal carries
+      both rather than collapsing them into one, so a caller cannot accidentally bind the
+      ledger's single-use claim to the wrong identity;
     * **principal / route (ADR-002-013 §8/§10 coordinates)** — :attr:`claim_principal` (=
       ``context.principal``), :attr:`active_principal`, :attr:`endpoint`, :attr:`account`,
       :attr:`environment`, :attr:`route_identity`, :attr:`credential_generation`,

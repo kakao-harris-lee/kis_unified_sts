@@ -20,7 +20,13 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from shared.decision.context import MarketContext, ScheduledEvent, build_market_context
+from shared.decision.context import (
+    MarketContext,
+    ScheduledEvent,
+    build_market_context,
+    load_futures_close_from_config,
+    load_futures_open_from_config,
+)
 from shared.decision.setups.event_reaction import SetupCConfig, SetupCEventReaction
 from shared.decision.setups.gap_reversion import SetupAConfig, SetupAGapReversion
 from shared.decision.setups.vwap_reversion import SetupDConfig, SetupDVWAPReversion
@@ -338,3 +344,48 @@ def test_build_market_context_explicit_open_overrides_config(tmp_path):
     )
     # Explicit 09:00 open: 09:30 → 30 min
     assert abs(ctx.minutes_since_open() - 30.0) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# Public futures regular-session loaders — config read, loud fallback
+# ---------------------------------------------------------------------------
+
+
+def _schedule_yaml(tmp_path, *, open_="08:45", close="15:45"):
+    path = tmp_path / "market_schedule.yaml"
+    path.write_text(
+        "market_schedule:\n"
+        "  futures:\n"
+        "    regular:\n"
+        f'      open: "{open_}"\n'
+        f'      close: "{close}"\n',
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def test_futures_open_and_close_are_read_from_config(tmp_path):
+    path = _schedule_yaml(tmp_path, open_="09:05", close="15:20")
+    assert load_futures_open_from_config(path) == (9, 5)
+    assert load_futures_close_from_config(path) == (15, 20)
+
+
+def test_an_unreadable_schedule_warns_once_and_uses_the_fallback(tmp_path, caplog):
+    """The old loader fell back to 08:45 silently; a per-tick caller must see
+    one WARNING, not one per tick."""
+    missing = str(tmp_path / "nonexistent.yaml")
+    with caplog.at_level("WARNING"):
+        assert load_futures_open_from_config(missing) == (8, 45)
+        assert load_futures_open_from_config(missing) == (8, 45)
+        assert load_futures_close_from_config(missing) == (15, 45)
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 2, warnings  # one per field, not one per call
+    assert "futures.regular.open unreadable" in warnings[0]
+    assert "futures.regular.close unreadable" in warnings[1]
+
+
+def test_an_invalid_schedule_value_warns_and_uses_the_fallback(tmp_path, caplog):
+    path = _schedule_yaml(tmp_path, close="25:99")
+    with caplog.at_level("WARNING"):
+        assert load_futures_close_from_config(path) == (15, 45)
+    assert "futures.regular.close unreadable" in caplog.text

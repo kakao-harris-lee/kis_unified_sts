@@ -6,10 +6,13 @@ limit); no behavioural difference from having them inline in root.py.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable
+import os
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-from tos.brokeradapter import SyntheticPaperTransport
+from tos.brokeradapter import Transport
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.egressgw import (
     AdmittedPriceObservation,
@@ -17,15 +20,16 @@ from tos.egressgw import (
     ConformanceProofStage,
     OrderConstructionStage,
     ProposedConstructionEnvelope,
-    VenueConstraintStage,
     VenueQuantityConstraint,
 )
 from tos.engine import (
     EngineCore,
     EngineEvent,
+    EventKind,
     EventResult,
     StrategyRegistry,
 )
+from tos.engine import NonTradeOutcome as KernelNonTradeOutcome
 from tos.venue import (
     ActionClass,
     OrderAdmissibilityDecision,
@@ -43,6 +47,8 @@ from tos_runtime.authority.iap import (
     IntentRegistry,
 )
 from tos_runtime.brokercap import BrokerScopesConfig
+from tos_runtime.calendar.owner import SessionFactsOwner
+from tos_runtime.compose._safety_wiring import SafetyMeshSnapshot
 from tos_runtime.compose.context import (
     ComposeContextResolver,
     RecordingActionFlowGovernor,
@@ -60,12 +66,28 @@ from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import NewRiskHaltClearOutcome, SqliteEventInbox
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.nontrade.convert import payload_from_observation
+from tos_runtime.nontrade.observations import NonTradeObservation
+from tos_runtime.nontrade.processor import NonTradeEventProcessor, NonTradeOutcome
 from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.recovery.barrier import RecoveryVerdict
+from tos_runtime.safety.protective import ProtectiveVerdict
+from tos_runtime.safety.rearm import prepare_new_risk_halt_clear
+from tos_runtime.safety.shutdown import ControlledShutdown, ShutdownOutcome
 from tos_runtime.time.service import TrustworthyTimeService
+
+if TYPE_CHECKING:
+    # TYPE_CHECKING-only: _venue_phase.py imports ConstructionConfig FROM this
+    # module, so a top-level import here would be circular. Postponed
+    # annotations (module docstring's own `from __future__ import annotations`)
+    # mean the string form below is all mypy needs.
+    from tos_runtime.compose._venue_phase import VenuePhaseStage
 
 __all__ = [
     "ComposedRuntime",
     "ConstructionConfig",
+    "OperationsFacts",
+    "RecoveryBarrierHeld",
     "ReleaseAdmissionRefused",
 ]
 
@@ -91,6 +113,18 @@ class ReleaseAdmissionRefused(RuntimeError):
     past custody/evidence/RCL is constructed when this is raised."""
 
 
+class RecoveryBarrierHeld(RuntimeError):
+    """Raised by :meth:`ComposedRuntime.run_once` when the TOS Phase 5 W1 recovery barrier
+    (:mod:`tos_runtime.recovery.barrier`, wired by :mod:`tos_runtime.compose._recovery_wiring`)
+    did not resolve to :attr:`~tos.sbr.vocabulary.ReadinessVerdict.READY`.
+
+    A typed refusal, never a silent no-op (plan §2 decision 2): a caller that tries to drive an
+    event through a held runtime learns exactly why, via :attr:`ComposedRuntime.recovery`,
+    rather than getting an ``AttributeError`` on a ``None`` driver or — worse — a call that
+    quietly does nothing.
+    """
+
+
 @dataclass(frozen=True)
 class ConstructionConfig:
     """The per-strategy Order Construction facts steps 2/3/5/11 need (module
@@ -110,10 +144,66 @@ class ConstructionConfig:
     order_shape: OrderShapeFields
     venue_shape_constraints: VenueShapeConstraints
     action_class: ActionClass
-    observed_session_phase: str
+    #: TOS Phase 5 W5 plan §2 decision 5 — replaces the former
+    #: ``observed_session_phase: str`` literal. Keys
+    #: :mod:`tos_runtime.calendar`'s session windows/futures-expiry rules for
+    #: this deployment (e.g. ``"krx-stock"``/``"krx-index-futures"``); step
+    #: 3's actual ``observed_session_phase`` is now a late-bound read off
+    #: :class:`~tos_runtime.calendar.owner.SessionFactsOwner`
+    #: (:mod:`tos_runtime.compose._session_wiring`), never a caller-supplied
+    #: phase string.
+    instrument_class: str
     outbound_side: str
     price_field_key: str | None = None
     shape_price_field_key: str | None = None
+
+
+@dataclass(frozen=True)
+class OperationsFacts:
+    """Read callables :func:`~tos_runtime.compose._operations_wiring.apply_operations_wiring`
+    exposes on :attr:`ComposedRuntime.operations` (TOS Phase 5 W4 plan §2 decision 11) — the
+    ``operations`` field group of the operator projection (plan §2.7). Defined here, not in
+    ``_operations_wiring.py``, purely to avoid that module importing THIS one for
+    :class:`ComposedRuntime`'s own type while this one imports it back for the field's type (a
+    two-file cycle) — the same "shared dataclass lives in ``_types.py``" placement
+    :class:`ConstructionConfig` already uses.
+
+    Every field is a zero-argument read callable, never a stored value — the SAME "read
+    callable, not a snapshot" discipline :mod:`tos_runtime.operator.projection` requires of its
+    own constructor arguments, so ``apply_operations_wiring`` can hand these straight through.
+    """
+
+    #: ``{"evidence": int | None, "rcl": int | None, "inbox": int | None}`` — each store's own
+    #: on-disk ``PRAGMA user_version`` (:func:`~tos_runtime.operations.schema_migrations
+    #: .schema_version`), read fresh on every call (never cached — a ``migrate`` CLI run between
+    #: two projection exports must be visible on the very next one).
+    schema_versions: Callable[[], dict[str, int | None]]
+    #: ``{"generation": int, "age_monotonic_ns": None, "manifest_digest": str}`` for the highest
+    #: ``gen*`` manifest under the composed ``backup_root``, or ``None`` when no ``backup_root``
+    #: was given or no manifest exists yet. ``age_monotonic_ns`` is always ``None`` — a backup
+    #: manifest's ``created_at_monotonic_ns`` was stamped by a DIFFERENT process's monotonic
+    #: clock, and monotonic clocks are not comparable across processes (module docstring of
+    #: ``_operations_wiring.py`` has the full reasoning); no trusted wall-clock source exists
+    #: either (plan §2.7's own "벽시계 값 비노출" decision), so this fact stays honestly absent
+    #: until a cross-process-comparable time source exists.
+    last_backup: Callable[[], dict[str, object] | None]
+    #: The STAGE B dependency-admission verdict (``composed.release_admitted`` — the SAME fact
+    #: :attr:`~ComposedRuntime.release_admitted` already carries; plan §2 decision 5).
+    dependency_admission: Callable[[], bool | None]
+    #: The evidence store's own boot-time
+    #: :class:`~tos_runtime.operations.key_rotation.KeyContinuityCheck` verdict string (one of
+    #: :class:`~tos_runtime.operations.key_rotation.KeyContinuityVerdict`'s three constants),
+    #: read from :attr:`~tos_runtime.evidence.store.SqliteEvidenceStore.key_continuity` — a fact
+    #: this constructor already computed and refuses to open on anything but
+    #: ``CONTINUOUS`` (that same module's own docstring). Consequence, disclosed rather than
+    #: hidden: this can only ever read as ``CONTINUOUS`` for the lifetime of a runtime this
+    #: projection is attached to (any other verdict means the store never finished opening,
+    #: so no ``ComposedRuntime`` — and no projection — exists to read it from). Still an
+    #: honest, informative fact, not a constant: it is genuinely SOURCED from the boot-time
+    #: check, and the SAME projection is exported from ``restore-drill``'s own recompose too,
+    #: where a reader benefits from seeing "yes, a store opened here and passed its continuity
+    #: check" rather than a value with no source at all.
+    key_continuity: Callable[[], str | None]
 
 
 @dataclass
@@ -139,12 +229,15 @@ class ComposedRuntime:
     step9_recorder: VerdictRecorder
     step14_stage: TransmissionCapabilityStage
     construction_stage: OrderConstructionStage
-    venue_stage: VenueConstraintStage
+    venue_stage: VenuePhaseStage
     proof_stage: ConformanceProofStage
     context_resolver: ComposeContextResolver
     core: EngineCore
     gateway: BrokerEgressGateway
-    transport: SyntheticPaperTransport
+    #: T2 lane C — widened from ``SyntheticPaperTransport`` to the kernel's own ``Transport``
+    #: Protocol: either the synthetic transport or a fully-wired ``KisMockTransport`` satisfies
+    #: it structurally.
+    transport: Transport
     registry: StrategyRegistry
     release_admitted: bool
     #: The loaded coverage floor (``risk.yaml``'s ``required_scenario_kinds``)
@@ -156,13 +249,65 @@ class ComposedRuntime:
     inbox: SqliteEventInbox
     #: The single driver over ``core``/``gateway`` (plan §1.1) — the ONLY
     #: caller of ``core.handle``/``run`` in this composed runtime; see
-    #: ``tos/runtime/tests/engine/test_no_direct_core_calls.py``.
-    driver: EngineDriver
+    #: ``tos/runtime/tests/engine/test_no_direct_core_calls.py``. ``None`` iff the TOS Phase 5
+    #: W1 recovery barrier (:attr:`recovery`) did not resolve to ``READY`` — see
+    #: :meth:`run_once`'s own ``RecoveryBarrierHeld`` refusal.
+    driver: EngineDriver | None
     #: The loaded Broker Scope table (TOS Phase 4 plan §2 decisions 1-2, G-4)
     #: — the SAME config :attr:`context_resolver`'s ``transport_nature`` /
     #: ``credential_route_inventory`` were derived from, exposed so a caller
     #: can inspect the active scope without re-loading the config file.
     scopes: BrokerScopesConfig
+    #: The TOS Phase 5 W1 recovery-barrier verdict (:mod:`tos_runtime.recovery.barrier`),
+    #: stamped by :func:`tos_runtime.compose._recovery_wiring.apply_recovery_barrier`
+    #: immediately after this runtime is otherwise fully composed. ``None`` only transiently,
+    #: before that wiring runs inside :func:`~tos_runtime.compose.root.compose_paper_runtime` —
+    #: never observable on a runtime a caller actually receives.
+    recovery: RecoveryVerdict | None = None
+    #: TOS Phase 5 W4 §2 decision 11 — set by
+    #: :func:`~tos_runtime.compose._operations_wiring.apply_operations_wiring` (called from
+    #: :func:`~tos_runtime.compose.root.compose_paper_runtime`, right after
+    #: ``apply_recovery_barrier``). ``None`` only transiently before that wiring runs — never
+    #: observable on a runtime a caller actually receives (mirrors :attr:`recovery`'s own
+    #: docstring).
+    operations: OperationsFacts | None = None
+    #: TOS Phase 5 W4 §2 decision 7 — a read-only peek at the safety mesh's own per-tick
+    #: :class:`~tos_runtime.compose._safety_wiring.SafetyMeshSnapshot`
+    #: (:meth:`~tos_runtime.compose._safety_wiring._SafetyMeshTickCell.peek`'s own
+    #: docstring on why this never triggers a service ``.clear()``) — set directly at
+    #: ``_finalize`` construction time (the mesh already fully exists by then; never
+    #: transiently ``None`` on a runtime a caller receives, unlike :attr:`recovery`).
+    safety_mesh_peek: Callable[[], SafetyMeshSnapshot | None] | None = None
+    #: TOS Phase 5 W4 §2 decision 7 — reads
+    #: :attr:`~tos_runtime.safety.protective.ProtectiveActionService.last_verdict` (that
+    #: property's own docstring on why this is a pure read, never a second evaluation).
+    #: Set directly at ``_finalize`` construction time, same as :attr:`safety_mesh_peek`.
+    protective_last_verdict: Callable[[], ProtectiveVerdict | None] | None = None
+    #: TOS Phase 5 W5 plan §2 decision 3 — the KST session/venue-facts owner, set by
+    #: :func:`~tos_runtime.compose._session_wiring.apply_session_wiring` (called from
+    #: :func:`~tos_runtime.compose.root.compose_paper_runtime`, right after ``_finalize``).
+    #: ``None`` only transiently before that wiring runs — never observable on a runtime a
+    #: caller actually receives (mirrors :attr:`recovery`'s own docstring).
+    session_facts: SessionFactsOwner | None = None
+    #: TOS Phase 5 W5 plan §2 decision 7 — the DRY-RUN non-trade processor (``nontrade-eval``
+    #: CLI preview only), set by :func:`~tos_runtime.compose._session_wiring
+    #: .apply_nontrade_wiring` (called from :func:`~tos_runtime.compose.root
+    #: .compose_paper_runtime`, right after ``apply_session_wiring``). ``None`` only transiently
+    #: before that wiring runs, or permanently when ``config_dir`` carries no ``nontrade.yaml``
+    #: — never observable-as-transient on a runtime a caller actually receives (mirrors
+    #: :attr:`session_facts`'s own docstring). Never call :attr:`nontrade`'s own ``evaluate``
+    #: directly to reach a new-risk latch — :meth:`observe_nontrade` is the sanctioned door
+    #: (module docstring discipline); it does not read this attribute at all.
+    nontrade: NonTradeEventProcessor | None = None
+    #: TOS runtime operations wiring plan §2 decision 3 (follow-up) — the SAME honest,
+    #: single-scope venue-admissibility read :func:`~tos_runtime.compose._session_wiring
+    #: .build_nontrade_admissibility_provider` builds for the dry-run :attr:`nontrade`
+    #: processor above, shared (never rebuilt) with :meth:`observe_nontrade`'s engine path. Set
+    #: by :func:`~tos_runtime.compose._session_wiring.apply_nontrade_wiring`, unconditionally —
+    #: unlike :attr:`nontrade`, this is wired even when ``config_dir`` carries no
+    #: ``nontrade.yaml`` (the engine path does not depend on that file). ``None`` only
+    #: transiently before that wiring runs.
+    nontrade_admissibility_provider: Callable[[str], str | None] | None = None
 
     def run_once(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
         """Drive ``events`` through :attr:`driver` to completion, one at a time.
@@ -181,8 +326,46 @@ class ComposedRuntime:
             One :class:`~tos.engine.core.EventResult` per event, in order — the result for EACH
             enqueued event specifically; any re-injected follow-on ``EGRESS_RESULT`` events are
             processed too (as a side effect, durably recorded) but are not included here.
+
+        Raises:
+            RecoveryBarrierHeld: If :attr:`driver` is ``None`` (the TOS Phase 5 W1 recovery
+                barrier did not resolve to ``READY``) — a typed refusal, never a silent no-op.
         """
+        if self.driver is None:
+            raise RecoveryBarrierHeld(
+                "recovery barrier is not READY -- the engine driver is not wired "
+                f"(recovery={self.recovery!r})"
+            )
         return tuple(self.driver.enqueue_and_run(event) for event in events)
+
+    def shutdown(self, *, reason: str) -> ShutdownOutcome:
+        """Run the TOS Phase 5 W3.2 controlled-shutdown procedure once (lane d3;
+        :mod:`tos_runtime.safety.shutdown`'s own module docstring has the full honesty
+        discipline — what each step proves, what it deliberately does not, and why).
+
+        A thin sequencing wrapper ONLY: the actual step bodies, the kernel-predicate calls,
+        and the recovery-handoff package construction all live in
+        :class:`~tos_runtime.safety.shutdown.ControlledShutdown`, kept out of this dataclass
+        purely for the ``tools/tos_size_budget.py`` function-length budget (no behavioural
+        difference from inlining it here).
+
+        Args:
+            reason: A free-text operator/runtime reason for the shutdown — recorded on the
+                ``CONTROLLED_SHUTDOWN_STARTED`` evidence row and as the new-risk-halt
+                latch's own reason.
+
+        Returns:
+            The :class:`~tos_runtime.safety.shutdown.ShutdownOutcome`. Closes
+            :attr:`inbox`, :attr:`rcl_log`, and :attr:`evidence_store` as part of the
+            procedure — this runtime is not usable for further calls afterward.
+        """
+        return ControlledShutdown(
+            inbox=self.inbox,
+            rcl_log=self.rcl_log,
+            evidence_store=self.evidence_store,
+            custody=self.custody,
+            key_provider=self.key_provider,
+        ).run(reason=reason)
 
     #: The evidence kind recorded by :meth:`clear_new_risk_halt` on success — a runtime-level
     #: record, not a kernel ``EvidenceKind`` member (re-review finding R3, 2026-09-09).
@@ -194,7 +377,7 @@ class ComposedRuntime:
     _NEW_RISK_HALT_CLEAR_REFUSED_KIND = "NEW_RISK_HALT_CLEAR_REFUSED"
 
     def clear_new_risk_halt(
-        self, *, latched_evidence_seq: int, operator_attestation: str
+        self, *, latched_evidence_seq: int, approvals_dir: Path
     ) -> NewRiskHaltClearOutcome:
         """Operator re-arm for the independent-review finding #3 new-risk halt latch
         (re-review finding R3, 2026-09-09 — see :mod:`tos_runtime.engine.inbox`'s own module
@@ -203,71 +386,61 @@ class ComposedRuntime:
         :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`'s for why a direct
         call on the storage layer is refused by a mechanical pin (re-review finding RR2).
 
-        Evidence BEFORE state change, exactly like every other halt path in this runtime
-        (:func:`~tos_runtime.evidence.emergency.record_halt`'s own discipline, though this is a
-        CLEAR, not a halt, so it goes through the ordinary
-        :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.append` path instead): this method
-        first checks the CURRENTLY-latched halt matches ``latched_evidence_seq`` and that
-        ``operator_attestation`` is non-empty, THEN durably appends one
-        ``NEW_RISK_HALT_CLEARED_BY_OPERATOR`` evidence entry (the latched reason, the seq being
-        cleared, and the sha256 of the attestation text — never the raw text itself, which may be
-        arbitrarily long free-form operator prose), and ONLY THEN clears the latch via
-        :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`. If that final
-        clear itself refuses (a concurrent relatch changed the seq between the check above and
-        the clear — a narrow, honestly-disclosed TOCTOU this single-threaded runtime does not
+        **TOS Phase 5 W3 plan §2 decision 7.** The single free-text operator attestation this
+        method used to accept is replaced by a HAG two-person quorum, evaluated by
+        :func:`~tos_runtime.safety.rearm.prepare_new_risk_halt_clear` (which owns the
+        NO_LATCH/SEQ_MISMATCH pre-checks plus the
+        :class:`~tos_runtime.safety.rearm.ReArmWorkflow` quorum evaluation, including its own
+        ``REARM_APPROVED``/``REARM_REFUSED`` evidence — split out purely for the
+        ``tools/tos_size_budget.py`` function-length budget, no behavioural change). THIS method
+        still owns the actual storage-layer clear call — the machine pin
+        ``tests/engine/test_no_direct_latch_clear.py`` allows only this file to call
+        :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt` — plus the
+        ``NEW_RISK_HALT_CLEARED_BY_OPERATOR`` evidence (BEFORE that call) and the
+        ``NEW_RISK_HALT_CLEAR_REFUSED`` row for the one refusal only IT can observe: the
+        storage-layer TOCTOU (a concurrent relatch changing the seq between the pre-check and the
+        clear — a narrow, honestly-disclosed window this single-threaded runtime does not
         currently reach, since :class:`~tos_runtime.engine.driver.EngineDriver` is itself
-        single-threaded), the ``CLEARED`` evidence row still exists, recording that a clear was
-        ATTEMPTED against that seq even though it did not take effect — never a silently-dropped
-        attempt — and this method ALSO appends a ``NEW_RISK_HALT_CLEAR_REFUSED`` row for it
-        (re-review finding RR3).
-
-        **Every refusal is now durably recorded (re-review finding RR3, 2026-09-09).** Before this
-        fix, a refused clear returned a bare ``False`` with zero evidence — a caller that ignored
-        the return value, or a stale-seq clear attempt (exactly "the operator reviewed an old
-        violation, not the current one"), left no trace anywhere. Every refusal path — no latch,
-        empty attestation, seq mismatch, or the storage-layer TOCTOU refusal above — now appends
-        one ``NEW_RISK_HALT_CLEAR_REFUSED`` entry (the typed outcome, the requested seq, the
-        CURRENTLY-latched seq if any, and the attestation's sha256) before returning.
+        single-threaded).
 
         Args:
             latched_evidence_seq: The ``evidence_seq`` of the violation the operator reviewed.
                 Must equal the CURRENTLY-latched row's own seq — a stale value is refused (with a
                 ``NEW_RISK_HALT_CLEAR_REFUSED`` evidence row, per RR3).
-            operator_attestation: Non-empty free-text operator attestation.
+            approvals_dir: The directory
+                ``approvals_dir/rearm/<latched_evidence_seq>.yaml`` is resolved under (the same
+                root :mod:`tos_runtime.authority.iap` uses for
+                ``approvals/<proposal_digest>.yaml``).
 
         Returns:
             :class:`~tos_runtime.engine.inbox.NewRiskHaltClearOutcome` — :attr:`~tos_runtime
             .engine.inbox.NewRiskHaltClearOutcome.CLEARED` on success; ``NO_LATCH`` /
-            ``EMPTY_ATTESTATION`` / ``SEQ_MISMATCH`` / ``STORAGE_REFUSED`` on refusal (the latch,
+            ``SEQ_MISMATCH`` / ``QUORUM_REFUSED`` / ``STORAGE_REFUSED`` on refusal (the latch,
             if any, is left completely untouched in every refusal case).
         """
         current = self.inbox.new_risk_halt()
+        decision = prepare_new_risk_halt_clear(
+            current=current,
+            latched_evidence_seq=latched_evidence_seq,
+            approvals_dir=approvals_dir,
+            evidence_store=self.evidence_store,
+            inbox=self.inbox,
+            time_service=self.time_service,
+            environment_label=self.identity.cell_id or "",
+            expected_owner_uid=os.getuid(),
+            refused_kind=self._NEW_RISK_HALT_CLEAR_REFUSED_KIND,
+        )
+        if decision.refusal is not None:
+            return decision.refusal
+
+        assert (
+            current is not None
+        )  # decision.refusal is None only past the NO_LATCH check
+        attestation_text = decision.attestation_text
+        assert attestation_text is not None  # non-None exactly when refusal is None
         attestation_sha256 = hashlib.sha256(
-            operator_attestation.encode("utf-8")
+            attestation_text.encode("utf-8")
         ).hexdigest()
-
-        def _refuse(outcome: NewRiskHaltClearOutcome) -> NewRiskHaltClearOutcome:
-            self.evidence_store.append(
-                {
-                    "outcome": outcome.value,
-                    "requested_evidence_seq": latched_evidence_seq,
-                    "current_latched_evidence_seq": (
-                        current.get("evidence_seq") if current is not None else None
-                    ),
-                    "operator_attestation_sha256": attestation_sha256,
-                },
-                kind=self._NEW_RISK_HALT_CLEAR_REFUSED_KIND,
-                record_class=self._NEW_RISK_HALT_CLEAR_REFUSED_KIND,
-            )
-            return outcome
-
-        if current is None:
-            return _refuse(NewRiskHaltClearOutcome.NO_LATCH)
-        if not operator_attestation.strip():
-            return _refuse(NewRiskHaltClearOutcome.EMPTY_ATTESTATION)
-        if current.get("evidence_seq") != latched_evidence_seq:
-            return _refuse(NewRiskHaltClearOutcome.SEQ_MISMATCH)
-
         self.evidence_store.append(
             {
                 "latched_evidence_seq": latched_evidence_seq,
@@ -280,8 +453,151 @@ class ComposedRuntime:
         )
         outcome = self.inbox.clear_new_risk_halt(
             latched_evidence_seq=latched_evidence_seq,
-            operator_attestation=operator_attestation,
+            operator_attestation=attestation_text,
         )
         if outcome is not NewRiskHaltClearOutcome.CLEARED:
-            return _refuse(NewRiskHaltClearOutcome.STORAGE_REFUSED)
+            self.evidence_store.append(
+                {
+                    "outcome": NewRiskHaltClearOutcome.STORAGE_REFUSED.value,
+                    "requested_evidence_seq": latched_evidence_seq,
+                    "current_latched_evidence_seq": current.get("evidence_seq"),
+                },
+                kind=self._NEW_RISK_HALT_CLEAR_REFUSED_KIND,
+                record_class=self._NEW_RISK_HALT_CLEAR_REFUSED_KIND,
+            )
+            return NewRiskHaltClearOutcome.STORAGE_REFUSED
         return outcome
+
+    #: The evidence kind :meth:`observe_nontrade` appends when the TOS Phase 5 W1 recovery
+    #: barrier holds (:attr:`driver` is ``None``): the observation is durably enqueued but not
+    #: yet judged by anything (TOS runtime operations wiring plan §2 decision 3/8) — an honest
+    #: "queued", never a fabricated disposition.
+    _NONTRADE_QUEUED_UNTIL_RECOVERY_KIND = "NONTRADE_QUEUED_UNTIL_RECOVERY"
+
+    def observe_nontrade(self, obs: NonTradeObservation) -> NonTradeOutcome:
+        """Fold one non-trade observation through the ENGINE's own ``CORPORATE_ACTION`` handler
+        (TOS runtime operations wiring plan §2 decision 3 — originally Phase 5 W5 plan §2
+        decision 7, which routed this through the dry-run
+        :class:`~tos_runtime.nontrade.processor.NonTradeEventProcessor` directly; that path is
+        now :meth:`~tos_runtime.nontrade.processor.NonTradeEventProcessor.evaluate`'s own
+        preview-only lane, never called from here).
+
+        Converts ``obs`` into a kernel :class:`~tos.engine.records.CorporateActionPayload`
+        (:func:`~tos_runtime.nontrade.convert.payload_from_observation`) and an
+        :class:`~tos.engine.records.EngineEvent`, then:
+
+        * **Driver wired** (:attr:`driver` real): runs it through
+          :meth:`~tos_runtime.engine.driver.EngineDriver.enqueue_and_run` — the SAME
+          ``core.handle`` call every other event kind gets. The driver's own post-consumption
+          hook (:meth:`~tos_runtime.engine.driver.EngineDriver._apply_nontrade_latch`) latches a
+          new-risk halt through the shared
+          :func:`~tos_runtime.nontrade.latch.latch_restrictive` when the judged outcome is
+          restrictive — THE sanctioned door onto
+          :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.record_new_risk_halt`, never called
+          from this method directly any more.
+        * **Recovery barrier held** (:attr:`driver` is ``None``): nothing can judge the event yet
+          — it is durably enqueued (:attr:`inbox`) and an honest
+          ``NONTRADE_QUEUED_UNTIL_RECOVERY`` evidence row is appended; the returned outcome
+          reports ``queued=True`` and every judgement field at its own honest default (never a
+          fabricated disposition). A later driver rebind drains and judges the queued row like
+          any other durably-admitted event.
+
+        **Admissibility is real; time-freshness is a documented gap.** ``payload_from_
+        observation`` is called with :attr:`nontrade_admissibility_provider` — the SAME honest
+        provider the dry-run :attr:`nontrade` processor uses
+        (:func:`~tos_runtime.compose._session_wiring.build_nontrade_admissibility_provider` —
+        built once, shared, never rebuilt), resolved against ``obs``'s route identity the SAME
+        way :meth:`~tos_runtime.nontrade.processor.NonTradeEventProcessor._resolve_admissibility`
+        does. ``time_freshness`` stays ``None`` — no live source exists anywhere in this
+        runtime yet (the dry-run processor's own provider is ``None`` too); an honest absence,
+        never a fabricated ``FRESH``.
+
+        Args:
+            obs: The observed non-trade event.
+
+        Returns:
+            The :class:`~tos_runtime.nontrade.processor.NonTradeOutcome` — mapped from the
+            kernel's own :class:`~tos.engine.records.NonTradeOutcome` when judged, or an honest
+            ``queued=True`` placeholder when the recovery barrier held.
+        """
+        required_legs = (
+            None
+            if self.nontrade is None
+            else {obs.event_class: self.nontrade.required_legs_for(obs.event_class)}
+        )
+        route_key = obs.new_instrument_identity or obs.old_instrument_identity
+        admissibility = (
+            None
+            if self.nontrade_admissibility_provider is None or route_key is None
+            else self.nontrade_admissibility_provider(route_key)
+        )
+        payload = payload_from_observation(
+            obs,
+            instrument_key=self.context_resolver.instrument_key,
+            required_legs_by_class=required_legs,
+            admissibility=admissibility,
+        )
+        event = EngineEvent(kind=EventKind.CORPORATE_ACTION, corporate_action=payload)
+
+        if self.driver is not None:
+            result = self.driver.enqueue_and_run(event)
+            assert (
+                result.nontrade_outcome is not None
+            )  # every CORPORATE_ACTION result carries one (kernel round #3 §2 결정 2)
+            return _nontrade_outcome_from_kernel(
+                observation_id=obs.observation_id,
+                kernel_outcome=result.nontrade_outcome,
+                evidence_seq=self.driver.last_nontrade_evidence_seq(),
+            )
+
+        self.inbox.enqueue(event)
+        self.evidence_store.append(
+            {"observation_id": obs.observation_id},
+            kind=self._NONTRADE_QUEUED_UNTIL_RECOVERY_KIND,
+            record_class=self._NONTRADE_QUEUED_UNTIL_RECOVERY_KIND,
+        )
+        return _queued_nontrade_outcome(obs.observation_id)
+
+
+def _nontrade_outcome_from_kernel(
+    *,
+    observation_id: str,
+    kernel_outcome: KernelNonTradeOutcome,
+    evidence_seq: int | None,
+) -> NonTradeOutcome:
+    """Map the kernel's own :class:`~tos.engine.records.NonTradeOutcome` (a judged
+    ``CORPORATE_ACTION`` result) onto the runtime :class:`~tos_runtime.nontrade.processor
+    .NonTradeOutcome` shape (size-budget discipline: factored out of
+    :meth:`ComposedRuntime.observe_nontrade`, which stays a readable orchestration)."""
+    return NonTradeOutcome(
+        observation_id=observation_id,
+        disposition=kernel_outcome.disposition,
+        restrictive=kernel_outcome.restrictive,
+        latch_reason=(
+            f"NONTRADE_{kernel_outcome.disposition.value}"
+            if kernel_outcome.restrictive
+            else None
+        ),
+        predicate_results=dict(kernel_outcome.predicate_results),
+        unevaluated=kernel_outcome.unevaluated,
+        material_change_closure=None,
+        evidence_seq=evidence_seq,
+        queued=False,
+    )
+
+
+def _queued_nontrade_outcome(observation_id: str) -> NonTradeOutcome:
+    """The honest ``queued=True`` placeholder :meth:`ComposedRuntime.observe_nontrade` returns
+    when the recovery barrier holds — every judgement field at its own default, never a
+    fabricated disposition (size-budget discipline: factored out of that method)."""
+    return NonTradeOutcome(
+        observation_id=observation_id,
+        disposition=None,
+        restrictive=False,
+        latch_reason=None,
+        predicate_results={},
+        unevaluated=(),
+        material_change_closure=None,
+        evidence_seq=None,
+        queued=True,
+    )
