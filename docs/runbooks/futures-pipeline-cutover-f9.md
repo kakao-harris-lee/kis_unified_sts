@@ -274,7 +274,7 @@ artifacts, or written operator approval.
 
   ```bash
   redis-cli -p 6379 -n 1 hgetall futures:daily_reference:<trading symbol>   # prev_close, source, asof_ts (today, KST), producer
-  docker logs --tail 300 kis_paper-futures-decision-engine | grep -E "prev_close source="
+  docker logs --tail 300 kis_paper-futures-decision-engine 2>&1 | grep -E "prev_close source="
   ```
 
   An `asof_ts` older than today means the producer did not prefetch this
@@ -283,15 +283,45 @@ artifacts, or written operator approval.
 - **Every risk-filter verdict is on the log.** Rejections used to be silent
   (no log line, the audit writer is the `shared/backtest` no-op stub, no
   metric), so no Gate 1b row could ever be evidenced CLOSED. PR #667 logs one
-  line per candidate:
+  line per evaluation:
 
-  ```bash
-  docker logs --since <session start> kis_paper-futures-risk-filter \
-    | grep -oE "verdict=(passed|rejected)( filter=[A-Za-z_]+)?" | sort | uniq -c
+  ```text
+  risk_filter verdict=rejected msg_id=<stream id> signal_id=… setup_type=… direction=… symbol=… filter=leverage reason=… size_multiplier=… layer_size_multiplier=… entry_size_factor=… outcomes=trading_hours:pass,…,leverage:fail
   ```
 
-  The total must equal the day's `signal.candidate.futures.shadow` entries;
-  `filter=` names the rejecting filter and is what a CLOSED row cites.
+  The daemons log through `logging.basicConfig` (stderr), so every `docker logs`
+  pipe below needs `2>&1`. Raw count per verdict and rejecting filter (every
+  evaluation, redeliveries included):
+
+  ```bash
+  docker logs --since <session start> kis_paper-futures-risk-filter 2>&1 \
+    | grep -F "risk_filter verdict=" \
+    | grep -oE "verdict=(passed|rejected)|filter=[^ ]+" | paste -d' ' - - \
+    | sort | uniq -c
+  ```
+
+  A candidate whose signals_all enqueue / final XADD / expire / approval
+  hold fails is left pending and redelivered (XAUTOCLAIM), and logs a fresh
+  verdict line under the SAME `msg_id` each time — the raw count above then
+  overstates passes. De-duplicated count, keeping the last evaluation per
+  stream entry:
+
+  ```bash
+  docker logs --since <session start> kis_paper-futures-risk-filter 2>&1 \
+    | grep -F "risk_filter verdict=" \
+    | awk '{v=f=m=""; for (i = 1; i <= NF; i++) {
+              if ($i ~ /^verdict=/) v = $i; else if ($i ~ /^filter=/) f = $i;
+              else if ($i ~ /^msg_id=/) m = $i }
+            last[m] = v " " f } END { for (k in last) print last[k] }' \
+    | sort | uniq -c
+  ```
+
+  The de-duplicated total must equal the day's `signal.candidate.futures.shadow`
+  entries; a raw total above it is the redelivery count. `filter=` names the
+  rejecting filter (`-` on a pass) and is what a CLOSED row cites;
+  `size_multiplier=` is the product actually forwarded to order_router
+  (`layer_size_multiplier` × `entry_size_factor`), and `outcomes=` marks a
+  filter that passed but scaled size as `name:pass@0.50`.
 - **The shadow `LeverageFilter` reads the SHADOW book.** Until PR #667 the
   risk-filter process never set `TRADING_STATE_KEY_SUFFIX` (the monitor does),
   so the filter read `trading:futures:positions` — the orchestrator's book — and
@@ -300,7 +330,7 @@ artifacts, or written operator approval.
   orchestrator's flat window 09:38–09:43). Check the startup line:
 
   ```bash
-  docker logs kis_paper-futures-risk-filter | grep -E "positions_key=" | tail -1   # expect trading:futures:positions:shadow
+  docker logs kis_paper-futures-risk-filter 2>&1 | grep -E "positions_key=" | tail -1   # expect trading:futures:positions:shadow
   ```
 
 - **Read the decision-engine log with `--tail`.** After the 2026-09-09
