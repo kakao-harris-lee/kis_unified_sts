@@ -803,12 +803,16 @@ def _stream_fields(signal: Signal, signal_id: str = "sig-1") -> dict[bytes, byte
     return {k.encode(): str(v).encode() for k, v in fields.items()}
 
 
-def _verdict_line(caplog) -> str:
-    lines = [
+def _verdict_lines(caplog) -> list[str]:
+    return [
         r.getMessage()
         for r in caplog.records
         if r.getMessage().startswith("risk_filter verdict=")
     ]
+
+
+def _verdict_line(caplog) -> str:
+    lines = _verdict_lines(caplog)
     assert len(lines) == 1, f"expected exactly one verdict line, got {lines}"
     return lines[0]
 
@@ -836,6 +840,7 @@ async def test_verdict_log_passed(redis, signals_writer, caplog) -> None:
 
     line = _verdict_line(caplog)
     assert "verdict=passed" in line
+    assert "msg_id=1-1" in line
     assert "signal_id=sig-1" in line
     assert "setup_type=A_gap_reversion" in line
     assert "direction=long" in line
@@ -901,3 +906,50 @@ async def test_verdict_log_without_outcomes_uses_placeholders(
     assert "verdict=rejected" in line
     assert "filter=- reason=-" in line
     assert "outcomes=-" in line
+
+
+@pytest.mark.asyncio
+async def test_verdict_log_carries_msg_id_across_redelivery(
+    redis, signals_writer, caplog, monkeypatch
+) -> None:
+    """F3: a redelivered candidate logs again — under the SAME msg_id.
+
+    The verdict is logged before the final-stream XADD, so an XADD failure
+    returns False, StreamStage leaves the entry pending, and XAUTOCLAIM hands
+    the same entry back. Both evaluations are real and both are logged; the
+    stream entry id is what lets Gate 1b de-duplicate them.
+    """
+    import logging as _logging
+
+    real_xadd = redis.xadd
+    calls = 0
+
+    async def _xadd_fails_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ConnectionError("transient redis error")
+        return await real_xadd(*args, **kwargs)
+
+    monkeypatch.setattr(redis, "xadd", _xadd_fails_once)
+    result = LayerResult(
+        passed=True,
+        skip_reason=None,
+        size_multiplier=1.0,
+        filter_outcomes=[FilterResult(passed=True, filter_name="trading_hours")],
+    )
+    daemon = _make_daemon(
+        redis=redis, signals_writer=signals_writer, layer=_StubLayer(result)
+    )
+    fields = _stream_fields(_signal("long"))
+
+    with caplog.at_level(_logging.INFO, logger="services.risk_filter.main"):
+        assert await daemon.handle_message(b"1-1", fields) is False
+        assert await daemon.handle_message(b"1-1", fields) is True
+
+    lines = _verdict_lines(caplog)
+    assert len(lines) == 2, lines
+    assert all(" msg_id=1-1 " in line for line in lines), lines
+    assert all("signal_id=sig-1" in line for line in lines), lines
+    # Only the redelivery reached the final stream.
+    assert len(await redis.xrange(FINAL_STREAM)) == 1

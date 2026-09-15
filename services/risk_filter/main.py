@@ -37,6 +37,7 @@ from shared.streaming.approval_gate import (
     log_gate_config,
     record_pending,
 )
+from shared.streaming.audit import decode_stream_id
 from shared.streaming.stage import StreamStage
 from shared.streaming.trading_state import TradingStateReader, ensure_state_key_suffix
 
@@ -216,9 +217,7 @@ class RiskFilterDaemon(StreamStage):
         # unchanged unless an operator opts a strategy/symbol in.
         self.approval_gate_config = approval_gate_config or ApprovalGateConfig()
 
-    async def handle_message(
-        self, msg_id: bytes, fields: dict[bytes, bytes]  # noqa: ARG002
-    ) -> bool:
+    async def handle_message(self, msg_id: bytes, fields: dict[bytes, bytes]) -> bool:
         try:
             signal_id, signal = _signal_from_stream_fields(fields)
         except Exception:
@@ -241,10 +240,20 @@ class RiskFilterDaemon(StreamStage):
         # carried no reason anywhere. Unthrottled on purpose: the candidate
         # stream is at most ~1/min, and Gate 1b's "CLOSED = shadow rejection
         # evidence" needs every row, not a sampled one.
+        # Logged BEFORE the writes below on purpose, so a failed write still
+        # leaves its verdict on record. The cost: a failed signals_all enqueue /
+        # XADD / expire / record_pending returns False, StreamStage leaves the
+        # entry pending and XAUTOCLAIM redelivers it, so one candidate can log
+        # several verdict lines (each a fresh evaluation). ``msg_id`` is the
+        # stream entry id and is identical across redeliveries — de-duplicate
+        # on it when counting, keeping the LAST line per msg_id (the evaluation
+        # whose outcome stands).
         logger.info(
-            "risk_filter verdict=%s signal_id=%s setup_type=%s direction=%s "
-            "symbol=%s filter=%s reason=%s size_multiplier=%.3f outcomes=%s",
+            "risk_filter verdict=%s msg_id=%s signal_id=%s setup_type=%s "
+            "direction=%s symbol=%s filter=%s reason=%s size_multiplier=%.3f "
+            "outcomes=%s",
             "passed" if result.passed else "rejected",
+            decode_stream_id(msg_id),
             signal_id,
             signal.setup_type,
             signal.direction,
