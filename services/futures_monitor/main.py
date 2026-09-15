@@ -113,6 +113,7 @@ async def _build_and_run() -> int:
         health_stale_seconds=float(tg.get("health_stale_seconds", 600)),
         health_cooldown_seconds=float(tg.get("health_cooldown_seconds", 1800)),
         digest_time_kst=str(tg.get("digest_time_kst", "15:40")),
+        contract_symbol=symbol,
     )
 
     loop = asyncio.get_running_loop()

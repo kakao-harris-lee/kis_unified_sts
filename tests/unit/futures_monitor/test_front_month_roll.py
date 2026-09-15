@@ -81,6 +81,7 @@ async def test_futures_monitor_exits_with_roll_code_day_after_expiry(
 
     assert code == FRONT_MONTH_ROLL_EXIT_CODE
     assert built["feed"]._subscribed == {"A01609"}  # type: ignore[attr-defined]
+    assert built["contract_symbol"] == "A01609"  # F5 recovery check sees it too
     assert "futures-monitor: front-month rollover check active" in caplog.text
     assert (
         "futures front-month rolled: A01609 -> A01612 (expiry 2026-12-10)"
