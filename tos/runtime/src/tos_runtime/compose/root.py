@@ -73,6 +73,7 @@ from tos.engine import (
 )
 
 from tos_runtime.brokercap import is_broker_reaching
+from tos_runtime.calendar.config import load_calendar_config
 from tos_runtime.calendar.ports import WallClockReference
 from tos_runtime.compose._finalize_wiring import _finalize
 from tos_runtime.compose._operations_wiring import apply_operations_wiring
@@ -80,6 +81,7 @@ from tos_runtime.compose._recovery_wiring import apply_recovery_barrier
 from tos_runtime.compose._release_wiring import apply_release_wiring
 from tos_runtime.compose._request_digest import KisWireCodecDigest
 from tos_runtime.compose._session_wiring import (
+    CALENDAR_CONFIG_NAME,
     SessionInboxCell,
     apply_nontrade_wiring,
     apply_session_wiring,
@@ -93,6 +95,7 @@ from tos_runtime.compose._types import (
     ConstructionConfig,
     ReleaseAdmissionRefused,
 )
+from tos_runtime.compose._venue_wiring import build_venue_service
 from tos_runtime.compose._wiring import (
     _boot_services,
     _build_construction_stages,
@@ -232,9 +235,15 @@ def compose_paper_runtime(
     # time; its tick-generation reader is a late-bound cell (mirrors `_SafetyMesh`'s own inbox
     # cell, `_safety_wiring.py`) since the durable inbox does not exist until `_finalize` --
     # `apply_session_wiring` below fills it in once it does.
+    # TOS venue constraint service wave (plan §2 decision 9): `calendar.yaml` is loaded EXACTLY
+    # ONCE here and the SAME `CalendarConfig` is threaded into both `build_session_facts_owner`
+    # (the session-phase owner) and `build_venue_service` (the admitting-phase token
+    # cross-check below) — never a second file read.
+    calendar_config = load_calendar_config(config_dir / CALENDAR_CONFIG_NAME)
     session_inbox_cell = SessionInboxCell()
     session_facts_owner = build_session_facts_owner(
         config_dir=config_dir,
+        calendar=calendar_config,
         wall_clock=wall_clock,
         evidence_store=boot.infra.evidence_store,
         time_config=boot.infra.time_config,
@@ -249,9 +258,30 @@ def compose_paper_runtime(
         construction.instrument_class
     )
 
+    # TOS venue constraint service wave (plan §2 decisions 1-9): the governed venue-constraint
+    # service, built BEFORE `_build_construction_stages` (step 2 needs the loaded Order
+    # Construction Policy's own coordinates; step 3 needs the live service itself). Boot
+    # refusals here (policy activation / scope mismatch — `build_venue_service`'s own
+    # docstring "Order of boot refusals") surface before any evidence past what
+    # `_boot_services` already wrote.
+    venue_service, loaded_ocp = build_venue_service(
+        config_dir=config_dir,
+        scheme=_SCHEME,
+        construction=construction,
+        environment_label=environment_label,
+        session_phase_reader=session_phase_reader,
+        tick_generation_reader=session_inbox_cell.read,
+        evidence_store=boot.infra.evidence_store,
+        instance_document=boot.instance_document,
+        egress_coordinates=boot.egress_coordinates,
+        transport_kind=transport_kind,
+        calendar_config=calendar_config,
+    )
+
     construction_stages = _build_construction_stages(
         construction,
-        session_phase_reader=session_phase_reader,
+        venue_service=venue_service,
+        loaded_ocp=loaded_ocp,
     )
     # Late-bind the CONSTRAINT dimension reader's cell now step 3's own VerdictRecorder
     # exists (Phase 5 W3.2, plan §2 decision 2).
@@ -345,6 +375,11 @@ def compose_paper_runtime(
         transport_kind=transport_kind,
         transport_config=boot.transport_config,
     )
+    # TOS venue constraint service wave (plan §2 decision 9) — attach the already-live venue
+    # service to the composed runtime (the service itself was built earlier, above, before
+    # `_build_construction_stages`; this just publishes it on `ComposedRuntime.venue`, mirroring
+    # `apply_session_wiring`'s own "attach the already-built owner" idiom below).
+    composed.venue = venue_service
     # Late-bind the safety-mesh inbox cell now the durable inbox exists (Phase 5 W3-b,
     # plan §2 decision 6/8) — RestrictiveLatchOwner's new-risk-halt reader and
     # MonitoringService's inbox-backlog observer both close over this cell.
@@ -368,6 +403,7 @@ def compose_paper_runtime(
     # never a boot refusal for a caller that has not configured this yet.
     nontrade_admissibility_provider = build_nontrade_admissibility_provider(
         construction=construction,
+        venue_service=venue_service,
         session_phase_reader=session_phase_reader,
     )
     composed = apply_nontrade_wiring(

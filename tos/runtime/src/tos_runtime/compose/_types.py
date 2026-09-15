@@ -20,7 +20,6 @@ from tos.egressgw import (
     ConformanceProofStage,
     OrderConstructionStage,
     ProposedConstructionEnvelope,
-    VenueQuantityConstraint,
 )
 from tos.engine import (
     EngineCore,
@@ -32,11 +31,7 @@ from tos.engine import (
 from tos.engine import NonTradeOutcome as KernelNonTradeOutcome
 from tos.venue import (
     ActionClass,
-    OrderAdmissibilityDecision,
     OrderShapeFields,
-    VenueConstraintPolicy,
-    VenueConstraintSnapshot,
-    VenueShapeConstraints,
 )
 from tos.workload import RuntimeIdentity
 
@@ -75,13 +70,14 @@ from tos_runtime.safety.protective import ProtectiveVerdict
 from tos_runtime.safety.rearm import prepare_new_risk_halt_clear
 from tos_runtime.safety.shutdown import ControlledShutdown, ShutdownOutcome
 from tos_runtime.time.service import TrustworthyTimeService
+from tos_runtime.venue import VenueConstraintService
 
 if TYPE_CHECKING:
-    # TYPE_CHECKING-only: _venue_phase.py imports ConstructionConfig FROM this
+    # TYPE_CHECKING-only: _venue_wiring.py imports ConstructionConfig FROM this
     # module, so a top-level import here would be circular. Postponed
     # annotations (module docstring's own `from __future__ import annotations`)
     # mean the string form below is all mypy needs.
-    from tos_runtime.compose._venue_phase import VenuePhaseStage
+    from tos_runtime.compose._venue_wiring import VenueServiceStage
 
 __all__ = [
     "ComposedRuntime",
@@ -131,18 +127,24 @@ class ConstructionConfig:
     docstring). Every field mirrors ``tests/slice/_slice_fixtures.py``'s own
     injected constants — genuine per-deployment configuration, not a bound
     this compose root could derive itself.
+
+    **Venue facts are no longer carried here** (TOS venue constraint service wave, plan §2
+    decision 5, ``docs/plans/2026-09-15-tos-venue-constraint-service-plan.md``) — the former
+    ``venue_snapshot``/``venue_policy``/``venue_decision``/``venue_shape_constraints``/
+    ``venue_constraint`` fields were a test fixture hand-issuing the very kernel artifacts a
+    real venue-constraint SERVICE is supposed to issue (plan §0 "발행 아티팩트 3"). They now
+    come exclusively from the governed, activated Venue Constraint Policy plus the runtime's
+    own :class:`~tos_runtime.venue.VenueConstraintService` (``compose/_venue_wiring.py``'s
+    ``build_venue_service``) — this compose root authors no admissibility judgement itself.
+    ``order_shape`` stays: the proposed order shape under evaluation is genuine per-attempt
+    strategy content, not a venue fact.
     """
 
     account: str
     instrument: str
     envelope: ProposedConstructionEnvelope
     price: AdmittedPriceObservation | None
-    venue_constraint: VenueQuantityConstraint | None
-    venue_snapshot: VenueConstraintSnapshot
-    venue_policy: VenueConstraintPolicy
-    venue_decision: OrderAdmissibilityDecision
     order_shape: OrderShapeFields
-    venue_shape_constraints: VenueShapeConstraints
     action_class: ActionClass
     #: TOS Phase 5 W5 plan §2 decision 5 — replaces the former
     #: ``observed_session_phase: str`` literal. Keys
@@ -229,7 +231,7 @@ class ComposedRuntime:
     step9_recorder: VerdictRecorder
     step14_stage: TransmissionCapabilityStage
     construction_stage: OrderConstructionStage
-    venue_stage: VenuePhaseStage
+    venue_stage: VenueServiceStage
     proof_stage: ConformanceProofStage
     context_resolver: ComposeContextResolver
     core: EngineCore
@@ -264,6 +266,15 @@ class ComposedRuntime:
     #: before that wiring runs inside :func:`~tos_runtime.compose.root.compose_paper_runtime` —
     #: never observable on a runtime a caller actually receives.
     recovery: RecoveryVerdict | None = None
+    #: TOS venue constraint service wave (plan §2 decisions 1-9) — the governed venue-constraint
+    #: service :func:`~tos_runtime.compose._venue_wiring.build_venue_service` constructs, the
+    #: SAME instance :attr:`venue_stage` folds against every attempt. Set by
+    #: :func:`~tos_runtime.compose.root.compose_paper_runtime` immediately after ``_finalize``
+    #: returns (the service itself is built earlier, before ``_build_construction_stages`` —
+    #: this field just attaches the already-live instance to the composed runtime, mirroring
+    #: :attr:`session_facts`'s own "``None`` only transiently, never observable on a runtime a
+    #: caller actually receives" discipline).
+    venue: VenueConstraintService | None = None
     #: TOS Phase 5 W4 §2 decision 11 — set by
     #: :func:`~tos_runtime.compose._operations_wiring.apply_operations_wiring` (called from
     #: :func:`~tos_runtime.compose.root.compose_paper_runtime`, right after
