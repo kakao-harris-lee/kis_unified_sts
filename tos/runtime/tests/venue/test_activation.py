@@ -165,6 +165,68 @@ def test_require_member_activated_digest_one_char_off_refused(tmp_path: Path) ->
         )
 
 
+def test_require_member_activated_digest_last_char_off_refused(tmp_path: Path) -> None:
+    """Team-lead review HIGH, 2026-09-15: the pre-existing negative only ever
+    flipped the FIRST character, so a bug that compared just an 8-char
+    prefix would still pass all tests. Flip only the LAST character
+    instead — an exact-match comparator must still refuse."""
+    wrong_digest = _DIGEST[:-1] + "b"
+    assert wrong_digest[:32] == _DIGEST[:32]  # same long leading prefix
+    path = _write(tmp_path, _activation_yaml(digest=wrong_digest))
+    members = load_activation_members(path)
+    with pytest.raises(PolicyNotActivated):
+        require_member_activated(
+            members,
+            kind=_KIND,
+            member_id=_MEMBER_ID,
+            generation=_GENERATION,
+            digest=_DIGEST,
+        )
+
+
+def test_require_member_activated_digest_shared_long_prefix_refused(
+    tmp_path: Path,
+) -> None:
+    """A digest sharing the SAME 32 leading characters as the real one but
+    differing entirely in the trailing 32 — pins that the comparator checks
+    the whole string, not just a leading prefix (team-lead review HIGH)."""
+    wrong_digest = ("a" * 32) + ("b" * 32)
+    assert len(wrong_digest) == len(_DIGEST)
+    assert wrong_digest[:32] == _DIGEST[:32]
+    assert wrong_digest != _DIGEST
+    path = _write(tmp_path, _activation_yaml(digest=wrong_digest))
+    members = load_activation_members(path)
+    with pytest.raises(PolicyNotActivated):
+        require_member_activated(
+            members,
+            kind=_KIND,
+            member_id=_MEMBER_ID,
+            generation=_GENERATION,
+            digest=_DIGEST,
+        )
+
+
+def test_require_member_activated_digest_strict_prefix_of_real_refused(
+    tmp_path: Path,
+) -> None:
+    """A digest that is a STRICT PREFIX of the real one (shorter, every
+    character matching) — pins that the comparator is exact-length equality,
+    never a ``startswith``/prefix check (team-lead review HIGH)."""
+    wrong_digest = _DIGEST[:32]
+    assert _DIGEST.startswith(wrong_digest)
+    assert wrong_digest != _DIGEST
+    path = _write(tmp_path, _activation_yaml(digest=wrong_digest))
+    members = load_activation_members(path)
+    with pytest.raises(PolicyNotActivated):
+        require_member_activated(
+            members,
+            kind=_KIND,
+            member_id=_MEMBER_ID,
+            generation=_GENERATION,
+            digest=_DIGEST,
+        )
+
+
 def test_require_member_activated_resolved_false_refused(tmp_path: Path) -> None:
     path = _write(tmp_path, _activation_yaml(resolved="false"))
     members = load_activation_members(path)

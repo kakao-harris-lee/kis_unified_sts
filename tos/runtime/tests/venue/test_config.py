@@ -104,6 +104,74 @@ def test_load_venue_constraint_policy_not_a_mapping(tmp_path: Path) -> None:
         load_venue_constraint_policy(path, scheme=SCHEME)
 
 
+def test_load_venue_constraint_policy_old_scalar_scope_shape_refused(
+    tmp_path: Path,
+) -> None:
+    """Team-lead review, 2026-09-15: the pre-correction singular-scalar
+    ``scope`` shape (``environment: "paper"`` etc, the v1 §4.1 draft this
+    module no longer speaks) must be REJECTED outright, never silently
+    accepted alongside the template's own plural-list shape — the loader
+    reads ONLY ``environments``/``brokers``/.../``instruments`` (explicit
+    lists), so a document still carrying the old singular keys is missing
+    every required plural key and refuses on the first one."""
+    text = venue_policy_yaml().replace(
+        (
+            "scope:\n"
+            '  environments: ["paper"]\n'
+            "  safety_cells: []\n"
+            '  brokers: ["kis"]\n'
+            '  accounts: ["acct-1"]\n'
+            '  venues: ["krx"]\n'
+            '  market_segments: ["futures"]\n'
+            '  instruments: ["K200F"]\n'
+            "  contracts: []\n"
+            '  action_classes: ["NEW_LONG", "NEW_SHORT"]\n'
+        ),
+        (
+            "scope:\n"
+            '  environment: "paper"\n'
+            '  broker: "kis"\n'
+            '  account: "acct-1"\n'
+            '  venue: "krx"\n'
+            '  market_segment: "futures"\n'
+            '  instrument: "K200F"\n'
+        ),
+    )
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="environments"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_old_scalar_scope_shape_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace(
+        (
+            "scope:\n"
+            '  environments: ["paper"]\n'
+            "  safety_cells: []\n"
+            '  brokers: ["kis"]\n'
+            '  accounts: ["acct-1"]\n'
+            "  venues: []\n"
+            "  market_segments: []\n"
+            '  instruments: ["K200F"]\n'
+            "  contracts: []\n"
+            "  action_classes: []\n"
+            "  order_types: []\n"
+        ),
+        (
+            "scope:\n"
+            '  environment: "paper"\n'
+            '  broker: "kis"\n'
+            '  account: "acct-1"\n'
+            '  instrument: "K200F"\n'
+        ),
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="environments"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
 def test_load_venue_constraint_policy_wrong_artifact_type_refused(
     tmp_path: Path,
 ) -> None:

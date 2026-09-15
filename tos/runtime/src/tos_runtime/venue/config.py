@@ -283,13 +283,24 @@ class VenuePolicyConfigError(RuntimeError):
 @dataclass(frozen=True)
 class VenuePolicyScope:
     """The structured venue policy scope (plan §4.1, corrected field set —
-    the template's ``scope`` block has no ``product_type`` key at all).
+    team-lead review 2026-09-15: the template's ``scope`` block declares NO
+    product coordinate at all — ``environments``/``safety_cells``/
+    ``brokers``/``accounts``/``venues``/``market_segments``/``instruments``/
+    ``contracts``/``action_classes`` is the complete plural-list key set —
+    so a ``product_type`` field on this dataclass would carry a fact the
+    template has no slot for. ``instrument`` + ``market_segment`` carry that
+    distinction instead (an instrument id is already product-specific within
+    its market segment); this dataclass deliberately has no separate
+    ``product_type`` field.
 
     Kept alongside the kernel's flattened ``VenueConstraintPolicy.scope``
-    string (produced by :func:`_scope_identity`) so a later cross-check
-    (plan §2 decision 5, lane b) can compare ``environment``/``account``/
-    ``instrument``/``instrument_class`` against compose's own configured
-    coordinates without re-parsing the composed string.
+    string (produced by :func:`_scope_identity` — the six single-entry
+    coordinates joined in template-declaration order, ``environment``/
+    ``broker``/``account``/``venue``/``market_segment``/``instrument``) so a
+    later cross-check (plan §2 decision 5, lane b) can compare
+    ``environment``/``account``/``instrument``/``instrument_class`` against
+    compose's own configured coordinates without re-parsing the composed
+    string.
     """
 
     environment: str
