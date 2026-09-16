@@ -48,7 +48,7 @@ __all__ = [
 
 @dataclass(frozen=True)
 class ActionClassShape:
-    """The side / position-effect / direction one ``ActionClass`` maps to.
+    """The side / position-effect one ``(ActionClass, direction)`` pair maps to.
 
     The OCP instance already states this mapping, in prose:
 
@@ -60,23 +60,46 @@ class ActionClassShape:
     already carry, which is why the wave treats a mismatch between this mapping and that prose as
     a document defect rather than a code choice.
 
+    ⚠ **Direction is the key, not a field** (amended 2026-09-16, lane A finding). The first cut
+    of this type carried ``direction`` as a third *attribute*, which made the mapping
+    ``ActionClass → shape`` — one triple per class. That could not express the document's own
+    ``CLOSE↔opposite side/CLOSE`` rule: ``ActionClass`` has a single ``CLOSE`` member (no
+    ``CLOSE_LONG``/``CLOSE_SHORT`` split, ``tos/src/tos/venue/vocabulary.py:141``), so closing a
+    long (sell) and closing a short (buy) collapse onto one key and **one arm has to be invented**.
+    Lane A hit exactly that and refused to invent it. Keying by ``(ActionClass, direction)``
+    instead makes both arms declarable, and makes the long/short symmetry check something the
+    loader can actually enforce — an action class present for one direction and absent for its
+    mirror is a refusal, not a narrower scope.
+
+    That is also the direction of travel. ``Proposal.direction`` already exists in the kernel
+    (``tos/src/tos/dsl/proposal.py:126``) and ``build_flat_proposal`` takes the direction of a
+    closing action as an explicit argument (``proposal.py:251``) — direction is **per-attempt
+    strategy content**, not a policy output. The runtime has no proposal path yet (zero
+    ``DIRECTION`` sources under ``tos_runtime/src`` as of this wave), so for now the direction
+    comes from the policy's own ``DIRECTION`` axis binding in :attr:`ConstructionRules
+    .authorized_axes` — a per-composition fact. When the proposal path lands, direction becomes a
+    per-attempt lookup key and **this mapping is unchanged**; had it stayed an output attribute it
+    would have had to be deleted.
+
     ⚠ **Long/short symmetry is a repo non-negotiable** (``CLAUDE.md``: "Futures must preserve
     long/short symmetry. Entry/exit direction follows ``signal_direction``"). A mapping that
-    admits ``NEW_LONG`` but not its ``NEW_SHORT`` mirror is a policy error, not a narrower scope,
-    and the lane that loads this is expected to refuse rather than silently support one side.
+    admits one direction of an action class but not its mirror is a policy error, and the loader
+    is expected to refuse rather than silently support one side.
 
     Attributes:
-        side: The outbound side token (e.g. ``"BUY"``/``"SELL"``) — the value that reaches
-            ``OrderShapeFields.side`` and the ``SIDE`` axis binding.
-        position_effect: ``"OPEN"``/``"CLOSE"`` — reaches ``OrderShapeFields.position_effect``.
-        direction: The ``DIRECTION`` axis value (e.g. ``"LONG"``/``"SHORT"``). Distinct from
-            ``side``: a CLOSE of a long is ``SELL`` on a ``LONG`` direction, and collapsing the
-            two would lose exactly the symmetry the non-negotiable protects.
+        side: The outbound side token — the value that reaches ``OrderShapeFields.side`` and the
+            ``SIDE`` axis binding. Carried by the policy document, never authored here: note that
+            ``tos/runtime/tests/test_no_side_literals.py`` pins **zero quoted side literals**
+            anywhere under ``tos_runtime/src`` outside the KIS mock wire codec, and that pin has a
+            deliberately empty carve-out list. It scans docstrings too — spelling the two tokens
+            in quotes *in this very docstring* is what broke it at the contract commit. Do not
+            re-add them; the point of the type is that the spelling lives in the document.
+        position_effect: The position effect this pair opens or closes — reaches
+            ``OrderShapeFields.position_effect``.
     """
 
     side: str
     position_effect: str
-    direction: str
 
 
 @dataclass(frozen=True)
@@ -110,8 +133,10 @@ class ConstructionRules:
             instrument, direction, side, order type, TIF, environment. **Never** a member of
             ``DERIVED_AXES``: declaring one here is refused by the kernel envelope validator, and
             the lane that assembles these is expected to fail loudly rather than filter silently.
-        action_class_shape: ``ActionClass`` → :class:`ActionClassShape`. A class absent from this
-            mapping is unauthorized for this generation, not defaulted.
+        action_class_shape: ``(ActionClass, direction)`` → :class:`ActionClassShape`. A pair
+            absent from this mapping is unauthorized for this generation, not defaulted — and a
+            class present for one direction but missing its mirror is a symmetry refusal, not a
+            narrower scope. See :class:`ActionClassShape` for why direction is the key.
         effect_dimensions: The per-dimension Economic Effect Envelope specs. An empty tuple means
             nothing is derived, which reaches the step-5 adapter as ``UNKNOWN`` — "an empty
             vector is not no effect".
@@ -120,5 +145,5 @@ class ConstructionRules:
     sizing_bound: SizingBound
     admitted_quantity_bases: frozenset[str]
     authorized_axes: tuple[AxisBinding, ...]
-    action_class_shape: dict[ActionClass, ActionClassShape]
+    action_class_shape: dict[tuple[ActionClass, str], ActionClassShape]
     effect_dimensions: tuple[EffectDimensionSpec, ...]
