@@ -712,7 +712,7 @@ def test_load_order_construction_policy_missing_template_list_key_refused(
 # ===========================================================================
 #
 # ``ocp_yaml()``'s default construction block (tos_runtime/tests/venue/_documents.py) is
-# well-formed FIXTURE DATA (max_quantity=10 etc — NOT the operator-adopted production values,
+# well-formed FIXTURE DATA (max_quantity=100 etc — NOT the operator-adopted production values,
 # see that module's own docstring). Every mutation test below starts from that default text and
 # breaks exactly one leaf via ``.replace()``/regex, mirroring this file's existing idiom for
 # every other OCP negative case above.

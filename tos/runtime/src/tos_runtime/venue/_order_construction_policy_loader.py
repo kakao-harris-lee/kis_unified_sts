@@ -472,6 +472,29 @@ def _refuse_missing_mirror(
 def _check_action_class_shape_symmetry(
     shapes: dict[tuple[ActionClass, str], ActionClassShape], path: Path
 ) -> None:
+    """Refuse an ``action_class_shape`` where a mirror pair has one arm declared but not the
+    other (see :func:`_refuse_missing_mirror`).
+
+    **The within-class rule is deliberately UNIFORM across all 11 non-direction-named
+    ``ActionClass`` members — no per-class exception list, on purpose** (PR #719 delta review,
+    MEDIUM disposition, 2026-09-16). A fair reading of the rule: for order-management classes
+    that reference an EXISTING order (``CANCEL``/``AMEND``/``REPLACE``) and the undocumented
+    ``ROUTING_ALTERNATIVE``, a per-direction side may not be a meaningful fact at all, so a
+    future author declaring one of them could be forced to invent a mirror entry — the same
+    fabrication pattern this wave exists to prevent (see :data:`_DIRECTION_NAMED_ACTION_CLASSES`
+    and the ``ConstructionRules.action_class_shape`` docstring on why a table was rejected here
+    once already: PR #719's own HIGH finding, a per-class allowlist that a future ``ActionClass``
+    member must be remembered into).
+
+    The fix is NOT a second table naming which classes are exempt — that reintroduces exactly
+    the "registry with an unpinned satellite" defect class this repo keeps getting bitten by,
+    just for the exemption list instead of the mirror-pair list. So the rule stays uniform, and
+    its known failure mode is **over-refusal**, deliberately the safe direction: an author who
+    genuinely needs to declare ``CANCEL``/``AMEND``/``REPLACE``/``ROUTING_ALTERNATIVE`` hits a
+    refusal here and has to decide whether direction is a meaningful fact for that class — the
+    right prompt to raise as a design question, not a signal to reach for an exemption. Nothing
+    declares those four today, so the present cost of leaving this uniform is zero.
+    """
     # Cross-class mirror: NEW_LONG <-> NEW_SHORT (see _DIRECTION_NAMED_ACTION_CLASSES).
     key_new_long = (ActionClass.NEW_LONG, "LONG")
     key_new_short = (ActionClass.NEW_SHORT, "SHORT")
