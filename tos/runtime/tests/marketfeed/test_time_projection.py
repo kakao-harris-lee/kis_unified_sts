@@ -93,6 +93,11 @@ class _FakeSessionOwner:
 # config / service builders
 # ----------------------------------------------------------------------------
 
+#: Mirrors tos/runtime/tests/compose/_fixtures.py:263's own literal — the same injected
+#: construction-parameter value the ratified backtest fixture uses for the identical field.
+_DEFAULT_SNAPSHOT_AGE_BOUND = 20
+_DEFAULT_INTERVAL_WIDTH = 500
+
 
 def _config(**overrides: object) -> TrustworthyTimeConfig:
     base: dict[str, object] = {
@@ -143,13 +148,29 @@ def _projection(
     service: TrustworthyTimeService | None = None,
     session_context: SessionContext | None = None,
     instrument_class: str = "005930",
+    snapshot_age_bound: int = _DEFAULT_SNAPSHOT_AGE_BOUND,
+    interval_width: int = _DEFAULT_INTERVAL_WIDTH,
 ) -> RuntimeTimeProjection:
     return RuntimeTimeProjection(
         config=config if config is not None else _config(),
         time_service=service if service is not None else _build_service(config=config),
         session_owner=_FakeSessionOwner(session_context),
         instrument_class=instrument_class,
+        snapshot_age_bound=snapshot_age_bound,
+        interval_width=interval_width,
     )
+
+
+def _drive_to_trusted(
+    service: TrustworthyTimeService, monotonic: FakeMonotonicSource
+) -> None:
+    """Mirrors test_service.py's own "reaching_required_conditions" pattern — one
+    SYNCHRONIZING step then a small monotonic advance reaches TRUSTED."""
+    service.start()
+    service.evaluate()  # -> SYNCHRONIZING
+    monotonic.value += 10
+    service.evaluate()  # -> TRUSTED
+    assert service.health_state is HealthState.TRUSTED
 
 
 # ----------------------------------------------------------------------------
@@ -220,12 +241,7 @@ def test_wall_clock_unknown_when_as_of_is_none_too() -> None:
 def test_source_age_is_computed_when_both_known() -> None:
     monotonic = FakeMonotonicSource(1_000)
     service = _build_service(monotonic=monotonic)
-    service.start()
-    service.evaluate()  # -> SYNCHRONIZING
-    monotonic.value = 1_010
-    service.evaluate()  # -> TRUSTED (single stabilization step is enough — mirrors
-    #    test_service.py's own "reaching_required_conditions" pattern)
-    assert service.health_state is HealthState.TRUSTED
+    _drive_to_trusted(service, monotonic)
     wall_clock_now = service.wall_clock_now()
     assert wall_clock_now is not None
 
@@ -272,6 +288,8 @@ def test_session_owner_is_read_for_the_configured_instrument_class() -> None:
         time_service=service,
         session_owner=owner,
         instrument_class="FUTURES",
+        snapshot_age_bound=_DEFAULT_SNAPSHOT_AGE_BOUND,
+        interval_width=_DEFAULT_INTERVAL_WIDTH,
     )
 
     projection(as_of=None)
@@ -297,11 +315,7 @@ def test_health_state_is_the_services_own_uninitialized_before_evaluate() -> Non
 def test_health_state_is_the_services_own_trusted_after_evaluate() -> None:
     monotonic = FakeMonotonicSource(1_000)
     service = _build_service(monotonic=monotonic)
-    service.start()
-    service.evaluate()
-    monotonic.value = 1_010
-    service.evaluate()
-    assert service.health_state is HealthState.TRUSTED
+    _drive_to_trusted(service, monotonic)
     projection = _projection(service=service)
 
     result = projection(as_of=None)
@@ -310,7 +324,7 @@ def test_health_state_is_the_services_own_trusted_after_evaluate() -> None:
 
 
 # ----------------------------------------------------------------------------
-# every bound comes from config — mutate one value, assert the projected field changes
+# every VER-002 bound comes from config — mutate one value, assert the projected field changes
 # (proves there is no hardcoded literal anywhere in the binding)
 # ----------------------------------------------------------------------------
 
@@ -404,6 +418,8 @@ def test_missing_delay_bound_term_refuses_construction(missing_field: str) -> No
             time_service=service,
             session_owner=_FakeSessionOwner(None),
             instrument_class="005930",
+            snapshot_age_bound=_DEFAULT_SNAPSHOT_AGE_BOUND,
+            interval_width=_DEFAULT_INTERVAL_WIDTH,
         )
 
 
@@ -422,19 +438,54 @@ def test_missing_delay_bound_term_never_reaches_a_three_term_tuple() -> None:
             time_service=service,
             session_owner=_FakeSessionOwner(None),
             instrument_class="005930",
+            snapshot_age_bound=_DEFAULT_SNAPSHOT_AGE_BOUND,
+            interval_width=_DEFAULT_INTERVAL_WIDTH,
         )
     # no projection object was ever constructed to call — nothing to assert on further; the
     # exception above IS the assertion that a 3-term tuple can never be built.
 
 
 # ----------------------------------------------------------------------------
-# uncertainty_interval — honestly None (current TimeHealthSnapshot schema carries none)
+# snapshot_age_bound — injected construction parameter, flows through verbatim, refused if absent
 # ----------------------------------------------------------------------------
 
 
-def test_uncertainty_interval_is_none_before_any_evaluate() -> None:
+def test_snapshot_age_bound_flows_through_verbatim() -> None:
     service = _build_service()
     service.start()
+    projection = _projection(service=service, snapshot_age_bound=77)
+
+    result = projection(as_of=None)
+
+    assert result.snapshot_age_bound == 77
+
+
+@pytest.mark.parametrize("bad_value", [None, -1])
+def test_snapshot_age_bound_refuses_construction_when_absent_or_negative(
+    bad_value: int | None,
+) -> None:
+    service = _build_service()
+    service.start()
+
+    with pytest.raises(TimeProjectionConfigError, match="snapshot_age_bound"):
+        RuntimeTimeProjection(
+            config=_config(),
+            time_service=service,
+            session_owner=_FakeSessionOwner(None),
+            instrument_class="005930",
+            snapshot_age_bound=bad_value,  # type: ignore[arg-type]
+            interval_width=_DEFAULT_INTERVAL_WIDTH,
+        )
+
+
+# ----------------------------------------------------------------------------
+# interval_width — injected construction parameter, composes uncertainty_interval
+# ----------------------------------------------------------------------------
+
+
+def test_uncertainty_interval_is_none_when_wall_clock_unknown() -> None:
+    service = _build_service()
+    service.start()  # never evaluate()-d — wall_clock_now() stays None
     projection = _projection(service=service)
 
     result = projection(as_of=None)
@@ -442,35 +493,85 @@ def test_uncertainty_interval_is_none_before_any_evaluate() -> None:
     assert result.uncertainty_interval is None
 
 
-def test_uncertainty_interval_is_none_after_evaluate_too() -> None:
-    """Current ``TimeHealthSnapshot`` (``tos/src/tos/time/snapshot.py``) carries no
-    ``uncertainty_interval`` field at all, so this stays ``None`` even once a real snapshot
-    exists — an honest absence, not a bug (see ``RuntimeTimeProjection._uncertainty_interval``'s
-    docstring)."""
+def test_uncertainty_interval_is_built_from_anchor_and_interval_width_when_trusted() -> (
+    None
+):
+    """Mirrors ``BarTimeProjection.project``'s own construction verbatim:
+    ``UncertaintyInterval(lo=anchor, hi=anchor + interval_width)`` — the runtime's live
+    ``wall_clock_now()`` reading substitutes for the backtest's bar coordinate as the anchor.
+    """
     monotonic = FakeMonotonicSource(1_000)
     service = _build_service(monotonic=monotonic)
-    service.start()
-    service.evaluate()
-    monotonic.value = 1_010
-    service.evaluate()
-    assert service.current_snapshot() is not None
-    projection = _projection(service=service)
+    _drive_to_trusted(service, monotonic)
+    anchor = service.wall_clock_now()
+    assert anchor is not None
+    projection = _projection(service=service, interval_width=333)
 
     result = projection(as_of=None)
 
-    assert result.uncertainty_interval is None
+    assert result.uncertainty_interval is not None
+    assert result.uncertainty_interval.lo == anchor
+    assert result.uncertainty_interval.hi == anchor + 333
 
 
-# ----------------------------------------------------------------------------
-# snapshot_age_bound — deliberately left at the engine default (documented scope boundary)
-# ----------------------------------------------------------------------------
-
-
-def test_snapshot_age_bound_is_left_at_engine_default() -> None:
+@pytest.mark.parametrize("bad_value", [None, -1])
+def test_interval_width_refuses_construction_when_absent_or_negative(
+    bad_value: int | None,
+) -> None:
     service = _build_service()
     service.start()
-    projection = _projection(service=service)
 
-    result = projection(as_of=None)
+    with pytest.raises(TimeProjectionConfigError, match="interval_width"):
+        RuntimeTimeProjection(
+            config=_config(),
+            time_service=service,
+            session_owner=_FakeSessionOwner(None),
+            instrument_class="005930",
+            snapshot_age_bound=_DEFAULT_SNAPSHOT_AGE_BOUND,
+            interval_width=bad_value,  # type: ignore[arg-type]
+        )
 
-    assert result.snapshot_age_bound is None
+
+# ----------------------------------------------------------------------------
+# end-to-end: a fully-populated projection now reaches a REAL tos.engine.time_admits verdict
+# ----------------------------------------------------------------------------
+
+
+def test_time_admits_reaches_true_end_to_end_with_a_fully_populated_projection() -> (
+    None
+):
+    """Closes the earlier draft's structural gap (an always-``None`` ``snapshot_age_bound``
+    made ``snapshot_age_admissible`` unconditionally ``False``). With TRUSTED health, a
+    genuinely fresh ``source_age``, an admissible ``snapshot_age_bound``, and a positively-open
+    session context all real, the full four-check chain now reaches ``True``."""
+    monotonic = FakeMonotonicSource(1_000)
+    service = _build_service(monotonic=monotonic)
+    _drive_to_trusted(service, monotonic)
+    anchor = service.wall_clock_now()
+    assert anchor is not None
+
+    # is_open=True, phase/calendar-version concrete, no tz conflict, boundary_value=None (so the
+    # boundary-inside-the-uncertainty-window check — the one straddling rule
+    # session_open_positively enforces — has nothing to straddle).
+    open_session = SessionContext(
+        tz_id="Asia/Seoul",
+        tz_db_version="2026a",
+        trading_calendar_version="cal-1",
+        phase="REGULAR",
+        is_open=True,
+        tz_version_conflict=False,
+        boundary_value=None,
+    )
+    projection = _projection(
+        service=service,
+        session_context=open_session,
+        snapshot_age_bound=20,  # <= maximum_consumer_age_ms (1000) — admissible
+        interval_width=500,
+    )
+
+    result = projection(as_of=anchor)  # source_age == 0 — as fresh as it gets
+
+    admitted, reason = time_admits(result)
+
+    assert admitted is True, f"expected admission, got reason: {reason!r}"
+    assert reason is None
