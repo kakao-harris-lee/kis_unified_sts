@@ -6,9 +6,9 @@ the runtime once, from CLI-sourced paths only (never ``os.environ``/``os.getenv`
 D1.1 "파일 경로는 CLI 인자로만 주입"), and a real invocation still needs a caller-supplied
 :class:`~tos_runtime.compose.root.ConstructionConfig` and the two risk input providers
 (:func:`~tos_runtime.compose.root.compose_paper_runtime`'s own required keyword arguments) —
-none of which are expressible as bare CLI flags (this module's long-standing constraint, unchanged
-by this wave). :func:`main` therefore does not itself compose or drive anything for ``run``; a
-real launcher parses :class:`Args` here and supplies the rest itself.
+none of which are expressible as bare CLI flags (this module's long-standing constraint).
+:func:`main` therefore does not itself compose or drive anything for ``run``; a real launcher
+parses :class:`Args` here and supplies the rest itself.
 
 **The five operations subcommands DO real work directly from bare flags** (plan §2 decision 10),
 because none of them need a ``ConstructionConfig``/risk-input-provider: ``backup-set``,
@@ -71,27 +71,28 @@ issuing them. Blocker (b) is RESOLVED by the TOS risk state service wave
 (``docs/plans/2026-09-16-tos-risk-state-service-plan.md``): ``compose_paper_runtime``'s
 ``aggregate_risk_inputs_provider``/``action_flow_inputs_provider`` are now ``| None = None`` —
 when left ``None``, both default to the production
-:class:`~tos_runtime.riskstate.service.RiskStateService` (built from
-``aggregate_risk_policy.yaml``/``action_flow_policy.yaml`` under ``config_dir``,
-:mod:`tos_runtime.compose._riskstate_wiring`), never a test fixture hand-building
-``AggregateRiskDecisionInputs``/``ActionFlowDecisionInputs``. Two independent gaps remain,
-each requiring its own follow-up wave, and each gates the NEXT column's own follow-up
-(dashboards, ``shutdown``, live projection export all need a live composed runtime too, so
-they wait on BOTH, not just one):
+:class:`~tos_runtime.riskstate.service.RiskStateService` (:mod:`tos_runtime.compose
+._riskstate_wiring`), never a test fixture hand-building ``AggregateRiskDecisionInputs``/
+``ActionFlowDecisionInputs``. Two independent gaps remain, each gating the NEXT column's own
+follow-up (dashboards, ``shutdown``, live projection export all need a live composed runtime
+too, so they wait on BOTH):
 
 (a′) **``ConstructionConfig``'s remaining caller-supplied inputs have no production source
     yet**: ``envelope`` (needs the approved-Intent / IAP authoring flow), ``price`` (needs a
     ``tos.marketfeed`` adapter), and ``order_shape`` (needs a strategy's own proposal to carry a
     concrete shape) — plus ``compose/_wiring.py``'s own ``intent_id``/``intent_version``/
-    ``envelope_id``/``command_id``/``generation`` literals (the venue wave's own §2.10 residue;
-    step 2's ``policy_id``/``policy_version``/``policy_generation`` are now the governed Order
-    Construction Policy's real coordinates, not a literal).
+    ``envelope_id``/``command_id``/``generation`` literals (the venue wave's own §2.10 residue).
 (b′) **The risk state service's own disclosed limits** (TOS risk state service wave plan §2.6):
     the position observation is single-source (the runtime's own durable evidence — no broker
     witness corroborates it, so ``all_fields_attributed`` stays an operator attestation), it
     governs contract-count dimensions only (no valuation/notional/margin dimension — no mark
     source exists), and the Adverse Scenario Set instance is still a fixture value pending
-    operator adoption (plan §6 confirmation point 2).
+    operator adoption (plan §6 confirmation point 2). **Honest finding (2026-09-16), not
+    papered over:** step 7 (``ACTION_FLOW_DECISION``) ``GRANT`` is categorically unreachable
+    today — ``tos.afg.amplification_bounded`` requires a concrete observed value on every
+    bounded axis, and ``duplicate_redelivery_expansion``/``failover_reconnect_replay_expansion``
+    have no durable per-root-cause read surface in ``tos_runtime`` (inbox dedup is a transient
+    receipt; replay verdicts are per-boot) — needs a durable inbox-schema counter (follow-up).
 (c) **No tick source.** Nothing in ``tos_runtime`` produces a ``DECISION_TICK`` from a live market
     feed or a clock — :class:`~tos_runtime.engine.driver.EngineDriver`'s three public entry points
     are all pull-based; every real caller is a test fixture. Needs a ``tos.marketfeed`` runtime
