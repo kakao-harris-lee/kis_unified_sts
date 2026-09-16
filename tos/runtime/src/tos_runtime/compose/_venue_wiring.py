@@ -457,33 +457,46 @@ def _observed_silently_rounded(
     price: int | None,
     quantity: int | None,
     constraints: VenueShapeConstraints | None,
-) -> bool | None:
-    """Whether ``price``/``quantity`` sit on the governed tick/lot grid the injected
-    :class:`~tos.venue.VenueShapeConstraints` declare — an **observation**, never an
-    attestation (OCP's own "no silent rounding" prose; (a′) wave decision 4). Mirrors the exact
-    grid arithmetic :func:`tos.venue.predicates.order_shape_admissible` itself uses for the
-    price-tick / quantity-lot checks, so a ``False`` here never disagrees with what that
-    predicate separately concludes. Fails closed to ``None`` ("ungradeable") whenever a grid
-    fact is missing or an injected tick/lot is invalid (zero) — never a stamped ``False``
-    (module docstring; VTG-AC-004 "silent normalization or widening must fail").
+) -> bool:
+    """Whether ``price``/``quantity`` are AFFIRMATIVELY off the governed tick/lot grid the
+    injected :class:`~tos.venue.VenueShapeConstraints` declare — an **observation**, never an
+    attestation (OCP's own "no silent rounding" prose; (a′) wave decision 4).
+
+    ``False`` in every case except one: this is NOT a three-state observation, even though its
+    sibling fields (``quantity``, and price via ``_shape_for``) fail closed to ``None`` on an
+    unknown. ``tos.venue.predicates.order_shape_admissible`` checks
+    ``shape.silently_rounded is not False`` (line ~253) — **before** its own missing-field
+    check (price/quantity/constraints absent, or tick/lot zero or absent, lines ~255-266) ever
+    runs. So returning anything other than ``False`` when a grid fact is missing does not
+    produce an "ungradeable" classification: it makes the kernel's own missing-field branch
+    UNREACHABLE and forces ``INADMISSIBLE`` in its place — turning what the kernel would have
+    classified ``UNKNOWN`` into a ``DENY`` this function has no authority to make (HIGH, PR
+    #718 review, 2026-09-16; reproduced with ``price=None`` — ``silently_rounded=False`` there
+    yields ``UNKNOWN``, anything else yields ``INADMISSIBLE``). ``False`` is also the literally
+    correct value whenever nothing could be judged: no rounding was OBSERVED, because no
+    judgement was possible at all — "nothing was silently rounded" is true precisely when there
+    is nothing to observe, and letting the kernel's own downstream logic classify the missing
+    data is the honest path, not a workaround.
+
+    ``True`` only when every grid fact is present, tick/lot are positive, and the shape is
+    affirmatively off-grid. In that one case the kernel's own downstream price-band/tick and
+    quantity-range/lot checks (``order_shape_admissible`` lines ~267-280) would independently
+    reach ``INADMISSIBLE`` too, once they ran — so ``True`` here changes only WHICH check fires,
+    never the classification, unlike every other non-``False`` value this function could return.
     """
     if constraints is None:
-        return None
+        return False
     if (
         price is None
         or constraints.price_min is None
         or constraints.tick_size is None
         or constraints.tick_size == 0
     ):
-        price_on_grid = None
-    else:
-        price_on_grid = (price - constraints.price_min) % constraints.tick_size == 0
+        return False
     if quantity is None or constraints.lot_size is None or constraints.lot_size == 0:
-        quantity_on_grid = None
-    else:
-        quantity_on_grid = quantity % constraints.lot_size == 0
-    if price_on_grid is None or quantity_on_grid is None:
-        return None
+        return False
+    price_on_grid = (price - constraints.price_min) % constraints.tick_size == 0
+    quantity_on_grid = quantity % constraints.lot_size == 0
     return not (price_on_grid and quantity_on_grid)
 
 

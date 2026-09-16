@@ -759,6 +759,71 @@ class TestDerivedQuantityReachesVenueGate:
     # .test_absent_candidate_command_is_none`` below.
 
 
+class TestSourcedShapeNonIntegralQuantityNeverFallsBackToTheLiteral:
+    """MEDIUM (team-lead review, PR #718): pins ``VenueServiceStage._sourced_shape`` ITSELF —
+    the reviewer made it silently fall back to the injected literal quantity when the
+    derivation yields ``None`` and all 2225 other tests still passed, because nothing
+    exercised ``_sourced_shape`` with a ``candidate_command`` that IS present
+    (``candidate_command is not None``, i.e. step 2 admitted) but bound to a non-integral
+    QUANTITY value — ``_derived_shape_quantity``'s own fail-closed branch, distinct from the
+    "no command at all" case ``TestDerivedQuantityReachesVenueGate`` already covers (that one
+    halts the sequencer before step 3 ever runs, so it cannot reach this branch either).
+
+    Exercises the REAL ``_sourced_shape`` method against a hand-built
+    ``CanonicalBrokerCommand`` — not a reimplementation of its logic — rather than forcing a
+    genuinely-DERIVED non-integral quantity through the full compose stack: that path is
+    structurally closed, since ``VenueShapeConstraints.lot_size`` is ``int``-typed, so any
+    quantity that clears the venue policy's own lot check is necessarily integer-valued
+    (verified while writing this test — an all-``Decimal("0.5")`` lot/sizing-bound override
+    hits ``VenuePolicyConfigError: ... lot_size must be an int or null`` at the venue-policy
+    loader, before derivation is even reached)."""
+
+    @staticmethod
+    def _stage(shape) -> object:
+        from tos.venue import ActionClass
+        from tos_runtime.compose._venue_wiring import VenueServiceStage
+
+        class _StubService:
+            shape_constraints = None
+
+        class _StubConstructionStage:
+            construction = None
+
+        return VenueServiceStage(
+            _StubService(),
+            _StubConstructionStage(),
+            ActionClass.NEW_LONG,
+            shape,
+            None,
+        )
+
+    def test_non_integral_axis_value_leaves_quantity_none_not_the_literal(self) -> None:
+        from tos.ioc import AxisBinding, CanonicalBrokerCommand, ConformanceAxis
+        from tos.venue import OrderShapeFields
+
+        literal_quantity = 20
+        resolved = OrderShapeFields(
+            price=4500,
+            quantity=literal_quantity,  # must NOT survive into the sourced shape
+            order_type="LIMIT",
+            tif="DAY",
+            side="BUY",
+            position_effect="OPEN",
+            silently_rounded=False,
+        )
+        command = CanonicalBrokerCommand(
+            command_id="cmd-test",
+            command_generation=1,
+            axis_bindings=(AxisBinding(axis=ConformanceAxis.QUANTITY, value="10.5"),),
+        )
+
+        sourced = self._stage(resolved)._sourced_shape(resolved, command)
+
+        assert sourced is not None
+        assert sourced.quantity is None
+        assert sourced.quantity != literal_quantity
+
+
 class TestSilentlyRoundedObservedEndToEnd:
     """decision 4: ``silently_rounded`` is an OBSERVED tick/lot-grid fact, never the injected
     attestation."""
@@ -797,8 +862,45 @@ class TestSilentlyRoundedObservedEndToEnd:
 
         assert runtime.venue_stage.resolved_shape is not None
         assert runtime.venue_stage.resolved_shape.price == 4200
-        assert runtime.venue_stage.resolved_shape.silently_rounded is not False
+        # LOW (team-lead review, PR #718): `is not False` admits both `True` and `None` —
+        # `_observed_silently_rounded` returns a plain `bool` now, so the precise value is
+        # `True` (this shape IS fully gradeable and IS off-grid), not merely "not False".
+        assert runtime.venue_stage.resolved_shape.silently_rounded is True
         assert step3.outcome is not StageOutcome.ADMIT
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+    def test_unprojectable_price_yields_structural_unknown_not_inadmissible(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """HIGH (team-lead review, PR #718): a structurally-unprojectable step-3 price —
+        ``_shape_for``'s own documented "projection impossible ⇒ structural UNKNOWN" path
+        (``egressgw/construction.py:1074-1098``, ``admitted_shape_price_from_view`` returning
+        ``None`` because the governed field key is not on the value surface) — must reach
+        ``order_shape_admissible``'s OWN missing-field ``UNKNOWN`` classification. Before the
+        fix, ``_observed_silently_rounded`` returned ``None`` here, which
+        ``order_shape_admissible`` treats the same as ``True`` (``is not False`` gates BEFORE
+        the missing-field check) — silently turning the kernel's own ``UNKNOWN`` into a
+        ``DENY`` this function has no authority to make. This is the exact classification a
+        unit test on the helper's return value alone cannot pin — it only shows up once the
+        kernel's real predicate ordering runs, hence e2e."""
+        construction = fx.construction_config(
+            shape_price_field_key="not-a-real-field-key"
+        )
+        runtime = _compose_with_construction(
+            tmp_path, config_dir, data_dir, custody_root, construction
+        )
+        _reach_trusted(runtime)
+
+        results = runtime.run_once((fx.crossing_event(),))
+        verdicts = {v.step: v for v in results[0].flow.verdicts}
+        step3 = verdicts[CommitmentStep.VENUE_ADMISSIBILITY_DECISION]
+
+        assert runtime.venue_stage.resolved_shape is not None
+        assert runtime.venue_stage.resolved_shape.price is None
+        assert runtime.venue_stage.resolved_shape.silently_rounded is False
+        assert step3.outcome is StageOutcome.UNKNOWN
 
         runtime.rcl_log.close()
         runtime.evidence_store.close()
@@ -1019,8 +1121,20 @@ class TestConstructionRulesShapeSourcingUnit:
 
 
 class TestObservedSilentlyRoundedUnit:
-    """decision 4: pure unit coverage for :func:`_observed_silently_rounded` — every branch,
-    including the "ungradeable" cases an e2e path cannot cheaply reach."""
+    """decision 4 + HIGH (team-lead review, PR #718): pure unit coverage for
+    :func:`_observed_silently_rounded` — every branch. This is NOT a three-state observation:
+    ``order_shape_admissible`` checks ``silently_rounded is not False`` BEFORE its own
+    missing-field check, so anything other than ``False`` on missing/invalid grid data would
+    force ``INADMISSIBLE`` in place of the kernel's own ``UNKNOWN`` — a classification this
+    function has no authority to make. ``False`` is therefore the answer for every
+    "ungradeable" case, not just the on-grid one; only an AFFIRMATIVELY off-grid shape (every
+    fact present, positive tick/lot, and a genuine misalignment) returns ``True``. The
+    classification-preserving property itself — that ``False`` here reaches the kernel's own
+    missing-field ``UNKNOWN`` rather than a forced ``INADMISSIBLE`` — is pinned at the e2e
+    level below (``TestSilentlyRoundedObservedEndToEnd
+    .test_unprojectable_price_yields_structural_unknown_not_inadmissible``), since a unit
+    assertion on this function's return value alone cannot see the kernel's predicate
+    ordering."""
 
     @staticmethod
     def _constraints(**overrides: object):
@@ -1051,57 +1165,61 @@ class TestObservedSilentlyRoundedUnit:
             is False
         )
 
-    def test_off_grid_price_observes_not_false(self) -> None:
+    def test_off_grid_price_observes_true(self) -> None:
         from tos_runtime.compose._venue_wiring import _observed_silently_rounded
 
-        result = _observed_silently_rounded(
-            price=4200, quantity=20, constraints=self._constraints()
+        assert (
+            _observed_silently_rounded(
+                price=4200, quantity=20, constraints=self._constraints()
+            )
+            is True
         )
-        assert result is not False
 
-    def test_off_grid_quantity_observes_not_false(self) -> None:
+    def test_off_grid_quantity_observes_true(self) -> None:
         from tos_runtime.compose._venue_wiring import _observed_silently_rounded
 
-        result = _observed_silently_rounded(
-            price=4500, quantity=21, constraints=self._constraints()
+        assert (
+            _observed_silently_rounded(
+                price=4500, quantity=21, constraints=self._constraints()
+            )
+            is True
         )
-        assert result is not False
 
-    def test_missing_constraints_is_ungradeable(self) -> None:
+    def test_missing_constraints_observes_false_not_a_forced_denial(self) -> None:
         from tos_runtime.compose._venue_wiring import _observed_silently_rounded
 
         assert (
             _observed_silently_rounded(price=4500, quantity=20, constraints=None)
-            is None
+            is False
         )
 
-    def test_missing_price_or_quantity_is_ungradeable(self) -> None:
+    def test_missing_price_or_quantity_observes_false_not_a_forced_denial(self) -> None:
         from tos_runtime.compose._venue_wiring import _observed_silently_rounded
 
         constraints = self._constraints()
         assert (
             _observed_silently_rounded(price=None, quantity=20, constraints=constraints)
-            is None
+            is False
         )
         assert (
             _observed_silently_rounded(
                 price=4500, quantity=None, constraints=constraints
             )
-            is None
+            is False
         )
 
-    def test_zero_tick_or_lot_is_ungradeable(self) -> None:
+    def test_zero_tick_or_lot_observes_false_not_a_forced_denial(self) -> None:
         from tos_runtime.compose._venue_wiring import _observed_silently_rounded
 
         assert (
             _observed_silently_rounded(
                 price=4500, quantity=20, constraints=self._constraints(tick_size=0)
             )
-            is None
+            is False
         )
         assert (
             _observed_silently_rounded(
                 price=4500, quantity=20, constraints=self._constraints(lot_size=0)
             )
-            is None
+            is False
         )
