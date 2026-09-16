@@ -228,12 +228,23 @@ def _seed_egress_result(
 
 
 def _seed_recovery_marker(
-    store: SqliteEvidenceStore, *, kind: str, event_id: str
+    store: SqliteEvidenceStore,
+    *,
+    kind: str,
+    event_id: str,
+    handling_started_evidence_seq: int | None = None,
 ) -> None:
     """Mirrors ``tests/riskstate/conftest.py::seed_recovery_marker`` exactly — the
-    ``{"event_id": ...}`` shape ``EngineDriver._handle_interrupted_event`` durably appends
-    (``tos_runtime/engine/driver.py:517-535``)."""
-    store.append({"event_id": event_id}, kind=kind, record_class=kind)
+    ``{"event_id": ..., "handling_started_evidence_seq": ...}`` shape
+    ``EngineDriver._handle_interrupted_event`` durably appends
+    (``tos_runtime/engine/driver.py:517-535`` — ``record_halt``'s own payload for
+    ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND``, and the plain ``evidence_store.append`` for
+    ``DECISION_TICK_DROPPED_ON_RECOVERY``, both carry ``event_id``; only the former also
+    carries ``handling_started_evidence_seq`` — omitted (``None``) for the latter)."""
+    payload: dict[str, object] = {"event_id": event_id}
+    if handling_started_evidence_seq is not None:
+        payload["handling_started_evidence_seq"] = handling_started_evidence_seq
+    store.append(payload, kind=kind, record_class=kind)
 
 
 def _stage_request(
@@ -1477,13 +1488,26 @@ class TestComposeE2E:
                     "the root row's own content-addressed event_id could not be resolved — "
                     "nothing to seed against"
                 )
-                # 3 recovery markers for THIS tick's own content-addressed event — exceeds
-                # max_failover_reconnect_replay_expansion=2.
-                for _ in range(3):
+                # 2 markers of EACH recovery kind (4 total) for THIS tick's own
+                # content-addressed event — exceeds max_failover_reconnect_replay_expansion=2.
+                # Deliberately a MIX, not one kind repeated: dropping either
+                # `DECISION_TICK_DROPPED_ON_RECOVERY` or
+                # `HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND` from
+                # `_RECOVERY_MARKER_KINDS` would still leave 2 of the other kind — exactly
+                # AT the bound, no longer exceeding it — so this test goes RED under either
+                # single-kind-removed mutation (review HIGH, PR #707).
+                for _ in range(2):
                     _seed_recovery_marker(
                         runtime.evidence_store,
                         kind="DECISION_TICK_DROPPED_ON_RECOVERY",
                         event_id=content_event_id,
+                    )
+                for _ in range(2):
+                    _seed_recovery_marker(
+                        runtime.evidence_store,
+                        kind="HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND",
+                        event_id=content_event_id,
+                        handling_started_evidence_seq=root_event_seq,
                     )
             return original_observe(
                 root_event_id=root_event_id,
@@ -1505,7 +1529,7 @@ class TestComposeE2E:
         assert afg_verdict.outcome.value == "UNKNOWN", afg_verdict.reason
 
         observed_row = _read_last_risk_state_observed(runtime.evidence_store)
-        assert observed_row["flow"]["replays"] == 3
+        assert observed_row["flow"]["replays"] == 4
 
     def test_new_short_mirrors_new_long_at_aggregate_risk_grant(
         self, tmp_path: Path

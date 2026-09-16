@@ -83,16 +83,16 @@ too, so they wait on BOTH):
     concrete shape) — plus ``compose/_wiring.py``'s own ``intent_id``/``intent_version``/
     ``envelope_id``/``command_id``/``generation`` literals (the venue wave's own §2.10 residue).
 (b′) **The risk state service's own disclosed limits** (TOS risk state service wave plan §2.6):
-    the position observation is single-source (the runtime's own durable evidence — no broker
-    witness corroborates it, so ``all_fields_attributed`` stays an operator attestation), it
-    governs contract-count dimensions only (no valuation/notional/margin dimension — no mark
-    source exists), and the Adverse Scenario Set instance's values were adopted by the operator
-    2026-09-16 (plan §6 confirmation point 2) but lands in a separate wave —
-    ``config/tos_runtime/paper/risk.yaml`` does not exist on this branch yet. **Resolved
-    (2026-09-16, action-flow observation completion wave):** step 7 (``ACTION_FLOW_DECISION``)
-    ``GRANT`` is now reachable — both axes observed from durable evidence, zero schema change
-    (:mod:`tos_runtime.riskstate.flow_observation`'s ``count_duplicate_dispositions``/
-    ``count_recovery_markers``), disclosed under-count as ``flow.replays_definition``.
+    the position observation is single-source (no broker witness corroborates it, so
+    ``all_fields_attributed`` stays an operator attestation), it governs contract-count
+    dimensions only (no valuation/notional/margin dimension), and the Adverse Scenario Set
+    instance's values landed 2026-09-16 (``config/tos_runtime/paper/``, operator-fill scopes).
+    **Resolved (2026-09-16, action-flow observation completion wave):** step 7
+    (``ACTION_FLOW_DECISION``) ``GRANT`` is now reachable — both axes observed from durable
+    evidence, zero schema change (:mod:`tos_runtime.riskstate.flow_observation`'s
+    ``count_duplicate_dispositions``/``count_recovery_markers``); the replay axis is a
+    recovery-EPISODE count with a disclosed under-count limit (``flow.replays_definition``),
+    and ``committed_flow_vectors`` stays empty (unchanged gap, that module's own docstring).
 (c) **No tick source.** Nothing in ``tos_runtime`` produces a ``DECISION_TICK`` from a live market
     feed or a clock — :class:`~tos_runtime.engine.driver.EngineDriver`'s three public entry points
     are all pull-based; every real caller is a test fixture. Needs a ``tos.marketfeed`` runtime

@@ -341,6 +341,88 @@ def test_observe_ignores_recovery_marker_for_a_different_event(
     assert obs.replays == 0
 
 
+def _seed_real_handling_started(
+    inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore, *, attempt_id: str
+) -> tuple[str, int]:
+    """Enqueues one real ``EgressResultPayload`` event and durably marks it "handling
+    started" — the SAME write-ahead idiom :meth:`test_observe_counts_recovery_marker_for_
+    resolved_root_event` above already exercises, split out so the two new
+    ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND``-kind tests below (review HIGH, PR #707: the
+    prior suite never seeded this SECOND marker kind at all — removing it from
+    ``_RECOVERY_MARKER_KINDS`` stayed green) don't repeat the setup. Returns the row's own
+    ``(content-addressed event_id, inbox seq)``."""
+    payload = EgressResultPayload(
+        instrument_key=InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT),
+        attempt_id=attempt_id,
+        kind=EgressResultKind.ACK,
+    )
+    event = EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
+    receipt = inbox.enqueue(event)
+    marker = evidence_store.append(
+        {"event_id": receipt.event_id},
+        kind="EVENT_HANDLING_STARTED",
+        record_class="EVENT_HANDLING_STARTED",
+    )
+    assert marker.seq is not None
+    assert marker.key_generation is not None
+    inbox.mark_handling_started(
+        receipt.seq, evidence_seq=marker.seq, generation=marker.key_generation
+    )
+    return receipt.event_id, receipt.seq
+
+
+def test_observe_counts_handling_interrupted_possibly_live_send_marker(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """Review HIGH (PR #707): pins the SECOND recovery marker kind specifically —
+    ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND`` (the halt path,
+    ``tos_runtime/engine/driver.py:517-528``, ``record_halt``'s own payload shape, which also
+    carries ``handling_started_evidence_seq`` alongside ``event_id`` — cited and reproduced by
+    :func:`~tests.riskstate.conftest.seed_recovery_marker`'s own ``handling_started_evidence_
+    seq`` argument). A mutation dropping this kind from ``_RECOVERY_MARKER_KINDS`` must fail
+    this exact assertion (the prior suite only ever seeded the OTHER kind,
+    ``DECISION_TICK_DROPPED_ON_RECOVERY``, so that mutation previously stayed green)."""
+    event_id, seq = _seed_real_handling_started(inbox, evidence_store, attempt_id="a1")
+    seed_recovery_marker(
+        evidence_store,
+        kind="HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND",
+        event_id=event_id,
+        handling_started_evidence_seq=seq,
+    )
+    reader = InboxFlowReader(inbox, evidence_store, rcl_log)
+    obs = reader.observe(root_event_id=_ROOT, attempt_id="a1", root_event_seq=seq)
+    assert obs.replays == 1
+
+
+def test_observe_counts_both_recovery_marker_kinds_together(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """Review HIGH (PR #707): one marker of EACH kind for the SAME root event durably sums
+    to ``replays == 2`` — pins that :func:`count_recovery_markers` is kind-agnostic once fed
+    both kinds' payloads (:meth:`InboxFlowReader._count_amplification_axes` reads both kinds
+    into one combined list before counting), not merely tolerant of either kind alone.
+    """
+    event_id, seq = _seed_real_handling_started(inbox, evidence_store, attempt_id="a1")
+    seed_recovery_marker(
+        evidence_store,
+        kind="DECISION_TICK_DROPPED_ON_RECOVERY",
+        event_id=event_id,
+    )
+    seed_recovery_marker(
+        evidence_store,
+        kind="HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND",
+        event_id=event_id,
+        handling_started_evidence_seq=seq,
+    )
+    reader = InboxFlowReader(inbox, evidence_store, rcl_log)
+    obs = reader.observe(root_event_id=_ROOT, attempt_id="a1", root_event_seq=seq)
+    assert obs.replays == 2
+
+
 # ===========================================================================
 # committed_flow_vectors
 # ===========================================================================

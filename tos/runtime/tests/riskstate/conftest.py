@@ -150,7 +150,11 @@ def seed_egress_result(
 
 
 def seed_recovery_marker(
-    store: SqliteEvidenceStore, *, kind: str, event_id: str
+    store: SqliteEvidenceStore,
+    *,
+    kind: str,
+    event_id: str,
+    handling_started_evidence_seq: int | None = None,
 ) -> None:
     """Append one restart-recovery marker row with the SAME field shape
     ``EngineDriver._handle_interrupted_event`` emits
@@ -165,5 +169,13 @@ def seed_recovery_marker(
         event_id: The interrupted row's own content-addressed ``event_id``
             (:func:`tos.engine.records.event_identity`) — the SAME id
             :class:`~tos_runtime.engine.inbox.InboxReceipt.event_id` carries for that row.
+        handling_started_evidence_seq: Only ``record_halt``'s own payload for
+            ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND`` carries this field
+            (``driver.py:519-527``) — ``DECISION_TICK_DROPPED_ON_RECOVERY``'s plain
+            ``evidence_store.append`` (``driver.py:530-534``) does not. ``None`` (the default,
+            omitted from the payload) for the latter.
     """
-    store.append({"event_id": event_id}, kind=kind, record_class=kind)
+    payload: dict[str, object] = {"event_id": event_id}
+    if handling_started_evidence_seq is not None:
+        payload["handling_started_evidence_seq"] = handling_started_evidence_seq
+    store.append(payload, kind=kind, record_class=kind)
