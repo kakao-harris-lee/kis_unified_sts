@@ -94,6 +94,7 @@ from tos.engine.records import (
     StageRequest,
 )
 from tos.engine.vocabulary import CommitmentStep, EgressResultKind, EventKind
+from tos.ioc import AxisBinding, ConformanceAxis
 from tos.ordering import OrderingEvent
 from tos.spg import GovernedDimensionLimit, HardSafetyEnvelope
 from tos.venue import ActionClass
@@ -126,11 +127,11 @@ from ..riskstate._documents import (
 )
 from . import _fixtures as fx
 from . import _symmetry_fixtures as sfx
+from .conftest import _RISK_STATE_ENVELOPE_MAX, write_approval_file
 from .conftest import config_dir as _config_dir_fixture
 from .conftest import config_dir_with_risk_state as _config_dir_with_risk_state_fixture
 from .conftest import custody_root as _custody_root_fixture
 from .conftest import data_dir as _data_dir_fixture
-from .conftest import write_approval_file
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
@@ -1312,7 +1313,30 @@ class TestComposeE2E:
         effective limit (``_RISK_STATE_ENVELOPE_MAX``, ``tests/compose/conftest.py``) flips
         step 6 from ``GRANT`` to ``DENY`` on the very next attempt, via the REAL
         ``tos.are.adverse_increment`` headroom check over the position observation's own
-        durable-evidence fold — no hand-built cell anywhere in this test either."""
+        durable-evidence fold — no hand-built cell anywhere in this test either.
+
+        The prior fill is DERIVED from this attempt's own real derived quantity
+        (``construction.derivation.quantity``, read off the FIRST ``run_once`` call — the
+        same discovery call ``_drive_two_calls`` always makes first, before any approval file
+        exists), never a literal restating what that quantity happens to be today. This wave
+        has already been bitten twice by exactly that coupling (a hardcoded expectation
+        silently invalidated by an unrelated fixture-bound change elsewhere — lane C's own
+        instance, and this test's prior ``quantity="99990"`` against a ``max_quantity``
+        lane A later raised for the sizing cross-check, 2026-09-16). Computing the prior fill
+        from the real derived quantity means a future bound change moves this test with it.
+
+        ⚠ **What this test does and does not guarantee** (code-review MEDIUM, 2026-09-16): the
+        prior fill is computed as ``envelope_max - derived_quantity + 1``, which makes
+        ``prior_fill + derived_quantity == envelope_max + 1`` true BY CONSTRUCTION — this test
+        proves step 6 correctly flips ``GRANT`` -> ``DENY`` off whatever real derived quantity
+        the runtime produces (the plumbing), but it does NOT independently prove that derived
+        quantity is itself the RIGHT number (a derivation that deterministically returned 0, or
+        any other fixed value, would still make this test pass — the ``derived_quantity > 0``
+        assertion below only catches an absent or degenerate value, not a wrong one). Quantity
+        CORRECTNESS — that the derived value matches what the governed sizing bound actually
+        authorizes — is lane C's job, pinned by its own invariant tests against the derivation's
+        output; that coverage exists, it is just not duplicated here.
+        """
         fx.write_band_strategy_file(config_dir_with_risk_state)
         runtime = compose_paper_runtime(
             config_dir_with_risk_state,
@@ -1324,24 +1348,63 @@ class TestComposeE2E:
             action_flow_inputs_provider=None,
             wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
         )
-        # A prior fill comfortably over the fixture's own 100_000 effective limit — the SAME
-        # durable evidence-row SHAPE the real synthetic transport would produce (module
-        # docstring's own unit-layer helpers, reused here against the real evidence store).
+
+        # First call (the SAME discovery call _drive_two_calls makes): no approval file exists
+        # yet, so this denies at step 4 IAP, but step 2 construction — and its real derivation
+        # — already ran, giving us the one real fact this test's arithmetic depends on.
+        event = fx.crossing_event()
+        results = runtime.run_once((event,))
+        proposal_digest = results[0].pipeline.proposal.canonical_digest
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
+        derived_quantity = construction.derivation.quantity
+        assert (
+            derived_quantity is not None
+        ), "no derived quantity to compute a prior fill from"
+        assert derived_quantity > 0, (
+            f"derived_quantity {derived_quantity} is not a sane, non-degenerate positive "
+            "value — a zero or negative derivation would make the arithmetic below trivially "
+            "satisfiable without the plumbing it claims to exercise actually running"
+        )
+        write_approval_file(
+            custody_root,
+            proposal_digest=proposal_digest,
+            environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
+        )
+
+        # A durable prior fill that sits just UNDER the effective limit given THIS attempt's
+        # own derived quantity — adding the real derived quantity must cross the limit,
+        # regardless of what that derived quantity happens to be. The SAME durable
+        # evidence-row SHAPE the real synthetic transport would produce (module docstring's
+        # own unit-layer helpers, reused here against the real evidence store).
+        envelope_max = Decimal(_RISK_STATE_ENVELOPE_MAX)
+        prior_fill = envelope_max - derived_quantity + 1
+        assert prior_fill > 0, (
+            f"derived_quantity {derived_quantity} leaves no room for a positive prior fill "
+            f"under the {envelope_max} effective limit — the fixture's own headroom assumption "
+            "no longer holds"
+        )
         _seed_send_sealed(
             runtime.evidence_store,
             attempt_id="prior-fill-attempt",
             side="BUY",
-            quantity="99990",
+            quantity=str(prior_fill),
         )
         _seed_egress_result(
             runtime.evidence_store,
             kind="EGRESS_RESULT_CONSUMED",
             attempt_id="prior-fill-attempt",
-            filled_quantity="99990",
+            filled_quantity=str(prior_fill),
         )
 
-        event = fx.crossing_event()
-        verdict_by_step = _drive_two_calls(runtime, custody_root, event)
+        # Second call: the prior fill plus THIS attempt's own real derived quantity together
+        # exceed the effective limit by construction (prior_fill + derived_quantity ==
+        # envelope_max + 1), so step 6 must flip to DENY.
+        results2 = runtime.run_once((event,))
+        flow = results2[0].flow
+        assert flow is not None
+        verdict_by_step = {v.step.value: v for v in flow.verdicts}
         are_verdict = verdict_by_step["AGGREGATE_RISK_DECISION"]
         assert are_verdict.outcome.value == "DENY", are_verdict.reason
         assert are_verdict.native_verdict_value == "DENY"
@@ -1541,7 +1604,19 @@ class TestComposeE2E:
         reaches the SAME step 7 ``GRANT``/``ADMIT`` (plan §2 decision 4, TOS action-flow
         observation completion wave, 2026-09-16 — the mirror path exercises the SAME
         :class:`~tos_runtime.riskstate.service.RiskStateService` observation code, so it must
-        reach the same outcome as the NEW_LONG case above)."""
+        reach the same outcome as the NEW_LONG case above).
+
+        Also pins DIRECTION/SIDE self-consistency on the INTEGRATED path (code-review MEDIUM,
+        2026-09-16): the shared OCP document's own ``DIRECTION`` axis says ``LONG`` (lane A's
+        ``ocp_yaml()`` default), yet this composition's ``action_class`` is ``NEW_SHORT`` — the
+        exact mismatch ``resolve_construction_direction`` exists to resolve. Before that fix,
+        this composition could not derive a SIDE at all; before the envelope self-consistency
+        fix, it could derive SIDE=SELL while the envelope's own DIRECTION binding stayed at the
+        policy's LONG. Only one hermetic unit test
+        (``tests/compose/test_envelope_wiring.py::test_envelope_replaces_the_direction_binding
+        _with_the_resolved_direction``) pinned that until now — this asserts the SAME fact on
+        the real composed attempt, so deleting the replacement fails here too, not only beside
+        the code that implements it."""
         config_dir, data_dir, custody_root = _fresh_risk_state_dirs(tmp_path / "short")
         sfx.write_mirrored_strategy_file(config_dir)
         runtime = compose_paper_runtime(
@@ -1565,3 +1640,17 @@ class TestComposeE2E:
         afg_verdict = verdict_by_step["ACTION_FLOW_DECISION"]
         assert afg_verdict.outcome.value == "ADMIT", afg_verdict.reason
         assert afg_verdict.native_verdict_value == "GRANT"
+
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.envelope is not None
+        direction_bindings = [
+            b
+            for b in construction.envelope.authorized_axis_bindings
+            if b.axis is ConformanceAxis.DIRECTION
+        ]
+        assert direction_bindings == [
+            AxisBinding(axis=ConformanceAxis.DIRECTION, value="SHORT")
+        ], (
+            "the composed envelope's own DIRECTION binding must match the NEW_SHORT action "
+            "class, never the shared policy document's LONG axis left unreplaced"
+        )
