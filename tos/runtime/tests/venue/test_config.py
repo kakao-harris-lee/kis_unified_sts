@@ -722,7 +722,7 @@ def test_load_order_construction_policy_construction_happy_path(tmp_path: Path) 
     path = write_fixture_ocp(tmp_path)
     loaded = load_order_construction_policy(path, scheme=SCHEME)
     rules = loaded.construction_rules
-    assert rules.sizing_bound.max_quantity == Decimal(10)
+    assert rules.sizing_bound.max_quantity == Decimal(100)
     assert rules.sizing_bound.min_quantity == Decimal(2)
     assert rules.sizing_bound.lot_size == Decimal(2)
     assert rules.sizing_bound.lot_rounding is LotRoundingPolicy.EXACT_MULTIPLE_REQUIRED
