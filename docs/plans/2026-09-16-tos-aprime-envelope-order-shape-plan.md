@@ -140,6 +140,28 @@ fold #2 자신의 지역 `fold_venue_admissibility(shape=...)` 에서 계산되�
 거부되는지. 주장만 있고 실증이 없으면 §4.1 의 죽은 코드와 같은 상태다.
 
 
+### 4.3 레인 D — `cli.py` 차단 목록 (팀리드 선실측)
+
+현행 문구는 `tos/runtime/src/tos_runtime/compose/cli.py:62-100`. (a′) 항의 **전제 자체가
+이번 웨이브로 반증됐다** — 다시 쓸 때 그 점을 적을 것:
+
+| 현행 문구 | 실측 |
+|---|---|
+| 「`envelope` (needs **IAP authoring**)」 | **틀렸다.** IAP 저작이 아니라 **OCP 가 공급자였다** — RFC-002 §9.1:553 이 OCP 거버넌스를 구성 규칙의 공급자로 이미 지명하고 있었고, 없던 것은 공급 **경로**였다. 레인 B 의 `build_construction_envelope` 이 그 경로다 |
+| 「`order_shape` (needs a strategy-carried shape)」 | **부분 반증.** 7 필드 중 `quantity`/`silently_rounded` 는 파생·관측으로, `side`/`position_effect`/`order_type`/`tif` 는 정책으로 해소. 전략이 실어야 하는 것은 남지 않았다 |
+| 「`intent_id`/`intent_version`/`envelope_id`/`command_id`/`generation` 리터럴」 | **해소.** 레인 B 가 전부 실사실에서 파생(`_envelope_wiring.py`) |
+
+**★ 목록이 두 벌이고 손으로 동기화한다.** `cli.py:62` 자신이 「§7 of the plan document is
+the other copy of this same list — keep both in sync」라고 적는다. 이것도
+[[registry-with-unpinned-satellite]] 부류다. 레인 D 는 **양쪽을 다 고치고**, 가능하면
+드리프트를 잡는 핀을 붙인다(최소한: 한쪽에만 고친 경우를 잡는 테스트).
+
+**정직하게 남길 것** — 해소했다고 쓰기 전에 실측으로 확인할 것:
+- `effect_dimensions` 채운 뒤에도 step 5 가 ADMIT 인가(제안표 §5: 필요조건이지 충분조건 아님)
+- 배포 인스턴스는 여전히 부팅하지 않는다(`admitted_quantity_bases`·`DIRECTION`·scope·digest 가 operator-fill)
+- (b′) 잔여는 그대로다
+
+
 ## 5. 종료 조건 · 뮤테이션 (초안)
 
 - 실증: (1) `ConstructionConfig.envelope` 주입 없이 부팅 — 봉투가 **OCP 에서** 구성됨 (2) e2e 에서 실 step-2 의 sizing 이 OCP 값과 일치(리터럴 아님) (3) **shape 수량 == 명령 수량**, 불일치를 심으면 거부 (4) `side`/`position_effect` 가 OCP `action_class_map` 에서 나옴 — 미러(NEW_SHORT) 동일 (5) `silently_rounded` 가 관측에서 나오고 관측 불가 시 `None` (6) 정체성 5종에 날조 리터럴 0(AST 핀) (7) OCP 세대 불일치 → 부팅 거부.
