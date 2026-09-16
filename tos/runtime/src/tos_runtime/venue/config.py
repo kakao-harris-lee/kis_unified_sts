@@ -79,9 +79,13 @@ each carry exactly one string — zero or two-or-more is refused. The other
 BOTH loaders (venue policy: cross-checked below; OCP: validated the same way
 but with no cross-check — the plan names no OCP-side use of it, so an OCP
 ``action_classes`` entry is checked for a real ``ActionClass`` spelling and
-then discarded). ``order_types`` (OCP only) is an explicit list of strings,
-not further typed (no kernel order-type enum is named in scope for this
-loader).
+then discarded). ``order_types`` (OCP only) joined the OCP single-live-scope
+SINGLETON set in the (a′) wave (``docs/plans/
+2026-09-16-tos-aprime-envelope-order-shape-plan.md`` §4 lane A) — previously
+an explicit list of strings, not further typed and discarded; the OCP
+loader's ``_runtime.construction`` block now DERIVES the ``ORDER_TYPE``
+authorized-axis binding from it, so it must carry exactly one value, same as
+``environments``/``brokers``/``accounts``/``instruments`` already did.
 
 **Top-level scalar presence — ``effective_from``/``review_due``.** Both
 templates declare these two keys (DR-0002 §2.1: "every template key is

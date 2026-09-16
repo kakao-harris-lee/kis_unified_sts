@@ -223,10 +223,28 @@ def ocp_yaml(
     broker: str = "kis",
     account: str = "acct-1",
     instrument: str = "K200F",
+    action_classes: str = "[]",
+    order_types: str = '["LIMIT"]',
+    construction: str | None = None,
 ) -> str:
     """The standard fixture ``order_construction_policy.yaml`` INSTANCE
     document — a full ORDER-CONSTRUCTION-POLICY-template.yaml key set plus
-    ``_model_view``/``_runtime``."""
+    ``_model_view``/``_runtime``.
+
+    ``order_types`` defaults to a single-entry list (``["LIMIT"]``), not the
+    template's own empty default: the (a′) wave's loader now DERIVES the
+    ``ORDER_TYPE`` authorized-axis binding from ``scope.order_types`` (a
+    single-live-scope singleton, like ``environments``/``accounts``), so an
+    empty list would refuse to load — same reason ``environment``/``account``
+    already default to non-empty singletons above.
+
+    ``construction`` is the raw YAML text for the ``_runtime.construction``
+    block (2-space-indented, as it appears directly under ``_runtime:``,
+    fixture data only — not the operator-adopted production values, see this
+    module's own docstring). Defaults to a well-formed block so every
+    existing ``ocp_yaml()`` caller keeps loading without having to know about
+    the (a′) wave; override wholesale (including ``""`` to omit the block
+    entirely) for tests that exercise ``_runtime.construction`` itself."""
     version = (
         SCHEME.version if canonicalization_version is None else canonicalization_version
     )
@@ -235,6 +253,29 @@ def ocp_yaml(
         if model_view_policy_generation is None
         else model_view_policy_generation
     )
+    if construction is None:
+        construction = textwrap.indent(
+            textwrap.dedent("""\
+                construction:
+                  sizing:
+                    max_quantity: 10
+                    min_quantity: 1
+                    lot_size: 1
+                    lot_rounding: "EXACT_MULTIPLE_REQUIRED"
+                    risk_budget: 100
+                    per_unit_risk: 10
+                    max_notional: null
+                    admitted_quantity_bases: ["RISK"]
+                  axes:
+                    - axis: "TIF"
+                      value: "DAY"
+                  action_class_shape:
+                    NEW_LONG: {side: "BUY", position_effect: "OPEN", direction: "LONG"}
+                    NEW_SHORT: {side: "SELL", position_effect: "OPEN", direction: "SHORT"}
+                  effect_dimensions: []
+                """),
+            "  ",
+        )
     head = textwrap.dedent(f"""\
         artifact_type: ORDER_CONSTRUCTION_POLICY
         schema_version: "1.0-DRAFT"
@@ -254,8 +295,8 @@ def ocp_yaml(
           market_segments: []
           instruments: ["{instrument}"]
           contracts: []
-          action_classes: []
-          order_types: []
+          action_classes: {action_classes}
+          order_types: {order_types}
         """)
     tail_blocks = textwrap.dedent(f"""\
         _model_view:
@@ -265,7 +306,7 @@ def ocp_yaml(
           canonicalization_version: "{version}"
           wire_codec: {wire_codec}
         """)
-    return head + _OCP_TEMPLATE_TAIL + tail_blocks
+    return head + _OCP_TEMPLATE_TAIL + tail_blocks + construction
 
 
 def write_fixture_venue_policy(tmp_path: Path, text: str | None = None) -> Path:

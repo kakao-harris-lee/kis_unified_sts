@@ -7,8 +7,20 @@
 # policy_id / policy_generation / policy_version ONLY; signer / approval /
 # evidence-package binding is a kernel-round candidate, so they stay unbound).
 #
-# APPROVAL PROVENANCE: docs/plans/2026-09-15-tos-venue-constraint-service-plan.md
-# §6 ② proposal table, adopted by the operator on 2026-09-16.
+# APPROVAL PROVENANCE (scope/admission coordinates, generation 1):
+# docs/plans/2026-09-15-tos-venue-constraint-service-plan.md §6 ② proposal
+# table, adopted by the operator on 2026-09-16.
+#
+# APPROVAL PROVENANCE (`_runtime.construction`, generation 2 — (a′) wave):
+# docs/plans/2026-09-16-tos-ocp-sizing-values-proposal.md §2 proposal table,
+# adopted by the operator on 2026-09-16 (disposition block at the top of
+# that document: ① risk_budget/per_unit_risk = structural encoding (1/1),
+# ② admitted_quantity_bases stays operator-fill "TBD" until the deployed
+# strategy file's own quantity_basis is settled, ③ proposal table adopted
+# as-is). This is a NEW generation, not an edit to generation 1's content —
+# a governed policy's content is generation-immutable (see this document's
+# own canonicalization_and_duplicate_field_rules entry and the loader's
+# canonical_digest tamper/stale check).
 #
 # TRANSPORT BINDING (`_runtime.wire_codec`): the paper compose default is the
 # SYNTHETIC transport, for which the loader requires `wire_codec: null`. A
@@ -16,18 +28,20 @@
 #   wire_codec: {kind: "kis-order-cash-v1", wire_fields: [CANO, ACNT_PRDT_CD,
 #   PDNO, ORD_DVSN, ORD_QTY, ORD_UNPR, EXCG_ID_DVSN_CD, SLL_TYPE, CNDT_PRIC]}
 # (tos_runtime/transport/kis_mock/codec.py KIS_ORDER_CASH_WIRE_FIELDS) — that
-# is a NEW policy generation, not an in-place edit.
+# is a further NEW policy generation, not an in-place edit.
 #
 # OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"): scope.accounts,
-# scope.instruments (same values as venue_constraint_policy.yaml), then
-# `tos-runtime print-policy-digests --config-dir <dir>` → safety_activation.yaml
-# `members:` (kind ORDER_CONSTRUCTION_POLICY).
+# scope.instruments (same values as venue_constraint_policy.yaml),
+# _runtime.construction.sizing.admitted_quantity_bases (deliberately left
+# ["TBD"] below — sizing proposal §4 ②, this document does not boot until
+# it is filled), then `tos-runtime print-policy-digests --config-dir <dir>`
+# → safety_activation.yaml `members:` (kind ORDER_CONSTRUCTION_POLICY).
 # =============================================================================
 
 artifact_type: ORDER_CONSTRUCTION_POLICY
 schema_version: "1.0-DRAFT"
 policy_id: "ocp-paper-krx-index-futures"
-policy_generation: 1
+policy_generation: 2
 construction_generation: 1
 canonical_digest: TBD
 status: ISSUED
@@ -74,7 +88,9 @@ invalidation_and_failure_responses:
 common_mode_requirements: []
 residual_risks:
   - "signer_identity / approval_identity / evidence_package_ref are not bound in v1 (kernel construct_candidate_command takes the three coordinates only — kernel round #4 candidate)"
-approved_by: ["operator (System Owner) — 2026-09-16, plan §6 ② 채택"]
+approved_by:
+  - "operator (System Owner) — 2026-09-16, venue-constraint-service plan §6 ② 채택 (generation 1: scope/admission coordinates)"
+  - "operator (System Owner) — 2026-09-16, OCP sizing values proposal §2 채택 (generation 2: _runtime.construction)"
 authority:
   grants_approval: false
   creates_capacity: false
@@ -91,8 +107,58 @@ evidence:
   independent_review_id: "PR #694 / #699 independent review (sonnet) — see plan §7"
   evidence_location: "evidence store row ORDER_CONSTRUCTION_POLICY_BOUND"
 _model_view:
-  policy_generation: 1
+  policy_generation: 2
   policy_version: "1.0.0"
 _runtime:
   canonicalization_version: "ev-l1-provisional-0"
   wire_codec: null
+  # (a′) wave — machine-readable form of the direction_side_and_position_effect_rules /
+  # price_tick_lot_quantity_and_rounding_rules / unit_multiplier_currency_and_numeric_rules
+  # prose above. Values: OCP sizing values proposal §2 (2026-09-16, operator-adopted).
+  construction:
+    sizing:
+      # max_quantity/min_quantity/lot_size: already-approved effective limit — paper trades
+      # exactly one contract (aggregate_risk_policy.yaml INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL,
+      # effective limit 1) and venue_constraint_policy.yaml already carries lot_size/min_quantity 1.
+      max_quantity: 1
+      min_quantity: 1
+      lot_size: 1
+      # The only kernel member matching this document's own "no silent rounding" prose
+      # (price_tick_lot_quantity_and_rounding_rules above) — FLOOR_TO_LOT would contradict it.
+      lot_rounding: "EXACT_MULTIPLE_REQUIRED"
+      # Structural encoding of "exactly one contract" (ratio risk_budget/per_unit_risk == 1
+      # under lot_rounding=EXACT_MULTIPLE_REQUIRED, lot_size=1) — NOT an economic calibration.
+      # No approved stop-distance/contract-multiplier source exists yet (proposal §4 ①); when
+      # one lands, it is a new generation, not an edit to this one.
+      risk_budget: 1
+      per_unit_risk: 1
+      # Optional ceiling (egressgw/construction.py:525 guards it `is not None`) — no approved
+      # notional source exists; the binding constraint is max_quantity: 1, not a fabricated
+      # notional cap (proposal §2 max_notional row).
+      max_notional: null
+      # OPERATOR-FILL (deliberately unfilled, proposal §4 ②): this document does not boot
+      # until the deployed strategy file's own quantity_basis is settled. An empty/"TBD"
+      # admitted set authorizes nothing — the same operator-fill gate scope.accounts/
+      # scope.instruments are already in, not a new kind of incompleteness.
+      admitted_quantity_bases: ["TBD"]
+    axes:
+      # ENVIRONMENT/ORDER_TYPE are derived from scope.environments/scope.order_types above
+      # (never restated here). TIF has no scope.* home, so it is authored directly.
+      - axis: "TIF"
+        value: "DAY"
+    action_class_shape:
+      # Machine-readable form of direction_side_and_position_effect_rules above
+      # ("long/short symmetric: NEW_LONG↔BUY/OPEN, NEW_SHORT↔SELL/OPEN, CLOSE↔opposite side/CLOSE").
+      NEW_LONG: {side: "BUY", position_effect: "OPEN", direction: "LONG"}
+      NEW_SHORT: {side: "SELL", position_effect: "OPEN", direction: "SHORT"}
+      # CAVEAT (flagged, not silently resolved): the prose above states CLOSE as
+      # direction-dependent ("opposite side") — closing a LONG is SELL, closing a SHORT is BUY.
+      # This dict binds exactly one (side, position_effect, direction) triple per ActionClass,
+      # so it cannot express both. The entry below encodes the long-close case only (matching
+      # ActionClassShape's own docstring example, "a CLOSE of a long is SELL on a LONG
+      # direction") — a short-close (BUY/CLOSE/SHORT) has no representation here. This is a
+      # structural mismatch between the committed ConstructionRules contract (one shape per
+      # ActionClass) and the document's own symmetric-CLOSE prose; construction_rules.py is
+      # out of lane A's scope to change, so this is recorded here rather than resolved.
+      CLOSE: {side: "SELL", position_effect: "CLOSE", direction: "LONG"}
+    effect_dimensions: []
