@@ -192,6 +192,117 @@ def test_null_field_value_refuses_the_whole_poll(tmp_path: Path) -> None:
         journal.poll(instrument="005930", after_as_of_ms=None)
 
 
+def test_line_is_a_json_array_not_an_object_refuses_the_whole_poll(
+    tmp_path: Path,
+) -> None:
+    """Covers the ``not isinstance(payload, dict)`` refusal (``journal.py``'s
+    ``_parse_line``) — a syntactically valid JSON value that is nonetheless not an object.
+    A surviving, well-formed record on line 1 proves the refusal is wholesale: it is never
+    returned, only ever raised past."""
+    path = tmp_path / "journal.jsonl"
+    _write_lines(path, [_observation(raw_event_id="e-1"), [1, 2, 3]])
+    journal = JsonLinesObservationJournal(path=path)
+
+    with pytest.raises(JournalError, match=r"journal\.jsonl:2.*not a JSON object"):
+        journal.poll(instrument="005930", after_as_of_ms=None)
+
+
+@pytest.mark.parametrize("field", ["raw_event_id", "instrument", "source_id"])
+def test_blank_required_string_field_refuses_the_whole_poll(
+    tmp_path: Path, field: str
+) -> None:
+    """Covers ``_require_nonblank_str``'s refusal for each of its three call sites."""
+    path = tmp_path / "journal.jsonl"
+    bad = _observation(raw_event_id="e-2")
+    bad[field] = "  "
+    _write_lines(path, [_observation(raw_event_id="e-1"), bad])
+    journal = JsonLinesObservationJournal(path=path)
+
+    with pytest.raises(
+        JournalError, match=rf"journal\.jsonl:2.*{field!r} must be a non-blank string"
+    ):
+        journal.poll(instrument="005930", after_as_of_ms=None)
+
+
+def test_non_string_required_field_refuses_the_whole_poll(tmp_path: Path) -> None:
+    """The same ``_require_nonblank_str`` refusal, triggered by the wrong TYPE rather than a
+    blank value — a collector that emits a numeric id is refused exactly like a blank one.
+    """
+    path = tmp_path / "journal.jsonl"
+    bad = _observation(raw_event_id="e-2")
+    bad["instrument"] = 5930  # type: ignore[assignment]
+    _write_lines(path, [_observation(raw_event_id="e-1"), bad])
+    journal = JsonLinesObservationJournal(path=path)
+
+    with pytest.raises(
+        JournalError, match=r"journal\.jsonl:2.*'instrument' must be a non-blank string"
+    ):
+        journal.poll(instrument="005930", after_as_of_ms=None)
+
+
+def test_non_int_as_of_ms_refuses_the_whole_poll(tmp_path: Path) -> None:
+    """Covers ``_require_int``'s refusal via the required ``as_of_ms`` call site."""
+    path = tmp_path / "journal.jsonl"
+    bad = _observation(raw_event_id="e-2")
+    bad["as_of_ms"] = "1700000000000"  # type: ignore[assignment]
+    _write_lines(path, [_observation(raw_event_id="e-1"), bad])
+    journal = JsonLinesObservationJournal(path=path)
+
+    with pytest.raises(
+        JournalError, match=r"journal\.jsonl:2.*'as_of_ms' must be an int"
+    ):
+        journal.poll(instrument="005930", after_as_of_ms=None)
+
+
+def test_non_int_received_ms_refuses_the_whole_poll(tmp_path: Path) -> None:
+    """The same ``_require_int`` refusal via the OPTIONAL ``received_ms`` call site — proves
+    both required and optional int fields route through the identical guard."""
+    path = tmp_path / "journal.jsonl"
+    bad = _observation(raw_event_id="e-2")
+    bad["received_ms"] = 12.5  # type: ignore[assignment]
+    _write_lines(path, [_observation(raw_event_id="e-1"), bad])
+    journal = JsonLinesObservationJournal(path=path)
+
+    with pytest.raises(
+        JournalError, match=r"journal\.jsonl:2.*'received_ms' must be an int"
+    ):
+        journal.poll(instrument="005930", after_as_of_ms=None)
+
+
+def test_fields_value_is_not_a_json_object_refuses_the_whole_poll(
+    tmp_path: Path,
+) -> None:
+    """Covers ``_require_fields``'s "not a JSON object" refusal — ``fields`` present but a
+    JSON array rather than an object."""
+    path = tmp_path / "journal.jsonl"
+    bad = _observation(raw_event_id="e-2")
+    bad["fields"] = [1, 2, 3]  # type: ignore[assignment]
+    _write_lines(path, [_observation(raw_event_id="e-1"), bad])
+    journal = JsonLinesObservationJournal(path=path)
+
+    with pytest.raises(
+        JournalError, match=r"journal\.jsonl:2.*'fields' must be a JSON object"
+    ):
+        journal.poll(instrument="005930", after_as_of_ms=None)
+
+
+def test_blank_field_key_refuses_the_whole_poll(tmp_path: Path) -> None:
+    """Covers ``_require_fields``'s per-key refusal — JSON permits an empty-string object key
+    (``{"": 5}``), which is exactly the blank case this guard exists to catch (a non-string
+    key is not reachable through ``json.loads`` — JSON object keys are always strings — so the
+    blank-string half of the check is the only half a real journal line can ever exercise).
+    """
+    path = tmp_path / "journal.jsonl"
+    bad = _observation(raw_event_id="e-2", fields={"": 5})
+    _write_lines(path, [_observation(raw_event_id="e-1"), bad])
+    journal = JsonLinesObservationJournal(path=path)
+
+    with pytest.raises(
+        JournalError, match=r"journal\.jsonl:2.*'fields' key must be a non-blank string"
+    ):
+        journal.poll(instrument="005930", after_as_of_ms=None)
+
+
 def test_malformed_line_for_a_different_instrument_still_refuses(
     tmp_path: Path,
 ) -> None:
