@@ -850,9 +850,82 @@ class TestConstructionRulesShapeSourcingUnit:
     ``_build_construction_stages`` does not pass a loaded ``ConstructionRules`` into
     ``VenueServiceStage`` yet (that wiring reaches into ``compose/root.py``, outside this
     wave's lane-C scope; see the lane-C report) — so the capability is exercised directly.
+
+    ``action_class_shape`` is keyed by ``(ActionClass, direction)`` (contract amended
+    2026-09-16, commit ``7e79f00c``) — a single ``ActionClass.CLOSE`` member cannot otherwise
+    express both a long-close and a short-close arm. ``direction`` is a per-composition fact
+    read off ``authorized_axes``' own ``DIRECTION`` binding (today's discipline, pending a
+    runtime proposal path — see ``_shape_side_and_position_effect``'s own docstring), so each
+    test below builds ONE ``ConstructionRules`` per direction rather than one shared instance
+    covering both.
     """
 
     def test_side_and_position_effect_come_from_the_mapping(self) -> None:
+        from tos.ioc import AxisBinding, ConformanceAxis
+        from tos.venue import ActionClass
+        from tos_runtime.compose._venue_wiring import _shape_side_and_position_effect
+        from tos_runtime.venue.construction_rules import (
+            ActionClassShape,
+            ConstructionRules,
+        )
+
+        long_rules = ConstructionRules(
+            sizing_bound=fx.sizing_bound(),
+            admitted_quantity_bases=frozenset({"RISK"}),
+            authorized_axes=(
+                AxisBinding(axis=ConformanceAxis.DIRECTION, value="LONG"),
+            ),
+            action_class_shape={
+                (ActionClass.NEW_LONG, "LONG"): ActionClassShape(
+                    side="BUY", position_effect="OPEN"
+                ),
+                (ActionClass.CLOSE, "LONG"): ActionClassShape(
+                    side="SELL", position_effect="CLOSE"
+                ),
+            },
+            effect_dimensions=(),
+        )
+        assert _shape_side_and_position_effect(long_rules, ActionClass.NEW_LONG) == (
+            "BUY",
+            "OPEN",
+        )
+        assert _shape_side_and_position_effect(long_rules, ActionClass.CLOSE) == (
+            "SELL",
+            "CLOSE",
+        )
+
+        # NEW_SHORT / short-close mirror — a SEPARATE ConstructionRules whose
+        # authorized_axes DIRECTION is SHORT, with its OWN CLOSE arm distinct from the
+        # long-close arm above (the exact ambiguity the (ActionClass, direction) key
+        # exists to resolve) — symmetric, not a narrower/omitted case (CLAUDE.md
+        # non-negotiable: "Futures must preserve long/short symmetry").
+        short_rules = ConstructionRules(
+            sizing_bound=fx.sizing_bound(),
+            admitted_quantity_bases=frozenset({"RISK"}),
+            authorized_axes=(
+                AxisBinding(axis=ConformanceAxis.DIRECTION, value="SHORT"),
+            ),
+            action_class_shape={
+                (ActionClass.NEW_SHORT, "SHORT"): ActionClassShape(
+                    side="SELL", position_effect="OPEN"
+                ),
+                (ActionClass.CLOSE, "SHORT"): ActionClassShape(
+                    side="BUY", position_effect="CLOSE"
+                ),
+            },
+            effect_dimensions=(),
+        )
+        assert _shape_side_and_position_effect(short_rules, ActionClass.NEW_SHORT) == (
+            "SELL",
+            "OPEN",
+        )
+        assert _shape_side_and_position_effect(short_rules, ActionClass.CLOSE) == (
+            "BUY",
+            "CLOSE",
+        )
+
+    def test_action_class_absent_from_the_mapping_is_a_refusal(self) -> None:
+        from tos.ioc import AxisBinding, ConformanceAxis
         from tos.venue import ActionClass
         from tos_runtime.compose._venue_wiring import _shape_side_and_position_effect
         from tos_runtime.venue.construction_rules import (
@@ -863,54 +936,53 @@ class TestConstructionRulesShapeSourcingUnit:
         rules = ConstructionRules(
             sizing_bound=fx.sizing_bound(),
             admitted_quantity_bases=frozenset({"RISK"}),
-            authorized_axes=(),
+            authorized_axes=(
+                AxisBinding(axis=ConformanceAxis.DIRECTION, value="LONG"),
+            ),
             action_class_shape={
-                ActionClass.NEW_LONG: ActionClassShape(
-                    side="BUY", position_effect="OPEN", direction="LONG"
+                (ActionClass.NEW_LONG, "LONG"): ActionClassShape(
+                    side="BUY", position_effect="OPEN"
                 ),
-                ActionClass.NEW_SHORT: ActionClassShape(
-                    side="SELL", position_effect="OPEN", direction="SHORT"
+            },
+            effect_dimensions=(),
+        )
+
+        # NEW_SHORT is absent for direction LONG (there is no (NEW_SHORT, "LONG") entry,
+        # and there is no CLOSE entry at all) — both refuse.
+        assert _shape_side_and_position_effect(rules, ActionClass.NEW_SHORT) == (
+            None,
+            None,
+        )
+        assert _shape_side_and_position_effect(rules, ActionClass.CLOSE) == (None, None)
+        assert _shape_side_and_position_effect(rules, None) == (None, None)
+
+    def test_no_direction_binding_is_a_refusal(self) -> None:
+        """No ``DIRECTION`` axis binding at all is the SAME refusal as an absent mapping
+        entry — never a fallback to some default direction (team-lead brief, 2026-09-16:
+        "no direction" gets the same discipline already applied to "no derivation")."""
+        from tos.venue import ActionClass
+        from tos_runtime.compose._venue_wiring import _shape_side_and_position_effect
+        from tos_runtime.venue.construction_rules import (
+            ActionClassShape,
+            ConstructionRules,
+        )
+
+        rules = ConstructionRules(
+            sizing_bound=fx.sizing_bound(),
+            admitted_quantity_bases=frozenset({"RISK"}),
+            authorized_axes=(),  # no DIRECTION binding
+            action_class_shape={
+                (ActionClass.NEW_LONG, "LONG"): ActionClassShape(
+                    side="BUY", position_effect="OPEN"
                 ),
             },
             effect_dimensions=(),
         )
 
         assert _shape_side_and_position_effect(rules, ActionClass.NEW_LONG) == (
-            "BUY",
-            "OPEN",
-        )
-        # NEW_SHORT mirror — symmetric, not a narrower/omitted case (CLAUDE.md
-        # non-negotiable: "Futures must preserve long/short symmetry").
-        assert _shape_side_and_position_effect(rules, ActionClass.NEW_SHORT) == (
-            "SELL",
-            "OPEN",
-        )
-
-    def test_action_class_absent_from_the_mapping_is_a_refusal(self) -> None:
-        from tos.venue import ActionClass
-        from tos_runtime.compose._venue_wiring import _shape_side_and_position_effect
-        from tos_runtime.venue.construction_rules import (
-            ActionClassShape,
-            ConstructionRules,
-        )
-
-        rules = ConstructionRules(
-            sizing_bound=fx.sizing_bound(),
-            admitted_quantity_bases=frozenset({"RISK"}),
-            authorized_axes=(),
-            action_class_shape={
-                ActionClass.NEW_LONG: ActionClassShape(
-                    side="BUY", position_effect="OPEN", direction="LONG"
-                ),
-            },
-            effect_dimensions=(),
-        )
-
-        assert _shape_side_and_position_effect(rules, ActionClass.NEW_SHORT) == (
             None,
             None,
         )
-        assert _shape_side_and_position_effect(rules, None) == (None, None)
 
     def test_order_type_and_tif_come_from_authorized_axes(self) -> None:
         from tos.ioc import AxisBinding, ConformanceAxis

@@ -59,7 +59,7 @@ from pathlib import Path
 from tos.canonical import CanonicalizationScheme
 from tos.egressgw import OrderConstructionStage, VenueConstraintStage
 from tos.engine import StageRequest, StageVerdict
-from tos.ioc import CanonicalBrokerCommand, ConformanceAxis
+from tos.ioc import AxisBinding, CanonicalBrokerCommand, ConformanceAxis
 from tos.spg import BundleMemberKind, BundleMemberRef
 from tos.venue import (
     ActionClass,
@@ -392,19 +392,47 @@ def _derived_shape_quantity(
     return int(value)
 
 
+def _authorized_axis_value(
+    authorized_axes: tuple[AxisBinding, ...], axis: ConformanceAxis
+) -> str | None:
+    """The single bound value for ``axis`` in ``authorized_axes`` — ``None`` if absent. The one
+    place both :func:`_shape_order_type_and_tif` and :func:`_shape_side_and_position_effect`
+    read a governed axis value, so "absent is a refusal, never a default" is not a rule
+    duplicated across call sites."""
+    for binding in authorized_axes:
+        if binding.axis == axis:
+            return binding.value
+    return None
+
+
 def _shape_side_and_position_effect(
     construction_rules: ConstructionRules,
     action_class: ActionClass | None,
 ) -> tuple[str | None, str | None]:
     """``(side, position_effect)`` for ``action_class``, sourced from the OCP's own
-    ``ConstructionRules.action_class_shape`` mapping (``construction_rules.py``; (a′) wave
-    decision 2) — never ``ConstructionConfig``'s caller-declared literal. An ``action_class``
-    absent from the mapping (or ``None`` outright) is a refusal — ``(None, None)`` — not a
-    default (``ConstructionRules.action_class_shape`` docstring: "absent from this mapping is
-    unauthorized for this generation, not defaulted")."""
+    ``ConstructionRules.action_class_shape`` mapping — never ``ConstructionConfig``'s
+    caller-declared literal.
+
+    Keyed by ``(ActionClass, direction)`` (contract amended 2026-09-16, commit ``7e79f00c``):
+    ``ActionClass`` has a single ``CLOSE`` member, so a long-close and a short-close arm would
+    otherwise collapse onto one key. ``direction`` is sourced STRUCTURALLY from the ``DIRECTION``
+    axis binding in ``construction_rules.authorized_axes`` — never a new ``ConstructionConfig``
+    field, never an injected literal (that would reintroduce exactly the caller-declared-literal
+    problem this wave exists to remove).
+
+    No ``DIRECTION`` binding at all, an ``(action_class, direction)`` pair absent from the
+    mapping, or ``action_class is None`` outright are all the SAME refusal — ``(None, None)`` —
+    never a default (``ConstructionRules.action_class_shape`` docstring: "absent from this
+    mapping is unauthorized for this generation, not defaulted"; the "no derivation ⇒ None"
+    discipline this wave already applies to quantity, applied here to direction)."""
     if action_class is None:
         return None, None
-    mapped = construction_rules.action_class_shape.get(action_class)
+    direction = _authorized_axis_value(
+        construction_rules.authorized_axes, ConformanceAxis.DIRECTION
+    )
+    if direction is None:
+        return None, None
+    mapped = construction_rules.action_class_shape.get((action_class, direction))
     if mapped is None:
         return None, None
     return mapped.side, mapped.position_effect
@@ -416,14 +444,12 @@ def _shape_order_type_and_tif(
     """``(order_type, tif)`` sourced from ``ConstructionRules.authorized_axes`` (a′) wave
     decision 3) — never a caller literal. An axis this generation does not authorize is
     ``None`` (fail-closed), never a default."""
-    order_type: str | None = None
-    tif: str | None = None
-    for binding in construction_rules.authorized_axes:
-        if binding.axis == ConformanceAxis.ORDER_TYPE:
-            order_type = binding.value
-        elif binding.axis == ConformanceAxis.TIF:
-            tif = binding.value
-    return order_type, tif
+    return (
+        _authorized_axis_value(
+            construction_rules.authorized_axes, ConformanceAxis.ORDER_TYPE
+        ),
+        _authorized_axis_value(construction_rules.authorized_axes, ConformanceAxis.TIF),
+    )
 
 
 def _observed_silently_rounded(
