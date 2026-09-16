@@ -38,7 +38,10 @@
 # scope.instruments (same values as venue_constraint_policy.yaml),
 # _runtime.construction.sizing.admitted_quantity_bases (deliberately left
 # ["TBD"] below — sizing proposal §4 ②, this document does not boot until
-# it is filled), then `tos-runtime print-policy-digests --config-dir <dir>`
+# it is filled), _runtime.construction.axes' DIRECTION entry (deliberately
+# left "TBD" below — review round 2026-09-16, PR #719: no operator decision
+# has bound this static, proposal-path-less composition to one trading
+# direction yet), then `tos-runtime print-policy-digests --config-dir <dir>`
 # → safety_activation.yaml `members:` (kind ORDER_CONSTRUCTION_POLICY).
 # =============================================================================
 
@@ -146,10 +149,23 @@ _runtime:
       # scope.instruments are already in, not a new kind of incompleteness.
       admitted_quantity_bases: ["TBD"]
     axes:
-      # ENVIRONMENT/ORDER_TYPE are derived from scope.environments/scope.order_types above
-      # (never restated here). TIF has no scope.* home, so it is authored directly.
+      # ENVIRONMENT/ORDER_TYPE/ACCOUNT/INSTRUMENT are derived from scope.environments/
+      # scope.order_types/scope.accounts/scope.instruments above (never restated here).
+      # TIF/DIRECTION have no scope.* home, so they are authored directly.
       - axis: "TIF"
         value: "DAY"
+      # OPERATOR-FILL (deliberately unfilled, review round 2026-09-16, PR #719): DIRECTION is a
+      # per-COMPOSITION fact under the current (proposal-path-less) design — one static value for
+      # this whole deployed generation, not per-attempt (construction_rules.py's own
+      # ActionClassShape docstring). No operator decision has bound this deployment to trading
+      # LONG-only or SHORT-only yet, and scope.action_classes already authorizes BOTH
+      # (NEW_LONG/NEW_SHORT/CLOSE both directions) — picking one silently here would narrow that
+      # without sign-off, exactly the kind of quiet asymmetry CLAUDE.md's non-negotiable forbids.
+      # Left "TBD" so the loader refuses until an operator actually decides (same discipline as
+      # scope.accounts/scope.instruments/admitted_quantity_bases above); this becomes a real
+      # per-attempt lookup once the strategy proposal path lands (construction_rules.py).
+      - axis: "DIRECTION"
+        value: "TBD"
     action_class_shape:
       # Machine-readable form of direction_side_and_position_effect_rules above
       # ("long/short symmetric: NEW_LONG↔BUY/OPEN, NEW_SHORT↔SELL/OPEN, CLOSE↔opposite side/CLOSE").

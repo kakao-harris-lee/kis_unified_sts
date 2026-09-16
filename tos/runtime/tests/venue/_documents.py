@@ -269,6 +269,8 @@ def ocp_yaml(
                   axes:
                     - axis: "TIF"
                       value: "DAY"
+                    - axis: "DIRECTION"
+                      value: "LONG"
                   action_class_shape:
                     NEW_LONG:
                       LONG: {side: "BUY", position_effect: "OPEN"}

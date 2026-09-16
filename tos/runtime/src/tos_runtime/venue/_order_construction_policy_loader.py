@@ -134,9 +134,12 @@ _OCP_SCOPE_SINGLETON_KEYS: tuple[str, ...] = (
 )
 
 #: ``_parse_ocp_scope``'s return-tuple field names, in ``_OCP_SCOPE_SINGLETON_KEYS`` order —
-#: only ``environment``/``order_type`` are actually returned (the other three are validated for
-#: shape but have no (a′) consumer yet, matching every other loader in this package that
-#: validates a coordinate without threading it through).
+#: ``environment``/``order_type``/``account``/``instrument`` are all four returned and threaded
+#: into ``authorized_axes`` (review round 2026-09-16, PR #719 — ACCOUNT/INSTRUMENT were
+#: previously validated for shape but silently never derived into an axis binding, the same
+#: class of gap DIRECTION's own absence surfaced); only ``broker`` has no (a′) consumer yet,
+#: matching every other loader in this package that validates a coordinate without threading it
+#: through.
 _OCP_SCOPE_SINGLETON_FIELD_NAMES: tuple[str, ...] = (
     "environment",
     "broker",
@@ -166,13 +169,21 @@ _SIZING_REQUIRED_INT_FIELDS: tuple[str, ...] = (
     "per_unit_risk",
 )
 
-#: The two axes :func:`_build_authorized_axes` derives from ``scope`` rather than reading from
-#: an authored ``_runtime.construction.axes`` entry — re-declaring either there would restate a
-#: fact ``scope.environments``/``scope.order_types`` already carries and risk the two drifting
-#: apart (plan §2 decision 1's "read the values OCP already declares" instinct, applied to axes
-#: too).
+#: The four axes :func:`_build_authorized_axes` derives from ``scope`` rather than reading from
+#: an authored ``_runtime.construction.axes`` entry — re-declaring any of them there would
+#: restate a fact ``scope.environments``/``scope.order_types``/``scope.accounts``/
+#: ``scope.instruments`` already carries and risk the two drifting apart (plan §2 decision 1's
+#: "read the values OCP already declares" instinct, applied to axes too). ACCOUNT/INSTRUMENT
+#: joined ENVIRONMENT/ORDER_TYPE here in the review round that caught DIRECTION missing
+#: entirely (PR #719) — the same audit ("is every axis the contract names present in ``axes:``
+#: or genuinely derived from ``scope``?") turned up that these two were silently absent too.
 _AUTHORIZED_AXES_DERIVED_FROM_SCOPE: frozenset[ConformanceAxis] = frozenset(
-    {ConformanceAxis.ENVIRONMENT, ConformanceAxis.ORDER_TYPE}
+    {
+        ConformanceAxis.ENVIRONMENT,
+        ConformanceAxis.ORDER_TYPE,
+        ConformanceAxis.ACCOUNT,
+        ConformanceAxis.INSTRUMENT,
+    }
 )
 
 
@@ -193,14 +204,15 @@ class LoadedOrderConstructionPolicy:
     construction_rules: ConstructionRules
 
 
-def _parse_ocp_scope(raw: dict[str, Any], path: Path) -> tuple[str, str]:
-    """Validate the OCP ``scope`` block's shape and return the two singleton coordinates the
-    (a′) wave's ``authorized_axes`` derivation consumes (``environment``, ``order_type``) —
-    every other scope key is validated for shape only and discarded, as before.
-    ``action_classes`` is validated against the kernel ``ActionClass`` enum (team-lead review
-    MEDIUM, 2026-09-15 — the same check the venue-policy loader already runs, previously missing
-    here entirely: an OCP document with an unknown/misspelled ``action_classes`` token loaded
-    silently); that result is still discarded — OCP runs no ``action_classes`` cross-check.
+def _parse_ocp_scope(raw: dict[str, Any], path: Path) -> tuple[str, str, str, str]:
+    """Validate the OCP ``scope`` block's shape and return the four singleton coordinates the
+    (a′) wave's ``authorized_axes`` derivation consumes (``environment``, ``order_type``,
+    ``account``, ``instrument``, in that order) — every other scope key is validated for shape
+    only and discarded, as before. ``action_classes`` is validated against the kernel
+    ``ActionClass`` enum (team-lead review MEDIUM, 2026-09-15 — the same check the venue-policy
+    loader already runs, previously missing here entirely: an OCP document with an
+    unknown/misspelled ``action_classes`` token loaded silently); that result is still
+    discarded — OCP runs no ``action_classes`` cross-check.
     """
     scope_raw = require_mapping_key(raw, "scope", path)
     singletons = {
@@ -213,7 +225,12 @@ def _parse_ocp_scope(raw: dict[str, Any], path: Path) -> tuple[str, str]:
         entries = require_list(scope_raw, key, path, "scope")
         require_str_list(entries, path, f"scope.{key}")
     parse_action_classes(scope_raw, path, "scope")
-    return singletons["environment"], singletons["order_type"]
+    return (
+        singletons["environment"],
+        singletons["order_type"],
+        singletons["account"],
+        singletons["instrument"],
+    )
 
 
 def _parse_ocp_model_view(
@@ -330,18 +347,42 @@ def _parse_sizing(construction_raw: dict[str, Any], path: Path) -> SizingBound:
 
 
 def _build_authorized_axes(
-    construction_raw: dict[str, Any], path: Path, *, environment: str, order_type: str
+    construction_raw: dict[str, Any],
+    path: Path,
+    *,
+    environment: str,
+    order_type: str,
+    account: str,
+    instrument: str,
 ) -> tuple[AxisBinding, ...]:
     """Build the envelope's non-derived authorized axis bindings: ``ENVIRONMENT``/
-    ``ORDER_TYPE`` are DERIVED from ``scope.environments``/``scope.order_types`` (never
-    restated under ``_runtime.construction.axes`` — see
-    ``_AUTHORIZED_AXES_DERIVED_FROM_SCOPE``), every other axis (e.g. ``TIF``) is authored
-    explicitly there. A :data:`~tos.egressgw.DERIVED_AXES` member
+    ``ORDER_TYPE``/``ACCOUNT``/``INSTRUMENT`` are DERIVED from ``scope.environments``/
+    ``scope.order_types``/``scope.accounts``/``scope.instruments`` (never restated under
+    ``_runtime.construction.axes`` — see ``_AUTHORIZED_AXES_DERIVED_FROM_SCOPE``), every other
+    axis the contract names (``DIRECTION``, ``TIF``) is authored explicitly there — neither has
+    a ``scope.*`` home to derive from. A :data:`~tos.egressgw.DERIVED_AXES` member
     (``QUANTITY``/``PRICE``/``UNIT``) in the authored list refuses at load, with a clearer
     message than the kernel envelope validator's own later refusal
     (``ProposedConstructionEnvelope._no_derived_axis_is_pre_declared``, ADR-002-020 §10:284
     "ambiguity is denial") would give — the whole point of catching it here is not letting a
-    document author discover this only when step 2 denies at runtime.
+    document author discover this only when step 2 denies at runtime. An authored value that is
+    still the template's own ``"TBD"`` placeholder refuses too, the same as every other
+    operator-fill leaf this loader reads (e.g. ``DIRECTION: "TBD"`` on the shipped paper
+    instance — no operator decision has bound this single, static composition to one trading
+    direction yet, and passing that placeholder through as a real value would silently commit
+    to one side of the long/short symmetry non-negotiable rather than refusing until an operator
+    actually decides).
+
+    ``SIDE`` is one of the seven axes :class:`~tos_runtime.venue.construction_rules
+    .ConstructionRules`'s own ``authorized_axes`` docstring names, but this function does NOT
+    derive or accept one: lane C's ``_shape_side_and_position_effect``
+    (``tos_runtime/compose/_venue_wiring.py``) reads side from ``action_class_shape`` via the
+    ``(action_class, direction)`` lookup, not from ``authorized_axes`` — no consumer reads a
+    ``SIDE`` axis binding at all today. Adding one here would be a second, unconsulted
+    declaration of the very same fact ``action_class_shape`` already derives per attempt —
+    exactly the "two quantities" duplication class this wave exists to remove, applied to side
+    instead of quantity. Left unresolved deliberately; flagged for the team lead / lane
+    B rather than special-cased here.
     """
     entries = require_list(construction_raw, "axes", path, "_runtime.construction")
     authored: list[AxisBinding] = []
@@ -366,59 +407,101 @@ def _build_authorized_axes(
             )
         if axis in _AUTHORIZED_AXES_DERIVED_FROM_SCOPE:
             raise VenuePolicyConfigError(
-                f"{path}: {ctx} restates {axis.value}, which is derived from "
-                "scope.environments/scope.order_types — do not re-declare it under "
-                "_runtime.construction.axes (a second declaration risks drifting apart "
-                "from the scope value)"
+                f"{path}: {ctx} restates {axis.value}, which is derived from scope — do not "
+                "re-declare it under _runtime.construction.axes (a second declaration risks "
+                "drifting apart from the scope value)"
             )
         value = require_str(entry, "value", path, ctx)
+        if value == TBD_STR:
+            raise VenuePolicyConfigError(
+                f"{path}: {ctx}.value for axis {axis.value} is still the template placeholder "
+                f"{TBD_STR!r} — operator-fill before activation, the same discipline every "
+                "other operator-fill leaf in this document already follows"
+            )
         authored.append(AxisBinding(axis=axis, value=value))
     derived = (
         AxisBinding(axis=ConformanceAxis.ENVIRONMENT, value=environment),
         AxisBinding(axis=ConformanceAxis.ORDER_TYPE, value=order_type),
+        AxisBinding(axis=ConformanceAxis.ACCOUNT, value=account),
+        AxisBinding(axis=ConformanceAxis.INSTRUMENT, value=instrument),
     )
     return derived + tuple(authored)
 
 
-#: The (ActionClass, direction) mirror pairs long/short symmetry requires (contract amendment
-#: 2026-09-16 — ``construction_rules.py``'s own docstring: ``ActionClassShape`` lost its
-#: ``direction`` attribute and ``ConstructionRules.action_class_shape`` is now keyed by
-#: ``(ActionClass, direction)`` so both a long-close and a short-close are declarable). Two
-#: DIFFERENT shapes of mirror, both load-bearing:
-#: * NEW_LONG/NEW_SHORT are separate ActionClass members, each single-direction by construction
-#:   (a NEW_LONG entry only ever makes sense at direction LONG) — the mirror is CROSS-class.
-#: * CLOSE is one ActionClass member serving both directions (``venue/vocabulary.py:141`` has no
-#:   ``CLOSE_LONG``/``CLOSE_SHORT`` split) — the mirror is WITHIN the same class, across
-#:   direction.
+#: ActionClass members whose NAME ITSELF encodes a trading direction — the CROSS-class mirror
+#: shape: a ``NEW_LONG`` entry only ever makes sense at direction ``LONG`` (there is no
+#: "NEW_LONG at direction SHORT"), so the mirror of a declared ``(NEW_LONG, LONG)`` is a declared
+#: ``(NEW_SHORT, SHORT)``, never a second direction of ``NEW_LONG`` itself.
+#:
+#: Every OTHER ``ActionClass`` member — all 11 of the remaining 13 (``CLOSE``, ``INCREASE``,
+#: ``DECREASE``, ``REVERSAL``, ``CANCEL``, ``AMEND``, ``REPLACE``, ``REDUCE_ONLY``,
+#: ``PROTECTIVE``, ``EMERGENCY``, ``ROUTING_ALTERNATIVE`` — verified against ``tos.venue
+#: .ActionClass`` directly) — is direction-agnostic BY NAME: if declared for one direction it
+#: must be declared for the other, checked generically in :func:`_check_action_class_shape_symmetry`
+#: with NO per-class table. An earlier revision of this check named only ``CLOSE`` in a second,
+#: explicit mirror-pair table alongside this one — independent review (PR #719) designed a
+#: mutation that declared a one-sided ``INCREASE`` entry and the loader loaded it anyway,
+#: because ``INCREASE`` was not in that table. A table a future ``ActionClass`` member must be
+#: remembered into is exactly the "registry with an unpinned satellite" class this repo has
+#: already been bitten by; the fix closes the CLASS OF BUG, not the one instance — the general
+#: rule below covers all 11 automatically, including any member added to the enum later, with no
+#: code change here.
+#:
 #: "LONG"/"SHORT" are hardcoded here deliberately, not read from a kernel enum: no
 #: ``DirectionKind`` enum exists (direction is a Phase-0-instance-injected axis value, like
 #: ORDER_TYPE/TIF/ENVIRONMENT), and CLAUDE.md's own non-negotiable text ("Futures must preserve
 #: long/short symmetry") already commits the repo to exactly these two tokens.
-_ACTION_CLASS_SHAPE_MIRROR_PAIRS: tuple[
-    tuple[tuple[ActionClass, str], tuple[ActionClass, str]], ...
-] = (
-    ((ActionClass.NEW_LONG, "LONG"), (ActionClass.NEW_SHORT, "SHORT")),
-    ((ActionClass.CLOSE, "LONG"), (ActionClass.CLOSE, "SHORT")),
+_DIRECTION_NAMED_ACTION_CLASSES: frozenset[ActionClass] = frozenset(
+    {ActionClass.NEW_LONG, ActionClass.NEW_SHORT}
 )
+
+
+def _refuse_missing_mirror(
+    present: tuple[ActionClass, str], missing: tuple[ActionClass, str], path: Path
+) -> None:
+    raise VenuePolicyConfigError(
+        f"{path}: action_class_shape declares "
+        f"({present[0].value}, {present[1]}) but not its mirror "
+        f"({missing[0].value}, {missing[1]}) — long/short symmetry is a repo non-negotiable "
+        "(CLAUDE.md: 'Futures must preserve long/short symmetry. Entry/exit direction follows "
+        "signal_direction') and a mapping that admits one direction of an action class but not "
+        "its mirror is a policy error, not a narrower scope"
+    )
 
 
 def _check_action_class_shape_symmetry(
     shapes: dict[tuple[ActionClass, str], ActionClassShape], path: Path
 ) -> None:
-    for key_a, key_b in _ACTION_CLASS_SHAPE_MIRROR_PAIRS:
-        has_a = key_a in shapes
-        has_b = key_b in shapes
-        if has_a != has_b:
-            present, missing = (key_a, key_b) if has_a else (key_b, key_a)
-            raise VenuePolicyConfigError(
-                f"{path}: action_class_shape declares "
-                f"({present[0].value}, {present[1]}) but not its mirror "
-                f"({missing[0].value}, {missing[1]}) — long/short symmetry is a repo "
-                "non-negotiable (CLAUDE.md: 'Futures must preserve long/short symmetry. "
-                "Entry/exit direction follows signal_direction') and a mapping that admits "
-                "one direction of an action class but not its mirror is a policy error, not "
-                "a narrower scope"
+    # Cross-class mirror: NEW_LONG <-> NEW_SHORT (see _DIRECTION_NAMED_ACTION_CLASSES).
+    key_new_long = (ActionClass.NEW_LONG, "LONG")
+    key_new_short = (ActionClass.NEW_SHORT, "SHORT")
+    has_new_long = key_new_long in shapes
+    has_new_short = key_new_short in shapes
+    if has_new_long != has_new_short:
+        present, missing = (
+            (key_new_long, key_new_short)
+            if has_new_long
+            else (key_new_short, key_new_long)
+        )
+        _refuse_missing_mirror(present, missing, path)
+
+    # Within-class mirror: every OTHER declared class, checked generically against exactly the
+    # two LONG/SHORT tokens — no table, no per-class allowlist (see the data note above).
+    other_declared_classes = {
+        action
+        for action, _direction in shapes
+        if action not in _DIRECTION_NAMED_ACTION_CLASSES
+    }
+    for action in sorted(other_declared_classes, key=lambda a: a.value):
+        key_long = (action, "LONG")
+        key_short = (action, "SHORT")
+        has_long = key_long in shapes
+        has_short = key_short in shapes
+        if has_long != has_short:
+            present, missing = (
+                (key_long, key_short) if has_long else (key_short, key_long)
             )
+            _refuse_missing_mirror(present, missing, path)
 
 
 def _parse_action_class_shape(
@@ -428,9 +511,9 @@ def _parse_action_class_shape(
     document's own ``direction_side_and_position_effect_rules`` prose. YAML shape: a mapping of
     ``ActionClass`` token -> mapping of ``direction`` token -> ``{side, position_effect}``
     (nested, not a flattened tuple key — YAML mapping keys are strings). Refuses when a mirror
-    pair (see :data:`_ACTION_CLASS_SHAPE_MIRROR_PAIRS`) has one arm declared but not the other:
-    "Futures must preserve long/short symmetry" (``CLAUDE.md``) is a repo non-negotiable, and an
-    asymmetric mapping is a policy defect, not a narrower scope."""
+    pair (see :func:`_check_action_class_shape_symmetry`) has one arm declared but not the
+    other: "Futures must preserve long/short symmetry" (``CLAUDE.md``) is a repo non-negotiable,
+    and an asymmetric mapping is a policy defect, not a narrower scope."""
     raw_map = require_mapping_key(construction_raw, "action_class_shape", path)
     shapes: dict[tuple[ActionClass, str], ActionClassShape] = {}
     for action_token, direction_map in raw_map.items():
@@ -492,7 +575,13 @@ def _parse_effect_dimensions(
 
 
 def _parse_construction_rules(
-    raw: dict[str, Any], path: Path, *, environment: str, order_type: str
+    raw: dict[str, Any],
+    path: Path,
+    *,
+    environment: str,
+    order_type: str,
+    account: str,
+    instrument: str,
 ) -> ConstructionRules:
     """Parse ``_runtime.construction`` into a
     :class:`~tos_runtime.venue.construction_rules.ConstructionRules` — the (a′) wave's whole
@@ -504,7 +593,12 @@ def _parse_construction_rules(
     construction_raw = require_mapping_key(runtime_raw, "construction", path)
     sizing_bound = _parse_sizing(construction_raw, path)
     authorized_axes = _build_authorized_axes(
-        construction_raw, path, environment=environment, order_type=order_type
+        construction_raw,
+        path,
+        environment=environment,
+        order_type=order_type,
+        account=account,
+        instrument=instrument,
     )
     action_class_shape = _parse_action_class_shape(construction_raw, path)
     effect_dimensions = _parse_effect_dimensions(construction_raw, path)
@@ -554,8 +648,10 @@ def load_order_construction_policy(
             template placeholder ``"TBD"``; ``sizing.lot_rounding`` is not a
             known ``LotRoundingPolicy``; an ``axes`` entry names an unknown
             ``ConformanceAxis``, a :data:`~tos.egressgw.DERIVED_AXES` member
-            (``QUANTITY``/``PRICE``/``UNIT``), or restates ``ENVIRONMENT``/
-            ``ORDER_TYPE`` (both derived from ``scope`` instead);
+            (``QUANTITY``/``PRICE``/``UNIT``), restates ``ENVIRONMENT``/
+            ``ORDER_TYPE``/``ACCOUNT``/``INSTRUMENT`` (all four derived from
+            ``scope`` instead), or carries the template placeholder
+            ``"TBD"`` as its value;
             ``action_class_shape`` names an unknown ``ActionClass`` or
             declares ``NEW_LONG``/``NEW_SHORT`` without its mirror; or an
             ``effect_dimensions`` entry names an unknown ``EffectBasis``.
@@ -572,7 +668,7 @@ def load_order_construction_policy(
         raw, "construction_generation", path, "policy"
     )
 
-    environment, order_type = _parse_ocp_scope(raw, path)
+    environment, order_type, account, instrument = _parse_ocp_scope(raw, path)
     policy_version = _parse_ocp_model_view(
         raw, path, top_level_policy_generation=policy_generation
     )
@@ -580,7 +676,12 @@ def load_order_construction_policy(
         raw, path, scheme=scheme
     )
     construction_rules = _parse_construction_rules(
-        raw, path, environment=environment, order_type=order_type
+        raw,
+        path,
+        environment=environment,
+        order_type=order_type,
+        account=account,
+        instrument=instrument,
     )
 
     require_template_shape(

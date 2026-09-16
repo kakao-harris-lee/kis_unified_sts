@@ -725,7 +725,10 @@ def test_load_order_construction_policy_construction_happy_path(tmp_path: Path) 
     assert rules.authorized_axes == (
         AxisBinding(axis=ConformanceAxis.ENVIRONMENT, value="paper"),
         AxisBinding(axis=ConformanceAxis.ORDER_TYPE, value="LIMIT"),
+        AxisBinding(axis=ConformanceAxis.ACCOUNT, value="acct-1"),
+        AxisBinding(axis=ConformanceAxis.INSTRUMENT, value="K200F"),
         AxisBinding(axis=ConformanceAxis.TIF, value="DAY"),
+        AxisBinding(axis=ConformanceAxis.DIRECTION, value="LONG"),
     )
     assert rules.action_class_shape == {
         (ActionClass.NEW_LONG, "LONG"): ActionClassShape(
@@ -866,20 +869,45 @@ def test_load_order_construction_policy_construction_axes_derived_axis_refused(
 
 
 @pytest.mark.parametrize(
-    "axis_token, value", [("ORDER_TYPE", "MARKET"), ("ENVIRONMENT", "live")]
+    "axis_token, value",
+    [
+        ("ORDER_TYPE", "MARKET"),
+        ("ENVIRONMENT", "live"),
+        ("ACCOUNT", "acct-2"),
+        ("INSTRUMENT", "K200G"),
+    ],
 )
 def test_load_order_construction_policy_construction_axes_restated_refused(
     tmp_path: Path, axis_token: str, value: str
 ) -> None:
-    """ENVIRONMENT/ORDER_TYPE are derived from ``scope`` — restating either under
-    ``_runtime.construction.axes`` refuses rather than risk the two silently drifting apart.
-    """
+    """ENVIRONMENT/ORDER_TYPE/ACCOUNT/INSTRUMENT are derived from ``scope`` — restating any of
+    them under ``_runtime.construction.axes`` refuses rather than risk the two silently drifting
+    apart. ACCOUNT/INSTRUMENT joined this set in the review round (PR #719) that caught
+    DIRECTION missing entirely — the same audit found these two silently absent."""
     text = ocp_yaml().replace(
         '    axes:\n      - axis: "TIF"\n        value: "DAY"\n',
         f'    axes:\n      - axis: "{axis_token}"\n        value: "{value}"\n',
     )
     path = write_fixture_ocp(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="restates"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_axes_tbd_value_refused(
+    tmp_path: Path,
+) -> None:
+    """An authored axis (e.g. ``DIRECTION``, which has no ``scope.*`` home) left at the
+    template's ``"TBD"`` placeholder refuses, the same discipline every other operator-fill leaf
+    in this loader already follows — this is what makes the shipped paper instance's own
+    ``DIRECTION: "TBD"`` an operator-fill gate rather than a silent single-direction commitment.
+    """
+    text = ocp_yaml().replace(
+        '    axes:\n      - axis: "TIF"\n        value: "DAY"\n',
+        '    axes:\n      - axis: "TIF"\n        value: "DAY"\n'
+        '      - axis: "DIRECTION"\n        value: "TBD"\n',
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="DIRECTION.*TBD"):
         load_order_construction_policy(path, scheme=SCHEME)
 
 
@@ -988,6 +1016,35 @@ def test_load_order_construction_policy_construction_action_class_shape_close_bo
     ] == (ActionClassShape(side="BUY", position_effect="CLOSE"))
 
 
+def test_load_order_construction_policy_construction_action_class_shape_one_sided_increase_refused(
+    tmp_path: Path,
+) -> None:
+    """PR #719 independent review mutation: a one-sided ``INCREASE`` entry (no per-class
+    allowlist table names it) must still refuse. Proves the within-class mirror check is
+    GENERIC over every ``ActionClass`` member other than ``NEW_LONG``/``NEW_SHORT`` — not a
+    table someone has to remember to extend, which is exactly the bug this reproduces: the
+    original ``_ACTION_CLASS_SHAPE_MIRROR_PAIRS`` table named only ``CLOSE`` alongside
+    ``NEW_LONG``/``NEW_SHORT``, so a one-sided ``INCREASE`` (or ``DECREASE``, ``REVERSAL``,
+    ``CANCEL``, ``AMEND``, ``REPLACE``, ``REDUCE_ONLY``, ``PROTECTIVE``, ``EMERGENCY``,
+    ``ROUTING_ALTERNATIVE``) loaded OK. ``INCREASE`` is not a repo enum member ``ocp_yaml()``'s
+    default declares, so this test adds it fresh rather than mutating an existing entry.
+    """
+    text = ocp_yaml().replace(
+        "    action_class_shape:\n"
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
+        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n',
+        "    action_class_shape:\n"
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
+        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n'
+        '      INCREASE:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n',
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(
+        VenuePolicyConfigError, match=r"INCREASE, LONG.*INCREASE, SHORT"
+    ):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
 def test_load_order_construction_policy_construction_effect_dimensions_unknown_basis_refused(
     tmp_path: Path,
 ) -> None:
@@ -1076,4 +1133,29 @@ def test_real_paper_ocp_refuses_on_admitted_quantity_bases_tbd_even_when_scope_i
     path = tmp_path / "order_construction_policy.yaml"
     path.write_text(text, encoding="utf-8")
     with pytest.raises(VenuePolicyConfigError, match="admitted_quantity_bases"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_real_paper_ocp_refuses_on_direction_tbd_even_when_scope_and_bases_are_filled(
+    tmp_path: Path,
+) -> None:
+    """A third layer of the same operator-fill gate chain (review round 2026-09-16, PR #719):
+    after scope AND admitted_quantity_bases are filled, the shipped instance still refuses —
+    now on ``_runtime.construction.axes``' ``DIRECTION`` entry, which no operator has yet bound
+    this static, proposal-path-less composition to one trading direction."""
+    raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
+    raw["scope"]["accounts"] = ["acct-x"]
+    raw["scope"]["instruments"] = ["inst-x"]
+    raw["_runtime"]["construction"]["sizing"]["admitted_quantity_bases"] = ["RISK"]
+    direction_entries = [
+        entry
+        for entry in raw["_runtime"]["construction"]["axes"]
+        if entry["axis"] == "DIRECTION"
+    ]
+    assert len(direction_entries) == 1
+    assert direction_entries[0]["value"] == "TBD"
+    text = yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
+    path = tmp_path / "order_construction_policy.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(VenuePolicyConfigError, match="DIRECTION.*TBD"):
         load_order_construction_policy(path, scheme=SCHEME)

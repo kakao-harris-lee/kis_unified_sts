@@ -81,15 +81,25 @@ _ADOPTED_OCP_VERSION = "1.0.0"
 #: rest of the document boots, the same role ``account``/``instrument`` already play here.
 _OCP_FIXTURE_QUANTITY_BASIS = "RISK"
 
+#: The (a′) wave's OCP fixture-fill for ``_runtime.construction.axes``' ``DIRECTION`` entry
+#: (review round 2026-09-16, PR #719 -- the shipped file left it ``"TBD"``: no operator decision
+#: has bound this static, proposal-path-less composition to one trading direction yet). Not a
+#: real strategy-file value (the shipped deploy file stays ``"TBD"`` -- see
+#: ``test_real_paper_ocp_refuses_on_direction_tbd_even_when_scope_and_bases_are_filled`` in
+#: ``tests/venue/test_config.py``); fixture data only, the same role
+#: ``_OCP_FIXTURE_QUANTITY_BASIS`` already plays here.
+_OCP_FIXTURE_DIRECTION = "LONG"
+
 
 def _filled(path: Path, *, environment: str, account: str, instrument: str) -> dict:
     """The real document with ONLY the operator-fill coordinates filled -- exactly what the
     operator fills by hand before ``print-policy-digests``. For the Order Construction Policy
-    this now ALSO fills ``_runtime.construction.sizing.admitted_quantity_bases`` (the (a′)
-    wave's OCP loader change, ``tos_runtime/venue/_order_construction_policy_loader.py``):
-    that leaf joined the operator-fill gate scope.accounts/scope.instruments were already in, so
-    this helper -- whose whole job is "fill every operator-fill leaf, then prove the rest boots"
-    -- fills it too, the same way and for the same reason."""
+    this now ALSO fills ``_runtime.construction.sizing.admitted_quantity_bases`` and
+    ``_runtime.construction.axes``' ``DIRECTION`` entry (the (a′) wave's OCP loader changes,
+    ``tos_runtime/venue/_order_construction_policy_loader.py``): both leaves joined the
+    operator-fill gate scope.accounts/scope.instruments were already in, so this helper --
+    whose whole job is "fill every operator-fill leaf, then prove the rest boots" -- fills them
+    too, the same way and for the same reason."""
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert raw["scope"]["accounts"] == ["TBD"]
     assert raw["scope"]["instruments"] == ["TBD"]
@@ -101,6 +111,12 @@ def _filled(path: Path, *, environment: str, account: str, instrument: str) -> d
         sizing = construction["sizing"]
         assert sizing["admitted_quantity_bases"] == ["TBD"]
         sizing["admitted_quantity_bases"] = [_OCP_FIXTURE_QUANTITY_BASIS]
+        direction_entries = [
+            entry for entry in construction["axes"] if entry["axis"] == "DIRECTION"
+        ]
+        assert len(direction_entries) == 1
+        assert direction_entries[0]["value"] == "TBD"
+        direction_entries[0]["value"] = _OCP_FIXTURE_DIRECTION
     return raw
 
 
