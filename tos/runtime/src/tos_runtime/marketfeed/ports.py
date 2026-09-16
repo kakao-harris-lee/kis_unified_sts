@@ -12,8 +12,11 @@ converging on a shape afterwards.
 (``:84``), :class:`~tos.marketfeed.TimeCoordinateProjection` (``:103``) — are the *only* way a
 value reaches a decision. What does not exist is anything in production that **implements** them:
 as of ``e3e26e3e`` every caller of ``CriticalInputSnapshot.issue`` / ``DecisionContextCapsule
-.issue`` is a test fixture (``tos/tests/**``), which is exactly what ``compose/cli.py:96-100``
-records as blocker (c). This package is that upstream producer — the Context Integrity Service
+.issue`` is a test fixture — under ``tos/tests/**`` *and* under ``tos/runtime/tests/**`` (five
+files there, e.g. ``compose/_fixtures.py:280``, ``engine/_fixtures.py:84``); the load-bearing
+measurement is that ``tos/src`` and ``tos/runtime/src`` hold **zero** callers between them. That
+is exactly what ``compose/cli.py:96-100`` records as blocker (c). This package is that upstream
+producer — the Context Integrity Service
 the kernel explicitly keeps outside itself (design #2 §0.2, restated at
 ``tos/src/tos/marketfeed/__init__.py``'s "(c)" paragraph).
 
@@ -132,11 +135,26 @@ class ObservationIntake(Protocol):
 class DurableSnapshotStore(Protocol):
     """The durable half of the admitted-snapshot injection port (design #38; plan §2 decision 3).
 
-    One implementation plays two kernel roles — :class:`~tos.marketfeed.SnapshotStore` (via
-    :meth:`__call__`, the exact shipped signature) and
-    :class:`~tos.marketfeed.ValueCandidateSource` (via :meth:`candidates`) — because both read the
-    same durable rows: the snapshot body and the preimages its observations' digests address.
-    Splitting them across two stores would let the two halves disagree about what was issued.
+    One implementation backs two kernel roles — :class:`~tos.marketfeed.SnapshotStore` and
+    :class:`~tos.marketfeed.ValueCandidateSource` — because both read the same durable rows: the
+    snapshot body and the preimages its observations' digests address. Splitting them across two
+    stores would let the two halves disagree about what was issued.
+
+    ⚠ **The two roles are injected differently, and getting this wrong fails late.** Both kernel
+    Protocols are invoked through ``__call__`` — the resolver calls
+    ``self._candidate_source(snapshot, instrument_key=...)`` (``resolver.py:186-190``), not
+    ``.candidates(...)``. This type's own ``__call__`` is already the ``SnapshotStore`` signature,
+    so:
+
+    * ``snapshot_store=store`` — the object itself;
+    * ``candidate_source=store.candidates`` — the **bound method**, whose
+      ``(snapshot, *, instrument_key)`` signature is exactly ``ValueCandidateSource.__call__``.
+
+    Passing the store object as ``candidate_source`` is the trap: ``ValueCandidateSource`` is
+    ``runtime_checkable``, and a ``runtime_checkable`` Protocol's ``isinstance`` check tests only
+    that ``__call__`` *exists*, never its signature — so the wiring passes every construction-time
+    check and then raises ``TypeError`` at the first ``resolve``, with a value surface that is
+    absent rather than wrong. Named here because the contract is what the wiring lane reads.
 
     **Durability is load-bearing, not hygiene.** The value ⟺ digest check recomputes the digest
     from the producer's preimage and compares it against what the snapshot-covered observation

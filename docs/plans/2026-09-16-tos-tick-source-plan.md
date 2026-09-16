@@ -9,7 +9,7 @@
 
 | 항목 | 실측 (`file:line`) | 함의 |
 |---|---|---|
-| 틱을 만드는 프로덕션 코드 | 없음. `DecisionContextCapsule.issue`/`CriticalInputSnapshot.issue` 호출자는 `tos/tests/**` 뿐(grep: `tos/src`·`tos/runtime/src` 0건) · 컴포즈 e2e 는 `tests/compose/_fixtures.py:278-355` 이 capsule·value_view·time·reference 를 전부 손으로 만듦 | (c) 는 「어댑터 하나」가 아니라 **CIS(Context Integrity Service) 런타임 부재** |
+| 틱을 만드는 프로덕션 코드 | 없음. `DecisionContextCapsule.issue`/`CriticalInputSnapshot.issue` 호출자는 전부 테스트 픽스처 — `tos/tests/**` **와 `tos/runtime/tests/**`**(후자에도 5개 파일: `compose/_fixtures.py:280`·`compose/test_preconditions.py:99`·`backtest/test_symmetry.py:111`·`engine/_fixtures.py:84`·`engine/_parity_fixtures.py:258`). 정본 실측은 **`tos/src`·`tos/runtime/src` 합쳐 0건**(계약 리뷰 LOW 지적으로 인용 경로 정정) · 컴포즈 e2e 는 `tests/compose/_fixtures.py:278-355` 이 capsule·value_view·time·reference 를 전부 손으로 만듦 | (c) 는 「어댑터 하나」가 아니라 **CIS(Context Integrity Service) 런타임 부재** |
 | 리졸버 | `MarketFeedContextResolver`(`marketfeed/resolver.py:135`)는 이미 실물. 주입 3구: `SnapshotStore`(`:62`) · `ValueCandidateSource`(`:84`) · `TimeCoordinateProjection`(`:103`) | **커널 신규 0** — 런타임은 이 세 포트의 구현자만 만든다 |
 | 엔진 슬롯 | `EngineCore` 는 리졸버를 받지 않는다 — `DecisionContextResolver` 는 Protocol 선언뿐(`engine/core.py:94`) | 틱 원천은 **호출자 측**. compose 에 새 코어 인자 0 |
 | 순서 좌표 | `EngineDriver._stamp`(`engine/driver.py:397`)가 호출자 reference 를 버리고 자체 카운터로 재스탬프(step 7 웨이브 §7 발견) | 틱 원천은 `reference` 를 **주장하지 않는다**(리졸버 `__call__` 독스트링과 동일 규율) |
@@ -22,7 +22,7 @@
 | 시간 경계값 | `time.example.yaml` 이 VER-002 키 8종 보유(`:20`~`:84`). marketfeed 가 지명하는 `MAX_critical_input_consumer_receipt_age_ms`·`MAX_time_source_sequence_gap_ms` 는 로더 `_BOUND_KEYS`(`time/config.py:35-64`)에 **없다**. 단 둘 다 VERIFICATION-PROFILE-002 에 **APPROVED 값 보유**(`:1067` = 1000 ms · `:1077` = 50 ms · 둘 다 2026-07-29 Bounds-Approver) | **새 승인 라운드 불필요** — `MAX_clock_domain_conversion_uncertainty_ms` 가 밟은 「승인값을 근거 인용과 함께 verbatim 재사용」 경로를 그대로(`time/config.py:43-53`) |
 | 방화벽 | 런타임 스코프는 `socket`/`ssl`/`http`/`urllib.request` 카브아웃(`tools/tos_firewall_check.py:238-249`) · `time.sleep` 선례(`transport/kis_mock/adapter.py:480`) · `shared.*` 는 런타임에서도 전면 금지(규칙 (h)) | 폴 루프는 런타임 스코프에서 **합법** · 레거시 `shared.kis`/`shared.streaming` 재사용은 **불가** |
 | 다심볼 | FORWARD-OBLIGATION-MS1 — 라이브 다심볼 EventSource 의 단일 연속성 수집 순서 의무는 **미비준**(`tos/src/tos/backtest/driver.py:78-86`) | 1차 웨이브는 **단일 instrument** · 다심볼은 명시적 비범위 |
-| 크기 | `module_max_lines: 1000` · `function_max_lines: 100` · 런타임 스코프 등재 예외 **0건**(`config/tos_size_budget.yaml:23-33`) | 새 모듈 전부 1000행 이하 · 예외 등재하지 않음 |
+| 크기 | `module_max_lines: 1000` · `function_max_lines: 100` · 런타임 스코프 등재 예외는 **9건**(전체 39건 중 — `_wiring.py` 1122행 · `authority/iap.py` 1026행 등). ~~0건~~ 은 저작 시 `config/tos_size_budget.yaml:23-33` 의 **2026-09-07 자 주석**을 실측 대신 인용한 오류(계약 리뷰 MEDIUM 지적) — 주석이 stale 이고 데이터가 정본 | 새 모듈 전부 1000행 이하 · **이번 웨이브는 예외를 등재하지 않는다**(선례가 없어서가 아니라, 예산 상한에 이미 붙어 있는 모듈은 등재가 아니라 분해가 답이기 때문 — `compose/cli.py` 는 직전 웨이브가 정확히 1000행에 맞춰 둬서 헤드룸이 0) |
 
 ## 1. 목표 · 범위 · 비범위
 
