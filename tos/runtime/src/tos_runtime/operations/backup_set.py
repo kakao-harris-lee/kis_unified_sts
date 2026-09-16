@@ -1,22 +1,51 @@
-"""Durable-set backup / restore / restore-drill (TOS Phase 5 W4 plan §2 decisions 1-2).
+"""Durable-set backup / restore / restore-drill (TOS Phase 5 W4 plan §2 decisions 1-2; the
+marketfeed snapshot store joined the set in the tick-source wave, plan
+``docs/plans/2026-09-16-tos-tick-source-plan.md`` §6 ④, operator decision 2026-09-16).
 
-**The durable set is four separate sqlite files, not one.** Design #40 D3.1's own
-failure-domain separation means the evidence store, the RCL commit log, the event inbox, and the
-kernel-owned composite-state store each live in their own file — there is no single connection
-whose ``Connection.backup`` could snapshot all four atomically. A "backup" here is therefore: (1)
-every store CLOSED (documented precondition — see :func:`backup_set`'s own docstring for why this
-module cannot mechanically detect a handle open in another process), (2) one
-``sqlite3.Connection.backup`` per file (the same byte-consistent-online-snapshot idiom
-:mod:`tos_runtime.evidence.backup` already uses — never a raw file copy), (3) one JSON
-:class:`BackupSetManifest` recording every file's digest plus a few store-specific tail facts, so
-a LATER divergence between "the files as copied" and "the files as they were" is detectable even
-though nothing enforced their mutual consistency at copy time.
+**The durable set is five separate sqlite files, not one.** Design #40 D3.1's own
+failure-domain separation means the evidence store, the RCL commit log, the event inbox, the
+kernel-owned composite-state store, and the marketfeed snapshot/preimage store each live in their
+own file — there is no single connection whose ``Connection.backup`` could snapshot all five
+atomically. A "backup" here is therefore: (1) every store CLOSED (documented precondition — see
+:func:`backup_set`'s own docstring for why this module cannot mechanically detect a handle open in
+another process), (2) one ``sqlite3.Connection.backup`` per file (the same
+byte-consistent-online-snapshot idiom :mod:`tos_runtime.evidence.backup` already uses — never a
+raw file copy), (3) one JSON :class:`BackupSetManifest` recording every file's digest plus a few
+store-specific tail facts, so a LATER divergence between "the files as copied" and "the files as
+they were" is detectable even though nothing enforced their mutual consistency at copy time.
 
 **The composite-state store is touched only by path.** ``tos.staterestore.CompositeStateStore``
 is kernel-owned; this module never imports it, never opens it as a table, and never reads its
 ``last_seq`` (recorded as ``None`` in every manifest, always) — it is backed up/restored as an
-opaque file, exactly like the other three, because ``sqlite3.Connection.backup`` needs no
+opaque file, exactly like the other four, because ``sqlite3.Connection.backup`` needs no
 knowledge of a database's own schema to snapshot it byte-consistently.
+
+**The marketfeed store joined the backup set to close a restore-path failure mode, not for
+symmetry.** The kernel's value ⟺ digest check recomputes a value's digest from the STORED preimage
+and compares it against what the snapshot-covered observation attests
+(``tos/src/tos/marketfeed/value.py:514-523``); ``tos_runtime.marketfeed.store``'s own module
+docstring proves, with a restart test, that losing preimages silently takes every value operand to
+``UNKNOWN`` while a perfectly valid-looking snapshot id is still in hand. Leaving
+``marketfeed.sqlite3`` out of the backup set did not remove that failure mode, it moved it to the
+restore path: a deployment restored from a backup could not re-publish a view for any snapshot
+issued before the restore. Like ``composite_state``, this module never imports
+:class:`~tos_runtime.marketfeed.store.SqliteSnapshotStore` — it is backed up/restored as an opaque
+file, and is optional for the same reason ``composite_state`` is: a runtime that never ticked never
+creates it (:data:`_OPTIONAL_FILES`).
+
+**Manifest compatibility is two-directional, and only one direction is executed.** A NEW
+:func:`restore_set` reading an OLD manifest (written before ``marketfeed`` joined the set) is a
+real, exercised path — that manifest has no ``"marketfeed"`` key in ``files`` at all, and
+:func:`restore_set`'s own docstring/code handle it explicitly (proven by
+``test_restore_set_handles_a_manifest_written_before_marketfeed_joined_the_set``). The REVERSE
+direction — an OLD ``restore_set`` (from a checkout predating this change) reading a NEW manifest —
+cannot be exercised by this suite, since that would require running old code; the following is a
+STATIC TRACE, not a test result. Old code's own restore loop iterates ``manifest.files.items()``
+generically, so it would harmlessly restore ``marketfeed.sqlite3`` to disk — but its own
+``DurableSetPaths(...)`` construction is hardcoded to four fields (this module's shape before this
+change) and would silently drop the restored path from the object it returns. No crash, no
+refusal: a rollback to pre-wave code operating on a post-wave backup restores the marketfeed file
+but loses its path from the returned set without any error.
 
 **Restore is always non-live** (mirrors :func:`tos_runtime.evidence.backup.restore`'s own
 ADR-002-016 discipline) and refuses a destination that resolves inside, or equal to, the live
@@ -31,8 +60,10 @@ the structural surface :class:`_ComposedForDrill` names — verified directly ag
 attribute this Protocol names), never against the concrete class itself.
 
 Firewall: stdlib (``hashlib``, ``json``, ``sqlite3``, ``time``) + ``pydantic`` + ``tos.canonical``
-+ ``tos.sbr.vocabulary`` + ``tos_runtime.evidence`` + ``tos_runtime.engine`` only (R1 allowlist).
-No ``tos_runtime.compose``, no ``tos_runtime.custody``, no ``tos.staterestore``.
++ ``tos.sbr.vocabulary`` + ``tos_runtime.evidence`` + ``tos_runtime.engine`` +
+``tos_runtime.marketfeed.store`` (``MARKETFEED_FILE_NAME`` only — a name, not the store class)
+only (R1 allowlist). No ``tos_runtime.compose``, no ``tos_runtime.custody``, no
+``tos.staterestore``.
 """
 
 from __future__ import annotations
@@ -52,6 +83,7 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.engine.replay import ReplayableCore, ReplayVerdict, replay_engine
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import KeyProvider, SqliteEvidenceStore
+from tos_runtime.marketfeed.store import MARKETFEED_FILE_NAME
 
 __all__ = [
     "BackupSetManifest",
@@ -74,7 +106,9 @@ __all__ = [
 #: ``tos_runtime.recovery.composite_state_writer`` already fix for a data_dir (duplicated here,
 #: not imported, to keep this package's own firewall scope out of ``tos_runtime.compose`` and
 #: ``tos_runtime.recovery`` — a restored set's directory happens to be a valid ``data_dir`` for a
-#: recompose precisely BECAUSE these match).
+#: recompose precisely BECAUSE these match). ``MARKETFEED_FILE_NAME`` is the one exception: it is
+#: imported, not duplicated, because :mod:`tos_runtime.marketfeed.store` already owns that
+#: constant as its own public name.
 EVIDENCE_FILE_NAME = "evidence.sqlite3"
 RCL_FILE_NAME = "rcl.sqlite3"
 INBOX_FILE_NAME = "inbox.sqlite3"
@@ -83,6 +117,15 @@ COMPOSITE_STATE_FILE_NAME = "composite_state.sqlite3"
 #: Matches :mod:`tos_runtime.evidence.store`'s own private genesis constant — the chain digest of
 #: an empty evidence store.
 _CHAIN_GENESIS = ""
+
+#: Backup-set members that MAY be absent from a live directory because the store that owns them
+#: opens its file lazily, on first write, rather than preemptively at boot — a runtime that never
+#: reached that first write never creates the file. ``backup_set`` records absence honestly as
+#: ``None`` rather than fabricating an empty backup, and ``_last_seq_for`` never queries either
+#: (``composite_state`` is kernel-owned/opaque; ``marketfeed`` has no ``seq`` column at all — see
+#: that function's own docstring). Every site that special-cased ``"composite_state"`` on its own
+#: reads this set instead, so a future optional member is added in ONE place, not N.
+_OPTIONAL_FILES: frozenset[str] = frozenset({"composite_state", "marketfeed"})
 
 _MANIFEST_SUFFIX = ".set.manifest.json"
 
@@ -108,7 +151,8 @@ class RestoreRefused(RuntimeError):
 
 
 class DurableSetPaths(BaseModel):
-    """The four files one durable set is made of."""
+    """The five files one durable set is made of (``marketfeed`` joined the set in the
+    tick-source wave — module docstring)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -116,6 +160,7 @@ class DurableSetPaths(BaseModel):
     rcl: Path
     inbox: Path
     composite_state: Path
+    marketfeed: Path
 
     @classmethod
     def from_data_dir(cls, data_dir: Path) -> DurableSetPaths:
@@ -127,6 +172,7 @@ class DurableSetPaths(BaseModel):
             rcl=data_dir / RCL_FILE_NAME,
             inbox=data_dir / INBOX_FILE_NAME,
             composite_state=data_dir / COMPOSITE_STATE_FILE_NAME,
+            marketfeed=data_dir / MARKETFEED_FILE_NAME,
         )
 
 
@@ -170,22 +216,24 @@ class BackupSetManifest(BaseModel):
 
     generation: int
     created_at_monotonic_ns: int
-    #: ``composite_state`` is ``None`` when that file did not exist at backup time — a runtime
-    #: that never processed an ``EGRESS_RESULT`` all the way to a composite write never creates
-    #: it (:mod:`tos_runtime.recovery.composite_state_writer`'s own module docstring: the file is
-    #: opened lazily, on first write, never preemptively at boot). Absence is never fabricated
-    #: into a fake empty backup — it is recorded honestly as ``None``. The other three keys are
-    #: always present (a constructed store always creates its own file).
+    #: A key in :data:`_OPTIONAL_FILES` (``composite_state``, ``marketfeed``) is ``None`` when
+    #: that file did not exist at backup time — ``composite_state`` because a runtime that never
+    #: processed an ``EGRESS_RESULT`` all the way to a composite write never creates it
+    #: (:mod:`tos_runtime.recovery.composite_state_writer`'s own module docstring), ``marketfeed``
+    #: because a runtime that never ticked never issues a snapshot. Absence is never fabricated
+    #: into a fake empty backup — it is recorded honestly as ``None``. The other three keys
+    #: (``evidence``/``rcl``/``inbox``) are always present (a constructed store always creates its
+    #: own file).
     files: dict[str, FileBackupEntry | None]
     #: The LIVE source paths at backup time (never the backup-copy paths) — :func:`restore_set`
     #: refuses a destination that resolves equal to, or inside, any of these directories. Always
-    #: has all four keys, even when ``composite_state`` was absent (its recorded path is where it
+    #: has all five keys, even when an optional member was absent (its recorded path is where it
     #: WOULD have lived).
     source_paths: dict[str, str]
     evidence: EvidenceBackupFacts
     rcl: RclBackupFacts
     inbox: InboxBackupFacts
-    #: Caller-supplied — never derived (four closed sqlite files carry no runtime identity of
+    #: Caller-supplied — never derived (five closed sqlite files carry no runtime identity of
     #: their own). ``None`` when the caller has none to attest.
     runtime_identity: str | None = None
     #: Caller-supplied (e.g. the live runtime's own ``recovery.readiness_verdict.value``
@@ -219,11 +267,43 @@ def _read_optional_int(conn: sqlite3.Connection, query: str) -> int | None:
     return int(row[0])
 
 
+#: Table holding a ``seq`` column, per store name — the only stores :func:`_last_seq_for`
+#: actually queries. A name absent from BOTH this mapping and :data:`_OPTIONAL_FILES` is a bug,
+#: not a silent ``None``: see :func:`_last_seq_for`'s own docstring.
+_SEQ_TABLE_BY_NAME: dict[str, str] = {
+    "evidence": "entries",
+    "rcl": "entries",
+    "inbox": "events",
+}
+
+
 def _last_seq_for(name: str, backup_path: Path) -> int | None:
-    if name == "composite_state":
-        # Kernel-owned shape — never queried (module docstring).
+    """The newest ``seq`` a store's own backup file carries, or ``None`` when the store has no
+    such column (``_OPTIONAL_FILES``: ``composite_state`` is kernel-owned/opaque, ``marketfeed``
+    is content-addressed with no ``seq`` column at all).
+
+    Every :class:`DurableSetPaths` member must resolve here one way or the other — via
+    :data:`_SEQ_TABLE_BY_NAME` or via :data:`_OPTIONAL_FILES` — never fall through. This is the
+    fourth instance, in this one wave, of a registry paired with a hand-maintained satellite that
+    nothing pinned together: the first was ``STORE_MIGRATIONS`` vs ``cli.py``'s hardcoded path
+    dict (fixed by extracting ``compose/_migrate_paths.py``), the second/third were
+    ``MARKETFEED_SCHEMA_VERSION`` vs ``MARKETFEED_MIGRATIONS[-1].version``. An unrecognized name
+    fails LOUDLY and BY NAME here — never a bare ``KeyError`` from inside a dict literal — so the
+    next new member cannot silently fall through either branch.
+
+    Raises:
+        RuntimeError: ``name`` is in neither :data:`_SEQ_TABLE_BY_NAME` nor
+            :data:`_OPTIONAL_FILES`.
+    """
+    if name in _OPTIONAL_FILES:
         return None
-    table = {"evidence": "entries", "rcl": "entries", "inbox": "events"}[name]
+    table = _SEQ_TABLE_BY_NAME.get(name)
+    if table is None:
+        raise RuntimeError(
+            f"_last_seq_for: no seq-table mapping registered for store {name!r} — every "
+            "DurableSetPaths member must be handled either via _SEQ_TABLE_BY_NAME or "
+            "_OPTIONAL_FILES (this function's own docstring)"
+        )
     conn = sqlite3.connect(str(backup_path))
     try:
         return _read_optional_int(conn, f"SELECT MAX(seq) FROM {table}")
@@ -308,11 +388,12 @@ def backup_set(
     stopped or not-yet-started runtime) is responsible for that.
 
     Args:
-        paths: The four source files. ``evidence``/``rcl``/``inbox`` must already exist (refused
+        paths: The five source files. ``evidence``/``rcl``/``inbox`` must already exist (refused
             otherwise — never silently backs up an absent store as a fresh empty file, which
-            ``sqlite3.connect`` would do by default). ``composite_state`` MAY be absent (a
-            runtime that never wrote a composite never creates that file) — recorded honestly as
-            ``None`` in the manifest rather than fabricated.
+            ``sqlite3.connect`` would do by default). ``composite_state`` and ``marketfeed`` MAY
+            be absent (:data:`_OPTIONAL_FILES` — a runtime that never wrote a composite, or never
+            ticked, never creates that file) — recorded honestly as ``None`` in the manifest
+            rather than fabricated.
         dest_dir: Where ``gen{generation}/`` and the manifest are written. Never deleted, never
             overwritten.
         generation: Must be strictly greater than the highest existing ``gen*`` manifest already
@@ -342,10 +423,11 @@ def backup_set(
         "rcl": paths.rcl,
         "inbox": paths.inbox,
         "composite_state": paths.composite_state,
+        "marketfeed": paths.marketfeed,
     }
     for name, source_path in file_specs.items():
-        if name == "composite_state":
-            continue  # optional — see this function's own docstring
+        if name in _OPTIONAL_FILES:
+            continue  # optional — see this function's own docstring / _OPTIONAL_FILES
         if not source_path.is_file():
             raise BackupSetRefused(
                 f"backup_set: source file for {name!r} does not exist at {source_path} — "
@@ -358,7 +440,7 @@ def backup_set(
 
     files: dict[str, FileBackupEntry | None] = {}
     for name, source_path in file_specs.items():
-        if name == "composite_state" and not source_path.is_file():
+        if name in _OPTIONAL_FILES and not source_path.is_file():
             files[name] = None
             continue
         backup_path = gen_dir / f"{name}.sqlite3"
@@ -415,9 +497,19 @@ def restore_set(
     :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.verify_or_raise` — the same check
     :mod:`tos_runtime.evidence.backup`'s own ``restore()`` performs.
 
+    **Backward compatibility with a pre-marketfeed manifest.** A manifest written before
+    ``marketfeed`` joined the backup set (plan §6 ④) has no ``"marketfeed"`` key in ``files`` at
+    all — not even a ``None`` entry. That legitimately means "this manifest predates this store",
+    the same fact ``composite_state=None`` records for a runtime that never wrote one; the
+    restored set is given a ``marketfeed`` path with no file behind it rather than a
+    fabricated one or a raised ``KeyError``. This is the NEW-code/OLD-manifest direction, and it is
+    exercised by a real test; the reverse direction (an OLD ``restore_set`` reading a NEW manifest)
+    is only a static trace — see this module's own docstring, "Manifest compatibility is
+    two-directional" paragraph.
+
     Args:
         manifest_path: The ``*.set.manifest.json`` :func:`backup_set` wrote.
-        dest_dir: Where the four restored files are copied. Refused if it resolves equal to, or
+        dest_dir: Where the restored files are copied. Refused if it resolves equal to, or
             inside, ANY of the manifest's own recorded LIVE source directories.
         key_provider: The evidence store's key source for the post-restore chain
             re-verification.
@@ -446,9 +538,9 @@ def restore_set(
     for name, entry in manifest.files.items():
         dest_path = dest_dir / f"{name}.sqlite3"
         if entry is None:
-            # composite_state was absent at backup time (module docstring) — the restored
-            # directory simply has no such file either; a recompose creates it lazily on first
-            # write, exactly like a runtime that never wrote one.
+            # composite_state/marketfeed was absent at backup time (module docstring) — the
+            # restored directory simply has no such file either; a recompose creates it lazily
+            # on first write, exactly like a runtime that never wrote one.
             restored_file_paths[name] = dest_path
             continue
         _backup_one_file(Path(entry.path), dest_path)
@@ -460,11 +552,22 @@ def restore_set(
             )
         restored_file_paths[name] = dest_path
 
+    # Backward compatibility with a manifest written BEFORE marketfeed joined the backup set
+    # (plan §6 ④): such a manifest's own `files` has no "marketfeed" key at all — not even a
+    # `None` entry — because the key did not exist yet. That is a real, different fact from "this
+    # store existed and was empty at backup time": the old manifest legitimately PREDATES this
+    # store, so the restored set simply has no such file, exactly like the composite_state-absent
+    # case above (``BackupSetManifest.files``'s own docstring). Never fabricate a file for it, and
+    # never raise a bare KeyError that hides which shape of manifest this is.
+    if "marketfeed" not in restored_file_paths:
+        restored_file_paths["marketfeed"] = dest_dir / MARKETFEED_FILE_NAME
+
     restored_paths = DurableSetPaths(
         evidence=restored_file_paths["evidence"],
         rcl=restored_file_paths["rcl"],
         inbox=restored_file_paths["inbox"],
         composite_state=restored_file_paths["composite_state"],
+        marketfeed=restored_file_paths["marketfeed"],
     )
 
     restored_evidence_store = SqliteEvidenceStore(
@@ -584,7 +687,7 @@ def restore_drill(
 
     Args:
         restored: The :class:`RestoredSet` from :func:`restore_set`.
-        compose: Recomposes a runtime over ``restored``'s own directory (all four restored files
+        compose: Recomposes a runtime over ``restored``'s own directory (all five restored files
             share one directory — see :func:`restore_set`) under ``environment_label``.
         build_core: A fresh-core factory for :func:`~tos_runtime.engine.replay.replay_engine`.
         scheme: The canonicalization scheme the replay digest comparison uses.

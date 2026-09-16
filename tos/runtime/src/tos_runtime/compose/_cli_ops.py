@@ -49,11 +49,12 @@ already returned on any non-``APPROVED`` :func:`~tos_runtime.safety.rearm
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``hashlib``) +
 ``tos.canonical`` + ``tos_runtime.engine.inbox`` + ``tos_runtime.evidence.store`` +
-``tos_runtime.riskstate.policies`` + ``tos_runtime.safety.rearm`` +
-``tos_runtime.time.service`` only. ``tos_runtime.riskstate.policies`` was added for
-:func:`risk_state_policy_digest_lines` (TOS risk state service wave, lane b) — the SAME
-"``cli.py``'s size budget pushed a print-only helper here" idiom this module already used
-for :func:`rearm_and_clear`.
+``tos_runtime.marketfeed.policy`` + ``tos_runtime.riskstate.policies`` +
+``tos_runtime.safety.rearm`` + ``tos_runtime.time.service`` only.
+``tos_runtime.riskstate.policies``/``tos_runtime.marketfeed.policy`` were added for
+:func:`risk_state_policy_digest_lines`/:func:`marketfeed_policy_digest_lines` (risk state
+service wave lane b; tick-source wave lane D) — the SAME "``cli.py``'s size budget pushed a
+print-only helper here" idiom this module already used for :func:`rearm_and_clear`.
 """
 
 from __future__ import annotations
@@ -66,6 +67,10 @@ from tos.canonical import CanonicalizationScheme
 
 from tos_runtime.engine.inbox import NewRiskHaltClearOutcome, SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.marketfeed.policy import (
+    CRITICAL_INPUT_POLICY_CONFIG_NAME,
+    load_critical_input_policy,
+)
 from tos_runtime.riskstate.policies import (
     ACTION_FLOW_POLICY_CONFIG_NAME,
     AGGREGATE_RISK_POLICY_CONFIG_NAME,
@@ -77,6 +82,7 @@ from tos_runtime.time.service import TrustworthyTimeService
 
 __all__ = [
     "RearmCliOutcome",
+    "marketfeed_policy_digest_lines",
     "rearm_and_clear",
     "risk_state_policy_digest_lines",
 ]
@@ -113,6 +119,30 @@ def risk_state_policy_digest_lines(
             f"{loaded_afg.policy.canonical_digest}"
         )
     return tuple(lines)
+
+
+def marketfeed_policy_digest_lines(
+    config_dir: Path, *, scheme: CanonicalizationScheme
+) -> tuple[str, ...]:
+    """``print-policy-digests``'s own tick-source extension (TOS tick-source wave, lane D;
+    ``compose/cli.py``'s own size budget pushed this helper here — the SAME idiom
+    :func:`risk_state_policy_digest_lines` above already uses). Loads
+    ``critical_input_policy.yaml`` under ``config_dir`` and returns one
+    ``CRITICAL_INPUT_POLICY`` line iff the file EXISTS — optional, like the risk-state pair:
+    an operator adopting this wave incrementally may not have authored it yet, so a missing
+    file contributes no line and no error; a PRESENT but malformed file propagates
+    :class:`~tos_runtime.marketfeed.policy.CriticalInputPolicyConfigError` (the caller's own
+    ``except`` block covers it alongside ``VenuePolicyConfigError``).
+    """
+    cip_path = config_dir / CRITICAL_INPUT_POLICY_CONFIG_NAME
+    if not cip_path.is_file():
+        return ()
+    loaded_cip = load_critical_input_policy(cip_path, scheme=scheme)
+    return (
+        "CRITICAL_INPUT_POLICY "
+        f"{loaded_cip.policy_id} {loaded_cip.policy_generation} "
+        f"{loaded_cip.canonical_digest}",
+    )
 
 
 #: Duplicated from :mod:`tos_runtime.compose._types`'s own private

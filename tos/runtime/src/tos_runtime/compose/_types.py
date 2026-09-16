@@ -61,6 +61,7 @@ from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import NewRiskHaltClearOutcome, SqliteEventInbox
 from tos_runtime.evidence.emergency import EmergencyAppendLog
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.marketfeed.scheduler import TickScheduler
 from tos_runtime.nontrade.convert import payload_from_observation
 from tos_runtime.nontrade.observations import NonTradeObservation
 from tos_runtime.nontrade.processor import NonTradeEventProcessor, NonTradeOutcome
@@ -343,6 +344,18 @@ class ComposedRuntime:
     #: ``nontrade.yaml`` (the engine path does not depend on that file). ``None`` only
     #: transiently before that wiring runs.
     nontrade_admissibility_provider: Callable[[str], str | None] | None = None
+    #: TOS tick-source wave (plan §2 decisions 1-9) — the governed tick scheduler
+    #: :func:`~tos_runtime.compose._marketfeed_wiring.build_tick_scheduler` constructs whenever
+    #: ``marketfeed.yaml``/``critical_input_policy.yaml`` both exist under ``config_dir``.
+    #: ``None`` when either is absent — a legitimate, unconfigured state (mirrors
+    #: :attr:`nontrade`'s own "config-optional" discipline), never a boot refusal. Attached
+    #: AFTER :func:`~tos_runtime.compose._recovery_wiring.apply_recovery_barrier`, UNLIKE
+    #: :attr:`venue` — the scheduler captures :attr:`driver` at construction and holds it for
+    #: the rest of the process's life, so it must read the FINAL post-barrier value, never a
+    #: stale pre-barrier one a HOLD verdict later detaches (see :attr:`driver`'s own docstring;
+    #: :mod:`tos_runtime.compose._marketfeed_wiring`'s own module docstring has the full
+    #: reasoning).
+    marketfeed: TickScheduler | None = None
 
     def run_once(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
         """Drive ``events`` through :attr:`driver` to completion, one at a time.

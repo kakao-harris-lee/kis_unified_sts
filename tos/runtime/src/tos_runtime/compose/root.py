@@ -77,6 +77,7 @@ from tos_runtime.brokercap import is_broker_reaching
 from tos_runtime.calendar.config import load_calendar_config
 from tos_runtime.calendar.ports import WallClockReference
 from tos_runtime.compose._finalize_wiring import _finalize
+from tos_runtime.compose._marketfeed_wiring import build_tick_scheduler
 from tos_runtime.compose._operations_wiring import apply_operations_wiring
 from tos_runtime.compose._recovery_wiring import apply_recovery_barrier
 from tos_runtime.compose._release_wiring import apply_release_wiring
@@ -534,6 +535,22 @@ def compose_paper_runtime(
     # `composed` to a caller that could drive an attempt (_RecoveryDimensionState's own
     # docstring).
     boot.risk.recovery_dimension_state.verdict = composed.recovery
+    # TOS tick-source wave (plan §2 decisions 1-9) — build the tick scheduler now
+    # `composed.driver` reflects the FINAL post-barrier value (`_marketfeed_wiring.py`'s own
+    # module docstring on why this must run after `apply_recovery_barrier`, unlike `venue`
+    # above). `None` when `marketfeed.yaml` is absent — an operator who has not adopted this
+    # wave yet, never a boot refusal.
+    composed.marketfeed = build_tick_scheduler(
+        config_dir=config_dir,
+        data_dir=data_dir,
+        scheme=_SCHEME,
+        time_config=boot.infra.time_config,
+        time_service=composed.time_service,
+        session_owner=session_facts_owner,
+        driver=composed.driver,
+        inbox=composed.inbox,
+        evidence_store=composed.evidence_store,
+    )
     # TOS Phase 5 W4 (plan §2 decision 11) — operations facts + (optional) operator
     # projection, wired last: every durable fact this reads (evidence/RCL/inbox,
     # release_admitted, recovery) already exists by this point.
