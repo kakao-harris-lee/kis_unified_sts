@@ -1,19 +1,20 @@
 """Per-store baseline ``SchemaMigration`` definitions + the operator-facing ``apply_migrations``
-(TOS Phase 5 W4 plan §2 decision 3).
+(TOS Phase 5 W4 plan §2 decision 3; ``marketfeed`` entry added by the tick-source wave, plan
+``docs/plans/2026-09-16-tos-tick-source-plan.md`` §2 decision 3).
 
-**Baseline v1, this wave only.** Each of the three runtime-owned durable stores (evidence, RCL,
-inbox) gets exactly one registered migration: version 1, "baseline — current DDL as of the
-schema-ledger wave". A future wave that actually changes a table's shape adds a SECOND
+**Baseline v1, per store.** Each runtime-owned durable store (evidence, RCL, inbox, marketfeed)
+gets exactly one registered migration: version 1, "baseline — current DDL as of the store's own
+introduction". A future wave that actually changes a table's shape adds a SECOND
 ``SchemaMigration`` per affected store; this module does not invent placeholder future versions.
 
 **Deliberately self-contained (duplicated DDL, not imported).** The literal ``CREATE
 TABLE``/trigger strings below mirror — and must be kept in sync with — each store's own DDL
 (:mod:`tos_runtime.evidence.store`, :mod:`tos_runtime.rcl.schema`, :mod:`tos_runtime.engine.inbox`,
-including the inbox's own ``_ADDED_COLUMNS`` idiom, folded into ``events`` directly here since
-baseline v1 IS "the current DDL, added columns included" per the plan). This is intentional, not
-an oversight: :func:`apply_migrations` must be able to bring a PRE-EXISTING file (real tables,
-``user_version == 0``, never ledgered) up to baseline WITHOUT constructing the real store class
-first — that class's own constructor now calls
+:mod:`tos_runtime.marketfeed.store`, including the inbox's own ``_ADDED_COLUMNS`` idiom, folded
+into ``events`` directly here since baseline v1 IS "the current DDL, added columns included" per
+the plan). This is intentional, not an oversight: :func:`apply_migrations` must be able to bring a
+PRE-EXISTING file (real tables, ``user_version == 0``, never ledgered) up to baseline WITHOUT
+constructing the real store class first — that class's own constructor now calls
 :func:`~tos_runtime.operations.schema_ledger.ensure_schema_current`, which would immediately
 refuse a non-fresh, sub-baseline file with :class:`~tos_runtime.operations.schema_ledger
 .SchemaVersionRefused` — precisely the refusal this function exists to resolve. Importing the
@@ -47,6 +48,7 @@ from tos_runtime.operations.schema_ledger import (
 __all__ = [
     "EVIDENCE_MIGRATIONS",
     "INBOX_MIGRATIONS",
+    "MARKETFEED_MIGRATIONS",
     "RCL_MIGRATIONS",
     "STORE_MIGRATIONS",
     "SchemaMigration",
@@ -344,10 +346,62 @@ INBOX_MIGRATIONS: tuple[SchemaMigration, ...] = (
     ),
 )
 
+# -- marketfeed snapshot store baseline (mirrors tos_runtime.marketfeed.store) ----------------
+
+_MARKETFEED_BASELINE_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS snapshots (
+        snapshot_id TEXT PRIMARY KEY,
+        canonical_digest TEXT NOT NULL,
+        instrument TEXT NOT NULL,
+        as_of_ms INTEGER NOT NULL,
+        snapshot_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS snapshots_instrument_as_of
+    ON snapshots (instrument, as_of_ms)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS preimages (
+        snapshot_id TEXT NOT NULL,
+        raw_event_id TEXT NOT NULL,
+        preimage_json TEXT NOT NULL,
+        PRIMARY KEY (snapshot_id, raw_event_id)
+    )
+    """,
+)
+
+MARKETFEED_MIGRATIONS: tuple[SchemaMigration, ...] = (
+    SchemaMigration(
+        version=1,
+        description=(
+            "baseline — snapshots (content-addressed, one row per issued "
+            "CriticalInputSnapshot) + preimages (durable, keyed by (snapshot_id, raw_event_id))"
+        ),
+        statements=_MARKETFEED_BASELINE_STATEMENTS,
+        expected_tables={
+            "snapshots": (
+                "snapshot_id",
+                "canonical_digest",
+                "instrument",
+                "as_of_ms",
+                "snapshot_json",
+            ),
+            "preimages": (
+                "snapshot_id",
+                "raw_event_id",
+                "preimage_json",
+            ),
+        },
+    ),
+)
+
 STORE_MIGRATIONS: Mapping[str, tuple[SchemaMigration, ...]] = {
     "evidence": EVIDENCE_MIGRATIONS,
     "rcl": RCL_MIGRATIONS,
     "inbox": INBOX_MIGRATIONS,
+    "marketfeed": MARKETFEED_MIGRATIONS,
 }
 
 
