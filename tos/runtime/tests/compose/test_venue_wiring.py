@@ -103,6 +103,32 @@ def _sync_venue_activation_digest(config_dir: Path) -> None:
     _rewrite_activation(config_dir, members)
 
 
+def _compose_with_construction(
+    tmp_path: Path,
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    construction,
+):
+    """Mirrors ``test_compose_root.py``'s own ``_compose`` but takes a caller-supplied
+    ``construction`` (that helper hardcodes ``fx.construction_config()``) — used by the (a′)
+    wave's order-shape sourcing tests below to mutate the injected literal shape / envelope
+    independently of the shared happy-path fixture every other e2e test in this file relies
+    on."""
+    fx.write_band_strategy_file(config_dir)
+    return compose_paper_runtime(
+        config_dir,
+        data_dir,
+        custody_root,
+        "non-live-test",
+        construction=construction,
+        aggregate_risk_inputs_provider=_aggregate_inputs,
+        action_flow_inputs_provider=_action_flow_inputs,
+        transport_kind=TransportKind.SYNTHETIC,
+        wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
+    )
+
+
 def _kind_count(runtime, kind: str) -> int:
     return runtime.evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = ?", (kind,)
@@ -646,4 +672,364 @@ class TestWireCodecCrossCheck:
         loaded = load_order_construction_policy(path, scheme=_SCHEME)
         _venue_wiring._cross_check_wire_codec(
             loaded, transport_kind=TransportKind.SYNTHETIC
+        )
+
+
+# ===========================================================================
+# (a′) wave lane C — order_shape field sourcing
+# (docs/plans/2026-09-16-tos-aprime-envelope-order-shape-plan.md §2 decisions 2/3/4)
+# ===========================================================================
+
+
+class TestDerivedQuantityReachesVenueGate:
+    """decision 2: ``order_shape.quantity`` is judged from the derivation
+    (``construction.command.axis_value(QUANTITY)``), never the caller-declared literal on
+    ``ConstructionConfig.order_shape``."""
+
+    def test_derived_quantity_reaches_the_fold_not_the_literal(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        # fx.sizing_bound() derives risk_budget/per_unit_risk = 1000/50 = 20 (already an
+        # exact lot_size=2 multiple, within [min_quantity=2, max_quantity=100]) —
+        # deliberately different from the literal quantity below (4, itself on-grid /
+        # admissible on its own) so an ADMIT here cannot be explained by the literal
+        # happening to match, only by the derived value being the one actually judged.
+        construction = fx.construction_config(order_shape=fx.order_shape(quantity=4))
+        runtime = _compose_with_construction(
+            tmp_path, config_dir, data_dir, custody_root, construction
+        )
+        _reach_trusted(runtime)
+
+        results = runtime.run_once((fx.crossing_event(),))
+        verdicts = {v.step: v for v in results[0].flow.verdicts}
+        step3 = verdicts[CommitmentStep.VENUE_ADMISSIBILITY_DECISION]
+
+        construction_result = runtime.construction_stage.construction
+        assert (
+            construction_result is not None and construction_result.command is not None
+        )
+        # the bound axis value is a canonicalized Decimal string (e.g. "2E+1", not "20") —
+        # assert the parsed *value*, not its literal spelling.
+        from decimal import Decimal
+
+        bound_quantity = construction_result.command.axis_value(
+            fx.ConformanceAxis.QUANTITY
+        )
+        assert bound_quantity is not None and Decimal(bound_quantity) == 20
+
+        assert runtime.venue_stage.resolved_shape is not None
+        assert runtime.venue_stage.resolved_shape.quantity == 20
+        assert step3.outcome is StageOutcome.ADMIT
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+    def test_literal_derived_quantity_mismatch_no_longer_passes_on_the_literal(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """The defect, as a test (team-lead brief): a literal quantity (999) the venue policy
+        would refuse on its own (exceeds ``max_quantity=100`` — ``conftest.py``'s own venue
+        policy fixture) must not veto the attempt when the DERIVED quantity (20, on-grid,
+        in-bounds) is the one actually judged. Pre-fix, ``order_shape_admissible`` judged the
+        caller's literal directly and this attempt would have been INADMISSIBLE."""
+        construction = fx.construction_config(order_shape=fx.order_shape(quantity=999))
+        runtime = _compose_with_construction(
+            tmp_path, config_dir, data_dir, custody_root, construction
+        )
+        _reach_trusted(runtime)
+
+        results = runtime.run_once((fx.crossing_event(),))
+        verdicts = {v.step: v for v in results[0].flow.verdicts}
+        step3 = verdicts[CommitmentStep.VENUE_ADMISSIBILITY_DECISION]
+
+        assert runtime.venue_stage.resolved_shape is not None
+        assert runtime.venue_stage.resolved_shape.quantity == 20
+        assert step3.outcome is StageOutcome.ADMIT
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+    # No e2e "denied derivation ⇒ step3 sees quantity=None" test: ``tos.engine.sequencer
+    # .run_commitment_flow``'s "positive-admit gate" halts the flow entirely at the FIRST
+    # non-ADMIT verdict ("Only an explicit ADMIT advances") — a denied step 2
+    # (``candidate_command_verdict`` DENYs whenever ``construction.command is None``) means
+    # step 3's stage never runs at all, so there is no ``StageVerdict`` to read here. The
+    # ``candidate_command is None ⇒ quantity is None`` fail-closed behaviour is instead
+    # covered directly at the unit level: ``TestDerivedShapeQuantityUnit
+    # .test_absent_candidate_command_is_none`` below.
+
+
+class TestSilentlyRoundedObservedEndToEnd:
+    """decision 4: ``silently_rounded`` is an OBSERVED tick/lot-grid fact, never the injected
+    attestation."""
+
+    def test_on_grid_shape_observes_silently_rounded_false(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+        runtime.run_once((fx.crossing_event(),))
+
+        assert runtime.venue_stage.resolved_shape is not None
+        assert runtime.venue_stage.resolved_shape.silently_rounded is False
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+    def test_off_grid_price_observes_not_false_and_denies(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """Disabling step 3's value-surface price projection (``shape_price_field_key=None``)
+        leaves the literal price (4200) standing — off the venue policy's own tick grid
+        (``conftest.py``: ``price_min=1000``, ``tick_size=500`` — ``(4200-1000) % 500 ==
+        200``). The injected ``silently_rounded=False`` attestation is IGNORED; the observed
+        fact (off-grid) denies the attempt through ``order_shape_admissible``'s own early
+        gate ("anything other than a positive ``False`` fails closed")."""
+        construction = fx.construction_config(shape_price_field_key=None)
+        runtime = _compose_with_construction(
+            tmp_path, config_dir, data_dir, custody_root, construction
+        )
+        _reach_trusted(runtime)
+
+        results = runtime.run_once((fx.crossing_event(),))
+        verdicts = {v.step: v for v in results[0].flow.verdicts}
+        step3 = verdicts[CommitmentStep.VENUE_ADMISSIBILITY_DECISION]
+
+        assert runtime.venue_stage.resolved_shape is not None
+        assert runtime.venue_stage.resolved_shape.price == 4200
+        assert runtime.venue_stage.resolved_shape.silently_rounded is not False
+        assert step3.outcome is not StageOutcome.ADMIT
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+
+class TestDerivedShapeQuantityUnit:
+    """decision 2: pure unit coverage for :func:`_derived_shape_quantity`'s fail-closed
+    parsing — the case an e2e path cannot cheaply exercise (a bound axis value that is not an
+    exact whole number)."""
+
+    def test_absent_candidate_command_is_none(self) -> None:
+        from tos_runtime.compose._venue_wiring import _derived_shape_quantity
+
+        assert _derived_shape_quantity(None) is None
+
+    def test_absent_quantity_axis_is_none(self) -> None:
+        from tos.ioc import CanonicalBrokerCommand
+        from tos_runtime.compose._venue_wiring import _derived_shape_quantity
+
+        command = CanonicalBrokerCommand(command_id="cmd-test", command_generation=1)
+        assert _derived_shape_quantity(command) is None
+
+    def test_fractional_axis_value_is_none_not_a_guess(self) -> None:
+        from tos.ioc import AxisBinding, CanonicalBrokerCommand, ConformanceAxis
+        from tos_runtime.compose._venue_wiring import _derived_shape_quantity
+
+        command = CanonicalBrokerCommand(
+            command_id="cmd-test",
+            command_generation=1,
+            axis_bindings=(AxisBinding(axis=ConformanceAxis.QUANTITY, value="1.5"),),
+        )
+        assert _derived_shape_quantity(command) is None
+
+    def test_whole_number_axis_value_parses_to_int(self) -> None:
+        from tos.ioc import AxisBinding, CanonicalBrokerCommand, ConformanceAxis
+        from tos_runtime.compose._venue_wiring import _derived_shape_quantity
+
+        command = CanonicalBrokerCommand(
+            command_id="cmd-test",
+            command_generation=1,
+            axis_bindings=(AxisBinding(axis=ConformanceAxis.QUANTITY, value="20"),),
+        )
+        assert _derived_shape_quantity(command) == 20
+
+
+class TestConstructionRulesShapeSourcingUnit:
+    """decisions 2/3: pure unit coverage for the ``ConstructionRules``-driven sourcing
+    helpers. Not yet reachable end-to-end — ``compose/_wiring.py``'s own
+    ``_build_construction_stages`` does not pass a loaded ``ConstructionRules`` into
+    ``VenueServiceStage`` yet (that wiring reaches into ``compose/root.py``, outside this
+    wave's lane-C scope; see the lane-C report) — so the capability is exercised directly.
+    """
+
+    def test_side_and_position_effect_come_from_the_mapping(self) -> None:
+        from tos.venue import ActionClass
+        from tos_runtime.compose._venue_wiring import _shape_side_and_position_effect
+        from tos_runtime.venue.construction_rules import (
+            ActionClassShape,
+            ConstructionRules,
+        )
+
+        rules = ConstructionRules(
+            sizing_bound=fx.sizing_bound(),
+            admitted_quantity_bases=frozenset({"RISK"}),
+            authorized_axes=(),
+            action_class_shape={
+                ActionClass.NEW_LONG: ActionClassShape(
+                    side="BUY", position_effect="OPEN", direction="LONG"
+                ),
+                ActionClass.NEW_SHORT: ActionClassShape(
+                    side="SELL", position_effect="OPEN", direction="SHORT"
+                ),
+            },
+            effect_dimensions=(),
+        )
+
+        assert _shape_side_and_position_effect(rules, ActionClass.NEW_LONG) == (
+            "BUY",
+            "OPEN",
+        )
+        # NEW_SHORT mirror — symmetric, not a narrower/omitted case (CLAUDE.md
+        # non-negotiable: "Futures must preserve long/short symmetry").
+        assert _shape_side_and_position_effect(rules, ActionClass.NEW_SHORT) == (
+            "SELL",
+            "OPEN",
+        )
+
+    def test_action_class_absent_from_the_mapping_is_a_refusal(self) -> None:
+        from tos.venue import ActionClass
+        from tos_runtime.compose._venue_wiring import _shape_side_and_position_effect
+        from tos_runtime.venue.construction_rules import (
+            ActionClassShape,
+            ConstructionRules,
+        )
+
+        rules = ConstructionRules(
+            sizing_bound=fx.sizing_bound(),
+            admitted_quantity_bases=frozenset({"RISK"}),
+            authorized_axes=(),
+            action_class_shape={
+                ActionClass.NEW_LONG: ActionClassShape(
+                    side="BUY", position_effect="OPEN", direction="LONG"
+                ),
+            },
+            effect_dimensions=(),
+        )
+
+        assert _shape_side_and_position_effect(rules, ActionClass.NEW_SHORT) == (
+            None,
+            None,
+        )
+        assert _shape_side_and_position_effect(rules, None) == (None, None)
+
+    def test_order_type_and_tif_come_from_authorized_axes(self) -> None:
+        from tos.ioc import AxisBinding, ConformanceAxis
+        from tos_runtime.compose._venue_wiring import _shape_order_type_and_tif
+        from tos_runtime.venue.construction_rules import ConstructionRules
+
+        rules = ConstructionRules(
+            sizing_bound=fx.sizing_bound(),
+            admitted_quantity_bases=frozenset({"RISK"}),
+            authorized_axes=(
+                AxisBinding(axis=ConformanceAxis.ORDER_TYPE, value="LIMIT"),
+                AxisBinding(axis=ConformanceAxis.TIF, value="DAY"),
+                AxisBinding(axis=ConformanceAxis.ACCOUNT, value=fx.ACCOUNT),
+            ),
+            action_class_shape={},
+            effect_dimensions=(),
+        )
+
+        assert _shape_order_type_and_tif(rules) == ("LIMIT", "DAY")
+
+    def test_order_type_and_tif_absent_from_authorized_axes_is_none(self) -> None:
+        from tos_runtime.compose._venue_wiring import _shape_order_type_and_tif
+        from tos_runtime.venue.construction_rules import ConstructionRules
+
+        rules = ConstructionRules(
+            sizing_bound=fx.sizing_bound(),
+            admitted_quantity_bases=frozenset({"RISK"}),
+            authorized_axes=(),
+            action_class_shape={},
+            effect_dimensions=(),
+        )
+
+        assert _shape_order_type_and_tif(rules) == (None, None)
+
+
+class TestObservedSilentlyRoundedUnit:
+    """decision 4: pure unit coverage for :func:`_observed_silently_rounded` — every branch,
+    including the "ungradeable" cases an e2e path cannot cheaply reach."""
+
+    @staticmethod
+    def _constraints(**overrides: object):
+        from tos.venue import VenueShapeConstraints
+
+        base: dict[str, object] = {
+            "price_min": 1000,
+            "price_max": 9000000,
+            "tick_size": 500,
+            "lot_size": 2,
+            "min_quantity": 2,
+            "max_quantity": 100,
+            "allowed_order_types": frozenset({"LIMIT"}),
+            "allowed_tifs": frozenset({"DAY"}),
+            "allowed_sides": frozenset({"BUY", "SELL"}),
+            "allowed_position_effects": frozenset({"OPEN", "CLOSE"}),
+        }
+        base.update(overrides)
+        return VenueShapeConstraints(**base)
+
+    def test_on_grid_price_and_quantity_observe_false(self) -> None:
+        from tos_runtime.compose._venue_wiring import _observed_silently_rounded
+
+        assert (
+            _observed_silently_rounded(
+                price=4500, quantity=20, constraints=self._constraints()
+            )
+            is False
+        )
+
+    def test_off_grid_price_observes_not_false(self) -> None:
+        from tos_runtime.compose._venue_wiring import _observed_silently_rounded
+
+        result = _observed_silently_rounded(
+            price=4200, quantity=20, constraints=self._constraints()
+        )
+        assert result is not False
+
+    def test_off_grid_quantity_observes_not_false(self) -> None:
+        from tos_runtime.compose._venue_wiring import _observed_silently_rounded
+
+        result = _observed_silently_rounded(
+            price=4500, quantity=21, constraints=self._constraints()
+        )
+        assert result is not False
+
+    def test_missing_constraints_is_ungradeable(self) -> None:
+        from tos_runtime.compose._venue_wiring import _observed_silently_rounded
+
+        assert (
+            _observed_silently_rounded(price=4500, quantity=20, constraints=None)
+            is None
+        )
+
+    def test_missing_price_or_quantity_is_ungradeable(self) -> None:
+        from tos_runtime.compose._venue_wiring import _observed_silently_rounded
+
+        constraints = self._constraints()
+        assert (
+            _observed_silently_rounded(price=None, quantity=20, constraints=constraints)
+            is None
+        )
+        assert (
+            _observed_silently_rounded(
+                price=4500, quantity=None, constraints=constraints
+            )
+            is None
+        )
+
+    def test_zero_tick_or_lot_is_ungradeable(self) -> None:
+        from tos_runtime.compose._venue_wiring import _observed_silently_rounded
+
+        assert (
+            _observed_silently_rounded(
+                price=4500, quantity=20, constraints=self._constraints(tick_size=0)
+            )
+            is None
+        )
+        assert (
+            _observed_silently_rounded(
+                price=4500, quantity=20, constraints=self._constraints(lot_size=0)
+            )
+            is None
         )
