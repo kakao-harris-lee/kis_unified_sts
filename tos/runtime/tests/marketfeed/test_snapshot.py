@@ -236,6 +236,43 @@ def test_now_ms_none_derives_unknown_for_every_declared_field(tmp_path: Path) ->
     assert all(r.reason == "now_ms_unknown" for r in issued.field_reports)
 
 
+def test_future_dated_as_of_is_not_refused_at_this_layer(tmp_path: Path) -> None:
+    """Review closure (확인 불가 pinned): a future-dated ``as_of_ms`` (negative age,
+    ``now_ms < as_of_ms``) must publish VALID through the real kernel gate at this layer.
+
+    This is correct, not a fail-open. The freshness check here is
+    ``now_ms - as_of_ms > spec.max_age_ms``, which is ``False`` for a negative age, so this
+    layer has no opinion on future-dating by construction. The actual defense lives one layer
+    later, on the time-admission path: ``tos.time.freshness_verdict``
+    (``tos/src/tos/time/predicates.py:375-408``) treats a negative ``source_age`` as legitimate
+    future-dating — never clamped to zero — and returns ``CONFLICTED`` both when there is no
+    ``future_tolerance`` at all and when the skew exceeds it. Do NOT "fix" this into a
+    fail-closed check here — that would duplicate a bound (``MAX_future_timestamp_tolerance_ms``)
+    the kernel already owns, applied at a different layer, which is its own defect class.
+    """
+    issuer = _issuer(tmp_path)
+    obs = observation(fields=(("close", CLOSE_BAR_ONE),))
+    future_now_ms = obs.as_of_ms - 60_000  # now is 60s BEFORE as_of -> negative age
+    issued = issuer.issue(obs, now_ms=future_now_ms)
+
+    reports = {r.field_key: r for r in issued.field_reports}
+    assert reports["close"].state == FieldState.VALID
+    assert reports["close"].reason is None
+
+    capsule = _capsule_issuer(issued.snapshot.critical_input_policy).issue(
+        issued.snapshot
+    )
+    resolution = publish_context_value_view(
+        capsule=capsule,
+        snapshot=issued.snapshot,
+        candidates=(_candidate(obs, issued, "close"),),
+        scheme=SCHEME,
+    )
+    assert resolution.disposition == ValueViewDisposition.RESOLVED
+    published = {v.field_key: v.value for v in resolution.values}
+    assert published == {"close": CLOSE_BAR_ONE}
+
+
 def test_unprojectable_value_derives_unknown(tmp_path: Path) -> None:
     """A ``float`` is refused by the kernel's own ``project_scalar`` (non-deterministic numeric,
     design #32 §2.5) — this module reuses that rule rather than re-deciding it."""

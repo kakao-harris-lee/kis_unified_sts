@@ -61,6 +61,16 @@ all-or-nothing. ``None`` degrades correctly at the predicate above — ``observe
 folded as *uncertain* (``UNCERTAIN`` -> ``UNKNOWN``), never a mismatch — which is the "absence is
 restrictive, never permissive" discipline this codebase applies everywhere else.
 
+**Review closure — a future-dated ``as_of_ms`` (negative age) is deliberately not refused here.**
+``_derive_field_state``'s freshness check is ``now_ms - as_of_ms > spec.max_age_ms``, which is
+``False`` for a negative age, so a future-dated observation reads ``VALID`` at this layer. That is
+not a fail-open: the future-dating defense is owned one layer later, on the time-admission path —
+``tos.time.freshness_verdict`` (``tos/src/tos/time/predicates.py:375-408``) treats a negative
+``source_age`` as legitimate future-dating, never clamps it to zero, and returns ``CONFLICTED``
+both with no ``future_tolerance`` at all and when the skew exceeds it. This layer has no
+future-date opinion by design — duplicating that bound here would be its own defect class, a
+runtime-owned copy of a kernel-owned bound that can drift out of sync with it.
+
 Firewall (R1, runtime scope): stdlib + ``tos.*`` + ``tos_runtime.marketfeed.ports`` only — no
 ``shared.*``, no network, no clock (the caller supplies ``now_ms``; this module never reads one).
 """
