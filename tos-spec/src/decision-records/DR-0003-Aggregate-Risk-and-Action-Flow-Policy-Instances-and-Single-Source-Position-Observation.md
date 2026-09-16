@@ -2,7 +2,8 @@
 
 - **Decision ID:** DR-0003
 - **Date:** 2026-09-16
-- **Status:** Proposed (becomes Accepted on System Owner merge; see §6)
+- **Status:** Accepted (System Owner, 2026-09-16 — PR #702 merged 2026-09-16;
+  acceptance confirmed with the adoption of the first policy instances, see §6)
 - **Decision Owner:** System Owner (final risk-acceptance authority, vision §12.1)
 - **Category:** Governance Decision
 - **Originating Finding:** The implementation track's composition root takes
