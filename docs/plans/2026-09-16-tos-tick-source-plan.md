@@ -111,16 +111,18 @@ class TickOutcome(StrEnum):
 5. **hypothesis 헬스체크 취약점(웨이브 밖 · 기존)** — **결정: 기록만, 미조치.** — `tos/runtime/tests/riskstate/test_position.py::test_adding_unknown_attempt_never_decreases_worst_credible_usage` 가 부하 상황에서 `FailedHealthCheck: Input generation is slow` 로 실패(단독 재실행 시 통과). 이 웨이브가 병렬 에이전트를 여럿 돌리며 드러났을 뿐 **리스크 상태 웨이브(`29d50ec5`) 것**이고, 런타임 테스트 어디에도 `suppress_health_check` 프로파일이 없다. CI 도 부하를 받으면 같은 것을 맞는다 — 이번 웨이브에서 고치지 않음(범위 밖). 별도 처리 여부는 운영자 결정.
 6. 다음 순서 — **결정: (a′) 잔여 먼저.** `envelope`(승인 Intent/IAP 저작 흐름) + `order_shape`(전략 제안이 구체 shape 를 싣기). 이 둘이 `run` 의 마지막 차단이며, 끝나면 런타임이 실제로 구동 가능해진다. 이후 순서: (c2) 실 시세 어댑터 → 브로커 증인(P-BAL)/band 원천 → 실 HSE 인스턴스 → 커널 라운드 #4.
 
-## 7. 착지 기록 (2026-09-16)
+## 7. 착지 기록 (2026-09-16) — **웨이브 완료 · 전 레인 main 머지**
+
+> 2026-09-16 전건 머지: 레인 A/C/B/D/E → `feat/tos-tick-source` → **main `24f6c217`**. 머지 후 main 실측 **2206 passed** · CI 8종(`test`·`tos-gate`·`tos-firewall`·`lint`·`type-check`·`backtest-extra`·`performance`·`ruff`) 전건 SUCCESS.
 
 | 레인 | PR | 커밋 | 내용 |
 |---|---|---|---|
-| 계약 | **#709** | `37d6c128`·`300cbe6f`·`ff2c70a1`·`90c57104`·`15798e73` | `ports.py`(로직 0) + 계획 · 리뷰 HIGH1(이중 역할 주입 트랩)·MED1(크기 예외 실측)·LOW1 전건 처분 · 운영자 결정 5건 기록 |
-| A | **#710** | `df75b5c9`·`ec29b5a0`·`109eef0b`·`c2d54305` | CIP 로더 · `SnapshotIssuer` · `CapsuleIssuer` · 리뷰 0건 · 확인 불가 1(미래 시각) 종결 · 커버리지 후속 |
-| B | **#712** | `b131f382`·`4bdb291a`·`27624134`·`c7dd2cbc` | `SqliteSnapshotStore` · 스키마 baseline v1 · migrate 드리프트 차단 · code MED1 + **migration HIGH1·MED2** 전건 처분 |
-| C | **#711** | `a82bad9a`·`d8d16959`·`8a7587e0` | 저널 intake · `RuntimeTimeProjection` · VER-002 2키 · 리뷰 0건·확인 불가 0 · 커버리지 87→98% |
-| D | **#713** | `99914c81`·`da7bdb0b`·`7ff3845f` | `TickScheduler` · compose 결선 · e2e — **(c) 해소** · 리뷰 HIGH2(무커버리지) 전건 처분 |
-| E | **#714** | `314430f5`·`b8fb63f8` | 백업 세트 편입(운영자 §6 ④ (a)) · `_OPTIONAL_FILES`/`_SEQ_TABLE_BY_NAME` 로 드리프트 4번째 차단 + `model_fields` 순회 핀 · **복원 후 실 커널 view 재발행 실증** · 리뷰 LOW1 + 확인 불가 1(역방향 호환 = 정적 추적) 전건 종결 |
+| 계약 | **#709 MERGED → main `24f6c217`** | `37d6c128`·`300cbe6f`·`ff2c70a1`·`90c57104`·`15798e73` | `ports.py`(로직 0) + 계획 · 리뷰 HIGH1(이중 역할 주입 트랩)·MED1(크기 예외 실측)·LOW1 전건 처분 · 운영자 결정 5건 기록 |
+| A | **#710 MERGED → `6f484426`** | `df75b5c9`·`ec29b5a0`·`109eef0b`·`c2d54305` | CIP 로더 · `SnapshotIssuer` · `CapsuleIssuer` · 리뷰 0건 · 확인 불가 1(미래 시각) 종결 · 커버리지 후속 |
+| B | **#712 MERGED → `eaa93ced`** | `b131f382`·`4bdb291a`·`27624134`·`c7dd2cbc` | `SqliteSnapshotStore` · 스키마 baseline v1 · migrate 드리프트 차단 · code MED1 + **migration HIGH1·MED2** 전건 처분 |
+| C | **#711 MERGED → `7a5f4a25`** | `a82bad9a`·`d8d16959`·`8a7587e0` | 저널 intake · `RuntimeTimeProjection` · VER-002 2키 · 리뷰 0건·확인 불가 0 · 커버리지 87→98% |
+| D | **#713 MERGED → `5c18f346`** | `99914c81`·`da7bdb0b`·`7ff3845f` | `TickScheduler` · compose 결선 · e2e — **(c) 해소** · 리뷰 HIGH2(무커버리지) 전건 처분 |
+| E | **#714 MERGED → `cd88cf4d`** | `314430f5`·`b8fb63f8` | 백업 세트 편입(운영자 §6 ④ (a)) · `_OPTIONAL_FILES`/`_SEQ_TABLE_BY_NAME` 로 드리프트 4번째 차단 + `model_fields` 순회 핀 · **복원 후 실 커널 view 재발행 실증** · 리뷰 LOW1 + 확인 불가 1(역방향 호환 = 정적 추적) 전건 종결 |
 
 ### 종료 조건 대비 (§5)
 
