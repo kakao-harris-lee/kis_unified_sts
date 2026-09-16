@@ -21,11 +21,16 @@ from tos_runtime.operations.dependency_admission import (
     observe_dependency_set_digest,
     observe_source_tree_digest,
 )
+from tos_runtime.riskstate.policies import (
+    load_action_flow_policy,
+    load_aggregate_risk_policy,
+)
 from tos_runtime.venue import (
     load_order_construction_policy,
     load_venue_constraint_policy,
 )
 
+from ..riskstate._documents import action_flow_policy_yaml, aggregate_risk_policy_yaml
 from ..venue._documents import ocp_yaml, venue_policy_yaml
 
 _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
@@ -550,6 +555,135 @@ def mismatched_release_config_dir(config_dir: Path) -> Path:
             },
         },
     )
+    return config_dir
+
+
+#: The TOS risk state service wave's own governed dimension id (an ADDITIVE new HSE/profile
+#: dimension, alongside the existing "max_notional" pair — never replacing it, so every OTHER
+#: compose e2e test reusing the base ``config_dir`` fixture's own envelope/profile is
+#: untouched) — see :func:`config_dir_with_risk_state`'s own docstring for why this lives on
+#: a SEPARATE, opt-in fixture rather than mutating ``config_dir`` itself.
+_RISK_STATE_DIMENSION_ID = "ACCOUNT::GROSS_NOTIONAL"
+_RISK_STATE_ENVELOPE_MAX = "100000"
+
+
+def _governed_dimension_entry(*, magnitude_key: str, value: str) -> dict:
+    return {
+        "dimension": _RISK_STATE_DIMENSION_ID,
+        magnitude_key: value,
+        "unit": "CONTRACTS",
+        "multiplier": "1",
+        "sign": "POSITIVE",
+        "precision": "0",
+        "rounding": "NEAREST",
+        "boundary": "INCLUSIVE",
+    }
+
+
+@pytest.fixture()
+def config_dir_with_risk_state(config_dir: Path) -> Path:
+    """``config_dir`` PLUS the two TOS risk state service wave governed policy instances
+    (TOS risk state service wave, plan §1 "합성 paper e2e" acceptance) — an OPT-IN layered
+    fixture, mirroring :func:`mismatched_release_config_dir`'s own "copy of config_dir with
+    one more thing written into it" idiom, so the ~400 OTHER compose e2e tests that request
+    ``config_dir`` directly are completely unaffected (each test's own ``config_dir``
+    invocation is a fresh ``tmp_path``-scoped directory; this fixture only ever mutates the
+    ONE instance a test that actually depends on it receives).
+
+    Adds, on top of the base fixture:
+
+    * A new ``ACCOUNT::GROSS_NOTIONAL`` governed dimension to BOTH ``safety_envelope.yaml``
+      and ``safety_profile.yaml`` (alongside the existing ``max_notional`` pair, never
+      replacing it) — ``profile_within_envelope``'s own "profile covers every envelope
+      dimension" requirement stays satisfied for every OTHER test's own happy path, since
+      this dimension is additive to both files together.
+    * ``aggregate_risk_policy.yaml`` / ``action_flow_policy.yaml`` scoped to this suite's own
+      ``fx.ACCOUNT``/``fx.INSTRUMENT``, covering both ``NEW_LONG``/``NEW_SHORT`` action
+      classes (plan §5 실증 (7) NEW_SHORT mirror), with generous limits
+      (``_RISK_STATE_ENVELOPE_MAX`` / ``100`` afg.ORDER) so a single crossing-event attempt's
+      real derived quantity has ample headroom, and
+      ``concurrent_consumers_share_one_envelope: true`` — REQUIRED (not the lane a fixture
+      builder's own ``false`` default) for ``tos.afg.amplification_bounded`` to ever GRANT
+      (§11 line 294's own positive-``True`` requirement).
+    * Two new ``safety_activation.yaml`` ``members:`` entries (additive to the existing
+      VENUE_CONSTRAINT_POLICY/ORDER_CONSTRUCTION_POLICY pair).
+    """
+    envelope_raw = yaml.safe_load(
+        (config_dir / "safety_envelope.yaml").read_text(encoding="utf-8")
+    )
+    envelope_raw["envelope"]["governed_dimensions"].append(
+        _governed_dimension_entry(
+            magnitude_key="envelope_max", value=_RISK_STATE_ENVELOPE_MAX
+        )
+    )
+    _write_yaml(config_dir / "safety_envelope.yaml", envelope_raw)
+
+    profile_raw = yaml.safe_load(
+        (config_dir / "safety_profile.yaml").read_text(encoding="utf-8")
+    )
+    profile_raw["profile"]["governed_dimensions"].append(
+        _governed_dimension_entry(
+            magnitude_key="profile_value", value=_RISK_STATE_ENVELOPE_MAX
+        )
+    )
+    _write_yaml(config_dir / "safety_profile.yaml", profile_raw)
+
+    are_path = config_dir / "aggregate_risk_policy.yaml"
+    are_path.write_text(
+        aggregate_risk_policy_yaml(
+            instrument_scope=f'["{_VENUE_POLICY_INSTRUMENT}"]',
+            account_scope=f'["{_VENUE_POLICY_ACCOUNT}"]',
+            governed_dimensions='["GROSS_NOTIONAL"]',
+            governed_scopes='["ACCOUNT"]',
+            dimension_id=_RISK_STATE_DIMENSION_ID,
+            dimension_scope="ACCOUNT",
+            dimension_dimension="GROSS_NOTIONAL",
+            unit="CONTRACTS",
+            effective_limit_value=_RISK_STATE_ENVELOPE_MAX,
+            required_scopes='["ACCOUNT"]',
+            applicable_risk_scopes='["ACCOUNT"]',
+        ),
+        encoding="utf-8",
+    )
+    afg_path = config_dir / "action_flow_policy.yaml"
+    afg_path.write_text(
+        action_flow_policy_yaml(
+            account_scope=f'["{_VENUE_POLICY_ACCOUNT}"]',
+            hard_limit="100",
+            runtime_limit="100",
+            envelope_max="100",
+            decision_effective_limit="100",
+            concurrent_consumers_share_one_envelope="true",
+        ),
+        encoding="utf-8",
+    )
+    are_loaded = load_aggregate_risk_policy(are_path, scheme=_SCHEME)
+    afg_loaded = load_action_flow_policy(afg_path, scheme=_SCHEME)
+
+    activation_raw = yaml.safe_load(
+        (config_dir / "safety_activation.yaml").read_text(encoding="utf-8")
+    )
+    activation_raw["members"].extend(
+        [
+            {
+                "kind": "AGGREGATE_RISK_POLICY",
+                "member_id": are_loaded.policy.policy_id,
+                "generation": are_loaded.policy.policy_generation,
+                "digest": are_loaded.policy.canonical_digest,
+                "resolved": True,
+                "immutable": True,
+            },
+            {
+                "kind": "ACTION_FLOW_POLICY",
+                "member_id": afg_loaded.policy.policy_id,
+                "generation": afg_loaded.policy.policy_generation,
+                "digest": afg_loaded.policy.canonical_digest,
+                "resolved": True,
+                "immutable": True,
+            },
+        ]
+    )
+    _write_yaml(config_dir / "safety_activation.yaml", activation_raw)
     return config_dir
 
 

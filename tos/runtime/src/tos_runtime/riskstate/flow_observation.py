@@ -45,6 +45,20 @@ implementation of the narrower Protocol" convention): when a scheme is supplied,
 ``EVENT_HANDLING_STARTED`` evidence receipt. Without a scheme, both fields are ``None`` (never
 guessed).
 
+**Superseded in production by a second, additive widening (team-lead disposition
+2026-09-16): :meth:`InboxFlowReader.observe` now also accepts an optional
+``root_event_seq``.** The identity-recomputation match above only succeeds when a caller's
+``root_event_id`` string happens to equal the inbox's own content-addressed identity for that
+row — this runtime's engine driver (``tos_runtime/engine/driver.py``) never guarantees that
+(``StageRequest.reference.event_id`` is a caller-authored label threaded through from the
+DECISION_TICK payload, not that digest). The engine handles exactly ONE inbox row at a time
+(``EngineDriver._process_next``'s own ``_draining``/re-entrancy guard), so the CURRENTLY
+handled row's ``seq`` is a genuine structural fact a caller can read directly off
+``SqliteEventInbox.next_unconsumed()`` (still not-yet-consumed at that point in the flow —
+``mark_consumed`` runs only after ``core.handle`` returns) and pass straight through, skipping
+the identity-recomputation match entirely. :mod:`tos_runtime.compose._riskstate_wiring` wires
+exactly this for :class:`~tos_runtime.riskstate.service.RiskStateService`.
+
 **``committed_flow_vectors`` — measured, and empirically ``()`` under the current e2e wiring
 (deviation, reported prominently).** DR-0003 §2.3 names "the committed flow vectors (unconsumed
 permits in the commit log)" as an observation. Two facts, both measured directly against
@@ -236,9 +250,76 @@ class InboxFlowReader:
                 return entry.appended_at_monotonic_ns
         return None
 
-    def observe(self, *, root_event_id: str, attempt_id: str) -> FlowObservation:
+    def _scan_sealed_lineage(
+        self,
+        sealed_payloads: list[dict[str, object]],
+        *,
+        root_event_id: str,
+        attempt_id: str,
+        terminal_attempts: set[str],
+        resolved_root_event_seq: int | None,
+    ) -> tuple[set[str], int, bool | None]:
+        """The sealed-payload lineage scan + the pre-seal fallback — split out of
+        :meth:`observe` purely for that method's own 100-line size budget.
+
+        Returns ``(cause_attempts, in_flight_count, this_attempt_lineage_found)``. The
+        fallback: when THIS attempt has sealed nothing yet (DR-0003 §2.3's own "event ->
+        proposal -> attempt chain read from the inbox" — evaluated at step 7, strictly
+        BEFORE step 15 ever seals anything for it, so a SEND_SEALED-tracing match can never
+        positively confirm a brand-new attempt's own lineage), the root event's own durable
+        presence at a positively resolved inbox seq IS the structural fact DR-0003 names —
+        never a fabricated ``True`` when the root itself could not be resolved. The
+        SEND_SEALED-tracing check still stands, unchanged, for an ALREADY-sealed attempt
+        whose seal does NOT trace to its claimed root (a genuine inconsistency).
+        """
+        cause_attempts: set[str] = set()
+        in_flight_count = 0
+        this_attempt_sealed = False
+        this_attempt_lineage_found: bool | None = None
+        for payload in sealed_payloads:
+            aid = payload.get("attempt_id")
+            seal = payload.get("send_seal")
+            if not isinstance(aid, str) or not isinstance(seal, Mapping):
+                continue
+            event_id, predecessors = _sealed_reference(seal)
+            traces = _traces_to(root_event_id, event_id, predecessors)
+            if aid == attempt_id:
+                this_attempt_sealed = True
+                this_attempt_lineage_found = traces
+            if traces:
+                cause_attempts.add(aid)
+                if aid not in terminal_attempts:
+                    in_flight_count += 1
+        if not this_attempt_sealed and resolved_root_event_seq is not None:
+            this_attempt_lineage_found = True
+        return cause_attempts, in_flight_count, this_attempt_lineage_found
+
+    def observe(
+        self,
+        *,
+        root_event_id: str,
+        attempt_id: str,
+        root_event_seq: int | None = None,
+    ) -> FlowObservation:
         """Assemble one :class:`FlowObservation` for ``root_event_id``/``attempt_id`` (module
-        docstring)."""
+        docstring).
+
+        Args:
+            root_event_seq: An OPTIONAL, additive, directly-resolved inbox seq for the root
+                event (lane b widening, TOS risk state service wave team-lead disposition
+                2026-09-16) — when supplied, it is used DIRECTLY in place of this reader's own
+                ``root_event_id``-to-``event_identity``-recomputation match
+                (:meth:`_resolve_root_event_seq`), which only succeeds when the caller's
+                ``root_event_id`` string happens to equal the durable inbox's own
+                content-addressed identity for that row — a coincidence this runtime's own
+                compose test fixtures do NOT guarantee (measured:
+                ``tests/compose/_fixtures.py::crossing_event`` sets ``reference.event_id`` to
+                a human label, never that digest). A caller that already knows which inbox
+                row is CURRENTLY being handled (e.g. ``SqliteEventInbox.next_unconsumed()``'s
+                own ``seq`` — the engine handles exactly one inbox row at a time, so this is a
+                genuine structural fact, not a guess) should resolve it there and pass it
+                here, never recomputing an identity match. ``None`` (the default) preserves
+                this reader's prior behavior unchanged."""
         sealed_payloads = _read_kind_payloads(self._evidence_store, _SEND_SEALED_KIND)
         consumed_payloads = _read_kind_payloads(
             self._evidence_store, "EGRESS_RESULT_CONSUMED"
@@ -252,24 +333,30 @@ class InboxFlowReader:
             if isinstance(aid, str):
                 terminal_attempts.add(aid)
 
-        cause_attempts: set[str] = set()
-        in_flight_count = 0
-        this_attempt_lineage_found: bool | None = None
-        for payload in sealed_payloads:
-            aid = payload.get("attempt_id")
-            seal = payload.get("send_seal")
-            if not isinstance(aid, str) or not isinstance(seal, Mapping):
-                continue
-            event_id, predecessors = _sealed_reference(seal)
-            traces = _traces_to(root_event_id, event_id, predecessors)
-            if aid == attempt_id:
-                this_attempt_lineage_found = traces
-            if traces:
-                cause_attempts.add(aid)
-                if aid not in terminal_attempts:
-                    in_flight_count += 1
-
         sources: list[str] = []
+
+        # Resolved BEFORE the sealed-payload loop below (module docstring's own "resolved
+        # structurally" section) — the pre-seal fallback for `this_attempt_lineage_found`
+        # needs to know whether the root event is itself durably, positively present.
+        resolved_root_event_seq: int | None
+        if root_event_seq is not None:
+            resolved_root_event_seq = root_event_seq
+            sources.append("inbox:current_seq")
+        else:
+            resolved_root_event_seq = self._resolve_root_event_seq(root_event_id)
+            if self._scheme is not None:
+                sources.append("inbox:event_identity")
+
+        cause_attempts, in_flight_count, this_attempt_lineage_found = (
+            self._scan_sealed_lineage(
+                sealed_payloads,
+                root_event_id=root_event_id,
+                attempt_id=attempt_id,
+                terminal_attempts=terminal_attempts,
+                resolved_root_event_seq=resolved_root_event_seq,
+            )
+        )
+
         if sealed_payloads:
             sources.append(f"evidence:{_SEND_SEALED_KIND}")
         if consumed_payloads:
@@ -278,11 +365,8 @@ class InboxFlowReader:
             sources.append("evidence:RESULT_UNMATCHED")
         sources.append("inbox:unconsumed_count")
 
-        root_event_seq = self._resolve_root_event_seq(root_event_id)
-        if self._scheme is not None:
-            sources.append("inbox:event_identity")
         handling_started_monotonic = self._resolve_handling_started_monotonic(
-            root_event_seq
+            resolved_root_event_seq
         )
         if handling_started_monotonic is not None:
             sources.append(f"evidence:{_HANDLING_STARTED_KIND}")
@@ -293,7 +377,7 @@ class InboxFlowReader:
             attempts_for_cause=len(cause_attempts),
             duplicates_rejected=None,
             replays=None,
-            root_event_seq=root_event_seq,
+            root_event_seq=resolved_root_event_seq,
             handling_started_monotonic=handling_started_monotonic,
             lineage_found=this_attempt_lineage_found,
             sources=tuple(sources),

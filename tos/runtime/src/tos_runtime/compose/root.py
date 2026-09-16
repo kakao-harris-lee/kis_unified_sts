@@ -63,6 +63,7 @@ Firewall (tools/tos_firewall_check.py R1, runtime scope): stdlib + ``tos.*``
 from __future__ import annotations
 
 import os
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
@@ -80,6 +81,7 @@ from tos_runtime.compose._operations_wiring import apply_operations_wiring
 from tos_runtime.compose._recovery_wiring import apply_recovery_barrier
 from tos_runtime.compose._release_wiring import apply_release_wiring
 from tos_runtime.compose._request_digest import KisWireCodecDigest
+from tos_runtime.compose._riskstate_wiring import build_risk_state_service
 from tos_runtime.compose._session_wiring import (
     CALENDAR_CONFIG_NAME,
     SessionInboxCell,
@@ -94,6 +96,7 @@ from tos_runtime.compose._types import (
     ComposedRuntime,
     ConstructionConfig,
     ReleaseAdmissionRefused,
+    RiskStateConfigError,
 )
 from tos_runtime.compose._venue_wiring import build_venue_service
 from tos_runtime.compose._wiring import (
@@ -104,10 +107,16 @@ from tos_runtime.compose._wiring import (
     _build_stage_map,
 )
 from tos_runtime.nontrade.config import NONTRADE_CONFIG_NAME
+from tos_runtime.rcl.log import StaleEpochRead
 from tos_runtime.risk.aggregate import (
     AggregateRiskDecisionInputs,
 )
 from tos_runtime.risk.flow import ActionFlowDecisionInputs
+from tos_runtime.riskstate.policies import (
+    ACTION_FLOW_POLICY_CONFIG_NAME,
+    AGGREGATE_RISK_POLICY_CONFIG_NAME,
+)
+from tos_runtime.riskstate.service import RiskStateService
 from tos_runtime.time.sources import (
     MonotonicSource,
 )
@@ -116,6 +125,7 @@ __all__ = [
     "ComposedRuntime",
     "ConstructionConfig",
     "ReleaseAdmissionRefused",
+    "RiskStateConfigError",
     "TransportKind",
     "compose_paper_runtime",
 ]
@@ -143,12 +153,12 @@ def compose_paper_runtime(
     environment_label: str,
     *,
     construction: ConstructionConfig,
-    aggregate_risk_inputs_provider: Callable[
-        [StageRequest], AggregateRiskDecisionInputs | None
-    ],
-    action_flow_inputs_provider: Callable[
-        [StageRequest], ActionFlowDecisionInputs | None
-    ],
+    aggregate_risk_inputs_provider: (
+        Callable[[StageRequest], AggregateRiskDecisionInputs | None] | None
+    ) = None,
+    action_flow_inputs_provider: (
+        Callable[[StageRequest], ActionFlowDecisionInputs | None] | None
+    ) = None,
     registry: StrategyRegistry | None = None,
     authority_domain: str = "trading",
     continuity_id: str = "paper-runtime",
@@ -168,7 +178,12 @@ def compose_paper_runtime(
         custody_root: The D4 custody directory.
         environment_label: Boot-argument environment label (never ``os.environ`` — D1.1).
         construction: Per-strategy Order Construction facts (steps 2/3/5/11) — :class:`ConstructionConfig`.
-        aggregate_risk_inputs_provider: Supplies step 6's inputs (``None`` => restrictive UNKNOWN).
+        aggregate_risk_inputs_provider: Supplies step 6's inputs. ``None`` (the default) uses
+            the production :class:`~tos_runtime.riskstate.service.RiskStateService` instead —
+            see :attr:`ComposedRuntime.risk_state`'s own docstring for the exact boot rule
+            (TOS risk state service wave, plan §3 "run 차단 목록"). An explicit callable
+            (the pre-existing test seam) still returns ``None`` per-request for restrictive
+            UNKNOWN exactly as before.
         action_flow_inputs_provider: Supplies step 7's inputs, analogously.
         registry: An injected strategy registry — mutually exclusive with a populated strategies directory.
         authority_domain: The Safety Authority epoch's governed domain name.
@@ -200,7 +215,9 @@ def compose_paper_runtime(
         The fully wired :class:`ComposedRuntime`.
     Raises:
         ReleaseAdmissionRefused / config or custody exceptions / StrategyRegistryResolutionRefused
-        / :class:`~tos_runtime.compose._transport_wiring.TransportWiringError`.
+        / :class:`~tos_runtime.compose._transport_wiring.TransportWiringError` /
+        :class:`RiskStateConfigError` / :class:`~tos_runtime.compose._riskstate_wiring
+        .RiskPolicyScopeMismatch`.
     """
     uid = os.getuid()
     boot = _boot_services(
@@ -293,14 +310,53 @@ def compose_paper_runtime(
     boot.risk.construction_dimension_state.construction_stage = (
         construction_stages.construction_stage
     )
+    # TOS risk state service wave (plan §2.4/§3): decide NOW (file existence only, no I/O on
+    # the not-yet-existing durable inbox) whether the production RiskStateService will supply
+    # any provider the caller left `None` — a caller-supplied `None` with the two governed
+    # policy files ALSO absent is a production-boot refusal (`RiskStateConfigError`), never a
+    # silent "every attempt is UNKNOWN forever" runtime. The service ITSELF is constructed
+    # later, right where `venue_service` is attached below, because `InboxFlowReader` needs
+    # the REAL durable inbox `_finalize` has not built yet at this point in the function (the
+    # SAME "constructed before its dependency exists" ordering already documented for
+    # `_ActionFlowDimensionState`/`_RecoveryDimensionState` above) — `_risk_state_cell` is the
+    # late-bound slot both thunks below close over; `composed.risk_state` is filled from the
+    # SAME cell once the real service exists, so a caller never observes a torn state.
+    risk_state_files_exist = (
+        config_dir / AGGREGATE_RISK_POLICY_CONFIG_NAME
+    ).is_file() and (config_dir / ACTION_FLOW_POLICY_CONFIG_NAME).is_file()
+    if not risk_state_files_exist and (
+        aggregate_risk_inputs_provider is None or action_flow_inputs_provider is None
+    ):
+        raise RiskStateConfigError(
+            f"{config_dir}: aggregate_risk_policy.yaml/action_flow_policy.yaml are not both "
+            "present, and at least one of aggregate_risk_inputs_provider/"
+            "action_flow_inputs_provider was left None — refusing to boot with a permanently "
+            "UNKNOWN step 6/7 (TOS risk state service wave plan §3)"
+        )
+    risk_state_cell: dict[str, RiskStateService | None] = {"service": None}
+
+    def _aggregate_provider(
+        request: StageRequest,
+    ) -> AggregateRiskDecisionInputs | None:
+        if aggregate_risk_inputs_provider is not None:
+            return aggregate_risk_inputs_provider(request)
+        service = risk_state_cell["service"]
+        return None if service is None else service.aggregate_inputs_for(request)
+
+    def _action_flow_provider(request: StageRequest) -> ActionFlowDecisionInputs | None:
+        if action_flow_inputs_provider is not None:
+            return action_flow_inputs_provider(request)
+        service = risk_state_cell["service"]
+        return None if service is None else service.action_flow_inputs_for(request)
+
     realized = _build_realized_stages(
         infra=boot.infra,
         rcl=boot.rcl,
         risk=boot.risk,
         construction_stages=construction_stages,
         construction=construction,
-        aggregate_risk_inputs_provider=aggregate_risk_inputs_provider,
-        action_flow_inputs_provider=action_flow_inputs_provider,
+        aggregate_risk_inputs_provider=_aggregate_provider,
+        action_flow_inputs_provider=_action_flow_provider,
         custody_root=custody_root,
         environment_label=environment_label,
         uid=uid,
@@ -384,6 +440,44 @@ def compose_paper_runtime(
     # plan §2 decision 6/8) — RestrictiveLatchOwner's new-risk-halt reader and
     # MonitoringService's inbox-backlog observer both close over this cell.
     boot.risk.safety_mesh.inbox_cell.inbox = composed.inbox
+    # TOS risk state service wave (plan §2.4) — build the real RiskStateService now the
+    # durable inbox exists (`InboxFlowReader` needs it), fill the late-bound cell the two
+    # thunks above already close over, and attach it to the composed runtime. Only when the
+    # two governed policy files exist (the `risk_state_files_exist` decision, above) — a
+    # caller that supplied both explicit providers with the files absent legitimately keeps
+    # `risk_state` at its `None` default (the pre-existing test seam).
+
+    def _rcl_tip_reader() -> int | None:
+        try:
+            view = boot.rcl.rcl_log.read_linearizable(
+                writer_epoch=boot.rcl.writer_epoch
+            )
+        except (StaleEpochRead, sqlite3.Error, OSError):
+            return None
+        return None if view.last_seq is None else view.last_seq
+
+    if risk_state_files_exist:
+        risk_state_cell["service"] = build_risk_state_service(
+            config_dir=config_dir,
+            scheme=_SCHEME,
+            construction=construction,
+            environment_label=environment_label,
+            evidence_store=boot.infra.evidence_store,
+            inbox=composed.inbox,
+            rcl_log=boot.rcl.rcl_log,
+            hse_envelope=boot.risk.safety_mesh.profile_service.envelope,
+            scenario_set=boot.risk.risk_service.scenario_set,
+            required_scenario_kinds=boot.risk.required_scenario_kinds,
+            rcl_tip_reader=_rcl_tip_reader,
+            monotonic_reader=boot.infra.monotonic_source.now_ms,
+            max_attempts_reader=lambda: boot.risk.flow_governor.envelope.max_attempts,
+            construction_stage_reader=(
+                lambda: construction_stages.construction_stage.construction
+            ),
+            effect_envelope_reader=lambda: construction_stages.economic_stage.envelope,
+            venue_allowed_sides=venue_service.shape_constraints.allowed_sides,
+        )
+    composed.risk_state = risk_state_cell["service"]
     # TOS Phase 5 W5 — late-bind the session-facts owner's own tick-generation cell now
     # the durable inbox exists (same ordering as the safety-mesh cell above), and attach
     # the owner to the composed runtime.

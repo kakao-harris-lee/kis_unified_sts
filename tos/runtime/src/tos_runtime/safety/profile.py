@@ -287,6 +287,17 @@ class SafetyProfileService:
     def dimension_key(self) -> DimensionKey:
         return DimensionKey.SAFETY_ENVELOPE_PROFILE
 
+    @property
+    def envelope(self) -> HardSafetyEnvelope:
+        """The loaded Hard Safety Envelope this service validated at construction (TOS risk
+        state service wave, lane b addition) — exposed so a caller
+        (:mod:`tos_runtime.compose._riskstate_wiring`) can cross-check a governed dimension id
+        against :attr:`~tos.spg.HardSafetyEnvelope.governed_dimensions` without this module
+        loading the same file a second time or a caller reaching into this service's own
+        private ``_docs`` attribute (project directive: no private-attribute access across a
+        module boundary)."""
+        return self._docs.envelope
+
     def _time_verifiable(self) -> bool | None:
         """``True`` only when the injected time port reports ``TRUSTED``; ``None``
         (unevaluable) otherwise — the plan's own worked example of a fact this service

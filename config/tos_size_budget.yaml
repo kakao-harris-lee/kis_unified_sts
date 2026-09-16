@@ -708,11 +708,22 @@ exceptions:
     로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
     1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 311
+  measured: 395
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-09-16 TOS 리스크 상태 서비스 웨이브(레인 b) 재등재 311→391(+80)**:
+    `aggregate_risk_inputs_provider`/`action_flow_inputs_provider` 를
+    `| None = None` 으로 전환 + (1) `_build_realized_stages` 호출 앞에 파일 존재
+    판정(`risk_state_files_exist`) · `RiskStateConfigError` 조기 거부 ·
+    late-bound 셀(`risk_state_cell`) · 두 thunk 제공자(`_aggregate_provider`/
+    `_action_flow_provider`) 정의(주석 포함 약 30줄, 결정 근거: `InboxFlowReader`
+    가 필요로 하는 실 inbox 는 `_finalize` 이후에만 존재하므로 서비스 생성 자체를
+    미뤄야 함) (2) `_finalize` 직후 `composed.venue = venue_service` 다음에
+    `_rcl_tip_reader` 지역 함수 + `build_risk_state_service(...)` 호출(kwargs 14)
+    + `composed.risk_state = risk_state_cell["service"]` 부착(주석 포함 약 30줄).
+    이 함수가 정본 결선 순서 문서(§4 "run 차단 목록" 해소 지점)라 분해 대신 등재.
     **2026-09-15 TOS venue constraint service wave 재등재 278→311(+33, 레인 b,
     계획 §2 결정 4/5/9)**: `calendar.yaml` 을 이 함수에서 1회 로드(`load_calendar_config`)
     하고 SAME `CalendarConfig` 를 `build_session_facts_owner`/`build_venue_service`
@@ -920,7 +931,7 @@ exceptions:
     100→107(+7) — Coordinator 자신이 매 틱 스냅샷을 «갱신하는» 유일한 소비자여야
     한다는 팀리드 처분의 핵심 지점이라 분해 대신 등재.
 - target: tos/runtime/src/tos_runtime/compose/_safety_wiring.py::build_safety_mesh
-  measured: 148
+  measured: 149
   owner: tos-runtime
   decomposition_order: 43
   expires_on: '2026-12-31'
@@ -959,3 +970,18 @@ exceptions:
     `peek_tick_snapshot=tick_cell.peek,` 1줄 추가(§2 결정 7 — operator projection
     이 `.clear()` 재호출 없이 마지막 스냅샷을 읽는 유일한 경로) — 이 함수가
     `_SafetyMesh` 조립의 유일한 지점이라 분해 대신 등재.
+    **2026-09-16 TOS 리스크 상태 서비스 웨이브(레인 b) 재등재 148→149(+1)**:
+    `_SafetyMesh` 반환문에 `profile_service=profile_service,` 1줄 추가 — HSE
+    (`governed_dimensions`)를 `tos_runtime.compose._riskstate_wiring`가 재로드
+    없이 읽도록 `SafetyProfileService`를 이름으로 노출(`services` 튜플 위치 의존
+    회피) — 이 함수가 `_SafetyMesh` 조립의 유일한 지점이라 분해 대신 등재.
+
+# 2026-09-16 리스크 상태 서비스 웨이브 리뷰 처분(item T1): `riskstate/policies.py` 가
+# 레인 b의 `side_tokens`/`instrument_scope`/`account_scope` 확장으로 1000줄 문턱을
+# 넘겼을 때 등재된 신규 예외 항목은 "분해가 원칙, 등재는 드리프트만" 규율을 어겼다
+# (등재 시 사유가 이미 "분해는 이 웨이브 범위 밖"이라고 자인). 처분: `tos_runtime/venue
+# /config.py` 가 이미 밟은 분할(`_venue_policy_loader.py`/`_order_construction_policy
+# _loader.py`)과 동일한 패턴으로 `policies.py` 를 얇은 재수출 shim 으로 축소하고
+# `_aggregate_risk_policy_loader.py`/`_action_flow_policy_loader.py`(+ 공유 헬퍼
+# `_riskstate_primitives.py`) 로 분리 — 예외 항목 자체를 제거. 세 파일 모두 100/1000줄
+# 문턱 아래.
