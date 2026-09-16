@@ -96,14 +96,25 @@ __all__ = [
 #: this version corresponds to.
 MARKETFEED_SCHEMA_VERSION = 1
 
-#: This store's own file name for a ``data_dir`` layout. The four sibling constants
+#: This store's own file name for a ``data_dir`` layout. The other backup-set sibling constants
 #: (``EVIDENCE_FILE_NAME``/``RCL_FILE_NAME``/``INBOX_FILE_NAME``/``COMPOSITE_STATE_FILE_NAME``)
-#: live in :mod:`tos_runtime.operations.backup_set` instead, because they name the members of the
-#: *backup set* — this store is deliberately NOT a backup-set member yet; that membership is a
-#: separate decision with its own restore semantics, owned by the tick-source wave's lane D. This
-#: constant exists on its own, here, only because ``tos_runtime.compose.cli``'s ``migrate``
-#: subcommand needs a path for this store the moment ``"marketfeed"`` joins
-#: :data:`~tos_runtime.operations.schema_migrations.STORE_MIGRATIONS`.
+#: live in :mod:`tos_runtime.operations.backup_set`; this one is defined here instead and IMPORTED
+#: by that module, because ``tos_runtime.compose.cli``'s ``migrate`` subcommand already needed a
+#: path for this store the moment ``"marketfeed"`` joined
+#: :data:`~tos_runtime.operations.schema_migrations.STORE_MIGRATIONS`, before backup-set
+#: membership was decided.
+#:
+#: **This store IS a backup-set member** (:class:`~tos_runtime.operations.backup_set
+#: .DurableSetPaths`, plan §6 ④, operator decision 2026-09-16) — an optional one, like
+#: ``composite_state``, because a runtime that never ticked never creates this file
+#: (``backup_set._OPTIONAL_FILES``). The reason is a restore-path failure mode, not symmetry: the
+#: kernel's value ⟺ digest check recomputes a value's digest from the STORED preimage and compares
+#: it against what the snapshot-covered observation attests (``value.py:514-523``); this module's
+#: own docstring proves, with a restart test, that losing preimages silently takes every value
+#: operand to ``UNKNOWN`` while a perfectly valid-looking snapshot id is still in hand. Leaving
+#: this file out of the backup set did not remove that failure mode — it moved it to the restore
+#: path: a deployment restored from a backup could not re-publish a view for any snapshot issued
+#: before the restore.
 MARKETFEED_FILE_NAME = "marketfeed.sqlite3"
 
 _CREATE_SNAPSHOTS_TABLE_SQL = """
