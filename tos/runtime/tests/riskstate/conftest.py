@@ -114,15 +114,18 @@ def seed_egress_result(
     account: str,
     instrument: str,
     filled_quantity: str | None,
+    result_disposition: str | None = None,
 ) -> None:
     """Append one ``EGRESS_RESULT_CONSUMED``/``RESULT_UNMATCHED`` row with the SAME field
     names ``tos.engine.records.EngineEvidenceRecord.model_dump(mode="json")`` produces for the
     sub-fields :mod:`tos_runtime.recon.witness_synthetic` /
     :mod:`tos_runtime.recon.evidence_reader` (and this suite's own readers) touch:
     ``attempt_id``, ``instrument_key``, ``egress_result_kind``, ``filled_quantity``,
-    ``remaining_quantity`` — cited against
-    :class:`~tos_runtime.recon.ports.EgressReceiptObservation`'s own field list. Mirrors
-    :meth:`~tos_runtime.evidence.sinks.EngineEvidenceSinkAdapter.record`'s own call:
+    ``remaining_quantity``, ``result_disposition`` — cited against
+    :class:`~tos_runtime.recon.ports.EgressReceiptObservation`'s own field list AND
+    ``tos/src/tos/engine/core.py:705-720`` (the exact ``RESULT_UNMATCHED`` payload shape,
+    including ``result_disposition``, the kernel emits for a non-``APPLIED`` disposition).
+    Mirrors :meth:`~tos_runtime.evidence.sinks.EngineEvidenceSinkAdapter.record`'s own call:
     ``store.append(record.model_dump(mode="json"), kind=record.kind.value, ...)``.
 
     Args:
@@ -130,6 +133,10 @@ def seed_egress_result(
             this suite's readers distinguish).
         filled_quantity: ``None`` for a zero-fill terminal outcome (e.g. a plain ACK/CANCEL) —
             a positively recorded absence, not an unread field.
+        result_disposition: One of ``tos.engine.vocabulary.ResultDisposition``'s string values
+            (e.g. ``"DUPLICATE"``) — only meaningful for ``kind="RESULT_UNMATCHED"``
+            (``core.py:713``); ``None`` when the caller does not need it (every pre-existing
+            call site).
     """
     payload = {
         "attempt_id": attempt_id,
@@ -137,5 +144,26 @@ def seed_egress_result(
         "egress_result_kind": "FULL_FILL" if filled_quantity is not None else "ACK",
         "filled_quantity": filled_quantity,
         "remaining_quantity": None,
+        "result_disposition": result_disposition,
     }
     store.append(payload, kind=kind, record_class=kind)
+
+
+def seed_recovery_marker(
+    store: SqliteEvidenceStore, *, kind: str, event_id: str
+) -> None:
+    """Append one restart-recovery marker row with the SAME field shape
+    ``EngineDriver._handle_interrupted_event`` emits
+    (``tos_runtime/engine/driver.py:517-535``: ``{"event_id": event_id, ...}``, appended via
+    either ``record_halt`` — for ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND`` — or
+    ``evidence_store.append`` directly — for ``DECISION_TICK_DROPPED_ON_RECOVERY`` — both of
+    which route through the SAME ``SqliteEvidenceStore.append`` this helper calls directly).
+
+    Args:
+        kind: ``"DECISION_TICK_DROPPED_ON_RECOVERY"`` or
+            ``"HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND"``.
+        event_id: The interrupted row's own content-addressed ``event_id``
+            (:func:`tos.engine.records.event_identity`) — the SAME id
+            :class:`~tos_runtime.engine.inbox.InboxReceipt.event_id` carries for that row.
+    """
+    store.append({"event_id": event_id}, kind=kind, record_class=kind)
