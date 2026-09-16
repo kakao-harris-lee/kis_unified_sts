@@ -204,6 +204,25 @@ if isinstance(args, Args):
 | 레인 B 리뷰 (LOW) | `_wiring.py:561` `proof_generation=1` 이 **맨 리터럴로 잔존** — 레인 B 가 방금 고친 것과 **같은 결함 부류**(세대 펜싱이 상수 앞에서 무의미). 계획 §0 표가 정체성 5종만 열거해 레인 B 스코프 밖이었다. 파생하거나, 파생 불가면 **그 이유를 등재** |
 | 레인 B 리뷰 (확인 불가) | `proof_generation` 이 다운스트림에서 실제 소비·대조되는지 미확인(`ioc/records.py:378-403` 에 `_REQUIRED_COVERED` 등재만) — 레인 D 가 실측해 결론낼 것 |
 
+| PR #721 리뷰 (LOW) | `tests/compose/_symmetry_fixtures.py:213` — `mirrored_construction_config()` 가 `envelope=` 로 DIRECTION=SHORT/SIDE=SELL 축 바인딩을 주입하는데 **무효화돼 있다**(`build_construction_envelope` 이 `ConstructionConfig.envelope` 을 인자로 받지 않는다). 대칭 테스트는 green 이나 **그 이유가 주입 봉투가 아니라 살아 있는 별개 필드 `action_class`** 다. 레인 D 가 필드를 제거하면 이 죽은 설정이 **조용한 무효가 아니라 즉시 오류**가 된다 — 제거의 진짜 이득이 여기 있다 |
+
+### 4.7 ★ 「봉투 주입은 죽었다」의 동적 증거 (2026-09-16 실측)
+
+§4.2 에서 `ConstructionConfig.envelope` 이 죽은 필드라고 **정적으로** 판정했다. 병합 라운드가
+그것을 **동적으로** 증명했다 — 그 필드에 값을 넣던 테스트 3건이 값이 무시된다는 이유로
+깨졌고(`3 failed, 2288 passed`), 전수 조사에서 **네 번째 지점**(`_symmetry_fixtures.py:213`)이
+같은 상태로 발견됐다.
+
+이것이 레인 D 의 제거 작업을 단순한 정리가 아니라 **결함 방지**로 만든다:
+
+| | 필드가 남아 있을 때 | 필드를 제거한 뒤 |
+|---|---|---|
+| 테스트가 봉투를 커스터마이즈 | **조용히 무시** — green 인 채로 의도한 케이스를 시험하지 않음 | **즉시 오류** — 없는 인자 |
+
+「탐지 가능」과 「불가능」의 차이다. 레인 D 는 제거하면서 `_symmetry_fixtures.py` 의
+`mirrored_proposed_envelope()` 도 함께 정리하고, 정리 후에도 대칭 테스트가 **같은 이유로**
+통과하는지(= `action_class` 가 동인) 확인한다.
+
 ### 4.6 정직 상태 — 파생됐으나 소비되지 않는 것 (§7 등재 대상)
 
 레인 B 리뷰 뮤테이션 6: `intent_id` 를 상수로 바꿔도 **2275 중 2건만 적색**. 즉 파생된
