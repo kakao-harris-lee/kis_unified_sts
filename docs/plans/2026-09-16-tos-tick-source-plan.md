@@ -100,14 +100,16 @@ class TickOutcome(StrEnum):
 - 게이트: `tools/tos_firewall_check.py` · `lint-imports` · `tools/tos_size_budget.py --check`(신규 모듈 전부 예산 내, 예외 등재 0) · `ruff`/`black`/`mypy` · 런타임+커널 스위트.
 - 정직 상태(예상): 관측 원천은 **파일 저널 1종**(실 시세 트랜스포트 미착지 — 「라이브 피드」가 아니라 「상류 수집기가 쓴 저널」) · 직접 관측만(파생 지표 0) · 단일 instrument · `run` 은 (a′) `envelope`/`order_shape` 로 계속 차단 · `committed_flow_vectors` 여전히 `()` · 포지션 단일 원천(변화 없음).
 
-## 6. 운영자 확인
+## 6. 운영자 확인 — **2026-09-16 전건 처분 완료**
 
-1. **시세 트랜스포트**: 이번 웨이브는 파일 저널만(추천 · 결정적·헤르메틱) → 실 KIS 모의투자 시세 HTTP 어댑터는 후속 웨이브 (c2) 로 분리. 아니면 (c) 안에 포함할지.
+> 운영자 결정(2026-09-16): ① 저널만 유지 · ③ Codex 미부착 · ④ **편입(레인 E 즉시 착수)** · ⑤ 기록만 · ⑥ 다음 = (a′) 잔여. ② 는 저작 중 실측으로 조치 불요 종결.
+
+1. **시세 트랜스포트** — **결정: 이번 웨이브는 파일 저널만.** 실 KIS 모의투자 시세 HTTP 어댑터는 후속 웨이브 (c2) 로 분리(브로커 스코프 능력·TR id·토큰 커스터디가 함께 필요). 따라서 이 웨이브의 정직한 서술은 「라이브 피드」가 아니라 **「상류 수집기가 쓴 저널로 구동되는 틱 원천」**이다.
 2. ~~VER-002 경계값 2종 신규 승인~~ — **불요로 판명(저작 중 실측 정정)**. 두 키 모두 VERIFICATION-PROFILE-002 에 2026-07-29 APPROVED 값 보유(`:1067` 1000 ms · `:1077` 50 ms). 레인 C 가 `MAX_clock_domain_conversion_uncertainty_ms` 선례대로 근거 인용과 함께 `_BOUND_KEYS` 에 추가한다. 운영자 조치 없음.
-3. **마이그레이션 심사**: 레인 B 는 새 sqlite 스키마 — `migration-reviewer` 는 자동으로 돌린다. **Codex 독립 심판**(되돌리기 어려운 경로 = DB 마이그레이션)은 유료 외부 호출이므로 **범위·비용 승인 시에만** 디스패치 — 붙일지 여부.
-4. **`marketfeed.sqlite3` 를 내구 백업 세트(`DurableSetPaths`)에 넣을 것인가** — `migration-reviewer` 지적(MEDIUM)으로 등재. 지금까지 이 결정은 `store.py` 독스트링에 「레인 D 소관」이라고만 적혀 있었고, **모듈 독스트링에만 있는 결정은 운영자가 질문받은 적 없는 결정**이다. 실측된 결과: 커널이 값의 digest 를 저장된 preimage 에서 재계산하므로(`tos/src/tos/marketfeed/value.py:514-518`), 복원된 데이터 디렉터리에 `preimages` 가 없으면 **복원 이전에 발행된 스냅샷은 view 를 재발행할 수 없다**(레인 B 가 M4 로 증명한 실패 모드가 복원 경로로 옮겨갈 뿐). (a) 편입(추천 — `composite_state` 가 이미 「있을 수도 없을 수도 있는 멤버」 선례) (b) 비편입 유지 + 한계 공시. 편입 시 드리프트 지점 2곳(`_last_seq_for` 의 하드코딩 테이블 dict `backup_set.py:222-226` · `restore_set` 의 `DurableSetPaths` 재구성)과 기존 매니페스트 하위호환을 함께 다뤄야 하므로 **레인 E** 로 분리.
-5. **hypothesis 헬스체크 취약점(웨이브 밖 · 기존)** — `tos/runtime/tests/riskstate/test_position.py::test_adding_unknown_attempt_never_decreases_worst_credible_usage` 가 부하 상황에서 `FailedHealthCheck: Input generation is slow` 로 실패(단독 재실행 시 통과). 이 웨이브가 병렬 에이전트를 여럿 돌리며 드러났을 뿐 **리스크 상태 웨이브(`29d50ec5`) 것**이고, 런타임 테스트 어디에도 `suppress_health_check` 프로파일이 없다. CI 도 부하를 받으면 같은 것을 맞는다 — 이번 웨이브에서 고치지 않음(범위 밖). 별도 처리 여부는 운영자 결정.
-6. 다음 순서(잔여): (a′) `envelope`(승인 Intent/IAP) · `order_shape`(전략 제안) → 브로커 증인(P-BAL)/band 원천 → 실 HSE 인스턴스 → 커널 라운드 #4.
+3. **마이그레이션 심사** — **결정: Codex 미부착.** Claude 측 `migration-reviewer` 게이트가 이미 적대적 데이터 디렉터리 6종을 직접 만들어 실측했고 HIGH 1건(버전 정수 쌍 영구 교착)을 잡아 조치까지 끝났다. 신규 파일 baseline v1 하나뿐이고 기존 스토어를 건드리지 않아 위험 표면이 좁다. 유료 외부 호출은 디스패치하지 않는다.
+4. **`marketfeed.sqlite3` 의 내구 백업 세트 편입** — **결정: (a) 편입. 레인 E 즉시 착수.** — `migration-reviewer` 지적(MEDIUM)으로 등재. 지금까지 이 결정은 `store.py` 독스트링에 「레인 D 소관」이라고만 적혀 있었고, **모듈 독스트링에만 있는 결정은 운영자가 질문받은 적 없는 결정**이다. 실측된 결과: 커널이 값의 digest 를 저장된 preimage 에서 재계산하므로(`tos/src/tos/marketfeed/value.py:514-518`), 복원된 데이터 디렉터리에 `preimages` 가 없으면 **복원 이전에 발행된 스냅샷은 view 를 재발행할 수 없다**(레인 B 가 M4 로 증명한 실패 모드가 복원 경로로 옮겨갈 뿐). `composite_state` 가 「있을 수도 없을 수도 있는 멤버」 선례를 이미 갖고 있다. 편입 시 드리프트 지점 2곳(`_last_seq_for` 의 하드코딩 테이블 dict `backup_set.py:222-226` · `restore_set` 의 `DurableSetPaths` 재구성)과 기존 매니페스트 하위호환을 함께 다뤄야 하므로 **레인 E** 로 분리.
+5. **hypothesis 헬스체크 취약점(웨이브 밖 · 기존)** — **결정: 기록만, 미조치.** — `tos/runtime/tests/riskstate/test_position.py::test_adding_unknown_attempt_never_decreases_worst_credible_usage` 가 부하 상황에서 `FailedHealthCheck: Input generation is slow` 로 실패(단독 재실행 시 통과). 이 웨이브가 병렬 에이전트를 여럿 돌리며 드러났을 뿐 **리스크 상태 웨이브(`29d50ec5`) 것**이고, 런타임 테스트 어디에도 `suppress_health_check` 프로파일이 없다. CI 도 부하를 받으면 같은 것을 맞는다 — 이번 웨이브에서 고치지 않음(범위 밖). 별도 처리 여부는 운영자 결정.
+6. 다음 순서 — **결정: (a′) 잔여 먼저.** `envelope`(승인 Intent/IAP 저작 흐름) + `order_shape`(전략 제안이 구체 shape 를 싣기). 이 둘이 `run` 의 마지막 차단이며, 끝나면 런타임이 실제로 구동 가능해진다. 이후 순서: (c2) 실 시세 어댑터 → 브로커 증인(P-BAL)/band 원천 → 실 HSE 인스턴스 → 커널 라운드 #4.
 
 ## 7. 착지 기록
 
