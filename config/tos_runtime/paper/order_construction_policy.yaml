@@ -149,16 +149,16 @@ _runtime:
     action_class_shape:
       # Machine-readable form of direction_side_and_position_effect_rules above
       # ("long/short symmetric: NEW_LONG↔BUY/OPEN, NEW_SHORT↔SELL/OPEN, CLOSE↔opposite side/CLOSE").
-      NEW_LONG: {side: "BUY", position_effect: "OPEN", direction: "LONG"}
-      NEW_SHORT: {side: "SELL", position_effect: "OPEN", direction: "SHORT"}
-      # CAVEAT (flagged, not silently resolved): the prose above states CLOSE as
-      # direction-dependent ("opposite side") — closing a LONG is SELL, closing a SHORT is BUY.
-      # This dict binds exactly one (side, position_effect, direction) triple per ActionClass,
-      # so it cannot express both. The entry below encodes the long-close case only (matching
-      # ActionClassShape's own docstring example, "a CLOSE of a long is SELL on a LONG
-      # direction") — a short-close (BUY/CLOSE/SHORT) has no representation here. This is a
-      # structural mismatch between the committed ConstructionRules contract (one shape per
-      # ActionClass) and the document's own symmetric-CLOSE prose; construction_rules.py is
-      # out of lane A's scope to change, so this is recorded here rather than resolved.
-      CLOSE: {side: "SELL", position_effect: "CLOSE", direction: "LONG"}
+      # Keyed by (ActionClass, direction) — contract amendment 2026-09-16: ActionClass has one
+      # CLOSE member for both a long-close and a short-close, so direction (not just the class)
+      # disambiguates which side/position_effect apply. Both CLOSE arms are declared below.
+      NEW_LONG:
+        LONG: {side: "BUY", position_effect: "OPEN"}
+      NEW_SHORT:
+        SHORT: {side: "SELL", position_effect: "OPEN"}
+      CLOSE:
+        # closing a long: opposite of NEW_LONG's BUY.
+        LONG: {side: "SELL", position_effect: "CLOSE"}
+        # closing a short: opposite of NEW_SHORT's SELL.
+        SHORT: {side: "BUY", position_effect: "CLOSE"}
     effect_dimensions: []

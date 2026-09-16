@@ -266,10 +266,20 @@ def _parse_sizing(construction_raw: dict[str, Any], path: Path) -> SizingBound:
     (``egressgw/construction.py:525`` guards it ``is not None`` — a bound
     ``None`` there is simply "no notional ceiling", not a denial), so
     ``null`` is accepted and legitimate (proposal table §2, ``max_notional``
-    row). ``SizingBound.quantity_unit`` is deliberately left ``None`` here —
-    the OCP document carries no quantity-unit fact (the venue policy's own
-    ``_runtime.quantity_unit`` is that source); a consumer that assembles the
-    final envelope is expected to fill it from there, not invent one here.
+    row).
+
+    ``SizingBound.quantity_unit`` is DELIBERATELY left ``None`` here — not a gap to fill later,
+    a boundary the OCP loader must not cross. The OCP document carries no quantity-unit fact of
+    its own; the Venue Constraint Policy's own ``_runtime.quantity_unit``
+    (:attr:`~tos_runtime.venue._venue_policy_loader.VenuePolicyScope.quantity_unit`) already IS
+    that fact. If OCP declared a second one, the two would be the same value written in two YAML
+    files with nothing pinning them to each other — the "registry with an unpinned satellite"
+    class this repo keeps getting bitten by (``derive_order_size``,
+    ``egressgw/construction.py:456``, already denies on exactly that disagreement:
+    ``venue_constraint.quantity_unit is not bound.quantity_unit``). The wiring that assembles the
+    final envelope (lane B/D) is expected to take the VCP-loaded value and fill it in there, so
+    the two agree BY CONSTRUCTION — one source, read once — never by keeping two declarations in
+    sync by hand.
     """
     sizing_raw = require_mapping_key(construction_raw, "sizing", path)
     ctx = "_runtime.construction.sizing"
@@ -360,47 +370,85 @@ def _build_authorized_axes(
     return derived + tuple(authored)
 
 
+#: The (ActionClass, direction) mirror pairs long/short symmetry requires (contract amendment
+#: 2026-09-16 — ``construction_rules.py``'s own docstring: ``ActionClassShape`` lost its
+#: ``direction`` attribute and ``ConstructionRules.action_class_shape`` is now keyed by
+#: ``(ActionClass, direction)`` so both a long-close and a short-close are declarable). Two
+#: DIFFERENT shapes of mirror, both load-bearing:
+#: * NEW_LONG/NEW_SHORT are separate ActionClass members, each single-direction by construction
+#:   (a NEW_LONG entry only ever makes sense at direction LONG) — the mirror is CROSS-class.
+#: * CLOSE is one ActionClass member serving both directions (``venue/vocabulary.py:141`` has no
+#:   ``CLOSE_LONG``/``CLOSE_SHORT`` split) — the mirror is WITHIN the same class, across
+#:   direction.
+#: "LONG"/"SHORT" are hardcoded here deliberately, not read from a kernel enum: no
+#: ``DirectionKind`` enum exists (direction is a Phase-0-instance-injected axis value, like
+#: ORDER_TYPE/TIF/ENVIRONMENT), and CLAUDE.md's own non-negotiable text ("Futures must preserve
+#: long/short symmetry") already commits the repo to exactly these two tokens.
+_ACTION_CLASS_SHAPE_MIRROR_PAIRS: tuple[
+    tuple[tuple[ActionClass, str], tuple[ActionClass, str]], ...
+] = (
+    ((ActionClass.NEW_LONG, "LONG"), (ActionClass.NEW_SHORT, "SHORT")),
+    ((ActionClass.CLOSE, "LONG"), (ActionClass.CLOSE, "SHORT")),
+)
+
+
+def _check_action_class_shape_symmetry(
+    shapes: dict[tuple[ActionClass, str], ActionClassShape], path: Path
+) -> None:
+    for key_a, key_b in _ACTION_CLASS_SHAPE_MIRROR_PAIRS:
+        has_a = key_a in shapes
+        has_b = key_b in shapes
+        if has_a != has_b:
+            present, missing = (key_a, key_b) if has_a else (key_b, key_a)
+            raise VenuePolicyConfigError(
+                f"{path}: action_class_shape declares "
+                f"({present[0].value}, {present[1]}) but not its mirror "
+                f"({missing[0].value}, {missing[1]}) — long/short symmetry is a repo "
+                "non-negotiable (CLAUDE.md: 'Futures must preserve long/short symmetry. "
+                "Entry/exit direction follows signal_direction') and a mapping that admits "
+                "one direction of an action class but not its mirror is a policy error, not "
+                "a narrower scope"
+            )
+
+
 def _parse_action_class_shape(
     construction_raw: dict[str, Any], path: Path
-) -> dict[ActionClass, ActionClassShape]:
+) -> dict[tuple[ActionClass, str], ActionClassShape]:
     """Parse ``_runtime.construction.action_class_shape`` — the machine-readable form of the
-    document's own ``direction_side_and_position_effect_rules`` prose. Refuses a mapping that
-    declares ``NEW_LONG`` without its ``NEW_SHORT`` mirror (or vice versa): "Futures must
-    preserve long/short symmetry" (``CLAUDE.md``) is a repo non-negotiable, and an asymmetric
-    mapping is a policy defect, not a narrower scope."""
+    document's own ``direction_side_and_position_effect_rules`` prose. YAML shape: a mapping of
+    ``ActionClass`` token -> mapping of ``direction`` token -> ``{side, position_effect}``
+    (nested, not a flattened tuple key — YAML mapping keys are strings). Refuses when a mirror
+    pair (see :data:`_ACTION_CLASS_SHAPE_MIRROR_PAIRS`) has one arm declared but not the other:
+    "Futures must preserve long/short symmetry" (``CLAUDE.md``) is a repo non-negotiable, and an
+    asymmetric mapping is a policy defect, not a narrower scope."""
     raw_map = require_mapping_key(construction_raw, "action_class_shape", path)
-    shapes: dict[ActionClass, ActionClassShape] = {}
-    for token, entry in raw_map.items():
-        ctx = f"_runtime.construction.action_class_shape.{token}"
+    shapes: dict[tuple[ActionClass, str], ActionClassShape] = {}
+    for action_token, direction_map in raw_map.items():
+        ctx = f"_runtime.construction.action_class_shape.{action_token}"
         try:
-            action = ActionClass(token)
+            action = ActionClass(action_token)
         except ValueError as exc:
             raise VenuePolicyConfigError(
-                f"{path}: action_class_shape key {token!r} is not a known ActionClass"
+                f"{path}: action_class_shape key {action_token!r} is not a known ActionClass"
             ) from exc
-        if not isinstance(entry, dict):
-            raise VenuePolicyConfigError(f"{path}: {ctx} must be a mapping")
-        side = require_str(entry, "side", path, ctx)
-        position_effect = require_str(entry, "position_effect", path, ctx)
-        direction = require_str(entry, "direction", path, ctx)
-        shapes[action] = ActionClassShape(
-            side=side, position_effect=position_effect, direction=direction
-        )
-    has_long = ActionClass.NEW_LONG in shapes
-    has_short = ActionClass.NEW_SHORT in shapes
-    if has_long != has_short:
-        present, missing = (
-            (ActionClass.NEW_LONG, ActionClass.NEW_SHORT)
-            if has_long
-            else (ActionClass.NEW_SHORT, ActionClass.NEW_LONG)
-        )
-        raise VenuePolicyConfigError(
-            f"{path}: action_class_shape declares {present.value} but not its "
-            f"{missing.value} mirror — long/short symmetry is a repo non-negotiable "
-            "(CLAUDE.md: 'Futures must preserve long/short symmetry. Entry/exit direction "
-            "follows signal_direction') and a mapping that admits one side but not the "
-            "other is a policy error, not a narrower scope"
-        )
+        if not isinstance(direction_map, dict):
+            raise VenuePolicyConfigError(
+                f"{path}: {ctx} must be a mapping (direction -> {{side, position_effect}})"
+            )
+        for direction_token, entry in direction_map.items():
+            if not isinstance(direction_token, str) or not direction_token.strip():
+                raise VenuePolicyConfigError(
+                    f"{path}: {ctx} direction key {direction_token!r} must be a non-empty string"
+                )
+            entry_ctx = f"{ctx}.{direction_token}"
+            if not isinstance(entry, dict):
+                raise VenuePolicyConfigError(f"{path}: {entry_ctx} must be a mapping")
+            side = require_str(entry, "side", path, entry_ctx)
+            position_effect = require_str(entry, "position_effect", path, entry_ctx)
+            shapes[(action, direction_token)] = ActionClassShape(
+                side=side, position_effect=position_effect
+            )
+    _check_action_class_shape_symmetry(shapes, path)
     return shapes
 
 

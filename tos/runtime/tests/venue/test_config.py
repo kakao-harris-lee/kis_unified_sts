@@ -728,11 +728,11 @@ def test_load_order_construction_policy_construction_happy_path(tmp_path: Path) 
         AxisBinding(axis=ConformanceAxis.TIF, value="DAY"),
     )
     assert rules.action_class_shape == {
-        ActionClass.NEW_LONG: ActionClassShape(
-            side="BUY", position_effect="OPEN", direction="LONG"
+        (ActionClass.NEW_LONG, "LONG"): ActionClassShape(
+            side="BUY", position_effect="OPEN"
         ),
-        ActionClass.NEW_SHORT: ActionClassShape(
-            side="SELL", position_effect="OPEN", direction="SHORT"
+        (ActionClass.NEW_SHORT, "SHORT"): ActionClassShape(
+            side="SELL", position_effect="OPEN"
         ),
     }
     assert rules.effect_dimensions == ()
@@ -895,39 +895,97 @@ def test_load_order_construction_policy_construction_axes_unknown_token_refused(
 def test_load_order_construction_policy_construction_action_class_shape_unknown_token_refused(
     tmp_path: Path,
 ) -> None:
-    text = ocp_yaml().replace(
-        'NEW_LONG: {side: "BUY", position_effect: "OPEN", direction: "LONG"}',
-        'NOPE: {side: "BUY", position_effect: "OPEN", direction: "LONG"}',
-    )
+    text = ocp_yaml().replace("      NEW_LONG:\n", "      NOPE:\n")
     path = write_fixture_ocp(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="ActionClass"):
         load_order_construction_policy(path, scheme=SCHEME)
 
 
-def test_load_order_construction_policy_construction_action_class_shape_long_without_short_refused(
+def test_load_order_construction_policy_construction_action_class_shape_not_a_mapping_refused(
     tmp_path: Path,
 ) -> None:
-    """Long/short symmetry is a repo non-negotiable (CLAUDE.md) — a mapping with ``NEW_LONG``
-    but no ``NEW_SHORT`` mirror refuses, naming both (team-lead directive)."""
+    """``action_class_shape.<ActionClass>`` must itself be a mapping (direction -> shape), not
+    a flattened ``{side, position_effect}`` — the (ActionClass, direction) key shape (contract
+    amendment 2026-09-16) requires the extra nesting level."""
     text = ocp_yaml().replace(
-        '      NEW_SHORT: {side: "SELL", position_effect: "OPEN", direction: "SHORT"}\n',
-        "",
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n',
+        '      NEW_LONG: {side: "BUY", position_effect: "OPEN"}\n',
     )
     path = write_fixture_ocp(tmp_path, text)
-    with pytest.raises(VenuePolicyConfigError, match="NEW_LONG.*NEW_SHORT"):
+    with pytest.raises(VenuePolicyConfigError, match="mapping"):
         load_order_construction_policy(path, scheme=SCHEME)
 
 
-def test_load_order_construction_policy_construction_action_class_shape_short_without_long_refused(
+def test_load_order_construction_policy_construction_action_class_shape_new_long_without_new_short_refused(
     tmp_path: Path,
 ) -> None:
+    """Long/short symmetry is a repo non-negotiable (CLAUDE.md) — a mapping with
+    ``(NEW_LONG, LONG)`` but no ``(NEW_SHORT, SHORT)`` mirror refuses, naming both (team-lead
+    directive). This is the CROSS-class mirror: NEW_LONG/NEW_SHORT are separate ActionClass
+    members, each single-direction by construction."""
     text = ocp_yaml().replace(
-        '      NEW_LONG: {side: "BUY", position_effect: "OPEN", direction: "LONG"}\n',
+        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n',
         "",
     )
     path = write_fixture_ocp(tmp_path, text)
-    with pytest.raises(VenuePolicyConfigError, match="NEW_SHORT.*NEW_LONG"):
+    with pytest.raises(VenuePolicyConfigError, match=r"NEW_LONG.*NEW_SHORT"):
         load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_action_class_shape_new_short_without_new_long_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace(
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n',
+        "",
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match=r"NEW_SHORT.*NEW_LONG"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_action_class_shape_close_long_without_close_short_refused(
+    tmp_path: Path,
+) -> None:
+    """The WITHIN-class mirror (contract amendment 2026-09-16, the fix for lane A's original
+    finding): ``ActionClass.CLOSE`` has one member for both a long-close and a short-close, so a
+    document declaring ``(CLOSE, LONG)`` without its ``(CLOSE, SHORT)`` mirror must refuse too —
+    this mirror pair did not exist to violate before the amendment (mutation proof)."""
+    text = ocp_yaml().replace(
+        "    action_class_shape:\n"
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
+        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n',
+        "    action_class_shape:\n"
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
+        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n'
+        '      CLOSE:\n        LONG: {side: "SELL", position_effect: "CLOSE"}\n',
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match=r"CLOSE, LONG.*CLOSE, SHORT"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_action_class_shape_close_both_directions_accepted(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace(
+        "    action_class_shape:\n"
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
+        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n',
+        "    action_class_shape:\n"
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
+        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n'
+        '      CLOSE:\n        LONG: {side: "SELL", position_effect: "CLOSE"}\n'
+        '        SHORT: {side: "BUY", position_effect: "CLOSE"}\n',
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    loaded = load_order_construction_policy(path, scheme=SCHEME)
+    assert loaded.construction_rules.action_class_shape[
+        (ActionClass.CLOSE, "LONG")
+    ] == (ActionClassShape(side="SELL", position_effect="CLOSE"))
+    assert loaded.construction_rules.action_class_shape[
+        (ActionClass.CLOSE, "SHORT")
+    ] == (ActionClassShape(side="BUY", position_effect="CLOSE"))
 
 
 def test_load_order_construction_policy_construction_effect_dimensions_unknown_basis_refused(
