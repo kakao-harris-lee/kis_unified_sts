@@ -452,63 +452,55 @@ def _shape_order_type_and_tif(
     )
 
 
-def _observed_silently_rounded(
-    *,
-    price: int | None,
-    quantity: int | None,
-    constraints: VenueShapeConstraints | None,
-) -> bool:
-    """Whether ``price``/``quantity`` are AFFIRMATIVELY off the governed tick/lot grid the
-    injected :class:`~tos.venue.VenueShapeConstraints` declare — an **observation**, never an
-    attestation (OCP's own "no silent rounding" prose; (a′) wave decision 4).
+def _observed_silently_rounded() -> bool:
+    """``False``, always — an observation of the RUNTIME's own behaviour, not a relayed
+    caller claim, and (round 3 correction, team-lead review, PR #718, 2026-09-16) not a
+    re-derivation of the kernel's own grid verdict.
 
-    This function may only assert something when the kernel's OWN preconditions for reaching
-    that conclusion are satisfied — never on a narrower fact set of its own choosing. It never
-    decides what the kernel has not been given enough to decide.
+    ``OrderShapeFields.silently_rounded`` does not ask "is this shape off the tick/lot grid" —
+    ``order_shape_admissible`` already judges exactly that, completely, itself, from the SAME
+    injected :class:`~tos.venue.VenueShapeConstraints` a first and second cut of this function
+    tried to re-check (price band + tick divisibility at
+    ``tos/src/tos/venue/predicates.py:281-284``, quantity range + lot divisibility at
+    ``:286-291``). The field is a question about PROVENANCE, not grid membership — the
+    kernel's own comment at ``predicates.py:252``: "a silently-rounded / normalized shape is a
+    NEW shape — never admissible here". It asks whether whoever handed this exact shape over
+    quietly normalized it FIRST, after it was decided, before it reached the gate.
 
-    Concretely: ``tos.venue.predicates.order_shape_admissible`` checks
-    ``shape.silently_rounded is not False`` (line ~253) — **before** its own missing-field
-    check, which requires **all eight** of ``shape.price``, ``shape.quantity``,
-    ``constraints.price_min``, ``constraints.price_max``, ``constraints.tick_size``,
-    ``constraints.lot_size``, ``constraints.min_quantity``, ``constraints.max_quantity`` to be
-    present (plus ``tick_size``/``lot_size`` both positive), lines ~255-266. Returning anything
-    other than ``False`` while even ONE of those eight is missing makes that branch
-    UNREACHABLE and forces ``INADMISSIBLE`` in its place — turning what the kernel would have
-    classified ``UNKNOWN`` into a ``DENY`` this function has no authority to make.
+    Two rounds of review each found this function's grid re-derivation missing one more of
+    ``order_shape_admissible``'s own precondition fields (round 1: ``shape.price``/
+    ``shape.quantity``/``constraints`` absent; round 2: ``price_max``/``min_quantity``/
+    ``max_quantity`` absent) — because re-deriving a verdict the kernel owns means predicting
+    every precondition it will ever check, and nothing bounds that list. That approach is
+    DELETED here, not patched a fourth time — the grid arithmetic that lived in this function
+    (a second, unpinned copy of ``predicates.py:281-291``) is gone.
 
-    The first cut of this function checked only the THREE fields its own grid arithmetic
-    needs (``price_min``/``tick_size``/``lot_size``) and returned ``True`` on a violation
-    whenever those three were present — even with ``price_max``/``min_quantity``/
-    ``max_quantity`` absent, a case every one of the kernel's own eight are independently
-    nullable and a partially-filled venue policy is schema-valid (``VenueShapeConstraints``,
-    ``tos/src/tos/venue/records.py:126-133``) — reintroducing the identical defect class one
-    field set narrower (HIGH round 1, PR #718 review, 2026-09-16, ``price=None``; HIGH round 2,
-    same review, a grid violation with those three band fields absent). Both rounds are closed
-    by the same rule: check every field the kernel itself requires, not the subset this
-    function's own arithmetic happens to touch.
+    **The structural answer: this runtime never rounds a shape after it has been decided.**
+    :meth:`VenueServiceStage._sourced_shape` takes ``derive_order_size``'s own output quantity
+    AS-IS (:func:`_derived_shape_quantity` parses the bound axis value back to ``int`` and
+    REFUSES — returns ``None`` — a value that is not already an exact whole number, rather
+    than rounding it). ``derive_order_size`` itself, under
+    :attr:`~tos.egressgw.vocabulary.LotRoundingPolicy.EXACT_MULTIPLE_REQUIRED`, DENIES a raw
+    size that is not already an exact lot multiple rather than rounding it — never reaches
+    ``DERIVED``, never reaches this runtime at all. Under ``FLOOR_TO_LOT`` the derivation DOES
+    floor the raw size to a lot multiple — but that floor IS the authored policy computing the
+    decision, not a caller normalizing an already-decided shape: the floored quantity is the
+    ONE value that ever exists in this runtime's path (the axis binding, the command, this
+    shape), so there is no second, differently-valued "decided" shape for a later step to have
+    quietly altered. Nothing between ``derive_order_size`` and the judged shape (this module)
+    rounds, clamps, or widens a value. So the honest answer is ``False`` — always, structurally
+    true rather than computed per attempt.
 
-    ``False`` is therefore the answer for every case except one — every missing/invalid field
-    among the eight, not just the three the grid math uses. ``True`` only when all eight are
-    present and valid and the shape is affirmatively off-grid.
+    This is true only for as long as it stays true. ``tos/runtime/tests/compose
+    /test_venue_wiring.py::TestSilentlyRoundedIsNeverIntroduced`` pins the underlying
+    INVARIANT this constant relies on — that the sourced shape's quantity always equals
+    ``derive_order_size``'s own output exactly, unaltered, including under a genuine
+    ``FLOOR_TO_LOT`` floor — never this constant itself (asserting ``is False`` on a hardcoded
+    ``False`` would be exactly the tautology this project has been bitten by before). If this
+    runtime ever grows a normalization step, that test goes red and THIS field must be
+    revisited then, never left at ``False`` by inertia.
     """
-    if constraints is None:
-        return False
-    if (
-        price is None
-        or quantity is None
-        or constraints.price_min is None
-        or constraints.price_max is None
-        or constraints.tick_size is None
-        or constraints.lot_size is None
-        or constraints.min_quantity is None
-        or constraints.max_quantity is None
-    ):
-        return False
-    if constraints.tick_size == 0 or constraints.lot_size == 0:
-        return False
-    price_on_grid = (price - constraints.price_min) % constraints.tick_size == 0
-    quantity_on_grid = quantity % constraints.lot_size == 0
-    return not (price_on_grid and quantity_on_grid)
+    return False
 
 
 class VenueServiceStage:
@@ -521,9 +513,10 @@ class VenueServiceStage:
     ``last_decision`` — so those call sites change only what they read FROM, not how.
 
     **(a′) wave — order-shape field sourcing.** :meth:`__call__` never folds the raw injected
-    ``shape`` unchanged: ``quantity`` and ``silently_rounded`` are ALWAYS replaced with,
-    respectively, the derivation's own quantity (:func:`_derived_shape_quantity`) and an
-    observed tick/lot-grid fact (:func:`_observed_silently_rounded`) — neither ever falls back
+    ``shape`` unchanged: ``quantity`` is ALWAYS replaced with the derivation's own quantity
+    (:func:`_derived_shape_quantity`) and ``silently_rounded`` is ALWAYS the structural
+    ``False`` this runtime's own behaviour justifies (:func:`_observed_silently_rounded` — its
+    own docstring explains why this is not a grid re-derivation) — neither ever falls back
     to the caller's literal, construction_rules or not. ``side``/``position_effect``/
     ``order_type``/``tif`` are sourced from the optional ``construction_rules`` (decisions 2/3)
     **when one is supplied**; ``construction_rules is None`` is this compose root not yet
@@ -615,7 +608,8 @@ class VenueServiceStage:
         if resolved is None:
             return None
         updates: dict[str, object] = {
-            "quantity": _derived_shape_quantity(candidate_command)
+            "quantity": _derived_shape_quantity(candidate_command),
+            "silently_rounded": _observed_silently_rounded(),
         }
         if self._construction_rules is not None:
             side, position_effect = _shape_side_and_position_effect(
@@ -626,13 +620,7 @@ class VenueServiceStage:
             updates["position_effect"] = position_effect
             updates["order_type"] = order_type
             updates["tif"] = tif
-        shape = resolved.model_copy(update=updates)
-        silently_rounded = _observed_silently_rounded(
-            price=shape.price,
-            quantity=shape.quantity,
-            constraints=self._service.shape_constraints,
-        )
-        return shape.model_copy(update={"silently_rounded": silently_rounded})
+        return resolved.model_copy(update=updates)
 
     @property
     def resolved_shape(self) -> OrderShapeFields | None:
