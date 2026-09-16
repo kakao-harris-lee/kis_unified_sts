@@ -324,8 +324,30 @@ if isinstance(args, Args):
   `TestVenueBootRefusals.test_instrument_class_mismatch_refuses_to_boot` ·
   `test_run_blocker_list_labels_match_between_cli_and_plan_section_7`(드리프트 핀). 산식:
   2291 − 2 + 3 = **2292**.
-- **정직 이월**: `_wiring.py` 크기 예산이 1122→1124(+2, 신규 import 1줄 + `construction_rules=`
-  kwarg 1줄 — 주석을 전부 압축한 뒤에도 남는 실질 증가)로 드리프트. 신규 예외를 등재하지 않고
-  그대로 보고하며 `measured:` 값은 직접 고치지 않는다(팀리드 처분 대기). `cli.py` 는 정확히
-  1000행으로 재압축(헤드룸 0 유지). `run` 은 여전히 파싱 전용(`cli.py:935` `return 0`) — (a′)
-  해소가 `run` 가동을 뜻하지 않는다는 점을 코드·문서 양쪽에 명시했다.
+- **크기 예산 — 신규 예외 0**: `_wiring.py` **1122행**(등재값과 동일) · `cli.py` **정확히
+  1000행**(헤드룸 0). 둘 다 `wc -l` 실측. *(이 항목의 이전 판은 `1122→1124(+2)` 라고 적었는데
+  **거짓이었다** — PR #722 리뷰가 `--stat` 순증 0 · `wc -l` base·HEAD 동일 · 검사기 자체 출력
+  전부로 반박했고, 「신규 import 1줄」은 `_venue_wiring.py` 와의 혼동이었다. 착지 기록의 오류를
+  착지 기록에 남긴다 — 이 절의 존재 이유가 정밀한 자기보고이므로 조용히 고치지 않는다.)*
+  중간 라운드에 실제로 +2 가 났으나 **재등재 대신 설계로 해소**했다: `VenueServiceStage` 가
+  7 필드를 전부 원천화하므로 호출자가 빈 `OrderShapeFields()` 를 만들 이유가 없어, 기본값을
+  스테이지 내부로 옮기자 import 와 인자가 함께 빠졌다.
+- **`run` 은 여전히 구동되지 않는다**: `cli.py:935` 가 `if isinstance(args, Args): return 0` —
+  파싱하고 아무것도 구성하지 않는다. `ConstructionConfig` 로더는 후속 웨이브(§6 ⑥). **(a′)
+  해소와 「`run` 가동」은 다른 문장**이며, 이 구분을 코드·계획·PR 세 곳에 명시했다.
+- **배포 인스턴스는 부팅하지 않는다 — 결정에 의해**: operator-fill leaf 5종이 각각 독립적으로
+  로드를 거부한다 — `scope.accounts` · `scope.instruments` · `admitted_quantity_bases`(전략
+  파일의 `quantity_basis` 확정 대기) · `authorized_axes` 의 `DIRECTION` 값(양방향을 승인하는
+  문서를 한쪽으로 못박지 않기 위해 레인 A 가 의도적으로 비움) · `canonical_digest`. 앞의 둘은
+  **이 웨이브 이전부터 그 상태**였다 — 새 블록이 아니라 같은 목록에 항목이 는 것이다.
+- **정체성은 파생되지만 소비자가 없다**(§4.6): PR #720 리뷰 뮤테이션이 `intent_id` 를 상수로
+  바꿔도 **2275 중 2건만** red 였다. 파생 정체성에 의존해 행동이 바뀌는 소비자가 현재 없다.
+  결함으로 처리하지 않는다 — 상수는 세대 펜싱을 사문화하므로 파생이 옳고, 「파생됐으나 아직
+  소비자 없음」은 「상수」보다 엄격히 낫다. **인위적 소비자를 만들지 않는다.** 다만 「정체성을
+  파생한다」가 「정체성이 무언가를 막는다」를 뜻하지 않음을 여기 적는다. 리뷰어 확인 불가도
+  함께: 단일 instrument 전제에서만 확인했고 다계정/다상품 배포의 영향은 미관측이다.
+- **거버넌스 산출물**: DR-0004(OCP `_runtime.construction` 커버리지 — DR-0002 §6 이 정한 수단)
+  · 제안표 2종(sizing `52d7aa14` · effect_dimensions `92a5d462`, 둘 다 운영자 채택). §13 실측
+  결과 이번 웨이브는 DR-0002 §6 의 두 트리거 어느 것도 아니나 §2.3 행을 낡게 만든 것은 사실이라
+  그 수단을 따랐다. **digest 는 `_runtime` 내용을 커버하지 않는다** — 같은 세대에서 구성 값을
+  바꿔도 tamper-check 는 통과한다(DR-0004 §4).
