@@ -223,10 +223,28 @@ def ocp_yaml(
     broker: str = "kis",
     account: str = "acct-1",
     instrument: str = "K200F",
+    action_classes: str = "[]",
+    order_types: str = '["LIMIT"]',
+    construction: str | None = None,
 ) -> str:
     """The standard fixture ``order_construction_policy.yaml`` INSTANCE
     document — a full ORDER-CONSTRUCTION-POLICY-template.yaml key set plus
-    ``_model_view``/``_runtime``."""
+    ``_model_view``/``_runtime``.
+
+    ``order_types`` defaults to a single-entry list (``["LIMIT"]``), not the
+    template's own empty default: the (a′) wave's loader now DERIVES the
+    ``ORDER_TYPE`` authorized-axis binding from ``scope.order_types`` (a
+    single-live-scope singleton, like ``environments``/``accounts``), so an
+    empty list would refuse to load — same reason ``environment``/``account``
+    already default to non-empty singletons above.
+
+    ``construction`` is the raw YAML text for the ``_runtime.construction``
+    block (2-space-indented, as it appears directly under ``_runtime:``,
+    fixture data only — not the operator-adopted production values, see this
+    module's own docstring). Defaults to a well-formed block so every
+    existing ``ocp_yaml()`` caller keeps loading without having to know about
+    the (a′) wave; override wholesale (including ``""`` to omit the block
+    entirely) for tests that exercise ``_runtime.construction`` itself."""
     version = (
         SCHEME.version if canonicalization_version is None else canonicalization_version
     )
@@ -235,6 +253,67 @@ def ocp_yaml(
         if model_view_policy_generation is None
         else model_view_policy_generation
     )
+    if construction is None:
+        construction = textwrap.indent(
+            textwrap.dedent("""\
+                construction:
+                  sizing:
+                    # max_quantity/min_quantity/lot_size are CROSS-CHECKED at boot against the
+                    # venue constraint policy's own shape_constraints (lane B's
+                    # _cross_check_ocp_sizing_bound, tos_runtime/compose/_riskstate_wiring.py):
+                    # OCP max_quantity must not EXCEED the venue's, OCP min_quantity must not be
+                    # BELOW the venue's, and OCP lot_size must be a whole multiple of the
+                    # venue's. tests/compose/conftest.py's own venue_policy_yaml() fixture (the
+                    # ONE both suites' e2e tests boot against) sets
+                    # lot_size=2/min_quantity=2/max_quantity=100 — these three values were
+                    # picked to satisfy that cross-check (95 boot refusals, PR #719 delta
+                    # review, surfaced the pre-wave disagreement: OCP sizing did not exist
+                    # before this wave, so nobody had ever checked the two fixtures agreed).
+                    # max_quantity is deliberately NOT narrower than the venue's: this is the
+                    # SHARED baseline every compose e2e test boots against, and a narrower OCP
+                    # ceiling here would silently cap the derived quantity in every one of
+                    # them — a test asserting a specific derived value would then be pinning
+                    # the OCP ceiling by accident, not the thing it means to pin (integration
+                    # review, 2026-09-16: lane C's own test_derived_quantity_reaches_the_fold_
+                    # not_the_literal expected 20 and got 10, capped by this fixture's OCP
+                    # bound rather than the venue's [2, 100] range its comment reasons from).
+                    # A test that specifically wants a narrower OCP should override this
+                    # parameter/construction locally, never shrink the shared default. If you
+                    # change ONE of these two fixtures' sizing values, change the other too, or
+                    # the cross-check will refuse every compose e2e boot.
+                    max_quantity: 100
+                    min_quantity: 2
+                    lot_size: 2
+                    lot_rounding: "EXACT_MULTIPLE_REQUIRED"
+                    risk_budget: 100
+                    per_unit_risk: 10
+                    max_notional: null
+                    admitted_quantity_bases: ["RISK"]
+                  axes:
+                    - axis: "TIF"
+                      value: "DAY"
+                    - axis: "DIRECTION"
+                      value: "LONG"
+                  action_class_shape:
+                    NEW_LONG:
+                      LONG: {side: "BUY", position_effect: "OPEN"}
+                    NEW_SHORT:
+                      SHORT: {side: "SELL", position_effect: "OPEN"}
+                  effect_dimensions:
+                    # dimension_id MEASURED off aggregate_risk_policy.yaml's own
+                    # _runtime.dimension_ids (the composed-id spelling RCL actually looks up
+                    # by, rcl/predicates.py:104-105 / riskstate/service.py:145-151) --
+                    # NOT the unprefixed _model_view.governed_dimensions spelling (proposal
+                    # 2026-09-16-tos-ocp-effect-dimensions-proposal.md §2.1). A wrong spelling
+                    # here passes step 5 while the capacity lookup finds nothing -- the exact
+                    # phantom the withdrawn fixture-injected "notional"/"units" values were.
+                    - dimension_id: "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"
+                      basis: "QUANTITY"
+                      unit: "CONTRACTS"
+                      scale: "1"
+                """),
+            "  ",
+        )
     head = textwrap.dedent(f"""\
         artifact_type: ORDER_CONSTRUCTION_POLICY
         schema_version: "1.0-DRAFT"
@@ -254,8 +333,8 @@ def ocp_yaml(
           market_segments: []
           instruments: ["{instrument}"]
           contracts: []
-          action_classes: []
-          order_types: []
+          action_classes: {action_classes}
+          order_types: {order_types}
         """)
     tail_blocks = textwrap.dedent(f"""\
         _model_view:
@@ -265,7 +344,7 @@ def ocp_yaml(
           canonicalization_version: "{version}"
           wire_codec: {wire_codec}
         """)
-    return head + _OCP_TEMPLATE_TAIL + tail_blocks
+    return head + _OCP_TEMPLATE_TAIL + tail_blocks + construction
 
 
 def write_fixture_venue_policy(tmp_path: Path, text: str | None = None) -> Path:
