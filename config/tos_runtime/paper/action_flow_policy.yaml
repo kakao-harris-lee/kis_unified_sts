@@ -1,0 +1,152 @@
+# =============================================================================
+# Action Flow Policy — paper / KRX index futures (KOSPI200)
+# =============================================================================
+# INSTANCE of tos-spec/src/part-1-foundation/verification/ACTION-FLOW-POLICY-template.yaml
+# (placement + activation per DR-0002 §2.1/§2.2, extended by DR-0003 §2.1;
+# observed-vs-declared split per DR-0003 §2.3). Loaded by
+# tos_runtime.riskstate.load_action_flow_policy.
+#
+# APPROVAL PROVENANCE: docs/plans/2026-09-16-tos-risk-state-service-plan.md
+# §6 ②, adopted by the operator on 2026-09-16 (「1. 채택」).
+#   * flow dimension afg.ORDER, hard/runtime/envelope/decision limits all 1 —
+#     one broker mutation in flight for this single-scope paper deployment
+#     (consistent with risk.yaml max_in_flight 1).
+#   * scope_independence (ACCOUNT): DECLARATIONS about this deployment's
+#     structure — one account, one broker, one credential/session, one route,
+#     one failure domain; the two "basis is only a local counter / scheduler
+#     priority" negatives are false. The runtime evidences these as
+#     declarations at boot; it never observes them (DR-0003 §2.3).
+#   * deployment_facts: concurrent_consumers_share_one_envelope TRUE (the
+#     compose root drives exactly one EngineDriver over one inbox — the
+#     envelope is shared by construction; tos.afg.amplification_bounded
+#     requires this to be positively true), envelope_reset_on_duplicate
+#     FALSE, duplicate_event_created_new_allowance FALSE (the inbox rejects
+#     duplicates by signature; a rejected duplicate creates no allowance).
+#     NOTE: plan §6 ② listed the three as "(False, False, True)" in a
+#     different order; the semantics adopted here are the ones the kernel
+#     predicate needs and the deployment actually has.
+#   * action_class_map: NEW_LONG/NEW_SHORT → NORMAL_NEW_RISK; DECREASE/CLOSE/
+#     REDUCE_ONLY → ORDINARY_REDUCE_OR_EXIT (kernel ActionClassKind tokens).
+#   * side_tokens BUY/SELL — must be members of venue_constraint_policy.yaml
+#     allowed_sides (compose-time cross-check).
+#   * HONEST LIMIT: even with this file active, step 7 (ACTION_FLOW_DECISION)
+#     is UNKNOWN today — the duplicate-redelivery and failover-replay axes
+#     have no durable per-root-cause observation (plan §7) until the
+#     inbox-schema counter wave lands.
+#
+# OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"): account_scope
+# (same value as venue_constraint_policy.yaml), then
+# `tos-runtime print-policy-digests --config-dir <dir>` → safety_activation.yaml
+# `members:` (kind ACTION_FLOW_POLICY).
+# =============================================================================
+
+artifact_type: ACTION_FLOW_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: "afp-paper-krx-index-futures"
+policy_version: TBD
+action_flow_generation: 1
+canonical_digest: TBD
+status: ISSUED
+environment_scope: ["paper"]
+safety_cell_scope: []
+broker_scope: ["KIS_KOREA_INVESTMENT_SECURITIES"]
+legal_portfolio_scope: []
+account_scope: ["TBD"]
+credential_session_route_and_endpoint_scope: []
+venue_and_instrument_scope: ["KRX"]
+strategy_intent_and_cause_scope: []
+global_scope_included: false
+hard_safety_envelope:
+  envelope_id: TBD
+  generation: null
+  canonical_digest: TBD
+runtime_safety_profile:
+  profile_id: TBD
+  generation: null
+  canonical_digest: TBD
+action_classes:
+  - "NORMAL_NEW_RISK (NEW_LONG, NEW_SHORT)"
+  - "ORDINARY_REDUCE_OR_EXIT (DECREASE, CLOSE, REDUCE_ONLY)"
+resource_dimensions_and_units:
+  - "afg.ORDER — broker mutations (count)"
+scope_aggregation_and_shared_limit_rules:
+  - "single ACCOUNT scope; no shared-limit aggregation in v1"
+rate_burst_queue_and_in_flight_limits:
+  - "max_in_flight 1 (risk.yaml); queue depth ceiling 8 (risk.yaml)"
+cause_amplification_limits:
+  - "risk.yaml amplification envelope (max_amplification_per_cause 3)"
+retry_reconnect_replay_and_redelivery_rules:
+  - "no blind retry (AFG-INV-008); duplicate inbox events are rejected by signature and create no allowance"
+protective_flow_reservations: []
+trustworthy_time_and_refill_rules:
+  - "elapsed_monotonic observed from the inbox's handling-started receipt and the trustworthy time service (no refill in v1)"
+atomic_risk_and_flow_commitment_rules:
+  - "economic_commitment_exclusive / flow_commitment_exclusive are operator attestations (risk_attestations.yaml) — this policy asserts neither"
+materiality_default: MATERIAL
+unknown_disposition: DENY_NEW_NORMAL_RISK
+invalidation_and_containment_rules:
+  - "new policy generation on any change of limits, scope, independence declarations or deployment facts"
+recovery_and_non_revival_rules: []
+compatibility_requirements: []
+approved_by: ["operator (System Owner) — 2026-09-16, plan §6 ② 채택"]
+effective_from: "2026-09-16"
+review_due: null
+authority:
+  policy_active: false
+  grants_action_flow_allocation: false
+  creates_or_refills_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+evidence:
+  activation_record_id: TBD
+  independent_review_id: "PR #703 / #704 independent review (sonnet) — see plan §7"
+  evidence_location: "evidence store rows ACTION_FLOW_POLICY_BOUND / RISK_STATE_OBSERVED"
+_model_view:
+  policy_generation: 1
+  policy_version: "1.0.0"
+  governed_dimensions: ["afg.ORDER"]
+  governed_scopes: ["ACCOUNT"]
+  governed_action_classes: ["NORMAL_NEW_RISK", "ORDINARY_REDUCE_OR_EXIT"]
+  bundle_member_kind: "ACTION_FLOW_POLICY"
+  signer_identity: null
+  approval_identity: null
+  evidence_package_ref: null
+_runtime:
+  flow_dimension_id: "afg.ORDER"
+  limits:
+    hard_limit: 1
+    runtime_limit: 1
+    envelope_max: 1
+    decision_effective_limit: 1
+  scope_independence:
+    scope: "ACCOUNT"
+    allocation_separated: true
+    refill_separated: true
+    broker_enforcement_separated: true
+    credential_session_state_separated: true
+    failure_domain_separated: true
+    final_route_separated: true
+    basis_is_local_counter_only: false
+    basis_is_scheduler_priority_only: false
+  covered_scopes: ["ACCOUNT"]
+  required_scopes: ["ACCOUNT"]
+  applicable_action_flow_scopes: ["ACCOUNT"]
+  action_class_map:
+    NEW_LONG: "NORMAL_NEW_RISK"
+    NEW_SHORT: "NORMAL_NEW_RISK"
+    DECREASE: "ORDINARY_REDUCE_OR_EXIT"
+    CLOSE: "ORDINARY_REDUCE_OR_EXIT"
+    REDUCE_ONLY: "ORDINARY_REDUCE_OR_EXIT"
+  deployment_facts:
+    concurrent_consumers_share_one_envelope: true
+    envelope_reset_on_duplicate: false
+    duplicate_event_created_new_allowance: false
+  side_tokens:
+    buy: "BUY"
+    sell: "SELL"

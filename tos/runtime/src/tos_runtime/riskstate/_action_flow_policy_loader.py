@@ -97,8 +97,10 @@ _AFG_TEMPLATE_LIST_KEYS: tuple[str, ...] = (
     "approved_by",
 )
 
-#: The AFG policy's scope-array keys (template order) — all explicit lists, no v1 singleton
-#: requirement is named for this policy in plan §2.1 (unlike ARE's instrument/account pair).
+#: The AFG policy's scope-array keys (template order) — all explicit lists. ``account_scope``
+#: additionally passes :func:`_require_account_scope_singleton` (exactly one entry, never
+#: ``"TBD"``/empty — the same phantom-scope gate the venue/ARE loaders apply; team-lead
+#: disposition 2026-09-16, found while landing the real deploy file).
 _AFG_LIST_SCOPE_KEYS: tuple[str, ...] = (
     "environment_scope",
     "safety_cell_scope",
@@ -466,6 +468,29 @@ def _parse_afg_runtime_core(
     return flow_dimension_id, limits, scope_independence, side_tokens
 
 
+def _require_account_scope_singleton(raw: Mapping[str, Any], path: Path) -> str:
+    """``account_scope`` is the ONE deployment coordinate this policy binds (v1 single live
+    scope, plan §2.1) and the real deploy file ships it as the operator-fill marker ``["TBD"]``
+    (config/tos_runtime/paper/action_flow_policy.yaml) — the same phantom-scope gate the
+    venue/ARE loaders apply: exactly one entry, never ``"TBD"``/empty (team-lead disposition
+    2026-09-16, found while landing the real file). Split out of :func:`load_action_flow_policy`
+    for that function's own 100-line budget."""
+    account_entries = require_str_list(
+        raw["account_scope"], path, "policy.account_scope"
+    )
+    if len(account_entries) != 1:
+        raise VenuePolicyConfigError(
+            f"{path}: policy.account_scope must be a list of EXACTLY one string for a single "
+            f"live scope (v1, plan §2.1) — got {len(account_entries)}"
+        )
+    if account_entries[0] == "TBD" or not account_entries[0].strip():
+        raise VenuePolicyConfigError(
+            f"{path}: policy.account_scope is still 'TBD'/empty (named-TBD) — fill the "
+            "deployment coordinate before activation"
+        )
+    return account_entries[0]
+
+
 def load_action_flow_policy(
     path: Path, *, scheme: CanonicalizationScheme
 ) -> LoadedActionFlowPolicy:
@@ -493,6 +518,7 @@ def load_action_flow_policy(
 
     for key in _AFG_LIST_SCOPE_KEYS:
         require_explicit_list_str(raw, key, path, "policy")
+    _require_account_scope_singleton(raw, path)
     global_scope_included = raw.get("global_scope_included")
     if not isinstance(global_scope_included, bool):
         raise VenuePolicyConfigError(
