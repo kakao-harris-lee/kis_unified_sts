@@ -295,6 +295,7 @@ def _service(
     hse_envelope_max: str = "1",
     effective_limit_value: str = "1",
     current_seq_reader: Callable[[], int | None] | None = None,
+    monotonic_reader: Callable[[], int | None] | None = None,
 ) -> RiskStateService:
     are_path = tmp_path / "aggregate_risk_policy.yaml"
     are_path.write_text(
@@ -333,7 +334,9 @@ def _service(
         construction_stage_reader=lambda: None,
         effect_envelope_reader=lambda: None,
         rcl_tip_reader=(rcl_tip_reader if rcl_tip_reader is not None else (lambda: 1)),
-        monotonic_reader=lambda: 1_000,
+        monotonic_reader=(
+            monotonic_reader if monotonic_reader is not None else (lambda: 1_000)
+        ),
         max_attempts_reader=lambda: max_attempts,
         current_seq_reader=(
             current_seq_reader if current_seq_reader is not None else (lambda: None)
@@ -636,6 +639,65 @@ class TestActionFlowInputsFor:
         second = service.action_flow_inputs_for(second_request)
         assert second is not None
         assert second.decision_generation == 8
+
+    def test_elapsed_monotonic_ms_consumes_real_handling_started_receipt(
+        self,
+        tmp_path: Path,
+        evidence_store: SqliteEvidenceStore,
+        inbox: SqliteEventInbox,
+        rcl_log: SqliteCommitLog,
+    ) -> None:
+        """Re-review residual of HIGH-4 (review of PR #704, 2026-09-16): the earlier fix pinned
+        ``InboxFlowReader`` resolving ``handling_started_monotonic`` from a real inbox row
+        (``tests/riskstate/test_flow_observation.py``), but nothing pinned
+        :class:`RiskStateService` actually CONSUMING that value into
+        ``ActionFlowDecisionInputs.observed_amplification.elapsed_monotonic`` via
+        :meth:`RiskStateService._elapsed_monotonic_ms` — a mutation making that method always
+        return ``None`` stayed green across the full suite. This test enqueues a real
+        ``EngineEvent``, marks it handling-started with a real ``EVENT_HANDLING_STARTED``
+        evidence receipt, reads back that receipt's OWN real
+        ``appended_at_monotonic_ns`` (the SAME column the service itself reads — never a
+        hand-typed literal standing in for it), and supplies a ``monotonic_reader`` fixed at a
+        KNOWN offset past it, so the expected millisecond difference is exact and
+        deterministic despite the receipt's own timestamp being a real wall-clock read.
+        """
+        payload = EgressResultPayload(
+            instrument_key=InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT),
+            attempt_id="prop-1",
+            kind=EgressResultKind.ACK,
+        )
+        event = EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
+        receipt = inbox.enqueue(event)
+        marker = evidence_store.append(
+            {"event_id": receipt.event_id},
+            kind="EVENT_HANDLING_STARTED",
+            record_class="EVENT_HANDLING_STARTED",
+        )
+        assert marker.seq is not None and marker.key_generation is not None
+        inbox.mark_handling_started(
+            receipt.seq, evidence_seq=marker.seq, generation=marker.key_generation
+        )
+        started_ns = next(
+            entry.appended_at_monotonic_ns
+            for entry in evidence_store.iter_entry_meta()
+            if entry.seq == marker.seq
+        )
+        started_ms = started_ns // 1_000_000
+        expected_elapsed_ms = 5_000
+        service = _service(
+            tmp_path,
+            evidence_store,
+            inbox,
+            rcl_log,
+            current_seq_reader=lambda: receipt.seq,
+            monotonic_reader=lambda: started_ms + expected_elapsed_ms,
+        )
+        request = _stage_request(step=CommitmentStep.ACTION_FLOW_DECISION)
+        inputs = service.action_flow_inputs_for(request)
+        assert inputs is not None
+        assert inputs.observed_amplification.elapsed_monotonic == Decimal(
+            expected_elapsed_ms
+        )
 
 
 # ===========================================================================
@@ -1127,7 +1189,13 @@ class TestComposeE2E:
         hand-built literal cell anywhere in this test. Step 7 (ACTION_FLOW_DECISION) reaches
         ``UNKNOWN`` — the module docstring's own honest ``amplification_bounded`` finding,
         asserted here as the REAL outcome, never papered over. Both ``*_POLICY_BOUND`` rows
-        and exactly one ``RISK_STATE_OBSERVED`` row are recorded."""
+        and exactly one ``RISK_STATE_OBSERVED`` row are recorded. Also asserts (re-review
+        residual of HIGH-4, 2026-09-16) that the REAL first attempt's own step-7 inputs carry
+        a non-``None`` ``observed_amplification.elapsed_monotonic`` — captured via a spy on
+        ``runtime.risk_state.action_flow_inputs_for`` (an instance-attribute override shadows
+        the bound method for the SAME object the compose thunks already close over, per
+        ``root.py``'s own ``risk_state_cell`` — never a second, separately-built service).
+        """
         fx.write_band_strategy_file(config_dir_with_risk_state)
         runtime = compose_paper_runtime(
             config_dir_with_risk_state,
@@ -1141,6 +1209,17 @@ class TestComposeE2E:
         )
         assert runtime.risk_state is not None
 
+        captured_action_flow_inputs = []
+        original_action_flow_inputs_for = runtime.risk_state.action_flow_inputs_for
+
+        def _spy(request):  # type: ignore[no-untyped-def]
+            result = original_action_flow_inputs_for(request)
+            if result is not None:
+                captured_action_flow_inputs.append(result)
+            return result
+
+        runtime.risk_state.action_flow_inputs_for = _spy  # type: ignore[method-assign]
+
         event = fx.crossing_event()
         verdict_by_step = _drive_two_calls(runtime, custody_root, event)
 
@@ -1153,6 +1232,13 @@ class TestComposeE2E:
             "expected the honest amplification_bounded gap (module docstring) — got "
             f"{afg_verdict.outcome.value}: {afg_verdict.reason}"
         )
+
+        assert captured_action_flow_inputs, (
+            "action_flow_inputs_for was never called with a non-None result — the spy "
+            "captured nothing"
+        )
+        first_attempt_inputs = captured_action_flow_inputs[0]
+        assert first_attempt_inputs.observed_amplification.elapsed_monotonic is not None
 
         counts = _evidence_kind_counts(runtime)
         assert counts.get("AGGREGATE_RISK_POLICY_BOUND") == 1
