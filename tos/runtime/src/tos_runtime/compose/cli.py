@@ -86,13 +86,13 @@ too, so they wait on BOTH):
     the position observation is single-source (the runtime's own durable evidence — no broker
     witness corroborates it, so ``all_fields_attributed`` stays an operator attestation), it
     governs contract-count dimensions only (no valuation/notional/margin dimension — no mark
-    source exists), and the Adverse Scenario Set instance is still a fixture value pending
-    operator adoption (plan §6 confirmation point 2). **Honest finding (2026-09-16), not
-    papered over:** step 7 (``ACTION_FLOW_DECISION``) ``GRANT`` is categorically unreachable
-    today — ``tos.afg.amplification_bounded`` requires a concrete observed value on every
-    bounded axis, and ``duplicate_redelivery_expansion``/``failover_reconnect_replay_expansion``
-    have no durable per-root-cause read surface in ``tos_runtime`` (inbox dedup is a transient
-    receipt; replay verdicts are per-boot) — needs a durable inbox-schema counter (follow-up).
+    source exists), and the Adverse Scenario Set instance's values were adopted by the operator
+    2026-09-16 (plan §6 confirmation point 2) but lands in a separate wave —
+    ``config/tos_runtime/paper/risk.yaml`` does not exist on this branch yet. **Resolved
+    (2026-09-16, action-flow observation completion wave):** step 7 (``ACTION_FLOW_DECISION``)
+    ``GRANT`` is now reachable — both axes observed from durable evidence, zero schema change
+    (:mod:`tos_runtime.riskstate.flow_observation`'s ``count_duplicate_dispositions``/
+    ``count_recovery_markers``), disclosed under-count as ``flow.replays_definition``.
 (c) **No tick source.** Nothing in ``tos_runtime`` produces a ``DECISION_TICK`` from a live market
     feed or a clock — :class:`~tos_runtime.engine.driver.EngineDriver`'s three public entry points
     are all pull-based; every real caller is a test fixture. Needs a ``tos.marketfeed`` runtime
