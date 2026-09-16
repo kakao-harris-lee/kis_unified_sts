@@ -20,14 +20,24 @@ construction rules as **prose only** (``direction_side_and_position_effect_rules
 block, ``construction``, that makes those same prose rules machine-readable into
 :class:`~tos_runtime.venue.construction_rules.ConstructionRules` (the (a′) wave's committed,
 lane-A-read-only contract) — a **new policy generation** (``policy_generation: 2``), not a
-field bolted onto generation 1, because a governed policy's content is generation-immutable
-(this module's own ``canonical_digest`` tamper/stale check is exactly that discipline). Every
-leaf here is fail-closed exactly like every other ``_runtime``/``_model_view`` leaf this module
-already reads: a missing ``_runtime.construction`` block, a still-``TBD``/``null`` leaf, or a
-malformed value refuses the load — with the ONE documented exception
-(:func:`_parse_sizing`'s ``max_notional``, which is an OPTIONAL ceiling and legitimately
-``null``, per ``SizingBound``'s own consuming code at ``egressgw/construction.py:525``, guarded
-``is not None``).
+field bolted onto generation 1, on the operational convention that a governed policy's content
+does not change silently under an unchanged generation number. Every leaf here is fail-closed
+exactly like every other ``_runtime``/``_model_view`` leaf this module already reads: a missing
+``_runtime.construction`` block, a still-``TBD``/``null`` leaf, or a malformed value refuses the
+load — with the ONE documented exception (:func:`_parse_sizing`'s ``max_notional``, which is an
+OPTIONAL ceiling and legitimately ``null``, per ``SizingBound``'s own consuming code at
+``egressgw/construction.py:525``, guarded ``is not None``).
+
+⚠ **The generation bump above is convention, not something this loader's ``canonical_digest``
+check mechanically enforces.** DR-0002 §2.3's coverage table is explicit: the OCP row's kernel
+digest covers identity/generation/version only — ``policy_id`` / ``policy_generation`` /
+``policy_version`` (``_REQUIRED_COVERED``) — and nothing else. ``_runtime`` content, including
+every leaf :func:`_parse_construction_rules` reads, sits OUTSIDE that coverage. So an editor who
+changes ``_runtime.construction.sizing.max_quantity`` (or any other construction leaf) while
+leaving ``policy_generation`` unchanged passes :func:`~tos_runtime.venue._policy_primitives
+.check_canonical_digest` silently — the tamper/stale check never looks at that content, so it
+has nothing to fire on. Treat the generation bump as a discipline this module's callers must
+keep by hand, not a guarantee this loader verifies.
 
 Firewall (R1, runtime scope): stdlib + ``tos.*`` only — no ``shared.*``.
 """

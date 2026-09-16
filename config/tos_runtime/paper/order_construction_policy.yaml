@@ -18,9 +18,13 @@
 # ② admitted_quantity_bases stays operator-fill "TBD" until the deployed
 # strategy file's own quantity_basis is settled, ③ proposal table adopted
 # as-is). This is a NEW generation, not an edit to generation 1's content —
-# a governed policy's content is generation-immutable (see this document's
-# own canonicalization_and_duplicate_field_rules entry and the loader's
-# canonical_digest tamper/stale check).
+# an operational convention this module's loader does NOT mechanically
+# enforce: DR-0002 §2.3's coverage table binds the kernel canonical_digest to
+# policy_id/policy_generation/policy_version only, never to _runtime content,
+# so a content edit under an unchanged policy_generation would pass the
+# loader's tamper/stale check silently. The generation bump is a discipline
+# kept by hand, not a guarantee the digest verifies (see this document's own
+# canonicalization_and_duplicate_field_rules entry).
 #
 # TRANSPORT BINDING (`_runtime.wire_codec`): the paper compose default is the
 # SYNTHETIC transport, for which the loader requires `wire_codec: null`. A
