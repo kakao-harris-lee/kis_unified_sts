@@ -268,4 +268,64 @@ if isinstance(args, Args):
 
 ## 7. 착지 기록
 
-(웨이브 완료 후 채움)
+**차단 목록 — `cli.py:62-100`(§7 자신이 「the other copy of this same list」라 적는 그 쪽)와 이
+표는 손으로 동기화한다.** 드리프트 핀:
+`tos/runtime/tests/compose/test_cli.py::test_run_blocker_list_labels_match_between_cli_and_plan_section_7`
+— 두 문서의 `(a′)`/`(b′)`/`(c)` 레이블이 각각 RESOLVED 인지를 정규식으로 뽑아 대조한다.
+
+- (a′) **RESOLVED**(웨이브 전체 — 원천화 자체는 레인 A·B·C 의 것, 레인 D 는 그것을 실제로
+  연결·정리했다). `envelope`/`order_shape` 원천화 완료: 레인 A 가 만든 거버넌스 값 위에서
+  `_envelope_wiring.build_construction_envelope`(레인 B)가 로드된 OCP `construction_rules`
+  에서 봉투를 짓고, `_venue_wiring.VenueServiceStage`(레인 C)가 `OrderShapeFields` 7 필드
+  전부(price·quantity·silently_rounded·side·position_effect·order_type·tif)를 파생/정책에서
+  소싱한다. **레인 D 가 한 일**: 레인 C 가 만들어 둔 `construction_rules` 선택 인자를 아무도
+  넘기지 않아 프로덕션 도달 불가였던 것을 `_wiring.py` 결선으로 실제로 살렸고(§4.1) · 죽은
+  `ConstructionConfig.envelope`/`.order_shape` 필드를 제거했고 · `intent_id`/`intent_version`/
+  `envelope_id`/`command_id`/`generation`/`proof_generation` 리터럴을 전부 파생으로 바꿨고 ·
+  차단 목록 두 사본의 동기화 드리프트 핀을 추가했다. **「run 가동」과는 다른 문장**:
+  `cli.py:935` 의 `return 0` 은 그대로 남는다(`ConstructionConfig` 로더는 후속 웨이브, §6 ⑥).
+- (b′) 잔존 — 리스크 상태 서비스 자체가 이미 공시한 한계(단일 원천 포지션·계약 수 차원만).
+  운영자 결정 사항(§6 확인점 5), 이 웨이브 범위 밖.
+- (c) **RESOLVED**(틱 원천 웨이브에서 기해소) — 이 웨이브에서 변경 없음.
+
+**레인 D 실측**:
+
+- `ConstructionConfig` 는 스칼라 7개 + `price` 만 남는다(§4.2 표 확정 — `envelope`/`order_shape`
+  둘 다 제거). `_symmetry_fixtures.py` 의 죽은 주입 2건(`mirrored_proposed_envelope`/
+  `mirrored_order_shape`)도 함께 제거 — 대칭 테스트는 `action_class` 만으로 같은 이유로 통과함을
+  확인.
+- `_shape_side_and_position_effect` 를 `resolve_construction_direction` 경유로 교체 — 레인 B 가
+  이미 고친 「정책 `DIRECTION` 축을 무조건 읽는」 결함을 shape 경로에서도 닫았다(direction-named
+  클래스는 축과 무관하게 클래스 자신에서 방향을 얻는다). 유닛 테스트 1건(`NEW_LONG` → `CLOSE`)을
+  이 교정에 맞춰 정정 — 옛 버전은 「틀린 이유로」 통과하고 있었다.
+- `proof_generation=1` 리터럴 제거 → `inputs.identities.generation`(intent/envelope/command 와
+  동일 construction generation)으로 파생. 다운스트림 소비자는 미발견(`ioc/records.py:378-403` 는
+  `_REQUIRED_COVERED` 등재만) — 다만 Layer-1 covered content 라 canonical digest 에는 실제로
+  반영된다.
+- **뮤테이션(attempt 수준)**: `construction_rules=None` 으로 되돌리면 `TestVenueServiceE2E`/
+  `TestDerivedQuantityReachesVenueGate` 2건이 ADMIT→DENY 로 즉시 red — §4.1 이 죽은 코드라 판정한
+  경로가 이제 실제로 살아 있음을 attempt 수준에서 실증(수정 후 원복 확인).
+- **「이미 고정」주장 3건 실증**: `action_class`(기존 `test_riskstate_wiring.py:1079`) ·
+  `instrument_class`(신규 `test_instrument_class_mismatch_refuses_to_boot`) ·
+  `outbound_side`(커널 `test_a_forged_outbound_side_never_reaches_the_transport`/
+  `test_an_absent_outbound_side_is_a_stop`, `tos/tests/egressgw/test_egressgw_gateway.py`) —
+  전부 실제로 거부됨을 확인. 새로 만든 것은 `instrument_class` 하나뿐, 나머지 둘은 기존 커버리지
+  인용.
+- **게이트**: firewall PASS · lint-imports 3 kept/0 broken · ruff/black/mypy 클린 · 커널 diff 0
+  (`git diff origin/feat/tos-aprime..HEAD --stat -- tos/src` 공백) · 런타임 스위트
+  **2292 passed, 0 failed**(재측정 — 최종 트리, 2026-09-16). 기준 baseline **2291**(브랜치 팁
+  `73c101a3` 실측). 삭제 2 −
+  `TestDerivedQuantityReachesVenueGate.test_literal_derived_quantity_mismatch_no_longer_
+  passes_on_the_literal`(필드 제거로 구성 불가가 된 e2e) ·
+  `TestSilentlyRoundedIsNeverIntroduced.test_off_grid_price_still_denies_via_the_kernels_
+  own_tick_check`(동일 사유, 커널 테스트로 대체 인용) — 신규 3 +
+  `TestSourcedShapeIgnoresPolicyViolatingLiteralQuantity.test_policy_violating_literal_
+  quantity_never_reaches_the_judged_shape`(위 첫 삭제의 유닛 레벨 대체) ·
+  `TestVenueBootRefusals.test_instrument_class_mismatch_refuses_to_boot` ·
+  `test_run_blocker_list_labels_match_between_cli_and_plan_section_7`(드리프트 핀). 산식:
+  2291 − 2 + 3 = **2292**.
+- **정직 이월**: `_wiring.py` 크기 예산이 1122→1124(+2, 신규 import 1줄 + `construction_rules=`
+  kwarg 1줄 — 주석을 전부 압축한 뒤에도 남는 실질 증가)로 드리프트. 신규 예외를 등재하지 않고
+  그대로 보고하며 `measured:` 값은 직접 고치지 않는다(팀리드 처분 대기). `cli.py` 는 정확히
+  1000행으로 재압축(헤드룸 0 유지). `run` 은 여전히 파싱 전용(`cli.py:935` `return 0`) — (a′)
+  해소가 `run` 가동을 뜻하지 않는다는 점을 코드·문서 양쪽에 명시했다.

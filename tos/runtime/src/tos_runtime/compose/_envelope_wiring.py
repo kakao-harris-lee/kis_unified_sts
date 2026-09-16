@@ -153,10 +153,10 @@ def resolve_construction_direction(
 ) -> str:
     """The ONE place direction is resolved for ``action_class_shape`` lookups (module docstring)
     — :func:`build_construction_envelope`'s own SIDE derivation calls this, and lane D's
-    ``_shape_side_and_position_effect`` (``compose/_venue_wiring.py``, unreachable today —
-    nothing passes it ``construction_rules`` yet) should call it too rather than re-deriving
-    direction a second way; this wave has already found five instances of two copies of one
-    fact drifting apart, and lane D would be the sixth.
+    ``_shape_side_and_position_effect`` (``compose/_venue_wiring.py``) calls it too, now that
+    ``compose/_wiring.py`` passes ``loaded_ocp.construction_rules`` through on the real compose
+    path, rather than re-deriving direction a second way; this wave found five instances of two
+    copies of one fact drifting apart, and lane D would have been the sixth.
 
     **Direction is per-attempt, not a policy constant** (team-lead correction, 2026-09-16):
     CLAUDE.md's own non-negotiable — "Futures must preserve long/short symmetry. Entry/exit
