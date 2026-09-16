@@ -100,13 +100,68 @@ class TickOutcome(StrEnum):
 - 게이트: `tools/tos_firewall_check.py` · `lint-imports` · `tools/tos_size_budget.py --check`(신규 모듈 전부 예산 내, 예외 등재 0) · `ruff`/`black`/`mypy` · 런타임+커널 스위트.
 - 정직 상태(예상): 관측 원천은 **파일 저널 1종**(실 시세 트랜스포트 미착지 — 「라이브 피드」가 아니라 「상류 수집기가 쓴 저널」) · 직접 관측만(파생 지표 0) · 단일 instrument · `run` 은 (a′) `envelope`/`order_shape` 로 계속 차단 · `committed_flow_vectors` 여전히 `()` · 포지션 단일 원천(변화 없음).
 
-## 6. 운영자 확인
+## 6. 운영자 확인 — **2026-09-16 전건 처분 완료**
 
-1. **시세 트랜스포트**: 이번 웨이브는 파일 저널만(추천 · 결정적·헤르메틱) → 실 KIS 모의투자 시세 HTTP 어댑터는 후속 웨이브 (c2) 로 분리. 아니면 (c) 안에 포함할지.
+> 운영자 결정(2026-09-16): ① 저널만 유지 · ③ Codex 미부착 · ④ **편입(레인 E 즉시 착수)** · ⑤ 기록만 · ⑥ 다음 = (a′) 잔여. ② 는 저작 중 실측으로 조치 불요 종결.
+
+1. **시세 트랜스포트** — **결정: 이번 웨이브는 파일 저널만.** 실 KIS 모의투자 시세 HTTP 어댑터는 후속 웨이브 (c2) 로 분리(브로커 스코프 능력·TR id·토큰 커스터디가 함께 필요). 따라서 이 웨이브의 정직한 서술은 「라이브 피드」가 아니라 **「상류 수집기가 쓴 저널로 구동되는 틱 원천」**이다.
 2. ~~VER-002 경계값 2종 신규 승인~~ — **불요로 판명(저작 중 실측 정정)**. 두 키 모두 VERIFICATION-PROFILE-002 에 2026-07-29 APPROVED 값 보유(`:1067` 1000 ms · `:1077` 50 ms). 레인 C 가 `MAX_clock_domain_conversion_uncertainty_ms` 선례대로 근거 인용과 함께 `_BOUND_KEYS` 에 추가한다. 운영자 조치 없음.
-3. **마이그레이션 심사**: 레인 B 는 새 sqlite 스키마 — `migration-reviewer` 는 자동으로 돌린다. **Codex 독립 심판**(되돌리기 어려운 경로 = DB 마이그레이션)은 유료 외부 호출이므로 **범위·비용 승인 시에만** 디스패치 — 붙일지 여부.
-4. 다음 순서(잔여): (a′) `envelope`(승인 Intent/IAP) · `order_shape`(전략 제안) → 브로커 증인(P-BAL)/band 원천 → 실 HSE 인스턴스 → 커널 라운드 #4.
+3. **마이그레이션 심사** — **결정: Codex 미부착.** Claude 측 `migration-reviewer` 게이트가 이미 적대적 데이터 디렉터리 6종을 직접 만들어 실측했고 HIGH 1건(버전 정수 쌍 영구 교착)을 잡아 조치까지 끝났다. 신규 파일 baseline v1 하나뿐이고 기존 스토어를 건드리지 않아 위험 표면이 좁다. 유료 외부 호출은 디스패치하지 않는다.
+4. **`marketfeed.sqlite3` 의 내구 백업 세트 편입** — **결정: (a) 편입. 레인 E 즉시 착수.** — `migration-reviewer` 지적(MEDIUM)으로 등재. 지금까지 이 결정은 `store.py` 독스트링에 「레인 D 소관」이라고만 적혀 있었고, **모듈 독스트링에만 있는 결정은 운영자가 질문받은 적 없는 결정**이다. 실측된 결과: 커널이 값의 digest 를 저장된 preimage 에서 재계산하므로(`tos/src/tos/marketfeed/value.py:514-518`), 복원된 데이터 디렉터리에 `preimages` 가 없으면 **복원 이전에 발행된 스냅샷은 view 를 재발행할 수 없다**(레인 B 가 M4 로 증명한 실패 모드가 복원 경로로 옮겨갈 뿐). `composite_state` 가 「있을 수도 없을 수도 있는 멤버」 선례를 이미 갖고 있다. 편입 시 드리프트 지점 2곳(`_last_seq_for` 의 하드코딩 테이블 dict `backup_set.py:222-226` · `restore_set` 의 `DurableSetPaths` 재구성)과 기존 매니페스트 하위호환을 함께 다뤄야 하므로 **레인 E** 로 분리.
+5. **hypothesis 헬스체크 취약점(웨이브 밖 · 기존)** — **결정: 기록만, 미조치.** — `tos/runtime/tests/riskstate/test_position.py::test_adding_unknown_attempt_never_decreases_worst_credible_usage` 가 부하 상황에서 `FailedHealthCheck: Input generation is slow` 로 실패(단독 재실행 시 통과). 이 웨이브가 병렬 에이전트를 여럿 돌리며 드러났을 뿐 **리스크 상태 웨이브(`29d50ec5`) 것**이고, 런타임 테스트 어디에도 `suppress_health_check` 프로파일이 없다. CI 도 부하를 받으면 같은 것을 맞는다 — 이번 웨이브에서 고치지 않음(범위 밖). 별도 처리 여부는 운영자 결정.
+6. 다음 순서 — **결정: (a′) 잔여 먼저.** `envelope`(승인 Intent/IAP 저작 흐름) + `order_shape`(전략 제안이 구체 shape 를 싣기). 이 둘이 `run` 의 마지막 차단이며, 끝나면 런타임이 실제로 구동 가능해진다. 이후 순서: (c2) 실 시세 어댑터 → 브로커 증인(P-BAL)/band 원천 → 실 HSE 인스턴스 → 커널 라운드 #4.
 
-## 7. 착지 기록
+## 7. 착지 기록 (2026-09-16)
 
-(웨이브 완료 후 채움)
+| 레인 | PR | 커밋 | 내용 |
+|---|---|---|---|
+| 계약 | **#709** | `37d6c128`·`300cbe6f`·`ff2c70a1`·`90c57104`·`15798e73` | `ports.py`(로직 0) + 계획 · 리뷰 HIGH1(이중 역할 주입 트랩)·MED1(크기 예외 실측)·LOW1 전건 처분 · 운영자 결정 5건 기록 |
+| A | **#710** | `df75b5c9`·`ec29b5a0`·`109eef0b`·`c2d54305` | CIP 로더 · `SnapshotIssuer` · `CapsuleIssuer` · 리뷰 0건 · 확인 불가 1(미래 시각) 종결 · 커버리지 후속 |
+| B | **#712** | `b131f382`·`4bdb291a`·`27624134`·`c7dd2cbc` | `SqliteSnapshotStore` · 스키마 baseline v1 · migrate 드리프트 차단 · code MED1 + **migration HIGH1·MED2** 전건 처분 |
+| C | **#711** | `a82bad9a`·`d8d16959`·`8a7587e0` | 저널 intake · `RuntimeTimeProjection` · VER-002 2키 · 리뷰 0건·확인 불가 0 · 커버리지 87→98% |
+| D | **#713** | `99914c81`·`da7bdb0b`·`7ff3845f` | `TickScheduler` · compose 결선 · e2e — **(c) 해소** · 리뷰 HIGH2(무커버리지) 전건 처분 |
+| E | **#714** | `314430f5`·`b8fb63f8` | 백업 세트 편입(운영자 §6 ④ (a)) · `_OPTIONAL_FILES`/`_SEQ_TABLE_BY_NAME` 로 드리프트 4번째 차단 + `model_fields` 순회 핀 · **복원 후 실 커널 view 재발행 실증** · 리뷰 LOW1 + 확인 불가 1(역방향 호환 = 정적 추적) 전건 종결 |
+
+### 종료 조건 대비 (§5)
+
+(1) 저널 관측 → `tick_once()` → 실 리졸버가 채운 `value_view` 를 가진 `DECISION_TICK` ✓ (2) 같은 as_of 재투입 → `SKIPPED_NOT_NEWER` ✓(실 저널이 이미 strictly-newer 로 걸러 스케줄러 의무에 도달하지 못하므로, 의도적으로 느슨한 intake 더블로 스케줄러 자신의 검사를 태움 — 사유 공시) (3) 미선언 `field_key` 탈락·나머지 발행 ✓ (4) 신선도 초과 → `FIELD_STATE_NOT_VALID` ✓ (5) preimage 변조 → `DIGEST_MISMATCH` ✓ (6) digest 불일치 본문 → `None`(대체 거부) ✓ (7) 세션 닫힘 → `SKIPPED_SESSION_CLOSED` ✓ (8) 재시작 후 view 재현 ✓ **+ 복원 후 재현(레인 E)** ✓ (9) **(a′) price 실증** ✓ (10) 다심볼 부팅 거부 ✓
+
+### 헤드라인 — (a′) 의 `price` 항이 (c) 로 해소됐다
+
+`test_tick_once_..._admitted_price_travels_with_its_digest` 가 두 겹으로 증명한다. 결정적인 것은 두 번째다: 같은 틱을 실 `EngineDriver` 로 구동한 뒤 **실 step-2 스테이지**의 `construction_stage.construction.derivation.price` 가 틱 자신의 close(**4,499,000**)이지 주입 리터럴 `Decimal("4200")` 이 아니다. 리뷰어가 두 값이 실제로 다름을 확인해 우연 일치를 배제했고, 그 스테이지가 `compose/_wiring.py:1110` 에 등록된 **동일 인스턴스**임을 추적했다.
+
+### 발견된 실결함·증거갭 12건 — 출처별
+
+| 출처 | 건수 | 대표 |
+|---|---|---|
+| 레인 자신 | 3 | `migrate` 경로 드리프트 · **`time_admits` 구조적 도달 불가** · 크기 예산 벽 |
+| 통합 검증(세션 모델) | 2 | **`Observation.field_state` 이중 접힘** · 모호한 `mapping` |
+| 리뷰 패스 | 4 | 계약의 이중 역할 주입 트랩 · HOLD 분기 무커버리지 · 결선 순서 무고정 · (E) 문서 드리프트 |
+| migration 게이트 | 1 | **스키마 버전 정수 쌍 → 영구 교착** |
+| 커버리지 스윕 | 3 | `journal` 거부 5 · `policy` 거부 1 · `run_forever` 미실행 |
+
+**두 기법이 값을 냈다.**
+
+첫째, **커널 소비자 쪽에서 역방향으로 읽기**(「누가 이 필드를 읽는가?」). 이중 접힘과 모호한 `mapping` 둘 다 이걸로 나왔고, 레인 자체 테스트 52건은 전부 통과하고 있었다. 이중 접힘은 실측이 이랬다 — 정책이 `close`+`session` 을 선언하고 페이로드에 신선한 `close` 만 있으면 **아무것도 발행되지 않는다**(`EXPLICIT_EMPTY`). 정책이 페이로드보다 많은 키를 선언하는 모든 배포가 영향받았을 것이고, 레인 D e2e 에서 「이유 없이 value-free 인 틱」으로 나타났을 것이다.
+
+둘째, **코드를 지우고 테스트가 통과하는지 보기**. 리뷰어가 HOLD 분기를 통째로 지웠는데 2186개가 전부 green 이었다. 특히 아픈 것은 그 분기가 레인 D 가 「정직하다」고 방어한 설계였다는 점 — **정직성을 주장하는 독스트링이 아무도 실행하지 않는 코드를 가리키고 있었다.**
+
+### 반복 부류 — 레지스트리 + 고정 안 된 위성 (한 웨이브에 4 인스턴스)
+
+`STORE_MIGRATIONS` ↔ `cli.py` 하드코딩 경로 맵 · `DurableSetPaths` ↔ `_last_seq_for` 테이블 dict · `MARKETFEED_SCHEMA_VERSION` ↔ `MARKETFEED_MIGRATIONS[-1].version` · (E 가 닫은) 백업 세트 멤버 열거. **넷 다 추가한 날에는 전 테스트가 green 이다** — 다른 레인이 store 를 추가하거나 첫 버전업이 있어야 드러난다. 넷 다 인스턴스가 아니라 부류로 닫았다(키 집합 동등 핀 · 실파일 원장 대조 · `model_fields` 순회 핀).
+
+### 게이트
+
+전체 런타임 **2193 passed**(베이스라인 2048 + 145) · firewall PASS · size budget **0 violations · 신규 예외 0**(기존 `compose_paper_runtime` 의 `measured:` 재등재 395→411 뿐) · ruff/black/mypy clean · **커널 diff 0**(`main..최종` 에서 `tos/src` 0바이트) · 신규 `marketfeed` 패키지 분기 커버리지 **95%→98%**(`snapshot`·`capsule`·`store`·`time_projection`·`scheduler` 5종이 100%).
+
+### 정직 상태 · 이월
+
+- **관측 원천은 파일 저널 1종.** 「라이브 피드」가 아니라 **「상류 수집기가 쓴 저널로 구동되는 틱 원천」**이다. 실 KIS 모의투자 시세 HTTP 어댑터는 후속 (c2)(§6 ①).
+- **직접 관측만.** 파생/지표 값은 `TransformationLineage` 가 필요해 비범위 — 실전략은 capsule 값 ↔ config 임계값 비교로 성립한다.
+- **단일 instrument.** FORWARD-OBLIGATION-MS1(라이브 다심볼의 단일 연속성 수집 순서 의무)이 미비준이라 다심볼은 부팅 거부.
+- **`snapshot_age_bound` 는 측정이 아니라 주입된 경계값이다.** `snapshot_age_admissible` 은 `bound <= maximum_consumer_age_ms` 만 보므로, 이 검사 통과는 **어떤 스냅샷이 실제로 신선하게 관측됐다는 증거가 아니다.** 동일 연속성 파생(`issue_monotonic_value` + `anchor_valid`)은 실재하나 §8 규칙이 걸린 후속.
+- **`run` 은 계속 차단.** (a′) `envelope`/`order_shape` + `_wiring.py` 의 id 리터럴 잔존. `run` 디스패치 경로에 `run_forever`/`marketfeed` 호출 0건(리뷰어 grep 확인).
+- **알고 두는 미커버 2곳**: `journal.py` · `policy.py` 의 `OSError` 읽기 경로 — 각 모듈 독스트링에 「보고 결정했다」로 명시.
+- **반쯤 죽은 가드 1곳**: `journal.py` 의 「`fields` 키가 문자열 아님」 절반은 `json.loads` 입력에서 도달 불가(JSON 객체 키는 항상 문자열). 제거하지 않고 기록 — 다음 독자가 테스트하려다 실패하지 않도록.
+- **역방향 호환은 정적 추적만**: 구 코드가 신 매니페스트를 읽으면 `marketfeed` 파일은 복원되나 반환 `DurableSetPaths` 에서 조용히 빠진다(구 바이너리 실행 불가 — 실행 검증 아님).
+- **웨이브 밖 기존 취약점**: `riskstate/test_position.py` 의 hypothesis 헬스체크가 부하에서 실패(§6 ⑤ · 미조치 결정).

@@ -25,13 +25,18 @@ resolves the exact same body and the exact same candidates a pre-restart instanc
 view through the REAL kernel :func:`~tos.marketfeed.value.publish_context_value_view` /
 :class:`~tos.marketfeed.MarketFeedContextResolver` against a second, freshly-opened store instance.
 
-**Single-instrument-scoped, by construction (plan §2 decision 8).** :meth:`put` derives the
-``snapshots.instrument`` column from ``snapshot.scope.instruments`` and REFUSES a snapshot whose
-scope does not name exactly one instrument — :meth:`latest_as_of` is keyed by a single instrument
-name, and a snapshot claiming more than one (or zero) would make that key ambiguous. This is a
-disclosed store-level narrowing consistent with FORWARD-OBLIGATION-MS1's unratified multi-symbol
-obligation (``ports.py``'s own :class:`~tos_runtime.marketfeed.ports.TickOutcome` docstring), not
-an attempt to enforce the wave's single-instrument scheduler discipline from inside the store.
+**Single-instrument-scoped, by construction of this store's own schema (plan §2 decision 3 — the
+store decision, not the scheduler's).** :meth:`put` derives the ``snapshots.instrument`` column
+from ``snapshot.scope.instruments`` and REFUSES a snapshot whose scope does not name exactly one
+instrument — :meth:`latest_as_of` is keyed by a single ``instrument TEXT`` column, and a snapshot
+claiming more than one (or zero) would make that key ambiguous. This refusal is a necessity of THIS
+schema, not an inherited policy: the scheduler's own single-instrument rule (plan §2 decision 8) is
+a SEPARATE discipline this store neither implements nor depends on — a future multi-instrument
+schema (a composite key, or one row per instrument) could drop this refusal without the scheduler
+changing at all. The two happen to agree today because FORWARD-OBLIGATION-MS1's multi-symbol
+ingest-ordering obligation is unratified (``ports.py``'s own
+:class:`~tos_runtime.marketfeed.ports.TickOutcome` docstring), not because one derives from the
+other.
 
 **Candidates are claims, not pre-filtered admissions.** :meth:`candidates` returns one
 :class:`~tos.marketfeed.AdmittedValue` per preimage entry per covered observation — every payload
@@ -142,8 +147,9 @@ def _single_instrument(instruments: tuple[str, ...]) -> str:
     """
     if len(instruments) != 1:
         raise ValueError(
-            "SqliteSnapshotStore.put: this store is single-instrument-scoped (plan §2 decision "
-            f"8) — snapshot.scope.instruments must name exactly one instrument, got {instruments!r}"
+            "SqliteSnapshotStore.put: this store's schema keys latest_as_of by a single "
+            "instrument column (module docstring) — snapshot.scope.instruments must name "
+            f"exactly one instrument, got {instruments!r}"
         )
     return instruments[0]
 

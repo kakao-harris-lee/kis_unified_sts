@@ -33,6 +33,14 @@ envelope, no stored ``canonical_digest`` to tamper-check against (the shipped ex
 Firewall (R1, runtime scope): stdlib + ``pyyaml`` + ``tos.*`` only — no ``shared.*``, no
 ``os.environ``/``subprocess``/``importlib.import_module`` (``tools/tos_firewall_check.py`` scans
 tests too).
+
+**Coverage note (team-lead sweep).** ``_load_mapping``'s ``OSError`` branch (the file exists per
+``path.is_file()`` but ``read_text`` still fails — a permissions change or removal racing the
+check, an unreadable device file, ...) is knowingly left untested: triggering it hermetically
+needs a filesystem fault a ``tmp_path`` test cannot cheaply and portably induce, and the branch's
+own behavior (wrap in :class:`CriticalInputPolicyConfigError`) is a one-line, low-risk mirror of
+the two YAML/shape checks directly below it, which *are* covered. Recorded here as "looked and
+decided", not silently uncovered.
 """
 
 from __future__ import annotations

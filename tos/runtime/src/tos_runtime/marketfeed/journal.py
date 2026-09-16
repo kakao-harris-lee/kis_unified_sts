@@ -39,6 +39,14 @@ empty result — "the journal does not exist" and "the journal has nothing new s
 are different facts, and collapsing them would let a collector that was never wired at all look
 identical to one that is simply caught up.
 
+**Known uncovered, by decision, not by oversight.** :meth:`~JsonLinesObservationJournal.poll`'s
+``except OSError`` branch (the file exists at the ``is_file()`` check but a subsequent
+``read_text`` still fails — permission revoked mid-poll, a filesystem race, a device error) has no
+paired test: constructing a real, portable ``OSError`` mid-read hermetically is awkward and the
+branch's own logic is a one-line re-wrap with no decision to get wrong. Noted here explicitly so
+this is "looked at and decided", not "never looked at" — the same discipline the five refusal
+branches below are held to.
+
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos.*`` + ``tos_runtime.*``
 only. No network, no clock — this module reads a file and nothing else.
 """
