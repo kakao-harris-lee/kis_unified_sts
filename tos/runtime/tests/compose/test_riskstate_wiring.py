@@ -58,13 +58,24 @@ Two layers, deliberately NOT sharing fixtures across suites (mirrors
   required-concrete bound paired with a structurally-unobservable count means
   ``amplification_bounded`` can NEVER return ``True`` for ANY attempt, in ANY deployment of
   this runtime as it stands — regardless of how correctly :class:`RiskStateService` wires
-  everything else (this suite independently confirms every OTHER witness
-  ``action_flow_decision`` needs — ``scope_graph_complete``, ``cause_lineage_complete`` (after
-  the ``lineage_found`` pre-seal fix below), ``envelope_not_enlarged``,
-  ``atomic_economic_flow_coverage`` — is genuinely satisfied). Closing this gap needs a durable
-  per-root-cause dedup/replay counter added to the inbox's own schema — kernel-adjacent runtime
-  work outside this wave's remit, reported here as a concrete next-wave candidate rather than
-  worked around with a literal.
+  everything else. Closing this gap needs a durable per-root-cause dedup/replay counter added
+  to the inbox's own schema — kernel-adjacent runtime work outside this wave's remit, reported
+  here as a concrete next-wave candidate rather than worked around with a literal.
+
+  **Honest scope correction (review of PR #704, 2026-09-16, LOW):** this docstring previously
+  claimed this SUITE "independently confirms" the other four ``action_flow_decision``
+  witnesses (``scope_graph_complete``, ``cause_lineage_complete``, ``envelope_not_enlarged``,
+  ``atomic_economic_flow_coverage``) are satisfied. That was an overclaim — the ONLY committed
+  assertion below is ``afg_verdict.outcome.value == "UNKNOWN"``, and
+  :class:`~tos.afg.records.ActionFlowDecision` (kernel, ``tos.afg.predicates
+  .action_flow_decision``) carries no per-witness boolean in its issued, immutable shape (only
+  digests and the final ``result``), so no assertion in THIS file can check those four
+  witnesses individually without new kernel-adjacent instrumentation outside this wave's
+  remit. The PR review DID independently verify ``scope_graph_complete``/
+  ``cause_lineage_complete`` were genuinely satisfied on a real first attempt, via a temporary
+  out-of-suite probe (patching the governor call site directly) — that verification lives in
+  the review record, not in this committed suite, and is not re-asserted here. Reported
+  honestly rather than re-worded to imply committed test coverage that does not exist.
 
   **A second, real fix landed alongside this finding, NOT reported as a gap:**
   :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe`'s own
@@ -81,6 +92,7 @@ Two layers, deliberately NOT sharing fixtures across suites (mirrors
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
 
@@ -90,8 +102,13 @@ from tos.afg import ActionClassKind
 from tos.are import AdverseScenarioKind, AdverseScenarioSet
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.dsl.proposal import Proposal
-from tos.engine.records import InstrumentKey, StageRequest
-from tos.engine.vocabulary import CommitmentStep
+from tos.engine.records import (
+    EgressResultPayload,
+    EngineEvent,
+    InstrumentKey,
+    StageRequest,
+)
+from tos.engine.vocabulary import CommitmentStep, EgressResultKind, EventKind
 from tos.ordering import OrderingEvent
 from tos.spg import GovernedDimensionLimit, HardSafetyEnvelope
 from tos.venue import ActionClass
@@ -105,12 +122,12 @@ from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import KeyProvider, SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
-from tos_runtime.riskstate.flow_observation import InboxFlowReader
+from tos_runtime.riskstate.flow_observation import FlowObservation, InboxFlowReader
 from tos_runtime.riskstate.policies import (
     load_action_flow_policy,
     load_aggregate_risk_policy,
 )
-from tos_runtime.riskstate.position import EvidencePositionReader
+from tos_runtime.riskstate.position import EvidencePositionReader, PositionObservation
 from tos_runtime.riskstate.service import RiskStateService
 from tos_runtime.venue import PolicyNotActivated
 
@@ -239,11 +256,13 @@ def _stage_request(
     )
 
 
-def _hse() -> HardSafetyEnvelope:
+def _hse(*, envelope_max: str = "1") -> HardSafetyEnvelope:
     return HardSafetyEnvelope(
         governed_dimensions=(
             GovernedDimensionLimit(
-                dimension=_ARE_DIM_ID, envelope_max=Decimal("1"), unit="CONTRACTS"
+                dimension=_ARE_DIM_ID,
+                envelope_max=Decimal(envelope_max),
+                unit="CONTRACTS",
             ),
         )
     )
@@ -272,11 +291,17 @@ def _service(
     *,
     max_attempts: int | None = 4,
     action_class: ActionClass = ActionClass.NEW_LONG,
+    rcl_tip_reader: Callable[[], int | None] | None = None,
+    hse_envelope_max: str = "1",
+    effective_limit_value: str = "1",
+    current_seq_reader: Callable[[], int | None] | None = None,
 ) -> RiskStateService:
     are_path = tmp_path / "aggregate_risk_policy.yaml"
     are_path.write_text(
         aggregate_risk_policy_yaml(
-            instrument_scope=f'["{_INSTRUMENT}"]', account_scope=f'["{_ACCOUNT}"]'
+            instrument_scope=f'["{_INSTRUMENT}"]',
+            account_scope=f'["{_ACCOUNT}"]',
+            effective_limit_value=effective_limit_value,
         ),
         encoding="utf-8",
     )
@@ -299,7 +324,7 @@ def _service(
         are_policy=are_policy,
         afg_policy=afg_policy,
         scheme=_SCHEME,
-        hse_envelope=_hse(),
+        hse_envelope=_hse(envelope_max=hse_envelope_max),
         scenario_set=_scenario_set(),
         required_scenario_kinds=are_policy.required_scenario_kinds,
         position_reader=position_reader,
@@ -307,10 +332,12 @@ def _service(
         rcl_log=rcl_log,
         construction_stage_reader=lambda: None,
         effect_envelope_reader=lambda: None,
-        rcl_tip_reader=lambda: 1,
+        rcl_tip_reader=(rcl_tip_reader if rcl_tip_reader is not None else (lambda: 1)),
         monotonic_reader=lambda: 1_000,
         max_attempts_reader=lambda: max_attempts,
-        current_seq_reader=lambda: None,
+        current_seq_reader=(
+            current_seq_reader if current_seq_reader is not None else (lambda: None)
+        ),
         evidence_store=evidence_store,
         environment_label="riskstate-wiring-test",
         action_class=action_class,
@@ -456,6 +483,53 @@ class TestAggregateInputsFor:
         assert "AGGREGATE_RISK_POLICY_BOUND" in kinds
         assert "ACTION_FLOW_POLICY_BOUND" in kinds
 
+    def test_injected_envelope_max_is_hse_bound_not_policy_effective_limit(
+        self,
+        tmp_path: Path,
+        evidence_store: SqliteEvidenceStore,
+        inbox: SqliteEventInbox,
+        rcl_log: SqliteCommitLog,
+    ) -> None:
+        """HIGH-3 (review of PR #704, 2026-09-16): every OTHER test in this suite sets the HSE
+        ``envelope_max`` and the policy's ``effective_limit`` to the SAME value, so a mutation
+        that swaps ``injected_envelope_max`` (``service.py``, plan §2.1's own "ARE
+        ``injected_envelope_max`` comes from the already-loaded HSE") for
+        ``self._are_policy.effective_limits`` (bypassing the HSE entirely) stays green. This
+        test separates the two sources: HSE ``envelope_max=5``, policy
+        ``effective_limit_value=100`` — a policy document that (incorrectly) tries to claim a
+        limit twenty times its own governing envelope.
+        """
+        service = _service(
+            tmp_path,
+            evidence_store,
+            inbox,
+            rcl_log,
+            hse_envelope_max="5",
+            effective_limit_value="100",
+        )
+        request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
+        inputs = service.aggregate_inputs_for(request)
+        assert inputs is not None
+        # The HSE bound, not the policy's own (inflated) claim:
+        assert inputs.injected_envelope_max.magnitude(_ARE_DIM_ID) == Decimal("5")
+        # The policy's own claim is carried too (untouched, for the predicate to compare
+        # against) — proving the two sources really are independent in this service, not
+        # silently unified upstream:
+        assert inputs.effective_limit.magnitude(_ARE_DIM_ID) == Decimal("100")
+        # The real kernel predicate this separation exists to feed: even if some other layer
+        # mistakenly asserted `limit_source_is_injected_envelope=True`, a 100-vs-5 mismatch is
+        # correctly refused — the safety invariant this field separation protects.
+        from tos.are.predicates import envelope_bound_not_enlarged
+
+        assert (
+            envelope_bound_not_enlarged(
+                decision_effective_limit=inputs.effective_limit,
+                injected_envelope_max=inputs.injected_envelope_max,
+                limit_source_is_injected_envelope=True,
+            )
+            is False
+        )
+
 
 class TestActionFlowInputsFor:
     def test_none_rcl_tip_yields_none_inputs(
@@ -527,6 +601,171 @@ class TestActionFlowInputsFor:
         assert inputs is not None
         assert inputs.cause is not None
         assert inputs.cause.forked_beyond_bound is None
+
+    def test_decision_generation_tracks_rcl_tip_reader(
+        self,
+        tmp_path: Path,
+        evidence_store: SqliteEvidenceStore,
+        inbox: SqliteEventInbox,
+        rcl_log: SqliteCommitLog,
+    ) -> None:
+        """HIGH-1 (review of PR #704, 2026-09-16): every OTHER test in this suite (and every
+        e2e fixture) fixes ``rcl_tip_reader=lambda: 1``, so a mutation that hardcodes
+        ``decision_generation=1`` (``service.py``, instead of the real ``rcl_tip``) stays
+        green. ``_risk_attestations.py``'s own ``wrap_action_flow_inputs_provider`` feeds this
+        value straight into ``generation_fenced`` to detect stale/replayed commits — a
+        constant here silently disables that detection. This test uses a reader whose return
+        value CHANGES between two calls and asserts the field tracks it both times."""
+        tip_values = iter([7, 8])
+        service = _service(
+            tmp_path,
+            evidence_store,
+            inbox,
+            rcl_log,
+            rcl_tip_reader=lambda: next(tip_values),
+        )
+        request = _stage_request(step=CommitmentStep.ACTION_FLOW_DECISION)
+
+        first = service.action_flow_inputs_for(request)
+        assert first is not None
+        assert first.decision_generation == 7
+
+        second_request = _stage_request(
+            step=CommitmentStep.ACTION_FLOW_DECISION, proposal_id="prop-2"
+        )
+        second = service.action_flow_inputs_for(second_request)
+        assert second is not None
+        assert second.decision_generation == 8
+
+
+# ===========================================================================
+# HIGH-2 (review of PR #704, 2026-09-16) — RISK_STATE_OBSERVED.absent_fields honesty
+# ===========================================================================
+
+
+def _read_last_observed_absent_fields(evidence_store: SqliteEvidenceStore) -> list[str]:
+    """Reads the most recently appended ``RISK_STATE_OBSERVED`` row's own ``absent_fields``
+    list straight off the durable store (the SAME ``entries.payload_json`` shape
+    ``tos_runtime.evidence.store.SqliteEvidenceStore.append`` itself writes — ``{"payload":
+    ..., "masked_keys": [...]}`` — mirroring how this file's own ``_evidence_kind_counts``
+    already reads the ``entries`` table directly rather than through a decrypt/query API this
+    store does not expose)."""
+    import json
+
+    row = evidence_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = 'RISK_STATE_OBSERVED' "
+        "ORDER BY seq DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None, "no RISK_STATE_OBSERVED row was recorded"
+    payload = json.loads(row[0])["payload"]
+    absent = payload["absent_fields"]
+    assert isinstance(absent, list)
+    return absent
+
+
+class TestAbsentFieldsHonesty:
+    def test_isolated_flow_absence_reports_exactly_the_three_structural_gaps(
+        self,
+        tmp_path: Path,
+        evidence_store: SqliteEvidenceStore,
+        inbox: SqliteEventInbox,
+        rcl_log: SqliteCommitLog,
+    ) -> None:
+        """HIGH-2, isolated form: calls the private ``_record_observation`` directly (module
+        docstring's own "split out ... purely for that method's own 100-line size budget" —
+        it is the SAME code path :meth:`RiskStateService.aggregate_inputs_for` calls) with a
+        hand-built :class:`FlowObservation` where ONLY ``duplicates_rejected``/``replays`` are
+        ``None`` and ``committed_vectors`` is empty, while ``root_event_seq``/
+        ``handling_started_monotonic``/``lineage_found`` are all concrete — isolating the
+        claim from step 6's OWN absent fields (``max_credible_command_effect``/
+        ``effect_digest``, present whenever construction/effect-envelope readers return
+        ``None``, exercised separately below). A mutation hardcoding ``absent_fields=[]``
+        (the review's own M5 finding) must fail this exact assertion."""
+        service = _service(tmp_path, evidence_store, inbox, rcl_log)
+        flow_obs = FlowObservation(
+            queue_depth=0,
+            in_flight=0,
+            attempts_for_cause=0,
+            duplicates_rejected=None,
+            replays=None,
+            root_event_seq=3,
+            handling_started_monotonic=123456,
+            lineage_found=True,
+            sources=("inbox:current_seq",),
+        )
+        position_obs = PositionObservation(
+            scope_key=f"{_ACCOUNT}::{_INSTRUMENT}",
+            confirmed_net=Decimal("0"),
+            unknown_buy=Decimal("0"),
+            unknown_sell=Decimal("0"),
+            in_flight_buy=Decimal("0"),
+            in_flight_sell=Decimal("0"),
+            attempts_seen=0,
+            sources=(),
+        )
+        service._record_observation(
+            attempt_id="prop-isolated",
+            position_obs=position_obs,
+            flow_obs=flow_obs,
+            committed_vectors=(),
+            extra_absent=(),
+        )
+        absent = _read_last_observed_absent_fields(evidence_store)
+        assert absent == sorted(
+            ["committed_flow_vectors", "duplicates_rejected", "replays"]
+        )
+
+    def test_real_first_attempt_absent_fields_include_the_three_structural_gaps(
+        self,
+        tmp_path: Path,
+        evidence_store: SqliteEvidenceStore,
+        inbox: SqliteEventInbox,
+        rcl_log: SqliteCommitLog,
+    ) -> None:
+        """HIGH-2, realistic form: drives the SAME real ``aggregate_inputs_for`` path a brand
+        new first attempt takes (real inbox row, real ``EVENT_HANDLING_STARTED`` marker, real
+        ``current_seq_reader``) and asserts the three structurally-unobservable names
+        (``committed_flow_vectors``/``duplicates_rejected``/``replays``) are present while the
+        now-resolved flow names (``root_event_seq``/``handling_started_monotonic``/
+        ``lineage_found``) are NOT — documenting, honestly, that step 6's own construction-time
+        absent fields (``max_credible_command_effect``/``effect_digest``, since this suite's
+        ``_service`` fixes ``construction_stage_reader``/``effect_envelope_reader`` to
+        ``lambda: None``) are ALSO present here, same as the isolated test above avoids by
+        calling ``_record_observation`` directly."""
+        payload = EgressResultPayload(
+            instrument_key=InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT),
+            attempt_id="prop-1",
+            kind=EgressResultKind.ACK,
+        )
+        event = EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
+        receipt = inbox.enqueue(event)
+        marker = evidence_store.append(
+            {"event_id": receipt.event_id},
+            kind="EVENT_HANDLING_STARTED",
+            record_class="EVENT_HANDLING_STARTED",
+        )
+        assert marker.seq is not None and marker.key_generation is not None
+        inbox.mark_handling_started(
+            receipt.seq, evidence_seq=marker.seq, generation=marker.key_generation
+        )
+        service = _service(
+            tmp_path,
+            evidence_store,
+            inbox,
+            rcl_log,
+            current_seq_reader=lambda: receipt.seq,
+        )
+        request = _stage_request(step=CommitmentStep.AGGREGATE_RISK_DECISION)
+        inputs = service.aggregate_inputs_for(request)
+        assert inputs is not None
+
+        absent = set(_read_last_observed_absent_fields(evidence_store))
+        assert {"committed_flow_vectors", "duplicates_rejected", "replays"}.issubset(
+            absent
+        )
+        assert "root_event_seq" not in absent
+        assert "handling_started_monotonic" not in absent
+        assert "lineage_found" not in absent
 
 
 # ===========================================================================

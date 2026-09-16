@@ -6,6 +6,9 @@ from __future__ import annotations
 from decimal import Decimal
 
 from tos.afg.records import ActionAmplificationEnvelope
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.engine.records import EgressResultPayload, EngineEvent, InstrumentKey
+from tos.engine.vocabulary import EgressResultKind, EventKind
 from tos.rcl import CommandType, CommitEntry
 from tos.workload import RuntimeIdentity
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -441,3 +444,52 @@ def test_to_action_cause_forked_beyond_bound_none_when_max_attempts_absent() -> 
         max_attempts=None,
     )
     assert cause.forked_beyond_bound is None
+
+
+def test_handling_started_monotonic_resolves_from_a_real_inbox_row(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """HIGH-4 (review of PR #704, 2026-09-16): every existing test above only exercises
+    ``root_event_seq=None`` (8 instances). None pins the structural fix (team-lead
+    disposition, same date) that resolves ``handling_started_monotonic`` from a REAL,
+    currently-handled inbox row via ``current_seq_reader``/``next_unconsumed`` rather than an
+    identity-recomputation match. This test enqueues a real ``EngineEvent``, marks it
+    "handling started" with a real ``EVENT_HANDLING_STARTED`` evidence receipt — the SAME
+    write-ahead idiom ``tos_runtime.engine.driver.EngineDriver._process_next`` itself uses
+    (``driver.py``'s own ``_EVENT_HANDLING_STARTED_KIND``/``_EVENT_HANDLING_STARTED_RECORD_CLASS``
+    constants) — and supplies that row's own ``seq`` via ``observe(root_event_seq=...)``,
+    mirroring how :class:`~tos_runtime.riskstate.service.RiskStateService`'s
+    ``current_seq_reader`` feeds this in production (built from
+    ``SqliteEventInbox.next_unconsumed()`` in ``tos_runtime.compose._riskstate_wiring``).
+
+    A mutation that hardcodes :meth:`InboxFlowReader._resolve_handling_started_monotonic` (or
+    ``RiskStateService._elapsed_monotonic_ms``) to always return ``None`` must fail exactly
+    this assertion — the review's own M11 finding.
+    """
+    scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
+    payload = EgressResultPayload(
+        instrument_key=InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT),
+        attempt_id="a1",
+        kind=EgressResultKind.ACK,
+    )
+    event = EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
+    receipt = inbox.enqueue(event)
+    marker = evidence_store.append(
+        {"event_id": receipt.event_id},
+        kind="EVENT_HANDLING_STARTED",
+        record_class="EVENT_HANDLING_STARTED",
+    )
+    assert marker.seq is not None
+    assert marker.key_generation is not None
+    inbox.mark_handling_started(
+        receipt.seq, evidence_seq=marker.seq, generation=marker.key_generation
+    )
+    reader = InboxFlowReader(inbox, evidence_store, rcl_log, scheme=scheme)
+    obs = reader.observe(
+        root_event_id=_ROOT, attempt_id="a1", root_event_seq=receipt.seq
+    )
+    assert obs.root_event_seq == receipt.seq
+    assert obs.handling_started_monotonic is not None
+    assert isinstance(obs.handling_started_monotonic, int)
