@@ -218,6 +218,15 @@ class TickOutcome(StrEnum):
     observation to an operator reading a log, which is the distinction the ∅ 양방향 discipline
     exists to keep.
 
+    ⚠ **``TICKED`` answers "was a tick produced", not "was it processed".** When the recovery
+    barrier holds, the runtime's driver is detached and a produced tick is durably enqueued
+    instead of run (the shape ``ComposedRuntime.observe_nontrade`` already establishes: enqueue
+    plus an evidence row, never a claim that it was judged). That case is still ``TICKED`` — the
+    tick exists — and the *processing* state rides alongside it on the scheduler's own richer
+    result type, not in this enum. So a caller that switches on this member alone, and reads
+    ``TICKED`` as "the engine has decided", is wrong in exactly the situation that matters most.
+    Read the whole result, not just the outcome.
+
     The scheduler this vocabulary serves is **single-instrument** on purpose: a live multi-symbol
     event source owes the engine core the same single-continuity ingest order its backtest
     counterpart provides, and that obligation is FORWARD-OBLIGATION-MS1 — recorded as *new and
