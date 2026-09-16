@@ -71,14 +71,14 @@ issuing them. Blocker (b) is RESOLVED by the TOS risk state service wave
 when left ``None``, both default to the production
 :class:`~tos_runtime.riskstate.service.RiskStateService` (:mod:`tos_runtime.compose
 ._riskstate_wiring`), never a test fixture hand-building ``AggregateRiskDecisionInputs``/
-``ActionFlowDecisionInputs``. Two independent gaps remain, each gating the NEXT column's own
-follow-up (dashboards, ``shutdown``, live projection export all need a live composed runtime
-too, so they wait on BOTH):
+``ActionFlowDecisionInputs``. One gap remains (b′), gating the NEXT column's own follow-up
+(dashboards, ``shutdown``, live projection export all need a live composed runtime too):
 
-(a′) **Still no production source**: ``envelope`` (needs IAP authoring) and ``order_shape``
-    (needs a strategy-carried shape) — plus ``compose/_wiring.py``'s own ``intent_id``/
-    ``intent_version``/``envelope_id``/``command_id``/``generation`` literals (venue wave §2.10
-    residue). ``price`` is now RESOLVED structurally — see (c) below.
+(a′) **RESOLVED** (``docs/plans/2026-09-16-tos-aprime-envelope-order-shape-plan.md``). Old
+    premise false: ``envelope`` needed a supply PATH not IAP authoring (OCP was already the
+    named supplier — ``_envelope_wiring.py`` builds it now); ``order_shape``'s 7 fields are all
+    OCP/derivation-sourced now, and ``_wiring.py``'s identity/generation literals are derived
+    too. **Not "``run`` is operational"**: ``run`` still returns ``0`` (no loader yet, §6 ⑥).
 (b′) **The risk state service's own disclosed limits** (TOS risk state service wave plan §2.6):
     the position observation is single-source (no broker witness corroborates it, so
     ``all_fields_attributed`` stays an operator attestation), it governs contract-count
@@ -94,10 +94,10 @@ too, so they wait on BOTH):
     :class:`~tos_runtime.marketfeed.scheduler.TickScheduler` feeds real ``DECISION_TICK``
     events — governed policy, durable store, the REAL kernel resolver — to
     :class:`~tos_runtime.engine.driver.EngineDriver` (:mod:`tos_runtime.compose
-    ._marketfeed_wiring``). Does NOT by itself admit ``run`` — (a′)/(b′) still gate that.
+    ._marketfeed_wiring``). Does NOT by itself admit ``run`` — (b′) and the loader gap, (a′) above, still gate that.
 
-Resolving (a′)/(b′) is an operator decision (plan §6 confirmation point 5), not this
-module's to make.
+Resolving (b′) is an operator decision (plan §6 confirmation point 5); (a′) is resolved above
+and the loader gap is a separate later wave (plan §6 ⑥).
 
 **No subcommand token given ⇒ ``run`` (backward compatibility).** :func:`parse_args` prepends
 ``"run"`` to ``argv`` when the first token is not one of :data:`_SUBCOMMANDS` — the OLD bare

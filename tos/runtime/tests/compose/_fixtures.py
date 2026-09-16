@@ -46,12 +46,8 @@ from tos.dsl import (
     TargetKind,
     TargetSpec,
 )
-from tos.egressgw import (
-    AdmittedPriceObservation,
-    EffectDimensionSpec,
-    ProposedConstructionEnvelope,
-)
-from tos.egressgw.vocabulary import EffectBasis, LotRoundingPolicy
+from tos.egressgw import AdmittedPriceObservation
+from tos.egressgw.vocabulary import LotRoundingPolicy
 from tos.engine import (
     CAPSULE_CONTEXT_SOURCE,
     EngineConfiguration,
@@ -61,7 +57,7 @@ from tos.engine import (
 )
 from tos.engine.records import DecisionTickPayload, TimeAdmissionInputs
 from tos.engine.vocabulary import EventKind
-from tos.ioc import AxisBinding, ConformanceAxis, QuantityUnitKind
+from tos.ioc import QuantityUnitKind
 from tos.ordering import OrderingEvent
 from tos.rcl import CapacityComponent, CapacityVector
 from tos.time import HealthState, SessionContext, UncertaintyInterval
@@ -370,39 +366,6 @@ def sizing_bound(**overrides: object) -> object:
     return SizingBound(**base)
 
 
-def proposed_envelope(**overrides: object) -> ProposedConstructionEnvelope:
-    base: dict[str, object] = {
-        "envelope_generation": 1,
-        "policy_binding_id": "ocp-compose",
-        "authorized_axis_bindings": (
-            AxisBinding(axis=ConformanceAxis.ACCOUNT, value=ACCOUNT),
-            AxisBinding(axis=ConformanceAxis.INSTRUMENT, value=INSTRUMENT),
-            AxisBinding(axis=ConformanceAxis.DIRECTION, value="LONG"),
-            AxisBinding(axis=ConformanceAxis.SIDE, value=SIDE),
-            AxisBinding(axis=ConformanceAxis.ORDER_TYPE, value="LIMIT"),
-            AxisBinding(axis=ConformanceAxis.TIF, value="DAY"),
-            AxisBinding(axis=ConformanceAxis.ENVIRONMENT, value="non-live-test"),
-        ),
-        "sizing_bound": sizing_bound(),
-        "effect_dimensions": (
-            EffectDimensionSpec(
-                dimension_id="notional",
-                basis=EffectBasis.NOTIONAL,
-                unit="KRW",
-                scale="1",
-            ),
-            EffectDimensionSpec(
-                dimension_id="units",
-                basis=EffectBasis.QUANTITY,
-                unit="contract",
-                scale="1",
-            ),
-        ),
-    }
-    base.update(overrides)
-    return ProposedConstructionEnvelope(**base)
-
-
 def admitted_price(**overrides: object) -> AdmittedPriceObservation:
     base: dict[str, object] = {
         "source": CAPSULE_CONTEXT_SOURCE,
@@ -414,6 +377,13 @@ def admitted_price(**overrides: object) -> AdmittedPriceObservation:
 
 
 def order_shape(**overrides: object) -> OrderShapeFields:
+    """A hand-built :class:`~tos.venue.OrderShapeFields` literal — no longer wired anywhere on
+    the ``ConstructionConfig`` path ((a′) wave lane D: the field this used to feed,
+    ``ConstructionConfig.order_shape``, is removed — every field is sourced from the
+    derivation/OCP instead, see ``compose/_venue_wiring.py``'s ``VenueServiceStage`` docstring).
+    Kept for unit-level tests that construct :class:`~tos_runtime.compose._venue_wiring
+    .VenueServiceStage` directly, e.g. to prove a caller-declared literal never survives
+    sourcing (``test_venue_wiring.py``)."""
     base: dict[str, object] = {
         "price": 4200,
         "quantity": 20,
@@ -435,16 +405,13 @@ def construction_config(**overrides: object) -> ConstructionConfig:
     fixture writes and ``compose/_venue_wiring.py``'s ``build_venue_service`` loads (never a
     test-authored stand-in).
 
-    ``**overrides`` (a′) wave lane C: lets a caller replace ``envelope``/``order_shape``/etc.
-    (e.g. a deliberately mismatched literal quantity, a denied sizing bound) without
-    duplicating the whole fixture — mirrors ``proposed_envelope``/``sizing_bound``'s own
-    override pattern. No existing call site passes any, so this is purely additive."""
+    ``envelope``/``order_shape`` are gone too ((a′) wave lane D, ``ConstructionConfig`` no
+    longer carries either field — both are now sourced from the loaded OCP's
+    ``construction_rules``/the derivation, never an injected literal)."""
     base: dict[str, object] = {
         "account": ACCOUNT,
         "instrument": INSTRUMENT,
-        "envelope": proposed_envelope(),
         "price": admitted_price(),
-        "order_shape": order_shape(),
         "action_class": ActionClass.NEW_LONG,
         "instrument_class": INSTRUMENT_CLASS,
         "outbound_side": SIDE,

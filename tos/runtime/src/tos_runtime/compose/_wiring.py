@@ -550,15 +550,15 @@ def _build_construction_stages(
         venue_service,
         construction_stage,
         construction.action_class,
-        construction.order_shape,
         construction.shape_price_field_key,
+        construction_rules=loaded_ocp.construction_rules,
     )
     economic_stage = EconomicEffectStage(construction_stage=construction_stage)
     proof_stage = ConformanceProofStage(
         construction_stage=construction_stage,
         scheme=_SCHEME,
         proof_id=inputs.identities.proof_id,
-        proof_generation=1,
+        proof_generation=inputs.identities.generation,  # same generation as intent/envelope
         required_authority_scope=(f"scope-{construction.instrument}",),
     )
     return _ConstructionStages(

@@ -19,7 +19,6 @@ from tos.egressgw import (
     BrokerEgressGateway,
     ConformanceProofStage,
     OrderConstructionStage,
-    ProposedConstructionEnvelope,
 )
 from tos.engine import (
     EngineCore,
@@ -29,10 +28,7 @@ from tos.engine import (
     StrategyRegistry,
 )
 from tos.engine import NonTradeOutcome as KernelNonTradeOutcome
-from tos.venue import (
-    ActionClass,
-    OrderShapeFields,
-)
+from tos.venue import ActionClass
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.authority.epoch import (
@@ -150,15 +146,24 @@ class ConstructionConfig:
     come exclusively from the governed, activated Venue Constraint Policy plus the runtime's
     own :class:`~tos_runtime.venue.VenueConstraintService` (``compose/_venue_wiring.py``'s
     ``build_venue_service``) — this compose root authors no admissibility judgement itself.
-    ``order_shape`` stays: the proposed order shape under evaluation is genuine per-attempt
-    strategy content, not a venue fact.
+
+    **``envelope`` and ``order_shape`` are gone** ((a′) wave lane D,
+    ``docs/plans/2026-09-16-tos-aprime-envelope-order-shape-plan.md`` §4.2/§4.7) — both used to
+    be an injected literal a test fixture hand-authored, the very authorization/shape content
+    the governed Order Construction Policy is supposed to supply. ``envelope`` is now built by
+    :func:`~tos_runtime.compose._envelope_wiring.build_construction_envelope` from the loaded
+    OCP's own ``construction_rules``; ``order_shape``'s seven fields are all sourced downstream
+    of :class:`~tos_runtime.compose._venue_wiring.VenueServiceStage` (price from the per-tick
+    value view, quantity/``silently_rounded`` from the derivation, side/position_effect/
+    order_type/tif from the OCP's ``action_class_shape``/``authorized_axes``) — never a caller
+    literal. Leaving either field in place after its consumer stopped reading it would make a
+    test that customizes it pass silently while testing nothing (§4.7's own dynamic evidence:
+    three merged tests, plus a fourth found in ``_symmetry_fixtures.py``, did exactly that).
     """
 
     account: str
     instrument: str
-    envelope: ProposedConstructionEnvelope
     price: AdmittedPriceObservation | None
-    order_shape: OrderShapeFields
     action_class: ActionClass
     #: TOS Phase 5 W5 plan §2 decision 5 — replaces the former
     #: ``observed_session_phase: str`` literal. Keys

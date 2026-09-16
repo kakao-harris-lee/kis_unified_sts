@@ -5,13 +5,14 @@ builder — same magnitudes, same instrument/account/decision-class, same crossi
 only the side-bearing fields flipped: ``ActionClass.NEW_LONG`` -> ``NEW_SHORT``, ``"BUY"`` ->
 ``"SELL"``, ``TargetSpec.direction`` ``"LONG"`` -> ``"SHORT"``. Nothing here re-derives a NEW
 concept of side; it is the exact set of fields TOS Phase 5 W5 plan §2 decision 8 names
-("픽스처 side·action_class·venue_shape_constraints.allowed_sides 미러"), extended to the two
-fixtures that would otherwise silently disagree with a flipped order shape: the Order
-Construction Policy's own authorized ``DIRECTION``/``SIDE`` axis bindings (``proposed_envelope``)
-and the Venue Constraint Policy's admitting-phase rule (keyed by the exact ``ActionClass``,
-``tos.venue.state.session_phase_admits``) — both must admit the mirrored action or the SHORT run
-would halt at a different step than the LONG one, which would make this suite's own "identical
-verdict sequence" assertion vacuous rather than a real symmetry proof.
+("픽스처 side·action_class·venue_shape_constraints.allowed_sides 미러"). ``action_class`` alone
+now drives the Order Construction Policy's own authorized ``DIRECTION``/``SIDE`` derivation AND
+the Venue Constraint Policy's admitting-phase rule (``tos.venue.state.session_phase_admits``) —
+((a′) wave lane D removed the two hand-authored envelope/order-shape fixtures this module used
+to carry SEPARATELY for exactly the same fact, see :func:`mirrored_construction_config`'s own
+docstring) — both must admit the mirrored action or the SHORT run would halt at a different step
+than the LONG one, which would make this suite's own "identical verdict sequence" assertion
+vacuous rather than a real symmetry proof.
 
 Does not import ``tos.tests`` (kernel test-private modules) and does not copy
 ``_fixtures.py``'s content wholesale — it imports the side-agnostic builders directly (``fx``'s
@@ -38,9 +39,7 @@ from tos.dsl import (
     TargetKind,
     TargetSpec,
 )
-from tos.egressgw import ProposedConstructionEnvelope
-from tos.ioc import AxisBinding, ConformanceAxis
-from tos.venue import ActionClass, OrderShapeFields
+from tos.venue import ActionClass
 from tos_runtime.compose.root import ConstructionConfig
 
 from . import _fixtures as fx
@@ -166,40 +165,22 @@ def write_mirrored_strategy_file(config_dir: Path) -> Path:
     return path
 
 
-def mirrored_proposed_envelope() -> ProposedConstructionEnvelope:
-    """:func:`~._fixtures.proposed_envelope`, mirrored: the ``DIRECTION``/``SIDE`` authorized axis
-    bindings are the ONE place besides ``order_shape``/``venue_shape_constraints`` that carry side
-    content — an un-mirrored envelope here would desynchronize the Order Construction Policy's
-    conformance axis bindings from the mirrored order shape, and the run would halt at a
-    DIFFERENT step than the LONG run (a conformance mismatch, not a venue admissibility one),
-    which is exactly the kind of "looks symmetric but silently isn't" this suite exists to catch.
-    """
-    return fx.proposed_envelope(
-        policy_binding_id="ocp-compose-short",
-        authorized_axis_bindings=(
-            AxisBinding(axis=ConformanceAxis.ACCOUNT, value=fx.ACCOUNT),
-            AxisBinding(axis=ConformanceAxis.INSTRUMENT, value=fx.INSTRUMENT),
-            AxisBinding(axis=ConformanceAxis.DIRECTION, value="SHORT"),
-            AxisBinding(axis=ConformanceAxis.SIDE, value="SELL"),
-            AxisBinding(axis=ConformanceAxis.ORDER_TYPE, value="LIMIT"),
-            AxisBinding(axis=ConformanceAxis.TIF, value="DAY"),
-            AxisBinding(axis=ConformanceAxis.ENVIRONMENT, value="non-live-test"),
-        ),
-    )
-
-
-def mirrored_order_shape() -> OrderShapeFields:
-    """:func:`~._fixtures.order_shape` with ``side`` flipped to ``"SELL"`` — every OTHER field
-    (price/quantity/order_type/tif/position_effect) is the identical value, so a divergence
-    anywhere else in the run is a real asymmetry, not an artifact of two differently-shaped
-    fixtures."""
-    return fx.order_shape().model_copy(update={"side": "SELL"})
-
-
 def mirrored_construction_config() -> ConstructionConfig:
     """:func:`~._fixtures.construction_config`, mirrored (plan §2 decision 8: "픽스처
-    side·action_class·venue_shape_constraints.allowed_sides 미러", extended to ``envelope`` per
-    this module's own docstring — everything a flipped ``ActionClass``/side touches).
+    side·action_class·venue_shape_constraints.allowed_sides 미러").
+
+    **``envelope``/``order_shape`` are gone** ((a′) wave lane D — ``ConstructionConfig`` no
+    longer carries either field, plan §4.7). Before lane D this module hand-authored a mirrored
+    ``ProposedConstructionEnvelope``/``OrderShapeFields`` here (``mirrored_proposed_envelope``/
+    ``mirrored_order_shape``, now removed) purely to flip their DIRECTION/SIDE content to SHORT
+    — but neither injected literal was ever read on the SHORT run either: the envelope comes
+    from ``build_construction_envelope`` (the loaded OCP's own ``construction_rules``, keyed by
+    ``action_class``) and every ``order_shape`` field is sourced downstream of
+    ``VenueServiceStage``, both driven by ``action_class`` alone. ``action_class=NEW_SHORT``
+    below is the ONE thing that needs to flip; removing the two dead fields makes that the
+    single, real, live driver instead of a second, silently-ignored declaration of the same
+    fact — exactly what a symmetry suite should pin (§4.7's own dynamic evidence: this was one
+    of the four call sites a merged round found still injecting into a dead surface).
 
     **Venue facts are no longer per-side fixture content** (TOS venue constraint service wave,
     plan §2 decision 5) — ``conftest.py``'s ONE governed ``venue_constraint_policy.yaml``
@@ -207,15 +188,13 @@ def mirrored_construction_config() -> ConstructionConfig:
     admitting rule and the allowed side" intent decision 8 originally named for the fixture
     hand-issued snapshot/policy/decision, now realized at the governed-policy layer instead —
     see ``conftest.py``'s own ``venue_constraint_policy.yaml`` write for the shared admission).
-    ``envelope``/``price``/``instrument_class``/the two price-field keys are the exact SAME
-    fx-derived values as the LONG side: nothing about sizing, pricing, or the calendar lookup key
-    is side-dependent."""
+    ``price``/``instrument_class``/the two price-field keys are the exact SAME fx-derived values
+    as the LONG side: nothing about sizing, pricing, or the calendar lookup key is
+    side-dependent."""
     return ConstructionConfig(
         account=fx.ACCOUNT,
         instrument=fx.INSTRUMENT,
-        envelope=mirrored_proposed_envelope(),
         price=fx.admitted_price(),
-        order_shape=mirrored_order_shape(),
         action_class=ActionClass.NEW_SHORT,
         instrument_class=fx.INSTRUMENT_CLASS,
         outbound_side="SELL",

@@ -74,6 +74,10 @@ from tos.venue import (
 from tos_runtime.brokercap import InstanceDocument
 from tos_runtime.calendar.config import CalendarConfig
 from tos_runtime.compose._egress_coordinates import EgressCoordinatesConfig
+from tos_runtime.compose._envelope_wiring import (
+    SideDerivationRefused,
+    resolve_construction_direction,
+)
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.compose._types import ConstructionConfig
 from tos_runtime.evidence.store import SqliteEvidenceStore
@@ -415,22 +419,30 @@ def _shape_side_and_position_effect(
 
     Keyed by ``(ActionClass, direction)`` (contract amended 2026-09-16, commit ``7e79f00c``):
     ``ActionClass`` has a single ``CLOSE`` member, so a long-close and a short-close arm would
-    otherwise collapse onto one key. ``direction`` is sourced STRUCTURALLY from the ``DIRECTION``
-    axis binding in ``construction_rules.authorized_axes`` — never a new ``ConstructionConfig``
-    field, never an injected literal (that would reintroduce exactly the caller-declared-literal
-    problem this wave exists to remove).
+    otherwise collapse onto one key. ``direction`` is resolved through
+    :func:`~tos_runtime.compose._envelope_wiring.resolve_construction_direction` — the ONE
+    place direction is resolved (that function's own docstring), never a second, independent
+    read of ``construction_rules.authorized_axes`` here: a direction-NAMED action class
+    (``NEW_LONG``/``NEW_SHORT``) resolves from the class itself, never the policy's own
+    ``DIRECTION`` axis alone — reading the axis unconditionally, as an earlier version of this
+    function did, gave every action class the SAME answer regardless of which one actually
+    fired, silently wrong for whichever side the axis did not name (the same
+    per-composition-constant defect :func:`build_construction_envelope` already fixed for the
+    envelope's own SIDE derivation).
 
-    No ``DIRECTION`` binding at all, an ``(action_class, direction)`` pair absent from the
-    mapping, or ``action_class is None`` outright are all the SAME refusal — ``(None, None)`` —
-    never a default (``ConstructionRules.action_class_shape`` docstring: "absent from this
-    mapping is unauthorized for this generation, not defaulted"; the "no derivation ⇒ None"
-    discipline this wave already applies to quantity, applied here to direction)."""
+    No direction resolvable (a direction-agnostic class with no ``DIRECTION`` axis binding), an
+    ``(action_class, direction)`` pair absent from the mapping, or ``action_class is None``
+    outright are all the SAME refusal — ``(None, None)`` — never a default
+    (``ConstructionRules.action_class_shape`` docstring: "absent from this mapping is
+    unauthorized for this generation, not defaulted"; the "no derivation ⇒ None" discipline
+    this wave already applies to quantity, applied here to direction)."""
     if action_class is None:
         return None, None
-    direction = _authorized_axis_value(
-        construction_rules.authorized_axes, ConformanceAxis.DIRECTION
-    )
-    if direction is None:
+    try:
+        direction = resolve_construction_direction(
+            construction_rules, action_class=action_class
+        )
+    except SideDerivationRefused:
         return None, None
     mapped = construction_rules.action_class_shape.get((action_class, direction))
     if mapped is None:
@@ -512,18 +524,25 @@ class VenueServiceStage:
     stage — ``resolved_shape``/``shape_constraints``/``policy``/``last_snapshot``/
     ``last_decision`` — so those call sites change only what they read FROM, not how.
 
-    **(a′) wave — order-shape field sourcing.** :meth:`__call__` never folds the raw injected
-    ``shape`` unchanged: ``quantity`` is ALWAYS replaced with the derivation's own quantity
+    **(a′) wave — order-shape field sourcing.** ``shape`` is keyword-only and defaults to an
+    empty :class:`~tos.venue.OrderShapeFields` skeleton when omitted (``__init__`` below) — the
+    real compose call site (``compose/_wiring.py``) passes none at all, since every field gets
+    sourced downstream regardless; only a unit test that wants to pin a specific literal
+    surviving (or not) supplies one explicitly. :meth:`__call__` never folds that shape
+    unchanged: ``quantity`` is ALWAYS replaced with the derivation's own quantity
     (:func:`_derived_shape_quantity`) and ``silently_rounded`` is ALWAYS the structural
     ``False`` this runtime's own behaviour justifies (:func:`_observed_silently_rounded` — its
     own docstring explains why this is not a grid re-derivation) — neither ever falls back
     to the caller's literal, construction_rules or not. ``side``/``position_effect``/
-    ``order_type``/``tif`` are sourced from the optional ``construction_rules`` (decisions 2/3)
-    **when one is supplied**; ``construction_rules is None`` is this compose root not yet
-    wiring a loaded OCP generation's rules through (``compose/_wiring.py``'s own
-    ``_build_construction_stages`` call site does not pass one yet — that wiring is out of this
-    module's reach, see this wave's lane-C report), so those four fields fall back to the
-    injected literal rather than a fail-closed refusal, transitionally.
+    ``order_type``/``tif`` are sourced from ``construction_rules`` (decisions 2/3) when one is
+    supplied. **Lane D wires this in production** (``compose/_wiring.py``'s
+    ``_build_construction_stages`` passes ``loaded_ocp.construction_rules`` — the SAME loaded
+    OCP generation step 2's envelope already came from), so all seven ``OrderShapeFields``
+    fields are policy/derivation-sourced on the real boot path; ``construction_rules`` stays an
+    optional constructor argument purely so a unit test may construct this stage directly
+    without a full compose boot (e.g. :func:`_derived_shape_quantity`'s own unit tests) — when
+    omitted there, those four fields fall back to the injected literal rather than a
+    fail-closed refusal.
     """
 
     def __init__(
@@ -531,14 +550,21 @@ class VenueServiceStage:
         service: VenueConstraintService,
         construction_stage: OrderConstructionStage,
         action_class: ActionClass,
-        shape: OrderShapeFields | None,
         shape_price_field_key: str | None,
+        *,
+        shape: OrderShapeFields | None = None,
         construction_rules: ConstructionRules | None = None,
     ) -> None:
         self._service = service
         self._construction_stage = construction_stage
         self._action_class = action_class
-        self._shape = shape
+        # A caller with no literal shape to inject (the real compose path, since (a′) lane D —
+        # every field gets sourced below regardless) never needs to know OrderShapeFields
+        # exists just to build an empty one; this stage owns that default itself. `None` here
+        # is "no literal supplied", never "fold nothing" — a caller that genuinely wants the
+        # kernel's "no shape at all" behaviour has no route to it through this constructor
+        # (module docstring: no real or test call site has ever needed that degenerate case).
+        self._shape = shape if shape is not None else OrderShapeFields()
         self._shape_price_field_key = shape_price_field_key
         self._construction_rules = construction_rules
         #: The last, decision-bound kernel stage this call built — never read for judgement,
