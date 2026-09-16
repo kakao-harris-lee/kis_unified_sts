@@ -1,9 +1,9 @@
 """Schema-ledger boot-check tests (TOS Phase 5 W4 plan §2 decision 3).
 
-Exercises the real wiring in the three runtime-owned durable stores (evidence, RCL, inbox) —
-never only the generic :func:`~tos_runtime.operations.schema_ledger.ensure_schema_current`
-helper in isolation — so a regression in any store's own constructor call site is caught here,
-not just a regression in the shared helper.
+Exercises the real wiring in the four runtime-owned durable stores (evidence, RCL, inbox,
+marketfeed) — never only the generic :func:`~tos_runtime.operations.schema_ledger
+.ensure_schema_current` helper in isolation — so a regression in any store's own constructor
+call site is caught here, not just a regression in the shared helper.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import pytest
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos_runtime.engine.inbox import INBOX_SCHEMA_VERSION, SqliteEventInbox
 from tos_runtime.evidence.store import EVIDENCE_SCHEMA_VERSION, SqliteEvidenceStore
+from tos_runtime.marketfeed.store import MARKETFEED_SCHEMA_VERSION, SqliteSnapshotStore
 from tos_runtime.operations.schema_ledger import (
     SchemaVersionRefused,
     compute_schema_shape_digest,
@@ -22,6 +23,7 @@ from tos_runtime.operations.schema_ledger import (
     file_is_fresh,
 )
 from tos_runtime.operations.schema_migrations import (
+    MARKETFEED_MIGRATIONS,
     RCL_MIGRATIONS,
     SchemaMigrationRefused,
     apply_migrations,
@@ -264,6 +266,88 @@ def test_apply_migrations_is_a_noop_once_already_at_target(tmp_path: Path) -> No
     rows = conn.execute("SELECT version, applied_by FROM schema_ledger").fetchall()
     conn.close()
     assert rows == [(RCL_MIGRATIONS[-1].version, "CREATED")]
+
+
+# -- marketfeed store: schema-version-drift regression pattern -------------------------------
+#
+# This wave has hit the same shape three times: a registry paired with a hand-maintained
+# satellite that nothing pins them equal. `STORE_MIGRATIONS` vs `compose/cli.py`'s hardcoded
+# `path_by_store` dict (fixed in 4bdb291a); `backup_set.py`'s `_last_seq_for` hardcoded table
+# dict (lane E); and here, a THIRD instance — `MARKETFEED_SCHEMA_VERSION`
+# (`tos_runtime.marketfeed.store`) and `MARKETFEED_MIGRATIONS[-1].version`
+# (`tos_runtime.operations.schema_migrations`) are two hand-maintained integers in two files,
+# harmless today only because both happen to be ``1``. Bump only one and the failure is a
+# PERMANENT DEADLOCK with a CLI that reports success: a v1 data dir meets code expecting v2,
+# `SqliteSnapshotStore.__init__` refuses with `SchemaVersionRefused(BEHIND)`, the operator runs
+# `migrate` — and `apply_migrations` silently no-ops because ITS OWN `target_version` never
+# moved. Reboot, refused again.
+#
+# The test below is deliberately NOT a comparison of the two constants to each other in the
+# abstract (that would pass even if BOTH constants were bumped in lockstep incorrectly, or
+# neither reflects what the real file ends up stamped with). It goes through the REAL file and
+# the REAL `apply_migrations`, the same shape as `test_apply_migrations_is_a_noop_once_already
+# _at_target` above for RCL — so it catches drift in either direction: `MARKETFEED_SCHEMA_VERSION`
+# ahead of `MARKETFEED_MIGRATIONS[-1].version` fails the assert directly; the reverse makes the
+# store's own genesis stamp disagree with what `apply_migrations` would consider "current".
+
+
+def test_apply_migrations_is_a_noop_once_already_at_target_marketfeed(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "marketfeed.sqlite3"
+    store = SqliteSnapshotStore(path)
+    store.close()
+
+    apply_migrations(path, "marketfeed")  # should not raise, nothing to do
+
+    conn = sqlite3.connect(str(path))
+    rows = conn.execute("SELECT version, applied_by FROM schema_ledger").fetchall()
+    conn.close()
+    assert rows == [(MARKETFEED_MIGRATIONS[-1].version, "CREATED")]
+    # Pins the two hand-maintained integers together through the real construction path, not
+    # merely against each other.
+    assert MARKETFEED_MIGRATIONS[-1].version == MARKETFEED_SCHEMA_VERSION
+
+
+def test_apply_migrations_stamps_a_truly_fresh_marketfeed_file(tmp_path: Path) -> None:
+    """``migrate`` may run against a data-dir path no store has ever opened (a fresh deploy) —
+    ``apply_migrations`` alone must be able to bring an empty file to baseline."""
+    path = tmp_path / "marketfeed.sqlite3"
+    path.touch()
+
+    apply_migrations(path, "marketfeed")
+
+    assert schema_version(path) == MARKETFEED_MIGRATIONS[-1].version
+    conn = sqlite3.connect(str(path))
+    rows = conn.execute("SELECT version, applied_by FROM schema_ledger").fetchall()
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        )
+    }
+    conn.close()
+    assert rows == [(MARKETFEED_MIGRATIONS[-1].version, "MIGRATE")]
+    assert {"snapshots", "preimages", "schema_ledger"} <= tables
+
+    # The migrated-from-scratch file now boots cleanly through the real store.
+    reopened = SqliteSnapshotStore(path)
+    reopened.close()
+
+
+def test_apply_migrations_refuses_a_marketfeed_shape_it_does_not_recognize(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "bad_marketfeed.sqlite3"
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        "CREATE TABLE snapshots (snapshot_id TEXT PRIMARY KEY, extra_column TEXT)"
+    )
+    conn.execute("PRAGMA user_version = 0")
+    conn.close()
+
+    with pytest.raises(SchemaMigrationRefused, match="snapshots"):
+        apply_migrations(path, "marketfeed")
 
 
 def test_apply_migrations_refuses_an_unknown_store_name(tmp_path: Path) -> None:
