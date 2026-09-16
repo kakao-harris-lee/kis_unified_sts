@@ -462,38 +462,49 @@ def _observed_silently_rounded(
     injected :class:`~tos.venue.VenueShapeConstraints` declare — an **observation**, never an
     attestation (OCP's own "no silent rounding" prose; (a′) wave decision 4).
 
-    ``False`` in every case except one: this is NOT a three-state observation, even though its
-    sibling fields (``quantity``, and price via ``_shape_for``) fail closed to ``None`` on an
-    unknown. ``tos.venue.predicates.order_shape_admissible`` checks
-    ``shape.silently_rounded is not False`` (line ~253) — **before** its own missing-field
-    check (price/quantity/constraints absent, or tick/lot zero or absent, lines ~255-266) ever
-    runs. So returning anything other than ``False`` when a grid fact is missing does not
-    produce an "ungradeable" classification: it makes the kernel's own missing-field branch
-    UNREACHABLE and forces ``INADMISSIBLE`` in its place — turning what the kernel would have
-    classified ``UNKNOWN`` into a ``DENY`` this function has no authority to make (HIGH, PR
-    #718 review, 2026-09-16; reproduced with ``price=None`` — ``silently_rounded=False`` there
-    yields ``UNKNOWN``, anything else yields ``INADMISSIBLE``). ``False`` is also the literally
-    correct value whenever nothing could be judged: no rounding was OBSERVED, because no
-    judgement was possible at all — "nothing was silently rounded" is true precisely when there
-    is nothing to observe, and letting the kernel's own downstream logic classify the missing
-    data is the honest path, not a workaround.
+    This function may only assert something when the kernel's OWN preconditions for reaching
+    that conclusion are satisfied — never on a narrower fact set of its own choosing. It never
+    decides what the kernel has not been given enough to decide.
 
-    ``True`` only when every grid fact is present, tick/lot are positive, and the shape is
-    affirmatively off-grid. In that one case the kernel's own downstream price-band/tick and
-    quantity-range/lot checks (``order_shape_admissible`` lines ~267-280) would independently
-    reach ``INADMISSIBLE`` too, once they ran — so ``True`` here changes only WHICH check fires,
-    never the classification, unlike every other non-``False`` value this function could return.
+    Concretely: ``tos.venue.predicates.order_shape_admissible`` checks
+    ``shape.silently_rounded is not False`` (line ~253) — **before** its own missing-field
+    check, which requires **all eight** of ``shape.price``, ``shape.quantity``,
+    ``constraints.price_min``, ``constraints.price_max``, ``constraints.tick_size``,
+    ``constraints.lot_size``, ``constraints.min_quantity``, ``constraints.max_quantity`` to be
+    present (plus ``tick_size``/``lot_size`` both positive), lines ~255-266. Returning anything
+    other than ``False`` while even ONE of those eight is missing makes that branch
+    UNREACHABLE and forces ``INADMISSIBLE`` in its place — turning what the kernel would have
+    classified ``UNKNOWN`` into a ``DENY`` this function has no authority to make.
+
+    The first cut of this function checked only the THREE fields its own grid arithmetic
+    needs (``price_min``/``tick_size``/``lot_size``) and returned ``True`` on a violation
+    whenever those three were present — even with ``price_max``/``min_quantity``/
+    ``max_quantity`` absent, a case every one of the kernel's own eight are independently
+    nullable and a partially-filled venue policy is schema-valid (``VenueShapeConstraints``,
+    ``tos/src/tos/venue/records.py:126-133``) — reintroducing the identical defect class one
+    field set narrower (HIGH round 1, PR #718 review, 2026-09-16, ``price=None``; HIGH round 2,
+    same review, a grid violation with those three band fields absent). Both rounds are closed
+    by the same rule: check every field the kernel itself requires, not the subset this
+    function's own arithmetic happens to touch.
+
+    ``False`` is therefore the answer for every case except one — every missing/invalid field
+    among the eight, not just the three the grid math uses. ``True`` only when all eight are
+    present and valid and the shape is affirmatively off-grid.
     """
     if constraints is None:
         return False
     if (
         price is None
+        or quantity is None
         or constraints.price_min is None
+        or constraints.price_max is None
         or constraints.tick_size is None
-        or constraints.tick_size == 0
+        or constraints.lot_size is None
+        or constraints.min_quantity is None
+        or constraints.max_quantity is None
     ):
         return False
-    if quantity is None or constraints.lot_size is None or constraints.lot_size == 0:
+    if constraints.tick_size == 0 or constraints.lot_size == 0:
         return False
     price_on_grid = (price - constraints.price_min) % constraints.tick_size == 0
     quantity_on_grid = quantity % constraints.lot_size == 0

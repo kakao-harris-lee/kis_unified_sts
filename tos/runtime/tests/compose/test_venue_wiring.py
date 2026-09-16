@@ -905,6 +905,60 @@ class TestSilentlyRoundedObservedEndToEnd:
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
+    def test_grid_violation_with_absent_band_field_yields_unknown_not_inadmissible(
+        self, tmp_path: Path
+    ) -> None:
+        """HIGH round 2 (team-lead re-review, PR #718, 2026-09-16): the SAME defect class as
+        the round-1 fix, one field set narrower. The round-1 ``_observed_silently_rounded``
+        checked only the three fields its own grid arithmetic needs (``price_min``/
+        ``tick_size``/``lot_size``) and returned ``True`` on a genuine grid violation as soon
+        as those three were present — even with ``price_max`` absent, one of the kernel's own
+        EIGHT required fields for a `order_shape_admissible` classification at all
+        (``predicates.py:255-265``), independently nullable and schema-valid
+        (``VenueShapeConstraints``, ``records.py:126-133``). ``price_max: null`` here plus an
+        off-grid literal price (``shape_price_field_key=None`` leaves the literal 4200
+        unprojected — off the ``price_min=1000``/``tick_size=500`` grid, same numbers as the
+        round-1 off-grid-price e2e test) reproduces exactly the reviewer's round-2 repro: the
+        fixed function must return ``False`` (nothing here is enough to affirm off-grid per
+        the kernel's own precondition) so the kernel's own missing-``price_max`` branch
+        classifies ``UNKNOWN``, not the ``INADMISSIBLE`` the round-2 defect produced."""
+        config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
+        (config_dir / "venue_constraint_policy.yaml").write_text(
+            venue_policy_yaml(
+                environment=_VENUE_POLICY_ENVIRONMENT,
+                account=_VENUE_POLICY_ACCOUNT,
+                instrument=_VENUE_POLICY_INSTRUMENT,
+                instrument_class=_VENUE_POLICY_INSTRUMENT_CLASS,
+                price_min="1000",
+                price_max="null",
+                tick_size="500",
+                lot_size="2",
+                min_quantity="2",
+                max_quantity="100",
+                admitting_phases=f'["{_VENUE_POLICY_ADMITTING_PHASE}"]',
+                admitting_phases_short=f'["{_VENUE_POLICY_ADMITTING_PHASE}"]',
+            ),
+            encoding="utf-8",
+        )
+        _sync_venue_activation_digest(config_dir)
+        construction = fx.construction_config(shape_price_field_key=None)
+        runtime = _compose_with_construction(
+            tmp_path, config_dir, data_dir, custody_root, construction
+        )
+        _reach_trusted(runtime)
+
+        results = runtime.run_once((fx.crossing_event(),))
+        verdicts = {v.step: v for v in results[0].flow.verdicts}
+        step3 = verdicts[CommitmentStep.VENUE_ADMISSIBILITY_DECISION]
+
+        assert runtime.venue_stage.resolved_shape is not None
+        assert runtime.venue_stage.resolved_shape.price == 4200  # off-grid, unprojected
+        assert runtime.venue_stage.resolved_shape.silently_rounded is False
+        assert step3.outcome is StageOutcome.UNKNOWN
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
 
 class TestDerivedShapeQuantityUnit:
     """decision 2: pure unit coverage for :func:`_derived_shape_quantity`'s fail-closed
@@ -1121,19 +1175,25 @@ class TestConstructionRulesShapeSourcingUnit:
 
 
 class TestObservedSilentlyRoundedUnit:
-    """decision 4 + HIGH (team-lead review, PR #718): pure unit coverage for
-    :func:`_observed_silently_rounded` — every branch. This is NOT a three-state observation:
+    """decision 4 + HIGH round 1/round 2 (team-lead review, PR #718): pure unit coverage for
+    :func:`_observed_silently_rounded` — every branch. This function may only assert
+    something when the kernel's OWN preconditions for reaching that conclusion are satisfied:
     ``order_shape_admissible`` checks ``silently_rounded is not False`` BEFORE its own
-    missing-field check, so anything other than ``False`` on missing/invalid grid data would
-    force ``INADMISSIBLE`` in place of the kernel's own ``UNKNOWN`` — a classification this
-    function has no authority to make. ``False`` is therefore the answer for every
-    "ungradeable" case, not just the on-grid one; only an AFFIRMATIVELY off-grid shape (every
-    fact present, positive tick/lot, and a genuine misalignment) returns ``True``. The
-    classification-preserving property itself — that ``False`` here reaches the kernel's own
-    missing-field ``UNKNOWN`` rather than a forced ``INADMISSIBLE`` — is pinned at the e2e
-    level below (``TestSilentlyRoundedObservedEndToEnd
-    .test_unprojectable_price_yields_structural_unknown_not_inadmissible``), since a unit
-    assertion on this function's return value alone cannot see the kernel's predicate
+    missing-field check, which requires ALL EIGHT of ``shape.price``/``shape.quantity``/
+    ``price_min``/``price_max``/``tick_size``/``lot_size``/``min_quantity``/``max_quantity``
+    (never merely the three the grid arithmetic itself touches — round 1 fixed the case where
+    the kernel's core inputs were missing, round 2 fixed the SAME class one field set
+    narrower, where only the three band fields the arithmetic uses were present but the
+    other five were not). Anything other than ``False`` while even one of the eight is
+    missing forces ``INADMISSIBLE`` in place of the kernel's own ``UNKNOWN`` — a
+    classification this function has no authority to make. ``False`` is therefore the answer
+    for every "ungradeable" case; only an AFFIRMATIVELY off-grid shape with all eight present
+    and valid returns ``True``. The classification-preserving property itself — that
+    ``False`` here reaches the kernel's own missing-field ``UNKNOWN`` rather than a forced
+    ``INADMISSIBLE`` — is pinned at the e2e level below (``TestSilentlyRoundedObservedEndToEnd
+    .test_unprojectable_price_yields_structural_unknown_not_inadmissible`` and
+    ``.test_grid_violation_with_absent_band_field_yields_unknown_not_inadmissible``), since a
+    unit assertion on this function's return value alone cannot see the kernel's predicate
     ordering."""
 
     @staticmethod
@@ -1223,3 +1283,31 @@ class TestObservedSilentlyRoundedUnit:
             )
             is False
         )
+
+    def test_grid_violation_with_absent_band_field_observes_false_not_a_forced_denial(
+        self,
+    ) -> None:
+        """HIGH round 2 (team-lead re-review, PR #718, 2026-09-16): a GENUINE grid violation
+        (price off the tick grid) computed from the three fields the arithmetic itself needs
+        is not enough — ``price_max``/``min_quantity``/``max_quantity`` are three of the
+        kernel's own eight required fields and are independently nullable
+        (``VenueShapeConstraints``, ``records.py:126-133``); absent, this must stay ``False``
+        (never the ``True`` the first round-2 cut returned from exactly these three-field
+        inputs), so the kernel's own missing-field branch — not this function — classifies
+        the attempt. The e2e version of this same case lives at
+        ``TestSilentlyRoundedObservedEndToEnd
+        .test_grid_violation_with_absent_band_field_yields_unknown_not_inadmissible``.
+        """
+        from tos_runtime.compose._venue_wiring import _observed_silently_rounded
+
+        off_grid_price, on_grid_quantity = 4200, 20  # (4200-1000) % 500 == 200 != 0
+        for absent_field in ("price_max", "min_quantity", "max_quantity"):
+            constraints = self._constraints(**{absent_field: None})
+            assert (
+                _observed_silently_rounded(
+                    price=off_grid_price,
+                    quantity=on_grid_quantity,
+                    constraints=constraints,
+                )
+                is False
+            ), f"absent {absent_field!r} must not let a True through"
