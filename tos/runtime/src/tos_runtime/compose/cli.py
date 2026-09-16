@@ -16,13 +16,11 @@ because none of them need a ``ConstructionConfig``/risk-input-provider: ``backup
 :mod:`tos_runtime.operations.backup_set` / :mod:`tos_runtime.operations.schema_migrations` /
 :mod:`tos_runtime.operations.key_rotation` / :mod:`tos_runtime.operations.dependency_admission`.
 
-**``print-policy-digests --config-dir`` (TOS venue constraint service wave, plan §2 decision 7)**
-follows the SAME bare-flags idiom: loads the Venue Constraint Policy / Order Construction Policy
-YAMLs under ``--config-dir`` with the compose scheme and prints each one's ``policy_id``/
-``policy_generation``/``canonical_digest`` to stdout — opens no evidence store, reads no
-``safety_activation.yaml`` — so an operator can copy the printed digests into that file's
-``members:`` list (the SAME "print, then the operator hand-fills an activation document"
-idiom :mod:`tos_runtime.calendar` already establishes for its own bind digest).
+**``print-policy-digests --config-dir`` (plan §2 decision 7)** follows the SAME bare-flags
+idiom: loads the governed policy YAMLs under ``--config-dir`` and prints each one's
+``policy_id``/``policy_generation``/``canonical_digest`` to stdout, so an operator can copy
+them into ``safety_activation.yaml``'s ``members:`` list (:func:`_dispatch_print_policy_digests`
+names which policies).
 
 **Three MORE operations subcommands, added by the runtime operations wiring plan
 (2026-09-13) §2 decisions 4/5/7: ``rearm``, ``ack-alert``, ``nontrade-eval``.** All three follow
@@ -77,11 +75,10 @@ when left ``None``, both default to the production
 follow-up (dashboards, ``shutdown``, live projection export all need a live composed runtime
 too, so they wait on BOTH):
 
-(a′) **``ConstructionConfig``'s remaining caller-supplied inputs have no production source
-    yet**: ``envelope`` (needs the approved-Intent / IAP authoring flow), ``price`` (needs a
-    ``tos.marketfeed`` adapter), and ``order_shape`` (needs a strategy's own proposal to carry a
-    concrete shape) — plus ``compose/_wiring.py``'s own ``intent_id``/``intent_version``/
-    ``envelope_id``/``command_id``/``generation`` literals (the venue wave's own §2.10 residue).
+(a′) **Still no production source**: ``envelope`` (needs IAP authoring) and ``order_shape``
+    (needs a strategy-carried shape) — plus ``compose/_wiring.py``'s own ``intent_id``/
+    ``intent_version``/``envelope_id``/``command_id``/``generation`` literals (venue wave §2.10
+    residue). ``price`` is now RESOLVED structurally — see (c) below.
 (b′) **The risk state service's own disclosed limits** (TOS risk state service wave plan §2.6):
     the position observation is single-source (no broker witness corroborates it, so
     ``all_fields_attributed`` stays an operator attestation), it governs contract-count
@@ -93,12 +90,13 @@ too, so they wait on BOTH):
     ``count_duplicate_dispositions``/``count_recovery_markers``); the replay axis is a
     recovery-EPISODE count with a disclosed under-count limit (``flow.replays_definition``),
     and ``committed_flow_vectors`` stays empty (unchanged gap, that module's own docstring).
-(c) **No tick source.** Nothing in ``tos_runtime`` produces a ``DECISION_TICK`` from a live market
-    feed or a clock — :class:`~tos_runtime.engine.driver.EngineDriver`'s three public entry points
-    are all pull-based; every real caller is a test fixture. Needs a ``tos.marketfeed`` runtime
-    adapter and a scheduler/poll loop.
+(c) **RESOLVED (TOS tick-source wave, ``docs/plans/2026-09-16-tos-tick-source-plan.md``).**
+    :class:`~tos_runtime.marketfeed.scheduler.TickScheduler` feeds real ``DECISION_TICK``
+    events — governed policy, durable store, the REAL kernel resolver — to
+    :class:`~tos_runtime.engine.driver.EngineDriver` (:mod:`tos_runtime.compose
+    ._marketfeed_wiring``). Does NOT by itself admit ``run`` — (a′)/(b′) still gate that.
 
-Resolving (a′)/(b′)/(c) is an operator decision (plan §6 confirmation point 5), not this
+Resolving (a′)/(b′) is an operator decision (plan §6 confirmation point 5), not this
 module's to make.
 
 **No subcommand token given ⇒ ``run`` (backward compatibility).** :func:`parse_args` prepends
@@ -142,12 +140,17 @@ from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.nontrade import NonTradeEventClass
 from tos.workload import RuntimeIdentity
 
-from tos_runtime.compose._cli_ops import rearm_and_clear, risk_state_policy_digest_lines
+from tos_runtime.compose._cli_ops import (
+    marketfeed_policy_digest_lines,
+    rearm_and_clear,
+    risk_state_policy_digest_lines,
+)
 from tos_runtime.compose._migrate_paths import migrate_path_for
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import KeyContinuityRefused, SqliteEvidenceStore
+from tos_runtime.marketfeed.policy import CriticalInputPolicyConfigError
 from tos_runtime.nontrade.observations import NonTradeObservation
 from tos_runtime.nontrade.processor import NonTradeEventProcessor
 from tos_runtime.operations.backup_set import DurableSetPaths, backup_set, restore_set
@@ -666,15 +669,13 @@ def _build_cli_identity(environment_label: str) -> RuntimeIdentity:
 
 
 def _dispatch_print_policy_digests(args: PrintPolicyDigestsArgs) -> int:
-    """The ``print-policy-digests`` subcommand's own dispatch (module docstring) — loads both
-    governed policy YAMLs with the compose scheme and prints each one's own ``policy_id``/
-    ``policy_generation``/``canonical_digest``, plus (TOS risk state service wave, lane b)
-    the AGGREGATE_RISK_POLICY/ACTION_FLOW_POLICY pair when their files exist under
-    ``--config-dir`` (:func:`~tos_runtime.compose._cli_ops.risk_state_policy_digest_lines` —
-    optional, unlike the venue/OCP pair: an operator adopting this wave incrementally may not
-    have authored them yet). Opens no evidence store, reads no ``safety_activation.yaml`` — a
-    refused load (a PRESENT but malformed file; activation is NOT required here) is printed
-    and reported via a non-zero exit code, never a raised traceback."""
+    """The ``print-policy-digests`` subcommand's own dispatch — loads the Venue/OCP policies
+    with the compose scheme and prints each ``policy_id``/``policy_generation``/
+    ``canonical_digest``, plus AGGREGATE_RISK_POLICY/ACTION_FLOW_POLICY/CRITICAL_INPUT_POLICY
+    lines for whichever of those OPTIONAL files exist (:mod:`tos_runtime.compose._cli_ops`'s
+    ``risk_state_policy_digest_lines``/``marketfeed_policy_digest_lines``). Opens no evidence
+    store, reads no ``safety_activation.yaml`` — a refused load (PRESENT but malformed; not
+    required to be activated) is printed and reported via a non-zero exit code."""
     scheme = get_scheme(EV_L1_PROVISIONAL_VERSION)
     try:
         loaded_venue = load_venue_constraint_policy(
@@ -685,8 +686,8 @@ def _dispatch_print_policy_digests(args: PrintPolicyDigestsArgs) -> int:
         )
         risk_state_lines = risk_state_policy_digest_lines(
             args.config_dir, scheme=scheme
-        )
-    except VenuePolicyConfigError as exc:
+        ) + marketfeed_policy_digest_lines(args.config_dir, scheme=scheme)
+    except (VenuePolicyConfigError, CriticalInputPolicyConfigError) as exc:
         print(f"print-policy-digests: refused — {exc}", file=sys.stderr)
         return 1
     print(

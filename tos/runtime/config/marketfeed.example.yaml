@@ -1,0 +1,66 @@
+# tos_runtime.marketfeed tick-scheduler example config
+# (TOS tick-source wave, plan docs/plans/2026-09-16-tos-tick-source-plan.md §2/§4, lane D)
+#
+# Loader: tos_runtime.compose._marketfeed_wiring.load_marketfeed_config
+#
+# Every value below is `null` (named-TBD): this is an EXAMPLE file, not an
+# approved config. A real deployment copies this file (e.g. under
+# config/tos_runtime/paper/), fills in every leaf, and keeps a
+# critical_input_policy.yaml alongside it — compose only builds the tick
+# scheduler when BOTH files exist under --config-dir; absent, the scheduler
+# stays None (a legitimate, unconfigured state, never a boot refusal). A
+# still-null or missing required leaf here IS a fail-closed refusal at load
+# (tos_runtime.compose._marketfeed_wiring.MarketFeedConfigError), never a
+# silent default.
+#
+# environment / decision_class / issuer_principal_id / intended_use are NOT
+# repeated here — the scheduler reads them straight off the loaded
+# critical_input_policy.yaml (구조 파생 > 자기신고: the tick source's capsule
+# scope is the SAME deployment fact its governing policy already declares,
+# never a second, independently-typed copy that could drift from it).
+
+# --- instrument scope --------------------------------------------------
+# `instruments` MUST name exactly one instrument — TickScheduler refuses at
+# construction otherwise (FORWARD-OBLIGATION-MS1, tos/src/tos/backtest/
+# driver.py:78-86, is unratified for a live multi-symbol source). Shaped as
+# a list, not a bare string, so a misconfigured multi-symbol deployment is
+# expressible and therefore refusable, rather than silently unrepresentable.
+
+instruments: null
+
+# The session/calendar instrument class key this scheduler's session gate
+# reads (tos_runtime.calendar.owner.SessionFactsOwner.session_context's own
+# argument — must be a class calendar.yaml actually declares sessions for).
+instrument_class: null
+
+# --- capsule scope -------------------------------------------------------
+# The account every issued snapshot/capsule is scoped to, and the
+# SafetyCriticalFacts every issued capsule carries (tos.capsule.capsule
+# .SafetyCriticalFacts — direction/quantity_basis/unit).
+
+account: null
+direction: null
+quantity_basis: null
+unit: null
+
+# --- observation intake --------------------------------------------------
+# Path to the append-only JSON-Lines observation journal an upstream
+# collector writes (tos_runtime.marketfeed.journal.JsonLinesObservationJournal
+# — this wave's one ObservationIntake implementation; a real market-data
+# transport is a named follow-up, plan §6 confirmation 1).
+
+journal_path: null
+
+# --- pacing ----------------------------------------------------------------
+# Minimum wall-clock milliseconds between two TICKED passes
+# (tos_runtime.marketfeed.scheduler.decide_tick's own SKIPPED_INTERVAL gate).
+
+poll_interval_ms: null
+
+# --- time-projection frame parameters -------------------------------------
+# Injected construction parameters for tos_runtime.marketfeed.time_projection
+# .RuntimeTimeProjection — a frame-of-reference bound, not a measurement (see
+# that module's own docstring on why these are NOT VER-002 profile keys).
+
+snapshot_age_bound: null
+interval_width: null

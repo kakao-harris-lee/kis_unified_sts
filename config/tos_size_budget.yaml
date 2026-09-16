@@ -708,11 +708,19 @@ exceptions:
     로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
     1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 395
+  measured: 411
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-09-16 TOS 틱 원천 웨이브(레인 D) 재등재 395→411(+16)**: recovery barrier
+    직후 `boot.risk.recovery_dimension_state.verdict = composed.recovery` 다음에
+    `composed.marketfeed = build_tick_scheduler(...)` 호출 1건(kwargs 9 · 주석
+    5줄) 추가 — `venue` 와 달리 `_finalize` 직후가 아니라 recovery barrier 이후에
+    붙이는 이유는 `TickScheduler` 가 생성 시점에 `driver` 를 캡처해 보관하기
+    때문(HOLD 판정이 `composed.driver` 를 detach 하는 시점보다 앞서 만들면 낡은
+    참조를 얼려버림 — `_marketfeed_wiring.py` 자신의 모듈 도크스트링 참조).
+    이 함수가 정본 결선 순서 문서(§4 "run 차단 목록" 해소 지점)라 분해 대신 등재.
     **2026-09-16 TOS 리스크 상태 서비스 웨이브(레인 b) 재등재 311→391(+80)**:
     `aggregate_risk_inputs_provider`/`action_flow_inputs_provider` 를
     `| None = None` 으로 전환 + (1) `_build_realized_stages` 호출 앞에 파일 존재
