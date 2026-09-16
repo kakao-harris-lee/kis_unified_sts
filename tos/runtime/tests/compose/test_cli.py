@@ -17,6 +17,7 @@ import pytest
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos_runtime.compose import cli
+from tos_runtime.compose._migrate_paths import MIGRATE_PATH_BY_STORE
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -344,6 +345,19 @@ def test_migrate_rejects_an_unregistered_store_at_parse_time(tmp_path: Path) -> 
         cli.parse_args(
             ["migrate", "--data-dir", str(tmp_path / "data"), "--store", "nonexistent"]
         )
+
+
+def test_migrate_path_map_never_drifts_from_store_migrations() -> None:
+    """Pins the defect fixed alongside this test: ``b131f382`` added ``"marketfeed"`` to
+    :data:`STORE_MIGRATIONS` (``schema_migrations.py``) but ``migrate``'s path resolution was a
+    separately hand-maintained dict (then in ``compose/cli.py``, now extracted to
+    :mod:`tos_runtime.compose._migrate_paths` — see that module's own docstring for why) that
+    still only listed ``evidence``/``rcl``/``inbox`` — the two had drifted apart, and ``migrate``
+    (with no ``--store`` given) raised a bare ``KeyError`` for ``marketfeed`` instead of running.
+    This asserts the two key sets stay equal so the same class of drift fails loudly here instead
+    of resurfacing as a ``KeyError`` deep in dispatch the next time a store is registered.
+    """
+    assert set(MIGRATE_PATH_BY_STORE) == set(STORE_MIGRATIONS)
 
 
 # -- print-digests ----------------------------------------------------------------

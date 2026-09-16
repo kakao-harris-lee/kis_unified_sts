@@ -78,6 +78,7 @@ from tos_runtime.operations.schema_ledger import (
 )
 
 __all__ = [
+    "MARKETFEED_FILE_NAME",
     "MARKETFEED_SCHEMA_VERSION",
     "InjectedCrash",
     "SqliteSnapshotStore",
@@ -89,6 +90,16 @@ __all__ = [
 #: ``tos_runtime.operations.schema_migrations.MARKETFEED_MIGRATIONS`` for the registered migration
 #: this version corresponds to.
 MARKETFEED_SCHEMA_VERSION = 1
+
+#: This store's own file name for a ``data_dir`` layout. The four sibling constants
+#: (``EVIDENCE_FILE_NAME``/``RCL_FILE_NAME``/``INBOX_FILE_NAME``/``COMPOSITE_STATE_FILE_NAME``)
+#: live in :mod:`tos_runtime.operations.backup_set` instead, because they name the members of the
+#: *backup set* — this store is deliberately NOT a backup-set member yet; that membership is a
+#: separate decision with its own restore semantics, owned by the tick-source wave's lane D. This
+#: constant exists on its own, here, only because ``tos_runtime.compose.cli``'s ``migrate``
+#: subcommand needs a path for this store the moment ``"marketfeed"`` joins
+#: :data:`~tos_runtime.operations.schema_migrations.STORE_MIGRATIONS`.
+MARKETFEED_FILE_NAME = "marketfeed.sqlite3"
 
 _CREATE_SNAPSHOTS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS snapshots (

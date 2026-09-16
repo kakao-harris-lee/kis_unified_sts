@@ -143,6 +143,7 @@ from tos.nontrade import NonTradeEventClass
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.compose._cli_ops import rearm_and_clear, risk_state_policy_digest_lines
+from tos_runtime.compose._migrate_paths import migrate_path_for
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -969,14 +970,12 @@ def main(argv: list[str] | None = None) -> int:
             (args.store,) if args.store is not None else tuple(STORE_MIGRATIONS)
         )
         paths = DurableSetPaths.from_data_dir(args.data_dir)
-        path_by_store = {
-            "evidence": paths.evidence,
-            "rcl": paths.rcl,
-            "inbox": paths.inbox,
-        }
         for store_name in store_names:
-            apply_migrations(path_by_store[store_name], store_name)
-            print(f"migrate: {store_name} at {path_by_store[store_name]} is current")
+            store_path = migrate_path_for(
+                store_name, paths=paths, data_dir=args.data_dir
+            )
+            apply_migrations(store_path, store_name)
+            print(f"migrate: {store_name} at {store_path} is current")
         return 0
 
     if isinstance(args, RotateKeyArgs):
