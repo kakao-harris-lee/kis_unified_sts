@@ -49,10 +49,17 @@ DR-0003) adds three more governed files the compose root loads the same way:
 activated through `safety_activation.yaml` `members:` of kinds
 `AGGREGATE_RISK_POLICY` / `ACTION_FLOW_POLICY`; `print-policy-digests` prints
 all four policy digests) and `risk.yaml` (the Adverse Scenario Set and the
-action amplification envelope). None of the three has an adopted value yet —
-the proposal table is plan §6 ② — so no `paper/` instance exists for them and
-a paper boot without them is refused unless the caller injects its own
-providers (a test seam only). Even with them adopted, step 7 (action flow)
-cannot GRANT today: the runtime has no durable per-root-cause duplicate /
-replay counter (plan §7), so that decision stays `UNKNOWN` until an inbox
-schema change lands.
+action amplification envelope). All three were adopted by the operator on
+2026-09-16 (plan §6 ②) and live under `paper/` with `account_scope` /
+`instrument_scope` left `TBD` for the operator to fill (both loaders refuse
+`TBD`); `tos/runtime/tests/compose/test_deploy_risk_policies.py` pins the
+values and the fail-closed boot. A paper boot without the two policy files is
+refused unless the caller injects its own providers (a test seam only). The
+Hard Safety Envelope this deployment boots with must govern the policy's
+dimension (`INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL`, `envelope_max ≥ 1`) —
+no paper `safety_envelope.yaml` is committed yet. Step 7 (action flow) can
+GRANT since the action-flow observation wave
+(`docs/plans/2026-09-16-tos-action-flow-observation-plan.md`): both
+amplification axes are observed from durable evidence (kernel `DUPLICATE`
+result dispositions; recovery-marker episodes, with the under-count limit
+disclosed as `replays_definition`).

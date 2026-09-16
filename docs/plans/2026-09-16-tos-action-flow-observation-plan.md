@@ -58,6 +58,12 @@
 1. replay 축 정의(옵션 1 «복구 에피소드 계수» 채택 · 추천) vs 옵션 2(새 evidence + 부팅 세대 카운터 · 별도 웨이브).
 2. 다음 순서: (c) 틱 원천/marketfeed → (a′) → 브로커 증인(P-BAL) → 커널 라운드 #4.
 
-## 7. 착지 기록
+## 7. 착지 기록 (2026-09-16)
 
-(레인 착지 후 기입)
+| 레인 | PR → main | 커밋 | 내용 |
+|---|---|---|---|
+| a | **#707 → `da3b5ba1`** | `c04b2df3`·`2d62359e`·`a6909e6b`·`badaf214` | `riskstate/flow_observation.py`(494→667 · 순수 헬퍼 `count_duplicate_dispositions`/`count_recovery_markers` · `_resolve_root_content_event_id`(root 행의 `EVENT_HANDLING_STARTED` 마커를 인박스 `handling_started_receipt` O(1) 조회로 · 새 인박스 API 0) · `REPLAYS_DEFINITION` · `observe()` 98행) · `service.py`(`absent_fields` = `committed_flow_vectors` 만 · `flow.replays_definition` 공시) · `cli.py` (b′) «해소»(정확히 1000행) · tests +12(2048) · 리뷰 HIGH 1(두 번째 복구 마커 kind 무핀 — M4 GREEN)·LOW 1 → `badaf214`(두 kind 각각·혼합 seed · e2e 2+2) → 재심 approve · 뮤테이션 M1~M7 전건 red(양방향 M4 포함) |
+
+- **종료 조건 대비(§5)**: (1) 제공자 미주입 e2e step 6 GRANT ∧ **step 7 `ACTION_FLOW_DECISION` GRANT** · `absent_fields` 에 두 축 없음 ✓ (2)(3) 봉투 초과 seed(DUPLICATE 행 / 복구 마커) → step 7 **UNKNOWN** — 계획은 DENY 를 기대했으나 커널 `_decide_action_flow_result`(`afg/predicates.py:584-585`) 가 `amplification_ok is not True` 를 DENY 분기보다 먼저 UNKNOWN 으로 판정(봉투 초과 = 제한적 UNKNOWN, 커널 설계) → 테스트는 실제 결과를 단언하고 독스트링에 인용 ✓ (4) NEW_SHORT 미러 GRANT ✓ (5) 단위: 빈 스캔 0 · cause 밖 DUPLICATE 미산입 · 다른 event_id 마커 미산입 · 두 kind 각각/혼합 ✓.
+- **발견**: `EngineDriver.enqueue_and_run._stamp()` 가 호출자 event reference 를 버리고 자체 카운터로 재스탬프 → 테스트가 root event 식별자를 사전에 알 수 없어, e2e 는 `observe()` 호출 시점에 실 식별자를 포착해 evidence 행을 커밋한 뒤 원 구현에 위임하는 일회성 seeding 훅 사용(리뷰어: 계수는 프로덕션 읽기 경로로 산출됨을 확인 · 단 M7 에 대한 e2e 의 독립 검증력은 없고 단위 통합 테스트가 잡음).
+- **정직 상태·이월**: replay 축은 «복구 에피소드 계수» 정의 하의 관측(같은 미결 행의 반복 restart 는 1회 기록 — 과소 계수 가능 · `replays_definition` 으로 공시 · §6 ① 옵션 2 는 미채택) · `committed_flow_vectors` 여전히 `()`(RCL 항목 내용 공개 읽기 부재 · 라운드 #4 후보) · `run` 은 (a′) envelope/price/order_shape · (b′ 잔여) 단일 원천 포지션·계약 수 차원 · (c) 틱 원천 으로 계속 차단 · 실 HSE 인스턴스(`safety_envelope.yaml`) 미착지(정책 실파일은 픽스처 HSE 로만 부팅 검증).
