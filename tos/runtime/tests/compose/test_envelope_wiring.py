@@ -37,6 +37,7 @@ from tos_runtime.compose._envelope_wiring import (
     build_construction_envelope,
     build_construction_identities,
     build_construction_inputs,
+    resolve_construction_direction,
 )
 from tos_runtime.compose._riskstate_wiring import RiskPolicyScopeMismatch
 from tos_runtime.venue import LoadedOrderConstructionPolicy
@@ -318,6 +319,55 @@ def test_envelope_sizing_check_skips_a_field_the_venue_leaves_absent() -> None:
 
 
 # ===========================================================================
+# resolve_construction_direction (integration follow-up, 2026-09-16)
+# ===========================================================================
+
+_MIRRORED_SIDES = {
+    (ActionClass.NEW_LONG, "LONG"): "BUY",
+    (ActionClass.NEW_SHORT, "SHORT"): "SELL",
+}
+_MIRRORED_SIDES_WITH_CLOSE = {**_MIRRORED_SIDES, (ActionClass.CLOSE, "LONG"): "SELL"}
+
+
+def test_resolve_direction_uses_the_action_class_for_direction_named_classes() -> None:
+    """The class itself is the most specific per-attempt direction fact available — read
+    BEFORE the policy's own axis, not instead of it only when the axis agrees."""
+    rules = _construction_rules(sides=_MIRRORED_SIDES, direction="LONG")
+    assert (
+        resolve_construction_direction(rules, action_class=ActionClass.NEW_SHORT)
+        == "SHORT"
+    )
+    assert (
+        resolve_construction_direction(rules, action_class=ActionClass.NEW_LONG)
+        == "LONG"
+    )
+
+
+def test_resolve_direction_falls_back_to_the_policy_axis_for_direction_agnostic_classes() -> (
+    None
+):
+    rules = _construction_rules(sides=_MIRRORED_SIDES_WITH_CLOSE, direction="LONG")
+    assert (
+        resolve_construction_direction(rules, action_class=ActionClass.CLOSE) == "LONG"
+    )
+
+
+def test_resolve_direction_refuses_for_a_direction_agnostic_class_with_no_axis() -> (
+    None
+):
+    """Mutation-equivalent for the DIRECTION-absent path: never defaults, refuses — matches
+    the ``construction_generation`` discipline :func:`build_construction_identities` already
+    follows for its own missing-input case. Narrower than before: this only fires for a
+    DIRECTION-AGNOSTIC class now, never for NEW_LONG/NEW_SHORT."""
+    rules = _construction_rules(sides=_MIRRORED_SIDES_WITH_CLOSE, direction=None)
+    assert not any(
+        b.axis is ConformanceAxis.DIRECTION for b in rules.authorized_axes
+    )  # fixture sanity
+    with pytest.raises(SideDerivationRefused, match="direction-agnostic"):
+        resolve_construction_direction(rules, action_class=ActionClass.CLOSE)
+
+
+# ===========================================================================
 # build_construction_envelope — SIDE axis derivation (team-lead follow-up)
 # ===========================================================================
 
@@ -342,16 +392,15 @@ def test_envelope_derives_side_from_action_class_shape() -> None:
     assert side_bindings == [AxisBinding(axis=ConformanceAxis.SIDE, value="BUY")]
 
 
-def test_envelope_derives_the_mirror_side_for_the_short_direction() -> None:
-    """Long/short symmetry: the SAME derivation, a different (action_class, direction) key,
-    yields the mirror side — never a hardcoded "the side is always BUY" shortcut."""
-    rules = _construction_rules(
-        sides={
-            (ActionClass.NEW_LONG, "LONG"): "BUY",
-            (ActionClass.NEW_SHORT, "SHORT"): "SELL",
-        },
-        direction="SHORT",
-    )
+def test_envelope_derives_short_side_even_when_the_policy_direction_axis_says_long() -> (
+    None
+):
+    """The exact defect the integration run caught (team-lead follow-up, 2026-09-16): a
+    ``NEW_SHORT`` composition against a policy whose ``DIRECTION`` axis says ``LONG`` must
+    still derive SELL — direction comes from the action class for a direction-named class,
+    the policy axis is never even consulted. Before this fix, a policy fixed at ``LONG`` was
+    permanently unable to serve a short attempt, backwards from long/short symmetry."""
+    rules = _construction_rules(sides=_MIRRORED_SIDES, direction="LONG")
     envelope = build_construction_envelope(
         rules,
         loaded_ocp=_loaded_ocp(),
@@ -365,30 +414,32 @@ def test_envelope_derives_the_mirror_side_for_the_short_direction() -> None:
     assert side_bindings == [AxisBinding(axis=ConformanceAxis.SIDE, value="SELL")]
 
 
-def test_envelope_refuses_when_no_direction_axis_binding_is_present() -> None:
-    """Mutation-equivalent for the DIRECTION-absent path: never defaults, refuses — matches
-    the ``construction_generation`` discipline :func:`build_construction_identities` already
-    follows for its own missing-input case."""
-    rules = _construction_rules(direction=None)
-    assert not any(
-        b.axis is ConformanceAxis.DIRECTION for b in rules.authorized_axes
-    )  # fixture sanity
-    with pytest.raises(SideDerivationRefused, match="DIRECTION"):
-        build_construction_envelope(
-            rules,
-            loaded_ocp=_loaded_ocp(),
-            action_class=_ACTION_CLASS,
-            venue_quantity_constraint=_venue_quantity_constraint(),
-            venue_allowed_sides=frozenset({"BUY", "SELL"}),
-        )
+def test_envelope_derives_side_for_a_direction_agnostic_class_from_the_policy_axis() -> (
+    None
+):
+    """CLOSE names no direction of its own, so this exercises the fallback arm of
+    :func:`resolve_construction_direction`."""
+    rules = _construction_rules(sides=_MIRRORED_SIDES_WITH_CLOSE, direction="LONG")
+    envelope = build_construction_envelope(
+        rules,
+        loaded_ocp=_loaded_ocp(),
+        action_class=ActionClass.CLOSE,
+        venue_quantity_constraint=_venue_quantity_constraint(),
+        venue_allowed_sides=frozenset({"BUY", "SELL"}),
+    )
+    side_bindings = [
+        b for b in envelope.authorized_axis_bindings if b.axis is ConformanceAxis.SIDE
+    ]
+    assert side_bindings == [AxisBinding(axis=ConformanceAxis.SIDE, value="SELL")]
 
 
-def test_envelope_refuses_when_action_class_shape_has_no_arm_for_the_direction() -> (
+def test_envelope_refuses_when_action_class_shape_has_no_arm_for_the_resolved_direction() -> (
     None
 ):
     """The document declares a shape for (NEW_LONG, LONG) only; this composition's own
-    ``action_class`` is NEW_SHORT — no (NEW_SHORT, LONG) arm exists, so this refuses rather
-    than silently falling back to some other declared side."""
+    ``action_class`` is NEW_SHORT, which resolves its OWN direction (SHORT) — no
+    (NEW_SHORT, SHORT) arm exists, so this refuses rather than silently falling back to some
+    other declared side."""
     rules = _construction_rules(
         sides={(ActionClass.NEW_LONG, "LONG"): "BUY"}, direction="LONG"
     )

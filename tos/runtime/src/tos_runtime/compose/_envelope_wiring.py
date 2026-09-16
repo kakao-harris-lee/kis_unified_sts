@@ -51,15 +51,17 @@ this repo has hit four times already); sourcing it from
 declaring it under ``_runtime.construction.axes`` would put the same fact ``action_class_shape``
 already carries in two places with nothing reconciling them — the exact "two quantities"
 duplication this wave exists to remove, applied to side instead of quantity. So
-:func:`build_construction_envelope` derives it instead: looks up the composition's fixed
-``DIRECTION`` axis binding (already in ``rules.authorized_axes`` — an authored, not derived,
-axis; ``TBD`` on the shipped paper instance refuses at LOAD time, before this function ever
-runs) and this composition's ``action_class``, and reads
-``action_class_shape[(action_class, direction)].side`` — the one source
-:class:`ActionClassShape` already is. A missing DIRECTION binding or an ``action_class_shape``
-entry with no arm for that ``(action_class, direction)`` pair refuses here rather than building
-an envelope with no SIDE axis, exactly the ``construction_generation`` discipline
-:func:`build_construction_identities` already follows.
+:func:`build_construction_envelope` derives it instead: resolves this composition's direction
+(:func:`resolve_construction_direction` — see that function's own docstring for why direction
+is resolved PER ATTEMPT from ``action_class`` when the class names one, and only falls back to
+the policy's own ``DIRECTION`` axis for direction-agnostic classes; an integration finding,
+2026-09-16 — a policy-constant-only reading made a policy fixed at ``DIRECTION: LONG``
+permanently unable to serve a ``NEW_SHORT`` composition, backwards from what long/short symmetry
+requires) and reads ``action_class_shape[(action_class, direction)].side`` — the one source
+:class:`ActionClassShape` already is. A direction-agnostic class with no DIRECTION binding, or
+an ``action_class_shape`` entry with no arm for the resolved ``(action_class, direction)`` pair,
+refuses here rather than building an envelope with no SIDE axis, exactly the
+``construction_generation`` discipline :func:`build_construction_identities` already follows.
 
 This closes a real gate, not a paper one: ``tos/src/tos/egressgw/gateway.py:1215`` reads
 ``construction.command.axis_value(ConformanceAxis.SIDE)`` and refuses the send outright when it
@@ -121,32 +123,92 @@ __all__ = [
     "build_construction_envelope",
     "build_construction_identities",
     "build_construction_inputs",
+    "resolve_construction_direction",
 ]
 
 
+#: ``ActionClass`` members whose NAME ITSELF names a trading direction — the class is the most
+#: specific per-attempt direction fact available (module docstring / :func:`resolve_construction
+#: _direction`). Deliberately duplicated in spelling from the venue loader's own private
+#: ``_DIRECTION_NAMED_ACTION_CLASSES`` (``tos_runtime.venue._order_construction_policy_loader``)
+#: rather than importing it: that constant is package-private inside ``venue`` (a different
+#: top-level package from ``compose``), and the fact itself — "NEW_LONG only ever makes sense at
+#: direction LONG" — is a property of the kernel's own closed ``ActionClass`` taxonomy, not of
+#: that loader's internals, so this module states it directly rather than reaching across a
+#: package boundary for a private symbol.
+_DIRECTION_NAMED_ACTION_CLASSES: dict[ActionClass, str] = {
+    ActionClass.NEW_LONG: "LONG",
+    ActionClass.NEW_SHORT: "SHORT",
+}
+
+
 class SideDerivationRefused(RuntimeError):
-    """The SIDE axis binding could not be derived from ``rules`` for this composition's
-    ``action_class`` (module docstring) — either no ``DIRECTION`` axis binding is present (the
-    shipped paper instance ships ``DIRECTION: "TBD"``, which the OCP loader itself already
-    refuses at LOAD time; this only fires for some OTHER absence) or ``action_class_shape`` has
-    no arm for the resulting ``(action_class, direction)`` pair. Refused, never defaulted — an
-    envelope with no SIDE axis would make every attempt refuse later, at the egress gate,
-    instead of here at boot with a clear reason."""
+    """Direction or SIDE could not be resolved from ``rules`` for this composition's
+    ``action_class`` (module docstring) — a direction-agnostic action class with no ``DIRECTION``
+    axis binding present (the shipped paper instance ships ``DIRECTION: "TBD"``, which the OCP
+    loader itself already refuses at LOAD time; this only fires for some OTHER absence), or
+    ``action_class_shape`` has no arm for the resolved ``(action_class, direction)`` pair.
+    Refused, never defaulted — an envelope with no SIDE axis would make every attempt refuse
+    later, at the egress gate, instead of here at boot with a clear reason."""
 
 
-def _derive_side_axis_binding(
+def resolve_construction_direction(
     rules: ConstructionRules, *, action_class: ActionClass
-) -> AxisBinding:
-    """The one place SIDE is derived (module docstring) — never authored in the OCP document."""
+) -> str:
+    """The ONE place direction is resolved for ``action_class_shape`` lookups (module docstring)
+    — :func:`build_construction_envelope`'s own SIDE derivation calls this, and lane D's
+    ``_shape_side_and_position_effect`` (``compose/_venue_wiring.py``, unreachable today —
+    nothing passes it ``construction_rules`` yet) should call it too rather than re-deriving
+    direction a second way; this wave has already found five instances of two copies of one
+    fact drifting apart, and lane D would be the sixth.
+
+    **Direction is per-attempt, not a policy constant** (team-lead correction, 2026-09-16):
+    CLAUDE.md's own non-negotiable — "Futures must preserve long/short symmetry. Entry/exit
+    direction follows ``signal_direction``" — means one governed document must serve BOTH
+    directions, so direction cannot be read as a single fixed fact off the policy alone; a
+    ``NEW_SHORT`` composition against a policy whose ``DIRECTION`` axis says ``LONG`` would
+    otherwise be permanently unable to derive a SIDE, exactly backwards from what long/short
+    symmetry requires. The kernel already agrees ``Proposal.direction`` is per-attempt content
+    (``tos/src/tos/dsl/proposal.py:126``; ``build_flat_proposal`` takes a closing direction as an
+    explicit argument, ``proposal.py:251``) — the runtime has no proposal path yet to supply it
+    directly, so this function uses the next most specific per-attempt fact actually available:
+
+    * When ``action_class`` NAMES a direction (``NEW_LONG`` -> ``LONG``, ``NEW_SHORT`` ->
+      ``SHORT`` — :data:`_DIRECTION_NAMED_ACTION_CLASSES`, the same distinction lane A's own
+      ``_check_action_class_shape_symmetry`` already draws between direction-named and
+      direction-agnostic classes), the class itself supplies the direction — never the policy's
+      axis, which would give the SAME wrong answer for every action class alike.
+    * For every other (direction-agnostic) class — ``CLOSE`` and the rest — there is no
+      per-attempt signal to read yet, so this falls back to the policy's own ``DIRECTION`` axis
+      binding in ``rules.authorized_axes``, refusing if none is present. This is narrower than
+      the wave's first cut, which read the axis unconditionally for every class: refusal still
+      fires, just only where no more specific fact exists.
+
+    Raises:
+        SideDerivationRefused: ``action_class`` is direction-agnostic and no ``DIRECTION`` axis
+            binding is present in ``rules.authorized_axes``.
+    """
+    named_direction = _DIRECTION_NAMED_ACTION_CLASSES.get(action_class)
+    if named_direction is not None:
+        return named_direction
     direction = next(
         (b.value for b in rules.authorized_axes if b.axis is ConformanceAxis.DIRECTION),
         None,
     )
     if direction is None:
         raise SideDerivationRefused(
-            "no DIRECTION axis binding in rules.authorized_axes — cannot derive SIDE for "
-            f"action_class {action_class!r} without a direction to key action_class_shape by"
+            f"action_class {action_class!r} is direction-agnostic and no DIRECTION axis "
+            "binding is present in rules.authorized_axes — cannot derive SIDE without a "
+            "direction to key action_class_shape by"
         )
+    return direction
+
+
+def _derive_side_axis_binding(
+    rules: ConstructionRules, *, action_class: ActionClass
+) -> AxisBinding:
+    """The one place SIDE is derived (module docstring) — never authored in the OCP document."""
+    direction = resolve_construction_direction(rules, action_class=action_class)
     shape = rules.action_class_shape.get((action_class, direction))
     if shape is None:
         raise SideDerivationRefused(
@@ -194,9 +256,10 @@ def build_construction_envelope(
         tos_runtime.compose._riskstate_wiring.RiskPolicyScopeMismatch: an
             ``action_class_shape`` side is not a member of ``venue_allowed_sides``, or the
             OCP's sizing bound is wider than ``venue_quantity_constraint``.
-        SideDerivationRefused: no ``DIRECTION`` axis binding is present in
-            ``rules.authorized_axes``, or ``action_class_shape`` has no arm for
-            ``(action_class, direction)``.
+        SideDerivationRefused: ``action_class`` is direction-agnostic and no ``DIRECTION``
+            axis binding is present in ``rules.authorized_axes`` (see
+            :func:`resolve_construction_direction`), or ``action_class_shape`` has no arm for
+            the resolved ``(action_class, direction)``.
     """
     ocp_sides = frozenset(shape.side for shape in rules.action_class_shape.values())
     _cross_check_ocp_side_tokens(ocp_sides, venue_allowed_sides=venue_allowed_sides)
