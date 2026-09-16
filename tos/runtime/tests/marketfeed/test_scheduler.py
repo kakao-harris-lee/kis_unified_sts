@@ -10,14 +10,20 @@ mutation M9 ("다심볼 거부 제거 -> (10) red").
 
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import MagicMock
+
 import pytest
 from tos.time import SessionContext
 from tos_runtime.marketfeed.ports import RawObservation, TickOutcome
 from tos_runtime.marketfeed.scheduler import (
     MultiInstrumentRefused,
+    TickResult,
     TickScheduler,
     decide_tick,
 )
+
+from ._fixtures import INSTRUMENT, SCHEME, loaded_policy
 
 _OPEN_SESSION = SessionContext(phase="CONTINUOUS", is_open=True)
 _CLOSED_SESSION = SessionContext(phase="CLOSED", is_open=False)
@@ -200,3 +206,82 @@ def test_multi_instrument_refused_on_an_empty_instruments_sequence() -> None:
             evidence_store=None,  # type: ignore[arg-type]
             poll_interval_ms=1_000,
         )
+
+
+# ----------------------------------------------------------------------------
+# run_forever — the thin loop (module docstring: "the ONLY place time.sleep is called")
+# ----------------------------------------------------------------------------
+
+
+def _build_scheduler(tmp_path: Path, *, poll_interval_ms: int) -> TickScheduler:
+    """A real :class:`TickScheduler`, built with the real
+    :func:`~tos_runtime.marketfeed.policy.load_critical_input_policy` output (reused from
+    ``_fixtures.loaded_policy`` rather than hand-rolled) plus ``MagicMock`` doubles for every
+    OTHER collaborator (:class:`~tos_runtime.marketfeed.ports.ObservationIntake`/
+    ``DurableSnapshotStore``/time-projection/time-service/session-owner/inbox/evidence-store).
+    ``run_forever`` never reads any of those directly — it only ever calls ``self.tick_once()``
+    — so this scheduler exists purely as something to monkeypatch ``tick_once`` onto below,
+    never to exercise a real tick path (that path already has its own dedicated coverage in
+    this module and in ``tests/compose/test_marketfeed_wiring.py``)."""
+    return TickScheduler(
+        instruments=(INSTRUMENT,),
+        instrument_class="krx-index-futures",
+        account="acct-run-forever",
+        direction="LONG",
+        quantity_basis="RISK",
+        unit="contract",
+        policy=loaded_policy(tmp_path),
+        scheme=SCHEME,
+        intake=MagicMock(),
+        store=MagicMock(),
+        time_projection=MagicMock(),
+        time_service=MagicMock(),
+        session_owner=MagicMock(),
+        driver=None,
+        inbox=MagicMock(),
+        evidence_store=MagicMock(),
+        poll_interval_ms=poll_interval_ms,
+    )
+
+
+def _stop_after(n: int):
+    """A ``stop`` double that returns ``False`` for its first ``n`` calls, then ``True`` —
+    ``run_forever``'s own loop checks ``stop()`` BEFORE every pass, so this yields exactly
+    ``n`` ``tick_once``/``sleep`` calls before the loop exits."""
+    calls = {"count": 0}
+
+    def stop() -> bool:
+        if calls["count"] >= n:
+            return True
+        calls["count"] += 1
+        return False
+
+    return stop
+
+
+def test_run_forever_calls_tick_once_n_times_and_sleeps_the_configured_interval(
+    tmp_path: Path,
+) -> None:
+    """Pins the loop's own thinness (team-lead review finding, 2026-09-16: ``run_forever`` had
+    zero coverage — its own docstring described the injection seam this test now actually
+    uses). Never re-tests ``tick_once``'s own logic — ``tick_once`` is replaced with a counting
+    double, so this test demonstrates ONLY: ``stop()`` gates every pass, ``tick_once()`` runs
+    once per admitted pass, and ``sleep()`` is called with the scheduler's OWN CONFIGURED
+    interval (750 ms here, deliberately not the common 1000 ms default elsewhere in this
+    module) — never a hardcoded one."""
+    scheduler = _build_scheduler(tmp_path, poll_interval_ms=750)
+
+    tick_calls = 0
+
+    def fake_tick_once() -> TickResult:
+        nonlocal tick_calls
+        tick_calls += 1
+        return TickResult(outcome=TickOutcome.SKIPPED_NO_OBSERVATION)
+
+    scheduler.tick_once = fake_tick_once  # type: ignore[method-assign]
+
+    sleep_calls: list[float] = []
+    scheduler.run_forever(sleep=sleep_calls.append, stop=_stop_after(3))
+
+    assert tick_calls == 3
+    assert sleep_calls == [0.75, 0.75, 0.75]
