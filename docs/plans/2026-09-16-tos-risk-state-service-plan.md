@@ -136,6 +136,15 @@ def to_action_cause(obs, *, root_event_id, proposal_id, command_identity, comman
 4. 커널 라운드 #4 후보 추가: `tos.position`(체결 합·보수 사용량 술어) · RCL 예약 행에 committed 벡터 영속(`aggregate.py:15-22` 가 지목).
 5. 다음 웨이브 순서: (c) 틱 원천/marketfeed → (a′) envelope/price/order_shape → 브로커 증인(P-BAL) / band 원천.
 
-## 7. 착지 기록
+## 7. 착지 기록 (2026-09-16)
 
-(레인 착지 후 기입)
+| 레인 | PR → main | 커밋 | 내용 |
+|---|---|---|---|
+| S(spec) | **#702 → `ea097185`** | 2 | DR-0003(ARE/AFG 인스턴스에 DR-0002 경로 확장 · 단일 원천 포지션 관측 · 관측/선언 분리) + SUMMARY · 사실 대조 리뷰 HIGH 1(인용 계획 문서 부재 → 계획 동반 착지)·LOW 1(§5.3/§9 인용) 처분 · Status `Proposed`(머지 = 수용) |
+| a(관측) | **#703 → `6fa1750d`** | `29d50ec5`·`c4ffec2c` | `tos_runtime/riskstate/{policies(→shim 79), position 446, flow_observation 494}.py` + tests 66 · 리뷰 HIGH 1(`deployment_facts` 블록 부재 테스트) 처분 · 뮤테이션 리뷰어 실행 10/11 red(M4 GREEN) → M4 는 처분 커밋 `c4ffec2c` 의 **저자 자체 확인**(리뷰어 재심 라운드 없음 — 판정이 «테스트 보강 조건부 머지 가능» 이었음) |
+| b(결선) | **#704 → `61ba6cea`** | `8b817d8f`…`a3d48af4`(14) | `riskstate/service.py` 648 · `_aggregate_risk_policy_loader.py` 464 · `_action_flow_policy_loader.py` 567 · `_riskstate_primitives.py` 76 · `compose/_riskstate_wiring.py` 268 · `root.py` 449→543(제공자 `| None` 기본 서비스 · `compose_paper_runtime` 311→395 재등재) · `cli.py` 980→1000(4 정책 digest · (b)→(b′)) · tests +30 · 리뷰 HIGH 4/LOW 1(핀 부재 4 · HIGH-2 는 **실결함**: `committed_flow_vectors` 부재가 공시되지 않음) → 재심 HIGH 1(서비스 측 `elapsed_monotonic` 소비 무핀) → 재심 2 approve · 뮤테이션 M1~M12 전건 red · CI `performance` 잡 실패는 기존 flaky(이슈 #679 · 필수 아님) |
+
+- **종료 조건 대비(§5)**: (1) 제공자 미주입 부팅 → `*_POLICY_BOUND` 각 1 · `RISK_STATE_OBSERVED` 1 · **step 6 `AGGREGATE_RISK_DECISION` GRANT**(손 셀 0 — 포지션 폴드 + 구성 수량 + 정책 한도 + HSE `envelope_max`) ✓ (2) 선행 체결 seed → 한도 초과 **DENY**(seed 크기에 민감함을 뮤테이션으로 확인) ✓ (3) `RESULT_UNMATCHED` 전량 산입(단위) ✓ (4) `max_in_flight` — `committed_flow_vectors` 가 현행 결선에서 항상 `()` 이라 `in_flight` 관측으로 대체 ✓ (5) 차원 id ∉ HSE 부팅 거부 ✓ (6) `members:` 불일치 거부 ✓ (7) NEW_SHORT 미러 동일 GRANT ✓ (8) 명시 제공자 e2e 불변 ✓ (9) `run` 파싱 전용 + (b)→(b′) ✓.
+- **정직 발견(핵심)**: **step 7 `ACTION_FLOW_DECISION` GRANT 는 현행 런타임에서 범주적으로 불가** — `tos.afg.amplification_bounded` 가 bound 를 가진 모든 축의 관측값을 요구하는데 `duplicate_redelivery_expansion`/`failover_reconnect_replay_expansion` 은 내구 root-cause 별 읽기 표면이 없다(인박스 dedup 은 일시 receipt · replay verdict 는 부팅당). 다른 witness(`scope_graph_complete`·`cause_lineage_complete`·`envelope_not_enlarged`·`atomic_economic_flow_coverage`) 는 리뷰 시점 프로브로 충족 확인(커밋 테스트는 UNKNOWN 결과만 단언 — 과대 주장 정정). 해소 = 인박스 스키마에 내구 카운터(마이그레이션 · `migration-reviewer` 게이트) — 후속 웨이브.
+- **발견·정정(그 외)**: side 토큰은 저장소 핀 `test_no_side_literals` 때문에 정책 선언(`_runtime.side_tokens` · `allowed_sides` 교차검사) · `InboxFlowReader` 는 root event 를 id 재계산이 아니라 **현재 처리 중 인박스 seq** 로 해석(라벨 불일치로 `elapsed_monotonic` 이 None 이던 결함 수정) · `lineage_attested` 가 봉인 전 신규 attempt 에서 영구 False 이던 결함 수정 · `producer_self_declared_scope=False` 는 snapshot `covered_scopes` 가 활성 정책 문서에서만 읽힌다는 파생(리뷰어 정밀 심사로 확인) · `policies.py` 1017행 신규 예외 등재 → 규칙대로 **분할** · `committed_flow_vectors` 는 RCL 항목 내용 공개 읽기 부재 + permit 이 `COMMIT_RESERVATION` 종류로 묶여 현행 `()`(§6 ④ RCL 벡터 영속 후보).
+- **정직 상태·이월**: `run` 은 (a′) envelope/price/order_shape · (b′) 단일 원천 포지션(브로커 증인 0 · `all_fields_attributed` attestation) · 계약 수 차원만 · 시나리오 셋/정책 실인스턴스 값 대기(§6 ②) · **step 7 dedup/replay 내구 관측 부재** · (c) 틱 원천 으로 계속 차단 · 투영 필드군 없음 · DR-0003 Status `Proposed` 문언(운영자 확인 ① 뒤 전환).
