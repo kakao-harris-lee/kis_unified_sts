@@ -103,6 +103,22 @@ def _sync_venue_activation_digest(config_dir: Path) -> None:
     _rewrite_activation(config_dir, members)
 
 
+def _sync_ocp_activation_digest(config_dir: Path) -> None:
+    """Sibling of :func:`_sync_venue_activation_digest` for the ORDER_CONSTRUCTION_POLICY
+    member — re-loads ``order_construction_policy.yaml`` as it stands NOW (after a test's own
+    mutation) and rewrites ``safety_activation.yaml``'s own member digest to match."""
+    from tos_runtime.venue import load_order_construction_policy
+
+    loaded = load_order_construction_policy(
+        config_dir / "order_construction_policy.yaml", scheme=_SCHEME
+    )
+    members = _real_members(config_dir)
+    for member in members:
+        if member["kind"] == "ORDER_CONSTRUCTION_POLICY":
+            member["digest"] = loaded.policy.canonical_digest
+    _rewrite_activation(config_dir, members)
+
+
 def _compose_with_construction(
     tmp_path: Path,
     config_dir: Path,
@@ -689,9 +705,14 @@ class TestDerivedQuantityReachesVenueGate:
     def test_derived_quantity_reaches_the_fold_not_the_literal(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
-        # fx.sizing_bound() derives risk_budget/per_unit_risk = 1000/50 = 20 (already an
-        # exact lot_size=2 multiple, within [min_quantity=2, max_quantity=100]) —
-        # deliberately different from the literal quantity below (4, itself on-grid /
+        # integration correction (team-lead re-review, 2026-09-16, post lane-A/B/C merge):
+        # the envelope's sizing bound comes from the governed OCP document now (lane B's
+        # `build_construction_envelope`), never from `ConstructionConfig.envelope` — so the
+        # derived quantity here is `ocp_yaml()`'s own shared default
+        # (`construction.sizing.risk_budget=100` / `per_unit_risk=10` = 10, already an exact
+        # `lot_size=2` multiple, within `[min_quantity=2, max_quantity=100]`), not
+        # `fx.sizing_bound()`'s values, which this test no longer wires anywhere.
+        # Deliberately different from the literal quantity below (4, itself on-grid /
         # admissible on its own) so an ADMIT here cannot be explained by the literal
         # happening to match, only by the derived value being the one actually judged.
         construction = fx.construction_config(order_shape=fx.order_shape(quantity=4))
@@ -708,17 +729,17 @@ class TestDerivedQuantityReachesVenueGate:
         assert (
             construction_result is not None and construction_result.command is not None
         )
-        # the bound axis value is a canonicalized Decimal string (e.g. "2E+1", not "20") —
+        # the bound axis value is a canonicalized Decimal string (e.g. "1E+1", not "10") —
         # assert the parsed *value*, not its literal spelling.
         from decimal import Decimal
 
         bound_quantity = construction_result.command.axis_value(
             fx.ConformanceAxis.QUANTITY
         )
-        assert bound_quantity is not None and Decimal(bound_quantity) == 20
+        assert bound_quantity is not None and Decimal(bound_quantity) == 10
 
         assert runtime.venue_stage.resolved_shape is not None
-        assert runtime.venue_stage.resolved_shape.quantity == 20
+        assert runtime.venue_stage.resolved_shape.quantity == 10
         assert step3.outcome is StageOutcome.ADMIT
 
         runtime.rcl_log.close()
@@ -729,9 +750,11 @@ class TestDerivedQuantityReachesVenueGate:
     ) -> None:
         """The defect, as a test (team-lead brief): a literal quantity (999) the venue policy
         would refuse on its own (exceeds ``max_quantity=100`` — ``conftest.py``'s own venue
-        policy fixture) must not veto the attempt when the DERIVED quantity (20, on-grid,
-        in-bounds) is the one actually judged. Pre-fix, ``order_shape_admissible`` judged the
-        caller's literal directly and this attempt would have been INADMISSIBLE."""
+        policy fixture) must not veto the attempt when the DERIVED quantity (10 — the shared
+        OCP fixture's own ``risk_budget=100``/``per_unit_risk=10``, on-grid, in-bounds; see
+        the sibling test's own comment) is the one actually judged. Pre-fix,
+        ``order_shape_admissible`` judged the caller's literal directly and this attempt
+        would have been INADMISSIBLE."""
         construction = fx.construction_config(order_shape=fx.order_shape(quantity=999))
         runtime = _compose_with_construction(
             tmp_path, config_dir, data_dir, custody_root, construction
@@ -743,7 +766,7 @@ class TestDerivedQuantityReachesVenueGate:
         step3 = verdicts[CommitmentStep.VENUE_ADMISSIBILITY_DECISION]
 
         assert runtime.venue_stage.resolved_shape is not None
-        assert runtime.venue_stage.resolved_shape.quantity == 20
+        assert runtime.venue_stage.resolved_shape.quantity == 10
         assert step3.outcome is StageOutcome.ADMIT
 
         runtime.rcl_log.close()
@@ -871,27 +894,71 @@ class TestSilentlyRoundedIsNeverIntroduced:
         runtime.evidence_store.close()
 
     def test_sourced_quantity_equals_the_derivations_own_output_when_floor_to_lot_actually_rounds(
-        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+        self, tmp_path: Path
     ) -> None:
-        """FLOOR_TO_LOT check (team-lead brief, 2026-09-16): ``risk_budget=1030`` /
+        """FLOOR_TO_LOT check (team-lead brief, 2026-09-16). ``risk_budget=1030`` /
         ``per_unit_risk=50`` = ``20.6`` — NOT already a ``lot_size=2`` multiple, so the
-        derivation GENUINELY floors it to ``20`` (``fx.sizing_bound()``'s default
-        ``lot_rounding=LotRoundingPolicy.FLOOR_TO_LOT``). That floor is the authored policy
+        derivation GENUINELY floors it to ``20``. That floor is the authored policy
         PRODUCING the decision, not a caller normalizing an already-decided shape: the
         derived, floored ``20`` is the only quantity that ever exists in this runtime's path,
         and it reaches the judged shape unaltered — confirming ``FLOOR_TO_LOT`` does not put
         the "always ``False``" claim back in the position the grid re-derivation was removed
-        for."""
+        for.
+
+        Customization moved to the governed OCP document (integration correction,
+        team-lead re-review, 2026-09-16, post lane-A/B/C merge): the sizing bound now comes
+        from ``build_construction_envelope`` reading the OCP's own ``_runtime.construction``
+        block, never from an injected ``ConstructionConfig.envelope`` — so this test writes
+        its own ``order_construction_policy.yaml`` (via ``ocp_yaml(construction=...)``, "the
+        override wholesale" seam its own docstring names for exactly this) rather than
+        passing a customized envelope into ``fx.construction_config`` the way the earlier,
+        now-defanged version of this test did. ``lot_rounding`` is switched to
+        ``FLOOR_TO_LOT`` explicitly — the shared fixture default is
+        ``EXACT_MULTIPLE_REQUIRED``, under which a raw ``20.6`` would be DENIED, not floored,
+        which would silently stop this test from exercising a floor at all."""
         from decimal import Decimal
 
         from tos.egressgw import DerivationOutcome
 
-        fractional_envelope = fx.proposed_envelope(
-            sizing_bound=fx.sizing_bound(
-                risk_budget=Decimal("1030"), per_unit_risk=Decimal("50")
-            )
+        config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
+        (config_dir / "order_construction_policy.yaml").write_text(
+            ocp_yaml(
+                environment=_VENUE_POLICY_ENVIRONMENT,
+                account=_VENUE_POLICY_ACCOUNT,
+                instrument=_VENUE_POLICY_INSTRUMENT,
+                wire_codec="null",
+                construction=(
+                    "  construction:\n"
+                    "    sizing:\n"
+                    "      max_quantity: 100\n"
+                    "      min_quantity: 2\n"
+                    "      lot_size: 2\n"
+                    '      lot_rounding: "FLOOR_TO_LOT"\n'
+                    "      risk_budget: 1030\n"
+                    "      per_unit_risk: 50\n"
+                    "      max_notional: null\n"
+                    '      admitted_quantity_bases: ["RISK"]\n'
+                    "    axes:\n"
+                    '      - axis: "TIF"\n'
+                    '        value: "DAY"\n'
+                    '      - axis: "DIRECTION"\n'
+                    '        value: "LONG"\n'
+                    "    action_class_shape:\n"
+                    "      NEW_LONG:\n"
+                    '        LONG: {side: "BUY", position_effect: "OPEN"}\n'
+                    "      NEW_SHORT:\n"
+                    '        SHORT: {side: "SELL", position_effect: "OPEN"}\n'
+                    "    effect_dimensions:\n"
+                    '      - dimension_id: "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"\n'
+                    '        basis: "QUANTITY"\n'
+                    '        unit: "CONTRACTS"\n'
+                    '        scale: "1"\n'
+                ),
+            ),
+            encoding="utf-8",
         )
-        construction = fx.construction_config(envelope=fractional_envelope)
+        _sync_ocp_activation_digest(config_dir)
+        construction = fx.construction_config()
         runtime = _compose_with_construction(
             tmp_path, config_dir, data_dir, custody_root, construction
         )
