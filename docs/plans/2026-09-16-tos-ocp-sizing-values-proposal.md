@@ -1,4 +1,6 @@
-# OCP sizing 값 제안표 — 운영자 승인 요청 ((a′) 웨이브 §6 ①)
+# OCP sizing 값 제안표 — **채택됨 (운영자, 2026-09-16)** ((a′) 웨이브 §6 ①)
+
+> **운영자 처분 2026-09-16**: ① `risk_budget`/`per_unit_risk` = **구조 인코딩**(1/1) · ② `admitted_quantity_bases` 는 **전략 파일 확정 후** 채움(그때까지 operator-fill TBD) · ③ **제안표 채택**. 아래 §2 표의 값으로 OCP `policy_generation: 2` 를 진행한다.
 
 - **요청**: `config/tos_runtime/paper/order_construction_policy.yaml` 에 `SizingBound` 7필드 + `admitted_quantity_bases` 를 기계가 읽는 값으로 채우는 **policy_generation 2** 를 승인해 주십시오.
 - **근거**: (a′) 계획(`docs/plans/2026-09-16-tos-aprime-envelope-order-shape-plan.md`) §6 ① · `SizingBound` 독스트링이 「RFC-002 §9.1:553 이 **Order Construction Policy 거버넌스**를 construction rule 의 공급자로 만든다」고 지목하는데, **공급 경로가 없다**(현 OCP 인스턴스에 sizing 값 0건).
@@ -32,7 +34,7 @@
 | `risk_budget` | **1** | **C** | 구조 인코딩. `raw = risk_budget / per_unit_risk`(`construction.py:321`)이고 `lot_rounding=EXACT_MULTIPLE_REQUIRED`·`lot_size=1` 이므로 **비율이 정확히 1이어야** 승인된 1계약 한도와 일치. 경제적 캘리브레이션 아님 | 비율 ≠ 1 → 파생 수량이 1 이 아니게 되고 §2 `max_quantity` 와 어긋나 거부 |
 | `per_unit_risk` | **1** | **C** | 위와 한 쌍. 단위는 「계약 환산」으로 선언 | 위와 동일 |
 | `max_notional` | **null** | — | **선택적 상한**입니다(`construction.py:525` 이 `is not None` 일 때만 검사 — §3 발견 1). 승인된 명목 원천이 없고, 구속 제약은 `max_quantity: 1` 입니다. 없는 근거로 숫자를 만들지 않습니다 | null 은 「명목 상한 없음」 — 계약 수 1 이 구속하므로 실효 무제한은 아니나, **명목 자체를 독립으로 막지는 않음**(공시 대상) |
-| `admitted_quantity_bases` | **`["RISK", "ZERO_POSITION"]`** | **C** | `ZERO_POSITION` 은 커널 예약 토큰(`dsl/proposal.py:49` `FLAT_QUANTITY_BASIS`). `RISK` 는 현재 픽스처가 쓰는 진입 basis. **주의**: 실제 값은 배포된 전략 파일이 무엇을 내는지에 달렸고, `tos/runtime/config/strategies/example.strategy.yaml:55` 의 `quantity_basis` 는 아직 **named-TBD `null`** 입니다 | 빈 집합은 **아무것도 승인하지 않음**(∅ fail-closed) · 전략이 내는 토큰이 집합 밖이면 규칙 2 에서 거부 |
+| `admitted_quantity_bases` | **`["TBD"]`(operator-fill)** — ~~`["RISK", "ZERO_POSITION"]`~~ | **보류** | `ZERO_POSITION` 은 커널 예약 토큰(`dsl/proposal.py:49` `FLAT_QUANTITY_BASIS`). `RISK` 는 현재 픽스처가 쓰는 진입 basis. **주의**: 실제 값은 배포된 전략 파일이 무엇을 내는지에 달렸고, `tos/runtime/config/strategies/example.strategy.yaml:55` 의 `quantity_basis` 는 아직 **named-TBD `null`** 입니다 | 빈 집합은 **아무것도 승인하지 않음**(∅ fail-closed) · 전략이 내는 토큰이 집합 밖이면 규칙 2 에서 거부 |
 
 ## 3. 준비 중 발견한 것 2건 (커널 문서 문제 — 이 웨이브 범위 밖, 기록만)
 
@@ -41,9 +43,9 @@
 
 ## 4. 운영자 선택지
 
-1. **`risk_budget`/`per_unit_risk` 의 성격** — (a) 제안대로 **구조 인코딩**(1/1, 「정확히 1계약」의 기계 표현, 경제 모델 아님을 OCP 주석에 명시) · (b) **실제 KRW 캘리브레이션**(계약당 리스크 = 스톱 거리 × 승수). (b) 는 스톱 거리와 계약 승수의 **승인된 원천이 필요**합니다 — `config/arbitrage.yaml:11` 의 `multiplier: 50000` 은 레거시 로컬 설정(등급 C)이고 같은 파일의 `tick_size: 0.05` 와 조합하면 KOSPI200 표준/미니 사양이 섞여 있어 **어느 계약인지 단정할 수 없습니다.** 추천은 (a) — 없는 원천으로 숫자를 만들지 않고, 나중에 원천이 생기면 새 세대로 올립니다.
-2. **`admitted_quantity_bases`** — 배포 전략 파일이 확정되면 그 토큰으로 맞춰야 합니다. 지금 `["RISK", "ZERO_POSITION"]` 로 두고 전략 확정 시 재검토할지, 전략 파일을 먼저 채울지.
-3. **세대 이행 절차 확인** — 승인 시 제가 수행할 것: `policy_generation: 2` · `_runtime.construction` 블록 추가 · `canonical_digest` 재계산 → `tos-runtime print-policy-digests --config-dir …` 출력 → **`safety_activation.yaml` `members:` 는 운영자 손으로 기입**(기존 관례). 이 마지막 단계만 운영자 작업입니다.
+1. **`risk_budget`/`per_unit_risk` 의 성격 — 결정: (a) 구조 인코딩.** ~~(a) 제안대로 **구조 인코딩**(1/1, 「정확히 1계약」의 기계 표현, 경제 모델 아님을 OCP 주석에 명시) · (b) **실제 KRW 캘리브레이션**(계약당 리스크 = 스톱 거리 × 승수). (b) 는 스톱 거리와 계약 승수의 **승인된 원천이 필요**합니다 — `config/arbitrage.yaml:11` 의 `multiplier: 50000` 은 레거시 로컬 설정(등급 C)이고 같은 파일의 `tick_size: 0.05` 와 조합하면 KOSPI200 표준/미니 사양이 섞여 있어 **어느 계약인지 단정할 수 없습니다.** 추천은 (a) — 없는 원천으로 숫자를 만들지 않고, 나중에 원천이 생기면 새 세대로 올립니다.
+2. **`admitted_quantity_bases` — 결정: 전략 파일 확정 후.** 세대 2 는 이 필드를 `["TBD"]` 로 두고 착지한다(로더가 TBD 를 거부하므로 fail-closed 유지 — `scope.accounts`/`scope.instruments` 가 이미 같은 상태). 배포 전략 파일(`config_dir/strategies/*.yaml` 의 `quantity_basis`)이 확정되면 그 토큰으로 채운다. **이것이 남는 한 paper 인스턴스는 부팅하지 않는다 — 의도된 fail-closed 이고, 오늘도 이미 그렇다.**
+3. **세대 이행 절차 — 결정: 채택.** 수행할 것: `policy_generation: 2` · `_runtime.construction` 블록 추가 · `canonical_digest` 재계산 → `tos-runtime print-policy-digests --config-dir …` 출력 → **`safety_activation.yaml` `members:` 는 운영자 손으로 기입**(기존 관례). 이 마지막 단계만 운영자 작업입니다.
 
 ## 5. 승인 후 즉시 착수할 것
 
