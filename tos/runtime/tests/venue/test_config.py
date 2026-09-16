@@ -41,6 +41,18 @@ _REAL_OCP_PATH = (
     / "order_construction_policy.yaml"
 )
 
+#: The shipped production ARP instance — the RCL capacity lookup's actual source of truth for
+#: dimension_id spelling (``tos_runtime/riskstate/service.py:145-151``). Read alongside
+#: ``_REAL_OCP_PATH`` so a spelling drift between the two documents is caught by a single test
+#: rather than trusted by inspection (OCP effect_dimensions proposal §2.1's own warning).
+_REAL_ARP_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "config"
+    / "tos_runtime"
+    / "paper"
+    / "aggregate_risk_policy.yaml"
+)
+
 # ===========================================================================
 # venue_constraint_policy.yaml — happy path
 # ===========================================================================
@@ -738,7 +750,14 @@ def test_load_order_construction_policy_construction_happy_path(tmp_path: Path) 
             side="SELL", position_effect="OPEN"
         ),
     }
-    assert rules.effect_dimensions == ()
+    assert rules.effect_dimensions == (
+        EffectDimensionSpec(
+            dimension_id="INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL",
+            basis=EffectBasis.QUANTITY,
+            unit="CONTRACTS",
+            scale="1",
+        ),
+    )
 
 
 def test_load_order_construction_policy_construction_missing_block_refused(
@@ -1045,12 +1064,23 @@ def test_load_order_construction_policy_construction_action_class_shape_one_side
         load_order_construction_policy(path, scheme=SCHEME)
 
 
+#: The default fixture's own single ``effect_dimensions`` entry (adopted proposal value,
+#: ``tests/venue/_documents.py``'s own ``ocp_yaml()`` docstring) — the stable substring the two
+#: tests below replace, independent of the surrounding comment block.
+_DEFAULT_EFFECT_DIMENSION_ENTRY = (
+    '      - dimension_id: "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"\n'
+    '        basis: "QUANTITY"\n'
+    '        unit: "CONTRACTS"\n'
+    '        scale: "1"\n'
+)
+
+
 def test_load_order_construction_policy_construction_effect_dimensions_unknown_basis_refused(
     tmp_path: Path,
 ) -> None:
     text = ocp_yaml().replace(
-        "    effect_dimensions: []\n",
-        '    effect_dimensions:\n      - dimension_id: "d1"\n        basis: "NOPE"\n'
+        _DEFAULT_EFFECT_DIMENSION_ENTRY,
+        '      - dimension_id: "d1"\n        basis: "NOPE"\n'
         '        unit: "KRW"\n        scale: "1"\n',
     )
     path = write_fixture_ocp(tmp_path, text)
@@ -1061,16 +1091,23 @@ def test_load_order_construction_policy_construction_effect_dimensions_unknown_b
 def test_load_order_construction_policy_construction_effect_dimensions_well_formed(
     tmp_path: Path,
 ) -> None:
+    """A second, differently-shaped ``effect_dimensions`` entry parses generically — the
+    default fixture's own adopted-proposal entry (asserted in the happy-path test) already
+    covers the QUANTITY basis; this proves NOTIONAL round-trips too, independent of whether the
+    document declares it (the real deploy file does not — proposal §3)."""
     text = ocp_yaml().replace(
-        "    effect_dimensions: []\n",
-        '    effect_dimensions:\n      - dimension_id: "notional"\n        basis: "NOTIONAL"\n'
+        _DEFAULT_EFFECT_DIMENSION_ENTRY,
+        '      - dimension_id: "notional-test"\n        basis: "NOTIONAL"\n'
         '        unit: "KRW"\n        scale: "1"\n',
     )
     path = write_fixture_ocp(tmp_path, text)
     loaded = load_order_construction_policy(path, scheme=SCHEME)
     assert loaded.construction_rules.effect_dimensions == (
         EffectDimensionSpec(
-            dimension_id="notional", basis=EffectBasis.NOTIONAL, unit="KRW", scale="1"
+            dimension_id="notional-test",
+            basis=EffectBasis.NOTIONAL,
+            unit="KRW",
+            scale="1",
         ),
     )
 
@@ -1107,13 +1144,55 @@ def test_load_order_construction_policy_scope_order_types_named_tbd_refused(
 
 def test_real_paper_ocp_carries_the_new_generation(tmp_path: Path) -> None:
     """Pins the (a′) wave's generation bump on the shipped file itself (mirrors
-    ``tests/compose/test_deploy_policies.py``'s own "real policy files" pins)."""
+    ``tests/compose/test_deploy_policies.py``'s own "real policy files" pins). Generation 3:
+    effect_dimensions proposal (2026-09-16), on top of generation 2's sizing proposal.
+    """
     raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
-    assert raw["policy_generation"] == 2
-    assert raw["_model_view"]["policy_generation"] == 2
+    assert raw["policy_generation"] == 3
+    assert raw["_model_view"]["policy_generation"] == 3
     assert raw["_runtime"]["construction"]["sizing"]["admitted_quantity_bases"] == [
         "TBD"
     ]
+
+
+def test_real_paper_ocp_effect_dimensions_matches_the_adopted_proposal(
+    tmp_path: Path,
+) -> None:
+    """Pins the effect_dimensions proposal's adopted table on the shipped file: single
+    dimension, all four fields, no notional dimension (proposal §3 — rejected, no approved
+    mark source)."""
+    raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
+    dims = raw["_runtime"]["construction"]["effect_dimensions"]
+    assert dims == [
+        {
+            "dimension_id": "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL",
+            "basis": "QUANTITY",
+            "unit": "CONTRACTS",
+            "scale": "1",
+        }
+    ]
+
+
+def test_real_paper_ocp_effect_dimension_id_matches_the_real_arp_capacity_lookup_spelling(
+    tmp_path: Path,
+) -> None:
+    """The strongest form of the proposal §2.1 measurement: reads BOTH shipped files and
+    asserts the OCP's declared ``dimension_id`` equals the exact composed-id spelling the ARP's
+    own ``_runtime.dimension_ids`` mapping carries — the same key
+    ``tos_runtime/riskstate/service.py:145-151`` builds the RCL capacity vector from. A future
+    edit that drifts either file's spelling apart fails HERE, not only downstream at a capacity
+    lookup that silently finds nothing (the exact phantom the withdrawn fixture-injected values
+    already were)."""
+    ocp_raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
+    arp_raw = yaml.safe_load(_REAL_ARP_PATH.read_text(encoding="utf-8"))
+    ocp_dimension_id = ocp_raw["_runtime"]["construction"]["effect_dimensions"][0][
+        "dimension_id"
+    ]
+    arp_dimension_ids = arp_raw["_runtime"]["dimension_ids"]
+    assert ocp_dimension_id in arp_dimension_ids
+    # The unprefixed governed_dimensions spelling is a DIFFERENT id — proposal §2.1's own
+    # warning that the two ARP spellings must not be confused.
+    assert ocp_dimension_id not in arp_raw["_model_view"]["governed_dimensions"]
 
 
 def test_real_paper_ocp_refuses_on_admitted_quantity_bases_tbd_even_when_scope_is_filled(

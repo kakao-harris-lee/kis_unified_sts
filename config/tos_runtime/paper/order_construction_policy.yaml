@@ -26,6 +26,24 @@
 # kept by hand, not a guarantee the digest verifies (see this document's own
 # canonicalization_and_duplicate_field_rules entry).
 #
+# APPROVAL PROVENANCE (`_runtime.construction.effect_dimensions`, generation 3
+# — (a′) wave): docs/plans/2026-09-16-tos-ocp-effect-dimensions-proposal.md
+# §2/§4, adopted by the operator 2026-09-16 (① the single INSTRUMENT::
+# LONG_SHORT_DELTA_DIRECTIONAL dimension adopted, every field grade A —
+# derived from aggregate_risk_policy.yaml/venue_constraint_policy.yaml, no
+# new judgement; ② no notional dimension declared — no approved mark source,
+# proposal §3). `dimension_id` is the exact composed-id spelling
+# aggregate_risk_policy.yaml's own `_runtime.dimension_ids` carries (measured
+# against `tos_runtime/riskstate/service.py:145-151`'s actual RCL capacity
+# lookup, NOT the unprefixed `_model_view.governed_dimensions` spelling —
+# proposal §2.1's own warning: a wrong spelling here passes step 5 while the
+# capacity lookup finds nothing, reproducing the exact phantom a withdrawn
+# test-fixture-injected value already was). Proposal §5: adopting this table
+# is a necessary condition for step 5 to leave UNKNOWN, not a sufficient
+# one — `derive_economic_effect_envelope` only fills a magnitude when the
+# quantity derivation itself is DERIVED, never as a guarantee this document
+# alone can make.
+#
 # TRANSPORT BINDING (`_runtime.wire_codec`): the paper compose default is the
 # SYNTHETIC transport, for which the loader requires `wire_codec: null`. A
 # `--transport kis-mock` deployment must instead declare
@@ -48,7 +66,7 @@
 artifact_type: ORDER_CONSTRUCTION_POLICY
 schema_version: "1.0-DRAFT"
 policy_id: "ocp-paper-krx-index-futures"
-policy_generation: 2
+policy_generation: 3
 construction_generation: 1
 canonical_digest: TBD
 status: ISSUED
@@ -98,6 +116,7 @@ residual_risks:
 approved_by:
   - "operator (System Owner) — 2026-09-16, venue-constraint-service plan §6 ② 채택 (generation 1: scope/admission coordinates)"
   - "operator (System Owner) — 2026-09-16, OCP sizing values proposal §2 채택 (generation 2: _runtime.construction)"
+  - "operator (System Owner) — 2026-09-16, OCP effect_dimensions proposal §2/§4 채택 (generation 3: _runtime.construction.effect_dimensions)"
 authority:
   grants_approval: false
   creates_capacity: false
@@ -114,7 +133,7 @@ evidence:
   independent_review_id: "PR #694 / #699 independent review (sonnet) — see plan §7"
   evidence_location: "evidence store row ORDER_CONSTRUCTION_POLICY_BOUND"
 _model_view:
-  policy_generation: 2
+  policy_generation: 3
   policy_version: "1.0.0"
 _runtime:
   canonicalization_version: "ev-l1-provisional-0"
@@ -181,4 +200,11 @@ _runtime:
         LONG: {side: "SELL", position_effect: "CLOSE"}
         # closing a short: opposite of NEW_SHORT's SELL.
         SHORT: {side: "BUY", position_effect: "CLOSE"}
-    effect_dimensions: []
+    effect_dimensions:
+      # dimension_id measured against aggregate_risk_policy.yaml's own _runtime.dimension_ids
+      # (the composed-id spelling RCL's capacity lookup actually uses) — see APPROVAL
+      # PROVENANCE (generation 3) above.
+      - dimension_id: "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"
+        basis: "QUANTITY"
+        unit: "CONTRACTS"
+        scale: "1"

@@ -35,6 +35,7 @@ from pathlib import Path
 import pytest
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.egressgw import EffectBasis, EffectDimensionSpec
 from tos.engine.vocabulary import CommitmentStep, StageOutcome
 from tos.venue import OrderAdmissibilityResult, OrderShapeFields
 from tos.venue.predicates import order_shape_admissible
@@ -232,11 +233,20 @@ def test_filled_real_policies_carry_exactly_the_adopted_values(tmp_path: Path) -
     ocp_path.write_text(yaml.safe_dump(ocp_raw, sort_keys=False, allow_unicode=True))
     ocp = load_order_construction_policy(ocp_path, scheme=_SCHEME)
     assert ocp.policy.policy_version == _ADOPTED_OCP_VERSION
-    # policy_generation 2 -- the (a′) wave's _runtime.construction block ((a′) plan §2
-    # decision 1: a new generation, not a field bolted onto generation 1).
-    assert ocp.policy.policy_generation == 2
+    # policy_generation 3 -- generation 2 was the (a′) wave's _runtime.construction block
+    # ((a′) plan §2 decision 1: a new generation, not a field bolted onto generation 1);
+    # generation 3 is the effect_dimensions proposal (2026-09-16), same discipline.
+    assert ocp.policy.policy_generation == 3
     assert ocp.construction_generation == 1
     assert ocp.wire_codec_kind is None  # synthetic paper default
+    assert ocp.construction_rules.effect_dimensions == (
+        EffectDimensionSpec(
+            dimension_id="INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL",
+            basis=EffectBasis.QUANTITY,
+            unit="CONTRACTS",
+            scale="1",
+        ),
+    )
     assert ocp.construction_rules.sizing_bound.admitted_quantity_bases == frozenset(
         {_OCP_FIXTURE_QUANTITY_BASIS}
     )

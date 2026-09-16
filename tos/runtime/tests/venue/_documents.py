@@ -288,7 +288,18 @@ def ocp_yaml(
                       LONG: {side: "BUY", position_effect: "OPEN"}
                     NEW_SHORT:
                       SHORT: {side: "SELL", position_effect: "OPEN"}
-                  effect_dimensions: []
+                  effect_dimensions:
+                    # dimension_id MEASURED off aggregate_risk_policy.yaml's own
+                    # _runtime.dimension_ids (the composed-id spelling RCL actually looks up
+                    # by, rcl/predicates.py:104-105 / riskstate/service.py:145-151) --
+                    # NOT the unprefixed _model_view.governed_dimensions spelling (proposal
+                    # 2026-09-16-tos-ocp-effect-dimensions-proposal.md §2.1). A wrong spelling
+                    # here passes step 5 while the capacity lookup finds nothing -- the exact
+                    # phantom the withdrawn fixture-injected "notional"/"units" values were.
+                    - dimension_id: "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"
+                      basis: "QUANTITY"
+                      unit: "CONTRACTS"
+                      scale: "1"
                 """),
             "  ",
         )
