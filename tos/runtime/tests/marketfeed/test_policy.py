@@ -154,6 +154,18 @@ def test_null_fields_refuses(tmp_path: Path) -> None:
         load_critical_input_policy(path, scheme=SCHEME)
 
 
+def test_fields_not_a_list_refuses(tmp_path: Path) -> None:
+    """``fields:`` present and non-null but not a list at all (a mapping here) — distinct from
+    ``test_missing_fields_key_refuses``/``test_null_fields_refuses`` (key absent/null) and from
+    ``test_fields_entry_not_a_mapping_refuses`` below (a list whose *entry* is malformed).
+    """
+    path = write_policy(
+        tmp_path, policy_yaml(fields_block="fields:\n  close: not-a-list\n")
+    )
+    with pytest.raises(CriticalInputPolicyConfigError, match="must be a list"):
+        load_critical_input_policy(path, scheme=SCHEME)
+
+
 def test_empty_fields_list_refuses(tmp_path: Path) -> None:
     """A policy admitting no field is almost certainly a misfill (module docstring), not a
     deliberate deny-all — refused outright rather than silently admitting nothing forever.
