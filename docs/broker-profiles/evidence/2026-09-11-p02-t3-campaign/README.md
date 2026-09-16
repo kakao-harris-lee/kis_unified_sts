@@ -41,7 +41,32 @@
 | 09:22:39 | N-15 | `N-15-20260911T002239Z.json` | live / MEASURED / MOCK_VTS | [] / [] | `invalidate_to_reissue_ms` **107,228 ms(n=1)** → 후보 상한 160,843 ms(`candidate_only`, 값 아님). 토큰 endpoint 호출 4회, 거부가 30.9s gap 을 넘김. **held-token 사용성 ACCEPTED 3 / REJECTED 0 / UNDETERMINED 0** → 거부 창은 재발급 쿨다운이지 egress 블랙아웃이 아님(아티팩트 `interaction_verdict`; `B_egress_hard_fence` 기입 불가). 소요 108s(07-29 ≥528s 관측보다 짧음 — 표본 n=1). |
 | 09:24:27 | P-BAL(모의 주식) | `P-BAL-20260911T002427Z.json` | live / MEASURED / MOCK_VTS | [] / [] | `VTTC8434R` 2페이지 walk, **양수 수량 25행 > page_size 20** → `TRUNCATION_RISK_DEMONSTRATED`(런타임은 1페이지만 읽음, `client.py:931-932`). 종료 원인 `BROKER_END_OF_SET`(page 1 `tr_cont='D'`), `tr_cont` 헤더 관측, 연속조회 지원. 2026-08-05 측정과 일치. 계좌 `50******01`(`54e7f8a5d841`). |
 
-이후 남은 것: **P-CA**(1차 2026-09-17 SK텔레콤, 위 표), **P-EXT ×5**·**P-8 ×5**(모의 선물 주문 권한 복구 후, 운영자 MTS 동석).
+### 2026-09-15 (화) 밤 — 모의투자 재신청 직후 연결 확인 (GET-only)
+
+운영자가 21:1x 에 KIS 모의투자를 재신청해 **두 계좌 모두 새 번호**를 받았고 `.env.mock` 만 갱신했다(주식 `54e7f8a5d841`→`ee1bdb5f1ca2`, 선물 `5e175fd232de`→`46c39c54d3bb`; 백업 `~/.config/kis-probes/backups/.env.mock.bak-20260915-mock-reapply`). 앱키·시크릿은 바뀌지 않았다. 주문은 한 건도 내지 않았다.
+
+| 시각(KST) | 프로브 | 아티팩트 | mode / prov / env | errors / skips | 요지 |
+|---|---|---|---|---|---|
+| 21:16:51 | P-BAL(모의 주식) | `P-BAL-20260915T121651Z.json` | live / **NOT_MEASURED** / MOCK_VTS | 1 / 1 | 새 계좌 `ee1bdb5f1ca2` → `rt_cd=2 OPSQ2000 INPUT INVALID_CHECK_ACNO`. 토큰 발급 자체는 성공 |
+| 21:16:55 | P-BAL(모의 선물) | `P-BAL-20260915T121655Z.json` | live / — / MOCK_VTS | [] / 1 | 모의는 선물 잔고 조회를 제공하지 않아 SKIP — 선물 계좌 연결 여부는 이 경로로 확인 불가 |
+| 22:07:32 | P-BAL(모의 주식) | `P-BAL-20260915T130732Z.json` | live / **NOT_MEASURED** / MOCK_VTS | 1 / 1 | 동일 거부 |
+| 22:09:55 | P-BAL(모의 주식) | `P-BAL-20260915T130955Z.json` | live / **NOT_MEASURED** / MOCK_VTS | 1 / 1 | **새 토큰 발급 후에도** 동일 거부 → 토큰 캐시 문제 아님 |
+| 22:10:09 | P-BAL(**예전** 모의 주식) | `P-BAL-20260915T131009Z.json` | live / MEASURED / MOCK_VTS | [] / [] | 판별 실험: 같은 앱키로 **예전 계좌 `54e7f8a5d841` 는 정상 25행**(SK텔레콤 017670 보유 포함) → **앱키가 아직 예전 계좌에 묶여 있다** |
+
+운영자 조치: KIS Developers 에서 키·시크릿·번호 일치 확인 후 **'재사용 신청'**, 선물은 **'초기화 신청'**(주문 거부가 주·야간 시간 문제일 가능성도 함께 제기). 09-16 09:00 재확인하기로 함. 판별 결과에 따라 **09-17 P-CA 1차 대상은 예전 계좌로 실행**하도록 복원(운영자 결정).
+
+### 2026-09-16 (수) — 재신청 반영 재확인 (주식 GET + 선물 P-8 1회)
+
+정규장 내(09:02 KST, 선물 08:45~15:45), `futures_live.enabled=false`, `futures:live:suspended` 미설정, 워크트리 clean, 실행 컨테이너 중 모의 선물 앱키(`f546a47adc88`) 공유 0 — 09-11 러너와 같은 가드. mini 근월물 `A05610`(`futures:contract:latest`, 만기 2026-10-08). `repo_commit` `1959656c`.
+
+| 시각(KST) | 프로브 | 아티팩트 | mode / prov / env | errors / skips | 요지 |
+|---|---|---|---|---|---|
+| 09:02:06 | P-BAL(모의 주식) | `P-BAL-20260916T000206Z.json` | live / **NOT_MEASURED** / MOCK_VTS | 1 / 1 | 새 계좌 `ee1bdb5f1ca2` → `rt_cd=2 OPSQ2000 INPUT INVALID_CHECK_ACNO` **변화 없음** |
+| 09:02:36 | P-8 1/5 | `P-8-20260916T000236Z.json` | live / **NOT_MEASURED** / MOCK_VTS | 1 / [] | 새 선물 계좌 `46c39c54d3bb` → `submit rejected rt_cd=1 msg=인증 시점의 계좌번호와 요청 계좌번호가 일치하지 않습니다.` — **09-11 의 `모의투자 주문이 불가한 계좌입니다` 와 다른 문구**. 2~5회차 미실행(거부 시 중단 규칙) |
+
+**해석(측정 아님):** 선물 거부 문구가 "주문 불가 계좌"에서 "인증 계좌 ≠ 요청 계좌"로 바뀐 것은, 토큰이 여전히 **예전 계좌**에 대해 발급되는데 요청만 새 번호로 나간다는 것과 정합적이다 — 주식의 `INVALID_CHECK_ACNO` 와 같은 원인(앱키↔새 계좌 미연결)으로 보인다. 토큰은 이 실행에서 새로 발급됐으므로(프로브 토큰 캐시 `results/.token_cache/futures/` 09:02 갱신) 캐시 노후가 아니다. 재사용/초기화 신청이 아직 반영되지 않았다는 뜻이며, **반영 시점은 브로커 측이라 관측만 가능**하다.
+
+이후 남은 것: **P-CA**(1차 2026-09-17 SK텔레콤, 위 표 — 운영자 결정으로 **예전 계좌** 사용), **P-EXT ×5**·**P-8 ×5**(모의 선물 주문 권한 복구 후, 운영자 MTS 동석).
 
 ## 수동 개입 기록
 
