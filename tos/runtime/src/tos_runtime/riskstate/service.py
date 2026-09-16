@@ -270,13 +270,17 @@ class RiskStateService:
         self._envelope_max = _envelope_max_vector(are_policy, hse_envelope)
         self._snapshot_seq = 0
         self._observation_seq = 0
-        #: One (attempt_id, FlowObservation) slot, filled by whichever of
-        #: :meth:`aggregate_inputs_for` / :meth:`action_flow_inputs_for` observes flow state
+        #: One (attempt_id, FlowObservation, committed_flow_vectors) slot, filled by whichever
+        #: of :meth:`aggregate_inputs_for` / :meth:`action_flow_inputs_for` observes flow state
         #: FIRST for a given attempt, and reused by the other — so exactly ONE
-        #: ``RISK_STATE_OBSERVED`` evidence row (carrying BOTH position and flow) is recorded
-        #: per attempt, never two, and the durable inbox/evidence reads underlying
-        #: :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe` happen once.
-        self._flow_obs_cache: tuple[str | None, FlowObservation] | None = None
+        #: ``RISK_STATE_OBSERVED`` evidence row (carrying position, flow, AND the committed
+        #: flow vector count — review HIGH-2, 2026-09-16) is recorded per attempt, never two,
+        #: and the durable inbox/evidence/RCL-log reads underlying
+        #: :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe` /
+        #: :func:`~tos_runtime.riskstate.flow_observation.committed_flow_vectors` happen once.
+        self._flow_obs_cache: (
+            tuple[str | None, FlowObservation, tuple[CapacityVector, ...]] | None
+        ) = None
         self._record_boot_evidence(are_policy, afg_policy, activated_member_digests)
 
     def _record_boot_evidence(
@@ -322,21 +326,28 @@ class RiskStateService:
             record_class=kind,
         )
 
-    def _observe_flow(self, request: StageRequest) -> FlowObservation:
-        """Observe flow state for ``request``'s own attempt, ONCE per attempt (module
-        docstring's own ``_flow_obs_cache`` note) — whichever of :meth:`aggregate_inputs_for`
-        / :meth:`action_flow_inputs_for` calls this FIRST for a given attempt id does the
-        real inbox/evidence read; the other reuses the cached result."""
+    def _observe_flow(
+        self, request: StageRequest
+    ) -> tuple[FlowObservation, tuple[CapacityVector, ...]]:
+        """Observe flow state (AND the committed flow vectors — review HIGH-2, 2026-09-16:
+        both need to land in the SAME evidence row, so both are resolved here, together, once
+        per attempt) for ``request``'s own attempt (module docstring's own ``_flow_obs_cache``
+        note) — whichever of :meth:`aggregate_inputs_for` / :meth:`action_flow_inputs_for`
+        calls this FIRST for a given attempt id does the real inbox/evidence/RCL-log read; the
+        other reuses the cached result."""
         attempt_id = getattr(request.proposal, "proposal_id", None)
         if self._flow_obs_cache is not None and self._flow_obs_cache[0] == attempt_id:
-            return self._flow_obs_cache[1]
+            return self._flow_obs_cache[1], self._flow_obs_cache[2]
         obs = self._flow_reader.observe(
             root_event_id=request.reference.event_id or "",
             attempt_id=attempt_id or "",
             root_event_seq=self._current_seq_reader(),
         )
-        self._flow_obs_cache = (attempt_id, obs)
-        return obs
+        vectors = committed_flow_vectors(
+            self._rcl_log, flow_dimension_id=self._afg_policy.flow_dimension_id
+        )
+        self._flow_obs_cache = (attempt_id, obs, vectors)
+        return obs, vectors
 
     def _record_observation(
         self,
@@ -344,23 +355,30 @@ class RiskStateService:
         attempt_id: str | None,
         position_obs: PositionObservation,
         flow_obs: FlowObservation,
+        committed_vectors: tuple[CapacityVector, ...],
         extra_absent: tuple[str, ...],
     ) -> None:
         """Record ONE ``RISK_STATE_OBSERVED`` row carrying BOTH position and flow state
         (plan §2.4's own "position 관측 + flow 관측 + absent_fields" shape) — split out of
         :meth:`aggregate_inputs_for` purely for that method's own 100-line size budget.
+        ``absent_fields`` is SORTED — deterministic, review HIGH-2 (2026-09-16) — never an
+        encounter-order artifact a caller could mistake for significance.
         """
         self._observation_seq += 1
-        flow_absent = tuple(
-            name
-            for name, value in (
-                ("duplicates_rejected", flow_obs.duplicates_rejected),
-                ("replays", flow_obs.replays),
-                ("root_event_seq", flow_obs.root_event_seq),
-                ("handling_started_monotonic", flow_obs.handling_started_monotonic),
-                ("lineage_found", flow_obs.lineage_found),
-            )
-            if value is None
+        absent = sorted(
+            {*extra_absent}
+            | {
+                name
+                for name, value in (
+                    ("duplicates_rejected", flow_obs.duplicates_rejected),
+                    ("replays", flow_obs.replays),
+                    ("root_event_seq", flow_obs.root_event_seq),
+                    ("handling_started_monotonic", flow_obs.handling_started_monotonic),
+                    ("lineage_found", flow_obs.lineage_found),
+                )
+                if value is None
+            }
+            | ({"committed_flow_vectors"} if not committed_vectors else set())
         )
         self._evidence_store.append(
             {
@@ -385,8 +403,9 @@ class RiskStateService:
                     "handling_started_monotonic": flow_obs.handling_started_monotonic,
                     "lineage_found": flow_obs.lineage_found,
                     "sources": list(flow_obs.sources),
+                    "committed_flow_vectors_count": len(committed_vectors),
                 },
-                "absent_fields": list(extra_absent) + list(flow_absent),
+                "absent_fields": absent,
             },
             kind=_OBSERVED_KIND,
             record_class=_OBSERVED_KIND,
@@ -397,7 +416,7 @@ class RiskStateService:
     ) -> AggregateRiskDecisionInputs | None:
         """Build step 6's inputs for ``request`` (module docstring; plan §2.4)."""
         position_obs = self._position_reader.observe()
-        flow_obs = self._observe_flow(request)
+        flow_obs, committed_vectors = self._observe_flow(request)
         conservative_usage = conservative_current_usage(position_obs)
         overlap_effect = in_flight_overlap_effect(position_obs)
         construction = self._construction_stage_reader()
@@ -433,6 +452,7 @@ class RiskStateService:
             attempt_id=grant_identity,
             position_obs=position_obs,
             flow_obs=flow_obs,
+            committed_vectors=committed_vectors,
             extra_absent=absent,
         )
         return AggregateRiskDecisionInputs(
@@ -503,10 +523,10 @@ class RiskStateService:
         action_class_kind = self._afg_policy.action_class_map.get(self._action_class)
         if action_class_kind is None:
             return None
-        flow_obs = self._observe_flow(request)
+        flow_obs, committed_vectors = self._observe_flow(request)
         cause = self._action_cause_for(request, flow_obs)
         return self._build_action_flow_inputs(
-            request, rcl_tip, action_class_kind, flow_obs, cause
+            request, rcl_tip, action_class_kind, flow_obs, cause, committed_vectors
         )
 
     def _elapsed_monotonic_ms(self, flow_obs: FlowObservation) -> Decimal | None:
@@ -556,9 +576,13 @@ class RiskStateService:
         action_class_kind: ActionClassKind,
         flow_obs: FlowObservation,
         cause: ActionCause,
+        committed_vectors: tuple[CapacityVector, ...],
     ) -> ActionFlowDecisionInputs:
         """Split out of :meth:`action_flow_inputs_for` purely for that method's own 100-line
-        size budget; no behavioural difference from having this inline."""
+        size budget; no behavioural difference from having this inline. ``committed_vectors``
+        is the SAME value :meth:`_observe_flow` already resolved (and recorded absence of, if
+        empty, on the shared ``RISK_STATE_OBSERVED`` row) — never a second, independent RCL
+        log read here."""
         observed = to_observed_amplification(
             flow_obs,
             self._afg_policy.deployment_facts,
@@ -577,9 +601,6 @@ class RiskStateService:
         )
         economic_ref = scope_reservation_id(
             request.instrument_key.account, request.instrument_key.instrument
-        )
-        vectors = committed_flow_vectors(
-            self._rcl_log, flow_dimension_id=self._afg_policy.flow_dimension_id
         )
         cause_digest, lineage_digest, amplification_envelope_digest = self._afg_digests(
             cause, observed
@@ -606,7 +627,7 @@ class RiskStateService:
             limit_source_is_injected_envelope=None,
             economic_ref=economic_ref,
             flow_vector=flow_vector,
-            committed_flow_vectors=vectors,
+            committed_flow_vectors=committed_vectors,
             hard_limit=self._afg_policy.limits["hard_limit"],
             runtime_limit=self._afg_policy.limits["runtime_limit"],
             economic_commitment_exclusive=None,
