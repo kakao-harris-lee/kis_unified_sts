@@ -19,7 +19,7 @@
 | 분별(distinctness) | 「완전한 per-bar distinctness 집행은 상류 CIS 소관」(`tos/tests/marketfeed/test_marketfeed_cis_port.py:46-49`) | 이 웨이브가 그 의무를 **인수**한다 — as_of 중복 틱 거부 |
 | 가격 (a′) | `OrderConstructionStage._price_for`(`egressgw/construction.py:986-996`): `price_field_key` 가 있고 틱에 view 가 있으면 **view 가 이긴다** → `admitted_price_from_view`(`:200`) | **(a′) 의 `price` 항은 (c) 로 구조적으로 해소** — 별도 웨이브 불필요 · 주입 `construction.price` 는 value-free 틱의 폴백으로 격하 |
 | 세션 컨텍스트 | `SessionFactsOwner.session_context(instrument_class)`(`calendar/owner.py:238`) 가 이미 실물 `SessionContext` 를 낸다 | 시간 투영이 `SessionContext` 를 **날조하지 않는다**(픽스처 `_fixtures.py:263-272` 가 손으로 만들던 것) |
-| 시간 경계값 | `time.example.yaml` 이 VER-002 키 8종 보유(`:20`~`:84`). 그러나 marketfeed 가 지명하는 `MAX_critical_input_consumer_receipt_age_ms`·`MAX_time_source_sequence_gap_ms` 는 **없음** | 경계값 2종은 신규 승인 필요 → **운영자 확인 ②** |
+| 시간 경계값 | `time.example.yaml` 이 VER-002 키 8종 보유(`:20`~`:84`). marketfeed 가 지명하는 `MAX_critical_input_consumer_receipt_age_ms`·`MAX_time_source_sequence_gap_ms` 는 로더 `_BOUND_KEYS`(`time/config.py:35-64`)에 **없다**. 단 둘 다 VERIFICATION-PROFILE-002 에 **APPROVED 값 보유**(`:1067` = 1000 ms · `:1077` = 50 ms · 둘 다 2026-07-29 Bounds-Approver) | **새 승인 라운드 불필요** — `MAX_clock_domain_conversion_uncertainty_ms` 가 밟은 「승인값을 근거 인용과 함께 verbatim 재사용」 경로를 그대로(`time/config.py:43-53`) |
 | 방화벽 | 런타임 스코프는 `socket`/`ssl`/`http`/`urllib.request` 카브아웃(`tools/tos_firewall_check.py:238-249`) · `time.sleep` 선례(`transport/kis_mock/adapter.py:480`) · `shared.*` 는 런타임에서도 전면 금지(규칙 (h)) | 폴 루프는 런타임 스코프에서 **합법** · 레거시 `shared.kis`/`shared.streaming` 재사용은 **불가** |
 | 다심볼 | FORWARD-OBLIGATION-MS1 — 라이브 다심볼 EventSource 의 단일 연속성 수집 순서 의무는 **미비준**(`tos/src/tos/backtest/driver.py:78-86`) | 1차 웨이브는 **단일 instrument** · 다심볼은 명시적 비범위 |
 | 크기 | `module_max_lines: 1000` · `function_max_lines: 100` · 런타임 스코프 등재 예외 **0건**(`config/tos_size_budget.yaml:23-33`) | 새 모듈 전부 1000행 이하 · 예외 등재하지 않음 |
@@ -103,7 +103,7 @@ class TickOutcome(StrEnum):
 ## 6. 운영자 확인
 
 1. **시세 트랜스포트**: 이번 웨이브는 파일 저널만(추천 · 결정적·헤르메틱) → 실 KIS 모의투자 시세 HTTP 어댑터는 후속 웨이브 (c2) 로 분리. 아니면 (c) 안에 포함할지.
-2. **VER-002 경계값 2종 신규**: `MAX_critical_input_consumer_receipt_age_ms` · `MAX_time_source_sequence_gap_ms` 가 `time.example.yaml` 에 없다. (a) `time.yaml` 에 2키 추가 + Bounds-Approver 승인(추천) (b) CIP 안에 두어 Critical Input 정책의 일부로 승인.
+2. ~~VER-002 경계값 2종 신규 승인~~ — **불요로 판명(저작 중 실측 정정)**. 두 키 모두 VERIFICATION-PROFILE-002 에 2026-07-29 APPROVED 값 보유(`:1067` 1000 ms · `:1077` 50 ms). 레인 C 가 `MAX_clock_domain_conversion_uncertainty_ms` 선례대로 근거 인용과 함께 `_BOUND_KEYS` 에 추가한다. 운영자 조치 없음.
 3. **마이그레이션 심사**: 레인 B 는 새 sqlite 스키마 — `migration-reviewer` 는 자동으로 돌린다. **Codex 독립 심판**(되돌리기 어려운 경로 = DB 마이그레이션)은 유료 외부 호출이므로 **범위·비용 승인 시에만** 디스패치 — 붙일지 여부.
 4. 다음 순서(잔여): (a′) `envelope`(승인 Intent/IAP) · `order_shape`(전략 제안) → 브로커 증인(P-BAL)/band 원천 → 실 HSE 인스턴스 → 커널 라운드 #4.
 
