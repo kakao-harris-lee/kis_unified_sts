@@ -90,6 +90,33 @@ side 를 `venue_allowed_sides` 에 대해 같은 방식으로 검사하고, 벗�
 | D | compose 결선 · `cli.py` 문언 · e2e | A∧B∧C |
 | 리뷰 | 전 PR `code-reviewer`(sonnet) · **A 는 `contract-keeper`** (거버넌스 문서 계약 변경) | PR 별 |
 
+### 4.1 레인 처분 (진행 중 · 2026-09-16)
+
+**레인 C — 파생 수량을 fold 둘 다에 흘린다 (편차, 수용).** 브리프는 fold #2 만 말했으나
+레인 C 가 fold #1 에도 넣었다. 근거가 옳다: `venue_admissibility_verdict` 가 돌려주는 결과는
+fold #2 자신의 지역 `fold_venue_admissibility(shape=...)` 에서 계산되고 `decision.result` 가
+아니다. 한쪽에만 넣으면 **기록되는 attempt 증거(`decision.result`)와 반환 판정이 갈린다.**
+기존 테스트 `test_boot_binds_the_policies_once_and_step3_admits_with_the_real_decision` 이
+`decision.result is fold_venue_admissibility(..., shape=venue_stage.resolved_shape, ...)` 를
+단언하므로 두 fold 가 같은 shape 를 볼 때만 성립한다. 커널 편집 불필요 — §6 ② 실측 확인.
+
+**★ 레인 C — side/position_effect/order_type/tif 매핑이 오늘 죽은 코드다 (레인 D 인수인계).**
+레인 C 가 `VenueServiceStage(..., construction_rules=None)` 를 선택 인자로 달았는데
+**현행 호출부 전부가 `None`** 이다(`_wiring.py:~549` 가 넘기지 않는다). 즉 네 필드는
+구현·유닛테스트되었으나 **프로덕션 경로에서 도달 불가**하고, 전부 주입 리터럴로 떨어진다.
+레인 C 가 파일 경계를 넘지 않고 정직하게 보고한 것은 옳다.
+
+이것은 이 저장소가 틱 원천 웨이브에서 두 번 맞은 **커버리지 0 부류**와 같은 모양이다
+(리뷰어가 분기를 통째로 지웠는데 2186 테스트가 전부 green). 따라서 레인 D 의 종료 조건에
+**유닛 통과로는 불충분**을 못박는다:
+
+1. e2e 가 side/position_effect/order_type/tif 가 **정책에서** 온 실값임을 실증할 것.
+2. 뮤테이션 — 매핑 경로를 지우고 **attempt 수준에서** 거동이 바뀌는 것을 보일 것.
+   유닛만 red 가 되고 e2e 가 green 이면 그 경로는 여전히 죽어 있다.
+3. `ConstructionConfig` 의 **모든 필드를 훑어** 어떤 리터럴이 남았는지 정확히 진술할 것
+   (계획 리뷰 처분).
+
+
 ## 5. 종료 조건 · 뮤테이션 (초안)
 
 - 실증: (1) `ConstructionConfig.envelope` 주입 없이 부팅 — 봉투가 **OCP 에서** 구성됨 (2) e2e 에서 실 step-2 의 sizing 이 OCP 값과 일치(리터럴 아님) (3) **shape 수량 == 명령 수량**, 불일치를 심으면 거부 (4) `side`/`position_effect` 가 OCP `action_class_map` 에서 나옴 — 미러(NEW_SHORT) 동일 (5) `silently_rounded` 가 관측에서 나오고 관측 불가 시 `None` (6) 정체성 5종에 날조 리터럴 0(AST 핀) (7) OCP 세대 불일치 → 부팅 거부.
