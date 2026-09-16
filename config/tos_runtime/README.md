@@ -41,3 +41,18 @@ price band makes the kernel's order-shape admissibility `UNKNOWN`. The adopted
 `scope.accounts`/`scope.instruments` left `TBD` for the operator to fill
 (the loader refuses `TBD`); `tos/runtime/tests/compose/test_deploy_policies.py`
 pins both the refusal and the fail-closed boot.
+
+The risk state service wave (`docs/plans/2026-09-16-tos-risk-state-service-plan.md`,
+DR-0003) adds three more governed files the compose root loads the same way:
+`aggregate_risk_policy.yaml` and `action_flow_policy.yaml` (INSTANCES of
+`AGGREGATE-RISK-POLICY-template.yaml` / `ACTION-FLOW-POLICY-template.yaml`,
+activated through `safety_activation.yaml` `members:` of kinds
+`AGGREGATE_RISK_POLICY` / `ACTION_FLOW_POLICY`; `print-policy-digests` prints
+all four policy digests) and `risk.yaml` (the Adverse Scenario Set and the
+action amplification envelope). None of the three has an adopted value yet —
+the proposal table is plan §6 ② — so no `paper/` instance exists for them and
+a paper boot without them is refused unless the caller injects its own
+providers (a test seam only). Even with them adopted, step 7 (action flow)
+cannot GRANT today: the runtime has no durable per-root-cause duplicate /
+replay counter (plan §7), so that decision stays `UNKNOWN` until an inbox
+schema change lands.
