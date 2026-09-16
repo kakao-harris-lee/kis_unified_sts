@@ -23,6 +23,33 @@
 | 시점은 맞는다 | `VenueServiceStage.__call__`(`_venue_wiring.py:390-424`)이 fold #1 뒤에 `self._construction_stage.construction` 을 읽는다 — step 2 가 step 3 보다 먼저 돈다 | **파생 수량을 shape 에 흘려넣을 데이터가 이미 그 시점에 있다** |
 | 크기 제약 | `_wiring.py` **1122행**(예산 1000 초과 · 등재 예외 `decomposition_order: 30`) · `cli.py` 정확히 **1000행**(헤드룸 0) | 두 파일 모두 **증설 불가** — 새 모듈로 빼야 한다 |
 
+### 0.1 (b′) 상호작용 점검 (2026-09-16 · 계획 리뷰의 「확인 불가」 해소)
+
+계획 리뷰가 «(b′) 와의 상호작용 미확인» 을 냈고, 나는 그것을 통과로 처리하지 않겠다고 했다.
+(b′) 계획(`2026-09-16-tos-risk-state-service-plan.md` §150·§151)의 잔여 3항에 대해 실측한 판정:
+
+| (b′) 잔여 | (a′) 와의 상호작용 | 판정 |
+|---|---|---|
+| 계약 수 차원만 | ARP `risk_dimensions`(`aggregate_risk_policy.yaml:58`)가 `unit CONTRACTS`, VCP `_runtime.quantity_unit: "CONTRACTS"`(`venue_constraint_policy.yaml:136`), (a′) 채택 `max_quantity=1` 은 **그 ARP 실효 한도에서 파생**(제안표 §2) | **일치 — 충돌 없음.** 세 값이 맞는 이유가 「우연히 같다」가 아니라 (a′) 가 (b′) 의 승인 한도를 **재진술하지 않고 파생**했기 때문이다 |
+| 단일 원천 포지션(브로커 증인 0) | (a′) 는 포지션을 읽지 않는다. step 6 의 `conservative_current_usage` 는 evidence 체결 합이고 (a′) 가 바꾸는 것은 step 2/3 의 수량·shape | **무관** |
+| `committed_flow_vectors` `()` | (a′) 의 `effect_dimensions` 가 step 5 봉투를 채우면 ARE `effect_digest`(§43)와 AFG `command_identity/digest`(§46)의 **실값이 바뀐다**. 깨뜨리지는 않으나 (b′) e2e 의 digest 기대값이 상수라면 red | **관측 필요** — 레인 D e2e 가 (b′) 스위트 동시 green 을 확인할 것 |
+
+**★ 행동이 필요한 발견 — side 토큰 선언자가 셋이 된다.**
+
+(b′) 는 이미 side 를 정책 선언으로 옮겼다(§149): AFG `_runtime.side_tokens: {buy, sell}`
+(`riskstate/_action_flow_policy_loader.py:430-438`). 그리고 **교차검사가 이미 존재한다** —
+`_cross_check_side_tokens`(`compose/_riskstate_wiring.py:138-144`)가 AFG 토큰이 VCP
+`allowed_sides` 의 부분집합이 아니면 **부팅을 거부**한다.
+
+(a′) 레인 A 가 OCP `action_class_shape[(class, direction)].side` 로 **세 번째 선언자**를 만든다.
+같은 사실을 파일 셋이 각자 들고 아무도 고정하지 않으면 [[registry-with-unpinned-satellite]]
+부류가 그대로 재발한다 — 이 저장소가 이미 4 인스턴스를 겪은 부류다.
+
+**처분**: (a′) 의 side 토큰은 기존 교차검사에 **합류한다**. 레인 B/D 결선이 OCP 가 내놓는 모든
+side 를 `venue_allowed_sides` 에 대해 같은 방식으로 검사하고, 벗어나면 부팅 거부한다.
+새 검사 기구를 만들지 않는다 — `_cross_check_side_tokens` 의 형제로 붙인다.
+
+
 ## 1. 목표 · 범위 · 비범위
 
 **목표**: `envelope` 과 `order_shape` 를 **거버넌스 문서와 파생에서 원천화**한다. 한 문장으로: **기계가 OCP 가 이미 산문으로 선언한 것을 읽게 하고, 파생이 이미 계산한 것을 선언으로 중복하지 않게 한다.**
