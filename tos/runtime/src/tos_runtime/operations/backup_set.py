@@ -33,6 +33,20 @@ issued before the restore. Like ``composite_state``, this module never imports
 file, and is optional for the same reason ``composite_state`` is: a runtime that never ticked never
 creates it (:data:`_OPTIONAL_FILES`).
 
+**Manifest compatibility is two-directional, and only one direction is executed.** A NEW
+:func:`restore_set` reading an OLD manifest (written before ``marketfeed`` joined the set) is a
+real, exercised path — that manifest has no ``"marketfeed"`` key in ``files`` at all, and
+:func:`restore_set`'s own docstring/code handle it explicitly (proven by
+``test_restore_set_handles_a_manifest_written_before_marketfeed_joined_the_set``). The REVERSE
+direction — an OLD ``restore_set`` (from a checkout predating this change) reading a NEW manifest —
+cannot be exercised by this suite, since that would require running old code; the following is a
+STATIC TRACE, not a test result. Old code's own restore loop iterates ``manifest.files.items()``
+generically, so it would harmlessly restore ``marketfeed.sqlite3`` to disk — but its own
+``DurableSetPaths(...)`` construction is hardcoded to four fields (this module's shape before this
+change) and would silently drop the restored path from the object it returns. No crash, no
+refusal: a rollback to pre-wave code operating on a post-wave backup restores the marketfeed file
+but loses its path from the returned set without any error.
+
 **Restore is always non-live** (mirrors :func:`tos_runtime.evidence.backup.restore`'s own
 ADR-002-016 discipline) and refuses a destination that resolves inside, or equal to, the live
 source data directory the manifest itself recorded — a restore can never silently land back on
@@ -219,7 +233,7 @@ class BackupSetManifest(BaseModel):
     evidence: EvidenceBackupFacts
     rcl: RclBackupFacts
     inbox: InboxBackupFacts
-    #: Caller-supplied — never derived (four closed sqlite files carry no runtime identity of
+    #: Caller-supplied — never derived (five closed sqlite files carry no runtime identity of
     #: their own). ``None`` when the caller has none to attest.
     runtime_identity: str | None = None
     #: Caller-supplied (e.g. the live runtime's own ``recovery.readiness_verdict.value``
@@ -488,7 +502,10 @@ def restore_set(
     all — not even a ``None`` entry. That legitimately means "this manifest predates this store",
     the same fact ``composite_state=None`` records for a runtime that never wrote one; the
     restored set is given a ``marketfeed`` path with no file behind it rather than a
-    fabricated one or a raised ``KeyError``.
+    fabricated one or a raised ``KeyError``. This is the NEW-code/OLD-manifest direction, and it is
+    exercised by a real test; the reverse direction (an OLD ``restore_set`` reading a NEW manifest)
+    is only a static trace — see this module's own docstring, "Manifest compatibility is
+    two-directional" paragraph.
 
     Args:
         manifest_path: The ``*.set.manifest.json`` :func:`backup_set` wrote.
@@ -670,7 +687,7 @@ def restore_drill(
 
     Args:
         restored: The :class:`RestoredSet` from :func:`restore_set`.
-        compose: Recomposes a runtime over ``restored``'s own directory (all four restored files
+        compose: Recomposes a runtime over ``restored``'s own directory (all five restored files
             share one directory — see :func:`restore_set`) under ``environment_label``.
         build_core: A fresh-core factory for :func:`~tos_runtime.engine.replay.replay_engine`.
         scheme: The canonicalization scheme the replay digest comparison uses.
