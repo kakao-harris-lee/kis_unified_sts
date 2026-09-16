@@ -117,6 +117,29 @@ fold #2 자신의 지역 `fold_venue_admissibility(shape=...)` 에서 계산되�
    (계획 리뷰 처분).
 
 
+### 4.2 `ConstructionConfig` 전 필드 운명 (팀리드 선실측 · 레인 D 체크리스트)
+
+계획 리뷰가 레인 D 에 「모든 필드를 훑어 어떤 리터럴이 남는지 정확히 진술」을 요구했다.
+레인 D 가 다시 세지 않아도 되도록 미리 실측한다. **레인 D 는 이 표를 재검증하고 갱신한다.**
+
+| 필드 | 웨이브 후 | 근거 |
+|---|---|---|
+| `account`·`instrument` | **리터럴 유지 — 정당** | 운영자가 지정하는 배포 스코프. 파생 대상이 아니다 |
+| `envelope` | **제거 가능** | 레인 B 가 `ConstructionRules` 에서 만든다 |
+| `price` | **해소됨** | (c) 웨이브 — `_price_for` 가 틱 view 를 택한다(`egressgw/construction.py:986-996`) |
+| `order_shape` | **제거 가능**(레인 D 결선 후) | `OrderShapeFields` 7 필드 전부 원천화: `price`(c) · `quantity`·`silently_rounded`(레인 C, 이미 라이브) · `order_type`·`tif`·`side`·`position_effect`(레인 C, **결선 대기**) |
+| `action_class` | **리터럴 유지 — 고정 + 교차검사** | 컴포지션당 고정값. AFG `action_class_map` 에 없으면 부팅 거부(`_riskstate_wiring.py:130-133`) |
+| `instrument_class` | **리터럴 유지 — 교차검사됨** | VCP `_runtime.instrument_class` 와 불일치 시 부팅 거부(`_venue_wiring.py:141-144`). 사본 둘이지만 **부류는 이미 닫혀 있다** |
+| `outbound_side` | **리터럴 유지 — 커널이 고정** | 커널이 command 의 SIDE 축과 대조해 다르면 거부(`egressgw/gateway.py:1220`), **어느 쪽이든 부재해도 거부**(`:1215` — 건너뛰기가 아니라 거부 문자열 반환). SIDE 축은 레인 B 의 `authorized_axes` 에서 오므로, 정책이 side 를 바꾸면 이 리터럴은 **자동으로 red 가 된다** |
+| `price_field_key`·`shape_price_field_key` | **리터럴 유지** | 정책/틱 필드 키 지정 |
+
+**결론**: 웨이브가 끝나면 `ConstructionConfig` 에서 **제거되는 것은 `envelope` 과 `order_shape` 둘**이고,
+남는 리터럴은 전부 (i) 운영자 배포 스코프이거나 (ii) **이미 고정 장치가 있는** 값이다.
+레인 D 는 이 「이미 고정되어 있다」 주장 3건(`action_class`·`instrument_class`·`outbound_side`)을
+**뮤테이션으로 실증**할 것 — 리터럴을 정책과 어긋나게 바꿨을 때 실제로 부팅/attempt 가
+거부되는지. 주장만 있고 실증이 없으면 §4.1 의 죽은 코드와 같은 상태다.
+
+
 ## 5. 종료 조건 · 뮤테이션 (초안)
 
 - 실증: (1) `ConstructionConfig.envelope` 주입 없이 부팅 — 봉투가 **OCP 에서** 구성됨 (2) e2e 에서 실 step-2 의 sizing 이 OCP 값과 일치(리터럴 아님) (3) **shape 수량 == 명령 수량**, 불일치를 심으면 거부 (4) `side`/`position_effect` 가 OCP `action_class_map` 에서 나옴 — 미러(NEW_SHORT) 동일 (5) `silently_rounded` 가 관측에서 나오고 관측 불가 시 `None` (6) 정체성 5종에 날조 리터럴 0(AST 핀) (7) OCP 세대 불일치 → 부팅 거부.
