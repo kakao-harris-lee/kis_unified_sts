@@ -975,22 +975,13 @@ exceptions:
     (`governed_dimensions`)를 `tos_runtime.compose._riskstate_wiring`가 재로드
     없이 읽도록 `SafetyProfileService`를 이름으로 노출(`services` 튜플 위치 의존
     회피) — 이 함수가 `_SafetyMesh` 조립의 유일한 지점이라 분해 대신 등재.
-- target: tos/runtime/src/tos_runtime/riskstate/policies.py
-  measured: 1017
-  owner: tos-runtime
-  decomposition_order: 44
-  expires_on: '2026-12-31'
-  note: >-
-    TOS 리스크 상태 서비스 웨이브(레인 b, 2026-09-16) 신규 등재 — 레인 a 착지
-    시점(모듈 976줄, 등재 없음)에서 레인 b 의 `side_tokens` 확장이 문턱을
-    넘겼다: (1) `LoadedActionFlowPolicy.side_tokens: tuple[str, str]` 필드 +
-    `_parse_side_tokens`/`_parse_afg_runtime_core` 확장 — 정책/config 표면을
-    새로 만들지 않고 `EvidencePositionReader`의 REQUIRED 매개변수(런타임 리터럴
-    금지)를 이 governed 인스턴스에서 공급하기 위함(plan §4.1 편차, 도크스트링에
-    보고). (2) `LoadedAggregateRiskPolicy.instrument_scope`/`account_scope: str`
-    필드 + `_parse_are_top_level_scopes` 신규 헬퍼 — 레인 a 로더가 검증만 하고
-    버렸던 싱글턴 스코프 문자열을, 레인 b 결선 시점의 construction 계정/상품
-    교차검사(plan §4 결정)가 실값으로 필요로 함. 두 파일 모두 기존 함수를
-    100줄 문턱 아래로 유지하도록 헬퍼 분해를 거쳤으나(각 함수 자체는 위반
-    없음), 신규 필드·헬퍼·도크스트링 순증이 모듈 1000줄 문턱을 넘겼다.
-    분해는 이 웨이브 범위 밖(레인 a 소유 파일의 구조 재편은 별도 결정) — 등재만.
+
+# 2026-09-16 리스크 상태 서비스 웨이브 리뷰 처분(item T1): `riskstate/policies.py` 가
+# 레인 b의 `side_tokens`/`instrument_scope`/`account_scope` 확장으로 1000줄 문턱을
+# 넘겼을 때 등재된 신규 예외 항목은 "분해가 원칙, 등재는 드리프트만" 규율을 어겼다
+# (등재 시 사유가 이미 "분해는 이 웨이브 범위 밖"이라고 자인). 처분: `tos_runtime/venue
+# /config.py` 가 이미 밟은 분할(`_venue_policy_loader.py`/`_order_construction_policy
+# _loader.py`)과 동일한 패턴으로 `policies.py` 를 얇은 재수출 shim 으로 축소하고
+# `_aggregate_risk_policy_loader.py`/`_action_flow_policy_loader.py`(+ 공유 헬퍼
+# `_riskstate_primitives.py`) 로 분리 — 예외 항목 자체를 제거. 세 파일 모두 100/1000줄
+# 문턱 아래.

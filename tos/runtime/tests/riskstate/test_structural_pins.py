@@ -8,8 +8,12 @@ invariant mechanical, not conventional" convention already used elsewhere in thi
    fact :func:`tos_runtime.riskstate.flow_observation.to_observed_amplification` cites to
    justify its ``queries=0`` constant (module docstring; DR-0003 §2.3). Adding such a method
    in the future MUST fail this test, forcing that observation to be rebuilt.
-2. ``AggregateRiskPolicy.issue`` / ``ActionFlowPolicy.issue`` are called ONLY from
-   ``tos_runtime/riskstate/policies.py`` — no other module may mint one of these two policy
+2. ``AggregateRiskPolicy.issue`` is called ONLY from
+   ``tos_runtime/riskstate/_aggregate_risk_policy_loader.py`` and ``ActionFlowPolicy.issue``
+   ONLY from ``tos_runtime/riskstate/_action_flow_policy_loader.py`` (team-lead disposition
+   2026-09-16, review of PR #704 item T1: ``policies.py`` itself is now a thin re-export
+   shim over these two loader modules, mirroring ``tos_runtime/venue/config.py``'s own split
+   — it calls ``.issue()`` nowhere itself) — no other module may mint one of these two policy
    artifacts.
 3. No ``True``/``False`` literal is ever passed as a keyword argument to
    ``ObservedAmplification(...)``/``ActionCause(...)``/``ScopeIndependenceEvidence(...)``
@@ -29,7 +33,16 @@ _TRANSPORT_ROOT = _RUNTIME_SRC / "transport"
 _FORBIDDEN_METHOD_SUBSTRINGS = ("query", "balance", "position")
 
 _PINNED_ARTIFACT_CALLS = ("AggregateRiskPolicy", "ActionFlowPolicy")
-_ALLOWED_ISSUE_CALL_SITE = _RUNTIME_SRC / "riskstate" / "policies.py"
+#: One allowed call site per artifact (team-lead disposition 2026-09-16, review of PR #704
+#: item T1: ``policies.py`` split into per-policy loader modules, mirroring
+#: ``tos_runtime/venue/config.py``'s own split) — a TIGHTER pin than "either call anywhere in
+#: one shared file": each policy's own ``.issue()`` may be minted from its own loader only.
+_ALLOWED_ISSUE_CALL_SITES: dict[str, Path] = {
+    "AggregateRiskPolicy": _RUNTIME_SRC
+    / "riskstate"
+    / "_aggregate_risk_policy_loader.py",
+    "ActionFlowPolicy": _RUNTIME_SRC / "riskstate" / "_action_flow_policy_loader.py",
+}
 
 _PINNED_RECORD_TYPES = (
     "ObservedAmplification",
@@ -67,8 +80,12 @@ def test_no_transport_method_name_contains_query_balance_or_position() -> None:
     )
 
 
-def _issue_call_sites(tree: ast.Module, artifact_names: tuple[str, ...]) -> list[int]:
-    lines: list[int] = []
+def _issue_call_sites(
+    tree: ast.Module, artifact_names: tuple[str, ...]
+) -> dict[str, list[int]]:
+    """``{artifact_name: [lineno, ...]}`` — one entry per pinned artifact name that has at
+    least one ``<name>.issue(...)`` call site in ``tree``."""
+    by_artifact: dict[str, list[int]] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -77,27 +94,31 @@ def _issue_call_sites(tree: ast.Module, artifact_names: tuple[str, ...]) -> list
             continue
         value = func.value
         if isinstance(value, ast.Name) and value.id in artifact_names:
-            lines.append(node.lineno)
-    return lines
+            by_artifact.setdefault(value.id, []).append(node.lineno)
+    return by_artifact
 
 
 def test_are_afg_policy_issue_scoped_to_riskstate_policies_module() -> None:
     violations: list[str] = []
     for path in _iter_python_files(_RUNTIME_SRC):
         tree = _parse(path)
-        sites = _issue_call_sites(tree, _PINNED_ARTIFACT_CALLS)
-        if sites and path != _ALLOWED_ISSUE_CALL_SITE:
-            violations.append(f"{path}: lines {sites}")
+        by_artifact = _issue_call_sites(tree, _PINNED_ARTIFACT_CALLS)
+        for artifact_name, sites in by_artifact.items():
+            if path != _ALLOWED_ISSUE_CALL_SITES[artifact_name]:
+                violations.append(f"{path}: {artifact_name}.issue() at lines {sites}")
     assert not violations, (
-        "AggregateRiskPolicy.issue()/ActionFlowPolicy.issue() must be called ONLY from "
-        f"tos_runtime/riskstate/policies.py — found elsewhere: {violations}"
+        "AggregateRiskPolicy.issue() must be called ONLY from "
+        "_aggregate_risk_policy_loader.py, ActionFlowPolicy.issue() ONLY from "
+        f"_action_flow_policy_loader.py — found elsewhere: {violations}"
     )
-    # Positive control: the allowed site itself really does call both.
-    allowed_tree = _parse(_ALLOWED_ISSUE_CALL_SITE)
-    allowed_sites = _issue_call_sites(allowed_tree, _PINNED_ARTIFACT_CALLS)
-    assert (
-        allowed_sites
-    ), "policies.py itself must call .issue() at least once (sanity check)"
+    # Positive control: each allowed site really does call its own artifact's .issue().
+    for artifact_name, allowed_path in _ALLOWED_ISSUE_CALL_SITES.items():
+        allowed_tree = _parse(allowed_path)
+        allowed_sites = _issue_call_sites(allowed_tree, (artifact_name,))
+        assert allowed_sites.get(artifact_name), (
+            f"{allowed_path} itself must call {artifact_name}.issue() at least once "
+            "(sanity check)"
+        )
 
 
 def _bool_literal_keyword_violations(
