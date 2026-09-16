@@ -41,6 +41,7 @@ from pathlib import Path
 
 from tos.are import AdverseScenarioKind, AdverseScenarioSet
 from tos.canonical import CanonicalizationScheme
+from tos.egressgw import SizingBound, VenueQuantityConstraint
 from tos.egressgw.records import CandidateConstruction
 from tos.ioc import EconomicEffectEnvelope
 from tos.spg import BundleMemberKind, HardSafetyEnvelope
@@ -143,6 +144,75 @@ def _cross_check_side_tokens(
         raise RiskPolicyScopeMismatch(
             f"action flow policy _runtime.side_tokens names {unknown!r}, which the venue "
             f"policy's own allowed_sides {sorted(venue_allowed_sides)!r} does not declare"
+        )
+
+
+def _cross_check_ocp_side_tokens(
+    ocp_sides: frozenset[str], *, venue_allowed_sides: frozenset[str]
+) -> None:
+    """Sibling of :func:`_cross_check_side_tokens`, same subset-and-refuse shape, for the
+    Order Construction Policy's own side declarations ((a′) wave, lane B interaction check).
+
+    ``action_class_shape`` makes the OCP a THIRD declarant of the side-token fact ``(b′)``
+    already moved to policy declaration (module docstring item 5: the AFG policy's
+    ``_runtime.side_tokens`` are already cross-checked against the venue policy's own
+    ``allowed_sides``). Every side an OCP ``ActionClassShape`` yields must be a member of that
+    same ``allowed_sides`` set, or boot is refused here — never a silent pass-through that lets
+    the OCP name a side the venue never declared admissible.
+    """
+    unknown = sorted(ocp_sides - venue_allowed_sides)
+    if unknown:
+        raise RiskPolicyScopeMismatch(
+            f"order construction policy action_class_shape names side token(s) {unknown!r}, "
+            f"which the venue policy's own allowed_sides {sorted(venue_allowed_sides)!r} does "
+            "not declare"
+        )
+
+
+def _cross_check_ocp_sizing_bound(
+    sizing_bound: SizingBound, *, venue_quantity_constraint: VenueQuantityConstraint
+) -> None:
+    """Sibling of :func:`_cross_check_side_tokens` / :func:`_cross_check_ocp_side_tokens`: the
+    OCP's own comment (``order_construction_policy.yaml:120-122``) says its ``sizing``
+    ``max_quantity``/``min_quantity``/``lot_size`` are DERIVED from the venue policy's own
+    ``lot_size``/``min_quantity`` (and an aggregate-risk effective limit) — a fact nothing
+    pins. This checks the SUBSET direction only, never equality (a narrower OCP is legitimate,
+    a wider one is a document defect): OCP ``max_quantity`` must not exceed the venue's,
+    OCP ``min_quantity`` must not be below the venue's, and OCP's ``lot_size`` must be a whole
+    multiple of the venue's (never a finer grain than the venue itself grants). A field left
+    ``None`` on either side is skipped — an absent bound is UNKNOWN, not "unlimited", so there
+    is nothing to compare it against, not evidence the OCP may claim anything it likes.
+    ``derive_order_size`` (``egressgw/construction.py:449-523``) already ANDs both bounds
+    independently at every attempt, so a real mismatch here only ever narrows what an attempt
+    can do — this check exists to catch the DOCUMENT drift at boot, not a correctness gap.
+    """
+    offenses: list[str] = []
+    ocp_max, venue_max = (
+        sizing_bound.max_quantity,
+        venue_quantity_constraint.max_quantity,
+    )
+    if ocp_max is not None and venue_max is not None and ocp_max > venue_max:
+        offenses.append(f"max_quantity: OCP {ocp_max} > venue {venue_max}")
+    ocp_min, venue_min = (
+        sizing_bound.min_quantity,
+        venue_quantity_constraint.min_quantity,
+    )
+    if ocp_min is not None and venue_min is not None and ocp_min < venue_min:
+        offenses.append(f"min_quantity: OCP {ocp_min} < venue {venue_min}")
+    ocp_lot, venue_lot = sizing_bound.lot_size, venue_quantity_constraint.lot_size
+    if (
+        ocp_lot is not None
+        and venue_lot is not None
+        and venue_lot > 0
+        and ocp_lot % venue_lot != 0
+    ):
+        offenses.append(
+            f"lot_size: OCP {ocp_lot} is not a whole multiple of venue {venue_lot}"
+        )
+    if offenses:
+        raise RiskPolicyScopeMismatch(
+            "order construction policy sizing bound is WIDER than the venue quantity "
+            f"constraint it claims to derive from ({'; '.join(offenses)})"
         )
 
 

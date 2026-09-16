@@ -63,6 +63,7 @@ from tos_runtime.compose._egress_coordinates import (
     EgressCoordinatesConfig,
     load_egress_coordinates,
 )
+from tos_runtime.compose._envelope_wiring import build_construction_inputs
 from tos_runtime.compose._pending_dimensions import PendingDimensionSpec
 from tos_runtime.compose._request_digest import (
     RequestBytesDigestSource,
@@ -525,25 +526,24 @@ def _build_construction_stages(
     loaded_ocp: LoadedOrderConstructionPolicy,
 ) -> _ConstructionStages:
     """Steps 2/3/5/11 (design #34 §3.2). Step 2's OCP coordinates come from ``build_venue_service``
-    (plan §2 decision 6); intent/envelope/command-id/generation are the (a′) residue (§2.10).
-    Step 3 folds the REAL governed ``venue_service`` (plan §2 decision 4)."""
-    ocp = loaded_ocp.policy
-    # build_venue_service's own loader always fills these (never a real absence here).
-    assert ocp.policy_id is not None and ocp.policy_version is not None
-    assert ocp.policy_generation is not None
+    (plan §2 decision 6); envelope/intent/command-id/generation come from the governed OCP
+    (``_envelope_wiring.py``, a′ wave). Step 3 folds the governed ``venue_service``."""
+    inputs = build_construction_inputs(
+        construction, venue_service=venue_service, loaded_ocp=loaded_ocp, scheme=_SCHEME
+    )
     construction_stage = OrderConstructionStage(
-        envelope=construction.envelope,
+        envelope=inputs.envelope,
         price=construction.price,
         venue_constraint=venue_service.quantity_constraint,
         scheme=_SCHEME,
-        intent_id=f"intent-{construction.account}-{construction.instrument}",
-        intent_version="intent-v1",
-        envelope_id="compose-envelope",
-        policy_id=ocp.policy_id,
-        policy_version=ocp.policy_version,
-        policy_generation=ocp.policy_generation,
-        command_id=f"cmd-{construction.account}-{construction.instrument}",
-        generation=1,
+        intent_id=inputs.identities.intent_id,
+        intent_version=inputs.identities.intent_version,
+        envelope_id=inputs.identities.envelope_id,
+        policy_id=inputs.policy_id,
+        policy_version=inputs.policy_version,
+        policy_generation=inputs.policy_generation,
+        command_id=inputs.identities.command_id,
+        generation=inputs.identities.generation,
         price_field_key=construction.price_field_key,
     )
     venue_stage = VenueServiceStage(
@@ -557,7 +557,7 @@ def _build_construction_stages(
     proof_stage = ConformanceProofStage(
         construction_stage=construction_stage,
         scheme=_SCHEME,
-        proof_id=f"ocp-proof-{construction.account}-{construction.instrument}",
+        proof_id=inputs.identities.proof_id,
         proof_generation=1,
         required_authority_scope=(f"scope-{construction.instrument}",),
     )
