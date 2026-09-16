@@ -711,8 +711,8 @@ def test_load_order_construction_policy_construction_happy_path(tmp_path: Path) 
     loaded = load_order_construction_policy(path, scheme=SCHEME)
     rules = loaded.construction_rules
     assert rules.sizing_bound.max_quantity == Decimal(10)
-    assert rules.sizing_bound.min_quantity == Decimal(1)
-    assert rules.sizing_bound.lot_size == Decimal(1)
+    assert rules.sizing_bound.min_quantity == Decimal(2)
+    assert rules.sizing_bound.lot_size == Decimal(2)
     assert rules.sizing_bound.lot_rounding is LotRoundingPolicy.EXACT_MULTIPLE_REQUIRED
     assert rules.sizing_bound.risk_budget == Decimal(100)
     assert rules.sizing_bound.per_unit_risk == Decimal(10)

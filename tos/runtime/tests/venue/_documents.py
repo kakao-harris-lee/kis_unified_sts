@@ -258,9 +258,21 @@ def ocp_yaml(
             textwrap.dedent("""\
                 construction:
                   sizing:
+                    # min_quantity/lot_size are CROSS-CHECKED at boot against the venue
+                    # constraint policy's own shape_constraints (lane B's
+                    # _cross_check_ocp_sizing_bound, tos_runtime/compose/_riskstate_wiring.py):
+                    # OCP min_quantity must not be BELOW the venue's, and OCP lot_size must be a
+                    # whole multiple of the venue's. tests/compose/conftest.py's own
+                    # venue_policy_yaml() fixture (the ONE both suites' e2e tests boot against)
+                    # sets lot_size=2/min_quantity=2/max_quantity=100 — these three values were
+                    # picked to satisfy that cross-check (95 boot refusals, PR #719 delta
+                    # review, surfaced the pre-wave disagreement: OCP sizing did not exist
+                    # before this wave, so nobody had ever checked the two fixtures agreed).
+                    # If you change ONE of these two fixtures' sizing values, change the other
+                    # too, or the cross-check will refuse every compose e2e boot.
                     max_quantity: 10
-                    min_quantity: 1
-                    lot_size: 1
+                    min_quantity: 2
+                    lot_size: 2
                     lot_rounding: "EXACT_MULTIPLE_REQUIRED"
                     risk_budget: 100
                     per_unit_risk: 10
