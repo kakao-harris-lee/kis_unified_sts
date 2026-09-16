@@ -153,6 +153,23 @@ fold #2 자신의 지역 `fold_venue_admissibility(shape=...)` 에서 계산되�
 3. **웨이브 분할** — `envelope`(레인 A·B)과 `order_shape`(레인 C)은 OCP 를 공유하지만 독립 착지가 가능하다. 한 웨이브로 갈지, 둘로 쪼갤지.
 4. 다음 순서(잔여): `run` 데몬화 → (c2) 실 시세 어댑터 → 브로커 증인(P-BAL)/band 원천 → 실 HSE 인스턴스 → 커널 라운드 #4.
 
+### 6.1 운영자 처분 기록 (2026-09-16, 웨이브 진행 중)
+
+| # | 항목 | 처분 | 근거·결과 |
+|---|---|---|---|
+| ④ | OCP `effect_dimensions` 가 비어 모든 attempt 가 step 5 에서 정지 | **제안표 저작 → 이 웨이브에서 해소** | `2026-09-16-tos-ocp-effect-dimensions-proposal.md`(`92a5d462`). 단일 차원 `INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL`/QUANTITY/CONTRACTS/1 — 전 필드 등급 A. notional 기각(승인 원천 부재 + price None 시 재차 UNKNOWN) |
+| ⑤ | DR-0002 §2.3 커버리지 표 미갱신(contract-keeper 판정 필요) | **새 DR 저작** | `DR-0004`(`115bf983`). §13 실측 = Atomic Activation Protocol 10단계 → 이번 웨이브는 §6 의 두 트리거 어느 것도 아니나, §2.3 행을 낡게 만든 것은 사실이므로 §6 이 정한 수단을 따름 |
+
+### 6.2 레인 자체 판단 — 팀리드 수용
+
+| 판단 | 레인 | 처분 |
+|---|---|---|
+| `DIRECTION` 을 배포 파일에 `"TBD"` 로 (한쪽을 고르지 않음) | A | **수용.** `scope.action_classes` 가 양방향을 승인하는데 파일을 한쪽으로 못박으면 운영자 승인 없이 대칭 승인을 좁힌다 — 비협상 규칙이 잡으려는 조용한 비대칭 |
+| SIDE 를 `axes:` 에 선언하지 않음 | A | **수용하되 파생으로 해소.** 별도 선언은 「두 수량」을 side 로 옮긴 것이나, 누락도 불가 — `gateway.py:1215` 가 command 의 SIDE 축 부재를 **거부**한다. 레인 B 가 `action_class_shape` 에서 파생 → `gateway.py:1220` 의 기존 검사가 `outbound_side` 리터럴의 실제 핀이 된다 |
+| 파생 수량을 fold 둘 다에 | C | **수용**(§4.1) |
+| 거버넌스 값을 지어내지 않고 보고 | A·B·C | **전건 수용.** 지어낸 값 0 |
+
+
 ## 7. 착지 기록
 
 (웨이브 완료 후 채움)
