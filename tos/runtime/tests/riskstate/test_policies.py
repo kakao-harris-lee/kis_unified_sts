@@ -402,6 +402,21 @@ def test_afg_action_class_map_value_outside_governed_action_classes_refused(
         load_action_flow_policy(path, scheme=SCHEME)
 
 
+@pytest.mark.parametrize("marker", ['["TBD"]', '[""]', '["acct-1", "acct-2"]', "[]"])
+def test_afg_account_scope_named_tbd_or_not_singleton_refused(
+    tmp_path: Path, marker: str
+) -> None:
+    """The operator-fill gate for the ONE deployment coordinate this policy binds: the real
+    deploy file ships ``account_scope: ["TBD"]`` and must not boot as a phantom scope; two
+    entries or none is not a single live scope (v1, plan §2.1) either."""
+    text = action_flow_policy_yaml().replace(
+        'account_scope: ["acct-1"]', f"account_scope: {marker}"
+    )
+    path = _write(tmp_path, "afg.yaml", text)
+    with pytest.raises(VenuePolicyConfigError, match="account_scope"):
+        load_action_flow_policy(path, scheme=SCHEME)
+
+
 def test_afg_account_scope_not_explicit_list_refused(tmp_path: Path) -> None:
     """A missing-but-required explicit-list scope array (never null) is refused — the venue
     primitives' own ``require_list`` discipline ("a missing key or null is a named-TBD gap").

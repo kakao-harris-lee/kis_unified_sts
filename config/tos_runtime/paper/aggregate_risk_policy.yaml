@@ -1,0 +1,114 @@
+# =============================================================================
+# Aggregate Risk Policy — paper / KRX index futures (KOSPI200)
+# =============================================================================
+# INSTANCE of tos-spec/src/part-1-foundation/verification/AGGREGATE-RISK-POLICY-template.yaml
+# (placement + activation per DR-0002 §2.1/§2.2, extended to this policy by
+# DR-0003 §2.1). Loaded by tos_runtime.riskstate.load_aggregate_risk_policy.
+#
+# APPROVAL PROVENANCE: docs/plans/2026-09-16-tos-risk-state-service-plan.md
+# §6 ②, adopted by the operator on 2026-09-16 (「1. 채택」).
+#   * ONE governed dimension, INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL in
+#     CONTRACTS, effective limit 1 — paper trades one contract; this is the
+#     only dimension the runtime can source today (a single-source fill sum
+#     from its own durable evidence, DR-0003 §2.2). No notional / margin
+#     dimension: no mark source exists, and a dimension with no source would
+#     make every evaluation UNKNOWN.
+#   * The Hard Safety Envelope this deployment boots with MUST declare the
+#     same dimension id with an envelope_max ≥ 1 — the compose root refuses
+#     to boot (RiskPolicyScopeMismatch) when the policy governs a dimension the
+#     HSE does not carry, and the kernel's envelope_bound_not_enlarged denies
+#     when the policy limit exceeds the HSE maximum. No paper HSE instance is
+#     committed yet (safety_envelope.yaml is still an .example.yaml).
+#   * required_scenario_kinds = risk.yaml's set (ADVERSE_PRICE_SLIPPAGE_GAP_VOL_LIQ).
+#   * The position observation is single-source (no broker witness);
+#     all_fields_attributed stays the operator attestation in
+#     risk_attestations.yaml (DR-0003 §2.2) — this file never asserts it.
+#
+# OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"): account_scope,
+# instrument_scope (same values as venue_constraint_policy.yaml), then
+# `tos-runtime print-policy-digests --config-dir <dir>` → safety_activation.yaml
+# `members:` (kind AGGREGATE_RISK_POLICY).
+# =============================================================================
+
+artifact_type: AGGREGATE_RISK_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: "arp-paper-krx-index-futures"
+policy_version: TBD
+aggregate_risk_generation: 1
+canonical_digest: TBD
+status: ISSUED
+environment_scope: ["paper"]
+safety_cell_scope: []
+legal_portfolio_scope: []
+account_scope: ["TBD"]
+strategy_scope: []
+venue_scope: ["KRX"]
+instrument_scope: ["TBD"]
+currency_scope: ["KRW"]
+global_scope_included: false
+hard_safety_envelope:
+  envelope_id: TBD
+  generation: null
+  canonical_digest: TBD
+runtime_safety_profile:
+  profile_id: TBD
+  generation: null
+  canonical_digest: TBD
+risk_dimensions:
+  - "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL — unit CONTRACTS — worst-credible directional usage = max(|confirmed_net + unknown_buy + in_flight_buy|, |confirmed_net − unknown_sell − in_flight_sell|) over the runtime's own SEND_SEALED / EGRESS_RESULT_CONSUMED / RESULT_UNMATCHED evidence (DR-0003 §2.2)"
+scope_aggregation_rules:
+  - "single live scope (one account, one instrument) — no cross-scope aggregation in v1"
+valuation_and_uncertainty_rules:
+  - "no valuation: contract counts only; an UNKNOWN attempt counts in full in the direction that maximises usage (ARE-INV-006)"
+scenario_set_requirements:
+  - "risk.yaml scenario set paper-adverse-set-1; required kinds = [ADVERSE_PRICE_SLIPPAGE_GAP_VOL_LIQ]"
+netting_hedge_and_correlation_rules:
+  - "none claimed (no benefit proof; BenefitProof premises all false)"
+margin_collateral_and_liquidity_rules: []
+numerical_safety_rules:
+  - "numerically_safe / valuation_ok are operator attestations (risk_attestations.yaml, restrictive merge) — this policy asserts neither"
+dependency_closure_rules: []
+materiality_default: MATERIAL
+unknown_disposition: DENY_NEW_RISK
+compatibility_requirements:
+  - "HSE must govern INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL with envelope_max ≥ 1"
+invalidation_conditions:
+  - "new policy generation on any change of dimension, limit, scenario coverage or scope"
+approved_by: ["operator (System Owner) — 2026-09-16, plan §6 ② 채택"]
+effective_from: "2026-09-16"
+review_due: null
+authority:
+  policy_active: false
+  grants_risk_allocation: false
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+evidence:
+  activation_record_id: TBD
+  independent_review_id: "PR #703 / #704 independent review (sonnet) — see plan §7"
+  evidence_location: "evidence store rows AGGREGATE_RISK_POLICY_BOUND / RISK_STATE_OBSERVED"
+_model_view:
+  policy_generation: 1
+  policy_version: "1.0.0"
+  governed_dimensions: ["LONG_SHORT_DELTA_DIRECTIONAL"]
+  governed_scopes: ["INSTRUMENT"]
+  signer_identity: null
+  approval_identity: null
+  evidence_package_ref: null
+_runtime:
+  unit: "CONTRACTS"
+  dimension_ids:
+    "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL":
+      scope: "INSTRUMENT"
+      dimension: "LONG_SHORT_DELTA_DIRECTIONAL"
+  effective_limits:
+    "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL": 1
+  required_scenario_kinds: ["ADVERSE_PRICE_SLIPPAGE_GAP_VOL_LIQ"]
+  required_scopes: ["INSTRUMENT"]
+  applicable_risk_scopes: ["INSTRUMENT"]
