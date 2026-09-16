@@ -53,11 +53,13 @@ Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``tos.*``
 from __future__ import annotations
 
 from collections.abc import Callable
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from tos.canonical import CanonicalizationScheme
 from tos.egressgw import OrderConstructionStage, VenueConstraintStage
 from tos.engine import StageRequest, StageVerdict
+from tos.ioc import AxisBinding, CanonicalBrokerCommand, ConformanceAxis
 from tos.spg import BundleMemberKind, BundleMemberRef
 from tos.venue import (
     ActionClass,
@@ -88,6 +90,7 @@ from tos_runtime.venue import (
     record_order_construction_policy_bound,
     require_member_activated,
 )
+from tos_runtime.venue.construction_rules import ConstructionRules
 
 __all__ = [
     "VenuePolicyScopeMismatch",
@@ -356,6 +359,150 @@ def build_venue_service(
     return service, loaded_ocp
 
 
+def _derived_shape_quantity(
+    candidate_command: CanonicalBrokerCommand | None,
+) -> int | None:
+    """The QUANTITY axis value ``construct_candidate_command`` already bound onto the command
+    (``_derived_axis_bindings``, ``egressgw/construction.py:544-553``), parsed to the ``int``
+    :class:`~tos.venue.OrderShapeFields.quantity` needs.
+
+    (a′) wave (``construction_rules.py`` module docstring "the asymmetry this wave also
+    closes"): the kernel refuses an envelope that re-declares a ``DERIVED_AXES`` member as
+    ambiguous, but nothing reconciled the derived quantity against ``OrderShapeFields.quantity``
+    — a caller-declared literal — before this. This function is the ONE place that reads the
+    derived value back out; it never re-derives a quantity itself (``derive_order_size`` stays
+    the sole source) and never falls back to the caller's literal.
+
+    A denied attempt (``candidate_command is None``), an absent QUANTITY axis binding, or a
+    bound value that does not parse as an exact whole number all fail closed to ``None`` — the
+    same structural UNKNOWN ``_shape_for`` already returns for an unprojectable price
+    (``egressgw/construction.py:1074-1098``), never a guess and never the injected literal.
+    """
+    if candidate_command is None:
+        return None
+    raw = candidate_command.axis_value(ConformanceAxis.QUANTITY)
+    if raw is None:
+        return None
+    try:
+        value = Decimal(raw)
+    except (InvalidOperation, ValueError):
+        return None
+    if value != value.to_integral_value():
+        return None
+    return int(value)
+
+
+def _authorized_axis_value(
+    authorized_axes: tuple[AxisBinding, ...], axis: ConformanceAxis
+) -> str | None:
+    """The single bound value for ``axis`` in ``authorized_axes`` — ``None`` if absent. The one
+    place both :func:`_shape_order_type_and_tif` and :func:`_shape_side_and_position_effect`
+    read a governed axis value, so "absent is a refusal, never a default" is not a rule
+    duplicated across call sites."""
+    for binding in authorized_axes:
+        if binding.axis == axis:
+            return binding.value
+    return None
+
+
+def _shape_side_and_position_effect(
+    construction_rules: ConstructionRules,
+    action_class: ActionClass | None,
+) -> tuple[str | None, str | None]:
+    """``(side, position_effect)`` for ``action_class``, sourced from the OCP's own
+    ``ConstructionRules.action_class_shape`` mapping — never ``ConstructionConfig``'s
+    caller-declared literal.
+
+    Keyed by ``(ActionClass, direction)`` (contract amended 2026-09-16, commit ``7e79f00c``):
+    ``ActionClass`` has a single ``CLOSE`` member, so a long-close and a short-close arm would
+    otherwise collapse onto one key. ``direction`` is sourced STRUCTURALLY from the ``DIRECTION``
+    axis binding in ``construction_rules.authorized_axes`` — never a new ``ConstructionConfig``
+    field, never an injected literal (that would reintroduce exactly the caller-declared-literal
+    problem this wave exists to remove).
+
+    No ``DIRECTION`` binding at all, an ``(action_class, direction)`` pair absent from the
+    mapping, or ``action_class is None`` outright are all the SAME refusal — ``(None, None)`` —
+    never a default (``ConstructionRules.action_class_shape`` docstring: "absent from this
+    mapping is unauthorized for this generation, not defaulted"; the "no derivation ⇒ None"
+    discipline this wave already applies to quantity, applied here to direction)."""
+    if action_class is None:
+        return None, None
+    direction = _authorized_axis_value(
+        construction_rules.authorized_axes, ConformanceAxis.DIRECTION
+    )
+    if direction is None:
+        return None, None
+    mapped = construction_rules.action_class_shape.get((action_class, direction))
+    if mapped is None:
+        return None, None
+    return mapped.side, mapped.position_effect
+
+
+def _shape_order_type_and_tif(
+    construction_rules: ConstructionRules,
+) -> tuple[str | None, str | None]:
+    """``(order_type, tif)`` sourced from ``ConstructionRules.authorized_axes`` (a′) wave
+    decision 3) — never a caller literal. An axis this generation does not authorize is
+    ``None`` (fail-closed), never a default."""
+    return (
+        _authorized_axis_value(
+            construction_rules.authorized_axes, ConformanceAxis.ORDER_TYPE
+        ),
+        _authorized_axis_value(construction_rules.authorized_axes, ConformanceAxis.TIF),
+    )
+
+
+def _observed_silently_rounded() -> bool:
+    """``False``, always — an observation of the RUNTIME's own behaviour, not a relayed
+    caller claim, and (round 3 correction, team-lead review, PR #718, 2026-09-16) not a
+    re-derivation of the kernel's own grid verdict.
+
+    ``OrderShapeFields.silently_rounded`` does not ask "is this shape off the tick/lot grid" —
+    ``order_shape_admissible`` already judges exactly that, completely, itself, from the SAME
+    injected :class:`~tos.venue.VenueShapeConstraints` a first and second cut of this function
+    tried to re-check (price band + tick divisibility at
+    ``tos/src/tos/venue/predicates.py:281-284``, quantity range + lot divisibility at
+    ``:286-291``). The field is a question about PROVENANCE, not grid membership — the
+    kernel's own comment at ``predicates.py:252``: "a silently-rounded / normalized shape is a
+    NEW shape — never admissible here". It asks whether whoever handed this exact shape over
+    quietly normalized it FIRST, after it was decided, before it reached the gate.
+
+    Two rounds of review each found this function's grid re-derivation missing one more of
+    ``order_shape_admissible``'s own precondition fields (round 1: ``shape.price``/
+    ``shape.quantity``/``constraints`` absent; round 2: ``price_max``/``min_quantity``/
+    ``max_quantity`` absent) — because re-deriving a verdict the kernel owns means predicting
+    every precondition it will ever check, and nothing bounds that list. That approach is
+    DELETED here, not patched a fourth time — the grid arithmetic that lived in this function
+    (a second, unpinned copy of ``predicates.py:281-291``) is gone.
+
+    **The structural answer: this runtime never rounds a shape after it has been decided.**
+    :meth:`VenueServiceStage._sourced_shape` takes ``derive_order_size``'s own output quantity
+    AS-IS (:func:`_derived_shape_quantity` parses the bound axis value back to ``int`` and
+    REFUSES — returns ``None`` — a value that is not already an exact whole number, rather
+    than rounding it). ``derive_order_size`` itself, under
+    :attr:`~tos.egressgw.vocabulary.LotRoundingPolicy.EXACT_MULTIPLE_REQUIRED`, DENIES a raw
+    size that is not already an exact lot multiple rather than rounding it — never reaches
+    ``DERIVED``, never reaches this runtime at all. Under ``FLOOR_TO_LOT`` the derivation DOES
+    floor the raw size to a lot multiple — but that floor IS the authored policy computing the
+    decision, not a caller normalizing an already-decided shape: the floored quantity is the
+    ONE value that ever exists in this runtime's path (the axis binding, the command, this
+    shape), so there is no second, differently-valued "decided" shape for a later step to have
+    quietly altered. Nothing between ``derive_order_size`` and the judged shape (this module)
+    rounds, clamps, or widens a value. So the honest answer is ``False`` — always, structurally
+    true rather than computed per attempt.
+
+    This is true only for as long as it stays true. ``tos/runtime/tests/compose
+    /test_venue_wiring.py::TestSilentlyRoundedIsNeverIntroduced`` pins the underlying
+    INVARIANT this constant relies on — that the sourced shape's quantity always equals
+    ``derive_order_size``'s own output exactly, unaltered, including under a genuine
+    ``FLOOR_TO_LOT`` floor — never this constant itself (asserting ``is False`` on a hardcoded
+    ``False`` would be exactly the tautology this project has been bitten by before). If this
+    runtime ever grows a normalization step, that test goes red and THIS field must be
+    revisited then, never left at ``False`` by inertia.
+    """
+    return False
+
+
 class VenueServiceStage:
     """Step 3, folded against a live :class:`~tos_runtime.venue.VenueConstraintService`
     (module docstring — replaces ``compose/_venue_phase.py::VenuePhaseStage``).
@@ -364,6 +511,19 @@ class VenueServiceStage:
     (item 11) and :class:`~tos_runtime.compose._types.ComposedRuntime` already read off the old
     stage — ``resolved_shape``/``shape_constraints``/``policy``/``last_snapshot``/
     ``last_decision`` — so those call sites change only what they read FROM, not how.
+
+    **(a′) wave — order-shape field sourcing.** :meth:`__call__` never folds the raw injected
+    ``shape`` unchanged: ``quantity`` is ALWAYS replaced with the derivation's own quantity
+    (:func:`_derived_shape_quantity`) and ``silently_rounded`` is ALWAYS the structural
+    ``False`` this runtime's own behaviour justifies (:func:`_observed_silently_rounded` — its
+    own docstring explains why this is not a grid re-derivation) — neither ever falls back
+    to the caller's literal, construction_rules or not. ``side``/``position_effect``/
+    ``order_type``/``tif`` are sourced from the optional ``construction_rules`` (decisions 2/3)
+    **when one is supplied**; ``construction_rules is None`` is this compose root not yet
+    wiring a loaded OCP generation's rules through (``compose/_wiring.py``'s own
+    ``_build_construction_stages`` call site does not pass one yet — that wiring is out of this
+    module's reach, see this wave's lane-C report), so those four fields fall back to the
+    injected literal rather than a fail-closed refusal, transitionally.
     """
 
     def __init__(
@@ -373,12 +533,14 @@ class VenueServiceStage:
         action_class: ActionClass,
         shape: OrderShapeFields | None,
         shape_price_field_key: str | None,
+        construction_rules: ConstructionRules | None = None,
     ) -> None:
         self._service = service
         self._construction_stage = construction_stage
         self._action_class = action_class
         self._shape = shape
         self._shape_price_field_key = shape_price_field_key
+        self._construction_rules = construction_rules
         #: The last, decision-bound kernel stage this call built — never read for judgement,
         #: only for the read-surface properties below (mirrors the retired
         #: ``VenuePhaseStage``'s own ``_last_stage`` discipline).
@@ -403,25 +565,62 @@ class VenueServiceStage:
         resolved = stage0.resolved_shape
         construction = self._construction_stage.construction
         candidate_command = None if construction is None else construction.command
+        # (a′) wave: the quantity judged here is the DERIVED one — never the caller-declared
+        # literal on ``self._shape`` — the same discipline the kernel already applies to the
+        # other two DERIVED_AXES members (module docstring; ``_derived_shape_quantity``).
+        # ``silently_rounded`` is likewise always the OBSERVED grid fact, never the injected
+        # attestation. ``resolved is None`` (no shape was ever injected) leaves nothing to
+        # source any field onto — stays ``None``, not a stand-in.
+        shape_for_decision = self._sourced_shape(resolved, candidate_command)
         decision = self._service.decide(
             action_class=self._action_class,
-            shape=resolved,
+            shape=shape_for_decision,
             candidate_command=candidate_command,
         )
         # Fold #2: the real per-attempt decision now bound onto the returned StageVerdict
-        # (venue_admissibility_verdict records decision.canonical_digest/decision_id).
+        # (venue_admissibility_verdict records decision.canonical_digest/decision_id). Folded
+        # against the SAME ``shape_for_decision`` ``decide()`` just judged — not ``self._shape``
+        # — so the returned StageVerdict's outcome (computed locally by this fold, module
+        # docstring "Two folds, deliberately") agrees with ``decision.result`` on the quantity
+        # that was actually judged, not a stale literal.
         stage = VenueConstraintStage(
             observed_session_phase=snapshot.observed_session_phase,
             action_class=self._action_class,
             snapshot=snapshot,
             policy=self._service.policy,
-            shape=self._shape,
+            shape=shape_for_decision,
             constraints=self._service.shape_constraints,
             decision=decision,
             shape_price_field_key=self._shape_price_field_key,
         )
         self._last_stage = stage
         return stage(request)
+
+    def _sourced_shape(
+        self,
+        resolved: OrderShapeFields | None,
+        candidate_command: CanonicalBrokerCommand | None,
+    ) -> OrderShapeFields | None:
+        """Build the exact shape both folds judge — ``resolved`` (fold #1's price-projected
+        shape) with every (a′)-owned field replaced (class docstring "order-shape field
+        sourcing"). ``None`` in, ``None`` out — no shape at all means no field to source
+        anything onto."""
+        if resolved is None:
+            return None
+        updates: dict[str, object] = {
+            "quantity": _derived_shape_quantity(candidate_command),
+            "silently_rounded": _observed_silently_rounded(),
+        }
+        if self._construction_rules is not None:
+            side, position_effect = _shape_side_and_position_effect(
+                self._construction_rules, self._action_class
+            )
+            order_type, tif = _shape_order_type_and_tif(self._construction_rules)
+            updates["side"] = side
+            updates["position_effect"] = position_effect
+            updates["order_type"] = order_type
+            updates["tif"] = tif
+        return resolved.model_copy(update=updates)
 
     @property
     def resolved_shape(self) -> OrderShapeFields | None:

@@ -413,37 +413,46 @@ def admitted_price(**overrides: object) -> AdmittedPriceObservation:
     return AdmittedPriceObservation(**base)
 
 
-def order_shape() -> OrderShapeFields:
-    return OrderShapeFields(
-        price=4200,
-        quantity=20,
-        order_type="LIMIT",
-        tif="DAY",
-        side=SIDE,
-        position_effect="OPEN",
-        silently_rounded=False,
-    )
+def order_shape(**overrides: object) -> OrderShapeFields:
+    base: dict[str, object] = {
+        "price": 4200,
+        "quantity": 20,
+        "order_type": "LIMIT",
+        "tif": "DAY",
+        "side": SIDE,
+        "position_effect": "OPEN",
+        "silently_rounded": False,
+    }
+    base.update(overrides)
+    return OrderShapeFields(**base)
 
 
-def construction_config() -> ConstructionConfig:
+def construction_config(**overrides: object) -> ConstructionConfig:
     """TOS venue constraint service wave (plan §2 decision 5): the former
     ``venue_snapshot``/``venue_policy``/``venue_decision``/``venue_shape_constraints``/
     ``venue_constraint`` fields are gone — those facts now come exclusively from the governed
     Venue Constraint Policy + Order Construction Policy ``conftest.py``'s own ``config_dir``
     fixture writes and ``compose/_venue_wiring.py``'s ``build_venue_service`` loads (never a
-    test-authored stand-in)."""
-    return ConstructionConfig(
-        account=ACCOUNT,
-        instrument=INSTRUMENT,
-        envelope=proposed_envelope(),
-        price=admitted_price(),
-        order_shape=order_shape(),
-        action_class=ActionClass.NEW_LONG,
-        instrument_class=INSTRUMENT_CLASS,
-        outbound_side=SIDE,
-        price_field_key=PRICE_FIELD_KEY,
-        shape_price_field_key=PRICE_FIELD_KEY,
-    )
+    test-authored stand-in).
+
+    ``**overrides`` (a′) wave lane C: lets a caller replace ``envelope``/``order_shape``/etc.
+    (e.g. a deliberately mismatched literal quantity, a denied sizing bound) without
+    duplicating the whole fixture — mirrors ``proposed_envelope``/``sizing_bound``'s own
+    override pattern. No existing call site passes any, so this is purely additive."""
+    base: dict[str, object] = {
+        "account": ACCOUNT,
+        "instrument": INSTRUMENT,
+        "envelope": proposed_envelope(),
+        "price": admitted_price(),
+        "order_shape": order_shape(),
+        "action_class": ActionClass.NEW_LONG,
+        "instrument_class": INSTRUMENT_CLASS,
+        "outbound_side": SIDE,
+        "price_field_key": PRICE_FIELD_KEY,
+        "shape_price_field_key": PRICE_FIELD_KEY,
+    }
+    base.update(overrides)
+    return ConstructionConfig(**base)
 
 
 def adverse_scenario_cells() -> tuple[object, ...]:
