@@ -162,6 +162,37 @@ the other copy of this same list — keep both in sync」라고 적는다. 이�
 - (b′) 잔여는 그대로다
 
 
+### 4.4 `run` 의 실제 상태 (팀리드 실측 · 2026-09-16)
+
+차단 목록을 고치기 전에 **`run` 이 오늘 무엇을 하는지** 실측했다. 결과가 문언보다 강하다:
+
+```python
+# tos/runtime/src/tos_runtime/compose/cli.py:935
+if isinstance(args, Args):
+    return 0
+```
+
+**`run` 은 인자를 파싱하고, 아무것도 구성하지 않고, 0 을 돌려준다.** 「차단되어 있다」가
+아니라 **아직 배선되지 않았다**. 이 웨이브가 (a′) 를 해소해도 그 줄은 그대로다.
+
+#### 이 웨이브 이후 `ConstructionConfig` 의 남은 항
+
+레인 B 통합 트리에서 실측(§4.2 예측 검증):
+
+| 필드 | 상태 |
+|---|---|
+| `envelope` | **이미 죽은 필드** — `_wiring.py:535` 가 레인 B 의 `inputs.envelope` 을 쓴다. 아무도 `construction.envelope` 을 읽지 않는다 |
+| `order_shape` | `_wiring.py:553` 이 아직 넘긴다 — 레인 D 가 `construction_rules` 를 결선하면 7 필드 전부 원천화되어 죽는다 |
+| 나머지 7 | `account`·`instrument`·`action_class`·`instrument_class`·`outbound_side`·`price_field_key`·`shape_price_field_key` — **전부 스칼라** |
+
+즉 웨이브가 끝나면 `ConstructionConfig` 는 **스칼라 7개**만 남고, 그것들을 설정 파일에서
+읽는 로더 하나면 `run` 이 실제로 구성할 수 있다. 그 로더는 **이 웨이브 범위 밖**이며
+운영자 결정 사항이다(§6 ⑥).
+
+**레인 D 는 「(a′) 해소」라고 쓰되 「`run` 이 구동된다」고 쓰지 않는다.** 둘은 다른 문장이고,
+후자는 위 `return 0` 이 남아 있는 한 거짓이다.
+
+
 ## 5. 종료 조건 · 뮤테이션 (초안)
 
 - 실증: (1) `ConstructionConfig.envelope` 주입 없이 부팅 — 봉투가 **OCP 에서** 구성됨 (2) e2e 에서 실 step-2 의 sizing 이 OCP 값과 일치(리터럴 아님) (3) **shape 수량 == 명령 수량**, 불일치를 심으면 거부 (4) `side`/`position_effect` 가 OCP `action_class_map` 에서 나옴 — 미러(NEW_SHORT) 동일 (5) `silently_rounded` 가 관측에서 나오고 관측 불가 시 `None` (6) 정체성 5종에 날조 리터럴 0(AST 핀) (7) OCP 세대 불일치 → 부팅 거부.
