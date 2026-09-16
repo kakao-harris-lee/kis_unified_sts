@@ -197,8 +197,11 @@ def test_envelope_identity_and_axes_come_from_the_ocp() -> None:
     )
     assert envelope.envelope_generation == 7
     assert envelope.policy_binding_id == "ocp-test-1"
-    # authorized_axis_bindings carries rules.authorized_axes PLUS the derived SIDE binding
-    # (module docstring) — never a second, independently-authored SIDE declaration.
+    # authorized_axis_bindings carries rules.authorized_axes with DIRECTION resolved (here
+    # unchanged in value, since NEW_LONG resolves "LONG" and the policy axis already said
+    # "LONG" too) plus the derived SIDE binding — never a second, independently-authored SIDE
+    # declaration. See test_envelope_replaces_the_direction_binding_with_the_resolved_direction
+    # for the case where the resolved and policy-axis values actually differ.
     assert envelope.authorized_axis_bindings == rules.authorized_axes + (
         AxisBinding(axis=ConformanceAxis.SIDE, value="BUY"),
     )
@@ -412,6 +415,31 @@ def test_envelope_derives_short_side_even_when_the_policy_direction_axis_says_lo
         b for b in envelope.authorized_axis_bindings if b.axis is ConformanceAxis.SIDE
     ]
     assert side_bindings == [AxisBinding(axis=ConformanceAxis.SIDE, value="SELL")]
+
+
+def test_envelope_replaces_the_direction_binding_with_the_resolved_direction() -> None:
+    """Second integration finding, same day (team-lead follow-up): the envelope's own
+    DIRECTION binding must carry the RESOLVED direction, never the policy's original axis
+    value left unmodified — a NEW_SHORT composition against a DIRECTION: LONG policy must
+    produce an envelope whose own DIRECTION binding reads SHORT, matching its SELL SIDE, not
+    an internally inconsistent DIRECTION=LONG/SIDE=SELL envelope. Exactly one DIRECTION
+    binding survives, never two."""
+    rules = _construction_rules(sides=_MIRRORED_SIDES, direction="LONG")
+    envelope = build_construction_envelope(
+        rules,
+        loaded_ocp=_loaded_ocp(),
+        action_class=ActionClass.NEW_SHORT,
+        venue_quantity_constraint=_venue_quantity_constraint(),
+        venue_allowed_sides=frozenset({"BUY", "SELL"}),
+    )
+    direction_bindings = [
+        b
+        for b in envelope.authorized_axis_bindings
+        if b.axis is ConformanceAxis.DIRECTION
+    ]
+    assert direction_bindings == [
+        AxisBinding(axis=ConformanceAxis.DIRECTION, value="SHORT")
+    ]
 
 
 def test_envelope_derives_side_for_a_direction_agnostic_class_from_the_policy_axis() -> (

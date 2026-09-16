@@ -63,6 +63,14 @@ an ``action_class_shape`` entry with no arm for the resolved ``(action_class, di
 refuses here rather than building an envelope with no SIDE axis, exactly the
 ``construction_generation`` discipline :func:`build_construction_identities` already follows.
 
+**The envelope's own DIRECTION binding is REPLACED with the resolved direction, never left at
+the policy's original axis value.** A second integration finding, same day: resolving SHORT
+from ``action_class`` while leaving ``authorized_axis_bindings``' own DIRECTION binding at the
+policy's LONG would build an internally inconsistent envelope — DIRECTION says LONG, SIDE says
+SELL — a new instance of the same two-sources problem this whole module exists to close, just
+applied to direction instead of quantity or side. :func:`_resolve_direction_and_side_bindings`
+returns both bindings together for exactly this reason.
+
 This closes a real gate, not a paper one: ``tos/src/tos/egressgw/gateway.py:1215`` reads
 ``construction.command.axis_value(ConformanceAxis.SIDE)`` and refuses the send outright when it
 is ``None`` — and SIDE is not a :data:`~tos.egressgw.DERIVED_AXES` member, so nothing else ever
@@ -114,6 +122,9 @@ from tos_runtime.compose._riskstate_wiring import (
 )
 from tos_runtime.compose._types import ConstructionConfig
 from tos_runtime.venue import LoadedOrderConstructionPolicy, VenueConstraintService
+from tos_runtime.venue._order_construction_policy_loader import (
+    _DIRECTION_NAMED_ACTION_CLASSES,
+)
 from tos_runtime.venue.construction_rules import ConstructionRules
 
 __all__ = [
@@ -125,21 +136,6 @@ __all__ = [
     "build_construction_inputs",
     "resolve_construction_direction",
 ]
-
-
-#: ``ActionClass`` members whose NAME ITSELF names a trading direction — the class is the most
-#: specific per-attempt direction fact available (module docstring / :func:`resolve_construction
-#: _direction`). Deliberately duplicated in spelling from the venue loader's own private
-#: ``_DIRECTION_NAMED_ACTION_CLASSES`` (``tos_runtime.venue._order_construction_policy_loader``)
-#: rather than importing it: that constant is package-private inside ``venue`` (a different
-#: top-level package from ``compose``), and the fact itself — "NEW_LONG only ever makes sense at
-#: direction LONG" — is a property of the kernel's own closed ``ActionClass`` taxonomy, not of
-#: that loader's internals, so this module states it directly rather than reaching across a
-#: package boundary for a private symbol.
-_DIRECTION_NAMED_ACTION_CLASSES: dict[ActionClass, str] = {
-    ActionClass.NEW_LONG: "LONG",
-    ActionClass.NEW_SHORT: "SHORT",
-}
 
 
 class SideDerivationRefused(RuntimeError):
@@ -174,9 +170,11 @@ def resolve_construction_direction(
     directly, so this function uses the next most specific per-attempt fact actually available:
 
     * When ``action_class`` NAMES a direction (``NEW_LONG`` -> ``LONG``, ``NEW_SHORT`` ->
-      ``SHORT`` — :data:`_DIRECTION_NAMED_ACTION_CLASSES`, the same distinction lane A's own
-      ``_check_action_class_shape_symmetry`` already draws between direction-named and
-      direction-agnostic classes), the class itself supplies the direction — never the policy's
+      ``SHORT`` — membership in :data:`~tos_runtime.venue._order_construction_policy_loader
+      ._DIRECTION_NAMED_ACTION_CLASSES`, REUSED from lane A's loader rather than a second copy
+      of that judgement; the value itself is read off the class's own enum spelling, e.g.
+      ``ActionClass.NEW_SHORT.value.rsplit("_", 1)[-1] == "SHORT"`` — not a second hardcoded
+      LONG/SHORT table either), the class itself supplies the direction — never the policy's
       axis, which would give the SAME wrong answer for every action class alike.
     * For every other (direction-agnostic) class — ``CLOSE`` and the rest — there is no
       per-attempt signal to read yet, so this falls back to the policy's own ``DIRECTION`` axis
@@ -184,13 +182,16 @@ def resolve_construction_direction(
       the wave's first cut, which read the axis unconditionally for every class: refusal still
       fires, just only where no more specific fact exists.
 
+    This is a PRECEDENCE rule, not a silent override: the action class is more specific
+    per-attempt information than the policy's own axis, so it wins when both could apply —
+    written down here rather than left implicit.
+
     Raises:
         SideDerivationRefused: ``action_class`` is direction-agnostic and no ``DIRECTION`` axis
             binding is present in ``rules.authorized_axes``.
     """
-    named_direction = _DIRECTION_NAMED_ACTION_CLASSES.get(action_class)
-    if named_direction is not None:
-        return named_direction
+    if action_class in _DIRECTION_NAMED_ACTION_CLASSES:
+        return action_class.value.rsplit("_", 1)[-1]
     direction = next(
         (b.value for b in rules.authorized_axes if b.axis is ConformanceAxis.DIRECTION),
         None,
@@ -204,10 +205,20 @@ def resolve_construction_direction(
     return direction
 
 
-def _derive_side_axis_binding(
+def _resolve_direction_and_side_bindings(
     rules: ConstructionRules, *, action_class: ActionClass
-) -> AxisBinding:
-    """The one place SIDE is derived (module docstring) — never authored in the OCP document."""
+) -> tuple[AxisBinding, AxisBinding]:
+    """The one place DIRECTION and SIDE are resolved together (module docstring) — never
+    authored in the OCP document as a second declaration.
+
+    Returns BOTH bindings, never just SIDE: the resolved direction (:func:`resolve_construction
+    _direction`) can differ from whatever ``rules.authorized_axes`` states for a direction-named
+    action class (a ``NEW_SHORT`` composition resolves ``SHORT`` even when the policy's own axis
+    says ``LONG``), so the envelope's own DIRECTION binding must be REPLACED with the resolved
+    value, not left at the policy's — an envelope declaring ``DIRECTION=LONG`` while its own
+    SIDE says ``SELL`` would be internally inconsistent, exactly the two-sources problem this
+    wave exists to remove, applied to direction instead of quantity (integration finding,
+    2026-09-16)."""
     direction = resolve_construction_direction(rules, action_class=action_class)
     shape = rules.action_class_shape.get((action_class, direction))
     if shape is None:
@@ -215,7 +226,10 @@ def _derive_side_axis_binding(
             f"action_class_shape has no entry for (action_class={action_class!r}, "
             f"direction={direction!r}) — cannot derive a SIDE axis binding for this composition"
         )
-    return AxisBinding(axis=ConformanceAxis.SIDE, value=shape.side)
+    return (
+        AxisBinding(axis=ConformanceAxis.DIRECTION, value=direction),
+        AxisBinding(axis=ConformanceAxis.SIDE, value=shape.side),
+    )
 
 
 def build_construction_envelope(
@@ -249,8 +263,10 @@ def build_construction_envelope(
 
     Returns:
         The envelope ``OrderConstructionStage`` should be constructed with — its
-        ``authorized_axis_bindings`` carries the derived SIDE binding (module docstring)
-        alongside ``rules.authorized_axes``.
+        ``authorized_axis_bindings`` carries ``rules.authorized_axes`` with the DIRECTION
+        binding REPLACED by the resolved direction (never the policy's own axis value
+        unmodified — see :func:`_resolve_direction_and_side_bindings`) plus the derived SIDE
+        binding.
 
     Raises:
         tos_runtime.compose._riskstate_wiring.RiskPolicyScopeMismatch: an
@@ -266,14 +282,19 @@ def build_construction_envelope(
     _cross_check_ocp_sizing_bound(
         rules.sizing_bound, venue_quantity_constraint=venue_quantity_constraint
     )
-    side_binding = _derive_side_axis_binding(rules, action_class=action_class)
+    direction_binding, side_binding = _resolve_direction_and_side_bindings(
+        rules, action_class=action_class
+    )
+    other_axes = tuple(
+        b for b in rules.authorized_axes if b.axis is not ConformanceAxis.DIRECTION
+    )
     sizing_bound = rules.sizing_bound.model_copy(
         update={"quantity_unit": venue_quantity_constraint.quantity_unit}
     )
     return ProposedConstructionEnvelope(
         envelope_generation=loaded_ocp.construction_generation,
         policy_binding_id=loaded_ocp.policy.policy_id,
-        authorized_axis_bindings=rules.authorized_axes + (side_binding,),
+        authorized_axis_bindings=other_axes + (direction_binding, side_binding),
         sizing_bound=sizing_bound,
         effect_dimensions=rules.effect_dimensions,
     )
