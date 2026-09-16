@@ -273,12 +273,16 @@ if isinstance(args, Args):
 `tos/runtime/tests/compose/test_cli.py::test_run_blocker_list_labels_match_between_cli_and_plan_section_7`
 — 두 문서의 `(a′)`/`(b′)`/`(c)` 레이블이 각각 RESOLVED 인지를 정규식으로 뽑아 대조한다.
 
-- (a′) **RESOLVED** — `envelope`/`order_shape` 원천화 완료(레인 D). `_envelope_wiring.
-  build_construction_envelope` 가 로드된 OCP `construction_rules` 에서 봉투를 짓고,
-  `_venue_wiring.VenueServiceStage` 가 `OrderShapeFields` 7 필드 전부(price·quantity·
-  silently_rounded·side·position_effect·order_type·tif)를 파생/정책에서 소싱한다.
-  `_wiring.py` 의 `intent_id`/`intent_version`/`envelope_id`/`command_id`/`generation`/
-  `proof_generation` 리터럴도 전부 제거 — 전건 파생. **「run 가동」과는 다른 문장**:
+- (a′) **RESOLVED**(웨이브 전체 — 원천화 자체는 레인 A·B·C 의 것, 레인 D 는 그것을 실제로
+  연결·정리했다). `envelope`/`order_shape` 원천화 완료: 레인 A 가 만든 거버넌스 값 위에서
+  `_envelope_wiring.build_construction_envelope`(레인 B)가 로드된 OCP `construction_rules`
+  에서 봉투를 짓고, `_venue_wiring.VenueServiceStage`(레인 C)가 `OrderShapeFields` 7 필드
+  전부(price·quantity·silently_rounded·side·position_effect·order_type·tif)를 파생/정책에서
+  소싱한다. **레인 D 가 한 일**: 레인 C 가 만들어 둔 `construction_rules` 선택 인자를 아무도
+  넘기지 않아 프로덕션 도달 불가였던 것을 `_wiring.py` 결선으로 실제로 살렸고(§4.1) · 죽은
+  `ConstructionConfig.envelope`/`.order_shape` 필드를 제거했고 · `intent_id`/`intent_version`/
+  `envelope_id`/`command_id`/`generation`/`proof_generation` 리터럴을 전부 파생으로 바꿨고 ·
+  차단 목록 두 사본의 동기화 드리프트 핀을 추가했다. **「run 가동」과는 다른 문장**:
   `cli.py:935` 의 `return 0` 은 그대로 남는다(`ConstructionConfig` 로더는 후속 웨이브, §6 ⑥).
 - (b′) 잔존 — 리스크 상태 서비스 자체가 이미 공시한 한계(단일 원천 포지션·계약 수 차원만).
   운영자 결정 사항(§6 확인점 5), 이 웨이브 범위 밖.
@@ -309,8 +313,17 @@ if isinstance(args, Args):
   인용.
 - **게이트**: firewall PASS · lint-imports 3 kept/0 broken · ruff/black/mypy 클린 · 커널 diff 0
   (`git diff origin/feat/tos-aprime..HEAD --stat -- tos/src` 공백) · 런타임 스위트
-  **2291 passed, 0 failed**(기준 baseline 2290 − 삭제 1(e2e 중복) + 신규 유닛 1 + 신규
-  boot-refusal 1).
+  **2292 passed, 0 failed**(재측정 — 최종 트리, 2026-09-16). 기준 baseline **2291**(브랜치 팁
+  `73c101a3` 실측). 삭제 2 −
+  `TestDerivedQuantityReachesVenueGate.test_literal_derived_quantity_mismatch_no_longer_
+  passes_on_the_literal`(필드 제거로 구성 불가가 된 e2e) ·
+  `TestSilentlyRoundedIsNeverIntroduced.test_off_grid_price_still_denies_via_the_kernels_
+  own_tick_check`(동일 사유, 커널 테스트로 대체 인용) — 신규 3 +
+  `TestSourcedShapeIgnoresPolicyViolatingLiteralQuantity.test_policy_violating_literal_
+  quantity_never_reaches_the_judged_shape`(위 첫 삭제의 유닛 레벨 대체) ·
+  `TestVenueBootRefusals.test_instrument_class_mismatch_refuses_to_boot` ·
+  `test_run_blocker_list_labels_match_between_cli_and_plan_section_7`(드리프트 핀). 산식:
+  2291 − 2 + 3 = **2292**.
 - **정직 이월**: `_wiring.py` 크기 예산이 1122→1124(+2, 신규 import 1줄 + `construction_rules=`
   kwarg 1줄 — 주석을 전부 압축한 뒤에도 남는 실질 증가)로 드리프트. 신규 예외를 등재하지 않고
   그대로 보고하며 `measured:` 값은 직접 고치지 않는다(팀리드 처분 대기). `cli.py` 는 정확히
