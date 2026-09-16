@@ -211,6 +211,7 @@ if isinstance(args, Args):
 | # | 항목 | 처분 | 근거·결과 |
 |---|---|---|---|
 | ④ | OCP `effect_dimensions` 가 비어 모든 attempt 가 step 5 에서 정지 | **제안표 저작 → 이 웨이브에서 해소** | `2026-09-16-tos-ocp-effect-dimensions-proposal.md`(`92a5d462`). 단일 차원 `INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL`/QUANTITY/CONTRACTS/1 — 전 필드 등급 A. notional 기각(승인 원천 부재 + price None 시 재차 UNKNOWN) |
+| ⑥ | `run` 이 실제 구성까지 가려면 `ConstructionConfig` 로더 필요(§4.4) | **레인 D 는 결선만 — 로더는 다음 웨이브** | 레인 D 범위 = `construction_rules` 결선 · 죽은 필드 제거 · 차단 문구(양쪽) · e2e. **「`run` 이 구동된다」고 쓰지 않는다** — `cli.py:935` 의 `return 0` 을 정직 등재. 로더는 배포 파일에 어떤 값을 넣을지(특히 `action_class`·`outbound_side`)가 새 운영자 결정이라 별도 |
 | ⑤ | DR-0002 §2.3 커버리지 표 미갱신(contract-keeper 판정 필요) | **새 DR 저작** | `DR-0004`(`115bf983`). §13 실측 = Atomic Activation Protocol 10단계 → 이번 웨이브는 §6 의 두 트리거 어느 것도 아니나, §2.3 행을 낡게 만든 것은 사실이므로 §6 이 정한 수단을 따름 |
 
 ### 6.2 레인 자체 판단 — 팀리드 수용
