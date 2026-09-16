@@ -120,7 +120,7 @@ class TickOutcome(StrEnum):
 | B | **#712** | `b131f382`·`4bdb291a`·`27624134`·`c7dd2cbc` | `SqliteSnapshotStore` · 스키마 baseline v1 · migrate 드리프트 차단 · code MED1 + **migration HIGH1·MED2** 전건 처분 |
 | C | **#711** | `a82bad9a`·`d8d16959`·`8a7587e0` | 저널 intake · `RuntimeTimeProjection` · VER-002 2키 · 리뷰 0건·확인 불가 0 · 커버리지 87→98% |
 | D | **#713** | `99914c81`·`da7bdb0b`·`7ff3845f` | `TickScheduler` · compose 결선 · e2e — **(c) 해소** · 리뷰 HIGH2(무커버리지) 전건 처분 |
-| E | (PR) | `314430f5`+ | 백업 세트 편입 · 드리프트 4번째 차단 · 리뷰 LOW1 |
+| E | **#714** | `314430f5`·`b8fb63f8` | 백업 세트 편입(운영자 §6 ④ (a)) · `_OPTIONAL_FILES`/`_SEQ_TABLE_BY_NAME` 로 드리프트 4번째 차단 + `model_fields` 순회 핀 · **복원 후 실 커널 view 재발행 실증** · 리뷰 LOW1 + 확인 불가 1(역방향 호환 = 정적 추적) 전건 종결 |
 
 ### 종료 조건 대비 (§5)
 
