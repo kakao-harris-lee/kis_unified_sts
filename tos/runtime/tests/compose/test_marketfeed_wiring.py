@@ -30,6 +30,7 @@ from tos_runtime.calendar.ports import AbsentWallClockReference
 from tos_runtime.marketfeed.ports import RawObservation, TickOutcome
 from tos_runtime.marketfeed.scheduler import MultiInstrumentRefused
 
+from ..recovery.test_drill import _mark_handling_started
 from . import _fixtures as fx
 from .test_compose_root import _compose, _reach_trusted
 
@@ -361,3 +362,89 @@ def test_marketfeed_stays_none_when_unconfigured(
     assert runtime.marketfeed is None
     runtime.rcl_log.close()
     runtime.evidence_store.close()
+
+
+# ----------------------------------------------------------------------------
+# held runtime: recovery barrier HOLD -> queued, not silently dropped or silently run
+# ----------------------------------------------------------------------------
+
+
+def _kind_count(runtime, kind: str) -> int:
+    return runtime.evidence_store.connection.execute(
+        "SELECT COUNT(*) FROM entries WHERE kind = ?", (kind,)
+    ).fetchone()[0]
+
+
+def test_a_held_recovery_barrier_queues_the_tick_instead_of_running_or_dropping_it(
+    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+) -> None:
+    """Pins the CONSEQUENCE of the held-runtime branch (scheduler.py's own module docstring),
+    not the source ordering that produces it — team-lead review finding, 2026-09-16: the
+    reviewer deleted the ``driver is None`` branch (replaced it with ``pass``) and separately
+    moved ``build_tick_scheduler`` back to BEFORE ``apply_recovery_barrier`` in ``root.py``; the
+    full suite stayed green under BOTH mutations because nothing had ever driven
+    ``tick_once()`` against a held runtime.
+
+    Holds the barrier the SAME way ``tests/recovery/test_drill.py``'s own
+    ``test_crash_marker_only_holds_the_barrier`` does — an ``EVENT_HANDLING_STARTED`` marker
+    durable with no matching ``EVENT_CONSUMED`` receipt, discovered on reboot (never a real
+    OS-level crash) — then proves FOUR things about the marketfeed scheduler specifically, none
+    of which any other test in this suite exercises:
+
+    1. ``runtime2.marketfeed is not None`` — ``build_tick_scheduler`` runs even when
+       ``driver`` is ``None`` (a HOLD is a legitimate state to build the scheduler INTO, not a
+       reason to skip building it — the whole point is to keep queuing while held).
+    2. ``tick_once()`` still reports ``TICKED``/``queued_until_recovery=True`` — never a
+       silent no-op and never (mutation: scheduler built before the barrier) a tick that
+       actually ran because it captured the live pre-HOLD driver.
+    3. The event actually landed in the durable inbox (``inbox.count`` incremented by exactly
+       one) — under the deleted branch, ``pass`` leaves it at zero.
+    4. The evidence row was actually appended (module's own
+       ``MARKETFEED_QUEUED_UNTIL_RECOVERY`` kind, count incremented by exactly one) — same
+       failure mode under the deleted branch.
+    """
+    journal_path = tmp_path / "journal.jsonl"
+    _write_critical_input_policy(config_dir)
+    _write_marketfeed_config(
+        config_dir, journal_path=journal_path, instruments=(fx.INSTRUMENT,)
+    )
+
+    runtime1 = _compose(tmp_path, config_dir, data_dir, custody_root)
+    _reach_trusted(runtime1)
+    _mark_handling_started(runtime1, fx.crossing_event(seq=1))
+
+    runtime1.rcl_log.close()
+    runtime1.evidence_store.close()
+    runtime2 = _compose(tmp_path, config_dir, data_dir, custody_root)
+
+    # The barrier held (the crash-window ambiguity from runtime1 is durable and discovered on
+    # this reboot) -- the SAME assertion test_drill.py's own _assert_held makes.
+    assert runtime2.driver is None
+    assert runtime2.recovery is not None
+    assert runtime2.recovery.ready is False
+
+    # (1) built anyway.
+    assert runtime2.marketfeed is not None
+
+    _write_journal(
+        journal_path,
+        [_observation_line(raw_event_id="raw-held-1", as_of_ms=_as_of_ms())],
+    )
+    inbox_count_before = runtime2.inbox.count
+    evidence_count_before = _kind_count(runtime2, "MARKETFEED_QUEUED_UNTIL_RECOVERY")
+
+    result = runtime2.marketfeed.tick_once()
+
+    # (2)
+    assert result.outcome is TickOutcome.TICKED
+    assert result.queued_until_recovery is True
+    # (3)
+    assert runtime2.inbox.count == inbox_count_before + 1
+    # (4)
+    assert (
+        _kind_count(runtime2, "MARKETFEED_QUEUED_UNTIL_RECOVERY")
+        == evidence_count_before + 1
+    )
+
+    runtime2.rcl_log.close()
+    runtime2.evidence_store.close()
