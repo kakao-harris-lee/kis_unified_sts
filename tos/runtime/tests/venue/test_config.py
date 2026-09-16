@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import re
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from tos.ioc import OrderConstructionPolicy
+import yaml
+from tos.egressgw import EffectBasis, EffectDimensionSpec, LotRoundingPolicy
+from tos.ioc import AxisBinding, ConformanceAxis, OrderConstructionPolicy
 from tos.venue import ActionClass, VenueConstraintPolicy, classify_record_pair
 from tos_runtime.venue.config import (
     LoadedOrderConstructionPolicy,
@@ -14,6 +18,7 @@ from tos_runtime.venue.config import (
     load_order_construction_policy,
     load_venue_constraint_policy,
 )
+from tos_runtime.venue.construction_rules import ActionClassShape
 
 from .conftest import (
     SCHEME,
@@ -21,6 +26,31 @@ from .conftest import (
     venue_policy_yaml,
     write_fixture_ocp,
     write_fixture_venue_policy,
+)
+
+#: The shipped production paper OCP instance — same coordinate as
+#: ``tests/compose/test_deploy_policies.py``'s own ``_REAL_OCP`` (parallel depth:
+#: ``tos/runtime/tests/venue/test_config.py`` and
+#: ``tos/runtime/tests/compose/test_deploy_policies.py`` are both 4 ``parents[]`` from the repo
+#: root).
+_REAL_OCP_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "config"
+    / "tos_runtime"
+    / "paper"
+    / "order_construction_policy.yaml"
+)
+
+#: The shipped production ARP instance — the RCL capacity lookup's actual source of truth for
+#: dimension_id spelling (``tos_runtime/riskstate/service.py:145-151``). Read alongside
+#: ``_REAL_OCP_PATH`` so a spelling drift between the two documents is caught by a single test
+#: rather than trusted by inspection (OCP effect_dimensions proposal §2.1's own warning).
+_REAL_ARP_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "config"
+    / "tos_runtime"
+    / "paper"
+    / "aggregate_risk_policy.yaml"
 )
 
 # ===========================================================================
@@ -157,7 +187,7 @@ def test_load_order_construction_policy_old_scalar_scope_shape_refused(
             '  instruments: ["K200F"]\n'
             "  contracts: []\n"
             "  action_classes: []\n"
-            "  order_types: []\n"
+            '  order_types: ["LIMIT"]\n'
         ),
         (
             "scope:\n"
@@ -674,4 +704,537 @@ def test_load_order_construction_policy_missing_template_list_key_refused(
     text = ocp_yaml().replace("intent_schema_versions: []\n", "")
     path = write_fixture_ocp(tmp_path, text)
     with pytest.raises(VenuePolicyConfigError, match="intent_schema_versions"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+# ===========================================================================
+# order_construction_policy.yaml — (a′) wave, lane A: _runtime.construction
+# ===========================================================================
+#
+# ``ocp_yaml()``'s default construction block (tos_runtime/tests/venue/_documents.py) is
+# well-formed FIXTURE DATA (max_quantity=100 etc — NOT the operator-adopted production values,
+# see that module's own docstring). Every mutation test below starts from that default text and
+# breaks exactly one leaf via ``.replace()``/regex, mirroring this file's existing idiom for
+# every other OCP negative case above.
+
+
+def test_load_order_construction_policy_construction_happy_path(tmp_path: Path) -> None:
+    path = write_fixture_ocp(tmp_path)
+    loaded = load_order_construction_policy(path, scheme=SCHEME)
+    rules = loaded.construction_rules
+    assert rules.sizing_bound.max_quantity == Decimal(100)
+    assert rules.sizing_bound.min_quantity == Decimal(2)
+    assert rules.sizing_bound.lot_size == Decimal(2)
+    assert rules.sizing_bound.lot_rounding is LotRoundingPolicy.EXACT_MULTIPLE_REQUIRED
+    assert rules.sizing_bound.risk_budget == Decimal(100)
+    assert rules.sizing_bound.per_unit_risk == Decimal(10)
+    assert rules.sizing_bound.max_notional is None
+    assert (
+        rules.sizing_bound.quantity_unit is None
+    )  # not OCP's data source — see loader docstring
+    assert rules.sizing_bound.admitted_quantity_bases == frozenset({"RISK"})
+    assert rules.admitted_quantity_bases == frozenset({"RISK"})
+    assert rules.authorized_axes == (
+        AxisBinding(axis=ConformanceAxis.ENVIRONMENT, value="paper"),
+        AxisBinding(axis=ConformanceAxis.ORDER_TYPE, value="LIMIT"),
+        AxisBinding(axis=ConformanceAxis.ACCOUNT, value="acct-1"),
+        AxisBinding(axis=ConformanceAxis.INSTRUMENT, value="K200F"),
+        AxisBinding(axis=ConformanceAxis.TIF, value="DAY"),
+        AxisBinding(axis=ConformanceAxis.DIRECTION, value="LONG"),
+    )
+    assert rules.action_class_shape == {
+        (ActionClass.NEW_LONG, "LONG"): ActionClassShape(
+            side="BUY", position_effect="OPEN"
+        ),
+        (ActionClass.NEW_SHORT, "SHORT"): ActionClassShape(
+            side="SELL", position_effect="OPEN"
+        ),
+    }
+    assert rules.effect_dimensions == (
+        EffectDimensionSpec(
+            dimension_id="INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL",
+            basis=EffectBasis.QUANTITY,
+            unit="CONTRACTS",
+            scale="1",
+        ),
+    )
+
+
+def test_load_order_construction_policy_construction_missing_block_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml(construction="")
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="construction"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["max_quantity", "min_quantity", "lot_size", "risk_budget", "per_unit_risk"],
+)
+def test_load_order_construction_policy_construction_sizing_missing_leaf_refused(
+    tmp_path: Path, field: str
+) -> None:
+    default = ocp_yaml()
+    text, count = re.subn(
+        rf"^(\s*){field}: .*\n", "", default, count=1, flags=re.MULTILINE
+    )
+    assert count == 1
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match=field):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["max_quantity", "min_quantity", "lot_size", "risk_budget", "per_unit_risk"],
+)
+def test_load_order_construction_policy_construction_sizing_null_leaf_refused(
+    tmp_path: Path, field: str
+) -> None:
+    default = ocp_yaml()
+    text, count = re.subn(
+        rf"^(\s*{field}): .*$", r"\1: null", default, count=1, flags=re.MULTILINE
+    )
+    assert count == 1
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match=field):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_max_notional_null_accepted(
+    tmp_path: Path,
+) -> None:
+    """Team-lead directive: an optional ceiling — ``null`` is legitimate, NOT a refusal
+    (``egressgw/construction.py:525`` guards it ``is not None``)."""
+    path = write_fixture_ocp(tmp_path)  # default already carries max_notional: null
+    loaded = load_order_construction_policy(path, scheme=SCHEME)
+    assert loaded.construction_rules.sizing_bound.max_notional is None
+
+
+def test_load_order_construction_policy_construction_max_notional_int_accepted(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace("max_notional: null", "max_notional: 5000")
+    path = write_fixture_ocp(tmp_path, text)
+    loaded = load_order_construction_policy(path, scheme=SCHEME)
+    assert loaded.construction_rules.sizing_bound.max_notional == Decimal(5000)
+
+
+def test_load_order_construction_policy_construction_lot_rounding_unknown_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace(
+        'lot_rounding: "EXACT_MULTIPLE_REQUIRED"', 'lot_rounding: "ROUND_HALF_UP"'
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="LotRoundingPolicy"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_lot_rounding_null_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace(
+        'lot_rounding: "EXACT_MULTIPLE_REQUIRED"', "lot_rounding: null"
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="lot_rounding"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_admitted_quantity_bases_tbd_refused(
+    tmp_path: Path,
+) -> None:
+    """The load-bearing rule: ``admitted_quantity_bases: ["TBD"]`` must refuse the same way
+    ``scope.accounts: ["TBD"]`` already does (team-lead directive)."""
+    text = ocp_yaml().replace(
+        'admitted_quantity_bases: ["RISK"]', 'admitted_quantity_bases: ["TBD"]'
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="admitted_quantity_bases"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_admitted_quantity_bases_empty_accepted(
+    tmp_path: Path,
+) -> None:
+    """An empty (but present, non-TBD) admitted set is a LOADABLE, always-denying state
+    (SizingBound's own docstring: "∅ authorizes nothing") — not a load-time refusal; only the
+    literal template placeholder ``"TBD"`` refuses at load."""
+    text = ocp_yaml().replace(
+        'admitted_quantity_bases: ["RISK"]', "admitted_quantity_bases: []"
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    loaded = load_order_construction_policy(path, scheme=SCHEME)
+    assert loaded.construction_rules.admitted_quantity_bases == frozenset()
+
+
+@pytest.mark.parametrize("axis_token", ["QUANTITY", "PRICE", "UNIT"])
+def test_load_order_construction_policy_construction_axes_derived_axis_refused(
+    tmp_path: Path, axis_token: str
+) -> None:
+    """A :data:`~tos.egressgw.DERIVED_AXES` member declared under ``axes`` refuses at load
+    (team-lead directive: catch it here, not only later at the kernel envelope validator).
+    """
+    text = ocp_yaml().replace(
+        '    axes:\n      - axis: "TIF"\n        value: "DAY"\n',
+        f'    axes:\n      - axis: "{axis_token}"\n        value: "5"\n',
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="derived axis"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+@pytest.mark.parametrize(
+    "axis_token, value",
+    [
+        ("ORDER_TYPE", "MARKET"),
+        ("ENVIRONMENT", "live"),
+        ("ACCOUNT", "acct-2"),
+        ("INSTRUMENT", "K200G"),
+    ],
+)
+def test_load_order_construction_policy_construction_axes_restated_refused(
+    tmp_path: Path, axis_token: str, value: str
+) -> None:
+    """ENVIRONMENT/ORDER_TYPE/ACCOUNT/INSTRUMENT are derived from ``scope`` — restating any of
+    them under ``_runtime.construction.axes`` refuses rather than risk the two silently drifting
+    apart. ACCOUNT/INSTRUMENT joined this set in the review round (PR #719) that caught
+    DIRECTION missing entirely — the same audit found these two silently absent."""
+    text = ocp_yaml().replace(
+        '    axes:\n      - axis: "TIF"\n        value: "DAY"\n',
+        f'    axes:\n      - axis: "{axis_token}"\n        value: "{value}"\n',
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="restates"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_axes_tbd_value_refused(
+    tmp_path: Path,
+) -> None:
+    """An authored axis (e.g. ``DIRECTION``, which has no ``scope.*`` home) left at the
+    template's ``"TBD"`` placeholder refuses, the same discipline every other operator-fill leaf
+    in this loader already follows — this is what makes the shipped paper instance's own
+    ``DIRECTION: "TBD"`` an operator-fill gate rather than a silent single-direction commitment.
+    """
+    text = ocp_yaml().replace(
+        '    axes:\n      - axis: "TIF"\n        value: "DAY"\n',
+        '    axes:\n      - axis: "TIF"\n        value: "DAY"\n'
+        '      - axis: "DIRECTION"\n        value: "TBD"\n',
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="DIRECTION.*TBD"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_axes_unknown_token_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace('axis: "TIF"', 'axis: "NOPE"')
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="ConformanceAxis"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_action_class_shape_unknown_token_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace("      NEW_LONG:\n", "      NOPE:\n")
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="ActionClass"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_action_class_shape_not_a_mapping_refused(
+    tmp_path: Path,
+) -> None:
+    """``action_class_shape.<ActionClass>`` must itself be a mapping (direction -> shape), not
+    a flattened ``{side, position_effect}`` — the (ActionClass, direction) key shape (contract
+    amendment 2026-09-16) requires the extra nesting level."""
+    text = ocp_yaml().replace(
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n',
+        '      NEW_LONG: {side: "BUY", position_effect: "OPEN"}\n',
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="mapping"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_action_class_shape_new_long_without_new_short_refused(
+    tmp_path: Path,
+) -> None:
+    """Long/short symmetry is a repo non-negotiable (CLAUDE.md) — a mapping with
+    ``(NEW_LONG, LONG)`` but no ``(NEW_SHORT, SHORT)`` mirror refuses, naming both (team-lead
+    directive). This is the CROSS-class mirror: NEW_LONG/NEW_SHORT are separate ActionClass
+    members, each single-direction by construction."""
+    text = ocp_yaml().replace(
+        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n',
+        "",
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match=r"NEW_LONG.*NEW_SHORT"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_action_class_shape_new_short_without_new_long_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace(
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n',
+        "",
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match=r"NEW_SHORT.*NEW_LONG"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_action_class_shape_close_long_without_close_short_refused(
+    tmp_path: Path,
+) -> None:
+    """The WITHIN-class mirror (contract amendment 2026-09-16, the fix for lane A's original
+    finding): ``ActionClass.CLOSE`` has one member for both a long-close and a short-close, so a
+    document declaring ``(CLOSE, LONG)`` without its ``(CLOSE, SHORT)`` mirror must refuse too —
+    this mirror pair did not exist to violate before the amendment (mutation proof)."""
+    text = ocp_yaml().replace(
+        "    action_class_shape:\n"
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
+        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n',
+        "    action_class_shape:\n"
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
+        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n'
+        '      CLOSE:\n        LONG: {side: "SELL", position_effect: "CLOSE"}\n',
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match=r"CLOSE, LONG.*CLOSE, SHORT"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_action_class_shape_close_both_directions_accepted(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace(
+        "    action_class_shape:\n"
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
+        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n',
+        "    action_class_shape:\n"
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
+        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n'
+        '      CLOSE:\n        LONG: {side: "SELL", position_effect: "CLOSE"}\n'
+        '        SHORT: {side: "BUY", position_effect: "CLOSE"}\n',
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    loaded = load_order_construction_policy(path, scheme=SCHEME)
+    assert loaded.construction_rules.action_class_shape[
+        (ActionClass.CLOSE, "LONG")
+    ] == (ActionClassShape(side="SELL", position_effect="CLOSE"))
+    assert loaded.construction_rules.action_class_shape[
+        (ActionClass.CLOSE, "SHORT")
+    ] == (ActionClassShape(side="BUY", position_effect="CLOSE"))
+
+
+def test_load_order_construction_policy_construction_action_class_shape_one_sided_increase_refused(
+    tmp_path: Path,
+) -> None:
+    """PR #719 independent review mutation: a one-sided ``INCREASE`` entry (no per-class
+    allowlist table names it) must still refuse. Proves the within-class mirror check is
+    GENERIC over every ``ActionClass`` member other than ``NEW_LONG``/``NEW_SHORT`` — not a
+    table someone has to remember to extend, which is exactly the bug this reproduces: the
+    original ``_ACTION_CLASS_SHAPE_MIRROR_PAIRS`` table named only ``CLOSE`` alongside
+    ``NEW_LONG``/``NEW_SHORT``, so a one-sided ``INCREASE`` (or ``DECREASE``, ``REVERSAL``,
+    ``CANCEL``, ``AMEND``, ``REPLACE``, ``REDUCE_ONLY``, ``PROTECTIVE``, ``EMERGENCY``,
+    ``ROUTING_ALTERNATIVE``) loaded OK. ``INCREASE`` is not a repo enum member ``ocp_yaml()``'s
+    default declares, so this test adds it fresh rather than mutating an existing entry.
+    """
+    text = ocp_yaml().replace(
+        "    action_class_shape:\n"
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
+        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n',
+        "    action_class_shape:\n"
+        '      NEW_LONG:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n'
+        '      NEW_SHORT:\n        SHORT: {side: "SELL", position_effect: "OPEN"}\n'
+        '      INCREASE:\n        LONG: {side: "BUY", position_effect: "OPEN"}\n',
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(
+        VenuePolicyConfigError, match=r"INCREASE, LONG.*INCREASE, SHORT"
+    ):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+#: The default fixture's own single ``effect_dimensions`` entry (adopted proposal value,
+#: ``tests/venue/_documents.py``'s own ``ocp_yaml()`` docstring) — the stable substring the two
+#: tests below replace, independent of the surrounding comment block.
+_DEFAULT_EFFECT_DIMENSION_ENTRY = (
+    '      - dimension_id: "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"\n'
+    '        basis: "QUANTITY"\n'
+    '        unit: "CONTRACTS"\n'
+    '        scale: "1"\n'
+)
+
+
+def test_load_order_construction_policy_construction_effect_dimensions_unknown_basis_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml().replace(
+        _DEFAULT_EFFECT_DIMENSION_ENTRY,
+        '      - dimension_id: "d1"\n        basis: "NOPE"\n'
+        '        unit: "KRW"\n        scale: "1"\n',
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="EffectBasis"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_construction_effect_dimensions_well_formed(
+    tmp_path: Path,
+) -> None:
+    """A second, differently-shaped ``effect_dimensions`` entry parses generically — the
+    default fixture's own adopted-proposal entry (asserted in the happy-path test) already
+    covers the QUANTITY basis; this proves NOTIONAL round-trips too, independent of whether the
+    document declares it (the real deploy file does not — proposal §3)."""
+    text = ocp_yaml().replace(
+        _DEFAULT_EFFECT_DIMENSION_ENTRY,
+        '      - dimension_id: "notional-test"\n        basis: "NOTIONAL"\n'
+        '        unit: "KRW"\n        scale: "1"\n',
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    loaded = load_order_construction_policy(path, scheme=SCHEME)
+    assert loaded.construction_rules.effect_dimensions == (
+        EffectDimensionSpec(
+            dimension_id="notional-test",
+            basis=EffectBasis.NOTIONAL,
+            unit="KRW",
+            scale="1",
+        ),
+    )
+
+
+def test_load_order_construction_policy_scope_order_types_empty_refused(
+    tmp_path: Path,
+) -> None:
+    """``order_types`` joined the OCP single-live-scope singleton set in the (a′) wave — the
+    ``ORDER_TYPE`` authorized axis is derived from it, so it needs exactly one value like
+    ``environments``/``accounts`` already do."""
+    text = ocp_yaml(order_types="[]")
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="EXACTLY one"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_scope_order_types_multiple_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml(order_types='["LIMIT", "MARKET"]')
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="EXACTLY one"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_scope_order_types_named_tbd_refused(
+    tmp_path: Path,
+) -> None:
+    text = ocp_yaml(order_types='["TBD"]')
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="named-TBD"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_real_paper_ocp_carries_the_new_generation(tmp_path: Path) -> None:
+    """Pins the (a′) wave's generation bump on the shipped file itself (mirrors
+    ``tests/compose/test_deploy_policies.py``'s own "real policy files" pins). Generation 3:
+    effect_dimensions proposal (2026-09-16), on top of generation 2's sizing proposal.
+    """
+    raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
+    assert raw["policy_generation"] == 3
+    assert raw["_model_view"]["policy_generation"] == 3
+    assert raw["_runtime"]["construction"]["sizing"]["admitted_quantity_bases"] == [
+        "TBD"
+    ]
+
+
+def test_real_paper_ocp_effect_dimensions_matches_the_adopted_proposal(
+    tmp_path: Path,
+) -> None:
+    """Pins the effect_dimensions proposal's adopted table on the shipped file: single
+    dimension, all four fields, no notional dimension (proposal §3 — rejected, no approved
+    mark source)."""
+    raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
+    dims = raw["_runtime"]["construction"]["effect_dimensions"]
+    assert dims == [
+        {
+            "dimension_id": "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL",
+            "basis": "QUANTITY",
+            "unit": "CONTRACTS",
+            "scale": "1",
+        }
+    ]
+
+
+def test_real_paper_ocp_effect_dimension_id_matches_the_real_arp_capacity_lookup_spelling(
+    tmp_path: Path,
+) -> None:
+    """The strongest form of the proposal §2.1 measurement: reads BOTH shipped files and
+    asserts the OCP's declared ``dimension_id`` equals the exact composed-id spelling the ARP's
+    own ``_runtime.dimension_ids`` mapping carries — the same key
+    ``tos_runtime/riskstate/service.py:145-151`` builds the RCL capacity vector from. A future
+    edit that drifts either file's spelling apart fails HERE, not only downstream at a capacity
+    lookup that silently finds nothing (the exact phantom the withdrawn fixture-injected values
+    already were)."""
+    ocp_raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
+    arp_raw = yaml.safe_load(_REAL_ARP_PATH.read_text(encoding="utf-8"))
+    ocp_dimension_id = ocp_raw["_runtime"]["construction"]["effect_dimensions"][0][
+        "dimension_id"
+    ]
+    arp_dimension_ids = arp_raw["_runtime"]["dimension_ids"]
+    assert ocp_dimension_id in arp_dimension_ids
+    # The unprefixed governed_dimensions spelling is a DIFFERENT id — proposal §2.1's own
+    # warning that the two ARP spellings must not be confused.
+    assert ocp_dimension_id not in arp_raw["_model_view"]["governed_dimensions"]
+
+
+def test_real_paper_ocp_refuses_on_admitted_quantity_bases_tbd_even_when_scope_is_filled(
+    tmp_path: Path,
+) -> None:
+    """The shipped ``config/tos_runtime/paper/order_construction_policy.yaml`` pins its own
+    intentional not-yet-bootable state (OCP sizing proposal §4 ②): even with the
+    scope.accounts/scope.instruments operator-fill gate satisfied, the document still refuses
+    to load — now for admitted_quantity_bases, not merely for the scope gate this file already
+    pinned before the (a′) wave."""
+    raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
+    assert raw["scope"]["accounts"] == ["TBD"]
+    assert raw["scope"]["instruments"] == ["TBD"]
+    raw["scope"]["accounts"] = ["acct-x"]
+    raw["scope"]["instruments"] = ["inst-x"]
+    text = yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
+    path = tmp_path / "order_construction_policy.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(VenuePolicyConfigError, match="admitted_quantity_bases"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_real_paper_ocp_refuses_on_direction_tbd_even_when_scope_and_bases_are_filled(
+    tmp_path: Path,
+) -> None:
+    """A third layer of the same operator-fill gate chain (review round 2026-09-16, PR #719):
+    after scope AND admitted_quantity_bases are filled, the shipped instance still refuses —
+    now on ``_runtime.construction.axes``' ``DIRECTION`` entry, which no operator has yet bound
+    this static, proposal-path-less composition to one trading direction."""
+    raw = yaml.safe_load(_REAL_OCP_PATH.read_text(encoding="utf-8"))
+    raw["scope"]["accounts"] = ["acct-x"]
+    raw["scope"]["instruments"] = ["inst-x"]
+    raw["_runtime"]["construction"]["sizing"]["admitted_quantity_bases"] = ["RISK"]
+    direction_entries = [
+        entry
+        for entry in raw["_runtime"]["construction"]["axes"]
+        if entry["axis"] == "DIRECTION"
+    ]
+    assert len(direction_entries) == 1
+    assert direction_entries[0]["value"] == "TBD"
+    text = yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
+    path = tmp_path / "order_construction_policy.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(VenuePolicyConfigError, match="DIRECTION.*TBD"):
         load_order_construction_policy(path, scheme=SCHEME)

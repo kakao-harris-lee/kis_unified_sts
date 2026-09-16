@@ -1239,3 +1239,61 @@ def test_the_refusal_guard_detector_rejects_an_unguarded_call(tmp_path: Path) ->
         stmt.lineno for stmt in function_node.body if _is_refusal_guard(stmt)
     ]
     assert guard_linenos == []
+
+
+# -- (a′) wave lane D: the two-copy blocker list must not drift ---------------
+
+
+def _cli_blocker_resolution_labels() -> dict[str, bool]:
+    """Extract cli.py's own canonical blocker list — ``(a′)``/``(b′)``/``(c)``, each on its
+    own line at column 0 (module docstring's own formatting) — mapping label -> whether that
+    line marks it ``**RESOLVED``."""
+    import re
+
+    source = Path(cli.__file__).read_text(encoding="utf-8")
+    return {
+        m.group(1): m.group(2) is not None
+        for m in re.finditer(r"^\(([ab]′|c)\)\s+\*\*(RESOLVED)?", source, re.MULTILINE)
+    }
+
+
+def _plan_section_7_resolution_labels() -> dict[str, bool]:
+    """Same extraction over ``docs/plans/2026-09-16-tos-aprime-envelope-order-shape-plan.md``
+    §7 — the "other copy" ``cli.py:62`` names by name. Any ``- (label)`` bullet counts as a
+    real entry; only one also carrying ``**RESOLVED`` counts as resolved."""
+    import re
+
+    plan_path = (
+        Path(__file__).resolve().parents[4]
+        / "docs"
+        / "plans"
+        / "2026-09-16-tos-aprime-envelope-order-shape-plan.md"
+    )
+    section_7 = plan_path.read_text(encoding="utf-8").split("## 7. 착지 기록", 1)[1]
+    labels: dict[str, bool] = {}
+    for m in re.finditer(r"^-\s*\(([ab]′|c)\)", section_7, re.MULTILINE):
+        labels.setdefault(m.group(1), False)
+    for m in re.finditer(r"\(([ab]′|c)\)\s+\*\*RESOLVED", section_7):
+        labels[m.group(1)] = True
+    return labels
+
+
+def test_run_blocker_list_labels_match_between_cli_and_plan_section_7() -> None:
+    """``cli.py:62`` says so itself: "§7 of the plan document is the other copy of this same
+    list — keep both in sync." Hand-maintained duplicates drift silently — this repo has hit
+    that class five times in the (a′) wave alone (plan §4.3) — so this pins the one fact that
+    actually matters: which labels ((a′)/(b′)/(c)) each copy marks RESOLVED must agree. It does
+    not compare prose (the two documents are different languages/audiences on purpose), only
+    the resolution status per label."""
+    cli_labels = _cli_blocker_resolution_labels()
+    plan_labels = _plan_section_7_resolution_labels()
+    assert (
+        cli_labels
+    ), "regex matched nothing in cli.py — the list's format changed, fix the regex"
+    assert (
+        plan_labels
+    ), "regex matched nothing in plan §7 — the list's format changed, fix the regex"
+    assert cli_labels == plan_labels, (
+        f"cli.py blocker list {cli_labels!r} disagrees with plan §7 {plan_labels!r} — the two "
+        "copies have drifted; update whichever one is stale"
+    )

@@ -35,6 +35,7 @@ from pathlib import Path
 import pytest
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.egressgw import EffectBasis, EffectDimensionSpec
 from tos.engine.vocabulary import CommitmentStep, StageOutcome
 from tos.venue import OrderAdmissibilityResult, OrderShapeFields
 from tos.venue.predicates import order_shape_admissible
@@ -72,15 +73,51 @@ _ADOPTED_ADMITTING_PHASE = "CONTINUOUS"
 _ADOPTED_OCP_VERSION = "1.0.0"
 
 
+#: The (a′) wave's OCP fixture-fill for ``_runtime.construction.sizing.admitted_quantity_bases``
+#: -- the SAME token the OCP sizing values proposal (§3) names as "the basis the fixtures
+#: already use" and ``tos_runtime/tests/venue/_documents.py``'s own ``ocp_yaml()`` default uses.
+#: Not a real strategy-file value (the shipped deploy file stays ``["TBD"]`` -- see
+#: ``test_real_paper_ocp_refuses_on_admitted_quantity_bases_tbd_even_when_scope_is_filled`` in
+#: ``tests/venue/test_config.py``); this is only what THIS test's "filled" copy uses to prove the
+#: rest of the document boots, the same role ``account``/``instrument`` already play here.
+_OCP_FIXTURE_QUANTITY_BASIS = "RISK"
+
+#: The (a′) wave's OCP fixture-fill for ``_runtime.construction.axes``' ``DIRECTION`` entry
+#: (review round 2026-09-16, PR #719 -- the shipped file left it ``"TBD"``: no operator decision
+#: has bound this static, proposal-path-less composition to one trading direction yet). Not a
+#: real strategy-file value (the shipped deploy file stays ``"TBD"`` -- see
+#: ``test_real_paper_ocp_refuses_on_direction_tbd_even_when_scope_and_bases_are_filled`` in
+#: ``tests/venue/test_config.py``); fixture data only, the same role
+#: ``_OCP_FIXTURE_QUANTITY_BASIS`` already plays here.
+_OCP_FIXTURE_DIRECTION = "LONG"
+
+
 def _filled(path: Path, *, environment: str, account: str, instrument: str) -> dict:
-    """The real document with ONLY the three deployment coordinates filled --
-    exactly what the operator fills by hand before ``print-policy-digests``."""
+    """The real document with ONLY the operator-fill coordinates filled -- exactly what the
+    operator fills by hand before ``print-policy-digests``. For the Order Construction Policy
+    this now ALSO fills ``_runtime.construction.sizing.admitted_quantity_bases`` and
+    ``_runtime.construction.axes``' ``DIRECTION`` entry (the (a′) wave's OCP loader changes,
+    ``tos_runtime/venue/_order_construction_policy_loader.py``): both leaves joined the
+    operator-fill gate scope.accounts/scope.instruments were already in, so this helper --
+    whose whole job is "fill every operator-fill leaf, then prove the rest boots" -- fills them
+    too, the same way and for the same reason."""
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert raw["scope"]["accounts"] == ["TBD"]
     assert raw["scope"]["instruments"] == ["TBD"]
     raw["scope"]["environments"] = [environment]
     raw["scope"]["accounts"] = [account]
     raw["scope"]["instruments"] = [instrument]
+    construction = raw.get("_runtime", {}).get("construction")
+    if construction is not None:
+        sizing = construction["sizing"]
+        assert sizing["admitted_quantity_bases"] == ["TBD"]
+        sizing["admitted_quantity_bases"] = [_OCP_FIXTURE_QUANTITY_BASIS]
+        direction_entries = [
+            entry for entry in construction["axes"] if entry["axis"] == "DIRECTION"
+        ]
+        assert len(direction_entries) == 1
+        assert direction_entries[0]["value"] == "TBD"
+        direction_entries[0]["value"] = _OCP_FIXTURE_DIRECTION
     return raw
 
 
@@ -196,9 +233,23 @@ def test_filled_real_policies_carry_exactly_the_adopted_values(tmp_path: Path) -
     ocp_path.write_text(yaml.safe_dump(ocp_raw, sort_keys=False, allow_unicode=True))
     ocp = load_order_construction_policy(ocp_path, scheme=_SCHEME)
     assert ocp.policy.policy_version == _ADOPTED_OCP_VERSION
-    assert ocp.policy.policy_generation == 1
+    # policy_generation 3 -- generation 2 was the (a′) wave's _runtime.construction block
+    # ((a′) plan §2 decision 1: a new generation, not a field bolted onto generation 1);
+    # generation 3 is the effect_dimensions proposal (2026-09-16), same discipline.
+    assert ocp.policy.policy_generation == 3
     assert ocp.construction_generation == 1
     assert ocp.wire_codec_kind is None  # synthetic paper default
+    assert ocp.construction_rules.effect_dimensions == (
+        EffectDimensionSpec(
+            dimension_id="INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL",
+            basis=EffectBasis.QUANTITY,
+            unit="CONTRACTS",
+            scale="1",
+        ),
+    )
+    assert ocp.construction_rules.sizing_bound.admitted_quantity_bases == frozenset(
+        {_OCP_FIXTURE_QUANTITY_BASIS}
+    )
 
 
 def test_real_policies_boot_the_compose_root_and_the_attempt_denies_fail_closed(
