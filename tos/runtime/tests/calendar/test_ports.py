@@ -157,6 +157,8 @@ def test_trusted_reference_against_the_real_time_service() -> None:
         min_time_independent_reference_count=1,
         max_clock_domain_conversion_uncertainty_ms=50,
         max_send_result_wait_ms=5000,
+        max_critical_input_consumer_receipt_age_ms=1000,
+        max_time_source_sequence_gap_ms=50,
         tz_db_version="2026a",
         trading_calendar_version="cal-1",
         verification_profile_version="vp-0",

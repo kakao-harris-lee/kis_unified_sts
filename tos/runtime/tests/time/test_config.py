@@ -22,6 +22,8 @@ _FULLY_VALUED: dict[str, object] = {
     "MIN_time_independent_reference_count": 1,
     "MAX_clock_domain_conversion_uncertainty_ms": 50,
     "MAX_send_result_wait_ms": 5000,
+    "MAX_critical_input_consumer_receipt_age_ms": 1000,
+    "MAX_time_source_sequence_gap_ms": 50,
     "tz_db_version": "2026a",
     "trading_calendar_version": "cal-1",
     "verification_profile_version": "vp-0",
