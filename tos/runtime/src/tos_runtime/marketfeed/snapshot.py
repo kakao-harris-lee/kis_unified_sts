@@ -18,19 +18,48 @@ observation... there is no derivation to be unreproducible about"), which is exa
 direct observation has, so this module constructs no :class:`~tos.capsule.TransformationLineage`
 node at all.
 
-**The ``Observation.mapping`` "primary field" reading (deviation, reported).** ``tos.capsule
-.observation.Mapping`` (``tos/src/tos/capsule/observation.py``) carries ONE
-``unit``/``scale``/``multiplier``/``sign`` slot per :class:`~tos.capsule.Observation`, but the CIP
-declares those four per **field_key** and one observation's payload may carry several
-policy-declared keys at once (``tos/tests/marketfeed/_marketfeed_fixtures.py``'s ``one_bar()``
-bundles ``close`` + ``session`` under one raw event id). There is no kernel slot to hold more than
-one field's mapping. This module resolves the tension by using the **first policy-declared field
-(in the policy's own declaration order) actually present in the observation's payload** as the
-observation's ``mapping`` source (:func:`_primary_field_spec`) — a deterministic, structurally
-derived choice, not a self-reported one, but it is a real interpretation call the plan text did not
-spell out for the multi-field case. ``FieldEvaluation`` — the artifact that actually gates
-admission per :func:`tos.marketfeed.value.value_field_state` — is unaffected: every declared field
-gets its own derived evaluation regardless of which one is "primary" for ``mapping``.
+**Correction 1 (team-lead review of the initial cut) — ``Observation.field_state`` must not
+aggregate per-field verdicts.** The first cut set ``Observation.field_state = worst(over every
+declared field's FieldEvaluation)``. That double-counts: ``tos/src/tos/marketfeed/value.py:216-230``
+(``value_field_state``) already folds the snapshot's own ``field_evaluations`` in *per matching
+field_ref*, and separately folds ``observation.field_state`` in for **every** field key regardless
+of which one it was "about". A per-field verdict placed on the observation therefore counted twice
+against its own key and once, wrongly, against every other key. Reproduced against the real kernel
+gate: policy declares ``close`` + ``session``; payload carries only a fresh ``close``. With the
+aggregating cut, ``observation.field_state`` came out ``UNKNOWN`` (because ``session`` was absent),
+which then dragged ``close`` down too — ``publish_context_value_view`` returned
+``EXPLICIT_EMPTY`` with ``close`` itself rejected ``FIELD_STATE_NOT_VALID``, even though ``close``
+was individually fresh and valid. Any deployment whose policy declares more keys than a given
+payload happens to carry would silently publish an empty value surface. Fixed:
+:func:`_derive_observation_state` computes ``field_state``/``admission.result`` from
+**observation-level** facts only — is the record well-formed (instrument concrete, payload
+non-empty) — never from per-field presence or freshness; those stay exactly where the kernel folds
+them, in ``field_evaluations``. (``as_of_ms`` is always concrete — ``RawObservation.as_of_ms: int``,
+not ``int | None`` — and the payload digest is always computable by the time this function runs,
+since an un-computable preimage would already have raised at :class:`~tos.marketfeed
+.RawPayloadPreimage` construction, so neither needs an explicit re-check here.) Declared-but-absent
+keys still get their own ``FieldEvaluation(state=UNKNOWN)`` (see :func:`_derive_field_state`) — a
+deliberate decision, not a leftover: with the aggregation removed, an absent key's ``UNKNOWN`` now
+affects only that key's own gate, which is informative (a future evidence row can see *why* that
+one field was dropped) and no longer contaminates the record-level verdict.
+
+**Correction 2 (team-lead review) — ``Observation.mapping``'s unit/scale/multiplier/sign: filled
+only when unambiguous, never "first field wins".** The first cut's ``_primary_field_spec`` picked
+one policy-declared field's unit/scale/multiplier/sign to represent the whole observation even when
+several *different* declared fields, with *different* values for those slots, were present in the
+same payload (this module's own fixture: ``close`` unit ``KRW`` vs. ``session`` unit ``token``) —
+a false statement written into a covered, digest-bound artifact. It is not inert either:
+``tos/src/tos/capsule/predicates.py:212-236`` compares exactly these four ``mapping`` fields
+against an injected expectation, and ``observed != expected`` is folded into
+:func:`~tos.capsule.predicates.admitted_field_state` as ``REJECTED`` -> ``INVALID`` — the
+strongest, *proven-bad* verdict the lattice has — for a fact this module invented, not observed.
+Fixed: :func:`_mapping_slot_values` fills each of the four slots **independently**, and only when
+every policy-declared field actually present in this payload agrees on that slot's value (a single
+present field trivially agrees with itself); otherwise the slot is left ``None``. A field's
+``unit`` may be ambiguous while its ``sign`` is shared, so this is decided per slot, not
+all-or-nothing. ``None`` degrades correctly at the predicate above — ``observed is None`` is
+folded as *uncertain* (``UNCERTAIN`` -> ``UNKNOWN``), never a mismatch — which is the "absence is
+restrictive, never permissive" discipline this codebase applies everywhere else.
 
 Firewall (R1, runtime scope): stdlib + ``tos.*`` + ``tos_runtime.marketfeed.ports`` only — no
 ``shared.*``, no network, no clock (the caller supplies ``now_ms``; this module never reads one).
@@ -50,7 +79,6 @@ from tos.capsule import (
     FieldState,
     Observation,
     PolicyRef,
-    worst,
 )
 from tos.capsule.observation import (
     Admission,
@@ -102,16 +130,25 @@ class IssuedSnapshot:
     field_reports: tuple[FieldEvaluationReport, ...]
 
 
-def _primary_field_spec(
+_MAPPING_SLOTS: tuple[str, ...] = ("unit", "scale", "multiplier", "sign")
+
+
+def _mapping_slot_values(
     policy: LoadedCriticalInputPolicy, payload: RawPayloadPreimage
-) -> CriticalInputFieldPolicy | None:
-    """The first policy-declared field (declaration order) actually present in ``payload`` — see
-    module docstring "primary field" note. ``None`` when the payload carries no declared field.
-    """
-    for spec in policy.fields:
-        if payload.lookup(spec.field_key) is not None:
-            return spec
-    return None
+) -> dict[str, str | None]:
+    """Fill each of ``Observation.mapping``'s unit/scale/multiplier/sign slots only when
+    unambiguous (module docstring "Correction 2"): every policy-declared field actually present
+    in ``payload`` must agree on that slot's value, or the slot is left ``None``. Decided
+    independently per slot — two present fields may disagree on ``unit`` while agreeing on
+    ``sign``."""
+    present_specs = [
+        spec for spec in policy.fields if payload.lookup(spec.field_key) is not None
+    ]
+    slots: dict[str, str | None] = {}
+    for slot in _MAPPING_SLOTS:
+        values = {getattr(spec, slot) for spec in present_specs}
+        slots[slot] = values.pop() if len(values) == 1 else None
+    return slots
 
 
 def _derive_field_state(
@@ -139,6 +176,18 @@ def _derive_field_state(
         # would refuse at publication is not VALID here either.
         return FieldState.UNKNOWN, "unprojectable"
     return FieldState.VALID, None
+
+
+def _derive_observation_state(
+    observation: RawObservation,
+) -> tuple[FieldState, AdmissionResult]:
+    """Record-level well-formedness only (module docstring "Correction 1") — instrument
+    concrete, payload non-empty. Never reads per-field presence or freshness; those stay in
+    ``field_evaluations``, the slot the kernel folds per key (``value.py:216-230``)."""
+    well_formed = bool(observation.instrument.strip()) and bool(observation.fields)
+    if well_formed:
+        return FieldState.VALID, AdmissionResult.ADMITTED
+    return FieldState.UNKNOWN, AdmissionResult.REJECTED
 
 
 class SnapshotIssuer:
@@ -189,17 +238,9 @@ class SnapshotIssuer:
             field_reports.append(
                 FieldEvaluationReport(field_key=field_key, state=state, reason=reason)
             )
-        aggregate_field_state = worst(
-            evaluation.state for evaluation in field_evaluations
-        )
+        record_field_state, admission_result = _derive_observation_state(observation)
+        mapping_slots = _mapping_slot_values(self._policy, payload)
 
-        admission_result = (
-            AdmissionResult.ADMITTED
-            if observation.instrument.strip() and observation.fields
-            else AdmissionResult.REJECTED
-        )
-
-        primary = _primary_field_spec(self._policy, payload)
         observation_record = Observation(
             source=SourceIdentity(provider=observation.source_id),
             raw=RawRef(
@@ -211,13 +252,13 @@ class SnapshotIssuer:
             ),
             mapping=ObservationMapping(
                 instrument=observation.instrument,
-                unit=primary.unit if primary is not None else None,
-                scale=primary.scale if primary is not None else None,
-                multiplier=primary.multiplier if primary is not None else None,
-                sign=primary.sign if primary is not None else None,
+                unit=mapping_slots["unit"],
+                scale=mapping_slots["scale"],
+                multiplier=mapping_slots["multiplier"],
+                sign=mapping_slots["sign"],
             ),
             admission=Admission(result=admission_result),
-            field_state=aggregate_field_state,
+            field_state=record_field_state,
         )
 
         snapshot = CriticalInputSnapshot.issue(

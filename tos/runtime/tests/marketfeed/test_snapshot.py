@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tos.capsule import AdmissionResult, FieldState
+from tos.capsule import AdmissionResult, FieldState, PolicyRef
 from tos.marketfeed import (
     AdmittedValue,
     ValueRejectionReason,
@@ -29,6 +29,7 @@ from ._fixtures import (
     SCHEME,
     loaded_policy,
     observation,
+    policy_yaml,
 )
 
 
@@ -37,8 +38,31 @@ def _issuer(tmp_path: Path) -> SnapshotIssuer:
     return SnapshotIssuer(policy=policy, scheme=SCHEME, account=ACCOUNT)
 
 
+def _capsule_issuer(policy_ref: PolicyRef) -> CapsuleIssuer:
+    return CapsuleIssuer(
+        account=ACCOUNT,
+        instrument=INSTRUMENT,
+        environment=ENVIRONMENT,
+        decision_class=DECISION_CLASS,
+        direction="LONG",
+        quantity_basis="RISK",
+        unit="contract",
+        issuer_principal_id="iss-1",
+        critical_input_policy=policy_ref,
+        scheme=SCHEME,
+    )
+
+
+def _candidate(obs, issued, field_key: str) -> AdmittedValue:
+    return AdmittedValue(
+        field_key=field_key,
+        observation_ref=obs.raw_event_id,
+        preimage=issued.preimages[obs.raw_event_id],
+    )
+
+
 # ===========================================================================
-# End-to-end through the REAL kernel gate — the M1/M2/M6 proof surface
+# End-to-end through the REAL kernel gate — the M1/M6 proof surface
 # ===========================================================================
 
 
@@ -49,33 +73,14 @@ def test_fresh_observation_publishes_through_real_gate(tmp_path: Path) -> None:
     Guards mutation M1 (a stamped-constant-VALID FieldEvaluation would let a STALE field through
     the real kernel gate too, not just this module's own report) and M6 (a broken binding would
     never reach RESOLVED at all)."""
-    policy = loaded_policy(tmp_path)
-    snap_issuer = SnapshotIssuer(policy=policy, scheme=SCHEME, account=ACCOUNT)
+    issuer = _issuer(tmp_path)
     obs = observation()
-    issued = snap_issuer.issue(obs, now_ms=BAR_ONE_AS_OF + 500)
+    issued = issuer.issue(obs, now_ms=BAR_ONE_AS_OF + 500)
 
-    cap_issuer = CapsuleIssuer(
-        account=ACCOUNT,
-        instrument=INSTRUMENT,
-        environment=ENVIRONMENT,
-        decision_class=DECISION_CLASS,
-        direction="LONG",
-        quantity_basis="RISK",
-        unit="contract",
-        issuer_principal_id="iss-1",
-        critical_input_policy=issued.snapshot.critical_input_policy,
-        scheme=SCHEME,
+    capsule = _capsule_issuer(issued.snapshot.critical_input_policy).issue(
+        issued.snapshot
     )
-    capsule = cap_issuer.issue(issued.snapshot)
-
-    candidates = tuple(
-        AdmittedValue(
-            field_key=key,
-            observation_ref=obs.raw_event_id,
-            preimage=issued.preimages[obs.raw_event_id],
-        )
-        for key, _ in obs.fields
-    )
+    candidates = tuple(_candidate(obs, issued, key) for key, _ in obs.fields)
     resolution = publish_context_value_view(
         capsule=capsule, snapshot=issued.snapshot, candidates=candidates, scheme=SCHEME
     )
@@ -91,41 +96,115 @@ def test_stale_field_is_dropped_by_the_real_gate(tmp_path: Path) -> None:
     REAL ``publish_context_value_view`` gate, not merely reported UNKNOWN by this module. A
     mutation stamping ``FieldEvaluation(state=VALID)`` unconditionally would make this pass a
     value the policy's own freshness ceiling forbids."""
-    policy = loaded_policy(tmp_path)  # close: max_age_ms=5000
-    snap_issuer = SnapshotIssuer(policy=policy, scheme=SCHEME, account=ACCOUNT)
+    issuer = _issuer(tmp_path)  # close: max_age_ms=5000
     obs = observation()
     stale_now_ms = BAR_ONE_AS_OF + 10_000  # 10s > 5000ms ceiling
-    issued = snap_issuer.issue(obs, now_ms=stale_now_ms)
+    issued = issuer.issue(obs, now_ms=stale_now_ms)
 
-    cap_issuer = CapsuleIssuer(
-        account=ACCOUNT,
-        instrument=INSTRUMENT,
-        environment=ENVIRONMENT,
-        decision_class=DECISION_CLASS,
-        direction="LONG",
-        quantity_basis="RISK",
-        unit="contract",
-        issuer_principal_id="iss-1",
-        critical_input_policy=issued.snapshot.critical_input_policy,
-        scheme=SCHEME,
-    )
-    capsule = cap_issuer.issue(issued.snapshot)
-
-    candidate = AdmittedValue(
-        field_key="close",
-        observation_ref=obs.raw_event_id,
-        preimage=issued.preimages[obs.raw_event_id],
+    capsule = _capsule_issuer(issued.snapshot.critical_input_policy).issue(
+        issued.snapshot
     )
     resolution = publish_context_value_view(
         capsule=capsule,
         snapshot=issued.snapshot,
-        candidates=(candidate,),
+        candidates=(_candidate(obs, issued, "close"),),
         scheme=SCHEME,
     )
 
     assert resolution.disposition == ValueViewDisposition.EXPLICIT_EMPTY
     assert len(resolution.rejected) == 1
     assert resolution.rejected[0].reason == ValueRejectionReason.FIELD_STATE_NOT_VALID
+
+
+# ===========================================================================
+# Correction 1 (team-lead review) — Observation.field_state must not aggregate
+# per-field verdicts. Literal end-to-end reproduction + inverted positive proof.
+# ===========================================================================
+
+
+def test_fresh_field_publishes_when_a_sibling_declared_field_is_absent(
+    tmp_path: Path,
+) -> None:
+    """The literal Correction 1 repro, as a positive assertion: policy declares ``close`` +
+    ``session``; payload carries only a fresh ``close``. Before the fix, aggregating
+    ``Observation.field_state`` over every declared field dragged a fresh, individually-VALID
+    ``close`` down to ``EXPLICIT_EMPTY`` / ``FIELD_STATE_NOT_VALID`` just because ``session`` was
+    absent. ``close`` must now publish on its own."""
+    issuer = _issuer(tmp_path)
+    obs = observation(fields=(("close", CLOSE_BAR_ONE),))  # "session" absent
+    issued = issuer.issue(obs, now_ms=BAR_ONE_AS_OF + 100)
+
+    capsule = _capsule_issuer(issued.snapshot.critical_input_policy).issue(
+        issued.snapshot
+    )
+    resolution = publish_context_value_view(
+        capsule=capsule,
+        snapshot=issued.snapshot,
+        candidates=(_candidate(obs, issued, "close"),),
+        scheme=SCHEME,
+    )
+
+    assert resolution.disposition == ValueViewDisposition.RESOLVED
+    published = {v.field_key: v.value for v in resolution.values}
+    assert published == {"close": CLOSE_BAR_ONE}
+
+
+def test_fresh_field_publishes_when_a_sibling_declared_field_is_stale(
+    tmp_path: Path,
+) -> None:
+    """``close`` (max_age_ms=10000) and ``session`` (max_age_ms=2000) both present at age 6000ms:
+    ``close`` is individually fresh, ``session`` is individually stale. ``close`` must publish;
+    ``session`` alone must be dropped — a pre-fix aggregate would have dropped both."""
+    fields_block = (
+        "fields:\n"
+        "  - field_key: close\n"
+        "    unit: KRW\n"
+        "    scale: minor\n"
+        '    multiplier: "1"\n'
+        '    sign: "1"\n'
+        "    max_age_ms: 10000\n"
+        "  - field_key: session\n"
+        "    unit: token\n"
+        "    scale: none\n"
+        '    multiplier: "1"\n'
+        '    sign: "1"\n'
+        "    max_age_ms: 2000\n"
+    )
+    policy = loaded_policy(tmp_path, policy_yaml(fields_block=fields_block))
+    issuer = SnapshotIssuer(policy=policy, scheme=SCHEME, account=ACCOUNT)
+    obs = observation()  # close + session both present, as_of=BAR_ONE_AS_OF
+    issued = issuer.issue(obs, now_ms=BAR_ONE_AS_OF + 6_000)
+
+    capsule = _capsule_issuer(issued.snapshot.critical_input_policy).issue(
+        issued.snapshot
+    )
+    candidates = (_candidate(obs, issued, "close"), _candidate(obs, issued, "session"))
+    resolution = publish_context_value_view(
+        capsule=capsule, snapshot=issued.snapshot, candidates=candidates, scheme=SCHEME
+    )
+
+    published = {v.field_key: v.value for v in resolution.values}
+    assert published == {"close": CLOSE_BAR_ONE}
+    rejected = {r.field_key: r.reason for r in resolution.rejected}
+    assert rejected["session"] == ValueRejectionReason.FIELD_STATE_NOT_VALID
+
+
+def test_record_field_state_reflects_only_well_formedness(tmp_path: Path) -> None:
+    """Direct check of :func:`tos_runtime.marketfeed.snapshot._derive_observation_state`'s
+    contract via its observable effect: a well-formed record is VALID/ADMITTED regardless of
+    which declared fields the payload happens to carry."""
+    issuer = _issuer(tmp_path)
+    only_close = issuer.issue(
+        observation(fields=(("close", CLOSE_BAR_ONE),)), now_ms=BAR_ONE_AS_OF + 100
+    )
+    assert only_close.snapshot.observations[0].field_state == FieldState.VALID
+    assert (
+        only_close.snapshot.observations[0].admission.result == AdmissionResult.ADMITTED
+    )
+
+    both = issuer.issue(observation(raw_event_id="raw-2"), now_ms=BAR_ONE_AS_OF + 100)
+    assert both.snapshot.observations[0].field_state == FieldState.VALID
+    assert both.snapshot.observations[0].admission.result == AdmissionResult.ADMITTED
 
 
 # ===========================================================================
@@ -184,31 +263,10 @@ def test_undeclared_field_present_in_payload_drops_only_that_field(
     reported_keys = {r.field_key for r in issued.field_reports}
     assert reported_keys == {"close", "session"}  # "volume" is not policy-declared
 
-    cap_issuer = CapsuleIssuer(
-        account=ACCOUNT,
-        instrument=INSTRUMENT,
-        environment=ENVIRONMENT,
-        decision_class=DECISION_CLASS,
-        direction="LONG",
-        quantity_basis="RISK",
-        unit="contract",
-        issuer_principal_id="iss-1",
-        critical_input_policy=issued.snapshot.critical_input_policy,
-        scheme=SCHEME,
+    capsule = _capsule_issuer(issued.snapshot.critical_input_policy).issue(
+        issued.snapshot
     )
-    capsule = cap_issuer.issue(issued.snapshot)
-    candidates = (
-        AdmittedValue(
-            field_key="close",
-            observation_ref=obs.raw_event_id,
-            preimage=issued.preimages[obs.raw_event_id],
-        ),
-        AdmittedValue(
-            field_key="volume",
-            observation_ref=obs.raw_event_id,
-            preimage=issued.preimages[obs.raw_event_id],
-        ),
-    )
+    candidates = (_candidate(obs, issued, "close"), _candidate(obs, issued, "volume"))
     resolution = publish_context_value_view(
         capsule=capsule, snapshot=issued.snapshot, candidates=candidates, scheme=SCHEME
     )
@@ -267,6 +325,7 @@ def test_admission_rejected_for_blank_instrument(tmp_path: Path) -> None:
     obs = observation(instrument="")
     issued = issuer.issue(obs, now_ms=BAR_ONE_AS_OF + 100)
     assert issued.snapshot.observations[0].admission.result == AdmissionResult.REJECTED
+    assert issued.snapshot.observations[0].field_state == FieldState.UNKNOWN
 
 
 def test_admission_rejected_for_empty_payload(tmp_path: Path) -> None:
@@ -274,24 +333,88 @@ def test_admission_rejected_for_empty_payload(tmp_path: Path) -> None:
     obs = observation(fields=())
     issued = issuer.issue(obs, now_ms=BAR_ONE_AS_OF + 100)
     assert issued.snapshot.observations[0].admission.result == AdmissionResult.REJECTED
+    assert issued.snapshot.observations[0].field_state == FieldState.UNKNOWN
 
 
-def test_mapping_reflects_first_declared_field_present_in_payload(
+# ===========================================================================
+# Correction 2 (team-lead review) — mapping unit/scale/multiplier/sign: filled
+# only when unambiguous, never "first field wins".
+# ===========================================================================
+
+
+def test_mapping_slot_is_none_when_present_declared_fields_disagree(
     tmp_path: Path,
 ) -> None:
-    """The "primary field" mapping choice (module docstring deviation note): with both ``close``
-    and ``session`` present, ``close`` wins (it is declared first); with only ``session``
-    present, ``session``'s unit/scale/multiplier/sign are used instead."""
+    """Default fixture policy: ``close`` (unit=KRW, scale=minor) and ``session`` (unit=token,
+    scale=none) disagree on unit/scale but AGREE on multiplier="1"/sign="1" — decided per slot,
+    not all-or-nothing."""
     issuer = _issuer(tmp_path)
+    issued = issuer.issue(
+        observation(), now_ms=BAR_ONE_AS_OF + 100
+    )  # close + session present
 
-    both = issuer.issue(observation(), now_ms=BAR_ONE_AS_OF + 100)
-    assert both.snapshot.observations[0].mapping.unit == "KRW"
+    mapping = issued.snapshot.observations[0].mapping
+    assert mapping.instrument == INSTRUMENT
+    assert mapping.unit is None
+    assert mapping.scale is None
+    assert mapping.multiplier == "1"
+    assert mapping.sign == "1"
 
-    session_only = issuer.issue(
-        observation(raw_event_id="raw-2", fields=(("session", "REGULAR"),)),
-        now_ms=BAR_ONE_AS_OF + 100,
+
+def test_mapping_filled_when_only_one_declared_field_present(tmp_path: Path) -> None:
+    issuer = _issuer(tmp_path)
+    issued = issuer.issue(
+        observation(fields=(("close", CLOSE_BAR_ONE),)), now_ms=BAR_ONE_AS_OF + 100
     )
-    assert session_only.snapshot.observations[0].mapping.unit == "token"
+
+    mapping = issued.snapshot.observations[0].mapping
+    assert mapping.unit == "KRW"
+    assert mapping.scale == "minor"
+    assert mapping.multiplier == "1"
+    assert mapping.sign == "1"
+
+
+def test_mapping_filled_when_all_present_declared_fields_agree(tmp_path: Path) -> None:
+    fields_block = (
+        "fields:\n"
+        "  - field_key: bid\n"
+        "    unit: KRW\n"
+        "    scale: minor\n"
+        '    multiplier: "1"\n'
+        '    sign: "1"\n'
+        "    max_age_ms: 5000\n"
+        "  - field_key: ask\n"
+        "    unit: KRW\n"
+        "    scale: minor\n"
+        '    multiplier: "1"\n'
+        '    sign: "1"\n'
+        "    max_age_ms: 5000\n"
+    )
+    policy = loaded_policy(tmp_path, policy_yaml(fields_block=fields_block))
+    issuer = SnapshotIssuer(policy=policy, scheme=SCHEME, account=ACCOUNT)
+    issued = issuer.issue(
+        observation(fields=(("bid", 100), ("ask", 101))), now_ms=BAR_ONE_AS_OF + 100
+    )
+
+    mapping = issued.snapshot.observations[0].mapping
+    assert mapping.unit == "KRW"
+    assert mapping.scale == "minor"
+    assert mapping.multiplier == "1"
+    assert mapping.sign == "1"
+
+
+def test_mapping_all_none_when_no_declared_field_present(tmp_path: Path) -> None:
+    issuer = _issuer(tmp_path)
+    issued = issuer.issue(
+        observation(fields=(("volume", 100),)), now_ms=BAR_ONE_AS_OF + 100
+    )
+
+    mapping = issued.snapshot.observations[0].mapping
+    assert mapping.instrument == INSTRUMENT
+    assert mapping.unit is None
+    assert mapping.scale is None
+    assert mapping.multiplier is None
+    assert mapping.sign is None
 
 
 def test_receipt_trustworthy_time_anchor_is_none_when_collector_recorded_none(
