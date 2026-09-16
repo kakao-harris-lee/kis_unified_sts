@@ -36,58 +36,43 @@ Two layers, deliberately NOT sharing fixtures across suites (mirrors
   ``mismatched_release_config_dir`` idiom) — the ~400 other compose e2e tests requesting
   ``config_dir`` directly are completely unaffected.
 
-  **Honest finding, reported per team-lead disposition 2026-09-16, not papered over: step 7
-  (ACTION_FLOW_DECISION) reaches UNKNOWN, never GRANT, through the REAL
-  ``tos.afg.amplification_bounded`` predicate — a pre-existing, disclosed gap in lane a's own
-  ``flow_observation.py``, not something this wave's wiring can close.**
-  ``amplification_bounded`` (``tos/src/tos/afg/predicates.py:311-353``) iterates ALL 11
-  ``ActionAmplificationEnvelope`` axes unconditionally and returns ``False`` the instant ANY
-  bound OR its paired observed count is ``None``. Two of those axes —
-  ``max_duplicate_redelivery_expansion``/``duplicate_redelivery_expansion`` and
-  ``max_failover_reconnect_replay_expansion``/``failover_reconnect_replay_expansion`` — have a
-  bound the governor's own ``declares_every_bound()`` REQUIRES be concrete just to construct
-  (``tos/src/tos/afg/records.py:252-262``, ``all(... is not None for name in
-  type(self).model_fields)``), while their OBSERVED counterpart
-  (:class:`~tos_runtime.riskstate.flow_observation.FlowObservation`'s own
-  ``duplicates_rejected``/``replays`` fields) is documented by lane a as STRUCTURALLY always
-  ``None`` in this runtime: no durable per-root-cause dedup or replay counter exists anywhere
-  in ``tos_runtime`` (``SqliteEventInbox.enqueue``'s own ``InboxReceipt.duplicate`` is a
-  transient return value, never durably counted; the only durable replay-verdict evidence is a
-  ONE-PER-BOOT whole-log verdict, not a per-cause count — that module's own "Two fields this
-  fixed 3-argument reader cannot honestly source" section). The combination is airtight: a
-  required-concrete bound paired with a structurally-unobservable count means
-  ``amplification_bounded`` can NEVER return ``True`` for ANY attempt, in ANY deployment of
-  this runtime as it stands — regardless of how correctly :class:`RiskStateService` wires
-  everything else. Closing this gap needs a durable per-root-cause dedup/replay counter added
-  to the inbox's own schema — kernel-adjacent runtime work outside this wave's remit, reported
-  here as a concrete next-wave candidate rather than worked around with a literal.
+  **Resolved (2026-09-16), TOS action-flow observation completion wave
+  (``docs/plans/2026-09-16-tos-action-flow-observation-plan.md``): step 7
+  (ACTION_FLOW_DECISION) now reaches a real ``GRANT``, not ``UNKNOWN``.** The prior gap was
+  structural, not a wiring bug: ``amplification_bounded``
+  (``tos/src/tos/afg/predicates.py:311-353``) requires a concrete bound AND a concrete
+  observed count on every one of 11 axes; two of those —
+  ``duplicate_redelivery_expansion``/``failover_reconnect_replay_expansion`` — had no durable
+  per-root-cause read surface anywhere in ``tos_runtime``. This wave's lane a closed both with
+  ZERO schema change:
+  :func:`~tos_runtime.riskstate.flow_observation.count_duplicate_dispositions` counts kernel
+  ``RESULT_UNMATCHED`` rows whose ``result_disposition`` is ``DUPLICATE`` and whose
+  ``attempt_id`` traces to the root cause;
+  :func:`~tos_runtime.riskstate.flow_observation.count_recovery_markers` counts durable
+  restart-recovery marker rows keyed to the root event's own content-addressed identity — an
+  accepted, disclosed-under-count proxy
+  (:attr:`~tos_runtime.riskstate.flow_observation.FlowObservation.replays_definition`). See
+  :mod:`tos_runtime.riskstate.flow_observation`'s own module docstring for the full
+  derivation.
 
-  **Honest scope correction (review of PR #704, 2026-09-16, LOW):** this docstring previously
-  claimed this SUITE "independently confirms" the other four ``action_flow_decision``
-  witnesses (``scope_graph_complete``, ``cause_lineage_complete``, ``envelope_not_enlarged``,
-  ``atomic_economic_flow_coverage``) are satisfied. That was an overclaim — the ONLY committed
-  assertion below is ``afg_verdict.outcome.value == "UNKNOWN"``, and
-  :class:`~tos.afg.records.ActionFlowDecision` (kernel, ``tos.afg.predicates
-  .action_flow_decision``) carries no per-witness boolean in its issued, immutable shape (only
-  digests and the final ``result``), so no assertion in THIS file can check those four
-  witnesses individually without new kernel-adjacent instrumentation outside this wave's
-  remit. The PR review DID independently verify ``scope_graph_complete``/
-  ``cause_lineage_complete`` were genuinely satisfied on a real first attempt, via a temporary
-  out-of-suite probe (patching the governor call site directly) — that verification lives in
-  the review record, not in this committed suite, and is not re-asserted here. Reported
-  honestly rather than re-worded to imply committed test coverage that does not exist.
+  **Honest scope correction (unchanged from the review of PR #704, 2026-09-16, LOW — still
+  applies now that step 7 reaches ``GRANT``):** this docstring makes no claim that this suite
+  independently confirms the other four ``action_flow_decision`` witnesses
+  (``scope_graph_complete``, ``cause_lineage_complete``, ``envelope_not_enlarged``,
+  ``atomic_economic_flow_coverage``) beyond what ``amplification_bounded``'s own ``GRANT``
+  outcome already implies — :class:`~tos.afg.records.ActionFlowDecision` (kernel,
+  ``tos.afg.predicates.action_flow_decision``) carries no per-witness boolean in its issued,
+  immutable shape (only digests and the final ``result``), so no assertion in this file
+  inspects those four witnesses individually.
 
-  **A second, real fix landed alongside this finding, NOT reported as a gap:**
+  **A real fix landed alongside the prior wave's finding, still in effect:**
   :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe`'s own
-  ``this_attempt_lineage_found`` used to require a durable ``SEND_SEALED`` row already tracing
-  to the root event — a condition that can NEVER hold for a brand-new attempt being evaluated
-  at step 7, strictly BEFORE step 15 ever seals anything for it (measured directly against
-  this suite's own e2e run: ``lineage_attested`` was always ``False`` pre-fix). Fixed by
-  falling back to "the root event's own durable presence at a positively resolved inbox seq"
-  (via the SAME ``current_seq_reader`` this wave already wired) when NO sealed row exists yet
-  for this specific attempt — the SEND_SEALED-tracing check still stands, unchanged, for an
-  ALREADY-sealed attempt whose seal does NOT trace to its claimed root (a genuine
-  inconsistency). See :mod:`tos_runtime.riskstate.flow_observation`'s own module docstring.
+  ``this_attempt_lineage_found`` falls back to "the root event's own durable presence at a
+  positively resolved inbox seq" (via the SAME ``current_seq_reader`` this wave already wired)
+  when NO sealed row exists yet for a brand-new attempt being evaluated at step 7, strictly
+  BEFORE step 15 ever seals anything for it — the SEND_SEALED-tracing check still stands,
+  unchanged, for an ALREADY-sealed attempt whose seal does NOT trace to its claimed root (a
+  genuine inconsistency).
 """
 
 from __future__ import annotations
@@ -122,7 +107,11 @@ from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import KeyProvider, SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
-from tos_runtime.riskstate.flow_observation import FlowObservation, InboxFlowReader
+from tos_runtime.riskstate.flow_observation import (
+    REPLAYS_DEFINITION,
+    FlowObservation,
+    InboxFlowReader,
+)
 from tos_runtime.riskstate.policies import (
     load_action_flow_policy,
     load_aggregate_risk_policy,
@@ -222,15 +211,39 @@ def _seed_egress_result(
     kind: str,
     attempt_id: str,
     filled_quantity: str | None,
+    result_disposition: str | None = None,
 ) -> None:
-    """Mirrors ``tests/riskstate/conftest.py::seed_egress_result`` exactly."""
+    """Mirrors ``tests/riskstate/conftest.py::seed_egress_result`` exactly (including
+    ``result_disposition`` — ``tos/src/tos/engine/core.py:705-720``'s own ``RESULT_UNMATCHED``
+    payload shape)."""
     payload = {
         "attempt_id": attempt_id,
         "instrument_key": {"account": _ACCOUNT, "instrument": _INSTRUMENT},
         "egress_result_kind": "FULL_FILL" if filled_quantity is not None else "ACK",
         "filled_quantity": filled_quantity,
         "remaining_quantity": None,
+        "result_disposition": result_disposition,
     }
+    store.append(payload, kind=kind, record_class=kind)
+
+
+def _seed_recovery_marker(
+    store: SqliteEvidenceStore,
+    *,
+    kind: str,
+    event_id: str,
+    handling_started_evidence_seq: int | None = None,
+) -> None:
+    """Mirrors ``tests/riskstate/conftest.py::seed_recovery_marker`` exactly — the
+    ``{"event_id": ..., "handling_started_evidence_seq": ...}`` shape
+    ``EngineDriver._handle_interrupted_event`` durably appends
+    (``tos_runtime/engine/driver.py:517-535`` — ``record_halt``'s own payload for
+    ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND``, and the plain ``evidence_store.append`` for
+    ``DECISION_TICK_DROPPED_ON_RECOVERY``, both carry ``event_id``; only the former also
+    carries ``handling_started_evidence_seq`` — omitted (``None``) for the latter)."""
+    payload: dict[str, object] = {"event_id": event_id}
+    if handling_started_evidence_seq is not None:
+        payload["handling_started_evidence_seq"] = handling_started_evidence_seq
     store.append(payload, kind=kind, record_class=kind)
 
 
@@ -725,8 +738,25 @@ def _read_last_observed_absent_fields(evidence_store: SqliteEvidenceStore) -> li
     return absent
 
 
+def _read_last_risk_state_observed(evidence_store: SqliteEvidenceStore) -> dict:
+    """Reads the most recently appended ``RISK_STATE_OBSERVED`` row's FULL payload dict —
+    sibling of :func:`_read_last_observed_absent_fields` for tests that need more than just
+    ``absent_fields`` (e.g. ``flow.duplicates_rejected``/``flow.replays_definition``).
+    """
+    import json
+
+    row = evidence_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = 'RISK_STATE_OBSERVED' "
+        "ORDER BY seq DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None, "no RISK_STATE_OBSERVED row was recorded"
+    payload = json.loads(row[0])["payload"]
+    assert isinstance(payload, dict)
+    return payload
+
+
 class TestAbsentFieldsHonesty:
-    def test_isolated_flow_absence_reports_exactly_the_three_structural_gaps(
+    def test_isolated_flow_absence_reports_exactly_the_one_remaining_structural_gap(
         self,
         tmp_path: Path,
         evidence_store: SqliteEvidenceStore,
@@ -736,24 +766,28 @@ class TestAbsentFieldsHonesty:
         """HIGH-2, isolated form: calls the private ``_record_observation`` directly (module
         docstring's own "split out ... purely for that method's own 100-line size budget" —
         it is the SAME code path :meth:`RiskStateService.aggregate_inputs_for` calls) with a
-        hand-built :class:`FlowObservation` where ONLY ``duplicates_rejected``/``replays`` are
-        ``None`` and ``committed_vectors`` is empty, while ``root_event_seq``/
-        ``handling_started_monotonic``/``lineage_found`` are all concrete — isolating the
-        claim from step 6's OWN absent fields (``max_credible_command_effect``/
-        ``effect_digest``, present whenever construction/effect-envelope readers return
-        ``None``, exercised separately below). A mutation hardcoding ``absent_fields=[]``
-        (the review's own M5 finding) must fail this exact assertion."""
+        hand-built, REALISTIC :class:`FlowObservation` — ``duplicates_rejected``/``replays``
+        are concrete ``0``s (TOS action-flow observation completion wave, 2026-09-16:
+        :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe` never returns
+        ``None`` for either once a scan ran), ``root_event_seq``/``handling_started_monotonic``/
+        ``lineage_found`` are also concrete, and only ``committed_vectors`` is empty —
+        isolating the claim from step 6's OWN absent fields
+        (``max_credible_command_effect``/``effect_digest``, present whenever
+        construction/effect-envelope readers return ``None``, exercised separately below). A
+        mutation hardcoding ``absent_fields=[]`` (the review's own M5 finding) must fail this
+        exact assertion."""
         service = _service(tmp_path, evidence_store, inbox, rcl_log)
         flow_obs = FlowObservation(
             queue_depth=0,
             in_flight=0,
             attempts_for_cause=0,
-            duplicates_rejected=None,
-            replays=None,
+            duplicates_rejected=0,
+            replays=0,
             root_event_seq=3,
             handling_started_monotonic=123456,
             lineage_found=True,
             sources=("inbox:current_seq",),
+            replays_definition=REPLAYS_DEFINITION,
         )
         position_obs = PositionObservation(
             scope_key=f"{_ACCOUNT}::{_INSTRUMENT}",
@@ -773,11 +807,9 @@ class TestAbsentFieldsHonesty:
             extra_absent=(),
         )
         absent = _read_last_observed_absent_fields(evidence_store)
-        assert absent == sorted(
-            ["committed_flow_vectors", "duplicates_rejected", "replays"]
-        )
+        assert absent == ["committed_flow_vectors"]
 
-    def test_real_first_attempt_absent_fields_include_the_three_structural_gaps(
+    def test_real_first_attempt_absent_fields_include_only_the_one_remaining_gap(
         self,
         tmp_path: Path,
         evidence_store: SqliteEvidenceStore,
@@ -786,10 +818,10 @@ class TestAbsentFieldsHonesty:
     ) -> None:
         """HIGH-2, realistic form: drives the SAME real ``aggregate_inputs_for`` path a brand
         new first attempt takes (real inbox row, real ``EVENT_HANDLING_STARTED`` marker, real
-        ``current_seq_reader``) and asserts the three structurally-unobservable names
-        (``committed_flow_vectors``/``duplicates_rejected``/``replays``) are present while the
-        now-resolved flow names (``root_event_seq``/``handling_started_monotonic``/
-        ``lineage_found``) are NOT — documenting, honestly, that step 6's own construction-time
+        ``current_seq_reader``) and asserts the ONE remaining structurally-unobservable name
+        (``committed_flow_vectors``) is present while EVERY flow name this wave now observes
+        (``duplicates_rejected``/``replays``/``root_event_seq``/``handling_started_monotonic``/
+        ``lineage_found``) is NOT — documenting, honestly, that step 6's own construction-time
         absent fields (``max_credible_command_effect``/``effect_digest``, since this suite's
         ``_service`` fixes ``construction_stage_reader``/``effect_envelope_reader`` to
         ``lambda: None``) are ALSO present here, same as the isolated test above avoids by
@@ -822,9 +854,9 @@ class TestAbsentFieldsHonesty:
         assert inputs is not None
 
         absent = set(_read_last_observed_absent_fields(evidence_store))
-        assert {"committed_flow_vectors", "duplicates_rejected", "replays"}.issubset(
-            absent
-        )
+        assert "committed_flow_vectors" in absent
+        assert "duplicates_rejected" not in absent
+        assert "replays" not in absent
         assert "root_event_seq" not in absent
         assert "handling_started_monotonic" not in absent
         assert "lineage_found" not in absent
@@ -1186,15 +1218,19 @@ class TestComposeE2E:
         """Plan §5 실증 (1) — no explicit providers, the production
         :class:`~tos_runtime.riskstate.service.RiskStateService` supplies both steps 6/7's
         inputs. Step 6 (AGGREGATE_RISK_DECISION) reaches a real ``GRANT``/``ADMIT`` with no
-        hand-built literal cell anywhere in this test. Step 7 (ACTION_FLOW_DECISION) reaches
-        ``UNKNOWN`` — the module docstring's own honest ``amplification_bounded`` finding,
-        asserted here as the REAL outcome, never papered over. Both ``*_POLICY_BOUND`` rows
-        and exactly one ``RISK_STATE_OBSERVED`` row are recorded. Also asserts (re-review
-        residual of HIGH-4, 2026-09-16) that the REAL first attempt's own step-7 inputs carry
-        a non-``None`` ``observed_amplification.elapsed_monotonic`` — captured via a spy on
-        ``runtime.risk_state.action_flow_inputs_for`` (an instance-attribute override shadows
-        the bound method for the SAME object the compose thunks already close over, per
-        ``root.py``'s own ``risk_state_cell`` — never a second, separately-built service).
+        hand-built literal cell anywhere in this test. Step 7 (ACTION_FLOW_DECISION) ALSO
+        reaches a real ``GRANT``/``ADMIT`` (TOS action-flow observation completion wave,
+        2026-09-16 — this test previously asserted the honest ``amplification_bounded`` gap
+        this suite's own module docstring used to document; that gap is now closed, see the
+        module docstring's own "Resolved" section). Both ``*_POLICY_BOUND`` rows and exactly
+        one ``RISK_STATE_OBSERVED`` row are recorded, with no ``duplicates_rejected``/
+        ``replays`` absence (a brand-new, first-ever attempt still gets concrete ``0``s on
+        both axes — a completed scan finding nothing is a real fact, not a gap). Also asserts
+        (re-review residual of HIGH-4, 2026-09-16) that the REAL first attempt's own step-7
+        inputs carry a non-``None`` ``observed_amplification.elapsed_monotonic`` — captured via
+        a spy on ``runtime.risk_state.action_flow_inputs_for`` (an instance-attribute override
+        shadows the bound method for the SAME object the compose thunks already close over,
+        per ``root.py``'s own ``risk_state_cell`` — never a second, separately-built service).
         """
         fx.write_band_strategy_file(config_dir_with_risk_state)
         runtime = compose_paper_runtime(
@@ -1228,10 +1264,11 @@ class TestComposeE2E:
         assert are_verdict.native_verdict_value == "GRANT"
 
         afg_verdict = verdict_by_step["ACTION_FLOW_DECISION"]
-        assert afg_verdict.outcome.value == "UNKNOWN", (
-            "expected the honest amplification_bounded gap (module docstring) — got "
+        assert afg_verdict.outcome.value == "ADMIT", (
+            "expected step 7 GRANT (module docstring's own 'Resolved' section) — got "
             f"{afg_verdict.outcome.value}: {afg_verdict.reason}"
         )
+        assert afg_verdict.native_verdict_value == "GRANT"
 
         assert captured_action_flow_inputs, (
             "action_flow_inputs_for was never called with a non-None result — the spy "
@@ -1239,11 +1276,31 @@ class TestComposeE2E:
         )
         first_attempt_inputs = captured_action_flow_inputs[0]
         assert first_attempt_inputs.observed_amplification.elapsed_monotonic is not None
+        # M1 pin (plan §5): the two amplification axes this wave observes are concrete ``0``s
+        # for a brand-new first attempt, never ``None`` — reverting either to a literal
+        # ``None`` (module docstring's pre-fix state) collapses this to UNKNOWN, failing the
+        # ADMIT/GRANT assertions above.
+        assert (
+            first_attempt_inputs.observed_amplification.duplicate_redelivery_expansion
+            == 0
+        )
+        assert (
+            first_attempt_inputs.observed_amplification.failover_reconnect_replay_expansion
+            == 0
+        )
 
         counts = _evidence_kind_counts(runtime)
         assert counts.get("AGGREGATE_RISK_POLICY_BOUND") == 1
         assert counts.get("ACTION_FLOW_POLICY_BOUND") == 1
         assert counts.get("RISK_STATE_OBSERVED") == 1
+
+        observed_row = _read_last_risk_state_observed(runtime.evidence_store)
+        flow_row = observed_row["flow"]
+        assert flow_row["duplicates_rejected"] == 0
+        assert flow_row["replays"] == 0
+        assert flow_row["replays_definition"] == REPLAYS_DEFINITION
+        assert "duplicates_rejected" not in observed_row["absent_fields"]
+        assert "replays" not in observed_row["absent_fields"]
 
     def test_seeded_prior_fill_flips_aggregate_risk_decision_to_deny(
         self,
@@ -1289,13 +1346,202 @@ class TestComposeE2E:
         assert are_verdict.outcome.value == "DENY", are_verdict.reason
         assert are_verdict.native_verdict_value == "DENY"
 
+    def test_duplicate_dispositions_beyond_envelope_flip_action_flow_decision_to_unknown(
+        self,
+        config_dir_with_risk_state: Path,
+        data_dir: Path,
+        custody_root: Path,
+    ) -> None:
+        """Plan §5 실증 (2), CORRECTED against the real kernel composer (finding, reported —
+        the plan text says "DENY"; the kernel says otherwise, see below) — ``RESULT_UNMATCHED
+        {DUPLICATE}`` rows for an attempt sealed against THIS tick's own root event (traced
+        via ``SEND_SEALED`` lineage, the SAME set
+        :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader._scan_sealed_lineage`
+        builds), seeded BEYOND the fixture's own ``max_duplicate_redelivery_expansion`` (2,
+        ``tests/compose/conftest.py``), flip step 7 from ``GRANT`` to ``UNKNOWN`` — never
+        ``DENY`` — through the REAL ``tos.afg.predicates._decide_action_flow_result`` composer:
+        ``if amplification_ok is not True: return ActionFlowResult.UNKNOWN``
+        (``tos/src/tos/afg/predicates.py:584-585``) is evaluated BEFORE any of the composer's
+        two ``DENY`` branches (empty requested scope; ``envelope_ok is not True``) even run —
+        an unbounded/exceeded amplification axis is restrictive-UNKNOWN by kernel design
+        ("every unproven premise resolves to UNKNOWN... before any DENY/GRANT conclusion is
+        drawn", same module's own docstring), not a proven denial. No hand-built cell anywhere
+        in this test. A tiny sealed quantity (``"1"``) keeps step 6's own conservative-usage
+        check at ``GRANT`` (unlike the prior-fill test above, which deliberately exceeds it).
+
+        **Seeding mechanics**: ``EngineDriver.enqueue_and_run``'s own ``_stamp`` DISCARDS the
+        event's caller-supplied ``reference`` and re-stamps a fresh one from its own internal
+        counter on every admission (``driver.py:396-403``, "the caller-supplied reference is
+        discarded entirely") — so the REAL ``root_event_id`` this attempt's step 6/7 evaluate
+        against is only known at the moment
+        :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader.observe` is actually
+        invoked, never derivable in advance from the fixture's own ``event`` object. This test
+        wraps ``runtime.risk_state._flow_reader.observe`` to seed using the REAL
+        ``root_event_id`` it is called with, then delegates to the original implementation —
+        never a guessed or pre-computed identifier."""
+        fx.write_band_strategy_file(config_dir_with_risk_state)
+        runtime = compose_paper_runtime(
+            config_dir_with_risk_state,
+            data_dir,
+            custody_root,
+            "non-live-test",
+            construction=fx.construction_config(),
+            aggregate_risk_inputs_provider=None,
+            action_flow_inputs_provider=None,
+            wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
+        )
+        assert runtime.risk_state is not None
+        reader = runtime.risk_state._flow_reader
+        original_observe = reader.observe
+        seeded = {"done": False}
+
+        def _seeding_observe(
+            *, root_event_id, attempt_id, root_event_seq=None
+        ):  # type: ignore[no-untyped-def]
+            if not seeded["done"]:
+                seeded["done"] = True
+                _seed_send_sealed(
+                    runtime.evidence_store,
+                    attempt_id="dup-attempt-1",
+                    side="BUY",
+                    quantity="1",
+                    event_id=root_event_id,
+                )
+                # 3 DUPLICATE rows for the SAME attempt — exceeds
+                # max_duplicate_redelivery_expansion=2.
+                for _ in range(3):
+                    _seed_egress_result(
+                        runtime.evidence_store,
+                        kind="RESULT_UNMATCHED",
+                        attempt_id="dup-attempt-1",
+                        filled_quantity=None,
+                        result_disposition="DUPLICATE",
+                    )
+            return original_observe(
+                root_event_id=root_event_id,
+                attempt_id=attempt_id,
+                root_event_seq=root_event_seq,
+            )
+
+        reader.observe = _seeding_observe  # type: ignore[method-assign]
+
+        event = fx.crossing_event()
+        verdict_by_step = _drive_two_calls(runtime, custody_root, event)
+        assert seeded[
+            "done"
+        ], "InboxFlowReader.observe was never invoked — nothing seeded"
+        are_verdict = verdict_by_step["AGGREGATE_RISK_DECISION"]
+        assert are_verdict.outcome.value == "ADMIT", are_verdict.reason
+
+        afg_verdict = verdict_by_step["ACTION_FLOW_DECISION"]
+        assert afg_verdict.outcome.value == "UNKNOWN", afg_verdict.reason
+
+        observed_row = _read_last_risk_state_observed(runtime.evidence_store)
+        assert observed_row["flow"]["duplicates_rejected"] == 3
+
+    def test_recovery_markers_beyond_envelope_flip_action_flow_decision_to_unknown(
+        self,
+        config_dir_with_risk_state: Path,
+        data_dir: Path,
+        custody_root: Path,
+    ) -> None:
+        """Plan §5 실증 (3), CORRECTED against the real kernel composer (same finding as the
+        DUPLICATE test above) — restart-recovery marker rows keyed to THIS tick's own
+        content-addressed root event identity, seeded BEYOND the fixture's own
+        ``max_failover_reconnect_replay_expansion`` (2), flip step 7 from ``GRANT`` to
+        ``UNKNOWN`` — never ``DENY`` — for the SAME reason: ``amplification_ok is not True``
+        resolves to ``UNKNOWN`` before the composer's own ``DENY`` branches ever run
+        (``tos/src/tos/afg/predicates.py:584-585``).
+
+        **Seeding mechanics**: as in the DUPLICATE test above, ``EngineDriver.enqueue_and_run``
+        re-stamps a fresh reference on every admission, so the exact content-addressed
+        ``event_id`` this attempt's own ``EVENT_HANDLING_STARTED`` marker carries cannot be
+        derived in advance from the fixture's own ``event`` object — it is only knowable via
+        :meth:`~tos_runtime.riskstate.flow_observation.InboxFlowReader
+        ._resolve_root_content_event_id` at the moment ``observe`` actually runs (the SAME
+        method production code calls). This test wraps ``observe`` to resolve the REAL content
+        identity via that exact method, seed against it, then delegate to the original
+        implementation — never a guessed or pre-computed identifier."""
+        fx.write_band_strategy_file(config_dir_with_risk_state)
+        runtime = compose_paper_runtime(
+            config_dir_with_risk_state,
+            data_dir,
+            custody_root,
+            "non-live-test",
+            construction=fx.construction_config(),
+            aggregate_risk_inputs_provider=None,
+            action_flow_inputs_provider=None,
+            wall_clock=FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS),
+        )
+        assert runtime.risk_state is not None
+        reader = runtime.risk_state._flow_reader
+        original_observe = reader.observe
+        seeded = {"done": False}
+
+        def _seeding_observe(
+            *, root_event_id, attempt_id, root_event_seq=None
+        ):  # type: ignore[no-untyped-def]
+            if not seeded["done"]:
+                seeded["done"] = True
+                content_event_id = reader._resolve_root_content_event_id(root_event_seq)
+                assert content_event_id is not None, (
+                    "the root row's own content-addressed event_id could not be resolved — "
+                    "nothing to seed against"
+                )
+                # 2 markers of EACH recovery kind (4 total) for THIS tick's own
+                # content-addressed event — exceeds max_failover_reconnect_replay_expansion=2.
+                # Deliberately a MIX, not one kind repeated: dropping either
+                # `DECISION_TICK_DROPPED_ON_RECOVERY` or
+                # `HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND` from
+                # `_RECOVERY_MARKER_KINDS` would still leave 2 of the other kind — exactly
+                # AT the bound, no longer exceeding it — so this test goes RED under either
+                # single-kind-removed mutation (review HIGH, PR #707).
+                for _ in range(2):
+                    _seed_recovery_marker(
+                        runtime.evidence_store,
+                        kind="DECISION_TICK_DROPPED_ON_RECOVERY",
+                        event_id=content_event_id,
+                    )
+                for _ in range(2):
+                    _seed_recovery_marker(
+                        runtime.evidence_store,
+                        kind="HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND",
+                        event_id=content_event_id,
+                        handling_started_evidence_seq=root_event_seq,
+                    )
+            return original_observe(
+                root_event_id=root_event_id,
+                attempt_id=attempt_id,
+                root_event_seq=root_event_seq,
+            )
+
+        reader.observe = _seeding_observe  # type: ignore[method-assign]
+
+        event = fx.crossing_event()
+        verdict_by_step = _drive_two_calls(runtime, custody_root, event)
+        assert seeded[
+            "done"
+        ], "InboxFlowReader.observe was never invoked — nothing seeded"
+        are_verdict = verdict_by_step["AGGREGATE_RISK_DECISION"]
+        assert are_verdict.outcome.value == "ADMIT", are_verdict.reason
+
+        afg_verdict = verdict_by_step["ACTION_FLOW_DECISION"]
+        assert afg_verdict.outcome.value == "UNKNOWN", afg_verdict.reason
+
+        observed_row = _read_last_risk_state_observed(runtime.evidence_store)
+        assert observed_row["flow"]["replays"] == 4
+
     def test_new_short_mirrors_new_long_at_aggregate_risk_grant(
         self, tmp_path: Path
     ) -> None:
         """Plan §5 실증 (7) — the NEW_SHORT mirror (:mod:`tests.compose._symmetry_fixtures`,
         TOS Phase 5 W5 plan §2 decision 8) reaches the SAME step 6 ``GRANT``/``ADMIT`` as the
         NEW_LONG case, through the real ``EvidencePositionReader`` — position sign flips
-        (``SELL`` vs ``BUY``), usage MAGNITUDE (and therefore the decision) does not."""
+        (``SELL`` vs ``BUY``), usage MAGNITUDE (and therefore the decision) does not. Also
+        reaches the SAME step 7 ``GRANT``/``ADMIT`` (plan §2 decision 4, TOS action-flow
+        observation completion wave, 2026-09-16 — the mirror path exercises the SAME
+        :class:`~tos_runtime.riskstate.service.RiskStateService` observation code, so it must
+        reach the same outcome as the NEW_LONG case above)."""
         config_dir, data_dir, custody_root = _fresh_risk_state_dirs(tmp_path / "short")
         sfx.write_mirrored_strategy_file(config_dir)
         runtime = compose_paper_runtime(
@@ -1315,3 +1561,7 @@ class TestComposeE2E:
         are_verdict = verdict_by_step["AGGREGATE_RISK_DECISION"]
         assert are_verdict.outcome.value == "ADMIT", are_verdict.reason
         assert are_verdict.native_verdict_value == "GRANT"
+
+        afg_verdict = verdict_by_step["ACTION_FLOW_DECISION"]
+        assert afg_verdict.outcome.value == "ADMIT", afg_verdict.reason
+        assert afg_verdict.native_verdict_value == "GRANT"

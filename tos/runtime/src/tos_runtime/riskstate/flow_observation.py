@@ -11,21 +11,52 @@ causal-ordering coordinates this module needs for lineage: this is the ``event -
 attempt`` chain DR-0003 §2.3 names as an observation, read from the SAME evidence rows
 :mod:`tos_runtime.riskstate.position` reads for position, never a second invented mechanism.
 
-**Two fields this fixed 3-argument reader (``InboxFlowReader(inbox, evidence_store, rcl_log)``,
-plan §4.1) cannot honestly source, and why (deviation, reported).**
+**Two dedup layers exist in this runtime — only the SECOND is amplification (TOS action-flow
+observation completion wave, 2026-09-16; DR-0003 §2.3 "duplicate redelivery rejections,
+recovery replays" as observations, not declarations).**
 
-* ``duplicates_rejected`` — ``SqliteEventInbox.enqueue`` returns a typed
-  ``InboxReceipt.duplicate`` flag (``tos_runtime/engine/inbox.py:227-236``), but that flag is a
-  TRANSIENT return value at the moment of ONE enqueue call — it is never durably counted or
-  otherwise recorded anywhere this reader's three injected ports can see (measured: no
-  ``DUPLICATE``/dedup-count evidence kind exists in this runtime, confirmed by grep across
-  ``tos_runtime/engine/*.py`` and ``tos_runtime/compose/_engine_wiring.py``). Left ``None``
-  (never a fabricated ``0``).
-* ``replays`` — the only durable replay-verdict evidence kinds this runtime has
-  (``REPLAY_VERDICT_IDENTICAL``/``REPLAY_DIVERGED``, cited by
-  ``tos_runtime/recovery/inputs.py:85-86``) are ONE-PER-BOOT verdicts over the WHOLE log, not a
-  per-root-cause replay count — scoping a whole-log verdict to one ``root_event_id`` would be a
-  fabrication, not an observation. Left ``None``.
+* **Inbox admission dedup** (``SqliteEventInbox.enqueue``'s typed ``InboxReceipt.duplicate``
+  flag, ``tos_runtime/engine/inbox.py:227-236``) is a TRANSIENT return value at the moment of
+  ONE enqueue call, content-addressed on the whole event's bytes — no durable side table
+  records it anywhere (measured: no ``DUPLICATE``/dedup-count evidence kind exists in this
+  runtime, confirmed by grep across ``tos_runtime/engine/*.py`` and
+  ``tos_runtime/compose/_engine_wiring.py``). A refused duplicate admission creates no new
+  attempt, no new send, no new work of any kind — it contributes exactly zero amplification by
+  construction, so leaving it uncounted here is not a gap: there is nothing for
+  ``duplicate_redelivery_expansion`` to measure at this layer.
+* **Kernel result-signature dedup** is the layer that IS amplification-relevant:
+  ``ProvisionalReservationLedger._applied_result_signatures``
+  (``tos/src/tos/engine/state.py:333-346``, a per-scope 6-tuple signature set) classifies a
+  re-injected ``EGRESS_RESULT`` that repeats an already-applied signature as
+  ``ResultDisposition.DUPLICATE`` (``state.py:846-862``), durably recorded as a
+  ``RESULT_UNMATCHED`` evidence row carrying both ``result_disposition`` and ``attempt_id``
+  (``tos/src/tos/engine/core.py:705-720``). ``duplicates_rejected`` is
+  :func:`count_duplicate_dispositions` over the already-fetched ``RESULT_UNMATCHED`` payloads,
+  filtered to ``result_disposition == "DUPLICATE"`` and ``attempt_id`` in the cause's own
+  ``cause_attempts`` set (the SAME set :meth:`InboxFlowReader._scan_sealed_lineage` already
+  builds via ``SEND_SEALED`` lineage tracing). A completed scan matching none is a genuine
+  ``0``, never ``None`` — the scan ran and found none, which is a real fact, not a guess.
+
+**``replays`` — restart-recovery episode count (accepted proxy, under-count disclosed).**
+``EngineDriver._process_next``'s crash-window recovery (``tos_runtime/engine/driver.py:482-544``,
+``_handle_interrupted_event``) durably appends exactly one of two ``event_id``-keyed markers per
+interrupted row, right before that row is marked consumed:
+``DECISION_TICK_DROPPED_ON_RECOVERY`` (non-halt) or ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND``
+(halt). AFG's own vocabulary groups process-restart with failover/reconnect as the SAME
+amplification class (``tos/src/tos/afg/state.py:515-524``, ``non_revival_holds``'s parameter
+list), so :func:`count_recovery_markers` counts BOTH kinds whose ``event_id`` durably names
+this cause's own root event — resolved as the root row's own content-addressed identity, read
+back from its ``EVENT_HANDLING_STARTED`` write-ahead marker
+(:meth:`InboxFlowReader._resolve_root_content_event_id`), never the caller-authored
+``reference.event_id`` label the ``root_event_id`` parameter carries (module docstring's own
+"``StageRequest.reference.event_id`` is a caller-authored label" note above). **Disclosed
+under-count**: a SECOND restart of the SAME still-pending row does not append a second marker
+(the branch fires once, right before the row is marked consumed) — this is a lower bound on
+restart-recovery episodes attributable to this cause, not an exact replay count in every
+stricter sense DR-0003 might intend. Carried on every observation as
+:attr:`FlowObservation.replays_definition` (the module-level :data:`REPLAYS_DEFINITION`
+string) so a consumer of ``RISK_STATE_OBSERVED.flow.replays_definition`` never mistakes the
+proxy for an exact fact. A completed scan matching none is a genuine ``0``, never ``None``.
 
 **``root_event_seq``/``handling_started_monotonic`` need a canonicalization scheme this fixed
 constructor does not carry (deviation, reported).** ``SqliteEventInbox`` computes and stores
@@ -118,13 +149,31 @@ from tos_runtime.riskstate.policies import DeploymentFlowFacts
 __all__ = [
     "FlowObservation",
     "InboxFlowReader",
+    "REPLAYS_DEFINITION",
     "committed_flow_vectors",
+    "count_duplicate_dispositions",
+    "count_recovery_markers",
     "to_observed_amplification",
     "to_action_cause",
 ]
 
 _SEND_SEALED_KIND = "SEND_SEALED"
 _HANDLING_STARTED_KIND = "EVENT_HANDLING_STARTED"
+#: The two restart-recovery marker kinds ``EngineDriver._process_next`` appends
+#: (``tos_runtime/engine/driver.py:517-535``) — module docstring's own "replays" section.
+_RECOVERY_MARKER_KINDS = (
+    "DECISION_TICK_DROPPED_ON_RECOVERY",
+    "HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND",
+)
+
+#: Disclosed fixed definition for the ``replays`` axis (module docstring) — carried on every
+#: :class:`FlowObservation` as :attr:`FlowObservation.replays_definition` and disclosed on the
+#: ``RISK_STATE_OBSERVED`` evidence row (``riskstate/service.py``) so a consumer never mistakes
+#: this accepted proxy for an exact replay count.
+REPLAYS_DEFINITION = (
+    "recovery-marker-episodes:DECISION_TICK_DROPPED_ON_RECOVERY+"
+    "HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND"
+)
 
 
 @dataclass(frozen=True)
@@ -134,6 +183,10 @@ class FlowObservation:
     module docstring's own "deviation, reported" sections for exactly which fields that is and
     why. ``queries`` is deliberately NOT a field here — it is a structural constant computed by
     :func:`to_observed_amplification` directly (module docstring; plan §4.1's own exception).
+    ``duplicates_rejected``/``replays`` are, as of the TOS action-flow observation completion
+    wave (2026-09-16), always concrete ``int``s once :meth:`InboxFlowReader.observe` runs a
+    scan (module docstring) — never ``None`` in practice, though the type stays ``int | None``
+    for construction-site symmetry with every other field here.
     """
 
     queue_depth: int | None
@@ -145,6 +198,10 @@ class FlowObservation:
     handling_started_monotonic: int | None
     lineage_found: bool | None
     sources: tuple[str, ...]
+    #: The fixed, disclosed definition string for the ``replays`` axis (module docstring's own
+    #: :data:`REPLAYS_DEFINITION`) — ``None`` only for a :class:`FlowObservation` built by a
+    #: caller other than :meth:`InboxFlowReader.observe` that never set it.
+    replays_definition: str | None = None
 
 
 def _read_kind_payloads(
@@ -192,6 +249,47 @@ def _traces_to(
     root_event_id: str, event_id: str | None, predecessors: tuple[str, ...]
 ) -> bool:
     return event_id == root_event_id or root_event_id in predecessors
+
+
+def count_duplicate_dispositions(
+    unmatched_payloads: list[dict[str, object]], *, cause_attempts: set[str]
+) -> int:
+    """The kernel result-signature dedup count (module docstring's own "Two dedup layers"
+    section) — ``RESULT_UNMATCHED`` rows whose ``result_disposition`` is ``"DUPLICATE"``
+    (``tos/src/tos/engine/state.py:846-862``) AND whose ``attempt_id`` is a member of this
+    root cause's own traced ``cause_attempts`` set (the SAME set
+    :meth:`InboxFlowReader._scan_sealed_lineage` already builds via ``SEND_SEALED`` lineage
+    tracing). A ``DUPLICATE`` row for an attempt outside the cause, or a non-``DUPLICATE``
+    ``RESULT_UNMATCHED`` row, is never counted. Pure: takes already-read payload lists, returns
+    a plain ``int`` — ``0`` for an empty or fully-non-matching scan, never ``None``.
+    """
+    count = 0
+    for payload in unmatched_payloads:
+        if payload.get("result_disposition") != "DUPLICATE":
+            continue
+        attempt_id = payload.get("attempt_id")
+        if isinstance(attempt_id, str) and attempt_id in cause_attempts:
+            count += 1
+    return count
+
+
+def count_recovery_markers(
+    marker_payloads: list[dict[str, object]], *, root_event_ids: frozenset[str]
+) -> int:
+    """The restart-recovery episode count (module docstring's own "replays" section) — rows of
+    the two recovery marker kinds (:data:`_RECOVERY_MARKER_KINDS`) whose ``event_id`` is a
+    member of ``root_event_ids`` (this cause's own content-addressed root event identity, or
+    identities — see :meth:`InboxFlowReader._resolve_root_content_event_id`). A marker for a
+    different ``event_id``, or an empty ``root_event_ids`` (the root could not be resolved), is
+    never counted — never a fabricated match. Pure: takes already-read payload lists, returns a
+    plain ``int`` — ``0`` for an empty or fully-non-matching scan, never ``None``.
+    """
+    count = 0
+    for payload in marker_payloads:
+        event_id = payload.get("event_id")
+        if isinstance(event_id, str) and event_id in root_event_ids:
+            count += 1
+    return count
 
 
 class InboxFlowReader:
@@ -249,6 +347,71 @@ class InboxFlowReader:
             if entry.seq == evidence_seq and entry.kind == _HANDLING_STARTED_KIND:
                 return entry.appended_at_monotonic_ns
         return None
+
+    def _resolve_root_content_event_id(self, root_event_seq: int | None) -> str | None:
+        """The root row's own content-addressed ``event_id`` — read back from the SAME
+        write-ahead ``EVENT_HANDLING_STARTED`` evidence row (``{"event_id": event_identity(
+        event, scheme=...)}``, ``tos_runtime/engine/driver.py:788-792``) that
+        :meth:`_resolve_handling_started_monotonic` already locates via
+        ``SqliteEventInbox.handling_started_receipt`` — an O(1) primary-key lookup, no inbox
+        replay needed (module docstring's own "replays" section). This is the SAME content
+        digest ``EngineDriver._process_next`` computes for its crash-window recovery markers
+        (``driver.py:771``) — never the caller-authored ``reference.event_id`` label the
+        ``root_event_id`` parameter carries. ``None`` when ``root_event_seq`` is absent or the
+        marker row cannot be found (never guessed)."""
+        if root_event_seq is None:
+            return None
+        receipt = self._inbox.handling_started_receipt(root_event_seq)
+        if receipt is None:
+            return None
+        evidence_seq, _generation = receipt
+        cursor = self._evidence_store.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = ? AND seq = ?",
+            (_HANDLING_STARTED_KIND, evidence_seq),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        decoded = json.loads(row[0])
+        payload = decoded.get("payload", decoded)
+        if not isinstance(payload, dict):
+            return None
+        event_id = payload.get("event_id")
+        return event_id if isinstance(event_id, str) else None
+
+    def _count_amplification_axes(
+        self,
+        *,
+        unmatched_payloads: list[dict[str, object]],
+        cause_attempts: set[str],
+        resolved_root_event_seq: int | None,
+    ) -> tuple[int, int, tuple[str, ...]]:
+        """The dedup/replay axis counts — split out of :meth:`observe` purely for that
+        method's own 100-line size budget (module docstring's own "Two dedup layers"/
+        "replays" sections). Returns ``(duplicates_rejected, replays, extra_sources)``.
+        """
+        duplicates_rejected = count_duplicate_dispositions(
+            unmatched_payloads, cause_attempts=cause_attempts
+        )
+        root_content_event_id = self._resolve_root_content_event_id(
+            resolved_root_event_seq
+        )
+        root_event_ids = (
+            frozenset({root_content_event_id})
+            if root_content_event_id is not None
+            else frozenset()
+        )
+        recovery_payloads: list[dict[str, object]] = []
+        extra_sources: list[str] = []
+        for kind in _RECOVERY_MARKER_KINDS:
+            payloads = _read_kind_payloads(self._evidence_store, kind)
+            if payloads:
+                extra_sources.append(f"evidence:{kind}")
+            recovery_payloads.extend(payloads)
+        replays = count_recovery_markers(
+            recovery_payloads, root_event_ids=root_event_ids
+        )
+        return duplicates_rejected, replays, tuple(extra_sources)
 
     def _scan_sealed_lineage(
         self,
@@ -371,16 +534,26 @@ class InboxFlowReader:
         if handling_started_monotonic is not None:
             sources.append(f"evidence:{_HANDLING_STARTED_KIND}")
 
+        duplicates_rejected, replays, amplification_sources = (
+            self._count_amplification_axes(
+                unmatched_payloads=unmatched_payloads,
+                cause_attempts=cause_attempts,
+                resolved_root_event_seq=resolved_root_event_seq,
+            )
+        )
+        sources.extend(amplification_sources)
+
         return FlowObservation(
             queue_depth=self._inbox.unconsumed_count,
             in_flight=in_flight_count,
             attempts_for_cause=len(cause_attempts),
-            duplicates_rejected=None,
-            replays=None,
+            duplicates_rejected=duplicates_rejected,
+            replays=replays,
             root_event_seq=resolved_root_event_seq,
             handling_started_monotonic=handling_started_monotonic,
             lineage_found=this_attempt_lineage_found,
             sources=tuple(sources),
+            replays_definition=REPLAYS_DEFINITION,
         )
 
 

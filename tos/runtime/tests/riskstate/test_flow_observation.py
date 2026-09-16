@@ -15,15 +15,18 @@ from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.riskstate.flow_observation import (
+    REPLAYS_DEFINITION,
     FlowObservation,
     InboxFlowReader,
     committed_flow_vectors,
+    count_duplicate_dispositions,
+    count_recovery_markers,
     to_action_cause,
     to_observed_amplification,
 )
 from tos_runtime.riskstate.policies import DeploymentFlowFacts
 
-from .conftest import seed_send_sealed
+from .conftest import seed_egress_result, seed_recovery_marker, seed_send_sealed
 
 _ACCOUNT = "acct-1"
 _INSTRUMENT = "K200F"
@@ -48,8 +51,12 @@ def test_empty_ports_yield_all_zero_observation(
     assert obs.queue_depth == 0
     assert obs.in_flight == 0
     assert obs.attempts_for_cause == 0
-    assert obs.duplicates_rejected is None
-    assert obs.replays is None
+    # TOS action-flow observation completion wave (2026-09-16): a completed durable-evidence
+    # scan with no matches is a genuine 0, never None (module docstring's own "Two dedup
+    # layers"/"replays" sections) — never None-by-omission.
+    assert obs.duplicates_rejected == 0
+    assert obs.replays == 0
+    assert obs.replays_definition == REPLAYS_DEFINITION
     assert obs.root_event_seq is None
     assert obs.handling_started_monotonic is None
     assert obs.lineage_found is None
@@ -134,8 +141,6 @@ def test_terminal_attempt_is_not_in_flight(
     evidence_store: SqliteEvidenceStore,
     rcl_log: SqliteCommitLog,
 ) -> None:
-    from .conftest import seed_egress_result
-
     seed_send_sealed(
         evidence_store,
         attempt_id="a1",
@@ -171,6 +176,251 @@ def test_queue_depth_reflects_inbox_unconsumed_count(
     reader = InboxFlowReader(inbox, evidence_store, rcl_log)
     obs = reader.observe(root_event_id=_ROOT, attempt_id="a1")
     assert obs.queue_depth == inbox.unconsumed_count == 0
+
+
+# ===========================================================================
+# count_duplicate_dispositions / count_recovery_markers (pure helpers, TOS
+# action-flow observation completion wave, 2026-09-16)
+# ===========================================================================
+
+
+def test_count_duplicate_dispositions_empty_scan_is_zero() -> None:
+    assert count_duplicate_dispositions([], cause_attempts=set()) == 0
+
+
+def test_count_duplicate_dispositions_counts_only_cause_attempts() -> None:
+    payloads = [
+        {"result_disposition": "DUPLICATE", "attempt_id": "in-cause"},
+        {"result_disposition": "DUPLICATE", "attempt_id": "outside-cause"},
+    ]
+    assert count_duplicate_dispositions(payloads, cause_attempts={"in-cause"}) == 1
+
+
+def test_count_duplicate_dispositions_ignores_non_duplicate_disposition() -> None:
+    payloads = [
+        {"result_disposition": "ORPHAN_NO_RESERVATION", "attempt_id": "a1"},
+        {"result_disposition": "MISMATCHED_ATTEMPT", "attempt_id": "a1"},
+    ]
+    assert count_duplicate_dispositions(payloads, cause_attempts={"a1"}) == 0
+
+
+def test_count_recovery_markers_empty_scan_is_zero() -> None:
+    assert count_recovery_markers([], root_event_ids=frozenset()) == 0
+
+
+def test_count_recovery_markers_ignores_unrelated_event_id() -> None:
+    payloads = [{"event_id": "unrelated"}]
+    assert count_recovery_markers(payloads, root_event_ids=frozenset({"root-1"})) == 0
+
+
+def test_count_recovery_markers_counts_each_recovery_kind() -> None:
+    """Both marker kinds (module docstring's own :data:`_RECOVERY_MARKER_KINDS`) count when
+    keyed to a matching ``event_id`` — the helper itself is kind-agnostic (the caller reads
+    both kinds into one combined list), so this pins that neither kind is silently dropped.
+    """
+    payloads = [{"event_id": "root-1"}, {"event_id": "root-1"}]
+    assert count_recovery_markers(payloads, root_event_ids=frozenset({"root-1"})) == 2
+
+
+# ===========================================================================
+# InboxFlowReader.observe — real evidence-store integration (dedup/replay axes)
+# ===========================================================================
+
+
+def test_observe_counts_duplicate_disposition_from_real_evidence_store(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """Integration pin: a REAL ``RESULT_UNMATCHED`` row shaped exactly like
+    ``tos/src/tos/engine/core.py:705-720``'s own emission (``result_disposition="DUPLICATE"``,
+    ``attempt_id``) durably yields ``duplicates_rejected == 1`` — never ``None`` — for a cause
+    the attempt traces to via ``SEND_SEALED`` lineage. ``replays`` stays a genuine ``0`` (no
+    recovery marker was ever seeded, and no ``root_event_seq`` was supplied either)."""
+    seed_send_sealed(
+        evidence_store,
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        side="BUY",
+        quantity="1",
+        event_id=_ROOT,
+    )
+    seed_egress_result(
+        evidence_store,
+        kind="RESULT_UNMATCHED",
+        attempt_id="a1",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=None,
+        result_disposition="DUPLICATE",
+    )
+    reader = InboxFlowReader(inbox, evidence_store, rcl_log)
+    obs = reader.observe(root_event_id=_ROOT, attempt_id="a1")
+    assert obs.duplicates_rejected == 1
+    assert obs.replays == 0
+
+
+def test_observe_ignores_duplicate_disposition_outside_cause(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """A ``DUPLICATE``-disposition row for an attempt that never sealed against THIS root
+    (never a member of ``cause_attempts``) is never counted — the scan still completes and
+    returns a genuine ``0``, not ``None``."""
+    seed_egress_result(
+        evidence_store,
+        kind="RESULT_UNMATCHED",
+        attempt_id="unrelated-attempt",
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        filled_quantity=None,
+        result_disposition="DUPLICATE",
+    )
+    reader = InboxFlowReader(inbox, evidence_store, rcl_log)
+    obs = reader.observe(root_event_id=_ROOT, attempt_id="a1")
+    assert obs.duplicates_rejected == 0
+
+
+def test_observe_counts_recovery_marker_for_resolved_root_event(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """Integration pin: a REAL restart-recovery marker keyed to the CURRENT row's own
+    content-addressed ``event_id`` (read back via
+    :meth:`InboxFlowReader._resolve_root_content_event_id`'s own ``EVENT_HANDLING_STARTED``
+    lookup, the SAME write-ahead idiom ``EngineDriver._process_next`` uses) durably yields
+    ``replays >= 1`` — never ``None``, never silently zero for a genuinely matching marker.
+    """
+    payload = EgressResultPayload(
+        instrument_key=InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT),
+        attempt_id="a1",
+        kind=EgressResultKind.ACK,
+    )
+    event = EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
+    receipt = inbox.enqueue(event)
+    marker = evidence_store.append(
+        {"event_id": receipt.event_id},
+        kind="EVENT_HANDLING_STARTED",
+        record_class="EVENT_HANDLING_STARTED",
+    )
+    assert marker.seq is not None
+    assert marker.key_generation is not None
+    inbox.mark_handling_started(
+        receipt.seq, evidence_seq=marker.seq, generation=marker.key_generation
+    )
+    seed_recovery_marker(
+        evidence_store,
+        kind="DECISION_TICK_DROPPED_ON_RECOVERY",
+        event_id=receipt.event_id,
+    )
+    reader = InboxFlowReader(inbox, evidence_store, rcl_log)
+    obs = reader.observe(
+        root_event_id=_ROOT, attempt_id="a1", root_event_seq=receipt.seq
+    )
+    assert obs.replays == 1
+    assert obs.duplicates_rejected == 0
+
+
+def test_observe_ignores_recovery_marker_for_a_different_event(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """A recovery marker keyed to an unrelated ``event_id`` is never counted for this root —
+    the scan still completes and returns a genuine ``0``, not ``None``."""
+    seed_recovery_marker(
+        evidence_store,
+        kind="HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND",
+        event_id="some-other-event",
+    )
+    reader = InboxFlowReader(inbox, evidence_store, rcl_log)
+    obs = reader.observe(root_event_id=_ROOT, attempt_id="a1")
+    assert obs.replays == 0
+
+
+def _seed_real_handling_started(
+    inbox: SqliteEventInbox, evidence_store: SqliteEvidenceStore, *, attempt_id: str
+) -> tuple[str, int]:
+    """Enqueues one real ``EgressResultPayload`` event and durably marks it "handling
+    started" — the SAME write-ahead idiom :meth:`test_observe_counts_recovery_marker_for_
+    resolved_root_event` above already exercises, split out so the two new
+    ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND``-kind tests below (review HIGH, PR #707: the
+    prior suite never seeded this SECOND marker kind at all — removing it from
+    ``_RECOVERY_MARKER_KINDS`` stayed green) don't repeat the setup. Returns the row's own
+    ``(content-addressed event_id, inbox seq)``."""
+    payload = EgressResultPayload(
+        instrument_key=InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT),
+        attempt_id=attempt_id,
+        kind=EgressResultKind.ACK,
+    )
+    event = EngineEvent(kind=EventKind.EGRESS_RESULT, egress_result=payload)
+    receipt = inbox.enqueue(event)
+    marker = evidence_store.append(
+        {"event_id": receipt.event_id},
+        kind="EVENT_HANDLING_STARTED",
+        record_class="EVENT_HANDLING_STARTED",
+    )
+    assert marker.seq is not None
+    assert marker.key_generation is not None
+    inbox.mark_handling_started(
+        receipt.seq, evidence_seq=marker.seq, generation=marker.key_generation
+    )
+    return receipt.event_id, receipt.seq
+
+
+def test_observe_counts_handling_interrupted_possibly_live_send_marker(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """Review HIGH (PR #707): pins the SECOND recovery marker kind specifically —
+    ``HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND`` (the halt path,
+    ``tos_runtime/engine/driver.py:517-528``, ``record_halt``'s own payload shape, which also
+    carries ``handling_started_evidence_seq`` alongside ``event_id`` — cited and reproduced by
+    :func:`~tests.riskstate.conftest.seed_recovery_marker`'s own ``handling_started_evidence_
+    seq`` argument). A mutation dropping this kind from ``_RECOVERY_MARKER_KINDS`` must fail
+    this exact assertion (the prior suite only ever seeded the OTHER kind,
+    ``DECISION_TICK_DROPPED_ON_RECOVERY``, so that mutation previously stayed green)."""
+    event_id, seq = _seed_real_handling_started(inbox, evidence_store, attempt_id="a1")
+    seed_recovery_marker(
+        evidence_store,
+        kind="HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND",
+        event_id=event_id,
+        handling_started_evidence_seq=seq,
+    )
+    reader = InboxFlowReader(inbox, evidence_store, rcl_log)
+    obs = reader.observe(root_event_id=_ROOT, attempt_id="a1", root_event_seq=seq)
+    assert obs.replays == 1
+
+
+def test_observe_counts_both_recovery_marker_kinds_together(
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """Review HIGH (PR #707): one marker of EACH kind for the SAME root event durably sums
+    to ``replays == 2`` — pins that :func:`count_recovery_markers` is kind-agnostic once fed
+    both kinds' payloads (:meth:`InboxFlowReader._count_amplification_axes` reads both kinds
+    into one combined list before counting), not merely tolerant of either kind alone.
+    """
+    event_id, seq = _seed_real_handling_started(inbox, evidence_store, attempt_id="a1")
+    seed_recovery_marker(
+        evidence_store,
+        kind="DECISION_TICK_DROPPED_ON_RECOVERY",
+        event_id=event_id,
+    )
+    seed_recovery_marker(
+        evidence_store,
+        kind="HANDLING_INTERRUPTED_POSSIBLY_LIVE_SEND",
+        event_id=event_id,
+        handling_started_evidence_seq=seq,
+    )
+    reader = InboxFlowReader(inbox, evidence_store, rcl_log)
+    obs = reader.observe(root_event_id=_ROOT, attempt_id="a1", root_event_seq=seq)
+    assert obs.replays == 2
 
 
 # ===========================================================================

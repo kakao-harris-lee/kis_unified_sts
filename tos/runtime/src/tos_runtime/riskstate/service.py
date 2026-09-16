@@ -362,7 +362,11 @@ class RiskStateService:
         (plan §2.4's own "position 관측 + flow 관측 + absent_fields" shape) — split out of
         :meth:`aggregate_inputs_for` purely for that method's own 100-line size budget.
         ``absent_fields`` is SORTED — deterministic, review HIGH-2 (2026-09-16) — never an
-        encounter-order artifact a caller could mistake for significance.
+        encounter-order artifact a caller could mistake for significance. ``duplicates_rejected``/
+        ``replays`` are deliberately NOT in this None-check table (TOS action-flow observation
+        completion wave, 2026-09-16): :meth:`~tos_runtime.riskstate.flow_observation
+        .InboxFlowReader.observe` now always populates both from a completed durable-evidence
+        scan (never ``None``), so they are observed, not absent — see that module's own docstring.
         """
         self._observation_seq += 1
         absent = sorted(
@@ -370,8 +374,6 @@ class RiskStateService:
             | {
                 name
                 for name, value in (
-                    ("duplicates_rejected", flow_obs.duplicates_rejected),
-                    ("replays", flow_obs.replays),
                     ("root_event_seq", flow_obs.root_event_seq),
                     ("handling_started_monotonic", flow_obs.handling_started_monotonic),
                     ("lineage_found", flow_obs.lineage_found),
@@ -399,6 +401,7 @@ class RiskStateService:
                     "attempts_for_cause": flow_obs.attempts_for_cause,
                     "duplicates_rejected": flow_obs.duplicates_rejected,
                     "replays": flow_obs.replays,
+                    "replays_definition": flow_obs.replays_definition,
                     "root_event_seq": flow_obs.root_event_seq,
                     "handling_started_monotonic": flow_obs.handling_started_monotonic,
                     "lineage_found": flow_obs.lineage_found,
