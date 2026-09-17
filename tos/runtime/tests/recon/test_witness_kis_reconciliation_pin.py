@@ -1,27 +1,54 @@
 """Lane C pin (W3 plan §4 W3 row C: "``ReconciliationService`` 경로 실증 — 실 증인일 때
 ``CORROBORATED`` 의 의미가 바뀌는 지점을 테스트로 고정 · 합성 증인과의 차이").
 
+**Why this file exists — read this before deleting any test in it.** The W3 plan's own §0.4
+states the wave's entire justification: a genuinely independent witness turns a ``CORROBORATED``
+verdict from a structural label into something substantive. This file's second half
+(:func:`test_real_kis_witness_cannot_join_the_same_order_to_its_known_attempt` and
+:func:`test_kis_witness_permits_stay_false_across_every_rcl_and_evidence_combination`) measures
+that this is **FALSE on the orders axis specifically**, with the real, concrete
+:class:`~tos_runtime.recon.witness_kis.KisStockBrokerWitness` class — not a prediction, not a
+double standing in for a hoped-for future shape.
+
+**The mechanism, named exactly.** :class:`~tos_runtime.recon.ports.WitnessOrder.attempt_id` is
+how :class:`~tos_runtime.recon.service.ReconciliationService.reconcile` joins a witness-observed
+order to the attempt the RCL/evidence-receipt paths already know about
+(``witness_by_attempt = {o.attempt_id: o for o in snapshot.orders if o.attempt_id is not None}``,
+``service.py``'s own ``reconcile`` body). ``KisStockBrokerWitness._order_from_row`` has exactly
+ONE construction site for :class:`WitnessOrder` in the whole module, and it hardcodes
+``attempt_id=None`` unconditionally — KIS's own 주문체결조회 response
+(``docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:1548-1575``) carries no
+attempt-id concept at all; an ODNO identifies a broker order, never a runtime attempt. The
+consequence follows deductively, not just from the two cases this file happens to run: since
+``witness_by_attempt`` can therefore NEVER contain an entry keyed by any real attempt id,
+``_classify_attempt`` (``service.py``) can never see ``has_witness=True`` for a known attempt, so
+its ``classification is ReconciliationClass.MATCHED`` branch is UNREACHABLE whenever this witness
+is the injected one — and both ``rearm_ok``/``capacity_ok`` in
+``_attempt_field_confidences_and_gates`` are gated on exactly that ``classification is MATCHED``
+check. Every order this witness returns instead lands in ``orphan_orders`` (``o.attempt_id is
+None`` — true of literally every order it can ever produce), where ``reconcile`` hardcodes
+``rearm_flags.append(False)`` / ``capacity_flags.append(False)`` unconditionally. **The double
+counting this produces**: the SAME physical broker order (same ``broker_execution_id``/ODNO) the
+evidence-receipt path already recorded against a known attempt (1) degrades that attempt's own
+classification to ``STALE_RESERVATION`` (RCL present, no witness confirmation reaches it) AND (2)
+is separately reported a second time as an unrelated ``ORPHAN_BROKER_ORDER`` — not corroboration,
+a duplicate. Closing this (a ``broker_execution_id`` cross-reference between the witness and
+:class:`~tos_runtime.recon.ports.EvidenceReceiptReader`, added to ``ReconciliationService`` itself)
+is a service-level design decision this witness lane does not get to make on its way past — it is
+reported here, pinned as a test, and left alone.
+
+**The other half, stated with equal weight because it is also true.** This gap is specific to the
+ORDERS axis (the ``attempt_id`` join). The POSITIONS/CASH axis needs no attempt join at all —
+:attr:`~tos_runtime.recon.ports.WitnessSnapshot.positions`/``cash`` are account-level facts, not
+per-attempt ones. An independent, continuation-complete positions/cash read from the real broker
+is exactly what this witness delivers without qualification; see
+``test_witness_kis.py::test_multi_page_balance_walk_assembles_all_25_positions`` and
+``test_independent_of_evidence_store_is_true``. Nothing here contradicts that half.
+
 Exercises the two CONCRETE ``BrokerWitness`` implementations — not Protocol doubles — inside a
 real :class:`~tos_runtime.recon.service.ReconciliationService`, against a real
 :class:`~tos_runtime.evidence.store.SqliteEvidenceStore` shared with a real
 :class:`~tos_runtime.recon.evidence_reader.SqliteEvidenceReceiptReader`.
-
-**Finding, stated plainly (not smoothed over).** ``tos_runtime/recon/test_service.py``'s own
-``test_matched_set_yields_positive_confidence_and_both_permits_true`` already shows, with a
-``FakeWitness`` double, that an independent witness whose ``WitnessOrder.attempt_id`` matches a
-known attempt makes ``CORROBORATED`` substantive. That double is optimistic in one respect this
-module's own docstring does not hide: it ASSUMES a real witness can echo back ``attempt_id``.
-KIS's own 주문체결조회 response (``docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml
-:1548-1575``) carries no such field, and never will — an ODNO identifies a broker order, not a
-runtime attempt. :class:`~tos_runtime.recon.witness_kis.KisStockBrokerWitness` therefore ALWAYS
-returns ``attempt_id=None`` (that module's own ``_order_from_row`` docstring). This file pins the
-consequence: plugging the REAL witness in for the SAME order the evidence-receipt path already
-recorded for a known attempt does NOT reach per-attempt ``CORROBORATED`` — the order instead
-re-surfaces as an UNRELATED orphan-broker-order record, even though its own
-``broker_execution_id`` matches the evidence receipt's. ``ReconciliationService.reconcile`` joins
-witness orders to attempts by ``attempt_id`` only, never by ``broker_execution_id`` — closing that
-gap (a ``broker_execution_id`` cross-reference against ``EvidenceReceiptReader``) is out of this
-lane's scope and is reported here, not fixed quietly.
 """
 
 from __future__ import annotations
@@ -233,5 +260,69 @@ def test_real_kis_witness_cannot_join_the_same_order_to_its_known_attempt(
     assert by_attempt["a1"].broker_execution_id != "0000004470"  # never joined
     # Never permits, either way — the double-count is conservative (fails closed), not silently
     # accepted as corroboration.
+    assert report.permits_capacity_release is False
+    assert report.permits_rearm is False
+
+
+@pytest.mark.parametrize(
+    "rcl_present,evidence_present",
+    [
+        (True, True),  # RCL knows the attempt, evidence-receipt recorded it too
+        (True, False),  # RCL knows the attempt, no receipt at all
+        (False, True),  # no RCL reservation, but a receipt exists
+        (False, False),  # neither RCL nor a receipt — attempt named only by scope
+    ],
+)
+def test_kis_witness_permits_stay_false_across_every_rcl_and_evidence_combination(
+    store,
+    fresh,
+    kis_server: FakeKisGetServer,
+    rcl_present: bool,
+    evidence_present: bool,
+) -> None:
+    """Closes the gap between "확인 불가" and a real proof (팀리드 요청 3): rather than resting
+    the "``permits_*`` stays False" claim on the ONE (RCL present, evidence present) case the
+    test above exercises, this walks all four reachable combinations of RCL-reservation-present
+    x evidence-receipt-present. In every one, ``classification`` is provably never ``MATCHED``
+    (module docstring's deduction: ``has_witness`` can never be ``True`` for this witness), so
+    both gates — which the source (``_attempt_field_confidences_and_gates``) gates on exactly
+    ``classification is MATCHED`` — stay ``False`` regardless of what RCL/evidence say. The one
+    case this loop does NOT reach is "no attempt named at all" (an empty scope with zero orders),
+    which is covered separately by ``ReconciliationReport``'s own empty-``rearm_flags`` guard
+    (``bool(capacity_flags) and all(capacity_flags)`` is ``False`` on an empty list too — module
+    docstring's "fail-closed throughout").
+    """
+    if evidence_present:
+        _append_egress_result(store)
+    kis_server.queue_response(
+        BALANCE_PATH, status=200, body={"rt_cd": "0", "output1": []}
+    )
+    kis_server.queue_response(
+        ORDER_PATH,
+        status=200,
+        body={
+            "rt_cd": "0",
+            "output1": [
+                {
+                    "odno": "0000004470",
+                    "tot_ccld_qty": "1",
+                    "rmn_qty": "0",
+                    "cncl_yn": "N",
+                }
+            ],
+        },
+    )
+    rcl_states = {"a1": CapacityState.POSITION_CONSUMED} if rcl_present else {}
+    rcl = _MinimalRclReader(rcl_states)
+    evidence = SqliteEvidenceReceiptReader(store)
+    witness = _kis_witness(kis_server)
+    service = ReconciliationService(rcl, evidence, witness)
+
+    report = service.reconcile(
+        WitnessScope(account=ACCOUNT, attempt_ids=("a1",)), freshness=fresh
+    )
+
+    by_attempt = {c.attempt_id: c for c in report.classifications}
+    assert by_attempt["a1"].classification is not ReconciliationClass.MATCHED
     assert report.permits_capacity_release is False
     assert report.permits_rearm is False
