@@ -5,8 +5,10 @@ from __future__ import annotations
 from tos.engine.records import InstrumentKey
 from tos.rcl import (
     AppendReceipt,
+    CapacityComponent,
     CapacityReservationTransition,
     CapacityState,
+    CapacityVector,
     CommandType,
     ReservationScope,
     TransitionCause,
@@ -61,6 +63,121 @@ def test_projection_reflects_committed_transition(
     assert reader.reservation_state("res-1") == CapacityState.ATTEMPT_BOUND
     assert reader.reservation_last_seq("res-1") == result.seq
     assert reader.all_reservations() == {"res-1": CapacityState.ATTEMPT_BOUND}
+
+
+# ============================================================================
+# Committed Capacity Vector round-trip (kernel round #4 K-4). Prior to this,
+# every transition in this module committed with the default
+# ``committed_vector=None``, so no test exercised the "commit a NON-empty
+# vector, read it back through the projection" path -- a mutation that made
+# both ``reservation_committed_vector`` and ``instrument_committed_vector``
+# unconditionally return ``CapacityVector()`` passed the full runtime suite
+# (round #4 review finding ②). These pin that round trip so the same
+# mutation reds here.
+# ============================================================================
+
+_NON_EMPTY_VECTOR = CapacityVector(
+    components=(CapacityComponent(dimension_id="notional", magnitude="100"),)
+)
+
+
+def test_reservation_committed_vector_reads_back_the_committed_value(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    epoch = log.acquire_epoch(identity)
+    transition = CapacityReservationTransition(
+        reservation_id="res-1",
+        writer_epoch=epoch,
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.ATTEMPT_BOUND,
+        scope=DEFAULT_SCOPE,
+        committed_vector=_NON_EMPTY_VECTOR,
+    )
+    result = log.apply_reservation_transition(
+        transition,
+        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        command_type=CommandType.BIND_ATTEMPT,
+        command_id="cmd-1",
+        command_digest="dig-1",
+        expected_seq=-1,
+    )
+    assert isinstance(result, AppendReceipt)
+
+    reader = SqliteReservationProjectionReader(log)
+    assert reader.reservation_committed_vector("res-1") == _NON_EMPTY_VECTOR
+    key = InstrumentKey(
+        account=DEFAULT_SCOPE.account, instrument=DEFAULT_SCOPE.instrument
+    )
+    assert reader.instrument_committed_vector(key) == _NON_EMPTY_VECTOR
+
+
+def test_committed_vector_reads_as_none_when_never_committed(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    """A transition committed with the default ``committed_vector=None`` reads
+    back as ``None`` through both key surfaces -- distinct from the non-empty
+    vector case above, not merely "falsy"."""
+    epoch = log.acquire_epoch(identity)
+    transition = CapacityReservationTransition(
+        reservation_id="res-1",
+        writer_epoch=epoch,
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.ATTEMPT_BOUND,
+        scope=DEFAULT_SCOPE,
+    )
+    result = log.apply_reservation_transition(
+        transition,
+        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        command_type=CommandType.BIND_ATTEMPT,
+        command_id="cmd-1",
+        command_digest="dig-1",
+        expected_seq=-1,
+    )
+    assert isinstance(result, AppendReceipt)
+
+    reader = SqliteReservationProjectionReader(log)
+    assert reader.reservation_committed_vector("res-1") is None
+    key = InstrumentKey(
+        account=DEFAULT_SCOPE.account, instrument=DEFAULT_SCOPE.instrument
+    )
+    assert reader.instrument_committed_vector(key) is None
+
+
+def test_explicitly_empty_committed_vector_is_distinguishable_from_none(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    """(round #4 review disposition — resolves the apparent commitlog.py/gates.py wording
+    conflict) A transition committed with ``committed_vector=CapacityVector()`` (explicitly
+    empty, zero components) must read back as that real, non-``None`` empty vector, never as
+    ``None`` -- ``CapacityReservationTransition.committed_vector``'s own docstring promises a
+    runtime projection distinguishes "no vector recorded" from "an explicitly empty one";
+    :func:`~tos_runtime.rcl.gates.reservation_committed_vector`'s docstring separately notes an
+    UNRELATED, narrower indistinguishability (reservation nonexistent vs. existing-with-no-
+    vector, both -> ``None``) -- this pins that the two claims do not collide: an explicit
+    empty vector is not folded into either ``None`` case."""
+    epoch = log.acquire_epoch(identity)
+    transition = CapacityReservationTransition(
+        reservation_id="res-1",
+        writer_epoch=epoch,
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.ATTEMPT_BOUND,
+        scope=DEFAULT_SCOPE,
+        committed_vector=CapacityVector(),
+    )
+    result = log.apply_reservation_transition(
+        transition,
+        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        command_type=CommandType.BIND_ATTEMPT,
+        command_id="cmd-1",
+        command_digest="dig-1",
+        expected_seq=-1,
+    )
+    assert isinstance(result, AppendReceipt)
+
+    reader = SqliteReservationProjectionReader(log)
+    read_back = reader.reservation_committed_vector("res-1")
+    assert read_back is not None
+    assert read_back == CapacityVector()
 
 
 # ============================================================================
