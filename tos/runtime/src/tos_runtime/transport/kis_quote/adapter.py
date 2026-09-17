@@ -7,11 +7,13 @@ TR — so a deployment is no longer driven only by a file journal an upstream co
 (:mod:`tos_runtime.marketfeed.journal`, this wave's other, file-backed
 :class:`~tos_runtime.marketfeed.ports.ObservationIntake`).
 
-**Step 0 measurement 1 — no genuine source event time exists (do not skip this).** The legacy
-KIS client stamps ``"timestamp": time.time()`` itself on every quote — ``shared/kis/client.py:648``
-(stock) and ``:737`` (futures) — its own comment reads "Use local time as approx". This is receipt
-time, not a broker-attested event time, by the legacy code's OWN admission. Independent evidence
-confirms the response body carries no genuine event-time field either: a live MOCK_VTS stock quote
+**Step 0 measurement 1 — this TR's OWN response body carries no genuine source event time (do not
+skip this, and do not over-read it as a claim about KIS as a whole — see the explicit scope note
+below).** The legacy KIS client stamps ``"timestamp": time.time()`` itself on every quote —
+``shared/kis/client.py:648`` (stock) and ``:737`` (futures) — its own comment reads "Use local
+time as approx". This is receipt time, not a broker-attested event time, by the legacy code's OWN
+admission. Independent evidence confirms THIS RESPONSE BODY (the ``inquire-price`` quotations TR
+this adapter polls) carries no genuine event-time field either: a live MOCK_VTS stock quote
 capture (``docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-16-20260729T133539Z.json``,
 005930, n=5, errors 0) lists ``body_timestamp_like_keys: [crdt_able_yn, ovtm_vi_cls_code,
 rstc_wdth_prc]`` — and the broker profile itself
@@ -19,11 +21,30 @@ rstc_wdth_prc]`` — and the broker profile itself
 POSITIVES from a substring heuristic (신용가능여부/시간외VI구분코드/제한폭가격 — none is a
 timestamp), leaving genuinely **zero** timestamp-like fields in the measured body. The futures
 scope probe (``P-16-20260729T063005Z``) independently records ``body_timestamp_like_keys: []`` —
-zero, not merely zero after the false-positive correction. **Conclusion, stated loudly rather than
-implied: this adapter uses RECEIPT time for ``RawObservation.as_of_ms`` — never a value read from
-the response body — because no genuine source event time is available to read.** A future TR that
-does carry one would need this module's own analysis redone, not a silent assumption inherited
-from this one.
+zero, not merely zero after the false-positive correction.
+
+**Scope note — KIS DOES have a genuine execution-time field elsewhere; this adapter cannot reach
+it.** ``shared/kis/stock_feed.py:67`` (``_F_TIME`` = ``STCK_CNTG_HOUR``, "체결시간") shows the KIS
+real-time WebSocket trade feed (TR ``H0STCNT0``, subscription-based push, not an HTTP GET) DOES
+carry a genuine broker execution time — the legacy WebSocket handler parses that field's position
+and then DISCARDS it in favor of ``time.time()`` at ``stock_feed.py:120``, the same receipt-time
+substitution as the REST client. No REST/HTTP TR carrying an equivalent field is measured,
+referenced, or implemented anywhere in this repository, and this adapter's whole architecture
+(:class:`~tos_runtime.marketfeed.ports.ObservationIntake`'s pull-based ``poll()``, this wave's own
+stdlib-HTTP-only scope) is a REST poller, not a WebSocket subscriber — adopting the WebSocket feed
+would be a different transport architecture, out of this lane's scope, not a code change here.
+This paragraph exists so a future reader who wants genuine event time knows WHERE to look (a
+WebSocket-subscribing intake, a lane this module does not attempt), rather than concluding KIS
+never offers one.
+
+**Conclusion, stated loudly rather than implied, and scoped precisely: this adapter uses RECEIPT
+time for ``RawObservation.as_of_ms`` — never a value read from the response body — because the ONE
+TR this adapter polls (``inquire-price``, an HTTP GET) carries no genuine source event time in its
+own response.** This is not a claim that no KIS TR anywhere carries one (the scope note above is
+the counter-evidence) — it is a claim about this adapter's own, deliberately HTTP-only, data
+source. A future change to poll a different REST TR that does carry a genuine event time — or a
+future WebSocket-based intake — would need this module's own analysis redone, not a silent
+assumption inherited from this one.
 
 **Receipt-time anchor.** ``as_of_ms``/``received_ms`` are both stamped from the SAME
 :meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now` reading, taken AFTER the
