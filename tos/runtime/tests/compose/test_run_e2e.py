@@ -262,6 +262,13 @@ def test_run_forever_ticks_a_second_real_observation_after_the_pacing_interval(
 # ----------------------------------------------------------------------------
 
 
+#: How long the sender thread waits for a real tick before giving up on OBSERVING one and
+#: instead sending ``SIGINT`` unconditionally, purely to unstick a hung ``run_forever`` so this
+#: test fails normally instead of hanging the suite (see ``_send_sigint_once_ticked_or_deadline``
+#: and the "known flake class" paragraph in this test's own docstring for the full reasoning).
+_TICK_WAIT_TIMEOUT_S = 10.0
+
+
 def test_cli_main_run_argv_path_composes_and_actually_ticks(
     tmp_path: Path,
     config_dir_with_risk_state: Path,
@@ -274,16 +281,36 @@ def test_cli_main_run_argv_path_composes_and_actually_ticks(
     — no monkeypatched ``compose_paper_runtime``, no fake scheduler. The loop is bounded the
     ONLY way ``dispatch_run`` itself supports (module docstring of
     ``tos_runtime.compose._run_dispatch`` — SIGINT/SIGTERM flip the injected stop predicate
-    between passes): a background thread sends a real ``SIGINT`` to this process. Rather than a
-    fixed sleep (composition time is not a promised bound and a flaky race either sends SIGINT
-    before ``install_run_stop_signal_handlers`` has even run — hitting Python's DEFAULT SIGINT
-    handler, which raises ``KeyboardInterrupt`` straight through the test process — or leaves
-    the loop spinning past a generous deadline), the sender POLLS the SAME durable file the
-    final assertion reads, by opening its own independent sqlite connection (a second
-    connection from a second thread — the store itself only ever touches its own connection
-    from the thread that created it, so this never crosses a `sqlite3` thread-affinity rule),
-    and sends ``SIGINT`` only once it observes the real tick has already landed. This makes the
-    bound a real condition (a tick occurred), not a timing guess.
+    between passes): a background thread sends a real ``SIGINT`` to this process.
+
+    **Known flake class — a real-signal-from-a-thread test — and why this shape survives it**
+    (team-lead directive, PR #725 delta review). The FIRST implementation of this test used a
+    fixed ``time.sleep(0.15)`` before sending ``SIGINT``. That crashed the WHOLE pytest session
+    with an uncaught ``KeyboardInterrupt`` — not a clean failure of this test alone — under two
+    distinct conditions found while building it:
+
+    1. Composition legitimately taking longer than the guessed sleep (no promised upper bound
+       on ``compose_paper_runtime``'s own wall-clock cost).
+    2. The reviewer's own mutation 4 (revert ``main()``'s dispatch back to a bare ``return 0``):
+       ``cli.main()`` then returns almost instantly, well before the sleep elapses, so the
+       DEFAULT Python ``SIGINT`` handler (raises ``KeyboardInterrupt``) is still installed —
+       ``install_run_stop_signal_handlers`` never got a chance to run — and the signal lands
+       asynchronously wherever the main thread happens to be by the time the sleep expires:
+       pytest's own teardown, or the NEXT test's setup, not this test's own assertions.
+
+    A fixed sleep cannot distinguish "compose is still running" from "compose already finished
+    (or never started)" — it only ever guesses elapsed wall-clock time, and that guess is wrong
+    in both directions under load. The fix is to poll a REAL condition instead of guessing a
+    duration: the sender opens its own independent connection to the SAME durable store file
+    the final assertion reads (a second connection from a second thread — the store itself only
+    ever touches its own connection from the thread that created it, so this never crosses a
+    ``sqlite3`` thread-affinity rule) and sends ``SIGINT`` only once it observes the real tick
+    has already landed, OR — bounded by :data:`_TICK_WAIT_TIMEOUT_S` — gives up waiting and
+    sends ``SIGINT`` anyway so a genuinely stuck ``run_forever`` still gets unstuck rather than
+    hanging the process forever; see :func:`_send_sigint_once_ticked_or_deadline`'s own
+    docstring for the exact state machine and why each branch is safe. **If a future person is
+    tempted to replace this polling with a fixed sleep "to simplify it": don't — that is
+    reintroducing the exact bug this paragraph documents.**
 
     Evidence of an actual tick is read back from the durable snapshot STORE FILE
     (``data_dir / MARKETFEED_FILE_NAME``), reopened fresh after ``main()`` returns — never the
@@ -315,34 +342,49 @@ def test_cli_main_run_argv_path_composes_and_actually_ticks(
         finally:
             probe.close()
 
-    def _send_sigint_once_ticked() -> None:
-        # `main_done` is checked on every iteration AND immediately before `os.kill` — a
-        # mutated/broken `dispatch_run` that returns without ever composing (e.g. reverting
-        # `main`'s own dispatch back to a bare `return 0`) makes `cli.main()` return almost
-        # instantly; without this check, a signal sent AFTER that point lands asynchronously
-        # wherever the main thread happens to be by then (pytest's own teardown, the next
-        # test's setup, ...) and raises an uncaught `KeyboardInterrupt` there instead of
-        # failing THIS test — exactly the failure mode this comment exists to document, found
-        # while building this very test (reviewer HIGH, PR #725). Giving up quietly and letting
-        # the assertions below fail normally is the whole point.
-        deadline = time.monotonic() + 10.0
+    def _send_sigint_once_ticked_or_deadline() -> None:
+        """Three exit paths, in the order they can happen:
+
+        1. **Tick observed** (the expected path): breaks out of the poll loop and sends
+           ``SIGINT`` — guarded by one more ``main_done`` check right before ``os.kill``, since
+           ``main()`` could in principle finish between the ``break`` and the signal (an
+           extremely narrow window; harmless either way, see branch 2).
+        2. **``main_done`` set while still polling**: ``cli.main()`` already returned on its
+           own — a mutated/broken ``dispatch_run`` that returns without ever composing (e.g.
+           reviewer mutation 4) makes this happen almost instantly. Checked at the TOP of every
+           iteration (5ms poll interval — the same value the loop sleeps for below, so the
+           worst-case detection latency after ``main()`` returns is one iteration, not the full
+           ``_TICK_WAIT_TIMEOUT_S`` deadline). Returns WITHOUT sending anything — sending a
+           signal into an already-exited call risks hitting an already-restored default
+           handler, the exact original bug.
+        3. **Deadline reached with no tick ever observed and ``main()`` still running**: this
+           is the "hung ``run_forever``" case a naive "give up and send nothing" would leave
+           parked forever (nothing else in this test process would ever ask it to stop) — that
+           was this function's own behavior before this hardening pass, and it is exactly the
+           silent-hang risk a load-sensitive signal test must not have. Sending ``SIGINT`` here
+           unconditionally (guarded only by the same ``main_done`` check) lets ``cli.main()``
+           return normally, so the test proceeds to its own assertions instead of wedging the
+           whole suite — the final ``assert _observed_tick()`` then fails with a message naming
+           the timeout, a normal test failure instead of a hang.
+        """
+        deadline = time.monotonic() + _TICK_WAIT_TIMEOUT_S
         while time.monotonic() < deadline:
             if main_done.is_set():
-                return
+                return  # branch 2
             try:
                 if _observed_tick():
-                    break
+                    break  # branch 1
             except Exception:
                 # The store file may exist but not yet have a committed schema/row the instant
                 # it is created — keep polling rather than treat a transient read as failure.
                 pass
             time.sleep(0.005)
-        else:
-            return  # deadline hit with no tick ever observed — give up, send nothing
+        # branch 1 (break) falls through to here too, deliberately — the guard below is the
+        # ONLY place either exit path actually sends the signal.
         if not main_done.is_set():
             os.kill(os.getpid(), signal.SIGINT)
 
-    sender = threading.Thread(target=_send_sigint_once_ticked, daemon=True)
+    sender = threading.Thread(target=_send_sigint_once_ticked_or_deadline, daemon=True)
     sender.start()
     try:
         exit_code = cli.main(
@@ -360,11 +402,15 @@ def test_cli_main_run_argv_path_composes_and_actually_ticks(
         )
     finally:
         main_done.set()
-        sender.join(timeout=11)
+        sender.join(timeout=_TICK_WAIT_TIMEOUT_S + 1)
 
     assert exit_code == 0
     assert "run: stopped" in capsys.readouterr().out
-    assert _observed_tick()
+    assert _observed_tick(), (
+        f"no tick observed within {_TICK_WAIT_TIMEOUT_S}s of `cli.main(['run', ...])` "
+        "returning — either compose never wired the tick source, or the sender's deadline "
+        "SIGINT fired before a real tick could land (see _send_sigint_once_ticked_or_deadline)"
+    )
 
 
 # ----------------------------------------------------------------------------
