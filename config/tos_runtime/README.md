@@ -16,10 +16,53 @@ Everything else the runtime needs to boot (`time.yaml`, `authority.yaml`,
 own value the same way `calendar.yaml` was approved here.
 
 This directory is consumed today by the compose e2e test suite
-(`tos/runtime/tests/compose/test_deploy_config.py`) and, once later waves
-give `run` a real `ConstructionConfig`/risk-input/tick-source path (plan
-§2.7 — `run` is currently blocked, see `cli.py`'s module docstring), by the
-CLI's `run` entrypoint itself.
+(`tos/runtime/tests/compose/test_deploy_config.py`) **and, as of the TOS
+`run` 구동 아크 wave (main `ae3c967c`), by the CLI's `run` entrypoint itself.**
+`run` now actually composes and drives: `cli.py`'s `main()` dispatches to
+`_run_dispatch.dispatch_run` (`compose/cli.py:801-802`), which loads
+`construction.yaml` from `--config-dir` fail-closed, calls
+`compose_paper_runtime` with it, refuses with a non-zero exit when
+`composed.marketfeed is None` (no tick source wired), and otherwise drives
+`composed.marketfeed.run_forever` until `SIGINT`/`SIGTERM` stops it
+(`compose/_run_dispatch.py`). **That is the code path, not a deployment** —
+composing still needs every approved value this directory exists to hold.
+
+**W1 lane D inventory (2026-09-17,
+`docs/plans/2026-09-17-tos-deployment-instance-inventory.md`, measured
+against main `ae3c967c`)** measured the full gap between "6 files approved
+here" and "`run` actually boots a deployment": `compose_paper_runtime` reads
+exactly 30 fixed config-dir file names (plus the `strategies/` directory),
+of which these 6 are approved and 24 exist only as
+`tos/runtime/config/*.example.yaml`. Of those 24 unapproved names, 19
+actually block boot (the loader is called unconditionally and raises on a
+missing file) and 5 are genuine opt-in features that boot cleanly without
+them at the `compose_paper_runtime` level (`strategy_bindings.yaml`,
+`marketfeed.yaml` + `critical_input_policy.yaml` together, `nontrade.yaml`,
+`kis_mock_transport.yaml` — the last only matters for `--transport
+kis-mock`, not the default synthetic transport). Two of those five —
+`marketfeed.yaml` + `critical_input_policy.yaml` — are opt-in at the
+`compose_paper_runtime` level but de facto required to run `run` at all,
+since `dispatch_run` itself refuses when they leave `composed.marketfeed`
+`None`. A 31st name, `construction.yaml`, sits outside
+`compose_paper_runtime`'s own 30 (that function takes `construction` as a
+caller-supplied argument, never loading a file for it itself) but is
+required by the `run` CLI specifically, and — like the other 24 — exists
+only as an all-`null` example, with no approved instance in this directory
+yet. The inventory's per-file table names, for every file, its loader
+(function + file:line), whether it blocks boot or is optional at which
+layer (with the file:line proving it), and what KIND of decision its value
+needs (measured value / operator policy judgment / derived digest /
+external approval document) — never inventing the value itself. Two more
+names (`backtest_calibration.yaml`, `evidence_retention.yaml`) ship an
+example file but have zero call sites anywhere under `compose/*.py` — they
+are orphaned relative to boot, not blocking and not optional-features
+either. Read that document before authoring any new `.yaml` here — it is
+the current, measured map of what still blocks a real boot, and it records
+which main commit it was measured against (`ae3c967c`) so a reader knows
+what it does and does not cover: `kis_witness.yaml` (W3, PR #726) landed on
+main after that measurement point and is not covered, and `kis_quote.yaml`
+(W2, PR #727) is still unmerged and is not covered either — neither gets a
+row until the whole table is re-measured against a new commit.
 
 Two more governed files belong here once the operator adopts their values
 (TOS venue constraint service plan, `docs/plans/2026-09-15-tos-venue-constraint-service-plan.md`
