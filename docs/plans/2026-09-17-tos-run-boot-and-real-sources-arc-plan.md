@@ -19,12 +19,15 @@
 파일에서 읽는 로더 하나면 `run` 이 실제로 구성할 수 있다」고 적었다. **로더는 필요조건이고,
 부팅의 충분조건이 아니다.**
 
-| 실측 | 값 |
+| 실측 (상수를 값으로 해소해 기계적으로 열거) | 값 |
 |---|---|
-| 컴포즈가 `config_dir` 에서 읽는 설정 이름 | **30종** (은퇴 이름 `egress_attestations.yaml` 제외 — `_session_wiring.py:101` 이 `RETIRED_…` 로 명시 보존) |
+| `config_dir` 에서 읽는 YAML 이름 | **30종** — 여기에 은퇴명 `egress_attestations.yaml` 이 **포함**된다(존재하면 부팅 거부 · `_session_wiring.py:95-101`). 활성은 **29종** |
+| 적재 대상 총계 | **30** = 활성 YAML 29 + `strategies/` 디렉터리 |
 | 그중 승인된 배포 인스턴스(`config/tos_runtime/paper/`) | **6종** — `calendar` · `venue_constraint_policy` · `order_construction_policy` · `aggregate_risk_policy` · `action_flow_policy` · `risk` |
-| 나머지 | **24종이 `tos/runtime/config/*.example.yaml` 뿐** — 전 리프 `null`(named-TBD), 로더가 fail-closed 거부 |
-| 추가로 필요한 것 | `strategies/` 디렉터리(승인 전략 파일 0건 — `example.strategy.yaml` 뿐) · `custody.manifest.yaml` |
+| 미승인 | **24** = 활성 YAML 23(전부 `tos/runtime/config/*.example.yaml` 뿐 · 전 리프 `null`) + `strategies/`(승인 전략 파일 0건 — `example.strategy.yaml` 뿐) |
+| 그중 **실제로 부팅을 막는 것** | **19**. 나머지 **5 는 진짜 옵트인** — `strategy_bindings.yaml`(`strategy/bindings.py:151-153` 이 `present=False` 를 돌려줌) · `marketfeed.yaml`+`critical_input_policy.yaml`(`_marketfeed_wiring.py:228-232`) · `nontrade.yaml`(`root.py:511`) · `kis_mock_transport.yaml`(`--transport synthetic` 기본에서 미접촉) |
+| `config_dir` 밖 | `custody.manifest.yaml`(`--custody-root` 소속) · `approvals/**`(digest·seq 키잉) |
+| 고아 2종 (레인 D 발견) | `backtest_calibration.yaml` · `evidence_retention.yaml` — example 과 fail-closed 로더가 **있는데** 컴포즈 호출부가 **0건**. 부팅을 막지도, 옵트인도 아닌 **미결선** |
 | 이미 채택된 6종 안의 `TBD` 리프 | `scope.accounts`/`scope.instruments`·`account_scope`/`instrument_scope`·`admitted_quantity_bases`·`authorized_axes` 의 `DIRECTION`·`canonical_digest`/`policy_version`/`activation_record_id` |
 
 즉 **로더를 쓰고 `run` 을 결선해도 배포 인스턴스는 부팅하지 않는다.** 부팅하지 않는 이유가
@@ -36,19 +39,20 @@
 
 - `cli.py:935` — `if isinstance(args, Args): return 0`. `Args` 7필드(`config_dir`·`data_dir`·
   `custody_root`·`environment_label`·`transport`·`projection_path`·`backup_root`)는 **이미 전부
-  파싱된다**(`cli.py:218-230`, `_add_run_arguments` `cli.py:321-385`).
+  파싱된다** — 선언 `cli.py:218-230` · 플래그 `_add_run_arguments` `cli.py:321-385` · 생성 `cli.py:552-560`.
 - `compose_paper_runtime` (`root.py:150-172`)의 필수 인자 중 CLI 가 못 주는 것은 **`construction`
-  하나뿐**. 나머지 12개는 전부 기본값이 있고, risk provider 2종은 (b) 웨이브가 `None` 기본으로
+  하나뿐**. 나머지 **11개**는 전부 기본값이 있고, risk provider 2종은 (b) 웨이브가 `None` 기본으로
   이미 해소했다.
 - `ConstructionConfig` (`compose/_types.py:135-179`)는 스칼라 7 + `price: AdmittedPriceObservation
   | None` 8필드. `price` 는 `_wiring.py:536` 한 곳에서만 읽히고, **틱 원천이 있으면 per-tick
   value view 가 이긴다** — `OrderConstructionStage._price_for`(`tos/src/tos/egressgw/
-  construction.py:985-996`)가 `price_field_key` + view 동시 존재 시 view 를 택한다.
+  construction.py:986-997`)가 `price_field_key` + view 동시 존재 시 view 를 택한다(`:997` 이 실제
+  `admitted_price_from_view` 반환 줄).
 - 루프는 **이미 있다**: `TickScheduler.run_forever(*, sleep, stop)`(`marketfeed/scheduler.py:392`),
   `tick_once`(`:341`)는 실제로 컴포즈된 런타임에서 e2e 실증됨
   (`tests/compose/test_marketfeed_wiring.py:158`). `run_forever` 자체는 주입 `sleep`/`stop` 으로
   단위 테스트만 됨(`tests/marketfeed/test_scheduler.py:262`) — 컴포즈 런타임 상대 e2e 는 없다.
-- **후보 결함(레인이 실측 후 처분)**: `_wiring.py:558`
+- **후보 결함(레인이 실측 후 처분)**: `_wiring.py:562`
   `required_authority_scope=(f"scope-{construction.instrument}",)` — 권한 스코프 문자열을
   instrument 에서 **합성**한다. 거버넌스 원천이 없는 값이 술어의 인자로 들어가는 모양이며,
   (a′) 가 정체성 리터럴에서 잡은 것과 같은 부류일 수 있다.
@@ -58,13 +62,14 @@
 - **플러그 지점은 하나**: `ObservationIntake.poll(*, instrument, after_as_of_ms) ->
   Sequence[RawObservation]`(`marketfeed/ports.py:105-131`)를 구현해
   `TickScheduler(intake=…)`(`scheduler.py:293`)에 넘긴다. **marketfeed 의 다른 모듈은 무변경.**
-  포트 독스트링이 이미 (c2) 를 이름으로 지명하고 있다(`ports.py:109-113`).
+  포트 독스트링이 이미 이 후속을 지명하고 있다(`ports.py:109-113` — 다만 리터럴은 「(c2)」가 아니라
+  「plan §6 ①」이다).
 - HTTP 는 **stdlib 만**. 런타임 스코프는 `socket`/`ssl`/`http`/`urllib.request` 카브아웃을
   갖지만(`tools/tos_firewall_check.py:245-246`) 서드파티 HTTP 클라이언트는 허용목록에 없다
-  (`THIRD_PARTY_ALLOWED` `:157-159`). 선례 `KisMockHttpClient`(`transport/kis_mock/client.py`)가
+  (`THIRD_PARTY_ALLOWED` `:164-166`). 선례 `KisMockHttpClient`(`transport/kis_mock/client.py`)가
   **호스트 씰 · TR id 형상 가드 · 토큰 발급 · fail-closed 로더**를 전부 갖고 있다.
 - 헤르메틱: `tests/transport/kis_mock/_fake_kis_server.py`(stdlib `ThreadingHTTPServer`,
-  `127.0.0.1`) + autouse 네트워크/쓰기 가드(`tests/conftest.py:93-103`, `:203-244`). **새 테스트
+  `127.0.0.1`) + autouse 네트워크/쓰기 가드(**`tos/runtime/tests/conftest.py`** — 네트워크 `:151-158`, 쓰기 `:203-244`. 루트 `tests/conftest.py` 가 **아니다**). **새 테스트
   인프라 불요.**
 - **측정된 브로커 사실**(`docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml`):
   - 모의 자격증명으로 **실제 시세 본문 수신 실증** — P-16 `20260729T133539Z`, 005930, n=5,
@@ -106,29 +111,32 @@
   P-BAL 아티팩트 7건: 모의 주식 잔고 **25행 / 2페이지 · `page_size` 20 ·
   `TRUNCATION_RISK_DEMONSTRATED`**. 즉 **한 페이지만 읽는 증인은 포지션을 과소보고한다.**
   레거시가 정확히 그 모양이고(`shared/kis/client.py:931-932` 한 페이지), 그 과소보고가
-  `services/trading/broker_verification.py:187-190` 에서 `remove_position(reason="broker_absent")`
+  `services/trading/broker_verification.py:188-190` 에서 `remove_position(reason="broker_absent")`
   로 포지션을 파괴한다. **새 증인은 연속키를 완주하거나 `WitnessUnavailable` 을 올린다. 조용한
   절단은 없다.**
-- 선물 모의 잔고 TR 은 **존재하지 않는다**(`shared/kis/client.py:1031` NOTE, 가드 `:1047`) →
+- 선물 모의 잔고 TR 은 **존재하지 않는다**(`shared/kis/client.py:1040` NOTE, 가드 `:1055`) →
   선물 증인은 P-CA 선례대로 **거부**한다.
 - **잔고 TR 하나로는 `orders` 를 답할 수 없다.** `WitnessSnapshot.orders` 를 빈 튜플로 돌려주면
   포트 독스트링이 허용하는 「조회했고 없었다」와 **조회조차 안 했다**가 구별되지 않는다 —
-  고아 주문 탐지가 구조적으로 불가능해진다(`ports.py:69-85` 가 명시 금지하는 상태와 같은 부류).
+  고아 주문 탐지가 구조적으로 불가능해진다(같은 부류의 금지가 `recon/ports.py:22-27` 모듈 독스트링과 `:124-135` `WitnessUnavailable` 독스트링에 있다 — 「답하지 못한 증인」은 빈 스냅샷이 아니다).
   → 운영자 확인 ③.
 
 ### 0.5 W4 — 커널 라운드 #4 후보
 
 | 후보 | 근거 | 커널 diff |
 |---|---|---|
-| ① `construct_candidate_command` 에 OCP **approval/signer** 결속 | DR-0002 §6 이 「a kernel round that binds the Order Construction Policy's approval fields」로 **명시 예견** · venue 계획 `:133`/`:160` | 예 (`tos/src/tos/egressgw/construction.py:556` 가 좌표 3개만 받음) |
+| ① `construct_candidate_command` 에 OCP **approval/signer** 결속 | DR-0002 §6 이 「a kernel round that binds the Order Construction Policy's approval fields」로 **명시 예견** · venue 계획 `:133`/`:160` | 예. **정정(리뷰 HIGH)**: 이 함수는 키워드 인자 14개를 받고 `policy_id`/`policy_version`/`policy_generation` 은 **이미 결속한다**(`construction.py:556-570`). 빠진 것은 인자 개수가 아니라 **종류** — 이 모듈 전체에 `signer`/`approval` 개념이 **0건**이다(grep 실측). 「좌표 3개만 받는다」는 앞선 서술은 「정책 사실 중 식별 좌표 3개만 결속한다」는 뜻이었고, 문언이 총 인자 수로 오독될 수 있어 정정한다 |
 | ② 주식 **가격대별 tick 표** | venue 계획 `:133` — 현재 선물 단일 `tick_size` 만 | 예 (`tos/src/tos/venue/records.py:113`) |
 | ③ `tos.position` — 체결 합·보수 사용량 **술어 패키지** | DR-0003 §6 · risk-state 계획 `:136` | 예 (신규 패키지) |
 | ④ RCL 예약 행에 **committed 벡터 영속** | risk-state 계획 `:136` — 「RCL 투영에 크기 없음」 | 예 (`tos/src/tos/rcl/`) |
 | ⑤ Phase 3 §7.11 미해소 이월 | `docs/plans/2026-09-09-tos-phase3-event-core-plan.md:294` — ⓐ 전역 new-risk 래치 · ⓑ · ⓓ · ⓕ · ⓗ · ⓘ · ⓙ | 항목별 |
 
 - 서베이 정정: 「라운드 #2 이월 6건」은 오독이었다. 라운드 #2 의 "deferred 6" 은 이월 항목이
-  아니라 `SendBoundaryContext` 에 추가된 **안전-attestation 입력 필드 6개**다. 라운드 #2 의 실제
-  이월(§7 「이월」) 2건은 **둘 다 라운드 #3 에서 해소**됐다.
+  아니라 `SendBoundaryContext` 에 추가된 **안전-attestation 입력 필드 6개**다.
+  **재정정(리뷰 MEDIUM — 정정문 자체가 과장이었다)**: 라운드 #2 §7 「이월」 줄은 2건이 아니라
+  **4건**이고(① `load_egress_attestations` docstring · ② 계약문서 인용 드리프트 · ③ 운영자 확인 ⑵
+  `False⇒DENIED` 극성 · ④ 운영자 확인 ⑴ W2-K/ⓖ), 라운드 #3 에서 해소가 확인되는 것은 **③④ 둘뿐**이다.
+  ①② 는 해소 근거를 찾지 못했다(성격상 「이월」보다 동결 기록에 가깝다) — **확인 불가**로 남긴다.
 - **③ 은 W3 이 선행이어야 의미가 있다.** DR-0003 §6 이 「브로커 포지션 증인 · 커널 포지션 술어 ·
   valuation 원천」을 같은 줄에 두고, 그중 **어느 하나라도** §2.2 의 한계를 대체한다고 적는다.
 
