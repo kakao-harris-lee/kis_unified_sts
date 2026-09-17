@@ -1,0 +1,194 @@
+{
+  "artifact_id": "P-CA-20260917T130246Z",
+  "probe_id": "P-CA",
+  "title": "corporate_action reflection -- 7-time x leg (effective->broker-reflect->detect) latency (기회주의·GET-only·operator t0)",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-09-17T13:02:46.230919+00:00",
+  "finished_at_utc": "2026-09-17T13:02:47.717572+00:00",
+  "duration_s": 1.487,
+  "repo_commit": "1959656c",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-CA",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "stock",
+    "symbol": "017670",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "t3 P-CA SKT cash dividend payable 2026-09-17; OLD mock stock account 54e7f8a5d841 (post re-application 2026-09-15); account static during window",
+    "env": "mock",
+    "event_class": "cash_dividend",
+    "ex_time": "",
+    "effective_time": "",
+    "payable_time": "2026-09-17T00:00:00+09:00",
+    "settlement_time": "",
+    "poll_ms": 5000.0,
+    "window_s": 28800.0,
+    "pace_s": 1.1,
+    "reference_check": true
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "stock",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "50******01",
+    "account_fingerprint": "54e7f8a5d841"
+  },
+  "measurements": {
+    "baseline": {
+      "hldg_qty": 1,
+      "dnca_tot_amt": 6686725.0
+    },
+    "class_leg_table": [
+      {
+        "event_class": "cash_dividend",
+        "leg": "cash",
+        "t0_field": "payable_time",
+        "t0": "2026-09-17T00:00:00+09:00",
+        "status": "CENSORED",
+        "window_s": 28800.0
+      }
+    ],
+    "polls_used": 1,
+    "poll_interval_ms_effective": 5000.0,
+    "leg_provenance_class": "NOT_MEASURED",
+    "no_aggregate_scalar_note": "B_non_trade_event_detect / B_non_trade_reconcile are never written as a single scalar by this probe — the source_and_broker_specific estimand is undefined (design doc §11 MODERATE-7). measurements.class_leg_table is the only aggregate emitted; both VP-002 keys stay NOT_ESTABLISHED pending a Bounds-Approver."
+  },
+  "observations": [
+    {
+      "read_only_attestation": "This probe can issue GET requests only, against the allowlist in tools/broker_probes/probes_ca.py::ALLOWLIST (2 balance TRs + 12 ksdinfo reference TRs). No order path exists in this module and it does not import one.",
+      "allowlist": [
+        {
+          "tr_id": "TTTC8434R",
+          "path": "/uapi/domestic-stock/v1/trading/inquire-balance"
+        },
+        {
+          "tr_id": "VTTC8434R",
+          "path": "/uapi/domestic-stock/v1/trading/inquire-balance"
+        },
+        {
+          "tr_id": "HHKDB669102C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/dividend"
+        },
+        {
+          "tr_id": "HHKDB669101C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/bonus-issue"
+        },
+        {
+          "tr_id": "HHKDB669100C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/paidin-capin"
+        },
+        {
+          "tr_id": "HHKDB669106C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/cap-dcrs"
+        },
+        {
+          "tr_id": "HHKDB669104C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/merger-split"
+        },
+        {
+          "tr_id": "HHKDB669105C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/rev-split"
+        },
+        {
+          "tr_id": "HHKDB669109C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/forfeit"
+        },
+        {
+          "tr_id": "HHKDB669107C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/list-info"
+        },
+        {
+          "tr_id": "HHKDB669108C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/pub-offer"
+        },
+        {
+          "tr_id": "HHKDB669110C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/mand-deposit"
+        },
+        {
+          "tr_id": "HHKDB669103C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/purreq"
+        },
+        {
+          "tr_id": "HHKDB669111C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/sharehld-meet"
+        }
+      ],
+      "event_class": "cash_dividend",
+      "symbol": "017670"
+    },
+    {
+      "t0_offsets": {
+        "payable_time": "+09:00"
+      }
+    },
+    {
+      "baseline_call": {
+        "status_kind": "OK",
+        "rt_cd": "0"
+      }
+    },
+    {
+      "reference_dates": [
+        {
+          "record_date": "20260831",
+          "sht_cd": "017670",
+          "isin_name": "SK텔레콤",
+          "divi_kind": "분기",
+          "face_val": "100",
+          "per_sto_divi_amt": "830",
+          "divi_rate": "830.00",
+          "stk_divi_rate": "0.00",
+          "divi_pay_dt": "2026/09/17",
+          "stk_div_pay_dt": "",
+          "odd_pay_dt": "",
+          "stk_kind": "보통",
+          "high_divi_gb": ""
+        }
+      ]
+    },
+    {
+      "mock_reference_support": "SUPPORTED"
+    },
+    {
+      "attribution_caveat": "OBSERVED rows in class_leg_table are UNVERIFIED_ACCOUNT_LEVEL_CHANGE: detected by TIMING ALONE (a balance change during the polling window), not by any broker-side reference to this corporate action on the row — a concurrent order fill, deposit/withdrawal, or unrelated corporate action on the SAME account within the window is indistinguishable from the event being measured (runbook §5.8 prerequisite: operator attests no such activity)."
+    }
+  ],
+  "skips": [
+    {
+      "what": "legs.cash_dividend.ex",
+      "reason": "NOT_OBSERVABLE_ON_BALANCE_SURFACE — 기준가 조정은 잔고 TR로 관측 불가(N-19 §2.3: 주식잔고조회 72필드 중 가격 필드 없음); 현금 leg만 관측 가능."
+    },
+    {
+      "what": "legs.cash_dividend.cash",
+      "reason": "CENSORED — no broker-reflect observed within --window-s=28800.0s (polls_used=1). Absence of an observed reflection is not evidence of zero latency (VP-002:772 'observed 0 != 0')."
+    }
+  ],
+  "errors": [
+    "rate-limited during poll #1; stopping — no retry"
+  ],
+  "provenance_class": "NOT_MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_non_trade_event_detect",
+      "B_non_trade_reconcile"
+    ],
+    "instance_fields": [
+      "capabilities.corporate_actions.evidence_refs",
+      "capabilities.corporate_actions.status"
+    ],
+    "capability_dimension": "CORPORATE_ADMINISTRATIVE_EVENTS"
+  }
+}
