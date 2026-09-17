@@ -335,6 +335,30 @@ def test_session_closed_skips_the_tick(
 # ----------------------------------------------------------------------------
 
 
+def test_named_tbd_placeholder_instrument_class_refuses_to_load(
+    tmp_path: Path, config_dir: Path
+) -> None:
+    """W-A A-0 round 2: an operator typing the literal placeholder string ``"TBD"``
+    into a ``marketfeed.yaml`` scalar-string field must never be sealed into
+    ``MarketFeedConfig`` as though it were a real deployment value."""
+    from tos_runtime.compose._marketfeed_wiring import (
+        MarketFeedConfigError,
+        load_marketfeed_config,
+    )
+
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path, [])
+    _write_marketfeed_config(
+        config_dir, journal_path=journal_path, instruments=(fx.INSTRUMENT,)
+    )
+    raw = yaml.safe_load((config_dir / "marketfeed.yaml").read_text())
+    raw["instrument_class"] = "TBD"
+    (config_dir / "marketfeed.yaml").write_text(yaml.safe_dump(raw, sort_keys=False))
+
+    with pytest.raises(MarketFeedConfigError, match="template placeholder"):
+        load_marketfeed_config(config_dir / "marketfeed.yaml")
+
+
 def test_a_multi_instrument_config_refuses_boot(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:

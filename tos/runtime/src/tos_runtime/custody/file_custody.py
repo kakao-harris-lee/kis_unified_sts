@@ -71,6 +71,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from tos.evidence import scrub_secret_fields
 from tos.workload import environment_label_consistent
 
+from tos_runtime._named_tbd import is_named_tbd_placeholder
 from tos_runtime.custody.ports import (
     CredentialHandle,
     CustodyLoadRefused,
@@ -164,6 +165,20 @@ class _ScopeManifestEntry(BaseModel):
             raise ValueError(
                 f"scope 'file' must not contain a '..' path component — got "
                 f"{value!r} (design #40 D4.1, MEDIUM-1 path-escape guard)"
+            )
+        return value
+
+    @field_validator("principal")
+    @classmethod
+    def _principal_must_not_be_named_tbd(cls, value: str) -> str:
+        """Refuse the named-TBD placeholder (W-A A-0 round 2) — a scope's own distinct
+        ``principal`` (ADR-002-013 :267-269) is a real identity sealed into every
+        ``CUSTODY_LOAD`` evidence record and cross-checked against broker-scope principals
+        elsewhere; an operator-typed ``"TBD"`` must never pass for one."""
+        if is_named_tbd_placeholder(value):
+            raise ValueError(
+                "scope 'principal' is still the template placeholder 'TBD' — "
+                "operator-fill before activation"
             )
         return value
 

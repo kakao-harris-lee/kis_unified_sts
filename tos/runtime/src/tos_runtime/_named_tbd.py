@@ -22,13 +22,33 @@ loaders that already had their own local check —
 — now source their own ``TBD_STR``/``_TBD_STR`` constant from here too, so there is exactly
 one literal, not three).
 
-Pure stdlib module: no ``tos.*``, no ``yaml`` — a bare string-equality helper has no reason
-to know a kernel record shape or a YAML shape.
+**Re-survey, round 2 (team-lead disposition, kernel round #4 re-review BLOCKER).** The first
+survey worked from a hand-maintained file list that turned out to be stale (missing
+``tos_runtime.safety.profile``, both ``tos_runtime.transport.kis_*.config`` modules, and
+``tos_runtime.safety.rearm``) — the exact "레지스트리 + 고정 안 된 위성" failure shape this
+repo has hit before. :func:`first_named_tbd_leaf` (promoted here from
+:mod:`tos_runtime.strategy.loader`, which re-exports it for backward compatibility — no
+behavioural change) is this module's answer to the "whole raw dict handed to
+``pydantic.model_validate`` with no per-field extraction at all" loader shape
+(:mod:`tos_runtime.safety.profile`'s three policy documents) — the SAME depth-first walk
+:mod:`tos_runtime.strategy.loader`/``.bindings`` already apply to a free-form strategy file,
+generalized here because it turns out to be the right tool for ANY raw-dict-to-pydantic
+loader, not just strategy files.
+
+Pure stdlib module: no ``tos.*``, no ``yaml`` — a bare string-equality/tree-walk helper has no
+reason to know a kernel record shape or a YAML shape.
 """
 
 from __future__ import annotations
 
-__all__ = ["NAMED_TBD_PLACEHOLDER", "is_named_tbd_placeholder", "reject_named_tbd"]
+from typing import Any
+
+__all__ = [
+    "NAMED_TBD_PLACEHOLDER",
+    "first_named_tbd_leaf",
+    "is_named_tbd_placeholder",
+    "reject_named_tbd",
+]
 
 #: The one placeholder string this codebase's example configs use for "an operator has not
 #: filled this in yet" — an EXACT match only, deliberately never case-folded or fuzzy.
@@ -75,3 +95,40 @@ def reject_named_tbd(
             f"{NAMED_TBD_PLACEHOLDER!r} — operator-fill before activation, never a value "
             "this loader treats as concrete"
         )
+
+
+def first_named_tbd_leaf(value: Any, path: str) -> str | None:
+    """Return the dotted/indexed path of the first named-TBD placeholder STRING leaf
+    found by a depth-first walk of ``value`` (dict values and list elements only —
+    scalars ARE the leaves), or ``None`` if there is none.
+
+    For a loader that hands a raw dict straight to ``pydantic.model_validate`` with no
+    per-field extraction of its own (e.g. :mod:`tos_runtime.safety.profile`'s three
+    policy documents) — :func:`reject_named_tbd` has nothing to wrap in that shape,
+    since there is no individual ``value``/``field`` pair to check one at a time. This
+    walks the whole raw mapping/list tree in one pass instead, the same discipline
+    :mod:`tos_runtime.strategy.loader`'s sibling ``first_null_leaf`` already applies for
+    a bare ``null`` anywhere in a free-form strategy file.
+
+    Args:
+        value: The (sub)value to inspect.
+        path: The dotted/indexed path to ``value`` itself, for the message.
+
+    Returns:
+        The path of the first :data:`NAMED_TBD_PLACEHOLDER` string found, else ``None``.
+    """
+    if isinstance(value, dict):
+        for key, sub in value.items():
+            found = first_named_tbd_leaf(sub, f"{path}.{key}" if path else str(key))
+            if found is not None:
+                return found
+        return None
+    if isinstance(value, list):
+        for index, sub in enumerate(value):
+            found = first_named_tbd_leaf(sub, f"{path}[{index}]")
+            if found is not None:
+                return found
+        return None
+    if is_named_tbd_placeholder(value):
+        return path or "<root>"
+    return None

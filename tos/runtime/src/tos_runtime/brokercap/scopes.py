@@ -368,7 +368,7 @@ def _build_provenance(raw: Mapping[str, Any], scope_name: str) -> CapabilityProv
 
 
 def _build_profile_key(raw: Mapping[str, Any] | None) -> ProfileKey:
-    raw = raw or {}
+    raw = raw or {}  # no TBD guard (W-A A-0 r2): 3 fields eq-read by kernel, 7 unread
     return ProfileKey(
         broker_id=raw.get("broker_id"),
         api_product=raw.get("api_product"),

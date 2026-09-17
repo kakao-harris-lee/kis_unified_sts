@@ -95,6 +95,14 @@ __all__ = [
 _EVIDENCE_KIND_SNAPSHOT = "ARE_SNAPSHOT"
 _EVIDENCE_KIND_DECISION = "ARE_DECISION"
 
+#: The template's reserved not-yet-filled placeholder (W-A A-0 round 2) — the SAME token
+#: ``tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`` names, duplicated here (never imported)
+#: per this module's own closed R1 Firewall allowlist (module docstring): ``scenario_set_id``
+#: / ``policy_binding_id`` / ``evidence_package_ref`` are free strings sealed straight into the
+#: issued ``AdverseScenarioSet``'s digest — ``AdverseScenarioSet.issue`` refuses a bare
+#: ``null`` (module docstring), but never caught an operator typing this literal instead.
+_TBD_STR = "TBD"
+
 
 class AggregateRiskConfigError(Exception):
     """Raised when the ``AdverseScenarioSet`` / coverage-floor config is
@@ -165,6 +173,12 @@ def load_adverse_scenario_set(
     covered = _parse_scenario_kinds(
         path, raw.get("covered_scenario_kinds"), field_name="covered_scenario_kinds"
     )
+    for field_name in ("scenario_set_id", "policy_binding_id", "evidence_package_ref"):
+        if raw.get(field_name) == _TBD_STR:
+            raise AggregateRiskConfigError(
+                f"{path}: {field_name!r} is still the template placeholder {_TBD_STR!r} — "
+                "operator-fill before activation, never a value this loader treats as concrete"
+            )
     try:
         scenario_set = AdverseScenarioSet.issue(
             scheme=scheme,

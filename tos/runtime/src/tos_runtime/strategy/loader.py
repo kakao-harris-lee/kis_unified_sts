@@ -49,7 +49,13 @@ loader in this tree refuse) into a rule/target/threshold leaf was not caught by
 the null-only walk — an unbounded free-form ``AuthoredStrategy`` mapping has no
 enum/allow-list to fall back on the way a fixed-shape config loader's fields do,
 so this walker closes the SAME gap :func:`first_null_leaf` closes, over the
-SAME tree, before ``parse`` ever sees the file.
+SAME tree, before ``parse`` ever sees the file. :func:`~tos_runtime._named_tbd
+.first_named_tbd_leaf` itself now lives in the shared ``_named_tbd`` module (promoted
+there, W-A A-0 round 2) — re-imported here so this module's own name and
+:mod:`tos_runtime.strategy.bindings`'s existing import both keep working unchanged;
+:mod:`tos_runtime.safety.profile` reuses the SAME walker for its own three
+raw-dict-to-pydantic policy documents, which have no per-field extraction of their own
+for :func:`~tos_runtime._named_tbd.reject_named_tbd` to wrap.
 
 Firewall: this module is ``tos_runtime`` scope — ``tos.*`` (the kernel),
 stdlib, and ``pyyaml``/``pydantic`` (already-pinned third parties) only; no
@@ -70,7 +76,7 @@ from tos.dsl import ArtifactIntegrityError, AuthoredStrategy
 from tos.engine.admission import AdmissionResult
 from tos.engine.vocabulary import AdmissionVerdict
 
-from tos_runtime._named_tbd import is_named_tbd_placeholder
+from tos_runtime._named_tbd import first_named_tbd_leaf
 
 __all__ = [
     "AdmitFn",
@@ -152,43 +158,6 @@ def first_null_leaf(value: Any, path: str) -> str | None:
             if found is not None:
                 return found
         return None
-    return None
-
-
-def first_named_tbd_leaf(value: Any, path: str) -> str | None:
-    """Return the dotted/indexed path of the first named-TBD placeholder STRING
-    leaf found by a depth-first walk of ``value`` (dict values and list elements
-    only — scalars ARE the leaves), or ``None`` if there is none.
-
-    The sibling of :func:`first_null_leaf` (module docstring, "Named-TBD 'TBD'
-    STRING leaves" section) — same walk, same shared-verbatim intra-package
-    reuse by :func:`tos_runtime.strategy.bindings.load_strategy_bindings`, closing
-    the SECOND named-TBD gap (a placeholder STRING typed in place of a real
-    value) rather than the first (a bare ``null``, :func:`first_null_leaf`'s own
-    job).
-
-    Args:
-        value: The (sub)value to inspect.
-        path: The dotted/indexed path to ``value`` itself, for the message.
-
-    Returns:
-        The path of the first :data:`~tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`
-        string found, else ``None``.
-    """
-    if isinstance(value, dict):
-        for key, sub in value.items():
-            found = first_named_tbd_leaf(sub, f"{path}.{key}" if path else str(key))
-            if found is not None:
-                return found
-        return None
-    if isinstance(value, list):
-        for index, sub in enumerate(value):
-            found = first_named_tbd_leaf(sub, f"{path}[{index}]")
-            if found is not None:
-                return found
-        return None
-    if is_named_tbd_placeholder(value):
-        return path or "<root>"
     return None
 
 

@@ -60,6 +60,7 @@ from typing import Any
 
 import yaml
 
+from tos_runtime._named_tbd import is_named_tbd_placeholder
 from tos_runtime.custody.file_custody import verify_file_mode_and_owner
 from tos_runtime.custody.ports import CustodyLoadRefused
 from tos_runtime.evidence.store import SqliteEvidenceStore
@@ -164,6 +165,12 @@ def _verify_principal_id(raw: Mapping[str, Any], path: Path) -> str:
     if not isinstance(principal_id, str) or not principal_id.strip():
         raise AlertAcknowledgementFileError(
             f"{path} 'principal_id' is missing or blank"
+        )
+    if is_named_tbd_placeholder(principal_id):
+        raise AlertAcknowledgementFileError(
+            f"{path} 'principal_id' is still the template placeholder 'TBD' — "
+            "operator-fill before activation, never a value this loader treats as a "
+            "genuine acknowledging identity"
         )
     return principal_id
 

@@ -282,7 +282,7 @@ def _parse_ocp_model_view(
             f"{path}: _model_view.policy_generation {generation!r} != top-level "
             f"policy_generation {top_level_policy_generation!r} — refusing"
         )
-    return require_str(mv_raw, "policy_version", path, "_model_view")
+    return require_filled_str(mv_raw, "policy_version", path, "_model_view")
 
 
 def _parse_wire_codec(
@@ -303,6 +303,11 @@ def _parse_wire_codec(
     kind = require_str(value, "kind", path, "_runtime.wire_codec")
     fields = require_list(value, "wire_fields", path, "_runtime.wire_codec")
     field_strs = require_str_list(fields, path, "_runtime.wire_codec.wire_fields")
+    if TBD_STR in field_strs:
+        raise VenuePolicyConfigError(
+            f"{path}: _runtime.wire_codec.wire_fields still carries the template "
+            f"placeholder {TBD_STR!r} — operator-fill before activation"
+        )
     return kind, frozenset(field_strs)
 
 
@@ -598,8 +603,10 @@ def _parse_action_class_shape(
             entry_ctx = f"{ctx}.{direction_token}"
             if not isinstance(entry, dict):
                 raise VenuePolicyConfigError(f"{path}: {entry_ctx} must be a mapping")
-            side = require_str(entry, "side", path, entry_ctx)
-            position_effect = require_str(entry, "position_effect", path, entry_ctx)
+            side = require_filled_str(entry, "side", path, entry_ctx)
+            position_effect = require_filled_str(
+                entry, "position_effect", path, entry_ctx
+            )
             shapes[(action, direction_token)] = ActionClassShape(
                 side=side, position_effect=position_effect
             )
@@ -618,7 +625,7 @@ def _parse_effect_dimensions(
         ctx = f"_runtime.construction.effect_dimensions[{i}]"
         if not isinstance(entry, dict):
             raise VenuePolicyConfigError(f"{path}: {ctx} must be a mapping")
-        dimension_id = require_str(entry, "dimension_id", path, ctx)
+        dimension_id = require_filled_str(entry, "dimension_id", path, ctx)
         basis_token = require_str(entry, "basis", path, ctx)
         try:
             basis = EffectBasis(basis_token)
@@ -626,8 +633,8 @@ def _parse_effect_dimensions(
             raise VenuePolicyConfigError(
                 f"{path}: {ctx}.basis {basis_token!r} is not a known EffectBasis"
             ) from exc
-        unit = require_str(entry, "unit", path, ctx)
-        scale = require_str(entry, "scale", path, ctx)
+        unit = require_filled_str(entry, "unit", path, ctx)
+        scale = require_filled_str(entry, "scale", path, ctx)
         specs.append(
             EffectDimensionSpec(
                 dimension_id=dimension_id, basis=basis, unit=unit, scale=scale

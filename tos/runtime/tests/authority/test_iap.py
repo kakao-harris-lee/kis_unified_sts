@@ -52,6 +52,21 @@ def test_loader_passes_the_operators_result_verbatim(
     assert decision.decision_id == "d1"
 
 
+def test_loader_refuses_named_tbd_placeholder_decision_id(
+    approvals_dir: Path, expected_owner_uid: int
+) -> None:
+    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): decision_id/request_id/
+    request_digest/etc. are free strings sealed straight into the issued
+    decision's own canonical digest — an operator-typed ``"TBD"`` must never pass."""
+    path = write_approval_file(approvals_dir / "p1.yaml", decision_id="TBD")
+    with pytest.raises(OperatorApprovalFileError, match="template placeholder"):
+        load_operator_approval_file(
+            path,
+            expected_owner_uid=expected_owner_uid,
+            environment_label="non-live-test",
+        )
+
+
 def test_loader_refuses_mode_0644(approvals_dir: Path, expected_owner_uid: int) -> None:
     path = write_approval_file(approvals_dir / "p1.yaml", mode=0o644)
     with pytest.raises(OperatorApprovalFileError):

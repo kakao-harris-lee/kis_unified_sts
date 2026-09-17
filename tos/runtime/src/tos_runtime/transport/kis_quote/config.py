@@ -82,6 +82,14 @@ __all__ = [
 #: ``V``-prefixed shape (``kis_mock/config.py``'s ``_TR_ID_PATTERN``).
 _QUOTE_TR_ID_PATTERN = re.compile(r"^FH[A-Z]{3}\d{8}$")
 
+#: The template's reserved not-yet-filled placeholder — the SAME token
+#: ``tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`` names, duplicated here (never imported)
+#: per this module's own stdlib-only firewall discipline (module docstring): an operator
+#: typing this literal into a free string field (``instrument``/``source_id``/``quote_path``/
+#: ``token_path``/``market_div_code``/a ``field_mapping`` value) must never be sealed in as a
+#: real value the way a bare ``null`` already refuses.
+_TBD_STR = "TBD"
+
 
 class KisQuoteTransportConfigError(Exception):
     """The KIS QUOTE transport config is missing, malformed, still named-TBD, or names an
@@ -154,6 +162,11 @@ def _require_str(raw: Any, field: str, path: Path) -> str:
         raise KisQuoteTransportConfigError(
             f"{path}: {field!r} must be a non-empty string, got {value!r}"
         )
+    if value == _TBD_STR:
+        raise KisQuoteTransportConfigError(
+            f"{path}: {field!r} is still the template placeholder {_TBD_STR!r} — "
+            "operator-fill before activation, never a value this loader treats as concrete"
+        )
     return value
 
 
@@ -216,6 +229,11 @@ def _require_field_mapping(raw: Any, path: Path) -> dict[str, str]:
             raise KisQuoteTransportConfigError(
                 f"{path}: field_mapping[{key!r}] is still null (named-TBD) or not a non-empty "
                 "string — refusing to start until an operator attests a concrete CIP field_key"
+            )
+        if value == _TBD_STR:
+            raise KisQuoteTransportConfigError(
+                f"{path}: field_mapping[{key!r}] is still the template placeholder "
+                f"{_TBD_STR!r} — operator-fill before activation"
             )
         result[key] = value
     return result

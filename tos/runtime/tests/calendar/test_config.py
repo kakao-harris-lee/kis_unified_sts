@@ -100,6 +100,26 @@ def test_null_required_scalar_refuses(tmp_path, key: str) -> None:
         load_calendar_config(path)
 
 
+@pytest.mark.parametrize("key", ["calendar_version", "tz_id", "closed_phase"])
+def test_named_tbd_placeholder_required_scalar_refuses(tmp_path, key: str) -> None:
+    """W-A A-0 round 2: an operator typing the literal placeholder string ``"TBD"``
+    must never be sealed into ``calendar_bind_digest`` as though it were real."""
+    base = {
+        "calendar_version": '"v1"',
+        "tz_id": '"Asia/Seoul"',
+        "closed_phase": '"CLOSED"',
+    }
+    base[key] = '"TBD"'
+    lines = [f"{k}: {v}" for k, v in base.items()] + [
+        "holidays: []",
+        "sessions: {}",
+        "futures_expiry: {}",
+    ]
+    path = write_fixture_calendar(tmp_path, text="\n".join(lines) + "\n")
+    with pytest.raises(CalendarConfigError, match="template placeholder"):
+        load_calendar_config(path)
+
+
 def test_null_holidays_refuses(tmp_path) -> None:
     text = (
         'calendar_version: "v1"\n'

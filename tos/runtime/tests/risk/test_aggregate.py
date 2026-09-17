@@ -39,6 +39,18 @@ def test_load_adverse_scenario_set_refuses_null_generation(tmp_path: Path) -> No
         load_adverse_scenario_set(path)
 
 
+def test_load_adverse_scenario_set_refuses_named_tbd_placeholder(
+    tmp_path: Path,
+) -> None:
+    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): scenario_set_id/policy_binding_id/
+    evidence_package_ref are sealed into the issued AdverseScenarioSet's canonical
+    digest — an operator-typed ``"TBD"`` must never pass ``AdverseScenarioSet.issue``'s
+    own null-only check."""
+    path = write_risk_config(tmp_path / "risk.yaml", scenario_set_id="TBD")
+    with pytest.raises(AggregateRiskConfigError, match="template placeholder"):
+        load_adverse_scenario_set(path)
+
+
 def test_load_adverse_scenario_set_refuses_missing_file(tmp_path: Path) -> None:
     with pytest.raises(AggregateRiskConfigError):
         load_adverse_scenario_set(tmp_path / "does-not-exist.yaml")

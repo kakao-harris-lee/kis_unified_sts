@@ -83,6 +83,17 @@ def test_are_named_tbd_policy_id_refused(tmp_path: Path) -> None:
         load_aggregate_risk_policy(path, scheme=SCHEME)
 
 
+def test_are_named_tbd_policy_version_refused(tmp_path: Path) -> None:
+    """W-A A-0 round 2: ``policy_version`` used the plain ``require_str`` helper (no
+    TBD check), unlike ``policy_id``'s own ``require_filled_str`` — fixed by swapping
+    to ``require_filled_str``."""
+    path = _write(
+        tmp_path, "are.yaml", aggregate_risk_policy_yaml(policy_version="TBD")
+    )
+    with pytest.raises(VenuePolicyConfigError, match="template placeholder"):
+        load_aggregate_risk_policy(path, scheme=SCHEME)
+
+
 def test_are_draft_status_refused(tmp_path: Path) -> None:
     path = _write(tmp_path, "are.yaml", aggregate_risk_policy_yaml(status="DRAFT"))
     with pytest.raises(VenuePolicyConfigError, match="status"):
@@ -233,6 +244,30 @@ def test_load_action_flow_policy_happy_path(tmp_path: Path) -> None:
 def test_afg_named_tbd_policy_id_refused(tmp_path: Path) -> None:
     path = _write(tmp_path, "afg.yaml", action_flow_policy_yaml(policy_id="TBD"))
     with pytest.raises(VenuePolicyConfigError, match="policy_id"):
+        load_action_flow_policy(path, scheme=SCHEME)
+
+
+def test_afg_named_tbd_bundle_member_kind_refused(tmp_path: Path) -> None:
+    """W-A A-0 round 2: ``bundle_member_kind`` used the plain ``require_str`` helper
+    (no TBD check) — fixed by swapping to ``require_filled_str``."""
+    path = _write(
+        tmp_path, "afg.yaml", action_flow_policy_yaml(bundle_member_kind="TBD")
+    )
+    with pytest.raises(VenuePolicyConfigError, match="template placeholder"):
+        load_action_flow_policy(path, scheme=SCHEME)
+
+
+def test_afg_named_tbd_signer_identity_refused(tmp_path: Path) -> None:
+    """W-A A-0 round 2 (kernel round #4 재심 후속 조사): signer_identity/
+    approval_identity/evidence_package_ref used an inline null-or-string check with no
+    TBD guard — fixed by reusing ``optional_str`` (the SAME helper
+    ``venue/_order_construction_policy_loader.py``'s own identical three fields
+    already use)."""
+    text = action_flow_policy_yaml().replace(
+        "signer_identity: null", 'signer_identity: "TBD"'
+    )
+    path = _write(tmp_path, "afg.yaml", text)
+    with pytest.raises(VenuePolicyConfigError, match="template placeholder"):
         load_action_flow_policy(path, scheme=SCHEME)
 
 
