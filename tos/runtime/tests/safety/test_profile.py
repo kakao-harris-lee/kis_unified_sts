@@ -244,6 +244,24 @@ def test_still_null_envelope_field_refuses_construction(
     assert service.clear().clear is False
 
 
+def test_named_tbd_placeholder_envelope_field_refuses_construction(
+    tmp_path: Path, trusted_time_source: TrustedTimeSource
+) -> None:
+    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): this loader hands its three raw
+    documents straight to ``model_validate`` with no per-field extraction of its own —
+    an operator typing the literal placeholder string ``"TBD"`` was never caught the
+    way a bare ``null`` already is. Unlike the null case above (deferred to ``clear()``
+    since envelope_id/generation are optional kernel fields), the TBD-leaf walk refuses
+    at CONSTRUCTION time, before ``model_validate`` ever sees the document."""
+    envelope = copy.deepcopy(NOMINAL_ENVELOPE)
+    envelope["envelope"]["envelope_id"] = "TBD"
+    envelope_path = _write(tmp_path, "safety_envelope.yaml", envelope)
+    profile_path = _write(tmp_path, "safety_profile.yaml", NOMINAL_PROFILE)
+    activation_path = _write(tmp_path, "safety_activation.yaml", NOMINAL_ACTIVATION)
+    with pytest.raises(SafetyProfileConfigError, match="template placeholder"):
+        _service((envelope_path, profile_path, activation_path), trusted_time_source)
+
+
 def test_not_expired_missing_key_refuses_construction(
     tmp_path: Path, trusted_time_source: TrustedTimeSource
 ) -> None:

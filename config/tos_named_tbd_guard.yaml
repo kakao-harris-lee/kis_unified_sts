@@ -1,0 +1,104 @@
+# config/tos_named_tbd_guard.yaml — named-TBD placeholder guard registry (W-A A-0 round 2,
+# kernel round #4 재심 BLOCKER 처분 — 2026-09-18).
+#
+# 검사기: tools/tos_named_tbd_guard.py · 테스트: tests/tools/test_tos_named_tbd_guard.py
+#
+# 배경: A-0 1차 라운드는 팀리드가 준 17개 파일 목록으로 작업했고, 그 목록이 실제 로더
+# 집합과 어긋나 safety/profile.py·transport/kis_*/config.py·safety/rearm.py 가 빠졌다
+# (재심 BLOCKER). 목록으로 다시 하지 말라는 지시에 따라, 이 검사기는 «후보 판별»을
+# 손으로 만든 목록이 아니라 tools/tos_named_tbd_guard.py 자신의 코드로 수행한다 —
+# 이 파일은 그 판별이 잡아낸 "예외" 만 등재한다.
+#
+# 후보 판별 규칙 (검사기 코드가 정본, 아래는 요약): tos/runtime/src/tos_runtime/**/*.py 중
+#   - `yaml.safe_load(` / `yaml.safe_load_all(` / `load_yaml_document(` 호출을 포함하거나
+#   - `tos_runtime.venue._policy_primitives` 에서 import 하는
+# 모든 파일이 "후보"(설정 파일에서 원시 값을 읽는 지점)다.
+#
+# 가드 판정 규칙: 후보 파일이 아래 토큰 중 하나라도 참조하면 통과 —
+#   reject_named_tbd · is_named_tbd_placeholder · first_named_tbd_leaf · TBD_STR ·
+#   _TBD_STR · TBD_DIGEST · NAMED_TBD_PLACEHOLDER · require_filled_str · optional_str ·
+#   require_str_field · _tbd_to_none
+#
+# 참조가 하나도 없는 후보는 --check 가 red 를 낸다 — 여기 등재하고 이유를 적어야
+# 통과한다. 새 로더가 이 가드 없이 추가되면 자동으로 걸린다(레지스트리를 신뢰하는 게
+# 아니라 실측과 대조하는 구조 — "레지스트리 + 고정 안 된 위성" 재발 방지,
+# project memory `registry-with-unpinned-satellite`).
+#
+# 등재는 «면허»가 아니라 «가시성»이다(tos_size_budget.yaml 과 동일한 규율) — 각 항목은
+# 검사기가 왜 이 파일에 가드가 필요 없다고 판단했는지 사람이 검증 가능한 이유를 남긴다.
+# 이유가 더 이상 성립하지 않으면(예: 새 문자열 필드가 추가됐는데 가드가 안 붙으면)
+# 검사기가 다시 candidate 로 잡아 이 등재와 무관하게 별도로 잡는다 — 아래 항목은
+# "가드가 없는 이유"이지 "앞으로도 안전하다는 보증"이 아니다.
+
+exempt_files:
+  - path: tos/runtime/src/tos_runtime/authority/epoch.py
+    reason: >-
+      int/bool 필드만(containment_bound_ms, trading_approval_policy_generation) —
+      문자열 리프가 없어 named-TBD 문자열이 애초에 들어갈 자리가 없다.
+  - path: tos/runtime/src/tos_runtime/backtest/config.py
+    reason: >-
+      Decimal/int 필드만(_RawDeviationBudget: max_price_bps, max_fill_ratio_shortfall,
+      max_latency_bars, min_observations) — 문자열 리프 없음.
+  - path: tos/runtime/src/tos_runtime/compose/_currentness_wiring.py
+    reason: >-
+      _load_action_flow_envelope 이 읽는 11개 필드(max_fan_out 등)가 전부 int —
+      문자열 리프 없음.
+  - path: tos/runtime/src/tos_runtime/compose/_engine_config.py
+    reason: >-
+      dsl_evaluation_budget_steps/max_unresolved_send_per_scope 둘 다 int — 문자열
+      리프 없음.
+  - path: tos/runtime/src/tos_runtime/compose/_engine_wiring.py
+    reason: >-
+      load_engine_driver_config 이 읽는 유일한 필드 replay_window_events 가 int —
+      문자열 리프 없음. (동일 파일의 CoordinatorPreconditionsConfig 는
+      _preconditions.py 소관 — 아래 별도 항목.)
+  - path: tos/runtime/src/tos_runtime/compose/_nontrade_eval_dispatch.py
+    reason: >-
+      nontrade-eval CLI 의 순수 dry-run 로더 — 결과는 표준출력에만 찍히고 어떤
+      다이제스트에도 봉인되지 않는다(모듈 독스트링: "opens no store, no custody,
+      appends zero evidence anywhere real"). 이 작업이 닫는 부류("TBD 가 조용히
+      승인/봉인됨")의 대상이 아니다.
+  - path: tos/runtime/src/tos_runtime/compose/_preconditions.py
+    reason: >-
+      CoordinatorPreconditionsConfig.live_authorization_state 는 문자열이지만
+      frozenset({"NOT_AUTHORIZED"}) 대조로 이미 닫힌 집합 게이트 — "TBD" 는
+      멤버가 아니므로 이미 거부된다(enum 게이트와 동일 논리).
+  - path: tos/runtime/src/tos_runtime/compose/_risk_attestations.py
+    reason: >-
+      RiskAttestations 의 6개 필드 전부 bool — 문자열 리프 없음.
+  - path: tos/runtime/src/tos_runtime/currentness/config.py
+    reason: >-
+      B_capability_claim_to_send 는 int; required_dimensions 엔트리는
+      DimensionKey(entry) enum 변환으로 이미 게이트됨.
+  - path: tos/runtime/src/tos_runtime/evidence/retention.py
+    reason: >-
+      minimum_days_by_class 의 값은 int|None(문자열 아님) — "TBD" 를 넣으면 이
+      부류(문자열 자리에 조용히 승인)가 아니라 별개의 타입 불일치로 하류에서 실패한다.
+      RetentionVerdict.record_class/reason 은 설정에서 읽은 값이 아니라 이 모듈이
+      계산해 내보내는 출력 필드.
+  - path: tos/runtime/src/tos_runtime/nontrade/config.py
+    reason: >-
+      키(NonTradeEventClass[name])와 리프(CredibleTransitionLegKind[name]) 모두
+      커널 enum 조회로 게이트 — "TBD" 는 애초에 유효 멤버명이 아니다.
+  - path: tos/runtime/src/tos_runtime/riskstate/_riskstate_primitives.py
+    reason: >-
+      require_explicit_list_str 는 venue._policy_primitives.require_str_list 로
+      위임하는 얇은 래퍼 — 이 파일 자신의 문자열 필드가 없다(호출부인
+      riskstate/_action_flow_policy_loader.py·_aggregate_risk_policy_loader.py 가
+      각자 가드를 갖는다).
+  - path: tos/runtime/src/tos_runtime/riskstate/policies.py
+    reason: >-
+      로더 로직이 없는 얇은 재노출 모듈(타입/도크스트링만) — 실제 로더는
+      riskstate/_action_flow_policy_loader.py·_aggregate_risk_policy_loader.py.
+  - path: tos/runtime/src/tos_runtime/venue/activation.py
+    reason: >-
+      BundleMemberRef.member_id/digest 는 커널 모델상 str|None 이며 요청 좌표와의
+      "정확 일치" 매칭에만 쓰인다. 매칭 대상(요청 좌표)은 커널에서 파생되지
+      operator 가 타이핑하지 않으므로 "TBD" 리터럴이 우연히 매칭될 시나리오가
+      없다 — venue/config.py 의 canonical_digest처럼 "TBD 는 특별히 허용"되는
+      필드도 아니고, 그렇다고 실질적 우회로도 아니다(조사 결과, 팀리드 지시 §1).
+  - path: tos/runtime/src/tos_runtime/venue/config.py
+    reason: >-
+      로더 로직이 없는 얇은 재노출 shim(모듈 독스트링 "A thin re-export shim") —
+      실제 로더는 venue/_venue_policy_loader.py·_order_construction_policy_loader.py·
+      _policy_primitives.py.

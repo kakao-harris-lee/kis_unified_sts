@@ -226,6 +226,25 @@ def test_non_conforming_tr_id_refuses(tmp_path: Path, bad_tr_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_named_tbd_placeholder_instrument_refuses(tmp_path: Path) -> None:
+    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): this file's own stdlib-only
+    firewall discipline means it duplicates the ``"TBD"`` literal locally rather than
+    importing ``tos_runtime._named_tbd`` — pin that the local check actually fires."""
+    raw = _valid_raw()
+    raw["instrument"] = "TBD"
+    path = _write(tmp_path, raw)
+    with pytest.raises(KisQuoteTransportConfigError, match="template placeholder"):
+        _load(path)
+
+
+def test_named_tbd_placeholder_field_mapping_value_refuses(tmp_path: Path) -> None:
+    raw = _valid_raw()
+    raw["field_mapping"] = {"stck_prpr": "TBD"}
+    path = _write(tmp_path, raw)
+    with pytest.raises(KisQuoteTransportConfigError, match="template placeholder"):
+        _load(path)
+
+
 def test_empty_field_mapping_refuses(tmp_path: Path) -> None:
     raw = _valid_raw()
     raw["field_mapping"] = {}

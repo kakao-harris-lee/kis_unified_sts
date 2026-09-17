@@ -79,6 +79,17 @@ def test_null_version_string_is_rejected(tmp_path: Path) -> None:
         load_time_config(path)
 
 
+def test_named_tbd_placeholder_version_string_is_rejected(tmp_path: Path) -> None:
+    """W-A A-0: a version string literally ``"TBD"`` is a template placeholder an
+    operator typed in place of a real value, not a genuine version — never sealed
+    into a ``TimeHealthSnapshot`` as if it were concrete."""
+    content = dict(_FULLY_VALUED)
+    content["tz_db_version"] = "TBD"
+    path = _write_yaml(tmp_path / "time.yaml", content)
+    with pytest.raises(TimeConfigError, match="template placeholder"):
+        load_time_config(path)
+
+
 def test_negative_bound_is_rejected(tmp_path: Path) -> None:
     content = dict(_FULLY_VALUED)
     content["MAX_process_suspension_ms"] = -1

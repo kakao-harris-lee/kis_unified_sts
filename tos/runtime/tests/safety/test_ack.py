@@ -406,6 +406,27 @@ def test_missing_principal_id_is_refused(
     assert "principal_id" in outcome.reason
 
 
+def test_named_tbd_placeholder_principal_id_is_refused(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore, expected_owner_uid: int
+) -> None:
+    """W-A A-0 round 2: an operator typing the literal placeholder string ``"TBD"``
+    for the acknowledging identity must never be sealed into
+    ``STM_ALERT_ACKNOWLEDGED`` as though a real operator acknowledged it."""
+    seq = _append_stm_alert(evidence_store)
+    _write_ack_file(tmp_path / "approvals", alert_seq=seq, principal_id="TBD")
+
+    outcome = acknowledge_alert(
+        evidence_store=evidence_store,
+        approvals_dir=tmp_path / "approvals",
+        alert_seq=seq,
+        environment_label=_ENV_LABEL,
+        expected_owner_uid=expected_owner_uid,
+    )
+
+    assert outcome.acknowledged is False
+    assert "template placeholder" in outcome.reason
+
+
 def test_missing_acknowledged_at_label_is_refused(
     tmp_path: Path, evidence_store: SqliteEvidenceStore, expected_owner_uid: int
 ) -> None:

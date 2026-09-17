@@ -150,6 +150,29 @@ def test_null_applicable_incident_ids_refuses_to_load(tmp_path: Path) -> None:
         IncidentService(config_path=path)
 
 
+def test_named_tbd_placeholder_safety_cell_refuses_to_load(tmp_path: Path) -> None:
+    """W-A A-0: an operator typing the literal placeholder string ``"TBD"`` for
+    ``safety_cell`` (via the shared ``require_str_field`` helper) must never be
+    sealed into ``ActiveSafetyIncidentSet`` as though it were a genuine value —
+    the pre-existing null-only guard never caught this."""
+    raw = json.loads(json.dumps(NOMINAL_EMPTY))
+    raw["incidents"]["active_set"]["safety_cell"] = "TBD"
+    path = _write(tmp_path, raw)
+    with pytest.raises(IncidentConfigError, match="template placeholder"):
+        IncidentService(config_path=path)
+
+
+def test_named_tbd_placeholder_applicable_incident_id_entry_refuses_to_load(
+    tmp_path: Path,
+) -> None:
+    """Same guard, over a list entry (the local ``_require_str_list`` helper)."""
+    raw = json.loads(json.dumps(NOMINAL_EMPTY))
+    raw["incidents"]["applicable_incident_ids"] = ["TBD"]
+    path = _write(tmp_path, raw)
+    with pytest.raises(IncidentConfigError, match="template placeholder"):
+        IncidentService(config_path=path)
+
+
 def test_null_members_refuses_to_load(tmp_path: Path) -> None:
     raw = json.loads(json.dumps(NOMINAL_EMPTY))
     raw["incidents"]["members"] = None

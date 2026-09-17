@@ -130,6 +130,16 @@ KIS_ORDER_CASH_WIRE_FIELDS: frozenset[str] = frozenset(
     }
 )
 
+#: The template's reserved not-yet-filled placeholder — the SAME token
+#: ``tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`` names, duplicated here (never imported)
+#: per this module's own stdlib-only firewall discipline (module docstring): an operator
+#: typing this literal into a free string field (``order_path``/``token_path``/a
+#: ``static_body_fields`` value) must never be sealed in as a real value the way a bare
+#: ``null`` already refuses. ``mode``/``endpoint_rest_base``/``tr_id_buy``/``tr_id_sell``/
+#: ``field_map`` values need no separate check here — each is already gated by a closed
+#: set, an exact-equality host seal, or a regex shape check that "TBD" fails on its own.
+_TBD_STR = "TBD"
+
 
 class KisMockTransportConfigError(Exception):
     """The KIS MOCK transport config is missing, malformed, still named-TBD, or names an
@@ -184,6 +194,11 @@ def _require_str(raw: Any, field: str, path: Path) -> str:
     if not isinstance(value, str) or not value:
         raise KisMockTransportConfigError(
             f"{path}: {field!r} must be a non-empty string, got {value!r}"
+        )
+    if value == _TBD_STR:
+        raise KisMockTransportConfigError(
+            f"{path}: {field!r} is still the template placeholder {_TBD_STR!r} — "
+            "operator-fill before activation, never a value this loader treats as concrete"
         )
     return value
 
@@ -249,6 +264,11 @@ def _require_str_mapping(
             raise KisMockTransportConfigError(
                 f"{path}: {field!r}[{key!r}] is empty — refusing to start until an operator "
                 "attests a concrete value"
+            )
+        if value == _TBD_STR:
+            raise KisMockTransportConfigError(
+                f"{path}: {field!r}[{key!r}] is still the template placeholder {_TBD_STR!r} — "
+                "operator-fill before activation"
             )
         result[key] = value
     return result

@@ -64,6 +64,15 @@ class CalendarConfigError(RuntimeError):
 _DAY_NAMES = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 _DAY_INDEX: Mapping[str, int] = {name: i for i, name in enumerate(_DAY_NAMES)}
 
+#: The template's reserved not-yet-filled placeholder (W-A A-0 round 2) — the SAME token
+#: ``tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`` names, duplicated here (never imported)
+#: per this module's own "re-implements its own inline validation" per-package convention
+#: (module docstring). ``phase``/``closed_phase``/``expired_phase`` are deliberately opaque,
+#: un-enum-gated tokens (module docstring) — exactly the shape with no allow-list to catch
+#: "TBD" on its own, so ``calendar_version``/``tz_id``/every phase token all route through
+#: this one check.
+_TBD_STR = "TBD"
+
 
 @dataclass(frozen=True)
 class SessionWindow:
@@ -126,6 +135,11 @@ def _require_str_field(
             f"{path}: {ctx} {key!r} is still null (named-TBD) or not a "
             "non-empty string — refusing to start until an operator fills "
             "it in"
+        )
+    if value == _TBD_STR:
+        raise CalendarConfigError(
+            f"{path}: {ctx} {key!r} is still the template placeholder {_TBD_STR!r} — "
+            "operator-fill before activation"
         )
     return value
 

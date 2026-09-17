@@ -105,6 +105,7 @@ from tos.hag import (
     quorum_independence_satisfied,
 )
 
+from tos_runtime._named_tbd import is_named_tbd_placeholder
 from tos_runtime.custody.file_custody import verify_file_mode_and_owner
 from tos_runtime.custody.ports import CustodyLoadRefused
 from tos_runtime.engine.inbox import NewRiskHaltClearOutcome, SqliteEventInbox
@@ -255,6 +256,11 @@ def _verify_entries(
             raise ReArmApprovalFileError(
                 f"{path} an 'approvals' entry has a missing/blank principal_id"
             )
+        if is_named_tbd_placeholder(principal_id):
+            raise ReArmApprovalFileError(
+                f"{path} an 'approvals' entry's principal_id is still the template "
+                "placeholder 'TBD' — operator-fill before activation"
+            )
         if decision not in {"APPROVE", "DENY", "ABSTAIN"}:
             raise ReArmApprovalFileError(
                 f"{path} an 'approvals' entry has an invalid decision {decision!r}"
@@ -291,6 +297,11 @@ def _parse_roster_principals(raw: Mapping[str, Any], path: Path) -> frozenset[st
         principal_id = entry.get("id")
         if not isinstance(principal_id, str) or not principal_id.strip():
             raise _RosterInvalid(f"{path} a 'principals' entry has a missing/blank id")
+        if is_named_tbd_placeholder(principal_id):
+            raise _RosterInvalid(
+                f"{path} a 'principals' entry's id is still the template placeholder "
+                "'TBD' — operator-fill before activation"
+            )
         principal_ids.add(principal_id)
     return frozenset(principal_ids)
 
@@ -319,6 +330,11 @@ def _parse_roster_edges(
         if not isinstance(target, str) or not target.strip():
             raise _RosterInvalid(
                 f"{path} a 'control_edges' entry has a missing/blank 'to'"
+            )
+        if is_named_tbd_placeholder(source) or is_named_tbd_placeholder(target):
+            raise _RosterInvalid(
+                f"{path} a 'control_edges' entry's 'from'/'to' is still the template "
+                "placeholder 'TBD' — operator-fill before activation"
             )
         edges.append(
             EffectiveControlEdge(

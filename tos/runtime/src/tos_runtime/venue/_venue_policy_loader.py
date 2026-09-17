@@ -34,6 +34,7 @@ from tos.venue import (
 
 from tos_runtime.venue._policy_primitives import (
     ACCEPTED_SCHEMA_VERSION,
+    TBD_STR,
     TEMPLATE_MAPPING_KEYS,
     VenuePolicyConfigError,
     check_canonical_digest,
@@ -356,9 +357,14 @@ def _parse_dependency_closure(
         ctx = f"_model_view.dependency_closure.edges[{i}]"
         if not isinstance(entry, dict):
             raise VenuePolicyConfigError(f"{path}: {ctx} must be a mapping")
-        node = require_str(entry, "node", path, ctx)
+        node = require_filled_str(entry, "node", path, ctx)
         dependents = require_list(entry, "dependents", path, ctx)
         dependent_strs = require_str_list(dependents, path, f"{ctx}.dependents")
+        if TBD_STR in dependent_strs:
+            raise VenuePolicyConfigError(
+                f"{path}: {ctx}.dependents still carries the template placeholder "
+                f"{TBD_STR!r} — operator-fill before activation"
+            )
         edges.append(DependencyEdge(node=node, dependents=frozenset(dependent_strs)))
     return ConstraintDependencyClosure(edges=tuple(edges))
 

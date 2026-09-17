@@ -62,6 +62,7 @@ from tos_runtime.venue._policy_primitives import (
     VenuePolicyConfigError,
     check_canonical_digest,
     load_mapping,
+    optional_str,
     require_exact_str,
     require_filled_str,
     require_int,
@@ -173,7 +174,7 @@ def _parse_are_model_view(
             f"{path}: _model_view.policy_generation {generation!r} != top-level "
             f"aggregate_risk_generation {top_level_generation!r} — refusing"
         )
-    policy_version = require_str(mv_raw, "policy_version", path, "_model_view")
+    policy_version = require_filled_str(mv_raw, "policy_version", path, "_model_view")
     dim_entries = require_list(mv_raw, "governed_dimensions", path, "_model_view")
     dim_tokens = require_str_list(dim_entries, path, "_model_view.governed_dimensions")
     governed_dimensions: list[RiskDimensionKind] = []
@@ -195,22 +196,16 @@ def _parse_are_model_view(
             raise VenuePolicyConfigError(
                 f"{path}: _model_view.governed_scopes {token!r} is not a known RiskScopeKind"
             ) from exc
-    signer_identity = mv_raw.get("signer_identity")
-    approval_identity = mv_raw.get("approval_identity")
-    evidence_package_ref = mv_raw.get("evidence_package_ref")
-    for name, value in (
-        ("signer_identity", signer_identity),
-        ("approval_identity", approval_identity),
-        ("evidence_package_ref", evidence_package_ref),
-    ):
-        if "_model_view" not in raw or name not in mv_raw:
-            raise VenuePolicyConfigError(
-                f"{path}: _model_view missing required key {name!r}"
-            )
-        if value is not None and not isinstance(value, str):
-            raise VenuePolicyConfigError(
-                f"{path}: _model_view.{name} must be a string or null"
-            )
+    # optional_str (W-A A-0 round 2, kernel round #4 K-3 precedent): PRESENT-required,
+    # null-or-string, and — unlike the inline check this replaces — also refuses the
+    # template's own "TBD" placeholder for these three operator-fill identity fields
+    # (the SAME check venue/_order_construction_policy_loader.py's own signer_identity/
+    # approval_identity/evidence_package_ref already get).
+    signer_identity = optional_str(mv_raw, "signer_identity", path, "_model_view")
+    approval_identity = optional_str(mv_raw, "approval_identity", path, "_model_view")
+    evidence_package_ref = optional_str(
+        mv_raw, "evidence_package_ref", path, "_model_view"
+    )
     return (
         generation,
         policy_version,
@@ -416,7 +411,7 @@ def load_aggregate_risk_policy(
     ) = _parse_are_model_view(raw, path, top_level_generation=top_level_generation)
 
     runtime_raw = require_mapping_key(raw, "_runtime", path)
-    unit = require_str(runtime_raw, "unit", path, "_runtime")
+    unit = require_filled_str(runtime_raw, "unit", path, "_runtime")
     dimension_ids = _parse_are_dimension_ids(
         runtime_raw,
         path,

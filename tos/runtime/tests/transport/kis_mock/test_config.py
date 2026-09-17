@@ -331,6 +331,25 @@ def test_field_map_colliding_wire_names_refuses(tmp_path: Path) -> None:
         _load(path)
 
 
+def test_named_tbd_placeholder_order_path_refuses(tmp_path: Path) -> None:
+    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): this file's own stdlib-only
+    firewall discipline means it duplicates the ``"TBD"`` literal locally rather than
+    importing ``tos_runtime._named_tbd`` — pin that the local check actually fires."""
+    raw = _valid_raw()
+    raw["order_path"] = "TBD"
+    path = _write(tmp_path, raw)
+    with pytest.raises(KisMockTransportConfigError, match="template placeholder"):
+        _load(path)
+
+
+def test_named_tbd_placeholder_static_body_field_value_refuses(tmp_path: Path) -> None:
+    raw = _valid_raw()
+    raw["static_body_fields"] = dict(STATIC_BODY_FIELDS, ACNT_PRDT_CD="TBD")
+    path = _write(tmp_path, raw)
+    with pytest.raises(KisMockTransportConfigError, match="template placeholder"):
+        _load(path)
+
+
 def test_static_body_fields_with_a_null_value_refuses(tmp_path: Path) -> None:
     raw = _valid_raw()
     raw["static_body_fields"] = dict(STATIC_BODY_FIELDS)

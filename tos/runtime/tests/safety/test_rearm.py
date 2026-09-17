@@ -221,6 +221,25 @@ def test_an_approver_missing_from_the_roster_is_refused(
     assert "bob" in outcome.reasons[0]
 
 
+def test_named_tbd_placeholder_roster_principal_id_is_refused(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> None:
+    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): an operator typing the literal
+    placeholder string ``"TBD"`` for a roster principal's own ``id`` must never be
+    sealed in as a real effective principal."""
+    write_rearm_approval_file(
+        tmp_path / "approvals", latched_evidence_seq=_SEQ, write_roster=False
+    )
+    write_rearm_roster_file(tmp_path / "approvals", principal_ids=["alice", "TBD"])
+    workflow = _workflow(tmp_path, evidence_store)
+
+    outcome = workflow.approve_and_clear(_SEQ)
+
+    assert outcome.status is ReArmStatus.REFUSED
+    assert len(outcome.reasons) == 1
+    assert "template placeholder" in outcome.reasons[0]
+
+
 def test_roster_unresolved_control_true_is_refused(
     tmp_path: Path, evidence_store: SqliteEvidenceStore
 ) -> None:

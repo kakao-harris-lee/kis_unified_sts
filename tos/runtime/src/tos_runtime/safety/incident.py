@@ -75,6 +75,7 @@ from tos.sir import (
     dominating_open_incident_present,
 )
 
+from tos_runtime._named_tbd import reject_named_tbd
 from tos_runtime.currentness.vector import DimensionReport
 from tos_runtime.safety._policy_loader import (
     load_yaml_document,
@@ -137,6 +138,9 @@ def _require_str_list(raw: dict[str, Any], key: str, path: Path) -> tuple[str, .
             raise IncidentConfigError(
                 f"{path}: {key!r} must be a list of non-blank strings (got {value!r})"
             )
+        reject_named_tbd(
+            value, field=key, context=str(path), error_cls=IncidentConfigError
+        )
     return tuple(values)
 
 

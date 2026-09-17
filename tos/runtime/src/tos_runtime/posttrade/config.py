@@ -25,6 +25,8 @@ from typing import Any
 
 import yaml
 
+from tos_runtime._named_tbd import reject_named_tbd
+
 __all__ = ["FinalityConfig", "FinalityConfigError", "load_finality_config"]
 
 
@@ -94,6 +96,9 @@ def _require_str(raw: dict[str, Any], key: str) -> str:
         raise FinalityConfigError(
             f"finality config key {key!r} must be a non-blank string (got {value!r})"
         )
+    reject_named_tbd(
+        value, field=key, context="finality config", error_cls=FinalityConfigError
+    )
     return value
 
 

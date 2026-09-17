@@ -122,6 +122,20 @@ def test_blank_string_refuses(tmp_path: Path) -> None:
         load_critical_input_policy(path, scheme=SCHEME)
 
 
+#: policy_generation is excluded -- it is an int leaf (module _require_int), not a
+#: string one, so "TBD" fails its own type check rather than the named-TBD guard.
+_HEADER_STR_KEYS = tuple(k for k in _HEADER_KEYS if k != "policy_generation")
+
+
+@pytest.mark.parametrize("key", _HEADER_STR_KEYS)
+def test_named_tbd_placeholder_top_level_key_refuses(tmp_path: Path, key: str) -> None:
+    """W-A A-0 round 2: every top-level string leaf feeds ``canonical_digest`` directly
+    (module docstring) — an operator-typed ``"TBD"`` must never be sealed into it."""
+    path = write_policy(tmp_path, policy_yaml(overrides={key: f'{key}: "TBD"'}))
+    with pytest.raises(CriticalInputPolicyConfigError, match="template placeholder"):
+        load_critical_input_policy(path, scheme=SCHEME)
+
+
 def test_example_file_all_null_refuses() -> None:
     """M8: the loader's null/missing rejection must still bite on the shipped example — a
     mutation removing it would let an all-null, no-real-identity document load."""

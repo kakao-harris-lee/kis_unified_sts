@@ -62,6 +62,30 @@ def test_null_expected_dependency_set_digest_refuses(tmp_path: Path) -> None:
         load_release_config(path)
 
 
+def test_named_tbd_placeholder_expected_code_digest_refuses(tmp_path: Path) -> None:
+    """W-A A-0: an operator typing the literal placeholder string ``"TBD"`` in
+    place of a real digest must never be sealed into the release-admission
+    config as though it were a genuine digest."""
+    text = _VALID.replace(
+        'expected_code_digest: "digest-abc"', 'expected_code_digest: "TBD"'
+    )
+    path = _write(tmp_path, text)
+    with pytest.raises(ReleaseAdmissionConfigError, match="template placeholder"):
+        load_release_config(path)
+
+
+def test_named_tbd_placeholder_expected_dependency_set_digest_refuses(
+    tmp_path: Path,
+) -> None:
+    text = _VALID.replace(
+        'expected_dependency_set_digest: "dep-digest-abc"',
+        'expected_dependency_set_digest: "TBD"',
+    )
+    path = _write(tmp_path, text)
+    with pytest.raises(ReleaseAdmissionConfigError, match="template placeholder"):
+        load_release_config(path)
+
+
 def test_null_admission_result_refuses(tmp_path: Path) -> None:
     text = _VALID.replace('admission_result: "ADMIT"', "admission_result: null")
     path = _write(tmp_path, text)

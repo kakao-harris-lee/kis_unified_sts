@@ -72,6 +72,7 @@ import yaml
 from tos.canonical import CanonicalizationScheme
 from tos.workload import RuntimeIdentity
 
+from tos_runtime._named_tbd import reject_named_tbd
 from tos_runtime.brokercap.instance import load_instance_documents
 from tos_runtime.brokercap.scopes import BrokerScopesConfig
 from tos_runtime.calendar.owner import SessionFactsOwner
@@ -196,6 +197,9 @@ def _require_str(raw: Any, key: str, path: Path) -> str:
         raise MarketFeedConfigError(
             f"{path}: {key!r} is missing, still null (named-TBD), or not a non-empty string"
         )
+    reject_named_tbd(
+        value, field=key, context=str(path), error_cls=MarketFeedConfigError
+    )
     return value
 
 
@@ -219,6 +223,13 @@ def _require_instruments(raw: Any, path: Path) -> tuple[str, ...]:
     if not all(isinstance(item, str) and item.strip() for item in value):
         raise MarketFeedConfigError(
             f"{path}: every 'instruments' entry must be a non-empty string"
+        )
+    for item in value:
+        reject_named_tbd(
+            item,
+            field="instruments",
+            context=str(path),
+            error_cls=MarketFeedConfigError,
         )
     return tuple(value)
 
