@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import ast
 import os
+import signal
 import stat
 from pathlib import Path
 
 import pytest
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos_runtime.compose import cli
+from tos_runtime.compose import _run_dispatch, cli
 from tos_runtime.compose._migrate_paths import MIGRATE_PATH_BY_STORE
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.custody.key_provider import FileKeyProvider
@@ -122,9 +123,16 @@ def test_run_accepts_the_two_new_optional_flags(tmp_path: Path) -> None:
     assert args.backup_root == backup_root
 
 
-def test_run_main_returns_zero_and_never_calls_an_operations_function(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_run_main_refuses_without_construction_config_and_never_calls_an_operations_function(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """``run`` now actually composes (TOS ``run`` 구동 아크 plan §4 W1 lane B) — against an empty
+    ``--config-dir`` (no ``construction.yaml`` at all, as here) it refuses with exit code ``1``
+    rather than silently returning ``0``, and it STILL never reaches for a ``backup-set``/
+    ``restore-drill``/``migrate``/``print-digests`` operations function — those remain
+    exclusively their own subcommands' dispatch (module docstring's own invariant, unchanged by
+    this wave)."""
+
     def _must_not_be_called(name: str, *_args: object, **_kwargs: object) -> None:
         raise AssertionError(f"{name} must not be called for `run`")
 
@@ -149,7 +157,181 @@ def test_run_main_returns_zero_and_never_calls_an_operations_function(
             "non-live-test",
         ]
     )
+    assert exit_code == 1
+    assert "construction" in capsys.readouterr().err
+
+
+# -- `run`: _dispatch_run itself (TOS `run` 구동 아크 plan §4 W1 lane B) -------------------------
+
+
+class _FakeTickScheduler:
+    """A ``TickScheduler``-shaped stub — only ``run_forever``'s own keyword-only ``stop``
+    contract matters here (lane C's e2e test drives the real one)."""
+
+    def __init__(self, *, calls_before_stop: int = 1) -> None:
+        self.calls_before_stop = calls_before_stop
+        self.run_forever_calls: list[object] = []
+
+    def run_forever(
+        self, *, _sleep=None, stop=None
+    ) -> None:  # noqa: ANN001 - test stub
+        self.run_forever_calls.append(stop)
+        n = 0
+        while not stop():
+            n += 1
+            if n >= self.calls_before_stop:
+                # Simulate the signal arriving between passes (module docstring: checked only
+                # BETWEEN passes, never mid-tick) by flipping the SAME predicate a real signal
+                # handler would flip, rather than a scheduler-internal shortcut.
+                break
+
+
+class _FakeComposed:
+    def __init__(self, marketfeed: object) -> None:
+        self.marketfeed = marketfeed
+
+
+def _make_args(tmp_path: Path) -> cli.Args:
+    return cli.Args(
+        config_dir=tmp_path / "config",
+        data_dir=tmp_path / "data",
+        custody_root=tmp_path / "custody",
+        environment_label="non-live-test",
+        transport=TransportKind.SYNTHETIC,
+    )
+
+
+def test_dispatch_run_refuses_on_a_bad_construction_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def _raise_construction_error(path):
+        raise _run_dispatch.ConstructionConfigError(f"{path}: boom")
+
+    monkeypatch.setattr(
+        _run_dispatch, "load_construction_config", _raise_construction_error
+    )
+    monkeypatch.setattr(
+        _run_dispatch,
+        "compose_paper_runtime",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("compose_paper_runtime must not be called")
+        ),
+    )
+
+    exit_code = cli._dispatch_run(_make_args(tmp_path))
+
+    assert exit_code == 1
+    assert "boom" in capsys.readouterr().err
+
+
+def test_dispatch_run_refuses_and_relays_whichever_compose_exception_fired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No common base class exists across this codebase's dozen-plus config/custody/policy
+    loader exceptions (``_dispatch_run``'s own docstring) — this pins that ANY of them (an
+    arbitrary one, here) is relayed verbatim rather than only a hardcoded subset."""
+
+    class _SomeUnrelatedLoaderError(RuntimeError):
+        pass
+
+    monkeypatch.setattr(
+        _run_dispatch, "load_construction_config", lambda _path: object()
+    )
+
+    def _raise(*_a, **_k):
+        raise _SomeUnrelatedLoaderError("some/config/path.yaml: 'key' is still null")
+
+    monkeypatch.setattr(_run_dispatch, "compose_paper_runtime", _raise)
+
+    exit_code = cli._dispatch_run(_make_args(tmp_path))
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "_SomeUnrelatedLoaderError" in err
+    assert "'key' is still null" in err
+
+
+def test_dispatch_run_refuses_when_marketfeed_is_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        _run_dispatch, "load_construction_config", lambda _path: object()
+    )
+    monkeypatch.setattr(
+        _run_dispatch,
+        "compose_paper_runtime",
+        lambda *_a, **_k: _FakeComposed(marketfeed=None),
+    )
+
+    exit_code = cli._dispatch_run(_make_args(tmp_path))
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "marketfeed" in err
+    assert _run_dispatch.MARKETFEED_CONFIG_NAME in err
+    assert _run_dispatch.CRITICAL_INPUT_POLICY_CONFIG_NAME in err
+
+
+def test_dispatch_run_drives_run_forever_and_stops_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    scheduler = _FakeTickScheduler(calls_before_stop=3)
+    monkeypatch.setattr(
+        _run_dispatch, "load_construction_config", lambda _path: object()
+    )
+    monkeypatch.setattr(
+        _run_dispatch,
+        "compose_paper_runtime",
+        lambda *_a, **_k: _FakeComposed(marketfeed=scheduler),
+    )
+
+    exit_code = cli._dispatch_run(_make_args(tmp_path))
+
     assert exit_code == 0
+    assert len(scheduler.run_forever_calls) == 1
+    assert "stopped" in capsys.readouterr().out
+
+
+def test_dispatch_run_passes_the_loaded_construction_config_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentinel_construction = object()
+    captured_kwargs: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        _run_dispatch, "load_construction_config", lambda _path: sentinel_construction
+    )
+
+    def _fake_compose(config_dir, data_dir, custody_root, environment_label, **kwargs):
+        captured_kwargs.update(kwargs)
+        captured_kwargs["config_dir"] = config_dir
+        captured_kwargs["data_dir"] = data_dir
+        captured_kwargs["custody_root"] = custody_root
+        captured_kwargs["environment_label"] = environment_label
+        return _FakeComposed(marketfeed=_FakeTickScheduler(calls_before_stop=1))
+
+    monkeypatch.setattr(_run_dispatch, "compose_paper_runtime", _fake_compose)
+
+    args = _make_args(tmp_path)
+    exit_code = cli._dispatch_run(args)
+
+    assert exit_code == 0
+    assert captured_kwargs["construction"] is sentinel_construction
+    assert captured_kwargs["config_dir"] == args.config_dir
+    assert captured_kwargs["transport_kind"] == args.transport
+
+
+def test_install_run_stop_signal_handlers_flips_stop_on_sigint_and_restores() -> None:
+    stop, restore = _run_dispatch.install_run_stop_signal_handlers()
+    try:
+        assert stop() is False
+        os.kill(os.getpid(), signal.SIGINT)
+        assert stop() is True
+    finally:
+        restore()
+    # After restore(), the default Python SIGINT handler (raises KeyboardInterrupt) is back.
+    with pytest.raises(KeyboardInterrupt):
+        os.kill(os.getpid(), signal.SIGINT)
 
 
 # -- backup-set ----------------------------------------------------------------
@@ -1258,16 +1440,23 @@ def _cli_blocker_resolution_labels() -> dict[str, bool]:
 
 
 def _plan_section_7_resolution_labels() -> dict[str, bool]:
-    """Same extraction over ``docs/plans/2026-09-16-tos-aprime-envelope-order-shape-plan.md``
-    §7 — the "other copy" ``cli.py:62`` names by name. Any ``- (label)`` bullet counts as a
-    real entry; only one also carrying ``**RESOLVED`` counts as resolved."""
+    """Same extraction over ``docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md``
+    §7 (§7.2 "웨이브 착지" carries the W1 landing entry; §7.1 "정직 등재" is the separate,
+    non-label ``required_authority_scope`` registration and has no ``(a′)``/``(b′)``/``(c)``
+    bullets to match) — the "other copy" ``cli.py:78`` names by name. Any ``- (label)`` bullet
+    counts as a real entry; only one also carrying ``**RESOLVED`` counts as resolved.
+
+    Retargeted here (team-lead directive, 2026-09-17, PR #725 MEDIUM 1) from the now-frozen
+    ``docs/plans/2026-09-16-tos-aprime-envelope-order-shape-plan.md`` §7 once the ``run`` 구동
+    아크 plan (PR #724) landed on main — that plan is what ``cli.py``'s own docstring actually
+    claims to mirror now."""
     import re
 
     plan_path = (
         Path(__file__).resolve().parents[4]
         / "docs"
         / "plans"
-        / "2026-09-16-tos-aprime-envelope-order-shape-plan.md"
+        / "2026-09-17-tos-run-boot-and-real-sources-arc-plan.md"
     )
     section_7 = plan_path.read_text(encoding="utf-8").split("## 7. 착지 기록", 1)[1]
     labels: dict[str, bool] = {}
@@ -1279,12 +1468,12 @@ def _plan_section_7_resolution_labels() -> dict[str, bool]:
 
 
 def test_run_blocker_list_labels_match_between_cli_and_plan_section_7() -> None:
-    """``cli.py:62`` says so itself: "§7 of the plan document is the other copy of this same
-    list — keep both in sync." Hand-maintained duplicates drift silently — this repo has hit
-    that class five times in the (a′) wave alone (plan §4.3) — so this pins the one fact that
-    actually matters: which labels ((a′)/(b′)/(c)) each copy marks RESOLVED must agree. It does
-    not compare prose (the two documents are different languages/audiences on purpose), only
-    the resolution status per label."""
+    """``cli.py:78`` says so itself: "plan §7.2 ... carries the SAME (a′)/(b′)/(c) resolution
+    labels as this W1 landing entry — keep both in sync." Hand-maintained duplicates drift
+    silently — this repo has hit that class five times in the (a′) wave alone (plan §4.3) — so
+    this pins the one fact that actually matters: which labels ((a′)/(b′)/(c)) each copy marks
+    RESOLVED must agree. It does not compare prose (the two documents are different
+    languages/audiences on purpose), only the resolution status per label."""
     cli_labels = _cli_blocker_resolution_labels()
     plan_labels = _plan_section_7_resolution_labels()
     assert (

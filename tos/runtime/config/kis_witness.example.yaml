@@ -1,0 +1,36 @@
+# Real KIS 모의투자 BrokerWitness config example (tos_runtime.recon.witness_kis_config).
+#
+# Loader: tos_runtime.recon.witness_kis_config.load_kis_witness_config
+# (consumed by tos_runtime.recon.witness_kis_client.build_witness_client and
+# tos_runtime.recon.witness_kis.KisStockBrokerWitness's constructor — a compose root
+# wires both, mirroring tos_runtime.transport.kis_mock's own config/client/adapter split).
+#
+# This witness is GET-only and 모의투자-only, structurally — see witness_kis_config.py's
+# own module docstring for the host-seal and TR-id-shape checks this loader enforces.
+#
+# ── Host seal (mirrors tos_runtime/transport/kis_mock/config.py's decision 5) ──────────
+# `endpoint_rest_base` must byte-exact match the INSTANCE MOCK_VTS document's own
+# `_kis.endpoints.rest_base` literal (docs/broker-profiles/KIS-BROKER-CAPABILITY-
+# PROFILE-draft.yaml, measured "https://openapivts.koreainvestment.com:29443") and must
+# NOT equal the INSTANCE REAL_PROD document's own rest_base
+# ("https://openapi.koreainvestment.com:9443") — the loader refuses to start either way.
+#
+# ── TR ids — measured, not guessed ──────────────────────────────────────────────────────
+# balance_tr_id: VTTC8434R (모의 주식 잔고조회) — measured
+#   docs/broker-profiles/evidence/2026-09-11-p02-t3-campaign/P-BAL-20260911T002427Z.json
+#   measurements.target.tr_id.
+# order_inquiry_tr_id: VTTC0081R (모의 주식일별주문체결조회) — sourced
+#   docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:1548-1575 and mirrored
+#   (with the exact wire params) at tools/broker_probes/probes_order.py:1079-1150.
+#
+# Every value below is a named-TBD `null` except `allow_plaintext_for_tests` (false —
+# plaintext HTTP is a hermetic-test-only escape hatch, never a real deployment value),
+# the two TR ids (already measured, above), and the two paths (already measured, above).
+endpoint_rest_base: null
+balance_path: "/uapi/domestic-stock/v1/trading/inquire-balance"
+balance_tr_id: "VTTC8434R"
+order_inquiry_path: "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
+order_inquiry_tr_id: "VTTC0081R"
+request_timeout_s: null
+max_pages: null
+allow_plaintext_for_tests: false

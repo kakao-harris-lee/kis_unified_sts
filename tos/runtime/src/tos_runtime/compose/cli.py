@@ -1,14 +1,28 @@
 """``tos_runtime.compose.cli`` — argument parsing + operations-subcommand dispatch (slice plan §4
 item 2; TOS Phase 5 W4 §2 decision 10).
 
-**``run`` is still parsing only — no daemon loop lives here for it.** This subcommand composes
-the runtime once, from CLI-sourced paths only (never ``os.environ``/``os.getenv`` — design #40
-D1.1 "파일 경로는 CLI 인자로만 주입"), and a real invocation still needs a caller-supplied
-:class:`~tos_runtime.compose.root.ConstructionConfig` and the two risk input providers
-(:func:`~tos_runtime.compose.root.compose_paper_runtime`'s own required keyword arguments) —
-none of which are expressible as bare CLI flags (this module's long-standing constraint).
-:func:`main` therefore does not itself compose or drive anything for ``run``; a real launcher
-parses :class:`Args` here and supplies the rest itself.
+**``run`` now actually composes and drives the runtime, but that is the CODE PATH, not a
+deployment** (TOS ``run`` 구동 아크 plan, ``docs/plans/2026-09-17-tos-run-boot-and-real-sources-
+arc-plan.md`` §2 decisions 2/3/6, §4 W1 — replaces the former "parsing only" state; dispatch
+lives in :mod:`~tos_runtime.compose._run_dispatch`, split out for this module's size budget).
+:func:`_dispatch_run` loads ``construction.yaml`` fail-closed
+(:func:`~tos_runtime.compose._construction_config.load_construction_config` — never expresses
+``price``, always ``None``), calls :func:`~tos_runtime.compose.root.compose_paper_runtime` with
+the loaded :class:`~tos_runtime.compose.root.ConstructionConfig`, refuses with a non-zero exit
+when ``composed.marketfeed is None`` (nothing to drive with no wired tick source), and
+otherwise drives ``composed.marketfeed.run_forever`` until ``SIGINT``/``SIGTERM`` flips the
+injected stop predicate (never mid-tick); :func:`main` no longer returns ``0`` unconditionally
+for :class:`Args`. A real boot still needs every config file ``compose_paper_runtime`` reads
+filled with operator-approved values: of the 30 it reads (plan §0.1), 6 have an approved
+instance under ``config/tos_runtime/paper/``; the other 24 ship only as ``*.example.yaml``
+(every leaf ``null``). **Of those 24, 19 actually block boot** (fail-closed loader refusal —
+``run`` relays each refusal, naming the file and the key, never inventing a value); the other
+**5 are genuine opt-in**, not blockers: ``strategy_bindings.yaml``
+(:func:`~tos_runtime.strategy.bindings` reports ``present=False`` rather than refusing),
+``marketfeed.yaml``/``critical_input_policy.yaml`` TOGETHER (absent ⇒
+``composed.marketfeed is None``, refused separately by THIS module, not by a config loader —
+see :func:`_dispatch_run`), ``nontrade.yaml``, and ``kis_mock_transport.yaml`` (unreached at
+the default ``--transport synthetic``).
 
 **The five operations subcommands DO real work directly from bare flags** (plan §2 decision 10),
 because none of them need a ``ConstructionConfig``/risk-input-provider: ``backup-set``,
@@ -36,8 +50,10 @@ the SAME idiom as ``rotate-key`` above — open the evidence store / inbox / tim
   only on an ``APPROVED`` outcome — clears the storage-layer latch via
   :func:`~tos_runtime.compose._cli_ops.rearm_and_clear`, the SECOND sanctioned door onto
   :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt` (team-lead directive:
-  since no live ``ComposedRuntime`` is ever reachable from the CLI today — the SAME
-  ``ConstructionConfig``/risk-input-provider gap ``run`` has, see the blocker list below —
+  written when ``run`` could not yet reach a live ``ComposedRuntime`` at all — that loader gap
+  is closed now (blocker list below), but ``rearm`` still deliberately avoids a full
+  ``compose_paper_runtime`` call: clearing a latch needs only the evidence store + inbox + a
+  started time service, never a live ``EngineCore`` —
   ``ComposedRuntime.clear_new_risk_halt`` alone would leave this subcommand unable to ever
   complete a re-arm; the machine pin, ``tests/engine/test_no_direct_latch_clear.py``, now allows
   exactly these two callers, both gated by the SAME HAG quorum evaluation). ``rearm`` exits ``0``
@@ -59,45 +75,31 @@ the SAME idiom as ``rotate-key`` above — open the evidence store / inbox / tim
   disposition + per-predicate result table. Opens no store, no custody, no inbox — genuinely
   zero evidence reaches any real durable store.
 
-**Canonical blocker list for why ``run`` still refuses (plan §2 decision 7; §7 of the plan
-document is the other copy of this same list — keep both in sync).** Blocker (a) is RESOLVED
-by the TOS venue constraint service wave
-(``docs/plans/2026-09-15-tos-venue-constraint-service-plan.md``): ``VenueConstraintSnapshot``/
-``OrderAdmissibilityDecision`` are now issued by a real, governed runtime service
-(:mod:`tos_runtime.venue`, wired in ``compose/_venue_wiring.py``), never a test fixture hand-
-issuing them. Blocker (b) is RESOLVED by the TOS risk state service wave
-(``docs/plans/2026-09-16-tos-risk-state-service-plan.md``): ``compose_paper_runtime``'s
-``aggregate_risk_inputs_provider``/``action_flow_inputs_provider`` are now ``| None = None`` —
-when left ``None``, both default to the production
-:class:`~tos_runtime.riskstate.service.RiskStateService` (:mod:`tos_runtime.compose
-._riskstate_wiring`), never a test fixture hand-building ``AggregateRiskDecisionInputs``/
-``ActionFlowDecisionInputs``. One gap remains (b′), gating the NEXT column's own follow-up
-(dashboards, ``shutdown``, live projection export all need a live composed runtime too):
+**Canonical blocker list — CODE-PATH blockers, all now resolved (plan §7.2 "웨이브 착지" of the
+``run`` 구동 아크 plan carries the SAME (a′)/(b′)/(c) resolution labels as this W1 landing entry
+— keep both in sync; §7.1 "정직 등재" is the separate, non-label registration for
+``required_authority_scope``, see ``_wiring.py:562``'s own comment).** Every blocker below used
+to be "the code cannot do this"; none of them are any more:
 
-(a′) **RESOLVED** (``docs/plans/2026-09-16-tos-aprime-envelope-order-shape-plan.md``). Old
-    premise false: ``envelope`` needed a supply PATH not IAP authoring (OCP was already the
-    named supplier — ``_envelope_wiring.py`` builds it now); ``order_shape``'s 7 fields are all
-    OCP/derivation-sourced now, and ``_wiring.py``'s identity/generation literals are derived
-    too. **Not "``run`` is operational"**: ``run`` still returns ``0`` (no loader yet, §6 ⑥).
-(b′) **The risk state service's own disclosed limits** (TOS risk state service wave plan §2.6):
-    the position observation is single-source (no broker witness corroborates it, so
-    ``all_fields_attributed`` stays an operator attestation), it governs contract-count
-    dimensions only (no valuation/notional/margin dimension), and the Adverse Scenario Set
-    instance's values landed 2026-09-16 (``config/tos_runtime/paper/``, operator-fill scopes).
-    **Resolved (2026-09-16, action-flow observation completion wave):** step 7
-    (``ACTION_FLOW_DECISION``) ``GRANT`` is now reachable — both axes observed from durable
-    evidence, zero schema change (:mod:`tos_runtime.riskstate.flow_observation`'s
-    ``count_duplicate_dispositions``/``count_recovery_markers``); the replay axis is a
-    recovery-EPISODE count with a disclosed under-count limit (``flow.replays_definition``),
-    and ``committed_flow_vectors`` stays empty (unchanged gap, that module's own docstring).
-(c) **RESOLVED (TOS tick-source wave, ``docs/plans/2026-09-16-tos-tick-source-plan.md``).**
-    :class:`~tos_runtime.marketfeed.scheduler.TickScheduler` feeds real ``DECISION_TICK``
-    events — governed policy, durable store, the REAL kernel resolver — to
-    :class:`~tos_runtime.engine.driver.EngineDriver` (:mod:`tos_runtime.compose
-    ._marketfeed_wiring``). Does NOT by itself admit ``run`` — (b′) and the loader gap, (a′) above, still gate that.
+(a) **RESOLVED** — venue constraint service wave: ``VenueConstraintSnapshot``/
+    ``OrderAdmissibilityDecision`` come from a real governed service (``compose/_venue_wiring.py``).
+(b) **RESOLVED** — risk state service wave: ``aggregate_risk_inputs_provider``/
+    ``action_flow_inputs_provider`` default to the production ``RiskStateService`` when
+    ``None``. (b′) below is that service's own disclosed remaining limit, not a missing path.
+(a′) **RESOLVED** — envelope/order_shape wave: both are OCP/derivation-sourced now, no
+    caller-injected literal.
+(b′) **잔존** — the risk state service's own already-disclosed limit (single-source position
+    observation, contract-count dimensions only). Operator decision (that wave's plan §6
+    confirmation point 5), outside every wave's scope so far, this one included.
+(c) **RESOLVED** — tick-source wave: ``TickScheduler`` feeds real ``DECISION_TICK`` events —
+    governed policy, durable store, the REAL kernel resolver — to ``EngineDriver``.
+**Loader gap RESOLVED** (this wave, W1 lane A): ``construction.yaml`` loads fail-closed
+    (:func:`~tos_runtime.compose._construction_config.load_construction_config`), so ``run``
+    calls ``compose_paper_runtime`` instead of returning ``0`` unconditionally.
 
-Resolving (b′) is an operator decision (plan §6 confirmation point 5); (a′) is resolved above
-and the loader gap is a separate later wave (plan §6 ⑥).
+**Even a fully-approved config directory still carries (b′)'s disclosed limits and
+``snapshot_age_bound``'s injected-not-measured bound** (tick-source plan §7) — config approval
+resolves neither; also missing today: an approved ``strategies/`` file and ``custody.manifest.yaml``.
 
 **No subcommand token given ⇒ ``run`` (backward compatibility).** :func:`parse_args` prepends
 ``"run"`` to ``argv`` when the first token is not one of :data:`_SUBCOMMANDS` — the OLD bare
@@ -119,9 +121,9 @@ a ``key_provider`` for its post-restore evidence-chain re-verification, and ther
 build one without a custody directory. Both of these are reported to the team lead as an explicit
 Phase B scope decision, not a silent narrowing.
 
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``argparse``, ``decimal``,
-``os``, ``secrets``, ``sys``) + ``pyyaml`` (``nontrade-eval``'s own small observation loader) +
-``tos_runtime.*`` only. No ``shared.*``.
+Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``argparse``, ``os``,
+``secrets``, ``sys``) + ``tos_runtime.*`` only. No ``shared.*``. (``decimal``/``pyyaml`` moved
+with the ``nontrade-eval`` loader into :mod:`~tos_runtime.compose._nontrade_eval_dispatch`.)
 """
 
 from __future__ import annotations
@@ -131,13 +133,9 @@ import os
 import secrets
 import sys
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
 
-import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos.nontrade import NonTradeEventClass
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.compose._cli_ops import (
@@ -146,13 +144,15 @@ from tos_runtime.compose._cli_ops import (
     risk_state_policy_digest_lines,
 )
 from tos_runtime.compose._migrate_paths import migrate_path_for
+from tos_runtime.compose._nontrade_eval_dispatch import (
+    dispatch_nontrade_eval as _dispatch_nontrade_eval,
+)
+from tos_runtime.compose._run_dispatch import dispatch_run as _dispatch_run
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import KeyContinuityRefused, SqliteEvidenceStore
 from tos_runtime.marketfeed.policy import CriticalInputPolicyConfigError
-from tos_runtime.nontrade.observations import NonTradeObservation
-from tos_runtime.nontrade.processor import NonTradeEventProcessor
 from tos_runtime.operations.backup_set import DurableSetPaths, backup_set, restore_set
 from tos_runtime.operations.dependency_admission import (
     observe_runtime_artifact,
@@ -782,158 +782,24 @@ def _dispatch_ack_alert(args: AckAlertArgs) -> int:
     return 0 if outcome.acknowledged else 1
 
 
-#: ``NonTradeObservation`` fields this CLI's YAML loader accepts directly (scalar/simple types
-#: only — module docstring). ``event_class`` is handled separately (enum conversion);
-#: ``change_triggers``/``field_confidences`` are handled separately (frozenset conversion);
-#: ``injected_worst_intermediate_risk`` is handled separately (Decimal conversion).
-_NONTRADE_SCALAR_FIELDS = (
-    "observation_id",
-    "source_label",
-    "event_subtype",
-    "workflow_generation",
-    "idempotency_key",
-    "supersedes_ref",
-    "announcement_time",
-    "observation_time",
-    "record_time",
-    "ex_time",
-    "effective_time",
-    "payable_time",
-    "settlement_time",
-    "old_instrument_identity",
-    "new_instrument_identity",
-    "identity_transition_final",
-    "original_retained",
-    "event_is_material",
-    "earliest_credible_boundary",
-    "latest_completion_boundary",
-    "source_disagreement_bounded",
-    "protective_action_may_proceed",
-    "injected_credible_space_bounded",
-    "injected_union_capacity_known",
-)
-
-#: The three nested kernel records :class:`~tos_runtime.nontrade.observations.NonTradeObservation`
-#: can carry (``transition_envelope``/``split_spec``/``correction``/``prior_correction``) have no
-#: loader here yet — refused rather than silently dropped (module docstring's own "a future wave's
-#: own loader" note).
-_NONTRADE_UNSUPPORTED_NESTED_FIELDS = (
-    "transition_envelope",
-    "split_spec",
-    "correction",
-    "prior_correction",
-)
-
-
-class NontradeObservationLoadError(Exception):
-    """Raised by :func:`_load_nontrade_observation` on any refusal."""
-
-
-def _load_nontrade_observation(path: Path) -> NonTradeObservation:
-    """Load a :class:`~tos_runtime.nontrade.observations.NonTradeObservation` from a YAML file
-    (module docstring — scalar fields only)."""
-    try:
-        raw_text = path.read_text()
-    except OSError as exc:
-        raise NontradeObservationLoadError(f"cannot read {path}: {exc}") from exc
-    try:
-        raw = yaml.safe_load(raw_text)
-    except yaml.YAMLError as exc:
-        raise NontradeObservationLoadError(f"{path} is not valid YAML: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise NontradeObservationLoadError(
-            f"{path} must parse to a mapping (got {type(raw).__name__})"
-        )
-    unsupported = [
-        name
-        for name in _NONTRADE_UNSUPPORTED_NESTED_FIELDS
-        if raw.get(name) is not None
-    ]
-    if unsupported:
-        raise NontradeObservationLoadError(
-            f"{path}: field(s) {unsupported} are not supported by this CLI's YAML loader "
-            "yet (nested kernel records need a dedicated loader a future wave adds) — "
-            "omit them or leave them null"
-        )
-    kwargs: dict[str, Any] = {
-        name: raw[name] for name in _NONTRADE_SCALAR_FIELDS if name in raw
-    }
-    if raw.get("event_class") is not None:
-        try:
-            kwargs["event_class"] = NonTradeEventClass(raw["event_class"])
-        except ValueError as exc:
-            raise NontradeObservationLoadError(
-                f"{path}: 'event_class'={raw['event_class']!r} is not a valid "
-                f"NonTradeEventClass: {exc}"
-            ) from exc
-    for name in ("change_triggers", "field_confidences"):
-        if raw.get(name) is not None:
-            kwargs[name] = frozenset(raw[name])
-    if raw.get("injected_worst_intermediate_risk") is not None:
-        try:
-            kwargs["injected_worst_intermediate_risk"] = Decimal(
-                str(raw["injected_worst_intermediate_risk"])
-            )
-        except InvalidOperation as exc:
-            raise NontradeObservationLoadError(
-                f"{path}: 'injected_worst_intermediate_risk'="
-                f"{raw['injected_worst_intermediate_risk']!r} is not a valid decimal: {exc}"
-            ) from exc
-    try:
-        return NonTradeObservation(**kwargs)
-    except TypeError as exc:
-        raise NontradeObservationLoadError(
-            f"{path}: missing or unexpected field(s): {exc}"
-        ) from exc
-
-
-def _dispatch_nontrade_eval(args: NontradeEvalArgs) -> int:
-    """The ``nontrade-eval`` subcommand's own dispatch — a pure dry run (module docstring):
-    opens no store, no custody, appends zero evidence anywhere real."""
-    try:
-        observation = _load_nontrade_observation(args.observation)
-    except NontradeObservationLoadError as exc:
-        print(f"nontrade-eval: refused — {exc}", file=sys.stderr)
-        return 1
-
-    processor = NonTradeEventProcessor(required_legs_by_class={})
-    outcome = processor.evaluate(observation)
-
-    disposition_str = (
-        outcome.disposition.value if outcome.disposition is not None else None
-    )
-    print(
-        f"nontrade-eval: disposition={disposition_str} "
-        f"restrictive={outcome.restrictive} latch_reason={outcome.latch_reason}"
-    )
-    print("nontrade-eval: predicates:")
-    for name, value in outcome.predicate_results.items():
-        print(f"  {name}: {value}")
-    if outcome.unevaluated:
-        print(f"nontrade-eval: unevaluated: {list(outcome.unevaluated)}")
-    print(
-        "nontrade-eval: dry run only — no --data-dir/--custody-root was opened, so zero "
-        "evidence was appended to any real store."
-    )
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     """Parse ``argv`` and dispatch to the right subcommand (module docstring).
 
-    ``run`` returns ``0`` without composing or driving anything itself (this module has never
-    done that — see the module docstring's own long-standing constraint); every other
-    subcommand performs its real action directly and prints a short human-readable report.
+    ``run`` now composes and drives the runtime via :func:`_dispatch_run` (module docstring —
+    replaces the former unconditional ``return 0``); every other subcommand performs its real
+    action directly and prints a short human-readable report.
 
     Returns:
-        ``0`` on success; ``1`` on a refusal this function itself decided (e.g.
-        ``restore-drill`` against a live ``environment_label``) — an underlying operations
-        function's own exception is NOT caught here and propagates to the caller.
+        ``0`` on success; ``1`` on a refusal this function or :func:`_dispatch_run` decided
+        (e.g. ``restore-drill`` against a live ``environment_label``, or ``run`` against an
+        unapproved config) — an underlying operations function's own exception is NOT caught
+        here and propagates, except inside :func:`_dispatch_run` itself (that function's own
+        docstring explains its one deliberate broad catch).
     """
     args = parse_args(argv)
 
     if isinstance(args, Args):
-        return 0
+        return _dispatch_run(args)
 
     if isinstance(args, BackupSetArgs):
         paths = DurableSetPaths.from_data_dir(args.data_dir)
