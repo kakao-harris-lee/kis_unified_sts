@@ -16,10 +16,32 @@ Everything else the runtime needs to boot (`time.yaml`, `authority.yaml`,
 own value the same way `calendar.yaml` was approved here.
 
 This directory is consumed today by the compose e2e test suite
-(`tos/runtime/tests/compose/test_deploy_config.py`) and, once later waves
-give `run` a real `ConstructionConfig`/risk-input/tick-source path (plan
-§2.7 — `run` is currently blocked, see `cli.py`'s module docstring), by the
-CLI's `run` entrypoint itself.
+(`tos/runtime/tests/compose/test_deploy_config.py`). The CLI's `run`
+entrypoint does not consume it yet — `cli.py`'s `main()` returns `0` for the
+`run` subcommand without ever calling `compose_paper_runtime` (module
+docstring, `compose/cli.py`); it is argument-parsing only, not a boot path.
+
+**W1 lane D inventory (2026-09-17,
+`docs/plans/2026-09-17-tos-deployment-instance-inventory.md`)** measured the
+full gap between "6 files approved here" and "a real deployment boots":
+`compose_paper_runtime` reads exactly 30 fixed config-dir file names (plus
+the `strategies/` directory), of which these 6 are approved and 24 exist
+only as `tos/runtime/config/*.example.yaml`. Of those 24 unapproved names,
+19 actually block boot (the loader is called unconditionally and raises on
+a missing file) and 5 are genuine opt-in features that boot cleanly without
+them (`strategy_bindings.yaml`, `marketfeed.yaml` + `critical_input_policy.yaml`
+together, `nontrade.yaml`, `kis_mock_transport.yaml` — the last only matters
+for `--transport kis-mock`, not the default synthetic transport). The
+inventory's per-file table names, for every one of the 30, its loader
+(function + file:line), whether it blocks boot or is optional (with the
+file:line proving it), and what KIND of decision its value needs (measured
+value / operator policy judgment / derived digest / external approval
+document) — never inventing the value itself. Two more names
+(`backtest_calibration.yaml`, `evidence_retention.yaml`) ship an example
+file but have zero call sites anywhere under `compose/*.py` — they are
+orphaned relative to boot, not blocking and not optional-features either.
+Read that document before authoring any new `.yaml` here — it is the
+current, measured map of what still blocks a real boot.
 
 Two more governed files belong here once the operator adopts their values
 (TOS venue constraint service plan, `docs/plans/2026-09-15-tos-venue-constraint-service-plan.md`
