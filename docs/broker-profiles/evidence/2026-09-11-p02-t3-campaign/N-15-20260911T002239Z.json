@@ -1,0 +1,194 @@
+{
+  "artifact_id": "N-15-20260911T002239Z",
+  "probe_id": "N-15",
+  "title": "Token 1-minute reissue limit x invalidate→retry token blackout",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-09-11T00:22:39.120529+00:00",
+  "finished_at_utc": "2026-09-11T00:24:27.664201+00:00",
+  "duration_s": 108.544,
+  "repo_commit": "7f3ffa52",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "N-15",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A05610",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "t3 N-15 in-session held-token sampling on A05610; run after P-15 back to back",
+    "endpoint_class": "query",
+    "start_rps": 1.0,
+    "step_rps": 1.0,
+    "max_rps": 25.0,
+    "hold_seconds": 3.0,
+    "step_gap_seconds": 2.0,
+    "recovery_poll_s": 1.0,
+    "recovery_timeout_s": 120.0,
+    "max_sessions": 5,
+    "max_subscriptions": 45,
+    "reissue_gap_s": 5.0,
+    "reissue_poll_s": 15.0,
+    "blackout_backoff_factor": 2.0,
+    "blackout_backoff_max_s": 120.0,
+    "blackout_max_attempts": 12,
+    "blackout_observe_only": false,
+    "blackout_timeout_s": 1200.0,
+    "trials": 1,
+    "inter_trial_s": 1.0
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "5e175fd232de"
+  },
+  "measurements": {
+    "token_blackout_window_candidate": {
+      "label": "invalidate_to_reissue_ms",
+      "n": 1,
+      "min_ms": 107228.415,
+      "p50_ms": 107228.415,
+      "p90_ms": 107228.415,
+      "p95_ms": 107228.415,
+      "p99_ms": 107228.415,
+      "max_ms": 107228.415,
+      "stdev_ms": 0.0,
+      "margin_pct": 50.0,
+      "recommended_bound_ms": 160843,
+      "statistic": "hard maximum: ceil(max_observed x (1 + margin_pct/100)). p95/p99 are shape diagnostics and MUST NOT be proposed as the bound.",
+      "sample_adequacy_note": "A maximum estimated from a small sample understates the true maximum. Record n and the observation window with the value; the Bounds-Approver decides whether n is adequate.",
+      "candidate_only": true
+    },
+    "token_blackout_window_candidate_origin": "POST_INVALIDATE trials only — PRE_EXISTING_REFUSAL samples are reported separately under pre_existing_refusal_lower_bound_ms and are NOT summarised here, because their start instant is unobserved and pooling them would understate a hard-maximum bound.",
+    "pre_existing_refusal_lower_bound_ms": null,
+    "reissue_refusal_lower_bound": null,
+    "reissue_refusal_survived_gap_s": 30.9,
+    "token_endpoint_calls_made": 4,
+    "held_token_usability_samples": {
+      "ACCEPTED": 3,
+      "REJECTED": 0,
+      "UNDETERMINED": 0
+    },
+    "held_token_note": "reissue_refusal_window and held_token_usable are DIFFERENT measurements. invalidate() unlinks a local cache file (shared/kis/auth.py:396-405); it does not revoke the token at the broker. A process that kept the token string in memory may keep transacting through the whole refusal window. Only the window in which NO usable credential exists feeds B_egress_hard_fence.",
+    "held_token_rejection_reachability": "REJECTED is asserted only on HTTP 401/403. KIS also signals failures as 200+rt_cd!=0, and if a token rejection arrives in THAT shape this probe records UNDETERMINED, not REJECTED — the mapping is unmeasured and inventing it would let a business rejection masquerade as a credential failure. So REJECTED may be unreachable on this surface. An all-UNDETERMINED tally means the question was not answered; it does NOT mean the held token kept working, and nothing may be written into B_egress_hard_fence from it. To make REJECTED reachable, first measure the rejection code by presenting a known-bad token.",
+    "reissue_poll_schedule_s": [
+      15.0,
+      30.0,
+      60.0,
+      120.0,
+      120.0,
+      120.0,
+      120.0,
+      120.0,
+      120.0,
+      120.0,
+      120.0
+    ],
+    "interaction_verdict": "A refusal window > 0 confirms the plan §2:68 interaction risk ONLY when held_token_usability_samples shows the previously issued token was also rejected. A refusal window with the held token still ACCEPTED is a reissue cooldown, not an egress blackout, and must not be written into B_egress_hard_fence as one. A window ~= 0 means the limit did not bind on this attempt — it does NOT prove it is absent.",
+    "shared_app_key_scope": "The reissue limit is per app key, and every worker shares it (config/kis/auth.yaml:7-8). The measured blackout applies to the whole fleet, not one process."
+  },
+  "observations": [
+    {
+      "private_token_cache": "/home/deploy/project/kis_unified_sts/tools/broker_probes/results/.token_cache",
+      "safety_note": "invalidate() unlinks the cache file (shared/kis/auth.py:402-405); the probe uses its own directory so runtime workers are unaffected.",
+      "token_calls_budget_per_trial": 12,
+      "backoff_schedule_s": [
+        15.0,
+        30.0,
+        60.0,
+        120.0,
+        120.0,
+        120.0,
+        120.0,
+        120.0,
+        120.0,
+        120.0,
+        120.0
+      ]
+    },
+    {
+      "trial": 0,
+      "origin": "POST_INVALIDATE",
+      "observe_only": false,
+      "attempts": 4,
+      "rejections": [
+        {
+          "attempt": 1,
+          "at_ms": 108.6,
+          "gap_since_prev_attempt_s": 0.0,
+          "http_status": 403,
+          "msg_cd": null,
+          "msg1": null,
+          "raw_excerpt": "{\"error_code\":\"EGW00133\",\"error_description\":\"접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)\"}",
+          "held_token": "ACCEPTED",
+          "held_token_evidence": {
+            "http_status": 200,
+            "rt_cd": "0",
+            "msg_cd": "MCA00000",
+            "msg1": "정상처리 되었습니다.",
+            "raw_excerpt": "{\"output1\":{\"hts_kor_isnm\":\"미니F 202610\",\"futs_prpr\":\"1077.34\",\"futs_prdy_vrss\":\"-29.32\",\"prdy_vrss_sign\":\"5\",\"futs_prdy_clpr\":\"1106.66\",\"futs_prdy_ctrt\":\"-2.65\""
+          }
+        },
+        {
+          "attempt": 2,
+          "at_ms": 15989.9,
+          "gap_since_prev_attempt_s": 15.1,
+          "http_status": 403,
+          "msg_cd": null,
+          "msg1": null,
+          "raw_excerpt": "{\"error_code\":\"EGW00133\",\"error_description\":\"접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)\"}",
+          "held_token": "ACCEPTED",
+          "held_token_evidence": {
+            "http_status": 200,
+            "rt_cd": "0",
+            "msg_cd": "MCA00000",
+            "msg1": "정상처리 되었습니다.",
+            "raw_excerpt": "{\"output1\":{\"hts_kor_isnm\":\"미니F 202610\",\"futs_prpr\":\"1077.26\",\"futs_prdy_vrss\":\"-29.40\",\"prdy_vrss_sign\":\"5\",\"futs_prdy_clpr\":\"1106.66\",\"futs_prdy_ctrt\":\"-2.66\""
+          }
+        },
+        {
+          "attempt": 3,
+          "at_ms": 47065.9,
+          "gap_since_prev_attempt_s": 30.9,
+          "http_status": 403,
+          "msg_cd": null,
+          "msg1": null,
+          "raw_excerpt": "{\"error_code\":\"EGW00133\",\"error_description\":\"접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)\"}",
+          "held_token": "ACCEPTED",
+          "held_token_evidence": {
+            "http_status": 200,
+            "rt_cd": "0",
+            "msg_cd": "MCA00000",
+            "msg1": "정상처리 되었습니다.",
+            "raw_excerpt": "{\"output1\":{\"hts_kor_isnm\":\"미니F 202610\",\"futs_prpr\":\"1078.16\",\"futs_prdy_vrss\":\"-28.50\",\"prdy_vrss_sign\":\"5\",\"futs_prdy_clpr\":\"1106.66\",\"futs_prdy_ctrt\":\"-2.58\""
+          }
+        }
+      ]
+    }
+  ],
+  "skips": [],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_egress_hard_fence"
+    ],
+    "instance_fields": [
+      "capabilities.credentials_and_revocation.token_blackout_window_ms",
+      "capabilities.credentials_and_revocation.reissue_rejection_semantics"
+    ],
+    "capability_dimension": "CREDENTIALS_AUTHORIZATION"
+  }
+}
