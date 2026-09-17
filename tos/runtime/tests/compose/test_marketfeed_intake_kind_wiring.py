@@ -131,14 +131,25 @@ def test_null_intake_kind_refuses(
 def test_unknown_intake_kind_refuses(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
+    """``journal_path`` is deliberately OMITTED from ``raw`` (not merely left at its valid
+    default) — with ``journal_path`` present, ``_resolve_journal_path``'s own XOR cross-check
+    ("journal_path is set but intake_kind is not journal") fires first and its message also
+    contains the substring ``intake_kind=``, which would satisfy a loose ``match="intake_kind"``
+    even if ``_require_intake_kind``'s own membership check were deleted entirely (verified by
+    mutation — see the W2 lane review finding this docstring closes). Omitting ``journal_path``
+    means that XOR check cannot fire at all, so only ``_require_intake_kind`` itself can raise
+    here, and ``match`` is narrowed to ``"is not one of"`` — the fragment unique to its
+    membership-check branch, not shared with its missing/null branch or with
+    ``_resolve_journal_path``'s messages."""
     journal_path = tmp_path / "journal.jsonl"
     _write_journal(journal_path, [])
     _write_critical_input_policy(config_dir)
     raw = _valid_marketfeed_raw(journal_path=journal_path)
+    del raw["journal_path"]
     raw["intake_kind"] = "websocket"  # not one of ("journal", "kis_quote")
     _write_marketfeed_config_raw(config_dir, raw)
 
-    with pytest.raises(MarketFeedConfigError, match="intake_kind"):
+    with pytest.raises(MarketFeedConfigError, match="is not one of"):
         _compose(tmp_path, config_dir, data_dir, custody_root)
 
 
@@ -164,6 +175,13 @@ def test_journal_path_present_with_kis_quote_intake_refuses(
 def test_journal_path_absent_with_journal_intake_refuses(
     tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
 ) -> None:
+    """``match`` is narrowed to ``"required when intake_kind"`` — the fragment unique to
+    ``_resolve_journal_path``'s own dedicated "missing for the journal branch" check. A generic
+    ``match="journal_path"`` would ALSO be satisfied if that dedicated check were deleted and
+    ``_resolve_journal_path`` fell through to ``_require_str(raw, "journal_path", path)``, whose
+    own generic-field message ("'journal_path' is missing, still null (named-TBD), or not a
+    non-empty string") also contains the substring ``journal_path`` — verified by mutation (W2
+    lane review finding this docstring closes)."""
     journal_path = tmp_path / "journal.jsonl"
     _write_journal(journal_path, [])
     _write_critical_input_policy(config_dir)
@@ -171,7 +189,7 @@ def test_journal_path_absent_with_journal_intake_refuses(
     del raw["journal_path"]
     _write_marketfeed_config_raw(config_dir, raw)
 
-    with pytest.raises(MarketFeedConfigError, match="journal_path"):
+    with pytest.raises(MarketFeedConfigError, match="required when intake_kind"):
         _compose(tmp_path, config_dir, data_dir, custody_root)
 
 
