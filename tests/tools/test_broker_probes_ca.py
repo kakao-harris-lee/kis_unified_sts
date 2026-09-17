@@ -34,6 +34,9 @@ from tools.broker_probes.common import ProbeError, SafetyViolation
 from tools.broker_probes.registry import coverage_report, get
 
 _ACCOUNT = "1234567890"
+#: What a request actually carries — ``ProbeCredentials.cano`` is
+#: ``account_no[:8]`` (``common.py:266-267``), never the full 10 digits.
+_CANO = _ACCOUNT[:8]
 
 
 # ---------------------------------------------------------------------------
@@ -525,6 +528,10 @@ def test_quantity_leg_detection_on_second_poll_latency_is_one_effective_interval
     table = run.measurements["class_leg_table"]
     assert [row for row in table if row["leg"] == "quantity"][0]["status"] == "OBSERVED"
     assert run.measurements["leg_provenance_class"] == "MEASURED"
+    # M2: on a run that ends naturally the two counts agree — both polls
+    # completed, so nothing is hidden behind the ambiguous name.
+    assert run.measurements["polls_used"] == 2
+    assert run.measurements["polls_completed"] == 2
 
 
 def test_attribution_caveat_is_recorded_once_when_legs_are_polled(
@@ -878,6 +885,15 @@ def test_rate_limited_poll_aborts_the_leg_and_records_verbatim_evidence(
     assert row["status"] == "ABORTED"
     assert row["stop_reason"] == pc._STOP_RATE_LIMITED
     assert row["polls_used"] == 1
+    # M2: polls_used counts ATTEMPTS, so the one it counts here is the attempt
+    # that was rate-limited — zero polls came back with a usable balance. The
+    # 2026-09-17 row said "polls_used=1" for exactly this run and read as "one
+    # poll observed nothing".
+    assert row["polls_completed"] == 0
+    # M3: the row is the ONLY aggregate this probe emits, so it must carry how
+    # long polling actually ran, not just the 8 hours that were requested.
+    assert row["window_s"] == 28800.0
+    assert row["polled_elapsed_s"] < 60.0
 
     skip = [
         entry for entry in run.skips if entry["what"] == "legs.bonus_issue.quantity"
@@ -885,6 +901,10 @@ def test_rate_limited_poll_aborts_the_leg_and_records_verbatim_evidence(
     assert "ABORTED" in skip["reason"]
     assert "NOT elapse" in skip["reason"]
     assert "CENSORED" not in skip["reason"]
+    # The prose must name which count is which, not leave "polls_used" to be
+    # read as "polls that completed".
+    assert "polls_attempted=1" in skip["reason"]
+    assert "polls_completed=0" in skip["reason"]
 
     evidence = _stop_evidence(run)
     assert evidence["poll_index"] == 1
@@ -962,7 +982,9 @@ def test_rejected_poll_aborts_with_its_own_reason_and_carries_the_envelope(
     row = _leg_row(run, "quantity")
     assert row["status"] == "ABORTED"
     assert row["stop_reason"] == pc._STOP_REJECTED
-    assert pc._STOP_REJECTED != pc._STOP_RATE_LIMITED
+    # Asserted against the ROW the run produced, not against the two constants:
+    # a plain rejection must not be filed under the rate-limit reason.
+    assert row["stop_reason"] != pc._STOP_RATE_LIMITED
 
     evidence = _stop_evidence(run)
     assert evidence["status_kind"] == pc._BAL_REJECTED
@@ -993,7 +1015,45 @@ def test_page_capped_poll_aborts_with_the_page_cap_reason(
     row = _leg_row(run, "quantity")
     assert row["status"] == "ABORTED"
     assert row["stop_reason"] == pc._STOP_PAGE_CAP
-    assert _stop_evidence(run)["status_kind"] == pc._BAL_CAPPED
+    evidence = _stop_evidence(run)
+    assert evidence["status_kind"] == pc._BAL_CAPPED
+    # H1: the page-cap stop is the leak that hid in plain sight — its last page
+    # is a SUCCESSFUL balance page, so an ungated excerpt recorded a full
+    # holdings body under the banner of "stop evidence".
+    assert evidence["rt_cd"] == "0"
+    assert evidence["body_excerpt"] == ""
+
+
+def test_polls_completed_counts_polls_that_returned_a_balance(
+    stock_env: None, wire: Any
+) -> None:
+    """M2: ``polls_used`` is incremented BEFORE the read, so the attempt that
+    ends the run is counted. With one good poll and then a rate limit the two
+    counters must differ — attempted 2, completed 1."""
+    from datetime import UTC, datetime
+
+    t0 = datetime(2020, 1, 1, 9, 0, 0, tzinfo=UTC)
+    wire(
+        _ScriptedSession(
+            [
+                _balance_body(10),  # baseline
+                _balance_body(10),  # poll #1 — completes, no change
+                _FakeResponse(  # poll #2 — rate-limited, no observation
+                    {"rt_cd": "1", "msg_cd": "EGW00201", "msg1": "초당 거래건수 초과"},
+                    status=429,
+                ),
+            ]
+        ),
+        clock=[t0],
+    )
+    run = pc.probe_pca(
+        _args(effective_time=t0.isoformat(), poll_ms=0.0, pace_s=0.0, window_s=60.0)
+    )
+    row = _leg_row(run, "quantity")
+    assert row["status"] == "ABORTED"
+    assert (row["polls_used"], row["polls_completed"]) == (2, 1)
+    assert run.measurements["polls_used"] == 2
+    assert run.measurements["polls_completed"] == 1
 
 
 def test_aborted_row_carries_no_value_fields(stock_env: None, wire: Any) -> None:
@@ -1040,6 +1100,11 @@ def test_window_expiry_carries_no_stop_reason_and_no_stop_evidence(
     row = _leg_row(run, "quantity")
     assert row["status"] == "CENSORED"
     assert "stop_reason" not in row
+    assert "polls_completed" not in row
+    # M3: a CENSORED row states an absence over the window, so it too says how
+    # long polling ran — here the window was 1e-9s and nothing polled.
+    assert row["window_s"] == pytest.approx(1e-9)
+    assert row["polled_elapsed_s"] < 60.0
     assert not [obs for obs in run.observations if "poll_stop_evidence" in obs]
     assert run.errors == []
 
@@ -1079,8 +1144,15 @@ def test_body_excerpt_is_truncated_and_never_carries_request_params(
     stock_env: None, wire: Any
 ) -> None:
     """The excerpt is a broker ERROR body recorded unparsed, so it is capped;
-    and no request param/header (which carry the account number and the bearer
-    token) may ever reach the artifact through it."""
+    and no request param (which carry the account number) may ever reach the
+    artifact through it.
+
+    The account assertion is on ``creds.cano`` — ``account_no[:8]``
+    (``common.py:266-267``), the value the balance params ACTUALLY carry — not
+    on the full 10-digit ``_ACCOUNT``, which no request ever transmits: dumping
+    ``params`` verbatim would leak the CANO and a ``_ACCOUNT``-only assertion
+    would still pass.
+    """
     wire(
         _ScriptedSession(
             [
@@ -1108,7 +1180,67 @@ def test_body_excerpt_is_truncated_and_never_carries_request_params(
     assert len(evidence["body_excerpt"]) == pc._BODY_EXCERPT_MAX_CHARS
     blob = json.dumps(run.to_dict(), ensure_ascii=False)
     assert _ACCOUNT not in blob
-    assert "Bearer test" not in blob
+    assert _CANO not in blob
+
+
+def test_successful_balance_body_is_never_excerpted_into_the_artifact(
+    stock_env: None, wire: Any
+) -> None:
+    """H1: ``_call_evidence`` runs on EVERY baseline status, including
+    ``_BAL_OK`` — i.e. on 100% of runs that get past the baseline. An
+    ungated ``text[:N]`` therefore embedded a live balance response (holdings,
+    ``pchs_avg_pric``, ``evlu_amt``, ``dnca_tot_amt``, and the raw
+    ``ctx_area_*`` continuation cursors) in every artifact, and these artifacts
+    are committed under ``docs/broker-profiles/evidence/``.
+
+    ``redact()`` keys on field NAMES and cannot reach inside a raw string leaf,
+    so the cap was never a filter — only the ``rt_cd`` gate is. The envelope
+    fields that make a stop diagnosable must survive the gate.
+    """
+    body = {
+        "rt_cd": "0",
+        "msg_cd": "MCA00000",
+        "msg1": "정상처리 되었습니다.",
+        "output1": [
+            # A holding the probe never reports on — present only to prove the
+            # raw page did not reach the artifact.
+            {"pdno": "000660", "hldg_qty": "4", "pchs_avg_pric": "81234.5678"},
+            {"pdno": "005930", "hldg_qty": "13", "evlu_amt": "98765432"},
+        ],
+        "output2": [{"dnca_tot_amt": "88888888.00"}],
+        "ctx_area_fk100": "CURSOR-FK-SENTINEL-9f3a",
+        "ctx_area_nk100": "CURSOR-NK-SENTINEL-c71b",
+    }
+    wire(_ScriptedSession([_FakeResponse(body)]))
+    run = pc.probe_pca(
+        _args(effective_time="2020-01-01T09:00:00+09:00", window_s=1e-9, pace_s=0.0)
+    )
+
+    baseline = [
+        obs["baseline_call"] for obs in run.observations if "baseline_call" in obs
+    ][0]
+    # The diagnostic envelope still survives — the gate suppresses the body, not
+    # the fields that tell a 429 from a body EGW00201.
+    assert baseline["status_kind"] == pc._BAL_OK
+    assert baseline["http_status"] == 200
+    assert baseline["rt_cd"] == "0"
+    assert baseline["body_excerpt"] == ""
+
+    # The probe still did its job off that body.
+    assert run.measurements["baseline"]["hldg_qty"] == 13
+
+    blob = json.dumps(run.to_dict(), ensure_ascii=False)
+    for leaked in (
+        "000660",  # another holder's pdno
+        "81234.5678",  # pchs_avg_pric
+        "98765432",  # evlu_amt
+        "88888888.00",  # dnca_tot_amt, verbatim (the parsed float is fine)
+        "CURSOR-FK-SENTINEL-9f3a",
+        "CURSOR-NK-SENTINEL-c71b",
+    ):
+        assert (
+            leaked not in blob
+        ), f"raw balance body leaked into the artifact: {leaked}"
 
 
 def test_read_balance_reports_the_transport_status_alongside_the_kind(

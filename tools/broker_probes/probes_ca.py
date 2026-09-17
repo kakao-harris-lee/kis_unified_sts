@@ -524,16 +524,19 @@ _STOP_RATE_LIMITED = "rate_limited"
 _STOP_REJECTED = "rejected"
 _STOP_PAGE_CAP = "page_cap"
 
-#: Cap on the verbatim broker body carried by a stop-evidence observation.
-#: Capped rather than trusted: the excerpt is recorded unparsed, and an
-#: unexpected response (an HTML gateway error page, or a full balance page on a
-#: partial failure) would otherwise bloat every artifact — 500 chars comfortably
-#: covers the ``rt_cd``/``msg_cd``/``msg1`` envelope that identifies WHICH
-#: rate-limit signal fired (HTTP 429 vs EGW00201 in the body), which is exactly
-#: what the 2026-09-17 artifact could not say afterwards. Request params and
-#: headers are never recorded here — they carry the account number and the
+#: Cap on the verbatim broker body carried by a FAILED call's evidence record.
+#: The excerpt is GATED on ``rt_cd`` first (:func:`_call_evidence`): a body the
+#: broker answered ``rt_cd='0'`` to is never recorded at all, only a failed one
+#: is, and this cap then bounds that failed body. Capped rather than trusted:
+#: the excerpt is recorded unparsed, and an HTML gateway error page would
+#: otherwise bloat every artifact — 300 chars (the same cap the sibling probes
+#: use: ``probes_balance.py:749``, ``probes_real.py:232,315,389,490``)
+#: comfortably covers the ``rt_cd``/``msg_cd``/``msg1`` envelope that identifies
+#: WHICH rate-limit signal fired (HTTP 429 vs EGW00201 in the body), which is
+#: exactly what the 2026-09-17 artifact could not say afterwards. Request params
+#: and headers are never recorded here — they carry the account number and the
 #: bearer token.
-_BODY_EXCERPT_MAX_CHARS = 500
+_BODY_EXCERPT_MAX_CHARS = 300
 
 
 def _call_evidence(
@@ -544,14 +547,29 @@ def _call_evidence(
     ``is_rate_limited`` fires on EITHER HTTP 429 OR ``EGW00201`` in the body, so
     a bare "rate-limited" string cannot be diagnosed after the fact; this record
     carries both signals plus the rejection envelope (2026-09-17 incident).
+
+    Record shape and ``rt_cd`` gate mirror ``probes_balance.py:749`` (and
+    ``probes_real.py:232,315,389,490``) — a local twin of the same decision,
+    not a divergence from it, so change the two together. The gate is the point:
+    a SUCCESSFUL balance body carries holdings (``pdno``, ``pchs_avg_pric``,
+    ``evlu_amt``), the account cash total (``dnca_tot_amt``) and the raw
+    ``ctx_area_fk100``/``ctx_area_nk100`` cursors that
+    ``probes_balance.py:529-540`` fingerprints rather than stores — and these
+    artifacts are committed under ``docs/broker-profiles/evidence/``.
     """
+    rt_cd = str(parsed.get("rt_cd") or "").strip()
     return {
         "status_kind": status_kind,
         "http_status": http_status,
         "rt_cd": parsed.get("rt_cd"),
         "msg_cd": parsed.get("msg_cd"),
         "msg1": parsed.get("msg1"),
-        "body_excerpt": (text or "")[:_BODY_EXCERPT_MAX_CHARS],
+        # A gate, not a filter: redact() (common.py:228-243) keys on field NAMES
+        # and cannot reach inside a raw string leaf, so a length cap alone would
+        # still commit account-derived material to the evidence corpus. The
+        # _BAL_CAPPED stop is the case that makes this load-bearing — its last
+        # page is a SUCCESSFUL balance page, i.e. the whole holdings body.
+        "body_excerpt": "" if rt_cd == "0" else (text or "")[:_BODY_EXCERPT_MAX_CHARS],
     }
 
 
@@ -719,22 +737,33 @@ def _poll_loop(
     baseline_cash: float,
     legs: list[tuple[str, str, datetime]],
     pacer: _Pacer,
-) -> tuple[dict[str, dict[str, Any]], int, str | None]:
+) -> tuple[dict[str, dict[str, Any]], int, int, float, str | None]:
     """Poll balance until every leg is observed or ``--window-s`` expires.
 
-    Returns ``(found, polls_used, stop_reason)`` — ``found`` maps leg name to its
-    measurement record for every leg detected live. ``stop_reason`` is ``None``
-    when the loop ran to its natural end (window elapsed, or every leg observed),
-    in which case a leg absent from ``found`` is CENSORED; otherwise it is one of
+    Returns ``(found, polls_used, polls_completed, polled_elapsed_s,
+    stop_reason)`` — ``found`` maps leg name to its measurement record for every
+    leg detected live. ``stop_reason`` is ``None`` when the loop ran to its
+    natural end (window elapsed, or every leg observed), in which case a leg
+    absent from ``found`` is CENSORED; otherwise it is one of
     :data:`_STOP_RATE_LIMITED` / :data:`_STOP_REJECTED` / :data:`_STOP_PAGE_CAP`
     and the remaining legs were ABORTED, not censored (:func:`_finalize`).
     """
     pending = {name: (t0_field, t0_dt) for name, t0_field, t0_dt in legs}
     found: dict[str, dict[str, Any]] = {}
     poll_pacer = pacer.derive(trial.effective_poll_ms / 1000.0)
+    # Two counters, because one number cannot mean both (review M2): the
+    # 2026-09-17 artifact's "polls_used=1" was the ATTEMPT that rate-limited, so
+    # a reader who took it for "one poll observed nothing" read an observation
+    # into a run that made none. polls_used counts attempts (the failed one that
+    # ends the run included, so it stays the index poll_stop_evidence reports);
+    # polls_completed counts the polls that came back with a usable balance.
     polls_used = 0
+    polls_completed = 0
     stop_reason: str | None = None
-    deadline = time.monotonic() + trial.window_s
+    # M3: the ABORTED row must carry how long polling ACTUALLY ran, not just the
+    # requested --window-s it never reached (an ~1s run carrying window_s=28800).
+    started_at = time.monotonic()
+    deadline = started_at + trial.window_s
 
     while pending and time.monotonic() < deadline:
         polls_used += 1
@@ -776,6 +805,7 @@ def _poll_loop(
             stop_reason = _STOP_PAGE_CAP
             break
 
+        polls_completed += 1
         now = _now()
         run.observe(poll={"index": polls_used, "hldg_qty": qty, "dnca_tot_amt": cash})
         for name, observed, baseline in (
@@ -801,7 +831,13 @@ def _poll_loop(
                 found[name] = record
                 run.measure(f"legs.{trial.event_class}.{name}", record)
 
-    return found, polls_used, stop_reason
+    return (
+        found,
+        polls_used,
+        polls_completed,
+        round(time.monotonic() - started_at, 3),
+        stop_reason,
+    )
 
 
 def _finalize(
@@ -810,6 +846,8 @@ def _finalize(
     legs: list[tuple[str, str, datetime]],
     found: dict[str, dict[str, Any]],
     polls_used: int,
+    polls_completed: int,
+    polled_elapsed_s: float,
     stop_reason: str | None,
 ) -> None:
     """Build ``class_leg_table`` — the ONLY aggregate this probe emits — and
@@ -821,6 +859,12 @@ def _finalize(
     epistemic state, in which nothing at all was observed about the leg and the
     window never elapsed (2026-09-17 incident: an ~1s run claimed an 8-hour
     censoring window).
+
+    Because ``class_leg_table`` is the only aggregate emitted, each row has to
+    be self-sufficient: it carries ``polled_elapsed_s`` (how long polling
+    ACTUALLY ran) beside ``window_s`` (what was REQUESTED), so the 2026-09-17
+    row's ``window_s=28800.0`` on a one-second run cannot be read as a window
+    that elapsed (review M3).
     """
     class_leg_table: list[dict[str, Any]] = []
     for name, t0_field, t0_dt in legs:
@@ -837,7 +881,11 @@ def _finalize(
                 "t0_field": t0_field,
                 "t0": t0_dt.isoformat(),
                 "status": "CENSORED" if stop_reason is None else "ABORTED",
+                # window_s is what was REQUESTED; polled_elapsed_s is what
+                # actually ran. On an ABORTED row the two differ by orders of
+                # magnitude, and the row is the only aggregate a reader gets.
                 "window_s": trial.window_s,
+                "polled_elapsed_s": polled_elapsed_s,
             }
             if stop_reason is None:
                 run.skip(
@@ -850,10 +898,13 @@ def _finalize(
             else:
                 row["stop_reason"] = stop_reason
                 row["polls_used"] = polls_used
+                row["polls_completed"] = polls_completed
                 run.skip(
                     f"legs.{trial.event_class}.{name}",
                     f"ABORTED — polling stopped early (stop_reason={stop_reason}, "
-                    f"polls_used={polls_used}); --window-s={trial.window_s}s did "
+                    f"polls_attempted={polls_used}, "
+                    f"polls_completed={polls_completed}); polling ran "
+                    f"{polled_elapsed_s}s, so --window-s={trial.window_s}s did "
                     "NOT elapse. This is not even a censored observation: the "
                     "window never ran, so nothing at all was observed about this "
                     "leg. See the poll_stop_evidence observation for the broker's "
@@ -877,7 +928,12 @@ def _finalize(
         )
     )
     run.measure("class_leg_table", class_leg_table)
+    # polls_used counts ATTEMPTS and keeps its name for the artifacts already
+    # committed under docs/broker-profiles/evidence/; polls_completed is the
+    # count a reader actually wants when the run stopped early (review M2).
     run.measure("polls_used", polls_used)
+    run.measure("polls_completed", polls_completed)
+    run.measure("polled_elapsed_s", polled_elapsed_s)
     run.measure("poll_interval_ms_effective", trial.effective_poll_ms)
     run.measure(
         # Supplements the framework's own mode/errors-only provenance_class
@@ -1033,7 +1089,7 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
         )
         input("  [Enter when the first relevant time has passed] ")
 
-        found, polls_used, stop_reason = _poll_loop(
+        found, polls_used, polls_completed, polled_elapsed_s, stop_reason = _poll_loop(
             run,
             session,
             auth,
@@ -1046,7 +1102,16 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
             legs,
             pacer,
         )
-        _finalize(run, trial, legs, found, polls_used, stop_reason)
+        _finalize(
+            run,
+            trial,
+            legs,
+            found,
+            polls_used,
+            polls_completed,
+            polled_elapsed_s,
+            stop_reason,
+        )
     finally:
         session.close()
     return run
