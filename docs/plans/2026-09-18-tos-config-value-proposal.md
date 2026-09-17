@@ -107,7 +107,7 @@ A-3 에서 절차를 찾거나, 못 찾으면 **못 찾았다고 보고**한다.
 |---|---|---|---|
 | `broker_scopes.yaml` | `active_scope` | **`SYNTHETIC_FUTURES_ORDER`** ⚠ | example 의 네 스코프 중 **브로커에 전혀 닿지 않는 유일한 것**이다. `REAL_ORDER`(`authorization_class: REAL_ORDER`)는 비협상 규칙상 영구 차단. `MOCK_STOCK_ORDER`(`endpoint_class: BROKER_ORDER`)와 `REAL_READ`(GET)는 **외부 호출이 생기므로 로컬 첫 부팅의 범위가 아니다.** 부팅을 증명하는 데 필요한 최소 권한이 이것이다 |
 | `coordinator_preconditions.yaml` | `nonlive_broker_consuming.admitted` | **`false`** ⚠ | `active_scope` 가 SYNTHETIC 이면 **이 자세는 아예 평가되지 않는다**(게이트 ②가 먼저 통과시킨다 — `compose/_preconditions.py` 모듈 독스트링). `true` 로 둘 이유가 없고, `false` 가 **더 좁은** 태세다. MOCK 전송을 켤 때 별도 승인으로 바꾼다 |
-| `release.yaml` | `admission_result` | **`ADMITTED`**(enum 실값은 로더 확인 후 확정) ⚠ | 이 값이 없으면 어떤 서비스도 구성되지 않는다(design #40 §5). 로컬 부팅을 위해 허용으로 두되, **`restriction_present: false`** 와 짝이어야 한다 |
+| `release.yaml` | `admission_result` | **`ADMIT`** ⚠ | 이 값이 없으면 어떤 서비스도 구성되지 않는다(design #40 §5). 로컬 부팅을 위해 허용으로 두되, **`restriction_present: false`** 와 짝이어야 한다. **정정(fact-check)**: 초고는 **`ADMITTED`** 라고 적었는데 **그런 멤버는 없다** — `tos.sci.AdmissionResult`(`tos/src/tos/sci/vocabulary.py:100`)는 `ADMIT`/`DENY`/`UNKNOWN` 뿐이고 `release/config.py:122-130` 이 `member.value` 와 **정확히** 대조한다. 그대로 썼으면 **부팅이 거부**됐다 |
 | `risk_attestations.yaml` | 6개 `attested` | **전부 `true`** ⚠ | 이것은 **측정이 아니라 운영자 확약**이다(Phase 2 에 실측 인프라가 없어 명시적 스탠드인). **`false` 면 부팅이 막힌다.** 로컬 합성 경로에서는 6개 성질이 실제로 성립한다(실 자금 없음·실 주문 없음·필드 귀속은 합성 경로가 전부 채움). **실 전송을 켜는 순간 이 확약은 재검토 대상이다** |
 
 ### 4.2 상위 원천이 없는 값 — 내가 고르고 근거를 적는다

@@ -108,6 +108,17 @@ therefore_refuses` 는 「거부되는가」만 핀하는데, 이 파일은 **�
 
 - `null` 과 `"TBD"` 를 **둘 다** 거부하는 것은 **`construction.yaml` 로더와 `venue/_policy_primitives.py`
   둘뿐**이다 — 전자는 라운드 #4 이후 신설, 후자는 라운드 #4 가 직접 고친 파일.
+
+  > 정정(fact-check 2026-09-18): **「`venue/_policy_primitives.py` 는 안전하다」는 파일 단위 뭉뚱그림이었다.**
+  > 그 파일 안에 `require_str`(TBD 미검사)과 `require_filled_str`/`optional_str`(검사함)이 **공존**하고,
+  > main 기준으로는 **미검사 쪽이 다수**였다(OCP 로더 12:1 · venue 4:1 · action_flow 4:3 · aggregate_risk 4:1).
+  > A-0 라운드 2 가 24곳 중 14곳을 강한 쪽으로 교체해 **6:7 / 3:2 / 2:5 / 2:3** 이 됐고, 팀리드가 남은 13곳을
+  > 확인한 결과 **enum 토큰이거나 `require_str` 직후 인라인 TBD 체크가 있다**(예:
+  > `_order_construction_policy_loader.py:458-464` 의 `axes.value`). 즉 지금은 갭이 아니다.
+  >
+  > **다만 검사기의 한계가 여기서 드러난다** — `tos_named_tbd_guard.py` 는 파일이 가드 관용구를
+  > **참조하는지**만 보므로, 한 파일 안에서 **일부 호출부만** 가드를 쓰는 상태를 구분하지 못한다.
+  > 이번엔 결과적으로 안전하지만 **호출부 단위 보장이 아니다.** 등재하고 넘어간다.
 - **라운드 #4 이전부터 있던 18종 로더는 `"TBD"` 문자열 검사 자체가 없다**(`_require`/`_require_str`/
   `require_str_field` 계열 — 예: `brokercap/scopes.py:277-282`). 지금 안전한 이유는 로더가 막아서가
   아니라 **example 에 `"TBD"` 관례가 아직 침투하지 않아서**다.
