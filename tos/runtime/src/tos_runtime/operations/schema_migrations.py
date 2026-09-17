@@ -12,6 +12,19 @@ introduction". A future wave that actually changes a table's shape adds a SECOND
 baseline. It is the worked example for the pattern above: a NEW ``SchemaMigration`` appended,
 never an edit to the v1 entry's own statements/expected shape.
 
+**Rollout order (round #4 review LOW — first genuine v1->v2 bump, so this module carried no
+prior worked example of the deploy-time ordering it requires).**
+:func:`~tos_runtime.operations.schema_ledger.ensure_schema_current` refuses BOTH directions on
+open (module docstring's points 3/4: behind OR ahead of the running code's expected version), so
+a `RCL_SCHEMA_VERSION` bump is not safe to roll out in an arbitrary order against a running store.
+The required sequence: (1) fully stop every process still running the OLD (v1-expecting) code
+against this store file — a still-live v1 process would itself get refused the instant
+``apply_migrations`` stamps the file at v2 out from under it; (2) run
+``apply_migrations(path, "rcl")`` to bring the file to v2; (3) start the NEW (v2-expecting) code.
+Running ``apply_migrations`` first, while a v1 process is still up, does not corrupt anything —
+the v1 process simply gets ``SchemaVersionRefused`` on its next open/reopen — but it does turn a
+planned migration into an unplanned outage of that still-live process.
+
 **Deliberately self-contained (duplicated DDL, not imported).** The literal ``CREATE
 TABLE``/trigger strings below mirror — and must be kept in sync with — each store's own DDL
 (:mod:`tos_runtime.evidence.store`, :mod:`tos_runtime.rcl.schema`, :mod:`tos_runtime.engine.inbox`,
