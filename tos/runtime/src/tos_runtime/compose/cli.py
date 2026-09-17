@@ -113,9 +113,9 @@ a ``key_provider`` for its post-restore evidence-chain re-verification, and ther
 build one without a custody directory. Both of these are reported to the team lead as an explicit
 Phase B scope decision, not a silent narrowing.
 
-Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``argparse``, ``decimal``,
-``os``, ``secrets``, ``sys``) + ``pyyaml`` (``nontrade-eval``'s own small observation loader) +
-``tos_runtime.*`` only. No ``shared.*``.
+Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib (``argparse``, ``os``,
+``secrets``, ``sys``) + ``tos_runtime.*`` only. No ``shared.*``. (``decimal``/``pyyaml`` moved
+with the ``nontrade-eval`` loader into :mod:`~tos_runtime.compose._nontrade_eval_dispatch`.)
 """
 
 from __future__ import annotations
@@ -125,13 +125,9 @@ import os
 import secrets
 import sys
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
 
-import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos.nontrade import NonTradeEventClass
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.compose._cli_ops import (
@@ -140,14 +136,15 @@ from tos_runtime.compose._cli_ops import (
     risk_state_policy_digest_lines,
 )
 from tos_runtime.compose._migrate_paths import migrate_path_for
+from tos_runtime.compose._nontrade_eval_dispatch import (
+    dispatch_nontrade_eval as _dispatch_nontrade_eval,
+)
 from tos_runtime.compose._run_dispatch import dispatch_run as _dispatch_run
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.custody.key_provider import FileKeyProvider
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import KeyContinuityRefused, SqliteEvidenceStore
 from tos_runtime.marketfeed.policy import CriticalInputPolicyConfigError
-from tos_runtime.nontrade.observations import NonTradeObservation
-from tos_runtime.nontrade.processor import NonTradeEventProcessor
 from tos_runtime.operations.backup_set import DurableSetPaths, backup_set, restore_set
 from tos_runtime.operations.dependency_admission import (
     observe_runtime_artifact,
@@ -775,142 +772,6 @@ def _dispatch_ack_alert(args: AckAlertArgs) -> int:
 
     print(f"ack-alert: {outcome.reason}")
     return 0 if outcome.acknowledged else 1
-
-
-#: ``NonTradeObservation`` fields this CLI's YAML loader accepts directly (scalar/simple types
-#: only — module docstring). ``event_class`` is handled separately (enum conversion);
-#: ``change_triggers``/``field_confidences`` are handled separately (frozenset conversion);
-#: ``injected_worst_intermediate_risk`` is handled separately (Decimal conversion).
-_NONTRADE_SCALAR_FIELDS = (
-    "observation_id",
-    "source_label",
-    "event_subtype",
-    "workflow_generation",
-    "idempotency_key",
-    "supersedes_ref",
-    "announcement_time",
-    "observation_time",
-    "record_time",
-    "ex_time",
-    "effective_time",
-    "payable_time",
-    "settlement_time",
-    "old_instrument_identity",
-    "new_instrument_identity",
-    "identity_transition_final",
-    "original_retained",
-    "event_is_material",
-    "earliest_credible_boundary",
-    "latest_completion_boundary",
-    "source_disagreement_bounded",
-    "protective_action_may_proceed",
-    "injected_credible_space_bounded",
-    "injected_union_capacity_known",
-)
-
-#: The three nested kernel records :class:`~tos_runtime.nontrade.observations.NonTradeObservation`
-#: can carry (``transition_envelope``/``split_spec``/``correction``/``prior_correction``) have no
-#: loader here yet — refused rather than silently dropped (module docstring's own "a future wave's
-#: own loader" note).
-_NONTRADE_UNSUPPORTED_NESTED_FIELDS = (
-    "transition_envelope",
-    "split_spec",
-    "correction",
-    "prior_correction",
-)
-
-
-class NontradeObservationLoadError(Exception):
-    """Raised by :func:`_load_nontrade_observation` on any refusal."""
-
-
-def _load_nontrade_observation(path: Path) -> NonTradeObservation:
-    """Load a :class:`~tos_runtime.nontrade.observations.NonTradeObservation` from a YAML file
-    (module docstring — scalar fields only)."""
-    try:
-        raw_text = path.read_text()
-    except OSError as exc:
-        raise NontradeObservationLoadError(f"cannot read {path}: {exc}") from exc
-    try:
-        raw = yaml.safe_load(raw_text)
-    except yaml.YAMLError as exc:
-        raise NontradeObservationLoadError(f"{path} is not valid YAML: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise NontradeObservationLoadError(
-            f"{path} must parse to a mapping (got {type(raw).__name__})"
-        )
-    unsupported = [
-        name
-        for name in _NONTRADE_UNSUPPORTED_NESTED_FIELDS
-        if raw.get(name) is not None
-    ]
-    if unsupported:
-        raise NontradeObservationLoadError(
-            f"{path}: field(s) {unsupported} are not supported by this CLI's YAML loader "
-            "yet (nested kernel records need a dedicated loader a future wave adds) — "
-            "omit them or leave them null"
-        )
-    kwargs: dict[str, Any] = {
-        name: raw[name] for name in _NONTRADE_SCALAR_FIELDS if name in raw
-    }
-    if raw.get("event_class") is not None:
-        try:
-            kwargs["event_class"] = NonTradeEventClass(raw["event_class"])
-        except ValueError as exc:
-            raise NontradeObservationLoadError(
-                f"{path}: 'event_class'={raw['event_class']!r} is not a valid "
-                f"NonTradeEventClass: {exc}"
-            ) from exc
-    for name in ("change_triggers", "field_confidences"):
-        if raw.get(name) is not None:
-            kwargs[name] = frozenset(raw[name])
-    if raw.get("injected_worst_intermediate_risk") is not None:
-        try:
-            kwargs["injected_worst_intermediate_risk"] = Decimal(
-                str(raw["injected_worst_intermediate_risk"])
-            )
-        except InvalidOperation as exc:
-            raise NontradeObservationLoadError(
-                f"{path}: 'injected_worst_intermediate_risk'="
-                f"{raw['injected_worst_intermediate_risk']!r} is not a valid decimal: {exc}"
-            ) from exc
-    try:
-        return NonTradeObservation(**kwargs)
-    except TypeError as exc:
-        raise NontradeObservationLoadError(
-            f"{path}: missing or unexpected field(s): {exc}"
-        ) from exc
-
-
-def _dispatch_nontrade_eval(args: NontradeEvalArgs) -> int:
-    """The ``nontrade-eval`` subcommand's own dispatch — a pure dry run (module docstring):
-    opens no store, no custody, appends zero evidence anywhere real."""
-    try:
-        observation = _load_nontrade_observation(args.observation)
-    except NontradeObservationLoadError as exc:
-        print(f"nontrade-eval: refused — {exc}", file=sys.stderr)
-        return 1
-
-    processor = NonTradeEventProcessor(required_legs_by_class={})
-    outcome = processor.evaluate(observation)
-
-    disposition_str = (
-        outcome.disposition.value if outcome.disposition is not None else None
-    )
-    print(
-        f"nontrade-eval: disposition={disposition_str} "
-        f"restrictive={outcome.restrictive} latch_reason={outcome.latch_reason}"
-    )
-    print("nontrade-eval: predicates:")
-    for name, value in outcome.predicate_results.items():
-        print(f"  {name}: {value}")
-    if outcome.unevaluated:
-        print(f"nontrade-eval: unevaluated: {list(outcome.unevaluated)}")
-    print(
-        "nontrade-eval: dry run only — no --data-dir/--custody-root was opened, so zero "
-        "evidence was appended to any real store."
-    )
-    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
