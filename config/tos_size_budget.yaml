@@ -321,11 +321,19 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_wiring.py
-  measured: 1122
+  measured: 1132
   owner: tos-runtime
   decomposition_order: 30
   expires_on: '2026-12-31'
   note: >-
+    **2026-09-17 TOS `run` 구동 아크 plan W1 레인 A 재등재 1122→1132(+10)**: 레인 A 에
+    부여된 처분 의무(§4 W1 레인 A 각주 — "레인 A 가 발견한 `required_authority_scope`
+    합성은 레인 A 가 실측해 처분한다 — 원천이 있으면 원천화, 없으면 §7 에 등재. 지어내지
+    않는다") 이행 — 원천이 없으므로 값을 만들지 않고, 합성 지점(`_build_construction_stages`
+    의 `required_authority_scope=(f"scope-{construction.instrument}",)`) 에 정직 등재
+    주석만 추가: 이 f-string 이 런타임에서 유일한 생산자이고, 다운스트림 어디도 그 값을
+    검증하지 않으며, 커널 라운드 #4 ① 후보임을 코드 자리에 남긴다. 코드 동작 변화 0
+    (주석만) · 커널 diff 0.
     **2026-09-15 TOS venue constraint service wave 재등재 1118→1122(+4, 레인 b,
     계획 §2 결정 4/6)**: `_build_construction_stages` 시그니처를
     `session_phase_reader: Callable[[], str | None]` 1개에서
