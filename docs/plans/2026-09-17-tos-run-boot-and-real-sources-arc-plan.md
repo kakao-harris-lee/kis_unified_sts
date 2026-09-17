@@ -334,3 +334,39 @@
 ### 7.2 웨이브 착지
 
 (웨이브가 착지할 때마다 여기 적는다.)
+
+**W1 (`run` 결선) — PR #725, 브랜치 `feat/tos-run-loader`, 3+3 커밋(레인 A/B/C 착지 + 리뷰
+HIGH/MEDIUM2/LOW 조치).** `tos_runtime.compose.cli` 모듈독스트링(`cli.py:78-93`)의 "Canonical
+blocker list" 가 아래와 같은 `(a′)`/`(b′)`/`(c)` 레이블·해소 상태를 유지한다(드리프트 핀
+`tests/compose/test_cli.py::test_run_blocker_list_labels_match_between_cli_and_plan_section_7`
+가 정규식으로 두 사본을 대조) — 아래는 그 사본, 항목마다 열 0 에서 시작(핀의 정규식이 그 형태를
+요구):
+
+- (a′) **RESOLVED** — envelope/order_shape 웨이브: 둘 다 OCP/파생 원천, 호출자 주입 리터럴
+  없음.
+- (b′) **잔존** — 리스크 상태 서비스 자신이 이미 공시한 한계(단일 원천 포지션 관측, 계약 수
+  차원만). 그 웨이브의 운영자 확인점 5, 이번 웨이브 범위 밖.
+- (c) **RESOLVED** — 틱 원천 웨이브: `TickScheduler` 가 실 `DECISION_TICK` 를 `EngineDriver`
+  로 흘린다.
+
+그 밖의 W1 착지 사실(레이블 목록이 아닌 것):
+
+- **로더 갭 RESOLVED**(이번 웨이브, 레인 A): `construction.yaml` 이 fail-closed 로 로드된다
+  (`compose/_construction_config.py`) — `run` 이 `return 0` 대신 실제로
+  `compose_paper_runtime` 을 호출한다.
+- `required_authority_scope` 합성값 처분은 위 §7.1 을 본다(레인 A 가 실측·등재,
+  `_wiring.py:562` 의 주석이 이 절을 역참조).
+- **레인 C — `run_forever` 첫 컴포즈 상대 e2e** + `cli.main(["run", ...])` argv 경로
+  e2e(리뷰 HIGH 조치, 실 SIGINT 로 유일하게 지원되는 정지 수단을 구동해 실 durable 파일에서
+  틱 발생을 확인).
+- **게이트**: firewall PASS · lint-imports 3 kept/0 broken · size-budget PASS(신규 예외 0 —
+  `_wiring.py` 재등재 1122→1132, `cli.py` 는 분리로 858줄까지 내려감) · ruff/black/mypy 클린 ·
+  커널 diff 0.
+- **런타임 스위트**: 기준선(main `7b76e217`) 2292 passed → 이 웨이브 착지 후 **2333
+  passed**(브랜치 실측, exit 0).
+- **뮤테이션**: 로더가 누락 리프를 조용히 기본값 처리 → 19개 red · `run` 이
+  `composed.marketfeed is None` 에서도 0 반환 → 2개 red(단위+e2e 양쪽) · `main()` 의
+  `_dispatch_run` 호출을 `return 0` 으로 되돌림(전체 웨이브 되돌리기) → red 1(최초
+  리뷰)→2(HIGH 조치 후, 신규 argv e2e 포함) · 정지 술어 핸들러를 no-op 로 바꿈 → 1개 red.
+- **비범위 확인**: 24 종 미승인 설정값 중 어느 것도 이 웨이브가 채우지 않았다(§0.1 의 19
+  부팅차단/5 옵트인 구분 — 값 저작은 운영자 소관, 계획 §2 비범위).
