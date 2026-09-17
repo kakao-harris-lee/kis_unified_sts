@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import ast
 import os
+import signal
 import stat
 from pathlib import Path
 
 import pytest
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
-from tos_runtime.compose import cli
+from tos_runtime.compose import _run_dispatch, cli
 from tos_runtime.compose._migrate_paths import MIGRATE_PATH_BY_STORE
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.custody.key_provider import FileKeyProvider
@@ -122,9 +123,16 @@ def test_run_accepts_the_two_new_optional_flags(tmp_path: Path) -> None:
     assert args.backup_root == backup_root
 
 
-def test_run_main_returns_zero_and_never_calls_an_operations_function(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_run_main_refuses_without_construction_config_and_never_calls_an_operations_function(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """``run`` now actually composes (TOS ``run`` 구동 아크 plan §4 W1 lane B) — against an empty
+    ``--config-dir`` (no ``construction.yaml`` at all, as here) it refuses with exit code ``1``
+    rather than silently returning ``0``, and it STILL never reaches for a ``backup-set``/
+    ``restore-drill``/``migrate``/``print-digests`` operations function — those remain
+    exclusively their own subcommands' dispatch (module docstring's own invariant, unchanged by
+    this wave)."""
+
     def _must_not_be_called(name: str, *_args: object, **_kwargs: object) -> None:
         raise AssertionError(f"{name} must not be called for `run`")
 
@@ -149,7 +157,181 @@ def test_run_main_returns_zero_and_never_calls_an_operations_function(
             "non-live-test",
         ]
     )
+    assert exit_code == 1
+    assert "construction" in capsys.readouterr().err
+
+
+# -- `run`: _dispatch_run itself (TOS `run` 구동 아크 plan §4 W1 lane B) -------------------------
+
+
+class _FakeTickScheduler:
+    """A ``TickScheduler``-shaped stub — only ``run_forever``'s own keyword-only ``stop``
+    contract matters here (lane C's e2e test drives the real one)."""
+
+    def __init__(self, *, calls_before_stop: int = 1) -> None:
+        self.calls_before_stop = calls_before_stop
+        self.run_forever_calls: list[object] = []
+
+    def run_forever(
+        self, *, _sleep=None, stop=None
+    ) -> None:  # noqa: ANN001 - test stub
+        self.run_forever_calls.append(stop)
+        n = 0
+        while not stop():
+            n += 1
+            if n >= self.calls_before_stop:
+                # Simulate the signal arriving between passes (module docstring: checked only
+                # BETWEEN passes, never mid-tick) by flipping the SAME predicate a real signal
+                # handler would flip, rather than a scheduler-internal shortcut.
+                break
+
+
+class _FakeComposed:
+    def __init__(self, marketfeed: object) -> None:
+        self.marketfeed = marketfeed
+
+
+def _make_args(tmp_path: Path) -> cli.Args:
+    return cli.Args(
+        config_dir=tmp_path / "config",
+        data_dir=tmp_path / "data",
+        custody_root=tmp_path / "custody",
+        environment_label="non-live-test",
+        transport=TransportKind.SYNTHETIC,
+    )
+
+
+def test_dispatch_run_refuses_on_a_bad_construction_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def _raise_construction_error(path):
+        raise _run_dispatch.ConstructionConfigError(f"{path}: boom")
+
+    monkeypatch.setattr(
+        _run_dispatch, "load_construction_config", _raise_construction_error
+    )
+    monkeypatch.setattr(
+        _run_dispatch,
+        "compose_paper_runtime",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("compose_paper_runtime must not be called")
+        ),
+    )
+
+    exit_code = cli._dispatch_run(_make_args(tmp_path))
+
+    assert exit_code == 1
+    assert "boom" in capsys.readouterr().err
+
+
+def test_dispatch_run_refuses_and_relays_whichever_compose_exception_fired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No common base class exists across this codebase's dozen-plus config/custody/policy
+    loader exceptions (``_dispatch_run``'s own docstring) — this pins that ANY of them (an
+    arbitrary one, here) is relayed verbatim rather than only a hardcoded subset."""
+
+    class _SomeUnrelatedLoaderError(RuntimeError):
+        pass
+
+    monkeypatch.setattr(
+        _run_dispatch, "load_construction_config", lambda _path: object()
+    )
+
+    def _raise(*_a, **_k):
+        raise _SomeUnrelatedLoaderError("some/config/path.yaml: 'key' is still null")
+
+    monkeypatch.setattr(_run_dispatch, "compose_paper_runtime", _raise)
+
+    exit_code = cli._dispatch_run(_make_args(tmp_path))
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "_SomeUnrelatedLoaderError" in err
+    assert "'key' is still null" in err
+
+
+def test_dispatch_run_refuses_when_marketfeed_is_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        _run_dispatch, "load_construction_config", lambda _path: object()
+    )
+    monkeypatch.setattr(
+        _run_dispatch,
+        "compose_paper_runtime",
+        lambda *_a, **_k: _FakeComposed(marketfeed=None),
+    )
+
+    exit_code = cli._dispatch_run(_make_args(tmp_path))
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "marketfeed" in err
+    assert _run_dispatch.MARKETFEED_CONFIG_NAME in err
+    assert _run_dispatch.CRITICAL_INPUT_POLICY_CONFIG_NAME in err
+
+
+def test_dispatch_run_drives_run_forever_and_stops_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    scheduler = _FakeTickScheduler(calls_before_stop=3)
+    monkeypatch.setattr(
+        _run_dispatch, "load_construction_config", lambda _path: object()
+    )
+    monkeypatch.setattr(
+        _run_dispatch,
+        "compose_paper_runtime",
+        lambda *_a, **_k: _FakeComposed(marketfeed=scheduler),
+    )
+
+    exit_code = cli._dispatch_run(_make_args(tmp_path))
+
     assert exit_code == 0
+    assert len(scheduler.run_forever_calls) == 1
+    assert "stopped" in capsys.readouterr().out
+
+
+def test_dispatch_run_passes_the_loaded_construction_config_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentinel_construction = object()
+    captured_kwargs: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        _run_dispatch, "load_construction_config", lambda _path: sentinel_construction
+    )
+
+    def _fake_compose(config_dir, data_dir, custody_root, environment_label, **kwargs):
+        captured_kwargs.update(kwargs)
+        captured_kwargs["config_dir"] = config_dir
+        captured_kwargs["data_dir"] = data_dir
+        captured_kwargs["custody_root"] = custody_root
+        captured_kwargs["environment_label"] = environment_label
+        return _FakeComposed(marketfeed=_FakeTickScheduler(calls_before_stop=1))
+
+    monkeypatch.setattr(_run_dispatch, "compose_paper_runtime", _fake_compose)
+
+    args = _make_args(tmp_path)
+    exit_code = cli._dispatch_run(args)
+
+    assert exit_code == 0
+    assert captured_kwargs["construction"] is sentinel_construction
+    assert captured_kwargs["config_dir"] == args.config_dir
+    assert captured_kwargs["transport_kind"] == args.transport
+
+
+def test_install_run_stop_signal_handlers_flips_stop_on_sigint_and_restores() -> None:
+    stop, restore = _run_dispatch.install_run_stop_signal_handlers()
+    try:
+        assert stop() is False
+        os.kill(os.getpid(), signal.SIGINT)
+        assert stop() is True
+    finally:
+        restore()
+    # After restore(), the default Python SIGINT handler (raises KeyboardInterrupt) is back.
+    with pytest.raises(KeyboardInterrupt):
+        os.kill(os.getpid(), signal.SIGINT)
 
 
 # -- backup-set ----------------------------------------------------------------
