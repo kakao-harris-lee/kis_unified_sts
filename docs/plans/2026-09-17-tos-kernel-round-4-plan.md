@@ -3,7 +3,7 @@
 - 작성: 2026-09-17 · 세션 모델 단독 저작(운영자 지시 2026-09-04)
 - 선행: `run` 구동 아크(`docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md`) W1·W2·W3 착지
 - 범위 결정: 운영자 처분 2026-09-17(아크 계획 §6.1 ④) — **①②③④ 4건 전부**, ⑤(Phase 3 §7.11 이월) 미선택
-- 기준선: 커널 **9522** · 런타임 **2445**
+- 기준선: 커널 **9522** · 런타임 **2374**(착수 시점 main `a8a694f5` 실측 — W2 는 미병합)
 
 ---
 
@@ -18,16 +18,33 @@
 | ③ `tos.position` | 입력 타입은 이미 커널에 있다 — `SendSeal.outbound_side`/`outbound_quantity`/`instrument_key`(`tos.egressgw.seal`) · `EvidenceKind.EGRESS_RESULT_CONSUMED`/`RESULT_UNMATCHED`(`tos.engine.vocabulary`) | 술어 자체와 `PositionObservation` 커널 타입. 런타임 추출 경계는 깨끗하다(`tos_runtime/riskstate/position.py` 중 순수 6종) |
 | ④ RCL committed 벡터 | `ReservationRecord`(`rcl/records.py:35-116`)는 `adverse_increment_vector` 를 **이미 갖고 있다** | 커밋된 전이의 와이어 형상 `CapacityReservationTransition`(`rcl/commitlog.py:258-291`)에 벡터 필드 없음 · 런타임 `reservations` 테이블에 크기 컬럼 없음(`rcl/schema.py`, `RCL_SCHEMA_VERSION = 1`) |
 
-### 0.1 ★ ② 는 값을 채울 수 없다 — 형상만 가능하다
+### 0.1 ★ ② 는 표를 채울 수 없다 — 실측은 **한 구간뿐**이다
 
-**이 저장소에 측정된 KRX 주식 호가단위 원천이 0건이다.** 브로커 프로필의 tick 은 전부
-KOSPI200 선물(0.05/0.02pt)이고 등급 **C**(로컬 설정 `config/execution.yaml:286` 파생, 브로커
-조회 아님)이며, `price_band_tick_lot_and_quantity_semantics: UNKNOWN` 이 명시 상태다
-(`KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:2364`, `:4427`). P0-2 증거 캠페인·`config/`·
-`shared/` 전수 조사에서도 주식 가격대별 tick 내용은 0건.
+**정정(fact-check 지적, 2026-09-17).** 이 절의 초고는 「측정된 KRX 주식 호가단위 원천이
+**0건**」이라고 적었다. **틀렸다.** 리뷰가 실측 1건을 찾아냈다:
 
-따라서 ② 는 **구조(형상)만** 추가할 수 있다. 실값은 OCP sizing 제안표와 같은 **새 승인 경로**가
-필요하고 그 경로는 아직 없다.
+```
+docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-11-20260730T002715Z.json
+  measurements.limit_price_tick:
+    wire_value:  "232500"        # 종목 005930
+    tick_size:   "500"
+    tick_source: "broker-reported 호가단위: TR FHKST01010100
+                  (v1_국내주식-008, .../quotations/inquire-price) output.aspr_unit='500'"
+```
+
+**브로커가 응답으로 돌려준 값**(`output.aspr_unit`)이지 로컬 설정 파생이 아니다 — 등급으로도
+프로필의 선물 tick(등급 C, `config/execution.yaml:286` 파생)보다 강하다.
+
+그러나 이것은 **가격대 하나**(232,500원 지점)일 뿐 **표가 아니다.** 나머지 구간은 여전히
+미측정이고, 프로필의 `price_band_tick_lot_and_quantity_semantics` 는 `UNKNOWN` 상태 그대로다
+(`KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:2364`, `:4427`). 그 밖의 주식 가격대별 tick 내용은
+P0-2 증거 전 디렉터리·`config/`·`shared/` 어디에도 없다(리뷰어 재확인).
+
+따라서 결론은 유지되되 근거가 바뀐다 — ② 는 **구조(형상)만** 추가하고 배포 값은 `null` 로
+둔다. 다만 **이 실측 1건은 지어낸 값이 아니므로 형상의 워크드 예시·테스트 픽스처로 인용할 수
+있고, 그렇게 한다**(K-1). 배포 정책 값으로 승격하지는 않는다 — 한 구간을 표로 제시하면 표가
+완전하다는 뜻이 되어버린다. 전체 표는 OCP sizing 제안표와 같은 **새 승인 경로**가 필요하고
+그 경로는 아직 없다.
 
 ### 0.2 ★ ④ 는 순수 커널 변경이 아니다
 
@@ -103,7 +120,7 @@ OCP 스펙 템플릿(`tos-spec/src/part-1-foundation/verification/ORDER-CONSTRUC
 
 | # | 내용 | 종료 조건 |
 |---|---|---|
-| K-1 | `VenueShapeConstraints` 에 가격대별 tick **형상** 추가 · `order_shape_admissible` 이 표가 있으면 표로, 없으면 기존 평탄 `tick_size` 로 판정 · **둘 다 없으면 `UNKNOWN`** | 기존 선물 경로 무변경 실증 · 표 있는 경우의 판정 테스트 · 값 `null` 인 배포 파일이 여전히 `UNKNOWN` |
+| K-1 | `VenueShapeConstraints` 에 가격대별 tick **형상** 추가 · `order_shape_admissible` 이 표가 있으면 표로, 없으면 기존 평탄 `tick_size` 로 판정 · **둘 다 없으면 `UNKNOWN`** · **테스트 픽스처는 실측 1건**(005930 · 232,500원 · tick 500 · `P-11-20260730T002715Z.json`)을 쓴다 | 기존 선물 경로 무변경 실증 · 표 있는 경우의 판정 테스트(실측값 기반) · 값 `null` 인 배포 파일이 여전히 `UNKNOWN` · **배포 파일에 tick 표를 채우지 않음** |
 | K-2 | 신규 `tos.position` — `PositionObservation` 커널 타입 + 순수 술어 6종 이식(`worst_credible_directional_usage`·`conservative_current_usage`·`in_flight_overlap_effect`·`_sign_of`·분류표·`_SealedSend`) · 런타임은 **이 패키지를 호출하도록만** 바뀐다 | 런타임 `riskstate/position.py` 의 I/O 는 그대로 · 이식 전후 런타임 테스트 동일 통과(동작 보존) |
 | K-3 | `construct_candidate_command` 가 `signer_identity`/`approval_identity`/`evidence_package_ref` 를 받아 `.issue()` 에 전달 · 런타임 로더가 템플릿에서 읽어 넘김 · OCP 템플릿에 세 키 추가(named-TBD) | 세 값이 `None` 일 때 **오늘과 digest 동일**(무회귀) · 실값이 있을 때 로더 digest == 커널 digest(충돌 0) · 픽스처 파생 digest 갱신 |
 | K-4 | `CapacityReservationTransition` 에 committed 벡터 필드 · 런타임 `reservations` 새 컬럼 + **스키마 v1→v2 마이그레이션**(두 곳 미러) · `ReservationProjectionReader` 에 접근자 | 기존 v1 데이터 디렉터리가 v2 로 승격되고 **기존 행이 보존**됨 · 투영이 크기를 돌려줌 · `tos_runtime/risk/aggregate.py` 의 「RCL 투영에 크기 없음」 서술 갱신 |
