@@ -13,10 +13,16 @@ when ``composed.marketfeed is None`` (nothing to drive with no wired tick source
 otherwise drives ``composed.marketfeed.run_forever`` until ``SIGINT``/``SIGTERM`` flips the
 injected stop predicate (never mid-tick); :func:`main` no longer returns ``0`` unconditionally
 for :class:`Args`. A real boot still needs every config file ``compose_paper_runtime`` reads
-filled with operator-approved values: as of this wave 6 of the 30 have an approved instance
-under ``config/tos_runtime/paper/``; the other 24 ship only as ``*.example.yaml`` (every leaf
-``null``) and every fail-closed loader here refuses on that shape by naming the file and the
-key — ``run`` relays each refusal, never invents a value.
+filled with operator-approved values: of the 30 it reads (plan §0.1), 6 have an approved
+instance under ``config/tos_runtime/paper/``; the other 24 ship only as ``*.example.yaml``
+(every leaf ``null``). **Of those 24, 19 actually block boot** (fail-closed loader refusal —
+``run`` relays each refusal, naming the file and the key, never inventing a value); the other
+**5 are genuine opt-in**, not blockers: ``strategy_bindings.yaml``
+(:func:`~tos_runtime.strategy.bindings` reports ``present=False`` rather than refusing),
+``marketfeed.yaml``/``critical_input_policy.yaml`` TOGETHER (absent ⇒
+``composed.marketfeed is None``, refused separately by THIS module, not by a config loader —
+see :func:`_dispatch_run`), ``nontrade.yaml``, and ``kis_mock_transport.yaml`` (unreached at
+the default ``--transport synthetic``).
 
 **The five operations subcommands DO real work directly from bare flags** (plan §2 decision 10),
 because none of them need a ``ConstructionConfig``/risk-input-provider: ``backup-set``,
@@ -69,8 +75,10 @@ the SAME idiom as ``rotate-key`` above — open the evidence store / inbox / tim
   disposition + per-predicate result table. Opens no store, no custody, no inbox — genuinely
   zero evidence reaches any real durable store.
 
-**Canonical blocker list — CODE-PATH blockers, all now resolved (plan §7 of the ``run`` 구동
-아크 plan is the other copy of this same list — keep both in sync).** Every blocker below used
+**Canonical blocker list — CODE-PATH blockers, all now resolved (plan §7.2 "웨이브 착지" of the
+``run`` 구동 아크 plan carries the SAME (a′)/(b′)/(c) resolution labels as this W1 landing entry
+— keep both in sync; §7.1 "정직 등재" is the separate, non-label registration for
+``required_authority_scope``, see ``_wiring.py:562``'s own comment).** Every blocker below used
 to be "the code cannot do this"; none of them are any more:
 
 (a) **RESOLVED** — venue constraint service wave: ``VenueConstraintSnapshot``/

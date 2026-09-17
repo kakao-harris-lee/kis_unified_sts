@@ -559,16 +559,18 @@ def _build_construction_stages(
         scheme=_SCHEME,
         proof_id=inputs.identities.proof_id,
         proof_generation=inputs.identities.generation,  # same generation as intent/envelope
-        # SYNTHESIZED, not sourced (TOS `run` 구동 아크 plan W1 lane A disposition, measured not
-        # fixed — reported to team-lead, kernel diff 0 required here): no governed policy
-        # declares an authority scope for this deployment, so this f-string is the ONLY
-        # producer of `required_authority_scope` in the runtime. Nothing downstream reads or
-        # value-checks it either — `tos.ioc.records.OrderConformanceProof
-        # .required_authority_scope`'s own docstring says "missing/empty means UNKNOWN/
-        # NON_CONFORMANT", but no predicate in tos/src enforces that; the tuple is accepted
-        # here purely because it happens to be non-empty, not because its content means
-        # anything. Candidate for kernel round #4 ① (OCP approval/signer binding) once that
-        # round picks a real governance source — do not invent one here.
+        # SYNTHESIZED, not sourced — see docs/plans/2026-09-17-tos-run-boot-and-real-sources-
+        # arc-plan.md §7.1 "정직 등재" for the plan-side copy of this same disposition (TOS
+        # `run` 구동 아크 plan W1 lane A, measured not fixed — reported to team-lead, kernel
+        # diff 0 required here): no governed policy declares an authority scope for this
+        # deployment, so this f-string is the ONLY producer of `required_authority_scope` in
+        # the runtime. Nothing downstream reads or value-checks it either —
+        # `tos.ioc.records.OrderConformanceProof.required_authority_scope`'s own docstring says
+        # "missing/empty means UNKNOWN/NON_CONFORMANT", but no predicate in tos/src enforces
+        # that; the tuple is accepted here purely because it happens to be non-empty, not
+        # because its content means anything. Candidate for kernel round #4 ① (OCP
+        # approval/signer binding) once that round picks a real governance source — do not
+        # invent one here.
         required_authority_scope=(f"scope-{construction.instrument}",),
     )
     return _ConstructionStages(

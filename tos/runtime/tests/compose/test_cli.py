@@ -1440,16 +1440,23 @@ def _cli_blocker_resolution_labels() -> dict[str, bool]:
 
 
 def _plan_section_7_resolution_labels() -> dict[str, bool]:
-    """Same extraction over ``docs/plans/2026-09-16-tos-aprime-envelope-order-shape-plan.md``
-    §7 — the "other copy" ``cli.py:62`` names by name. Any ``- (label)`` bullet counts as a
-    real entry; only one also carrying ``**RESOLVED`` counts as resolved."""
+    """Same extraction over ``docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md``
+    §7 (§7.2 "웨이브 착지" carries the W1 landing entry; §7.1 "정직 등재" is the separate,
+    non-label ``required_authority_scope`` registration and has no ``(a′)``/``(b′)``/``(c)``
+    bullets to match) — the "other copy" ``cli.py:78`` names by name. Any ``- (label)`` bullet
+    counts as a real entry; only one also carrying ``**RESOLVED`` counts as resolved.
+
+    Retargeted here (team-lead directive, 2026-09-17, PR #725 MEDIUM 1) from the now-frozen
+    ``docs/plans/2026-09-16-tos-aprime-envelope-order-shape-plan.md`` §7 once the ``run`` 구동
+    아크 plan (PR #724) landed on main — that plan is what ``cli.py``'s own docstring actually
+    claims to mirror now."""
     import re
 
     plan_path = (
         Path(__file__).resolve().parents[4]
         / "docs"
         / "plans"
-        / "2026-09-16-tos-aprime-envelope-order-shape-plan.md"
+        / "2026-09-17-tos-run-boot-and-real-sources-arc-plan.md"
     )
     section_7 = plan_path.read_text(encoding="utf-8").split("## 7. 착지 기록", 1)[1]
     labels: dict[str, bool] = {}
@@ -1461,12 +1468,12 @@ def _plan_section_7_resolution_labels() -> dict[str, bool]:
 
 
 def test_run_blocker_list_labels_match_between_cli_and_plan_section_7() -> None:
-    """``cli.py:62`` says so itself: "§7 of the plan document is the other copy of this same
-    list — keep both in sync." Hand-maintained duplicates drift silently — this repo has hit
-    that class five times in the (a′) wave alone (plan §4.3) — so this pins the one fact that
-    actually matters: which labels ((a′)/(b′)/(c)) each copy marks RESOLVED must agree. It does
-    not compare prose (the two documents are different languages/audiences on purpose), only
-    the resolution status per label."""
+    """``cli.py:78`` says so itself: "plan §7.2 ... carries the SAME (a′)/(b′)/(c) resolution
+    labels as this W1 landing entry — keep both in sync." Hand-maintained duplicates drift
+    silently — this repo has hit that class five times in the (a′) wave alone (plan §4.3) — so
+    this pins the one fact that actually matters: which labels ((a′)/(b′)/(c)) each copy marks
+    RESOLVED must agree. It does not compare prose (the two documents are different
+    languages/audiences on purpose), only the resolution status per label."""
     cli_labels = _cli_blocker_resolution_labels()
     plan_labels = _plan_section_7_resolution_labels()
     assert (
