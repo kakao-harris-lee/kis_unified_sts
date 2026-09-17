@@ -1,0 +1,92 @@
+# tos_runtime.transport.kis_quote KIS 모의투자 quote transport example config
+# (TOS tick-source wave, W2 lane, plan
+#  docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md §4 W2)
+#
+# Loader: tos_runtime.transport.kis_quote.config.load_kis_quote_transport_config
+#
+# Every value below is `null` (named-TBD): this is an EXAMPLE file, not an
+# approved config. A real deployment copies this file, gets it approved
+# through this repo's normal config-driven governance (CLAUDE.md
+# "configuration-driven only"), and fills in every leaf. A still-null or
+# missing required leaf is a fail-closed refusal at load
+# (KisQuoteTransportConfigError), never a silent default.
+#
+# This file is read ONLY when marketfeed.yaml's own `intake_kind` is
+# "kis_quote" (tos_runtime.compose._marketfeed_wiring) — an `intake_kind` of
+# "journal" never reads this file at all.
+
+# --- host seal ---------------------------------------------------------
+# Must byte-exact match the INSTANCE MOCK_VTS document's own rest_base
+# (caller-supplied at load time, e.g. "https://openapivts.koreainvestment.com:29443")
+# and must differ from the INSTANCE REAL_PROD document's rest_base. A
+# config value cannot invent its own broker host, and cannot point this
+# transport at the real domain under any value (config.py's own
+# `_validate_endpoint` — a STRUCTURAL guard, not documentation: KIS answers
+# quote TRs for a mock app key even against the real domain, so this seal
+# is what actually keeps this transport off the real host).
+
+endpoint_rest_base: null
+allow_plaintext_for_tests: null
+
+# --- quote TR -------------------------------------------------------------
+# quote_path: the quotations endpoint's path, e.g.
+#   /uapi/domestic-stock/v1/quotations/inquire-price     (stock, TR FHKST01010100)
+#   /uapi/domestic-futureoption/v1/quotations/inquire-price  (futures/index, TR FHMIF10000000)
+# tr_id: must match ^FH[A-Z]{3}\d{8}$ (config.py's own module docstring —
+#   measured shape, four independent citations there).
+# market_div_code: KIS's own FID_COND_MRKT_DIV_CODE query value — "J" for
+#   stock, "F" for futures/index (shared/kis/client.py:602,:665, cited as an
+#   existing-code shape reference only — this package never imports
+#   shared.kis).
+
+quote_path: null
+tr_id: null
+market_div_code: null
+
+# --- instrument scope ----------------------------------------------------
+# The single instrument this config quotes (KIS's own symbol/code, e.g.
+# "005930") — MUST equal the instrument string
+# KisQuoteObservationIntake.poll() is called with (checked at poll time; a
+# mismatch refuses rather than silently serving the wrong instrument's
+# price). Single-instrument only — FORWARD-OBLIGATION-MS1 is unratified.
+
+instrument: null
+
+# --- token endpoint --------------------------------------------------------
+# token_path: the token endpoint's path (e.g. /oauth2/tokenP) — shared with
+#   the KIS MOCK order transport's own token cache
+#   (tos_runtime.transport.kis_mock.token.KisTokenLifecycle).
+# token_reissue_min_interval_s: the token endpoint's own reissue-rate pacing
+#   (N-15's own finding: a rate limit, not a token lifetime).
+
+token_path: null
+token_reissue_min_interval_s: null
+
+# --- field mapping (configured, never hardcoded) ---------------------------
+# KIS wire field name (from the quote response's `output` block) -> the
+# critical_input_policy.yaml-admitted field_key it feeds. A response field
+# NOT named here is dropped before it ever reaches a RawObservation — never
+# guessed, never passed through wholesale. No unit/scale/multiplier/sign
+# interpretation happens here — the raw KIS scalar value (typically a
+# numeral-as-string) is carried through unchanged; that interpretation is
+# critical_input_policy.yaml's own job.
+#
+# Example shape (values below are illustrative comments only — the actual
+# mapping is a real YAML mapping an operator fills in, not a commented-out
+# template, since KisQuoteTransportConfigError refuses an empty
+# field_mapping):
+#   field_mapping:
+#     stck_prpr: last_price   # 현재가 (stock) / futs_prpr for futures
+#     acml_vol: volume        # 누적거래량
+
+field_mapping: null
+
+# --- observation attribution ------------------------------------------------
+# The RawObservation.source_id this intake stamps on every observation it
+# emits (e.g. "kis_quote_mock_stock").
+
+source_id: null
+
+# --- HTTP -------------------------------------------------------------------
+
+request_timeout_s: null

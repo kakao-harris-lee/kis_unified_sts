@@ -2,14 +2,47 @@
 wave, plan ``docs/plans/2026-09-16-tos-tick-source-plan.md`` §4 lane D).
 
 Loads ``marketfeed.yaml`` (fail-closed, the SAME named-TBD idiom
-:mod:`tos_runtime.compose._engine_config` already ships) and, only when it exists under
-``config_dir`` ALONGSIDE a ``critical_input_policy.yaml``
-(:data:`~tos_runtime.marketfeed.policy.CRITICAL_INPUT_POLICY_CONFIG_NAME`), builds a real
-:class:`~tos_runtime.marketfeed.scheduler.TickScheduler` — the SAME "files exist" idiom
-:func:`~tos_runtime.compose._session_wiring.build_nontrade_processor` already uses for its own
-optional ``nontrade.yaml``. Absent either file, :func:`build_tick_scheduler` returns ``None``: an
-operator who has not yet adopted this wave keeps composing exactly as before (module docstring of
-``ComposedRuntime.marketfeed`` — a legitimate state, never a boot refusal).
+:mod:`tos_runtime.compose._engine_config` already ships).
+
+**Two distinct absent-file cases — do not conflate them (2026-09-17 correction; an earlier
+revision of this paragraph claimed both were the same "returns None" case, which the code never
+did).** ``marketfeed.yaml`` ABSENT is the ONLY case that makes :func:`build_tick_scheduler` return
+``None`` — the SAME "files exist" idiom :func:`~tos_runtime.compose._session_wiring
+.build_nontrade_processor`'s own call site uses for its single optional ``nontrade.yaml``: an
+operator who has not yet adopted this wave at all keeps composing exactly as before (module
+docstring of ``ComposedRuntime.marketfeed`` — a legitimate state, never a boot refusal). But once
+``marketfeed.yaml`` EXISTS, ``critical_input_policy.yaml`` is no longer optional: this module
+checks only ``marketfeed.yaml``'s existence before proceeding, then calls
+:func:`~tos_runtime.marketfeed.policy.load_critical_input_policy` unconditionally, and THAT
+loader raises :class:`~tos_runtime.marketfeed.policy.CriticalInputPolicyConfigError` on a missing
+file (its own docstring's ``Raises:`` clause) — never swallowed or downgraded to ``None`` here. An
+operator who configured a tick source but did not govern it is refused at boot, not handed a
+runtime with a silently absent tick source; :func:`build_tick_scheduler`'s own ``Raises:`` clause
+already documented this exception correctly, only this module-level paragraph's blanket "absent
+either file" phrasing was wrong.
+
+**Intake selection is explicit, fail-closed, and never defaults (W2 lane,
+plan ``docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md`` §4 W2).**
+``marketfeed.yaml``'s ``intake_kind`` names EXACTLY ONE of two
+:class:`~tos_runtime.marketfeed.ports.ObservationIntake` implementations —
+``"journal"`` (:class:`~tos_runtime.marketfeed.journal.JsonLinesObservationJournal`, this
+module's original, file-backed intake) or ``"kis_quote"``
+(:class:`~tos_runtime.transport.kis_quote.adapter.KisQuoteObservationIntake`, a real KIS
+모의투자 quote HTTP poll). Neither is a fallback for the other: an unrecognized or missing
+``intake_kind`` refuses to load, and each kind's own required fields are validated only for
+that kind — ``journal_path`` is required (and must be the ONLY intake-shaped field present) when
+``intake_kind: journal``; ``kis_quote.yaml`` must exist alongside ``marketfeed.yaml`` (and
+``journal_path`` must be ABSENT) when ``intake_kind: kis_quote``. A deployment cannot silently end
+up on the file journal because a real transport config was misnamed, nor silently poll a live KIS
+endpoint because an operator forgot to set ``intake_kind`` — both are named-TBD refusals.
+
+Building the ``kis_quote`` intake needs the SAME two INSTANCE host-seal facts (MOCK/REAL
+``rest_base``) :mod:`tos_runtime.compose._transport_wiring`'s own ``load_transport_config``
+resolves for the order transport — resolved independently here (module-local
+:func:`_resolve_kis_instance_rest_bases`, duplicated rather than imported from that sibling
+wiring module: this module has no dependency on which *order* transport kind is active, and a
+deployment may run the KIS quote intake with a purely synthetic order transport, or vice versa —
+coupling the two would make one unavailable without the other for no structural reason).
 
 **Why this is called AFTER ``apply_recovery_barrier``, unlike ``venue`` (attached right after
 ``_finalize``).** :class:`~tos_runtime.marketfeed.scheduler.TickScheduler` captures ``driver`` at
@@ -30,14 +63,19 @@ collaborator is injected by the caller, exactly like every other ``_*_wiring`` m
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 from tos.canonical import CanonicalizationScheme
+from tos.workload import RuntimeIdentity
 
+from tos_runtime.brokercap.instance import load_instance_documents
+from tos_runtime.brokercap.scopes import BrokerScopesConfig
 from tos_runtime.calendar.owner import SessionFactsOwner
+from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
@@ -46,13 +84,21 @@ from tos_runtime.marketfeed.policy import (
     CRITICAL_INPUT_POLICY_CONFIG_NAME,
     load_critical_input_policy,
 )
+from tos_runtime.marketfeed.ports import ObservationIntake
 from tos_runtime.marketfeed.scheduler import TickScheduler
 from tos_runtime.marketfeed.store import MARKETFEED_FILE_NAME, SqliteSnapshotStore
 from tos_runtime.marketfeed.time_projection import RuntimeTimeProjection
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.service import TrustworthyTimeService
+from tos_runtime.time.sources import MonotonicSource
+from tos_runtime.transport.kis_quote.adapter import (
+    KisQuoteObservationIntake,
+    build_quote_client,
+)
+from tos_runtime.transport.kis_quote.config import load_kis_quote_transport_config
 
 __all__ = [
+    "KIS_QUOTE_TRANSPORT_CONFIG_NAME",
     "MARKETFEED_CONFIG_NAME",
     "MarketFeedConfig",
     "MarketFeedConfigError",
@@ -63,14 +109,28 @@ __all__ = [
 #: The runtime INSTANCE file name (distinct from ``marketfeed.example.yaml``).
 MARKETFEED_CONFIG_NAME = "marketfeed.yaml"
 
-#: The scalar-string fields, in the shipped example's own declaration order.
+#: The KIS quote transport's own runtime INSTANCE file name (distinct from
+#: ``kis_quote.example.yaml``) — read ONLY when ``intake_kind: kis_quote`` (module docstring).
+KIS_QUOTE_TRANSPORT_CONFIG_NAME = "kis_quote.yaml"
+
+#: The two ``intake_kind`` values this wiring recognizes — anything else is a fail-closed
+#: refusal at load (module docstring's "never defaults" note).
+_VALID_INTAKE_KINDS = ("journal", "kis_quote")
+
+#: Mirrors ``tos_runtime.compose._transport_wiring``'s own ``_REAL_ENVIRONMENT`` literal
+#: (duplicated, not imported — module docstring's "no dependency on the order transport wiring"
+#: note; both name the SAME Broker Capability Profile INSTANCE environment label).
+_REAL_ENVIRONMENT = "REAL_PROD"
+
+#: The scalar-string fields required regardless of ``intake_kind`` (``journal_path`` is NOT
+#: here — module docstring: it is required/forbidden depending on ``intake_kind``, validated
+#: separately by :func:`_require_journal_path_matches_intake_kind`).
 _STR_FIELDS: tuple[str, ...] = (
     "instrument_class",
     "account",
     "direction",
     "quantity_basis",
     "unit",
-    "journal_path",
 )
 #: The scalar-int fields.
 _INT_FIELDS: tuple[str, ...] = (
@@ -96,7 +156,13 @@ class MarketFeedConfig:
     direction: str
     quantity_basis: str
     unit: str
-    journal_path: Path
+    #: Which :class:`~tos_runtime.marketfeed.ports.ObservationIntake` this deployment builds —
+    #: ``"journal"`` or ``"kis_quote"`` (module docstring; :data:`_VALID_INTAKE_KINDS`).
+    intake_kind: str
+    #: Required (non-``None``) iff ``intake_kind == "journal"``; MUST be ``None`` otherwise
+    #: (module docstring's "never defaults" note — enforced by
+    #: :func:`_require_journal_path_matches_intake_kind`).
+    journal_path: Path | None
     poll_interval_ms: int
     snapshot_age_bound: int
     interval_width: int
@@ -157,15 +223,67 @@ def _require_instruments(raw: Any, path: Path) -> tuple[str, ...]:
     return tuple(value)
 
 
+def _require_intake_kind(raw: Any, path: Path) -> str:
+    value = raw.get("intake_kind") if isinstance(raw, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        raise MarketFeedConfigError(
+            f"{path}: 'intake_kind' is missing, still null (named-TBD), or not a non-empty "
+            f"string — must be one of {_VALID_INTAKE_KINDS!r} (module docstring: intake "
+            "selection never defaults)"
+        )
+    if value not in _VALID_INTAKE_KINDS:
+        raise MarketFeedConfigError(
+            f"{path}: intake_kind={value!r} is not one of {_VALID_INTAKE_KINDS!r}"
+        )
+    return value
+
+
+def _resolve_journal_path(raw: Any, path: Path, *, intake_kind: str) -> Path | None:
+    """Enforce the module docstring's "journal_path is required XOR forbidden" rule.
+
+    Args:
+        raw: The loaded YAML mapping.
+        path: The config file path (for error messages).
+        intake_kind: The already-validated ``intake_kind`` value.
+
+    Raises:
+        MarketFeedConfigError: ``journal_path`` is missing/null when ``intake_kind == "journal"``,
+            or present (non-null) when ``intake_kind != "journal"`` — a stale ``journal_path``
+            left in the file when an operator switches to ``kis_quote`` is refused rather than
+            silently ignored, so a config never carries a field that looks load-bearing but
+            is not.
+    """
+    present = isinstance(raw, dict) and raw.get("journal_path") is not None
+    if intake_kind == "journal":
+        if not present:
+            raise MarketFeedConfigError(
+                f"{path}: 'journal_path' is missing or still null (named-TBD) — required when "
+                "intake_kind: journal"
+            )
+        return Path(_require_str(raw, "journal_path", path))
+    if present:
+        raise MarketFeedConfigError(
+            f"{path}: 'journal_path' is set but intake_kind={intake_kind!r} — a non-journal "
+            "intake_kind must leave journal_path null (module docstring: neither intake kind "
+            "is a silent fallback for the other, and a stray journal_path would look "
+            "load-bearing while being ignored)"
+        )
+    return None
+
+
 def load_marketfeed_config(path: Path) -> MarketFeedConfig:
     """Load and fail-closed-validate ``marketfeed.yaml`` from ``path`` (module docstring).
 
     Raises:
         MarketFeedConfigError: The file is missing/unreadable/not valid YAML/not a mapping, or
-            any required leaf is absent, ``null``, or the wrong type.
+            any required leaf is absent, ``null``, or the wrong type; ``intake_kind`` is not one
+            of :data:`_VALID_INTAKE_KINDS`; or ``journal_path`` disagrees with ``intake_kind``
+            (module docstring).
     """
     raw = _load_mapping(path)
     instruments = _require_instruments(raw, path)
+    intake_kind = _require_intake_kind(raw, path)
+    journal_path = _resolve_journal_path(raw, path, intake_kind=intake_kind)
     str_values = {field: _require_str(raw, field, path) for field in _STR_FIELDS}
     int_values = {field: _require_int(raw, field, path) for field in _INT_FIELDS}
     return MarketFeedConfig(
@@ -175,10 +293,125 @@ def load_marketfeed_config(path: Path) -> MarketFeedConfig:
         direction=str_values["direction"],
         quantity_basis=str_values["quantity_basis"],
         unit=str_values["unit"],
-        journal_path=Path(str_values["journal_path"]),
+        intake_kind=intake_kind,
+        journal_path=journal_path,
         poll_interval_ms=int_values["poll_interval_ms"],
         snapshot_age_bound=int_values["snapshot_age_bound"],
         interval_width=int_values["interval_width"],
+    )
+
+
+def _resolve_kis_instance_rest_bases(
+    broker_scopes: BrokerScopesConfig,
+) -> tuple[str, str]:
+    """Resolve the (MOCK, REAL) INSTANCE ``rest_base`` host-seal facts for the ``kis_quote``
+    intake — the SAME two facts
+    :func:`tos_runtime.compose._transport_wiring.load_transport_config` resolves for the order
+    transport, independently re-derived here (module docstring).
+
+    Args:
+        broker_scopes: The already-loaded scope table (unconditionally available at this
+            module's call site regardless of which order-transport kind is active).
+
+    Returns:
+        ``(instance_mock_rest_base, instance_real_rest_base)``.
+
+    Raises:
+        MarketFeedConfigError: The active scope declares no ``instance`` block,
+            ``broker_scopes.instance_path`` is unset, or either the MOCK or REAL document
+            cannot be uniquely resolved with a known ``rest_base`` — the host seal cannot be
+            proven without every one of these facts.
+    """
+    scope = broker_scopes.active_scope
+    if scope.instance is None or broker_scopes.instance_path is None:
+        raise MarketFeedConfigError(
+            "intake_kind: kis_quote requires the active broker scope's own INSTANCE binding "
+            f"({scope.name!r}.instance) and broker_scopes.instance_path — the host seal cannot "
+            "be proven without both; refusing to boot"
+        )
+    documents = load_instance_documents(broker_scopes.instance_path)
+    mock_document = next(
+        (d for d in documents if d.environment == scope.instance.environment), None
+    )
+    real_document = next(
+        (d for d in documents if d.environment == _REAL_ENVIRONMENT), None
+    )
+    if mock_document is None or mock_document.rest_base is None:
+        raise MarketFeedConfigError(
+            f"intake_kind: kis_quote: no unique INSTANCE document for environment "
+            f"{scope.instance.environment!r} with a known rest_base at "
+            f"{broker_scopes.instance_path} — refusing to boot"
+        )
+    if real_document is None or real_document.rest_base is None:
+        raise MarketFeedConfigError(
+            f"intake_kind: kis_quote: no unique INSTANCE document for environment "
+            f"{_REAL_ENVIRONMENT!r} with a known rest_base at {broker_scopes.instance_path} — "
+            "the REAL host cannot be excluded without it; refusing to boot"
+        )
+    return mock_document.rest_base, real_document.rest_base
+
+
+def _evidence_recorder(
+    store: SqliteEvidenceStore, runtime_identity: RuntimeIdentity
+) -> Any:
+    """Adapt the KIS quote intake's injected ``EvidenceRecorder`` Protocol (``record(kind,
+    fields)``) onto :meth:`~tos_runtime.evidence.store.SqliteEvidenceStore.append` — mirrors
+    :mod:`tos_runtime.compose._transport_wiring`'s own ``_evidence_recorder`` (duplicated, not
+    imported — same "no dependency on the order transport wiring" reasoning as
+    :func:`_resolve_kis_instance_rest_bases`)."""
+
+    def _record(kind: str, fields: Mapping[str, Any]) -> None:
+        store.append(
+            dict(fields),
+            kind=kind,
+            record_class=kind,
+            runtime_identity=runtime_identity,
+        )
+
+    return _record
+
+
+def _build_intake(
+    config: MarketFeedConfig,
+    *,
+    config_dir: Path,
+    custody: CredentialCustody,
+    monotonic: MonotonicSource,
+    time_service: TrustworthyTimeService,
+    broker_scopes: BrokerScopesConfig,
+    evidence_store: SqliteEvidenceStore,
+    runtime_identity: RuntimeIdentity,
+) -> ObservationIntake:
+    """Build the ``ObservationIntake`` config.intake_kind selects (module docstring) — the ONE
+    branch point between the two intake kinds; every other collaborator below is intake-kind-
+    agnostic. ``custody``/``monotonic`` feed the shared KIS token lifecycle (custody: the SAME
+    ``kis_mock.*`` scopes the order transport uses; monotonic: its pacing clock, independent of
+    ``time_service`` — module docstring's "two clocks, two jobs" note, in
+    ``tos_runtime.transport.kis_quote.adapter``); ``broker_scopes`` resolves the host seal
+    (:func:`_resolve_kis_instance_rest_bases`); ``runtime_identity`` attributes evidence.
+    """
+    if config.intake_kind == "journal":
+        assert config.journal_path is not None  # load_marketfeed_config's own invariant
+        return JsonLinesObservationJournal(config.journal_path)
+    assert (
+        config.intake_kind == "kis_quote"
+    )  # _VALID_INTAKE_KINDS has exactly two members
+    instance_mock_rest_base, instance_real_rest_base = _resolve_kis_instance_rest_bases(
+        broker_scopes
+    )
+    quote_config = load_kis_quote_transport_config(
+        config_dir / KIS_QUOTE_TRANSPORT_CONFIG_NAME,
+        instance_mock_rest_base=instance_mock_rest_base,
+        instance_real_rest_base=instance_real_rest_base,
+    )
+    client = build_quote_client(quote_config)
+    return KisQuoteObservationIntake(
+        config=quote_config,
+        client=client,
+        custody=custody,
+        monotonic=monotonic,
+        time_service=time_service,
+        evidence_sink=_evidence_recorder(evidence_store, runtime_identity),
     )
 
 
@@ -193,11 +426,16 @@ def build_tick_scheduler(
     driver: EngineDriver | None,
     inbox: SqliteEventInbox,
     evidence_store: SqliteEvidenceStore,
+    custody: CredentialCustody,
+    monotonic: MonotonicSource,
+    broker_scopes: BrokerScopesConfig,
+    runtime_identity: RuntimeIdentity,
 ) -> TickScheduler | None:
     """Build the tick scheduler, or ``None`` when this wave is not configured (module docstring).
 
     Args:
-        config_dir: Where ``marketfeed.yaml``/``critical_input_policy.yaml`` are read from.
+        config_dir: Where ``marketfeed.yaml``/``critical_input_policy.yaml``/(``intake_kind:
+            kis_quote`` only) ``kis_quote.yaml`` are read from.
         data_dir: Where the durable snapshot store's own sqlite file lives
             (``data_dir / MARKETFEED_FILE_NAME`` — the SAME path
             :mod:`tos_runtime.compose._migrate_paths` already resolves for ``migrate``).
@@ -210,20 +448,24 @@ def build_tick_scheduler(
             (module docstring on why this must be called after the barrier runs).
         inbox: This process's shared durable event inbox.
         evidence_store: This process's shared evidence store.
+        custody, monotonic, broker_scopes, runtime_identity: Used ONLY when ``intake_kind:
+            kis_quote`` — see :func:`_build_intake` for what each one feeds.
 
     Returns:
-        The built :class:`~tos_runtime.marketfeed.scheduler.TickScheduler`, or ``None`` when
-        ``marketfeed.yaml`` is absent (an operator who has not adopted this wave).
+        The built scheduler, or ``None`` when ``marketfeed.yaml`` is absent (an operator who has
+        not adopted this wave).
 
     Raises:
-        MarketFeedConfigError: ``marketfeed.yaml`` exists but is malformed/incomplete.
-        tos_runtime.marketfeed.policy.CriticalInputPolicyConfigError: ``marketfeed.yaml`` exists
-            but ``critical_input_policy.yaml`` is missing/malformed/incomplete.
-        tos_runtime.marketfeed.scheduler.MultiInstrumentRefused: ``instruments`` names more than
-            one instrument (FORWARD-OBLIGATION-MS1 is unratified).
-        tos_runtime.marketfeed.time_projection.TimeProjectionConfigError: ``time_config`` is
-            missing a required ``delay_bounds`` term (unreachable in production — that config
-            loader already refuses first — kept as this module's own defense in depth).
+        MarketFeedConfigError: ``marketfeed.yaml`` malformed/incomplete, or ``intake_kind:
+            kis_quote``'s host-seal facts could not be resolved.
+        tos_runtime.marketfeed.policy.CriticalInputPolicyConfigError: ``critical_input_policy
+            .yaml`` missing/malformed/incomplete.
+        tos_runtime.transport.kis_quote.config.KisQuoteTransportConfigError: ``intake_kind:
+            kis_quote`` but ``kis_quote.yaml`` missing/malformed/incomplete.
+        tos_runtime.marketfeed.scheduler.MultiInstrumentRefused: more than one instrument
+            (FORWARD-OBLIGATION-MS1 unratified).
+        tos_runtime.marketfeed.time_projection.TimeProjectionConfigError: ``time_config`` missing
+            ``delay_bounds`` (unreachable in production — defense in depth).
     """
     config_path = config_dir / MARKETFEED_CONFIG_NAME
     if not config_path.is_file():
@@ -233,7 +475,16 @@ def build_tick_scheduler(
         config_dir / CRITICAL_INPUT_POLICY_CONFIG_NAME, scheme=scheme
     )
     store = SqliteSnapshotStore(data_dir / MARKETFEED_FILE_NAME)
-    intake = JsonLinesObservationJournal(config.journal_path)
+    intake = _build_intake(
+        config,
+        config_dir=config_dir,
+        custody=custody,
+        monotonic=monotonic,
+        time_service=time_service,
+        broker_scopes=broker_scopes,
+        evidence_store=evidence_store,
+        runtime_identity=runtime_identity,
+    )
     time_projection = RuntimeTimeProjection(
         config=time_config,
         time_service=time_service,
