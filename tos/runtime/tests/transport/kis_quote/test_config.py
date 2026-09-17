@@ -256,3 +256,29 @@ def test_negative_request_timeout_refuses(tmp_path: Path) -> None:
     path = _write(tmp_path, raw)
     with pytest.raises(KisQuoteTransportConfigError, match="positive"):
         _load(path)
+
+
+# ---------------------------------------------------------------------------
+# shipped example (W2 lane review finding — LOW: no test ever loaded this file)
+# ---------------------------------------------------------------------------
+
+
+def test_shipped_example_file_is_all_null_and_therefore_refuses() -> None:
+    """``kis_quote.example.yaml`` is a template, not an approved config — every leaf is
+    ``null`` (named-TBD), so loading it as-shipped must refuse (module docstring's own "still-null
+    or missing required leaf is a fail-closed refusal at load" note). Mirrors
+    ``test_construction_config.py``'s ``test_shipped_example_file_is_all_null_and_therefore_refuses``.
+
+    Nothing else in this suite ever reads the shipped example file itself — every other test
+    here writes its own synthetic ``kis_quote.yaml`` via ``_write``/``_valid_raw``. This is the
+    ONE test that would catch a required key added to the loader without the example being kept
+    in sync (a missing key in ``marketfeed.example.yaml`` went unnoticed by hand for exactly this
+    reason before this test existed)."""
+    example_path = (
+        Path(__file__).resolve().parents[3] / "config" / "kis_quote.example.yaml"
+    )
+    assert (
+        example_path.is_file()
+    ), "fixture assumption: the example file ships at this path"
+    with pytest.raises(KisQuoteTransportConfigError):
+        _load(example_path)

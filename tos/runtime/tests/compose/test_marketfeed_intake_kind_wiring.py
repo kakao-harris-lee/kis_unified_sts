@@ -26,7 +26,10 @@ from typing import Any
 
 import pytest
 import yaml
-from tos_runtime.compose._marketfeed_wiring import MarketFeedConfigError
+from tos_runtime.compose._marketfeed_wiring import (
+    MarketFeedConfigError,
+    load_marketfeed_config,
+)
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.transport.kis_quote.adapter import KisQuoteObservationIntake
 from tos_runtime.transport.kis_quote.config import KisQuoteTransportConfigError
@@ -282,3 +285,30 @@ def test_kis_quote_intake_no_instance_binding_refuses_at_wiring_level(
 
     with pytest.raises(MarketFeedConfigError, match="instance"):
         _compose(tmp_path, config_dir, data_dir, custody_root)
+
+
+# ---------------------------------------------------------------------------
+# shipped example (W2 lane review finding — LOW: no test ever loaded this file)
+# ---------------------------------------------------------------------------
+
+
+def test_shipped_example_file_is_all_null_and_therefore_refuses() -> None:
+    """``marketfeed.example.yaml`` is a template, not an approved config — every leaf is ``null``
+    (named-TBD), so loading it as-shipped must refuse (``_marketfeed_wiring`` module docstring's
+    own "still-null or missing required leaf here IS a fail-closed refusal at load" note). Mirrors
+    ``test_construction_config.py``'s
+    ``test_shipped_example_file_is_all_null_and_therefore_refuses``.
+
+    Every other test in this module and in ``test_marketfeed_wiring.py`` writes its own synthetic
+    ``marketfeed.yaml`` via ``_write_marketfeed_config``/``_write_marketfeed_config_raw`` — nothing
+    ever loaded the shipped example file itself before this test existed, which is exactly why a
+    missing required key in it (``poll_interval_ms``, W2 lane) went unnoticed by hand: "every
+    fixture is green" and "the shipped example is valid" were unconnected statements."""
+    example_path = (
+        Path(__file__).resolve().parents[2] / "config" / "marketfeed.example.yaml"
+    )
+    assert (
+        example_path.is_file()
+    ), "fixture assumption: the example file ships at this path"
+    with pytest.raises(MarketFeedConfigError):
+        load_marketfeed_config(example_path)
