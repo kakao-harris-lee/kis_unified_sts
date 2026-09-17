@@ -10,6 +10,16 @@ single ``tick_once()`` call against a real composed runtime
 Nothing before this file drives the ACTUAL ``while not stop(): tick_once(); sleep(...)`` loop
 against a real :class:`~tos_runtime.compose._types.ComposedRuntime`.
 
+**(1b) the ``cli.main(["run", ...])`` argv path itself, ticking for real** (reviewer HIGH, PR
+#725: the tests above call ``run_forever`` directly on a ``_compose()``d runtime, never through
+``dispatch_run``/``main`` — the ONLY test that reaches ``dispatch_run``'s success path used to
+monkeypatch ``compose_paper_runtime`` with a fake scheduler, so reverting ``main``'s dispatch to
+the pre-wave ``return 0`` killed just one test). ``test_cli_main_run_argv_path_composes_and_
+actually_ticks`` enters at the real argv path against a real composed runtime and a real tick
+source on disk, bounded by a real ``SIGINT`` from a background thread (the only bound
+``dispatch_run`` itself supports), and confirms a durable tick landed by reopening the on-disk
+snapshot store file after ``main()`` returns.
+
 **(2) ``_dispatch_run``'s own refusal paths, against real files on disk** (module docstring of
 :mod:`tos_runtime.compose.cli` — the module-level unit tests in ``test_cli.py`` monkeypatch
 ``compose_paper_runtime``/``load_construction_config``; this file exercises the real functions):
@@ -23,6 +33,9 @@ autouse guards ``test_marketfeed_wiring.py`` uses.
 
 from __future__ import annotations
 
+import os
+import signal
+import threading
 import time
 from pathlib import Path
 
@@ -30,6 +43,7 @@ import pytest
 import yaml
 from tos_runtime.compose import cli
 from tos_runtime.compose._transport_wiring import TransportKind
+from tos_runtime.marketfeed.store import MARKETFEED_FILE_NAME, SqliteSnapshotStore
 
 from . import _fixtures as fx
 from .test_compose_root import _compose, _reach_trusted
@@ -236,6 +250,121 @@ def test_run_forever_ticks_a_second_real_observation_after_the_pacing_interval(
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()
+
+
+# ----------------------------------------------------------------------------
+# (1b) the `cli.main(["run", ...])` argv path itself — reviewer HIGH (PR #725):
+# every other test in this file either calls `run_forever` directly on a `_compose()`d
+# runtime (never through `dispatch_run`/`main` at all) or drives `dispatch_run` down a
+# REFUSAL path that never reaches `run_forever`. Reverting `main`'s `return
+# _dispatch_run(args)` back to the pre-wave `return 0` must turn THIS test red — that is
+# the headline claim ("run composes and drives") and no other test in the suite pins it.
+# ----------------------------------------------------------------------------
+
+
+def test_cli_main_run_argv_path_composes_and_actually_ticks(
+    tmp_path: Path,
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Enters at the REAL argv path (``cli.main(["run", ...])``, exactly what a real launcher
+    invokes) against a REAL ``compose_paper_runtime`` and a REAL tick source configured on disk
+    — no monkeypatched ``compose_paper_runtime``, no fake scheduler. The loop is bounded the
+    ONLY way ``dispatch_run`` itself supports (module docstring of
+    ``tos_runtime.compose._run_dispatch`` — SIGINT/SIGTERM flip the injected stop predicate
+    between passes): a background thread sends a real ``SIGINT`` to this process. Rather than a
+    fixed sleep (composition time is not a promised bound and a flaky race either sends SIGINT
+    before ``install_run_stop_signal_handlers`` has even run — hitting Python's DEFAULT SIGINT
+    handler, which raises ``KeyboardInterrupt`` straight through the test process — or leaves
+    the loop spinning past a generous deadline), the sender POLLS the SAME durable file the
+    final assertion reads, by opening its own independent sqlite connection (a second
+    connection from a second thread — the store itself only ever touches its own connection
+    from the thread that created it, so this never crosses a `sqlite3` thread-affinity rule),
+    and sends ``SIGINT`` only once it observes the real tick has already landed. This makes the
+    bound a real condition (a tick occurred), not a timing guess.
+
+    Evidence of an actual tick is read back from the durable snapshot STORE FILE
+    (``data_dir / MARKETFEED_FILE_NAME``), reopened fresh after ``main()`` returns — never the
+    in-process ``composed`` object (``cli.main`` returns only an exit code, by design; a second,
+    independent connection to the same on-disk sqlite file is exactly the durability guarantee
+    ``run`` is supposed to provide)."""
+    config_dir = config_dir_with_risk_state
+    fx.write_band_strategy_file(config_dir)
+    _write_construction_yaml(config_dir)
+    journal_path = tmp_path / "journal.jsonl"
+    as_of_ms = _as_of_ms()
+    _write_journal(
+        journal_path,
+        [_observation_line(raw_event_id="raw-cli-main-argv", as_of_ms=as_of_ms)],
+    )
+    _write_critical_input_policy(config_dir)
+    _write_fast_marketfeed_config(
+        config_dir, journal_path=journal_path, instruments=(fx.INSTRUMENT,)
+    )
+    marketfeed_db_path = data_dir / MARKETFEED_FILE_NAME
+    main_done = threading.Event()
+
+    def _observed_tick() -> bool:
+        if not marketfeed_db_path.exists():
+            return False
+        probe = SqliteSnapshotStore(marketfeed_db_path)
+        try:
+            return probe.latest_as_of(instrument=fx.INSTRUMENT) == as_of_ms
+        finally:
+            probe.close()
+
+    def _send_sigint_once_ticked() -> None:
+        # `main_done` is checked on every iteration AND immediately before `os.kill` — a
+        # mutated/broken `dispatch_run` that returns without ever composing (e.g. reverting
+        # `main`'s own dispatch back to a bare `return 0`) makes `cli.main()` return almost
+        # instantly; without this check, a signal sent AFTER that point lands asynchronously
+        # wherever the main thread happens to be by then (pytest's own teardown, the next
+        # test's setup, ...) and raises an uncaught `KeyboardInterrupt` there instead of
+        # failing THIS test — exactly the failure mode this comment exists to document, found
+        # while building this very test (reviewer HIGH, PR #725). Giving up quietly and letting
+        # the assertions below fail normally is the whole point.
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            if main_done.is_set():
+                return
+            try:
+                if _observed_tick():
+                    break
+            except Exception:
+                # The store file may exist but not yet have a committed schema/row the instant
+                # it is created — keep polling rather than treat a transient read as failure.
+                pass
+            time.sleep(0.005)
+        else:
+            return  # deadline hit with no tick ever observed — give up, send nothing
+        if not main_done.is_set():
+            os.kill(os.getpid(), signal.SIGINT)
+
+    sender = threading.Thread(target=_send_sigint_once_ticked, daemon=True)
+    sender.start()
+    try:
+        exit_code = cli.main(
+            [
+                "run",
+                "--config-dir",
+                str(config_dir),
+                "--data-dir",
+                str(data_dir),
+                "--custody-root",
+                str(custody_root),
+                "--environment-label",
+                "non-live-test",
+            ]
+        )
+    finally:
+        main_done.set()
+        sender.join(timeout=11)
+
+    assert exit_code == 0
+    assert "run: stopped" in capsys.readouterr().out
+    assert _observed_tick()
 
 
 # ----------------------------------------------------------------------------
