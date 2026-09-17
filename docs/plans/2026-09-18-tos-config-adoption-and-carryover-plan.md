@@ -49,6 +49,46 @@
 
 즉 **절반 이상이 승인이 아니라 계산으로 풀린다.** 이것이 이 계획의 작업량을 크게 줄인다.
 
+### 0.1.1 조사 레인이 정정한 것 — (나)의 성격이 셋으로 갈린다
+
+초고는 `canonical_digest`/`*_id`/`activation_record_id` 를 **하나의 (나)** 로 묶었다. 실측 결과
+**셋이 다른 것**이었다. 이 구분이 작업량을 다시 줄인다.
+
+| 실측 | 뜻 | 처리 |
+|---|---|---|
+| **`canonical_digest` 는 `"TBD"` 로 영구히 둬도 된다** — `check_canonical_digest`(`venue/_policy_primitives.py:241-247`)가 `TBD_DIGEST` 를 **항상 통과**시킨다 | 진짜 엄격 동등이 요구되는 곳은 **`safety_activation.yaml::members[].digest`** 다(`venue/activation.py:130-145`, exact match) | **채우지 않는다.** 정상 배포 형태는 「정책 파일의 `canonical_digest` 는 TBD, `members` 만 정확」 |
+| **`activation_record_id` 는 죽은 리프다** — `grep -rn "activation_record_id" tos/runtime/src tos/src` → **프로덕션 0건**(배포 YAML 4곳과 테스트 픽스처에만 존재) | 활성화 판정은 `(kind, member_id, generation, digest)` **4-튜플로만** 이뤄지고 이 필드는 참여하지 않는다 | **채우지 않는다.** 파생되는 게 아니라 **아무도 읽지 않는다** |
+| **`members[]` 4-튜플만이 실제 작업이다** | `print-policy-digests` 출력 3필드 + `kind`(enum 라벨을 사람이 전사) | **이것만 채운다** |
+
+따라서 (나) 15개 중 **실제로 채워야 하는 것은 `safety_activation.yaml::members` 뿐**이다.
+
+### 0.1.2 부류가 하나 더 있다 — **(라) 배포 환경 실측값**
+
+`release.yaml::expected_code_digest` / `expected_dependency_set_digest` 는 **(가)가 아니다.**
+운영자가 정하는 값이 아니라 **현재 설치된 소스트리·의존성 집합에서 실측**되는 값이다
+(`print-digests` — **`print-policy-digests` 와 다른 서브커맨드다**, `operations.dependency_admission.
+observe_runtime_artifact().source_tree_digest`).
+
+(나)와도 다르다: (나)는 **다른 정책 문서**에서 파생되지만 (라)는 **배포 환경 자체**에서 파생된다.
+파생 방향이 반대라 순서 의존도 반대다 — 정책 확정이 선행조건이 아니라 **설치 상태**가 선행조건이다.
+
+**제안표에서 (라)를 (가)로 놓고 「운영자가 정한다」고 적으면 틀린다.**
+
+### 0.1.3 ★ 잠재 부류 — 18종 로더가 `"TBD"` 를 막지 않는다
+
+커널 라운드 #4 의 `contract-keeper` HIGH(`optional_str` 이 `"TBD"` 통과)는 **인스턴스였고 부류는
+열려 있다.** 조사 실측:
+
+- `null` 과 `"TBD"` 를 **둘 다** 거부하는 것은 **`construction.yaml` 로더와 `venue/_policy_primitives.py`
+  둘뿐**이다 — 전자는 라운드 #4 이후 신설, 후자는 라운드 #4 가 직접 고친 파일.
+- **라운드 #4 이전부터 있던 18종 로더는 `"TBD"` 문자열 검사 자체가 없다**(`_require`/`_require_str`/
+  `require_str_field` 계열 — 예: `brokercap/scopes.py:277-282`). 지금 안전한 이유는 로더가 막아서가
+  아니라 **example 에 `"TBD"` 관례가 아직 침투하지 않아서**다.
+
+**이 계획은 이 파일들에 값을 쓰는 계획이다.** 즉 내가 `"TBD"` 를 placeholder 로 쓰는 순간 **18종이
+그것을 유효한 값으로 승인한다.** 그러므로 **A-0 에서 부류를 먼저 닫고** 값 저작을 시작한다
+(§4 W-A). 「지적을 고쳤는가」가 아니라 「같은 지적이 또 나올 수 있는가」다.
+
 ### 0.2 순서 의존이 하나 있다
 
 `admitted_quantity_bases` / sizing `value` 는 **전략 파일의 `quantity_basis` 가 먼저 정해져야** 한다
@@ -115,7 +155,8 @@
 
 | # | 내용 | 종료 조건 |
 |---|---|---|
-| A-1 | **제안표 저작**(문서). (가) 12개 정책값 + **19종** example-only 파일의 필수 리프. 값마다 **근거 한 줄**. 안전 계열은 `⚠` 표로 분리 | 저작한 값 **전부에 근거**가 붙어 있음 · (다) 부류 **0건** |
+| **A-0** | **잠재 부류 닫기(§0.1.3).** 공용 `_require_str`/`require_str_field`/`_require` 계열에 named-TBD 거부 추가 — **값을 쓰기 전에** | `"TBD"` 를 넣으면 거부됨을 로더별로 핀 · 거부 코드를 지우면 red(뮤테이션) · 기존 부팅 무회귀 |
+| A-1 | **제안표 저작**(문서). (가) 정책값 + **19종** example-only 파일의 필수 리프. 값마다 **근거 한 줄**. 안전 계열은 `⚠` 표로 분리 | 저작한 값 **전부에 근거**가 붙어 있음 · (다) 부류 **0건** |
 | A-2 | (가) 채택 — 실파일 기입. `approved_by` 에 「operator 2026-09-18 · 제안표 §n」 | `grep -n "TBD" config/tos_runtime/paper/*.yaml` 에서 (가) 계열 **0** |
 | A-3 | (나) 파생 — `print-policy-digests` 출력을 기입 | digest 계열 **0** · 명령과 출력을 커밋 메시지에 인용 |
 | A-4 | `construction.yaml` 신규 인스턴스 — `price_field_key`/`shape_price_field_key` 는 배포된 `critical_input_policy.yaml::fields[].field_key` 와 **일치해야** 한다(로더가 대조하지 않으므로 사람이 맞춰야 함) | 두 파일의 키가 실제로 일치함을 테스트로 핀 |
