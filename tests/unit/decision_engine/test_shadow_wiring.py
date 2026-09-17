@@ -42,7 +42,7 @@ async def test_resolve_context_provider_off_is_inert_stub():
 async def test_resolve_context_provider_live_builds_real(monkeypatch):
     called = {}
 
-    async def _fake_builder(redis_client):
+    async def _fake_builder(redis_client, instrument=None):
         called["redis"] = redis_client
         return ("PROVIDER", "FEED", "SYNC", "ATR")
 
@@ -55,7 +55,7 @@ async def test_resolve_context_provider_live_builds_real(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_resolve_context_provider_shadow_builds_real(monkeypatch):
-    async def _fake_builder(redis_client):
+    async def _fake_builder(redis_client, instrument=None):
         return ("PROVIDER", "FEED", "SYNC", "ATR")
 
     monkeypatch.setattr(dem, "_build_context_provider", _fake_builder)

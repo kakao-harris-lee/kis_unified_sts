@@ -33,6 +33,7 @@ from tos.dsl import (
 from tos.engine import (
     AttemptRequest,
     CommitmentStep,
+    CorporateActionPayload,
     DecisionTickPayload,
     EngineConfiguration,
     EngineCore,
@@ -46,6 +47,7 @@ from tos.engine import (
     TimeAdmissionInputs,
     provisional_stage_map,
 )
+from tos.nontrade import NonTradeEventRecord
 from tos.ordering import OrderingEvent
 from tos.time import HealthState, SessionContext, UncertaintyInterval
 
@@ -275,6 +277,27 @@ def decision_tick(
             capsule=capsule or issue_capsule(),
             time=time_inputs or admitting_time_inputs(),
             reference=ordering(sequence),
+        ),
+    )
+
+
+def corporate_action_event(
+    *,
+    sequence: int = 1,
+    key: InstrumentKey | None = None,
+    event: NonTradeEventRecord | None = None,
+    **payload_overrides: Any,
+) -> EngineEvent:
+    """Build a ``CORPORATE_ACTION`` event (kernel round #3 §2 결정 1) — the minimal, honestly
+    empty-coordinate payload every unit test that just needs a well-formed event (rather than
+    exercising a specific ``nontrade_disposition`` branch) can reuse."""
+    return EngineEvent(
+        kind=EventKind.CORPORATE_ACTION,
+        corporate_action=CorporateActionPayload(
+            instrument_key=key or instrument_key(),
+            event=event if event is not None else NonTradeEventRecord(),
+            reference=ordering(sequence),
+            **payload_overrides,
         ),
     )
 

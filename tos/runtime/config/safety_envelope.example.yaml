@@ -1,0 +1,39 @@
+# Hard Safety Envelope policy document (tos_runtime.safety.profile.SafetyProfileService).
+#
+# Loaded into tos.spg.HardSafetyEnvelope via model_validate — see
+# tos_runtime/safety/profile.py for the loader and the predicates that
+# consume this document (profile_within_envelope, hard_and_runtime_versions_
+# match, activation_atomic, envelope_bounded).
+#
+# Every value below is a named-TBD `null` (or an empty collection where the
+# schema allows one) — an operator MUST replace every null with a concrete,
+# governance-approved value before this file can be used in production. The
+# loader refuses to start on a still-null required field (fail-closed, never
+# a silent default). See docs/runbooks/tos-safety-mesh.md for the proposal
+# table an operator reviews before filling this in.
+envelope:
+  envelope_id: null
+  envelope_generation: null
+  envelope_version:
+    version: null
+    effective_date: null
+    evidence_package_version: null
+    approver_identity: null
+    expiration_or_revalidation_date: null
+    superseded_version_link: null
+    change_classification: null
+  # One entry per governed dimension this envelope bounds. Example shape
+  # (delete the null placeholder, add real dimensions):
+  #   - dimension: null
+  #     envelope_max: null
+  #     unit: null
+  #     multiplier: null
+  #     sign: null
+  #     precision: null
+  #     rounding: null
+  #     boundary: null
+  governed_dimensions: []
+  permitted_scope: []
+  prohibited_fallbacks: []
+  residual_risk_ceiling: null
+  evidence_package_ref: null

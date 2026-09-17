@@ -553,7 +553,7 @@ _CASES: list[tuple[str, SendVerifyItem, dict[str, Any]]] = [
     (
         "stale venue facts",
         SendVerifyItem.VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION,
-        {"venue_session_account_facts_current": False},
+        {"session_facts_current": False},
     ),
     ("no construction", SendVerifyItem.ORDER_CONSTRUCTION, {"construction": None}),
     (

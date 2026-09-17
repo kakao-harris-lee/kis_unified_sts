@@ -19,6 +19,7 @@ from tos_runtime.compose._egress_coordinates import (
     EgressCoordinateConfigError,
     load_egress_coordinates,
 )
+from tos_runtime.compose._request_digest import CapsuleStandInDigest
 
 from . import _fixtures as fx
 from .conftest import write_approval_file
@@ -221,7 +222,11 @@ def test_wired_coordinates_equal_the_configured_non_default_values(
     ]
     assert matching_inventory_principals == [resolved.principal]
 
-    assert resolved.capsule_egress_request_digest == _SCHEME.compute_digest(
+    # T2 lane A: the DEFAULT ``request_bytes_digest_source`` is still the unchanged
+    # capsule-terminus stand-in — same constant, same computation, now wrapped in
+    # ``CapsuleStandInDigest`` rather than assigned to a bare field.
+    assert isinstance(resolved.request_bytes_digest_source, CapsuleStandInDigest)
+    assert resolved.request_bytes_digest_source.digest == _SCHEME.compute_digest(
         {
             "account": runtime.context_resolver.instrument_key.account,
             "instrument": runtime.context_resolver.instrument_key.instrument,

@@ -90,14 +90,25 @@ __all__ = [
 #: The manifest's own filename, expected directly inside ``root_dir``.
 MANIFEST_FILENAME = "custody.manifest.yaml"
 
-#: Exactly the three scopes Phase 2 provisions (design #40 D4.1 line 111).
-#: ``order.*`` — and every other scope name — is deliberately absent: futures
-#: REAL is permanently absent (root CLAUDE.md non-negotiable rule) and stock
-#: order-scope custody is Phase 4. This set is a Python-level constant, not
-#: manifest-driven — a manifest cannot grant a scope Phase 2 does not
-#: provision by simply declaring it.
+#: The Phase 2 three scopes (design #40 D4.1 line 111) PLUS the two Phase 4 KIS MOCK stock
+#: order-verification scopes (TOS KIS MOCK transport plan T2 lane C —
+#: docs/plans/2026-09-10-tos-kis-mock-transport-plan.md §2 decision 4). ``order.*`` — and every
+#: futures-REAL scope name — is deliberately absent and always will be (root CLAUDE.md
+#: non-negotiable rule: the real futures account is never funded with margin). ``kis_mock.account``
+#: is likewise deliberately absent: the KIS account number is NOT a custody credential in this
+#: design — it is the sealed outbound ``account`` coordinate, read directly off the
+#: :class:`~tos.egressgw.SendSeal` (review F2 — see
+#: :mod:`tos_runtime.transport.kis_mock.codec`'s own module docstring). This set is a
+#: Python-level constant, not manifest-driven — a manifest cannot grant a scope this module does
+#: not provision by simply declaring it.
 PROVISIONED_SCOPES: frozenset[str] = frozenset(
-    {"read.principal", "evidence.key", "replay.params"}
+    {
+        "read.principal",
+        "evidence.key",
+        "replay.params",
+        "kis_mock.app_key",
+        "kis_mock.app_secret",
+    }
 )
 
 #: The exact permission bits a custody-scope file must carry. Compared against
@@ -486,6 +497,43 @@ class FileCustody:
             scrubbed_payload, kind="CUSTODY_LOAD", record_class="CUSTODY_LOAD"
         )
         return CredentialHandle(scope=scope, principal_id=entry.principal, data=data)
+
+    def scope_principal(self, scope: str) -> str:
+        """Return ``scope``'s own manifest-declared ``principal`` — manifest-only, zero secret
+        I/O (TOS KIS MOCK transport plan T2 lane C — the custody-principal consistency check,
+        docs/plans/2026-09-10-tos-kis-mock-transport-plan.md §2 decision 4).
+
+        This is deliberately NOT a ``load()`` call: it never opens, reads, or hands back the
+        scope's own credential file/bytes — only the already-parsed manifest entry's
+        ``principal`` string, which is not itself a secret (module docstring's fault-contract
+        table already treats ``principal_id`` as a non-secret evidence field). A caller that
+        needs to prove "this custody scope's principal matches that broker scope's principal"
+        (e.g. :mod:`tos_runtime.compose._transport_wiring`) can do so without ever loading the
+        credential.
+
+        Args:
+            scope: The scope to look up.
+
+        Returns:
+            The manifest entry's own ``principal`` string.
+
+        Raises:
+            CustodyScopeNotProvisioned: ``scope`` is not in :data:`PROVISIONED_SCOPES`.
+            CustodyLoadRefused: The manifest does not configure ``scope``.
+        """
+        if scope not in PROVISIONED_SCOPES:
+            raise CustodyScopeNotProvisioned(
+                f"FileCustody.scope_principal: scope {scope!r} is not provisioned "
+                f"(only {sorted(PROVISIONED_SCOPES)!r})"
+            )
+        entry = self._manifest.scopes.get(scope)
+        if entry is None:
+            raise CustodyLoadRefused(
+                f"FileCustody.scope_principal: scope {scope!r} is provisioned by design "
+                f"but the custody manifest at {self._root_dir / MANIFEST_FILENAME} "
+                "does not configure it — refuse (fail-closed)"
+            )
+        return entry.principal
 
     def _verify_and_resolve(self, scope: str) -> tuple[Path, _ScopeManifestEntry]:
         """:meth:`load`'s checks 1-4 — everything before the file is opened.

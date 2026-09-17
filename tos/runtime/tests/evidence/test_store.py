@@ -208,6 +208,49 @@ def test_delete_on_entries_is_rejected(store: SqliteEvidenceStore) -> None:
 # ============================================================================
 
 
+def test_last_committed_excluding_ignores_the_named_kinds(
+    store: SqliteEvidenceStore,
+) -> None:
+    """W3.1 independent review HIGH-1: a self-perturbing observer (a writer whose own
+    appends the SAME reader would otherwise see as tip advancement) needs a view of the
+    tip that excludes its own writes. ``last_committed_excluding`` is that view."""
+    store.append({"a": 1}, kind="OTHER", record_class="OTHERCLASS")
+    seq_before_alert, digest_before_alert, _ = store.last_committed_excluding(
+        frozenset({"ALERT"})
+    )
+    assert seq_before_alert == 0
+
+    store.append({"a": 2}, kind="ALERT", record_class="ALERTCLASS")
+    # last_committed() (unfiltered) sees the ALERT row -- that is the flap this method
+    # exists to avoid for a caller wired against its own alert sink.
+    unfiltered_seq, _, _ = store.last_committed()
+    assert unfiltered_seq == 1
+
+    seq_after_alert, digest_after_alert, _ = store.last_committed_excluding(
+        frozenset({"ALERT"})
+    )
+    assert seq_after_alert == 0
+    assert digest_after_alert == digest_before_alert
+
+
+def test_last_committed_excluding_reflects_a_genuine_non_excluded_append(
+    store: SqliteEvidenceStore,
+) -> None:
+    store.append({"a": 1}, kind="OTHER", record_class="OTHERCLASS")
+    store.append({"a": 2}, kind="ALERT", record_class="ALERTCLASS")
+    store.append({"a": 3}, kind="OTHER", record_class="OTHERCLASS")
+    seq, _, _ = store.last_committed_excluding(frozenset({"ALERT"}))
+    assert seq == 2
+
+
+def test_last_committed_excluding_empty_store_matches_last_committed(
+    store: SqliteEvidenceStore,
+) -> None:
+    excluded = store.last_committed_excluding(frozenset({"ALERT"}))
+    plain = store.last_committed()
+    assert excluded == plain
+
+
 def test_crash_before_commit_leaves_entry_absent(tmp_path: Path) -> None:
     path = tmp_path / "crash_before.sqlite3"
 

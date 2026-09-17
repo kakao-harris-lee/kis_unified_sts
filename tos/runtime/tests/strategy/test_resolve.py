@@ -56,6 +56,9 @@ class _FixedKeyProvider:
     def current(self) -> tuple[int, bytes]:
         return (1, b"test-fixed-key-bytes-resolve")
 
+    def generations(self) -> tuple[int, ...]:
+        return (1,)
+
 
 @pytest.fixture()
 def evidence_store(tmp_path: Path) -> SqliteEvidenceStore:

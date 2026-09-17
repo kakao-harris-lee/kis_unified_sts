@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from tos.egressgw.records import GatewayEvidenceRecord
+from tos.engine.vocabulary import CommitmentStep
 from tos.rcl import (
     AppendReceipt,
     CapacityReservationTransition,
@@ -39,6 +40,9 @@ _IDENTITY = RuntimeIdentity(cell_id="test-cell", process_nonce="test-nonce-1")
 class _FixedKeyProvider:
     def current(self) -> tuple[int, bytes]:
         return (1, b"test-fixed-key-bytes")
+
+    def generations(self) -> tuple[int, ...]:
+        return (1,)
 
 
 def _store(tmp_path: Path) -> SqliteEvidenceStore:
@@ -173,6 +177,7 @@ def test_no_obligation_appends_no_evidence_and_never_resolves(tmp_path: Path) ->
     recorder(
         GatewayEvidenceRecord(
             kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             attempt_id="attempt-1",
             preserved_worst_credible_capacity=None,
         )
@@ -222,6 +227,7 @@ def test_magnitude_unknown_obligation_is_not_a_no_op_appends_evidence_and_halts(
     recorder(
         GatewayEvidenceRecord(
             kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             attempt_id="attempt-1",
             preserved_worst_credible_capacity=None,
             preserved_obligation_magnitude_unknown=True,
@@ -264,6 +270,7 @@ def test_consuming_state_appends_evidence_with_no_halt(tmp_path: Path) -> None:
     recorder(
         GatewayEvidenceRecord(
             kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             attempt_id="attempt-1",
             preserved_worst_credible_capacity=5,
         )
@@ -301,6 +308,7 @@ def test_released_state_appends_evidence_and_halts(tmp_path: Path) -> None:
     recorder(
         GatewayEvidenceRecord(
             kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             attempt_id="attempt-1",
             preserved_worst_credible_capacity=5,
         )
@@ -333,6 +341,7 @@ def test_unresolvable_reservation_appends_evidence_and_halts(tmp_path: Path) -> 
     recorder(
         GatewayEvidenceRecord(
             kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             attempt_id="attempt-1",
             preserved_worst_credible_capacity=5,
         )
@@ -366,6 +375,7 @@ def test_attempt_id_none_never_calls_the_resolver(tmp_path: Path) -> None:
     recorder(
         GatewayEvidenceRecord(
             kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             attempt_id=None,
             preserved_worst_credible_capacity=5,
         )
@@ -437,7 +447,10 @@ def test_resolver_is_not_attempt_scoped_reads_the_shared_reservations_current_st
 
     recorder(
         GatewayEvidenceRecord(
-            kind="SEND_REFUSED", attempt_id="a1", preserved_worst_credible_capacity=5
+            kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+            attempt_id="a1",
+            preserved_worst_credible_capacity=5,
         )
     )
     kinds_after_a1 = [m.kind for m in store.iter_entry_meta()]
@@ -451,7 +464,10 @@ def test_resolver_is_not_attempt_scoped_reads_the_shared_reservations_current_st
 
     recorder(
         GatewayEvidenceRecord(
-            kind="SEND_REFUSED", attempt_id="a2", preserved_worst_credible_capacity=3
+            kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+            attempt_id="a2",
+            preserved_worst_credible_capacity=3,
         )
     )
     kinds_after_a2 = [m.kind for m in store.iter_entry_meta()]
@@ -482,7 +498,10 @@ def test_every_capacity_state_matches_the_kernel_predicate(
     )
     recorder(
         GatewayEvidenceRecord(
-            kind="SEND_REFUSED", attempt_id="a1", preserved_worst_credible_capacity=1
+            kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
+            attempt_id="a1",
+            preserved_worst_credible_capacity=1,
         )
     )
 

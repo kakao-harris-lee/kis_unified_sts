@@ -44,13 +44,18 @@ from tos_runtime.brokercap.scopes import (
     load_broker_scopes,
     resolve_scope,
 )
+from tos_runtime.compose._transport_wiring import TransportKind
 
 from ..compose import _fixtures as fx
-from ..compose.conftest import config_dir as config_dir  # noqa: F401
-from ..compose.conftest import custody_root as custody_root  # noqa: F401
-from ..compose.conftest import data_dir as data_dir  # noqa: F401
 from ..compose.conftest import write_approval_file
 from ..compose.test_compose_root import _compose, _reach_trusted
+
+# ``config_dir`` / ``data_dir`` / ``custody_root`` are NOT imported here: they are re-exported by
+# this package's own ``conftest.py`` (kernel round #3 K-6) precisely so pytest resolves them as
+# fixtures for the test methods below without this module ever binding those names itself — the
+# same names appear as parameters throughout this file, and importing them here too would trip
+# ruff's F811 (a false positive: pyflakes reads "parameter shadows import" without knowing pytest
+# resolves fixtures by name, never by import visibility).
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
@@ -392,9 +397,26 @@ class TestEC5HonestyNotAPass:
         at the gateway/kernel level directly below
         (:meth:`test_kernel_level_item6_item12_deny_honestly_for_the_broker_reaching_scope`),
         since this e2e path cannot reach the gateway at all for a
-        broker-reaching scope."""
+        broker-reaching scope.
+
+        T2 lane C: an active broker-reaching scope now requires the
+        ``kis-mock`` transport (:func:`~tos_runtime.compose._transport_wiring
+        .refuse_transport_scope_mismatch` — one source of truth), so this
+        e2e path composes with it. The compose-wide fixture's own
+        ``nonlive_broker_consuming.admitted: false`` posture is left
+        untouched, so the Coordinator gate's honest denial is EXACTLY the
+        same as before this lane — the transport kind is orthogonal to it.
+        """
         _ec5_config_dir(config_dir)
-        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        fx.write_kis_mock_transport_config(config_dir)
+        fx.provision_kis_mock_custody(custody_root)
+        runtime = _compose(
+            tmp_path,
+            config_dir,
+            data_dir,
+            custody_root,
+            transport_kind=TransportKind.KIS_MOCK,
+        )
         _reach_trusted(runtime)
         event = fx.crossing_event()
         results = runtime.run_once((event,))
@@ -402,7 +424,13 @@ class TestEC5HonestyNotAPass:
         assert results[0].pipeline is None
         assert results[0].halt_reason is not None
         assert results[0].halt_reason.value == "LIVE_SCOPE_NOT_AUTHORIZED"
-        assert runtime.transport.requests == ()
+        # T2 lane C: runtime.transport is now a KisMockTransport (no synthetic-only
+        # `.requests` attribute) — zero transport calls is instead proven by the
+        # absence of ANY TRANSPORT_* evidence row this adapter would otherwise emit.
+        transport_evidence_rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind LIKE 'TRANSPORT_%'"
+        ).fetchone()[0]
+        assert transport_evidence_rows == 0
         assert runtime.gateway.verifications == ()
 
         runtime.rcl_log.close()
@@ -417,9 +445,14 @@ class TestEC5HonestyNotAPass:
         it — bypassing the earlier Coordinator-preconditions halt (previous
         test) purely to exercise items 6/12/deferred in isolation, exactly
         as the plan asks: item 6 DENIED naming brokercap's PROHIBITED
-        verdict, item 12 UNKNOWN (DRAFT ⇒ not current), every deferred item
-        (4/5/7/8/9/10) UNKNOWN — never NOT_APPLICABLE (that would claim
-        this send was synthetic, which a broker-reaching scope never is)."""
+        verdict, item 12 DENIED (DRAFT ⇒ ``broker_constraint_generation_current``
+        is a strict ``bool`` — :func:`~tos_runtime.brokercap.derive_item6_item12`
+        never returns ``None`` for it — so the DRAFT profile's honest ``False``
+        is now an explicit denial, not folded into ``UNKNOWN`` the way the
+        pre-kernel-round-#3 gate's ``_positive()`` single-polarity check did;
+        kernel round #3 §11 결정 5), every deferred item (4/5/7/8/9/10)
+        UNKNOWN — never NOT_APPLICABLE (that would claim this send was
+        synthetic, which a broker-reaching scope never is)."""
         from tos.egress import RestrictiveLatchState
         from tos.egressgw import verify_send_boundary
         from tos.engine import AttemptRequest
@@ -446,7 +479,9 @@ class TestEC5HonestyNotAPass:
             broker_capability_profile=derived.broker_capability_profile,
             required_capability_set=derived.required_capability_set,
             broker_profile_version_current=derived.broker_profile_version_current,
-            venue_session_account_facts_current=True,
+            session_facts_current=True,
+            tradability_facts_current=True,
+            account_facts_current=True,
             broker_constraint_generation_current=(
                 derived.broker_constraint_generation_current
             ),
@@ -468,7 +503,8 @@ class TestEC5HonestyNotAPass:
         item12 = by_item[
             SendVerifyItem.VENUE_SESSION_ACCOUNT_AND_BROKER_CONSTRAINT_GENERATION
         ]
-        assert item12.outcome is VerifyOutcome.UNKNOWN
+        assert item12.outcome is VerifyOutcome.DENIED
+        assert "broker-constraint generation" in (item12.reason or "")
 
         deferred_items = (
             SendVerifyItem.CURRENT_SAFETY_AUTHORITY_EPOCH,
@@ -596,7 +632,16 @@ class TestF9SingleInstanceLoadPerBoot:
         # actually causes the real INSTANCE file to be parsed at all (the
         # default fixture's SYNTHETIC_FUTURES_ORDER scope has no `instance`
         # block, so it would never exercise either call site).
+        #
+        # T2 lane C: a broker-reaching active scope now requires the
+        # kis-mock transport (refuse_transport_scope_mismatch). This test's
+        # own counted call site (`derive_module.load_instance_document`) is
+        # unaffected: kis-mock's OWN host-seal loading uses the plural
+        # `load_instance_documents` (a different function this monkeypatch
+        # does not touch), so the count this test pins stays exactly 1.
         _ec5_config_dir(config_dir)
+        fx.write_kis_mock_transport_config(config_dir)
+        fx.provision_kis_mock_custody(custody_root)
         calls: list[int] = []
         original = derive_module.load_instance_document
 
@@ -605,7 +650,13 @@ class TestF9SingleInstanceLoadPerBoot:
             return original(*args, **kwargs)
 
         monkeypatch.setattr(derive_module, "load_instance_document", _counting)
-        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        runtime = _compose(
+            tmp_path,
+            config_dir,
+            data_dir,
+            custody_root,
+            transport_kind=TransportKind.KIS_MOCK,
+        )
 
         assert len(calls) == 1
 

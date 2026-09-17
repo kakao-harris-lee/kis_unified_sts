@@ -22,6 +22,7 @@ bar-replay driver is part of this composition.
 
 from __future__ import annotations
 
+import stat
 from decimal import Decimal
 from pathlib import Path
 
@@ -45,12 +46,8 @@ from tos.dsl import (
     TargetKind,
     TargetSpec,
 )
-from tos.egressgw import (
-    AdmittedPriceObservation,
-    EffectDimensionSpec,
-    ProposedConstructionEnvelope,
-)
-from tos.egressgw.vocabulary import EffectBasis, LotRoundingPolicy
+from tos.egressgw import AdmittedPriceObservation
+from tos.egressgw.vocabulary import LotRoundingPolicy
 from tos.engine import (
     CAPSULE_CONTEXT_SOURCE,
     EngineConfiguration,
@@ -60,20 +57,15 @@ from tos.engine import (
 )
 from tos.engine.records import DecisionTickPayload, TimeAdmissionInputs
 from tos.engine.vocabulary import EventKind
-from tos.ioc import AxisBinding, ConformanceAxis, QuantityUnitKind
+from tos.ioc import QuantityUnitKind
 from tos.ordering import OrderingEvent
 from tos.rcl import CapacityComponent, CapacityVector
 from tos.time import HealthState, SessionContext, UncertaintyInterval
-from tos.venue import (
-    ActionClass,
-    ActionPhaseAdmission,
-    OrderAdmissibilityDecision,
-    OrderShapeFields,
-    VenueConstraintPolicy,
-    VenueConstraintSnapshot,
-    VenueShapeConstraints,
-)
+from tos.venue import ActionClass, OrderShapeFields
 from tos_runtime.compose.root import ConstructionConfig
+from tos_runtime.transport.kis_mock.codec import KIS_ORDER_CASH_WIRE_FIELDS
+
+from ..venue._documents import ocp_yaml
 
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
@@ -82,6 +74,19 @@ INSTRUMENT = "ES"
 DECISION_CLASS = "entry"
 SIDE = "BUY"
 SESSION_PHASE = "CONTINUOUS"
+#: TOS Phase 5 W5 plan §2 decision 5 — keys the calendar.yaml session-window /
+#: futures-expiry lookup this suite's ConstructionConfig now carries, replacing
+#: the retired ``observed_session_phase: str`` literal. Matches the instrument
+#: class key ``conftest.py``'s ``calendar.yaml`` fixture defines.
+INSTRUMENT_CLASS = "krx-index-futures"
+#: A fixed Monday 2026-09-14 10:00:00 Asia/Seoul instant (a real, non-holiday
+#: weekday) — the default wall-clock reading this suite's ``_compose()`` helper
+#: injects so every existing happy-path e2e test keeps observing an ADMISSIBLE
+#: step 3 (the conftest.py calendar fixture is open 24/7, so the EXACT instant
+#: does not matter for that fixture; this constant exists so every test that
+#: wants a deterministic, non-``None`` wall-clock reading shares ONE fixed
+#: instant rather than each hand-rolling its own arbitrary timestamp).
+DEFAULT_WALL_CLOCK_UNIX_MS = 1_789_347_600_000
 
 LOWER_BAND = 4_500_000
 UPPER_BAND = 4_520_000
@@ -361,39 +366,6 @@ def sizing_bound(**overrides: object) -> object:
     return SizingBound(**base)
 
 
-def proposed_envelope(**overrides: object) -> ProposedConstructionEnvelope:
-    base: dict[str, object] = {
-        "envelope_generation": 1,
-        "policy_binding_id": "ocp-compose",
-        "authorized_axis_bindings": (
-            AxisBinding(axis=ConformanceAxis.ACCOUNT, value=ACCOUNT),
-            AxisBinding(axis=ConformanceAxis.INSTRUMENT, value=INSTRUMENT),
-            AxisBinding(axis=ConformanceAxis.DIRECTION, value="LONG"),
-            AxisBinding(axis=ConformanceAxis.SIDE, value=SIDE),
-            AxisBinding(axis=ConformanceAxis.ORDER_TYPE, value="LIMIT"),
-            AxisBinding(axis=ConformanceAxis.TIF, value="DAY"),
-            AxisBinding(axis=ConformanceAxis.ENVIRONMENT, value="non-live-test"),
-        ),
-        "sizing_bound": sizing_bound(),
-        "effect_dimensions": (
-            EffectDimensionSpec(
-                dimension_id="notional",
-                basis=EffectBasis.NOTIONAL,
-                unit="KRW",
-                scale="1",
-            ),
-            EffectDimensionSpec(
-                dimension_id="units",
-                basis=EffectBasis.QUANTITY,
-                unit="contract",
-                scale="1",
-            ),
-        ),
-    }
-    base.update(overrides)
-    return ProposedConstructionEnvelope(**base)
-
-
 def admitted_price(**overrides: object) -> AdmittedPriceObservation:
     base: dict[str, object] = {
         "source": CAPSULE_CONTEXT_SOURCE,
@@ -404,104 +376,50 @@ def admitted_price(**overrides: object) -> AdmittedPriceObservation:
     return AdmittedPriceObservation(**base)
 
 
-def venue_quantity_constraint() -> object:
-    from tos.egressgw import VenueQuantityConstraint
-
-    return VenueQuantityConstraint(
-        lot_size=LOT_SIZE,
-        min_quantity=MIN_QUANTITY,
-        max_quantity=MAX_QUANTITY,
-        quantity_unit=QuantityUnitKind.CONTRACTS,
-    )
-
-
-def venue_policy() -> VenueConstraintPolicy:
-    issued = VenueConstraintPolicy.issue(
-        scheme=SCHEME,
-        policy_id="vpol-compose",
-        policy_generation=1,
-        scope="scope-compose",
-        admitting_phase_rules=(
-            ActionPhaseAdmission(
-                action=ActionClass.NEW_LONG, admitting_phases=frozenset({SESSION_PHASE})
-            ),
-        ),
-    )
-    assert isinstance(issued, VenueConstraintPolicy)
-    return issued
+def order_shape(**overrides: object) -> OrderShapeFields:
+    """A hand-built :class:`~tos.venue.OrderShapeFields` literal — no longer wired anywhere on
+    the ``ConstructionConfig`` path ((a′) wave lane D: the field this used to feed,
+    ``ConstructionConfig.order_shape``, is removed — every field is sourced from the
+    derivation/OCP instead, see ``compose/_venue_wiring.py``'s ``VenueServiceStage`` docstring).
+    Kept for unit-level tests that construct :class:`~tos_runtime.compose._venue_wiring
+    .VenueServiceStage` directly, e.g. to prove a caller-declared literal never survives
+    sourcing (``test_venue_wiring.py``)."""
+    base: dict[str, object] = {
+        "price": 4200,
+        "quantity": 20,
+        "order_type": "LIMIT",
+        "tif": "DAY",
+        "side": SIDE,
+        "position_effect": "OPEN",
+        "silently_rounded": False,
+    }
+    base.update(overrides)
+    return OrderShapeFields(**base)
 
 
-def venue_snapshot() -> VenueConstraintSnapshot:
-    issued = VenueConstraintSnapshot.issue(
-        scheme=SCHEME,
-        snapshot_id="vsnap-compose",
-        constraint_generation=1,
-        policy_id="vpol-compose",
-        policy_generation=1,
-        observed_session_phase=SESSION_PHASE,
-    )
-    assert isinstance(issued, VenueConstraintSnapshot)
-    return issued
+def construction_config(**overrides: object) -> ConstructionConfig:
+    """TOS venue constraint service wave (plan §2 decision 5): the former
+    ``venue_snapshot``/``venue_policy``/``venue_decision``/``venue_shape_constraints``/
+    ``venue_constraint`` fields are gone — those facts now come exclusively from the governed
+    Venue Constraint Policy + Order Construction Policy ``conftest.py``'s own ``config_dir``
+    fixture writes and ``compose/_venue_wiring.py``'s ``build_venue_service`` loads (never a
+    test-authored stand-in).
 
-
-def venue_admissible_decision() -> OrderAdmissibilityDecision:
-    from tos.venue import OrderAdmissibilityResult
-
-    issued = OrderAdmissibilityDecision.issue(
-        scheme=SCHEME,
-        decision_id="vdec-compose",
-        decision_generation=1,
-        result=OrderAdmissibilityResult.ADMISSIBLE,
-    )
-    assert isinstance(issued, OrderAdmissibilityDecision)
-    return issued
-
-
-def order_shape() -> OrderShapeFields:
-    return OrderShapeFields(
-        price=4200,
-        quantity=20,
-        order_type="LIMIT",
-        tif="DAY",
-        side=SIDE,
-        position_effect="OPEN",
-        silently_rounded=False,
-    )
-
-
-def venue_shape_constraints() -> VenueShapeConstraints:
-    return VenueShapeConstraints(
-        price_min=1000,
-        price_max=9_000_000,
-        tick_size=500,
-        lot_size=2,
-        min_quantity=2,
-        max_quantity=100,
-        allowed_order_types=frozenset({"LIMIT"}),
-        allowed_tifs=frozenset({"DAY"}),
-        allowed_sides=frozenset({SIDE}),
-        allowed_position_effects=frozenset({"OPEN"}),
-    )
-
-
-def construction_config() -> ConstructionConfig:
-    return ConstructionConfig(
-        account=ACCOUNT,
-        instrument=INSTRUMENT,
-        envelope=proposed_envelope(),
-        price=admitted_price(),
-        venue_constraint=venue_quantity_constraint(),
-        venue_snapshot=venue_snapshot(),
-        venue_policy=venue_policy(),
-        venue_decision=venue_admissible_decision(),
-        order_shape=order_shape(),
-        venue_shape_constraints=venue_shape_constraints(),
-        action_class=ActionClass.NEW_LONG,
-        observed_session_phase=SESSION_PHASE,
-        outbound_side=SIDE,
-        price_field_key=PRICE_FIELD_KEY,
-        shape_price_field_key=PRICE_FIELD_KEY,
-    )
+    ``envelope``/``order_shape`` are gone too ((a′) wave lane D, ``ConstructionConfig`` no
+    longer carries either field — both are now sourced from the loaded OCP's
+    ``construction_rules``/the derivation, never an injected literal)."""
+    base: dict[str, object] = {
+        "account": ACCOUNT,
+        "instrument": INSTRUMENT,
+        "price": admitted_price(),
+        "action_class": ActionClass.NEW_LONG,
+        "instrument_class": INSTRUMENT_CLASS,
+        "outbound_side": SIDE,
+        "price_field_key": PRICE_FIELD_KEY,
+        "shape_price_field_key": PRICE_FIELD_KEY,
+    }
+    base.update(overrides)
+    return ConstructionConfig(**base)
 
 
 def adverse_scenario_cells() -> tuple[object, ...]:
@@ -554,3 +472,148 @@ def action_flow_requested_limit() -> CapacityVector:
             CapacityComponent(dimension_id="afg.ORDER", magnitude=Decimal("1")),
         )
     )
+
+
+# ===========================================================================
+# TOS KIS MOCK transport plan T2 lane C — kis-mock compose test fixtures
+# ===========================================================================
+
+#: The real INSTANCE MOCK_VTS document's own ``rest_base`` (docs/broker-profiles/
+#: KIS-BROKER-CAPABILITY-PROFILE-draft.yaml) — this suite's config never invents its own host.
+KIS_MOCK_REST_BASE = "https://openapivts.koreainvestment.com:29443"
+
+#: ``MOCK_STOCK_ORDER.principal`` in ``broker_scopes.example.yaml``, substituted for the SAME
+#: ``environment_label`` (``"non-live-test"``) every compose e2e test in this suite composes
+#: with (:func:`_compose` in ``test_compose_root.py``) — the custody-principal consistency
+#: check (:func:`~tos_runtime.compose._transport_wiring.refuse_custody_principal_mismatch`)
+#: requires byte-exact equality with this value.
+KIS_MOCK_ORDER_PRINCIPAL = "kis-mock-order-non-live-test"
+
+
+class _Unset:
+    """A distinguishable "no override given" sentinel — distinct from ``None`` itself, which
+    :func:`write_kis_mock_transport_config`'s own ``wire_codec`` keyword uses to mean "write a
+    literal ``null``" (team-lead review MEDIUM, 2026-09-15: a test proving the wire-codec-
+    mismatch REFUSAL needs to request that exact ``null`` deliberately, which a plain ``None``
+    default could not distinguish from "no override, keep today's auto-fix")."""
+
+
+_UNSET = _Unset()
+
+
+def write_kis_mock_transport_config(
+    config_dir: Path,
+    *,
+    mode: str = "dry_run",
+    endpoint_rest_base: str = KIS_MOCK_REST_BASE,
+    allow_plaintext_for_tests: bool = False,
+    min_send_interval_ms: int = 1100,
+    wire_codec: str | None | _Unset = _UNSET,
+) -> Path:
+    """Write a fully-valued ``kis_mock_transport.yaml`` (T2 lane C test fixture) — every
+    named-TBD field of the shipped example filled with a concrete, schema-valid value.
+
+    ``endpoint_rest_base``/``allow_plaintext_for_tests``/``min_send_interval_ms`` default to
+    the real-host, TLS-only, T2-lane-C shape every existing caller relies on; T3's own
+    hermetic-fake-KIS-server counterfactual (``test_kis_mock_e2e_honesty.py``) is the only
+    caller that overrides them, to point this config at the fake server's own ``127.0.0.1``
+    ``http://`` base instead of inventing a second, duplicated config-writer.
+
+    **Also keeps ``order_construction_policy.yaml`` in step** (TOS venue constraint service
+    wave, plan §2 decision 6): ``build_venue_service`` refuses to boot a ``kis-mock`` transport
+    unless the governed Order Construction Policy's own ``_runtime.wire_codec`` exactly names
+    ``kind: kis-order-cash-v1`` + the nine :data:`~tos_runtime.transport.kis_mock.codec
+    .KIS_ORDER_CASH_WIRE_FIELDS`. Every existing caller of this function already calls it
+    immediately before a ``transport_kind=TransportKind.KIS_MOCK`` compose against the SAME
+    ``config_dir`` (never a bare probe directory this fixture module does not itself write
+    ``order_construction_policy.yaml`` into) — so this rewrites that ALREADY-present file in
+    place rather than requiring every one of those call sites to also learn a second fixture
+    call. A directory with no such file yet (the transport-config-loader-only unit tests in
+    ``test_transport_wiring.py``, which never reach ``compose_paper_runtime`` at all) is left
+    untouched.
+
+    Args:
+        wire_codec: Left at :data:`_UNSET` (the default), the OCP rewrite below writes the
+            exact ``kis-order-cash-v1`` codec block every existing kis-mock e2e caller relies
+            on. Passed ``None``, it writes a literal ``wire_codec: null`` instead — a
+            DELIBERATE mismatch a boot-refusal test can compose against (team-lead review
+            MEDIUM, 2026-09-15: no compose-level test previously exercised this path, since
+            every caller got the auto-fix unconditionally). A caller-supplied raw YAML
+            fragment string is written through unchanged (the same convention
+            :func:`~tests.venue._documents.ocp_yaml`'s own ``wire_codec`` parameter uses).
+    """
+    path = config_dir / "kis_mock_transport.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "mode": mode,
+                "endpoint_rest_base": endpoint_rest_base,
+                "order_path": "/uapi/domestic-stock/v1/trading/order-cash",
+                "token_path": "/oauth2/tokenP",
+                "tr_id_buy": "VTTC0012U",
+                "tr_id_sell": "VTTC0011U",
+                "field_map": {
+                    "account": "CANO",
+                    "instrument": "PDNO",
+                    "quantity": "ORD_QTY",
+                    "price": "ORD_UNPR",
+                },
+                "static_body_fields": {
+                    "ACNT_PRDT_CD": "01",
+                    "ORD_DVSN": "00",
+                    "EXCG_ID_DVSN_CD": "KRX",
+                    "SLL_TYPE": "",
+                    "CNDT_PRIC": "",
+                },
+                "min_send_interval_ms": min_send_interval_ms,
+                "token_reissue_min_interval_s": 60,
+                "request_timeout_s": 5.0,
+                "allow_plaintext_for_tests": allow_plaintext_for_tests,
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    ocp_path = config_dir / "order_construction_policy.yaml"
+    if ocp_path.is_file():
+        if isinstance(wire_codec, _Unset):
+            effective_wire_codec = (
+                "{kind: kis-order-cash-v1, wire_fields: "
+                f"{sorted(KIS_ORDER_CASH_WIRE_FIELDS)!r}}}"
+            )
+        elif wire_codec is None:
+            effective_wire_codec = "null"
+        else:
+            effective_wire_codec = wire_codec
+        ocp_path.write_text(
+            ocp_yaml(
+                environment="non-live-test",
+                account=ACCOUNT,
+                instrument=INSTRUMENT,
+                wire_codec=effective_wire_codec,
+            ),
+            encoding="utf-8",
+        )
+    return path
+
+
+def provision_kis_mock_custody(
+    custody_root: Path, *, principal: str = KIS_MOCK_ORDER_PRINCIPAL
+) -> None:
+    """Add the two ``kis_mock.*`` custody scopes (T2 lane C) to an already-provisioned
+    ``custody_root`` (``tos/runtime/tests/compose/conftest.py``'s own ``custody_root`` fixture) —
+    manifest rows + 0600 secret files, both principals equal to ``principal`` (defaults to the
+    SAME value :data:`KIS_MOCK_ORDER_PRINCIPAL` names)."""
+    manifest_path = custody_root / "custody.manifest.yaml"
+    raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    scopes = raw.setdefault("scopes", {})
+    for scope_name in ("kis_mock.app_key", "kis_mock.app_secret"):
+        scopes[scope_name] = {
+            "file": scope_name,
+            "principal": principal,
+            "expected_sha256": None,
+        }
+        scope_path = custody_root / scope_name
+        scope_path.write_bytes(f"test-secret-{scope_name}".encode())
+        scope_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    manifest_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")

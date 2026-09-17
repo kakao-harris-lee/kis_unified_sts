@@ -420,6 +420,43 @@ def test_futures_daemons_share_contract_resolution_env_with_orchestrator():
         assert services[service_name]["environment"]["TZ"] == "Asia/Seoul", service_name
 
 
+def test_futures_equity_denominator_knob_reaches_both_consumers():
+    """F-9 gap G4: config/risk.yaml (MDD, read by futures-risk-filter) and
+    config/futures_margin.yaml (LeverageFilter in futures-risk-filter, the
+    margin read-model in `scheduler`) share ${FUTURES_MARGIN_FALLBACK_EQUITY}.
+    `.env.paper` is interpolation-only, so both containers need the var in
+    compose — and with the SAME expression, or plumbing it into only one
+    silently splits the two denominators. The compose default must equal the
+    YAML default so an unset var gives one value everywhere."""
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    services = compose["services"]
+    risk_filter = services["futures-risk-filter"]["environment"][
+        "FUTURES_MARGIN_FALLBACK_EQUITY"
+    ]
+    scheduler = services["scheduler"]["environment"]["FUTURES_MARGIN_FALLBACK_EQUITY"]
+    assert risk_filter == "${FUTURES_MARGIN_FALLBACK_EQUITY:-50000000}"
+    assert scheduler == risk_filter
+
+    # Both YAML consumers use the loader's ${VAR:default} form with the same
+    # default the compose expression carries.
+    compose_default = risk_filter.removeprefix(
+        "${FUTURES_MARGIN_FALLBACK_EQUITY:-"
+    ).removesuffix("}")
+    yaml_expression = "${FUTURES_MARGIN_FALLBACK_EQUITY:" + compose_default + "}"
+    risk_yaml = yaml.safe_load(
+        (_REPO_ROOT / "config" / "risk.yaml").read_text(encoding="utf-8")
+    )
+    margin_yaml = yaml.safe_load(
+        (_REPO_ROOT / "config" / "futures_margin.yaml").read_text(encoding="utf-8")
+    )
+    assert risk_yaml["risk"]["account_equity_krw"] == yaml_expression
+    assert (
+        margin_yaml["futures_margin"]["fallback_account_equity_krw"] == yaml_expression
+    )
+
+
 def test_scheduler_mounts_data_market_and_reports_writable():
     """The scheduler runs EOD backfills + report jobs, so data/market and reports
     must be writable (the shared pipeline-service mount is data/market:ro and does
