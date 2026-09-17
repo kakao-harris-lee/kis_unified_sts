@@ -49,25 +49,6 @@ from tos.venue.records import (
     VenueGateAuthorityEffect,
     VenueShapeConstraints,
 )
-
-
-def _resolved_tick(price: int, constraints: VenueShapeConstraints) -> int | None:
-    """The on-grid tick for ``price`` (kernel round #4 K-1; §8.0 — every bound is injected).
-
-    A non-empty ``price_band_ticks`` table takes priority over the flat ``tick_size`` (an
-    honest refinement, not a substitution — the flat field still governs when no table is
-    injected, §0.3 "기존 선물 경로 무변경"). Table resolution is an **absolute** grid lookup
-    (``band_min <= price <= band_max``); a price the table does not cover resolves to ``None``
-    (the table is not silently extrapolated to a neighboring row) rather than falling back to
-    the flat field, since a declared-but-incomplete table is a stronger fact than "no table" —
-    the flat ``tick_size`` only applies when there is **no** table at all.
-    """
-    if constraints.price_band_ticks:
-        for row in constraints.price_band_ticks:
-            if row.band_min <= price <= row.band_max:
-                return row.tick
-        return None
-    return constraints.tick_size
 from tos.venue.vocabulary import (
     ActionClass,
     OrderAdmissibilityResult,
@@ -235,6 +216,25 @@ def exact_instrument_route_bound(
 # ===========================================================================
 # core §5.3 — order-shape venue-admissibility (VTG-EV-004, +Broker)
 # ===========================================================================
+
+
+def _resolved_tick(price: int, constraints: VenueShapeConstraints) -> int | None:
+    """The on-grid tick for ``price`` (kernel round #4 K-1; §8.0 — every bound is injected).
+
+    A non-empty ``price_band_ticks`` table takes priority over the flat ``tick_size`` (an
+    honest refinement, not a substitution — the flat field still governs when no table is
+    injected, §0.3 "기존 선물 경로 무변경"). Table resolution is an **absolute** grid lookup
+    (``band_min <= price <= band_max``); a price the table does not cover resolves to ``None``
+    (the table is not silently extrapolated to a neighboring row) rather than falling back to
+    the flat field, since a declared-but-incomplete table is a stronger fact than "no table" —
+    the flat ``tick_size`` only applies when there is **no** table at all.
+    """
+    if constraints.price_band_ticks:
+        for row in constraints.price_band_ticks:
+            if row.band_min <= price <= row.band_max:
+                return row.tick
+        return None
+    return constraints.tick_size
 
 
 def order_shape_admissible(

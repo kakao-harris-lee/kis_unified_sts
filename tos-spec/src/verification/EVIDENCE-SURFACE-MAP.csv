@@ -760,7 +760,7 @@ VTG-EV-001,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 VTG-EV-001,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 VTG-EV-002,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 VTG-EV-002,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-VTG-EV-003,PACKAGE,tos/src/tos/venue/predicates.py,PRESENT,tos/src/tos/venue/predicates.py:78
+VTG-EV-003,PACKAGE,tos/src/tos/venue/predicates.py,PRESENT,tos/src/tos/venue/predicates.py:59
 VTG-EV-003,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 VTG-EV-003,TEST,tests/venue/test_venue_instrument_route.py::test_account_or_route_substitution_is_rejected,PRESENT,tos/tests/venue/test_venue_instrument_route.py:1
 VTG-EV-003,TEST,tests/venue/test_venue_instrument_route.py::test_alias_set_both_ways_missing_and_spurious,PRESENT,tos/tests/venue/test_venue_instrument_route.py:1

@@ -550,7 +550,8 @@ def test_load_order_construction_policy_none_identity_fields_digest_is_pinned(
     ``OrderConstructionPolicy._COVERED_FIELDS`` covers (or how a ``None`` value folds into the
     digest) would silently shift every existing deployment's digest without this pin catching
     it — the two live-computation comparisons elsewhere in this file (loader vs. a fresh kernel
-    call with the SAME inputs) cannot catch that, because both sides would drift together."""
+    call with the SAME inputs) cannot catch that, because both sides would drift together.
+    """
     path = write_fixture_ocp(tmp_path)
     loaded = load_order_construction_policy(path, scheme=SCHEME)
     assert (

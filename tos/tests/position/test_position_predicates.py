@@ -1,7 +1,8 @@
 """tos.position pure predicates — ported from tos_runtime.riskstate.position (kernel round #4
 K-2; DR-0003 §2.2). These tests exercise the kernel package directly (no evidence-store I/O —
 that stays runtime-side); the runtime's own ``tos_runtime/tests/riskstate/test_position.py``
-covers the I/O + wiring end to end and must keep passing unchanged (K-2 end condition)."""
+covers the I/O + wiring end to end and must keep passing unchanged (K-2 end condition).
+"""
 
 from __future__ import annotations
 
@@ -22,16 +23,16 @@ _SELL = "SELL"
 
 
 def _obs(**overrides: object) -> PositionObservation:
-    base = dict(
-        scope_key="acct-1::K200F",
-        confirmed_net=Decimal(0),
-        unknown_buy=Decimal(0),
-        unknown_sell=Decimal(0),
-        in_flight_buy=Decimal(0),
-        in_flight_sell=Decimal(0),
-        attempts_seen=0,
-        sources=(),
-    )
+    base: dict[str, object] = {
+        "scope_key": "acct-1::K200F",
+        "confirmed_net": Decimal(0),
+        "unknown_buy": Decimal(0),
+        "unknown_sell": Decimal(0),
+        "in_flight_buy": Decimal(0),
+        "in_flight_sell": Decimal(0),
+        "attempts_seen": 0,
+        "sources": (),
+    }
     base.update(overrides)
     return PositionObservation(**base)  # type: ignore[arg-type]
 
@@ -82,7 +83,9 @@ def test_classify_confirmed_fill_signed_by_side() -> None:
         buy_side_token=_BUY,
         sell_side_token=_SELL,
     )
-    confirmed_net, unknown_buy, unknown_sell, in_flight_buy, in_flight_sell, seen = result
+    confirmed_net, unknown_buy, unknown_sell, in_flight_buy, in_flight_sell, seen = (
+        result
+    )
     assert confirmed_net == Decimal(7)
     assert (unknown_buy, unknown_sell, in_flight_buy, in_flight_sell) == (
         Decimal(0),
@@ -102,7 +105,9 @@ def test_classify_unmatched_result_counts_full_sealed_quantity_as_unknown() -> N
         buy_side_token=_BUY,
         sell_side_token=_SELL,
     )
-    confirmed_net, unknown_buy, unknown_sell, in_flight_buy, in_flight_sell, seen = result
+    confirmed_net, unknown_buy, unknown_sell, in_flight_buy, in_flight_sell, seen = (
+        result
+    )
     assert confirmed_net == Decimal(0)
     assert unknown_sell == Decimal(10)
     assert unknown_buy == Decimal(0)
@@ -127,9 +132,12 @@ def test_classify_no_terminal_result_is_in_flight() -> None:
     )
 
 
-def test_classify_unrecognized_side_on_confirmed_fill_is_unknown_both_directions() -> None:
+def test_classify_unrecognized_side_on_confirmed_fill_is_unknown_both_directions() -> (
+    None
+):
     """An unrecognized side token on a CONFIRMED fill must not silently drop the confirmed
-    magnitude — it fails closed into UNKNOWN in BOTH directions (never a guessed direction)."""
+    magnitude — it fails closed into UNKNOWN in BOTH directions (never a guessed direction).
+    """
     sealed = (SealedSend(attempt_id="a1", side="MYSTERY", quantity=Decimal(9)),)
     result = classify_sealed_sends(
         sealed,

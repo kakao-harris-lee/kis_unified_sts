@@ -164,7 +164,7 @@ def test_price_band_table_uncovered_price_is_unknown() -> None:
     declared table is a stronger fact than "no table")."""
     uncovered = price_band_table_shape().model_copy(update={"price": 150_000})
     assert MEASURED_KRX_PRICE_BAND_ROW.band_min > 150_000 or (
-        150_000 > MEASURED_KRX_PRICE_BAND_ROW.band_max
+        MEASURED_KRX_PRICE_BAND_ROW.band_max < 150_000
     )
     assert (
         order_shape_admissible(uncovered, price_band_table_constraints())
@@ -174,12 +174,14 @@ def test_price_band_table_uncovered_price_is_unknown() -> None:
 
 def test_no_table_and_no_flat_tick_is_unknown() -> None:
     """(§8.0) With no price-band table AND no flat ``tick_size`` injected, the tick is
-    unresolvable => UNKNOWN (M2: an ``ADMISSIBLE`` here would be a fail-open regression)."""
+    unresolvable => UNKNOWN (M2: an ``ADMISSIBLE`` here would be a fail-open regression).
+    """
     no_tick = clean_shape_constraints().model_copy(
         update={"tick_size": None, "price_band_ticks": None}
     )
     assert (
-        order_shape_admissible(clean_shape(), no_tick) is OrderAdmissibilityResult.UNKNOWN
+        order_shape_admissible(clean_shape(), no_tick)
+        is OrderAdmissibilityResult.UNKNOWN
     )
 
 

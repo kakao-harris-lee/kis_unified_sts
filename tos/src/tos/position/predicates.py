@@ -43,7 +43,8 @@ Pure module: stdlib (``decimal``, ``collections.abc``) + ``tos.position.records`
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Set as AbstractSet
+from collections.abc import Mapping
+from collections.abc import Set as AbstractSet
 from decimal import Decimal
 
 from tos.position.records import PositionObservation, SealedSend

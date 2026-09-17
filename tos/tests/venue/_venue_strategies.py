@@ -52,7 +52,9 @@ from tos.venue import (
 #: ``docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-11-20260730T002715Z.json``
 #: (``measurements.limit_price_tick``). This is broker-measured fact used as a test fixture, not
 #: a promoted deployment policy value (the deployed profile stays ``UNKNOWN`` — §0.1/§2 결정 3).
-MEASURED_KRX_PRICE_BAND_ROW = PriceBandTick(band_min=200_000, band_max=300_000, tick=500)
+MEASURED_KRX_PRICE_BAND_ROW = PriceBandTick(
+    band_min=200_000, band_max=300_000, tick=500
+)
 MEASURED_KRX_PRICE = 232_500
 
 #: The injected provisional canonicalizer (REUSE, design #19 §3.1 — no new scheme).

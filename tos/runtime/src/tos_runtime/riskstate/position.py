@@ -110,12 +110,15 @@ from decimal import Decimal
 
 from tos.position import (
     PositionObservation,
-    SealedSend as _SealedSend,
     classify_sealed_sends,
     conservative_current_usage,
     in_flight_overlap_effect,
     worst_credible_directional_usage,
 )
+from tos.position import (
+    SealedSend as _SealedSend,
+)
+
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.recon.ports import WitnessUnavailable
 
