@@ -35,6 +35,19 @@ returns ``None`` when Trustworthy Time is not yet ``TRUSTED`` — this adapter R
 new", because those are different facts: "the clock is not trusted yet" is an operational fault,
 not "the market has not moved".
 
+**Two clocks, two jobs (deliberate, do not merge).** This adapter is injected with BOTH a
+:class:`~tos_runtime.time.sources.MonotonicSource` and a wall-clock reader, and they are never
+substituted for each other. The shared :class:`~tos_runtime.transport.kis_mock.token
+.KisTokenLifecycle` uses ONLY the monotonic source — a token's own age/cooldown bookkeeping is a
+purely process-local, relative-elapsed-time concern that has nothing to do with whether
+Trustworthy Time currently considers wall-clock readings ``TRUSTED``. An earlier revision of this
+module derived the token lifecycle's clock FROM ``wall_clock_now()`` instead, which had two bugs:
+it made a perfectly valid, still-live token suddenly unusable the instant wall-clock trust
+degraded (for a reason unrelated to the token), and it moved the "untrusted" raise EARLIER than
+this docstring's own "taken after the HTTP response" claim — ``ensure_token_string`` reads its
+clock before ``_fetch_quote`` is ever called, on every poll, including ones whose token is still
+perfectly fresh. Kept as a note against reintroducing that mistake.
+
 **Step 0 measurement 2 — the token lifecycle is shared, not duplicated.** This adapter's token
 handling is :class:`~tos_runtime.transport.kis_mock.token.KisTokenLifecycle` — the SAME class the
 KIS MOCK order transport uses, against the SAME custody scopes (``kis_mock.app_key``/
@@ -89,13 +102,13 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from tos.dsl import ScalarValue
 
 from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.marketfeed.ports import ObservationIntake, RawObservation
-from tos_runtime.time.service import TrustworthyTimeService
+from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.client import KisMockHttpClient, RawResponse
 from tos_runtime.transport.kis_mock.token import (
     EvidenceRecorder,
@@ -112,6 +125,7 @@ __all__ = [
     "KisQuoteRejected",
     "KisQuoteWallClockUntrusted",
     "TokenStale",
+    "WallClockSource",
     "build_quote_client",
 ]
 
@@ -128,6 +142,21 @@ _KIS_MOCK_APP_SECRET_SCOPE = "kis_mock.app_secret"
 #: before ``int`` for the same reason: ``bool`` is an ``int`` subclass in Python, and this
 #: adapter never silently narrows ``True`` to ``1``).
 _SCALAR_FIELD_TYPES: tuple[type, ...] = (bool, int, float, str)
+
+
+@runtime_checkable
+class WallClockSource(Protocol):
+    """The one method this module needs from a time service — mirrors
+    :class:`tos_runtime.calendar.ports`'s own private ``_WallClockNowSource`` Protocol
+    (identical shape, independently duplicated there for the same reason: match
+    :meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now` structurally without
+    importing that module, keeping this module's own import surface — and a test's own fake —
+    minimal)."""
+
+    def wall_clock_now(self) -> int | None:
+        """The current wall-clock reading, or ``None`` when not yet ``TRUSTED``. MUST NOT
+        raise."""
+        ...
 
 
 class KisQuoteAdapterError(Exception):
@@ -181,7 +210,8 @@ class KisQuoteObservationIntake:
         config: KisQuoteTransportConfig,
         client: KisMockHttpClient,
         custody: CredentialCustody,
-        time_service: TrustworthyTimeService,
+        monotonic: MonotonicSource,
+        time_service: WallClockSource,
         evidence_sink: EvidenceRecorder,
     ) -> None:
         """Wire this intake's dependencies (all injected — no ambient state).
@@ -192,8 +222,20 @@ class KisQuoteObservationIntake:
             client: The stdlib HTTP shim — build via :func:`build_quote_client` for real use.
             custody: The credential source — the two ``kis_mock.*`` scopes must already be
                 provisioned (module-level constants above).
+            monotonic: The injected monotonic clock — used ONLY for the shared token
+                lifecycle's own pacing/expiry bookkeeping (module docstring's "two clocks, two
+                jobs" note). Deliberately NOT derived from ``time_service``: a token's own
+                validity is a purely process-local, RELATIVE-elapsed-time concern that has
+                nothing to do with whether Trustworthy Time currently considers wall-clock
+                readings ``TRUSTED`` — conflating the two would make a perfectly good, still-
+                valid token suddenly unusable the moment wall-clock trust degrades, for a
+                reason that has nothing to do with the token itself (an earlier revision of
+                this module made exactly that mistake; kept here as a note against
+                reintroducing it).
             time_service: This process's shared Trustworthy Time service — the ONE wall-clock
-                reading this adapter ever takes (module docstring).
+                reading this adapter takes for its OWN ``as_of_ms``/``received_ms`` stamp,
+                taken once per emitted observation, after the HTTP response is received
+                (module docstring).
             evidence_sink: Records this intake's own token-lifecycle evidence entries
                 (``TRANSPORT_TOKEN_STALE`` — forwarded to :class:`~tos_runtime.transport.kis_mock
                 .token.KisTokenLifecycle`, this module raises no evidence of its own).
@@ -207,7 +249,7 @@ class KisQuoteObservationIntake:
             custody=custody,
             app_key_scope=_KIS_MOCK_APP_KEY_SCOPE,
             app_secret_scope=_KIS_MOCK_APP_SECRET_SCOPE,
-            monotonic=_MonotonicFromWallClock(time_service),
+            monotonic=monotonic,
             token_path=config.token_path,
             token_reissue_min_interval_s=config.token_reissue_min_interval_s,
             evidence_sink=evidence_sink,
@@ -365,37 +407,6 @@ class KisQuoteObservationIntake:
         :mod:`tos_runtime.marketfeed.journal`'s own order-independence discipline)."""
         canonical = json.dumps(sorted(fields), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-class _MonotonicFromWallClock:
-    """Adapts :class:`~tos_runtime.time.service.TrustworthyTimeService` onto
-    :class:`~tos_runtime.time.sources.MonotonicSource`'s ``now_ms() -> int`` shape, for
-    :class:`~tos_runtime.transport.kis_mock.token.KisTokenLifecycle`'s own pacing/expiry
-    bookkeeping.
-
-    **This is a deliberate, narrow substitution, not a claim that wall-clock time IS monotonic
-    time.** ``KisTokenLifecycle`` uses its injected clock only for RELATIVE deltas within one
-    process's lifetime (token age, cooldown elapsed) — never for kernel-facing evidence — so a
-    wall-clock reading (subject to the OS ever stepping it backward) is an acceptable substitute
-    here specifically because :meth:`~tos_runtime.time.service.TrustworthyTimeService
-    .wall_clock_now` already gates on ``HealthState.TRUSTED``: this adapter raises
-    :class:`KisQuoteWallClockUntrusted` before ever reaching the token lifecycle when that gate is
-    closed, so ``KisTokenLifecycle`` here never actually observes an untrusted (and therefore
-    possibly-stepped) reading.
-    """
-
-    def __init__(self, time_service: TrustworthyTimeService) -> None:
-        self._time_service = time_service
-
-    def now_ms(self) -> int:
-        value = self._time_service.wall_clock_now()
-        if value is None:
-            raise KisQuoteWallClockUntrusted(
-                "KisQuoteObservationIntake: wall_clock_now() returned None mid-token-lifecycle "
-                "call — Trustworthy Time became untrusted between this poll's own guard check "
-                "and the token lifecycle's clock read"
-            )
-        return value
 
 
 class _TokenIssuingClientAdapter:
