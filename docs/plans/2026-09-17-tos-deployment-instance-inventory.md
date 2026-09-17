@@ -5,6 +5,13 @@ W1 레인 D(`feat/tos-deploy-inventory`) — "run 구동" 웨이브의 배포 �
 §6.1 ① 소관. **이 문서는 값을 하나도 저작하지 않는다** — 모든 셀은 소스 코드에서
 측정한 사실이거나, 운영자가 채워야 할 결정의 종류를 이름 붙인 것뿐이다.
 
+**이 문서가 측정한 시점: main `ae3c967c`**(W1 레인 A~C 병합 후, "PR #725" — `run`이
+실제로 `compose_paper_runtime`을 호출하고 구동하는 코드 경로로 바뀐 시점).
+`kis_quote.yaml`(W2, PR #727)과 `kis_witness.yaml`(W3, PR #726)은 이 기준선 시점에
+**아직 병합되지 않았다** — 이 문서는 그 두 이름에 대해 아무것도 주장하지 않는다.
+병합되면 이 문서는 재측정이 필요하다(산술로 보정하지 말 것 — 이 레인이 처음에 한
+것과 같은 방식으로 소스에서 다시 측정할 것).
+
 ## 0. 측정 방법
 
 `tos_runtime.compose.root.compose_paper_runtime`(구성 루트, `compose/root.py`)와
@@ -57,6 +64,48 @@ W1 레인 D(`feat/tos-deploy-inventory`) — "run 구동" 웨이브의 배포 �
 경로 — `root.py:325-336` 참조, 아래 표), `venue_constraint_policy.yaml`/
 `order_construction_policy.yaml`은 "필수 18/19"에 포함된다.
 
+## 1.5 병합 후 재측정 — `run`이 실제로 구동한다 + `construction.yaml` 신규
+
+이 레인이 처음 측정했을 때(main `7b76e217`) `cli.py`의 `run` 서브커맨드는
+`main()`에서 `if isinstance(args, Args): return 0`으로 끝나는 순수 파싱 경로였다.
+W1 레인 A~C(PR #725, main `ae3c967c`)가 이를 바꿨다 — 재측정 결과:
+
+- `cli.py:801-802` — 이제 `if isinstance(args, Args): return _dispatch_run(args)`.
+- `_dispatch_run`(= `_run_dispatch.dispatch_run`, `compose/_run_dispatch.py:75-138`)이
+  실제로 하는 일, 순서대로: (1) `construction.yaml`을 fail-closed 로드
+  (`_run_dispatch.py:94-99`), (2) `compose_paper_runtime`을 호출
+  (`_run_dispatch.py:101-119`, 그 함수가 던지는 어떤 예외든 그대로 relay), (3)
+  `composed.marketfeed is None`이면 거부(`_run_dispatch.py:121-130`), (4) 그 외에는
+  `SIGINT`/`SIGTERM`이 멈추라고 할 때까지 `composed.marketfeed.run_forever(stop=stop)`을
+  구동(`_run_dispatch.py:132-138`).
+- **`compose_paper_runtime`이 읽는 30개 고정 이름 자체는 변화 없다** — 측정:
+  `diff <(git show ae3c967c:tos/runtime/src/tos_runtime/compose/_wiring.py) tos/runtime/src/tos_runtime/compose/_wiring.py`
+  결과 빈 diff, 그리고 `grep -rn '_CONFIG_NAME = "' tos/runtime/src/tos_runtime/`을
+  병합 전/후 다시 대조해도 새 이름은 `CONSTRUCTION_CONFIG_NAME`
+  (`compose/_construction_config.py:59`) 단 하나뿐이다. §2 표의 30행은 그대로
+  유효하다 — 다시 계산할 필요가 없었다(산술 보정이 아니라 재측정으로 확인한 결과다).
+
+**신규 31번째 항목 — `construction.yaml`은 `compose_paper_runtime` 자신이 읽는 30개
+목록 밖에 있다.** `compose_paper_runtime`은 `construction: ConstructionConfig`를
+호출자가 채워서 넘기는 필수 키워드 인자로 받을 뿐(`root.py:156`), 그 값을 파일에서
+읽는 코드는 함수 본문에 없다. 이 파일을 읽어서 그 인자를 만드는 것은 **CLI 레이어**
+(`_run_dispatch.dispatch_run`)이다 — 즉 `construction.yaml`은 "compose_paper_runtime이
+읽는 30개"에는 속하지 않지만, "`run` CLI가 실제로 배포를 구동하는 데 필요한 config-dir
+파일"에는 새로 속한다. 아래 표에 별도 행으로 추가한다.
+
+| # | 파일명 | 로더 (function + file:line) | 호출부 (file:line) | 상태 | 필수/옵션 (근거) | 승인 근거 종류 |
+|---|---|---|---|---|---|---|
+| 31 | `construction.yaml` | `load_construction_config` — `compose/_construction_config.py:167` | `compose/_run_dispatch.py:96` (`dispatch_run`, `run` 서브커맨드에서만; `compose_paper_runtime` 자신은 호출하지 않음) | example 뿐 (`tos/runtime/config/construction.example.yaml`, 7개 리프 전부 `null`; `config/tos_runtime/paper/`에 없음 — 측정: `ls config/tos_runtime/paper/`) | **필수 (`run` 서브커맨드 경로에서만)** — `_run_dispatch.py:94-99`: 로드 실패 시 `run: refused` 메시지와 함께 exit 1. `compose_paper_runtime`을 직접 호출하는 다른 호출자(테스트, 향후 다른 엔트리포인트)에는 이 파일이 전혀 무관 — `construction` 인자를 다른 방법으로 채우면 됨 | 운영자 정책 판단(`account`/`instrument`/`action_class`/`instrument_class`/`outbound_side`) + 측정값 성격의 상관키(`price_field_key`/`shape_price_field_key` — 배포된 `critical_input_policy.yaml`의 `fields[].field_key`와 반드시 일치해야 하며, 이 로더 자신은 그 파일과 대조하지 않는다 — `construction.example.yaml`L52-57 주석) |
+
+**`marketfeed.yaml`/`critical_input_policy.yaml`에 대한 판정 갱신(§2 표 27/28행) —
+`compose_paper_runtime` 레벨과 `run` CLI 레벨은 다르다.** `compose_paper_runtime` 자신은
+여전히 이 둘이 없어도 부팅에 성공한다(`composed.marketfeed`가 `None`이 될 뿐 — 변화
+없음, §2 27/28행 그대로 유효). 그러나 **`run` 서브커맨드는 그 위에 자신만의 거부를
+추가**했다 — `_run_dispatch.py:121-130`: `composed.marketfeed is None`이면
+`run: refused — ... no tick source is wired`로 exit 1. 즉 `compose_paper_runtime`을
+직접 부르는 호출자에게는 여전히 옵트인이지만, **`run` CLI로 실제 배포를 구동하려는
+운영자에게는 사실상 필수**다 — 두 계층을 구분해서 읽어야 한다.
+
 ## 2. 전체 표 — compose_paper_runtime이 읽는 30개 고정 이름
 
 열 설명: **상태** = 채택/example뿐/은퇴/해당없음. **필수/옵션** = 그 값이 없으면
@@ -93,8 +142,8 @@ W1 레인 D(`feat/tos-deploy-inventory`) — "run 구동" 웨이브의 배포 �
 | 24 | `strategy_bindings.yaml` | `load_strategy_bindings` — `strategy/bindings.py:133` | `strategy/resolve.py:559` 부근 (`strategies/` 사용 시에만 호출) | example 뿐 | **옵션** — `bindings.py:150-153`: 파일 부재 시 예외가 아니라 `LoadedStrategyBindings(present=False, ...)` 타입화된 부재를 반환 (fail-closed 아님, "부재는 합법적 상태") | 운영자 정책 판단 (전략별 config-ref 바인딩; 필요한 전략이 없으면 안 채워도 됨) |
 | 25 | `aggregate_risk_policy.yaml` | `load_aggregate_risk_policy` — `riskstate/_aggregate_risk_policy_loader.py:373` | `compose/root.py:326` (존재 검사), `_riskstate_wiring.py:226` (무조건 호출, 파일이 있을 때만 도달), `_cli_ops.py:105`(CLI print-policy-digests 전용, boot 무관) | **채택** | **사실상 필수** — `root.py:328-336`: 이 파일과 `action_flow_policy.yaml` 둘 다 없고 동시에 `aggregate_risk_inputs_provider`/`action_flow_inputs_provider` 콜러블이 모두 주어지지 않으면 `RiskStateConfigError`로 부팅 거부. 운영 기본 경로(`RiskStateService` 프로덕션 사용, provider=None)는 이 파일을 요구함 — 명시적 콜러블 주입은 테스트 시임(같은 라인의 주석) | (이미 채택됨) |
 | 26 | `action_flow_policy.yaml` | `load_action_flow_policy` — `riskstate/_action_flow_policy_loader.py:494` | `compose/root.py:327`, `_riskstate_wiring.py:229`, `_cli_ops.py:113`(CLI 전용) | **채택** | **사실상 필수** (25와 동일 쌍 판정) | (이미 채택됨) |
-| 27 | `marketfeed.yaml` | `load_marketfeed_config` — `compose/_marketfeed_wiring.py:160` | `compose/_marketfeed_wiring.py:228` (호출 전 `if not config_path.is_file(): return None` 가드 — `_marketfeed_wiring.py:229`) | example 뿐 | **옵션** — `build_tick_scheduler`(root.py:543에서 무조건 호출되지만 함수 내부가 옵션 처리) 자신의 docstring: "``None`` when ``marketfeed.yaml`` is absent (an operator who has not adopted this wave)" | 운영자 정책 판단 (tick 소스 계측) — 2026-09-16 틱 원천 웨이브가 이미 서베이함 |
-| 28 | `critical_input_policy.yaml` | `load_critical_input_policy` — `marketfeed/policy.py:270` | `_marketfeed_wiring.py:233` — **오직 `marketfeed.yaml`이 존재할 때만 도달**(둘 다 없으면 둘 다 안 읽음; `marketfeed.yaml`만 있고 이게 없으면 그때는 이 로더가 raise) | example 뿐 | **옵션 (marketfeed.yaml과 함께)** — `_marketfeed_wiring.py` 모듈 docstring이 "optional-together"로 명명 | 운영자 정책 판단 |
+| 27 | `marketfeed.yaml` | `load_marketfeed_config` — `compose/_marketfeed_wiring.py:160` | `compose/_marketfeed_wiring.py:228` (호출 전 `if not config_path.is_file(): return None` 가드 — `_marketfeed_wiring.py:229`) | example 뿐 | **`compose_paper_runtime` 레벨: 옵션** — `build_tick_scheduler`(root.py:543에서 무조건 호출되지만 함수 내부가 옵션 처리) 자신의 docstring: "``None`` when ``marketfeed.yaml`` is absent (an operator who has not adopted this wave)". **`run` CLI 레벨: 사실상 필수(§1.5 참조)** — `_run_dispatch.py:121-130`이 `composed.marketfeed is None`을 별도로 거부한다 | 운영자 정책 판단 (tick 소스 계측) — 2026-09-16 틱 원천 웨이브가 이미 서베이함 |
+| 28 | `critical_input_policy.yaml` | `load_critical_input_policy` — `marketfeed/policy.py:270` | `_marketfeed_wiring.py:233` — **오직 `marketfeed.yaml`이 존재할 때만 도달**(둘 다 없으면 둘 다 안 읽음; `marketfeed.yaml`만 있고 이게 없으면 그때는 이 로더가 raise) | example 뿐 | **`compose_paper_runtime` 레벨: 옵션(marketfeed.yaml과 함께)** — `_marketfeed_wiring.py` 모듈 docstring이 "optional-together"로 명명. **`run` CLI 레벨: 27번과 동일하게 사실상 필수(§1.5)** | 운영자 정책 판단 |
 | 29 | `nontrade.yaml` | `load_required_legs_config` — `nontrade/config.py:79` | `_session_wiring.py:303`(호출 전 가드는 호출부인 `root.py:511`: `if (config_dir / NONTRADE_CONFIG_NAME).is_file() else None`) | example 뿐 | **옵션** — `root.py:495-498` 주석: "config_dir with no nontrade.yaml at all ... leaves composed.nontrade None ... never a boot refusal" | 운영자 정책 판단 (non-trade 승인 leg) |
 | 30 | `kis_mock_transport.yaml` | `load_kis_mock_transport_config` — `transport/kis_mock/config.py:402` | `compose/_transport_wiring.py:203` — `resolve_transport_boot`가 `kind is TransportKind.SYNTHETIC`이면 즉시 `return None`(`_transport_wiring.py:177-178`), `kis-mock`일 때만 로더 도달 | example 뿐 | **옵션 (기본 synthetic 전송에서는 무관)** — `--transport kis-mock`을 명시할 때만 필수로 전환 | 외부 승인 문서 (KIS MOCK REST base 등) + 운영자 정책 판단 |
 
@@ -140,6 +189,13 @@ README §"...`print-policy-digests`가 그 digest를 출력한다"). `account_sc
 `instrument_scope`/`scope.accounts`/`scope.instruments`는 **운영자 정책 판단**
 (어느 계좌/종목에 이 정책이 적용되는지). `admitted_quantity_bases`/sizing `value`는
 **운영자 정책 판단**(전략 파일의 `quantity_basis`가 먼저 정해져야 함 — 순서 의존).
+
+**신규 — `construction.yaml`은 채택된 인스턴스가 아예 없다** (`config/tos_runtime/paper/`
+에 없음 — §1.5 항목 31 참조). `tos/runtime/config/construction.example.yaml`의 7개
+리프(`account`, `instrument`, `action_class`, `instrument_class`, `outbound_side`,
+`price_field_key`, `shape_price_field_key`) 전부가 `null`이다 — TBD 문자열이 아니라
+YAML `null`이지만, 로더(`_construction_config.py:131-136`)는 `null`도 `"TBD"`도 동일하게
+거부한다(측정: `construction.example.yaml`L28-60, 로더 코드 대조).
 
 ## 5. 확인 불가
 
