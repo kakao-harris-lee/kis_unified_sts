@@ -500,9 +500,17 @@ def reservation_committed_vector(
 ) -> CapacityVector | None:
     """The committed Capacity Vector last written for ``reservation_id``, if any (kernel round
     #4 K-4). ``None`` when the reservation does not exist, or exists but its last transition
-    carried no vector — the two are indistinguishable here by design (a caller needing to tell
-    them apart already has :func:`reservation_rows` for existence). Moved out of ``log.py``
-    purely for that module's own 1000-line size budget — no behavior change;
+    carried no vector — those two are indistinguishable here by design (a caller needing to
+    tell them apart already has :func:`reservation_rows` for existence). This is a DIFFERENT
+    axis from :class:`~tos.rcl.CapacityReservationTransition.committed_vector`'s own docstring
+    claim that a runtime projection distinguishes "no committed vector recorded" from "an
+    explicitly empty one" (round #4 review disposition, resolving an apparent wording
+    conflict): that claim holds for an EXISTING reservation — a last transition committed with
+    ``committed_vector=CapacityVector()`` reads back as ``CapacityVector(components=())``, not
+    ``None`` (verified: the JSON column holds a real, non-NULL value distinct from the NULL
+    written when ``committed_vector`` was itself ``None``). Only the *existence* question above
+    is folded away; the no-vector/explicitly-empty question below it is not. Moved out of
+    ``log.py`` purely for that module's own 1000-line size budget — no behavior change;
     ``SqliteCommitLog.reservation_committed_vector`` delegates here unchanged."""
     row = conn.execute(
         "SELECT committed_vector_json FROM reservations WHERE reservation_id = ?",
