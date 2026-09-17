@@ -261,6 +261,19 @@ def fold_reservations_from_entries(
     ``reservation_id``/``to_state``, rather than folded in with a
     fabricated scope.
 
+    KNOWN LIMITATION (round #4 review MEDIUM, not fixed here — scope too large for a fixup
+    lane): ``committed_vector_json`` (kernel round #4 K-4) is written only to the
+    ``reservations`` table (:func:`upsert_reservation_projection`), never into ``payload_json``
+    here, so this fold — and :meth:`~tos_runtime.rcl.log.SqliteCommitLog.verify_replay`'s
+    digest comparison over its return value — cover only ``{state, scope_account,
+    scope_instrument}``. A ``committed_vector_json`` value altered directly in the
+    ``reservations`` table has no append-only source to re-derive it from and would go
+    undetected, unlike state/scope. Closing this needs: (1) a canonical, round-trip-safe
+    payload encoding for the vector's ``Decimal`` magnitudes, (2) extending this fold's and
+    :func:`digest_of_reservation_map`'s map shape, and (3) an explicit decision for how pre-K-4
+    entries (no ``committed_vector`` key at all) fold — each a real design decision, left open
+    rather than rushed through this fixup.
+
     Args:
         conn: The live sqlite3 connection.
 
