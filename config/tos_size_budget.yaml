@@ -720,11 +720,19 @@ exceptions:
     로 분할하며 필드 선언·factory kwargs·docstring Args·pass-through 배선 각각
     1→3줄로 증가(순증 약 12줄) + 필드 docstring 확장(약 7줄).
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 411
+  measured: 415
   owner: tos-runtime
   decomposition_order: 38
   expires_on: '2026-12-31'
   note: >-
+    **2026-09-17 TOS run-boot/실 원천 웨이브(W2 레인) 재등재 411→415(+4)**:
+    `build_tick_scheduler(...)` 호출부에 `custody=boot.infra.custody,` ·
+    `monotonic=boot.infra.monotonic_source,` · `broker_scopes=boot.broker_scopes,` ·
+    `runtime_identity=boot.identity,` 4개 kwargs 추가(각 1줄) — kis_quote 시세
+    어댑터가 (같은 커스터디 스코프·모노토닉 클록·브로커 스코프·identity 를)
+    order transport 결선과 동일한 값으로 공유해야 하므로 이미 이 함수 스코프에
+    있던 값을 그대로 관통. 호출 시퀀스 자체는 무변경. 이 함수가 정본 결선 순서
+    문서라 분해 대신 등재.
     **2026-09-16 TOS 틱 원천 웨이브(레인 D) 재등재 395→411(+16)**: recovery barrier
     직후 `boot.risk.recovery_dimension_state.verdict = composed.recovery` 다음에
     `composed.marketfeed = build_tick_scheduler(...)` 호출 1건(kwargs 9 · 주석
