@@ -152,6 +152,16 @@ def optional_str(raw: dict[str, Any], key: str, path: Path, ctx: str) -> str | N
     discarding it, because the OCP loader must pass the ACTUAL value (``None`` or a string) into
     ``OrderConstructionPolicy.issue`` — a discarded value would silently re-introduce the exact
     hardcoded-``None`` this round removes.
+
+    Also refuses the template's own ``"TBD"`` placeholder string (review finding ③, round #4),
+    the same way :func:`require_filled_str` does for a required (non-nullable) field. These
+    three fields are operator-fill identity values, and this document's own template uses the
+    ``"TBD"`` placeholder convention elsewhere (e.g. ``accounts: ["TBD"]``,
+    ``axes.DIRECTION: "TBD"``) — without this check an operator typing that same convention
+    here would have the literal string ``"TBD"`` silently sealed into the ``canonical_digest``
+    as if it were a real identity, rather than being caught as an unfilled field (CLAUDE.md
+    "원천 없는 수치는 null"). ``null`` stays accepted (see above): it is the honest
+    not-yet-filled value, distinct from a typed placeholder pretending to be one.
     """
     if key not in raw:
         raise VenuePolicyConfigError(f"{path}: {ctx} missing required key {key!r}")
@@ -160,6 +170,10 @@ def optional_str(raw: dict[str, Any], key: str, path: Path, ctx: str) -> str | N
         return None
     if not isinstance(value, str):
         raise VenuePolicyConfigError(f"{path}: {ctx} {key!r} must be a string or null")
+    if value == TBD_STR:
+        raise VenuePolicyConfigError(
+            f"{path}: {ctx} {key!r} is still the template placeholder {TBD_STR!r}"
+        )
     return value
 
 

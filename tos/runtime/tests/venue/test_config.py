@@ -598,6 +598,26 @@ def test_load_order_construction_policy_digest_matches_kernel_issuance_when_iden
     assert verdict.value == "IDEMPOTENT_DUP"
 
 
+@pytest.mark.parametrize(
+    "field", ["signer_identity", "approval_identity", "evidence_package_ref"]
+)
+def test_load_order_construction_policy_named_tbd_identity_field_refused(
+    tmp_path: Path, field: str
+) -> None:
+    """(review finding ③, round #4) Each of the three ``optional_str``-loaded identity
+    fields must refuse the template's own ``"TBD"`` placeholder the same way
+    ``scope.instruments: ["TBD"]`` already does above (``named-TBD`` idiom) — a ``null``
+    value is the honest not-yet-filled state (see the happy-path test), but the literal
+    string ``"TBD"`` is an operator typing the template's OTHER placeholder convention
+    into a field this loader was letting through unchecked before this fix, which would
+    have sealed ``"TBD"`` into the ``canonical_digest`` as if it were a real identity.
+    """
+    text = ocp_yaml(**{field: '"TBD"'})
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="named-TBD|template placeholder"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
 def test_load_order_construction_policy_wire_codec_mapping(tmp_path: Path) -> None:
     text = ocp_yaml(wire_codec='{kind: "kis-order-cash-v1", wire_fields: ["a", "b"]}')
     path = write_fixture_ocp(tmp_path, text)
