@@ -192,6 +192,20 @@ class _Pacer:
         self._next_allowed_at = now + self.interval_s
         return now
 
+    def derive(self, interval_s: float) -> _Pacer:
+        """A pacer on a new interval that still owes THIS pacer's gap.
+
+        The polling loop paces on ``--poll-ms`` rather than ``--pace-s``, but a
+        freshly constructed pacer carries no outstanding gap, so its first call
+        would follow the setup phase's last call (the baseline walk, or the
+        ``--reference-check`` GET) with no interval at all. The broker answers
+        such a pair with a rate limit, which stops the run: the 2026-09-17
+        SK텔레콤 trial lost its whole cash leg to CENSORED off one poll.
+        """
+        successor = _Pacer(interval_s)
+        successor._next_allowed_at = self._next_allowed_at
+        return successor
+
 
 def _now() -> datetime:
     """The current wall-clock instant, timezone-aware. A seam for tests.
@@ -650,6 +664,7 @@ def _poll_loop(
     baseline_qty: int,
     baseline_cash: float,
     legs: list[tuple[str, str, datetime]],
+    pacer: _Pacer,
 ) -> tuple[dict[str, dict[str, Any]], int]:
     """Poll balance until every leg is observed or ``--window-s`` expires.
 
@@ -658,7 +673,7 @@ def _poll_loop(
     """
     pending = {name: (t0_field, t0_dt) for name, t0_field, t0_dt in legs}
     found: dict[str, dict[str, Any]] = {}
-    poll_pacer = _Pacer(trial.effective_poll_ms / 1000.0)
+    poll_pacer = pacer.derive(trial.effective_poll_ms / 1000.0)
     polls_used = 0
     deadline = time.monotonic() + trial.window_s
 
@@ -929,6 +944,7 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
             baseline_qty,
             baseline_cash,
             legs,
+            pacer,
         )
         _finalize(run, trial, legs, found, polls_used)
     finally:
