@@ -832,9 +832,25 @@ class FuturesRiskConfig(ServiceConfigBase):
     #: cap (ConcurrentPositionsFilter). StockRiskConfig overrides it.
     _asset_class: ClassVar[str] = "futures"
 
-    account_equity_krw: int = Field(
-        default=5_000_000,
-        description="Account equity in KRW",
+    account_equity_krw: float = Field(
+        # Same value as the config/risk.yaml default (and the margin lane's
+        # fallback_account_equity_krw default), so a construction that skips
+        # the YAML does not resurrect the pre-G4 5M denominator (150,000원
+        # daily MDD cap). StockRiskConfig pins its own default below.
+        default=50_000_000.0,
+        gt=0,
+        description=(
+            "Account equity in KRW — the MDD filters' denominator. float/gt=0 "
+            "mirrors services/futures_margin_risk/config.py::"
+            "fallback_account_equity_krw, because config/risk.yaml now shares "
+            "that block's ${FUTURES_MARGIN_FALLBACK_EQUITY:...} knob (F-9 gap "
+            "G4): an int field would reject the scientific notation the margin "
+            "config accepts (5e7), crash-looping the risk_filter daemon while "
+            "the margin lane kept running. gt=0 is the other half — the MDD "
+            "filters divide by this value with equity_nonpositive='raise', so "
+            "0/negative would raise inside every candidate's evaluate() and "
+            "leave the whole candidate stream pending forever."
+        ),
     )
     daily_mdd_limit_pct: float = Field(
         default=0.03,
@@ -934,6 +950,15 @@ class StockRiskConfig(FuturesRiskConfig):
     _default_section: ClassVar[str] = "risk_stock"
     _env_prefix: ClassVar[str] = "STOCK_RISK_"
     _asset_class: ClassVar[str] = "stock"
+
+    account_equity_krw: float = Field(
+        # Keeps the default this class inherited before FuturesRiskConfig's moved
+        # to the futures lane's 50M (F-9 gap G4 is futures-only; the cash stock
+        # account's YAML value lives in config/risk.yaml::risk_stock).
+        default=5_000_000.0,
+        gt=0,
+        description="Stock account equity in KRW — the MDD filters' denominator.",
+    )
 
     core_correlation: CoreCorrelationSettings = Field(
         default_factory=CoreCorrelationSettings,

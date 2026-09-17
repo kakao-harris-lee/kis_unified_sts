@@ -17,14 +17,21 @@ hash of the real KIS wire bytes. So a ``sha256`` of THIS codec's own KIS-body JS
 equal a real, gateway-produced seal's ``request_bytes_digest`` today, no matter how correct this
 codec is.
 
-**The fix is out of this slice's (T1's) scope, but this module is the shared seam for it.** T2
-(the compose-wiring slice) binds this SAME ``KisOrderWireCodec`` into the compose context
-resolver so ``capsule_egress_request_digest`` (and therefore ``request_bytes_digest``) becomes
-genuinely this codec's own digest of the sealed outbound — closing the semantic gap. Until that
-binding lands, :mod:`tos_runtime.transport.kis_mock.config` refuses ``mode: live`` unconditionally
-at load time (see that module's own docstring) — a real send would deterministically hit
-:class:`~tos_runtime.transport.kis_mock.adapter.SendRefused` today, which is honest but useless,
-so the config loader now says so up front instead.
+**The fix landed in T2 (lane A — codec digest binding).** :meth:`KisOrderWireCodec.encode_fields`
+is the value-level half of the recipe :meth:`KisOrderWireCodec.encode` delegates to; the compose
+context resolver (:mod:`tos_runtime.compose.context`) now binds a
+:class:`~tos_runtime.compose._request_digest.KisWireCodecDigest` (built over ``encode_fields``)
+as its ``request_bytes_digest_source``, so ``capsule_egress_request_digest`` (and therefore
+``request_bytes_digest``) becomes genuinely this codec's own digest of the sealed outbound —
+closing the semantic gap for any caller that wires it in (see
+:mod:`tos_runtime.compose._request_digest`'s own module docstring). The DEFAULT compose wiring
+still uses the prior capsule-terminus stand-in (:class:`~tos_runtime.compose._request_digest.
+CapsuleStandInDigest`) unchanged — binding ``KisWireCodecDigest`` into the default path is a
+later lane's job (compose ``--transport kis-mock``), so :mod:`tos_runtime.transport.kis_mock.
+config` still refuses ``mode: live`` unless a caller explicitly attests ``codec_bound=True`` (see
+that module's own docstring) — a real send would deterministically hit
+:class:`~tos_runtime.transport.kis_mock.adapter.SendRefused` under the default (non-codec-bound)
+wiring, which is honest but useless, so the config loader still says so up front by default.
 
 **Serialization recipe (FROZEN — a future T2 binding must reproduce this EXACTLY, byte for
 byte):**
@@ -125,9 +132,79 @@ def _account_coordinate(seal: SendSeal) -> str:
 
 
 class KisOrderWireCodec:
-    """Stateless — two pure static methods, grouped under one name so a future caller (T2's
+    """Stateless — pure static methods, grouped under one name so a future caller (T2's
     compose context resolver) imports and calls ``KisOrderWireCodec.encode``/``.digest`` without
     ever needing an instance."""
+
+    @staticmethod
+    def encode_fields(
+        *,
+        account: str,
+        instrument: str,
+        quantity: CanonicalDecimal,
+        price: CanonicalDecimal,
+        field_map: Mapping[str, str],
+        static_body_fields: Mapping[str, str],
+    ) -> bytes:
+        """Serialize the four dynamic VALUES + static config into the KIS ``order_cash`` wire
+        body (the FROZEN recipe, module docstring) — the value-level half :meth:`encode`
+        delegates to.
+
+        This is the seam T2 (the compose context resolver) binds to directly: unlike
+        :meth:`encode`, it needs no :class:`~tos.egressgw.SendSeal` — only the four sealed
+        VALUES a resolver already holds before a seal exists (``authorized_coordinates.account``,
+        ``instrument_key.instrument``, and the step-2 derivation's ``quantity``/``price`` — see
+        :mod:`tos_runtime.compose._request_digest`'s own module docstring for exactly which
+        compose-root sources feed these, and why they are the SAME sources
+        :func:`tos.egressgw.seal.build_send_seal` later seals onto ``SendSeal.account`` /
+        ``.instrument_key.instrument`` / ``.outbound_quantity`` / ``.outbound_price``).
+
+        Args:
+            account: The sealed outbound account coordinate (review F2 — never a custody-loaded
+                value; -> ``SendSeal.account``).
+            instrument: The instrument key's instrument (-> ``SendSeal.instrument_key.instrument``).
+            quantity: The derived outbound quantity (-> ``SendSeal.outbound_quantity``).
+            price: The derived outbound price (-> ``SendSeal.outbound_price``).
+            field_map: Kernel-side source name -> KIS wire field name (closed vocabulary:
+                :data:`DYNAMIC_FIELD_SOURCES`).
+            static_body_fields: KIS wire field name -> per-deployment literal constant.
+
+        Returns:
+            The deterministic, canonical body bytes (recipe step 3 above).
+
+        Raises:
+            KisOrderWireCodecError: ``field_map`` names an unrecognized source, or the combined
+                field set does not equal :data:`KIS_ORDER_CASH_WIRE_FIELDS` exactly.
+        """
+        dynamic_sources: dict[str, str] = {
+            "account": account,
+            "instrument": instrument,
+            "quantity": _decimal_to_kis_string(quantity),
+            "price": _decimal_to_kis_string(price),
+        }
+        fields: dict[str, str] = {}
+        for source_name, wire_name in field_map.items():
+            if source_name not in dynamic_sources:
+                raise KisOrderWireCodecError(
+                    f"KisOrderWireCodec.encode_fields: unrecognized dynamic field_map source "
+                    f"{source_name!r} — only {sorted(DYNAMIC_FIELD_SOURCES)!r} are recognized"
+                )
+            fields[wire_name] = dynamic_sources[source_name]
+        for wire_name, literal in static_body_fields.items():
+            fields[wire_name] = literal
+
+        present = frozenset(fields)
+        if present != KIS_ORDER_CASH_WIRE_FIELDS:
+            missing = sorted(KIS_ORDER_CASH_WIRE_FIELDS - present)
+            unexpected = sorted(present - KIS_ORDER_CASH_WIRE_FIELDS)
+            raise KisOrderWireCodecError(
+                "KisOrderWireCodec.encode_fields: the encoded body does not cover exactly the "
+                f"nine KIS order_cash fields — missing={missing!r} unexpected={unexpected!r}"
+            )
+
+        return json.dumps(
+            fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("utf-8")
 
     @staticmethod
     def encode(
@@ -137,6 +214,10 @@ class KisOrderWireCodec:
         static_body_fields: Mapping[str, str],
     ) -> bytes:
         """Serialize the sealed outbound + static config into the KIS ``order_cash`` wire body.
+
+        A thin wrapper over :meth:`encode_fields`: reads the same four dynamic values off
+        ``seal`` (review F2's ``_account_coordinate`` sourcing unchanged) and delegates —
+        :meth:`encode_fields` is the actual recipe implementation.
 
         Args:
             seal: The sealed outbound (the sole source for every dynamic field).
@@ -151,35 +232,14 @@ class KisOrderWireCodec:
             KisOrderWireCodecError: ``field_map`` names an unrecognized source, or the combined
                 field set does not equal :data:`KIS_ORDER_CASH_WIRE_FIELDS` exactly.
         """
-        dynamic_sources: dict[str, str] = {
-            "account": _account_coordinate(seal),
-            "instrument": seal.instrument_key.instrument,
-            "quantity": _decimal_to_kis_string(seal.outbound_quantity),
-            "price": _decimal_to_kis_string(seal.outbound_price),
-        }
-        fields: dict[str, str] = {}
-        for source_name, wire_name in field_map.items():
-            if source_name not in dynamic_sources:
-                raise KisOrderWireCodecError(
-                    f"KisOrderWireCodec.encode: unrecognized dynamic field_map source "
-                    f"{source_name!r} — only {sorted(DYNAMIC_FIELD_SOURCES)!r} are recognized"
-                )
-            fields[wire_name] = dynamic_sources[source_name]
-        for wire_name, literal in static_body_fields.items():
-            fields[wire_name] = literal
-
-        present = frozenset(fields)
-        if present != KIS_ORDER_CASH_WIRE_FIELDS:
-            missing = sorted(KIS_ORDER_CASH_WIRE_FIELDS - present)
-            unexpected = sorted(present - KIS_ORDER_CASH_WIRE_FIELDS)
-            raise KisOrderWireCodecError(
-                "KisOrderWireCodec.encode: the encoded body does not cover exactly the nine "
-                f"KIS order_cash fields — missing={missing!r} unexpected={unexpected!r}"
-            )
-
-        return json.dumps(
-            fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-        ).encode("utf-8")
+        return KisOrderWireCodec.encode_fields(
+            account=_account_coordinate(seal),
+            instrument=seal.instrument_key.instrument,
+            quantity=seal.outbound_quantity,
+            price=seal.outbound_price,
+            field_map=field_map,
+            static_body_fields=static_body_fields,
+        )
 
     @staticmethod
     def digest(body_bytes: bytes) -> str:

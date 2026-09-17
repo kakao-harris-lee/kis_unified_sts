@@ -50,6 +50,7 @@ class ReleaseAdmissionConfig:
     """
 
     expected_code_digest: str
+    expected_dependency_set_digest: str
     admission_result: AdmissionResult
     restriction_state_resolved: bool
     restriction_present: bool
@@ -177,12 +178,14 @@ def load_release_config(path: Path) -> ReleaseAdmissionConfig:
     """
     raw = _require_mapping(path)
     expected_code_digest = _require_str(raw, "expected_code_digest")
+    expected_dependency_set_digest = _require_str(raw, "expected_dependency_set_digest")
     admission_result = _resolve_admission_result(raw)
     restriction_state_resolved = _require_bool(raw, "restriction_state_resolved")
     restriction_present = _require_bool(raw, "restriction_present")
     restriction = _resolve_restriction(raw, present=restriction_present)
     return ReleaseAdmissionConfig(
         expected_code_digest=expected_code_digest,
+        expected_dependency_set_digest=expected_dependency_set_digest,
         admission_result=admission_result,
         restriction_state_resolved=restriction_state_resolved,
         restriction_present=restriction_present,

@@ -22,13 +22,15 @@ economic obligation record for this fill would only ever carry a ``RECEIPT`` leg
 settlement leg is exactly the kind of claim §1 line 23 forbids ORDER_FQP from making, and this
 producer never makes it.
 
-**No release call site exists yet in this runtime (measured, plan §0 survey).** This module only
-produces the :class:`~tos.posttrade.records.PostTradeFinalityProof`; wiring it as a reservation's
+**The release call site (TOS Phase 5 W2-R; plan §10 row ①).** This module only produces the
+:class:`~tos.posttrade.records.PostTradeFinalityProof`; wiring it as a reservation's
 ``finality_witness`` is :mod:`tos_runtime.rcl.finality_witness`'s seam, exercised end-to-end
 against the real :class:`~tos_runtime.rcl.log.SqliteCommitLog` in
-``tos/runtime/tests/rcl/test_finality_witness.py`` — no lane in this runtime yet calls
-``apply_reservation_transition`` to a ``RELEASED`` destination in production; that is a future
-lane's release-trigger flow, not manufactured here.
+``tos/runtime/tests/rcl/test_finality_witness.py``. :mod:`tos_runtime.posttrade.release_consumer`
+is the ONE production call site that reaches an ``apply_reservation_transition`` call to a
+``RELEASED``/``POSITION_CONSUMED`` destination — this module (:meth:`SyntheticFinalityProducer
+.produce`/:meth:`~SyntheticFinalityProducer.produce_non_execution`) still only ever builds the
+proof artifact, never decides whether or when to release.
 
 Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``pydantic``
 (transitively) + ``tos.canonical``/``tos.engine.records``/``tos.engine.vocabulary``/
@@ -38,6 +40,7 @@ Firewall (``tools/tos_firewall_check.py`` R1, runtime scope): stdlib + ``pydanti
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 from tos.canonical import CanonicalizationScheme, derive_id
 from tos.engine.records import EgressResultPayload
@@ -58,7 +61,34 @@ from tos.posttrade import (
 
 from tos_runtime.posttrade.config import FinalityConfig
 
-__all__ = ["SyntheticFinalityResult", "SyntheticFinalityProducer"]
+__all__ = [
+    "FULL_FILL_OBLIGATION_ID_PREFIX",
+    "FULL_FILL_PROOF_ID_PREFIX",
+    "NON_EXECUTION_OBLIGATION_ID_PREFIX",
+    "NON_EXECUTION_PROOF_ID_PREFIX",
+    "SyntheticFinalityResult",
+    "SyntheticFinalityProducer",
+]
+
+#: Idempotency-key / :func:`~tos.canonical.derive_id` namespace prefixes (TOS Phase 5 W2-R
+#: independent-review M4 fix, 2026-09-10). :meth:`SyntheticFinalityProducer.produce` and
+#: :meth:`~SyntheticFinalityProducer.produce_non_execution` used to share ONE prefix each
+#: (``"synthetic-fqp-obligation"``/``"synthetic-fqp-proof"``), so an attempt that legitimately
+#: produced BOTH a ``FULL_FILL`` proof (via :meth:`produce`) and a later non-execution proof
+#: (via :meth:`produce_non_execution`) would mint COLLIDING ``obligation_id``/``proof_id``
+#: content-addressed identities AND collide on ``idempotency_key`` — the later row would
+#: silently shadow the earlier one in every idempotency-key-keyed reload
+#: (:mod:`tos_runtime.posttrade.release_consumer`'s own ``_reload_proof``/``_reload_obligation``,
+#: and :mod:`tos_runtime.recon.evidence_reader`'s ``_attempts_with_finality_proof``). Distinct
+#: prefixes make the two artifact families non-collidable by construction; the ``FULL_FILL``
+#: prefixes are UNCHANGED literal values (so
+#: :mod:`tos_runtime.recon.evidence_reader`'s own already-shipped, disclosed-coupling prefix
+#: match keeps working unmodified — it correctly never recognizes a non-execution proof as a
+#: Final Quantity Proof for a fill, which it structurally is not).
+FULL_FILL_OBLIGATION_ID_PREFIX = "synthetic-fqp-obligation"
+FULL_FILL_PROOF_ID_PREFIX = "synthetic-fqp-proof"
+NON_EXECUTION_OBLIGATION_ID_PREFIX = "synthetic-fqp-nonexec-obligation"
+NON_EXECUTION_PROOF_ID_PREFIX = "synthetic-fqp-nonexec-proof"
 
 #: The one obligation leg this SYNTHETIC producer ever asserts — see module docstring.
 _REQUIRED_LEGS: frozenset[ObligationLegDirection] = frozenset(
@@ -79,6 +109,22 @@ _ORDER_FQP_DOES_NOT_PROVE: tuple[str, ...] = tuple(
 #: quantity is by construction still live, RFC-005 §11), ``CANCEL_ACK``/``EXPIRED`` (CPL-4: a
 #: cancel/expiry is not a release), ``ACK``/``REJECT``/``UNKNOWN``/``TIMEOUT`` — yields no proof.
 _ELIGIBLE_KINDS: frozenset[EgressResultKind] = frozenset({EgressResultKind.FULL_FILL})
+
+#: TOS Phase 5 W2-R (plan §10 row ①): the three kinds :meth:`SyntheticFinalityProducer
+#: .produce_non_execution` ever considers — a non-execution FQP (zero filled, zero remaining) is
+#: the CPL-4-honest declaration that this attempt executed nothing at all, not a release of a
+#: fill (that stays :meth:`produce`'s own job). ``ACK``/``PARTIAL_FILL``/``UNKNOWN``/``TIMEOUT``
+#: are never eligible: an ``ACK``/``PARTIAL_FILL`` attempt may still fill later, and
+#: ``UNKNOWN``/``TIMEOUT`` carry no positive knowledge that nothing executed (RFC-005 §11
+#: "timeout = UNKNOWN, never rejection") — a non-execution proof for either would assert
+#: knowledge this runtime does not have.
+_NON_EXECUTION_KINDS: frozenset[EgressResultKind] = frozenset(
+    {
+        EgressResultKind.CANCEL_ACK,
+        EgressResultKind.EXPIRED,
+        EgressResultKind.REJECT,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -146,7 +192,66 @@ class SyntheticFinalityProducer:
             # remaining executable quantity" — the ORDER_FQP claim itself does, so it is
             # checked directly against the payload, not inferred from the kind.
             return None
+        return self._build_synthetic_result(
+            payload,
+            quantity=filled_quantity,
+            obligation_id_prefix=FULL_FILL_OBLIGATION_ID_PREFIX,
+            proof_id_prefix=FULL_FILL_PROOF_ID_PREFIX,
+        )
 
+    def produce_non_execution(
+        self, payload: EgressResultPayload
+    ) -> SyntheticFinalityResult | None:
+        """Build a **non-execution** obligation record + finality proof — zero filled, zero
+        remaining — for a ``CANCEL_ACK``/``EXPIRED``/``REJECT`` result (TOS Phase 5 W2-R; plan
+        §10 row ①).
+
+        The CPL-4-honest declaration that this attempt executed nothing at all: the ``RECEIPT``
+        leg's magnitude is asserted as exactly ``Decimal("0")``, never read off the payload —
+        ``EgressResultPayload``'s own validator already refuses a ``CANCEL_ACK``/``EXPIRED``/
+        ``REJECT`` payload that carries any fill magnitude at all (``tos.engine.records``'
+        ``_fill_shape_consistent``), so "zero executed" is this method's own structural claim
+        about what these three kinds mean, not an inference from a field that cannot legally be
+        present.
+
+        **This method never decides whether zero-execution is actually TRUE for this attempt —
+        it only builds the artifact.** :mod:`tos_runtime.posttrade.release_consumer`'s
+        :class:`~tos_runtime.posttrade.release_consumer.FinalityReleaseConsumer` is the ONLY
+        caller, and it calls this method only AFTER a three-way reconciliation report
+        corroborates non-execution (plan §3 "주문 응답으로 finality 판정" is a rejected
+        alternative) — a response payload alone must never produce a proof this cheaply.
+
+        Args:
+            payload: The re-injected ``EGRESS_RESULT`` payload.
+
+        Returns:
+            A :class:`SyntheticFinalityResult`, or ``None`` when ``payload.kind`` is not one of
+            ``CANCEL_ACK``/``EXPIRED``/``REJECT``, or when the built artifacts fail any of the
+            three kernel gates named on this class's own docstring.
+        """
+        if payload.kind not in _NON_EXECUTION_KINDS:
+            return None
+        return self._build_synthetic_result(
+            payload,
+            quantity=Decimal("0"),
+            obligation_id_prefix=NON_EXECUTION_OBLIGATION_ID_PREFIX,
+            proof_id_prefix=NON_EXECUTION_PROOF_ID_PREFIX,
+        )
+
+    def _build_synthetic_result(
+        self,
+        payload: EgressResultPayload,
+        *,
+        quantity: Decimal,
+        obligation_id_prefix: str,
+        proof_id_prefix: str,
+    ) -> SyntheticFinalityResult | None:
+        """Shared artifact construction for :meth:`produce` (``quantity=filled_quantity``,
+        the ``FULL_FILL_*`` prefixes) and :meth:`produce_non_execution` (``quantity=Decimal("0")``,
+        the ``NON_EXECUTION_*`` prefixes) — every gate/leg convention stays identical between the
+        two; only the asserted magnitude and the id/idempotency-key namespace differ (module
+        docstring's M4 fix — distinct prefixes so the two artifact families can never collide).
+        """
         account = payload.instrument_key.account
         leg_scope = ObligationLegScope(
             leg=ObligationLegDirection.RECEIPT,
@@ -158,10 +263,10 @@ class SyntheticFinalityProducer:
         )
         leg = ObligationLeg(
             direction=ObligationLegDirection.RECEIPT,
-            magnitude=filled_quantity,
+            magnitude=quantity,
             scope=leg_scope,
         )
-        leg_magnitudes = {ObligationLegDirection.RECEIPT: filled_quantity}
+        leg_magnitudes = {ObligationLegDirection.RECEIPT: quantity}
 
         if not obligation_leg_set_complete(
             required_legs=_REQUIRED_LEGS,
@@ -177,13 +282,13 @@ class SyntheticFinalityProducer:
             return None
 
         obligation_id = derive_id(
-            "synthetic-fqp-obligation",
+            obligation_id_prefix,
             self.scheme.compute_digest(
                 {"attempt_id": payload.attempt_id, "instrument_key": account}
             ),
         )
         proof_id = derive_id(
-            "synthetic-fqp-proof",
+            proof_id_prefix,
             self.scheme.compute_digest({"obligation_id": obligation_id}),
         )
 
@@ -194,11 +299,11 @@ class SyntheticFinalityProducer:
             obligation_type="SYNTHETIC_ORDER_FQP",
             obligation_version="1",
             obligation_generation=0,
-            idempotency_key=f"synthetic-fqp-obligation:{payload.attempt_id}",
+            idempotency_key=f"{obligation_id_prefix}:{payload.attempt_id}",
             source_event_ids=(payload.attempt_id,),
             account_scope=account,
             instrument_identity=payload.instrument_key.instrument,
-            quantity=filled_quantity,
+            quantity=quantity,
             legs=(leg,),
             leg_magnitudes=leg_magnitudes,
             lifecycle_state=PostTradeObligationLifecycleState.FINALITY_PROVEN,
@@ -213,13 +318,13 @@ class SyntheticFinalityProducer:
             obligation_ref=record.obligation_id,
             obligation_version=record.obligation_version,
             leg_scope=leg_scope,
-            amount=filled_quantity,
+            amount=quantity,
             finality_class=FinalityDimensionKind.ORDER_FQP,
             bound_generation=record.obligation_generation,
             does_not_prove=_ORDER_FQP_DOES_NOT_PROVE,
             proof_recipe_id=self.config.proof_recipe_id,
             source_revision=self.config.source_revision,
-            idempotency_key=f"synthetic-fqp-proof:{payload.attempt_id}",
+            idempotency_key=f"{proof_id_prefix}:{payload.attempt_id}",
         )
         assert isinstance(proof, PostTradeFinalityProof)
 

@@ -1,0 +1,353 @@
+# TOS (a′) 잔여 웨이브 계획 — `envelope` · `order_shape` 원천화 (`run` 마지막 차단)
+
+- **상위**: `compose/cli.py` 차단 (a′) 「Still no production source: `envelope`(needs IAP authoring) · `order_shape`(needs a strategy-carried shape) + `_wiring.py` 의 `intent_id`/`intent_version`/`envelope_id`/`command_id`/`generation` 리터럴」 · 운영자 2026-09-16 「다음 = (a′) 잔여 먼저」(틱 원천 계획 §6 ⑥).
+- **선행**: 틱 원천 웨이브 전건 MERGED → main `24f6c217`/`9577e947`(2206 tests). (c) 해소로 **(a′) 의 `price` 항은 이미 구조 해소**됨 — 남은 것은 `envelope` 과 `order_shape`.
+- **저작**: 세션 모델 단독 · 커널 diff 0 목표.
+- **브랜치**: `feat/tos-aprime-plan`(워크트리 `../kis_unified_sts-aprime`).
+
+## 0. 서베이 실측 (요지)
+
+| 항목 | 실측 (`file:line`) | 함의 |
+|---|---|---|
+| 체인은 이미 결선돼 있다 | `construct_candidate_command` 가 **이미** `ApprovedIntentContract` 를 만든다(`construction.intent`) · step 4 의 `_envelope_equivalent_provider`(`_wiring.py:613-635`)가 운영자 결정의 `approved_intent_envelope_digest` 를 그 **실제** intent digest 와 `exact_binding_holds` 로 대조 | **(a′) 는 「없는 기구를 만드는」 일이 아니다** — 기구는 있고 **입력이 리터럴**이다 |
+| 리터럴 위치 | `_wiring.py:539-546`: `intent_id=f"intent-{account}-{instrument}"` · `intent_version="intent-v1"` · `envelope_id="compose-envelope"` · `command_id=f"cmd-{account}-{instrument}"` · `generation=1` | 정체성이 **제안에서 파생되지 않고 날조**된다 |
+| IAP 런타임 | `IntentRegistry`(propose/approve/consume·`authority/iap.py:533`) · 운영자 승인 파일 로더(`:333` · 0600+owner+환경라벨 byte-exact · **zero auto-approval**) 전부 실물 | IAP 쪽은 **이미 프로덕션** — (c) 의 CIS 부재와 다르다 |
+| `ApprovedIntentContract` 발행 경로 | **있다.** `construct_candidate_command`(`egressgw/construction.py:617`)가 커널 **프로덕션** 소스에서 `.issue()` 를 부른다. ~~프로덕션 0건~~ 은 저작 시 grep 이 `ioc/__init__.py` 와 `tos/runtime/src` 만 훑어 커널 본체를 통째로 빠뜨린 오류(계획 리뷰 HIGH 지적) | **발행자를 새로 만드는 일이 아니다** — 그 발행자로 들어가는 **입력이 리터럴**이다. 이 웨이브는 입력 교체이지 기구 신설이 아니다 |
+| 권한 축의 정본 | `ApprovedIntentContract` 독스트링: 「ADR-002-020 §8 필드 집합의 **landing point**」 · 「구체 authorized-axis 값은 Phase-0 주입이라 `_REQUIRED_COVERED` 에서 제외 — **없는 축은 소비 술어에서 fail-closed**」 | 축을 비워둬도 ISSUED 는 되지만 **소비 시점에 막힌다** |
+| `sizing_bound` 의 소유자 | `SizingBound` 독스트링: 「RFC-002 §9.1:553 이 **Order Construction Policy 거버넌스**를 construction rule 공급자로 만든다」 · 「저자가 수량을 건네줄 수 없다 — **quantity 필드가 없다**」 | 수량은 선언이 아니라 **경계값에서 파생**되어야 한다(구조적 봉인) |
+| 그런데 OCP 실파일에 값이 없다 | `config/tos_runtime/paper/order_construction_policy.yaml` — 규칙이 **산문 문자열**(`direction_side_and_position_effect_rules: ["NEW_LONG↔BUY/OPEN, …"]` · `price_tick_lot_quantity_and_rounding_rules: ["no silent rounding …"]`) · `_runtime` 블록은 `canonicalization_version`/`wire_codec` 뿐 · **risk_budget/per_unit_risk/lot_size/min·max_quantity/max_notional 어디에도 없음**(DR-0002 §2.3 v1 coverage = policy_id/generation/version ONLY) | **거버넌스 문서가 산문으로 선언한 것을 기계가 읽지 못한다** — 이 웨이브의 본체 |
+| `order_shape` 의 실제 잔여 | `_shape_for`(`egressgw/construction.py:1074-1098`)는 **`price` 만** value surface 로 덮는다. `quantity`·`order_type`·`tif`·`side`·`position_effect`·`silently_rounded` 는 주입값 그대로 | price 는 (c) 가 해소 · 나머지 6필드가 잔여 |
+| ★ **커널 자신의 원칙이 shape 에는 적용되지 않는다** | 커널은 `DERIVED_AXES = {QUANTITY, PRICE, UNIT}`(`egressgw/records.py:267-269`)를 **파생 소유**로 못박고, 봉투가 그 축을 선언하면 **「어느 값이 이기는지 모호해진다」는 이유로 거부**한다(`_no_derived_axis_is_pre_declared` · ADR-002-020 §10:284 「ambiguity is denial」). 그런데 **`OrderShapeFields.quantity` 는 같은 축인데 호출자가 선언**하고, 아무도 파생값과 대조하지 않는다 — venue 결정은 `candidate_command` 를 **식별자 결속에만** 쓰고(`venue/service.py:330-350`) `tos/src/tos/venue/predicates.py` 는 이를 **아예 참조하지 않는다**(grep 0건) | **venue 게이트가 검사하는 수량과 실제 보낼 수량이 갈릴 수 있다.** 커널이 봉투에 대해 막은 바로 그 모호성이 shape 경로로 열려 있다 |
+| ★★ **한 attempt 가 수량을 둘 싣는다** | `construct_candidate_command:609-611` 이 `bindings = envelope.authorized_axis_bindings + _derived_axis_bindings(derivation)` 로 **파생 QUANTITY 를 intent·command 에 이미 싣는다**(`_derived_axis_bindings:544-553`). 같은 attempt 의 `OrderShapeFields.quantity` 는 호출자 리터럴이고, 이를 대조하는 지점이 없다 | **파생 수량과 선언 수량이 같은 attempt 안에 공존한다.** 커널은 봉투가 그 축을 중복 선언하는 것은 막으면서, shape 가 별개 값을 들고 venue 게이트를 통과하는 것은 막지 않는다 |
+| 수량을 읽을 수 있는가 | `CanonicalBrokerCommand.axis_value(ConformanceAxis.QUANTITY)` 가 공개 접근자(`ioc/records.py:349`) · `VenueConstraintStage` 는 `shape` 를 **생성자 인자**로 받는다(`_venue_wiring.py:390`·`:414`) | **커널 편집 없이** 런타임이 fold #2 에 파생 수량을 실은 shape 를 넘길 수 있다 — §6 ② 는 저작 중 실측으로 해소 |
+| 시점은 맞는다 | `VenueServiceStage.__call__`(`_venue_wiring.py:390-424`)이 fold #1 뒤에 `self._construction_stage.construction` 을 읽는다 — step 2 가 step 3 보다 먼저 돈다 | **파생 수량을 shape 에 흘려넣을 데이터가 이미 그 시점에 있다** |
+| 크기 제약 | `_wiring.py` **1122행**(예산 1000 초과 · 등재 예외 `decomposition_order: 30`) · `cli.py` 정확히 **1000행**(헤드룸 0) | 두 파일 모두 **증설 불가** — 새 모듈로 빼야 한다 |
+
+### 0.1 (b′) 상호작용 점검 (2026-09-16 · 계획 리뷰의 「확인 불가」 해소)
+
+계획 리뷰가 «(b′) 와의 상호작용 미확인» 을 냈고, 나는 그것을 통과로 처리하지 않겠다고 했다.
+(b′) 계획(`2026-09-16-tos-risk-state-service-plan.md` §150·§151)의 잔여 3항에 대해 실측한 판정:
+
+| (b′) 잔여 | (a′) 와의 상호작용 | 판정 |
+|---|---|---|
+| 계약 수 차원만 | ARP `risk_dimensions`(`aggregate_risk_policy.yaml:58`)가 `unit CONTRACTS`, VCP `_runtime.quantity_unit: "CONTRACTS"`(`venue_constraint_policy.yaml:136`), (a′) 채택 `max_quantity=1` 은 **그 ARP 실효 한도에서 파생**(제안표 §2) | **일치 — 충돌 없음.** 세 값이 맞는 이유가 「우연히 같다」가 아니라 (a′) 가 (b′) 의 승인 한도를 **재진술하지 않고 파생**했기 때문이다 |
+| 단일 원천 포지션(브로커 증인 0) | (a′) 는 포지션을 읽지 않는다. step 6 의 `conservative_current_usage` 는 evidence 체결 합이고 (a′) 가 바꾸는 것은 step 2/3 의 수량·shape | **무관** |
+| `committed_flow_vectors` `()` | (a′) 의 `effect_dimensions` 가 step 5 봉투를 채우면 ARE `effect_digest`(§43)와 AFG `command_identity/digest`(§46)의 **실값이 바뀐다**. 깨뜨리지는 않으나 (b′) e2e 의 digest 기대값이 상수라면 red | **관측 필요** — 레인 D e2e 가 (b′) 스위트 동시 green 을 확인할 것 |
+
+**★ 행동이 필요한 발견 — side 토큰 선언자가 셋이 된다.**
+
+(b′) 는 이미 side 를 정책 선언으로 옮겼다(§149): AFG `_runtime.side_tokens: {buy, sell}`
+(`riskstate/_action_flow_policy_loader.py:430-438`). 그리고 **교차검사가 이미 존재한다** —
+`_cross_check_side_tokens`(`compose/_riskstate_wiring.py:138-144`)가 AFG 토큰이 VCP
+`allowed_sides` 의 부분집합이 아니면 **부팅을 거부**한다.
+
+(a′) 레인 A 가 OCP `action_class_shape[(class, direction)].side` 로 **세 번째 선언자**를 만든다.
+같은 사실을 파일 셋이 각자 들고 아무도 고정하지 않으면 [[registry-with-unpinned-satellite]]
+부류가 그대로 재발한다 — 이 저장소가 이미 4 인스턴스를 겪은 부류다.
+
+**처분**: (a′) 의 side 토큰은 기존 교차검사에 **합류한다**. 레인 B/D 결선이 OCP 가 내놓는 모든
+side 를 `venue_allowed_sides` 에 대해 같은 방식으로 검사하고, 벗어나면 부팅 거부한다.
+새 검사 기구를 만들지 않는다 — `_cross_check_side_tokens` 의 형제로 붙인다.
+
+
+## 1. 목표 · 범위 · 비범위
+
+**목표**: `envelope` 과 `order_shape` 를 **거버넌스 문서와 파생에서 원천화**한다. 한 문장으로: **기계가 OCP 가 이미 산문으로 선언한 것을 읽게 하고, 파생이 이미 계산한 것을 선언으로 중복하지 않게 한다.**
+
+**범위**: OCP 에 기계가 읽는 `_runtime` 구성 규칙 추가(**새 policy generation**) · OCP 로더 확장 · `ProposedConstructionEnvelope` 발행자(런타임 신규) · `ApprovedIntentContract` 정체성 파생 · `order_shape` 6필드 원천화(특히 **수량 = 파생값**) · `_wiring.py` 리터럴 5종 제거 · compose 결선 + e2e · `cli.py` (a′) 문언.
+
+**비범위**: 커널 편집 · IAP 승인 **정책** 변경(운영자 파일 흐름은 이미 프로덕션이고 건드리지 않는다) · (b′) 잔여(단일 원천 포지션·명목/마진 차원) · (c2) 실 시세 어댑터 · 다심볼 · **`run` 의 데몬화**(차단 해소와 데몬 루프는 다른 일 — §2 결정 8).
+
+## 2. 결정 (초안 — 레인 저작 전 운영자 확인 대상은 §6)
+
+1. **OCP 가 정본이다. 새 필드가 아니라 새 세대다.** 산문 규칙을 기계가 읽는 값으로 옮기되 **기존 산문은 남긴다**(사람이 읽는 근거). `_runtime` 블록에 `construction:` 하위로 `sizing`(risk_budget·per_unit_risk·lot_size·lot_rounding·min_quantity·max_quantity·max_notional·admitted_quantity_bases) · `axes`(order_type·tif·environment) · `action_class_map`(NEW_LONG→side/position_effect …) · `effect_dimensions` 를 추가. **policy_generation 2 · canonical_digest 재계산 · `safety_activation.yaml` members 재기입** — 운영자 작업이 끼는 지점(§6 ①).
+2. **`order_shape.quantity` 는 선언하지 않고 파생에서 받는다 — 커널 편집 없이 가능함을 실측했다.** 런타임 `VenueServiceStage` 가 fold #1 뒤에 `construction.command.axis_value(ConformanceAxis.QUANTITY)` 를 읽어 그 수량을 실은 shape 를 fold #2 의 `VenueConstraintStage(shape=...)` 에 넘긴다. `VenueConstraintStage` 가 shape 를 생성자로 받으므로 **커널 diff 0**. 근거는 커널 자신의 원칙이다 — `DERIVED_AXES` 가 QUANTITY 를 파생 소유로 지정하고 봉투의 중복 선언을 「ambiguity is denial」로 거부하는데, shape 만 예외일 이유가 없다. 파생이 수량을 내지 못한 attempt 는 shape 수량을 **`None`**(구조적 UNKNOWN)으로 두고 주입 리터럴로 되돌아가지 않는다.
+3. **정체성은 파생한다 — 발행자는 이미 있으므로 입력만 바꾼다.** `intent_id`/`envelope_id`/`command_id` 는 제안·capsule·attempt 에서 결정적으로 파생(예: proposal digest + attempt 좌표). `intent_version`/`generation` 은 OCP 세대에 결속. 날조 리터럴 0. **새 발행자를 만들지 않는다** — `construct_candidate_command` 가 그대로 발행자다.
+4. **`silently_rounded` 는 attestation 이 아니라 관측이어야 한다.** OCP 가 「no silent rounding — 구성은 off-grid shape 를 반올림하지 않고 거부한다」를 선언한다. 런타임이 **그 사실을 관측**해 채운다(틱 그리드 대조). 관측 불가면 `None`(제한적) — `False` 를 찍지 않는다.
+5. **새 모듈.** `_wiring.py`(1122) 와 `cli.py`(1000) 둘 다 증설 불가 → `compose/_envelope_wiring.py` 신설. 크기 예외 신규 등재 금지.
+6. **e2e 는 (c) 의 방식을 따른다.** 「실 step-2 가 주입 리터럴이 아니라 거버넌스 값을 썼다」를 실 스테이지 상태로 실증 — (c) 의 `derivation.price` 단언과 같은 형태.
+7. **`run` 차단 문언.** (a′) 해소를 기록하되 **데몬 루프 부재**를 별도 항목으로 남긴다. 「(a′) 해소」와 「`run` 가동」을 같은 문장에 쓰지 않는다 — (c) 웨이브의 규율 계승.
+8. **범위 경계**: 이 웨이브는 `run` 의 **차단 목록**을 비우는 것까지다. `run` 이 실제 데몬으로 도는 것(`run_forever` 결선 · 신호 처리 · 종료 규약)은 **후속**.
+
+## 3. 기각 대안 (초안)
+
+| 대안 | 기각 사유 |
+|---|---|
+| `envelope` 을 새 YAML 로 분리 | `SizingBound` 독스트링이 OCP 거버넌스를 공급자로 지목(RFC-002 §9.1:553) — 두 번째 문서는 정본을 쪼갠다 |
+| OCP 를 in-place 편집 | 정책은 세대 불변 — digest 가 바뀌면 새 세대다(OCP 자신의 주석이 wire_codec 예로 같은 말을 한다) |
+| `order_shape.quantity` 를 계속 선언 | venue 게이트가 **보내지 않을 수량**을 검사한다 — 서베이 ★ 항목 |
+| 수량 불일치를 로그만 남기고 통과 | 「ambiguity is denial」(ADR-002-020 §10:284) 과 정면 충돌 |
+| `silently_rounded=False` 를 계속 주입 | 관측 가능한 사실을 선언으로 두는 것 — 틱 원천 웨이브가 필드 상태에서 이미 겪은 부류 |
+
+## 4. 레인 (초안)
+
+| 레인 | 파일(배타) | 의존 |
+|---|---|---|
+| 계약 | `compose/_envelope_wiring.py` 시그니처 + 계획 | 없음 |
+| A | OCP 템플릿/실파일 세대 2 · OCP 로더 확장 · 대응 tests | 계약 |
+| B | `ProposedConstructionEnvelope` 발행자 + 정체성 파생 · tests | 계약 |
+| C | `order_shape` 6필드 원천화(수량 대조 포함) · tests | 계약 |
+| D | compose 결선 · `cli.py` 문언 · e2e | A∧B∧C |
+| 리뷰 | 전 PR `code-reviewer`(sonnet) · **A 는 `contract-keeper`** (거버넌스 문서 계약 변경) | PR 별 |
+
+### 4.1 레인 처분 (진행 중 · 2026-09-16)
+
+**레인 C — 파생 수량을 fold 둘 다에 흘린다 (편차, 수용).** 브리프는 fold #2 만 말했으나
+레인 C 가 fold #1 에도 넣었다. 근거가 옳다: `venue_admissibility_verdict` 가 돌려주는 결과는
+fold #2 자신의 지역 `fold_venue_admissibility(shape=...)` 에서 계산되고 `decision.result` 가
+아니다. 한쪽에만 넣으면 **기록되는 attempt 증거(`decision.result`)와 반환 판정이 갈린다.**
+기존 테스트 `test_boot_binds_the_policies_once_and_step3_admits_with_the_real_decision` 이
+`decision.result is fold_venue_admissibility(..., shape=venue_stage.resolved_shape, ...)` 를
+단언하므로 두 fold 가 같은 shape 를 볼 때만 성립한다. 커널 편집 불필요 — §6 ② 실측 확인.
+
+**★ 레인 C — side/position_effect/order_type/tif 매핑이 오늘 죽은 코드다 (레인 D 인수인계).**
+레인 C 가 `VenueServiceStage(..., construction_rules=None)` 를 선택 인자로 달았는데
+**현행 호출부 전부가 `None`** 이다(`_wiring.py:~549` 가 넘기지 않는다). 즉 네 필드는
+구현·유닛테스트되었으나 **프로덕션 경로에서 도달 불가**하고, 전부 주입 리터럴로 떨어진다.
+레인 C 가 파일 경계를 넘지 않고 정직하게 보고한 것은 옳다.
+
+이것은 이 저장소가 틱 원천 웨이브에서 두 번 맞은 **커버리지 0 부류**와 같은 모양이다
+(리뷰어가 분기를 통째로 지웠는데 2186 테스트가 전부 green). 따라서 레인 D 의 종료 조건에
+**유닛 통과로는 불충분**을 못박는다:
+
+1. e2e 가 side/position_effect/order_type/tif 가 **정책에서** 온 실값임을 실증할 것.
+2. 뮤테이션 — 매핑 경로를 지우고 **attempt 수준에서** 거동이 바뀌는 것을 보일 것.
+   유닛만 red 가 되고 e2e 가 green 이면 그 경로는 여전히 죽어 있다.
+3. `ConstructionConfig` 의 **모든 필드를 훑어** 어떤 리터럴이 남았는지 정확히 진술할 것
+   (계획 리뷰 처분).
+
+
+### 4.2 `ConstructionConfig` 전 필드 운명 (팀리드 선실측 · 레인 D 체크리스트)
+
+계획 리뷰가 레인 D 에 「모든 필드를 훑어 어떤 리터럴이 남는지 정확히 진술」을 요구했다.
+레인 D 가 다시 세지 않아도 되도록 미리 실측한다. **레인 D 는 이 표를 재검증하고 갱신한다.**
+
+| 필드 | 웨이브 후 | 근거 |
+|---|---|---|
+| `account`·`instrument` | **리터럴 유지 — 정당** | 운영자가 지정하는 배포 스코프. 파생 대상이 아니다 |
+| `envelope` | **제거 가능** | 레인 B 가 `ConstructionRules` 에서 만든다 |
+| `price` | **해소됨** | (c) 웨이브 — `_price_for` 가 틱 view 를 택한다(`egressgw/construction.py:986-996`) |
+| `order_shape` | **제거 가능**(레인 D 결선 후) | `OrderShapeFields` 7 필드 전부 원천화: `price`(c) · `quantity`·`silently_rounded`(레인 C, 이미 라이브) · `order_type`·`tif`·`side`·`position_effect`(레인 C, **결선 대기**) |
+| `action_class` | **리터럴 유지 — 고정 + 교차검사** | 컴포지션당 고정값. AFG `action_class_map` 에 없으면 부팅 거부(`_riskstate_wiring.py:130-133`) |
+| `instrument_class` | **리터럴 유지 — 교차검사됨** | VCP `_runtime.instrument_class` 와 불일치 시 부팅 거부(`_venue_wiring.py:141-144`). 사본 둘이지만 **부류는 이미 닫혀 있다** |
+| `outbound_side` | **리터럴 유지 — 커널이 고정** | 커널이 command 의 SIDE 축과 대조해 다르면 거부(`egressgw/gateway.py:1220`), **어느 쪽이든 부재해도 거부**(`:1215` — 건너뛰기가 아니라 거부 문자열 반환). SIDE 축은 레인 B 의 `authorized_axes` 에서 오므로, 정책이 side 를 바꾸면 이 리터럴은 **자동으로 red 가 된다** |
+| `price_field_key`·`shape_price_field_key` | **리터럴 유지** | 정책/틱 필드 키 지정 |
+
+**결론**: 웨이브가 끝나면 `ConstructionConfig` 에서 **제거되는 것은 `envelope` 과 `order_shape` 둘**이고,
+남는 리터럴은 전부 (i) 운영자 배포 스코프이거나 (ii) **이미 고정 장치가 있는** 값이다.
+레인 D 는 이 「이미 고정되어 있다」 주장 3건(`action_class`·`instrument_class`·`outbound_side`)을
+**뮤테이션으로 실증**할 것 — 리터럴을 정책과 어긋나게 바꿨을 때 실제로 부팅/attempt 가
+거부되는지. 주장만 있고 실증이 없으면 §4.1 의 죽은 코드와 같은 상태다.
+
+
+### 4.3 레인 D — `cli.py` 차단 목록 (팀리드 선실측)
+
+현행 문구는 `tos/runtime/src/tos_runtime/compose/cli.py:62-100`. (a′) 항의 **전제 자체가
+이번 웨이브로 반증됐다** — 다시 쓸 때 그 점을 적을 것:
+
+| 현행 문구 | 실측 |
+|---|---|
+| 「`envelope` (needs **IAP authoring**)」 | **틀렸다.** IAP 저작이 아니라 **OCP 가 공급자였다** — RFC-002 §9.1:553 이 OCP 거버넌스를 구성 규칙의 공급자로 이미 지명하고 있었고, 없던 것은 공급 **경로**였다. 레인 B 의 `build_construction_envelope` 이 그 경로다 |
+| 「`order_shape` (needs a strategy-carried shape)」 | **부분 반증.** 7 필드 중 `quantity`/`silently_rounded` 는 파생·관측으로, `side`/`position_effect`/`order_type`/`tif` 는 정책으로 해소. 전략이 실어야 하는 것은 남지 않았다 |
+| 「`intent_id`/`intent_version`/`envelope_id`/`command_id`/`generation` 리터럴」 | **해소.** 레인 B 가 전부 실사실에서 파생(`_envelope_wiring.py`) |
+
+**★ 목록이 두 벌이고 손으로 동기화한다.** `cli.py:62` 자신이 「§7 of the plan document is
+the other copy of this same list — keep both in sync」라고 적는다. 이것도
+[[registry-with-unpinned-satellite]] 부류다. 레인 D 는 **양쪽을 다 고치고**, 가능하면
+드리프트를 잡는 핀을 붙인다(최소한: 한쪽에만 고친 경우를 잡는 테스트).
+
+**정직하게 남길 것** — 해소했다고 쓰기 전에 실측으로 확인할 것:
+- `effect_dimensions` 채운 뒤에도 step 5 가 ADMIT 인가(제안표 §5: 필요조건이지 충분조건 아님)
+- 배포 인스턴스는 여전히 부팅하지 않는다(`admitted_quantity_bases`·`DIRECTION`·scope·digest 가 operator-fill)
+- (b′) 잔여는 그대로다
+
+
+### 4.4 `run` 의 실제 상태 (팀리드 실측 · 2026-09-16)
+
+차단 목록을 고치기 전에 **`run` 이 오늘 무엇을 하는지** 실측했다. 결과가 문언보다 강하다:
+
+```python
+# tos/runtime/src/tos_runtime/compose/cli.py:935
+if isinstance(args, Args):
+    return 0
+```
+
+**`run` 은 인자를 파싱하고, 아무것도 구성하지 않고, 0 을 돌려준다.** 「차단되어 있다」가
+아니라 **아직 배선되지 않았다**. 이 웨이브가 (a′) 를 해소해도 그 줄은 그대로다.
+
+#### 이 웨이브 이후 `ConstructionConfig` 의 남은 항
+
+레인 B 통합 트리에서 실측(§4.2 예측 검증):
+
+| 필드 | 상태 |
+|---|---|
+| `envelope` | **이미 죽은 필드** — `_wiring.py:535` 가 레인 B 의 `inputs.envelope` 을 쓴다. 아무도 `construction.envelope` 을 읽지 않는다 |
+| `order_shape` | `_wiring.py:553` 이 아직 넘긴다 — 레인 D 가 `construction_rules` 를 결선하면 7 필드 전부 원천화되어 죽는다 |
+| 나머지 7 | `account`·`instrument`·`action_class`·`instrument_class`·`outbound_side`·`price_field_key`·`shape_price_field_key` — **전부 스칼라** |
+
+즉 웨이브가 끝나면 `ConstructionConfig` 는 **스칼라 7개**만 남고, 그것들을 설정 파일에서
+읽는 로더 하나면 `run` 이 실제로 구성할 수 있다. 그 로더는 **이 웨이브 범위 밖**이며
+운영자 결정 사항이다(§6 ⑥).
+
+**레인 D 는 「(a′) 해소」라고 쓰되 「`run` 이 구동된다」고 쓰지 않는다.** 둘은 다른 문장이고,
+후자는 위 `return 0` 이 남아 있는 한 거짓이다.
+
+
+### 4.5 레인 D 인수 목록 (리뷰에서 나온 것)
+
+레인 A/B/C 리뷰가 레인 D 로 명시 이연한 항목. 계획 저자가 아니라 **리뷰어가 찾은 것**이므로
+레인 D 종료 조건에 포함한다.
+
+| 출처 | 항목 |
+|---|---|
+| 레인 C 리뷰 1·2차 (MEDIUM) | `construction_rules` 분기가 **프로덕션 도달 불가** — 결선 후 e2e + **attempt 수준** 뮤테이션으로 실증(§4.1) |
+| 레인 B 리뷰 (LOW) | `_wiring.py:561` `proof_generation=1` 이 **맨 리터럴로 잔존** — 레인 B 가 방금 고친 것과 **같은 결함 부류**(세대 펜싱이 상수 앞에서 무의미). 계획 §0 표가 정체성 5종만 열거해 레인 B 스코프 밖이었다. 파생하거나, 파생 불가면 **그 이유를 등재** |
+| 레인 B 리뷰 (확인 불가) | `proof_generation` 이 다운스트림에서 실제 소비·대조되는지 미확인(`ioc/records.py:378-403` 에 `_REQUIRED_COVERED` 등재만) — 레인 D 가 실측해 결론낼 것 |
+
+| PR #721 리뷰 (LOW) | `tests/compose/_symmetry_fixtures.py:213` — `mirrored_construction_config()` 가 `envelope=` 로 DIRECTION=SHORT/SIDE=SELL 축 바인딩을 주입하는데 **무효화돼 있다**(`build_construction_envelope` 이 `ConstructionConfig.envelope` 을 인자로 받지 않는다). 대칭 테스트는 green 이나 **그 이유가 주입 봉투가 아니라 살아 있는 별개 필드 `action_class`** 다. 레인 D 가 필드를 제거하면 이 죽은 설정이 **조용한 무효가 아니라 즉시 오류**가 된다 — 제거의 진짜 이득이 여기 있다 |
+
+### 4.7 ★ 「봉투 주입은 죽었다」의 동적 증거 (2026-09-16 실측)
+
+§4.2 에서 `ConstructionConfig.envelope` 이 죽은 필드라고 **정적으로** 판정했다. 병합 라운드가
+그것을 **동적으로** 증명했다 — 그 필드에 값을 넣던 테스트 3건이 값이 무시된다는 이유로
+깨졌고(`3 failed, 2288 passed`), 전수 조사에서 **네 번째 지점**(`_symmetry_fixtures.py:213`)이
+같은 상태로 발견됐다.
+
+이것이 레인 D 의 제거 작업을 단순한 정리가 아니라 **결함 방지**로 만든다:
+
+| | 필드가 남아 있을 때 | 필드를 제거한 뒤 |
+|---|---|---|
+| 테스트가 봉투를 커스터마이즈 | **조용히 무시** — green 인 채로 의도한 케이스를 시험하지 않음 | **즉시 오류** — 없는 인자 |
+
+「탐지 가능」과 「불가능」의 차이다. 레인 D 는 제거하면서 `_symmetry_fixtures.py` 의
+`mirrored_proposed_envelope()` 도 함께 정리하고, 정리 후에도 대칭 테스트가 **같은 이유로**
+통과하는지(= `action_class` 가 동인) 확인한다.
+
+### 4.6 정직 상태 — 파생됐으나 소비되지 않는 것 (§7 등재 대상)
+
+레인 B 리뷰 뮤테이션 6: `intent_id` 를 상수로 바꿔도 **2275 중 2건만 적색**. 즉 파생된
+정체성 값에 **의존해 행동이 바뀌는 소비자가 현재 없다.**
+
+**이것을 결함으로 처리하지 않는다.** 상수는 세대 펜싱을 사문화하므로 파생이 옳고,
+「파생됐으나 아직 소비자 없음」은 「상수」보다 엄격히 낫다. 인위적 소비자를 만들지 않는다.
+다만 **§7 에 이 상태를 그대로 적는다** — 「정체성을 파생한다」가 「정체성이 무언가를 막는다」를
+뜻하지 않는다. 리뷰어의 확인 불가도 함께 적는다: 단일 instrument 전제에서만 확인했고,
+다계정/다상품 배포에서 identity 충돌의 영향은 미관측이다.
+
+
+## 5. 종료 조건 · 뮤테이션 (초안)
+
+- 실증: (1) `ConstructionConfig.envelope` 주입 없이 부팅 — 봉투가 **OCP 에서** 구성됨 (2) e2e 에서 실 step-2 의 sizing 이 OCP 값과 일치(리터럴 아님) (3) **shape 수량 == 명령 수량**, 불일치를 심으면 거부 (4) `side`/`position_effect` 가 OCP `action_class_map` 에서 나옴 — 미러(NEW_SHORT) 동일 (5) `silently_rounded` 가 관측에서 나오고 관측 불가 시 `None` (6) 정체성 5종에 날조 리터럴 0(AST 핀) (7) OCP 세대 불일치 → 부팅 거부.
+- 뮤테이션: M1 수량 대조 제거 → (3) red · M2 `action_class_map` 무시하고 리터럴 복원 → (4) red · M3 `silently_rounded=False` 하드코딩 → (5) red · M4 정체성 리터럴 복원 → (6) red · M5 OCP 세대 검증 제거 → (7) red.
+- 게이트: firewall · size budget(**신규 예외 0**) · ruff/black/mypy · 런타임+커널 스위트 · **커널 diff 0**.
+
+## 6. 운영자 확인
+
+1. **OCP 세대 2 로의 이행** — 기계가 읽는 구성 규칙을 담으려면 `policy_generation: 2` + `canonical_digest` 재계산 + `safety_activation.yaml` `members:` 재기입이 필요하다(운영자 손작업). 값 자체(risk_budget·per_unit_risk·lot_size·min/max_quantity·max_notional)는 **승인된 적이 없다** — `SizingBound` 독스트링이 「VERIFICATION-PROFILE-002 키가 아니므로 P0-1 사안이 아니고, OCP 가 아직 아무것도 비준하지 않았다」고 명시. **제안표를 만들어 올릴지, 운영자가 직접 채울지** 결정 필요.
+2. ~~수량 경로가 커널 편집을 요구하는가~~ — **불요로 판명(저작 중 실측)**. `CanonicalBrokerCommand.axis_value(ConformanceAxis.QUANTITY)` 가 공개 접근자이고 `VenueConstraintStage` 가 shape 를 생성자로 받으므로 런타임만으로 된다. 운영자 조치 없음.
+3. **웨이브 분할** — `envelope`(레인 A·B)과 `order_shape`(레인 C)은 OCP 를 공유하지만 독립 착지가 가능하다. 한 웨이브로 갈지, 둘로 쪼갤지.
+4. 다음 순서(잔여): `run` 데몬화 → (c2) 실 시세 어댑터 → 브로커 증인(P-BAL)/band 원천 → 실 HSE 인스턴스 → 커널 라운드 #4.
+
+### 6.1 운영자 처분 기록 (2026-09-16, 웨이브 진행 중)
+
+| # | 항목 | 처분 | 근거·결과 |
+|---|---|---|---|
+| ④ | OCP `effect_dimensions` 가 비어 모든 attempt 가 step 5 에서 정지 | **제안표 저작 → 이 웨이브에서 해소** | `2026-09-16-tos-ocp-effect-dimensions-proposal.md`(`92a5d462`). 단일 차원 `INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL`/QUANTITY/CONTRACTS/1 — 전 필드 등급 A. notional 기각(승인 원천 부재 + price None 시 재차 UNKNOWN) |
+| ⑥ | `run` 이 실제 구성까지 가려면 `ConstructionConfig` 로더 필요(§4.4) | **레인 D 는 결선만 — 로더는 다음 웨이브** | 레인 D 범위 = `construction_rules` 결선 · 죽은 필드 제거 · 차단 문구(양쪽) · e2e. **「`run` 이 구동된다」고 쓰지 않는다** — `cli.py:935` 의 `return 0` 을 정직 등재. 로더는 배포 파일에 어떤 값을 넣을지(특히 `action_class`·`outbound_side`)가 새 운영자 결정이라 별도 |
+| ⑤ | DR-0002 §2.3 커버리지 표 미갱신(contract-keeper 판정 필요) | **새 DR 저작** | `DR-0004`(`115bf983`). §13 실측 = Atomic Activation Protocol 10단계 → 이번 웨이브는 §6 의 두 트리거 어느 것도 아니나, §2.3 행을 낡게 만든 것은 사실이므로 §6 이 정한 수단을 따름 |
+
+### 6.2 레인 자체 판단 — 팀리드 수용
+
+| 판단 | 레인 | 처분 |
+|---|---|---|
+| `DIRECTION` 을 배포 파일에 `"TBD"` 로 (한쪽을 고르지 않음) | A | **수용.** `scope.action_classes` 가 양방향을 승인하는데 파일을 한쪽으로 못박으면 운영자 승인 없이 대칭 승인을 좁힌다 — 비협상 규칙이 잡으려는 조용한 비대칭 |
+| SIDE 를 `axes:` 에 선언하지 않음 | A | **수용하되 파생으로 해소.** 별도 선언은 「두 수량」을 side 로 옮긴 것이나, 누락도 불가 — `gateway.py:1215` 가 command 의 SIDE 축 부재를 **거부**한다. 레인 B 가 `action_class_shape` 에서 파생 → `gateway.py:1220` 의 기존 검사가 `outbound_side` 리터럴의 실제 핀이 된다 |
+| 파생 수량을 fold 둘 다에 | C | **수용**(§4.1) |
+| 거버넌스 값을 지어내지 않고 보고 | A·B·C | **전건 수용.** 지어낸 값 0 |
+
+
+## 7. 착지 기록
+
+**차단 목록 — `cli.py:62-100`(§7 자신이 「the other copy of this same list」라 적는 그 쪽)와 이
+표는 손으로 동기화한다.** 드리프트 핀:
+`tos/runtime/tests/compose/test_cli.py::test_run_blocker_list_labels_match_between_cli_and_plan_section_7`
+— 두 문서의 `(a′)`/`(b′)`/`(c)` 레이블이 각각 RESOLVED 인지를 정규식으로 뽑아 대조한다.
+
+- (a′) **RESOLVED**(웨이브 전체 — 원천화 자체는 레인 A·B·C 의 것, 레인 D 는 그것을 실제로
+  연결·정리했다). `envelope`/`order_shape` 원천화 완료: 레인 A 가 만든 거버넌스 값 위에서
+  `_envelope_wiring.build_construction_envelope`(레인 B)가 로드된 OCP `construction_rules`
+  에서 봉투를 짓고, `_venue_wiring.VenueServiceStage`(레인 C)가 `OrderShapeFields` 7 필드
+  전부(price·quantity·silently_rounded·side·position_effect·order_type·tif)를 파생/정책에서
+  소싱한다. **레인 D 가 한 일**: 레인 C 가 만들어 둔 `construction_rules` 선택 인자를 아무도
+  넘기지 않아 프로덕션 도달 불가였던 것을 `_wiring.py` 결선으로 실제로 살렸고(§4.1) · 죽은
+  `ConstructionConfig.envelope`/`.order_shape` 필드를 제거했고 · `intent_id`/`intent_version`/
+  `envelope_id`/`command_id`/`generation`/`proof_generation` 리터럴을 전부 파생으로 바꿨고 ·
+  차단 목록 두 사본의 동기화 드리프트 핀을 추가했다. **「run 가동」과는 다른 문장**:
+  `cli.py:935` 의 `return 0` 은 그대로 남는다(`ConstructionConfig` 로더는 후속 웨이브, §6 ⑥).
+- (b′) 잔존 — 리스크 상태 서비스 자체가 이미 공시한 한계(단일 원천 포지션·계약 수 차원만).
+  운영자 결정 사항(§6 확인점 5), 이 웨이브 범위 밖.
+- (c) **RESOLVED**(틱 원천 웨이브에서 기해소) — 이 웨이브에서 변경 없음.
+
+**레인 D 실측**:
+
+- `ConstructionConfig` 는 스칼라 7개 + `price` 만 남는다(§4.2 표 확정 — `envelope`/`order_shape`
+  둘 다 제거). `_symmetry_fixtures.py` 의 죽은 주입 2건(`mirrored_proposed_envelope`/
+  `mirrored_order_shape`)도 함께 제거 — 대칭 테스트는 `action_class` 만으로 같은 이유로 통과함을
+  확인.
+- `_shape_side_and_position_effect` 를 `resolve_construction_direction` 경유로 교체 — 레인 B 가
+  이미 고친 「정책 `DIRECTION` 축을 무조건 읽는」 결함을 shape 경로에서도 닫았다(direction-named
+  클래스는 축과 무관하게 클래스 자신에서 방향을 얻는다). 유닛 테스트 1건(`NEW_LONG` → `CLOSE`)을
+  이 교정에 맞춰 정정 — 옛 버전은 「틀린 이유로」 통과하고 있었다.
+- `proof_generation=1` 리터럴 제거 → `inputs.identities.generation`(intent/envelope/command 와
+  동일 construction generation)으로 파생. 다운스트림 소비자는 미발견(`ioc/records.py:378-403` 는
+  `_REQUIRED_COVERED` 등재만) — 다만 Layer-1 covered content 라 canonical digest 에는 실제로
+  반영된다.
+- **뮤테이션(attempt 수준)**: `construction_rules=None` 으로 되돌리면 `TestVenueServiceE2E`/
+  `TestDerivedQuantityReachesVenueGate` 2건이 ADMIT→DENY 로 즉시 red — §4.1 이 죽은 코드라 판정한
+  경로가 이제 실제로 살아 있음을 attempt 수준에서 실증(수정 후 원복 확인).
+- **「이미 고정」주장 3건 실증**: `action_class`(기존 `test_riskstate_wiring.py:1079`) ·
+  `instrument_class`(신규 `test_instrument_class_mismatch_refuses_to_boot`) ·
+  `outbound_side`(커널 `test_a_forged_outbound_side_never_reaches_the_transport`/
+  `test_an_absent_outbound_side_is_a_stop`, `tos/tests/egressgw/test_egressgw_gateway.py`) —
+  전부 실제로 거부됨을 확인. 새로 만든 것은 `instrument_class` 하나뿐, 나머지 둘은 기존 커버리지
+  인용.
+- **게이트**: firewall PASS · lint-imports 3 kept/0 broken · ruff/black/mypy 클린 · 커널 diff 0
+  (`git diff origin/feat/tos-aprime..HEAD --stat -- tos/src` 공백) · 런타임 스위트
+  **2292 passed, 0 failed**(재측정 — 최종 트리, 2026-09-16). 기준 baseline **2291**(브랜치 팁
+  `73c101a3` 실측). 삭제 2 −
+  `TestDerivedQuantityReachesVenueGate.test_literal_derived_quantity_mismatch_no_longer_
+  passes_on_the_literal`(필드 제거로 구성 불가가 된 e2e) ·
+  `TestSilentlyRoundedIsNeverIntroduced.test_off_grid_price_still_denies_via_the_kernels_
+  own_tick_check`(동일 사유, 커널 테스트로 대체 인용) — 신규 3 +
+  `TestSourcedShapeIgnoresPolicyViolatingLiteralQuantity.test_policy_violating_literal_
+  quantity_never_reaches_the_judged_shape`(위 첫 삭제의 유닛 레벨 대체) ·
+  `TestVenueBootRefusals.test_instrument_class_mismatch_refuses_to_boot` ·
+  `test_run_blocker_list_labels_match_between_cli_and_plan_section_7`(드리프트 핀). 산식:
+  2291 − 2 + 3 = **2292**.
+- **크기 예산 — 신규 예외 0**: `_wiring.py` **1122행**(등재값과 동일) · `cli.py` **정확히
+  1000행**(헤드룸 0). 둘 다 `wc -l` 실측. *(이 항목의 이전 판은 `1122→1124(+2)` 라고 적었는데
+  **거짓이었다** — PR #722 리뷰가 `--stat` 순증 0 · `wc -l` base·HEAD 동일 · 검사기 자체 출력
+  전부로 반박했고, 「신규 import 1줄」은 `_venue_wiring.py` 와의 혼동이었다. 착지 기록의 오류를
+  착지 기록에 남긴다 — 이 절의 존재 이유가 정밀한 자기보고이므로 조용히 고치지 않는다.)*
+  중간 라운드에 실제로 +2 가 났으나 **재등재 대신 설계로 해소**했다: `VenueServiceStage` 가
+  7 필드를 전부 원천화하므로 호출자가 빈 `OrderShapeFields()` 를 만들 이유가 없어, 기본값을
+  스테이지 내부로 옮기자 import 와 인자가 함께 빠졌다.
+- **`run` 은 여전히 구동되지 않는다**: `cli.py:935` 가 `if isinstance(args, Args): return 0` —
+  파싱하고 아무것도 구성하지 않는다. `ConstructionConfig` 로더는 후속 웨이브(§6 ⑥). **(a′)
+  해소와 「`run` 가동」은 다른 문장**이며, 이 구분을 코드·계획·PR 세 곳에 명시했다.
+- **배포 인스턴스는 부팅하지 않는다 — 결정에 의해**: operator-fill leaf 5종이 각각 독립적으로
+  로드를 거부한다 — `scope.accounts` · `scope.instruments` · `admitted_quantity_bases`(전략
+  파일의 `quantity_basis` 확정 대기) · `authorized_axes` 의 `DIRECTION` 값(양방향을 승인하는
+  문서를 한쪽으로 못박지 않기 위해 레인 A 가 의도적으로 비움) · `canonical_digest`. 앞의 둘은
+  **이 웨이브 이전부터 그 상태**였다 — 새 블록이 아니라 같은 목록에 항목이 는 것이다.
+- **정체성은 파생되지만 소비자가 없다**(§4.6): PR #720 리뷰 뮤테이션이 `intent_id` 를 상수로
+  바꿔도 **2275 중 2건만** red 였다. 파생 정체성에 의존해 행동이 바뀌는 소비자가 현재 없다.
+  결함으로 처리하지 않는다 — 상수는 세대 펜싱을 사문화하므로 파생이 옳고, 「파생됐으나 아직
+  소비자 없음」은 「상수」보다 엄격히 낫다. **인위적 소비자를 만들지 않는다.** 다만 「정체성을
+  파생한다」가 「정체성이 무언가를 막는다」를 뜻하지 않음을 여기 적는다. 리뷰어 확인 불가도
+  함께: 단일 instrument 전제에서만 확인했고 다계정/다상품 배포의 영향은 미관측이다.
+- **거버넌스 산출물**: DR-0004(OCP `_runtime.construction` 커버리지 — DR-0002 §6 이 정한 수단)
+  · 제안표 2종(sizing `52d7aa14` · effect_dimensions `92a5d462`, 둘 다 운영자 채택). §13 실측
+  결과 이번 웨이브는 DR-0002 §6 의 두 트리거 어느 것도 아니나 §2.3 행을 낡게 만든 것은 사실이라
+  그 수단을 따랐다. **digest 는 `_runtime` 내용을 커버하지 않는다** — 같은 세대에서 구성 값을
+  바꿔도 tamper-check 는 통과한다(DR-0004 §4).

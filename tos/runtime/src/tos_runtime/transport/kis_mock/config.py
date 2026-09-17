@@ -42,16 +42,24 @@ module's own copy of :data:`~tos_runtime.transport.kis_mock.codec.KIS_ORDER_CASH
 ``test_config.py::test_a_fully_valued_config_loads`` is the drift canary) — a config missing or
 adding a field refuses to load, before this transport ever reaches the network.
 
-**``mode: live`` is unconditionally refused (review disposition F1/F6).** In production, the
-compose context resolver sets ``EgressRequestRecord.request_bytes_digest`` literally equal to
-``capsule_egress_request_digest`` (``tos_runtime/compose/context.py:368``), a documented
-STAND-IN (:mod:`tos_runtime.compose._egress_coordinates` module docstring), never a hash of real
-KIS wire bytes — so a live send's own digest check
-(:mod:`tos_runtime.transport.kis_mock.adapter`) would deterministically mismatch every attempt,
-today, regardless of how correct this transport is. Until T2 binds
-:class:`~tos_runtime.transport.kis_mock.codec.KisOrderWireCodec` into that resolver (closing the
-gap — see ``codec.py``'s own module docstring), this loader refuses ``mode: live`` outright,
-independent of every other field's validity.
+**``mode: live`` is refused unless the caller attests ``codec_bound=True`` (review disposition
+F1/F6, T2 lane A follow-up).** By DEFAULT, the compose context resolver binds
+``EgressRequestRecord.request_bytes_digest``/``SendBoundaryContext.capsule_egress_request_digest``
+to :class:`~tos_runtime.compose._request_digest.CapsuleStandInDigest` — a documented STAND-IN
+(:mod:`tos_runtime.compose._egress_coordinates` module docstring, :mod:`tos_runtime.compose.
+_request_digest` module docstring), never a hash of real KIS wire bytes — so a live send's own
+digest check (:mod:`tos_runtime.transport.kis_mock.adapter`) would deterministically mismatch
+every attempt under that default wiring, regardless of how correct this transport is. T2 lane A
+landed the seam that closes this gap (:class:`~tos_runtime.compose._request_digest.
+KisWireCodecDigest`, built over :meth:`~tos_runtime.transport.kis_mock.codec.KisOrderWireCodec.
+encode_fields` — see ``codec.py``'s own module docstring), but binding it into the DEFAULT
+compose wiring is a later lane's job (compose ``--transport kis-mock``). So this loader still
+refuses ``mode: live`` UNLESS the caller explicitly passes ``codec_bound=True`` to
+:func:`load_kis_mock_transport_config` — an attestation that the compose root the caller is
+about to run actually wired ``KisWireCodecDigest`` (never inferred, never a config-file field:
+the config file cannot see its own compose wiring, so this is a caller-supplied fact, exactly
+like ``instance_mock_rest_base``/``instance_real_rest_base`` below). The default,
+``codec_bound=False``, preserves T1's unconditional refusal exactly.
 
 Firewall: stdlib (``dataclasses``, ``pathlib``, ``re``, ``urllib.parse``) + ``pyyaml`` only — no
 ``tos``/``tos_runtime`` sibling import (this module has nothing to seal against yet; the seal
@@ -396,6 +404,7 @@ def load_kis_mock_transport_config(
     *,
     instance_mock_rest_base: str,
     instance_real_rest_base: str,
+    codec_bound: bool = False,
 ) -> KisMockTransportConfig:
     """Load + fail-closed-validate the KIS MOCK transport config from ``path``.
 
@@ -408,6 +417,11 @@ def load_kis_mock_transport_config(
         instance_real_rest_base: The INSTANCE REAL_PROD document's own ``rest_base`` — REQUIRED
             (review F3: a caller that cannot state this cannot honestly exclude it), and must
             differ from ``instance_mock_rest_base``.
+        codec_bound: The caller's own attestation that the compose root about to run this
+            config actually wired :class:`~tos_runtime.compose._request_digest.KisWireCodecDigest`
+            as its ``request_bytes_digest_source`` (T2 lane A — module docstring). ``False``
+            (the default) preserves the unconditional ``mode: live`` refusal; only an explicit
+            ``True`` admits ``mode: live`` past this check.
 
     Returns:
         The fully-valued config.
@@ -415,11 +429,11 @@ def load_kis_mock_transport_config(
     Raises:
         KisMockTransportConfigError: The file is missing/unreadable/not valid YAML/not a
             mapping, an entry is absent or still ``null`` (named-TBD), ``mode`` is ``"live"``
-            (unconditionally refused — module docstring), a TR id carries a real-order prefix
-            or does not match the mock TR id shape, ``endpoint_rest_base`` does not match the
-            MOCK instance (or matches the REAL one), ``instance_real_rest_base`` is ``None`` or
-            equals ``instance_mock_rest_base``, or ``field_map``/``static_body_fields`` name an
-            unrecognized source or do not cover exactly the nine KIS wire fields.
+            and ``codec_bound`` is not ``True`` (module docstring), a TR id carries a real-order
+            prefix or does not match the mock TR id shape, ``endpoint_rest_base`` does not match
+            the MOCK instance (or matches the REAL one), ``instance_real_rest_base`` is ``None``
+            or equals ``instance_mock_rest_base``, or ``field_map``/``static_body_fields`` name
+            an unrecognized source or do not cover exactly the nine KIS wire fields.
     """
     raw = _read_yaml_mapping(path)
 
@@ -428,10 +442,11 @@ def load_kis_mock_transport_config(
         raise KisMockTransportConfigError(
             f"{path}: mode={mode!r} must be one of {_VALID_MODES!r}"
         )
-    if mode == "live":
+    if mode == "live" and codec_bound is not True:
         raise KisMockTransportConfigError(
-            "live mode requires the T2 seal-codec binding (plan §4 T2); dry_run only "
-            "(review disposition F1/F6 — see this module's own docstring)"
+            "live mode requires the T2 seal-codec binding (plan §4 T2) — the compose root "
+            "must wire KisWireCodecDigest and pass codec_bound=True to attest it; dry_run "
+            "only otherwise (review disposition F1/F6 — see this module's own docstring)"
         )
 
     allow_plaintext_for_tests = _require_bool(raw, "allow_plaintext_for_tests", path)

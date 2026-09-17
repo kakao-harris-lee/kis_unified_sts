@@ -62,6 +62,7 @@ import json
 import sqlite3
 from collections.abc import Mapping
 from enum import StrEnum
+from typing import Any
 
 from tos.canonical import CanonicalizationScheme
 from tos.rcl import (
@@ -69,6 +70,8 @@ from tos.rcl import (
     AppendRefusalReason,
     CapacityReservationTransition,
     CapacityState,
+    CommandType,
+    CommitEntry,
     TransitionCause,
     duplicate_command,
     release_admissible,
@@ -86,6 +89,7 @@ __all__ = [
     "existing_command_row",
     "fold_reservations_from_entries",
     "reservation_lifecycle_refusal",
+    "row_to_commit_entry",
 ]
 
 #: The only capacity state a reservation-lifecycle transition may claim as its
@@ -385,3 +389,23 @@ def reservation_lifecycle_refusal(
             f"destination {to_state} requires finality_witness is True",
         )
     return None
+
+
+def row_to_commit_entry(row: tuple[Any, ...]) -> CommitEntry:
+    """Build a :class:`~tos.rcl.CommitEntry` from one ``entries`` row.
+
+    Shared by :meth:`~tos_runtime.rcl.log.SqliteCommitLog.replay` and
+    :meth:`~tos_runtime.rcl.log.SqliteCommitLog.read_linearizable` — moved here (a pure,
+    row-shape-to-model helper, no transaction/connection state) purely for ``log.py``'s own
+    1000-line module size budget (TOS Phase 5 W4, size-budget decomposition — no behavior
+    change).
+    """
+    seq, writer_epoch, command_id, command_digest, kind, payload_digest = row
+    return CommitEntry(
+        seq=seq,
+        writer_epoch=writer_epoch,
+        command_id=command_id,
+        command_digest=command_digest,
+        kind=CommandType(kind) if kind is not None else None,
+        payload_digest=payload_digest,
+    )

@@ -67,8 +67,13 @@ class FuturesMonitorDaemon:
         health_stale_seconds: float = 600.0,
         health_cooldown_seconds: float = 1800.0,
         digest_time_kst: str = "15:40",
+        contract_symbol: str | None = None,
     ) -> None:
         self.redis = redis
+        # The contract this process resolved and subscribed to. Only used to
+        # flag recovered positions on another (e.g. pre-roll) contract; None
+        # disables the check.
+        self.contract_symbol = contract_symbol
         self.feed = feed
         self.publisher = publisher
         self.alert_sink = alert_sink
@@ -178,6 +183,17 @@ class FuturesMonitorDaemon:
             if rec is None:
                 continue
             symbol = str(rec["symbol"])
+            if self.contract_symbol and symbol != self.contract_symbol:
+                # Warn only — the record is still recovered unchanged. A
+                # position left on a rolled-out contract gets no price
+                # updates here (the feed follows contract_symbol).
+                logger.warning(
+                    "recovered futures position %s is not on the current "
+                    "contract %s (likely opened before a front-month roll); "
+                    "it will not be marked to market",
+                    symbol,
+                    self.contract_symbol,
+                )
             entry_price = float(rec["entry_price"])
             self._open[symbol] = {
                 "symbol": symbol,

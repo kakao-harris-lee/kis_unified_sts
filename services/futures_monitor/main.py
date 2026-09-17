@@ -14,6 +14,7 @@ import os
 import socket
 
 from shared.config.runtime_defaults import redis_url_from_env
+from shared.streaming.trading_state import ensure_state_key_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +30,15 @@ def _streams_for(mode: str) -> tuple[str, str]:
 
 
 def _ensure_shadow_isolation(mode: str) -> None:
-    if mode == "shadow" and not os.environ.get("TRADING_STATE_KEY_SUFFIX", "").strip():
-        os.environ["TRADING_STATE_KEY_SUFFIX"] = "shadow"
-    if mode == "live" and os.environ.get("TRADING_STATE_KEY_SUFFIX", "").strip():
-        logger.warning("clearing TRADING_STATE_KEY_SUFFIX for live futures monitor")
-        os.environ["TRADING_STATE_KEY_SUFFIX"] = ""
+    """Bind the trading-state key suffix to *mode* (shared helper, same logic).
+
+    A thin module-local wrapper kept so this entrypoint and its existing tests
+    (tests/unit/futures_monitor/test_entrypoint.py) keep the historical name.
+    The behaviour lives in
+    :func:`shared.streaming.trading_state.ensure_state_key_suffix`;
+    ``services/risk_filter`` calls that helper directly (F-9 gap G3).
+    """
+    ensure_state_key_suffix(mode, label="futures monitor")
 
 
 async def _build_and_run() -> int:
@@ -59,7 +64,10 @@ async def _build_and_run() -> int:
         ContractSpecRegistry,
         resolve_contract_spec,
     )
-    from shared.execution.futures_instrument import resolve_futures_instrument_from_env
+    from shared.execution.futures_instrument import (
+        resolve_futures_instrument_from_env,
+        run_with_front_month_watch,
+    )
     from shared.models.stream_models import DEFAULT_FUTURES_TICK_STREAM
     from shared.notification.telegram import notifier_for_domain
     from shared.streaming.consumer_feed import StreamConsumerFeed
@@ -110,6 +118,7 @@ async def _build_and_run() -> int:
         health_stale_seconds=float(tg.get("health_stale_seconds", 600)),
         health_cooldown_seconds=float(tg.get("health_cooldown_seconds", 1800)),
         digest_time_kst=str(tg.get("digest_time_kst", "15:40")),
+        contract_symbol=symbol,
     )
 
     loop = asyncio.get_running_loop()
@@ -124,10 +133,11 @@ async def _build_and_run() -> int:
         os.environ.get("TRADING_STATE_KEY_SUFFIX", ""),
     )
     try:
-        await daemon.run()
+        return await run_with_front_month_watch(
+            daemon.run, daemon.stop, instrument, daemon_name="futures-monitor"
+        )
     finally:
         await redis_client.aclose()
-    return 0
 
 
 def main() -> int:

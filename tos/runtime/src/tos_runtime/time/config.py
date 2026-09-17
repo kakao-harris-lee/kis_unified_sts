@@ -61,6 +61,30 @@ _BOUND_KEYS: tuple[str, ...] = (
     # named-TBD with no prior approved value to cite; a Bounds-Approver
     # decision fills it in before any deployment relies on timeout injection.
     "MAX_send_result_wait_ms",
+    # TOS 틱 원천 웨이브, 레인 C (docs/plans/2026-09-16-tos-tick-source-plan.md
+    # §2 decision 6 / §6 운영자 확인 ②): tos_runtime.marketfeed.time_projection
+    # .RuntimeTimeProjection binds TimeAdmissionInputs.maximum_consumer_age_ms
+    # to this key — the same VER-002-KEYS name tos.backtest.resolver
+    # .BarTimeProjection already documents for the identical field
+    # (resolver.py:59-61, ADR-002-018 §14). Verbatim reuse of an ALREADY
+    # APPROVED key — the same path MAX_clock_domain_conversion_uncertainty_ms
+    # above took: VERIFICATION-PROFILE-002.yaml:1067 carries this exact key
+    # name at value 1000 ("APPROVE per consumer and dependency scope;
+    # consumer-local receipt age is distinct from issuer-side production and
+    # snapshot age" -- [APPROVED 2026-07-29 operator (Bounds-Approver)]).
+    # Registering it here does not itself approve a Phase 2 value (this
+    # file's own null=named-TBD discipline).
+    "MAX_critical_input_consumer_receipt_age_ms",
+    # TOS 틱 원천 웨이브, 레인 C (same plan, §2 decision 6 / §6 운영자 확인 ②):
+    # one of the four terms tos.backtest.resolver.BarTimeProjection's own
+    # docstring names for its composite-membership ``delay_bounds`` bind
+    # (resolver.py:63-70) and that RuntimeTimeProjection reuses identically.
+    # Also verbatim reuse of an ALREADY APPROVED key:
+    # VERIFICATION-PROFILE-002.yaml:1077 carries this exact key name at
+    # value 50 ("APPROVE per reference-source class; an unknown or unbounded
+    # source sequence gap denies TRUSTED time" -- [APPROVED 2026-07-29
+    # operator (Bounds-Approver)]).
+    "MAX_time_source_sequence_gap_ms",
 )
 
 #: Non-bound identity/version strings the service needs to issue a
@@ -104,6 +128,10 @@ _BOUND_FIELD_BY_KEY: dict[str, str] = {
         "max_clock_domain_conversion_uncertainty_ms"
     ),
     "MAX_send_result_wait_ms": "max_send_result_wait_ms",
+    "MAX_critical_input_consumer_receipt_age_ms": (
+        "max_critical_input_consumer_receipt_age_ms"
+    ),
+    "MAX_time_source_sequence_gap_ms": "max_time_source_sequence_gap_ms",
 }
 
 
@@ -125,6 +153,8 @@ class TrustworthyTimeConfig:
     min_time_independent_reference_count: int
     max_clock_domain_conversion_uncertainty_ms: int
     max_send_result_wait_ms: int
+    max_critical_input_consumer_receipt_age_ms: int
+    max_time_source_sequence_gap_ms: int
     tz_db_version: str
     trading_calendar_version: str
     verification_profile_version: str

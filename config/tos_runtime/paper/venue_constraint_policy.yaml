@@ -1,0 +1,137 @@
+# =============================================================================
+# Venue Constraint Policy — paper / KRX index futures (KOSPI200)
+# =============================================================================
+# INSTANCE of tos-spec/src/part-1-foundation/verification/VENUE-CONSTRAINT-POLICY-template.yaml
+# (placement + activation per tos-spec/src/decision-records/DR-0002 §2.1/§2.2).
+#
+# APPROVAL PROVENANCE (config/tos_runtime/README.md rule — a value without a
+# citation does not belong here):
+#   * values: docs/plans/2026-09-15-tos-venue-constraint-service-plan.md §6 ②
+#     proposal table, adopted by the operator on 2026-09-16 (「추천 방향으로 모두 선택」).
+#   * tick_size 5 = 0.05 index points at the ×100 integer price scale
+#     (config/execution.yaml:286 `tick_size_points: 0.02`/`0.05` — a LOCAL
+#     setting, grade C; broker-side tick validation was observed in P0-2,
+#     docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:853-868,
+#     but no broker QUERY of the tick exists).
+#   * lot_size / min_quantity 1 = one contract (official contract unit, grade B).
+#   * price_min / price_max / max_quantity: NO SOURCE (P0-2
+#     `price_band_tick_lot_and_quantity_semantics: UNKNOWN`) → null. With
+#     this file NOTHING is transmitted: the null max_quantity makes the
+#     venue quantity constraint incomplete, so step 2 (candidate command
+#     construction) DENIES before step 3; and the null band makes the
+#     kernel's order_shape_admissible UNKNOWN regardless. Both are the
+#     intended fail-closed state until a governed band/limit source lands
+#     (plan §5 정직 상태 / §6 ⑤; pinned by
+#     tos/runtime/tests/compose/test_deploy_policies.py). Never fill by hand.
+#   * admitting session phase = the ONE token config/tos_runtime/paper/
+#     calendar.yaml declares for krx-index-futures (`CONTINUOUS`, 08:45-15:45
+#     KST); `CLOSED`/`EXPIRED` admit nothing.
+#
+# OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"):
+#   1. scope.accounts  — the paper account number (never committed here).
+#   2. scope.instruments — the CURRENT front-month contract code (ADR-002-019
+#      §11 binds the contract month; a roll is a NEW policy generation).
+#   3. run `tos-runtime print-policy-digests --config-dir <dir>` and copy the
+#      printed digest into safety_activation.yaml `members:` (kind
+#      VENUE_CONSTRAINT_POLICY, member_id, generation, digest, resolved: true,
+#      immutable: true). canonical_digest below may stay TBD (derived) or be
+#      set to that exact value.
+#
+# The rule-list keys below are template DATA (preserved, never interpreted by
+# the runtime — DR-0002 §2.1); the runtime reads kernel-typed content from
+# `_model_view` and runtime-only facts from `_runtime`.
+# =============================================================================
+
+artifact_type: VENUE_CONSTRAINT_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: "vcp-paper-krx-index-futures"
+policy_generation: 1
+canonical_digest: TBD
+status: ISSUED
+approved_by: ["operator (System Owner) — 2026-09-16, plan §6 ② 채택"]
+effective_from: "2026-09-16"
+review_due: null
+scope:
+  environments: ["paper"]
+  safety_cells: []
+  brokers: ["KIS_KOREA_INVESTMENT_SECURITIES"]
+  accounts: ["TBD"]
+  venues: ["KRX"]
+  market_segments: ["KRX_DERIVATIVES"]
+  instruments: ["TBD"]
+  contracts: []
+  action_classes: ["NEW_LONG", "NEW_SHORT", "CLOSE"]
+approved_sources:
+  - "session phase: config/tos_runtime/paper/calendar.yaml (baseline expectation) read through TrustedWallClockReference (ADR-002-019 §9 — a calendar alone is not admissibility proof; the kernel folds the token)"
+  - "tick/lot: local setting config/execution.yaml:286 (grade C) — no broker query source"
+  - "price band / max quantity: NO SOURCE (P0-2 UNKNOWN) — null"
+source_continuity_rules:
+  - "no source-continuity identity exists in the runtime yet → snapshot.source_continuity_id is None (evidenced as absent)"
+session_phase_state_machines:
+  - "krx-index-futures: CONTINUOUS 08:45-15:45 KST MON-FRI; CLOSED otherwise; EXPIRED from the 2nd Thursday of MAR/JUN/SEP/DEC (class-level, plan §5 이월)"
+halt_suspension_and_tradability_rules:
+  - "no halt/suspension source → action_tradability map is empty (not consumed by the Phase-1 fold)"
+instrument_and_contract_rules:
+  - "one contract per policy generation; contract month/expiration are not bound in the decision route fields (None)"
+price_band_tick_and_lot_rules:
+  - "tick_size 5 (= 0.05 pt at ×100 scale); lot 1; band null (no source)"
+quantity_notional_and_rounding_rules:
+  - "no permissive rounding — a silently rounded shape is INADMISSIBLE (kernel order_shape_admissible)"
+order_type_time_in_force_and_routing_rules:
+  - "LIMIT / DAY only (INSTANCE draft order_type: LIMIT; TIF DAY mapping is the OCP's)"
+account_permission_rules: []
+margin_collateral_and_buying_power_rules: []
+borrow_locate_and_short_sale_rules: []
+settlement_currency_and_expiration_rules:
+  - "currency KRW"
+broker_capability_requirements:
+  - "Broker Capability Profile INSTANCE is DRAFT → decision.broker_capability_profile_digest is None (ceiling, never promoted)"
+corroboration_and_independence_rules: []
+dependency_and_invalidation_rules:
+  - "constraint_generation advances on every snapshot re-issue (phase change); durable across restarts via evidence row count"
+conservative_failure_responses:
+  - "any null bound → UNKNOWN; unenumerated action → INADMISSIBLE; token outside the calendar → boot refusal"
+protective_only_restrictions: []
+residual_risks:
+  - "price band unsourced: admissibility is UNKNOWN for every attempt until a band source exists (intended fail-closed)"
+authority:
+  grants_approval: false
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+evidence:
+  activation_record_id: TBD
+  independent_review_id: "PR #694 / #699 independent review (sonnet) — see plan §7"
+  evidence_location: "evidence store rows VENUE_POLICY_BOUND / VENUE_SNAPSHOT_ISSUED / ORDER_ADMISSIBILITY_DECISION_ISSUED"
+_model_view:
+  admitting_phase_rules:
+    - action: "NEW_LONG"
+      admitting_phases: ["CONTINUOUS"]
+    - action: "NEW_SHORT"
+      admitting_phases: ["CONTINUOUS"]
+    - action: "CLOSE"
+      admitting_phases: ["CONTINUOUS"]
+  required_constraint_classes: ["SESSION_PHASE", "PRICE_TICK_LOT_QUANTITY", "ORDER_TYPE_TIF"]
+  shape_constraints:
+    price_min: null
+    price_max: null
+    tick_size: 5
+    lot_size: 1
+    min_quantity: 1
+    max_quantity: null
+    allowed_order_types: ["LIMIT"]
+    allowed_tifs: ["DAY"]
+    allowed_sides: ["BUY", "SELL"]
+    allowed_position_effects: ["OPEN", "CLOSE"]
+  dependency_closure:
+    edges: []
+_runtime:
+  instrument_class: "krx-index-futures"
+  quantity_unit: "CONTRACTS"
+  currency: "KRW"

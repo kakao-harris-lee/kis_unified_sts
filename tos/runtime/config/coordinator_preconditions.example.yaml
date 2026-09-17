@@ -24,3 +24,30 @@
 # value here is the same named-TBD refusal every other tos_runtime.*.config
 # loader in this codebase uses.
 live_authorization_state: null
+
+# nonlive_broker_consuming.admitted: the T2 lane B non-live broker-consuming
+# admission posture (TOS KIS MOCK transport plan §2 decision 7 / §7 operator
+# disposition row 1, docs/plans/2026-09-10-tos-kis-mock-transport-plan.md).
+# This is a SEPARATE governance fact from live_authorization_state above —
+# it gates only the SECOND question tos_runtime.compose._preconditions
+# .RuntimeCoordinatorPreconditions.live_scope_authorized now asks for a
+# broker-reaching transport (a non-broker-reaching transport never reaches
+# this posture at all, gate ② already admits it).
+#
+# `admitted: true` is NOT, by itself, enough to admit anything — it is one
+# of five required conditions
+# (tos_runtime.compose._nonlive_admission.nonlive_broker_consuming_admitted's
+# own module docstring). In particular condition 3 requires EVERY one of the
+# active scope's own capability tuples to carry authorization_class in
+# {MOCK_ORDER, NON_AUTHORIZING_READ} AND environment BROKER_SIMULATION — a
+# REAL-shaped scope (any BROKER_PRODUCTION tuple, or a REAL_ORDER
+# authorization_class) fails that condition regardless of what this posture
+# says, so no value of this flag can ever admit a real order (CLAUDE.md
+# non-negotiable: the real futures account is never funded with margin;
+# real-money futures order paths are permanently policy-blocked).
+#
+# A null value here is the same named-TBD refusal every other
+# tos_runtime.*.config loader in this codebase uses — this posture is an
+# explicit operator act, never a silently-trusted default.
+nonlive_broker_consuming:
+  admitted: null

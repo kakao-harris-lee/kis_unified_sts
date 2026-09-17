@@ -169,6 +169,32 @@ def test_an_unrecognized_dynamic_source_refuses() -> None:
         )
 
 
+def test_encode_delegates_to_encode_fields_with_the_seals_own_four_values() -> None:
+    """(T2 lane A) ``encode(seal, ...)`` must equal ``encode_fields`` called directly with the
+    SAME four values a resolver reads before a seal exists — pinning that ``encode`` is a thin
+    wrapper, never a diverging second implementation."""
+    seal = build_seal(
+        field_map=FIELD_MAP,
+        static_body_fields=STATIC_FIELDS,
+        account="12345678",
+        instrument="005930",
+        quantity=Decimal("10"),
+        price=Decimal("70000"),
+    )
+    via_encode = KisOrderWireCodec.encode(
+        seal, field_map=FIELD_MAP, static_body_fields=STATIC_FIELDS
+    )
+    via_encode_fields = KisOrderWireCodec.encode_fields(
+        account=seal.account,
+        instrument=seal.instrument_key.instrument,
+        quantity=seal.outbound_quantity,
+        price=seal.outbound_price,
+        field_map=FIELD_MAP,
+        static_body_fields=STATIC_FIELDS,
+    )
+    assert via_encode == via_encode_fields
+
+
 def test_quantity_and_price_are_plain_decimal_strings_never_scientific_notation() -> (
     None
 ):

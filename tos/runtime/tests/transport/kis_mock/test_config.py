@@ -148,16 +148,37 @@ def test_mode_outside_the_two_valid_values_refuses(tmp_path: Path) -> None:
         _load(path)
 
 
-def test_mode_live_always_refuses(tmp_path: Path) -> None:
-    """(review F1/F6) ``live`` is unconditionally refused until T2 binds
-    ``KisOrderWireCodec`` into the compose context resolver's ``capsule_egress_request_digest``
-    — see ``codec.py``'s own module docstring for exactly why a real send would otherwise
-    always hit a digest mismatch today."""
+def test_mode_live_refuses_by_default(tmp_path: Path) -> None:
+    """(review F1/F6, T2 lane A) ``live`` is refused by default (``codec_bound`` defaults to
+    ``False``) — see ``codec.py``'s and this module's own docstrings for exactly why a real
+    send would otherwise hit a digest mismatch under the DEFAULT (non-codec-bound) compose
+    wiring."""
     raw = _valid_raw()
     raw["mode"] = "live"
     path = _write(tmp_path, raw)
     with pytest.raises(KisMockTransportConfigError, match="seal-codec binding"):
         _load(path)
+
+
+def test_mode_live_refuses_with_codec_bound_explicitly_false(tmp_path: Path) -> None:
+    """(T2 lane A) An explicit ``codec_bound=False`` refuses exactly like the default — the
+    attestation must be a positive ``True``, never inferred."""
+    raw = _valid_raw()
+    raw["mode"] = "live"
+    path = _write(tmp_path, raw)
+    with pytest.raises(KisMockTransportConfigError, match="seal-codec binding"):
+        _load(path, codec_bound=False)
+
+
+def test_mode_live_loads_when_codec_bound_is_true(tmp_path: Path) -> None:
+    """(T2 lane A) ``live`` is admitted once the caller attests ``codec_bound=True`` — the
+    compose root's own claim that it wired ``KisWireCodecDigest`` (never inferred by this
+    loader, which has no visibility into compose wiring)."""
+    raw = _valid_raw()
+    raw["mode"] = "live"
+    path = _write(tmp_path, raw)
+    config = _load(path, codec_bound=True)
+    assert config.mode == "live"
 
 
 def test_endpoint_not_matching_the_mock_instance_refuses(tmp_path: Path) -> None:

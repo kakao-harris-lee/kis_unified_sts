@@ -11,11 +11,27 @@ crash-window technique — never a real OS-level crash), then rebuilds the runti
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
+from tos.engine import NullEvidenceSink
 from tos.engine.records import event_identity
 from tos.engine.vocabulary import HaltReason
 from tos.sbr.vocabulary import ReadinessVerdict
+from tos_runtime.compose._preconditions import _ReplayPreconditions
 from tos_runtime.compose._types import RecoveryBarrierHeld
+from tos_runtime.engine.replay_stage import EventCorrelatingCore, RecordedStage
+from tos_runtime.engine.replay_transmit import RecordedTransmit, any_recorded_hand_off
+from tos_runtime.evidence.store import EvidenceCorruption
+from tos_runtime.operations.backup_set import (
+    BackupSetRefused,
+    DurableSetPaths,
+    RestoreRefused,
+    backup_set,
+    restore_drill,
+    restore_set,
+)
+from tos_runtime.operations.schema_ledger import SchemaVersionRefused
 
 from .conftest import SCHEME, _compose, _reach_trusted, fx, write_approval_file
 
@@ -531,3 +547,239 @@ def test_reconciliation_runs_the_real_service_but_cannot_clear_an_unmatched_atte
     _assert_held(
         runtime2, expected_event_ids={event_id}, reason_fragment="possibly-live"
     )
+
+
+# -- TOS Phase 5 W4 (plan §2 decisions 1-2): durable-set backup/restore/restore-drill -----------
+
+
+def _restore_drill_helpers(tmp_path, config_dir, custody_root):
+    """Build the ``(compose, build_core)`` pair :func:`~tos_runtime.operations.backup_set
+    .restore_drill` needs for a REAL recompose.
+
+    ``build_core`` mirrors ``tos_runtime.compose._engine_wiring``'s own private
+    ``_replay_core_factory`` exactly (a single shared :class:`RecordedStage` for every injected
+    step, :class:`RecordedTransmit` iff a hand-off was ever recorded, wrapped in
+    :class:`EventCorrelatingCore`) — there is no PUBLIC accessor for a composed runtime's own
+    ``registry``/``configuration``/``stages``, so this reaches into ``runtime.core``'s private
+    attributes the same way that module's own factory closes over them at compose time. A mutable
+    box carries the just-composed runtime from ``compose`` (called first, inside
+    ``restore_drill``) to ``build_core`` (called second, by ``replay_engine``).
+    """
+    from tos.engine import EngineCore
+
+    box: dict[str, object] = {}
+
+    def _compose_callable(data_dir, environment_label):
+        del environment_label  # `_compose` always composes under "non-live-test"; restore_drill
+        # itself already refused any live label before ever calling this.
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        box["runtime"] = runtime
+        return runtime
+
+    def _build_core():
+        runtime = box["runtime"]
+        evidence_store = runtime.evidence_store
+        recorded_stage = RecordedStage(evidence_store)
+        core = EngineCore(
+            registry=runtime.registry,
+            stages=dict.fromkeys(runtime.core._stages.keys(), recorded_stage),
+            configuration=runtime.core._configuration,
+            preconditions=_ReplayPreconditions(),
+            transmit=(
+                RecordedTransmit(evidence_store)
+                if any_recorded_hand_off(evidence_store)
+                else None
+            ),
+            sink=NullEvidenceSink(),
+            scheme=SCHEME,
+        )
+        return EventCorrelatingCore(
+            core=core, recorded_stage=recorded_stage, scheme=SCHEME
+        )
+
+    return _compose_callable, _build_core
+
+
+def _drive_one_clean_event(runtime) -> str:
+    """Run one event through ``runtime`` and return the readiness verdict string at that point —
+    the common setup every restore-drill test below shares."""
+    _reach_trusted(runtime)
+    event = fx.crossing_event(seq=1)
+    runtime.run_once((event,))
+    assert runtime.recovery is not None
+    return runtime.recovery.readiness_verdict.value
+
+
+def _backup_after_clean_shutdown(
+    runtime, data_dir, backups_dir, *, generation: int, readiness_at_backup: str
+):
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+    runtime.inbox.close()
+    paths = DurableSetPaths.from_data_dir(data_dir)
+    return backup_set(
+        paths,
+        backups_dir,
+        generation=generation,
+        readiness_verdict_at_backup=readiness_at_backup,
+    )
+
+
+def test_restore_drill_passes_after_a_clean_backup_and_restore(
+    tmp_path, config_dir, data_dir, custody_root
+) -> None:
+    runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+    readiness_at_backup = _drive_one_clean_event(runtime)
+    backups_dir = tmp_path / "backups"
+    _backup_after_clean_shutdown(
+        runtime,
+        data_dir,
+        backups_dir,
+        generation=1,
+        readiness_at_backup=readiness_at_backup,
+    )
+
+    restored = restore_set(
+        backups_dir / "gen1.set.manifest.json",
+        tmp_path / "restored",
+        key_provider=runtime.key_provider,
+    )
+
+    compose_callable, build_core = _restore_drill_helpers(
+        tmp_path, config_dir, custody_root
+    )
+    verdict = restore_drill(
+        restored,
+        compose=compose_callable,
+        build_core=build_core,
+        scheme=SCHEME,
+        environment_label="non-live-test",
+    )
+
+    assert verdict.result == "PASSED"
+    assert verdict.mismatched_fields == ()
+    assert verdict.total_compared == verdict.expected_event_consumed_count
+
+    # (c) durably recorded into the RESTORED store, not the live one.
+    restored_conn = sqlite3.connect(str(restored.paths.evidence))
+    rows = restored_conn.execute(
+        "SELECT kind FROM entries WHERE kind = 'RESTORE_DRILL_VERDICT'"
+    ).fetchall()
+    assert len(rows) == 1
+    restored_conn.close()
+
+
+def test_restore_drill_refuses_a_live_environment_label(
+    tmp_path, config_dir, data_dir, custody_root
+) -> None:
+    runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+    readiness_at_backup = _drive_one_clean_event(runtime)
+    backups_dir = tmp_path / "backups"
+    _backup_after_clean_shutdown(
+        runtime,
+        data_dir,
+        backups_dir,
+        generation=1,
+        readiness_at_backup=readiness_at_backup,
+    )
+    restored = restore_set(
+        backups_dir / "gen1.set.manifest.json",
+        tmp_path / "restored",
+        key_provider=runtime.key_provider,
+    )
+    compose_callable, build_core = _restore_drill_helpers(
+        tmp_path, config_dir, custody_root
+    )
+    for live_label in ("paper", "restricted-live", "production"):
+        with pytest.raises(RestoreRefused, match="live label"):
+            restore_drill(
+                restored,
+                compose=compose_callable,
+                build_core=build_core,
+                scheme=SCHEME,
+                environment_label=live_label,
+            )
+
+
+def test_restore_set_refuses_a_mutated_restored_file(
+    tmp_path, config_dir, data_dir, custody_root
+) -> None:
+    """(M1) One byte flipped in a restored file refuses at restore_set — restore_drill never even
+    runs against tampered content."""
+    runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+    readiness_at_backup = _drive_one_clean_event(runtime)
+    backups_dir = tmp_path / "backups"
+    _backup_after_clean_shutdown(
+        runtime,
+        data_dir,
+        backups_dir,
+        generation=1,
+        readiness_at_backup=readiness_at_backup,
+    )
+
+    backup_evidence_path = backups_dir / "gen1" / "evidence.sqlite3"
+    raw = bytearray(backup_evidence_path.read_bytes())
+    raw[-1] ^= 0xFF
+    backup_evidence_path.write_bytes(bytes(raw))
+
+    with pytest.raises((RestoreRefused, EvidenceCorruption)):
+        restore_set(
+            backups_dir / "gen1.set.manifest.json",
+            tmp_path / "restored",
+            key_provider=runtime.key_provider,
+        )
+
+
+def test_backup_set_generation_must_strictly_increase(
+    tmp_path, config_dir, data_dir, custody_root
+) -> None:
+    runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+    readiness_at_backup = _drive_one_clean_event(runtime)
+    backups_dir = tmp_path / "backups"
+    _backup_after_clean_shutdown(
+        runtime,
+        data_dir,
+        backups_dir,
+        generation=3,
+        readiness_at_backup=readiness_at_backup,
+    )
+
+    paths = DurableSetPaths.from_data_dir(data_dir)
+    with pytest.raises(BackupSetRefused, match="strictly greater"):
+        backup_set(paths, backups_dir, generation=3)
+    with pytest.raises(BackupSetRefused, match="strictly greater"):
+        backup_set(paths, backups_dir, generation=1)
+
+
+def test_a_lowered_user_version_on_a_restored_file_refuses_at_open(
+    tmp_path, config_dir, data_dir, custody_root
+) -> None:
+    """A schema-ledger regression check on a RESTORED file specifically: lowering
+    ``user_version`` on the restored evidence store must refuse the very next open, exactly like
+    it would on a live file (``tos_runtime.operations.schema_ledger.SchemaVersionRefused``).
+    """
+    runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+    readiness_at_backup = _drive_one_clean_event(runtime)
+    backups_dir = tmp_path / "backups"
+    _backup_after_clean_shutdown(
+        runtime,
+        data_dir,
+        backups_dir,
+        generation=1,
+        readiness_at_backup=readiness_at_backup,
+    )
+
+    restored = restore_set(
+        backups_dir / "gen1.set.manifest.json",
+        tmp_path / "restored",
+        key_provider=runtime.key_provider,
+    )
+
+    conn = sqlite3.connect(str(restored.paths.evidence))
+    conn.execute("PRAGMA user_version = 0")
+    conn.close()
+
+    from tos_runtime.evidence.store import SqliteEvidenceStore
+
+    with pytest.raises(SchemaVersionRefused, match="BEHIND"):
+        SqliteEvidenceStore(restored.paths.evidence, key_provider=runtime.key_provider)

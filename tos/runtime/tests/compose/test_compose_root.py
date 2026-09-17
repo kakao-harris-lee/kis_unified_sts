@@ -12,11 +12,13 @@ from pathlib import Path
 
 import pytest
 import yaml
-from tos.engine.vocabulary import StageAuthorityClass
+from tos.engine.vocabulary import CommitmentStep, StageAuthorityClass
+from tos_runtime.calendar.ports import FixedWallClockReference, WallClockReference
 from tos_runtime.compose._pending_dimensions import (
     load_pending_currentness_dimensions,
     stamp_pending_dimensions,
 )
+from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.compose.root import (
     ReleaseAdmissionRefused,
     compose_paper_runtime,
@@ -181,6 +183,8 @@ def _compose(
     custody_root: Path,
     *,
     monotonic_source: object | None = None,
+    transport_kind: TransportKind = TransportKind.SYNTHETIC,
+    wall_clock: WallClockReference | None = None,
 ):
     """Composes via the FILE strategy source (TOS Phase 3 슬라이스 D-R
     ``[D-R-2]``) — writes the band-reversion strategy into
@@ -189,7 +193,22 @@ def _compose(
     production path ``tos_runtime.strategy.resolve.resolve_strategy_registry``
     wires. ``registry=fx.registry_with_band_strategy()[0]`` moved to
     :func:`test_both_a_strategies_directory_and_an_injected_registry_refuses`,
-    the ONE remaining both-present-refusal test (brief item 4)."""
+    the ONE remaining both-present-refusal test (brief item 4).
+
+    ``transport_kind`` (T2 lane C) defaults to ``synthetic`` — every existing
+    e2e test's active scope is SYNTHETIC (``reaches_broker=False``), which
+    :func:`~tos_runtime.compose._transport_wiring.refuse_transport_scope_mismatch`
+    requires to pair with ``synthetic``.
+
+    ``wall_clock`` (TOS Phase 5 W5 plan §2 decision 2) defaults to a
+    :class:`~tos_runtime.calendar.ports.FixedWallClockReference` at
+    :data:`~._fixtures.DEFAULT_WALL_CLOCK_UNIX_MS` — NOT the production-honest
+    ``AbsentWallClockReference`` default ``compose_paper_runtime`` itself uses,
+    because dozens of existing happy-path e2e tests in this suite need step 3
+    ADMISSIBLE / item 12 SATISFIED to reach the transport at all. A test that
+    wants to exercise the absent/holiday/mismatch paths passes its own
+    ``wall_clock`` (or a ``config_dir`` with its own ``calendar.yaml``) — see
+    ``tests/compose/test_session_wiring.py``."""
     fx.write_band_strategy_file(config_dir)
     return compose_paper_runtime(
         config_dir,
@@ -200,6 +219,12 @@ def _compose(
         aggregate_risk_inputs_provider=_aggregate_inputs,
         action_flow_inputs_provider=_action_flow_inputs,
         monotonic_source=monotonic_source,
+        transport_kind=transport_kind,
+        wall_clock=(
+            wall_clock
+            if wall_clock is not None
+            else FixedWallClockReference(fx.DEFAULT_WALL_CLOCK_UNIX_MS)
+        ),
     )
 
 
@@ -209,6 +234,67 @@ def _reach_trusted(runtime) -> None:
     admission check has a real currentness fact — this just asserts that
     held."""
     assert runtime.time_service.health_state.value == "TRUSTED"
+
+
+def _write_rearm_approval(
+    custody_root: Path,
+    latched_evidence_seq: int,
+    *,
+    environment_label: str = "non-live-test",
+    approvals: list[dict[str, str]] | None = None,
+    mode: int = 0o600,
+) -> Path:
+    """Write one ``approvals/rearm/<latched_evidence_seq>.yaml`` two-person
+    decision file (:mod:`tos_runtime.safety.rearm` module docstring) — the
+    TOS Phase 5 W3 replacement for the old free-text ``operator_attestation``
+    string this suite used to pass directly to ``clear_new_risk_halt``.
+    Defaults to a genuinely satisfying two-distinct-principal ``APPROVE`` pair.
+
+    Also writes a matching ``approvals/rearm/roster.yaml`` (independent-review
+    HIGH-3 disposition: the effective-principal graph is loaded from an
+    operator-authored roster, never a constant identity graph — see
+    :mod:`tos_runtime.safety.rearm`'s own module docstring), derived from
+    ``approvals`` — two genuinely distinct, unconnected principals, exactly
+    what this suite's happy-path re-arm scenarios need.
+    """
+    import os
+
+    if approvals is None:
+        approvals = [
+            {"principal_id": "alice", "decision": "APPROVE"},
+            {"principal_id": "bob", "decision": "APPROVE"},
+        ]
+    roster_path = custody_root / "approvals" / "rearm" / "roster.yaml"
+    roster_path.parent.mkdir(parents=True, exist_ok=True)
+    roster_path.write_text(
+        yaml.safe_dump(
+            {
+                "environment_label": environment_label,
+                "principals": [
+                    {"id": entry["principal_id"]}
+                    for entry in sorted(approvals, key=lambda e: e["principal_id"])
+                ],
+                "control_edges": [],
+                "unresolved_control": False,
+            },
+            sort_keys=False,
+        )
+    )
+    os.chmod(roster_path, mode)
+    path = custody_root / "approvals" / "rearm" / f"{latched_evidence_seq}.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "environment_label": environment_label,
+                "latched_evidence_seq": latched_evidence_seq,
+                "approvals": approvals,
+            },
+            sort_keys=False,
+        )
+    )
+    os.chmod(path, mode)
+    return path
 
 
 def _reach_new_risk_halt_via_cancel_crossing_fill(runtime, custody_root: Path) -> int:
@@ -406,12 +492,23 @@ class TestComposeRootWiring:
         stored = json.loads(rows[0][0])
         names = {c["name"] for c in stored["payload"]["attested_coordinates"]}
         assert names == {
-            # egress_attestations.yaml (3, TOS Phase 4 plan §2 decision 4 —
-            # account_instrument_action_allowed/broker_constraint_generation_current
-            # are derived now, not attested)
-            "venue_session_account_facts_current",
-            "restrictive_latch_state",
-            "worst_credible_capacity",
+            # egress_attestations.yaml retired to zero (TOS Phase 5 W5 plan §2
+            # decision 4): venue_session_account_facts_current (item 12) is now a
+            # real runtime owner read (tos_runtime.calendar.owner.SessionFactsOwner),
+            # never an attested coordinate here any more; account_instrument_action_
+            # allowed/broker_constraint_generation_current (TOS Phase 4 plan §2
+            # decision 4) and restrictive_latch_state/worst_credible_capacity (TOS
+            # Phase 5 W3 plan §2 decision 6) were already derived/owned before this.
+            # Phase 5 W3 safety-mesh policy documents (extra_config_files,
+            # tos_runtime.compose._safety_wiring.SAFETY_MESH_CONFIG_FILE_NAMES) —
+            # named-config-document rows, not attestations, but folded into the
+            # SAME OPERATOR_ATTESTED_INPUTS evidence record by name
+            "safety_envelope.yaml",
+            "safety_profile.yaml",
+            "safety_activation.yaml",
+            "safety_deviations.yaml",
+            "safety_incidents.yaml",
+            "monitor_coverage.yaml",
             # broker_scopes.yaml (1) — the active scope's own name
             "SYNTHETIC_FUTURES_ORDER",
             # risk_attestations.yaml (6)
@@ -439,10 +536,15 @@ class TestComposeRootWiring:
         }
         for coordinate in stored["payload"]["attested_coordinates"]:
             assert coordinate["source_file"] in (
-                "egress_attestations.yaml",
                 "risk_attestations.yaml",
                 "egress_coordinates.yaml",
                 "broker_scopes.yaml",
+                "safety_envelope.yaml",
+                "safety_profile.yaml",
+                "safety_activation.yaml",
+                "safety_deviations.yaml",
+                "safety_incidents.yaml",
+                "monitor_coverage.yaml",
                 fx.BAND_STRATEGY_FILE_NAME,
             )
             assert len(coordinate["source_file_digest"]) == 64  # sha256 hex
@@ -557,9 +659,11 @@ class TestSyntheticEventDrivesTheChain:
         send is THEN admitted at the gateway boundary too, because the
         Safety Currentness Vector is complete (4 structurally-owned
         dimensions + 17 operator-attested pending dimensions, see
-        ``tos_runtime.compose._pending_dimensions``) and every one of item
-        6/12/16's egress-gate stand-ins is supplied as an explicit operator
-        attestation (``tos_runtime.compose._egress_attestations``).
+        ``tos_runtime.compose._pending_dimensions``) and item 6/12/16's
+        egress-gate stand-ins are all real runtime owners now (item 12 —
+        ``tos_runtime.calendar.owner.SessionFactsOwner``, TOS Phase 5 W5;
+        item 16 — ``tos_runtime.safety.latch``, TOS Phase 5 W3) except item 6,
+        which is structurally derived (``tos_runtime.brokercap.derive_item6_item12``).
 
         Step 4 (``INDEPENDENT_APPROVAL``) genuinely admits: ``decision_current``
         is derived by lane P's ``IntentRegistry.decision_current`` (policy-
@@ -616,6 +720,44 @@ class TestSyntheticEventDrivesTheChain:
             ), f"step {step_name}: {verdict_by_step[step_name].reason}"
 
         assert len(runtime.transport.requests) == 1
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
+    def test_action_flow_decision_carries_a_real_protective_classification_digest(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """Phase 5 W3.2 plan §2 decision 8, lane d2/d1 cross-lane follow-up: the
+        Action Flow Governor is wired with ``ProtectiveActionService
+        .protective_classification_digest`` as its ``protective_classification_digest_
+        provider`` (``_currentness_wiring._build_risk_and_currentness``), so every
+        genuinely-admitted ACTION_FLOW_DECISION now carries a REAL digest — never the
+        ``None`` default a caller-supplied input would otherwise leave permanently
+        unfed (``tos_runtime.risk.flow`` module history)."""
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+
+        event = fx.crossing_event()
+        results = runtime.run_once((event,))
+        proposal_digest = results[0].pipeline.proposal.canonical_digest
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
+        write_approval_file(
+            custody_root,
+            proposal_digest=proposal_digest,
+            environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
+        )
+
+        results2 = runtime.run_once((event,))
+        flow = results2[0].flow
+        assert flow is not None
+        verdict_by_step = {v.step.value: v for v in flow.verdicts}
+        assert verdict_by_step["ACTION_FLOW_DECISION"].outcome.value == "ADMIT"
+
+        decision = runtime.flow_governor.last_decision
+        assert decision is not None
+        assert decision.protective_classification_digest is not None
 
         runtime.rcl_log.close()
         runtime.evidence_store.close()
@@ -1107,9 +1249,13 @@ class TestPendingDimensionAttestationGatesCompleteness:
     def test_one_false_attestation_makes_the_vector_incomplete(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
+        # RELEASE used to be the dimension flipped here; Phase 5 W3.2 gave it a real
+        # dimension_readers entry (_release_dimension_reader_for), so this test now
+        # flips CONTEXT instead — one of the three dimensions still genuinely pending
+        # (tos_runtime.compose._pending_dimensions.PENDING_DIMENSION_KEYS).
         dims_path = config_dir / "currentness_dimensions.yaml"
         raw = yaml.safe_load(dims_path.read_text(encoding="utf-8"))
-        raw["RELEASE"]["positively_established"] = False
+        raw["CONTEXT"]["positively_established"] = False
         dims_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
 
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
@@ -1549,6 +1695,108 @@ class TestReleaseAdmissionRefusalBlocksBoot:
         assert "expected_code_digest" in str(excinfo.value)
 
 
+class TestIdentityCodeDigestBoundToObservation:
+    """Re-review disposition (HIGH, 2026-09-12) — ``release/admission.py``'s
+    ``_runtime_attestation_matches`` never actually read ``identity.code_digest``;
+    only ``observation``'s own digests were compared against config, so a
+    caller building ``identity`` from a constant instead of the real observation
+    went undetected by every prior test. ``_runtime_attestation_matches`` now
+    also requires ``identity.code_digest == observation.source_tree_digest``.
+    This pins that the M2-shaped mutation — ``_build_identity`` returning a
+    constant ``code_digest`` disconnected from the observation it was handed —
+    goes red: compose must refuse at STAGE A, before any sqlite file exists."""
+
+    def test_constant_identity_code_digest_refuses_at_stage_a(
+        self,
+        config_dir: Path,
+        data_dir: Path,
+        custody_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import tos_runtime.compose._wiring as wiring_module
+
+        real_build_identity = wiring_module._build_identity
+
+        def _constant_digest_build_identity(environment_label, code_digest):
+            identity = real_build_identity(environment_label, code_digest)
+            return identity.model_copy(
+                update={"code_digest": "a-hardcoded-constant-not-the-observation"}
+            )
+
+        monkeypatch.setattr(
+            wiring_module, "_build_identity", _constant_digest_build_identity
+        )
+        with pytest.raises(ReleaseAdmissionRefused):
+            _compose(tmp_path, config_dir, data_dir, custody_root)
+        assert list(data_dir.glob("*.sqlite3")) == []
+        assert list(custody_root.glob("*.sqlite3")) == []
+
+
+class TestSoftwareDeploymentOkThreadedIntoSafetyMesh:
+    """Phase 5 W4 §2 decision 6 (2026-09-12 reorder) — ``_stage_b_release_probe``
+    now runs right after the RCL log is verified, BEFORE ``build_safety_mesh``, so
+    its real ``release_admitted`` verdict (never a literal ``True``) reaches
+    SAFETY_ENVELOPE_PROFILE's ``SemanticValidationInputs.software_deployment_ok``.
+
+    ``TestReleaseAdmissionRefusalBlocksBoot`` above already proves release
+    admission gates the WHOLE boot on a digest mismatch, but that refusal is a
+    STAGE A rejection (pure digest comparison, no I/O) — ``_stage_b_release_probe``
+    is never reached in that scenario either before or after this reorder, so it
+    does not by itself pin the STAGE B -> ``build_safety_mesh`` wiring. The two
+    tests below do: one over a normal boot (the real ``True`` reaches the
+    service), one mutation-style (forcing ``decide()`` to refuse proves
+    ``build_safety_mesh`` is never even called with a stale/hardcoded value)."""
+
+    def test_normal_boot_threads_the_real_admitted_verdict(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        composed = _compose(tmp_path, config_dir, data_dir, custody_root)
+        assert composed.release_admitted is True
+        # Honest read path: the kernel's own EngineCore stores the injected
+        # CoordinatorPreconditions as ``self._preconditions`` (tos/src/tos/engine/
+        # core.py), which in turn stores the safety-mesh tuple it was constructed
+        # with as ``self._safety_mesh`` (tos_runtime.compose._preconditions
+        # .RuntimeCoordinatorPreconditions.__init__) — item 0 of that tuple is
+        # SAFETY_ENVELOPE_PROFILE (build_safety_mesh's own services tuple order).
+        profile_service = composed.core._preconditions._safety_mesh[0]
+        assert profile_service._software_deployment_ok is True
+
+    def test_a_refused_stage_b_verdict_never_reaches_build_safety_mesh(
+        self,
+        config_dir: Path,
+        data_dir: Path,
+        custody_root: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """M2-style guard: if ``software_deployment_ok`` were hardcoded ``True``
+        (disconnected from the real STAGE B verdict), forcing that verdict to
+        refuse would not stop ``build_safety_mesh`` from running with a stale
+        ``True``. Forcing ``ReleaseAdmissionService.decide`` to always return
+        ``False`` must instead raise before ``build_safety_mesh`` is ever
+        called."""
+        import tos_runtime.compose._wiring as wiring_module
+        from tos_runtime.release.admission import ReleaseAdmissionService
+
+        calls: list[object] = []
+        real_build_safety_mesh = wiring_module.build_safety_mesh
+
+        def _spy_build_safety_mesh(*args: object, **kwargs: object) -> object:
+            calls.append(kwargs.get("software_deployment_ok"))
+            return real_build_safety_mesh(*args, **kwargs)
+
+        monkeypatch.setattr(wiring_module, "build_safety_mesh", _spy_build_safety_mesh)
+        monkeypatch.setattr(
+            ReleaseAdmissionService,
+            "decide",
+            lambda _self, *_args, **_kwargs: False,
+        )
+        with pytest.raises(ReleaseAdmissionRefused):
+            _compose(tmp_path, config_dir, data_dir, custody_root)
+        assert calls == []
+
+
 class TestCapacityObligationRecording:
     """Kernel round #1 §3 (lane B) — the compose root wires a REAL
     ``CapacityObligationRecorder`` onto the REAL gateway sink, resolving the
@@ -1644,6 +1892,7 @@ class TestCapacityObligationRecording:
         # (this class's own docstring).
         refusal = GatewayEvidenceRecord(
             kind="SEND_REFUSED",
+            step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
             attempt_id=attempt_id,
             item=SendVerifyItem.CURRENTNESS,
             preserved_worst_credible_capacity=7,
@@ -1700,6 +1949,7 @@ class TestCapacityObligationRecording:
         runtime.gateway._sink.record(  # noqa: SLF001
             GatewayEvidenceRecord(
                 kind="SEND_REFUSED",
+                step=CommitmentStep.SEND_BOUNDARY_VERIFICATION,
                 attempt_id="attempt-mutation-probe",
                 item=SendVerifyItem.CURRENTNESS,
                 preserved_worst_credible_capacity=7,
@@ -1773,6 +2023,74 @@ class TestOrthostateAndFinalityProjectionWiring:
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
+    def test_full_fill_hand_off_never_releases_rcl_capacity_end_to_end(
+        self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
+    ) -> None:
+        """TOS Phase 5 W2-R (plan §10 row ①): the finality release consumer
+        (:mod:`tos_runtime.posttrade.release_consumer`) is live through
+        :func:`~tos_runtime.compose.root.compose_paper_runtime`, but this compose root's ONE
+        concrete broker witness (:class:`~tos_runtime.recon.witness_synthetic
+        .SyntheticLedgerWitness`) is store-derived, never independent of the evidence-receipt
+        path it corroborates (plan §10's own "정직 상태" — see
+        ``tos_runtime.recon.service.ReconciliationService``'s own module docstring). So even
+        after a genuine, real ``FULL_FILL`` hand-off, the RCL reservation must show ZERO
+        ``RELEASED``/``POSITION_CONSUMED`` rows — capacity release stays structurally absent
+        until a genuinely independent (real broker) witness replaces the synthetic one.
+        """
+        import json
+
+        from tos.rcl import CapacityState
+        from tos_runtime.rcl.reservation_identity import scope_reservation_id
+
+        runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
+        _reach_trusted(runtime)
+        event = fx.crossing_event()
+
+        first = runtime.run_once((event,))
+        proposal_digest = first[0].pipeline.proposal.canonical_digest
+        construction = runtime.construction_stage.construction
+        assert construction is not None and construction.intent is not None
+        write_approval_file(
+            custody_root,
+            proposal_digest=proposal_digest,
+            environment_label="non-live-test",
+            approved_intent_envelope_digest=construction.intent.canonical_digest,
+        )
+
+        second = runtime.run_once((event,))
+        flow = second[0].flow
+        assert flow is not None and flow.handed_off is True and flow.attempt is not None
+
+        released_or_consumed = [
+            state
+            for _reservation_id, state, _seq, _scope in runtime.rcl_log.reservation_rows()
+            if state in (CapacityState.RELEASED, CapacityState.POSITION_CONSUMED)
+        ]
+        assert released_or_consumed == []
+
+        held_payload_rows = runtime.evidence_store.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = 'CAPACITY_RELEASE_HELD'"
+        ).fetchall()
+        assert len(held_payload_rows) == 1
+        held_payload = json.loads(held_payload_rows[0][0])["payload"]
+        # Independent-review finding M5 (2026-09-10): assert *why* it held, not merely that it
+        # held -- a hold for a trivial upstream reason would otherwise pass this test
+        # identically. Also pins the reservation id itself (finding M5's own measured mutation:
+        # a total `_reservation_id` drift left the prior assertions passing unchanged).
+        instrument_key = runtime.context_resolver.instrument_key
+        assert held_payload["reservation_id"] == scope_reservation_id(
+            instrument_key.account, instrument_key.instrument
+        )
+        assert held_payload["reason"] == "NOT_CORROBORATED"
+        assert held_payload["detail"] == "WITNESS_NOT_INDEPENDENT"
+        intent_rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind = 'CAPACITY_RELEASE_INTENT'"
+        ).fetchone()[0]
+        assert intent_rows == 0
+
+        runtime.rcl_log.close()
+        runtime.evidence_store.close()
+
 
 class TestNewRiskHaltOperatorReArm:
     """Re-review finding R3 (2026-09-09): the operator re-arm path for the independent-review
@@ -1792,9 +2110,10 @@ class TestNewRiskHaltOperatorReArm:
             runtime, custody_root
         )
 
+        _write_rearm_approval(custody_root, evidence_seq)
         outcome = runtime.clear_new_risk_halt(
             latched_evidence_seq=evidence_seq,
-            operator_attestation="reviewed the cancel-crossing fill, fill is genuine, clearing",
+            approvals_dir=custody_root / "approvals",
         )
         assert outcome is NewRiskHaltClearOutcome.CLEARED
         assert runtime.inbox.new_risk_halt() is None
@@ -1812,6 +2131,14 @@ class TestNewRiskHaltOperatorReArm:
         assert (
             len(payload["operator_attestation_sha256"]) == 64
         )  # sha256 hex digest length
+
+        # TOS Phase 5 W3 plan §2 decision 7: the HAG two-person re-arm quorum
+        # (tos_runtime.safety.rearm.ReArmWorkflow) records its own APPROVED evidence
+        # before this wrapper's own CLEARED row above.
+        rearm_rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind = 'REARM_APPROVED'"
+        ).fetchone()[0]
+        assert rearm_rows == 1
 
         # The success path writes no refusal evidence (re-review finding RR3).
         refused_rows = runtime.evidence_store.connection.execute(
@@ -1841,9 +2168,12 @@ class TestNewRiskHaltOperatorReArm:
             runtime, custody_root
         )
 
+        # No approval file needed here: the seq-mismatch pre-check in
+        # ``ComposedRuntime.clear_new_risk_halt`` runs BEFORE the HAG re-arm
+        # workflow is ever consulted (TOS Phase 5 W3 plan §2 decision 7).
         outcome = runtime.clear_new_risk_halt(
             latched_evidence_seq=evidence_seq - 1,  # a stale/wrong seq
-            operator_attestation="reviewed, clearing",
+            approvals_dir=custody_root / "approvals",
         )
         assert outcome is NewRiskHaltClearOutcome.SEQ_MISMATCH
         assert runtime.inbox.new_risk_halt() is not None
@@ -1864,7 +2194,6 @@ class TestNewRiskHaltOperatorReArm:
         assert payload["outcome"] == "SEQ_MISMATCH"
         assert payload["requested_evidence_seq"] == evidence_seq - 1
         assert payload["current_latched_evidence_seq"] == evidence_seq
-        assert len(payload["operator_attestation_sha256"]) == 64
 
         next_tick = runtime.driver.enqueue_and_run(fx.crossing_event(seq=99))
         assert "NEW_RISK_HALTED_BY_COUPLING_VIOLATION" in (next_tick.detail or "")
@@ -1872,9 +2201,13 @@ class TestNewRiskHaltOperatorReArm:
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
-    def test_empty_attestation_is_refused_and_latch_stays_intact(
+    def test_no_approval_file_is_refused_and_latch_stays_intact(
         self, config_dir: Path, data_dir: Path, custody_root: Path, tmp_path: Path
     ) -> None:
+        """TOS Phase 5 W3 plan §2 decision 7 (mutation M6): with NO
+        ``approvals/rearm/<seq>.yaml`` file present at all, the HAG re-arm
+        workflow refuses before it ever reaches a kernel predicate — replaces
+        the old free-text-attestation refusal this test used to exercise."""
         from tos_runtime.engine.inbox import NewRiskHaltClearOutcome
 
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
@@ -1883,11 +2216,11 @@ class TestNewRiskHaltOperatorReArm:
             runtime, custody_root
         )
 
-        for empty in ("", "   ", "\n\t"):
-            outcome = runtime.clear_new_risk_halt(
-                latched_evidence_seq=evidence_seq, operator_attestation=empty
-            )
-            assert outcome is NewRiskHaltClearOutcome.EMPTY_ATTESTATION
+        outcome = runtime.clear_new_risk_halt(
+            latched_evidence_seq=evidence_seq,
+            approvals_dir=custody_root / "approvals",
+        )
+        assert outcome is NewRiskHaltClearOutcome.QUORUM_REFUSED
         assert runtime.inbox.new_risk_halt() is not None
 
         cleared_rows = runtime.evidence_store.connection.execute(
@@ -1895,11 +2228,17 @@ class TestNewRiskHaltOperatorReArm:
         ).fetchone()[0]
         assert cleared_rows == 0
 
-        # One NEW_RISK_HALT_CLEAR_REFUSED row per refused attempt (re-review finding RR3).
+        # The HAG workflow's own refusal evidence (tos_runtime.safety.rearm), PLUS this
+        # wrapper's own NEW_RISK_HALT_CLEAR_REFUSED row (re-review finding RR3) — both
+        # are durably recorded for one refused attempt.
+        rearm_refused_rows = runtime.evidence_store.connection.execute(
+            "SELECT COUNT(*) FROM entries WHERE kind = 'REARM_REFUSED'"
+        ).fetchone()[0]
+        assert rearm_refused_rows == 1
         refused_rows = runtime.evidence_store.connection.execute(
             "SELECT COUNT(*) FROM entries WHERE kind = 'NEW_RISK_HALT_CLEAR_REFUSED'"
         ).fetchone()[0]
-        assert refused_rows == 3
+        assert refused_rows == 1
 
         runtime.rcl_log.close()
         runtime.evidence_store.close()
@@ -1930,10 +2269,11 @@ class TestNewRiskHaltOperatorReArm:
         first_evidence_seq = _reach_new_risk_halt_via_cancel_crossing_fill(
             runtime, custody_root
         )
+        _write_rearm_approval(custody_root, first_evidence_seq)
         assert (
             runtime.clear_new_risk_halt(
                 latched_evidence_seq=first_evidence_seq,
-                operator_attestation="first violation reviewed, clearing",
+                approvals_dir=custody_root / "approvals",
             )
             is NewRiskHaltClearOutcome.CLEARED
         )
@@ -1968,11 +2308,12 @@ class TestNewRiskHaltOperatorReArm:
         assert second_evidence_seq != first_evidence_seq
         assert second_evidence_seq > first_evidence_seq
 
-        # The OLD (now-cleared, superseded) seq no longer clears the NEW latch.
+        # The OLD (now-cleared, superseded) seq no longer clears the NEW latch — the
+        # seq-mismatch pre-check refuses before any approval file is even consulted.
         assert (
             runtime.clear_new_risk_halt(
                 latched_evidence_seq=first_evidence_seq,
-                operator_attestation="stale clear attempt",
+                approvals_dir=custody_root / "approvals",
             )
             is NewRiskHaltClearOutcome.SEQ_MISMATCH
         )

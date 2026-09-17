@@ -1,0 +1,798 @@
+"""``tos_runtime.safety.rearm`` — the HAG two-person new-risk-halt re-arm workflow
+(Phase 5 W3 plan ``docs/plans/2026-09-11-tos-phase5-w3-safety-mesh-plan.md`` §2
+decision 7; ADR-002-015 §17 "re-arm dual control").
+
+**What this replaces.** :meth:`~tos_runtime.compose._types.ComposedRuntime
+.clear_new_risk_halt` used to accept one operator's free-text
+``operator_attestation`` string (only its sha256 was ever recorded — a single
+person, unauthenticated, unverified against any roster). :class:`ReArmWorkflow`
+replaces that with an operator-authored, on-disk, TWO-PERSON decision file
+(``approvals/rearm/<latched_evidence_seq>.yaml`` — the same
+``approvals/<key>.yaml`` custody convention
+:mod:`tos_runtime.authority.iap` already uses for Independent Approval decisions)
+evaluated against FIVE kernel ``tos.hag`` predicates:
+
+* :func:`~tos.hag.dual_control_effective_distinct` — >= 2 distinct effective
+  natural persons (collapse-before-count; §17 line 444).
+* :func:`~tos.hag.quorum_independence_satisfied` — the full independent-quorum
+  gate (both ``APPROVE``, no duplicate principal, every attesting principal
+  resolved in the graph, ``quorum_n=2`` with the ``REARM_APPROVER`` role
+  required of every attestation).
+* :func:`~tos.hag.approval_binding_exact` — each attestation binds the EXACT
+  request digest (never a different request's approval reused).
+* :func:`~tos.hag.approval_set_single_use` — the approval set this file
+  produces has never been consumed before (checked against this runtime's own
+  ``REARM_APPROVED`` evidence history — module's own durable record of every
+  prior successful re-arm).
+
+**The effective-principal graph is loaded from an operator-authored roster
+(independent review HIGH-3, disposed).** The two independence predicates above
+(``dual_control_effective_distinct`` / ``quorum_independence_satisfied``) both
+consume an :class:`~tos.hag.EffectivePrincipalGraph`. An earlier build of this
+module asserted that graph itself — ``edges=()``, ``unresolved_control=False``
+— which made the collapse the identity (no roster edge could ever merge two
+approvers) and the whole-graph-denial arm unreachable: the "two distinct
+effective natural persons" claim degenerated to "two distinct non-blank
+strings in one file", with no roster/graph source at all. Fixed: the graph is
+now built from ``approvals_dir/rearm/roster.yaml`` (:func:`_load_roster`) — an
+operator-authored document under the SAME custody gate as the decision file
+(0600 + owner uid), declaring ``principals: [{id: ...}, ...]``,
+``control_edges: [{from: ..., to: ..., kind: ...}, ...]``, and
+``unresolved_control: <bool>`` (an explicit, named-TBD-refusing value — never
+a literal default). Every attesting principal must be a roster principal
+(checked explicitly, with its own disclosed refusal reason, ahead of the
+kernel predicate's own equivalent membership gate); the roster's own
+``unresolved_control`` flows through unchanged to the graph, so a roster that
+cannot positively assert full control resolution correctly denies (plan §6
+confirmation 5 — the operator owns the re-arm roster's custody). A missing
+roster file refuses (``ROSTER_ABSENT``) before any kernel predicate runs — the
+same "never automatic" discipline as a missing decision file.
+
+**``no_automatic_rearm`` is not called here.** The kernel
+:func:`~tos.hag.no_automatic_rearm` (§18/§20 HAG-INV-014) is realized as an
+UNCONDITIONAL ``True`` — every recovery-event input it accepts is discarded, so
+calling it with no real recovery-event facts to pass would be a vacuous,
+always-passing check that misleads a reader into thinking a real gate ran. The
+REAL "never automatic" guarantee here is structural, not a predicate call: with
+no approval file present, :meth:`ReArmWorkflow.approve_and_clear` refuses
+before it ever reaches a kernel predicate — there is no code path in this
+module that synthesises an approval.
+
+**Evidence discipline (design #40 D3.1's own "evidence before state change").**
+A successful evaluation appends ONE ``REARM_APPROVED`` entry (principal ids
+hashed — never plaintext — plus the request/approval-set digests) BEFORE
+:meth:`~tos_runtime.compose._types.ComposedRuntime.clear_new_risk_halt` performs
+the actual storage-layer clear; ANY refusal — a missing/malformed file, a failed
+custody check, or any of the five predicates not positively satisfied — appends
+a ``REARM_REFUSED`` entry (the failed check names, never a partial approval) and
+clears nothing.
+
+Firewall: stdlib + ``pyyaml`` + ``tos.hag`` + ``tos.canonical`` (``get_scheme``)
++ ``tos_runtime.custody`` + ``tos_runtime.engine.inbox`` (read-only —
+``new_risk_halt()``, never ``clear_new_risk_halt(`` — the machine pin
+``tests/engine/test_no_direct_latch_clear.py`` allows only
+``compose/_types.py`` to call that) + ``tos_runtime.evidence.store`` +
+``tos_runtime.time.service`` only.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
+from typing import Any
+
+import yaml
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, ArtifactIntegrityError, get_scheme
+from tos.hag import (
+    ApprovalSetConsumptionRecord,
+    AttestationDecision,
+    AuthorityClass,
+    ConflictRole,
+    EffectiveControlEdge,
+    EffectivePrincipalGraph,
+    EffectivePrincipalNode,
+    HumanApprovalAttestation,
+    HumanApprovalRequest,
+    HumanApprovalSet,
+    approval_binding_exact,
+    approval_set_single_use,
+    dual_control_effective_distinct,
+    quorum_independence_satisfied,
+)
+
+from tos_runtime.custody.file_custody import verify_file_mode_and_owner
+from tos_runtime.custody.ports import CustodyLoadRefused
+from tos_runtime.engine.inbox import NewRiskHaltClearOutcome, SqliteEventInbox
+from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.time.service import TrustworthyTimeService
+
+__all__ = [
+    "NewRiskHaltDoorDecision",
+    "ReArmApprovalFileError",
+    "ReArmOutcome",
+    "ReArmStatus",
+    "ReArmWorkflow",
+    "prepare_new_risk_halt_clear",
+]
+
+_SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
+
+#: Evidence kind for a satisfied two-person re-arm quorum, recorded BEFORE the
+#: caller (``ComposedRuntime.clear_new_risk_halt``) performs the storage clear.
+_REARM_APPROVED_KIND = "REARM_APPROVED"
+#: Evidence kind for EVERY refusal — a missing file, a custody failure, or any
+#: kernel predicate not positively satisfied.
+_REARM_REFUSED_KIND = "REARM_REFUSED"
+
+#: The one required role every attestation in a re-arm quorum must carry.
+_REARM_ROLE = ConflictRole.REARM_APPROVER
+#: The re-arm quorum size (ADR-002-015 §17 line 444 "two distinct effective
+#: natural persons").
+_REARM_QUORUM_N = 2
+
+
+class ReArmApprovalFileError(Exception):
+    """Raised internally for any refusal reading/validating an on-disk operator
+    file (the decision file or the roster) — always caught by
+    :meth:`ReArmWorkflow.approve_and_clear` and turned into a ``REFUSED``
+    :class:`ReArmOutcome`, never propagated to the caller."""
+
+
+class _RosterAbsent(ReArmApprovalFileError):
+    """The roster file itself does not exist — refused with the specific
+    ``ROSTER_ABSENT`` reason token (never folded into a generic message), since
+    "no roster" is a distinct, disclosed refusal from "a malformed roster"."""
+
+
+class _RosterInvalid(ReArmApprovalFileError):
+    """The roster file exists but fails custody, parsing, environment-label, or
+    shape validation."""
+
+
+class ReArmStatus(StrEnum):
+    """The two-outcome result of one re-arm attempt (module docstring)."""
+
+    APPROVED = "APPROVED"
+    REFUSED = "REFUSED"
+
+
+@dataclass(frozen=True)
+class ReArmOutcome:
+    """One :meth:`ReArmWorkflow.approve_and_clear` result.
+
+    Attributes:
+        status: :attr:`ReArmStatus.APPROVED` iff every kernel predicate was
+            positively satisfied.
+        reasons: The failed check names (empty exactly when ``status is
+            ReArmStatus.APPROVED``) — never a secret, never file content.
+        attestation_text: A non-secret marker string
+            (``"hag-rearm-quorum-satisfied:<consumption_id>"``) the caller may
+            pass on as the storage layer's own (non-empty, free-text)
+            ``operator_attestation`` argument — ``None`` on refusal.
+    """
+
+    status: ReArmStatus
+    reasons: tuple[str, ...]
+    attestation_text: str | None
+
+
+def _load_raw_rearm_file(
+    path: Path, *, expected_owner_uid: int, getuid: Callable[[], int]
+) -> dict[str, Any]:
+    """Custody-gated read + parse of the on-disk approval file (the
+    ``tos_runtime.authority.iap.load_operator_approval_file`` convention, reused
+    here rather than re-authored: same 0600-mode + owner-uid custody rule via
+    :func:`~tos_runtime.custody.file_custody.verify_file_mode_and_owner`)."""
+    if not path.is_file():
+        raise ReArmApprovalFileError(f"rearm approval file not found: {path}")
+    try:
+        verify_file_mode_and_owner(
+            path, expected_owner_uid=expected_owner_uid, getuid=getuid
+        )
+    except CustodyLoadRefused as exc:
+        raise ReArmApprovalFileError(
+            f"{path} failed the custody mode/owner gate: {exc}"
+        ) from exc
+    try:
+        raw_text = path.read_text()
+    except OSError as exc:
+        raise ReArmApprovalFileError(f"cannot read {path}: {exc}") from exc
+    try:
+        raw = yaml.safe_load(raw_text)
+    except yaml.YAMLError as exc:
+        raise ReArmApprovalFileError(f"{path} is not valid YAML: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ReArmApprovalFileError(
+            f"{path} must parse to a mapping (got {type(raw).__name__})"
+        )
+    return raw
+
+
+def _verify_environment_label(
+    raw: Mapping[str, Any], path: Path, environment_label: str
+) -> None:
+    file_label = raw.get("environment_label")
+    if file_label != environment_label or not file_label:
+        raise ReArmApprovalFileError(
+            f"{path} environment_label={file_label!r} does not match runtime "
+            f"environment_label={environment_label!r} — refuse (cross-environment "
+            "isolation)"
+        )
+
+
+def _verify_entries(
+    raw: Mapping[str, Any], path: Path, latched_evidence_seq: int
+) -> tuple[dict[str, Any], ...]:
+    """Structural validation of the ``latched_evidence_seq``/``approvals`` fields —
+    the file-level half of "binds the exact request" (the kernel-level half is
+    :func:`~tos.hag.approval_binding_exact` over the constructed digests)."""
+    file_seq = raw.get("latched_evidence_seq")
+    if file_seq != latched_evidence_seq:
+        raise ReArmApprovalFileError(
+            f"{path} latched_evidence_seq={file_seq!r} does not match the "
+            f"requested {latched_evidence_seq!r} — refuse (stale/wrong approval file)"
+        )
+    approvals = raw.get("approvals")
+    if not isinstance(approvals, list) or not approvals:
+        raise ReArmApprovalFileError(
+            f"{path} 'approvals' must be a non-empty list of "
+            "{{principal_id, decision}} entries"
+        )
+    entries: list[dict[str, Any]] = []
+    for entry in approvals:
+        if not isinstance(entry, dict):
+            raise ReArmApprovalFileError(
+                f"{path} every 'approvals' entry must be a mapping"
+            )
+        principal_id = entry.get("principal_id")
+        decision = entry.get("decision")
+        if not isinstance(principal_id, str) or not principal_id.strip():
+            raise ReArmApprovalFileError(
+                f"{path} an 'approvals' entry has a missing/blank principal_id"
+            )
+        if decision not in {"APPROVE", "DENY", "ABSTAIN"}:
+            raise ReArmApprovalFileError(
+                f"{path} an 'approvals' entry has an invalid decision {decision!r}"
+            )
+        entries.append({"principal_id": principal_id, "decision": decision})
+    return tuple(entries)
+
+
+@dataclass(frozen=True)
+class _Roster:
+    """The operator-authored effective-principal roster
+    (``approvals_dir/rearm/roster.yaml`` — module docstring HIGH-3 disposition;
+    plan §6 confirmation 5). Everything :func:`_build_hag_artifacts` needs to
+    build the REAL :class:`~tos.hag.EffectivePrincipalGraph` — never a
+    constant."""
+
+    principal_ids: frozenset[str]
+    edges: tuple[EffectiveControlEdge, ...]
+    unresolved_control: bool
+
+
+def _parse_roster_principals(raw: Mapping[str, Any], path: Path) -> frozenset[str]:
+    """The ``principals: [{id, ...}, ...]`` half of :func:`_load_roster` (split
+    out purely for the size budget)."""
+    principals_raw = raw.get("principals")
+    if not isinstance(principals_raw, list) or not principals_raw:
+        raise _RosterInvalid(
+            f"{path} 'principals' must be a non-empty list of {{id, ...}} entries"
+        )
+    principal_ids: set[str] = set()
+    for entry in principals_raw:
+        if not isinstance(entry, dict):
+            raise _RosterInvalid(f"{path} every 'principals' entry must be a mapping")
+        principal_id = entry.get("id")
+        if not isinstance(principal_id, str) or not principal_id.strip():
+            raise _RosterInvalid(f"{path} a 'principals' entry has a missing/blank id")
+        principal_ids.add(principal_id)
+    return frozenset(principal_ids)
+
+
+def _parse_roster_edges(
+    raw: Mapping[str, Any], path: Path
+) -> tuple[EffectiveControlEdge, ...]:
+    """The ``control_edges: [{from, to, kind}, ...]`` half of :func:`_load_roster`
+    (split out purely for the size budget)."""
+    edges_raw = raw.get("control_edges", [])
+    if not isinstance(edges_raw, list):
+        raise _RosterInvalid(f"{path} 'control_edges' must be a list")
+    edges: list[EffectiveControlEdge] = []
+    for entry in edges_raw:
+        if not isinstance(entry, dict):
+            raise _RosterInvalid(
+                f"{path} every 'control_edges' entry must be a mapping"
+            )
+        source = entry.get("from")
+        target = entry.get("to")
+        relation = entry.get("kind")
+        if not isinstance(source, str) or not source.strip():
+            raise _RosterInvalid(
+                f"{path} a 'control_edges' entry has a missing/blank 'from'"
+            )
+        if not isinstance(target, str) or not target.strip():
+            raise _RosterInvalid(
+                f"{path} a 'control_edges' entry has a missing/blank 'to'"
+            )
+        edges.append(
+            EffectiveControlEdge(
+                source=source,
+                target=target,
+                relation=relation if isinstance(relation, str) else None,
+                resolved=True,
+            )
+        )
+    return tuple(edges)
+
+
+def _load_roster(
+    path: Path,
+    *,
+    expected_owner_uid: int,
+    getuid: Callable[[], int],
+    environment_label: str,
+) -> _Roster:
+    """Custody-gated read + parse of the operator-authored re-arm roster (the
+    same 0600-mode + owner-uid + environment-label custody convention
+    :func:`_load_raw_rearm_file`/:func:`_verify_environment_label` apply to the
+    decision file, reused rather than re-authored).
+
+    Raises:
+        _RosterAbsent: The file does not exist at all (a distinct, disclosed
+            reason — ``ROSTER_ABSENT`` — never folded into a generic message).
+        _RosterInvalid: The file exists but fails custody, parsing, the
+            environment-label check, or the ``principals``/``control_edges``/
+            ``unresolved_control`` shape.
+    """
+    if not path.is_file():
+        raise _RosterAbsent(f"rearm roster file not found: {path}")
+    try:
+        verify_file_mode_and_owner(
+            path, expected_owner_uid=expected_owner_uid, getuid=getuid
+        )
+    except CustodyLoadRefused as exc:
+        raise _RosterInvalid(
+            f"{path} failed the custody mode/owner gate: {exc}"
+        ) from exc
+    try:
+        raw_text = path.read_text()
+    except OSError as exc:
+        raise _RosterInvalid(f"cannot read {path}: {exc}") from exc
+    try:
+        raw = yaml.safe_load(raw_text)
+    except yaml.YAMLError as exc:
+        raise _RosterInvalid(f"{path} is not valid YAML: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise _RosterInvalid(
+            f"{path} must parse to a mapping (got {type(raw).__name__})"
+        )
+
+    file_label = raw.get("environment_label")
+    if file_label != environment_label or not file_label:
+        raise _RosterInvalid(
+            f"{path} environment_label={file_label!r} does not match runtime "
+            f"environment_label={environment_label!r} — refuse (cross-environment "
+            "isolation)"
+        )
+
+    principal_ids = _parse_roster_principals(raw, path)
+    edges = _parse_roster_edges(raw, path)
+
+    unresolved_control = raw.get("unresolved_control")
+    if not isinstance(unresolved_control, bool):
+        raise _RosterInvalid(
+            f"{path} 'unresolved_control' is still null (named-TBD) or not a "
+            "bool — refusing to start until the operator declares it explicitly"
+        )
+
+    return _Roster(
+        principal_ids=principal_ids,
+        edges=edges,
+        unresolved_control=unresolved_control,
+    )
+
+
+def _build_hag_artifacts(
+    entries: Sequence[Mapping[str, Any]], latched_evidence_seq: int, roster: _Roster
+) -> tuple[
+    HumanApprovalRequest,
+    tuple[HumanApprovalAttestation, ...],
+    EffectivePrincipalGraph,
+    HumanApprovalSet,
+    ApprovalSetConsumptionRecord,
+]:
+    """Issue the digest-bound ``tos.hag`` artifacts the five kernel predicates
+    consume — deterministic in every field the seq/file content fix, never a
+    fabricated or free literal (module docstring)."""
+    # Note: DigestBoundArtifact.issue() is annotated to return the BASE class (no
+    # Self/TypeVar -- tos/src/tos/canonical/_base.py), even though at runtime a
+    # classmethod call always binds `cls` to the class it was called on. Each
+    # `assert isinstance(...)` below narrows the static type to match that real
+    # runtime behavior (the same idiom tos_runtime.time.service.TrustworthyTimeService
+    # ._issue_snapshot uses) -- never a suppression; it will always hold.
+    request = HumanApprovalRequest.issue(
+        scheme=_SCHEME,
+        request_id=f"rearm-request-{latched_evidence_seq}",
+        request_type=AuthorityClass.APPROVE_REARM,
+        maximum_authority=AuthorityClass.APPROVE_REARM,
+        creation_generation=latched_evidence_seq,
+        requested_action="clear_new_risk_halt",
+        graph_generation=latched_evidence_seq,
+    )
+    assert isinstance(request, HumanApprovalRequest)
+    attestation_list: list[HumanApprovalAttestation] = []
+    for index, entry in enumerate(entries):
+        attestation = HumanApprovalAttestation.issue(
+            scheme=_SCHEME,
+            attestation_id=f"rearm-attn-{latched_evidence_seq}-{index}",
+            request_digest=request.canonical_digest,
+            principal_id=entry["principal_id"],
+            role=_REARM_ROLE,
+            decision=AttestationDecision(entry["decision"]),
+            effective_principal_graph_generation=latched_evidence_seq,
+            issue_generation=latched_evidence_seq,
+        )
+        assert isinstance(attestation, HumanApprovalAttestation)
+        attestation_list.append(attestation)
+    attestations = tuple(attestation_list)
+    graph = EffectivePrincipalGraph.issue(
+        scheme=_SCHEME,
+        graph_id=f"rearm-graph-{latched_evidence_seq}",
+        graph_generation=latched_evidence_seq,
+        nodes=tuple(
+            EffectivePrincipalNode(principal_id=p) for p in sorted(roster.principal_ids)
+        ),
+        edges=roster.edges,
+        unresolved_control=roster.unresolved_control,
+    )
+    assert isinstance(graph, EffectivePrincipalGraph)
+    approval_set = HumanApprovalSet.issue(
+        scheme=_SCHEME,
+        set_id=f"rearm-set-{latched_evidence_seq}",
+        attestations=attestations,
+        bound_request_digest=request.canonical_digest,
+        policy_generation=latched_evidence_seq,
+        graph_generation=latched_evidence_seq,
+    )
+    assert isinstance(approval_set, HumanApprovalSet)
+    consumption = ApprovalSetConsumptionRecord.issue(
+        scheme=_SCHEME,
+        consumption_id=f"rearm-consumption-{latched_evidence_seq}",
+        approval_set_digest=approval_set.canonical_digest,
+        downstream_decision_ref=f"new_risk_halt:{latched_evidence_seq}",
+        single_use=True,
+        consumed_generation=latched_evidence_seq,
+    )
+    assert isinstance(consumption, ApprovalSetConsumptionRecord)
+    return request, attestations, graph, approval_set, consumption
+
+
+class ReArmWorkflow:
+    """The HAG two-person new-risk-halt re-arm workflow (module docstring).
+
+    Constructed fresh per :meth:`~tos_runtime.compose._types.ComposedRuntime
+    .clear_new_risk_halt` call (cheap — no I/O happens until
+    :meth:`approve_and_clear` runs); never caches a quorum decision across calls
+    (single-use is re-checked, against durable evidence, every time).
+    """
+
+    def __init__(
+        self,
+        approvals_dir: Path,
+        evidence_store: SqliteEvidenceStore,
+        inbox: SqliteEventInbox,
+        time_service: TrustworthyTimeService,
+        *,
+        environment_label: str,
+        expected_owner_uid: int,
+        getuid: Callable[[], int] = os.getuid,
+    ) -> None:
+        """Args:
+        approvals_dir: The directory ``rearm/<latched_evidence_seq>.yaml`` is
+            resolved under (the same root :mod:`tos_runtime.authority.iap` uses
+            for ``approvals/<proposal_digest>.yaml``).
+        evidence_store: Where ``REARM_APPROVED``/``REARM_REFUSED`` are recorded,
+            and where prior approval-set consumptions are read back from (single-
+            use check).
+        inbox: Read-only — only :meth:`~tos_runtime.engine.inbox.SqliteEventInbox
+            .new_risk_halt` is ever called; this workflow never calls
+            ``clear_new_risk_halt`` itself (the machine-pinned caller is
+            ``compose/_types.py`` alone).
+        time_service: The runtime's trustworthy-time service — carried for
+            interface symmetry with the runtime's other operator-door workflows;
+            hag itself reads no clock (module docstring), so this is not
+            consulted by any of the five predicates.
+        environment_label: This runtime's own boot-argument environment label;
+            the file's own ``environment_label`` must match byte-exact (never an
+            ambient env read — the same IAP convention).
+        expected_owner_uid: The uid both the file's owner and this process are
+            expected to be (custody's 0600 rule).
+        getuid: An ``os.getuid``-shaped callable, injectable for tests.
+        """
+        self._approvals_dir = approvals_dir
+        self._evidence = evidence_store
+        self._inbox = inbox
+        self._time_service = time_service
+        self._environment_label = environment_label
+        self._expected_owner_uid = expected_owner_uid
+        self._getuid = getuid
+
+    def approve_and_clear(self, latched_evidence_seq: int) -> ReArmOutcome:
+        """Evaluate the two-person re-arm quorum for ``latched_evidence_seq``.
+
+        Never calls the storage-layer clear itself (module docstring) — the
+        caller (:meth:`~tos_runtime.compose._types.ComposedRuntime
+        .clear_new_risk_halt`) does that only when this returns
+        :attr:`ReArmStatus.APPROVED`.
+
+        Args:
+            latched_evidence_seq: The ``evidence_seq`` of the currently-latched
+                new-risk halt the operator reviewed.
+
+        Returns:
+            The :class:`ReArmOutcome`.
+        """
+        path = self._approvals_dir / "rearm" / f"{latched_evidence_seq}.yaml"
+        try:
+            raw = _load_raw_rearm_file(
+                path,
+                expected_owner_uid=self._expected_owner_uid,
+                getuid=self._getuid,
+            )
+            _verify_environment_label(raw, path, self._environment_label)
+            entries = _verify_entries(raw, path, latched_evidence_seq)
+        except ReArmApprovalFileError as exc:
+            return self._refuse(latched_evidence_seq, (f"approval_file: {exc}",))
+
+        current = self._inbox.new_risk_halt()
+        if current is None or current.get("evidence_seq") != latched_evidence_seq:
+            return self._refuse(latched_evidence_seq, ("no_matching_latch",))
+
+        approver_ids = frozenset(entry["principal_id"] for entry in entries)
+        roster_result = self._resolve_roster(latched_evidence_seq, approver_ids)
+        if isinstance(roster_result, ReArmOutcome):
+            return roster_result
+        roster = roster_result
+
+        try:
+            request, attestations, graph, approval_set, consumption = (
+                _build_hag_artifacts(entries, latched_evidence_seq, roster)
+            )
+        except (ValueError, ArtifactIntegrityError) as exc:
+            return self._refuse(
+                latched_evidence_seq, (f"hag_artifact_construction: {exc}",)
+            )
+
+        prior_consumptions = self._prior_consumptions()
+        checks: dict[str, bool] = {
+            "dual_control_effective_distinct": (
+                dual_control_effective_distinct(attestations, graph) is True
+            ),
+            "quorum_independence_satisfied": (
+                quorum_independence_satisfied(
+                    attestations,
+                    graph,
+                    quorum_n=_REARM_QUORUM_N,
+                    required_roles=frozenset({_REARM_ROLE}),
+                )
+                is True
+            ),
+            "approval_binding_exact": bool(attestations)
+            and all(
+                approval_binding_exact(request, attestation) is True
+                for attestation in attestations
+            ),
+            "approval_set_single_use": (
+                approval_set_single_use(consumption, prior_consumptions) is True
+            ),
+        }
+        failed = tuple(name for name, satisfied in checks.items() if not satisfied)
+        if failed:
+            return self._refuse(latched_evidence_seq, failed)
+
+        principal_sha256 = sorted(
+            hashlib.sha256(attestation.principal_id.encode("utf-8")).hexdigest()
+            for attestation in attestations
+            if attestation.principal_id is not None
+        )
+        self._evidence.append(
+            {
+                "latched_evidence_seq": latched_evidence_seq,
+                "latched_reason": current.get("reason"),
+                "principal_sha256": principal_sha256,
+                "request_digest": request.canonical_digest,
+                "approval_set_digest": approval_set.canonical_digest,
+                "roster_digest": graph.canonical_digest,
+                "consumption_id": consumption.consumption_id,
+                "consumed_generation": consumption.consumed_generation,
+            },
+            kind=_REARM_APPROVED_KIND,
+            record_class=_REARM_APPROVED_KIND,
+        )
+        return ReArmOutcome(
+            status=ReArmStatus.APPROVED,
+            reasons=(),
+            attestation_text=f"hag-rearm-quorum-satisfied:{consumption.consumption_id}",
+        )
+
+    def _refuse(
+        self, latched_evidence_seq: int, reasons: tuple[str, ...]
+    ) -> ReArmOutcome:
+        self._evidence.append(
+            {
+                "latched_evidence_seq": latched_evidence_seq,
+                "reasons": list(reasons),
+            },
+            kind=_REARM_REFUSED_KIND,
+            record_class=_REARM_REFUSED_KIND,
+        )
+        return ReArmOutcome(
+            status=ReArmStatus.REFUSED, reasons=reasons, attestation_text=None
+        )
+
+    def _resolve_roster(
+        self, latched_evidence_seq: int, approver_ids: frozenset[str]
+    ) -> _Roster | ReArmOutcome:
+        """Load the operator roster and check every attesting principal is on
+        it (module docstring HIGH-3 disposition) — returns the loaded
+        :class:`_Roster` on success, or an already-evidenced ``REFUSED``
+        :class:`ReArmOutcome` (split out of :meth:`approve_and_clear` purely
+        for the size budget)."""
+        roster_path = self._approvals_dir / "rearm" / "roster.yaml"
+        try:
+            roster = _load_roster(
+                roster_path,
+                expected_owner_uid=self._expected_owner_uid,
+                getuid=self._getuid,
+                environment_label=self._environment_label,
+            )
+        except _RosterAbsent:
+            return self._refuse(latched_evidence_seq, ("ROSTER_ABSENT",))
+        except ReArmApprovalFileError as exc:
+            return self._refuse(latched_evidence_seq, (f"roster: {exc}",))
+
+        not_in_roster = sorted(approver_ids - roster.principal_ids)
+        if not_in_roster:
+            return self._refuse(
+                latched_evidence_seq,
+                (f"approver_not_in_roster: {not_in_roster}",),
+            )
+        return roster
+
+    def _prior_consumptions(self) -> tuple[ApprovalSetConsumptionRecord, ...]:
+        """Reconstruct every past successful re-arm's consumption record from this
+        runtime's own durable ``REARM_APPROVED`` evidence history — the single-use
+        check's own memory (never an in-process cache; a fresh
+        :class:`ReArmWorkflow` over the SAME evidence store sees the identical
+        history, exactly like ``tos_runtime.authority.iap.IntentRegistry``'s own
+        log-enforced, not memory-enforced, single-use consumption)."""
+        rows = self._evidence.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = ?", (_REARM_APPROVED_KIND,)
+        ).fetchall()
+        records: list[ApprovalSetConsumptionRecord] = []
+        for (payload_json,) in rows:
+            payload = json.loads(payload_json)["payload"]
+            record = ApprovalSetConsumptionRecord.issue(
+                scheme=_SCHEME,
+                consumption_id=payload["consumption_id"],
+                approval_set_digest=payload["approval_set_digest"],
+                downstream_decision_ref=(
+                    f"new_risk_halt:{payload['latched_evidence_seq']}"
+                ),
+                single_use=True,
+                consumed_generation=payload["consumed_generation"],
+            )
+            assert isinstance(record, ApprovalSetConsumptionRecord)
+            records.append(record)
+        return tuple(records)
+
+
+@dataclass(frozen=True)
+class NewRiskHaltDoorDecision:
+    """The result of :func:`prepare_new_risk_halt_clear` — either a terminal,
+    already-evidenced refusal, or the go-ahead for the caller's OWN
+    storage-layer clear call.
+
+    Split out of :meth:`~tos_runtime.compose._types.ComposedRuntime
+    .clear_new_risk_halt` purely for the ``tools/tos_size_budget.py``
+    function-length budget (that method was over budget with this inlined) —
+    no behavioural change. The machine pin
+    ``tests/engine/test_no_direct_latch_clear.py`` still allows only
+    ``compose/_types.py`` to call
+    :meth:`~tos_runtime.engine.inbox.SqliteEventInbox.clear_new_risk_halt`, so
+    this function stops one step short of that call and hands back everything
+    the caller needs to make it.
+
+    Attributes:
+        refusal: A terminal :class:`~tos_runtime.engine.inbox
+            .NewRiskHaltClearOutcome` (``NO_LATCH`` / ``SEQ_MISMATCH`` /
+            ``QUORUM_REFUSED``), already durably evidenced by this function —
+            ``None`` means "proceed to the storage clear".
+        attestation_text: Non-``None`` exactly when ``refusal is None`` — the
+            workflow's non-secret attestation marker text for the caller's own
+            ``operator_attestation`` argument.
+    """
+
+    refusal: NewRiskHaltClearOutcome | None
+    attestation_text: str | None
+
+
+def prepare_new_risk_halt_clear(
+    *,
+    current: Mapping[str, object] | None,
+    latched_evidence_seq: int,
+    approvals_dir: Path,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    time_service: TrustworthyTimeService,
+    environment_label: str,
+    expected_owner_uid: int,
+    refused_kind: str,
+) -> NewRiskHaltDoorDecision:
+    """Every check ``ComposedRuntime.clear_new_risk_halt`` needs BEFORE its own
+    storage-layer clear call — the seq pre-checks plus the HAG two-person
+    re-arm quorum (:class:`ReArmWorkflow`) — extracted from that method purely
+    for the size budget (:class:`NewRiskHaltDoorDecision`'s own docstring); no
+    behavioural change.
+
+    Args:
+        current: The caller's own ``inbox.new_risk_halt()`` reading (read
+            once by the caller and passed in here, rather than re-read).
+        latched_evidence_seq: The seq the operator is attempting to clear.
+        approvals_dir: See :class:`ReArmWorkflow`.
+        evidence_store: See :class:`ReArmWorkflow`; also where this
+            function's own ``NEW_RISK_HALT_CLEAR_REFUSED`` rows are appended
+            for the ``NO_LATCH``/``SEQ_MISMATCH``/``QUORUM_REFUSED`` paths.
+        inbox: See :class:`ReArmWorkflow` (read-only).
+        time_service: See :class:`ReArmWorkflow`.
+        environment_label: See :class:`ReArmWorkflow`.
+        expected_owner_uid: See :class:`ReArmWorkflow`.
+        refused_kind: The evidence ``kind``/``record_class`` string for a
+            refusal recorded here (the caller's own
+            ``_NEW_RISK_HALT_CLEAR_REFUSED_KIND`` — a runtime-level record
+            kind, not a kernel one, passed in rather than duplicated here).
+
+    Returns:
+        The :class:`NewRiskHaltDoorDecision`.
+    """
+
+    def _refuse(outcome: NewRiskHaltClearOutcome) -> NewRiskHaltDoorDecision:
+        evidence_store.append(
+            {
+                "outcome": outcome.value,
+                "requested_evidence_seq": latched_evidence_seq,
+                "current_latched_evidence_seq": (
+                    current.get("evidence_seq") if current is not None else None
+                ),
+            },
+            kind=refused_kind,
+            record_class=refused_kind,
+        )
+        return NewRiskHaltDoorDecision(refusal=outcome, attestation_text=None)
+
+    if current is None:
+        return _refuse(NewRiskHaltClearOutcome.NO_LATCH)
+    if current.get("evidence_seq") != latched_evidence_seq:
+        return _refuse(NewRiskHaltClearOutcome.SEQ_MISMATCH)
+
+    workflow = ReArmWorkflow(
+        approvals_dir,
+        evidence_store,
+        inbox,
+        time_service,
+        environment_label=environment_label,
+        expected_owner_uid=expected_owner_uid,
+    )
+    rearm_outcome = workflow.approve_and_clear(latched_evidence_seq)
+    if rearm_outcome.status is not ReArmStatus.APPROVED:
+        return _refuse(NewRiskHaltClearOutcome.QUORUM_REFUSED)
+
+    return NewRiskHaltDoorDecision(
+        refusal=None, attestation_text=rearm_outcome.attestation_text
+    )

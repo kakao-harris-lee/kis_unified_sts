@@ -57,6 +57,26 @@ def test_next_unconsumed_returns_oldest_first_then_none(
     assert inbox.next_unconsumed() is None
 
 
+def test_unconsumed_count_tracks_admitted_minus_consumed(
+    inbox: SqliteEventInbox,
+) -> None:
+    """The MONITORING safety-mesh service's own inbox-backlog observation (Phase 5
+    W3-b) — distinct from :attr:`~SqliteEventInbox.count`, which never falls as
+    events are consumed."""
+    assert inbox.unconsumed_count == 0
+    inbox.enqueue(fx.decision_tick_event(seq=1))
+    inbox.enqueue(fx.decision_tick_event(seq=2))
+    assert inbox.unconsumed_count == 2
+    assert inbox.count == 2
+
+    inbox.mark_consumed(1, evidence_seq=100, generation=1)
+    assert inbox.unconsumed_count == 1
+    assert inbox.count == 2  # count never falls
+
+    inbox.mark_consumed(2, evidence_seq=101, generation=1)
+    assert inbox.unconsumed_count == 0
+
+
 def test_mark_consumed_is_reflected_in_is_consumed(inbox: SqliteEventInbox) -> None:
     receipt = inbox.enqueue(fx.decision_tick_event(seq=1))
     assert inbox.is_consumed(receipt.seq) is False

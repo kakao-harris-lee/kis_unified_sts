@@ -77,6 +77,17 @@ class ReferenceObservation:
     offset_bound_ms: int | None = None
     drift_bound_ppm: int | None = None
     uncertainty_bound_ms: int | None = None
+    #: G-1 (runtime operations wiring plan §2 decision 1): the wall-clock
+    #: VALUE this read observed, in whole unix milliseconds, or ``None`` when
+    #: this reader kind does not (or could not) observe one. Carrying the
+    #: value here does NOT make ``LOCAL_WALL`` a decisional input anywhere in
+    #: ``tos.time`` — no kernel predicate reads this field; it exists only so
+    #: :class:`~tos_runtime.time.service.TrustworthyTimeService` can surface
+    #: it, gated on ``HealthState.TRUSTED``, as the kernel's own audit-only
+    #: ``TimeHealthSnapshot.wall_clock_observation`` (see that field's
+    #: docstring: "Layer-1 covered but audit-only: no predicate reads it for
+    #: expiry/freshness/ordering").
+    wall_clock_unix_ms: int | None = None
 
 
 @runtime_checkable
@@ -121,17 +132,24 @@ class LocalSystemClockReader:
     """
 
     def read(self) -> ReferenceObservation:
-        """Read the local wall clock once, as a reachability probe.
+        """Read the local wall clock: a reachability probe, AND (G-1, runtime
+        operations wiring plan §2 decision 1) the observed value itself.
 
-        The wall-clock VALUE itself is never surfaced beyond this reachability
-        check — no predicate in ``tos.time`` reads ``LOCAL_WALL`` as a
-        freshness/ordering basis (time design §4.2), so this reader's only
-        job is to prove the local clock subsystem answers at all.
+        The value is now *preserved* on :attr:`ReferenceObservation.
+        wall_clock_unix_ms` — but this remains non-decisional: no predicate
+        in ``tos.time`` reads ``LOCAL_WALL`` as a freshness/ordering basis
+        (time design §4.2). The value is surfaced strictly for audit and for
+        the G-1-gated wall-clock reference
+        (:class:`~tos_runtime.calendar.ports.TrustedWallClockReference`),
+        which only ever reads it once :class:`~tos_runtime.time.service
+        .TrustworthyTimeService` itself is ``HealthState.TRUSTED`` — this
+        reader's own reachability verdict is unchanged either way.
         """
-        time.time_ns()
+        now_ns = time.time_ns()
         return ReferenceObservation(
             reachable=True,
             healthy=True,
             quality="LOCAL_SYSTEM_CLOCK",
             common_mode_group=_LOCAL_SYSTEM_CLOCK_GROUP,
+            wall_clock_unix_ms=now_ns // 1_000_000,
         )

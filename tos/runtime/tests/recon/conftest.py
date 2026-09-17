@@ -15,6 +15,9 @@ class FixedKeyProvider:
     def current(self) -> tuple[int, bytes]:
         return (1, b"test-fixed-key-bytes")
 
+    def generations(self) -> tuple[int, ...]:
+        return (1,)
+
 
 @pytest.fixture
 def key_provider() -> KeyProvider:

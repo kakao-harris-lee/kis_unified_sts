@@ -1,0 +1,39 @@
+# Runtime Safety Profile policy document (tos_runtime.safety.profile.SafetyProfileService).
+#
+# Loaded into tos.spg.RuntimeSafetyProfile via model_validate. Must pin the
+# exact envelope generation it operates under (target_envelope_id /
+# target_envelope_generation) — see tos_runtime/safety/profile.py.
+#
+# Every value below is a named-TBD `null` (or an empty collection where the
+# schema allows one) — an operator MUST replace every null with a concrete,
+# governance-approved value before this file can be used in production. The
+# loader refuses to start on a still-null required field (fail-closed).
+profile:
+  profile_id: null
+  profile_generation: null
+  profile_version:
+    version: null
+    effective_date: null
+    evidence_package_version: null
+    approver_identity: null
+    expiration_or_revalidation_date: null
+    superseded_version_link: null
+    change_classification: null
+  target_envelope_id: null
+  target_envelope_generation: null
+  # One entry per governed dimension this profile operates at — must be a
+  # subset of the envelope's governed dimensions, at or below each maximum.
+  # Example shape (delete the null placeholder, add real dimensions):
+  #   - dimension: null
+  #     profile_value: null
+  #     unit: null
+  #     multiplier: null
+  #     sign: null
+  #     precision: null
+  #     rounding: null
+  #     boundary: null
+  governed_dimensions: []
+  scope: []
+  permitted_behaviors: []
+  fallback_rules: []
+  evidence_package_ref: null
