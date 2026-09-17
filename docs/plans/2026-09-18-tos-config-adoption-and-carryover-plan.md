@@ -28,8 +28,16 @@
 
 `docs/plans/2026-09-17-tos-deployment-instance-inventory.md` 와 `grep -n "TBD" config/tos_runtime/paper/*.yaml`.
 
-- **부팅 차단 19종**: 무조건 호출 로더 18 + `strategies/` 디렉터리 1. 이 중 채택된 것은 6종.
-  → **13종이 example 뿐**이다.
+- **부팅 차단 23종**: 인벤토리 §2 표에서 `**필수**` 로 마킹된 행을 **직접 센 값**
+  (`awk '/^\| [0-9]+ \|/ && /\*\*필수\*\*/' | wc -l` → 23, `strategies/` 포함).
+  이 중 채택된 것은 **4종**(`calendar`·`risk`·`venue_constraint_policy`·`order_construction_policy`).
+  → **19종이 example 뿐**이다(`comm -23 <필수23> <채택6>` → 19).
+
+  > 정정(2026-09-18, 조사 레인 지적): 이 절의 초고는 **「13종」**이라고 적었다. **틀렸다.**
+  > 인벤토리 §2 요약 문단이 나열한 「무조건 호출 18종」 목록은 **이미 채택된 4종을 뺀 이름만**
+  > 열거한 것인데, 그것을 총량으로 읽고 거기서 채택 6을 **또** 뺐다 — 이중 차감이다.
+  > 채택 6종 중 2종(`action_flow_policy`·`aggregate_risk_policy`)은 「사실상 필수」 행이라 애초에
+  > 필수 23 집합 밖이기도 하다. 작업량이 **1.5배**로 늘어난다.
 - **`construction.yaml`**: 채택 인스턴스가 **아예 없다**(`config/tos_runtime/paper/` 에 부재).
   `run` 서브커맨드 전용 필수. 리프 7개 전부 `null`.
 - **채택된 6종 안의 잔여 TBD**: `aggregate_risk_policy` 9 · `action_flow_policy` 8 ·
