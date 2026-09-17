@@ -817,6 +817,328 @@ def test_rate_limit_during_poll_stops_with_no_further_call(
 
 
 # ---------------------------------------------------------------------------
+# ABORTED vs CENSORED + verbatim stop evidence (2026-09-17 P-CA trial 1 defects)
+# ---------------------------------------------------------------------------
+
+
+def _stop_evidence(run: Any) -> dict[str, Any]:
+    """The single ``poll_stop_evidence`` observation, or fail loudly."""
+    records = [
+        obs["poll_stop_evidence"]
+        for obs in run.observations
+        if "poll_stop_evidence" in obs
+    ]
+    assert (
+        len(records) == 1
+    ), f"expected exactly one stop evidence record, got {records}"
+    return records[0]
+
+
+def _leg_row(run: Any, leg: str) -> dict[str, Any]:
+    table = run.measurements["class_leg_table"]
+    rows = [row for row in table if row["leg"] == leg]
+    assert rows, f"no {leg} row in class_leg_table: {table}"
+    return rows[0]
+
+
+def test_rate_limited_poll_aborts_the_leg_and_records_verbatim_evidence(
+    stock_env: None, wire: Any
+) -> None:
+    """2026-09-17: a rate limit on poll #1 stopped the run after ~1s, yet the
+    cash leg was labelled CENSORED "within --window-s=28800.0s" — asserting an
+    8-hour absence that was never observed. The window did not elapse: that is
+    ABORTED. And the artifact recorded only the string "rate-limited", though
+    ``is_rate_limited`` fires on EITHER HTTP 429 OR EGW00201 in the body, so
+    nobody could tell afterwards which one had fired."""
+    wire(
+        _ScriptedSession(
+            [
+                _balance_body(10),  # baseline
+                _FakeResponse(
+                    {
+                        "rt_cd": "1",
+                        "msg_cd": "EGW00201",
+                        "msg1": "초당 거래건수를 초과하였습니다.",
+                    },
+                    status=429,
+                ),
+            ]
+        )
+    )
+    run = pc.probe_pca(
+        _args(
+            effective_time="2020-01-01T09:00:00+09:00",
+            poll_ms=0.0,
+            pace_s=0.0,
+            window_s=28800.0,
+        )
+    )
+
+    row = _leg_row(run, "quantity")
+    assert row["status"] == "ABORTED"
+    assert row["stop_reason"] == pc._STOP_RATE_LIMITED
+    assert row["polls_used"] == 1
+
+    skip = [
+        entry for entry in run.skips if entry["what"] == "legs.bonus_issue.quantity"
+    ][0]
+    assert "ABORTED" in skip["reason"]
+    assert "NOT elapse" in skip["reason"]
+    assert "CENSORED" not in skip["reason"]
+
+    evidence = _stop_evidence(run)
+    assert evidence["poll_index"] == 1
+    assert evidence["status_kind"] == pc._BAL_RATE_LIMITED
+    assert evidence["http_status"] == 429
+    assert evidence["msg_cd"] == "EGW00201"
+    assert "EGW00201" in evidence["body_excerpt"]
+
+
+def test_rate_limited_poll_evidence_distinguishes_429_from_body_egw00201(
+    stock_env: None, wire: Any
+) -> None:
+    """The other half of ``is_rate_limited``: EGW00201 in a 200 body. The
+    evidence must show http_status=200, so the two signals are told apart."""
+    wire(
+        _ScriptedSession(
+            [
+                _balance_body(10),
+                _FakeResponse(
+                    {
+                        "rt_cd": "1",
+                        "msg_cd": "EGW00201",
+                        "msg1": "초당 거래건수를 초과하였습니다.",
+                    },
+                    status=200,
+                ),
+            ]
+        )
+    )
+    run = pc.probe_pca(
+        _args(
+            effective_time="2020-01-01T09:00:00+09:00",
+            poll_ms=0.0,
+            pace_s=0.0,
+            window_s=60.0,
+        )
+    )
+    evidence = _stop_evidence(run)
+    assert evidence["http_status"] == 200
+    assert evidence["status_kind"] == pc._BAL_RATE_LIMITED
+    assert _leg_row(run, "quantity")["status"] == "ABORTED"
+
+
+def test_rejected_poll_aborts_with_its_own_reason_and_carries_the_envelope(
+    stock_env: None, wire: Any
+) -> None:
+    """A rejection that is NOT a rate limit gets its own stop reason, and the
+    evidence carries the broker's rt_cd/msg_cd/msg1 verbatim."""
+    wire(
+        _ScriptedSession(
+            [
+                _balance_body(10),
+                _FakeResponse(
+                    {
+                        "rt_cd": "1",
+                        "msg_cd": "APBK0919",
+                        "msg1": "계좌번호가 유효하지 않습니다.",
+                        "output1": [],
+                        "output2": [],
+                    },
+                    status=200,
+                ),
+            ]
+        )
+    )
+    run = pc.probe_pca(
+        _args(
+            effective_time="2020-01-01T09:00:00+09:00",
+            poll_ms=0.0,
+            pace_s=0.0,
+            window_s=60.0,
+        )
+    )
+
+    row = _leg_row(run, "quantity")
+    assert row["status"] == "ABORTED"
+    assert row["stop_reason"] == pc._STOP_REJECTED
+    assert pc._STOP_REJECTED != pc._STOP_RATE_LIMITED
+
+    evidence = _stop_evidence(run)
+    assert evidence["status_kind"] == pc._BAL_REJECTED
+    assert evidence["http_status"] == 200
+    assert evidence["rt_cd"] == "1"
+    assert evidence["msg_cd"] == "APBK0919"
+    assert evidence["msg1"] == "계좌번호가 유효하지 않습니다."
+
+
+def test_page_capped_poll_aborts_with_the_page_cap_reason(
+    stock_env: None, wire: Any
+) -> None:
+    pages = [_balance_body(10)] + [
+        _paged_balance(
+            qty_row={"pdno": "999999", "hldg_qty": "1"}, fk=f"F{i}", nk=f"N{i}"
+        )
+        for i in range(pc._MAX_BALANCE_PAGES)
+    ]
+    wire(_ScriptedSession(pages))
+    run = pc.probe_pca(
+        _args(
+            effective_time="2020-01-01T09:00:00+09:00",
+            poll_ms=0.0,
+            pace_s=0.0,
+            window_s=60.0,
+        )
+    )
+    row = _leg_row(run, "quantity")
+    assert row["status"] == "ABORTED"
+    assert row["stop_reason"] == pc._STOP_PAGE_CAP
+    assert _stop_evidence(run)["status_kind"] == pc._BAL_CAPPED
+
+
+def test_aborted_row_carries_no_value_fields(stock_env: None, wire: Any) -> None:
+    """Like a CENSORED row, an ABORTED row must carry NEITHER a timestamp NOR a
+    value, and must not be tagged candidate_only — there is no candidate."""
+    wire(
+        _ScriptedSession(
+            [
+                _balance_body(10),
+                _FakeResponse(
+                    {"rt_cd": "1", "msg_cd": "", "msg1": "EGW00201"}, status=429
+                ),
+            ]
+        )
+    )
+    run = pc.probe_pca(
+        _args(
+            effective_time="2020-01-01T09:00:00+09:00",
+            poll_ms=0.0,
+            pace_s=0.0,
+            window_s=60.0,
+        )
+    )
+    row = _leg_row(run, "quantity")
+    assert row["status"] == "ABORTED"
+    assert "t1" not in row
+    assert "latency_ms" not in row
+    assert "candidate_only" not in row
+    assert "legs.bonus_issue.quantity" not in run.measurements
+
+
+def test_window_expiry_carries_no_stop_reason_and_no_stop_evidence(
+    stock_env: None, wire: Any
+) -> None:
+    """Regression guard for the untouched path: when nothing goes wrong, an
+    unobserved leg stays CENSORED with no stop_reason and no stop evidence."""
+    from datetime import UTC, datetime
+
+    t0 = datetime(2020, 1, 1, 9, 0, 0, tzinfo=UTC)
+    wire(_ScriptedSession([_balance_body(10)]), clock=[t0])
+    run = pc.probe_pca(
+        _args(effective_time=t0.isoformat(), poll_ms=0.0, pace_s=0.0, window_s=1e-9)
+    )
+    row = _leg_row(run, "quantity")
+    assert row["status"] == "CENSORED"
+    assert "stop_reason" not in row
+    assert not [obs for obs in run.observations if "poll_stop_evidence" in obs]
+    assert run.errors == []
+
+
+def test_baseline_call_observation_carries_the_verbatim_broker_envelope(
+    stock_env: None, wire: Any
+) -> None:
+    """``baseline_call`` recorded only status_kind + rt_cd; a baseline rejection
+    was therefore as undiagnosable as the poll one."""
+    wire(
+        _ScriptedSession(
+            [
+                _FakeResponse(
+                    {
+                        "rt_cd": "1",
+                        "msg_cd": "APBK0919",
+                        "msg1": "계좌번호가 유효하지 않습니다.",
+                    },
+                    status=200,
+                )
+            ]
+        )
+    )
+    run = pc.probe_pca(_args(effective_time="2020-01-01T09:00:00+09:00"))
+    baseline = [
+        obs["baseline_call"] for obs in run.observations if "baseline_call" in obs
+    ][0]
+    assert baseline["status_kind"] == pc._BAL_REJECTED
+    assert baseline["http_status"] == 200
+    assert baseline["rt_cd"] == "1"
+    assert baseline["msg_cd"] == "APBK0919"
+    assert baseline["msg1"] == "계좌번호가 유효하지 않습니다."
+    assert "APBK0919" in baseline["body_excerpt"]
+
+
+def test_body_excerpt_is_truncated_and_never_carries_request_params(
+    stock_env: None, wire: Any
+) -> None:
+    """The excerpt is a broker ERROR body recorded unparsed, so it is capped;
+    and no request param/header (which carry the account number and the bearer
+    token) may ever reach the artifact through it."""
+    wire(
+        _ScriptedSession(
+            [
+                _balance_body(10),
+                _FakeResponse(
+                    {
+                        "rt_cd": "1",
+                        "msg_cd": "EGW00201",
+                        "msg1": "x" * 4000,
+                    },
+                    status=429,
+                ),
+            ]
+        )
+    )
+    run = pc.probe_pca(
+        _args(
+            effective_time="2020-01-01T09:00:00+09:00",
+            poll_ms=0.0,
+            pace_s=0.0,
+            window_s=60.0,
+        )
+    )
+    evidence = _stop_evidence(run)
+    assert len(evidence["body_excerpt"]) == pc._BODY_EXCERPT_MAX_CHARS
+    blob = json.dumps(run.to_dict(), ensure_ascii=False)
+    assert _ACCOUNT not in blob
+    assert "Bearer test" not in blob
+
+
+def test_read_balance_reports_the_transport_status_alongside_the_kind(
+    stock_env: None, wire: Any
+) -> None:
+    """The HTTP status must survive :func:`pc._read_balance`, which previously
+    discarded it in favour of the ``_BAL_*`` kind."""
+    session = _ScriptedSession(
+        [_FakeResponse({"rt_cd": "1", "msg_cd": "", "msg1": "EGW00201"}, status=429)]
+    )
+
+    class _Creds:
+        cano = _ACCOUNT[:8]
+        acnt_prdt_cd = "01"
+
+    kind, qty, cash, _parsed, _text, http_status = pc._read_balance(
+        session,
+        _FakeAuth(),
+        pc.MOCK_BASE_URL,
+        pc._STOCK_TR_MOCK,
+        _Creds(),
+        "005930",
+        pc._Pacer(0.0),
+    )
+    assert kind == pc._BAL_RATE_LIMITED
+    assert http_status == 429
+    assert (qty, cash) == (0, 0.0)
+
+
+# ---------------------------------------------------------------------------
 # CLI wiring
 # ---------------------------------------------------------------------------
 
