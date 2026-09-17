@@ -111,6 +111,10 @@ def _write_marketfeed_config(
                 "direction": _DIRECTION,
                 "quantity_basis": _QUANTITY_BASIS,
                 "unit": _UNIT,
+                # W2 lane (2026-09-17) — intake_kind is now required and never defaults
+                # (_marketfeed_wiring.py module docstring); this suite exercises the
+                # journal-backed intake exclusively, so it is pinned explicitly here.
+                "intake_kind": "journal",
                 "journal_path": str(journal_path),
                 "poll_interval_ms": _POLL_INTERVAL_MS,
                 "snapshot_age_bound": _SNAPSHOT_AGE_BOUND,
