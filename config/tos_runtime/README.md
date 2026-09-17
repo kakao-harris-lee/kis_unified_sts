@@ -58,9 +58,11 @@ example file but have zero call sites anywhere under `compose/*.py` — they
 are orphaned relative to boot, not blocking and not optional-features
 either. Read that document before authoring any new `.yaml` here — it is
 the current, measured map of what still blocks a real boot, and it records
-which main commit it was measured against so a reader knows what it does
-and does not cover (e.g. it says nothing about `kis_quote.yaml`/
-`kis_witness.yaml` from concurrent unmerged lanes).
+which main commit it was measured against (`ae3c967c`) so a reader knows
+what it does and does not cover: `kis_witness.yaml` (W3, PR #726) landed on
+main after that measurement point and is not covered, and `kis_quote.yaml`
+(W2, PR #727) is still unmerged and is not covered either — neither gets a
+row until the whole table is re-measured against a new commit.
 
 Two more governed files belong here once the operator adopts their values
 (TOS venue constraint service plan, `docs/plans/2026-09-15-tos-venue-constraint-service-plan.md`
