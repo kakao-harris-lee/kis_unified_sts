@@ -74,6 +74,33 @@ observe_runtime_artifact().source_tree_digest`).
 
 **제안표에서 (라)를 (가)로 놓고 「운영자가 정한다」고 적으면 틀린다.**
 
+### 0.1.4 ★ 실증된 부류 — **배포 example 을 복사하면 부팅이 거부된다**
+
+잠재가 아니라 **이미 깨져 있다.** 팀리드가 직접 로드해 확인:
+
+```
+$ python -c "load_activation_members('tos/runtime/config/safety_activation.example.yaml')"
+REFUSED: 'members' key is missing or still null (named-TBD) —
+         an activation document must explicitly declare its member list, [] included
+```
+
+`safety_activation.yaml` 은 **네 곳**에서 읽힌다(`compose/_riskstate_wiring.py:72` ·
+`_safety_wiring.py:99` · `_venue_wiring.py:109` · `venue/activation.py`). example 은 그중
+**spg 소유 스키마(`activation:` 블록)만** 채우고 `venue/activation.py::load_activation_members`
+가 요구하는 **`members:` 키가 아예 없다.**
+
+**이 아크에서 이미 나온 부류다.** W2 의 `marketfeed.example.yaml` 이 `intake_kind` 를 빠뜨렸던 것과
+같다 — **한 파일을 여러 로더가 읽는데 example 이 한쪽만 만족시킨다.** 그때 인스턴스만 고치고
+부류를 닫지 않았다.
+
+**기존 스모크 테스트 관례로는 이것이 안 잡힌다.** `test_shipped_example_file_is_all_null_and_
+therefore_refuses` 는 「거부되는가」만 핀하는데, 이 파일은 **거부된다** — 다만 **틀린 이유로**
+거부된다(「값이 전부 null 이라」가 아니라 「구조가 불완전해서」). 그 관례는 지금 3개 파일에만
+붙어 있기도 하다(`grep -rln "shipped_example" tos/runtime/tests` → 3건).
+
+**이 계획은 example 을 복사해 실파일을 만드는 계획이다.** 깨진 example 을 복사하면 그 결함이
+배포 파일로 옮겨간다. 그러므로 **A-0b 에서 부류를 닫고** 값 저작을 시작한다.
+
 ### 0.1.3 ★ 잠재 부류 — 18종 로더가 `"TBD"` 를 막지 않는다
 
 커널 라운드 #4 의 `contract-keeper` HIGH(`optional_str` 이 `"TBD"` 통과)는 **인스턴스였고 부류는
@@ -156,6 +183,7 @@ observe_runtime_artifact().source_tree_digest`).
 | # | 내용 | 종료 조건 |
 |---|---|---|
 | **A-0** | **잠재 부류 닫기(§0.1.3).** 공용 `_require_str`/`require_str_field`/`_require` 계열에 named-TBD 거부 추가 — **값을 쓰기 전에** | `"TBD"` 를 넣으면 거부됨을 로더별로 핀 · 거부 코드를 지우면 red(뮤테이션) · 기존 부팅 무회귀 |
+| **A-0b** | **실증 부류 닫기(§0.1.4).** `safety_activation.example.yaml` 에 `members:` 추가 + **모든 배포 example 이 자신을 읽는 *모든* 로더를 통과/거부하는지** 검사. 거부는 **이유까지** 핀 | 깨진 example **0** · 스모크가 「거부됨」이 아니라 **「올바른 이유로 거부됨」**을 핀 · 로더를 하나 더 추가해도 검사가 따라옴 |
 | A-1 | **제안표 저작**(문서). (가) 정책값 + **19종** example-only 파일의 필수 리프. 값마다 **근거 한 줄**. 안전 계열은 `⚠` 표로 분리 | 저작한 값 **전부에 근거**가 붙어 있음 · (다) 부류 **0건** |
 | A-2 | (가) 채택 — 실파일 기입. `approved_by` 에 「operator 2026-09-18 · 제안표 §n」 | `grep -n "TBD" config/tos_runtime/paper/*.yaml` 에서 (가) 계열 **0** |
 | A-3 | (나) 파생 — `print-policy-digests` 출력을 기입 | digest 계열 **0** · 명령과 출력을 커밋 메시지에 인용 |
