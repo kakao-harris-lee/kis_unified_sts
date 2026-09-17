@@ -54,6 +54,7 @@ __all__ = [
     # injected inputs / value models
     "InstrumentRouteFields",
     "OrderShapeFields",
+    "PriceBandTick",
     "VenueShapeConstraints",
     "StageBinding",
     "BindingChain",
@@ -110,6 +111,23 @@ class InstrumentRouteFields(FrozenModel):
     routing_relevant_aliases: frozenset[str] = frozenset()
 
 
+class PriceBandTick(FrozenModel):
+    """One declared price-band's tick size (kernel round #4 K-1; inclusive bounds).
+
+    A **shape** artifact only — the price-band-to-tick table itself is opaque injected policy
+    content, exactly like the flat ``tick_size`` it refines (design #19 §8.0 — nothing numeric
+    is hardcoded). ``band_min``/``band_max`` are the opaque scaled-price inclusive bounds this
+    row covers; ``tick`` is the opaque scaled tick that applies while the shape's price falls in
+    that band. Rows are not required to be contiguous or exhaustive — a price that falls
+    outside every declared row's band is simply **not resolvable** from the table (the table is
+    honest about what it does not cover, never a permissive extrapolation).
+    """
+
+    band_min: int
+    band_max: int
+    tick: int
+
+
 class VenueShapeConstraints(FrozenModel):
     """The injected venue order-shape constraints (ADR §12 line 297-311 — all values injected).
 
@@ -120,6 +138,14 @@ class VenueShapeConstraints(FrozenModel):
     position-effect sets are policy-declared; an **empty** allowed set means "nothing admitted"
     (fail-closed), not "anything admitted". A ``tick_size`` / ``lot_size`` of zero is an
     invalid injected constraint (``UNKNOWN``), not a divisor.
+
+    ``price_band_ticks`` (kernel round #4 K-1) is an **optional, honest refinement** of the flat
+    ``tick_size``: when a non-empty table is injected, :func:`~tos.venue.predicates.\
+order_shape_admissible` resolves the tick for the shape's exact price from the table (a price
+    not covered by any row is left unresolved, not silently widened to a neighboring row); when
+    the table is ``None`` / empty, the flat ``tick_size`` still applies unchanged (§0.3 —
+    "기존 선물 경로 무변경"). ``None`` (not an empty tuple) is the "no table injected" state; an
+    injected-but-empty tuple resolves nothing, same as ``None``, by construction of the lookup.
     """
 
     #: Opaque injected scaled price band (inclusive); ``None`` => unknown => fail-closed.
@@ -127,6 +153,10 @@ class VenueShapeConstraints(FrozenModel):
     price_max: int | None = None
     #: Opaque injected price tick (scaled); ``None`` / ``0`` => unknown/invalid => fail-closed.
     tick_size: int | None = None
+    #: Opaque injected per-price-band tick table (kernel round #4 K-1); ``None`` => no table =>
+    #: fall back to the flat ``tick_size`` above. Never populated with fabricated rows — a row
+    #: is only ever a real broker-reported measurement (see K-1 test fixture provenance).
+    price_band_ticks: tuple[PriceBandTick, ...] | None = None
     #: Opaque injected quantity lot / min / max; ``None`` => unknown => fail-closed.
     lot_size: int | None = None
     min_quantity: int | None = None

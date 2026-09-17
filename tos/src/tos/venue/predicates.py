@@ -49,6 +49,25 @@ from tos.venue.records import (
     VenueGateAuthorityEffect,
     VenueShapeConstraints,
 )
+
+
+def _resolved_tick(price: int, constraints: VenueShapeConstraints) -> int | None:
+    """The on-grid tick for ``price`` (kernel round #4 K-1; §8.0 — every bound is injected).
+
+    A non-empty ``price_band_ticks`` table takes priority over the flat ``tick_size`` (an
+    honest refinement, not a substitution — the flat field still governs when no table is
+    injected, §0.3 "기존 선물 경로 무변경"). Table resolution is an **absolute** grid lookup
+    (``band_min <= price <= band_max``); a price the table does not cover resolves to ``None``
+    (the table is not silently extrapolated to a neighboring row) rather than falling back to
+    the flat field, since a declared-but-incomplete table is a stronger fact than "no table" —
+    the flat ``tick_size`` only applies when there is **no** table at all.
+    """
+    if constraints.price_band_ticks:
+        for row in constraints.price_band_ticks:
+            if row.band_min <= price <= row.band_max:
+                return row.tick
+        return None
+    return constraints.tick_size
 from tos.venue.vocabulary import (
     ActionClass,
     OrderAdmissibilityResult,
@@ -239,6 +258,13 @@ def order_shape_admissible(
     every declared constraint positively; any violation is ``INADMISSIBLE``; any missing /
     invalid injected bound is ``UNKNOWN``.
 
+    **Price-band tick table (kernel round #4 K-1).** The on-grid tick check prefers
+    ``constraints.price_band_ticks`` when a non-empty table is injected (see
+    :func:`_resolved_tick`); a price the table does not cover is ``UNKNOWN`` (not a fallback to
+    the flat ``tick_size``, since a declared table is a stronger — and possibly deliberately
+    incomplete — fact than "no table"). When no table is injected, the flat ``tick_size``
+    governs exactly as before (no behavior change for existing flat-only callers, e.g. futures).
+
     Args:
         shape: The exact order shape (``None`` => ``UNKNOWN``).
         constraints: The injected venue shape constraints (``None`` / missing bound =>
@@ -257,17 +283,19 @@ def order_shape_admissible(
         shape.price is None
         or constraints.price_min is None
         or constraints.price_max is None
-        or constraints.tick_size is None
         or shape.quantity is None
         or constraints.lot_size is None
         or constraints.min_quantity is None
         or constraints.max_quantity is None
     ):
         return OrderAdmissibilityResult.UNKNOWN
-    if constraints.tick_size == 0 or constraints.lot_size == 0:
+    # Tick resolution (kernel round #4 K-1): a declared price-band table refines the flat
+    # tick_size; neither present => UNKNOWN (fail-closed, never a permissive default, §8.0).
+    tick = _resolved_tick(shape.price, constraints)
+    if tick is None or tick == 0 or constraints.lot_size == 0:
         return (
             OrderAdmissibilityResult.UNKNOWN
-        )  # invalid injected constraint, not a divisor
+        )  # missing / invalid injected constraint, not a divisor
     # Required policy-declared enum sets must be non-empty (empty => nothing admitted => UNKNOWN).
     if (
         not constraints.allowed_order_types
@@ -279,7 +307,11 @@ def order_shape_admissible(
     # Price band + tick (no permissive rounding — the injected tick divides exactly).
     if shape.price < constraints.price_min or shape.price > constraints.price_max:
         return OrderAdmissibilityResult.INADMISSIBLE
-    if (shape.price - constraints.price_min) % constraints.tick_size != 0:
+    if constraints.price_band_ticks:
+        # Absolute grid (a price-band table's tick is anchored at 0, not at price_min).
+        if shape.price % tick != 0:
+            return OrderAdmissibilityResult.INADMISSIBLE
+    elif (shape.price - constraints.price_min) % tick != 0:
         return OrderAdmissibilityResult.INADMISSIBLE
     # Quantity min/max + lot (odd-lot => inadmissible).
     if (

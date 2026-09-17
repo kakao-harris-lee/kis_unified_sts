@@ -35,6 +35,7 @@ from tos.venue import (
     OrderAdmissibilityDecision,
     OrderAdmissibilityResult,
     OrderShapeFields,
+    PriceBandTick,
     SourceContinuity,
     StageBinding,
     TradabilityState,
@@ -42,6 +43,17 @@ from tos.venue import (
     VenueConstraintSnapshot,
     VenueShapeConstraints,
 )
+
+#: One real broker-reported price-band tick measurement (kernel round #4 K-1; §0.1 — this is
+#: the ONLY measured KRX price-band tick datapoint this repo has; do not extend this into a
+#: fabricated multi-row table). Source: 종목 005930, wire price 232,500원, broker-reported
+#: ``output.aspr_unit='500'`` (TR ``FHKST01010100``, v1_국내주식-008,
+#: ``.../quotations/inquire-price``), recorded at
+#: ``docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-11-20260730T002715Z.json``
+#: (``measurements.limit_price_tick``). This is broker-measured fact used as a test fixture, not
+#: a promoted deployment policy value (the deployed profile stays ``UNKNOWN`` — §0.1/§2 결정 3).
+MEASURED_KRX_PRICE_BAND_ROW = PriceBandTick(band_min=200_000, band_max=300_000, tick=500)
+MEASURED_KRX_PRICE = 232_500
 
 #: The injected provisional canonicalizer (REUSE, design #19 §3.1 — no new scheme).
 SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
@@ -112,6 +124,43 @@ def clean_shape_constraints() -> VenueShapeConstraints:
         allowed_tifs=frozenset({"DAY", "IOC"}),
         allowed_sides=frozenset({"BUY", "SELL"}),
         allowed_position_effects=frozenset({"OPEN", "CLOSE"}),
+    )
+
+
+def price_band_table_constraints() -> VenueShapeConstraints:
+    """Shape constraints with a declared price-band tick table (kernel round #4 K-1).
+
+    The table's single row is the one measured KRX datapoint (see
+    ``MEASURED_KRX_PRICE_BAND_ROW``); the flat ``tick_size`` is deliberately a value (3) that
+    puts the measured price **off**-grid relative to ``price_min`` (unlike the table's 500,
+    which is exactly on-grid), so a test that regresses to reading the flat field instead of the
+    table (M1) flips ADMISSIBLE to INADMISSIBLE — a detectably different, and wrong, result.
+    """
+    return VenueShapeConstraints(
+        price_min=100_000,
+        price_max=500_000,
+        tick_size=3,
+        price_band_ticks=(MEASURED_KRX_PRICE_BAND_ROW,),
+        lot_size=10,
+        min_quantity=10,
+        max_quantity=1_000_000,
+        allowed_order_types=frozenset({"LIMIT", "MARKET"}),
+        allowed_tifs=frozenset({"DAY", "IOC"}),
+        allowed_sides=frozenset({"BUY", "SELL"}),
+        allowed_position_effects=frozenset({"OPEN", "CLOSE"}),
+    )
+
+
+def price_band_table_shape() -> OrderShapeFields:
+    """A shape priced at the one measured KRX price-band datapoint (232,500원, tick 500)."""
+    return OrderShapeFields(
+        price=MEASURED_KRX_PRICE,
+        quantity=20,
+        order_type="LIMIT",
+        tif="DAY",
+        side="BUY",
+        position_effect="OPEN",
+        silently_rounded=False,
     )
 
 
