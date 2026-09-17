@@ -226,6 +226,9 @@ def ocp_yaml(
     action_classes: str = "[]",
     order_types: str = '["LIMIT"]',
     construction: str | None = None,
+    signer_identity: str = "null",
+    approval_identity: str = "null",
+    evidence_package_ref: str = "null",
 ) -> str:
     """The standard fixture ``order_construction_policy.yaml`` INSTANCE
     document — a full ORDER-CONSTRUCTION-POLICY-template.yaml key set plus
@@ -244,7 +247,12 @@ def ocp_yaml(
     module's own docstring). Defaults to a well-formed block so every
     existing ``ocp_yaml()`` caller keeps loading without having to know about
     the (a′) wave; override wholesale (including ``""`` to omit the block
-    entirely) for tests that exercise ``_runtime.construction`` itself."""
+    entirely) for tests that exercise ``_runtime.construction`` itself.
+
+    ``signer_identity``/``approval_identity``/``evidence_package_ref`` default to the raw YAML
+    literal ``"null"`` (kernel round #4 K-3 — these three keys are now required-present, value
+    optional, exactly like ``effective_from``/``review_due`` above); pass a quoted string
+    literal to exercise a filled value."""
     version = (
         SCHEME.version if canonicalization_version is None else canonicalization_version
     )
@@ -324,6 +332,9 @@ def ocp_yaml(
         status: {status}
         effective_from: null
         review_due: null
+        signer_identity: {signer_identity}
+        approval_identity: {approval_identity}
+        evidence_package_ref: {evidence_package_ref}
         scope:
           environments: ["{environment}"]
           safety_cells: []

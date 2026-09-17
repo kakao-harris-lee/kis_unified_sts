@@ -5,11 +5,16 @@ ceiling 1000 lines; no behavioural difference from having this inline
 there).
 
 See :mod:`tos_runtime.venue.config`'s own module docstring for the full
-``_model_view``/``_runtime`` discipline, the single-live-scope rule, the
-``canonical_digest`` tamper/stale cross-check, and the deliberate
-``signer_identity``/``approval_identity``/``evidence_package_ref`` ``None``
-choice this module implements for the Order Construction Policy INSTANCE
-document specifically.
+``_model_view``/``_runtime`` discipline, the single-live-scope rule, and the
+``canonical_digest`` tamper/stale cross-check.
+
+**Kernel round #4 K-3.** ``signer_identity``/``approval_identity``/``evidence_package_ref``
+are now READ from the instance document's own top-level keys (:func:`optional_str`) and
+threaded into ``OrderConstructionPolicy.issue`` — previously this loader hardcoded all three to
+``None`` regardless of what (if anything) the document declared. Every deployed instance today
+leaves them ``null`` (a genuinely unbound coordinate, not a fabricated value — the operator has
+not yet approved a signer/approval/evidence-package source), so today's digest is unchanged;
+filling one in a future generation binds it into the issued policy's digest for the first time.
 
 **(a′) wave, lane A** (``docs/plans/2026-09-16-tos-aprime-envelope-order-shape-plan.md``
 §4 lane A; values per ``docs/plans/2026-09-16-tos-ocp-sizing-values-proposal.md``,
@@ -68,6 +73,7 @@ from tos_runtime.venue._policy_primitives import (
     check_canonical_digest,
     load_mapping,
     optional_int,
+    optional_str,
     parse_action_classes,
     require_exact_str,
     require_filled_str,
@@ -642,16 +648,19 @@ def load_order_construction_policy(
     ``ORDER-CONSTRUCTION-POLICY-template.yaml`` — see
     :mod:`tos_runtime.venue.config`'s own module docstring;
     ``signer_identity``/``approval_identity``/``evidence_package_ref`` are
-    deliberately left ``None`` so this loader's digest matches the kernel's
-    own ``construct_candidate_command`` issuance from the same three
-    coordinates).
+    read from the document (kernel round #4 K-3) and passed through to the
+    kernel's own ``OrderConstructionPolicy.issue`` unchanged — a document
+    that leaves them ``null`` (every instance today) issues the exact same
+    digest as before this round).
 
     Raises:
         VenuePolicyConfigError: the file is missing/unreadable/not valid
             YAML/not a mapping; ``artifact_type``/``schema_version`` do not
             match the accepted constants; ``status`` is not ``ISSUED``;
             ``policy_id``/``policy_generation`` are absent, ``null``, or
-            still ``"TBD"``; ``canonical_digest`` is present but does not
+            still ``"TBD"``; ``signer_identity``/``approval_identity``/
+            ``evidence_package_ref`` is present-but-not-a-string (``null`` is
+            accepted); ``canonical_digest`` is present but does not
             match the freshly computed digest; any ``scope`` singleton key
             (``environments``/``brokers``/``accounts``/``instruments``/
             ``order_types``) does not carry exactly one non-empty,
@@ -690,6 +699,14 @@ def load_order_construction_policy(
     construction_generation = optional_int(
         raw, "construction_generation", path, "policy"
     )
+    # Kernel round #4 K-3: read, rather than hardcode None for, the three OCP covered fields
+    # `OrderConstructionPolicy._COVERED_FIELDS` already declares (`ioc/records.py:277-285`). A
+    # deployment that leaves these `null` (every instance today) reproduces the EXACT digest
+    # this loader computed before this round — no regression; a deployment that fills them gets
+    # them bound into the issued policy's digest for the first time.
+    signer_identity = optional_str(raw, "signer_identity", path, "policy")
+    approval_identity = optional_str(raw, "approval_identity", path, "policy")
+    evidence_package_ref = optional_str(raw, "evidence_package_ref", path, "policy")
 
     environment, order_type, account, instrument = _parse_ocp_scope(raw, path)
     policy_version = _parse_ocp_model_view(
@@ -719,9 +736,9 @@ def load_order_construction_policy(
         policy_id=policy_id,
         policy_generation=policy_generation,
         policy_version=policy_version,
-        signer_identity=None,
-        approval_identity=None,
-        evidence_package_ref=None,
+        signer_identity=signer_identity,
+        approval_identity=approval_identity,
+        evidence_package_ref=evidence_package_ref,
     )
     assert isinstance(policy, OrderConstructionPolicy)
     check_canonical_digest(raw, path, policy.canonical_digest, "policy")

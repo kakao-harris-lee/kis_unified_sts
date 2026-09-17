@@ -143,6 +143,26 @@ def optional_int(raw: dict[str, Any], key: str, path: Path, ctx: str) -> int | N
     return value
 
 
+def optional_str(raw: dict[str, Any], key: str, path: Path, ctx: str) -> str | None:
+    """Like :func:`optional_int`, for a nullable string key (kernel round #4 K-3 —
+    ``OrderConstructionPolicy.signer_identity``/``approval_identity``/``evidence_package_ref``):
+    the key must be PRESENT (a missing key refuses, same "no silently-dropped key" discipline as
+    every other primitive here), but ``null`` is an honest, load-bearing value — unlike
+    :func:`require_nullable_str_key_present`, this returns the parsed value rather than
+    discarding it, because the OCP loader must pass the ACTUAL value (``None`` or a string) into
+    ``OrderConstructionPolicy.issue`` — a discarded value would silently re-introduce the exact
+    hardcoded-``None`` this round removes.
+    """
+    if key not in raw:
+        raise VenuePolicyConfigError(f"{path}: {ctx} missing required key {key!r}")
+    value = raw[key]
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise VenuePolicyConfigError(f"{path}: {ctx} {key!r} must be a string or null")
+    return value
+
+
 def require_list(raw: dict[str, Any], key: str, path: Path, ctx: str) -> list[Any]:
     if key not in raw or raw[key] is None:
         raise VenuePolicyConfigError(
