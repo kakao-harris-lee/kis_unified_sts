@@ -131,15 +131,17 @@ def price_band_table_constraints() -> VenueShapeConstraints:
     """Shape constraints with a declared price-band tick table (kernel round #4 K-1).
 
     The table's single row is the one measured KRX datapoint (see
-    ``MEASURED_KRX_PRICE_BAND_ROW``); the flat ``tick_size`` is deliberately a value (3) that
-    puts the measured price **off**-grid relative to ``price_min`` (unlike the table's 500,
-    which is exactly on-grid), so a test that regresses to reading the flat field instead of the
-    table (M1) flips ADMISSIBLE to INADMISSIBLE — a detectably different, and wrong, result.
+    ``MEASURED_KRX_PRICE_BAND_ROW``); the flat ``tick_size`` is deliberately a value (7) that
+    does NOT divide the measured price (232,500 % 7 == 2, unlike the table's 500, which divides
+    it exactly), so a test that regresses to reading the flat field instead of the table (M1)
+    flips ADMISSIBLE to INADMISSIBLE — a detectably different, and wrong, result. (7 was chosen
+    over smaller values precisely because 232,500 is divisible by several small integers, e.g.
+    3 — confirmed by mutation: a flat tick_size=3 does NOT catch the M1 regression.)
     """
     return VenueShapeConstraints(
         price_min=100_000,
         price_max=500_000,
-        tick_size=3,
+        tick_size=7,
         price_band_ticks=(MEASURED_KRX_PRICE_BAND_ROW,),
         lot_size=10,
         min_quantity=10,

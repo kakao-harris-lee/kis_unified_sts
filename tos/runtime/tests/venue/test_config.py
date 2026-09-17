@@ -541,6 +541,62 @@ def test_load_order_construction_policy_digest_matches_kernel_issuance(
     assert verdict.value == "IDEMPOTENT_DUP"
 
 
+def test_load_order_construction_policy_none_identity_fields_digest_is_pinned(
+    tmp_path: Path,
+) -> None:
+    """(kernel round #4 K-3 no-regression pin, M5) The default fixture's ``signer_identity``/
+    ``approval_identity``/``evidence_package_ref`` are all ``null`` — the issued policy's
+    ``canonical_digest`` is pinned to its EXACT value from before this round. A change to what
+    ``OrderConstructionPolicy._COVERED_FIELDS`` covers (or how a ``None`` value folds into the
+    digest) would silently shift every existing deployment's digest without this pin catching
+    it — the two live-computation comparisons elsewhere in this file (loader vs. a fresh kernel
+    call with the SAME inputs) cannot catch that, because both sides would drift together."""
+    path = write_fixture_ocp(tmp_path)
+    loaded = load_order_construction_policy(path, scheme=SCHEME)
+    assert (
+        loaded.policy.canonical_digest
+        == "6be15d765e2f9bdc3178a2bd10297df2eb3ab75193c4f4cd2749b48426df5fe4"
+    )
+
+
+def test_load_order_construction_policy_digest_matches_kernel_issuance_when_identity_fields_are_filled(
+    tmp_path: Path,
+) -> None:
+    """(kernel round #4 K-3) With ``signer_identity``/``approval_identity``/
+    ``evidence_package_ref`` FILLED (not ``null``), the loader's digest still matches a bare
+    kernel ``OrderConstructionPolicy.issue`` call from the same three values — the loader
+    threads them through unchanged (M4: a loader that drops them before ``.issue()`` would
+    diverge from this exact assertion)."""
+    text = ocp_yaml(
+        signer_identity='"signer-1"',
+        approval_identity='"approval-1"',
+        evidence_package_ref='"evidence-pkg-1"',
+    )
+    path = write_fixture_ocp(tmp_path, text)
+    loaded = load_order_construction_policy(path, scheme=SCHEME)
+    assert loaded.policy.signer_identity == "signer-1"
+    assert loaded.policy.approval_identity == "approval-1"
+    assert loaded.policy.evidence_package_ref == "evidence-pkg-1"
+    kernel_issued = OrderConstructionPolicy.issue(
+        scheme=SCHEME,
+        policy_id="ocp-fixture-1",
+        policy_generation=1,
+        policy_version="1.0.0",
+        signer_identity="signer-1",
+        approval_identity="approval-1",
+        evidence_package_ref="evidence-pkg-1",
+    )
+    assert isinstance(kernel_issued, OrderConstructionPolicy)
+    assert loaded.policy.canonical_digest == kernel_issued.canonical_digest
+    verdict = classify_record_pair(
+        loaded.policy.policy_id,
+        loaded.policy.canonical_digest,
+        kernel_issued.policy_id,
+        kernel_issued.canonical_digest,
+    )
+    assert verdict.value == "IDEMPOTENT_DUP"
+
+
 def test_load_order_construction_policy_wire_codec_mapping(tmp_path: Path) -> None:
     text = ocp_yaml(wire_codec='{kind: "kis-order-cash-v1", wire_fields: ["a", "b"]}')
     path = write_fixture_ocp(tmp_path, text)
