@@ -44,10 +44,24 @@ quantity_basis: null
 unit: null
 
 # --- observation intake --------------------------------------------------
-# Path to the append-only JSON-Lines observation journal an upstream
-# collector writes (tos_runtime.marketfeed.journal.JsonLinesObservationJournal
-# — this wave's one ObservationIntake implementation; a real market-data
-# transport is a named follow-up, plan §6 confirmation 1).
+# `intake_kind` names EXACTLY ONE observation source and is REQUIRED — there is
+# no default and neither kind is ever substituted for the other
+# (tos_runtime.compose._marketfeed_wiring's module docstring). Two values are
+# recognized; anything else, or a still-null leaf, is a fail-closed refusal:
+#
+#   journal    — the append-only JSON-Lines journal an upstream collector
+#                writes (tos_runtime.marketfeed.journal
+#                .JsonLinesObservationJournal). `journal_path` below is then
+#                REQUIRED.
+#   kis_quote  — the KIS 모의투자 quote HTTP poller (tos_runtime.transport
+#                .kis_quote). `kis_quote.yaml` must then exist alongside this
+#                file, and `journal_path` below must be ABSENT.
+
+intake_kind: null
+
+# Path to the observation journal — REQUIRED when `intake_kind: journal`, and
+# refused when `intake_kind: kis_quote` (the cross-check is what stops a
+# deployment from naming one source while configuring the other).
 
 journal_path: null
 
