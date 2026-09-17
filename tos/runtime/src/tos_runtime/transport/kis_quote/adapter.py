@@ -37,14 +37,30 @@ This paragraph exists so a future reader who wants genuine event time knows WHER
 WebSocket-subscribing intake, a lane this module does not attempt), rather than concluding KIS
 never offers one.
 
-**Conclusion, stated loudly rather than implied, and scoped precisely: this adapter uses RECEIPT
-time for ``RawObservation.as_of_ms`` — never a value read from the response body — because the ONE
-TR this adapter polls (``inquire-price``, an HTTP GET) carries no genuine source event time in its
-own response.** This is not a claim that no KIS TR anywhere carries one (the scope note above is
-the counter-evidence) — it is a claim about this adapter's own, deliberately HTTP-only, data
-source. A future change to poll a different REST TR that does carry a genuine event time — or a
-future WebSocket-based intake — would need this module's own analysis redone, not a silent
-assumption inherited from this one.
+**Conclusion, stated loudly rather than implied, and made unconditionally true rather than resting
+on a measurement that does not cover every value this adapter's own config admits (independent
+review MEDIUM, 2026-09-17 — see that note below).** This adapter uses RECEIPT time for
+``RawObservation.as_of_ms`` — never a value read from the response body — as a STRUCTURAL fact
+about this module's own code, not a claim earned by measuring any one TR: :meth:`poll`'s only
+source for ``as_of_ms``/``received_ms`` is ``self._time_service.wall_clock_now()`` (below); nothing
+in :meth:`_parse_output`/:meth:`_map_fields` ever extracts a timestamp candidate from the response
+body, for ANY TR id :class:`~tos_runtime.transport.kis_quote.config.KisQuoteTransportConfig`'s
+loader admits. This is deliberately the general, code-level statement, not the TR-specific one an
+earlier revision of this paragraph made — that revision was true for the two TR ids this adapter
+was actually measured against (``FHKST01010100``, ``FHMIF10000000`` — Step 0 measurement 1 above),
+but ``_QUOTE_TR_ID_PATTERN`` (``config.py``) admits any ``^FH[A-Z]{3}\\d{8}$`` id, including the
+other two the shape itself was derived from (``FHPPG04600001``/``FHKST03030200``) whose OWN
+response bodies were never independently checked for a timestamp field. Resting the honesty
+argument on a per-TR measurement would have been false for an operator who (harmlessly, from a
+safety point of view — this code still never reads one) configured one of those. The Step 0
+measurement above still stands as the motivating EVIDENCE for why this design was chosen in the
+first place — it is just no longer the thing the conclusion's own truth depends on.
+
+This is not a claim that no KIS TR anywhere carries a genuine event time (the scope note above is
+the counter-evidence) — it is a claim about what this adapter's own code does with whatever body a
+configured TR returns. A future change to poll a different REST TR that does carry a genuine event
+time — or a future WebSocket-based intake — would need this module's own analysis, and its own new
+code path, not a silent assumption inherited from this one.
 
 **Receipt-time anchor.** ``as_of_ms``/``received_ms`` are both stamped from the SAME
 :meth:`~tos_runtime.time.service.TrustworthyTimeService.wall_clock_now` reading, taken AFTER the

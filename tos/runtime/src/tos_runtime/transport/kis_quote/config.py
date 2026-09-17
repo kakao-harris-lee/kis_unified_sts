@@ -7,16 +7,23 @@ document: every field is named-TBD (``null``) in the shipped ``.example.yaml``, 
 or missing required leaf refuses to load, naming the offending key.
 
 **Host seal (same shape as the order transport, decision 5 there).** ``endpoint_rest_base`` must
-equal the INSTANCE MOCK_VTS document's own ``rest_base`` literal exactly, and must NOT equal the
-REAL_PROD document's ``rest_base`` — this loader takes both as caller-supplied facts, never reads
-the broker-capability-profile YAML itself. This is a STRUCTURAL guard, not documentation: the
-measured broker behavior
+equal the INSTANCE MOCK_VTS document's own ``rest_base`` literal exactly — this loader takes both
+the MOCK and REAL facts as caller-supplied, never reads the broker-capability-profile YAML itself.
+This is a STRUCTURAL guard, not documentation: the measured broker behavior
 (``docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml:4348-4361``) is that KIS enforces
 environment separation *per TR family*, not *per domain* — "모의 앱키로 실전 도메인 시세를 읽는
 구성은 조용히 동작한다" ("a config reading REAL-domain quotes with a MOCK app key works silently").
-A config value alone cannot be trusted to keep this transport pointed at MOCK; the host-seal check
-below is what actually refuses a REAL endpoint, regardless of what an operator (or an attacker with
-config-file write access) sets ``endpoint_rest_base`` to.
+A config value alone cannot be trusted to keep this transport pointed at MOCK.
+
+**The actual defense is the ALLOWLIST check, not the explicit REAL-match check (independent
+review LOW, 2026-09-17).** :func:`_validate_endpoint`'s LAST comparison —
+``endpoint_rest_base != instance_mock_rest_base`` — is what refuses ANY non-MOCK value, a REAL
+endpoint included: deleting the earlier, explicit ``endpoint_rest_base == instance_real_rest_base``
+branch entirely still refuses a REAL endpoint, because it is not MOCK either, and the allowlist
+check catches it regardless. That explicit REAL-match branch is kept ONLY for a clearer, more
+specific error message when a config names the REAL host BY NAME (it says "equals REAL_PROD's own
+rest_base", not the generic "does not match MOCK_VTS") — it is redundant for the refusal itself,
+never the sole thing standing between this transport and a real host.
 
 **Quote TR id shape (measured, NOT the order transport's ``V``-prefix rule).** Four independently
 observed KIS quotations TR ids —
