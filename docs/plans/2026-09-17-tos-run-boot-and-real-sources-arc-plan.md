@@ -137,6 +137,21 @@
   **4건**이고(① `load_egress_attestations` docstring · ② 계약문서 인용 드리프트 · ③ 운영자 확인 ⑵
   `False⇒DENIED` 극성 · ④ 운영자 확인 ⑴ W2-K/ⓖ), 라운드 #3 에서 해소가 확인되는 것은 **③④ 둘뿐**이다.
   ①② 는 해소 근거를 찾지 못했다(성격상 「이월」보다 동결 기록에 가깝다) — **확인 불가**로 남긴다.
+### 0.5.1 항목별 정밀 실측 (2026-09-17 · 운영자 처분 ④ 이후)
+
+운영자가 ①②③④ 를 전부 선택한 뒤 항목별로 다시 실측했다. **둘의 성격이 바뀌었다.**
+
+| 항목 | 실측 결과 |
+|---|---|
+| ① OCP approval 결속 | 커널 함수는 키워드 14개를 받고 정책 식별 좌표 3개는 **이미 결속**. `signer`/`approval` 은 이 모듈에 **개념이 없다**. 착지 시 `tos/tests/egressgw/_egressgw_fixtures.py::construction()` 이 단일 초크포인트이며, 새 kwarg 가 실값을 실으면 **픽스처 파생 digest 가 전부 바뀐다** |
+| ② 주식 가격대별 tick 표 | **★ 이 저장소에 측정된 KRX 주식 호가단위 원천이 0건이다.** 브로커 프로필의 tick 은 전부 KOSPI200 선물(0.05/0.02pt)이고 등급 C(로컬 설정, 브로커 조회 아님) · `price_band_tick_lot_and_quantity_semantics: UNKNOWN` 이 명시 상태. 즉 ② 는 **형상만** 추가할 수 있고, 실값은 OCP sizing 제안표와 같은 **새 승인 경로**가 필요하다 — 운영자 확인 ⑦ |
+| ③ `tos.position` | 추출 경계가 깨끗하다: `PositionObservation` · `worst_credible_directional_usage` · `conservative_current_usage` · `in_flight_overlap_effect` · `_sign_of` · `_classify_sealed_sends`(DR-0003 §2.2 분류표 그 자체)가 순수. `SqliteEvidenceStore`/SQL 은 전부 런타임 잔류 |
+| ④ RCL committed 벡터 | **★ 순수 커널 변경이 아니다.** `apply_reservation_transition` 은 커널이 아니라 `tos_runtime.rcl.log.SqliteCommitLog` 의 메서드다. 영속화는 `reservations` 테이블 **새 컬럼 + RCL 스키마 v1→v2 마이그레이션**(`rcl/schema.py` 와 `operations/schema_migrations.py` 두 곳 미러)을 강제하고, 커널 쪽은 `CapacityReservationTransition` 에 필드를 더하는 일이다 → **`migration-reviewer` 게이트가 추가로 붙는다**(리뷰 레인 규약 §3) |
+
+**라운드 의식(라운드 #3 §1~§5 실측)**: 커널 라운드는 **레인 하나(K)** 로 간다 — venue/OCP 웨이브처럼 팬아웃하지 않는다. 번호 붙은 하위 커밋을 위험 낮은 순서로 쌓고, 각 하위 커밋마다 커널·런타임 스위트가 green 이어야 다음으로 간다. 「런타임 소스 diff 0」은 문자 그대로 0줄이 아니라 **런타임발 판단 0**(커널 변경이 구조적으로 강제하는 소비자 갱신만 허용)을 뜻한다. §5 는 뮤테이션 표와 저자와 다른 sonnet 리뷰를 요구한다.
+
+**착수 시점**: ① 이 `construct_candidate_command` 시그니처를 바꾸면 런타임 소비자(`_wiring.py`)가 따라 바뀐다. W1/W2/W3 브랜치가 전부 그 근방을 만지므로 **W4 는 세 웨이브가 머지된 뒤 착수**한다.
+
 - **③ 은 W3 이 선행이어야 의미가 있다.** DR-0003 §6 이 「브로커 포지션 증인 · 커널 포지션 술어 ·
   valuation 원천」을 같은 줄에 두고, 그중 **어느 하나라도** §2.2 의 한계를 대체한다고 적는다.
 
@@ -292,6 +307,12 @@
 | ③ | W3 `orders` 축 | **주문체결조회 GET TR 추가** | 증인이 잔고(포지션·현금)와 주문 둘 다 답한다. 둘 다 GET-only이므로 P-R5 금지와 무관. 새 TR 이 런타임 허용 경로에 들어오는 것이 이 처분의 내용 |
 | ④ | 커널 라운드 #4 범위 | **① OCP approval 결속 · ③ `tos.position` · ② 주식 tick 표 · ④ RCL committed 벡터 — 4건 전부** | ⑤ Phase 3 §7.11 이월은 **미선택**(ⓐ 전역 new-risk 래치는 정책 승인 선행이라 애초에 코드 라운드 밖) |
 | ⑤ | PR #676 | **W3 착수 전 머지** | W3 설계가 인용하는 P-BAL 측정치(25행/2페이지 · `TRUNCATION_RISK_DEMONSTRATED`)가 main 에 있게 된다 |
+
+**⑦ (신규 · §0.5.1 에서 나옴) 커널 라운드 #4 항목 ② 의 처리.** 이 저장소에 측정된 주식 호가단위
+원천이 **0건**이므로 ② 는 형상만 추가할 수 있다. (a) 형상만 넣고 값은 `None` 으로 남겨 커널이
+`UNKNOWN` 을 내게 한다(계획 §2 의 「원천 없는 수치는 null」 규율 그대로) · (b) 새 승인 경로(제안표)를
+만들어 값까지 채운다 · (c) 측정 원천이 생길 때까지 ② 를 이번 라운드에서 뺀다. **추천: (a)** — 형상이
+있어야 값이 «표현 가능하고 따라서 거부 가능»해지며, 지어낸 값은 0 이다.
 
 ②(실행 측정 위치)·⑥(Codex 부착)은 미질의 — ② 는 W2/W3 코드 착지 시점에, ⑥ 은 되돌리기 어려운
 경로가 실제로 생길 때 범위·비용과 함께 올린다.
