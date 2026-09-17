@@ -21,7 +21,11 @@ this probe writes. Both VP-002 keys stay ``NOT_ESTABLISHED``, a Bounds-Approver
 judgement (``common.py::ProbeRun``: "Probes measure; humans approve.").
 
 Falsification-first (§5.2, §8.4 / VP-002:772 "observed 0 != 0"): an unobserved
-leg within the polling window is CENSORED, never a zero latency.
+leg is never a zero latency. It is CENSORED when the polling window actually
+elapsed, and ABORTED when polling stopped early (rate limit, rejection, page
+cap) — two different epistemic states that must never share a label, because a
+CENSORED row asserts an absence over the full window and an ABORTED row asserts
+nothing at all (2026-09-17 incident, :func:`_finalize`).
 
 Attribution caveat (independent review finding F3): a detected balance change
 is attributed to the CA being measured by TIMING ALONE — the row carries no
@@ -509,6 +513,90 @@ _BAL_RATE_LIMITED = "RATE_LIMITED"
 _BAL_REJECTED = "REJECTED"
 _BAL_CAPPED = "CAPPED"
 
+#: Why :func:`_poll_loop` stopped. ``None`` means it ran to its natural end —
+#: ``--window-s`` genuinely elapsed, or every leg was observed — which is the
+#: ONLY state in which an unobserved leg is CENSORED (:func:`_finalize`).
+#: Anything else means the run stopped early and learned nothing about the
+#: remaining legs: the 2026-09-17 SK텔레콤 trial stopped on poll #1 after ~1s
+#: yet labelled its cash leg "CENSORED — no broker-reflect observed within
+#: --window-s=28800.0s", asserting an 8-hour absence that was never observed.
+_STOP_RATE_LIMITED = "rate_limited"
+_STOP_REJECTED = "rejected"
+_STOP_PAGE_CAP = "page_cap"
+
+#: Cap on the verbatim broker body carried by a FAILED call's evidence record.
+#: The excerpt is GATED first (:func:`_call_evidence`), and the gate is PAYLOAD-
+#: BASED and FAIL-CLOSED: the body is recorded only when the call both failed
+#: (``rt_cd != '0'``) AND carries no ``output1``/``output2``. Asking only "did
+#: the broker say success?" recorded the body on every OTHER answer, so a body
+#: the probe MISCLASSIFIES still reached the artifact — ``rt_cd`` absent or
+#: ``null``, or ``rt_cd`` as the JSON number ``0`` (``str(0 or '')`` is ``''``,
+#: not ``'0'``, because ``0`` is falsy), each wrote holdings plus the raw
+#: ``ctx_area_*`` cursors into a committed artifact. Keying on the payload
+#: instead is safe in BOTH directions: a body carrying holdings is never
+#: diagnostic (it is the success page, not the signal that stopped the run),
+#: and the failures worth recording — HTTP 429, ``EGW00201``, ``APBK0919``, an
+#: HTML gateway page — carry no ``output1``/``output2`` at all. Verified against
+#: the committed corpus: EVERY non-empty ``raw_excerpt`` under
+#: ``docs/broker-profiles/evidence/`` is a bare ``rt_cd``/``msg_cd``/``msg1`` or
+#: ``error_code`` envelope, none with a non-empty ``output1``/``output2``. So
+#: this gate suppresses no excerpt the corpus has ever found diagnostic.
+#: This cap then bounds whatever survives the gate. Capped rather than trusted:
+#: the excerpt is recorded unparsed, and an HTML gateway error page would
+#: otherwise bloat every artifact — 300 chars (the same cap the sibling probes
+#: use: ``probes_balance.py:749``, ``probes_real.py:232,315,389,490``)
+#: comfortably covers the ``rt_cd``/``msg_cd``/``msg1`` envelope that identifies
+#: WHICH rate-limit signal fired (HTTP 429 vs EGW00201 in the body), which is
+#: exactly what the 2026-09-17 artifact could not say afterwards. Request params
+#: and headers are never recorded here — they carry the account number and the
+#: bearer token.
+_BODY_EXCERPT_MAX_CHARS = 300
+
+
+def _call_evidence(
+    *, status_kind: str, http_status: int, parsed: dict[str, Any], text: str
+) -> dict[str, Any]:
+    """Verbatim broker evidence for one balance call, for the artifact.
+
+    ``is_rate_limited`` fires on EITHER HTTP 429 OR ``EGW00201`` in the body, so
+    a bare "rate-limited" string cannot be diagnosed after the fact; this record
+    carries both signals plus the rejection envelope (2026-09-17 incident).
+
+    Record shape mirrors ``probes_balance.py:749`` (and
+    ``probes_real.py:232,315,389,490``) — a local twin of the same decision,
+    not a divergence from it, so change the two together. The gate is the point:
+    a SUCCESSFUL balance body carries holdings (``pdno``, ``pchs_avg_pric``,
+    ``evlu_amt``), the account cash total (``dnca_tot_amt``) and the raw
+    ``ctx_area_fk100``/``ctx_area_nk100`` cursors that
+    ``probes_balance.py:529-540`` fingerprints rather than stores — and these
+    artifacts are committed under ``docs/broker-profiles/evidence/``. The gate
+    here is STRICTER than the sibling probes': it fails closed on the payload
+    rather than trusting ``rt_cd`` alone, because a body this probe
+    MISCLASSIFIES (``rt_cd`` absent/``null``, or the JSON number ``0``) is
+    exactly the body an ``rt_cd``-only gate lets through
+    (:data:`_BODY_EXCERPT_MAX_CHARS`).
+    """
+    raw = parsed.get("rt_cd")
+    rt_cd = "" if raw is None else str(raw).strip()
+    carries_payload = any(bool(parsed.get(k)) for k in ("output1", "output2"))
+    return {
+        "status_kind": status_kind,
+        "http_status": http_status,
+        "rt_cd": parsed.get("rt_cd"),
+        "msg_cd": parsed.get("msg_cd"),
+        "msg1": parsed.get("msg1"),
+        # A gate, not a filter: redact() (common.py:228-243) keys on field NAMES
+        # and cannot reach inside a raw string leaf, so a length cap alone would
+        # still commit account-derived material to the evidence corpus. The
+        # _BAL_CAPPED stop is the case that makes this load-bearing — its last
+        # page is a SUCCESSFUL balance page, i.e. the whole holdings body.
+        "body_excerpt": (
+            ""
+            if rt_cd == "0" or carries_payload
+            else (text or "")[:_BODY_EXCERPT_MAX_CHARS]
+        ),
+    }
+
 
 def _read_balance(
     session: Any,
@@ -518,19 +606,24 @@ def _read_balance(
     creds: Any,
     symbol: str,
     pacer: _Pacer,
-) -> tuple[str, int, float, dict[str, Any], str]:
+) -> tuple[str, int, float, dict[str, Any], str, int]:
     """Walk balance pages (capped at :data:`_MAX_BALANCE_PAGES`) until
     ``symbol``'s row is found or the broker signals end-of-set. Returns
-    ``(status, qty, cash, parsed_last_page, text_last_page)`` where ``status``
-    is one of :data:`_BAL_OK` / :data:`_BAL_RATE_LIMITED` / :data:`_BAL_REJECTED`
-    / :data:`_BAL_CAPPED` (F6: capped ⇒ INCONCLUSIVE, never "not held")."""
+    ``(status, qty, cash, parsed_last_page, text_last_page, http_status)`` where
+    ``status`` is one of :data:`_BAL_OK` / :data:`_BAL_RATE_LIMITED` /
+    :data:`_BAL_REJECTED` / :data:`_BAL_CAPPED` (F6: capped ⇒ INCONCLUSIVE,
+    never "not held"). ``http_status`` is the transport status of the LAST page
+    fetched — the caller records it verbatim (:func:`_call_evidence`)."""
     fk = nk = ""
     cash = 0.0
     parsed: dict[str, Any] = {}
     text = ""
+    # Bound before the loop so the _BAL_CAPPED return below is always defined;
+    # 0 is "no call completed", which no real transport status can be.
+    http_status = 0
     for _page in range(_MAX_BALANCE_PAGES):
         pacer.wait()
-        status, parsed, text, _elapsed_ms = _get(
+        http_status, parsed, text, _elapsed_ms = _get(
             session,
             auth,
             base_url=base_url,
@@ -538,25 +631,25 @@ def _read_balance(
             tr_id=tr_id,
             params=_balance_params(creds, fk=fk, nk=nk),
         )
-        if is_rate_limited(status, parsed, text):
-            return _BAL_RATE_LIMITED, 0, cash, parsed, text
+        if is_rate_limited(http_status, parsed, text):
+            return _BAL_RATE_LIMITED, 0, cash, parsed, text, http_status
         rt_cd = str(parsed.get("rt_cd") or "").strip()
         if rt_cd != "0":
-            return _BAL_REJECTED, 0, cash, parsed, text
+            return _BAL_REJECTED, 0, cash, parsed, text, http_status
         rows = parsed.get("output1")
         rows = rows if isinstance(rows, list) else []
         cash = _read_cash_total(parsed)
         found_qty = _find_symbol_qty(rows, symbol)
         if found_qty is not None:
-            return _BAL_OK, found_qty, cash, parsed, text
+            return _BAL_OK, found_qty, cash, parsed, text, http_status
         next_fk = str(parsed.get("ctx_area_fk100") or "").strip()
         next_nk = str(parsed.get("ctx_area_nk100") or "").strip()
         if not next_fk and not next_nk:
             # Broker end-of-set and the symbol was never on any page walked —
             # genuinely absent, not truncated.
-            return _BAL_OK, 0, cash, parsed, text
+            return _BAL_OK, 0, cash, parsed, text, http_status
         fk, nk = next_fk, next_nk
-    return _BAL_CAPPED, 0, cash, parsed, text
+    return _BAL_CAPPED, 0, cash, parsed, text, http_status
 
 
 # ---------------------------------------------------------------------------
@@ -577,10 +670,14 @@ def _do_baseline(
     """Paced, paginated balance snapshot (:func:`_read_balance`). Returns
     ``(qty, cash)`` or ``None`` if the run should stop here (rate-limited,
     rejected, capped, or no holding)."""
-    status, qty, cash, parsed, _text = _read_balance(
+    status, qty, cash, parsed, text, http_status = _read_balance(
         session, auth, base_url, tr_id, creds, symbol, pacer
     )
-    run.observe(baseline_call={"status_kind": status, "rt_cd": parsed.get("rt_cd")})
+    run.observe(
+        baseline_call=_call_evidence(
+            status_kind=status, http_status=http_status, parsed=parsed, text=text
+        )
+    )
     if status == _BAL_RATE_LIMITED:
         run.error("rate-limited on baseline balance call; stopping — no retry")
         return None
@@ -665,31 +762,64 @@ def _poll_loop(
     baseline_cash: float,
     legs: list[tuple[str, str, datetime]],
     pacer: _Pacer,
-) -> tuple[dict[str, dict[str, Any]], int]:
+) -> tuple[dict[str, dict[str, Any]], int, int, float, str | None]:
     """Poll balance until every leg is observed or ``--window-s`` expires.
 
-    Returns ``(found, polls_used)`` — ``found`` maps leg name to its measurement
-    record for every leg detected live; a leg absent from ``found`` was CENSORED.
+    Returns ``(found, polls_used, polls_completed, polled_elapsed_s,
+    stop_reason)`` — ``found`` maps leg name to its measurement record for every
+    leg detected live. ``stop_reason`` is ``None`` when the loop ran to its
+    natural end (window elapsed, or every leg observed), in which case a leg
+    absent from ``found`` is CENSORED; otherwise it is one of
+    :data:`_STOP_RATE_LIMITED` / :data:`_STOP_REJECTED` / :data:`_STOP_PAGE_CAP`
+    and the remaining legs were ABORTED, not censored (:func:`_finalize`).
     """
     pending = {name: (t0_field, t0_dt) for name, t0_field, t0_dt in legs}
     found: dict[str, dict[str, Any]] = {}
     poll_pacer = pacer.derive(trial.effective_poll_ms / 1000.0)
+    # Two counters, because one number cannot mean both (review M2): the
+    # 2026-09-17 artifact's "polls_used=1" was the ATTEMPT that rate-limited, so
+    # a reader who took it for "one poll observed nothing" read an observation
+    # into a run that made none. polls_used counts attempts (the failed one that
+    # ends the run included, so it stays the index poll_stop_evidence reports);
+    # polls_completed counts the polls that came back with a usable balance.
     polls_used = 0
-    deadline = time.monotonic() + trial.window_s
+    polls_completed = 0
+    stop_reason: str | None = None
+    # M3: the ABORTED row must carry how long polling ACTUALLY ran, not just the
+    # requested --window-s it never reached (an ~1s run carrying window_s=28800).
+    started_at = time.monotonic()
+    deadline = started_at + trial.window_s
 
     while pending and time.monotonic() < deadline:
         polls_used += 1
-        status, qty, cash, parsed, _text = _read_balance(
+        status, qty, cash, parsed, text, http_status = _read_balance(
             session, auth, base_url, tr_id, creds, trial.symbol, poll_pacer
         )
+        if status in (_BAL_RATE_LIMITED, _BAL_REJECTED, _BAL_CAPPED):
+            # ONE verbatim evidence record per stop, so a later reader can tell
+            # HTTP 429 from EGW00201 and read the broker's own words (the
+            # 2026-09-17 artifact recorded neither).
+            run.observe(
+                poll_stop_evidence={
+                    "poll_index": polls_used,
+                    **_call_evidence(
+                        status_kind=status,
+                        http_status=http_status,
+                        parsed=parsed,
+                        text=text,
+                    ),
+                }
+            )
         if status == _BAL_RATE_LIMITED:
             run.error(f"rate-limited during poll #{polls_used}; stopping — no retry")
+            stop_reason = _STOP_RATE_LIMITED
             break
         if status == _BAL_REJECTED:
             run.error(
                 f"poll #{polls_used} rejected: rt_cd={parsed.get('rt_cd')!r} "
                 f"msg_cd={parsed.get('msg_cd')!r}"
             )
+            stop_reason = _STOP_REJECTED
             break
         if status == _BAL_CAPPED:
             run.error(
@@ -697,8 +827,10 @@ def _poll_loop(
                 f"without finding {trial.symbol}'s row — INCONCLUSIVE, stopping "
                 "(finding F6: a truncated read is not evidence of no change)."
             )
+            stop_reason = _STOP_PAGE_CAP
             break
 
+        polls_completed += 1
         now = _now()
         run.observe(poll={"index": polls_used, "hldg_qty": qty, "dnca_tot_amt": cash})
         for name, observed, baseline in (
@@ -724,7 +856,13 @@ def _poll_loop(
                 found[name] = record
                 run.measure(f"legs.{trial.event_class}.{name}", record)
 
-    return found, polls_used
+    return (
+        found,
+        polls_used,
+        polls_completed,
+        round(time.monotonic() - started_at, 3),
+        stop_reason,
+    )
 
 
 def _finalize(
@@ -733,9 +871,26 @@ def _finalize(
     legs: list[tuple[str, str, datetime]],
     found: dict[str, dict[str, Any]],
     polls_used: int,
+    polls_completed: int,
+    polled_elapsed_s: float,
+    stop_reason: str | None,
 ) -> None:
     """Build ``class_leg_table`` — the ONLY aggregate this probe emits — and
-    skip every CENSORED leg explicitly (never a value, never a zero)."""
+    skip every unobserved leg explicitly (never a value, never a zero).
+
+    An unobserved leg is CENSORED only when ``stop_reason`` is ``None``: the
+    window truly elapsed, so absence is an informative-but-not-zero observation.
+    When polling stopped early the leg is ABORTED instead — a different
+    epistemic state, in which nothing at all was observed about the leg and the
+    window never elapsed (2026-09-17 incident: an ~1s run claimed an 8-hour
+    censoring window).
+
+    Because ``class_leg_table`` is the only aggregate emitted, each row has to
+    be self-sufficient: it carries ``polled_elapsed_s`` (how long polling
+    ACTUALLY ran) beside ``window_s`` (what was REQUESTED), so the 2026-09-17
+    row's ``window_s=28800.0`` on a one-second run cannot be read as a window
+    that elapsed (review M3).
+    """
     class_leg_table: list[dict[str, Any]] = []
     for name, t0_field, t0_dt in legs:
         if name in found:
@@ -743,22 +898,43 @@ def _finalize(
             row["status"] = "OBSERVED"
         else:
             # No "candidate_only" here (F5): that flag means "a value exists,
-            # unapproved" — a CENSORED row has NO value to flag as a candidate.
+            # unapproved" — a CENSORED/ABORTED row has NO value to flag as a
+            # candidate (and no t1/latency_ms either).
             row = {
                 "event_class": trial.event_class,
                 "leg": name,
                 "t0_field": t0_field,
                 "t0": t0_dt.isoformat(),
-                "status": "CENSORED",
+                "status": "CENSORED" if stop_reason is None else "ABORTED",
+                # window_s is what was REQUESTED; polled_elapsed_s is what
+                # actually ran. On an ABORTED row the two differ by orders of
+                # magnitude, and the row is the only aggregate a reader gets.
                 "window_s": trial.window_s,
+                "polled_elapsed_s": polled_elapsed_s,
             }
-            run.skip(
-                f"legs.{trial.event_class}.{name}",
-                "CENSORED — no broker-reflect observed within "
-                f"--window-s={trial.window_s}s (polls_used={polls_used}). "
-                "Absence of an observed reflection is not evidence of zero "
-                "latency (VP-002:772 'observed 0 != 0').",
-            )
+            if stop_reason is None:
+                run.skip(
+                    f"legs.{trial.event_class}.{name}",
+                    "CENSORED — no broker-reflect observed within "
+                    f"--window-s={trial.window_s}s (polls_used={polls_used}). "
+                    "Absence of an observed reflection is not evidence of zero "
+                    "latency (VP-002:772 'observed 0 != 0').",
+                )
+            else:
+                row["stop_reason"] = stop_reason
+                row["polls_used"] = polls_used
+                row["polls_completed"] = polls_completed
+                run.skip(
+                    f"legs.{trial.event_class}.{name}",
+                    f"ABORTED — polling stopped early (stop_reason={stop_reason}, "
+                    f"polls_used={polls_used} (attempts), "
+                    f"polls_completed={polls_completed}); polling ran "
+                    f"{polled_elapsed_s}s, so --window-s={trial.window_s}s did "
+                    "NOT elapse. This is not even a censored observation: the "
+                    "window never ran, so nothing at all was observed about this "
+                    "leg. See the poll_stop_evidence observation for the broker's "
+                    "verbatim response.",
+                )
         class_leg_table.append(row)
 
     run.observe(
@@ -777,7 +953,12 @@ def _finalize(
         )
     )
     run.measure("class_leg_table", class_leg_table)
+    # polls_used counts ATTEMPTS and keeps its name for the artifacts already
+    # committed under docs/broker-profiles/evidence/; polls_completed is the
+    # count a reader actually wants when the run stopped early (review M2).
     run.measure("polls_used", polls_used)
+    run.measure("polls_completed", polls_completed)
+    run.measure("polled_elapsed_s", polled_elapsed_s)
     run.measure("poll_interval_ms_effective", trial.effective_poll_ms)
     run.measure(
         # Supplements the framework's own mode/errors-only provenance_class
@@ -933,7 +1114,7 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
         )
         input("  [Enter when the first relevant time has passed] ")
 
-        found, polls_used = _poll_loop(
+        found, polls_used, polls_completed, polled_elapsed_s, stop_reason = _poll_loop(
             run,
             session,
             auth,
@@ -946,7 +1127,16 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
             legs,
             pacer,
         )
-        _finalize(run, trial, legs, found, polls_used)
+        _finalize(
+            run,
+            trial,
+            legs,
+            found,
+            polls_used,
+            polls_completed,
+            polled_elapsed_s,
+            stop_reason,
+        )
     finally:
         session.close()
     return run
