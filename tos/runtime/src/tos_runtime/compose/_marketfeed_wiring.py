@@ -2,14 +2,24 @@
 wave, plan ``docs/plans/2026-09-16-tos-tick-source-plan.md`` §4 lane D).
 
 Loads ``marketfeed.yaml`` (fail-closed, the SAME named-TBD idiom
-:mod:`tos_runtime.compose._engine_config` already ships) and, only when it exists under
-``config_dir`` ALONGSIDE a ``critical_input_policy.yaml``
-(:data:`~tos_runtime.marketfeed.policy.CRITICAL_INPUT_POLICY_CONFIG_NAME`), builds a real
-:class:`~tos_runtime.marketfeed.scheduler.TickScheduler` — the SAME "files exist" idiom
-:func:`~tos_runtime.compose._session_wiring.build_nontrade_processor` already uses for its own
-optional ``nontrade.yaml``. Absent either file, :func:`build_tick_scheduler` returns ``None``: an
-operator who has not yet adopted this wave keeps composing exactly as before (module docstring of
-``ComposedRuntime.marketfeed`` — a legitimate state, never a boot refusal).
+:mod:`tos_runtime.compose._engine_config` already ships).
+
+**Two distinct absent-file cases — do not conflate them (2026-09-17 correction; an earlier
+revision of this paragraph claimed both were the same "returns None" case, which the code never
+did).** ``marketfeed.yaml`` ABSENT is the ONLY case that makes :func:`build_tick_scheduler` return
+``None`` — the SAME "files exist" idiom :func:`~tos_runtime.compose._session_wiring
+.build_nontrade_processor`'s own call site uses for its single optional ``nontrade.yaml``: an
+operator who has not yet adopted this wave at all keeps composing exactly as before (module
+docstring of ``ComposedRuntime.marketfeed`` — a legitimate state, never a boot refusal). But once
+``marketfeed.yaml`` EXISTS, ``critical_input_policy.yaml`` is no longer optional: this module
+checks only ``marketfeed.yaml``'s existence before proceeding, then calls
+:func:`~tos_runtime.marketfeed.policy.load_critical_input_policy` unconditionally, and THAT
+loader raises :class:`~tos_runtime.marketfeed.policy.CriticalInputPolicyConfigError` on a missing
+file (its own docstring's ``Raises:`` clause) — never swallowed or downgraded to ``None`` here. An
+operator who configured a tick source but did not govern it is refused at boot, not handed a
+runtime with a silently absent tick source; :func:`build_tick_scheduler`'s own ``Raises:`` clause
+already documented this exception correctly, only this module-level paragraph's blanket "absent
+either file" phrasing was wrong.
 
 **Intake selection is explicit, fail-closed, and never defaults (W2 lane,
 plan ``docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md`` §4 W2).**
