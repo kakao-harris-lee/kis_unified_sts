@@ -210,6 +210,23 @@ def test_broker_rejection_raises_witness_unavailable(server: FakeKisGetServer) -
         witness.observe(WitnessScope(account=ACCOUNT))
 
 
+def test_non_200_http_status_raises_even_when_the_body_looks_successful(
+    server: FakeKisGetServer,
+) -> None:
+    """Review MEDIUM-1 (2026-09-17): a non-200 response (a proxy, a WAF, an
+    intermediary's own error page) whose body happens to parse as JSON shaped like a
+    successful KIS answer (``rt_cd="0"``) must never be read as a genuine broker success
+    just because the body parses and ``rt_cd`` looks right."""
+    server.queue_response(
+        BALANCE_PATH,
+        status=500,
+        body={"rt_cd": "0", "output1": [_balance_row("A")]},
+    )
+    witness = _witness(server)
+    with pytest.raises(WitnessUnavailable, match="HTTP 500"):
+        witness.observe(WitnessScope(account=ACCOUNT))
+
+
 def test_our_own_max_pages_cap_raises_rather_than_returning_a_partial_snapshot(
     server: FakeKisGetServer,
 ) -> None:

@@ -213,17 +213,21 @@ class SystemKstDateSource:
         return datetime.now(self._KST).strftime("%Y%m%d")
 
 
-#: The two KIS wire field-name spellings a continuation key can arrive under — never
-#: observed to differ in casing within one response, but ``probes_balance.py``'s own
-#: ``_read_ctx_key`` checks both defensively, and this module does too (module docstring
-#: "the runtime never reads these keys, so the repo carries no evidence of their casing").
+#: The KIS wire field-name spelling a continuation key arrives under — lowercase, exactly.
+#: ``probes_balance.py``'s own ``_read_ctx_key`` defensively also checks an uppercase
+#: spelling, but every P-BAL artifact this repo has ever recorded — 2026-07-29 campaign
+#: (``P-BAL-20260731T081805Z.json``, ``:083102Z``, ``:084147Z``, ``:084238Z``,
+#: ``P-BAL-20260805T000827Z.json``) through the 2026-09-11 campaign
+#: (``P-BAL-20260911T002427Z.json``) — reports ``found_at: "body:ctx_area_fk100"`` /
+#: ``"body:ctx_area_nk100"`` and NEVER once an uppercase ``found_at``. Review MEDIUM-2
+#: (2026-09-17): an untested defensive branch resting on no evidence is exactly the
+#: phantom this repo's own lesson warns about ("필드를 제거하라, 무시하지 말고" —
+#: [[injected-literals-hide-dead-paths]]) — removed rather than kept-and-unexercised. If a
+#: future measurement ever observes an uppercase key, add it back WITH the artifact that
+#: demonstrates it and a test that exercises that exact branch.
 def _read_ctx_key(body: Mapping[str, Any], suffix: str, kind: str) -> str:
-    lower = f"ctx_area_{kind}{suffix}"
-    upper = f"CTX_AREA_{kind.upper()}{suffix}"
-    for name in (lower, upper):
-        if name in body:
-            return str(body.get(name) or "").strip()
-    return ""
+    name = f"ctx_area_{kind}{suffix}"
+    return str(body.get(name) or "").strip()
 
 
 @dataclass(frozen=True)
@@ -396,6 +400,16 @@ class KisStockBrokerWitness:
             response = self._get_page(
                 path=path, tr_id=tr_id, params=build_params(fk, nk), tr_cont=tr_cont
             )
+            # Review MEDIUM-1 (2026-09-17): the HTTP status is checked BEFORE the body is
+            # trusted at all — a non-200 response that happens to carry a JSON body shaped
+            # like a successful KIS answer (rt_cd="0") — a proxy, a WAF, an intermediary's
+            # own error page — must never be read as a genuine broker success just because
+            # its body parses.
+            if response.status != 200:
+                raise WitnessUnavailable(
+                    f"KisStockBrokerWitness: page {index} of {tr_id} returned HTTP "
+                    f"{response.status} (expected 200) — refusing to trust its body"
+                )
             if response.json is None:
                 raise WitnessUnavailable(
                     f"KisStockBrokerWitness: page {index} of {tr_id} did not parse as "
