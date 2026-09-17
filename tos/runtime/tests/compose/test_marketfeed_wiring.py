@@ -27,6 +27,7 @@ import pytest
 import yaml
 from tos.egressgw.construction import admitted_price_from_view
 from tos_runtime.calendar.ports import AbsentWallClockReference
+from tos_runtime.marketfeed.policy import CriticalInputPolicyConfigError
 from tos_runtime.marketfeed.ports import RawObservation, TickOutcome
 from tos_runtime.marketfeed.scheduler import MultiInstrumentRefused
 
@@ -111,6 +112,10 @@ def _write_marketfeed_config(
                 "direction": _DIRECTION,
                 "quantity_basis": _QUANTITY_BASIS,
                 "unit": _UNIT,
+                # W2 lane (2026-09-17) — intake_kind is now required and never defaults
+                # (_marketfeed_wiring.py module docstring); this suite exercises the
+                # journal-backed intake exclusively, so it is pinned explicitly here.
+                "intake_kind": "journal",
                 "journal_path": str(journal_path),
                 "poll_interval_ms": _POLL_INTERVAL_MS,
                 "snapshot_age_bound": _SNAPSHOT_AGE_BOUND,
@@ -362,6 +367,30 @@ def test_marketfeed_stays_none_when_unconfigured(
     assert runtime.marketfeed is None
     runtime.rcl_log.close()
     runtime.evidence_store.close()
+
+
+def test_half_configured_marketfeed_refuses_boot_rather_than_staying_none(
+    tmp_path: Path, config_dir: Path, data_dir: Path, custody_root: Path
+) -> None:
+    """``marketfeed.yaml`` present, ``critical_input_policy.yaml`` ABSENT — a boot REFUSAL, not
+    ``marketfeed is None`` (2026-09-17 defect fix: the module docstring used to claim "absent
+    either file -> None, never a boot refusal" for BOTH files, but ``build_tick_scheduler`` only
+    ever guards on ``marketfeed.yaml``'s own existence before calling
+    ``load_critical_input_policy`` unconditionally, and that loader raises
+    ``CriticalInputPolicyConfigError`` on a missing file. An operator who configured a tick
+    source but did not govern it must be refused at boot, never handed a runtime with a silently
+    absent tick source — this test pins that the CODE's behavior, not the old prose, is correct.
+    """
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path, [])
+    _write_marketfeed_config(
+        config_dir, journal_path=journal_path, instruments=(fx.INSTRUMENT,)
+    )
+    # Deliberately NOT calling _write_critical_input_policy(config_dir) — the file under test.
+    assert not (config_dir / "critical_input_policy.yaml").exists()
+
+    with pytest.raises(CriticalInputPolicyConfigError, match="not found"):
+        _compose(tmp_path, config_dir, data_dir, custody_root)
 
 
 # ----------------------------------------------------------------------------

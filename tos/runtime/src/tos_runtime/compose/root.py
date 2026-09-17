@@ -550,6 +550,10 @@ def compose_paper_runtime(
         driver=composed.driver,
         inbox=composed.inbox,
         evidence_store=composed.evidence_store,
+        custody=boot.infra.custody,
+        monotonic=boot.infra.monotonic_source,
+        broker_scopes=boot.broker_scopes,
+        runtime_identity=boot.identity,
     )
     # TOS Phase 5 W4 (plan §2 decision 11) — operations facts + (optional) operator
     # projection, wired last: every durable fact this reads (evidence/RCL/inbox,
