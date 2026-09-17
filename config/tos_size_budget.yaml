@@ -137,11 +137,12 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/egressgw/construction.py
-  measured: 1215
+  measured: 1238
   owner: tos-kernel
   decomposition_order: 6
   expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성 ·
+    커널 라운드 #4 K-3(signer/approval/evidence 결속)으로 1215→1238 실측 갱신
 - target: tos/src/tos/afg/predicates.py
   measured: 1186
   owner: tos-kernel
@@ -261,11 +262,12 @@ exceptions:
   expires_on: '2026-12-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/egressgw/construction.py::construct_candidate_command
-  measured: 136
+  measured: 151
   owner: tos-kernel
   decomposition_order: 20
   expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성 ·
+    커널 라운드 #4 K-3(signer/approval/evidence kwarg 3개 추가)으로 136→151 실측 갱신
 - target: tos/src/tos/spg/predicates.py::semantic_validation
   measured: 134
   owner: tos-kernel

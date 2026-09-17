@@ -239,6 +239,39 @@ def _parse_ocp_scope(raw: dict[str, Any], path: Path) -> tuple[str, str, str, st
     )
 
 
+def _issue_ocp_policy(
+    raw: dict[str, Any],
+    path: Path,
+    *,
+    scheme: CanonicalizationScheme,
+    policy_id: str,
+    policy_generation: int,
+    policy_version: str,
+) -> OrderConstructionPolicy:
+    """Read the three OCP covered fields ``OrderConstructionPolicy._COVERED_FIELDS`` already
+    declares (kernel round #4 K-3; ``ioc/records.py:277-285``) — ``signer_identity``,
+    ``approval_identity``, ``evidence_package_ref`` — issue the kernel policy, and verify its
+    ``canonical_digest`` against the document. Split out of
+    :func:`load_order_construction_policy` purely for that function's own 100-line size
+    budget (``config/tos_size_budget.yaml``) — no behavioural difference from having this
+    inline there."""
+    signer_identity = optional_str(raw, "signer_identity", path, "policy")
+    approval_identity = optional_str(raw, "approval_identity", path, "policy")
+    evidence_package_ref = optional_str(raw, "evidence_package_ref", path, "policy")
+    policy = OrderConstructionPolicy.issue(
+        scheme=scheme,
+        policy_id=policy_id,
+        policy_generation=policy_generation,
+        policy_version=policy_version,
+        signer_identity=signer_identity,
+        approval_identity=approval_identity,
+        evidence_package_ref=evidence_package_ref,
+    )
+    assert isinstance(policy, OrderConstructionPolicy)
+    check_canonical_digest(raw, path, policy.canonical_digest, "policy")
+    return policy
+
+
 def _parse_ocp_model_view(
     raw: dict[str, Any], path: Path, *, top_level_policy_generation: int
 ) -> str:
@@ -699,14 +732,6 @@ def load_order_construction_policy(
     construction_generation = optional_int(
         raw, "construction_generation", path, "policy"
     )
-    # Kernel round #4 K-3: read, rather than hardcode None for, the three OCP covered fields
-    # `OrderConstructionPolicy._COVERED_FIELDS` already declares (`ioc/records.py:277-285`). A
-    # deployment that leaves these `null` (every instance today) reproduces the EXACT digest
-    # this loader computed before this round — no regression; a deployment that fills them gets
-    # them bound into the issued policy's digest for the first time.
-    signer_identity = optional_str(raw, "signer_identity", path, "policy")
-    approval_identity = optional_str(raw, "approval_identity", path, "policy")
-    evidence_package_ref = optional_str(raw, "evidence_package_ref", path, "policy")
 
     environment, order_type, account, instrument = _parse_ocp_scope(raw, path)
     policy_version = _parse_ocp_model_view(
@@ -731,17 +756,14 @@ def load_order_construction_policy(
         mapping_keys=TEMPLATE_MAPPING_KEYS,
     )
 
-    policy = OrderConstructionPolicy.issue(
+    policy = _issue_ocp_policy(
+        raw,
+        path,
         scheme=scheme,
         policy_id=policy_id,
         policy_generation=policy_generation,
         policy_version=policy_version,
-        signer_identity=signer_identity,
-        approval_identity=approval_identity,
-        evidence_package_ref=evidence_package_ref,
     )
-    assert isinstance(policy, OrderConstructionPolicy)
-    check_canonical_digest(raw, path, policy.canonical_digest, "policy")
 
     return LoadedOrderConstructionPolicy(
         policy=policy,
