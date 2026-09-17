@@ -853,3 +853,57 @@ def test_get_refuses_a_non_allowlisted_path_before_any_contact() -> None:
             tr_id="TTTC0012U",
             params={},
         )
+
+
+# ---------------------------------------------------------------------------
+# pacing across phases (2026-09-17 P-CA trial 1 defect)
+# ---------------------------------------------------------------------------
+
+
+def test_first_poll_is_paced_against_the_preceding_setup_call(
+    stock_env: None, wire: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The polling loop paces on ``--poll-ms``, but its pacer must still owe the
+    gap left by the last call of the setup phase (the baseline walk, then the
+    ``--reference-check`` GET). A fresh pacer carries no outstanding gap, so
+    poll #1 went out back-to-back with the reference GET and the broker answered
+    with a rate limit — the cash leg of the 2026-09-17 SK텔레콤 trial came back
+    CENSORED off a single poll.
+    """
+    wire(
+        _ScriptedSession(
+            [
+                _balance_body(10),  # baseline walk
+                _ksdinfo_body(rows=[{"sht_cd": "005930"}]),  # --reference-check
+                _balance_body(11),  # poll #1 — quantity changed, loop ends
+            ]
+        )
+    )
+    # After wire(), which installs its own no-op sleep.
+    sleeps: list[float] = []
+    monkeypatch.setattr("time.monotonic", lambda: 1000.0)  # frozen: only gaps show
+    monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
+    run = pc.probe_pca(
+        _args(
+            event_class="bonus_issue",
+            effective_time="2020-01-01T09:00:00+09:00",
+            poll_ms=5000.0,
+            pace_s=1.1,
+            window_s=60.0,
+            reference_check=True,
+        )
+    )
+
+    assert run.errors == []
+    # One gap before the reference GET, one before poll #1. Without the carried
+    # gap the second sleep never happens.
+    assert len(sleeps) == 2, f"expected a gap before every broker call, got {sleeps}"
+    assert all(gap == pytest.approx(1.1) for gap in sleeps)
+
+
+def test_derived_pacer_inherits_the_outstanding_gap() -> None:
+    pacer = pc._Pacer(1.1)
+    pacer.wait()  # first call is free; arms the gap for the next one
+    derived = pacer.derive(5.0)
+    assert derived.interval_s == pytest.approx(5.0)
+    assert derived._next_allowed_at == pacer._next_allowed_at
