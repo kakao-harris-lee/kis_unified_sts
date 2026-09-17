@@ -37,7 +37,7 @@ from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from tos.engine.records import InstrumentKey
-from tos.rcl import CapacityState
+from tos.rcl import CapacityState, CapacityVector
 
 from tos_runtime.rcl.log import SqliteCommitLog
 
@@ -76,6 +76,18 @@ class ReservationProjectionReader(Protocol):
     def instrument_last_seq(self, key: InstrumentKey) -> int | None:
         """The ``seq`` of the last committed transition for the reservation bound to
         ``key``'s scope, if any."""
+        ...
+
+    def reservation_committed_vector(
+        self, reservation_id: str
+    ) -> CapacityVector | None:
+        """The committed :class:`~tos.rcl.CapacityVector` last written for
+        ``reservation_id``, if any (kernel round #4 K-4)."""
+        ...
+
+    def instrument_committed_vector(self, key: InstrumentKey) -> CapacityVector | None:
+        """The committed :class:`~tos.rcl.CapacityVector` of the reservation bound to
+        ``key``'s (account, instrument) scope, if any (kernel round #4 K-4)."""
         ...
 
 
@@ -128,4 +140,15 @@ class SqliteReservationProjectionReader:
         for _reservation_id, _state, last_seq, scope in self._log.reservation_rows():
             if scope.account == key.account and scope.instrument == key.instrument:
                 return last_seq
+        return None
+
+    def reservation_committed_vector(
+        self, reservation_id: str
+    ) -> CapacityVector | None:
+        return self._log.reservation_committed_vector(reservation_id)
+
+    def instrument_committed_vector(self, key: InstrumentKey) -> CapacityVector | None:
+        for reservation_id, _state, _last_seq, scope in self._log.reservation_rows():
+            if scope.account == key.account and scope.instrument == key.instrument:
+                return self._log.reservation_committed_vector(reservation_id)
         return None

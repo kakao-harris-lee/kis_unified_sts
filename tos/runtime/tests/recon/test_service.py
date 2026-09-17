@@ -49,6 +49,12 @@ class FakeRclReader:
     def instrument_last_seq(self, _key) -> int | None:
         return None
 
+    def reservation_committed_vector(self, _reservation_id: str):
+        return None
+
+    def instrument_committed_vector(self, _key):
+        return None
+
 
 class FakeEvidenceReader:
     """An :class:`EvidenceReceiptReader` test double."""

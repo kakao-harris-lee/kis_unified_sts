@@ -295,6 +295,12 @@ def test_a2_an_independent_witness_double_clears_the_same_attempt() -> None:
         def instrument_last_seq(self, _key: object) -> int | None:
             return None
 
+        def reservation_committed_vector(self, _reservation_id: str) -> object | None:
+            return None
+
+        def instrument_committed_vector(self, _key: object) -> object | None:
+            return None
+
     class _FakeEvidenceReader:
         def receipts(
             self, _scope: WitnessScope

@@ -96,6 +96,12 @@ class _MinimalRclReader:
     def instrument_last_seq(self, _key: object) -> int | None:
         return None
 
+    def reservation_committed_vector(self, _reservation_id: str) -> object | None:
+        return None
+
+    def instrument_committed_vector(self, _key: object) -> object | None:
+        return None
+
 
 @pytest.fixture
 def fresh() -> FreshnessMarker:

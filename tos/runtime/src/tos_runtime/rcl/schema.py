@@ -25,7 +25,11 @@ Three tables (design #40 D2.1, slice plan §1 item 1):
   persist the kernel's ``CapacityReservationTransition.scope`` binding —
   ``NOT NULL`` because :meth:`SqliteCommitLog.apply_reservation_transition`
   refuses any transition whose ``scope`` is absent before a row is ever
-  written (see ``log.py``'s own module docstring).
+  written (see ``log.py``'s own module docstring). ``committed_vector_json``
+  (kernel round #4 K-4, schema v2) persists the kernel's
+  ``CapacityReservationTransition.committed_vector`` — nullable (``None`` on
+  the kernel side means "no vector committed", not a zero vector, and every
+  pre-K-4 row is genuinely ``NULL`` after the v1→v2 migration).
 
 ``epochs`` and ``entries`` reject both ``UPDATE`` and ``DELETE`` (append-only,
 mechanically unrepresentable — matching
@@ -66,7 +70,14 @@ __all__ = [
 #: TOS Phase 5 W4 plan §2 decision 3 — see
 #: ``tos_runtime.evidence.store.EVIDENCE_SCHEMA_VERSION``'s own docstring for the shared
 #: convention.
-RCL_SCHEMA_VERSION = 1
+#:
+#: **v2 (kernel round #4 K-4).** ``reservations`` gained ``committed_vector_json`` (the
+#: durable form of ``CapacityReservationTransition.committed_vector``, kernel round #4 K-4) — a
+#: pre-existing v1 store file must be brought up via
+#: ``tos_runtime.operations.schema_migrations.apply_migrations(path, "rcl")`` BEFORE this code
+#: can open it again (:func:`apply_schema_ledger` / ``ensure_schema_current`` refuses a
+#: non-fresh file whose stamped version disagrees — a boot refusal, never an auto-migrate).
+RCL_SCHEMA_VERSION = 2
 
 CREATE_EPOCHS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS epochs (
@@ -97,7 +108,8 @@ CREATE TABLE IF NOT EXISTS reservations (
     state TEXT NOT NULL,
     last_seq INTEGER NOT NULL,
     scope_account TEXT NOT NULL,
-    scope_instrument TEXT NOT NULL
+    scope_instrument TEXT NOT NULL,
+    committed_vector_json TEXT
 )
 """
 

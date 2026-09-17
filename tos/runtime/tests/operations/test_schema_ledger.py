@@ -360,3 +360,74 @@ def test_schema_version_reads_a_closed_file(tmp_path: Path) -> None:
     store = SqliteEvidenceStore(path, key_provider=FixedKeyProvider())
     store.close()
     assert schema_version(path) == EVIDENCE_SCHEMA_VERSION
+
+
+# -- RCL v1 -> v2 promotion (kernel round #4 K-4: reservations gains committed_vector_json) ---
+
+
+def test_rcl_v1_data_dir_promotes_to_v2_preserving_existing_rows(
+    tmp_path: Path,
+) -> None:
+    """A genuinely pre-existing v1 RCL file (built from ``RCL_MIGRATIONS[0]``'s own registered
+    baseline statements — never this test's own ad hoc DDL) promotes to v2 via
+    :func:`apply_migrations`, and the reservation row committed under v1 survives unchanged —
+    the v2 migration is a bare ``ALTER TABLE ... ADD COLUMN`` (nullable), never a rebuild.
+    """
+    path = tmp_path / "rcl.sqlite3"
+    baseline = RCL_MIGRATIONS[0]
+    assert baseline.version == 1
+
+    conn = sqlite3.connect(str(path))
+    for statement in baseline.statements:
+        conn.execute(statement)
+    conn.execute(
+        "INSERT INTO reservations (reservation_id, state, last_seq, scope_account, "
+        "scope_instrument) VALUES (?, ?, ?, ?, ?)",
+        ("resv-v1-legacy", "POTENTIALLY_LIVE", 7, "acct-1", "K200F"),
+    )
+    conn.execute("PRAGMA user_version = 1")
+    conn.commit()
+    conn.close()
+
+    assert schema_version(path) == 1
+
+    apply_migrations(path, "rcl")
+
+    assert schema_version(path) == RCL_MIGRATIONS[-1].version
+    assert (
+        RCL_MIGRATIONS[-1].version == RCL_SCHEMA_VERSION
+    )  # same lockstep pin as marketfeed's
+
+    conn = sqlite3.connect(str(path))
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(reservations)")}
+    assert "committed_vector_json" in columns
+    row = conn.execute(
+        "SELECT reservation_id, state, last_seq, scope_account, scope_instrument, "
+        "committed_vector_json FROM reservations WHERE reservation_id = ?",
+        ("resv-v1-legacy",),
+    ).fetchone()
+    conn.close()
+    # The v1 row's original five columns are byte-for-byte preserved; the new column is a
+    # legitimate NULL (no committed vector was ever recorded under v1), never a fabricated one.
+    assert row == ("resv-v1-legacy", "POTENTIALLY_LIVE", 7, "acct-1", "K200F", None)
+
+    # The promoted file now boots cleanly through the real log, and the real projection
+    # confirms the preserved row is genuinely usable, not merely present as raw bytes.
+    evidence = SqliteEvidenceStore(
+        tmp_path / "evidence.sqlite3", key_provider=FixedKeyProvider()
+    )
+    rcl = SqliteCommitLog(path, evidence_port=evidence)
+    try:
+        rows = list(rcl.reservation_rows())
+        assert len(rows) == 1
+        reservation_id, state, last_seq, scope = rows[0]
+        assert (reservation_id, state.value, last_seq) == (
+            "resv-v1-legacy",
+            "POTENTIALLY_LIVE",
+            7,
+        )
+        assert (scope.account, scope.instrument) == ("acct-1", "K200F")
+        assert rcl.reservation_committed_vector("resv-v1-legacy") is None
+    finally:
+        rcl.close()
+        evidence.close()

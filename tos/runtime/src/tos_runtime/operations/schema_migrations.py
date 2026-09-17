@@ -7,6 +7,11 @@ gets exactly one registered migration: version 1, "baseline — current DDL as o
 introduction". A future wave that actually changes a table's shape adds a SECOND
 ``SchemaMigration`` per affected store; this module does not invent placeholder future versions.
 
+**First v2 (kernel round #4 K-4).** ``RCL_MIGRATIONS`` now carries a genuine second entry —
+``reservations`` gains ``committed_vector_json`` — the first store in this module to move past
+baseline. It is the worked example for the pattern above: a NEW ``SchemaMigration`` appended,
+never an edit to the v1 entry's own statements/expected shape.
+
 **Deliberately self-contained (duplicated DDL, not imported).** The literal ``CREATE
 TABLE``/trigger strings below mirror — and must be kept in sync with — each store's own DDL
 (:mod:`tos_runtime.evidence.store`, :mod:`tos_runtime.rcl.schema`, :mod:`tos_runtime.engine.inbox`,
@@ -233,6 +238,12 @@ _RCL_BASELINE_STATEMENTS: tuple[str, ...] = (
     """,
 )
 
+_RCL_V2_STATEMENTS: tuple[str, ...] = (
+    """
+    ALTER TABLE reservations ADD COLUMN committed_vector_json TEXT
+    """,
+)
+
 RCL_MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration(
         version=1,
@@ -263,6 +274,20 @@ RCL_MIGRATIONS: tuple[SchemaMigration, ...] = (
                 "scope_instrument",
             ),
         },
+    ),
+    # Kernel round #4 K-4: `reservations` gains `committed_vector_json` (the durable form of
+    # `CapacityReservationTransition.committed_vector`, tos/src/tos/rcl/commitlog.py). This
+    # migration only ever runs against an already-v1-ledgered store (current_version == 1 by
+    # the time apply_migrations reaches it), so `expected_tables` is empty — the pre-shape
+    # verification in `_verify_expected_shape_or_refuse` only fires for `current_version == 0`,
+    # which v1's own entry above already claimed for a totally fresh/untracked file.
+    SchemaMigration(
+        version=2,
+        description=(
+            "reservations gains committed_vector_json (kernel round #4 K-4 "
+            "CapacityReservationTransition.committed_vector)"
+        ),
+        statements=_RCL_V2_STATEMENTS,
     ),
 )
 
