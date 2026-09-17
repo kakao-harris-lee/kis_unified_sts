@@ -525,9 +525,23 @@ _STOP_REJECTED = "rejected"
 _STOP_PAGE_CAP = "page_cap"
 
 #: Cap on the verbatim broker body carried by a FAILED call's evidence record.
-#: The excerpt is GATED on ``rt_cd`` first (:func:`_call_evidence`): a body the
-#: broker answered ``rt_cd='0'`` to is never recorded at all, only a failed one
-#: is, and this cap then bounds that failed body. Capped rather than trusted:
+#: The excerpt is GATED first (:func:`_call_evidence`), and the gate is PAYLOAD-
+#: BASED and FAIL-CLOSED: the body is recorded only when the call both failed
+#: (``rt_cd != '0'``) AND carries no ``output1``/``output2``. Asking only "did
+#: the broker say success?" recorded the body on every OTHER answer, so a body
+#: the probe MISCLASSIFIES still reached the artifact — ``rt_cd`` absent or
+#: ``null``, or ``rt_cd`` as the JSON number ``0`` (``str(0 or '')`` is ``''``,
+#: not ``'0'``, because ``0`` is falsy), each wrote holdings plus the raw
+#: ``ctx_area_*`` cursors into a committed artifact. Keying on the payload
+#: instead is safe in BOTH directions: a body carrying holdings is never
+#: diagnostic (it is the success page, not the signal that stopped the run),
+#: and the failures worth recording — HTTP 429, ``EGW00201``, ``APBK0919``, an
+#: HTML gateway page — carry no ``output1``/``output2`` at all. Verified against
+#: the committed corpus: EVERY non-empty ``raw_excerpt`` under
+#: ``docs/broker-profiles/evidence/`` is a bare ``rt_cd``/``msg_cd``/``msg1`` or
+#: ``error_code`` envelope, none with a non-empty ``output1``/``output2``. So
+#: this gate suppresses no excerpt the corpus has ever found diagnostic.
+#: This cap then bounds whatever survives the gate. Capped rather than trusted:
 #: the excerpt is recorded unparsed, and an HTML gateway error page would
 #: otherwise bloat every artifact — 300 chars (the same cap the sibling probes
 #: use: ``probes_balance.py:749``, ``probes_real.py:232,315,389,490``)
@@ -548,16 +562,23 @@ def _call_evidence(
     a bare "rate-limited" string cannot be diagnosed after the fact; this record
     carries both signals plus the rejection envelope (2026-09-17 incident).
 
-    Record shape and ``rt_cd`` gate mirror ``probes_balance.py:749`` (and
+    Record shape mirrors ``probes_balance.py:749`` (and
     ``probes_real.py:232,315,389,490``) — a local twin of the same decision,
     not a divergence from it, so change the two together. The gate is the point:
     a SUCCESSFUL balance body carries holdings (``pdno``, ``pchs_avg_pric``,
     ``evlu_amt``), the account cash total (``dnca_tot_amt``) and the raw
     ``ctx_area_fk100``/``ctx_area_nk100`` cursors that
     ``probes_balance.py:529-540`` fingerprints rather than stores — and these
-    artifacts are committed under ``docs/broker-profiles/evidence/``.
+    artifacts are committed under ``docs/broker-profiles/evidence/``. The gate
+    here is STRICTER than the sibling probes': it fails closed on the payload
+    rather than trusting ``rt_cd`` alone, because a body this probe
+    MISCLASSIFIES (``rt_cd`` absent/``null``, or the JSON number ``0``) is
+    exactly the body an ``rt_cd``-only gate lets through
+    (:data:`_BODY_EXCERPT_MAX_CHARS`).
     """
-    rt_cd = str(parsed.get("rt_cd") or "").strip()
+    raw = parsed.get("rt_cd")
+    rt_cd = "" if raw is None else str(raw).strip()
+    carries_payload = any(bool(parsed.get(k)) for k in ("output1", "output2"))
     return {
         "status_kind": status_kind,
         "http_status": http_status,
@@ -569,7 +590,11 @@ def _call_evidence(
         # still commit account-derived material to the evidence corpus. The
         # _BAL_CAPPED stop is the case that makes this load-bearing — its last
         # page is a SUCCESSFUL balance page, i.e. the whole holdings body.
-        "body_excerpt": "" if rt_cd == "0" else (text or "")[:_BODY_EXCERPT_MAX_CHARS],
+        "body_excerpt": (
+            ""
+            if rt_cd == "0" or carries_payload
+            else (text or "")[:_BODY_EXCERPT_MAX_CHARS]
+        ),
     }
 
 
@@ -902,7 +927,7 @@ def _finalize(
                 run.skip(
                     f"legs.{trial.event_class}.{name}",
                     f"ABORTED — polling stopped early (stop_reason={stop_reason}, "
-                    f"polls_attempted={polls_used}, "
+                    f"polls_used={polls_used} (attempts), "
                     f"polls_completed={polls_completed}); polling ran "
                     f"{polled_elapsed_s}s, so --window-s={trial.window_s}s did "
                     "NOT elapse. This is not even a censored observation: the "

@@ -902,8 +902,10 @@ def test_rate_limited_poll_aborts_the_leg_and_records_verbatim_evidence(
     assert "NOT elapse" in skip["reason"]
     assert "CENSORED" not in skip["reason"]
     # The prose must name which count is which, not leave "polls_used" to be
-    # read as "polls that completed".
-    assert "polls_attempted=1" in skip["reason"]
+    # read as "polls that completed" — and it must spell the quantity the same
+    # way the row key does, so prose and row are not two names for one number.
+    assert "polls_used=1 (attempts)" in skip["reason"]
+    assert "polls_attempted" not in skip["reason"]
     assert "polls_completed=0" in skip["reason"]
 
     evidence = _stop_evidence(run)
@@ -1056,6 +1058,67 @@ def test_polls_completed_counts_polls_that_returned_a_balance(
     assert run.measurements["polls_completed"] == 1
 
 
+def test_polled_elapsed_s_is_measured_off_the_clock_not_a_constant(
+    stock_env: None, wire: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M3's whole point is that the row carries how long polling ACTUALLY ran.
+    Every other assertion on it is ``< 60.0``, which a hardcoded ``0.0`` — or a
+    silent substitution of the requested ``--window-s`` — satisfies just as
+    well. Pin it to a simulated clock instead.
+
+    The clock advances ONLY on a broker round-trip, so the expected value is
+    fixed by the SCRIPT (2 polls x 7.5s) rather than by how many times the code
+    happens to read ``time.monotonic()``.
+    """
+    clock = [1000.0]
+
+    class _TickingSession(_ScriptedSession):
+        def request(self, *args: Any, **kwargs: Any) -> _FakeResponse:
+            response = super().request(*args, **kwargs)
+            clock[0] += 7.5
+            return response
+
+    wire(
+        _TickingSession(
+            [
+                _balance_body(10),  # baseline — before the polling clock starts
+                _balance_body(10),  # poll #1 — completes, no change
+                _FakeResponse(  # poll #2 — rate-limited, the run aborts
+                    {"rt_cd": "1", "msg_cd": "EGW00201", "msg1": "초당 거래건수 초과"},
+                    status=429,
+                ),
+            ]
+        )
+    )
+    # AFTER wire(), which installs its own no-op sleep — patching monotonic
+    # first would be undone by nothing, but the sleep must already be inert or
+    # the pacer would block on a clock that only this test advances.
+    monkeypatch.setattr("time.monotonic", lambda: clock[0])
+
+    run = pc.probe_pca(
+        _args(
+            effective_time="2020-01-01T09:00:00+09:00",
+            poll_ms=0.0,
+            pace_s=0.0,
+            window_s=28800.0,
+        )
+    )
+
+    row = _leg_row(run, "quantity")
+    assert row["status"] == "ABORTED"
+    assert row["polls_used"] == 2
+    # Two polled round-trips at 7.5 simulated seconds each. Not 0.0, and not
+    # the 28800.0s that were merely REQUESTED.
+    assert row["polled_elapsed_s"] == pytest.approx(15.0)
+    assert run.measurements["polled_elapsed_s"] == pytest.approx(15.0)
+    assert row["window_s"] == 28800.0
+    # The ABORTED prose quotes the same measured number, not the window.
+    skip = [
+        entry for entry in run.skips if entry["what"] == "legs.bonus_issue.quantity"
+    ][0]
+    assert "polling ran 15.0s" in skip["reason"]
+
+
 def test_aborted_row_carries_no_value_fields(stock_env: None, wire: Any) -> None:
     """Like a CENSORED row, an ABORTED row must carry NEITHER a timestamp NOR a
     value, and must not be tagged candidate_only — there is no candidate."""
@@ -1140,18 +1203,28 @@ def test_baseline_call_observation_carries_the_verbatim_broker_envelope(
     assert "APBK0919" in baseline["body_excerpt"]
 
 
-def test_body_excerpt_is_truncated_and_never_carries_request_params(
+def test_body_excerpt_is_truncated_and_never_carries_request_params_or_headers(
     stock_env: None, wire: Any
 ) -> None:
     """The excerpt is a broker ERROR body recorded unparsed, so it is capped;
-    and no request param (which carry the account number) may ever reach the
-    artifact through it.
+    and neither a request param (which carry the account number) nor a request
+    header (which carries the bearer token) may ever reach the artifact
+    through it.
 
     The account assertion is on ``creds.cano`` — ``account_no[:8]``
     (``common.py:266-267``), the value the balance params ACTUALLY carry — not
     on the full 10-digit ``_ACCOUNT``, which no request ever transmits: dumping
     ``params`` verbatim would leak the CANO and a ``_ACCOUNT``-only assertion
     would still pass.
+
+    The header half is asserted too, and stays asserted even though no current
+    code path copies headers: ``_FakeAuth`` really does transmit
+    ``authorization: Bearer test`` and ``_get`` (``probes_ca.py:416``) really
+    does build the outgoing header dict from it, so this is the standing guard
+    against a future ``_call_evidence`` that records the request the way it
+    already records the response. ``_BODY_EXCERPT_MAX_CHARS`` promises "request
+    params AND headers are never recorded here"; a test of only the params half
+    leaves half the promise unenforced.
     """
     wire(
         _ScriptedSession(
@@ -1181,6 +1254,59 @@ def test_body_excerpt_is_truncated_and_never_carries_request_params(
     blob = json.dumps(run.to_dict(), ensure_ascii=False)
     assert _ACCOUNT not in blob
     assert _CANO not in blob
+    assert "Bearer test" not in blob
+
+
+#: Values that must never appear in a serialised artifact: another holder's
+#: ``pdno``, purchase price, valuation, the verbatim account cash total, and the
+#: raw continuation cursors ``probes_balance.py:529-540`` fingerprints rather
+#: than stores.
+_LEAK_SENTINELS = (
+    "000660",  # another holder's pdno
+    "81234.5678",  # pchs_avg_pric
+    "98765432",  # evlu_amt
+    "88888888.00",  # dnca_tot_amt, verbatim (the parsed float is fine)
+    "CURSOR-FK-SENTINEL-9f3a",
+    "CURSOR-NK-SENTINEL-c71b",
+)
+
+#: ``rt_cd`` key absent altogether — distinct from present-and-``null``.
+_NO_RT_CD = object()
+
+
+def _sentinel_balance_body(rt_cd: Any = "0") -> dict[str, Any]:
+    """A success-SHAPED balance page carrying every :data:`_LEAK_SENTINELS`
+    value, spelling ``rt_cd`` however the caller asks: the ``'0'`` the broker
+    really sends, ``None`` (key present, JSON ``null``), the JSON number ``0``,
+    or :data:`_NO_RT_CD` (key absent). The payload is identical in every case —
+    which is the point: whether the excerpt is written must not hinge on how
+    the success marker happens to be spelled."""
+    body: dict[str, Any] = {
+        "msg_cd": "MCA00000",
+        "msg1": "정상처리 되었습니다.",
+        "output1": [
+            # A holding the probe never reports on — present only to prove the
+            # raw page did not reach the artifact.
+            {"pdno": "000660", "hldg_qty": "4", "pchs_avg_pric": "81234.5678"},
+            {"pdno": "005930", "hldg_qty": "13", "evlu_amt": "98765432"},
+        ],
+        "output2": [{"dnca_tot_amt": "88888888.00"}],
+        "ctx_area_fk100": "CURSOR-FK-SENTINEL-9f3a",
+        "ctx_area_nk100": "CURSOR-NK-SENTINEL-c71b",
+    }
+    if rt_cd is not _NO_RT_CD:
+        body["rt_cd"] = rt_cd
+    return body
+
+
+def _assert_no_sentinel_leaked(run: Any) -> None:
+    """Assert against the SERIALISED artifact, not the in-memory record: what
+    gets committed under ``docs/broker-profiles/evidence/`` is the dump."""
+    blob = json.dumps(run.to_dict(), ensure_ascii=False)
+    for leaked in _LEAK_SENTINELS:
+        assert (
+            leaked not in blob
+        ), f"raw balance body leaked into the artifact: {leaked}"
 
 
 def test_successful_balance_body_is_never_excerpted_into_the_artifact(
@@ -1194,24 +1320,10 @@ def test_successful_balance_body_is_never_excerpted_into_the_artifact(
     are committed under ``docs/broker-profiles/evidence/``.
 
     ``redact()`` keys on field NAMES and cannot reach inside a raw string leaf,
-    so the cap was never a filter — only the ``rt_cd`` gate is. The envelope
-    fields that make a stop diagnosable must survive the gate.
+    so the cap was never a filter — only the gate is. The envelope fields that
+    make a stop diagnosable must survive the gate.
     """
-    body = {
-        "rt_cd": "0",
-        "msg_cd": "MCA00000",
-        "msg1": "정상처리 되었습니다.",
-        "output1": [
-            # A holding the probe never reports on — present only to prove the
-            # raw page did not reach the artifact.
-            {"pdno": "000660", "hldg_qty": "4", "pchs_avg_pric": "81234.5678"},
-            {"pdno": "005930", "hldg_qty": "13", "evlu_amt": "98765432"},
-        ],
-        "output2": [{"dnca_tot_amt": "88888888.00"}],
-        "ctx_area_fk100": "CURSOR-FK-SENTINEL-9f3a",
-        "ctx_area_nk100": "CURSOR-NK-SENTINEL-c71b",
-    }
-    wire(_ScriptedSession([_FakeResponse(body)]))
+    wire(_ScriptedSession([_FakeResponse(_sentinel_balance_body())]))
     run = pc.probe_pca(
         _args(effective_time="2020-01-01T09:00:00+09:00", window_s=1e-9, pace_s=0.0)
     )
@@ -1229,18 +1341,53 @@ def test_successful_balance_body_is_never_excerpted_into_the_artifact(
     # The probe still did its job off that body.
     assert run.measurements["baseline"]["hldg_qty"] == 13
 
-    blob = json.dumps(run.to_dict(), ensure_ascii=False)
-    for leaked in (
-        "000660",  # another holder's pdno
-        "81234.5678",  # pchs_avg_pric
-        "98765432",  # evlu_amt
-        "88888888.00",  # dnca_tot_amt, verbatim (the parsed float is fine)
-        "CURSOR-FK-SENTINEL-9f3a",
-        "CURSOR-NK-SENTINEL-c71b",
-    ):
-        assert (
-            leaked not in blob
-        ), f"raw balance body leaked into the artifact: {leaked}"
+    _assert_no_sentinel_leaked(run)
+
+
+@pytest.mark.parametrize(
+    ("rt_cd", "label"),
+    [
+        (_NO_RT_CD, "rt_cd key absent"),
+        (None, "rt_cd present but JSON null"),
+        (0, "rt_cd as a JSON number, not a string"),
+    ],
+    ids=["absent", "null", "number_zero"],
+)
+def test_misclassified_success_body_is_still_never_excerpted(
+    stock_env: None, wire: Any, rt_cd: Any, label: str
+) -> None:
+    """The gate must fail CLOSED, not merely ask "did the broker say success?".
+
+    An ``rt_cd``-only gate answers "no" to every body it cannot READ as ``'0'``
+    and then records it — so a body the probe MISCLASSIFIES leaks exactly the
+    payload the gate exists to suppress. Two shapes do that:
+
+    * ``rt_cd`` absent, or explicitly ``null`` — ``parsed.get('rt_cd')`` is
+      ``None``;
+    * ``rt_cd`` as the JSON **number** ``0`` — ``str(0 or '').strip()`` is
+      ``''``, not ``'0'``, because ``0`` is falsy and the ``or ''`` idiom drops
+      it.
+
+    Keying on the payload instead settles all three: the page carries holdings,
+    so it is not diagnostic of anything and is never recorded, whatever
+    ``rt_cd`` says. The diagnostic envelope (``status_kind``, ``http_status``)
+    still is — suppressing the body must not blind the artifact.
+    """
+    wire(_ScriptedSession([_FakeResponse(_sentinel_balance_body(rt_cd))]))
+    run = pc.probe_pca(
+        _args(effective_time="2020-01-01T09:00:00+09:00", window_s=1e-9, pace_s=0.0)
+    )
+
+    baseline = [
+        obs["baseline_call"] for obs in run.observations if "baseline_call" in obs
+    ][0]
+    assert baseline["body_excerpt"] == "", f"{label} leaked the body"
+    # Still diagnosable: the probe reads this page as a rejection (it cannot
+    # find rt_cd='0'), and the record says so, with the transport status.
+    assert baseline["status_kind"] == pc._BAL_REJECTED
+    assert baseline["http_status"] == 200
+
+    _assert_no_sentinel_leaked(run)
 
 
 def test_read_balance_reports_the_transport_status_alongside_the_kind(
