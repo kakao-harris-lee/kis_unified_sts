@@ -29,6 +29,26 @@ from tos_runtime.recon.service import (
     ReconciliationReport,
     ReconciliationService,
 )
+from tos_runtime.recon.witness_kis import (
+    KisStockBrokerWitness,
+    KisWitnessTokenSession,
+    KstDateSource,
+    SystemKstDateSource,
+)
+from tos_runtime.recon.witness_kis_client import (
+    KisWitnessClientError,
+    KisWitnessConnectionError,
+    KisWitnessHttpClient,
+    KisWitnessTimeoutError,
+    build_witness_client,
+)
+from tos_runtime.recon.witness_kis_config import (
+    FuturesAssetRefused,
+    KisWitnessConfig,
+    KisWitnessConfigError,
+    load_kis_witness_config,
+    refuse_futures_asset,
+)
 from tos_runtime.recon.witness_synthetic import SyntheticLedgerWitness
 
 __all__ = [
@@ -36,14 +56,28 @@ __all__ = [
     "BrokerWitness",
     "EgressReceiptObservation",
     "EvidenceReceiptReader",
+    "FuturesAssetRefused",
+    "KisStockBrokerWitness",
+    "KisWitnessClientError",
+    "KisWitnessConfig",
+    "KisWitnessConfigError",
+    "KisWitnessConnectionError",
+    "KisWitnessHttpClient",
+    "KisWitnessTimeoutError",
+    "KisWitnessTokenSession",
+    "KstDateSource",
     "ReconciliationClass",
     "ReconciliationReport",
     "ReconciliationService",
     "SqliteEvidenceReceiptReader",
     "SyntheticLedgerWitness",
+    "SystemKstDateSource",
     "WitnessOrder",
     "WitnessOrderState",
     "WitnessScope",
     "WitnessSnapshot",
     "WitnessUnavailable",
+    "build_witness_client",
+    "load_kis_witness_config",
+    "refuse_futures_asset",
 ]
