@@ -38,6 +38,11 @@ class _Route:
 class FakeKisServer:
     """A threaded HTTP server bound to ``127.0.0.1`` with per-path scripted responses.
 
+    Handles both POST (order/token) and GET (quote) requests. A GET route is matched by its
+    FULL path, query string included (``set_response("/…/inquire-price?FID_INPUT_ISCD=005930",
+    ...)``) — a test that wants to distinguish two quote calls scripts two distinct full paths,
+    the same way it would script two distinct POST bodies via two separate assertions.
+
     Usage::
 
         server = FakeKisServer()
@@ -107,12 +112,23 @@ class FakeKisServer:
             def do_POST(self) -> None:  # noqa: N802
                 length = int(self.headers.get("Content-Length", 0))
                 raw_body = self.rfile.read(length) if length else b""
-                route = server._routes.get(self.path)
+                self._handle("POST", self.path, raw_body)
+
+            def do_GET(self) -> None:  # noqa: N802
+                # A quote GET carries no body — recorded with an empty one for symmetry with
+                # RecordedRequest's shape. Route lookup, like recording, uses the FULL path
+                # (query string included): a quote adapter's own routing distinguishes requests
+                # by their query string (e.g. a different FID_INPUT_ISCD), unlike the order
+                # transport's POST routes, which never carry one.
+                self._handle("GET", self.path, b"")
+
+            def _handle(self, method: str, path: str, raw_body: bytes) -> None:
+                route = server._routes.get(path)
                 with server._lock:
                     server._requests.append(
                         RecordedRequest(
-                            method="POST",
-                            path=self.path,
+                            method=method,
+                            path=path,
                             headers={k.lower(): v for k, v in self.headers.items()},
                             body=raw_body,
                         )

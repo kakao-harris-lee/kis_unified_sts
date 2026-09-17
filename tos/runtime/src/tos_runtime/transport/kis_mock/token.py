@@ -201,7 +201,8 @@ class KisTokenLifecycle:
 
     def _issue_token(self) -> None:
         """(review F5, preserved verbatim) The app key/secret are loaded inside the narrowest
-        possible ``with`` block — wrapped directly around the one ``issue_token`` network call."""
+        possible ``with`` block — wrapped directly around the one ``issue_token`` network call.
+        """
         with (
             self._custody.load(self._app_key_scope) as key_handle,
             self._custody.load(self._app_secret_scope) as secret_handle,
