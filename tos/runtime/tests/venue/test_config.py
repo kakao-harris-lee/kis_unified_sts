@@ -618,6 +618,38 @@ def test_load_order_construction_policy_named_tbd_identity_field_refused(
         load_order_construction_policy(path, scheme=SCHEME)
 
 
+@pytest.mark.parametrize(
+    "field", ["signer_identity", "approval_identity", "evidence_package_ref"]
+)
+def test_load_order_construction_policy_missing_identity_key_refused(
+    tmp_path: Path, field: str
+) -> None:
+    """(review finding ⑤, round #4) ``optional_str``'s "key not in raw" branch was
+    untested for all three identity fields — only the ``null``-default and filled-value
+    paths had coverage. A MISSING key (never a silently-defaulted ``None``) must refuse,
+    same "no silently-dropped key" discipline as every other primitive in
+    ``_policy_primitives.py``."""
+    text = ocp_yaml().replace(f"{field}: null\n", "")
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match=f"missing required key '{field}'"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+@pytest.mark.parametrize(
+    "field", ["signer_identity", "approval_identity", "evidence_package_ref"]
+)
+def test_load_order_construction_policy_non_string_identity_value_refused(
+    tmp_path: Path, field: str
+) -> None:
+    """(review finding ⑤, round #4) ``optional_str``'s "not isinstance(value, str)"
+    branch was untested for all three identity fields — a YAML integer (never quoted
+    into a string) must refuse rather than being coerced or silently accepted."""
+    text = ocp_yaml(**{field: "12345"})
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="must be a string or null"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
 def test_load_order_construction_policy_wire_codec_mapping(tmp_path: Path) -> None:
     text = ocp_yaml(wire_codec='{kind: "kis-order-cash-v1", wire_fields: ["a", "b"]}')
     path = write_fixture_ocp(tmp_path, text)
