@@ -41,6 +41,16 @@ concrete; a ``null`` anywhere (the repo's "named-TBD" convention, e.g.
 shape with every value left as an explicit placeholder, the same way every
 other example config in this tree does.
 
+**Named-TBD ``"TBD"`` STRING leaves, same walk (W-A A-0).** A ``null`` leaf is
+refused above, but an operator who instead types the literal template-placeholder
+STRING ``"TBD"`` (:data:`~tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`, the SAME
+token :mod:`tos_runtime.venue._policy_primitives` and every other fail-closed
+loader in this tree refuse) into a rule/target/threshold leaf was not caught by
+the null-only walk — an unbounded free-form ``AuthoredStrategy`` mapping has no
+enum/allow-list to fall back on the way a fixed-shape config loader's fields do,
+so this walker closes the SAME gap :func:`first_null_leaf` closes, over the
+SAME tree, before ``parse`` ever sees the file.
+
 Firewall: this module is ``tos_runtime`` scope — ``tos.*`` (the kernel),
 stdlib, and ``pyyaml``/``pydantic`` (already-pinned third parties) only; no
 ``shared.*`` (``tools/tos_firewall_check.py`` R1 allowlist).
@@ -59,6 +69,8 @@ from pydantic import ValidationError
 from tos.dsl import ArtifactIntegrityError, AuthoredStrategy
 from tos.engine.admission import AdmissionResult
 from tos.engine.vocabulary import AdmissionVerdict
+
+from tos_runtime._named_tbd import is_named_tbd_placeholder
 
 __all__ = [
     "AdmitFn",
@@ -143,6 +155,43 @@ def first_null_leaf(value: Any, path: str) -> str | None:
     return None
 
 
+def first_named_tbd_leaf(value: Any, path: str) -> str | None:
+    """Return the dotted/indexed path of the first named-TBD placeholder STRING
+    leaf found by a depth-first walk of ``value`` (dict values and list elements
+    only — scalars ARE the leaves), or ``None`` if there is none.
+
+    The sibling of :func:`first_null_leaf` (module docstring, "Named-TBD 'TBD'
+    STRING leaves" section) — same walk, same shared-verbatim intra-package
+    reuse by :func:`tos_runtime.strategy.bindings.load_strategy_bindings`, closing
+    the SECOND named-TBD gap (a placeholder STRING typed in place of a real
+    value) rather than the first (a bare ``null``, :func:`first_null_leaf`'s own
+    job).
+
+    Args:
+        value: The (sub)value to inspect.
+        path: The dotted/indexed path to ``value`` itself, for the message.
+
+    Returns:
+        The path of the first :data:`~tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`
+        string found, else ``None``.
+    """
+    if isinstance(value, dict):
+        for key, sub in value.items():
+            found = first_named_tbd_leaf(sub, f"{path}.{key}" if path else str(key))
+            if found is not None:
+                return found
+        return None
+    if isinstance(value, list):
+        for index, sub in enumerate(value):
+            found = first_named_tbd_leaf(sub, f"{path}[{index}]")
+            if found is not None:
+                return found
+        return None
+    if is_named_tbd_placeholder(value):
+        return path or "<root>"
+    return None
+
+
 #: The only accepted strategy-file suffixes (2026-09-09 independent-review
 #: finding #12: ``*.yaml`` alone silently skipped a ``.yml`` file instead of
 #: refusing it).
@@ -208,6 +257,14 @@ def _load_one(path: Path, *, parse: ParseFn, admit: AdmitFn) -> LoadedStrategy:
         raise StrategyLoadError(
             f"{path}: field {null_leaf!r} is still null (named-TBD) — refusing to "
             "load until an operator attests a concrete value"
+        )
+
+    tbd_leaf = first_named_tbd_leaf(raw, "")
+    if tbd_leaf is not None:
+        raise StrategyLoadError(
+            f"{path}: field {tbd_leaf!r} is still the template placeholder "
+            "'TBD' (named-TBD) — refusing to load until an operator attests a "
+            "concrete value"
         )
 
     try:

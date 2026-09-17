@@ -170,3 +170,17 @@ def test_a_reader_owned_key_still_present_in_config_refuses_to_load(
     _write_full_config(path, extra={reader_owned_key.value: _valid_block()})
     with pytest.raises(PendingDimensionConfigError, match=reader_owned_key.value):
         load_pending_currentness_dimensions(path)
+
+
+def test_named_tbd_placeholder_bound_digest_is_refused(tmp_path: Path) -> None:
+    """W-A A-0: an operator typing the literal placeholder string ``"TBD"`` for
+    ``bound_digest`` must never be sealed into a ``CurrentnessDimension`` as
+    though it were a genuine digest — the pre-existing null-only ``_require_field``
+    guard never caught this."""
+    path = tmp_path / "currentness_dimensions.yaml"
+    one_key = PENDING_DIMENSION_KEYS[0]
+    _write_full_config(
+        path, extra={one_key.value: dict(_valid_block(), bound_digest="TBD")}
+    )
+    with pytest.raises(PendingDimensionConfigError, match="template placeholder"):
+        load_pending_currentness_dimensions(path)

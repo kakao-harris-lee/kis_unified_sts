@@ -20,6 +20,8 @@ from typing import Any
 
 import yaml
 
+from tos_runtime._named_tbd import reject_named_tbd
+
 __all__ = ["TimeConfigError", "TrustworthyTimeConfig", "load_time_config"]
 
 
@@ -222,6 +224,9 @@ def _resolve_versions(raw: dict[str, Any]) -> dict[str, Any]:
             raise TimeConfigError(
                 f"time config key {key!r} must be a non-blank string (got {value!r})"
             )
+        reject_named_tbd(
+            value, field=key, context="time config", error_cls=TimeConfigError
+        )
         resolved[key] = value
     return resolved
 

@@ -128,6 +128,24 @@ def test_top_level_null_leaf_refuses(strategies_dir, parse, admit):
         load_strategies(strategies_dir, parse=parse, admit=admit)
 
 
+def test_named_tbd_placeholder_leaf_anywhere_refuses_naming_the_field(
+    strategies_dir, parse, admit
+):
+    """W-A A-0: the null-only leaf walk never caught an operator typing the literal
+    placeholder string ``"TBD"`` in place of a real value anywhere in a strategy
+    file — an unbounded ``AuthoredStrategy`` mapping has no enum/allow-list to fall
+    back on the way a fixed-shape config loader's fields do, so this could have
+    reached ``parse`` silently before the (a′) fix."""
+    mapping = admissible_strategy_mapping()
+    mapping["policy"]["rules"][0]["decision"]["rationale"] = "TBD"
+    path = write_strategy_yaml(strategies_dir, "tbd-leaf.strategy.yaml", mapping)
+    with pytest.raises(StrategyLoadError) as excinfo:
+        load_strategies(strategies_dir, parse=parse, admit=admit)
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "rationale" in message
+
+
 def test_not_a_mapping_refuses(strategies_dir, parse, admit):
     path = strategies_dir / "list.strategy.yaml"
     path.write_text("- 1\n- 2\n", encoding="utf-8")

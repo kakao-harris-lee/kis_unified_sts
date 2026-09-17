@@ -72,6 +72,19 @@ def test_loader_happy_path_and_environment_label_substitution(tmp_path: Path) ->
     assert loaded.capsule_terminus_fields == ("account", "instrument")
 
 
+def test_named_tbd_placeholder_endpoint_is_refused(tmp_path: Path) -> None:
+    """W-A A-0: an operator typing the literal placeholder string ``"TBD"`` for
+    one of the eight authorized-coordinate literals must never be sealed into
+    ``EgressCoordinateSet`` as though it were a genuine value — the pre-existing
+    ``_require_str`` guard only refused a bare ``null``/empty string."""
+    raw = _valid_egress_coordinates()
+    raw["endpoint"] = {"value": "TBD"}
+    path = tmp_path / "egress_coordinates.yaml"
+    _write(path, raw)
+    with pytest.raises(EgressCoordinateConfigError, match="template placeholder"):
+        load_egress_coordinates(path, environment_label="paper-env-7")
+
+
 def test_active_principal_without_the_token_passes_through_unchanged(
     tmp_path: Path,
 ) -> None:

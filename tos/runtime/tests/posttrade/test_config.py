@@ -52,6 +52,17 @@ def test_release_proof_wait_ms_null_is_named_tbd_refused(tmp_path: Path) -> None
         load_finality_config(_write(tmp_path, raw))
 
 
+def test_currency_named_tbd_placeholder_is_refused(tmp_path: Path) -> None:
+    """W-A A-0: the literal placeholder string ``"TBD"`` in place of a real
+    ``currency``/``value_date``/``source_revision``/``proof_recipe_id`` value must
+    never be sealed into ``ObligationLegScope`` as though an operator actually
+    filled it in — the pre-existing ``_require_str`` null/wrong-type guards never
+    caught this (only a bare ``null`` was refused)."""
+    raw = dict(_VALID_RAW, currency="TBD")
+    with pytest.raises(FinalityConfigError, match="template placeholder"):
+        load_finality_config(_write(tmp_path, raw))
+
+
 def test_release_proof_wait_ms_zero_is_refused(tmp_path: Path) -> None:
     """Zero is not a smaller bound, it is a silently-disabled one — same discipline as every
     other positive-int operator bound in this runtime (mirrors

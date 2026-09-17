@@ -22,6 +22,8 @@ from typing import Any
 
 import yaml
 
+from tos_runtime._named_tbd import reject_named_tbd
+
 __all__ = [
     "PolicyLoadError",
     "load_yaml_document",
@@ -139,6 +141,7 @@ def require_str_field(
         )
     if not isinstance(value, str) or not value.strip():
         raise error_cls(f"{path}: {key!r} must be a non-blank string (got {value!r})")
+    reject_named_tbd(value, field=key, context=str(path), error_cls=error_cls)
     return value
 
 
