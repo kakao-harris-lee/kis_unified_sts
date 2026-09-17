@@ -134,6 +134,12 @@ class _FakeProjectionReader:
     def instrument_last_seq(self, key: InstrumentKey) -> int | None:
         raise NotImplementedError
 
+    def reservation_committed_vector(self, reservation_id: str):
+        raise NotImplementedError
+
+    def instrument_committed_vector(self, key: InstrumentKey):
+        raise NotImplementedError
+
 
 def test_capacity_zero_when_no_reservation_is_projected() -> None:
     owner = CapacityOwner(_FakeProjectionReader(None), _SCOPE)

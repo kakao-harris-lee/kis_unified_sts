@@ -14,7 +14,13 @@ from hypothesis import given
 from hypothesis import strategies as st
 from tos.venue import OrderAdmissibilityResult, order_shape_admissible
 
-from ._venue_strategies import clean_shape, clean_shape_constraints
+from ._venue_strategies import (
+    MEASURED_KRX_PRICE_BAND_ROW,
+    clean_shape,
+    clean_shape_constraints,
+    price_band_table_constraints,
+    price_band_table_shape,
+)
 
 
 def test_venue_valid_shape_is_admissible_positive_side() -> None:
@@ -137,6 +143,56 @@ def test_none_shape_or_constraints_is_unknown() -> None:
     )
     assert (
         order_shape_admissible(clean_shape(), None) is OrderAdmissibilityResult.UNKNOWN
+    )
+
+
+def test_price_band_table_admits_the_measured_datapoint() -> None:
+    """(kernel round #4 K-1) With a declared price-band table, the ONE measured KRX datapoint
+    (005930 · 232,500원 · tick 500 · P-11-20260730T002715Z.json) resolves ADMISSIBLE via the
+    table — even though the flat ``tick_size`` on the same constraints (3) would put this price
+    off-grid (M1: reverting to the flat field flips this to INADMISSIBLE)."""
+    assert (
+        order_shape_admissible(price_band_table_shape(), price_band_table_constraints())
+        is OrderAdmissibilityResult.ADMISSIBLE
+    )
+
+
+def test_price_band_table_uncovered_price_is_unknown() -> None:
+    """(kernel round #4 K-1) A price inside the overall band but NOT covered by any declared
+    price-band row is UNKNOWN — the table is not silently extrapolated to a neighboring row, and
+    a declared-but-incomplete table does not fall back to the flat ``tick_size`` either (a
+    declared table is a stronger fact than "no table")."""
+    uncovered = price_band_table_shape().model_copy(update={"price": 150_000})
+    assert MEASURED_KRX_PRICE_BAND_ROW.band_min > 150_000 or (
+        MEASURED_KRX_PRICE_BAND_ROW.band_max < 150_000
+    )
+    assert (
+        order_shape_admissible(uncovered, price_band_table_constraints())
+        is OrderAdmissibilityResult.UNKNOWN
+    )
+
+
+def test_no_table_and_no_flat_tick_is_unknown() -> None:
+    """(§8.0) With no price-band table AND no flat ``tick_size`` injected, the tick is
+    unresolvable => UNKNOWN (M2: an ``ADMISSIBLE`` here would be a fail-open regression).
+    """
+    no_tick = clean_shape_constraints().model_copy(
+        update={"tick_size": None, "price_band_ticks": None}
+    )
+    assert (
+        order_shape_admissible(clean_shape(), no_tick)
+        is OrderAdmissibilityResult.UNKNOWN
+    )
+
+
+def test_futures_flat_tick_path_is_unchanged() -> None:
+    """(§0.3 무회귀) A constraints artifact with no ``price_band_ticks`` (the futures / existing
+    path) behaves exactly as before this kernel round — flat ``tick_size`` governs."""
+    constraints = clean_shape_constraints()
+    assert constraints.price_band_ticks is None
+    assert (
+        order_shape_admissible(clean_shape(), constraints)
+        is OrderAdmissibilityResult.ADMISSIBLE
     )
 
 

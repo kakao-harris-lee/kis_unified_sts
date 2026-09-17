@@ -25,8 +25,10 @@ from tos.rcl import (
     AppendReceipt,
     AppendRefusal,
     AppendRefusalReason,
+    CapacityComponent,
     CapacityReservationTransition,
     CapacityState,
+    CapacityVector,
     CommitEntry,
     CommitLog,
     LogView,
@@ -427,6 +429,38 @@ def test_reservation_scope_field_set_mirrors_instrument_key() -> None:
     for name in scope_fields:
         assert scope_fields[name].annotation == key_fields[name].annotation
         assert scope_fields[name].is_required() == key_fields[name].is_required()
+
+
+# ===========================================================================
+# committed_vector — the wire-shape counterpart of ReservationRecord's own
+# adverse_increment_vector (kernel round #4 K-4)
+# ===========================================================================
+
+
+def test_capacity_reservation_transition_committed_vector_defaults_to_none() -> None:
+    """Like ``scope`` above, an absent committed vector stays ``None`` — never a
+    silently-fabricated zero vector (the M7 mutation this pins against: a
+    projection accessor that always returns an empty vector instead of the
+    genuinely-absent ``None`` would be indistinguishable from "no dimensions
+    declared" without this positive/negative split)."""
+    transition = CapacityReservationTransition(to_state=CapacityState.RELEASED)
+    assert transition.committed_vector is None
+
+
+def test_capacity_reservation_transition_carries_committed_vector() -> None:
+    vector = CapacityVector(
+        components=(CapacityComponent(dimension_id="INSTRUMENT::DELTA", magnitude=3),)
+    )
+    transition = CapacityReservationTransition(
+        reservation_id="res-1",
+        writer_epoch=1,
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.ATTEMPT_BOUND,
+        scope=ReservationScope(account="acct-1", instrument="101S06"),
+        committed_vector=vector,
+    )
+    assert transition.committed_vector == vector
+    assert transition.committed_vector.magnitude("INSTRUMENT::DELTA") == 3
 
 
 # ===========================================================================

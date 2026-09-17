@@ -88,6 +88,14 @@ only the evidence kinds this module actually read. The snapshot-completeness wit
 it remains the existing operator attestation under ``_restrictive_merge``
 (``tos_runtime/compose/_risk_attestations.py``), which this package does not touch.
 
+**Kernel round #4 K-2.** The pure value types (``PositionObservation``, ``SealedSend``) and
+pure predicates (the three magnitude functions, ``sign_of``, the classification table) are
+promoted to :mod:`tos.position` (kernel round #4 plan K-2) — this module re-exports them
+unchanged (same names, same shapes) so every existing import of
+``tos_runtime.riskstate.position`` keeps working, and now contains ONLY the durable-evidence
+I/O (reading the ``SqliteEvidenceStore``, JSON decoding, ``(account, instrument)`` scope
+filtering) plus the thin call into the kernel's pure classification.
+
 Firewall (R1, runtime scope): stdlib + ``tos.*`` + ``tos_runtime.evidence.store`` +
 ``tos_runtime.recon.ports`` (``WitnessUnavailable`` only — the shared read-failure exception
 type) only.
@@ -98,8 +106,18 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Mapping
-from dataclasses import dataclass
 from decimal import Decimal
+
+from tos.position import (
+    PositionObservation,
+    classify_sealed_sends,
+    conservative_current_usage,
+    in_flight_overlap_effect,
+    worst_credible_directional_usage,
+)
+from tos.position import (
+    SealedSend as _SealedSend,
+)
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.recon.ports import WitnessUnavailable
@@ -114,56 +132,6 @@ __all__ = [
 
 #: The gateway evidence kind carrying the whole pre-``SEND_STARTED`` seal (module docstring).
 _SEND_SEALED_KIND = "SEND_SEALED"
-
-
-@dataclass(frozen=True)
-class PositionObservation:
-    """One (account, instrument) scope's conservative position observation (plan §2.2 /
-    §4.1). All magnitudes are contract counts (never a valuation/notional dimension — DR-0003
-    §2.2 "it is contract-count only"). ``sources`` names only the evidence kinds actually read,
-    never a blanket claim of corroboration."""
-
-    scope_key: str
-    confirmed_net: Decimal
-    unknown_buy: Decimal
-    unknown_sell: Decimal
-    in_flight_buy: Decimal
-    in_flight_sell: Decimal
-    attempts_seen: int
-    sources: tuple[str, ...]
-
-
-def worst_credible_directional_usage(obs: PositionObservation) -> Decimal:
-    """The worst-credible directional usage magnitude (plan §2.2, pure function).
-
-    ``max(|confirmed_net + unknown_buy + in_flight_buy|, |confirmed_net - unknown_sell -
-    in_flight_sell|)`` — every unconfirmed/in-flight quantity pushed to the direction that
-    makes usage LARGEST (ARE-INV-006: UNKNOWN consumes conservative capacity, never assumed
-    safe). Adding an unknown attempt in either direction can only enlarge (or leave unchanged)
-    this magnitude, never shrink it.
-    """
-    long_case = obs.confirmed_net + obs.unknown_buy + obs.in_flight_buy
-    short_case = obs.confirmed_net - obs.unknown_sell - obs.in_flight_sell
-    return max(abs(long_case), abs(short_case))
-
-
-def conservative_current_usage(obs: PositionObservation) -> Decimal:
-    """Like :func:`worst_credible_directional_usage`, but WITHOUT the in-flight terms (plan
-    §2.2: "``conservative_current_usage`` = 이 값 − in-flight 항(in-flight 는
-    ``required_concurrent_overlap_effect`` 로 별도)") — the confirmed-plus-unconfirmed-only
-    worst-credible magnitude, excluding attempts that are still genuinely outstanding.
-    """
-    long_case = obs.confirmed_net + obs.unknown_buy
-    short_case = obs.confirmed_net - obs.unknown_sell
-    return max(abs(long_case), abs(short_case))
-
-
-def in_flight_overlap_effect(obs: PositionObservation) -> Decimal:
-    """The magnitude an ARE ``ProjectedCell.required_concurrent_overlap_effect`` would take
-    from this observation (plan §2.2) — the sum of both in-flight buckets, never netted (an
-    in-flight buy and an in-flight sell are both still-outstanding overlap exposure, not
-    offsetting positions)."""
-    return obs.in_flight_buy + obs.in_flight_sell
 
 
 def _read_kind_payloads(
@@ -202,13 +170,6 @@ def _to_decimal(value: object) -> Decimal | None:
         except (ValueError, ArithmeticError):
             return None
     return None
-
-
-@dataclass(frozen=True)
-class _SealedSend:
-    attempt_id: str
-    side: str | None
-    quantity: Decimal | None
 
 
 def _seal_in_scope(
@@ -337,73 +298,6 @@ class EvidencePositionReader:
             sources.append("evidence:RESULT_UNMATCHED")
         return consumed_by_attempt, unmatched_attempts, sources
 
-    def _sign_of(self, side: str | None) -> int | None:
-        """The directional sign for ``side`` against this reader's two injected tokens, or
-        ``None`` when it matches neither (module docstring's "side stays a policy/config-
-        carried token" — fail-closed, never a guessed direction)."""
-        if side == self._buy_side_token:
-            return 1
-        if side == self._sell_side_token:
-            return -1
-        return None
-
-    def _classify_sealed_sends(
-        self,
-        sealed: tuple[_SealedSend, ...],
-        *,
-        consumed_by_attempt: dict[str, Decimal],
-        unmatched_attempts: set[str],
-    ) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal, int]:
-        """The module docstring's classification table, applied to every sealed send. Split
-        out of :meth:`observe` purely for that method's own 100-line size budget."""
-        confirmed_net = Decimal(0)
-        unknown_buy = Decimal(0)
-        unknown_sell = Decimal(0)
-        in_flight_buy = Decimal(0)
-        in_flight_sell = Decimal(0)
-        attempts_seen = 0
-        for send in sealed:
-            attempts_seen += 1
-            sign = self._sign_of(send.side)
-            if send.attempt_id in consumed_by_attempt:
-                filled = consumed_by_attempt[send.attempt_id]
-                if sign is None:
-                    # Unrecognized side on a CONFIRMED fill: fail-closed to UNKNOWN in both
-                    # directions rather than silently dropping the confirmed magnitude.
-                    unknown_buy += filled
-                    unknown_sell += filled
-                    continue
-                confirmed_net += sign * filled
-                continue
-            quantity = send.quantity if send.quantity is not None else Decimal(0)
-            if send.attempt_id in unmatched_attempts:
-                if sign is None:
-                    unknown_buy += quantity
-                    unknown_sell += quantity
-                    continue
-                if sign > 0:
-                    unknown_buy += quantity
-                else:
-                    unknown_sell += quantity
-                continue
-            # Sealed, no terminal result at all: genuinely in-flight.
-            if sign is None:
-                in_flight_buy += quantity
-                in_flight_sell += quantity
-                continue
-            if sign > 0:
-                in_flight_buy += quantity
-            else:
-                in_flight_sell += quantity
-        return (
-            confirmed_net,
-            unknown_buy,
-            unknown_sell,
-            in_flight_buy,
-            in_flight_sell,
-            attempts_seen,
-        )
-
     def observe(self) -> PositionObservation:
         """Fold the durable evidence into one :class:`PositionObservation` (module docstring's
         classification table). Never raises on genuinely absent evidence (a fresh store yields
@@ -424,10 +318,12 @@ class EvidencePositionReader:
             in_flight_buy,
             in_flight_sell,
             attempts_seen,
-        ) = self._classify_sealed_sends(
+        ) = classify_sealed_sends(
             sealed,
             consumed_by_attempt=consumed_by_attempt,
             unmatched_attempts=unmatched_attempts,
+            buy_side_token=self._buy_side_token,
+            sell_side_token=self._sell_side_token,
         )
         sources: list[str] = []
         if sealed:

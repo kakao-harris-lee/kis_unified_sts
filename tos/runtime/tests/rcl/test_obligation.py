@@ -139,6 +139,12 @@ class _FixedStateProjection:
     def instrument_last_seq(self, _key: object) -> int | None:
         return None
 
+    def reservation_committed_vector(self, _reservation_id: str) -> object | None:
+        return None
+
+    def instrument_committed_vector(self, _key: object) -> object | None:
+        return None
+
 
 def test_capacity_consuming_state_values_excludes_only_released() -> None:
     """(module docstring) Mirrors rcl's private ``_LIVE_COMMITTED_STATES`` member-for-member."""
@@ -414,6 +420,12 @@ class _MutableStateProjection:
         return None
 
     def instrument_last_seq(self, _key: object) -> int | None:
+        return None
+
+    def reservation_committed_vector(self, _reservation_id: str) -> object | None:
+        return None
+
+    def instrument_committed_vector(self, _key: object) -> object | None:
         return None
 
 

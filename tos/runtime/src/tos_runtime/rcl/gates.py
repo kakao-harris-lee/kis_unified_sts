@@ -60,7 +60,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from enum import StrEnum
 from typing import Any
 
@@ -70,8 +70,10 @@ from tos.rcl import (
     AppendRefusalReason,
     CapacityReservationTransition,
     CapacityState,
+    CapacityVector,
     CommandType,
     CommitEntry,
+    ReservationScope,
     TransitionCause,
     duplicate_command,
     release_admissible,
@@ -88,8 +90,11 @@ __all__ = [
     "digest_of_reservation_map",
     "existing_command_row",
     "fold_reservations_from_entries",
+    "reservation_committed_vector",
+    "reservation_rows",
     "reservation_lifecycle_refusal",
     "row_to_commit_entry",
+    "upsert_reservation_projection",
 ]
 
 #: The only capacity state a reservation-lifecycle transition may claim as its
@@ -256,6 +261,19 @@ def fold_reservations_from_entries(
     ``reservation_id``/``to_state``, rather than folded in with a
     fabricated scope.
 
+    KNOWN LIMITATION (round #4 review MEDIUM, not fixed here — scope too large for a fixup
+    lane): ``committed_vector_json`` (kernel round #4 K-4) is written only to the
+    ``reservations`` table (:func:`upsert_reservation_projection`), never into ``payload_json``
+    here, so this fold — and :meth:`~tos_runtime.rcl.log.SqliteCommitLog.verify_replay`'s
+    digest comparison over its return value — cover only ``{state, scope_account,
+    scope_instrument}``. A ``committed_vector_json`` value altered directly in the
+    ``reservations`` table has no append-only source to re-derive it from and would go
+    undetected, unlike state/scope. Closing this needs: (1) a canonical, round-trip-safe
+    payload encoding for the vector's ``Decimal`` magnitudes, (2) extending this fold's and
+    :func:`digest_of_reservation_map`'s map shape, and (3) an explicit decision for how pre-K-4
+    entries (no ``committed_vector`` key at all) fold — each a real design decision, left open
+    rather than rushed through this fixup.
+
     Args:
         conn: The live sqlite3 connection.
 
@@ -409,3 +427,95 @@ def row_to_commit_entry(row: tuple[Any, ...]) -> CommitEntry:
         kind=CommandType(kind) if kind is not None else None,
         payload_digest=payload_digest,
     )
+
+
+def reservation_rows(
+    conn: sqlite3.Connection,
+) -> Iterator[tuple[str, CapacityState, int, ReservationScope]]:
+    """Yield every held ``(reservation_id, state, last_seq, scope)`` — the projection's read
+    shape. Moved out of ``log.py`` purely for that module's own 1000-line size budget (kernel
+    round #4 K-4 decomposition) — no behavior change; ``SqliteCommitLog.reservation_rows``
+    delegates here unchanged."""
+    rows = conn.execute(
+        "SELECT reservation_id, state, last_seq, scope_account, "
+        "scope_instrument FROM reservations ORDER BY reservation_id ASC"
+    ).fetchall()
+    for reservation_id, state, last_seq, scope_account, scope_instrument in rows:
+        yield (
+            reservation_id,
+            CapacityState(state),
+            int(last_seq),
+            ReservationScope(account=scope_account, instrument=scope_instrument),
+        )
+
+
+#: Mirrors ``log.py``'s own private ``_ReservationUpdate`` shape (not imported — that would be
+#: a ``gates -> log`` edge, the wrong direction; this module has no dependency on ``log.py``).
+_ReservationUpsert = (
+    tuple[str, CapacityState, CapacityState, ReservationScope, CapacityVector | None]
+    | None
+)
+
+
+def upsert_reservation_projection(
+    conn: sqlite3.Connection, *, next_seq: int, reservation_update: _ReservationUpsert
+) -> None:
+    """``UPSERT`` the ``reservations`` row for ``reservation_update``, a no-op when ``None``.
+
+    Moved out of ``log.py``'s own ``_insert_entry_and_reservation`` purely for that module's
+    1000-line size budget (kernel round #4 K-4 decomposition) — no behavior change; MUST be
+    called from inside the same ``BEGIN IMMEDIATE`` transaction as the caller's own ``entries``
+    insert (module docstring).
+    """
+    if reservation_update is None:
+        return
+    reservation_id, _claimed_from_state, to_state, scope, committed_vector = (
+        reservation_update
+    )
+    committed_vector_json = (
+        None if committed_vector is None else committed_vector.model_dump_json()
+    )
+    conn.execute(
+        "INSERT INTO reservations (reservation_id, state, last_seq, "
+        "scope_account, scope_instrument, committed_vector_json) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(reservation_id) DO UPDATE SET "
+        "state=excluded.state, last_seq=excluded.last_seq, "
+        "scope_account=excluded.scope_account, "
+        "scope_instrument=excluded.scope_instrument, "
+        "committed_vector_json=excluded.committed_vector_json",
+        (
+            reservation_id,
+            to_state.value,
+            next_seq,
+            scope.account,
+            scope.instrument,
+            committed_vector_json,
+        ),
+    )
+
+
+def reservation_committed_vector(
+    conn: sqlite3.Connection, reservation_id: str
+) -> CapacityVector | None:
+    """The committed Capacity Vector last written for ``reservation_id``, if any (kernel round
+    #4 K-4). ``None`` when the reservation does not exist, or exists but its last transition
+    carried no vector — those two are indistinguishable here by design (a caller needing to
+    tell them apart already has :func:`reservation_rows` for existence). This is a DIFFERENT
+    axis from :class:`~tos.rcl.CapacityReservationTransition.committed_vector`'s own docstring
+    claim that a runtime projection distinguishes "no committed vector recorded" from "an
+    explicitly empty one" (round #4 review disposition, resolving an apparent wording
+    conflict): that claim holds for an EXISTING reservation — a last transition committed with
+    ``committed_vector=CapacityVector()`` reads back as ``CapacityVector(components=())``, not
+    ``None`` (verified: the JSON column holds a real, non-NULL value distinct from the NULL
+    written when ``committed_vector`` was itself ``None``). Only the *existence* question above
+    is folded away; the no-vector/explicitly-empty question below it is not. Moved out of
+    ``log.py`` purely for that module's own 1000-line size budget — no behavior change;
+    ``SqliteCommitLog.reservation_committed_vector`` delegates here unchanged."""
+    row = conn.execute(
+        "SELECT committed_vector_json FROM reservations WHERE reservation_id = ?",
+        (reservation_id,),
+    ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return CapacityVector.model_validate_json(row[0])

@@ -4,8 +4,10 @@
 # INSTANCE of tos-spec/src/part-1-foundation/verification/ORDER-CONSTRUCTION-POLICY-template.yaml
 # (placement + activation per tos-spec/src/decision-records/DR-0002 §2.1/§2.2;
 # v1 coverage per DR-0002 §2.3 — the kernel record's covered content is
-# policy_id / policy_generation / policy_version ONLY; signer / approval /
-# evidence-package binding is a kernel-round candidate, so they stay unbound).
+# policy_id / policy_generation / policy_version plus signer_identity /
+# approval_identity / evidence_package_ref (kernel round #4 K-3 landed the
+# loader plumbing to read+thread the latter three); this document still
+# declares all three null pending an operator-approved source).
 #
 # APPROVAL PROVENANCE (scope/admission coordinates, generation 1):
 # docs/plans/2026-09-15-tos-venue-constraint-service-plan.md §6 ② proposal
@@ -72,6 +74,13 @@ canonical_digest: TBD
 status: ISSUED
 effective_from: "2026-09-16"
 review_due: null
+# Kernel round #4 K-3 landed the loader-side plumbing (OrderConstructionPolicy._COVERED_FIELDS
+# already declared these three, ioc/records.py:277-285); no approved signer/approval/
+# evidence-package source exists yet, so they stay null (residual_risks note below still
+# applies) — CLAUDE.md "원천 없는 수치는 null", not a fabricated value.
+signer_identity: null
+approval_identity: null
+evidence_package_ref: null
 scope:
   environments: ["paper"]
   safety_cells: []
@@ -112,7 +121,7 @@ invalidation_and_failure_responses:
   - "construction failure is denial; unknown conformance is UNKNOWN (TOS-GAP-001)"
 common_mode_requirements: []
 residual_risks:
-  - "signer_identity / approval_identity / evidence_package_ref are not bound in v1 (kernel construct_candidate_command takes the three coordinates only — kernel round #4 candidate)"
+  - "signer_identity / approval_identity / evidence_package_ref are not bound in v1 (kernel round #4 K-3 landed the loader/construct_candidate_command plumbing to read+thread the three coordinates; this document still declares them null pending an operator-approved source)"
 approved_by:
   - "operator (System Owner) — 2026-09-16, venue-constraint-service plan §6 ② 채택 (generation 1: scope/admission coordinates)"
   - "operator (System Owner) — 2026-09-16, OCP sizing values proposal §2 채택 (generation 2: _runtime.construction)"

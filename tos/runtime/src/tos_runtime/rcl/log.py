@@ -257,6 +257,7 @@ from tos.rcl import (
     AppendRefusalReason,
     CapacityReservationTransition,
     CapacityState,
+    CapacityVector,
     CommandType,
     CommitEntry,
     LogView,
@@ -280,6 +281,13 @@ from tos_runtime.rcl.gates import (
     fold_reservations_from_entries,
     reservation_lifecycle_refusal,
     row_to_commit_entry,
+)
+from tos_runtime.rcl.gates import (
+    reservation_committed_vector as gates_reservation_committed_vector,
+)
+from tos_runtime.rcl.gates import reservation_rows as gates_reservation_rows
+from tos_runtime.rcl.gates import (
+    upsert_reservation_projection as gates_upsert_reservation_projection,
 )
 from tos_runtime.rcl.schema import (
     CREATE_ENTRIES_TABLE_SQL,
@@ -305,9 +313,13 @@ __all__ = [
 #: :meth:`SqliteCommitLog.verify_replay` folds and compares.
 _CANONICALIZATION_VERSION = EV_L1_PROVISIONAL_VERSION
 
-#: ``(reservation_id, claimed_from_state, to_state, scope)``, or ``None`` for
-#: a plain :meth:`SqliteCommitLog.append_cas` call.
-_ReservationUpdate = tuple[str, CapacityState, CapacityState, ReservationScope] | None
+#: ``(reservation_id, claimed_from_state, to_state, scope, committed_vector)``, or ``None`` for
+#: a plain :meth:`SqliteCommitLog.append_cas` call. ``committed_vector`` (kernel round #4 K-4)
+#: is ``None`` when the transition carries no vector — never a zero vector.
+_ReservationUpdate = (
+    tuple[str, CapacityState, CapacityState, ReservationScope, CapacityVector | None]
+    | None
+)
 
 
 class CommitLogCorruption(RuntimeError):
@@ -605,7 +617,9 @@ class SqliteCommitLog:
         Args:
             transition: The proposed transition (``reservation_id``,
                 ``from_state``, ``to_state``, ``writer_epoch``, ``scope`` —
-                all required, checked here).
+                all required, checked here; ``committed_vector`` — kernel
+                round #4 K-4 — is OPTIONAL and persisted as-is, ``None``
+                included, never defaulted).
             cause: The :class:`~tos.rcl.TransitionCause` driving it.
             command_type: The ``CommandType`` recorded as the entry's
                 ``kind`` (caller-supplied — this module does not infer a
@@ -678,24 +692,25 @@ class SqliteCommitLog:
                 from_state,
                 to_state,
                 transition.scope,
+                transition.committed_vector,
             ),
         )
 
     def reservation_rows(
         self,
     ) -> Iterator[tuple[str, CapacityState, int, ReservationScope]]:
-        """Yield every held ``(reservation_id, state, last_seq, scope)`` — the projection's read shape."""
-        rows = self._conn.execute(
-            "SELECT reservation_id, state, last_seq, scope_account, "
-            "scope_instrument FROM reservations ORDER BY reservation_id ASC"
-        ).fetchall()
-        for reservation_id, state, last_seq, scope_account, scope_instrument in rows:
-            yield (
-                reservation_id,
-                CapacityState(state),
-                int(last_seq),
-                ReservationScope(account=scope_account, instrument=scope_instrument),
-            )
+        """Yield every held ``(reservation_id, state, last_seq, scope)`` — the projection's read
+        shape (delegates to :func:`~tos_runtime.rcl.gates.reservation_rows`, moved there for
+        this module's own 1000-line size budget, kernel round #4 K-4 decomposition)."""
+        return gates_reservation_rows(self._conn)
+
+    def reservation_committed_vector(
+        self, reservation_id: str
+    ) -> CapacityVector | None:
+        """The committed Capacity Vector last written for ``reservation_id``, if any (delegates
+        to :func:`~tos_runtime.rcl.gates.reservation_committed_vector`, kernel round #4 K-4).
+        """
+        return gates_reservation_committed_vector(self._conn, reservation_id)
 
     # -- replay / corruption detection (fault ⑤) --------------------------
 
@@ -787,7 +802,13 @@ class SqliteCommitLog:
         if dup_reason is not None:
             return AppendRefusal(reason=dup_reason)
         if reservation_update is not None:
-            reservation_id, claimed_from_state, _to_state, _scope = reservation_update
+            (
+                reservation_id,
+                claimed_from_state,
+                _to_state,
+                _scope,
+                _committed_vector,
+            ) = reservation_update
             from_state_refusal = check_reservation_from_state(
                 self._conn, reservation_id, claimed_from_state
             )
@@ -834,23 +855,9 @@ class SqliteCommitLog:
                 1 if reservation_update is not None else 0,
             ),
         )
-        if reservation_update is not None:
-            reservation_id, _claimed_from_state, to_state, scope = reservation_update
-            self._conn.execute(
-                "INSERT INTO reservations (reservation_id, state, last_seq, "
-                "scope_account, scope_instrument) VALUES (?, ?, ?, ?, ?) "
-                "ON CONFLICT(reservation_id) DO UPDATE SET "
-                "state=excluded.state, last_seq=excluded.last_seq, "
-                "scope_account=excluded.scope_account, "
-                "scope_instrument=excluded.scope_instrument",
-                (
-                    reservation_id,
-                    to_state.value,
-                    next_seq,
-                    scope.account,
-                    scope.instrument,
-                ),
-            )
+        gates_upsert_reservation_projection(
+            self._conn, next_seq=next_seq, reservation_update=reservation_update
+        )
 
     def _append_evidence_or_refuse(
         self,

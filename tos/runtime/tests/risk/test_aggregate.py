@@ -8,6 +8,17 @@ from pathlib import Path
 import pytest
 from tos.are import RiskDecisionResult, RiskScopeKind
 from tos.engine.records import InstrumentKey
+from tos.rcl import (
+    AppendReceipt,
+    CapacityComponent,
+    CapacityReservationTransition,
+    CapacityState,
+    CapacityVector,
+    CommandType,
+    ReservationScope,
+    TransitionCause,
+)
+from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.risk.aggregate import (
     AggregateRiskConfigError,
     AggregateRiskService,
@@ -122,6 +133,71 @@ def test_snapshot_propagates_projection_read_failures(
             required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
             all_fields_attributed=True,
         )
+
+
+def test_snapshot_conservative_current_usage_reflects_the_committed_rcl_vector(
+    ara_service: AggregateRiskService,
+    instrument_key: InstrumentKey,
+    log: SqliteCommitLog,
+    writer_epoch: int,
+) -> None:
+    """(review finding ④, round #4 — K-4's actual new behavior: the RCL commit vector
+    now flows into the risk snapshot) A reservation committed with a NON-empty
+    ``committed_vector`` in ``instrument_key``'s own scope must come back out as
+    ``snapshot.conservative_current_usage`` — not the ``CapacityVector()`` fallback,
+    which is reserved for "no reservation / no vector on record" only. Before this test,
+    no test in this suite ever committed a non-``None`` vector, so
+    ``AggregateRiskService.snapshot``'s wiring to ``instrument_committed_vector`` (rather
+    than the unconditional empty-vector fallback it replaced) had no regression coverage:
+    hardcoding ``conservative_current_usage=CapacityVector()`` in ``snapshot()`` left
+    ``tos/runtime/tests/risk`` / ``compose`` / ``rcl`` / ``riskstate`` / ``safety`` all
+    green (round #4 review, code-reviewer's own mutation)."""
+    committed_vector = CapacityVector(
+        components=(CapacityComponent(dimension_id="notional", magnitude="250"),)
+    )
+    transition = CapacityReservationTransition(
+        reservation_id="res-are-1",
+        writer_epoch=writer_epoch,
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.ATTEMPT_BOUND,
+        scope=ReservationScope(
+            account=instrument_key.account, instrument=instrument_key.instrument
+        ),
+        committed_vector=committed_vector,
+    )
+    result = log.apply_reservation_transition(
+        transition,
+        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        command_type=CommandType.BIND_ATTEMPT,
+        command_id="cmd-are-1",
+        command_digest="dig-are-1",
+        expected_seq=-1,
+    )
+    assert isinstance(result, AppendReceipt)
+
+    snapshot = ara_service.snapshot(
+        instrument_key,
+        snapshot_generation=1,
+        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
+        all_fields_attributed=True,
+    )
+    assert snapshot.conservative_current_usage == committed_vector
+    assert snapshot.conservative_current_usage != CapacityVector()
+
+
+def test_snapshot_conservative_current_usage_is_empty_vector_when_no_reservation(
+    ara_service: AggregateRiskService, instrument_key: InstrumentKey
+) -> None:
+    """The ``CapacityVector()`` fallback stays for the honest "no reservation on
+    record for this scope" case — never a fabricated magnitude, per the module
+    docstring."""
+    snapshot = ara_service.snapshot(
+        instrument_key,
+        snapshot_generation=1,
+        required_scopes=frozenset({RiskScopeKind.ACCOUNT}),
+        all_fields_attributed=True,
+    )
+    assert snapshot.conservative_current_usage == CapacityVector()
 
 
 # ============================================================================
