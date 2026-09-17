@@ -12,23 +12,56 @@ This is the exact "레지스트리 + 고정 안 된 위성" failure shape this r
 population the moment a new loader is added.
 
 **The fix: stop listing loaders, detect them.** This script scans
-``tos/runtime/src/tos_runtime/**/*.py`` for the STRUCTURAL signature every named-TBD-
-relevant loader shares — it reads a raw mapping out of YAML (``yaml.safe_load``/
-``yaml.safe_load_all``/the shared ``load_yaml_document`` helper) or imports the shared
-venue-policy YAML primitives (``tos_runtime.venue._policy_primitives``) — and checks
-whether that same file references ANY of the known guard idioms this codebase's own
-named-TBD loaders use (:mod:`tos_runtime._named_tbd`'s ``reject_named_tbd``/
-``is_named_tbd_placeholder``/``first_named_tbd_leaf``, a local ``TBD_STR``/``_TBD_STR``/
-``TBD_DIGEST``/``NAMED_TBD_PLACEHOLDER`` constant, or one of the pre-existing
-TBD-checking helpers ``require_filled_str``/``optional_str``/``require_str_field``/
-``_tbd_to_none``). A candidate file with none of these is a violation — ``--check``
-exits 1 — UNLESS it is registered in ``config/tos_named_tbd_guard.yaml`` with a reason a
-human can verify (mirrors ``tools/tos_size_budget.py``'s own "registration is
-visibility, not a licence" discipline).
+``tos/runtime/src/tos_runtime/**/*.py`` for the STRUCTURAL IDIOM every named-TBD-
+relevant loader in this codebase actually uses to read a raw mapping — ``yaml.safe_load``/
+``yaml.safe_load_all``/``yaml.load``/``tomllib.load``/``tomllib.loads``/the shared
+``load_yaml_document`` helper, or an import of the shared venue-policy YAML primitives
+(``tos_runtime.venue._policy_primitives``) — and checks whether that same file
+references ANY of the known guard idioms this codebase's own named-TBD loaders use
+(:mod:`tos_runtime._named_tbd`'s ``reject_named_tbd``/``is_named_tbd_placeholder``/
+``first_named_tbd_leaf``, a local ``TBD_STR``/``_TBD_STR``/``TBD_DIGEST``/
+``NAMED_TBD_PLACEHOLDER`` constant, or one of the pre-existing TBD-checking helpers
+``require_filled_str``/``optional_str``/``require_str_field``/``_tbd_to_none``). A
+candidate file with none of these is a violation — ``--check`` exits 1 — UNLESS it is
+registered in ``config/tos_named_tbd_guard.yaml`` with a reason a human can verify
+(mirrors ``tools/tos_size_budget.py``'s own "registration is visibility, not a licence"
+discipline).
 
 **A NEW loader added without a guard is caught automatically** — nothing needs to be
 added to a list first. This is the direct answer to the re-review's demand: "새 로더가
 가드 없이 추가되면 CI 가 잡는다".
+
+**What this scan is, precisely — an idiom scan, not a semantic one (round 3 re-review
+MEDIUM).** ``json.load``/``json.loads`` are deliberately EXCLUDED from the candidate
+signature: a survey of every ``json.load(s)`` call site in ``tos_runtime`` (21 files)
+found each one reads back an EVIDENCE STORE ROW or JOURNAL LINE this runtime itself
+already durably wrote (``evidence/store.py``, ``marketfeed/journal.py``,
+``compose/_operations_wiring.py``, and 18 more) — internal, machine-written data, never
+an operator-authored config template an operator could type ``"TBD"`` into. Including
+them would add ~21 candidates needing an exemption entry each, for zero real coverage
+gain (measured, round 3). ``tomllib.load``/``tomllib.loads`` ARE included even though
+NO file in ``tos_runtime`` uses them today (measured: zero hits) — a legitimate future
+config format with the identical named-TBD risk, included at zero present cost.
+
+**A real, permanent limitation of substring/idiom detection (documented, not solved
+here): a function that receives an ALREADY-PARSED mapping as a plain argument — never
+calling ``yaml.load``/``json.load``/etc. itself — is invisible to this scan.** Closing
+that would need call-graph analysis (genuine AST-territory, a materially bigger tool
+than this one). This scan's job is narrower and still load-bearing: catch the shape
+every named-TBD loader in this codebase actually has TODAY, mechanically, so a new
+loader written the same way nobody has to remember to add to a list.
+
+**Why a widened string scan, not folding into ``tools/tos_firewall_check.py``'s
+existing AST gate (round 3 re-review question).** That checker's AST walk answers one
+question — "does this import cross the kernel/runtroshell boundary" — over import
+statements only; a config-loader candidate is a CALL-EXPRESSION signature
+(``yaml.safe_load(...)``), a different AST shape needing its own visitor, its own
+config schema, and its own self-test additions layered onto an already-dense, already-
+reviewed file. That is a new capability bolted onto an existing tool, not "reusing what
+is already there" — the size-budget checker (registry + drift detection, no AST at all)
+is the closer precedent, and this tool already follows it. Widening the string
+signature (below) closes the concrete bypass the re-review demonstrated
+(``yaml.load(text, Loader=yaml.SafeLoader)``) at near-zero cost and no new tool.
 
 Failure classes enforced by ``--check`` (never silently pass):
 
@@ -47,13 +80,20 @@ Failure classes enforced by ``--check`` (never silently pass):
 that list is non-empty. (e) is a distinct hard failure, mirroring
 ``tools/tos_size_budget.py``'s own "a checker that never fails is dead" discipline.
 
-This is a small stdlib(+PyYAML)-only text-scan tool — no AST needed, since the guard
-idioms are always plain names/calls a substring scan finds reliably, and a false
-negative here (a file that references one of these tokens in a comment, without really
-using it) is exactly the same conservative-pass shape ``tools/tos_size_budget.py``
-already accepts for its own line-count heuristic: this tool's job is to make "nobody
-looked at this file" impossible, not to replace the review that decides each file's
-actual exemption reason.
+This is a small stdlib(+PyYAML)-only text-scan tool — no AST needed for the reasons
+above — and a false negative here (a file that references one of these tokens in a
+comment, without really using it) is exactly the same conservative-pass shape
+``tools/tos_size_budget.py`` already accepts for its own line-count heuristic: this
+tool's job is to make "nobody looked at this file" impossible, not to replace the
+review that decides each file's actual exemption reason.
+
+**The checker's own candidate-detection signature is itself covered against silent
+weakening (round 3 re-review MEDIUM — "the checker itself was not checked"): the real-
+tree smoke test pins a candidate-count FLOOR, not just "0 violations" — removing a
+signal from ``_CANDIDATE_SIGNALS`` silently shrinks the candidate set while staying
+"clean" otherwise (proven: removing ``"load_yaml_document("`` drops 46 candidates to 42
+with zero violations), so a bare ``violations == []`` assertion cannot catch that
+regression. The floor makes it visible.**
 """
 
 from __future__ import annotations
@@ -69,11 +109,15 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = Path("config/tos_named_tbd_guard.yaml")
 DEFAULT_SCOPE = Path("tos/runtime/src/tos_runtime")
 
-#: A file is a "candidate" — a config loader that reads a raw value out of YAML — if it
-#: contains any of these substrings (module docstring).
+#: A file is a "candidate" — a config loader that reads a raw value out of YAML/TOML — if
+#: it contains any of these substrings (module docstring's "what this scan is,
+#: precisely" section explains what is deliberately excluded, and why).
 _CANDIDATE_SIGNALS: tuple[str, ...] = (
     "yaml.safe_load(",
     "yaml.safe_load_all(",
+    "yaml.load(",
+    "tomllib.load(",
+    "tomllib.loads(",
     "load_yaml_document(",
     "_policy_primitives import",
 )

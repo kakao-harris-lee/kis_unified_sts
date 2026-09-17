@@ -374,13 +374,53 @@ def test_main_check_flag_exits_zero_when_clean(tmp_path: Path, capsys) -> None:
 # ---------------------------------------------------------------------------
 
 
+#: The measured candidate count against the real tree as of round 3 (2026-09-18) — a
+#: FLOOR, not an exact pin: a legitimate new loader raises this count (re-measure and
+#: bump it deliberately, the same "measured drift" discipline
+#: ``tools/tos_size_budget.py`` applies to its own registered `measured` values), but a
+#: SILENT drop below it means the candidate-detection signature itself weakened (round 3
+#: re-review MEDIUM — see ``test_a_weakened_candidate_signature_drops_below_the_floor``
+#: for the mutation this floor is proven against).
+_REAL_TREE_CANDIDATE_FLOOR = 46
+
+
 def test_check_real_config_and_scope_smoke() -> None:
     """The real ``config/tos_named_tbd_guard.yaml`` against the real
-    ``tos/runtime/src/tos_runtime`` tree must pass with 0 violations right now."""
+    ``tos/runtime/src/tos_runtime`` tree must pass with 0 violations right now, over AT
+    LEAST the measured candidate floor — round 3 re-review MEDIUM: a bare
+    ``violations == []`` cannot tell "0 violations because every candidate is guarded"
+    from "0 violations because the candidate-detection signature quietly stopped seeing
+    most of them" (proven: removing one signal drops 46 candidates to 42, still 0
+    violations)."""
     candidates, violations = guard.check(
         repo_root=_REPO_ROOT,
         scope_dir=_REPO_ROOT / guard.DEFAULT_SCOPE,
         config_path=_REPO_ROOT / guard.DEFAULT_CONFIG,
     )
     assert violations == [], violations
-    assert len(candidates) > 0
+    assert len(candidates) >= _REAL_TREE_CANDIDATE_FLOOR, (
+        f"candidate count dropped to {len(candidates)}, below the floor of "
+        f"{_REAL_TREE_CANDIDATE_FLOOR} — did _CANDIDATE_SIGNALS lose a signal?"
+    )
+
+
+def test_a_weakened_candidate_signature_drops_below_the_floor(monkeypatch) -> None:
+    """THE mutation the floor above is proven against (round 3 re-review MEDIUM): with
+    ``"load_yaml_document("`` removed from ``_CANDIDATE_SIGNALS`` — exactly the kind of
+    silent weakening a future edit could introduce — the real-tree candidate count must
+    fall below :data:`_REAL_TREE_CANDIDATE_FLOOR`, proving the floor assertion above is
+    load-bearing rather than decorative."""
+    weakened = tuple(s for s in guard._CANDIDATE_SIGNALS if s != "load_yaml_document(")
+    assert len(weakened) == len(guard._CANDIDATE_SIGNALS) - 1
+    monkeypatch.setattr(guard, "_CANDIDATE_SIGNALS", weakened)
+
+    candidates, violations = guard.check(
+        repo_root=_REPO_ROOT,
+        scope_dir=_REPO_ROOT / guard.DEFAULT_SCOPE,
+        config_path=_REPO_ROOT / guard.DEFAULT_CONFIG,
+    )
+    assert violations == []  # still "clean" -- that is exactly the danger this pins
+    assert len(candidates) < _REAL_TREE_CANDIDATE_FLOOR, (
+        "weakening the candidate signature should have dropped the count below the "
+        f"floor, but got {len(candidates)} -- the floor would not have caught this"
+    )
