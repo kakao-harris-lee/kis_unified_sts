@@ -1,4 +1,4 @@
-"""Every pipeline daemon entrypoint honours ``LOG_LEVEL`` (#751).
+"""Every pipeline daemon entrypoint honours ``LOG_LEVEL`` (#751, #753).
 
 The level-name matrix itself is covered by ``test_logging_setup.py``. What is
 worth pinning here is the wiring: each ``main()`` must configure logging, and
@@ -72,3 +72,75 @@ def test_main_configures_logging_before_it_starts_the_daemon(
 
     assert module.main() == 0
     assert observed == [expected], module_name
+
+
+def test_stream_exporter_prefers_its_own_knob_over_log_level(
+    monkeypatch: pytest.MonkeyPatch, restore_root_log_level: logging.Logger
+) -> None:
+    """STREAM_EXPORTER_LOG_LEVEL outranks LOG_LEVEL for the exporter (#753).
+
+    The exporter's ``main()`` binds a port and loops forever, so the setup is
+    called directly here. It is not a pass-through: it carries the exporter's
+    distinct log format and the name of the override, which is what this pins.
+    """
+    from services.monitoring.stream_exporter import _setup_logging
+
+    monkeypatch.setenv("LOG_LEVEL", "WARNING")
+    monkeypatch.setenv("STREAM_EXPORTER_LOG_LEVEL", "DEBUG")
+
+    assert _setup_logging() == logging.DEBUG
+
+
+def test_stream_exporter_falls_back_to_log_level(
+    monkeypatch: pytest.MonkeyPatch, restore_root_log_level: logging.Logger
+) -> None:
+    """With the override blank — how compose renders it unset — LOG_LEVEL wins."""
+    from services.monitoring.stream_exporter import _setup_logging
+
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    monkeypatch.setenv("STREAM_EXPORTER_LOG_LEVEL", "")
+
+    assert _setup_logging() == logging.DEBUG
+
+
+def test_stream_exporter_non_level_attribute_does_not_crash_startup(
+    monkeypatch: pytest.MonkeyPatch, restore_root_log_level: logging.Logger
+) -> None:
+    """The defect #753 names: ``getattr(logging, name)`` resolved any attribute.
+
+    ``STREAM_EXPORTER_LOG_LEVEL=BASIC_FORMAT`` used to hand ``basicConfig`` a
+    string and abort the container with ``ValueError: Unknown level``.
+    """
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.setenv("STREAM_EXPORTER_LOG_LEVEL", "BASIC_FORMAT")
+
+    from services.monitoring.stream_exporter import _setup_logging
+
+    assert _setup_logging() == logging.INFO
+
+
+def test_stream_exporter_dockerfile_copies_every_shared_package_it_imports():
+    """The minimal image breaks silently on a ``shared.*`` import it lacks.
+
+    ``Dockerfile.stream_exporter`` copies individual packages rather than the
+    repo, so an import added here that is not COPYed passes every test and
+    fails only in that one container at runtime (#591). #753 added
+    ``shared.observability``; this keeps the next one honest.
+    """
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[3]
+    source = (repo_root / "services/monitoring/stream_exporter.py").read_text(
+        encoding="utf-8"
+    )
+    dockerfile = (repo_root / "Dockerfile.stream_exporter").read_text(encoding="utf-8")
+
+    imported = {
+        line.split()[1].split(".")[1]
+        for line in source.splitlines()
+        if line.startswith("from shared.")
+    }
+    assert imported, "resolver matched nothing — the import style changed"
+
+    for package in sorted(imported):
+        assert f"COPY shared/{package} " in dockerfile, package

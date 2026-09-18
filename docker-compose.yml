@@ -868,6 +868,11 @@ services:
       - "127.0.0.1:${STREAM_EXPORTER_HOST_PORT:-9093}:9093"
     environment:
       <<: *redis-runtime-env
+      # Stack-wide fallback plus the exporter's own pre-existing knob, which
+      # wins when it names a level. Left blank when unset so it defers rather
+      # than pinning this container at INFO — see _setup_logging (#753).
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      STREAM_EXPORTER_LOG_LEVEL: "${STREAM_EXPORTER_LOG_LEVEL:-}"
       STREAM_EXPORTER_PORT: "9093"
       STREAM_EXPORTER_STREAMS: "market:ticks,raw_data"
       STREAM_EXPORTER_READ_COUNT: "200"

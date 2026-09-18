@@ -673,6 +673,7 @@ def test_log_level_reaches_exactly_the_entrypoints_that_read_it():
         "futures-order-router",
         "futures-monitor",
         "futures-kill-switch",
+        "stream-exporter",
     }
     readers = {
         name
@@ -700,6 +701,12 @@ def test_log_level_reaches_exactly_the_entrypoints_that_read_it():
             else {entry.split("=", 1)[0] for entry in environment}
         )
         assert "LOG_LEVEL" not in keys, f"{name} does not read LOG_LEVEL"
+
+    # The exporter keeps its own older knob, which outranks LOG_LEVEL. It has
+    # to interpolate to empty when unset: any literal default would pin the
+    # container at that level and make LOG_LEVEL unreachable there (#753).
+    exporter_env = services["stream-exporter"]["environment"]
+    assert exporter_env["STREAM_EXPORTER_LOG_LEVEL"] == "${STREAM_EXPORTER_LOG_LEVEL:-}"
 
     # The templates document the knob and ship the default the code falls back
     # to; a template that drifted to another value would move every one of
