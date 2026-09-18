@@ -34,7 +34,7 @@ from shared.streaming.audit import (
     format_audit_kv,
 )
 from shared.streaming.stage import (
-    is_missing_consumer_group_error,
+    is_vanished_stream_read_error,
     recover_missing_consumer_group,
 )
 from shared.utils.calc import calc_realized_pnl
@@ -395,7 +395,8 @@ class StockMonitorDaemon:
         Blocks up to 2s per ``xreadgroup``; routes by stream name to
         ``handle_fill`` / ``handle_signal``; handler exceptions are logged and
         the message is still ACKed (poison-pill drop). Read errors back off 0.5s,
-        except NOGROUP, which recreates both groups and retries immediately.
+        except a vanished stream (NOGROUP/UNBLOCKED), which recreates both groups
+        and retries immediately — but only when both recreates succeed.
         """
         while not self._stop.is_set():
             try:
@@ -409,18 +410,22 @@ class StockMonitorDaemon:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                if is_missing_consumer_group_error(exc):
-                    # Both streams are read in one XREADGROUP, so a NOGROUP on
-                    # either (the fill stream carries a 24h TTL and expires on a
-                    # fill-less day) blinds the monitor to the surviving stream
-                    # too. Recreate the group on both (mkstream restores the
-                    # vanished key) and retry: handled condition, no backoff.
-                    for stream in (self.fill_stream, self.signal_stream):
+                if is_vanished_stream_read_error(exc):
+                    # Either stream can expire, and both are read in one
+                    # XREADGROUP, so the read fails as a unit and recovery has
+                    # to restore both (mkstream recreates the vanished key).
+                    # Skip the backoff only when both recoveries succeeded; a
+                    # failed recreate falls through to the error log + backoff
+                    # below so a persistent failure cannot become a hot loop.
+                    recovered = [
                         await recover_missing_consumer_group(
                             self.redis, stream, self.consumer_group
                         )
-                    await asyncio.sleep(0)
-                    continue
+                        for stream in (self.fill_stream, self.signal_stream)
+                    ]
+                    if all(recovered):
+                        await asyncio.sleep(0)
+                        continue
                 self._xreadgroup_error_log.exception(
                     logger,
                     format_audit_kv(

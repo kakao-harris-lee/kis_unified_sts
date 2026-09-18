@@ -48,6 +48,28 @@ def is_missing_consumer_group_error(exc: Exception) -> bool:
     return "nogroup" in str(exc).lower()
 
 
+def is_vanished_stream_read_error(exc: Exception) -> bool:
+    """Whether ``exc`` says the stream read failed because its key vanished.
+
+    Two Redis error codes report that one condition. NOGROUP comes back when
+    the key or the group is already gone at call time; ``UNBLOCKED the stream
+    key no longer exists`` is what a client *already blocked* in XREADGROUP
+    gets when the key disappears underneath it — which is how each episode on
+    the monitor daemons starts. The unrelated ``UNBLOCKED client unblocked via
+    CLIENT UNBLOCK`` is deliberately excluded: that is an operator action, not
+    a vanished key.
+
+    Sibling of :func:`is_missing_consumer_group_error` rather than a widening
+    of it, so ``StreamStage``/``MultiStreamStage`` keep their current NOGROUP-
+    only behavior; only the monitor daemons, which read TTL-bearing streams,
+    opt into the wider match.
+    """
+    if is_missing_consumer_group_error(exc):
+        return True
+    message = str(exc).lower()
+    return "unblocked" in message and "no longer exists" in message
+
+
 async def _ensure_consumer_group(
     redis: Any,
     stream: str | bytes,
