@@ -194,7 +194,17 @@ def _leaf_values(node: Any) -> list[Any]:
     ``None`` nor ``[]``) — instead of the empty-mapping case silently vanishing from the walk.
     This mirrors the exact class of bug this whole module exists to catch at the loader layer
     (a required key/block gone missing, not merely unfilled) — just one level lower, inside the
-    leaf-flattener itself."""
+    leaf-flattener itself.
+
+    KNOWN LIMITATION (PR #737 review round 3, LOW — registered, deliberately NOT fixed). The
+    empty-list branch is unconditional at EVERY depth, so a NESTED empty list (``[[]]``) still
+    flattens to the leaf ``[]`` and passes :func:`is_template_document`. Only the empty-MAPPING
+    asymmetry was closed. This is currently unexploitable rather than merely unlikely: the two
+    configs in ``EXAMPLE_TEMPLATE_ONLY`` (the only callers of this predicate) have no
+    list-of-lists anywhere in their schemas — every field on ``HardSafetyEnvelope``/
+    ``RuntimeSafetyProfile`` is a flat optional scalar or a flat tuple. That precondition, not
+    the predicate, is what makes it safe; if a config with a nested-list schema is ever added to
+    ``EXAMPLE_TEMPLATE_ONLY``, this branch has to be revisited first."""
     if isinstance(node, dict):
         if not node:
             return [node]
@@ -277,17 +287,17 @@ def assert_safety_activation_refuses_on_both_readers() -> None:
 
     example_path = CONFIG_DIR / "safety_activation.example.yaml"
     try:
-        result = load_activation_members(example_path)
+        members_result = load_activation_members(example_path)
     except ActivationMembersConfigError:
         pass
     else:
         raise AssertionError(
             f"{example_path.name} loaded successfully via load_activation_members instead of "
-            f"refusing (got {result!r}) — a real value appears to have leaked into the "
+            f"refusing (got {members_result!r}) — a real value appears to have leaked into the "
             "members: schema."
         )
     try:
-        result = _load_documents(
+        documents_result = _load_documents(
             CONFIG_DIR / "safety_envelope.example.yaml",
             CONFIG_DIR / "safety_profile.example.yaml",
             example_path,
@@ -297,7 +307,7 @@ def assert_safety_activation_refuses_on_both_readers() -> None:
     else:
         raise AssertionError(
             f"{example_path.name} loaded successfully via _load_documents instead of refusing "
-            f"(got {result!r}) — a real value appears to have leaked into the activation:/"
+            f"(got {documents_result!r}) — a real value appears to have leaked into the activation:/"
             "not_expired: schema."
         )
 

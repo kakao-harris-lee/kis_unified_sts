@@ -676,6 +676,17 @@ EVIDENCE_RETENTION_LOADER: LoaderSpec = (RetentionPolicy.load, {})
 #: this dict the single source for BOTH the real test and the coverage ledger closes that gap
 #: structurally — see ``example_integrity.assert_safety_activation_refuses_on_both_readers``'s own
 #: docstring for the full explanation (applies identically here).
+#:
+#: KNOWN LIMITATION (PR #737 review round 3, MEDIUM — registered, deliberately NOT fixed).
+#: "Claiming coverage" and "being actually called" are now the same act, but NOTHING checks that
+#: the registered callable actually asserts anything: registering a no-op (``lambda: None``) for a
+#: stem, and deleting that stem's real check, still leaves the whole suite green — the reviewer
+#: reproduced exactly this. What changed versus the old hand-typed ledger is the COST of the
+#: mistake, not its possibility: it now takes writing a callable into this source file rather than
+#: adding one string to a frozenset, so a diff shows it. Closing it completely would need a
+#: meta-check on whether a registered function contains a meaningful assert — i.e. a new
+#: verification harness, which this repo's review convention §5 forbids on purpose. The defence
+#: here is code review, and this note is what tells the next reviewer to look.
 LOADS_SUCCESSFULLY_LOADERS: dict[str, LoaderSpec] = {
     "custody.manifest": CUSTODY_MANIFEST_LOADER,
     "evidence_retention": EVIDENCE_RETENTION_LOADER,
@@ -693,7 +704,10 @@ EXAMPLE_TEMPLATE_ONLY: frozenset[str] = frozenset({"safety_envelope", "safety_pr
 #: Keyed by stem, mapping to a standalone check function — the SAME dict both the parametrized
 #: ``test_multi_reader_example_still_refuses_on_both_readers`` calls and the coverage ledger reads
 #: from (``frozenset(MULTI_READER_CHECKS)``); see ``LOADS_SUCCESSFULLY_LOADERS``'s own comment for
-#: why this "ledger IS the callable registry" shape is what PR #737 review round 2 asked for.
+#: why this "ledger IS the callable registry" shape is what PR #737 review round 2 asked for —
+#: INCLUDING its KNOWN LIMITATION, which applies here identically and was in fact reproduced
+#: against THIS dict: a ``lambda: None`` entry here counts as coverage. Adding an entry below is
+#: therefore a code-review checkpoint, not a self-verifying act.
 MULTI_READER_CHECKS: dict[str, Callable[[], None]] = {
     "safety_activation": assert_safety_activation_refuses_on_both_readers,
     "risk": assert_risk_refuses_on_both_readers,
