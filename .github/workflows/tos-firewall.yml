@@ -159,10 +159,16 @@ jobs:
       # plus exactly one tool and its test, leaving `tos/runtime/src`,
       # `tos/runtime/tests` and the rest of the tos governance tooling unformatted-
       # by-nobody — the same shape of hole as the mypy one #742 closed, in the same
-      # job. The audit that found it also measured the cost of closing it: all 423
-      # newly covered files were ALREADY clean (406 under tos/runtime, 17 across the
-      # tools), so this widening required no reformatting commit and cannot be
-      # carrying a silent reformat.
+      # job. The audit that found it also measured the cost of closing it: all 421
+      # newly covered files were ALREADY clean (406 under tos/runtime, 15 across the
+      # tooling), so this widening required no reformatting commit and cannot be
+      # carrying a silent reformat. Checked file totals: 845 before, 1266 after.
+      # (421, not the 423 first written here: the globs below match 17 tooling files,
+      # but two of them — tos_size_budget.py and its test — were already named
+      # explicitly by the old command, so they are not new coverage. Counting glob
+      # matches as "new" is the same shape of slip this step's other note exists to
+      # correct; an independent review caught it by diffing the two file SETS with
+      # `git ls-files` instead of trusting either total.)
       - name: Black (tos)
         run: >-
           black --check tos/src tos/tests tos/runtime/src tos/runtime/tests
@@ -200,9 +206,15 @@ jobs:
       # strength of 53 hits under FULL checking. That is wrong while any code is
       # deferred, and the correction is the useful part of this note: measured with
       # exactly the flags below minus the `unused-ignore` deferral, the count is 283
-      # (183 kernel + 100 runtime), not 53. The extra 230 are ignores that DO suppress
-      # a real error of a DEFERRED code — `# type: ignore[arg-type]` reads as "unused"
-      # only because `arg-type` is off right now. Deleting them to go green would
+      # (183 kernel + 100 runtime), not 53. The extra 230 are ignores that stop being
+      # "used" once the deferrals are applied: 228 name a deferred code directly
+      # (`# type: ignore[arg-type]` reads as "unused" only because `arg-type` is off
+      # right now), and 2 name `call-arg` — an ENABLED code — where turning the nine
+      # off removes the error at that line by cascade, so the mechanism there is
+      # interaction between deferred codes rather than the ignore's own code being
+      # off. An independent review measured that split; the one-to-one story was too
+      # strong, and the practical conclusion holds either way. Deleting them to go
+      # green would
       # quietly remove the suppressions that the deferred codes need the moment they
       # are enabled, i.e. it would make this gate harder to ratchet, not easier.
       # So `unused-ignore` is enabled LAST, after the codes it interacts with — it
