@@ -198,27 +198,33 @@ jobs:
       #     convention §5 forbids on purpose.
       # So the deferral is per ERROR CODE instead. That list is finite, it does not
       # rot as files are added (a new file is checked for every enabled code from the
-      # moment it exists), and it only ever shrinks. Enabled today are the nine codes
-      # that flag a real mismatch rather than a missing annotation — measured to 0 in
-      # both trees by the commit that added this step.
+      # moment it exists), and it only ever shrinks. Enabled today are thirteen codes:
+      # the original nine that flag a real mismatch rather than a missing annotation
+      # (measured to 0 in both trees by the commit that added this step), plus four
+      # more added by the test-tree mypy ratchet plan's stage 1
+      # (`docs/plans/2026-09-18-tos-test-tree-mypy-ratchet-plan.md` §3.1) — `misc`,
+      # `index`, `operator`, `union-attr` — fixed by adding real None-checks/type
+      # narrowing at each call site, never by loosening a type or an assertion.
       #
       # `unused-ignore` was named in PR #742 as the next code to enable, on the
       # strength of 53 hits under FULL checking. That is wrong while any code is
-      # deferred, and the correction is the useful part of this note: measured with
-      # exactly the flags below minus the `unused-ignore` deferral, the count is 283
-      # (183 kernel + 100 runtime), not 53. The extra 230 are ignores that stop being
-      # "used" once the deferrals are applied: 228 name a deferred code directly
-      # (`# type: ignore[arg-type]` reads as "unused" only because `arg-type` is off
-      # right now), and 2 name `call-arg` — an ENABLED code — where turning the nine
-      # off removes the error at that line by cascade, so the mechanism there is
-      # interaction between deferred codes rather than the ignore's own code being
-      # off. An independent review measured that split; the one-to-one story was too
-      # strong, and the practical conclusion holds either way. Deleting them to go
-      # green would
-      # quietly remove the suppressions that the deferred codes need the moment they
-      # are enabled, i.e. it would make this gate harder to ratchet, not easier.
-      # So `unused-ignore` is enabled LAST, after the codes it interacts with — it
-      # measures the others, it does not lead them.
+      # deferred, and the correction is the useful part of this note: measured back
+      # when nine codes were enabled and ten deferred, exactly the flags below minus
+      # the `unused-ignore` deferral gave 283 (183 kernel + 100 runtime), not 53. The
+      # extra 230 are ignores that stop being "used" once the deferrals are applied:
+      # 228 name a deferred code directly (`# type: ignore[arg-type]` reads as
+      # "unused" only because `arg-type` is off right now), and 2 name `call-arg` —
+      # an ENABLED code — where turning the nine off removes the error at that line by
+      # cascade, so the mechanism there is interaction between deferred codes rather
+      # than the ignore's own code being off. An independent review measured that
+      # split; the one-to-one story was too strong, and the practical conclusion
+      # holds either way. Deleting them to go green would quietly remove the
+      # suppressions that the deferred codes need the moment they are enabled, i.e.
+      # it would make this gate harder to ratchet, not easier. So `unused-ignore` is
+      # enabled LAST, after every code it interacts with — it measures the others, it
+      # does not lead them. Stage 1 separately removed the 53 genuinely dead ignores
+      # (unused regardless of deferral state) while leaving the 230 deferral-dependent
+      # ones in place.
       #
       # Two steps, never one: `mypy tos/tests tos/runtime/tests` in a single
       # invocation aborts with `Duplicate module named "tests"` and checks almost
@@ -229,8 +235,6 @@ jobs:
           --disable-error-code=arg-type --disable-error-code=no-untyped-def
           --disable-error-code=attr-defined --disable-error-code=return-value
           --disable-error-code=no-any-return --disable-error-code=unused-ignore
-          --disable-error-code=union-attr --disable-error-code=operator
-          --disable-error-code=index --disable-error-code=misc
 
       - name: mypy (tos runtime tests)
         run: >-
@@ -238,8 +242,6 @@ jobs:
           --disable-error-code=arg-type --disable-error-code=no-untyped-def
           --disable-error-code=attr-defined --disable-error-code=return-value
           --disable-error-code=no-any-return --disable-error-code=unused-ignore
-          --disable-error-code=union-attr --disable-error-code=operator
-          --disable-error-code=index --disable-error-code=misc
 
       - name: tos size budget
         # config/tos_size_budget.yaml exceptions register — Phase 1 작업 6.
