@@ -36,6 +36,10 @@ from shared.streaming.audit import (
     extract_audit_fields,
     format_audit_kv,
 )
+from shared.streaming.stage import (
+    is_missing_consumer_group_error,
+    recover_missing_consumer_group,
+)
 from shared.utils.calc import calc_futures_realized_pnl
 
 logger = logging.getLogger(__name__)
@@ -317,7 +321,19 @@ class FuturesMonitorDaemon:
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
+                if is_missing_consumer_group_error(exc):
+                    # Both streams are read in one XREADGROUP, so a NOGROUP on
+                    # either (the fill stream carries a 24h TTL and expires on a
+                    # fill-less day) blinds the monitor to the surviving stream
+                    # too. Recreate the group on both (mkstream restores the
+                    # vanished key) and retry: handled condition, no backoff.
+                    for stream in (self.fill_stream, self.signal_stream):
+                        await recover_missing_consumer_group(
+                            self.redis, stream, self.consumer_group
+                        )
+                    await asyncio.sleep(0)
+                    continue
                 self._xreadgroup_error_log.exception(
                     logger,
                     format_audit_kv(

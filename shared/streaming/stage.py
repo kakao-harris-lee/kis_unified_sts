@@ -38,7 +38,13 @@ def _is_busygroup_error(exc: Exception) -> bool:
     return "busygroup" in str(exc).lower()
 
 
-def _is_nogroup_error(exc: Exception) -> bool:
+def is_missing_consumer_group_error(exc: Exception) -> bool:
+    """Whether ``exc`` is Redis' NOGROUP — the stream key or the group is gone.
+
+    Redis answers NOGROUP both when the consumer group was never created and
+    when the stream key itself expired, so a consumer that reads an expiring
+    stream must treat it as a recoverable condition, not a read failure.
+    """
     return "nogroup" in str(exc).lower()
 
 
@@ -62,11 +68,16 @@ async def _ensure_consumer_group(
         return False
 
 
-async def _recover_missing_consumer_group(
+async def recover_missing_consumer_group(
     redis: Any,
     stream: str | bytes,
     consumer_group: str,
 ) -> bool:
+    """Recreate a vanished stream/group (``mkstream``) and log the recreate.
+
+    Returns True when the group exists afterwards (created here, or already
+    present). Safe to call on a stream whose group never went missing.
+    """
     ensured = await _ensure_consumer_group(redis, stream, consumer_group)
     if ensured:
         logger.warning(
@@ -75,6 +86,12 @@ async def _recover_missing_consumer_group(
             consumer_group,
         )
     return ensured
+
+
+# Pre-existing private spellings, kept so the in-module call sites below are
+# untouched by making the two helpers above public API for the monitor daemons.
+_is_nogroup_error = is_missing_consumer_group_error
+_recover_missing_consumer_group = recover_missing_consumer_group
 
 
 def _log_processed_message(
