@@ -369,26 +369,51 @@ artifacts, or written operator approval.
   close (and before any redeploy, even mid-day), per session:
 
   ```bash
-  D=$(TZ=Asia/Seoul date +%F); TS=$(TZ=Asia/Seoul date +%H%M%S)
-  OUT=reports/f9-gate1/$D; mkdir -p "$OUT"
-  for c in futures-risk-filter futures-order-router futures-monitor; do
-    docker logs --since "${D}T08:00:00+09:00" "kis_paper-$c" > "$OUT/$c.$TS.log" 2>&1
-  done
-  # decision-engine: see the --tail caveat above until the container is recreated
-  docker logs --tail 900 kis_paper-futures-decision-engine > "$OUT/futures-decision-engine.$TS.log" 2>&1
-  grep -c "risk_filter verdict=" "$OUT"/futures-risk-filter.*.log   # per harvest; non-zero on any day with candidates
+  python scripts/ops/f9_observation_harvest.py                    # harvest + verdict, today
+  python scripts/ops/f9_observation_harvest.py --date 2026-09-18  # past day, verdict only
   ```
+
+  The script harvests every service named in `config/f9_observation.yaml`
+  (`--since 08:00 KST`, and `--tail 900` for the decision-engine per the caveat
+  above), then emits the observation-log row and a JSON sidecar. Exit status is
+  `0` only when the day's observation is `COMPLETE`.
 
   Every harvest writes new `<service>.<HHMMSS KST>.log` files, so harvesting
   before a mid-session redeploy and again at the close keeps both halves of the
-  day — never rename or overwrite them. The per-file `grep -c` overlaps when a
-  container was harvested twice without being recreated; count across files
-  only with the `sort -u` commands in "Every risk-filter verdict is on the log"
-  above. `reports/**` is git-ignored; cite the harvested files (paths + the
+  day — the script never renames or overwrites them, and it reads all of a
+  day's files together, de-duplicating the lines two overlapping harvests share
+  (the `sort -u` rule in "Every risk-filter verdict is on the log" above).
+  `reports/**` is git-ignored; cite the harvested files (paths + the
   de-duplicated counts) in the observation-log row, not live `docker logs`
   output.
 
+  **The verdict is derived from the harvested files only.** Redis streams carry
+  a 24h TTL and their entries vanish, so a past day is not reconstructible from
+  Redis. Live Redis (`xinfo groups` lag, `raw_data` tip,
+  `futures:daily_reference` `asof_ts`) and `docker inspect`
+  (`RestartCount`, `StartedAt`) are collected as context, recorded under
+  `point_in_time` in the sidecar, and never feed the verdict.
+
 **Shadow observation log** (Gate 1 — feeds the Gate 2 one-line summary):
+
+**`Consumers` means consumers that DEMONSTRABLY CONSUMED** — each one having
+emitted at least one `event=stream_message_processed` line during the session,
+or (for the decision-engine) having evaluated its setups against a real market
+context. It is **not** a count of consumers that were running. From 2026-09-17
+00:00 to 2026-09-18 12:34 both monitor daemons were up with `RestartCount=0`
+while consuming nothing — a vanished-stream NOGROUP loop, fixed in PRs
+#739/#741 — so a running-count row on either day would have said "4" and been
+wrong, and a reader would have taken two days of "no signals" for a quiet
+market rather than for a dead instrument. This is the INERT-GATE CAVEAT below
+applied to the observation surface itself: **"observed 0" and "could not
+observe" must never occupy the same cell.** `scripts/ops/f9_observation_harvest.py`
+emits the cell, and qualifies the candidate → final → fills counts on any day
+whose observation is not `COMPLETE`.
+
+**The three rows below (2026-09-08 … 2026-09-10) were recorded under the OLD
+definition** (consumers running) and are left as recorded; do not read their
+`Consumers` numbers as proof of consumption, and do not restate them under the
+new definition — no completeness evidence was captured for those days.
 
 | Day | Consumers | Setup D candidates → final → fills | Orchestrator (ledger) | Direction parity | Notes |
 |---|---|---|---|---|---|

@@ -1,0 +1,134 @@
+# F-9 Gate 1 shadow observation — harvest targets and observation evidence.
+#
+# Read by scripts/ops/f9_observation_harvest.py. Nothing in that script hardcodes
+# a service name, a container name, a log pattern, or a threshold; they all live
+# here (CLAUDE.md: configuration-driven only).
+#
+# The session window is NOT here — it is read from
+# config/market_schedule.yaml::market_schedule.futures.regular.{open,close}
+# through shared/decision/context.py's loader (the one PR #668 added), so this
+# file cannot drift from what the runtime believes the session is.
+#
+# WHY the `observed` / `blind` split exists: from 2026-09-17 00:00 to
+# 2026-09-18 12:34 both monitor daemons were up with RestartCount=0 while
+# consuming nothing (a vanished-stream NOGROUP loop, fixed in #739/#741). A row
+# recorded on either day would have said "consumers: 4" and been wrong. "How
+# many are running" is not "how many observed"; only a line a consumer emits
+# when it really handles a message proves the second.
+
+f9_observation:
+  # Harvest destination: reports/f9-gate1/<KST date>/<service>.<HHMMSS>.log
+  # (git-ignored; these files ARE the durable record — Redis streams carry a
+  # 24h TTL and their entries vanish).
+  report_root: "reports/f9-gate1"
+  container_prefix: "kis_paper-"
+  # KST clock time `docker logs --since` starts from. Before the 08:45 open so
+  # a pre-open blind window is captured too.
+  harvest_since: "08:00"
+  # Blind timestamps closer together than this are reported as one window.
+  # The dense blind signals repeat every 30-60s, so 300s merges a run without
+  # merging two genuinely separate outages.
+  blind_run_merge_seconds: 300
+  # Counters printed in the observation-log row's third column, in order.
+  row_counters: ["candidates", "final", "fills"]
+
+  services:
+    - name: futures-decision-engine
+      container: futures-decision-engine
+      # The producer of candidates. Its "observation" is evaluating setups
+      # against a live market context, not consuming a stream.
+      role: producer
+      # `docker logs` without --tail (or with a large one) stops at
+      # 2026-09-09 23:30 on a container that survived the host reboots — see
+      # the "--tail caveat" in docs/runbooks/futures-pipeline-cutover-f9.md.
+      harvest_mode: tail
+      harvest_tail: 900
+      observed:
+        # One line per setup-evaluation state change: proof the daemon had a
+        # market context and ran the setup against it.
+        - '\[setup_[a-z_0-9]+\] (signal [a-z]+|no signal this cycle): '
+      blind:
+        # Checked BEFORE `observed`, so a reject whose reason is "I had no
+        # input" counts as blindness, not as an evaluation.
+        - '\[setup_[a-z_0-9]+\] no signal this cycle: (no_market_context|no_vwap|no_prev_close)\b'
+        # Emitted every cycle while the tick feed is stale — the dense signal
+        # that gives a blind window its edges.
+        - 'Indicator data stale for \S+ \(\d+s since last tick'
+      counters:
+        candidates:
+          pattern: 'event=signal_published\b'
+
+    - name: futures-risk-filter
+      container: futures-risk-filter
+      role: consumer
+      harvest_mode: since
+      observed:
+        - 'event=stream_message_processed .*\bconsumer_group=risk_filter\b'
+      blind: &stream_consumer_blind
+        - 'event=monitor_stream_read_error\b'
+        - 'event=tick_stream_read_error\b'
+        - 'event=consumer_group_ensure_failed\b'
+        # The group was GONE and had to be recreated: whatever was published
+        # while it was missing never reached this consumer. This is the exact
+        # 2026-09-17 / 09-18 signature. Both spellings are listed because the
+        # harvested logs of that window predate PR #740's structured wording.
+        - 'event=consumer_group_recovered\b'
+        - 'consumer group missing; recreated\b'
+        - 'xreadgroup error; sleeping'
+      counters:
+        # The runbook's de-duplication rule: a redelivered candidate logs a
+        # fresh verdict under the SAME msg_id, so the raw count overstates
+        # passes. Keep the last verdict per msg_id and count the passes.
+        final:
+          pattern: 'risk_filter verdict=(?P<state>passed|rejected) msg_id=(?P<key>\S+)'
+          keep_last_per_key: true
+          count_state: "passed"
+
+    - name: futures-order-router
+      container: futures-order-router
+      role: consumer
+      harvest_mode: since
+      observed:
+        - 'event=stream_message_processed .*\bconsumer_group=order_router\b'
+      blind: *stream_consumer_blind
+
+    - name: futures-monitor
+      container: futures-monitor
+      role: consumer
+      harvest_mode: since
+      observed:
+        - 'event=stream_message_processed .*\bconsumer_group=futures_monitor\b'
+      blind: *stream_consumer_blind
+      counters:
+        # Every shadow fill reaches the ledger through this consumer, so the
+        # fill count and the monitor's proof-of-consumption are the same line.
+        # That is why a blind monitor cannot report "0 fills" as a measurement.
+        fills:
+          pattern: 'event=stream_message_processed stream=order\.fill\.futures\.shadow\b'
+
+    - name: trader-futures
+      container: trader-futures
+      # Harvested for the row's "Orchestrator (ledger)" column. NOT part of the
+      # decoupled observation surface, so it is never scored in the verdict.
+      role: reference
+      harvest_mode: since
+
+  # Read live at run time, recorded in the JSON sidecar under `point_in_time`,
+  # and NEVER used to verdict a day: Redis streams expire after 24h, so none of
+  # this is reconstructible for a past session. The verdict comes only from the
+  # harvested files above.
+  point_in_time:
+    redis_url_env: "REDIS_URL"
+    redis_url_default: "redis://localhost:6379/1"
+    tick_stream: "raw_data"
+    daily_reference_key: "futures:daily_reference:{symbol}"
+    # Trading symbol for the daily_reference lookup, taken from the harvested
+    # logs so a past-date run still names the right key.
+    symbol_pattern: '\bsymbol=(A[0-9]{5})\b'
+    consumer_groups:
+      - stream: "signal.candidate.futures.shadow"
+        group: "risk_filter"
+      - stream: "signal.final.futures.shadow"
+        group: "order_router"
+      - stream: "order.fill.futures.shadow"
+        group: "futures_monitor"
