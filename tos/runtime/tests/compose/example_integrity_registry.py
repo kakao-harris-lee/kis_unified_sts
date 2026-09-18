@@ -42,6 +42,8 @@ would go red and demand an ``EXAMPLE_REQUIRED_PATHS`` entry.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from tos_runtime.authority.epoch import load_authority_config
 from tos_runtime.backtest.config import load_backtest_calibration_config
 from tos_runtime.brokercap.scopes import load_broker_scopes
@@ -72,7 +74,12 @@ from tos_runtime.time.config import load_time_config
 from tos_runtime.transport.kis_mock.config import load_kis_mock_transport_config
 from tos_runtime.transport.kis_quote.config import load_kis_quote_transport_config
 
-from .example_integrity import KeyPath, LoaderSpec
+from .example_integrity import (
+    KeyPath,
+    LoaderSpec,
+    assert_risk_refuses_on_both_readers,
+    assert_safety_activation_refuses_on_both_readers,
+)
 
 # ---------------------------------------------------------------------------
 # Required key paths — a copy of the shipped example missing any of these
@@ -658,9 +665,36 @@ EXAMPLE_LOADERS: dict[str, LoaderSpec] = {
 CUSTODY_MANIFEST_LOADER: LoaderSpec = (CustodyManifest.load, {})
 EVIDENCE_RETENTION_LOADER: LoaderSpec = (RetentionPolicy.load, {})
 
+#: The two "loads successfully" specs above, keyed by stem — the SAME dict both the parametrized
+#: ``test_shipped_example_loads_successfully`` calls and
+#: ``test_every_registered_example_has_value_leak_coverage`` reads its coverage set from
+#: (``frozenset(LOADS_SUCCESSFULLY_LOADERS)``). PR #737 review round 2, first HIGH finding: the
+#: OLD coverage set was a hand-typed ``frozenset`` of stem names in
+#: ``test_shipped_example_integrity.py`` that nothing actually iterated — reproduced by removing
+#: ``backtest_calibration`` from ``EXAMPLE_LOADERS`` (deleting its real check) and adding its name
+#: to that set instead: the whole suite stayed green, since the set was pure bookkeeping. Making
+#: this dict the single source for BOTH the real test and the coverage ledger closes that gap
+#: structurally — see ``example_integrity.assert_safety_activation_refuses_on_both_readers``'s own
+#: docstring for the full explanation (applies identically here).
+LOADS_SUCCESSFULLY_LOADERS: dict[str, LoaderSpec] = {
+    "custody.manifest": CUSTODY_MANIFEST_LOADER,
+    "evidence_retention": EVIDENCE_RETENTION_LOADER,
+}
+
 #: Configs whose loader can NEVER be relied on to refuse a filled-in example (PR #737 review,
 #: HIGH finding — see this module's own comment above ``EXAMPLE_LOADERS`` for why: both kernel
 #: records ``tos_runtime.safety.profile._load_documents`` validates them against have every field
 #: optional). Checked instead via ``example_integrity.assert_shipped_example_is_a_template`` —
 #: every leaf must be ``null``/``[]``, independent of whether the loader raises at all.
 EXAMPLE_TEMPLATE_ONLY: frozenset[str] = frozenset({"safety_envelope", "safety_profile"})
+
+#: ``safety_activation``/``risk`` each have TWO/THREE independent real readers (this module's own
+#: docstring above) that a single ``LoaderSpec`` cannot express (one takes THREE paths, not one).
+#: Keyed by stem, mapping to a standalone check function — the SAME dict both the parametrized
+#: ``test_multi_reader_example_still_refuses_on_both_readers`` calls and the coverage ledger reads
+#: from (``frozenset(MULTI_READER_CHECKS)``); see ``LOADS_SUCCESSFULLY_LOADERS``'s own comment for
+#: why this "ledger IS the callable registry" shape is what PR #737 review round 2 asked for.
+MULTI_READER_CHECKS: dict[str, Callable[[], None]] = {
+    "safety_activation": assert_safety_activation_refuses_on_both_readers,
+    "risk": assert_risk_refuses_on_both_readers,
+}

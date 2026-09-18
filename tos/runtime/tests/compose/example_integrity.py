@@ -39,6 +39,29 @@ Three independent assertions close this, together:
   schema reader) flips this red until a human looks — this is what makes the check follow a NEW
   loader being added later, rather than rotting the moment ``EXAMPLE_REQUIRED_PATHS`` goes stale
   (the "레지스트리 + 고정 안 된 위성" class this repo has already hit once at the kernel layer).
+
+PR #737 review round 2 found TWO further gaps, both closed here rather than by instance:
+
+* The coverage LEDGER itself (``test_shipped_example_integrity.test_every_registered_example_has
+  _value_leak_coverage``, added to close the first round's gap) tracked which of the four checks
+  above applies to each config via two hand-typed ``frozenset``s that named stems but called
+  nothing — reproduced by removing ``backtest_calibration`` from ``EXAMPLE_LOADERS`` (deleting
+  its REAL check) and adding its name to the bogus set instead: the whole suite stayed green.
+  Fixed by making those two categories real dicts of callables
+  (``example_integrity_registry.LOADS_SUCCESSFULLY_LOADERS``/``MULTI_READER_CHECKS``) that a
+  parametrized test actually iterates and calls — :func:`assert_safety_activation_refuses_on_both
+  _readers` and :func:`assert_risk_refuses_on_both_readers` are the two standalone checks
+  ``MULTI_READER_CHECKS`` registers; ``LOADS_SUCCESSFULLY_LOADERS`` reuses the existing
+  ``LoaderSpec`` shape. The ledger sets are now DERIVED (``frozenset(THE_DICT)``), so naming a
+  stem "covered" and making it actually get called are the same act.
+* :func:`is_template_document`'s leaf-flattener silently dropped an EMPTY MAPPING (``{}``) —
+  reproduced by collapsing ``safety_envelope.example.yaml``'s ``envelope_version:`` block (7
+  required ``null`` subfields) to ``envelope_version: {}``: neither this function nor
+  ``assert_required_paths_present`` (registered only one level deep for this config) caught it.
+  Fixed generically in :func:`_leaf_values` (an empty mapping is now itself a leaf, exactly like
+  an empty list already was) rather than by registering those 7 subfields as explicit required
+  paths — the latter would have closed only this one instance, not the class (a different block
+  collapsing the same way elsewhere would still slip through a paths-list fix).
 """
 
 from __future__ import annotations
@@ -155,11 +178,26 @@ def assert_shipped_example_still_refuses(stem: str, spec: LoaderSpec) -> None:
 
 
 def _leaf_values(node: Any) -> list[Any]:
-    """Flatten ``node`` into its leaf values — recursing through mappings and non-empty lists,
-    but treating an EMPTY list as itself a leaf (the "explicit empty list" named-TBD convention
-    this codebase's loaders already accept as a valid unfilled/nominal-empty state, e.g.
-    ``scope: []``/``members: []``)."""
+    """Flatten ``node`` into its leaf values — recursing through NON-EMPTY mappings and lists,
+    but treating an EMPTY mapping OR an empty list as itself a leaf.
+
+    An empty list IS a valid named-TBD leaf value this codebase's loaders already accept (the
+    "explicit empty list" convention, e.g. ``scope: []``/``members: []``) — but an empty mapping
+    is NOT: a real ``{...}`` block collapsed to ``{}`` is a required sub-structure gone missing
+    (PR #737 review, second HIGH finding — a re-review confirmed ``safety_envelope.example
+    .yaml``'s ``envelope_version:`` block, 7 required ``null`` subfields, collapses to
+    ``envelope_version: {}`` completely undetected: the ORIGINAL version of this function
+    recursed into an empty dict exactly like a non-empty one, found zero leaves under it, and
+    contributed nothing to :func:`is_template_document`'s ``all(...)`` — which is vacuously
+    ``True`` over zero elements. Both ``{}`` and ``[]`` are therefore returned AS leaves here so
+    :func:`is_template_document` can tell them apart — ``[]`` passes, ``{}`` fails (neither
+    ``None`` nor ``[]``) — instead of the empty-mapping case silently vanishing from the walk.
+    This mirrors the exact class of bug this whole module exists to catch at the loader layer
+    (a required key/block gone missing, not merely unfilled) — just one level lower, inside the
+    leaf-flattener itself."""
     if isinstance(node, dict):
+        if not node:
+            return [node]
         leaves: list[Any] = []
         for value in node.values():
             leaves.extend(_leaf_values(value))
@@ -176,7 +214,10 @@ def _leaf_values(node: Any) -> list[Any]:
 
 def is_template_document(document: Any) -> bool:
     """``True`` iff every leaf of ``document`` (see :func:`_leaf_values`) is ``None`` or an empty
-    list — i.e. the document is STILL the all-placeholder template, never a concrete instance.
+    list — i.e. the document is STILL the all-placeholder template, never a concrete instance. An
+    empty MAPPING (``{}``) is never a valid leaf here (see :func:`_leaf_values`'s own docstring)
+    — no example this module registers uses one legitimately (confirmed by grep across every
+    shipped ``*.example.yaml`` before this predicate was tightened, PR #737 review round 2).
 
     Exists for readers whose loader has NO per-field null/TBD check of its own to fail on (e.g.
     ``tos_runtime.safety.profile._load_documents``'s ``HardSafetyEnvelope``/``RuntimeSafetyProfile``
@@ -208,6 +249,85 @@ def assert_shipped_example_is_a_template(stem: str) -> None:
         "value here; a real, concrete value appears to have leaked into a file that is supposed "
         "to ship as an all-null/empty template."
     )
+
+
+def assert_safety_activation_refuses_on_both_readers() -> None:
+    """Call BOTH real readers of ``safety_activation.example.yaml`` and assert each still
+    refuses — the A-0b defect this whole module exists because of (module docstring): the file
+    has two independent schemas, and a value leaking into either one's leaves must be caught.
+
+    A standalone function (not a data-driven ``LoaderSpec``, unlike :func:`assert_shipped_example
+    _still_refuses`) because the second reader (``_load_documents``) takes three paths, not one —
+    but still a REAL, directly-callable check, not a bookkeeping label: registered in
+    ``example_integrity_registry.MULTI_READER_CHECKS`` by name, and that registry IS what a
+    parametrized test in ``test_shipped_example_integrity.py`` calls (PR #737 review round 2,
+    first HIGH finding: a hand-typed ``frozenset`` of stem names claiming coverage, with nothing
+    tying it to an actual test, let a real coverage gap through — ``backtest_calibration``
+    reproduced it: removed from ``EXAMPLE_LOADERS`` and its name added to the OLD bookkeeping set
+    instead, the whole suite stayed green). Making the "is this stem covered" set equal to
+    ``MULTI_READER_CHECKS.keys()`` — the SAME dict this function is registered in and the
+    parametrized test iterates — closes that gap structurally: there is no longer a way to claim
+    coverage without also registering something a test actually calls.
+    """
+    from tos_runtime.safety.profile import SafetyProfileConfigError, _load_documents
+    from tos_runtime.venue.activation import (
+        ActivationMembersConfigError,
+        load_activation_members,
+    )
+
+    example_path = CONFIG_DIR / "safety_activation.example.yaml"
+    try:
+        result = load_activation_members(example_path)
+    except ActivationMembersConfigError:
+        pass
+    else:
+        raise AssertionError(
+            f"{example_path.name} loaded successfully via load_activation_members instead of "
+            f"refusing (got {result!r}) — a real value appears to have leaked into the "
+            "members: schema."
+        )
+    try:
+        result = _load_documents(
+            CONFIG_DIR / "safety_envelope.example.yaml",
+            CONFIG_DIR / "safety_profile.example.yaml",
+            example_path,
+        )
+    except SafetyProfileConfigError:
+        pass
+    else:
+        raise AssertionError(
+            f"{example_path.name} loaded successfully via _load_documents instead of refusing "
+            f"(got {result!r}) — a real value appears to have leaked into the activation:/"
+            "not_expired: schema."
+        )
+
+
+def assert_risk_refuses_on_both_readers() -> None:
+    """Call ALL THREE real reader functions of ``risk.example.yaml`` and assert each still
+    refuses — see :func:`assert_safety_activation_refuses_on_both_readers`'s own docstring for
+    why this is a standalone registered check rather than a ``LoaderSpec`` entry, and for the
+    PR #737 review round 2 finding this closes."""
+    from tos_runtime.compose._currentness_wiring import _load_action_flow_envelope
+    from tos_runtime.risk.aggregate import (
+        AggregateRiskConfigError,
+        load_adverse_scenario_set,
+        load_required_scenario_kinds,
+    )
+
+    example_path = CONFIG_DIR / "risk.example.yaml"
+    for loader in (
+        load_adverse_scenario_set,
+        load_required_scenario_kinds,
+        _load_action_flow_envelope,
+    ):
+        try:
+            result = loader(example_path)
+        except AggregateRiskConfigError:
+            continue
+        raise AssertionError(
+            f"{example_path.name} loaded successfully via {loader.__qualname__} instead of "
+            f"refusing (got {result!r}) — a real value appears to have leaked in."
+        )
 
 
 def assert_touchpoints_match(stem: str, expected_files: frozenset[str]) -> None:

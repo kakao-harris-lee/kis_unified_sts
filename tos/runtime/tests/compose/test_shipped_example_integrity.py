@@ -36,24 +36,24 @@ from .example_integrity import (
     call_loader,
 )
 from .example_integrity_registry import (
-    CUSTODY_MANIFEST_LOADER,
-    EVIDENCE_RETENTION_LOADER,
     EXAMPLE_LOADERS,
     EXAMPLE_REQUIRED_PATHS,
     EXAMPLE_TEMPLATE_ONLY,
     EXAMPLE_TOUCHPOINTS,
+    LOADS_SUCCESSFULLY_LOADERS,
+    MULTI_READER_CHECKS,
 )
 
-#: The other three ways a config's own value-leak coverage is asserted, beyond
-#: EXAMPLE_LOADERS/EXAMPLE_TEMPLATE_ONLY — each has its own dedicated test below. Kept as an
-#: explicit set (not just "everything not in the other two") so
-#: test_every_registered_example_has_value_leak_coverage can name a gap precisely instead of
-#: silently passing on one (PR #737 review, HIGH finding: the multi-reader/multi-path-constructor
-#: exclusion comment above EXAMPLE_LOADERS once *claimed* coverage that did not exist).
-_LOADS_SUCCESSFULLY_DEDICATED_TESTS = frozenset(
-    {"custody.manifest", "evidence_retention"}
-)
-_MULTI_READER_DEDICATED_TESTS = frozenset({"safety_activation", "risk"})
+#: The other two ways a config's own value-leak coverage is asserted, beyond
+#: EXAMPLE_LOADERS/EXAMPLE_TEMPLATE_ONLY — DERIVED from the same dicts
+#: test_shipped_example_loads_successfully/test_multi_reader_example_still_refuses_on_both_readers
+#: below actually call (not hand-typed literals — PR #737 review round 2, first HIGH finding: the
+#: OLD version of these two sets named stems with nothing tying them to an actual test; removing
+#: ``backtest_calibration`` from ``EXAMPLE_LOADERS`` and adding its name to one of them left the
+#: whole suite green. See ``example_integrity_registry.LOADS_SUCCESSFULLY_LOADERS``'s own comment
+#: for the full explanation).
+_LOADS_SUCCESSFULLY_DEDICATED_TESTS = frozenset(LOADS_SUCCESSFULLY_LOADERS)
+_MULTI_READER_DEDICATED_TESTS = frozenset(MULTI_READER_CHECKS)
 
 
 def _shipped_example_stems() -> list[str]:
@@ -87,18 +87,20 @@ def test_every_shipped_example_is_registered() -> None:
 def test_every_registered_example_has_value_leak_coverage() -> None:
     """Every ``EXAMPLE_REQUIRED_PATHS`` entry has EXACTLY ONE value-leak check assigned to it —
     ``EXAMPLE_LOADERS`` ("still refuses"), ``EXAMPLE_TEMPLATE_ONLY`` ("every leaf is null/[]"), or
-    one of the two small dedicated-test sets below (custody.manifest/evidence_retention's "loads
-    successfully", safety_activation/risk's own multi-reader tests).
+    one of the two dedicated-check dicts below (custody.manifest/evidence_retention's "loads
+    successfully", safety_activation/risk's own multi-reader checks).
 
-    This is the completeness guard PR #737's review found missing: ``EXAMPLE_LOADERS``'s own
-    module comment *claimed* ``safety_envelope``/``safety_profile`` "get their own targeted
+    This is the completeness guard PR #737's review round 1 found missing: ``EXAMPLE_LOADERS``'s
+    own module comment *claimed* ``safety_envelope``/``safety_profile`` "get their own targeted
     test", but nothing actually asserted that claim — a filled-in real value passed the whole
-    suite silently. A hardcoded exclusion list is exactly the "레지스트리 + 고정 안 된 위성"
-    class this repo has already hit once; this test is what makes a THIRD such gap go red
-    instead of silently shipping: add a new example (or move one between categories) without
-    updating exactly one of these four sets, and this fails immediately, naming the config —
-    which is exactly how this same test caught ``evidence_retention`` missing a category the
-    FIRST time it ran, before this docstring was even finished.
+    suite silently. Round 1's fix (this test) caught a second real gap the moment it first ran
+    (``evidence_retention``, registered nowhere). Round 2's review then found THIS test's own two
+    "dedicated" categories were still hand-typed ``frozenset``s naming stems with nothing tying
+    them to an actual test — reproduced by removing ``backtest_calibration`` from
+    ``EXAMPLE_LOADERS`` and adding its name to one of those sets instead: still green. Both
+    categories are now DERIVED (``frozenset(LOADS_SUCCESSFULLY_LOADERS)`` /
+    ``frozenset(MULTI_READER_CHECKS)``) from the SAME dicts the two parametrized tests below
+    actually call, so a stem cannot be "covered" here without also being wired into a real check.
     """
     all_registered = set(EXAMPLE_REQUIRED_PATHS)
     covered = (
@@ -184,61 +186,22 @@ def test_shipped_example_is_a_template(stem: str) -> None:
     assert_shipped_example_is_a_template(stem)
 
 
-def test_custody_manifest_example_loads_successfully() -> None:
-    """``custody.manifest.example.yaml`` is confirmed to be a genuinely loadable instance already
-    (every leaf ``CustodyManifest.load`` requires carries a concrete illustrative value; only the
-    optional ``expected_sha256`` pins are ``null``) — see
-    ``example_integrity_registry.CUSTODY_MANIFEST_LOADER``'s own comment."""
-    call_loader(CUSTODY_MANIFEST_LOADER, CONFIG_DIR / "custody.manifest.example.yaml")
+@pytest.mark.parametrize("stem", sorted(LOADS_SUCCESSFULLY_LOADERS))
+def test_shipped_example_loads_successfully(stem: str) -> None:
+    """``custody.manifest``/``evidence_retention`` are confirmed to be genuinely loadable
+    instances already (see ``example_integrity_registry.LOADS_SUCCESSFULLY_LOADERS``'s own
+    comment for why each one). Parametrized over that SAME dict — the coverage ledger
+    (``_LOADS_SUCCESSFULLY_DEDICATED_TESTS`` above) is derived from it too, so a stem cannot claim
+    this coverage without this test actually calling its loader (PR #737 review round 2).
+    """
+    call_loader(LOADS_SUCCESSFULLY_LOADERS[stem], CONFIG_DIR / f"{stem}.example.yaml")
 
 
-def test_evidence_retention_example_loads_successfully() -> None:
-    """``evidence_retention.example.yaml`` also loads successfully as-shipped — its own header
-    comment states a per-class retention floor is legitimately, PERMANENTLY nullable, so there is
-    no "still refuses" behavior to assert; see
-    ``example_integrity_registry.EVIDENCE_RETENTION_LOADER``'s own comment for the full reasoning
-    (and for why ``test_every_registered_example_has_value_leak_coverage`` caught this file
-    missing a category before this test existed)."""
-    call_loader(
-        EVIDENCE_RETENTION_LOADER, CONFIG_DIR / "evidence_retention.example.yaml"
-    )
-
-
-def test_safety_activation_still_refuses_on_both_independent_readers() -> None:
-    """``safety_activation.example.yaml`` has TWO independent readers (the A-0b defect this
-    module exists because of — see this module's own docstring): both must still refuse to load
-    the shipped, all-``null`` template."""
-    from tos_runtime.safety.profile import SafetyProfileConfigError, _load_documents
-    from tos_runtime.venue.activation import (
-        ActivationMembersConfigError,
-        load_activation_members,
-    )
-
-    example_path = CONFIG_DIR / "safety_activation.example.yaml"
-    with pytest.raises(ActivationMembersConfigError):
-        load_activation_members(example_path)
-    with pytest.raises(SafetyProfileConfigError):
-        _load_documents(
-            CONFIG_DIR / "safety_envelope.example.yaml",
-            CONFIG_DIR / "safety_profile.example.yaml",
-            example_path,
-        )
-
-
-def test_risk_example_still_refuses_on_both_independent_readers() -> None:
-    """``risk.example.yaml`` has TWO independent readers (this module's own docstring): both
-    must still refuse to load the shipped, all-``null`` template."""
-    from tos_runtime.compose._currentness_wiring import _load_action_flow_envelope
-    from tos_runtime.risk.aggregate import (
-        AggregateRiskConfigError,
-        load_adverse_scenario_set,
-        load_required_scenario_kinds,
-    )
-
-    example_path = CONFIG_DIR / "risk.example.yaml"
-    with pytest.raises(AggregateRiskConfigError):
-        load_adverse_scenario_set(example_path)
-    with pytest.raises(AggregateRiskConfigError):
-        load_required_scenario_kinds(example_path)
-    with pytest.raises(AggregateRiskConfigError):
-        _load_action_flow_envelope(example_path)
+@pytest.mark.parametrize("stem", sorted(MULTI_READER_CHECKS))
+def test_multi_reader_example_still_refuses_on_both_readers(stem: str) -> None:
+    """``safety_activation``/``risk`` each have multiple independent real readers (this module's
+    own docstring) — every one must still refuse to load the shipped, all-``null`` template.
+    Parametrized over ``example_integrity_registry.MULTI_READER_CHECKS`` — the SAME dict the
+    coverage ledger (``_MULTI_READER_DEDICATED_TESTS`` above) derives from, for the same reason as
+    ``test_shipped_example_loads_successfully`` above."""
+    MULTI_READER_CHECKS[stem]()
