@@ -630,7 +630,7 @@ def _recreate_logs(caplog) -> list[str]:
     return [
         record.getMessage()
         for record in caplog.records
-        if "consumer group missing; recreated" in record.getMessage()
+        if "event=consumer_group_recovered" in record.getMessage()
     ]
 
 
@@ -661,9 +661,10 @@ async def test_consume_loop_nogroup_recreates_both_groups_then_consumes(
         (_SIGNAL_STREAM, "stock_monitor"),
     ]
     assert _recreate_logs(caplog) == [
-        f"consumer group missing; recreated stream={_FILL_STREAM} group=stock_monitor",
-        f"consumer group missing; recreated stream={_SIGNAL_STREAM} "
-        "group=stock_monitor",
+        f"event=consumer_group_recovered stream={_FILL_STREAM} "
+        "consumer_group=stock_monitor",
+        f"event=consumer_group_recovered stream={_SIGNAL_STREAM} "
+        "consumer_group=stock_monitor",
     ]
     assert not any(
         "monitor_stream_read_error" in record.getMessage() for record in caplog.records
@@ -708,7 +709,13 @@ async def test_consume_loop_non_nogroup_error_keeps_error_log_and_backoff(
 async def test_consume_loop_processes_signal_after_fill_stream_expired(
     wired, caplog
 ) -> None:
-    """Regression: the expired fill stream must not blind the signal stream."""
+    """Regression: the expired fill stream must not blind the signal stream.
+
+    Also the honest-log regression, inverted from the 2026-09-18 13:31:54
+    production pair: both streams are swept, only the fill group was actually
+    gone, so exactly one recovery WARNING may be emitted and it must name the
+    stream that broke.
+    """
     daemon, _redis, _reader = wired
     fields = _enc({"signal_id": "sig-survivor", "code": "005930"})
     redis = _MissingGroupRedis(
@@ -730,6 +737,10 @@ async def test_consume_loop_processes_signal_after_fill_stream_expired(
     assert redis.created == [
         (_FILL_STREAM, "stock_monitor"),
         (_SIGNAL_STREAM, "stock_monitor"),
+    ]
+    assert _recreate_logs(caplog) == [
+        f"event=consumer_group_recovered stream={_FILL_STREAM} "
+        "consumer_group=stock_monitor"
     ]
     assert handled == [fields]
     assert redis.acks == [(_SIGNAL_STREAM, "stock_monitor", b"1700000000000-10")]

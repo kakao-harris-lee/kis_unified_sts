@@ -18,6 +18,7 @@ import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from typing import Any, final
 
 from shared.streaming.audit import (
@@ -70,24 +71,39 @@ def is_vanished_stream_read_error(exc: Exception) -> bool:
     return "unblocked" in message and "no longer exists" in message
 
 
+class ConsumerGroupEnsure(StrEnum):
+    """Outcome of one XGROUP CREATE attempt.
+
+    ``CREATED`` and ``EXISTED`` both leave the group usable, but only the first
+    means something was actually missing — collapsing them into one ``True``
+    is what made the recovery log claim a recreate on healthy streams.
+    """
+
+    CREATED = "created"
+    EXISTED = "existed"
+    FAILED = "failed"
+
+
 async def _ensure_consumer_group(
     redis: Any,
     stream: str | bytes,
     consumer_group: str,
-) -> bool:
+) -> ConsumerGroupEnsure:
     try:
         await redis.xgroup_create(stream, consumer_group, id="0", mkstream=True)
-        return True
+        return ConsumerGroupEnsure.CREATED
     except Exception as exc:
         if _is_busygroup_error(exc):
-            return True
+            return ConsumerGroupEnsure.EXISTED
         logger.warning(
-            "consumer group ensure failed stream=%s group=%s",
-            decode_stream_id(stream),
-            consumer_group,
+            format_audit_kv(
+                event="consumer_group_ensure_failed",
+                stream=decode_stream_id(stream),
+                consumer_group=consumer_group,
+            ),
             exc_info=True,
         )
-        return False
+        return ConsumerGroupEnsure.FAILED
 
 
 async def recover_missing_consumer_group(
@@ -95,19 +111,34 @@ async def recover_missing_consumer_group(
     stream: str | bytes,
     consumer_group: str,
 ) -> bool:
-    """Recreate a vanished stream/group (``mkstream``) and log the recreate.
+    """Recreate a vanished stream/group (``mkstream``) and log what happened.
 
     Returns True when the group exists afterwards (created here, or already
-    present). Safe to call on a stream whose group never went missing.
+    present). Safe to call on a stream whose group never went missing — and
+    only the genuine recreate is logged at WARNING, because callers recover
+    every stream they read, not just the one that vanished.
     """
     ensured = await _ensure_consumer_group(redis, stream, consumer_group)
-    if ensured:
+    if ensured is ConsumerGroupEnsure.CREATED:
         logger.warning(
-            "consumer group missing; recreated stream=%s group=%s",
-            decode_stream_id(stream),
-            consumer_group,
+            format_audit_kv(
+                event="consumer_group_recovered",
+                stream=decode_stream_id(stream),
+                consumer_group=consumer_group,
+            )
         )
-    return ensured
+    elif ensured is ConsumerGroupEnsure.EXISTED:
+        # Not an incident: the caller swept a healthy sibling stream. Kept at
+        # DEBUG so it stays available when tracing an episode without adding a
+        # line an operator could read as breakage.
+        logger.debug(
+            format_audit_kv(
+                event="consumer_group_already_present",
+                stream=decode_stream_id(stream),
+                consumer_group=consumer_group,
+            )
+        )
+    return ensured is not ConsumerGroupEnsure.FAILED
 
 
 # Pre-existing private spellings, kept so the in-module call sites below are
