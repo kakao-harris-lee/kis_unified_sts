@@ -111,6 +111,78 @@ green 을 만들자고 지우면 **나중에 `arg-type` 을 켤 때 필요한 �
 1:1로 귀속하는 분해는 혼합 코드(`# type: ignore[call-arg, arg-type]`)와 캐스케이드가
 섞여 신뢰할 수 없다 — **집합 차만 쓴다.**
 
+### 2.1 `unused-ignore` 가 말하지 않는 것 — 「덮이지 않은 나머지」
+
+**저자가 1단계 PR 에서 틀린 주장을 했고 #747 재심이 반증했다.** 틀린 주장이 그럴듯해서
+반복될 만하므로 반증까지 함께 남긴다.
+
+**틀린 주장**: 「라벨이 실제 에러 코드와 다른 `# type: ignore` 는 `unused-ignore` 로
+안 잡힌다.」 **거짓이다.** 라벨이 가리키는 코드의 에러가 그 줄에 없으면 그 ignore 는
+아무것도 억제하지 않으므로 `unused-ignore` 로 **정확히 잡힌다**(`warn_unused_ignores
+= true`, `pyproject.toml:321`).
+
+**실제로 일어나는 것**은 다른 일이다 — **한 줄에 에러가 둘일 수 있다.** ignore 가
+하나를 **정당하게** 덮고, 다른 하나가 덮이지 않은 채 남는다. 그때 mypy 는 덮이지 않은
+쪽을 그대로 내고 note 를 붙인다:
+
+```
+tos/tests/sci/test_sci_truthy_sentinel.py:48: error: "object" has no attribute "name"  [attr-defined]
+tos/tests/sci/test_sci_truthy_sentinel.py:48: note: Error code "attr-defined" not covered by "type: ignore[index]" comment
+```
+
+이 note 의 뜻은 **「라벨이 틀렸다」가 아니라 「이 줄에 네 ignore 가 덮지 못한 에러가
+더 있다」**이다. 그 `[index]` 는 같은 줄의 진짜 `index` 에러를 덮고 있으므로
+`unused-ignore` 에 안 잡히는 것이 **옳다.**
+
+**판별에는 절차가 필요 없다.** 라벨이 팬텀이면(= 그 코드의 에러가 그 줄에 없으면)
+평범한 FULL 실행에서 **그 줄에 `unused-ignore` 가 그냥 뜬다.** 아래 4건은 FULL 에서
+`unused-ignore` 가 **안 뜨므로** 팬텀이 아니다 — 그것이 전부다.
+
+굳이 한 건을 더 확인하고 싶으면, **note 가 지목한 쪽**(덮이지 않은 코드)을 끈다.
+**라벨이 가리키는 코드를 끄면 안 된다** — 끄는 순간 그 ignore 는 무엇을 덮고 있었든
+구조적으로 「unused」가 되어 **판별력이 0이다.** 저자가 이 문서에 그렇게 잘못 적었다가
+#747 2차 재심에서 잡혔다.
+
+대조군까지 갖춘 실측(`test_sci_truthy_sentinel.py`, 109줄에 팬텀 `ignore[index]` 를
+심어 대조군으로 삼음. 48줄은 진짜 `index` 에러 위의 `ignore[index]`):
+
+| 실행 | 48줄 (덮고 있음) | 109줄 (팬텀) | 판별력 |
+|---|---|---|---|
+| 아무것도 끄지 않음 | 조용 | `unused-ignore` | **있음** |
+| 라벨 코드(`index`)를 끔 | `unused-ignore` | `unused-ignore` | **없음** |
+| note 가 지목한 코드(`attr-defined`)를 끔 | 조용 | `unused-ignore` | **있음** |
+
+아래 4건은 이 방법으로 **전부 「덮고 있음」**임을 확인했다. 1차 재심은 같은 결론을
+다른 방법(ignore 를 지우고 두 에러가 동시에 뜨는지 보기)으로 독립 확인했다.
+
+따라서 `not covered by` 는 죽은 억제 탐지기가 아니라 **다음 단계가 red 를 낼 자리의
+예고**다. 두 탐지기는 **서로 다른 것**을 재므로 둘 다 돌린다:
+
+```bash
+mypy <tree> --ignore-missing-imports --no-error-summary | grep -c 'unused-ignore'   # 죽은 억제
+mypy <tree> --ignore-missing-imports --no-error-summary | grep -c 'not covered by'  # 덮이지 않은 나머지
+```
+
+**1단계 착지 시점 「덮이지 않은 나머지」 4건 — 전부 2단계 코드다:**
+
+| 위치 | ignore 가 덮는 코드 | 덮이지 않은 코드 |
+|---|---|---|
+| `tos/tests/sci/test_sci_truthy_sentinel.py:48` | `index` | `attr-defined` |
+| `tos/tests/afg/test_afg_void_canaries.py:149` | `arg-type` | `return-value` |
+| `tos/tests/afg/test_afg_truthy_sentinel.py:96` | `arg-type` | `return-value` |
+| `tos/runtime/tests/engine/test_replay_stage.py:58` | `operator` | `no-any-return` |
+
+덮이지 않은 쪽이 `attr-defined`/`return-value`/`no-any-return` — **2단계가 켜는 바로
+그 셋**이다. 2단계에서 반드시 red 가 되므로 **별도 PR을 만들지 않고 2단계에서
+처리한다.** 라벨 정리가 아니라 **실제 에러 수정**이다.
+
+**#737 `test_adapter.py` 의 죽은 `ignore[attr-defined]` 10곳은 이 부류가 아니다** —
+실제 에러가 `assignment` 였으니 **팬텀 라벨**이고, 위 표의 첫 줄대로 `unused-ignore`
+가 켜져 있었다면 그냥 떴을 것이다. 안 잡힌 이유는 탐지기의 한계가 아니라 **꺼져
+있었음**이고, 껐던 것이 두 겹이다: 그때는 **테스트 트리가 게이트에 아예 없었고**(§0),
+지금은 트리는 들어왔지만 **`unused-ignore` 가 아직 유예 중**이다(§3.4 에서 켠다).
+그때까지 팬텀 라벨은 CI 에서 계속 안 보인다 — **로컬 FULL 실행에서만 보인다.**
+
 ## 3. 계층과 순서
 
 ### 3.1 1단계 — 한 PR (113건 / 약 46파일)
@@ -214,6 +286,100 @@ codemod 로 일괄 처리하되 **「리뷰 가치 없음」을 PR 에 명시**�
 7. **테스트 수 불변을 확인**한다. `pytest` 에 **`-q` 를 붙이지 말 것** —
    `pytest.ini` 의 `addopts` 에 이미 있어서 또 붙이면 quiet 2단계가 되어 「N passed」
    요약 줄 자체가 사라진다(이 아크에서 여러 에이전트가 그 때문에 dot 을 셌다).
+
+### 5.1 줄 앵커 결합 — 테스트 파일의 줄 수를 바꾸면 계약이 깨진다
+
+1단계에서 실제로 터졌고, **CI 가 아니면 보이지 않는 부류**다.
+
+`tos-spec/src/verification/EVIDENCE-SURFACE-MAP.csv` 는 증거 표면을 `<경로>:<줄>` 로
+못박는다. Phase-0 완료 계약의 결속이고 `tools/tos_completion_status.py --check` 가
+집행한다. 실측(2026-09-18, `fix/tos-mypy-stage1` 기준):
+
+**단위를 먼저 못박는다 — 두 개이고, 5배 이상 벌어진다.**
+
+| 단위 | 무엇 | CSV 전체 | tos 테스트 트리 |
+|---|---|---|---|
+| **결속 행** | `<경로>:<줄>` 을 담은 CSV 행. 검사기가 위반을 세는 단위 | 1121 | 997 |
+| **고유 앵커** | `sort -u` 한 `<경로>:<줄>` 쌍 | 225 | 101 |
+
+하나의 줄을 여러 증거 행이 가리키기 때문이다(파라미터화 테스트가 전형이다 —
+`test_..._reject_mutation[...]` 4개가 같은 줄 하나를 공유한다). **`tos_completion_status
+--check` 가 RED 로 세는 것은 결속 행**이므로, 「몇 건 깨졌나」는 행으로 읽어야 한다.
+저자가 처음에 이 둘을 섞어 틀린 값을 얻었고, fact-check(#747)가 잡았다.
+
+실측(2026-09-18, `fix/tos-mypy-stage1` 기준):
+
+| 범위 | 앵커된 파일 | 결속 행 | 고유 앵커 |
+|---|---|---|---|
+| CSV 전체 | 141 | 1121 | 225 |
+| tos 테스트 트리 | 78 | 997 | 101 |
+| **2단계(`attr-defined`)가 건드리는 것** | **2** | **15** | **3** |
+| **3단계(`arg-type`)가 건드리는 것** | **14** | **170** | **22** |
+
+2단계의 두 파일은 `egress/test_egress_authority.py`(행 9) ·
+`orthostate/test_orthostate_composite.py`(6). 3단계 14개 중 앵커가 몰린 곳은
+`hag/test_hag_predicates.py`(고유 6) · `spg/test_spg_l2_fault.py`(4)이고 나머지 12개는
+각 1이다.
+
+**규모는 단계가 올라간다고 단조 증가하지 않는다.** 1단계에서 실제로 깨진 것이
+**13행**인데 2단계 노출은 **15행**으로 비슷하고, 3단계가 170행으로 한 자릿수 배 크다.
+다만 3단계는 14개 파일에 흩어져 있어 한 번에 다 밀리지는 않는다 — 그래서 오히려
+**한 곳만 보고 넘어가기 쉽다.**
+
+**무엇이 터졌나.** 1단계 코드 수정이 `tos/tests/spg/test_spg_replay_substrate.py` 의
+서로 다른 세 지점에 assert 를 더해 291→294줄이 됐다. 그 아래 `SPG-EV-012` 결속
+**13행**(그 13행이 가리키는 고유 줄로는 10개 — 파라미터화 4행이 한 줄로 접힌다)이
+전부 밀렸고 `tos_completion_status --check` 가
+RED(위반 14 = 13행 + 파생 D0-1)로 떨어졌다.
+**리뷰는 이것을 못 잡는다** — diff 만 보면 assert 를 더한 정상적인 변경이다. 그리고
+같은 PR 의 다른 결함(죽지 않은 `# type: ignore` 5건)은 **CI 가 못 잡았다** — 유예가
+걸려 있는 동안 그 코드는 CI 에서 영원히 안 보이고 유예 플래그 없는 FULL mypy 에서만
+보인다. **둘 중 하나만 돌렸으면 이 PR 은 깨진 채로 머지됐다.**
+
+§5 에 두 항을 더한다.
+
+8. 게이트 목록에 **`python tools/tos_completion_status.py --check` 를 반드시 넣는다.**
+   1단계에서 실행 레인에 준 목록에 이것이 빠져 있었고, 그래서 로컬 전건 green 뒤에
+   CI 가 RED 였다.
+9. diff 가 **테스트 파일의 줄 수를 바꾸면**(`git show --stat` 의 삽입≠삭제) 그 파일이
+   앵커돼 있는지 먼저 본다:
+
+   ```bash
+   # 경로를 필드로 정확 일치시킨다 — grep 에 그대로 넣으면 파일명의 `.` 이
+   # 정규식 임의 문자가 되고, `^` 를 빼면 더 긴 경로의 접미사에도 걸린다.
+   f=tos/tests/spg/test_spg_replay_substrate.py   # 줄 수가 바뀐 파일
+   grep -oE '[A-Za-z0-9_./-]+\.py:[0-9]+' \
+     tos-spec/src/verification/EVIDENCE-SURFACE-MAP.csv \
+     | sort -u | awk -F: -v f="$f" '$1 == f'
+   ```
+
+   밀렸으면 **각 앵커를 현재 파일에서 다시 유도**한다. **GREEN 은 앵커가 옳다는 뜻이
+   아니다** — 아래를 읽어라. 일괄 오프셋 가산은 틀린다 —
+   삽입 지점이 여러 곳이면 앵커마다 이동량이 다르다.
+
+**CSV 를 파이썬으로 다시 쓸 때의 함정.** `csv.writer` 의 기본 `lineterminator` 는
+`\r\n` 이라, 13줄만 바꾸려 해도 **파일 전체(헤더 1 + 데이터 2023 = 2024줄)가 CRLF 로
+재기입**된다. 앵커 값은 맞는데
+diff 가 전 파일로 부풀고 blob 이 바뀐다. 조치 뒤 `git diff --stat` 의 변경 줄 수가
+의도한 수와 같은지 확인하라 — 1단계에서 실제로 발생했고 diff 를 보고 되돌렸다.
+
+**GREEN 의 의미를 정확히 못박는다 — 「앵커가 옳다」가 아니다.**
+`tools/tos_completion_status.py:556 _resolve_path_line_basis` 가 요구하는 것은
+**그 줄에 `evidence_id` 리터럴이 있을 것** 하나뿐이다. 같은 행의 `surface_ref`(pytest
+nodeid)와 그 줄의 대응은 **검사하지 않는다.** 실측: `test_spg_replay_substrate.py` 는
+`SPG-EV-012` 표지 줄이 **13개**인데 CSV 앵커는 **11개**다 — 즉 **11개를 서로 뒤바꿔
+놓아도 GREEN 이다.**
+
+읽는 법은 이렇다:
+
+| 검사기가 잡는 것 | 잡지 못하는 것 |
+|---|---|
+| 앵커가 표지 없는 줄로 밀림 (= 줄 수 변화의 전형) | 앵커가 **같은 파일의 다른 표지 줄**을 가리킴 |
+
+1단계가 RED 로 걸린 것은 왼쪽 부류였다(+3 이 전부 표지 없는 줄로 떨어졌다). 하지만
+**일괄 오프셋 가산으로 「고치면」 오른쪽 부류를 만들어 GREEN 으로 통과시킬 수 있다.**
+그래서 앵커는 각각 다시 유도해야 하고, **GREEN 을 조치의 충분조건으로 쓰지 않는다.**
+이 한계는 #746 재심(`review-746b`)이 검사기 코드를 읽고 지적한 것이다.
 
 ## 6. 운영자 확인 사항 — **전건 처분됨 (2026-09-18)**
 
