@@ -179,19 +179,78 @@ docs/                architecture, plans, runbooks, operations docs
 
 ## Runbooks
 
+`docs/runbooks/` 전체가 여기 올라온다. 새 런북을 추가하면 이 표에도 등재한다 —
+등재되지 않은 런북은 필요한 순간에 발견되지 않는다.
+
+### Stock
+
 | Runbook | Use |
 |---|---|
 | [stock-pipeline-cutover-m5d.md](docs/runbooks/stock-pipeline-cutover-m5d.md) | Stock decoupled pipeline cutover/rollback |
-| [futures-pipeline-cutover-f9.md](docs/runbooks/futures-pipeline-cutover-f9.md) | Futures decoupled pipeline cutover |
-| [ops-readiness-checks.md](docs/runbooks/ops-readiness-checks.md) | Offline readiness checks for common post-cutover gates |
-| [har-rv-log-rv-validation.md](docs/runbooks/har-rv-log-rv-validation.md) | HAR-RV raw-vs-log validation before forecast config cutover |
-| [setup-c-event-score-observation.md](docs/runbooks/setup-c-event-score-observation.md) | Setup C event-score history readiness observation |
 | [stock-strategy-reactivation.md](docs/runbooks/stock-strategy-reactivation.md) | Stock strategy evidence review before reactivation |
-| [track-a-quarterly-rebalancing.md](docs/runbooks/track-a-quarterly-rebalancing.md) | Track A 분기 리밸런싱 체크리스트 (수동 트랙) |
-| [paper-live-code-separation.md](docs/runbooks/paper-live-code-separation.md) | Validated-code live clone and promotion |
-| [telegram-interactive-alerts.md](docs/runbooks/telegram-interactive-alerts.md) | Telegram approve/reject + close bot: config, rollout, rollback |
+| [bb-reversion-15m-paper.md](docs/runbooks/bb-reversion-15m-paper.md) | `bb_reversion_15m` paper validation — PAPER-ONLY, live flags must stay off |
+| [stock-stream-cutover.md](docs/runbooks/stock-stream-cutover.md) | M1c — 모놀리식 orchestrator 의 시세 원천을 WebSocket ↔ Redis 틱 스트림으로 전환 (`STOCK_MARKET_DATA_SOURCE`). **표준 경로는 decoupled 파이프라인이라 평시에는 해당 없다**; `STOCK_ORCHESTRATOR_ENABLED=true` 롤백 시에만 쓴다. 플래그를 읽는 코드는 `services/trading/market_data_bootstrap.py:126` 에 살아 있다 |
+
+### Futures
+
+| Runbook | Use |
+|---|---|
+| [futures-pipeline-cutover-f9.md](docs/runbooks/futures-pipeline-cutover-f9.md) | Futures decoupled pipeline cutover |
 | [futures-paradigm-operations.md](docs/runbooks/futures-paradigm-operations.md) | Futures daily operations checklist |
 | [futures-paradigm-rollback.md](docs/runbooks/futures-paradigm-rollback.md) | Emergency futures rollback |
+| [futures-paradigm-failure-modes.md](docs/runbooks/futures-paradigm-failure-modes.md) | Futures failure modes — symptoms and first response |
+| [futures-legal-review.md](docs/runbooks/futures-legal-review.md) | Gate 2 legal/compliance review template — complete before any live flip |
+| [setup-c-event-score-observation.md](docs/runbooks/setup-c-event-score-observation.md) | Setup C event-score history readiness observation |
+| [regime-gate-paper-observation.md](docs/runbooks/regime-gate-paper-observation.md) | RegimeGate paper observation, activated per strategy |
+
+### tos kernel / runtime
+
+| Runbook | Use |
+|---|---|
+| [tos-rcl-schema-migration.md](docs/runbooks/tos-rcl-schema-migration.md) | RCL sqlite schema v1→v2 migration ordering, backup-before-migrate, rollback scope |
+| [tos-kis-mock-transport.md](docs/runbooks/tos-kis-mock-transport.md) | `--transport kis-mock` wiring, custody, and non-live admission |
+| [u17-prevention-control.md](docs/runbooks/u17-prevention-control.md) | U-17 예방 통제 — 아티팩트 countersign · main 착지 · 룰셋 필수 체크. **D0-A 착수 차단의 실제 해제 조건** |
+| [kis-capability-probes.md](docs/runbooks/kis-capability-probes.md) | KIS broker capability probes (P0-2 / T2) — measurement only, approval is human |
+| [2026-09-10-p02-probe-handover-paper-server.md](docs/runbooks/2026-09-10-p02-probe-handover-paper-server.md) | P0-2 probe handover to the paper server; `kis-capability-probes.md` is authoritative on conflict |
+
+### Data, market structure, indicators
+
+| Runbook | Use |
+|---|---|
+| [market-structure-policy.md](docs/runbooks/market-structure-policy.md) | Operator policy for stock ATS/SOR, futures sessions, KOSPI 200 product governance |
+| [market-structure-krx-csv-backfill.md](docs/runbooks/market-structure-krx-csv-backfill.md) | Manual `foreign_futures` CSV backfill when the KIS feed has no history |
+| [har-rv-log-rv-validation.md](docs/runbooks/har-rv-log-rv-validation.md) | HAR-RV raw-vs-log validation before forecast config cutover |
+| [streaming-talib-convergence-gate.md](docs/runbooks/streaming-talib-convergence-gate.md) | Streaming indicator → TA-Lib convergence gate before a value-changing live change |
+
+### Cross-cutting ops
+
+| Runbook | Use |
+|---|---|
+| [ops-readiness-checks.md](docs/runbooks/ops-readiness-checks.md) | Offline readiness checks for common post-cutover gates |
+| [market-open-pipeline-verification.md](docs/runbooks/market-open-pipeline-verification.md) | Pre-open and post-open pipeline verification |
+| [paper-live-code-separation.md](docs/runbooks/paper-live-code-separation.md) | Validated-code live clone and promotion |
+| [telegram-interactive-alerts.md](docs/runbooks/telegram-interactive-alerts.md) | Telegram approve/reject + close bot: config, rollout, rollback |
+| [track-a-quarterly-rebalancing.md](docs/runbooks/track-a-quarterly-rebalancing.md) | Track A 분기 리밸런싱 체크리스트 (수동 트랙) |
+
+### Staged verification
+
+| Runbook | Use |
+|---|---|
+| [phase1-verification.md](docs/runbooks/phase1-verification.md) | Redis stream flow and file-based persistence |
+| [phase2-verification.md](docs/runbooks/phase2-verification.md) | News/scoring/event flow without a server database |
+| [phase3-verification.md](docs/runbooks/phase3-verification.md) | Futures market data and strategy gates against Parquet |
+| [phase4-verification.md](docs/runbooks/phase4-verification.md) | Order fill logging and slippage analysis through `RuntimeLedger` |
+| [phase5-verification.md](docs/runbooks/phase5-verification.md) | Paper/live readiness across Redis DB 1, SQLite ledger, Parquet |
+
+### Historical — superseded, kept for reference
+
+이 둘은 **현행 절차가 아니다.** 지우지 않고 남겨두되 그대로 따라 하지 말 것. 「비활성」과
+「제거됨」은 다르다 — 플래그로 꺼져 있을 뿐 코드가 살아 있는 절차서는 여기 넣지 않는다.
+
+| Runbook | Superseded by |
+|---|---|
+| [phase2-startup.md](docs/runbooks/phase2-startup.md) | 문서 자체가 Historical 선언 — RL-shadow 경로는 2026-06-03 제거됐다 |
+| [cron-to-compose-cutover.md](docs/runbooks/cron-to-compose-cutover.md) | 호스트 crontab 철거는 완료됐다 (`docs/archive/operations/crontab.md`) — 스케줄은 Compose 소관 |
 
 ## Documentation
 
