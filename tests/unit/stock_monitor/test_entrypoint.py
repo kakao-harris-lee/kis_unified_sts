@@ -64,28 +64,40 @@ def test_config_loads() -> None:
     assert tg.get("pnl_alert_pct") == 3.0
 
 
-def test_setup_logging_honours_log_level(
-    monkeypatch: pytest.MonkeyPatch, restore_root_log_level: logging.Logger
+@pytest.mark.parametrize(
+    ("log_level", "expected"),
+    [
+        # The level an operator actually reaches for.
+        ("DEBUG", logging.DEBUG),
+        # A typo must degrade to INFO, not stop the daemon from starting.
+        ("bogus", logging.INFO),
+    ],
+)
+def test_main_configures_logging_before_it_starts_the_daemon(
+    log_level: str,
+    expected: int,
+    monkeypatch: pytest.MonkeyPatch,
+    restore_root_log_level: logging.Logger,
 ) -> None:
-    """LOG_LEVEL=DEBUG must reach this daemon, or its DEBUG records stay dark."""
-    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    """``main()`` must configure logging, and must do it before dispatching.
 
-    assert m._setup_logging() == logging.DEBUG
-    assert restore_root_log_level.isEnabledFor(logging.DEBUG)
+    Calling ``_setup_logging()`` directly proves nothing about the entrypoint:
+    it is a pass-through whose whole job is being called from ``main()``, and
+    the level-name matrix it delegates to is already covered by
+    tests/unit/observability/test_logging_setup.py. Reading the effective root
+    level from inside the daemon seam pins both halves at once — delete the
+    call from ``main()`` and this fails, which is the regression worth having.
+    """
+    monkeypatch.setenv("LOG_LEVEL", log_level)
+    # A level main() has to move, so an unconfigured root cannot pass by luck.
+    restore_root_log_level.setLevel(logging.WARNING)
+    observed: list[int] = []
 
+    async def _fake_build_and_run() -> int:
+        observed.append(logging.getLogger().level)
+        return 0
 
-def test_setup_logging_defaults_to_info_when_unset(
-    monkeypatch: pytest.MonkeyPatch, restore_root_log_level: logging.Logger
-) -> None:
-    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.setattr(m, "_build_and_run", _fake_build_and_run)
 
-    assert m._setup_logging() == logging.INFO
-
-
-def test_setup_logging_falls_back_to_info_on_invalid(
-    monkeypatch: pytest.MonkeyPatch, restore_root_log_level: logging.Logger
-) -> None:
-    """A typo'd LOG_LEVEL must not stop the daemon from starting."""
-    monkeypatch.setenv("LOG_LEVEL", "bogus")
-
-    assert m._setup_logging() == logging.INFO
+    assert m.main() == 0
+    assert observed == [expected]

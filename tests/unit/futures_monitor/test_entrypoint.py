@@ -69,24 +69,37 @@ def test_config_loads():
     assert "telegram" in cfg
 
 
-def test_setup_logging_honours_log_level(monkeypatch, restore_root_log_level):
-    """LOG_LEVEL=DEBUG must reach this daemon, or its DEBUG records stay dark."""
-    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
-
-    assert m._setup_logging() == logging.DEBUG
-    assert restore_root_log_level.isEnabledFor(logging.DEBUG)
-
-
-def test_setup_logging_defaults_to_info_when_unset(monkeypatch, restore_root_log_level):
-    monkeypatch.delenv("LOG_LEVEL", raising=False)
-
-    assert m._setup_logging() == logging.INFO
-
-
-def test_setup_logging_falls_back_to_info_on_invalid(
-    monkeypatch, restore_root_log_level
+@pytest.mark.parametrize(
+    ("log_level", "expected"),
+    [
+        # The level an operator actually reaches for.
+        ("DEBUG", logging.DEBUG),
+        # A typo must degrade to INFO, not stop the daemon from starting.
+        ("bogus", logging.INFO),
+    ],
+)
+def test_main_configures_logging_before_it_starts_the_daemon(
+    log_level, expected, monkeypatch, restore_root_log_level
 ):
-    """A typo'd LOG_LEVEL must not stop the daemon from starting."""
-    monkeypatch.setenv("LOG_LEVEL", "bogus")
+    """``main()`` must configure logging, and must do it before dispatching.
 
-    assert m._setup_logging() == logging.INFO
+    Calling ``_setup_logging()`` directly proves nothing about the entrypoint:
+    it is a pass-through whose whole job is being called from ``main()``, and
+    the level-name matrix it delegates to is already covered by
+    tests/unit/observability/test_logging_setup.py. Reading the effective root
+    level from inside the daemon seam pins both halves at once — delete the
+    call from ``main()`` and this fails, which is the regression worth having.
+    """
+    monkeypatch.setenv("LOG_LEVEL", log_level)
+    # A level main() has to move, so an unconfigured root cannot pass by luck.
+    restore_root_log_level.setLevel(logging.WARNING)
+    observed = []
+
+    async def _fake_build_and_run():
+        observed.append(logging.getLogger().level)
+        return 0
+
+    monkeypatch.setattr(m, "_build_and_run", _fake_build_and_run)
+
+    assert m.main() == 0
+    assert observed == [expected]

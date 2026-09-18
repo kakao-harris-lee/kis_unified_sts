@@ -616,12 +616,37 @@ def test_monitor_daemons_receive_log_level_from_the_environment():
 
     No env_file is mounted into these containers, so a key absent from the
     service's ``environment`` block simply does not exist at runtime and the
-    daemon silently falls back to INFO.
+    daemon silently falls back to INFO. Guards all three layers of the knob:
+    compose passes it, only these two services get it, and the deploy
+    templates ship the INFO default.
     """
     compose = yaml.safe_load(
         (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     )
     services = compose["services"]
 
-    for name in ("stock-monitor", "futures-monitor"):
+    monitors = ("stock-monitor", "futures-monitor")
+    for name in monitors:
         assert services[name]["environment"]["LOG_LEVEL"] == "${LOG_LEVEL:-INFO}", name
+
+    # And nowhere else. The key is declared per service on purpose rather than
+    # in the shared *redis-runtime-env anchor: only these two entrypoints read
+    # it, so the anchor would hand it to ~20 daemons that ignore it. The
+    # assertion above cannot catch that move on its own — ``yaml.safe_load``
+    # expands the ``<<`` merge keys, so an inherited key looks local here.
+    for name, service in services.items():
+        if name in monitors:
+            continue
+        environment = service.get("environment") or {}
+        keys = (
+            set(environment)
+            if isinstance(environment, dict)
+            else {entry.split("=", 1)[0] for entry in environment}
+        )
+        assert "LOG_LEVEL" not in keys, f"{name} does not read LOG_LEVEL"
+
+    # The templates document the knob and ship the default the code falls back
+    # to; a template that drifted to another value would move those two
+    # daemons' level on every deploy from it.
+    for name in (".env.paper.example", ".env.live.example"):
+        assert _read_env_template(name)["LOG_LEVEL"] == "INFO", name
