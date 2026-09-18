@@ -77,6 +77,14 @@ _TOP_LEVEL_STR_KEYS: tuple[str, ...] = (
 #: ``fields[]`` entry scalar-string keys (``max_age_ms`` is handled separately — it is an int).
 _FIELD_STR_KEYS: tuple[str, ...] = ("field_key", "unit", "scale", "multiplier", "sign")
 
+#: The template's reserved not-yet-filled placeholder (W-A A-0 round 2) — the SAME token
+#: ``tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`` names, duplicated here (never imported)
+#: per this module's own "stdlib + pyyaml + tos.* only" firewall discipline (module
+#: docstring): every string leaf this loader reads feeds the computed ``canonical_digest``
+#: directly (module docstring's "Why the loader owns per-field validation" section) — an
+#: operator-typed ``"TBD"`` must never be sealed into that digest as though it were real.
+_TBD_STR = "TBD"
+
 
 class CriticalInputPolicyConfigError(RuntimeError):
     """A Critical Input Policy instance YAML is missing, malformed, or carries an unfilled
@@ -158,6 +166,11 @@ def _require_str(raw: Mapping[str, Any], key: str, path: Path, ctx: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise CriticalInputPolicyConfigError(
             f"{path}: {ctx}.{key} is still null (named-TBD) or not a non-empty string"
+        )
+    if value == _TBD_STR:
+        raise CriticalInputPolicyConfigError(
+            f"{path}: {ctx}.{key} is still the template placeholder {_TBD_STR!r} — "
+            "operator-fill before activation"
         )
     return value
 

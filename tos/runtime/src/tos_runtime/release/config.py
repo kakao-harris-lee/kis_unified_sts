@@ -21,6 +21,8 @@ import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.sci import AdmissionResult, ReleaseRestriction, SupplyChainScope
 
+from tos_runtime._named_tbd import reject_named_tbd
+
 __all__ = [
     "ReleaseAdmissionConfig",
     "ReleaseAdmissionConfigError",
@@ -98,6 +100,12 @@ def _require_str(raw: dict[str, Any], key: str) -> str:
             f"release-admission config key {key!r} must be a non-blank string "
             f"(got {value!r})"
         )
+    reject_named_tbd(
+        value,
+        field=key,
+        context="release-admission config",
+        error_cls=ReleaseAdmissionConfigError,
+    )
     return value
 
 

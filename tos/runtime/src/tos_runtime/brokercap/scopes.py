@@ -107,6 +107,8 @@ from tos.brokercap.records import BrokerEvidenceRef
 from tos.egress import CredentialRouteInventoryEntry
 from tos.egressgw import TransportNature
 
+from tos_runtime._named_tbd import reject_named_tbd
+
 __all__ = [
     "BrokerScope",
     "BrokerScopeConfigError",
@@ -282,6 +284,12 @@ def _require(value: Any, field: str, context: str) -> Any:
     return value
 
 
+def _reject_tbd(value: Any, field: str, context: str) -> None:
+    reject_named_tbd(
+        value, field=field, context=context, error_cls=BrokerScopeConfigError
+    )
+
+
 def _as_str(value: Any) -> str:
     """Narrow an untyped YAML value to ``str`` for enum/model construction —
     a non-``str`` (including ``None``) raises ``ValueError``, caught by
@@ -341,10 +349,15 @@ def _build_provenance(raw: Mapping[str, Any], scope_name: str) -> CapabilityProv
                 f"scope {scope_name!r}: probe manifest rejected by the kernel — {exc}"
             ) from exc
     try:
+        source_ref = _as_str(raw.get("source_ref"))
+        captured_at = _as_str(raw.get("captured_at"))
+        context = f"scope {scope_name!r}: provenance"
+        _reject_tbd(source_ref, "source_ref", context)
+        _reject_tbd(captured_at, "captured_at", context)
         return CapabilityProvenance(
             provenance_class=ProvenanceClass(_as_str(raw.get("provenance_class"))),
-            source_ref=_as_str(raw.get("source_ref")),
-            captured_at=_as_str(raw.get("captured_at")),
+            source_ref=source_ref,
+            captured_at=captured_at,
             evidence_ref=_build_evidence_ref(raw.get("evidence_ref")),
             probe_manifest=manifest,
         )
@@ -355,7 +368,7 @@ def _build_provenance(raw: Mapping[str, Any], scope_name: str) -> CapabilityProv
 
 
 def _build_profile_key(raw: Mapping[str, Any] | None) -> ProfileKey:
-    raw = raw or {}
+    raw = raw or {}  # no TBD guard (W-A A-0 r2): 3 fields eq-read by kernel, 7 unread
     return ProfileKey(
         broker_id=raw.get("broker_id"),
         api_product=raw.get("api_product"),
@@ -508,6 +521,7 @@ def _build_scope_identity(
         raise BrokerScopeConfigError(
             f"{context}: 'principal' must be a string, got {principal_raw!r}"
         )
+    _reject_tbd(principal_raw, "principal", context)
     principal = principal_raw.replace(_ENVIRONMENT_LABEL_TOKEN, environment_label)
     if not principal:
         raise BrokerScopeConfigError(
@@ -545,6 +559,7 @@ def _build_scope(
     path: Path,
 ) -> BrokerScope:
     name = _require(raw.get("name"), "name", "scope")
+    _reject_tbd(name, "name", "scope")
     context = f"scope {name!r}"
 
     identity = _build_scope_identity(
@@ -558,6 +573,8 @@ def _build_scope(
         raise BrokerScopeConfigError(
             f"{context}: 'allowed_methods' must be a non-empty list"
         )
+    for entry in allowed_methods_raw:
+        _reject_tbd(entry, "allowed_methods", context)
     allowed_methods = tuple(allowed_methods_raw)
 
     tuples_raw = _require(raw.get("capability_tuples"), "capability_tuples", context)
@@ -735,6 +752,7 @@ def _load_binding(
             raise BrokerScopeConfigError(
                 f"{path}: {field}[{key!r}] must be a string, got {value!r}"
             )
+        _reject_tbd(value, f"{field}[{key!r}]", str(path))
         try:
             binding[member_type(key)] = value
         except ValueError as exc:

@@ -84,6 +84,15 @@ _TR_ID_PATTERN = re.compile(r"^V[A-Z]{3}\d{4}[A-Z]$")
 #: mirrors ``kis_mock/config.py``'s ``_FORBIDDEN_TR_PREFIXES``).
 _FORBIDDEN_TR_PREFIXES = ("T", "STTN", "CTF")
 
+#: The template's reserved not-yet-filled placeholder (W-A A-0 round 2) — the SAME token
+#: ``tos_runtime._named_tbd.NAMED_TBD_PLACEHOLDER`` names, duplicated here (never imported)
+#: per this module's own stdlib-only firewall discipline (module docstring): an operator
+#: typing this literal into ``balance_path``/``order_inquiry_path`` must never be sealed in
+#: as a real value the way a bare ``null`` already refuses. Every other string field here is
+#: already gated by the host-seal equality check or the TR-id regex, which "TBD" fails on
+#: its own.
+_TBD_STR = "TBD"
+
 
 def refuse_futures_asset(asset: str) -> None:
     """The one structural refusal point for a futures request (module docstring).
@@ -145,6 +154,11 @@ def _require_str(raw: Any, field: str, path: Path) -> str:
     if not isinstance(value, str) or not value:
         raise KisWitnessConfigError(
             f"{path}: {field!r} must be a non-empty string, got {value!r}"
+        )
+    if value == _TBD_STR:
+        raise KisWitnessConfigError(
+            f"{path}: {field!r} is still the template placeholder {_TBD_STR!r} — "
+            "operator-fill before activation, never a value this loader treats as concrete"
         )
     return value
 

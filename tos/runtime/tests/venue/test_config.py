@@ -598,6 +598,34 @@ def test_load_order_construction_policy_digest_matches_kernel_issuance_when_iden
     assert verdict.value == "IDEMPOTENT_DUP"
 
 
+def test_load_venue_constraint_policy_dependency_closure_named_tbd_dependent_refused(
+    tmp_path: Path,
+) -> None:
+    """W-A A-0 round 2: a dependency-closure edge's own ``dependents`` list is a free
+    string list with no enum backstop (unlike ``node``, which already had
+    ``require_filled_str``) — an operator-typed ``"TBD"`` must never pass."""
+    text = venue_policy_yaml().replace(
+        "edges: []", 'edges: [{"node": "n1", "dependents": ["TBD"]}]'
+    )
+    path = write_fixture_venue_policy(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="template placeholder"):
+        load_venue_constraint_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_named_tbd_policy_version_refused(
+    tmp_path: Path,
+) -> None:
+    """W-A A-0 round 2 (kernel round #4 재심 후속 조사): ``policy_version`` is a
+    ``_REQUIRED_COVERED`` field sealed straight into the issued policy's own
+    ``canonical_digest`` (module docstring) — this loader used the plain ``require_str``
+    helper for it (no TBD check), unlike ``policy_id``'s own ``require_filled_str``.
+    Fixed by swapping to ``require_filled_str``."""
+    text = ocp_yaml(policy_version="TBD")
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="template placeholder"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
 @pytest.mark.parametrize(
     "field", ["signer_identity", "approval_identity", "evidence_package_ref"]
 )

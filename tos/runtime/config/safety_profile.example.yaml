@@ -6,8 +6,18 @@
 #
 # Every value below is a named-TBD `null` (or an empty collection where the
 # schema allows one) — an operator MUST replace every null with a concrete,
-# governance-approved value before this file can be used in production. The
-# loader refuses to start on a still-null required field (fail-closed).
+# governance-approved value before this file can be used in production.
+#
+# UNLIKE most loaders in this codebase, the loader here does NOT itself
+# refuse a still-null field: RuntimeSafetyProfile's own fields are all
+# `X | None = None` (tos/src/tos/spg/records.py), so model_validate accepts
+# an all-null mapping exactly as readily as a fully filled-in one (confirmed
+# 2026-09-18, PR #737 review — see safety_envelope.example.yaml's own header
+# comment for the full explanation, which applies identically here). The
+# shipped example's own all-null/[] shape is verified directly (never by
+# loader refusal) — see
+# tos/runtime/tests/compose/example_integrity_registry.py's
+# EXAMPLE_TEMPLATE_ONLY comment.
 profile:
   profile_id: null
   profile_generation: null

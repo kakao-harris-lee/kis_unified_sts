@@ -595,6 +595,33 @@ def test_manifest_rejects_absolute_file_path(
     assert evidence_double.records == []
 
 
+def test_manifest_rejects_named_tbd_placeholder_principal(
+    custody_root: Path,
+    evidence_double: FakeEvidenceDouble,
+    expected_owner_uid: int,
+) -> None:
+    """W-A A-0 round 2: a scope's own ``principal`` (ADR-002-013 :267-269) is a real
+    identity sealed into every ``CUSTODY_LOAD`` evidence record — an operator typing
+    the literal placeholder string ``"TBD"`` must never pass for one."""
+    scopes = dict(_DEFAULT_SCOPES)
+    scopes["read.principal"] = {
+        "file": "read.principal",
+        "principal": "TBD",
+        "expected_sha256": None,
+    }
+    write_manifest(custody_root, environment_label="non-live-test", scopes=scopes)
+
+    with pytest.raises(CustodyManifestError, match="template placeholder"):
+        FileCustody(
+            root_dir=custody_root,
+            environment_label="non-live-test",
+            expected_owner_uid=expected_owner_uid,
+            evidence=evidence_double,
+        )
+
+    assert evidence_double.records == []
+
+
 def test_manifest_rejects_dotdot_file_path(
     custody_root: Path,
     evidence_double: FakeEvidenceDouble,

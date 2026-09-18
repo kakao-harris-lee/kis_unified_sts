@@ -18,6 +18,7 @@ import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from typing import Any, final
 
 from shared.streaming.audit import (
@@ -38,43 +39,126 @@ def _is_busygroup_error(exc: Exception) -> bool:
     return "busygroup" in str(exc).lower()
 
 
-def _is_nogroup_error(exc: Exception) -> bool:
+def is_missing_consumer_group_error(exc: Exception) -> bool:
+    """Whether ``exc`` is Redis' NOGROUP — the stream key or the group is gone.
+
+    Redis answers NOGROUP both when the consumer group was never created and
+    when the stream key itself expired, so a consumer that reads an expiring
+    stream must treat it as a recoverable condition, not a read failure.
+    """
     return "nogroup" in str(exc).lower()
+
+
+def is_vanished_stream_read_error(exc: Exception) -> bool:
+    """Whether ``exc`` says the stream read failed because its key vanished.
+
+    Two Redis error codes report that one condition. NOGROUP comes back when
+    the key or the group is already gone at call time; ``UNBLOCKED the stream
+    key no longer exists`` is what a client *already blocked* in XREADGROUP
+    gets when the key disappears underneath it — which is how each episode on
+    the monitor daemons starts. The unrelated ``UNBLOCKED client unblocked via
+    CLIENT UNBLOCK`` is deliberately excluded: that is an operator action, not
+    a vanished key.
+
+    Sibling of :func:`is_missing_consumer_group_error` rather than a widening
+    of it, so ``StreamStage``/``MultiStreamStage`` keep their current NOGROUP-
+    only behavior; only the monitor daemons, which read TTL-bearing streams,
+    opt into the wider match.
+    """
+    if is_missing_consumer_group_error(exc):
+        return True
+    message = str(exc).lower()
+    return "unblocked" in message and "no longer exists" in message
+
+
+class ConsumerGroupEnsure(StrEnum):
+    """Outcome of one XGROUP CREATE attempt.
+
+    ``CREATED`` and ``EXISTED`` both leave the group usable, but only the first
+    means something was actually missing — collapsing them into one ``True``
+    is what made the recovery log claim a recreate on healthy streams, and what
+    let a caller retry immediately after recovering nothing.
+
+    Every member is a truthy non-empty string, so ``all(...)`` over these is a
+    trap. Compare with ``is``; the ``__bool__`` below exists only so a caller
+    who writes ``if not await recover_missing_consumer_group(...)`` still gets
+    the honest answer instead of a silently-always-false condition.
+    """
+
+    CREATED = "created"
+    EXISTED = "existed"
+    FAILED = "failed"
+
+    def __bool__(self) -> bool:
+        return self is not ConsumerGroupEnsure.FAILED
 
 
 async def _ensure_consumer_group(
     redis: Any,
     stream: str | bytes,
     consumer_group: str,
-) -> bool:
+) -> ConsumerGroupEnsure:
     try:
         await redis.xgroup_create(stream, consumer_group, id="0", mkstream=True)
-        return True
+        return ConsumerGroupEnsure.CREATED
     except Exception as exc:
         if _is_busygroup_error(exc):
-            return True
+            return ConsumerGroupEnsure.EXISTED
         logger.warning(
-            "consumer group ensure failed stream=%s group=%s",
-            decode_stream_id(stream),
-            consumer_group,
+            format_audit_kv(
+                event="consumer_group_ensure_failed",
+                stream=decode_stream_id(stream),
+                consumer_group=consumer_group,
+            ),
             exc_info=True,
         )
-        return False
+        return ConsumerGroupEnsure.FAILED
 
 
-async def _recover_missing_consumer_group(
+async def recover_missing_consumer_group(
     redis: Any,
     stream: str | bytes,
     consumer_group: str,
-) -> bool:
+) -> ConsumerGroupEnsure:
+    """Recreate a vanished stream/group (``mkstream``) and log what happened.
+
+    Returns the outcome rather than a bool, because a caller that sweeps every
+    stream it reads has to tell "I recreated something" from "nothing was
+    missing after all" — the second means the read error had another cause, so
+    retrying immediately would spin. Safe to call on a stream whose group never
+    went missing, and only the genuine recreate is logged at WARNING.
+    """
     ensured = await _ensure_consumer_group(redis, stream, consumer_group)
-    if ensured:
+    if ensured is ConsumerGroupEnsure.CREATED:
         logger.warning(
-            "consumer group missing; recreated stream=%s group=%s",
-            decode_stream_id(stream),
-            consumer_group,
+            format_audit_kv(
+                event="consumer_group_recovered",
+                stream=decode_stream_id(stream),
+                consumer_group=consumer_group,
+            )
+        )
+    elif ensured is ConsumerGroupEnsure.EXISTED:
+        # Not an incident: the caller swept a healthy sibling stream, so this
+        # stays below the operator's log. It is DEBUG and therefore unreachable
+        # in the deployed monitors — services/futures_monitor/main.py:144 and
+        # services/stock_monitor/main.py:134 both hardcode
+        # basicConfig(level=logging.INFO) and read no LOG_LEVEL, so surfacing
+        # this line means editing main.py and rebuilding the image. What the
+        # daemons actually act on is the returned outcome, not this record.
+        logger.debug(
+            format_audit_kv(
+                event="consumer_group_already_present",
+                stream=decode_stream_id(stream),
+                consumer_group=consumer_group,
+            )
         )
     return ensured
+
+
+# Pre-existing private spellings, kept so the in-module call sites below are
+# untouched by making the two helpers above public API for the monitor daemons.
+_is_nogroup_error = is_missing_consumer_group_error
+_recover_missing_consumer_group = recover_missing_consumer_group
 
 
 def _log_processed_message(

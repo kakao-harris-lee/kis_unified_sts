@@ -16,6 +16,9 @@ from tos_runtime.compose._construction_config import (
     load_construction_config,
 )
 
+from .example_integrity import assert_required_paths_present
+from .example_integrity_registry import EXAMPLE_REQUIRED_PATHS
+
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
 
@@ -165,9 +168,19 @@ def test_shipped_example_file_is_all_null_and_therefore_refuses(
     tmp_path: Path,
 ) -> None:
     """The shipped ``construction.example.yaml`` is a template, not an approved config — every
-    leaf ``null`` means it must refuse to load as-is (module docstring)."""
+    leaf ``null`` means it must refuse to load as-is (module docstring).
+
+    A ``pytest.raises`` alone cannot tell a value-only refusal (this test's own name) apart from
+    a STRUCTURAL one (a required key entirely missing from the document — the shape of bug
+    ``test_shipped_example_integrity.py`` exists to catch; see that module's own docstring for
+    why ``safety_activation.example.yaml`` shipped broken despite an identical narrow test having
+    passed the whole time) — so this also pins every required key path is explicitly present.
+    """
     example_path = (
         Path(__file__).resolve().parents[2] / "config" / "construction.example.yaml"
     )
     with pytest.raises(ConstructionConfigError):
         load_construction_config(example_path)
+    assert_required_paths_present(
+        "construction", EXAMPLE_REQUIRED_PATHS["construction"]
+    )

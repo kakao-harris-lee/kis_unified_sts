@@ -96,6 +96,15 @@ def test_a_named_tbd_null_field_refuses_to_load(tmp_path: Path) -> None:
         _load(path)
 
 
+def test_named_tbd_placeholder_balance_path_refuses_to_load(tmp_path: Path) -> None:
+    """W-A A-0 round 2 (kernel round #4 재심 BLOCKER): this file's own stdlib-only
+    firewall discipline means it duplicates the ``"TBD"`` literal locally rather than
+    importing ``tos_runtime._named_tbd`` — pin that the local check actually fires."""
+    path = _write(tmp_path, balance_path="TBD")
+    with pytest.raises(KisWitnessConfigError, match="template placeholder"):
+        _load(path)
+
+
 def test_max_pages_must_be_positive(tmp_path: Path) -> None:
     path = _write(tmp_path, max_pages=0)
     with pytest.raises(KisWitnessConfigError, match="positive"):

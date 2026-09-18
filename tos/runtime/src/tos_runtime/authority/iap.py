@@ -128,6 +128,7 @@ from tos.time import (
     elapsed_within_continuity,
 )
 
+from tos_runtime._named_tbd import is_named_tbd_placeholder
 from tos_runtime.custody.file_custody import verify_file_mode_and_owner
 from tos_runtime.rcl.log import CommitLogCorruption, SqliteCommitLog, StaleEpochRead
 from tos_runtime.time.config import TrustworthyTimeConfig
@@ -153,6 +154,21 @@ _CONSUMPTION_KIND = CommandType.CONSUME_APPROVAL_DECISION
 _EVIDENCE_KIND_PROPOSAL = "IAP_PROPOSAL"
 _EVIDENCE_KIND_DECISION = "IAP_DECISION_REGISTERED"
 _EVIDENCE_KIND_CONSUMPTION = "IAP_CONSUMPTION"
+
+#: The free string/id/digest fields ``_build_decision_from_raw`` reads straight off the
+#: operator file and seals into ``IndependentApprovalDecision.issue``'s own canonical
+#: digest (W-A A-0 round 2) — none of these are enum-gated, so an operator-typed
+#: ``"TBD"`` was never caught the way a bare ``null`` already is.
+_DECISION_TBD_CHECKED_FIELDS: tuple[str, ...] = (
+    "decision_id",
+    "request_id",
+    "request_digest",
+    "trading_approval_policy_id",
+    "trading_approval_policy_digest",
+    "approved_intent_envelope_id",
+    "approved_intent_envelope_digest",
+    "supersedes_decision_id",
+)
 
 
 def _consumption_command_id(decision: IndependentApprovalDecision) -> str:
@@ -302,6 +318,13 @@ def _build_decision_from_raw(
             f"load_operator_approval_file: {path} 'result' is missing or not one "
             f"of APPROVE/DENY/UNKNOWN: {exc}"
         ) from exc
+    for field_name in _DECISION_TBD_CHECKED_FIELDS:
+        if is_named_tbd_placeholder(raw.get(field_name)):
+            raise OperatorApprovalFileError(
+                f"load_operator_approval_file: {path} {field_name!r} is still the "
+                "template placeholder 'TBD' — operator-fill before activation, never "
+                "a value sealed into this decision's own canonical digest"
+            )
     try:
         decision = IndependentApprovalDecision.issue(
             scheme=scheme,

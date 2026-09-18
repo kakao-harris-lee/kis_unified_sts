@@ -111,6 +111,28 @@ def test_null_leaf_in_bindings_refuses_naming_the_key(tmp_path: Path) -> None:
     assert "still null (named-TBD)" in message
 
 
+def test_named_tbd_placeholder_in_bindings_refuses_naming_the_key(
+    tmp_path: Path,
+) -> None:
+    """W-A A-0: the null-only leaf walk never caught the literal placeholder
+    string ``"TBD"`` typed in place of a real bindings value."""
+    path = tmp_path / STRATEGY_BINDINGS_FILE_NAME
+    mapping = {
+        "strategies": {
+            "example.strategy": {
+                "config_binding_version": "cfg-1",
+                "bindings": {"threshold": "TBD"},
+            }
+        }
+    }
+    path.write_text(yaml.safe_dump(mapping, sort_keys=False), encoding="utf-8")
+    with pytest.raises(StrategyBindingsLoadError) as excinfo:
+        load_strategy_bindings(path)
+    message = str(excinfo.value)
+    assert "threshold" in message
+    assert "template placeholder" in message
+
+
 def test_unrecognized_key_refuses(tmp_path: Path) -> None:
     path = tmp_path / STRATEGY_BINDINGS_FILE_NAME
     mapping = {

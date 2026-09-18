@@ -210,6 +210,73 @@ def test_a_still_null_scope_field_refuses_to_load(tmp_path: Path, field: str) ->
         load_broker_scopes(path, environment_label="paper-env-7")
 
 
+def test_named_tbd_placeholder_name_refuses_to_load(tmp_path: Path) -> None:
+    """W-A A-0: an operator typing the literal placeholder string ``"TBD"`` for
+    a scope's own ``name``/``principal`` must never be sealed into ``BrokerScope``
+    as though it were a genuine identity — the pre-existing null-only ``_require``
+    guard never caught this."""
+    scope = _minimal_scope(name="TBD")
+    raw = _minimal_config([scope], active_scope=None)
+    path = tmp_path / "broker_scopes.yaml"
+    _write(path, raw)
+
+    with pytest.raises(BrokerScopeConfigError, match="template placeholder"):
+        load_broker_scopes(path, environment_label="paper-env-7")
+
+
+def test_named_tbd_placeholder_principal_refuses_to_load(tmp_path: Path) -> None:
+    scope = _minimal_scope(principal="TBD")
+    raw = _minimal_config([scope], active_scope="SOME_SCOPE")
+    path = tmp_path / "broker_scopes.yaml"
+    _write(path, raw)
+
+    with pytest.raises(BrokerScopeConfigError, match="template placeholder"):
+        load_broker_scopes(path, environment_label="paper-env-7")
+
+
+def test_named_tbd_placeholder_allowed_methods_entry_refuses_to_load(
+    tmp_path: Path,
+) -> None:
+    scope = _minimal_scope(allowed_methods=["TBD"])
+    raw = _minimal_config([scope], active_scope="SOME_SCOPE")
+    path = tmp_path / "broker_scopes.yaml"
+    _write(path, raw)
+
+    with pytest.raises(BrokerScopeConfigError, match="template placeholder"):
+        load_broker_scopes(path, environment_label="paper-env-7")
+
+
+def test_named_tbd_placeholder_environment_binding_entry_refuses_to_load(
+    tmp_path: Path,
+) -> None:
+    raw = _minimal_config([_minimal_scope()], active_scope="SOME_SCOPE")
+    raw["environment_binding"]["SYNTHETIC"] = "TBD"
+    path = tmp_path / "broker_scopes.yaml"
+    _write(path, raw)
+
+    with pytest.raises(BrokerScopeConfigError, match="template placeholder"):
+        load_broker_scopes(path, environment_label="paper-env-7")
+
+
+def test_named_tbd_placeholder_provenance_source_ref_refuses_to_load(
+    tmp_path: Path,
+) -> None:
+    scope = _minimal_scope()
+    scope["provenance"] = [
+        {
+            "provenance_class": "INTERNAL_CLIENT",
+            "source_ref": "TBD",
+            "captured_at": "2026-09-18T00:00:00Z",
+        }
+    ]
+    raw = _minimal_config([scope], active_scope="SOME_SCOPE")
+    path = tmp_path / "broker_scopes.yaml"
+    _write(path, raw)
+
+    with pytest.raises(BrokerScopeConfigError, match="template placeholder"):
+        load_broker_scopes(path, environment_label="paper-env-7")
+
+
 def test_non_boolean_inside_boundary_refuses_to_load(tmp_path: Path) -> None:
     scope = _minimal_scope(inside_boundary="yes")  # type: ignore[arg-type]
     raw = _minimal_config([scope], active_scope="SOME_SCOPE")

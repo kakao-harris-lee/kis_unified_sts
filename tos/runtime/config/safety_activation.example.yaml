@@ -33,3 +33,24 @@ activation:
 # Operator attestation — see module docstring above. Not part of the kernel
 # ActivationRecord schema; read directly by SafetyProfileService.
 not_expired: null
+
+# `members` is a SEPARATE top-level key on this SAME document, read by a
+# DIFFERENT consumer than everything above: tos_runtime.venue.activation
+# .load_activation_members (TOS venue constraint service wave, plan §2
+# decision 7, §4.1 — docs/plans/2026-09-15-tos-venue-constraint-service-plan.md).
+# It never touches `activation:`/`not_expired:` above, and SafetyProfileService
+# never touches `members:` — two independent schemas share this one file
+# (policy activation is spg-owned per ADR-002-019 §5.1 line 111; venue is the
+# CONTENT author only). REQUIRED and explicit-list, same as every other named-TBD
+# leaf in this file: a still-null/missing `members` refuses to load, and an
+# empty list ([]) is the valid, positive "nothing is activated" state — never
+# substitute one for the other without an operator decision.
+#
+# One entry per tos.spg.BundleMemberRef — the exact 5-coordinate shape:
+#   kind: str (required) — a tos.spg.BundleMemberKind member name.
+#   member_id: str (required)
+#   generation: int (required)
+#   digest: str (required)
+#   resolved: bool (required) — only `true` counts toward activation.
+#   immutable: bool (required) — only `true` counts toward activation.
+members: null

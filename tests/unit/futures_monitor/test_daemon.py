@@ -11,7 +11,10 @@ from unittest.mock import MagicMock
 import fakeredis.aioredis
 import pytest
 
-from services.futures_monitor.daemon import FuturesMonitorDaemon
+from services.futures_monitor.daemon import (
+    _CONSUME_ERROR_SLEEP_SECONDS,
+    FuturesMonitorDaemon,
+)
 
 MULT = 50_000.0
 POS_KEY = "futures:monitor:positions"
@@ -73,6 +76,68 @@ class _FailingReadRedis:
         if self.success_on_call is not None and self.calls == self.success_on_call:
             return []
         raise ConnectionError("redis down")
+
+
+class _MissingGroupRedis:
+    """Stub where a group-less stream fails the whole multi-stream XREADGROUP.
+
+    Models the live defect: both monitor streams are read in one call, so
+    whichever one expired takes the surviving one down with it until the
+    consumer group is recreated on both. ``recover_fails`` models the split
+    failure (ACL, or eviction racing the recreate) where the recreate itself
+    keeps failing. ``read_always_fails`` models the reviewer's spin scenario:
+    the read keeps reporting a vanished stream while every group is already
+    there, so every recreate answers BUSYGROUP and nothing is ever recovered.
+    """
+
+    def __init__(
+        self,
+        *,
+        existing_groups: set[str],
+        pending: dict[str, list[tuple[bytes, dict[bytes, bytes]]]],
+        recover_fails: bool = False,
+        missing_error: str | None = None,
+        read_always_fails: bool = False,
+    ) -> None:
+        self.groups = set(existing_groups)
+        self.pending = dict(pending)
+        self.recover_fails = recover_fails
+        self.missing_error = missing_error
+        self.read_always_fails = read_always_fails
+        self.created: list[tuple[str, str]] = []
+        self.acks: list[tuple[str, str, bytes]] = []
+        self.reads = 0
+
+    async def xreadgroup(self, *, groupname, consumername, streams, **_kwargs):
+        self.reads += 1
+        missing = [name for name in streams if name not in self.groups]
+        if missing or self.read_always_fails:
+            default = (
+                (
+                    f"NOGROUP No such key '{missing[0]}' or consumer group "
+                    f"'{groupname}' in XREADGROUP with GROUP option"
+                )
+                if missing
+                else "UNBLOCKED the stream key no longer exists"
+            )
+            raise RuntimeError(self.missing_error or default)
+        delivered = []
+        for name in streams:
+            msgs = self.pending.pop(name, [])
+            if msgs:
+                delivered.append((name.encode(), msgs))
+        return delivered
+
+    async def xgroup_create(self, stream, group, *, id="0", mkstream=False):
+        self.created.append((stream, group))
+        if self.recover_fails:
+            raise RuntimeError("NOPERM this user has no permissions to run 'xgroup'")
+        if stream in self.groups:
+            raise RuntimeError("BUSYGROUP Consumer Group name already exists")
+        self.groups.add(stream)
+
+    async def xack(self, stream: str, group: str, msg_id: bytes) -> None:
+        self.acks.append((stream, group, msg_id))
 
 
 def _fill(side: str, role: str, price: float, qty: int = 1) -> dict[bytes, bytes]:
@@ -385,3 +450,265 @@ async def test_consume_loop_read_error_logs_again_after_success(monkeypatch, cap
         'event=monitor_stream_read_error streams="order.fill.futures.shadow,signal.final.futures.shadow" consumer_group=futures_monitor worker_id=w1 sleep_seconds=0.5',
         'event=monitor_stream_read_error streams="order.fill.futures.shadow,signal.final.futures.shadow" consumer_group=futures_monitor worker_id=w1 sleep_seconds=0.5',
     ]
+
+
+_FILL_STREAM = "order.fill.futures.shadow"
+_SIGNAL_STREAM = "signal.final.futures.shadow"
+
+
+def _recreate_logs(caplog) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if "event=consumer_group_recovered" in record.getMessage()
+    ]
+
+
+@pytest.mark.asyncio
+async def test_consume_loop_nogroup_recreates_both_groups_then_consumes(caplog):
+    fields = {b"signal_id": b"sig-nogroup", b"symbol": b"A05603"}
+    redis = _MissingGroupRedis(
+        existing_groups=set(),
+        pending={_SIGNAL_STREAM: [(b"1700000000000-3", fields)]},
+    )
+    d = _make_daemon(redis)
+    handled: list[dict[bytes, bytes]] = []
+
+    async def handler(data):
+        handled.append(data)
+        d._stop.set()
+
+    d.handle_signal = handler
+    caplog.set_level(logging.WARNING)
+
+    await asyncio.wait_for(d._consume_loop(), timeout=2.0)
+
+    assert redis.created == [
+        (_FILL_STREAM, "futures_monitor"),
+        (_SIGNAL_STREAM, "futures_monitor"),
+    ]
+    assert _recreate_logs(caplog) == [
+        f"event=consumer_group_recovered stream={_FILL_STREAM} "
+        "consumer_group=futures_monitor",
+        f"event=consumer_group_recovered stream={_SIGNAL_STREAM} "
+        "consumer_group=futures_monitor",
+    ]
+    assert not any(
+        "monitor_stream_read_error" in record.getMessage() for record in caplog.records
+    )
+    assert handled == [fields]
+    assert redis.acks == [(_SIGNAL_STREAM, "futures_monitor", b"1700000000000-3")]
+
+
+@pytest.mark.asyncio
+async def test_consume_loop_non_nogroup_error_keeps_error_log_and_backoff(
+    monkeypatch, caplog
+):
+    redis = _FailingReadRedis()
+    d = _make_daemon(redis)
+    caplog.set_level(logging.WARNING)
+    sleeps: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def record_sleep(seconds=0):
+        sleeps.append(seconds)
+        await real_sleep(0)
+
+    monkeypatch.setattr("services.futures_monitor.daemon.asyncio.sleep", record_sleep)
+
+    async def stop_after_errors():
+        while redis.calls < 2:
+            await asyncio.sleep(0)
+        await d.stop()
+
+    await asyncio.gather(d._consume_loop(), stop_after_errors())
+
+    assert 0.5 in sleeps
+    assert any(
+        "event=monitor_stream_read_error" in record.getMessage()
+        for record in caplog.records
+    )
+    assert _recreate_logs(caplog) == []
+
+
+@pytest.mark.asyncio
+async def test_consume_loop_all_groups_present_backs_off_instead_of_spinning(
+    monkeypatch, caplog
+):
+    """A vanished-stream read error that recovers nothing must not hot-loop.
+
+    Measured on the previous shape: 50 reads, 100 BUSYGROUP recreates, every
+    sleep 0, and not one record at or above INFO — the 2026-09-17 silence
+    again, this time burning a core. ``all(recovered)`` answered True because
+    EXISTED leaves the group usable; what a bool could not say is that nothing
+    had actually been recovered, so the read error had some other cause and
+    retrying immediately was wrong.
+    """
+    redis = _MissingGroupRedis(
+        existing_groups={_FILL_STREAM, _SIGNAL_STREAM},
+        pending={},
+        read_always_fails=True,
+    )
+    d = _make_daemon(redis)
+    caplog.set_level(logging.WARNING)
+    real_sleep = asyncio.sleep
+    sleeps: list[float] = []
+
+    async def record_sleep(seconds=0):
+        sleeps.append(seconds)
+        await real_sleep(0)
+
+    monkeypatch.setattr("services.futures_monitor.daemon.asyncio.sleep", record_sleep)
+
+    async def stop_after_errors():
+        while redis.reads < 3:
+            await real_sleep(0)
+        await d.stop()
+
+    await asyncio.gather(d._consume_loop(), stop_after_errors())
+
+    # every iteration paid the backoff; none took the zero-sleep fast path
+    assert sleeps
+    assert set(sleeps) == {_CONSUME_ERROR_SLEEP_SECONDS}
+    # the recreates all answered BUSYGROUP, so nothing may claim a recovery
+    assert _recreate_logs(caplog) == []
+    assert redis.created  # the daemon did try both streams
+    # and the operator gets the read error exactly once, rate-limited
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "event=monitor_stream_read_error" in record.getMessage()
+    ] == [
+        f'event=monitor_stream_read_error streams="{_FILL_STREAM},{_SIGNAL_STREAM}" '
+        "consumer_group=futures_monitor worker_id=w1 "
+        f"sleep_seconds={_CONSUME_ERROR_SLEEP_SECONDS}"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_consume_loop_processes_signal_after_fill_stream_expired(
+    monkeypatch, caplog
+):
+    """Regression: the expired fill stream must not blind the signal stream.
+
+    Also the honest-log regression, inverted from the 2026-09-18 13:31:54
+    production pair: both streams are swept, only the fill group was actually
+    gone, so exactly one recovery WARNING may be emitted and it must name the
+    stream that broke. A genuine recreate keeps the zero-sleep retry — the
+    backoff belongs to the paths that recovered nothing.
+    """
+    fields = {b"signal_id": b"sig-survivor", b"symbol": b"A05603"}
+    redis = _MissingGroupRedis(
+        existing_groups={_SIGNAL_STREAM},
+        pending={_SIGNAL_STREAM: [(b"1700000000000-4", fields)]},
+    )
+    d = _make_daemon(redis)
+    handled: list[dict[bytes, bytes]] = []
+
+    async def handler(data):
+        handled.append(data)
+        d._stop.set()
+
+    d.handle_signal = handler
+    caplog.set_level(logging.WARNING)
+    real_sleep = asyncio.sleep
+    sleeps: list[float] = []
+
+    async def record_sleep(seconds=0):
+        sleeps.append(seconds)
+        await real_sleep(0)
+
+    monkeypatch.setattr("services.futures_monitor.daemon.asyncio.sleep", record_sleep)
+
+    await asyncio.wait_for(d._consume_loop(), timeout=2.0)
+
+    assert redis.created == [
+        (_FILL_STREAM, "futures_monitor"),
+        (_SIGNAL_STREAM, "futures_monitor"),
+    ]
+    assert _recreate_logs(caplog) == [
+        f"event=consumer_group_recovered stream={_FILL_STREAM} "
+        "consumer_group=futures_monitor"
+    ]
+    assert sleeps == [0]
+    assert not any(
+        "event=monitor_stream_read_error" in record.getMessage()
+        for record in caplog.records
+    )
+    assert handled == [fields]
+    assert redis.acks == [(_SIGNAL_STREAM, "futures_monitor", b"1700000000000-4")]
+
+
+@pytest.mark.asyncio
+async def test_consume_loop_unblocked_key_gone_recovers_like_nogroup(caplog):
+    """Production's first error per episode is UNBLOCKED, not NOGROUP.
+
+    Redis sends it to a client already blocked in XREADGROUP when the key
+    disappears underneath it — same recoverable condition, different code.
+    """
+    fields = {b"signal_id": b"sig-unblocked", b"symbol": b"A05603"}
+    redis = _MissingGroupRedis(
+        existing_groups=set(),
+        pending={_SIGNAL_STREAM: [(b"1700000000000-5", fields)]},
+        missing_error="UNBLOCKED the stream key no longer exists",
+    )
+    d = _make_daemon(redis)
+    handled: list[dict[bytes, bytes]] = []
+
+    async def handler(data):
+        handled.append(data)
+        d._stop.set()
+
+    d.handle_signal = handler
+    caplog.set_level(logging.WARNING)
+
+    await asyncio.wait_for(d._consume_loop(), timeout=2.0)
+
+    assert redis.created == [
+        (_FILL_STREAM, "futures_monitor"),
+        (_SIGNAL_STREAM, "futures_monitor"),
+    ]
+    assert handled == [fields]
+    assert not any(
+        "monitor_stream_read_error" in record.getMessage() for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_consume_loop_failed_recovery_backs_off_instead_of_spinning(
+    monkeypatch, caplog
+):
+    """A recreate that keeps failing must not turn into a hot loop.
+
+    Both recoveries are still attempted, but the loop falls through to the
+    rate-limited ``monitor_stream_read_error`` log and the 0.5s backoff.
+    """
+    redis = _MissingGroupRedis(existing_groups=set(), pending={}, recover_fails=True)
+    d = _make_daemon(redis)
+    caplog.set_level(logging.WARNING)
+    sleeps: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def record_sleep(seconds=0):
+        sleeps.append(seconds)
+        if len(sleeps) >= 2:
+            await d.stop()
+        await real_sleep(0)
+
+    monkeypatch.setattr("services.futures_monitor.daemon.asyncio.sleep", record_sleep)
+
+    await asyncio.wait_for(d._consume_loop(), timeout=2.0)
+
+    assert sleeps == [0.5, 0.5]
+    # both streams attempted per iteration, despite the first one failing
+    assert redis.created == [
+        (_FILL_STREAM, "futures_monitor"),
+        (_SIGNAL_STREAM, "futures_monitor"),
+        (_FILL_STREAM, "futures_monitor"),
+        (_SIGNAL_STREAM, "futures_monitor"),
+    ]
+    assert any(
+        "event=monitor_stream_read_error" in record.getMessage()
+        for record in caplog.records
+    )
+    assert _recreate_logs(caplog) == []

@@ -111,6 +111,7 @@ from tos.spg import (
 )
 from tos.time import HealthState
 
+from tos_runtime._named_tbd import first_named_tbd_leaf
 from tos_runtime.currentness.vector import DimensionReport
 from tos_runtime.safety._policy_loader import (
     load_yaml_document,
@@ -189,6 +190,23 @@ class _LoadedDocuments:
     activation_path: Path
 
 
+def _reject_tbd_leaves(body: dict[str, Any], path: Path) -> None:
+    """Refuse a document whose raw mapping carries the named-TBD placeholder string
+    ``"TBD"`` anywhere (W-A A-0 round 2). This module hands ``body`` straight to
+    ``model.model_validate`` with no per-field extraction of its own — unlike every
+    ``_require_str``-shaped loader elsewhere in this package,
+    :func:`~tos_runtime._named_tbd.reject_named_tbd` has no individual ``value``/``field``
+    pair here to wrap, so this walks the WHOLE raw tree in one pass instead (the same
+    :func:`~tos_runtime._named_tbd.first_named_tbd_leaf` walker
+    :mod:`tos_runtime.strategy.loader` already applies to a free-form strategy file)."""
+    tbd_leaf = first_named_tbd_leaf(body, "")
+    if tbd_leaf is not None:
+        raise SafetyProfileConfigError(
+            f"{path}: field {tbd_leaf!r} is still the template placeholder 'TBD' "
+            "(named-TBD) — refusing to load until an operator attests a concrete value"
+        )
+
+
 def _validate_record(model: type[Any], raw: dict[str, Any], path: Path) -> Any:
     """``model.model_validate(raw)``, wrapping a pydantic ``ValidationError`` into
     :class:`SafetyProfileConfigError` (fail-closed, never a bare pydantic error leaking
@@ -208,18 +226,21 @@ def _load_documents(
     envelope_body = require_mapping_field(
         envelope_raw, "envelope", envelope_path, SafetyProfileConfigError
     )
+    _reject_tbd_leaves(envelope_body, envelope_path)
     envelope = _validate_record(HardSafetyEnvelope, envelope_body, envelope_path)
 
     profile_raw = load_yaml_document(profile_path, SafetyProfileConfigError)
     profile_body = require_mapping_field(
         profile_raw, "profile", profile_path, SafetyProfileConfigError
     )
+    _reject_tbd_leaves(profile_body, profile_path)
     profile = _validate_record(RuntimeSafetyProfile, profile_body, profile_path)
 
     activation_raw = load_yaml_document(activation_path, SafetyProfileConfigError)
     activation_body = require_mapping_field(
         activation_raw, "activation", activation_path, SafetyProfileConfigError
     )
+    _reject_tbd_leaves(activation_body, activation_path)
     activation = _validate_record(ActivationRecord, activation_body, activation_path)
     not_expired = require_bool_field(
         activation_raw, "not_expired", activation_path, SafetyProfileConfigError

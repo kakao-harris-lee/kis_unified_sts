@@ -51,6 +51,8 @@ import yaml
 from tos.cur import MANDATED_DIMENSION_FLOOR, CurrentnessRevision, DimensionKey
 from tos.cur.state import CurrentnessDimension
 
+from tos_runtime._named_tbd import reject_named_tbd
+
 __all__ = [
     "PendingDimensionConfigError",
     "PendingDimensionSpec",
@@ -262,6 +264,12 @@ def load_pending_currentness_dimensions(path: Path) -> tuple[PendingDimensionSpe
                 f"{path}: {key.value!r}.bound_digest must be a non-blank string "
                 f"(got {bound_digest!r})"
             )
+        reject_named_tbd(
+            bound_digest,
+            field=f"{key.value}.bound_digest",
+            context=str(path),
+            error_cls=PendingDimensionConfigError,
+        )
         if isinstance(restrictive_floor, bool) or not isinstance(
             restrictive_floor, int
         ):
