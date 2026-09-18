@@ -30,16 +30,30 @@ import pytest
 from .example_integrity import (
     CONFIG_DIR,
     assert_required_paths_present,
+    assert_shipped_example_is_a_template,
     assert_shipped_example_still_refuses,
     assert_touchpoints_match,
     call_loader,
 )
 from .example_integrity_registry import (
     CUSTODY_MANIFEST_LOADER,
+    EVIDENCE_RETENTION_LOADER,
     EXAMPLE_LOADERS,
     EXAMPLE_REQUIRED_PATHS,
+    EXAMPLE_TEMPLATE_ONLY,
     EXAMPLE_TOUCHPOINTS,
 )
+
+#: The other three ways a config's own value-leak coverage is asserted, beyond
+#: EXAMPLE_LOADERS/EXAMPLE_TEMPLATE_ONLY — each has its own dedicated test below. Kept as an
+#: explicit set (not just "everything not in the other two") so
+#: test_every_registered_example_has_value_leak_coverage can name a gap precisely instead of
+#: silently passing on one (PR #737 review, HIGH finding: the multi-reader/multi-path-constructor
+#: exclusion comment above EXAMPLE_LOADERS once *claimed* coverage that did not exist).
+_LOADS_SUCCESSFULLY_DEDICATED_TESTS = frozenset(
+    {"custody.manifest", "evidence_retention"}
+)
+_MULTI_READER_DEDICATED_TESTS = frozenset({"safety_activation", "risk"})
 
 
 def _shipped_example_stems() -> list[str]:
@@ -70,6 +84,60 @@ def test_every_shipped_example_is_registered() -> None:
     )
 
 
+def test_every_registered_example_has_value_leak_coverage() -> None:
+    """Every ``EXAMPLE_REQUIRED_PATHS`` entry has EXACTLY ONE value-leak check assigned to it —
+    ``EXAMPLE_LOADERS`` ("still refuses"), ``EXAMPLE_TEMPLATE_ONLY`` ("every leaf is null/[]"), or
+    one of the two small dedicated-test sets below (custody.manifest/evidence_retention's "loads
+    successfully", safety_activation/risk's own multi-reader tests).
+
+    This is the completeness guard PR #737's review found missing: ``EXAMPLE_LOADERS``'s own
+    module comment *claimed* ``safety_envelope``/``safety_profile`` "get their own targeted
+    test", but nothing actually asserted that claim — a filled-in real value passed the whole
+    suite silently. A hardcoded exclusion list is exactly the "레지스트리 + 고정 안 된 위성"
+    class this repo has already hit once; this test is what makes a THIRD such gap go red
+    instead of silently shipping: add a new example (or move one between categories) without
+    updating exactly one of these four sets, and this fails immediately, naming the config —
+    which is exactly how this same test caught ``evidence_retention`` missing a category the
+    FIRST time it ran, before this docstring was even finished.
+    """
+    all_registered = set(EXAMPLE_REQUIRED_PATHS)
+    covered = (
+        set(EXAMPLE_LOADERS)
+        | EXAMPLE_TEMPLATE_ONLY
+        | _LOADS_SUCCESSFULLY_DEDICATED_TESTS
+        | _MULTI_READER_DEDICATED_TESTS
+    )
+    uncovered = all_registered - covered
+    assert not uncovered, (
+        f"{sorted(uncovered)} have NO value-leak check at all — a real, concrete value could "
+        "leak into the shipped example and every test in this module would stay green. Assign "
+        "each to EXAMPLE_LOADERS (if the loader still refuses when called directly), "
+        "EXAMPLE_TEMPLATE_ONLY (if it does not — see that constant's own docstring), or add a "
+        "dedicated test and register it in one of the two sets above test_shipped_example_"
+        "integrity.py's own test_every_registered_example_has_value_leak_coverage."
+    )
+    orphaned = covered - all_registered
+    assert not orphaned, (
+        f"{sorted(orphaned)} are covered by a value-leak check but have no "
+        "EXAMPLE_REQUIRED_PATHS entry — either it no longer ships, or the required-paths "
+        "registry is missing it (see test_every_shipped_example_is_registered)."
+    )
+    categories = [
+        set(EXAMPLE_LOADERS),
+        EXAMPLE_TEMPLATE_ONLY,
+        _LOADS_SUCCESSFULLY_DEDICATED_TESTS,
+        _MULTI_READER_DEDICATED_TESTS,
+    ]
+    for i, first in enumerate(categories):
+        for second in categories[i + 1 :]:
+            overlap = first & second
+            assert not overlap, (
+                f"{sorted(overlap)} appear in more than one value-leak-check category — that "
+                "hides which check (if either) was actually kept up to date; assign each config "
+                "to exactly one category."
+            )
+
+
 @pytest.mark.parametrize("stem", sorted(EXAMPLE_REQUIRED_PATHS))
 def test_required_key_paths_present(stem: str) -> None:
     """The shipped example for ``stem`` carries every key path its real reader(s) require as an
@@ -96,17 +164,44 @@ def test_shipped_example_still_refuses_to_load(stem: str) -> None:
     """Every single-reader shipped example still refuses to load as-shipped — see
     ``example_integrity_registry.EXAMPLE_LOADERS``'s own module comment for why this runs
     ALONGSIDE (never instead of) ``test_required_key_paths_present``, and for which configs are
-    deliberately excluded here (multi-reader, multi-path-constructor, or optional-file configs
-    each get their own targeted test below)."""
+    deliberately excluded here (each has its own value-leak check instead — see
+    ``test_every_registered_example_has_value_leak_coverage``'s own docstring for the full map).
+    """
     assert_shipped_example_still_refuses(stem, EXAMPLE_LOADERS[stem])
 
 
+@pytest.mark.parametrize("stem", sorted(EXAMPLE_TEMPLATE_ONLY))
+def test_shipped_example_is_a_template(stem: str) -> None:
+    """Every leaf of these shipped examples is ``null``/``[]`` — see
+    ``example_integrity_registry.EXAMPLE_TEMPLATE_ONLY``'s own docstring for why "still refuses
+    to load" cannot substitute for this here (PR #737 review, HIGH finding).
+
+    Mutation check (run by hand — see the A-0b HIGH-remediation report): replacing
+    ``safety_envelope.example.yaml`` wholesale with concrete-looking values (a real
+    ``envelope_id``, a non-empty ``permitted_scope``, etc.) turned this red; restoring it turned
+    it green again, with the rest of the suite unaffected either way (confirming the earlier gap:
+    that mutation left every OTHER test in this module green)."""
+    assert_shipped_example_is_a_template(stem)
+
+
 def test_custody_manifest_example_loads_successfully() -> None:
-    """``custody.manifest.example.yaml`` is the one shipped example confirmed to be a genuinely
-    loadable instance already (every leaf ``CustodyManifest.load`` requires carries a concrete
-    illustrative value; only the optional ``expected_sha256`` pins are ``null``) — see
+    """``custody.manifest.example.yaml`` is confirmed to be a genuinely loadable instance already
+    (every leaf ``CustodyManifest.load`` requires carries a concrete illustrative value; only the
+    optional ``expected_sha256`` pins are ``null``) — see
     ``example_integrity_registry.CUSTODY_MANIFEST_LOADER``'s own comment."""
     call_loader(CUSTODY_MANIFEST_LOADER, CONFIG_DIR / "custody.manifest.example.yaml")
+
+
+def test_evidence_retention_example_loads_successfully() -> None:
+    """``evidence_retention.example.yaml`` also loads successfully as-shipped — its own header
+    comment states a per-class retention floor is legitimately, PERMANENTLY nullable, so there is
+    no "still refuses" behavior to assert; see
+    ``example_integrity_registry.EVIDENCE_RETENTION_LOADER``'s own comment for the full reasoning
+    (and for why ``test_every_registered_example_has_value_leak_coverage`` caught this file
+    missing a category before this test existed)."""
+    call_loader(
+        EVIDENCE_RETENTION_LOADER, CONFIG_DIR / "evidence_retention.example.yaml"
+    )
 
 
 def test_safety_activation_still_refuses_on_both_independent_readers() -> None:

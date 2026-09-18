@@ -58,6 +58,7 @@ from tos_runtime.compose._preconditions import load_coordinator_preconditions_co
 from tos_runtime.compose._risk_attestations import load_risk_attestations
 from tos_runtime.currentness.config import load_currentness_config
 from tos_runtime.custody.file_custody import CustodyManifest
+from tos_runtime.evidence.retention import RetentionPolicy
 from tos_runtime.marketfeed.policy import load_critical_input_policy
 from tos_runtime.nontrade.config import load_required_legs_config
 from tos_runtime.posttrade.config import load_finality_config
@@ -66,6 +67,7 @@ from tos_runtime.release.config import load_release_config
 from tos_runtime.safety.deviation import _load_deviations
 from tos_runtime.safety.incident import _load_incidents
 from tos_runtime.safety.monitoring import _load_coverage
+from tos_runtime.strategy.bindings import load_strategy_bindings
 from tos_runtime.time.config import load_time_config
 from tos_runtime.transport.kis_mock.config import load_kis_mock_transport_config
 from tos_runtime.transport.kis_quote.config import load_kis_quote_transport_config
@@ -553,12 +555,32 @@ EXAMPLE_TOUCHPOINTS: dict[str, frozenset[str]] = {
 # ``CanonicalizationScheme``) are given plausible dummy values here — those
 # extra args are never sourced from the example file itself, and every one of
 # these loaders is confirmed (by reading its source) to validate the
-# example's own null leaves BEFORE it ever touches them. Configs with a
-# multi-reader schema (``safety_activation``, ``risk``), a multi-path
-# constructor (``safety_envelope``/``safety_profile``/``safety_activation``
-# via ``tos_runtime.safety.profile._load_documents``), or a strictly-optional
-# file (``strategy_bindings``) get their own targeted test instead — see
-# ``test_shipped_example_integrity.py``.
+# example's own null leaves BEFORE it ever touches them.
+#
+# Deliberately excluded, each covered by its OWN targeted assertion instead —
+# see test_shipped_example_integrity.py for exactly which test covers which:
+#
+# * ``safety_activation``, ``risk`` — multi-reader schemas (this module's own
+#   docstring above); both readers of each are exercised explicitly.
+# * ``safety_envelope``, ``safety_profile`` — the two OTHER paths
+#   ``tos_runtime.safety.profile._load_documents`` takes alongside
+#   ``safety_activation``. **NOT** "still refuses" (PR #737 review, HIGH
+#   finding): ``HardSafetyEnvelope``/``RuntimeSafetyProfile`` have every field
+#   ``X | None = None`` (``tos/src/tos/spg/records.py``), so
+#   ``model.model_validate`` accepts a filled-in mapping exactly as readily as
+#   an all-``null`` one — nothing on that path ever raises because of THEIR
+#   leaves (only ``activation``'s ``not_expired`` ever raises, which stays
+#   green regardless of what ``safety_envelope``/``safety_profile`` contain).
+#   Covered instead by ``example_integrity.assert_shipped_example_is_a_template``
+#   — asserts every leaf is ``null``/``[]`` directly, independent of whether
+#   the loader raises at all.
+#
+# ``strategy_bindings`` is a SIBLING file that is itself optional in
+# production (its own module docstring — a compose root with no
+# config-sourced strategy never needs it), but ``load_strategy_bindings``
+# still has a real per-field null check when called directly on the shipped
+# example (it raises on ``config_binding_version`` first), so it stays IN
+# ``EXAMPLE_LOADERS`` below like every other single-reader config.
 EXAMPLE_LOADERS: dict[str, LoaderSpec] = {
     "authority": (load_authority_config, {}),
     "backtest_calibration": (load_backtest_calibration_config, {}),
@@ -610,13 +632,35 @@ EXAMPLE_LOADERS: dict[str, LoaderSpec] = {
     "risk_attestations": (load_risk_attestations, {}),
     "safety_deviations": (_load_deviations, {}),
     "safety_incidents": (_load_incidents, {}),
+    "strategy_bindings": (load_strategy_bindings, {}),
     "time": (load_time_config, {}),
 }
 
-#: ``custody.manifest.example.yaml`` is the one shipped example confirmed to
-#: LOAD SUCCESSFULLY as-is (``tos_runtime.custody.file_custody.CustodyManifest
-#: .load`` — every leaf ``load`` actually requires already carries a concrete
-#: illustrative value; only the optional ``expected_sha256`` pins are
-#: ``null``) — deliberately excluded from ``EXAMPLE_LOADERS`` (which asserts
-#: "still refuses"); its own dedicated test asserts the opposite.
+#: Two shipped examples confirmed to LOAD SUCCESSFULLY as-is — deliberately excluded from
+#: ``EXAMPLE_LOADERS`` (which asserts "still refuses"); each gets its own dedicated test in
+#: ``test_shipped_example_integrity.py`` asserting the opposite (found by
+#: ``test_every_registered_example_has_value_leak_coverage`` when this registry initially missed
+#: ``evidence_retention`` — the exact "silently uncovered" shape PR #737's review caught for
+#: ``safety_envelope``/``safety_profile``, now caught mechanically instead of by hand a second
+#: time):
+#:
+#: * ``custody.manifest`` — ``tos_runtime.custody.file_custody.CustodyManifest.load``: every leaf
+#:   ``load`` actually requires already carries a concrete illustrative value; only the optional
+#:   ``expected_sha256`` pins are ``null``.
+#: * ``evidence_retention`` — ``tos_runtime.evidence.retention.RetentionPolicy.load``: the
+#:   example's own header comment states a per-class retention floor is legitimately,
+#:   PERMANENTLY nullable (the kernel predicate treats ``null`` as "no configured minimum",
+#:   refusing rather than admitting vacuously) — unlike every named-TBD template elsewhere in
+#:   this repo, ``null`` here is never something an operator MUST eventually replace, so there is
+#:   no "still refuses" behavior to assert at all; the loader only requires the
+#:   ``minimum_days_by_class`` KEY to be present (already covered by
+#:   ``EXAMPLE_REQUIRED_PATHS``) and succeeds regardless of what its values are.
 CUSTODY_MANIFEST_LOADER: LoaderSpec = (CustodyManifest.load, {})
+EVIDENCE_RETENTION_LOADER: LoaderSpec = (RetentionPolicy.load, {})
+
+#: Configs whose loader can NEVER be relied on to refuse a filled-in example (PR #737 review,
+#: HIGH finding — see this module's own comment above ``EXAMPLE_LOADERS`` for why: both kernel
+#: records ``tos_runtime.safety.profile._load_documents`` validates them against have every field
+#: optional). Checked instead via ``example_integrity.assert_shipped_example_is_a_template`` —
+#: every leaf must be ``null``/``[]``, independent of whether the loader raises at all.
+EXAMPLE_TEMPLATE_ONLY: frozenset[str] = frozenset({"safety_envelope", "safety_profile"})

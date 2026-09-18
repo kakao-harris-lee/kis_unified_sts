@@ -15,11 +15,24 @@ the key a SECOND, independent reader added later (``tos_runtime.venue.activation
 for ``marketfeed.example.yaml``'s missing ``intake_kind`` (commit ``47cf1671``), which is why this
 module makes the check itself, not just one more instance fix.
 
-Two independent assertions close this, together:
+Three independent assertions close this, together:
 
 * :func:`assert_required_paths_present` — the document declared in ``config/EXAMPLE_NAME
   .example.yaml`` must carry every key path any of its real readers require, as an EXPLICIT key
   (value may be ``null`` — that is the correct named-TBD template state) at every level.
+* :func:`assert_shipped_example_still_refuses` — the loader must still refuse to load the shipped
+  document (a value-leak detector — see its own docstring), for readers whose loader has at least
+  one per-field null/TBD check of its own to fail on.
+* :func:`assert_shipped_example_is_a_template` — every leaf of the document is ``null``/``[]``
+  (a DIFFERENT value-leak detector, for a reader — ``tos_runtime.safety.profile._load_documents``'s
+  ``HardSafetyEnvelope``/``RuntimeSafetyProfile`` halves — whose kernel record has every field
+  optional, so nothing in that loader ever raises on a filled-in leaf; see that function's own
+  docstring for why "does it still refuse" cannot substitute here. A PR #737 review caught this
+  exact gap: the module comment above ``EXAMPLE_LOADERS`` in ``example_integrity_registry.py``
+  once claimed ``safety_envelope``/``safety_profile`` "get their own targeted test", but the only
+  test touching them (``test_safety_activation_still_refuses_on_both_independent_readers``) only
+  ever raises via ``activation``'s ``not_expired`` — replacing either file's content wholesale
+  with concrete-looking values left the whole suite green.
 * :func:`assert_touchpoints_match` — a live grep of ``tos_runtime`` for the config's own deployed
   filename literal (``f'"{stem}.yaml"'``) must match a RECORDED set of touch-point files exactly.
   A new file referencing that literal (a new wiring call site, or a genuinely new independent
@@ -138,6 +151,62 @@ def assert_shipped_example_still_refuses(stem: str, spec: LoaderSpec) -> None:
         f"{stem}.example.yaml loaded successfully via {loader.__module__}.{loader.__qualname__} "
         f"instead of refusing (got {result!r}) — this file is supposed to ship as an all-null "
         "template; a concrete value appears to have leaked into it."
+    )
+
+
+def _leaf_values(node: Any) -> list[Any]:
+    """Flatten ``node`` into its leaf values — recursing through mappings and non-empty lists,
+    but treating an EMPTY list as itself a leaf (the "explicit empty list" named-TBD convention
+    this codebase's loaders already accept as a valid unfilled/nominal-empty state, e.g.
+    ``scope: []``/``members: []``)."""
+    if isinstance(node, dict):
+        leaves: list[Any] = []
+        for value in node.values():
+            leaves.extend(_leaf_values(value))
+        return leaves
+    if isinstance(node, list):
+        if not node:
+            return [node]
+        leaves = []
+        for item in node:
+            leaves.extend(_leaf_values(item))
+        return leaves
+    return [node]
+
+
+def is_template_document(document: Any) -> bool:
+    """``True`` iff every leaf of ``document`` (see :func:`_leaf_values`) is ``None`` or an empty
+    list — i.e. the document is STILL the all-placeholder template, never a concrete instance.
+
+    Exists for readers whose loader has NO per-field null/TBD check of its own to fail on (e.g.
+    ``tos_runtime.safety.profile._load_documents``'s ``HardSafetyEnvelope``/``RuntimeSafetyProfile``
+    halves — every field on both kernel records is ``X | None = None``, so
+    ``model_validate`` accepts an all-``null`` mapping AND an all-filled-in one identically;
+    nothing in that path ever raises on the envelope/profile leaves themselves). For those,
+    :func:`assert_shipped_example_still_refuses` cannot detect a real value leaking into the
+    shipped example — there is nothing left in the loader to refuse it — so this checks the
+    document directly instead."""
+    return all(leaf is None or leaf == [] for leaf in _leaf_values(document))
+
+
+def assert_shipped_example_is_a_template(stem: str) -> None:
+    """Assert every leaf of ``config/{stem}.example.yaml`` is ``None``/``[]`` (see
+    :func:`is_template_document`).
+
+    Use this — INSTEAD OF, never in addition to expecting a raise from,
+    :func:`assert_shipped_example_still_refuses` — for a config whose loader validates via a
+    kernel record with universally-optional fields (module docstring's own note): such a loader
+    genuinely never refuses a filled-in example, so "does it still refuse" cannot catch a real
+    value leaking in; asserting the document's own leaves directly is the only check left that
+    can.
+    """
+    document = load_example_document(stem)
+    assert is_template_document(document), (
+        f"{stem}.example.yaml has at least one non-null, non-empty leaf — its loader "
+        "(tos_runtime.safety.profile._load_documents) validates this half via a kernel record "
+        "whose fields are ALL optional (module docstring), so it never raises on a filled-in "
+        "value here; a real, concrete value appears to have leaked into a file that is supposed "
+        "to ship as an all-null/empty template."
     )
 
 
