@@ -111,6 +111,48 @@ green 을 만들자고 지우면 **나중에 `arg-type` 을 켤 때 필요한 �
 1:1로 귀속하는 분해는 혼합 코드(`# type: ignore[call-arg, arg-type]`)와 캐스케이드가
 섞여 신뢰할 수 없다 — **집합 차만 쓴다.**
 
+### 2.1 죽은 억제는 두 부류이고 `unused-ignore` 는 하나만 잡는다
+
+1단계 재심(#746 `review-746b`)의 LOW 지적에서 나온 것이다. **이 절의 53건과 §5 의
+검증 규약 둘 다에 영향이 있으므로 여기 못박는다.**
+
+| 부류 | mypy 가 내는 것 | 탐지기 |
+|---|---|---|
+| 아무것도 억제하지 않음 | `unused-ignore` 에러 | `unused-ignore` 켜기 |
+| **코드 라벨이 실제 에러와 다름** | 실제 에러 **그대로** + `note: Error code "X" not covered by "type: ignore[Y]" comment` | **그 note 를 세는 것뿐** |
+
+두 번째 부류는 **`unused-ignore` 로 절대 안 잡힌다.** 실측 예:
+
+```
+tos/tests/sci/test_sci_truthy_sentinel.py:48: error: "object" has no attribute "name"  [attr-defined]
+tos/tests/sci/test_sci_truthy_sentinel.py:48: note: Error code "attr-defined" not covered by "type: ignore[index]" comment
+```
+
+**이 아크의 발단이 바로 이 부류였다** — #737 `test_adapter.py` 의 죽은
+`ignore[attr-defined]` 10곳(실제 에러는 `assignment`), 그리고 1단계에서 고친
+`test_slice_gaps.py:192`(`[union-attr]` → `[attr-defined]`).
+
+따라서 **「`unused-ignore` 0 = 모든 억제가 살아 있다」로 읽으면 안 된다.** 저자가
+1단계 PR 에 그렇게 썼다가 정정했다. 두 탐지기를 **둘 다** 돌려야 한다:
+
+```bash
+mypy <tree> --ignore-missing-imports --no-error-summary | grep -c 'unused-ignore'
+mypy <tree> --ignore-missing-imports --no-error-summary | grep -c 'not covered by'
+```
+
+**1단계 착지 시점 잔존 4건 — 전부 2단계 코드다:**
+
+| 위치 | 라벨 | 실제 코드 |
+|---|---|---|
+| `tos/tests/sci/test_sci_truthy_sentinel.py:48` | `index` | `attr-defined` |
+| `tos/tests/afg/test_afg_void_canaries.py:149` | `arg-type` | `return-value` |
+| `tos/tests/afg/test_afg_truthy_sentinel.py:96` | `arg-type` | `return-value` |
+| `tos/runtime/tests/engine/test_replay_stage.py:58` | `operator` | `no-any-return` |
+
+넷 다 실제 코드가 `attr-defined`/`return-value`/`no-any-return` — **2단계가 켜는 바로
+그 셋**이다. 2단계에서 반드시 마주치므로 **별도 PR을 만들지 않고 2단계에서 처리한다.**
+라벨만 고치면 되는 것이 아니라 **실제 에러가 드러나므로 고쳐야 한다**는 뜻이다.
+
 ## 3. 계층과 순서
 
 ### 3.1 1단계 — 한 PR (113건 / 약 46파일)
@@ -280,7 +322,8 @@ RED(위반 14 = 13행 + 파생 D0-1)로 떨어졌다.
      | sort -u | awk -F: -v f="$f" '$1 == f'
    ```
 
-   밀렸으면 **각 앵커를 현재 파일에서 다시 유도**한다. 일괄 오프셋 가산은 틀린다 —
+   밀렸으면 **각 앵커를 현재 파일에서 다시 유도**한다. **GREEN 은 앵커가 옳다는 뜻이
+   아니다** — 아래를 읽어라. 일괄 오프셋 가산은 틀린다 —
    삽입 지점이 여러 곳이면 앵커마다 이동량이 다르다.
 
 **CSV 를 파이썬으로 다시 쓸 때의 함정.** `csv.writer` 의 기본 `lineterminator` 는
@@ -288,6 +331,24 @@ RED(위반 14 = 13행 + 파생 D0-1)로 떨어졌다.
 재기입**된다. 앵커 값은 맞는데
 diff 가 전 파일로 부풀고 blob 이 바뀐다. 조치 뒤 `git diff --stat` 의 변경 줄 수가
 의도한 수와 같은지 확인하라 — 1단계에서 실제로 발생했고 diff 를 보고 되돌렸다.
+
+**GREEN 의 의미를 정확히 못박는다 — 「앵커가 옳다」가 아니다.**
+`tools/tos_completion_status.py:557 _resolve_path_line_basis` 가 요구하는 것은
+**그 줄에 `evidence_id` 리터럴이 있을 것** 하나뿐이다. 같은 행의 `surface_ref`(pytest
+nodeid)와 그 줄의 대응은 **검사하지 않는다.** 실측: `test_spg_replay_substrate.py` 는
+`SPG-EV-012` 표지 줄이 **13개**인데 CSV 앵커는 **11개**다 — 즉 **11개를 서로 뒤바꿔
+놓아도 GREEN 이다.**
+
+읽는 법은 이렇다:
+
+| 검사기가 잡는 것 | 잡지 못하는 것 |
+|---|---|
+| 앵커가 표지 없는 줄로 밀림 (= 줄 수 변화의 전형) | 앵커가 **같은 파일의 다른 표지 줄**을 가리킴 |
+
+1단계가 RED 로 걸린 것은 왼쪽 부류였다(+3 이 전부 표지 없는 줄로 떨어졌다). 하지만
+**일괄 오프셋 가산으로 「고치면」 오른쪽 부류를 만들어 GREEN 으로 통과시킬 수 있다.**
+그래서 앵커는 각각 다시 유도해야 하고, **GREEN 을 조치의 충분조건으로 쓰지 않는다.**
+이 한계는 #746 재심(`review-746b`)이 검사기 코드를 읽고 지적한 것이다.
 
 ## 6. 운영자 확인 사항 — **전건 처분됨 (2026-09-18)**
 
