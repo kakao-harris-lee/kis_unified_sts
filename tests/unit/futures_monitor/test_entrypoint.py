@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 import pytest
@@ -66,3 +67,39 @@ def test_config_loads():
 
     cfg = ConfigLoader.load("futures_monitor.yaml").get("futures_monitor", {})
     assert "telegram" in cfg
+
+
+@pytest.mark.parametrize(
+    ("log_level", "expected"),
+    [
+        # The level an operator actually reaches for.
+        ("DEBUG", logging.DEBUG),
+        # A typo must degrade to INFO, not stop the daemon from starting.
+        ("bogus", logging.INFO),
+    ],
+)
+def test_main_configures_logging_before_it_starts_the_daemon(
+    log_level, expected, monkeypatch, restore_root_log_level
+):
+    """``main()`` must configure logging, and must do it before dispatching.
+
+    Calling ``_setup_logging()`` directly proves nothing about the entrypoint:
+    it is a pass-through whose whole job is being called from ``main()``, and
+    the level-name matrix it delegates to is already covered by
+    tests/unit/observability/test_logging_setup.py. Reading the effective root
+    level from inside the daemon seam pins both halves at once — delete the
+    call from ``main()`` and this fails, which is the regression worth having.
+    """
+    monkeypatch.setenv("LOG_LEVEL", log_level)
+    # A level main() has to move, so an unconfigured root cannot pass by luck.
+    restore_root_log_level.setLevel(logging.WARNING)
+    observed = []
+
+    async def _fake_build_and_run():
+        observed.append(logging.getLogger().level)
+        return 0
+
+    monkeypatch.setattr(m, "_build_and_run", _fake_build_and_run)
+
+    assert m.main() == 0
+    assert observed == [expected]

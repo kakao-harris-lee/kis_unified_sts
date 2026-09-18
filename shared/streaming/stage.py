@@ -139,12 +139,12 @@ async def recover_missing_consumer_group(
         )
     elif ensured is ConsumerGroupEnsure.EXISTED:
         # Not an incident: the caller swept a healthy sibling stream, so this
-        # stays below the operator's log. It is DEBUG and therefore unreachable
-        # in the deployed monitors — services/futures_monitor/main.py:144 and
-        # services/stock_monitor/main.py:134 both hardcode
-        # basicConfig(level=logging.INFO) and read no LOG_LEVEL, so surfacing
-        # this line means editing main.py and rebuilding the image. What the
-        # daemons actually act on is the returned outcome, not this record.
+        # stays below the operator's log at the shipped LOG_LEVEL=INFO. Both
+        # monitor daemons now honour LOG_LEVEL (their _setup_logging ->
+        # shared.observability.logging_setup.configure_logging), so surfacing
+        # this line is a compose env change, not a code edit and image rebuild.
+        # What the daemons actually act on is the returned outcome, not this
+        # record.
         logger.debug(
             format_audit_kv(
                 event="consumer_group_already_present",
