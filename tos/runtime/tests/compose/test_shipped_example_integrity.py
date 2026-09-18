@@ -100,7 +100,17 @@ def test_every_registered_example_has_value_leak_coverage() -> None:
     ``EXAMPLE_LOADERS`` and adding its name to one of those sets instead: still green. Both
     categories are now DERIVED (``frozenset(LOADS_SUCCESSFULLY_LOADERS)`` /
     ``frozenset(MULTI_READER_CHECKS)``) from the SAME dicts the two parametrized tests below
-    actually call, so a stem cannot be "covered" here without also being wired into a real check.
+    actually call, so a stem cannot be "covered" here without also being wired to a callable
+    those tests invoke.
+
+    Read that last clause exactly as narrow as it is: what this test guarantees is that every
+    registered example is ASSIGNED somewhere and that the assignment is a callable something
+    actually runs — NOT that the callable asserts anything. Round 3's review registered the
+    remaining hole as a KNOWN LIMITATION on ``LOADS_SUCCESSFULLY_LOADERS`` (a ``lambda: None``
+    entry counts as coverage); closing it would take a meta-check on assert-bearing-ness, i.e. a
+    new verification harness, which the review convention §5 forbids. Do not widen this docstring
+    back into "cannot be covered without a REAL check" — that sentence was false, and writing a
+    claim wider than the mechanism is the failure this whole arc kept repeating.
     """
     all_registered = set(EXAMPLE_REQUIRED_PATHS)
     covered = (
