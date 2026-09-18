@@ -30,10 +30,11 @@ cron은 존재하지 않는다. 순서를 지키는 장치는 **사람과 이 �
 
 > **Rollout order (round #4 review LOW — first genuine v1->v2 bump, so this module carried no
 > prior worked example of the deploy-time ordering it requires).**
-> `ensure_schema_current` refuses BOTH directions on open (behind OR ahead of the running code's
-> expected version), so a `RCL_SCHEMA_VERSION` bump is not safe to roll out in an arbitrary order
-> against a running store. The required sequence: (1) fully stop every process still running the
-> OLD (v1-expecting) code against this store file — a still-live v1 process would itself get
+> `ensure_schema_current` refuses BOTH directions on open (module docstring's points 3/4: behind
+> OR ahead of the running code's expected version), so a `RCL_SCHEMA_VERSION` bump is not safe to
+> roll out in an arbitrary order against a running store. The required sequence: (1) fully stop
+> every process still running the OLD (v1-expecting) code against this store file — a still-live
+> v1 process would itself get
 > refused the instant `apply_migrations` stamps the file at v2 out from under it; (2) run
 > `apply_migrations(path, "rcl")` to bring the file to v2; (3) start the NEW (v2-expecting) code.
 > Running `apply_migrations` first, while a v1 process is still up, does not corrupt anything —
@@ -149,9 +150,14 @@ exit code `0`. `--store`를 생략하면 이 줄이 등록된 스토어 수만�
 이미 backup/restore 경로가 있다 — `backup-set`/`restore-drill` 서브커맨드
 (`tos_runtime.operations.backup_set.backup_set`/`restore_set`). **RCL 파일 하나만 복사해두는
 것은 부족하다** — RCL의 `entries`는 evidence store의 seq를 참조하므로, 되돌릴 때는 evidence/
-RCL/inbox를 **같은 세대(generation)로 함께** 되돌려야 정합이 맞는다. `backup_set`도 이를
-반영해 `evidence`/`rcl`/`inbox` 세 파일이 모두 존재하지 않으면 거부한다
-(`backup_set.py:420-425`).
+RCL/inbox를 **같은 세대(generation)로 함께** 되돌려야 정합이 맞는다.
+
+durable set은 실제로는 **다섯 파일**이다 — `evidence`/`rcl`/`inbox`(필수 3) +
+`composite_state`/`marketfeed`(선택 2, `_OPTIONAL_FILES`, `backup_set.py:128`). `backup_set`은
+`file_specs` 딕셔너리(`backup_set.py:421-427`)에 다섯을 전부 등록해두고, 필수 3 중 하나라도
+파일이 없으면 거부하며(`backup_set.py:428-435`), 선택 2는 없으면 조용히 건너뛰고 **있으면
+백업에 포함**한다. 즉 실제 배포에서 `composite_state.sqlite3`/`marketfeed.sqlite3`가 존재하는
+데이터 디렉터리라면, `backup-set`은 그 둘도 같은 세대로 함께 백업한다.
 
 실제로 evidence+rcl(v1)+inbox 셋을 만들고 백업 → 마이그레이션 → 복원까지 돌린 결과(스크립트는
 §6):
@@ -190,9 +196,11 @@ options:
 ```
 
 즉 마이그레이션 전에 `backup-set --data-dir <data_dir> --dest <backup_root> --generation
-<N>`을 돌려두면, 마이그레이션이 잘못됐을 때 `restore-drill`로 **마이그레이션 이전 세대 전체**
-(evidence+rcl+inbox, 전부 v1 시절 상태)를 별도 디렉터리에 복원할 수 있다. 위 실측에서
-`gen1`을 복원한 뒤 RCL 파일의 `schema_version`이 다시 `1`로 돌아온 것이 그 증거다.
+<N>`을 돌려두면, 마이그레이션이 잘못됐을 때 `restore-drill`로 **마이그레이션 이전 세대 전체**를
+별도 디렉터리에 복원할 수 있다. 위 실측은 필수 3파일(evidence+rcl+inbox, 전부 v1 시절 상태)만
+갖춘 데이터 디렉터리로 돌렸다 — `composite_state`/`marketfeed`가 함께 있었다면 그 둘도 같은
+세대로 복원됐을 것이다(§4 위 문단, `restore_set`은 매니페스트의 `files` 전부를 순회한다). 위
+실측에서 `gen1`을 복원한 뒤 RCL 파일의 `schema_version`이 다시 `1`로 돌아온 것이 그 증거다.
 
 CLI 레벨에서는:
 
@@ -243,8 +251,10 @@ options:
 **즉 "마이그레이션을 롤백한다"는 개념 자체가 이 코드베이스에 없다.** 대신 있는 것은 §4의
 백업/복원이다 — 마이그레이션이 잘못됐다고 판단되면:
 
-1. `restore-drill`로 마이그레이션 **직전 세대**(evidence+rcl+inbox 전체)를 별도 디렉터리에
-   복원한다.
+1. `restore-drill`로 마이그레이션 **직전 세대**를 별도 디렉터리에 복원한다. `restore_set`은
+   백업 매니페스트의 `files`에 실린 항목을 **전부** 순회하며 복원한다(`backup_set.py:538`) —
+   최소 evidence+rcl+inbox, 그리고 그 세대에 `composite_state`/`marketfeed`가 백업돼 있었다면
+   **그것도 함께** 되돌아간다(§4). "RCL만 되돌린다"는 선택지는 없다 — 세대 전체가 단위다.
 2. 복원된 디렉터리를 새 `--data-dir`로 삼아 **구버전 코드**를 그 위에서 기동한다(v1 상태로
    되돌아갔으므로 신버전 코드는 다시 BEHIND로 거부된다 — v1 코드가 필요하다).
 3. 원래 `--data-dir`의 마이그레이션된 파일은 그대로 두거나(증거 보존) 폐기한다 — 이 판단은
@@ -253,29 +263,262 @@ options:
 **있지도 않은 롤백을 있는 것처럼 적지 않는다.** 사전 백업이 유일한 안전망이다 — §4의 절차를
 마이그레이션 전에 반드시 거쳐야 하는 이유가 이것이다.
 
-## 6. 재현 스크립트 (실제로 실행한 것)
+## 6. 재현 스크립트 (실제로 실행한 것 — 그대로 복사해서 돌아간다)
 
-이 문서의 모든 출력은 아래 세 스크립트를 이 저장소의 워크트리(`kis_unified_sts-b2`)에서,
-`PYTHONPATH`로 `tos/src`+`tos/runtime/src`+저장소 루트를 얹고(별도 `pip install -e` 없이),
-메인 체크아웃의 `tos/.venv/bin/python`(의존성만 재사용, editable 설치 경로는 실제로 이
-워크트리를 가리키는지 import 결과로 직접 확인함)으로 실행해 얻었다.
+아래 세 스크립트가 이 문서 §2~§4의 모든 출력을 만들었다. 각자 `tempfile.mkdtemp`로 자기
+작업 디렉터리를 만들고 끝에 정리하므로 인자 없이 그대로 실행할 수 있다. 실행 환경은
+공통이다 — 이 저장소의 워크트리에서, `PYTHONPATH`로 `tos/src`+`tos/runtime/src`+저장소
+루트를 얹고(별도 `pip install -e` 없이), 메인 체크아웃의 `tos/.venv/bin/python`(의존성만
+재사용 — editable 설치 경로가 실제로 이 워크트리를 가리키는지는 import 결과로 직접 확인함)
+으로 실행한다:
 
 ```bash
 export PYTHONPATH=<worktree>/tos/src:<worktree>/tos/runtime/src:<worktree>
 <main-repo>/tos/.venv/bin/python <script>.py
 ```
 
-- **§2~§3 (`--help` + 양방향 거부 + 승격)**: `SqliteCommitLog` 생성자로 v1 파일을 직접 열어
-  BEHIND를, `ensure_schema_current(..., schema_version=1)` 직접 호출로 AHEAD를 재현하고,
-  `apply_migrations(path, "rcl")`로 실제 승격을 수행 —
-  `tos/runtime/tests/operations/test_schema_ledger.py:368-433`과 같은 v1 baseline 구성 방식.
-- **§2 (CLI 종단 `migrate`)**: `tos_runtime.compose.cli.main(["migrate", "--data-dir", ...,
-  "--store", "rcl"])`을 실제로 호출 — `DurableSetPaths.from_data_dir` 경로 파생까지 포함한
-  진짜 서브커맨드 디스패치.
-- **§4 (백업/복원)**: `SqliteEvidenceStore`/`SqliteEventInbox`로 evidence/inbox를 만들고 RCL은
-  v1 baseline으로 직접 구성한 뒤 `backup_set(paths, backup_dir, generation=1)` →
-  `apply_migrations(paths.rcl, "rcl")` → `restore_set(backup_dir / "gen1.set.manifest.json",
-  restore_dest, key_provider=...)`을 실제로 호출.
+### 6.1 양방향 거부 + v1→v2 승격 (§3 출력의 출처)
+
+`tos/runtime/tests/operations/test_schema_ledger.py:368-433`
+(`test_rcl_v1_data_dir_promotes_to_v2_preserving_existing_rows`)와 같은 v1 baseline 구성
+방식을 그대로 쓴다.
+
+```python
+"""Reproduction script for the RCL v1->v2 migration runbook.
+Every step here is real: real SqliteCommitLog construction, real apply_migrations,
+real ensure_schema_current. No fabricated output.
+"""
+import shutil
+import sqlite3
+import tempfile
+from pathlib import Path
+
+from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.operations.schema_ledger import SchemaVersionRefused, ensure_schema_current
+from tos_runtime.operations.schema_migrations import RCL_MIGRATIONS, apply_migrations, schema_version
+from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.schema import RCL_SCHEMA_VERSION
+
+
+class FixedKeyProvider:
+    """Same test double as tos/runtime/tests/engine/conftest.py::FixedKeyProvider (inlined here
+    to avoid fighting the tests package's relative-import layout in a standalone script)."""
+
+    def __init__(self, key_generation: int = 1, key: bytes = b"engine-test-fixed-key") -> None:
+        self._key_generation = key_generation
+        self._key = key
+
+    def current(self) -> tuple[int, bytes]:
+        return (self._key_generation, self._key)
+
+    def generations(self) -> tuple[int, ...]:
+        return (self._key_generation,)
+
+
+tmp = Path(tempfile.mkdtemp(prefix="rcl-migration-runbook-"))
+print(f"### workdir: {tmp}")
+
+# ---- Step 1: build a genuine pre-existing v1 RCL file (baseline statements, no shortcuts) ----
+rcl_path = tmp / "rcl.sqlite3"
+baseline = RCL_MIGRATIONS[0]
+assert baseline.version == 1
+conn = sqlite3.connect(str(rcl_path))
+for stmt in baseline.statements:
+    conn.execute(stmt)
+conn.execute(
+    "INSERT INTO reservations (reservation_id, state, last_seq, scope_account, "
+    "scope_instrument) VALUES (?, ?, ?, ?, ?)",
+    ("resv-runbook-demo", "POTENTIALLY_LIVE", 3, "acct-9", "K200F"),
+)
+conn.execute("PRAGMA user_version = 1")
+conn.commit()
+conn.close()
+print(f"### step1: created v1 rcl.sqlite3 at {rcl_path}, schema_version={schema_version(rcl_path)}")
+
+# ---- Step 2: NEW code (current, expects v2) opens the un-migrated v1 file directly ----
+evidence_path = tmp / "evidence.sqlite3"
+evidence = SqliteEvidenceStore(evidence_path, key_provider=FixedKeyProvider())
+print("### step2: current code (RCL_SCHEMA_VERSION="
+      f"{RCL_SCHEMA_VERSION}) opens the v1 file WITHOUT migrating first:")
+try:
+    SqliteCommitLog(rcl_path, evidence_port=evidence)
+    print("### step2: UNEXPECTED — did not refuse")
+except SchemaVersionRefused as exc:
+    print(f"### step2 SchemaVersionRefused: {exc}")
+evidence.close()
+
+# ---- Step 3: run the real migrate path (apply_migrations) ----
+print("### step3: apply_migrations(rcl_path, 'rcl')")
+apply_migrations(rcl_path, "rcl")
+print(f"### step3: schema_version now = {schema_version(rcl_path)}")
+
+conn = sqlite3.connect(str(rcl_path))
+row = conn.execute(
+    "SELECT reservation_id, state, last_seq, scope_account, scope_instrument, "
+    "committed_vector_json FROM reservations WHERE reservation_id = ?",
+    ("resv-runbook-demo",),
+).fetchone()
+conn.close()
+print(f"### step3: preserved row = {row}")
+
+# ---- Step 4: OLD code (pre-K4, expected v1) opens the now-migrated v2 file ----
+# Real ensure_schema_current, unchanged since before K-4 (git diff 982dea35^..982dea35 on
+# schema_ledger.py is empty) -- only the schema_version ARGUMENT differs between old/new code,
+# which is exactly what this call pins to reproduce the pre-K4 constant (RCL_SCHEMA_VERSION was
+# 1 before commit 982dea35).
+print("### step4: pre-K4 code (schema_version=1 literal) opens the now-v2 file:")
+conn = sqlite3.connect(str(rcl_path))
+try:
+    ensure_schema_current(
+        conn,
+        store_name="rcl",
+        schema_version=1,
+        was_fresh=False,
+        migration_digest="unused-on-this-path",
+        monotonic_ns=lambda: 0,
+    )
+    print("### step4: UNEXPECTED — did not refuse")
+except SchemaVersionRefused as exc:
+    print(f"### step4 SchemaVersionRefused: {exc}")
+finally:
+    conn.close()
+
+shutil.rmtree(tmp)
+print("### cleanup done")
+```
+
+### 6.2 CLI 종단 `migrate` (§2의 실행 명령/출력의 출처)
+
+`tos_runtime.compose.cli.main(["migrate", ...])`를 실제로 호출한다 —
+`DurableSetPaths.from_data_dir` 경로 파생까지 포함한 진짜 서브커맨드 디스패치.
+
+```python
+"""Reproduces the actual `migrate` subcommand as an operator would invoke it (main()), against
+a data-dir holding a genuine pre-existing v1 rcl.sqlite3 -- exercising cli.py's own dispatch,
+not just apply_migrations directly."""
+import shutil
+import sqlite3
+import tempfile
+from pathlib import Path
+
+from tos_runtime.compose.cli import main
+from tos_runtime.operations.schema_migrations import RCL_MIGRATIONS, schema_version
+
+tmp = Path(tempfile.mkdtemp(prefix="rcl-cli-runbook-"))
+data_dir = tmp / "data"
+data_dir.mkdir()
+rcl_path = data_dir / "rcl.sqlite3"
+
+baseline = RCL_MIGRATIONS[0]
+conn = sqlite3.connect(str(rcl_path))
+for stmt in baseline.statements:
+    conn.execute(stmt)
+conn.execute("PRAGMA user_version = 1")
+conn.commit()
+conn.close()
+print(f"### before: schema_version={schema_version(rcl_path)}")
+
+print("### invoking: migrate --data-dir <data_dir> --store rcl")
+rc = main(["migrate", "--data-dir", str(data_dir), "--store", "rcl"])
+print(f"### exit code: {rc}")
+print(f"### after: schema_version={schema_version(rcl_path)}")
+
+shutil.rmtree(tmp)
+```
+
+### 6.3 백업 → 마이그레이션 → 복원 라운드트립 (§4의 실행 결과의 출처)
+
+`SqliteEvidenceStore`/`SqliteEventInbox`로 evidence/inbox를 만들고 RCL은 v1 baseline으로
+직접 구성한 뒤, `cli.py`의 `backup-set`/`restore-drill`이 그대로 호출하는 `backup_set`/
+`restore_set` 함수를 직접 호출한다(이 스크립트는 필수 3파일만 구성한다 — §4에서 설명한
+선택 2파일(`composite_state`/`marketfeed`)은 여기서 실측하지 않았다).
+
+```python
+"""Reproduces the backup-before-migrate / restore-as-rollback path for the RCL migration runbook.
+Real backup_set + real restore_set (the same functions cli.py's backup-set/restore-drill
+subcommands call), against a real evidence+rcl+inbox durable set.
+"""
+import shutil
+import sqlite3
+import tempfile
+from pathlib import Path
+
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos_runtime.engine.inbox import SqliteEventInbox
+from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.operations.backup_set import DurableSetPaths, backup_set, restore_set
+from tos_runtime.operations.schema_migrations import (
+    RCL_MIGRATIONS,
+    apply_migrations,
+    schema_version,
+)
+
+SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
+
+
+class FixedKeyProvider:
+    def __init__(self, key_generation: int = 1, key: bytes = b"engine-test-fixed-key") -> None:
+        self._key_generation = key_generation
+        self._key = key
+
+    def current(self) -> tuple[int, bytes]:
+        return (self._key_generation, self._key)
+
+    def generations(self) -> tuple[int, ...]:
+        return (self._key_generation,)
+
+
+tmp = Path(tempfile.mkdtemp(prefix="rcl-rollback-runbook-"))
+data_dir = tmp / "data"
+data_dir.mkdir()
+backup_dir = tmp / "backups"
+restore_dest = tmp / "restored"
+
+key_provider = FixedKeyProvider()
+evidence = SqliteEvidenceStore(data_dir / "evidence.sqlite3", key_provider=key_provider)
+evidence.append({"n": 1}, kind="EVENT_CONSUMED", record_class="EVENT_CONSUMED")
+evidence.close()
+inbox = SqliteEventInbox(data_dir / "inbox.sqlite3", scheme=SCHEME)
+inbox.close()
+
+# rcl.sqlite3 built directly from the registered v1 baseline (never via SqliteCommitLog's own
+# constructor, which would stamp a FRESH file straight to the current RCL_SCHEMA_VERSION=2 --
+# the whole point here is a genuinely pre-existing, un-migrated v1 file).
+rcl_baseline = RCL_MIGRATIONS[0]
+assert rcl_baseline.version == 1
+conn = sqlite3.connect(str(data_dir / "rcl.sqlite3"))
+for stmt in rcl_baseline.statements:
+    conn.execute(stmt)
+conn.execute(
+    "INSERT INTO reservations (reservation_id, state, last_seq, scope_account, "
+    "scope_instrument) VALUES (?, ?, ?, ?, ?)",
+    ("resv-rollback-demo", "POTENTIALLY_LIVE", 1, "acct-9", "K200F"),
+)
+conn.execute("PRAGMA user_version = 1")
+conn.commit()
+conn.close()
+
+print(f"### pre-migrate rcl schema_version={schema_version(data_dir / 'rcl.sqlite3')}")
+
+paths = DurableSetPaths.from_data_dir(data_dir)
+manifest_pre = backup_set(paths, backup_dir, generation=1)
+print(f"### backup-set gen{manifest_pre.generation} written under {backup_dir}")
+
+print("### now running migrate (rcl v1 -> v2)")
+apply_migrations(paths.rcl, "rcl")
+print(f"### post-migrate rcl schema_version={schema_version(paths.rcl)}")
+
+# Simulate "the migration/rollout went wrong, restore the pre-migration generation".
+restored = restore_set(backup_dir / "gen1.set.manifest.json", restore_dest, key_provider=key_provider)
+restored_rcl_path = restore_dest / "rcl.sqlite3"
+print(f"### restore-drill restored gen{restored.manifest.generation} into {restore_dest}")
+print(f"### restored rcl schema_version={schema_version(restored_rcl_path)}")
+
+shutil.rmtree(tmp)
+```
+
+세 스크립트 모두 이 조치 커밋 시점에 다시 실행해 §2~§4에 인용된 출력과 **바이트 단위로
+동일**함을 재확인했다(작업 디렉터리 경로 문자열만 매 실행 랜덤).
 
 ## 7. 못 한 것 (정직하게 남긴다)
 
