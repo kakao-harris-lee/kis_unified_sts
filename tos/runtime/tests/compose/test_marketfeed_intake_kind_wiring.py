@@ -35,6 +35,8 @@ from tos_runtime.transport.kis_quote.adapter import KisQuoteObservationIntake
 from tos_runtime.transport.kis_quote.config import KisQuoteTransportConfigError
 
 from . import _fixtures as fx
+from .example_integrity import assert_required_paths_present
+from .example_integrity_registry import EXAMPLE_REQUIRED_PATHS
 from .test_compose_root import _compose
 from .test_marketfeed_wiring import (
     _write_critical_input_policy,
@@ -303,7 +305,13 @@ def test_shipped_example_file_is_all_null_and_therefore_refuses() -> None:
     ``marketfeed.yaml`` via ``_write_marketfeed_config``/``_write_marketfeed_config_raw`` — nothing
     ever loaded the shipped example file itself before this test existed, which is exactly why a
     missing required key in it (``poll_interval_ms``, W2 lane) went unnoticed by hand: "every
-    fixture is green" and "the shipped example is valid" were unconnected statements."""
+    fixture is green" and "the shipped example is valid" were unconnected statements.
+
+    ``pytest.raises`` alone still cannot tell that value-only refusal apart from a STRUCTURAL one
+    (a required key entirely missing) — see ``test_shipped_example_integrity.py``'s own module
+    docstring for why (``safety_activation.example.yaml`` shipped exactly that bug despite an
+    identically-shaped narrow test passing the whole time) — so this also pins every required key
+    path is explicitly present."""
     example_path = (
         Path(__file__).resolve().parents[2] / "config" / "marketfeed.example.yaml"
     )
@@ -312,3 +320,4 @@ def test_shipped_example_file_is_all_null_and_therefore_refuses() -> None:
     ), "fixture assumption: the example file ships at this path"
     with pytest.raises(MarketFeedConfigError):
         load_marketfeed_config(example_path)
+    assert_required_paths_present("marketfeed", EXAMPLE_REQUIRED_PATHS["marketfeed"])

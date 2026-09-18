@@ -7,10 +7,24 @@
 #
 # Every value below is a named-TBD `null` (or an empty collection where the
 # schema allows one) — an operator MUST replace every null with a concrete,
-# governance-approved value before this file can be used in production. The
-# loader refuses to start on a still-null required field (fail-closed, never
-# a silent default). See docs/runbooks/tos-safety-mesh.md for the proposal
-# table an operator reviews before filling this in.
+# governance-approved value before this file can be used in production.
+#
+# UNLIKE most loaders in this codebase, the loader here does NOT itself
+# refuse a still-null field: HardSafetyEnvelope's own fields are all
+# `X | None = None` (tos/src/tos/spg/records.py), so model_validate accepts
+# an all-null mapping exactly as readily as a fully filled-in one (confirmed
+# 2026-09-18, PR #737 review — replacing this file wholesale with concrete
+# values left the whole test suite green). What actually blocks an unfilled
+# deployment is downstream: the predicates this envelope feeds
+# (profile_within_envelope, activation_atomic, envelope_bounded) treat an
+# undeclared/null dimension as most-restrictive, and the safety_activation
+# document's own `not_expired` attestation is the one field in this
+# three-file chain the loader itself still raises on. See
+# docs/runbooks/tos-safety-mesh.md for the proposal table an operator
+# reviews before filling this in, and
+# tos/runtime/tests/compose/example_integrity_registry.py's own
+# EXAMPLE_TEMPLATE_ONLY comment for how the shipped example's own
+# all-null/[] shape is verified directly (never by loader refusal) instead.
 envelope:
   envelope_id: null
   envelope_generation: null
