@@ -36,6 +36,10 @@ from shared.streaming.audit import (
     extract_audit_fields,
     format_audit_kv,
 )
+from shared.streaming.stage import (
+    is_vanished_stream_read_error,
+    recover_missing_consumer_group,
+)
 from shared.utils.calc import calc_futures_realized_pnl
 
 logger = logging.getLogger(__name__)
@@ -317,7 +321,23 @@ class FuturesMonitorDaemon:
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
+                if is_vanished_stream_read_error(exc):
+                    # Either stream can expire, and both are read in one
+                    # XREADGROUP, so the read fails as a unit and recovery has
+                    # to restore both (mkstream recreates the vanished key).
+                    # Skip the backoff only when both recoveries succeeded; a
+                    # failed recreate falls through to the error log + backoff
+                    # below so a persistent failure cannot become a hot loop.
+                    recovered = [
+                        await recover_missing_consumer_group(
+                            self.redis, stream, self.consumer_group
+                        )
+                        for stream in (self.fill_stream, self.signal_stream)
+                    ]
+                    if all(recovered):
+                        await asyncio.sleep(0)
+                        continue
                 self._xreadgroup_error_log.exception(
                     logger,
                     format_audit_kv(
