@@ -125,10 +125,14 @@ def _full_fill_event_and_payload() -> (
 
 
 def _release_skipped_count(evidence_store: SqliteEvidenceStore) -> int:
-    return evidence_store.connection.execute(
+    row = evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = ?",
         (ENGINE_PROJECTION_RELEASE_SKIPPED_KIND,),
-    ).fetchone()[0]
+    ).fetchone()
+    assert row is not None
+    count = row[0]
+    assert isinstance(count, int), f"COUNT(*) returned {type(count).__name__}"
+    return count
 
 
 def test_a_released_outcome_releases_the_kernel_ledger_too(

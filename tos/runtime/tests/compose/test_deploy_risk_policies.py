@@ -92,6 +92,7 @@ _ADOPTED_ENVELOPE = {
 def _filled_risk_policy(path: Path, *, account: str, instrument: str | None) -> dict:
     """The real document with ONLY the operator-fill coordinates filled."""
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(raw, dict), f"policy document loaded as {type(raw).__name__}"
     assert raw["account_scope"] == ["TBD"]
     raw["account_scope"] = [account]
     if instrument is not None:

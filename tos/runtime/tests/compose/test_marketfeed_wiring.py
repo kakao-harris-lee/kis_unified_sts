@@ -423,9 +423,13 @@ def test_half_configured_marketfeed_refuses_boot_rather_than_staying_none(
 
 
 def _kind_count(runtime, kind: str) -> int:
-    return runtime.evidence_store.connection.execute(
+    row = runtime.evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = ?", (kind,)
-    ).fetchone()[0]
+    ).fetchone()
+    assert row is not None
+    count = row[0]
+    assert isinstance(count, int), f"COUNT(*) returned {type(count).__name__}"
+    return count
 
 
 def test_a_held_recovery_barrier_queues_the_tick_instead_of_running_or_dropping_it(

@@ -102,6 +102,7 @@ def _filled(path: Path, *, environment: str, account: str, instrument: str) -> d
     whose whole job is "fill every operator-fill leaf, then prove the rest boots" -- fills them
     too, the same way and for the same reason."""
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(raw, dict), f"policy document loaded as {type(raw).__name__}"
     assert raw["scope"]["accounts"] == ["TBD"]
     assert raw["scope"]["instruments"] == ["TBD"]
     raw["scope"]["environments"] = [environment]

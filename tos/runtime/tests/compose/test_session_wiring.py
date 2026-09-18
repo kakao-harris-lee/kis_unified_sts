@@ -105,9 +105,13 @@ def _verify_item_payloads(runtime) -> list[dict]:
 
 
 def _kind_count(runtime, kind: str) -> int:
-    return runtime.evidence_store.connection.execute(
+    row = runtime.evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = ?", (kind,)
-    ).fetchone()[0]
+    ).fetchone()
+    assert row is not None
+    count = row[0]
+    assert isinstance(count, int), f"COUNT(*) returned {type(count).__name__}"
+    return count
 
 
 def _drive_crossing_tick(runtime, custody_root: Path):

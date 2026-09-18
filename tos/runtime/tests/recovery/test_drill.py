@@ -607,7 +607,11 @@ def _drive_one_clean_event(runtime) -> str:
     event = fx.crossing_event(seq=1)
     runtime.run_once((event,))
     assert runtime.recovery is not None
-    return runtime.recovery.readiness_verdict.value
+    verdict = runtime.recovery.readiness_verdict.value
+    assert isinstance(
+        verdict, str
+    ), f"readiness verdict value is {type(verdict).__name__}"
+    return verdict
 
 
 def _backup_after_clean_shutdown(

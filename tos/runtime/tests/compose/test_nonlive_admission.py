@@ -367,6 +367,9 @@ def _load_example_scopes_with_mock_stock_order_evidence() -> dict:
     yet — a scopes-loader fact this sweep does not re-litigate; it exercises
     this module's own condition boundaries instead)."""
     raw = yaml.safe_load(_BROKER_SCOPES_EXAMPLE_PATH.read_text(encoding="utf-8"))
+    assert isinstance(
+        raw, dict
+    ), f"example scopes document loaded as {type(raw).__name__}"
     raw["active_scope"] = "SYNTHETIC_FUTURES_ORDER"
     for scope in raw["scopes"]:
         if scope["name"] == "MOCK_STOCK_ORDER":
