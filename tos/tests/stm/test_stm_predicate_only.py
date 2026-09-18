@@ -494,7 +494,7 @@ def test_a_single_unknown_marker_still_arms_the_gate() -> None:
 
     markers = MonitoringRecoveryInputs.RECOVERY_MARKER_FIELDS
     for unknown in markers:
-        fields = dict.fromkeys(markers, False)
+        fields: dict[str, bool | None] = dict.fromkeys(markers, False)
         fields[unknown] = None
         armed = MonitoringRecoveryInputs(**fields, revived_prior_authority=True)
         assert recovery_revives_nothing(armed) is False

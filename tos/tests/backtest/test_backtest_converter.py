@@ -156,7 +156,7 @@ def test_a_missing_capsule_is_a_stop_never_an_implied_empty_context() -> None:
     """(RFC-003 §7:201-204) A missing Decision Context forbids a decision — fail-closed."""
     converter = build_converter()
     converter._capsule_source = (
-        lambda _bar: None
+        lambda _bar: None  # type: ignore[return-value, assignment]
     )  # noqa: SLF001 - the absent-context injection
     with pytest.raises(BacktestIntegrityError, match="no Decision Context"):
         list(converter.stream(reference_bars(1)))

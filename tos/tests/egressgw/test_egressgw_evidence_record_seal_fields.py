@@ -107,4 +107,4 @@ def test_step_is_a_required_field() -> None:
     unconstructable — the Phase 3 wave 3 KW3-GW auditability gap this field closes cannot be
     silently reopened by a call site that simply omits it."""
     with pytest.raises(ValidationError, match="step"):
-        GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="a")
+        GatewayEvidenceRecord(kind="SEND_REFUSED", attempt_id="a")  # type: ignore[call-arg]

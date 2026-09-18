@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 import tos.sci as sci
@@ -177,6 +178,7 @@ def test_nested_blocks_match_their_value_models(name: str) -> None:
             assert set(keys) < set(sci.SupplyChainScope.SCOPE_DIMENSIONS)
             assert "legal_portfolio" not in keys
             continue
+        model: type[Any]
         if block == "trustworthy_time_binding":
             model = (
                 sci.DecisionTimeBinding

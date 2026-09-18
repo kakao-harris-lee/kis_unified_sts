@@ -344,7 +344,7 @@ def test_the_engine_still_refuses_to_host_the_send_boundary_itself() -> None:
     gateway, _ = build_gateway(attempt=attempt, context=context)
     for step in SEND_BOUNDARY_STEPS:
         try:
-            validate_stage_map({step: gateway})
+            validate_stage_map({step: gateway})  # type: ignore[dict-item]
         except ArtifactIntegrityError:
             continue
         raise AssertionError(f"the engine hosted send-boundary step {step}")

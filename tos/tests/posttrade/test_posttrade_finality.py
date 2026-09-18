@@ -103,9 +103,13 @@ def test_other_dimensions_cannot_influence_the_verdict(
     """
     proof_map = {**others, claimed: claimed_proof}
     baseline = finality_dimensions_orthogonal(claimed, proof_map)
-    all_others_true = dict.fromkeys(FinalityDimensionKind, True)
+    all_others_true: dict[FinalityDimensionKind, bool | None] = dict.fromkeys(
+        FinalityDimensionKind, True
+    )
     all_others_true[claimed] = claimed_proof
-    all_others_false = dict.fromkeys(FinalityDimensionKind, False)
+    all_others_false: dict[FinalityDimensionKind, bool | None] = dict.fromkeys(
+        FinalityDimensionKind, False
+    )
     all_others_false[claimed] = claimed_proof
     assert finality_dimensions_orthogonal(claimed, all_others_true) is baseline
     assert finality_dimensions_orthogonal(claimed, all_others_false) is baseline

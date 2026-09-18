@@ -144,7 +144,7 @@ def test_capability_tuple_is_frozen() -> None:
 def test_capability_tuple_extra_field_forbidden() -> None:
     """extra='forbid' — an unknown field is rejected."""
     with pytest.raises(pydantic.ValidationError):
-        CapabilityTuple(**_base_kwargs(), unexpected=1)  # type: ignore[call-arg]
+        CapabilityTuple(**_base_kwargs(), unexpected=1)  # type: ignore[call-arg, arg-type]
 
 
 def test_capability_tuple_hashable_for_whitelist_membership() -> None:
