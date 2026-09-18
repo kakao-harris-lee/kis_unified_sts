@@ -15,6 +15,7 @@ lane owns ``safety/{latch,rearm}.py`` and adds only what its own tests need).
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -234,7 +235,9 @@ def key_provider() -> KeyProvider:
 
 
 @pytest.fixture
-def evidence_store(tmp_path: Path, key_provider: KeyProvider) -> SqliteEvidenceStore:
+def evidence_store(
+    tmp_path: Path, key_provider: KeyProvider
+) -> Iterator[SqliteEvidenceStore]:
     instance = SqliteEvidenceStore(
         tmp_path / "evidence.sqlite3", key_provider=key_provider
     )

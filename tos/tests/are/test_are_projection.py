@@ -158,8 +158,10 @@ def test_favorable_final_does_not_shrink_increment_negative() -> None:
         conservative_current_usage_already_committed=Decimal("100"),
         effective_limit=Decimal("1000"),
     )
-    assert cell.requested_increment() == Decimal("30")  # NOT clamped to 0 or negative
-    assert cell.requested_increment() > 0
+    increment = cell.requested_increment()
+    assert increment == Decimal("30")  # NOT clamped to 0 or negative
+    assert increment is not None
+    assert increment > 0
 
 
 def test_dominance_takes_max_over_scenarios() -> None:

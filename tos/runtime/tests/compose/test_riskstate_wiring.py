@@ -77,7 +77,7 @@ Two layers, deliberately NOT sharing fixtures across suites (mirrors
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from decimal import Decimal
 from pathlib import Path
 
@@ -159,7 +159,7 @@ class _FixedKeyProvider:
 
 
 @pytest.fixture
-def evidence_store(tmp_path: Path) -> SqliteEvidenceStore:
+def evidence_store(tmp_path: Path) -> Iterator[SqliteEvidenceStore]:
     key_provider: KeyProvider = _FixedKeyProvider()
     instance = SqliteEvidenceStore(
         tmp_path / "evidence.sqlite3", key_provider=key_provider
@@ -169,14 +169,16 @@ def evidence_store(tmp_path: Path) -> SqliteEvidenceStore:
 
 
 @pytest.fixture
-def inbox(tmp_path: Path) -> SqliteEventInbox:
+def inbox(tmp_path: Path) -> Iterator[SqliteEventInbox]:
     instance = SqliteEventInbox(tmp_path / "inbox.sqlite3", scheme=_SCHEME)
     yield instance
     instance.close()
 
 
 @pytest.fixture
-def rcl_log(tmp_path: Path, evidence_store: SqliteEvidenceStore) -> SqliteCommitLog:
+def rcl_log(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> Iterator[SqliteCommitLog]:
     instance = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=evidence_store)
     yield instance
     instance.close()
@@ -393,6 +395,7 @@ class TestAggregateInputsFor:
         assert inputs.numerically_safe is None
         assert inputs.valuation_ok is None
         assert inputs.limit_source_is_injected_envelope is None
+        assert inputs.injected_envelope_max is not None
         assert inputs.injected_envelope_max.magnitude(_ARE_DIM_ID) == Decimal("1")
         assert inputs.grant_identity == "prop-1"
         assert inputs.lineage_ref == "root-event-1"
@@ -528,10 +531,12 @@ class TestAggregateInputsFor:
         inputs = service.aggregate_inputs_for(request)
         assert inputs is not None
         # The HSE bound, not the policy's own (inflated) claim:
+        assert inputs.injected_envelope_max is not None
         assert inputs.injected_envelope_max.magnitude(_ARE_DIM_ID) == Decimal("5")
         # The policy's own claim is carried too (untouched, for the predicate to compare
         # against) — proving the two sources really are independent in this service, not
         # silently unified upstream:
+        assert inputs.effective_limit is not None
         assert inputs.effective_limit.magnitude(_ARE_DIM_ID) == Decimal("100")
         # The real kernel predicate this separation exists to feed: even if some other layer
         # mistakenly asserted `limit_source_is_injected_envelope=True`, a 100-vs-5 mismatch is
@@ -709,6 +714,7 @@ class TestActionFlowInputsFor:
         request = _stage_request(step=CommitmentStep.ACTION_FLOW_DECISION)
         inputs = service.action_flow_inputs_for(request)
         assert inputs is not None
+        assert inputs.observed_amplification is not None
         assert inputs.observed_amplification.elapsed_monotonic == Decimal(
             expected_elapsed_ms
         )
@@ -1276,6 +1282,7 @@ class TestComposeE2E:
             "captured nothing"
         )
         first_attempt_inputs = captured_action_flow_inputs[0]
+        assert first_attempt_inputs.observed_amplification is not None
         assert first_attempt_inputs.observed_amplification.elapsed_monotonic is not None
         # M1 pin (plan §5): the two amplification axes this wave observes are concrete ``0``s
         # for a brand-new first attempt, never ``None`` — reverting either to a literal
@@ -1354,7 +1361,9 @@ class TestComposeE2E:
         # — already ran, giving us the one real fact this test's arithmetic depends on.
         event = fx.crossing_event()
         results = runtime.run_once((event,))
-        proposal_digest = results[0].pipeline.proposal.canonical_digest
+        pipeline = results[0].pipeline
+        assert pipeline is not None and pipeline.proposal is not None
+        proposal_digest = pipeline.proposal.canonical_digest
         construction = runtime.construction_stage.construction
         assert construction is not None and construction.intent is not None
         derived_quantity = construction.derivation.quantity
@@ -1458,9 +1467,7 @@ class TestComposeE2E:
         original_observe = reader.observe
         seeded = {"done": False}
 
-        def _seeding_observe(
-            *, root_event_id, attempt_id, root_event_seq=None
-        ):  # type: ignore[no-untyped-def]
+        def _seeding_observe(*, root_event_id, attempt_id, root_event_seq=None):
             if not seeded["done"]:
                 seeded["done"] = True
                 _seed_send_sealed(
@@ -1541,9 +1548,7 @@ class TestComposeE2E:
         original_observe = reader.observe
         seeded = {"done": False}
 
-        def _seeding_observe(
-            *, root_event_id, attempt_id, root_event_seq=None
-        ):  # type: ignore[no-untyped-def]
+        def _seeding_observe(*, root_event_id, attempt_id, root_event_seq=None):
             if not seeded["done"]:
                 seeded["done"] = True
                 content_event_id = reader._resolve_root_content_event_id(root_event_seq)

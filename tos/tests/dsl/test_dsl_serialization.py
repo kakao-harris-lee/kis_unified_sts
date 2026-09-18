@@ -124,6 +124,7 @@ def test_a_precomputed_identity_field_is_refused_as_an_unknown_key() -> None:
 def test_round_trip_parse_strategy_of_its_own_dump_is_idempotent() -> None:
     """Re-parsing a parsed strategy's own authoring content yields the identical artifact."""
     first = parse_strategy(_NO_ACTION_MAPPING)
+    assert first.policy is not None
     round_tripped_mapping = {
         "dsl_version": first.dsl_version,
         "config_binding_version": first.config_binding_version,

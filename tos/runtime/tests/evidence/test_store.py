@@ -35,6 +35,7 @@ def test_append_returns_receipt_with_seq_zero_for_first_entry(
 def test_append_increments_seq(store: SqliteEvidenceStore) -> None:
     r1 = store.append({"a": 1}, kind="TEST", record_class="TESTCLASS")
     r2 = store.append({"b": 2}, kind="TEST", record_class="TESTCLASS")
+    assert r1.seq is not None
     assert r2.seq == r1.seq + 1
 
 

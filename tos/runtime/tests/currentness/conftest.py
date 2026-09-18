@@ -8,7 +8,7 @@ per the task brief's TDD instruction.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 import pytest
@@ -124,7 +124,9 @@ def log_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def log(log_path: Path, evidence_port: FakeEvidenceAppendPort) -> SqliteCommitLog:
+def log(
+    log_path: Path, evidence_port: FakeEvidenceAppendPort
+) -> Iterator[SqliteCommitLog]:
     instance = SqliteCommitLog(log_path, evidence_port=evidence_port)
     yield instance
     instance.close()

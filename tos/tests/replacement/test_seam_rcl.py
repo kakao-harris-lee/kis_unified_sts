@@ -148,6 +148,8 @@ def test_an_over_envelope_double_count_denies() -> None:
     limit = effective_limit(_vector(Decimal("100")), _vector(Decimal("50")))
     usage_magnitude = usage.components[0].magnitude
     limit_magnitude = limit.components[0].magnitude
+    assert usage_magnitude is not None
+    assert limit_magnitude is not None
     assert usage_magnitude == Decimal("80")
     assert usage_magnitude > limit_magnitude
     within = usage_magnitude <= limit_magnitude

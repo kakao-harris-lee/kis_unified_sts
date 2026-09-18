@@ -445,6 +445,7 @@ def test_the_authorized_coordinates_cross_the_seam_as_opaque_ordered_scalars() -
     gateway(attempt)
     assert len(transport.requests) == 1
     request = transport.requests[0]
+    assert context.authorized_coordinates is not None
     assert request.coordinate("account") == context.authorized_coordinates.account
     assert request.coordinate("environment") == "non-live-test"
     assert [name for name, _ in request.coordinates] == [

@@ -274,6 +274,7 @@ def test_a_raising_after_turn_callback_does_not_stop_run_once(
 
     assert result is not None
     assert driver.after_turn_failures == 1
+    assert driver.after_turn_last_error is not None
     assert "nope" in driver.after_turn_last_error
 
 
@@ -302,4 +303,5 @@ def test_after_turn_last_error_reflects_the_most_recent_failure_only(
     driver.run_until_idle()
 
     assert driver.after_turn_failures == 2
+    assert driver.after_turn_last_error is not None
     assert "failure #2" in driver.after_turn_last_error

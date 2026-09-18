@@ -6,6 +6,7 @@ autouse guards enforce this); no network, no ambient env.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -52,7 +53,9 @@ def key_provider() -> KeyProvider:
 
 
 @pytest.fixture
-def evidence_store(tmp_path: Path, key_provider: KeyProvider) -> SqliteEvidenceStore:
+def evidence_store(
+    tmp_path: Path, key_provider: KeyProvider
+) -> Iterator[SqliteEvidenceStore]:
     instance = SqliteEvidenceStore(
         tmp_path / "evidence.sqlite3", key_provider=key_provider
     )
@@ -66,7 +69,7 @@ def emergency_log(tmp_path: Path) -> EmergencyAppendLog:
 
 
 @pytest.fixture
-def inbox(tmp_path: Path) -> SqliteEventInbox:
+def inbox(tmp_path: Path) -> Iterator[SqliteEventInbox]:
     instance = SqliteEventInbox(tmp_path / "inbox.sqlite3", scheme=SCHEME)
     yield instance
     instance.close()

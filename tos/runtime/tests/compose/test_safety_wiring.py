@@ -229,7 +229,9 @@ def test_snapshot_is_computed_once_and_reused_by_every_consumer_within_one_tick(
 
     # Consumer 3: the deferred-mesh-fields read -- also reuses the cell.
     snapshot_for_deferred = _current_tick_snapshot(services, cell, inbox_cell)
-    assert snapshot_for_deferred.clear_for(service.identity).clear is True
+    clearance_for_deferred = snapshot_for_deferred.clear_for(service.identity)
+    assert clearance_for_deferred is not None
+    assert clearance_for_deferred.clear is True
     assert service.clear_calls == 1
     assert service.dimension_report_calls == 1
 
@@ -263,7 +265,9 @@ def test_current_tick_snapshot_takes_one_when_the_cell_starts_empty() -> None:
     assert cell.snapshot is None
 
     snapshot = _current_tick_snapshot(services, cell, inbox_cell)
-    assert snapshot.clear_for(service.identity).clear is True
+    clearance = snapshot.clear_for(service.identity)
+    assert clearance is not None
+    assert clearance.clear is True
     assert service.clear_calls == 1
     assert cell.snapshot is snapshot
 

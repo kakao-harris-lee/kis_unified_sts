@@ -173,6 +173,7 @@ def test_concurrent_consumers_must_share_one_envelope() -> None:
 def test_amplification_is_monotone_in_the_fan_out_axis(fan_out: int) -> None:
     """(property) The verdict follows ``observed <= bound`` exactly on the fan-out axis."""
     envelope = full_envelope()
+    assert envelope.max_fan_out is not None  # full_envelope() declares every axis
     verdict = amplification_bounded(envelope, within_observation(fan_out=fan_out))
     assert verdict is (fan_out <= envelope.max_fan_out)
 

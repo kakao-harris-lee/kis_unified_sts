@@ -12,6 +12,29 @@ from tos.evidence import scrub_secret_fields
 _SECRETS = frozenset({"api_key", "session_cookie"})
 
 
+def _dig(container: object, *path: str | int) -> object:
+    """Descend into a nested dict/list/tuple ``object`` value by key/index.
+
+    ``scrub_secret_fields`` returns ``dict[str, object]`` — every nested value
+    is typed ``object`` on purpose (the function is generic over payload
+    shape), so mypy's ``[index]`` correctly refuses to subscript it further.
+    Each step here asserts the concrete container type before subscripting,
+    which is exactly the assumption every ``scrubbed[...][...]`` chain below
+    was already making implicitly — this just makes it explicit and checked.
+    """
+    current = container
+    for step in path:
+        if isinstance(step, str):
+            assert isinstance(current, dict), f"expected dict at step {step!r}"
+            current = current[step]
+        else:
+            assert isinstance(
+                current, (list, tuple)
+            ), f"expected list/tuple at step {step!r}"
+            current = current[step]
+    return current
+
+
 def test_no_matching_key_leaves_payload_unchanged_with_empty_masked_tuple() -> None:
     payload = {"symbol": "005930", "quantity": 10}
     scrubbed, masked = scrub_secret_fields(payload, _SECRETS)
@@ -31,8 +54,8 @@ def test_top_level_secret_is_masked() -> None:
 def test_nested_secret_is_masked_with_dotted_path() -> None:
     payload = {"credentials": {"api_key": "sk-abc123", "region": "kr"}}
     scrubbed, masked = scrub_secret_fields(payload, _SECRETS)
-    assert scrubbed["credentials"]["api_key"] == "***REDACTED***"
-    assert scrubbed["credentials"]["region"] == "kr"
+    assert _dig(scrubbed, "credentials", "api_key") == "***REDACTED***"
+    assert _dig(scrubbed, "credentials", "region") == "kr"
     assert masked == ("credentials.api_key",)
 
 
@@ -43,8 +66,8 @@ def test_deeply_nested_and_multiple_secrets_are_masked_sorted() -> None:
     }
     scrubbed, masked = scrub_secret_fields(payload, _SECRETS)
     assert scrubbed["session_cookie"] == "***REDACTED***"
-    assert scrubbed["auth"]["api_key"] == "***REDACTED***"
-    assert scrubbed["auth"]["nested"]["api_key"] == "***REDACTED***"
+    assert _dig(scrubbed, "auth", "api_key") == "***REDACTED***"
+    assert _dig(scrubbed, "auth", "nested", "api_key") == "***REDACTED***"
     assert masked == ("auth.api_key", "auth.nested.api_key", "session_cookie")
 
 
@@ -92,15 +115,15 @@ def test_secret_inside_list_element_mapping_is_masked() -> None:
     [{"api_key": "SECRET"}]}, {"api_key"}) must mask it, not return masked=()."""
     payload = {"accounts": [{"api_key": "SECRET", "region": "kr"}]}
     scrubbed, masked = scrub_secret_fields(payload, _SECRETS)
-    assert scrubbed["accounts"][0]["api_key"] == "***REDACTED***"
-    assert scrubbed["accounts"][0]["region"] == "kr"
+    assert _dig(scrubbed, "accounts", 0, "api_key") == "***REDACTED***"
+    assert _dig(scrubbed, "accounts", 0, "region") == "kr"
     assert masked == ("accounts[0].api_key",)
 
 
 def test_secret_inside_tuple_element_mapping_is_masked() -> None:
     payload = {"accounts": ({"api_key": "SECRET"},)}
     scrubbed, masked = scrub_secret_fields(payload, _SECRETS)
-    assert scrubbed["accounts"][0]["api_key"] == "***REDACTED***"
+    assert _dig(scrubbed, "accounts", 0, "api_key") == "***REDACTED***"
     assert masked == ("accounts[0].api_key",)
 
 
@@ -124,10 +147,10 @@ def test_multiple_list_elements_masked_with_correct_index_in_path() -> None:
         ]
     }
     scrubbed, masked = scrub_secret_fields(payload, _SECRETS)
-    assert scrubbed["accounts"][0]["api_key"] == "***REDACTED***"
-    assert scrubbed["accounts"][1]["api_key"] == "***REDACTED***"
-    assert scrubbed["accounts"][0]["id"] == "a"
-    assert scrubbed["accounts"][1]["id"] == "b"
+    assert _dig(scrubbed, "accounts", 0, "api_key") == "***REDACTED***"
+    assert _dig(scrubbed, "accounts", 1, "api_key") == "***REDACTED***"
+    assert _dig(scrubbed, "accounts", 0, "id") == "a"
+    assert _dig(scrubbed, "accounts", 1, "id") == "b"
     assert masked == ("accounts[0].api_key", "accounts[1].api_key")
 
 
@@ -148,10 +171,10 @@ def test_mixed_depth_list_inside_mapping_inside_list_is_masked() -> None:
     }
     scrubbed, masked = scrub_secret_fields(payload, _SECRETS)
     assert scrubbed["session_cookie"] == "***REDACTED***"
-    assert scrubbed["groups"][0]["label"] == "g0"
-    assert scrubbed["groups"][0]["members"][0]["api_key"] == "***REDACTED***"
-    assert scrubbed["groups"][0]["members"][0]["name"] == "m0"
-    assert scrubbed["groups"][0]["members"][1] == {"name": "m1"}
+    assert _dig(scrubbed, "groups", 0, "label") == "g0"
+    assert _dig(scrubbed, "groups", 0, "members", 0, "api_key") == "***REDACTED***"
+    assert _dig(scrubbed, "groups", 0, "members", 0, "name") == "m0"
+    assert _dig(scrubbed, "groups", 0, "members", 1) == {"name": "m1"}
     assert masked == ("groups[0].members[0].api_key", "session_cookie")
 
 

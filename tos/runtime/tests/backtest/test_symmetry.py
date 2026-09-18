@@ -381,6 +381,10 @@ def test_fill_records_are_identical_except_the_side_field() -> None:
     # opposite in sign, never the same value for both sides (an "equal execution_price on both
     # sides" bug would be a phantom price-improvement that ignores which way the taker trades).
     assert long_fill.reference_price == short_fill.reference_price
+    assert long_fill.execution_price is not None
+    assert long_fill.reference_price is not None
+    assert short_fill.execution_price is not None
+    assert short_fill.reference_price is not None
     long_deviation = long_fill.execution_price - long_fill.reference_price
     short_deviation = short_fill.execution_price - short_fill.reference_price
     assert long_deviation == -short_deviation

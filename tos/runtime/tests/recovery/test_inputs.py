@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -39,7 +40,9 @@ class _NeverStartedTimeService:
 
 
 @pytest.fixture()
-def rcl_log(tmp_path: Path, evidence_store: SqliteEvidenceStore) -> SqliteCommitLog:
+def rcl_log(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> Iterator[SqliteCommitLog]:
     instance = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=evidence_store)
     yield instance
     instance.close()
