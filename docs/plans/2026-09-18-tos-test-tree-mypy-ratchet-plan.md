@@ -111,47 +111,65 @@ green 을 만들자고 지우면 **나중에 `arg-type` 을 켤 때 필요한 �
 1:1로 귀속하는 분해는 혼합 코드(`# type: ignore[call-arg, arg-type]`)와 캐스케이드가
 섞여 신뢰할 수 없다 — **집합 차만 쓴다.**
 
-### 2.1 죽은 억제는 두 부류이고 `unused-ignore` 는 하나만 잡는다
+### 2.1 `unused-ignore` 가 말하지 않는 것 — 「덮이지 않은 나머지」
 
-1단계 재심(#746 `review-746b`)의 LOW 지적에서 나온 것이다. **이 절의 53건과 §5 의
-검증 규약 둘 다에 영향이 있으므로 여기 못박는다.**
+**저자가 1단계 PR 에서 틀린 주장을 했고 #747 재심이 반증했다.** 틀린 주장이 그럴듯해서
+반복될 만하므로 반증까지 함께 남긴다.
 
-| 부류 | mypy 가 내는 것 | 탐지기 |
-|---|---|---|
-| 아무것도 억제하지 않음 | `unused-ignore` 에러 | `unused-ignore` 켜기 |
-| **코드 라벨이 실제 에러와 다름** | 실제 에러 **그대로** + `note: Error code "X" not covered by "type: ignore[Y]" comment` | **그 note 를 세는 것뿐** |
+**틀린 주장**: 「라벨이 실제 에러 코드와 다른 `# type: ignore` 는 `unused-ignore` 로
+안 잡힌다.」 **거짓이다.** 라벨이 가리키는 코드의 에러가 그 줄에 없으면 그 ignore 는
+아무것도 억제하지 않으므로 `unused-ignore` 로 **정확히 잡힌다**(`warn_unused_ignores
+= true`, `pyproject.toml:321`).
 
-두 번째 부류는 **`unused-ignore` 로 절대 안 잡힌다.** 실측 예:
+**실제로 일어나는 것**은 다른 일이다 — **한 줄에 에러가 둘일 수 있다.** ignore 가
+하나를 **정당하게** 덮고, 다른 하나가 덮이지 않은 채 남는다. 그때 mypy 는 덮이지 않은
+쪽을 그대로 내고 note 를 붙인다:
 
 ```
 tos/tests/sci/test_sci_truthy_sentinel.py:48: error: "object" has no attribute "name"  [attr-defined]
 tos/tests/sci/test_sci_truthy_sentinel.py:48: note: Error code "attr-defined" not covered by "type: ignore[index]" comment
 ```
 
-**이 아크의 발단이 바로 이 부류였다** — #737 `test_adapter.py` 의 죽은
-`ignore[attr-defined]` 10곳(실제 에러는 `assignment`), 그리고 1단계에서 고친
-`test_slice_gaps.py:192`(`[union-attr]` → `[attr-defined]`).
+이 note 의 뜻은 **「라벨이 틀렸다」가 아니라 「이 줄에 네 ignore 가 덮지 못한 에러가
+더 있다」**이다. 그 `[index]` 는 같은 줄의 진짜 `index` 에러를 덮고 있으므로
+`unused-ignore` 에 안 잡히는 것이 **옳다.**
 
-따라서 **「`unused-ignore` 0 = 모든 억제가 살아 있다」로 읽으면 안 된다.** 저자가
-1단계 PR 에 그렇게 썼다가 정정했다. 두 탐지기를 **둘 다** 돌려야 한다:
+**편집 없이 판별하는 법** — 라벨이 가리키는 코드를 끄고 그 줄에 `unused-ignore` 가
+뜨는지 본다:
 
 ```bash
-mypy <tree> --ignore-missing-imports --no-error-summary | grep -c 'unused-ignore'
-mypy <tree> --ignore-missing-imports --no-error-summary | grep -c 'not covered by'
+mypy <tree> --ignore-missing-imports --no-error-summary \
+  --disable-error-code=<라벨이_가리키는_코드> | grep '<파일>:<줄>'
 ```
 
-**1단계 착지 시점 잔존 4건 — 전부 2단계 코드다:**
+뜨면 라벨이 가리키는 에러가 **없었던** 것(= 진짜 죽은 억제), 안 뜨면 **덮고 있던**
+것이다. 아래 4건은 이 방법으로 **전부 후자**임을 확인했다.
 
-| 위치 | 라벨 | 실제 코드 |
+따라서 `not covered by` 는 죽은 억제 탐지기가 아니라 **다음 단계가 red 를 낼 자리의
+예고**다. 두 탐지기는 **서로 다른 것**을 재므로 둘 다 돌린다:
+
+```bash
+mypy <tree> --ignore-missing-imports --no-error-summary | grep -c 'unused-ignore'   # 죽은 억제
+mypy <tree> --ignore-missing-imports --no-error-summary | grep -c 'not covered by'  # 덮이지 않은 나머지
+```
+
+**1단계 착지 시점 「덮이지 않은 나머지」 4건 — 전부 2단계 코드다:**
+
+| 위치 | ignore 가 덮는 코드 | 덮이지 않은 코드 |
 |---|---|---|
 | `tos/tests/sci/test_sci_truthy_sentinel.py:48` | `index` | `attr-defined` |
 | `tos/tests/afg/test_afg_void_canaries.py:149` | `arg-type` | `return-value` |
 | `tos/tests/afg/test_afg_truthy_sentinel.py:96` | `arg-type` | `return-value` |
 | `tos/runtime/tests/engine/test_replay_stage.py:58` | `operator` | `no-any-return` |
 
-넷 다 실제 코드가 `attr-defined`/`return-value`/`no-any-return` — **2단계가 켜는 바로
-그 셋**이다. 2단계에서 반드시 마주치므로 **별도 PR을 만들지 않고 2단계에서 처리한다.**
-라벨만 고치면 되는 것이 아니라 **실제 에러가 드러나므로 고쳐야 한다**는 뜻이다.
+덮이지 않은 쪽이 `attr-defined`/`return-value`/`no-any-return` — **2단계가 켜는 바로
+그 셋**이다. 2단계에서 반드시 red 가 되므로 **별도 PR을 만들지 않고 2단계에서
+처리한다.** 라벨 정리가 아니라 **실제 에러 수정**이다.
+
+**#737 `test_adapter.py` 의 죽은 `ignore[attr-defined]` 10곳은 이 부류가 아니다** —
+그것은 진짜 죽은 억제였고, `unused-ignore` 로 잡혔을 것이다. 잡히지 않은 이유는
+단순하다: **그 코드가 유예돼 있었다**(지금도 그렇다 — §3.4). 탐지기의 한계가 아니라
+꺼져 있었던 것이다.
 
 ## 3. 계층과 순서
 
@@ -298,7 +316,8 @@ codemod 로 일괄 처리하되 **「리뷰 가치 없음」을 PR 에 명시**�
 
 **무엇이 터졌나.** 1단계 코드 수정이 `tos/tests/spg/test_spg_replay_substrate.py` 의
 서로 다른 세 지점에 assert 를 더해 291→294줄이 됐다. 그 아래 `SPG-EV-012` 결속
-**13행**(고유 앵커로는 11개)이 전부 밀렸고 `tos_completion_status --check` 가
+**13행**(그 13행이 가리키는 고유 줄로는 10개 — 파라미터화 4행이 한 줄로 접힌다)이
+전부 밀렸고 `tos_completion_status --check` 가
 RED(위반 14 = 13행 + 파생 D0-1)로 떨어졌다.
 **리뷰는 이것을 못 잡는다** — diff 만 보면 assert 를 더한 정상적인 변경이다. 그리고
 같은 PR 의 다른 결함(죽지 않은 `# type: ignore` 5건)은 **CI 가 못 잡았다** — 유예가
@@ -333,7 +352,7 @@ diff 가 전 파일로 부풀고 blob 이 바뀐다. 조치 뒤 `git diff --stat
 의도한 수와 같은지 확인하라 — 1단계에서 실제로 발생했고 diff 를 보고 되돌렸다.
 
 **GREEN 의 의미를 정확히 못박는다 — 「앵커가 옳다」가 아니다.**
-`tools/tos_completion_status.py:557 _resolve_path_line_basis` 가 요구하는 것은
+`tools/tos_completion_status.py:556 _resolve_path_line_basis` 가 요구하는 것은
 **그 줄에 `evidence_id` 리터럴이 있을 것** 하나뿐이다. 같은 행의 `surface_ref`(pytest
 nodeid)와 그 줄의 대응은 **검사하지 않는다.** 실측: `test_spg_replay_substrate.py` 는
 `SPG-EV-012` 표지 줄이 **13개**인데 CSV 앵커는 **11개**다 — 즉 **11개를 서로 뒤바꿔
