@@ -376,7 +376,31 @@ artifacts, or written operator approval.
   The script harvests every service named in `config/f9_observation.yaml`
   (`--since 08:00 KST`, and `--tail 900` for the decision-engine per the caveat
   above), then emits the observation-log row and a JSON sidecar. Exit status is
-  `0` only when the day's observation is `COMPLETE`.
+  `0` when the day's observation is `COMPLETE`, and also on a `NO_SESSION` day
+  (a weekend or a KRX holiday — there was no session to observe, so a per-session
+  cron must not raise a standing alarm). Every other verdict exits `1`.
+
+  **`COMPLETE` requires evidence that spans the session.** A service counts as
+  `consumed` only when its harvest brackets 08:45–15:45: rotation drops the
+  *oldest* lines, so it preferentially destroys early-session blindness, and a
+  container recreated mid-day takes everything before the recreate with it —
+  2026-09-18's `futures-monitor` harvest reaches 11:33 and stops, though the
+  daemon was blind until 12:34. What the files do not reach is rendered as
+  `no evidence HH:MM-HH:MM`, never as the end of a blind window. A window that
+  rests on a single line renders open-ended (`BLIND <=09:47`), because one
+  `consumer group missing; recreated` line dates the *end* of an outage of
+  unknown length, not a point event. A missing, zero-byte, unparseable, or
+  failed capture (`<service>.<HHMMSS>.harvest-failed`, written when
+  `docker logs` exits non-zero) is a **harvest failure**, reported as such and
+  never counted as a quiet service.
+
+  There is deliberately **no "nothing was due" exemption**: a silent consumer
+  reads `no evidence`, so a genuinely quiet day reads `1/4 consumed, 3 no
+  evidence (PARTIAL)`. An idle consumer emits nothing at all — the one line that
+  would prove liveness without traffic (`consumer_group_already_present`) is
+  DEBUG and both monitors hardcode INFO — so a healthy idle consumer and one
+  that died at the open leave identical records. Calling that `COMPLETE` is the
+  INERT-GATE CAVEAT below committed against the observation surface itself.
 
   Every harvest writes new `<service>.<HHMMSS KST>.log` files, so harvesting
   before a mid-session redeploy and again at the close keeps both halves of the
