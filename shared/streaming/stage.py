@@ -18,6 +18,7 @@ import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from typing import Any, final
 
 from shared.streaming.audit import (
@@ -70,42 +71,86 @@ def is_vanished_stream_read_error(exc: Exception) -> bool:
     return "unblocked" in message and "no longer exists" in message
 
 
+class ConsumerGroupEnsure(StrEnum):
+    """Outcome of one XGROUP CREATE attempt.
+
+    ``CREATED`` and ``EXISTED`` both leave the group usable, but only the first
+    means something was actually missing — collapsing them into one ``True``
+    is what made the recovery log claim a recreate on healthy streams, and what
+    let a caller retry immediately after recovering nothing.
+
+    Every member is a truthy non-empty string, so ``all(...)`` over these is a
+    trap. Compare with ``is``; the ``__bool__`` below exists only so a caller
+    who writes ``if not await recover_missing_consumer_group(...)`` still gets
+    the honest answer instead of a silently-always-false condition.
+    """
+
+    CREATED = "created"
+    EXISTED = "existed"
+    FAILED = "failed"
+
+    def __bool__(self) -> bool:
+        return self is not ConsumerGroupEnsure.FAILED
+
+
 async def _ensure_consumer_group(
     redis: Any,
     stream: str | bytes,
     consumer_group: str,
-) -> bool:
+) -> ConsumerGroupEnsure:
     try:
         await redis.xgroup_create(stream, consumer_group, id="0", mkstream=True)
-        return True
+        return ConsumerGroupEnsure.CREATED
     except Exception as exc:
         if _is_busygroup_error(exc):
-            return True
+            return ConsumerGroupEnsure.EXISTED
         logger.warning(
-            "consumer group ensure failed stream=%s group=%s",
-            decode_stream_id(stream),
-            consumer_group,
+            format_audit_kv(
+                event="consumer_group_ensure_failed",
+                stream=decode_stream_id(stream),
+                consumer_group=consumer_group,
+            ),
             exc_info=True,
         )
-        return False
+        return ConsumerGroupEnsure.FAILED
 
 
 async def recover_missing_consumer_group(
     redis: Any,
     stream: str | bytes,
     consumer_group: str,
-) -> bool:
-    """Recreate a vanished stream/group (``mkstream``) and log the recreate.
+) -> ConsumerGroupEnsure:
+    """Recreate a vanished stream/group (``mkstream``) and log what happened.
 
-    Returns True when the group exists afterwards (created here, or already
-    present). Safe to call on a stream whose group never went missing.
+    Returns the outcome rather than a bool, because a caller that sweeps every
+    stream it reads has to tell "I recreated something" from "nothing was
+    missing after all" — the second means the read error had another cause, so
+    retrying immediately would spin. Safe to call on a stream whose group never
+    went missing, and only the genuine recreate is logged at WARNING.
     """
     ensured = await _ensure_consumer_group(redis, stream, consumer_group)
-    if ensured:
+    if ensured is ConsumerGroupEnsure.CREATED:
         logger.warning(
-            "consumer group missing; recreated stream=%s group=%s",
-            decode_stream_id(stream),
-            consumer_group,
+            format_audit_kv(
+                event="consumer_group_recovered",
+                stream=decode_stream_id(stream),
+                consumer_group=consumer_group,
+            )
+        )
+    elif ensured is ConsumerGroupEnsure.EXISTED:
+        # Not an incident: the caller swept a healthy sibling stream, so this
+        # stays below the operator's log. It is DEBUG and therefore unreachable
+        # in the deployed monitors — services/futures_monitor/main.py:144 and
+        # services/stock_monitor/main.py:134 both hardcode
+        # basicConfig(level=logging.INFO) and read no LOG_LEVEL, so surfacing
+        # this line means editing main.py and rebuilding the image. What the
+        # daemons actually act on is the returned outcome, not this record.
+        logger.debug(
+            format_audit_kv(
+                event="consumer_group_already_present",
+                stream=decode_stream_id(stream),
+                consumer_group=consumer_group,
+            )
         )
     return ensured
 
