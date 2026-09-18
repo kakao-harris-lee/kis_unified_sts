@@ -19,6 +19,20 @@ from tos_runtime.custody.ports import (
 
 from .conftest import FakeEvidenceDouble, write_manifest, write_scope_file
 
+
+def _payload(record: dict[str, object]) -> dict[str, object]:
+    """Narrow ``record["payload"]`` from ``object`` back to ``dict[str, object]``.
+
+    ``FakeEvidenceDouble.records`` stores ``{"payload": dict(payload), ...}``
+    (see ``conftest.py``), so ``payload`` is always a dict at runtime — this
+    just asserts what every ``record["payload"][...]`` chain below already
+    assumed implicitly, so mypy can check the second subscript too.
+    """
+    payload = record["payload"]
+    assert isinstance(payload, dict)
+    return payload
+
+
 _DEFAULT_SCOPES = {
     "read.principal": {
         "file": "read.principal",
@@ -323,9 +337,9 @@ def test_evidence_record_never_contains_secret_bytes(
     serialized = repr(record)
     assert secret not in serialized.encode()
     assert secret.decode() not in serialized
-    assert record["payload"]["principal_id"] == "read-principal-v1"
-    assert record["payload"]["scope"] == "read.principal"
-    assert record["payload"]["file_sha256"] == hashlib.sha256(secret).hexdigest()
+    assert _payload(record)["principal_id"] == "read-principal-v1"
+    assert _payload(record)["scope"] == "read.principal"
+    assert _payload(record)["file_sha256"] == hashlib.sha256(secret).hexdigest()
     assert record["kind"] == "CUSTODY_LOAD"
 
 
@@ -502,8 +516,8 @@ def test_load_succeeds_with_correctly_pinned_digest(
 
     assert handle.value() == data
     record = evidence_double.records[0]
-    assert record["payload"]["digest_pinned"] is True
-    assert "digest_note" not in record["payload"]
+    assert _payload(record)["digest_pinned"] is True
+    assert "digest_note" not in _payload(record)
 
 
 def test_load_with_null_digest_succeeds_and_records_unpinned_note(
@@ -518,8 +532,8 @@ def test_load_with_null_digest_succeeds_and_records_unpinned_note(
 
     assert handle.value() == b"unpinned-key-bytes"
     record = evidence_double.records[0]
-    assert record["payload"]["digest_pinned"] is False
-    assert record["payload"]["digest_note"] == "digest 미고정"
+    assert _payload(record)["digest_pinned"] is False
+    assert _payload(record)["digest_note"] == "digest 미고정"
 
 
 # ============================================================================

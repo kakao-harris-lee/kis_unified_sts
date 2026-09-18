@@ -322,7 +322,7 @@ def _reach_new_risk_halt_via_cancel_crossing_fill(runtime, custody_root: Path) -
     )
     results2 = runtime.run_once((event,))
     assert results2[0].flow is not None and results2[0].flow.handed_off is True
-    attempt_id = results2[0].flow.attempt.attempt_id  # type: ignore[union-attr]
+    attempt_id = results2[0].flow.attempt.attempt_id
 
     def _egress_result(kind: EgressResultKind, **magnitudes: Decimal) -> EngineEvent:
         return EngineEvent(
@@ -891,9 +891,7 @@ class TestRecomposeReplay:
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
         runtime.run_once((fx.crossing_event(),))
-        pre_reservations = dict(
-            runtime.risk_service._projection.all_reservations()  # type: ignore[attr-defined]
-        )
+        pre_reservations = dict(runtime.risk_service._projection.all_reservations())
         runtime.rcl_log.verify_replay()
         runtime.rcl_log.close()
         runtime.evidence_store.close()
@@ -902,9 +900,7 @@ class TestRecomposeReplay:
         # No new epoch-advancing writes yet: verify_replay reproduces the
         # SAME reservations-state digest the pre-restart process held.
         runtime2.rcl_log.verify_replay()
-        post_reservations = dict(
-            runtime2.risk_service._projection.all_reservations()  # type: ignore[attr-defined]
-        )
+        post_reservations = dict(runtime2.risk_service._projection.all_reservations())
         assert post_reservations == pre_reservations
 
         assert runtime2.evidence_store.verify(
@@ -1179,7 +1175,7 @@ class TestRecomposeReplay:
         )
         results2 = runtime.run_once((event,))
         assert results2[0].flow is not None and results2[0].flow.handed_off is True
-        attempt_id = results2[0].flow.attempt.attempt_id  # type: ignore[union-attr]
+        attempt_id = results2[0].flow.attempt.attempt_id
 
         def _egress_result(
             kind: EgressResultKind, **magnitudes: Decimal

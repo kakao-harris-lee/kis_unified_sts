@@ -23,7 +23,12 @@ from decimal import Decimal
 import pytest
 from tos.canonical import ArtifactIntegrityError
 from tos.engine import EventResult
-from tos.engine.records import EgressResultPayload, EngineEvent, InstrumentKey
+from tos.engine.records import (
+    EgressResultPayload,
+    EngineEvent,
+    InstrumentKey,
+    ProvisionalReservation,
+)
 from tos.engine.state import ProvisionalReservationLedger
 from tos.engine.vocabulary import (
     EgressResultKind,
@@ -43,6 +48,17 @@ _ACCOUNT = "acct-fp"
 _INSTRUMENT = "101S07"
 _ATTEMPT = "attempt-fp-1"
 _KEY = InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT)
+
+
+def _outstanding(
+    ledger: ProvisionalReservationLedger, key: InstrumentKey
+) -> ProvisionalReservation:
+    """``ledger.outstanding(key)``, asserted present (absent is a real, reachable case
+    elsewhere in this module — every call site below already knows, from the test's own
+    preceding setup, that the reservation exists at this point)."""
+    reservation = ledger.outstanding(key)
+    assert reservation is not None
+    return reservation
 
 
 class _NullFinalityProducer:
@@ -121,7 +137,7 @@ def test_a_released_outcome_releases_the_kernel_ledger_too(
     ledger = _live_ledger()
     event, result, payload = _full_fill_event_and_payload()
     ledger.apply_egress_result(payload)
-    assert ledger.outstanding(_KEY).capacity_state is CapacityState.POSITION_CONSUMED
+    assert _outstanding(ledger, _KEY).capacity_state is CapacityState.POSITION_CONSUMED
 
     consumer = _StubConsumer(
         _StubOutcome(
@@ -213,7 +229,7 @@ def test_a_held_outcome_records_release_skipped(
         ledger=ledger,
     )
 
-    assert ledger.outstanding(_KEY).capacity_state is CapacityState.POSITION_CONSUMED
+    assert _outstanding(ledger, _KEY).capacity_state is CapacityState.POSITION_CONSUMED
     assert _release_skipped_count(evidence_store) == 1
 
 
@@ -245,7 +261,7 @@ def test_a_kernel_side_refusal_records_release_skipped_even_though_rcl_released(
         ledger=ledger,
     )
 
-    assert ledger.outstanding(_KEY).capacity_state is CapacityState.POSITION_CONSUMED
+    assert _outstanding(ledger, _KEY).capacity_state is CapacityState.POSITION_CONSUMED
     assert _release_skipped_count(evidence_store) == 1
 
 
@@ -268,5 +284,5 @@ def test_no_release_consumer_never_touches_the_ledger_or_evidence(
         ledger=ledger,
     )
 
-    assert ledger.outstanding(_KEY).capacity_state is CapacityState.POSITION_CONSUMED
+    assert _outstanding(ledger, _KEY).capacity_state is CapacityState.POSITION_CONSUMED
     assert _release_skipped_count(evidence_store) == 0

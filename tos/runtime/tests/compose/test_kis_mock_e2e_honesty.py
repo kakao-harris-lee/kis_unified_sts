@@ -591,11 +591,11 @@ def test_counterfactual_a_phase5_and_p02_closed_dry_run(
     assert result.flow is not None and result.flow.handoff is not None
     assert result.flow.handoff.accepted_for_transmission is True
 
-    assert _evidence_row_order(runtime, "SEND_SEALED") is not None
-    assert _evidence_row_order(runtime, "NETWORK_CALL_ENTERED") is not None
-    assert _evidence_row_order(runtime, "SEND_SEALED") < _evidence_row_order(
-        runtime, "NETWORK_CALL_ENTERED"
-    )
+    send_sealed_order = _evidence_row_order(runtime, "SEND_SEALED")
+    network_call_entered_order = _evidence_row_order(runtime, "NETWORK_CALL_ENTERED")
+    assert send_sealed_order is not None
+    assert network_call_entered_order is not None
+    assert send_sealed_order < network_call_entered_order
 
     (dry_run_row,) = runtime.evidence_store.connection.execute(
         "SELECT payload_json FROM entries WHERE kind = 'TRANSPORT_DRY_RUN'"

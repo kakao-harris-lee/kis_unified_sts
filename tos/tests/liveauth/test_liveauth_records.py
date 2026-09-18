@@ -148,7 +148,7 @@ def test_records_are_frozen() -> None:
     """An issued record cannot be mutated in place (frozen; append-only §2.0)."""
     auth = issue_authorization()
     with pytest.raises(ValidationError):
-        auth.issuer_identity = "other"  # type: ignore[misc]
+        auth.issuer_identity = "other"
 
 
 def test_no_update_or_delete_methods_on_records() -> None:

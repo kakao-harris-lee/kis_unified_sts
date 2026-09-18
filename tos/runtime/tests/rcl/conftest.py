@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 import pytest
@@ -77,7 +77,7 @@ def log(
     log_path: Path,
     evidence_port: FakeEvidenceAppendPort,
     monotonic_clock: FakeMonotonicClock,
-) -> SqliteCommitLog:
+) -> Iterator[SqliteCommitLog]:
     instance = SqliteCommitLog(
         log_path, evidence_port=evidence_port, monotonic_ns=monotonic_clock
     )

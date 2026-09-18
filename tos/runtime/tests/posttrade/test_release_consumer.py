@@ -36,6 +36,7 @@ codebase — never a fake kernel predicate, never a relaxed gate in the module u
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -132,7 +133,7 @@ def _producer() -> SyntheticFinalityProducer:
 
 
 @pytest.fixture
-def evidence_store(tmp_path: Path) -> SqliteEvidenceStore:
+def evidence_store(tmp_path: Path) -> Iterator[SqliteEvidenceStore]:
     instance = SqliteEvidenceStore(
         tmp_path / "evidence.sqlite3", key_provider=FixedKeyProvider()
     )
@@ -141,14 +142,16 @@ def evidence_store(tmp_path: Path) -> SqliteEvidenceStore:
 
 
 @pytest.fixture
-def inbox(tmp_path: Path) -> SqliteEventInbox:
+def inbox(tmp_path: Path) -> Iterator[SqliteEventInbox]:
     instance = SqliteEventInbox(tmp_path / "inbox.sqlite3", scheme=SCHEME)
     yield instance
     instance.close()
 
 
 @pytest.fixture
-def rcl_log(tmp_path: Path, evidence_store: SqliteEvidenceStore) -> SqliteCommitLog:
+def rcl_log(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> Iterator[SqliteCommitLog]:
     instance = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=evidence_store)
     yield instance
     instance.close()
@@ -572,7 +575,9 @@ def test_full_fill_release_outcome_feeds_a_real_kernel_ledger_release(
     ledger.mark_potentially_live(_KEY)
     application = ledger.apply_egress_result(payload)
     assert application.applied is True
-    assert ledger.outstanding(_KEY).capacity_state is CapacityState.POSITION_CONSUMED
+    outstanding = ledger.outstanding(_KEY)
+    assert outstanding is not None
+    assert outstanding.capacity_state is CapacityState.POSITION_CONSUMED
 
     ref = FinalityProofRef(
         attempt_id=outcome.attempt_id,

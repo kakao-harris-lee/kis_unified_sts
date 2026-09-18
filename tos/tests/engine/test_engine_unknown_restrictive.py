@@ -43,6 +43,8 @@ from tos.engine import (
     EngineEvent,
     EventKind,
     HaltReason,
+    InstrumentKey,
+    ProvisionalReservation,
     ProvisionalReservationLedger,
     ResultDisposition,
     knowledge_for_result,
@@ -58,6 +60,21 @@ from ._engine_fixtures import (
     instrument_key,
     ordering,
 )
+
+
+def _outstanding(
+    ledger: ProvisionalReservationLedger, key: InstrumentKey
+) -> ProvisionalReservation:
+    """``ledger.outstanding(key)``, asserted present.
+
+    ``outstanding()`` is typed ``ProvisionalReservation | None`` (absent is a real,
+    reachable case elsewhere in this module) — every call site below already knows,
+    from the test's own preceding setup, that the reservation exists at this point;
+    this makes that assumption explicit and checked rather than typing it away.
+    """
+    reservation = ledger.outstanding(key)
+    assert reservation is not None
+    return reservation
 
 
 def _sent_core():
@@ -823,14 +840,14 @@ def test_a_backwards_projection_transition_is_refused(backwards) -> None:
             remaining_quantity=Decimal("0"),
         )
     )
-    assert ledger.outstanding(key).capacity_state is CapacityState.POSITION_CONSUMED
+    assert _outstanding(ledger, key).capacity_state is CapacityState.POSITION_CONSUMED
 
     with pytest.raises(ArtifactIntegrityError, match="may not revive"):
         if backwards == "bind_attempt":
             ledger.bind_attempt(key, attempt_id="attempt-2")
         else:
             ledger.mark_potentially_live(key)
-    assert ledger.outstanding(key).capacity_state is CapacityState.POSITION_CONSUMED
+    assert _outstanding(ledger, key).capacity_state is CapacityState.POSITION_CONSUMED
 
 
 def test_the_projection_rank_orders_the_states_conservatively() -> None:
@@ -1196,7 +1213,7 @@ def test_attempt_bound_then_timeout_then_full_fill_still_resolves_upward() -> No
     key = instrument_key()
     ledger.commit_unbound(key, proposal_id="prop-r2")
     ledger.bind_attempt(key, attempt_id="attempt-r2")
-    assert ledger.outstanding(key).capacity_state is CapacityState.ATTEMPT_BOUND
+    assert _outstanding(ledger, key).capacity_state is CapacityState.ATTEMPT_BOUND
 
     timeout_application = ledger.apply_egress_result(
         EgressResultPayload(
@@ -1204,7 +1221,7 @@ def test_attempt_bound_then_timeout_then_full_fill_still_resolves_upward() -> No
         )
     )
     assert timeout_application.disposition is ResultDisposition.APPLIED
-    assert ledger.outstanding(key).capacity_state is CapacityState.QUARANTINED_UNKNOWN
+    assert _outstanding(ledger, key).capacity_state is CapacityState.QUARANTINED_UNKNOWN
 
     fill_application = ledger.apply_egress_result(
         EgressResultPayload(
@@ -1216,7 +1233,7 @@ def test_attempt_bound_then_timeout_then_full_fill_still_resolves_upward() -> No
         )
     )
     assert fill_application.disposition is ResultDisposition.APPLIED
-    assert ledger.outstanding(key).capacity_state is CapacityState.POSITION_CONSUMED
+    assert _outstanding(ledger, key).capacity_state is CapacityState.POSITION_CONSUMED
 
 
 def test_pre_quarantine_capacity_invariant_is_non_none_iff_quarantined() -> None:

@@ -46,7 +46,7 @@ def test_if_member_raises_for_every_member(member: object) -> None:
 def test_identity_value_and_hashing_still_work(member: object) -> None:
     """(§2.2) The seal touches only ``__bool__``: identity, value, and hashing are unaffected."""
     assert member is type(member)[member.name]  # type: ignore[index]
-    assert isinstance(member.value, str)  # type: ignore[attr-defined]
+    assert isinstance(member.value, str)
     assert member in {member}
 
 

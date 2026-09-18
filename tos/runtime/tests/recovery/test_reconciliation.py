@@ -34,6 +34,7 @@ The four scenarios below are the task brief's own acceptance tests:
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -109,7 +110,9 @@ class _NeverStartedTimeService:
 
 
 @pytest.fixture()
-def rcl_log(tmp_path: Path, evidence_store: SqliteEvidenceStore) -> SqliteCommitLog:
+def rcl_log(
+    tmp_path: Path, evidence_store: SqliteEvidenceStore
+) -> Iterator[SqliteCommitLog]:
     instance = SqliteCommitLog(tmp_path / "rcl.sqlite3", evidence_port=evidence_store)
     yield instance
     instance.close()

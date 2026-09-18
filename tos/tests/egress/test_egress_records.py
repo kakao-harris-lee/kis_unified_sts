@@ -128,7 +128,7 @@ def test_replay_observation_requires_subject_identity() -> None:
 def test_extra_field_forbidden_on_qcc() -> None:
     """(§2.0) extra='forbid' — an unknown field is rejected (schema-level omission-is-restrictive)."""
     with pytest.raises((ValueError, TypeError)):
-        clean_qcc(unexpected_field="x")  # type: ignore[call-arg]
+        clean_qcc(unexpected_field="x")
 
 
 def test_signer_coordinates_carried_verbatim() -> None:

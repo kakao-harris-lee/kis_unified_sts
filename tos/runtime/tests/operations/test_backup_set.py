@@ -120,9 +120,9 @@ def test_backup_set_writes_a_manifest_with_five_files_and_facts(tmp_path: Path) 
     assert manifest.evidence.event_consumed_count == 2
     assert manifest.rcl.writer_epoch == 1
     assert manifest.inbox.last_seq is None  # no events enqueued in this fixture
-    assert (
-        manifest.files["composite_state"].last_seq is None
-    )  # kernel-owned — never queried
+    composite_state_entry = manifest.files["composite_state"]
+    assert composite_state_entry is not None
+    assert composite_state_entry.last_seq is None  # kernel-owned — never queried
     assert manifest.files["marketfeed"] is None  # absent — never fabricated
 
     manifest_path = backups_dir / "gen1.set.manifest.json"

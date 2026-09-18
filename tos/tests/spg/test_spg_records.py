@@ -149,7 +149,7 @@ def test_artifacts_are_frozen() -> None:
     """(§2.0) Every artifact is immutable — in-place mutation is rejected."""
     e = issue_envelope()
     with pytest.raises(ValidationError):
-        e.envelope_generation = 9  # type: ignore[misc]
+        e.envelope_generation = 9
 
 
 def test_extra_field_forbidden() -> None:

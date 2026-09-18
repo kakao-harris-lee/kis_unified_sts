@@ -221,9 +221,10 @@ def test_row_3_reject_leaves_the_scope_occupied() -> None:
             f"the projection exposes {forbidden!r} — releasing capacity is the RCL's "
             "(RFC-002 §9.1:557); a producer-local release would create headroom (:558)"
         )
+    outstanding = core.ledger.outstanding(instrument_key())
+    assert outstanding is not None
     assert (
-        core.ledger.outstanding(instrument_key()).capacity_state
-        is not CapacityState.RELEASED
+        outstanding.capacity_state is not CapacityState.RELEASED
     ), "an ordinary REJECT result must never itself reach RELEASED (only release() may)"
 
 

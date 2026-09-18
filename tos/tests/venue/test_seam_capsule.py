@@ -102,6 +102,9 @@ def test_venue_refs_fill_the_capsule_slots() -> None:
             decision_id=did, canonical_digest=ddig
         ),
     )
+    assert capsule.venue_constraint_policy is not None
+    assert capsule.venue_constraint_snapshot is not None
+    assert capsule.order_admissibility_decision is not None
     assert capsule.venue_constraint_policy.policy_id == policy.policy_id
     assert (
         capsule.venue_constraint_snapshot.constraint_generation

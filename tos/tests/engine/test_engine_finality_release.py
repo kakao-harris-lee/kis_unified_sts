@@ -30,7 +30,11 @@ from decimal import Decimal
 
 import pytest
 from tos.canonical import ArtifactIntegrityError
-from tos.engine.records import EgressResultPayload
+from tos.engine.records import (
+    EgressResultPayload,
+    InstrumentKey,
+    ProvisionalReservation,
+)
 from tos.engine.state import (
     FinalityProofRef,
     ProvisionalReservationLedger,
@@ -41,6 +45,17 @@ from tos.rcl import CapacityState
 from ._engine_fixtures import instrument_key
 
 _ATTEMPT = "release-attempt-1"
+
+
+def _outstanding(
+    ledger: ProvisionalReservationLedger, key: InstrumentKey
+) -> ProvisionalReservation:
+    """``ledger.outstanding(key)``, asserted present (absent is a real, reachable case
+    elsewhere in this module — every call site below already knows, from the test's own
+    preceding setup, that the reservation exists at this point)."""
+    reservation = ledger.outstanding(key)
+    assert reservation is not None
+    return reservation
 
 
 def _live_ledger(
@@ -104,7 +119,7 @@ def test_release_refuses_a_still_live_reservation() -> None:
     ledger, key = _live_ledger()
     assert ledger.release(_proof()) is False
     assert ledger.outstanding(key) is not None
-    assert ledger.outstanding(key).capacity_state is CapacityState.POTENTIALLY_LIVE
+    assert _outstanding(ledger, key).capacity_state is CapacityState.POTENTIALLY_LIVE
 
 
 def test_release_refuses_a_partial_fill() -> None:
@@ -119,9 +134,9 @@ def test_release_refuses_a_partial_fill() -> None:
             remaining_quantity=Decimal("1"),
         )
     )
-    assert ledger.outstanding(key).knowledge is EgressKnowledge.PARTIALLY_FILLED
+    assert _outstanding(ledger, key).knowledge is EgressKnowledge.PARTIALLY_FILLED
     assert ledger.release(_proof()) is False
-    assert ledger.outstanding(key).capacity_state is not CapacityState.RELEASED
+    assert _outstanding(ledger, key).capacity_state is not CapacityState.RELEASED
 
 
 def test_release_refuses_a_quarantined_reservation() -> None:
@@ -132,7 +147,7 @@ def test_release_refuses_a_quarantined_reservation() -> None:
             instrument_key=key, attempt_id=_ATTEMPT, kind=EgressResultKind.TIMEOUT
         )
     )
-    assert ledger.outstanding(key).capacity_state is CapacityState.QUARANTINED_UNKNOWN
+    assert _outstanding(ledger, key).capacity_state is CapacityState.QUARANTINED_UNKNOWN
     assert ledger.release(_proof()) is False
 
 
@@ -219,7 +234,7 @@ def test_release_matches_by_attempt_id_across_every_scope_not_by_caller_supplied
     assert ledger.outstanding(key_b) is None
     assert ledger.admits_new_exposure(key_b) is True
     # Scope A is untouched — release only ever finds the ONE matching attempt_id.
-    assert ledger.outstanding(key_a).capacity_state is CapacityState.POTENTIALLY_LIVE
+    assert _outstanding(ledger, key_a).capacity_state is CapacityState.POTENTIALLY_LIVE
     assert ledger.admits_new_exposure(key_a) is False
 
 
@@ -241,7 +256,7 @@ def test_release_refuses_an_unmatched_attempt_id() -> None:
         resolution_generation=1,
     )
     assert ledger.release(ref) is False
-    assert ledger.outstanding(key).capacity_state is CapacityState.POSITION_CONSUMED
+    assert _outstanding(ledger, key).capacity_state is CapacityState.POSITION_CONSUMED
 
 
 # ===========================================================================
@@ -274,7 +289,7 @@ def test_release_reopens_the_scope_for_a_genuinely_new_attempt() -> None:
     assert fresh.capacity_state is CapacityState.COMMITTED_UNBOUND
     bound = ledger.bind_attempt(key, attempt_id="release-attempt-2")
     assert bound.attempt_id == "release-attempt-2"
-    assert ledger.outstanding(key).attempt_id == "release-attempt-2"
+    assert _outstanding(ledger, key).attempt_id == "release-attempt-2"
 
 
 def test_the_released_attempt_id_may_never_transition_again_after_the_scope_reopens() -> (
@@ -303,8 +318,8 @@ def test_the_released_attempt_id_may_never_transition_again_after_the_scope_reop
     with pytest.raises(ArtifactIntegrityError, match="already reached RELEASED"):
         ledger.bind_attempt(key, attempt_id=_ATTEMPT)
     # The fresh attempt's own outstanding projection is untouched by the refused attempt.
-    assert ledger.outstanding(key).capacity_state is CapacityState.COMMITTED_UNBOUND
-    assert ledger.outstanding(key).attempt_id is None
+    assert _outstanding(ledger, key).capacity_state is CapacityState.COMMITTED_UNBOUND
+    assert _outstanding(ledger, key).attempt_id is None
 
 
 def test_a_released_reservation_itself_never_transitions_before_the_scope_reopens() -> (

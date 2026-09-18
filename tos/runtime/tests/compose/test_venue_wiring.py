@@ -293,8 +293,10 @@ class TestVenueServiceE2E:
         verdicts = {v.step: v for v in results[0].flow.verdicts}
         step3 = verdicts[CommitmentStep.VENUE_ADMISSIBILITY_DECISION]
         assert step3.outcome is not StageOutcome.ADMIT
-        assert runtime.venue.last_snapshot is not None
-        assert runtime.venue.last_snapshot.observed_session_phase == "CLOSED"
+        assert runtime.venue is not None  # this runtime always wires a venue stage
+        last_snapshot = runtime.venue.last_snapshot
+        assert last_snapshot is not None
+        assert last_snapshot.observed_session_phase == "CLOSED"
 
         runtime.rcl_log.close()
         runtime.evidence_store.close()
@@ -305,14 +307,14 @@ class TestVenueServiceE2E:
         runtime = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime)
         runtime.run_once((fx.crossing_event(),))
-        first_generation = runtime.venue.last_snapshot.constraint_generation  # type: ignore[union-attr]
+        first_generation = runtime.venue.last_snapshot.constraint_generation
         runtime.rcl_log.close()
         runtime.evidence_store.close()
 
         runtime2 = _compose(tmp_path, config_dir, data_dir, custody_root)
         _reach_trusted(runtime2)
         runtime2.run_once((fx.crossing_event(),))
-        second_generation = runtime2.venue.last_snapshot.constraint_generation  # type: ignore[union-attr]
+        second_generation = runtime2.venue.last_snapshot.constraint_generation
         assert second_generation > first_generation
 
         runtime2.rcl_log.close()
@@ -437,7 +439,7 @@ class TestVenueBootRefusals:
     def test_activation_digest_mismatch_refuses_to_boot(self, tmp_path: Path) -> None:
         config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
         members = _real_members(config_dir)
-        members[0]["digest"] = "deliberately-wrong-digest"  # type: ignore[index]
+        members[0]["digest"] = "deliberately-wrong-digest"
         _rewrite_activation(config_dir, members)
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(PolicyNotActivated):
@@ -455,7 +457,7 @@ class TestVenueBootRefusals:
     def test_activation_resolved_false_refuses_to_boot(self, tmp_path: Path) -> None:
         config_dir, data_dir, custody_root = _fresh_compose_dirs(tmp_path / "case")
         members = _real_members(config_dir)
-        members[0]["resolved"] = False  # type: ignore[index]
+        members[0]["resolved"] = False
         _rewrite_activation(config_dir, members)
         fx.write_band_strategy_file(config_dir)
         with pytest.raises(PolicyNotActivated):

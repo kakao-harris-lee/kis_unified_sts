@@ -56,6 +56,7 @@ def test_active_envelope_version_absent_and_present() -> None:
     """(§5.7, SPG-EV-012) active_envelope_version replays the version string; None when absent."""
     assert spg.active_envelope_version(None) is None
     env = issue_envelope()
+    assert env.envelope_version is not None
     assert spg.active_envelope_version(env) == env.envelope_version.version
     assert spg.active_envelope_version(env) == "e1"
 
@@ -64,6 +65,7 @@ def test_active_profile_version_absent_and_present() -> None:
     """(§5.7, SPG-EV-012) active_profile_version replays the version string; None when absent."""
     assert spg.active_profile_version(None) is None
     prof = issue_profile()
+    assert prof.profile_version is not None
     assert spg.active_profile_version(prof) == prof.profile_version.version
     assert spg.active_profile_version(prof) == "p1"
 
@@ -217,6 +219,7 @@ def test_replay_coordinates_reconstruct_denial_too() -> None:
 
     # A stale-base predecessor (does not equal the candidate's recorded predecessor)
     # reconstructs a non-serializing link, not a silently-permissive one.
+    assert act.predecessor_generation is not None  # set explicitly by the fixture above
     stale_predecessor_link = spg.activation_serializable(
         act, act.predecessor_generation + 1
     )

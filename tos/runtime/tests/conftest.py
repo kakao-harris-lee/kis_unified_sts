@@ -145,6 +145,10 @@ def _guarded_sendmsg(self: socket.socket, *args: Any, **kwargs: Any) -> Any:
     if address is None and len(args) >= 4:
         address = args[3]
     _enforce_loopback(address)
+    # Only ever installed as the patched method when `_real_sendmsg is not
+    # None` (see `_hermetic_network_guard` below) — assert to make that
+    # invariant explicit rather than typing this call away.
+    assert _real_sendmsg is not None
     return _real_sendmsg(self, *args, **kwargs)
 
 

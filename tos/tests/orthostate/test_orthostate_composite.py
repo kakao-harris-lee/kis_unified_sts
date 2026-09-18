@@ -259,7 +259,7 @@ def test_composite_is_frozen() -> None:
     """An issued composite cannot be mutated in place (frozen; append-only §2.0)."""
     c = issue_composite()
     with pytest.raises(ValidationError):
-        c.broker_order_state = BrokerOrderState.FILLED  # type: ignore[misc]
+        c.broker_order_state = BrokerOrderState.FILLED
 
 
 def test_no_dimension_mutation_method_on_records() -> None:
