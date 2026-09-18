@@ -189,7 +189,7 @@ def test_gap_1_the_local_retained_results_port_has_not_drifted_from_the_gateway(
     sliced = run_slice()
     assert isinstance(sliced.gateway, RetainedEgressResults)
 
-    declared = inspect.signature(RetainedEgressResults.results.fget).return_annotation
+    declared = inspect.signature(RetainedEgressResults.results.fget).return_annotation  # type: ignore[attr-defined]
     assert str(declared) == "tuple[EgressResultPayload, ...]"
     # …and the live surface really is that shape.
     assert isinstance(sliced.gateway.results, tuple)

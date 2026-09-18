@@ -426,7 +426,9 @@ def test_missing_delay_bound_term_refuses_construction(missing_field: str) -> No
 def test_missing_delay_bound_term_never_reaches_a_three_term_tuple() -> None:
     """Belt-and-suspenders: even if construction refused for the wrong reason, this proves no
     ``RuntimeTimeProjection`` carrying a 3-term ``delay_bounds`` is ever reachable."""
-    broken_config = replace(_config(), max_time_source_sequence_gap_ms=None)
+    broken_config = replace(
+        _config(), max_time_source_sequence_gap_ms=None  # type: ignore[arg-type]
+    )
     service = _build_service()
     service.start()
 

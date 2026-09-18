@@ -257,9 +257,9 @@ def test_absence_gate_is_exactly_the_four_way_positive_conjunction(
 @given(forged=FORGED_FLAG)
 def test_only_real_trues_open_the_absence_gate(forged: object) -> None:
     """(polarity) Truthy **and falsy** non-``bool`` values pass none of the four gates."""
-    assert absence_is_negative_evidence_only(forged, True, True, True) is (
-        forged is True
-    )
+    assert absence_is_negative_evidence_only(
+        forged, True, True, True  # type: ignore[arg-type]
+    ) is (forged is True)
 
 
 def test_no_time_based_signal_exists_in_the_absence_gate() -> None:

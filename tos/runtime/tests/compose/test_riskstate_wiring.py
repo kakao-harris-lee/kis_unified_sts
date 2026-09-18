@@ -1467,7 +1467,9 @@ class TestComposeE2E:
         original_observe = reader.observe
         seeded = {"done": False}
 
-        def _seeding_observe(*, root_event_id, attempt_id, root_event_seq=None):
+        def _seeding_observe(  # type: ignore[no-untyped-def]
+            *, root_event_id, attempt_id, root_event_seq=None
+        ):
             if not seeded["done"]:
                 seeded["done"] = True
                 _seed_send_sealed(
@@ -1548,7 +1550,9 @@ class TestComposeE2E:
         original_observe = reader.observe
         seeded = {"done": False}
 
-        def _seeding_observe(*, root_event_id, attempt_id, root_event_seq=None):
+        def _seeding_observe(  # type: ignore[no-untyped-def]
+            *, root_event_id, attempt_id, root_event_seq=None
+        ):
             if not seeded["done"]:
                 seeded["done"] = True
                 content_event_id = reader._resolve_root_content_event_id(root_event_seq)
