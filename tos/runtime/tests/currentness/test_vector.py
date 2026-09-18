@@ -514,7 +514,9 @@ def test_reading_last_assemble_complete_does_not_itself_call_assemble(
         calls["n"] += 1
         return real_current_snapshot()
 
-    trusted_time_service.current_snapshot = _counting_current_snapshot
+    trusted_time_service.current_snapshot = (  # type: ignore[method-assign]
+        _counting_current_snapshot
+    )
 
     # Reading the property several times must never re-invoke assemble()'s own logic.
     for _ in range(3):

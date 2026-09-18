@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -73,7 +74,7 @@ def test_malformed_yaml_refuses(tmp_path: Path) -> None:
 
 def test_null_leaf_at_top_level_refuses_naming_the_field(tmp_path: Path) -> None:
     path = tmp_path / STRATEGY_BINDINGS_FILE_NAME
-    mapping = {
+    mapping: dict[str, Any] = {
         "strategies": {
             "example.strategy": {"config_binding_version": None, "bindings": {}}
         }
