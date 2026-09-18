@@ -611,31 +611,87 @@ def test_producer_and_consumer_futures_tick_stream_defaults_agree():
         assert _read_env_template(name)["FUTURES_TICK_STREAM"] == producer_default
 
 
-def test_monitor_daemons_receive_log_level_from_the_environment():
-    """Both monitors honour LOG_LEVEL in code; compose must actually pass it.
+def _entrypoint_sources(service: dict) -> list[Path]:
+    """Return the repo files a service's python ``command`` runs, if any.
+
+    Two shapes appear in this compose file: ``python -m pkg.mod`` (a module or
+    a package ``__main__``) and ``python /app/path/to/script.py``. Anything
+    else — supercronic, uvicorn, npm, redis-server, a bash entrypoint script —
+    has no single python entrypoint to read here and yields nothing.
+    """
+    command = service.get("command")
+    if not isinstance(command, list) or not command:
+        return []
+    if "python" not in str(command[0]):
+        return []
+    if "-m" in command:
+        module = command[command.index("-m") + 1].replace(".", "/")
+        candidates = [_REPO_ROOT / f"{module}.py", _REPO_ROOT / module / "__main__.py"]
+    elif str(command[-1]).endswith(".py"):
+        candidates = [_REPO_ROOT / str(command[-1]).removeprefix("/app/")]
+    else:
+        return []
+    return [path for path in candidates if path.is_file()]
+
+
+def test_log_level_reaches_exactly_the_entrypoints_that_read_it():
+    """Every entrypoint that reads LOG_LEVEL gets it from compose, and only those.
 
     No env_file is mounted into these containers, so a key absent from the
     service's ``environment`` block simply does not exist at runtime and the
-    daemon silently falls back to INFO. Guards all three layers of the knob:
-    compose passes it, only these two services get it, and the deploy
-    templates ship the INFO default.
+    daemon silently falls back to INFO. That is what made the knob half-true
+    between #749 and #751: two services honoured ``LOG_LEVEL=DEBUG`` and nine
+    ignored it, which reads to an operator as a broken knob.
+
+    The roster is derived from the code — a service is expected to carry the
+    key iff the module its ``command`` runs calls ``configure_logging`` — so a
+    daemon migrated to the helper without its compose line, or handed the line
+    without reading it, fails here. ``expected`` is spelled out anyway: it is
+    the reviewable list, and it keeps a resolver that silently matched nothing
+    from passing vacuously.
+
+    The key is declared per service rather than folded into an anchor; see the
+    NOTE above ``x-redis-runtime-env`` in docker-compose.yml. This test cannot
+    police that on its own — ``yaml.safe_load`` expands the ``<<`` merge keys,
+    so an inherited key is indistinguishable from a local one here.
     """
     compose = yaml.safe_load(
         (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     )
     services = compose["services"]
 
-    monitors = ("stock-monitor", "futures-monitor")
-    for name in monitors:
-        assert services[name]["environment"]["LOG_LEVEL"] == "${LOG_LEVEL:-INFO}", name
+    expected = {
+        "stock-market-ingest",
+        "stock-strategy",
+        "stock-risk-filter",
+        "stock-order-router",
+        "stock-exit",
+        "stock-monitor",
+        "futures-market-ingest",
+        "futures-decision-engine",
+        "futures-risk-filter",
+        "futures-order-router",
+        "futures-monitor",
+        "futures-kill-switch",
+    }
+    readers = {
+        name
+        for name, service in services.items()
+        if any(
+            "configure_logging" in path.read_text(encoding="utf-8")
+            for path in _entrypoint_sources(service)
+        )
+    }
+    assert readers == expected
 
-    # And nowhere else. The key is declared per service on purpose rather than
-    # in the shared *redis-runtime-env anchor: only these two entrypoints read
-    # it, so the anchor would hand it to ~20 daemons that ignore it. The
-    # assertion above cannot catch that move on its own — ``yaml.safe_load``
-    # expands the ``<<`` merge keys, so an inherited key looks local here.
+    for name in sorted(expected):
+        environment = services[name]["environment"]
+        assert environment["LOG_LEVEL"] == "${LOG_LEVEL:-INFO}", name
+
+    # And nowhere else: a service that ignores the variable must not advertise
+    # it, or the knob is half-true in the other direction.
     for name, service in services.items():
-        if name in monitors:
+        if name in expected:
             continue
         environment = service.get("environment") or {}
         keys = (
@@ -646,7 +702,7 @@ def test_monitor_daemons_receive_log_level_from_the_environment():
         assert "LOG_LEVEL" not in keys, f"{name} does not read LOG_LEVEL"
 
     # The templates document the knob and ship the default the code falls back
-    # to; a template that drifted to another value would move those two
-    # daemons' level on every deploy from it.
+    # to; a template that drifted to another value would move every one of
+    # these daemons' levels on every deploy from it.
     for name in (".env.paper.example", ".env.live.example"):
         assert _read_env_template(name)["LOG_LEVEL"] == "INFO", name

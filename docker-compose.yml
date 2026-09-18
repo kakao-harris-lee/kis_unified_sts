@@ -6,6 +6,17 @@
 # at a password-less host redis via host.docker.internal). With ${VAR:-default} an
 # empty value would become "changeme" and AUTH would fail against that server.
 # Unset still defaults to changeme. Do NOT re-add the colon.
+
+# NOTE: LOG_LEVEL is listed literally on every service whose entrypoint calls
+# shared.observability.logging_setup.configure_logging(), and on no other. No
+# env_file is mounted into these containers, so a key absent from a service's
+# `environment` block simply does not exist at runtime and the daemon falls
+# back to INFO — which is what made the knob half-true before #751. It is NOT
+# folded into the *redis-runtime-env anchor (that would hand it to ~20 services
+# that ignore it) nor into an anchor of its own: a one-key anchor costs the
+# same line per service as the assignment and would make `grep LOG_LEVEL
+# docker-compose.yml` stop naming the services that actually receive it.
+# tests/unit/test_compose_runtime_env.py pins the two sets to each other.
 x-redis-runtime-env: &redis-runtime-env
   REDIS_HOST: "${REDIS_HOST:-redis}"
   REDIS_PORT: "${REDIS_PORT:-6379}"
@@ -218,6 +229,7 @@ services:
       # offset (misdiagnosis risk). Code uses now_kst()/datetime.now(UTC) so this
       # is logging-only; no functional change.
       TZ: "Asia/Seoul"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       INGEST_ASSET: "stock"
       INGEST_MAX_SYMBOLS: "${INGEST_MAX_SYMBOLS:-40}"
       INGEST_REFRESH_SECONDS: "${INGEST_REFRESH_SECONDS:-30}"
@@ -237,6 +249,7 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env]
       TZ: "Asia/Seoul"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       STOCK_STRATEGY_DAEMON: "${STOCK_PIPELINE_MODE:-shadow}"
       STOCK_TICK_STREAM: "${STOCK_TICK_STREAM:-market:ticks}"
       STOCK_WATCHLIST_KEY: "${STOCK_WATCHLIST_KEY:-system:daily_watchlist:latest}"
@@ -253,6 +266,7 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env]
       TZ: "Asia/Seoul"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       STOCK_RISK_FILTER: "${STOCK_PIPELINE_MODE:-shadow}"
       STOCK_POSITIONS_KEY: "${STOCK_POSITIONS_KEY:-stock:daemon:positions}"
 
@@ -264,6 +278,7 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env]
       TZ: "Asia/Seoul"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       STOCK_ORDER_ROUTER: "${STOCK_PIPELINE_MODE:-shadow}"
       STOCK_POSITIONS_KEY: "${STOCK_POSITIONS_KEY:-stock:daemon:positions}"
       STOCK_PAPER_SLIPPAGE_RATE: "${STOCK_PAPER_SLIPPAGE_RATE:-0.0001}"
@@ -276,6 +291,7 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env]
       TZ: "Asia/Seoul"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       STOCK_EXIT_DAEMON: "${STOCK_PIPELINE_MODE:-shadow}"
       STOCK_POSITIONS_KEY: "${STOCK_POSITIONS_KEY:-stock:daemon:positions}"
       STOCK_TICK_STREAM: "${STOCK_TICK_STREAM:-market:ticks}"
@@ -290,8 +306,6 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *alert-runtime-env]
       TZ: "Asia/Seoul"
-      # Without this the daemon's LOG_LEVEL support is unreachable in the
-      # container: no env_file is mounted, so only keys listed here exist.
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       STOCK_MONITOR_DAEMON: "${STOCK_PIPELINE_MODE:-shadow}"
       STOCK_POSITIONS_KEY: "${STOCK_POSITIONS_KEY:-stock:daemon:positions}"
@@ -324,6 +338,7 @@ services:
       # KST log timestamps (logging-only; code uses now_kst()) — same as the
       # stock daemons above. Without it these containers log in UTC.
       TZ: "Asia/Seoul"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       # Front-month contract resolution must match `trader-futures`: every
       # futures daemon that resolves a contract (ingest, decision-engine,
       # order-router, monitor) calls resolve_futures_instrument_from_env(),
@@ -358,6 +373,7 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env]
       TZ: "Asia/Seoul"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       FUTURES_STRATEGY_DAEMON: "${FUTURES_PIPELINE_MODE:-shadow}"
       # See futures-market-ingest: must match trader-futures' contract.
       FUTURES_TRADING_PRODUCT: "${FUTURES_TRADING_PRODUCT:-mini}"
@@ -380,6 +396,7 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env]
       TZ: "Asia/Seoul"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       FUTURES_RISK_FILTER: "${FUTURES_PIPELINE_MODE:-shadow}"
       # ONE equity denominator for the futures risk lane (F-9 gap G4):
       # config/risk.yaml::risk.account_equity_krw (Daily/Weekly MDD) and
@@ -399,6 +416,7 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env]
       TZ: "Asia/Seoul"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       FUTURES_ORDER_ROUTER: "${FUTURES_ORDER_ROUTER_MODE:-paper}"
       # Price-feed source. `stream` (default) consumes the futures ticks another
       # process already publishes to FUTURES_TICK_STREAM — trader-futures today,
@@ -461,8 +479,6 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *alert-runtime-env]
       TZ: "Asia/Seoul"
-      # Without this the daemon's LOG_LEVEL support is unreachable in the
-      # container: no env_file is mounted, so only keys listed here exist.
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       FUTURES_MONITOR_DAEMON: "${FUTURES_PIPELINE_MODE:-shadow}"
       # See futures-market-ingest: must match trader-futures' contract.
@@ -479,6 +495,7 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *alert-runtime-env]
       TZ: "Asia/Seoul"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       KIS_FUTURES_EQUITY_KRW: "${KIS_FUTURES_EQUITY_KRW:-100000000}"
 
   # =============================================================================

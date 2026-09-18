@@ -12,6 +12,7 @@ import os
 import socket
 
 from shared.config.runtime_defaults import redis_url_from_env
+from shared.observability.logging_setup import configure_logging
 
 logger = logging.getLogger(__name__)
 
@@ -129,10 +130,7 @@ async def _build_and_run() -> int:
 
 
 def main() -> int:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    configure_logging()
     return asyncio.run(_build_and_run())
 
 
