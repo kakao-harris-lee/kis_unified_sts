@@ -609,3 +609,19 @@ def test_producer_and_consumer_futures_tick_stream_defaults_agree():
 
     for name in (".env.paper.example", ".env.live.example"):
         assert _read_env_template(name)["FUTURES_TICK_STREAM"] == producer_default
+
+
+def test_monitor_daemons_receive_log_level_from_the_environment():
+    """Both monitors honour LOG_LEVEL in code; compose must actually pass it.
+
+    No env_file is mounted into these containers, so a key absent from the
+    service's ``environment`` block simply does not exist at runtime and the
+    daemon silently falls back to INFO.
+    """
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    services = compose["services"]
+
+    for name in ("stock-monitor", "futures-monitor"):
+        assert services[name]["environment"]["LOG_LEVEL"] == "${LOG_LEVEL:-INFO}", name

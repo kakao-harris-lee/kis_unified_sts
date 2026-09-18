@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 import pytest
@@ -66,3 +67,26 @@ def test_config_loads():
 
     cfg = ConfigLoader.load("futures_monitor.yaml").get("futures_monitor", {})
     assert "telegram" in cfg
+
+
+def test_setup_logging_honours_log_level(monkeypatch, restore_root_log_level):
+    """LOG_LEVEL=DEBUG must reach this daemon, or its DEBUG records stay dark."""
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+
+    assert m._setup_logging() == logging.DEBUG
+    assert restore_root_log_level.isEnabledFor(logging.DEBUG)
+
+
+def test_setup_logging_defaults_to_info_when_unset(monkeypatch, restore_root_log_level):
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+
+    assert m._setup_logging() == logging.INFO
+
+
+def test_setup_logging_falls_back_to_info_on_invalid(
+    monkeypatch, restore_root_log_level
+):
+    """A typo'd LOG_LEVEL must not stop the daemon from starting."""
+    monkeypatch.setenv("LOG_LEVEL", "bogus")
+
+    assert m._setup_logging() == logging.INFO
