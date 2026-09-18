@@ -1,0 +1,271 @@
+# TOS 설정값 채택 + §7.4/F 이월 처분 계획
+
+- 작성: 2026-09-18 · 세션 모델 단독 저작(운영자 지시 2026-09-04)
+- 선행: `run` 구동 아크 4항 착지(`docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md`) ·
+  커널 라운드 #4 착지(`docs/plans/2026-09-17-tos-kernel-round-4-plan.md` §7)
+- 운영자 지시(2026-09-18): **「미해소 5건부터 진행」 · 「후속 처분도 진행」 · 「설정값은 승인함」**
+- 기준선: main `adaf0239` · 커널 **9537** · 런타임 **2462**
+
+---
+
+## 0. 승인이 무엇의 원천이 될 수 있는가 — 이 계획의 축
+
+운영자가 「설정값은 승인함」이라고 했다. 그러나 **승인은 정책 값의 원천이 될 수 있어도 측정 값의
+원천은 되지 못한다.** 이 아크가 내내 지킨 「원천 없는 수치는 `null`」을 승인으로 우회하면 그 규율은
+사라진다. 따라서 남은 값을 **세 부류로 갈라** 다르게 처리한다.
+
+| 부류 | 원천 | 이 계획의 처리 |
+|---|---|---|
+| **(가) 운영자 정책 판단** — scope(어느 계좌·종목), 임계값, 게이트 기준 | **승인 자체가 원천이다.** 정책은 측정 대상이 아니라 결정 대상 | 구체값을 제안하고 근거를 적어 채택. `approved_by` 에 2026-09-18 승인 기재 |
+| **(나) 파생 digest** — `canonical_digest`, `*_id`, `activation_record_id` | 다른 승인 문서 + `safety_activation.yaml::members` 에서 **계산된다** | 승인 불필요. `print-policy-digests` 로 도출해 기입. **손으로 짓지 않는다** |
+| **(다) 측정값** — 주식 가격대별 호가단위 표 | **브로커가 정한다.** 승인으로 만들 수 없다 | 승인 대상이 **아니다**. 실측 경로를 설계해 핸드오버. 그때까지 `null` 유지 |
+
+**(다)를 (가)로 취급하는 것이 이 계획이 막으려는 단 하나의 실수다.** 커널 라운드 #4 §0.1 이 바로 그
+경계에서 한 번 흔들렸고(「측정 원천 0건」이 틀렸던 건), `contract-keeper` 가 찾은 HIGH(`optional_str` 이
+`"TBD"` 통과)는 그 경계를 **뒷문으로** 여는 경로였다.
+
+### 0.1 실측 — 무엇이 얼마나 남았나
+
+`docs/plans/2026-09-17-tos-deployment-instance-inventory.md` 와 `grep -n "TBD" config/tos_runtime/paper/*.yaml`.
+
+- **부팅 차단 23종**: 인벤토리 §2 표에서 `**필수**` 로 마킹된 행을 **직접 센 값**
+  (`awk '/^\| [0-9]+ \|/ && /\*\*필수\*\*/' | wc -l` → 23, `strategies/` 포함).
+  이 중 채택된 것은 **4종**(`calendar`·`risk`·`venue_constraint_policy`·`order_construction_policy`).
+  → **19종이 example 뿐**이다(`comm -23 <필수23> <채택6>` → 19).
+
+  > 정정(2026-09-18, 조사 레인 지적): 이 절의 초고는 **「13종」**이라고 적었다. **틀렸다.**
+  > 인벤토리 §2 요약 문단이 나열한 「무조건 호출 18종」 목록은 **이미 채택된 4종을 뺀 이름만**
+  > 열거한 것인데, 그것을 총량으로 읽고 거기서 채택 6을 **또** 뺐다 — 이중 차감이다.
+  > 채택 6종 중 2종(`action_flow_policy`·`aggregate_risk_policy`)은 「사실상 필수」 행이라 애초에
+  > 필수 23 집합 밖이기도 하다. 작업량이 **1.5배**로 늘어난다.
+- **`construction.yaml`**: 채택 인스턴스가 **아예 없다**(`config/tos_runtime/paper/` 에 부재).
+  `run` 서브커맨드 전용 필수. 리프 7개 전부 `null`.
+- **채택된 6종 안의 잔여 TBD**: `aggregate_risk_policy` 9 · `action_flow_policy` 8 ·
+  `venue_constraint_policy` 4 · `order_construction_policy` 6 (+ 커널 #4 가 추가한 3키는 named-TBD 유지).
+  `calendar.yaml`·`risk.yaml` 은 TBD **0**.
+- **부류 비율(실측)**: 위 잔여 27개 중 **(나) 파생 digest 계열이 15개**(`canonical_digest`/`*_id`/
+  `activation_record_id`), **(가) 정책 판단이 12개**(scope 계열 8 + `admitted_quantity_bases` +
+  sizing `value` + OCP 3키 중 정책 성격인 것). **(다)는 0** — tick 표는 이 파일들 밖이다.
+
+즉 **절반 이상이 승인이 아니라 계산으로 풀린다.** 이것이 이 계획의 작업량을 크게 줄인다.
+
+### 0.1.1 조사 레인이 정정한 것 — (나)의 성격이 셋으로 갈린다
+
+초고는 `canonical_digest`/`*_id`/`activation_record_id` 를 **하나의 (나)** 로 묶었다. 실측 결과
+**셋이 다른 것**이었다. 이 구분이 작업량을 다시 줄인다.
+
+| 실측 | 뜻 | 처리 |
+|---|---|---|
+| **`canonical_digest` 는 `"TBD"` 로 영구히 둬도 된다** — `check_canonical_digest`(`venue/_policy_primitives.py:241-247`)가 `TBD_DIGEST` 를 **항상 통과**시킨다 | 진짜 엄격 동등이 요구되는 곳은 **`safety_activation.yaml::members[].digest`** 다(`venue/activation.py:130-145`, exact match) | **채우지 않는다.** 정상 배포 형태는 「정책 파일의 `canonical_digest` 는 TBD, `members` 만 정확」 |
+| **`activation_record_id` 는 죽은 리프다** — `grep -rn "activation_record_id" tos/runtime/src tos/src` → **프로덕션 0건**(배포 YAML 4곳과 테스트 픽스처에만 존재) | 활성화 판정은 `(kind, member_id, generation, digest)` **4-튜플로만** 이뤄지고 이 필드는 참여하지 않는다 | **채우지 않는다.** 파생되는 게 아니라 **아무도 읽지 않는다** |
+| **`members[]` 4-튜플만이 실제 작업이다** | `print-policy-digests` 출력 3필드 + `kind`(enum 라벨을 사람이 전사) | **이것만 채운다** |
+
+따라서 (나) 15개 중 **실제로 채워야 하는 것은 `safety_activation.yaml::members` 뿐**이다.
+
+### 0.1.2 부류가 하나 더 있다 — **(라) 배포 환경 실측값**
+
+`release.yaml::expected_code_digest` / `expected_dependency_set_digest` 는 **(가)가 아니다.**
+운영자가 정하는 값이 아니라 **현재 설치된 소스트리·의존성 집합에서 실측**되는 값이다
+(`print-digests` — **`print-policy-digests` 와 다른 서브커맨드다**, `operations.dependency_admission.
+observe_runtime_artifact().source_tree_digest`).
+
+(나)와도 다르다: (나)는 **다른 정책 문서**에서 파생되지만 (라)는 **배포 환경 자체**에서 파생된다.
+파생 방향이 반대라 순서 의존도 반대다 — 정책 확정이 선행조건이 아니라 **설치 상태**가 선행조건이다.
+
+**제안표에서 (라)를 (가)로 놓고 「운영자가 정한다」고 적으면 틀린다.**
+
+### 0.1.4 ★ 실증된 부류 — **배포 example 을 복사하면 부팅이 거부된다**
+
+잠재가 아니라 **이미 깨져 있다.** 팀리드가 직접 로드해 확인:
+
+```
+$ python -c "load_activation_members('tos/runtime/config/safety_activation.example.yaml')"
+REFUSED: 'members' key is missing or still null (named-TBD) —
+         an activation document must explicitly declare its member list, [] included
+```
+
+`safety_activation.yaml` 은 **네 곳**에서 읽힌다(`compose/_riskstate_wiring.py:72` ·
+`_safety_wiring.py:99` · `_venue_wiring.py:109` · `venue/activation.py`). example 은 그중
+**spg 소유 스키마(`activation:` 블록)만** 채우고 `venue/activation.py::load_activation_members`
+가 요구하는 **`members:` 키가 아예 없다.**
+
+**이 아크에서 이미 나온 부류다.** W2 의 `marketfeed.example.yaml` 이 `intake_kind` 를 빠뜨렸던 것과
+같다 — **한 파일을 여러 로더가 읽는데 example 이 한쪽만 만족시킨다.** 그때 인스턴스만 고치고
+부류를 닫지 않았다.
+
+**기존 스모크 테스트 관례로는 이것이 안 잡힌다.** `test_shipped_example_file_is_all_null_and_
+therefore_refuses` 는 「거부되는가」만 핀하는데, 이 파일은 **거부된다** — 다만 **틀린 이유로**
+거부된다(「값이 전부 null 이라」가 아니라 「구조가 불완전해서」). 그 관례는 지금 3개 파일에만
+붙어 있기도 하다(`grep -rln "shipped_example" tos/runtime/tests` → 3건).
+
+**이 계획은 example 을 복사해 실파일을 만드는 계획이다.** 깨진 example 을 복사하면 그 결함이
+배포 파일로 옮겨간다. 그러므로 **A-0b 에서 부류를 닫고** 값 저작을 시작한다.
+
+### 0.1.3 ★ 잠재 부류 — 18종 로더가 `"TBD"` 를 막지 않는다
+
+커널 라운드 #4 의 `contract-keeper` HIGH(`optional_str` 이 `"TBD"` 통과)는 **인스턴스였고 부류는
+열려 있다.** 조사 실측:
+
+- `null` 과 `"TBD"` 를 **둘 다** 거부하는 것은 **`construction.yaml` 로더와 `venue/_policy_primitives.py`
+  둘뿐**이다 — 전자는 라운드 #4 이후 신설, 후자는 라운드 #4 가 직접 고친 파일.
+
+  > 정정(fact-check 2026-09-18): **「`venue/_policy_primitives.py` 는 안전하다」는 파일 단위 뭉뚱그림이었다.**
+  > 그 파일 안에 `require_str`(TBD 미검사)과 `require_filled_str`/`optional_str`(검사함)이 **공존**하고,
+  > main 기준으로는 **미검사 쪽이 다수**였다(OCP 로더 12:1 · venue 4:1 · action_flow 4:3 · aggregate_risk 4:1).
+  > A-0 라운드 2 가 24곳 중 14곳을 강한 쪽으로 교체해 **6:7 / 3:2 / 2:5 / 2:3** 이 됐고, 팀리드가 남은 13곳을
+  > 확인한 결과 **enum 토큰이거나 `require_str` 직후 인라인 TBD 체크가 있다**(예:
+  > `_order_construction_policy_loader.py:458-464` 의 `axes.value`). 즉 지금은 갭이 아니다.
+  >
+  > **다만 검사기의 한계가 여기서 드러난다** — `tos_named_tbd_guard.py` 는 파일이 가드 관용구를
+  > **참조하는지**만 보므로, 한 파일 안에서 **일부 호출부만** 가드를 쓰는 상태를 구분하지 못한다.
+  > 이번엔 결과적으로 안전하지만 **호출부 단위 보장이 아니다.** 등재하고 넘어간다.
+- **라운드 #4 이전부터 있던 18종 로더는 `"TBD"` 문자열 검사 자체가 없다**(`_require`/`_require_str`/
+  `require_str_field` 계열 — 예: `brokercap/scopes.py:277-282`). 지금 안전한 이유는 로더가 막아서가
+  아니라 **example 에 `"TBD"` 관례가 아직 침투하지 않아서**다.
+
+**이 계획은 이 파일들에 값을 쓰는 계획이다.** 즉 내가 `"TBD"` 를 placeholder 로 쓰는 순간 **18종이
+그것을 유효한 값으로 승인한다.** 그러므로 **A-0 에서 부류를 먼저 닫고** 값 저작을 시작한다
+(§4 W-A). 「지적을 고쳤는가」가 아니라 「같은 지적이 또 나올 수 있는가」다.
+
+### 0.2 순서 의존이 하나 있다
+
+`admitted_quantity_bases` / sizing `value` 는 **전략 파일의 `quantity_basis` 가 먼저 정해져야** 한다
+(인벤토리 §4). 그리고 파생 digest는 그 위의 정책 값이 확정된 **뒤에만** 계산된다. 따라서
+**(가) → (나)** 순서는 뒤집을 수 없다.
+
+---
+
+## 1. 포함 · 제외
+
+**포함**: §7.4 미해소 5건 · 후속 처분 F-1~F-4 · 설정값 채택((가)+(나)) · `run` 실부팅 도달.
+
+**제외** (각각 한 줄 사유):
+
+| 제외 | 사유 |
+|---|---|
+| **(다) tick 표 실값** | 브로커 측정값이다. 승인으로 만들지 않는다. 실측 경로 설계까지만(W-B3) |
+| **F-3 별도 KIS 앱 등록** | 외부 등록 행위 — 코드가 아니라 운영자 계정 작업 |
+| **Codex 부착** | 유료 외부 호출. 범위·비용 승인이 별도로 필요하다(§6 ①) |
+| **실 모의 서버 실행** | 헤르메틱 테스트까지가 이 계획. 실행은 운영자 핸드오버 |
+| **계약 문서** | byte-frozen · 부수 편집 금지 |
+| Phase 3 §7.11 이월 | 이번에도 미선택 |
+
+---
+
+## 2. 결정
+
+1. **웨이브 3개, 의존 순서대로.** W-A(설정값) → W-B(§7.4 잔여) → W-C(F 처분). W-B/W-C 는 서로
+   독립이라 병렬 가능하나, W-A 는 `run` 부팅이라는 단일 종료조건을 가지므로 먼저 끝낸다.
+2. **(가) 값은 제안과 채택을 한 커밋에 넣지 않는다.** 제안표를 먼저 문서로 내고, 그 문서를 근거로
+   실파일을 채운다 — 이 저장소가 venue/OCP 에서 쓴 방식 그대로(`approved_by` 에 제안 문서를 인용).
+   운영자의 2026-09-18 승인은 **제안표 전체에 대한 승인**으로 기록한다.
+3. **(나) 는 손으로 적지 않는다.** `print-policy-digests` 출력을 그대로 옮기고, 옮긴 명령과 출력을
+   커밋 메시지에 남긴다. 값이 맞는지는 `tos_contract_check.py` 와 부팅이 판정한다.
+4. **안전 계열 값은 제안표에서 따로 표시한다.** Hard Safety Envelope · 리스크 한도 · 릴리스 게이트는
+   틀리면 비싸다. 「승인함」을 받았어도 **운영자가 눈으로 확인할 자리를 만든다** — 구체값을 제시하되
+   한 표에 모아 `⚠` 로 표시한다. 숙제를 돌려주지 않되 조용히 넘기지도 않는다.
+5. **§7.4 ④(롤아웃 순서)는 런북으로 닫는다.** 실측 결과 **배포 스크립트가 아예 없다** —
+   `apply_migrations` 호출부는 `compose/cli.py:844`(`migrate` 서브커맨드) 하나뿐이고 운영자 수동이다.
+   즉 「스크립트가 순서를 지키는가」라는 질문 자체가 성립하지 않는다. `docs/runbooks/` 에 tos 운영
+   런북이 **없으므로**(측정: `ls docs/runbooks/ | grep -i tos` → `tos-kis-mock-transport.md` 뿐) 새로 쓴다.
+6. **F-2 는 코드 전에 결정이 먼저다.** 두 착지 레인의 계약이 합성되지 않는 문제이고, 얇은 어댑터로
+   안 된다는 것이 이미 3중 확인됐다. **설계 결정을 문서로 먼저** 내고 그 다음에 코드.
+7. **저작과 검토는 다른 패스.** 웨이브마다 `code-reviewer`(sonnet) + 변경 표면별 게이트.
+   W-A 는 승인·정책 값이므로 `contract-keeper`, W-C 의 F-1 은 화해 경로라 `code-reviewer` 만.
+
+---
+
+## 3. 기각 대안
+
+| 대안 | 기각 사유 |
+|---|---|
+| 「승인함」을 근거로 tick 표를 채운다 | **(다)를 (가)로 취급하는 것.** 이 계획 §0 의 축을 정면으로 깬다 |
+| 파생 digest 를 손으로 계산해 적는다 | 도출 도구가 이미 있다(`print-policy-digests`). 손계산은 재현 불가능한 값을 만든다 |
+| 19종을 한 커밋에 몰아서 채운다 | 부팅 실패 시 어느 값이 원인인지 분리되지 않는다. 파일 단위로 나눠 각 단계가 부팅 진척을 증명하게 한다 |
+| F-2 를 어댑터로 우회 | 감쌀 대상이 없다 — adapter 가 **제2의 자격증명 로딩 경로**가 된다(아크 §7.2 F-2, 3중 확인) |
+| §7.4 5건을 한 레인에 몰기 | 성격이 제각각이다(코드·런북·측정설계·운영자결정). 한 레인이 네 부류를 다 잘하지 못한다 |
+
+---
+
+## 4. 웨이브
+
+### W-A — 설정값 채택 · 종료조건 = **`run` 이 실제 부팅한다**
+
+| # | 내용 | 종료 조건 |
+|---|---|---|
+| **A-0** | **잠재 부류 닫기(§0.1.3).** 공용 `_require_str`/`require_str_field`/`_require` 계열에 named-TBD 거부 추가 — **값을 쓰기 전에** | `"TBD"` 를 넣으면 거부됨을 로더별로 핀 · 거부 코드를 지우면 red(뮤테이션) · 기존 부팅 무회귀 |
+| **A-0b** | **실증 부류 닫기(§0.1.4).** `safety_activation.example.yaml` 에 `members:` 추가 + **모든 배포 example 이 자신을 읽는 *모든* 로더를 통과/거부하는지** 검사. 거부는 **이유까지** 핀 | 깨진 example **0** · 스모크가 「거부됨」이 아니라 **「올바른 이유로 거부됨」**을 핀 · 로더를 하나 더 추가해도 검사가 따라옴 |
+| A-1 | **제안표 저작**(문서). (가) 정책값 + **19종** example-only 파일의 필수 리프. 값마다 **근거 한 줄**. 안전 계열은 `⚠` 표로 분리 | 저작한 값 **전부에 근거**가 붙어 있음 · (다) 부류 **0건** |
+| A-2 | (가) 채택 — 실파일 기입. `approved_by` 에 「operator 2026-09-18 · 제안표 §n」 | `grep -n "TBD" config/tos_runtime/paper/*.yaml` 에서 (가) 계열 **0** |
+| A-3 | (나) 파생 — `print-policy-digests` 출력을 기입 | digest 계열 **0** · 명령과 출력을 커밋 메시지에 인용 |
+| A-4 | `construction.yaml` 신규 인스턴스 — `price_field_key`/`shape_price_field_key` 는 배포된 `critical_input_policy.yaml::fields[].field_key` 와 **일치해야** 한다(로더가 대조하지 않으므로 사람이 맞춰야 함) | 두 파일의 키가 실제로 일치함을 테스트로 핀 |
+| A-5 | **부팅** — `run` 을 실제 데이터 디렉터리에 대고 구동 | **거부 없이 틱을 관측**하거나, 거부된다면 **어느 값 때문인지** 지목 |
+
+**A-5 가 이 웨이브의 유일한 진짜 종료조건이다.** 나머지는 그 수단이다. 부팅이 안 되면 무엇이
+모자란지가 결과물이다 — 「채웠다」가 아니라 「구동한다」로 판정한다.
+
+### W-B — §7.4 잔여
+
+| # | 내용 | 종료 조건 |
+|---|---|---|
+| B-1 | **① `committed_vector_json` 을 `verify_replay` 범위 안으로.** `payload_json` 에 싣고 `fold_reservations_from_entries`/`digest_of_reservation_map` 에 포함. **pre-K-4 엔트리 처리**가 핵심 설계점(그 엔트리에는 벡터가 없다 — 「없음」과 「빈 벡터」를 섞지 말 것) | 기존 로그가 재폴드되고 **기존 엔트리 판정 불변** · 벡터를 직접 변조하면 `verify_replay` 가 **잡는다**(뮤테이션) · KNOWN LIMITATION 주석 제거 |
+| B-2 | **④ RCL v1→v2 운영 런북.** `docs/runbooks/tos-rcl-schema-migration.md` 신설. 순서(구버전 정지 → `migrate` → 신버전 기동) · 양방향 `SchemaVersionRefused` 의미 · 백업/롤백 | 런북의 명령이 **실제로 실행 가능**(복사해서 붙이면 돈다) · 배포 스크립트 부재를 명시 |
+| B-3 | **② tick 표 실측 경로 설계.** GET-only 로 `FHKST01010100::output.aspr_unit` 을 가격대별로 수집하는 프로브 설계 + 핸드오버 문서. **실행은 운영자** | 어느 종목·어느 가격대를 몇 건 찍어야 표가 되는지가 **수치로** 적혀 있음 · GET-only 준수 · 배포 값은 여전히 `null` |
+
+**②(=B-3)은 값을 채우지 않는다.** 이 웨이브가 내는 것은 표가 아니라 **표를 만들 수 있는 경로**다.
+
+### W-C — 후속 처분 F
+
+| # | 내용 | 종료 조건 |
+|---|---|---|
+| C-1 | **F-1 `broker_execution_id` 교차조회.** `ReconciliationService` 가 `attempt_id` 없이도 오더를 잇게 한다. 없으면 오더 축 재무장·캐파시티 해제가 **구조적으로 영구 차단**(아크 §0.4 인용) | 조인되는 경우 재무장 가능 · **조인 못 하는 경우는 여전히 fail-closed**(느슨해지지 않음을 뮤테이션으로) |
+| C-2 | **F-2 토큰 소유권 결정(문서 먼저).** W2 `KisTokenLifecycle`(평문 미노출) vs W3 `KisWitnessTokenSession`(요청마다 평문 요구). KIS 가 매 인증 호출에 시크릿 헤더를 요구하므로 **평문은 어느 선택지에서도 요청마다 실체화된다** — 질문은 「누가 소유하고 얼마나 오래, 몇 군데서 로드하는가」 | 선택지 3개 이상과 각각의 노출 표면을 **줄 수로** 비교 · 결정 후 코드 |
+| C-3 | **F-4 증거 README 인용 규율.** 값을 적을 때 `아티팩트:필드` 를 함께 적게 하는 규칙 + 가능하면 검사기 | 규칙이 **기존 증거 문서에 소급 적용 가능**한지 1건으로 시연 · #676→#729 재발 부류가 닫힘 |
+
+**F-3(별도 KIS 앱 등록)은 운영자 계정 작업이라 코드 레인이 없다.** C-2 의 결정이 F-3 을 필요로 하는지
+판정하고, 필요하면 그 근거를 문서로 남긴다.
+
+---
+
+## 5. 종료 조건 · 뮤테이션
+
+**게이트**: 커널·런타임 스위트 · **`tests/tools/test_tos_*.py`**(커널 #4 에서 빠졌던 배터리 — 이번엔
+명시한다) · `ruff`/`black`/`mypy` · `tos_firewall_check.py` + `lint-imports` · `tos_size_budget.py --check`
+(신규 예외 0) · `tos_completion_status.py --check` GREEN · `tos_spec_status.py --check` PASS ·
+`tos_contract_check.py` + `--self-test` · **계약 문서 무접촉**.
+
+**커널 diff 0** — 이 계획은 설정·런타임·문서만 건드린다. 커널 변경이 필요해지면 **멈추고 보고**한다
+(다음 커널 라운드 감이지 이 계획의 범위가 아니다).
+
+| # | 뮤테이션 | 기대 |
+|---|---|---|
+| M1 | A-4 의 `price_field_key` 를 `critical_input_policy` 와 어긋나게 | 일치 핀 red |
+| M2 | A-2 의 scope 를 빈 목록으로 | 부팅 거부(또는 정책 미적용이 드러남) |
+| M3 | B-1 의 `committed_vector` 를 `payload_json` 에서 다시 제거 | 재폴드 테스트 red |
+| M4 | B-1 에서 pre-K-4 엔트리를 「빈 벡터」로 읽도록 | 「없음 vs 빈 벡터」 구분 핀 red |
+| M5 | C-1 의 `broker_execution_id` 조인을 제거 | 재무장 테스트 red |
+| M6 | C-1 의 조인 실패 시 **통과**시키도록 | fail-closed 핀 red |
+| M7 | A-3 의 digest 를 한 바이트 바꿈 | `tos_contract_check.py` 또는 부팅이 거부 |
+
+**리뷰어는 최소 1건을 직접 실행한다.** 커널 라운드 #4 에서 저자의 「전건 red」보고가 틀렸고
+(M7 실제 red 0), 검토 측 측정도 두 번 틀렸다 — **완료 보고는 증거가 아니다**(§7.5).
+
+**워크트리 소유권**: 한 워크트리는 한 레인만. 행동 전에 에이전트 상태를 확인한다. idle 알림은
+종료가 아니다.
+
+---
+
+## 6. 운영자 확인
+
+1. **Codex 부착 여부**(§7.4 ⑤ 이월). B-1 은 **재폴드·변조탐지 경로**라 2026-09-11 지시가 Codex 범위로
+   열어둔 「되돌리기 어려운 경로」에 해당할 수 있다. **유료 외부 호출이므로 범위·비용 승인 후에만**
+   디스패치한다 — 기본값은 미부착이며, 이 계획은 미부착을 전제로 쓰였다.
+2. **안전 계열 값**(A-1 의 `⚠` 표). 「설정값 승인」을 받았으나 Hard Safety Envelope·리스크 한도·릴리스
+   게이트는 틀리면 비싸다. 제안표가 나오면 그 표만 한 번 봐주시길 — 숫자는 이쪽이 채운다.
+3. **F-3 별도 KIS 앱 등록** 의사. C-2 의 결정이 이걸 요구하면 외부 등록이 필요하다.
+4. **A-5 의 부팅 대상.** 로컬 헤르메틱 데이터 디렉터리까지인지, 모의 서버 핸드오버까지인지.
+   이 계획은 **로컬까지**를 전제로 쓰였다(실 서버 실행은 §1 제외).
+
+## 7. 착지 기록
+
+(비어 있음)
