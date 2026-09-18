@@ -227,6 +227,12 @@ K-2 의 `tos.position` 등재로 56 이 됐다. 이 배터리는 `tos/tests` 밖
 4. **v2 롤아웃 순서**는 주석으로만 못박혀 있다(구버전 완전 종료 → `apply_migrations` → 신버전 기동).
    실 배포 스크립트가 이 순서를 지키는지는 **확인하지 않았다** — `migrate` 를 먼저 돌리면 아직 떠 있는
    구버전이 재기동 시 `SchemaVersionRefused` 로 거부당한다.
+   → **해소(2026-09-18)**: 실측 결과 「실 배포 스크립트」자체가 존재하지 않음을 확인했다 —
+   `apply_migrations` 호출부는 `compose/cli.py` 의 `migrate` 서브커맨드 하나뿐이고 이를 자동으로
+   순서대로 실행하는 스크립트·CI 잡·cron 은 이 저장소에 없다. 순서는 운영자 런북으로 고정한다 —
+   `docs/runbooks/tos-rcl-schema-migration.md`(PR #_____) — 양방향 `SchemaVersionRefused` 거부
+   원문, v1→v2 실측 승격(기존 행 보존), backup-set/restore-drill 롤백 절차(스키마 역마이그레이션은
+   없음)를 실측으로 담았다.
 5. **Codex 미부착.** §6 확인 3 의 기본값 그대로다. DB 마이그레이션은 2026-09-11 지시가 Codex 범위로
    열어둔 경로지만 **유료 외부 호출이므로 범위·비용 승인 없이 돌리지 않았다.** 이번 라운드의 ④ 는
    Claude 측 `migration-reviewer` 만 봤다.

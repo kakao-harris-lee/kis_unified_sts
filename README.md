@@ -192,6 +192,7 @@ docs/                architecture, plans, runbooks, operations docs
 | [telegram-interactive-alerts.md](docs/runbooks/telegram-interactive-alerts.md) | Telegram approve/reject + close bot: config, rollout, rollback |
 | [futures-paradigm-operations.md](docs/runbooks/futures-paradigm-operations.md) | Futures daily operations checklist |
 | [futures-paradigm-rollback.md](docs/runbooks/futures-paradigm-rollback.md) | Emergency futures rollback |
+| [tos-rcl-schema-migration.md](docs/runbooks/tos-rcl-schema-migration.md) | tos RCL sqlite schema v1→v2 migration ordering, backup-before-migrate, rollback scope |
 
 ## Documentation
 
