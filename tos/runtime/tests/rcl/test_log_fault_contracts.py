@@ -545,6 +545,7 @@ def test_fault_6_regressing_monotonic_source_does_not_affect_seq_order(
             entry_b, expected_seq=receipt_a.seq, writer_epoch=epoch_2
         )
         assert isinstance(receipt_b, AppendReceipt)
+        assert receipt_a.seq is not None
         assert receipt_b.seq == receipt_a.seq + 1  # seq still strictly increases
     finally:
         instance.close()

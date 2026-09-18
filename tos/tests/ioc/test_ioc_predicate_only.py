@@ -74,7 +74,7 @@ def test_command_is_structurally_unmutable_post_proof() -> None:
 
     command = issue_command()
     try:
-        command.command_generation = 7  # type: ignore[misc]
+        command.command_generation = 7
     except ValidationError:
         return
     raise AssertionError(

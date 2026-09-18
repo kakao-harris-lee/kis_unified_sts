@@ -67,6 +67,7 @@ def test_decide_is_unknown_when_lineage_is_incomplete(
     afg_governor: ActionFlowGovernor,
 ) -> None:
     inputs = grant_shaped_afg_inputs()
+    assert inputs.cause is not None  # grant_shaped_afg_inputs() always sets one
     broken_cause = inputs.cause.model_copy(update={"cyclic": True})
     inputs = type(inputs)(**{**inputs.__dict__, "cause": broken_cause})
     decision = afg_governor.decide(inputs)

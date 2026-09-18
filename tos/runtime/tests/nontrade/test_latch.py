@@ -198,6 +198,8 @@ def test_second_restrictive_call_does_not_overwrite_but_still_records_candidate(
     assert second.first_call is False
     assert second.incident_candidate_seq == 2
     # the underlying halt row is still the FIRST event's — first-call-wins, never overwritten
-    assert inbox.new_risk_halt()["event_id"] == "evt-1"
+    halt_row = inbox.new_risk_halt()
+    assert halt_row is not None
+    assert halt_row["event_id"] == "evt-1"
     assert len(store.calls) == 2
     assert all(kind == "INCIDENT_CANDIDATE" for kind, _rc, _payload in store.calls)

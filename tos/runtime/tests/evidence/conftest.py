@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -47,7 +48,7 @@ def monotonic_clock() -> FakeMonotonicClock:
 @pytest.fixture
 def store(
     tmp_path: Path, key_provider: KeyProvider, monotonic_clock: FakeMonotonicClock
-) -> SqliteEvidenceStore:
+) -> Iterator[SqliteEvidenceStore]:
     instance = SqliteEvidenceStore(
         tmp_path / "evidence.sqlite3",
         key_provider=key_provider,

@@ -97,7 +97,7 @@ def test_afg_all_false_authority_is_isomorphic_to_rcl() -> None:
     for cls in (ActionFlowGovernorEffect, RclAuthorityEffect):
         raised = False
         try:
-            cls(creates_capacity=True)  # type: ignore[call-arg]
+            cls(creates_capacity=True)
         except Exception:
             raised = True
         assert raised, f"{cls.__name__}(creates_capacity=True) must be unconstructable"

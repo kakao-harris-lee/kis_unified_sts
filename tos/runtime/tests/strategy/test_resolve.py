@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -61,7 +62,7 @@ class _FixedKeyProvider:
 
 
 @pytest.fixture()
-def evidence_store(tmp_path: Path) -> SqliteEvidenceStore:
+def evidence_store(tmp_path: Path) -> Iterator[SqliteEvidenceStore]:
     instance = SqliteEvidenceStore(
         tmp_path / "evidence.sqlite3", key_provider=_FixedKeyProvider()
     )

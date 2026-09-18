@@ -19,6 +19,7 @@ therefore by ``attempt_id`` alone, unconditionally — every test below reflects
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 
@@ -55,7 +56,7 @@ class _FixedKeyProvider:
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> SqliteEvidenceStore:
+def store(tmp_path: Path) -> Iterator[SqliteEvidenceStore]:
     instance = SqliteEvidenceStore(
         tmp_path / "evidence.sqlite3", key_provider=_FixedKeyProvider()
     )

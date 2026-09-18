@@ -159,7 +159,7 @@ def test_assessment_is_frozen() -> None:
     """(§2.0) An assessment is immutable — in-place mutation is rejected."""
     a = issue_assessment()
     with pytest.raises(ValidationError):
-        a.scope_ref = "mutated"  # type: ignore[misc]
+        a.scope_ref = "mutated"
 
 
 def test_no_mutate_methods() -> None:

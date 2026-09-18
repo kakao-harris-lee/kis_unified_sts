@@ -707,6 +707,7 @@ def test_a_wall_clock_jump_far_beyond_the_bound_is_observed_as_suspended() -> No
     service.evaluate()  # -> SYNCHRONIZING (baseline reading captured)
 
     monotonic.value = 1010  # Δmono = 10ms
+    assert reader.wall_clock_unix_ms is not None  # this test sets it explicitly above
     reader.wall_clock_unix_ms += 100 + 1000  # Δwall = 1100ms >> Δmono
     snap = service.evaluate()
 

@@ -78,7 +78,7 @@ def test_envelope_is_frozen() -> None:
     """An envelope is immutable: field assignment is rejected (ERI-INV-005)."""
     env = issue_envelope()
     with pytest.raises(ValidationError):
-        env.record_class = "OTHER"  # type: ignore[misc]
+        env.record_class = "OTHER"
 
 
 def test_digest_substitution_rejected() -> None:

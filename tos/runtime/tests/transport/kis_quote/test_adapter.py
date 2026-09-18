@@ -65,7 +65,7 @@ def _config(server: FakeKisServer, **overrides: Any) -> KisQuoteTransportConfig:
         "allow_plaintext_for_tests": True,
     }
     base.update(overrides)
-    return KisQuoteTransportConfig(**base)  # type: ignore[arg-type]
+    return KisQuoteTransportConfig(**base)
 
 
 def _custody() -> InMemoryCredentialCustody:

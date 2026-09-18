@@ -154,7 +154,9 @@ def test_a_refused_approval_file_is_recorded_before_returning_none(
     assert kind == "IAP_APPROVAL_FILE_REFUSED"
     assert record_class == "IAP_APPROVAL_FILE_REFUSED"
     assert payload["path"] == str(path)
-    assert "mode" in payload["error"]
+    error = payload["error"]
+    assert isinstance(error, str)
+    assert "mode" in error
 
 
 def test_a_missing_approval_file_records_nothing(tmp_path: Path) -> None:

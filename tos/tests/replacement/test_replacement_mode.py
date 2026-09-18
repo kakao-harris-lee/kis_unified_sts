@@ -389,7 +389,7 @@ def _composed(halt_active: bool | None, **mode_overrides: object) -> Replacement
         return halt_outcome
     return replacement_mode_admissible(
         ReplacementMode.OVERLAP_FIRST,
-        **clean_mode_inputs(**mode_overrides),  # type: ignore[arg-type]
+        **clean_mode_inputs(**mode_overrides),
     )
 
 
