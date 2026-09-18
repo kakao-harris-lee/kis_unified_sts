@@ -22,7 +22,6 @@ import pytest
 
 from shared.streaming.stage import (
     ConsumerGroupEnsure,
-    _ensure_consumer_group,
     recover_missing_consumer_group,
 )
 
@@ -54,36 +53,34 @@ def _events(caplog, name: str) -> list[str]:
     ]
 
 
-@pytest.mark.asyncio
-async def test_ensure_reports_created_existed_and_failed_apart() -> None:
-    """The three outcomes stay distinguishable instead of collapsing to a bool."""
-    assert (
-        await _ensure_consumer_group(_StubRedis(), _STREAM, _GROUP)
-        is ConsumerGroupEnsure.CREATED
-    )
-    assert (
-        await _ensure_consumer_group(_StubRedis(existing=True), _STREAM, _GROUP)
-        is ConsumerGroupEnsure.EXISTED
-    )
-    assert (
-        await _ensure_consumer_group(
-            _StubRedis(error="NOPERM this user has no permissions to run 'xgroup'"),
-            _STREAM,
-            _GROUP,
-        )
-        is ConsumerGroupEnsure.FAILED
-    )
+def test_outcome_truthiness_matches_usability() -> None:
+    """``__bool__`` must answer the question a caller means by ``if not ...``.
+
+    Every member is a non-empty string, so the inherited truthiness would make
+    ``FAILED`` truthy and a ``not`` test silently always false.
+    """
+    assert bool(ConsumerGroupEnsure.CREATED) is True
+    assert bool(ConsumerGroupEnsure.EXISTED) is True
+    assert bool(ConsumerGroupEnsure.FAILED) is False
 
 
 @pytest.mark.asyncio
-async def test_busygroup_recovery_returns_true_without_claiming_a_recreate(
+async def test_busygroup_recovery_reports_existed_without_claiming_a_recreate(
     caplog,
 ) -> None:
-    """The healthy sibling stream must not be reported as broken."""
+    """The healthy sibling stream must not be reported as broken.
+
+    The outcome — not a bool — is what the monitor daemons branch on: EXISTED
+    on every stream means nothing was missing, so the read error had another
+    cause and retrying immediately would spin.
+    """
     redis = _StubRedis(existing=True)
     caplog.set_level(logging.DEBUG, logger="shared.streaming.stage")
 
-    assert await recover_missing_consumer_group(redis, _STREAM, _GROUP) is True
+    assert (
+        await recover_missing_consumer_group(redis, _STREAM, _GROUP)
+        is ConsumerGroupEnsure.EXISTED
+    )
 
     assert _events(caplog, "consumer_group_recovered") == []
     assert not any(
@@ -104,7 +101,10 @@ async def test_genuine_recreate_warns_once_in_audit_kv_form(caplog) -> None:
     redis = _StubRedis()
     caplog.set_level(logging.DEBUG, logger="shared.streaming.stage")
 
-    assert await recover_missing_consumer_group(redis, _STREAM, _GROUP) is True
+    assert (
+        await recover_missing_consumer_group(redis, _STREAM, _GROUP)
+        is ConsumerGroupEnsure.CREATED
+    )
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert [r.getMessage() for r in warnings] == [
@@ -114,11 +114,13 @@ async def test_genuine_recreate_warns_once_in_audit_kv_form(caplog) -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_ensure_returns_false_and_keeps_the_traceback(caplog) -> None:
+async def test_failed_ensure_reports_failed_and_keeps_the_traceback(caplog) -> None:
     redis = _StubRedis(error="NOPERM this user has no permissions to run 'xgroup'")
     caplog.set_level(logging.DEBUG, logger="shared.streaming.stage")
 
-    assert await recover_missing_consumer_group(redis, _STREAM, _GROUP) is False
+    outcome = await recover_missing_consumer_group(redis, _STREAM, _GROUP)
+    assert outcome is ConsumerGroupEnsure.FAILED
+    assert not outcome
 
     failures = [
         record

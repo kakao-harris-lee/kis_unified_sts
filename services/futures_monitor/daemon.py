@@ -37,6 +37,7 @@ from shared.streaming.audit import (
     format_audit_kv,
 )
 from shared.streaming.stage import (
+    ConsumerGroupEnsure,
     is_vanished_stream_read_error,
     recover_missing_consumer_group,
 )
@@ -326,16 +327,22 @@ class FuturesMonitorDaemon:
                     # Either stream can expire, and both are read in one
                     # XREADGROUP, so the read fails as a unit and recovery has
                     # to restore both (mkstream recreates the vanished key).
-                    # Skip the backoff only when both recoveries succeeded; a
-                    # failed recreate falls through to the error log + backoff
-                    # below so a persistent failure cannot become a hot loop.
-                    recovered = [
+                    # Skip the backoff only when a recreate actually happened
+                    # and none failed. Every other shape — a failed recreate,
+                    # or every group already present, which means the read
+                    # error was not a vanished group after all — falls through
+                    # to the error log + backoff below, so neither can become a
+                    # silent hot loop. Compare with ``is``: the outcomes are
+                    # truthy strings, so ``all(...)`` would always pass.
+                    outcomes = [
                         await recover_missing_consumer_group(
                             self.redis, stream, self.consumer_group
                         )
                         for stream in (self.fill_stream, self.signal_stream)
                     ]
-                    if all(recovered):
+                    created = any(o is ConsumerGroupEnsure.CREATED for o in outcomes)
+                    failed = any(o is ConsumerGroupEnsure.FAILED for o in outcomes)
+                    if created and not failed:
                         await asyncio.sleep(0)
                         continue
                 self._xreadgroup_error_log.exception(
