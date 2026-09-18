@@ -155,10 +155,24 @@ jobs:
       #   * mypy 는 `cd tos` 로 이동해 `src` 를 검사하며, `tos/pyproject.toml` 에
       #     `[tool.mypy]` 섹션이 없어 상위로 올라가 루트 `pyproject.toml` 을 읽는다
       #     (로컬 실행 시 "../pyproject.toml: note: unused section(s)" 로 실측 확인).
+      # Scope note (PR #742 follow-up). This step used to check `tos/src tos/tests`
+      # plus exactly one tool and its test, leaving `tos/runtime/src`,
+      # `tos/runtime/tests` and the rest of the tos governance tooling unformatted-
+      # by-nobody — the same shape of hole as the mypy one #742 closed, in the same
+      # job. The audit that found it also measured the cost of closing it: all 421
+      # newly covered files were ALREADY clean (406 under tos/runtime, 15 across the
+      # tooling), so this widening required no reformatting commit and cannot be
+      # carrying a silent reformat. Checked file totals: 845 before, 1266 after.
+      # (421, not the 423 first written here: the globs below match 17 tooling files,
+      # but two of them — tos_size_budget.py and its test — were already named
+      # explicitly by the old command, so they are not new coverage. Counting glob
+      # matches as "new" is the same shape of slip this step's other note exists to
+      # correct; an independent review caught it by diffing the two file SETS with
+      # `git ls-files` instead of trusting either total.)
       - name: Black (tos)
         run: >-
-          black --check tos/src tos/tests tools/tos_size_budget.py
-          tests/tools/test_tos_size_budget.py
+          black --check tos/src tos/tests tos/runtime/src tos/runtime/tests
+          tools/tos_*.py tests/tools/test_tos_*.py tests/tools/test_u17_verify.py
 
       - name: mypy (tos kernel)
         run: cd tos && mypy src --ignore-missing-imports
@@ -188,11 +202,23 @@ jobs:
       # that flag a real mismatch rather than a missing annotation — measured to 0 in
       # both trees by the commit that added this step.
       #
-      # Next code to enable is `unused-ignore` (53 hits): it catches a `# type:
-      # ignore[...]` naming the wrong code, which therefore suppresses nothing — the
-      # exact shape found twice in one day (PR #737's helper, and ten dead
-      # `ignore[attr-defined]`s in `tests/transport/kis_mock/test_adapter.py` whose
-      # real error was `[assignment]`).
+      # `unused-ignore` was named in PR #742 as the next code to enable, on the
+      # strength of 53 hits under FULL checking. That is wrong while any code is
+      # deferred, and the correction is the useful part of this note: measured with
+      # exactly the flags below minus the `unused-ignore` deferral, the count is 283
+      # (183 kernel + 100 runtime), not 53. The extra 230 are ignores that stop being
+      # "used" once the deferrals are applied: 228 name a deferred code directly
+      # (`# type: ignore[arg-type]` reads as "unused" only because `arg-type` is off
+      # right now), and 2 name `call-arg` — an ENABLED code — where turning the nine
+      # off removes the error at that line by cascade, so the mechanism there is
+      # interaction between deferred codes rather than the ignore's own code being
+      # off. An independent review measured that split; the one-to-one story was too
+      # strong, and the practical conclusion holds either way. Deleting them to go
+      # green would
+      # quietly remove the suppressions that the deferred codes need the moment they
+      # are enabled, i.e. it would make this gate harder to ratchet, not easier.
+      # So `unused-ignore` is enabled LAST, after the codes it interacts with — it
+      # measures the others, it does not lead them.
       #
       # Two steps, never one: `mypy tos/tests tos/runtime/tests` in a single
       # invocation aborts with `Duplicate module named "tests"` and checks almost
