@@ -25,7 +25,7 @@ from tos_runtime.time.service import (
     TimeServiceNotStarted,
     TrustworthyTimeService,
 )
-from tos_runtime.time.sources import ReferenceObservation
+from tos_runtime.time.sources import ReferenceObservation, ReferenceSourceReader
 
 # ----------------------------------------------------------------------------
 # fakes
@@ -173,7 +173,7 @@ def _build(
     *,
     monotonic: FakeMonotonicSource,
     config: TrustworthyTimeConfig | None = None,
-    references: list[FakeReferenceReader] | None = None,
+    references: list[ReferenceSourceReader] | None = None,
     evidence: object | None = None,
 ) -> tuple[TrustworthyTimeService, InMemoryEvidenceDouble]:
     evidence_double = evidence if evidence is not None else InMemoryEvidenceDouble()

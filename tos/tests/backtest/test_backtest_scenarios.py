@@ -303,7 +303,13 @@ def test_row_6_the_denied_bars_still_advance_the_causal_gate() -> None:
     run, _core, _fill_model, _sink = run_scenario(
         scenario_for(ScenarioId.AT_MOST_ONE_FIRING)
     )
-    sequences = [entry.reference.source_native_sequence for entry in run.trace.entries]
+    raw_sequences = [
+        entry.reference.source_native_sequence for entry in run.trace.entries
+    ]
+    sequences = [seq for seq in raw_sequences if seq is not None]
+    assert len(sequences) == len(
+        raw_sequences
+    ), "every trace entry must carry a concrete sequence"
     assert sequences == sorted(set(sequences))
     assert len(sequences) == run.events_yielded
 

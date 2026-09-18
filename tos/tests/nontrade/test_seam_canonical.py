@@ -115,7 +115,7 @@ def test_the_signature_is_four_positional_plus_two_keyword() -> None:
     reorders the call cannot silently swap the digest and the key.
     """
     with pytest.raises(TypeError):
-        classify_record_pair("id-1", _DIGEST_A, "id-2", _DIGEST_B, "k", "k")  # type: ignore[misc]
+        classify_record_pair("id-1", _DIGEST_A, "id-2", _DIGEST_B, "k", "k")  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -234,7 +235,7 @@ class TestEC3ConfigAloneNeverCreatesFuturesRealOrder:
     def test_illegal_axis_combination_refuses_naming_the_scope(
         self, tmp_path: Path
     ) -> None:
-        raw = {
+        raw: dict[str, Any] = {
             "active_scope": None,
             "environment_binding": {
                 "SYNTHETIC": "SYNTHETIC",

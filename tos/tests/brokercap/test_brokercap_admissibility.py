@@ -285,7 +285,7 @@ def _all_dimensions_declared(
 
 
 def _empty_required(**overrides: object) -> RequiredCapabilitySet:
-    base = {
+    base: dict[str, object] = {
         "required_dimensions": frozenset(),  # explicitly empty = unspecified
         "required_level": None,
         "minimum_live_gate_satisfied": True,

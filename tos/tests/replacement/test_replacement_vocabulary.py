@@ -271,9 +271,9 @@ def test_strenum_members_are_not_their_raw_strings_under_identity() -> None:
     for member in ReplacementOutcome:
         assert member == member.value
         assert member is not member.value
-    for member in ReplacementMode:
-        assert member == member.value
-        assert member is not member.value
+    for mode_member in ReplacementMode:
+        assert mode_member == mode_member.value
+        assert mode_member is not mode_member.value
 
 
 def test_replacement_axes_are_distinct_types_from_each_other() -> None:

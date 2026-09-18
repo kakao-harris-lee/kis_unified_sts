@@ -550,7 +550,7 @@ def test_pacing_waits_before_the_second_send_and_t0_is_taken_after_the_wait(
 
     attempt1 = _attempt("pace-1")
     seal1 = build_seal(attempt_id=attempt1.attempt_id)
-    transport._seal_lookup = make_seal_lookup({attempt1.attempt_id: seal1})  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup({attempt1.attempt_id: seal1})
     _send(transport, attempt1)
     assert sleeps == []  # first send never waits
 
@@ -558,7 +558,7 @@ def test_pacing_waits_before_the_second_send_and_t0_is_taken_after_the_wait(
 
     attempt2 = _attempt("pace-2")
     seal2 = build_seal(attempt_id=attempt2.attempt_id)
-    transport._seal_lookup = make_seal_lookup({attempt2.attempt_id: seal2})  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup({attempt2.attempt_id: seal2})
     before_second_send_wall = mono.now_ms()
     _send(transport, attempt2)
 
@@ -587,7 +587,7 @@ def test_no_pacing_wait_when_the_interval_has_already_elapsed(
     transport, _, _, _ = _build_transport(server, config=cfg, monotonic=mono)
 
     attempt1 = _attempt("nopace-1")
-    transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup(
         {attempt1.attempt_id: build_seal(attempt_id=attempt1.attempt_id)}
     )
     _send(transport, attempt1)
@@ -595,7 +595,7 @@ def test_no_pacing_wait_when_the_interval_has_already_elapsed(
     mono.advance(1500)  # more than the floor has already elapsed
 
     attempt2 = _attempt("nopace-2")
-    transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup(
         {attempt2.attempt_id: build_seal(attempt_id=attempt2.attempt_id)}
     )
     _send(transport, attempt2)
@@ -621,7 +621,7 @@ def test_token_is_issued_once_and_reused_while_fresh(server: FakeKisServer) -> N
     )
     for i in range(2):
         attempt = _attempt(f"reuse-{i}")
-        transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+        transport._seal_lookup = make_seal_lookup(
             {attempt.attempt_id: build_seal(attempt_id=attempt.attempt_id)}
         )
         mono.advance(10)
@@ -644,7 +644,7 @@ def test_an_expired_token_within_the_reissue_cooldown_raises_token_stale_with_ze
     transport, evidence, _, _ = _build_transport(server, config=cfg, monotonic=mono)
 
     attempt1 = _attempt("stale-1")
-    transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup(
         {attempt1.attempt_id: build_seal(attempt_id=attempt1.attempt_id)}
     )
     _send(transport, attempt1)
@@ -656,7 +656,7 @@ def test_an_expired_token_within_the_reissue_cooldown_raises_token_stale_with_ze
     )  # token (expires_in=1s) is now stale; cooldown (300s) has not elapsed
 
     attempt2 = _attempt("stale-2")
-    transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup(
         {attempt2.attempt_id: build_seal(attempt_id=attempt2.attempt_id)}
     )
     with pytest.raises(TokenStale):
@@ -688,7 +688,7 @@ def test_a_later_attempt_after_the_cooldown_reissues_the_token(
     transport, _, _, _ = _build_transport(server, config=cfg, monotonic=mono)
 
     attempt1 = _attempt("recover-1")
-    transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup(
         {attempt1.attempt_id: build_seal(attempt_id=attempt1.attempt_id)}
     )
     _send(transport, attempt1)
@@ -698,7 +698,7 @@ def test_a_later_attempt_after_the_cooldown_reissues_the_token(
     )  # both the token's own expiry (1s) and the reissue cooldown (1s) elapse
 
     attempt2 = _attempt("recover-2")
-    transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup(
         {attempt2.attempt_id: build_seal(attempt_id=attempt2.attempt_id)}
     )
     result = _send(transport, attempt2)
@@ -728,7 +728,7 @@ def test_the_app_secret_never_appears_in_any_evidence_record(
     )
     transport, evidence, _, _ = _build_transport(server, custody=custody)
     attempt = _attempt("secret-1")
-    transport._seal_lookup = make_seal_lookup(  # type: ignore[attr-defined]
+    transport._seal_lookup = make_seal_lookup(
         {attempt.attempt_id: build_seal(attempt_id=attempt.attempt_id)}
     )
     _send(transport, attempt)

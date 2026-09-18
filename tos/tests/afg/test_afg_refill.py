@@ -226,7 +226,7 @@ def test_assume_zero_counter_on_restart_is_rejected() -> None:
         "assumed_unused_permit",
     ):
         for value in (True, None):
-            kwargs = {
+            kwargs: dict[str, bool | None] = {
                 "assumed_zero_counter": False,
                 "assumed_empty_queue": False,
                 "assumed_unused_permit": False,

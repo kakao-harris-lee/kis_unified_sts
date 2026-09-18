@@ -122,7 +122,7 @@ def test_frozen_artifact_rejects_mutation() -> None:
 def test_unknown_field_is_rejected() -> None:
     """(§8 line 259) "Unknown fields ... are prohibited" — extra='forbid' realizes it."""
     with pytest.raises(ValidationError):
-        sci.SoftwareReleasePolicy(unknown_field="x")
+        sci.SoftwareReleasePolicy(unknown_field="x")  # type: ignore[call-arg]
 
 
 @pytest.mark.parametrize("model", _ARTIFACTS)

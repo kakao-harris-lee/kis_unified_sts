@@ -21,6 +21,8 @@ Nothing here is a *policy* number — this package is number-free by constructio
 
 from __future__ import annotations
 
+from typing import Any
+
 import hypothesis.strategies as st
 from tos.failuredomain import (
     ExplicitlyAnalyzedEmpty,
@@ -62,7 +64,9 @@ MATRIX_FIELDS: tuple[str, ...] = (
 BLANK_TEXTS: tuple[str, ...] = ("", " ", "\t", "\n", "   \t\n ")
 
 #: Every ``∅``-shaped / absent value a claim collection field can take.
-VOID_COLLECTIONS = st.sampled_from([None, frozenset()])
+VOID_COLLECTIONS: st.SearchStrategy[frozenset[Any] | None] = st.sampled_from(
+    [None, frozenset()]
+)
 
 #: Status values that are **not** ``ESTABLISHED`` (every one must block).
 NON_ESTABLISHED_STATUS = st.sampled_from(

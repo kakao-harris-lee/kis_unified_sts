@@ -1169,7 +1169,11 @@ def test_the_claim_consumes_both_nonces_exactly_once() -> None:
     gateway, _ = build_gateway(attempt=attempt, context=context)
     gateway(attempt)
     nonces = [claim.nonce for claim in gateway.ledger.claims]
-    assert sorted(nonces) == sorted(
+    concrete_nonces = [nonce for nonce in nonces if nonce is not None]
+    assert len(concrete_nonces) == len(nonces), "no claimed nonce may be null"
+    assert context.capability_nonce is not None
+    assert context.action_flow_permit_nonce is not None
+    assert sorted(concrete_nonces) == sorted(
         {context.capability_nonce, context.action_flow_permit_nonce}
     )
 

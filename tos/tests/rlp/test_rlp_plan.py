@@ -128,7 +128,9 @@ def test_drop_one_scope_dimension_denies(dropped: ScopeDimension) -> None:
     reject an eligible plan with an incomplete scope) — the predicate layer must **independently**
     re-derive incompleteness (defence in depth, §2.3 / #20 lesson).
     """
-    scope_kwargs = {d.name.lower(): f"v-{d.name.lower()}" for d in ScopeDimension}
+    scope_kwargs: dict[str, str | None] = {
+        d.name.lower(): f"v-{d.name.lower()}" for d in ScopeDimension
+    }
     scope_kwargs[dropped.name.lower()] = None
     malformed = ExactTrialPlan.model_construct(
         plan_id="p",

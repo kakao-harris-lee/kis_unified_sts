@@ -25,6 +25,7 @@ from tos.dsl import (
     EvaluationResult,
     NoActionOutcome,
     Proposal,
+    ScalarValue,
     TargetKind,
     build_environment,
     evaluate,
@@ -65,7 +66,7 @@ _AMBIENT_PARAM_NAMES = frozenset(
 )
 
 
-def _config(enabled: bool, **bindings: object) -> EvaluationConfig:
+def _config(enabled: bool, **bindings: ScalarValue) -> EvaluationConfig:
     return EvaluationConfig(
         config_version="cfg-v1", bindings={**bindings, "enabled": enabled}
     )

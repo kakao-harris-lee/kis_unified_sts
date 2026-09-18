@@ -63,6 +63,7 @@ class FakeKisServer:
     @property
     def rest_base(self) -> str:
         host, port = self._httpd.server_address[:2]
+        assert isinstance(host, str), f"expected a str host, got {type(host)!r}"
         return f"http://{host}:{port}"
 
     def set_response(

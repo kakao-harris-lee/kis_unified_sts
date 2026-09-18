@@ -437,7 +437,7 @@ def test_the_models_are_frozen_and_forbid_extra_fields() -> None:
     with pytest.raises(ValueError, match="frozen|immutable"):
         envelope.pre_event_exposure = Decimal("1")  # type: ignore[misc]
     with pytest.raises(ValueError, match="[Ee]xtra"):
-        TransitionEnvelope(unexpected_field="x")
+        TransitionEnvelope(unexpected_field="x")  # type: ignore[call-arg]
     with pytest.raises(ValueError, match="[Ee]xtra"):
         clean_spec(favorable_netted=False)
 

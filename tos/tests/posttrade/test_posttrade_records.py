@@ -339,7 +339,7 @@ def test_issued_artifact_requires_every_required_covered_field() -> None:
 def test_models_forbid_unknown_fields() -> None:
     """(``extra="forbid"``) An unknown field cannot smuggle content past the digest."""
     with pytest.raises(ValueError, match="[Ee]xtra"):
-        ObligationLegScope(unknown_component="x")
+        ObligationLegScope(unknown_component="x")  # type: ignore[call-arg]
 
 
 def test_models_are_frozen() -> None:

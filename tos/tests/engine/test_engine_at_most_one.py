@@ -195,12 +195,13 @@ def test_the_projection_reaches_potentially_live_before_the_hand_off() -> None:
 
 def test_the_retention_survives_every_terminal_result_kind() -> None:
     """(§4.4) Whatever the send boundary reports, the scope stays occupied in this slice."""
-    for kind, fills in (
+    cases: tuple[tuple[EgressResultKind, dict[str, Any]], ...] = (
         (EgressResultKind.ACK, {}),
         (EgressResultKind.REJECT, {}),
         (EgressResultKind.UNKNOWN, {}),
         (EgressResultKind.TIMEOUT, {}),
-    ):
+    )
+    for kind, fills in cases:
         transmit = RecordingTransmit()
         core, _ = build_core(transmit=transmit)
         first = core.handle(decision_tick(sequence=1))

@@ -170,6 +170,51 @@ jobs:
       - name: mypy (tos runtime)
         run: mypy tos/runtime/src --ignore-missing-imports
 
+      # The two TEST trees, added after PR #737: a type defect in a test HELPER
+      # (`example_integrity.py` reassigning one name at two types, which can mask a
+      # broken assertion) survived three review rounds and three green CI runs
+      # precisely because the two steps above check `src` only.
+      #
+      # Both trees carry ~1.9k pre-existing errors, so they cannot simply be added.
+      # Two rejected shapes and why:
+      #   * a per-FILE exception list — that is the "registry with an unpinned
+      #     satellite" class this repo has already been bitten by; a new file joins
+      #     silently uncovered.
+      #   * a baseline error COUNT ratchet — a fingerprint, which the review
+      #     convention §5 forbids on purpose.
+      # So the deferral is per ERROR CODE instead. That list is finite, it does not
+      # rot as files are added (a new file is checked for every enabled code from the
+      # moment it exists), and it only ever shrinks. Enabled today are the nine codes
+      # that flag a real mismatch rather than a missing annotation — measured to 0 in
+      # both trees by the commit that added this step.
+      #
+      # Next code to enable is `unused-ignore` (53 hits): it catches a `# type:
+      # ignore[...]` naming the wrong code, which therefore suppresses nothing — the
+      # exact shape found twice in one day (PR #737's helper, and ten dead
+      # `ignore[attr-defined]`s in `tests/transport/kis_mock/test_adapter.py` whose
+      # real error was `[assignment]`).
+      #
+      # Two steps, never one: `mypy tos/tests tos/runtime/tests` in a single
+      # invocation aborts with `Duplicate module named "tests"` and checks almost
+      # nothing.
+      - name: mypy (tos kernel tests)
+        run: >-
+          mypy tos/tests --ignore-missing-imports
+          --disable-error-code=arg-type --disable-error-code=no-untyped-def
+          --disable-error-code=attr-defined --disable-error-code=return-value
+          --disable-error-code=no-any-return --disable-error-code=unused-ignore
+          --disable-error-code=union-attr --disable-error-code=operator
+          --disable-error-code=index --disable-error-code=misc
+
+      - name: mypy (tos runtime tests)
+        run: >-
+          mypy tos/runtime/tests --ignore-missing-imports
+          --disable-error-code=arg-type --disable-error-code=no-untyped-def
+          --disable-error-code=attr-defined --disable-error-code=return-value
+          --disable-error-code=no-any-return --disable-error-code=unused-ignore
+          --disable-error-code=union-attr --disable-error-code=operator
+          --disable-error-code=index --disable-error-code=misc
+
       - name: tos size budget
         # config/tos_size_budget.yaml exceptions register — Phase 1 작업 6.
         run: python tools/tos_size_budget.py --check

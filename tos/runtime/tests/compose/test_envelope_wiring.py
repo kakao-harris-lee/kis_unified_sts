@@ -98,7 +98,9 @@ def _construction_rules(
         key: ActionClassShape(side=side, position_effect="OPEN")
         for key, side in sides.items()
     }
-    axes = (AxisBinding(axis=ConformanceAxis.TIF, value="DAY"),)
+    axes: tuple[AxisBinding, ...] = (
+        AxisBinding(axis=ConformanceAxis.TIF, value="DAY"),
+    )
     if direction is not None:
         axes = axes + (AxisBinding(axis=ConformanceAxis.DIRECTION, value=direction),)
     return ConstructionRules(
