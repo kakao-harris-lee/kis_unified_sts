@@ -189,6 +189,7 @@ docs/                architecture, plans, runbooks, operations docs
 | [stock-pipeline-cutover-m5d.md](docs/runbooks/stock-pipeline-cutover-m5d.md) | Stock decoupled pipeline cutover/rollback |
 | [stock-strategy-reactivation.md](docs/runbooks/stock-strategy-reactivation.md) | Stock strategy evidence review before reactivation |
 | [bb-reversion-15m-paper.md](docs/runbooks/bb-reversion-15m-paper.md) | `bb_reversion_15m` paper validation — PAPER-ONLY, live flags must stay off |
+| [stock-stream-cutover.md](docs/runbooks/stock-stream-cutover.md) | M1c — 모놀리식 orchestrator 의 시세 원천을 WebSocket ↔ Redis 틱 스트림으로 전환 (`STOCK_MARKET_DATA_SOURCE`). **표준 경로는 decoupled 파이프라인이라 평시에는 해당 없다**; `STOCK_ORCHESTRATOR_ENABLED=true` 롤백 시에만 쓴다. 플래그를 읽는 코드는 `services/trading/market_data_bootstrap.py:126` 에 살아 있다 |
 
 ### Futures
 
@@ -208,7 +209,7 @@ docs/                architecture, plans, runbooks, operations docs
 |---|---|
 | [tos-rcl-schema-migration.md](docs/runbooks/tos-rcl-schema-migration.md) | RCL sqlite schema v1→v2 migration ordering, backup-before-migrate, rollback scope |
 | [tos-kis-mock-transport.md](docs/runbooks/tos-kis-mock-transport.md) | `--transport kis-mock` wiring, custody, and non-live admission |
-| [u17-prevention-control.md](docs/runbooks/u17-prevention-control.md) | U-17 prevention control — the operator/infra steps that unblock D0-A entry |
+| [u17-prevention-control.md](docs/runbooks/u17-prevention-control.md) | U-17 예방 통제 — 아티팩트 countersign · main 착지 · 룰셋 필수 체크. **D0-A 착수 차단의 실제 해제 조건** |
 | [kis-capability-probes.md](docs/runbooks/kis-capability-probes.md) | KIS broker capability probes (P0-2 / T2) — measurement only, approval is human |
 | [2026-09-10-p02-probe-handover-paper-server.md](docs/runbooks/2026-09-10-p02-probe-handover-paper-server.md) | P0-2 probe handover to the paper server; `kis-capability-probes.md` is authoritative on conflict |
 
@@ -243,12 +244,12 @@ docs/                architecture, plans, runbooks, operations docs
 
 ### Historical — superseded, kept for reference
 
-이 셋은 **현행 절차가 아니다.** 지우지 않고 남겨두되 그대로 따라 하지 말 것.
+이 둘은 **현행 절차가 아니다.** 지우지 않고 남겨두되 그대로 따라 하지 말 것. 「비활성」과
+「제거됨」은 다르다 — 플래그로 꺼져 있을 뿐 코드가 살아 있는 절차서는 여기 넣지 않는다.
 
 | Runbook | Superseded by |
 |---|---|
 | [phase2-startup.md](docs/runbooks/phase2-startup.md) | 문서 자체가 Historical 선언 — RL-shadow 경로는 2026-06-03 제거됐다 |
-| [stock-stream-cutover.md](docs/runbooks/stock-stream-cutover.md) | M1c 는 모놀리식 orchestrator 경로다. `STOCK_MARKET_DATA_SOURCE` 는 이제 테스트에만 남아 있고 그 경로는 cutover 후 `STOCK_ORCHESTRATOR_ENABLED=false` 로 차단된다 → `stock-pipeline-cutover-m5d.md` |
 | [cron-to-compose-cutover.md](docs/runbooks/cron-to-compose-cutover.md) | 호스트 crontab 철거는 완료됐다 (`docs/archive/operations/crontab.md`) — 스케줄은 Compose 소관 |
 
 ## Documentation
