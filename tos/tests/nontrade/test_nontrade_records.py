@@ -435,7 +435,7 @@ def test_the_models_are_frozen_and_forbid_extra_fields() -> None:
     """(§2) Immutable and schema-strict: no unknown field can smuggle a change."""
     envelope = clean_envelope()
     with pytest.raises(ValueError, match="frozen|immutable"):
-        envelope.pre_event_exposure = Decimal("1")  # type: ignore[misc]
+        envelope.pre_event_exposure = Decimal("1")
     with pytest.raises(ValueError, match="[Ee]xtra"):
         TransitionEnvelope(unexpected_field="x")  # type: ignore[call-arg]
     with pytest.raises(ValueError, match="[Ee]xtra"):

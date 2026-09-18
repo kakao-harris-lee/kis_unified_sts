@@ -95,7 +95,7 @@ def test_a_colliding_namespace_refuses_publication_rather_than_overwriting() -> 
     class _CollidingCapsule(DecisionContextCapsule):
         """A capsule-shaped stand-in whose dump carries the reserved namespace key."""
 
-        def model_dump(self, **kwargs: object) -> dict[str, object]:  # type: ignore[override]
+        def model_dump(self, **kwargs: object) -> dict[str, object]:
             dumped = super().model_dump(**kwargs)  # type: ignore[arg-type]
             dumped[VALUE_NAMESPACE] = {"smuggled": 1}
             return dumped
@@ -114,7 +114,7 @@ def test_build_environment_refuses_to_shadow_a_capsule_key() -> None:
     """(§3.2 (1)) The merge point itself raises rather than overwriting covered content."""
 
     class _CollidingCapsule(DecisionContextCapsule):
-        def model_dump(self, **kwargs: object) -> dict[str, object]:  # type: ignore[override]
+        def model_dump(self, **kwargs: object) -> dict[str, object]:
             dumped = super().model_dump(**kwargs)  # type: ignore[arg-type]
             dumped[VALUE_NAMESPACE] = {"smuggled": 1}
             return dumped

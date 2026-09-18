@@ -327,7 +327,7 @@ def test_a_namespace_collision_raises_rather_than_shadowing() -> None:
     """(§3.2 (1) ★) The merge refuses to overwrite a Capsule top-level key."""
 
     class _CollidingCapsule(DecisionContextCapsule):
-        def model_dump(self, **kwargs: object) -> dict[str, object]:  # type: ignore[override]
+        def model_dump(self, **kwargs: object) -> dict[str, object]:
             dumped = super().model_dump(**kwargs)  # type: ignore[arg-type]
             dumped[VALUE_NAMESPACE] = {"smuggled": 1}
             return dumped

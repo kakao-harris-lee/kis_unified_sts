@@ -140,4 +140,4 @@ def test_tombstone_rejects_missing_or_blank_dual_control_ref(dual_control_ref) -
 def test_tombstone_frozen() -> None:
     tombstone = Tombstone(dual_control_ref="approval-abc")
     with pytest.raises((TypeError, ValueError)):
-        tombstone.dual_control_ref = "approval-xyz"  # type: ignore[misc]
+        tombstone.dual_control_ref = "approval-xyz"

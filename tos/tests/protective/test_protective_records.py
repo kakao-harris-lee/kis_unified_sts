@@ -149,7 +149,7 @@ def test_profile_is_frozen() -> None:
     """(§2.0) A profile is immutable — in-place mutation is rejected."""
     p = issue_profile()
     with pytest.raises(ValidationError):
-        p.profile_version = "v9"  # type: ignore[misc]
+        p.profile_version = "v9"
 
 
 def test_declaration_for_lookup() -> None:

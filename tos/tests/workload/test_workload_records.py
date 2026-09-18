@@ -36,7 +36,7 @@ def test_runtime_identity_frozen() -> None:
     """RuntimeIdentity is immutable (FrozenModel)."""
     identity = RuntimeIdentity(cell_id="cell-1")
     with pytest.raises((TypeError, ValueError)):
-        identity.cell_id = "cell-2"  # type: ignore[misc]
+        identity.cell_id = "cell-2"
 
 
 @pytest.mark.parametrize("generation", [-1, -100])

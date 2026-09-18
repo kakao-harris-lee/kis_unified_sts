@@ -277,7 +277,7 @@ def test_the_same_as_of_again_is_skipped_not_newer_with_zero_ticks(
             source_id="compose-e2e-journal",
         )
     )
-    runtime.marketfeed._intake = lenient_intake  # type: ignore[assignment]
+    runtime.marketfeed._intake = lenient_intake
 
     second = runtime.marketfeed.tick_once()
     assert second.outcome is TickOutcome.SKIPPED_NOT_NEWER

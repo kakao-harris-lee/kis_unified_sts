@@ -197,7 +197,7 @@ def test_command_is_frozen_no_mutate() -> None:
     """(§2.0 / §6.2) A command is frozen — post-proof mutation is construction-impossible."""
     command = issue_command()
     with pytest.raises(ValidationError):
-        command.command_generation = 99  # type: ignore[misc]
+        command.command_generation = 99
 
 
 def test_extra_field_is_forbidden() -> None:

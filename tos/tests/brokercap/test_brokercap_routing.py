@@ -138,7 +138,7 @@ def test_capability_tuple_is_frozen() -> None:
     """A CapabilityTuple is immutable (FrozenModel discipline)."""
     tup = CapabilityTuple(**_base_kwargs())
     with pytest.raises(pydantic.ValidationError):
-        tup.environment = BrokerEnvironment.BROKER_PRODUCTION  # type: ignore[misc]
+        tup.environment = BrokerEnvironment.BROKER_PRODUCTION
 
 
 def test_capability_tuple_extra_field_forbidden() -> None:
@@ -751,7 +751,7 @@ def test_probe_manifest_is_frozen() -> None:
         provenance="official-spec",
     )
     with pytest.raises(pydantic.ValidationError):
-        manifest.ttl = "48h"  # type: ignore[misc]
+        manifest.ttl = "48h"
 
 
 # ---------------------------------------------------------------------------

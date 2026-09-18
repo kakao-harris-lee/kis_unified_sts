@@ -109,7 +109,7 @@ def test_records_are_frozen_and_have_no_mutation_method() -> None:
     """(§2/§4.4) Append-only at the record level: no update / delete / transmit method."""
     record = issue_workflow_record()
     with pytest.raises(ValidationError):
-        record.workflow_generation = 99  # type: ignore[misc]
+        record.workflow_generation = 99
     for forbidden in (
         "transmit",
         "send",

@@ -230,7 +230,7 @@ def test_non_string_required_field_refuses_the_whole_poll(tmp_path: Path) -> Non
     """
     path = tmp_path / "journal.jsonl"
     bad = _observation(raw_event_id="e-2")
-    bad["instrument"] = 5930  # type: ignore[assignment]
+    bad["instrument"] = 5930
     _write_lines(path, [_observation(raw_event_id="e-1"), bad])
     journal = JsonLinesObservationJournal(path=path)
 
@@ -244,7 +244,7 @@ def test_non_int_as_of_ms_refuses_the_whole_poll(tmp_path: Path) -> None:
     """Covers ``_require_int``'s refusal via the required ``as_of_ms`` call site."""
     path = tmp_path / "journal.jsonl"
     bad = _observation(raw_event_id="e-2")
-    bad["as_of_ms"] = "1700000000000"  # type: ignore[assignment]
+    bad["as_of_ms"] = "1700000000000"
     _write_lines(path, [_observation(raw_event_id="e-1"), bad])
     journal = JsonLinesObservationJournal(path=path)
 
@@ -259,7 +259,7 @@ def test_non_int_received_ms_refuses_the_whole_poll(tmp_path: Path) -> None:
     both required and optional int fields route through the identical guard."""
     path = tmp_path / "journal.jsonl"
     bad = _observation(raw_event_id="e-2")
-    bad["received_ms"] = 12.5  # type: ignore[assignment]
+    bad["received_ms"] = 12.5
     _write_lines(path, [_observation(raw_event_id="e-1"), bad])
     journal = JsonLinesObservationJournal(path=path)
 
@@ -276,7 +276,7 @@ def test_fields_value_is_not_a_json_object_refuses_the_whole_poll(
     JSON array rather than an object."""
     path = tmp_path / "journal.jsonl"
     bad = _observation(raw_event_id="e-2")
-    bad["fields"] = [1, 2, 3]  # type: ignore[assignment]
+    bad["fields"] = [1, 2, 3]
     _write_lines(path, [_observation(raw_event_id="e-1"), bad])
     journal = JsonLinesObservationJournal(path=path)
 

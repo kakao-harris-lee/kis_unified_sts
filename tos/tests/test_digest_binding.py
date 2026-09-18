@@ -52,7 +52,7 @@ def test_capsule_is_frozen() -> None:
     """A capsule is immutable: field assignment is rejected (§12/§4.1)."""
     cap = _issue_capsule(issuer_principal_id="iss")
     with pytest.raises(ValidationError):
-        cap.issuer_principal_id = "other"  # type: ignore[misc]
+        cap.issuer_principal_id = "other"
 
 
 # ---- covered sensitivity ---------------------------------------------------

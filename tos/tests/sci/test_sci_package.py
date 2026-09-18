@@ -116,7 +116,7 @@ def test_frozen_artifact_rejects_mutation() -> None:
     """(§2) A field assignment on an issued artifact raises — there is no mutate path."""
     policy = clean_policy()
     with pytest.raises(ValidationError):
-        policy.policy_id = "other"  # type: ignore[misc]
+        policy.policy_id = "other"
 
 
 def test_unknown_field_is_rejected() -> None:
