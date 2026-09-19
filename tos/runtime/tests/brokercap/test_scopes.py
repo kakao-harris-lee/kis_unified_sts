@@ -50,6 +50,9 @@ _SCOPE_NAMES = (
 
 def _load_example_dict() -> dict:
     raw = yaml.safe_load(_EXAMPLE_PATH.read_text(encoding="utf-8"))
+    assert isinstance(
+        raw, dict
+    ), f"example scopes document loaded as {type(raw).__name__}"
     raw["active_scope"] = "SYNTHETIC_FUTURES_ORDER"
     return raw
 
@@ -61,6 +64,9 @@ def _write(path: Path, content: dict) -> None:
 def _scope_by_name(raw: dict, name: str) -> dict:
     for scope in raw["scopes"]:
         if scope["name"] == name:
+            assert isinstance(
+                scope, dict
+            ), f"scope entry {name!r} is {type(scope).__name__}"
             return scope
     raise KeyError(name)
 
