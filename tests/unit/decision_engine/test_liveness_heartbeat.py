@@ -362,6 +362,25 @@ async def test_nothing_is_emitted_when_the_loop_never_turns(caplog):
     assert _heartbeats(caplog) == []
 
 
+def test_reset_moves_the_span_stamp_and_the_counts_together():
+    """The window is reset in one place, never half of it.
+
+    A line whose counts predate its own ``interval_seconds`` would be a quiet
+    lie of exactly the kind this heartbeat exists to stop shipping.
+    """
+    daemon = _make_daemon(liveness_log_interval_seconds=10.0)
+    daemon._liveness_cycles = 7
+    daemon._liveness_context_cycles = 4
+    daemon._liveness_context_errors = 2
+
+    daemon._reset_liveness_window(123.0)
+
+    assert daemon._liveness_last_emit_monotonic == 123.0
+    assert daemon._liveness_cycles == 0
+    assert daemon._liveness_context_cycles == 0
+    assert daemon._liveness_context_errors == 0
+
+
 # ---------------------------------------------------------------------------
 # Configuration (CLAUDE.md: configuration-driven only).
 # ---------------------------------------------------------------------------

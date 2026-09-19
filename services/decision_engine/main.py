@@ -208,16 +208,18 @@ class DecisionEngineDaemon:
             interval_seconds=liveness_log_interval_seconds
         )
         # Counts for the CURRENT, not-yet-emitted heartbeat interval. Reset on
-        # every emission so a line describes exactly the cycles it covers.
+        # every emission so a line describes exactly the cycles it covers
+        # (_reset_liveness_window).
         self._liveness_cycles = 0
         self._liveness_context_cycles = 0
         self._liveness_context_errors = 0
-        # Monotonic stamp of the last emission — REPORTING only. The throttle
-        # above is the sole authority on whether to emit; this exists so the
-        # line can state the wall span its counts cover, which is what makes a
-        # loop that is turning but slowly ("cycles=2 interval_seconds=600")
-        # distinguishable from a healthy one. Written only together with an
-        # emission, so the two cannot drift.
+        # Monotonic stamp where the current window began — REPORTING only. The
+        # throttle above is the sole authority on whether to emit; this exists
+        # so the line can state the wall span its counts cover, which is what
+        # makes a loop that is turning but slowly ("cycles=2
+        # interval_seconds=600") distinguishable from a healthy one. None until
+        # run() opens the first window; there is no meaningful "now" at
+        # construction.
         self._liveness_last_emit_monotonic: float | None = None
         # Redis key namespace for the eval rows. "" = the orchestrator
         # adapters' historical keys; ".shadow" in shadow mode so the daemon
@@ -277,7 +279,7 @@ class DecisionEngineDaemon:
         # construction: _build_and_run resolves the front-month contract and
         # the context provider before calling this, and an interval that
         # counted that wait would overstate the first line's span.
-        self._liveness_last_emit_monotonic = time.monotonic()
+        self._reset_liveness_window(time.monotonic())
         while not self._stop.is_set():
             self._liveness_cycles += 1
             try:
@@ -438,6 +440,16 @@ class DecisionEngineDaemon:
                 interval_seconds=None if last is None else round(now - last, 1),
             )
         )
+        self._reset_liveness_window(now)
+
+    def _reset_liveness_window(self, now: float) -> None:
+        """Open a fresh heartbeat window at ``now``.
+
+        One place, so the span stamp and the counts can never be reset apart:
+        a line whose counts predate its own ``interval_seconds`` would be a
+        quiet lie, and that is exactly the shape of bug this whole line exists
+        to stop shipping.
+        """
         self._liveness_last_emit_monotonic = now
         self._liveness_cycles = 0
         self._liveness_context_cycles = 0
