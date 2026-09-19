@@ -99,9 +99,11 @@ def call_wrapped_fixture(fixture_func: object, *args: object) -> Path:
 
     ``fixture_func`` is deliberately typed ``object`` rather than ``Callable[..., Path]``:
     ``FixtureFunctionDefinition.__call__`` is defined to ``fail()``, so a callable annotation would
-    be a type the object does not actually honour. That looseness is also what keeps the
-    ``isinstance`` below reachable — a caller passing a fixture that returns something other than
-    ``Path`` trips it (verified against a real ``@pytest.fixture``-decorated ``str`` fixture).
+    be a type the object does not actually honour. That looseness is also why the ``isinstance``
+    below is a live runtime check rather than a formality: accepting ``object`` means a caller can
+    in fact pass a fixture returning something other than ``Path``, and it then raises (verified by
+    passing a real ``@pytest.fixture``-decorated ``str`` fixture). This is about what a caller can
+    pass at runtime, not about mypy reachability — this repo does not set ``warn_unreachable``.
     """
     result = fixture_func.__wrapped__(*args)  # type: ignore[attr-defined]
     assert isinstance(result, Path)
