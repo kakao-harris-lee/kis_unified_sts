@@ -77,4 +77,4 @@
     # 2026-09-19 실행 → A05610
     ```
 
-    런타임도 같은 원천을 쓴다 — Redis DB1 `futures:contract:latest` 의 `front_symbol` 이 calendar 소스이고(`kis-capability-probes.md:747`), `services/futures_contract/main.py:93` 이 `source = "manual_override" if … else "calendar"` 로 확인해 준다. 실행 **당일** 값을 다시 뽑아 쓸 것(문서에 남아 있는 예시 `A05608` 은 2026-08-13 만기 — `kis-capability-probes.md:750`).
+    런타임도 같은 원천을 쓴다 — Redis DB1 `futures:contract:latest` 의 `front_symbol` 이 calendar 소스이고(`kis-capability-probes.md:747-748` — 두 줄에 걸쳐 있다), `services/futures_contract/main.py:93` 이 `source = "manual_override" if … else "calendar"` 로 확인해 준다. 실행 **당일** 값을 다시 뽑아 쓸 것(문서에 남아 있는 예시 `A05608` 은 2026-08-13 만기 — `kis-capability-probes.md:750`).
