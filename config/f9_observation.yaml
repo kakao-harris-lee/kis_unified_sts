@@ -29,6 +29,27 @@ f9_observation:
   # The dense blind signals repeat every 30-60s, so 300s merges a run without
   # merging two genuinely separate outages.
   blind_run_merge_seconds: 300
+  # How long a consumer may go without proving it consumed before the silence
+  # stops counting as liveness. A line only testifies to the instant it was
+  # written: a harvest whose coverage brackets the session says "we watched",
+  # never "it was working". Without this bound one surviving
+  # `stream_message_processed` plus a startup and a shutdown banner — three
+  # lines — rendered a whole session `consumed (COMPLETE)`, which is reachable
+  # by `services/futures_monitor/daemon.py`'s `_consume_loop` dying as an
+  # unretrieved task while `_status_loop` keeps the process up.
+  #
+  # 1800s is a policy knob, not a measurement: long enough that a normal lull in
+  # sparse shadow traffic does not trip it, short enough that a wedged consumer
+  # is named for the same session rather than a week later. It bounds three
+  # gaps — open to the first proof, between consecutive proofs, and the last
+  # proof to the close.
+  #
+  # NOTE: the idle path emits nothing at any log level today
+  # (shared/streaming/stage.py: xreadgroup -> no messages -> post_poll ->
+  # sleep(0) -> continue), so a genuinely quiet session trips this and reads
+  # PARTIAL. That is the runbook's INERT-GATE CAVEAT applied to the observation
+  # surface, and it stops being noise once the idle branch emits a heartbeat.
+  observation_max_gap_seconds: 1800
   # Counters printed in the observation-log row's third column, in order.
   row_counters: ["candidates", "final", "fills"]
 

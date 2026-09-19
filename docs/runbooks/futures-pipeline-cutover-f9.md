@@ -378,7 +378,12 @@ artifacts, or written operator approval.
   above), then emits the observation-log row and a JSON sidecar. Exit status is
   `0` when the day's observation is `COMPLETE`, and also on a `NO_SESSION` day
   (a weekend or a KRX holiday — there was no session to observe, so a per-session
-  cron must not raise a standing alarm). Every other verdict exits `1`.
+  cron must not raise a standing alarm). Every other verdict exits `1`. A
+  `--report-root` naming a day directory that does not exist exits `2` without
+  writing anything: with no harvested files there is no input, and a confident
+  `NOT OBSERVED - 0/4` against a mistyped path must not look like a dead
+  observation surface. Relative roots anchor at the repo root, not the working
+  directory, and the resolved root is echoed on stderr.
 
   **`COMPLETE` requires evidence that spans the session.** A service counts as
   `consumed` only when its harvest brackets 08:45–15:45: rotation drops the
@@ -394,13 +399,55 @@ artifacts, or written operator approval.
   `docker logs` exits non-zero) is a **harvest failure**, reported as such and
   never counted as a quiet service.
 
+  A file's coverage runs from its first surviving line to its own `<HHMMSS>`
+  harvest stamp, not to its last line. `docker logs` returns everything up to
+  the instant it runs in both harvest modes, so silence after the last line is
+  silence the harvest *watched* — otherwise `COMPLETE` turned on how chatty a
+  service happened to be near 15:45 (four consuming services whose files
+  stopped 30 seconds short of the close read `PARTIAL` with
+  `no evidence 15:44-15:45`). Only the head is uncertain, and it stays at the
+  first surviving line.
+
+  **`COMPLETE` also requires the proof to stay fresh.** Coverage is granted by
+  *any* timestamped line — a startup banner will do — so it answers "did we
+  look?" and cannot also answer "was it working?". Two banners plus one
+  `stream_message_processed` at 08:46 once rendered a whole session
+  `4/4 consumed (COMPLETE)` with the counts bare. So the gap from the open to
+  the first proof, between consecutive proofs, and from the last proof to the
+  close must each stay under `observation_max_gap_seconds`
+  (`config/f9_observation.yaml`, 1800s); a service that fails it reads
+  `consumed, but no proof of consumption HH:MM-HH:MM` and is never `consumed`.
+  This is reachable, not hypothetical: `services/futures_monitor/daemon.py`
+  creates `_consume_loop` as a task and awaits it only in `finally`, so if it
+  raises, the task dies unretrieved while `_status_loop` keeps the process up,
+  and a `docker restart` near the close (which preserves the log, unlike a
+  recreate) closes the span over the dead stretch.
+
   There is deliberately **no "nothing was due" exemption**: a silent consumer
   reads `no evidence`, so a genuinely quiet day reads `1/4 consumed, 3 no
-  evidence (PARTIAL)`. An idle consumer emits nothing at all — the one line that
-  would prove liveness without traffic (`consumer_group_already_present`) is
-  DEBUG and both monitors hardcode INFO — so a healthy idle consumer and one
-  that died at the open leave identical records. Calling that `COMPLETE` is the
-  INERT-GATE CAVEAT below committed against the observation surface itself.
+  evidence (PARTIAL)`. The constraint is a **code path, not a log level**. The
+  healthy idle loop emits nothing at any level — `xreadgroup` returns no
+  messages, `post_poll(count)`, `asyncio.sleep(0)`, `continue`, with no logging
+  on that path (`shared/streaming/stage.py`) — and
+  `consumer_group_already_present`, the one line that might have stood in, fires
+  only from `recover_missing_consumer_group`, i.e. only after a read has already
+  failed. So `LOG_LEVEL=DEBUG` would produce no idle-liveness evidence at all,
+  even though both monitor daemons do read `LOG_LEVEL` since PR #749
+  (`services/risk_filter/main.py` and `services/order_router/main.py` still
+  hardcode INFO, which is beside this point). **A heartbeat in the idle branch
+  is the only fix**, and once one exists a quiet day can legitimately read
+  `COMPLETE` again. Until then a healthy idle consumer and one that died at the
+  open leave identical records, and calling that `COMPLETE` is the INERT-GATE
+  CAVEAT below committed against the observation surface itself.
+
+  **`NO_SESSION` qualifies a verdict; it never replaces one.** Both holiday
+  sources describe themselves as provisional (`shared/calendar.py`:
+  `예상 - 확정 시 업데이트 필요`), so a non-trading day that nevertheless holds
+  substantive evidence keeps that evidence's verdict and says both things
+  (`(no session - … is not a trading day) **BUT THE HARVEST HOLDS EVIDENCE** -
+  4/4 consumed (COMPLETE)`), with its counts flagged `check the calendar`. Only
+  a non-trading day with nothing to report reads `n/a - no session`. One wrong
+  calendar entry must not silently unscore a real trading day.
 
   Every harvest writes new `<service>.<HHMMSS KST>.log` files, so harvesting
   before a mid-session redeploy and again at the close keeps both halves of the

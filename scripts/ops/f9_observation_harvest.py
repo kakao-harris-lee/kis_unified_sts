@@ -41,6 +41,18 @@ the session. Absent evidence is never promoted to a benign status, and the
 part of a session nothing testifies to is rendered as ``no evidence`` rather
 than left to look like silence.
 
+Observation freshness
+---------------------
+Coverage answers "did we look?", and it is granted by any timestamped line —
+a startup banner will do. It cannot also answer "was it working?", and reading
+it that way left the original defect open: a service whose only
+proof-of-consumption was one line half an hour after the open, followed by
+silence to the close, read ``consumed (COMPLETE)`` on the strength of two
+banners. So a second, separate bound is measured: the gap from the open to the
+first proof, between consecutive proofs, and from the last proof to the close
+must each stay under ``observation_max_gap_seconds``. A consumer whose last
+proof is hours before the close is ``stale_observation``, never ``consumed``.
+
 Durable vs point-in-time
 ------------------------
 Redis streams carry a 24h TTL and their entries vanish, so the verdict for a
@@ -106,6 +118,10 @@ STATUS_BLIND = "blind"
 #: Observed, never blind — but the harvest does not span the session, so the
 #: uncovered part is unknown rather than quiet. Never COMPLETE.
 STATUS_PARTIAL_COVERAGE = "partial_coverage"
+#: Observed, never blind, and the harvest spans the session — but a stretch of
+#: it holds no proof of consumption at all. Coverage says we watched; it cannot
+#: say the service was working. Never COMPLETE.
+STATUS_STALE_OBSERVATION = "stale_observation"
 STATUS_NO_EVIDENCE = "no_evidence"
 
 #: What the harvest itself yielded for a service. Only ``EVIDENCE_LINES`` is
@@ -126,6 +142,12 @@ EVIDENCE_REASONS = {
     EVIDENCE_HARVEST_FAILED: "docker logs capture failed",
 }
 
+#: The ``harvest_mode:`` vocabulary of config/f9_observation.yaml. ``since``
+#: floors the capture at a KST clock time; ``tail`` keeps the N most recent
+#: lines. Neither drops the tail — both end at the instant they run.
+HARVEST_MODE_SINCE = "since"
+HARVEST_MODE_TAIL = "tail"
+
 #: The ``role:`` vocabulary of config/f9_observation.yaml. Only ``reference``
 #: changes the verdict (it is excluded from scoring); the other two document
 #: what each service is for a reader of the sidecar.
@@ -139,6 +161,10 @@ ROLE_REFERENCE = "reference"
 #: (orchestrator). Continuation lines of a traceback carry no timestamp and are
 #: therefore not evidence of anything.
 _TIMESTAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d{3}")
+
+#: The ``<HHMMSS>`` KST stamp ``harvest_logs`` writes into every filename. It
+#: dates the capture, which is the end of what the file testifies to.
+_HARVEST_STAMP_RE = re.compile(r"\.(\d{6})\.log$")
 
 #: Cells the script cannot derive (they need the runtime ledger and an operator
 #: comparison). Named rather than left blank so an unfilled cell is obvious.
@@ -176,6 +202,34 @@ class ServiceSpec:
     blind: tuple[re.Pattern[str], ...]
     counters: tuple[CounterSpec, ...]
 
+    def __post_init__(self) -> None:
+        if self.harvest_mode != HARVEST_MODE_TAIL:
+            return
+        # No default here on purpose. A default would be a *second* value: the
+        # harvest capped at it while the truncation detector, which compares
+        # line counts against `harvest_tail`, saw None and reported
+        # `coverage_truncated: false` forever — a wrong fact in the audit
+        # record. One value, from config, read by both (CLAUDE.md:
+        # configuration-driven only).
+        if self.harvest_tail is None:
+            raise ValueError(
+                f"{self.name}: harvest_mode '{HARVEST_MODE_TAIL}' needs an "
+                "explicit harvest_tail — it is both the `docker logs --tail` "
+                "cap and what truncation is detected against"
+            )
+        if self.harvest_tail <= 0:
+            raise ValueError(
+                f"{self.name}: harvest_tail must be positive, not "
+                f"{self.harvest_tail} (`--tail 0` returns nothing)"
+            )
+
+    @property
+    def tail_cap(self) -> int:
+        """The ``--tail`` cap of a tail-harvested service."""
+        if self.harvest_tail is None:
+            raise ValueError(f"{self.name} is not harvested with --tail")
+        return self.harvest_tail
+
 
 @dataclass(frozen=True)
 class ObservationConfig:
@@ -183,6 +237,9 @@ class ObservationConfig:
     container_prefix: str
     harvest_since: time_cls
     blind_run_merge_seconds: int
+    #: Longest silence between two proofs of consumption that still counts as
+    #: liveness. See the module docstring's "Observation freshness".
+    observation_max_gap_seconds: int
     row_counters: tuple[str, ...]
     services: tuple[ServiceSpec, ...]
     point_in_time: Mapping[str, Any]
@@ -190,6 +247,21 @@ class ObservationConfig:
 
 def _compile_all(patterns: Iterable[str]) -> tuple[re.Pattern[str], ...]:
     return tuple(re.compile(p) for p in patterns)
+
+
+def anchored_report_root(value: str | Path, *, repo_root: Path = _REPO_ROOT) -> Path:
+    """Resolve a report root the same way whether it came from YAML or ``--report-root``.
+
+    The config value has always been repo-root-relative; ``--report-root`` used
+    to resolve against the **current working directory**, so the same relative
+    spelling meant two different trees depending on where the operator stood.
+    Combined with ``main``'s ``mkdir(parents=True)``, a mistyped root produced a
+    confident ``NOT OBSERVED - 0/4`` against zero input and then created the
+    tree it had just judged, so a second run found its own sidecar there. One
+    anchor for both.
+    """
+    path = Path(value)
+    return (path if path.is_absolute() else repo_root / path).resolve()
 
 
 def _parse_counters(raw: Mapping[str, Any]) -> tuple[CounterSpec, ...]:
@@ -225,9 +297,14 @@ def load_observation_config(
                 name=str(entry["name"]),
                 container=str(entry["container"]),
                 role=str(entry["role"]),
-                harvest_mode=str(entry.get("harvest_mode", "since")),
+                harvest_mode=str(entry.get("harvest_mode", HARVEST_MODE_SINCE)),
+                # `is not None`, not truthiness: `harvest_tail: 0` is a mistake
+                # worth naming (ServiceSpec refuses it), not a value to read as
+                # "absent" and silently replace.
                 harvest_tail=(
-                    int(entry["harvest_tail"]) if entry.get("harvest_tail") else None
+                    int(entry["harvest_tail"])
+                    if entry.get("harvest_tail") is not None
+                    else None
                 ),
                 observed=_compile_all(entry.get("observed", ())),
                 blind=_compile_all(entry.get("blind", ())),
@@ -236,15 +313,13 @@ def load_observation_config(
         )
 
     hour, minute = (int(part) for part in str(root["harvest_since"]).split(":")[:2])
-    report_root = Path(root["report_root"])
-    if not report_root.is_absolute():
-        report_root = repo_root / report_root
 
     return ObservationConfig(
-        report_root=report_root,
+        report_root=anchored_report_root(root["report_root"], repo_root=repo_root),
         container_prefix=str(root["container_prefix"]),
         harvest_since=time_cls(hour, minute),
         blind_run_merge_seconds=int(root["blind_run_merge_seconds"]),
+        observation_max_gap_seconds=int(root["observation_max_gap_seconds"]),
         row_counters=tuple(str(name) for name in root["row_counters"]),
         services=tuple(services),
         point_in_time=dict(root.get("point_in_time", {}) or {}),
@@ -389,11 +464,11 @@ def harvest_logs(
                     f"{existing} already exists; harvests are never overwritten"
                 )
         command = ["docker", "logs"]
-        if spec.harvest_mode == "tail":
+        if spec.harvest_mode == HARVEST_MODE_TAIL:
             # `docker logs` without --tail (or with a large one) stops at the
             # broken record left by the 2026-09-09 host reboots. See the
             # runbook's --tail caveat.
-            command += ["--tail", str(spec.harvest_tail or 900)]
+            command += ["--tail", str(spec.tail_cap)]
         else:
             since = datetime.combine(day, config.harvest_since, tzinfo=KST)
             command += ["--since", since.isoformat()]
@@ -435,6 +510,11 @@ class ServiceObservation:
     #: the part of the session none of them reach.
     coverage: tuple[tuple[datetime, datetime], ...]
     uncovered: tuple[tuple[datetime, datetime], ...]
+    #: Stretches of the session the harvest *did* reach that hold no proof of
+    #: consumption within ``observation_max_gap_seconds``. Kept apart from
+    #: ``uncovered`` because they answer different questions: "we did not look"
+    #: versus "we looked and it proved nothing".
+    unobserved: tuple[tuple[datetime, datetime], ...]
     #: A harvest file that came back at its ``--tail`` cap: lines older than
     #: its first are gone, so coverage is unknown before ``coverage[0][0]``.
     coverage_truncated: bool
@@ -446,16 +526,50 @@ class ServiceObservation:
         """No part of the session is without evidence."""
         return not self.uncovered
 
+    @property
+    def observation_is_fresh(self) -> bool:
+        """No stretch of the session went unproven for longer than the bound."""
+        return not self.unobserved
+
 
 @dataclass(frozen=True)
 class DayObservation:
     day: date_cls
     session_open: datetime
     session_close: datetime
+    #: What the harvested evidence says, always — never overwritten by the
+    #: calendar. See ``reported_verdict``.
     verdict: str
+    #: Whether both of this repo's holiday sources call *day* a trading day.
+    session_day: bool
     services: tuple[ServiceObservation, ...]
     counters: Mapping[str, int]
     point_in_time: Mapping[str, Any]
+
+    @property
+    def has_evidence(self) -> bool:
+        """Any scored service left a record of what it did."""
+        return any(
+            service.status != STATUS_NO_EVIDENCE for service in _scored(self.services)
+        ) or any(self.counters.values())
+
+    @property
+    def reported_verdict(self) -> str:
+        """The day's verdict, with ``NO_SESSION`` as a *qualifier*, not a replacement.
+
+        ``NO_SESSION`` used to be written over the evidence-derived verdict
+        after the scan, blanking the counts to ``n/a - no session`` and exiting
+        0. Both holiday sources describe themselves as provisional
+        (``shared/calendar.py``: ``예상 - 확정 시 업데이트 필요``), so one wrong
+        entry silently unscored a real trading day — on a script whose whole
+        purpose is making unscored days visible. A non-trading day that holds
+        substantive evidence now keeps that evidence's verdict and says both
+        things; only a non-trading day with nothing to report reads
+        ``NO_SESSION``, where the override changes no fact.
+        """
+        if not self.session_day and not self.has_evidence:
+            return VERDICT_NO_SESSION
+        return self.verdict
 
 
 def service_log_files(directory: Path, service: str) -> tuple[Path, ...]:
@@ -479,12 +593,34 @@ class FileEvidence:
     path: Path
     line_count: int
     lines: tuple[tuple[datetime, str], ...]
+    #: When ``docker logs`` was run, read from the file's own ``<HHMMSS>``
+    #: stamp. ``None`` when the name carries no stamp to read.
+    harvested_at: datetime | None = None
 
     @property
     def span(self) -> tuple[datetime, datetime] | None:
+        """From this file's first surviving line to the instant it was captured.
+
+        Ending the span at the *last* line made ``COMPLETE`` depend on how
+        chatty a service happened to be near 15:45: four consuming services
+        whose files stopped 30 seconds short of the close read ``PARTIAL`` with
+        ``no evidence 15:44-15:45``, while seven hours of interior silence read
+        ``COMPLETE``. Same epistemic situation, opposite verdicts — and the
+        quiet consumer hits the first one.
+
+        ``docker logs`` returns everything up to the moment it runs in **both**
+        harvest modes: ``--since`` floors the head, ``--tail N`` keeps the N
+        most recent lines, and neither drops the tail. So silence after the
+        last line is silence the harvest watched. The head stays at the first
+        surviving line, because rotation drops the OLDEST lines and a head
+        later than the ``--since`` floor cannot be told from a quiet start.
+        """
         if not self.lines:
             return None
-        return (self.lines[0][0], self.lines[-1][0])
+        first, last = self.lines[0][0], self.lines[-1][0]
+        if self.harvested_at is None:
+            return (first, last)
+        return (first, max(last, self.harvested_at))
 
 
 def _parse_line(line: str) -> datetime | None:
@@ -494,13 +630,28 @@ def _parse_line(line: str) -> datetime | None:
     return datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=KST)
 
 
-def read_file_evidence(path: Path) -> FileEvidence:
+def harvest_stamp(path: Path, day: date_cls) -> datetime | None:
+    """The KST instant *path* was harvested, from its ``<service>.<HHMMSS>.log`` name."""
+    match = _HARVEST_STAMP_RE.search(path.name)
+    if match is None:
+        return None
+    try:
+        clock = datetime.strptime(match.group(1), "%H%M%S").time()
+    except ValueError:
+        return None
+    return datetime.combine(day, clock, tzinfo=KST)
+
+
+def read_file_evidence(path: Path, *, day: date_cls | None = None) -> FileEvidence:
     """Parse one harvest file, keeping its own line count and its own span.
 
     Per file rather than per service because coverage is a union of *files*: a
     mid-day harvest and a post-close harvest of a container recreated in
     between testify to two disjoint spans, and flattening them first would
     invent the hours between.
+
+    *day* supplies the date the file's ``<HHMMSS>`` stamp belongs to, so the
+    span can reach the capture rather than the last line (see ``span``).
     """
     raw = [
         line
@@ -511,7 +662,12 @@ def read_file_evidence(path: Path) -> FileEvidence:
         (moment, line) for line in raw if (moment := _parse_line(line)) is not None
     ]
     parsed.sort()
-    return FileEvidence(path=path, line_count=len(raw), lines=tuple(parsed))
+    return FileEvidence(
+        path=path,
+        line_count=len(raw),
+        lines=tuple(parsed),
+        harvested_at=None if day is None else harvest_stamp(path, day),
+    )
 
 
 def _merge_intervals(
@@ -546,6 +702,29 @@ def _uncovered(
             break
     if cursor < end:
         gaps.append((cursor, end))
+    return tuple(gaps)
+
+
+def _stale_windows(
+    observed: Sequence[datetime],
+    start: datetime,
+    end: datetime,
+    max_gap_seconds: int,
+) -> tuple[tuple[datetime, datetime], ...]:
+    """Stretches of ``[start, end]`` with no proof of consumption in *observed*.
+
+    Three gaps are bounded, not two: the open to the first proof as well as
+    between consecutive proofs and the last proof to the close. A consumer that
+    was dead all morning and woke at 15:40 is as unproven for the session as one
+    that died at 08:46, and only the leading gap tells them apart from a healthy
+    one.
+    """
+    gaps: list[tuple[datetime, datetime]] = []
+    cursor = start
+    for moment in (*observed, end):
+        if (moment - cursor).total_seconds() > max_gap_seconds:
+            gaps.append((cursor, moment))
+        cursor = max(cursor, moment)
     return tuple(gaps)
 
 
@@ -624,6 +803,7 @@ def scan_service(
     session_open: datetime,
     session_close: datetime,
     blind_run_merge_seconds: int,
+    observation_max_gap_seconds: int,
     failure_markers: Sequence[Path] = (),
 ) -> ServiceObservation:
     """Classify one service from its harvested logs.
@@ -632,22 +812,29 @@ def scan_service(
     rejected for ``no_market_context`` is the daemon saying it had no input,
     not a completed evaluation.
 
-    Two things are measured, never merged: **what the service did** inside the
-    session window, and **how much of the session the harvest reaches**. A file
-    that starts after the open (rotation, or a container recreated mid-day)
-    cannot testify to the hours before its first line, and rotation drops the
-    OLDEST lines — so it preferentially destroys early-session blindness. One
-    surviving late ``stream_message_processed`` therefore never proves the
-    service consumed *for the session*, only within what the file covers.
+    Three things are measured, never merged:
+
+    * **what the service did** inside the session window;
+    * **how much of the session the harvest reaches** — a file that starts
+      after the open (rotation, or a container recreated mid-day) cannot
+      testify to the hours before its first line, and rotation drops the
+      OLDEST lines, so it preferentially destroys early-session blindness;
+    * **how fresh the proof stayed** — coverage is granted by any timestamped
+      line, a startup banner included, so it answers "did we look?" and cannot
+      also answer "was it working?".
+
+    One surviving ``stream_message_processed`` therefore never proves the
+    service consumed *for the session*: not beyond what the files cover, and
+    not beyond the freshness bound either side of it.
     """
-    evidence = [read_file_evidence(path) for path in files]
+    evidence = [read_file_evidence(path, day=session_open.date()) for path in files]
     state = _evidence_state(evidence, failure_markers)
 
     spans = [item.span for item in evidence]
     coverage = _merge_intervals(span for span in spans if span is not None)
     uncovered = _uncovered(coverage, session_open, session_close)
     truncated = any(
-        spec.harvest_tail is not None and item.line_count >= spec.harvest_tail
+        spec.harvest_mode == HARVEST_MODE_TAIL and item.line_count >= spec.tail_cap
         for item in evidence
     )
 
@@ -665,6 +852,10 @@ def scan_service(
         elif any(pattern.search(line) for pattern in spec.observed):
             observed.append(moment)
 
+    unobserved = _stale_windows(
+        observed, session_open, session_close, observation_max_gap_seconds
+    )
+
     if state != EVIDENCE_LINES:
         # Nothing was read, so nothing about this service was observed. Named
         # by `evidence`, never softened into a status that reads like quiet.
@@ -677,6 +868,8 @@ def scan_service(
         status = STATUS_NO_EVIDENCE
     elif uncovered:
         status = STATUS_PARTIAL_COVERAGE
+    elif unobserved:
+        status = STATUS_STALE_OBSERVATION
     else:
         status = STATUS_CONSUMED
 
@@ -692,6 +885,7 @@ def scan_service(
         blind_windows=_merge_windows(blind, blind_run_merge_seconds),
         coverage=coverage,
         uncovered=uncovered,
+        unobserved=unobserved,
         coverage_truncated=truncated,
         counters={counter.name: _count(counter, lines) for counter in spec.counters},
         files=tuple(str(path) for path in (*files, *failure_markers)),
@@ -715,14 +909,24 @@ def resolve_day(
     exemption and rendered "4/4 observing" on zero bytes.
 
     Tightening the predicate is not enough, because the evidence it would need
-    does not exist. An idle consumer emits nothing at all: the only line that
-    would prove liveness without traffic — ``consumer_group_already_present``
-    — is DEBUG, and both deployed monitors hardcode
-    ``basicConfig(level=logging.INFO)``. So a healthy idle consumer and one
-    that died at the open leave byte-identical records, and the runbook's own
-    INERT-GATE CAVEAT applies to the observation surface itself: a quiet day is
-    *exactly what you would observe* if the chain cannot fire. A silent
-    consumer is therefore ``no_evidence``, and a quiet day reads PARTIAL.
+    does not exist — and the constraint is a **code path**, not a log level.
+    The healthy idle loop emits nothing at any level: ``xreadgroup`` returns no
+    messages, ``post_poll(count)``, ``asyncio.sleep(0)``, ``continue``, with no
+    logging on that path (``shared/streaming/stage.py``). The one line that
+    might have stood in — ``consumer_group_already_present`` — fires only from
+    ``recover_missing_consumer_group``, i.e. only after a read has *already*
+    failed, so it is not idle evidence either. ``LOG_LEVEL=DEBUG`` would
+    therefore add no idle-liveness evidence at all (both monitor daemons do read
+    ``LOG_LEVEL`` since PR #749; ``services/risk_filter/main.py`` and
+    ``services/order_router/main.py`` still hardcode INFO, which is beside the
+    point here). **A heartbeat in the idle branch is the only fix**, and once one
+    exists a quiet day can legitimately read COMPLETE again.
+
+    Until then a healthy idle consumer and one that died at the open leave
+    byte-identical records, and the runbook's own INERT-GATE CAVEAT applies to
+    the observation surface itself: a quiet day is *exactly what you would
+    observe* if the chain cannot fire. A silent consumer is therefore
+    ``no_evidence``, and a quiet day reads PARTIAL.
     """
     counters: dict[str, int] = {}
     for service in services:
@@ -732,7 +936,13 @@ def resolve_day(
     resolved = tuple(services)
     scored = _scored(resolved)
     observed_anywhere = any(
-        s.status in (STATUS_CONSUMED, STATUS_PARTIALLY_BLIND, STATUS_PARTIAL_COVERAGE)
+        s.status
+        in (
+            STATUS_CONSUMED,
+            STATUS_PARTIALLY_BLIND,
+            STATUS_PARTIAL_COVERAGE,
+            STATUS_STALE_OBSERVATION,
+        )
         for s in scored
     )
     if not scored or not observed_anywhere:
@@ -762,21 +972,19 @@ def observe_day(
             session_open=session_open,
             session_close=session_close,
             blind_run_merge_seconds=config.blind_run_merge_seconds,
+            observation_max_gap_seconds=config.observation_max_gap_seconds,
             failure_markers=service_failure_markers(directory, spec.name),
         )
         for spec in config.services
     ]
     services, verdict, counters = resolve_day(scanned)
-    if not is_session_day(day, schedule_path=schedule_path):
-        # Nothing was scheduled to happen, so there is nothing to have missed.
-        # Decided after the scan so the sidecar still records whatever was
-        # harvested, and stated as its own verdict rather than NOT_OBSERVED.
-        verdict = VERDICT_NO_SESSION
     return DayObservation(
         day=day,
         session_open=session_open,
         session_close=session_close,
         verdict=verdict,
+        # Carried beside the verdict, never over it: see `reported_verdict`.
+        session_day=is_session_day(day, schedule_path=schedule_path),
         services=services,
         counters=counters,
         point_in_time=dict(point_in_time or {}),
@@ -832,6 +1040,13 @@ def describe_service(service: ServiceObservation) -> str:
         return f"{service.name} blind {_window_text(service.blind_windows)}{gap}"
     if service.status == STATUS_PARTIAL_COVERAGE:
         return f"{service.name} consumed, harvest does not span the session{gap}"
+    if service.status == STATUS_STALE_OBSERVATION:
+        # The harvest spans the session; what it holds does not. Named as the
+        # silence it is, not as the coverage hole it is not.
+        return (
+            f"{service.name} consumed, but no proof of consumption "
+            f"{_window_text(service.unobserved)}{gap}"
+        )
     if service.status == STATUS_NO_EVIDENCE:
         return f"{service.name} NO EVIDENCE (silent where harvested){gap}"
     return f"{service.name} consumed"
@@ -846,10 +1061,21 @@ def render_consumers_cell(result: DayObservation) -> str:
     scored = _scored(result.services)
     consumed = [s for s in scored if s.status == STATUS_CONSUMED]
     tally = f"{len(consumed)}/{len(scored)} consumed"
-    if result.verdict == VERDICT_NO_SESSION:
-        return f"(no session - {result.day.isoformat()} is not a trading day)"
+
+    no_session = (
+        ""
+        if result.session_day
+        else (f"(no session - {result.day.isoformat()} is not a trading day)")
+    )
+    if no_session and not result.has_evidence:
+        return no_session
+    if no_session:
+        # A day both holiday sources call closed, holding real evidence. Say
+        # both — one of the two is wrong and the row is where that shows.
+        no_session += " **BUT THE HARVEST HOLDS EVIDENCE** - "
+
     if result.verdict == VERDICT_COMPLETE:
-        return f"{tally} (COMPLETE)"
+        return f"{no_session}{tally} (COMPLETE)"
 
     problems = "; ".join(
         describe_service(s) for s in scored if s.status != STATUS_CONSUMED
@@ -859,7 +1085,7 @@ def render_consumers_cell(result: DayObservation) -> str:
         if result.verdict == VERDICT_NOT_OBSERVED
         else "**NOT COMPLETE**"
     )
-    return f"{marker} - {tally} ({result.verdict}): {problems}"
+    return f"{no_session}{marker} - {tally} ({result.verdict}): {problems}"
 
 
 def render_counts_cell(result: DayObservation, row_counters: Sequence[str]) -> str:
@@ -869,8 +1095,16 @@ def render_counts_cell(result: DayObservation, row_counters: Sequence[str]) -> s
     identically to a genuine quiet market. It never ships bare.
     """
     counts = " -> ".join(str(result.counters.get(name, 0)) for name in row_counters)
-    if result.verdict == VERDICT_NO_SESSION:
-        return "n/a - no session"
+    if not result.session_day:
+        if not result.has_evidence:
+            return "n/a - no session"
+        # Measured against a session window that, per both holiday sources,
+        # did not exist. Reported rather than discarded, and never bare.
+        return (
+            f"{counts} - UNQUALIFIED: {result.day.isoformat()} is not a trading "
+            "day in either holiday source, yet the harvest holds evidence - "
+            "check the calendar before reading these"
+        )
     if result.verdict == VERDICT_COMPLETE:
         return counts
     return (
@@ -883,7 +1117,9 @@ def render_row(
     result: DayObservation, row_counters: Sequence[str], sidecar: Path | None = None
 ) -> str:
     """The markdown row for the runbook's Shadow observation log table."""
-    notes = f"observation={result.verdict}"
+    notes = f"observation={result.reported_verdict}"
+    if not result.session_day and result.has_evidence:
+        notes += "; not a trading day in either holiday source"
     if sidecar is not None:
         notes += f"; evidence {sidecar}"
     return " | ".join(
@@ -906,19 +1142,23 @@ def build_sidecar(result: DayObservation, row: str) -> dict[str, Any]:
         "day": result.day.isoformat(),
         "session_open_kst": result.session_open.isoformat(),
         "session_close_kst": result.session_close.isoformat(),
-        "verdict": result.verdict,
+        "verdict": result.reported_verdict,
+        "evidence_verdict": result.verdict,
+        "session_day": result.session_day,
         "verdict_inputs": "durable: harvested log files only (Redis streams "
         "expire after 24h, so a past day is not reconstructible from Redis)",
         # The qualification travels WITH the values: a reader who copies
         # `counters` out of this JSON must not end up holding bare numbers from
         # a day whose observation surface could not see.
         "counters": {
-            "qualified": result.verdict == VERDICT_COMPLETE,
+            "qualified": result.reported_verdict == VERDICT_COMPLETE
+            and result.session_day,
             "qualification": (
-                "measured: the observation surface covered the session"
-                if result.verdict == VERDICT_COMPLETE
-                else f"UNQUALIFIED: observation {result.verdict}, these are a "
-                "lower bound, not a measurement"
+                "measured: the observation surface covered the session and "
+                "proved it consumed throughout"
+                if result.reported_verdict == VERDICT_COMPLETE and result.session_day
+                else f"UNQUALIFIED: observation {result.reported_verdict}, these "
+                "are a lower bound, not a measurement"
             ),
             "values": dict(result.counters),
         },
@@ -938,7 +1178,12 @@ def build_sidecar(result: DayObservation, row: str) -> dict[str, Any]:
                     [start.isoformat(), end.isoformat()]
                     for start, end in service.uncovered
                 ],
+                "unobserved_session_kst": [
+                    [start.isoformat(), end.isoformat()]
+                    for start, end in service.unobserved
+                ],
                 "covers_session": service.covers_session,
+                "observation_is_fresh": service.observation_is_fresh,
                 "coverage_truncated": service.coverage_truncated,
                 "observed_count": service.observed_count,
                 "first_observed_kst": (
@@ -1118,9 +1363,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     config = load_observation_config(Path(args.config))
     if args.report_root:
-        config = replace(config, report_root=Path(args.report_root).resolve())
+        config = replace(config, report_root=anchored_report_root(args.report_root))
     today = datetime.now(KST).date()
     day = date_cls.fromisoformat(args.date) if args.date else today
+    # Echoed always: every verdict below is *about this tree*, and a verdict
+    # against the wrong tree used to be indistinguishable from a dead surface.
+    print(f"[root] {config.report_root}", file=sys.stderr)
 
     harvest = not args.no_harvest
     if harvest and day != today:
@@ -1133,6 +1381,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         harvest = False
 
+    day_directory = config.report_root / day.isoformat()
+    if (
+        not harvest
+        and not day_directory.is_dir()
+        and is_session_day(day, schedule_path=Path(args.schedule))
+    ):
+        # Refused rather than verdicted. `--no-harvest` means "read the files
+        # already harvested"; with no directory holding them there is no input,
+        # and the scan would have rendered a confident `NOT OBSERVED - 0/4`
+        # against nothing — then `mkdir(parents=True)` below would create the
+        # mistyped tree and file a sidecar in it, which a second run reads back
+        # as its own evidence. A wrong --report-root and a dead observation
+        # surface must not look alike.
+        print(
+            f"[error] no harvest directory for the {day} session at "
+            f"{day_directory} — nothing to verdict. Check --report-root "
+            "(relative paths anchor at the repo root, not the working "
+            "directory) or harvest the day first.",
+            file=sys.stderr,
+        )
+        return 2
+
     if harvest:
         stamp = datetime.now(KST).strftime("%H%M%S")
         for name, outcome in harvest_logs(config, day, stamp=stamp).items():
@@ -1144,7 +1414,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         config, day, schedule_path=Path(args.schedule), point_in_time=point_in_time
     )
 
-    out_dir = config.report_root / day.isoformat()
+    out_dir = day_directory
     out_dir.mkdir(parents=True, exist_ok=True)
     sidecar = out_dir / (
         f"observation-completeness.{datetime.now(KST).strftime('%H%M%S')}.json"
@@ -1159,8 +1429,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"[sidecar] {sidecar}", file=sys.stderr)
     # NO_SESSION exits 0 alongside COMPLETE: the runbook invokes this per
     # session and exit-0-on-COMPLETE invites cron, so a standing weekend alarm
-    # would erode the signal this script exists to carry.
-    return 0 if result.verdict in (VERDICT_COMPLETE, VERDICT_NO_SESSION) else 1
+    # would erode the signal this script exists to carry. It is the *reported*
+    # verdict, so a non-trading day holding incomplete evidence still exits 1
+    # rather than being excused by the calendar.
+    return 0 if result.reported_verdict in (VERDICT_COMPLETE, VERDICT_NO_SESSION) else 1
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
