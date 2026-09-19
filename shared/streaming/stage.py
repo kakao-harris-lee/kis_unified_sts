@@ -18,6 +18,7 @@ import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from enum import StrEnum
 from typing import Any, final
 
@@ -60,16 +61,30 @@ def is_vanished_stream_read_error(exc: Exception) -> bool:
     CLIENT UNBLOCK`` is deliberately excluded: that is an operator action, not
     a vanished key.
 
+    **Which code you get is version-dependent, so both arms must stay.**
+    Measured against a blocking XREADGROUP whose key vanishes underneath it::
+
+        vanish mode      7.0.15 (this deployment)   7.4.9
+        DEL              UNBLOCKED                  NOGROUP
+        TTL expiry       UNBLOCKED                  NOGROUP
+        type change      UNBLOCKED                  NOGROUP
+        XGROUP DESTROY   NOGROUP                    NOGROUP
+
+    The consumers run against the host Redis (``REDIS_HOST`` is
+    ``host.docker.internal`` in the deployed stack), which is 7.0.15, so three
+    of those four modes are carried *only* by the UNBLOCKED arm today. Redis
+    7.2+ collapsed the condition into the ordinary NOGROUP message — the
+    compose-internal ``redis:7-alpine`` already resolves to 7.4.9 — so after a
+    host upgrade or a rewiring the NOGROUP arm becomes the only cover. Drop
+    either arm and a vanish mode goes unhandled on one version or the other.
+
     Sibling of :func:`is_missing_consumer_group_error` rather than a widening
-    of it, because the two shapes are not reachable from the same call. A
-    *blocking* read can be interrupted by the key expiring underneath it, so
-    every ``block=``-bearing XREADGROUP uses this predicate: both monitor
-    daemons, and both stage ``run()`` loops, whose five live consumers each read
-    a stream that is re-armed with a 24h EXPIRE on every publish
-    (``decision_engine``/``risk_filter``/``stock_strategy``/
-    ``stock_risk_filter``/``shared.news.publisher``) and block for 2s. XAUTOCLAIM
-    never blocks, so the pending-claim paths cannot see the UNBLOCKED shape and
-    stay on the NOGROUP-only sibling.
+    of it, because only a *blocking* call can be interrupted mid-read and see
+    the UNBLOCKED shape. That is the entire restriction — one blocking call
+    site reaches both shapes (on 7.0.15, XGROUP DESTROY under the block gives
+    NOGROUP while an expiring key gives UNBLOCKED) — so this predicate belongs
+    on every ``block=``-bearing XREADGROUP, while XAUTOCLAIM, which never
+    blocks, stays on the narrow sibling.
     """
     if is_missing_consumer_group_error(exc):
         return True
@@ -159,6 +174,42 @@ async def recover_missing_consumer_group(
             )
         )
     return ensured
+
+
+async def sweep_vanished_consumer_groups(
+    redis: Any,
+    streams: Iterable[str | bytes],
+    consumer_group: str,
+) -> bool:
+    """Recreate the groups a failed read covers; say whether to retry at once.
+
+    A caller that reads several streams in one XREADGROUP fails as a unit, so
+    recovery has to sweep all of them (``mkstream`` recreates whichever key
+    vanished). The return value is the three-way rule #741 arrived at:
+
+    - something was actually ``CREATED`` and nothing ``FAILED`` → ``True``.
+      The next read has a reason to succeed, so the caller skips its backoff.
+    - any ``FAILED`` → ``False``. An immediate retry would fail the same way.
+    - every group already ``EXISTED`` → ``False``. Nothing was recovered, so
+      the read error was not a vanished group after all and the caller must
+      fall through to its rate-limited error log and backoff.
+
+    That last case is the one worth stating plainly, because getting it wrong
+    is silent: retrying with no backoff and no log measured 33,746 reads/s,
+    0 records and 0 log lines in production.
+
+    Compare the outcomes with ``is``. ``ConsumerGroupEnsure`` is a ``StrEnum``
+    whose members are all non-empty — therefore truthy — strings, so
+    ``all(outcomes)`` and ``if outcome:`` are always true and would restore
+    that hot loop while looking like a check.
+    """
+    outcomes = [
+        await recover_missing_consumer_group(redis, stream, consumer_group)
+        for stream in streams
+    ]
+    created = any(outcome is ConsumerGroupEnsure.CREATED for outcome in outcomes)
+    failed = any(outcome is ConsumerGroupEnsure.FAILED for outcome in outcomes)
+    return created and not failed
 
 
 def _log_processed_message(
@@ -456,23 +507,14 @@ class StreamStage(ABC):
                     )
                 except Exception as exc:
                     if is_vanished_stream_read_error(exc):
-                        # Skip the backoff only when a recreate actually
-                        # happened, so the next read has a reason to succeed.
-                        # Every other outcome — a failed recreate, or the group
-                        # already present, which means the read error was not a
-                        # vanished group after all — falls through to the
-                        # rate-limited error log + backoff below, because
-                        # retrying instantly on a read that keeps failing is a
-                        # silent hot loop (#741, measured in production:
-                        # 33,746 reads/s, 0 records, 0 log lines). Compare with
-                        # ``is``: the outcomes are truthy strings, so a
-                        # truthiness test would always pass.
-                        outcome = await recover_missing_consumer_group(
+                        # One stream, so the sweep takes a one-element
+                        # iterable; what its answer means is the helper's
+                        # docstring, not a rule re-typed at each call site.
+                        if await sweep_vanished_consumer_groups(
                             self.redis,
-                            self.input_stream,
+                            (self.input_stream,),
                             self.consumer_group,
-                        )
-                        if outcome is ConsumerGroupEnsure.CREATED:
+                        ):
                             await asyncio.sleep(0)
                             continue
                     self._xreadgroup_error_log.exception(
@@ -717,27 +759,14 @@ class MultiStreamStage(ABC):
                 except Exception as exc:
                     if is_vanished_stream_read_error(exc):
                         # Every input stream is read in one XREADGROUP, so the
-                        # read fails as a unit and recovery has to sweep all of
-                        # them (mkstream recreates whichever key vanished).
-                        # Skip the backoff only when a recreate actually
-                        # happened and none failed; every other shape falls
-                        # through to the rate-limited error log + backoff
-                        # below, so neither can become a silent hot loop (#741).
-                        # Compare with ``is``: the outcomes are truthy strings,
-                        # so ``all(...)`` would always pass.
-                        outcomes = [
-                            await recover_missing_consumer_group(
-                                self.redis,
-                                stream,
-                                self.consumer_group,
-                            )
-                            for stream in self.input_streams
-                        ]
-                        created = any(
-                            o is ConsumerGroupEnsure.CREATED for o in outcomes
-                        )
-                        failed = any(o is ConsumerGroupEnsure.FAILED for o in outcomes)
-                        if created and not failed:
+                        # read fails as a unit and the sweep covers all of
+                        # them; what its answer means is the helper's
+                        # docstring, not a rule re-typed at each call site.
+                        if await sweep_vanished_consumer_groups(
+                            self.redis,
+                            self.input_streams,
+                            self.consumer_group,
+                        ):
                             await asyncio.sleep(0)
                             continue
                     self._xreadgroup_error_log.exception(
