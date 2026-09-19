@@ -1,0 +1,1 @@
+2026-09-18 09:47:37,466 WARNING shared.streaming.stage consumer group missing; recreated stream=signal.candidate.futures.shadow group=risk_filter
