@@ -225,7 +225,7 @@ def _degraded_no_action(
     """Build the recorded degradation No-Action Outcome (the ``on_exhaustion`` factory, §3.4)."""
     strategy = entry.strategy
     capsule = payload.capsule
-    return NoActionOutcome.issue(  # type: ignore[return-value]
+    return NoActionOutcome.issue(
         scheme=scheme,
         outcome_id=(
             f"degraded:{strategy.strategy_id}:{capsule.capsule_id}:{entry.config.config_version}"

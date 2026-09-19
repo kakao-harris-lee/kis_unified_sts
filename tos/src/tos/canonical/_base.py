@@ -40,7 +40,7 @@ Pure module: ``pydantic`` + stdlib only; no ``shared.*`` (design §0.3).
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -229,7 +229,7 @@ class DigestBoundArtifact(FrozenModel):
         scheme: CanonicalizationScheme,
         status: ArtifactStatus = ArtifactStatus.ISSUED,
         **content: Any,
-    ) -> DigestBoundArtifact:
+    ) -> Self:
         """Issue an artifact: compute its digest over the covered content (§4.1).
 
         Builds a transient ``DRAFT`` to extract the covered content, computes the
@@ -304,7 +304,7 @@ class IdDerivedArtifact(DigestBoundArtifact):
         scheme: CanonicalizationScheme,
         status: ArtifactStatus = ArtifactStatus.ISSUED,
         **content: Any,
-    ) -> IdDerivedArtifact:
+    ) -> Self:
         """Issue an id-derived artifact: compute the digest and derive the id (§4.1).
 
         Args:
