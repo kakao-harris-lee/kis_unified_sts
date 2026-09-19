@@ -7,6 +7,16 @@ lines is not enough: the break can arrive through an ``import shared.x`` form,
 a function-local import, or — the shape #753 introduced — a package
 ``__init__`` that reaches somewhere uncopied. So this rebuilds the image's file
 tree from the ``COPY`` lines and imports the exporter against nothing else.
+
+Mutating this test honestly is narrower than it looks. The mutation has to name
+a module that **exists in the repo but is not COPYed** — ``shared.config.loader``
+is one, ``shared.streaming.stage`` is not (it is copied). A module that exists
+nowhere, such as ``shared.config.settings``, fails the same way in a full
+checkout and so demonstrates nothing about COPY coverage; an import of a real
+module but a missing *symbol* raises ``ImportError``, not
+``ModuleNotFoundError``, and likewise proves nothing here. Both vacuous forms
+were tried while writing this and are recorded so the next person does not
+repeat them.
 """
 
 from __future__ import annotations
