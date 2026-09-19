@@ -10,6 +10,9 @@ ACK behavior. Subclasses implement ``handle_message`` (return ``True`` ⇒ the
 framework XACKs; ``False`` ⇒ leave the message pending for retry) and may
 override the optional hooks ``on_startup`` / ``pre_iteration_gate`` /
 ``post_poll`` / ``on_shutdown``.
+
+Both loops emit a periodic ``stream_consumer_alive`` heartbeat so that a stage
+with no traffic still proves it is running — see :class:`_LivenessHeartbeat`.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from enum import StrEnum
 from typing import Any, final
 
@@ -30,6 +33,21 @@ from shared.streaming.audit import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Seconds between ``stream_consumer_alive`` heartbeats (see
+#: :class:`_LivenessHeartbeat`).
+#:
+#: **Must stay strictly below**
+#: ``config/f9_observation.yaml::observation_max_gap_seconds`` (1800). That
+#: harvester scores a session by the largest gap between two proofs, so a
+#: heartbeat interval above the bound would make a healthy quiet session read
+#: ``stale_observation`` — the heartbeat would create the false verdict it
+#: exists to remove. ``tests/unit/streaming/test_stream_stage_heartbeat.py``
+#: pins the relation, reading both numbers from their real sources.
+#:
+#: 60s costs ~390 lines per service across a 6.5h session, which is negligible
+#: against the 10MB x 3 json-file rotation every stage-based service runs with.
+DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60.0
 
 
 def _duration_ms(started_at: float) -> int:
@@ -287,6 +305,97 @@ def _log_ack_failed_message(
     )
 
 
+class _LivenessHeartbeat:
+    """Periodic proof that a consume loop is still turning.
+
+    The idle path of a consumer — read, no messages, ``continue`` — emitted
+    nothing at any log level, so "healthy but no traffic" and "the consume task
+    died hours ago" were the same log: empty. That is how both monitor daemons
+    went two days blind (2026-09-17/18) with ``RestartCount=0``, and it is why
+    a quiet session harvests as ``PARTIAL`` today. ``LOG_LEVEL=DEBUG`` does not
+    help — the gap is in the code path, not the level — so this is INFO:
+    evidence, not diagnostics.
+
+    ``polls`` and ``messages`` are both carried because they answer different
+    questions. ``polls>0 messages=0`` is "alive, watching, no traffic"; no line
+    at all is the alarm, since a loop that is not turning cannot emit one.
+    ``polls`` counts *completed* reads only — a failing read never reaches here
+    and has its own rate-limited error line, so a heartbeat never launders one.
+
+    Deliberately not built on :class:`RateLimitedLog`. That primitive reports
+    an exception with its traceback, counts what it suppressed, and treats
+    ``reset()`` as "the guarded operation recovered". A heartbeat has no
+    exception to report, and the number of heartbeats it skipped is not news —
+    the poll and message counts already describe the interval. What is left of
+    that primitive once those are dropped is a "last emitted at" timestamp,
+    which is exactly what this holds.
+    """
+
+    def __init__(
+        self,
+        *,
+        consumer_group: str,
+        worker_id: str,
+        streams: Iterable[str | bytes],
+        interval_seconds: float,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        if interval_seconds <= 0:
+            raise ValueError("heartbeat_interval_seconds must be positive")
+        self.consumer_group = consumer_group
+        self.worker_id = worker_id
+        self.streams = ",".join(decode_stream_id(stream) for stream in streams)
+        self.interval_seconds = interval_seconds
+        self._clock = clock or time.monotonic
+        self._interval_started_at: float | None = None
+        self._polls = 0
+        self._messages = 0
+        self._last_message_at: float | None = None
+
+    def record_poll(self, message_count: int) -> None:
+        """Count one completed poll, emitting the heartbeat when one is due.
+
+        The first call opens the interval instead of emitting: a heartbeat
+        reports what happened over ``interval_seconds``, and the loop has not
+        run that long yet. Every later call is free — an integer add and one
+        clock read — so it is safe on the block-free path where a busy stage
+        polls thousands of times a second.
+        """
+        now = self._clock()
+        self._polls += 1
+        self._messages += message_count
+        if message_count:
+            self._last_message_at = now
+
+        if self._interval_started_at is None:
+            self._interval_started_at = now
+            return
+        if now - self._interval_started_at < self.interval_seconds:
+            return
+
+        logger.info(
+            format_audit_kv(
+                event="stream_consumer_alive",
+                streams=self.streams,
+                consumer_group=self.consumer_group,
+                worker_id=self.worker_id,
+                polls=self._polls,
+                messages=self._messages,
+                # Absent until this worker has consumed something: "0 seconds
+                # since a message that never arrived" would be a lie, and the
+                # bare `messages=0` already says the interval was quiet.
+                idle_seconds=(
+                    None
+                    if self._last_message_at is None
+                    else int(now - self._last_message_at)
+                ),
+            )
+        )
+        self._interval_started_at = now
+        self._polls = 0
+        self._messages = 0
+
+
 class StreamStage(ABC):
     """Abstract base for a Redis consumer-group daemon stage."""
 
@@ -301,6 +410,8 @@ class StreamStage(ABC):
         batch_size: int,
         xreadgroup_error_sleep_seconds: float = 0.5,
         pending_retry_idle_ms: int = 60_000,
+        heartbeat_interval_seconds: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+        heartbeat_clock: Callable[[], float] | None = None,
     ) -> None:
         self.redis = redis
         self.input_stream = input_stream
@@ -314,6 +425,13 @@ class StreamStage(ABC):
         self._pending_claim_disabled = pending_retry_idle_ms < 0
         self._xautoclaim_error_log = RateLimitedLog()
         self._xreadgroup_error_log = RateLimitedLog()
+        self._heartbeat = _LivenessHeartbeat(
+            consumer_group=consumer_group,
+            worker_id=worker_id,
+            streams=(input_stream,),
+            interval_seconds=heartbeat_interval_seconds,
+            clock=heartbeat_clock,
+        )
         self._stop = asyncio.Event()
 
     # -- subclass contract ------------------------------------------------ #
@@ -493,6 +611,11 @@ class StreamStage(ABC):
 
                 claimed = await self._claim_pending_messages()
                 if claimed:
+                    # Emitted from the loop, never from ``post_poll``: that hook
+                    # is overridden by subclasses (services/news_scorer), and an
+                    # override that forgets ``super()`` would silently delete the
+                    # only evidence this stage is alive.
+                    self._heartbeat.record_poll(len(claimed))
                     await self.post_poll(len(claimed))
                     await self._process_messages(claimed, claimed=True)
                     continue
@@ -527,6 +650,10 @@ class StreamStage(ABC):
                 self._xreadgroup_error_log.reset()
 
                 count = sum(len(msgs) for _stream, msgs in messages) if messages else 0
+                # Before ``post_poll`` and above the idle ``continue``: the idle
+                # poll is the case with no other evidence at all, and it is the
+                # one this line exists for.
+                self._heartbeat.record_poll(count)
                 await self.post_poll(count)
 
                 if not messages:
@@ -556,6 +683,8 @@ class MultiStreamStage(ABC):
         batch_size: int,
         xreadgroup_error_sleep_seconds: float = 0.5,
         pending_retry_idle_ms: int = 60_000,
+        heartbeat_interval_seconds: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+        heartbeat_clock: Callable[[], float] | None = None,
     ) -> None:
         if not input_streams:
             raise ValueError("input_streams must not be empty")
@@ -573,6 +702,16 @@ class MultiStreamStage(ABC):
         self._pending_claim_disabled = pending_retry_idle_ms < 0
         self._xautoclaim_error_log = RateLimitedLog()
         self._xreadgroup_error_log = RateLimitedLog()
+        self._heartbeat = _LivenessHeartbeat(
+            consumer_group=consumer_group,
+            worker_id=worker_id,
+            # Every input stream is named: one XREADGROUP covers them all, so a
+            # heartbeat that quoted only the first would understate what this
+            # worker is proving it still reads.
+            streams=self.input_streams,
+            interval_seconds=heartbeat_interval_seconds,
+            clock=heartbeat_clock,
+        )
         self._stop = asyncio.Event()
 
     # -- subclass contract ------------------------------------------------ #
@@ -743,6 +882,9 @@ class MultiStreamStage(ABC):
                     count = sum(
                         len(messages) for _stream, messages in claimed_by_stream
                     )
+                    # From the loop, not ``post_poll`` — see the same call in
+                    # ``StreamStage.run``.
+                    self._heartbeat.record_poll(count)
                     await self.post_poll(count)
                     for stream, messages in claimed_by_stream:
                         await self._process_messages(stream, messages, claimed=True)
@@ -779,6 +921,7 @@ class MultiStreamStage(ABC):
                 self._xreadgroup_error_log.reset()
 
                 count = sum(len(msgs) for _stream, msgs in messages) if messages else 0
+                self._heartbeat.record_poll(count)
                 await self.post_poll(count)
 
                 if not messages:
