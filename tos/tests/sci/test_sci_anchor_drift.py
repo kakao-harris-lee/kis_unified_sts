@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pydantic
 import pytest
 import tos.sci as sci
 
@@ -48,7 +49,7 @@ def _adr_path() -> Path:
 _SCI_SRC = Path(__file__).resolve().parents[2] / "src" / "tos" / "sci"
 
 #: template name -> sci model.
-_TEMPLATE_MODELS = {
+_TEMPLATE_MODELS: dict[str, type[pydantic.BaseModel]] = {
     "SOFTWARE-RELEASE-POLICY": sci.SoftwareReleasePolicy,
     "SOURCE-REVISION-MANIFEST": sci.SourceRevisionManifest,
     "DEPENDENCY-AND-TOOLCHAIN-CLOSURE-MANIFEST": sci.DependencyToolchainClosureManifest,

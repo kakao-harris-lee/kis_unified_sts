@@ -22,6 +22,7 @@ from tos.authority import (
     DegradedLeaseOwnershipRecord,
     SafetyAuthorityCapability,
 )
+from tos.canonical import DigestBoundArtifact
 
 from ._authority_strategies import (
     SCHEME,
@@ -31,7 +32,7 @@ from ._authority_strategies import (
     transition_required_kwargs,
 )
 
-_ARTIFACTS: list[tuple[type, Callable[..., dict[str, Any]]]] = [
+_ARTIFACTS: list[tuple[type[DigestBoundArtifact], Callable[..., dict[str, Any]]]] = [
     (SafetyAuthorityCapability, capability_required_kwargs),
     (AuthorityEpochTransitionRecord, transition_required_kwargs),
     (DegradedLeaseOwnershipRecord, lease_required_kwargs),
@@ -41,7 +42,7 @@ _ARTIFACTS: list[tuple[type, Callable[..., dict[str, Any]]]] = [
 def _cases() -> list[Any]:
     cases: list[Any] = []
     for cls, kwargs_fn in _ARTIFACTS:
-        for path in cls._REQUIRED_COVERED:  # type: ignore[attr-defined]
+        for path in cls._REQUIRED_COVERED:
             cases.append(
                 pytest.param(cls, kwargs_fn, path, id=f"{cls.__name__}:{path}")
             )
@@ -50,13 +51,13 @@ def _cases() -> list[Any]:
 
 @pytest.mark.parametrize("cls,kwargs_fn,path", _cases())
 def test_missing_required_covered_rejects_issuance(
-    cls: type, kwargs_fn: Callable[..., dict[str, Any]], path: str
+    cls: type[DigestBoundArtifact], kwargs_fn: Callable[..., dict[str, Any]], path: str
 ) -> None:
     """Dropping any required covered path makes an ISSUED record unconstructable (§3.2)."""
     kwargs = kwargs_fn()
     kwargs[path] = None
     with pytest.raises(ValidationError):
-        cls.issue(scheme=SCHEME, **kwargs)  # type: ignore[attr-defined]
+        cls.issue(scheme=SCHEME, **kwargs)
 
 
 def test_every_record_has_non_vacuous_required_covered() -> None:

@@ -39,7 +39,7 @@ _FORBIDDEN_NAME_TOKENS = (
     "aggregate_confidence",
 )
 
-_RECON_MODELS = [
+_RECON_MODELS: list[type[pydantic.BaseModel]] = [
     ConservativeBound,
     FreshnessMarker,
     FieldConfidence,

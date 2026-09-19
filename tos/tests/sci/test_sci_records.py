@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 import tos.sci as sci
+from tos.canonical import IndependentIdArtifact
 from tos.sci import ArtifactIntegrityError, RecordPairKind, classify_record_pair
 
 from ._sci_strategies import (
@@ -57,7 +58,9 @@ def _issue(builder, **overrides):  # type: ignore[no-untyped-def]
 @pytest.mark.parametrize(
     "model,builder", _ARTIFACTS, ids=lambda x: getattr(x, "__name__", "")
 )
-def test_issued_artifact_binds_its_digest(model: type, builder: object) -> None:
+def test_issued_artifact_binds_its_digest(
+    model: type[IndependentIdArtifact], builder: object
+) -> None:
     """(§4.1) An issued artifact carries a digest equal to ``H(canonicalize(covered))``."""
     issued = _issue(builder)
     assert issued.canonical_digest is not None
@@ -68,7 +71,9 @@ def test_issued_artifact_binds_its_digest(model: type, builder: object) -> None:
 @pytest.mark.parametrize(
     "model,builder", _ARTIFACTS, ids=lambda x: getattr(x, "__name__", "")
 )
-def test_id_is_independent_of_the_digest(model: type, builder: object) -> None:
+def test_id_is_independent_of_the_digest(
+    model: type[IndependentIdArtifact], builder: object
+) -> None:
     """(§0.4c) The id is separately issued — it is not a function of the digest."""
     issued = _issue(builder)
     artifact_id = getattr(issued, model._ID_FIELD)
@@ -91,7 +96,7 @@ def _classify(left: object, right: object, id_field: str) -> RecordPairKind:
     "model,builder", _ARTIFACTS, ids=lambda x: getattr(x, "__name__", "")
 )
 def test_same_id_different_bytes_is_a_critical_conflict(
-    model: type, builder: object
+    model: type[IndependentIdArtifact], builder: object
 ) -> None:
     """(§2.1 / §21 line 416) A forged same-id record with different covered bytes is detected."""
     original = _issue(builder)
@@ -116,7 +121,9 @@ def test_same_id_different_bytes_is_a_critical_conflict(
 @pytest.mark.parametrize(
     "model,builder", _ARTIFACTS, ids=lambda x: getattr(x, "__name__", "")
 )
-def test_pre_issuance_pair_is_not_comparable(model: type, builder: object) -> None:
+def test_pre_issuance_pair_is_not_comparable(
+    model: type[IndependentIdArtifact], builder: object
+) -> None:
     """(§3.1) A DRAFT pair (digest ``None``) is ``NOT_COMPARABLE``, never a false conflict."""
     left = builder()  # type: ignore[operator]
     right = builder()  # type: ignore[operator]
@@ -128,7 +135,7 @@ def test_pre_issuance_pair_is_not_comparable(model: type, builder: object) -> No
     "model,builder", _ARTIFACTS, ids=lambda x: getattr(x, "__name__", "")
 )
 def test_identical_issued_records_are_an_idempotent_duplicate(
-    model: type, builder: object
+    model: type[IndependentIdArtifact], builder: object
 ) -> None:
     """(§3.1) A byte-identical re-emission is an idempotent duplicate, not a conflict."""
     original = _issue(builder)
@@ -139,7 +146,9 @@ def test_identical_issued_records_are_an_idempotent_duplicate(
 @pytest.mark.parametrize(
     "model,builder", _ARTIFACTS, ids=lambda x: getattr(x, "__name__", "")
 )
-def test_missing_required_covered_blocks_issuance(model: type, builder: object) -> None:
+def test_missing_required_covered_blocks_issuance(
+    model: type[IndependentIdArtifact], builder: object
+) -> None:
     """(§3.2) Every ``_REQUIRED_COVERED`` path is genuinely load-bearing at issuance."""
     for path in model._REQUIRED_COVERED:
         head = path.split(".")[0]
