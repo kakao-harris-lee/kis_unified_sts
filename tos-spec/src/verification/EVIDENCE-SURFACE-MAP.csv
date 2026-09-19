@@ -183,9 +183,9 @@ PR-EV-009,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 PR-EV-010,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 PR-EV-011,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 PR-EV-012,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-NT-EV-001,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+NT-EV-001,PACKAGE,tos/src/tos/nontrade/predicates.py,PRESENT,tos/src/tos/nontrade/predicates.py:92
 NT-EV-001,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-NT-EV-001,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+NT-EV-001,TEST,tests/nontrade/test_nontrade_polarity.py::test_the_direction_is_derived_from_the_magnitudes,PRESENT,tos/tests/nontrade/test_nontrade_polarity.py:1
 NT-EV-002,PACKAGE,tos/src/tos/nontrade/__init__.py,PRESENT,tos/src/tos/nontrade/__init__.py:211
 NT-EV-002,PACKAGE,tos/src/tos/nontrade/predicates.py,PRESENT,tos/src/tos/nontrade/predicates.py:89
 NT-EV-002,PACKAGE,tos/src/tos/nontrade/vocabulary.py,PRESENT,tos/src/tos/nontrade/vocabulary.py:298
@@ -755,9 +755,9 @@ CII-EV-012,TEST,tests/test_non_revival.py::test_issued_capsule_can_authorize,PRE
 CII-EV-012,TEST,tests/test_non_revival.py::test_new_capsule_respects_non_revival,PRESENT,tos/tests/test_non_revival.py:1
 CII-EV-012,TEST,tests/test_non_revival.py::test_non_revival_of_same_identity_detected,PRESENT,tos/tests/test_non_revival.py:1
 CII-EV-012,TEST,tests/test_non_revival.py::test_restricted_status_cannot_authorize,PRESENT,tos/tests/test_non_revival.py:1
-VTG-EV-001,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+VTG-EV-001,PACKAGE,tos/src/tos/venue/state.py,PRESENT,tos/src/tos/venue/state.py:73
 VTG-EV-001,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-VTG-EV-001,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+VTG-EV-001,TEST,tests/venue/test_venue_session_phase.py::test_admitting_phase_for_exact_action_is_admissible_positive_side,PRESENT,tos/tests/venue/test_venue_session_phase.py:1
 VTG-EV-002,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 VTG-EV-002,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 VTG-EV-003,PACKAGE,tos/src/tos/venue/predicates.py,PRESENT,tos/src/tos/venue/predicates.py:59
@@ -769,9 +769,9 @@ VTG-EV-003,TEST,tests/venue/test_venue_instrument_route.py::test_exact_match_is_
 VTG-EV-003,TEST,tests/venue/test_venue_instrument_route.py::test_missing_routing_field_is_rejected,PRESENT,tos/tests/venue/test_venue_instrument_route.py:1
 VTG-EV-003,TEST,tests/venue/test_venue_instrument_route.py::test_none_decision_or_candidate_is_rejected,PRESENT,tos/tests/venue/test_venue_instrument_route.py:1
 VTG-EV-003,TEST,tests/venue/test_venue_instrument_route.py::test_symbol_alias_substitution_is_rejected,PRESENT,tos/tests/venue/test_venue_instrument_route.py:1
-VTG-EV-004,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+VTG-EV-004,PACKAGE,tos/src/tos/venue/predicates.py,PRESENT,tos/src/tos/venue/predicates.py:217
 VTG-EV-004,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-VTG-EV-004,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+VTG-EV-004,TEST,tests/venue/test_venue_order_shape.py::test_venue_valid_shape_is_admissible_positive_side,PRESENT,tos/tests/venue/test_venue_order_shape.py:1
 VTG-EV-005,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 VTG-EV-005,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 VTG-EV-006,PACKAGE,tos/src/tos/venue/predicates.py,PRESENT,tos/src/tos/venue/predicates.py:337
@@ -808,9 +808,9 @@ VTG-EV-011,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 VTG-EV-011,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 VTG-EV-012,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 VTG-EV-012,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-IOC-EV-001,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+IOC-EV-001,PACKAGE,tos/src/tos/ioc/predicates.py,PRESENT,tos/src/tos/ioc/predicates.py:92
 IOC-EV-001,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-IOC-EV-001,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+IOC-EV-001,TEST,tests/ioc/test_ioc_conformance.py::test_exact_match_on_every_axis_is_conformant,PRESENT,tos/tests/ioc/test_ioc_conformance.py:1
 IOC-EV-002,PACKAGE,tos/src/tos/ioc/predicates.py,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
 IOC-EV-002,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 IOC-EV-002,TEST,tests/ioc/test_ioc_conformance.py::test_absent_envelope_permits_no_construction,PRESENT,docs/plans/2026-07-25-tos-intent-order-conformance-design.md:1203
@@ -901,9 +901,9 @@ ARE-EV-002,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ARE-EV-002,TEST,tests/are/test_are_decision.py::test_exact_binding_none_fails_closed,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:735
 ARE-EV-002,TEST,tests/are/test_are_decision.py::test_exact_binding_positive,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:735
 ARE-EV-002,TEST,tests/are/test_are_decision.py::test_exact_binding_substitute_rejected,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:735
-ARE-EV-003,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+ARE-EV-003,PACKAGE,tos/src/tos/are/predicates.py,PRESENT,tos/src/tos/are/predicates.py:314
 ARE-EV-003,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-ARE-EV-003,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+ARE-EV-003,TEST,tests/are/test_are_projection.py::test_determinate_within_headroom_projection_grants,PRESENT,tos/tests/are/test_are_projection.py:1
 ARE-EV-004,PACKAGE,tos/src/tos/are/predicates.py,PRESENT,tos/src/tos/are/predicates.py:431
 ARE-EV-004,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ARE-EV-004,TEST,tests/are/test_are_decision.py::test_dimension_integrity_empty_descriptors_fails_closed,PRESENT,docs/plans/2026-07-25-tos-aggregate-risk-projection-design.md:774
@@ -986,9 +986,9 @@ AFG-EV-002,TEST,tests/afg/test_afg_amplification.py::test_unknown_change_status_
 AFG-EV-002,TEST,tests/afg/test_afg_amplification.py::test_unknown_observation_is_denial,PRESENT,tos/tests/afg/test_afg_amplification.py:1
 AFG-EV-003,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 AFG-EV-003,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-AFG-EV-004,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+AFG-EV-004,PACKAGE,tos/src/tos/afg/predicates.py,PRESENT,tos/src/tos/afg/predicates.py:790
 AFG-EV-004,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-AFG-EV-004,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+AFG-EV-004,TEST,tests/afg/test_afg_predicate_only.py::test_governed_retry_on_positive_send_failure_proof_passes,PRESENT,tos/tests/afg/test_afg_predicate_only.py:4
 AFG-EV-005,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 AFG-EV-005,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 AFG-EV-006,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
@@ -1306,9 +1306,9 @@ WDR-EV-004,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 WDR-EV-005,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 WDR-EV-005,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 WDR-EV-006,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-WDR-EV-007,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+WDR-EV-007,PACKAGE,tos/src/tos/wdr/predicates.py,PRESENT,tos/src/tos/wdr/predicates.py:363
 WDR-EV-007,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-WDR-EV-007,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+WDR-EV-007,TEST,tests/wdr/test_wdr_unknown.py::test_all_known_proceeds,PRESENT,tos/tests/wdr/test_wdr_unknown.py:7
 WDR-EV-008,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 WDR-EV-008,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 WDR-EV-009,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
@@ -1711,31 +1711,31 @@ SCI-EV-011,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 SCI-EV-012,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 SCI-EV-012,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 PTF-EV-001,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-PTF-EV-001,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+PTF-EV-001,PACKAGE,tos/src/tos/posttrade/predicates.py,PRESENT,tos/src/tos/posttrade/predicates.py:108
 PTF-EV-001,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-PTF-EV-001,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+PTF-EV-001,TEST,tests/posttrade/test_posttrade_finality.py::test_a_dimension_with_its_own_proof_is_final[ORDER_FQP],PRESENT,tos/tests/posttrade/test_posttrade_finality.py:1
 PTF-EV-002,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-PTF-EV-002,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+PTF-EV-002,PACKAGE,tos/src/tos/posttrade/predicates.py,PRESENT,tos/src/tos/posttrade/predicates.py:113
 PTF-EV-002,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-PTF-EV-002,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+PTF-EV-002,TEST,tests/posttrade/test_posttrade_no_favorable_default.py::test_a_present_classified_amount_is_conservative,PRESENT,tos/tests/posttrade/test_posttrade_no_favorable_default.py:1
 PTF-EV-003,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 PTF-EV-003,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 PTF-EV-004,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-PTF-EV-004,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+PTF-EV-004,PACKAGE,tos/src/tos/posttrade/predicates.py,PRESENT,tos/src/tos/posttrade/predicates.py:117
 PTF-EV-004,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-PTF-EV-004,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+PTF-EV-004,TEST,tests/posttrade/test_posttrade_collateral.py::test_a_free_unit_ladder_is_conserved,PRESENT,tos/tests/posttrade/test_posttrade_collateral.py:1
 PTF-EV-005,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 PTF-EV-005,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 PTF-EV-006,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-PTF-EV-006,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+PTF-EV-006,PACKAGE,tos/src/tos/posttrade/predicates.py,PRESENT,tos/src/tos/posttrade/predicates.py:121
 PTF-EV-006,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-PTF-EV-006,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+PTF-EV-006,TEST,tests/posttrade/test_posttrade_event.py::test_the_full_nine_leg_set_is_complete,PRESENT,tos/tests/posttrade/test_posttrade_event.py:1
 PTF-EV-007,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 PTF-EV-007,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 PTF-EV-008,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-PTF-EV-008,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+PTF-EV-008,PACKAGE,tos/src/tos/posttrade/predicates.py,PRESENT,tos/src/tos/posttrade/predicates.py:124
 PTF-EV-008,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-PTF-EV-008,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+PTF-EV-008,TEST,tests/posttrade/test_posttrade_statement.py::test_a_complete_final_manifest_passes,PRESENT,tos/tests/posttrade/test_posttrade_statement.py:1
 PTF-EV-009,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 PTF-EV-009,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 PTF-EV-010,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
@@ -1756,9 +1756,9 @@ HAG-EV-017,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 HAG-EV-018,FAULT,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 HAG-EV-018,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 EGRESS-EV-013,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-PRD-EV-001,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+PRD-EV-001,PACKAGE,tos/src/tos/protective/predicates.py,PRESENT,tos/src/tos/protective/predicates.py:73
 PRD-EV-001,RUNTIME,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-PRD-EV-001,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+PRD-EV-001,TEST,tests/protective/test_protective_enumeration.py::test_all_seven_declared_is_complete,PRESENT,tos/tests/protective/test_protective_enumeration.py:33
 PRD-EV-002,PACKAGE,tos/src/tos/protective/__init__.py,PRESENT,tos/src/tos/protective/__init__.py:8
 PRD-EV-002,PACKAGE,tos/src/tos/protective/predicates.py,PRESENT,tos/src/tos/protective/predicates.py:125
 PRD-EV-002,PACKAGE,tos/src/tos/protective/vocabulary.py,PRESENT,tos/src/tos/protective/vocabulary.py:48

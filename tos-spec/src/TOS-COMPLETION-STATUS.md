@@ -47,14 +47,14 @@
 U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `imprecise_owner_track`, `blank_normative_ref_rows`, `closable_no_rows`.
 
 - `unmapped_pairs=0`
-- `planned_unassigned_pairs=779`
+- `planned_unassigned_pairs=753`
 - `superset_declared_pairs=0`
 - `FWD-a-0 불충족 evidence_id=['STATE-EV-004']`
 - `FWD-a 미충족 1행 (표본=['STATE-EV-004'])`
 - `FWD-a-0 불충족(제외 후) evidence_id=[]`
 - `FWD-a 미충족(제외 후) 0행`
 - `ref_reuse_max=8`
-- `ref_reuse_top=[('tos/src/tos/hag/predicates.py', 8), ('tos/src/tos/capsule/predicates.py', 7), ('tos/src/tos/spg/predicates.py', 6), ('tos/src/tos/sbr/predicates.py', 5), ('tos/src/tos/evidence/predicates.py', 4)]`
+- `ref_reuse_top=[('tos/src/tos/hag/predicates.py', 8), ('tos/src/tos/capsule/predicates.py', 7), ('tos/src/tos/spg/predicates.py', 6), ('tos/src/tos/posttrade/predicates.py', 5), ('tos/src/tos/sbr/predicates.py', 5)]`
 - `profile_dependent_blocked=['BC-EV-003', 'ECO-EV-012', 'IOM-EV-008']`
 - `closable_no_rows=1`
 - `blank_normative_ref_rows=22`
