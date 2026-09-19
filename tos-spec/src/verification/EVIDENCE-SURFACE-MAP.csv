@@ -1769,20 +1769,20 @@ PRD-EV-002,TEST,tests/protective/test_protective_enumeration.py::test_physically
 PRD-EV-002,TEST,tests/protective/test_protective_enumeration.py::test_physically_reserved_without_failure_independence_downgrades,PRESENT,tos/tests/protective/test_protective_enumeration.py:99
 PRD-EV-002,TEST,tests/protective/test_protective_enumeration.py::test_prioritized_best_effort_unavailable_never_reserved,PRESENT,tos/tests/protective/test_protective_enumeration.py:99
 PRD-EV-002,TEST,tests/protective/test_protective_enumeration.py::test_unassigned_resolves_unavailable,PRESENT,tos/tests/protective/test_protective_enumeration.py:99
-DCE-EV-001,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-DCE-EV-001,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+DCE-EV-001,PACKAGE,tos/src/tos/dsl/vocabulary.py,PRESENT,VER-002-001 §5
+DCE-EV-001,TEST,tests/dsl/test_dsl_admissibility.py::test_non_member_decision_kind_is_unconstructable,PRESENT,tos/tests/dsl/test_dsl_admissibility.py:88
 DCE-EV-002,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 DCE-EV-002,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-DCE-EV-003,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-DCE-EV-003,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-DCE-EV-004,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-DCE-EV-004,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+DCE-EV-003,PACKAGE,tos/src/tos/dsl/admissibility.py,PRESENT,ADR-DEV-001 §6
+DCE-EV-003,TEST,tests/dsl/test_dsl_admissibility.py::test_ambient_symbol_reference_is_inadmissible,PRESENT,tos/tests/dsl/test_dsl_admissibility.py:133
+DCE-EV-004,PACKAGE,tos/src/tos/dsl/candidate.py,PRESENT,tos/src/tos/dsl/candidate.py:8
+DCE-EV-004,TEST,tests/dsl/test_dsl_admissibility.py::test_escape_kind_is_inadmissible,PRESENT,tos/tests/dsl/test_dsl_admissibility.py:169
 DCE-EV-005,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 DCE-EV-005,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-DCE-EV-006,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-DCE-EV-006,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-DCE-EV-007,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-DCE-EV-007,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+DCE-EV-006,PACKAGE,tos/src/tos/dsl/admissibility.py,PRESENT,ADR-DEV-001 §8
+DCE-EV-006,TEST,tests/dsl/test_dsl_admissibility.py::test_novel_unknown_kind_fails_closed,PRESENT,tos/tests/dsl/test_dsl_admissibility.py:206
+DCE-EV-007,PACKAGE,tos/src/tos/dsl/bounds.py,PRESENT,VER-002-001 §5
+DCE-EV-007,TEST,tests/dsl/test_dsl_bounds.py::test_bounded_evaluation_completes_or_degrades_to_no_action,PRESENT,tos/tests/dsl/test_dsl_bounds.py:54
 ARI-EV-001,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ARI-EV-001,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 ARI-EV-002,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
@@ -1857,18 +1857,18 @@ BFA-EV-006,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 BFA-EV-007,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 BFA-EV-007,REVIEWER,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 BFA-EV-007,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SOS-EV-001,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SOS-EV-001,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SOS-EV-002,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SOS-EV-002,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+SOS-EV-001,PACKAGE,tos/src/tos/dsl/outcome.py,PRESENT,ADR-DEV-007 §7
+SOS-EV-001,TEST,tests/dsl/test_dsl_output_semantics.py::test_no_action_and_explicit_flat_are_distinct_non_null_types,PRESENT,tos/tests/dsl/test_dsl_output_semantics.py:95
+SOS-EV-002,PACKAGE,tos/src/tos/dsl/outcome.py,PRESENT,ADR-DEV-007 §8
+SOS-EV-002,TEST,tests/dsl/test_dsl_output_semantics.py::test_portfolio_vector_is_a_set_of_proposals_without_aggregate_authority,PRESENT,tos/tests/dsl/test_dsl_output_semantics.py:128
 SOS-EV-003,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 SOS-EV-003,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SOS-EV-004,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SOS-EV-004,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SOS-EV-005,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SOS-EV-005,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SOS-EV-006,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
-SOS-EV-006,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
+SOS-EV-004,PACKAGE,tos/src/tos/dsl/proposal.py,PRESENT,VER-002-001 §5
+SOS-EV-004,TEST,tests/dsl/test_dsl_output_semantics.py::test_each_vector_target_is_capsule_bound_and_wildcard_free,PRESENT,tos/tests/dsl/test_dsl_output_semantics.py:179
+SOS-EV-005,PACKAGE,tos/src/tos/dsl/_base.py,PRESENT,VER-002-001 §5
+SOS-EV-005,TEST,tests/dsl/test_dsl_output_semantics.py::test_default_authority_is_all_false,PRESENT,tos/tests/dsl/test_dsl_output_semantics.py:207
+SOS-EV-006,PACKAGE,tos/src/tos/dsl/outcome.py,PRESENT,ADR-DEV-007 §6
+SOS-EV-006,TEST,tests/dsl/test_dsl_output_semantics.py::test_undeclared_interdependence_defaults_to_atomic,PRESENT,tos/tests/dsl/test_dsl_output_semantics.py:233
 DCM-EV-001,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 DCM-EV-001,TEST,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5
 DCM-EV-002,PACKAGE,PLANNED_UNASSIGNED,ABSENT,VER-002-001 §5

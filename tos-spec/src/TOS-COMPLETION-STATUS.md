@@ -47,7 +47,7 @@
 U-10 metrics (non-blocking, must stay visible): `superset_declared_pairs`, `imprecise_owner_track`, `blank_normative_ref_rows`, `closable_no_rows`.
 
 - `unmapped_pairs=0`
-- `planned_unassigned_pairs=773`
+- `planned_unassigned_pairs=753`
 - `superset_declared_pairs=0`
 - `FWD-a-0 불충족 evidence_id=['STATE-EV-004']`
 - `FWD-a 미충족 1행 (표본=['STATE-EV-004'])`
