@@ -169,13 +169,13 @@ def test_the_ioc_pattern_is_reused_not_imported() -> None:
     for path in _stm_sources():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            names: list[str] = []
+            entries: list[tuple[str, int]] = []
             if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
+                entries = [(alias.name, node.lineno) for alias in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module:
-                names = [node.module]
-            for name in names:
+                entries = [(node.module, node.lineno)]
+            for name, lineno in entries:
                 assert not name.startswith("tos.ioc"), (
-                    f"{path.name}:{node.lineno} imports {name} — the truthy-sentinel seal is "
+                    f"{path.name}:{lineno} imports {name} — the truthy-sentinel seal is "
                     "re-expressed locally, never imported (design #30 §3.3, sibling edge 0)"
                 )

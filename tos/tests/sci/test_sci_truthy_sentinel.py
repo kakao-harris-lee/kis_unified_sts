@@ -11,6 +11,7 @@ Regime tag: release-admission predicate/model substrate only; closes no SCI-EV; 
 from __future__ import annotations
 
 import ast
+from enum import StrEnum
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,7 @@ _ALL_MEMBERS = [*list(sci.AdmissionResult), *list(sci.IndependenceResult)]
 @pytest.mark.parametrize(
     "member", _ALL_MEMBERS, ids=lambda m: f"{type(m).__name__}.{m.name}"
 )
-def test_bool_raises_type_error_for_every_member(member: object) -> None:
+def test_bool_raises_type_error_for_every_member(member: StrEnum) -> None:
     """(§2.2) ``bool(member)`` raises for every member of both tri-states."""
     with pytest.raises(TypeError, match="not truthy-testable"):
         bool(member)
@@ -33,7 +34,7 @@ def test_bool_raises_type_error_for_every_member(member: object) -> None:
 @pytest.mark.parametrize(
     "member", _ALL_MEMBERS, ids=lambda m: f"{type(m).__name__}.{m.name}"
 )
-def test_if_member_raises_for_every_member(member: object) -> None:
+def test_if_member_raises_for_every_member(member: StrEnum) -> None:
     """(§2.2) A bare ``if member:`` — the actual fail-open shape — raises loudly."""
     with pytest.raises(TypeError):
         if member:  # noqa: SIM103 — the misuse under test
@@ -43,9 +44,9 @@ def test_if_member_raises_for_every_member(member: object) -> None:
 @pytest.mark.parametrize(
     "member", _ALL_MEMBERS, ids=lambda m: f"{type(m).__name__}.{m.name}"
 )
-def test_identity_value_and_hashing_still_work(member: object) -> None:
+def test_identity_value_and_hashing_still_work(member: StrEnum) -> None:
     """(§2.2) The seal touches only ``__bool__``: identity, value, and hashing are unaffected."""
-    assert member is type(member)[member.name]  # type: ignore[index]
+    assert member is type(member)[member.name]
     assert isinstance(member.value, str)
     assert member in {member}
 
@@ -97,16 +98,20 @@ def _bare_truth_tests_of_result_names(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for node in ast.walk(tree):
         tests: list[ast.expr] = []
+        lineno = 0
         if isinstance(node, (ast.If, ast.IfExp, ast.While)):
             tests = _truth_tested_operands(node.test)
+            lineno = node.lineno
         elif isinstance(node, ast.BoolOp):
             tests = _truth_tested_operands(node)
+            lineno = node.lineno
         elif isinstance(node, ast.Assert):
             tests = _truth_tested_operands(node.test)
+            lineno = node.lineno
         for test in tests:
             name = _truth_tested_name(test)
             if name and ("result" in name or "verdict" in name):
-                offenders.append(f"{path.name}:{node.lineno} bare truth test of {name}")
+                offenders.append(f"{path.name}:{lineno} bare truth test of {name}")
     return offenders
 
 
