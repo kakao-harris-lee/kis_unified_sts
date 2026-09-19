@@ -260,7 +260,9 @@ def test_no_source_wires_curs_monitoring_dimension_judgement(name: str) -> None:
 
 
 @pytest.mark.parametrize("artifact", _ARTIFACTS)
-def test_no_artifact_has_a_mutating_or_transmitting_method(artifact: type) -> None:
+def test_no_artifact_has_a_mutating_or_transmitting_method(
+    artifact: type[DigestBoundArtifact],
+) -> None:
     """(§2.3/§4.1) The artifacts are frozen append-only records with no imperative method."""
     inherited = set(dir(DigestBoundArtifact))
     own = [

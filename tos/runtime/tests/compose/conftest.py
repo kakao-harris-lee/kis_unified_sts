@@ -79,6 +79,22 @@ def _chmod_600(path: Path) -> None:
     path.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
+def call_wrapped_fixture(fixture_func: object, *args: object) -> Path:
+    """Call the plain function a ``@pytest.fixture``-decorated callable wraps, bypassing
+    pytest's own guard against calling a fixture directly. ``config_dir``/``data_dir``/
+    ``custody_root``/``config_dir_with_risk_state`` below are each parametrized only by plain
+    arguments (verified by reading their signatures), so a caller building an independent root
+    can drive the SAME fixture-writing logic every other e2e test in this package relies on,
+    just against a fresh root. ``__wrapped__`` reaches that original function; pytest's own
+    ``FixtureFunctionDefinition`` type deliberately does not expose it (calling a fixture
+    directly is unsupported API) — the single ignore below is this module's one place for that
+    gap, so call sites stay clean.
+    """
+    result = fixture_func.__wrapped__(*args)  # type: ignore[attr-defined]
+    assert isinstance(result, Path)
+    return result
+
+
 @pytest.fixture()
 def data_dir(tmp_path: Path) -> Path:
     directory = tmp_path / "data"

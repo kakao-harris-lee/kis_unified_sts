@@ -98,7 +98,7 @@ def test_identity_value_hashing_and_membership_still_work(member: Enum) -> None:
 
 
 @pytest.mark.parametrize("enum_type", _STRUCTURAL_ENUMS)
-def test_structural_vocabulary_enums_are_not_sealed(enum_type: type) -> None:
+def test_structural_vocabulary_enums_are_not_sealed(enum_type: type[Enum]) -> None:
     """(§2.1 m7) Only the two **result** enums are sealed; an axis is not a verdict.
 
     Sealing the structural axes would break ordinary set / mapping use for no safety gain —

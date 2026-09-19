@@ -22,6 +22,8 @@ axes.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from hypothesis import given
 from hypothesis import strategies as st
 from tos.replacement import (
@@ -278,7 +280,7 @@ def test_strenum_members_are_not_their_raw_strings_under_identity() -> None:
 
 def test_replacement_axes_are_distinct_types_from_each_other() -> None:
     """(§2.2-5) No member of one replacement axis is a member of another."""
-    axes = (
+    axes: tuple[set[StrEnum], ...] = (
         set(ReplacementMode),
         set(ReplacementWorkflowState),
         set(CredibleIntermediateOutcomeKind),
