@@ -426,12 +426,6 @@ def _build_hag_artifacts(
     """Issue the digest-bound ``tos.hag`` artifacts the five kernel predicates
     consume — deterministic in every field the seq/file content fix, never a
     fabricated or free literal (module docstring)."""
-    # Note: DigestBoundArtifact.issue() is annotated to return the BASE class (no
-    # Self/TypeVar -- tos/src/tos/canonical/_base.py), even though at runtime a
-    # classmethod call always binds `cls` to the class it was called on. Each
-    # `assert isinstance(...)` below narrows the static type to match that real
-    # runtime behavior (the same idiom tos_runtime.time.service.TrustworthyTimeService
-    # ._issue_snapshot uses) -- never a suppression; it will always hold.
     request = HumanApprovalRequest.issue(
         scheme=_SCHEME,
         request_id=f"rearm-request-{latched_evidence_seq}",
@@ -441,7 +435,6 @@ def _build_hag_artifacts(
         requested_action="clear_new_risk_halt",
         graph_generation=latched_evidence_seq,
     )
-    assert isinstance(request, HumanApprovalRequest)
     attestation_list: list[HumanApprovalAttestation] = []
     for index, entry in enumerate(entries):
         attestation = HumanApprovalAttestation.issue(
@@ -454,7 +447,6 @@ def _build_hag_artifacts(
             effective_principal_graph_generation=latched_evidence_seq,
             issue_generation=latched_evidence_seq,
         )
-        assert isinstance(attestation, HumanApprovalAttestation)
         attestation_list.append(attestation)
     attestations = tuple(attestation_list)
     graph = EffectivePrincipalGraph.issue(
@@ -467,7 +459,6 @@ def _build_hag_artifacts(
         edges=roster.edges,
         unresolved_control=roster.unresolved_control,
     )
-    assert isinstance(graph, EffectivePrincipalGraph)
     approval_set = HumanApprovalSet.issue(
         scheme=_SCHEME,
         set_id=f"rearm-set-{latched_evidence_seq}",
@@ -476,7 +467,6 @@ def _build_hag_artifacts(
         policy_generation=latched_evidence_seq,
         graph_generation=latched_evidence_seq,
     )
-    assert isinstance(approval_set, HumanApprovalSet)
     consumption = ApprovalSetConsumptionRecord.issue(
         scheme=_SCHEME,
         consumption_id=f"rearm-consumption-{latched_evidence_seq}",
@@ -485,7 +475,6 @@ def _build_hag_artifacts(
         single_use=True,
         consumed_generation=latched_evidence_seq,
     )
-    assert isinstance(consumption, ApprovalSetConsumptionRecord)
     return request, attestations, graph, approval_set, consumption
 
 
@@ -704,7 +693,6 @@ class ReArmWorkflow:
                 single_use=True,
                 consumed_generation=payload["consumed_generation"],
             )
-            assert isinstance(record, ApprovalSetConsumptionRecord)
             records.append(record)
         return tuple(records)
 

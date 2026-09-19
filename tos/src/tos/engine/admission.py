@@ -316,7 +316,7 @@ def _escape_checker_result(strategy: AuthoredStrategy) -> AdmissibilityResult:
     """
     program = lower_strategy(strategy)
     analysis = analyze(program)
-    return AdmissibilityResult.issue(  # type: ignore[return-value]
+    return AdmissibilityResult.issue(
         scheme=get_scheme(strategy.canonicalization_version),
         result_id=_admissibility_result_id(strategy),
         candidate=program,

@@ -189,7 +189,7 @@ def analyze_candidate(
         The issued :class:`AdmissibilityResult`.
     """
     computed = analyze(candidate)
-    return AdmissibilityResult.issue(  # type: ignore[return-value]
+    return AdmissibilityResult.issue(
         scheme=scheme,
         result_id=result_id,
         candidate=candidate,

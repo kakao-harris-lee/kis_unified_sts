@@ -93,7 +93,7 @@ def _decide(**overrides: object) -> ActionFlowResult:
         "scheme": SCHEME,
     }
     base.update(overrides)
-    return action_flow_decision(**base).result  # type: ignore[arg-type]
+    return action_flow_decision(**base).issued_result  # type: ignore[arg-type]
 
 
 @given(coverage=ACTION_FLOW_RESULT_OR_FORGERY)

@@ -48,6 +48,7 @@ from typing import ClassVar
 
 from tos.afg._base import (
     AllFalseActionFlowAuthority,
+    ArtifactIntegrityError,
     FrozenModel,
     IndependentIdArtifact,
 )
@@ -601,6 +602,48 @@ class ActionFlowDecision(IndependentIdArtifact):
 
     # ---- ledger-placement (self-excluded from the digest, §2.3/§3.2) ----------
     decision_order: int | None = None
+
+    @property
+    def issued_result(self) -> ActionFlowResult:
+        """The ISSUED-only covered ``result``, narrowed to a concrete member (§5.4; §3.2).
+
+        ``result`` is declared ``ActionFlowResult | None`` because a ``DRAFT``
+        decision legitimately carries no result yet — ``_verify_digest_identity``
+        (``_base.py``) only enforces ``_REQUIRED_COVERED`` completeness for a
+        non-``DRAFT`` (ISSUED-or-later) instance; it returns early for ``DRAFT``
+        (§3.2). So this accessor expresses the ISSUED-only contract at the type
+        level, for callers that have ALREADY established the decision is issued
+        (a decision built via :meth:`issue` never reaches the ``None`` branch,
+        since ``issue`` always constructs with a concrete ``result``).
+
+        Reachability: calling this on a genuinely ``DRAFT`` decision DOES raise —
+        it is not dead code — see
+        ``test_issued_result_raises_on_a_draft_decision``
+        (``tos/tests/afg/test_afg_records.py``).
+
+        Do NOT use this to replace a production call site that tolerates
+        ``result is None`` as a legitimate value rather than a bug: e.g.
+        ``tos_runtime/authority/iap.py:637,904``,
+        ``tos_runtime/risk/aggregate.py:456``,
+        ``tos_runtime/risk/flow.py:360``, and
+        ``tos_runtime/risk/ledger_stages.py:274,320`` all narrow a decision's
+        ``.result is None`` deliberately — most as a serialization no-op, but
+        ``iap.py:904`` specifically **fails safe to** ``ApprovalResult.DENY``
+        on ``None``. Swapping any of those for this accessor would turn a
+        safe-fail into an exception on the approval path. This accessor is for
+        call sites (today: tests only) that need to assert/consume the result
+        of an already-issued decision and treat a ``None`` there as the
+        programming-error it would be — never for a site designed to tolerate
+        ``None`` as data.
+        """
+        result = self.result
+        if result is None:
+            raise ArtifactIntegrityError(
+                "ActionFlowDecision.issued_result called on a DRAFT (or otherwise "
+                "result-less) decision — this accessor is ISSUED-only; call it "
+                "only past .issue()/§3.2 completeness, never on a DRAFT instance"
+            )
+        return result
 
 
 class ActionFlowPermit(IndependentIdArtifact):
