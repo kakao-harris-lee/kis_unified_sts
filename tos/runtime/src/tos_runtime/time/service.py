@@ -534,14 +534,6 @@ class TrustworthyTimeService:
         wall_clock_observation: int | None,
         suspension_status: SuspensionStatus,
     ) -> TimeHealthSnapshot:
-        # DigestBoundArtifact.issue() is annotated to return the BASE class
-        # (no Self/TypeVar — tos/src/tos/canonical/_base.py:232), even though
-        # at runtime a classmethod call always binds `cls` to the class it was
-        # called on (TimeHealthSnapshot here). The isinstance check below
-        # narrows the static type to match that real runtime behavior; it is
-        # not a suppression — it will always hold, and mypy would flag a
-        # regression if TimeHealthSnapshot.issue ever stopped constructing a
-        # TimeHealthSnapshot.
         snapshot = TimeHealthSnapshot.issue(
             scheme=_SCHEME,
             snapshot_id=self._next_snapshot_id(),
@@ -566,7 +558,6 @@ class TrustworthyTimeService:
             verification_profile_version=self._config.verification_profile_version,
             safety_profile_version=self._config.safety_profile_version,
         )
-        assert isinstance(snapshot, TimeHealthSnapshot)
         return snapshot
 
     def evaluate(self) -> TimeHealthSnapshot:
