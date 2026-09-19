@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock
 
 import fakeredis.aioredis
 import pytest
+from pydantic import ValidationError
 
+from services.order_router.config import Phase4ExecutionConfig
 from services.order_router.main import (
     OrderRouterDaemon,
     _fill_stream_for,
@@ -1708,3 +1710,16 @@ async def test_slippage_gate_blocks_when_signal_generated_at_missing(
     assert any(
         "reason=signal_timestamp_missing" in r.getMessage() for r in caplog.records
     ), [r.getMessage() for r in caplog.records]
+
+
+def test_zero_xread_block_ms_is_refused_so_the_liveness_heartbeat_can_fire():
+    """``BLOCK 0`` blocks forever, and a poll that never returns emits nothing.
+
+    Since PR #765 the shared consume loop proves it is alive when a poll
+    returns (``event=stream_consumer_alive``), so a configured ``0`` would
+    leave a healthy daemon looking exactly like a dead one — the confusion that
+    work exists to remove. Nothing sets it today; this keeps it that way.
+    """
+    assert Phase4ExecutionConfig(xread_block_ms=1).xread_block_ms == 1
+    with pytest.raises(ValidationError):
+        Phase4ExecutionConfig(xread_block_ms=0)
