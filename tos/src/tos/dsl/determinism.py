@@ -231,7 +231,7 @@ def _decision_to_outcome(
     # harmless here because the IndependentIdArtifact digest binds the content and
     # detects it; a canonical independent-id scheme is a Phase-0 concern.
     if decision.kind is DecisionKind.NO_ACTION:
-        return NoActionOutcome.issue(  # type: ignore[return-value]
+        return NoActionOutcome.issue(
             scheme=scheme,
             outcome_id=f"noact:{strategy.strategy_id}:{capsule.capsule_id}"
             f":{config.config_version}",
@@ -262,7 +262,7 @@ def _decision_to_outcome(
         )
         for target in decision.vector
     )
-    return PortfolioVector.issue(  # type: ignore[return-value]
+    return PortfolioVector.issue(
         scheme=scheme,
         vector_id=f"vec:{strategy.strategy_id}:{capsule.capsule_id}"
         f":{config.config_version}",

@@ -44,6 +44,7 @@ def _append_one(log: SqliteCommitLog, *, writer_epoch: int, expected_seq: int) -
         entry, expected_seq=expected_seq, writer_epoch=writer_epoch
     )
     assert isinstance(receipt, AppendReceipt)
+    assert receipt.seq is not None  # a successful append never returns a None seq
     return receipt.seq
 
 

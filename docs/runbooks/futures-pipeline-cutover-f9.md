@@ -369,26 +369,187 @@ artifacts, or written operator approval.
   close (and before any redeploy, even mid-day), per session:
 
   ```bash
-  D=$(TZ=Asia/Seoul date +%F); TS=$(TZ=Asia/Seoul date +%H%M%S)
-  OUT=reports/f9-gate1/$D; mkdir -p "$OUT"
-  for c in futures-risk-filter futures-order-router futures-monitor; do
-    docker logs --since "${D}T08:00:00+09:00" "kis_paper-$c" > "$OUT/$c.$TS.log" 2>&1
-  done
-  # decision-engine: see the --tail caveat above until the container is recreated
-  docker logs --tail 900 kis_paper-futures-decision-engine > "$OUT/futures-decision-engine.$TS.log" 2>&1
-  grep -c "risk_filter verdict=" "$OUT"/futures-risk-filter.*.log   # per harvest; non-zero on any day with candidates
+  python scripts/ops/f9_observation_harvest.py                    # harvest + verdict, today
+  python scripts/ops/f9_observation_harvest.py --date 2026-09-18  # past day, verdict only
   ```
+
+  The script harvests every service named in `config/f9_observation.yaml`
+  (`--since 08:00 KST`, and `--tail 900` for the decision-engine per the caveat
+  above), then emits the observation-log row and a JSON sidecar. Exit status is
+  `0` when the day's observation is `COMPLETE`, on a `NO_SESSION` day (a weekend
+  or a KRX holiday — there was no session to observe, so a per-session cron must
+  not raise a standing alarm), and on `LIVENESS_UNVERIFIED` (see below — the row
+  carries the caveat instead). Every other verdict exits `1`. A
+  `--report-root` naming a day directory that does not exist exits `2` without
+  writing anything: with no harvested files there is no input, and a confident
+  `NOT OBSERVED - 0/4` against a mistyped path must not look like a dead
+  observation surface. Relative roots anchor at the repo root, not the working
+  directory, and the resolved root is echoed on stderr.
+
+  **`COMPLETE` requires evidence that spans the session.** A service counts as
+  `consumed` only when its harvest brackets 08:45–15:45: rotation drops the
+  *oldest* lines, so it preferentially destroys early-session blindness, and a
+  container recreated mid-day takes everything before the recreate with it —
+  2026-09-18's `futures-monitor` harvest reaches 11:33 and stops, though the
+  daemon was blind until 12:34. What the files do not reach is rendered as
+  `no evidence HH:MM-HH:MM`, never as the end of a blind window. A window that
+  rests on a single line renders open-ended (`BLIND <=09:47`), because one
+  `consumer group missing; recreated` line dates the *end* of an outage of
+  unknown length, not a point event. A missing, zero-byte, unparseable, or
+  failed capture (`<service>.<HHMMSS>.harvest-failed`, written when
+  `docker logs` exits non-zero) is a **harvest failure**, reported as such and
+  never counted as a quiet service.
+
+  A file's coverage runs to its own `<HHMMSS>` harvest stamp, not to its last
+  line. `docker logs` returns everything up to the instant it runs in both
+  harvest modes, so silence after the last line is silence the harvest
+  *watched* — otherwise `COMPLETE` turned on how chatty a service happened to
+  be near 15:45 (four consuming services whose files stopped 30 seconds short
+  of the close read `PARTIAL` with `no evidence 15:44-15:45`). The stamp is a
+  clock with no date, and the directory that supplies one is the *session*
+  date, so a harvest run after midnight — `2026-09-15/*.000135.log` was
+  captured 2026-09-16 00:01 — used to date itself nine hours before the session
+  and silently switch this rule off. It now rolls forward when it is both
+  before the open and before the file's own last line, which is that case and
+  nothing else.
+
+  The head runs back to the `--since` floor in `since` mode. `--since 08:00`
+  was asked for, so a first line at 08:45:05 means the service was quiet from
+  08:00, not that the harvest missed those 45 minutes — without this, every
+  healthy day whose first line landed a second after the open read `PARTIAL`
+  with `no evidence <=08:45`, and the real `futures-risk-filter.113330.log`
+  (146 bytes, first line 09:47) was that case. The cost: a container recreated
+  mid-morning returns only post-recreate lines and is credited with coverage it
+  did not have, so head-hole detection moves to the freshness bound below — a
+  recreate at 11:00 leaves `no proof of consumption 08:45-11:00`. In `tail`
+  mode the head stays at the first surviving line: `--tail N` truncates by line
+  *count*, so there is no floor to anchor at and a late head cannot be told
+  from a quiet start.
+
+  **`COMPLETE` also requires the proof to stay fresh.** Coverage is granted by
+  *any* timestamped line — a startup banner will do — so it answers "did we
+  look?" and cannot also answer "was it working?". Two banners plus one
+  `stream_message_processed` at 08:46 once rendered a whole session
+  `4/4 consumed (COMPLETE)` with the counts bare. So the gap from the open to
+  the first proof, between consecutive proofs, and from the last proof to the
+  close must each stay at or under `observation_max_gap_seconds`
+  (`config/f9_observation.yaml`, 1800s; a gap of exactly 1800s passes); a
+  service that fails it reads `consumed, no proof of consumption HH:MM-HH:MM`
+  and is never `consumed`. This is reachable, not hypothetical:
+  `services/futures_monitor/daemon.py` creates `_consume_loop` as a task and
+  awaits it only in `finally`, so if it raises, the task dies unretrieved while
+  `_status_loop` keeps the process up, and a `docker restart` near the close
+  (which preserves the log, unlike a recreate) closes the span over the dead
+  stretch.
+
+  **The bound applies only to a traffic-driven proof.** A consumer's proof,
+  `stream_message_processed`, is emitted once per message
+  (`shared/streaming/stage.py`), so given traffic its silence is a real claim
+  about the consumer. The **producer's** proof is the setup-evaluation INFO,
+  and `shared/strategy/entry/setup_eval_publisher.py` emits it once per *state
+  change* — an unchanged verdict logs nothing however many cycles run — so its
+  silence says nothing about liveness at any timescale. On the two real
+  harvests the producer's worst in-session gap was 11235s (09-11) and 17050s
+  (09-18), and widening the proof set to `observed + blind` moved it by zero on
+  both days. `futures-decision-engine` therefore carries
+  `freshness_scored: false` in `config/f9_observation.yaml`, where the reason
+  is recorded next to it; it is still scored on coverage, blindness, and the
+  zero-proof rule. Note that the idle-branch heartbeat named below is a fix for
+  **consumers only** — `services/decision_engine` does not go through
+  `shared/streaming/stage.py` at all, so the producer needs its own liveness
+  emission.
+
+  **Exempt from scoring is not exempt from disclosure.** A day on which every
+  service consumed and covered the session, but an exempt one went silent past
+  the bound, reads `LIVENESS_UNVERIFIED` rather than `COMPLETE`: the row names
+  the stretch and quotes the configured reason
+  (`4/4 consumed (LIVENESS_UNVERIFIED): futures-decision-engine liveness
+  unverified 08:46-15:45 (proof is logged once per setup-eval state change …)`)
+  and the counts ship `UNQUALIFIED`. Without it the exemption walked the
+  original defect back in through the one service the bound cannot cover — a
+  producer with one 08:46 evaluation and nothing for the next six hours
+  fifty-nine minutes rendered `4/4 consumed (COMPLETE)`, exit 0, counts bare,
+  with no caveat anywhere in the row. The qualifier is keyed on
+  `freshness_scored: false` **and** `observation_is_fresh: false`, never on a
+  service name or role, so a second exempt service inherits it automatically; a
+  fresh exempt service carries nothing. `LIVENESS_UNVERIFIED` **exits 0** — a
+  dead throttled emitter and a healthy one leave identical records, and both
+  real harvests show the healthy case (worst in-session gaps 11235s and
+  17050s), so exiting 1 would alarm every trading day. The row is loud; the
+  exit status is not.
+
+  There is deliberately **no "nothing was due" exemption**: a silent consumer
+  reads `no evidence`, so a genuinely quiet day reads `1/4 consumed, 3 no
+  evidence (PARTIAL)`. The constraint is a **code path, not a log level**. The
+  healthy idle loop emits nothing at any level — `xreadgroup` returns no
+  messages, `post_poll(count)`, `asyncio.sleep(0)`, `continue`, with no logging
+  on that path (`shared/streaming/stage.py`) — and
+  `consumer_group_already_present`, the one line that might have stood in, fires
+  only from `recover_missing_consumer_group`, i.e. only after a read has already
+  failed. So `LOG_LEVEL=DEBUG` would produce no idle-liveness evidence at all,
+  even though both monitor daemons do read `LOG_LEVEL` since PR #749
+  (`services/risk_filter/main.py` and `services/order_router/main.py` still
+  hardcode INFO, which is beside this point). **A heartbeat in the idle branch
+  is the only fix**, and once one exists a quiet day can legitimately read
+  `COMPLETE` again. Until then a healthy idle consumer and one that died at the
+  open leave identical records, and calling that `COMPLETE` is the INERT-GATE
+  CAVEAT below committed against the observation surface itself.
+
+  **`NO_SESSION` qualifies a verdict; it never replaces one.** Both holiday
+  sources describe themselves as provisional (`shared/calendar.py`:
+  `예상 - 확정 시 업데이트 필요`), so a non-trading day that nevertheless holds
+  substantive evidence keeps that evidence's verdict and says both things
+  (`(no session - … is not a trading day) **BUT THE HARVEST HOLDS EVIDENCE** -
+  4/4 consumed (COMPLETE)`), with its counts flagged `check the calendar`. Only
+  a non-trading day with nothing to report reads `n/a - no session`. One wrong
+  calendar entry must not silently unscore a real trading day.
+
+  "Substantive" means a service demonstrably **worked** — `consumed`,
+  `partially_blind`, `partial_coverage`, `stale_observation` — or a non-zero
+  counter. Blindness is not substantive, because the pipeline runs on weekends
+  too: `services/decision_engine/main.py`'s loop has no trading-day gate, so
+  `context_provider()` returns None and it publishes `no_market_context` per
+  setup while the indicator engine emits `Indicator data stale …` every minute,
+  and both are `blind` patterns. Counting those made every Saturday render
+  `**BUT THE HARVEST HOLDS EVIDENCE** … BLIND 08:45-15:45` and exit `1` — the
+  standing alarm this exit-status rule exists to prevent.
 
   Every harvest writes new `<service>.<HHMMSS KST>.log` files, so harvesting
   before a mid-session redeploy and again at the close keeps both halves of the
-  day — never rename or overwrite them. The per-file `grep -c` overlaps when a
-  container was harvested twice without being recreated; count across files
-  only with the `sort -u` commands in "Every risk-filter verdict is on the log"
-  above. `reports/**` is git-ignored; cite the harvested files (paths + the
+  day — the script never renames or overwrites them, and it reads all of a
+  day's files together, de-duplicating the lines two overlapping harvests share
+  (the `sort -u` rule in "Every risk-filter verdict is on the log" above).
+  `reports/**` is git-ignored; cite the harvested files (paths + the
   de-duplicated counts) in the observation-log row, not live `docker logs`
   output.
 
+  **The verdict is derived from the harvested files only.** Redis streams carry
+  a 24h TTL and their entries vanish, so a past day is not reconstructible from
+  Redis. Live Redis (`xinfo groups` lag, `raw_data` tip,
+  `futures:daily_reference` `asof_ts`) and `docker inspect`
+  (`RestartCount`, `StartedAt`) are collected as context, recorded under
+  `point_in_time` in the sidecar, and never feed the verdict.
+
 **Shadow observation log** (Gate 1 — feeds the Gate 2 one-line summary):
+
+**`Consumers` means consumers that DEMONSTRABLY CONSUMED** — each one having
+emitted at least one `event=stream_message_processed` line during the session,
+or (for the decision-engine) having evaluated its setups against a real market
+context. It is **not** a count of consumers that were running. From 2026-09-17
+00:00 to 2026-09-18 12:34 both monitor daemons were up with `RestartCount=0`
+while consuming nothing — a vanished-stream NOGROUP loop, fixed in PRs
+#739/#741 — so a running-count row on either day would have said "4" and been
+wrong, and a reader would have taken two days of "no signals" for a quiet
+market rather than for a dead instrument. This is the INERT-GATE CAVEAT below
+applied to the observation surface itself: **"observed 0" and "could not
+observe" must never occupy the same cell.** `scripts/ops/f9_observation_harvest.py`
+emits the cell, and qualifies the candidate → final → fills counts on any day
+whose observation is not `COMPLETE`.
+
+**The three rows below (2026-09-08 … 2026-09-10) were recorded under the OLD
+definition** (consumers running) and are left as recorded; do not read their
+`Consumers` numbers as proof of consumption, and do not restate them under the
+new definition — no completeness evidence was captured for those days.
 
 | Day | Consumers | Setup D candidates → final → fills | Orchestrator (ledger) | Direction parity | Notes |
 |---|---|---|---|---|---|

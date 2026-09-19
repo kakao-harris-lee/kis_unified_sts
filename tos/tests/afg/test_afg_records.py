@@ -22,6 +22,7 @@ from tos.afg import (
     ActionFlowStateSnapshot,
     ActionFlowVector,
     AllFalseActionFlowAuthority,
+    ArtifactIntegrityError,
     ArtifactStatus,
     decision_is_forward_only,
     governor_grants_no_authority,
@@ -228,6 +229,19 @@ def test_missing_required_covered_blocks_issue() -> None:
     )
     assert draft.status is ArtifactStatus.DRAFT
     assert "claim_nonce" in draft.missing_required_fields()
+
+
+def test_issued_result_raises_on_a_draft_decision() -> None:
+    """``issued_result`` is reachable, not dead code: a DRAFT decision (a normal,
+    validator-accepted state, §3.2) legitimately carries ``result=None`` — the
+    required-covered guard only fires at ISSUED, not at DRAFT (``_base.py``'s
+    ``_verify_digest_identity`` returns early for DRAFT). ``issued_result`` expresses
+    the ISSUED-only contract at the type level and must itself fail closed here."""
+    draft = ActionFlowDecision()
+    assert draft.status is ArtifactStatus.DRAFT
+    assert draft.result is None
+    with pytest.raises(ArtifactIntegrityError):
+        _ = draft.issued_result
 
 
 # ---------------------------------------------------------------------------

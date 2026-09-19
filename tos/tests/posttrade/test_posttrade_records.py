@@ -25,7 +25,8 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-from tos.canonical import ArtifactStatus
+from pydantic import BaseModel
+from tos.canonical import ArtifactStatus, IndependentIdArtifact
 from tos.posttrade import (
     OBLIGATION_RECORD_FIELD_GROUPS,
     STATEMENT_COVERAGE_SET_AXES,
@@ -160,7 +161,7 @@ _ALL_MODELS = (
 
 
 @pytest.mark.parametrize(("model", "id_field"), _ID_FIELD_LOCK)
-def test_id_field_drift_lock(model: type, id_field: str) -> None:
+def test_id_field_drift_lock(model: type[IndependentIdArtifact], id_field: str) -> None:
     """(§3.1 drift lock) Each artifact's ``_ID_FIELD`` is pinned and is a real field."""
     assert id_field == model._ID_FIELD
     assert id_field in model.model_fields
@@ -168,7 +169,7 @@ def test_id_field_drift_lock(model: type, id_field: str) -> None:
 
 @pytest.mark.parametrize(("model", "id_field"), _ID_FIELD_LOCK)
 def test_identity_and_meta_fields_are_excluded_from_the_digest(
-    model: type, id_field: str
+    model: type[IndependentIdArtifact], id_field: str
 ) -> None:
     """(§2.3 self-exclusion) ``id != f(digest)`` — the identity is out of the preimage.
 
@@ -186,7 +187,7 @@ def test_identity_and_meta_fields_are_excluded_from_the_digest(
 
 @pytest.mark.parametrize(("model", "required"), _REQUIRED_COVERED_LOCK)
 def test_required_covered_contents_drift_lock(
-    model: type, required: tuple[str, ...]
+    model: type[IndependentIdArtifact], required: tuple[str, ...]
 ) -> None:
     """(review MINOR-2) The exact ``_REQUIRED_COVERED`` tuple is pinned, order included.
 
@@ -200,7 +201,7 @@ def test_required_covered_contents_drift_lock(
 
 @pytest.mark.parametrize(("model", "required"), _REQUIRED_COVERED_LOCK)
 def test_every_required_field_actually_blocks_issuance_when_absent(
-    model: type, required: tuple[str, ...]
+    model: type[IndependentIdArtifact], required: tuple[str, ...]
 ) -> None:
     """(review MINOR-2, positive canary) Each pinned member really is enforced at ``issue()``.
 
@@ -221,7 +222,9 @@ def test_every_required_field_actually_blocks_issuance_when_absent(
 
 
 @pytest.mark.parametrize(("model", "id_field"), _ID_FIELD_LOCK)
-def test_required_covered_is_a_subset_of_covered(model: type, id_field: str) -> None:
+def test_required_covered_is_a_subset_of_covered(
+    model: type[IndependentIdArtifact], id_field: str
+) -> None:
     """(§3.2) Every required field is itself covered — a required-but-uncovered field
     would be demanded at issuance yet invisible to the digest."""
     del id_field
@@ -230,7 +233,9 @@ def test_required_covered_is_a_subset_of_covered(model: type, id_field: str) -> 
 
 
 @pytest.mark.parametrize(("model", "id_field"), _ID_FIELD_LOCK)
-def test_every_covered_name_is_a_real_field(model: type, id_field: str) -> None:
+def test_every_covered_name_is_a_real_field(
+    model: type[IndependentIdArtifact], id_field: str
+) -> None:
     """(§3.3) No covered name is a typo — a mistyped covered field silently drops content."""
     del id_field
     missing = sorted(model._COVERED_FIELDS - set(model.model_fields))
@@ -395,7 +400,9 @@ def test_every_record_carries_an_all_false_consequence() -> None:
 
 
 @pytest.mark.parametrize("model", _ALL_MODELS)
-def test_no_phantom_negative_polarity_or_consequence_field(model: type) -> None:
+def test_no_phantom_negative_polarity_or_consequence_field(
+    model: type[BaseModel],
+) -> None:
     """(§7 honest disclosure) The forgeable names stay absent from every model.
 
     Phase-1 posttrade has **zero** negative-polarity fields: no-netting is the structural
@@ -409,7 +416,7 @@ def test_no_phantom_negative_polarity_or_consequence_field(model: type) -> None:
 
 
 @pytest.mark.parametrize("model", _ALL_MODELS)
-def test_no_field_name_contains_a_phantom_token(model: type) -> None:
+def test_no_field_name_contains_a_phantom_token(model: type[BaseModel]) -> None:
     """(review MINOR-1) Partial match, so an affixed variant cannot slip past equality.
 
     ``egress_route`` / ``settlement_credential`` / ``obligation_send_token`` are the same

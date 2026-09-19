@@ -218,6 +218,69 @@ jobs:
       # `SqliteEvidenceStore.connection`), which also gained a `row is not None`
       # check the bare `[0]` indexing had been skipping silently.
       #
+      # Stage 2b (same plan, §5) added a fifteenth code: `return-value` — 116 hits
+      # (105 kernel + 11 runtime). 108 of those (94 `DigestBoundArtifact.issue()` +
+      # 14 `IdDerivedArtifact.issue()` call sites) were one root cause: both
+      # `@classmethod issue()` methods in `tos/src/tos/canonical/_base.py` declared
+      # their return type as the base class instead of `Self`, so every subclass
+      # override (`Proposal.issue()`, `AuthoredStrategy.issue()`, ...) looked like it
+      # returned the base type to callers. Fixed by declaring both `-> Self`
+      # (`requires-python >= 3.11`, no `typing_extensions` needed); this also made 7
+      # `# type: ignore[return-value]` comments genuinely dead (confirmed by running
+      # the kernel gate with each removed and checking no error reappears at that
+      # line), removed alongside. The remaining 8 were judged individually, never by
+      # widening an ignore's label to also cover `return-value`:
+      # `tos/tests/afg/test_afg_{void_canaries,truthy_sentinel}.py` returned
+      # `ActionFlowDecision.result` (`ActionFlowResult | None`) from a helper typed
+      # to return `ActionFlowResult`; `result` is also in `_REQUIRED_COVERED`, so any
+      # decision built via `.issue()` (the only path these helpers use) already fails
+      # construction if `result` is `None` — a redundant `assert is not None` at the
+      # call site would be dead code (the `assert row is not None` lesson from the
+      # `no-any-return` stage), so the fix instead added a real
+      # `ActionFlowDecision.issued_result` property to
+      # `tos/src/tos/afg/records.py` that performs that one narrowing at its actual
+      # invariant boundary. Five `tos/runtime/tests/**/conftest.py` (+
+      # `calendar/test_owner.py`) `FixedKeyProvider` doubles were missing
+      # `KeyProvider.key_for()` — a real Protocol-conformance gap, not a mislabeled
+      # ignore, fixed by adding `key_for` to match the idiom already used by the
+      # sibling doubles in `riskstate/conftest.py` / `venue/conftest.py`. The last,
+      # `compose/test_rcl_tip_generation_provider.py`, returned `AppendReceipt.seq`
+      # (`int | None`); unlike the `ActionFlowDecision` case, nothing validates
+      # `AppendReceipt` at construction, so `assert receipt.seq is not None` is a
+      # live, reachable check (and the same pattern the kernel itself uses at e.g.
+      # `tos_runtime/nontrade/latch.py:139` and `tos_runtime/engine/driver.py:642`).
+      #
+      # The `Self` fix also surfaced two errors NOT counted in the 116 (both were
+      # previously masked by `attr-defined`, which stays deferred): a genuinely
+      # redundant `cast(ApprovalSetConsumptionRecord, ...)` in
+      # `tos/tests/hag/test_hag_void_canaries.py` — a sibling `.issue()` call two
+      # lines below it was never cast, proving the cast only existed to paper over
+      # the base-type return — deleted along with the then-unused `cast` import; and
+      # 3 `operator` errors (an enabled code) in
+      # `tos/tests/authority/test_authority_required_covered.py`, where
+      # `record.new_epoch > record.old_epoch` had type-checked against `Any` (via
+      # `attr-defined`) before `Self` let mypy resolve the real `int | None` fields.
+      # Both epochs are `_REQUIRED_COVERED` AND re-checked by a dedicated
+      # `_epoch_strictly_increasing` model validator, so — same reasoning as
+      # `ActionFlowDecision.issued_result` — an inline `assert is not None` would be
+      # dead; fixed with `AuthorityEpochTransitionRecord.issued_old_epoch` /
+      # `.issued_new_epoch` properties in `tos/src/tos/authority/records.py`. Both
+      # kernel properties raise `ArtifactIntegrityError` on the `None` branch rather
+      # than asserting — verified NOT dead by constructing an ISSUED-status instance
+      # via `model_construct()` (which bypasses the validator; this repo already
+      # treats that as a real threat model, e.g. `tos/tests/test_required_covered.py`
+      # module docstring) and confirming the raise actually fires.
+      #
+      # A full-tree, zero-disable mypy sweep after the `Self` fix (looking for any
+      # OTHER now-dead ignore this ratchet's own scope wouldn't otherwise catch)
+      # found 6 more genuinely-dead `# type: ignore[return-value]` comments on
+      # direct `Cls.issue(...)` calls, same root cause as the kernel's 7:
+      # `tos/tests/marketfeed/_marketfeed_fixtures.py:150,178`,
+      # `tos/tests/dsl/test_dsl_context_value.py:75,152`, and
+      # `tos/runtime/tests/marketfeed/_store_fixtures.py:100,128` — removed. The
+      # same sweep for a now-redundant `cast(...)` around an `.issue()` call found
+      # none beyond the one already listed above.
+      #
       # `unused-ignore` was named in PR #742 as the next code to enable, on the
       # strength of 53 hits under FULL checking. That is wrong while any code is
       # deferred, and the correction is the useful part of this note: measured back
@@ -238,6 +301,104 @@ jobs:
       # (unused regardless of deferral state) while leaving the 230 deferral-dependent
       # ones in place.
       #
+      # `attr-defined` enabled (2026-09-18, 2-stage-2 third/last PR): 108 errors / 46
+      # files at measurement time, five subject shapes: `"type"` (36), `"object"`
+      # (36), `"AST"` (23), `"FixtureFunctionDefinition"` (10), `"ModelMetaclass"`
+      # (2), plus one `Module has no attribute` outlier. Every one was a root-cause
+      # fix, not a per-line suppression:
+      #
+      # - `"type"` (36): a shared `_ARTIFACTS: list[tuple[type, ...]]`-shaped
+      #   collection (or a bare `model: type` / `cls: type` test-function parameter)
+      #   erased the real artifact base, so `._REQUIRED_COVERED` / `._ID_FIELD` /
+      #   `._COVERED_FIELDS` / `.issue()` / pydantic's own `.model_fields` /
+      #   `.model_config` all read as missing. Annotating with the real common base
+      #   (`type[DigestBoundArtifact]`, `type[IndependentIdArtifact]`, or
+      #   `type[pydantic.BaseModel]` for the two dict/list literals whose values
+      #   don't share a digest-bound base) fixed every instance; two `enum_cls: type`
+      #   parameters that iterate an Enum class needed `type[Enum]` instead.
+      # - `"object"` (36): a helper's declared return type (or a `dict[str, object]`
+      #   mutable box closing over a composed runtime) was strictly weaker than what
+      #   it actually produced — e.g. `tos_runtime/tests/marketfeed/test_scheduler
+      #   .py`'s `_decide()` was annotated `-> object` while wrapping `decide_tick()`,
+      #   which actually returns `TickDecision` (21 of the 36 errors, one fix).
+      #   Fixed by annotating each helper with its real return type
+      #   (`TickDecision`, `ComposedRuntime`, `EngineCore`, `VenueServiceStage`) —
+      #   the last two needed `if TYPE_CHECKING:` imports to avoid a runtime import
+      #   at module scope, mirroring this file's existing local-import style. Two
+      #   remaining `object` cases were mypy inference quirks rather than missing
+      #   annotations: a `sorted(FROZENSET, key=lambda i: i.value)` expression
+      #   inline inside `@pytest.mark.parametrize(...)` had its lambda parameter
+      #   widened to `object` by parametrize's own dynamically-typed `argvalues`
+      #   context (verified: the identical `sorted()` call type-checks cleanly once
+      #   hoisted to an explicitly annotated module-level constant) — fixed by that
+      #   hoist in `test_egressgw_applicability.py`; and a heterogeneous tuple of
+      #   five `set[SomeStrEnum]` literals (`test_replacement_vocabulary.py`) joined
+      #   to plain `object` on iteration since the five enum types share no common
+      #   base narrower than `Enum` — fixed with an explicit
+      #   `tuple[set[StrEnum], ...]` annotation.
+      # - `"AST"` (23, operator directive: type-narrow, no exception lane): every
+      #   instance was the same shape — an `isinstance(node, ast.Import)` /
+      #   `ast.ImportFrom` (or `ast.If`/`ast.Assign`/...) branch narrows `node`
+      #   correctly, but `node.lineno` was read AFTER the if/elif chain, where
+      #   `node`'s type has widened back to the bare `ast.AST` `ast.walk()` yields.
+      #   Fixed in all 22 files (20 near-identical `test_*_import_closure.py`
+      #   sibling-import scanners + `test_stm_truthy_sentinel.py` +
+      #   `test_sir_void_canaries.py`) the same way: capture `node.lineno` (or
+      #   `(name, node.lineno)` / `(target, node.lineno)` pairs) INSIDE each
+      #   narrowed branch instead of reading it from the widened loop variable
+      #   afterward. No `isinstance` narrowing was removed or weakened.
+      # - `"FixtureFunctionDefinition"` (10, 3 files): `config_dir.__wrapped__(root)`
+      #   — pytest's own documented escape hatch for calling the plain function a
+      #   `@pytest.fixture` wraps, used identically in `test_symmetry.py` (3),
+      #   `test_riskstate_wiring.py` (4), and `test_venue_wiring.py` (3) — reaches an
+      #   attribute pytest's typed `FixtureFunctionDefinition` deliberately does not
+      #   expose (calling a fixture directly is unsupported API). Consolidated into
+      #   one new `call_wrapped_fixture()` helper in `compose/conftest.py` with a
+      #   single documented `# type: ignore[attr-defined]` plus a real
+      #   `isinstance(result, Path)` runtime guard (needed to avoid trading the
+      #   attr-defined error for a `no-any-return` one on the SAME enabled code) —
+      #   ten call sites now import and call the shared helper instead of each
+      #   carrying its own gap.
+      # - `"ModelMetaclass"` (2): the same collapse-to-metaclass shape as `"type"`
+      #   above, on an unannotated `list`/`dict` literal of different pydantic model
+      #   classes (`_RECON_MODELS`, `_TEMPLATE_MODELS`) — fixed with an explicit
+      #   `list[type[pydantic.BaseModel]]` / `dict[str, type[pydantic.BaseModel]]`
+      #   annotation.
+      # - `Module has no attribute "engine"` (1): `sys.modules["tos_runtime"].engine
+      #   = ...` (restoring a package attribute a cold-cache-eviction test popped)
+      #   is dynamic module-attribute assignment mypy cannot model on `ModuleType` —
+      #   switched to `setattr(sys.modules["tos_runtime"], "engine", ...)`, same
+      #   runtime behavior, no attribute access for mypy to reject.
+      #
+      # `tos/tests/sci/test_sci_truthy_sentinel.py:48` was the one line flagged in
+      # advance (§2.1's "not covered by" case, PR #747): `# type: ignore[index]` on
+      # `member is type(member)[member.name]` covered a real `[index]` error (mypy
+      # not knowing `type[object]` supports subscripting) while the SAME line's
+      # `member.name` attr-defined error went uncovered, because the surrounding
+      # three test functions all took `member: object`. Retyping the parameter to
+      # `member: StrEnum` fixed the attr-defined AND, as a side effect, made mypy's
+      # enum-aware handling of `type[StrEnum].__getitem__` type-check the subscript
+      # too — so the `[index]` ignore became genuinely unused and was removed, not
+      # merely widened to `[index, attr-defined]`. Confirmed by re-running with the
+      # label removed: zero errors on that line, `unused-ignore` clean.
+      #
+      # Dead-suppression sweep (a zero-disable, whole-tree mypy run, not just this
+      # PR's own touched files): baseline was 18 `# type: ignore[attr-defined]`
+      # comments tree-wide (`git grep -c` against pre-PR `main`); 12 became
+      # dead/removed by the root-cause fixes above (10 replaced by the
+      # `call_wrapped_fixture()` consolidation losing their per-call-site ignore,
+      # 2 in `test_evidence_required_covered.py`/`test_orthostate_composite.py`-
+      # style `_ARTIFACTS` files whose `cls._REQUIRED_COVERED` / `cls.issue(...)`
+      # ignores became unused once `cls` carried a real base type) — 6 remain, all
+      # confirmed live by the same zero-disable sweep (zero `unused-ignore` hits
+      # tree-wide): `test_slice_gaps.py:192` (`.fget` on a property descriptor
+      # reached via the class, not an instance), `test_sci_records.py:85,87`
+      # (`left`/`right: object` parameters deliberately kept untyped beyond
+      # `.canonical_digest`), `test_stm_authority.py:85`, the new
+      # `call_wrapped_fixture()` helper itself (documented above), and
+      # `test_parity_and_resubmit.py:229` — none of these five pre-existing ones
+      # were touched by this PR.
+      #
       # Two steps, never one: `mypy tos/tests tos/runtime/tests` in a single
       # invocation aborts with `Duplicate module named "tests"` and checks almost
       # nothing.
@@ -245,14 +406,12 @@ jobs:
         run: >-
           mypy tos/tests --ignore-missing-imports
           --disable-error-code=arg-type --disable-error-code=no-untyped-def
-          --disable-error-code=attr-defined --disable-error-code=return-value
           --disable-error-code=unused-ignore
 
       - name: mypy (tos runtime tests)
         run: >-
           mypy tos/runtime/tests --ignore-missing-imports
           --disable-error-code=arg-type --disable-error-code=no-untyped-def
-          --disable-error-code=attr-defined --disable-error-code=return-value
           --disable-error-code=unused-ignore
 
       - name: tos size budget

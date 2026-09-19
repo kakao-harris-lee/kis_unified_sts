@@ -389,12 +389,12 @@ def test_sir_source_imports_no_forbidden_sibling_statically() -> None:
     for path in sorted(_SIR_SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            names: list[str] = []
+            entries: list[tuple[str, int]] = []
             if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
+                entries = [(alias.name, node.lineno) for alias in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module:
-                names = [node.module]
-            for name in names:
+                entries = [(node.module, node.lineno)]
+            for name, lineno in entries:
                 if not _is_allowed_tos_module(name):
-                    offenders.append(f"{path.name}:{node.lineno} import {name}")
+                    offenders.append(f"{path.name}:{lineno} import {name}")
     assert offenders == [], f"forbidden sibling import in sir source: {offenders}"

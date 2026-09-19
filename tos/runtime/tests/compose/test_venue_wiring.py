@@ -15,6 +15,7 @@ import ast
 import json
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 import yaml
@@ -27,6 +28,9 @@ from tos_runtime.compose._venue_wiring import VenuePolicyScopeMismatch
 from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.venue import PolicyNotActivated
 
+if TYPE_CHECKING:
+    from tos_runtime.compose._venue_wiring import VenueServiceStage
+
 from ..venue._documents import ocp_yaml, venue_policy_yaml
 from . import _fixtures as fx
 from .conftest import (
@@ -35,6 +39,7 @@ from .conftest import (
     _VENUE_POLICY_ENVIRONMENT,
     _VENUE_POLICY_INSTRUMENT,
     _VENUE_POLICY_INSTRUMENT_CLASS,
+    call_wrapped_fixture,
 )
 from .conftest import config_dir as _config_dir_fixture
 from .conftest import custody_root as _custody_root_fixture
@@ -58,9 +63,9 @@ def _fresh_compose_dirs(root: Path) -> tuple[Path, Path, Path]:
     every other compose e2e test uses (called through ``__wrapped__`` since pytest refuses a
     fixture function called directly)."""
     root.mkdir(parents=True, exist_ok=True)
-    config_dir = _config_dir_fixture.__wrapped__(root)
-    data_dir = _data_dir_fixture.__wrapped__(root)
-    custody_root = _custody_root_fixture.__wrapped__(root)
+    config_dir = call_wrapped_fixture(_config_dir_fixture, root)
+    data_dir = call_wrapped_fixture(_data_dir_fixture, root)
+    custody_root = call_wrapped_fixture(_custody_root_fixture, root)
     return config_dir, data_dir, custody_root
 
 
@@ -813,7 +818,7 @@ class TestSourcedShapeNonIntegralQuantityNeverFallsBackToTheLiteral:
     loader, before derivation is even reached)."""
 
     @staticmethod
-    def _stage(shape) -> object:
+    def _stage(shape) -> VenueServiceStage:
         from tos.venue import ActionClass
         from tos_runtime.compose._venue_wiring import VenueServiceStage
 
@@ -871,7 +876,7 @@ class TestSourcedShapeIgnoresPolicyViolatingLiteralQuantity:
     ``_stage`` pattern."""
 
     @staticmethod
-    def _stage(shape) -> object:
+    def _stage(shape) -> VenueServiceStage:
         from tos.venue import ActionClass
         from tos_runtime.compose._venue_wiring import VenueServiceStage
 

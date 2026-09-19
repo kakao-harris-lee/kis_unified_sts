@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 import tos.orthostate as orthostate
 from pydantic import ValidationError
-from tos.canonical import RecordPairKind, classify_record_pair
+from tos.canonical import DigestBoundArtifact, RecordPairKind, classify_record_pair
 from tos.orthostate import (
     ArtifactStatus,
     BrokerOrderState,
@@ -46,7 +46,7 @@ _DIMENSION_FIELDS = (
     "capacity_state",
 )
 
-_ARTIFACTS: list[tuple[type, Callable[..., dict[str, Any]]]] = [
+_ARTIFACTS: list[tuple[type[DigestBoundArtifact], Callable[..., dict[str, Any]]]] = [
     (CompositeState, composite_required_kwargs),
     (DimensionTransitionRecord, transition_required_kwargs),
 ]
@@ -158,7 +158,7 @@ def test_dimension_swap_is_rejected(field: str, foreign_value: object) -> None:
 def _required_cases() -> list[Any]:
     cases: list[Any] = []
     for cls, kwargs_fn in _ARTIFACTS:
-        for path in cls._REQUIRED_COVERED:  # type: ignore[attr-defined]
+        for path in cls._REQUIRED_COVERED:
             cases.append(
                 pytest.param(cls, kwargs_fn, path, id=f"{cls.__name__}:{path}")
             )
@@ -167,13 +167,13 @@ def _required_cases() -> list[Any]:
 
 @pytest.mark.parametrize("cls,kwargs_fn,path", _required_cases())
 def test_missing_required_covered_rejects_issuance(
-    cls: type, kwargs_fn: Callable[..., dict[str, Any]], path: str
+    cls: type[DigestBoundArtifact], kwargs_fn: Callable[..., dict[str, Any]], path: str
 ) -> None:
     """Dropping any required covered path makes an ISSUED record unconstructable (§3.2)."""
     kwargs = kwargs_fn()
     kwargs[path] = None
     with pytest.raises(ValidationError):
-        cls.issue(scheme=SCHEME, **kwargs)  # type: ignore[attr-defined]
+        cls.issue(scheme=SCHEME, **kwargs)
 
 
 def test_every_record_has_non_vacuous_required_covered() -> None:

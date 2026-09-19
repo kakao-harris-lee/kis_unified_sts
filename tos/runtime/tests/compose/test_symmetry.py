@@ -31,10 +31,10 @@ from tos_runtime.compose.root import compose_paper_runtime
 
 from . import _fixtures as fx
 from . import _symmetry_fixtures as sfx
+from .conftest import call_wrapped_fixture, write_approval_file
 from .conftest import config_dir as _config_dir_fixture
 from .conftest import custody_root as _custody_root_fixture
 from .conftest import data_dir as _data_dir_fixture
-from .conftest import write_approval_file
 from .test_compose_root import _action_flow_inputs, _aggregate_inputs, _reach_trusted
 
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
@@ -50,9 +50,9 @@ def _fresh_compose_dirs(root: Path) -> tuple[Path, Path, Path]:
     e2e test uses, just twice, against two independent roots.
     """
     root.mkdir(parents=True, exist_ok=True)
-    config_dir = _config_dir_fixture.__wrapped__(root)
-    data_dir = _data_dir_fixture.__wrapped__(root)
-    custody_root = _custody_root_fixture.__wrapped__(root)
+    config_dir = call_wrapped_fixture(_config_dir_fixture, root)
+    data_dir = call_wrapped_fixture(_data_dir_fixture, root)
+    custody_root = call_wrapped_fixture(_custody_root_fixture, root)
     return config_dir, data_dir, custody_root
 
 

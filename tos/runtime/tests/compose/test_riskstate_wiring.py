@@ -127,7 +127,11 @@ from ..riskstate._documents import (
 )
 from . import _fixtures as fx
 from . import _symmetry_fixtures as sfx
-from .conftest import _RISK_STATE_ENVELOPE_MAX, write_approval_file
+from .conftest import (
+    _RISK_STATE_ENVELOPE_MAX,
+    call_wrapped_fixture,
+    write_approval_file,
+)
 from .conftest import config_dir as _config_dir_fixture
 from .conftest import config_dir_with_risk_state as _config_dir_with_risk_state_fixture
 from .conftest import custody_root as _custody_root_fixture
@@ -1173,10 +1177,10 @@ def _fresh_risk_state_dirs(root: Path) -> tuple[Path, Path, Path]:
     wraps is reachable via ``__wrapped__``), extended one layer to also apply
     ``config_dir_with_risk_state`` on top of the base ``config_dir``."""
     root.mkdir(parents=True, exist_ok=True)
-    config_dir = _config_dir_fixture.__wrapped__(root)
-    config_dir = _config_dir_with_risk_state_fixture.__wrapped__(config_dir)
-    data_dir = _data_dir_fixture.__wrapped__(root)
-    custody_root = _custody_root_fixture.__wrapped__(root)
+    config_dir = call_wrapped_fixture(_config_dir_fixture, root)
+    config_dir = call_wrapped_fixture(_config_dir_with_risk_state_fixture, config_dir)
+    data_dir = call_wrapped_fixture(_data_dir_fixture, root)
+    custody_root = call_wrapped_fixture(_custody_root_fixture, root)
     return config_dir, data_dir, custody_root
 
 

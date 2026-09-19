@@ -308,6 +308,16 @@ _DEFERRED_FIELD_BY_ITEM = {
     SendVerifyItem.SAFETY_MONITORING: "monitoring_clear",
 }
 
+#: Hoisted out of the ``@pytest.mark.parametrize(...)`` call sites below: inlining
+#: ``sorted(DEFERRED_ITEMS, key=lambda i: i.value)`` directly in the decorator lets mypy's
+#: bidirectional inference for ``parametrize``'s dynamically-typed ``argvalues`` widen the
+#: lambda's parameter to ``object`` (verified: the same ``sorted()`` call type-checks cleanly
+#: assigned to an annotated name, but not inside the decorator expression) — an explicitly
+#: annotated module-level constant sidesteps that widening.
+_SORTED_DEFERRED_ITEMS: list[SendVerifyItem] = sorted(
+    DEFERRED_ITEMS, key=lambda i: i.value
+)
+
 
 def _deferred_verdict_for(item: SendVerifyItem, **field_overrides) -> VerifyOutcome:
     """The one named ``item``'s outcome under a BROKER_RESOURCE_CONSUMING send (so the deferred
@@ -319,14 +329,14 @@ def _deferred_verdict_for(item: SendVerifyItem, **field_overrides) -> VerifyOutc
     return next(v for v in verification.verdicts if v.item is item).outcome
 
 
-@pytest.mark.parametrize("item", sorted(DEFERRED_ITEMS, key=lambda i: i.value))
+@pytest.mark.parametrize("item", _SORTED_DEFERRED_ITEMS)
 def test_a_positively_supplied_deferred_flag_is_satisfied(item: SendVerifyItem) -> None:
     """(§2 decision 2) ``True`` -> SATISFIED, for every one of the six deferred items."""
     field = _DEFERRED_FIELD_BY_ITEM[item]
     assert _deferred_verdict_for(item, **{field: True}) is VerifyOutcome.SATISFIED
 
 
-@pytest.mark.parametrize("item", sorted(DEFERRED_ITEMS, key=lambda i: i.value))
+@pytest.mark.parametrize("item", _SORTED_DEFERRED_ITEMS)
 def test_an_explicitly_denied_deferred_flag_is_denied_not_unknown(
     item: SendVerifyItem,
 ) -> None:
@@ -336,7 +346,7 @@ def test_an_explicitly_denied_deferred_flag_is_denied_not_unknown(
     assert _deferred_verdict_for(item, **{field: False}) is VerifyOutcome.DENIED
 
 
-@pytest.mark.parametrize("item", sorted(DEFERRED_ITEMS, key=lambda i: i.value))
+@pytest.mark.parametrize("item", _SORTED_DEFERRED_ITEMS)
 def test_an_unsupplied_deferred_flag_is_unknown(item: SendVerifyItem) -> None:
     """(§2 decision 2, unchanged wording) ``None`` -> UNKNOWN — the owning runtime has not
     landed the fact yet."""

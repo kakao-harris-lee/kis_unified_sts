@@ -444,7 +444,12 @@ def test_release_consumer_imports_cleanly_after_a_cold_cache_eviction() -> None:
     finally:
         for name, module in saved.items():
             sys.modules[name] = module
-        sys.modules["tos_runtime"].engine = saved["tos_runtime.engine"]
+        # setattr, not plain assignment: `ModuleType` has no declared `engine`
+        # attribute, so `sys.modules["tos_runtime"].engine = ...` is an attr-defined
+        # error under mypy too, not just a ruff style preference.
+        setattr(  # noqa: B010
+            sys.modules["tos_runtime"], "engine", saved["tos_runtime.engine"]
+        )
 
 
 # -- FULL_FILL -> POSITION_CONSUMED (happy path) -------------------------------------

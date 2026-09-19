@@ -106,7 +106,9 @@ def test_every_export_resolves() -> None:
 
 
 @pytest.mark.parametrize("model", _ARTIFACTS)
-def test_models_are_frozen_and_extra_forbid(model: type) -> None:
+def test_models_are_frozen_and_extra_forbid(
+    model: type[sci.IndependentIdArtifact],
+) -> None:
     """(§2) Every artifact is frozen with ``extra='forbid'`` — append-only by construction."""
     assert model.model_config["frozen"] is True
     assert model.model_config["extra"] == "forbid"
@@ -126,7 +128,9 @@ def test_unknown_field_is_rejected() -> None:
 
 
 @pytest.mark.parametrize("model", _ARTIFACTS)
-def test_no_forbidden_operation_method_on_any_model(model: type) -> None:
+def test_no_forbidden_operation_method_on_any_model(
+    model: type[sci.IndependentIdArtifact],
+) -> None:
     """(§7 / §0.2) No model exposes a deploy / admit / sign / transmit / arm / mutate **method**.
 
     Field *names* legitimately contain those words (``deployment_plan_digest``,

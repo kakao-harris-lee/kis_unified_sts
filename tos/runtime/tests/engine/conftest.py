@@ -33,6 +33,10 @@ class FixedKeyProvider:
     def generations(self) -> tuple[int, ...]:
         return (self._key_generation,)
 
+    def key_for(self, generation: int) -> bytes:
+        del generation
+        return self._key
+
 
 class FakeMonotonicSource:
     """A settable, injectable monotonic-ms source (:class:`~tos_runtime.time.sources.MonotonicSource`)."""

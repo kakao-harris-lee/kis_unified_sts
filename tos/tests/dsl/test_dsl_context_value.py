@@ -72,7 +72,7 @@ _CLOSE = 4_512_500
 
 def _capsule() -> DecisionContextCapsule:
     """An issued Capsule bound to a snapshot reference."""
-    return DecisionContextCapsule.issue(  # type: ignore[return-value]
+    return DecisionContextCapsule.issue(
         scheme=SCHEME,
         issuer_principal_id="iss-1",
         critical_input_policy=PolicyRef(policy_id="pol-1", canonical_digest="pd-1"),
@@ -149,7 +149,7 @@ def _strategy(*, threshold: int) -> AuthoredStrategy:
             kind=DecisionKind.NO_ACTION, rationale="the guard did not fire — hold"
         ),
     )
-    return AuthoredStrategy.issue(  # type: ignore[return-value]
+    return AuthoredStrategy.issue(
         scheme=SCHEME,
         dsl_version="dsl-0",
         config_binding_version="cfg-bind-0",

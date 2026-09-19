@@ -448,15 +448,15 @@ def test_no_dsl_or_engine_source_statically_imports_marketfeed() -> None:
         for path in sorted((src_root / package).rglob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for node in ast.walk(tree):
-                names: list[str] = []
+                entries: list[tuple[str, int]] = []
                 if isinstance(node, ast.Import):
-                    names = [alias.name for alias in node.names]
+                    entries = [(alias.name, node.lineno) for alias in node.names]
                 elif isinstance(node, ast.ImportFrom) and node.module:
-                    names = [node.module]
-                for name in names:
+                    entries = [(node.module, node.lineno)]
+                for name, lineno in entries:
                     if name == "tos.marketfeed" or name.startswith("tos.marketfeed."):
                         offenders.append(
-                            f"{package}/{path.name}:{node.lineno} import {name}"
+                            f"{package}/{path.name}:{lineno} import {name}"
                         )
     assert (
         offenders == []

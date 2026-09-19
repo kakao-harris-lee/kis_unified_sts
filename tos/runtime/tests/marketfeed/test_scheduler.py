@@ -18,6 +18,7 @@ from tos.time import SessionContext
 from tos_runtime.marketfeed.ports import RawObservation, TickOutcome
 from tos_runtime.marketfeed.scheduler import (
     MultiInstrumentRefused,
+    TickDecision,
     TickResult,
     TickScheduler,
     decide_tick,
@@ -41,7 +42,7 @@ def _observation(
     )
 
 
-def _decide(**overrides: object) -> object:
+def _decide(**overrides: object) -> TickDecision:
     """``decide_tick`` with a baseline of admitting values — one keyword override per test
     isolates exactly the ONE check under test, mirroring the plan's own per-mutation red
     list."""

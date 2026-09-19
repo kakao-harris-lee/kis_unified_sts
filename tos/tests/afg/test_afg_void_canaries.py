@@ -146,7 +146,7 @@ def _decision(**overrides: object) -> ActionFlowResult:
         "scheme": SCHEME,
     }
     base.update(overrides)
-    return action_flow_decision(**base).result  # type: ignore[arg-type]
+    return action_flow_decision(**base).issued_result  # type: ignore[arg-type]
 
 
 def test_row3_empty_required_scope_forbidden_direction() -> None:

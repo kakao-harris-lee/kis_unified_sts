@@ -11,6 +11,8 @@ value-drift lock).
 
 from __future__ import annotations
 
+from enum import Enum
+
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -144,7 +146,7 @@ def test_prohibited_verb_count_is_nineteen() -> None:
         NonTradeDisposition,
     ],
 )
-def test_every_member_value_equals_its_name(enum_cls: type) -> None:
+def test_every_member_value_equals_its_name(enum_cls: type[Enum]) -> None:
     """(§9.1(4a) drift lock) ``Member.value == "MEMBER"`` for every member of every enum.
 
     A silent value drift would break the injected-token seams (which compare tokens) and
