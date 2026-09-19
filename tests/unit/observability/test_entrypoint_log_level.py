@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 from types import ModuleType
 
 import pytest
@@ -79,9 +80,13 @@ def test_stream_exporter_prefers_its_own_knob_over_log_level(
 ) -> None:
     """STREAM_EXPORTER_LOG_LEVEL outranks LOG_LEVEL for the exporter (#753).
 
-    The exporter's ``main()`` binds a port and loops forever, so the setup is
-    called directly here. It is not a pass-through: it carries the exporter's
-    distinct log format and the name of the override, which is what this pins.
+    What this pins is the precedence and the override's name — the two levels
+    disagree, so the one that wins identifies which variable was consulted.
+    That ``main()`` calls the setup at all is a separate claim, pinned by
+    ``test_stream_exporter_main_configures_logging_before_it_starts``; the
+    exporter's distinct log format is pinned by neither, because
+    ``basicConfig`` is a no-op against the root handler pytest already
+    installed and a format assertion here would pass on the wrong one.
     """
     from services.monitoring.stream_exporter import _setup_logging
 
@@ -119,28 +124,51 @@ def test_stream_exporter_non_level_attribute_does_not_crash_startup(
     assert _setup_logging() == logging.INFO
 
 
-def test_stream_exporter_dockerfile_copies_every_shared_package_it_imports():
-    """The minimal image breaks silently on a ``shared.*`` import it lacks.
+def test_stream_exporter_main_configures_logging_before_it_starts(
+    monkeypatch: pytest.MonkeyPatch, restore_root_log_level: logging.Logger
+) -> None:
+    """The exporter's ``main()`` must configure logging, and before it serves.
 
-    ``Dockerfile.stream_exporter`` copies individual packages rather than the
-    repo, so an import added here that is not COPYed passes every test and
-    fails only in that one container at runtime (#591). #753 added
-    ``shared.observability``; this keeps the next one honest.
+    The three tests above call ``_setup_logging()`` directly, which proves
+    nothing about the entrypoint — drop the call from ``main()`` and they all
+    still pass. The other eleven daemons are pinned through a stubbed
+    ``_build_and_run``; the exporter has no such seam (its ``main()`` binds a
+    port and loops forever), so the loop itself is stubbed and the effective
+    root level read from inside it.
     """
-    from pathlib import Path
+    from services.monitoring import stream_exporter as module
 
-    repo_root = Path(__file__).resolve().parents[3]
-    source = (repo_root / "services/monitoring/stream_exporter.py").read_text(
-        encoding="utf-8"
-    )
-    dockerfile = (repo_root / "Dockerfile.stream_exporter").read_text(encoding="utf-8")
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    monkeypatch.delenv("STREAM_EXPORTER_LOG_LEVEL", raising=False)
+    # ``main()`` assigns these directly, which monkeypatch records no undo for;
+    # touching them first is what makes them restorable at teardown.
+    for key in ("REDIS_HOST", "REDIS_PORT", "REDIS_DB", "REDIS_PASSWORD"):
+        monkeypatch.setenv(key, os.environ.get(key, ""))
+    # A level main() has to move, so an unconfigured root cannot pass by luck.
+    restore_root_log_level.setLevel(logging.WARNING)
+    observed: list[int] = []
 
-    imported = {
-        line.split()[1].split(".")[1]
-        for line in source.splitlines()
-        if line.startswith("from shared.")
-    }
-    assert imported, "resolver matched nothing — the import style changed"
+    class _StubConfig:
+        redis_host = "localhost"
+        redis_port = 6379
+        redis_db = 1
+        redis_password = ""
 
-    for package in sorted(imported):
-        assert f"COPY shared/{package} " in dockerfile, package
+    class _StubExporter:
+        def __init__(self, config: object) -> None:
+            self.config = config
+
+        def run_forever(self) -> None:
+            observed.append(logging.getLogger().level)
+
+    monkeypatch.setattr(module, "ExporterConfig", _StubConfig)
+    monkeypatch.setattr(module, "StreamExporter", _StubExporter)
+
+    module.main()
+
+    assert observed == [logging.DEBUG]
+
+
+# The minimal image's COPY coverage is pinned by
+# tests/unit/observability/test_stream_exporter_image.py, which imports the
+# entrypoint against a rebuilt image tree instead of parsing its import lines.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import yaml
@@ -611,6 +612,40 @@ def test_producer_and_consumer_futures_tick_stream_defaults_agree():
         assert _read_env_template(name)["FUTURES_TICK_STREAM"] == producer_default
 
 
+def _calls_configure_logging(source: Path) -> bool:
+    """Whether the module's ``main()`` reaches ``configure_logging``.
+
+    Substring-matching the file cannot tell a call from a mention in a comment
+    or docstring, nor a module that merely *defines* a setup wrapper from one
+    whose ``main()`` actually calls it — which is how the exporter shipped a
+    ``main()`` that could have dropped the call with every test still green.
+    So this walks the AST: collect the names each module-level function calls,
+    then follow that graph out of ``main``. The hop matters because half these
+    entrypoints call ``configure_logging()`` directly and half go through a
+    local ``_setup_logging()`` wrapper.
+    """
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    callees: dict[str, set[str]] = {}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            callees[node.name] = {
+                call.func.id
+                for call in ast.walk(node)
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+            }
+
+    pending, seen = ["main"], set()
+    while pending:
+        name = pending.pop()
+        if name in seen or name not in callees:
+            continue
+        seen.add(name)
+        if "configure_logging" in callees[name]:
+            return True
+        pending.extend(callees[name])
+    return False
+
+
 def _entrypoint_sources(service: dict) -> list[Path]:
     """Return the repo files a service's python ``command`` runs, if any.
 
@@ -644,11 +679,11 @@ def test_log_level_reaches_exactly_the_entrypoints_that_read_it():
     ignored it, which reads to an operator as a broken knob.
 
     The roster is derived from the code — a service is expected to carry the
-    key iff the module its ``command`` runs calls ``configure_logging`` — so a
-    daemon migrated to the helper without its compose line, or handed the line
-    without reading it, fails here. ``expected`` is spelled out anyway: it is
-    the reviewable list, and it keeps a resolver that silently matched nothing
-    from passing vacuously.
+    key iff the ``main()`` of the module its ``command`` runs actually calls
+    ``configure_logging`` — so a daemon migrated to the helper without its
+    compose line, or handed the line without reading it, fails here.
+    ``expected`` is spelled out anyway: it is the reviewable list, and it keeps
+    a resolver that silently matched nothing from passing vacuously.
 
     The key is declared per service rather than folded into an anchor; see the
     NOTE above ``x-redis-runtime-env`` in docker-compose.yml. This test cannot
@@ -678,10 +713,7 @@ def test_log_level_reaches_exactly_the_entrypoints_that_read_it():
     readers = {
         name
         for name, service in services.items()
-        if any(
-            "configure_logging" in path.read_text(encoding="utf-8")
-            for path in _entrypoint_sources(service)
-        )
+        if any(_calls_configure_logging(path) for path in _entrypoint_sources(service))
     }
     assert readers == expected
 
@@ -711,5 +743,17 @@ def test_log_level_reaches_exactly_the_entrypoints_that_read_it():
     # The templates document the knob and ship the default the code falls back
     # to; a template that drifted to another value would move every one of
     # these daemons' levels on every deploy from it.
-    for name in (".env.paper.example", ".env.live.example"):
+    #
+    # .env.production.example is in the list because it is the one that drifted:
+    # it carried WARNING from a time when the variable reached two daemons, and
+    # nothing failed when #751/#753 grew that to 13 — including the order
+    # routers and the kill switch, whose INFO lines are the records an incident
+    # is reconstructed from. A template may of course be *deliberately* quieter,
+    # but not silently.
+    for name in (
+        ".env.example",
+        ".env.paper.example",
+        ".env.live.example",
+        ".env.production.example",
+    ):
         assert _read_env_template(name)["LOG_LEVEL"] == "INFO", name
