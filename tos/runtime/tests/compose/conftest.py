@@ -85,10 +85,26 @@ def call_wrapped_fixture(fixture_func: object, *args: object) -> Path:
     ``custody_root``/``config_dir_with_risk_state`` below are each parametrized only by plain
     arguments (verified by reading their signatures), so a caller building an independent root
     can drive the SAME fixture-writing logic every other e2e test in this package relies on,
-    just against a fresh root. ``__wrapped__`` reaches that original function; pytest's own
-    ``FixtureFunctionDefinition`` type deliberately does not expose it (calling a fixture
-    directly is unsupported API) — the single ignore below is this module's one place for that
-    gap, so call sites stay clean.
+    just against a fresh root. ``__wrapped__`` reaches that original function.
+
+    The ignore below is a **choice, not a necessity** — pytest 9.0.2's
+    ``FixtureFunctionDefinition._get_wrapped_function()`` returns the same function and type-checks
+    clean without it. It is not used because it is a private method on a class that pytest does not
+    export (``pytest.FixtureFunctionDefinition`` does not exist; the class lives in the top-level
+    private ``_pytest.fixtures``), so depending on it would break on any internal refactor.
+    ``__wrapped__`` rests on the ``functools.update_wrapper`` convention instead, which is a far
+    more stable contract — at the cost of one ignore, kept here as this module's single place for
+    the gap so call sites stay clean. **If pytest ever exports the accessor, prefer it and drop
+    the ignore.**
+
+    ``fixture_func`` is deliberately typed ``object`` rather than ``Callable[..., Path]``:
+    ``FixtureFunctionDefinition.__call__`` is defined to ``fail()``, so a callable annotation would
+    be a type the object does not actually honour. That looseness is also why the ``isinstance``
+    below earns its keep: a caller can always pass a fixture returning something other than
+    ``Path`` — Python does not enforce annotations — and with ``object`` mypy will not flag it
+    either, so this check is the only thing between a wrong fixture and a confusing downstream
+    failure. It does fire (verified by passing a real ``@pytest.fixture``-decorated ``str``
+    fixture); that is a runtime fact, not a mypy-reachability one.
     """
     result = fixture_func.__wrapped__(*args)  # type: ignore[attr-defined]
     assert isinstance(result, Path)
