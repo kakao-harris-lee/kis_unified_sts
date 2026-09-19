@@ -97,7 +97,7 @@ def issue_snapshot(
         "field_evaluations": field_evaluations,
     }
     base.update(overrides)
-    return CriticalInputSnapshot.issue(scheme=SCHEME, **base)  # type: ignore[return-value]
+    return CriticalInputSnapshot.issue(scheme=SCHEME, **base)
 
 
 def issue_capsule(
@@ -125,7 +125,7 @@ def issue_capsule(
         ),
     }
     base.update(overrides)
-    return DecisionContextCapsule.issue(scheme=SCHEME, **base)  # type: ignore[return-value]
+    return DecisionContextCapsule.issue(scheme=SCHEME, **base)
 
 
 def one_bar(

@@ -24,6 +24,10 @@ class FixedKeyProvider:
     def generations(self) -> tuple[int, ...]:
         return (self._key_generation,)
 
+    def key_for(self, generation: int) -> bytes:
+        del generation
+        return self._key
+
 
 class FakeMonotonicClock:
     """A settable, injectable monotonic-ns source — deterministic age arithmetic in tests."""

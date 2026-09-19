@@ -10,8 +10,6 @@ Regime tag: predicate / model substrate only; HAG-EV substrate; EV-L1-complete c
 
 from __future__ import annotations
 
-from typing import cast
-
 from tos.hag import (
     ApprovalScope,
     approval_binding_exact,
@@ -118,15 +116,12 @@ def test_approval_set_reconsumption_blocks_but_first_use_passes() -> None:
 
     from ._hag_strategies import SCHEME
 
-    first = cast(
-        ApprovalSetConsumptionRecord,
-        ApprovalSetConsumptionRecord.issue(
-            scheme=SCHEME,
-            consumption_id="con-1",
-            approval_set_digest="set-digest",
-            single_use=True,
-            consumed_generation=1,
-        ),
+    first = ApprovalSetConsumptionRecord.issue(
+        scheme=SCHEME,
+        consumption_id="con-1",
+        approval_set_digest="set-digest",
+        single_use=True,
+        consumed_generation=1,
     )
     assert approval_set_single_use(first, []) is True
     # A second consumption of the SAME set digest is rejected (single-use spent).
