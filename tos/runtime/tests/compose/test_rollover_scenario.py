@@ -235,7 +235,6 @@ def _incident_candidate_count(runtime) -> int:
     row = runtime.evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = 'INCIDENT_CANDIDATE'"
     ).fetchone()
-    assert row is not None
     count = row[0]
     assert isinstance(count, int), f"COUNT(*) returned {type(count).__name__}"
     return count
@@ -576,7 +575,6 @@ def _queued_until_recovery_count(runtime) -> int:
     row = runtime.evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = 'NONTRADE_QUEUED_UNTIL_RECOVERY'"
     ).fetchone()
-    assert row is not None
     count = row[0]
     assert isinstance(count, int), f"COUNT(*) returned {type(count).__name__}"
     return count

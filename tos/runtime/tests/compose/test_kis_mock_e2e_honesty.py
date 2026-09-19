@@ -247,7 +247,6 @@ def _evidence_kind_count(runtime, kind: str) -> int:
     row = runtime.evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = ?", (kind,)
     ).fetchone()
-    assert row is not None
     count = row[0]
     assert isinstance(count, int), f"COUNT(*) returned {type(count).__name__}"
     return count
@@ -257,7 +256,6 @@ def _evidence_kind_like_count(runtime, pattern: str) -> int:
     row = runtime.evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind LIKE ?", (pattern,)
     ).fetchone()
-    assert row is not None
     count = row[0]
     assert isinstance(count, int), f"COUNT(*) returned {type(count).__name__}"
     return count

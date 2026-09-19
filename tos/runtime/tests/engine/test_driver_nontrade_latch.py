@@ -144,7 +144,6 @@ def _incident_candidate_count(evidence_store: SqliteEvidenceStore) -> int:
     row = evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = 'INCIDENT_CANDIDATE'"
     ).fetchone()
-    assert row is not None
     count = row[0]
     assert isinstance(count, int), f"COUNT(*) returned {type(count).__name__}"
     return count

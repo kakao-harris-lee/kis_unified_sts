@@ -129,7 +129,6 @@ def _release_skipped_count(evidence_store: SqliteEvidenceStore) -> int:
         "SELECT COUNT(*) FROM entries WHERE kind = ?",
         (ENGINE_PROJECTION_RELEASE_SKIPPED_KIND,),
     ).fetchone()
-    assert row is not None
     count = row[0]
     assert isinstance(count, int), f"COUNT(*) returned {type(count).__name__}"
     return count
