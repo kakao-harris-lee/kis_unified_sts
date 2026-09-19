@@ -27,6 +27,28 @@ streams:
     name: ORDER_COMMAND_STREAM
     maxlen: 5000
 
+# shared/streaming/stage.py 의 공용 소비 루프(StreamStage / MultiStreamStage) 설정.
+# 사용 서비스: risk_filter, order_router, stock_order_router, stock_risk_filter,
+# news_scorer. env 로도 덮을 수 있다: CONSUMER_STAGE_HEARTBEAT_INTERVAL_SECONDS.
+consumer_stage:
+  # 소비 루프가 살아 있다는 것을 증명하는 INFO 한 줄
+  # (event=stream_consumer_alive) 의 발화 간격(초).
+  #
+  # 유휴 경로는 원래 어떤 레벨에서도 아무것도 남기지 않아서 "건강하지만 트래픽이
+  # 없다" 와 "소비 루프가 죽었다" 가 로그상 동일했다(2026-09-17~18 이틀 실명).
+  #
+  # ⚠ config/f9_observation.yaml::observation_max_gap_seconds (1800) 보다
+  # 반드시 작아야 한다. 그 값은 증명과 증명 사이 최대 허용 간격이라, 간격이
+  # 그보다 크면 건강한 조용한 날이 stale_observation 으로 떨어진다 — 이 하트비트가
+  # 없애려던 오판을 하트비트가 만들어내는 꼴이다. 상한은 코드에서도 강제된다
+  # (shared/streaming/stage.py::MAX_HEARTBEAT_INTERVAL_SECONDS) 이고, 두 값의
+  # 관계는 tests/unit/streaming/test_stream_stage_heartbeat.py 가 양쪽 실제
+  # 출처에서 읽어 고정한다.
+  #
+  # 비용: 60초면 6.5시간 세션당 서비스별 ~390줄(~80KB). json-file 10MB × 3 회전
+  # 기준 무시 가능하다.
+  heartbeat_interval_seconds: 60
+
 consumer:
   # 메시지 읽기 설정
   read_count: 10

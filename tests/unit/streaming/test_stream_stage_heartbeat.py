@@ -3,9 +3,11 @@
 A consumer that is alive but idle used to emit nothing at any log level
 (``xreadgroup`` -> no messages -> ``post_poll(0)`` -> ``sleep(0)`` ->
 ``continue``), so a quiet session and a dead daemon left identical logs. These
-tests pin the line that tells them apart, and the two properties that make it
-worth trusting: it fires on the *idle* path, and it survives a subclass that
-overrides ``post_poll``.
+tests pin the line that tells them apart, and the three properties that make it
+worth trusting: it fires on the *idle* path, it survives a subclass that
+overrides ``post_poll``, and no supplier of the interval — YAML, env, or a
+service's own call site — can push it past the gap bound
+``scripts/ops/f9_observation_harvest.py`` scores against.
 
 Time is injected, never slept: the clock is stepped by the fake Redis at a
 chosen poll, so "one interval elapsed" is an exact fact rather than a wall-clock
@@ -23,9 +25,10 @@ import pytest
 
 import scripts.ops.f9_observation_harvest as harvest
 from shared.streaming.stage import (
-    DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+    MAX_HEARTBEAT_INTERVAL_SECONDS,
     MultiStreamStage,
     StreamStage,
+    StreamStageConfig,
     _LivenessHeartbeat,
 )
 
@@ -191,7 +194,7 @@ async def test_idle_loop_emits_heartbeat_proving_liveness_without_traffic(caplog
     assert records[0]["messages"] == "0"
     assert records[0]["polls"] == "2"
     # Nothing was ever consumed, so there is no honest "idle since" instant.
-    assert "idle_seconds" not in records[0]
+    assert "seconds_since_delivery" not in records[0]
 
 
 @pytest.mark.asyncio
@@ -212,7 +215,36 @@ async def test_message_path_heartbeat_reports_what_was_consumed(caplog):
     assert len(records) == 1
     assert records[0]["messages"] == "2"
     assert records[0]["polls"] == "2"
-    assert records[0]["idle_seconds"] == str(int(_INTERVAL))
+    assert records[0]["seconds_since_delivery"] == str(int(_INTERVAL))
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_reports_delivery_not_successful_processing(caplog):
+    """A handler that leaves messages pending still counts as delivery.
+
+    ``handle_message`` returning ``False`` is the supported "transient failure,
+    leave it pending for retry" contract, and the counts here are taken before
+    the handler runs. That is deliberate: this line claims the loop turned and
+    Redis answered — which it did — not that work completed. Progress has its
+    own evidence (``stream_message_processed`` / ``stream_message_failed`` and
+    the pending-entry list a stuck handler grows).
+    """
+    caplog.set_level(logging.INFO, logger="shared.streaming.stage")
+
+    class _NeverAcks(_Stage):
+        async def handle_message(self, _msg_id, _fields):
+            return False
+
+    clock = _Clock()
+    redis = FakeRedis([[(b"1-0", {})]], clock=clock, advance_before_call=2)
+    stage = _stage(redis, clock, cls=_NeverAcks)
+
+    await _drive_until(stage, lambda: _heartbeats(caplog))
+
+    records = _heartbeats(caplog)
+    assert records[0]["messages"] == "1"
+    assert records[0]["seconds_since_delivery"] == str(int(_INTERVAL))
+    assert redis.acked == []  # nothing progressed; delivery is what is claimed
 
 
 @pytest.mark.asyncio
@@ -353,7 +385,7 @@ def test_counts_cover_one_interval_not_the_whole_run(caplog):
     assert [(r["polls"], r["messages"]) for r in records] == [("2", "7"), ("1", "0")]
 
 
-def test_idle_seconds_measures_the_silence_since_the_last_message(caplog):
+def test_seconds_since_delivery_measures_the_silence_since_the_last_message(caplog):
     caplog.set_level(logging.INFO, logger="shared.streaming.stage")
     clock = _Clock()
     beat = _heartbeat(clock)
@@ -365,7 +397,7 @@ def test_idle_seconds_measures_the_silence_since_the_last_message(caplog):
     beat.record_poll(0)
 
     records = _heartbeats(caplog)
-    assert [record["idle_seconds"] for record in records] == ["60", "120"]
+    assert [record["seconds_since_delivery"] for record in records] == ["60", "120"]
 
 
 @pytest.mark.parametrize("interval", [0.0, -1.0])
@@ -380,16 +412,99 @@ def test_non_positive_interval_is_refused(interval):
 # --------------------------------------------------------------------------- #
 
 
-def test_heartbeat_interval_stays_under_the_observation_gap_bound():
+@pytest.mark.parametrize(
+    "interval",
+    [
+        MAX_HEARTBEAT_INTERVAL_SECONDS,  # equal is already too loose: real gaps
+        MAX_HEARTBEAT_INTERVAL_SECONDS + 1,  # are the interval plus poll jitter
+        2400.0,  # the value a service could plausibly configure
+    ],
+)
+def test_interval_at_or_above_the_observation_bound_is_refused(interval):
+    """The bound is enforced where every supplier lands, not on the default.
+
+    A service adding ``heartbeat_interval_seconds: 2400`` to its config and
+    passing it at its call site would leave the shipped default innocent while
+    every healthy quiet day for that service read ``stale_observation``. The
+    check lives in ``_LivenessHeartbeat.__init__``, so config, env and a direct
+    constructor call are all caught.
+    """
+    with pytest.raises(ValueError, match="heartbeat_interval_seconds"):
+        _heartbeat(_Clock(), interval_seconds=interval)
+
+
+@pytest.mark.asyncio
+async def test_stage_refuses_a_configured_interval_above_the_bound():
+    """The seam services actually use is guarded, not just the primitive."""
+    with pytest.raises(ValueError, match="heartbeat_interval_seconds"):
+        _stage(FakeRedis(), _Clock(), heartbeat_interval_seconds=2400.0)
+
+
+@pytest.mark.asyncio
+async def test_stage_takes_its_default_interval_from_config_not_from_code(monkeypatch):
+    """An operator changes this by editing YAML/env, never Python.
+
+    Driven through an env override rather than compared against the shipped
+    value: a stage that had quietly gone back to a hardcoded ``60.0`` would
+    match the shipped ``60`` and this test would pass while proving nothing.
+    A value only config can produce is the one that distinguishes them.
+    """
+    monkeypatch.setenv("CONSUMER_STAGE_HEARTBEAT_INTERVAL_SECONDS", "90")
+
+    stage = _stage(FakeRedis(), _Clock(), heartbeat_interval_seconds=None)
+
+    assert stage._heartbeat.interval_seconds == 90.0
+
+
+def test_env_override_reaches_the_configured_interval(monkeypatch):
+    """``CONSUMER_STAGE_*`` is the operator's second lever, so prove it works."""
+    monkeypatch.setenv("CONSUMER_STAGE_HEARTBEAT_INTERVAL_SECONDS", "90")
+
+    assert StreamStageConfig.load().heartbeat_interval_seconds == 90.0
+
+
+def test_out_of_bound_config_falls_back_to_the_field_default_with_a_warning(
+    monkeypatch, caplog
+):
+    """A config past the ceiling is refused at the boundary, not obeyed.
+
+    The fallback is deliberate: this knob only governs an observability line, so
+    a live consumer must not fail to start over it. The WARNING with its
+    traceback is what names the bad value.
+    """
+    caplog.set_level(logging.WARNING, logger="shared.streaming.stage")
+    monkeypatch.setenv("CONSUMER_STAGE_HEARTBEAT_INTERVAL_SECONDS", "2400")
+
+    config = StreamStageConfig.load()
+
+    assert (
+        config.heartbeat_interval_seconds
+        == StreamStageConfig.model_fields["heartbeat_interval_seconds"].default
+    )
+    assert config.heartbeat_interval_seconds < MAX_HEARTBEAT_INTERVAL_SECONDS
+    assert _audit_records(caplog, "stream_stage_config_load_failed")
+
+
+def test_configured_interval_stays_under_the_observation_gap_bound():
     """The two knobs have to know about each other, so pin them together.
 
     ``scripts/ops/f9_observation_harvest.py`` scores a session by the largest
     gap between two proofs and fails a service whose gap exceeds
     ``observation_max_gap_seconds``. A heartbeat interval at or above that bound
     would make healthy quiet sessions read ``stale_observation`` — the heartbeat
-    manufacturing the false verdict it was added to remove. Both numbers are
-    read from their real sources so the pair cannot drift apart silently.
+    manufacturing the false verdict it was added to remove.
+
+    Three real sources, no literals: the harvester's YAML, this package's code
+    ceiling, and the shipped value in ``config/streaming.yaml``. The middle
+    assertion is the one that keeps the ceiling honest — it is a copy of the
+    harvester's number, and a copy that may not drift upward.
+
+    ``from_yaml()`` rather than ``load()``: the shipped file is what this test
+    guards, and ``load()``'s fallback would answer with the field default and
+    hide a bad value in the file behind it. Here an out-of-bound file raises.
     """
     max_gap = harvest.load_observation_config().observation_max_gap_seconds
+    shipped = StreamStageConfig.from_yaml().heartbeat_interval_seconds
 
-    assert max_gap > DEFAULT_HEARTBEAT_INTERVAL_SECONDS
+    assert max_gap >= MAX_HEARTBEAT_INTERVAL_SECONDS
+    assert shipped < MAX_HEARTBEAT_INTERVAL_SECONDS
