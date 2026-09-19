@@ -19,7 +19,7 @@ from tos.engine.records import event_identity
 from tos.engine.vocabulary import HaltReason
 from tos.sbr.vocabulary import ReadinessVerdict
 from tos_runtime.compose._preconditions import _ReplayPreconditions
-from tos_runtime.compose._types import RecoveryBarrierHeld
+from tos_runtime.compose._types import ComposedRuntime, RecoveryBarrierHeld
 from tos_runtime.engine.replay_stage import EventCorrelatingCore, RecordedStage
 from tos_runtime.engine.replay_transmit import RecordedTransmit, any_recorded_hand_off
 from tos_runtime.evidence.store import EvidenceCorruption
@@ -567,7 +567,7 @@ def _restore_drill_helpers(tmp_path, config_dir, custody_root):
     """
     from tos.engine import EngineCore
 
-    box: dict[str, object] = {}
+    box: dict[str, ComposedRuntime] = {}
 
     def _compose_callable(data_dir, environment_label):
         del environment_label  # `_compose` always composes under "non-live-test"; restore_drill
