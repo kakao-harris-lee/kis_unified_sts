@@ -37,16 +37,21 @@ consumer_stage:
   # 유휴 경로는 원래 어떤 레벨에서도 아무것도 남기지 않아서 "건강하지만 트래픽이
   # 없다" 와 "소비 루프가 죽었다" 가 로그상 동일했다(2026-09-17~18 이틀 실명).
   #
-  # ⚠ config/f9_observation.yaml::observation_max_gap_seconds (1800) 보다
-  # 반드시 작아야 한다. 그 값은 증명과 증명 사이 최대 허용 간격이라, 간격이
-  # 그보다 크면 건강한 조용한 날이 stale_observation 으로 떨어진다 — 이 하트비트가
-  # 없애려던 오판을 하트비트가 만들어내는 꼴이다. 상한은 코드에서도 강제된다
-  # (shared/streaming/stage.py::MAX_HEARTBEAT_INTERVAL_SECONDS) 이고, 두 값의
-  # 관계는 tests/unit/streaming/test_stream_stage_heartbeat.py 가 양쪽 실제
-  # 출처에서 읽어 고정한다.
+  # ⚠ 상한: config/f9_observation.yaml::observation_max_gap_seconds (1800).
+  # 그 값은 증명과 증명 사이 최대 허용 간격이고, 수집기가 재는 것은 «설정한 간격»이
+  # 아니라 «실제로 찍힌 두 줄 사이»다. 하트비트는 폴링 중에 만기가 되고 «다음
+  # 폴링이 반환될 때» 나오므로 실제 간격 = 이 값 + xread_block_ms(현재 2초).
+  # 따라서 실효 상한은 1800 - 2 = 1798 이고, 코드가 그렇게 «유도»해서 강제한다
+  # (shared/streaming/stage.py::max_heartbeat_interval_seconds). 넘기면 건강한
+  # 조용한 날이 stale_observation 으로 떨어진다 — 이 하트비트가 없애려던 오판을
+  # 하트비트가 만들어내는 꼴이다. 관계는
+  # tests/unit/streaming/test_stream_stage_heartbeat.py 가 네 실제 출처
+  # (수집기 YAML·코드 사본·이 값·execution.yaml 의 블록)에서 읽어 고정한다.
   #
-  # 비용: 60초면 6.5시간 세션당 서비스별 ~390줄(~80KB). json-file 10MB × 3 회전
-  # 기준 무시 가능하다.
+  # 비용(실측): 이 다섯 서비스에는 세션 게이트가 없어 24시간 폴링한다. 60초면
+  # 하루 1,440줄/서비스, 줄당 191~215B(로그 프리픽스 52B 포함) → 약 285KB/일,
+  # 5개 합쳐 ~1.4MB/일. json-file max-size 10m × max-file 3 기준 파일 하나가
+  # 차는 데 ~35일이라 무시 가능하다.
   heartbeat_interval_seconds: 60
 
 consumer:

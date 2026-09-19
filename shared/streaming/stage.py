@@ -42,22 +42,41 @@ from shared.streaming.audit import (
 
 logger = logging.getLogger(__name__)
 
-#: Hard ceiling on any heartbeat interval, in seconds — **not** a default.
-#:
-#: It mirrors ``config/f9_observation.yaml::observation_max_gap_seconds``
-#: (1800), which is the largest gap that harvester tolerates between two proofs
-#: before it renders a service ``stale_observation``. An interval at or above
-#: that bound would make healthy quiet sessions fail the very verdict this
-#: heartbeat exists to fix, so no supplier — YAML, env, or a direct constructor
-#: call — may cross it: ``_LivenessHeartbeat.__init__`` refuses it, which is
-#: the one place every supplier passes through.
+#: Mirror of ``config/f9_observation.yaml::observation_max_gap_seconds`` (1800):
+#: the largest gap that harvester tolerates between two proofs before it renders
+#: a service ``stale_observation``.
 #:
 #: It lives in code rather than being read from that YAML because a live
 #: consumer must not fail to start over an ops harvest config, and because a
 #: bound config can raise is not a bound. ``tests/unit/streaming/
 #: test_stream_stage_heartbeat.py`` reads both real sources and fails if this
-#: ceiling ever drifts above the harvester's.
-MAX_HEARTBEAT_INTERVAL_SECONDS = 1800.0
+#: copy ever drifts above the harvester's.
+#:
+#: **This is the gap bound, not the interval ceiling** — see
+#: :func:`max_heartbeat_interval_seconds`.
+OBSERVATION_MAX_GAP_SECONDS = 1800.0
+
+
+def max_heartbeat_interval_seconds(poll_block_seconds: float) -> float:
+    """Largest interval whose worst-case *observed gap* still clears the bound.
+
+    The harvester measures the gap between two emitted lines, not the configured
+    interval, and those are not the same number: a heartbeat becomes due during
+    a poll and is emitted only when the *next* poll returns, so an idle loop
+    adds a full ``xread_block_ms`` wait on top of the interval. An interval of
+    1799 with the shipped 2s block produces gaps of ~1801 — over the bound, and
+    ``stale_observation`` on a healthy day, which is the exact false verdict
+    this heartbeat exists to delete.
+
+    So the ceiling is derived, not chosen: subtract the block that is
+    *guaranteed* to be there on the idle path — the path this whole line is
+    about. A busy loop also spends handler time before the next poll returns,
+    which is unbounded and deliberately not modelled here: a handler that slow
+    is its own failure with its own evidence (``stream_message_processed``
+    durations, ``stream_message_failed``, pending backlog), not something an
+    interval ceiling can insure against.
+    """
+    return OBSERVATION_MAX_GAP_SECONDS - poll_block_seconds
 
 
 class StreamStageConfig(ServiceConfigBase):
@@ -78,14 +97,18 @@ class StreamStageConfig(ServiceConfigBase):
     _default_section: ClassVar[str] = "consumer_stage"
     _env_prefix: ClassVar[str] = "CONSUMER_STAGE_"
 
+    # `lt` is the coarse bound: a config cannot know a stage's xread_block_ms,
+    # so the exact per-stage ceiling (gap bound minus that block) is enforced
+    # where the value lands, in _LivenessHeartbeat.__init__. This catches the
+    # obviously-wrong value at the boundary; that catches the subtly-wrong one.
     heartbeat_interval_seconds: float = Field(
         default=60.0,
         gt=0,
-        lt=MAX_HEARTBEAT_INTERVAL_SECONDS,
+        lt=OBSERVATION_MAX_GAP_SECONDS,
         description=(
-            "Seconds between stream_consumer_alive heartbeats. Bounded above by "
-            "MAX_HEARTBEAT_INTERVAL_SECONDS "
-            "(config/f9_observation.yaml::observation_max_gap_seconds)."
+            "Seconds between stream_consumer_alive heartbeats. The observed gap "
+            "is this plus one poll block, and must clear "
+            "config/f9_observation.yaml::observation_max_gap_seconds."
         ),
     )
 
@@ -418,6 +441,7 @@ class _LivenessHeartbeat:
         worker_id: str,
         streams: Iterable[str | bytes],
         interval_seconds: float,
+        poll_block_seconds: float,
         clock: Callable[[], float] | None = None,
     ) -> None:
         # Checked here, not at the config boundary, because this is where every
@@ -425,12 +449,19 @@ class _LivenessHeartbeat:
         # passes its own value at the call site. A bound that only guarded the
         # shipped default would miss the case that actually breaks the harvest —
         # one service configured past it while the default stays innocent.
-        if not 0 < interval_seconds < MAX_HEARTBEAT_INTERVAL_SECONDS:
+        #
+        # `poll_block_seconds` has no default on purpose: the ceiling depends on
+        # it, and a caller that forgot to say how long its poll blocks would get
+        # a ceiling that is too loose by exactly the amount it forgot.
+        if poll_block_seconds < 0:
+            raise ValueError("poll_block_seconds must not be negative")
+        ceiling = max_heartbeat_interval_seconds(poll_block_seconds)
+        if not 0 < interval_seconds < ceiling:
             raise ValueError(
-                "heartbeat_interval_seconds must be >0 and "
-                f"<{MAX_HEARTBEAT_INTERVAL_SECONDS} "
-                "(config/f9_observation.yaml::observation_max_gap_seconds); "
-                f"got {interval_seconds}"
+                f"heartbeat_interval_seconds must be >0 and <{ceiling} "
+                f"(observation_max_gap {OBSERVATION_MAX_GAP_SECONDS} minus the "
+                f"{poll_block_seconds}s poll block, because the observed gap is "
+                f"the interval plus one block); got {interval_seconds}"
             )
         self.consumer_group = consumer_group
         self.worker_id = worker_id
@@ -527,6 +558,9 @@ class StreamStage(ABC):
                 if heartbeat_interval_seconds is None
                 else heartbeat_interval_seconds
             ),
+            # The heartbeat becomes due during a poll and is emitted when the
+            # next one returns, so the block is part of every observed gap.
+            poll_block_seconds=xread_block_ms / 1000,
             clock=heartbeat_clock,
         )
         self._stop = asyncio.Event()
@@ -811,6 +845,9 @@ class MultiStreamStage(ABC):
                 if heartbeat_interval_seconds is None
                 else heartbeat_interval_seconds
             ),
+            # The heartbeat becomes due during a poll and is emitted when the
+            # next one returns, so the block is part of every observed gap.
+            poll_block_seconds=xread_block_ms / 1000,
             clock=heartbeat_clock,
         )
         self._stop = asyncio.Event()

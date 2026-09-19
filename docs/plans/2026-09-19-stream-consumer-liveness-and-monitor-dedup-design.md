@@ -157,8 +157,8 @@ shared/streaming/stage.py
     - logger.info(format_audit_kv(
           event="stream_consumer_alive",
           consumer_group=..., streams=..., worker_id=...,
-          polls=<구간 폴링 수>, messages=<구간 소비 수>,
-          idle_seconds=<마지막 소비로부터 경과>))
+          polls=<구간 폴링 수>, messages=<구간 배달 수>,
+          seconds_since_delivery=<마지막 배달로부터 경과>))
 ```
 
 두 가지 성질이 중요하다:

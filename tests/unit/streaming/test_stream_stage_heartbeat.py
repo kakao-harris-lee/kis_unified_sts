@@ -24,12 +24,14 @@ import time
 import pytest
 
 import scripts.ops.f9_observation_harvest as harvest
+from services.order_router.config import Phase4ExecutionConfig
 from shared.streaming.stage import (
-    MAX_HEARTBEAT_INTERVAL_SECONDS,
+    OBSERVATION_MAX_GAP_SECONDS,
     MultiStreamStage,
     StreamStage,
     StreamStageConfig,
     _LivenessHeartbeat,
+    max_heartbeat_interval_seconds,
 )
 
 _INTERVAL = 60.0
@@ -329,12 +331,17 @@ async def test_multi_stream_heartbeat_names_every_input_stream(caplog):
 # --------------------------------------------------------------------------- #
 
 
+#: What every stage-based service polls with today (2000ms), in seconds.
+_SHIPPED_BLOCK = 2.0
+
+
 def _heartbeat(clock: _Clock, **kwargs) -> _LivenessHeartbeat:
     params = {
         "consumer_group": "g",
         "worker_id": "w",
         "streams": ("s:in",),
         "interval_seconds": _INTERVAL,
+        "poll_block_seconds": _SHIPPED_BLOCK,
         "clock": clock,
     }
     params.update(kwargs)
@@ -413,6 +420,7 @@ def test_default_clock_is_monotonic():
         worker_id="w",
         streams=("s:in",),
         interval_seconds=_INTERVAL,
+        poll_block_seconds=_SHIPPED_BLOCK,
     )
 
     assert beat._clock is time.monotonic
@@ -433,12 +441,15 @@ def test_non_positive_interval_is_refused(interval):
 @pytest.mark.parametrize(
     "interval",
     [
-        MAX_HEARTBEAT_INTERVAL_SECONDS,  # equal is already too loose: real gaps
-        MAX_HEARTBEAT_INTERVAL_SECONDS + 1,  # are the interval plus poll jitter
+        # 1799 + the shipped 2s block = a 1801s gap: over the bound, on a
+        # healthy day. The ceiling must exclude it.
+        1799.0,
+        OBSERVATION_MAX_GAP_SECONDS - _SHIPPED_BLOCK,  # the ceiling itself
+        OBSERVATION_MAX_GAP_SECONDS,
         2400.0,  # the value a service could plausibly configure
     ],
 )
-def test_interval_at_or_above_the_observation_bound_is_refused(interval):
+def test_interval_whose_observed_gap_would_exceed_the_bound_is_refused(interval):
     """The bound is enforced where every supplier lands, not on the default.
 
     A service adding ``heartbeat_interval_seconds: 2400`` to its config and
@@ -446,16 +457,63 @@ def test_interval_at_or_above_the_observation_bound_is_refused(interval):
     every healthy quiet day for that service read ``stale_observation``. The
     check lives in ``_LivenessHeartbeat.__init__``, so config, env and a direct
     constructor call are all caught.
+
+    The 1799 case is the subtler one and the reason the ceiling is derived
+    rather than set to the bound: what the harvester measures is the gap
+    between two lines, which is the interval *plus* the poll that closes it.
     """
     with pytest.raises(ValueError, match="heartbeat_interval_seconds"):
         _heartbeat(_Clock(), interval_seconds=interval)
 
 
+def test_interval_just_under_the_derived_ceiling_is_accepted():
+    """The ceiling is a bound, not a mood: one second under it must work."""
+    beat = _heartbeat(
+        _Clock(),
+        interval_seconds=max_heartbeat_interval_seconds(_SHIPPED_BLOCK) - 1,
+    )
+
+    assert beat.interval_seconds == OBSERVATION_MAX_GAP_SECONDS - _SHIPPED_BLOCK - 1
+
+
+def test_ceiling_shrinks_as_the_poll_block_grows():
+    """A stage that blocks longer gets a tighter ceiling, by exactly that much.
+
+    Nothing about 1800 changes; what changes is how much of it the poll spends.
+    """
+    assert max_heartbeat_interval_seconds(5.0) == OBSERVATION_MAX_GAP_SECONDS - 5.0
+
+    with pytest.raises(ValueError, match="heartbeat_interval_seconds"):
+        _heartbeat(_Clock(), interval_seconds=1795.0, poll_block_seconds=5.0)
+
+    accepted = _heartbeat(_Clock(), interval_seconds=1794.0, poll_block_seconds=5.0)
+    assert accepted.interval_seconds == 1794.0
+
+
+def test_negative_poll_block_is_refused():
+    """A negative block would *raise* the ceiling above the harvester's bound."""
+    with pytest.raises(ValueError, match="poll_block_seconds"):
+        _heartbeat(_Clock(), poll_block_seconds=-1.0)
+
+
 @pytest.mark.asyncio
 async def test_stage_refuses_a_configured_interval_above_the_bound():
-    """The seam services actually use is guarded, not just the primitive."""
+    """The seam services actually use is guarded, not just the primitive.
+
+    The 1799 case is checked at a production-shaped ``xread_block_ms`` (2000,
+    what all five services poll with), because that is the configuration in
+    which 1799 is wrong — and the one a service would plausibly ship.
+    """
     with pytest.raises(ValueError, match="heartbeat_interval_seconds"):
         _stage(FakeRedis(), _Clock(), heartbeat_interval_seconds=2400.0)
+
+    with pytest.raises(ValueError, match="heartbeat_interval_seconds"):
+        _stage(
+            FakeRedis(),
+            _Clock(),
+            xread_block_ms=2000,
+            heartbeat_interval_seconds=1799.0,
+        )
 
 
 @pytest.mark.asyncio
@@ -499,7 +557,7 @@ def test_out_of_bound_config_falls_back_to_the_field_default_with_a_warning(
         config.heartbeat_interval_seconds
         == StreamStageConfig.model_fields["heartbeat_interval_seconds"].default
     )
-    assert config.heartbeat_interval_seconds < MAX_HEARTBEAT_INTERVAL_SECONDS
+    assert config.heartbeat_interval_seconds < OBSERVATION_MAX_GAP_SECONDS
     assert _audit_records(caplog, "stream_stage_config_load_failed")
 
 
@@ -512,10 +570,11 @@ def test_configured_interval_stays_under_the_observation_gap_bound():
     would make healthy quiet sessions read ``stale_observation`` — the heartbeat
     manufacturing the false verdict it was added to remove.
 
-    Three real sources, no literals: the harvester's YAML, this package's code
-    ceiling, and the shipped value in ``config/streaming.yaml``. The middle
-    assertion is the one that keeps the ceiling honest — it is a copy of the
-    harvester's number, and a copy that may not drift upward.
+    Four real sources, no literals: the harvester's YAML, this package's copy of
+    its bound, the shipped interval in ``config/streaming.yaml``, and the
+    shipped poll block in ``config/execution.yaml``. The middle assertion is the
+    one that keeps the copy honest; the last two are the claim that matters —
+    the *gap*, interval plus block, clears the bound.
 
     ``from_yaml()`` rather than ``load()``: the shipped file is what this test
     guards, and ``load()``'s fallback would answer with the field default and
@@ -523,6 +582,8 @@ def test_configured_interval_stays_under_the_observation_gap_bound():
     """
     max_gap = harvest.load_observation_config().observation_max_gap_seconds
     shipped = StreamStageConfig.from_yaml().heartbeat_interval_seconds
+    shipped_block = Phase4ExecutionConfig.from_yaml().xread_block_ms / 1000
 
-    assert max_gap >= MAX_HEARTBEAT_INTERVAL_SECONDS
-    assert shipped < MAX_HEARTBEAT_INTERVAL_SECONDS
+    assert max_gap >= OBSERVATION_MAX_GAP_SECONDS
+    assert shipped + shipped_block < OBSERVATION_MAX_GAP_SECONDS
+    assert shipped < max_heartbeat_interval_seconds(shipped_block)
