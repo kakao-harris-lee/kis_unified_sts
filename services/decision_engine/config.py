@@ -3,9 +3,10 @@
 The shared market-risk ENTRY gate itself (mode / reaction matrix / staleness
 bound / Redis key) lives in ``shared/risk/market_risk_gate.py`` +
 ``config/market_risk_gate.yaml`` — that file's ``mode`` is the single
-off/shadow/enforce switch. This module owns only what the shared gate
-delegates to the decision_engine daemon: the throttle interval for its
-shadow-mode would-block observation log.
+off/shadow/enforce switch. This module owns what the shared gate delegates to
+the decision_engine daemon (the throttle interval for its shadow-mode
+would-block observation log) plus the daemon's own two observability
+intervals: the per-setup evaluation log and the liveness heartbeat.
 
 Futures-side mirror of
 ``services/stock_strategy/market_risk.py::MarketRiskGateWiringConfig``
@@ -29,6 +30,7 @@ from shared.config.base import ServiceConfigBase
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "DecisionEngineLivenessWiring",
     "DecisionEngineMarketRiskGateWiring",
     "DecisionEngineSetupEvalWiring",
 ]
@@ -117,6 +119,61 @@ class DecisionEngineSetupEvalWiring(ServiceConfigBase):
         except Exception:
             logger.warning(
                 "decision_engine.yaml setup_eval wiring load failed; using defaults",
+                exc_info=True,
+            )
+            return cls()
+
+
+class DecisionEngineLivenessWiring(ServiceConfigBase):
+    """Proof-of-work heartbeat wiring for the futures decision_engine.
+
+    The setup-eval INFO governed by :class:`DecisionEngineSetupEvalWiring` is
+    throttled per STATE CHANGE (``setup_eval_throttle_key(name, outcome,
+    reason)``): an unchanged verdict logs nothing however many cycles run, so
+    its silence says nothing about whether the daemon is alive. Measured on the
+    2026-09-18 harvest, a healthy producer emitted 21 in-session lines across
+    seven hours, one stretch of 4h44m emitting nothing at all. The daemon
+    therefore emits its own per-interval liveness line from the evaluation loop
+    (``services/decision_engine/main.py::_maybe_log_liveness``); see
+    ``docs/plans/2026-09-19-stream-consumer-liveness-and-monitor-dedup-design.md``
+    §2.1 and §4 row 2b.
+
+    ``log_interval_seconds`` MUST stay below
+    ``config/f9_observation.yaml::f9_observation.observation_max_gap_seconds``
+    — above it a healthy producer would read ``stale_observation`` once that
+    file stops exempting this service from freshness scoring (design §4 row 3).
+    ``tests/unit/decision_engine/test_liveness_heartbeat.py`` asserts the
+    relationship against both real files so the two cannot drift apart
+    silently.
+    """
+
+    _default_config_file: ClassVar[str] = "decision_engine.yaml"
+    _default_section: ClassVar[str] = "liveness"
+
+    log_interval_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        description=(
+            "Interval between decision_engine_alive heartbeat lines (seconds). "
+            "Must stay below f9_observation.observation_max_gap_seconds."
+        ),
+    )
+
+    @classmethod
+    def load_or_default(cls, path: str | None = None) -> DecisionEngineLivenessWiring:
+        """Load from YAML when available; defaults on any read/parse problem.
+
+        Same graceful-degradation contract as
+        :meth:`DecisionEngineMarketRiskGateWiring.load_or_default` — a missing
+        file, missing section, or malformed value never blocks daemon startup.
+        Degrading to the default here is strictly better than degrading to
+        silence: the heartbeat is what makes a wedged daemon visible.
+        """
+        try:
+            return cls.from_yaml(path)
+        except Exception:
+            logger.warning(
+                "decision_engine.yaml liveness wiring load failed; using defaults",
                 exc_info=True,
             )
             return cls()
