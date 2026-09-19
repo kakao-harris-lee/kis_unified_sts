@@ -13,6 +13,11 @@ override the optional hooks ``on_startup`` / ``pre_iteration_gate`` /
 
 Both loops emit a periodic ``stream_consumer_alive`` heartbeat so that a stage
 with no traffic still proves it is running — see :class:`_LivenessHeartbeat`.
+That evidence is emitted when a poll *returns*, so ``xread_block_ms`` must be
+positive: Redis' ``BLOCK 0`` blocks indefinitely, and an idle stage would then
+never come back to say anything. Of the five services only
+``services/order_router`` reads that value from config, and its field refuses
+``0`` for this reason; the other four pass a literal 2000.
 """
 
 from __future__ import annotations
@@ -384,13 +389,18 @@ class _LivenessHeartbeat:
     and ``seconds_since_delivery`` are recorded when Redis hands this worker
     entries, before ``handle_message`` runs, so a handler that keeps returning
     ``False`` — the supported "transient failure, leave it pending" contract —
-    still counts as delivery and still resets the delivery clock. That is
-    deliberate for a *liveness* signal: the loop did turn and Redis did answer,
-    which is exactly the claim being made. Whether the work succeeded is a
-    different claim with its own evidence (``stream_message_processed`` per
-    message, ``stream_message_failed`` on error, and the growing pending-entry
-    list a stuck handler leaves behind). A heartbeat must not be read as "this
-    consumer is making progress"; it says "this consumer is still there".
+    still counts as delivery and still resets the delivery clock. A handler
+    stuck that way has the *same* ``msg_id`` redelivered by XAUTOCLAIM every
+    ``pending_retry_idle_ms``, and each redelivery counts again, so a wedged
+    consumer can sit at ``messages=1 seconds_since_delivery=0`` indefinitely
+    with nothing acked. That is deliberate for a *liveness* signal: the loop
+    did turn and Redis did answer, which is exactly the claim being made.
+    Whether the work succeeded is a different claim with its own evidence
+    (``stream_message_processed`` per message, ``stream_message_failed`` on
+    error, and the pending-entry list a stuck handler grows). A heartbeat must
+    not be read as "this consumer is making progress" — and an alert must not
+    be keyed on ``seconds_since_delivery`` staying low, which is precisely what
+    that wedged loop looks like; it says only "this consumer is still there".
 
     Deliberately not built on :class:`RateLimitedLog`. That primitive reports
     an exception with its traceback, counts what it suppressed, and treats

@@ -27,5 +27,12 @@ class Phase4ExecutionConfig(ServiceConfigBase):
     eod_kst_minute: int = Field(default=10, ge=0, le=59)
     base_quantity: int = Field(default=1, ge=1)
     final_stream_maxlen: int = Field(default=10_000, ge=100)
-    xread_block_ms: int = Field(default=2000, ge=0)
+    # gt, not ge: XREADGROUP BLOCK 0 blocks indefinitely, so an idle daemon
+    # would never return from the read — and since PR #765 the consume loop's
+    # liveness heartbeat is emitted when a poll returns, a legal `0` here would
+    # silence a perfectly healthy process. The failure direction is safe (false
+    # dead, never false alive) but there is no reason to keep the value legal:
+    # nothing sets it (config/execution.yaml ships 2000; the other four stage
+    # services hardcode 2000 inline).
+    xread_block_ms: int = Field(default=2000, gt=0)
     xread_batch_size: int = Field(default=10, ge=1)

@@ -400,6 +400,24 @@ def test_seconds_since_delivery_measures_the_silence_since_the_last_message(capl
     assert [record["seconds_since_delivery"] for record in records] == ["60", "120"]
 
 
+def test_default_clock_is_monotonic():
+    """The un-injected path is the one that ships, so pin it.
+
+    Every other test here supplies a clock, which means a default of
+    ``time.time`` would leave the whole suite green while an NTP step or a DST
+    change moved the interval under a live consumer. A heartbeat measures a
+    duration; only a monotonic source measures durations.
+    """
+    beat = _LivenessHeartbeat(
+        consumer_group="g",
+        worker_id="w",
+        streams=("s:in",),
+        interval_seconds=_INTERVAL,
+    )
+
+    assert beat._clock is time.monotonic
+
+
 @pytest.mark.parametrize("interval", [0.0, -1.0])
 def test_non_positive_interval_is_refused(interval):
     """0 would emit on every poll — thousands of lines a second on a busy stage."""
