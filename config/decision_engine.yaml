@@ -37,3 +37,27 @@ setup_eval:
   # (shared.risk.log_throttle.setup_eval_throttle_key). Redis publishing is
   # never throttled; only the log line is.
   log_interval_seconds: 300.0
+
+# Producer liveness heartbeat (event=decision_engine_alive), emitted from
+# DecisionEngineDaemon's evaluation loop — see
+# docs/plans/2026-09-19-stream-consumer-liveness-and-monitor-dedup-design.md
+# §2.1 / §4 row 2b.
+#
+# WHY this is not the setup_eval line above: that one is throttled per STATE
+# CHANGE, so an unchanged verdict logs nothing however many cycles run. Its
+# silence carries no information at any timescale. Measured on the 2026-09-18
+# harvest (reports/f9-gate1), a HEALTHY producer emitted 21 in-session lines
+# across seven hours, including one 4h44m stretch emitting nothing.
+liveness:
+  # MUST stay below config/f9_observation.yaml::f9_observation.
+  # observation_max_gap_seconds (1800). Above it, a healthy producer would read
+  # `stale_observation` the moment that file stops exempting this service from
+  # freshness scoring by name (design §4 row 3). The relationship is asserted
+  # against both real files by
+  # tests/unit/decision_engine/test_liveness_heartbeat.py, so the two cannot
+  # drift apart silently.
+  #
+  # Cost at 60s: a 6.5h (23,400s) session emits at most 390 lines. That is the
+  # dominant term in this container's log volume (the real 2026-09-18 producer
+  # log held 21 in-session lines) and still negligible.
+  log_interval_seconds: 60.0
