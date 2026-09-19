@@ -141,9 +141,12 @@ def _make_driver(
 
 
 def _incident_candidate_count(evidence_store: SqliteEvidenceStore) -> int:
-    return evidence_store.connection.execute(
+    row = evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = 'INCIDENT_CANDIDATE'"
-    ).fetchone()[0]
+    ).fetchone()
+    count = row[0]
+    assert isinstance(count, int), f"COUNT(*) returned {type(count).__name__}"
+    return count
 
 
 def test_restrictive_result_latches_new_risk_halt(

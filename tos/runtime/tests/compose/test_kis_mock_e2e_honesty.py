@@ -244,15 +244,21 @@ def _verify_item_payloads(runtime) -> list[dict[str, Any]]:
 
 
 def _evidence_kind_count(runtime, kind: str) -> int:
-    return runtime.evidence_store.connection.execute(
+    row = runtime.evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = ?", (kind,)
-    ).fetchone()[0]
+    ).fetchone()
+    count = row[0]
+    assert isinstance(count, int), f"COUNT(*) returned {type(count).__name__}"
+    return count
 
 
 def _evidence_kind_like_count(runtime, pattern: str) -> int:
-    return runtime.evidence_store.connection.execute(
+    row = runtime.evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind LIKE ?", (pattern,)
-    ).fetchone()[0]
+    ).fetchone()
+    count = row[0]
+    assert isinstance(count, int), f"COUNT(*) returned {type(count).__name__}"
+    return count
 
 
 def _evidence_row_order(runtime, kind: str) -> int | None:
