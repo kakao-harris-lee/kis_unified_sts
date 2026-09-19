@@ -61,6 +61,7 @@ from shared.execution.passive_maker import PassiveMaker
 from shared.execution.pseudo_oco import PseudoOCO
 from shared.execution.slippage_control import ExecutionAction, quote_age_seconds
 from shared.execution.tick_math import _compute_slippage_ticks
+from shared.observability.logging_setup import configure_logging
 from shared.streaming.stage import StreamStage
 
 # Same env-var contract as services/futures_monitor/main.py — both daemons must
@@ -1291,12 +1292,7 @@ async def _build_and_run() -> int:
 
 
 def main() -> int:
-    import logging
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    configure_logging()
     return asyncio.run(_build_and_run())
 
 

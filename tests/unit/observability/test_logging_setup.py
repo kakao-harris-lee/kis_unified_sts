@@ -82,3 +82,69 @@ def test_valid_value_logs_no_fallback_warning(
         configure_logging()
 
     assert caplog.text == ""
+
+
+# --- override_env: a service-specific knob that outranks LOG_LEVEL ------------
+
+
+def test_override_env_wins_over_log_level(
+    monkeypatch: pytest.MonkeyPatch, restore_root_log_level: logging.Logger
+) -> None:
+    """The narrower knob decides: naming one service means that service."""
+    monkeypatch.setenv("LOG_LEVEL", "WARNING")
+    monkeypatch.setenv("SERVICE_LOG_LEVEL", "DEBUG")
+
+    assert configure_logging(override_env="SERVICE_LOG_LEVEL") == logging.DEBUG
+
+
+def test_log_level_applies_when_override_is_unset(
+    monkeypatch: pytest.MonkeyPatch, restore_root_log_level: logging.Logger
+) -> None:
+    monkeypatch.setenv("LOG_LEVEL", "ERROR")
+    monkeypatch.delenv("SERVICE_LOG_LEVEL", raising=False)
+
+    assert configure_logging(override_env="SERVICE_LOG_LEVEL") == logging.ERROR
+
+
+def test_blank_override_defers_to_log_level_without_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    restore_root_log_level: logging.Logger,
+) -> None:
+    """Compose renders an unset override as ``""`` (``"${VAR:-}"``).
+
+    Blank therefore means "not configured", not "misconfigured" — warning on
+    it would put a spurious line in every container's startup output.
+    """
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    monkeypatch.setenv("SERVICE_LOG_LEVEL", "")
+
+    with caplog.at_level(logging.WARNING, logger="shared.observability.logging_setup"):
+        assert configure_logging(override_env="SERVICE_LOG_LEVEL") == logging.DEBUG
+
+    assert caplog.text == ""
+
+
+def test_typo_in_override_falls_through_to_log_level_with_a_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    restore_root_log_level: logging.Logger,
+) -> None:
+    """A misspelled override must not also swallow a good ``LOG_LEVEL``."""
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    monkeypatch.setenv("SERVICE_LOG_LEVEL", "DEBGU")
+
+    with caplog.at_level(logging.WARNING, logger="shared.observability.logging_setup"):
+        assert configure_logging(override_env="SERVICE_LOG_LEVEL") == logging.DEBUG
+
+    assert "SERVICE_LOG_LEVEL" in caplog.text
+    assert "DEBGU" in caplog.text
+
+
+def test_both_unparseable_falls_back_to_info(
+    monkeypatch: pytest.MonkeyPatch, restore_root_log_level: logging.Logger
+) -> None:
+    monkeypatch.setenv("LOG_LEVEL", "loud")
+    monkeypatch.setenv("SERVICE_LOG_LEVEL", "BASIC_FORMAT")
+
+    assert configure_logging(override_env="SERVICE_LOG_LEVEL") == logging.INFO

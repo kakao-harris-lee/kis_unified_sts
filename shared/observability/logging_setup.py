@@ -35,7 +35,32 @@ def _lookup_level(raw: str | None) -> int | None:
     return logging.getLevelNamesMapping().get(raw.strip().upper())
 
 
-def configure_logging(*, fmt: str = DEFAULT_FORMAT) -> int:
+def _resolve_level(env_names: tuple[str, ...]) -> tuple[int, list[tuple[str, str]]]:
+    """Return the first level named by *env_names*, plus the values to complain about.
+
+    Sources are consulted in order and the first one that names a level wins.
+    A variable that is absent **or blank** is "not configured" and is skipped
+    silently: compose renders an unset override as ``""`` (``"${VAR:-}"``), so
+    warning on blank would put a spurious line in every container's startup.
+    A variable that is set to a non-blank non-level is a typo worth a warning,
+    and the search continues to the next source rather than jumping to INFO —
+    a misspelled service override must not also swallow a good ``LOG_LEVEL``.
+    """
+    complaints: list[tuple[str, str]] = []
+    for name in env_names:
+        raw = os.environ.get(name)
+        if raw is None or not raw.strip():
+            continue
+        named = _lookup_level(raw)
+        if named is not None:
+            return named, complaints
+        complaints.append((name, raw))
+    return DEFAULT_LEVEL, complaints
+
+
+def configure_logging(
+    *, fmt: str = DEFAULT_FORMAT, override_env: str | None = None
+) -> int:
     """Configure root logging from ``LOG_LEVEL``, defaulting to INFO.
 
     The root level is set explicitly rather than left to ``basicConfig``, which
@@ -43,23 +68,28 @@ def configure_logging(*, fmt: str = DEFAULT_FORMAT) -> int:
 
     Args:
         fmt: Format string for the root handler.
+        override_env: Name of a service-specific level variable that takes
+            precedence over ``LOG_LEVEL``. The narrower knob wins by
+            convention: an operator who sets one service's level means that
+            service, not the whole stack. Used by the stream exporter to keep
+            its pre-existing ``STREAM_EXPORTER_LOG_LEVEL`` authoritative.
 
     Returns:
         The effective root logger level. Never raises on a bad value.
     """
-    raw = os.environ.get(LOG_LEVEL_ENV)
-    named = _lookup_level(raw)
-    level = DEFAULT_LEVEL if named is None else named
+    sources = (override_env, LOG_LEVEL_ENV) if override_env else (LOG_LEVEL_ENV,)
+    level, complaints = _resolve_level(sources)
 
     logging.basicConfig(level=level, format=fmt)
     logging.getLogger().setLevel(level)
 
-    if raw is not None and named is None:
+    for name, raw in complaints:
         # Warned only after logging is configured, or the complaint about the
         # bad value would itself go nowhere.
         logger.warning(
-            "%s=%r is not a log level name; falling back to INFO",
-            LOG_LEVEL_ENV,
+            "%s=%r is not a log level name; ignoring it (effective level: %s)",
+            name,
             raw,
+            logging.getLevelName(level),
         )
     return logging.getLogger().level

@@ -27,6 +27,7 @@ from prometheus_client import Counter, Gauge, start_http_server
 
 from shared.exceptions import InfrastructureError, ValidationError
 from shared.models.stream_models import MarketTickMessage
+from shared.observability.logging_setup import configure_logging
 from shared.streaming.client import RedisClient
 from shared.streaming.codec import StreamDecodeError, decode
 
@@ -483,12 +484,24 @@ class StreamExporter:
                 continue
 
 
-def _setup_logging() -> None:
-    level_name = os.getenv("STREAM_EXPORTER_LOG_LEVEL", "INFO").upper()
-    level = getattr(logging, level_name, logging.INFO)
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+def _setup_logging() -> int:
+    """Configure logging from STREAM_EXPORTER_LOG_LEVEL, else LOG_LEVEL.
+
+    Precedence: the service-specific knob wins over the stack-wide one, the
+    conventional direction — an operator who names this exporter means this
+    exporter, not every daemon. Either may be blank (compose renders an unset
+    override as ``""``); a blank one is simply not configured and defers.
+
+    STREAM_EXPORTER_LOG_LEVEL predates ``LOG_LEVEL`` here and stays
+    authoritative on purpose: it is a live operator-facing knob, so dropping
+    it in favour of the shared one would be a silent regression (#753).
+
+    Returns:
+        The effective root logger level.
+    """
+    return configure_logging(
+        fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        override_env="STREAM_EXPORTER_LOG_LEVEL",
     )
 
 

@@ -139,8 +139,8 @@ async def recover_missing_consumer_group(
         )
     elif ensured is ConsumerGroupEnsure.EXISTED:
         # Not an incident: the caller swept a healthy sibling stream, so this
-        # stays below the operator's log at the shipped LOG_LEVEL=INFO. Both
-        # monitor daemons now honour LOG_LEVEL (their _setup_logging ->
+        # stays below the operator's log at the shipped LOG_LEVEL=INFO. Every
+        # daemon entrypoint honours LOG_LEVEL (#751, via
         # shared.observability.logging_setup.configure_logging), so surfacing
         # this line is a compose env change, not a code edit and image rebuild.
         # What the daemons actually act on is the returned outcome, not this
