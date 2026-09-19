@@ -65,8 +65,16 @@
 - 런북 §9.4 P-BAL 기입면(`position_balance_margin` completeness/pagination 슬롯) 판정은 `docs/broker-profiles/`·tos-spec 템플릿 소관 — 판정 전까지 P-BAL 값은 아티팩트 안에만.
 - INSTANCE REAL_PROD 문서 `_model_view` 는 2026-09-10 보강 완료(`cc1a90e9`) — 프로브와 무관.
 - **드라이런 프리플라이트 (2026-09-19, main `600ee3f4`)** — 서버에 앉기 전에 러너가 멀쩡한지 확인해 둔 결과. `--confirm` 을 빼면 코드가 브로커에 접촉하지 않으므로(§1-8) 이 확인 자체는 무해하다.
-  - `--list` → 프로브 **22종** 등재(`P-CA`·`N-19` 포함). `--coverage` → `canonical_12` + `census_4`, total 22.
+  - `--list` → 프로브 **22종** 등재(`P-CA`·`N-19` 포함). `--coverage` → `canonical_12` **12종** + `census_4` **4종**, `total: 22` — **12+4 는 16 이고 총합이 아니다.** 나머지 6종(P-NMPR·P-BAL·P-R5-PRE·P-R5·N-19·P-CA)은 두 버킷 **밖**에 있으면서 total 에 들어간다.
   - §2 의 8개 명령(P-8 · P-15 · N-15 · P-BAL · P-EXT · N-16 · N-18 · P-CA) 전부 인자 파싱 통과, prereq 패널 정상 출력, 브로커 무접촉.
   - `--event-class` 대문자(`CASH_DIVIDEND`)는 **즉시 거부**된다 — 위 §2 순서 4 에 유효값 7종을 열거해 둔 이유.
-  - `P-BAL --asset futures --env mock` 은 **설계상 skip**(모의 선물잔고 미지원 · `shared/kis/client.py:1026 NOTE`, 가드 `:1031-1033`) — §2 가 「2번 모의 주식만」이라고 한 것이 맞다.
-  - 확인하지 못한 것: `--symbol` 에 넣을 **mini 근월물 코드**는 시세 접근이 필요해 개발 측에서 정할 수 없다. 운영자가 실행 직전 확인해 채운다(런북 `:748` — 예시 `A05608` 은 2026-08-13 만기).
+  - `P-BAL --asset futures --env mock` 은 **설계상 skip**(모의 선물잔고 미지원) — §2 가 「2번 모의 주식만」이라고 한 것이 맞다. 근거는 `shared/kis/client.py` 의 NOTE `"모의서버는 선물 잔고조회 미지원. is_real=True 필수"` **:1040** 과 그 아래 가드 `if not self.config.is_real: … return []` **:1055-1057** 이다. ⚠ **프로브 소스의 인용 줄 번호는 전부 낡았다** — `probes_balance.py:162-163` 은 `:1026`/`:1031-1033`, `probes_ca.py:49-50` 은 `:1031`/`:1047`, `probes_real.py:169` 는 `:1030-1032` 로 **셋이 서로 다르고 셋 다 실제와 어긋난다.** 러너 prereq 패널도 그 낡은 값을 출력하므로 그대로 믿지 말 것(주장의 실체는 맞다).
+  - **`--symbol` 의 mini 근월물 코드는 개발 측이 낼 수 있다** — 저장소에 순수 캘린더 함수가 있고 브로커·시세 접근이 전혀 없다:
+
+    ```bash
+    python -c "from shared.instruments.futures import get_front_month_code; \
+               print(get_front_month_code(product='mini'))"
+    # 2026-09-19 실행 → A05610
+    ```
+
+    런타임도 같은 원천을 쓴다 — Redis DB1 `futures:contract:latest` 의 `front_symbol` 이 calendar 소스이고(`kis-capability-probes.md:747`), `services/futures_contract/main.py:93` 이 `source = "manual_override" if … else "calendar"` 로 확인해 준다. 실행 **당일** 값을 다시 뽑아 쓸 것(문서에 남아 있는 예시 `A05608` 은 2026-08-13 만기 — `kis-capability-probes.md:750`).
