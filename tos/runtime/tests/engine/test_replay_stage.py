@@ -55,7 +55,11 @@ class _RecordingStage:
 
     def __call__(self, request: StageRequest) -> StageVerdict:
         self.captured.append(request)
-        return self.inner(request)  # type: ignore[operator]
+        result = self.inner(request)  # type: ignore[operator]
+        assert isinstance(
+            result, StageVerdict
+        ), f"wrapped stage returned {type(result).__name__}"
+        return result
 
 
 def _driver(

@@ -232,9 +232,12 @@ def _admissible_corporate_action() -> NonTradeObservation:
 
 
 def _incident_candidate_count(runtime) -> int:
-    return runtime.evidence_store.connection.execute(
+    row = runtime.evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = 'INCIDENT_CANDIDATE'"
-    ).fetchone()[0]
+    ).fetchone()
+    count = row[0]
+    assert isinstance(count, int), f"COUNT(*) returned {type(count).__name__}"
+    return count
 
 
 def _latest_session_facts_observed_payload(runtime) -> dict:
@@ -243,7 +246,11 @@ def _latest_session_facts_observed_payload(runtime) -> dict:
         "ORDER BY rowid DESC LIMIT 1"
     ).fetchone()
     assert row is not None, "expected at least one SESSION_FACTS_OBSERVED row"
-    return json.loads(row[0])["payload"]
+    payload = json.loads(row[0])["payload"]
+    assert isinstance(
+        payload, dict
+    ), f"SESSION_FACTS_OBSERVED payload is {type(payload).__name__}"
+    return payload
 
 
 # ============================================================================
@@ -565,9 +572,12 @@ def test_m7_mutation_bypassing_observe_nontrade_never_latches(
 
 
 def _queued_until_recovery_count(runtime) -> int:
-    return runtime.evidence_store.connection.execute(
+    row = runtime.evidence_store.connection.execute(
         "SELECT COUNT(*) FROM entries WHERE kind = 'NONTRADE_QUEUED_UNTIL_RECOVERY'"
-    ).fetchone()[0]
+    ).fetchone()
+    count = row[0]
+    assert isinstance(count, int), f"COUNT(*) returned {type(count).__name__}"
+    return count
 
 
 def test_barrier_held_queues_the_observation_then_drains_and_latches_once_recovered(
