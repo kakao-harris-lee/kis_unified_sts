@@ -47,6 +47,7 @@ from shared.config.loader import ConfigLoader
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.decision.context import MarketContext
 from shared.decision.setup_base import Setup
+from shared.observability.logging_setup import configure_logging
 from shared.portfolio.config import track_for_asset_class
 from shared.risk.gate_decision_record import (
     GateDecisionRecord,
@@ -1201,12 +1202,7 @@ async def _build_and_run() -> int:
 
 
 def main() -> int:
-    import logging
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    configure_logging()
     return asyncio.run(_build_and_run())
 
 
