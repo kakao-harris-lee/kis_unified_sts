@@ -42,7 +42,11 @@ f9_observation:
   # sparse shadow traffic does not trip it, short enough that a wedged consumer
   # is named for the same session rather than a week later. It bounds three
   # gaps — open to the first proof, between consecutive proofs, and the last
-  # proof to the close.
+  # proof to the close — each of which must be at or under this value (a gap of
+  # exactly 1800s passes).
+  #
+  # It applies only to services with `freshness_scored: true` (the default).
+  # See futures-decision-engine below for why the producer is not one of them.
   #
   # NOTE: the idle path emits nothing at any log level today
   # (shared/streaming/stage.py: xreadgroup -> no messages -> post_poll ->
@@ -64,6 +68,40 @@ f9_observation:
       # the "--tail caveat" in docs/runbooks/futures-pipeline-cutover-f9.md.
       harvest_mode: tail
       harvest_tail: 900
+      # NOT scored against observation_max_gap_seconds, and no per-service bound
+      # is offered in its place. The reason is structural, not a complaint about
+      # the number.
+      #
+      # A consumer's proof (`stream_message_processed`) is emitted once per
+      # message in shared/streaming/stage.py, so it is traffic-driven: given
+      # traffic, silence between two proofs is a real claim about the consumer.
+      # This producer's proof is the setup-evaluation INFO below, and
+      # shared/strategy/entry/setup_eval_publisher.py emits it once per *state
+      # change* (setup_eval_throttle_key(name, outcome, reason)) — an unchanged
+      # verdict logs nothing however many cycles run. Silence therefore carries
+      # no information about liveness at any timescale, and a bound over it
+      # would assert something the emitter cannot support.
+      #
+      # Measured on the two real harvests (08:45-15:45, in-session):
+      #   2026-09-11  observed 24, worst gap 11235s | +blind 36, worst 11235s
+      #   2026-09-18  observed 10, worst gap 17050s | +blind 20, worst 17050s
+      # Widening the proof set to `observed + blind` moves the worst gap by zero
+      # on both days — the blind set is sparser — so there is no pattern to
+      # promote. A bound loose enough to pass (~18000s) would assert only
+      # "proved itself once in some five-hour window", i.e. <=2 proofs per
+      # session, fitted to one sample it clears by 5%. The zero-proof case it
+      # looks like it guards is already caught: `not observed` -> no_evidence.
+      #
+      # 09-11 looks denser only because 374 of its 422 in-session lines are the
+      # per-cycle `prev_close: no daily bar data` WARNING that PR #668 removed.
+      # 09-18 — 21 timestamped lines across seven hours, including one 4h44m
+      # stretch emitting nothing — is the current shape of a healthy producer.
+      #
+      # The fix is an emission, not a threshold: this producer needs its own
+      # liveness line. A heartbeat in shared/streaming/stage.py's idle branch
+      # does NOT reach it — services/decision_engine does not go through
+      # stage.py at all.
+      freshness_scored: false
       observed:
         # One line per setup-evaluation state change: proof the daemon had a
         # market context and ran the setup against it.

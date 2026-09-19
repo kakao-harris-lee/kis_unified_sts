@@ -69,23 +69,28 @@ def day_dir(config: mod.ObservationConfig) -> Path:
 
 
 def bracket(service: str) -> list[str]:
-    """One innocuous line making a harvest file reach back to 08:00.
+    """One innocuous line at the open, so an otherwise silent file still parses.
 
-    It matches no ``observed`` and no ``blind`` pattern — it exists only so the
-    file *testifies* from 08:00, the way a real uninterrupted ``--since 08:00``
-    harvest does. Coverage is a property of the file, not of the service's
-    health, and every case that is not specifically about a coverage hole gets
-    it.
+    It matches no ``observed`` and no ``blind`` pattern — it exists only so a
+    file with nothing else in it reads as ``silent where harvested`` rather than
+    as an empty harvest.
 
-    There is deliberately no closing banner. A trailing
+    It used to be stamped ``08:00:00``, which handed **every** healthy fixture
+    45 minutes of pre-open coverage that production does not produce: a real
+    ``--since 08:00`` consumer's first line lands whenever it first logs. That
+    is precisely why the head boundary went untested until a reviewer moved a
+    real first line by ten seconds — ``08:44:55`` read COMPLETE and
+    ``08:45:05`` read ``PARTIAL — no evidence <=08:45``. The ``--since`` floor
+    is now supplied by ``FileEvidence.covers_from``, from config, where it
+    belongs; fixtures must not smuggle it in.
+
+    There is deliberately no closing banner either. A trailing
     ``2026-09-18 15:55:00 … shutting down`` is what made these fixtures encode
-    the defect as correct: two banners plus ONE ``stream_message_processed``
-    rendered a whole session ``consumed (COMPLETE)``. The file's coverage now
-    reaches its ``<HHMMSS>`` harvest stamp on its own, so proving a service
-    *worked* takes proof-of-consumption spread across the session — which is
-    what ``observed_through`` writes.
+    the original defect as correct: two banners plus ONE
+    ``stream_message_processed`` rendered a whole session ``consumed
+    (COMPLETE)``.
     """
-    return [f"2026-09-18 08:00:00,000 INFO __main__ {service} starting worker=w-1"]
+    return [f"2026-09-18 08:45:00,000 INFO __main__ {service} starting worker=w-1"]
 
 
 def write_log(
@@ -197,7 +202,9 @@ def consumed_through(service: str) -> list[str]:
     ]
 
 
-def healthy_producer(day_dir: Path, *, candidates: int = 0) -> None:
+def healthy_producer(
+    day_dir: Path, *, candidates: int = 0, stamp: str = "155535"
+) -> None:
     """A decision engine that demonstrably evaluated ACROSS the session.
 
     The real daemon logs one state line per cycle, so a producer that evaluated
@@ -216,7 +223,7 @@ def healthy_producer(day_dir: Path, *, candidates: int = 0) -> None:
         for index, minute in enumerate(session_minutes())
     ]
     lines += [signal_published(30 + i, f"sig{i}") for i in range(candidates)]
-    write_log(day_dir, "futures-decision-engine", lines)
+    write_log(day_dir, "futures-decision-engine", lines, stamp=stamp)
 
 
 def live_consumers(day_dir: Path, *, skip: tuple[str, ...] = ()) -> None:
@@ -685,14 +692,16 @@ def test_a_failed_capture_taints_the_service_even_beside_a_good_one(
 # ---------------------------------------------------------------------------
 
 
-def test_log_starting_after_the_open_cannot_be_consumed(
+def test_a_since_log_starting_after_the_open_is_still_caught_as_unproven(
     config: mod.ObservationConfig, day_dir: Path
 ) -> None:
-    """Rotation drops the OLDEST lines, so it destroys early-session blindness.
+    """A monitor that proves itself only near the close is still not ``consumed``.
 
-    The reviewer's reproduction of HIGH 3: a monitor blind all morning whose
-    rotated log keeps one late ``stream_message_processed`` used to render
-    ``consumed``, day ``COMPLETE``, counts bare.
+    It used to be caught as a **coverage** hole: any head later than the open
+    was unknown territory. That rule was too strong for ``--since``, whose floor
+    is known (see the head-boundary test below), so this case now lands on the
+    freshness bound instead — the leading 08:45-15:25 stretch is unproven. The
+    defence survives the change; the label is the truthful one.
     """
     healthy_producer(day_dir, candidates=1)
     live_consumers(day_dir, skip=("futures-monitor",))
@@ -710,13 +719,44 @@ def test_log_starting_after_the_open_cannot_be_consumed(
     row = row_of(config, result)
     monitor = next(s for s in result.services if s.name == "futures-monitor")
 
-    assert monitor.status == mod.STATUS_PARTIAL_COVERAGE
+    assert monitor.status == mod.STATUS_STALE_OBSERVATION
     assert monitor.observed_count == 2
-    assert not monitor.covers_session
     assert result.verdict == mod.VERDICT_PARTIAL
-    assert "futures-monitor consumed, harvest does not span the session" in row
-    assert "no evidence 08:45-15:25" in row
+    assert "futures-monitor consumed, no proof of consumption 08:45-15:25" in row
     assert "UNQUALIFIED" in row
+
+
+def test_a_since_harvest_whose_first_line_lands_after_the_open_is_complete(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """The head boundary, on the real ``--since 08:00`` contract.
+
+    The reviewer's probe: same fixture, first timestamp moved ten seconds.
+    ``08:44:55`` read ``COMPLETE`` and ``08:45:05`` read
+    ``PARTIAL — no evidence <=08:45``, though the harvest ran ``--since 08:00``,
+    45 minutes before the open. "The harvest does not span the session" was
+    simply false; the service was quiet. The real
+    ``futures-risk-filter.113330.log`` (146 bytes, first line 09:47) is this
+    case, and every healthy day whose first line lands a second late was it too.
+    """
+    healthy_producer(day_dir)
+    for service in CONSUMERS:
+        stream, group = CONSUMER_STREAMS[service]
+        lines = [
+            processed(minute, stream, group, f"{group}-{minute}")
+            for minute in session_minutes(config)
+        ]
+        # 08:45:05 — five seconds after the open, 45 minutes after the floor.
+        lines[0] = lines[0].replace("08:45:00,000", "08:45:05,000")
+        write_log(day_dir, service, lines, cover=False)
+
+    result = observe(config)
+    row = row_of(config, result)
+
+    assert result.verdict == mod.VERDICT_COMPLETE
+    assert "4/4 consumed (COMPLETE)" in row
+    assert "no evidence" not in row
+    assert all(s.covers_session for s in result.services if s.name in SCORED)
 
 
 def test_tail_capped_harvest_inside_the_session_cannot_be_consumed(
@@ -811,11 +851,13 @@ def test_uncovered_tail_is_named_rather_than_ending_the_window(
     monitor = next(s for s in result.services if s.name == "futures-monitor")
 
     assert monitor.status == mod.STATUS_BLIND
-    assert "futures-monitor BLIND 08:45-11:33 (no evidence 11:33-15:45)" in row
-    assert [
-        (start.strftime("%H:%M"), end.strftime("%H:%M"))
-        for start, end in monitor.uncovered
-    ] == [("11:33", "15:45")]
+    # The post-recreate file anchors at the `--since` floor, so the 11:33-15:45
+    # hole is no longer rendered as missing coverage — that is the stated cost
+    # of the head rule. What must NOT happen is the row reading as if blindness
+    # ended at 11:33, and it does not: the unproven stretch is named beside it.
+    assert (
+        "futures-monitor BLIND 08:45-11:33, no proof of consumption 08:45-15:45" in row
+    )
 
 
 def test_single_observation_window_renders_open_ended(
@@ -839,11 +881,12 @@ def test_single_observation_window_renders_open_ended(
 
     row = row_of(config, observe(config))
     assert "futures-risk-filter BLIND <=09:47" in row
-    # One gap, not the two adjacent ones a point-coverage span used to produce:
-    # the file's span now runs from its line to the 15:55:35 harvest stamp, so
-    # only the morning before that line is uncovered.
-    assert "no evidence 08:45-09:47" in row
-    assert "09:47-15:45" not in row
+    # The file's span now runs from the `--since` floor to the 15:55:35 harvest
+    # stamp, so nothing is uncovered; the morning is quiet, not unwatched.
+    assert "no evidence" not in row
+    # Blindness dated at 09:47 must not read as an early hiccup on a service
+    # that never proved itself at all.
+    assert "no proof of consumption 08:45-15:45" in row
 
 
 # ---------------------------------------------------------------------------
@@ -911,14 +954,19 @@ def test_two_banners_and_one_processed_line_are_not_a_consumed_session(
     monitor = next(s for s in result.services if s.name == "futures-monitor")
 
     assert result.verdict == mod.VERDICT_PARTIAL
-    assert statuses(result) == dict.fromkeys(SCORED, mod.STATUS_STALE_OBSERVATION)
+    assert statuses(result) == {
+        # The producer's proof is state-change throttled, so its silence is not
+        # scored — see the producer-freshness test below.
+        "futures-decision-engine": mod.STATUS_CONSUMED,
+        **dict.fromkeys(CONSUMERS, mod.STATUS_STALE_OBSERVATION),
+    }
     # The harvest DID span the session — that is exactly why coverage alone
     # could never have caught this.
     assert monitor.covers_session is True
     assert monitor.observation_is_fresh is False
     assert monitor.observed_count == 1
-    assert "0/4 consumed" in row
-    assert "futures-monitor consumed, but no proof of consumption 08:46-15:45" in row
+    assert "1/4 consumed" in row
+    assert "futures-monitor consumed, no proof of consumption 08:46-15:45" in row
     assert "UNQUALIFIED" in row
     assert (
         mod.build_sidecar(result, row)["counters"]["qualified"] is False
@@ -1015,16 +1063,404 @@ def test_a_quiet_half_minute_before_the_close_is_not_a_coverage_hole(
     assert all(s.covers_session for s in result.services if s.name in SCORED)
 
 
-def test_a_file_whose_head_was_rotated_away_still_loses_that_head(
+def test_a_tail_harvested_file_whose_head_was_rotated_away_still_loses_that_head(
     config: mod.ObservationConfig, day_dir: Path
 ) -> None:
-    """The tail reaches the harvest; the HEAD stays at the first surviving line.
+    """``tail`` mode keeps the head rule; ``since`` mode does not. Not one rule.
 
-    Rotation drops the OLDEST lines, so a head later than the ``--since`` floor
-    cannot be told from a quiet start — and treating it as covered would undo
-    the rotation defence that makes a late ``stream_message_processed`` stop
-    proving an early-session service healthy.
+    ``--tail N`` truncates by line *count*, so it has no time floor to anchor
+    at: a head later than the open cannot be told from a quiet start, and
+    treating it as covered would undo the rotation defence entirely. Only
+    ``--since``, whose floor is a configured clock time, earns the anchor.
     """
+    live_consumers(day_dir)
+    write_log(
+        day_dir,
+        "futures-decision-engine",
+        [
+            setup_eval(minute, "setup_d_vwap_reversion", "not_extreme(z=0.4)")
+            for minute in range(200, SESSION_MINUTES + 1, 20)
+        ],
+        cover=False,
+    )
+
+    producer = next(
+        s for s in observe(config).services if s.name == "futures-decision-engine"
+    )
+    assert producer.status == mod.STATUS_PARTIAL_COVERAGE
+    assert [
+        (start.strftime("%H:%M"), end.strftime("%H:%M"))
+        for start, end in producer.uncovered
+    ] == [("08:45", "12:05")]
+
+
+def test_a_tail_capped_head_is_distinguishable_from_a_log_that_began_there(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """``coverage_truncated`` decided the verdict but lived only in the sidecar.
+
+    The two causes call for different actions — a cap is a number in
+    ``config/f9_observation.yaml``, a late start is a recreated container — so
+    the row names which one it was.
+    """
+    tail = decision_engine_tail(config)
+    write_log(
+        day_dir,
+        "futures-decision-engine",
+        [
+            setup_eval(405 + index // 60, "setup_d_vwap_reversion", f"z={index}")
+            for index in range(tail)
+        ],
+        cover=False,
+    )
+    live_consumers(day_dir)
+
+    row = row_of(config, observe(config))
+    assert (
+        "futures-decision-engine consumed, harvest does not span the session "
+        "(head truncated by the --tail cap)" in row
+    )
+
+
+def test_harvest_stamp_is_dated_by_the_capture_not_by_the_session(
+    day_dir: Path,
+) -> None:
+    """A harvest run after midnight belongs to the NEXT day, not the session's.
+
+    ``datetime.combine(day, clock)`` dated ``…000135.log`` — the real
+    2026-09-15 harvest, captured 2026-09-16 00:01 — nine hours *before* the
+    session it captured, so ``max(last, harvested_at)`` discarded it and the
+    close-boundary rule went silently inert.
+
+    The roll needs both conditions. A stamp at or after the open stays put
+    whatever the file holds, so a line written between computing the stamp and
+    running ``docker logs`` cannot fling the capture forward a day.
+    """
+    session_open = SESSION_OPEN
+    after_close = datetime(2026, 9, 18, 15, 50, tzinfo=mod.KST)
+
+    assert mod.harvest_stamp(
+        Path("futures-monitor.155535.log"), session_open, last_line=after_close
+    ) == datetime(2026, 9, 18, 15, 55, 35, tzinfo=mod.KST)
+    # Post-midnight: before the open AND before the file's last line.
+    assert mod.harvest_stamp(
+        Path("futures-monitor.000135.log"), session_open, last_line=after_close
+    ) == datetime(2026, 9, 19, 0, 1, 35, tzinfo=mod.KST)
+    # Before the open but ALSO before everything the file holds: a pre-open run,
+    # not a late one. It stays on the session's own date.
+    assert mod.harvest_stamp(
+        Path("futures-monitor.083000.log"),
+        session_open,
+        last_line=datetime(2026, 9, 18, 8, 29, tzinfo=mod.KST),
+    ) == datetime(2026, 9, 18, 8, 30, tzinfo=mod.KST)
+    # A stamp at or after the open never rolls, even against a later line.
+    assert mod.harvest_stamp(
+        Path("futures-monitor.155535.log"),
+        session_open,
+        last_line=datetime(2026, 9, 18, 15, 55, 36, tzinfo=mod.KST),
+    ) == datetime(2026, 9, 18, 15, 55, 35, tzinfo=mod.KST)
+
+    assert mod.harvest_stamp(Path("futures-monitor.log"), session_open) is None
+    assert mod.harvest_stamp(Path("futures-monitor.996060.log"), session_open) is None
+
+
+def test_a_post_midnight_harvest_does_not_relabel_a_session_as_a_harvest_gap(
+    config: mod.ObservationConfig, tmp_path: Path
+) -> None:
+    """Byte-identical evidence, two stamps. The verdict must not turn on the clock.
+
+    ``155000`` read ``4/4 consumed (COMPLETE)``; ``000500`` read
+    ``consumed, harvest does not span the session (no evidence 15:24-15:45)``
+    ×4 — a wedged consumer's label pinned on a healthy day, inverting the very
+    distinction the close-boundary rule exists to draw.
+    """
+    rows = {}
+    for stamp in ("155000", "000500"):
+        root = tmp_path / stamp
+        day_dir = root / DAY.isoformat()
+        day_dir.mkdir(parents=True)
+        healthy_producer(day_dir, stamp=stamp)
+        for service in CONSUMERS:
+            write_log(day_dir, service, consumed_through(service), stamp=stamp)
+        result = mod.observe_day(replace(config, report_root=root), DAY)
+        rows[stamp] = mod.render_row(result, config.row_counters)
+
+    assert rows["155000"] == rows["000500"]
+    assert "4/4 consumed (COMPLETE)" in rows["000500"]
+    assert "no evidence" not in rows["000500"]
+
+
+# ---------------------------------------------------------------------------
+# 6d. Real harvested logs — the fixtures above are hand-built, and both HIGH
+#     findings of the last review would have surfaced from one real file.
+# ---------------------------------------------------------------------------
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+#: Verbatim excerpts of `reports/f9-gate1/2026-09-18/`, vendored because that
+#: tree is git-ignored (`.gitignore`: `reports/**`) and is the only durable
+#: record of a session — Redis streams carry a 24h TTL. The decision-engine file
+#: is its 08:40-15:45 window; the risk-filter file is whole, all 146 bytes.
+REAL_PRODUCER = FIXTURES / "real-2026-09-18-futures-decision-engine.155535.log"
+REAL_RISK_FILTER = FIXTURES / "real-2026-09-18-futures-risk-filter.155535.log"
+#: 423 consecutive real lines from 2026-09-17 18:17 to 2026-09-18 01:19 — seven
+#: hours of the decision engine running against a closed market, which is
+#: exactly what it does all weekend. Every line is blind; there is not one
+#: evaluation among them.
+REAL_NO_SESSION = FIXTURES / "real-2026-09-17-futures-decision-engine.no-session.log"
+
+
+def place_real(
+    day_dir: Path, source: Path, service: str, *, starting_at: datetime | None = None
+) -> None:
+    """Copy a vendored real harvest into *day_dir*, keeping every line verbatim.
+
+    ``starting_at`` shifts the whole file by one constant delta so its first
+    line lands there — the lines, their order, their spacing and their text are
+    untouched. Used to put a real out-of-session stretch inside a session
+    window; a per-line rewrite would be a fixture wearing a real log's clothes.
+    """
+    text = source.read_text(encoding="utf-8")
+    if starting_at is not None:
+        moments = []
+        for line in text.splitlines():
+            moment = mod._parse_line(line)
+            assert moment is not None, "every fixture line carries a timestamp"
+            moments.append((moment, line))
+        delta = starting_at - moments[0][0]
+        text = (
+            "\n".join(
+                (moment + delta).strftime("%Y-%m-%d %H:%M:%S")
+                + line[len("2026-09-18 00:00:00") :]
+                for moment, line in moments
+            )
+            + "\n"
+        )
+    (day_dir / f"{service}.155535.log").write_text(text, encoding="utf-8")
+
+
+def test_the_real_producer_log_reads_consumed_because_its_proof_is_throttled(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """HIGH 1, from the file itself: a healthy producer is this sparse.
+
+    21 timestamped lines across seven hours, 10 of them proofs, with a 17050s
+    stretch (09:45:53-14:30:03) emitting nothing — because
+    ``shared/strategy/entry/setup_eval_publisher.py`` logs once per *state
+    change*, not per cycle. Scored for freshness this reads
+    ``stale_observation`` on a producer that was working; widening the proof
+    set to ``observed + blind`` moves the worst gap by zero (the blind set is
+    sparser), so there was no pattern to promote and no honest bound to set.
+    ``freshness_scored: false`` in the config says so, by name and with the
+    reason.
+
+    2026-09-11 looks denser only because 374 of its 422 in-session lines are the
+    per-cycle ``prev_close: no daily bar data`` WARNING that PR #668 removed.
+    """
+    place_real(day_dir, REAL_PRODUCER, "futures-decision-engine")
+    live_consumers(day_dir)
+
+    result = observe(config)
+    producer = next(s for s in result.services if s.name == "futures-decision-engine")
+
+    assert producer.freshness_scored is False
+    assert producer.observed_count == 10
+    # Measured and recorded — just not scored.
+    assert producer.observation_is_fresh is False
+    assert max(
+        (end - start).total_seconds() for start, end in producer.unobserved
+    ) == pytest.approx(17050, abs=1)
+    assert producer.status == mod.STATUS_PARTIALLY_BLIND  # 15:38 no_market_context
+    assert result.verdict == mod.VERDICT_PARTIAL
+
+
+def test_a_real_producer_log_without_its_blind_tail_is_consumed_not_stale(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """The exemption in isolation: strip the 15:38+ blindness and it is CONSUMED.
+
+    Under a freshness bound this same file reads ``stale_observation`` and every
+    trading day reads PARTIAL — which is the failure the last round traded for
+    the one before it.
+    """
+    lines = [
+        line
+        for line in REAL_PRODUCER.read_text(encoding="utf-8").splitlines()
+        if line and line < "2026-09-18 15:38"
+    ]
+    (day_dir / "futures-decision-engine.155535.log").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+    live_consumers(day_dir)
+
+    result = observe(config)
+    producer = next(s for s in result.services if s.name == "futures-decision-engine")
+
+    assert producer.observation_is_fresh is False
+    assert producer.status == mod.STATUS_CONSUMED
+    assert result.verdict == mod.VERDICT_COMPLETE
+
+
+def test_the_real_risk_filter_log_no_longer_reads_as_a_coverage_hole(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """HIGH 2, from the file itself: 146 bytes, one line, 09:47:37.
+
+    ``--since 08:00`` was asked for and the container answered with one line, so
+    the morning is quiet — not unwatched. It is still BLIND, and now says it was
+    never proven either.
+    """
+    place_real(day_dir, REAL_RISK_FILTER, "futures-risk-filter")
+    healthy_producer(day_dir)
+
+    result = observe(config)
+    row = row_of(config, result)
+    risk_filter = next(s for s in result.services if s.name == "futures-risk-filter")
+
+    assert risk_filter.covers_session is True
+    assert risk_filter.status == mod.STATUS_BLIND
+    assert (
+        "futures-risk-filter BLIND <=09:47, no proof of consumption 08:45-15:45" in row
+    )
+
+
+def test_a_weekend_of_real_pipeline_noise_is_not_a_loud_exit_one(
+    config: mod.ObservationConfig, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """HIGH 3, from the file itself: the pipeline runs on Saturdays too.
+
+    ``services/decision_engine/main.py``'s loop has no trading-day gate, so on a
+    closed market ``context_provider()`` returns None and it publishes
+    ``no_market_context`` per setup, while the indicator engine emits
+    ``Indicator data stale …`` every minute. Both are ``blind`` patterns, and
+    counting blindness as evidence made every weekend render
+    ``**BUT THE HARVEST HOLDS EVIDENCE** … BLIND`` and exit 1 — a standing alarm
+    on a per-session cron, which is the one thing ``NO_SESSION`` exists to
+    prevent and the harm this script exists to prevent.
+
+    The old test could not catch it: its fixture was an empty directory.
+    """
+    saturday = date(2026, 9, 19)
+    day_dir = tmp_path / saturday.isoformat()
+    day_dir.mkdir(parents=True)
+    place_real(
+        day_dir,
+        REAL_NO_SESSION,
+        "futures-decision-engine",
+        starting_at=datetime(2026, 9, 19, 8, 45, tzinfo=mod.KST),
+    )
+
+    result = mod.observe_day(replace(config, report_root=tmp_path), saturday)
+    row = mod.render_row(result, config.row_counters)
+
+    producer = next(s for s in result.services if s.name == "futures-decision-engine")
+    assert producer.blind_count > 400, "the fixture must really be blind throughout"
+    assert producer.observed_count == 0
+    assert producer.status == mod.STATUS_BLIND
+    assert result.has_evidence is False
+    assert result.reported_verdict == mod.VERDICT_NO_SESSION
+    assert "no session" in row
+    assert "BUT THE HARVEST HOLDS EVIDENCE" not in row
+    assert "n/a - no session" in row
+
+    code = mod.main(
+        [
+            "--date",
+            saturday.isoformat(),
+            "--no-harvest",
+            "--no-point-in-time",
+            "--report-root",
+            str(tmp_path),
+        ]
+    )
+    assert code == 0, "a weekend must not raise a standing alarm"
+    capsys.readouterr()
+
+
+def test_a_non_trading_day_that_really_consumed_still_keeps_its_verdict(
+    config: mod.ObservationConfig, tmp_path: Path
+) -> None:
+    """The narrowing must not undo 2026-08-17, which is what the override is for.
+
+    Blindness on a closed day changes no fact; four *consuming* services do.
+    """
+    saturday = date(2026, 9, 19)
+    day_dir = tmp_path / saturday.isoformat()
+    day_dir.mkdir(parents=True)
+    place_real(
+        day_dir,
+        REAL_NO_SESSION,
+        "futures-decision-engine",
+        starting_at=datetime(2026, 9, 19, 8, 45, tzinfo=mod.KST),
+    )
+    for service in CONSUMERS:
+        stream, group = CONSUMER_STREAMS[service]
+        write_log(
+            day_dir,
+            service,
+            [
+                processed(minute, stream, group, f"{group}-{minute}").replace(
+                    DAY.isoformat(), saturday.isoformat()
+                )
+                for minute in session_minutes(config)
+            ],
+            cover=False,
+        )
+
+    result = mod.observe_day(replace(config, report_root=tmp_path), saturday)
+    row = mod.render_row(result, config.row_counters)
+
+    assert result.has_evidence is True
+    assert result.reported_verdict == mod.VERDICT_PARTIAL
+    assert "BUT THE HARVEST HOLDS EVIDENCE" in row
+    assert "3/4 consumed" in row
+
+
+# ---------------------------------------------------------------------------
+# 6e. Rendering the unproven stretches
+# ---------------------------------------------------------------------------
+
+
+def test_a_blind_row_names_the_stretch_it_was_never_proven_over(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """One proof at 08:46 and one read-error at 09:00 is not an early hiccup.
+
+    ``futures-monitor blind <=09:00`` read like one, while the service was in
+    fact unproven for the remaining 6h45m — a fact that lived only in the
+    sidecar.
+    """
+    healthy_producer(day_dir)
+    live_consumers(day_dir, skip=("futures-monitor",))
+    write_log(
+        day_dir,
+        "futures-monitor",
+        [
+            processed(1, "order.fill.futures.shadow", "futures_monitor", "o1"),
+            read_error(15, "futures_monitor"),
+        ],
+        cover=False,
+    )
+
+    result = observe(config)
+    row = row_of(config, result)
+    monitor = next(s for s in result.services if s.name == "futures-monitor")
+
+    assert monitor.status == mod.STATUS_PARTIALLY_BLIND
+    assert "futures-monitor blind <=09:00, no proof of consumption 08:46-15:45" in row
+
+
+def test_many_unproven_stretches_are_counted_rather_than_merged_away(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """A 30m01s cadence trips the bound every time without being a dead consumer.
+
+    Run-merging these the way blind timestamps are merged would join them across
+    the proof that separates each pair and render ``08:45-15:45`` — identical to
+    a consumer that never proved itself at all, which is the collapse this
+    script exists to prevent. The row gets shorter instead of less true.
+    """
+    cadence = config.observation_max_gap_seconds // 60 + 1
     healthy_producer(day_dir)
     live_consumers(day_dir, skip=("futures-monitor",))
     write_log(
@@ -1034,25 +1470,44 @@ def test_a_file_whose_head_was_rotated_away_still_loses_that_head(
             processed(
                 minute, "order.fill.futures.shadow", "futures_monitor", f"o{minute}"
             )
-            for minute in range(200, SESSION_MINUTES + 1, 20)
+            for minute in range(cadence, SESSION_MINUTES + 1, cadence)
         ],
         cover=False,
     )
 
-    monitor = next(s for s in observe(config).services if s.name == "futures-monitor")
-    assert monitor.status == mod.STATUS_PARTIAL_COVERAGE
-    assert [
-        (start.strftime("%H:%M"), end.strftime("%H:%M"))
-        for start, end in monitor.uncovered
-    ] == [("08:45", "12:05")]
+    result = observe(config)
+    row = row_of(config, result)
+    monitor = next(s for s in result.services if s.name == "futures-monitor")
 
-
-def test_harvest_stamp_is_read_from_the_filename(day_dir: Path) -> None:
-    assert mod.harvest_stamp(Path("futures-monitor.155535.log"), DAY) == datetime(
-        2026, 9, 18, 15, 55, 35, tzinfo=mod.KST
+    spelled_out = mod._STALE_WINDOWS_SPELLED_OUT
+    assert len(monitor.unobserved) > spelled_out
+    assert (
+        "no proof of consumption 08:45-09:16, 09:16-09:47, 09:47-10:18 +10 more" in row
     )
-    assert mod.harvest_stamp(Path("futures-monitor.log"), DAY) is None
-    assert mod.harvest_stamp(Path("futures-monitor.996060.log"), DAY) is None
+    assert f"+{len(monitor.unobserved) - spelled_out} more" in row
+    # Never the collapsed whole-session window a merge would have produced.
+    assert "no proof of consumption 08:45-15:45" not in row
+
+
+def test_stale_windows_are_sorted_and_clamped_rather_than_trusted(
+    config: mod.ObservationConfig,
+) -> None:
+    """The helper is total; it used to be correct only because of its one caller."""
+    start = SESSION_OPEN
+    end = start + timedelta(minutes=SESSION_MINUTES)
+    bound = config.observation_max_gap_seconds
+    inside = [start + timedelta(minutes=m) for m in range(0, SESSION_MINUTES + 1, 20)]
+
+    assert mod._stale_windows(inside, start, end, bound) == ()
+    # Reversed input used to yield two bogus windows.
+    assert mod._stale_windows(list(reversed(inside)), start, end, bound) == ()
+    # A post-close moment used to yield a window ending after the close.
+    assert all(
+        window[1] <= end
+        for window in mod._stale_windows(
+            [*inside, end + timedelta(hours=1)], start, end, bound
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1345,10 +1800,12 @@ def test_sidecar_names_the_uncovered_part_of_the_session(
     sidecar = mod.build_sidecar(result, row_of(config, result))
     monitor = next(s for s in sidecar["services"] if s["name"] == "futures-monitor")
 
-    # The file testifies from its one line to the 15:55:35 harvest stamp, so
-    # the morning before it is uncovered and the rest is watched silence.
-    assert monitor["covers_session"] is False
-    assert monitor["uncovered_session_kst"] == [
+    # A `--since` file testifies from its configured floor to its harvest stamp,
+    # so nothing here is uncovered — the morning is quiet, and unproven.
+    assert monitor["covers_session"] is True
+    assert monitor["uncovered_session_kst"] == []
+    assert monitor["freshness_scored"] is True
+    assert monitor["unobserved_session_kst"] == [
         ["2026-09-18T08:45:00+09:00", "2026-09-18T15:25:00+09:00"],
     ]
 
@@ -1515,6 +1972,33 @@ def test_a_non_trading_day_without_a_harvest_directory_is_not_refused(
         )
         == 0
     )
+
+
+def test_a_non_trading_day_never_creates_the_tree_it_was_pointed_at(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The exit-2 refusal is trading-day gated, so a weekend typo sailed past it.
+
+    It then reached ``mkdir(parents=True)`` and filed a sidecar in the mistyped
+    tree — the same "a second run reads its own evidence" shape the refusal
+    closes on trading days. Nothing is created where nothing was harvested.
+    """
+    missing = tmp_path / "typo" / "f9-gate-one"
+    assert (
+        mod.main(
+            [
+                "--date",
+                "2026-09-19",
+                "--no-harvest",
+                "--no-point-in-time",
+                "--report-root",
+                str(missing),
+            ]
+        )
+        == 0
+    )
+    assert not missing.exists()
+    assert "[sidecar] none" in capsys.readouterr().err
 
 
 def test_report_root_override_keeps_the_configured_root_untouched(
