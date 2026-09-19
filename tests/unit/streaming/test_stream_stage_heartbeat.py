@@ -570,6 +570,37 @@ async def test_config_value_above_the_ceiling_is_clamped_not_fatal(monkeypatch, 
     assert clamped[0]["consumer_group"] == "g"
 
 
+@pytest.mark.parametrize(
+    ("block_ms", "ceiling"),
+    [(1_799_000, 0.0), (1_800_000, -1.0)],  # ceiling lands on zero, then negative
+)
+@pytest.mark.asyncio
+async def test_a_block_leaving_no_room_raises_without_advertising_a_clamp(
+    block_ms, ceiling, caplog
+):
+    """When nothing fits, say nothing — do not log a clamp that never happened.
+
+    The clamp line claims "I applied this value". At a block this large the
+    ceiling is zero or negative, so the claim would be false twice over: the
+    value is never applied (the constructor refuses it) and it is not even a
+    positive interval. This file's whole premise is that a log line must be
+    trustworthy, so it must not lie on the absurd path either. The exception is
+    the honest answer, and it names the real culprit — the block.
+    """
+    caplog.set_level(logging.WARNING, logger="shared.streaming.stage")
+    assert max_heartbeat_interval_seconds(block_ms / 1000) == ceiling
+
+    with pytest.raises(ValueError, match="heartbeat_interval_seconds"):
+        _stage(
+            FakeRedis(),
+            _Clock(),
+            xread_block_ms=block_ms,
+            heartbeat_interval_seconds=None,
+        )
+
+    assert _audit_records(caplog, "heartbeat_interval_clamped") == []
+
+
 @pytest.mark.asyncio
 async def test_an_explicitly_passed_interval_above_the_ceiling_still_raises():
     """Code is held to the bound; only ops values are forgiven.

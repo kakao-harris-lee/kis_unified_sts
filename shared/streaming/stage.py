@@ -174,14 +174,19 @@ def _resolve_heartbeat_interval(
       operator lever it ships with, the crash that policy exists to prevent.
 
     A poll block so large that no positive interval fits (>= ~1799s) is left to
-    raise: there is no honest value to clamp to, and the wrong knob is the block.
+    raise, and — this is the part worth stating — it is left to raise *without*
+    a clamp line. There is no honest value to clamp to there: the ceiling is
+    zero or negative, so the line would advertise applying an interval that
+    cannot be applied and is not even positive. A log that lies on a path nobody
+    takes is still a log that lies, which is the whole premise of this file. The
+    wrong knob in that case is the block, and the exception says so.
     """
     if explicit_seconds is not None:
         return explicit_seconds
 
     configured = StreamStageConfig.load().heartbeat_interval_seconds
     ceiling = max_heartbeat_interval_seconds(poll_block_seconds)
-    if configured <= ceiling:
+    if configured <= ceiling or ceiling <= 0:
         return configured
 
     logger.warning(
