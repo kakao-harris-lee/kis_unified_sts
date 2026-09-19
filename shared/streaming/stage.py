@@ -61,9 +61,15 @@ def is_vanished_stream_read_error(exc: Exception) -> bool:
     a vanished key.
 
     Sibling of :func:`is_missing_consumer_group_error` rather than a widening
-    of it, so ``StreamStage``/``MultiStreamStage`` keep their current NOGROUP-
-    only behavior; only the monitor daemons, which read TTL-bearing streams,
-    opt into the wider match.
+    of it, because the two shapes are not reachable from the same call. A
+    *blocking* read can be interrupted by the key expiring underneath it, so
+    every ``block=``-bearing XREADGROUP uses this predicate: both monitor
+    daemons, and both stage ``run()`` loops, whose five live consumers each read
+    a stream that is re-armed with a 24h EXPIRE on every publish
+    (``decision_engine``/``risk_filter``/``stock_strategy``/
+    ``stock_risk_filter``/``shared.news.publisher``) and block for 2s. XAUTOCLAIM
+    never blocks, so the pending-claim paths cannot see the UNBLOCKED shape and
+    stay on the NOGROUP-only sibling.
     """
     if is_missing_consumer_group_error(exc):
         return True
@@ -153,12 +159,6 @@ async def recover_missing_consumer_group(
             )
         )
     return ensured
-
-
-# Pre-existing private spellings, kept so the in-module call sites below are
-# untouched by making the two helpers above public API for the monitor daemons.
-_is_nogroup_error = is_missing_consumer_group_error
-_recover_missing_consumer_group = recover_missing_consumer_group
 
 
 def _log_processed_message(
@@ -334,8 +334,17 @@ class StreamStage(ABC):
             self._pending_claim_disabled = True
             return []
         except Exception as exc:
-            if _is_nogroup_error(exc):
-                await _recover_missing_consumer_group(
+            # NOGROUP-only on purpose: XAUTOCLAIM does not block, so it cannot
+            # produce the UNBLOCKED shape that ``is_vanished_stream_read_error``
+            # exists for. Unlike ``run()`` below, this path does not branch on
+            # the outcome and must not: it returns ``[]`` either way and the
+            # caller goes straight to XREADGROUP, which is where a still-broken
+            # group is logged and backed off. All three outcomes are already on
+            # the record from inside ``recover_missing_consumer_group``
+            # (CREATED/FAILED at WARNING), so a second line here would only
+            # duplicate it.
+            if is_missing_consumer_group_error(exc):
+                await recover_missing_consumer_group(
                     self.redis,
                     self.input_stream,
                     self.consumer_group,
@@ -446,14 +455,26 @@ class StreamStage(ABC):
                         block=self.xread_block_ms,
                     )
                 except Exception as exc:
-                    if _is_nogroup_error(exc):
-                        await _recover_missing_consumer_group(
+                    if is_vanished_stream_read_error(exc):
+                        # Skip the backoff only when a recreate actually
+                        # happened, so the next read has a reason to succeed.
+                        # Every other outcome — a failed recreate, or the group
+                        # already present, which means the read error was not a
+                        # vanished group after all — falls through to the
+                        # rate-limited error log + backoff below, because
+                        # retrying instantly on a read that keeps failing is a
+                        # silent hot loop (#741, measured in production:
+                        # 33,746 reads/s, 0 records, 0 log lines). Compare with
+                        # ``is``: the outcomes are truthy strings, so a
+                        # truthiness test would always pass.
+                        outcome = await recover_missing_consumer_group(
                             self.redis,
                             self.input_stream,
                             self.consumer_group,
                         )
-                        await asyncio.sleep(0)
-                        continue
+                        if outcome is ConsumerGroupEnsure.CREATED:
+                            await asyncio.sleep(0)
+                            continue
                     self._xreadgroup_error_log.exception(
                         logger,
                         "xreadgroup error; sleeping %.1fs",
@@ -566,8 +587,10 @@ class MultiStreamStage(ABC):
             self._pending_claim_disabled = True
             return []
         except Exception as exc:
-            if _is_nogroup_error(exc):
-                await _recover_missing_consumer_group(
+            # NOGROUP-only, and deliberately outcome-independent — see the same
+            # branch in ``StreamStage._claim_pending_messages``.
+            if is_missing_consumer_group_error(exc):
+                await recover_missing_consumer_group(
                     self.redis,
                     stream,
                     self.consumer_group,
@@ -692,15 +715,31 @@ class MultiStreamStage(ABC):
                         block=self.xread_block_ms,
                     )
                 except Exception as exc:
-                    if _is_nogroup_error(exc):
-                        for stream in self.input_streams:
-                            await _recover_missing_consumer_group(
+                    if is_vanished_stream_read_error(exc):
+                        # Every input stream is read in one XREADGROUP, so the
+                        # read fails as a unit and recovery has to sweep all of
+                        # them (mkstream recreates whichever key vanished).
+                        # Skip the backoff only when a recreate actually
+                        # happened and none failed; every other shape falls
+                        # through to the rate-limited error log + backoff
+                        # below, so neither can become a silent hot loop (#741).
+                        # Compare with ``is``: the outcomes are truthy strings,
+                        # so ``all(...)`` would always pass.
+                        outcomes = [
+                            await recover_missing_consumer_group(
                                 self.redis,
                                 stream,
                                 self.consumer_group,
                             )
-                        await asyncio.sleep(0)
-                        continue
+                            for stream in self.input_streams
+                        ]
+                        created = any(
+                            o is ConsumerGroupEnsure.CREATED for o in outcomes
+                        )
+                        failed = any(o is ConsumerGroupEnsure.FAILED for o in outcomes)
+                        if created and not failed:
+                            await asyncio.sleep(0)
+                            continue
                     self._xreadgroup_error_log.exception(
                         logger,
                         "xreadgroup error; sleeping %.1fs",
