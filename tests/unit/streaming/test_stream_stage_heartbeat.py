@@ -27,6 +27,7 @@ import scripts.ops.f9_observation_harvest as harvest
 from services.order_router.config import Phase4ExecutionConfig
 from shared.streaming.stage import (
     OBSERVATION_MAX_GAP_SECONDS,
+    TIMESTAMP_RESOLUTION_SECONDS,
     MultiStreamStage,
     StreamStage,
     StreamStageConfig,
@@ -442,9 +443,11 @@ def test_non_positive_interval_is_refused(interval):
     "interval",
     [
         # 1799 + the shipped 2s block = a 1801s gap: over the bound, on a
-        # healthy day. The ceiling must exclude it.
+        # healthy day.
         1799.0,
-        OBSERVATION_MAX_GAP_SECONDS - _SHIPPED_BLOCK,  # the ceiling itself
+        # 1798: the gap is exactly 1800, which the harvester passes — but its
+        # timestamps are truncated to whole seconds, so it can measure 1801.
+        OBSERVATION_MAX_GAP_SECONDS - _SHIPPED_BLOCK,
         OBSERVATION_MAX_GAP_SECONDS,
         2400.0,  # the value a service could plausibly configure
     ],
@@ -466,14 +469,21 @@ def test_interval_whose_observed_gap_would_exceed_the_bound_is_refused(interval)
         _heartbeat(_Clock(), interval_seconds=interval)
 
 
-def test_interval_just_under_the_derived_ceiling_is_accepted():
-    """The ceiling is a bound, not a mood: one second under it must work."""
-    beat = _heartbeat(
-        _Clock(),
-        interval_seconds=max_heartbeat_interval_seconds(_SHIPPED_BLOCK) - 1,
-    )
+def test_the_ceiling_itself_is_accepted():
+    """Inclusive on purpose, and the two ends of that come from the harvester.
 
-    assert beat.interval_seconds == OBSERVATION_MAX_GAP_SECONDS - _SHIPPED_BLOCK - 1
+    Its gap comparison is ``> max_gap_seconds``, so a measured gap of exactly
+    1800 passes; its timestamps are second-truncated, so the second that
+    truncation can add is already subtracted here. At the ceiling the worst
+    case is 1797 + 2 + 1 = 1800 measured — the largest value that still passes.
+    """
+    ceiling = max_heartbeat_interval_seconds(_SHIPPED_BLOCK)
+
+    assert ceiling == OBSERVATION_MAX_GAP_SECONDS - _SHIPPED_BLOCK - 1.0
+    assert _heartbeat(_Clock(), interval_seconds=ceiling).interval_seconds == ceiling
+    assert ceiling + _SHIPPED_BLOCK + TIMESTAMP_RESOLUTION_SECONDS == (
+        OBSERVATION_MAX_GAP_SECONDS
+    )
 
 
 def test_ceiling_shrinks_as_the_poll_block_grows():
@@ -481,7 +491,7 @@ def test_ceiling_shrinks_as_the_poll_block_grows():
 
     Nothing about 1800 changes; what changes is how much of it the poll spends.
     """
-    assert max_heartbeat_interval_seconds(5.0) == OBSERVATION_MAX_GAP_SECONDS - 5.0
+    assert max_heartbeat_interval_seconds(5.0) == 1794.0  # 1800 - 5 - 1
 
     with pytest.raises(ValueError, match="heartbeat_interval_seconds"):
         _heartbeat(_Clock(), interval_seconds=1795.0, poll_block_seconds=5.0)
@@ -532,6 +542,67 @@ async def test_stage_takes_its_default_interval_from_config_not_from_code(monkey
     assert stage._heartbeat.interval_seconds == 90.0
 
 
+@pytest.mark.asyncio
+async def test_config_value_above_the_ceiling_is_clamped_not_fatal(monkeypatch, caplog):
+    """An ops mistake must not stop a live consumer — it warns and clamps.
+
+    1799 passes ``load()`` (the config field only knows the coarse 1800 bound;
+    it cannot know this stage blocks for 2s), so without this the operator lever
+    this PR ships would crash the daemon on startup — reintroducing exactly the
+    failure ``StreamStageConfig.load()``'s WARNING-and-degrade policy exists to
+    prevent.
+    """
+    caplog.set_level(logging.WARNING, logger="shared.streaming.stage")
+    monkeypatch.setenv("CONSUMER_STAGE_HEARTBEAT_INTERVAL_SECONDS", "1799")
+
+    stage = _stage(
+        FakeRedis(),
+        _Clock(),
+        xread_block_ms=2000,
+        heartbeat_interval_seconds=None,
+    )
+
+    assert stage._heartbeat.interval_seconds == max_heartbeat_interval_seconds(2.0)
+    clamped = _audit_records(caplog, "heartbeat_interval_clamped")
+    assert len(clamped) == 1
+    assert clamped[0]["configured_seconds"] == "1799.0"
+    assert clamped[0]["clamped_seconds"] == "1797.0"
+    assert clamped[0]["consumer_group"] == "g"
+
+
+@pytest.mark.asyncio
+async def test_an_explicitly_passed_interval_above_the_ceiling_still_raises():
+    """Code is held to the bound; only ops values are forgiven.
+
+    A service hardcoding 1799 is a programming error, and it should fail loudly
+    where it is written rather than be silently rewritten at runtime.
+    """
+    with pytest.raises(ValueError, match="heartbeat_interval_seconds"):
+        _stage(
+            FakeRedis(),
+            _Clock(),
+            xread_block_ms=2000,
+            heartbeat_interval_seconds=1799.0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_config_value_within_the_ceiling_is_left_alone(monkeypatch, caplog):
+    """The clamp is a guard, not a policy: a legal value passes through intact."""
+    caplog.set_level(logging.WARNING, logger="shared.streaming.stage")
+    monkeypatch.setenv("CONSUMER_STAGE_HEARTBEAT_INTERVAL_SECONDS", "120")
+
+    stage = _stage(
+        FakeRedis(),
+        _Clock(),
+        xread_block_ms=2000,
+        heartbeat_interval_seconds=None,
+    )
+
+    assert stage._heartbeat.interval_seconds == 120.0
+    assert _audit_records(caplog, "heartbeat_interval_clamped") == []
+
+
 def test_env_override_reaches_the_configured_interval(monkeypatch):
     """``CONSUMER_STAGE_*`` is the operator's second lever, so prove it works."""
     monkeypatch.setenv("CONSUMER_STAGE_HEARTBEAT_INTERVAL_SECONDS", "90")
@@ -579,11 +650,18 @@ def test_configured_interval_stays_under_the_observation_gap_bound():
     ``from_yaml()`` rather than ``load()``: the shipped file is what this test
     guards, and ``load()``'s fallback would answer with the field default and
     hide a bad value in the file behind it. Here an out-of-bound file raises.
+
+    One honest limit: the block read here is **order_router's**, the only one of
+    the five services that takes it from config; the other four pass a literal
+    2000 at their call sites. It stands proxy for all five. At the shipped
+    60s interval that proxy cannot mislead — the block would have to exceed
+    1739s to push the sum past the bound — but the next reader should know it is
+    one service's value rather than a fleet-wide one.
     """
     max_gap = harvest.load_observation_config().observation_max_gap_seconds
     shipped = StreamStageConfig.from_yaml().heartbeat_interval_seconds
     shipped_block = Phase4ExecutionConfig.from_yaml().xread_block_ms / 1000
 
     assert max_gap >= OBSERVATION_MAX_GAP_SECONDS
-    assert shipped + shipped_block < OBSERVATION_MAX_GAP_SECONDS
-    assert shipped < max_heartbeat_interval_seconds(shipped_block)
+    assert shipped + shipped_block + TIMESTAMP_RESOLUTION_SECONDS <= max_gap
+    assert shipped <= max_heartbeat_interval_seconds(shipped_block)

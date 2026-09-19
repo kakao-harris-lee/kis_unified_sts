@@ -56,27 +56,44 @@ logger = logging.getLogger(__name__)
 #: :func:`max_heartbeat_interval_seconds`.
 OBSERVATION_MAX_GAP_SECONDS = 1800.0
 
+#: How much a measured gap can exceed the real one, in seconds.
+#:
+#: ``scripts/ops/f9_observation_harvest.py:769`` parses log timestamps with
+#: ``"%Y-%m-%d %H:%M:%S"`` — sub-second parts are dropped — so two lines 1800.4s
+#: apart can be stamped 1800 and 1801 and measure as 1801. One second of
+#: truncation error is therefore part of the derivation, not padding. (Its
+#: comparison at ``:916`` is ``> max_gap_seconds``, so a measured gap of exactly
+#: the bound passes, which is why the ceiling below is inclusive.)
+TIMESTAMP_RESOLUTION_SECONDS = 1.0
+
 
 def max_heartbeat_interval_seconds(poll_block_seconds: float) -> float:
-    """Largest interval whose worst-case *observed gap* still clears the bound.
+    """Largest interval whose worst-case *measured gap* still clears the bound.
 
     The harvester measures the gap between two emitted lines, not the configured
-    interval, and those are not the same number: a heartbeat becomes due during
-    a poll and is emitted only when the *next* poll returns, so an idle loop
-    adds a full ``xread_block_ms`` wait on top of the interval. An interval of
-    1799 with the shipped 2s block produces gaps of ~1801 — over the bound, and
-    ``stale_observation`` on a healthy day, which is the exact false verdict
-    this heartbeat exists to delete.
+    interval, and those are not the same number:
 
-    So the ceiling is derived, not chosen: subtract the block that is
-    *guaranteed* to be there on the idle path — the path this whole line is
-    about. A busy loop also spends handler time before the next poll returns,
-    which is unbounded and deliberately not modelled here: a handler that slow
-    is its own failure with its own evidence (``stream_message_processed``
-    durations, ``stream_message_failed``, pending backlog), not something an
-    interval ceiling can insure against.
+    - a heartbeat becomes due *during* a poll and is emitted only when the next
+      poll returns, so an idle loop adds a full ``xread_block_ms`` wait, and
+    - the measurement itself can round up by :data:`TIMESTAMP_RESOLUTION_SECONDS`.
+
+    An interval of 1799 with the shipped 2s block produces gaps measuring ~1801
+    — over the bound, and ``stale_observation`` on a healthy day, which is the
+    exact false verdict this heartbeat exists to delete.
+
+    **Why the block is the only wait worth subtracting.** A busy loop also
+    spends handler time before the next poll returns, and arithmetically that
+    can exceed the bound (ten handlers at 0.5s add 5s: 1797 + 2 + 5 = 1804).
+    It cannot move the *verdict*, because a loop busy enough for handler time
+    to matter is emitting ``stream_message_processed`` per message — the
+    harvester's proof of consumption — right after each handler returns, so the
+    long interval is filled with proofs throughout. A long gap requires no
+    traffic, and a loop with no traffic spends its time in exactly one place:
+    the block this subtracts.
     """
-    return OBSERVATION_MAX_GAP_SECONDS - poll_block_seconds
+    return (
+        OBSERVATION_MAX_GAP_SECONDS - poll_block_seconds - TIMESTAMP_RESOLUTION_SECONDS
+    )
 
 
 class StreamStageConfig(ServiceConfigBase):
@@ -134,6 +151,50 @@ class StreamStageConfig(ServiceConfigBase):
                 exc_info=True,
             )
             return cls()
+
+
+def _resolve_heartbeat_interval(
+    explicit_seconds: float | None,
+    *,
+    poll_block_seconds: float,
+    consumer_group: str,
+) -> float:
+    """Pick the interval a stage will use, clamping an *ops* value if needed.
+
+    Two sources, two failure kinds, two answers:
+
+    - **Explicitly passed** (a service supplying its own value in code): left
+      exactly as given, so ``_LivenessHeartbeat`` raises on an out-of-range one.
+      That is a programming error, and it should stop a test, not a session.
+    - **From YAML or env**: clamped to the ceiling with a WARNING, never raised.
+      This knob governs one observability line, so killing a live consumer over
+      it would be a worse failure than the one the bound guards — the same
+      reason :meth:`StreamStageConfig.load` degrades instead of raising. The
+      bound added to close the 1799 hole must not reintroduce, through the
+      operator lever it ships with, the crash that policy exists to prevent.
+
+    A poll block so large that no positive interval fits (>= ~1799s) is left to
+    raise: there is no honest value to clamp to, and the wrong knob is the block.
+    """
+    if explicit_seconds is not None:
+        return explicit_seconds
+
+    configured = StreamStageConfig.load().heartbeat_interval_seconds
+    ceiling = max_heartbeat_interval_seconds(poll_block_seconds)
+    if configured <= ceiling:
+        return configured
+
+    logger.warning(
+        format_audit_kv(
+            event="heartbeat_interval_clamped",
+            consumer_group=consumer_group,
+            configured_seconds=configured,
+            clamped_seconds=ceiling,
+            poll_block_seconds=poll_block_seconds,
+            observation_max_gap_seconds=OBSERVATION_MAX_GAP_SECONDS,
+        )
+    )
+    return ceiling
 
 
 def _duration_ms(started_at: float) -> int:
@@ -456,12 +517,14 @@ class _LivenessHeartbeat:
         if poll_block_seconds < 0:
             raise ValueError("poll_block_seconds must not be negative")
         ceiling = max_heartbeat_interval_seconds(poll_block_seconds)
-        if not 0 < interval_seconds < ceiling:
+        if not 0 < interval_seconds <= ceiling:
             raise ValueError(
-                f"heartbeat_interval_seconds must be >0 and <{ceiling} "
+                f"heartbeat_interval_seconds must be >0 and <={ceiling} "
                 f"(observation_max_gap {OBSERVATION_MAX_GAP_SECONDS} minus the "
-                f"{poll_block_seconds}s poll block, because the observed gap is "
-                f"the interval plus one block); got {interval_seconds}"
+                f"{poll_block_seconds}s poll block and "
+                f"{TIMESTAMP_RESOLUTION_SECONDS}s of timestamp truncation, "
+                "because what is scored is the measured gap, not the interval); "
+                f"got {interval_seconds}"
             )
         self.consumer_group = consumer_group
         self.worker_id = worker_id
@@ -553,13 +616,13 @@ class StreamStage(ABC):
             consumer_group=consumer_group,
             worker_id=worker_id,
             streams=(input_stream,),
-            interval_seconds=(
-                StreamStageConfig.load().heartbeat_interval_seconds
-                if heartbeat_interval_seconds is None
-                else heartbeat_interval_seconds
+            interval_seconds=_resolve_heartbeat_interval(
+                heartbeat_interval_seconds,
+                poll_block_seconds=xread_block_ms / 1000,
+                consumer_group=consumer_group,
             ),
             # The heartbeat becomes due during a poll and is emitted when the
-            # next one returns, so the block is part of every observed gap.
+            # next one returns, so the block is part of every measured gap.
             poll_block_seconds=xread_block_ms / 1000,
             clock=heartbeat_clock,
         )
@@ -840,13 +903,13 @@ class MultiStreamStage(ABC):
             # heartbeat that quoted only the first would understate what this
             # worker is proving it still reads.
             streams=self.input_streams,
-            interval_seconds=(
-                StreamStageConfig.load().heartbeat_interval_seconds
-                if heartbeat_interval_seconds is None
-                else heartbeat_interval_seconds
+            interval_seconds=_resolve_heartbeat_interval(
+                heartbeat_interval_seconds,
+                poll_block_seconds=xread_block_ms / 1000,
+                consumer_group=consumer_group,
             ),
             # The heartbeat becomes due during a poll and is emitted when the
-            # next one returns, so the block is part of every observed gap.
+            # next one returns, so the block is part of every measured gap.
             poll_block_seconds=xread_block_ms / 1000,
             clock=heartbeat_clock,
         )
