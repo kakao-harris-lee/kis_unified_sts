@@ -376,9 +376,10 @@ artifacts, or written operator approval.
   The script harvests every service named in `config/f9_observation.yaml`
   (`--since 08:00 KST`, and `--tail 900` for the decision-engine per the caveat
   above), then emits the observation-log row and a JSON sidecar. Exit status is
-  `0` when the day's observation is `COMPLETE`, and also on a `NO_SESSION` day
-  (a weekend or a KRX holiday — there was no session to observe, so a per-session
-  cron must not raise a standing alarm). Every other verdict exits `1`. A
+  `0` when the day's observation is `COMPLETE`, on a `NO_SESSION` day (a weekend
+  or a KRX holiday — there was no session to observe, so a per-session cron must
+  not raise a standing alarm), and on `LIVENESS_UNVERIFIED` (see below — the row
+  carries the caveat instead). Every other verdict exits `1`. A
   `--report-root` naming a day directory that does not exist exits `2` without
   writing anything: with no harvested files there is no input, and a confident
   `NOT OBSERVED - 0/4` against a mistyped path must not look like a dead
@@ -457,6 +458,25 @@ artifacts, or written operator approval.
   **consumers only** — `services/decision_engine` does not go through
   `shared/streaming/stage.py` at all, so the producer needs its own liveness
   emission.
+
+  **Exempt from scoring is not exempt from disclosure.** A day on which every
+  service consumed and covered the session, but an exempt one went silent past
+  the bound, reads `LIVENESS_UNVERIFIED` rather than `COMPLETE`: the row names
+  the stretch and quotes the configured reason
+  (`4/4 consumed (LIVENESS_UNVERIFIED): futures-decision-engine liveness
+  unverified 08:46-15:45 (proof is logged once per setup-eval state change …)`)
+  and the counts ship `UNQUALIFIED`. Without it the exemption walked the
+  original defect back in through the one service the bound cannot cover — a
+  producer with one 08:46 evaluation and nothing for the next six hours
+  fifty-nine minutes rendered `4/4 consumed (COMPLETE)`, exit 0, counts bare,
+  with no caveat anywhere in the row. The qualifier is keyed on
+  `freshness_scored: false` **and** `observation_is_fresh: false`, never on a
+  service name or role, so a second exempt service inherits it automatically; a
+  fresh exempt service carries nothing. `LIVENESS_UNVERIFIED` **exits 0** — a
+  dead throttled emitter and a healthy one leave identical records, and both
+  real harvests show the healthy case (worst in-session gaps 11235s and
+  17050s), so exiting 1 would alarm every trading day. The row is loud; the
+  exit status is not.
 
   There is deliberately **no "nothing was due" exemption**: a silent consumer
   reads `no evidence`, so a genuinely quiet day reads `1/4 consumed, 3 no

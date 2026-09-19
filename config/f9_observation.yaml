@@ -101,7 +101,17 @@ f9_observation:
       # liveness line. A heartbeat in shared/streaming/stage.py's idle branch
       # does NOT reach it — services/decision_engine does not go through
       # stage.py at all.
+      #
+      # Exempt from SCORING, never from DISCLOSURE. A day whose every service
+      # consumed but whose exempt service went silent past the bound reads
+      # `LIVENESS_UNVERIFIED`, not `COMPLETE`, and the row quotes the reason
+      # below — otherwise a producer with one 08:46 evaluation and no line for
+      # the next six hours fifty-nine minutes rendered `4/4 consumed
+      # (COMPLETE)` with the counts bare.
       freshness_scored: false
+      freshness_unscored_reason: >-
+        proof is logged once per setup-eval state change, not per cycle, so
+        silence cannot be told from a dead daemon
       observed:
         # One line per setup-evaluation state change: proof the daemon had a
         # market context and ran the setup against it.

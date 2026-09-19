@@ -1274,14 +1274,18 @@ def test_the_real_producer_log_reads_consumed_because_its_proof_is_throttled(
     assert result.verdict == mod.VERDICT_PARTIAL
 
 
-def test_a_real_producer_log_without_its_blind_tail_is_consumed_not_stale(
+def test_a_real_producer_log_without_its_blind_tail_is_consumed_but_discloses(
     config: mod.ObservationConfig, day_dir: Path
 ) -> None:
-    """The exemption in isolation: strip the 15:38+ blindness and it is CONSUMED.
+    """The exemption in isolation: strip the 15:38+ blindness and the SERVICE is
+    ``consumed`` — while the DAY still refuses to read ``COMPLETE``.
 
-    Under a freshness bound this same file reads ``stale_observation`` and every
-    trading day reads PARTIAL — which is the failure the last round traded for
-    the one before it.
+    Both halves matter. Under a freshness bound this file reads
+    ``stale_observation`` and every trading day reads PARTIAL, which is the
+    failure the last round traded for the one before it. Without the disclosure
+    it reads ``COMPLETE`` with a real 17050s hole in it, which is the failure
+    the round before that. The service keeps its status; the day says what it
+    could not verify.
     """
     lines = [
         line
@@ -1294,11 +1298,16 @@ def test_a_real_producer_log_without_its_blind_tail_is_consumed_not_stale(
     live_consumers(day_dir)
 
     result = observe(config)
+    row = row_of(config, result)
     producer = next(s for s in result.services if s.name == "futures-decision-engine")
 
-    assert producer.observation_is_fresh is False
     assert producer.status == mod.STATUS_CONSUMED
-    assert result.verdict == mod.VERDICT_COMPLETE
+    assert producer.observation_is_fresh is False
+    assert producer.liveness_unverified is True
+    assert result.verdict == mod.VERDICT_LIVENESS_UNVERIFIED
+    assert "4/4 consumed (LIVENESS_UNVERIFIED)" in row
+    assert "futures-decision-engine liveness unverified 09:45-14:30" in row
+    assert "UNQUALIFIED" in row
 
 
 def test_the_real_risk_filter_log_no_longer_reads_as_a_coverage_hole(
@@ -1414,6 +1423,186 @@ def test_a_non_trading_day_that_really_consumed_still_keeps_its_verdict(
     assert result.reported_verdict == mod.VERDICT_PARTIAL
     assert "BUT THE HARVEST HOLDS EVIDENCE" in row
     assert "3/4 consumed" in row
+
+
+# ---------------------------------------------------------------------------
+# 6d-bis. Exempt from scoring is not exempt from disclosure
+# ---------------------------------------------------------------------------
+
+#: The reviewer's reproduction, verbatim. A pre-open line covering the tail-mode
+#: head, ONE in-session proof, then nothing for six hours fifty-nine minutes.
+DEAD_PRODUCER = [
+    "2026-09-18 08:44:00,100 INFO __main__ decision_engine starting",
+    "2026-09-18 08:46:00,100 INFO __main__ [setup_a_gap_reversion] "
+    "no signal this cycle: gap_too_small",
+]
+
+
+def test_a_dead_exempt_producer_cannot_render_as_a_complete_day(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """The round-3 blocker, walked back in through the freshness exemption.
+
+    Three healthy consumers and a producer that emitted one evaluation at 08:46
+    and then died rendered ``4/4 consumed (COMPLETE)``, exit 0, counts bare,
+    ``counters.qualified: true`` — with no caveat anywhere in the row. The
+    information was never missing: the sidecar for that same run already carried
+    ``observed_count: 1`` and ``unobserved 08:46-15:45``. The row discarded it.
+
+    Exempting a service from *scoring* cannot exempt it from *disclosure*, for
+    the reason the runbook's INERT-GATE CAVEAT gives: "observed 0" and "could
+    not observe" must never render alike. The verdict, not a note on one cell,
+    so the consumers cell, the counts cell, ``counters.qualified`` and the exit
+    status all follow one predicate.
+    """
+    (day_dir / "futures-decision-engine.155535.log").write_text(
+        "\n".join(DEAD_PRODUCER) + "\n", encoding="utf-8"
+    )
+    live_consumers(day_dir)
+
+    result = observe(config)
+    row = row_of(config, result)
+    producer = next(s for s in result.services if s.name == "futures-decision-engine")
+
+    # Every service still *consumed* — no status can carry what is wrong here.
+    assert statuses(result) == dict.fromkeys(SCORED, mod.STATUS_CONSUMED)
+    assert producer.observed_count == 1
+    assert producer.liveness_unverified is True
+
+    assert result.verdict == mod.VERDICT_LIVENESS_UNVERIFIED
+    assert "COMPLETE" not in row
+    assert "4/4 consumed (LIVENESS_UNVERIFIED)" in row
+    assert "futures-decision-engine liveness unverified 08:46-15:45" in row
+    # The reason travels with the window: the window alone reads like a measured
+    # defect, the reason alone like a footnote about configuration.
+    assert "once per setup-eval state change" in row
+    assert "UNQUALIFIED" in row
+    assert mod.build_sidecar(result, row)["counters"]["qualified"] is False
+
+
+def test_a_fresh_exempt_producer_carries_no_disclosure(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """The qualifier is keyed on BOTH facts, so a fresh exempt service is clean.
+
+    Only the exemption made this producer unscored; it proved itself throughout
+    anyway, so there is nothing to disclose and the day is a measurement.
+    """
+    healthy_producer(day_dir)
+    live_consumers(day_dir)
+
+    result = observe(config)
+    row = row_of(config, result)
+    producer = next(s for s in result.services if s.name == "futures-decision-engine")
+
+    assert producer.freshness_scored is False
+    assert producer.observation_is_fresh is True
+    assert producer.liveness_unverified is False
+    assert result.verdict == mod.VERDICT_COMPLETE
+    assert "4/4 consumed (COMPLETE)" in row
+    assert "liveness unverified" not in row
+
+
+def test_an_exempt_service_that_is_blind_says_so_once(
+    config: mod.ObservationConfig, day_dir: Path
+) -> None:
+    """Blindness outranks the disclosure; the two texts never collide.
+
+    A blind service is not ``consumed``, so the day is already PARTIAL and its
+    counts already qualified. ``describe_service`` names the blindness and
+    ``_stale_text`` stays silent for an exempt service, so the row carries one
+    clause about this producer, not two.
+    """
+    write_log(
+        day_dir,
+        "futures-decision-engine",
+        [
+            setup_eval(1, "setup_a_gap_reversion", "gap_too_small"),
+            setup_eval(60, "setup_d_vwap_reversion", "no_market_context"),
+        ],
+    )
+    live_consumers(day_dir)
+
+    result = observe(config)
+    row = row_of(config, result)
+    producer = next(s for s in result.services if s.name == "futures-decision-engine")
+
+    assert producer.status == mod.STATUS_PARTIALLY_BLIND
+    assert result.verdict == mod.VERDICT_PARTIAL
+    assert row.count("futures-decision-engine") == 1
+    assert "futures-decision-engine blind <=09:45" in row
+    assert "liveness unverified" not in row
+    assert "no proof of consumption" not in row
+
+
+def test_an_exemption_must_state_its_reason(config: mod.ObservationConfig) -> None:
+    """A disclosure with a blank where its reason goes is not a disclosure.
+
+    Same guard-rail as ``harvest_tail``: the value the row quotes comes from
+    config or the config is refused, rather than being silently defaulted into
+    an operator-facing row.
+    """
+    with pytest.raises(ValueError, match="freshness_unscored_reason"):
+        mod.ServiceSpec(
+            name="futures-decision-engine",
+            container="futures-decision-engine",
+            role=mod.ROLE_PRODUCER,
+            harvest_mode=mod.HARVEST_MODE_SINCE,
+            harvest_tail=None,
+            observed=(),
+            blind=(),
+            counters=(),
+            freshness_scored=False,
+        )
+    # The production config supplies one.
+    producer = next(s for s in config.services if s.name == "futures-decision-engine")
+    assert producer.freshness_scored is False
+    assert producer.freshness_unscored_reason.strip()
+
+
+def test_the_cli_exits_zero_on_an_unverified_liveness_day(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Loud row, quiet exit status.
+
+    A dead throttled emitter and a healthy one leave identical records — that is
+    why the bound was dropped — and both real harvests show the healthy case at
+    11235s and 17050s. Exiting 1 would alarm on every trading day, which is the
+    standing-alarm harm the ``NO_SESSION`` exit rule exists to prevent.
+    """
+    day_dir = tmp_path / DAY.isoformat()
+    day_dir.mkdir(parents=True)
+    (day_dir / "futures-decision-engine.155535.log").write_text(
+        "\n".join(DEAD_PRODUCER) + "\n", encoding="utf-8"
+    )
+    live_consumers(day_dir)
+
+    code = mod.main(
+        [
+            "--date",
+            DAY.isoformat(),
+            "--no-harvest",
+            "--no-point-in-time",
+            "--report-root",
+            str(tmp_path),
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert "LIVENESS_UNVERIFIED" in out
+    assert "liveness unverified 08:46-15:45" in out
+    sidecar = json.loads(
+        next(day_dir.glob("observation-completeness.*.json")).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert sidecar["verdict"] == mod.VERDICT_LIVENESS_UNVERIFIED
+    producer = next(
+        s for s in sidecar["services"] if s["name"] == "futures-decision-engine"
+    )
+    assert producer["liveness_unverified"] is True
+    assert producer["freshness_unscored_reason"].strip()
 
 
 # ---------------------------------------------------------------------------

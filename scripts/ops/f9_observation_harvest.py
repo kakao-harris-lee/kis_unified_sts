@@ -65,6 +65,15 @@ whose proof is not traffic-driven therefore set ``freshness_scored: false`` in
 ``config/f9_observation.yaml``, where the reason is recorded next to them; they
 are still scored on coverage, blindness, and the zero-proof rule.
 
+**Exempt from scoring is not exempt from disclosure.** A day on which every
+service consumed, but an exempt one went silent past the bound, is not a
+measurement and its row must not be able to pass for one: it reads
+``LIVENESS_UNVERIFIED``, names the stretch and quotes the reason, and its
+counters ship qualified. Left out, the exemption walked the original defect
+back in through the one service the bound cannot cover — one 08:46 evaluation
+and six hours fifty-nine minutes of nothing rendered ``4/4 consumed
+(COMPLETE)``, exit 0, counts bare.
+
 Durable vs point-in-time
 ------------------------
 Redis streams carry a 24h TTL and their entries vanish, so the verdict for a
@@ -122,6 +131,30 @@ VERDICT_NOT_OBSERVED = "NOT_OBSERVED"
 #: so a weekend or holiday run does not raise a standing false alarm — the
 #: runbook invokes this per session and exit-0-on-COMPLETE invites cron.
 VERDICT_NO_SESSION = "NO_SESSION"
+#: Every scored service consumed and covered the session — but at least one of
+#: them **cannot prove it stayed alive**, because its proof is not traffic-driven
+#: and it therefore carries ``freshness_scored: false`` (see the module
+#: docstring). Exempt from *scoring* is not exempt from *disclosure*: without
+#: this token a producer with one 08:46 evaluation and six hours fifty-nine
+#: minutes of silence rendered ``4/4 consumed (COMPLETE)``, exit 0, counts bare
+#: and ``counters.qualified: true`` — the same "one surviving line makes
+#: ``consumed``" collapse the freshness bound closed for consumers, walked back
+#: in through the one service the bound cannot cover.
+#:
+#: It exits 0, like ``COMPLETE``. A dead throttled emitter and a healthy one
+#: leave identical records (that is precisely why no bound over them asserts
+#: anything), and both real harvests show the healthy case: exiting 1 would
+#: alarm on every trading day, which is the standing-alarm harm this script
+#: exists to prevent. So the row says it loudly and the exit status stays quiet,
+#: and the counts are never bare.
+VERDICT_LIVENESS_UNVERIFIED = "LIVENESS_UNVERIFIED"
+
+#: Verdicts a per-session cron may treat as "nothing to escalate".
+VERDICTS_EXIT_ZERO = (
+    VERDICT_COMPLETE,
+    VERDICT_NO_SESSION,
+    VERDICT_LIVENESS_UNVERIFIED,
+)
 
 #: Per-service statuses.
 STATUS_CONSUMED = "consumed"
@@ -229,8 +262,20 @@ class ServiceSpec:
     #: over it asserts nothing. The reason belongs beside the service in
     #: ``config/f9_observation.yaml``, not in a branch here.
     freshness_scored: bool = True
+    #: Why this service is exempt, in one clause, for the row to quote. Required
+    #: when ``freshness_scored`` is false — the same rule ``harvest_tail``
+    #: follows below, for the same reason: the exemption is disclosed in an
+    #: operator-facing row, and a disclosure with no reason is a blank the
+    #: reader has to go and reconstruct from config comments.
+    freshness_unscored_reason: str = ""
 
     def __post_init__(self) -> None:
+        if not self.freshness_scored and not self.freshness_unscored_reason.strip():
+            raise ValueError(
+                f"{self.name}: freshness_scored false needs a "
+                "freshness_unscored_reason — the row discloses the exemption "
+                "and quotes this"
+            )
         if self.harvest_mode != HARVEST_MODE_TAIL:
             return
         # No default here on purpose. A default would be a *second* value: the
@@ -338,6 +383,9 @@ def load_observation_config(
                 blind=_compile_all(entry.get("blind", ())),
                 counters=_parse_counters(entry.get("counters", {}) or {}),
                 freshness_scored=bool(entry.get("freshness_scored", True)),
+                freshness_unscored_reason=str(
+                    entry.get("freshness_unscored_reason", "")
+                ),
             )
         )
 
@@ -553,6 +601,8 @@ class ServiceObservation:
     #: for a service whose proof is not traffic-driven (see the module
     #: docstring); ``unobserved`` is still measured and recorded, as context.
     freshness_scored: bool = True
+    #: Why, in one clause, for the row to quote. Empty when freshness is scored.
+    freshness_unscored_reason: str = ""
 
     @property
     def covers_session(self) -> bool:
@@ -566,6 +616,15 @@ class ServiceObservation:
         Informational, not a verdict input, when ``freshness_scored`` is False.
         """
         return not self.unobserved
+
+    @property
+    def liveness_unverified(self) -> bool:
+        """Exempt from the freshness bound AND silent past it: nothing verified it.
+
+        Keyed on the two facts, never on a name or a role, so a second exempt
+        service inherits the disclosure the day it is configured.
+        """
+        return not self.freshness_scored and not self.observation_is_fresh
 
 
 @dataclass(frozen=True)
@@ -1019,6 +1078,7 @@ def scan_service(
         role=spec.role,
         status=status,
         freshness_scored=spec.freshness_scored,
+        freshness_unscored_reason=spec.freshness_unscored_reason,
         evidence=state,
         observed_count=len(observed),
         first_observed=observed[0] if observed else None,
@@ -1080,10 +1140,18 @@ def resolve_day(
     observed_anywhere = any(s.status in STATUSES_SURFACE_WORKED for s in scored)
     if not scored or not observed_anywhere:
         verdict = VERDICT_NOT_OBSERVED
-    elif all(s.status == STATUS_CONSUMED for s in scored):
-        verdict = VERDICT_COMPLETE
-    else:
+    elif not all(s.status == STATUS_CONSUMED for s in scored):
         verdict = VERDICT_PARTIAL
+    elif any(s.liveness_unverified for s in scored):
+        # Everything consumed and covered the session, but a service exempt from
+        # the freshness bound went silent past it, and nothing scored that. The
+        # day is not a measurement; the row must not be able to pass for one.
+        # A verdict rather than a note on one cell, so the counts cell, the
+        # sidecar's `counters.qualified` and the exit status all follow from one
+        # predicate instead of three that can drift apart.
+        verdict = VERDICT_LIVENESS_UNVERIFIED
+    else:
+        verdict = VERDICT_COMPLETE
     return resolved, verdict, counters
 
 
@@ -1173,6 +1241,23 @@ def _stale_text(service: ServiceObservation) -> str:
     return f", no proof of consumption {shown}{more}"
 
 
+def describe_liveness(service: ServiceObservation) -> str:
+    """One clause naming the stretch a freshness-exempt service went unverified.
+
+    The stretch and the reason both, because either alone misleads: the window
+    without the reason reads like a defect that was measured, and the reason
+    without the window reads like a footnote about configuration rather than
+    about this day.
+    """
+    windows = _window_text(service.unobserved[:_STALE_WINDOWS_SPELLED_OUT])
+    extra = len(service.unobserved) - _STALE_WINDOWS_SPELLED_OUT
+    more = f" +{extra} more" if extra > 0 else ""
+    return (
+        f"{service.name} liveness unverified {windows}{more} "
+        f"({service.freshness_unscored_reason})"
+    )
+
+
 def describe_service(service: ServiceObservation) -> str:
     """One clause naming what a non-consuming service did, and when.
 
@@ -1246,6 +1331,14 @@ def render_consumers_cell(result: DayObservation) -> str:
     if result.verdict == VERDICT_COMPLETE:
         return f"{no_session}{tally} (COMPLETE)"
 
+    if result.verdict == VERDICT_LIVENESS_UNVERIFIED:
+        # Every service is `consumed`, so the `problems` list below would be
+        # empty. What is wrong with the day is a thing no status can carry.
+        unverified = "; ".join(
+            describe_liveness(s) for s in scored if s.liveness_unverified
+        )
+        return f"{no_session}{tally} ({VERDICT_LIVENESS_UNVERIFIED}): {unverified}"
+
     problems = "; ".join(
         describe_service(s) for s in scored if s.status != STATUS_CONSUMED
     )
@@ -1262,6 +1355,11 @@ def render_counts_cell(result: DayObservation, row_counters: Sequence[str]) -> s
 
     A bare "0 -> 0 -> 0" from a day whose observation surface was blind reads
     identically to a genuine quiet market. It never ships bare.
+
+    ``LIVENESS_UNVERIFIED`` falls through to the same qualification, and must:
+    the ``candidates`` counter comes from the very producer whose liveness is
+    unverified, so its "0" is the "observed 0 / could not observe" collapse in
+    its purest form.
     """
     counts = " -> ".join(str(result.counters.get(name, 0)) for name in row_counters)
     if not result.session_day:
@@ -1356,6 +1454,8 @@ def build_sidecar(result: DayObservation, row: str) -> dict[str, Any]:
                 # False means `unobserved` above is context, not a verdict input
                 # — see the module docstring's "Observation freshness".
                 "freshness_scored": service.freshness_scored,
+                "freshness_unscored_reason": service.freshness_unscored_reason,
+                "liveness_unverified": service.liveness_unverified,
                 "coverage_truncated": service.coverage_truncated,
                 "observed_count": service.observed_count,
                 "first_observed_kst": (
@@ -1611,12 +1711,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     else:
         print(f"[sidecar] {sidecar}", file=sys.stderr)
-    # NO_SESSION exits 0 alongside COMPLETE: the runbook invokes this per
-    # session and exit-0-on-COMPLETE invites cron, so a standing weekend alarm
-    # would erode the signal this script exists to carry. It is the *reported*
-    # verdict, so a non-trading day holding incomplete evidence still exits 1
-    # rather than being excused by the calendar.
-    return 0 if result.reported_verdict in (VERDICT_COMPLETE, VERDICT_NO_SESSION) else 1
+    # NO_SESSION and LIVENESS_UNVERIFIED exit 0 alongside COMPLETE: the runbook
+    # invokes this per session and exit-0-on-COMPLETE invites cron, so a
+    # standing weekend alarm — or a standing alarm on every day whose throttled
+    # producer stayed quiet, which both real harvests show is every day — would
+    # erode the signal this script exists to carry. Each of them says its piece
+    # in the row instead. It is the *reported* verdict, so a non-trading day
+    # holding incomplete evidence still exits 1 rather than being excused by the
+    # calendar.
+    return 0 if result.reported_verdict in VERDICTS_EXIT_ZERO else 1
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
